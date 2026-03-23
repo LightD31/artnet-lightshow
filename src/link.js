@@ -23,7 +23,7 @@ class AbletonLink {
 
   _spawn() {
     const script = path.join(__dirname, 'link-bridge.py');
-    this._proc = spawn('python3', [script], {
+    this._proc = spawn('python', [script], {
       stdio: ['pipe', 'pipe', 'inherit'],
     });
 
