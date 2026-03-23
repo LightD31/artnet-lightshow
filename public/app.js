@@ -70,6 +70,7 @@ function render(s) {
   renderPatterns(s);
   renderFixtures(s);
   renderDmxMonitor(s);
+  renderMidi(s);
 }
 
 // ── BPM ───────────────────────────────────────────────────────────────────────
@@ -414,4 +415,42 @@ socket.on('state', (s) => {
   if (document.activeElement !== hostEl) hostEl.value = s.artnet.host;
   if (document.activeElement !== portEl) portEl.value = s.artnet.port;
   if (document.activeElement !== univEl) univEl.value = s.artnet.universe;
+});
+
+// ── MIDI UI ───────────────────────────────────────────────────────────────────
+
+function renderMidi(s) {
+  if (!s.midi) return;
+  const dot  = document.getElementById('midi-dot');
+  const text = document.getElementById('midi-status-text');
+  dot.classList.toggle('connected', s.midi.enabled);
+  text.textContent = s.midi.enabled ? 'Connected' : 'Not connected';
+
+  // Populate port selects
+  const ports = s.midi.ports || { inputs: [], outputs: [] };
+  ['input', 'output'].forEach(dir => {
+    const sel = document.getElementById(`midi-${dir}`);
+    const list = dir === 'input' ? ports.inputs : ports.outputs;
+    const cur  = sel.value;
+    sel.innerHTML = '<option value="">— auto-detect —</option>';
+    list.forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = name; opt.textContent = name;
+      if (name === cur) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  });
+}
+
+document.getElementById('midi-connect').addEventListener('click', () => {
+  const input  = document.getElementById('midi-input').value  || null;
+  const output = document.getElementById('midi-output').value || null;
+  socket.emit('midi-connect', { input, output });
+});
+
+socket.on('midi-status', ({ ok, ports, enabled }) => {
+  const dot  = document.getElementById('midi-dot');
+  const text = document.getElementById('midi-status-text');
+  dot.classList.toggle('connected', enabled);
+  text.textContent = enabled ? 'Connected' : (ok ? 'Connected' : 'Failed to connect');
 });
