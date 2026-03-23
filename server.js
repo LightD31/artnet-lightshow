@@ -6,7 +6,7 @@ const { Server } = require('socket.io');
 const dgram = require('dgram');
 const path = require('path');
 const MidiController = require('./src/midi');
-const AbletonLink = require('abletonlink-addon');
+const AbletonLink = require('./src/link');
 
 const app = express();
 const server = http.createServer(app);
@@ -371,40 +371,41 @@ const midiInput  = process.env.MIDI_INPUT  || null;
 const midiOutput = process.env.MIDI_OUTPUT || null;
 midi.connect(midiInput, midiOutput);
 
-// ─── Ableton Link ─────────────────────────────────────────────────────────────
+// ─── Ableton Link (Python bridge via aalink) ─────────────────────────────────
 
 const link = new AbletonLink();
-let linkPollInterval = null;
+
+// React to tempo changes pushed from Link peers
+link.onTempoChange((bpm) => {
+  if (!state.linkEnabled) return;
+  const rounded = Math.round(bpm);
+  if (rounded >= 20 && rounded <= 300 && rounded !== state.bpm) {
+    state.bpm = rounded;
+    restartBeatTimer();
+    broadcast();
+  }
+});
+
+link.onPeersChange((peers) => {
+  console.log(`Ableton Link peers: ${peers}`);
+  io.emit('state', getClientState());
+});
 
 function enableLink() {
   link.enable();
   state.linkEnabled = true;
   // Push our current BPM to Link when first enabling
   link.setTempo(state.bpm);
-  linkPollInterval = setInterval(() => {
-    const linkBpm = Math.round(link.getTempo());
-    if (linkBpm >= 20 && linkBpm <= 300 && linkBpm !== state.bpm) {
-      state.bpm = linkBpm;
-      restartBeatTimer();
-      broadcast();
-    }
-  }, 50);
   console.log('Ableton Link enabled');
   broadcast();
 }
 
 function disableLink() {
-  if (linkPollInterval) { clearInterval(linkPollInterval); linkPollInterval = null; }
   link.disable();
   state.linkEnabled = false;
   console.log('Ableton Link disabled');
   broadcast();
 }
-
-link.setNumPeersCallback((peers) => {
-  console.log(`Ableton Link peers: ${peers}`);
-  io.emit('state', getClientState());
-});
 
 // Enable by default if LINK=1 env var is set
 if (process.env.LINK === '1') enableLink();
@@ -547,5 +548,10 @@ server.listen(PORT, () => {
   console.log(`  ArtNet            →  ${state.artnet.host}:${state.artnet.port} universe ${state.artnet.universe}`);
   console.log(`  Fixtures          →  ${FIXTURE_COUNT}x Cameo ROOT PAR 6 at DMX ${DEFAULT_ADDRESSES.join(', ')}`);
   console.log(`  MIDI              →  ${midi.enabled ? 'connected' : 'not connected (set MIDI_INPUT env var or use /api/midi/connect)'}`);
-  console.log(`  Ableton Link      →  ${state.linkEnabled ? 'enabled' : 'disabled (set LINK=1 env var or use web UI)'}\n`);
+  console.log(`  Ableton Link      →  ${state.linkEnabled ? 'enabled' : 'disabled (set LINK=1 env var or use web UI)'}`);
+  console.log(`  Link backend      →  Python aalink bridge\n`);
 });
+
+// Clean shutdown
+process.on('SIGINT',  () => { link.destroy(); process.exit(0); });
+process.on('SIGTERM', () => { link.destroy(); process.exit(0); });
