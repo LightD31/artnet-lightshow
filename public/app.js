@@ -81,6 +81,7 @@ function render(s) {
   renderPatterns(s);
   renderFixtures(s);
   renderDmxMonitor(s);
+  renderLink(s);
   renderMidi(s);
 }
 
@@ -439,6 +440,27 @@ socket.on('state', (s) => {
   if (document.activeElement !== hostEl) hostEl.value = s.artnet.host;
   if (document.activeElement !== portEl) portEl.value = s.artnet.port;
   if (document.activeElement !== univEl) univEl.value = s.artnet.universe;
+});
+
+// ── Ableton Link UI ──────────────────────────────────────────────────────────
+
+function renderLink(s) {
+  if (!s.link) return;
+  const dot  = document.getElementById('link-dot');
+  const text = document.getElementById('link-status-text');
+  const btn  = document.getElementById('link-toggle');
+  const peers = document.getElementById('link-peers');
+
+  dot.classList.toggle('connected', s.link.enabled);
+  text.textContent = s.link.enabled ? 'Enabled' : 'Disabled';
+  btn.textContent = s.link.enabled ? 'Disable' : 'Enable';
+  btn.classList.toggle('active', s.link.enabled);
+  peers.textContent = `${s.link.peers} peer${s.link.peers !== 1 ? 's' : ''}`;
+}
+
+document.getElementById('link-toggle').addEventListener('click', () => {
+  const enabled = state.link ? state.link.enabled : false;
+  send({ linkEnabled: !enabled });
 });
 
 // ── MIDI UI ───────────────────────────────────────────────────────────────────

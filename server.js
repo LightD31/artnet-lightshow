@@ -6,6 +6,7 @@ const { Server } = require('socket.io');
 const dgram = require('dgram');
 const path = require('path');
 const MidiController = require('./src/midi');
+const AbletonLink = require('abletonlink');
 
 const app = express();
 const server = http.createServer(app);
@@ -97,6 +98,7 @@ const state = {
   masterDimmer: 255,
   masterBlackout: false,
   strobeSpeed: 0,
+  linkEnabled: false,
   fixtures: Array.from({ length: FIXTURE_COUNT }, (_, i) => ({
     id: i,
     label: `PAR ${i + 1}`,
@@ -143,6 +145,15 @@ function applyPatch(data) {
   if (data.masterBlackout !== undefined) state.masterBlackout = data.masterBlackout;
   if (data.strobeSpeed !== undefined) state.strobeSpeed = Math.max(0, Math.min(255, data.strobeSpeed));
   if (data.artnet !== undefined) Object.assign(state.artnet, data.artnet);
+  if (data.linkEnabled !== undefined) {
+    if (data.linkEnabled && !state.linkEnabled) enableLink();
+    else if (!data.linkEnabled && state.linkEnabled) disableLink();
+  }
+
+  // Sync BPM changes back to Link when it's active
+  if (restartTimer && state.linkEnabled && data.bpm !== undefined) {
+    link.bpm = state.bpm;
+  }
 
   if (restartTimer) restartBeatTimer();
   broadcast();
@@ -346,6 +357,7 @@ function getClientState() {
     patterns: PATTERNS,
     dmxSnapshot: Array.from(dmx.slice(0, FIXTURE_COUNT * CHANNELS)),
     midi: { enabled: midi.enabled, ports: midi.listPorts() },
+    link: { enabled: state.linkEnabled, peers: link.numPeers },
   };
 }
 
@@ -358,6 +370,43 @@ midi.overrideFixture = applyOverride;
 const midiInput  = process.env.MIDI_INPUT  || null;
 const midiOutput = process.env.MIDI_OUTPUT || null;
 midi.connect(midiInput, midiOutput);
+
+// ─── Ableton Link ─────────────────────────────────────────────────────────────
+
+const link = new AbletonLink();
+let linkPollInterval = null;
+
+function enableLink() {
+  link.enable();
+  state.linkEnabled = true;
+  // Push our current BPM to Link when first enabling
+  link.bpm = state.bpm;
+  linkPollInterval = setInterval(() => {
+    const linkBpm = Math.round(link.bpm);
+    if (linkBpm >= 20 && linkBpm <= 300 && linkBpm !== state.bpm) {
+      state.bpm = linkBpm;
+      restartBeatTimer();
+      broadcast();
+    }
+  }, 50);
+  console.log('Ableton Link enabled');
+  broadcast();
+}
+
+function disableLink() {
+  if (linkPollInterval) { clearInterval(linkPollInterval); linkPollInterval = null; }
+  link.disable();
+  state.linkEnabled = false;
+  console.log('Ableton Link disabled');
+  broadcast();
+}
+
+link.on('numPeers', (peers) => {
+  console.log(`Ableton Link peers: ${peers}`);
+});
+
+// Enable by default if LINK=1 env var is set
+if (process.env.LINK === '1') enableLink();
 
 // ─── Socket.io ────────────────────────────────────────────────────────────────
 
@@ -484,6 +533,11 @@ app.post('/api/midi/connect', (req, res) => {
   res.json({ ok, enabled: midi.enabled, ports: midi.listPorts() });
 });
 
+// POST /api/link/enable   POST /api/link/disable   POST /api/link/toggle
+app.post('/api/link/enable',  (_req, res) => { applyPatch({ linkEnabled: true  }); res.json({ ok: true, link: { enabled: state.linkEnabled, peers: link.numPeers } }); });
+app.post('/api/link/disable', (_req, res) => { applyPatch({ linkEnabled: false }); res.json({ ok: true, link: { enabled: state.linkEnabled, peers: link.numPeers } }); });
+app.post('/api/link/toggle',  (_req, res) => { applyPatch({ linkEnabled: !state.linkEnabled }); res.json({ ok: true, link: { enabled: state.linkEnabled, peers: link.numPeers } }); });
+
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 3000;
@@ -491,5 +545,6 @@ server.listen(PORT, () => {
   console.log(`\n  ArtNet Lightshow  →  http://localhost:${PORT}`);
   console.log(`  ArtNet            →  ${state.artnet.host}:${state.artnet.port} universe ${state.artnet.universe}`);
   console.log(`  Fixtures          →  ${FIXTURE_COUNT}x Cameo ROOT PAR 6 at DMX ${DEFAULT_ADDRESSES.join(', ')}`);
-  console.log(`  MIDI              →  ${midi.enabled ? 'connected' : 'not connected (set MIDI_INPUT env var or use /api/midi/connect)'}\n`);
+  console.log(`  MIDI              →  ${midi.enabled ? 'connected' : 'not connected (set MIDI_INPUT env var or use /api/midi/connect)'}`);
+  console.log(`  Ableton Link      →  ${state.linkEnabled ? 'enabled' : 'disabled (set LINK=1 env var or use web UI)'}\n`);
 });
