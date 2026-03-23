@@ -1,0 +1,14 @@
+{
+  "name": "companion-module-artnet-lightshow",
+  "version": "1.0.0",
+  "description": "Bitfocus Companion module for ArtNet Lightshow (Cameo ROOT PAR 6)",
+  "keywords": ["companion-module"],
+  "main": "index.js",
+  "scripts": {
+    "build": "echo 'No build step needed'"
+  },
+  "dependencies": {
+    "@companion-module/base": "^1.8.0",
+    "socket.io-client": "^4.7.2"
+  }
+}

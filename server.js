@@ -1,0 +1,484 @@
+'use strict';
+
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const dgram = require('dgram');
+const path = require('path');
+const MidiController = require('./src/midi');
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
+
+app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.json());
+
+// ─── ArtNet ──────────────────────────────────────────────────────────────────
+
+const udpSocket = dgram.createSocket('udp4');
+udpSocket.bind(() => {
+  try { udpSocket.setBroadcast(true); } catch (_) {}
+});
+
+function buildArtDmxPacket(universe, dmxData) {
+  const packet = Buffer.alloc(18 + 512);
+  packet.write('Art-Net\0', 0, 'ascii');
+  packet.writeUInt16LE(0x5000, 8);
+  packet.writeUInt16BE(14, 10);
+  packet[12] = 0;
+  packet[13] = 0;
+  packet.writeUInt16LE(universe & 0x7fff, 14);
+  packet.writeUInt16BE(512, 16);
+  dmxData.copy(packet, 18, 0, 512);
+  return packet;
+}
+
+function sendArtNet() {
+  const packet = buildArtDmxPacket(state.artnet.universe, dmx);
+  udpSocket.send(packet, 0, packet.length, state.artnet.port, state.artnet.host);
+}
+
+// ─── Fixtures ────────────────────────────────────────────────────────────────
+// Cameo ROOT PAR 6 – 6-channel mode
+//   Ch1: Dimmer   Ch2: Red   Ch3: Green   Ch4: Blue   Ch5: White   Ch6: Strobe
+
+const FIXTURE_COUNT = 4;
+const CHANNELS = 6;
+const CH = { DIM: 0, RED: 1, GREEN: 2, BLUE: 3, WHITE: 4, STROBE: 5 };
+const DEFAULT_ADDRESSES = [1, 7, 13, 19];
+
+// ─── State ───────────────────────────────────────────────────────────────────
+
+const COLOR_PRESETS = [
+  { name: 'Red',        r: 255, g: 0,   b: 0,   w: 0   },
+  { name: 'Orange',     r: 255, g: 80,  b: 0,   w: 0   },
+  { name: 'Yellow',     r: 255, g: 200, b: 0,   w: 0   },
+  { name: 'Green',      r: 0,   g: 255, b: 0,   w: 0   },
+  { name: 'Cyan',       r: 0,   g: 255, b: 255, w: 0   },
+  { name: 'Blue',       r: 0,   g: 0,   b: 255, w: 0   },
+  { name: 'Purple',     r: 100, g: 0,   b: 255, w: 0   },
+  { name: 'Magenta',    r: 255, g: 0,   b: 200, w: 0   },
+  { name: 'White',      r: 0,   g: 0,   b: 0,   w: 255 },
+  { name: 'Warm White', r: 255, g: 120, b: 20,  w: 200 },
+  { name: 'UV',         r: 30,  g: 0,   b: 255, w: 0   },
+  { name: 'Blackout',   r: 0,   g: 0,   b: 0,   w: 0   },
+];
+
+const PATTERNS = [
+  { id: 'solid',       name: 'Solid',        desc: 'All fixtures same colour' },
+  { id: 'chase',       name: 'Chase →',      desc: 'One fixture at a time, forward' },
+  { id: 'chase-rev',   name: 'Chase ←',      desc: 'One fixture at a time, reverse' },
+  { id: 'ping-pong',   name: 'Ping Pong',    desc: 'Forward then backward' },
+  { id: 'strobe',      name: 'Strobe',       desc: 'All fixtures strobe on beat' },
+  { id: 'fade',        name: 'Fade',         desc: 'Fade in/out together' },
+  { id: 'color-cycle', name: 'Colour Cycle', desc: 'Cycle through hues in sync' },
+  { id: 'rainbow',     name: 'Rainbow',      desc: 'Each fixture offset in hue' },
+  { id: 'twinkle',     name: 'Twinkle',      desc: 'Random fixtures flash' },
+  { id: 'split',       name: 'Split',        desc: 'Two colours alternating in pairs' },
+];
+
+const state = {
+  artnet: {
+    host: '2.255.255.255',
+    port: 6454,
+    universe: 0,
+  },
+  bpm: 120,
+  beatDivision: 1,
+  running: true,
+  pattern: 'chase',
+  colorA: 0,
+  colorB: 5,
+  masterDimmer: 255,
+  masterBlackout: false,
+  strobeSpeed: 0,
+  fixtures: Array.from({ length: FIXTURE_COUNT }, (_, i) => ({
+    id: i,
+    label: `PAR ${i + 1}`,
+    address: DEFAULT_ADDRESSES[i],
+    override: null,
+  })),
+  _step: 0,
+  _pingDir: 1,
+  _hue: 0,
+  _fadePhase: 0,
+  _twinkle: new Array(FIXTURE_COUNT).fill(0),
+};
+
+const dmx = Buffer.alloc(512, 0);
+
+// ─── Shared state mutation ────────────────────────────────────────────────────
+// All sources (web UI, MIDI, REST API) go through these two functions.
+
+let beatInterval = null;
+
+function applyPatch(data) {
+  let restartTimer = false;
+
+  if (data.bpm !== undefined) {
+    state.bpm = Math.max(20, Math.min(300, data.bpm));
+    restartTimer = true;
+  }
+  if (data.beatDivision !== undefined) {
+    state.beatDivision = data.beatDivision;
+    restartTimer = true;
+  }
+  if (data.running !== undefined) {
+    state.running = data.running;
+    restartTimer = true;
+  }
+  if (data.pattern !== undefined) {
+    state.pattern = data.pattern;
+    state._step = 0;
+    state._fadePhase = 0;
+  }
+  if (data.colorA !== undefined) state.colorA = Math.max(0, Math.min(COLOR_PRESETS.length - 1, data.colorA));
+  if (data.colorB !== undefined) state.colorB = Math.max(0, Math.min(COLOR_PRESETS.length - 1, data.colorB));
+  if (data.masterDimmer !== undefined) state.masterDimmer = Math.max(0, Math.min(255, data.masterDimmer));
+  if (data.masterBlackout !== undefined) state.masterBlackout = data.masterBlackout;
+  if (data.strobeSpeed !== undefined) state.strobeSpeed = Math.max(0, Math.min(255, data.strobeSpeed));
+  if (data.artnet !== undefined) Object.assign(state.artnet, data.artnet);
+
+  if (restartTimer) restartBeatTimer();
+  broadcast();
+}
+
+function applyOverride(id, override) {
+  if (id >= 0 && id < FIXTURE_COUNT) {
+    state.fixtures[id].override = override;
+    broadcast();
+  }
+}
+
+// Tap tempo — shared tap buffer (keyed by source to avoid cross-contamination)
+const tapTimes = [];
+
+function processTap() {
+  const now = Date.now();
+  tapTimes.push(now);
+  if (tapTimes.length > 8) tapTimes.shift();
+  if (tapTimes.length >= 2) {
+    const diffs = [];
+    for (let i = 1; i < tapTimes.length; i++) diffs.push(tapTimes[i] - tapTimes[i - 1]);
+    const avg = diffs.reduce((a, b) => a + b, 0) / diffs.length;
+    state.bpm = Math.max(20, Math.min(300, Math.round(60000 / avg)));
+    restartBeatTimer();
+    broadcast();
+  }
+  setTimeout(() => {
+    if (tapTimes.length > 0 && Date.now() - tapTimes[tapTimes.length - 1] > 2500) tapTimes.length = 0;
+  }, 3000);
+}
+
+function broadcast() {
+  io.emit('state', getClientState());
+  midi.sendFeedback();
+}
+
+// ─── Colour helpers ───────────────────────────────────────────────────────────
+
+function hsvToRgb(h, s, v) {
+  h = ((h % 360) + 360) % 360;
+  const c = v * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = v - c;
+  let r = 0, g = 0, b = 0;
+  if (h < 60)       { r = c; g = x; b = 0; }
+  else if (h < 120) { r = x; g = c; b = 0; }
+  else if (h < 180) { r = 0; g = c; b = x; }
+  else if (h < 240) { r = 0; g = x; b = c; }
+  else if (h < 300) { r = x; g = 0; b = c; }
+  else              { r = c; g = 0; b = x; }
+  return { r: Math.round((r + m) * 255), g: Math.round((g + m) * 255), b: Math.round((b + m) * 255), w: 0 };
+}
+
+// ─── Engine ──────────────────────────────────────────────────────────────────
+
+let fixtureColors = Array.from({ length: FIXTURE_COUNT }, () => ({ r: 0, g: 0, b: 0, w: 0, dim: 255, strobe: 0 }));
+
+function tickPattern() {
+  if (!state.running) return;
+  const colA = COLOR_PRESETS[state.colorA];
+  const colB = COLOR_PRESETS[state.colorB];
+  const step = state._step;
+
+  switch (state.pattern) {
+    case 'solid':
+      for (let i = 0; i < FIXTURE_COUNT; i++) setFixtureColor(i, colA, 255, 0);
+      break;
+    case 'chase':
+      for (let i = 0; i < FIXTURE_COUNT; i++)
+        setFixtureColor(i, i === step % FIXTURE_COUNT ? colA : { r: 0, g: 0, b: 0, w: 0 }, 255, 0);
+      break;
+    case 'chase-rev':
+      for (let i = 0; i < FIXTURE_COUNT; i++)
+        setFixtureColor(i, i === (FIXTURE_COUNT - 1 - step % FIXTURE_COUNT) ? colA : { r: 0, g: 0, b: 0, w: 0 }, 255, 0);
+      break;
+    case 'ping-pong': {
+      const pos = step % (FIXTURE_COUNT * 2 - 2);
+      const idx = pos < FIXTURE_COUNT ? pos : (FIXTURE_COUNT * 2 - 2 - pos);
+      for (let i = 0; i < FIXTURE_COUNT; i++)
+        setFixtureColor(i, i === idx ? colA : { r: 0, g: 0, b: 0, w: 0 }, 255, 0);
+      break;
+    }
+    case 'strobe':
+      for (let i = 0; i < FIXTURE_COUNT; i++) setFixtureColor(i, colA, 255, 0);
+      break;
+    case 'fade': {
+      const bright = Math.round(state._fadePhase * 255);
+      for (let i = 0; i < FIXTURE_COUNT; i++) setFixtureColor(i, colA, bright, 0);
+      break;
+    }
+    case 'color-cycle': {
+      const col = hsvToRgb(state._hue, 1, 1);
+      for (let i = 0; i < FIXTURE_COUNT; i++) setFixtureColor(i, col, 255, 0);
+      break;
+    }
+    case 'rainbow':
+      for (let i = 0; i < FIXTURE_COUNT; i++) {
+        const col = hsvToRgb(state._hue + (360 / FIXTURE_COUNT) * i, 1, 1);
+        setFixtureColor(i, col, 255, 0);
+      }
+      break;
+    case 'twinkle':
+      for (let i = 0; i < FIXTURE_COUNT; i++) {
+        if (Math.random() < 0.35) state._twinkle[i] = Math.random() < 0.5 ? 255 : 0;
+        setFixtureColor(i, colA, state._twinkle[i], 0);
+      }
+      break;
+    case 'split':
+      for (let i = 0; i < FIXTURE_COUNT; i++)
+        setFixtureColor(i, (i + step) % 2 === 0 ? colA : colB, 255, 0);
+      break;
+  }
+
+  state._step++;
+  state._hue = (state._hue + 360 / FIXTURE_COUNT) % 360;
+}
+
+function setFixtureColor(idx, color, dim, strobe) {
+  fixtureColors[idx] = { r: color.r, g: color.g, b: color.b, w: color.w || 0, dim, strobe };
+}
+
+function renderDmx() {
+  for (let i = 0; i < FIXTURE_COUNT; i++) {
+    const fix = state.fixtures[i];
+    const base = fix.address - 1;
+    let col, dim, strobe;
+
+    if (fix.override && fix.override.enabled) {
+      const ov = fix.override;
+      if (ov.blackout) {
+        col = { r: 0, g: 0, b: 0, w: 0 }; dim = 0; strobe = 0;
+      } else {
+        col = { r: ov.r, g: ov.g, b: ov.b, w: ov.w };
+        dim = ov.dim !== undefined ? ov.dim : 255;
+        strobe = ov.strobe !== undefined ? ov.strobe : 0;
+      }
+    } else {
+      const fc = fixtureColors[i];
+      col = { r: fc.r, g: fc.g, b: fc.b, w: fc.w };
+      dim = fc.dim; strobe = fc.strobe;
+    }
+
+    if (state.masterBlackout) {
+      dmx[base + CH.DIM] = dmx[base + CH.RED] = dmx[base + CH.GREEN] =
+      dmx[base + CH.BLUE] = dmx[base + CH.WHITE] = dmx[base + CH.STROBE] = 0;
+    } else {
+      const ms = state.masterDimmer / 255;
+      const ds = dim / 255;
+      const ts = ms * ds;
+      dmx[base + CH.DIM]    = Math.round(dim * ms);
+      dmx[base + CH.RED]    = Math.round(col.r * ts);
+      dmx[base + CH.GREEN]  = Math.round(col.g * ts);
+      dmx[base + CH.BLUE]   = Math.round(col.b * ts);
+      dmx[base + CH.WHITE]  = Math.round(col.w * ts);
+      dmx[base + CH.STROBE] = state.pattern === 'strobe' ? state.strobeSpeed : strobe;
+    }
+  }
+  sendArtNet();
+}
+
+// ─── Timing ───────────────────────────────────────────────────────────────────
+
+function bpmInterval() { return (60000 / state.bpm) / state.beatDivision; }
+
+function restartBeatTimer() {
+  if (beatInterval) clearInterval(beatInterval);
+  if (state.running) {
+    beatInterval = setInterval(() => {
+      tickPattern();
+      state._fadePhase = (state._fadePhase + 1 / 8) % 1;
+    }, bpmInterval());
+  }
+}
+
+restartBeatTimer();
+setInterval(renderDmx, 25);
+setInterval(() => io.emit('state', getClientState()), 100);
+
+function getClientState() {
+  return {
+    artnet: state.artnet,
+    bpm: state.bpm,
+    beatDivision: state.beatDivision,
+    running: state.running,
+    pattern: state.pattern,
+    colorA: state.colorA,
+    colorB: state.colorB,
+    masterDimmer: state.masterDimmer,
+    masterBlackout: state.masterBlackout,
+    strobeSpeed: state.strobeSpeed,
+    fixtures: state.fixtures,
+    colorPresets: COLOR_PRESETS,
+    patterns: PATTERNS,
+    dmxSnapshot: Array.from(dmx.slice(0, 30)),
+    midi: { enabled: midi.enabled, ports: midi.listPorts() },
+  };
+}
+
+// ─── MIDI ─────────────────────────────────────────────────────────────────────
+
+const midi = new MidiController(state, applyPatch, processTap);
+midi.overrideFixture = applyOverride;
+
+// Auto-connect if MIDI_INPUT env var is set, or try auto-detection
+const midiInput  = process.env.MIDI_INPUT  || null;
+const midiOutput = process.env.MIDI_OUTPUT || null;
+midi.connect(midiInput, midiOutput);
+
+// ─── Socket.io ────────────────────────────────────────────────────────────────
+
+io.on('connection', (socket) => {
+  console.log('Client connected:', socket.id);
+  socket.emit('state', getClientState());
+
+  socket.on('set', applyPatch);
+
+  socket.on('override', ({ id, override }) => applyOverride(id, override));
+
+  socket.on('fixture', ({ id, address, label }) => {
+    if (id >= 0 && id < FIXTURE_COUNT) {
+      if (address !== undefined) state.fixtures[id].address = address;
+      if (label !== undefined) state.fixtures[id].label = label;
+      broadcast();
+    }
+  });
+
+  socket.on('tap', processTap);
+
+  // MIDI reconnect from UI
+  socket.on('midi-connect', ({ input, output }) => {
+    midi.close();
+    const ok = midi.connect(input || null, output || null);
+    socket.emit('midi-status', { ok, ports: midi.listPorts(), enabled: midi.enabled });
+  });
+
+  socket.on('disconnect', () => console.log('Client disconnected:', socket.id));
+});
+
+// ─── REST API ─────────────────────────────────────────────────────────────────
+// Used by Bitfocus Companion (Generic HTTP module) and other integrations.
+
+app.get('/api/state', (_req, res) => res.json(getClientState()));
+
+// POST /api/set  body: { bpm, pattern, colorA, colorB, masterDimmer, masterBlackout, running, ... }
+app.post('/api/set', (req, res) => {
+  applyPatch(req.body);
+  res.json({ ok: true, state: getClientState() });
+});
+
+// POST /api/tap
+app.post('/api/tap', (_req, res) => {
+  processTap();
+  res.json({ ok: true, bpm: state.bpm });
+});
+
+// POST /api/blackout/toggle
+app.post('/api/blackout/toggle', (_req, res) => {
+  applyPatch({ masterBlackout: !state.masterBlackout });
+  res.json({ ok: true, masterBlackout: state.masterBlackout });
+});
+
+// POST /api/blackout/:state  (on|off)
+app.post('/api/blackout/:onoff', (req, res) => {
+  applyPatch({ masterBlackout: req.params.onoff !== 'off' });
+  res.json({ ok: true, masterBlackout: state.masterBlackout });
+});
+
+// POST /api/pattern/:id
+app.post('/api/pattern/:id', (req, res) => {
+  applyPatch({ pattern: req.params.id });
+  res.json({ ok: true, pattern: state.pattern });
+});
+
+// POST /api/color/a/:index   POST /api/color/b/:index
+app.post('/api/color/:slot/:index', (req, res) => {
+  const slot = req.params.slot === 'b' ? 'colorB' : 'colorA';
+  applyPatch({ [slot]: parseInt(req.params.index) });
+  res.json({ ok: true, colorA: state.colorA, colorB: state.colorB });
+});
+
+// POST /api/bpm/:value
+app.post('/api/bpm/:value', (req, res) => {
+  applyPatch({ bpm: parseInt(req.params.value) });
+  res.json({ ok: true, bpm: state.bpm });
+});
+
+// POST /api/bpm/adjust/:delta  (e.g. +5 or -5)
+app.post('/api/bpm/adjust/:delta', (req, res) => {
+  applyPatch({ bpm: state.bpm + parseInt(req.params.delta) });
+  res.json({ ok: true, bpm: state.bpm });
+});
+
+// POST /api/play  POST /api/stop
+app.post('/api/play',  (_req, res) => { applyPatch({ running: true  }); res.json({ ok: true }); });
+app.post('/api/stop',  (_req, res) => { applyPatch({ running: false }); res.json({ ok: true }); });
+
+// POST /api/master/:value  (0-255)
+app.post('/api/master/:value', (req, res) => {
+  applyPatch({ masterDimmer: parseInt(req.params.value) });
+  res.json({ ok: true, masterDimmer: state.masterDimmer });
+});
+
+// POST /api/fixture/:id/override  body: { r,g,b,w,dim,strobe,blackout,enabled }
+app.post('/api/fixture/:id/override', (req, res) => {
+  const id = parseInt(req.params.id);
+  applyOverride(id, req.body);
+  res.json({ ok: true });
+});
+
+// POST /api/fixture/:id/blackout/toggle
+app.post('/api/fixture/:id/blackout/toggle', (req, res) => {
+  const id = parseInt(req.params.id);
+  const cur = state.fixtures[id] && state.fixtures[id].override;
+  applyOverride(id, { ...(cur || { r:0, g:0, b:0, w:0, dim:0, strobe:0 }), enabled: true, blackout: !(cur && cur.blackout) });
+  res.json({ ok: true });
+});
+
+// POST /api/fixture/:id/clear
+app.post('/api/fixture/:id/clear', (req, res) => {
+  applyOverride(parseInt(req.params.id), null);
+  res.json({ ok: true });
+});
+
+// GET /api/midi/ports
+app.get('/api/midi/ports', (_req, res) => res.json(midi.listPorts()));
+
+// POST /api/midi/connect  body: { input, output }
+app.post('/api/midi/connect', (req, res) => {
+  midi.close();
+  const ok = midi.connect(req.body.input || null, req.body.output || null);
+  res.json({ ok, enabled: midi.enabled, ports: midi.listPorts() });
+});
+
+// ─── Start ────────────────────────────────────────────────────────────────────
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+  console.log(`\n  ArtNet Lightshow  →  http://localhost:${PORT}`);
+  console.log(`  ArtNet            →  ${state.artnet.host}:${state.artnet.port} universe ${state.artnet.universe}`);
+  console.log(`  Fixtures          →  ${FIXTURE_COUNT}x Cameo ROOT PAR 6 at DMX ${DEFAULT_ADDRESSES.join(', ')}`);
+  console.log(`  MIDI              →  ${midi.enabled ? 'connected' : 'not connected (set MIDI_INPUT env var or use /api/midi/connect)'}\n`);
+});
