@@ -224,24 +224,26 @@ function tickPattern() {
       break;
     case 'chase':
       for (let i = 0; i < FIXTURE_COUNT; i++)
-        setFixtureColor(i, i === step % FIXTURE_COUNT ? colA : { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 }, 255, 0);
+        setFixtureColor(i, i === step % FIXTURE_COUNT ? colA : colB, i === step % FIXTURE_COUNT ? 255 : 80, 0);
       break;
     case 'chase-rev':
-      for (let i = 0; i < FIXTURE_COUNT; i++)
-        setFixtureColor(i, i === (FIXTURE_COUNT - 1 - step % FIXTURE_COUNT) ? colA : { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 }, 255, 0);
+      for (let i = 0; i < FIXTURE_COUNT; i++) {
+        const active = i === (FIXTURE_COUNT - 1 - step % FIXTURE_COUNT);
+        setFixtureColor(i, active ? colA : colB, active ? 255 : 80, 0);
+      }
       break;
     case 'ping-pong': {
       const pos = step % (FIXTURE_COUNT * 2 - 2);
       const idx = pos < FIXTURE_COUNT ? pos : (FIXTURE_COUNT * 2 - 2 - pos);
       for (let i = 0; i < FIXTURE_COUNT; i++)
-        setFixtureColor(i, i === idx ? colA : { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 }, 255, 0);
+        setFixtureColor(i, i === idx ? colA : colB, i === idx ? 255 : 80, 0);
       break;
     }
     case 'strobe':
       for (let i = 0; i < FIXTURE_COUNT; i++) setFixtureColor(i, colA, 255, 0);
       break;
     case 'fade': {
-      const bright = Math.round(state._fadePhase * 255);
+      const bright = Math.round(((Math.sin(state._fadePhase * Math.PI * 2 - Math.PI / 2) + 1) / 2) * 230 + 25);
       for (let i = 0; i < FIXTURE_COUNT; i++) setFixtureColor(i, colA, bright, 0);
       break;
     }
@@ -258,7 +260,7 @@ function tickPattern() {
       break;
     case 'twinkle':
       for (let i = 0; i < FIXTURE_COUNT; i++) {
-        if (Math.random() < 0.35) state._twinkle[i] = Math.random() < 0.5 ? 255 : 0;
+        if (Math.random() < 0.4) state._twinkle[i] = Math.random() < 0.7 ? 255 : 60;
         setFixtureColor(i, colA, state._twinkle[i], 0);
       }
       break;
