@@ -64,7 +64,7 @@ const DEFAULT_MAP = {
     15: { action: 'setPattern', value: 'rainbow'     },
     16: { action: 'setPattern', value: 'twinkle'     },
     17: { action: 'setPattern', value: 'split'       },
-    7: { action: 'cycleEnergy' },     // Encoder push 8: cycle energy overrides
+    7: { action: 'energyHold' },      // Encoder push 8: hold for energy override
     // Button row 2 (notes 18-23): first 6 colour presets → colour A
     18: { action: 'setColorA', value: 0 },
     19: { action: 'setColorA', value: 1 },
@@ -172,10 +172,23 @@ class MidiController {
 
     // Note On → button press
     this.input.on('noteon', ({ note, velocity, channel }) => {
-      if (velocity === 0) return; // treat as note-off
       const binding = m.notes[note];
       if (!binding) return;
+      if (velocity === 0) {
+        // Note-off: release momentary actions
+        if (binding.action === 'energyHold') this.apply({ energyOverride: null });
+        return;
+      }
       this._dispatch(binding);
+    });
+
+    // Explicit Note Off for controllers that send it separately
+    this.input.on('noteoff', ({ note }) => {
+      const binding = m.notes[note];
+      if (binding && binding.action === 'energyHold') {
+        this.apply({ energyOverride: null });
+        this.sendFeedback();
+      }
     });
 
     // CC → encoder / knob
@@ -217,12 +230,19 @@ class MidiController {
       case 'setColorB':
         this.apply({ colorB: binding.value });
         break;
-      case 'cycleEnergy': {
-        // Cycle through energy effects: off → white-strobe → blinder → uv-strobe → color-strobe → all-on → off
+      case 'energyHold': {
+        // Momentary: note-on activates, note-off (handled above) deactivates
         const ENERGY_IDS = ['white-strobe', 'blinder', 'uv-strobe', 'color-strobe', 'all-on'];
-        const curIdx = s.energyOverride ? ENERGY_IDS.indexOf(s.energyOverride) : -1;
-        const nextIdx = curIdx + 1;
-        this.apply({ energyOverride: nextIdx < ENERGY_IDS.length ? ENERGY_IDS[nextIdx] : null });
+        const effect = this._energyEffect || 'white-strobe';
+        // If already active with a different effect, switch; otherwise activate
+        this.apply({ energyOverride: effect });
+        break;
+      }
+      case 'cycleEnergyEffect': {
+        // Cycle which effect the energy hold button triggers (without activating it)
+        const ENERGY_IDS = ['white-strobe', 'blinder', 'uv-strobe', 'color-strobe', 'all-on'];
+        const curIdx = ENERGY_IDS.indexOf(this._energyEffect || 'white-strobe');
+        this._energyEffect = ENERGY_IDS[(curIdx + 1) % ENERGY_IDS.length];
         break;
       }
       case 'toggleFixBlackout': {

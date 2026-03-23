@@ -152,10 +152,15 @@ function renderEnergy(s) {
       btn.className = 'energy-btn';
       btn.dataset.id = e.id;
       btn.innerHTML = `<span class="name">${e.name}</span><span class="desc">${e.desc}</span>`;
-      btn.addEventListener('click', () => {
-        // Toggle: click again to deactivate
-        send({ energyOverride: state.energyOverride === e.id ? null : e.id });
-      });
+      // Momentary: hold to activate, release to deactivate
+      const activate = (ev) => { ev.preventDefault(); send({ energyOverride: e.id }); };
+      const deactivate = () => { if (state.energyOverride === e.id) send({ energyOverride: null }); };
+      btn.addEventListener('mousedown', activate);
+      btn.addEventListener('mouseup', deactivate);
+      btn.addEventListener('mouseleave', deactivate);
+      btn.addEventListener('touchstart', activate);
+      btn.addEventListener('touchend', deactivate);
+      btn.addEventListener('touchcancel', deactivate);
       grid.appendChild(btn);
     });
     energyRendered = true;
