@@ -40,29 +40,33 @@ function sendArtNet() {
 }
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
-// Cameo ROOT PAR 6 – 6-channel mode
-//   Ch1: Dimmer   Ch2: Red   Ch3: Green   Ch4: Blue   Ch5: White   Ch6: Strobe
+// Cameo ROOT PAR 6 – 12-channel mode (D12CH)
+//   Ch1: Dimmer (coarse)   Ch2: Dimmer fine   Ch3: Strobe functions
+//   Ch4: Red   Ch5: Green  Ch6: Blue  Ch7: White  Ch8: Amber  Ch9: UV
+//   Ch10: Color macros (keep 0 for RGBWA+UV control)
+//   Ch11: Sound   Ch12: DMX Delay
 
 const FIXTURE_COUNT = 4;
-const CHANNELS = 6;
-const CH = { DIM: 0, RED: 1, GREEN: 2, BLUE: 3, WHITE: 4, STROBE: 5 };
-const DEFAULT_ADDRESSES = [1, 7, 13, 19];
+const CHANNELS = 12;
+const CH = { DIM: 0, DIM_FINE: 1, STROBE: 2, RED: 3, GREEN: 4, BLUE: 5, WHITE: 6, AMBER: 7, UV: 8, MACRO: 9, SOUND: 10, DELAY: 11 };
+const DEFAULT_ADDRESSES = [1, 13, 25, 37];
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
 const COLOR_PRESETS = [
-  { name: 'Red',        r: 255, g: 0,   b: 0,   w: 0   },
-  { name: 'Orange',     r: 255, g: 80,  b: 0,   w: 0   },
-  { name: 'Yellow',     r: 255, g: 200, b: 0,   w: 0   },
-  { name: 'Green',      r: 0,   g: 255, b: 0,   w: 0   },
-  { name: 'Cyan',       r: 0,   g: 255, b: 255, w: 0   },
-  { name: 'Blue',       r: 0,   g: 0,   b: 255, w: 0   },
-  { name: 'Purple',     r: 100, g: 0,   b: 255, w: 0   },
-  { name: 'Magenta',    r: 255, g: 0,   b: 200, w: 0   },
-  { name: 'White',      r: 0,   g: 0,   b: 0,   w: 255 },
-  { name: 'Warm White', r: 255, g: 120, b: 20,  w: 200 },
-  { name: 'UV',         r: 30,  g: 0,   b: 255, w: 0   },
-  { name: 'Blackout',   r: 0,   g: 0,   b: 0,   w: 0   },
+  { name: 'Red',        r: 255, g: 0,   b: 0,   w: 0,   a: 0,   uv: 0   },
+  { name: 'Orange',     r: 200, g: 60,  b: 0,   w: 0,   a: 180, uv: 0   },
+  { name: 'Amber',      r: 0,   g: 0,   b: 0,   w: 0,   a: 255, uv: 0   },
+  { name: 'Yellow',     r: 255, g: 220, b: 0,   w: 0,   a: 100, uv: 0   },
+  { name: 'Green',      r: 0,   g: 255, b: 0,   w: 0,   a: 0,   uv: 0   },
+  { name: 'Cyan',       r: 0,   g: 255, b: 255, w: 0,   a: 0,   uv: 0   },
+  { name: 'Blue',       r: 0,   g: 0,   b: 255, w: 0,   a: 0,   uv: 0   },
+  { name: 'Purple',     r: 100, g: 0,   b: 255, w: 0,   a: 0,   uv: 0   },
+  { name: 'Magenta',    r: 255, g: 0,   b: 200, w: 0,   a: 0,   uv: 0   },
+  { name: 'White',      r: 0,   g: 0,   b: 0,   w: 255, a: 0,   uv: 0   },
+  { name: 'Warm White', r: 180, g: 80,  b: 0,   w: 150, a: 200, uv: 0   },
+  { name: 'UV',         r: 0,   g: 0,   b: 0,   w: 0,   a: 0,   uv: 255 },
+  { name: 'Blackout',   r: 0,   g: 0,   b: 0,   w: 0,   a: 0,   uv: 0   },
 ];
 
 const PATTERNS = [
@@ -88,8 +92,8 @@ const state = {
   beatDivision: 1,
   running: true,
   pattern: 'chase',
-  colorA: 0,
-  colorB: 5,
+  colorA: 0,    // Red
+  colorB: 6,    // Blue
   masterDimmer: 255,
   masterBlackout: false,
   strobeSpeed: 0,
@@ -195,7 +199,7 @@ function hsvToRgb(h, s, v) {
 
 // ─── Engine ──────────────────────────────────────────────────────────────────
 
-let fixtureColors = Array.from({ length: FIXTURE_COUNT }, () => ({ r: 0, g: 0, b: 0, w: 0, dim: 255, strobe: 0 }));
+let fixtureColors = Array.from({ length: FIXTURE_COUNT }, () => ({ r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 255, strobe: 0 }));
 
 function tickPattern() {
   if (!state.running) return;
@@ -209,17 +213,17 @@ function tickPattern() {
       break;
     case 'chase':
       for (let i = 0; i < FIXTURE_COUNT; i++)
-        setFixtureColor(i, i === step % FIXTURE_COUNT ? colA : { r: 0, g: 0, b: 0, w: 0 }, 255, 0);
+        setFixtureColor(i, i === step % FIXTURE_COUNT ? colA : { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 }, 255, 0);
       break;
     case 'chase-rev':
       for (let i = 0; i < FIXTURE_COUNT; i++)
-        setFixtureColor(i, i === (FIXTURE_COUNT - 1 - step % FIXTURE_COUNT) ? colA : { r: 0, g: 0, b: 0, w: 0 }, 255, 0);
+        setFixtureColor(i, i === (FIXTURE_COUNT - 1 - step % FIXTURE_COUNT) ? colA : { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 }, 255, 0);
       break;
     case 'ping-pong': {
       const pos = step % (FIXTURE_COUNT * 2 - 2);
       const idx = pos < FIXTURE_COUNT ? pos : (FIXTURE_COUNT * 2 - 2 - pos);
       for (let i = 0; i < FIXTURE_COUNT; i++)
-        setFixtureColor(i, i === idx ? colA : { r: 0, g: 0, b: 0, w: 0 }, 255, 0);
+        setFixtureColor(i, i === idx ? colA : { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 }, 255, 0);
       break;
     }
     case 'strobe':
@@ -258,7 +262,7 @@ function tickPattern() {
 }
 
 function setFixtureColor(idx, color, dim, strobe) {
-  fixtureColors[idx] = { r: color.r, g: color.g, b: color.b, w: color.w || 0, dim, strobe };
+  fixtureColors[idx] = { r: color.r, g: color.g, b: color.b, w: color.w || 0, a: color.a || 0, uv: color.uv || 0, dim, strobe };
 }
 
 function renderDmx() {
@@ -270,31 +274,38 @@ function renderDmx() {
     if (fix.override && fix.override.enabled) {
       const ov = fix.override;
       if (ov.blackout) {
-        col = { r: 0, g: 0, b: 0, w: 0 }; dim = 0; strobe = 0;
+        col = { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 }; dim = 0; strobe = 0;
       } else {
-        col = { r: ov.r, g: ov.g, b: ov.b, w: ov.w };
+        col = { r: ov.r, g: ov.g, b: ov.b, w: ov.w, a: ov.a || 0, uv: ov.uv || 0 };
         dim = ov.dim !== undefined ? ov.dim : 255;
         strobe = ov.strobe !== undefined ? ov.strobe : 0;
       }
     } else {
       const fc = fixtureColors[i];
-      col = { r: fc.r, g: fc.g, b: fc.b, w: fc.w };
+      col = { r: fc.r, g: fc.g, b: fc.b, w: fc.w, a: fc.a || 0, uv: fc.uv || 0 };
       dim = fc.dim; strobe = fc.strobe;
     }
 
     if (state.masterBlackout) {
-      dmx[base + CH.DIM] = dmx[base + CH.RED] = dmx[base + CH.GREEN] =
-      dmx[base + CH.BLUE] = dmx[base + CH.WHITE] = dmx[base + CH.STROBE] = 0;
+      for (let c = 0; c < CHANNELS; c++) dmx[base + c] = 0;
     } else {
       const ms = state.masterDimmer / 255;
       const ds = dim / 255;
       const ts = ms * ds;
-      dmx[base + CH.DIM]    = Math.round(dim * ms);
-      dmx[base + CH.RED]    = Math.round(col.r * ts);
-      dmx[base + CH.GREEN]  = Math.round(col.g * ts);
-      dmx[base + CH.BLUE]   = Math.round(col.b * ts);
-      dmx[base + CH.WHITE]  = Math.round(col.w * ts);
-      dmx[base + CH.STROBE] = state.pattern === 'strobe' ? state.strobeSpeed : strobe;
+      dmx[base + CH.DIM]      = Math.round(dim * ms);
+      dmx[base + CH.DIM_FINE] = 0;
+      // Strobe ch3: 0 = shutter open (full on); 128-250 = slow->fast strobe
+      const rawStrobe = state.pattern === 'strobe' ? state.strobeSpeed : strobe;
+      dmx[base + CH.STROBE]   = rawStrobe > 0 ? 128 + Math.round((rawStrobe / 255) * 122) : 0;
+      dmx[base + CH.RED]      = Math.round(col.r  * ts);
+      dmx[base + CH.GREEN]    = Math.round(col.g  * ts);
+      dmx[base + CH.BLUE]     = Math.round(col.b  * ts);
+      dmx[base + CH.WHITE]    = Math.round(col.w  * ts);
+      dmx[base + CH.AMBER]    = Math.round(col.a  * ts);
+      dmx[base + CH.UV]       = Math.round(col.uv * ts);
+      dmx[base + CH.MACRO]    = 0;   // 0 = colour macro off → RGBWAUV channels in control
+      dmx[base + CH.SOUND]    = 0;
+      dmx[base + CH.DELAY]    = 0;
     }
   }
   sendArtNet();
@@ -333,7 +344,7 @@ function getClientState() {
     fixtures: state.fixtures,
     colorPresets: COLOR_PRESETS,
     patterns: PATTERNS,
-    dmxSnapshot: Array.from(dmx.slice(0, 30)),
+    dmxSnapshot: Array.from(dmx.slice(0, FIXTURE_COUNT * CHANNELS)),
     midi: { enabled: midi.enabled, ports: midi.listPorts() },
   };
 }

@@ -25,11 +25,12 @@ socket.on('state', (s) => {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function send(data) { socket.emit('set', data); }
 
-function colorToCss({ r, g, b, w = 0 }) {
-  // blend w (white) additively
-  const rr = Math.min(255, r + w);
-  const gg = Math.min(255, g + w);
-  const bb = Math.min(255, b + w);
+function colorToCss({ r, g, b, w = 0, a = 0, uv = 0 }) {
+  // Amber (warm orange) additively: contributes to R and G
+  // UV contributes to blue-purple: R slightly, B strongly
+  const rr = Math.min(255, r + w + Math.round(a * 1.0) + Math.round(uv * 0.2));
+  const gg = Math.min(255, g + w + Math.round(a * 0.5));
+  const bb = Math.min(255, b + w + Math.round(uv * 0.9));
   return `rgb(${rr},${gg},${bb})`;
 }
 
@@ -46,18 +47,28 @@ function fixtureOutputColor(id) {
     const dim = (ov.dim !== undefined ? ov.dim : 255) / 255;
     const mDim = state.masterDimmer / 255;
     return colorToCss({
-      r: Math.round(ov.r * dim * mDim),
-      g: Math.round(ov.g * dim * mDim),
-      b: Math.round(ov.b * dim * mDim),
-      w: Math.round(ov.w * dim * mDim),
+      r:  Math.round(ov.r  * dim * mDim),
+      g:  Math.round(ov.g  * dim * mDim),
+      b:  Math.round(ov.b  * dim * mDim),
+      w:  Math.round(ov.w  * dim * mDim),
+      a:  Math.round((ov.a  || 0) * dim * mDim),
+      uv: Math.round((ov.uv || 0) * dim * mDim),
     });
   }
 
-  // Read from DMX snapshot
+  // Read from DMX snapshot — 12ch mode: dim@0, strobe@2, R@3, G@4, B@5, W@6, A@7, UV@8
   const base = fix.address - 1;
   const snap = state.dmxSnapshot || [];
-  if (base + 4 < snap.length) {
-    return colorToCss({ r: snap[base + 1], g: snap[base + 2], b: snap[base + 3], w: snap[base + 4] });
+  if (base + 8 < snap.length) {
+    const dimScale = snap[base] / 255;
+    return colorToCss({
+      r:  Math.round(snap[base + 3] * dimScale),
+      g:  Math.round(snap[base + 4] * dimScale),
+      b:  Math.round(snap[base + 5] * dimScale),
+      w:  Math.round(snap[base + 6] * dimScale),
+      a:  Math.round(snap[base + 7] * dimScale),
+      uv: Math.round(snap[base + 8] * dimScale),
+    });
   }
   return '#111';
 }
@@ -202,6 +213,16 @@ function buildFixtureCard(fix, container) {
           <span class="val" id="ov-w-val-${fix.id}">0</span>
         </div>
         <div class="override-row">
+          <label>Amber</label>
+          <input type="range" min="0" max="255" value="0" id="ov-a-${fix.id}" />
+          <span class="val" id="ov-a-val-${fix.id}">0</span>
+        </div>
+        <div class="override-row">
+          <label>UV</label>
+          <input type="range" min="0" max="255" value="0" id="ov-uv-${fix.id}" />
+          <span class="val" id="ov-uv-val-${fix.id}">0</span>
+        </div>
+        <div class="override-row">
           <label>Dimmer</label>
           <input type="range" min="0" max="255" value="255" id="ov-dim-${fix.id}" />
           <span class="val" id="ov-dim-val-${fix.id}">255</span>
@@ -238,16 +259,18 @@ function buildFixtureCard(fix, container) {
     const g = parseInt(document.getElementById(`ov-g-${id}`).value);
     const b = parseInt(document.getElementById(`ov-b-${id}`).value);
     const w = parseInt(document.getElementById(`ov-w-${id}`).value);
+    const a = parseInt(document.getElementById(`ov-a-${id}`).value);
+    const uv = parseInt(document.getElementById(`ov-uv-${id}`).value);
     const dim = parseInt(document.getElementById(`ov-dim-${id}`).value);
     const strobe = parseInt(document.getElementById(`ov-strobe-${id}`).value);
-    socket.emit('override', { id, override: { enabled, r, g, b, w, dim, strobe, blackout: false } });
+    socket.emit('override', { id, override: { enabled, r, g, b, w, a, uv, dim, strobe, blackout: false } });
   });
 
   // Override blackout
   document.getElementById(`ov-blackout-${id}`).addEventListener('click', () => {
     const cur = state.fixtures && state.fixtures[id] && state.fixtures[id].override;
     const newBlackout = !(cur && cur.blackout);
-    socket.emit('override', { id, override: { enabled: true, r: 0, g: 0, b: 0, w: 0, dim: 0, strobe: 0, blackout: newBlackout } });
+    socket.emit('override', { id, override: { enabled: true, r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 0, strobe: 0, blackout: newBlackout } });
   });
 
   // Override clear
@@ -255,8 +278,8 @@ function buildFixtureCard(fix, container) {
     socket.emit('override', { id, override: null });
   });
 
-  // RGBW/Dim/Strobe sliders
-  ['r','g','b','w','dim','strobe'].forEach(ch => {
+  // RGBWAUV/Dim/Strobe sliders
+  ['r','g','b','w','a','uv','dim','strobe'].forEach(ch => {
     const slider = document.getElementById(`ov-${ch}-${id}`);
     slider.addEventListener('input', () => {
       document.getElementById(`ov-${ch}-val-${id}`).textContent = slider.value;
@@ -270,11 +293,13 @@ function emitOverride(id) {
   const g      = parseInt(document.getElementById(`ov-g-${id}`).value);
   const b      = parseInt(document.getElementById(`ov-b-${id}`).value);
   const w      = parseInt(document.getElementById(`ov-w-${id}`).value);
+  const a      = parseInt(document.getElementById(`ov-a-${id}`).value);
+  const uv     = parseInt(document.getElementById(`ov-uv-${id}`).value);
   const dim    = parseInt(document.getElementById(`ov-dim-${id}`).value);
   const strobe = parseInt(document.getElementById(`ov-strobe-${id}`).value);
   const cur    = state.fixtures && state.fixtures[id] && state.fixtures[id].override;
   const enabled = cur ? cur.enabled : true;
-  socket.emit('override', { id, override: { enabled, r, g, b, w, dim, strobe, blackout: false } });
+  socket.emit('override', { id, override: { enabled, r, g, b, w, a, uv, dim, strobe, blackout: false } });
 }
 
 function renderFixtures(s) {
@@ -317,13 +342,12 @@ function renderFixtures(s) {
 
     // Sync sliders only if not actively dragged
     if (ov) {
-      ['r','g','b','w','dim','strobe'].forEach(ch => {
+      ['r','g','b','w','a','uv','dim','strobe'].forEach(ch => {
         const slider = document.getElementById(`ov-${ch}-${fix.id}`);
         const valEl  = document.getElementById(`ov-${ch}-val-${fix.id}`);
-        const key    = ch === 'dim' ? 'dim' : ch === 'strobe' ? 'strobe' : ch;
-        if (document.activeElement !== slider && ov[key] !== undefined) {
-          slider.value = ov[key];
-          valEl.textContent = ov[key];
+        if (document.activeElement !== slider && ov[ch] !== undefined) {
+          slider.value = ov[ch];
+          valEl.textContent = ov[ch];
         }
       });
     }
@@ -331,7 +355,7 @@ function renderFixtures(s) {
 }
 
 // ── DMX Monitor ───────────────────────────────────────────────────────────────
-const CH_LABELS = ['Dim', 'R', 'G', 'B', 'W', 'Str'];
+const CH_LABELS = ['Dim', 'Fine', 'Str', 'R', 'G', 'B', 'W', 'A', 'UV', 'Mac', 'Snd', 'Dly'];
 
 function renderDmxMonitor(s) {
   const mon = document.getElementById('dmx-monitor');
@@ -343,7 +367,7 @@ function renderDmxMonitor(s) {
       const cell = document.createElement('div');
       cell.className = 'dmx-cell';
       cell.id = `dmx-${i}`;
-      const chLabel = CH_LABELS[i % 6] || String(i % 6);
+      const chLabel = CH_LABELS[i % 12] || String(i % 12);
       cell.innerHTML = `<span class="ch">${i + 1} ${chLabel}</span><span class="val" id="dmxv-${i}">0</span>`;
       mon.appendChild(cell);
     });
