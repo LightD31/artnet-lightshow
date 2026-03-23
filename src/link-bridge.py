@@ -2,6 +2,7 @@
 """Ableton Link bridge for Node.js.
 
 Communicates via stdin/stdout using newline-delimited JSON.
+Uses a thread for stdin to avoid Windows asyncio pipe limitations.
 
 Inbound commands (stdin):
   { "cmd": "enable" }
@@ -19,19 +20,22 @@ Outbound events (stdout):
 import asyncio
 import json
 import sys
+import threading
 
 import aalink
+
+
+def send(obj):
+    line = json.dumps(obj, separators=(',', ':'))
+    sys.stdout.write(line + '\n')
+    sys.stdout.flush()
 
 
 async def main():
     link = aalink.Link(120.0)
     enabled = False
     poll_task = None
-
-    def send(obj):
-        line = json.dumps(obj, separators=(',', ':'))
-        sys.stdout.write(line + '\n')
-        sys.stdout.flush()
+    cmd_queue = asyncio.Queue()
 
     last_peers = -1
     last_bpm = -1.0
@@ -49,58 +53,64 @@ async def main():
                 send({'type': 'tempo', 'bpm': bpm})
             await asyncio.sleep(0.05)
 
-    async def read_stdin():
-        nonlocal enabled, poll_task
-        loop = asyncio.get_event_loop()
-        reader = asyncio.StreamReader()
-        protocol = asyncio.StreamReaderProtocol(reader)
-        await loop.connect_read_pipe(lambda: protocol, sys.stdin)
+    # Read stdin in a background thread and push lines into the async queue
+    def stdin_reader():
+        try:
+            for line in sys.stdin:
+                stripped = line.strip()
+                if stripped:
+                    cmd_queue.put_nowait(stripped)
+        except (EOFError, OSError):
+            pass
+        # Signal EOF
+        cmd_queue.put_nowait(None)
 
-        while True:
-            line = await reader.readline()
-            if not line:
-                break
-            try:
-                msg = json.loads(line.decode().strip())
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                continue
-
-            cmd = msg.get('cmd')
-
-            if cmd == 'enable':
-                if not enabled:
-                    link.enabled = True
-                    enabled = True
-                    if poll_task is None or poll_task.done():
-                        poll_task = asyncio.ensure_future(poll_link())
-                    send({'type': 'status', 'enabled': True})
-
-            elif cmd == 'disable':
-                if enabled:
-                    if poll_task and not poll_task.done():
-                        poll_task.cancel()
-                        try:
-                            await poll_task
-                        except asyncio.CancelledError:
-                            pass
-                    link.enabled = False
-                    enabled = False
-                    send({'type': 'status', 'enabled': False})
-
-            elif cmd == 'setTempo':
-                bpm = msg.get('bpm', 120)
-                link.tempo = float(bpm)
-
-            elif cmd == 'getTempo':
-                send({'type': 'tempo', 'bpm': round(link.tempo(), 2)})
-
-            elif cmd == 'getNumPeers':
-                send({'type': 'peers', 'peers': link.numPeers()})
+    thread = threading.Thread(target=stdin_reader, daemon=True)
+    thread.start()
 
     # Signal ready
     send({'type': 'ready'})
 
-    await read_stdin()
+    while True:
+        raw = await cmd_queue.get()
+        if raw is None:
+            break
+        try:
+            msg = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            continue
+
+        cmd = msg.get('cmd')
+
+        if cmd == 'enable':
+            if not enabled:
+                link.enabled = True
+                enabled = True
+                if poll_task is None or poll_task.done():
+                    poll_task = asyncio.ensure_future(poll_link())
+                send({'type': 'status', 'enabled': True})
+
+        elif cmd == 'disable':
+            if enabled:
+                if poll_task and not poll_task.done():
+                    poll_task.cancel()
+                    try:
+                        await poll_task
+                    except asyncio.CancelledError:
+                        pass
+                link.enabled = False
+                enabled = False
+                send({'type': 'status', 'enabled': False})
+
+        elif cmd == 'setTempo':
+            bpm = msg.get('bpm', 120)
+            link.tempo = float(bpm)
+
+        elif cmd == 'getTempo':
+            send({'type': 'tempo', 'bpm': round(link.tempo(), 2)})
+
+        elif cmd == 'getNumPeers':
+            send({'type': 'peers', 'peers': link.numPeers()})
 
 
 if __name__ == '__main__':
