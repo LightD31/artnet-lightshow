@@ -47,6 +47,18 @@ const ENERGY_EFFECTS = [
   { id: 'all-on',        name: 'All On'        },
 ];
 
+const STROBE_FUNCTIONS = [
+  { id: 'standard',         name: 'Standard'         },
+  { id: 'ramp-up-down',     name: 'Ramp Up/Down'     },
+  { id: 'ramp-up-down-rnd', name: 'Ramp Up/Down Rnd' },
+  { id: 'ramp-up',          name: 'Ramp Up'          },
+  { id: 'ramp-up-rnd',      name: 'Ramp Up Rnd'      },
+  { id: 'ramp-down',        name: 'Ramp Down'        },
+  { id: 'ramp-down-rnd',    name: 'Ramp Down Rnd'    },
+  { id: 'random',           name: 'Random'           },
+  { id: 'break',            name: 'Break'            },
+];
+
 function presetColor(c) {
   // Map RGBWAUV → Companion RGB for button preview
   // Amber ≈ warm orange; UV ≈ blue-purple
@@ -378,6 +390,20 @@ class ArtnetLightshowInstance extends InstanceBase {
         callback: () => {
           this._emit('set', { energyOverride: null });
         },
+      },
+
+      set_strobe_function: {
+        name: 'Set Strobe Function',
+        options: [
+          {
+            type: 'dropdown',
+            id: 'func',
+            label: 'Function',
+            default: 'standard',
+            choices: STROBE_FUNCTIONS.map(f => ({ id: f.id, label: f.name })),
+          },
+        ],
+        callback: ({ options }) => this._emit('set', { strobeFunction: options.func }),
       },
 
       fixture_clear: {

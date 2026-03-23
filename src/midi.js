@@ -245,6 +245,12 @@ class MidiController {
         this._energyEffect = ENERGY_IDS[(curIdx + 1) % ENERGY_IDS.length];
         break;
       }
+      case 'cycleStrobeFunction': {
+        const STROBE_FN_IDS = ['standard','ramp-up-down','ramp-up-down-rnd','ramp-up','ramp-up-rnd','ramp-down','ramp-down-rnd','random','break'];
+        const curIdx = STROBE_FN_IDS.indexOf(s.strobeFunction || 'standard');
+        this.apply({ strobeFunction: STROBE_FN_IDS[(curIdx + 1) % STROBE_FN_IDS.length] });
+        break;
+      }
       case 'toggleFixBlackout': {
         const fix = s.fixtures[binding.fixture];
         const cur = fix && fix.override;
