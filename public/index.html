@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ArtNet Lightshow — Cameo ROOT PAR 6</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+<header>
+  <h1>ArtNet <span>Lightshow</span></h1>
+  <span id="status-text" style="font-size:11px;color:var(--muted)">Connecting…</span>
+  <div id="status-dot" class="status-dot"></div>
+</header>
+
+<main>
+  <!-- ── Left Panel ───────────────────────────────────────── -->
+  <aside>
+
+    <!-- BPM -->
+    <div class="card">
+      <div class="card-title">Tempo</div>
+
+      <div class="bpm-display" id="bpm-display">120</div>
+      <div class="bpm-label">BPM</div>
+
+      <div class="bpm-controls">
+        <div class="bpm-adj">
+          <button class="btn icon" id="bpm-down">−</button>
+          <button class="btn icon" id="bpm-up">+</button>
+          <label>BPM</label>
+        </div>
+        <div class="bpm-adj">
+          <input type="number" id="bpm-input" min="20" max="300" value="120"
+            style="width:62px;background:var(--surface);border:1px solid var(--border);
+                   color:var(--text);border-radius:6px;padding:4px 6px;font-size:14px;font-family:monospace;" />
+        </div>
+      </div>
+
+      <button class="tap-btn" id="tap-btn">TAP</button>
+
+      <div class="beat-div-btns">
+        <span style="font-size:11px;color:var(--muted);margin-right:4px;line-height:26px">Beat:</span>
+        <button class="btn sm active" data-div="1">1/1</button>
+        <button class="btn sm" data-div="2">1/2</button>
+        <button class="btn sm" data-div="4">1/4</button>
+        <button class="btn sm" data-div="8">1/8</button>
+      </div>
+    </div>
+
+    <!-- Transport -->
+    <div class="card">
+      <div class="card-title">Transport</div>
+      <div class="transport">
+        <button class="btn active" id="play-btn">▶ Play</button>
+        <button class="btn" id="stop-btn">■ Stop</button>
+        <button class="btn danger" id="blackout-btn">BLACKOUT</button>
+      </div>
+      <div class="slider-row" style="margin-top:12px;margin-bottom:0">
+        <label>Master</label>
+        <input type="range" id="master-dimmer" min="0" max="255" value="255" />
+        <span class="val" id="master-dimmer-val">255</span>
+      </div>
+    </div>
+
+    <!-- Colours -->
+    <div class="card">
+      <div class="card-title">Colours</div>
+      <div class="color-grid" id="color-grid"></div>
+      <div class="color-legend">
+        <span class="a">Colour A</span>
+        <span class="b">Colour B</span>
+      </div>
+      <p style="font-size:10px;color:var(--muted);margin-top:8px">Left-click = Colour A &nbsp;|&nbsp; Right-click = Colour B</p>
+    </div>
+
+    <!-- Strobe speed (shown when strobe pattern active) -->
+    <div class="card" id="strobe-card" style="display:none">
+      <div class="card-title">Strobe Speed</div>
+      <div class="slider-row" style="margin-bottom:0">
+        <label>Speed</label>
+        <input type="range" id="strobe-speed" min="0" max="255" value="128" />
+        <span class="val" id="strobe-speed-val">128</span>
+      </div>
+    </div>
+
+    <!-- Settings -->
+    <div class="card">
+      <div class="card-title">ArtNet Settings</div>
+      <div class="settings-form">
+        <div class="field">
+          <label>Node IP</label>
+          <input type="text" id="artnet-host" value="2.255.255.255" />
+        </div>
+        <div class="field">
+          <label>Port</label>
+          <input type="number" id="artnet-port" value="6454" />
+        </div>
+        <div class="field">
+          <label>Universe</label>
+          <input type="number" id="artnet-universe" value="0" />
+        </div>
+        <button class="btn active" id="artnet-save" style="align-self:flex-start">Apply</button>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- ── Right Panel ──────────────────────────────────────── -->
+  <div class="right-panel">
+
+    <!-- Patterns -->
+    <div class="card">
+      <div class="card-title">Pattern</div>
+      <div class="pattern-grid" id="pattern-grid"></div>
+    </div>
+
+    <!-- Fixtures -->
+    <div class="card">
+      <div class="card-title">Fixtures — Cameo ROOT PAR 6 (6ch)</div>
+      <div class="fixtures-grid" id="fixtures-grid"></div>
+    </div>
+
+    <!-- DMX Monitor -->
+    <div class="card">
+      <div class="card-title">DMX Monitor (first 30 channels)</div>
+      <div class="dmx-monitor" id="dmx-monitor"></div>
+    </div>
+
+  </div>
+</main>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
