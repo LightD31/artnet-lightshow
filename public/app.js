@@ -200,6 +200,19 @@ function renderPatterns(s) {
   const ssSlider = document.getElementById('strobe-speed');
   if (document.activeElement !== ssSlider) ssSlider.value = s.strobeSpeed;
   document.getElementById('strobe-speed-val').textContent = s.strobeSpeed;
+
+  // Strobe function selector
+  const sfSelect = document.getElementById('strobe-function');
+  if (s.strobeFunctions && sfSelect.options.length === 0) {
+    s.strobeFunctions.forEach(fn => {
+      const opt = document.createElement('option');
+      opt.value = fn.id;
+      opt.textContent = fn.name;
+      opt.title = fn.desc;
+      sfSelect.appendChild(opt);
+    });
+  }
+  if (document.activeElement !== sfSelect) sfSelect.value = s.strobeFunction;
 }
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -448,10 +461,13 @@ masterSlider.addEventListener('input', () => {
   send({ masterDimmer: parseInt(masterSlider.value) });
 });
 
-// Strobe speed
+// Strobe controls
 document.getElementById('strobe-speed').addEventListener('input', (e) => {
   document.getElementById('strobe-speed-val').textContent = e.target.value;
   send({ strobeSpeed: parseInt(e.target.value) });
+});
+document.getElementById('strobe-function').addEventListener('change', (e) => {
+  send({ strobeFunction: e.target.value });
 });
 
 // ArtNet settings

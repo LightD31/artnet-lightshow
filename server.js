@@ -52,6 +52,21 @@ const CHANNELS = 12;
 const CH = { DIM: 0, DIM_FINE: 1, STROBE: 2, RED: 3, GREEN: 4, BLUE: 5, WHITE: 6, AMBER: 7, UV: 8, MACRO: 9, SOUND: 10, DELAY: 11 };
 const DEFAULT_ADDRESSES = [1, 13, 25, 37];
 
+// ─── Strobe functions (Ch3 DMX ranges) ──────────────────────────────────────
+// Each entry defines a DMX range on channel 3. Speed-based functions map
+// the 0-255 strobeSpeed value into the [lo..hi] range (slow → fast).
+const STROBE_FUNCTIONS = [
+  { id: 'standard',        name: 'Standard',          desc: 'Strobe slow → fast (1-20 Hz)', lo: 128, hi: 250 },
+  { id: 'ramp-up-down',    name: 'Ramp Up/Down',      desc: 'Ramp up/down, slow → fast',    lo: 11,  hi: 22  },
+  { id: 'ramp-up-down-rnd',name: 'Ramp Up/Down Rnd',  desc: 'Ramp up/down random',          lo: 23,  hi: 33  },
+  { id: 'ramp-up',         name: 'Ramp Up',            desc: 'Ramp up, slow → fast',         lo: 34,  hi: 45  },
+  { id: 'ramp-up-rnd',     name: 'Ramp Up Rnd',        desc: 'Ramp up random, slow → fast',  lo: 46,  hi: 56  },
+  { id: 'ramp-down',       name: 'Ramp Down',          desc: 'Ramp down, slow → fast',       lo: 57,  hi: 68  },
+  { id: 'ramp-down-rnd',   name: 'Ramp Down Rnd',      desc: 'Ramp down random, slow → fast',lo: 69,  hi: 79  },
+  { id: 'random',          name: 'Random',             desc: 'Random strobe, slow → fast',   lo: 80,  hi: 102 },
+  { id: 'break',           name: 'Break',              desc: 'Burst with break, 5s → 1s',    lo: 103, hi: 127 },
+];
+
 // ─── State ───────────────────────────────────────────────────────────────────
 
 const COLOR_PRESETS = [
@@ -110,6 +125,7 @@ const state = {
   masterDimmer: 255,
   masterBlackout: false,
   strobeSpeed: 0,
+  strobeFunction: 'standard', // id from STROBE_FUNCTIONS
   energyOverride: null, // null or string id from ENERGY_EFFECTS
   linkEnabled: false,
   fixtures: Array.from({ length: FIXTURE_COUNT }, (_, i) => ({
@@ -157,6 +173,9 @@ function applyPatch(data) {
   if (data.masterDimmer !== undefined) state.masterDimmer = Math.max(0, Math.min(255, data.masterDimmer));
   if (data.masterBlackout !== undefined) state.masterBlackout = data.masterBlackout;
   if (data.strobeSpeed !== undefined) state.strobeSpeed = Math.max(0, Math.min(255, data.strobeSpeed));
+  if (data.strobeFunction !== undefined) {
+    state.strobeFunction = STROBE_FUNCTIONS.find(f => f.id === data.strobeFunction) ? data.strobeFunction : 'standard';
+  }
   if (data.energyOverride !== undefined) {
     // null to clear, or a valid effect id
     state.energyOverride = data.energyOverride && ENERGY_EFFECTS.find(e => e.id === data.energyOverride) ? data.energyOverride : null;
@@ -342,9 +361,14 @@ function renderDmx() {
       const ts = ms * ds;
       dmx[base + CH.DIM]      = Math.round(dim * ms);
       dmx[base + CH.DIM_FINE] = 0;
-      // Strobe ch3: 0 = shutter open (full on); 128-250 = slow->fast strobe
+      // Strobe ch3: map rawStrobe (0-255) into the selected strobe function's DMX range
       const rawStrobe = energy ? strobe : (state.pattern === 'strobe' ? state.strobeSpeed : strobe);
-      dmx[base + CH.STROBE]   = rawStrobe > 0 ? 128 + Math.round((rawStrobe / 255) * 122) : 0;
+      if (rawStrobe > 0) {
+        const fn = STROBE_FUNCTIONS.find(f => f.id === state.strobeFunction) || STROBE_FUNCTIONS[0];
+        dmx[base + CH.STROBE] = fn.lo + Math.round((rawStrobe / 255) * (fn.hi - fn.lo));
+      } else {
+        dmx[base + CH.STROBE] = 0; // shutter open
+      }
       dmx[base + CH.RED]      = Math.round(col.r  * ts);
       dmx[base + CH.GREEN]    = Math.round(col.g  * ts);
       dmx[base + CH.BLUE]     = Math.round(col.b  * ts);
@@ -389,11 +413,13 @@ function getClientState() {
     masterDimmer: state.masterDimmer,
     masterBlackout: state.masterBlackout,
     strobeSpeed: state.strobeSpeed,
+    strobeFunction: state.strobeFunction,
     energyOverride: state.energyOverride,
     fixtures: state.fixtures,
     colorPresets: COLOR_PRESETS,
     patterns: PATTERNS,
     energyEffects: ENERGY_EFFECTS,
+    strobeFunctions: STROBE_FUNCTIONS,
     dmxSnapshot: Array.from(dmx.slice(0, FIXTURE_COUNT * CHANNELS)),
     midi: { enabled: midi.enabled, ports: midi.listPorts() },
     link: { enabled: state.linkEnabled, peers: link.getNumPeers() },
