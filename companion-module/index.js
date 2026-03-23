@@ -40,11 +40,12 @@ const PATTERNS = [
 ];
 
 function presetColor(c) {
-  // Map RGBW → Companion RGB (white adds brightness)
+  // Map RGBWAUV → Companion RGB for button preview
+  // Amber ≈ warm orange; UV ≈ blue-purple
   return combineRgb(
-    Math.min(255, c.r + c.w),
-    Math.min(255, c.g + c.w),
-    Math.min(255, c.b + c.w),
+    Math.min(255, c.r + c.w + Math.round(c.a * 1.0) + Math.round((c.uv || 0) * 0.2)),
+    Math.min(255, c.g + c.w + Math.round(c.a * 0.5)),
+    Math.min(255, c.b + c.w + Math.round((c.uv || 0) * 0.9)),
   );
 }
 
@@ -185,7 +186,7 @@ class ArtnetLightshowInstance extends InstanceBase {
             type: 'dropdown',
             id: 'color',
             label: 'Colour',
-            default: 5,
+            default: 6,  // Blue
             choices: COLOR_PRESETS.map((c, i) => ({ id: i, label: c.name })),
           },
         ],
@@ -317,11 +318,13 @@ class ArtnetLightshowInstance extends InstanceBase {
       },
 
       fixture_override: {
-        name: 'Fixture Override (RGBW)',
+        name: 'Fixture Override (RGBWAUV)',
         options: [
           { type: 'number', id: 'fixture', label: 'Fixture (1-4)', default: 1, min: 1, max: 4 },
-          { type: 'colorpicker', id: 'rgb', label: 'Colour', default: combineRgb(255, 0, 0) },
-          { type: 'number', id: 'white', label: 'White (0-255)', default: 0, min: 0, max: 255 },
+          { type: 'colorpicker', id: 'rgb', label: 'RGB Colour', default: combineRgb(255, 0, 0) },
+          { type: 'number', id: 'white', label: 'White (0-255)',  default: 0,   min: 0, max: 255 },
+          { type: 'number', id: 'amber', label: 'Amber (0-255)',  default: 0,   min: 0, max: 255 },
+          { type: 'number', id: 'uv',    label: 'UV (0-255)',     default: 0,   min: 0, max: 255 },
           { type: 'number', id: 'dim',   label: 'Dimmer (0-255)', default: 255, min: 0, max: 255 },
         ],
         callback: ({ options }) => {
@@ -330,10 +333,12 @@ class ArtnetLightshowInstance extends InstanceBase {
             id: options.fixture - 1,
             override: {
               enabled: true,
-              r: (rgb >> 16) & 0xff,
-              g: (rgb >> 8)  & 0xff,
-              b:  rgb        & 0xff,
-              w: options.white,
+              r:  (rgb >> 16) & 0xff,
+              g:  (rgb >> 8)  & 0xff,
+              b:   rgb        & 0xff,
+              w:  options.white,
+              a:  options.amber,
+              uv: options.uv,
               dim: options.dim,
               strobe: 0,
               blackout: false,
