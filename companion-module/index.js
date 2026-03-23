@@ -357,37 +357,26 @@ class ArtnetLightshowInstance extends InstanceBase {
       },
 
       energy_override: {
-        name: 'Energy Override',
+        name: 'Energy Override (activate)',
         options: [
           {
             type: 'dropdown',
             id: 'effect',
             label: 'Effect',
             default: 'white-strobe',
-            choices: [
-              { id: 'off', label: 'Off (clear)' },
-              ...ENERGY_EFFECTS.map(e => ({ id: e.id, label: e.name })),
-            ],
-          },
-          {
-            type: 'dropdown',
-            id: 'mode',
-            label: 'Mode',
-            default: 'toggle',
-            choices: [
-              { id: 'toggle', label: 'Toggle (click again = off)' },
-              { id: 'set',    label: 'Set (always activate)' },
-            ],
+            choices: ENERGY_EFFECTS.map(e => ({ id: e.id, label: e.name })),
           },
         ],
         callback: ({ options }) => {
-          if (options.effect === 'off') {
-            this._emit('set', { energyOverride: null });
-          } else if (options.mode === 'toggle' && this.liveState.energyOverride === options.effect) {
-            this._emit('set', { energyOverride: null });
-          } else {
-            this._emit('set', { energyOverride: options.effect });
-          }
+          this._emit('set', { energyOverride: options.effect });
+        },
+      },
+
+      energy_override_off: {
+        name: 'Energy Override Off',
+        options: [],
+        callback: () => {
+          this._emit('set', { energyOverride: null });
         },
       },
 
@@ -696,7 +685,7 @@ class ArtnetLightshowInstance extends InstanceBase {
       steps: [{ down: [{ actionId: 'fixture_clear', options: { fixture: 'all' } }], up: [] }],
     });
 
-    // ── Energy override buttons ──
+    // ── Energy override buttons (momentary: hold to activate, release to off) ──
     ENERGY_EFFECTS.forEach(e => {
       presets.push({
         type: 'button',
@@ -712,26 +701,11 @@ class ArtnetLightshowInstance extends InstanceBase {
           { feedbackId: 'energy_override_active', options: { effect: e.id },
             style: { bgcolor: combineRgb(255, 30, 30), color: combineRgb(255, 255, 255) } },
         ],
-        steps: [{ down: [{ actionId: 'energy_override', options: { effect: e.id, mode: 'toggle' } }], up: [] }],
+        steps: [{
+          down: [{ actionId: 'energy_override', options: { effect: e.id } }],
+          up:   [{ actionId: 'energy_override_off', options: {} }],
+        }],
       });
-    });
-
-    // Energy OFF button
-    presets.push({
-      type: 'button',
-      category: 'Energy',
-      name: 'Energy Off',
-      style: {
-        text:     'ENERGY\nOFF',
-        size:     '14',
-        color:    combineRgb(200, 200, 200),
-        bgcolor:  combineRgb(20, 20, 20),
-      },
-      feedbacks: [
-        { feedbackId: 'energy_override_active', options: { effect: 'any' },
-          style: { bgcolor: combineRgb(180, 0, 0), color: combineRgb(255, 255, 255), text: '⚡ ACTIVE\nTAP OFF' } },
-      ],
-      steps: [{ down: [{ actionId: 'energy_override', options: { effect: 'off', mode: 'set' } }], up: [] }],
     });
 
     this.setPresetDefinitions(presets);
