@@ -39,6 +39,14 @@ const PATTERNS = [
   { id: 'split',       name: 'Split'        },
 ];
 
+const ENERGY_EFFECTS = [
+  { id: 'white-strobe',  name: 'White Strobe'  },
+  { id: 'blinder',       name: 'Blinder'       },
+  { id: 'uv-strobe',     name: 'UV Strobe'     },
+  { id: 'color-strobe',  name: 'Colour Strobe' },
+  { id: 'all-on',        name: 'All On'        },
+];
+
 function presetColor(c) {
   // Map RGBWAUV → Companion RGB for button preview
   // Amber ≈ warm orange; UV ≈ blue-purple
@@ -134,6 +142,7 @@ class ArtnetLightshowInstance extends InstanceBase {
         'color_b_active',
         'fixture_blackout',
         'fixture_override',
+        'energy_override_active',
       );
     });
   }
@@ -347,6 +356,41 @@ class ArtnetLightshowInstance extends InstanceBase {
         },
       },
 
+      energy_override: {
+        name: 'Energy Override',
+        options: [
+          {
+            type: 'dropdown',
+            id: 'effect',
+            label: 'Effect',
+            default: 'white-strobe',
+            choices: [
+              { id: 'off', label: 'Off (clear)' },
+              ...ENERGY_EFFECTS.map(e => ({ id: e.id, label: e.name })),
+            ],
+          },
+          {
+            type: 'dropdown',
+            id: 'mode',
+            label: 'Mode',
+            default: 'toggle',
+            choices: [
+              { id: 'toggle', label: 'Toggle (click again = off)' },
+              { id: 'set',    label: 'Set (always activate)' },
+            ],
+          },
+        ],
+        callback: ({ options }) => {
+          if (options.effect === 'off') {
+            this._emit('set', { energyOverride: null });
+          } else if (options.mode === 'toggle' && this.liveState.energyOverride === options.effect) {
+            this._emit('set', { energyOverride: null });
+          } else {
+            this._emit('set', { energyOverride: options.effect });
+          }
+        },
+      },
+
       fixture_clear: {
         name: 'Clear Fixture Override',
         options: [
@@ -468,6 +512,28 @@ class ArtnetLightshowInstance extends InstanceBase {
         callback: ({ options }) => {
           const fix = this.liveState.fixtures && this.liveState.fixtures[options.fixture - 1];
           return !!(fix && fix.override && fix.override.enabled);
+        },
+      },
+
+      energy_override_active: {
+        type: 'boolean',
+        name: 'Energy override active',
+        defaultStyle: { bgcolor: combineRgb(255, 30, 30), color: combineRgb(255, 255, 255) },
+        options: [
+          {
+            type: 'dropdown',
+            id: 'effect',
+            label: 'Effect (or "any")',
+            default: 'any',
+            choices: [
+              { id: 'any', label: 'Any energy effect' },
+              ...ENERGY_EFFECTS.map(e => ({ id: e.id, label: e.name })),
+            ],
+          },
+        ],
+        callback: ({ options }) => {
+          if (options.effect === 'any') return !!this.liveState.energyOverride;
+          return this.liveState.energyOverride === options.effect;
         },
       },
 
@@ -628,6 +694,44 @@ class ArtnetLightshowInstance extends InstanceBase {
       style: { text: 'CLEAR\nOVERRIDE', size: '14', color: combineRgb(200, 200, 200), bgcolor: combineRgb(20, 20, 20) },
       feedbacks: [],
       steps: [{ down: [{ actionId: 'fixture_clear', options: { fixture: 'all' } }], up: [] }],
+    });
+
+    // ── Energy override buttons ──
+    ENERGY_EFFECTS.forEach(e => {
+      presets.push({
+        type: 'button',
+        category: 'Energy',
+        name: e.name,
+        style: {
+          text:     `⚡\n${e.name}`,
+          size:     '14',
+          color:    combineRgb(255, 200, 200),
+          bgcolor:  combineRgb(60, 10, 10),
+        },
+        feedbacks: [
+          { feedbackId: 'energy_override_active', options: { effect: e.id },
+            style: { bgcolor: combineRgb(255, 30, 30), color: combineRgb(255, 255, 255) } },
+        ],
+        steps: [{ down: [{ actionId: 'energy_override', options: { effect: e.id, mode: 'toggle' } }], up: [] }],
+      });
+    });
+
+    // Energy OFF button
+    presets.push({
+      type: 'button',
+      category: 'Energy',
+      name: 'Energy Off',
+      style: {
+        text:     'ENERGY\nOFF',
+        size:     '14',
+        color:    combineRgb(200, 200, 200),
+        bgcolor:  combineRgb(20, 20, 20),
+      },
+      feedbacks: [
+        { feedbackId: 'energy_override_active', options: { effect: 'any' },
+          style: { bgcolor: combineRgb(180, 0, 0), color: combineRgb(255, 255, 255), text: '⚡ ACTIVE\nTAP OFF' } },
+      ],
+      steps: [{ down: [{ actionId: 'energy_override', options: { effect: 'off', mode: 'set' } }], up: [] }],
     });
 
     this.setPresetDefinitions(presets);

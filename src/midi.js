@@ -64,6 +64,7 @@ const DEFAULT_MAP = {
     15: { action: 'setPattern', value: 'rainbow'     },
     16: { action: 'setPattern', value: 'twinkle'     },
     17: { action: 'setPattern', value: 'split'       },
+    7: { action: 'cycleEnergy' },     // Encoder push 8: cycle energy overrides
     // Button row 2 (notes 18-23): first 6 colour presets → colour A
     18: { action: 'setColorA', value: 0 },
     19: { action: 'setColorA', value: 1 },
@@ -216,6 +217,14 @@ class MidiController {
       case 'setColorB':
         this.apply({ colorB: binding.value });
         break;
+      case 'cycleEnergy': {
+        // Cycle through energy effects: off → white-strobe → blinder → uv-strobe → color-strobe → all-on → off
+        const ENERGY_IDS = ['white-strobe', 'blinder', 'uv-strobe', 'color-strobe', 'all-on'];
+        const curIdx = s.energyOverride ? ENERGY_IDS.indexOf(s.energyOverride) : -1;
+        const nextIdx = curIdx + 1;
+        this.apply({ energyOverride: nextIdx < ENERGY_IDS.length ? ENERGY_IDS[nextIdx] : null });
+        break;
+      }
       case 'toggleFixBlackout': {
         const fix = s.fixtures[binding.fixture];
         const cur = fix && fix.override;
@@ -296,8 +305,9 @@ class MidiController {
     });
 
     // Encoder push buttons
-    this._ledNote(1, s.masterBlackout ? 127 : 0);   // Note 1: blackout
-    this._ledNote(2, s.running        ? 127 : 0);   // Note 2: play
+    this._ledNote(1, s.masterBlackout   ? 127 : 0);  // Note 1: blackout
+    this._ledNote(2, s.running          ? 127 : 0);  // Note 2: play
+    this._ledNote(7, s.energyOverride   ? 127 : 0);  // Note 7: energy override active
   }
 
   _ledNote(note, velocity, channel = 0) {

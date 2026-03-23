@@ -78,6 +78,7 @@ function render(s) {
   renderBpm(s);
   renderTransport(s);
   renderColors(s);
+  renderEnergy(s);
   renderPatterns(s);
   renderFixtures(s);
   renderDmxMonitor(s);
@@ -134,6 +135,34 @@ function renderColors(s) {
     const i = parseInt(sw.dataset.idx);
     sw.classList.toggle('active-a', i === s.colorA);
     sw.classList.toggle('active-b', i === s.colorB);
+  });
+}
+
+// ── Energy Overrides ─────────────────────────────────────────────────────────
+let energyRendered = false;
+
+function renderEnergy(s) {
+  const grid = document.getElementById('energy-grid');
+  if (!s.energyEffects) return;
+
+  if (!energyRendered) {
+    grid.innerHTML = '';
+    s.energyEffects.forEach(e => {
+      const btn = document.createElement('button');
+      btn.className = 'energy-btn';
+      btn.dataset.id = e.id;
+      btn.innerHTML = `<span class="name">${e.name}</span><span class="desc">${e.desc}</span>`;
+      btn.addEventListener('click', () => {
+        // Toggle: click again to deactivate
+        send({ energyOverride: state.energyOverride === e.id ? null : e.id });
+      });
+      grid.appendChild(btn);
+    });
+    energyRendered = true;
+  }
+
+  grid.querySelectorAll('.energy-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.id === s.energyOverride);
   });
 }
 

@@ -83,6 +83,18 @@ const PATTERNS = [
   { id: 'split',       name: 'Split',        desc: 'Two colours alternating in pairs' },
 ];
 
+// ─── Energy overrides ────────────────────────────────────────────────────────
+// Global "panic button" effects that override everything (except master blackout).
+// Activated via UI, MIDI, REST, or Companion. Only one can be active at a time.
+
+const ENERGY_EFFECTS = [
+  { id: 'white-strobe',  name: 'White Strobe',  desc: 'Full white + fast strobe' },
+  { id: 'blinder',       name: 'Blinder',       desc: 'Full white wall of light' },
+  { id: 'uv-strobe',     name: 'UV Strobe',     desc: 'Full UV + fast strobe' },
+  { id: 'color-strobe',  name: 'Colour Strobe', desc: 'Colour A + fast strobe' },
+  { id: 'all-on',        name: 'All On',        desc: 'Every channel maxed out' },
+];
+
 const state = {
   artnet: {
     host: '2.255.255.255',
@@ -98,6 +110,7 @@ const state = {
   masterDimmer: 255,
   masterBlackout: false,
   strobeSpeed: 0,
+  energyOverride: null, // null or string id from ENERGY_EFFECTS
   linkEnabled: false,
   fixtures: Array.from({ length: FIXTURE_COUNT }, (_, i) => ({
     id: i,
@@ -144,6 +157,10 @@ function applyPatch(data) {
   if (data.masterDimmer !== undefined) state.masterDimmer = Math.max(0, Math.min(255, data.masterDimmer));
   if (data.masterBlackout !== undefined) state.masterBlackout = data.masterBlackout;
   if (data.strobeSpeed !== undefined) state.strobeSpeed = Math.max(0, Math.min(255, data.strobeSpeed));
+  if (data.energyOverride !== undefined) {
+    // null to clear, or a valid effect id
+    state.energyOverride = data.energyOverride && ENERGY_EFFECTS.find(e => e.id === data.energyOverride) ? data.energyOverride : null;
+  }
   if (data.artnet !== undefined) Object.assign(state.artnet, data.artnet);
   if (data.linkEnabled !== undefined) {
     if (data.linkEnabled && !state.linkEnabled) enableLink();
@@ -278,13 +295,30 @@ function setFixtureColor(idx, color, dim, strobe) {
   fixtureColors[idx] = { r: color.r, g: color.g, b: color.b, w: color.w || 0, a: color.a || 0, uv: color.uv || 0, dim, strobe };
 }
 
+function resolveEnergyOverride() {
+  const colA = COLOR_PRESETS[state.colorA];
+  switch (state.energyOverride) {
+    case 'white-strobe':  return { col: { r: 255, g: 255, b: 255, w: 255, a: 0,   uv: 0   }, dim: 255, strobe: 255 };
+    case 'blinder':       return { col: { r: 255, g: 255, b: 255, w: 255, a: 0,   uv: 0   }, dim: 255, strobe: 0   };
+    case 'uv-strobe':     return { col: { r: 0,   g: 0,   b: 0,   w: 0,   a: 0,   uv: 255 }, dim: 255, strobe: 255 };
+    case 'color-strobe':  return { col: { r: colA.r, g: colA.g, b: colA.b, w: colA.w || 0, a: colA.a || 0, uv: colA.uv || 0 }, dim: 255, strobe: 255 };
+    case 'all-on':        return { col: { r: 255, g: 255, b: 255, w: 255, a: 255, uv: 255 }, dim: 255, strobe: 0   };
+    default:              return null;
+  }
+}
+
 function renderDmx() {
+  const energy = state.energyOverride ? resolveEnergyOverride() : null;
+
   for (let i = 0; i < FIXTURE_COUNT; i++) {
     const fix = state.fixtures[i];
     const base = fix.address - 1;
     let col, dim, strobe;
 
-    if (fix.override && fix.override.enabled) {
+    if (energy) {
+      // Energy override trumps everything (except master blackout)
+      col = energy.col; dim = energy.dim; strobe = energy.strobe;
+    } else if (fix.override && fix.override.enabled) {
       const ov = fix.override;
       if (ov.blackout) {
         col = { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 }; dim = 0; strobe = 0;
@@ -302,13 +336,14 @@ function renderDmx() {
     if (state.masterBlackout) {
       for (let c = 0; c < CHANNELS; c++) dmx[base + c] = 0;
     } else {
-      const ms = state.masterDimmer / 255;
+      // Energy overrides bypass master dimmer — always full output
+      const ms = energy ? 1 : state.masterDimmer / 255;
       const ds = dim / 255;
       const ts = ms * ds;
       dmx[base + CH.DIM]      = Math.round(dim * ms);
       dmx[base + CH.DIM_FINE] = 0;
       // Strobe ch3: 0 = shutter open (full on); 128-250 = slow->fast strobe
-      const rawStrobe = state.pattern === 'strobe' ? state.strobeSpeed : strobe;
+      const rawStrobe = energy ? strobe : (state.pattern === 'strobe' ? state.strobeSpeed : strobe);
       dmx[base + CH.STROBE]   = rawStrobe > 0 ? 128 + Math.round((rawStrobe / 255) * 122) : 0;
       dmx[base + CH.RED]      = Math.round(col.r  * ts);
       dmx[base + CH.GREEN]    = Math.round(col.g  * ts);
@@ -354,9 +389,11 @@ function getClientState() {
     masterDimmer: state.masterDimmer,
     masterBlackout: state.masterBlackout,
     strobeSpeed: state.strobeSpeed,
+    energyOverride: state.energyOverride,
     fixtures: state.fixtures,
     colorPresets: COLOR_PRESETS,
     patterns: PATTERNS,
+    energyEffects: ENERGY_EFFECTS,
     dmxSnapshot: Array.from(dmx.slice(0, FIXTURE_COUNT * CHANNELS)),
     midi: { enabled: midi.enabled, ports: midi.listPorts() },
     link: { enabled: state.linkEnabled, peers: link.getNumPeers() },
@@ -504,6 +541,18 @@ app.post('/api/stop',  (_req, res) => { applyPatch({ running: false }); res.json
 app.post('/api/master/:value', (req, res) => {
   applyPatch({ masterDimmer: parseInt(req.params.value) });
   res.json({ ok: true, masterDimmer: state.masterDimmer });
+});
+
+// POST /api/energy/off  — clear energy override (must be before :id route)
+app.post('/api/energy/off', (_req, res) => {
+  applyPatch({ energyOverride: null });
+  res.json({ ok: true, energyOverride: null });
+});
+
+// POST /api/energy/:id  — activate an energy override (white-strobe, blinder, uv-strobe, color-strobe, all-on)
+app.post('/api/energy/:id', (req, res) => {
+  applyPatch({ energyOverride: req.params.id });
+  res.json({ ok: true, energyOverride: state.energyOverride });
 });
 
 // POST /api/fixture/:id/override  body: { r,g,b,w,dim,strobe,blackout,enabled }
