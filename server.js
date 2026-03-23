@@ -6,7 +6,7 @@ const { Server } = require('socket.io');
 const dgram = require('dgram');
 const path = require('path');
 const MidiController = require('./src/midi');
-const AbletonLink = require('abletonlink');
+const AbletonLink = require('abletonlink-addon');
 
 const app = express();
 const server = http.createServer(app);
@@ -152,7 +152,7 @@ function applyPatch(data) {
 
   // Sync BPM changes back to Link when it's active
   if (restartTimer && state.linkEnabled && data.bpm !== undefined) {
-    link.bpm = state.bpm;
+    link.setTempo(state.bpm);
   }
 
   if (restartTimer) restartBeatTimer();
@@ -357,7 +357,7 @@ function getClientState() {
     patterns: PATTERNS,
     dmxSnapshot: Array.from(dmx.slice(0, FIXTURE_COUNT * CHANNELS)),
     midi: { enabled: midi.enabled, ports: midi.listPorts() },
-    link: { enabled: state.linkEnabled, peers: link.numPeers },
+    link: { enabled: state.linkEnabled, peers: link.getNumPeers() },
   };
 }
 
@@ -380,9 +380,9 @@ function enableLink() {
   link.enable();
   state.linkEnabled = true;
   // Push our current BPM to Link when first enabling
-  link.bpm = state.bpm;
+  link.setTempo(state.bpm);
   linkPollInterval = setInterval(() => {
-    const linkBpm = Math.round(link.bpm);
+    const linkBpm = Math.round(link.getTempo());
     if (linkBpm >= 20 && linkBpm <= 300 && linkBpm !== state.bpm) {
       state.bpm = linkBpm;
       restartBeatTimer();
@@ -401,8 +401,9 @@ function disableLink() {
   broadcast();
 }
 
-link.on('numPeers', (peers) => {
+link.setNumPeersCallback((peers) => {
   console.log(`Ableton Link peers: ${peers}`);
+  io.emit('state', getClientState());
 });
 
 // Enable by default if LINK=1 env var is set
@@ -534,9 +535,9 @@ app.post('/api/midi/connect', (req, res) => {
 });
 
 // POST /api/link/enable   POST /api/link/disable   POST /api/link/toggle
-app.post('/api/link/enable',  (_req, res) => { applyPatch({ linkEnabled: true  }); res.json({ ok: true, link: { enabled: state.linkEnabled, peers: link.numPeers } }); });
-app.post('/api/link/disable', (_req, res) => { applyPatch({ linkEnabled: false }); res.json({ ok: true, link: { enabled: state.linkEnabled, peers: link.numPeers } }); });
-app.post('/api/link/toggle',  (_req, res) => { applyPatch({ linkEnabled: !state.linkEnabled }); res.json({ ok: true, link: { enabled: state.linkEnabled, peers: link.numPeers } }); });
+app.post('/api/link/enable',  (_req, res) => { applyPatch({ linkEnabled: true  }); res.json({ ok: true, link: { enabled: state.linkEnabled, peers: link.getNumPeers() } }); });
+app.post('/api/link/disable', (_req, res) => { applyPatch({ linkEnabled: false }); res.json({ ok: true, link: { enabled: state.linkEnabled, peers: link.getNumPeers() } }); });
+app.post('/api/link/toggle',  (_req, res) => { applyPatch({ linkEnabled: !state.linkEnabled }); res.json({ ok: true, link: { enabled: state.linkEnabled, peers: link.getNumPeers() } }); });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 
