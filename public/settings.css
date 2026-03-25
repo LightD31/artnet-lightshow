@@ -1,0 +1,283 @@
+/* ── Settings page layout ────────────────────────────────── */
+.settings-main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  max-width: 960px;
+  margin: 0 auto;
+  height: calc(100vh - 49px);
+  overflow-y: auto;
+}
+
+.settings-section {
+  width: 100%;
+}
+
+.section-desc {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 14px;
+}
+
+/* ── Header nav ─────────────────────────────────────────── */
+.header-nav {
+  display: flex;
+  gap: 4px;
+  margin-left: 16px;
+}
+
+.nav-link {
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-decoration: none;
+  transition: background .15s, color .15s;
+}
+.nav-link:hover { background: var(--border); color: var(--text); }
+.nav-link.active { background: var(--accent); color: #fff; }
+
+/* ── GDTF import ────────────────────────────────────────── */
+.gdtf-import {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.file-upload-btn {
+  cursor: pointer;
+  display: inline-block;
+}
+
+.import-status {
+  font-size: 12px;
+  color: var(--muted);
+}
+.import-status.success { color: var(--green); }
+.import-status.error { color: var(--red); }
+
+.gdtf-mode-select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gdtf-mode-select .field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.gdtf-mode-select label {
+  font-size: 11px;
+  color: var(--muted);
+  width: 90px;
+  flex-shrink: 0;
+}
+.gdtf-mode-select select {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.fixture-info-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* ── Channel preview ────────────────────────────────────── */
+.channel-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.ch-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-family: monospace;
+}
+.ch-tag .ch-num {
+  color: var(--muted);
+  font-size: 10px;
+}
+.ch-tag .ch-name {
+  color: var(--text);
+}
+.ch-tag.mapped {
+  border-color: var(--accent);
+  background: rgba(108, 99, 255, .1);
+}
+
+/* ── Profiles list ──────────────────────────────────────── */
+.profiles-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.profile-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.profile-card .profile-name {
+  font-weight: 700;
+  font-size: 13px;
+}
+.profile-card .profile-manufacturer {
+  font-size: 11px;
+  color: var(--muted);
+}
+.profile-card .profile-mode {
+  font-size: 11px;
+  color: var(--dim);
+}
+.profile-card .profile-channels {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.profile-card .profile-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.profile-card.builtin {
+  border-color: var(--accent);
+  background: rgba(108, 99, 255, .06);
+}
+
+/* ── Patch table ────────────────────────────────────────── */
+.patch-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.patch-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.patch-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(46, 46, 62, .4);
+  vertical-align: middle;
+}
+
+.patch-table tr:hover td {
+  background: rgba(108, 99, 255, .04);
+}
+
+.patch-table input[type=text],
+.patch-table input[type=number] {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: monospace;
+  width: 100%;
+}
+
+.patch-table input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.patch-table select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  width: 100%;
+}
+
+.patch-table .ch-count {
+  font-family: monospace;
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.patch-table .addr-range {
+  font-size: 10px;
+  color: var(--muted);
+  margin-left: 4px;
+}
+
+.patch-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ── Show file actions ──────────────────────────────────── */
+.show-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* ── Address conflict warning ───────────────────────────── */
+.addr-conflict {
+  color: var(--red) !important;
+  border-color: var(--red) !important;
+}
+
+.conflict-warning {
+  font-size: 10px;
+  color: var(--red);
+  display: block;
+  margin-top: 2px;
+}
+
+/* ── Remove fixture button ──────────────────────────────── */
+.remove-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px 8px;
+  font-size: 14px;
+  border-radius: 4px;
+  transition: color .15s, background .15s;
+}
+.remove-btn:hover {
+  color: var(--red);
+  background: rgba(255, 68, 68, .1);
+}

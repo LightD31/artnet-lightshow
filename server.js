@@ -5,12 +5,16 @@ const http = require('http');
 const { Server } = require('socket.io');
 const dgram = require('dgram');
 const path = require('path');
+const fs = require('fs');
+const multer = require('multer');
 const MidiController = require('./src/midi');
 const AbletonLink = require('./src/link');
+const { parseGDTF } = require('./src/gdtf');
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
@@ -40,17 +44,53 @@ function sendArtNet() {
   udpSocket.send(packet, 0, packet.length, state.artnet.port, state.artnet.host);
 }
 
-// ─── Fixtures ────────────────────────────────────────────────────────────────
-// Cameo ROOT PAR 6 – 12-channel mode (D12CH)
-//   Ch1: Dimmer (coarse)   Ch2: Dimmer fine   Ch3: Strobe functions
-//   Ch4: Red   Ch5: Green  Ch6: Blue  Ch7: White  Ch8: Amber  Ch9: UV
-//   Ch10: Color macros (keep 0 for RGBWA+UV control)
-//   Ch11: Sound   Ch12: DMX Delay
+// ─── Fixture Profiles ────────────────────────────────────────────────────────
+// Profiles define the channel layout of a fixture type. The built-in profile
+// matches the Cameo ROOT PAR 6 in 12-channel mode. Additional profiles can be
+// added at runtime via GDTF import.
 
-const FIXTURE_COUNT = 4;
-const CHANNELS = 12;
-const CH = { DIM: 0, DIM_FINE: 1, STROBE: 2, RED: 3, GREEN: 4, BLUE: 5, WHITE: 6, AMBER: 7, UV: 8, MACRO: 9, SOUND: 10, DELAY: 11 };
+const BUILTIN_PROFILE_ID = 'cameo-root-par-6-12ch';
+
+const fixtureProfiles = {
+  [BUILTIN_PROFILE_ID]: {
+    id: BUILTIN_PROFILE_ID,
+    name: 'ROOT PAR 6',
+    manufacturer: 'Cameo',
+    modeName: '12-channel (D12CH)',
+    channelCount: 12,
+    channelMap: {
+      dimmer: 0, dimmerFine: 1, strobe: 2,
+      red: 3, green: 4, blue: 5,
+      white: 6, amber: 7, uv: 8,
+      macro: 9, sound: 10, delay: 11,
+    },
+    channelList: [
+      { offset: 0,  name: 'Dimmer',      attribute: 'dimmer' },
+      { offset: 1,  name: 'Dimmer Fine',  attribute: 'dimmerFine' },
+      { offset: 2,  name: 'Strobe',       attribute: 'strobe' },
+      { offset: 3,  name: 'Red',          attribute: 'red' },
+      { offset: 4,  name: 'Green',        attribute: 'green' },
+      { offset: 5,  name: 'Blue',         attribute: 'blue' },
+      { offset: 6,  name: 'White',        attribute: 'white' },
+      { offset: 7,  name: 'Amber',        attribute: 'amber' },
+      { offset: 8,  name: 'UV',           attribute: 'uv' },
+      { offset: 9,  name: 'Color Macro',  attribute: 'macro' },
+      { offset: 10, name: 'Sound',        attribute: 'sound' },
+      { offset: 11, name: 'DMX Delay',    attribute: 'delay' },
+    ],
+  },
+};
+
+// Legacy constants used internally (derived from first profile)
 const DEFAULT_ADDRESSES = [1, 13, 25, 37];
+
+function getFixtureCount() { return state.fixtures.length; }
+function getProfile(fixture) { return fixtureProfiles[fixture.profileId] || fixtureProfiles[BUILTIN_PROFILE_ID]; }
+function getChannelCount(fixture) { return getProfile(fixture).channelCount; }
+function getCh(fixture, attr) {
+  const map = getProfile(fixture).channelMap;
+  return map[attr] !== undefined ? map[attr] : -1;
+}
 
 // ─── Strobe functions (Ch3 DMX ranges) ──────────────────────────────────────
 // Each entry defines a DMX range on channel 3. Speed-based functions map
@@ -128,17 +168,18 @@ const state = {
   strobeFunction: 'standard', // id from STROBE_FUNCTIONS
   energyOverride: null, // null or string id from ENERGY_EFFECTS
   linkEnabled: false,
-  fixtures: Array.from({ length: FIXTURE_COUNT }, (_, i) => ({
+  fixtures: Array.from({ length: 4 }, (_, i) => ({
     id: i,
     label: `PAR ${i + 1}`,
     address: DEFAULT_ADDRESSES[i],
+    profileId: BUILTIN_PROFILE_ID,
     override: null,
   })),
   _step: 0,
   _pingDir: 1,
   _hue: 0,
   _fadePhase: 0,
-  _twinkle: new Array(FIXTURE_COUNT).fill(0),
+  _twinkle: new Array(4).fill(0),
 };
 
 const dmx = Buffer.alloc(512, 0);
@@ -196,7 +237,7 @@ function applyPatch(data) {
 }
 
 function applyOverride(id, override) {
-  if (id >= 0 && id < FIXTURE_COUNT) {
+  if (id >= 0 && id < getFixtureCount()) {
     state.fixtures[id].override = override;
     broadcast();
   }
@@ -246,7 +287,14 @@ function hsvToRgb(h, s, v) {
 
 // ─── Engine ──────────────────────────────────────────────────────────────────
 
-let fixtureColors = Array.from({ length: FIXTURE_COUNT }, () => ({ r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 255, strobe: 0 }));
+let fixtureColors = Array.from({ length: 4 }, () => ({ r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 255, strobe: 0 }));
+
+function resizeFixtureColors() {
+  while (fixtureColors.length < state.fixtures.length) {
+    fixtureColors.push({ r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 255, strobe: 0 });
+  }
+  if (fixtureColors.length > state.fixtures.length) fixtureColors.length = state.fixtures.length;
+}
 
 function tickPattern() {
   if (!state.running) return;
@@ -256,58 +304,58 @@ function tickPattern() {
 
   switch (state.pattern) {
     case 'solid':
-      for (let i = 0; i < FIXTURE_COUNT; i++) setFixtureColor(i, colA, 255, 0);
+      for (let i = 0; i < getFixtureCount(); i++) setFixtureColor(i, colA, 255, 0);
       break;
     case 'chase':
-      for (let i = 0; i < FIXTURE_COUNT; i++)
-        setFixtureColor(i, i === step % FIXTURE_COUNT ? colA : colB, i === step % FIXTURE_COUNT ? 255 : 80, 0);
+      for (let i = 0; i < getFixtureCount(); i++)
+        setFixtureColor(i, i === step % getFixtureCount() ? colA : colB, i === step % getFixtureCount() ? 255 : 80, 0);
       break;
     case 'chase-rev':
-      for (let i = 0; i < FIXTURE_COUNT; i++) {
-        const active = i === (FIXTURE_COUNT - 1 - step % FIXTURE_COUNT);
+      for (let i = 0; i < getFixtureCount(); i++) {
+        const active = i === (getFixtureCount() - 1 - step % getFixtureCount());
         setFixtureColor(i, active ? colA : colB, active ? 255 : 80, 0);
       }
       break;
     case 'ping-pong': {
-      const pos = step % (FIXTURE_COUNT * 2 - 2);
-      const idx = pos < FIXTURE_COUNT ? pos : (FIXTURE_COUNT * 2 - 2 - pos);
-      for (let i = 0; i < FIXTURE_COUNT; i++)
+      const pos = step % (Math.max(2, getFixtureCount()) * 2 - 2);
+      const idx = pos < getFixtureCount() ? pos : (Math.max(2, getFixtureCount()) * 2 - 2 - pos);
+      for (let i = 0; i < getFixtureCount(); i++)
         setFixtureColor(i, i === idx ? colA : colB, i === idx ? 255 : 80, 0);
       break;
     }
     case 'strobe':
-      for (let i = 0; i < FIXTURE_COUNT; i++) setFixtureColor(i, colA, 255, 0);
+      for (let i = 0; i < getFixtureCount(); i++) setFixtureColor(i, colA, 255, 0);
       break;
     case 'fade': {
       const bright = Math.round(((Math.sin(state._fadePhase * Math.PI * 2 - Math.PI / 2) + 1) / 2) * 230 + 25);
-      for (let i = 0; i < FIXTURE_COUNT; i++) setFixtureColor(i, colA, bright, 0);
+      for (let i = 0; i < getFixtureCount(); i++) setFixtureColor(i, colA, bright, 0);
       break;
     }
     case 'color-cycle': {
       const col = hsvToRgb(state._hue, 1, 1);
-      for (let i = 0; i < FIXTURE_COUNT; i++) setFixtureColor(i, col, 255, 0);
+      for (let i = 0; i < getFixtureCount(); i++) setFixtureColor(i, col, 255, 0);
       break;
     }
     case 'rainbow':
-      for (let i = 0; i < FIXTURE_COUNT; i++) {
-        const col = hsvToRgb(state._hue + (360 / FIXTURE_COUNT) * i, 1, 1);
+      for (let i = 0; i < getFixtureCount(); i++) {
+        const col = hsvToRgb(state._hue + (360 / Math.max(1, getFixtureCount())) * i, 1, 1);
         setFixtureColor(i, col, 255, 0);
       }
       break;
     case 'twinkle':
-      for (let i = 0; i < FIXTURE_COUNT; i++) {
+      for (let i = 0; i < getFixtureCount(); i++) {
         if (Math.random() < 0.4) state._twinkle[i] = Math.random() < 0.7 ? 255 : 60;
         setFixtureColor(i, colA, state._twinkle[i], 0);
       }
       break;
     case 'split':
-      for (let i = 0; i < FIXTURE_COUNT; i++)
+      for (let i = 0; i < getFixtureCount(); i++)
         setFixtureColor(i, (i + step) % 2 === 0 ? colA : colB, 255, 0);
       break;
   }
 
   state._step++;
-  state._hue = (state._hue + 360 / FIXTURE_COUNT) % 360;
+  state._hue = (state._hue + 360 / Math.max(1, getFixtureCount())) % 360;
 }
 
 function setFixtureColor(idx, color, dim, strobe) {
@@ -329,7 +377,7 @@ function resolveEnergyOverride() {
 function renderDmx() {
   const energy = state.energyOverride ? resolveEnergyOverride() : null;
 
-  for (let i = 0; i < FIXTURE_COUNT; i++) {
+  for (let i = 0; i < getFixtureCount(); i++) {
     const fix = state.fixtures[i];
     const base = fix.address - 1;
     let col, dim, strobe;
@@ -352,32 +400,40 @@ function renderDmx() {
       dim = fc.dim; strobe = fc.strobe;
     }
 
+    const profile = getProfile(fix);
+    const chCount = profile.channelCount;
+    const ch = profile.channelMap;
+
     if (state.masterBlackout) {
-      for (let c = 0; c < CHANNELS; c++) dmx[base + c] = 0;
+      for (let c = 0; c < chCount; c++) dmx[base + c] = 0;
     } else {
+      // Zero out all channels first, then write the mapped ones
+      for (let c = 0; c < chCount; c++) dmx[base + c] = 0;
+
       // Energy overrides bypass master dimmer — always full output
       const ms = energy ? 1 : state.masterDimmer / 255;
       const ds = dim / 255;
       const ts = ms * ds;
-      dmx[base + CH.DIM]      = Math.round(dim * ms);
-      dmx[base + CH.DIM_FINE] = 0;
-      // Strobe ch3: map rawStrobe (0-255) into the selected strobe function's DMX range
-      const rawStrobe = energy ? strobe : (state.pattern === 'strobe' ? state.strobeSpeed : strobe);
-      if (rawStrobe > 0) {
-        const fn = STROBE_FUNCTIONS.find(f => f.id === state.strobeFunction) || STROBE_FUNCTIONS[0];
-        dmx[base + CH.STROBE] = fn.lo + Math.round((rawStrobe / 255) * (fn.hi - fn.lo));
-      } else {
-        dmx[base + CH.STROBE] = 0; // shutter open
+
+      if (ch.dimmer !== undefined)     dmx[base + ch.dimmer] = Math.round(dim * ms);
+      if (ch.dimmerFine !== undefined)  dmx[base + ch.dimmerFine] = 0;
+
+      // Strobe: map rawStrobe (0-255) into the selected strobe function's DMX range
+      if (ch.strobe !== undefined) {
+        const rawStrobe = energy ? strobe : (state.pattern === 'strobe' ? state.strobeSpeed : strobe);
+        if (rawStrobe > 0) {
+          const fn = STROBE_FUNCTIONS.find(f => f.id === state.strobeFunction) || STROBE_FUNCTIONS[0];
+          dmx[base + ch.strobe] = fn.lo + Math.round((rawStrobe / 255) * (fn.hi - fn.lo));
+        }
       }
-      dmx[base + CH.RED]      = Math.round(col.r  * ts);
-      dmx[base + CH.GREEN]    = Math.round(col.g  * ts);
-      dmx[base + CH.BLUE]     = Math.round(col.b  * ts);
-      dmx[base + CH.WHITE]    = Math.round(col.w  * ts);
-      dmx[base + CH.AMBER]    = Math.round(col.a  * ts);
-      dmx[base + CH.UV]       = Math.round(col.uv * ts);
-      dmx[base + CH.MACRO]    = 0;   // 0 = colour macro off → RGBWAUV channels in control
-      dmx[base + CH.SOUND]    = 0;
-      dmx[base + CH.DELAY]    = 0;
+
+      // Color channels — write all that exist in the profile
+      if (ch.red !== undefined)   dmx[base + ch.red]   = Math.round(col.r  * ts);
+      if (ch.green !== undefined) dmx[base + ch.green] = Math.round(col.g  * ts);
+      if (ch.blue !== undefined)  dmx[base + ch.blue]  = Math.round(col.b  * ts);
+      if (ch.white !== undefined) dmx[base + ch.white] = Math.round(col.w  * ts);
+      if (ch.amber !== undefined) dmx[base + ch.amber] = Math.round(col.a  * ts);
+      if (ch.uv !== undefined)    dmx[base + ch.uv]    = Math.round(col.uv * ts);
     }
   }
   sendArtNet();
@@ -401,6 +457,16 @@ restartBeatTimer();
 setInterval(renderDmx, 25);
 setInterval(() => io.emit('state', getClientState()), 100);
 
+function getDmxSnapshotSize() {
+  let maxEnd = 0;
+  for (const fix of state.fixtures) {
+    const profile = getProfile(fix);
+    const end = fix.address - 1 + profile.channelCount;
+    if (end > maxEnd) maxEnd = end;
+  }
+  return Math.min(512, maxEnd);
+}
+
 function getClientState() {
   return {
     artnet: state.artnet,
@@ -416,11 +482,12 @@ function getClientState() {
     strobeFunction: state.strobeFunction,
     energyOverride: state.energyOverride,
     fixtures: state.fixtures,
+    profiles: fixtureProfiles,
     colorPresets: COLOR_PRESETS,
     patterns: PATTERNS,
     energyEffects: ENERGY_EFFECTS,
     strobeFunctions: STROBE_FUNCTIONS,
-    dmxSnapshot: Array.from(dmx.slice(0, FIXTURE_COUNT * CHANNELS)),
+    dmxSnapshot: Array.from(dmx.slice(0, getDmxSnapshotSize())),
     midi: { enabled: midi.enabled, ports: midi.listPorts() },
     link: { enabled: state.linkEnabled, peers: link.getNumPeers() },
   };
@@ -485,10 +552,11 @@ io.on('connection', (socket) => {
 
   socket.on('override', ({ id, override }) => applyOverride(id, override));
 
-  socket.on('fixture', ({ id, address, label }) => {
-    if (id >= 0 && id < FIXTURE_COUNT) {
+  socket.on('fixture', ({ id, address, label, profileId }) => {
+    if (id >= 0 && id < getFixtureCount()) {
       if (address !== undefined) state.fixtures[id].address = address;
       if (label !== undefined) state.fixtures[id].label = label;
+      if (profileId !== undefined && fixtureProfiles[profileId]) state.fixtures[id].profileId = profileId;
       broadcast();
     }
   });
@@ -617,13 +685,136 @@ app.post('/api/link/enable',  (_req, res) => { applyPatch({ linkEnabled: true  }
 app.post('/api/link/disable', (_req, res) => { applyPatch({ linkEnabled: false }); res.json({ ok: true, link: { enabled: state.linkEnabled, peers: link.getNumPeers() } }); });
 app.post('/api/link/toggle',  (_req, res) => { applyPatch({ linkEnabled: !state.linkEnabled }); res.json({ ok: true, link: { enabled: state.linkEnabled, peers: link.getNumPeers() } }); });
 
+// ─── GDTF / Profiles / Fixtures / Show API ──────────────────────────────────
+
+// POST /api/gdtf/parse — upload a .gdtf file and parse it
+app.post('/api/gdtf/parse', upload.single('gdtf'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ ok: false, error: 'No file uploaded' });
+    const result = await parseGDTF(req.file.buffer);
+    res.json({ ok: true, fixture: result });
+  } catch (err) {
+    console.error('GDTF parse error:', err.message);
+    res.status(400).json({ ok: false, error: err.message });
+  }
+});
+
+// POST /api/profiles — add a fixture profile
+app.post('/api/profiles', (req, res) => {
+  const profile = req.body;
+  if (!profile.id || !profile.name || !profile.channelCount) {
+    return res.status(400).json({ ok: false, error: 'Invalid profile' });
+  }
+  fixtureProfiles[profile.id] = profile;
+  broadcast();
+  res.json({ ok: true });
+});
+
+// DELETE /api/profiles/:id — remove a fixture profile (cannot remove built-in)
+app.delete('/api/profiles/:id', (req, res) => {
+  const id = req.params.id;
+  if (id === BUILTIN_PROFILE_ID) return res.status(400).json({ ok: false, error: 'Cannot remove built-in profile' });
+  // Check if any fixture uses this profile
+  const inUse = state.fixtures.some(f => f.profileId === id);
+  if (inUse) return res.status(400).json({ ok: false, error: 'Profile is in use by patched fixtures' });
+  delete fixtureProfiles[id];
+  broadcast();
+  res.json({ ok: true });
+});
+
+// POST /api/fixtures — add a new fixture
+app.post('/api/fixtures', (_req, res) => {
+  // Calculate next available address
+  let maxEnd = 0;
+  for (const fix of state.fixtures) {
+    const profile = getProfile(fix);
+    const end = fix.address + profile.channelCount;
+    if (end > maxEnd) maxEnd = end;
+  }
+  const newId = state.fixtures.length;
+  state.fixtures.push({
+    id: newId,
+    label: `Fixture ${newId + 1}`,
+    address: Math.min(maxEnd, 501),
+    profileId: BUILTIN_PROFILE_ID,
+    override: null,
+  });
+  resizeFixtureColors();
+  while (state._twinkle.length < state.fixtures.length) state._twinkle.push(0);
+  broadcast();
+  res.json({ ok: true });
+});
+
+// DELETE /api/fixtures/:id — remove a fixture (must have at least 1)
+app.delete('/api/fixtures/:id', (req, res) => {
+  const id = parseInt(req.params.id);
+  if (state.fixtures.length <= 1) return res.status(400).json({ ok: false, error: 'Must have at least one fixture' });
+  state.fixtures = state.fixtures.filter(f => f.id !== id);
+  // Re-index fixture ids
+  state.fixtures.forEach((f, i) => { f.id = i; });
+  resizeFixtureColors();
+  state._twinkle.length = state.fixtures.length;
+  broadcast();
+  res.json({ ok: true });
+});
+
+// GET /api/show — export show configuration
+app.get('/api/show', (_req, res) => {
+  res.json({
+    artnet: state.artnet,
+    profiles: Object.values(fixtureProfiles).filter(p => p.id !== BUILTIN_PROFILE_ID),
+    fixtures: state.fixtures.map(f => ({
+      label: f.label,
+      address: f.address,
+      profileId: f.profileId,
+    })),
+  });
+});
+
+// POST /api/show — load show configuration
+app.post('/api/show', (req, res) => {
+  try {
+    const show = req.body;
+
+    // Load profiles
+    if (Array.isArray(show.profiles)) {
+      // Remove non-builtin profiles
+      Object.keys(fixtureProfiles).forEach(id => {
+        if (id !== BUILTIN_PROFILE_ID) delete fixtureProfiles[id];
+      });
+      show.profiles.forEach(p => { if (p.id) fixtureProfiles[p.id] = p; });
+    }
+
+    // Load ArtNet settings
+    if (show.artnet) Object.assign(state.artnet, show.artnet);
+
+    // Load fixtures
+    if (Array.isArray(show.fixtures) && show.fixtures.length > 0) {
+      state.fixtures = show.fixtures.map((f, i) => ({
+        id: i,
+        label: f.label || `Fixture ${i + 1}`,
+        address: f.address || 1,
+        profileId: fixtureProfiles[f.profileId] ? f.profileId : BUILTIN_PROFILE_ID,
+        override: null,
+      }));
+      resizeFixtureColors();
+      state._twinkle = new Array(state.fixtures.length).fill(0);
+    }
+
+    broadcast();
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err.message });
+  }
+});
+
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`\n  ArtNet Lightshow  →  http://localhost:${PORT}`);
   console.log(`  ArtNet            →  ${state.artnet.host}:${state.artnet.port} universe ${state.artnet.universe}`);
-  console.log(`  Fixtures          →  ${FIXTURE_COUNT}x Cameo ROOT PAR 6 at DMX ${DEFAULT_ADDRESSES.join(', ')}`);
+  console.log(`  Fixtures          →  ${state.fixtures.length}x at DMX ${state.fixtures.map(f => f.address).join(', ')}`);
   console.log(`  MIDI              →  ${midi.enabled ? 'connected' : 'not connected (set MIDI_INPUT env var or use /api/midi/connect)'}`);
   console.log(`  Ableton Link      →  ${state.linkEnabled ? 'enabled' : 'disabled (set LINK=1 env var or use web UI)'}`);
   console.log(`  Link backend      →  Python aalink bridge\n`);
