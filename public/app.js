@@ -56,18 +56,22 @@ function fixtureOutputColor(id) {
     });
   }
 
-  // Read from DMX snapshot — 12ch mode: dim@0, strobe@2, R@3, G@4, B@5, W@6, A@7, UV@8
+  // Read from DMX snapshot using the fixture's profile channel map
   const base = fix.address - 1;
   const snap = state.dmxSnapshot || [];
-  if (base + 8 < snap.length) {
-    const dimScale = snap[base] / 255;
+  const profile = state.profiles && state.profiles[fix.profileId];
+  if (profile && profile.channelMap) {
+    const ch = profile.channelMap;
+    const dimCh = ch.dimmer !== undefined ? ch.dimmer : -1;
+    const dimScale = dimCh >= 0 && base + dimCh < snap.length ? snap[base + dimCh] / 255 : 1;
+    const get = (attr) => ch[attr] !== undefined && base + ch[attr] < snap.length ? snap[base + ch[attr]] : 0;
     return colorToCss({
-      r:  Math.round(snap[base + 3] * dimScale),
-      g:  Math.round(snap[base + 4] * dimScale),
-      b:  Math.round(snap[base + 5] * dimScale),
-      w:  Math.round(snap[base + 6] * dimScale),
-      a:  Math.round(snap[base + 7] * dimScale),
-      uv: Math.round(snap[base + 8] * dimScale),
+      r:  Math.round(get('red')   * dimScale),
+      g:  Math.round(get('green') * dimScale),
+      b:  Math.round(get('blue')  * dimScale),
+      w:  Math.round(get('white') * dimScale),
+      a:  Math.round(get('amber') * dimScale),
+      uv: Math.round(get('uv')    * dimScale),
     });
   }
   return '#111';
@@ -354,7 +358,17 @@ function renderFixtures(s) {
   const grid = document.getElementById('fixtures-grid');
   if (!s.fixtures) return;
 
-  // Build cards on first render
+  // Rebuild cards if fixture count changed
+  const currentIds = new Set(s.fixtures.map(f => f.id));
+  const renderedIds = new Set(Object.keys(fixtureElements).map(Number));
+  const needsRebuild = currentIds.size !== renderedIds.size || [...currentIds].some(id => !renderedIds.has(id));
+
+  if (needsRebuild) {
+    grid.innerHTML = '';
+    Object.keys(fixtureElements).forEach(k => delete fixtureElements[k]);
+  }
+
+  // Build cards on first render or after rebuild
   s.fixtures.forEach(fix => {
     if (!fixtureElements[fix.id]) {
       buildFixtureCard(fix, grid);
@@ -403,11 +417,27 @@ function renderFixtures(s) {
 }
 
 // ── DMX Monitor ───────────────────────────────────────────────────────────────
-const CH_LABELS = ['Dim', 'Fine', 'Str', 'R', 'G', 'B', 'W', 'A', 'UV', 'Mac', 'Snd', 'Dly'];
+
+function buildChannelLabels(s) {
+  // Build a label map from fixture profiles
+  const labels = {};
+  if (!s.fixtures || !s.profiles) return labels;
+  s.fixtures.forEach(fix => {
+    const profile = s.profiles[fix.profileId];
+    if (!profile) return;
+    const base = fix.address - 1;
+    (profile.channelList || []).forEach(ch => {
+      const shortName = (ch.attribute || ch.name || '').substring(0, 3).toUpperCase();
+      labels[base + ch.offset] = shortName || String(ch.offset + 1);
+    });
+  });
+  return labels;
+}
 
 function renderDmxMonitor(s) {
   const mon = document.getElementById('dmx-monitor');
   const snap = s.dmxSnapshot || [];
+  const labels = buildChannelLabels(s);
 
   if (mon.children.length !== snap.length) {
     mon.innerHTML = '';
@@ -415,7 +445,7 @@ function renderDmxMonitor(s) {
       const cell = document.createElement('div');
       cell.className = 'dmx-cell';
       cell.id = `dmx-${i}`;
-      const chLabel = CH_LABELS[i % 12] || String(i % 12);
+      const chLabel = labels[i] || String((i % 12) + 1);
       cell.innerHTML = `<span class="ch">${i + 1} ${chLabel}</span><span class="val" id="dmxv-${i}">0</span>`;
       mon.appendChild(cell);
     });

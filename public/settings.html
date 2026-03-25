@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Settings — ArtNet Lightshow</title>
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="stylesheet" href="/settings.css" />
+</head>
+<body>
+
+<header>
+  <h1>ArtNet <span>Lightshow</span></h1>
+  <nav class="header-nav">
+    <a href="/" class="nav-link">Live</a>
+    <a href="/settings.html" class="nav-link active">Settings</a>
+  </nav>
+  <div id="status-dot" class="status-dot"></div>
+</header>
+
+<main class="settings-main">
+
+  <!-- ── ArtNet Settings ─────────────────────────────────── -->
+  <section class="card settings-section">
+    <div class="card-title">ArtNet Output</div>
+    <div class="settings-form">
+      <div class="field">
+        <label>Node IP</label>
+        <input type="text" id="artnet-host" value="2.255.255.255" />
+      </div>
+      <div class="field">
+        <label>Port</label>
+        <input type="number" id="artnet-port" value="6454" />
+      </div>
+      <div class="field">
+        <label>Universe</label>
+        <input type="number" id="artnet-universe" value="0" min="0" max="32767" />
+      </div>
+      <button class="btn active" id="artnet-save">Apply</button>
+    </div>
+  </section>
+
+  <!-- ── Fixture Profiles ────────────────────────────────── -->
+  <section class="card settings-section">
+    <div class="card-title">Fixture Profiles</div>
+    <p class="section-desc">Import GDTF files to add fixture profiles, or use built-in profiles.</p>
+
+    <div class="gdtf-import">
+      <label class="file-upload-btn btn active" for="gdtf-file">
+        Import GDTF File
+      </label>
+      <input type="file" id="gdtf-file" accept=".gdtf" style="display:none" />
+      <span id="gdtf-status" class="import-status"></span>
+    </div>
+
+    <!-- GDTF mode selector (shown after import) -->
+    <div id="gdtf-mode-select" class="gdtf-mode-select" style="display:none">
+      <div class="field">
+        <label>Fixture</label>
+        <span id="gdtf-fixture-name" class="fixture-info-text"></span>
+      </div>
+      <div class="field">
+        <label>DMX Mode</label>
+        <select id="gdtf-mode"></select>
+      </div>
+      <div id="gdtf-channel-preview" class="channel-preview"></div>
+      <button class="btn active" id="gdtf-confirm">Add Profile</button>
+    </div>
+
+    <div class="profiles-list" id="profiles-list"></div>
+  </section>
+
+  <!-- ── Patch Table ─────────────────────────────────────── -->
+  <section class="card settings-section">
+    <div class="card-title">Fixture Patch</div>
+    <p class="section-desc">Assign fixture profiles to DMX addresses.</p>
+
+    <table class="patch-table" id="patch-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Label</th>
+          <th>Profile</th>
+          <th>DMX Address</th>
+          <th>Channels</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="patch-tbody"></tbody>
+    </table>
+
+    <div class="patch-actions">
+      <button class="btn active" id="add-fixture">+ Add Fixture</button>
+    </div>
+  </section>
+
+  <!-- ── Show File ───────────────────────────────────────── -->
+  <section class="card settings-section">
+    <div class="card-title">Show File</div>
+    <p class="section-desc">Save or load the complete show configuration (patch, profiles, ArtNet settings).</p>
+    <div class="show-actions">
+      <button class="btn active" id="save-show">Save Show</button>
+      <label class="file-upload-btn btn" for="load-show-file">Load Show</label>
+      <input type="file" id="load-show-file" accept=".json" style="display:none" />
+      <span id="show-status" class="import-status"></span>
+    </div>
+  </section>
+
+</main>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/settings.js"></script>
+</body>
+</html>

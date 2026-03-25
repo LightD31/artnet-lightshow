@@ -40,6 +40,14 @@ header {
 header h1 { font-size: 16px; font-weight: 700; letter-spacing: .5px; }
 header h1 span { color: var(--accent); }
 
+.header-nav { display: flex; gap: 4px; margin-left: 16px; }
+.nav-link {
+  padding: 4px 12px; border-radius: 6px; font-size: 12px; font-weight: 600;
+  color: var(--muted); text-decoration: none; transition: background .15s, color .15s;
+}
+.nav-link:hover { background: var(--border); color: var(--text); }
+.nav-link.active { background: var(--accent); color: #fff; }
+
 .status-dot {
   width: 8px; height: 8px; border-radius: 50%;
   background: var(--red); margin-left: auto;
