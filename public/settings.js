@@ -26,14 +26,20 @@ socket.on('state', (s) => {
 
 // ── ArtNet settings ──────────────────────────────────────────────────────────
 
+['artnet-host', 'artnet-port', 'artnet-universe'].forEach(id => {
+  document.getElementById(id).addEventListener('input', function () {
+    this.dataset.dirty = 'true';
+  });
+});
+
 function syncArtnetFields(s) {
   if (!s.artnet) return;
   const h = document.getElementById('artnet-host');
   const p = document.getElementById('artnet-port');
   const u = document.getElementById('artnet-universe');
-  if (document.activeElement !== h) h.value = s.artnet.host;
-  if (document.activeElement !== p) p.value = s.artnet.port;
-  if (document.activeElement !== u) u.value = s.artnet.universe;
+  if (!h.dataset.dirty) h.value = s.artnet.host;
+  if (!p.dataset.dirty) p.value = s.artnet.port;
+  if (!u.dataset.dirty) u.value = s.artnet.universe;
 }
 
 document.getElementById('artnet-save').addEventListener('click', () => {
@@ -43,6 +49,9 @@ document.getElementById('artnet-save').addEventListener('click', () => {
       port: parseInt(document.getElementById('artnet-port').value),
       universe: parseInt(document.getElementById('artnet-universe').value),
     }
+  });
+  ['artnet-host', 'artnet-port', 'artnet-universe'].forEach(id => {
+    delete document.getElementById(id).dataset.dirty;
   });
 });
 

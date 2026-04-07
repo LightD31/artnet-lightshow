@@ -4,15 +4,14 @@
  * MIDI handler for Behringer X-Touch Compact
  *
  * X-Touch Compact Standard mode (default) layout — Layer A:
- *   Encoders 1-8 : CC 1-8, ch 1 (relative: 1-63=CW, 65-127=CCW)
- *   Enc buttons  : Note 0-7,  ch 1
- *   Button row 1 : Note 8-15, ch 1
- *   Button row 2 : Note 16-23, ch 1
- *   Faders 1-9   : Pitch Bend, MIDI ch 1-9 (channel index 0-8)
+ *   Encoders EN1-8 turn : CC 10-17, ch 1 (relative: 1-63=CW, 65-127=CCW)
+ *   Encoders EN1-8 push : Note 0-7,  ch 1
+ *   Button row 1 (BT1-8)  : Note 16-23, ch 1
+ *   Button row 2 (BT9-16) : Note 24-31, ch 1
+ *   Faders FD1-9 : CC 1-9, ch 1 (absolute 0-127)
  *
  * LED feedback is sent back via Note On (velocity = colour):
  *   0 = off, 1 = on (fixture-default), 127 = bright on
- *   Some buttons support colours via velocity (check Behringer docs)
  */
 
 let easymidi;
@@ -25,27 +24,27 @@ try {
 // ── Default mapping for X-Touch Compact Layer A ───────────────────────────────
 
 const DEFAULT_MAP = {
-  // CC → action  (relative encoders)
+  // CC → action
   cc: {
-    1: { action: 'adjustBpm',          scale: 1    },  // Encoder 1: BPM ±1/step
-    2: { action: 'adjustMasterDimmer', scale: 4    },  // Encoder 2: Master dim
-    3: { action: 'adjustFixtureDim',   fixture: 0, scale: 4 },
-    4: { action: 'adjustFixtureDim',   fixture: 1, scale: 4 },
-    5: { action: 'adjustFixtureDim',   fixture: 2, scale: 4 },
-    6: { action: 'adjustFixtureDim',   fixture: 3, scale: 4 },
-    7: { action: 'adjustStrobeSpeed',  scale: 4    },  // Encoder 7: Strobe
+    // Relative encoders EN1-EN8 turn: CC10-CC17
+    10: { action: 'adjustBpm',          scale: 1,   type: 'relative' },  // EN1: BPM ±1/step
+    11: { action: 'adjustMasterDimmer', scale: 4,   type: 'relative' },  // EN2: Master dim
+    12: { action: 'adjustFixtureDim',   fixture: 0, scale: 4, type: 'relative' },
+    13: { action: 'adjustFixtureDim',   fixture: 1, scale: 4, type: 'relative' },
+    14: { action: 'adjustFixtureDim',   fixture: 2, scale: 4, type: 'relative' },
+    15: { action: 'adjustFixtureDim',   fixture: 3, scale: 4, type: 'relative' },
+    16: { action: 'adjustStrobeSpeed',  scale: 4,   type: 'relative' },  // EN7: Strobe
+    // Absolute faders FD1-FD9: CC1-CC9 (0-127 → 0-255)
+    1: { action: 'setFixtureDim',  fixture: 0, type: 'absolute' },
+    2: { action: 'setFixtureDim',  fixture: 1, type: 'absolute' },
+    3: { action: 'setFixtureDim',  fixture: 2, type: 'absolute' },
+    4: { action: 'setFixtureDim',  fixture: 3, type: 'absolute' },
+    9: { action: 'setMasterDimmer',             type: 'absolute' },  // FD9: Master
   },
-  // Pitch bend channel (0-indexed) → action (absolute fader 0-16383 → 0-255)
-  pitchbend: {
-    0: { action: 'setFixtureDim',  fixture: 0 },
-    1: { action: 'setFixtureDim',  fixture: 1 },
-    2: { action: 'setFixtureDim',  fixture: 2 },
-    3: { action: 'setFixtureDim',  fixture: 3 },
-    8: { action: 'setMasterDimmer' },               // Fader 9: Master
-  },
+  pitchbend: {},  // Faders now send CC — pitch bend unused
   // Note → action  (Note On with velocity > 0 triggers)
   notes: {
-    // Encoder push buttons
+    // Encoder push buttons EN1-EN8: notes 0-7
     0: { action: 'tap' },
     1: { action: 'toggleBlackout' },
     2: { action: 'togglePlay' },
@@ -53,40 +52,35 @@ const DEFAULT_MAP = {
     4: { action: 'toggleFixBlackout', fixture: 1 },
     5: { action: 'toggleFixBlackout', fixture: 2 },
     6: { action: 'toggleFixBlackout', fixture: 3 },
-    // Button row 1 (notes 8-17): 10 patterns
-    8:  { action: 'setPattern', value: 'solid'       },
-    9:  { action: 'setPattern', value: 'chase'       },
-    10: { action: 'setPattern', value: 'chase-rev'   },
-    11: { action: 'setPattern', value: 'ping-pong'   },
-    12: { action: 'setPattern', value: 'strobe'      },
-    13: { action: 'setPattern', value: 'fade'        },
-    14: { action: 'setPattern', value: 'color-cycle' },
-    15: { action: 'setPattern', value: 'rainbow'     },
-    16: { action: 'setPattern', value: 'twinkle'     },
-    17: { action: 'setPattern', value: 'split'       },
-    7: { action: 'energyHold' },      // Encoder push 8: hold for energy override
-    // Button row 2 (notes 18-23): first 6 colour presets → colour A
-    18: { action: 'setColorA', value: 0 },
-    19: { action: 'setColorA', value: 1 },
-    20: { action: 'setColorA', value: 2 },
-    21: { action: 'setColorA', value: 3 },
-    22: { action: 'setColorA', value: 4 },
-    23: { action: 'setColorA', value: 5 },
+    7: { action: 'energyHold' },      // EN8 push: hold for energy override
+    // Button row 1 (BT1-8, notes 16-23): 8 patterns
+    16: { action: 'setPattern', value: 'solid'       },
+    17: { action: 'setPattern', value: 'chase'       },
+    18: { action: 'setPattern', value: 'chase-rev'   },
+    19: { action: 'setPattern', value: 'ping-pong'   },
+    20: { action: 'setPattern', value: 'strobe'      },
+    21: { action: 'setPattern', value: 'fade'        },
+    22: { action: 'setPattern', value: 'color-cycle' },
+    23: { action: 'setPattern', value: 'rainbow'     },
+    // Button row 2 (BT9-16, notes 24-31): 2 patterns + 6 colour presets
+    24: { action: 'setPattern', value: 'twinkle'     },
+    25: { action: 'setPattern', value: 'split'       },
+    26: { action: 'setColorA', value: 0 },
+    27: { action: 'setColorA', value: 1 },
+    28: { action: 'setColorA', value: 2 },
+    29: { action: 'setColorA', value: 3 },
+    30: { action: 'setColorA', value: 4 },
+    31: { action: 'setColorA', value: 5 },
   },
 };
 
 // MIDI note LED groups for feedback (note → LED note on same device)
-const LED_PATTERNS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
-const LED_COLORS_A = [18, 19, 20, 21, 22, 23];
+const LED_PATTERNS = [16, 17, 18, 19, 20, 21, 22, 23, 24, 25];
+const LED_COLORS_A = [26, 27, 28, 29, 30, 31];
 
 function relDelta(value) {
   // Relative mode 1: 1-63 = CW (+), 65-127 = CCW (-)
   return value > 64 ? value - 128 : value;
-}
-
-function pitchToLevel(pitchValue) {
-  // easymidi pitch bend: -8192 to +8191
-  return Math.round(((pitchValue + 8192) / 16383) * 255);
 }
 
 // ── MidiController class ──────────────────────────────────────────────────────
@@ -170,6 +164,17 @@ class MidiController {
   _bindInput() {
     const m = this.map;
 
+    // ── MIDI monitor (temporary) ──────────────────────────────────────────────
+    this.input.on('noteon',  ({ note, velocity, channel }) =>
+      console.log(`[MIDI] noteon  ch=${channel+1} note=${note} vel=${velocity}  → ${m.notes[note] ? m.notes[note].action : 'unmapped'}`));
+    this.input.on('noteoff', ({ note, velocity, channel }) =>
+      console.log(`[MIDI] noteoff ch=${channel+1} note=${note}`));
+    this.input.on('cc',      ({ controller, value, channel }) =>
+      console.log(`[MIDI] cc      ch=${channel+1} cc=${controller} val=${value}  → ${m.cc[controller] ? m.cc[controller].action : 'unmapped'}`));
+    this.input.on('pitch',   ({ value, channel }) =>
+      console.log(`[MIDI] pitch   ch=${channel+1} val=${value}`));
+    // ─────────────────────────────────────────────────────────────────────────
+
     // Note On → button press
     this.input.on('noteon', ({ note, velocity, channel }) => {
       const binding = m.notes[note];
@@ -191,21 +196,17 @@ class MidiController {
       }
     });
 
-    // CC → encoder / knob
+    // CC → encoder (relative) or fader (absolute)
     this.input.on('cc', ({ controller, value }) => {
       const binding = m.cc[controller];
       if (!binding) return;
-      const delta = relDelta(value) * (binding.scale || 1);
-      this._dispatchContinuous(binding, delta);
-    });
-
-    // Pitch bend → fader (absolute)
-    this.input.on('pitch', ({ value, channel }) => {
-      const chIdx = channel; // easymidi: 0-indexed
-      const binding = m.pitchbend[chIdx];
-      if (!binding) return;
-      const level = pitchToLevel(value);
-      this._dispatchAbsolute(binding, level);
+      if (binding.type === 'absolute') {
+        const level = Math.round(value / 127 * 255);
+        this._dispatchAbsolute(binding, level);
+      } else {
+        const delta = relDelta(value) * (binding.scale || 1);
+        this._dispatchContinuous(binding, delta);
+      }
     });
   }
 
