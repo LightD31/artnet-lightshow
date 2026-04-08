@@ -86,8 +86,9 @@ function render(s) {
   renderPatterns(s);
   renderFixtures(s);
   renderDmxMonitor(s);
-  renderLink(s);
+  renderProlink(s);
   renderMidi(s);
+  renderAutoMode(s);
 }
 
 // ── BPM ───────────────────────────────────────────────────────────────────────
@@ -522,25 +523,54 @@ socket.on('state', (s) => {
   if (document.activeElement !== univEl) univEl.value = s.artnet.universe;
 });
 
-// ── Ableton Link UI ──────────────────────────────────────────────────────────
+// ── PRO DJ LINK UI ───────────────────────────────────────────────────────────
 
-function renderLink(s) {
-  if (!s.link) return;
-  const dot  = document.getElementById('link-dot');
-  const text = document.getElementById('link-status-text');
-  const btn  = document.getElementById('link-toggle');
-  const peers = document.getElementById('link-peers');
+function renderProlink(s) {
+  if (!s.prolink) return;
+  const dot   = document.getElementById('prolink-dot');
+  const text  = document.getElementById('prolink-status-text');
+  const btn   = document.getElementById('prolink-toggle');
+  const peers = document.getElementById('prolink-peers');
+  const masterEl = document.getElementById('prolink-master');
+  const trackEl  = document.getElementById('prolink-track');
 
-  dot.classList.toggle('connected', s.link.enabled);
-  text.textContent = s.link.enabled ? 'Enabled' : 'Disabled';
-  btn.textContent = s.link.enabled ? 'Disable' : 'Enable';
-  btn.classList.toggle('active', s.link.enabled);
-  peers.textContent = `${s.link.peers} peer${s.link.peers !== 1 ? 's' : ''}`;
+  const p = s.prolink;
+  // Dot: green when fully connected, otherwise off
+  dot.classList.toggle('connected', !!p.connected);
+
+  let status;
+  if (p.connected && p.stale) status = 'Stale (no packets)';
+  else if (p.connected)       status = 'Connected';
+  else if (p.enabled)         status = 'Connecting…';
+  else if (p.lastError)       status = `Error: ${p.lastError}`;
+  else                        status = 'Disabled';
+  text.textContent = status;
+
+  btn.textContent = p.enabled ? 'Disable' : 'Enable';
+  btn.classList.toggle('active', !!p.enabled);
+  peers.textContent = `${p.peers} device${p.peers !== 1 ? 's' : ''}`;
+
+  if (p.master) {
+    const bpmStr = p.master.bpm ? p.master.bpm.toFixed(1) : '—';
+    const beatStr = p.master.beatInMeasure || '–';
+    masterEl.textContent = `Master: CDJ-${p.master.deviceId} · ${bpmStr} BPM · beat ${beatStr}/4`;
+  } else {
+    masterEl.textContent = 'No master';
+  }
+
+  if (p.track && (p.track.title || p.track.artist)) {
+    const t = `${p.track.title || '?'} — ${p.track.artist || '?'}`;
+    trackEl.textContent = t;
+  } else if (p.master && p.master.trackId) {
+    trackEl.textContent = 'Loading metadata…';
+  } else {
+    trackEl.textContent = '—';
+  }
 }
 
-document.getElementById('link-toggle').addEventListener('click', () => {
-  const enabled = state.link ? state.link.enabled : false;
-  send({ linkEnabled: !enabled });
+document.getElementById('prolink-toggle').addEventListener('click', () => {
+  const enabled = state.prolink ? state.prolink.enabled : false;
+  send({ prolinkEnabled: !enabled });
 });
 
 // ── MIDI UI ───────────────────────────────────────────────────────────────────
@@ -579,4 +609,489 @@ socket.on('midi-status', ({ ok, ports, enabled }) => {
   const text = document.getElementById('midi-status-text');
   dot.classList.toggle('connected', enabled);
   text.textContent = enabled ? 'Connected' : (ok ? 'Connected' : 'Failed to connect');
+});
+
+// ── Auto Timeline Visualizer ─────────────────────────────────────────────────
+//
+// Fetches the full analysis/timeline payload from /api/auto/timeline when a
+// new analysis becomes available, then draws a scrolling view with:
+//   - segment bands (coloured by energy level)
+//   - energy curve (filled area) + bass curve overlay
+//   - beat ticks
+//   - build-up gradient bars + drop markers
+//   - timeline event dots (patches vs energy bursts)
+//   - playhead (updated from socket `auto-position` events)
+
+const autoTimeline = {
+  data: null,            // full payload from /api/auto/timeline
+  fetchedForTrack: null, // identity key of last analysis we fetched
+  positionMs: 0,         // latest known playback position
+  posUpdatedAt: 0,       // local time when positionMs was received
+  running: false,        // whether playback is active (extrapolate if true)
+  rafId: null,
+};
+
+socket.on('auto-position', ({ positionMs, running }) => {
+  autoTimeline.positionMs = positionMs;
+  autoTimeline.posUpdatedAt = performance.now();
+  autoTimeline.running = !!running;
+});
+
+function autoTimelineIdentityKey(s) {
+  // The timeline is keyed by (track + timelineLength) — when either changes
+  // we know we should refetch.
+  if (!s.autoShow || !s.autoShow.analysis) return null;
+  const t = s.autoShow.track || {};
+  return `${t.name || ''}|${t.artist || ''}|${s.autoShow.timelineLength || 0}|${s.autoShow.analysis.duration || 0}`;
+}
+
+function maybeFetchTimeline(s) {
+  const key = autoTimelineIdentityKey(s);
+  const hasAnalysis = !!(s.autoShow && s.autoShow.analysis);
+
+  if (!hasAnalysis) {
+    autoTimeline.data = null;
+    autoTimeline.fetchedForTrack = null;
+    return;
+  }
+  if (key === autoTimeline.fetchedForTrack) return;
+
+  autoTimeline.fetchedForTrack = key;
+  fetch('/api/auto/timeline')
+    .then(r => r.json())
+    .then(d => {
+      if (d && d.ok && d.data) {
+        autoTimeline.data = d.data;
+        drawAutoTimeline();
+      }
+    })
+    .catch(() => { /* silent */ });
+}
+
+function currentAutoPositionMs() {
+  if (!autoTimeline.running) return autoTimeline.positionMs;
+  return autoTimeline.positionMs + (performance.now() - autoTimeline.posUpdatedAt);
+}
+
+function formatTime(ms) {
+  if (!isFinite(ms) || ms < 0) ms = 0;
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const ss = (s % 60).toString().padStart(2, '0');
+  return `${m}:${ss}`;
+}
+
+function drawAutoTimeline() {
+  const canvas = document.getElementById('auto-timeline-canvas');
+  if (!canvas) return;
+  const container = document.getElementById('auto-timeline');
+  if (!container || container.style.display === 'none') return;
+
+  const data = autoTimeline.data;
+  const ctx = canvas.getContext('2d');
+
+  // Resize backing store to match displayed size (HiDPI aware)
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth || canvas.width;
+  const cssH = canvas.clientHeight || canvas.height;
+  if (canvas.width !== Math.round(cssW * dpr) || canvas.height !== Math.round(cssH * dpr)) {
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const W = cssW;
+  const H = cssH;
+
+  // Clear
+  ctx.fillStyle = '#0a0a0f';
+  ctx.fillRect(0, 0, W, H);
+
+  if (!data || !data.duration) {
+    ctx.fillStyle = '#444';
+    ctx.font = '11px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('No analysis loaded', W / 2, H / 2);
+    return;
+  }
+
+  const durMs = data.duration * 1000;
+  const xForMs = (ms) => (ms / durMs) * W;
+  const xForSec = (s) => (s / data.duration) * W;
+
+  // ── Row layout ─────────────────────────────────────────────
+  //  0-16px  : segments
+  //  16-96px : energy + bass curves
+  //  96-108  : beat ticks
+  //  108-128 : buildups + drops
+  //  128-160 : timeline events
+  const ROW_SEG    = { y: 0,   h: 16 };
+  const ROW_CURVE  = { y: 18,  h: 78 };
+  const ROW_BEATS  = { y: 98,  h: 10 };
+  const ROW_EVENTS = { y: 110, h: 18 };
+  const ROW_TIMELN = { y: 132, h: 28 };
+
+  // ── Segments ────────────────────────────────────────────────
+  const segColors = {
+    low:  '#1e3a5f',
+    mid:  '#3a7099',
+    high: '#ff6584',
+  };
+  (data.segments || []).forEach(seg => {
+    const x0 = xForSec(seg.start);
+    const x1 = xForSec(seg.end);
+    ctx.fillStyle = segColors[seg.level] || '#333';
+    ctx.globalAlpha = 0.9;
+    ctx.fillRect(x0, ROW_SEG.y, Math.max(1, x1 - x0), ROW_SEG.h);
+  });
+  ctx.globalAlpha = 1;
+
+  // ── Energy curve (filled) ───────────────────────────────────
+  const curve = data.energyCurve || [];
+  if (curve.length > 1) {
+    ctx.beginPath();
+    ctx.moveTo(xForSec(curve[0].t), ROW_CURVE.y + ROW_CURVE.h);
+    for (const pt of curve) {
+      const x = xForSec(pt.t);
+      const y = ROW_CURVE.y + ROW_CURVE.h - Math.max(0, Math.min(1, pt.v)) * ROW_CURVE.h;
+      ctx.lineTo(x, y);
+    }
+    ctx.lineTo(xForSec(curve[curve.length - 1].t), ROW_CURVE.y + ROW_CURVE.h);
+    ctx.closePath();
+    const grad = ctx.createLinearGradient(0, ROW_CURVE.y, 0, ROW_CURVE.y + ROW_CURVE.h);
+    grad.addColorStop(0, 'rgba(108, 99, 255, .75)');
+    grad.addColorStop(1, 'rgba(108, 99, 255, .08)');
+    ctx.fillStyle = grad;
+    ctx.fill();
+  }
+
+  // ── Bass curve (outline) ───────────────────────────────────
+  const bass = data.bassCurve || [];
+  if (bass.length > 1) {
+    ctx.beginPath();
+    for (let i = 0; i < bass.length; i++) {
+      const pt = bass[i];
+      const x = xForSec(pt.t);
+      const y = ROW_CURVE.y + ROW_CURVE.h - Math.max(0, Math.min(1, pt.v)) * ROW_CURVE.h;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = 'rgba(255, 101, 132, .8)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+  }
+
+  // ── Beat ticks ──────────────────────────────────────────────
+  const beats = data.beats || [];
+  if (beats.length) {
+    ctx.strokeStyle = 'rgba(200, 200, 240, .25)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    // If there are lots of beats, subsample so we don't saturate pixels
+    const step = beats.length > W ? Math.ceil(beats.length / W) : 1;
+    for (let i = 0; i < beats.length; i += step) {
+      const x = xForSec(beats[i]);
+      ctx.moveTo(x, ROW_BEATS.y);
+      ctx.lineTo(x, ROW_BEATS.y + ROW_BEATS.h);
+    }
+    ctx.stroke();
+  }
+
+  // ── Build-ups (gradient bars) ───────────────────────────────
+  (data.buildups || []).forEach(b => {
+    const x0 = xForSec(b.start);
+    const x1 = xForSec(b.end);
+    const w = Math.max(2, x1 - x0);
+    const grad = ctx.createLinearGradient(x0, 0, x1, 0);
+    grad.addColorStop(0, 'rgba(255, 170, 68, .1)');
+    grad.addColorStop(1, 'rgba(255, 170, 68, .85)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(x0, ROW_EVENTS.y, w, ROW_EVENTS.h);
+  });
+
+  // ── Drops (triangular flag markers) ─────────────────────────
+  (data.drops || []).forEach(d => {
+    const x = xForSec(d.t);
+    const strength = Math.max(0.3, Math.min(1, d.strength || 0.5));
+    ctx.fillStyle = '#ff4444';
+    ctx.beginPath();
+    ctx.moveTo(x, ROW_EVENTS.y);
+    ctx.lineTo(x - 5, ROW_EVENTS.y + ROW_EVENTS.h);
+    ctx.lineTo(x + 5, ROW_EVENTS.y + ROW_EVENTS.h);
+    ctx.closePath();
+    ctx.fill();
+    // Vertical streak through the curve row for visual emphasis
+    ctx.strokeStyle = `rgba(255, 68, 68, ${0.25 + strength * 0.35})`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(x, ROW_CURVE.y);
+    ctx.lineTo(x, ROW_CURVE.y + ROW_CURVE.h);
+    ctx.stroke();
+  });
+
+  // ── Timeline events (dots in bottom row) ────────────────────
+  const events = data.timeline || [];
+  // Split events into two lanes: patches (top), energy bursts (bottom)
+  const patchY  = ROW_TIMELN.y + 6;
+  const energyY = ROW_TIMELN.y + ROW_TIMELN.h - 6;
+  events.forEach(ev => {
+    const x = xForMs(ev.timeMs);
+    if (ev.action === 'patch') {
+      ctx.fillStyle = '#6c63ff';
+      ctx.beginPath();
+      ctx.arc(x, patchY, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (ev.action === 'energy') {
+      const w = Math.max(2, xForMs(ev.durationMs || 150) - xForMs(0));
+      ctx.fillStyle = '#ffee44';
+      ctx.fillRect(x - w / 2, energyY - 3, w, 6);
+    }
+  });
+
+  // Divider lines between rows
+  ctx.strokeStyle = 'rgba(255,255,255,.04)';
+  ctx.lineWidth = 1;
+  [ROW_CURVE.y, ROW_BEATS.y, ROW_EVENTS.y, ROW_TIMELN.y].forEach(y => {
+    ctx.beginPath();
+    ctx.moveTo(0, y - 1);
+    ctx.lineTo(W, y - 1);
+    ctx.stroke();
+  });
+
+  // ── Playhead ────────────────────────────────────────────────
+  const posMs = currentAutoPositionMs();
+  if (posMs >= 0 && posMs <= durMs) {
+    const px = xForMs(posMs);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.5;
+    ctx.shadowColor = 'rgba(255,255,255,.7)';
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    ctx.moveTo(px, 0);
+    ctx.lineTo(px, H);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+
+  // Update time text
+  const posEl = document.getElementById('auto-timeline-pos');
+  const durEl = document.getElementById('auto-timeline-dur');
+  if (posEl) posEl.textContent = formatTime(posMs);
+  if (durEl) durEl.textContent = formatTime(durMs);
+}
+
+function autoTimelineLoop() {
+  autoTimeline.rafId = null;
+  drawAutoTimeline();
+  // Only loop while the visualizer is visible AND either running, or we still
+  // have data (so a paused preview keeps refreshing if the user resizes, etc.).
+  const container = document.getElementById('auto-timeline');
+  if (container && container.style.display !== 'none' && autoTimeline.data) {
+    autoTimeline.rafId = requestAnimationFrame(autoTimelineLoop);
+  }
+}
+
+function startAutoTimelineLoop() {
+  if (autoTimeline.rafId != null) return;
+  autoTimeline.rafId = requestAnimationFrame(autoTimelineLoop);
+}
+
+// Redraw on resize (debounced via rAF loop which already runs every frame)
+window.addEventListener('resize', () => {
+  if (autoTimeline.data) drawAutoTimeline();
+});
+
+// ── Auto Mode UI ─────────────────────────────────────────────────────────────
+
+function renderAutoMode(s) {
+  if (!s.spotify || !s.autoShow) return;
+
+  // Spotify status
+  const dot = document.getElementById('spotify-dot');
+  const text = document.getElementById('spotify-status-text');
+  const connectBtn = document.getElementById('spotify-connect-btn');
+  const disconnectBtn = document.getElementById('spotify-disconnect-btn');
+
+  if (s.spotify.authenticated) {
+    dot.classList.add('connected');
+    text.textContent = 'Connected';
+    connectBtn.style.display = 'none';
+    disconnectBtn.style.display = '';
+  } else if (s.spotify.configured) {
+    dot.classList.remove('connected');
+    text.textContent = 'Not connected';
+    connectBtn.style.display = '';
+    disconnectBtn.style.display = 'none';
+  } else {
+    dot.classList.remove('connected');
+    text.textContent = 'Not configured (set SPOTIFY_CLIENT_ID & SPOTIFY_CLIENT_SECRET)';
+    connectBtn.style.display = '';
+    disconnectBtn.style.display = 'none';
+  }
+
+  // Auto show status badge
+  const badge = document.getElementById('auto-badge');
+  const as = s.autoShow;
+  badge.textContent = as.status.toUpperCase();
+  badge.className = 'auto-badge auto-badge-' + as.status;
+
+  // Now playing
+  const npEl = document.getElementById('auto-now-playing');
+  if (as.track) {
+    npEl.style.display = '';
+    document.getElementById('auto-track-name').textContent = as.track.name;
+    document.getElementById('auto-track-artist').textContent = as.track.artist;
+    const art = document.getElementById('auto-album-art');
+    if (as.track.albumArt) { art.src = as.track.albumArt; art.style.display = ''; }
+    else art.style.display = 'none';
+  } else {
+    npEl.style.display = 'none';
+  }
+
+  // Analysis info
+  const analysisEl = document.getElementById('auto-analysis');
+  const statsEl = document.getElementById('auto-analysis-stats');
+  if (as.analysis) {
+    analysisEl.style.display = '';
+    const dropCount    = as.analysis.dropCount    != null ? as.analysis.dropCount    : 0;
+    const buildupCount = as.analysis.buildupCount != null ? as.analysis.buildupCount : 0;
+    statsEl.innerHTML = `
+      <span>BPM: <strong>${as.analysis.bpm}</strong></span>
+      <span>Key: <strong>${as.analysis.key} ${as.analysis.scale}</strong></span>
+      <span>Segments: <strong>${as.analysis.segmentCount}</strong></span>
+      <span>Beats: <strong>${as.analysis.beatCount}</strong></span>
+      <span>Drops: <strong>${dropCount}</strong></span>
+      <span>Builds: <strong>${buildupCount}</strong></span>
+      <span>Duration: <strong>${Math.round(as.analysis.duration)}s</strong></span>
+      <span>Events: <strong>${as.timelineLength}</strong></span>
+    `;
+  } else {
+    analysisEl.style.display = 'none';
+  }
+
+  // Timeline visualizer: show when analysis is present, fetch on change
+  const timelineEl = document.getElementById('auto-timeline');
+  if (as.analysis) {
+    timelineEl.style.display = '';
+    maybeFetchTimeline(s);
+    // Update running state for the playhead extrapolator
+    autoTimeline.running = as.running;
+    if (!as.running) {
+      // When paused, freeze the extrapolator at the last known position
+      autoTimeline.posUpdatedAt = performance.now();
+    }
+    startAutoTimelineLoop();
+  } else {
+    timelineEl.style.display = 'none';
+    autoTimeline.data = null;
+    autoTimeline.fetchedForTrack = null;
+  }
+
+  // Status message
+  const statusMsg = document.getElementById('auto-status-msg');
+  if (as.status === 'downloading') statusMsg.textContent = 'Downloading full audio via yt-dlp…';
+  else if (as.status === 'analyzing') statusMsg.textContent = 'Analyzing audio with Essentia…';
+  else if (as.status === 'playing') statusMsg.textContent = 'Auto show running';
+  else if (as.status === 'ready') statusMsg.textContent = 'Analysis complete — ready to start';
+  else statusMsg.textContent = '';
+
+  // Transport buttons
+  document.getElementById('auto-start-btn').disabled = as.status !== 'ready';
+  document.getElementById('auto-stop-btn').disabled = as.status !== 'playing';
+
+  // Source selector
+  const srcSel = document.getElementById('auto-source-select');
+  if (s.autoSource && document.activeElement !== srcSel && srcSel.value !== s.autoSource) {
+    srcSel.value = s.autoSource;
+  }
+
+  // Analyze CDJ button availability
+  const analyzeProlinkBtn = document.getElementById('auto-analyze-prolink-btn');
+  if (analyzeProlinkBtn) {
+    analyzeProlinkBtn.disabled = !(s.prolink && s.prolink.connected && s.prolink.track && s.prolink.track.title);
+  }
+}
+
+// Connect Spotify
+document.getElementById('spotify-connect-btn').addEventListener('click', () => {
+  window.open('/auth/spotify', '_blank', 'width=500,height=700');
+});
+
+document.getElementById('spotify-disconnect-btn').addEventListener('click', () => {
+  fetch('/api/spotify/disconnect', { method: 'POST' });
+});
+
+// Analyze from manual input
+document.getElementById('auto-analyze-btn').addEventListener('click', () => {
+  const source = document.getElementById('auto-source-input').value.trim();
+  if (!source) return;
+  document.getElementById('auto-status-msg').textContent = 'Analyzing…';
+  fetch('/api/auto/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ source }),
+  }).then(r => r.json()).then(d => {
+    if (!d.ok) document.getElementById('auto-status-msg').textContent = 'Error: ' + d.error;
+  }).catch(e => {
+    document.getElementById('auto-status-msg').textContent = 'Error: ' + e.message;
+  });
+});
+
+// Analyze current Spotify track
+document.getElementById('auto-analyze-spotify-btn').addEventListener('click', () => {
+  document.getElementById('auto-status-msg').textContent = 'Fetching Spotify track & analyzing…';
+  fetch('/api/auto/analyze-spotify', { method: 'POST' })
+    .then(r => r.json())
+    .then(d => {
+      if (!d.ok) document.getElementById('auto-status-msg').textContent = 'Error: ' + d.error;
+    }).catch(e => {
+      document.getElementById('auto-status-msg').textContent = 'Error: ' + e.message;
+    });
+});
+
+// Analyze current PRO DJ LINK master track
+document.getElementById('auto-analyze-prolink-btn').addEventListener('click', () => {
+  document.getElementById('auto-status-msg').textContent = 'Fetching CDJ track & analyzing…';
+  fetch('/api/auto/analyze-prolink', { method: 'POST' })
+    .then(r => r.json())
+    .then(d => {
+      if (!d.ok) document.getElementById('auto-status-msg').textContent = 'Error: ' + d.error;
+    }).catch(e => {
+      document.getElementById('auto-status-msg').textContent = 'Error: ' + e.message;
+    });
+});
+
+// Source selector
+document.getElementById('auto-source-select').addEventListener('change', (e) => {
+  send({ autoSource: e.target.value });
+});
+
+// Upload audio file
+document.getElementById('auto-upload-input').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  document.getElementById('auto-status-msg').textContent = 'Uploading & analyzing…';
+  const form = new FormData();
+  form.append('audio', file);
+  fetch('/api/auto/analyze-upload', { method: 'POST', body: form })
+    .then(r => r.json())
+    .then(d => {
+      if (!d.ok) document.getElementById('auto-status-msg').textContent = 'Error: ' + d.error;
+    }).catch(e => {
+      document.getElementById('auto-status-msg').textContent = 'Error: ' + e.message;
+    });
+  e.target.value = '';
+});
+
+// Auto show transport
+document.getElementById('auto-start-btn').addEventListener('click', () => {
+  fetch('/api/auto/start', { method: 'POST' });
+});
+
+document.getElementById('auto-stop-btn').addEventListener('click', () => {
+  fetch('/api/auto/stop', { method: 'POST' });
+});
+
+document.getElementById('auto-reset-btn').addEventListener('click', () => {
+  fetch('/api/auto/reset', { method: 'POST' });
 });

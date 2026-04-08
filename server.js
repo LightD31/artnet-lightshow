@@ -1,5 +1,6 @@
 'use strict';
 
+require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -8,8 +9,19 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const MidiController = require('./src/midi');
-const AbletonLink = require('./src/link');
+const ProLink = require('./src/prolink');
 const { parseGDTF } = require('./src/gdtf');
+const SpotifyClient = require('./src/spotify');
+const AutoShow = require('./src/auto-show');
+const {
+  AnalysisCache,
+  keyForSpotify,
+  keyForYouTube,
+  keyForQuery,
+  keyForLocalFile,
+  keyForBuffer,
+  keyForProlinkTrack,
+} = require('./src/analysis-cache');
 
 const app = express();
 const server = http.createServer(app);
@@ -50,6 +62,10 @@ function sendArtNet() {
 // added at runtime via GDTF import.
 
 const BUILTIN_PROFILE_ID = 'cameo-root-par-6-12ch';
+
+// UV LEDs are physically dimmer than RGBW — boost their DMX value so they
+// remain visually competitive at lower dimmer settings.
+const UV_BOOST = 1.8;
 
 const fixtureProfiles = {
   [BUILTIN_PROFILE_ID]: {
@@ -120,22 +136,28 @@ const COLOR_PRESETS = [
   { name: 'Purple',     r: 100, g: 0,   b: 255, w: 0,   a: 0,   uv: 0   },
   { name: 'Magenta',    r: 255, g: 0,   b: 200, w: 0,   a: 0,   uv: 0   },
   { name: 'White',      r: 0,   g: 0,   b: 0,   w: 255, a: 0,   uv: 0   },
-  { name: 'Warm White', r: 180, g: 80,  b: 0,   w: 150, a: 200, uv: 0   },
   { name: 'UV',         r: 0,   g: 0,   b: 0,   w: 0,   a: 0,   uv: 255 },
+  { name: 'UV (RGB)',   r: 60,  g: 0,   b: 255, w: 0,   a: 0,   uv: 0   },
   { name: 'Blackout',   r: 0,   g: 0,   b: 0,   w: 0,   a: 0,   uv: 0   },
 ];
 
 const PATTERNS = [
-  { id: 'solid',       name: 'Solid',        desc: 'All fixtures same colour' },
-  { id: 'chase',       name: 'Chase →',      desc: 'One fixture at a time, forward' },
-  { id: 'chase-rev',   name: 'Chase ←',      desc: 'One fixture at a time, reverse' },
-  { id: 'ping-pong',   name: 'Ping Pong',    desc: 'Forward then backward' },
-  { id: 'strobe',      name: 'Strobe',       desc: 'All fixtures strobe on beat' },
-  { id: 'fade',        name: 'Fade',         desc: 'Fade in/out together' },
-  { id: 'color-cycle', name: 'Colour Cycle', desc: 'Cycle through hues in sync' },
-  { id: 'rainbow',     name: 'Rainbow',      desc: 'Each fixture offset in hue' },
-  { id: 'twinkle',     name: 'Twinkle',      desc: 'Random fixtures flash' },
-  { id: 'split',       name: 'Split',        desc: 'Two colours alternating in pairs' },
+  { id: 'solid',        name: 'Solid',         desc: 'All fixtures same colour' },
+  { id: 'chase',        name: 'Chase →',       desc: 'One fixture at a time, forward' },
+  { id: 'chase-rev',    name: 'Chase ←',       desc: 'One fixture at a time, reverse' },
+  { id: 'ping-pong',    name: 'Ping Pong',     desc: 'Forward then backward' },
+  { id: 'strobe',       name: 'Strobe',        desc: 'All fixtures strobe on beat' },
+  { id: 'fade',         name: 'Fade',          desc: 'Fade in/out together' },
+  { id: 'color-cycle',  name: 'Colour Cycle',  desc: 'Cycle through hues in sync' },
+  { id: 'rainbow',      name: 'Rainbow',       desc: 'Each fixture offset in hue' },
+  { id: 'twinkle',      name: 'Twinkle',       desc: 'Random fixtures flash' },
+  { id: 'split',        name: 'Split',         desc: 'Two colours alternating in pairs' },
+  { id: 'sparkle',      name: 'Sparkle',       desc: 'Bright random pulses, instant' },
+  { id: 'wave',         name: 'Wave',          desc: 'Sine brightness wave across fixtures' },
+  { id: 'stack-up',     name: 'Stack Up',      desc: 'Fill fixtures one-by-one then reset' },
+  { id: 'random-flash', name: 'Random Flash',  desc: 'Random fixture pops each beat' },
+  { id: 'runner',       name: 'Runner',        desc: 'Chase with a fading trail' },
+  { id: 'pairs',        name: 'Pairs',         desc: 'Two adjacent fixtures chase' },
 ];
 
 // ─── Energy overrides ────────────────────────────────────────────────────────
@@ -152,9 +174,9 @@ const ENERGY_EFFECTS = [
 
 const state = {
   artnet: {
-    host: '2.255.255.255',
-    port: 6454,
-    universe: 0,
+    host: process.env.ARTNET_HOST || '2.255.255.255',
+    port: Number.parseInt(process.env.ARTNET_PORT, 10) || 6454,
+    universe: Number.parseInt(process.env.ARTNET_UNIVERSE, 10) || 0,
   },
   bpm: 120,
   beatDivision: 1,
@@ -167,7 +189,8 @@ const state = {
   strobeSpeed: 0,
   strobeFunction: 'standard', // id from STROBE_FUNCTIONS
   energyOverride: null, // null or string id from ENERGY_EFFECTS
-  linkEnabled: false,
+  prolinkEnabled: false,
+  autoSource: 'auto', // 'auto' | 'spotify' | 'prolink' | 'timer'
   fixtures: Array.from({ length: 4 }, (_, i) => ({
     id: i,
     label: `PAR ${i + 1}`,
@@ -222,14 +245,22 @@ function applyPatch(data) {
     state.energyOverride = data.energyOverride && ENERGY_EFFECTS.find(e => e.id === data.energyOverride) ? data.energyOverride : null;
   }
   if (data.artnet !== undefined) Object.assign(state.artnet, data.artnet);
-  if (data.linkEnabled !== undefined) {
-    if (data.linkEnabled && !state.linkEnabled) enableLink();
-    else if (!data.linkEnabled && state.linkEnabled) disableLink();
+  if (data.prolinkEnabled !== undefined) {
+    if (data.prolinkEnabled && !state.prolinkEnabled) {
+      state.prolinkEnabled = true;
+      prolink.enable().catch((err) => {
+        console.error('PRO DJ LINK enable failed:', err.message);
+        state.prolinkEnabled = false;
+        broadcast();
+      });
+    } else if (!data.prolinkEnabled && state.prolinkEnabled) {
+      state.prolinkEnabled = false;
+      prolink.disable().catch(() => {});
+    }
   }
-
-  // Sync BPM changes back to Link when it's active
-  if (restartTimer && state.linkEnabled && data.bpm !== undefined) {
-    link.setTempo(state.bpm);
+  if (data.autoSource !== undefined) {
+    const allowed = ['auto', 'spotify', 'prolink', 'timer'];
+    if (allowed.includes(data.autoSource)) state.autoSource = data.autoSource;
   }
 
   if (restartTimer) restartBeatTimer();
@@ -255,9 +286,12 @@ function processTap() {
     for (let i = 1; i < tapTimes.length; i++) diffs.push(tapTimes[i] - tapTimes[i - 1]);
     const avg = diffs.reduce((a, b) => a + b, 0) / diffs.length;
     state.bpm = Math.max(20, Math.min(300, Math.round(60000 / avg)));
-    restartBeatTimer();
-    broadcast();
   }
+  // A tap *is* a beat: advance the pattern immediately and phase-align the
+  // next tick to the tap. Without this, rapid taps would clear and re-arm
+  // the beat interval faster than it could ever fire, freezing patterns.
+  restartBeatTimer({ tickNow: true });
+  broadcast();
   setTimeout(() => {
     if (tapTimes.length > 0 && Date.now() - tapTimes[tapTimes.length - 1] > 2500) tapTimes.length = 0;
   }, 3000);
@@ -326,11 +360,11 @@ function tickPattern() {
     case 'strobe':
       for (let i = 0; i < getFixtureCount(); i++) setFixtureColor(i, colA, 255, 0);
       break;
-    case 'fade': {
-      const bright = Math.round(((Math.sin(state._fadePhase * Math.PI * 2 - Math.PI / 2) + 1) / 2) * 230 + 25);
-      for (let i = 0; i < getFixtureCount(); i++) setFixtureColor(i, colA, bright, 0);
+    case 'fade':
+      // Brightness is computed continuously in renderDmx for smoothness.
+      // Here we just make sure the colour is set; brightness will be overwritten.
+      for (let i = 0; i < getFixtureCount(); i++) setFixtureColor(i, colA, 255, 0);
       break;
-    }
     case 'color-cycle': {
       const col = hsvToRgb(state._hue, 1, 1);
       for (let i = 0; i < getFixtureCount(); i++) setFixtureColor(i, col, 255, 0);
@@ -352,6 +386,64 @@ function tickPattern() {
       for (let i = 0; i < getFixtureCount(); i++)
         setFixtureColor(i, (i + step) % 2 === 0 ? colA : colB, 255, 0);
       break;
+    case 'sparkle':
+      // Instant random pulses — unlike twinkle this has no memory, so it reads
+      // as sharper sparks rather than a slow scintillation.
+      for (let i = 0; i < getFixtureCount(); i++) {
+        const on = Math.random() < 0.35;
+        setFixtureColor(i, colA, on ? 255 : 0, 0);
+      }
+      break;
+    case 'wave': {
+      // Travelling sinusoidal brightness wave using colA.
+      const N = Math.max(1, getFixtureCount());
+      for (let i = 0; i < N; i++) {
+        const phase = (step * 0.25) - (i * (Math.PI * 2 / N));
+        const b = Math.round(((Math.sin(phase) + 1) / 2) * 215 + 40);
+        setFixtureColor(i, colA, b, 0);
+      }
+      break;
+    }
+    case 'stack-up': {
+      // Fills fixtures with colA one step at a time, then clears to colB.
+      const N = getFixtureCount();
+      const cycle = N + 1;
+      const pos = step % cycle;
+      for (let i = 0; i < N; i++) {
+        const lit = i < pos;
+        setFixtureColor(i, lit ? colA : colB, lit ? 255 : 60, 0);
+      }
+      break;
+    }
+    case 'random-flash': {
+      // Each beat, one random fixture slams to colA, the rest go dark.
+      const N = getFixtureCount();
+      const target = Math.floor(Math.random() * Math.max(1, N));
+      for (let i = 0; i < N; i++)
+        setFixtureColor(i, i === target ? colA : colB, i === target ? 255 : 0, 0);
+      break;
+    }
+    case 'runner': {
+      // Chase with a short fading tail behind the lead fixture.
+      const N = Math.max(1, getFixtureCount());
+      const lead = step % N;
+      for (let i = 0; i < N; i++) {
+        const dist = (lead - i + N) % N;
+        const b = dist === 0 ? 255 : dist === 1 ? 150 : dist === 2 ? 70 : 0;
+        setFixtureColor(i, colA, b, 0);
+      }
+      break;
+    }
+    case 'pairs': {
+      // Two adjacent fixtures lit at once, chasing the group forward.
+      const N = Math.max(1, getFixtureCount());
+      const pos = step % N;
+      for (let i = 0; i < N; i++) {
+        const on = (i === pos || i === (pos + 1) % N);
+        setFixtureColor(i, on ? colA : colB, on ? 255 : 50, 0);
+      }
+      break;
+    }
   }
 
   state._step++;
@@ -367,14 +459,30 @@ function resolveEnergyOverride() {
   switch (state.energyOverride) {
     case 'white-strobe':  return { col: { r: 255, g: 255, b: 255, w: 255, a: 0,   uv: 0   }, dim: 255, strobe: 255 };
     case 'blinder':       return { col: { r: 255, g: 255, b: 255, w: 255, a: 0,   uv: 0   }, dim: 255, strobe: 0   };
-    case 'uv-strobe':     return { col: { r: 0,   g: 0,   b: 0,   w: 0,   a: 0,   uv: 255 }, dim: 255, strobe: 255 };
+    case 'uv-strobe':     return { col: { r: 60,  g: 0,   b: 200, w: 0,   a: 0,   uv: 255 }, dim: 255, strobe: 255 };
     case 'color-strobe':  return { col: { r: colA.r, g: colA.g, b: colA.b, w: colA.w || 0, a: colA.a || 0, uv: colA.uv || 0 }, dim: 255, strobe: 255 };
     case 'all-on':        return { col: { r: 255, g: 255, b: 255, w: 255, a: 255, uv: 255 }, dim: 255, strobe: 0   };
     default:              return null;
   }
 }
 
+let _lastRenderTs = Date.now();
 function renderDmx() {
+  const now = Date.now();
+  const dt = Math.max(0, Math.min(0.25, (now - _lastRenderTs) / 1000));
+  _lastRenderTs = now;
+
+  // Advance the fade phase continuously so the fade pattern updates at the
+  // full DMX rate (40 Hz) instead of stepping once per beat. Full fade cycle
+  // spans 8 beats, matching the previous beat-stepped behaviour.
+  if (state.running && state.pattern === 'fade') {
+    const cycleSeconds = (60 / Math.max(1, state.bpm)) * 8;
+    state._fadePhase = (state._fadePhase + dt / cycleSeconds) % 1;
+    const bright = Math.round(((Math.sin(state._fadePhase * Math.PI * 2 - Math.PI / 2) + 1) / 2) * 230 + 25);
+    const colA = COLOR_PRESETS[state.colorA];
+    for (let i = 0; i < getFixtureCount(); i++) setFixtureColor(i, colA, bright, 0);
+  }
+
   const energy = state.energyOverride ? resolveEnergyOverride() : null;
 
   for (let i = 0; i < getFixtureCount(); i++) {
@@ -433,7 +541,7 @@ function renderDmx() {
       if (ch.blue !== undefined)  dmx[base + ch.blue]  = Math.round(col.b  * ts);
       if (ch.white !== undefined) dmx[base + ch.white] = Math.round(col.w  * ts);
       if (ch.amber !== undefined) dmx[base + ch.amber] = Math.round(col.a  * ts);
-      if (ch.uv !== undefined)    dmx[base + ch.uv]    = Math.round(col.uv * ts);
+      if (ch.uv !== undefined)    dmx[base + ch.uv]    = Math.min(255, Math.round(col.uv * ts * UV_BOOST));
     }
   }
   sendArtNet();
@@ -443,12 +551,12 @@ function renderDmx() {
 
 function bpmInterval() { return (60000 / state.bpm) / state.beatDivision; }
 
-function restartBeatTimer() {
+function restartBeatTimer({ tickNow = false } = {}) {
   if (beatInterval) clearInterval(beatInterval);
   if (state.running) {
+    if (tickNow) tickPattern();
     beatInterval = setInterval(() => {
       tickPattern();
-      state._fadePhase = (state._fadePhase + 1 / 8) % 1;
     }, bpmInterval());
   }
 }
@@ -489,7 +597,19 @@ function getClientState() {
     strobeFunctions: STROBE_FUNCTIONS,
     dmxSnapshot: Array.from(dmx.slice(0, getDmxSnapshotSize())),
     midi: { enabled: midi.enabled, ports: midi.listPorts() },
-    link: { enabled: state.linkEnabled, peers: link.getNumPeers() },
+    prolink: {
+      enabled: state.prolinkEnabled,
+      connected: prolink.connected,
+      peers: prolink.getNumPeers(),
+      master: prolink.getMaster(),
+      track: prolink.getTrack(),
+      bpm: prolink.getTempo(),
+      stale: prolink.stale,
+      lastError: prolink.lastError,
+    },
+    autoSource: state.autoSource,
+    spotify: spotify.getStatus(),
+    autoShow: autoShow.getClientState(),
   };
 }
 
@@ -503,13 +623,15 @@ const midiInput  = process.env.MIDI_INPUT  || null;
 const midiOutput = process.env.MIDI_OUTPUT || null;
 midi.connect(midiInput, midiOutput);
 
-// ─── Ableton Link (Python bridge via aalink) ─────────────────────────────────
+// ─── PRO DJ LINK ─────────────────────────────────────────────────────────────
 
-const link = new AbletonLink();
+const prolink = new ProLink();
 
-// React to tempo changes pushed from Link peers
-link.onTempoChange((bpm) => {
-  if (!state.linkEnabled) return;
+function getProlinkPositionMs() { return prolink.getPositionMs(); }
+
+// Tempo from the master CDJ → state.bpm. Same shape as the old Link callback.
+prolink.onTempoChange((bpm) => {
+  if (!state.prolinkEnabled) return;
   const rounded = Math.round(bpm);
   if (rounded >= 20 && rounded <= 300 && rounded !== state.bpm) {
     state.bpm = rounded;
@@ -518,29 +640,168 @@ link.onTempoChange((bpm) => {
   }
 });
 
-link.onPeersChange((peers) => {
-  console.log(`Ableton Link peers: ${peers}`);
+prolink.onPeersChange((peers) => {
+  console.log(`PRO DJ LINK devices: ${peers}`);
   io.emit('state', getClientState());
 });
 
-function enableLink() {
-  link.enable();
-  state.linkEnabled = true;
-  // Push our current BPM to Link when first enabling
-  link.setTempo(state.bpm);
-  console.log('Ableton Link enabled');
+prolink.onMasterChange(() => broadcast());
+
+prolink.onTrackChange(async (track) => {
+  console.log(`PRO DJ LINK track changed: ${track.artist || '?'} — ${track.title || '?'}`);
   broadcast();
+  if (!autoShow.running) return;
+  if (resolveAutoSource() !== 'prolink') return;
+
+  autoShow.stop();
+  autoShow.track = {
+    name: track.title || `Track ${track.trackId}`,
+    artist: track.artist || 'PRO DJ LINK',
+    album: track.album || '',
+    albumArt: null,
+    durationMs: track.durationMs || 0,
+  };
+  broadcast();
+  try {
+    if (!track.title || !track.artist) {
+      throw new Error('Track has no rekordbox metadata — cannot search');
+    }
+    const query = `${track.artist} - ${track.title}`;
+    const cacheKey = keyForProlinkTrack(track);
+    const { audioPath } = await autoShow.downloadAndAnalyze(
+      query, (track.durationMs || 0) / 1000, cacheKey
+    );
+    if (audioPath) { try { fs.unlinkSync(audioPath); } catch (_) {} }
+    autoShow.start(getProlinkPositionMs);
+    console.log('Auto show restarted for new CDJ track');
+  } catch (err) {
+    console.error('PRO DJ LINK auto analysis failed:', err.message);
+  }
+  broadcast();
+});
+
+// Pick the active source for auto-show playback. Explicit user choice wins,
+// then 'auto' falls through to: prolink > spotify > timer.
+function resolveAutoSource() {
+  if (state.autoSource === 'prolink' && prolink.connected) return 'prolink';
+  if (state.autoSource === 'spotify' && spotify.authenticated) return 'spotify';
+  if (state.autoSource === 'timer') return 'timer';
+  if (prolink.connected && prolink.getMaster()) return 'prolink';
+  if (spotify.authenticated) return 'spotify';
+  return 'timer';
 }
 
-function disableLink() {
-  link.disable();
-  state.linkEnabled = false;
-  console.log('Ableton Link disabled');
-  broadcast();
+// Enable by default if PROLINK=1 env var is set
+if (process.env.PROLINK === '1') {
+  state.prolinkEnabled = true;
+  prolink.enable().catch((err) => {
+    console.error('PRO DJ LINK enable failed:', err.message);
+    state.prolinkEnabled = false;
+  });
 }
 
-// Enable by default if LINK=1 env var is set
-if (process.env.LINK === '1') enableLink();
+// ─── Spotify + Auto Show ─────────────────────────────────────────────────────
+
+const spotify = new SpotifyClient();
+const analysisCache = new AnalysisCache(path.join(__dirname, 'cache', 'analysis'));
+const autoShow = new AutoShow(applyPatch, COLOR_PRESETS, PATTERNS, analysisCache);
+
+// Track playback position locally (updated by Spotify polling)
+let autoPlayback = { progressMs: 0, isPlaying: false, updatedAt: 0 };
+
+function getAutoPositionMs() {
+  if (!autoPlayback.isPlaying) return autoPlayback.progressMs;
+  return autoPlayback.progressMs + (Date.now() - autoPlayback.updatedAt);
+}
+
+// Throttle state for the queue-lookahead poll that re-peeks Spotify's queue
+// while a track is playing so that queue edits made mid-play (reorder, add)
+// are still picked up and prefetched.
+let lastQueuePeekAt = 0;
+const QUEUE_PEEK_INTERVAL_MS = 15000;
+
+spotify.onPlaybackUpdate((playing) => {
+  autoPlayback.progressMs = playing.progressMs;
+  autoPlayback.isPlaying = playing.isPlaying;
+  autoPlayback.updatedAt = Date.now();
+
+  // While the auto show is running, re-peek the queue on a slow interval so
+  // mid-play queue edits are picked up. prefetchNextFromQueue() is cheap when
+  // the head is unchanged or already cached — it no-ops in those cases.
+  if (autoShow.running && Date.now() - lastQueuePeekAt >= QUEUE_PEEK_INTERVAL_MS) {
+    lastQueuePeekAt = Date.now();
+    prefetchNextFromQueue();
+  }
+});
+
+/**
+ * Peek the Spotify user queue and kick off a background prefetch of the next
+ * upcoming track so its analysis is already in the cache when it starts
+ * playing. Safe to call while a show is running — the prefetch path does not
+ * touch the running show's state.
+ */
+async function prefetchNextFromQueue() {
+  if (!spotify.authenticated) return;
+  // Stamp the throttle so the onPlaybackUpdate poll doesn't immediately
+  // re-fire right after an explicit call from the track-change path.
+  lastQueuePeekAt = Date.now();
+  try {
+    const queue = await spotify.getQueue();
+    if (!queue || !queue.length) return;
+    const next = queue[0];
+    if (!next || !next.trackId) return;
+
+    const query = `${next.artist} - ${next.name}`;
+    const cacheKey = keyForSpotify(next.trackId) || keyForQuery(query);
+    const meta = {
+      track: {
+        name: next.name,
+        artist: next.artist,
+        album: next.album,
+        albumArt: next.albumArt,
+        durationMs: next.durationMs,
+      },
+    };
+    // Fire-and-forget: never block the caller on prefetch.
+    autoShow.prefetch(query, (next.durationMs || 0) / 1000, cacheKey, meta)
+      .then((r) => {
+        if (r.skipped && r.reason === 'already-cached') {
+          console.log(`[prefetch] next queued track already cached: ${next.artist} — ${next.name}`);
+        } else if (!r.skipped && !r.error) {
+          console.log(`[prefetch] ready for next queued track: ${next.artist} — ${next.name}`);
+        }
+      })
+      .catch((err) => console.warn(`[prefetch] unexpected error: ${err.message}`));
+  } catch (err) {
+    console.warn(`[prefetch] queue lookup failed: ${err.message}`);
+  }
+}
+
+spotify.onTrackChange(async (playing) => {
+  console.log(`Spotify track changed: ${playing.artist} — ${playing.name}`);
+  // Only drive auto-show from Spotify when it's the active source.
+  if (resolveAutoSource() !== 'spotify') return;
+  // If auto mode is playing, re-analyze the new track via yt-dlp
+  if (autoShow.running) {
+    autoShow.stop();
+    autoShow.track = { name: playing.name, artist: playing.artist, album: playing.album, albumArt: playing.albumArt, durationMs: playing.durationMs };
+    broadcast();
+    try {
+      const query = `${playing.artist} - ${playing.name}`;
+      const cacheKey = keyForSpotify(playing.trackId) || keyForQuery(query);
+      await autoShow.downloadAndAnalyze(query, playing.durationMs / 1000, cacheKey);
+      autoShow.start(getAutoPositionMs);
+      console.log('Auto show restarted for new track');
+    } catch (err) {
+      console.error('Auto show analysis failed for new track:', err.message);
+    }
+    broadcast();
+
+    // Now that the current track is playing, warm the cache for the NEXT
+    // queued track so the upcoming change flips instantly to a cache hit.
+    prefetchNextFromQueue();
+  }
+});
 
 // ─── Socket.io ────────────────────────────────────────────────────────────────
 
@@ -680,10 +941,10 @@ app.post('/api/midi/connect', (req, res) => {
   res.json({ ok, enabled: midi.enabled, ports: midi.listPorts() });
 });
 
-// POST /api/link/enable   POST /api/link/disable   POST /api/link/toggle
-app.post('/api/link/enable',  (_req, res) => { applyPatch({ linkEnabled: true  }); res.json({ ok: true, link: { enabled: state.linkEnabled, peers: link.getNumPeers() } }); });
-app.post('/api/link/disable', (_req, res) => { applyPatch({ linkEnabled: false }); res.json({ ok: true, link: { enabled: state.linkEnabled, peers: link.getNumPeers() } }); });
-app.post('/api/link/toggle',  (_req, res) => { applyPatch({ linkEnabled: !state.linkEnabled }); res.json({ ok: true, link: { enabled: state.linkEnabled, peers: link.getNumPeers() } }); });
+// POST /api/prolink/enable   POST /api/prolink/disable   POST /api/prolink/toggle
+app.post('/api/prolink/enable',  (_req, res) => { applyPatch({ prolinkEnabled: true  }); res.json({ ok: true, prolink: getClientState().prolink }); });
+app.post('/api/prolink/disable', (_req, res) => { applyPatch({ prolinkEnabled: false }); res.json({ ok: true, prolink: getClientState().prolink }); });
+app.post('/api/prolink/toggle',  (_req, res) => { applyPatch({ prolinkEnabled: !state.prolinkEnabled }); res.json({ ok: true, prolink: getClientState().prolink }); });
 
 // ─── GDTF / Profiles / Fixtures / Show API ──────────────────────────────────
 
@@ -808,18 +1069,273 @@ app.post('/api/show', (req, res) => {
   }
 });
 
+// ─── Spotify Auth Routes ─────────────────────────────────────────────────────
+
+// GET /auth/spotify — redirect user to Spotify authorization page
+app.get('/auth/spotify', (req, res) => {
+  if (!spotify.configured) {
+    return res.status(400).json({ ok: false, error: 'Set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET env vars' });
+  }
+  res.redirect(spotify.getAuthorizeUrl());
+});
+
+// GET /auth/spotify/callback — exchange code for tokens
+app.get('/auth/spotify/callback', async (req, res) => {
+  const code = req.query.code;
+  if (!code) return res.status(400).send('Missing authorization code');
+  try {
+    await spotify.exchangeCode(code);
+    spotify.startPolling();
+    console.log('Spotify authenticated successfully');
+    broadcast();
+    res.send('<html><body style="background:#0d0d0f;color:#e8e8f0;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh"><div style="text-align:center"><h2 style="color:#44ff88">Spotify Connected</h2><p>You can close this window and return to the lightshow.</p><script>setTimeout(()=>window.close(),2000)</script></div></body></html>');
+  } catch (err) {
+    console.error('Spotify auth error:', err.message);
+    res.status(500).send(`Spotify auth failed: ${err.message}`);
+  }
+});
+
+// POST /api/spotify/disconnect
+app.post('/api/spotify/disconnect', (_req, res) => {
+  spotify.disconnect();
+  broadcast();
+  res.json({ ok: true });
+});
+
+// GET /api/spotify/now-playing
+app.get('/api/spotify/now-playing', async (_req, res) => {
+  try {
+    const playing = await spotify.getCurrentlyPlaying();
+    res.json({ ok: true, playing });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ─── Auto Show Routes ────────────────────────────────────────────────────────
+
+// POST /api/auto/analyze — analyze audio from file path, direct URL, or YouTube
+app.post('/api/auto/analyze', async (req, res) => {
+  const { source } = req.body; // file path, audio URL, YouTube URL, or search query
+  if (!source) return res.status(400).json({ ok: false, error: 'Provide a source (file path, URL, or YouTube search)' });
+
+  // Detect if this needs yt-dlp (YouTube URL or not a local file / direct audio URL)
+  const isYouTube = /(?:youtube\.com|youtu\.be|music\.youtube)/.test(source);
+  const isLocalFile = /^[a-zA-Z]:[\\/]|^\//.test(source);
+  const isDirectAudio = /\.(mp3|wav|ogg|flac|m4a|aac|wma)(\?|$)/i.test(source);
+
+  try {
+    if (isLocalFile || isDirectAudio) {
+      autoShow.track = { name: path.basename(source), artist: 'Local file', album: '', albumArt: null };
+      const cacheKey = isLocalFile ? keyForLocalFile(source) : `url:${source}`;
+      await autoShow.analyze(source, cacheKey);
+    } else {
+      // Use yt-dlp for YouTube URLs or search queries
+      autoShow.track = { name: source, artist: '', album: '', albumArt: null };
+      broadcast();
+      const cacheKey = keyForYouTube(source) || keyForQuery(source);
+      await autoShow.downloadAndAnalyze(source, null, cacheKey);
+    }
+    broadcast();
+    res.json({ ok: true, analysis: autoShow.getClientState().analysis });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// POST /api/auto/analyze-spotify — download full audio via yt-dlp and analyze
+app.post('/api/auto/analyze-spotify', async (_req, res) => {
+  if (!spotify.authenticated) {
+    return res.status(400).json({ ok: false, error: 'Spotify not connected' });
+  }
+  try {
+    const playing = await spotify.getCurrentlyPlaying();
+    if (!playing) return res.status(400).json({ ok: false, error: 'No track currently playing on Spotify' });
+
+    autoShow.track = { name: playing.name, artist: playing.artist, album: playing.album, albumArt: playing.albumArt, durationMs: playing.durationMs };
+    broadcast(); // show track info immediately
+
+    // Download full audio from YouTube using track metadata
+    const query = `${playing.artist} - ${playing.name}`;
+    const cacheKey = keyForSpotify(playing.trackId) || keyForQuery(query);
+    await autoShow.downloadAndAnalyze(query, playing.durationMs / 1000, cacheKey);
+
+    broadcast();
+    res.json({ ok: true, track: autoShow.track, analysis: autoShow.getClientState().analysis });
+
+    // Warm the cache for whatever is next in the user's Spotify queue so
+    // the upcoming track change is instant.
+    prefetchNextFromQueue();
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// POST /api/auto/download-analyze — download via yt-dlp (YouTube URL or search) and analyze
+app.post('/api/auto/download-analyze', async (req, res) => {
+  const { query } = req.body; // YouTube URL or search query
+  if (!query) return res.status(400).json({ ok: false, error: 'Provide a query (YouTube URL or search terms)' });
+  try {
+    autoShow.track = { name: query, artist: '', album: '', albumArt: null };
+    broadcast();
+
+    const cacheKey = keyForYouTube(query) || keyForQuery(query);
+    await autoShow.downloadAndAnalyze(query, null, cacheKey);
+
+    broadcast();
+    res.json({ ok: true, analysis: autoShow.getClientState().analysis });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// POST /api/auto/analyze-upload — analyze uploaded audio file
+app.post('/api/auto/analyze-upload', upload.single('audio'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ ok: false, error: 'No audio file uploaded' });
+  const tmpPath = path.join(require('os').tmpdir(), `auto-analyze-${Date.now()}${path.extname(req.file.originalname) || '.mp3'}`);
+  try {
+    fs.writeFileSync(tmpPath, req.file.buffer);
+    autoShow.track = { name: req.file.originalname, artist: 'Local file', album: '', albumArt: null };
+    const cacheKey = keyForBuffer(req.file.buffer);
+    await autoShow.analyze(tmpPath, cacheKey);
+    broadcast();
+    res.json({ ok: true, track: autoShow.track, analysis: autoShow.getClientState().analysis });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  } finally {
+    try { fs.unlinkSync(tmpPath); } catch (_) {}
+  }
+});
+
+// POST /api/auto/analyze-prolink — analyze the track currently loaded on the master CDJ
+app.post('/api/auto/analyze-prolink', async (_req, res) => {
+  if (!prolink.connected) {
+    return res.status(400).json({ ok: false, error: 'PRO DJ LINK not connected' });
+  }
+  const track = prolink.getTrack();
+  if (!track) {
+    return res.status(400).json({ ok: false, error: 'No track loaded on the master CDJ' });
+  }
+  if (!track.title || !track.artist) {
+    return res.status(400).json({ ok: false, error: 'Track has no rekordbox metadata — cannot search' });
+  }
+
+  try {
+    autoShow.track = {
+      name: track.title,
+      artist: track.artist,
+      album: track.album || '',
+      albumArt: null,
+      durationMs: track.durationMs || 0,
+    };
+    broadcast();
+
+    const query = `${track.artist} - ${track.title}`;
+    const cacheKey = keyForProlinkTrack(track);
+    const { audioPath } = await autoShow.downloadAndAnalyze(
+      query, (track.durationMs || 0) / 1000, cacheKey
+    );
+    if (audioPath) { try { fs.unlinkSync(audioPath); } catch (_) {} }
+
+    broadcast();
+    res.json({ ok: true, track: autoShow.track, analysis: autoShow.getClientState().analysis });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// POST /api/auto/start — start the auto show playback
+app.post('/api/auto/start', (_req, res) => {
+  if (!autoShow.analysis) return res.status(400).json({ ok: false, error: 'No analysis loaded. Analyze a track first.' });
+
+  const source = resolveAutoSource();
+  if (source === 'prolink') {
+    autoShow.start(getProlinkPositionMs);
+  } else if (source === 'spotify') {
+    spotify.startPolling(1000); // poll more frequently during auto mode
+    autoShow.start(getAutoPositionMs);
+  } else {
+    // Standalone timer (starts from 0)
+    const startTime = Date.now();
+    autoShow.start(() => Date.now() - startTime);
+  }
+
+  broadcast();
+  res.json({ ok: true, source });
+});
+
+// POST /api/auto/stop — stop the auto show
+app.post('/api/auto/stop', (_req, res) => {
+  autoShow.stop();
+  broadcast();
+  res.json({ ok: true });
+});
+
+// POST /api/auto/reset — reset auto show state
+app.post('/api/auto/reset', (_req, res) => {
+  autoShow.reset();
+  broadcast();
+  res.json({ ok: true });
+});
+
+// GET /api/auto/state
+app.get('/api/auto/state', (_req, res) => {
+  res.json({ ok: true, ...autoShow.getClientState(), spotify: spotify.getStatus() });
+});
+
+// GET /api/auto/timeline — full data payload for the UI visualizer
+app.get('/api/auto/timeline', (_req, res) => {
+  const data = autoShow.getTimelineData();
+  if (!data) return res.status(404).json({ ok: false, error: 'No analysis loaded' });
+  res.json({ ok: true, data });
+});
+
+// GET /api/auto/cache — list cached analysis entries
+app.get('/api/auto/cache', (_req, res) => {
+  res.json({ ok: true, entries: analysisCache.list() });
+});
+
+// DELETE /api/auto/cache — wipe the whole cache
+app.delete('/api/auto/cache', (_req, res) => {
+  const removed = analysisCache.clear();
+  res.json({ ok: true, removed });
+});
+
+// DELETE /api/auto/cache/entry  body: { key }
+app.delete('/api/auto/cache/entry', (req, res) => {
+  const { key } = req.body || {};
+  if (!key) return res.status(400).json({ ok: false, error: 'Missing key' });
+  const ok = analysisCache.delete(key);
+  res.json({ ok });
+});
+
+// Broadcast the auto-show playback position to connected clients at ~10 Hz
+// so the visualizer playhead stays smooth. Only runs while actually playing.
+setInterval(() => {
+  if (!autoShow.running) return;
+  io.emit('auto-position', { positionMs: autoShow.getPositionMs(), running: true });
+}, 100);
+
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
+  // Proxy forwards the authorization code to this local URL
+  spotify.localCallbackUrl = `http://localhost:${PORT}/auth/spotify/callback`;
+
   console.log(`\n  ArtNet Lightshow  →  http://localhost:${PORT}`);
   console.log(`  ArtNet            →  ${state.artnet.host}:${state.artnet.port} universe ${state.artnet.universe}`);
   console.log(`  Fixtures          →  ${state.fixtures.length}x at DMX ${state.fixtures.map(f => f.address).join(', ')}`);
   console.log(`  MIDI              →  ${midi.enabled ? 'connected' : 'not connected (set MIDI_INPUT env var or use /api/midi/connect)'}`);
-  console.log(`  Ableton Link      →  ${state.linkEnabled ? 'enabled' : 'disabled (set LINK=1 env var or use web UI)'}`);
-  console.log(`  Link backend      →  Python aalink bridge\n`);
+  console.log(`  PRO DJ LINK       →  ${state.prolinkEnabled ? 'enabled' : 'disabled (set PROLINK=1 env var or use web UI)'}`);
+  console.log(`  Spotify           →  ${spotify.configured ? 'configured (visit /auth/spotify to connect)' : 'not configured (set SPOTIFY_CLIENT_ID & SPOTIFY_CLIENT_SECRET in .env)'}`);
+  if (spotify.configured) {
+    console.log(`  Spotify redirect  →  register this URL in your Spotify dashboard:`);
+    console.log(`                       ${spotify.redirectUri}`);
+  }
+  console.log(`  Auto Show         →  Essentia + Spotify integration\n`);
 });
 
 // Clean shutdown
-process.on('SIGINT',  () => { link.destroy(); process.exit(0); });
-process.on('SIGTERM', () => { link.destroy(); process.exit(0); });
+process.on('SIGINT',  () => { autoShow.stop(); spotify.disconnect(); prolink.destroy(); process.exit(0); });
+process.on('SIGTERM', () => { autoShow.stop(); spotify.disconnect(); prolink.destroy(); process.exit(0); });

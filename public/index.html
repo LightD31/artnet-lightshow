@@ -135,17 +135,19 @@
       </details>
     </div>
 
-    <!-- Ableton Link -->
+    <!-- PRO DJ LINK -->
     <div class="card">
-      <div class="card-title">Ableton Link</div>
+      <div class="card-title">PRO DJ LINK</div>
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-        <div id="link-dot" class="status-dot"></div>
-        <span id="link-status-text" style="font-size:11px;color:var(--muted)">Disabled</span>
+        <div id="prolink-dot" class="status-dot"></div>
+        <span id="prolink-status-text" style="font-size:11px;color:var(--muted)">Disabled</span>
       </div>
-      <div style="display:flex;align-items:center;gap:8px">
-        <button class="btn" id="link-toggle">Enable</button>
-        <span id="link-peers" style="font-size:11px;color:var(--muted)">0 peers</span>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <button class="btn" id="prolink-toggle">Enable</button>
+        <span id="prolink-peers" style="font-size:11px;color:var(--muted)">0 devices</span>
       </div>
+      <div id="prolink-master" style="font-size:11px;color:var(--muted)">No master</div>
+      <div id="prolink-track" style="font-size:11px;color:var(--muted);margin-top:4px">—</div>
     </div>
 
     <!-- Settings -->
@@ -172,6 +174,98 @@
 
   <!-- ── Right Panel ──────────────────────────────────────── -->
   <div class="right-panel">
+
+    <!-- Auto Mode -->
+    <div class="card" id="auto-card">
+      <div class="card-title">Auto Mode <span class="auto-badge" id="auto-badge">OFF</span></div>
+
+      <!-- Source selector -->
+      <div class="auto-section" style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+        <label style="font-size:11px;color:var(--muted)">Source:</label>
+        <select id="auto-source-select"
+          style="background:var(--surface);border:1px solid var(--border);
+                 color:var(--text);border-radius:6px;padding:4px 6px;font-size:12px;font-family:inherit">
+          <option value="auto">Auto-detect</option>
+          <option value="prolink">PRO DJ LINK</option>
+          <option value="spotify">Spotify</option>
+          <option value="timer">Standalone timer</option>
+        </select>
+      </div>
+
+      <!-- Spotify connection -->
+      <div class="auto-section" id="auto-spotify-section">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+          <div id="spotify-dot" class="status-dot"></div>
+          <span id="spotify-status-text" style="font-size:11px;color:var(--muted)">Not configured</span>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn" id="spotify-connect-btn">Connect Spotify</button>
+          <button class="btn" id="spotify-disconnect-btn" style="display:none">Disconnect</button>
+        </div>
+      </div>
+
+      <!-- Now playing -->
+      <div class="auto-now-playing" id="auto-now-playing" style="display:none">
+        <img id="auto-album-art" class="auto-album-art" src="" alt="" />
+        <div class="auto-track-info">
+          <div class="auto-track-name" id="auto-track-name"></div>
+          <div class="auto-track-artist" id="auto-track-artist"></div>
+        </div>
+      </div>
+
+      <!-- Analysis info -->
+      <div class="auto-analysis" id="auto-analysis" style="display:none">
+        <div class="auto-analysis-stats" id="auto-analysis-stats"></div>
+      </div>
+
+      <!-- Timeline visualizer -->
+      <div class="auto-timeline" id="auto-timeline" style="display:none">
+        <div class="auto-timeline-header">
+          <span class="auto-timeline-title">Timeline</span>
+          <span class="auto-timeline-time">
+            <span id="auto-timeline-pos">0:00</span> / <span id="auto-timeline-dur">0:00</span>
+          </span>
+        </div>
+        <canvas id="auto-timeline-canvas" width="800" height="160"></canvas>
+        <div class="auto-timeline-legend">
+          <span><i class="swatch seg-low"></i>Low</span>
+          <span><i class="swatch seg-mid"></i>Mid</span>
+          <span><i class="swatch seg-high"></i>High</span>
+          <span><i class="swatch buildup"></i>Build-up</span>
+          <span><i class="swatch drop"></i>Drop</span>
+          <span><i class="swatch event-patch"></i>Pattern</span>
+          <span><i class="swatch event-energy"></i>Burst</span>
+        </div>
+      </div>
+
+      <!-- Audio source -->
+      <div class="auto-source" style="margin-top:10px">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+          <button class="btn" id="auto-analyze-spotify-btn">Analyze Spotify Track</button>
+          <button class="btn" id="auto-analyze-prolink-btn">Analyze CDJ Track</button>
+          <label class="btn" id="auto-upload-label" style="cursor:pointer">
+            Upload Audio
+            <input type="file" id="auto-upload-input" accept="audio/*" style="display:none" />
+          </label>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input type="text" id="auto-source-input" placeholder="File path, YouTube URL, or search query…"
+            style="flex:1;background:var(--surface);border:1px solid var(--border);
+                   color:var(--text);border-radius:6px;padding:5px 8px;font-size:12px;font-family:monospace;" />
+          <button class="btn" id="auto-analyze-btn">Analyze</button>
+        </div>
+      </div>
+
+      <!-- Status -->
+      <div id="auto-status-msg" style="font-size:11px;color:var(--muted);margin-top:8px"></div>
+
+      <!-- Transport -->
+      <div class="auto-transport" style="margin-top:10px;display:flex;gap:6px">
+        <button class="btn active" id="auto-start-btn" disabled>Start Auto Show</button>
+        <button class="btn" id="auto-stop-btn" disabled>Stop</button>
+        <button class="btn" id="auto-reset-btn">Reset</button>
+      </div>
+    </div>
 
     <!-- Energy Overrides -->
     <div class="card" id="energy-card">
