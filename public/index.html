@@ -75,8 +75,10 @@
       <div class="color-legend">
         <span class="a">Colour A</span>
         <span class="b">Colour B</span>
+        <span class="c">Colour C</span>
+        <span class="d">Colour D</span>
       </div>
-      <p style="font-size:10px;color:var(--muted);margin-top:8px">Left-click = Colour A &nbsp;|&nbsp; Right-click = Colour B</p>
+      <p style="font-size:10px;color:var(--muted);margin-top:8px">Click = A &nbsp;|&nbsp; Right-click = B &nbsp;|&nbsp; Shift+click = C &nbsp;|&nbsp; Shift+right-click = D</p>
     </div>
 
     <!-- Strobe speed (shown when strobe pattern active) -->
@@ -180,7 +182,7 @@
       <div class="card-title">Auto Mode <span class="auto-badge" id="auto-badge">OFF</span></div>
 
       <!-- Source selector -->
-      <div class="auto-section" style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+      <div class="auto-section" style="display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap">
         <label style="font-size:11px;color:var(--muted)">Source:</label>
         <select id="auto-source-select"
           style="background:var(--surface);border:1px solid var(--border);
@@ -190,6 +192,20 @@
           <option value="spotify">Spotify</option>
           <option value="timer">Standalone timer</option>
         </select>
+        <label style="font-size:11px;color:var(--muted);margin-left:4px"
+               title="How many colours the locked palette uses — swaps live on the current song">Palette:</label>
+        <div class="palette-size-toggle" id="auto-palette-size" role="group" aria-label="Auto-show palette size">
+          <button type="button" class="btn palette-size-btn" data-size="2">2</button>
+          <button type="button" class="btn palette-size-btn" data-size="3">3</button>
+          <button type="button" class="btn palette-size-btn active" data-size="4">4</button>
+        </div>
+      </div>
+
+      <!-- Intensity slider -->
+      <div class="slider-row" style="margin-bottom:8px">
+        <label title="Energy intensity — scales accent density, drop effects, and beat-division escalation">Intensity</label>
+        <input type="range" id="auto-intensity" min="0" max="100" value="50" />
+        <span class="val" id="auto-intensity-val">50</span>
       </div>
 
       <!-- Spotify connection -->
@@ -226,11 +242,17 @@
             <span id="auto-timeline-pos">0:00</span> / <span id="auto-timeline-dur">0:00</span>
           </span>
         </div>
-        <canvas id="auto-timeline-canvas" width="800" height="160"></canvas>
+        <canvas id="auto-timeline-canvas" width="800" height="200"></canvas>
         <div class="auto-timeline-legend">
           <span><i class="swatch seg-low"></i>Low</span>
           <span><i class="swatch seg-mid"></i>Mid</span>
           <span><i class="swatch seg-high"></i>High</span>
+          <span><i class="swatch curve-energy"></i>Energy</span>
+          <span><i class="swatch curve-bass"></i>Bass</span>
+          <span><i class="swatch curve-kick"></i>Kick</span>
+          <span><i class="swatch curve-high"></i>Highs</span>
+          <span><i class="swatch tempo"></i>Tempo</span>
+          <span><i class="swatch downbeat"></i>Downbeat</span>
           <span><i class="swatch buildup"></i>Build-up</span>
           <span><i class="swatch drop"></i>Drop</span>
           <span><i class="swatch event-patch"></i>Pattern</span>

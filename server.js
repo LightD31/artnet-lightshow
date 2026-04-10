@@ -12,6 +12,7 @@ const MidiController = require('./src/midi');
 const ProLink = require('./src/prolink');
 const { parseGDTF } = require('./src/gdtf');
 const SpotifyClient = require('./src/spotify');
+const deezer = require('./src/deezer');
 const AutoShow = require('./src/auto-show');
 const {
   AnalysisCache,
@@ -125,20 +126,28 @@ const STROBE_FUNCTIONS = [
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
+// NOTE on ordering: indices 0-11 are frozen because MIDI bindings
+// (see src/midi.js) and stored shows reference them directly. New presets
+// are appended after index 11. `Blackout` stays last so UI code that treats
+// it as a sentinel continues to work (auto-show.js looks it up by name).
 const COLOR_PRESETS = [
-  { name: 'Red',        r: 255, g: 0,   b: 0,   w: 0,   a: 0,   uv: 0   },
-  { name: 'Orange',     r: 200, g: 60,  b: 0,   w: 0,   a: 180, uv: 0   },
-  { name: 'Amber',      r: 0,   g: 0,   b: 0,   w: 0,   a: 255, uv: 0   },
-  { name: 'Yellow',     r: 255, g: 220, b: 0,   w: 0,   a: 100, uv: 0   },
-  { name: 'Green',      r: 0,   g: 255, b: 0,   w: 0,   a: 0,   uv: 0   },
-  { name: 'Cyan',       r: 0,   g: 255, b: 255, w: 0,   a: 0,   uv: 0   },
-  { name: 'Blue',       r: 0,   g: 0,   b: 255, w: 0,   a: 0,   uv: 0   },
-  { name: 'Purple',     r: 100, g: 0,   b: 255, w: 0,   a: 0,   uv: 0   },
-  { name: 'Magenta',    r: 255, g: 0,   b: 200, w: 0,   a: 0,   uv: 0   },
-  { name: 'White',      r: 0,   g: 0,   b: 0,   w: 255, a: 0,   uv: 0   },
-  { name: 'UV',         r: 0,   g: 0,   b: 0,   w: 0,   a: 0,   uv: 255 },
-  { name: 'UV (RGB)',   r: 60,  g: 0,   b: 255, w: 0,   a: 0,   uv: 0   },
-  { name: 'Blackout',   r: 0,   g: 0,   b: 0,   w: 0,   a: 0,   uv: 0   },
+  { name: 'Red',        r: 255, g: 0,   b: 0,   w: 0,   a: 0,   uv: 0   }, // 0
+  { name: 'Orange',     r: 200, g: 60,  b: 0,   w: 0,   a: 180, uv: 0   }, // 1
+  { name: 'Amber',      r: 0,   g: 0,   b: 0,   w: 0,   a: 255, uv: 0   }, // 2
+  { name: 'Yellow',     r: 255, g: 220, b: 0,   w: 0,   a: 100, uv: 0   }, // 3
+  { name: 'Green',      r: 0,   g: 255, b: 0,   w: 0,   a: 0,   uv: 0   }, // 4
+  { name: 'Cyan',       r: 0,   g: 255, b: 255, w: 0,   a: 0,   uv: 0   }, // 5
+  { name: 'Blue',       r: 0,   g: 0,   b: 255, w: 0,   a: 0,   uv: 0   }, // 6
+  { name: 'Purple',     r: 100, g: 0,   b: 255, w: 0,   a: 0,   uv: 0   }, // 7
+  { name: 'Magenta',    r: 255, g: 0,   b: 200, w: 0,   a: 0,   uv: 0   }, // 8
+  { name: 'White',      r: 0,   g: 0,   b: 0,   w: 255, a: 0,   uv: 0   }, // 9
+  { name: 'UV',         r: 0,   g: 0,   b: 0,   w: 0,   a: 0,   uv: 255 }, // 10
+  { name: 'UV (RGB)',   r: 60,  g: 0,   b: 255, w: 0,   a: 0,   uv: 0   }, // 11
+  { name: 'Pink',       r: 255, g: 90,  b: 160, w: 0,   a: 0,   uv: 0   }, // 12
+  { name: 'Teal',       r: 0,   g: 200, b: 170, w: 0,   a: 0,   uv: 0   }, // 13
+  { name: 'Gold',       r: 255, g: 140, b: 0,   w: 0,   a: 200, uv: 0   }, // 14
+  { name: 'Warm White', r: 120, g: 40,  b: 0,   w: 255, a: 200, uv: 0   }, // 15
+  { name: 'Blackout',   r: 0,   g: 0,   b: 0,   w: 0,   a: 0,   uv: 0   }, // 16
 ];
 
 const PATTERNS = [
@@ -158,6 +167,15 @@ const PATTERNS = [
   { id: 'random-flash', name: 'Random Flash',  desc: 'Random fixture pops each beat' },
   { id: 'runner',       name: 'Runner',        desc: 'Chase with a fading trail' },
   { id: 'pairs',        name: 'Pairs',         desc: 'Two adjacent fixtures chase' },
+  { id: 'hit',          name: 'Hit',           desc: 'All fixtures punch on beat, decay between' },
+  { id: 'alt-halves',   name: 'Alt Halves',    desc: 'Two halves swap colours each beat' },
+  { id: 'split-3',      name: 'Split 3',       desc: 'Three colours cycling across fixtures' },
+  { id: 'chase-3',      name: 'Chase 3',       desc: 'Chase rotating through three colours' },
+  { id: 'alt-thirds',   name: 'Alt Thirds',    desc: 'Three sections swap colours each beat' },
+  { id: 'split-4',      name: 'Split 4',       desc: 'Four colours cycling across fixtures' },
+  { id: 'chase-4',      name: 'Chase 4',       desc: 'Chase rotating through four colours' },
+  { id: 'alt-quarters', name: 'Alt Quarters',  desc: 'Four sections swap colours each beat' },
+  { id: 'pairs-4',      name: 'Pairs 4',       desc: 'Adjacent pairs chase with four colours' },
 ];
 
 // ─── Energy overrides ────────────────────────────────────────────────────────
@@ -184,6 +202,8 @@ const state = {
   pattern: 'chase',
   colorA: 0,    // Red
   colorB: 6,    // Blue
+  colorC: 4,    // Green
+  colorD: 8,    // Magenta
   masterDimmer: 255,
   masterBlackout: false,
   strobeSpeed: 0,
@@ -202,6 +222,7 @@ const state = {
   _pingDir: 1,
   _hue: 0,
   _fadePhase: 0,
+  _hitPhase: 1, // 0 = fresh hit (full bright), 1 = fully decayed
   _twinkle: new Array(4).fill(0),
 };
 
@@ -231,9 +252,12 @@ function applyPatch(data) {
     state.pattern = data.pattern;
     state._step = 0;
     state._fadePhase = 0;
+    state._hitPhase = 1;
   }
   if (data.colorA !== undefined) state.colorA = Math.max(0, Math.min(COLOR_PRESETS.length - 1, data.colorA));
   if (data.colorB !== undefined) state.colorB = Math.max(0, Math.min(COLOR_PRESETS.length - 1, data.colorB));
+  if (data.colorC !== undefined) state.colorC = Math.max(0, Math.min(COLOR_PRESETS.length - 1, data.colorC));
+  if (data.colorD !== undefined) state.colorD = Math.max(0, Math.min(COLOR_PRESETS.length - 1, data.colorD));
   if (data.masterDimmer !== undefined) state.masterDimmer = Math.max(0, Math.min(255, data.masterDimmer));
   if (data.masterBlackout !== undefined) state.masterBlackout = data.masterBlackout;
   if (data.strobeSpeed !== undefined) state.strobeSpeed = Math.max(0, Math.min(255, data.strobeSpeed));
@@ -261,6 +285,14 @@ function applyPatch(data) {
   if (data.autoSource !== undefined) {
     const allowed = ['auto', 'spotify', 'prolink', 'timer'];
     if (allowed.includes(data.autoSource)) state.autoSource = data.autoSource;
+  }
+  if (data.autoPaletteSize !== undefined) {
+    // Live-swap the palette size for the current auto-show. Rebuilds the
+    // timeline in place so the next tick applies the new colours.
+    autoShow.setPaletteSize(Number(data.autoPaletteSize));
+  }
+  if (data.autoIntensity !== undefined) {
+    autoShow.setIntensity(Number(data.autoIntensity));
   }
 
   if (restartTimer) restartBeatTimer();
@@ -334,6 +366,8 @@ function tickPattern() {
   if (!state.running) return;
   const colA = COLOR_PRESETS[state.colorA];
   const colB = COLOR_PRESETS[state.colorB];
+  const colC = COLOR_PRESETS[state.colorC];
+  const colD = COLOR_PRESETS[state.colorD];
   const step = state._step;
 
   switch (state.pattern) {
@@ -444,6 +478,89 @@ function tickPattern() {
       }
       break;
     }
+    case 'hit': {
+      // Per-beat punch: reset decay phase; renderDmx does the smooth fade.
+      state._hitPhase = 0;
+      for (let i = 0; i < getFixtureCount(); i++) setFixtureColor(i, colA, 255, 0);
+      break;
+    }
+    case 'alt-halves': {
+      // Two halves of the rig swap colA/colB on each beat. Different look
+      // from 'split' (which alternates every other fixture).
+      const N = Math.max(1, getFixtureCount());
+      const half = Math.max(1, Math.floor(N / 2));
+      const flipped = (step % 2) === 1;
+      for (let i = 0; i < N; i++) {
+        const firstHalf = i < half;
+        const useA = flipped ? !firstHalf : firstHalf;
+        setFixtureColor(i, useA ? colA : colB, 255, 0);
+      }
+      break;
+    }
+    // ── 3-colour patterns ──────────────────────────────────────────────────
+    case 'split-3': {
+      const cols3 = [colA, colB, colC];
+      for (let i = 0; i < getFixtureCount(); i++)
+        setFixtureColor(i, cols3[(i + step) % 3], 255, 0);
+      break;
+    }
+    case 'chase-3': {
+      const N = getFixtureCount();
+      const cols3 = [colA, colB, colC];
+      for (let i = 0; i < N; i++) {
+        const active = i === step % N;
+        setFixtureColor(i, active ? cols3[step % 3] : cols3[i % 3], active ? 255 : 60, 0);
+      }
+      break;
+    }
+    case 'alt-thirds': {
+      const N = Math.max(1, getFixtureCount());
+      const cols3 = [colA, colB, colC];
+      const third = Math.max(1, Math.ceil(N / 3));
+      const rot = step % 3;
+      for (let i = 0; i < N; i++) {
+        const section = Math.min(2, Math.floor(i / third));
+        setFixtureColor(i, cols3[(section + rot) % 3], 255, 0);
+      }
+      break;
+    }
+    // ── 4-colour patterns ──────────────────────────────────────────────────
+    case 'split-4': {
+      const cols4 = [colA, colB, colC, colD];
+      for (let i = 0; i < getFixtureCount(); i++)
+        setFixtureColor(i, cols4[(i + step) % 4], 255, 0);
+      break;
+    }
+    case 'chase-4': {
+      const N = getFixtureCount();
+      const cols4 = [colA, colB, colC, colD];
+      for (let i = 0; i < N; i++) {
+        const active = i === step % N;
+        setFixtureColor(i, active ? cols4[step % 4] : cols4[i % 4], active ? 255 : 60, 0);
+      }
+      break;
+    }
+    case 'alt-quarters': {
+      const N = Math.max(1, getFixtureCount());
+      const cols4 = [colA, colB, colC, colD];
+      const quarter = Math.max(1, Math.ceil(N / 4));
+      const rot = step % 4;
+      for (let i = 0; i < N; i++) {
+        const section = Math.min(3, Math.floor(i / quarter));
+        setFixtureColor(i, cols4[(section + rot) % 4], 255, 0);
+      }
+      break;
+    }
+    case 'pairs-4': {
+      const N = Math.max(1, getFixtureCount());
+      const cols4 = [colA, colB, colC, colD];
+      const pos = step % N;
+      for (let i = 0; i < N; i++) {
+        const on = (i === pos || i === (pos + 1) % N);
+        setFixtureColor(i, on ? cols4[step % 4] : cols4[i % 4], on ? 255 : 50, 0);
+      }
+      break;
+    }
   }
 
   state._step++;
@@ -479,6 +596,19 @@ function renderDmx() {
     const cycleSeconds = (60 / Math.max(1, state.bpm)) * 8;
     state._fadePhase = (state._fadePhase + dt / cycleSeconds) % 1;
     const bright = Math.round(((Math.sin(state._fadePhase * Math.PI * 2 - Math.PI / 2) + 1) / 2) * 230 + 25);
+    const colA = COLOR_PRESETS[state.colorA];
+    for (let i = 0; i < getFixtureCount(); i++) setFixtureColor(i, colA, bright, 0);
+  }
+
+  // 'hit' pattern: decay brightness from 255 → 35 over one beat-interval.
+  // tickPattern resets _hitPhase to 0 on every beat; between beats we advance
+  // it at the DMX rate so the punch feels responsive at any beat division.
+  if (state.running && state.pattern === 'hit') {
+    const beatSec = Math.max(0.05, (60 / Math.max(1, state.bpm)) / Math.max(1, state.beatDivision));
+    state._hitPhase = Math.min(1, (state._hitPhase ?? 1) + dt / beatSec);
+    // Exponential-ish decay feels punchier than linear.
+    const decay = Math.pow(1 - state._hitPhase, 1.8);
+    const bright = Math.round(35 + decay * 220);
     const colA = COLOR_PRESETS[state.colorA];
     for (let i = 0; i < getFixtureCount(); i++) setFixtureColor(i, colA, bright, 0);
   }
@@ -526,11 +656,17 @@ function renderDmx() {
       if (ch.dimmer !== undefined)     dmx[base + ch.dimmer] = Math.round(dim * ms);
       if (ch.dimmerFine !== undefined)  dmx[base + ch.dimmerFine] = 0;
 
-      // Strobe: map rawStrobe (0-255) into the selected strobe function's DMX range
+      // Strobe: map rawStrobe (0-255) into the selected strobe function's DMX range.
+      // Energy overrides force the 'standard' function (1-20 Hz) so a colour-strobe
+      // burst never inherits a slow sequenced strobeFunction (ramp-*, break, …) left
+      // over from the prior segment. Without this, a burst landing on a section with
+      // strobeFunction:'break' visibly flashes slower than the pattern underneath at
+      // beatDivision 2/4.
       if (ch.strobe !== undefined) {
         const rawStrobe = energy ? strobe : (state.pattern === 'strobe' ? state.strobeSpeed : strobe);
         if (rawStrobe > 0) {
-          const fn = STROBE_FUNCTIONS.find(f => f.id === state.strobeFunction) || STROBE_FUNCTIONS[0];
+          const fnId = energy ? 'standard' : state.strobeFunction;
+          const fn = STROBE_FUNCTIONS.find(f => f.id === fnId) || STROBE_FUNCTIONS[0];
           dmx[base + ch.strobe] = fn.lo + Math.round((rawStrobe / 255) * (fn.hi - fn.lo));
         }
       }
@@ -584,6 +720,8 @@ function getClientState() {
     pattern: state.pattern,
     colorA: state.colorA,
     colorB: state.colorB,
+    colorC: state.colorC,
+    colorD: state.colorD,
     masterDimmer: state.masterDimmer,
     masterBlackout: state.masterBlackout,
     strobeSpeed: state.strobeSpeed,
@@ -706,6 +844,13 @@ const spotify = new SpotifyClient();
 const analysisCache = new AnalysisCache(path.join(__dirname, 'cache', 'analysis'));
 const autoShow = new AutoShow(applyPatch, COLOR_PRESETS, PATTERNS, analysisCache);
 
+// Initialize Deezer if an ARL token is configured
+if (process.env.DEEZER_ARL) {
+  deezer.init(process.env.DEEZER_ARL).catch((err) => {
+    console.warn(`[deezer] Init failed: ${err.message} — will fall back to yt-dlp`);
+  });
+}
+
 // Track playback position locally (updated by Spotify polling)
 let autoPlayback = { progressMs: 0, isPlaying: false, updatedAt: 0 };
 
@@ -763,7 +908,7 @@ async function prefetchNextFromQueue() {
       },
     };
     // Fire-and-forget: never block the caller on prefetch.
-    autoShow.prefetch(query, (next.durationMs || 0) / 1000, cacheKey, meta)
+    autoShow.prefetch(query, (next.durationMs || 0) / 1000, cacheKey, meta, next.isrc)
       .then((r) => {
         if (r.skipped && r.reason === 'already-cached') {
           console.log(`[prefetch] next queued track already cached: ${next.artist} — ${next.name}`);
@@ -789,7 +934,7 @@ spotify.onTrackChange(async (playing) => {
     try {
       const query = `${playing.artist} - ${playing.name}`;
       const cacheKey = keyForSpotify(playing.trackId) || keyForQuery(query);
-      await autoShow.downloadAndAnalyze(query, playing.durationMs / 1000, cacheKey);
+      await autoShow.downloadAndAnalyze(query, playing.durationMs / 1000, cacheKey, playing.isrc);
       autoShow.start(getAutoPositionMs);
       console.log('Auto show restarted for new track');
     } catch (err) {
@@ -839,7 +984,7 @@ io.on('connection', (socket) => {
 
 app.get('/api/state', (_req, res) => res.json(getClientState()));
 
-// POST /api/set  body: { bpm, pattern, colorA, colorB, masterDimmer, masterBlackout, running, ... }
+// POST /api/set  body: { bpm, pattern, colorA, colorB, colorC, colorD, masterDimmer, masterBlackout, running, ... }
 app.post('/api/set', (req, res) => {
   applyPatch(req.body);
   res.json({ ok: true, state: getClientState() });
@@ -869,11 +1014,12 @@ app.post('/api/pattern/:id', (req, res) => {
   res.json({ ok: true, pattern: state.pattern });
 });
 
-// POST /api/color/a/:index   POST /api/color/b/:index
+// POST /api/color/a/:index   POST /api/color/b/:index  etc.
 app.post('/api/color/:slot/:index', (req, res) => {
-  const slot = req.params.slot === 'b' ? 'colorB' : 'colorA';
+  const slotMap = { a: 'colorA', b: 'colorB', c: 'colorC', d: 'colorD' };
+  const slot = slotMap[req.params.slot] || 'colorA';
   applyPatch({ [slot]: parseInt(req.params.index) });
-  res.json({ ok: true, colorA: state.colorA, colorB: state.colorB });
+  res.json({ ok: true, colorA: state.colorA, colorB: state.colorB, colorC: state.colorC, colorD: state.colorD });
 });
 
 // POST /api/bpm/:value
@@ -1143,7 +1289,7 @@ app.post('/api/auto/analyze', async (req, res) => {
   }
 });
 
-// POST /api/auto/analyze-spotify — download full audio via yt-dlp and analyze
+// POST /api/auto/analyze-spotify — download audio (Deezer via ISRC, yt-dlp fallback) and analyze
 app.post('/api/auto/analyze-spotify', async (_req, res) => {
   if (!spotify.authenticated) {
     return res.status(400).json({ ok: false, error: 'Spotify not connected' });
@@ -1155,10 +1301,9 @@ app.post('/api/auto/analyze-spotify', async (_req, res) => {
     autoShow.track = { name: playing.name, artist: playing.artist, album: playing.album, albumArt: playing.albumArt, durationMs: playing.durationMs };
     broadcast(); // show track info immediately
 
-    // Download full audio from YouTube using track metadata
     const query = `${playing.artist} - ${playing.name}`;
     const cacheKey = keyForSpotify(playing.trackId) || keyForQuery(query);
-    await autoShow.downloadAndAnalyze(query, playing.durationMs / 1000, cacheKey);
+    await autoShow.downloadAndAnalyze(query, playing.durationMs / 1000, cacheKey, playing.isrc);
 
     broadcast();
     res.json({ ok: true, track: autoShow.track, analysis: autoShow.getClientState().analysis });
@@ -1333,6 +1478,7 @@ server.listen(PORT, () => {
     console.log(`  Spotify redirect  →  register this URL in your Spotify dashboard:`);
     console.log(`                       ${spotify.redirectUri}`);
   }
+  console.log(`  Deezer            →  ${process.env.DEEZER_ARL ? 'configured (ISRC-based downloads)' : 'not configured (set DEEZER_ARL in .env for exact audio — falls back to yt-dlp)'}`);
   console.log(`  Auto Show         →  Essentia + Spotify integration\n`);
 });
 

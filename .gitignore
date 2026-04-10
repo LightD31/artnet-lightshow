@@ -2,3 +2,4 @@ node_modules/
 companion-module/node_modules/
 .env
 cache/
+tests/fixtures/

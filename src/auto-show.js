@@ -4,6 +4,159 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const deezer = require('./deezer');
+
+// ── Palette tetrads ─────────────────────────────────────────────────────────
+// Each song locks to a single 4-colour "look" from this bank for the whole
+// track. Hand-tuned for coherence — most follow the tetrad rule (two pairs of
+// analogous + complement) or split-complementary (one dominant + two accents).
+//
+// Colour preset indices (see server.js COLOR_PRESETS):
+//   0=Red 1=Orange 2=Amber 3=Yellow 4=Green 5=Cyan 6=Blue 7=Purple 8=Magenta
+//   9=White 10=UV 11=UV(RGB) 12=Pink 13=Teal 14=Gold 15=Warm White
+//
+// Ordering inside each tetrad matters: position 0 is the "anchor" that shows
+// up first, positions 1-3 fill out the coherent pairings.
+const TETRADS = {
+  sunset:    [1, 0, 8, 7],    // Orange / Red / Magenta / Purple — warm theatrical
+  warm:      [3, 1, 14, 8],   // Yellow / Orange / Gold / Magenta — golden hour
+  cyber:     [8, 7, 5, 6],    // Magenta / Purple / Cyan / Blue — EDM classic
+  neon:      [8, 12, 5, 11],  // Magenta / Pink / Cyan / UV(RGB) — rave
+  cool:      [6, 7, 5, 13],   // Blue / Purple / Cyan / Teal — chill
+  ocean:     [5, 13, 6, 4],   // Cyan / Teal / Blue / Green — serene
+  forest:    [4, 13, 2, 14],  // Green / Teal / Amber / Gold — organic
+  fire:      [0, 14, 3, 1],   // Red / Gold / Yellow / Orange — rock/metal heat
+  candy:     [12, 8, 3, 5],   // Pink / Magenta / Yellow / Cyan — pop
+  halloween: [1, 7, 14, 10],  // Orange / Purple / Gold / UV — spooky
+  monoRed:   [0, 8, 1, 14],   // Red-dominant warm — metal / aggression
+  monoBlue:  [6, 7, 5, 11],   // Blue-dominant — trance
+  royal:     [7, 11, 8, 15],  // Purple / UV(RGB) / Magenta / Warm White — regal
+  golden:    [14, 3, 15, 1],  // Gold / Yellow / Warm White / Orange — concert
+};
+
+// Triad banks (3-colour looks). Hand-picked — NOT slices of TETRADS — so the
+// 3-colour view stays visually coherent (triads favour three well-separated
+// hues instead of the tetrad's two analogous pairs). Keys match TETRADS so
+// the same genre/mood resolver can swap size without changing its logic.
+const TRIADS = {
+  sunset:    [1, 0, 7],       // Orange / Red / Purple
+  warm:      [3, 1, 14],      // Yellow / Orange / Gold
+  cyber:     [8, 5, 6],       // Magenta / Cyan / Blue — EDM triad
+  neon:      [8, 12, 5],      // Magenta / Pink / Cyan
+  cool:      [6, 7, 5],       // Blue / Purple / Cyan
+  ocean:     [5, 6, 13],      // Cyan / Blue / Teal
+  forest:    [4, 13, 14],     // Green / Teal / Gold
+  fire:      [0, 14, 1],      // Red / Gold / Orange
+  candy:     [12, 3, 5],      // Pink / Yellow / Cyan — pop triad
+  halloween: [1, 7, 10],      // Orange / Purple / UV
+  monoRed:   [0, 8, 14],      // Red / Magenta / Gold
+  monoBlue:  [6, 7, 5],       // Blue / Purple / Cyan
+  royal:     [7, 11, 14],     // Purple / UV(RGB) / Gold
+  golden:    [14, 3, 1],      // Gold / Yellow / Orange
+};
+
+// Duo banks (2-colour looks). Complementary pairs that read cleanly on a
+// small rig — two hand-picked hues that contrast strongly instead of the
+// tetrad's analogous pair (which would look like a single colour from the
+// audience). Keys match TETRADS so the resolver works the same way.
+const DUOS = {
+  sunset:    [1, 7],          // Orange / Purple
+  warm:      [3, 8],          // Yellow / Magenta
+  cyber:     [8, 5],          // Magenta / Cyan — classic EDM
+  neon:      [12, 5],         // Pink / Cyan
+  cool:      [6, 5],          // Blue / Cyan
+  ocean:     [5, 6],          // Cyan / Blue
+  forest:    [4, 14],         // Green / Gold
+  fire:      [0, 14],         // Red / Gold
+  candy:     [12, 5],         // Pink / Cyan
+  halloween: [1, 7],          // Orange / Purple
+  monoRed:   [0, 8],          // Red / Magenta
+  monoBlue:  [6, 7],          // Blue / Purple
+  royal:     [7, 14],         // Purple / Gold
+  golden:    [14, 1],         // Gold / Orange
+};
+
+// Look up the right bank for a given palette size. 4 is the default (the
+// hand-tuned tetrad set); 3 and 2 use dedicated banks above.
+function paletteBankForSize(size) {
+  if (size === 2) return DUOS;
+  if (size === 3) return TRIADS;
+  return TETRADS;
+}
+
+// Each genre picks from a short preference list; which one it actually lands
+// on is keyed on the musical key so two EDM tracks in different keys get
+// different looks but the same vocabulary.
+//
+// NOTE: tier keeps gating accent density / drop handling:
+//   dance     — full banger (color-strobe accents, drop slams, white-strobe on
+//                proper drops only)
+//   moderate  — reduced bursts, no white-strobe
+//   rock      — light bursts, proper drops only
+//   calm      — no strobes, no drops
+const GENRE_STYLES = {
+  edm:       { tier: 'dance',    tetrads: ['cyber', 'neon', 'cool'],
+               patterns: ['pairs', 'runner', 'chase', 'split', 'stack-up', 'random-flash', 'hit', 'alt-halves', 'split-4', 'chase-4', 'pairs-4'] },
+  dubstep:   { tier: 'dance',    tetrads: ['monoRed', 'cyber', 'halloween'],
+               patterns: ['random-flash', 'stack-up', 'split', 'pairs', 'runner', 'hit', 'alt-halves', 'split-3', 'alt-thirds'] },
+  trance:    { tier: 'dance',    tetrads: ['monoBlue', 'cool', 'royal', 'cyber'],
+               patterns: ['sparkle', 'wave', 'twinkle', 'runner', 'hit', 'chase-3', 'alt-thirds'] },
+  disco:     { tier: 'dance',    tetrads: ['candy', 'warm', 'cyber'],
+               patterns: ['ping-pong', 'chase', 'sparkle', 'pairs', 'alt-halves', 'split', 'split-4', 'alt-quarters', 'pairs-4'] },
+  hiphop:    { tier: 'moderate', tetrads: ['monoRed', 'fire', 'royal'],
+               patterns: ['pairs', 'split', 'chase', 'stack-up', 'runner', 'alt-halves', 'split-3', 'chase-3'] },
+  pop:       { tier: 'moderate', tetrads: ['candy', 'sunset', 'neon'],
+               patterns: ['ping-pong', 'wave', 'chase', 'sparkle', 'pairs', 'split-3', 'chase-4'] },
+  funk:      { tier: 'moderate', tetrads: ['warm', 'sunset', 'candy'],
+               patterns: ['ping-pong', 'pairs', 'runner', 'chase', 'wave', 'alt-halves', 'split-4', 'alt-quarters'] },
+  rock:      { tier: 'rock',     tetrads: ['fire', 'sunset', 'golden'],
+               patterns: ['chase', 'runner', 'pairs', 'ping-pong', 'stack-up'] },
+  metal:     { tier: 'rock',     tetrads: ['monoRed', 'halloween', 'fire'],
+               patterns: ['stack-up', 'split', 'random-flash', 'runner', 'pairs', 'hit'] },
+  country:   { tier: 'rock',     tetrads: ['golden', 'warm', 'fire'],
+               patterns: ['wave', 'chase', 'runner', 'ping-pong', 'fade'] },
+  reggae:    { tier: 'rock',     tetrads: ['forest', 'golden', 'sunset'],
+               patterns: ['wave', 'fade', 'chase', 'ping-pong', 'pairs'] },
+  latin:     { tier: 'calm',     tetrads: ['sunset', 'warm', 'candy'],
+               patterns: ['ping-pong', 'runner', 'chase', 'pairs', 'wave'] },
+  jazz:      { tier: 'calm',     tetrads: ['royal', 'golden', 'cool'],
+               patterns: ['fade', 'wave', 'twinkle', 'sparkle'] },
+  classical: { tier: 'calm',     tetrads: ['royal', 'cool', 'ocean'],
+               patterns: ['fade', 'wave', 'twinkle'] },
+  folk:      { tier: 'calm',     tetrads: ['golden', 'forest', 'warm'],
+               patterns: ['fade', 'wave', 'twinkle'] },
+  ambient:   { tier: 'calm',     tetrads: ['ocean', 'cool', 'royal'],
+               patterns: ['fade', 'wave', 'twinkle', 'sparkle'] },
+};
+
+// Fallback tetrad preferences when the genre classifier has no answer.
+// Mapped onto Russell's circumplex model of affect (arousal × valence):
+//
+//                    high arousal
+//                         │
+//       angry / tense    ─┼─   excited / happy
+//     (fire, monoRed,     │   (sunset, candy,
+//      halloween)         │    warm, neon)
+//  low valence ───────────┼─────────── high valence
+//       sad / depressed   │    calm / content
+//     (cool, ocean,       │   (golden, forest,
+//      monoBlue, royal)   │    warm, royal)
+//                         │
+//                    low arousal
+//
+// Split the plane into four quadrants; each gets its own tetrad preference
+// list. Inside a quadrant the key still selects which tetrad we land on, so
+// same-mood different-key songs diverge.
+const CIRCUMPLEX_TETRADS = {
+  highPos: ['sunset', 'candy', 'warm', 'neon'],     // excited / happy
+  highNeg: ['fire', 'monoRed', 'halloween', 'cyber'], // angry / tense
+  lowPos:  ['golden', 'forest', 'warm', 'royal'],   // content / calm
+  lowNeg:  ['cool', 'ocean', 'monoBlue', 'royal'],  // sad / reflective
+};
+
+// NOTE: 'solid' is intentionally absent from every pattern list — auto mode
+// only uses solid at drop anchors (see feedback memory at
+// memory/feedback_auto_mode_no_solid.md).
 
 /**
  * Auto-show engine: runs librosa analysis on audio, generates a timeline
@@ -25,10 +178,21 @@ class AutoShow {
     this._colorPresets = colorPresets;
     this._patterns = patterns;
     this._cache = cache;
+    // Look up the Blackout sentinel by name so we don't break when new
+    // presets are appended. Falls back to index 12 (its historical slot) if
+    // the caller passed a dumb fixture without names.
+    const blackoutIdx = Array.isArray(colorPresets)
+      ? colorPresets.findIndex(p => p && (p.name === 'Blackout' || p.id === 'blackout'))
+      : -1;
+    this._blackoutIdx = blackoutIdx >= 0 ? blackoutIdx : 12;
     this.analysis = null;
     this.timeline = [];
     this.running = false;
     this.track = null;
+    this.palette = null;         // [idx, idx, …] — locked palette for current song (2, 3, or 4 colours)
+    this.paletteName = null;     // human-readable palette name (e.g. 'cyber', 'sunset')
+    this.paletteSize = 4;        // 2 | 3 | 4 — picks between DUOS / TRIADS / TETRADS banks
+    this.intensity = 50;         // 0–100 energy slider — scales accent density, drops, strobes
     this._getPositionMs = null;
     this._loopTimer = null;
     this._lastEventIdx = -1;
@@ -68,11 +232,20 @@ class AutoShow {
    * State-free runner: spawn the Essentia/librosa bridge and return the parsed
    * analysis JSON. Does not touch instance state (so it's safe to call from
    * prefetch while a show is already running).
+   *
+   * If `targetDurationSec` is provided, the analyzer will trim beatless
+   * padding from the head/tail of the audio until the length matches — used
+   * when yt-dlp can't find a candidate within its ±5s filter and has to
+   * fall back to an unfiltered search that may include long intros/outros.
    */
-  _runAnalyzer(source) {
+  _runAnalyzer(source, targetDurationSec = null) {
     return new Promise((resolve, reject) => {
       const script = path.join(__dirname, 'essentia-analyze.py');
-      const proc = spawn('python', [script, source], {
+      const args = [script, source];
+      if (Number.isFinite(targetDurationSec) && targetDurationSec > 0) {
+        args.push('--target-duration', String(targetDurationSec));
+      }
+      const proc = spawn('python', args, {
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
@@ -88,6 +261,13 @@ class AutoShow {
       proc.on('close', (code) => {
         if (code !== 0) {
           return reject(new Error(`Analyzer exited with code ${code}: ${stderr || stdout}`));
+        }
+        // Surface analyzer log lines (trim notices, PANNs status) to the
+        // Node console so operators can see when trimming kicked in.
+        if (stderr && stderr.trim()) {
+          for (const line of stderr.trim().split(/\r?\n/)) {
+            console.log(`[analyzer] ${line}`);
+          }
         }
         try {
           const result = JSON.parse(stdout);
@@ -126,11 +306,15 @@ class AutoShow {
    * go through this, and the one that needs to mutate instance state does so
    * on its own side of the in-flight boundary.
    */
-  async _fetchAnalysis(query, targetDurationSec, cacheKey, meta) {
+  async _fetchAnalysis(query, targetDurationSec, cacheKey, meta, isrc) {
     let audioPath = null;
     try {
-      audioPath = await this._downloadAudio(query, targetDurationSec);
-      const analysis = await this._runAnalyzer(audioPath);
+      audioPath = await this._downloadAudio(query, targetDurationSec, isrc);
+      // Always pass the target duration to the analyzer when we have one —
+      // it will no-op when the downloaded length is already within the ±2s
+      // tolerance, and trim beatless padding when the yt-dlp fallback grabs
+      // a longer version.
+      const analysis = await this._runAnalyzer(audioPath, targetDurationSec);
       if (cacheKey && this._cache) {
         this._cache.set(cacheKey, analysis, meta || {});
       }
@@ -145,11 +329,11 @@ class AutoShow {
    * being fetched, returns the existing in-flight promise so concurrent
    * callers share one download/analyze job.
    */
-  _fetchShared(query, targetDurationSec, cacheKey, meta) {
+  _fetchShared(query, targetDurationSec, cacheKey, meta, isrc) {
     if (cacheKey && this._inFlight.has(cacheKey)) {
       return this._inFlight.get(cacheKey);
     }
-    const promise = this._fetchAnalysis(query, targetDurationSec, cacheKey, meta);
+    const promise = this._fetchAnalysis(query, targetDurationSec, cacheKey, meta, isrc);
     if (cacheKey) {
       this._inFlight.set(cacheKey, promise);
       const cleanup = () => this._inFlight.delete(cacheKey);
@@ -166,14 +350,14 @@ class AutoShow {
    *
    * Returns { skipped: boolean, reason?: string, error?: string }.
    */
-  async prefetch(query, targetDurationSec, cacheKey, meta = {}) {
+  async prefetch(query, targetDurationSec, cacheKey, meta = {}, isrc = null) {
     if (!cacheKey || !this._cache) return { skipped: true, reason: 'no-cache' };
     if (this._cache.get(cacheKey)) return { skipped: true, reason: 'already-cached' };
     if (this._inFlight.has(cacheKey)) return { skipped: true, reason: 'in-flight' };
 
     try {
       console.log(`[auto-show] prefetching: ${query}`);
-      await this._fetchShared(query, targetDurationSec, cacheKey, meta);
+      await this._fetchShared(query, targetDurationSec, cacheKey, meta, isrc);
       console.log(`[auto-show] prefetched and cached: ${cacheKey}`);
       return { skipped: false };
     } catch (err) {
@@ -182,7 +366,7 @@ class AutoShow {
     }
   }
 
-  async downloadAndAnalyze(query, targetDurationSec = null, cacheKey = null) {
+  async downloadAndAnalyze(query, targetDurationSec = null, cacheKey = null, isrc = null) {
     // Cache hit → skip the download entirely.
     if (this._loadFromCache(cacheKey)) {
       return { analysis: this.analysis, cached: true };
@@ -196,7 +380,7 @@ class AutoShow {
     try {
       const analysis = await this._fetchShared(
         query, targetDurationSec, cacheKey,
-        { track: this.track },
+        { track: this.track }, isrc,
       );
       this.analysis = analysis;
       this.buildTimeline();
@@ -209,16 +393,25 @@ class AutoShow {
   }
 
   /**
-   * Download audio via yt-dlp. When `targetDurationSec` is provided, we pull
-   * several search candidates and ask yt-dlp to skip any whose duration doesn't
-   * match within ±5s — this avoids grabbing extended remixes, live versions,
-   * or music videos with long intros/outros when we know the Spotify length.
-   * Falls back to an unfiltered search if no candidate passes the filter.
+   * Download audio for analysis. When an ISRC is provided and Deezer is
+   * configured, downloads the exact studio track from Deezer — guaranteed
+   * audio-only and correct duration. Falls back to yt-dlp when Deezer is
+   * unavailable, the ISRC lookup fails, or the source is a direct URL.
    */
-  async _downloadAudio(query, targetDurationSec = null) {
-    const hasTarget = Number.isFinite(targetDurationSec) && targetDurationSec > 0;
+  async _downloadAudio(query, targetDurationSec = null, isrc = null) {
     const isUrl = /^https?:\/\//.test(query);
 
+    // Try Deezer first when we have an ISRC and Deezer is initialized
+    if (isrc && !isUrl && deezer.isAvailable()) {
+      try {
+        return await deezer.downloadByIsrc(query, isrc);
+      } catch (err) {
+        console.warn(`[deezer] Failed for "${query}" (ISRC: ${isrc}): ${err.message} — falling back to yt-dlp`);
+      }
+    }
+
+    // Fallback: yt-dlp
+    const hasTarget = Number.isFinite(targetDurationSec) && targetDurationSec > 0;
     if (hasTarget && !isUrl) {
       try {
         return await this._ytDlpExec(query, targetDurationSec);
@@ -321,12 +514,50 @@ class AutoShow {
     const events = [];
     const availablePatterns = new Set(this._patterns.map(p => p.id));
 
-    const palette = this._buildPalette(a.key, a.scale);
+    const mood = a.mood || { valence: 0.5, arousal: 0.5, danceability: 0.5 };
+    const genreLabel = (a.genre && a.genre.label) || 'unknown';
+    const genreStyle = GENRE_STYLES[genreLabel] || null;
+    const { palette, name: paletteName } = this._buildPalette(a.key, a.scale, mood, genreStyle);
+    this.palette = palette;
+    this.paletteName = paletteName;
     const drops = a.drops || [];
     const buildups = a.buildups || [];
-
-    // Keep a lookup of segments → bass dominance / brightness
     const segments = a.segments || [];
+
+    // Downbeat-aware snapping. If we have downbeats and the meter, align
+    // pattern changes to the bar so transitions feel musical.
+    const downbeats = a.downbeats || [];
+    const meter = a.meter || 4;
+    const barSec = downbeats.length >= 2 ? (downbeats[1] - downbeats[0]) : null;
+    const snapToDownbeatMs = (tSec) => {
+      if (!downbeats.length || !barSec) return Math.round(tSec * 1000);
+      let lo = 0, hi = downbeats.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (downbeats[mid] < tSec) lo = mid + 1; else hi = mid;
+      }
+      // Compare current & previous downbeats for nearest
+      const candidates = [];
+      if (lo > 0) candidates.push(downbeats[lo - 1]);
+      candidates.push(downbeats[lo]);
+      if (lo + 1 < downbeats.length) candidates.push(downbeats[lo + 1]);
+      let best = candidates[0];
+      for (const c of candidates) {
+        if (Math.abs(c - tSec) < Math.abs(best - tSec)) best = c;
+      }
+      // Only snap if within half a bar — otherwise leave it where it was.
+      if (Math.abs(best - tSec) <= barSec * 0.5) return Math.round(best * 1000);
+      return Math.round(tSec * 1000);
+    };
+
+    // Cluster label → palette offset, so repeated sections (same label) use
+    // the same look on return. Labels come from Laplacian segmentation.
+    const labelOffsets = new Map();
+    const labelOffset = (label) => {
+      if (!label) return null;
+      if (!labelOffsets.has(label)) labelOffsets.set(label, labelOffsets.size);
+      return labelOffsets.get(label);
+    };
 
     // Initial state — set BPM, make sure blackout is off, clear any stale energy.
     // Explicitly DO NOT touch masterDimmer.
@@ -344,19 +575,124 @@ class AutoShow {
       },
     });
 
+    // ── Tempo drift handling: only emit periodic BPM patches for tracks
+    // ── where the analyzer is *very* confident the tempo is drifting. With
+    // ── the octave-anchored tempo curve in the analyzer, stability below
+    // ── 0.60 means the track actually changes tempo. Stable tracks skip
+    // ── this path entirely — no jitter.
+    const tempoStab = a.tempoStability != null ? a.tempoStability : 1;
+    const tempoCurve = a.tempoCurve || [];
+    if (tempoStab < 0.60 && tempoCurve.length > 2) {
+      let lastBpm = Math.round(a.bpm || 120);
+      for (const pt of tempoCurve) {
+        const bpmVal = Math.round(pt.v);
+        if (Math.abs(bpmVal - lastBpm) < 4) continue; // 4 BPM delta floor
+        if (bpmVal < 50 || bpmVal > 220) continue;
+        events.push({
+          timeMs: Math.round(pt.t * 1000),
+          action: 'patch',
+          data: { bpm: bpmVal },
+        });
+        lastBpm = bpmVal;
+      }
+    }
+
+    // ── Style tier (from PANNs genre classifier) ──────────────────────────
+    // Each genre maps to a tier via GENRE_STYLES:
+    //   'dance'    – edm/dubstep/trance/disco       → full banger
+    //   'moderate' – hiphop/pop/funk                → reduced bursts
+    //   'rock'     – rock/metal/country/reggae      → light bursts
+    //   'calm'     – jazz/classical/folk/ambient/latin → no strobes
+    //   'unknown'  – classifier had no answer → fall back to arousal metric
+    const tier = genreStyle ? genreStyle.tier : 'unknown';
+    const arousalRaw = mood.arousal || 0;
+
+    // ── Energy intensity scaling ──────────────────────────────────────────
+    // intensity 0–100 maps to a 0.0–2.0 multiplier. 50 = normal (1.0).
+    // Low values suppress strobes/drops/accents; high values unlock them
+    // on tracks that would normally be too calm.
+    const iFactor = this.intensity / 50; // 0.0 – 2.0
+
+    const isCalm =
+      this.intensity === 0 ||
+      ((tier === 'calm' ||
+        (tier === 'unknown' && arousalRaw < 0.55)) && iFactor < 1.4);
+    const isLight =
+      !isCalm && iFactor < 0.6 ? true :
+      (tier === 'rock' ||
+        (tier === 'moderate' && arousalRaw < 0.65)) && iFactor < 1.6;
+
+    // ── White-strobe gate ─────────────────────────────────────────────────
+    // The old engine leaned on white-strobe for every bright high-energy
+    // accent which dulled its impact. It's now reserved exclusively for the
+    // loudest slams: proper drops on dance-tier tracks with high arousal.
+    // Segment accents and buildups use color-strobe or the pattern-level
+    // strobe channel instead.
+    // At intensity ≥ 80 the gate opens for any dance track regardless of arousal.
+    const allowWhiteStrobe =
+      tier === 'dance' && (arousalRaw >= 0.70 || iFactor >= 1.6);
+
     // ── Segment-driven pattern + colour + strobe ────────────────────────────
-    let colorIdx = 0;
+    // Pattern reuse by Laplacian label: two segments with the same label
+    // (= same cluster in the recurrence matrix = structurally similar) get
+    // the same pattern. This prevents the show from re-picking a different
+    // pattern each time a verse or chorus returns.
+    const labelToPattern = new Map();
     let segIdx = 0;
     let lastPatternKey = '';
 
     for (const seg of segments) {
-      const timeMs = Math.round(seg.start * 1000);
-      const pattern = this._pickPattern(seg, segIdx++, availablePatterns);
-      const colA = palette[colorIdx % palette.length];
-      const colB = palette[(colorIdx + 1) % palette.length];
+      // Snap boundary to nearest downbeat within half a bar so transitions
+      // land on the bar instead of mid-measure.
+      const timeMs = snapToDownbeatMs(seg.start);
 
-      // Beat division: quarter notes normally, eighths on bright high-energy parts
-      const beatDivision = seg.level === 'high' && (seg.spectralCentroid || 0) > 0.35 ? 2 : 1;
+      // Downgrade "high" to "mid" on calm tracks — percentile normalization
+      // makes calm songs look louder than they are, so a quiet-but-relatively-
+      // loud section can end up flagged 'high'. Don't launch banger patterns.
+      const segForPick = isCalm && seg.level === 'high'
+        ? Object.assign({}, seg, { level: 'mid' })
+        : seg;
+
+      let pattern;
+      if (seg.label && labelToPattern.has(seg.label)) {
+        pattern = labelToPattern.get(seg.label);
+      } else {
+        pattern = this._pickPattern(segForPick, segIdx, availablePatterns, mood, genreStyle);
+        if (seg.label) labelToPattern.set(seg.label, pattern);
+      }
+      segIdx++;
+
+      // Colour anchor: repeated sections (same Laplacian label) share an
+      // offset so verse/chorus/verse lands on the same palette rotation.
+      const offset = labelOffset(seg.label);
+      const base = offset != null ? offset * 2 : segIdx;
+      const colA = palette[base % palette.length];
+      const colB = palette[(base + 1) % palette.length];
+      const colC = palette.length >= 3 ? palette[(base + 2) % palette.length] : colA;
+      const colD = palette.length >= 4 ? palette[(base + 3) % palette.length] : colB;
+
+      // Beat division escalates with segment level × song energy tier. This
+      // is the primary lever for "intensity without strobing": a high-tier
+      // dance drop runs at 4× BPM while the chorus runs at 2×, so the same
+      // pattern reads as much more aggressive at the peak.
+      //
+      // Triple-meter tracks stay on quarters to keep the bar feel intact.
+      const bright = seg.brightness || 0;
+      const segEnergy = seg.energy || 0;
+      let beatDivision = 1;
+      if (!isCalm && meter !== 3) {
+        if (seg.level === 'high') {
+          if ((tier === 'dance' || iFactor >= 1.4) && (segEnergy > 0.7 || mood.arousal > 0.85 || iFactor >= 1.6)) {
+            beatDivision = 4;
+          } else if (bright > 0.35 || mood.arousal > 0.75 || tier === 'dance' || iFactor >= 1.2) {
+            beatDivision = 2;
+          }
+        } else if (seg.level === 'mid' && (mood.arousal > 0.75 && tier === 'dance' || iFactor >= 1.4)) {
+          beatDivision = 2;
+        }
+      }
+      // At very low intensity, clamp beat division to 1 (no double/quad time).
+      if (iFactor < 0.5) beatDivision = 1;
 
       // Note: strobeSpeed is only honoured by the server when pattern === 'strobe'.
       // For non-strobe patterns we zero it so a previous build-up strobe doesn't
@@ -364,7 +700,7 @@ class AutoShow {
       const strobeSpeed = pattern === 'strobe' ? this._segmentStrobeSpeed(seg) : 0;
       const strobeFunction = this._segmentStrobeFunction(seg);
 
-      const patchKey = `${pattern}|${colA}|${colB}|${strobeSpeed}|${strobeFunction}|${beatDivision}`;
+      const patchKey = `${pattern}|${colA}|${colB}|${colC}|${colD}|${strobeSpeed}|${strobeFunction}|${beatDivision}`;
       if (patchKey === lastPatternKey) continue;
       lastPatternKey = patchKey;
 
@@ -375,56 +711,108 @@ class AutoShow {
           pattern,
           colorA: colA,
           colorB: colB,
+          colorC: colC,
+          colorD: colD,
           strobeSpeed,
           strobeFunction,
           beatDivision,
           energyOverride: null,
         },
       });
-      colorIdx++;
     }
 
-    // ── Build-ups: escalating strobe speed during the rise ──────────────────
-    for (const build of buildups) {
-      const startMs = Math.round(build.start * 1000);
-      const endMs = Math.round(build.end * 1000);
-      const durMs = Math.max(1000, endMs - startMs);
-      // Emit 5 rising strobe-speed patches across the build
-      const steps = 5;
-      for (let i = 0; i < steps; i++) {
-        const t = startMs + Math.round((i / steps) * durMs);
-        const speed = Math.round(40 + (i / (steps - 1)) * 210); // 40 → 250
+    // ── Build-ups: escalating strobe speed × beatDivision during the rise ──
+    // Skip buildups on calm tracks or at very low intensity.
+    if (!isCalm && iFactor >= 0.4) {
+      for (const build of buildups) {
+        const startMs = Math.round(build.start * 1000);
+        const endMs = Math.round(build.end * 1000);
+        const durMs = Math.max(1000, endMs - startMs);
+        // Emit rising strobe-speed patches across the build. Early steps use
+        // 'ramp-up', mid steps 'standard', and the final step switches to
+        // 'break' — a stuttering pattern that reads as "something's about to
+        // happen" right before the drop slam.
+        const steps = 5;
+        for (let i = 0; i < steps; i++) {
+          const t = startMs + Math.round((i / steps) * durMs);
+          const speed = Math.round(40 + (i / (steps - 1)) * 210); // 40 → 250
+          let fn;
+          if (i < 2) fn = 'ramp-up';
+          else if (i === steps - 1) fn = 'break';
+          else fn = 'standard';
+          // Beat division climbs 1 → 2 → 4 across the build so the strobe
+          // feels like it's accelerating even beyond the strobeSpeed ramp.
+          const div = i < 1 ? 1 : i < 3 ? 2 : 4;
+          events.push({
+            timeMs: t,
+            action: 'patch',
+            data: {
+              pattern: 'strobe',
+              strobeSpeed: speed,
+              strobeFunction: fn,
+              beatDivision: div,
+            },
+          });
+        }
+        // On the last beat of the build, kill the lights for a split-second
+        // "silence" that makes the drop hit harder.
         events.push({
-          timeMs: t,
+          timeMs: Math.max(startMs, endMs - 120),
           action: 'patch',
-          data: {
-            pattern: 'strobe',
-            strobeSpeed: speed,
-            strobeFunction: i < 2 ? 'ramp-up' : 'standard',
-          },
+          data: { colorA: this._blackoutIdx, strobeSpeed: 0 },
         });
       }
-      // On the last beat of the build, kill the lights for a split-second
-      // "silence" that makes the drop hit harder.
-      events.push({
-        timeMs: Math.max(startMs, endMs - 120),
-        action: 'patch',
-        data: { pattern: 'solid', colorA: 12 /* Blackout */, strobeSpeed: 0 },
-      });
     }
 
     // ── Drops: blinder → hot colour slam → color-strobe burst → movement ───
+    // Two kinds of drops get different treatment:
+    //   • 'proper' – strong breakdown + sustained post-drop energy → full slam
+    //   • 'hype'   – no real breakdown, just a sudden energy lift → lighter
+    //                (no blinder, shorter strobe, no movement change)
+    //
+    // White-strobe is only fired at proper drops on dance-tier tracks with
+    // high arousal (see `allowWhiteStrobe` above). Everything else uses
+    // color-strobe to keep the song's 4-colour palette intact.
     for (let i = 0; i < drops.length; i++) {
       const drop = drops[i];
       const tMs = Math.round(drop.t * 1000);
-      const strength = Math.max(0, Math.min(1, drop.strength || 0.5));
-      const dropColorA = this._dropColor(i, palette);
-      const dropColorB = (dropColorA + 4) % this._colorPresets.length;
 
-      // 1. Lock in the hot drop colour at the exact drop time. JS sort is
-      //    stable, and drops are pushed AFTER segment-boundary patches, so
-      //    at the same timestamp this anchor lands last among patches
-      //    (and still before the energy burst thanks to our sort rule).
+      const baseConf = drop.confidence || 0.5;
+      const isDownbeat = drop.snapTo === 'downbeat';
+      // Downbeat-anchored drops are more trustworthy — boost confidence a bit.
+      const confidence = Math.max(0, Math.min(1, baseConf + (isDownbeat ? 0.1 : 0)));
+
+      // Classify. A proper drop is preceded by a real breakdown AND sustains
+      // post-drop; anything weaker is a hype moment.
+      const breakdown = drop.breakdownScore != null ? drop.breakdownScore : 0.5;
+      const sustain   = drop.sustainScore   != null ? drop.sustainScore   : 0.5;
+      const kind = (breakdown >= 0.4 && sustain >= 0.6) ? 'proper' : 'hype';
+
+      // Calm tracks or zero-intensity skip drops entirely.
+      if (isCalm) continue;
+      // At low intensity only keep proper drops (skip hype).
+      if (iFactor < 0.6 && kind !== 'proper') continue;
+      // Light tracks (rock, mid-tempo) allow proper drops only.
+      if (isLight && kind !== 'proper') continue;
+
+      // Drop colours stay inside the song's locked palette. Rotate through
+      // the palette on successive drops so each one feels different, then
+      // pair with the opposite slot for colorB. Offset = floor(N/2) so both
+      // tetrad (4→2) and triad (3→1) / duo (2→1) pick the slot across from
+      // the anchor — avoids dropColorA == dropColorB on 2-colour mode.
+      const palLen = palette.length;
+      const dropSlot = palLen ? (i % palLen) : 0;
+      const dropColorA = palette[dropSlot] || 0;
+      const oppositeOffset = Math.max(1, Math.floor(palLen / 2));
+      const dropColorB = palLen >= 2
+        ? palette[(dropSlot + oppositeOffset) % palLen]
+        : dropColorA;
+      const dropColorC = palLen >= 3 ? palette[(dropSlot + 2) % palLen] : dropColorA;
+      const dropColorD = palLen >= 4 ? palette[(dropSlot + 3) % palLen] : dropColorB;
+
+      // Anchor the hot drop colour at the exact drop time for both kinds.
+      // Drop anchors use quadruple-time on the meter != 3 so the movement
+      // pattern that follows reads at full dance-floor intensity.
       events.push({
         timeMs: tMs,
         action: 'patch',
@@ -432,100 +820,250 @@ class AutoShow {
           pattern: 'solid',
           colorA: dropColorA,
           colorB: dropColorB,
+          colorC: dropColorC,
+          colorD: dropColorD,
           strobeSpeed: 0,
-          beatDivision: 2,
+          beatDivision: meter === 3 ? 1 : 4,
+          strobeFunction: 'standard',
           energyOverride: null,
         },
       });
 
-      // 2. Instant full-white blinder flash on the downbeat (140–300ms)
-      const blinderMs = Math.round(140 + strength * 160);
-      events.push({
-        timeMs: tMs,
-        action: 'energy',
-        data: { id: 'blinder', durationMs: blinderMs },
-      });
+      if (kind === 'proper') {
+        // Full slam: (optional) blinder → color-strobe → movement.
+        // Blinder only fires on dance tracks — everything else leans on
+        // color-strobe + the post-drop pattern for impact.
+        // Minimum 300ms so the LED fixtures have time to physically ramp up
+        // to full brightness before the burst ends. Anything shorter reads
+        // as a half-open flicker at typical DMX update rates.
+        const useBlinder = (tier === 'dance' || iFactor >= 1.6) && confidence >= 0.55 && iFactor >= 0.6;
+        const blinderMs = useBlinder ? Math.round((300 + confidence * 250) * Math.min(1.5, iFactor)) : 0;
+        if (useBlinder) {
+          events.push({
+            timeMs: tMs,
+            action: 'energy',
+            data: { id: 'blinder', durationMs: blinderMs },
+          });
+        }
 
-      // 3. Sustained colour-strobe burst right after the blinder (~650ms).
-      //    Re-lock the drop colour 1ms before the burst so color-strobe
-      //    reads the right colorA even if anything else wrote to it.
-      const afterBlinderMs = tMs + blinderMs + 10;
-      const colorStrobeMs = Math.round(500 + strength * 300);
-      events.push({
-        timeMs: afterBlinderMs - 1,
-        action: 'patch',
-        data: { colorA: dropColorA, colorB: dropColorB },
-      });
-      events.push({
-        timeMs: afterBlinderMs,
-        action: 'energy',
-        data: { id: 'color-strobe', durationMs: colorStrobeMs },
-      });
+        const afterBlinderMs = tMs + blinderMs + (useBlinder ? 10 : 1);
+        const colorStrobeMs = Math.round((500 + confidence * 300) * Math.min(1.5, iFactor));
 
-      // 4. When the burst clears, switch into a high-intensity movement
-      //    pattern so the drop keeps moving. Rotate through the pool by drop
-      //    index so a track with multiple drops doesn't replay the same look.
-      const dropMovePool = ['color-cycle', 'rainbow', 'runner', 'pairs', 'sparkle', 'random-flash'];
-      const dropMoveFiltered = dropMovePool.filter(p => availablePatterns.has(p));
-      const movePattern = dropMoveFiltered.length
-        ? dropMoveFiltered[i % dropMoveFiltered.length]
-        : 'chase';
-      events.push({
-        timeMs: afterBlinderMs + colorStrobeMs + 20,
-        action: 'patch',
-        data: {
-          pattern: movePattern,
-          colorA: dropColorA,
-          colorB: dropColorB,
-          strobeSpeed: 0,
-          beatDivision: 2,
-          energyOverride: null,
-        },
-      });
+        // Re-anchor the colour right before the strobe burst so the energy
+        // effect reads the correct colA when it resolves.
+        if (useBlinder) {
+          events.push({
+            timeMs: afterBlinderMs - 1,
+            action: 'patch',
+            data: { colorA: dropColorA, colorB: dropColorB, colorC: dropColorC, colorD: dropColorD },
+          });
+        }
+
+        // White-strobe ONLY on dance-tier tracks with high arousal AND high
+        // drop confidence AND a real breakdown ≥ 0.6. Everything else uses
+        // color-strobe. This reserves white-strobe for the real bangers.
+        const useWhiteStrobe =
+          allowWhiteStrobe && confidence >= 0.65 && breakdown >= 0.6;
+        events.push({
+          timeMs: afterBlinderMs,
+          action: 'energy',
+          data: {
+            id: useWhiteStrobe ? 'white-strobe' : 'color-strobe',
+            durationMs: colorStrobeMs,
+          },
+        });
+
+        // Move pattern afterwards so the drop keeps moving. 'hit' gets
+        // preferred on dance tracks because it's the new pulse-decay pattern
+        // that reads great at beatDivision = 4.
+        const dropMovePool = tier === 'dance'
+          ? ['hit', 'runner', 'pairs', 'random-flash', 'alt-halves', 'stack-up']
+          : ['runner', 'pairs', 'chase', 'stack-up'];
+        const dropMoveFiltered = dropMovePool.filter(p => availablePatterns.has(p));
+        const movePattern = dropMoveFiltered.length
+          ? dropMoveFiltered[i % dropMoveFiltered.length]
+          : 'chase';
+        events.push({
+          timeMs: afterBlinderMs + colorStrobeMs + 20,
+          action: 'patch',
+          data: {
+            pattern: movePattern,
+            colorA: dropColorA,
+            colorB: dropColorB,
+            colorC: dropColorC,
+            colorD: dropColorD,
+            strobeSpeed: 0,
+            strobeFunction: 'ramp-down',
+            beatDivision: meter === 3 ? 1 : (tier === 'dance' ? 4 : 2),
+            energyOverride: null,
+          },
+        });
+      } else {
+        // Hype moment: no blinder, shorter colour-strobe, keep existing
+        // segment pattern afterwards instead of forcing a movement change.
+        const colorStrobeMs = Math.round((400 + confidence * 300) * Math.min(1.5, iFactor));
+        events.push({
+          timeMs: tMs + 1,
+          action: 'energy',
+          data: { id: 'color-strobe', durationMs: colorStrobeMs },
+        });
+      }
     }
 
 
-    // ── Beat-level accents on strong beats in high-energy segments ─────────
-    if (a.beats && a.beatStrengths && segments.length) {
-      const strongThreshold = 0.55;
+    // ── Bar-level accents in high-energy sections ─────────────────────────
+    // Prefer the downbeat array when we have one (confident meter) — that
+    // guarantees the accent lands on beat 1 of every bar. Fall back to the
+    // old beat-strength heuristic when downbeats are missing or the detector
+    // wasn't confident.
+    //
+    // Skip both paths entirely on calm tracks — they never want strobes.
+    // Use the downbeat-throttled path whenever we have downbeats at all and
+    // the confidence is plausible (≥ 0.10). The previous 0.25 threshold was
+    // too strict — tracks like Superbus (dbConf 0.25) and Tate McRae (0.18)
+    // were falling into the fallback strong-beat loop, which has none of the
+    // arousal-based throttling and fires on every strong beat in high
+    // segments → 30+ accents/min.
+    const hasConfidentDownbeats =
+      downbeats.length > 0 && (a.downbeatConfidence == null || a.downbeatConfidence >= 0.10);
+    const inDropWindow = (ms) => drops.some(d => Math.abs(d.t * 1000 - ms) < 1500);
+    const inBuildup = (ms) =>
+      buildups.some(b => ms >= b.start * 1000 - 200 && ms <= b.end * 1000 + 200);
+
+    // Accent density depends on the PANNs style tier first, falling back to
+    // arousal-based tiers when the classifier isn't available. This is the
+    // primary lever for "how much rig activity does this song deserve".
+    //
+    // Density was roughly halved relative to the old engine — the old rig
+    // leaned too hard on energy bursts and they lost their impact. Drops
+    // and buildups still carry the big moments; segment accents are now
+    // garnish, not the main event.
+    //
+    // dance:    high every 4 bars    | mid every 16 bars
+    // moderate: high every 8 bars    | mid every 32 bars
+    // rock:     high every 16 bars   | no mid accents
+    // calm:     never (handled above)
+    // unknown:  arousal-based tiers
+    const arousal = mood.arousal || 0;
+    // Accent throttle rates are scaled by intensity: higher intensity
+    // tightens the gap (more frequent accents), lower widens it.
+    // throttleScale: iFactor 0→4.0 (very sparse), 1.0→1.0 (normal), 2.0→0.5 (dense).
+    const throttleScale = iFactor > 0 ? 1 / iFactor : 4;
+    let highThrottle, midEligible, midThrottle;
+    if (tier === 'dance') {
+      highThrottle = Math.max(1, Math.round(4 * throttleScale));
+      midEligible  = iFactor >= 0.3;
+      midThrottle  = Math.max(2, Math.round(16 * throttleScale));
+    } else if (tier === 'moderate') {
+      highThrottle = Math.max(1, Math.round(8 * throttleScale));
+      midEligible  = iFactor >= 0.5;
+      midThrottle  = Math.max(4, Math.round(32 * throttleScale));
+    } else if (tier === 'rock') {
+      highThrottle = Math.max(2, Math.round(16 * throttleScale));
+      midEligible  = iFactor >= 1.4;
+      midThrottle  = Math.max(4, Math.round(32 * throttleScale));
+    } else {
+      // 'unknown' – arousal tiers, also relaxed from the old engine.
+      highThrottle =
+        arousal >= 0.92 ? Math.max(1, Math.round(2 * throttleScale)) :
+        arousal >= 0.78 ? Math.max(1, Math.round(8 * throttleScale)) :
+        Math.max(2, Math.round(16 * throttleScale));
+      midEligible = arousal >= 0.70 || iFactor >= 1.4;
+      midThrottle =
+        arousal >= 0.92 ? Math.max(2, Math.round(8 * throttleScale)) :
+        arousal >= 0.78 ? Math.max(4, Math.round(16 * throttleScale)) :
+        Math.max(8, Math.round(32 * throttleScale));
+    }
+
+    if (isCalm) {
+      // No accents on calm tracks.
+    } else if (hasConfidentDownbeats && segments.length) {
+      for (let dbIdx = 0; dbIdx < downbeats.length; dbIdx++) {
+        const dbt = downbeats[dbIdx];
+        const seg = segments.find(s => dbt >= s.start && dbt < s.end);
+        if (!seg) continue;
+        let throttle;
+        if (seg.level === 'high') throttle = highThrottle;
+        else if (seg.level === 'mid' && midEligible) throttle = midThrottle;
+        else continue;
+        if (dbIdx % throttle !== 0) continue;
+
+        const dbMs = Math.round(dbt * 1000);
+        if (inDropWindow(dbMs)) continue;
+        if (inBuildup(dbMs)) continue;
+
+        // Segment accents now always use color-strobe — white-strobe is
+        // reserved for drops. Keeping the song inside its coherent palette
+        // makes the whole show read more polished.
+        //
+        // 300ms minimum so the LED fixtures actually have time to react:
+        // at 40 Hz DMX that's ~12 frames, plus the fixture's own strobe
+        // channel firing 2-3 pulses. The old 110ms value was barely long
+        // enough for a single half-open flash.
+        events.push({
+          timeMs: dbMs,
+          action: 'energy',
+          data: { id: 'color-strobe', durationMs: 300 },
+        });
+      }
+    } else if (a.beats && a.beatStrengths && segments.length) {
+      // Fallback when there are no usable downbeats: accent on strong beats,
+      // but apply the same arousal-based throttling as the downbeat path so
+      // the fallback can't spam accents on tracks with low downbeat
+      // confidence. Gaps ~2×/4×/8× the old values to match the halved
+      // segment-accent density above.
+      const minGapMs = Math.round((
+        arousal >= 0.92 ? 2400 :
+        arousal >= 0.78 ? 9600 :
+        19200) * throttleScale);
+      const strongThreshold = 0.6;
       let lastAccentMs = -9999;
       for (let i = 0; i < a.beats.length; i++) {
-        const beatT = a.beats[i];
         const strength = a.beatStrengths[i] || 0;
         if (strength < strongThreshold) continue;
-
+        const beatT = a.beats[i];
         const beatMs = Math.round(beatT * 1000);
-        if (beatMs - lastAccentMs < 900) continue; // don't spam
-
-        // Skip accents inside drops / buildups (they handle themselves)
-        if (drops.some(d => Math.abs(d.t * 1000 - beatMs) < 1500)) continue;
-        if (buildups.some(b => beatMs >= b.start * 1000 - 200 && beatMs <= b.end * 1000 + 200)) continue;
-
-        // Only accent during high-energy segments
+        if (beatMs - lastAccentMs < minGapMs) continue;
+        if (inDropWindow(beatMs)) continue;
+        if (inBuildup(beatMs)) continue;
         const seg = segments.find(s => beatT >= s.start && beatT < s.end);
-        if (!seg || seg.level !== 'high') continue;
-
-        const bright = (seg.spectralCentroid || 0) > 0.35;
-        const effectId = bright ? 'white-strobe' : 'color-strobe';
-
+        if (!seg) continue;
+        const allowed = seg.level === 'high' || (seg.level === 'mid' && midEligible);
+        if (!allowed) continue;
+        // Always color-strobe here; see note above on the downbeat path.
+        // 300ms minimum so the fixture actually reacts.
         events.push({
           timeMs: beatMs,
           action: 'energy',
-          data: { id: effectId, durationMs: 90 },
+          data: { id: 'color-strobe', durationMs: 300 },
         });
         lastAccentMs = beatMs;
       }
     }
 
-    // ── Bass onsets on mid-energy segments → subtle colour flips ────────────
-    if (a.bassOnsets && segments.length) {
+    // ── Kick onsets on mid-energy segments → subtle colour flips ───────────
+    // Minimum gap tightens on calm tracks to avoid a metronome of colour
+    // changes on atmospheric songs.
+    //
+    // Palette inertia (inspired by CanYuzbey/music-reactive-lighting): dance-
+    // tier tracks already express groove through beatDivision 2/4, so piling
+    // kick-onset colour flips on top just makes the palette feel twitchy —
+    // skip them entirely on dance. Also extend the post-drop lockout window
+    // to 2.5s so the hot drop colour stays anchored through the afterglow.
+    if (a.kickOnsets && segments.length && tier !== 'dance') {
+      const flipGapMs = isCalm ? 4500 : 2000;
       let lastFlip = -9999;
-      for (const bt of a.bassOnsets) {
+      for (const bt of a.kickOnsets) {
         const btMs = Math.round(bt * 1000);
-        if (btMs - lastFlip < 1500) continue;
+        if (btMs - lastFlip < flipGapMs) continue;
         const seg = segments.find(s => bt >= s.start && bt < s.end);
         if (!seg || seg.level !== 'mid') continue;
-        if (drops.some(d => Math.abs(d.t * 1000 - btMs) < 1500)) continue;
+        // Asymmetric drop window: ±1.5s before, +2.5s after — post-drop
+        // afterglow should keep the hot colour locked.
+        if (drops.some(d => {
+          const dt = btMs - d.t * 1000;
+          return dt >= -1500 && dt <= 2500;
+        })) continue;
         if (buildups.some(b => btMs >= b.start * 1000 && btMs <= b.end * 1000)) continue;
         events.push({
           timeMs: btMs,
@@ -548,7 +1086,60 @@ class AutoShow {
       return x._idx - y._idx;
     });
     events.forEach(e => { delete e._idx; });
-    this.timeline = events;
+
+    // ── Global energy-burst debounce ──────────────────────────────────────
+    // Different event sources (drops, buildups, downbeat accents, beat-
+    // strength accents) each have their own throttling but don't coordinate
+    // with each other. When a drop lands one beat after a downbeat accent
+    // the two bursts stack and the first one is immediately clobbered.
+    //
+    // Dynamic debounce: the next burst cannot start until the previous
+    // burst has fully played out plus a 60ms safety gap. This guarantees
+    // every emitted burst gets its full declared duration on the rig —
+    // critical now that minimum burst length is 300ms, because a second
+    // burst starting at 150ms would clip the first one in half before the
+    // LEDs finished responding.
+    //
+    // Priority order (white-strobe > blinder > color-strobe) breaks ties
+    // when a higher-priority burst collides with a lower-priority one: the
+    // higher-priority one wins and replaces the earlier event.
+    //
+    // Inspired by "Strobe Debouncing (Blanking)" in CanYuzbey/music-
+    // reactive-lighting — keeps bursts mapped to the groove, not stacked
+    // on top of each other.
+    const ENERGY_PRIORITY = { 'white-strobe': 3, 'blinder': 2, 'color-strobe': 1 };
+    const DEBOUNCE_SAFETY_MS = 60;
+    const filtered = [];
+    let lastEnergy = null;
+    let lastEnergyEnd = -Infinity;
+    for (const ev of events) {
+      if (ev.action !== 'energy') { filtered.push(ev); continue; }
+      const id = ev.data && ev.data.id;
+      const prio = ENERGY_PRIORITY[id] != null ? ENERGY_PRIORITY[id] : 0;
+      const dur = (ev.data && ev.data.durationMs) || 200;
+      if (lastEnergy && ev.timeMs < lastEnergyEnd + DEBOUNCE_SAFETY_MS) {
+        // Too close — the previous burst hasn't finished yet. Keep whichever
+        // has higher priority.
+        const lastPrio = ENERGY_PRIORITY[lastEnergy.data.id] != null
+          ? ENERGY_PRIORITY[lastEnergy.data.id] : 0;
+        if (prio > lastPrio) {
+          // Replace the previous burst in the filtered list with this one.
+          for (let i = filtered.length - 1; i >= 0; i--) {
+            if (filtered[i] === lastEnergy) { filtered.splice(i, 1); break; }
+          }
+          filtered.push(ev);
+          lastEnergy = ev;
+          lastEnergyEnd = ev.timeMs + dur;
+        }
+        // else: drop this lower/equal-priority event entirely
+        continue;
+      }
+      filtered.push(ev);
+      lastEnergy = ev;
+      lastEnergyEnd = ev.timeMs + dur;
+    }
+
+    this.timeline = filtered;
   }
 
   // ── 3. Playback ─────────────────────────────────────────────────────────────
@@ -577,6 +1168,8 @@ class AutoShow {
     this.analysis = null;
     this.timeline = [];
     this.track = null;
+    this.palette = null;
+    this.paletteName = null;
     this._lastEventIdx = -1;
     this._status = 'idle';
   }
@@ -619,63 +1212,199 @@ class AutoShow {
 
   // ── Mapping helpers ─────────────────────────────────────────────────────────
 
-  _buildPalette(key, scale) {
-    // Color preset indices: 0=Red 1=Orange 2=Amber 3=Yellow 4=Green
-    // 5=Cyan 6=Blue 7=Purple 8=Magenta 9=White 10=UV 11=UV(RGB)
-
-    const warm = [0, 1, 2, 3, 8, 7]; // Red Orange Amber Yellow Magenta Purple
-    const cool = [6, 5, 4, 7, 11, 9]; // Blue Cyan Green Purple UV(RGB) White
-
-    let palette = scale === 'minor' ? cool : warm;
-
+  _buildPalette(key, scale, mood = { valence: 0.5, arousal: 0.5 }, genreStyle = null) {
+    // One song → one coherent palette from the bank matching this.paletteSize
+    // (2 → DUOS, 3 → TRIADS, 4 → TETRADS). Pick list comes from the genre
+    // style; which entry we land on is keyed on the musical key so songs in
+    // the same genre diverge.
+    //
+    // Returns { palette: [idx, …], name: 'cyber' } so the UI can label the
+    // active palette alongside the swatch row.
     const keys = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-    const keyIdx = keys.indexOf(key);
-    if (keyIdx > 0) {
-      const offset = keyIdx % palette.length;
-      palette = [...palette.slice(offset), ...palette.slice(0, offset)];
+    const keyIdx = Math.max(0, keys.indexOf(key));
+
+    let tetradNames;
+    if (genreStyle && genreStyle.tetrads && genreStyle.tetrads.length) {
+      tetradNames = genreStyle.tetrads;
+    } else {
+      // Russell's circumplex fallback — pick a quadrant from
+      // (arousal × valence) rather than valence alone.
+      const v = mood.valence != null ? mood.valence : (scale === 'major' ? 0.65 : 0.35);
+      const ar = mood.arousal != null ? mood.arousal : 0.5;
+      if (ar >= 0.5 && v >= 0.5)      tetradNames = CIRCUMPLEX_TETRADS.highPos;
+      else if (ar >= 0.5 && v < 0.5)  tetradNames = CIRCUMPLEX_TETRADS.highNeg;
+      else if (ar < 0.5 && v >= 0.5)  tetradNames = CIRCUMPLEX_TETRADS.lowPos;
+      else                             tetradNames = CIRCUMPLEX_TETRADS.lowNeg;
     }
 
-    return palette;
+    // Sub-pick by key index. Same genre in two different keys gets a
+    // different look, but any single song is locked in for its full duration.
+    const chosen = tetradNames[keyIdx % tetradNames.length];
+    const bank = paletteBankForSize(this.paletteSize);
+    const raw = bank[chosen] || bank.cyber;
+    const name = bank[chosen] ? chosen : 'cyber';
+
+    // Validate against _colorPresets length so we never hand out an index the
+    // server will clamp or silently remap.
+    const maxIdx = Math.max(0, (this._colorPresets?.length || 17) - 1);
+    let palette = raw.map(i => Math.min(maxIdx, Math.max(0, i)));
+
+    // Minor rotation by scale so major/minor variants of the same key feel
+    // slightly different without breaking the palette coherence. Pairs are
+    // just swapped at 2-colour, rotated at 3, and cross-paired at 4.
+    if (scale === 'minor') {
+      if (palette.length === 4) {
+        palette = [palette[1], palette[0], palette[3], palette[2]];
+      } else if (palette.length === 3) {
+        palette = [palette[1], palette[2], palette[0]];
+      } else if (palette.length === 2) {
+        palette = [palette[1], palette[0]];
+      }
+    }
+
+    return { palette, name };
   }
 
-  _dropColor(dropIdx, _palette) {
-    // Pick a "hot" drop colour: saturated magentas / reds / cyans that
-    // contrast hard against the current palette.
-    const hotColors = [0, 8, 5, 7, 6, 4]; // Red, Magenta, Cyan, Purple, Blue, Green
-    return hotColors[dropIdx % hotColors.length];
+  /**
+   * Swap the palette size live. Rebuilds the timeline from the current
+   * analysis so the new palette takes effect on the next tick without
+   * re-analysing the audio. No-op when paletteSize is already n.
+   *
+   * Allowed values: 2 | 3 | 4. Anything else is clamped into that range.
+   */
+  setPaletteSize(n) {
+    const size = n === 2 ? 2 : n === 3 ? 3 : 4;
+    if (size === this.paletteSize) return;
+    this.paletteSize = size;
+    if (this.analysis) {
+      this.buildTimeline();
+      // Advance cursor to current position so we don't re-fire the entire
+      // past of the timeline (which would machine-gun energy bursts). The
+      // next tick picks up from the event immediately after posMs.
+      if (this.running && this._getPositionMs) {
+        const posMs = this._getPositionMs();
+        let last = -1;
+        for (let i = 0; i < this.timeline.length; i++) {
+          if (this.timeline[i].timeMs > posMs) break;
+          last = i;
+        }
+        this._lastEventIdx = last;
+      } else {
+        this._lastEventIdx = -1;
+      }
+    }
   }
 
-  _pickPattern(segment, segIdx, available) {
-    const brightness = segment.spectralCentroid || 0;
+  /**
+   * Set the energy intensity (0–100). Rebuilds the timeline so accent density,
+   * drop effects, and beat-division scaling adjust on the fly.
+   */
+  setIntensity(n) {
+    const val = Math.max(0, Math.min(100, Math.round(Number(n) || 50)));
+    if (val === this.intensity) return;
+    this.intensity = val;
+    if (this.analysis) {
+      this.buildTimeline();
+      if (this.running && this._getPositionMs) {
+        const posMs = this._getPositionMs();
+        let last = -1;
+        for (let i = 0; i < this.timeline.length; i++) {
+          if (this.timeline[i].timeMs > posMs) break;
+          last = i;
+        }
+        this._lastEventIdx = last;
+      } else {
+        this._lastEventIdx = -1;
+      }
+    }
+  }
+
+  _pickPattern(segment, segIdx, available, mood = { arousal: 0.5, danceability: 0.5 }, genreStyle = null) {
+    const brightness = segment.brightness || 0;
     const bass = segment.bass || 0;
+    const arousal = mood.arousal || 0;
+    const dance = mood.danceability != null ? mood.danceability : 0.5;
+
+    // Danceability biases the pool: rhythm-locked patterns when the pulse is
+    // steady, flowy/ambient patterns when it isn't.
+    //
+    // NOTE: 'rainbow' and 'color-cycle' are intentionally absent from every
+    // auto-show pool — those two patterns generate colours via hsvToRgb in
+    // the server and completely ignore the colA/colB channel, which would
+    // break the song's locked 4-colour tetrad. They remain available for
+    // manual selection from the UI.
+    const RHYTHMIC = new Set(['chase', 'runner', 'pairs', 'ping-pong', 'split',
+                              'stack-up', 'random-flash',
+                              'hit', 'alt-halves']);
+    const FLOWY    = new Set(['fade', 'wave', 'sparkle', 'twinkle']);
+
+    // Genre bias: when a style is known, intersect the level-driven pool
+    // with the style's pattern list so (e.g.) metal tracks favour
+    // stack-up / split / random-flash and jazz favours fade / twinkle /
+    // wave. Falls back to the raw pool if the intersection is empty.
+    const genrePatterns = genreStyle && genreStyle.patterns
+      ? new Set(genreStyle.patterns)
+      : null;
 
     // Rotate through a pool using segIdx so consecutive segments of the same
     // energy level don't keep landing on the same pattern. Unavailable
     // patterns are filtered out first; 'chase' is the universal fallback.
+    //
+    // Danceability post-filter: on very danceable tracks (≥0.7) drop flowy
+    // picks; on very low danceability (≤0.35) drop rhythmic picks. Between
+    // the two, keep the full pool so mid-danceability tracks vary more.
     const pickFrom = (pool) => {
-      const filtered = pool.filter(p => available.has(p));
+      let filtered = pool.filter(p => available.has(p));
+      if (genrePatterns) {
+        const biased = filtered.filter(p => genrePatterns.has(p));
+        if (biased.length) filtered = biased;
+      }
+      if (dance >= 0.7) {
+        const rhythm = filtered.filter(p => !FLOWY.has(p));
+        if (rhythm.length) filtered = rhythm;
+      } else if (dance <= 0.35) {
+        const flowy = filtered.filter(p => !RHYTHMIC.has(p));
+        if (flowy.length) filtered = flowy;
+      }
       if (!filtered.length) return available.has('chase') ? 'chase' : [...available][0];
       return filtered[segIdx % filtered.length];
     };
 
-    switch (segment.level) {
+    // High arousal lifts low/mid segments into the next pool.
+    const effLevel =
+      arousal > 0.8 && segment.level === 'mid' ? 'high' :
+      arousal > 0.8 && segment.level === 'low' ? 'mid'  : segment.level;
+
+    switch (effLevel) {
       case 'low':
         // Calm: slow sustained patterns, light movement if there's any bass.
-        if (bass < 0.2) return pickFrom(['fade', 'solid', 'wave']);
-        return pickFrom(['solid', 'fade', 'color-cycle', 'wave']);
+        if (bass < 0.2) return pickFrom(['fade', 'wave']);
+        return pickFrom(['fade', 'wave', 'twinkle']);
 
       case 'mid':
         // Movement: bigger pool, picked by brightness/bass character.
-        if (brightness > 0.45) return pickFrom(['rainbow', 'ping-pong', 'wave', 'runner', 'chase']);
-        if (bass > 0.4)        return pickFrom(['split', 'pairs', 'runner', 'stack-up', 'chase']);
+        if (brightness > 0.45) return pickFrom(['ping-pong', 'wave', 'runner', 'chase', 'sparkle']);
+        if (bass > 0.4)        return pickFrom(['alt-halves', 'split', 'pairs', 'runner', 'stack-up', 'chase']);
         return pickFrom(['chase', 'ping-pong', 'pairs', 'runner', 'wave']);
 
-      case 'high':
+      case 'high': {
         // Intensity: sparkly/flashy patterns on bright sections, hammering
         // colour movement on bass-heavy ones.
-        if (brightness > 0.55) return pickFrom(['sparkle', 'twinkle', 'random-flash', 'rainbow', 'color-cycle']);
-        if (bass > 0.5)        return pickFrom(['color-cycle', 'pairs', 'stack-up', 'random-flash', 'split']);
-        return pickFrom(['chase', 'runner', 'color-cycle', 'rainbow', 'sparkle']);
+        //
+        // `hit` is the loudest pattern in the bank (all fixtures punch in
+        // unison on every beat). User feedback: it only reads right on
+        // *very* high-energy moments, otherwise it feels like the show is
+        // yelling at the audience. Gate it behind a veryHigh check so mid-
+        // tempo "technically high" segments get the more flowing patterns
+        // instead. Drops still get `hit` unconditionally — that's handled
+        // in the drop-movement pool below, not here.
+        const segEnergy = segment.energy || 0;
+        const veryHigh = arousal > 0.80 || segEnergy > 0.72;
+        const withHit = (arr) => veryHigh ? arr : arr.filter(p => p !== 'hit');
+        if (brightness > 0.55) return pickFrom(withHit(['sparkle', 'twinkle', 'random-flash', 'hit']));
+        if (bass > 0.5)        return pickFrom(withHit(['hit', 'alt-halves', 'pairs', 'stack-up', 'random-flash', 'split']));
+        return pickFrom(withHit(['chase', 'runner', 'hit', 'pairs', 'stack-up']));
+      }
 
       default:
         return pickFrom(['chase']);
@@ -685,16 +1414,43 @@ class AutoShow {
   _segmentStrobeSpeed(seg) {
     if (seg.level !== 'high') return 0;
     const energy = seg.energy || 0;
-    const bright = seg.spectralCentroid || 0;
+    const bright = seg.brightness || 0;
     // Only introduce strobe on bright, hot sections — otherwise it's a blur
     if (bright < 0.3 && energy < 0.65) return 0;
     return Math.round(Math.min(255, 90 + energy * 140 + bright * 30));
   }
 
   _segmentStrobeFunction(seg) {
-    const bright = seg.spectralCentroid || 0;
-    if (bright > 0.55) return 'random';
-    if ((seg.bass || 0) > 0.55) return 'ramp-up';
+    // Picks one of six strobe functions that ship with the fixture based on
+    // segment character. This gives each segment its own *texture* instead of
+    // relying on the binary standard/random choice the old engine used.
+    //
+    //   break          – stuttering; perfect for buildup tails and "wait for it"
+    //   random         – chaotic; bright/loud high sections (already existed)
+    //   ramp-up        – accelerating; rising bass sections
+    //   ramp-down      – decelerating; sections coming down from a peak
+    //   ramp-down-rnd  – messy deceleration; gnarly distorted high sections
+    //   standard       – neutral; anything else
+    const bright = seg.brightness || 0;
+    const bass = seg.bass || 0;
+    const level = seg.level;
+    const energy = seg.energy || 0;
+
+    if (level === 'high') {
+      // Gnarly / distorted high sections (high energy, high bass, not bright)
+      // → ramp-down-rnd — reads as chaos.
+      if (bright < 0.35 && bass > 0.55 && energy > 0.7) return 'ramp-down-rnd';
+      if (bright > 0.55) return 'random';
+      if (bass > 0.55) return 'ramp-up';
+      return 'standard';
+    }
+
+    if (level === 'mid') {
+      if (bass > 0.5) return 'ramp-up';
+      if (bright > 0.5) return 'standard';
+      return 'ramp-down';
+    }
+
     return 'standard';
   }
 
@@ -719,14 +1475,25 @@ class AutoShow {
     return {
       duration: a.duration,
       bpm: a.bpm,
+      tempoCurve: a.tempoCurve || [],
+      tempoStability: a.tempoStability,
+      beatSource: a.beatSource,
       key: a.key,
       scale: a.scale,
+      keyStrength: a.keyStrength,
+      mood: a.mood || null,
+      genre: a.genre || null,
       beats: a.beats || [],
+      beatStrengths: a.beatStrengths || [],
+      downbeats: a.downbeats || [],
+      meter: a.meter || 4,
+      downbeatConfidence: a.downbeatConfidence,
       segments: a.segments || [],
       drops: a.drops || [],
       buildups: a.buildups || [],
       energyCurve: a.energyCurve || [],
       bassCurve: a.bassCurve || [],
+      kickCurve: a.kickCurve || [],
       highCurve: a.highCurve || [],
       timeline,
     };
@@ -737,11 +1504,23 @@ class AutoShow {
       status: this._status,
       running: this.running,
       track: this.track,
+      palette: this.palette,
+      paletteName: this.paletteName,
+      paletteSize: this.paletteSize,
+      intensity: this.intensity,
       analysis: this.analysis ? {
         duration: this.analysis.duration,
         bpm: this.analysis.bpm,
+        tempoStability: this.analysis.tempoStability,
+        beatSource: this.analysis.beatSource,
         key: this.analysis.key,
         scale: this.analysis.scale,
+        keyStrength: this.analysis.keyStrength,
+        mood: this.analysis.mood || null,
+        genre: this.analysis.genre || null,
+        meter: this.analysis.meter,
+        downbeatCount: this.analysis.downbeats?.length || 0,
+        downbeatConfidence: this.analysis.downbeatConfidence,
         segmentCount: this.analysis.segments?.length || 0,
         beatCount: this.analysis.beats?.length || 0,
         onsetCount: this.analysis.onsets?.length || 0,

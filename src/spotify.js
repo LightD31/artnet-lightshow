@@ -103,6 +103,7 @@ class SpotifyClient {
       durationMs: data.item.duration_ms,
       progressMs: data.progress_ms,
       isPlaying: data.is_playing,
+      isrc: data.item.external_ids?.isrc || null,
       previewUrl: data.item.preview_url,
     };
   }
@@ -128,6 +129,7 @@ class SpotifyClient {
         album: item.album?.name || '',
         albumArt: item.album?.images?.[0]?.url || null,
         durationMs: item.duration_ms,
+        isrc: item.external_ids?.isrc || null,
       }));
   }
 

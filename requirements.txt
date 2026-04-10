@@ -1,4 +1,6 @@
 librosa>=0.10
 numpy
+scipy
+scikit-learn
 soundfile
 yt-dlp

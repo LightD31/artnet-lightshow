@@ -129,8 +129,8 @@ function renderColors(s) {
       sw.style.background = bg;
       if (c.name === 'Blackout') sw.style.border = '2px solid #444';
 
-      sw.addEventListener('click', () => send({ colorA: i }));
-      sw.addEventListener('contextmenu', (e) => { e.preventDefault(); send({ colorB: i }); });
+      sw.addEventListener('click', (e) => { send(e.shiftKey ? { colorC: i } : { colorA: i }); });
+      sw.addEventListener('contextmenu', (e) => { e.preventDefault(); send(e.shiftKey ? { colorD: i } : { colorB: i }); });
       grid.appendChild(sw);
     });
     colorsRendered = true;
@@ -140,6 +140,8 @@ function renderColors(s) {
     const i = parseInt(sw.dataset.idx);
     sw.classList.toggle('active-a', i === s.colorA);
     sw.classList.toggle('active-b', i === s.colorB);
+    sw.classList.toggle('active-c', i === s.colorC);
+    sw.classList.toggle('active-d', i === s.colorD);
   });
 }
 
@@ -611,6 +613,140 @@ socket.on('midi-status', ({ ok, ports, enabled }) => {
   text.textContent = enabled ? 'Connected' : (ok ? 'Connected' : 'Failed to connect');
 });
 
+// ── Analysis stats panel ─────────────────────────────────────────────────────
+//
+// Renders the #auto-analysis-stats block from the autoShow client state.
+// Three sub-rows: track-level stats (BPM, key, duration, segments…),
+// mood/genre (PANNs label + valence/arousal/loudness/…), structure
+// (drops/buildups/downbeats/meter).
+
+// Per-genre display colour. Keyed by the `label` field from the PANNs
+// classifier (see GENRE_STYLES in src/auto-show.js for the matching
+// palette/pattern map that drives the actual lighting).
+const GENRE_COLORS = {
+  edm:       '#ff66cc',
+  dubstep:   '#ff3366',
+  trance:    '#cc66ff',
+  disco:     '#ff99cc',
+  hiphop:    '#ffaa44',
+  pop:       '#ffcc66',
+  funk:      '#ff8844',
+  rock:      '#ff6644',
+  metal:     '#aa4466',
+  country:   '#ddbb66',
+  reggae:    '#66cc66',
+  latin:     '#ff8833',
+  jazz:      '#cc88ff',
+  classical: '#88ccff',
+  folk:      '#bb9966',
+  ambient:   '#66ccff',
+  unknown:   '#888888',
+};
+
+function fmtPct(v) {
+  if (v == null || !Number.isFinite(v)) return '–';
+  return `${Math.round(v * 100)}%`;
+}
+
+function fmtNum(v, digits = 2) {
+  if (v == null || !Number.isFinite(v)) return '–';
+  return v.toFixed(digits);
+}
+
+function renderAnalysisStats(as, colorPresets) {
+  const a = as.analysis;
+  const parts = [];
+
+  // Row 0 — Genre badge (most prominent so it can't be missed).
+  // Renders even if mood is missing, so the user always sees the style
+  // classification when PANNs is available.
+  if (a.genre && a.genre.label) {
+    const label = a.genre.label;
+    const color = GENRE_COLORS[label] || '#888';
+    const conf = a.genre.labelConf != null ? ` ${fmtPct(a.genre.labelConf)}` : '';
+    const tags = (a.genre.topTags || [])
+      .filter(t => !/^Music$/i.test(t.label))
+      .slice(0, 3);
+    const tagText = tags.length
+      ? `<span class="dim">${tags.map(t => `${t.label} ${fmtPct(t.p)}`).join(' · ')}</span>`
+      : '';
+    parts.push(`<div class="auto-analysis-row tier-row">`);
+    parts.push(`<span class="tier-badge" style="background:${color}22;color:${color};border-color:${color}55" title="PANNs AudioSet genre classifier (${label}${conf})">${label.toUpperCase()}${conf}</span>`);
+    parts.push(tagText);
+    parts.push(`</div>`);
+  }
+
+  // Row 0.5 — Palette swatches. The auto-show locks each song to a single
+  // 4-colour tetrad from the bank in src/auto-show.js (see TETRADS there)
+  // and every pattern/drop/accent stays inside it. Rendering the 4 colours
+  // here lets the operator see exactly what palette the song is running in.
+  if (Array.isArray(as.palette) && as.palette.length && Array.isArray(colorPresets)) {
+    const swatches = as.palette
+      .map((idx, i) => {
+        const preset = colorPresets[idx];
+        if (!preset) return '';
+        const css = colorToCss(preset);
+        const label = `${preset.name || 'color'} (#${idx})`;
+        // Highlight the first slot — that's the tetrad's "anchor" colour.
+        const border = i === 0 ? 'box-shadow:0 0 0 1px #fff8 inset;' : '';
+        return `<span class="palette-swatch" style="background:${css};${border}" title="${label}"></span>`;
+      })
+      .join('');
+    const nameLabel = as.paletteName
+      ? `<span class="dim" title="Tetrad name — the song's locked 4-colour look">${as.paletteName}</span>`
+      : '';
+    parts.push(`<div class="auto-analysis-row palette-row">`);
+    parts.push(`<span class="palette-label" title="The 4-colour tetrad the auto-show has locked this song into">Palette</span>`);
+    parts.push(`<span class="palette-swatches">${swatches}</span>`);
+    parts.push(nameLabel);
+    parts.push(`</div>`);
+  }
+
+  // Row 1 — track basics
+  parts.push(`<div class="auto-analysis-row">`);
+  parts.push(`<span>BPM: <strong>${a.bpm}</strong></span>`);
+  if (a.tempoStability != null) {
+    parts.push(`<span title="Tempo stability — 1.0 = locked, lower = drifting">Stability: <strong>${fmtPct(a.tempoStability)}</strong></span>`);
+  }
+  if (a.beatSource) {
+    parts.push(`<span title="Beat tracking algorithm">Beat: <strong>${a.beatSource}</strong></span>`);
+  }
+  parts.push(`<span>Key: <strong>${a.key} ${a.scale}</strong>${a.keyStrength != null ? ` <span class="dim">(${fmtNum(a.keyStrength)})</span>` : ''}</span>`);
+  parts.push(`<span>Duration: <strong>${Math.round(a.duration)}s</strong></span>`);
+  parts.push(`</div>`);
+
+  // Row 2 — mood (valence/arousal/loud/bright/dance/kick)
+  if (a.mood) {
+    const m = a.mood;
+    parts.push(`<div class="auto-analysis-row">`);
+    parts.push(`<span title="Valence — happy/bright vs dark/sad">Valence: <strong>${fmtPct(m.valence)}</strong></span>`);
+    parts.push(`<span title="Arousal — intense vs calm">Arousal: <strong>${fmtPct(m.arousal)}</strong></span>`);
+    if (m.loudness != null)     parts.push(`<span title="Loudness vs reference">Loud: <strong>${fmtPct(m.loudness)}</strong></span>`);
+    if (m.brightness != null)   parts.push(`<span title="Spectral brightness">Bright: <strong>${fmtPct(m.brightness)}</strong></span>`);
+    if (m.danceability != null) parts.push(`<span title="Danceability — pulse steadiness">Dance: <strong>${fmtPct(m.danceability)}</strong></span>`);
+    if (m.kickiness != null)    parts.push(`<span title="Kick-band median energy">Kick: <strong>${fmtPct(m.kickiness)}</strong></span>`);
+    parts.push(`</div>`);
+  }
+
+  // Row 3 — structure
+  parts.push(`<div class="auto-analysis-row">`);
+  parts.push(`<span>Segments: <strong>${a.segmentCount}</strong></span>`);
+  parts.push(`<span>Beats: <strong>${a.beatCount}</strong></span>`);
+  if (a.meter != null) {
+    parts.push(`<span title="Time signature">Meter: <strong>${a.meter}/4</strong></span>`);
+  }
+  if (a.downbeatCount != null) {
+    const dbConf = a.downbeatConfidence != null ? ` <span class="dim">(${fmtPct(a.downbeatConfidence)})</span>` : '';
+    parts.push(`<span title="Downbeats detected (with detection confidence)">Downbeats: <strong>${a.downbeatCount}</strong>${dbConf}</span>`);
+  }
+  parts.push(`<span>Drops: <strong>${a.dropCount || 0}</strong></span>`);
+  parts.push(`<span>Builds: <strong>${a.buildupCount || 0}</strong></span>`);
+  parts.push(`<span>Events: <strong>${as.timelineLength}</strong></span>`);
+  parts.push(`</div>`);
+
+  return parts.join('');
+}
+
 // ── Auto Timeline Visualizer ─────────────────────────────────────────────────
 //
 // Fetches the full analysis/timeline payload from /api/auto/timeline when a
@@ -719,19 +855,20 @@ function drawAutoTimeline() {
   const xForMs = (ms) => (ms / durMs) * W;
   const xForSec = (s) => (s / data.duration) * W;
 
-  // ── Row layout ─────────────────────────────────────────────
-  //  0-16px  : segments
-  //  16-96px : energy + bass curves
-  //  96-108  : beat ticks
-  //  108-128 : buildups + drops
-  //  128-160 : timeline events
+  // ── Row layout (200px total) ────────────────────────────────
+  //   0- 16 : segments with letter labels
+  //  18-106 : multi-band curves (energy filled + bass/kick/high lines)
+  //           and tempo-drift overlay if stability < 0.85
+  // 108-122 : beat ticks (regular + downbeats with greater height)
+  // 124-144 : buildups + drops
+  // 146-176 : timeline events (patches + energy bursts in two lanes)
   const ROW_SEG    = { y: 0,   h: 16 };
-  const ROW_CURVE  = { y: 18,  h: 78 };
-  const ROW_BEATS  = { y: 98,  h: 10 };
-  const ROW_EVENTS = { y: 110, h: 18 };
-  const ROW_TIMELN = { y: 132, h: 28 };
+  const ROW_CURVE  = { y: 18,  h: 88 };
+  const ROW_BEATS  = { y: 108, h: 14 };
+  const ROW_EVENTS = { y: 124, h: 20 };
+  const ROW_TIMELN = { y: 146, h: 30 };
 
-  // ── Segments ────────────────────────────────────────────────
+  // ── Segments with letter labels ─────────────────────────────
   const segColors = {
     low:  '#1e3a5f',
     mid:  '#3a7099',
@@ -740,23 +877,49 @@ function drawAutoTimeline() {
   (data.segments || []).forEach(seg => {
     const x0 = xForSec(seg.start);
     const x1 = xForSec(seg.end);
+    const w = Math.max(1, x1 - x0);
     ctx.fillStyle = segColors[seg.level] || '#333';
     ctx.globalAlpha = 0.9;
-    ctx.fillRect(x0, ROW_SEG.y, Math.max(1, x1 - x0), ROW_SEG.h);
+    ctx.fillRect(x0, ROW_SEG.y, w, ROW_SEG.h);
+    ctx.globalAlpha = 1;
+    // Letter label if the segment is wide enough
+    if (seg.label && w > 18) {
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.font = 'bold 10px monospace';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(seg.label, x0 + 4, ROW_SEG.y + ROW_SEG.h / 2);
+    }
   });
-  ctx.globalAlpha = 1;
 
   // ── Energy curve (filled) ───────────────────────────────────
-  const curve = data.energyCurve || [];
-  if (curve.length > 1) {
+  const drawCurveLine = (curve, color, width = 1.2, alpha = 0.8) => {
+    if (!curve || curve.length < 2) return;
     ctx.beginPath();
-    ctx.moveTo(xForSec(curve[0].t), ROW_CURVE.y + ROW_CURVE.h);
-    for (const pt of curve) {
+    for (let i = 0; i < curve.length; i++) {
+      const pt = curve[i];
+      const x = xForSec(pt.t);
+      const y = ROW_CURVE.y + ROW_CURVE.h - Math.max(0, Math.min(1, pt.v)) * ROW_CURVE.h;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = alpha;
+    ctx.lineWidth = width;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  };
+
+  const energyCurve = data.energyCurve || [];
+  if (energyCurve.length > 1) {
+    ctx.beginPath();
+    ctx.moveTo(xForSec(energyCurve[0].t), ROW_CURVE.y + ROW_CURVE.h);
+    for (const pt of energyCurve) {
       const x = xForSec(pt.t);
       const y = ROW_CURVE.y + ROW_CURVE.h - Math.max(0, Math.min(1, pt.v)) * ROW_CURVE.h;
       ctx.lineTo(x, y);
     }
-    ctx.lineTo(xForSec(curve[curve.length - 1].t), ROW_CURVE.y + ROW_CURVE.h);
+    ctx.lineTo(xForSec(energyCurve[energyCurve.length - 1].t), ROW_CURVE.y + ROW_CURVE.h);
     ctx.closePath();
     const grad = ctx.createLinearGradient(0, ROW_CURVE.y, 0, ROW_CURVE.y + ROW_CURVE.h);
     grad.addColorStop(0, 'rgba(108, 99, 255, .75)');
@@ -765,32 +928,71 @@ function drawAutoTimeline() {
     ctx.fill();
   }
 
-  // ── Bass curve (outline) ───────────────────────────────────
-  const bass = data.bassCurve || [];
-  if (bass.length > 1) {
+  // Sub-band curves as overlay lines on the same row
+  drawCurveLine(data.bassCurve, 'rgba(255, 101, 132, .85)', 1.2);
+  drawCurveLine(data.kickCurve, 'rgba(255, 170, 68, .75)', 1.0, 0.7);
+  drawCurveLine(data.highCurve, 'rgba(102, 221, 255, .7)', 1.0, 0.65);
+
+  // ── Tempo curve overlay (only when stability < 0.85) ────────
+  // Maps BPM ±15% around the global BPM into the top ~22px of the curve row.
+  // A wavy line means the track is genuinely speeding up / slowing down.
+  if (data.tempoCurve && data.tempoCurve.length > 2 && data.tempoStability != null && data.tempoStability < 0.85) {
+    const bpmMid = data.bpm || 120;
+    const bpmLo = bpmMid * 0.85;
+    const bpmHi = bpmMid * 1.15;
+    const bandTop = ROW_CURVE.y + 2;
+    const bandBot = ROW_CURVE.y + 22;
+    const bandH = bandBot - bandTop;
     ctx.beginPath();
-    for (let i = 0; i < bass.length; i++) {
-      const pt = bass[i];
+    let started = false;
+    for (const pt of data.tempoCurve) {
+      const v = (pt.v - bpmLo) / Math.max(0.001, bpmHi - bpmLo);
       const x = xForSec(pt.t);
-      const y = ROW_CURVE.y + ROW_CURVE.h - Math.max(0, Math.min(1, pt.v)) * ROW_CURVE.h;
-      if (i === 0) ctx.moveTo(x, y);
+      const y = bandBot - Math.max(0, Math.min(1, v)) * bandH;
+      if (!started) { ctx.moveTo(x, y); started = true; }
       else ctx.lineTo(x, y);
     }
-    ctx.strokeStyle = 'rgba(255, 101, 132, .8)';
-    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = 'rgba(153, 255, 153, .85)';
+    ctx.lineWidth = 1.4;
     ctx.stroke();
+    // Faint dashed band edges to show the ±15% window
+    ctx.strokeStyle = 'rgba(153, 255, 153, .25)';
+    ctx.setLineDash([2, 4]);
+    ctx.beginPath();
+    ctx.moveTo(0, bandTop); ctx.lineTo(W, bandTop);
+    ctx.moveTo(0, bandBot); ctx.lineTo(W, bandBot);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
 
-  // ── Beat ticks ──────────────────────────────────────────────
+  // ── Beat ticks (regular + downbeat highlights) ──────────────
   const beats = data.beats || [];
+  const beatStrengths = data.beatStrengths || [];
   if (beats.length) {
-    ctx.strokeStyle = 'rgba(200, 200, 240, .25)';
+    // Subsample if there are more beats than pixels available
+    const step = beats.length > W ? Math.ceil(beats.length / W) : 1;
+    ctx.strokeStyle = 'rgba(200, 200, 240, .35)';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    // If there are lots of beats, subsample so we don't saturate pixels
-    const step = beats.length > W ? Math.ceil(beats.length / W) : 1;
     for (let i = 0; i < beats.length; i += step) {
+      // Vary tick height by beat strength when available
+      const strength = beatStrengths[i] != null ? Math.max(0.25, beatStrengths[i]) : 0.5;
+      const tickH = Math.max(3, ROW_BEATS.h * strength);
       const x = xForSec(beats[i]);
+      ctx.moveTo(x, ROW_BEATS.y + ROW_BEATS.h - tickH);
+      ctx.lineTo(x, ROW_BEATS.y + ROW_BEATS.h);
+    }
+    ctx.stroke();
+  }
+  // Downbeats — taller, brighter
+  const downbeats = data.downbeats || [];
+  if (downbeats.length) {
+    ctx.strokeStyle = 'rgba(255, 255, 255, .85)';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    const step = downbeats.length > W / 2 ? Math.ceil(downbeats.length / (W / 2)) : 1;
+    for (let i = 0; i < downbeats.length; i += step) {
+      const x = xForSec(downbeats[i]);
       ctx.moveTo(x, ROW_BEATS.y);
       ctx.lineTo(x, ROW_BEATS.y + ROW_BEATS.h);
     }
@@ -809,19 +1011,26 @@ function drawAutoTimeline() {
     ctx.fillRect(x0, ROW_EVENTS.y, w, ROW_EVENTS.h);
   });
 
-  // ── Drops (triangular flag markers) ─────────────────────────
+  // ── Drops (triangular flag, height scaled by confidence) ────
   (data.drops || []).forEach(d => {
     const x = xForSec(d.t);
-    const strength = Math.max(0.3, Math.min(1, d.strength || 0.5));
-    ctx.fillStyle = '#ff4444';
+    const confidence = Math.max(0.3, Math.min(1, d.confidence || 0.5));
+    const triH = ROW_EVENTS.h * (0.5 + confidence * 0.5);
+    const isDownbeat = d.snapTo === 'downbeat';
+    ctx.fillStyle = isDownbeat ? '#ff2222' : '#ff5555';
     ctx.beginPath();
-    ctx.moveTo(x, ROW_EVENTS.y);
+    ctx.moveTo(x, ROW_EVENTS.y + (ROW_EVENTS.h - triH));
     ctx.lineTo(x - 5, ROW_EVENTS.y + ROW_EVENTS.h);
     ctx.lineTo(x + 5, ROW_EVENTS.y + ROW_EVENTS.h);
     ctx.closePath();
     ctx.fill();
-    // Vertical streak through the curve row for visual emphasis
-    ctx.strokeStyle = `rgba(255, 68, 68, ${0.25 + strength * 0.35})`;
+    if (isDownbeat) {
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+    // Vertical streak through the curve row, alpha scaled by confidence
+    ctx.strokeStyle = `rgba(255, 68, 68, ${0.25 + confidence * 0.4})`;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.moveTo(x, ROW_CURVE.y);
@@ -851,7 +1060,7 @@ function drawAutoTimeline() {
   // Divider lines between rows
   ctx.strokeStyle = 'rgba(255,255,255,.04)';
   ctx.lineWidth = 1;
-  [ROW_CURVE.y, ROW_BEATS.y, ROW_EVENTS.y, ROW_TIMELN.y].forEach(y => {
+  [ROW_SEG.y, ROW_CURVE.y, ROW_BEATS.y, ROW_EVENTS.y, ROW_TIMELN.y].forEach(y => {
     ctx.beginPath();
     ctx.moveTo(0, y - 1);
     ctx.lineTo(W, y - 1);
@@ -953,18 +1162,7 @@ function renderAutoMode(s) {
   const statsEl = document.getElementById('auto-analysis-stats');
   if (as.analysis) {
     analysisEl.style.display = '';
-    const dropCount    = as.analysis.dropCount    != null ? as.analysis.dropCount    : 0;
-    const buildupCount = as.analysis.buildupCount != null ? as.analysis.buildupCount : 0;
-    statsEl.innerHTML = `
-      <span>BPM: <strong>${as.analysis.bpm}</strong></span>
-      <span>Key: <strong>${as.analysis.key} ${as.analysis.scale}</strong></span>
-      <span>Segments: <strong>${as.analysis.segmentCount}</strong></span>
-      <span>Beats: <strong>${as.analysis.beatCount}</strong></span>
-      <span>Drops: <strong>${dropCount}</strong></span>
-      <span>Builds: <strong>${buildupCount}</strong></span>
-      <span>Duration: <strong>${Math.round(as.analysis.duration)}s</strong></span>
-      <span>Events: <strong>${as.timelineLength}</strong></span>
-    `;
+    statsEl.innerHTML = renderAnalysisStats(as, s.colorPresets);
   } else {
     analysisEl.style.display = 'none';
   }
@@ -1003,6 +1201,20 @@ function renderAutoMode(s) {
   const srcSel = document.getElementById('auto-source-select');
   if (s.autoSource && document.activeElement !== srcSel && srcSel.value !== s.autoSource) {
     srcSel.value = s.autoSource;
+  }
+
+  // Palette size toggle — reflect the server's current paletteSize so a
+  // manual change or a /api/auto/state refresh lands on the right button.
+  const psize = as.paletteSize || 4;
+  document.querySelectorAll('#auto-palette-size .palette-size-btn').forEach((btn) => {
+    btn.classList.toggle('active', Number(btn.dataset.size) === psize);
+  });
+
+  // Intensity slider — sync from server when user isn't dragging
+  const intensitySlider = document.getElementById('auto-intensity');
+  if (document.activeElement !== intensitySlider && as.intensity != null) {
+    intensitySlider.value = as.intensity;
+    document.getElementById('auto-intensity-val').textContent = as.intensity;
   }
 
   // Analyze CDJ button availability
@@ -1064,6 +1276,23 @@ document.getElementById('auto-analyze-prolink-btn').addEventListener('click', ()
 // Source selector
 document.getElementById('auto-source-select').addEventListener('change', (e) => {
   send({ autoSource: e.target.value });
+});
+
+// Palette size toggle — 2 | 3 | 4. The server hot-swaps the palette on the
+// current auto-show by rebuilding the timeline in place.
+document.querySelectorAll('#auto-palette-size .palette-size-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const size = Number(btn.dataset.size);
+    if (!size) return;
+    send({ autoPaletteSize: size });
+  });
+});
+
+// Intensity slider — rebuilds timeline with new accent density / drop scaling.
+document.getElementById('auto-intensity').addEventListener('input', (e) => {
+  const val = Number(e.target.value);
+  document.getElementById('auto-intensity-val').textContent = val;
+  send({ autoIntensity: val });
 });
 
 // Upload audio file

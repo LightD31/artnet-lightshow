@@ -7,7 +7,13 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:connect.prolink.tools)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(node tests/real-track-analyze.js \"Bon Iver Holocene\")",
+      "Bash(node tests/real-track-analyze.js \"Avicii Levels\")",
+      "Bash(node tests/real-track-analyze.js \"Tate McRae Just Keep Watching F1\")",
+      "Bash(node -e ':*)",
+      "Bash(python scripts/setup-panns.py --check)",
+      "WebFetch(domain:www.npmjs.com)"
     ]
   }
 }
