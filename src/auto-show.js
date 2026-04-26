@@ -12,26 +12,29 @@ const deezer = require('./deezer');
 // analogous + complement) or split-complementary (one dominant + two accents).
 //
 // Colour preset indices (see server.js COLOR_PRESETS):
-//   0=Red 1=Orange 2=Amber 3=Yellow 4=Green 5=Cyan 6=Blue 7=Purple 8=Magenta
-//   9=White 10=UV 11=UV(RGB) 12=Pink 13=Teal 14=Gold 15=Warm White
+//   0=Crimson 1=Flame 2=Amber 3=Sun 4=Lime 5=Aqua 6=Cobalt 7=Violet 8=Fuchsia
+//   9=Daylight White 10=UV 11=Actinic 12=Rose 13=Teal 14=Gold 15=Tungsten White
+//   16=Mint 17=Sky 18=Indigo 19=Coral 20=Lavender 21=Acid 22=Moonlight
 //
 // Ordering inside each tetrad matters: position 0 is the "anchor" that shows
 // up first, positions 1-3 fill out the coherent pairings.
 const TETRADS = {
-  sunset:    [1, 0, 8, 7],    // Orange / Red / Magenta / Purple — warm theatrical
-  warm:      [3, 1, 14, 8],   // Yellow / Orange / Gold / Magenta — golden hour
-  cyber:     [8, 7, 5, 6],    // Magenta / Purple / Cyan / Blue — EDM classic
-  neon:      [8, 12, 5, 11],  // Magenta / Pink / Cyan / UV(RGB) — rave
-  cool:      [6, 7, 5, 13],   // Blue / Purple / Cyan / Teal — chill
-  ocean:     [5, 13, 4, 6],   // Cyan / Teal / Green / Blue — serene (no longer same as cool)
-  forest:    [4, 13, 2, 14],  // Green / Teal / Amber / Gold — organic
-  fire:      [0, 7, 1, 14],   // Red / Purple / Orange / Gold — rock/metal heat (distinct from warm)
-  candy:     [12, 8, 3, 5],   // Pink / Magenta / Yellow / Cyan — pop
+  synthwave:   [8, 6, 12, 11],  // Fuchsia / Cobalt / Rose / Actinic — high-energy club contrast
+  sunsetDrive: [1, 19, 8, 15],  // Flame / Coral / Fuchsia / Tungsten White — warm lead with glam accent
+  solarPunch:  [3, 2, 14, 6],   // Sun / Amber / Gold / Cobalt — warm dominant + cool counter
+  deepOcean:   [5, 13, 6, 17],  // Aqua / Teal / Cobalt / Sky — cool analogous depth
+  emeraldCity: [4, 16, 13, 14], // Lime / Mint / Teal / Gold — natural greens with premium warmth
+  arctic:      [17, 6, 9, 20],  // Sky / Cobalt / Daylight White / Lavender — icy cinematic look
+  violetDream: [7, 20, 8, 9],   // Violet / Lavender / Fuchsia / Daylight White — dreamy purple family
+  volcanic:    [0, 1, 14, 15],  // Crimson / Flame / Gold / Tungsten White — aggressive warm concert look
+  candyPop:    [12, 8, 3, 5],   // Rose / Fuchsia / Sun / Aqua — playful high-separation tetrad
   halloween: [1, 7, 14, 10],  // Orange / Purple / Gold / UV — spooky
-  monoRed:   [0, 8, 1, 14],   // Red-dominant warm — metal / aggression
-  monoBlue:  [6, 11, 13, 5],  // Blue / UV(RGB) / Teal / Cyan — trance (distinct from cyber)
-  royal:     [7, 11, 8, 15],  // Purple / UV(RGB) / Magenta / Warm White — regal
-  golden:    [14, 15, 2, 9],  // Gold / Warm White / Amber / White — acoustic concert
+  noirUv:      [10, 11, 18, 9], // UV / Actinic / Indigo / Daylight White — dark room + UV accent
+  desert:      [2, 14, 19, 15], // Amber / Gold / Coral / Tungsten White — earthy warm theatre wash
+  royal:       [7, 18, 14, 9],  // Violet / Indigo / Gold / Daylight White — regal stage contrast
+  tropical:    [16, 13, 3, 19], // Mint / Teal / Sun / Coral — festival warm/cool crossover
+  aurora:      [17, 16, 20, 11],// Sky / Mint / Lavender / Actinic — ethereal atmospheric blend
+  lunar:       [9, 15, 6, 18],  // Daylight White / Tungsten White / Cobalt / Indigo — monochrome+cold accents
 };
 
 // Triad banks (3-colour looks). Hand-picked — NOT slices of TETRADS — so the
@@ -39,20 +42,22 @@ const TETRADS = {
 // hues instead of the tetrad's two analogous pairs). Keys match TETRADS so
 // the same genre/mood resolver can swap size without changing its logic.
 const TRIADS = {
-  sunset:    [1, 0, 7],       // Orange / Red / Purple
-  warm:      [3, 1, 14],      // Yellow / Orange / Gold
-  cyber:     [8, 5, 6],       // Magenta / Cyan / Blue — EDM triad
-  neon:      [8, 12, 5],      // Magenta / Pink / Cyan
-  cool:      [6, 7, 5],       // Blue / Purple / Cyan
-  ocean:     [5, 13, 4],      // Cyan / Teal / Green — serene (no longer same as cool)
-  forest:    [4, 13, 14],     // Green / Teal / Gold
-  fire:      [0, 14, 7],      // Red / Gold / Purple — rock heat with drama (distinct from warm)
-  candy:     [12, 3, 5],      // Pink / Yellow / Cyan — pop triad
-  halloween: [1, 7, 10],      // Orange / Purple / UV
-  monoRed:   [0, 8, 14],      // Red / Magenta / Gold
-  monoBlue:  [6, 11, 13],     // Blue / UV(RGB) / Teal — trance (distinct from cool)
-  royal:     [7, 11, 14],     // Purple / UV(RGB) / Gold
-  golden:    [14, 15, 9],     // Gold / Warm White / White — soft concert
+  synthwave:   [8, 6, 11],    // Fuchsia / Cobalt / Actinic
+  sunsetDrive: [1, 19, 15],   // Flame / Coral / Tungsten White
+  solarPunch:  [3, 14, 6],    // Sun / Gold / Cobalt
+  deepOcean:   [5, 13, 6],    // Aqua / Teal / Cobalt
+  emeraldCity: [4, 16, 14],   // Lime / Mint / Gold
+  arctic:      [17, 6, 9],    // Sky / Cobalt / Daylight White
+  violetDream: [7, 20, 9],    // Violet / Lavender / Daylight White
+  volcanic:    [0, 1, 15],    // Crimson / Flame / Tungsten White
+  candyPop:    [12, 3, 5],    // Rose / Sun / Aqua
+  halloween:   [1, 7, 10],    // Flame / Violet / UV
+  noirUv:      [10, 11, 18],  // UV / Actinic / Indigo
+  desert:      [2, 14, 19],   // Amber / Gold / Coral
+  royal:       [7, 14, 9],    // Violet / Gold / Daylight White
+  tropical:    [16, 13, 19],  // Mint / Teal / Coral
+  aurora:      [17, 16, 20],  // Sky / Mint / Lavender
+  lunar:       [9, 6, 18],    // Daylight White / Cobalt / Indigo
 };
 
 // Duo banks (2-colour looks). Complementary pairs that read cleanly on a
@@ -60,20 +65,22 @@ const TRIADS = {
 // tetrad's analogous pair (which would look like a single colour from the
 // audience). Keys match TETRADS so the resolver works the same way.
 const DUOS = {
-  sunset:    [1, 7],          // Orange / Purple
-  warm:      [3, 8],          // Yellow / Magenta
-  cyber:     [8, 5],          // Magenta / Cyan — classic EDM
-  neon:      [8, 11],         // Magenta / UV(RGB) — rave blacklight (distinct from candy)
-  cool:      [6, 12],         // Blue / Pink — chill contrast (Blue/Cyan too similar)
-  ocean:     [5, 4],          // Cyan / Green — serene (distinct from cool)
-  forest:    [4, 14],         // Green / Gold
-  fire:      [0, 14],         // Red / Gold
-  candy:     [12, 3],         // Pink / Yellow — pop (distinct from neon)
-  halloween: [1, 10],         // Orange / UV — spooky blacklight (distinct from sunset)
-  monoRed:   [0, 8],          // Red / Magenta
-  monoBlue:  [6, 7],          // Blue / Purple
-  royal:     [7, 14],         // Purple / Gold
-  golden:    [14, 15],        // Gold / Warm White — concert warmth
+  synthwave:   [8, 6],        // Fuchsia / Cobalt
+  sunsetDrive: [1, 17],       // Flame / Sky
+  solarPunch:  [3, 7],        // Sun / Violet
+  deepOcean:   [5, 13],       // Aqua / Teal
+  emeraldCity: [4, 14],       // Lime / Gold
+  arctic:      [17, 9],       // Sky / Daylight White
+  violetDream: [7, 9],        // Violet / Daylight White
+  volcanic:    [0, 15],       // Crimson / Tungsten White
+  candyPop:    [12, 5],       // Rose / Aqua
+  halloween:   [1, 10],       // Flame / UV
+  noirUv:      [10, 11],      // UV / Actinic
+  desert:      [2, 6],        // Amber / Cobalt
+  royal:       [7, 14],       // Violet / Gold
+  tropical:    [16, 19],      // Mint / Coral
+  aurora:      [16, 20],      // Mint / Lavender
+  lunar:       [9, 18],       // Daylight White / Indigo
 };
 
 // Look up the right bank for a given palette size. 4 is the default (the
@@ -95,37 +102,37 @@ function paletteBankForSize(size) {
 //   rock      — light bursts, proper drops only
 //   calm      — no strobes, no drops
 const GENRE_STYLES = {
-  edm:       { tier: 'dance',    tetrads: ['cyber', 'neon', 'cool'],
+  edm:       { tier: 'dance',    tetrads: ['synthwave', 'aurora', 'arctic'],
                patterns: ['pairs', 'runner', 'chase', 'split', 'stack-up', 'random-flash', 'hit', 'alt-halves', 'split-4', 'chase-4', 'pairs-4'] },
-  dubstep:   { tier: 'dance',    tetrads: ['monoRed', 'cyber', 'halloween'],
+  dubstep:   { tier: 'dance',    tetrads: ['volcanic', 'noirUv', 'synthwave'],
                patterns: ['random-flash', 'stack-up', 'split', 'pairs', 'runner', 'hit', 'alt-halves', 'split-3', 'alt-thirds'] },
-  trance:    { tier: 'dance',    tetrads: ['monoBlue', 'cool', 'royal', 'cyber'],
+  trance:    { tier: 'dance',    tetrads: ['arctic', 'violetDream', 'aurora', 'synthwave'],
                patterns: ['sparkle', 'wave', 'twinkle', 'runner', 'hit', 'chase-3', 'alt-thirds'] },
-  disco:     { tier: 'dance',    tetrads: ['candy', 'warm', 'cyber'],
+  disco:     { tier: 'dance',    tetrads: ['candyPop', 'sunsetDrive', 'solarPunch'],
                patterns: ['ping-pong', 'chase', 'sparkle', 'pairs', 'alt-halves', 'split', 'split-4', 'alt-quarters', 'pairs-4'] },
-  hiphop:    { tier: 'moderate', tetrads: ['monoRed', 'fire', 'royal'],
+  hiphop:    { tier: 'moderate', tetrads: ['volcanic', 'desert', 'royal'],
                patterns: ['pairs', 'split', 'chase', 'stack-up', 'runner', 'alt-halves', 'split-3', 'chase-3'] },
-  pop:       { tier: 'moderate', tetrads: ['candy', 'sunset', 'neon'],
+  pop:       { tier: 'moderate', tetrads: ['candyPop', 'sunsetDrive', 'tropical'],
                patterns: ['ping-pong', 'wave', 'chase', 'sparkle', 'pairs', 'split-3', 'chase-4'] },
-  funk:      { tier: 'moderate', tetrads: ['warm', 'sunset', 'candy'],
+  funk:      { tier: 'moderate', tetrads: ['solarPunch', 'tropical', 'sunsetDrive'],
                patterns: ['ping-pong', 'pairs', 'runner', 'chase', 'wave', 'alt-halves', 'split-4', 'alt-quarters'] },
-  rock:      { tier: 'rock',     tetrads: ['fire', 'sunset', 'golden'],
+  rock:      { tier: 'rock',     tetrads: ['volcanic', 'solarPunch', 'desert'],
                patterns: ['chase', 'runner', 'pairs', 'ping-pong', 'stack-up'] },
-  metal:     { tier: 'rock',     tetrads: ['monoRed', 'halloween', 'fire'],
+  metal:     { tier: 'rock',     tetrads: ['volcanic', 'noirUv', 'royal'],
                patterns: ['stack-up', 'split', 'random-flash', 'runner', 'pairs', 'hit'] },
-  country:   { tier: 'rock',     tetrads: ['golden', 'warm', 'fire'],
+  country:   { tier: 'rock',     tetrads: ['desert', 'solarPunch', 'sunsetDrive'],
                patterns: ['wave', 'chase', 'runner', 'ping-pong', 'fade'] },
-  reggae:    { tier: 'rock',     tetrads: ['forest', 'golden', 'sunset'],
+  reggae:    { tier: 'rock',     tetrads: ['emeraldCity', 'tropical', 'solarPunch'],
                patterns: ['wave', 'fade', 'chase', 'ping-pong', 'pairs'] },
-  latin:     { tier: 'calm',     tetrads: ['sunset', 'warm', 'candy'],
+  latin:     { tier: 'calm',     tetrads: ['sunsetDrive', 'tropical', 'solarPunch'],
                patterns: ['ping-pong', 'runner', 'chase', 'pairs', 'wave'] },
-  jazz:      { tier: 'calm',     tetrads: ['royal', 'golden', 'cool'],
+  jazz:      { tier: 'calm',     tetrads: ['royal', 'lunar', 'violetDream'],
                patterns: ['solid', 'fade', 'wave', 'twinkle', 'sparkle'] },
-  classical: { tier: 'calm',     tetrads: ['royal', 'cool', 'ocean'],
+  classical: { tier: 'calm',     tetrads: ['lunar', 'arctic', 'royal'],
                patterns: ['solid', 'fade', 'wave', 'twinkle'] },
-  folk:      { tier: 'calm',     tetrads: ['golden', 'forest', 'warm'],
+  folk:      { tier: 'calm',     tetrads: ['desert', 'emeraldCity', 'lunar'],
                patterns: ['solid', 'fade', 'wave', 'twinkle'] },
-  ambient:   { tier: 'calm',     tetrads: ['ocean', 'cool', 'royal'],
+  ambient:   { tier: 'calm',     tetrads: ['deepOcean', 'aurora', 'arctic'],
                patterns: ['solid', 'fade', 'wave', 'twinkle', 'sparkle'] },
 };
 
@@ -148,10 +155,10 @@ const GENRE_STYLES = {
 // list. Inside a quadrant the key still selects which tetrad we land on, so
 // same-mood different-key songs diverge.
 const CIRCUMPLEX_TETRADS = {
-  highPos: ['sunset', 'candy', 'warm', 'neon'],     // excited / happy
-  highNeg: ['fire', 'monoRed', 'halloween', 'cyber'], // angry / tense
-  lowPos:  ['golden', 'forest', 'warm', 'royal'],   // content / calm
-  lowNeg:  ['cool', 'ocean', 'monoBlue', 'royal'],  // sad / reflective
+  highPos: ['sunsetDrive', 'candyPop', 'tropical', 'solarPunch'], // excited / happy
+  highNeg: ['volcanic', 'noirUv', 'halloween', 'synthwave'],      // angry / tense
+  lowPos:  ['desert', 'emeraldCity', 'lunar', 'royal'],           // content / calm
+  lowNeg:  ['deepOcean', 'arctic', 'aurora', 'lunar'],            // sad / reflective
 };
 
 /**
@@ -918,7 +925,10 @@ class AutoShow {
 
         // ── Rise phase: escalate pattern + colour + strobe ──
         const riseStart = isShort ? startMs : startMs + Math.round(durMs * 0.35);
-        const risePool = ['chase', 'runner', 'stack-up'].filter(p => availablePatterns.has(p));
+        const risePool = [
+          'chase-4', 'split-4', 'chase-3', 'split-3',
+          'chase', 'runner', 'stack-up',
+        ].filter(p => availablePatterns.has(p));
         const risePat = risePool.length ? risePool[0] : 'chase';
         const riseColB = palette.length >= 2 ? palette[1] : palette[0];
         events.push({
@@ -1028,8 +1038,8 @@ class AutoShow {
 
         // Movement-pattern pool shared by slam and color-burst.
         const dropMovePool = tier === 'dance'
-          ? ['hit', 'runner', 'pairs', 'random-flash', 'alt-halves', 'stack-up']
-          : ['runner', 'pairs', 'chase', 'stack-up'];
+          ? ['hit', 'runner', 'pairs-4', 'chase-4', 'split-4', 'alt-quarters', 'chase-3', 'split-3', 'alt-thirds', 'pairs', 'random-flash', 'alt-halves', 'stack-up']
+          : ['pairs-4', 'chase-4', 'split-4', 'chase-3', 'split-3', 'runner', 'pairs', 'chase', 'stack-up'];
         const dropMoveFiltered = dropMovePool.filter(p => availablePatterns.has(p));
         const movePattern = dropMoveFiltered.length
           ? dropMoveFiltered[i % dropMoveFiltered.length]
@@ -1116,7 +1126,7 @@ class AutoShow {
           // ── Punch: no strobe overlay, immediate aggressive pattern ──
           // Impact comes from pattern + beat division, not energy effects.
           // The solid anchor reads for ~100 ms, then snaps to movement.
-          const punchPool = ['hit', 'alt-halves', 'random-flash', 'stack-up']
+          const punchPool = ['hit', 'alt-quarters', 'split-4', 'chase-4', 'alt-thirds', 'split-3', 'alt-halves', 'random-flash', 'stack-up']
             .filter(p => availablePatterns.has(p));
           const punchPattern = punchPool.length
             ? punchPool[i % punchPool.length]
@@ -1151,7 +1161,7 @@ class AutoShow {
           data: { id: 'color-strobe', durationMs: colorStrobeMs },
         });
 
-        const hypePool = ['hit', 'alt-halves', 'pairs']
+        const hypePool = ['hit', 'alt-quarters', 'pairs-4', 'chase-4', 'alt-thirds', 'chase-3', 'alt-halves', 'pairs']
           .filter(p => availablePatterns.has(p));
         if (hypePool.length) {
           events.push({
@@ -1604,6 +1614,7 @@ class AutoShow {
     const bass = segment.bass || 0;
     const arousal = mood.arousal || 0;
     const dance = mood.danceability != null ? mood.danceability : 0.5;
+    const palLen = Array.isArray(this.palette) ? this.palette.length : this.paletteSize;
 
     // Danceability biases the pool: rhythm-locked patterns when the pulse is
     // steady, flowy/ambient patterns when it isn't.
@@ -1617,6 +1628,17 @@ class AutoShow {
                               'stack-up', 'random-flash',
                               'hit', 'alt-halves']);
     const FLOWY    = new Set(['solid', 'fade', 'wave', 'sparkle', 'twinkle']);
+
+    const multi3 = ['split-3', 'chase-3', 'alt-thirds'];
+    const multi4 = ['split-4', 'chase-4', 'alt-quarters', 'pairs-4'];
+    const has3 = palLen >= 3;
+    const has4 = palLen >= 4;
+    const withMulti = (basePool) => {
+      const extras = [];
+      if (has3) extras.push(...multi3);
+      if (has4) extras.push(...multi4);
+      return [...extras, ...basePool];
+    };
 
     // Genre bias: when a style is known, intersect the level-driven pool
     // with the style's pattern list so (e.g.) metal tracks favour
@@ -1659,13 +1681,13 @@ class AutoShow {
       case 'low':
         // Calm: slow sustained patterns, light movement if there's any bass.
         if (bass < 0.2) return pickFrom(['solid', 'fade', 'wave']);
-        return pickFrom(['solid', 'fade', 'wave', 'twinkle']);
+        return pickFrom(withMulti(['solid', 'fade', 'wave', 'twinkle']));
 
       case 'mid':
         // Movement: bigger pool, picked by brightness/bass character.
-        if (brightness > 0.45) return pickFrom(['ping-pong', 'wave', 'runner', 'chase', 'sparkle']);
-        if (bass > 0.4)        return pickFrom(['alt-halves', 'split', 'pairs', 'runner', 'stack-up', 'chase']);
-        return pickFrom(['chase', 'ping-pong', 'pairs', 'runner', 'wave']);
+        if (brightness > 0.45) return pickFrom(withMulti(['ping-pong', 'wave', 'runner', 'chase', 'sparkle']));
+        if (bass > 0.4)        return pickFrom(withMulti(['alt-halves', 'split', 'pairs', 'runner', 'stack-up', 'chase']));
+        return pickFrom(withMulti(['chase', 'ping-pong', 'pairs', 'runner', 'wave']));
 
       case 'high': {
         // Intensity: sparkly/flashy patterns on bright sections, hammering
@@ -1681,9 +1703,9 @@ class AutoShow {
         const segEnergy = segment.energy || 0;
         const veryHigh = arousal > 0.80 || segEnergy > 0.72;
         const withHit = (arr) => veryHigh ? arr : arr.filter(p => p !== 'hit');
-        if (brightness > 0.55) return pickFrom(withHit(['sparkle', 'twinkle', 'random-flash', 'hit']));
-        if (bass > 0.5)        return pickFrom(withHit(['hit', 'alt-halves', 'pairs', 'stack-up', 'random-flash', 'split']));
-        return pickFrom(withHit(['chase', 'runner', 'hit', 'pairs', 'stack-up']));
+        if (brightness > 0.55) return pickFrom(withMulti(withHit(['sparkle', 'twinkle', 'random-flash', 'hit'])));
+        if (bass > 0.5)        return pickFrom(withMulti(withHit(['hit', 'alt-halves', 'pairs', 'stack-up', 'random-flash', 'split'])));
+        return pickFrom(withMulti(withHit(['chase', 'runner', 'hit', 'pairs', 'stack-up'])));
       }
 
       default:

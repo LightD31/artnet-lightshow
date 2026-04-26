@@ -1,11 +1,11 @@
 import { fmtPct, fmtNum, colorToCss } from '../utils.js';
 
 const GENRE_COLORS = {
-  edm: '#ff66cc', dubstep: '#ff3366', trance: '#cc66ff', disco: '#ff99cc',
-  hiphop: '#ffaa44', pop: '#ffcc66', funk: '#ff8844', rock: '#ff6644',
-  metal: '#aa4466', country: '#ddbb66', reggae: '#66cc66', latin: '#ff8833',
-  jazz: '#cc88ff', classical: '#88ccff', folk: '#bb9966', ambient: '#66ccff',
-  unknown: '#888888',
+  edm: '#ff2fb2', dubstep: '#ff3b5f', trance: '#8f6bff', disco: '#ff6ecf',
+  hiphop: '#ff9a3d', pop: '#ffcf57', funk: '#ff7c4a', rock: '#ff5d45',
+  metal: '#9b4cff', country: '#d9a86b', reggae: '#38d67f', latin: '#ff6f3c',
+  jazz: '#7f6dff', classical: '#7ec6ff', folk: '#b09068', ambient: '#52d6ff',
+  unknown: '#8d8d9a',
 };
 
 export function AnalysisStats({ as, colorPresets }) {

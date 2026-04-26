@@ -16,27 +16,37 @@ const STROBE_FUNCTIONS = [
 
 const STROBE_FUNCTION_IDS = STROBE_FUNCTIONS.map((f) => f.id);
 
-// NOTE on ordering: indices 0-11 are frozen — MIDI bindings (src/midi.js) and
-// stored shows reference them directly. Append new presets after index 11.
+// Palette rebuilt around practical lighting design goals:
+// - strong complementary contrast options
+// - warm/cool families for mood shaping
+// - neutral whites for subject visibility
+// - UV/actinic accents for effect looks
 // `Blackout` stays last (auto-show.js looks it up by name).
 const COLOR_PRESETS = [
-  { name: 'Red',        r: 255, g: 0,   b: 0,   w: 0,   a: 0,   uv: 0   }, // 0
-  { name: 'Orange',     r: 200, g: 60,  b: 0,   w: 0,   a: 180, uv: 0   }, // 1
-  { name: 'Amber',      r: 0,   g: 0,   b: 0,   w: 0,   a: 255, uv: 0   }, // 2
-  { name: 'Yellow',     r: 255, g: 220, b: 0,   w: 0,   a: 100, uv: 0   }, // 3
-  { name: 'Green',      r: 0,   g: 255, b: 0,   w: 0,   a: 0,   uv: 0   }, // 4
-  { name: 'Cyan',       r: 0,   g: 255, b: 255, w: 0,   a: 0,   uv: 0   }, // 5
-  { name: 'Blue',       r: 0,   g: 0,   b: 255, w: 0,   a: 0,   uv: 0   }, // 6
-  { name: 'Purple',     r: 100, g: 0,   b: 255, w: 0,   a: 0,   uv: 0   }, // 7
-  { name: 'Magenta',    r: 255, g: 0,   b: 200, w: 0,   a: 0,   uv: 0   }, // 8
-  { name: 'White',      r: 0,   g: 0,   b: 0,   w: 255, a: 0,   uv: 0   }, // 9
+  { name: 'Crimson',        r: 255, g: 18,  b: 8,   w: 0,   a: 0,   uv: 0   }, // 0
+  { name: 'Flame',          r: 255, g: 94,  b: 0,   w: 0,   a: 130, uv: 0   }, // 1
+  { name: 'Amber',          r: 70,  g: 20,  b: 0,   w: 0,   a: 255, uv: 0   }, // 2
+  { name: 'Sun',            r: 255, g: 220, b: 18,  w: 0,   a: 120, uv: 0   }, // 3
+  { name: 'Lime',           r: 40,  g: 255, b: 40,  w: 0,   a: 0,   uv: 0   }, // 4
+  { name: 'Aqua',           r: 0,   g: 225, b: 255, w: 0,   a: 0,   uv: 0   }, // 5
+  { name: 'Cobalt',         r: 20,  g: 60,  b: 255, w: 0,   a: 0,   uv: 0   }, // 6
+  { name: 'Violet',         r: 115, g: 20,  b: 255, w: 0,   a: 0,   uv: 0   }, // 7
+  { name: 'Fuchsia',        r: 255, g: 0,   b: 165, w: 0,   a: 0,   uv: 0   }, // 8
+  { name: 'Daylight White', r: 0,   g: 0,   b: 0,   w: 255, a: 0,   uv: 0   }, // 9
   { name: 'UV',         r: 0,   g: 0,   b: 0,   w: 0,   a: 0,   uv: 255 }, // 10
-  { name: 'UV (RGB)',   r: 60,  g: 0,   b: 255, w: 0,   a: 0,   uv: 0   }, // 11
-  { name: 'Pink',       r: 255, g: 90,  b: 160, w: 0,   a: 0,   uv: 0   }, // 12
-  { name: 'Teal',       r: 0,   g: 200, b: 170, w: 0,   a: 0,   uv: 0   }, // 13
-  { name: 'Gold',       r: 255, g: 140, b: 0,   w: 0,   a: 200, uv: 0   }, // 14
-  { name: 'Warm White', r: 120, g: 40,  b: 0,   w: 255, a: 200, uv: 0   }, // 15
-  { name: 'Blackout',   r: 0,   g: 0,   b: 0,   w: 0,   a: 0,   uv: 0   }, // 16
+  { name: 'Actinic',        r: 85,  g: 0,   b: 255, w: 0,   a: 0,   uv: 0   }, // 11
+  { name: 'Rose',           r: 255, g: 84,  b: 182, w: 0,   a: 0,   uv: 0   }, // 12
+  { name: 'Teal',           r: 0,   g: 188, b: 160, w: 0,   a: 0,   uv: 0   }, // 13
+  { name: 'Gold',           r: 255, g: 155, b: 20,  w: 0,   a: 225, uv: 0   }, // 14
+  { name: 'Tungsten White', r: 95,  g: 35,  b: 0,   w: 255, a: 175, uv: 0   }, // 15
+  { name: 'Mint',           r: 0,   g: 255, b: 145, w: 0,   a: 0,   uv: 0   }, // 16
+  { name: 'Sky',            r: 80,  g: 185, b: 255, w: 0,   a: 0,   uv: 0   }, // 17
+  { name: 'Indigo',         r: 35,  g: 0,   b: 190, w: 0,   a: 0,   uv: 0   }, // 18
+  { name: 'Coral',          r: 255, g: 112, b: 78,  w: 0,   a: 55,  uv: 0   }, // 19
+  { name: 'Lavender',       r: 165, g: 120, b: 255, w: 0,   a: 0,   uv: 0   }, // 20
+  { name: 'Acid',           r: 186, g: 255, b: 0,   w: 0,   a: 0,   uv: 0   }, // 21
+  { name: 'Moonlight',      r: 30,  g: 45,  b: 85,  w: 180, a: 0,   uv: 0   }, // 22
+  { name: 'Blackout',       r: 0,   g: 0,   b: 0,   w: 0,   a: 0,   uv: 0   }, // 23
 ];
 
 const PATTERNS = [
