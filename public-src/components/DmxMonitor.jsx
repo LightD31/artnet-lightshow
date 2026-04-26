@@ -25,7 +25,11 @@ export function DmxMonitor() {
       <div class="card-title">DMX Monitor</div>
       <div class="dmx-monitor">
         {snap.map((v, i) => (
-          <div key={i} class={`dmx-cell ${v > 0 ? 'active' : ''}`}>
+          <div
+            key={i}
+            class={`dmx-cell ${v > 0 ? 'active' : ''}`}
+            style={{ '--bar': `${(v / 255) * 100}%` }}
+          >
             <span class="ch">{i + 1} {labels[i] || String((i % 12) + 1)}</span>
             <span class="val">{v}</span>
           </div>

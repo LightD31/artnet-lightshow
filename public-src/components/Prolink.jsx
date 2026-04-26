@@ -27,27 +27,28 @@ export function Prolink() {
   return (
     <div class="card">
       <div class="card-title">PRO DJ LINK</div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
         <div class={`status-dot ${p.connected ? 'connected' : ''}`} />
-        <span style={{ fontSize: '11px', color: 'var(--muted)' }}>{statusText(p)}</span>
+        <span style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 600 }}>{statusText(p)}</span>
         <button
           class={`btn sm ${p.enabled ? 'active' : ''}`}
           style={{ marginLeft: 'auto' }}
           onClick={() => send({ prolinkEnabled: !p.enabled })}
         >{p.enabled ? 'Disable' : 'Enable'}</button>
       </div>
-      <div style={{ fontSize: '11px', color: 'var(--muted)' }}>
-        {p.peers} device{p.peers !== 1 ? 's' : ''}
+
+      <div class="prolink-info">
+        <div>{p.peers} device{p.peers !== 1 ? 's' : ''}</div>
+        <div>
+          {p.master
+            ? <>Master: <strong>CDJ-{p.master.deviceId}</strong> · {p.master.bpm ? p.master.bpm.toFixed(1) : '—'} BPM · beat {p.master.beatInMeasure || '–'}/4</>
+            : 'No master'}
+        </div>
+        <div>{trackText}</div>
       </div>
-      <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>
-        {p.master
-          ? `Master: CDJ-${p.master.deviceId} · ${p.master.bpm ? p.master.bpm.toFixed(1) : '—'} BPM · beat ${p.master.beatInMeasure || '–'}/4`
-          : 'No master'}
-      </div>
-      <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>{trackText}</div>
 
       {tracks.length > 0 && (
-        <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
           {tracks.map(({ playerId, track }) => {
             const isMaster = track && masterTrackId && track.trackId === masterTrackId;
             const title = track && track.title ? track.title : track ? `Track ${track.trackId}` : '…';
@@ -58,7 +59,7 @@ export function Prolink() {
                 title={artist ? `${artist} — ${title}` : title}
                 style={{
                   fontSize: '11px',
-                  color: isMaster ? 'var(--accent, #7c6)' : 'var(--muted)',
+                  color: isMaster ? 'var(--accent-3)' : 'var(--muted)',
                   lineHeight: 1.4,
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
@@ -67,7 +68,7 @@ export function Prolink() {
               >
                 <span style={{ opacity: 0.6 }}>CDJ-{playerId}</span>{' '}
                 {isMaster ? '▶ ' : ''}
-                <strong style={{ fontWeight: 500 }}>{title}</strong>
+                <strong style={{ fontWeight: 600 }}>{title}</strong>
                 {artist && <span style={{ opacity: 0.7 }}> — {artist}</span>}
               </div>
             );

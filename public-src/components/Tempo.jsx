@@ -17,21 +17,31 @@ export function Tempo() {
     return () => document.removeEventListener('keydown', onKey);
   }, []);
 
+  const bpm = s.bpm || 120;
+  const division = s.beatDivision || 1;
+  const periodMs = (60_000 / bpm) / division;
+  const pulse = !!s.running && !s.masterBlackout && bpm > 0;
+
   return (
     <div class="card">
       <div class="card-title">Tempo</div>
 
-      <div class="bpm-display">{s.bpm ?? '—'}</div>
-      <div class="bpm-label">BPM</div>
+      <div
+        class={`bpm-display ${pulse ? 'pulse' : ''}`}
+        style={{ '--bpm-period': `${periodMs.toFixed(0)}ms` }}
+      >
+        {s.bpm ?? '—'}
+      </div>
+      <div class="bpm-label">BEATS PER MINUTE</div>
 
       <div class="bpm-controls">
         <div class="bpm-adj">
-          <button class="btn icon" onClick={() => send({ bpm: (s.bpm || 120) - 1 })}>−</button>
-          <button class="btn icon" onClick={() => send({ bpm: (s.bpm || 120) + 1 })}>+</button>
-          <label>BPM</label>
+          <button class="btn icon" onClick={() => send({ bpm: (s.bpm || 120) - 1 })} title="Slower">−</button>
+          <button class="btn icon" onClick={() => send({ bpm: (s.bpm || 120) + 1 })} title="Faster">+</button>
         </div>
-        <div class="bpm-adj">
+        <div class="bpm-adj" style={{ justifyContent: 'flex-end' }}>
           <input
+            class="bpm-input"
             type="number"
             min="20" max="300"
             value={s.bpm ?? 120}
@@ -39,17 +49,14 @@ export function Tempo() {
               const v = parseInt(e.target.value, 10);
               if (v >= 20 && v <= 300) send({ bpm: v });
             }}
-            style={{ width: '62px', background: 'var(--surface)', border: '1px solid var(--border)',
-                     color: 'var(--text)', borderRadius: '6px', padding: '4px 6px',
-                     fontSize: '14px', fontFamily: 'monospace' }}
           />
         </div>
       </div>
 
-      <button class="tap-btn" onClick={emitTap}>TAP</button>
+      <button class="tap-btn" onClick={emitTap} title="Tap tempo (Space)">TAP</button>
 
       <div class="beat-div-btns">
-        <span style={{ fontSize: '11px', color: 'var(--muted)', marginRight: '4px', lineHeight: '26px' }}>Beat:</span>
+        <span class="beat-div-label">Beat</span>
         {DIVISIONS.map((d) => (
           <button
             key={d}

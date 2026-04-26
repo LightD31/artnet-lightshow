@@ -29,7 +29,6 @@ export function AutoMode() {
   const as = s.autoShow;
   const next = s.spotifyNext;
 
-  // Auto-start trigger when one-click "analyze + start" finishes its analysis.
   const pendingStartRef = useRef(false);
   useEffect(() => {
     if (pendingStartRef.current && as && as.status === 'ready') {
@@ -42,10 +41,10 @@ export function AutoMode() {
 
   const spotifyDot = sp.authenticated ? 'connected' : '';
   const spotifyText = sp.authenticated
-    ? 'Connected'
+    ? 'Spotify connected'
     : sp.configured
-      ? 'Not connected'
-      : 'Not configured (set SPOTIFY_CLIENT_ID & SPOTIFY_CLIENT_SECRET)';
+      ? 'Spotify not connected'
+      : 'Spotify not configured';
 
   const busy = as.status === 'downloading' || as.status === 'analyzing';
 
@@ -81,116 +80,119 @@ export function AutoMode() {
   const fallbackStatus = next && next.status ? next.status : 'idle';
 
   return (
-    <div class="card" id="auto-card">
-      <div class="card-title">Auto Mode <span class={`auto-badge auto-badge-${as.status}`}>{(as.status || '').toUpperCase()}</span></div>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
-        <label style={{ fontSize: '11px', color: 'var(--muted)' }}>Source:</label>
-        <select
-          value={s.autoSource || 'auto'}
-          onChange={(e) => send({ autoSource: e.target.value })}
-          style={{ background: 'var(--surface)', border: '1px solid var(--border)',
-                   color: 'var(--text)', borderRadius: '6px', padding: '4px 6px',
-                   fontSize: '12px', fontFamily: 'inherit' }}
-        >
-          <option value="auto">Auto-detect</option>
-          <option value="prolink">PRO DJ LINK</option>
-          <option value="spotify">Spotify</option>
-          <option value="timer">Standalone timer</option>
-        </select>
-        <label style={{ fontSize: '11px', color: 'var(--muted)', marginLeft: '4px' }}
-               title="How many colours the locked palette uses">Palette:</label>
-        <div class="palette-size-toggle" role="group" aria-label="Palette size">
-          {[2, 3, 4].map((sz) => (
-            <button
-              key={sz}
-              type="button"
-              class={`btn palette-size-btn ${(as.paletteSize || 4) === sz ? 'active' : ''}`}
-              onClick={() => send({ autoPaletteSize: sz })}
-            >{sz}</button>
-          ))}
-        </div>
-      </div>
-
-      <div class="slider-row" style={{ marginBottom: '8px' }}>
-        <label title="Energy intensity — scales accent density, drop effects, and beat-division escalation">Intensity</label>
-        <input
-          type="range" min="0" max="100"
-          value={as.intensity ?? 50}
-          onInput={(e) => send({ autoIntensity: Number(e.target.value) })}
-        />
-        <span class="val">{as.intensity ?? 50}</span>
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
-        <div class={`status-dot ${spotifyDot}`} />
-        <span style={{ fontSize: '11px', color: 'var(--muted)' }}>{spotifyText}</span>
-        {!sp.authenticated && (
-          <button
-            class="btn sm"
-            style={{ marginLeft: 'auto' }}
-            onClick={() => window.open('/auth/spotify', '_blank', 'width=500,height=700')}
-          >Connect Spotify</button>
-        )}
-        {sp.authenticated && (
-          <button
-            class="btn sm danger"
-            style={{ marginLeft: 'auto' }}
-            onClick={() => fetch('/api/spotify/disconnect', { method: 'POST' })}
-          >Disconnect</button>
-        )}
-      </div>
-
-      {as.track && (
-        <div class="auto-now-playing">
-          {as.track.albumArt && <img class="auto-album-art" src={as.track.albumArt} alt="" />}
-          <div class="auto-track-info">
-            <div class="auto-track-name">{as.track.name}</div>
-            <div class="auto-track-artist">{as.track.artist}</div>
-          </div>
-        </div>
-      )}
-
-      {(showNext || showNextEmpty) && (
-        <div class="auto-next-song">
-          <div class="auto-next-label">Next</div>
-          <div class="auto-next-track">{showNext ? (next.track.name || '-') : '-'}</div>
-          <div class="auto-next-meta">
-            <span class="auto-next-artist">{showNext ? (next.track.artist || '') : ''}</span>
-            <span
-              class={`auto-next-status ${(showNext ? next.status : fallbackStatus) || 'idle'}`}
-              title={(showNext && next.message) || (next && next.message) || ''}
+    <>
+      {/* Compact 2-column control card */}
+      <div class="card auto-card-grid" id="auto-card">
+        <div class="auto-card-left">
+          <div class="auto-controls-row">
+            <span class={`auto-badge auto-badge-${as.status}`} style={{ marginLeft: 0 }}>{(as.status || '').toUpperCase()}</span>
+            <select
+              class="auto-select"
+              value={s.autoSource || 'auto'}
+              onChange={(e) => send({ autoSource: e.target.value })}
+              title="Source"
             >
-              {NEXT_LABELS[showNext ? next.status : fallbackStatus] || (showNext ? next.status : 'Idle')}
-            </span>
+              <option value="auto">Auto-detect</option>
+              <option value="prolink">PRO DJ LINK</option>
+              <option value="spotify">Spotify</option>
+              <option value="timer">Standalone timer</option>
+            </select>
+            <div class="palette-size-toggle" role="group" aria-label="Palette size" title="Palette size">
+              {[2, 3, 4].map((sz) => (
+                <button
+                  key={sz}
+                  type="button"
+                  class={`btn palette-size-btn ${(as.paletteSize || 4) === sz ? 'active' : ''}`}
+                  onClick={() => send({ autoPaletteSize: sz })}
+                >{sz}</button>
+              ))}
+            </div>
+            <div class="auto-intensity">
+              <label title="Energy intensity">INT</label>
+              <input
+                type="range" min="0" max="100"
+                value={as.intensity ?? 50}
+                onInput={(e) => send({ autoIntensity: Number(e.target.value) })}
+              />
+              <span class="val">{as.intensity ?? 50}</span>
+            </div>
+            <div class="auto-actions">
+              <button
+                class="btn active"
+                disabled={as.status === 'playing' || busy}
+                onClick={analyzeAndStart}
+              >{busy ? '⟳' : '▶'} {busy ? 'Analyzing' : 'Start'}</button>
+              <button
+                class="btn"
+                disabled={as.status !== 'playing'}
+                onClick={() => { pendingStartRef.current = false; fetch('/api/auto/stop', { method: 'POST' }); }}
+              >■</button>
+            </div>
           </div>
+
+          {as.track && (
+            <div class="auto-now-playing">
+              {as.track.albumArt && <img class="auto-album-art" src={as.track.albumArt} alt="" />}
+              <div class="auto-track-info">
+                <div class="auto-track-name">{as.track.name}</div>
+                <div class="auto-track-artist">{as.track.artist}</div>
+              </div>
+            </div>
+          )}
+
+          <div class="auto-status-row">
+            <div class={`status-dot ${spotifyDot}`} />
+            <span style={{ fontSize: '11px', color: 'var(--muted)' }}>{spotifyText}</span>
+            {!sp.authenticated && (
+              <button
+                class="btn sm"
+                style={{ marginLeft: 'auto' }}
+                onClick={() => window.open('/auth/spotify', '_blank', 'width=500,height=700')}
+              >Connect</button>
+            )}
+            {sp.authenticated && (
+              <button
+                class="btn sm danger"
+                style={{ marginLeft: 'auto' }}
+                onClick={() => fetch('/api/spotify/disconnect', { method: 'POST' })}
+              >Disconnect</button>
+            )}
+          </div>
+
+          {(showNext || showNextEmpty) && (
+            <div class="auto-next-song">
+              <div class="auto-next-label">Up next</div>
+              <div class="auto-next-track">{showNext ? (next.track.name || '-') : '-'}</div>
+              <div class="auto-next-meta">
+                <span class="auto-next-artist">{showNext ? (next.track.artist || '') : ''}</span>
+                <span
+                  class={`auto-next-status ${(showNext ? next.status : fallbackStatus) || 'idle'}`}
+                  title={(showNext && next.message) || (next && next.message) || ''}
+                >
+                  {NEXT_LABELS[showNext ? next.status : fallbackStatus] || (showNext ? next.status : 'Idle')}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {statusMessage(as.status) && (
+            <div class="auto-status-message">{statusMessage(as.status)}</div>
+          )}
         </div>
-      )}
 
-      {as.analysis && (
-        <div class="auto-analysis">
-          <AnalysisStats as={as} colorPresets={s.colorPresets} />
+        <div class="auto-card-right">
+          {as.analysis ? (
+            <AnalysisStats as={as} colorPresets={s.colorPresets} />
+          ) : (
+            <div class="auto-empty">Run an auto-show to see analysis here.</div>
+          )}
         </div>
-      )}
-
-      <AutoTimeline />
-
-      <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '8px' }}>
-        {statusMessage(as.status)}
       </div>
 
-      <div class="auto-transport" style={{ marginTop: '10px', display: 'flex', gap: '6px' }}>
-        <button
-          class="btn active"
-          disabled={as.status === 'playing' || busy}
-          onClick={analyzeAndStart}
-        >{busy ? '… Analyzing' : '▶ Start Auto Show'}</button>
-        <button
-          class="btn"
-          disabled={as.status !== 'playing'}
-          onClick={() => { pendingStartRef.current = false; fetch('/api/auto/stop', { method: 'POST' }); }}
-        >■ Stop</button>
+      {/* Full-width timeline (sibling to the card, breaks out of any padding) */}
+      <div class="auto-timeline-full">
+        <AutoTimeline />
       </div>
-    </div>
+    </>
   );
 }

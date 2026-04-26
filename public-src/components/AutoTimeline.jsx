@@ -292,14 +292,14 @@ export function AutoTimeline() {
   const durMs = data && data.duration ? data.duration * 1000 : 0;
 
   return (
-    <div class="auto-timeline">
+    <div class="auto-timeline auto-timeline-bare">
       <div class="auto-timeline-header">
         <span class="auto-timeline-title">Timeline</span>
         <span class="auto-timeline-time">
           <span>{fmtTime(currentPosMs())}</span> / <span>{fmtTime(durMs)}</span>
         </span>
       </div>
-      <canvas ref={canvasRef} width={800} height={200} />
+      <canvas id="auto-timeline-canvas" ref={canvasRef} width={800} height={200} />
       <div class="auto-timeline-legend">
         <span><i class="swatch seg-low" />Low</span>
         <span><i class="swatch seg-mid" />Mid</span>

@@ -3,15 +3,15 @@ import { stateSig, emitOverride, emitFixture } from '../state.js';
 import { fixtureOutputColor } from '../utils.js';
 
 const CHANNELS = ['r', 'g', 'b', 'w', 'a', 'uv', 'dim', 'strobe'];
-const CHANNEL_LABELS = { r: 'Red', g: 'Green', b: 'Blue', w: 'White', a: 'Amber', uv: 'UV', dim: 'Dimmer', strobe: 'Strobe' };
+const CHANNEL_LABELS = { r: 'Red', g: 'Green', b: 'Blue', w: 'White', a: 'Amber', uv: 'UV', dim: 'Dim', strobe: 'Strb' };
 const DEFAULT_OVERRIDE = { enabled: false, r: 255, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 255, strobe: 0, blackout: false };
 
 function FixtureCard({ fix, state }) {
   const ov = (fix.override && fix.override.enabled) ? fix.override : null;
   const bo = !!(fix.override && fix.override.blackout);
   const [draft, setDraft] = useState(() => ({ ...DEFAULT_OVERRIDE, ...(fix.override || {}) }));
+  const [expanded, setExpanded] = useState(false);
 
-  // Pull server-side override changes into the draft when the user isn't dragging.
   useEffect(() => {
     if (fix.override) setDraft((d) => ({ ...d, ...fix.override }));
   }, [JSON.stringify(fix.override)]);
@@ -24,6 +24,7 @@ function FixtureCard({ fix, state }) {
   const toggleOverride = () => {
     const enabled = !ov;
     emitOverride(fix.id, { ...draft, enabled, blackout: false });
+    if (enabled) setExpanded(true);
   };
 
   const toggleBlackout = () => {
@@ -33,7 +34,10 @@ function FixtureCard({ fix, state }) {
   const clearOverride = () => {
     emitOverride(fix.id, null);
     setDraft({ ...DEFAULT_OVERRIDE });
+    setExpanded(false);
   };
+
+  const showControls = ov && expanded;
 
   return (
     <div class={`fixture-card ${ov ? 'overridden' : ''}`}>
@@ -42,26 +46,32 @@ function FixtureCard({ fix, state }) {
         <span
           class="fixture-name"
           contentEditable
+          spellcheck={false}
           onBlur={(e) => emitFixture({ id: fix.id, label: e.target.textContent.trim() })}
         >{fix.label}</span>
         <span class="fixture-addr">DMX <input
           type="number" min="1" max="507"
           value={fix.address}
           onChange={(e) => emitFixture({ id: fix.id, address: parseInt(e.target.value, 10) || fix.address })}
-          style={{ width: '42px', background: 'var(--surface)', border: '1px solid var(--border)',
-                   color: 'var(--muted)', borderRadius: '4px', padding: '2px 4px',
-                   fontSize: '11px', fontFamily: 'monospace' }}
         /></span>
       </div>
 
       <div class="override-section">
         <div class="override-header">
-          <label>Override</label>
-          <button class={`btn sm ${ov ? 'active' : ''}`} onClick={toggleOverride}>{ov ? 'On' : 'Off'}</button>
-          <button class={`btn sm danger ${bo ? 'active' : ''}`} onClick={toggleBlackout}>Blackout</button>
-          <button class="btn sm" onClick={clearOverride}>Clear</button>
+          <button class={`btn sm ${ov ? 'active' : ''}`} onClick={toggleOverride}>
+            {ov ? '● Override on' : 'Override'}
+          </button>
+          <button class={`btn sm danger ${bo ? 'active' : ''}`} onClick={toggleBlackout}>BO</button>
+          {ov && (
+            <button
+              class="btn sm"
+              onClick={() => setExpanded((v) => !v)}
+              title={expanded ? 'Collapse' : 'Expand'}
+            >{expanded ? '▴' : '▾'}</button>
+          )}
+          <button class="btn sm" onClick={clearOverride} style={{ marginLeft: 'auto' }}>Clear</button>
         </div>
-        {ov && (
+        {showControls && (
           <div class="override-controls">
             {CHANNELS.map((ch) => (
               <div class="override-row" key={ch}>
