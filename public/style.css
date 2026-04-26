@@ -412,6 +412,76 @@ button { font-family: inherit; cursor: pointer; }
   text-overflow: ellipsis;
 }
 
+.auto-next-song {
+  margin: 8px 0;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.auto-next-label {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  margin-bottom: 4px;
+}
+
+.auto-next-track {
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.auto-next-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+  min-width: 0;
+}
+
+.auto-next-artist {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.auto-next-status {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--dim);
+  flex-shrink: 0;
+}
+
+.auto-next-status.ready {
+  color: var(--green);
+  border-color: rgba(68, 255, 136, 0.5);
+  background: rgba(68, 255, 136, 0.12);
+}
+
+.auto-next-status.prefetching,
+.auto-next-status.queued {
+  color: #44bbff;
+  border-color: rgba(68, 187, 255, 0.45);
+  background: rgba(68, 187, 255, 0.12);
+}
+
+.auto-next-status.error {
+  color: #ff8888;
+  border-color: rgba(255, 68, 68, 0.5);
+  background: rgba(255, 68, 68, 0.15);
+}
+
 .auto-analysis {
   margin: 8px 0;
 }

@@ -40,6 +40,47 @@
     </div>
   </section>
 
+  <!-- ── MIDI ──────────────────────────────────────────────── -->
+  <section class="card settings-section">
+    <div class="card-title">MIDI — X-Touch Compact</div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <div id="midi-dot" class="status-dot"></div>
+      <span id="midi-status-text" style="font-size:11px;color:var(--muted)">Not connected</span>
+    </div>
+    <div class="settings-form">
+      <div class="field">
+        <label>Input port</label>
+        <select id="midi-input" style="flex:1;background:var(--surface);border:1px solid var(--border);
+          color:var(--text);border-radius:6px;padding:5px 8px;font-size:12px;font-family:inherit">
+          <option value="">— auto-detect —</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Output port</label>
+        <select id="midi-output" style="flex:1;background:var(--surface);border:1px solid var(--border);
+          color:var(--text);border-radius:6px;padding:5px 8px;font-size:12px;font-family:inherit">
+          <option value="">— auto-detect —</option>
+        </select>
+      </div>
+      <button class="btn active" id="midi-connect" style="align-self:flex-start">Connect</button>
+    </div>
+    <details style="margin-top:10px">
+      <summary style="font-size:11px;color:var(--muted);cursor:pointer">Default mapping</summary>
+      <div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.7">
+        <strong style="color:var(--dim)">Encoders (relative CC):</strong><br>
+        CC1 BPM &nbsp;|&nbsp; CC2 Master dim<br>
+        CC3–6 Fixture 1–4 dim &nbsp;|&nbsp; CC7 Strobe<br>
+        <strong style="color:var(--dim)">Faders (Pitch Bend ch 1–9):</strong><br>
+        Ch1–4 Fixture 1–4 dim &nbsp;|&nbsp; Ch9 Master<br>
+        <strong style="color:var(--dim)">Encoder push buttons:</strong><br>
+        N0 Tap &nbsp;|&nbsp; N1 Blackout &nbsp;|&nbsp; N2 Play/Stop<br>
+        N3–6 Fixture 1–4 blackout<br>
+        <strong style="color:var(--dim)">Button row 1 (N8–17):</strong> Patterns<br>
+        <strong style="color:var(--dim)">Button row 2 (N18–23):</strong> Colour A presets
+      </div>
+    </details>
+  </section>
+
   <!-- ── Fixture Profiles ────────────────────────────────── -->
   <section class="card settings-section">
     <div class="card-title">Fixture Profiles</div>

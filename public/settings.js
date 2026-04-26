@@ -22,6 +22,7 @@ socket.on('state', (s) => {
   renderProfiles();
   renderPatchTable();
   syncArtnetFields(s);
+  if (s.midi) renderMidiStatus(s.midi);
 });
 
 // ── ArtNet settings ──────────────────────────────────────────────────────────
@@ -53,6 +54,43 @@ document.getElementById('artnet-save').addEventListener('click', () => {
   ['artnet-host', 'artnet-port', 'artnet-universe'].forEach(id => {
     delete document.getElementById(id).dataset.dirty;
   });
+});
+
+// ── MIDI settings ────────────────────────────────────────────────────────────
+
+socket.on('midi-status', ({ ok, enabled }) => {
+  const dot  = document.getElementById('midi-dot');
+  const text = document.getElementById('midi-status-text');
+  if (dot) dot.classList.toggle('connected', enabled);
+  if (text) text.textContent = enabled ? 'Connected' : (ok ? 'Connected' : 'Failed to connect');
+});
+
+function renderMidiStatus(midi) {
+  const dot  = document.getElementById('midi-dot');
+  const text = document.getElementById('midi-status-text');
+  if (dot) dot.classList.toggle('connected', midi.enabled);
+  if (text) text.textContent = midi.enabled ? 'Connected' : 'Not connected';
+
+  const ports = midi.ports || { inputs: [], outputs: [] };
+  ['input', 'output'].forEach(dir => {
+    const sel = document.getElementById(`midi-${dir}`);
+    if (!sel) return;
+    const list = dir === 'input' ? ports.inputs : ports.outputs;
+    const cur  = sel.value;
+    sel.innerHTML = '<option value="">— auto-detect —</option>';
+    list.forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = name; opt.textContent = name;
+      if (name === cur) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  });
+}
+
+document.getElementById('midi-connect').addEventListener('click', () => {
+  const input  = document.getElementById('midi-input').value  || null;
+  const output = document.getElementById('midi-output').value || null;
+  socket.emit('midi-connect', { input, output });
 });
 
 // ── GDTF Import ──────────────────────────────────────────────────────────────

@@ -72,11 +72,21 @@ class ProLink {
     // Resolved metadata for the current master track
     this._track = null;           // { trackId, deviceId, slot, title, artist, album, durationMs }
 
+    // All-player track tracking (for prefetch + UI)
+    // _playerTracks:     Map<playerId, identity string> — last known track per CDJ
+    // _playerTrackData:  Map<playerId, track|null>      — resolved metadata per CDJ (null = loading)
+    // _seenTrackIdentities: Set<identity string> — tracks we've already fired onAnyTrackLoaded for
+    this._playerTracks = new Map();
+    this._playerTrackData = new Map();
+    this._seenTrackIdentities = new Set();
+
     // Listeners
     this._onTempoChange = null;
     this._onPeersChange = null;
     this._onMasterChange = null;
     this._onTrackChange = null;
+    this._onAnyTrackLoaded = null;
+    this._onLoadedTracksChange = null;
   }
 
   // ── Public getters ──────────────────────────────────────────────────────────
@@ -105,6 +115,20 @@ class ProLink {
   }
 
   getTrack() { return this._track; }
+
+  /**
+   * Returns an array of { playerId, track } for every CDJ that currently has a
+   * track loaded, sorted by playerId. `track` is null while metadata is still
+   * being resolved from rekordbox.
+   */
+  getLoadedTracks() {
+    const result = [];
+    for (const [playerId, track] of this._playerTrackData) {
+      result.push({ playerId, track });
+    }
+    result.sort((a, b) => a.playerId - b.playerId);
+    return result;
+  }
 
   /** Position in ms within the loaded master track. 0 when nothing is playing. */
   getPositionMs() {
@@ -212,6 +236,9 @@ class ProLink {
       this._connectedHandler = null;
       this._disconnectedHandler = null;
       this._resetMaster();
+      this._playerTracks.clear();
+      this._playerTrackData.clear();
+      this._seenTrackIdentities.clear();
       this._peers = 0;
       console.log('[prolink] disconnected');
     }
@@ -224,16 +251,76 @@ class ProLink {
 
   // ── Listeners ───────────────────────────────────────────────────────────────
 
-  onTempoChange(fn)  { this._onTempoChange  = fn; }
-  onPeersChange(fn)  { this._onPeersChange  = fn; }
-  onMasterChange(fn) { this._onMasterChange = fn; }
-  onTrackChange(fn)  { this._onTrackChange  = fn; }
+  onTempoChange(fn)          { this._onTempoChange          = fn; }
+  onPeersChange(fn)          { this._onPeersChange          = fn; }
+  onMasterChange(fn)         { this._onMasterChange         = fn; }
+  onTrackChange(fn)          { this._onTrackChange          = fn; }
+  onAnyTrackLoaded(fn)       { this._onAnyTrackLoaded       = fn; }
+  onLoadedTracksChange(fn)   { this._onLoadedTracksChange   = fn; }
 
   // ── Status packet handler ───────────────────────────────────────────────────
 
   _onStatus(s) {
     if (!s) return;
     this._lastPacketAtMs = Date.now();
+
+    // ── Track all players: detect load / eject on any CDJ ────────────────────
+    // s.deviceId is the player (CDJ 1-4) that sent this packet.
+    // A track identity is (trackDeviceId, trackSlot, trackId) — same tuple used
+    // by rekordbox and by keyForProlinkTrack in the cache.
+    {
+      const playerId = s.deviceId;
+      if (playerId) {
+        const tId = s.trackId;
+        if (!tId || tId === 0) {
+          // Eject — remove this player from the loaded-tracks map.
+          if (this._playerTracks.has(playerId)) {
+            this._playerTracks.delete(playerId);
+            this._playerTrackData.delete(playerId);
+            if (this._onLoadedTracksChange) this._onLoadedTracksChange(this.getLoadedTracks());
+          }
+        } else {
+          const identity = `${s.trackDeviceId}:${s.trackSlot}:${tId}`;
+          const prev = this._playerTracks.get(playerId);
+          if (prev !== identity) {
+            this._playerTracks.set(playerId, identity);
+            // Show a loading placeholder immediately so the UI updates right away.
+            this._playerTrackData.set(playerId, null);
+            if (this._onLoadedTracksChange) this._onLoadedTracksChange(this.getLoadedTracks());
+
+            const devId = s.trackDeviceId;
+            const slot  = s.trackSlot;
+            const tType = s.trackType;
+
+            // Resolve rekordbox metadata, then update the per-player entry.
+            this._resolveTrackMetadata(devId, slot, tType, tId)
+              .then((track) => {
+                // Only update if this player still has the same track.
+                if (this._playerTracks.get(playerId) === identity) {
+                  this._playerTrackData.set(playerId, track);
+                  if (this._onLoadedTracksChange) this._onLoadedTracksChange(this.getLoadedTracks());
+                }
+                // Fire prefetch callback once per unique track identity.
+                if (track && !this._seenTrackIdentities.has(identity)) {
+                  this._seenTrackIdentities.add(identity);
+                  if (this._onAnyTrackLoaded) this._onAnyTrackLoaded(track);
+                }
+              })
+              .catch(() => {
+                const fallback = { trackId: tId, deviceId: devId, slot, title: null, artist: null, durationMs: 0 };
+                if (this._playerTracks.get(playerId) === identity) {
+                  this._playerTrackData.set(playerId, fallback);
+                  if (this._onLoadedTracksChange) this._onLoadedTracksChange(this.getLoadedTracks());
+                }
+                if (!this._seenTrackIdentities.has(identity)) {
+                  this._seenTrackIdentities.add(identity);
+                  if (this._onAnyTrackLoaded) this._onAnyTrackLoaded(fallback);
+                }
+              });
+          }
+        }
+      }
+    }
 
     // Only the master drives our state. Ignore packets from non-master devices.
     if (!s.isMaster) return;
