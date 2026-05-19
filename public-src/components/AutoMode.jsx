@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'preact/hooks';
 import { stateSig, send } from '../state.js';
 import { AnalysisStats } from './AnalysisStats.jsx';
 import { AutoTimeline } from './AutoTimeline.jsx';
+import { DeezerPlayer } from './DeezerPlayer.jsx';
 
 const NEXT_LABELS = {
   idle: 'Idle',
@@ -54,25 +55,24 @@ export function AutoMode() {
 
     const source = s.autoSource || 'auto';
     const spotifyReady = sp.authenticated;
+    const deezerReady = s.deezer && s.deezer.authenticated;
     const prolinkReady = s.prolink && s.prolink.connected && s.prolink.track && s.prolink.track.title;
     const useSpotify = source === 'spotify' || (source === 'auto' && spotifyReady);
-    const useProlink = source === 'prolink' || (source === 'auto' && !spotifyReady && prolinkReady);
+    const useDeezer  = source === 'deezer'  || (source === 'auto' && !spotifyReady && deezerReady);
+    const useProlink = source === 'prolink' || (source === 'auto' && !spotifyReady && !deezerReady && prolinkReady);
 
-    if (useSpotify) {
+    const triggerAnalyze = (endpoint) => {
       pendingStartRef.current = true;
-      fetch('/api/auto/analyze-spotify', { method: 'POST' })
+      fetch(endpoint, { method: 'POST' })
         .then((r) => r.json())
         .then((d) => { if (!d.ok) pendingStartRef.current = false; })
         .catch(() => { pendingStartRef.current = false; });
-    } else if (useProlink) {
-      pendingStartRef.current = true;
-      fetch('/api/auto/analyze-prolink', { method: 'POST' })
-        .then((r) => r.json())
-        .then((d) => { if (!d.ok) pendingStartRef.current = false; })
-        .catch(() => { pendingStartRef.current = false; });
-    } else {
-      fetch('/api/auto/start', { method: 'POST' });
-    }
+    };
+
+    if (useSpotify)      triggerAnalyze('/api/auto/analyze-spotify');
+    else if (useDeezer)  triggerAnalyze('/api/auto/analyze-deezer');
+    else if (useProlink) triggerAnalyze('/api/auto/analyze-prolink');
+    else fetch('/api/auto/start', { method: 'POST' });
   };
 
   const showNext = next && next.track;
@@ -95,6 +95,7 @@ export function AutoMode() {
               <option value="auto">Auto-detect</option>
               <option value="prolink">PRO DJ LINK</option>
               <option value="spotify">Spotify</option>
+              <option value="deezer">Deezer</option>
               <option value="timer">Standalone timer</option>
             </select>
             <div class="palette-size-toggle" role="group" aria-label="Palette size" title="Palette size">
@@ -158,6 +159,8 @@ export function AutoMode() {
               >Disconnect</button>
             )}
           </div>
+
+          <DeezerPlayer />
 
           {(showNext || showNextEmpty) && (
             <div class="auto-next-song">

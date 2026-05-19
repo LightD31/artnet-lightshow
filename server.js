@@ -9,6 +9,7 @@ const { Server } = require('socket.io');
 const MidiController = require('./src/midi');
 const ProLink = require('./src/prolink');
 const SpotifyClient = require('./src/spotify');
+const DeezerSource = require('./src/deezer-source');
 const deezer = require('./src/deezer');
 const AutoShow = require('./src/auto-show');
 const { AnalysisCache } = require('./src/analysis-cache');
@@ -39,6 +40,7 @@ midi.connect(midiInputName, midiOutputName);
 
 const prolink = new ProLink();
 const spotify = new SpotifyClient();
+const deezerSource = new DeezerSource();
 
 const analysisCache = new AnalysisCache(path.join(__dirname, 'cache', 'analysis'));
 const autoShow = new AutoShow(applyPatch, COLOR_PRESETS, PATTERNS, analysisCache);
@@ -49,7 +51,7 @@ if (process.env.DEEZER_ARL) {
   });
 }
 
-const integrations = setupIntegrations({ io, midi, spotify, prolink, autoShow });
+const integrations = setupIntegrations({ io, midi, spotify, deezerSource, prolink, autoShow });
 
 if (process.env.PROLINK === '1') {
   state.prolinkEnabled = true;
@@ -59,8 +61,8 @@ if (process.env.PROLINK === '1') {
   });
 }
 
-attachRoutes(app, { midi, autoShow, spotify, prolink, analysisCache, integrations });
-attachSockets(io, { midi });
+attachRoutes(app, { midi, autoShow, spotify, deezerSource, prolink, analysisCache, integrations });
+attachSockets(io, { midi, deezerSource, integrations });
 
 startEngine();
 
@@ -84,5 +86,5 @@ server.listen(PORT, () => {
   console.log(`  Auto Show         →  Essentia + Spotify integration\n`);
 });
 
-process.on('SIGINT',  () => { autoShow.stop(); spotify.disconnect(); prolink.destroy(); process.exit(0); });
-process.on('SIGTERM', () => { autoShow.stop(); spotify.disconnect(); prolink.destroy(); process.exit(0); });
+process.on('SIGINT',  () => { autoShow.stop(); spotify.disconnect(); deezerSource.disconnect(); prolink.destroy(); process.exit(0); });
+process.on('SIGTERM', () => { autoShow.stop(); spotify.disconnect(); deezerSource.disconnect(); prolink.destroy(); process.exit(0); });

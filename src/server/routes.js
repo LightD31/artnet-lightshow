@@ -25,7 +25,7 @@ function asyncHandler(fn) {
 }
 
 function attachRoutes(app, deps) {
-  const { midi, autoShow, spotify, prolink, analysisCache, integrations } = deps;
+  const { midi, autoShow, spotify, deezerSource, prolink, analysisCache, integrations } = deps;
 
   // ─── State ────────────────────────────────────────────────────────────────
   app.get('/api/state', (_req, res) => res.json(getClientState()));
@@ -289,8 +289,15 @@ function attachRoutes(app, deps) {
     }
   }));
 
+  // ─── Deezer ───────────────────────────────────────────────────────────────
+  app.post('/api/deezer/disconnect', (_req, res) => {
+    deezerSource.disconnect();
+    integrations.broadcast();
+    res.json({ ok: true });
+  });
+
   // ─── Auto-show ────────────────────────────────────────────────────────────
-  const { keyForSpotify, keyForYouTube, keyForQuery, keyForLocalFile, keyForBuffer, keyForProlinkTrack } =
+  const { keyForSpotify, keyForDeezer, keyForYouTube, keyForQuery, keyForLocalFile, keyForBuffer, keyForProlinkTrack } =
     require('../analysis-cache');
 
   app.post('/api/auto/analyze', asyncHandler(async (req, res) => {
@@ -338,6 +345,29 @@ function attachRoutes(app, deps) {
       integrations.broadcast();
       res.json({ ok: true, track: autoShow.track, analysis: autoShow.getClientState().analysis });
       integrations.prefetchNextFromQueue();
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  }));
+
+  app.post('/api/auto/analyze-deezer', asyncHandler(async (_req, res) => {
+    if (!deezerSource.authenticated) return res.status(400).json({ ok: false, error: 'Deezer player not connected' });
+    try {
+      const playing = await deezerSource.getCurrentlyPlaying();
+      if (!playing) return res.status(400).json({ ok: false, error: 'No track currently playing on Deezer' });
+
+      autoShow.track = {
+        name: playing.name, artist: playing.artist, album: playing.album,
+        albumArt: playing.albumArt, durationMs: playing.durationMs,
+      };
+      integrations.broadcast();
+
+      const query = `${playing.artist} - ${playing.name}`;
+      const cacheKey = keyForDeezer(playing.trackId) || keyForQuery(query);
+      await autoShow.downloadAndAnalyze(query, playing.durationMs / 1000, cacheKey, playing.isrc);
+
+      integrations.broadcast();
+      res.json({ ok: true, track: autoShow.track, analysis: autoShow.getClientState().analysis });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }
@@ -420,7 +450,12 @@ function attachRoutes(app, deps) {
   });
 
   app.get('/api/auto/state', (_req, res) => {
-    res.json({ ok: true, ...autoShow.getClientState(), spotify: spotify.getStatus() });
+    res.json({
+      ok: true,
+      ...autoShow.getClientState(),
+      spotify: spotify.getStatus(),
+      deezer: deezerSource.getStatus(),
+    });
   });
 
   app.get('/api/auto/timeline', (_req, res) => {

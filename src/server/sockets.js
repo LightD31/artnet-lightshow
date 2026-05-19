@@ -9,10 +9,24 @@ const {
 } = require('./validation');
 const { listProfiles } = require('./profiles');
 
-function attachSockets(io, { midi }) {
+function attachSockets(io, { midi, deezerSource, integrations }) {
   io.on('connection', (socket) => {
     console.log('Client connected:', socket.id);
     socket.emit('state', getClientState());
+
+    // Browser-driven Deezer player forwards playback snapshots here.
+    socket.on('deezer:playback', (payload) => {
+      try {
+        if (deezerSource) deezerSource.updatePlayback(payload);
+      } catch (err) {
+        socket.emit('error-msg', { source: 'deezer:playback', message: err.message });
+      }
+    });
+
+    socket.on('deezer:disconnect', () => {
+      if (deezerSource) deezerSource.disconnect();
+      if (integrations) integrations.broadcast();
+    });
 
     socket.on('set', (payload) => {
       try { applyPatch(payload); }
