@@ -492,16 +492,18 @@ main {
   flex-direction: column;
   gap: 10px;
 }
-.auto-view .auto-timeline-full {
-  /* Break out of any padding — span the full main viewport. */
-  margin: 0;
-  padding: 8px 12px;
+.auto-view .auto-timeline-inline {
+  /* Timeline now lives inside .auto-card-right under the analysis stats —
+     sized to the column rather than spanning the viewport. */
+  margin-top: 4px;
+  padding: 6px 8px;
   background: rgba(10, 10, 15, .6);
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  min-width: 0;
 }
-.auto-view .auto-timeline-full #auto-timeline-canvas {
-  height: 280px;
+.auto-view .auto-timeline-inline #auto-timeline-canvas {
+  height: 220px;
   width: 100%;
 }
 .auto-view .auto-timeline-header { margin-bottom: 4px; }
@@ -1368,11 +1370,11 @@ input[type=range]::-moz-range-thumb {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: 1;
+  flex: 1 1 120px;
   min-width: 100px;
 }
 .auto-intensity label { font-size: 9px; color: var(--muted); font-weight: 800; letter-spacing: 0.08em; }
-.auto-intensity input[type=range] { flex: 1; }
+.auto-intensity input[type=range] { flex: 1 1 0; min-width: 0; }
 .auto-intensity .val {
   font-size: 11px;
   font-family: 'JetBrains Mono', monospace;
@@ -1381,8 +1383,44 @@ input[type=range]::-moz-range-thumb {
   text-align: right;
 }
 
-.auto-actions { display: inline-flex; gap: 4px; }
+.auto-actions { display: inline-flex; gap: 4px; flex-shrink: 0; }
 .auto-actions .btn { padding: 4px 10px; font-size: 11px; }
+
+.auto-prefetch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.auto-prefetch label { font-size: 9px; color: var(--muted); font-weight: 800; letter-spacing: 0.08em; }
+.auto-prefetch input[type=number] {
+  width: 48px;
+  padding: 4px 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+  text-align: center;
+  -moz-appearance: textfield;
+}
+.auto-prefetch input[type=number]:focus { outline: none; border-color: var(--accent); }
+.auto-prefetch input[type=number]::-webkit-inner-spin-button,
+.auto-prefetch input[type=number]::-webkit-outer-spin-button {
+  opacity: 1;
+  height: 20px;
+}
+
+.auto-next-list { display: flex; flex-direction: column; gap: 4px; }
+.auto-next-song.auto-next-song-sub {
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, .015);
+  opacity: 0.82;
+}
+.auto-next-song.auto-next-song-sub .auto-next-track { font-size: 10px; }
+.auto-next-song.auto-next-song-sub .auto-next-label { margin-bottom: 2px; }
 
 .auto-status-row {
   display: flex;

@@ -171,7 +171,7 @@ def main():
         if not download(CHECKPOINT_URL, CHECKPOINT_PATH, 'checkpoint', CHECKPOINT_MIN_SIZE):
             sys.exit(1)
 
-    print('\n[ok] PANNs ready' if deps_ok else '\n⚠ files in place but Python deps still missing')
+    print('\n[ok] PANNs ready' if deps_ok else '\n[!!] files in place but Python deps still missing')
     sys.exit(0 if deps_ok else 2)
 
 

@@ -37,6 +37,7 @@ const patchSchema = z.object({
   autoSource: z.enum(AUTO_SOURCES).optional(),
   autoPaletteSize: z.union([z.literal(2), z.literal(3), z.literal(4)]).optional(),
   autoIntensity: z.number().min(0).max(100).optional(),
+  autoPrefetchDepth: z.number().int().min(1).max(5).optional(),
 }).strict();
 
 const overrideSchema = z.object({

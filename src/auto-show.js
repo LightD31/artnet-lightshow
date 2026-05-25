@@ -1,10 +1,31 @@
 'use strict';
 
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const deezer = require('./deezer');
+const AnalyzerWorker = require('./analyzer-worker');
+
+// Resolve a working Python executable once at startup. On Windows, `python`
+// often points at the Microsoft Store stub which exits non-zero and produces
+// no usable stderr — the symptom is "analysis silently fails after download".
+// Probing with --version and checking the exit code filters the stub out.
+// Order: `py` (Windows launcher, shipped with python.org installers) → `python3`
+// → `python`. Falls back to 'python' so the eventual spawn surfaces a clear
+// error if nothing is installed at all.
+const PYTHON_EXE = (() => {
+  const candidates = process.platform === 'win32'
+    ? ['py', 'python3', 'python']
+    : ['python3', 'python'];
+  for (const name of candidates) {
+    try {
+      const r = spawnSync(name, ['--version'], { stdio: 'ignore' });
+      if (r.status === 0) return name;
+    } catch (_) { /* try the next candidate */ }
+  }
+  return 'python';
+})();
 
 // ── Palette tetrads ─────────────────────────────────────────────────────────
 // Each song locks to a single 4-colour "look" from this bank for the whole
@@ -181,6 +202,14 @@ class AutoShow {
     this._colorPresets = colorPresets;
     this._patterns = patterns;
     this._cache = cache;
+    this._worker = new AnalyzerWorker(
+      PYTHON_EXE, path.join(__dirname, 'essentia-analyze.py'),
+    );
+    // Spin up the Python process immediately so its imports + PANNs preload
+    // happen during server startup, hidden behind the user opening the UI
+    // and connecting Spotify. Without this, the first analyze() pays the
+    // full ~10s cold-start cost.
+    this._worker.prewarm();
     // Look up the Blackout sentinel by name so we don't break when new
     // presets are appended. Falls back to index 12 (its historical slot) if
     // the caller passed a dumb fixture without names.
@@ -232,55 +261,29 @@ class AutoShow {
   }
 
   /**
-   * State-free runner: spawn the Essentia/librosa bridge and return the parsed
-   * analysis JSON. Does not touch instance state (so it's safe to call from
-   * prefetch while a show is already running).
+   * State-free runner: send the audio to the persistent analyzer worker and
+   * return the parsed analysis JSON. Does not touch instance state (so it's
+   * safe to call from prefetch while a show is already running).
    *
    * If `targetDurationSec` is provided, the analyzer will trim beatless
    * padding from the head/tail of the audio until the length matches — used
    * when yt-dlp can't find a candidate within its ±5s filter and has to
    * fall back to an unfiltered search that may include long intros/outros.
    */
-  _runAnalyzer(source, targetDurationSec = null) {
-    return new Promise((resolve, reject) => {
-      const script = path.join(__dirname, 'essentia-analyze.py');
-      const args = [script, source];
-      if (Number.isFinite(targetDurationSec) && targetDurationSec > 0) {
-        args.push('--target-duration', String(targetDurationSec));
-      }
-      const proc = spawn('python', args, {
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
+  _runAnalyzer(source, targetDurationSec = null, priority = 'normal', tag = null) {
+    const tgt = Number.isFinite(targetDurationSec) && targetDurationSec > 0
+      ? targetDurationSec : null;
+    console.log(`[analyzer] Analyzing${priority === 'high' ? ' (high)' : ''}: ${path.basename(source)}${tgt ? ` (target ${Math.round(tgt)}s)` : ''}`);
+    return this._worker.analyze(source, tgt, { priority, tag });
+  }
 
-      let stdout = '';
-      let stderr = '';
-      proc.stdout.on('data', (d) => { stdout += d; });
-      proc.stderr.on('data', (d) => { stderr += d; });
-
-      proc.on('error', (err) => {
-        reject(new Error(`Essentia bridge failed to start: ${err.message}. Install librosa: pip install librosa`));
-      });
-
-      proc.on('close', (code) => {
-        if (code !== 0) {
-          return reject(new Error(`Analyzer exited with code ${code}: ${stderr || stdout}`));
-        }
-        // Surface analyzer log lines (trim notices, PANNs status) to the
-        // Node console so operators can see when trimming kicked in.
-        if (stderr && stderr.trim()) {
-          for (const line of stderr.trim().split(/\r?\n/)) {
-            console.log(`[analyzer] ${line}`);
-          }
-        }
-        try {
-          const result = JSON.parse(stdout);
-          if (result.error) return reject(new Error(result.error));
-          resolve(result);
-        } catch (e) {
-          reject(new Error(`Failed to parse analyzer output: ${e.message}`));
-        }
-      });
-    });
+  /**
+   * Tear down the persistent analyzer subprocess. Called on server shutdown.
+   * Safe to call multiple times.
+   */
+  destroy() {
+    this.stop();
+    if (this._worker) this._worker.shutdown();
   }
 
   async analyze(source, cacheKey = null) {
@@ -309,15 +312,17 @@ class AutoShow {
    * go through this, and the one that needs to mutate instance state does so
    * on its own side of the in-flight boundary.
    */
-  async _fetchAnalysis(query, targetDurationSec, cacheKey, meta, isrc) {
+  async _fetchAnalysis(query, targetDurationSec, cacheKey, meta, isrc, onPhase, priority) {
     let audioPath = null;
     try {
       audioPath = await this._downloadAudio(query, targetDurationSec, isrc);
+      if (onPhase) onPhase('analyzing');
       // Always pass the target duration to the analyzer when we have one —
       // it will no-op when the downloaded length is already within the ±2s
       // tolerance, and trim beatless padding when the yt-dlp fallback grabs
-      // a longer version.
-      const analysis = await this._runAnalyzer(audioPath, targetDurationSec);
+      // a longer version. The cacheKey doubles as the worker-queue tag so
+      // a later high-priority join can find and bump this entry.
+      const analysis = await this._runAnalyzer(audioPath, targetDurationSec, priority, cacheKey);
       if (cacheKey && this._cache) {
         this._cache.set(cacheKey, analysis, meta || {});
       }
@@ -330,13 +335,22 @@ class AutoShow {
   /**
    * Kick off (or join) a fetch for `cacheKey`. If the same key is already
    * being fetched, returns the existing in-flight promise so concurrent
-   * callers share one download/analyze job.
+   * callers share one download/analyze job. `onPhase` is only honoured for
+   * the originator — joiners can't retroactively hook into phase changes
+   * the in-flight call already passed through. `priority` only applies to
+   * the originator's worker-queue position; joiners ride the existing job's
+   * priority (whatever it was when first submitted).
    */
-  _fetchShared(query, targetDurationSec, cacheKey, meta, isrc) {
+  _fetchShared(query, targetDurationSec, cacheKey, meta, isrc, onPhase, priority) {
     if (cacheKey && this._inFlight.has(cacheKey)) {
+      // Joining an existing fetch — if we're now urgent (downloadAndAnalyze
+      // for the current track) but the original submission was a background
+      // prefetch, promote the worker queue entry so it doesn't sit behind
+      // other normal-priority prefetches.
+      if (priority === 'high' && this._worker) this._worker.bumpToHigh(cacheKey);
       return this._inFlight.get(cacheKey);
     }
-    const promise = this._fetchAnalysis(query, targetDurationSec, cacheKey, meta, isrc);
+    const promise = this._fetchAnalysis(query, targetDurationSec, cacheKey, meta, isrc, onPhase, priority);
     if (cacheKey) {
       this._inFlight.set(cacheKey, promise);
       const cleanup = () => this._inFlight.delete(cacheKey);
@@ -353,14 +367,14 @@ class AutoShow {
    *
    * Returns { skipped: boolean, reason?: string, error?: string }.
    */
-  async prefetch(query, targetDurationSec, cacheKey, meta = {}, isrc = null) {
+  async prefetch(query, targetDurationSec, cacheKey, meta = {}, isrc = null, priority = 'normal') {
     if (!cacheKey || !this._cache) return { skipped: true, reason: 'no-cache' };
     if (this._cache.get(cacheKey)) return { skipped: true, reason: 'already-cached' };
     if (this._inFlight.has(cacheKey)) return { skipped: true, reason: 'in-flight' };
 
     try {
-      console.log(`[auto-show] prefetching: ${query}`);
-      await this._fetchShared(query, targetDurationSec, cacheKey, meta, isrc);
+      console.log(`[auto-show] prefetching${priority === 'high' ? ' (high)' : ''}: ${query}`);
+      await this._fetchShared(query, targetDurationSec, cacheKey, meta, isrc, null, priority);
       console.log(`[auto-show] prefetched and cached: ${cacheKey}`);
       return { skipped: false };
     } catch (err) {
@@ -384,6 +398,13 @@ class AutoShow {
       const analysis = await this._fetchShared(
         query, targetDurationSec, cacheKey,
         { track: this.track }, isrc,
+        // Flip the badge to ANALYZING once the WAV is on disk — librosa
+        // alone takes 30-90s on a 3-5min track, and leaving "DOWNLOADING"
+        // up that whole time reads as a hang.
+        (phase) => { if (phase === 'analyzing') this._status = 'analyzing'; },
+        // The track the user is about to hear — outranks any background
+        // prefetches sitting in the worker queue.
+        'high',
       );
       this.analysis = analysis;
       this.buildTimeline();
@@ -1850,3 +1871,4 @@ class AutoShow {
 }
 
 module.exports = AutoShow;
+module.exports.PYTHON_EXE = PYTHON_EXE;

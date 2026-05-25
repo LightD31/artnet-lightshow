@@ -15,12 +15,21 @@ const {
 // auto-show) into the engine + state. Returns the integration handle that
 // routes.js / sockets.js call back into.
 function setupIntegrations({ io, midi, spotify, deezerSource, prolink, autoShow }) {
-  let spotifyNext = {
-    track: null,
-    status: 'idle', // idle | prefetching | ready | queued | error | empty | unavailable
-    message: '',
-    cacheKey: null,
-  };
+  // Slot statuses, one per upcoming track up to state.autoPrefetchDepth.
+  // slots[0] is the immediate next track (back-compat with the old
+  // spotifyNext shape — that field still mirrors slots[0]).
+  // Statuses: idle | prefetching | ready | queued | error | empty | unavailable
+  let spotifySlots = [];
+
+  function emptySlot(reason = 'empty', message = 'Queue is empty') {
+    return { track: null, status: reason, message, cacheKey: null };
+  }
+
+  function spotifyNextView() {
+    // Back-compat: callers (and the old UI) read `spotifyNext.track / .status /
+    // .message / .cacheKey` directly. Keep that working by mirroring slot 0.
+    return spotifySlots[0] || emptySlot('idle', '');
+  }
 
   let autoPlayback = { progressMs: 0, isPlaying: false, updatedAt: 0 };
 
@@ -45,7 +54,8 @@ function setupIntegrations({ io, midi, spotify, deezerSource, prolink, autoShow 
   function extras() {
     return {
       spotify: spotify.getStatus(),
-      spotifyNext,
+      spotifyNext: spotifyNextView(),
+      spotifyPrefetch: spotifySlots,
       deezer: {
         ...deezerSource.getStatus(),
         appId: process.env.DEEZER_APP_ID || '',
@@ -82,6 +92,16 @@ function setupIntegrations({ io, midi, spotify, deezerSource, prolink, autoShow 
     },
     autoPaletteSize: (n) => autoShow.setPaletteSize(Number(n)),
     autoIntensity: (n) => autoShow.setIntensity(Number(n)),
+    autoPrefetchDepth: () => {
+      // Depth change → trim slots that are now out of range and immediately
+      // queue prefetches for newly in-range positions.
+      const depth = Math.max(1, Math.min(5, state.autoPrefetchDepth || 1));
+      if (spotifySlots.length > depth) {
+        spotifySlots = spotifySlots.slice(0, depth);
+      }
+      broadcast();
+      if (autoShow.running) prefetchNextFromQueue();
+    },
   });
 
   // Pick the active source for auto-show playback. Explicit user choice wins,
@@ -194,76 +214,94 @@ function setupIntegrations({ io, midi, spotify, deezerSource, prolink, autoShow 
   });
 
   /**
-   * Peek the Spotify user queue and kick off a background prefetch of the next
-   * upcoming track so its analysis is already in the cache when it starts
-   * playing. Safe to call while a show is running — does not touch state.
+   * Peek the Spotify user queue and kick off background prefetches of the
+   * next `state.autoPrefetchDepth` upcoming tracks so their analyses are
+   * already in the cache when they start playing. The analyzer worker has a
+   * FIFO queue so multiple prefetches serialize behind it — depth 5 just
+   * means more cache warming over the course of the current song, not
+   * concurrent CPU thrash. Safe to call while a show is running.
    */
   async function prefetchNextFromQueue() {
     if (!spotify.authenticated) return;
     lastQueuePeekAt = Date.now();
+    const depth = Math.max(1, Math.min(5, state.autoPrefetchDepth || 1));
+
     try {
       const queue = await spotify.getQueue();
       if (!queue || !queue.length) {
-        spotifyNext = { track: null, status: 'empty', message: 'Queue is empty', cacheKey: null };
-        broadcast();
-        return;
-      }
-      const next = queue[0];
-      if (!next || !next.trackId) {
-        spotifyNext = { track: null, status: 'empty', message: 'Queue is empty', cacheKey: null };
+        spotifySlots = [emptySlot('empty', 'Queue is empty')];
         broadcast();
         return;
       }
 
-      const query = `${next.artist} - ${next.name}`;
-      const cacheKey = keyForSpotify(next.trackId) || keyForQuery(query);
-      spotifyNext = {
-        track: {
-          name: next.name, artist: next.artist, album: next.album,
-          albumArt: next.albumArt, durationMs: next.durationMs,
-        },
-        status: 'prefetching',
-        message: 'Prefetching analysis',
-        cacheKey,
-      };
+      // Take the first `depth` valid track entries from the user's queue.
+      const upcoming = queue.filter((t) => t && t.trackId).slice(0, depth);
+      if (!upcoming.length) {
+        spotifySlots = [emptySlot('empty', 'Queue is empty')];
+        broadcast();
+        return;
+      }
+
+      // Snapshot the cacheKeys for this dispatch — `spotifySlots` may be
+      // reassigned later if depth changes or the queue rotates, so we use
+      // each slot's own cacheKey to detect "is this status callback still
+      // relevant?" inside the .then().
+      const newSlots = upcoming.map((next) => {
+        const query = `${next.artist} - ${next.name}`;
+        const cacheKey = keyForSpotify(next.trackId) || keyForQuery(query);
+        return {
+          track: {
+            name: next.name, artist: next.artist, album: next.album,
+            albumArt: next.albumArt, durationMs: next.durationMs,
+          },
+          status: 'prefetching',
+          message: 'Prefetching analysis',
+          cacheKey,
+          _query: query,
+          _isrc: next.isrc,
+          _durationMs: next.durationMs,
+        };
+      });
+      spotifySlots = newSlots.map(({ _query, _isrc, _durationMs, ...slot }) => slot);
       broadcast();
 
-      const meta = {
-        track: {
-          name: next.name, artist: next.artist, album: next.album,
-          albumArt: next.albumArt, durationMs: next.durationMs,
-        },
-      };
-      autoShow.prefetch(query, (next.durationMs || 0) / 1000, cacheKey, meta, next.isrc)
-        .then((r) => {
-          if (spotifyNext.cacheKey !== cacheKey) return;
-          if (r.skipped && r.reason === 'already-cached') {
-            spotifyNext.status = 'ready';
-            spotifyNext.message = 'Analysis cached';
-            console.log(`[prefetch] next queued track already cached: ${next.artist} — ${next.name}`);
-          } else if (r.skipped && r.reason === 'in-flight') {
-            spotifyNext.status = 'queued';
-            spotifyNext.message = 'Prefetch in progress';
-          } else if (!r.skipped && !r.error) {
-            spotifyNext.status = 'ready';
-            spotifyNext.message = 'Prefetch complete';
-            console.log(`[prefetch] ready for next queued track: ${next.artist} — ${next.name}`);
-          } else if (r.error) {
-            spotifyNext.status = 'error';
-            spotifyNext.message = r.error;
-          }
-          broadcast();
-        })
-        .catch((err) => {
-          if (spotifyNext.cacheKey === cacheKey) {
-            spotifyNext.status = 'error';
-            spotifyNext.message = err.message;
+      // Fire prefetches in order. Each one writes its result back to the
+      // matching slot (by cacheKey) so out-of-order completion is harmless.
+      for (const seed of newSlots) {
+        const { cacheKey, _query, _isrc, _durationMs, track } = seed;
+        const meta = { track };
+        autoShow.prefetch(_query, (_durationMs || 0) / 1000, cacheKey, meta, _isrc)
+          .then((r) => {
+            const slot = spotifySlots.find((s) => s.cacheKey === cacheKey);
+            if (!slot) return;  // depth shrank or queue rotated past this slot
+            if (r.skipped && r.reason === 'already-cached') {
+              slot.status = 'ready';
+              slot.message = 'Analysis cached';
+            } else if (r.skipped && r.reason === 'in-flight') {
+              slot.status = 'queued';
+              slot.message = 'Prefetch in progress';
+            } else if (!r.skipped && !r.error) {
+              slot.status = 'ready';
+              slot.message = 'Prefetch complete';
+              console.log(`[prefetch] ready: ${track.artist} — ${track.name}`);
+            } else if (r.error) {
+              slot.status = 'error';
+              slot.message = r.error;
+            }
             broadcast();
-          }
-          console.warn(`[prefetch] unexpected error: ${err.message}`);
-        });
+          })
+          .catch((err) => {
+            const slot = spotifySlots.find((s) => s.cacheKey === cacheKey);
+            if (slot) {
+              slot.status = 'error';
+              slot.message = err.message;
+              broadcast();
+            }
+            console.warn(`[prefetch] unexpected error: ${err.message}`);
+          });
+      }
     } catch (err) {
-      spotifyNext = { track: null, status: 'error', message: err.message, cacheKey: null };
+      spotifySlots = [{ track: null, status: 'error', message: err.message, cacheKey: null }];
       broadcast();
       console.warn(`[prefetch] queue lookup failed: ${err.message}`);
     }
@@ -271,8 +309,13 @@ function setupIntegrations({ io, midi, spotify, deezerSource, prolink, autoShow 
 
   spotify.onTrackChange(async (playing) => {
     console.log(`Spotify track changed: ${playing.artist} — ${playing.name}`);
-    if (spotifyNext.track && spotifyNext.track.name === playing.name && spotifyNext.track.artist === playing.artist) {
-      spotifyNext = { track: null, status: 'idle', message: '', cacheKey: null };
+    // The track we were prefetching as "next" has become the current track —
+    // shift it off the slot list. The remaining slots are still valid (the
+    // queue moved up by one) and will be refreshed by the next queue peek.
+    if (spotifySlots.length && spotifySlots[0].track
+        && spotifySlots[0].track.name === playing.name
+        && spotifySlots[0].track.artist === playing.artist) {
+      spotifySlots = spotifySlots.slice(1);
     }
     if (resolveAutoSource() !== 'spotify') return;
     if (autoShow.running) {
@@ -341,7 +384,7 @@ function setupIntegrations({ io, midi, spotify, deezerSource, prolink, autoShow 
     broadcast,
     prefetchNextFromQueue,
     clearSpotifyNext: () => {
-      spotifyNext = { track: null, status: 'unavailable', message: 'Spotify disconnected', cacheKey: null };
+      spotifySlots = [{ track: null, status: 'unavailable', message: 'Spotify disconnected', cacheKey: null }];
     },
     startAutoShow,
     resolveAutoSource,

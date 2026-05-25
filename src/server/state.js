@@ -31,6 +31,7 @@ const state = {
   energyOverride: null,
   prolinkEnabled: false,
   autoSource: 'auto',
+  autoPrefetchDepth: 1,
   fixtures: Array.from({ length: 4 }, (_, i) => ({
     id: i,
     label: `PAR ${i + 1}`,
@@ -83,6 +84,7 @@ function getClientState() {
     strobeFunction: state.strobeFunction,
     energyOverride: state.energyOverride,
     autoSource: state.autoSource,
+    autoPrefetchDepth: state.autoPrefetchDepth,
     fixtures: state.fixtures,
     profiles: listProfiles(),
     colorPresets: COLOR_PRESETS,

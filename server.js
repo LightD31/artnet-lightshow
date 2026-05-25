@@ -83,8 +83,8 @@ server.listen(PORT, () => {
     console.log(`                       ${spotify.redirectUri}`);
   }
   console.log(`  Deezer            →  ${process.env.DEEZER_ARL ? 'configured (ISRC-based downloads)' : 'not configured (set DEEZER_ARL in .env for exact audio — falls back to yt-dlp)'}`);
-  console.log(`  Auto Show         →  Essentia + Spotify integration\n`);
+  console.log(`  Auto Show         →  Essentia + Spotify integration (python: ${AutoShow.PYTHON_EXE})\n`);
 });
 
-process.on('SIGINT',  () => { autoShow.stop(); spotify.disconnect(); deezerSource.disconnect(); prolink.destroy(); process.exit(0); });
-process.on('SIGTERM', () => { autoShow.stop(); spotify.disconnect(); deezerSource.disconnect(); prolink.destroy(); process.exit(0); });
+process.on('SIGINT',  () => { autoShow.destroy(); spotify.disconnect(); deezerSource.disconnect(); prolink.destroy(); process.exit(0); });
+process.on('SIGTERM', () => { autoShow.destroy(); spotify.disconnect(); deezerSource.disconnect(); prolink.destroy(); process.exit(0); });

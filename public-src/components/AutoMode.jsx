@@ -29,6 +29,8 @@ export function AutoMode() {
   const sp = s.spotify;
   const as = s.autoShow;
   const next = s.spotifyNext;
+  const prefetchSlots = Array.isArray(s.spotifyPrefetch) ? s.spotifyPrefetch : [];
+  const prefetchDepth = Math.max(1, Math.min(5, s.autoPrefetchDepth || 1));
 
   const pendingStartRef = useRef(false);
   useEffect(() => {
@@ -108,6 +110,17 @@ export function AutoMode() {
                 >{sz}</button>
               ))}
             </div>
+            <div class="auto-prefetch" title="How many upcoming Spotify tracks to prefetch in the background">
+              <label>QUEUE</label>
+              <input
+                type="number" min="1" max="5" step="1"
+                value={prefetchDepth}
+                onInput={(e) => {
+                  const v = Math.max(1, Math.min(5, parseInt(e.target.value, 10) || 1));
+                  send({ autoPrefetchDepth: v });
+                }}
+              />
+            </div>
             <div class="auto-intensity">
               <label title="Energy intensity">INT</label>
               <input
@@ -162,19 +175,36 @@ export function AutoMode() {
 
           <DeezerPlayer />
 
-          {(showNext || showNextEmpty) && (
-            <div class="auto-next-song">
-              <div class="auto-next-label">Up next</div>
-              <div class="auto-next-track">{showNext ? (next.track.name || '-') : '-'}</div>
-              <div class="auto-next-meta">
-                <span class="auto-next-artist">{showNext ? (next.track.artist || '') : ''}</span>
-                <span
-                  class={`auto-next-status ${(showNext ? next.status : fallbackStatus) || 'idle'}`}
-                  title={(showNext && next.message) || (next && next.message) || ''}
-                >
-                  {NEXT_LABELS[showNext ? next.status : fallbackStatus] || (showNext ? next.status : 'Idle')}
-                </span>
-              </div>
+          {sp.authenticated && (
+            <div class="auto-next-list">
+              {prefetchSlots.length === 0 || !prefetchSlots[0].track ? (
+                <div class="auto-next-song">
+                  <div class="auto-next-label">Up next</div>
+                  <div class="auto-next-track">-</div>
+                  <div class="auto-next-meta">
+                    <span class="auto-next-artist"></span>
+                    <span class={`auto-next-status ${fallbackStatus}`}>
+                      {NEXT_LABELS[fallbackStatus] || 'Idle'}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                prefetchSlots.map((slot, i) => (
+                  <div key={slot.cacheKey || i} class={`auto-next-song ${i > 0 ? 'auto-next-song-sub' : ''}`}>
+                    <div class="auto-next-label">{i === 0 ? 'Up next' : `+${i}`}</div>
+                    <div class="auto-next-track">{slot.track?.name || '-'}</div>
+                    <div class="auto-next-meta">
+                      <span class="auto-next-artist">{slot.track?.artist || ''}</span>
+                      <span
+                        class={`auto-next-status ${slot.status || 'idle'}`}
+                        title={slot.message || ''}
+                      >
+                        {NEXT_LABELS[slot.status] || slot.status || 'Idle'}
+                      </span>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           )}
 
@@ -189,12 +219,10 @@ export function AutoMode() {
           ) : (
             <div class="auto-empty">Run an auto-show to see analysis here.</div>
           )}
+          <div class="auto-timeline-inline">
+            <AutoTimeline />
+          </div>
         </div>
-      </div>
-
-      {/* Full-width timeline (sibling to the card, breaks out of any padding) */}
-      <div class="auto-timeline-full">
-        <AutoTimeline />
       </div>
     </>
   );

@@ -12,6 +12,7 @@ const hooks = {
   prolinkDisable: () => {},
   autoPaletteSize: () => {},
   autoIntensity: () => {},
+  autoPrefetchDepth: () => {},
   broadcast: () => {},
 };
 
@@ -61,6 +62,10 @@ function applyPatch(rawData) {
 
   if (data.autoPaletteSize !== undefined) hooks.autoPaletteSize(data.autoPaletteSize);
   if (data.autoIntensity !== undefined) hooks.autoIntensity(data.autoIntensity);
+  if (data.autoPrefetchDepth !== undefined) {
+    state.autoPrefetchDepth = data.autoPrefetchDepth;
+    hooks.autoPrefetchDepth(data.autoPrefetchDepth);
+  }
 
   if (restartTimer) restartBeatTimer();
   hooks.broadcast();

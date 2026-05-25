@@ -450,15 +450,37 @@ def downsample(values, times, step=1.0):
 
 
 def analyze(filepath, target_duration_sec=None):
+    import os as _os
     import librosa
     import numpy as np
+    from concurrent.futures import ThreadPoolExecutor
+    try:
+        from threadpoolctl import threadpool_limits
+    except Exception:
+        # threadpoolctl ships with scikit-learn; fall back to a no-op so the
+        # analyzer still runs if it's somehow not present.
+        from contextlib import contextmanager
+        @contextmanager
+        def threadpool_limits(*_a, **_kw):
+            yield
 
-    # ── PANNs genre classification (high-level prior) ─────────────────────
-    # Run this first so we can write its output into the result even on failure.
-    # Skips silently if torch / panns_inference / checkpoint aren't available.
-    # PANNs runs on the raw file (no trim) — a few seconds of intro silence
-    # doesn't change the genre classification.
-    genre = classify_panns(filepath)
+    # BLAS / OpenMP saturate every core on a single call (e.g. 24 threads per
+    # FFT on a 24-core box). With outer fan-out, that's 6×24 threads contending.
+    # Cap inner threads so (outer branches × inner) ≈ physical cores during
+    # the parallel waves only; serial stages keep full BLAS access.
+    # Below 4 cores there's nothing to gain — running the waves serially keeps
+    # each call using all available BLAS threads (faster than 6 starved tasks).
+    cpu = _os.cpu_count() or 4
+    parallelize = cpu >= 4
+    wave1_workers = 6 if parallelize else 1
+    wave2_workers = 3 if parallelize else 1
+    inner_blas = max(1, cpu // 6) if parallelize else cpu
+
+    # PANNs runs concurrently with the librosa pipeline. AudioSet labels don't
+    # depend on the trimmed waveform — it reads `filepath` directly. When PANNs
+    # is not installed, the future returns None almost instantly.
+    panns_pool = ThreadPoolExecutor(max_workers=1)
+    f_genre = panns_pool.submit(classify_panns, filepath)
 
     # Load audio (mono, 22050 Hz — good balance of speed/quality)
     y, sr = librosa.load(filepath, sr=22050, mono=True)
@@ -478,20 +500,55 @@ def analyze(filepath, target_duration_sec=None):
     except Exception:
         y_harm, y_perc = y, y
 
-    # ── Beat tracking ─────────────────────────────────────────────────────
-    # Always run beat_track first — its global BPM anchors the tempogram
-    # constraint below. We may later swap to PLP beats if the anchored tempo
-    # curve shows genuine drift.
+    # ── Wave 1: parallel feature extraction ───────────────────────────────
+    # Everything below only needs y / y_harm / y_perc, so we fan them out to
+    # a thread pool. librosa/numpy/scipy release the GIL during their compute
+    # paths, so threads give real parallelism on multi-core machines.
     hop_length = 512
-    perc_onset = None
-    try:
-        perc_onset = librosa.onset.onset_strength(y=y_perc, sr=sr, hop_length=hop_length)
-    except Exception:
-        perc_onset = None
+    n_fft = 2048
+    hop = 512
 
-    tempo, beat_frames = librosa.beat.beat_track(
-        y=y_perc, sr=sr, trim=False, start_bpm=120, tightness=100
-    )
+    with threadpool_limits(limits=inner_blas), ThreadPoolExecutor(max_workers=wave1_workers) as pool:
+        f_perc_onset = pool.submit(
+            librosa.onset.onset_strength, y=y_perc, sr=sr, hop_length=hop_length,
+        )
+        f_chroma = pool.submit(librosa.feature.chroma_cqt, y=y_harm, sr=sr)
+        f_stft = pool.submit(
+            lambda: np.abs(librosa.stft(y, n_fft=n_fft, hop_length=hop)),
+        )
+        f_onset = pool.submit(
+            librosa.onset.onset_strength, y=y, sr=sr, hop_length=hop,
+        )
+        f_zcr = pool.submit(
+            lambda: librosa.feature.zero_crossing_rate(y, hop_length=hop)[0],
+        )
+        # tonnetz is the dominant cost inside compute_mood (~1.3s on a 4-min
+        # track). Hoist it here so the mood call later is essentially free.
+        f_tonnetz = pool.submit(librosa.feature.tonnetz, y=y_harm, sr=sr)
+
+        try:
+            perc_onset = f_perc_onset.result()
+        except Exception:
+            perc_onset = None
+        chroma = f_chroma.result()
+        S = f_stft.result()
+        onset_env = f_onset.result()
+        zcr = f_zcr.result()
+        try:
+            tonnetz = f_tonnetz.result()
+        except Exception:
+            tonnetz = None
+
+    # ── Beat tracking (uses the perc_onset we just computed) ──────────────
+    # Passing onset_envelope= avoids beat_track recomputing onset internally.
+    if perc_onset is not None:
+        tempo, beat_frames = librosa.beat.beat_track(
+            onset_envelope=perc_onset, sr=sr, trim=False, start_bpm=120, tightness=100,
+        )
+    else:
+        tempo, beat_frames = librosa.beat.beat_track(
+            y=y_perc, sr=sr, trim=False, start_bpm=120, tightness=100,
+        )
     bpm = float(np.atleast_1d(tempo)[0])
     beat_times = librosa.frames_to_time(beat_frames, sr=sr)
     beat_source = 'beat_track'
@@ -557,14 +614,10 @@ def analyze(filepath, target_duration_sec=None):
         except Exception:
             pass
 
-    # ── Key / scale (CQT chromagram of harmonic component) ────────────────
-    chroma = librosa.feature.chroma_cqt(y=y_harm, sr=sr)
+    # ── Key / scale (chroma was computed in Wave 1) ───────────────────────
     key, scale, key_strength = estimate_key(chroma)
 
-    # ── STFT & sub-band energies ──────────────────────────────────────────
-    n_fft = 2048
-    hop = 512
-    S = np.abs(librosa.stft(y, n_fft=n_fft, hop_length=hop))
+    # ── Sub-band energies (S was computed in Wave 1) ──────────────────────
     freqs = librosa.fft_frequencies(sr=sr, n_fft=n_fft)
     stft_times = librosa.frames_to_time(np.arange(S.shape[1]), sr=sr, hop_length=hop)
 
@@ -593,13 +646,11 @@ def analyze(filepath, target_duration_sec=None):
     rms_times = stft_times[:n]
     norm_rms = robust_norm(rms)
 
-    # ── Spectral features ─────────────────────────────────────────────────
+    # ── Spectral features (centroid from S; zcr & onset_env from Wave 1) ──
     centroid = librosa.feature.spectral_centroid(S=S, sr=sr)[0]
     norm_centroid = robust_norm(centroid)
-    zcr = librosa.feature.zero_crossing_rate(y, hop_length=hop)[0]
 
-    # ── Onset strength (full-band & kick-band) ────────────────────────────
-    onset_env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop)
+    # ── Onset strength flux (onset_env from Wave 1) ───────────────────────
     flux_n = robust_norm(onset_env)
 
     onset_frames = librosa.onset.onset_detect(
@@ -647,31 +698,39 @@ def analyze(filepath, target_duration_sec=None):
         beat_strengths,
     )
 
-    # ── Mood features ─────────────────────────────────────────────────────
-    mood = compute_mood(
-        bpm=bpm, scale=scale, key_strength=key_strength,
-        rms=rms, centroid=centroid, onset_env=onset_env, zcr=zcr,
-        beat_strengths=beat_strengths, y_harm=y_harm, sr=sr,
-        onset_count=len(onset_times), duration=duration,
-        kick_energy=kick_energy,
-    )
-
-    # ── Structural segmentation (Laplacian) ───────────────────────────────
-    segments = compute_segments_laplacian(
-        y=y, sr=sr, beat_frames=beat_frames, beat_times=beat_times,
-        norm_rms=norm_rms, rms_times=rms_times,
-        norm_centroid=norm_centroid, bass_n=bass_n, stft_times=stft_times,
-    )
-
-    # ── Drop & build-up detection ─────────────────────────────────────────
-    drops, buildups = detect_drops(
-        norm_rms=norm_rms, rms_times=rms_times,
-        kick_n=kick_n, stft_times=stft_times,
-        flux_n=flux_n, kick_flux_n=kick_flux_n,
-        norm_centroid=norm_centroid,
-        beat_times=beat_times,
-        downbeat_idxs=downbeat_idxs,
-    )
+    # ── Wave 2: parallel post-beat heavy stages ───────────────────────────
+    # Segmentation runs its own CQT internally (~2.5s); mood does little CPU
+    # work since tonnetz is precomputed; drops is fast peak-picking. Fan them
+    # out concurrently — the segmentation thread sets the floor for this wave.
+    # Wave 2 only has 3 branches so we can give each a bigger BLAS slice.
+    wave2_inner = max(1, cpu // 3) if parallelize else cpu
+    with threadpool_limits(limits=wave2_inner), ThreadPoolExecutor(max_workers=wave2_workers) as pool:
+        f_segments = pool.submit(
+            compute_segments_laplacian,
+            y=y, sr=sr, beat_frames=beat_frames, beat_times=beat_times,
+            norm_rms=norm_rms, rms_times=rms_times,
+            norm_centroid=norm_centroid, bass_n=bass_n, stft_times=stft_times,
+        )
+        f_mood = pool.submit(
+            compute_mood,
+            bpm=bpm, scale=scale, key_strength=key_strength,
+            rms=rms, centroid=centroid, onset_env=onset_env, zcr=zcr,
+            beat_strengths=beat_strengths, y_harm=y_harm, sr=sr,
+            onset_count=len(onset_times), duration=duration,
+            kick_energy=kick_energy, tonnetz=tonnetz,
+        )
+        f_drops = pool.submit(
+            detect_drops,
+            norm_rms=norm_rms, rms_times=rms_times,
+            kick_n=kick_n, stft_times=stft_times,
+            flux_n=flux_n, kick_flux_n=kick_flux_n,
+            norm_centroid=norm_centroid,
+            beat_times=beat_times,
+            downbeat_idxs=downbeat_idxs,
+        )
+        segments = f_segments.result()
+        mood = f_mood.result()
+        drops, buildups = f_drops.result()
 
     # Cap drops by duration: a 2:30 pop song with 8 detected "drops" is the
     # detector firing on every chorus entry / snare buildup. Keep the most
@@ -692,6 +751,16 @@ def analyze(filepath, target_duration_sec=None):
     bass_curve   = downsample(bass_n.tolist(),   stft_times.tolist(), step=0.5)
     kick_curve   = downsample(kick_n.tolist(),   stft_times.tolist(), step=0.5)
     high_curve   = downsample(high_n.tolist(),   stft_times.tolist(), step=0.5)
+
+    # PANNs has been crunching in the background since the top of analyze().
+    # Block here if it hasn't finished — usually it's already done because
+    # the librosa pipeline takes 20s+ and a cold PANNs run is ~5-15s.
+    try:
+        genre = f_genre.result()
+    except Exception:
+        genre = None
+    finally:
+        panns_pool.shutdown(wait=False)
 
     return {
         'duration': round(duration, 3),
@@ -725,7 +794,7 @@ def analyze(filepath, target_duration_sec=None):
 
 def compute_mood(bpm, scale, key_strength, rms, centroid, onset_env, zcr,
                  beat_strengths, y_harm, sr, onset_count=0, duration=0.0,
-                 kick_energy=None):
+                 kick_energy=None, tonnetz=None):
     """
     Track mood as (valence, arousal) in [0, 1], plus loudness/brightness/
     danceability/kickiness.
@@ -810,9 +879,11 @@ def compute_mood(bpm, scale, key_strength, rms, centroid, onset_env, zcr,
     zcr_mean = _mean(zcr)
     tonality = float(np.clip(1.0 - zcr_mean * 8.0, 0.0, 1.0))
 
-    # Harmonic stability from tonnetz std
+    # Harmonic stability from tonnetz std (caller may pass a precomputed
+    # tonnetz to avoid recomputing it on the mood thread).
     try:
-        tonnetz = librosa.feature.tonnetz(y=y_harm, sr=sr)
+        if tonnetz is None:
+            tonnetz = librosa.feature.tonnetz(y=y_harm, sr=sr)
         tonnetz_std = float(np.mean(np.std(tonnetz, axis=1)))
         harmonic_stability = float(np.clip(1.0 - tonnetz_std * 3.0, 0.0, 1.0))
     except Exception:
@@ -1364,11 +1435,112 @@ def detect_drops(norm_rms, rms_times, kick_n, stft_times,
 
 # ── Entry point ──────────────────────────────────────────────────────────────
 
+def _preload_panns():
+    """Eagerly construct the PANNs AudioTagging model so the first request
+    doesn't pay the ~3-5s load cost. Silently skipped if PANNs isn't
+    installed or the checkpoint is missing — falls through to the same
+    classify_panns() skip-path used today."""
+    try:
+        from panns_inference import AudioTagging
+    except Exception:
+        return
+    ckpt = os.path.join(os.path.expanduser('~'), 'panns_data', 'Cnn14_mAP=0.431.pth')
+    if not os.path.isfile(ckpt) or os.path.getsize(ckpt) < int(3e8):
+        return
+    try:
+        import contextlib as _ctx
+        global _PANNS_AT
+        with _ctx.redirect_stdout(sys.stderr):
+            _PANNS_AT = AudioTagging(checkpoint_path=ckpt, device='cpu')
+    except Exception as exc:
+        print(f'[panns] preload failed: {exc}', file=sys.stderr)
+
+
+def _watch_parent_and_exit():
+    """Background daemon thread that polls the parent process. When the
+    parent dies (server crashed, terminal closed, or taskkill /F), the worker
+    exits within ~2 seconds instead of becoming an orphan. The normal shutdown
+    path via stdin EOF still works — this is just a safety net for SIGKILL."""
+    import threading, time
+    parent_pid = os.getppid()
+
+    def watcher():
+        # On Windows, OpenProcess via ctypes is the reliable check; on POSIX,
+        # os.kill(pid, 0) raises ProcessLookupError when the parent is gone.
+        if os.name == 'nt':
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            SYNCHRONIZE = 0x00100000
+            handle = kernel32.OpenProcess(SYNCHRONIZE, False, parent_pid)
+            if not handle:
+                os._exit(0)  # parent already gone
+            try:
+                # WaitForSingleObject returns 0 (WAIT_OBJECT_0) when parent exits.
+                # 258 (WAIT_TIMEOUT) means parent still alive; loop and re-poll.
+                while kernel32.WaitForSingleObject(handle, 2000) == 258:
+                    pass
+            finally:
+                kernel32.CloseHandle(handle)
+        else:
+            while True:
+                try:
+                    os.kill(parent_pid, 0)
+                except (ProcessLookupError, PermissionError):
+                    break
+                time.sleep(2)
+        os._exit(0)
+
+    t = threading.Thread(target=watcher, daemon=True)
+    t.start()
+
+
+def worker_loop():
+    """
+    Persistent worker mode. Reads one NDJSON request per stdin line, runs
+    analyze(), writes one NDJSON response line per request. Holds librosa /
+    numba JIT caches and the PANNs PyTorch model in memory between requests
+    so subsequent analyses skip the multi-second cold-start cost.
+
+    Request:  {"id": <any>, "source": "<path>", "targetDurationSec": <num|null>}
+    Response: {"id": <same>, "result": {...}}  OR  {"id": <same>, "error": "..."}
+    """
+    _watch_parent_and_exit()
+    _preload_panns()
+    print('[analyzer] worker ready', file=sys.stderr, flush=True)
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        req_id = None
+        try:
+            req = json.loads(line)
+            req_id = req.get('id')
+            source = req.get('source')
+            target = req.get('targetDurationSec')
+            if not source:
+                resp = {'id': req_id, 'error': 'missing source'}
+            elif not os.path.isfile(source):
+                resp = {'id': req_id, 'error': f'File not found: {source}'}
+            else:
+                result = analyze(source, target_duration_sec=target)
+                resp = {'id': req_id, 'result': result}
+        except Exception as exc:
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+            resp = {'id': req_id, 'error': str(exc)}
+        sys.stdout.write(json.dumps(resp) + '\n')
+        sys.stdout.flush()
+
+
 def main():
     # Usage:
     #   python essentia-analyze.py <audio_file_or_url>
     #   python essentia-analyze.py <audio_file_or_url> --target-duration <sec>
+    #   python essentia-analyze.py --worker      (NDJSON loop on stdin)
     argv = sys.argv[1:]
+    if '--worker' in argv:
+        worker_loop()
+        return
     if not argv:
         json.dump({'error': 'Usage: python essentia-analyze.py <audio_file_or_url> [--target-duration <sec>]'}, sys.stdout)
         sys.exit(1)
