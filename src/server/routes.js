@@ -25,7 +25,7 @@ function asyncHandler(fn) {
 }
 
 function attachRoutes(app, deps) {
-  const { midi, autoShow, spotify, nowPlaying, prolink, analysisCache, integrations } = deps;
+  const { midi, autoShow, spotify, nowPlaying, deezerSource, prolink, analysisCache, integrations } = deps;
 
   // ─── State ────────────────────────────────────────────────────────────────
   app.get('/api/state', (_req, res) => res.json(getClientState()));
@@ -296,6 +296,29 @@ function attachRoutes(app, deps) {
     res.json({ ok: true });
   });
 
+  // ─── Deezer (browser extension) ─────────────────────────────────────────────
+  // The Firefox extension POSTs from a moz-extension:// origin, which current
+  // Firefox treats as a CORS request (preflighted). Allow it on these endpoints.
+  app.use('/api/deezer', (req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type');
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+    next();
+  });
+
+  // The Firefox extension POSTs the Deezer web player's state here: the current
+  // track (with ISRC + position) and the upcoming queue (for prefetch).
+  app.post('/api/deezer/state', (req, res) => {
+    integrations.onDeezerState(req.body || {});
+    res.json({ ok: true, status: deezerSource.getStatus() });
+  });
+
+  app.post('/api/deezer/disconnect', (_req, res) => {
+    integrations.onDeezerDisconnect();
+    res.json({ ok: true });
+  });
+
   // ─── Auto-show ────────────────────────────────────────────────────────────
   const { keyForSpotify, keyForYouTube, keyForQuery, keyForLocalFile, keyForBuffer, keyForProlinkTrack } =
     require('../analysis-cache');
@@ -355,6 +378,29 @@ function attachRoutes(app, deps) {
     try {
       const playing = await nowPlaying.getCurrentlyPlaying();
       if (!playing) return res.status(400).json({ ok: false, error: 'Nothing is currently playing' });
+
+      autoShow.track = {
+        name: playing.name, artist: playing.artist, album: playing.album,
+        albumArt: playing.albumArt, durationMs: playing.durationMs,
+      };
+      integrations.broadcast();
+
+      const query = `${playing.artist} - ${playing.name}`;
+      const cacheKey = keyForQuery(query);
+      await autoShow.downloadAndAnalyze(query, playing.durationMs / 1000, cacheKey, playing.isrc);
+
+      integrations.broadcast();
+      res.json({ ok: true, track: autoShow.track, analysis: autoShow.getClientState().analysis });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  }));
+
+  app.post('/api/auto/analyze-deezer', asyncHandler(async (_req, res) => {
+    if (!deezerSource.authenticated) return res.status(400).json({ ok: false, error: 'Deezer extension not connected' });
+    try {
+      const playing = await deezerSource.getCurrentlyPlaying();
+      if (!playing) return res.status(400).json({ ok: false, error: 'No track currently playing on Deezer' });
 
       autoShow.track = {
         name: playing.name, artist: playing.artist, album: playing.album,
@@ -455,6 +501,7 @@ function attachRoutes(app, deps) {
       ...autoShow.getClientState(),
       spotify: spotify.getStatus(),
       nowPlaying: nowPlaying.getStatus(),
+      deezer: deezerSource.getStatus(),
     });
   });
 

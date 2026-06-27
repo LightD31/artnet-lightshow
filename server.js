@@ -11,6 +11,7 @@ const ProLink = require('./src/prolink');
 const SpotifyClient = require('./src/spotify');
 const NowPlayingSource = require('./src/nowplaying-source');
 const SmtcReader = require('./src/smtc-source');
+const DeezerSource = require('./src/deezer-source');
 const deezer = require('./src/deezer');
 const AutoShow = require('./src/auto-show');
 const { AnalysisCache } = require('./src/analysis-cache');
@@ -42,6 +43,7 @@ midi.connect(midiInputName, midiOutputName);
 const prolink = new ProLink();
 const spotify = new SpotifyClient();
 const nowPlaying = new NowPlayingSource();
+const deezerSource = new DeezerSource();
 
 const analysisCache = new AnalysisCache(path.join(__dirname, 'cache', 'analysis'));
 const autoShow = new AutoShow(applyPatch, COLOR_PRESETS, PATTERNS, analysisCache);
@@ -52,7 +54,7 @@ if (process.env.DEEZER_ARL) {
   });
 }
 
-const integrations = setupIntegrations({ io, midi, spotify, nowPlaying, prolink, autoShow });
+const integrations = setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolink, autoShow });
 
 // Windows "now playing" (SMTC) feeds the generic now-playing source: we read
 // the OS media session, so any player that reports to it (Deezer, Tidal,
@@ -71,7 +73,7 @@ if (process.env.PROLINK === '1') {
   });
 }
 
-attachRoutes(app, { midi, autoShow, spotify, nowPlaying, prolink, analysisCache, integrations });
+attachRoutes(app, { midi, autoShow, spotify, nowPlaying, deezerSource, prolink, analysisCache, integrations });
 attachSockets(io, { midi });
 
 startEngine();
@@ -100,5 +102,5 @@ server.listen(PORT, () => {
   console.log(`  Auto Show         →  Essentia + Spotify integration (python: ${AutoShow.PYTHON_EXE})\n`);
 });
 
-process.on('SIGINT',  () => { smtc.stop(); autoShow.destroy(); spotify.disconnect(); nowPlaying.disconnect(); prolink.destroy(); process.exit(0); });
-process.on('SIGTERM', () => { smtc.stop(); autoShow.destroy(); spotify.disconnect(); nowPlaying.disconnect(); prolink.destroy(); process.exit(0); });
+process.on('SIGINT',  () => { smtc.stop(); autoShow.destroy(); spotify.disconnect(); nowPlaying.disconnect(); deezerSource.disconnect(); prolink.destroy(); process.exit(0); });
+process.on('SIGTERM', () => { smtc.stop(); autoShow.destroy(); spotify.disconnect(); nowPlaying.disconnect(); deezerSource.disconnect(); prolink.destroy(); process.exit(0); });

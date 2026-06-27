@@ -39,6 +39,12 @@ class AnalysisCache {
     }
   }
 
+  /** Cheap existence check (no read/parse) — safe to poll. */
+  has(key) {
+    if (!key) return false;
+    try { return fs.existsSync(this._pathFor(key)); } catch (_) { return false; }
+  }
+
   set(key, analysis, meta = {}) {
     if (!key || !analysis) return;
     const p = this._pathFor(key);

@@ -238,6 +238,16 @@ class AutoShow {
 
   get status() { return this._status; }
 
+  /** True when this cacheKey's analysis is already on disk (cheap check). */
+  isCached(cacheKey) {
+    return !!(cacheKey && this._cache && this._cache.has(cacheKey));
+  }
+
+  /** True when a download/analyze for this cacheKey is currently running. */
+  isPrefetching(cacheKey) {
+    return !!(cacheKey && this._inFlight.has(cacheKey));
+  }
+
   /** Current playback position in ms, or 0 when not playing. */
   getPositionMs() {
     return this._getPositionMs ? this._getPositionMs() : 0;
