@@ -1,21 +1,21 @@
 'use strict';
 
 /**
- * Browser-driven Deezer player source.
+ * Generic "now playing" source.
  *
- * Unlike SpotifyClient (which polls Spotify's Web API from the server), the
- * Deezer player lives in the browser via Deezer's JS SDK. The web client
- * forwards playback updates over socket.io and this module just holds the
- * most recent snapshot, exposing the same shape the rest of the server uses
- * for "currently playing" sources (Spotify, prolink, etc).
+ * Holds the most recent playback snapshot reported by the OS media session
+ * (see src/smtc-source.js on Windows), exposing the same shape the rest of the
+ * server uses for "currently playing" sources (Spotify, prolink, etc). It is
+ * player-agnostic: anything that reports to the system media controls (Deezer,
+ * Tidal, YouTube, a browser tab, a desktop app…) drives the auto-show.
  *
  * `authenticated` is true while we have a fresh playback update — it fades to
- * false once `STALE_MS` has elapsed without one, so disconnecting a browser
- * tab cleanly removes Deezer as an available auto-source.
+ * false once `STALE_MS` has elapsed without one, so when playback stops the
+ * source cleanly drops out as an available auto-source.
  */
 const STALE_MS = 10000;
 
-class DeezerSource {
+class NowPlayingSource {
   constructor() {
     this._playing = null;         // last full playback snapshot
     this._currentTrackId = null;
@@ -27,14 +27,14 @@ class DeezerSource {
   /** Always "configured" — there's no server-side key required. */
   get configured() { return true; }
 
-  /** Authenticated = browser is actively reporting playback. */
+  /** Authenticated = something is actively reporting playback. */
   get authenticated() {
     return !!(this._playing && Date.now() - this._lastUpdateAt < STALE_MS);
   }
 
   /**
-   * Apply a playback update pushed from the browser. Mirrors the fields
-   * SpotifyClient.getCurrentlyPlaying() returns so downstream code is shared.
+   * Apply a playback update. Mirrors the fields SpotifyClient.getCurrentlyPlaying()
+   * returns so downstream code is shared.
    */
   updatePlayback(payload) {
     if (!payload || !payload.trackId) return;
@@ -69,7 +69,7 @@ class DeezerSource {
   onTrackChange(fn) { this._onTrackChange = fn; }
   onPlaybackUpdate(fn) { this._onPlaybackUpdate = fn; }
 
-  /** Clear any held playback state — called when the browser disconnects. */
+  /** Clear any held playback state. */
   disconnect() {
     this._playing = null;
     this._currentTrackId = null;
@@ -77,12 +77,16 @@ class DeezerSource {
   }
 
   getStatus() {
+    const live = this.authenticated;
     return {
       configured: this.configured,
-      authenticated: this.authenticated,
+      authenticated: live,
       currentTrackId: this._currentTrackId,
+      name: live && this._playing ? this._playing.name : null,
+      artist: live && this._playing ? this._playing.artist : null,
+      isPlaying: live && this._playing ? this._playing.isPlaying : false,
     };
   }
 }
 
-module.exports = DeezerSource;
+module.exports = NowPlayingSource;

@@ -104,10 +104,6 @@ function keyForSpotify(trackId) {
   return trackId ? `spotify:${trackId}` : null;
 }
 
-function keyForDeezer(trackId) {
-  return trackId ? `deezer:${trackId}` : null;
-}
-
 /** Returns a YouTube key if `input` looks like a YT URL, else null. */
 function keyForYouTube(input) {
   if (!input) return null;
@@ -159,7 +155,6 @@ function keyForProlinkTrack({ deviceId, slot, trackId, title, artist } = {}) {
 module.exports = {
   AnalysisCache,
   keyForSpotify,
-  keyForDeezer,
   keyForYouTube,
   keyForQuery,
   keyForLocalFile,

@@ -89,7 +89,7 @@ const ENERGY_EFFECTS = [
 
 const ENERGY_EFFECT_IDS = ENERGY_EFFECTS.map((e) => e.id);
 
-const AUTO_SOURCES = ['auto', 'spotify', 'deezer', 'prolink', 'timer'];
+const AUTO_SOURCES = ['auto', 'spotify', 'nowplaying', 'prolink', 'timer'];
 
 module.exports = {
   STROBE_FUNCTIONS,
