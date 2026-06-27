@@ -2,7 +2,6 @@ import { useEffect, useRef } from 'preact/hooks';
 import { stateSig, send } from '../state.js';
 import { AnalysisStats } from './AnalysisStats.jsx';
 import { AutoTimeline } from './AutoTimeline.jsx';
-import { DeezerPlayer } from './DeezerPlayer.jsx';
 
 const NEXT_LABELS = {
   idle: 'Idle',
@@ -27,6 +26,7 @@ function statusMessage(status) {
 export function AutoMode() {
   const s = stateSig.value;
   const sp = s.spotify;
+  const np = s.nowPlaying || {};
   const as = s.autoShow;
   const next = s.spotifyNext;
   const prefetchSlots = Array.isArray(s.spotifyPrefetch) ? s.spotifyPrefetch : [];
@@ -57,11 +57,11 @@ export function AutoMode() {
 
     const source = s.autoSource || 'auto';
     const spotifyReady = sp.authenticated;
-    const deezerReady = s.deezer && s.deezer.authenticated;
+    const nowPlayingReady = s.nowPlaying && s.nowPlaying.authenticated;
     const prolinkReady = s.prolink && s.prolink.connected && s.prolink.track && s.prolink.track.title;
-    const useSpotify = source === 'spotify' || (source === 'auto' && spotifyReady);
-    const useDeezer  = source === 'deezer'  || (source === 'auto' && !spotifyReady && deezerReady);
-    const useProlink = source === 'prolink' || (source === 'auto' && !spotifyReady && !deezerReady && prolinkReady);
+    const useSpotify    = source === 'spotify'    || (source === 'auto' && spotifyReady);
+    const useNowPlaying = source === 'nowplaying' || (source === 'auto' && !spotifyReady && nowPlayingReady);
+    const useProlink    = source === 'prolink'    || (source === 'auto' && !spotifyReady && !nowPlayingReady && prolinkReady);
 
     const triggerAnalyze = (endpoint) => {
       pendingStartRef.current = true;
@@ -71,9 +71,9 @@ export function AutoMode() {
         .catch(() => { pendingStartRef.current = false; });
     };
 
-    if (useSpotify)      triggerAnalyze('/api/auto/analyze-spotify');
-    else if (useDeezer)  triggerAnalyze('/api/auto/analyze-deezer');
-    else if (useProlink) triggerAnalyze('/api/auto/analyze-prolink');
+    if (useSpotify)         triggerAnalyze('/api/auto/analyze-spotify');
+    else if (useNowPlaying) triggerAnalyze('/api/auto/analyze-nowplaying');
+    else if (useProlink)    triggerAnalyze('/api/auto/analyze-prolink');
     else fetch('/api/auto/start', { method: 'POST' });
   };
 
@@ -97,7 +97,7 @@ export function AutoMode() {
               <option value="auto">Auto-detect</option>
               <option value="prolink">PRO DJ LINK</option>
               <option value="spotify">Spotify</option>
-              <option value="deezer">Deezer</option>
+              <option value="nowplaying">Now Playing (OS)</option>
               <option value="timer">Standalone timer</option>
             </select>
             <div class="palette-size-toggle" role="group" aria-label="Palette size" title="Palette size">
@@ -173,7 +173,14 @@ export function AutoMode() {
             )}
           </div>
 
-          <DeezerPlayer />
+          <div class="auto-status-row">
+            <div class={`status-dot ${np.authenticated ? 'connected' : ''}`} />
+            <span style={{ fontSize: '11px', color: 'var(--muted)' }}>
+              {np.authenticated
+                ? `Now playing: ${np.artist ? `${np.artist} — ` : ''}${np.name || 'unknown'}`
+                : 'No media detected (OS now-playing)'}
+            </span>
+          </div>
 
           {sp.authenticated && (
             <div class="auto-next-list">

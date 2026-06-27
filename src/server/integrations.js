@@ -6,15 +6,14 @@ const { setHooks, applyPatch } = require('./patch');
 const { restartBeatTimer } = require('./engine');
 const {
   keyForSpotify,
-  keyForDeezer,
   keyForQuery,
   keyForProlinkTrack,
 } = require('../analysis-cache');
 
-// Wires the auxiliary subsystems (MIDI feedback, Spotify, Deezer, PRO DJ LINK,
-// auto-show) into the engine + state. Returns the integration handle that
+// Wires the auxiliary subsystems (MIDI feedback, Spotify, now-playing, PRO DJ
+// LINK, auto-show) into the engine + state. Returns the integration handle that
 // routes.js / sockets.js call back into.
-function setupIntegrations({ io, midi, spotify, deezerSource, prolink, autoShow }) {
+function setupIntegrations({ io, midi, spotify, nowPlaying, prolink, autoShow }) {
   // Slot statuses, one per upcoming track up to state.autoPrefetchDepth.
   // slots[0] is the immediate next track (back-compat with the old
   // spotifyNext shape — that field still mirrors slots[0]).
@@ -49,17 +48,14 @@ function setupIntegrations({ io, midi, spotify, deezerSource, prolink, autoShow 
     midi.sendFeedback();
   }
 
-  // Inject the heavy "extras" the UI needs (autoShow / spotify / deezer /
+  // Inject the heavy "extras" the UI needs (autoShow / spotify / nowPlaying /
   // prolink) into the snapshot getClientState() builds.
   function extras() {
     return {
       spotify: spotify.getStatus(),
       spotifyNext: spotifyNextView(),
       spotifyPrefetch: spotifySlots,
-      deezer: {
-        ...deezerSource.getStatus(),
-        appId: process.env.DEEZER_APP_ID || '',
-      },
+      nowPlaying: nowPlaying.getStatus(),
       prolink: {
         enabled: state.prolinkEnabled,
         connected: prolink.connected,
@@ -105,15 +101,15 @@ function setupIntegrations({ io, midi, spotify, deezerSource, prolink, autoShow 
   });
 
   // Pick the active source for auto-show playback. Explicit user choice wins,
-  // then 'auto' falls through to: prolink > spotify > deezer > timer.
+  // then 'auto' falls through to: prolink > spotify > nowplaying > timer.
   function resolveAutoSource() {
     if (state.autoSource === 'prolink' && prolink.connected) return 'prolink';
     if (state.autoSource === 'spotify' && spotify.authenticated) return 'spotify';
-    if (state.autoSource === 'deezer' && deezerSource.authenticated) return 'deezer';
+    if (state.autoSource === 'nowplaying' && nowPlaying.authenticated) return 'nowplaying';
     if (state.autoSource === 'timer') return 'timer';
     if (prolink.connected && prolink.getMaster()) return 'prolink';
     if (spotify.authenticated) return 'spotify';
-    if (deezerSource.authenticated) return 'deezer';
+    if (nowPlaying.authenticated) return 'nowplaying';
     return 'timer';
   }
 
@@ -124,7 +120,7 @@ function setupIntegrations({ io, midi, spotify, deezerSource, prolink, autoShow 
     } else if (source === 'spotify') {
       spotify.startPolling(1000);
       autoShow.start(getAutoPositionMs);
-    } else if (source === 'deezer') {
+    } else if (source === 'nowplaying') {
       autoShow.start(getAutoPositionMs);
     } else {
       const startTime = Date.now();
@@ -339,17 +335,17 @@ function setupIntegrations({ io, midi, spotify, deezerSource, prolink, autoShow 
     }
   });
 
-  // ─── Deezer (browser-driven) ────────────────────────────────────────────
-  deezerSource.onPlaybackUpdate((playing) => {
-    if (resolveAutoSource() !== 'deezer') return;
+  // ─── Now playing (OS media session) ─────────────────────────────────────
+  nowPlaying.onPlaybackUpdate((playing) => {
+    if (resolveAutoSource() !== 'nowplaying') return;
     autoPlayback.progressMs = playing.progressMs;
     autoPlayback.isPlaying = playing.isPlaying;
     autoPlayback.updatedAt = Date.now();
   });
 
-  deezerSource.onTrackChange(async (playing) => {
-    console.log(`Deezer track changed: ${playing.artist} — ${playing.name}`);
-    if (resolveAutoSource() !== 'deezer') return;
+  nowPlaying.onTrackChange(async (playing) => {
+    console.log(`Now playing changed: ${playing.artist} — ${playing.name}`);
+    if (resolveAutoSource() !== 'nowplaying') return;
     if (!autoShow.running) return;
 
     autoShow.stop();
@@ -360,12 +356,12 @@ function setupIntegrations({ io, midi, spotify, deezerSource, prolink, autoShow 
     broadcast();
     try {
       const query = `${playing.artist} - ${playing.name}`;
-      const cacheKey = keyForDeezer(playing.trackId) || keyForQuery(query);
+      const cacheKey = keyForQuery(query);
       await autoShow.downloadAndAnalyze(query, playing.durationMs / 1000, cacheKey, playing.isrc);
       autoShow.start(getAutoPositionMs);
-      console.log('Auto show restarted for new Deezer track');
+      console.log('Auto show restarted for new now-playing track');
     } catch (err) {
-      console.error('Deezer auto analysis failed for new track:', err.message);
+      console.error('Now-playing auto analysis failed for new track:', err.message);
     }
     broadcast();
   });
@@ -388,8 +384,6 @@ function setupIntegrations({ io, midi, spotify, deezerSource, prolink, autoShow 
     },
     startAutoShow,
     resolveAutoSource,
-    onDeezerPlayback(payload) { deezerSource.updatePlayback(payload); },
-    onDeezerDisconnect() { deezerSource.disconnect(); broadcast(); },
   };
 }
 

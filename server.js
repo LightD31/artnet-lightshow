@@ -9,7 +9,8 @@ const { Server } = require('socket.io');
 const MidiController = require('./src/midi');
 const ProLink = require('./src/prolink');
 const SpotifyClient = require('./src/spotify');
-const DeezerSource = require('./src/deezer-source');
+const NowPlayingSource = require('./src/nowplaying-source');
+const SmtcReader = require('./src/smtc-source');
 const deezer = require('./src/deezer');
 const AutoShow = require('./src/auto-show');
 const { AnalysisCache } = require('./src/analysis-cache');
@@ -40,7 +41,7 @@ midi.connect(midiInputName, midiOutputName);
 
 const prolink = new ProLink();
 const spotify = new SpotifyClient();
-const deezerSource = new DeezerSource();
+const nowPlaying = new NowPlayingSource();
 
 const analysisCache = new AnalysisCache(path.join(__dirname, 'cache', 'analysis'));
 const autoShow = new AutoShow(applyPatch, COLOR_PRESETS, PATTERNS, analysisCache);
@@ -51,7 +52,16 @@ if (process.env.DEEZER_ARL) {
   });
 }
 
-const integrations = setupIntegrations({ io, midi, spotify, deezerSource, prolink, autoShow });
+const integrations = setupIntegrations({ io, midi, spotify, nowPlaying, prolink, autoShow });
+
+// Windows "now playing" (SMTC) feeds the generic now-playing source: we read
+// the OS media session, so any player that reports to it (Deezer, Tidal,
+// YouTube, a browser tab, a desktop app…) drives the auto-show. SMTC=0 disables.
+const smtc = new SmtcReader();
+if (process.env.SMTC !== '0') {
+  smtc.onUpdate((payload) => nowPlaying.updatePlayback(payload));
+  smtc.start();
+}
 
 if (process.env.PROLINK === '1') {
   state.prolinkEnabled = true;
@@ -61,8 +71,8 @@ if (process.env.PROLINK === '1') {
   });
 }
 
-attachRoutes(app, { midi, autoShow, spotify, deezerSource, prolink, analysisCache, integrations });
-attachSockets(io, { midi, deezerSource, integrations });
+attachRoutes(app, { midi, autoShow, spotify, nowPlaying, prolink, analysisCache, integrations });
+attachSockets(io, { midi });
 
 startEngine();
 
@@ -83,8 +93,12 @@ server.listen(PORT, () => {
     console.log(`                       ${spotify.redirectUri}`);
   }
   console.log(`  Deezer            →  ${process.env.DEEZER_ARL ? 'configured (ISRC-based downloads)' : 'not configured (set DEEZER_ARL in .env for exact audio — falls back to yt-dlp)'}`);
+  const npStatus = process.platform !== 'win32'
+    ? 'unavailable (Windows-only)'
+    : process.env.SMTC === '0' ? 'disabled (SMTC=0)' : 'reading OS media session (SMTC)';
+  console.log(`  Now Playing       →  ${npStatus}`);
   console.log(`  Auto Show         →  Essentia + Spotify integration (python: ${AutoShow.PYTHON_EXE})\n`);
 });
 
-process.on('SIGINT',  () => { autoShow.destroy(); spotify.disconnect(); deezerSource.disconnect(); prolink.destroy(); process.exit(0); });
-process.on('SIGTERM', () => { autoShow.destroy(); spotify.disconnect(); deezerSource.disconnect(); prolink.destroy(); process.exit(0); });
+process.on('SIGINT',  () => { smtc.stop(); autoShow.destroy(); spotify.disconnect(); nowPlaying.disconnect(); prolink.destroy(); process.exit(0); });
+process.on('SIGTERM', () => { smtc.stop(); autoShow.destroy(); spotify.disconnect(); nowPlaying.disconnect(); prolink.destroy(); process.exit(0); });

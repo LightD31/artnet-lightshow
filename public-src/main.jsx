@@ -31,7 +31,7 @@ function ModeTabs({ mode, setMode, autoActive }) {
       >
         <span class="mode-tab-icon">✦</span>
         <span class="mode-tab-label">Auto Show</span>
-        <span class="mode-tab-hint">{autoActive ? 'Running' : 'Spotify · Deezer · PRO DJ LINK'}</span>
+        <span class="mode-tab-hint">{autoActive ? 'Running' : 'Spotify · Now Playing · PRO DJ LINK'}</span>
         {autoActive && <span class="mode-tab-dot" />}
       </button>
     </div>

@@ -25,7 +25,7 @@ function asyncHandler(fn) {
 }
 
 function attachRoutes(app, deps) {
-  const { midi, autoShow, spotify, deezerSource, prolink, analysisCache, integrations } = deps;
+  const { midi, autoShow, spotify, nowPlaying, prolink, analysisCache, integrations } = deps;
 
   // ─── State ────────────────────────────────────────────────────────────────
   app.get('/api/state', (_req, res) => res.json(getClientState()));
@@ -289,15 +289,15 @@ function attachRoutes(app, deps) {
     }
   }));
 
-  // ─── Deezer ───────────────────────────────────────────────────────────────
-  app.post('/api/deezer/disconnect', (_req, res) => {
-    deezerSource.disconnect();
+  // ─── Now playing (OS media session) ─────────────────────────────────────────
+  app.post('/api/nowplaying/disconnect', (_req, res) => {
+    nowPlaying.disconnect();
     integrations.broadcast();
     res.json({ ok: true });
   });
 
   // ─── Auto-show ────────────────────────────────────────────────────────────
-  const { keyForSpotify, keyForDeezer, keyForYouTube, keyForQuery, keyForLocalFile, keyForBuffer, keyForProlinkTrack } =
+  const { keyForSpotify, keyForYouTube, keyForQuery, keyForLocalFile, keyForBuffer, keyForProlinkTrack } =
     require('../analysis-cache');
 
   app.post('/api/auto/analyze', asyncHandler(async (req, res) => {
@@ -350,11 +350,11 @@ function attachRoutes(app, deps) {
     }
   }));
 
-  app.post('/api/auto/analyze-deezer', asyncHandler(async (_req, res) => {
-    if (!deezerSource.authenticated) return res.status(400).json({ ok: false, error: 'Deezer player not connected' });
+  app.post('/api/auto/analyze-nowplaying', asyncHandler(async (_req, res) => {
+    if (!nowPlaying.authenticated) return res.status(400).json({ ok: false, error: 'Nothing is currently playing' });
     try {
-      const playing = await deezerSource.getCurrentlyPlaying();
-      if (!playing) return res.status(400).json({ ok: false, error: 'No track currently playing on Deezer' });
+      const playing = await nowPlaying.getCurrentlyPlaying();
+      if (!playing) return res.status(400).json({ ok: false, error: 'Nothing is currently playing' });
 
       autoShow.track = {
         name: playing.name, artist: playing.artist, album: playing.album,
@@ -363,7 +363,7 @@ function attachRoutes(app, deps) {
       integrations.broadcast();
 
       const query = `${playing.artist} - ${playing.name}`;
-      const cacheKey = keyForDeezer(playing.trackId) || keyForQuery(query);
+      const cacheKey = keyForQuery(query);
       await autoShow.downloadAndAnalyze(query, playing.durationMs / 1000, cacheKey, playing.isrc);
 
       integrations.broadcast();
@@ -454,7 +454,7 @@ function attachRoutes(app, deps) {
       ok: true,
       ...autoShow.getClientState(),
       spotify: spotify.getStatus(),
-      deezer: deezerSource.getStatus(),
+      nowPlaying: nowPlaying.getStatus(),
     });
   });
 
