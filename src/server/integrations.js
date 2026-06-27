@@ -13,12 +13,18 @@ const {
 // Wires the auxiliary subsystems (MIDI feedback, Spotify, now-playing, PRO DJ
 // LINK, auto-show) into the engine + state. Returns the integration handle that
 // routes.js / sockets.js call back into.
-function setupIntegrations({ io, midi, spotify, nowPlaying, prolink, autoShow }) {
+function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolink, autoShow }) {
   // Slot statuses, one per upcoming track up to state.autoPrefetchDepth.
   // slots[0] is the immediate next track (back-compat with the old
   // spotifyNext shape — that field still mirrors slots[0]).
   // Statuses: idle | prefetching | ready | queued | error | empty | unavailable
   let spotifySlots = [];
+
+  // Deezer prefetch slots (same shape/UI as spotifySlots), fed from the
+  // extension's queue. lastDeezerQueueSig avoids rebuilding (and flickering
+  // statuses) on every 1 Hz update when the queue hasn't actually changed.
+  let deezerSlots = [];
+  let lastDeezerSlotsSig = '';
 
   function emptySlot(reason = 'empty', message = 'Queue is empty') {
     return { track: null, status: reason, message, cacheKey: null };
@@ -56,6 +62,8 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, prolink, autoShow })
       spotifyNext: spotifyNextView(),
       spotifyPrefetch: spotifySlots,
       nowPlaying: nowPlaying.getStatus(),
+      deezer: deezerSource.getStatus(),
+      deezerPrefetch: deezerSlots,
       prolink: {
         enabled: state.prolinkEnabled,
         connected: prolink.connected,
@@ -101,14 +109,18 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, prolink, autoShow })
   });
 
   // Pick the active source for auto-show playback. Explicit user choice wins,
-  // then 'auto' falls through to: prolink > spotify > nowplaying > timer.
+  // then 'auto' falls through to: prolink > spotify > deezer > nowplaying > timer.
+  // Deezer (extension) outranks generic SMTC: when Deezer plays in the browser
+  // both see it, but the extension carries ISRC + queue, so it should win.
   function resolveAutoSource() {
     if (state.autoSource === 'prolink' && prolink.connected) return 'prolink';
     if (state.autoSource === 'spotify' && spotify.authenticated) return 'spotify';
+    if (state.autoSource === 'deezer' && deezerSource.authenticated) return 'deezer';
     if (state.autoSource === 'nowplaying' && nowPlaying.authenticated) return 'nowplaying';
     if (state.autoSource === 'timer') return 'timer';
     if (prolink.connected && prolink.getMaster()) return 'prolink';
     if (spotify.authenticated) return 'spotify';
+    if (deezerSource.authenticated) return 'deezer';
     if (nowPlaying.authenticated) return 'nowplaying';
     return 'timer';
   }
@@ -120,7 +132,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, prolink, autoShow })
     } else if (source === 'spotify') {
       spotify.startPolling(1000);
       autoShow.start(getAutoPositionMs);
-    } else if (source === 'nowplaying') {
+    } else if (source === 'deezer' || source === 'nowplaying') {
       autoShow.start(getAutoPositionMs);
     } else {
       const startTime = Date.now();
@@ -366,6 +378,83 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, prolink, autoShow })
     broadcast();
   });
 
+  // ─── Deezer (browser extension) ─────────────────────────────────────────
+  deezerSource.onPlaybackUpdate((playing) => {
+    if (resolveAutoSource() !== 'deezer') return;
+    autoPlayback.progressMs = playing.progressMs;
+    autoPlayback.isPlaying = playing.isPlaying;
+    autoPlayback.updatedAt = Date.now();
+  });
+
+  deezerSource.onTrackChange(async (playing) => {
+    console.log(`Deezer track changed: ${playing.artist} — ${playing.name}`);
+    if (resolveAutoSource() !== 'deezer') return;
+    if (!autoShow.running) return;
+
+    autoShow.stop();
+    autoShow.track = {
+      name: playing.name, artist: playing.artist, album: playing.album,
+      albumArt: playing.albumArt, durationMs: playing.durationMs,
+    };
+    broadcast();
+    try {
+      const query = `${playing.artist} - ${playing.name}`;
+      const cacheKey = keyForQuery(query);
+      // ISRC → exact Deezer audio via src/deezer.js (falls back to yt-dlp).
+      await autoShow.downloadAndAnalyze(query, playing.durationMs / 1000, cacheKey, playing.isrc);
+      autoShow.start(getAutoPositionMs);
+      console.log('Auto show restarted for new Deezer track');
+    } catch (err) {
+      console.error('Deezer auto analysis failed for new track:', err.message);
+    }
+    broadcast();
+  });
+
+  // Build prefetch slots for the upcoming Deezer queue (the extension can see
+  // it; SMTC can't) and warm the analysis cache, mirroring the Spotify "up
+  // next" list. Only when Deezer is the active source, so we don't burn the
+  // analyzer while another source drives the show. autoShow.prefetch dedupes on
+  // cache + in-flight, so re-running is cheap.
+  function prefetchDeezerQueue() {
+    if (resolveAutoSource() !== 'deezer') {
+      if (deezerSlots.length) { deezerSlots = []; lastDeezerSlotsSig = ''; broadcast(); }
+      return;
+    }
+    const depth = Math.max(1, Math.min(5, state.autoPrefetchDepth || 1));
+    const upcoming = deezerSource.getQueue().slice(0, depth);
+
+    // Derive each slot's status SYNCHRONOUSLY from the cache/in-flight state
+    // instead of a one-shot prefetch result. The extension POSTs at ~1 Hz and
+    // Deezer's queue (esp. Flow/radio) reshapes the list constantly; deriving
+    // from real state means a cached track is always 'ready' with no prefetch
+    // job — so it can never blip back to 'prefetching'. Only a genuinely new
+    // (uncached, not-yet-running) track kicks off a prefetch.
+    const slots = upcoming.map((t) => {
+      const query = `${t.artist} - ${t.name}`;
+      const cacheKey = keyForQuery(query);
+      const cached = autoShow.isCached(cacheKey);
+      if (!cached && !autoShow.isPrefetching(cacheKey)) {
+        autoShow.prefetch(query, (t.durationMs || 0) / 1000, cacheKey, { track: { name: t.name, artist: t.artist } }, t.isrc)
+          .then((r) => { if (!r.skipped && !r.error) console.log(`[deezer] prefetched: ${query}`); })
+          .catch(() => { /* ignore */ });
+      }
+      return {
+        track: { name: t.name, artist: t.artist, album: '', albumArt: null, durationMs: t.durationMs },
+        status: cached ? 'ready' : 'prefetching',
+        message: cached ? 'Analysis cached' : 'Prefetching analysis',
+        cacheKey,
+      };
+    });
+
+    // Only broadcast when the rendered list (tracks + statuses) actually
+    // changed, so the 1 Hz updates don't spam identical state.
+    const sig = slots.map((s) => `${s.cacheKey}:${s.status}`).join('|');
+    deezerSlots = slots;
+    if (sig === lastDeezerSlotsSig) return;
+    lastDeezerSlotsSig = sig;
+    broadcast();
+  }
+
   // Broadcast playback position for the timeline visualiser at ~10 Hz.
   setInterval(() => {
     if (!autoShow.running) return;
@@ -384,6 +473,20 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, prolink, autoShow })
     },
     startAutoShow,
     resolveAutoSource,
+    // Called by the Deezer browser extension (via routes) with the web player's
+    // current track + upcoming queue.
+    onDeezerState(payload) {
+      if (!payload) return;
+      if (payload.current) deezerSource.updatePlayback(payload.current);
+      deezerSource.updateQueue(payload.upcoming || []);
+      prefetchDeezerQueue();
+    },
+    onDeezerDisconnect() {
+      deezerSource.disconnect();
+      deezerSlots = [];
+      lastDeezerSlotsSig = '';
+      broadcast();
+    },
   };
 }
 

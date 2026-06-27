@@ -27,6 +27,7 @@ export function AutoMode() {
   const s = stateSig.value;
   const sp = s.spotify;
   const np = s.nowPlaying || {};
+  const dz = s.deezer || {};
   const as = s.autoShow;
   const next = s.spotifyNext;
   const prefetchSlots = Array.isArray(s.spotifyPrefetch) ? s.spotifyPrefetch : [];
@@ -57,11 +58,13 @@ export function AutoMode() {
 
     const source = s.autoSource || 'auto';
     const spotifyReady = sp.authenticated;
+    const deezerReady = s.deezer && s.deezer.authenticated;
     const nowPlayingReady = s.nowPlaying && s.nowPlaying.authenticated;
     const prolinkReady = s.prolink && s.prolink.connected && s.prolink.track && s.prolink.track.title;
     const useSpotify    = source === 'spotify'    || (source === 'auto' && spotifyReady);
-    const useNowPlaying = source === 'nowplaying' || (source === 'auto' && !spotifyReady && nowPlayingReady);
-    const useProlink    = source === 'prolink'    || (source === 'auto' && !spotifyReady && !nowPlayingReady && prolinkReady);
+    const useDeezer     = source === 'deezer'     || (source === 'auto' && !spotifyReady && deezerReady);
+    const useNowPlaying = source === 'nowplaying' || (source === 'auto' && !spotifyReady && !deezerReady && nowPlayingReady);
+    const useProlink    = source === 'prolink'    || (source === 'auto' && !spotifyReady && !deezerReady && !nowPlayingReady && prolinkReady);
 
     const triggerAnalyze = (endpoint) => {
       pendingStartRef.current = true;
@@ -72,6 +75,7 @@ export function AutoMode() {
     };
 
     if (useSpotify)         triggerAnalyze('/api/auto/analyze-spotify');
+    else if (useDeezer)     triggerAnalyze('/api/auto/analyze-deezer');
     else if (useNowPlaying) triggerAnalyze('/api/auto/analyze-nowplaying');
     else if (useProlink)    triggerAnalyze('/api/auto/analyze-prolink');
     else fetch('/api/auto/start', { method: 'POST' });
@@ -97,6 +101,7 @@ export function AutoMode() {
               <option value="auto">Auto-detect</option>
               <option value="prolink">PRO DJ LINK</option>
               <option value="spotify">Spotify</option>
+              <option value="deezer">Deezer (extension)</option>
               <option value="nowplaying">Now Playing (OS)</option>
               <option value="timer">Standalone timer</option>
             </select>
@@ -172,6 +177,32 @@ export function AutoMode() {
               >Disconnect</button>
             )}
           </div>
+
+          <div class="auto-status-row">
+            <div class={`status-dot ${dz.authenticated ? 'connected' : ''}`} />
+            <span style={{ fontSize: '11px', color: 'var(--muted)' }}>
+              {dz.authenticated
+                ? `Deezer: ${dz.artist ? `${dz.artist} — ` : ''}${dz.name || 'unknown'}${dz.queueLength ? ` (+${dz.queueLength} queued)` : ''}`
+                : 'Deezer extension not connected'}
+            </span>
+          </div>
+
+          {dz.authenticated && Array.isArray(s.deezerPrefetch) && s.deezerPrefetch.length > 0 && (
+            <div class="auto-next-list">
+              {s.deezerPrefetch.map((slot, i) => (
+                <div key={slot.cacheKey || i} class={`auto-next-song ${i > 0 ? 'auto-next-song-sub' : ''}`}>
+                  <div class="auto-next-label">{i === 0 ? 'Up next' : `+${i}`}</div>
+                  <div class="auto-next-track">{slot.track?.name || '-'}</div>
+                  <div class="auto-next-meta">
+                    <span class="auto-next-artist">{slot.track?.artist || ''}</span>
+                    <span class={`auto-next-status ${slot.status || 'idle'}`} title={slot.message || ''}>
+                      {NEXT_LABELS[slot.status] || slot.status || 'Idle'}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           <div class="auto-status-row">
             <div class={`status-dot ${np.authenticated ? 'connected' : ''}`} />
