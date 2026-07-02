@@ -138,21 +138,23 @@ LEDs on the X-Touch Compact are updated automatically to reflect the current sta
 
 See **[companion-module/INSTALL.md](companion-module/INSTALL.md)** for full installation instructions.
 
+Requires Companion **v4.3+** (the module uses the v2 connection API).
+
 ### Quick Summary
 
-1. Copy `companion-module/` to Companion's `developer-modules/` directory
-2. Run `npm install` inside the module directory
-3. Enable developer modules in Companion → Settings → Advanced
+1. Run `npm install` inside `companion-module/`
+2. In the Companion launcher, open advanced settings (cog icon) and pick a **Developer modules** folder
+3. Copy or symlink `companion-module/` into that folder
 4. Add a new **"ArtNet Lightshow"** connection pointing to `localhost:3000`
 5. Drag presets from the module onto your Stream Deck buttons
 
 ### Presets included
 
-- **Patterns** (10 buttons) — highlight when active
-- **Colour A** (12 buttons) — button background = colour
-- **Colour B** (12 buttons)
-- **Transport** — Play/Stop, Blackout, Tap Tempo, BPM ±5, Beat divisions
+- **Patterns** (25 buttons) — highlight when active
+- **Colours A–D** (24 buttons each) — button background = colour
+- **Transport** — Play/Stop, Blackout, Tap Tempo, BPM display/±5, Beat divisions
 - **Fixtures** — per-fixture blackout (4 buttons), clear all overrides
+- **Energy** — momentary effects (hold to activate, release to clear)
 
 ---
 
