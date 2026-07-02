@@ -71,8 +71,8 @@ function drawTimeline(canvas, data, posMs) {
     ctx.lineTo(xForSec(energyCurve[energyCurve.length - 1].t), ROW_CURVE.y + ROW_CURVE.h);
     ctx.closePath();
     const grad = ctx.createLinearGradient(0, ROW_CURVE.y, 0, ROW_CURVE.y + ROW_CURVE.h);
-    grad.addColorStop(0, 'rgba(108, 99, 255, .75)');
-    grad.addColorStop(1, 'rgba(108, 99, 255, .08)');
+    grad.addColorStop(0, 'rgba(59, 130, 246, .75)');
+    grad.addColorStop(1, 'rgba(59, 130, 246, .08)');
     ctx.fillStyle = grad;
     ctx.fill();
   }
@@ -202,7 +202,7 @@ function drawTimeline(canvas, data, posMs) {
   events.forEach((ev) => {
     const x = xForMs(ev.timeMs);
     if (ev.action === 'patch') {
-      ctx.fillStyle = '#6c63ff';
+      ctx.fillStyle = '#3b82f6';
       ctx.beginPath();
       ctx.arc(x, patchY, 2.2, 0, Math.PI * 2);
       ctx.fill();
