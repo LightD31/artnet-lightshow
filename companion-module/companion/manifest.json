@@ -1,0 +1,28 @@
+{
+	"$schema": "../node_modules/@companion-module/base/assets/manifest.schema.json",
+	"type": "connection",
+	"id": "artnet-lightshow",
+	"name": "artnet-lightshow",
+	"shortname": "lightshow",
+	"description": "Control the ArtNet Lightshow server: patterns, colours, BPM, blackouts and per-fixture overrides",
+	"version": "0.0.0",
+	"license": "MIT",
+	"repository": "git+https://github.com/LightD31/artnet-lightshow.git",
+	"bugs": "https://github.com/LightD31/artnet-lightshow/issues",
+	"maintainers": [
+		{
+			"name": "LightD31",
+			"github": "LightD31"
+		}
+	],
+	"legacyIds": [],
+	"runtime": {
+		"type": "node22",
+		"api": "nodejs-ipc",
+		"apiVersion": "0.0.0",
+		"entrypoint": "../src/main.js"
+	},
+	"manufacturer": "LightD31",
+	"products": ["ArtNet Lightshow"],
+	"keywords": ["artnet", "dmx", "lighting", "lightshow", "par"]
+}
