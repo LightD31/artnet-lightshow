@@ -235,3 +235,98 @@
   background: rgba(239, 68, 68, .1);
   border-color: rgba(239, 68, 68, .3);
 }
+
+/* =============================================================
+   CONFIGURATION SECTIONS
+   Rendered from the field spec in settings.js.
+   ============================================================= */
+
+.setting-field { align-items: center; }
+
+.setting-control {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.setting-control input[type=text],
+.setting-control input[type=number],
+.setting-control input[type=password] {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  font-size: 13px;
+  font-family: var(--mono);
+}
+.setting-control input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, .15);
+}
+
+/* A checkbox in a row of text inputs looks lost at its native size. */
+.setting-control input[type=checkbox] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  margin: 0;
+}
+
+.setting-unit {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+
+.btn-small {
+  padding: 6px 10px;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.btn-small:disabled { opacity: .4; cursor: default; }
+
+/* Marks a setting that is read before the server starts listening. Turns
+   amber once the stored value differs from the one actually running. */
+.setting-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 3px 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.setting-badge.pending {
+  color: var(--amber);
+  border-color: currentColor;
+}
+
+.setting-help {
+  font-size: 11px;
+  color: var(--muted);
+  margin: -4px 0 4px 112px;
+  line-height: 1.45;
+}
+
+.setting-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+@media (max-width: 640px) {
+  .setting-help { margin-left: 0; }
+  .setting-field { align-items: flex-start; flex-direction: column; gap: 6px; }
+  .setting-control { width: 100%; }
+}

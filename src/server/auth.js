@@ -50,21 +50,25 @@ function generateToken() {
  * Refuse to start in a configuration that silently exposes the rig.
  * Returns a fatal message, or null when the configuration is acceptable.
  */
-function configError({ host, token }) {
+function configError({ host, token, configFile = 'config/settings.json' }) {
   if (isLoopbackHost(host) || token) return null;
+  // The settings page normally refuses to save this combination, so reaching
+  // here means the file was hand-edited — and with the server refusing to
+  // start there is no UI to fix it from. Give file-level instructions.
   return [
-    `Refusing to start: HOST is "${host}" (not loopback) with no LIGHTSHOW_TOKEN set.`,
+    `Refusing to start: the bind address is "${host}" (not loopback) with no access token.`,
     '',
     'That would expose blackout, strobe and Art-Net control to every device on',
     'the network with no authentication at all.',
     '',
-    'Either:',
-    '  • drop HOST (defaults to 127.0.0.1, this machine only), or',
-    `  • set a token:  LIGHTSHOW_TOKEN=${generateToken()}`,
+    `Edit ${configFile} and either:`,
+    '  • set  "host": "127.0.0.1"   (this machine only), or',
+    `  • set  "token": "${generateToken()}"`,
     '',
     'With a token set, open the UI once at:',
     '  http://<this-machine>:<port>/?token=<the token>',
-    'The page stores it and sends it on every request afterwards.',
+    'The page stores it and sends it on every request afterwards. After that,',
+    'both settings are editable in the settings page under Server & Access.',
   ].join('\n');
 }
 

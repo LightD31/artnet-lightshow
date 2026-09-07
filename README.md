@@ -64,16 +64,17 @@ By default the server binds **127.0.0.1** and is reachable only from the machine
 it runs on. Nothing more is needed for a normal single-machine setup.
 
 To reach the UI from a phone or another machine, bind wider **and set a token**.
-The server refuses to start with a non-loopback `HOST` and no token, because
-every control — blackout, strobe, the Art-Net target — would otherwise be open
-to anyone on the network:
+Both live in the settings page under **Server & Access**:
 
-```bash
-# generate a token once
-node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"
+1. Press **Generate** next to *Access Token*, then **Apply**.
+2. Set *Bind Address* to `0.0.0.0` and **Apply**.
+3. Restart the server — both are read at startup.
 
-HOST=0.0.0.0 LIGHTSHOW_TOKEN=<the token> npm start
-```
+The order matters, and the page enforces it: saving a non-loopback bind with no
+token is refused, because the server would then refuse to start and there would
+be no UI left to undo it from. (The same check runs at startup as a backstop for
+a hand-edited config file.) Every control — blackout, strobe, the Art-Net
+target — would otherwise be open to anyone on the network.
 
 Then open the UI **once** per browser at
 `http://<machine>:3000/?token=<the token>`. The page stores it and strips it
@@ -161,22 +162,22 @@ mood-based path — so run `--check` if shows look off.
 
 | Source | What it needs |
 |--------|---------------|
-| **Spotify** | `SPOTIFY_CLIENT_ID` + `SPOTIFY_CLIENT_SECRET`, then visit `/auth/spotify`. Register the redirect URI the server prints at startup. |
-| **PRO DJ LINK** | CDJs on the same network. `PROLINK=1` or the web UI toggle. |
-| **Now playing (Windows)** | Nothing — reads the OS media session, so any player that reports to it works. `SMTC=0` disables. |
+| **Spotify** | A client ID and secret in the settings page, then visit `/auth/spotify`. Register the redirect URI the server prints at startup. |
+| **PRO DJ LINK** | CDJs on the same network. Toggle it in the settings page or on the main page. |
+| **Now playing (Windows)** | Nothing — reads the OS media session, so any player that reports to it works. Toggle it under *Playback Sources*. |
 | **Deezer** | The extension in `browser-extension/` (see its README). Carries ISRC and the upcoming queue, so it prefetches. |
 | **Timer** | Fallback: plays the analysed timeline against a wall clock. |
 
-`DEEZER_ARL` is optional but recommended: with it, audio is fetched by ISRC for
-an exact match instead of a yt-dlp search.
+The Deezer ARL cookie (settings page → *Deezer*) is optional but recommended:
+with it, audio is fetched by ISRC for an exact match instead of a yt-dlp search.
 
 ---
 
 ## MIDI — Behringer X-Touch Compact
 
 Set the controller to **Standard MIDI mode** (Layer A). The server auto-detects
-the first port matching `/x.?touch/i`; override with `MIDI_INPUT` /
-`MIDI_OUTPUT`, or pick ports in the UI.
+the first port matching `/x.?touch/i`; pick specific ports in the settings
+page, and the choice is remembered.
 
 | Control | MIDI | Action |
 |---------|------|--------|
@@ -283,30 +284,57 @@ connect, changed fields thereafter), `dmx` (live channel values), `auto-position
 
 ## Configuration
 
-See **[.env.example](.env.example)** for the full annotated list.
+Everything is configured in the **settings page** (the *Settings* link in the
+header, or `/settings.html`). There are no environment variables to set: the
+server stores your choices in `config/settings.json` and reads them from there.
 
-| Env var | Default | Description |
-|---------|---------|-------------|
-| `PORT` | `3000` | Web server port |
-| `HOST` | `127.0.0.1` | Interface to bind — see [Network access](#network-access) |
-| `LIGHTSHOW_TOKEN` | _(none)_ | Shared access token. **Required** when `HOST` is not loopback |
-| `PUBLIC_URL` | _(derived)_ | Base URL browsers use to reach the server, for the OAuth callback |
-| `ARTNET_HOST` | `2.255.255.255` | Art-Net target (broadcast by default) |
-| `ARTNET_PORT` | `6454` | Art-Net UDP port |
-| `ARTNET_UNIVERSE` | `0` | Art-Net universe |
-| `MIDI_INPUT` / `MIDI_OUTPUT` | _(auto)_ | MIDI port names |
-| `DEBUG_MIDI` | _(off)_ | `1` logs every incoming MIDI message |
-| `PROLINK` | _(off)_ | `1` enables PRO DJ LINK at startup |
-| `SMTC` | _(on, Windows)_ | `0` disables the OS now-playing source |
-| `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` | _(none)_ | Enables Spotify |
-| `SPOTIFY_PROXY_BASE` | `https://api.drndvs.fr` | OAuth proxy that relays the Spotify callback |
-| `SPOTIFY_ALLOW_UNVERIFIED_STATE` | _(off)_ | `1` accepts callbacks without a valid `state` — disables OAuth CSRF protection |
-| `DEEZER_ARL` | _(none)_ | Deezer ARL cookie — exact ISRC-matched audio |
-| `ANALYZE_LOCAL_ROOT` | _(none)_ | Confine local-file analysis to one directory tree |
-| `ANALYZER_TIMEOUT_MS` | `600000` | Ceiling on a single analysis before the worker is recycled |
-| `DOWNLOAD_TIMEOUT_MS` | `300000` | Ceiling on a single track download before yt-dlp is killed |
+Open the page, change what you need, press **Apply**. Most settings take effect
+immediately.
 
-Art-Net target and universe are also editable in the UI's ArtNet panel.
+| Section | Settings |
+|---------|----------|
+| **ArtNet Output** | Node IP, port, universe |
+| **MIDI** | Input and output port |
+| **Playback Sources** | PRO DJ LINK, Windows now-playing (SMTC) |
+| **Spotify** | Client ID, client secret, OAuth proxy, unverified-state escape hatch |
+| **Deezer** | ARL cookie — exact ISRC-matched audio instead of a yt-dlp search |
+| **Analysis** | Analyzer and download timeouts, library folder for local-file analysis |
+| **Server & Access** | Bind address, port, access token, public URL |
+
+The four **Server & Access** settings are read before the server starts
+listening, so they are marked `restart` in the page and applied on the next
+start. Everything else applies as soon as you press Apply.
+
+### The config file
+
+`config/settings.json` holds secrets — the Spotify client secret, the Deezer
+ARL, the access token — so it is written `0600` and is gitignored. Nothing else
+needs to be in it: any key you have not set uses the built-in default.
+
+The settings page never shows a stored secret. It reports only whether one is
+set, and lets you replace or clear it.
+
+If the file is corrupt or fails validation at startup, it is moved aside as
+`settings.json.invalid-<timestamp>` and the server starts on defaults rather
+than refusing to boot mid-gig.
+
+### Moving from .env
+
+Environment variables are **no longer read**. If you have a `.env` from an
+earlier version, the server names the variables it is ignoring at startup:
+
+```
+[settings] These environment variables are no longer read: ARTNET_HOST, DEEZER_ARL
+[settings] Settings now live in the settings page (⚙ → Settings) and are stored
+[settings] in config/settings.json. Set them there; you can delete them from .env.
+```
+
+Set those values once in the settings page and delete the file. (`DEBUG_MIDI=1`
+is the one exception — it is a developer log toggle, not a setting, and is still
+read from the environment.)
+
+Art-Net target and universe are also editable from the main page's ArtNet
+panel; changes there are persisted to the same file.
 
 > **Why `--openssl-legacy-provider`?** The `start` and `dev` scripts pass it
 > because Deezer track decryption uses Blowfish (`bf-cbc`), which OpenSSL 3

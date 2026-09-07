@@ -7,10 +7,13 @@ const { spawn } = require('child_process');
 // the auto-show silently stops picking up new tracks with no error anywhere.
 // Generous by design: a cold start plus a long track is well
 // under this, so hitting it means something is genuinely stuck.
-const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
-const ANALYZE_TIMEOUT_MS = Number.parseInt(process.env.ANALYZER_TIMEOUT_MS, 10) > 0
-  ? Number.parseInt(process.env.ANALYZER_TIMEOUT_MS, 10)
-  : DEFAULT_TIMEOUT_MS;
+const { settings } = require('./server/settings');
+
+// Read per call, not once at load: the operator can change it in the settings
+// page and the next analysis should honour the new value without a restart.
+function storedTimeoutMs() {
+  return settings.get('analysis.analyzerTimeoutMs');
+}
 
 /**
  * Long-lived Python analyzer process. Holds numba JIT caches and the PANNs
@@ -31,9 +34,17 @@ const ANALYZE_TIMEOUT_MS = Number.parseInt(process.env.ANALYZER_TIMEOUT_MS, 10) 
  * respawns. shutdown() ends stdin and lets the worker exit naturally.
  */
 class AnalyzerWorker {
-  constructor(pythonExe, scriptPath) {
+  /**
+   * `timeoutMs` overrides the configured analysis timeout — a number, or a
+   * function returning one. Left unset it follows the settings page, read per
+   * request so a change applies to the next analysis without a restart.
+   */
+  constructor(pythonExe, scriptPath, { timeoutMs } = {}) {
     this._pythonExe = pythonExe;
     this._scriptPath = scriptPath;
+    this._timeoutMs = timeoutMs === undefined
+      ? storedTimeoutMs
+      : (typeof timeoutMs === 'function' ? timeoutMs : () => timeoutMs);
     this._proc = null;
     this._pending = null;       // current in-flight { id, resolve, reject }
     this._queue = [];           // FIFO of waiting requests
@@ -184,17 +195,17 @@ class AnalyzerWorker {
   }
 
   /**
-   * The in-flight request exceeded ANALYZE_TIMEOUT_MS. Reject just that caller
-   * and recycle the worker — the queue behind it is still good work and gets
-   * re-dispatched to the fresh process.
+   * The in-flight request exceeded the configured analysis timeout. Reject
+   * just that caller and recycle the worker — the queue behind it is still
+   * good work and gets re-dispatched to the fresh process.
    */
   _onTimeout() {
     const p = this._pending;
     this._pending = null;
     this._timeoutTimer = null;
     if (p) {
-      console.warn(`[analyzer] request ${p.id} exceeded ${Math.round(ANALYZE_TIMEOUT_MS / 1000)}s — killing worker`);
-      p.reject(new Error(`analysis timed out after ${Math.round(ANALYZE_TIMEOUT_MS / 1000)}s`));
+      console.warn(`[analyzer] request ${p.id} exceeded ${Math.round(this._timeoutMs() / 1000)}s — killing worker`);
+      p.reject(new Error(`analysis timed out after ${Math.round(this._timeoutMs() / 1000)}s`));
     }
     if (this._proc) {
       this._recycling = true;
@@ -261,7 +272,7 @@ class AnalyzerWorker {
     try {
       this._proc.stdin.write(msg + '\n');
       this._clearTimeout();
-      this._timeoutTimer = setTimeout(() => this._onTimeout(), ANALYZE_TIMEOUT_MS);
+      this._timeoutTimer = setTimeout(() => this._onTimeout(), this._timeoutMs());
       if (this._timeoutTimer.unref) this._timeoutTimer.unref();
     } catch (err) {
       this._pending = null;

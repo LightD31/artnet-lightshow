@@ -27,9 +27,14 @@ test('a non-loopback bind without a token is refused at startup', () => {
   assert.strictEqual(configError({ host: '127.0.0.1', token: '' }), null);
   assert.strictEqual(configError({ host: '0.0.0.0', token: 'secret' }), null);
 
-  const err = configError({ host: '0.0.0.0', token: '' });
+  const err = configError({ host: '0.0.0.0', token: '', configFile: '/etc/lightshow/settings.json' });
   assert.ok(err, 'must refuse');
-  assert.match(err, /LIGHTSHOW_TOKEN/);
+  // Reaching this means the file was hand-edited: the settings page refuses to
+  // save it. With the server down there is no UI to fix it from, so the message
+  // has to name the file and both ways out.
+  assert.match(err, /\/etc\/lightshow\/settings\.json/, 'names the file to edit');
+  assert.match(err, /"host": "127\.0\.0\.1"/, 'offers the loopback fix');
+  assert.match(err, /"token":/, 'offers the token fix');
 });
 
 // Cross-site requests are rejected whether or not a token is set,

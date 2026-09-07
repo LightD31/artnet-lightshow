@@ -9,6 +9,7 @@ const {
   validate,
 } = require('./validation');
 const { listProfiles, getProfile, endChannel, fitsInUniverse, UNIVERSE_SIZE } = require('./profiles');
+const { settings } = require('./settings');
 
 function attachSockets(io, { midi, integrations }) {
   io.on('connection', (socket) => {
@@ -69,6 +70,11 @@ function attachSockets(io, { midi, integrations }) {
         const { input, output } = validate(midiConnectSchema, payload || {}, 'midi-connect');
         midi.close();
         const ok = midi.connect(input || null, output || null);
+        try {
+          settings.update({ midi: { input: input || '', output: output || '' } });
+        } catch (err) {
+          console.warn(`[settings] could not persist MIDI ports: ${err.message}`);
+        }
         socket.emit('midi-status', { ok, ports: midi.listPorts(), enabled: midi.enabled });
       } catch (err) {
         socket.emit('error-msg', { source: 'midi-connect', message: err.message });

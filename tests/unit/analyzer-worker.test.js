@@ -6,9 +6,9 @@ const path = require('node:path');
 const AnalyzerWorker = require('../../src/analyzer-worker');
 
 const FAKE = path.join(__dirname, '..', 'helpers', 'fake-analyzer.js');
-const worker = (mode) => {
+const worker = (mode, opts) => {
   process.env.FAKE_MODE = mode;
-  return new AnalyzerWorker(process.execPath, FAKE);
+  return new AnalyzerWorker(process.execPath, FAKE, opts);
 };
 
 test('analyses are dispatched and resolved', async () => {
@@ -39,38 +39,22 @@ test('high priority jumps the queue ahead of normal work', () => {
 // With no timeout a wedged worker left the request unsettled
 // forever and every queued prefetch stalled behind it.
 test('a hung worker times out instead of stalling the queue', async () => {
-  process.env.ANALYZER_TIMEOUT_MS = '400';
-  delete require.cache[require.resolve('../../src/analyzer-worker')];
-  const Fresh = require('../../src/analyzer-worker');
-  process.env.FAKE_MODE = 'hang';
-  const w = new Fresh(process.execPath, FAKE);
+  const w = worker('hang', { timeoutMs: 400 });
   try {
     await assert.rejects(w.analyze('/tmp/a.wav', null), /timed out/);
     // The queue survives: a second request runs on a fresh process.
     await assert.rejects(w.analyze('/tmp/b.wav', null), /timed out/);
-  } finally {
-    w.shutdown();
-    delete process.env.ANALYZER_TIMEOUT_MS;
-    delete require.cache[require.resolve('../../src/analyzer-worker')];
-  }
+  } finally { w.shutdown(); }
 });
 
 // A mismatched id was logged and then delivered anyway, handing
 // one track's analysis to a different track's caller.
 test('a stale response is discarded, not delivered to the wrong caller', async () => {
-  process.env.ANALYZER_TIMEOUT_MS = '400';
-  delete require.cache[require.resolve('../../src/analyzer-worker')];
-  const Fresh = require('../../src/analyzer-worker');
-  process.env.FAKE_MODE = 'wrongid';
-  const w = new Fresh(process.execPath, FAKE);
+  const w = worker('wrongid', { timeoutMs: 400 });
   try {
     // The reply carries the wrong id, so the caller must not receive it.
     await assert.rejects(w.analyze('/tmp/a.wav', null), /timed out/);
-  } finally {
-    w.shutdown();
-    delete process.env.ANALYZER_TIMEOUT_MS;
-    delete require.cache[require.resolve('../../src/analyzer-worker')];
-  }
+  } finally { w.shutdown(); }
 });
 
 test('shutdown rejects work rather than leaving it pending', async () => {
