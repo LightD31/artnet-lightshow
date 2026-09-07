@@ -3,7 +3,7 @@
 const { state, getFixtureCount, universeOf, activeUniverses } = require('./state');
 const { COLOR_PRESETS, STROBE_FUNCTIONS } = require('./presets');
 const { getProfile, UV_BOOST } = require('./profiles');
-const { sendArtDmx } = require('./artnet');
+const { sendUniverse } = require('./output');
 const universes = require('./universes');
 const { PATTERN_FUNCS } = require('./patterns');
 
@@ -72,11 +72,6 @@ function resolveEnergyOverride() {
     case 'all-on':       return { col: { r: 255, g: 255, b: 255, w: 255, a: 255, uv: 255 }, dim: 255, strobe: 0   };
     default: return null;
   }
-}
-
-/** Put one universe on the wire. */
-function sendFrame(universe, frame) {
-  sendArtDmx({ host: state.artnet.host, port: state.artnet.port, universe }, frame);
 }
 
 let lastRenderTs = Date.now();
@@ -181,11 +176,11 @@ function renderDmx() {
   }
 
   for (const universe of universes.list()) {
-    sendFrame(universe, universes.getBuffer(universe));
+    sendUniverse(universe, universes.getBuffer(universe));
   }
   // One last all-zero frame for any universe that just left the patch, so its
   // node doesn't sit holding the look it was showing when the fixture moved.
-  for (const [universe, frame] of universes.drainRetired()) sendFrame(universe, frame);
+  for (const [universe, frame] of universes.drainRetired()) sendUniverse(universe, frame);
 }
 
 let beatInterval = null;
@@ -224,13 +219,12 @@ function stopEngine() {
   universes.sync(activeUniverses());
   universes.clearAll();
   for (const universe of universes.list()) {
-    sendFrame(universe, universes.getBuffer(universe));
+    sendUniverse(universe, universes.getBuffer(universe));
   }
-  for (const [universe, frame] of universes.drainRetired()) sendFrame(universe, frame);
+  for (const [universe, frame] of universes.drainRetired()) sendUniverse(universe, frame);
 }
 
 module.exports = {
-  sendFrame,
   startEngine,
   stopEngine,
   restartBeatTimer,

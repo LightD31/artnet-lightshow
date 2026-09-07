@@ -1,7 +1,8 @@
 # ArtNet Lightshow
 
-Web-based light show controller speaking **Art-Net** to DMX fixtures, with an
-automatic mode that analyses the music you're playing and builds a show from it.
+Web-based light show controller speaking **Art-Net** and **sACN (E1.31)** to DMX
+fixtures, with an automatic mode that analyses the music you're playing and
+builds a show from it.
 
 Ships configured for **4× Cameo ROOT PAR 6**, but any fixture works — import a
 GDTF profile and patch it in the UI.
@@ -42,6 +43,8 @@ Control surfaces: the web UI, a **Behringer X-Touch Compact** over MIDI, an
 - **GDTF import** — drop in a `.gdtf` file, pick a DMX mode, patch it
 - **Multiple universes** — every fixture names the universe it lives on, so a
   rig is no longer capped at one node's 512 channels
+- **Art-Net and sACN (E1.31)** — run either, or both at once while a venue is
+  migrating from one to the other
 - Save and load the whole patch as a show file
 
 ---
@@ -122,6 +125,39 @@ Set each fixture to **12-channel mode** and give it the start address above.
 channel map is derived automatically. Patch fixtures to the new profile in the
 same page. The patch table flags address overlaps, and the server refuses a
 fixture whose channels would run past the end of the universe.
+
+### Output protocols
+
+Frames go out over **Art-Net**, **sACN (E1.31)**, or both — each universe is
+sent on every protocol that is enabled, so a rig can run one node on Art-Net
+and a console on sACN at the same time.
+
+| | Art-Net | sACN (E1.31) |
+|---|---|---|
+| Settings section | *ArtNet Output* | *sACN (E1.31)* |
+| Default | on | off |
+| Port | 6454 | 5568 |
+| Addressing | broadcast or unicast to the node IP | multicast to `239.255.x.y` per universe, or unicast to a node IP |
+| Universe numbering | from 0 | from 1 |
+
+sACN is off until you turn it on. Once it is, leave *Node IP* blank for the
+normal deployment — each universe multicasts to its own group and receivers
+subscribe to what they need.
+
+**Universe offset.** Art-Net counts universes from 0 and sACN from 1, so the
+default offset of `+1` lines them up: a fixture patched on universe 0 goes out
+as sACN universe 1. Change it if your console numbers universes differently.
+
+**Component ID.** A receiver tells sACN sources apart by CID, so a fresh one
+every boot would look like a second source arriving and start the console
+arbitrating between two of us. One is generated on first start and stored in
+`config/settings.json` from then on. Change it only if two servers on the same
+network ended up sharing one.
+
+**Priority** (0–200, default 100) decides who wins when two sources drive the
+same universe.
+
+To run sACN *only*, turn **ArtNet Output → Enabled** off.
 
 ### Universes
 
@@ -352,7 +388,8 @@ immediately.
 
 | Section | Settings |
 |---------|----------|
-| **ArtNet Output** | Node IP, port, universe |
+| **ArtNet Output** | Enabled, node IP, port, default universe |
+| **sACN (E1.31)** | Enabled, node IP, priority, source name, universe offset, component ID |
 | **MIDI** | Input and output port |
 | **Playback Sources** | PRO DJ LINK, Windows now-playing (SMTC) |
 | **Spotify** | Client ID, client secret, OAuth proxy, unverified-state escape hatch |

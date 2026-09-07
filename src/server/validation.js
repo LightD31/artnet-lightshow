@@ -25,6 +25,7 @@ const artnetHost = z.string().min(1).max(253)
     { message: 'must be an IPv4 address or hostname' });
 
 const artnetSchema = z.object({
+  enabled: z.boolean().optional(),
   host: artnetHost.optional(),
   port: z.number().int().min(1).max(65535).optional(),
   universe: z.number().int().min(0).max(32767).optional(),

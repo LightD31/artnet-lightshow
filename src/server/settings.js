@@ -28,9 +28,27 @@ const DEFAULTS = {
     publicUrl: '',
   },
   artnet: {
+    enabled: true,
     host: '2.255.255.255',
     port: 6454,
     universe: 0,
+  },
+  // sACN / E1.31: what consoles and most modern nodes speak. Off by default —
+  // enabling it is a deliberate act, and a rig can run it alongside Art-Net or
+  // instead of it.
+  sacn: {
+    enabled: false,
+    // Blank multicasts to each universe's own group (239.255.x.y), which is how
+    // sACN is normally deployed. Name a node to unicast to it instead.
+    host: '',
+    priority: 100,
+    sourceName: 'ArtNet Lightshow',
+    // Art-Net counts universes from 0, sACN from 1. The default lines them up.
+    universeOffset: 1,
+    // Stable per installation: a receiver tells sources apart by CID, so a
+    // fresh one each boot reads as a second source arriving. Generated on
+    // first start and stored here.
+    cid: '',
   },
   midi: {
     input: '',
@@ -87,9 +105,27 @@ const schema = z.object({
     ),
   }).strict(),
   artnet: z.object({
+    enabled: z.boolean(),
     host: netHost,
     port: z.number().int().min(1).max(65535),
     universe: z.number().int().min(0).max(32767),
+  }).strict(),
+  sacn: z.object({
+    enabled: z.boolean(),
+    host: z.string().max(253).refine(
+      (v) => v === '' || HOSTNAME_RE.test(v),
+      { message: 'must be blank (multicast) or an IP address or hostname' },
+    ),
+    // E1.31 §6.2.3: 0-200, with 100 the default and higher winning when two
+    // sources drive the same universe.
+    priority: z.number().int().min(0).max(200),
+    sourceName: z.string().min(1).max(63),
+    // Enough range to map any Art-Net universe onto a legal sACN one.
+    universeOffset: z.number().int().min(-32767).max(63999),
+    cid: z.string().max(64).refine(
+      (v) => v === '' || /^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$/.test(v),
+      { message: 'must be blank or a UUID' },
+    ),
   }).strict(),
   midi: z.object({
     input: z.string().max(256),

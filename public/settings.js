@@ -27,17 +27,22 @@ socket.on('state', (s) => {
 
 // ── ArtNet settings ──────────────────────────────────────────────────────────
 
-['artnet-host', 'artnet-port', 'artnet-universe'].forEach(id => {
-  document.getElementById(id).addEventListener('input', function () {
+const ARTNET_FIELDS = ['artnet-enabled', 'artnet-host', 'artnet-port', 'artnet-universe'];
+
+ARTNET_FIELDS.forEach(id => {
+  const node = document.getElementById(id);
+  node.addEventListener(node.type === 'checkbox' ? 'change' : 'input', function () {
     this.dataset.dirty = 'true';
   });
 });
 
 function syncArtnetFields(s) {
   if (!s.artnet) return;
+  const e = document.getElementById('artnet-enabled');
   const h = document.getElementById('artnet-host');
   const p = document.getElementById('artnet-port');
   const u = document.getElementById('artnet-universe');
+  if (!e.dataset.dirty) e.checked = s.artnet.enabled !== false;
   if (!h.dataset.dirty) h.value = s.artnet.host;
   if (!p.dataset.dirty) p.value = s.artnet.port;
   if (!u.dataset.dirty) u.value = s.artnet.universe;
@@ -46,12 +51,13 @@ function syncArtnetFields(s) {
 document.getElementById('artnet-save').addEventListener('click', () => {
   socket.emit('set', {
     artnet: {
+      enabled: document.getElementById('artnet-enabled').checked,
       host: document.getElementById('artnet-host').value,
       port: parseInt(document.getElementById('artnet-port').value),
       universe: parseInt(document.getElementById('artnet-universe').value),
     }
   });
-  ['artnet-host', 'artnet-port', 'artnet-universe'].forEach(id => {
+  ARTNET_FIELDS.forEach(id => {
     delete document.getElementById(id).dataset.dirty;
   });
 });
@@ -469,6 +475,28 @@ const SETTINGS_SPEC = [
         help: 'Follow CDJs on the network for tempo and track changes.' },
       { path: 'sources.smtc', label: 'Now Playing', type: 'toggle',
         help: 'Read the Windows media session, so any player drives the show. Windows only.' },
+    ],
+  },
+  {
+    id: 'sacn',
+    title: 'sACN (E1.31)',
+    desc: 'What consoles and most modern nodes speak. Runs alongside Art-Net or instead of it '
+      + '(turn Art-Net off above). Takes effect immediately.',
+    fields: [
+      { path: 'sacn.enabled', label: 'Enabled', type: 'toggle' },
+      { path: 'sacn.host', label: 'Node IP', type: 'text',
+        help: 'Blank multicasts to each universe\'s own group (239.255.x.y), which is how sACN is '
+          + 'normally deployed. Name a node to unicast to it instead.' },
+      { path: 'sacn.priority', label: 'Priority', type: 'number', min: 0, max: 200,
+        help: 'Higher wins when two sources drive the same universe. 100 is the E1.31 default.' },
+      { path: 'sacn.sourceName', label: 'Source Name', type: 'text',
+        help: 'What the receiving console lists this server as.' },
+      { path: 'sacn.universeOffset', label: 'Universe Offset', type: 'number', min: -32767, max: 63999,
+        help: 'Art-Net counts universes from 0 and sACN from 1, so +1 lines them up: a fixture on '
+          + 'universe 0 goes out as sACN universe 1.' },
+      { path: 'sacn.cid', label: 'Component ID', type: 'text',
+        help: 'How a receiver tells sources apart. Generated on first start and stable from then on '
+          + '— change it only if two servers on the network ended up sharing one.' },
     ],
   },
   {
