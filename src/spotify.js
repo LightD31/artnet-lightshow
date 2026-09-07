@@ -1,9 +1,17 @@
 'use strict';
 
-const https = require('https');
-const http = require('http');
 const crypto = require('crypto');
-const { URL } = require('url');
+
+// Every Spotify call is bounded. The previous hand-rolled https client had no
+// timeout at all, so one hung connection leaked a promise that never settled
+// while the 1 Hz poller kept stacking more behind it — see AUDIT.md M5.
+const REQUEST_TIMEOUT_MS = 10000;
+
+// Spotify returns 429 with a Retry-After (seconds). Polling /currently-playing
+// at 1 Hz plus a queue peek every 15 s sits close enough to the limit that this
+// matters; without it a rate-limit looked like "Spotify just stopped working".
+const DEFAULT_RETRY_AFTER_MS = 5000;
+const MAX_RETRY_AFTER_MS = 5 * 60 * 1000;
 
 /**
  * Spotify Web API client with OAuth2 Authorization Code flow.
@@ -48,6 +56,9 @@ class SpotifyClient {
     // accepts any code presented to it, so any page could bind this server to
     // an attacker's Spotify account — see AUDIT.md H3.
     this._pendingStates = new Map();
+    // Set while a 429 backoff window is in effect.
+    this._rateLimitedUntil = 0;
+    this._lastErrorLogAt = 0;
   }
 
   get configured() {
@@ -178,6 +189,8 @@ class SpotifyClient {
   startPolling(intervalMs = 2000) {
     this.stopPolling();
     this._pollTimer = setInterval(async () => {
+      // Honour a rate-limit window before issuing anything new.
+      if (Date.now() < this._rateLimitedUntil) return;
       try {
         const playing = await this.getCurrentlyPlaying();
         if (!playing) return;
@@ -188,8 +201,30 @@ class SpotifyClient {
           this._currentTrackId = playing.trackId;
           if (this._onTrackChange) this._onTrackChange(playing);
         }
-      } catch (_) { /* ignore transient errors */ }
+      } catch (err) {
+        this._noteRequestError(err);
+      }
     }, intervalMs);
+    if (this._pollTimer.unref) this._pollTimer.unref();
+  }
+
+  /**
+   * Record a failed request. A 429 parks the poller for the window Spotify
+   * asked for; anything else is logged at most once per minute so a persistent
+   * outage is visible without flooding the console at 1 Hz.
+   */
+  _noteRequestError(err) {
+    if (err && err.status === 429) {
+      const waitMs = err.retryAfterMs || DEFAULT_RETRY_AFTER_MS;
+      this._rateLimitedUntil = Date.now() + waitMs;
+      console.warn(`[spotify] rate limited — backing off ${Math.round(waitMs / 1000)}s`);
+      return;
+    }
+    const now = Date.now();
+    if (now - this._lastErrorLogAt > 60000) {
+      this._lastErrorLogAt = now;
+      console.warn(`[spotify] ${err && err.message ? err.message : err}`);
+    }
   }
 
   stopPolling() {
@@ -208,6 +243,7 @@ class SpotifyClient {
     this.expiresAt = 0;
     this._currentTrackId = null;
     this._pendingStates.clear();
+    this._rateLimitedUntil = 0;
   }
 
   getStatus() {
@@ -228,8 +264,9 @@ class SpotifyClient {
       // Auto-refresh before expiry
       if (this._refreshTimer) clearTimeout(this._refreshTimer);
       this._refreshTimer = setTimeout(() => {
-        this.refreshAccessToken().catch(() => {});
+        this.refreshAccessToken().catch((err) => this._noteRequestError(err));
       }, (data.expires_in - 120) * 1000);
+      if (this._refreshTimer.unref) this._refreshTimer.unref();
     }
   }
 
@@ -247,30 +284,58 @@ class SpotifyClient {
     });
   }
 
-  _request(method, urlStr, headers, body) {
-    return new Promise((resolve, reject) => {
-      const url = new URL(urlStr);
-      const opts = {
+  /**
+   * Issue a request and return the parsed JSON body, or null for an empty
+   * response (204 and friends).
+   *
+   * Throws on a non-2xx status with `err.status` set, and on 429 also
+   * `err.retryAfterMs` — callers previously got the error body parsed as if it
+   * were data, which turned an auth failure into a silent wrong answer.
+   */
+  async _request(method, urlStr, headers, body) {
+    let res;
+    try {
+      res = await fetch(urlStr, {
         method,
-        hostname: url.hostname,
-        path: url.pathname + url.search,
         headers: { ...headers },
-      };
-      if (body) opts.headers['Content-Length'] = Buffer.byteLength(body);
-
-      const req = https.request(opts, (res) => {
-        let data = '';
-        res.on('data', (chunk) => { data += chunk; });
-        res.on('end', () => {
-          if (res.statusCode === 204 || !data) return resolve(null);
-          try { resolve(JSON.parse(data)); }
-          catch { resolve(null); }
-        });
+        body: body || undefined,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
-      req.on('error', reject);
-      if (body) req.write(body);
-      req.end();
-    });
+    } catch (err) {
+      // AbortError from the timeout, DNS failure, connection reset…
+      const wrapped = new Error(
+        err.name === 'TimeoutError' || err.name === 'AbortError'
+          ? `Spotify request timed out after ${REQUEST_TIMEOUT_MS}ms`
+          : `Spotify request failed: ${err.message}`
+      );
+      wrapped.cause = err;
+      throw wrapped;
+    }
+
+    if (res.status === 429) {
+      const err = new Error('Spotify rate limit hit');
+      err.status = 429;
+      err.retryAfterMs = this._parseRetryAfter(res.headers.get('retry-after'));
+      throw err;
+    }
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      const err = new Error(`Spotify API ${res.status}${text ? `: ${text.slice(0, 200)}` : ''}`);
+      err.status = res.status;
+      throw err;
+    }
+
+    if (res.status === 204) return null;
+    const text = await res.text();
+    if (!text) return null;
+    try { return JSON.parse(text); } catch { return null; }
+  }
+
+  _parseRetryAfter(header) {
+    const seconds = Number.parseInt(header, 10);
+    if (!Number.isFinite(seconds) || seconds < 0) return DEFAULT_RETRY_AFTER_MS;
+    return Math.min(seconds * 1000, MAX_RETRY_AFTER_MS);
   }
 }
 

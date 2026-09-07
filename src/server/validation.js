@@ -1,6 +1,7 @@
 'use strict';
 
 const { z } = require('zod');
+const net = require('net');
 const {
   COLOR_PRESETS,
   AUTO_SOURCES,
@@ -9,8 +10,22 @@ const {
 const u8 = z.number().int().min(0).max(255);
 const colorIdx = z.number().int().min(0).max(COLOR_PRESETS.length - 1);
 
+// Hostname per RFC 1123, or an IPv4 literal. Rejecting junk here means a typo
+// in the ArtNet panel surfaces as a validation error instead of a stream of
+// failed sends — see AUDIT.md H1.
+const HOSTNAME_RE = /^(?=.{1,253}$)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+
+// A string of dotted numeric labels is someone typing an IP, so hold it to
+// IPv4 rules rather than letting "2.255.255.256" through as a hostname (which
+// RFC 1123 would technically permit) and failing later at DNS.
+const DOTTED_NUMERIC_RE = /^[0-9]+(\.[0-9]+)*$/;
+
+const artnetHost = z.string().min(1).max(253)
+  .refine((v) => (DOTTED_NUMERIC_RE.test(v) ? net.isIPv4(v) : HOSTNAME_RE.test(v)),
+    { message: 'must be an IPv4 address or hostname' });
+
 const artnetSchema = z.object({
-  host: z.string().min(1).optional(),
+  host: artnetHost.optional(),
   port: z.number().int().min(1).max(65535).optional(),
   universe: z.number().int().min(0).max(32767).optional(),
 }).strict();
