@@ -4,11 +4,11 @@
 
 Each finding names a file and line so it can be triaged independently.
 
-> **Status.** The audit was written first as a review-only document; **PR 1 (Security)**
-> has since been implemented on this branch, so C1, C2, H2, H3, H5, M6, M7 and M8 are
-> marked ✅ Fixed below and their line references point at the *pre-fix* code. Everything
-> else is still open. See the [Suggested order of work](#8-suggested-order-of-work) for
-> what remains.
+> **Status.** The audit was written first as a review-only document. **PR 1 (Security)**
+> and **PR 2 (Stability)** have since been implemented, so C1, C2, H1, H2, H3, H4, H5,
+> M4, M5, M6, M7, M8 and L6 are marked ✅ Fixed below and their line references point at
+> the *pre-fix* code. Everything else is still open — see the
+> [Suggested order of work](#8-suggested-order-of-work).
 
 ---
 
@@ -40,16 +40,16 @@ against real Stream Deck hardware.
 |----|----------|------|---------|--------|
 | [C1](#c1--stored-xss-via-fixture-profile-and-label-fields) | Critical | Client | Stored XSS via GDTF-supplied profile names and fixture labels | ✅ Fixed |
 | [C2](#c2--no-authentication-server-listens-on-all-interfaces) | Critical | Server | No authentication; binds to `0.0.0.0` | ✅ Fixed |
-| [H1](#h1--unhandled-dgram-error-crashes-the-process-mid-show) | High | Art-Net | Unhandled UDP socket error kills the server mid-show | Open |
+| [H1](#h1--unhandled-dgram-error-crashes-the-process-mid-show) | High | Art-Net | Unhandled UDP socket error kills the server mid-show | ✅ Fixed |
 | [H2](#h2--wildcard-cors-on-apideezer-lets-any-website-drive-the-show) | High | Server | Wildcard CORS lets any website drive the show | ✅ Fixed |
 | [H3](#h3--spotify-oauth-has-no-state-parameter) | High | Auth | Spotify OAuth has no `state` parameter (login CSRF) | ✅ Fixed |
-| [H4](#h4--17-known-vulnerable-dependencies-11-rated-high) | High | Deps | 17 vulnerable dependencies, 11 rated high | Open |
+| [H4](#h4--17-known-vulnerable-dependencies-11-rated-high) | High | Deps | 17 vulnerable dependencies, 11 rated high | ✅ Fixed |
 | [H5](#h5--unverified-310-mb-pytorch-checkpoint-download) | High | Supply chain | 310 MB PyTorch checkpoint downloaded without checksum | ✅ Fixed |
 | [M1](#m1--10-hz-full-state-broadcast-is-the-dominant-runtime-cost) | Medium | Performance | 10 Hz full-state broadcast rebuilds everything | Open |
 | [M2](#m2--client-re-renders-the-whole-tree-10-times-per-second) | Medium | Performance | Client re-renders whole tree 10×/second | Open |
 | [M3](#m3--gdtf-channelcount-is-the-channel-count-not-the-address-footprint) | Medium | Correctness | GDTF `channelCount` wrong → stale DMX channels latch | Open |
-| [M4](#m4--analyzer-worker-has-no-timeout-one-hang-stalls-everything) | Medium | Correctness | Analyzer worker has no timeout; delivers mismatched responses | Open |
-| [M5](#m5--no-request-timeouts-or-rate-limit-handling-on-spotify-calls) | Medium | Robustness | No timeouts, status checks or 429 backoff on Spotify | Open |
+| [M4](#m4--analyzer-worker-has-no-timeout-one-hang-stalls-everything) | Medium | Correctness | Analyzer worker has no timeout; delivers mismatched responses | ✅ Fixed |
+| [M5](#m5--no-request-timeouts-or-rate-limit-handling-on-spotify-calls) | Medium | Robustness | No timeouts, status checks or 429 backoff on Spotify | ✅ Fixed |
 | [M6](#m6--arbitrary-local-file-read-via-the-analyze-endpoint) | Medium | Server | Arbitrary local-file read via analyze endpoint | ✅ Fixed |
 | [M7](#m7--prototype-manipulation-via-registerprofile) | Medium | Server | `__proto__` as a profile id corrupts the profile registry | ✅ Fixed |
 | [M8](#m8--zip-bomb--xml-dos-on-gdtf-upload) | Medium | Server | Zip-bomb / XML DoS on GDTF upload | ✅ Fixed |
@@ -60,7 +60,7 @@ against real Stream Deck hardware.
 | [L3](#l3--midi-monitor-logging-left-enabled) | Low | Hygiene | "Temporary" MIDI monitor logging still enabled | Open |
 | [L4](#l4--art-net-sequence-byte-hardcoded-to-zero) | Low | Art-Net | Sequence byte hardcoded to 0 | Open |
 | [L5](#l5--socket-midi-connect-skips-validation) | Low | Consistency | Socket `midi-connect` skips schema validation | Open |
-| [L6](#l6--no-timeouts-size-caps-or-redirect-limit-in-the-deezer-downloader) | Low | Robustness | Deezer downloader: no timeout, size cap or redirect limit | Open |
+| [L6](#l6--no-timeouts-size-caps-or-redirect-limit-in-the-deezer-downloader) | Low | Robustness | Deezer downloader: no timeout, size cap or redirect limit | ✅ Fixed |
 | [L7](#l7--fixture-addresses-may-overlap-or-run-past-channel-512) | Low | Correctness | Fixture addresses may overlap or exceed channel 512 | Open |
 | [L8](#l8--dead-code-and-stale-comments) | Nit | Hygiene | Dead code and stale comments | Open |
 | [L9](#l9--no-linter-formatter-ci-or-test-runner) | Low | Tooling | No linter, formatter, CI or test runner | Open |
@@ -160,7 +160,7 @@ hardened auth system and should not be described as one.
 
 ## 4. High
 
-### H1 — Unhandled `dgram` error crashes the process mid-show
+### H1 — Unhandled `dgram` error crashes the process mid-show  ✅ **Fixed**
 
 **Where:** `src/server/artnet.js:5,25`
 
@@ -258,7 +258,7 @@ require an exact match in the callback, and reject when absent.
 
 ---
 
-### H4 — 17 known-vulnerable dependencies, 11 rated high
+### H4 — 17 known-vulnerable dependencies, 11 rated high  ✅ **Fixed**
 
 **Where:** `package.json`, `package-lock.json`. Reproduce with `npm audit --omit=dev`.
 
@@ -414,7 +414,7 @@ the UI wants to show it.
 
 ---
 
-### M4 — Analyzer worker has no timeout; one hang stalls everything
+### M4 — Analyzer worker has no timeout; one hang stalls everything  ✅ **Fixed**
 
 **Where:** `src/analyzer-worker.js:193-209` and `:179-190`
 
@@ -451,7 +451,7 @@ respawns so a missing Python install fails loudly rather than looping.
 
 ---
 
-### M5 — No request timeouts or rate-limit handling on Spotify calls
+### M5 — No request timeouts or rate-limit handling on Spotify calls  ✅ **Fixed**
 
 **Where:** `src/spotify.js:208-232`
 
@@ -652,7 +652,7 @@ Increment 1→255 (wrapping, skipping 0) per universe.
 the equivalent REST route validates with `midiConnectSchema` first
 (`src/server/routes.js:142`). The schema already exists — apply it to both.
 
-### L6 — No timeouts, size caps or redirect limit in the Deezer downloader
+### L6 — No timeouts, size caps or redirect limit in the Deezer downloader  ✅ **Fixed**
 
 `src/deezer.js:95-112`. `_downloadUrl` follows redirects by unbounded recursion (a
 redirect loop recurses until it blows up), has no timeout, and buffers the entire track
@@ -751,9 +751,10 @@ Grouped so each lands as a reviewable PR with a coherent theme.
 branch, with the token wired through `companion-module/src/config.js` and the extension's
 new options page.
 
-**PR 2 — Stability.** H1, H4, M4, M5, L6.
-H1 is the one that will bite during a show. Do the dependency bump last within this PR so
-a regression is easy to bisect.
+**PR 2 — Stability.** H1, H4, M4, M5, L6. ✅ **Done.** H4 took the tree from 17
+vulnerabilities (11 high) to **0**, via `npm audit fix`, Express 5, and `overrides` for
+`cookie` and `ip-address` — the last two are pinned by `prolink-connect`, and the
+`ip-address` bump was checked call-site by call-site against v7 first.
 
 **PR 3 — Performance.** M1 and M2 together — they are the same problem at both ends, and
 fixing one without the other gives up most of the benefit.

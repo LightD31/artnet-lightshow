@@ -8,6 +8,14 @@ const os = require('os');
 const { spawn } = require('child_process');
 const dfi = require('d-fi-core');
 
+// Bounds on the audio download. Previously unbounded on all three counts: a
+// redirect loop recursed until it blew the stack, a stalled connection hung
+// forever, and the whole body accumulated in memory with no ceiling.
+// See AUDIT.md L6.
+const MAX_REDIRECTS = 5;
+const DOWNLOAD_TIMEOUT_MS = 60000;
+const MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024;   // a 320 kbps hour is ~144 MB; tracks are far smaller
+
 let initialized = false;
 
 /**
@@ -91,23 +99,56 @@ async function downloadByIsrc(trackName, isrc) {
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
-/** Download a URL to a Buffer. */
-function _downloadUrl(url) {
+/** Download a URL to a Buffer, with a redirect cap, timeout and size ceiling. */
+function _downloadUrl(url, redirectsLeft = MAX_REDIRECTS) {
   return new Promise((resolve, reject) => {
     const client = url.startsWith('https') ? https : http;
-    client.get(url, (res) => {
-      // Follow redirects
+    const req = client.get(url, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return resolve(_downloadUrl(res.headers.location));
+        res.resume();                       // drain so the socket can be reused
+        if (redirectsLeft <= 0) {
+          return reject(new Error(`[deezer] too many redirects (>${MAX_REDIRECTS}) downloading audio`));
+        }
+        const next = new URL(res.headers.location, url).toString();
+        return resolve(_downloadUrl(next, redirectsLeft - 1));
       }
       if (res.statusCode !== 200) {
+        res.resume();
         return reject(new Error(`[deezer] HTTP ${res.statusCode} downloading audio`));
       }
+
+      // Trust the declared length when present, but still enforce the ceiling
+      // as bytes arrive — content-length is advisory.
+      const declared = Number.parseInt(res.headers['content-length'], 10);
+      if (Number.isFinite(declared) && declared > MAX_DOWNLOAD_BYTES) {
+        res.destroy();
+        return reject(new Error(
+          `[deezer] audio too large (${Math.round(declared / 1024 / 1024)} MB, limit `
+          + `${Math.round(MAX_DOWNLOAD_BYTES / 1024 / 1024)} MB)`
+        ));
+      }
+
       const chunks = [];
-      res.on('data', (chunk) => chunks.push(chunk));
+      let received = 0;
+      res.on('data', (chunk) => {
+        received += chunk.length;
+        if (received > MAX_DOWNLOAD_BYTES) {
+          res.destroy();
+          reject(new Error(
+            `[deezer] audio exceeded ${Math.round(MAX_DOWNLOAD_BYTES / 1024 / 1024)} MB limit`
+          ));
+          return;
+        }
+        chunks.push(chunk);
+      });
       res.on('end', () => resolve(Buffer.concat(chunks)));
       res.on('error', reject);
-    }).on('error', reject);
+    });
+
+    req.setTimeout(DOWNLOAD_TIMEOUT_MS, () => {
+      req.destroy(new Error(`[deezer] download timed out after ${DOWNLOAD_TIMEOUT_MS}ms`));
+    });
+    req.on('error', reject);
   });
 }
 

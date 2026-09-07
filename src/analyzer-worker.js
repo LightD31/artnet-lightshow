@@ -2,6 +2,16 @@
 
 const { spawn } = require('child_process');
 
+// Hard ceiling on a single analysis. Without one, a wedged Python process
+// leaves _pending unsettled forever and every queued prefetch waits behind it —
+// the auto-show silently stops picking up new tracks with no error anywhere.
+// See AUDIT.md M4. Generous by design: a cold start plus a long track is well
+// under this, so hitting it means something is genuinely stuck.
+const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
+const ANALYZE_TIMEOUT_MS = Number.parseInt(process.env.ANALYZER_TIMEOUT_MS, 10) > 0
+  ? Number.parseInt(process.env.ANALYZER_TIMEOUT_MS, 10)
+  : DEFAULT_TIMEOUT_MS;
+
 /**
  * Long-lived Python analyzer process. Holds numba JIT caches and the PANNs
  * PyTorch model in memory between requests so we only pay the multi-second
@@ -30,6 +40,10 @@ class AnalyzerWorker {
     this._stdoutBuf = '';
     this._nextId = 1;
     this._shuttingDown = false;
+    this._timeoutTimer = null;
+    // Set while we deliberately kill a wedged worker, so the exit handler
+    // recycles the process instead of failing the whole queue with it.
+    this._recycling = false;
   }
 
   /**
@@ -93,6 +107,7 @@ class AnalyzerWorker {
 
   shutdown() {
     this._shuttingDown = true;
+    this._clearTimeout();
     this._failPending('worker shutting down');
     if (this._proc) {
       try { this._proc.stdin.end(); } catch (_) { /* ignore */ }
@@ -146,6 +161,12 @@ class AnalyzerWorker {
   }
 
   _onExit(reason) {
+    // Deliberate recycle after a timeout: the pending request was already
+    // rejected and the queue is intentionally preserved.
+    if (this._recycling) {
+      this._recycling = false;
+      return;
+    }
     if (!this._proc) return;
     this._proc = null;
     this._stdoutBuf = '';
@@ -155,7 +176,39 @@ class AnalyzerWorker {
     this._failPending(reason);
   }
 
+  _clearTimeout() {
+    if (this._timeoutTimer) {
+      clearTimeout(this._timeoutTimer);
+      this._timeoutTimer = null;
+    }
+  }
+
+  /**
+   * The in-flight request exceeded ANALYZE_TIMEOUT_MS. Reject just that caller
+   * and recycle the worker — the queue behind it is still good work and gets
+   * re-dispatched to the fresh process.
+   */
+  _onTimeout() {
+    const p = this._pending;
+    this._pending = null;
+    this._timeoutTimer = null;
+    if (p) {
+      console.warn(`[analyzer] request ${p.id} exceeded ${Math.round(ANALYZE_TIMEOUT_MS / 1000)}s — killing worker`);
+      p.reject(new Error(`analysis timed out after ${Math.round(ANALYZE_TIMEOUT_MS / 1000)}s`));
+    }
+    if (this._proc) {
+      this._recycling = true;
+      const proc = this._proc;
+      this._proc = null;
+      this._stdoutBuf = '';
+      try { proc.kill(); } catch (_) { /* already gone */ }
+    }
+    // Fresh process, continue with whatever is queued.
+    this._tick();
+  }
+
   _failPending(reason) {
+    this._clearTimeout();
     if (this._pending) {
       const p = this._pending;
       this._pending = null;
@@ -181,10 +234,15 @@ class AnalyzerWorker {
       return;
     }
     if (resp.id !== this._pending.id) {
-      console.warn(`[analyzer] response id mismatch: got ${resp.id}, expected ${this._pending.id}`);
+      // A stale reply (e.g. from a worker that was recycled mid-request).
+      // Resolving the current caller with it would hand one track's analysis to
+      // a different track's request — see AUDIT.md M4.
+      console.warn(`[analyzer] discarding stale response: got id ${resp.id}, awaiting ${this._pending.id}`);
+      return;
     }
     const p = this._pending;
     this._pending = null;
+    this._clearTimeout();
     if (resp.error) p.reject(new Error(resp.error));
     else p.resolve(resp.result);
     this._tick();
@@ -202,6 +260,9 @@ class AnalyzerWorker {
     });
     try {
       this._proc.stdin.write(msg + '\n');
+      this._clearTimeout();
+      this._timeoutTimer = setTimeout(() => this._onTimeout(), ANALYZE_TIMEOUT_MS);
+      if (this._timeoutTimer.unref) this._timeoutTimer.unref();
     } catch (err) {
       this._pending = null;
       next.reject(new Error(`failed to send to worker: ${err.message}`));
