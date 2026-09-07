@@ -14,6 +14,16 @@ const AnalyzerWorker = require('./analyzer-worker');
 // Order: `py` (Windows launcher, shipped with python.org installers) → `python3`
 // → `python`. Falls back to 'python' so the eventual spawn surfaces a clear
 // error if nothing is installed at all.
+// A download that never finishes is indistinguishable from one that never
+// started: the track change waits on this promise, so an unresponsive network
+// or a yt-dlp stuck on an extractor would leave the show on the previous
+// track's timeline with no error and no recovery. The analyzer worker already
+// bounds its own stage (ANALYZER_TIMEOUT_MS); this bounds the download.
+const DEFAULT_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
+const DOWNLOAD_TIMEOUT_MS = Number.parseInt(process.env.DOWNLOAD_TIMEOUT_MS, 10) > 0
+  ? Number.parseInt(process.env.DOWNLOAD_TIMEOUT_MS, 10)
+  : DEFAULT_DOWNLOAD_TIMEOUT_MS;
+
 const PYTHON_EXE = (() => {
   const candidates = process.platform === 'win32'
     ? ['py', 'python3', 'python']
@@ -499,16 +509,31 @@ class AutoShow {
 
       let stdout = '';
       let stderr = '';
+      let timedOut = false;
       proc.stdout.on('data', (d) => { stdout += d; });
       proc.stderr.on('data', (d) => { stderr += d; });
 
+      const timer = setTimeout(() => {
+        timedOut = true;
+        proc.kill('SIGKILL');
+      }, DOWNLOAD_TIMEOUT_MS);
+      // Don't let a pending download keep the process alive at shutdown.
+      if (typeof timer.unref === 'function') timer.unref();
+
       proc.on('error', (err) => {
+        clearTimeout(timer);
         reject(new Error(
           `yt-dlp not found. Install it: pip install yt-dlp  (or download from https://github.com/yt-dlp/yt-dlp)\n${err.message}`
         ));
       });
 
       proc.on('close', (code) => {
+        clearTimeout(timer);
+        if (timedOut) {
+          return reject(new Error(
+            `yt-dlp timed out after ${Math.round(DOWNLOAD_TIMEOUT_MS / 1000)}s (set DOWNLOAD_TIMEOUT_MS to change)`
+          ));
+        }
         // yt-dlp exits 101 when --max-downloads is reached — that's the normal
         // success path for a filtered search, so treat it the same as 0.
         if (code !== 0 && code !== 101) {

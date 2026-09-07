@@ -97,7 +97,26 @@ const profileSchema = z.object({
     name: z.string().min(1),
     attribute: z.string().min(1),
   })).optional(),
-}).passthrough();
+}).passthrough()
+  // channelCount is the fixture's DMX footprint: it decides where the *next*
+  // fixture can be patched and what the universe-bounds check reserves. An
+  // offset at or past it would be written outside the footprint the profile
+  // claims — straight into whatever fixture is patched next. The GDTF importer
+  // already derives channelCount from the highest offset; this holds the
+  // hand-written and API-posted paths to the same rule.
+  .superRefine((profile, ctx) => {
+    const over = [];
+    for (const [attr, offset] of Object.entries(profile.channelMap || {})) {
+      if (offset >= profile.channelCount) over.push(`${attr}@${offset}`);
+    }
+    if (over.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['channelMap'],
+        message: `maps channels outside the profile's ${profile.channelCount}-channel footprint: ${over.join(', ')}`,
+      });
+    }
+  });
 
 const showSchema = z.object({
   artnet: artnetSchema.optional(),
@@ -107,6 +126,31 @@ const showSchema = z.object({
     address: z.number().int().min(1).max(512).optional(),
     profileId: z.string().optional(),
   })).optional(),
+}).passthrough();
+
+// The browser extension POSTs the Deezer web player's state. DeezerSource
+// coerces the field types defensively, but nothing bounded the *sizes*: track
+// names and a queue of any length flowed straight into state that is broadcast
+// to every connected client (and into yt-dlp search queries and cache keys).
+// A text field is a text field — cap it at something no real track exceeds.
+const deezerTrackSchema = z.object({
+  name: z.string().max(512).optional(),
+  title: z.string().max(512).optional(),
+  artist: z.string().max(512).optional(),
+  album: z.string().max(512).optional(),
+  albumArt: z.string().max(2048).nullable().optional(),
+  isrc: z.string().max(32).nullable().optional(),
+  trackId: z.union([z.string().max(128), z.number()]).nullable().optional(),
+  durationMs: z.number().nonnegative().max(24 * 60 * 60 * 1000).optional(),
+  progressMs: z.number().nonnegative().max(24 * 60 * 60 * 1000).optional(),
+  isPlaying: z.boolean().optional(),
+}).passthrough();
+
+const deezerStateSchema = z.object({
+  current: deezerTrackSchema.nullable().optional(),
+  // Only the first `autoPrefetchDepth` (max 5) entries are ever read; 50 is
+  // generous headroom without letting a client park an unbounded array here.
+  upcoming: z.array(deezerTrackSchema).max(50).optional(),
 }).passthrough();
 
 const midiConnectSchema = z.object({
@@ -127,6 +171,7 @@ function validate(schema, value, label) {
 
 module.exports = {
   patchSchema,
+  deezerStateSchema,
   overrideSchema,
   overrideMessageSchema,
   fixtureMessageSchema,

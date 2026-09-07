@@ -1,7 +1,7 @@
 'use strict';
 
 const path = require('path');
-const fs = require('fs');
+const fsp = require('fs/promises');
 const os = require('os');
 const multer = require('multer');
 
@@ -11,12 +11,16 @@ const { resizeFixtureBuffers } = require('./engine');
 const { parseGDTF } = require('../gdtf');
 const {
   BUILTIN_PROFILE_ID,
+  MAX_FIXTURES,
+  UNIVERSE_SIZE,
+  endChannel,
+  fitsInUniverse,
   registerProfile,
   unregisterProfile,
   listProfiles,
   clearNonBuiltinProfiles,
 } = require('./profiles');
-const { profileSchema, showSchema, midiConnectSchema, validate } = require('./validation');
+const { profileSchema, showSchema, midiConnectSchema, deezerStateSchema, validate } = require('./validation');
 
 // Audio uploads genuinely need headroom; GDTF files do not. Separate limits so
 // the fixture importer isn't handed a 50 MB budget it has no use for — a real
@@ -207,6 +211,9 @@ function attachRoutes(app, deps) {
   });
 
   app.post('/api/fixtures', (_req, res) => {
+    if (state.fixtures.length >= MAX_FIXTURES) {
+      return res.status(400).json({ ok: false, error: `Patch is full (${MAX_FIXTURES} fixtures)` });
+    }
     let maxEnd = 0;
     const profiles = listProfiles();
     for (const fix of state.fixtures) {
@@ -214,11 +221,23 @@ function attachRoutes(app, deps) {
       const end = fix.address + profile.channelCount;
       if (end > maxEnd) maxEnd = end;
     }
+    const chCount = profiles[BUILTIN_PROFILE_ID].channelCount;
+    // Auto-address after the last patched fixture. Clamping to a fixed 501 used
+    // to hand out an address the new fixture does not actually fit at, so the
+    // tail of a full universe silently produced dead channels.
+    const address = Math.max(1, maxEnd);
+    if (!fitsInUniverse(address, chCount)) {
+      return res.status(400).json({
+        ok: false,
+        error: `No room left: a ${chCount}-channel fixture at ${address} would end at `
+          + `${endChannel(address, chCount)}, past the ${UNIVERSE_SIZE}-channel universe`,
+      });
+    }
     const newId = state.fixtures.length;
     state.fixtures.push({
       id: newId,
       label: `Fixture ${newId + 1}`,
-      address: Math.min(maxEnd, 501),
+      address,
       profileId: BUILTIN_PROFILE_ID,
       override: null,
     });
@@ -253,20 +272,55 @@ function attachRoutes(app, deps) {
   app.post('/api/show', (req, res) => {
     try {
       const show = validate(showSchema, req.body, 'show');
+      const hasFixtures = Array.isArray(show.fixtures) && show.fixtures.length > 0;
+      if (hasFixtures && show.fixtures.length > MAX_FIXTURES) {
+        return res.status(400).json({
+          ok: false,
+          error: `Show has ${show.fixtures.length} fixtures, more than the ${MAX_FIXTURES} supported`,
+        });
+      }
+
+      // Resolve the incoming show against the profiles it *brings*, before
+      // touching live state. Loading a show is otherwise the one path that can
+      // half-apply: the old code swapped the profile registry first, so a show
+      // that failed later left the rig on a profile set no fixture referenced.
+      // It was also the one path that skipped the universe-bounds check the
+      // socket handler enforces, silently dropping the overhanging channels.
+      const incoming = Object.create(null);
+      incoming[BUILTIN_PROFILE_ID] = listProfiles()[BUILTIN_PROFILE_ID];
+      if (Array.isArray(show.profiles)) {
+        for (const p of show.profiles) if (p && p.id) incoming[p.id] = p;
+      }
+
+      let next = null;
+      if (hasFixtures) {
+        next = show.fixtures.map((f, i) => ({
+          id: i,
+          label: f.label || `Fixture ${i + 1}`,
+          address: f.address || 1,
+          profileId: incoming[f.profileId] ? f.profileId : BUILTIN_PROFILE_ID,
+          override: null,
+        }));
+        for (const fix of next) {
+          const chCount = incoming[fix.profileId].channelCount;
+          if (!fitsInUniverse(fix.address, chCount)) {
+            return res.status(400).json({
+              ok: false,
+              error: `"${fix.label}" at address ${fix.address} needs ${chCount} channels and would end at `
+                + `${endChannel(fix.address, chCount)}, past the ${UNIVERSE_SIZE}-channel universe`,
+            });
+          }
+        }
+      }
+
+      // Everything checked out — now apply.
       if (Array.isArray(show.profiles)) {
         clearNonBuiltinProfiles();
         show.profiles.forEach((p) => { if (p && p.id) registerProfile(p); });
       }
       if (show.artnet) Object.assign(state.artnet, show.artnet);
-      const profiles = listProfiles();
-      if (Array.isArray(show.fixtures) && show.fixtures.length > 0) {
-        state.fixtures = show.fixtures.map((f, i) => ({
-          id: i,
-          label: f.label || `Fixture ${i + 1}`,
-          address: f.address || 1,
-          profileId: profiles[f.profileId] ? f.profileId : BUILTIN_PROFILE_ID,
-          override: null,
-        }));
+      if (next) {
+        state.fixtures = next;
         resizeFixtureBuffers();
       }
       integrations.broadcast();
@@ -351,8 +405,10 @@ function attachRoutes(app, deps) {
   // The Firefox extension POSTs the Deezer web player's state here: the current
   // track (with ISRC + position) and the upcoming queue (for prefetch).
   app.post('/api/deezer/state', (req, res) => {
-    integrations.onDeezerState(req.body || {});
-    res.json({ ok: true, status: deezerSource.getStatus() });
+    try {
+      integrations.onDeezerState(validate(deezerStateSchema, req.body || {}, 'deezer-state'));
+      res.json({ ok: true, status: deezerSource.getStatus() });
+    } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
   });
 
   app.post('/api/deezer/disconnect', (_req, res) => {
@@ -479,7 +535,10 @@ function attachRoutes(app, deps) {
     if (!req.file) return res.status(400).json({ ok: false, error: 'No audio file uploaded' });
     const tmpPath = path.join(os.tmpdir(), `auto-analyze-${Date.now()}${path.extname(req.file.originalname) || '.mp3'}`);
     try {
-      fs.writeFileSync(tmpPath, req.file.buffer);
+      // Async on purpose: this buffer can be 50 MB, and a synchronous write of
+      // that size stalls the event loop — which here means the 40 Hz Art-Net
+      // render loop stops sending frames and the rig visibly freezes mid-show.
+      await fsp.writeFile(tmpPath, req.file.buffer);
       autoShow.track = { name: req.file.originalname, artist: 'Local file', album: '', albumArt: null };
       const cacheKey = keyForBuffer(req.file.buffer);
       await autoShow.analyze(tmpPath, cacheKey);
@@ -488,7 +547,7 @@ function attachRoutes(app, deps) {
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     } finally {
-      try { fs.unlinkSync(tmpPath); } catch (_) { /* ignore */ }
+      await fsp.unlink(tmpPath).catch(() => { /* already gone */ });
     }
   }));
 
@@ -507,8 +566,8 @@ function attachRoutes(app, deps) {
 
       const query = `${track.artist} - ${track.title}`;
       const cacheKey = keyForProlinkTrack(track);
-      const { audioPath } = await autoShow.downloadAndAnalyze(query, (track.durationMs || 0) / 1000, cacheKey);
-      if (audioPath) { try { fs.unlinkSync(audioPath); } catch (_) { /* ignore */ } }
+      // The downloaded WAV is unlinked by auto-show's own finally block.
+      await autoShow.downloadAndAnalyze(query, (track.durationMs || 0) / 1000, cacheKey);
 
       integrations.broadcast();
       res.json({ ok: true, track: autoShow.track, analysis: autoShow.getClientState().analysis });
@@ -566,6 +625,34 @@ function attachRoutes(app, deps) {
     if (!key) return res.status(400).json({ ok: false, error: 'Missing key' });
     const ok = analysisCache.delete(key);
     res.json({ ok });
+  });
+
+  // ─── Error handler ────────────────────────────────────────────────────────
+  // Must be registered last. Without it, anything that reaches next(err) — an
+  // upload over the size limit, a malformed JSON body, a throw inside an
+  // asyncHandler — fell through to Express's default handler, which answers
+  // with an HTML page carrying the stack trace (it only hides it when NODE_ENV
+  // is 'production', which a locally-run show tool never sets). Every other
+  // route here answers JSON; this makes the failure paths agree.
+  app.use((err, _req, res, _next) => {
+    if (res.headersSent) return;
+
+    // Multer signals "too big" with a code rather than a status.
+    if (err && err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ ok: false, error: 'Uploaded file is too large' });
+    }
+    if (err && err.code === 'LIMIT_UNEXPECTED_FILE') {
+      return res.status(400).json({ ok: false, error: `Unexpected file field "${err.field}"` });
+    }
+
+    const status = err && (err.status || err.statusCode);
+    if (status && status >= 400 && status < 500) {
+      return res.status(status).json({ ok: false, error: err.message });
+    }
+
+    // Genuine server-side faults: log the detail, return only the message.
+    console.error('[api] unhandled error:', err && err.stack ? err.stack : err);
+    res.status(500).json({ ok: false, error: (err && err.message) || 'Internal error' });
   });
 }
 

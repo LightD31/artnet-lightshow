@@ -17,7 +17,7 @@ const AutoShow = require('./src/auto-show');
 const { AnalysisCache } = require('./src/analysis-cache');
 
 const { state } = require('./src/server/state');
-const { startEngine } = require('./src/server/engine');
+const { startEngine, stopEngine } = require('./src/server/engine');
 const { applyPatch, applyOverride, processTap } = require('./src/server/patch');
 const { COLOR_PRESETS, PATTERNS } = require('./src/server/presets');
 const { setupIntegrations } = require('./src/server/integrations');
@@ -132,5 +132,35 @@ server.listen(PORT, HOST, () => {
   console.log(`  Auto Show         →  Essentia + Spotify integration (python: ${AutoShow.PYTHON_EXE})\n`);
 });
 
-process.on('SIGINT',  () => { smtc.stop(); autoShow.destroy(); spotify.disconnect(); nowPlaying.disconnect(); deezerSource.disconnect(); prolink.destroy(); process.exit(0); });
-process.on('SIGTERM', () => { smtc.stop(); autoShow.destroy(); spotify.disconnect(); nowPlaying.disconnect(); deezerSource.disconnect(); prolink.destroy(); process.exit(0); });
+// ─── Shutdown ───────────────────────────────────────────────────────────────
+// One path for both signals: the two copies had to be edited in lockstep, and
+// neither put the rig out on the way down. stopEngine() sends a final all-zero
+// frame so the fixtures don't hold the last look after the server is gone.
+let shuttingDown = false;
+
+function shutdown(signal) {
+  if (shuttingDown) return;             // a second Ctrl-C shouldn't re-enter this
+  shuttingDown = true;
+  console.log(`\n${signal} — blacking out and shutting down…`);
+
+  // Each of these is independent: one throwing must not skip the rest.
+  for (const [what, fn] of [
+    ['engine', () => stopEngine()],
+    ['smtc', () => smtc.stop()],
+    ['autoShow', () => autoShow.destroy()],
+    ['spotify', () => spotify.disconnect()],
+    ['nowPlaying', () => nowPlaying.disconnect()],
+    ['deezer', () => deezerSource.disconnect()],
+    ['prolink', () => prolink.destroy()],
+    ['midi', () => midi.close()],
+  ]) {
+    try { fn(); } catch (err) { console.warn(`[shutdown] ${what}: ${err.message}`); }
+  }
+
+  server.close(() => process.exit(0));
+  // Don't hang on a lingering keep-alive socket or an in-flight analysis.
+  setTimeout(() => process.exit(0), 2000).unref();
+}
+
+process.on('SIGINT',  () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));

@@ -1,6 +1,5 @@
 'use strict';
 
-const fs = require('fs');
 const { state, getLiveState, getDmxSnapshot } = require('./state');
 const { setHooks } = require('./patch');
 const { restartBeatTimer } = require('./engine');
@@ -187,10 +186,8 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       }
       const query = `${track.artist} - ${track.title}`;
       const cacheKey = keyForProlinkTrack(track);
-      const { audioPath } = await autoShow.downloadAndAnalyze(
-        query, (track.durationMs || 0) / 1000, cacheKey,
-      );
-      if (audioPath) { try { fs.unlinkSync(audioPath); } catch (_) { /* ignore */ } }
+      // The downloaded WAV is unlinked by auto-show's own finally block.
+      await autoShow.downloadAndAnalyze(query, (track.durationMs || 0) / 1000, cacheKey);
       autoShow.start(getProlinkPositionMs);
       console.log('Auto show restarted for new CDJ track');
     } catch (err) {
