@@ -6,7 +6,7 @@ const { getProfile, UV_BOOST } = require('./profiles');
 const { sendArtDmx } = require('./artnet');
 const { PATTERN_FUNCS } = require('./patterns');
 
-let fixtureColors = Array.from({ length: 4 }, () => ({
+const fixtureColors = Array.from({ length: 4 }, () => ({
   r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 255, strobe: 0,
 }));
 

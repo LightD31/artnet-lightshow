@@ -16,12 +16,12 @@
 (function () {
   'use strict';
 
-  var KEY = 'lightshow.token';
-  var token = '';
+  const KEY = 'lightshow.token';
+  let token = '';
 
   try {
-    var url = new URL(window.location.href);
-    var fromUrl = url.searchParams.get('token');
+    const url = new URL(window.location.href);
+    const fromUrl = url.searchParams.get('token');
     if (fromUrl) {
       try { localStorage.setItem(KEY, fromUrl); } catch (_) { /* private mode */ }
       url.searchParams.delete('token');
@@ -39,19 +39,19 @@
 
   // Attach the header centrally rather than at ~13 call sites, so a new fetch
   // added later is authenticated without anyone having to remember.
-  var nativeFetch = window.fetch.bind(window);
+  const nativeFetch = window.fetch.bind(window);
   window.fetch = function (input, init) {
     init = init || {};
-    var target = typeof input === 'string' ? input : (input && input.url) || '';
+    const target = typeof input === 'string' ? input : (input && input.url) || '';
     // Only same-origin API traffic — never leak the token to a third party.
-    var isApi = target.indexOf('/api') === 0
+    const isApi = target.indexOf('/api') === 0
       || target.indexOf(window.location.origin + '/api') === 0;
     if (!isApi) return nativeFetch(input, init);
 
-    var headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined));
+    const headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined));
     headers.set('X-Lightshow-Token', token);
-    var next = {};
-    for (var k in init) if (Object.prototype.hasOwnProperty.call(init, k)) next[k] = init[k];
+    const next = {};
+    for (const k in init) if (Object.prototype.hasOwnProperty.call(init, k)) next[k] = init[k];
     next.headers = headers;
     return nativeFetch(input, next);
   };

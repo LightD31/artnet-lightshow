@@ -1,3 +1,5 @@
+/* settings.html loads style.css first, which declares the Inter @font-face. */
+
 /* ── Settings page layout ────────────────────────────────── */
 .settings-main {
   display: flex;

@@ -164,9 +164,19 @@ async function parseGDTF(fileBuffer) {
     // Sort by offset
     channelList.sort((a, b) => a.offset - b.offset);
 
+    // channelCount is the mode's DMX *footprint*, not how many channel entries
+    // it has. Offsets can be sparse or start above zero, and the render loop
+    // clears `for (c < channelCount)` before writing by offset — so a count
+    // smaller than the highest offset leaves channels written but never
+    // cleared, latching stale values until master blackout. It also drives
+    // auto-addressing and the patch table's overlap detection.
+    // See AUDIT.md M3.
+    const maxOffset = channelList.reduce((max, ch) => Math.max(max, ch.offset), -1);
+    const channelCount = maxOffset + 1;
+
     return {
       modeName,
-      channelCount: channelList.length,
+      channelCount,
       channelMap,
       channelList,
     };

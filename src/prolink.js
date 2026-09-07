@@ -26,14 +26,9 @@
 
 let prolink = null;
 let CDJStatus = null;
-let MediaSlot = null;
-let TrackType = null;
 try {
-  // eslint-disable-next-line global-require
   prolink = require('prolink-connect');
   CDJStatus = prolink.CDJStatus; // PlayState enum lives here
-  MediaSlot = prolink.MediaSlot;
-  TrackType = prolink.TrackType;
 } catch (err) {
   console.error('[prolink] failed to load prolink-connect:', err.message);
 }

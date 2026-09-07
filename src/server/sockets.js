@@ -5,9 +5,10 @@ const { applyPatch, applyOverride, processTap } = require('./patch');
 const {
   overrideMessageSchema,
   fixtureMessageSchema,
+  midiConnectSchema,
   validate,
 } = require('./validation');
-const { listProfiles } = require('./profiles');
+const { listProfiles, getProfile } = require('./profiles');
 
 function attachSockets(io, { midi, integrations }) {
   io.on('connection', (socket) => {
@@ -32,10 +33,28 @@ function attachSockets(io, { midi, integrations }) {
       try {
         const { id, address, label, profileId } = validate(fixtureMessageSchema, payload, 'fixture-msg');
         if (id < 0 || id >= getFixtureCount()) return;
-        if (address !== undefined) state.fixtures[id].address = address;
-        if (label !== undefined) state.fixtures[id].label = label;
+
         const profiles = listProfiles();
-        if (profileId !== undefined && profiles[profileId]) state.fixtures[id].profileId = profileId;
+        const nextProfileId = (profileId !== undefined && profiles[profileId])
+          ? profileId : state.fixtures[id].profileId;
+        const nextAddress = address !== undefined ? address : state.fixtures[id].address;
+
+        // A fixture has to fit inside the universe. Past channel 512 the writes
+        // land outside the DMX buffer and Node drops them silently, leaving the
+        // fixture half-controllable with no error — see AUDIT.md L7.
+        const chCount = getProfile({ profileId: nextProfileId }).channelCount;
+        const endChannel = nextAddress + chCount - 1;
+        if (endChannel > 512) {
+          socket.emit('error-msg', {
+            source: 'fixture',
+            message: `Address ${nextAddress} + ${chCount} channels ends at ${endChannel}, past the 512-channel universe`,
+          });
+          return;
+        }
+
+        state.fixtures[id].address = nextAddress;
+        state.fixtures[id].profileId = nextProfileId;
+        if (label !== undefined) state.fixtures[id].label = label;
         integrations.broadcast();
       } catch (err) {
         socket.emit('error-msg', { source: 'fixture', message: err.message });
@@ -44,10 +63,17 @@ function attachSockets(io, { midi, integrations }) {
 
     socket.on('tap', processTap);
 
-    socket.on('midi-connect', ({ input, output } = {}) => {
-      midi.close();
-      const ok = midi.connect(input || null, output || null);
-      socket.emit('midi-status', { ok, ports: midi.listPorts(), enabled: midi.enabled });
+    socket.on('midi-connect', (payload) => {
+      try {
+        // Same schema the REST route uses — these two paths had drifted apart.
+        // See AUDIT.md L5.
+        const { input, output } = validate(midiConnectSchema, payload || {}, 'midi-connect');
+        midi.close();
+        const ok = midi.connect(input || null, output || null);
+        socket.emit('midi-status', { ok, ports: midi.listPorts(), enabled: midi.enabled });
+      } catch (err) {
+        socket.emit('error-msg', { source: 'midi-connect', message: err.message });
+      }
     });
 
     socket.on('disconnect', () => console.log('Client disconnected:', socket.id));
