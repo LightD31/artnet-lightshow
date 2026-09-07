@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { patchSchema, profileSchema, overrideSchema, validate } = require('../../src/server/validation');
+const { patchSchema, profileSchema, overrideSchema, deezerStateSchema, validate } = require('../../src/server/validation');
 
 const ok = (schema, v) => { validate(schema, v, 't'); return true; };
 const rejects = (schema, v) => assert.throws(() => validate(schema, v, 't'));
@@ -43,4 +43,25 @@ test('fixture override clamps to byte range and requires enabled', () => {
   const parsed = validate(overrideSchema, { enabled: true }, 't');
   assert.strictEqual(parsed.dim, 255, 'dim defaults to full');
   assert.strictEqual(parsed.blackout, false);
+});
+
+// channelCount is the fixture's DMX footprint: it decides where the next
+// fixture may be patched. An offset past it writes into the neighbour.
+test('a profile cannot map channels outside its own footprint', () => {
+  const base = { id: 'acme-par', name: 'PAR', channelCount: 4 };
+  assert.ok(ok(profileSchema, { ...base, channelMap: { red: 0, green: 1, blue: 3 } }));
+  rejects(profileSchema, { ...base, channelMap: { red: 0, uv: 4 } });    // one past the end
+  rejects(profileSchema, { ...base, channelMap: { red: 0, uv: 40 } });   // far past the end
+});
+
+// The extension's payload reaches state that is broadcast to every client, and
+// feeds search queries and cache keys. Field types were coerced; sizes weren't.
+test('deezer state bounds text fields and queue length', () => {
+  assert.ok(ok(deezerStateSchema, {
+    current: { name: 'Song', artist: 'Artist', isrc: 'GBxxx0000001', isPlaying: true },
+    upcoming: [{ name: 'Next', artist: 'Artist' }],
+  }));
+  assert.ok(ok(deezerStateSchema, {}), 'an empty report is legal');
+  rejects(deezerStateSchema, { current: { name: 'x'.repeat(1000) } });
+  rejects(deezerStateSchema, { upcoming: new Array(500).fill({ name: 'a', artist: 'b' }) });
 });

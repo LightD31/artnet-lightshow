@@ -2,6 +2,26 @@
 
 const BUILTIN_PROFILE_ID = 'cameo-root-par-6-12ch';
 
+// One DMX universe. A fixture patched past it has its writes silently dropped
+// by the 512-byte buffer, leaving it half-controllable with no error, so every
+// path that sets an address checks against this.
+const UNIVERSE_SIZE = 512;
+
+// A show is a handful of fixtures. The cap exists so a stuck client or a
+// scripted loop cannot grow the patch (and with it every state broadcast)
+// without bound.
+const MAX_FIXTURES = 64;
+
+/** Last channel a fixture at `address` with `channelCount` channels occupies. */
+function endChannel(address, channelCount) {
+  return address + channelCount - 1;
+}
+
+/** Does a fixture patched here fit inside the universe? */
+function fitsInUniverse(address, channelCount) {
+  return address >= 1 && endChannel(address, channelCount) <= UNIVERSE_SIZE;
+}
+
 // UV LEDs are physically dimmer than RGBW — boost their DMX value so they
 // remain visually competitive at lower dimmer settings.
 const UV_BOOST = 1.8;
@@ -72,6 +92,10 @@ function clearNonBuiltinProfiles() {
 
 module.exports = {
   BUILTIN_PROFILE_ID,
+  UNIVERSE_SIZE,
+  MAX_FIXTURES,
+  endChannel,
+  fitsInUniverse,
   UV_BOOST,
   RESERVED_PROFILE_IDS,
   getProfile,

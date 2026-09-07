@@ -8,7 +8,7 @@ const {
   midiConnectSchema,
   validate,
 } = require('./validation');
-const { listProfiles, getProfile } = require('./profiles');
+const { listProfiles, getProfile, endChannel, fitsInUniverse, UNIVERSE_SIZE } = require('./profiles');
 
 function attachSockets(io, { midi, integrations }) {
   io.on('connection', (socket) => {
@@ -43,11 +43,11 @@ function attachSockets(io, { midi, integrations }) {
         // land outside the DMX buffer and Node drops them silently, leaving the
         // fixture half-controllable with no error.
         const chCount = getProfile({ profileId: nextProfileId }).channelCount;
-        const endChannel = nextAddress + chCount - 1;
-        if (endChannel > 512) {
+        if (!fitsInUniverse(nextAddress, chCount)) {
           socket.emit('error-msg', {
             source: 'fixture',
-            message: `Address ${nextAddress} + ${chCount} channels ends at ${endChannel}, past the 512-channel universe`,
+            message: `Address ${nextAddress} + ${chCount} channels ends at `
+              + `${endChannel(nextAddress, chCount)}, past the ${UNIVERSE_SIZE}-channel universe`,
           });
           return;
         }

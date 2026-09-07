@@ -101,7 +101,24 @@ function renderDmx() {
 
   const energy = state.energyOverride ? resolveEnergyOverride() : null;
 
-  for (let i = 0; i < getFixtureCount(); i++) {
+  // Clear the whole universe every frame, then let each fixture write its own
+  // channels back. Zeroing per-fixture ranges instead used to leave any channel
+  // no *current* fixture covers latched at its last value forever: delete a
+  // fixture, re-address one, load a smaller show, or map a profile offset past
+  // its channelCount, and the orphaned channels kept streaming at 40 Hz with no
+  // way to clear them — master blackout only walked the current fixtures, so it
+  // could not turn those lights off either. A 512-byte memset per frame is far
+  // cheaper than the bug.
+  dmx.fill(0);
+
+  // With the buffer already cleared, a blackout is simply the empty universe.
+  if (state.masterBlackout) {
+    sendArtDmx(state.artnet, dmx);
+    return;
+  }
+
+  const fixtureCount = getFixtureCount();
+  for (let i = 0; i < fixtureCount; i++) {
     const fix = state.fixtures[i];
     const base = fix.address - 1;
     let col, dim, strobe;
@@ -123,16 +140,7 @@ function renderDmx() {
       dim = fc.dim; strobe = fc.strobe;
     }
 
-    const profile = getProfile(fix);
-    const chCount = profile.channelCount;
-    const ch = profile.channelMap;
-
-    if (state.masterBlackout) {
-      for (let c = 0; c < chCount; c++) dmx[base + c] = 0;
-      continue;
-    }
-
-    for (let c = 0; c < chCount; c++) dmx[base + c] = 0;
+    const ch = getProfile(fix).channelMap;
 
     // Energy overrides bypass master dimmer — always full output
     const ms = energy ? 1 : state.masterDimmer / 255;
@@ -167,11 +175,13 @@ function renderDmx() {
 }
 
 let beatInterval = null;
+let renderInterval = null;
 
 function bpmInterval() { return (60000 / state.bpm) / state.beatDivision; }
 
 function restartBeatTimer({ tickNow = false } = {}) {
   if (beatInterval) clearInterval(beatInterval);
+  beatInterval = null;
   if (state.running) {
     if (tickNow) tickPattern();
     beatInterval = setInterval(tickPattern, bpmInterval());
@@ -179,12 +189,31 @@ function restartBeatTimer({ tickNow = false } = {}) {
 }
 
 function startEngine() {
+  if (renderInterval) return;           // idempotent: never stack render loops
   restartBeatTimer();
-  setInterval(renderDmx, 25);
+  renderInterval = setInterval(renderDmx, 25);
+}
+
+/**
+ * Stop rendering and put the rig out.
+ *
+ * Art-Net receivers latch: they hold the last frame they were sent. Without a
+ * final all-zero frame, quitting the server leaves the fixtures burning
+ * whatever look was on stage — through the end of the night, or until someone
+ * power-cycles them.
+ */
+function stopEngine() {
+  if (beatInterval) clearInterval(beatInterval);
+  if (renderInterval) clearInterval(renderInterval);
+  beatInterval = null;
+  renderInterval = null;
+  dmx.fill(0);
+  sendArtDmx(state.artnet, dmx);
 }
 
 module.exports = {
   startEngine,
+  stopEngine,
   restartBeatTimer,
   resizeFixtureBuffers,
 };

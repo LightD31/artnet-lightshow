@@ -115,34 +115,15 @@ function getDmxSnapshot() {
   return Array.from(dmx.slice(0, getDmxSnapshotSize()));
 }
 
-// Full snapshot: GET /api/state and the initial push on socket connect. Kept
-// whole so REST consumers and first-connect behaviour are unchanged.
+// Full snapshot: GET /api/state and the initial push on socket connect. It is
+// exactly the three parts the incremental channels carry, reassembled — spelling
+// the fields out a second time only created two lists to keep in sync, and they
+// had already drifted once.
 function getClientState() {
   return {
-    artnet: { ...state.artnet },
-    bpm: state.bpm,
-    beatDivision: state.beatDivision,
-    running: state.running,
-    pattern: state.pattern,
-    colorA: state.colorA,
-    colorB: state.colorB,
-    colorC: state.colorC,
-    colorD: state.colorD,
-    masterDimmer: state.masterDimmer,
-    masterBlackout: state.masterBlackout,
-    strobeSpeed: state.strobeSpeed,
-    strobeFunction: state.strobeFunction,
-    energyOverride: state.energyOverride,
-    autoSource: state.autoSource,
-    autoPrefetchDepth: state.autoPrefetchDepth,
-    fixtures: state.fixtures.map((f) => ({ ...f })),
-    profiles: { ...listProfiles() },
-    colorPresets: COLOR_PRESETS,
-    patterns: PATTERNS,
-    energyEffects: ENERGY_EFFECTS,
-    strobeFunctions: STROBE_FUNCTIONS,
-    dmxSnapshot: Array.from(dmx.slice(0, getDmxSnapshotSize())),
-    ...extrasProvider(),
+    ...getLiveState(),
+    ...getCatalogs(),
+    dmxSnapshot: getDmxSnapshot(),
   };
 }
 

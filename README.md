@@ -304,6 +304,7 @@ See **[.env.example](.env.example)** for the full annotated list.
 | `DEEZER_ARL` | _(none)_ | Deezer ARL cookie — exact ISRC-matched audio |
 | `ANALYZE_LOCAL_ROOT` | _(none)_ | Confine local-file analysis to one directory tree |
 | `ANALYZER_TIMEOUT_MS` | `600000` | Ceiling on a single analysis before the worker is recycled |
+| `DOWNLOAD_TIMEOUT_MS` | `300000` | Ceiling on a single track download before yt-dlp is killed |
 
 Art-Net target and universe are also editable in the UI's ArtNet panel.
 
