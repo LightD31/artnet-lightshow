@@ -53,6 +53,10 @@ const DEFAULTS = {
     analyzerTimeoutMs: 600000,
     downloadTimeoutMs: 300000,
     localRoot: '',
+    // Blank auto-detects, preferring an interpreter that can actually import
+    // the analyzer's dependencies. Set it when you have several Pythons and
+    // pip installed into a different one than the launcher resolves to.
+    pythonPath: '',
   },
 };
 
@@ -113,6 +117,7 @@ const schema = z.object({
     analyzerTimeoutMs: z.number().int().min(60000).max(3600000),
     downloadTimeoutMs: z.number().int().min(10000).max(3600000),
     localRoot: z.string().max(4096),
+    pythonPath: z.string().max(4096),
   }).strict(),
 }).strict();
 

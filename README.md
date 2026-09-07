@@ -158,6 +158,38 @@ If `torch`/`panns_inference` are missing the analyser still runs, but genre
 classification is skipped silently and palette selection falls back to a
 mood-based path — so run `--check` if shows look off.
 
+### Which Python?
+
+Having *a* Python is not the same as having the right one. `py` (the Windows
+launcher) and `python` (whatever is first on `PATH`, often a conda env) are
+routinely two different installations, and `pip install -r requirements.txt`
+only ever populates one of them.
+
+The server therefore picks the interpreter that can actually import the
+analyser's dependencies, not merely the first one that answers, and prints what
+it chose at startup:
+
+```
+Python  →  py → C:\Users\you\miniconda3\python.exe (3.12.7)
+```
+
+If nothing on the machine has them, it says so at startup — with the exact
+command to fix it — rather than letting the failure surface minutes into a set
+as a `ModuleNotFoundError` after a track has already downloaded:
+
+```
+[python] C:\Python312\python.exe is missing: librosa, numpy, soundfile
+[python] Interpreters found:
+[python]   py     → C:\Python312\python.exe (3.12.7) — missing librosa, numpy, soundfile
+[python]   python → C:\Users\you\miniconda3\python.exe (3.12.7) — has everything
+[python] Fix: install into this interpreter with
+[python]   "C:\Python312\python.exe" -m pip install -r requirements.txt
+```
+
+To force a specific interpreter, set its full path in the settings page under
+**Analysis → Python**. The page shows which one is live and what it is missing.
+Changing it recycles the analyzer process; no restart needed.
+
 ### Playback sources
 
 | Source | What it needs |
@@ -298,7 +330,7 @@ immediately.
 | **Playback Sources** | PRO DJ LINK, Windows now-playing (SMTC) |
 | **Spotify** | Client ID, client secret, OAuth proxy, unverified-state escape hatch |
 | **Deezer** | ARL cookie — exact ISRC-matched audio instead of a yt-dlp search |
-| **Analysis** | Analyzer and download timeouts, library folder for local-file analysis |
+| **Analysis** | Analyzer and download timeouts, library folder, Python interpreter |
 | **Server & Access** | Bind address, port, access token, public URL |
 
 The four **Server & Access** settings are read before the server starts

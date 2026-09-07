@@ -35,12 +35,16 @@ function storedTimeoutMs() {
  */
 class AnalyzerWorker {
   /**
+   * `pythonExe` may be a string or a function returning one. As a function it
+   * is called at spawn time, so changing the interpreter in the settings page
+   * takes effect on the next worker rather than needing a server restart.
+   *
    * `timeoutMs` overrides the configured analysis timeout — a number, or a
    * function returning one. Left unset it follows the settings page, read per
    * request so a change applies to the next analysis without a restart.
    */
   constructor(pythonExe, scriptPath, { timeoutMs } = {}) {
-    this._pythonExe = pythonExe;
+    this._resolvePython = typeof pythonExe === 'function' ? pythonExe : () => pythonExe;
     this._scriptPath = scriptPath;
     this._timeoutMs = timeoutMs === undefined
       ? storedTimeoutMs
@@ -116,6 +120,21 @@ class AnalyzerWorker {
     }
   }
 
+  /**
+   * Drop the current worker process so the next analysis spawns a fresh one.
+   * Used when the interpreter changes under us — the running process is still
+   * the old Python, and nothing else would replace it.
+   */
+  restart(reason = 'configuration changed') {
+    if (!this._proc) return;                 // next spawn already picks it up
+    console.log(`[analyzer] recycling worker: ${reason}`);
+    this._recycling = true;
+    const proc = this._proc;
+    this._proc = null;
+    this._stdoutBuf = '';
+    try { proc.kill(); } catch (_) { /* already gone */ }
+  }
+
   shutdown() {
     this._shuttingDown = true;
     this._clearTimeout();
@@ -134,7 +153,7 @@ class AnalyzerWorker {
   // ── internals ────────────────────────────────────────────────────────────
 
   _spawn() {
-    const proc = spawn(this._pythonExe, [this._scriptPath, '--worker'], {
+    const proc = spawn(this._resolvePython(), [this._scriptPath, '--worker'], {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 

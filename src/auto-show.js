@@ -1,41 +1,22 @@
 'use strict';
 
-const { spawn, spawnSync } = require('child_process');
+const { spawn } = require('child_process');
 const { settings } = require('./server/settings');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const deezer = require('./deezer');
 const AnalyzerWorker = require('./analyzer-worker');
+const pythonEnv = require('./python-env');
 
-// Resolve a working Python executable once at startup. On Windows, `python`
-// often points at the Microsoft Store stub which exits non-zero and produces
-// no usable stderr — the symptom is "analysis silently fails after download".
-// Probing with --version and checking the exit code filters the stub out.
-// Order: `py` (Windows launcher, shipped with python.org installers) → `python3`
-// → `python`. Falls back to 'python' so the eventual spawn surfaces a clear
-// error if nothing is installed at all.
 // A download that never finishes is indistinguishable from one that never
 // started: the track change waits on this promise, so an unresponsive network
 // or a yt-dlp stuck on an extractor would leave the show on the previous
 // track's timeline with no error and no recovery. The analyzer worker already
-// bounds its own stage (ANALYZER_TIMEOUT_MS); this bounds the download.
+// bounds its own stage; this bounds the download.
 function downloadTimeoutMs() {
   return settings.get('analysis.downloadTimeoutMs');
 }
-
-const PYTHON_EXE = (() => {
-  const candidates = process.platform === 'win32'
-    ? ['py', 'python3', 'python']
-    : ['python3', 'python'];
-  for (const name of candidates) {
-    try {
-      const r = spawnSync(name, ['--version'], { stdio: 'ignore' });
-      if (r.status === 0) return name;
-    } catch (_) { /* try the next candidate */ }
-  }
-  return 'python';
-})();
 
 // ── Palette tetrads ─────────────────────────────────────────────────────────
 // Each song locks to a single 4-colour "look" from this bank for the whole
@@ -213,7 +194,7 @@ class AutoShow {
     this._patterns = patterns;
     this._cache = cache;
     this._worker = new AnalyzerWorker(
-      PYTHON_EXE, path.join(__dirname, 'essentia-analyze.py'),
+      pythonEnv.pythonExe, path.join(__dirname, 'essentia-analyze.py'),
     );
     // Spin up the Python process immediately so its imports + PANNs preload
     // happen during server startup, hidden behind the user opening the UI
@@ -301,6 +282,11 @@ class AutoShow {
    * Tear down the persistent analyzer subprocess. Called on server shutdown.
    * Safe to call multiple times.
    */
+  /** Recycle the analyzer process — used when the interpreter changes. */
+  restartWorker(reason) {
+    if (this._worker) this._worker.restart(reason);
+  }
+
   destroy() {
     this.stop();
     if (this._worker) this._worker.shutdown();
@@ -1907,4 +1893,7 @@ class AutoShow {
 }
 
 module.exports = AutoShow;
-module.exports.PYTHON_EXE = PYTHON_EXE;
+// Kept as a getter: callers (the startup banner, scripts/bench-worker.js) read
+// it after the settings store has loaded, and it must reflect a configured
+// interpreter rather than a value frozen at require time.
+Object.defineProperty(module.exports, 'PYTHON_EXE', { get: () => pythonEnv.pythonExe() });

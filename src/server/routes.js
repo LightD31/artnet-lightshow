@@ -23,6 +23,7 @@ const {
 const { profileSchema, showSchema, midiConnectSchema, deezerStateSchema, validate } = require('./validation');
 const { settings, RESTART_PATHS, CONFIG_FILE } = require('./settings');
 const { generateToken } = require('./auth');
+const pythonEnv = require('../python-env');
 
 // Audio uploads genuinely need headroom; GDTF files do not. Separate limits so
 // the fixture importer isn't handed a 50 MB budget it has no use for — a real
@@ -648,6 +649,10 @@ function attachRoutes(app, deps) {
       secrets,
       restartKeys: RESTART_PATHS,
       pendingRestart: applier.pendingRestart(),
+      // Which interpreter the analyzer actually resolved to, and whether it can
+      // import what it needs. Shown under the Python field, because "I ran pip
+      // install" and "the analyzer can import librosa" are different claims.
+      python: pythonEnv.resolve(),
       // Read-only context the page shows next to the restart-only fields.
       running: applier.bootValues.server,
       configFile: CONFIG_FILE,

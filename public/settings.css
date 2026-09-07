@@ -330,3 +330,7 @@
   .setting-field { align-items: flex-start; flex-direction: column; gap: 6px; }
   .setting-control { width: 100%; }
 }
+
+/* Live readout of what the server resolved, as opposed to what the field says. */
+.setting-note { font-family: var(--mono); font-size: 10px; }
+.setting-note.warn { color: var(--amber); }
