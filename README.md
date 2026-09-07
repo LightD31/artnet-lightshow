@@ -40,6 +40,11 @@ via **Bitfocus Companion**, and a REST API.
 - Caches analyses on disk and **prefetches the next tracks in the queue**, so a
   track change flips instantly instead of stalling for a download
 
+**Before the show**
+
+- **Preflight** — one command that checks Art-Net reachability, the patch,
+  Python, ffmpeg, yt-dlp and the genre model before doors open
+
 **Fixtures**
 
 - **GDTF import** — drop in a `.gdtf` file, pick a DMX mode, patch it
@@ -59,6 +64,8 @@ npm start
 ```
 
 Open **http://localhost:3000**. Fixture patching lives at **/settings.html**.
+
+Before a show, run `npm run preflight` — see [Pre-show check](#pre-show-check).
 
 The auto-show needs Python and a few extras — see
 [Auto show setup](#auto-show-setup). Manual control works without them.
@@ -176,6 +183,55 @@ fixture you deliberately patched somewhere else stays put.
 Universes with nothing patched on them are transmitted for one final all-zero
 frame and then dropped, so a node never sits holding the look it had when its
 last fixture moved away. The server transmits at most **32** universes.
+
+---
+
+## Pre-show check
+
+Everything in this stack degrades quietly on purpose. Art-Net send failures are
+logged and the render loop carries on. A missing PANNs checkpoint drops genre
+classification and falls back to a mood palette. An absent ffmpeg only surfaces
+when the first track downloads. Individually that is right — none of it should
+take the show down mid-set. Collectively it means the first sign of a broken rig
+is the rig not working, in front of an audience.
+
+```bash
+npm run preflight
+```
+
+It asks every one of those questions while there is still time to fix the
+answer, and exits non-zero if something will not work:
+
+```
+  [ok]   Art-Net output     2 nodes answered: DMX-1 at 192.168.1.50 (universe 0), …
+  [--]   sACN output        Disabled. Turn it on in Settings → sACN (E1.31) …
+  [ok]   Fixture patch      8 fixtures on universes 0, 1, no overlaps.
+  [warn] MIDI               "X-TOUCH COMPACT" is not among the available inputs (none).
+                            → Plug the controller in and reconnect it in Settings → MIDI.
+  [FAIL] ffmpeg             Not usable — not found on PATH. …
+                            → Install ffmpeg with your package manager …
+```
+
+| Status | Meaning |
+|--------|---------|
+| `ok` | Working. |
+| `warn` | Works, but degraded — or we could not prove it either way. Does not fail the run. |
+| `FAIL` | Will not work. Exits 1. |
+| `--` | Nothing to verify, just worth seeing. |
+
+What it checks: Art-Net reachability (it sends an ArtPoll and lists the nodes
+that answer), the sACN configuration and universe mapping, the fixture patch
+for overlaps and out-of-universe addresses, the bind address and token, the
+MIDI controller, the Python interpreter and the analyser's imports, ffmpeg,
+yt-dlp, the PANNs checkpoint, the analysis cache, and which playback sources
+are connected.
+
+The same report is in the settings page under **Pre-show Check** — run there,
+it also sees the *live* MIDI and playback-source connections rather than only
+what is configured.
+
+A node that never answers an ArtPoll is a warning, not a failure: plenty of
+them do not implement it, and a broadcast rig works fine without ever replying.
 
 ---
 
@@ -442,6 +498,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/midi/learn/cancel` | Disarm learn |
 | POST | `/api/prolink/enable` · `/disable` · `/toggle` | PRO DJ LINK |
 | GET | `/auth/spotify` · `/auth/spotify/callback` | Spotify OAuth |
+| GET | `/api/preflight` | Run the pre-show check against the live subsystems |
 | GET | `/api/spotify/now-playing` · POST `/api/spotify/disconnect` | Spotify |
 | POST | `/api/nowplaying/disconnect` | Drop the OS media session source |
 | POST | `/api/deezer/state` · `/api/deezer/disconnect` | Used by the browser extension |
@@ -532,11 +589,12 @@ panel; changes there are persisted to the same file.
 ## Development
 
 ```bash
-npm run lint        # ESLint
-npm test            # node:test unit suite
-npm run check       # both
+npm run lint         # ESLint
+npm test             # node:test unit suite
+npm run check        # both
+npm run preflight    # pre-show check (exits 1 if something will not work)
 npm run watch:client # rebuild the client bundle on change
-npm run dev         # server with --watch
+npm run dev          # server with --watch
 ```
 
 `public/app.bundle.js` is generated from `public-src/` by esbuild and is not

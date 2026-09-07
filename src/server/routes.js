@@ -28,6 +28,7 @@ const {
 const { profileSchema, showSchema, midiConnectSchema, deezerStateSchema, dmxUniverse, validate } = require('./validation');
 const { settings, RESTART_PATHS, CONFIG_FILE } = require('./settings');
 const { generateToken } = require('./auth');
+const { runPreflight } = require('./preflight');
 const pythonEnv = require('../python-env');
 
 // Audio uploads genuinely need headroom; GDTF files do not. Separate limits so
@@ -823,6 +824,15 @@ function attachRoutes(app, deps) {
     const ok = analysisCache.delete(key);
     res.json({ ok });
   });
+
+  // ─── Preflight ────────────────────────────────────────────────────────────
+  // The same checks `npm run preflight` runs, with the live subsystems wired in
+  // so MIDI and the playback sources report what is actually connected rather
+  // than what is merely configured.
+  app.get('/api/preflight', asyncHandler(async (_req, res) => {
+    const report = await runPreflight({ midi, spotify, prolink, analysisCache });
+    res.json({ ok: true, report });
+  }));
 
   // ─── Settings ─────────────────────────────────────────────────────────────
   // Everything the operator can configure. Secrets are never sent back: the

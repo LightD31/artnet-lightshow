@@ -1022,5 +1022,58 @@ async function loadSettings() {
   } catch (_) { /* page still works without the config sections */ }
 }
 
+// ── Pre-show check ───────────────────────────────────────────────────────────
+// The same checks `npm run preflight` runs, but against the live subsystems, so
+// MIDI and the playback sources report what is connected rather than what is
+// merely configured.
+
+const PREFLIGHT_GLYPH = { ok: '\u2713', warn: '!', fail: '\u2715', info: '\u00b7' };
+
+function renderPreflight(report) {
+  const host = document.getElementById('preflight-results');
+  host.textContent = '';
+
+  const summary = el('div', `preflight-summary ${report.ok ? (report.counts.warn ? 'warn' : 'ok') : 'fail'}`);
+  summary.textContent = report.ok
+    ? (report.counts.warn
+      ? `Ready, with warnings — ${report.counts.ok} passed, ${report.counts.warn} to look at.`
+      : `Ready. ${report.counts.ok} checks passed.`)
+    : `Not ready — ${report.counts.fail} problem${report.counts.fail === 1 ? '' : 's'} to fix.`;
+  host.appendChild(summary);
+
+  for (const check of report.checks) {
+    const row = el('div', `preflight-row ${check.status}`);
+    row.appendChild(el('span', 'preflight-mark', PREFLIGHT_GLYPH[check.status] || '?'));
+
+    const body = el('div', 'preflight-body');
+    body.appendChild(el('div', 'preflight-label', check.label));
+    body.appendChild(el('div', 'preflight-detail', check.detail));
+    if (check.fix && check.status !== 'ok' && check.status !== 'info') {
+      body.appendChild(el('div', 'preflight-fix', check.fix));
+    }
+    row.appendChild(body);
+    host.appendChild(row);
+  }
+}
+
+document.getElementById('preflight-run').addEventListener('click', async (e) => {
+  const button = e.currentTarget;
+  const host = document.getElementById('preflight-results');
+  button.disabled = true;
+  host.textContent = '';
+  // The Art-Net poll waits a second and a half for replies, and the external
+  // tool probes each spawn a process — say something rather than looking hung.
+  host.appendChild(el('div', 'preflight-summary', 'Checking\u2026'));
+  try {
+    const res = await fetch('/api/preflight').then(r => r.json());
+    if (res.ok) renderPreflight(res.report);
+    else host.textContent = res.error || 'Preflight failed';
+  } catch (err) {
+    host.textContent = `Preflight failed: ${err.message}`;
+  } finally {
+    button.disabled = false;
+  }
+});
+
 loadSettings();
 loadMidiMap();

@@ -25,6 +25,18 @@
 
 <main class="settings-main">
 
+  <!-- ── Preflight ──────────────────────────────────────── -->
+  <section class="card settings-section">
+    <div class="card-title">Pre-show Check</div>
+    <p class="section-desc">
+      Everything in this stack degrades quietly on purpose, so the first sign of a broken rig is
+      usually the rig not working. Run this before doors open instead. Also available as
+      <code>npm run preflight</code>.
+    </p>
+    <button class="btn active" id="preflight-run">Run check</button>
+    <div class="preflight-results" id="preflight-results"></div>
+  </section>
+
   <!-- ── ArtNet Settings ─────────────────────────────────── -->
   <section class="card settings-section">
     <div class="card-title">ArtNet Output</div>
