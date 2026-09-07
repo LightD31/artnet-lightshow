@@ -486,6 +486,11 @@ const SETTINGS_SPEC = [
         help: 'How long yt-dlp may run before it is killed.' },
       { path: 'analysis.localRoot', label: 'Library Folder', type: 'text',
         help: 'Confine "analyze a local file" to this folder. Blank allows any path.' },
+      { path: 'analysis.pythonPath', label: 'Python', type: 'text',
+        help: 'Blank auto-detects, preferring an interpreter that can import the analyzer\'s '
+          + 'dependencies. Set a full path when pip installed into a different Python than the '
+          + 'one that gets picked.',
+        note: pythonNote },
     ],
   },
 ];
@@ -505,7 +510,24 @@ const SERVER_SPEC = {
   ],
 };
 
-let settingsData = null;   // { settings, secrets, restartKeys, pendingRestart, running }
+let settingsData = null;   // { settings, secrets, restartKeys, pendingRestart, running, python }
+
+/**
+ * What the server actually resolved, rather than what the box says. "I ran pip
+ * install" and "the analyzer can import librosa" are different claims, and on a
+ * machine with several Pythons they are routinely about different interpreters.
+ */
+function pythonNote(data) {
+  const py = data && data.python;
+  if (!py) return null;
+  if (!py.ok) return { ok: false, text: `Currently: ${py.exe} — cannot be run.` };
+  const where = py.executable || py.exe;
+  if (py.missing && py.missing.length) {
+    return { ok: false, text: `Currently: ${where} (${py.version}) — missing ${py.missing.join(', ')}. `
+      + `Install with: "${where}" -m pip install -r requirements.txt` };
+  }
+  return { ok: true, text: `Currently: ${where} (${py.version}) — all dependencies present.` };
+}
 
 const at = (obj, dotted) => dotted.split('.').reduce((a, k) => (a == null ? a : a[k]), obj);
 
@@ -587,6 +609,10 @@ function renderSection(spec, host) {
 
     form.appendChild(row);
     if (field.help) form.appendChild(el('p', 'setting-help', field.help));
+    if (field.note) {
+      const note = field.note(settingsData);
+      if (note) form.appendChild(el('p', `setting-help setting-note${note.ok ? '' : ' warn'}`, note.text));
+    }
   }
 
   const actions = el('div', 'setting-actions');

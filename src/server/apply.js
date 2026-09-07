@@ -2,6 +2,7 @@
 
 const { state } = require('./state');
 const { settings } = require('./settings');
+const pythonEnv = require('../python-env');
 
 /**
  * Push stored settings into the running subsystems.
@@ -13,7 +14,7 @@ const { settings } = require('./settings');
  * from the store at call time by the code that uses them, so they need no
  * action at all.
  */
-function createApplier({ midi, spotify, smtc, deezer, applyPatch, broadcast }) {
+function createApplier({ midi, spotify, smtc, deezer, autoShow, applyPatch, broadcast }) {
   // What this process actually booted with, for pending-restart detection.
   const bootValues = {
     server: {
@@ -64,6 +65,20 @@ function createApplier({ midi, spotify, smtc, deezer, applyPatch, broadcast }) {
     applyPatch({ prolinkEnabled: settings.get('sources.prolink') });
   }
 
+  /**
+   * The interpreter is cached (probing three Pythons is not free) and the
+   * running worker process *is* the old one, so a change needs both a
+   * re-resolve and a recycle.
+   */
+  function applyPython() {
+    pythonEnv._reset();
+    const info = pythonEnv.resolve();
+    console.log(`[python] interpreter is now ${pythonEnv.describe()}`);
+    pythonEnv.warnIfUnusable();
+    if (autoShow && autoShow.restartWorker) autoShow.restartWorker('interpreter changed');
+    return info;
+  }
+
   function applyDeezer() {
     const arl = settings.get('deezer.arl');
     if (!arl) return;
@@ -82,6 +97,7 @@ function createApplier({ midi, spotify, smtc, deezer, applyPatch, broadcast }) {
     { match: (k) => k.startsWith('spotify.') && k !== 'spotify.allowUnverifiedState', run: applySpotify },
     { match: (k) => k === 'server.publicUrl', run: refreshCallbackUrl },
     { match: (k) => k === 'deezer.arl', run: applyDeezer },
+    { match: (k) => k === 'analysis.pythonPath', run: applyPython },
   ];
 
   return {

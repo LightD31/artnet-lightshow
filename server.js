@@ -26,6 +26,7 @@ const { attachSockets } = require('./src/server/sockets');
 const { createAuth, configError, isLoopbackHost } = require('./src/server/auth');
 const { settings, CONFIG_FILE, warnAboutLegacyEnv } = require('./src/server/settings');
 const { createApplier } = require('./src/server/apply');
+const pythonEnv = require('./src/python-env');
 
 // A .env from before settings moved into the UI would otherwise go quiet: the
 // rig would come up on defaults with no clue why. Say which variables are now
@@ -84,7 +85,7 @@ smtc.onUpdate((payload) => nowPlaying.updatePlayback(payload));
 // Everything configurable is pushed into the subsystems from one place, both
 // here at boot and again whenever the settings page saves.
 const applier = createApplier({
-  midi, spotify, smtc, deezer, applyPatch,
+  midi, spotify, smtc, deezer, autoShow, applyPatch,
   broadcast: () => integrations.broadcast(),
 });
 applier.applyAll();
@@ -135,7 +136,13 @@ server.listen(PORT, HOST, () => {
     ? 'unavailable (Windows-only)'
     : smtcEnabled ? 'reading OS media session (SMTC)' : 'disabled in settings';
   console.log(`  Now Playing       →  ${npStatus}`);
-  console.log(`  Auto Show         →  Essentia + Spotify integration (python: ${AutoShow.PYTHON_EXE})\n`);
+  console.log(`  Python            →  ${pythonEnv.describe()}`);
+  console.log(`  Auto Show         →  Essentia + Spotify integration\n`);
+
+  // Say this after the banner, where it won't scroll past unnoticed: otherwise
+  // the first sign of a wrong interpreter is a traceback minutes into a set,
+  // after a track has already downloaded.
+  pythonEnv.warnIfUnusable();
 });
 
 // ─── Shutdown ───────────────────────────────────────────────────────────────
