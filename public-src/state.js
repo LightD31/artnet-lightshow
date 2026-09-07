@@ -42,6 +42,51 @@ socket.on('auto-position', ({ positionMs, running }) => {
   autoPositionSig.value = { positionMs, running: !!running, updatedAt: performance.now() };
 });
 
+// Toast comes from public/toast.js, which runs before this bundle. Guarded so
+// the bundle still works if it ever loads without it.
+const toast = (typeof window !== 'undefined' && window.Toast) || {
+  error: () => {}, info: () => {}, success: () => {}, push: () => () => {},
+};
+export { toast };
+
+// The server refuses invalid input on every socket path — an address past the
+// end of a universe, a fixture move over the transmit cap, a bad MIDI port.
+// Until this listener existed none of it reached the operator: the control just
+// snapped back on the next broadcast, which reads as the app eating your input.
+//
+// The messages are written for a person (they name the fixture and say what the
+// limit is), so they go out as-is.
+socket.on('error-msg', ({ message }) => {
+  if (message) toast.error(message);
+});
+
+/**
+ * Fetch a JSON API and surface the failure.
+ *
+ * Nearly every call site was fire-and-forget, so a 400 from the server looked
+ * exactly like success. Returns the parsed body either way; callers that want
+ * to branch still can, and callers that don't at least stop swallowing errors.
+ */
+export async function api(path, init) {
+  try {
+    const res = await fetch(path, {
+      ...init,
+      ...(init && init.body ? { headers: { 'Content-Type': 'application/json', ...(init.headers || {}) } } : {}),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body.ok === false) {
+      toast.error(body.error || `${init && init.method ? init.method : 'GET'} ${path} failed (${res.status})`);
+      return { ok: false, error: body.error || `HTTP ${res.status}`, ...body };
+    }
+    return { ok: true, ...body };
+  } catch (err) {
+    // A network-level failure here almost always means the server went away
+    // mid-show, which is worth saying plainly rather than as a bare TypeError.
+    toast.error(`Could not reach the server: ${err.message}`);
+    return { ok: false, error: err.message };
+  }
+}
+
 export function send(patch) { socket.emit('set', patch); }
 export function emitOverride(id, override) { socket.emit('override', { id, override }); }
 export function emitFixture(payload) { socket.emit('fixture', payload); }

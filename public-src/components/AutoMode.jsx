@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'preact/hooks';
-import { stateSig, send } from '../state.js';
+import { stateSig, send, api } from '../state.js';
 import { AnalysisStats } from './AnalysisStats.jsx';
 import { AutoTimeline } from './AutoTimeline.jsx';
 
@@ -37,7 +37,7 @@ export function AutoMode() {
   useEffect(() => {
     if (pendingStartRef.current && as && as.status === 'ready') {
       pendingStartRef.current = false;
-      fetch('/api/auto/start', { method: 'POST' });
+      api('/api/auto/start', { method: 'POST' });
     }
   }, [as && as.status]);
 
@@ -54,7 +54,7 @@ export function AutoMode() {
 
   const analyzeAndStart = () => {
     if (as.status === 'playing') return;
-    if (as.status === 'ready')   { fetch('/api/auto/start', { method: 'POST' }); return; }
+    if (as.status === 'ready')   { api('/api/auto/start', { method: 'POST' }); return; }
 
     const source = s.autoSource || 'auto';
     const spotifyReady = sp.authenticated;
@@ -66,19 +66,19 @@ export function AutoMode() {
     const useNowPlaying = source === 'nowplaying' || (source === 'auto' && !spotifyReady && !deezerReady && nowPlayingReady);
     const useProlink    = source === 'prolink'    || (source === 'auto' && !spotifyReady && !deezerReady && !nowPlayingReady && prolinkReady);
 
+    // A failed analyse must clear the pending flag, or the next status change
+    // fires a start for a track that never analysed. api() reports the reason.
     const triggerAnalyze = (endpoint) => {
       pendingStartRef.current = true;
-      fetch(endpoint, { method: 'POST' })
-        .then((r) => r.json())
-        .then((d) => { if (!d.ok) pendingStartRef.current = false; })
-        .catch(() => { pendingStartRef.current = false; });
+      api(endpoint, { method: 'POST' })
+        .then((d) => { if (!d.ok) pendingStartRef.current = false; });
     };
 
     if (useSpotify)         triggerAnalyze('/api/auto/analyze-spotify');
     else if (useDeezer)     triggerAnalyze('/api/auto/analyze-deezer');
     else if (useNowPlaying) triggerAnalyze('/api/auto/analyze-nowplaying');
     else if (useProlink)    triggerAnalyze('/api/auto/analyze-prolink');
-    else fetch('/api/auto/start', { method: 'POST' });
+    else api('/api/auto/start', { method: 'POST' });
   };
   const fallbackStatus = next && next.status ? next.status : 'idle';
 
@@ -141,7 +141,7 @@ export function AutoMode() {
               <button
                 class="btn"
                 disabled={as.status !== 'playing'}
-                onClick={() => { pendingStartRef.current = false; fetch('/api/auto/stop', { method: 'POST' }); }}
+                onClick={() => { pendingStartRef.current = false; api('/api/auto/stop', { method: 'POST' }); }}
               >■</button>
             </div>
           </div>
@@ -170,7 +170,7 @@ export function AutoMode() {
               <button
                 class="btn sm danger"
                 style={{ marginLeft: 'auto' }}
-                onClick={() => fetch('/api/spotify/disconnect', { method: 'POST' })}
+                onClick={() => api('/api/spotify/disconnect', { method: 'POST' })}
               >Disconnect</button>
             )}
           </div>

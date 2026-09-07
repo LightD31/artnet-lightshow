@@ -1,12 +1,12 @@
 import { useState } from 'preact/hooks';
-import { stateSig } from '../state.js';
+import { stateSig, api } from '../state.js';
 
 // Progress rides the state broadcast, so this component only ever posts.
-const post = (path, body) => fetch(`/api/warm${path}`, {
+// Failures surface as toasts via api().
+const post = (path, body) => api(`/api/warm${path}`, {
   method: body === undefined ? 'DELETE' : 'POST',
-  headers: { 'Content-Type': 'application/json' },
   ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-}).then((r) => r.json()).catch((err) => ({ ok: false, error: err.message }));
+});
 
 const STATUS_LABEL = {
   pending: 'queued',
@@ -35,16 +35,11 @@ export function Warm() {
   const s = stateSig.value;
   const warm = s.warm || { running: false, total: 0, done: 0, ready: 0, failed: 0, tracks: [] };
   const [text, setText] = useState('');
-  const [error, setError] = useState('');
   const [open, setOpen] = useState(false);
 
   const spotifyReady = !!(s.spotify && s.spotify.authenticated);
 
-  const start = async (body) => {
-    setError('');
-    const res = body ? await post('', body) : await post('/spotify-queue', {});
-    if (!res.ok) setError(res.error || 'Could not start warming');
-  };
+  const start = (body) => (body ? post('', body) : post('/spotify-queue', {}));
 
   const hasList = warm.tracks && warm.tracks.length > 0;
 
@@ -97,8 +92,6 @@ export function Warm() {
               <button class="btn" onClick={() => post('')}>Clear</button>
             )}
           </div>
-
-          {error && <div class="warm-error">{error}</div>}
 
           {hasList && (
             <div class="warm-list">
