@@ -33,8 +33,27 @@ Temporary add-ons unload on browser restart. For a permanent install, sign it
 via [AMO](https://addons.mozilla.org) or use Firefox Developer/ESR with
 `xpinstall.signatures.required = false` in `about:config`.
 
-> If your server isn't on `localhost:3000`, edit `SERVER` in `background.js`
-> **and** the `permissions` host in `manifest.json` to match.
+## Settings
+
+Open the add-on's **Preferences** (about:addons → this extension → Preferences)
+to set:
+
+- **Lightshow server** — host and port, if you don't run it on
+  `localhost:3000`. Pointing it at a non-loopback address asks for an extra host
+  permission at save time; the manifest only grants loopback by default.
+- **Access token** — needed only when the server runs with `LIGHTSHOW_TOKEN`
+  set, which is mandatory whenever it is bound to anything but localhost. Must
+  match the server's token.
+
+Both are stored in `browser.storage.local`. No editing of source files needed.
+
+## Manifest version
+
+This is still a **Manifest V2** add-on. Firefox supports MV2 today, but it is
+on the way out and a migration to MV3 is outstanding — see `AUDIT.md` L11. It
+was deliberately not done as part of the audit work because an MV3 migration
+changes the background-script lifecycle and cannot be verified without loading
+the add-on into a real Firefox profile against a live Deezer session.
 
 ## If it stops detecting tracks (dzPlayer changed)
 

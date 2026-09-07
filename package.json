@@ -8,7 +8,11 @@
     "watch:client": "node scripts/build-client.js --watch",
     "prestart": "npm run build:client",
     "start": "node --openssl-legacy-provider server.js",
-    "dev": "node --openssl-legacy-provider --watch server.js"
+    "dev": "node --openssl-legacy-provider --watch server.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "node --test",
+    "check": "npm run lint && npm test"
   },
   "engines": {
     "node": ">=20"
@@ -29,7 +33,8 @@
     "zod": "^3.22.4"
   },
   "devDependencies": {
-    "esbuild": "^0.20.0"
+    "esbuild": "^0.20.0",
+    "eslint": "^9.39.5"
   },
   "overrides": {
     "better-sqlite3": "^12.0.0",

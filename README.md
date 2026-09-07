@@ -1,224 +1,72 @@
 # ArtNet Lightshow
 
-Web-based light show controller for **4× Cameo ROOT PAR 6** fixtures over ArtNet.
-Supports **Behringer X-Touch Compact** (MIDI) and **Elgato Stream Deck** via **Bitfocus Companion**.
+Web-based light show controller speaking **Art-Net** to DMX fixtures, with an
+automatic mode that analyses the music you're playing and builds a show from it.
+
+Ships configured for **4× Cameo ROOT PAR 6**, but any fixture works — import a
+GDTF profile and patch it in the UI.
+
+Control surfaces: the web UI, a **Behringer X-Touch Compact** over MIDI, an
+**Elgato Stream Deck** via **Bitfocus Companion**, and a REST API.
+
+---
 
 ## Features
 
-- **BPM engine** — tap tempo, manual entry, beat subdivision (1/1, 1/2, 1/4, 1/8)
-- **10 patterns** — Solid, Chase →, Chase ←, Ping Pong, Strobe, Fade, Colour Cycle, Rainbow, Twinkle, Split
-- **13 colour presets** — Red, Orange, Amber, Yellow, Green, Cyan, Blue, Purple, Magenta, White, Warm White, UV, Blackout
-- **Dual colour slots** — Colour A & B for split/alternating patterns
-- **Per-fixture overrides** — independent RGBWAUV + Dimmer + Strobe per fixture, or instant blackout
-- **Energy overrides** — global one-touch effects (White Strobe, Blinder, UV Strobe, Colour Strobe, All On) that trump everything except master blackout
-- **Master controls** — global dimmer, master blackout, play/stop
-- **Live DMX monitor** — real-time channel values for all 4 fixtures
-- **Ableton Link** — sync BPM with Ableton Live and other Link-enabled apps via Python aalink bridge
-- **MIDI control** — Behringer X-Touch Compact with LED feedback
-- **Stream Deck** — via Bitfocus Companion module (actions, feedbacks, presets)
-- **REST API** — for custom integrations
+**Manual control**
 
-## Quick Start
+- **BPM engine** — tap tempo, manual entry, beat subdivision (1/1 … 1/16)
+- **25 patterns** — solid, chases, ping-pong, strobe, fade, colour cycle,
+  rainbow, twinkle, sparkle, wave, runner, splits and halves/thirds/quarters
+  variants for larger rigs
+- **24 colour presets** and four colour slots (A–D) that patterns draw from
+- **Per-fixture overrides** — independent RGBWAUV + dimmer + strobe, or an
+  instant per-fixture blackout
+- **Energy overrides** — one-touch panic effects that trump everything except
+  master blackout
+- **Master controls** — global dimmer, master blackout, play/stop
+- **Live DMX monitor** — real-time channel values
+
+**Automatic show**
+
+- Analyses a track (librosa + a PANNs genre classifier) and generates a timed
+  show: palette, pattern choices, drops, build-ups and accents
+- Follows playback from **Spotify**, **PRO DJ LINK** (CDJs), the **Windows OS
+  media session** (any player that reports to it), or the **Deezer web player**
+  via the bundled browser extension
+- Caches analyses on disk and **prefetches the next tracks in the queue**, so a
+  track change flips instantly instead of stalling for a download
+
+**Fixtures**
+
+- **GDTF import** — drop in a `.gdtf` file, pick a DMX mode, patch it
+- Save and load the whole patch as a show file
+
+---
+
+## Quick start
 
 ```bash
 npm install
 npm start
 ```
 
-Open **http://localhost:3000**.
+Open **http://localhost:3000**. Fixture patching lives at **/settings.html**.
+
+The auto-show needs Python and a few extras — see
+[Auto show setup](#auto-show-setup). Manual control works without them.
 
 ---
-
-## Fixture Setup
-
-### DMX Addresses (default)
-
-| Fixture | Label  | Start Address |
-|---------|--------|--------------|
-| 1       | PAR 1  | 1            |
-| 2       | PAR 2  | 13           |
-| 3       | PAR 3  | 25           |
-| 4       | PAR 4  | 37           |
-
-### Channel Map — 12-Channel Mode (D12CH)
-
-| Channel | Function      |
-|---------|---------------|
-| 1       | Dimmer        |
-| 2       | Dimmer fine   |
-| 3       | Strobe        |
-| 4       | Red           |
-| 5       | Green         |
-| 6       | Blue          |
-| 7       | White         |
-| 8       | Amber         |
-| 9       | UV            |
-| 10      | Colour macros (keep 0) |
-| 11      | Sound         |
-| 12      | DMX Delay     |
-
-Set each fixture to **12-channel mode (D12CH)** and configure the start address as above.
-
----
-
-## Energy Overrides
-
-Energy overrides are "panic button" effects that instantly override all patterns and per-fixture settings (except master blackout). Only one can be active at a time; set `energyOverride: null` to clear.
-
-| ID             | Name           | Description                    |
-|----------------|----------------|--------------------------------|
-| `white-strobe` | White Strobe   | Full white + fast strobe       |
-| `blinder`      | Blinder        | Full white wall of light       |
-| `uv-strobe`    | UV Strobe      | Full UV + fast strobe          |
-| `color-strobe` | Colour Strobe  | Colour A + fast strobe         |
-| `all-on`       | All On         | Every channel maxed out        |
-
-Energy overrides bypass the master dimmer — output is always at full intensity.
-
-Activate via UI, MIDI (encoder push 8 — hold to activate, release to clear), REST, or Companion.
-
----
-
-## Ableton Link
-
-Sync BPM with Ableton Live or any other Ableton Link-enabled app.
-
-**Requirements:** Python 3 + aalink
-
-```bash
-pip install aalink
-```
-
-Enable Link at startup:
-
-```bash
-LINK=1 npm start
-```
-
-Or toggle Link from the web UI **Link** panel at runtime. When Link is active, tempo changes from any peer are applied automatically and local BPM changes are pushed back to the session.
-
----
-
-## MIDI — Behringer X-Touch Compact
-
-Set the X-Touch Compact to **Standard MIDI mode** (Layer A).
-
-The server auto-detects the first available MIDI device named "X-Touch".
-Override via environment variables:
-
-```bash
-MIDI_INPUT="X-Touch Compact" MIDI_OUTPUT="X-Touch Compact" npm start
-```
-
-Or use the **MIDI panel** in the web UI to select ports at runtime.
-
-### Default Mapping
-
-| Control | MIDI | Action |
-|---------|------|--------|
-| Encoder 1 | CC 1 (relative) | BPM ±1/step |
-| Encoder 2 | CC 2 (relative) | Master dimmer |
-| Encoder 3–6 | CC 3–6 (relative) | Fixture 1–4 dimmer |
-| Encoder 7 | CC 7 (relative) | Strobe speed |
-| Fader 1–4 | Pitch Bend ch 1–4 | Fixture 1–4 dimmer (absolute) |
-| Fader 9 (master) | Pitch Bend ch 9 | Master dimmer (absolute) |
-| Enc push 1 | Note 0 | Tap tempo |
-| Enc push 2 | Note 1 | Toggle blackout |
-| Enc push 3 | Note 2 | Toggle play/stop |
-| Enc push 4–7 | Note 3–6 | Fixture 1–4 blackout |
-| Enc push 8 | Note 7 | Energy override (hold to activate, release to clear) |
-| Button row 1 | Note 8–17 | Patterns (10) |
-| Button row 2 | Note 18–23 | Colour A presets (first 6) |
-
-LEDs on the X-Touch Compact are updated automatically to reflect the current state.
-
----
-
-## Stream Deck — Bitfocus Companion
-
-See **[companion-module/INSTALL.md](companion-module/INSTALL.md)** for full installation instructions.
-
-Requires Companion **v4.3+** (the module uses the v2 connection API).
-
-### Quick Summary
-
-1. Run `npm install` inside `companion-module/`
-2. In the Companion launcher, open advanced settings (cog icon) and pick a **Developer modules** folder
-3. Copy or symlink `companion-module/` into that folder
-4. Add a new **"ArtNet Lightshow"** connection pointing to `localhost:3000`
-5. Drag presets from the module onto your Stream Deck buttons
-
-### Presets included
-
-- **Patterns** (25 buttons) — highlight when active
-- **Colours A–D** (24 buttons each) — button background = colour
-- **Transport** — Play/Stop, Blackout, Tap Tempo, BPM display/±5, Beat divisions
-- **Fixtures** — per-fixture blackout (4 buttons), clear all overrides
-- **Energy** — momentary effects (hold to activate, release to clear)
-
----
-
-## REST API
-
-All endpoints return JSON. Useful for custom integrations or additional controllers.
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/state` | Full current state |
-| POST | `/api/set` | Patch any state fields (JSON body) |
-| POST | `/api/tap` | Tap tempo |
-| POST | `/api/blackout/toggle` | Toggle master blackout |
-| POST | `/api/blackout/on` | Blackout on |
-| POST | `/api/blackout/off` | Blackout off |
-| POST | `/api/pattern/:id` | Set pattern (e.g. `chase`, `rainbow`) |
-| POST | `/api/color/a/:index` | Set Colour A (0-12) |
-| POST | `/api/color/b/:index` | Set Colour B (0-12) |
-| POST | `/api/bpm/:value` | Set BPM |
-| POST | `/api/bpm/adjust/:delta` | Nudge BPM (e.g. `+5`) |
-| POST | `/api/play` | Start show |
-| POST | `/api/stop` | Stop show |
-| POST | `/api/master/:value` | Set master dimmer (0-255) |
-| POST | `/api/energy/:id` | Activate energy override (e.g. `white-strobe`) |
-| POST | `/api/energy/off` | Clear energy override |
-| POST | `/api/fixture/:id/override` | Set fixture override (JSON body) |
-| POST | `/api/fixture/:id/blackout/toggle` | Toggle fixture blackout |
-| POST | `/api/fixture/:id/clear` | Clear fixture override |
-| POST | `/api/link/enable` | Enable Ableton Link |
-| POST | `/api/link/disable` | Disable Ableton Link |
-| POST | `/api/link/toggle` | Toggle Ableton Link |
-| GET | `/api/midi/ports` | List available MIDI ports |
-| POST | `/api/midi/connect` | Connect MIDI ports `{ input, output }` |
-
----
-
-## Configuration
-
-See **[.env.example](.env.example)** for the full list with comments. The ones you are
-most likely to need:
-
-| Env var | Default | Description |
-|---------|---------|-------------|
-| `PORT` | `3000` | Web server port |
-| `HOST` | `127.0.0.1` | Interface to bind. Loopback by default — see **Network access** below |
-| `LIGHTSHOW_TOKEN` | _(none)_ | Shared access token. **Required** when `HOST` is not loopback |
-| `MIDI_INPUT` | _(auto)_ | MIDI input port name |
-| `MIDI_OUTPUT` | _(auto)_ | MIDI output port name |
-| `PROLINK` | _(off)_ | Set to `1` to enable PRO DJ LINK on startup |
-| `SMTC` | _(on, Windows)_ | Set to `0` to disable the OS now-playing source |
-| `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` | _(none)_ | Enables Spotify as an auto-show source |
-| `DEEZER_ARL` | _(none)_ | Deezer ARL cookie — exact ISRC-matched audio instead of a yt-dlp search |
-| `ARTNET_HOST` / `ARTNET_PORT` / `ARTNET_UNIVERSE` | `2.255.255.255` / `6454` / `0` | Art-Net output target |
-
-ArtNet node IP and universe are also configurable in the web UI **ArtNet Settings** panel.
 
 ## Network access
 
-By default the server binds **127.0.0.1** and is reachable only from the machine it runs
-on. Nothing else is needed for a normal single-machine setup.
+By default the server binds **127.0.0.1** and is reachable only from the machine
+it runs on. Nothing more is needed for a normal single-machine setup.
 
-To reach the UI from a phone or another machine, bind wider **and set a token** — the
-server refuses to start with a non-loopback `HOST` and no token, because every control
-(blackout, strobe, Art-Net target) is otherwise open to anyone on the network:
+To reach the UI from a phone or another machine, bind wider **and set a token**.
+The server refuses to start with a non-loopback `HOST` and no token, because
+every control — blackout, strobe, the Art-Net target — would otherwise be open
+to anyone on the network:
 
 ```bash
 # generate a token once
@@ -227,17 +75,275 @@ node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"
 HOST=0.0.0.0 LIGHTSHOW_TOKEN=<the token> npm start
 ```
 
-Then open the UI **once** per browser at `http://<machine>:3000/?token=<the token>`. The
-page stores it and strips it from the URL; later visits need no token in the address.
+Then open the UI **once** per browser at
+`http://<machine>:3000/?token=<the token>`. The page stores it and strips it
+from the URL; later visits need nothing in the address bar.
 
 The same token goes in:
 
 - **Companion** → the connection's *Access token* field
 - **Browser extension** → its preferences page (server URL and token)
 
-Cross-origin requests are refused whether or not a token is set, so a website you happen
-to have open in another tab cannot drive the rig.
+Cross-origin requests are refused whether or not a token is set, so a website
+you happen to have open in another tab cannot drive the rig.
 
-## Keyboard Shortcut
+---
 
-**Space** — tap tempo
+## Fixture setup
+
+### Default patch
+
+| Fixture | Label | Start address |
+|---------|-------|---------------|
+| 1 | PAR 1 | 1 |
+| 2 | PAR 2 | 13 |
+| 3 | PAR 3 | 25 |
+| 4 | PAR 4 | 37 |
+
+### Cameo ROOT PAR 6 — 12-channel mode (D12CH)
+
+| Ch | Function | Ch | Function |
+|----|----------|----|----------|
+| 1 | Dimmer | 7 | White |
+| 2 | Dimmer fine | 8 | Amber |
+| 3 | Strobe | 9 | UV |
+| 4 | Red | 10 | Colour macros (keep at 0) |
+| 5 | Green | 11 | Sound |
+| 6 | Blue | 12 | DMX delay |
+
+Set each fixture to **12-channel mode** and give it the start address above.
+
+### Other fixtures — GDTF import
+
+**Settings → Import GDTF**: upload a `.gdtf` file, pick a DMX mode, and the
+channel map is derived automatically. Patch fixtures to the new profile in the
+same page. The patch table flags address overlaps, and the server refuses a
+fixture whose channels would run past the end of the universe.
+
+---
+
+## Energy overrides
+
+Panic-button effects that instantly override patterns and per-fixture settings.
+One at a time; they bypass the master dimmer and always output at full.
+
+| ID | Name | Effect |
+|----|------|--------|
+| `white-strobe` | White Strobe | Full white + fast strobe |
+| `blinder` | Blinder | Full white wall of light |
+| `uv-strobe` | UV Strobe | Full UV + fast strobe |
+| `color-strobe` | Colour Strobe | Colour A + fast strobe |
+| `all-on` | All On | Every channel maxed |
+
+Trigger from the UI, MIDI (encoder push 8 — hold to activate, release to clear),
+REST, or Companion. Clear with `energyOverride: null`.
+
+---
+
+## Auto show setup
+
+The analyser is Python. Manual control does not need any of this.
+
+```bash
+pip install -r requirements.txt
+python scripts/setup-panns.py          # one-time, ~310 MB genre model
+python scripts/setup-panns.py --check  # verify without downloading
+```
+
+**ffmpeg** and **yt-dlp** must be on `PATH`. `pip install -r requirements.txt`
+covers yt-dlp; install ffmpeg with your package manager.
+
+If `torch`/`panns_inference` are missing the analyser still runs, but genre
+classification is skipped silently and palette selection falls back to a
+mood-based path — so run `--check` if shows look off.
+
+### Playback sources
+
+| Source | What it needs |
+|--------|---------------|
+| **Spotify** | `SPOTIFY_CLIENT_ID` + `SPOTIFY_CLIENT_SECRET`, then visit `/auth/spotify`. Register the redirect URI the server prints at startup. |
+| **PRO DJ LINK** | CDJs on the same network. `PROLINK=1` or the web UI toggle. |
+| **Now playing (Windows)** | Nothing — reads the OS media session, so any player that reports to it works. `SMTC=0` disables. |
+| **Deezer** | The extension in `browser-extension/` (see its README). Carries ISRC and the upcoming queue, so it prefetches. |
+| **Timer** | Fallback: plays the analysed timeline against a wall clock. |
+
+`DEEZER_ARL` is optional but recommended: with it, audio is fetched by ISRC for
+an exact match instead of a yt-dlp search.
+
+---
+
+## MIDI — Behringer X-Touch Compact
+
+Set the controller to **Standard MIDI mode** (Layer A). The server auto-detects
+the first port matching `/x.?touch/i`; override with `MIDI_INPUT` /
+`MIDI_OUTPUT`, or pick ports in the UI.
+
+| Control | MIDI | Action |
+|---------|------|--------|
+| Encoder 1 | CC 10 (relative) | BPM ±1 |
+| Encoder 2 | CC 11 (relative) | Master dimmer |
+| Encoders 3–6 | CC 12–15 (relative) | Fixture 1–4 dimmer |
+| Encoder 7 | CC 16 (relative) | Strobe speed |
+| Faders 1–4 | CC 1–4 (absolute) | Fixture 1–4 dimmer |
+| Fader 9 | CC 9 (absolute) | Master dimmer |
+| Encoder push 1 | Note 0 | Tap tempo |
+| Encoder push 2 | Note 1 | Toggle blackout |
+| Encoder push 3 | Note 2 | Toggle play/stop |
+| Encoder push 4–7 | Note 3–6 | Fixture 1–4 blackout |
+| Encoder push 8 | Note 7 | Energy override (hold) |
+| Button row 1 | Notes 16–23 | Patterns |
+| Button row 2 | Notes 24–31 | 2 patterns + Colour A presets 1–6 |
+
+LEDs reflect current state. `DEBUG_MIDI=1` logs every incoming message — useful
+when mapping a controller, far too noisy during a show.
+
+---
+
+## Stream Deck — Bitfocus Companion
+
+See **[companion-module/INSTALL.md](companion-module/INSTALL.md)**. Requires
+Companion **v4.3+** (the module uses the v2 connection API).
+
+1. `npm install` inside `companion-module/`
+2. Point Companion's *Developer modules* folder at it
+3. Add an **ArtNet Lightshow** connection — host, port, and the access token if
+   the server uses one
+4. Drag presets onto buttons
+
+Presets cover patterns, colours A–D, transport, per-fixture blackout and energy
+effects, with feedback highlighting the active state.
+
+---
+
+## REST API
+
+All endpoints return JSON. When a token is configured, send it as an
+`X-Lightshow-Token` header or a `?token=` query parameter.
+
+### State and transport
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/state` | Full current state |
+| POST | `/api/set` | Patch state fields (JSON body) |
+| POST | `/api/tap` | Tap tempo |
+| POST | `/api/play` · `/api/stop` | Start / stop the pattern engine |
+| POST | `/api/bpm/:value` | Set BPM (20–300) |
+| POST | `/api/bpm/adjust/:delta` | Nudge BPM |
+| POST | `/api/master/:value` | Master dimmer (0–255) |
+| POST | `/api/blackout/toggle` · `/api/blackout/on` · `/api/blackout/off` | Master blackout |
+| POST | `/api/pattern/:id` | Set pattern (e.g. `chase`, `rainbow`) |
+| POST | `/api/color/:slot/:index` | Set colour slot `a`–`d` (index 0–23) |
+| POST | `/api/energy/:id` · `/api/energy/off` | Energy override |
+
+### Fixtures, profiles and shows
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/fixture/:id/override` | Set a fixture override (JSON body) |
+| POST | `/api/fixture/:id/blackout/toggle` · `/api/fixture/:id/clear` | Per-fixture blackout / clear |
+| POST | `/api/fixtures` · DELETE `/api/fixtures/:id` | Add / remove a fixture |
+| POST | `/api/gdtf/parse` | Parse an uploaded `.gdtf` (multipart `gdtf`) |
+| POST | `/api/profiles` · DELETE `/api/profiles/:id` | Register / remove a fixture profile |
+| GET · POST | `/api/show` | Export / import the patch |
+
+### Auto show
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/auto/analyze` | Analyse a file path, URL or search query |
+| POST | `/api/auto/analyze-spotify` · `-nowplaying` · `-deezer` · `-prolink` | Analyse what's playing on that source |
+| POST | `/api/auto/download-analyze` | Analyse a YouTube URL or search |
+| POST | `/api/auto/analyze-upload` | Analyse an uploaded audio file (multipart `audio`) |
+| POST | `/api/auto/start` · `/api/auto/stop` · `/api/auto/reset` | Playback control |
+| GET | `/api/auto/state` · `/api/auto/timeline` | Status / generated timeline |
+| GET · DELETE | `/api/auto/cache` | List / clear cached analyses |
+| DELETE | `/api/auto/cache/entry` | Remove one cached analysis (`{ key }`) |
+
+### MIDI, PRO DJ LINK, integrations
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/midi/ports` | List MIDI ports |
+| POST | `/api/midi/connect` | Connect ports `{ input, output }` |
+| POST | `/api/prolink/enable` · `/disable` · `/toggle` | PRO DJ LINK |
+| GET | `/auth/spotify` · `/auth/spotify/callback` | Spotify OAuth |
+| GET | `/api/spotify/now-playing` · POST `/api/spotify/disconnect` | Spotify |
+| POST | `/api/nowplaying/disconnect` | Drop the OS media session source |
+| POST | `/api/deezer/state` · `/api/deezer/disconnect` | Used by the browser extension |
+
+### Socket.IO
+
+The UI uses Socket.IO rather than polling. Clients send `set`, `override`,
+`fixture`, `tap` and `midi-connect`; the server emits `state` (full snapshot on
+connect, changed fields thereafter), `dmx` (live channel values), `auto-position`,
+`midi-status` and `error-msg`.
+
+---
+
+## Configuration
+
+See **[.env.example](.env.example)** for the full annotated list.
+
+| Env var | Default | Description |
+|---------|---------|-------------|
+| `PORT` | `3000` | Web server port |
+| `HOST` | `127.0.0.1` | Interface to bind — see [Network access](#network-access) |
+| `LIGHTSHOW_TOKEN` | _(none)_ | Shared access token. **Required** when `HOST` is not loopback |
+| `PUBLIC_URL` | _(derived)_ | Base URL browsers use to reach the server, for the OAuth callback |
+| `ARTNET_HOST` | `2.255.255.255` | Art-Net target (broadcast by default) |
+| `ARTNET_PORT` | `6454` | Art-Net UDP port |
+| `ARTNET_UNIVERSE` | `0` | Art-Net universe |
+| `MIDI_INPUT` / `MIDI_OUTPUT` | _(auto)_ | MIDI port names |
+| `DEBUG_MIDI` | _(off)_ | `1` logs every incoming MIDI message |
+| `PROLINK` | _(off)_ | `1` enables PRO DJ LINK at startup |
+| `SMTC` | _(on, Windows)_ | `0` disables the OS now-playing source |
+| `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` | _(none)_ | Enables Spotify |
+| `SPOTIFY_PROXY_BASE` | `https://api.drndvs.fr` | OAuth proxy that relays the Spotify callback |
+| `SPOTIFY_ALLOW_UNVERIFIED_STATE` | _(off)_ | `1` accepts callbacks without a valid `state` — disables OAuth CSRF protection |
+| `DEEZER_ARL` | _(none)_ | Deezer ARL cookie — exact ISRC-matched audio |
+| `ANALYZE_LOCAL_ROOT` | _(none)_ | Confine local-file analysis to one directory tree |
+| `ANALYZER_TIMEOUT_MS` | `600000` | Ceiling on a single analysis before the worker is recycled |
+
+Art-Net target and universe are also editable in the UI's ArtNet panel.
+
+> **Why `--openssl-legacy-provider`?** The `start` and `dev` scripts pass it
+> because Deezer track decryption uses Blowfish (`bf-cbc`), which OpenSSL 3
+> moved to the legacy provider. Without the flag, Deezer downloads fail with
+> `ERR_OSSL_EVP_UNSUPPORTED`; everything else works.
+
+---
+
+## Keyboard shortcuts
+
+| Key | Action |
+|-----|--------|
+| **Space** | Tap tempo |
+| **1** / **2** | Manual / Auto Show tab |
+
+---
+
+## Development
+
+```bash
+npm run lint        # ESLint
+npm test            # node:test unit suite
+npm run check       # both
+npm run watch:client # rebuild the client bundle on change
+npm run dev         # server with --watch
+```
+
+`public/app.bundle.js` is generated from `public-src/` by esbuild and is not
+committed; `npm start` builds it automatically via `prestart`.
+
+CI runs lint, tests, a client build and `npm audit --omit=dev` on every push and
+pull request.
+
+**[AUDIT.md](AUDIT.md)** records a full code audit of the project — findings,
+what has been fixed, and what is still open.
+
+---
+
+## Licence
+
+MIT — see [LICENSE](LICENSE).

@@ -164,19 +164,22 @@ class MidiController {
   _bindInput() {
     const m = this.map;
 
-    // ── MIDI monitor (temporary) ──────────────────────────────────────────────
-    this.input.on('noteon',  ({ note, velocity, channel }) =>
-      console.log(`[MIDI] noteon  ch=${channel+1} note=${note} vel=${velocity}  → ${m.notes[note] ? m.notes[note].action : 'unmapped'}`));
-    this.input.on('noteoff', ({ note, velocity, channel }) =>
-      console.log(`[MIDI] noteoff ch=${channel+1} note=${note}`));
-    this.input.on('cc',      ({ controller, value, channel }) =>
-      console.log(`[MIDI] cc      ch=${channel+1} cc=${controller} val=${value}  → ${m.cc[controller] ? m.cc[controller].action : 'unmapped'}`));
-    this.input.on('pitch',   ({ value, channel }) =>
-      console.log(`[MIDI] pitch   ch=${channel+1} val=${value}`));
-    // ─────────────────────────────────────────────────────────────────────────
+    // MIDI monitor: one line per incoming message. Invaluable when mapping a
+    // controller, unusable during a show — a single encoder sweep is hundreds
+    // of lines. Off unless DEBUG_MIDI=1. See AUDIT.md L3.
+    if (process.env.DEBUG_MIDI === '1') {
+      this.input.on('noteon',  ({ note, velocity, channel }) =>
+        console.log(`[MIDI] noteon  ch=${channel+1} note=${note} vel=${velocity}  → ${m.notes[note] ? m.notes[note].action : 'unmapped'}`));
+      this.input.on('noteoff', ({ note, channel }) =>
+        console.log(`[MIDI] noteoff ch=${channel+1} note=${note}`));
+      this.input.on('cc',      ({ controller, value, channel }) =>
+        console.log(`[MIDI] cc      ch=${channel+1} cc=${controller} val=${value}  → ${m.cc[controller] ? m.cc[controller].action : 'unmapped'}`));
+      this.input.on('pitch',   ({ value, channel }) =>
+        console.log(`[MIDI] pitch   ch=${channel+1} val=${value}`));
+    }
 
     // Note On → button press
-    this.input.on('noteon', ({ note, velocity, channel }) => {
+    this.input.on('noteon', ({ note, velocity }) => {
       const binding = m.notes[note];
       if (!binding) return;
       if (velocity === 0) {
@@ -233,7 +236,6 @@ class MidiController {
         break;
       case 'energyHold': {
         // Momentary: note-on activates, note-off (handled above) deactivates
-        const ENERGY_IDS = ['white-strobe', 'blinder', 'uv-strobe', 'color-strobe', 'all-on'];
         const effect = this._energyEffect || 'white-strobe';
         // If already active with a different effect, switch; otherwise activate
         this.apply({ energyOverride: effect });
@@ -320,13 +322,13 @@ class MidiController {
     if (!this.output) return;
     const s = this.state;
 
-    // Pattern buttons (notes 8-17)
+    // Pattern buttons (LED_PATTERNS: notes 16-25)
     const PATTERNS = ['solid','chase','chase-rev','ping-pong','strobe','fade','color-cycle','rainbow','twinkle','split'];
     PATTERNS.forEach((p, i) => {
       this._ledNote(LED_PATTERNS[i], p === s.pattern ? 127 : 0);
     });
 
-    // Colour A buttons (notes 18-23)
+    // Colour A buttons (LED_COLORS_A: notes 26-31)
     LED_COLORS_A.forEach((note, i) => {
       this._ledNote(note, i === s.colorA ? 127 : 0);
     });

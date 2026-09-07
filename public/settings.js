@@ -268,7 +268,7 @@ function renderPatchTable() {
   const conflicts = detectConflicts(state.fixtures);
 
   tbody.innerHTML = '';
-  state.fixtures.forEach((fix, i) => {
+  state.fixtures.forEach((fix) => {
     const profile = profiles[fix.profileId] || {};
     const chCount = profile.channelCount || 12;
     const endAddr = fix.address + chCount - 1;

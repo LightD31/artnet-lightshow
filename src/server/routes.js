@@ -369,7 +369,6 @@ function attachRoutes(app, deps) {
     const { source } = req.body || {};
     if (!source) return res.status(400).json({ ok: false, error: 'Provide a source (file path, URL, or YouTube search)' });
 
-    const isYouTube = /(?:youtube\.com|youtu\.be|music\.youtube)/.test(source);
     const isLocalFile = /^[a-zA-Z]:[\\/]|^\//.test(source);
     const isDirectAudio = /\.(mp3|wav|ogg|flac|m4a|aac|wma)(\?|$)/i.test(source);
 

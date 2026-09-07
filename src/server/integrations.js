@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const { state, getLiveState, getDmxSnapshot } = require('./state');
-const { setHooks, applyPatch } = require('./patch');
+const { setHooks } = require('./patch');
 const { restartBeatTimer } = require('./engine');
 const {
   keyForSpotify,
@@ -36,7 +36,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     return spotifySlots[0] || emptySlot('idle', '');
   }
 
-  let autoPlayback = { progressMs: 0, isPlaying: false, updatedAt: 0 };
+  const autoPlayback = { progressMs: 0, isPlaying: false, updatedAt: 0 };
 
   // Throttle for the queue-lookahead poll.
   let lastQueuePeekAt = 0;

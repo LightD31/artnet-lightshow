@@ -20,6 +20,11 @@ udpSocket.bind(() => {
   try { udpSocket.setBroadcast(true); } catch (_) { /* not all networks allow it */ }
 });
 
+// This socket only ever sends. The HTTP listener is what should keep the server
+// alive, so don't let a bound send-only socket hold the event loop open — it
+// otherwise stops any script that merely imports this module from exiting.
+udpSocket.unref();
+
 // Art-Net output is a firehose; a broken target would otherwise produce 40
 // identical log lines a second and bury everything else. Report the first
 // failure immediately, then at most one line per interval.
@@ -78,12 +83,22 @@ function resolveHost(host) {
   return resolved.host === host ? resolved.address : null;
 }
 
-function buildArtDmxPacket(universe, dmxData) {
+// Art-Net sequence counter. 0 tells receivers "sequencing disabled", so they
+// cannot discard out-of-order UDP packets; 1-255 wrapping is what the spec
+// asks for — see AUDIT.md L4.
+let sequence = 0;
+
+function nextSequence() {
+  sequence = sequence >= 255 ? 1 : sequence + 1;
+  return sequence;
+}
+
+function buildArtDmxPacket(universe, dmxData, seq = nextSequence()) {
   const packet = Buffer.alloc(18 + 512);
   packet.write('Art-Net\0', 0, 'ascii');
   packet.writeUInt16LE(0x5000, 8);
   packet.writeUInt16BE(14, 10);
-  packet[12] = 0;
+  packet[12] = seq;
   packet[13] = 0;
   packet.writeUInt16LE(universe & 0x7fff, 14);
   packet.writeUInt16BE(512, 16);

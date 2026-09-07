@@ -4,11 +4,10 @@
 
 Each finding names a file and line so it can be triaged independently.
 
-> **Status.** The audit was written first as a review-only document. **PR 1 (Security)**,
-> **PR 2 (Stability)** and **PR 3 (Performance)** have since been implemented, so C1, C2,
-> H1, H2, H3, H4, H5, M1, M2, M4, M5, M6, M7, M8 and L6 are marked ✅ Fixed below and
-> their line references point at the *pre-fix* code. Everything else is still open — see
-> the [Suggested order of work](#8-suggested-order-of-work).
+> **Status.** The audit was written first as a review-only document. All four PRs
+> have since been implemented. Everything is marked ✅ Fixed below **except L11**
+> (browser-extension Manifest V3 migration), which was deliberately not done — see
+> its entry for why. Line references throughout point at the *pre-fix* code.
 >
 > **One correction.** M1 originally called the 10 Hz broadcast "the dominant runtime
 > cost". Measurement did not support that: building and serializing the payload costs
@@ -53,26 +52,26 @@ against real Stream Deck hardware.
 | [H5](#h5--unverified-310-mb-pytorch-checkpoint-download) | High | Supply chain | 310 MB PyTorch checkpoint downloaded without checksum | ✅ Fixed |
 | [M1](#m1--10-hz-full-state-broadcast-re-sends-mostly-static-data) | Medium | Performance | 10 Hz broadcast re-sends mostly-static data | ✅ Fixed |
 | [M2](#m2--client-re-renders-the-whole-tree-10-times-per-second) | Medium | Performance | Client re-renders whole tree 10×/second | ✅ Fixed |
-| [M3](#m3--gdtf-channelcount-is-the-channel-count-not-the-address-footprint) | Medium | Correctness | GDTF `channelCount` wrong → stale DMX channels latch | Open |
+| [M3](#m3--gdtf-channelcount-is-the-channel-count-not-the-address-footprint) | Medium | Correctness | GDTF `channelCount` wrong → stale DMX channels latch | ✅ Fixed |
 | [M4](#m4--analyzer-worker-has-no-timeout-one-hang-stalls-everything) | Medium | Correctness | Analyzer worker has no timeout; delivers mismatched responses | ✅ Fixed |
 | [M5](#m5--no-request-timeouts-or-rate-limit-handling-on-spotify-calls) | Medium | Robustness | No timeouts, status checks or 429 backoff on Spotify | ✅ Fixed |
 | [M6](#m6--arbitrary-local-file-read-via-the-analyze-endpoint) | Medium | Server | Arbitrary local-file read via analyze endpoint | ✅ Fixed |
 | [M7](#m7--prototype-manipulation-via-registerprofile) | Medium | Server | `__proto__` as a profile id corrupts the profile registry | ✅ Fixed |
 | [M8](#m8--zip-bomb--xml-dos-on-gdtf-upload) | Medium | Server | Zip-bomb / XML DoS on GDTF upload | ✅ Fixed |
-| [M9](#m9--readme-documents-a-removed-feature-and-the-wrong-midi-map) | Medium | Docs | README documents a removed feature and the wrong MIDI map | Open |
-| [M10](#m10--requirementstxt-cannot-install-the-analyzer) | Medium | Setup | `requirements.txt` is missing three required packages | Open |
-| [L1](#l1--build-artifacts-and-local-config-are-committed) | Low | Hygiene | Build artifacts and local config committed | Open |
-| [L2](#l2--font-loaded-from-a-cdn-in-a-venue-tool) | Low | Reliability | Font loaded from a CDN in an offline-capable tool | Open |
-| [L3](#l3--midi-monitor-logging-left-enabled) | Low | Hygiene | "Temporary" MIDI monitor logging still enabled | Open |
-| [L4](#l4--art-net-sequence-byte-hardcoded-to-zero) | Low | Art-Net | Sequence byte hardcoded to 0 | Open |
-| [L5](#l5--socket-midi-connect-skips-validation) | Low | Consistency | Socket `midi-connect` skips schema validation | Open |
+| [M9](#m9--readme-documents-a-removed-feature-and-the-wrong-midi-map) | Medium | Docs | README documents a removed feature and the wrong MIDI map | ✅ Fixed |
+| [M10](#m10--requirementstxt-cannot-install-the-analyzer) | Medium | Setup | `requirements.txt` is missing three required packages | ✅ Fixed |
+| [L1](#l1--build-artifacts-and-local-config-are-committed) | Low | Hygiene | Build artifacts and local config committed | ✅ Fixed |
+| [L2](#l2--font-loaded-from-a-cdn-in-a-venue-tool) | Low | Reliability | Font loaded from a CDN in an offline-capable tool | ✅ Fixed |
+| [L3](#l3--midi-monitor-logging-left-enabled) | Low | Hygiene | "Temporary" MIDI monitor logging still enabled | ✅ Fixed |
+| [L4](#l4--art-net-sequence-byte-hardcoded-to-zero) | Low | Art-Net | Sequence byte hardcoded to 0 | ✅ Fixed |
+| [L5](#l5--socket-midi-connect-skips-validation) | Low | Consistency | Socket `midi-connect` skips schema validation | ✅ Fixed |
 | [L6](#l6--no-timeouts-size-caps-or-redirect-limit-in-the-deezer-downloader) | Low | Robustness | Deezer downloader: no timeout, size cap or redirect limit | ✅ Fixed |
-| [L7](#l7--fixture-addresses-may-overlap-or-run-past-channel-512) | Low | Correctness | Fixture addresses may overlap or exceed channel 512 | Open |
-| [L8](#l8--dead-code-and-stale-comments) | Nit | Hygiene | Dead code and stale comments | Open |
-| [L9](#l9--no-linter-formatter-ci-or-test-runner) | Low | Tooling | No linter, formatter, CI or test runner | Open |
-| [L10](#l10--undocumented---openssl-legacy-provider) | Nit | Ops | Undocumented `--openssl-legacy-provider` | Open |
-| [L11](#l11--browser-extension-is-manifest-v2-with-a-hardcoded-port) | Low | Extension | Manifest V2 with a hardcoded port | Open |
-| [L12](#l12--getclientstate-returns-internal-mutable-objects) | Nit | Design | `getClientState()` leaks internal mutable objects | Open |
+| [L7](#l7--fixture-addresses-may-overlap-or-run-past-channel-512) | Low | Correctness | Fixture addresses may overlap or exceed channel 512 | ✅ Fixed |
+| [L8](#l8--dead-code-and-stale-comments) | Nit | Hygiene | Dead code and stale comments | ✅ Fixed |
+| [L9](#l9--no-linter-formatter-ci-or-test-runner) | Low | Tooling | No linter, formatter, CI or test runner | ✅ Fixed |
+| [L10](#l10--undocumented---openssl-legacy-provider) | Nit | Ops | Undocumented `--openssl-legacy-provider` | ✅ Fixed |
+| [L11](#l11--browser-extension-is-manifest-v2-with-a-hardcoded-port) | Low | Extension | Manifest V2 with a hardcoded port | ⏸ Deferred |
+| [L12](#l12--getclientstate-returns-internal-mutable-objects) | Nit | Design | `getClientState()` leaks internal mutable objects | ✅ Fixed |
 
 ---
 
@@ -735,11 +734,28 @@ today — `buildArtDmxPacket`, the `keyFor*` builders in `src/analysis-cache.js`
 
 ### L10 — Undocumented `--openssl-legacy-provider`
 
-`package.json:9-10` passes it to both `start` and `dev` with no explanation. It re-enables
-OpenSSL algorithms disabled for good reason. Identify what needs it (most likely
-`prolink-connect`'s crypto), document it, and scope or remove it.
+**✅ Fixed** — by documenting it, not removing it.
+
+`package.json:9-10` passes it to both `start` and `dev` with no explanation. Investigated:
+it is **required**, and the guess in the original finding (`prolink-connect`) was wrong.
+`d-fi-core/dist/lib/decrypt.js` decrypts Deezer audio with Blowfish (`bf-cbc`), which
+OpenSSL 3 moved to the legacy provider. Without the flag,
+`crypto.createCipheriv('bf-cbc', …)` throws `ERR_OSSL_EVP_UNSUPPORTED` and every Deezer
+download fails; nothing else is affected. Now explained in the README rather than
+removed.
 
 ### L11 — Browser extension is Manifest V2 with a hardcoded port
+
+**⏸ Partly addressed; MV3 migration deliberately deferred.** The hardcoded port is gone —
+server URL and access token now live in an options page backed by
+`browser.storage.local`, and host permissions were *narrowed* from a blanket grant to
+loopback-on-any-port with an optional user-granted permission for a non-loopback server.
+
+The **MV2 → MV3 migration was not attempted**. It changes the background-script
+lifecycle, and there is no way to verify it without loading the add-on into a real
+Firefox profile against a live Deezer session. Shipping an unverified rewrite of a
+working production integration is a worse trade than staying on MV2 while Firefox still
+supports it. This needs someone with a browser in front of them.
 
 `browser-extension/manifest.json:2` is `manifest_version: 2`, which Firefox is phasing
 out. `browser-extension/background.js:7` hardcodes `http://localhost:3000`, so the
@@ -803,4 +819,7 @@ renders over 10 s of a running show, the remaining 200 being the two views that 
 display DMX. Server CPU was never the problem — see the correction at the top.
 
 **PR 4 — Hygiene and docs.** M3, M9, M10, the L-series, plus ESLint and a CI workflow.
-Land ESLint first so it can catch L8 for you.
+✅ **Done**, except L11. ESLint went in first and did indeed find L8's dead code — plus
+seven more unused bindings nobody had spotted. The suite is 33 `node:test` cases
+encoding the bugs fixed across all four PRs, and CI runs lint, tests, a client build and
+`npm audit --omit=dev`.

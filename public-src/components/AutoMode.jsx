@@ -80,9 +80,6 @@ export function AutoMode() {
     else if (useProlink)    triggerAnalyze('/api/auto/analyze-prolink');
     else fetch('/api/auto/start', { method: 'POST' });
   };
-
-  const showNext = next && next.track;
-  const showNextEmpty = !showNext && sp.authenticated;
   const fallbackStatus = next && next.status ? next.status : 'idle';
 
   return (

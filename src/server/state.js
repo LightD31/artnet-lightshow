@@ -86,7 +86,9 @@ function getCatalogs() {
  */
 function getLiveState() {
   return {
-    artnet: state.artnet,
+    // Copies, not references: these leave the module and are only safe today
+    // because everything is JSON-serialised on the way out — see AUDIT.md L12.
+    artnet: { ...state.artnet },
     bpm: state.bpm,
     beatDivision: state.beatDivision,
     running: state.running,
@@ -102,8 +104,8 @@ function getLiveState() {
     energyOverride: state.energyOverride,
     autoSource: state.autoSource,
     autoPrefetchDepth: state.autoPrefetchDepth,
-    fixtures: state.fixtures,
-    profiles: listProfiles(),
+    fixtures: state.fixtures.map((f) => ({ ...f })),
+    profiles: { ...listProfiles() },
     ...extrasProvider(),
   };
 }
@@ -117,7 +119,7 @@ function getDmxSnapshot() {
 // whole so REST consumers and first-connect behaviour are unchanged.
 function getClientState() {
   return {
-    artnet: state.artnet,
+    artnet: { ...state.artnet },
     bpm: state.bpm,
     beatDivision: state.beatDivision,
     running: state.running,
@@ -133,8 +135,8 @@ function getClientState() {
     energyOverride: state.energyOverride,
     autoSource: state.autoSource,
     autoPrefetchDepth: state.autoPrefetchDepth,
-    fixtures: state.fixtures,
-    profiles: listProfiles(),
+    fixtures: state.fixtures.map((f) => ({ ...f })),
+    profiles: { ...listProfiles() },
     colorPresets: COLOR_PRESETS,
     patterns: PATTERNS,
     energyEffects: ENERGY_EFFECTS,
