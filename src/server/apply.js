@@ -1,6 +1,6 @@
 'use strict';
 
-const { state } = require('./state');
+const { state, setDefaultUniverse } = require('./state');
 const { settings } = require('./settings');
 const pythonEnv = require('../python-env');
 
@@ -46,7 +46,11 @@ function createApplier({ midi, spotify, smtc, deezer, autoShow, applyPatch, broa
   }
 
   function applyArtnet() {
-    Object.assign(state.artnet, settings.group('artnet'));
+    const { universe, ...rest } = settings.group('artnet');
+    Object.assign(state.artnet, rest);
+    // Same rule as the Art-Net panel: fixtures on the old default universe
+    // follow it, ones deliberately patched elsewhere stay put.
+    setDefaultUniverse(universe);
   }
 
   function applyMidi() {

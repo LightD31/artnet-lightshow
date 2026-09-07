@@ -1,6 +1,6 @@
 'use strict';
 
-const { state, getClientState, getFixtureCount } = require('./state');
+const { state, getClientState, getFixtureCount, countUniverses, universeOf } = require('./state');
 const { applyPatch, applyOverride, processTap } = require('./patch');
 const {
   overrideMessageSchema,
@@ -9,6 +9,7 @@ const {
   validate,
 } = require('./validation');
 const { listProfiles, getProfile, endChannel, fitsInUniverse, UNIVERSE_SIZE } = require('./profiles');
+const { MAX_UNIVERSES } = require('./universes');
 const { settings } = require('./settings');
 
 function attachSockets(io, { midi, integrations }) {
@@ -32,15 +33,16 @@ function attachSockets(io, { midi, integrations }) {
 
     socket.on('fixture', (payload) => {
       try {
-        const { id, address, label, profileId } = validate(fixtureMessageSchema, payload, 'fixture-msg');
+        const { id, address, universe, label, profileId } = validate(fixtureMessageSchema, payload, 'fixture-msg');
         if (id < 0 || id >= getFixtureCount()) return;
 
         const profiles = listProfiles();
         const nextProfileId = (profileId !== undefined && profiles[profileId])
           ? profileId : state.fixtures[id].profileId;
         const nextAddress = address !== undefined ? address : state.fixtures[id].address;
+        const nextUniverse = universe !== undefined ? universe : universeOf(state.fixtures[id]);
 
-        // A fixture has to fit inside the universe. Past channel 512 the writes
+        // A fixture has to fit inside its universe. Past channel 512 the writes
         // land outside the DMX buffer and Node drops them silently, leaving the
         // fixture half-controllable with no error.
         const chCount = getProfile({ profileId: nextProfileId }).channelCount;
@@ -53,7 +55,20 @@ function attachSockets(io, { midi, integrations }) {
           return;
         }
 
+        // Each universe is another stream going out at the render rate, so the
+        // patch may not spread across more of them than the engine transmits.
+        const proposed = state.fixtures.map((f, i) => (i === id ? { ...f, universe: nextUniverse } : f));
+        if (countUniverses(proposed) > MAX_UNIVERSES) {
+          socket.emit('error-msg', {
+            source: 'fixture',
+            message: `Moving "${state.fixtures[id].label}" to universe ${nextUniverse} would put the `
+              + `patch on more than the ${MAX_UNIVERSES} universes this server transmits`,
+          });
+          return;
+        }
+
         state.fixtures[id].address = nextAddress;
+        state.fixtures[id].universe = nextUniverse;
         state.fixtures[id].profileId = nextProfileId;
         if (label !== undefined) state.fixtures[id].label = label;
         integrations.broadcast();

@@ -43,9 +43,11 @@ export function fixtureOutputColor(fix, state, dmxSnapshot) {
     });
   }
 
-  // Read DMX snapshot through the fixture's profile channel map.
+  // Read DMX snapshot through the fixture's profile channel map. The snapshot
+  // is keyed by universe, so pick out the one this fixture lives on.
   const base = fix.address - 1;
-  const snap = dmxSnapshot || state.dmxSnapshot || [];
+  const all = dmxSnapshot || state.dmxSnapshot || {};
+  const snap = all[fix.universe ?? 0] || [];
   const profile = state.profiles && state.profiles[fix.profileId];
   if (!profile || !profile.channelMap) return '#111';
 

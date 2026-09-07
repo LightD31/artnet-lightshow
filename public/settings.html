@@ -40,6 +40,8 @@
       <div class="field">
         <label>Universe</label>
         <input type="number" id="artnet-universe" value="0" min="0" max="32767" />
+        <small class="setting-help">The rig's default universe: it seeds new fixtures, and fixtures
+          sitting on it follow when you change it.</small>
       </div>
       <button class="btn active" id="artnet-save">Apply</button>
     </div>
@@ -124,7 +126,8 @@
   <!-- ── Patch Table ─────────────────────────────────────── -->
   <section class="card settings-section">
     <div class="card-title">Fixture Patch</div>
-    <p class="section-desc">Assign fixture profiles to DMX addresses.</p>
+    <p class="section-desc">Assign fixture profiles to a universe and DMX address. Addresses only
+      collide within the same universe.</p>
 
     <table class="patch-table" id="patch-table">
       <thead>
@@ -132,6 +135,7 @@
           <th>#</th>
           <th>Label</th>
           <th>Profile</th>
+          <th>Universe</th>
           <th>DMX Address</th>
           <th>Channels</th>
           <th></th>

@@ -303,6 +303,18 @@ function renderPatchTable() {
     profileCell.appendChild(select);
     tr.appendChild(profileCell);
 
+    const uniCell = el('td');
+    const uniInput = el('input', hasConflict ? 'addr-conflict' : null);
+    uniInput.type = 'number';
+    uniInput.value = fix.universe ?? 0;
+    uniInput.min = '0';
+    uniInput.max = '32767';
+    uniInput.dataset.field = 'universe';
+    uniInput.dataset.id = fix.id;
+    uniInput.style.width = '70px';
+    uniCell.appendChild(uniInput);
+    tr.appendChild(uniCell);
+
     const addrCell = el('td');
     const addrInput = el('input', hasConflict ? 'addr-conflict' : null);
     addrInput.type = 'number';
@@ -337,6 +349,10 @@ function renderPatchTable() {
       const field = el.dataset.field;
       let value = el.value;
       if (field === 'address') value = parseInt(value) || 1;
+      if (field === 'universe') {
+        const parsed = parseInt(value, 10);
+        value = Number.isInteger(parsed) && parsed >= 0 ? parsed : 0;
+      }
 
       socket.emit('fixture', { id, [field]: value });
     });
@@ -351,6 +367,8 @@ function renderPatchTable() {
   });
 }
 
+// Two fixtures only fight over an address when they are on the same universe —
+// channel 1 of universe 0 and channel 1 of universe 1 are different wires.
 function detectConflicts(fixtures) {
   const conflicts = new Set();
   for (let i = 0; i < fixtures.length; i++) {
@@ -360,6 +378,7 @@ function detectConflicts(fixtures) {
 
     for (let j = i + 1; j < fixtures.length; j++) {
       const b = fixtures[j];
+      if ((a.universe ?? 0) !== (b.universe ?? 0)) continue;
       const pb = profiles[b.profileId] || {};
       const bEnd = b.address + (pb.channelCount || 12) - 1;
 

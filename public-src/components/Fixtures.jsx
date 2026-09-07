@@ -49,11 +49,24 @@ function FixtureCard({ fix, state, dmx }) {
           spellcheck={false}
           onBlur={(e) => emitFixture({ id: fix.id, label: e.target.textContent.trim() })}
         >{fix.label}</span>
-        <span class="fixture-addr">DMX <input
-          type="number" min="1" max="507"
-          value={fix.address}
-          onChange={(e) => emitFixture({ id: fix.id, address: parseInt(e.target.value, 10) || fix.address })}
-        /></span>
+        <span class="fixture-addr" title="Universe / DMX address">
+          <input
+            class="fixture-universe"
+            type="number" min="0" max="32767"
+            value={fix.universe ?? 0}
+            onChange={(e) => emitFixture({
+              id: fix.id,
+              universe: Number.isInteger(parseInt(e.target.value, 10))
+                ? parseInt(e.target.value, 10) : (fix.universe ?? 0),
+            })}
+          />
+          <span class="fixture-addr-sep">/</span>
+          <input
+            type="number" min="1" max="512"
+            value={fix.address}
+            onChange={(e) => emitFixture({ id: fix.id, address: parseInt(e.target.value, 10) || fix.address })}
+          />
+        </span>
       </div>
 
       <div class="override-section">

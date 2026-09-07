@@ -40,6 +40,8 @@ Control surfaces: the web UI, a **Behringer X-Touch Compact** over MIDI, an
 **Fixtures**
 
 - **GDTF import** — drop in a `.gdtf` file, pick a DMX mode, patch it
+- **Multiple universes** — every fixture names the universe it lives on, so a
+  rig is no longer capped at one node's 512 channels
 - Save and load the whole patch as a show file
 
 ---
@@ -94,12 +96,12 @@ you happen to have open in another tab cannot drive the rig.
 
 ### Default patch
 
-| Fixture | Label | Start address |
-|---------|-------|---------------|
-| 1 | PAR 1 | 1 |
-| 2 | PAR 2 | 13 |
-| 3 | PAR 3 | 25 |
-| 4 | PAR 4 | 37 |
+| Fixture | Label | Universe | Start address |
+|---------|-------|----------|---------------|
+| 1 | PAR 1 | 0 | 1 |
+| 2 | PAR 2 | 0 | 13 |
+| 3 | PAR 3 | 0 | 25 |
+| 4 | PAR 4 | 0 | 37 |
 
 ### Cameo ROOT PAR 6 — 12-channel mode (D12CH)
 
@@ -120,6 +122,22 @@ Set each fixture to **12-channel mode** and give it the start address above.
 channel map is derived automatically. Patch fixtures to the new profile in the
 same page. The patch table flags address overlaps, and the server refuses a
 fixture whose channels would run past the end of the universe.
+
+### Universes
+
+Each fixture carries a **universe** alongside its DMX address, so a rig can be
+larger than one node's 512 channels. Set it per fixture in the patch table (or
+in the fixture card on the live page) — addresses only collide with other
+fixtures on the *same* universe.
+
+The **Universe** field in *ArtNet Output* is the rig's **default** universe: it
+seeds new fixtures, and fixtures sitting on it follow when you change it, which
+is what that field used to do when there was only one universe to be on. A
+fixture you deliberately patched somewhere else stays put.
+
+Universes with nothing patched on them are transmitted for one final all-zero
+frame and then dropped, so a node never sits holding the look it had when its
+last fixture moved away. The server transmits at most **32** universes.
 
 ---
 
@@ -282,7 +300,7 @@ All endpoints return JSON. When a token is configured, send it as an
 |--------|------|-------------|
 | POST | `/api/fixture/:id/override` | Set a fixture override (JSON body) |
 | POST | `/api/fixture/:id/blackout/toggle` · `/api/fixture/:id/clear` | Per-fixture blackout / clear |
-| POST | `/api/fixtures` · DELETE `/api/fixtures/:id` | Add / remove a fixture |
+| POST | `/api/fixtures` · DELETE `/api/fixtures/:id` | Add / remove a fixture (`{ universe }` optional on add) |
 | POST | `/api/gdtf/parse` | Parse an uploaded `.gdtf` (multipart `gdtf`) |
 | POST | `/api/profiles` · DELETE `/api/profiles/:id` | Register / remove a fixture profile |
 | GET · POST | `/api/show` | Export / import the patch |
@@ -316,8 +334,10 @@ All endpoints return JSON. When a token is configured, send it as an
 
 The UI uses Socket.IO rather than polling. Clients send `set`, `override`,
 `fixture`, `tap` and `midi-connect`; the server emits `state` (full snapshot on
-connect, changed fields thereafter), `dmx` (live channel values), `auto-position`,
-`midi-status` and `error-msg`.
+connect, changed fields thereafter), `dmx` (live channel values, keyed by
+universe), `auto-position`, `midi-status` and `error-msg`.
+
+The `fixture` message carries `{ id, address?, universe?, label?, profileId? }`.
 
 ---
 

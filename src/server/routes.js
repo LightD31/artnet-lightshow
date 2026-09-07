@@ -5,7 +5,7 @@ const fsp = require('fs/promises');
 const os = require('os');
 const multer = require('multer');
 
-const { state, getClientState } = require('./state');
+const { state, getClientState, universeOf, countUniverses, setDefaultUniverse } = require('./state');
 const { applyPatch, applyOverride, processTap } = require('./patch');
 const { resizeFixtureBuffers } = require('./engine');
 const { parseGDTF } = require('../gdtf');
@@ -20,7 +20,8 @@ const {
   listProfiles,
   clearNonBuiltinProfiles,
 } = require('./profiles');
-const { profileSchema, showSchema, midiConnectSchema, deezerStateSchema, validate } = require('./validation');
+const { MAX_UNIVERSES } = require('./universes');
+const { profileSchema, showSchema, midiConnectSchema, deezerStateSchema, dmxUniverse, validate } = require('./validation');
 const { settings, RESTART_PATHS, CONFIG_FILE } = require('./settings');
 const { generateToken } = require('./auth');
 const pythonEnv = require('../python-env');
@@ -220,13 +221,27 @@ function attachRoutes(app, deps) {
     res.json({ ok: true });
   });
 
-  app.post('/api/fixtures', (_req, res) => {
+  app.post('/api/fixtures', (req, res) => {
     if (state.fixtures.length >= MAX_FIXTURES) {
       return res.status(400).json({ ok: false, error: `Patch is full (${MAX_FIXTURES} fixtures)` });
     }
+    // New fixtures land on the rig's default universe unless the caller names
+    // another one, and auto-address behind whatever is already on *that*
+    // universe — addressing behind the whole patch would leave a hole at the
+    // front of every universe but the first.
+    let universe = state.artnet.universe;
+    if (req.body && req.body.universe !== undefined) {
+      const parsed = dmxUniverse.safeParse(req.body.universe);
+      if (!parsed.success) {
+        return res.status(400).json({ ok: false, error: 'universe must be an integer from 0 to 32767' });
+      }
+      universe = parsed.data;
+    }
+
     let maxEnd = 0;
     const profiles = listProfiles();
     for (const fix of state.fixtures) {
+      if (universeOf(fix) !== universe) continue;
       const profile = profiles[fix.profileId] || profiles[BUILTIN_PROFILE_ID];
       const end = fix.address + profile.channelCount;
       if (end > maxEnd) maxEnd = end;
@@ -239,15 +254,24 @@ function attachRoutes(app, deps) {
     if (!fitsInUniverse(address, chCount)) {
       return res.status(400).json({
         ok: false,
-        error: `No room left: a ${chCount}-channel fixture at ${address} would end at `
-          + `${endChannel(address, chCount)}, past the ${UNIVERSE_SIZE}-channel universe`,
+        error: `No room left in universe ${universe}: a ${chCount}-channel fixture at ${address} `
+          + `would end at ${endChannel(address, chCount)}, past the ${UNIVERSE_SIZE}-channel universe`,
       });
     }
     const newId = state.fixtures.length;
+    const next = [...state.fixtures, { universe }];
+    if (countUniverses(next) > MAX_UNIVERSES) {
+      return res.status(400).json({
+        ok: false,
+        error: `Universe ${universe} would put the patch on more than the ${MAX_UNIVERSES} `
+          + 'universes this server transmits',
+      });
+    }
     state.fixtures.push({
       id: newId,
       label: `Fixture ${newId + 1}`,
       address,
+      universe,
       profileId: BUILTIN_PROFILE_ID,
       override: null,
     });
@@ -274,6 +298,7 @@ function attachRoutes(app, deps) {
       fixtures: state.fixtures.map((f) => ({
         label: f.label,
         address: f.address,
+        universe: universeOf(f),
         profileId: f.profileId,
       })),
     });
@@ -302,12 +327,20 @@ function attachRoutes(app, deps) {
         for (const p of show.profiles) if (p && p.id) incoming[p.id] = p;
       }
 
+      // A show file carries its own default universe, and the fixtures in it
+      // are resolved against that rather than the one the rig happens to be on.
+      const showUniverse = (show.artnet && show.artnet.universe !== undefined)
+        ? show.artnet.universe : state.artnet.universe;
+
       let next = null;
       if (hasFixtures) {
         next = show.fixtures.map((f, i) => ({
           id: i,
           label: f.label || `Fixture ${i + 1}`,
           address: f.address || 1,
+          // Shows saved before multi-universe carry no universe at all: those
+          // fixtures belong on the show's own universe, where they used to be.
+          universe: f.universe !== undefined ? f.universe : showUniverse,
           profileId: incoming[f.profileId] ? f.profileId : BUILTIN_PROFILE_ID,
           override: null,
         }));
@@ -321,6 +354,13 @@ function attachRoutes(app, deps) {
             });
           }
         }
+        const spanned = new Set([showUniverse, ...next.map((f) => f.universe)]);
+        if (spanned.size > MAX_UNIVERSES) {
+          return res.status(400).json({
+            ok: false,
+            error: `Show spans ${spanned.size} universes, more than the ${MAX_UNIVERSES} this server transmits`,
+          });
+        }
       }
 
       // Everything checked out — now apply.
@@ -328,7 +368,18 @@ function attachRoutes(app, deps) {
         clearNonBuiltinProfiles();
         show.profiles.forEach((p) => { if (p && p.id) registerProfile(p); });
       }
-      if (show.artnet) Object.assign(state.artnet, show.artnet);
+      if (show.artnet) {
+        const { universe, ...rest } = show.artnet;
+        Object.assign(state.artnet, rest);
+        if (universe !== undefined) {
+          // With a fixture list the show already says where every fixture goes,
+          // so assign the default directly; dragging the old default's
+          // occupants along would fight it. Without one, this is the Art-Net
+          // panel's "move the rig" semantics.
+          if (next) state.artnet.universe = universe;
+          else setDefaultUniverse(universe);
+        }
+      }
       if (next) {
         state.fixtures = next;
         resizeFixtureBuffers();
