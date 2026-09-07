@@ -43,6 +43,83 @@ KEY_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
 _PANNS_AT = None  # cached AudioTagging instance (PyTorch model is heavy)
 
+# ── PANNs data files ────────────────────────────────────────────────────────
+# panns_inference fetches its own files with `wget` — and does so at *import*
+# time, in config.py, then reads the labels CSV unconditionally. On Windows,
+# where there is no wget, that means `import panns_inference` prints a shell
+# error and then raises FileNotFoundError.
+#
+# The consequence is subtle: any bootstrap placed after the import can never
+# run, because there is no "after". So everything below makes sure the files
+# are on disk *before* importing the package.
+
+_PANNS_DIR = os.path.join(os.path.expanduser('~'), 'panns_data')
+_PANNS_CKPT = os.path.join(_PANNS_DIR, 'Cnn14_mAP=0.431.pth')
+_PANNS_LABELS = os.path.join(_PANNS_DIR, 'class_labels_indices.csv')
+_PANNS_SETUP = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    'scripts', 'setup-panns.py',
+)
+_MIN_CKPT_BYTES = int(3e8)
+
+
+def _panns_installed():
+    """Is the package importable, without actually importing it?
+
+    find_spec locates the package without executing its __init__, which is the
+    only safe way to ask this question: importing is what triggers the wget
+    call and the failure we are trying to avoid.
+    """
+    import importlib.util
+    try:
+        return importlib.util.find_spec('panns_inference') is not None
+    except Exception:
+        return False
+
+
+def _checkpoint_present():
+    return os.path.isfile(_PANNS_CKPT) and os.path.getsize(_PANNS_CKPT) >= _MIN_CKPT_BYTES
+
+
+def _run_panns_setup(extra_args, note):
+    """Fetch the data files via scripts/setup-panns.py (urllib + verified
+    digests) rather than leaving it to the package's wget.
+
+    The exit code is deliberately not treated as the verdict: the script exits
+    2 for "files are in place but torch is missing", which is a perfectly good
+    outcome here — we only ever wanted the files. Callers decide by looking at
+    the filesystem, so the only thing worth reporting is a failure to run it
+    at all.
+    """
+    if not os.path.isfile(_PANNS_SETUP):
+        return
+    print(f'[panns] {note}', file=sys.stderr)
+    import subprocess as _sp
+    try:
+        _sp.run([sys.executable, _PANNS_SETUP, *extra_args],
+                check=False, stdout=sys.stderr, stderr=sys.stderr)
+    except Exception as exc:
+        print(f'[panns] could not run setup-panns.py: {exc}', file=sys.stderr)
+
+
+def _ensure_panns_labels():
+    """The ~15 KB labels CSV, required for `import panns_inference` to succeed."""
+    if os.path.isfile(_PANNS_LABELS):
+        return True
+    _run_panns_setup(['--labels-only'], 'fetching the AudioSet labels CSV (~15 KB)')
+    return os.path.isfile(_PANNS_LABELS)
+
+
+def _ensure_panns_files():
+    """Labels CSV + the ~310 MB checkpoint. Used on the analysis path, where
+    paying a one-time download is preferable to silently losing genre
+    classification for the rest of the night."""
+    if os.path.isfile(_PANNS_LABELS) and _checkpoint_present():
+        return True
+    _run_panns_setup([], 'model files missing — running setup-panns.py (one-time ~310 MB download)')
+    return os.path.isfile(_PANNS_LABELS) and _checkpoint_present()
+
+
 
 def classify_panns(filepath):
     """
@@ -61,49 +138,27 @@ def classify_panns(filepath):
         _warn.filterwarnings('ignore')
         import numpy as _np
         import librosa as _lr
+    except Exception as exc:
+        print(f'[panns] skipped: {exc}', file=sys.stderr)
+        return None
+
+    if not _panns_installed():
+        print('[panns] skipped: panns_inference is not installed', file=sys.stderr)
+        return None
+
+    # Before the import, never after: importing is what would try to wget them.
+    if not _ensure_panns_files():
+        print('[panns] model files still missing after setup — skipping',
+              file=sys.stderr)
+        return None
+
+    try:
         from panns_inference import AudioTagging, labels as _labels
     except Exception as exc:
         print(f'[panns] skipped: {exc}', file=sys.stderr)
         return None
 
-    home = os.path.expanduser('~')
-    ckpt = os.path.join(home, 'panns_data', 'Cnn14_mAP=0.431.pth')
-    labels_csv = os.path.join(home, 'panns_data', 'class_labels_indices.csv')
-
-    # Auto-bootstrap on first run: if torch/panns_inference are installed but
-    # the model files aren't present, kick off scripts/setup-panns.py.
-    needs_files = (
-        not os.path.isfile(ckpt)
-        or os.path.getsize(ckpt) < int(3e8)
-        or not os.path.isfile(labels_csv)
-    )
-    if needs_files:
-        setup = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            'scripts', 'setup-panns.py'
-        )
-        if os.path.isfile(setup):
-            print(
-                '[panns] model files missing — running setup-panns.py '
-                '(one-time ~310 MB download)',
-                file=sys.stderr,
-            )
-            import subprocess as _sp
-            try:
-                _sp.run(
-                    [sys.executable, setup],
-                    check=True,
-                    stdout=sys.stderr,
-                    stderr=sys.stderr,
-                )
-            except Exception as exc:
-                print(f'[panns] setup failed: {exc}', file=sys.stderr)
-                return None
-
-    if not os.path.isfile(ckpt) or os.path.getsize(ckpt) < int(3e8):
-        print('[panns] checkpoint still missing after setup — skipping',
-              file=sys.stderr)
-        return None
+    ckpt = _PANNS_CKPT
 
     global _PANNS_AT
     if _PANNS_AT is None:
@@ -1440,18 +1495,26 @@ def _preload_panns():
     doesn't pay the ~3-5s load cost. Silently skipped if PANNs isn't
     installed or the checkpoint is missing — falls through to the same
     classify_panns() skip-path used today."""
+    if not _panns_installed():
+        return
+    # Startup is the wrong moment for a 310 MB download, so the checkpoint is
+    # checked (a plain file test, no import) and preload simply skips when it
+    # is absent. classify_panns() fetches it on the analysis path instead.
+    if not _checkpoint_present():
+        return
+    # The labels CSV is 15 KB and the import fails without it.
+    if not _ensure_panns_labels():
+        return
     try:
         from panns_inference import AudioTagging
-    except Exception:
-        return
-    ckpt = os.path.join(os.path.expanduser('~'), 'panns_data', 'Cnn14_mAP=0.431.pth')
-    if not os.path.isfile(ckpt) or os.path.getsize(ckpt) < int(3e8):
+    except Exception as exc:
+        print(f'[panns] preload skipped: {exc}', file=sys.stderr)
         return
     try:
         import contextlib as _ctx
         global _PANNS_AT
         with _ctx.redirect_stdout(sys.stderr):
-            _PANNS_AT = AudioTagging(checkpoint_path=ckpt, device='cpu')
+            _PANNS_AT = AudioTagging(checkpoint_path=_PANNS_CKPT, device='cpu')
     except Exception as exc:
         print(f'[panns] preload failed: {exc}', file=sys.stderr)
 

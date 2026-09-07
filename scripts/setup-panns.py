@@ -148,16 +148,26 @@ def download(url: str, target: Path, label: str,
 
 
 def check_python_deps() -> bool:
-    """Verify torch + panns_inference are importable. Print actionable hint
+    """Verify torch + panns_inference are installed. Print actionable hint
     if not."""
+    import importlib.util
+
     missing = []
     try:
         import torch  # noqa: F401
     except Exception:
         missing.append('torch')
+
+    # find_spec, not import: panns_inference's config.py shells out to `wget`
+    # at import time and then reads the labels CSV unconditionally, so on a
+    # machine without wget importing it raises — and an installed package
+    # would be reported here as missing, which is exactly the wrong hint when
+    # this script is what fixes it.
     try:
-        import panns_inference  # noqa: F401
+        found = importlib.util.find_spec('panns_inference') is not None
     except Exception:
+        found = False
+    if not found:
         missing.append('panns_inference')
 
     if missing:
@@ -177,6 +187,12 @@ def main():
     parser.add_argument(
         '--check', action='store_true',
         help='Verify only — exit nonzero if anything is missing'
+    )
+    parser.add_argument(
+        '--labels-only', action='store_true',
+        help='Fetch just the ~15 KB labels CSV, not the ~310 MB checkpoint. '
+             'The analyzer uses this to make "import panns_inference" work '
+             'without committing to the full download.'
     )
     args = parser.parse_args()
 
@@ -198,10 +214,17 @@ def main():
     # No-op shortcut
 
     need_labels = args.force or not labels_ok
-    need_ckpt = args.force or not ckpt_ok
+    need_ckpt = (args.force or not ckpt_ok) and not args.labels_only
 
     if not need_labels and not need_ckpt:
         print('\n[ok] already set up — nothing to do')
+        sys.exit(0 if deps_ok else 2)
+
+    if args.labels_only and need_labels:
+        if not download(LABELS_URL, LABELS_PATH, 'labels',
+                        LABELS_SIZE, 'sha256', LABELS_SHA256):
+            sys.exit(1)
+        print('\n[ok] labels in place (checkpoint not requested)')
         sys.exit(0 if deps_ok else 2)
 
     print('')

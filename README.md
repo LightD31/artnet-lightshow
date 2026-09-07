@@ -158,6 +158,13 @@ If `torch`/`panns_inference` are missing the analyser still runs, but genre
 classification is skipped silently and palette selection falls back to a
 mood-based path — so run `--check` if shows look off.
 
+You do not have to run the setup script by hand: the analyser fetches whatever
+is missing on its first analysis. `panns_inference` would otherwise try to
+download its own files with `wget`, at *import* time — which fails on Windows,
+and takes the import down with it — so the files are always fetched first, over
+HTTPS with verified digests. The one-time ~310 MB checkpoint download happens on
+the first track you analyse, not at startup.
+
 ### Which Python?
 
 Having *a* Python is not the same as having the right one. `py` (the Windows
