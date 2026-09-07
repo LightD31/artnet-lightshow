@@ -28,6 +28,25 @@ jobs:
       - name: Build client
         run: npm run build:client
 
+  # The analyzer is ~1,800 lines of Python that CI never touched. It does not
+  # run here (librosa + torch is a heavy install for a syntax-and-wiring check),
+  # but a compile pass and the bootstrap-ordering tests are cheap and catch the
+  # class of bug that only shows up on an operator's machine.
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Compile every module
+        run: python -m compileall -q src scripts tests
+
+      - name: Bootstrap ordering tests
+        run: python -m unittest discover -s tests/python -v
+
   audit:
     runs-on: ubuntu-latest
     steps:
