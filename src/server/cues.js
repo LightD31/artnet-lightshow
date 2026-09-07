@@ -82,6 +82,12 @@ const reorderSchema = z.object({
   ids: z.array(z.string().min(1).max(64)).max(MAX_CUES),
 }).strict();
 
+/** POST /api/cues/restore: put a just-deleted cue back where it was. */
+const cueRestoreSchema = z.object({
+  cue: cueSchema,
+  index: z.number().int().min(0).max(MAX_CUES).optional(),
+}).strict();
+
 function newId() {
   return crypto.randomBytes(8).toString('hex');
 }
@@ -246,12 +252,41 @@ class CueStore {
     return cue;
   }
 
+  /**
+   * Delete a cue and hand back what was removed, and from where.
+   *
+   * The caller needs both to offer an undo: re-creating a cue from its look
+   * alone would give it a new id and drop it at the end of the stack, which is
+   * not what "undo" means to someone who just deleted the wrong row.
+   *
+   * @returns {{cue, index}|null} null when the id is unknown.
+   */
   remove(id) {
-    const before = this._cues.length;
-    this._cues = this._cues.filter((c) => c.id !== id);
-    if (this._cues.length === before) return false;
+    const index = this._cues.findIndex((c) => c.id === id);
+    if (index < 0) return null;
+    const [cue] = this._cues.splice(index, 1);
     this._persist();
-    return true;
+    return { cue, index };
+  }
+
+  /**
+   * Put a removed cue back where it was, id intact.
+   *
+   * Idempotent on the id: pressing undo twice, or on a cue that has since been
+   * re-created, must not end up with two rows claiming the same id.
+   */
+  insert(cue, index) {
+    const parsed = cueSchema.parse(cue);
+    if (this.get(parsed.id)) return null;
+    if (this._cues.length >= MAX_CUES) {
+      const err = new Error(`Cue stack is full (${MAX_CUES} cues)`);
+      err.status = 400;
+      throw err;
+    }
+    const at = Math.max(0, Math.min(this._cues.length, Number.isInteger(index) ? index : this._cues.length));
+    this._cues.splice(at, 0, parsed);
+    this._persist();
+    return parsed;
   }
 
   /**
@@ -307,6 +342,7 @@ module.exports = {
   lookSchema,
   cueSchema,
   cueWriteSchema,
+  cueRestoreSchema,
   reorderSchema,
   captureLook,
   recallLook,

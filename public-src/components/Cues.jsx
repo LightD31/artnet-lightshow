@@ -1,5 +1,5 @@
 import { useState } from 'preact/hooks';
-import { stateSig, api } from '../state.js';
+import { stateSig, api, toast } from '../state.js';
 import { colorToCss } from '../utils.js';
 
 // The cue list rides the state broadcast as summaries — id, name, and enough to
@@ -21,6 +21,25 @@ function Swatches({ colors, presets }) {
 
 function CueRow({ cue, presets, editing, setEditing }) {
   const [draft, setDraft] = useState(cue.name);
+
+  // Delete and rebuild-from-scratch are not the same thing, and "×" sits right
+  // next to "⟳" on this row. The server hands back the cue and where it was, so
+  // undo puts that exact cue back in that exact slot rather than appending a
+  // copy with a new id.
+  const remove = async () => {
+    const res = await cueApi(`/${cue.id}`, { method: 'DELETE' });
+    if (!res.ok) return;
+    toast.push({
+      message: `Deleted "${cue.name}"`,
+      action: {
+        label: 'Undo',
+        onClick: () => cueApi('/restore', {
+          method: 'POST',
+          body: JSON.stringify({ cue: res.cue, index: res.index }),
+        }),
+      },
+    });
+  };
 
   const commitRename = () => {
     const name = draft.trim();
@@ -71,7 +90,7 @@ function CueRow({ cue, presets, editing, setEditing }) {
       <button
         class="btn icon sm danger"
         title="Delete"
-        onClick={() => cueApi(`/${cue.id}`, { method: 'DELETE' })}
+        onClick={remove}
       >×</button>
     </div>
   );

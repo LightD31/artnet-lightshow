@@ -84,6 +84,23 @@ const fixtureMessageSchema = z.object({
   profileId: z.string().min(1).max(128).optional(),
 }).strict();
 
+/**
+ * POST /api/fixtures/restore: an undo for a just-deleted fixture.
+ *
+ * Carries the override too — a fixture deleted while overridden should come
+ * back the way it left, not reset to the pattern engine.
+ */
+const fixtureRestoreSchema = z.object({
+  index: z.number().int().min(0).max(255),
+  fixture: z.object({
+    label: z.string().max(64),
+    address: z.number().int().min(1).max(512),
+    universe: dmxUniverse.optional(),
+    profileId: z.string().min(1).max(128),
+    override: z.union([overrideSchema, z.null()]).optional(),
+  }).strict(),
+}).strict();
+
 // Profile ids reach an object key, so reject the ones that would collide with
 // object machinery before they get anywhere near the registry.
 const RESERVED_PROFILE_IDS = ['__proto__', 'constructor', 'prototype'];
@@ -183,6 +200,7 @@ module.exports = {
   overrideSchema,
   overrideMessageSchema,
   fixtureMessageSchema,
+  fixtureRestoreSchema,
   profileSchema,
   showSchema,
   midiConnectSchema,

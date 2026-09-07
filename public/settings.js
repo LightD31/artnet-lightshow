@@ -221,7 +221,15 @@ function renderMidiMap() {
 
     const clear = el('button', 'btn btn-small remove-btn', '×');
     clear.title = 'Unbind';
-    clear.addEventListener('click', () => putBinding(row.kind, row.number, null));
+    clear.addEventListener('click', async () => {
+      const before = row.binding;
+      const res = await putBinding(row.kind, row.number, null);
+      if (!res.ok) return;
+      Toast.push({
+        message: `Unbound ${controlLabel(row.kind, row.number, before)}`,
+        action: { label: 'Undo', onClick: () => putBinding(row.kind, row.number, before) },
+      });
+    });
     actions.appendChild(clear);
 
     tr.appendChild(actions);
@@ -342,6 +350,7 @@ async function putBinding(kind, number, binding) {
     midiMapData = { ...midiMapData, map: res.map, customised: res.customised };
     renderMidiMap();
   }
+  return res;
 }
 
 async function loadMidiMap() {
@@ -372,11 +381,27 @@ document.getElementById('midi-learn-cancel').addEventListener('click', () => {
   hideLearnBanner();
 });
 document.getElementById('midi-map-reset').addEventListener('click', async () => {
+  // Reset throws away a mapping that may have taken a while to build one
+  // control at a time. The map we are about to replace is right here, and
+  // PUT /api/midi/map takes a whole one, so undo costs nothing.
+  const before = midiMapData && midiMapData.map;
   const res = await apiJson('/api/midi/map/reset', { method: 'POST' });
-  if (res.ok) {
-    midiMapData = { ...midiMapData, map: res.map, customised: res.customised };
-    renderMidiMap();
-  }
+  if (!res.ok) return;
+  midiMapData = { ...midiMapData, map: res.map, customised: res.customised };
+  renderMidiMap();
+  if (!before) return;
+  Toast.push({
+    message: 'Reset to the built-in X-Touch mapping',
+    action: {
+      label: 'Undo',
+      onClick: async () => {
+        const restored = await apiJson('/api/midi/map', jsonBody('PUT', before));
+        if (!restored.ok) return;
+        midiMapData = { ...midiMapData, map: restored.map, customised: restored.customised };
+        renderMidiMap();
+      },
+    },
+  });
 });
 
 // ── GDTF Import ──────────────────────────────────────────────────────────────
@@ -529,11 +554,22 @@ function renderProfiles() {
     container.appendChild(card);
   });
 
-  // Remove profile handlers
+  // Remove profile handlers. A GDTF import is a file the operator had to go
+  // and find, so losing one to a stray click is worse than it looks — and the
+  // whole profile is already here in `profiles`, so undo is just re-posting it.
   container.querySelectorAll('.remove-profile-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       const id = btn.dataset.id;
-      await fetch(`/api/profiles/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      const profile = profiles[id];
+      const res = await apiJson(`/api/profiles/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (!res.ok || !profile) return;
+      Toast.push({
+        message: `Removed "${profile.name}"`,
+        action: {
+          label: 'Undo',
+          onClick: () => apiJson('/api/profiles', jsonBody('POST', profile)),
+        },
+      });
     });
   });
 }
@@ -639,10 +675,22 @@ function renderPatchTable() {
   });
 
   // Remove fixture handlers
+  // Removing a fixture takes its address, universe and any override with it,
+  // and the button is a bare × in a dense table. The server answers with what
+  // it removed and from where, so undo puts it back in the same row.
   tbody.querySelectorAll('.remove-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       const id = parseInt(btn.dataset.id);
-      await fetch(`/api/fixtures/${id}`, { method: 'DELETE' });
+      const res = await apiJson(`/api/fixtures/${id}`, { method: 'DELETE' });
+      if (!res.ok) return;
+      Toast.push({
+        message: `Removed "${res.fixture.label}"`,
+        action: {
+          label: 'Undo',
+          onClick: () => apiJson('/api/fixtures/restore',
+            jsonBody('POST', { index: res.index, fixture: res.fixture })),
+        },
+      });
     });
   });
 }
