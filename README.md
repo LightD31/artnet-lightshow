@@ -7,8 +7,9 @@ builds a show from it.
 Ships configured for **4× Cameo ROOT PAR 6**, but any fixture works — import a
 GDTF profile and patch it in the UI.
 
-Control surfaces: the web UI, a **Behringer X-Touch Compact** over MIDI, an
-**Elgato Stream Deck** via **Bitfocus Companion**, and a REST API.
+Control surfaces: the web UI, **any MIDI controller** (with MIDI learn; a
+Behringer X-Touch Compact is mapped out of the box), an **Elgato Stream Deck**
+via **Bitfocus Companion**, and a REST API.
 
 ---
 
@@ -290,11 +291,44 @@ with it, audio is fetched by ISRC for an exact match instead of a yt-dlp search.
 
 ---
 
-## MIDI — Behringer X-Touch Compact
+## MIDI
+
+Any MIDI controller works. Pick its ports in the settings page (the choice is
+remembered), then map it — either keep the built-in layout, or relearn the
+bindings you want onto the controls you have.
+
+### MIDI learn
+
+**Settings → MIDI Mapping**: pick an action, press **Learn**, and move the
+control you want it on. The next message that arrives is bound to it and saved.
+
+- **Learn** next to an existing row *moves* that action to another control — it
+  does not leave the old one firing as well.
+- **×** unbinds a control.
+- **Reset to default** goes back to the X-Touch layout below and forgets your
+  file.
+
+Learning an action that takes a parameter (a pattern, a colour, a cue, a
+fixture) asks for it first, so *Recall cue → Chorus* and *Recall cue → Verse* are
+two separate bindings on two separate buttons.
+
+Bindings can name a **MIDI channel**, which a controller whose second layer
+repeats the same note numbers on another channel needs; leave it out and any
+channel matches.
+
+Your mapping is stored in `config/midi-map.json`. Until you change something the
+file does not exist and the default below is used.
+
+LED feedback follows the map: a button bound to the live pattern lights up
+wherever you put it, rather than wherever the X-Touch originally had it.
+
+`DEBUG_MIDI=1` logs every incoming message — useful when mapping an unfamiliar
+controller, far too noisy during a show.
+
+### Default mapping — Behringer X-Touch Compact
 
 Set the controller to **Standard MIDI mode** (Layer A). The server auto-detects
-the first port matching `/x.?touch/i`; pick specific ports in the settings
-page, and the choice is remembered.
+the first port matching `/x.?touch/i`.
 
 | Control | MIDI | Action |
 |---------|------|--------|
@@ -312,8 +346,13 @@ page, and the choice is remembered.
 | Button row 1 | Notes 16–23 | Patterns |
 | Button row 2 | Notes 24–31 | 2 patterns + Colour A presets 1–6 |
 
-LEDs reflect current state. `DEBUG_MIDI=1` logs every incoming message — useful
-when mapping a controller, far too noisy during a show.
+### Bindable actions
+
+| Control | Actions |
+|---------|---------|
+| **Buttons** | Tap tempo · Play/stop · Master blackout · Select pattern · Set colour slot A–D · Set beat division · Energy override (hold) · Cycle the held energy effect · Cycle strobe function · Fixture blackout · Recall cue |
+| **Encoders** (relative) | Nudge BPM · Nudge master dimmer · Nudge strobe speed · Nudge fixture dimmer |
+| **Faders** (absolute) | Master dimmer · Strobe speed · BPM · Fixture dimmer |
 
 ---
 
@@ -395,6 +434,12 @@ All endpoints return JSON. When a token is configured, send it as an
 |--------|------|-------------|
 | GET | `/api/midi/ports` | List MIDI ports |
 | POST | `/api/midi/connect` | Connect ports `{ input, output }` |
+| GET | `/api/midi/map` | The live map, the action catalogue, and whether it is customised |
+| PUT | `/api/midi/map` | Replace the whole map |
+| POST | `/api/midi/map/reset` | Back to the built-in X-Touch layout |
+| PUT | `/api/midi/map/binding` | Bind or clear one message (`{ kind, number, binding }`) |
+| POST | `/api/midi/learn` | Arm learn; the request is held open until a control moves |
+| POST | `/api/midi/learn/cancel` | Disarm learn |
 | POST | `/api/prolink/enable` · `/disable` · `/toggle` | PRO DJ LINK |
 | GET | `/auth/spotify` · `/auth/spotify/callback` | Spotify OAuth |
 | GET | `/api/spotify/now-playing` · POST `/api/spotify/disconnect` | Spotify |
@@ -406,7 +451,8 @@ All endpoints return JSON. When a token is configured, send it as an
 The UI uses Socket.IO rather than polling. Clients send `set`, `override`,
 `fixture`, `tap` and `midi-connect`; the server emits `state` (full snapshot on
 connect, changed fields thereafter), `dmx` (live channel values, keyed by
-universe), `auto-position`, `midi-status` and `error-msg`.
+universe), `auto-position`, `midi-status`, `midi-map`, `midi-learn` and
+`error-msg`.
 
 The `fixture` message carries `{ id, address?, universe?, label?, profileId? }`.
 

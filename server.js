@@ -26,6 +26,8 @@ const { attachSockets } = require('./src/server/sockets');
 const { createAuth, configError, isLoopbackHost } = require('./src/server/auth');
 const { settings, CONFIG_FILE, warnAboutLegacyEnv } = require('./src/server/settings');
 const { createApplier } = require('./src/server/apply');
+const { midiMap } = require('./src/server/midi-map');
+const { cues } = require('./src/server/cues');
 const pythonEnv = require('./src/python-env');
 
 // A .env from before settings moved into the UI would otherwise go quiet: the
@@ -65,6 +67,15 @@ io.use(auth.socketMiddleware);
 
 const midi = new MidiController(state, applyPatch, processTap);
 midi.overrideFixture = applyOverride;
+
+// The control map is stored and relearnable, so the controller follows edits
+// without a reconnect. Cue recall is wired in from here rather than reached for
+// inside midi.js, which has no business knowing about the cue store.
+midi.setMap(midiMap.get());
+midiMap.onChange((map) => midi.setMap(map));
+midi.recallCue = (id) => {
+  if (!cues.recall(id)) console.warn(`[MIDI] recallCue: no cue ${id} — it may have been deleted`);
+};
 
 const prolink = new ProLink();
 const spotify = new SpotifyClient();
@@ -124,7 +135,8 @@ server.listen(PORT, HOST, () => {
     : 'no token — loopback only, this machine can reach it'}`);
   console.log(`  ArtNet            →  ${state.artnet.host}:${state.artnet.port} universe ${state.artnet.universe}`);
   console.log(`  Fixtures          →  ${state.fixtures.length}x at DMX ${state.fixtures.map((f) => f.address).join(', ')}`);
-  console.log(`  MIDI              →  ${midi.enabled ? 'connected' : 'not connected (pick a port in the settings page)'}`);
+  console.log(`  MIDI              →  ${midi.enabled ? 'connected' : 'not connected (pick a port in the settings page)'}`
+    + `  [${midiMap.snapshot().customised ? 'custom map' : 'default X-Touch map'}]`);
   console.log(`  PRO DJ LINK       →  ${state.prolinkEnabled ? 'enabled' : 'disabled (enable it in the settings page)'}`);
   console.log(`  Spotify           →  ${spotify.configured ? 'configured (visit /auth/spotify to connect)' : 'not configured (add a client ID & secret in the settings page)'}`);
   if (spotify.configured) {

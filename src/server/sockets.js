@@ -11,8 +11,15 @@ const {
 const { listProfiles, getProfile, endChannel, fitsInUniverse, UNIVERSE_SIZE } = require('./profiles');
 const { MAX_UNIVERSES } = require('./universes');
 const { settings } = require('./settings');
+const { midiMap } = require('./midi-map');
 
 function attachSockets(io, { midi, integrations }) {
+  // Learn is a whole-server mode, not a per-socket one: whoever armed it needs
+  // to see the capture, and every other open settings page needs to stop
+  // showing a stale map. Both go to everyone.
+  midi.onLearn((event) => io.emit('midi-learn', event));
+  midiMap.onChange(() => io.emit('midi-map', midiMap.snapshot()));
+
   io.on('connection', (socket) => {
     console.log('Client connected:', socket.id);
     socket.emit('state', getClientState());

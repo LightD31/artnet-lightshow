@@ -22,6 +22,9 @@ const {
 } = require('./profiles');
 const { MAX_UNIVERSES } = require('./universes');
 const { cues, cueWriteSchema, reorderSchema } = require('./cues');
+const {
+  midiMap, ACTIONS, defaultTypeFor, mapSchema, learnSchema, bindingWriteSchema,
+} = require('./midi-map');
 const { profileSchema, showSchema, midiConnectSchema, deezerStateSchema, dmxUniverse, validate } = require('./validation');
 const { settings, RESTART_PATHS, CONFIG_FILE } = require('./settings');
 const { generateToken } = require('./auth');
@@ -184,6 +187,88 @@ function attachRoutes(app, deps) {
       persistMidi(body);
       res.json({ ok, enabled: midi.enabled, ports: midi.listPorts() });
     } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+  });
+
+  // ─── MIDI mapping and learn ───────────────────────────────────────────────
+  // The map used to be a constant describing one controller. It is now stored,
+  // editable, and relearnable by pressing the control you want.
+  app.get('/api/midi/map', (_req, res) => {
+    res.json({
+      ok: true,
+      ...midiMap.snapshot(),
+      // The catalogue the settings page renders its picker from, so the list of
+      // bindable actions lives in one place rather than two.
+      actions: ACTIONS,
+      learning: midi.learning,
+    });
+  });
+
+  app.put('/api/midi/map', (req, res) => {
+    try {
+      midiMap.replace(validate(mapSchema, req.body || {}, 'midi-map'));
+      res.json({ ok: true, ...midiMap.snapshot() });
+    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+  });
+
+  app.post('/api/midi/map/reset', (_req, res) => {
+    midiMap.reset();
+    res.json({ ok: true, ...midiMap.snapshot() });
+  });
+
+  /** Bind or clear one message by hand, for when the controller isn't to hand. */
+  app.put('/api/midi/map/binding', (req, res) => {
+    try {
+      const { kind, number, binding } = validate(bindingWriteSchema, req.body || {}, 'midi-binding');
+      midiMap.setBinding(kind, number, binding);
+      res.json({ ok: true, ...midiMap.snapshot() });
+    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+  });
+
+  /**
+   * Arm learn and answer when a control is pressed.
+   *
+   * The request is held open until the controller sends something, learn is
+   * cancelled, or it times out — so the page gets its answer without polling,
+   * and a client that navigates away disarms nothing it did not arm.
+   */
+  app.post('/api/midi/learn', asyncHandler(async (req, res) => {
+    if (!midi.enabled) {
+      return res.status(400).json({ ok: false, error: 'No MIDI input connected — pick a port first' });
+    }
+    let binding;
+    try {
+      binding = validate(learnSchema, req.body || {}, 'midi-learn');
+    } catch (err) {
+      return res.status(400).json({ ok: false, error: err.message });
+    }
+
+    // A CC binding needs to know whether the control is an encoder or a fader.
+    // The action says which by default; an explicit type in the request wins,
+    // for the controller whose faders send relative or whose encoders don't.
+    const captured = await midi.startLearn(binding);
+    if (!captured) {
+      return res.json({ ok: false, error: 'Learn cancelled or timed out', learned: null });
+    }
+
+    const stored = { ...captured.binding };
+    if (captured.kind === 'cc' && !stored.type) stored.type = defaultTypeFor(stored.action);
+    if (captured.kind === 'notes') delete stored.type;
+
+    try {
+      midiMap.setBinding(captured.kind, captured.number, stored);
+    } catch (err) {
+      return res.status(err.status || 500).json({ ok: false, error: err.message });
+    }
+
+    res.json({
+      ok: true,
+      learned: { kind: captured.kind, number: captured.number, channel: captured.channel, binding: stored },
+      ...midiMap.snapshot(),
+    });
+  }));
+
+  app.post('/api/midi/learn/cancel', (_req, res) => {
+    res.json({ ok: true, cancelled: midi.cancelLearn('cancelled') });
   });
 
   // ─── PRO DJ LINK ──────────────────────────────────────────────────────────

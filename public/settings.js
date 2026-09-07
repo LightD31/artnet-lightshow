@@ -16,13 +16,18 @@ socket.on('disconnect', () => {
   document.getElementById('status-dot').classList.remove('connected');
 });
 
+// MERGE, don't replace. The first push on connect is the full snapshot,
+// including the static catalogues (colour presets, patterns, energy effects);
+// every later push carries only the fields that change. Replacing would drop
+// the catalogues the MIDI mapping editor builds its pickers from.
 socket.on('state', (s) => {
-  state = s;
+  state = { ...state, ...s };
   if (s.profiles) profiles = s.profiles;
   renderProfiles();
   renderPatchTable();
   syncArtnetFields(s);
   if (s.midi) renderMidiStatus(s.midi);
+  if (s.cues) renderMidiMap();
 });
 
 // ── ArtNet settings ──────────────────────────────────────────────────────────
@@ -97,6 +102,250 @@ document.getElementById('midi-connect').addEventListener('click', () => {
   const input  = document.getElementById('midi-input').value  || null;
   const output = document.getElementById('midi-output').value || null;
   socket.emit('midi-connect', { input, output });
+});
+
+// ── MIDI mapping and learn ───────────────────────────────────────────────────
+// The map used to be a constant describing one controller; anything else was
+// unusable without editing source. Pick an action, press Learn, then move the
+// control you want it on.
+
+let midiMapData = null;   // { map, customised, actions }
+
+const ACTION_BY_ID = () => new Map((midiMapData.actions || []).map(a => [a.id, a]));
+
+/** The options for an action's parameter, from the live catalogues. */
+function paramOptions(kind) {
+  switch (kind) {
+    case 'pattern':
+      return (state.patterns || []).map(p => ({ value: p.id, label: p.name }));
+    case 'color':
+      return (state.colorPresets || []).map((c, i) => ({ value: i, label: c.name }));
+    case 'energy':
+      return (state.energyEffects || []).map(e => ({ value: e.id, label: e.name }));
+    case 'cue':
+      return (state.cues || []).map(c => ({ value: c.id, label: c.name }));
+    case 'fixture':
+      return (state.fixtures || []).map(f => ({ value: f.id, label: f.label }));
+    case 'division':
+      return [1, 2, 4, 8, 16].map(d => ({ value: d, label: d === 1 ? '1/1' : `1/${d}` }));
+    default:
+      return [];
+  }
+}
+
+/** "CC 12" / "Note 40 ch 3" — what the operator sees in the Control column. */
+function controlLabel(kind, number, binding) {
+  const base = kind === 'cc' ? `CC ${number}` : `Note ${number}`;
+  const chan = binding.channel !== undefined ? ` ch ${binding.channel + 1}` : '';
+  const type = kind === 'cc' ? ` (${binding.type === 'relative' ? 'encoder' : 'fader'})` : '';
+  return `${base}${chan}${type}`;
+}
+
+/** "Select pattern — Chase" */
+function actionLabel(binding) {
+  const action = ACTION_BY_ID().get(binding.action);
+  const label = action ? action.label : binding.action;
+  if (!action || !action.param) return label;
+  const key = action.param.key;
+  const value = binding[key];
+  if (value === undefined || value === null) return label;
+  const match = paramOptions(action.param.kind).find(o => String(o.value) === String(value));
+  return `${label} — ${match ? match.label : value}`;
+}
+
+function renderMidiMap() {
+  const tbody = document.getElementById('midi-map-tbody');
+  if (!tbody || !midiMapData) return;
+
+  document.getElementById('midi-map-source').textContent = midiMapData.customised
+    ? 'Using your saved mapping.'
+    : 'Using the built-in X-Touch Compact mapping.';
+  document.getElementById('midi-map-reset').disabled = !midiMapData.customised;
+
+  const rows = [];
+  for (const kind of ['notes', 'cc']) {
+    for (const [number, binding] of Object.entries(midiMapData.map[kind] || {})) {
+      rows.push({ kind, number: Number(number), binding });
+    }
+  }
+  rows.sort((a, b) => (a.kind === b.kind ? a.number - b.number : a.kind < b.kind ? -1 : 1));
+
+  tbody.innerHTML = '';
+  for (const row of rows) {
+    const tr = document.createElement('tr');
+    tr.appendChild(el('td', 'midi-control', controlLabel(row.kind, row.number, row.binding)));
+    tr.appendChild(el('td', null, actionLabel(row.binding)));
+
+    const actions = el('td', 'midi-row-actions');
+    const relearn = el('button', 'btn btn-small', 'Learn');
+    relearn.title = 'Move this action to another control';
+    relearn.addEventListener('click', () => startLearn(row.binding));
+    actions.appendChild(relearn);
+
+    const clear = el('button', 'btn btn-small remove-btn', '×');
+    clear.title = 'Unbind';
+    clear.addEventListener('click', () => putBinding(row.kind, row.number, null));
+    actions.appendChild(clear);
+
+    tr.appendChild(actions);
+    tbody.appendChild(tr);
+  }
+
+  if (!rows.length) {
+    const tr = document.createElement('tr');
+    const td = el('td', 'midi-map-empty', 'Nothing is bound.');
+    td.colSpan = 3;
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+  }
+}
+
+/** Fill the "add a binding" pickers, and keep the parameter list in step. */
+function renderMidiAddRow() {
+  const actionSel = document.getElementById('midi-add-action');
+  if (!actionSel || !midiMapData) return;
+
+  const previous = actionSel.value;
+  actionSel.innerHTML = '';
+  let group = null;
+  for (const action of midiMapData.actions || []) {
+    if (action.input !== group) {
+      group = action.input;
+      const label = { button: 'Buttons', encoder: 'Encoders', fader: 'Faders' }[group] || group;
+      actionSel.appendChild(Object.assign(document.createElement('optgroup'), { label }));
+    }
+    const opt = el('option', null, action.label);
+    opt.value = action.id;
+    actionSel.lastChild.appendChild(opt);
+  }
+  if (previous) actionSel.value = previous;
+  syncMidiParam();
+}
+
+function syncMidiParam() {
+  const actionSel = document.getElementById('midi-add-action');
+  const paramSel  = document.getElementById('midi-add-param');
+  const action = ACTION_BY_ID().get(actionSel.value);
+  const param = action && action.param;
+
+  if (!param) { paramSel.hidden = true; paramSel.innerHTML = ''; return; }
+
+  const options = paramOptions(param.kind);
+  paramSel.innerHTML = '';
+  if (param.optional) {
+    const none = el('option', null, `— any ${param.label.toLowerCase()} —`);
+    none.value = '';
+    paramSel.appendChild(none);
+  }
+  for (const o of options) {
+    const opt = el('option', null, o.label);
+    opt.value = String(o.value);
+    paramSel.appendChild(opt);
+  }
+  paramSel.hidden = false;
+}
+
+/** The binding described by the add-row pickers. */
+function bindingFromAddRow() {
+  const actionSel = document.getElementById('midi-add-action');
+  const paramSel  = document.getElementById('midi-add-param');
+  const action = ACTION_BY_ID().get(actionSel.value);
+  if (!action) return null;
+
+  const binding = { action: action.id };
+  if (action.param && !paramSel.hidden && paramSel.value !== '') {
+    const raw = paramSel.value;
+    const numeric = ['color', 'fixture', 'division'].includes(action.param.kind);
+    binding[action.param.key] = numeric ? Number(raw) : raw;
+  }
+  if (action.input === 'encoder') binding.type = 'relative';
+  if (action.input === 'fader') binding.type = 'absolute';
+  return binding;
+}
+
+function showLearnBanner(text) {
+  const banner = document.getElementById('midi-learn-banner');
+  document.getElementById('midi-learn-text').textContent = text;
+  banner.hidden = false;
+}
+
+function hideLearnBanner() {
+  document.getElementById('midi-learn-banner').hidden = true;
+}
+
+/**
+ * Arm learn. The request is held open by the server until a control moves, so
+ * there is nothing to poll — the answer arrives when the operator presses
+ * something, gives up, or the 30-second timeout fires.
+ */
+async function startLearn(binding) {
+  if (!binding) return;
+  showLearnBanner('Press or move the control you want…');
+  let res;
+  try {
+    res = await fetch('/api/midi/learn', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(binding),
+    }).then(r => r.json());
+  } catch (err) {
+    res = { ok: false, error: err.message };
+  }
+  if (!res.ok) {
+    showLearnBanner(res.error || 'Learn failed');
+    setTimeout(hideLearnBanner, 3000);
+    return;
+  }
+  hideLearnBanner();
+  midiMapData = { ...midiMapData, map: res.map, customised: res.customised };
+  renderMidiMap();
+}
+
+async function putBinding(kind, number, binding) {
+  const res = await fetch('/api/midi/map/binding', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind, number, binding }),
+  }).then(r => r.json()).catch(err => ({ ok: false, error: err.message }));
+  if (res.ok) {
+    midiMapData = { ...midiMapData, map: res.map, customised: res.customised };
+    renderMidiMap();
+  }
+}
+
+async function loadMidiMap() {
+  const res = await fetch('/api/midi/map').then(r => r.json()).catch(() => null);
+  if (!res || !res.ok) return;
+  midiMapData = res;
+  renderMidiAddRow();
+  renderMidiMap();
+}
+
+// Learn is a whole-server mode, so another page arming or completing one has to
+// show up here too rather than leaving this one displaying a stale map.
+socket.on('midi-map', ({ map, customised }) => {
+  if (!midiMapData) return;
+  midiMapData = { ...midiMapData, map, customised };
+  renderMidiMap();
+});
+
+socket.on('midi-learn', (event) => {
+  if (event.status === 'armed') showLearnBanner('Press or move the control you want…');
+  else hideLearnBanner();
+});
+
+document.getElementById('midi-add-action').addEventListener('change', syncMidiParam);
+document.getElementById('midi-add-learn').addEventListener('click', () => startLearn(bindingFromAddRow()));
+document.getElementById('midi-learn-cancel').addEventListener('click', () => {
+  fetch('/api/midi/learn/cancel', { method: 'POST' });
+  hideLearnBanner();
+});
+document.getElementById('midi-map-reset').addEventListener('click', async () => {
+  const res = await fetch('/api/midi/map/reset', { method: 'POST' }).then(r => r.json());
+  if (res.ok) {
+    midiMapData = { ...midiMapData, map: res.map, customised: res.customised };
+    renderMidiMap();
+  }
 });
 
 // ── GDTF Import ──────────────────────────────────────────────────────────────
@@ -774,3 +1023,4 @@ async function loadSettings() {
 }
 
 loadSettings();
+loadMidiMap();
