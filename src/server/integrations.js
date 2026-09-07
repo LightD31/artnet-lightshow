@@ -4,6 +4,7 @@ const { state, getLiveState, getDmxSnapshot } = require('./state');
 const { setHooks } = require('./patch');
 const { restartBeatTimer } = require('./engine');
 const { cues } = require('./cues');
+const { Warmer } = require('./warm');
 const {
   keyForSpotify,
   keyForQuery,
@@ -37,6 +38,11 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   }
 
   const autoPlayback = { progressMs: 0, isPlaying: false, updatedAt: 0 };
+
+  // Set-list warming: analyses a whole night ahead of time rather than relying
+  // on the live queue lookahead, which only sees one to five tracks and only
+  // once something is playing. Progress rides the state broadcast.
+  const warmer = new Warmer({ autoShow, onChange: () => broadcast() });
 
   // Throttle for the queue-lookahead poll.
   let lastQueuePeekAt = 0;
@@ -89,6 +95,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       // Summaries, not the stored looks: a hundred full cues would ride every
       // broadcast, and the buttons only need a name and a swatch.
       cues: cues.summaries(),
+      warm: warmer.status(),
       midi: { enabled: midi.enabled, ports: midi.listPorts() },
     };
   }
@@ -494,6 +501,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
 
   return {
     broadcast,
+    warmer,
     prefetchNextFromQueue,
     clearSpotifyNext: () => {
       spotifySlots = [{ track: null, status: 'unavailable', message: 'Spotify disconnected', cacheKey: null }];

@@ -1731,3 +1731,97 @@ input[type=range]::-moz-range-thumb {
   border-radius: 2px;
   border: 1px solid rgba(255, 255, 255, .12);
 }
+
+/* =============================================================
+   SET-LIST WARMING
+   ============================================================= */
+.warm-card .card-title { display: flex; align-items: center; }
+.warm-toggle { margin-left: auto; }
+
+.warm-help {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.55;
+  margin: 8px 0;
+}
+.warm-help code {
+  font-family: var(--mono);
+  font-size: 10px;
+  background: var(--surface);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.warm-progress { margin-top: 8px; }
+.warm-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.warm-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width .3s ease;
+}
+.warm-counts {
+  margin-top: 5px;
+  font-size: 10px;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+.warm-failed { color: var(--accent-4); }
+.warm-current { color: var(--dim); }
+
+.warm-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 12px;
+  font-family: var(--mono);
+  line-height: 1.5;
+  resize: vertical;
+}
+.warm-input:focus { outline: none; border-color: var(--accent); }
+.warm-input:disabled { opacity: .5; }
+
+.warm-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.warm-error { margin-top: 8px; font-size: 11px; color: var(--accent-4); }
+
+.warm-list {
+  margin-top: 10px;
+  max-height: 260px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.warm-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 11px;
+  padding: 3px 0;
+}
+.warm-row + .warm-row { border-top: 1px solid var(--border); }
+.warm-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.warm-row-status {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.warm-row.ready .warm-row-status,
+.warm-row.cached .warm-row-status { color: #4ade80; }
+.warm-row.warming .warm-row-status { color: var(--accent); }
+.warm-row.error .warm-row-status { color: var(--accent-4); }

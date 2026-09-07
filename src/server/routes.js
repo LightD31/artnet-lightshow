@@ -29,6 +29,7 @@ const { profileSchema, showSchema, midiConnectSchema, deezerStateSchema, dmxUniv
 const { settings, RESTART_PATHS, CONFIG_FILE } = require('./settings');
 const { generateToken } = require('./auth');
 const { runPreflight } = require('./preflight');
+const { warmRequestSchema, parseSetList } = require('./warm');
 const pythonEnv = require('../python-env');
 
 // Audio uploads genuinely need headroom; GDTF files do not. Separate limits so
@@ -823,6 +824,42 @@ function attachRoutes(app, deps) {
     if (!key) return res.status(400).json({ ok: false, error: 'Missing key' });
     const ok = analysisCache.delete(key);
     res.json({ ok });
+  });
+
+  // ─── Set-list warming ─────────────────────────────────────────────────────
+  // Analyse a whole night up front. Live prefetch only sees one to five tracks
+  // ahead, and only once something is playing.
+  app.get('/api/warm', (_req, res) => res.json({ ok: true, warm: integrations.warmer.status() }));
+
+  app.post('/api/warm', (req, res) => {
+    try {
+      const body = validate(warmRequestSchema, req.body || {}, 'warm');
+      const inputs = [...(body.tracks || []), ...parseSetList(body.text)];
+      if (!inputs.length) {
+        return res.status(400).json({ ok: false, error: 'Provide a set list as `text` or `tracks`' });
+      }
+      res.json({ ok: true, warm: integrations.warmer.start(inputs) });
+    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+  });
+
+  /** Warm everything Spotify has queued, rather than only the next few. */
+  app.post('/api/warm/spotify-queue', asyncHandler(async (_req, res) => {
+    if (!spotify.authenticated) return res.status(400).json({ ok: false, error: 'Spotify not connected' });
+    const queue = await spotify.getQueue();
+    if (!queue || !queue.length) return res.status(400).json({ ok: false, error: 'Spotify queue is empty' });
+
+    const inputs = queue.filter((t) => t && t.name).map((t) => ({
+      title: t.name, artist: t.artist, isrc: t.isrc, trackId: t.trackId, durationMs: t.durationMs,
+    }));
+    try {
+      res.json({ ok: true, warm: integrations.warmer.start(inputs) });
+    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+  }));
+
+  app.delete('/api/warm', (_req, res) => {
+    const cancelled = integrations.warmer.cancel();
+    if (!cancelled) integrations.warmer.clear();
+    res.json({ ok: true, cancelled, warm: integrations.warmer.status() });
   });
 
   // ─── Preflight ────────────────────────────────────────────────────────────

@@ -39,11 +39,15 @@ via **Bitfocus Companion**, and a REST API.
   via the bundled browser extension
 - Caches analyses on disk and **prefetches the next tracks in the queue**, so a
   track change flips instantly instead of stalling for a download
+- **Set-list warming** — paste tonight's tracks at load-in and have the whole
+  night analysed before doors open
 
 **Before the show**
 
 - **Preflight** — one command that checks Art-Net reachability, the patch,
   Python, ffmpeg, yt-dlp and the genre model before doors open
+- **Set-list warming** — analyse the whole night up front rather than relying on
+  the live queue lookahead
 
 **Fixtures**
 
@@ -183,6 +187,45 @@ fixture you deliberately patched somewhere else stays put.
 Universes with nothing patched on them are transmitted for one final all-zero
 frame and then dropped, so a node never sits holding the look it had when its
 last fixture moved away. The server transmits at most **32** universes.
+
+---
+
+## Set-list warming
+
+Live prefetch only looks one to five tracks down the queue, and only once a
+source is playing. That makes a track change instant *during* a set, and is no
+help at all for the first track of the night, for a DJ who does not queue ahead,
+or for a venue whose network you would rather not depend on once the room is
+full.
+
+Analysing a track takes tens of seconds. Doing forty of them at load-in costs
+nothing but time you already have.
+
+**Auto Show → Set-list warming**: paste one `Artist - Title` per line and press
+**Warm this list**. Blank lines, `#` comments and leading track numbers are
+ignored, so a list copied out of rekordbox or a notes app works as-is.
+
+```
+1. Daft Punk - Around the World
+02) Justice - Genesis
+# encore
+A-Trak - Ray Ban Vision
+```
+
+**Warm the Spotify queue** does the same for everything Spotify has queued,
+rather than only the next few.
+
+Progress is live — each track shows *queued*, *analysing*, *cached* or *failed*.
+Tracks already on disk are skipped without touching the analyser, so re-running
+a list is nearly instant. A track yt-dlp cannot find is recorded and the rest of
+the list continues.
+
+Warming runs at normal priority, so a track change during a set (which submits
+at high priority) never sits behind an hour of it. **Stop** ends the queue; the
+track being analysed at that moment finishes, since abandoning it would mean
+throwing away work that was nearly done.
+
+Up to 200 tracks per run.
 
 ---
 
@@ -483,6 +526,15 @@ All endpoints return JSON. When a token is configured, send it as an
 | GET | `/api/auto/state` · `/api/auto/timeline` | Status / generated timeline |
 | GET · DELETE | `/api/auto/cache` | List / clear cached analyses |
 | DELETE | `/api/auto/cache/entry` | Remove one cached analysis (`{ key }`) |
+
+### Set-list warming
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/warm` | Progress: per-track status, counts, what is running |
+| POST | `/api/warm` | Start a run (`{ text }` — one `Artist - Title` per line — or `{ tracks }`) |
+| POST | `/api/warm/spotify-queue` | Warm everything Spotify has queued |
+| DELETE | `/api/warm` | Stop a run, or clear a finished one |
 
 ### MIDI, PRO DJ LINK, integrations
 

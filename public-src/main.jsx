@@ -6,6 +6,7 @@ import { Header } from './components/Header.jsx';
 import { CommandBar } from './components/CommandBar.jsx';
 import { Colors } from './components/Colors.jsx';
 import { AutoMode } from './components/AutoMode.jsx';
+import { Warm } from './components/Warm.jsx';
 import { Patterns } from './components/Patterns.jsx';
 import { Cues } from './components/Cues.jsx';
 import { Fixtures } from './components/Fixtures.jsx';
@@ -58,6 +59,7 @@ function AutoView() {
   return (
     <div class="auto-view">
       <AutoMode />
+      <Warm />
     </div>
   );
 }
