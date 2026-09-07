@@ -8,7 +8,7 @@
 //
 // The rule set is deliberately small: catch what actually bit us — unused
 // bindings, accidental globals, unreachable code — without turning a working
-// project into a lint backlog. See AUDIT.md L9.
+// project into a lint backlog.
 
 const js = require('@eslint/js');
 

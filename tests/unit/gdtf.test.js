@@ -24,7 +24,7 @@ test('parses fixture identity and maps GDTF attributes to channels', async () =>
   assert.deepStrictEqual(r.modes[0].channelMap, { dimmer: 0, red: 1, green: 2, blue: 3 });
 });
 
-// AUDIT.md M3: channelCount is the DMX footprint, not the number of entries.
+// channelCount is the DMX footprint, not the number of entries.
 // A sparse mode reported 3 while occupying 20 channels, so the render loop
 // cleared 3 and wrote 20 — the rest latched until master blackout.
 test('channelCount is the address footprint, not the entry count', async () => {
@@ -47,7 +47,7 @@ test('rejects archives without a usable description', async () => {
   await assert.rejects(parseGDTF(await gdtf('<GDTF></GDTF>')), /FixtureType/);
 });
 
-// AUDIT.md M8: a small upload could expand to gigabytes of heap.
+// A small upload could expand to gigabytes of heap.
 test('refuses a zip bomb before decompressing it', async () => {
   const buf = await gdtf('A'.repeat(64 * 1024 * 1024));
   assert.ok(buf.length < 1024 * 1024, 'compresses to well under a megabyte');

@@ -82,7 +82,7 @@ async function parseGDTF(fileBuffer) {
 
   // Refuse to decompress a zip bomb. A real GDTF description.xml is well under
   // a megabyte; without this a small upload can expand to gigabytes of heap and
-  // take the process down — see AUDIT.md M8. The size is read from the central
+  // take the process down. The size is read from the central
   // directory, so this check happens before any decompression.
   const declaredSize = descFile._data && descFile._data.uncompressedSize;
   if (Number.isFinite(declaredSize) && declaredSize > MAX_DESCRIPTION_BYTES) {
@@ -170,7 +170,6 @@ async function parseGDTF(fileBuffer) {
     // smaller than the highest offset leaves channels written but never
     // cleared, latching stale values until master blackout. It also drives
     // auto-addressing and the patch table's overlap detection.
-    // See AUDIT.md M3.
     const maxOffset = channelList.reduce((max, ch) => Math.max(max, ch.offset), -1);
     const channelCount = maxOffset + 1;
 

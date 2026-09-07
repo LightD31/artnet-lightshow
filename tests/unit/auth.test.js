@@ -21,7 +21,7 @@ test('safeEqual compares without throwing on length mismatch', () => {
   assert.strictEqual(safeEqual(undefined, 'x'), false);
 });
 
-// AUDIT.md C2: exposing the rig to the network with no token must be refused,
+// Exposing the rig to the network with no token must be refused,
 // not silently allowed.
 test('a non-loopback bind without a token is refused at startup', () => {
   assert.strictEqual(configError({ host: '127.0.0.1', token: '' }), null);
@@ -32,7 +32,7 @@ test('a non-loopback bind without a token is refused at startup', () => {
   assert.match(err, /LIGHTSHOW_TOKEN/);
 });
 
-// AUDIT.md C2: cross-site requests are rejected whether or not a token is set,
+// Cross-site requests are rejected whether or not a token is set,
 // because several control routes take no body and skip preflight.
 test('origin check rejects other websites but allows same-origin and extensions', () => {
   const req = (origin) => ({ headers: { host: 'localhost:3000', origin } });

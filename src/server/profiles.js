@@ -12,7 +12,7 @@ const RESERVED_PROFILE_IDS = new Set(['__proto__', 'constructor', 'prototype']);
 
 // Null-prototype map: profile ids come straight from user input (GDTF upload,
 // POST /api/profiles), and on a plain object literal an id of "__proto__" would
-// reassign this object's prototype instead of adding a key — see AUDIT.md M7.
+// reassign this object's prototype instead of adding a key.
 const fixtureProfiles = Object.assign(Object.create(null), {
   [BUILTIN_PROFILE_ID]: {
     id: BUILTIN_PROFILE_ID,

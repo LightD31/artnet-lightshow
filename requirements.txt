@@ -26,7 +26,6 @@ threadpoolctl>=3.1
 # Without these the analyser still runs, but classify_panns() catches the
 # ImportError and skips silently — palettes and patterns then fall back to the
 # mood/circumplex path and shows are quietly worse with no error shown.
-# See AUDIT.md M10.
 #
 # torch is deliberately not pinned to an exact version: the right wheel depends
 # on platform and CUDA. If pip picks a build you don't want, install torch

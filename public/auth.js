@@ -2,7 +2,7 @@
  * Client-side token bootstrap. Loaded before the app on every page.
  *
  * The server requires a shared token whenever it is bound to anything but
- * loopback (see AUDIT.md C2). Flow:
+ * loopback. Flow:
  *
  *   1. Operator opens  http://host:3000/?token=XYZ  once per browser.
  *   2. We stash the token and strip it from the URL so it does not linger in

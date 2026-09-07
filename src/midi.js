@@ -166,7 +166,7 @@ class MidiController {
 
     // MIDI monitor: one line per incoming message. Invaluable when mapping a
     // controller, unusable during a show — a single encoder sweep is hundreds
-    // of lines. Off unless DEBUG_MIDI=1. See AUDIT.md L3.
+    // of lines. Off unless DEBUG_MIDI=1.
     if (process.env.DEBUG_MIDI === '1') {
       this.input.on('noteon',  ({ note, velocity, channel }) =>
         console.log(`[MIDI] noteon  ch=${channel+1} note=${note} vel=${velocity}  → ${m.notes[note] ? m.notes[note].action : 'unmapped'}`));

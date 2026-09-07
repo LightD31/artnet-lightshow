@@ -5,7 +5,7 @@ const { spawn } = require('child_process');
 // Hard ceiling on a single analysis. Without one, a wedged Python process
 // leaves _pending unsettled forever and every queued prefetch waits behind it —
 // the auto-show silently stops picking up new tracks with no error anywhere.
-// See AUDIT.md M4. Generous by design: a cold start plus a long track is well
+// Generous by design: a cold start plus a long track is well
 // under this, so hitting it means something is genuinely stuck.
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const ANALYZE_TIMEOUT_MS = Number.parseInt(process.env.ANALYZER_TIMEOUT_MS, 10) > 0
@@ -236,7 +236,7 @@ class AnalyzerWorker {
     if (resp.id !== this._pending.id) {
       // A stale reply (e.g. from a worker that was recycled mid-request).
       // Resolving the current caller with it would hand one track's analysis to
-      // a different track's request — see AUDIT.md M4.
+      // a different track's request.
       console.warn(`[analyzer] discarding stale response: got id ${resp.id}, awaiting ${this._pending.id}`);
       return;
     }

@@ -5,7 +5,7 @@ const crypto = require('crypto');
 /**
  * Access control for the control surface.
  *
- * Two independent concerns, deliberately kept separate — see AUDIT.md C2:
+ * Two independent concerns, deliberately kept separate:
  *
  *   1. Authentication (who may talk to the API at all). A shared token,
  *      required whenever the server is bound to anything other than loopback.

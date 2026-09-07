@@ -4,7 +4,7 @@ const crypto = require('crypto');
 
 // Every Spotify call is bounded. The previous hand-rolled https client had no
 // timeout at all, so one hung connection leaked a promise that never settled
-// while the 1 Hz poller kept stacking more behind it — see AUDIT.md M5.
+// while the 1 Hz poller kept stacking more behind it.
 const REQUEST_TIMEOUT_MS = 10000;
 
 // Spotify returns 429 with a Retry-After (seconds). Polling /currently-playing
@@ -54,7 +54,7 @@ class SpotifyClient {
     this._onPlaybackUpdate = null;
     // Pending OAuth state nonces → issue time. Without this the callback
     // accepts any code presented to it, so any page could bind this server to
-    // an attacker's Spotify account — see AUDIT.md H3.
+    // an attacker's Spotify account.
     this._pendingStates = new Map();
     // Set while a 429 backoff window is in effect.
     this._rateLimitedUntil = 0;

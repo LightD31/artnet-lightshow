@@ -69,7 +69,7 @@ function setExtrasProvider(fn) { extrasProvider = fn; }
 
 // The static half of the snapshot: fixed at boot and identical on every
 // broadcast. It was 63% of a 7 KB payload going out 10 times a second, so it is
-// now sent once per connection instead — see AUDIT.md M1.
+// now sent once per connection instead.
 function getCatalogs() {
   return {
     colorPresets: COLOR_PRESETS,
@@ -87,7 +87,7 @@ function getCatalogs() {
 function getLiveState() {
   return {
     // Copies, not references: these leave the module and are only safe today
-    // because everything is JSON-serialised on the way out — see AUDIT.md L12.
+    // because everything is JSON-serialised on the way out.
     artnet: { ...state.artnet },
     bpm: state.bpm,
     beatDivision: state.beatDivision,

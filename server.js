@@ -27,7 +27,7 @@ const { createAuth, configError, isLoopbackHost } = require('./src/server/auth')
 
 // ─── Bind address & access control ──────────────────────────────────────────
 // Loopback by default: exposing the rig to the whole network should be a
-// deliberate act, and once it is, a token is mandatory. See AUDIT.md C2.
+// deliberate act, and once it is, a token is mandatory.
 const HOST = process.env.HOST || '127.0.0.1';
 const LIGHTSHOW_TOKEN = process.env.LIGHTSHOW_TOKEN || '';
 

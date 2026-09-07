@@ -9,7 +9,7 @@ const udpSocket = dgram.createSocket('udp4');
 // A dgram socket with no 'error' listener turns any send failure into an
 // unhandled 'error' event, which terminates the process. Since the Art-Net
 // target is operator-editable and renderDmx() sends at 40 Hz, a typo in the
-// settings panel used to be enough to kill the server mid-show — see AUDIT.md H1.
+// settings panel used to be enough to kill the server mid-show.
 //
 // Failures here are also almost always transient or configuration-level
 // (unreachable host, broadcast not permitted), so the right response is to log
@@ -85,7 +85,7 @@ function resolveHost(host) {
 
 // Art-Net sequence counter. 0 tells receivers "sequencing disabled", so they
 // cannot discard out-of-order UDP packets; 1-255 wrapping is what the spec
-// asks for — see AUDIT.md L4.
+// asks for.
 let sequence = 0;
 
 function nextSequence() {

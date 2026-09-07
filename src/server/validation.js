@@ -12,7 +12,7 @@ const colorIdx = z.number().int().min(0).max(COLOR_PRESETS.length - 1);
 
 // Hostname per RFC 1123, or an IPv4 literal. Rejecting junk here means a typo
 // in the ArtNet panel surfaces as a validation error instead of a stream of
-// failed sends — see AUDIT.md H1.
+// failed sends.
 const HOSTNAME_RE = /^(?=.{1,253}$)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
 
 // A string of dotted numeric labels is someone typing an IP, so hold it to
@@ -81,7 +81,7 @@ const fixtureMessageSchema = z.object({
 }).strict();
 
 // Profile ids reach an object key, so reject the ones that would collide with
-// object machinery before they get anywhere near the registry — see AUDIT.md M7.
+// object machinery before they get anywhere near the registry.
 const RESERVED_PROFILE_IDS = ['__proto__', 'constructor', 'prototype'];
 
 const profileSchema = z.object({

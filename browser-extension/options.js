@@ -1,5 +1,5 @@
 // Settings for the bridge: which lightshow server to post to, and the access
-// token when the server requires one (see AUDIT.md C2). Stored in
+// token when the server requires one. Stored in
 // browser.storage.local and read by background.js on every send.
 'use strict';
 

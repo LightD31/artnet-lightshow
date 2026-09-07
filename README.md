@@ -339,9 +339,6 @@ committed; `npm start` builds it automatically via `prestart`.
 CI runs lint, tests, a client build and `npm audit --omit=dev` on every push and
 pull request.
 
-**[AUDIT.md](AUDIT.md)** records a full code audit of the project — findings,
-what has been fixed, and what is still open.
-
 ---
 
 ## Licence

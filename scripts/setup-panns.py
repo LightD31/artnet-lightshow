@@ -29,7 +29,7 @@ import urllib.request
 from pathlib import Path
 
 # Both URLs are HTTPS: the checkpoint is a pickle that torch.load() executes, so
-# a tampered download is arbitrary code execution on this machine. See AUDIT.md H5.
+# a tampered download is arbitrary code execution on this machine.
 LABELS_URL = (
     'https://storage.googleapis.com/us_audioset/youtube_corpus/v1/csv/'
     'class_labels_indices.csv'

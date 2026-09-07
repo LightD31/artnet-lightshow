@@ -155,7 +155,7 @@ function showModeSelector(fixture) {
 
 // Build an element with text content set safely. Every value rendered by this
 // page can originate from an uploaded GDTF file or an unauthenticated API call,
-// so it must never reach innerHTML — see AUDIT.md C1.
+// so it must never reach innerHTML.
 function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
