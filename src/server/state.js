@@ -67,6 +67,54 @@ let extrasProvider = () => ({});
 
 function setExtrasProvider(fn) { extrasProvider = fn; }
 
+// The static half of the snapshot: fixed at boot and identical on every
+// broadcast. It was 63% of a 7 KB payload going out 10 times a second, so it is
+// now sent once per connection instead — see AUDIT.md M1.
+function getCatalogs() {
+  return {
+    colorPresets: COLOR_PRESETS,
+    patterns: PATTERNS,
+    energyEffects: ENERGY_EFFECTS,
+    strobeFunctions: STROBE_FUNCTIONS,
+  };
+}
+
+/**
+ * The part of the snapshot that actually changes: control state, fixtures,
+ * profiles and the integration status blocks. Excludes the static catalogues
+ * (sent once on connect) and `dmxSnapshot` (its own high-rate channel).
+ */
+function getLiveState() {
+  return {
+    artnet: state.artnet,
+    bpm: state.bpm,
+    beatDivision: state.beatDivision,
+    running: state.running,
+    pattern: state.pattern,
+    colorA: state.colorA,
+    colorB: state.colorB,
+    colorC: state.colorC,
+    colorD: state.colorD,
+    masterDimmer: state.masterDimmer,
+    masterBlackout: state.masterBlackout,
+    strobeSpeed: state.strobeSpeed,
+    strobeFunction: state.strobeFunction,
+    energyOverride: state.energyOverride,
+    autoSource: state.autoSource,
+    autoPrefetchDepth: state.autoPrefetchDepth,
+    fixtures: state.fixtures,
+    profiles: listProfiles(),
+    ...extrasProvider(),
+  };
+}
+
+/** Just the live DMX values, for the high-rate `dmx` channel. */
+function getDmxSnapshot() {
+  return Array.from(dmx.slice(0, getDmxSnapshotSize()));
+}
+
+// Full snapshot: GET /api/state and the initial push on socket connect. Kept
+// whole so REST consumers and first-connect behaviour are unchanged.
 function getClientState() {
   return {
     artnet: state.artnet,
@@ -102,5 +150,8 @@ module.exports = {
   getFixtureCount,
   getDmxSnapshotSize,
   getClientState,
+  getLiveState,
+  getCatalogs,
+  getDmxSnapshot,
   setExtrasProvider,
 };

@@ -9,7 +9,7 @@ const {
 } = require('./validation');
 const { listProfiles } = require('./profiles');
 
-function attachSockets(io, { midi }) {
+function attachSockets(io, { midi, integrations }) {
   io.on('connection', (socket) => {
     console.log('Client connected:', socket.id);
     socket.emit('state', getClientState());
@@ -36,8 +36,7 @@ function attachSockets(io, { midi }) {
         if (label !== undefined) state.fixtures[id].label = label;
         const profiles = listProfiles();
         if (profileId !== undefined && profiles[profileId]) state.fixtures[id].profileId = profileId;
-        io.emit('state', getClientState());
-        midi.sendFeedback();
+        integrations.broadcast();
       } catch (err) {
         socket.emit('error-msg', { source: 'fixture', message: err.message });
       }

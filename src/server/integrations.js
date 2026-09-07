@@ -1,7 +1,7 @@
 'use strict';
 
 const fs = require('fs');
-const { state, getClientState } = require('./state');
+const { state, getLiveState, getDmxSnapshot } = require('./state');
 const { setHooks, applyPatch } = require('./patch');
 const { restartBeatTimer } = require('./engine');
 const {
@@ -49,10 +49,20 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
 
   function getProlinkPositionMs() { return prolink.getPositionMs(); }
 
+  // Last live payload we sent, as JSON. Used to skip re-sending an identical
+  // snapshot — see AUDIT.md M1.
+  let lastLiveJson = '';
+
   function broadcast() {
-    io.emit('state', getClientState());
+    const live = getLiveState();
+    const json = JSON.stringify(live);
+    if (json !== lastLiveJson) {
+      lastLiveJson = json;
+      io.emit('state', live);
+    }
     midi.sendFeedback();
   }
+
 
   // Inject the heavy "extras" the UI needs (autoShow / spotify / nowPlaying /
   // prolink) into the snapshot getClientState() builds.
@@ -153,7 +163,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   });
   prolink.onPeersChange((peers) => {
     console.log(`PRO DJ LINK devices: ${peers}`);
-    io.emit('state', getClientState());
+    broadcast();
   });
   prolink.onMasterChange(() => broadcast());
   prolink.onTrackChange(async (track) => {
@@ -461,9 +471,25 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     io.emit('auto-position', { positionMs: autoShow.getPositionMs(), running: true });
   }, 100);
 
-  // Periodic state broadcast at ~10 Hz so the DMX monitor and live overlays
-  // stay fresh even without explicit state changes.
-  setInterval(() => io.emit('state', getClientState()), 100);
+  // DMX values on their own high-rate channel. This is the only field that
+  // genuinely changes every frame; sending it alone keeps the 10 Hz payload at
+  // ~100 bytes instead of ~7 KB, and lets the client re-render just the DMX
+  // views instead of the whole tree — see AUDIT.md M1/M2.
+  let lastDmxJson = '';
+  setInterval(() => {
+    const snapshot = getDmxSnapshot();
+    const json = JSON.stringify(snapshot);
+    if (json === lastDmxJson) return;      // blackout / idle rig: nothing to send
+    lastDmxJson = json;
+    io.emit('dmx', snapshot);
+  }, 100);
+
+  // Some status fields drift without any explicit event — `authenticated` on
+  // the now-playing and Deezer sources expires on a staleness timer, and
+  // Spotify's poll updates status without calling broadcast(). A low-rate
+  // dirty-checked sweep picks those up; broadcast() covers everything else the
+  // moment it changes.
+  setInterval(broadcast, 1000);
 
   return {
     broadcast,

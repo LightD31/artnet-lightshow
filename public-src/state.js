@@ -6,6 +6,11 @@ import { io } from 'socket.io-client';
 export const stateSig = signal({});
 export const connectedSig = signal(false);
 
+// Live DMX values, on their own signal so the 10 Hz stream only re-renders the
+// views that show DMX output (the monitor and the fixture previews) instead of
+// waking every control panel in the tree — see AUDIT.md M2.
+export const dmxSig = signal([]);
+
 // Auto-show playback position (pushed from server at ~10 Hz). Held in its own
 // signal so the timeline visualiser can re-render without churning the rest.
 export const autoPositionSig = signal({ positionMs: 0, running: false, updatedAt: 0 });
@@ -21,7 +26,18 @@ export const socket = io({
 
 socket.on('connect',    () => { connectedSig.value = true;  });
 socket.on('disconnect', () => { connectedSig.value = false; });
-socket.on('state',      (s) => { stateSig.value = s; });
+
+// MERGE, don't replace. The first push on connect is the full snapshot
+// including the static catalogues (colour presets, patterns, strobe functions);
+// every later push carries only the fields that change. Replacing would drop
+// the catalogues on the first update after connect.
+socket.on('state', (s) => {
+  if (!s) return;
+  if (s.dmxSnapshot) dmxSig.value = s.dmxSnapshot;   // full snapshot on connect
+  stateSig.value = { ...stateSig.value, ...s };
+});
+
+socket.on('dmx', (snapshot) => { dmxSig.value = snapshot || []; });
 socket.on('auto-position', ({ positionMs, running }) => {
   autoPositionSig.value = { positionMs, running: !!running, updatedAt: performance.now() };
 });
