@@ -21,6 +21,8 @@ const {
   clearNonBuiltinProfiles,
 } = require('./profiles');
 const { profileSchema, showSchema, midiConnectSchema, deezerStateSchema, validate } = require('./validation');
+const { settings, RESTART_PATHS, CONFIG_FILE } = require('./settings');
+const { generateToken } = require('./auth');
 
 // Audio uploads genuinely need headroom; GDTF files do not. Separate limits so
 // the fixture importer isn't handed a 50 MB budget it has no use for — a real
@@ -28,23 +30,29 @@ const { profileSchema, showSchema, midiConnectSchema, deezerStateSchema, validat
 const uploadAudio = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 const uploadGdtf = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
 
-// Local-file analysis reads an arbitrary path off the filesystem. When
-// ANALYZE_LOCAL_ROOT is set, confine it to that subtree; unset keeps the old
-// behaviour (fine on a loopback-only bind, less so once the server is exposed).
-const ANALYZE_LOCAL_ROOT = process.env.ANALYZE_LOCAL_ROOT
-  ? path.resolve(process.env.ANALYZE_LOCAL_ROOT)
-  : null;
-
+// Local-file analysis reads an arbitrary path off the filesystem. When a
+// library folder is set in the settings page, confine it to that subtree;
+// blank keeps the old behaviour (fine on a loopback-only bind, less so once the
+// server is exposed). Read per request so a change applies without a restart.
 function assertLocalPathAllowed(source) {
-  if (!ANALYZE_LOCAL_ROOT) return;
+  const configured = settings.get('analysis.localRoot');
+  if (!configured) return;
+  const root = path.resolve(configured);
   const resolved = path.resolve(source);
-  const root = ANALYZE_LOCAL_ROOT.endsWith(path.sep)
-    ? ANALYZE_LOCAL_ROOT
-    : ANALYZE_LOCAL_ROOT + path.sep;
-  if (resolved !== ANALYZE_LOCAL_ROOT && !resolved.startsWith(root)) {
-    const err = new Error('Local file analysis is restricted to ANALYZE_LOCAL_ROOT');
+  const prefix = root.endsWith(path.sep) ? root : root + path.sep;
+  if (resolved !== root && !resolved.startsWith(prefix)) {
+    const err = new Error(`Local file analysis is restricted to ${root}`);
     err.status = 403;
     throw err;
+  }
+}
+
+/** Remember the chosen MIDI ports so the pick survives a restart. */
+function persistMidi({ input, output }) {
+  try {
+    settings.update({ midi: { input: input || '', output: output || '' } });
+  } catch (err) {
+    console.warn(`[settings] could not persist MIDI ports: ${err.message}`);
   }
 }
 
@@ -53,7 +61,7 @@ function asyncHandler(fn) {
 }
 
 function attachRoutes(app, deps) {
-  const { midi, autoShow, spotify, nowPlaying, deezerSource, prolink, analysisCache, integrations } = deps;
+  const { midi, autoShow, spotify, nowPlaying, deezerSource, prolink, analysisCache, integrations, applier } = deps;
 
   // ─── State ────────────────────────────────────────────────────────────────
   app.get('/api/state', (_req, res) => res.json(getClientState()));
@@ -170,6 +178,7 @@ function attachRoutes(app, deps) {
       const body = validate(midiConnectSchema, req.body || {}, 'midi-connect');
       midi.close();
       const ok = midi.connect(body.input || null, body.output || null);
+      persistMidi(body);
       res.json({ ok, enabled: midi.enabled, ports: midi.listPorts() });
     } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
   });
@@ -344,18 +353,18 @@ function attachRoutes(app, deps) {
     // could navigate the operator's browser here with an attacker's code and
     // silently bind the show to the attacker's account.
     if (!spotify.consumeState(req.query.state)) {
-      if (process.env.SPOTIFY_ALLOW_UNVERIFIED_STATE === '1') {
+      if (settings.get('spotify.allowUnverifiedState')) {
         console.warn(
           '[spotify] callback state missing or unrecognised — accepted because '
-          + 'SPOTIFY_ALLOW_UNVERIFIED_STATE=1. This disables OAuth CSRF protection.'
+          + '"accept unverified state" is enabled. This disables OAuth CSRF protection.'
         );
       } else {
         console.warn('[spotify] rejected callback: missing or unrecognised state parameter');
         return res.status(400).send(
           'Spotify auth failed: missing or unrecognised state parameter. '
           + 'Start the flow from /auth/spotify in this browser. If your OAuth proxy '
-          + 'does not forward the state parameter, set SPOTIFY_ALLOW_UNVERIFIED_STATE=1 '
-          + '(this disables OAuth CSRF protection).'
+          + 'does not forward the state parameter, enable "accept unverified state" '
+          + 'in the settings page (this disables OAuth CSRF protection).'
         );
       }
     }
@@ -625,6 +634,52 @@ function attachRoutes(app, deps) {
     if (!key) return res.status(400).json({ ok: false, error: 'Missing key' });
     const ok = analysisCache.delete(key);
     res.json({ ok });
+  });
+
+  // ─── Settings ─────────────────────────────────────────────────────────────
+  // Everything the operator can configure. Secrets are never sent back: the
+  // client gets a per-secret "is one set?" flag and may replace or clear a
+  // value, but cannot read it.
+  app.get('/api/settings', (_req, res) => {
+    const { settings: values, secrets } = settings.redacted();
+    res.json({
+      ok: true,
+      settings: values,
+      secrets,
+      restartKeys: RESTART_PATHS,
+      pendingRestart: applier.pendingRestart(),
+      // Read-only context the page shows next to the restart-only fields.
+      running: applier.bootValues.server,
+      configFile: CONFIG_FILE,
+    });
+  });
+
+  app.put('/api/settings', (req, res) => {
+    try {
+      const changed = settings.update(req.body || {});
+      applier.applyChanged(changed);
+      const { settings: values, secrets } = settings.redacted();
+      res.json({
+        ok: true,
+        changed,
+        settings: values,
+        secrets,
+        pendingRestart: applier.pendingRestart(),
+      });
+    } catch (err) {
+      // Zod errors carry the offending path; surface it rather than a bare 500.
+      const detail = err.issues
+        ? err.issues.map((i) => `${i.path.join('.') || '<root>'} ${i.message}`).join('; ')
+        : err.message;
+      res.status(400).json({ ok: false, error: detail });
+    }
+  });
+
+  // A token the operator can actually use, rather than asking them to run a
+  // node one-liner. Returned once, in the clear, because it has to be copied
+  // into Companion and the browser extension — it is not stored until saved.
+  app.post('/api/settings/token/suggest', (_req, res) => {
+    res.json({ ok: true, token: generateToken() });
   });
 
   // ─── Error handler ────────────────────────────────────────────────────────

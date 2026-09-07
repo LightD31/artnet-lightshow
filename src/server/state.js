@@ -1,6 +1,7 @@
 'use strict';
 
 const { BUILTIN_PROFILE_ID, getProfile, listProfiles } = require('./profiles');
+const { settings } = require('./settings');
 const {
   COLOR_PRESETS,
   PATTERNS,
@@ -11,11 +12,10 @@ const {
 const DEFAULT_ADDRESSES = [1, 13, 25, 37];
 
 const state = {
-  artnet: {
-    host: process.env.ARTNET_HOST || '2.255.255.255',
-    port: Number.parseInt(process.env.ARTNET_PORT, 10) || 6454,
-    universe: Number.parseInt(process.env.ARTNET_UNIVERSE, 10) || 0,
-  },
+  // Seeded from the settings store at boot. Live edits go through applyPatch
+  // (the Art-Net panel on the main page) and are persisted back by server.js,
+  // so the two never drift.
+  artnet: settings.group('artnet'),
   bpm: 120,
   beatDivision: 1,
   running: true,

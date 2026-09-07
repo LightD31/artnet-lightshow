@@ -18,6 +18,12 @@ const hooks = {
 
 function setHooks(partial) { Object.assign(hooks, partial); }
 
+// Art-Net and PRO DJ LINK are reachable from the main page as well as the
+// settings page. Without this, changing them there would work until the next
+// restart and then silently revert to whatever the settings page holds.
+let persist = () => {};
+function setPersist(fn) { persist = fn; }
+
 function applyPatch(rawData) {
   // Validate at the boundary. Throws on invalid input.
   const data = validate(patchSchema, rawData || {}, 'patch');
@@ -47,15 +53,20 @@ function applyPatch(rawData) {
     state.energyOverride = data.energyOverride && ENERGY_EFFECTS.some((e) => e.id === data.energyOverride)
       ? data.energyOverride : null;
   }
-  if (data.artnet !== undefined) Object.assign(state.artnet, data.artnet);
+  if (data.artnet !== undefined) {
+    Object.assign(state.artnet, data.artnet);
+    persist({ artnet: { ...state.artnet } });
+  }
   if (data.autoSource !== undefined) state.autoSource = data.autoSource;
 
   if (data.prolinkEnabled !== undefined) {
     if (data.prolinkEnabled && !state.prolinkEnabled) {
       state.prolinkEnabled = true;
+      persist({ sources: { prolink: true } });
       hooks.prolinkEnable();
     } else if (!data.prolinkEnabled && state.prolinkEnabled) {
       state.prolinkEnabled = false;
+      persist({ sources: { prolink: false } });
       hooks.prolinkDisable();
     }
   }
@@ -103,4 +114,4 @@ function processTap() {
   }, 3000);
 }
 
-module.exports = { applyPatch, applyOverride, processTap, setHooks };
+module.exports = { applyPatch, applyOverride, processTap, setHooks, setPersist };

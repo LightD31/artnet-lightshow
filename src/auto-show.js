@@ -1,6 +1,7 @@
 'use strict';
 
 const { spawn, spawnSync } = require('child_process');
+const { settings } = require('./server/settings');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -19,10 +20,9 @@ const AnalyzerWorker = require('./analyzer-worker');
 // or a yt-dlp stuck on an extractor would leave the show on the previous
 // track's timeline with no error and no recovery. The analyzer worker already
 // bounds its own stage (ANALYZER_TIMEOUT_MS); this bounds the download.
-const DEFAULT_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
-const DOWNLOAD_TIMEOUT_MS = Number.parseInt(process.env.DOWNLOAD_TIMEOUT_MS, 10) > 0
-  ? Number.parseInt(process.env.DOWNLOAD_TIMEOUT_MS, 10)
-  : DEFAULT_DOWNLOAD_TIMEOUT_MS;
+function downloadTimeoutMs() {
+  return settings.get('analysis.downloadTimeoutMs');
+}
 
 const PYTHON_EXE = (() => {
   const candidates = process.platform === 'win32'
@@ -516,7 +516,7 @@ class AutoShow {
       const timer = setTimeout(() => {
         timedOut = true;
         proc.kill('SIGKILL');
-      }, DOWNLOAD_TIMEOUT_MS);
+      }, downloadTimeoutMs());
       // Don't let a pending download keep the process alive at shutdown.
       if (typeof timer.unref === 'function') timer.unref();
 
@@ -531,7 +531,8 @@ class AutoShow {
         clearTimeout(timer);
         if (timedOut) {
           return reject(new Error(
-            `yt-dlp timed out after ${Math.round(DOWNLOAD_TIMEOUT_MS / 1000)}s (set DOWNLOAD_TIMEOUT_MS to change)`
+            `yt-dlp timed out after ${Math.round(downloadTimeoutMs() / 1000)}s `
+            + '(raise the download timeout in the settings page)'
           ));
         }
         // yt-dlp exits 101 when --max-downloads is reached — that's the normal

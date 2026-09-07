@@ -18,20 +18,29 @@ const { AnalysisCache } = require('./src/analysis-cache');
 
 const { state } = require('./src/server/state');
 const { startEngine, stopEngine } = require('./src/server/engine');
-const { applyPatch, applyOverride, processTap } = require('./src/server/patch');
+const { applyPatch, applyOverride, processTap, setPersist } = require('./src/server/patch');
 const { COLOR_PRESETS, PATTERNS } = require('./src/server/presets');
 const { setupIntegrations } = require('./src/server/integrations');
 const { attachRoutes } = require('./src/server/routes');
 const { attachSockets } = require('./src/server/sockets');
 const { createAuth, configError, isLoopbackHost } = require('./src/server/auth');
+const { settings, CONFIG_FILE, warnAboutLegacyEnv } = require('./src/server/settings');
+const { createApplier } = require('./src/server/apply');
+
+// A .env from before settings moved into the UI would otherwise go quiet: the
+// rig would come up on defaults with no clue why. Say which variables are now
+// ignored, then carry on.
+warnAboutLegacyEnv();
 
 // ─── Bind address & access control ──────────────────────────────────────────
 // Loopback by default: exposing the rig to the whole network should be a
-// deliberate act, and once it is, a token is mandatory.
-const HOST = process.env.HOST || '127.0.0.1';
-const LIGHTSHOW_TOKEN = process.env.LIGHTSHOW_TOKEN || '';
+// deliberate act, and once it is, a token is mandatory. These three are read
+// before anything is listening, so changing them in the settings page takes
+// effect on the next start.
+const HOST = settings.get('server.host');
+const LIGHTSHOW_TOKEN = settings.get('server.token');
 
-const fatal = configError({ host: HOST, token: LIGHTSHOW_TOKEN });
+const fatal = configError({ host: HOST, token: LIGHTSHOW_TOKEN, configFile: CONFIG_FILE });
 if (fatal) {
   console.error(`\n${fatal}\n`);
   process.exit(1);
@@ -56,10 +65,6 @@ io.use(auth.socketMiddleware);
 const midi = new MidiController(state, applyPatch, processTap);
 midi.overrideFixture = applyOverride;
 
-const midiInputName  = process.env.MIDI_INPUT  || null;
-const midiOutputName = process.env.MIDI_OUTPUT || null;
-midi.connect(midiInputName, midiOutputName);
-
 const prolink = new ProLink();
 const spotify = new SpotifyClient();
 const nowPlaying = new NowPlayingSource();
@@ -68,66 +73,67 @@ const deezerSource = new DeezerSource();
 const analysisCache = new AnalysisCache(path.join(__dirname, 'cache', 'analysis'));
 const autoShow = new AutoShow(applyPatch, COLOR_PRESETS, PATTERNS, analysisCache);
 
-if (process.env.DEEZER_ARL) {
-  deezer.init(process.env.DEEZER_ARL).catch((err) => {
-    console.warn(`[deezer] Init failed: ${err.message} — will fall back to yt-dlp`);
-  });
-}
-
 const integrations = setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolink, autoShow });
 
 // Windows "now playing" (SMTC) feeds the generic now-playing source: we read
 // the OS media session, so any player that reports to it (Deezer, Tidal,
-// YouTube, a browser tab, a desktop app…) drives the auto-show. SMTC=0 disables.
+// YouTube, a browser tab, a desktop app…) drives the auto-show.
 const smtc = new SmtcReader();
-if (process.env.SMTC !== '0') {
-  smtc.onUpdate((payload) => nowPlaying.updatePlayback(payload));
-  smtc.start();
-}
+smtc.onUpdate((payload) => nowPlaying.updatePlayback(payload));
 
-if (process.env.PROLINK === '1') {
-  state.prolinkEnabled = true;
-  prolink.enable().catch((err) => {
-    console.error('PRO DJ LINK enable failed:', err.message);
-    state.prolinkEnabled = false;
-  });
-}
+// Everything configurable is pushed into the subsystems from one place, both
+// here at boot and again whenever the settings page saves.
+const applier = createApplier({
+  midi, spotify, smtc, deezer, applyPatch,
+  broadcast: () => integrations.broadcast(),
+});
+applier.applyAll();
 
-attachRoutes(app, { midi, autoShow, spotify, nowPlaying, deezerSource, prolink, analysisCache, integrations });
+// Art-Net, PRO DJ LINK and MIDI are also reachable from the main page and the
+// patch panel. Persist those edits so the settings page keeps showing the
+// truth and the choice survives a restart.
+setPersist((patch) => {
+  try { settings.update(patch); }
+  catch (err) { console.warn(`[settings] could not persist: ${err.message}`); }
+});
+
+attachRoutes(app, { midi, autoShow, spotify, nowPlaying, deezerSource, prolink, analysisCache, integrations, applier });
 attachSockets(io, { midi, integrations });
 
 startEngine();
 
 // ─── Listen ─────────────────────────────────────────────────────────────────
 
-const PORT = process.env.PORT || 3000;
+const PORT = settings.get('server.port');
 server.listen(PORT, HOST, () => {
   // Where the OAuth proxy sends the operator's browser back to. Must be an
   // address that browser can actually reach: "localhost" is only right when the
-  // browser is on this machine. PUBLIC_URL overrides for anything unusual
-  // (reverse proxy, hostname, https).
-  const publicBase = process.env.PUBLIC_URL
-    ? process.env.PUBLIC_URL.replace(/\/+$/, '')
-    : `http://${isLoopbackHost(HOST) ? 'localhost' : HOST}:${PORT}`;
-  spotify.localCallbackUrl = `${publicBase}/auth/spotify/callback`;
+  // browser is on this machine. The settings page's "public URL" overrides for
+  // anything unusual (reverse proxy, hostname, https).
+  applier.refreshCallbackUrl();
 
-  console.log(`\n  ArtNet Lightshow  →  http://${isLoopbackHost(HOST) ? 'localhost' : HOST}:${PORT}`);
+  const shownHost = isLoopbackHost(HOST) ? 'localhost' : HOST;
+  const smtcEnabled = settings.get('sources.smtc');
+
+  console.log(`\n  ArtNet Lightshow  →  http://${shownHost}:${PORT}`);
+  console.log(`  Settings          →  http://${shownHost}:${PORT}/settings.html  (everything is configured there)`);
+  console.log(`  Config file       →  ${CONFIG_FILE}`);
   console.log(`  Access            →  ${auth.enabled
     ? `token required (open /?token=… once per browser)`
     : 'no token — loopback only, this machine can reach it'}`);
   console.log(`  ArtNet            →  ${state.artnet.host}:${state.artnet.port} universe ${state.artnet.universe}`);
   console.log(`  Fixtures          →  ${state.fixtures.length}x at DMX ${state.fixtures.map((f) => f.address).join(', ')}`);
-  console.log(`  MIDI              →  ${midi.enabled ? 'connected' : 'not connected (set MIDI_INPUT env var or use /api/midi/connect)'}`);
-  console.log(`  PRO DJ LINK       →  ${state.prolinkEnabled ? 'enabled' : 'disabled (set PROLINK=1 env var or use web UI)'}`);
-  console.log(`  Spotify           →  ${spotify.configured ? 'configured (visit /auth/spotify to connect)' : 'not configured (set SPOTIFY_CLIENT_ID & SPOTIFY_CLIENT_SECRET in .env)'}`);
+  console.log(`  MIDI              →  ${midi.enabled ? 'connected' : 'not connected (pick a port in the settings page)'}`);
+  console.log(`  PRO DJ LINK       →  ${state.prolinkEnabled ? 'enabled' : 'disabled (enable it in the settings page)'}`);
+  console.log(`  Spotify           →  ${spotify.configured ? 'configured (visit /auth/spotify to connect)' : 'not configured (add a client ID & secret in the settings page)'}`);
   if (spotify.configured) {
     console.log(`  Spotify redirect  →  register this URL in your Spotify dashboard:`);
     console.log(`                       ${spotify.redirectUri}`);
   }
-  console.log(`  Deezer            →  ${process.env.DEEZER_ARL ? 'configured (ISRC-based downloads)' : 'not configured (set DEEZER_ARL in .env for exact audio — falls back to yt-dlp)'}`);
+  console.log(`  Deezer            →  ${settings.get('deezer.arl') ? 'configured (ISRC-based downloads)' : 'not configured (add an ARL in the settings page — falls back to yt-dlp)'}`);
   const npStatus = process.platform !== 'win32'
     ? 'unavailable (Windows-only)'
-    : process.env.SMTC === '0' ? 'disabled (SMTC=0)' : 'reading OS media session (SMTC)';
+    : smtcEnabled ? 'reading OS media session (SMTC)' : 'disabled in settings';
   console.log(`  Now Playing       →  ${npStatus}`);
   console.log(`  Auto Show         →  Essentia + Spotify integration (python: ${AutoShow.PYTHON_EXE})\n`);
 });

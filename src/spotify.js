@@ -16,7 +16,7 @@ const MAX_RETRY_AFTER_MS = 5 * 60 * 1000;
 /**
  * Spotify Web API client with OAuth2 Authorization Code flow.
  *
- * Requires SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET env vars.
+ * Requires a client ID and secret, set in the settings page under Spotify.
  *
  * Spotify no longer allows plain HTTP redirect URIs, so OAuth goes through
  * an HTTPS proxy (api.drndvs.fr) which handles the Spotify callback and then
@@ -25,23 +25,22 @@ const MAX_RETRY_AFTER_MS = 5 * 60 * 1000;
  * Register this URL in your Spotify app dashboard as the allowed redirect URI:
  *   https://api.drndvs.fr/api/v1/spotify/proxy/callback
  *
- * Override with SPOTIFY_PROXY_BASE env var to use a different proxy.
+ * Change the proxy in the settings page (Spotify → OAuth proxy) to use another.
  */
-const PROXY_BASE = process.env.SPOTIFY_PROXY_BASE || 'https://api.drndvs.fr';
-const PROXY_LOGIN_URL = `${PROXY_BASE}/api/v1/spotify/proxy/login`;
 
 // How long an issued OAuth state nonce stays valid. Long enough to log in and
 // approve the scopes, short enough that a leaked authorize URL goes stale.
 const STATE_TTL_MS = 10 * 60 * 1000;
-const PROXY_CALLBACK_URL = `${PROXY_BASE}/api/v1/spotify/proxy/callback`;
 
 class SpotifyClient {
-  constructor() {
-    this.clientId = process.env.SPOTIFY_CLIENT_ID || '';
-    this.clientSecret = process.env.SPOTIFY_CLIENT_SECRET || '';
+  constructor(config = {}) {
+    this.clientId = '';
+    this.clientSecret = '';
+    this.proxyBase = 'https://api.drndvs.fr';
     // The redirect_uri used in the Spotify token exchange — must match the one
     // the proxy used when redirecting to Spotify (i.e. the proxy's own callback).
-    this.redirectUri = PROXY_CALLBACK_URL;
+    this.redirectUri = '';
+    this.configure(config);
     // The local URL the proxy forwards the code to — set by server after port is known.
     this.localCallbackUrl = '';
     this.accessToken = null;
@@ -60,6 +59,21 @@ class SpotifyClient {
     this._rateLimitedUntil = 0;
     this._lastErrorLogAt = 0;
   }
+
+  /**
+   * Apply credentials from the settings store. Called at boot and again
+   * whenever the settings page saves, so editing the client id or the proxy
+   * takes effect without a restart. Only keys actually present are changed.
+   */
+  configure({ clientId, clientSecret, proxyBase } = {}) {
+    if (clientId !== undefined) this.clientId = clientId || '';
+    if (clientSecret !== undefined) this.clientSecret = clientSecret || '';
+    if (proxyBase !== undefined && proxyBase) this.proxyBase = proxyBase.replace(/\/+$/, '');
+    this.redirectUri = `${this.proxyBase}/api/v1/spotify/proxy/callback`;
+    return this;
+  }
+
+  get loginUrl() { return `${this.proxyBase}/api/v1/spotify/proxy/login`; }
 
   get configured() {
     return !!(this.clientId && this.clientSecret);
@@ -87,7 +101,7 @@ class SpotifyClient {
       // Proxy forwards the code to this local URL after Spotify OAuth completes
       redirect_uri: this.localCallbackUrl,
     });
-    return `${PROXY_LOGIN_URL}?${params}`;
+    return `${this.loginUrl}?${params}`;
   }
 
   /**
