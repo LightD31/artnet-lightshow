@@ -9,7 +9,7 @@ export const connectedSig = signal(false);
 // Live DMX values, on their own signal so the 10 Hz stream only re-renders the
 // views that show DMX output (the monitor and the fixture previews) instead of
 // waking every control panel in the tree.
-export const dmxSig = signal([]);
+export const dmxSig = signal({});
 
 // Auto-show playback position (pushed from server at ~10 Hz). Held in its own
 // signal so the timeline visualiser can re-render without churning the rest.
@@ -37,7 +37,7 @@ socket.on('state', (s) => {
   stateSig.value = { ...stateSig.value, ...s };
 });
 
-socket.on('dmx', (snapshot) => { dmxSig.value = snapshot || []; });
+socket.on('dmx', (snapshot) => { dmxSig.value = snapshot || {}; });
 socket.on('auto-position', ({ positionMs, running }) => {
   autoPositionSig.value = { positionMs, running: !!running, updatedAt: performance.now() };
 });

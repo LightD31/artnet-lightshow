@@ -25,6 +25,7 @@ const artnetHost = z.string().min(1).max(253)
     { message: 'must be an IPv4 address or hostname' });
 
 const artnetSchema = z.object({
+  enabled: z.boolean().optional(),
   host: artnetHost.optional(),
   port: z.number().int().min(1).max(65535).optional(),
   universe: z.number().int().min(0).max(32767).optional(),
@@ -73,9 +74,12 @@ const overrideMessageSchema = z.object({
   override: z.union([overrideSchema, z.null()]),
 });
 
+const dmxUniverse = z.number().int().min(0).max(32767);
+
 const fixtureMessageSchema = z.object({
   id: z.number().int().nonnegative(),
   address: z.number().int().min(1).max(512).optional(),
+  universe: dmxUniverse.optional(),
   label: z.string().max(64).optional(),
   profileId: z.string().min(1).max(128).optional(),
 }).strict();
@@ -124,6 +128,9 @@ const showSchema = z.object({
   fixtures: z.array(z.object({
     label: z.string().max(64).optional(),
     address: z.number().int().min(1).max(512).optional(),
+    // Absent in shows saved before multi-universe: those load onto the rig's
+    // default universe, which is exactly where they used to live.
+    universe: dmxUniverse.optional(),
     profileId: z.string().optional(),
   })).optional(),
 }).passthrough();
@@ -170,6 +177,7 @@ function validate(schema, value, label) {
 }
 
 module.exports = {
+  dmxUniverse,
   patchSchema,
   deezerStateSchema,
   overrideSchema,

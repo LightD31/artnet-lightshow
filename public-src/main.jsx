@@ -6,7 +6,9 @@ import { Header } from './components/Header.jsx';
 import { CommandBar } from './components/CommandBar.jsx';
 import { Colors } from './components/Colors.jsx';
 import { AutoMode } from './components/AutoMode.jsx';
+import { Warm } from './components/Warm.jsx';
 import { Patterns } from './components/Patterns.jsx';
+import { Cues } from './components/Cues.jsx';
 import { Fixtures } from './components/Fixtures.jsx';
 import { BottomDrawer } from './components/BottomDrawer.jsx';
 
@@ -46,7 +48,7 @@ function ModeTabs({ mode, setMode }) {
 function ManualView() {
   return (
     <div class="manual-view">
-      <div class="manual-col col-patterns"><Patterns /></div>
+      <div class="manual-col col-patterns"><Cues /><Patterns /></div>
       <div class="manual-col col-colors"><Colors /></div>
       <div class="manual-col col-fixtures"><Fixtures /></div>
     </div>
@@ -57,6 +59,7 @@ function AutoView() {
   return (
     <div class="auto-view">
       <AutoMode />
+      <Warm />
     </div>
   );
 }

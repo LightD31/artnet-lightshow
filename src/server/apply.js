@@ -1,7 +1,9 @@
 'use strict';
 
-const { state } = require('./state');
+const { state, setDefaultUniverse } = require('./state');
 const { settings } = require('./settings');
+const output = require('./output');
+const { generateCid } = require('./sacn');
 const pythonEnv = require('../python-env');
 
 /**
@@ -46,7 +48,36 @@ function createApplier({ midi, spotify, smtc, deezer, autoShow, applyPatch, broa
   }
 
   function applyArtnet() {
-    Object.assign(state.artnet, settings.group('artnet'));
+    const { universe, ...rest } = settings.group('artnet');
+    Object.assign(state.artnet, rest);
+    // Same rule as the Art-Net panel: fixtures on the old default universe
+    // follow it, ones deliberately patched elsewhere stay put.
+    setDefaultUniverse(universe);
+  }
+
+  /**
+   * A receiver tells sACN sources apart by their CID, so ours has to survive a
+   * restart: a fresh one every boot reads as a second source arriving and
+   * starts the console arbitrating between two of us. Mint one on first use and
+   * store it.
+   */
+  function ensureSacnCid() {
+    if (settings.get('sacn.cid')) return;
+    try {
+      settings.update({ sacn: { cid: generateCid() } });
+    } catch (err) {
+      console.warn(`[sacn] could not store a component id: ${err.message} — using a temporary one`);
+    }
+  }
+
+  function applySacn() {
+    const config = settings.group('sacn');
+    output.configureSacn(config);
+    if (config.enabled) {
+      const where = config.host || 'multicast';
+      console.log(`[sacn] output enabled → ${where}, priority ${config.priority}, `
+        + `universe offset ${config.universeOffset >= 0 ? '+' : ''}${config.universeOffset}`);
+    }
   }
 
   function applyMidi() {
@@ -91,6 +122,7 @@ function createApplier({ midi, spotify, smtc, deezer, autoShow, applyPatch, broa
   // Spotify fields reconfigures the client once.
   const HANDLERS = [
     { match: (k) => k.startsWith('artnet.'), run: applyArtnet },
+    { match: (k) => k.startsWith('sacn.'), run: applySacn },
     { match: (k) => k.startsWith('midi.'), run: applyMidi },
     { match: (k) => k === 'sources.smtc', run: applySmtc },
     { match: (k) => k === 'sources.prolink', run: applyProlink },
@@ -104,6 +136,8 @@ function createApplier({ midi, spotify, smtc, deezer, autoShow, applyPatch, broa
     /** Everything, at boot. */
     applyAll() {
       applyArtnet();
+      ensureSacnCid();
+      applySacn();
       applySpotify();
       applyMidi();
       applySmtc();

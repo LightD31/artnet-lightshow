@@ -1,6 +1,6 @@
 'use strict';
 
-const { state, getFixtureCount } = require('./state');
+const { state, getFixtureCount, setDefaultUniverse } = require('./state');
 const { restartBeatTimer } = require('./engine');
 const { patchSchema, overrideSchema, validate } = require('./validation');
 const { STROBE_FUNCTIONS, ENERGY_EFFECTS } = require('./presets');
@@ -54,7 +54,12 @@ function applyPatch(rawData) {
       ? data.energyOverride : null;
   }
   if (data.artnet !== undefined) {
-    Object.assign(state.artnet, data.artnet);
+    // The universe field goes through setDefaultUniverse so fixtures sitting on
+    // the rig's default universe move with it, as they did when there was only
+    // one universe to be on.
+    const { universe, ...rest } = data.artnet;
+    Object.assign(state.artnet, rest);
+    if (universe !== undefined) setDefaultUniverse(universe);
     persist({ artnet: { ...state.artnet } });
   }
   if (data.autoSource !== undefined) state.autoSource = data.autoSource;

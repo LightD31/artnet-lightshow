@@ -25,10 +25,27 @@
 
 <main class="settings-main">
 
+  <!-- ── Preflight ──────────────────────────────────────── -->
+  <section class="card settings-section">
+    <div class="card-title">Pre-show Check</div>
+    <p class="section-desc">
+      Everything in this stack degrades quietly on purpose, so the first sign of a broken rig is
+      usually the rig not working. Run this before doors open instead. Also available as
+      <code>npm run preflight</code>.
+    </p>
+    <button class="btn active" id="preflight-run">Run check</button>
+    <div class="preflight-results" id="preflight-results"></div>
+  </section>
+
   <!-- ── ArtNet Settings ─────────────────────────────────── -->
   <section class="card settings-section">
     <div class="card-title">ArtNet Output</div>
     <div class="settings-form">
+      <div class="field">
+        <label>Enabled</label>
+        <input type="checkbox" id="artnet-enabled" checked />
+        <small class="setting-help">Turn off to run sACN only.</small>
+      </div>
       <div class="field">
         <label>Node IP</label>
         <input type="text" id="artnet-host" value="2.255.255.255" />
@@ -40,6 +57,8 @@
       <div class="field">
         <label>Universe</label>
         <input type="number" id="artnet-universe" value="0" min="0" max="32767" />
+        <small class="setting-help">The rig's default universe: it seeds new fixtures, and fixtures
+          sitting on it follow when you change it.</small>
       </div>
       <button class="btn active" id="artnet-save">Apply</button>
     </div>
@@ -69,21 +88,42 @@
       </div>
       <button class="btn active" id="midi-connect" style="align-self:flex-start">Connect</button>
     </div>
-    <details style="margin-top:10px">
-      <summary style="font-size:11px;color:var(--muted);cursor:pointer">Default mapping</summary>
-      <div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.7">
-        <strong style="color:var(--dim)">Encoders (relative CC):</strong><br>
-        CC1 BPM &nbsp;|&nbsp; CC2 Master dim<br>
-        CC3–6 Fixture 1–4 dim &nbsp;|&nbsp; CC7 Strobe<br>
-        <strong style="color:var(--dim)">Faders (Pitch Bend ch 1–9):</strong><br>
-        Ch1–4 Fixture 1–4 dim &nbsp;|&nbsp; Ch9 Master<br>
-        <strong style="color:var(--dim)">Encoder push buttons:</strong><br>
-        N0 Tap &nbsp;|&nbsp; N1 Blackout &nbsp;|&nbsp; N2 Play/Stop<br>
-        N3–6 Fixture 1–4 blackout<br>
-        <strong style="color:var(--dim)">Button row 1 (N8–17):</strong> Patterns<br>
-        <strong style="color:var(--dim)">Button row 2 (N18–23):</strong> Colour A presets
-      </div>
-    </details>
+  </section>
+
+  <!-- ── MIDI Mapping ─────────────────────────────── -->
+  <section class="card settings-section">
+    <div class="card-title">MIDI Mapping</div>
+    <p class="section-desc">
+      Which message does what. Defaults to a Behringer X-Touch Compact in Standard mode
+      (Layer A) — pick an action, press <strong>Learn</strong>, then move the control you want it on.
+    </p>
+
+    <div class="midi-map-status">
+      <span id="midi-map-source"></span>
+      <button class="btn btn-small" id="midi-map-reset">Reset to default</button>
+    </div>
+
+    <div class="midi-learn-banner" id="midi-learn-banner" hidden>
+      <span id="midi-learn-text">Press a control on your MIDI controller…</span>
+      <button class="btn btn-small" id="midi-learn-cancel">Cancel</button>
+    </div>
+
+    <div class="midi-add-row">
+      <select id="midi-add-action"></select>
+      <select id="midi-add-param" hidden></select>
+      <button class="btn active btn-small" id="midi-add-learn">Learn</button>
+    </div>
+
+    <table class="patch-table midi-map-table">
+      <thead>
+        <tr>
+          <th>Control</th>
+          <th>Action</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="midi-map-tbody"></tbody>
+    </table>
   </section>
 
   <!-- ── Sources, integrations, analysis ─────────────────────
@@ -124,7 +164,8 @@
   <!-- ── Patch Table ─────────────────────────────────────── -->
   <section class="card settings-section">
     <div class="card-title">Fixture Patch</div>
-    <p class="section-desc">Assign fixture profiles to DMX addresses.</p>
+    <p class="section-desc">Assign fixture profiles to a universe and DMX address. Addresses only
+      collide within the same universe.</p>
 
     <table class="patch-table" id="patch-table">
       <thead>
@@ -132,6 +173,7 @@
           <th>#</th>
           <th>Label</th>
           <th>Profile</th>
+          <th>Universe</th>
           <th>DMX Address</th>
           <th>Channels</th>
           <th></th>

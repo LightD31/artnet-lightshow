@@ -16,28 +16,38 @@ socket.on('disconnect', () => {
   document.getElementById('status-dot').classList.remove('connected');
 });
 
+// MERGE, don't replace. The first push on connect is the full snapshot,
+// including the static catalogues (colour presets, patterns, energy effects);
+// every later push carries only the fields that change. Replacing would drop
+// the catalogues the MIDI mapping editor builds its pickers from.
 socket.on('state', (s) => {
-  state = s;
+  state = { ...state, ...s };
   if (s.profiles) profiles = s.profiles;
   renderProfiles();
   renderPatchTable();
   syncArtnetFields(s);
   if (s.midi) renderMidiStatus(s.midi);
+  if (s.cues) renderMidiMap();
 });
 
 // ── ArtNet settings ──────────────────────────────────────────────────────────
 
-['artnet-host', 'artnet-port', 'artnet-universe'].forEach(id => {
-  document.getElementById(id).addEventListener('input', function () {
+const ARTNET_FIELDS = ['artnet-enabled', 'artnet-host', 'artnet-port', 'artnet-universe'];
+
+ARTNET_FIELDS.forEach(id => {
+  const node = document.getElementById(id);
+  node.addEventListener(node.type === 'checkbox' ? 'change' : 'input', function () {
     this.dataset.dirty = 'true';
   });
 });
 
 function syncArtnetFields(s) {
   if (!s.artnet) return;
+  const e = document.getElementById('artnet-enabled');
   const h = document.getElementById('artnet-host');
   const p = document.getElementById('artnet-port');
   const u = document.getElementById('artnet-universe');
+  if (!e.dataset.dirty) e.checked = s.artnet.enabled !== false;
   if (!h.dataset.dirty) h.value = s.artnet.host;
   if (!p.dataset.dirty) p.value = s.artnet.port;
   if (!u.dataset.dirty) u.value = s.artnet.universe;
@@ -46,12 +56,13 @@ function syncArtnetFields(s) {
 document.getElementById('artnet-save').addEventListener('click', () => {
   socket.emit('set', {
     artnet: {
+      enabled: document.getElementById('artnet-enabled').checked,
       host: document.getElementById('artnet-host').value,
       port: parseInt(document.getElementById('artnet-port').value),
       universe: parseInt(document.getElementById('artnet-universe').value),
     }
   });
-  ['artnet-host', 'artnet-port', 'artnet-universe'].forEach(id => {
+  ARTNET_FIELDS.forEach(id => {
     delete document.getElementById(id).dataset.dirty;
   });
 });
@@ -91,6 +102,250 @@ document.getElementById('midi-connect').addEventListener('click', () => {
   const input  = document.getElementById('midi-input').value  || null;
   const output = document.getElementById('midi-output').value || null;
   socket.emit('midi-connect', { input, output });
+});
+
+// ── MIDI mapping and learn ───────────────────────────────────────────────────
+// The map used to be a constant describing one controller; anything else was
+// unusable without editing source. Pick an action, press Learn, then move the
+// control you want it on.
+
+let midiMapData = null;   // { map, customised, actions }
+
+const ACTION_BY_ID = () => new Map((midiMapData.actions || []).map(a => [a.id, a]));
+
+/** The options for an action's parameter, from the live catalogues. */
+function paramOptions(kind) {
+  switch (kind) {
+    case 'pattern':
+      return (state.patterns || []).map(p => ({ value: p.id, label: p.name }));
+    case 'color':
+      return (state.colorPresets || []).map((c, i) => ({ value: i, label: c.name }));
+    case 'energy':
+      return (state.energyEffects || []).map(e => ({ value: e.id, label: e.name }));
+    case 'cue':
+      return (state.cues || []).map(c => ({ value: c.id, label: c.name }));
+    case 'fixture':
+      return (state.fixtures || []).map(f => ({ value: f.id, label: f.label }));
+    case 'division':
+      return [1, 2, 4, 8, 16].map(d => ({ value: d, label: d === 1 ? '1/1' : `1/${d}` }));
+    default:
+      return [];
+  }
+}
+
+/** "CC 12" / "Note 40 ch 3" — what the operator sees in the Control column. */
+function controlLabel(kind, number, binding) {
+  const base = kind === 'cc' ? `CC ${number}` : `Note ${number}`;
+  const chan = binding.channel !== undefined ? ` ch ${binding.channel + 1}` : '';
+  const type = kind === 'cc' ? ` (${binding.type === 'relative' ? 'encoder' : 'fader'})` : '';
+  return `${base}${chan}${type}`;
+}
+
+/** "Select pattern — Chase" */
+function actionLabel(binding) {
+  const action = ACTION_BY_ID().get(binding.action);
+  const label = action ? action.label : binding.action;
+  if (!action || !action.param) return label;
+  const key = action.param.key;
+  const value = binding[key];
+  if (value === undefined || value === null) return label;
+  const match = paramOptions(action.param.kind).find(o => String(o.value) === String(value));
+  return `${label} — ${match ? match.label : value}`;
+}
+
+function renderMidiMap() {
+  const tbody = document.getElementById('midi-map-tbody');
+  if (!tbody || !midiMapData) return;
+
+  document.getElementById('midi-map-source').textContent = midiMapData.customised
+    ? 'Using your saved mapping.'
+    : 'Using the built-in X-Touch Compact mapping.';
+  document.getElementById('midi-map-reset').disabled = !midiMapData.customised;
+
+  const rows = [];
+  for (const kind of ['notes', 'cc']) {
+    for (const [number, binding] of Object.entries(midiMapData.map[kind] || {})) {
+      rows.push({ kind, number: Number(number), binding });
+    }
+  }
+  rows.sort((a, b) => (a.kind === b.kind ? a.number - b.number : a.kind < b.kind ? -1 : 1));
+
+  tbody.innerHTML = '';
+  for (const row of rows) {
+    const tr = document.createElement('tr');
+    tr.appendChild(el('td', 'midi-control', controlLabel(row.kind, row.number, row.binding)));
+    tr.appendChild(el('td', null, actionLabel(row.binding)));
+
+    const actions = el('td', 'midi-row-actions');
+    const relearn = el('button', 'btn btn-small', 'Learn');
+    relearn.title = 'Move this action to another control';
+    relearn.addEventListener('click', () => startLearn(row.binding));
+    actions.appendChild(relearn);
+
+    const clear = el('button', 'btn btn-small remove-btn', '×');
+    clear.title = 'Unbind';
+    clear.addEventListener('click', () => putBinding(row.kind, row.number, null));
+    actions.appendChild(clear);
+
+    tr.appendChild(actions);
+    tbody.appendChild(tr);
+  }
+
+  if (!rows.length) {
+    const tr = document.createElement('tr');
+    const td = el('td', 'midi-map-empty', 'Nothing is bound.');
+    td.colSpan = 3;
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+  }
+}
+
+/** Fill the "add a binding" pickers, and keep the parameter list in step. */
+function renderMidiAddRow() {
+  const actionSel = document.getElementById('midi-add-action');
+  if (!actionSel || !midiMapData) return;
+
+  const previous = actionSel.value;
+  actionSel.innerHTML = '';
+  let group = null;
+  for (const action of midiMapData.actions || []) {
+    if (action.input !== group) {
+      group = action.input;
+      const label = { button: 'Buttons', encoder: 'Encoders', fader: 'Faders' }[group] || group;
+      actionSel.appendChild(Object.assign(document.createElement('optgroup'), { label }));
+    }
+    const opt = el('option', null, action.label);
+    opt.value = action.id;
+    actionSel.lastChild.appendChild(opt);
+  }
+  if (previous) actionSel.value = previous;
+  syncMidiParam();
+}
+
+function syncMidiParam() {
+  const actionSel = document.getElementById('midi-add-action');
+  const paramSel  = document.getElementById('midi-add-param');
+  const action = ACTION_BY_ID().get(actionSel.value);
+  const param = action && action.param;
+
+  if (!param) { paramSel.hidden = true; paramSel.innerHTML = ''; return; }
+
+  const options = paramOptions(param.kind);
+  paramSel.innerHTML = '';
+  if (param.optional) {
+    const none = el('option', null, `— any ${param.label.toLowerCase()} —`);
+    none.value = '';
+    paramSel.appendChild(none);
+  }
+  for (const o of options) {
+    const opt = el('option', null, o.label);
+    opt.value = String(o.value);
+    paramSel.appendChild(opt);
+  }
+  paramSel.hidden = false;
+}
+
+/** The binding described by the add-row pickers. */
+function bindingFromAddRow() {
+  const actionSel = document.getElementById('midi-add-action');
+  const paramSel  = document.getElementById('midi-add-param');
+  const action = ACTION_BY_ID().get(actionSel.value);
+  if (!action) return null;
+
+  const binding = { action: action.id };
+  if (action.param && !paramSel.hidden && paramSel.value !== '') {
+    const raw = paramSel.value;
+    const numeric = ['color', 'fixture', 'division'].includes(action.param.kind);
+    binding[action.param.key] = numeric ? Number(raw) : raw;
+  }
+  if (action.input === 'encoder') binding.type = 'relative';
+  if (action.input === 'fader') binding.type = 'absolute';
+  return binding;
+}
+
+function showLearnBanner(text) {
+  const banner = document.getElementById('midi-learn-banner');
+  document.getElementById('midi-learn-text').textContent = text;
+  banner.hidden = false;
+}
+
+function hideLearnBanner() {
+  document.getElementById('midi-learn-banner').hidden = true;
+}
+
+/**
+ * Arm learn. The request is held open by the server until a control moves, so
+ * there is nothing to poll — the answer arrives when the operator presses
+ * something, gives up, or the 30-second timeout fires.
+ */
+async function startLearn(binding) {
+  if (!binding) return;
+  showLearnBanner('Press or move the control you want…');
+  let res;
+  try {
+    res = await fetch('/api/midi/learn', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(binding),
+    }).then(r => r.json());
+  } catch (err) {
+    res = { ok: false, error: err.message };
+  }
+  if (!res.ok) {
+    showLearnBanner(res.error || 'Learn failed');
+    setTimeout(hideLearnBanner, 3000);
+    return;
+  }
+  hideLearnBanner();
+  midiMapData = { ...midiMapData, map: res.map, customised: res.customised };
+  renderMidiMap();
+}
+
+async function putBinding(kind, number, binding) {
+  const res = await fetch('/api/midi/map/binding', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind, number, binding }),
+  }).then(r => r.json()).catch(err => ({ ok: false, error: err.message }));
+  if (res.ok) {
+    midiMapData = { ...midiMapData, map: res.map, customised: res.customised };
+    renderMidiMap();
+  }
+}
+
+async function loadMidiMap() {
+  const res = await fetch('/api/midi/map').then(r => r.json()).catch(() => null);
+  if (!res || !res.ok) return;
+  midiMapData = res;
+  renderMidiAddRow();
+  renderMidiMap();
+}
+
+// Learn is a whole-server mode, so another page arming or completing one has to
+// show up here too rather than leaving this one displaying a stale map.
+socket.on('midi-map', ({ map, customised }) => {
+  if (!midiMapData) return;
+  midiMapData = { ...midiMapData, map, customised };
+  renderMidiMap();
+});
+
+socket.on('midi-learn', (event) => {
+  if (event.status === 'armed') showLearnBanner('Press or move the control you want…');
+  else hideLearnBanner();
+});
+
+document.getElementById('midi-add-action').addEventListener('change', syncMidiParam);
+document.getElementById('midi-add-learn').addEventListener('click', () => startLearn(bindingFromAddRow()));
+document.getElementById('midi-learn-cancel').addEventListener('click', () => {
+  fetch('/api/midi/learn/cancel', { method: 'POST' });
+  hideLearnBanner();
+});
+document.getElementById('midi-map-reset').addEventListener('click', async () => {
+  const res = await fetch('/api/midi/map/reset', { method: 'POST' }).then(r => r.json());
+  if (res.ok) {
+    midiMapData = { ...midiMapData, map: res.map, customised: res.customised };
+    renderMidiMap();
+  }
 });
 
 // ── GDTF Import ──────────────────────────────────────────────────────────────
@@ -303,6 +558,18 @@ function renderPatchTable() {
     profileCell.appendChild(select);
     tr.appendChild(profileCell);
 
+    const uniCell = el('td');
+    const uniInput = el('input', hasConflict ? 'addr-conflict' : null);
+    uniInput.type = 'number';
+    uniInput.value = fix.universe ?? 0;
+    uniInput.min = '0';
+    uniInput.max = '32767';
+    uniInput.dataset.field = 'universe';
+    uniInput.dataset.id = fix.id;
+    uniInput.style.width = '70px';
+    uniCell.appendChild(uniInput);
+    tr.appendChild(uniCell);
+
     const addrCell = el('td');
     const addrInput = el('input', hasConflict ? 'addr-conflict' : null);
     addrInput.type = 'number';
@@ -337,6 +604,10 @@ function renderPatchTable() {
       const field = el.dataset.field;
       let value = el.value;
       if (field === 'address') value = parseInt(value) || 1;
+      if (field === 'universe') {
+        const parsed = parseInt(value, 10);
+        value = Number.isInteger(parsed) && parsed >= 0 ? parsed : 0;
+      }
 
       socket.emit('fixture', { id, [field]: value });
     });
@@ -351,6 +622,8 @@ function renderPatchTable() {
   });
 }
 
+// Two fixtures only fight over an address when they are on the same universe —
+// channel 1 of universe 0 and channel 1 of universe 1 are different wires.
 function detectConflicts(fixtures) {
   const conflicts = new Set();
   for (let i = 0; i < fixtures.length; i++) {
@@ -360,6 +633,7 @@ function detectConflicts(fixtures) {
 
     for (let j = i + 1; j < fixtures.length; j++) {
       const b = fixtures[j];
+      if ((a.universe ?? 0) !== (b.universe ?? 0)) continue;
       const pb = profiles[b.profileId] || {};
       const bEnd = b.address + (pb.channelCount || 12) - 1;
 
@@ -450,6 +724,28 @@ const SETTINGS_SPEC = [
         help: 'Follow CDJs on the network for tempo and track changes.' },
       { path: 'sources.smtc', label: 'Now Playing', type: 'toggle',
         help: 'Read the Windows media session, so any player drives the show. Windows only.' },
+    ],
+  },
+  {
+    id: 'sacn',
+    title: 'sACN (E1.31)',
+    desc: 'What consoles and most modern nodes speak. Runs alongside Art-Net or instead of it '
+      + '(turn Art-Net off above). Takes effect immediately.',
+    fields: [
+      { path: 'sacn.enabled', label: 'Enabled', type: 'toggle' },
+      { path: 'sacn.host', label: 'Node IP', type: 'text',
+        help: 'Blank multicasts to each universe\'s own group (239.255.x.y), which is how sACN is '
+          + 'normally deployed. Name a node to unicast to it instead.' },
+      { path: 'sacn.priority', label: 'Priority', type: 'number', min: 0, max: 200,
+        help: 'Higher wins when two sources drive the same universe. 100 is the E1.31 default.' },
+      { path: 'sacn.sourceName', label: 'Source Name', type: 'text',
+        help: 'What the receiving console lists this server as.' },
+      { path: 'sacn.universeOffset', label: 'Universe Offset', type: 'number', min: -32767, max: 63999,
+        help: 'Art-Net counts universes from 0 and sACN from 1, so +1 lines them up: a fixture on '
+          + 'universe 0 goes out as sACN universe 1.' },
+      { path: 'sacn.cid', label: 'Component ID', type: 'text',
+        help: 'How a receiver tells sources apart. Generated on first start and stable from then on '
+          + '— change it only if two servers on the network ended up sharing one.' },
     ],
   },
   {
@@ -726,4 +1022,58 @@ async function loadSettings() {
   } catch (_) { /* page still works without the config sections */ }
 }
 
+// ── Pre-show check ───────────────────────────────────────────────────────────
+// The same checks `npm run preflight` runs, but against the live subsystems, so
+// MIDI and the playback sources report what is connected rather than what is
+// merely configured.
+
+const PREFLIGHT_GLYPH = { ok: '\u2713', warn: '!', fail: '\u2715', info: '\u00b7' };
+
+function renderPreflight(report) {
+  const host = document.getElementById('preflight-results');
+  host.textContent = '';
+
+  const summary = el('div', `preflight-summary ${report.ok ? (report.counts.warn ? 'warn' : 'ok') : 'fail'}`);
+  summary.textContent = report.ok
+    ? (report.counts.warn
+      ? `Ready, with warnings — ${report.counts.ok} passed, ${report.counts.warn} to look at.`
+      : `Ready. ${report.counts.ok} checks passed.`)
+    : `Not ready — ${report.counts.fail} problem${report.counts.fail === 1 ? '' : 's'} to fix.`;
+  host.appendChild(summary);
+
+  for (const check of report.checks) {
+    const row = el('div', `preflight-row ${check.status}`);
+    row.appendChild(el('span', 'preflight-mark', PREFLIGHT_GLYPH[check.status] || '?'));
+
+    const body = el('div', 'preflight-body');
+    body.appendChild(el('div', 'preflight-label', check.label));
+    body.appendChild(el('div', 'preflight-detail', check.detail));
+    if (check.fix && check.status !== 'ok' && check.status !== 'info') {
+      body.appendChild(el('div', 'preflight-fix', check.fix));
+    }
+    row.appendChild(body);
+    host.appendChild(row);
+  }
+}
+
+document.getElementById('preflight-run').addEventListener('click', async (e) => {
+  const button = e.currentTarget;
+  const host = document.getElementById('preflight-results');
+  button.disabled = true;
+  host.textContent = '';
+  // The Art-Net poll waits a second and a half for replies, and the external
+  // tool probes each spawn a process — say something rather than looking hung.
+  host.appendChild(el('div', 'preflight-summary', 'Checking\u2026'));
+  try {
+    const res = await fetch('/api/preflight').then(r => r.json());
+    if (res.ok) renderPreflight(res.report);
+    else host.textContent = res.error || 'Preflight failed';
+  } catch (err) {
+    host.textContent = `Preflight failed: ${err.message}`;
+  } finally {
+    button.disabled = false;
+  }
+});
+
 loadSettings();
+loadMidiMap();

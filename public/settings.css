@@ -334,3 +334,99 @@
 /* Live readout of what the server resolved, as opposed to what the field says. */
 .setting-note { font-family: var(--mono); font-size: 10px; }
 .setting-note.warn { color: var(--amber); }
+
+/* =============================================================
+   MIDI MAPPING
+   ============================================================= */
+.midi-map-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.midi-map-status button { margin-left: auto; }
+
+.midi-learn-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(59, 130, 246, .5);
+  background: rgba(59, 130, 246, .12);
+  font-size: 12px;
+}
+.midi-learn-banner button { margin-left: auto; }
+
+.midi-add-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.midi-add-row select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  min-width: 0;
+}
+
+.midi-map-table .midi-control {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--dim);
+  white-space: nowrap;
+}
+.midi-map-table .midi-row-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+.midi-map-empty { color: var(--muted); font-size: 11px; }
+
+/* =============================================================
+   PRE-SHOW CHECK
+   ============================================================= */
+.preflight-results { margin-top: 12px; display: flex; flex-direction: column; gap: 2px; }
+
+.preflight-summary {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 8px 10px;
+  border-radius: 6px;
+  margin-bottom: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.preflight-summary.ok   { border-color: rgba(34, 197, 94, .5);  color: #4ade80; }
+.preflight-summary.warn { border-color: rgba(234, 179, 8, .5);  color: #facc15; }
+.preflight-summary.fail { border-color: rgba(239, 68, 68, .55); color: #f87171; }
+
+.preflight-row { display: flex; gap: 8px; padding: 6px 2px; align-items: baseline; }
+.preflight-row + .preflight-row { border-top: 1px solid var(--border); }
+
+.preflight-mark {
+  width: 14px;
+  flex-shrink: 0;
+  text-align: center;
+  font-weight: 700;
+  font-family: var(--mono);
+}
+.preflight-row.ok   .preflight-mark { color: #4ade80; }
+.preflight-row.warn .preflight-mark { color: #facc15; }
+.preflight-row.fail .preflight-mark { color: #f87171; }
+.preflight-row.info .preflight-mark { color: var(--muted); }
+
+.preflight-body { min-width: 0; }
+.preflight-label { font-size: 12px; font-weight: 600; }
+.preflight-detail { font-size: 11px; color: var(--muted); line-height: 1.5; }
+.preflight-fix { font-size: 11px; color: var(--dim); line-height: 1.5; margin-top: 2px; }
+.preflight-fix::before { content: '\2192  '; }

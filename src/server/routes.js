@@ -5,7 +5,7 @@ const fsp = require('fs/promises');
 const os = require('os');
 const multer = require('multer');
 
-const { state, getClientState } = require('./state');
+const { state, getClientState, universeOf, countUniverses, setDefaultUniverse } = require('./state');
 const { applyPatch, applyOverride, processTap } = require('./patch');
 const { resizeFixtureBuffers } = require('./engine');
 const { parseGDTF } = require('../gdtf');
@@ -20,9 +20,16 @@ const {
   listProfiles,
   clearNonBuiltinProfiles,
 } = require('./profiles');
-const { profileSchema, showSchema, midiConnectSchema, deezerStateSchema, validate } = require('./validation');
+const { MAX_UNIVERSES } = require('./universes');
+const { cues, cueWriteSchema, reorderSchema } = require('./cues');
+const {
+  midiMap, ACTIONS, defaultTypeFor, mapSchema, learnSchema, bindingWriteSchema,
+} = require('./midi-map');
+const { profileSchema, showSchema, midiConnectSchema, deezerStateSchema, dmxUniverse, validate } = require('./validation');
 const { settings, RESTART_PATHS, CONFIG_FILE } = require('./settings');
 const { generateToken } = require('./auth');
+const { runPreflight } = require('./preflight');
+const { warmRequestSchema, parseSetList } = require('./warm');
 const pythonEnv = require('../python-env');
 
 // Audio uploads genuinely need headroom; GDTF files do not. Separate limits so
@@ -184,6 +191,88 @@ function attachRoutes(app, deps) {
     } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
   });
 
+  // ─── MIDI mapping and learn ───────────────────────────────────────────────
+  // The map used to be a constant describing one controller. It is now stored,
+  // editable, and relearnable by pressing the control you want.
+  app.get('/api/midi/map', (_req, res) => {
+    res.json({
+      ok: true,
+      ...midiMap.snapshot(),
+      // The catalogue the settings page renders its picker from, so the list of
+      // bindable actions lives in one place rather than two.
+      actions: ACTIONS,
+      learning: midi.learning,
+    });
+  });
+
+  app.put('/api/midi/map', (req, res) => {
+    try {
+      midiMap.replace(validate(mapSchema, req.body || {}, 'midi-map'));
+      res.json({ ok: true, ...midiMap.snapshot() });
+    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+  });
+
+  app.post('/api/midi/map/reset', (_req, res) => {
+    midiMap.reset();
+    res.json({ ok: true, ...midiMap.snapshot() });
+  });
+
+  /** Bind or clear one message by hand, for when the controller isn't to hand. */
+  app.put('/api/midi/map/binding', (req, res) => {
+    try {
+      const { kind, number, binding } = validate(bindingWriteSchema, req.body || {}, 'midi-binding');
+      midiMap.setBinding(kind, number, binding);
+      res.json({ ok: true, ...midiMap.snapshot() });
+    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+  });
+
+  /**
+   * Arm learn and answer when a control is pressed.
+   *
+   * The request is held open until the controller sends something, learn is
+   * cancelled, or it times out — so the page gets its answer without polling,
+   * and a client that navigates away disarms nothing it did not arm.
+   */
+  app.post('/api/midi/learn', asyncHandler(async (req, res) => {
+    if (!midi.enabled) {
+      return res.status(400).json({ ok: false, error: 'No MIDI input connected — pick a port first' });
+    }
+    let binding;
+    try {
+      binding = validate(learnSchema, req.body || {}, 'midi-learn');
+    } catch (err) {
+      return res.status(400).json({ ok: false, error: err.message });
+    }
+
+    // A CC binding needs to know whether the control is an encoder or a fader.
+    // The action says which by default; an explicit type in the request wins,
+    // for the controller whose faders send relative or whose encoders don't.
+    const captured = await midi.startLearn(binding);
+    if (!captured) {
+      return res.json({ ok: false, error: 'Learn cancelled or timed out', learned: null });
+    }
+
+    const stored = { ...captured.binding };
+    if (captured.kind === 'cc' && !stored.type) stored.type = defaultTypeFor(stored.action);
+    if (captured.kind === 'notes') delete stored.type;
+
+    try {
+      midiMap.setBinding(captured.kind, captured.number, stored);
+    } catch (err) {
+      return res.status(err.status || 500).json({ ok: false, error: err.message });
+    }
+
+    res.json({
+      ok: true,
+      learned: { kind: captured.kind, number: captured.number, channel: captured.channel, binding: stored },
+      ...midiMap.snapshot(),
+    });
+  }));
+
+  app.post('/api/midi/learn/cancel', (_req, res) => {
+    res.json({ ok: true, cancelled: midi.cancelLearn('cancelled') });
+  });
+
   // ─── PRO DJ LINK ──────────────────────────────────────────────────────────
   app.post('/api/prolink/enable',  (_req, res) => { applyPatch({ prolinkEnabled: true });  res.json({ ok: true, prolink: getClientState().prolink }); });
   app.post('/api/prolink/disable', (_req, res) => { applyPatch({ prolinkEnabled: false }); res.json({ ok: true, prolink: getClientState().prolink }); });
@@ -220,13 +309,27 @@ function attachRoutes(app, deps) {
     res.json({ ok: true });
   });
 
-  app.post('/api/fixtures', (_req, res) => {
+  app.post('/api/fixtures', (req, res) => {
     if (state.fixtures.length >= MAX_FIXTURES) {
       return res.status(400).json({ ok: false, error: `Patch is full (${MAX_FIXTURES} fixtures)` });
     }
+    // New fixtures land on the rig's default universe unless the caller names
+    // another one, and auto-address behind whatever is already on *that*
+    // universe — addressing behind the whole patch would leave a hole at the
+    // front of every universe but the first.
+    let universe = state.artnet.universe;
+    if (req.body && req.body.universe !== undefined) {
+      const parsed = dmxUniverse.safeParse(req.body.universe);
+      if (!parsed.success) {
+        return res.status(400).json({ ok: false, error: 'universe must be an integer from 0 to 32767' });
+      }
+      universe = parsed.data;
+    }
+
     let maxEnd = 0;
     const profiles = listProfiles();
     for (const fix of state.fixtures) {
+      if (universeOf(fix) !== universe) continue;
       const profile = profiles[fix.profileId] || profiles[BUILTIN_PROFILE_ID];
       const end = fix.address + profile.channelCount;
       if (end > maxEnd) maxEnd = end;
@@ -239,15 +342,24 @@ function attachRoutes(app, deps) {
     if (!fitsInUniverse(address, chCount)) {
       return res.status(400).json({
         ok: false,
-        error: `No room left: a ${chCount}-channel fixture at ${address} would end at `
-          + `${endChannel(address, chCount)}, past the ${UNIVERSE_SIZE}-channel universe`,
+        error: `No room left in universe ${universe}: a ${chCount}-channel fixture at ${address} `
+          + `would end at ${endChannel(address, chCount)}, past the ${UNIVERSE_SIZE}-channel universe`,
       });
     }
     const newId = state.fixtures.length;
+    const next = [...state.fixtures, { universe }];
+    if (countUniverses(next) > MAX_UNIVERSES) {
+      return res.status(400).json({
+        ok: false,
+        error: `Universe ${universe} would put the patch on more than the ${MAX_UNIVERSES} `
+          + 'universes this server transmits',
+      });
+    }
     state.fixtures.push({
       id: newId,
       label: `Fixture ${newId + 1}`,
       address,
+      universe,
       profileId: BUILTIN_PROFILE_ID,
       override: null,
     });
@@ -274,6 +386,7 @@ function attachRoutes(app, deps) {
       fixtures: state.fixtures.map((f) => ({
         label: f.label,
         address: f.address,
+        universe: universeOf(f),
         profileId: f.profileId,
       })),
     });
@@ -302,12 +415,20 @@ function attachRoutes(app, deps) {
         for (const p of show.profiles) if (p && p.id) incoming[p.id] = p;
       }
 
+      // A show file carries its own default universe, and the fixtures in it
+      // are resolved against that rather than the one the rig happens to be on.
+      const showUniverse = (show.artnet && show.artnet.universe !== undefined)
+        ? show.artnet.universe : state.artnet.universe;
+
       let next = null;
       if (hasFixtures) {
         next = show.fixtures.map((f, i) => ({
           id: i,
           label: f.label || `Fixture ${i + 1}`,
           address: f.address || 1,
+          // Shows saved before multi-universe carry no universe at all: those
+          // fixtures belong on the show's own universe, where they used to be.
+          universe: f.universe !== undefined ? f.universe : showUniverse,
           profileId: incoming[f.profileId] ? f.profileId : BUILTIN_PROFILE_ID,
           override: null,
         }));
@@ -321,6 +442,13 @@ function attachRoutes(app, deps) {
             });
           }
         }
+        const spanned = new Set([showUniverse, ...next.map((f) => f.universe)]);
+        if (spanned.size > MAX_UNIVERSES) {
+          return res.status(400).json({
+            ok: false,
+            error: `Show spans ${spanned.size} universes, more than the ${MAX_UNIVERSES} this server transmits`,
+          });
+        }
       }
 
       // Everything checked out — now apply.
@@ -328,7 +456,18 @@ function attachRoutes(app, deps) {
         clearNonBuiltinProfiles();
         show.profiles.forEach((p) => { if (p && p.id) registerProfile(p); });
       }
-      if (show.artnet) Object.assign(state.artnet, show.artnet);
+      if (show.artnet) {
+        const { universe, ...rest } = show.artnet;
+        Object.assign(state.artnet, rest);
+        if (universe !== undefined) {
+          // With a fixture list the show already says where every fixture goes,
+          // so assign the default directly; dragging the old default's
+          // occupants along would fight it. Without one, this is the Art-Net
+          // panel's "move the rig" semantics.
+          if (next) state.artnet.universe = universe;
+          else setDefaultUniverse(universe);
+        }
+      }
       if (next) {
         state.fixtures = next;
         resizeFixtureBuffers();
@@ -336,6 +475,56 @@ function attachRoutes(app, deps) {
       integrations.broadcast();
       res.json({ ok: true });
     } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+  });
+
+  // ─── Cue stack ────────────────────────────────────────────────────────────
+  // Named looks. GET returns the full stored look; the state broadcast carries
+  // only the summaries the buttons need.
+  app.get('/api/cues', (_req, res) => res.json({ ok: true, cues: cues.list() }));
+
+  app.post('/api/cues', (req, res) => {
+    try {
+      const body = validate(cueWriteSchema, req.body || {}, 'cue');
+      const cue = cues.create(body);
+      integrations.broadcast();
+      res.json({ ok: true, cue });
+    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+  });
+
+  // Note: /api/cues/reorder must come before :id
+  app.post('/api/cues/reorder', (req, res) => {
+    try {
+      const { ids } = validate(reorderSchema, req.body || {}, 'cue-reorder');
+      cues.reorder(ids);
+      integrations.broadcast();
+      res.json({ ok: true, cues: cues.summaries() });
+    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+  });
+
+  app.put('/api/cues/:id', (req, res) => {
+    try {
+      const body = validate(cueWriteSchema, req.body || {}, 'cue');
+      const cue = cues.update(req.params.id, body);
+      if (!cue) return res.status(404).json({ ok: false, error: 'No such cue' });
+      integrations.broadcast();
+      res.json({ ok: true, cue });
+    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+  });
+
+  app.delete('/api/cues/:id', (req, res) => {
+    try {
+      if (!cues.remove(req.params.id)) return res.status(404).json({ ok: false, error: 'No such cue' });
+      integrations.broadcast();
+      res.json({ ok: true });
+    } catch (err) { res.status(err.status || 500).json({ ok: false, error: err.message }); }
+  });
+
+  app.post('/api/cues/:id/recall', (req, res) => {
+    try {
+      if (!cues.recall(req.params.id)) return res.status(404).json({ ok: false, error: 'No such cue' });
+      // recallLook goes through applyPatch, which broadcasts on its own.
+      res.json({ ok: true, state: getClientState() });
+    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
   });
 
   // ─── Spotify ──────────────────────────────────────────────────────────────
@@ -636,6 +825,51 @@ function attachRoutes(app, deps) {
     const ok = analysisCache.delete(key);
     res.json({ ok });
   });
+
+  // ─── Set-list warming ─────────────────────────────────────────────────────
+  // Analyse a whole night up front. Live prefetch only sees one to five tracks
+  // ahead, and only once something is playing.
+  app.get('/api/warm', (_req, res) => res.json({ ok: true, warm: integrations.warmer.status() }));
+
+  app.post('/api/warm', (req, res) => {
+    try {
+      const body = validate(warmRequestSchema, req.body || {}, 'warm');
+      const inputs = [...(body.tracks || []), ...parseSetList(body.text)];
+      if (!inputs.length) {
+        return res.status(400).json({ ok: false, error: 'Provide a set list as `text` or `tracks`' });
+      }
+      res.json({ ok: true, warm: integrations.warmer.start(inputs) });
+    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+  });
+
+  /** Warm everything Spotify has queued, rather than only the next few. */
+  app.post('/api/warm/spotify-queue', asyncHandler(async (_req, res) => {
+    if (!spotify.authenticated) return res.status(400).json({ ok: false, error: 'Spotify not connected' });
+    const queue = await spotify.getQueue();
+    if (!queue || !queue.length) return res.status(400).json({ ok: false, error: 'Spotify queue is empty' });
+
+    const inputs = queue.filter((t) => t && t.name).map((t) => ({
+      title: t.name, artist: t.artist, isrc: t.isrc, trackId: t.trackId, durationMs: t.durationMs,
+    }));
+    try {
+      res.json({ ok: true, warm: integrations.warmer.start(inputs) });
+    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+  }));
+
+  app.delete('/api/warm', (_req, res) => {
+    const cancelled = integrations.warmer.cancel();
+    if (!cancelled) integrations.warmer.clear();
+    res.json({ ok: true, cancelled, warm: integrations.warmer.status() });
+  });
+
+  // ─── Preflight ────────────────────────────────────────────────────────────
+  // The same checks `npm run preflight` runs, with the live subsystems wired in
+  // so MIDI and the playback sources report what is actually connected rather
+  // than what is merely configured.
+  app.get('/api/preflight', asyncHandler(async (_req, res) => {
+    const report = await runPreflight({ midi, spotify, prolink, analysisCache });
+    res.json({ ok: true, report });
+  }));
 
   // ─── Settings ─────────────────────────────────────────────────────────────
   // Everything the operator can configure. Secrets are never sent back: the

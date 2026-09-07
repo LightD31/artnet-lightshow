@@ -1,9 +1,10 @@
 'use strict';
 
-const { state, dmx, getFixtureCount } = require('./state');
+const { state, getFixtureCount, universeOf, activeUniverses } = require('./state');
 const { COLOR_PRESETS, STROBE_FUNCTIONS } = require('./presets');
 const { getProfile, UV_BOOST } = require('./profiles');
-const { sendArtDmx } = require('./artnet');
+const { sendUniverse } = require('./output');
+const universes = require('./universes');
 const { PATTERN_FUNCS } = require('./patterns');
 
 const fixtureColors = Array.from({ length: 4 }, () => ({
@@ -101,77 +102,85 @@ function renderDmx() {
 
   const energy = state.energyOverride ? resolveEnergyOverride() : null;
 
-  // Clear the whole universe every frame, then let each fixture write its own
+  // Allocate a buffer for every universe the patch now spans and retire the
+  // ones it left. Done every frame rather than on patch edits: a fixture moved
+  // between universes takes effect immediately, and no caller has to remember.
+  universes.sync(activeUniverses());
+
+  // Clear every universe each frame, then let each fixture write its own
   // channels back. Zeroing per-fixture ranges instead used to leave any channel
   // no *current* fixture covers latched at its last value forever: delete a
   // fixture, re-address one, load a smaller show, or map a profile offset past
-  // its channelCount, and the orphaned channels kept streaming at 40 Hz with no
-  // way to clear them — master blackout only walked the current fixtures, so it
-  // could not turn those lights off either. A 512-byte memset per frame is far
-  // cheaper than the bug.
-  dmx.fill(0);
+  // its channelCount, and the orphaned channels kept streaming at the render
+  // rate with no way to clear them — master blackout only walked the current
+  // fixtures, so it could not turn those lights off either. A 512-byte memset
+  // per universe per frame is far cheaper than the bug.
+  universes.clearAll();
 
-  // With the buffer already cleared, a blackout is simply the empty universe.
-  if (state.masterBlackout) {
-    sendArtDmx(state.artnet, dmx);
-    return;
-  }
+  // With the buffers already cleared, a blackout is simply empty universes.
+  if (!state.masterBlackout) {
+    const fixtureCount = getFixtureCount();
+    for (let i = 0; i < fixtureCount; i++) {
+      const fix = state.fixtures[i];
+      const dmx = universes.getBuffer(universeOf(fix));
+      const base = fix.address - 1;
+      let col, dim, strobe;
 
-  const fixtureCount = getFixtureCount();
-  for (let i = 0; i < fixtureCount; i++) {
-    const fix = state.fixtures[i];
-    const base = fix.address - 1;
-    let col, dim, strobe;
-
-    if (energy) {
-      col = energy.col; dim = energy.dim; strobe = energy.strobe;
-    } else if (fix.override && fix.override.enabled) {
-      const ov = fix.override;
-      if (ov.blackout) {
-        col = { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 }; dim = 0; strobe = 0;
+      if (energy) {
+        col = energy.col; dim = energy.dim; strobe = energy.strobe;
+      } else if (fix.override && fix.override.enabled) {
+        const ov = fix.override;
+        if (ov.blackout) {
+          col = { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 }; dim = 0; strobe = 0;
+        } else {
+          col = { r: ov.r, g: ov.g, b: ov.b, w: ov.w, a: ov.a || 0, uv: ov.uv || 0 };
+          dim = ov.dim !== undefined ? ov.dim : 255;
+          strobe = ov.strobe !== undefined ? ov.strobe : 0;
+        }
       } else {
-        col = { r: ov.r, g: ov.g, b: ov.b, w: ov.w, a: ov.a || 0, uv: ov.uv || 0 };
-        dim = ov.dim !== undefined ? ov.dim : 255;
-        strobe = ov.strobe !== undefined ? ov.strobe : 0;
+        const fc = fixtureColors[i];
+        col = { r: fc.r, g: fc.g, b: fc.b, w: fc.w, a: fc.a || 0, uv: fc.uv || 0 };
+        dim = fc.dim; strobe = fc.strobe;
       }
-    } else {
-      const fc = fixtureColors[i];
-      col = { r: fc.r, g: fc.g, b: fc.b, w: fc.w, a: fc.a || 0, uv: fc.uv || 0 };
-      dim = fc.dim; strobe = fc.strobe;
-    }
 
-    const ch = getProfile(fix).channelMap;
+      const ch = getProfile(fix).channelMap;
 
-    // Energy overrides bypass master dimmer — always full output
-    const ms = energy ? 1 : state.masterDimmer / 255;
-    const ds = dim / 255;
-    const ts = ms * ds;
+      // Energy overrides bypass master dimmer — always full output
+      const ms = energy ? 1 : state.masterDimmer / 255;
+      const ds = dim / 255;
+      const ts = ms * ds;
 
-    if (ch.dimmer !== undefined)     dmx[base + ch.dimmer] = Math.round(dim * ms);
-    if (ch.dimmerFine !== undefined) dmx[base + ch.dimmerFine] = 0;
+      if (ch.dimmer !== undefined)     dmx[base + ch.dimmer] = Math.round(dim * ms);
+      if (ch.dimmerFine !== undefined) dmx[base + ch.dimmerFine] = 0;
 
-    // Energy overrides force 'standard' strobe so a colour-strobe burst never
-    // inherits a slow ramp/break function from the prior segment.
-    if (ch.strobe !== undefined) {
-      const rawStrobe = energy
-        ? strobe
-        : (state.pattern === 'strobe' ? state.strobeSpeed : strobe);
-      if (rawStrobe > 0) {
-        const fnId = energy ? 'standard' : state.strobeFunction;
-        const fn = STROBE_FUNCTIONS.find((f) => f.id === fnId) || STROBE_FUNCTIONS[0];
-        dmx[base + ch.strobe] = fn.lo + Math.round((rawStrobe / 255) * (fn.hi - fn.lo));
+      // Energy overrides force 'standard' strobe so a colour-strobe burst never
+      // inherits a slow ramp/break function from the prior segment.
+      if (ch.strobe !== undefined) {
+        const rawStrobe = energy
+          ? strobe
+          : (state.pattern === 'strobe' ? state.strobeSpeed : strobe);
+        if (rawStrobe > 0) {
+          const fnId = energy ? 'standard' : state.strobeFunction;
+          const fn = STROBE_FUNCTIONS.find((f) => f.id === fnId) || STROBE_FUNCTIONS[0];
+          dmx[base + ch.strobe] = fn.lo + Math.round((rawStrobe / 255) * (fn.hi - fn.lo));
+        }
       }
-    }
 
-    if (ch.red !== undefined)   dmx[base + ch.red]   = Math.round(col.r * ts);
-    if (ch.green !== undefined) dmx[base + ch.green] = Math.round(col.g * ts);
-    if (ch.blue !== undefined)  dmx[base + ch.blue]  = Math.round(col.b * ts);
-    if (ch.white !== undefined) dmx[base + ch.white] = Math.round(col.w * ts);
-    if (ch.amber !== undefined) dmx[base + ch.amber] = Math.round(col.a * ts);
-    if (ch.uv !== undefined)    dmx[base + ch.uv]    = Math.min(255, Math.round(col.uv * ts * UV_BOOST));
+      if (ch.red !== undefined)   dmx[base + ch.red]   = Math.round(col.r * ts);
+      if (ch.green !== undefined) dmx[base + ch.green] = Math.round(col.g * ts);
+      if (ch.blue !== undefined)  dmx[base + ch.blue]  = Math.round(col.b * ts);
+      if (ch.white !== undefined) dmx[base + ch.white] = Math.round(col.w * ts);
+      if (ch.amber !== undefined) dmx[base + ch.amber] = Math.round(col.a * ts);
+      if (ch.uv !== undefined)    dmx[base + ch.uv]    = Math.min(255, Math.round(col.uv * ts * UV_BOOST));
+    }
   }
 
-  sendArtDmx(state.artnet, dmx);
+  for (const universe of universes.list()) {
+    sendUniverse(universe, universes.getBuffer(universe));
+  }
+  // One last all-zero frame for any universe that just left the patch, so its
+  // node doesn't sit holding the look it was showing when the fixture moved.
+  for (const [universe, frame] of universes.drainRetired()) sendUniverse(universe, frame);
 }
 
 let beatInterval = null;
@@ -207,8 +216,12 @@ function stopEngine() {
   if (renderInterval) clearInterval(renderInterval);
   beatInterval = null;
   renderInterval = null;
-  dmx.fill(0);
-  sendArtDmx(state.artnet, dmx);
+  universes.sync(activeUniverses());
+  universes.clearAll();
+  for (const universe of universes.list()) {
+    sendUniverse(universe, universes.getBuffer(universe));
+  }
+  for (const [universe, frame] of universes.drainRetired()) sendUniverse(universe, frame);
 }
 
 module.exports = {
