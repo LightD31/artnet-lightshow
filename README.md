@@ -26,6 +26,7 @@ Control surfaces: the web UI, a **Behringer X-Touch Compact** over MIDI, an
 - **Energy overrides** — one-touch panic effects that trump everything except
   master blackout
 - **Master controls** — global dimmer, master blackout, play/stop
+- **Cue stack** — save the look on stage under a name and recall it in one press
 - **Live DMX monitor** — real-time channel values
 
 **Automatic show**
@@ -174,6 +175,29 @@ fixture you deliberately patched somewhere else stays put.
 Universes with nothing patched on them are transmitted for one final all-zero
 frame and then dropped, so a node never sits holding the look it had when its
 last fixture moved away. The server transmits at most **32** universes.
+
+---
+
+## Cues
+
+A **cue** is the look on stage saved under a name: tempo and beat division,
+pattern, all four colour slots, master dimmer, blackout, strobe, the active
+energy override, and every fixture's override. Build something you like, press
+**Save current look**, and it is one press away for the rest of the night.
+
+Cues live in the *Cues* card on the live page.
+
+- **Recall** — click the cue.
+- **✎** rename. Renaming never touches the stored look.
+- **⟳** overwrite the cue with what is on stage now.
+- **×** delete.
+
+A cue holds no patch data — no addresses, no universes, no Art-Net target — so
+recalling one can never re-address the rig or move a fixture to another universe
+mid-show. Fixtures the cue says nothing about are cleared rather than left
+holding the previous look: a cue is the whole rig, not a partial edit.
+
+They are stored in `config/cues.json` and survive restarts. Up to 128.
 
 ---
 
@@ -340,6 +364,17 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/gdtf/parse` | Parse an uploaded `.gdtf` (multipart `gdtf`) |
 | POST | `/api/profiles` · DELETE `/api/profiles/:id` | Register / remove a fixture profile |
 | GET · POST | `/api/show` | Export / import the patch |
+
+### Cues
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/cues` | Every cue, with its full stored look |
+| POST | `/api/cues` | Save a cue (`{ name }`, capturing the live look, or `{ name, look }`) |
+| PUT | `/api/cues/:id` | Rename (`{ name }`), overwrite from the live look (`{ recapture: true }`), or replace outright (`{ look }`) |
+| DELETE | `/api/cues/:id` | Delete a cue |
+| POST | `/api/cues/:id/recall` | Put a cue on stage |
+| POST | `/api/cues/reorder` | Reorder the stack (`{ ids }`); ids left out keep their relative order |
 
 ### Auto show
 

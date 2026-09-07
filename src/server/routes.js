@@ -21,6 +21,7 @@ const {
   clearNonBuiltinProfiles,
 } = require('./profiles');
 const { MAX_UNIVERSES } = require('./universes');
+const { cues, cueWriteSchema, reorderSchema } = require('./cues');
 const { profileSchema, showSchema, midiConnectSchema, deezerStateSchema, dmxUniverse, validate } = require('./validation');
 const { settings, RESTART_PATHS, CONFIG_FILE } = require('./settings');
 const { generateToken } = require('./auth');
@@ -387,6 +388,56 @@ function attachRoutes(app, deps) {
       integrations.broadcast();
       res.json({ ok: true });
     } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+  });
+
+  // ─── Cue stack ────────────────────────────────────────────────────────────
+  // Named looks. GET returns the full stored look; the state broadcast carries
+  // only the summaries the buttons need.
+  app.get('/api/cues', (_req, res) => res.json({ ok: true, cues: cues.list() }));
+
+  app.post('/api/cues', (req, res) => {
+    try {
+      const body = validate(cueWriteSchema, req.body || {}, 'cue');
+      const cue = cues.create(body);
+      integrations.broadcast();
+      res.json({ ok: true, cue });
+    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+  });
+
+  // Note: /api/cues/reorder must come before :id
+  app.post('/api/cues/reorder', (req, res) => {
+    try {
+      const { ids } = validate(reorderSchema, req.body || {}, 'cue-reorder');
+      cues.reorder(ids);
+      integrations.broadcast();
+      res.json({ ok: true, cues: cues.summaries() });
+    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+  });
+
+  app.put('/api/cues/:id', (req, res) => {
+    try {
+      const body = validate(cueWriteSchema, req.body || {}, 'cue');
+      const cue = cues.update(req.params.id, body);
+      if (!cue) return res.status(404).json({ ok: false, error: 'No such cue' });
+      integrations.broadcast();
+      res.json({ ok: true, cue });
+    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+  });
+
+  app.delete('/api/cues/:id', (req, res) => {
+    try {
+      if (!cues.remove(req.params.id)) return res.status(404).json({ ok: false, error: 'No such cue' });
+      integrations.broadcast();
+      res.json({ ok: true });
+    } catch (err) { res.status(err.status || 500).json({ ok: false, error: err.message }); }
+  });
+
+  app.post('/api/cues/:id/recall', (req, res) => {
+    try {
+      if (!cues.recall(req.params.id)) return res.status(404).json({ ok: false, error: 'No such cue' });
+      // recallLook goes through applyPatch, which broadcasts on its own.
+      res.json({ ok: true, state: getClientState() });
+    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
   });
 
   // ─── Spotify ──────────────────────────────────────────────────────────────

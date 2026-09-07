@@ -3,6 +3,7 @@
 const { state, getLiveState, getDmxSnapshot } = require('./state');
 const { setHooks } = require('./patch');
 const { restartBeatTimer } = require('./engine');
+const { cues } = require('./cues');
 const {
   keyForSpotify,
   keyForQuery,
@@ -85,6 +86,9 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
         lastError: prolink.lastError,
       },
       autoShow: autoShow.getClientState(),
+      // Summaries, not the stored looks: a hundred full cues would ride every
+      // broadcast, and the buttons only need a name and a swatch.
+      cues: cues.summaries(),
       midi: { enabled: midi.enabled, ports: midi.listPorts() },
     };
   }
