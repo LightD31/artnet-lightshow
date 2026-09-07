@@ -10,7 +10,12 @@ import { Patterns } from './components/Patterns.jsx';
 import { Fixtures } from './components/Fixtures.jsx';
 import { BottomDrawer } from './components/BottomDrawer.jsx';
 
-function ModeTabs({ mode, setMode, autoActive }) {
+function ModeTabs({ mode, setMode }) {
+  // Subscribes here rather than in Root, so an auto-show status change re-renders
+  // this tab strip alone instead of the whole tree.
+  const s = stateSig.value;
+  const autoActive = !!(s.autoShow && s.autoShow.status && s.autoShow.status !== 'idle');
+
   return (
     <div class="mode-tabs" role="tablist">
       <button
@@ -57,9 +62,9 @@ function AutoView() {
 }
 
 function Root() {
-  // Touch the signal so the whole tree re-renders on every state push.
-  void stateSig.value;
-
+  // Deliberately reads no signals. Subscribing the root made every component in
+  // the tree re-render on every push; each component now subscribes to what it
+  // actually needs — see AUDIT.md M2.
   const [mode, setMode] = useState(() => {
     const saved = localStorage.getItem('lightshow.mode');
     return saved === 'auto' ? 'auto' : 'manual';
@@ -78,14 +83,11 @@ function Root() {
     return () => document.removeEventListener('keydown', onKey);
   }, []);
 
-  const s = stateSig.value;
-  const autoActive = s.autoShow && s.autoShow.status && s.autoShow.status !== 'idle';
-
   return (
     <>
       <Header />
       <CommandBar />
-      <ModeTabs mode={mode} setMode={setMode} autoActive={autoActive} />
+      <ModeTabs mode={mode} setMode={setMode} />
       <main class={`mode-${mode}`}>
         {mode === 'manual' ? <ManualView /> : <AutoView />}
       </main>

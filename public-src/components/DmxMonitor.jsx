@@ -1,4 +1,4 @@
-import { stateSig } from '../state.js';
+import { stateSig, dmxSig } from '../state.js';
 
 function buildChannelLabels(s) {
   const labels = {};
@@ -17,7 +17,7 @@ function buildChannelLabels(s) {
 
 export function DmxMonitor() {
   const s = stateSig.value;
-  const snap = s.dmxSnapshot || [];
+  const snap = dmxSig.value;
   const labels = buildChannelLabels(s);
 
   return (

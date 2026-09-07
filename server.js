@@ -94,7 +94,7 @@ if (process.env.PROLINK === '1') {
 }
 
 attachRoutes(app, { midi, autoShow, spotify, nowPlaying, deezerSource, prolink, analysisCache, integrations });
-attachSockets(io, { midi });
+attachSockets(io, { midi, integrations });
 
 startEngine();
 

@@ -24,7 +24,7 @@ export function fmtNum(v, digits = 2) {
   return v.toFixed(digits);
 }
 
-export function fixtureOutputColor(fix, state) {
+export function fixtureOutputColor(fix, state, dmxSnapshot) {
   if (!fix) return '#000';
   if (state.masterBlackout) return '#000';
 
@@ -45,7 +45,7 @@ export function fixtureOutputColor(fix, state) {
 
   // Read DMX snapshot through the fixture's profile channel map.
   const base = fix.address - 1;
-  const snap = state.dmxSnapshot || [];
+  const snap = dmxSnapshot || state.dmxSnapshot || [];
   const profile = state.profiles && state.profiles[fix.profileId];
   if (!profile || !profile.channelMap) return '#111';
 

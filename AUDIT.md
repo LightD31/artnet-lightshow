@@ -4,11 +4,17 @@
 
 Each finding names a file and line so it can be triaged independently.
 
-> **Status.** The audit was written first as a review-only document. **PR 1 (Security)**
-> and **PR 2 (Stability)** have since been implemented, so C1, C2, H1, H2, H3, H4, H5,
-> M4, M5, M6, M7, M8 and L6 are marked ✅ Fixed below and their line references point at
-> the *pre-fix* code. Everything else is still open — see the
-> [Suggested order of work](#8-suggested-order-of-work).
+> **Status.** The audit was written first as a review-only document. **PR 1 (Security)**,
+> **PR 2 (Stability)** and **PR 3 (Performance)** have since been implemented, so C1, C2,
+> H1, H2, H3, H4, H5, M1, M2, M4, M5, M6, M7, M8 and L6 are marked ✅ Fixed below and
+> their line references point at the *pre-fix* code. Everything else is still open — see
+> the [Suggested order of work](#8-suggested-order-of-work).
+>
+> **One correction.** M1 originally called the 10 Hz broadcast "the dominant runtime
+> cost". Measurement did not support that: building and serializing the payload costs
+> ~38 µs, so ~0.4 ms/s per client — negligible CPU. The real costs were **bandwidth**
+> (70.5 KB/s per client measured, 63% of it static data re-sent unchanged) and the
+> **client re-render** it drove. The claim is corrected in the finding below.
 
 ---
 
@@ -45,8 +51,8 @@ against real Stream Deck hardware.
 | [H3](#h3--spotify-oauth-has-no-state-parameter) | High | Auth | Spotify OAuth has no `state` parameter (login CSRF) | ✅ Fixed |
 | [H4](#h4--17-known-vulnerable-dependencies-11-rated-high) | High | Deps | 17 vulnerable dependencies, 11 rated high | ✅ Fixed |
 | [H5](#h5--unverified-310-mb-pytorch-checkpoint-download) | High | Supply chain | 310 MB PyTorch checkpoint downloaded without checksum | ✅ Fixed |
-| [M1](#m1--10-hz-full-state-broadcast-is-the-dominant-runtime-cost) | Medium | Performance | 10 Hz full-state broadcast rebuilds everything | Open |
-| [M2](#m2--client-re-renders-the-whole-tree-10-times-per-second) | Medium | Performance | Client re-renders whole tree 10×/second | Open |
+| [M1](#m1--10-hz-full-state-broadcast-re-sends-mostly-static-data) | Medium | Performance | 10 Hz broadcast re-sends mostly-static data | ✅ Fixed |
+| [M2](#m2--client-re-renders-the-whole-tree-10-times-per-second) | Medium | Performance | Client re-renders whole tree 10×/second | ✅ Fixed |
 | [M3](#m3--gdtf-channelcount-is-the-channel-count-not-the-address-footprint) | Medium | Correctness | GDTF `channelCount` wrong → stale DMX channels latch | Open |
 | [M4](#m4--analyzer-worker-has-no-timeout-one-hang-stalls-everything) | Medium | Correctness | Analyzer worker has no timeout; delivers mismatched responses | ✅ Fixed |
 | [M5](#m5--no-request-timeouts-or-rate-limit-handling-on-spotify-calls) | Medium | Robustness | No timeouts, status checks or 429 backoff on Spotify | ✅ Fixed |
@@ -72,7 +78,9 @@ against real Stream Deck hardware.
 
 ## 3. Critical
 
-### C1 — Stored XSS via fixture profile and label fields  ✅ **Fixed**
+### C1 — Stored XSS via fixture profile and label fields
+
+**✅ Fixed.**
 
 **Where:** `public/settings.js:163`, `:222-231`, `:261-274`
 
@@ -118,7 +126,9 @@ small `esc()` helper. The Preact client (`public-src/`) is clean — no
 
 ---
 
-### C2 — No authentication; server listens on all interfaces  ✅ **Fixed**
+### C2 — No authentication; server listens on all interfaces
+
+**✅ Fixed.**
 
 **Where:** `server.js:84` — `server.listen(PORT, …)` with no host argument
 
@@ -160,7 +170,9 @@ hardened auth system and should not be described as one.
 
 ## 4. High
 
-### H1 — Unhandled `dgram` error crashes the process mid-show  ✅ **Fixed**
+### H1 — Unhandled `dgram` error crashes the process mid-show
+
+**✅ Fixed.**
 
 **Where:** `src/server/artnet.js:5,25`
 
@@ -191,7 +203,9 @@ level; resolve once on change and cache the address.
 
 ---
 
-### H2 — Wildcard CORS on `/api/deezer` lets any website drive the show  ✅ **Fixed**
+### H2 — Wildcard CORS on `/api/deezer` lets any website drive the show
+
+**✅ Fixed.**
 
 **Where:** `src/server/routes.js:302-308`
 
@@ -222,7 +236,9 @@ use.
 
 ---
 
-### H3 — Spotify OAuth has no `state` parameter  ✅ **Fixed**
+### H3 — Spotify OAuth has no `state` parameter
+
+**✅ Fixed.**
 
 **Where:** `src/spotify.js:53-63` (authorize URL), `src/server/routes.js:261-274` (callback)
 
@@ -258,7 +274,9 @@ require an exact match in the callback, and reject when absent.
 
 ---
 
-### H4 — 17 known-vulnerable dependencies, 11 rated high  ✅ **Fixed**
+### H4 — 17 known-vulnerable dependencies, 11 rated high
+
+**✅ Fixed.**
 
 **Where:** `package.json`, `package-lock.json`. Reproduce with `npm audit --omit=dev`.
 
@@ -285,7 +303,9 @@ transitive — worth checking whether anything actually needs it.
 
 ---
 
-### H5 — Unverified 310 MB PyTorch checkpoint download  ✅ **Fixed**
+### H5 — Unverified 310 MB PyTorch checkpoint download
+
+**✅ Fixed.**
 
 **Where:** `scripts/setup-panns.py:31-40`
 
@@ -319,7 +339,14 @@ can be brought under this repo's control.
 
 ## 5. Medium
 
-### M1 — 10 Hz full-state broadcast is the dominant runtime cost
+### M1 — 10 Hz full-state broadcast re-sends mostly-static data
+
+**✅ Fixed.**
+
+> **Correction to the original finding**, which was titled "the dominant runtime cost".
+> Measured, the server-side CPU is ~38 µs per build+serialize — about 0.4 ms/s per client
+> at 10 Hz, which is negligible. The genuine problems were bandwidth and the client
+> re-render this drove; both are quantified below.
 
 **Where:** `src/server/integrations.js:466`
 
@@ -360,6 +387,8 @@ the problem — the serialisation volume is.
 
 ### M2 — Client re-renders the whole tree 10 times per second
 
+**✅ Fixed.**
+
 **Where:** `public-src/main.jsx:61`
 
 ```js
@@ -370,7 +399,7 @@ function Root() {
 
 Subscribing the root component to the signal means `Header`, `CommandBar`, `Patterns`,
 `Colors`, `Fixtures`, `AutoMode`, `AutoTimeline` and `BottomDrawer` all reconcile on every
-100 ms push from [M1](#m1--10-hz-full-state-broadcast-is-the-dominant-runtime-cost). This
+100 ms push from [M1](#m1--10-hz-full-state-broadcast-re-sends-mostly-static-data). This
 defeats the point of `@preact/signals`, whose whole value is fine-grained subscription.
 
 The comment is honest about what it does, so this reads as a deliberate shortcut rather
@@ -414,7 +443,9 @@ the UI wants to show it.
 
 ---
 
-### M4 — Analyzer worker has no timeout; one hang stalls everything  ✅ **Fixed**
+### M4 — Analyzer worker has no timeout; one hang stalls everything
+
+**✅ Fixed.**
 
 **Where:** `src/analyzer-worker.js:193-209` and `:179-190`
 
@@ -451,7 +482,9 @@ respawns so a missing Python install fails loudly rather than looping.
 
 ---
 
-### M5 — No request timeouts or rate-limit handling on Spotify calls  ✅ **Fixed**
+### M5 — No request timeouts or rate-limit handling on Spotify calls
+
+**✅ Fixed.**
 
 **Where:** `src/spotify.js:208-232`
 
@@ -478,7 +511,9 @@ so it does not hold the process open at shutdown.
 
 ---
 
-### M6 — Arbitrary local-file read via the analyze endpoint  ✅ **Fixed**
+### M6 — Arbitrary local-file read via the analyze endpoint
+
+**✅ Fixed.**
 
 **Where:** `src/server/routes.js:331-338`
 
@@ -499,7 +534,9 @@ analysis to a configured media root.
 
 ---
 
-### M7 — Prototype manipulation via `registerProfile`  ✅ **Fixed**
+### M7 — Prototype manipulation via `registerProfile`
+
+**✅ Fixed.**
 
 **Where:** `src/server/profiles.js:9,45`
 
@@ -525,7 +562,9 @@ rejection (`__proto__`, `constructor`, `prototype`) in `profileSchema`.
 
 ---
 
-### M8 — Zip-bomb / XML DoS on GDTF upload  ✅ **Fixed**
+### M8 — Zip-bomb / XML DoS on GDTF upload
+
+**✅ Fixed.**
 
 **Where:** `src/gdtf.js:65,79` and `src/server/routes.js:21`
 
@@ -652,7 +691,9 @@ Increment 1→255 (wrapping, skipping 0) per universe.
 the equivalent REST route validates with `midiConnectSchema` first
 (`src/server/routes.js:142`). The schema already exists — apply it to both.
 
-### L6 — No timeouts, size caps or redirect limit in the Deezer downloader  ✅ **Fixed**
+### L6 — No timeouts, size caps or redirect limit in the Deezer downloader
+
+**✅ Fixed.**
 
 `src/deezer.js:95-112`. `_downloadUrl` follows redirects by unbounded recursion (a
 redirect loop recurses until it blows up), has no timeout, and buffers the entire track
@@ -756,8 +797,10 @@ vulnerabilities (11 high) to **0**, via `npm audit fix`, Express 5, and `overrid
 `cookie` and `ip-address` — the last two are pinned by `prolink-connect`, and the
 `ip-address` bump was checked call-site by call-site against v7 first.
 
-**PR 3 — Performance.** M1 and M2 together — they are the same problem at both ends, and
-fixing one without the other gives up most of the benefit.
+**PR 3 — Performance.** M1 and M2 together. ✅ **Done.** Measured on an idle rig:
+**70.5 KB/s → 2.1 KB/s** per client (51 → 12 events in 5 s), and **800 → 200** component
+renders over 10 s of a running show, the remaining 200 being the two views that actually
+display DMX. Server CPU was never the problem — see the correction at the top.
 
 **PR 4 — Hygiene and docs.** M3, M9, M10, the L-series, plus ESLint and a CI workflow.
 Land ESLint first so it can catch L8 for you.
