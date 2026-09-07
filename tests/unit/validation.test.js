@@ -16,7 +16,7 @@ test('patch schema bounds the control ranges', () => {
   rejects(patchSchema, { unknownField: 1 });      // .strict()
 });
 
-// AUDIT.md H1: a mistyped host used to reach dgram, fail DNS, and kill the
+// A mistyped host used to reach dgram, fail DNS, and kill the
 // process. Dotted-numeric strings are held to IPv4 rules so a typo is caught.
 test('artnet host accepts addresses and hostnames, rejects mistyped IPs', () => {
   for (const host of ['2.255.255.255', '192.168.1.50', '10.0.0.1', 'artnet-node.local', 'node1']) {
@@ -27,7 +27,7 @@ test('artnet host accepts addresses and hostnames, rejects mistyped IPs', () => 
   }
 });
 
-// AUDIT.md M7: "__proto__" as a profile id reassigned the registry's prototype.
+// "__proto__" as a profile id reassigned the registry's prototype.
 test('reserved profile ids are rejected', () => {
   const good = { id: 'acme-par', name: 'PAR', channelCount: 4, channelMap: { red: 0 } };
   assert.ok(ok(profileSchema, good));

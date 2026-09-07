@@ -64,7 +64,7 @@ function AutoView() {
 function Root() {
   // Deliberately reads no signals. Subscribing the root made every component in
   // the tree re-render on every push; each component now subscribes to what it
-  // actually needs — see AUDIT.md M2.
+  // actually needs.
   const [mode, setMode] = useState(() => {
     const saved = localStorage.getItem('lightshow.mode');
     return saved === 'auto' ? 'auto' : 'manual';

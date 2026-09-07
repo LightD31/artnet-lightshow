@@ -6,7 +6,7 @@ const { getClientState, getLiveState, getCatalogs, getDmxSnapshot, state } = req
 
 const STATIC = ['colorPresets', 'patterns', 'energyEffects', 'strobeFunctions'];
 
-// AUDIT.md M1: the static catalogues were 63% of a 7 KB payload and went out
+// The static catalogues were 63% of a 7 KB payload and went out
 // ten times a second unchanged.
 test('the live payload carries no static catalogues and no DMX snapshot', () => {
   const live = getLiveState();
@@ -40,7 +40,7 @@ test('catalogues are the static half and the DMX snapshot is an array of bytes',
   assert.ok(snap.every((v) => Number.isInteger(v) && v >= 0 && v <= 255));
 });
 
-// AUDIT.md L12: these objects used to leave the module by reference.
+// These objects used to leave the module by reference.
 test('callers cannot mutate engine state through the snapshot', () => {
   const originalHost = state.artnet.host;
   const originalLabel = state.fixtures[0].label;

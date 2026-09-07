@@ -36,7 +36,7 @@ test('high priority jumps the queue ahead of normal work', () => {
   } finally { w.shutdown(); }
 });
 
-// AUDIT.md M4: with no timeout a wedged worker left the request unsettled
+// With no timeout a wedged worker left the request unsettled
 // forever and every queued prefetch stalled behind it.
 test('a hung worker times out instead of stalling the queue', async () => {
   process.env.ANALYZER_TIMEOUT_MS = '400';
@@ -55,7 +55,7 @@ test('a hung worker times out instead of stalling the queue', async () => {
   }
 });
 
-// AUDIT.md M4: a mismatched id was logged and then delivered anyway, handing
+// A mismatched id was logged and then delivered anyway, handing
 // one track's analysis to a different track's caller.
 test('a stale response is discarded, not delivered to the wrong caller', async () => {
   process.env.ANALYZER_TIMEOUT_MS = '400';

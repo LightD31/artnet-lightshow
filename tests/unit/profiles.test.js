@@ -23,7 +23,7 @@ test('profiles register, list and unregister', () => {
   assert.strictEqual(unregisterProfile(BUILTIN_PROFILE_ID), false, 'built-in cannot be removed');
 });
 
-// AUDIT.md M7: on a plain object literal, obj["__proto__"] = v reassigns the
+// On a plain object literal, obj["__proto__"] = v reassigns the
 // prototype instead of adding a key, so every unknown-profile lookup would then
 // resolve to the attacker's object.
 test('a __proto__ id cannot hijack the registry', () => {

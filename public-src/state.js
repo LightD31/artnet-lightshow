@@ -8,7 +8,7 @@ export const connectedSig = signal(false);
 
 // Live DMX values, on their own signal so the 10 Hz stream only re-renders the
 // views that show DMX output (the monitor and the fixture previews) instead of
-// waking every control panel in the tree — see AUDIT.md M2.
+// waking every control panel in the tree.
 export const dmxSig = signal([]);
 
 // Auto-show playback position (pushed from server at ~10 Hz). Held in its own

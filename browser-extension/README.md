@@ -23,11 +23,15 @@ Deezer web player (window.dzPlayer)
 
 ## Install (temporary, recommended for dev)
 
-1. Start the lightshow server (`node server.js`, default port 3000).
+1. Start the lightshow server (`npm start`, default port 3000).
 2. Open `about:debugging#/runtime/this-firefox`.
 3. **Load Temporary Add-on…** → pick `browser-extension/manifest.json`.
 4. Open <https://www.deezer.com> and play a track. The Auto Show panel should
    show `Deezer: ARTIST — TITLE (+N queued)`.
+
+If nothing arrives, open the add-on's own console from that same
+`about:debugging` page — under MV3 the background page is unloaded when idle,
+so it will often show as inactive until a message wakes it. That is normal.
 
 Temporary add-ons unload on browser restart. For a permanent install, sign it
 via [AMO](https://addons.mozilla.org) or use Firefox Developer/ESR with
@@ -49,11 +53,30 @@ Both are stored in `browser.storage.local`. No editing of source files needed.
 
 ## Manifest version
 
-This is still a **Manifest V2** add-on. Firefox supports MV2 today, but it is
-on the way out and a migration to MV3 is outstanding — see `AUDIT.md` L11. It
-was deliberately not done as part of the audit work because an MV3 migration
-changes the background-script lifecycle and cannot be verified without loading
-the add-on into a real Firefox profile against a live Deezer session.
+**Manifest V3**, requiring **Firefox 142+**.
+
+Firefox MV3 uses a non-persistent **event page** for the background script, not
+the service worker Chrome requires — so `background.scripts` stays, and two
+things follow that the code depends on:
+
+- the `runtime.onMessage` listener is registered synchronously at the top level,
+  which is what lets the browser wake the page when a message arrives;
+- the listener **returns** the POST promise, so the page is kept alive until the
+  request settles. A fire-and-forget `fetch()` can be killed when the page goes
+  idle.
+
+Other MV3 changes: host permissions moved to `host_permissions` /
+`optional_host_permissions`, and `web_accessible_resources` is now a list of
+objects with an explicit `matches` list rather than bare filenames.
+
+The floor of 142 comes from `data_collection_permissions`, which the add-on
+declares (it transmits what you are playing to a server) and which needs
+Firefox 140 on desktop and 142 on Android.
+
+Validated with `web-ext lint` (0 errors, 0 warnings, 0 notices) and
+`web-ext build`. **It has not been loaded into a running Firefox against a live
+Deezer session** — if track detection misbehaves after this upgrade, that is the
+first thing to check.
 
 ## If it stops detecting tracks (dzPlayer changed)
 

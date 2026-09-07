@@ -11,7 +11,6 @@ const dfi = require('d-fi-core');
 // Bounds on the audio download. Previously unbounded on all three counts: a
 // redirect loop recursed until it blew the stack, a stalled connection hung
 // forever, and the whole body accumulated in memory with no ceiling.
-// See AUDIT.md L6.
 const MAX_REDIRECTS = 5;
 const DOWNLOAD_TIMEOUT_MS = 60000;
 const MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024;   // a 320 kbps hour is ~144 MB; tracks are far smaller

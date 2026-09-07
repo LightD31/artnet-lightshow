@@ -20,14 +20,13 @@ const { profileSchema, showSchema, midiConnectSchema, validate } = require('./va
 
 // Audio uploads genuinely need headroom; GDTF files do not. Separate limits so
 // the fixture importer isn't handed a 50 MB budget it has no use for — a real
-// GDTF is a few hundred KB. See AUDIT.md M8.
+// GDTF is a few hundred KB.
 const uploadAudio = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 const uploadGdtf = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
 
 // Local-file analysis reads an arbitrary path off the filesystem. When
 // ANALYZE_LOCAL_ROOT is set, confine it to that subtree; unset keeps the old
 // behaviour (fine on a loopback-only bind, less so once the server is exposed).
-// See AUDIT.md M6.
 const ANALYZE_LOCAL_ROOT = process.env.ANALYZE_LOCAL_ROOT
   ? path.resolve(process.env.ANALYZE_LOCAL_ROOT)
   : null;
@@ -289,7 +288,7 @@ function attachRoutes(app, deps) {
 
     // Bind this callback to a flow this server started. Without it, any page
     // could navigate the operator's browser here with an attacker's code and
-    // silently bind the show to the attacker's account — see AUDIT.md H3.
+    // silently bind the show to the attacker's account.
     if (!spotify.consumeState(req.query.state)) {
       if (process.env.SPOTIFY_ALLOW_UNVERIFIED_STATE === '1') {
         console.warn(
@@ -347,7 +346,7 @@ function attachRoutes(app, deps) {
   // script (see browser-extension/background.js), which holds a host permission
   // and is therefore not subject to page CORS at all. A wildcard
   // Access-Control-Allow-Origin used to sit here and let any website on the
-  // internet push fake now-playing state into the show — see AUDIT.md H2.
+  // internet push fake now-playing state into the show.
 
   // The Firefox extension POSTs the Deezer web player's state here: the current
   // track (with ISRC + position) and the upcoming queue (for prefetch).

@@ -50,7 +50,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   function getProlinkPositionMs() { return prolink.getPositionMs(); }
 
   // Last live payload we sent, as JSON. Used to skip re-sending an identical
-  // snapshot — see AUDIT.md M1.
+  // snapshot.
   let lastLiveJson = '';
 
   function broadcast() {
@@ -474,7 +474,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   // DMX values on their own high-rate channel. This is the only field that
   // genuinely changes every frame; sending it alone keeps the 10 Hz payload at
   // ~100 bytes instead of ~7 KB, and lets the client re-render just the DMX
-  // views instead of the whole tree — see AUDIT.md M1/M2.
+  // views instead of the whole tree.
   let lastDmxJson = '';
   setInterval(() => {
     const snapshot = getDmxSnapshot();

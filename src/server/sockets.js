@@ -41,7 +41,7 @@ function attachSockets(io, { midi, integrations }) {
 
         // A fixture has to fit inside the universe. Past channel 512 the writes
         // land outside the DMX buffer and Node drops them silently, leaving the
-        // fixture half-controllable with no error — see AUDIT.md L7.
+        // fixture half-controllable with no error.
         const chCount = getProfile({ profileId: nextProfileId }).channelCount;
         const endChannel = nextAddress + chCount - 1;
         if (endChannel > 512) {
@@ -66,7 +66,6 @@ function attachSockets(io, { midi, integrations }) {
     socket.on('midi-connect', (payload) => {
       try {
         // Same schema the REST route uses — these two paths had drifted apart.
-        // See AUDIT.md L5.
         const { input, output } = validate(midiConnectSchema, payload || {}, 'midi-connect');
         midi.close();
         const ok = midi.connect(input || null, output || null);

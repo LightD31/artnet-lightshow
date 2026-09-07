@@ -23,7 +23,7 @@ test('universe is masked to 15 bits', () => {
   assert.strictEqual(buildArtDmxPacket(0xffff, dmx, 1).readUInt16LE(14), 0x7fff);
 });
 
-// AUDIT.md L4: a hardcoded 0 tells receivers sequencing is disabled, so they
+// A hardcoded 0 tells receivers sequencing is disabled, so they
 // cannot detect out-of-order UDP.
 test('sequence counter advances 1..255 and never emits 0', () => {
   const dmx = Buffer.alloc(512);
