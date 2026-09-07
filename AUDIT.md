@@ -2,8 +2,13 @@
 
 **Date:** 2026-09-07 · **Commit audited:** `36c234f` · **Scope:** whole repository
 
-This is a review-only document. No behaviour was changed in the commit that adds it.
 Each finding names a file and line so it can be triaged independently.
+
+> **Status.** The audit was written first as a review-only document; **PR 1 (Security)**
+> has since been implemented on this branch, so C1, C2, H2, H3, H5, M6, M7 and M8 are
+> marked ✅ Fixed below and their line references point at the *pre-fix* code. Everything
+> else is still open. See the [Suggested order of work](#8-suggested-order-of-work) for
+> what remains.
 
 ---
 
@@ -31,43 +36,43 @@ against real Stream Deck hardware.
 
 ## 2. Findings at a glance
 
-| ID | Severity | Area | Summary |
-|----|----------|------|---------|
-| [C1](#c1--stored-xss-via-fixture-profile-and-label-fields) | Critical | Client | Stored XSS via GDTF-supplied profile names and fixture labels |
-| [C2](#c2--no-authentication-server-listens-on-all-interfaces) | Critical | Server | No authentication; binds to `0.0.0.0` |
-| [H1](#h1--unhandled-dgram-error-crashes-the-process-mid-show) | High | Art-Net | Unhandled UDP socket error kills the server mid-show |
-| [H2](#h2--wildcard-cors-on-apideezer-lets-any-website-drive-the-show) | High | Server | Wildcard CORS lets any website drive the show |
-| [H3](#h3--spotify-oauth-has-no-state-parameter) | High | Auth | Spotify OAuth has no `state` parameter (login CSRF) |
-| [H4](#h4--17-known-vulnerable-dependencies-11-rated-high) | High | Deps | 17 vulnerable dependencies, 11 rated high |
-| [H5](#h5--unverified-310-mb-pytorch-checkpoint-download) | High | Supply chain | 310 MB PyTorch checkpoint downloaded without checksum |
-| [M1](#m1--10-hz-full-state-broadcast-is-the-dominant-runtime-cost) | Medium | Performance | 10 Hz full-state broadcast rebuilds everything |
-| [M2](#m2--client-re-renders-the-whole-tree-10-times-per-second) | Medium | Performance | Client re-renders whole tree 10×/second |
-| [M3](#m3--gdtf-channelcount-is-the-channel-count-not-the-address-footprint) | Medium | Correctness | GDTF `channelCount` wrong → stale DMX channels latch |
-| [M4](#m4--analyzer-worker-has-no-timeout-one-hang-stalls-everything) | Medium | Correctness | Analyzer worker has no timeout; delivers mismatched responses |
-| [M5](#m5--no-request-timeouts-or-rate-limit-handling-on-spotify-calls) | Medium | Robustness | No timeouts, status checks or 429 backoff on Spotify |
-| [M6](#m6--arbitrary-local-file-read-via-the-analyze-endpoint) | Medium | Server | Arbitrary local-file read via analyze endpoint |
-| [M7](#m7--prototype-manipulation-via-registerprofile) | Medium | Server | `__proto__` as a profile id corrupts the profile registry |
-| [M8](#m8--zip-bomb--xml-dos-on-gdtf-upload) | Medium | Server | Zip-bomb / XML DoS on GDTF upload |
-| [M9](#m9--readme-documents-a-removed-feature-and-the-wrong-midi-map) | Medium | Docs | README documents a removed feature and the wrong MIDI map |
-| [M10](#m10--requirementstxt-cannot-install-the-analyzer) | Medium | Setup | `requirements.txt` is missing three required packages |
-| [L1](#l1--build-artifacts-and-local-config-are-committed) | Low | Hygiene | Build artifacts and local config committed |
-| [L2](#l2--font-loaded-from-a-cdn-in-a-venue-tool) | Low | Reliability | Font loaded from a CDN in an offline-capable tool |
-| [L3](#l3--midi-monitor-logging-left-enabled) | Low | Hygiene | "Temporary" MIDI monitor logging still enabled |
-| [L4](#l4--art-net-sequence-byte-hardcoded-to-zero) | Low | Art-Net | Sequence byte hardcoded to 0 |
-| [L5](#l5--socket-midi-connect-skips-validation) | Low | Consistency | Socket `midi-connect` skips schema validation |
-| [L6](#l6--no-timeouts-size-caps-or-redirect-limit-in-the-deezer-downloader) | Low | Robustness | Deezer downloader: no timeout, size cap or redirect limit |
-| [L7](#l7--fixture-addresses-may-overlap-or-run-past-channel-512) | Low | Correctness | Fixture addresses may overlap or exceed channel 512 |
-| [L8](#l8--dead-code-and-stale-comments) | Nit | Hygiene | Dead code and stale comments |
-| [L9](#l9--no-linter-formatter-ci-or-test-runner) | Low | Tooling | No linter, formatter, CI or test runner |
-| [L10](#l10--undocumented---openssl-legacy-provider) | Nit | Ops | Undocumented `--openssl-legacy-provider` |
-| [L11](#l11--browser-extension-is-manifest-v2-with-a-hardcoded-port) | Low | Extension | Manifest V2 with a hardcoded port |
-| [L12](#l12--getclientstate-returns-internal-mutable-objects) | Nit | Design | `getClientState()` leaks internal mutable objects |
+| ID | Severity | Area | Summary | Status |
+|----|----------|------|---------|--------|
+| [C1](#c1--stored-xss-via-fixture-profile-and-label-fields) | Critical | Client | Stored XSS via GDTF-supplied profile names and fixture labels | ✅ Fixed |
+| [C2](#c2--no-authentication-server-listens-on-all-interfaces) | Critical | Server | No authentication; binds to `0.0.0.0` | ✅ Fixed |
+| [H1](#h1--unhandled-dgram-error-crashes-the-process-mid-show) | High | Art-Net | Unhandled UDP socket error kills the server mid-show | Open |
+| [H2](#h2--wildcard-cors-on-apideezer-lets-any-website-drive-the-show) | High | Server | Wildcard CORS lets any website drive the show | ✅ Fixed |
+| [H3](#h3--spotify-oauth-has-no-state-parameter) | High | Auth | Spotify OAuth has no `state` parameter (login CSRF) | ✅ Fixed |
+| [H4](#h4--17-known-vulnerable-dependencies-11-rated-high) | High | Deps | 17 vulnerable dependencies, 11 rated high | Open |
+| [H5](#h5--unverified-310-mb-pytorch-checkpoint-download) | High | Supply chain | 310 MB PyTorch checkpoint downloaded without checksum | ✅ Fixed |
+| [M1](#m1--10-hz-full-state-broadcast-is-the-dominant-runtime-cost) | Medium | Performance | 10 Hz full-state broadcast rebuilds everything | Open |
+| [M2](#m2--client-re-renders-the-whole-tree-10-times-per-second) | Medium | Performance | Client re-renders whole tree 10×/second | Open |
+| [M3](#m3--gdtf-channelcount-is-the-channel-count-not-the-address-footprint) | Medium | Correctness | GDTF `channelCount` wrong → stale DMX channels latch | Open |
+| [M4](#m4--analyzer-worker-has-no-timeout-one-hang-stalls-everything) | Medium | Correctness | Analyzer worker has no timeout; delivers mismatched responses | Open |
+| [M5](#m5--no-request-timeouts-or-rate-limit-handling-on-spotify-calls) | Medium | Robustness | No timeouts, status checks or 429 backoff on Spotify | Open |
+| [M6](#m6--arbitrary-local-file-read-via-the-analyze-endpoint) | Medium | Server | Arbitrary local-file read via analyze endpoint | ✅ Fixed |
+| [M7](#m7--prototype-manipulation-via-registerprofile) | Medium | Server | `__proto__` as a profile id corrupts the profile registry | ✅ Fixed |
+| [M8](#m8--zip-bomb--xml-dos-on-gdtf-upload) | Medium | Server | Zip-bomb / XML DoS on GDTF upload | ✅ Fixed |
+| [M9](#m9--readme-documents-a-removed-feature-and-the-wrong-midi-map) | Medium | Docs | README documents a removed feature and the wrong MIDI map | Open |
+| [M10](#m10--requirementstxt-cannot-install-the-analyzer) | Medium | Setup | `requirements.txt` is missing three required packages | Open |
+| [L1](#l1--build-artifacts-and-local-config-are-committed) | Low | Hygiene | Build artifacts and local config committed | Open |
+| [L2](#l2--font-loaded-from-a-cdn-in-a-venue-tool) | Low | Reliability | Font loaded from a CDN in an offline-capable tool | Open |
+| [L3](#l3--midi-monitor-logging-left-enabled) | Low | Hygiene | "Temporary" MIDI monitor logging still enabled | Open |
+| [L4](#l4--art-net-sequence-byte-hardcoded-to-zero) | Low | Art-Net | Sequence byte hardcoded to 0 | Open |
+| [L5](#l5--socket-midi-connect-skips-validation) | Low | Consistency | Socket `midi-connect` skips schema validation | Open |
+| [L6](#l6--no-timeouts-size-caps-or-redirect-limit-in-the-deezer-downloader) | Low | Robustness | Deezer downloader: no timeout, size cap or redirect limit | Open |
+| [L7](#l7--fixture-addresses-may-overlap-or-run-past-channel-512) | Low | Correctness | Fixture addresses may overlap or exceed channel 512 | Open |
+| [L8](#l8--dead-code-and-stale-comments) | Nit | Hygiene | Dead code and stale comments | Open |
+| [L9](#l9--no-linter-formatter-ci-or-test-runner) | Low | Tooling | No linter, formatter, CI or test runner | Open |
+| [L10](#l10--undocumented---openssl-legacy-provider) | Nit | Ops | Undocumented `--openssl-legacy-provider` | Open |
+| [L11](#l11--browser-extension-is-manifest-v2-with-a-hardcoded-port) | Low | Extension | Manifest V2 with a hardcoded port | Open |
+| [L12](#l12--getclientstate-returns-internal-mutable-objects) | Nit | Design | `getClientState()` leaks internal mutable objects | Open |
 
 ---
 
 ## 3. Critical
 
-### C1 — Stored XSS via fixture profile and label fields
+### C1 — Stored XSS via fixture profile and label fields  ✅ **Fixed**
 
 **Where:** `public/settings.js:163`, `:222-231`, `:261-274`
 
@@ -113,7 +118,7 @@ small `esc()` helper. The Preact client (`public-src/`) is clean — no
 
 ---
 
-### C2 — No authentication; server listens on all interfaces
+### C2 — No authentication; server listens on all interfaces  ✅ **Fixed**
 
 **Where:** `server.js:84` — `server.listen(PORT, …)` with no host argument
 
@@ -186,7 +191,7 @@ level; resolve once on change and cache the address.
 
 ---
 
-### H2 — Wildcard CORS on `/api/deezer` lets any website drive the show
+### H2 — Wildcard CORS on `/api/deezer` lets any website drive the show  ✅ **Fixed**
 
 **Where:** `src/server/routes.js:302-308`
 
@@ -217,7 +222,7 @@ use.
 
 ---
 
-### H3 — Spotify OAuth has no `state` parameter
+### H3 — Spotify OAuth has no `state` parameter  ✅ **Fixed**
 
 **Where:** `src/spotify.js:53-63` (authorize URL), `src/server/routes.js:261-274` (callback)
 
@@ -280,7 +285,7 @@ transitive — worth checking whether anything actually needs it.
 
 ---
 
-### H5 — Unverified 310 MB PyTorch checkpoint download
+### H5 — Unverified 310 MB PyTorch checkpoint download  ✅ **Fixed**
 
 **Where:** `scripts/setup-panns.py:31-40`
 
@@ -473,7 +478,7 @@ so it does not hold the process open at shutdown.
 
 ---
 
-### M6 — Arbitrary local-file read via the analyze endpoint
+### M6 — Arbitrary local-file read via the analyze endpoint  ✅ **Fixed**
 
 **Where:** `src/server/routes.js:331-338`
 
@@ -494,7 +499,7 @@ analysis to a configured media root.
 
 ---
 
-### M7 — Prototype manipulation via `registerProfile`
+### M7 — Prototype manipulation via `registerProfile`  ✅ **Fixed**
 
 **Where:** `src/server/profiles.js:9,45`
 
@@ -520,7 +525,7 @@ rejection (`__proto__`, `constructor`, `prototype`) in `profileSchema`.
 
 ---
 
-### M8 — Zip-bomb / XML DoS on GDTF upload
+### M8 — Zip-bomb / XML DoS on GDTF upload  ✅ **Fixed**
 
 **Where:** `src/gdtf.js:65,79` and `src/server/routes.js:21`
 
@@ -742,10 +747,9 @@ Ideas rather than defects — listed separately so they do not compete with the 
 
 Grouped so each lands as a reviewable PR with a coherent theme.
 
-**PR 1 — Security.** C1, C2, H2, H3, H5, M6, M7, M8.
-Ships with the token wired through `companion-module/src/config.js` and the extension.
-C1 and C2 are the two that matter most; C1 alone is a small, self-contained fix worth
-doing immediately even if the rest waits.
+**PR 1 — Security.** C1, C2, H2, H3, H5, M6, M7, M8. ✅ **Done** — implemented on this
+branch, with the token wired through `companion-module/src/config.js` and the extension's
+new options page.
 
 **PR 2 — Stability.** H1, H4, M4, M5, L6.
 H1 is the one that will bite during a show. Do the dependency bump last within this PR so

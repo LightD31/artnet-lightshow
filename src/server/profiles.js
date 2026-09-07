@@ -6,7 +6,14 @@ const BUILTIN_PROFILE_ID = 'cameo-root-par-6-12ch';
 // remain visually competitive at lower dimmer settings.
 const UV_BOOST = 1.8;
 
-const fixtureProfiles = {
+// Ids that would collide with object-machinery keys. Rejected at registration
+// as defence in depth alongside the null-prototype registry below.
+const RESERVED_PROFILE_IDS = new Set(['__proto__', 'constructor', 'prototype']);
+
+// Null-prototype map: profile ids come straight from user input (GDTF upload,
+// POST /api/profiles), and on a plain object literal an id of "__proto__" would
+// reassign this object's prototype instead of adding a key — see AUDIT.md M7.
+const fixtureProfiles = Object.assign(Object.create(null), {
   [BUILTIN_PROFILE_ID]: {
     id: BUILTIN_PROFILE_ID,
     name: 'ROOT PAR 6',
@@ -34,7 +41,7 @@ const fixtureProfiles = {
       { offset: 11, name: 'DMX Delay',   attribute: 'delay' },
     ],
   },
-};
+});
 
 function getProfile(fixture) {
   return fixtureProfiles[fixture.profileId] || fixtureProfiles[BUILTIN_PROFILE_ID];
@@ -42,6 +49,7 @@ function getProfile(fixture) {
 
 function registerProfile(profile) {
   if (!profile || !profile.id || !profile.name || !profile.channelCount) return false;
+  if (RESERVED_PROFILE_IDS.has(profile.id)) return false;
   fixtureProfiles[profile.id] = profile;
   return true;
 }
@@ -65,6 +73,7 @@ function clearNonBuiltinProfiles() {
 module.exports = {
   BUILTIN_PROFILE_ID,
   UV_BOOST,
+  RESERVED_PROFILE_IDS,
   getProfile,
   registerProfile,
   unregisterProfile,

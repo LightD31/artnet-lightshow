@@ -65,8 +65,13 @@ const fixtureMessageSchema = z.object({
   profileId: z.string().min(1).max(128).optional(),
 }).strict();
 
+// Profile ids reach an object key, so reject the ones that would collide with
+// object machinery before they get anywhere near the registry — see AUDIT.md M7.
+const RESERVED_PROFILE_IDS = ['__proto__', 'constructor', 'prototype'];
+
 const profileSchema = z.object({
-  id: z.string().min(1).max(128),
+  id: z.string().min(1).max(128)
+    .refine((v) => !RESERVED_PROFILE_IDS.includes(v), { message: 'is a reserved id' }),
   name: z.string().min(1).max(128),
   manufacturer: z.string().max(128).optional(),
   modeName: z.string().max(128).optional(),

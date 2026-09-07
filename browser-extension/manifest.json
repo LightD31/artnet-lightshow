@@ -3,18 +3,42 @@
   "name": "Lightshow Deezer Bridge",
   "version": "0.1.0",
   "description": "Sends the Deezer web player's current track, position and upcoming queue to the local ArtNet Lightshow server (auto-show sync + prefetch).",
-  "permissions": ["http://localhost:3000/*"],
+  "permissions": [
+    "storage",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
   "content_scripts": [
     {
-      "matches": ["*://www.deezer.com/*"],
-      "js": ["content.js"],
+      "matches": [
+        "*://www.deezer.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle",
       "all_frames": false
     }
   ],
-  "background": { "scripts": ["background.js"], "persistent": false },
-  "web_accessible_resources": ["inject.js"],
+  "background": {
+    "scripts": [
+      "background.js"
+    ],
+    "persistent": false
+  },
+  "web_accessible_resources": [
+    "inject.js"
+  ],
   "browser_specific_settings": {
-    "gecko": { "id": "lightshow-deezer-bridge@local" }
-  }
+    "gecko": {
+      "id": "lightshow-deezer-bridge@local"
+    }
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "optional_permissions": [
+    "http://*/*"
+  ]
 }

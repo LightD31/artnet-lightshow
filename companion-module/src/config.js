@@ -27,5 +27,15 @@ export function GetConfigFields() {
 			max: 65535,
 			width: 4,
 		},
+		{
+			type: 'textinput',
+			id: 'token',
+			label: 'Access token',
+			tooltip:
+				'Only needed when the lightshow server runs with LIGHTSHOW_TOKEN set '
+				+ '(required whenever it is bound to anything but localhost). Leave blank otherwise.',
+			default: '',
+			width: 12,
+		},
 	]
 }

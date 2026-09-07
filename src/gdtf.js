@@ -3,6 +3,10 @@
 const JSZip = require('jszip');
 const { XMLParser } = require('fast-xml-parser');
 
+// Upper bound on the decompressed description.xml. Real fixture definitions are
+// a few hundred KB at most; anything past this is a zip bomb, not a fixture.
+const MAX_DESCRIPTION_BYTES = 16 * 1024 * 1024;
+
 // Map GDTF attribute names to our internal channel attributes
 const ATTR_MAP = {
   'Dimmer':           'dimmer',
@@ -74,6 +78,18 @@ async function parseGDTF(fileBuffer) {
 
   if (!descFile) {
     throw new Error('No description.xml found in GDTF file');
+  }
+
+  // Refuse to decompress a zip bomb. A real GDTF description.xml is well under
+  // a megabyte; without this a small upload can expand to gigabytes of heap and
+  // take the process down — see AUDIT.md M8. The size is read from the central
+  // directory, so this check happens before any decompression.
+  const declaredSize = descFile._data && descFile._data.uncompressedSize;
+  if (Number.isFinite(declaredSize) && declaredSize > MAX_DESCRIPTION_BYTES) {
+    throw new Error(
+      `description.xml is too large (${Math.round(declaredSize / 1024 / 1024)} MB, limit ` +
+      `${Math.round(MAX_DESCRIPTION_BYTES / 1024 / 1024)} MB)`
+    );
   }
 
   const xmlContent = await descFile.async('string');

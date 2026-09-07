@@ -2,6 +2,7 @@
 
 const https = require('https');
 const http = require('http');
+const crypto = require('crypto');
 const { URL } = require('url');
 
 /**
@@ -20,6 +21,10 @@ const { URL } = require('url');
  */
 const PROXY_BASE = process.env.SPOTIFY_PROXY_BASE || 'https://api.drndvs.fr';
 const PROXY_LOGIN_URL = `${PROXY_BASE}/api/v1/spotify/proxy/login`;
+
+// How long an issued OAuth state nonce stays valid. Long enough to log in and
+// approve the scopes, short enough that a leaked authorize URL goes stale.
+const STATE_TTL_MS = 10 * 60 * 1000;
 const PROXY_CALLBACK_URL = `${PROXY_BASE}/api/v1/spotify/proxy/callback`;
 
 class SpotifyClient {
@@ -39,6 +44,10 @@ class SpotifyClient {
     this._currentTrackId = null;
     this._onTrackChange = null;
     this._onPlaybackUpdate = null;
+    // Pending OAuth state nonces → issue time. Without this the callback
+    // accepts any code presented to it, so any page could bind this server to
+    // an attacker's Spotify account — see AUDIT.md H3.
+    this._pendingStates = new Map();
   }
 
   get configured() {
@@ -49,17 +58,49 @@ class SpotifyClient {
     return !!(this.accessToken && Date.now() < this.expiresAt);
   }
 
-  /** Build the proxy login URL for the user to visit. */
+  /**
+   * Build the proxy login URL for the user to visit. Issues a single-use state
+   * nonce that consumeState() must later match, binding the callback to a flow
+   * this server actually started.
+   */
   getAuthorizeUrl() {
     const scopes = 'user-read-playback-state user-read-currently-playing';
+    const state = crypto.randomBytes(24).toString('base64url');
+    this._pruneStates();
+    this._pendingStates.set(state, Date.now());
     const params = new URLSearchParams({
       response_type: 'code',
       client_id: this.clientId,
       scope: scopes,
+      state,
       // Proxy forwards the code to this local URL after Spotify OAuth completes
       redirect_uri: this.localCallbackUrl,
     });
     return `${PROXY_LOGIN_URL}?${params}`;
+  }
+
+  /**
+   * Verify and burn a state nonce from the OAuth callback. Returns true only
+   * for a nonce this server issued within STATE_TTL_MS and has not yet used.
+   */
+  consumeState(state) {
+    this._pruneStates();
+    if (!state || !this._pendingStates.has(state)) return false;
+    this._pendingStates.delete(state);
+    return true;
+  }
+
+  /** True when at least one authorization flow is currently outstanding. */
+  get hasPendingState() {
+    this._pruneStates();
+    return this._pendingStates.size > 0;
+  }
+
+  _pruneStates() {
+    const cutoff = Date.now() - STATE_TTL_MS;
+    for (const [nonce, issuedAt] of this._pendingStates) {
+      if (issuedAt < cutoff) this._pendingStates.delete(nonce);
+    }
   }
 
   /** Exchange an authorization code for access + refresh tokens. */
@@ -166,6 +207,7 @@ class SpotifyClient {
     this.refreshToken = null;
     this.expiresAt = 0;
     this._currentTrackId = null;
+    this._pendingStates.clear();
   }
 
   getStatus() {

@@ -22,22 +22,38 @@ Exit codes:
 """
 
 import argparse
+import hashlib
 import os
 import sys
 import urllib.request
 from pathlib import Path
 
+# Both URLs are HTTPS: the checkpoint is a pickle that torch.load() executes, so
+# a tampered download is arbitrary code execution on this machine. See AUDIT.md H5.
 LABELS_URL = (
-    'http://storage.googleapis.com/us_audioset/youtube_corpus/v1/csv/'
+    'https://storage.googleapis.com/us_audioset/youtube_corpus/v1/csv/'
     'class_labels_indices.csv'
 )
 CHECKPOINT_URL = (
     'https://zenodo.org/record/3987831/files/Cnn14_mAP%3D0.431.pth?download=1'
 )
 
-# Expected sizes (bytes). Used to detect partial / corrupt downloads.
-LABELS_MIN_SIZE = 10 * 1024            # ≥ 10 KB
-CHECKPOINT_MIN_SIZE = 300 * 1024 * 1024  # ≥ 300 MB
+# Pinned digests. A size check alone cannot tell a real model from a malicious
+# one of similar length, which is what this script used to rely on.
+#
+#   labels     — SHA-256 of the AudioSet class index (527 classes).
+#   checkpoint — MD5 as published by Zenodo for record 3987831. MD5 is not
+#                collision-resistant, but it is the digest the publisher
+#                provides and it pins the file to their record; combined with
+#                the exact byte size it rules out substitution in transit.
+LABELS_SHA256 = 'cdd1049833c4b86127c2773ac0d14a2754b6a6d0d1798002ed5c66e699708429'
+LABELS_SIZE = 14675
+CHECKPOINT_MD5 = '541141fa2ee191a88f24a3219fff024e'
+CHECKPOINT_SIZE = 327428481
+
+# Set to skip digest enforcement (e.g. upstream republished the artifact).
+# Downloads are then trusted on size alone, as they were before.
+ALLOW_UNVERIFIED = os.environ.get('PANNS_ALLOW_UNVERIFIED') == '1'
 
 PANNS_DIR = Path.home() / 'panns_data'
 LABELS_PATH = PANNS_DIR / 'class_labels_indices.csv'
@@ -76,24 +92,51 @@ def progress_hook(label):
     return hook
 
 
-def file_ok(path: Path, min_size: int) -> bool:
-    return path.is_file() and path.stat().st_size >= min_size
+def digest(path: Path, algo: str) -> str:
+    h = hashlib.new(algo)
+    with open(path, 'rb') as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b''):
+            h.update(chunk)
+    return h.hexdigest()
 
 
-def download(url: str, target: Path, label: str, min_size: int) -> bool:
+def verify(path: Path, expected_size: int, algo: str, expected_digest: str):
+    """Return (ok, reason). Size is checked first because it is free."""
+    if not path.is_file():
+        return False, 'missing'
+    size = path.stat().st_size
+    if size != expected_size:
+        return False, f'size {human(size)}, expected {human(expected_size)}'
+    if ALLOW_UNVERIFIED:
+        return True, 'size only (PANNS_ALLOW_UNVERIFIED=1)'
+    actual = digest(path, algo)
+    if actual != expected_digest:
+        return False, f'{algo} {actual[:16]}… != expected {expected_digest[:16]}…'
+    return True, f'{algo} verified'
+
+
+def file_ok(path: Path, expected_size: int, algo: str, expected_digest: str) -> bool:
+    ok, _ = verify(path, expected_size, algo, expected_digest)
+    return ok
+
+
+def download(url: str, target: Path, label: str,
+             expected_size: int, algo: str, expected_digest: str) -> bool:
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_suffix(target.suffix + '.partial')
     try:
         urllib.request.urlretrieve(url, tmp, reporthook=progress_hook(label))
         sys.stdout.write('\n')
         sys.stdout.flush()
-        size = tmp.stat().st_size
-        if size < min_size:
-            print(f'  [!!] download too small ({human(size)} < {human(min_size)}), discarding')
+        ok, reason = verify(tmp, expected_size, algo, expected_digest)
+        if not ok:
+            # Never leave an unverified artifact on disk: the checkpoint is a
+            # pickle that torch.load() would execute.
+            print(f'  [!!] integrity check failed ({reason}), discarding')
             tmp.unlink(missing_ok=True)
             return False
         tmp.replace(target)
-        print(f'  [ok] saved {target}  ({human(size)})')
+        print(f'  [ok] saved {target}  ({human(target.stat().st_size)}, {reason})')
         return True
     except Exception as exc:
         sys.stdout.write('\n')
@@ -141,11 +184,11 @@ def main():
 
     deps_ok = check_python_deps()
 
-    labels_ok = file_ok(LABELS_PATH, LABELS_MIN_SIZE)
-    ckpt_ok = file_ok(CHECKPOINT_PATH, CHECKPOINT_MIN_SIZE)
+    labels_ok, labels_why = verify(LABELS_PATH, LABELS_SIZE, 'sha256', LABELS_SHA256)
+    ckpt_ok, ckpt_why = verify(CHECKPOINT_PATH, CHECKPOINT_SIZE, 'md5', CHECKPOINT_MD5)
 
-    print(f'\n  labels CSV   {"[ok] present" if labels_ok else "[!!] missing"}  {LABELS_PATH}')
-    print(f'  checkpoint   {"[ok] present" if ckpt_ok else "[!!] missing"}  {CHECKPOINT_PATH}')
+    print(f'\n  labels CSV   {"[ok] " + labels_why if labels_ok else "[!!] " + labels_why}  {LABELS_PATH}')
+    print(f'  checkpoint   {"[ok] " + ckpt_why if ckpt_ok else "[!!] " + ckpt_why}  {CHECKPOINT_PATH}')
 
     if args.check:
         ok = labels_ok and ckpt_ok and deps_ok
@@ -163,12 +206,14 @@ def main():
 
     print('')
     if need_labels:
-        if not download(LABELS_URL, LABELS_PATH, 'labels', LABELS_MIN_SIZE):
+        if not download(LABELS_URL, LABELS_PATH, 'labels',
+                        LABELS_SIZE, 'sha256', LABELS_SHA256):
             sys.exit(1)
     if need_ckpt:
         print('Downloading the Cnn14 checkpoint (~310 MB). This is a one-time')
         print('cost. The model will be cached at ~/panns_data/ for all future runs.')
-        if not download(CHECKPOINT_URL, CHECKPOINT_PATH, 'checkpoint', CHECKPOINT_MIN_SIZE):
+        if not download(CHECKPOINT_URL, CHECKPOINT_PATH, 'checkpoint',
+                        CHECKPOINT_SIZE, 'md5', CHECKPOINT_MD5):
             sys.exit(1)
 
     print('\n[ok] PANNs ready' if deps_ok else '\n[!!] files in place but Python deps still missing')

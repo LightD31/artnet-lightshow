@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Lightshow Bridge Settings</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 16px; max-width: 380px; color: #1b1b1f; }
+    h1 { font-size: 15px; margin: 0 0 12px; }
+    label { display: block; font-size: 12px; margin: 12px 0 4px; font-weight: 600; }
+    input { width: 100%; box-sizing: border-box; padding: 6px 8px; font-size: 13px; }
+    p.hint { font-size: 11px; color: #56565c; margin: 4px 0 0; }
+    button { margin-top: 14px; padding: 6px 14px; font-size: 13px; }
+    #status { font-size: 12px; margin-left: 8px; color: #1a7f37; }
+  </style>
+</head>
+<body>
+  <h1>Lightshow Deezer Bridge</h1>
+
+  <label for="server">Lightshow server</label>
+  <input id="server" type="text" placeholder="http://localhost:3000" />
+  <p class="hint">Host and port the lightshow server is running on.</p>
+
+  <label for="token">Access token</label>
+  <input id="token" type="password" placeholder="(leave blank if none)" />
+  <p class="hint">Only needed when the server runs with LIGHTSHOW_TOKEN set.</p>
+
+  <button id="save">Save</button><span id="status"></span>
+
+  <script src="options.js"></script>
+</body>
+</html>
