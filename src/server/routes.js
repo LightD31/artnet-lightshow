@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const multer = require('multer');
 
-const { state, getClientState, getFixtureCount } = require('./state');
+const { state, getClientState } = require('./state');
 const { applyPatch, applyOverride, processTap } = require('./patch');
 const { resizeFixtureBuffers } = require('./engine');
 const { parseGDTF } = require('../gdtf');
@@ -18,7 +18,32 @@ const {
 } = require('./profiles');
 const { profileSchema, showSchema, midiConnectSchema, validate } = require('./validation');
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+// Audio uploads genuinely need headroom; GDTF files do not. Separate limits so
+// the fixture importer isn't handed a 50 MB budget it has no use for — a real
+// GDTF is a few hundred KB. See AUDIT.md M8.
+const uploadAudio = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+const uploadGdtf = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
+
+// Local-file analysis reads an arbitrary path off the filesystem. When
+// ANALYZE_LOCAL_ROOT is set, confine it to that subtree; unset keeps the old
+// behaviour (fine on a loopback-only bind, less so once the server is exposed).
+// See AUDIT.md M6.
+const ANALYZE_LOCAL_ROOT = process.env.ANALYZE_LOCAL_ROOT
+  ? path.resolve(process.env.ANALYZE_LOCAL_ROOT)
+  : null;
+
+function assertLocalPathAllowed(source) {
+  if (!ANALYZE_LOCAL_ROOT) return;
+  const resolved = path.resolve(source);
+  const root = ANALYZE_LOCAL_ROOT.endsWith(path.sep)
+    ? ANALYZE_LOCAL_ROOT
+    : ANALYZE_LOCAL_ROOT + path.sep;
+  if (resolved !== ANALYZE_LOCAL_ROOT && !resolved.startsWith(root)) {
+    const err = new Error('Local file analysis is restricted to ANALYZE_LOCAL_ROOT');
+    err.status = 403;
+    throw err;
+  }
+}
 
 function asyncHandler(fn) {
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -152,7 +177,7 @@ function attachRoutes(app, deps) {
   app.post('/api/prolink/toggle',  (_req, res) => { applyPatch({ prolinkEnabled: !state.prolinkEnabled }); res.json({ ok: true, prolink: getClientState().prolink }); });
 
   // ─── GDTF / Profiles / Fixtures / Show ────────────────────────────────────
-  app.post('/api/gdtf/parse', upload.single('gdtf'), asyncHandler(async (req, res) => {
+  app.post('/api/gdtf/parse', uploadGdtf.single('gdtf'), asyncHandler(async (req, res) => {
     if (!req.file) return res.status(400).json({ ok: false, error: 'No file uploaded' });
     try {
       const result = await parseGDTF(req.file.buffer);
@@ -261,6 +286,27 @@ function attachRoutes(app, deps) {
   app.get('/auth/spotify/callback', asyncHandler(async (req, res) => {
     const code = req.query.code;
     if (!code) return res.status(400).send('Missing authorization code');
+
+    // Bind this callback to a flow this server started. Without it, any page
+    // could navigate the operator's browser here with an attacker's code and
+    // silently bind the show to the attacker's account — see AUDIT.md H3.
+    if (!spotify.consumeState(req.query.state)) {
+      if (process.env.SPOTIFY_ALLOW_UNVERIFIED_STATE === '1') {
+        console.warn(
+          '[spotify] callback state missing or unrecognised — accepted because '
+          + 'SPOTIFY_ALLOW_UNVERIFIED_STATE=1. This disables OAuth CSRF protection.'
+        );
+      } else {
+        console.warn('[spotify] rejected callback: missing or unrecognised state parameter');
+        return res.status(400).send(
+          'Spotify auth failed: missing or unrecognised state parameter. '
+          + 'Start the flow from /auth/spotify in this browser. If your OAuth proxy '
+          + 'does not forward the state parameter, set SPOTIFY_ALLOW_UNVERIFIED_STATE=1 '
+          + '(this disables OAuth CSRF protection).'
+        );
+      }
+    }
+
     try {
       await spotify.exchangeCode(code);
       spotify.startPolling();
@@ -297,15 +343,11 @@ function attachRoutes(app, deps) {
   });
 
   // ─── Deezer (browser extension) ─────────────────────────────────────────────
-  // The Firefox extension POSTs from a moz-extension:// origin, which current
-  // Firefox treats as a CORS request (preflighted). Allow it on these endpoints.
-  app.use('/api/deezer', (req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type');
-    if (req.method === 'OPTIONS') return res.sendStatus(204);
-    next();
-  });
+  // No CORS headers here on purpose. The extension POSTs from its background
+  // script (see browser-extension/background.js), which holds a host permission
+  // and is therefore not subject to page CORS at all. A wildcard
+  // Access-Control-Allow-Origin used to sit here and let any website on the
+  // internet push fake now-playing state into the show — see AUDIT.md H2.
 
   // The Firefox extension POSTs the Deezer web player's state here: the current
   // track (with ISRC + position) and the upcoming queue (for prefetch).
@@ -333,6 +375,7 @@ function attachRoutes(app, deps) {
 
     try {
       if (isLocalFile || isDirectAudio) {
+        if (isLocalFile) assertLocalPathAllowed(source);
         autoShow.track = { name: path.basename(source), artist: 'Local file', album: '', albumArt: null };
         const cacheKey = isLocalFile ? keyForLocalFile(source) : `url:${source}`;
         await autoShow.analyze(source, cacheKey);
@@ -345,7 +388,7 @@ function attachRoutes(app, deps) {
       integrations.broadcast();
       res.json({ ok: true, analysis: autoShow.getClientState().analysis });
     } catch (err) {
-      res.status(500).json({ ok: false, error: err.message });
+      res.status(err.status || 500).json({ ok: false, error: err.message });
     }
   }));
 
@@ -434,7 +477,7 @@ function attachRoutes(app, deps) {
     }
   }));
 
-  app.post('/api/auto/analyze-upload', upload.single('audio'), asyncHandler(async (req, res) => {
+  app.post('/api/auto/analyze-upload', uploadAudio.single('audio'), asyncHandler(async (req, res) => {
     if (!req.file) return res.status(400).json({ ok: false, error: 'No audio file uploaded' });
     const tmpPath = path.join(os.tmpdir(), `auto-analyze-${Date.now()}${path.extname(req.file.originalname) || '.mp3'}`);
     try {

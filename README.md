@@ -193,15 +193,50 @@ All endpoints return JSON. Useful for custom integrations or additional controll
 
 ## Configuration
 
+See **[.env.example](.env.example)** for the full list with comments. The ones you are
+most likely to need:
+
 | Env var | Default | Description |
 |---------|---------|-------------|
 | `PORT` | `3000` | Web server port |
+| `HOST` | `127.0.0.1` | Interface to bind. Loopback by default — see **Network access** below |
+| `LIGHTSHOW_TOKEN` | _(none)_ | Shared access token. **Required** when `HOST` is not loopback |
 | `MIDI_INPUT` | _(auto)_ | MIDI input port name |
 | `MIDI_OUTPUT` | _(auto)_ | MIDI output port name |
-| `LINK` | _(off)_ | Set to `1` to enable Ableton Link on startup |
+| `PROLINK` | _(off)_ | Set to `1` to enable PRO DJ LINK on startup |
+| `SMTC` | _(on, Windows)_ | Set to `0` to disable the OS now-playing source |
+| `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` | _(none)_ | Enables Spotify as an auto-show source |
+| `DEEZER_ARL` | _(none)_ | Deezer ARL cookie — exact ISRC-matched audio instead of a yt-dlp search |
+| `ARTNET_HOST` / `ARTNET_PORT` / `ARTNET_UNIVERSE` | `2.255.255.255` / `6454` / `0` | Art-Net output target |
 
-ArtNet node IP and universe are configurable in the web UI **ArtNet Settings** panel.
-Default: broadcast to `2.255.255.255:6454`, universe 0.
+ArtNet node IP and universe are also configurable in the web UI **ArtNet Settings** panel.
+
+## Network access
+
+By default the server binds **127.0.0.1** and is reachable only from the machine it runs
+on. Nothing else is needed for a normal single-machine setup.
+
+To reach the UI from a phone or another machine, bind wider **and set a token** — the
+server refuses to start with a non-loopback `HOST` and no token, because every control
+(blackout, strobe, Art-Net target) is otherwise open to anyone on the network:
+
+```bash
+# generate a token once
+node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"
+
+HOST=0.0.0.0 LIGHTSHOW_TOKEN=<the token> npm start
+```
+
+Then open the UI **once** per browser at `http://<machine>:3000/?token=<the token>`. The
+page stores it and strips it from the URL; later visits need no token in the address.
+
+The same token goes in:
+
+- **Companion** → the connection's *Access token* field
+- **Browser extension** → its preferences page (server URL and token)
+
+Cross-origin requests are refused whether or not a token is set, so a website you happen
+to have open in another tab cannot drive the rig.
 
 ## Keyboard Shortcut
 

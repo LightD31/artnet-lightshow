@@ -3,3 +3,4 @@ companion-module/node_modules/
 .env
 cache/
 tests/fixtures/
+__pycache__/

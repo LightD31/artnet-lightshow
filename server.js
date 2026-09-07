@@ -23,13 +23,33 @@ const { COLOR_PRESETS, PATTERNS } = require('./src/server/presets');
 const { setupIntegrations } = require('./src/server/integrations');
 const { attachRoutes } = require('./src/server/routes');
 const { attachSockets } = require('./src/server/sockets');
+const { createAuth, configError, isLoopbackHost } = require('./src/server/auth');
+
+// ─── Bind address & access control ──────────────────────────────────────────
+// Loopback by default: exposing the rig to the whole network should be a
+// deliberate act, and once it is, a token is mandatory. See AUDIT.md C2.
+const HOST = process.env.HOST || '127.0.0.1';
+const LIGHTSHOW_TOKEN = process.env.LIGHTSHOW_TOKEN || '';
+
+const fatal = configError({ host: HOST, token: LIGHTSHOW_TOKEN });
+if (fatal) {
+  console.error(`\n${fatal}\n`);
+  process.exit(1);
+}
+
+const auth = createAuth({ token: LIGHTSHOW_TOKEN });
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
+// Static assets stay open: they carry no secrets, and the page needs to load
+// before it can present a token. Everything that reads or changes show state
+// goes through the guard.
 app.use(express.static(path.join(__dirname, 'public')));
+app.use('/api', auth.httpMiddleware);   // before express.json: reject first, parse after
 app.use(express.json());
+io.use(auth.socketMiddleware);
 
 // ─── Subsystems ─────────────────────────────────────────────────────────────
 
@@ -81,10 +101,20 @@ startEngine();
 // ─── Listen ─────────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  spotify.localCallbackUrl = `http://localhost:${PORT}/auth/spotify/callback`;
+server.listen(PORT, HOST, () => {
+  // Where the OAuth proxy sends the operator's browser back to. Must be an
+  // address that browser can actually reach: "localhost" is only right when the
+  // browser is on this machine. PUBLIC_URL overrides for anything unusual
+  // (reverse proxy, hostname, https).
+  const publicBase = process.env.PUBLIC_URL
+    ? process.env.PUBLIC_URL.replace(/\/+$/, '')
+    : `http://${isLoopbackHost(HOST) ? 'localhost' : HOST}:${PORT}`;
+  spotify.localCallbackUrl = `${publicBase}/auth/spotify/callback`;
 
-  console.log(`\n  ArtNet Lightshow  →  http://localhost:${PORT}`);
+  console.log(`\n  ArtNet Lightshow  →  http://${isLoopbackHost(HOST) ? 'localhost' : HOST}:${PORT}`);
+  console.log(`  Access            →  ${auth.enabled
+    ? `token required (open /?token=… once per browser)`
+    : 'no token — loopback only, this machine can reach it'}`);
   console.log(`  ArtNet            →  ${state.artnet.host}:${state.artnet.port} universe ${state.artnet.universe}`);
   console.log(`  Fixtures          →  ${state.fixtures.length}x at DMX ${state.fixtures.map((f) => f.address).join(', ')}`);
   console.log(`  MIDI              →  ${midi.enabled ? 'connected' : 'not connected (set MIDI_INPUT env var or use /api/midi/connect)'}`);

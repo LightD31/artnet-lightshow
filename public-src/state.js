@@ -13,7 +13,11 @@ export const autoPositionSig = signal({ positionMs: 0, running: false, updatedAt
 // Auto-show timeline payload (loaded on demand from /api/auto/timeline).
 export const autoTimelineSig = signal({ data: null, fetchedKey: null });
 
-export const socket = io({ transports: ['websocket', 'polling'] });
+// Token comes from public/auth.js, which runs before this bundle.
+export const socket = io({
+  transports: ['websocket', 'polling'],
+  auth: { token: (typeof window !== 'undefined' && window.LIGHTSHOW_TOKEN) || '' },
+});
 
 socket.on('connect',    () => { connectedSig.value = true;  });
 socket.on('disconnect', () => { connectedSig.value = false; });

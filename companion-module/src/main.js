@@ -50,7 +50,11 @@ export default class ArtnetLightshowInstance extends InstanceBase {
 		this.updateStatus(InstanceStatus.Connecting)
 		this.log('debug', `Connecting to ${url}`)
 
-		this.socket = io(url, { reconnection: true, reconnectionDelay: 2000 })
+		this.socket = io(url, {
+			reconnection: true,
+			reconnectionDelay: 2000,
+			auth: { token: this.config.token || '' },
+		})
 
 		this.socket.on('connect', () => {
 			this.updateStatus(InstanceStatus.Ok)
@@ -62,6 +66,18 @@ export default class ArtnetLightshowInstance extends InstanceBase {
 		})
 
 		this.socket.on('connect_error', (err) => {
+			// The server rejects the handshake with "unauthorized" when it runs
+			// with LIGHTSHOW_TOKEN set and this connection presented the wrong
+			// token (or none). Say so plainly — "connection failure" would send
+			// someone hunting a network problem that isn't there.
+			if (err.message === 'unauthorized') {
+				this.updateStatus(
+					InstanceStatus.BadConfig,
+					'Rejected: set the matching Access token in this connection\'s config',
+				)
+				this.log('error', 'Lightshow server rejected the token — check the Access token field')
+				return
+			}
 			this.updateStatus(InstanceStatus.ConnectionFailure, err.message)
 		})
 

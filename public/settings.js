@@ -1,6 +1,6 @@
 'use strict';
 
-const socket = io();
+const socket = io({ auth: { token: window.LIGHTSHOW_TOKEN || '' } });
 
 let state = {};
 let profiles = {};
@@ -153,14 +153,24 @@ function showModeSelector(fixture) {
   });
 }
 
+// Build an element with text content set safely. Every value rendered by this
+// page can originate from an uploaded GDTF file or an unauthenticated API call,
+// so it must never reach innerHTML — see AUDIT.md C1.
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined && text !== null) node.textContent = String(text);
+  return node;
+}
+
 function renderChannelPreview(mode) {
   const container = document.getElementById('gdtf-channel-preview');
   container.innerHTML = '';
   mode.channelList.forEach(ch => {
-    const tag = document.createElement('span');
     const isMapped = ch.attribute && ch.attribute !== 'unknown';
-    tag.className = 'ch-tag' + (isMapped ? ' mapped' : '');
-    tag.innerHTML = `<span class="ch-num">${ch.offset + 1}</span><span class="ch-name">${ch.name}</span>`;
+    const tag = el('span', 'ch-tag' + (isMapped ? ' mapped' : ''));
+    tag.appendChild(el('span', 'ch-num', ch.offset + 1));
+    tag.appendChild(el('span', 'ch-name', ch.name));
     container.appendChild(tag);
   });
 }
@@ -219,16 +229,23 @@ function renderProfiles() {
     card.className = 'profile-card' + (isBuiltin ? ' builtin' : '');
 
     const mappedChannels = Object.keys(p.channelMap || {}).join(', ');
-    card.innerHTML = `
-      <span class="profile-name">${p.name}</span>
-      <span class="profile-manufacturer">${p.manufacturer}</span>
-      <span class="profile-mode">${p.modeName} &mdash; ${p.channelCount}ch</span>
-      <span class="profile-channels">Mapped: ${mappedChannels || 'none'}</span>
-      <div class="profile-actions">
-        ${isBuiltin ? '<span style="font-size:10px;color:var(--accent)">Built-in</span>' :
-          `<button class="btn sm remove-profile-btn" data-id="${p.id}">Remove</button>`}
-      </div>
-    `;
+    card.appendChild(el('span', 'profile-name', p.name));
+    card.appendChild(el('span', 'profile-manufacturer', p.manufacturer));
+    card.appendChild(el('span', 'profile-mode', `${p.modeName} — ${p.channelCount}ch`));
+    card.appendChild(el('span', 'profile-channels', `Mapped: ${mappedChannels || 'none'}`));
+
+    const actions = el('div', 'profile-actions');
+    if (isBuiltin) {
+      const badge = el('span', null, 'Built-in');
+      badge.style.fontSize = '10px';
+      badge.style.color = 'var(--accent)';
+      actions.appendChild(badge);
+    } else {
+      const btn = el('button', 'btn sm remove-profile-btn', 'Remove');
+      btn.dataset.id = p.id;
+      actions.appendChild(btn);
+    }
+    card.appendChild(actions);
     container.appendChild(card);
   });
 
@@ -258,26 +275,57 @@ function renderPatchTable() {
     const hasConflict = conflicts.has(fix.id);
 
     const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td style="color:var(--muted);font-family:monospace">${fix.id + 1}</td>
-      <td><input type="text" value="${fix.label}" data-field="label" data-id="${fix.id}" /></td>
-      <td>
-        <select data-field="profileId" data-id="${fix.id}">
-          ${Object.values(profiles).map(p =>
-            `<option value="${p.id}" ${p.id === fix.profileId ? 'selected' : ''}>${p.manufacturer} ${p.name} - ${p.modeName}</option>`
-          ).join('')}
-        </select>
-      </td>
-      <td>
-        <input type="number" value="${fix.address}" min="1" max="512"
-          data-field="address" data-id="${fix.id}"
-          class="${hasConflict ? 'addr-conflict' : ''}" style="width:70px" />
-        <span class="addr-range">${fix.address}&ndash;${endAddr}</span>
-        ${hasConflict ? '<span class="conflict-warning">Address overlap!</span>' : ''}
-      </td>
-      <td class="ch-count">${chCount}</td>
-      <td><button class="remove-btn" data-id="${fix.id}" title="Remove fixture">&times;</button></td>
-    `;
+
+    const idCell = el('td', null, fix.id + 1);
+    idCell.style.color = 'var(--muted)';
+    idCell.style.fontFamily = 'monospace';
+    tr.appendChild(idCell);
+
+    const labelCell = el('td');
+    const labelInput = el('input');
+    labelInput.type = 'text';
+    labelInput.value = fix.label;            // property assignment, never an HTML attribute
+    labelInput.dataset.field = 'label';
+    labelInput.dataset.id = fix.id;
+    labelCell.appendChild(labelInput);
+    tr.appendChild(labelCell);
+
+    const profileCell = el('td');
+    const select = el('select');
+    select.dataset.field = 'profileId';
+    select.dataset.id = fix.id;
+    Object.values(profiles).forEach(p => {
+      const opt = el('option', null, `${p.manufacturer} ${p.name} - ${p.modeName}`);
+      opt.value = p.id;
+      if (p.id === fix.profileId) opt.selected = true;
+      select.appendChild(opt);
+    });
+    profileCell.appendChild(select);
+    tr.appendChild(profileCell);
+
+    const addrCell = el('td');
+    const addrInput = el('input', hasConflict ? 'addr-conflict' : null);
+    addrInput.type = 'number';
+    addrInput.value = fix.address;
+    addrInput.min = '1';
+    addrInput.max = '512';
+    addrInput.dataset.field = 'address';
+    addrInput.dataset.id = fix.id;
+    addrInput.style.width = '70px';
+    addrCell.appendChild(addrInput);
+    addrCell.appendChild(el('span', 'addr-range', `${fix.address}–${endAddr}`));
+    if (hasConflict) addrCell.appendChild(el('span', 'conflict-warning', 'Address overlap!'));
+    tr.appendChild(addrCell);
+
+    tr.appendChild(el('td', 'ch-count', chCount));
+
+    const removeCell = el('td');
+    const removeBtn = el('button', 'remove-btn', '×');
+    removeBtn.dataset.id = fix.id;
+    removeBtn.title = 'Remove fixture';
+    removeCell.appendChild(removeBtn);
+    tr.appendChild(removeCell);
+
     tbody.appendChild(tr);
   });
 
