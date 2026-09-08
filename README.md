@@ -568,7 +568,7 @@ Changing it recycles the analyzer process; no restart needed.
 
 | Source | What it needs |
 |--------|---------------|
-| **Spotify** | A client ID and secret in the settings page, then visit `/auth/spotify`. Register the redirect URI the server prints at startup. |
+| **Spotify** | A client ID and secret in the settings page, then visit `/auth/spotify`. Register the redirect URI the server prints at startup — see [Spotify authorisation](#spotify-authorisation). |
 | **PRO DJ LINK** | CDJs on the same network. Toggle it in the settings page or on the main page. |
 | **Now playing (Windows)** | Nothing — reads the OS media session, so any player that reports to it works. Toggle it under *Playback Sources*. |
 | **Deezer** | The extension in `browser-extension/` (see its README). Carries ISRC and the upcoming queue, so it prefetches. |
@@ -576,6 +576,40 @@ Changing it recycles the analyzer process; no restart needed.
 
 The Deezer ARL cookie (settings page → *Deezer*) is optional but recommended:
 with it, audio is fetched by ISRC for an exact match instead of a yt-dlp search.
+
+### Spotify authorisation
+
+Spotify requires HTTPS for OAuth redirect URIs, with one exception: **loopback
+IP literals**. `http://127.0.0.1:PORT` is accepted, and `http://[::1]:PORT` for
+IPv6. `http://localhost:PORT` is not — Spotify dropped it in February 2025
+because localhost resolution varies between machines.
+
+That exception is enough to authorise without any third party, so **the OAuth
+proxy is optional and off by default**. Leave *OAuth Proxy* blank and the flow
+goes straight to `accounts.spotify.com`; register the redirect URI the server
+prints at startup, which is:
+
+```
+http://127.0.0.1:<port>/auth/spotify/callback
+```
+
+Use the literal `127.0.0.1` in the dashboard whatever `server.host` is set to —
+it is the redirect Spotify checks, not the address you browse the UI on.
+
+**When you still want a proxy.** The loopback redirect only works if the browser
+doing the authorisation is on the same machine as the server: a phone on the LAN
+that follows it would land on its *own* `127.0.0.1`. So if the rig is headless
+and you connect from a tablet, either
+
+- do the one-time connect from a browser on the server machine, or
+- set *OAuth Proxy* to a relay, which is the original behaviour — the proxy
+  takes Spotify's callback and forwards the code to this server's LAN address.
+
+Going direct is also the safer of the two: the authorization code never passes
+through anyone else's server, and the OAuth `state` nonce round-trips through
+Spotify intact, so the *Allow Unverified State* escape hatch (which exists for
+relays that strip `state`, and which disables OAuth CSRF protection) is not
+needed at all.
 
 ### Shaping the generated show
 
@@ -885,7 +919,7 @@ immediately.
 | **sACN (E1.31)** | Enabled, node IP, priority, source name, universe offset, component ID |
 | **MIDI** | Input and output port, motorised fader feedback |
 | **Playback Sources** | PRO DJ LINK, Windows now-playing (SMTC) |
-| **Spotify** | Client ID, client secret, OAuth proxy, unverified-state escape hatch |
+| **Spotify** | Client ID, client secret, optional OAuth proxy, unverified-state escape hatch |
 | **Deezer** | ARL cookie — exact ISRC-matched audio instead of a yt-dlp search |
 | **Analysis** | Analyzer and download timeouts, library folder, Python interpreter |
 | **Server & Access** | Bind address, port, access token, public URL |

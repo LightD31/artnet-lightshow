@@ -36,6 +36,16 @@ function downloadTimeoutMs() {
 //   moderate  — reduced bursts, no white-strobe
 //   rock      — light bursts, proper drops only
 //   calm      — no strobes, no drops
+// Every number this module puts into a patch has to land inside the range
+// server/validation.js accepts, because applyPatch throws on anything else and
+// the timeline fires from a timer callback — an out-of-range value there is not
+// a bad look, it is an uncaught exception that takes the server down mid-set.
+// That is exactly how `strobeSpeed` at 330 (220 scaled by a 1.5 intensity
+// factor) killed a show. Scale first, then clamp, always.
+const u8 = (n) => Math.max(0, Math.min(255, Math.round(n) || 0));
+// Matches the patch schema's bpm bounds.
+const clampBpm = (n) => Math.max(20, Math.min(300, Math.round(n) || 120));
+
 const GENRE_STYLES = {
   edm:       { tier: 'dance',    tetrads: ['synthwave', 'aurora', 'arctic'],
                patterns: ['pairs', 'runner', 'chase', 'split', 'stack-up', 'random-flash', 'hit', 'sections'] },
@@ -619,7 +629,10 @@ class AutoShow {
       timeMs: 0,
       action: 'patch',
       data: {
-        bpm: Math.round(a.bpm || 120),
+        // The analyser is a separate process doing signal processing on
+        // arbitrary audio; a nonsense tempo out of it should not be able to
+        // throw here either.
+        bpm: clampBpm(a.bpm),
         beatDivision: 1,
         running: true,
         masterBlackout: false,
@@ -637,7 +650,7 @@ class AutoShow {
     const tempoStab = a.tempoStability != null ? a.tempoStability : 1;
     const tempoCurve = a.tempoCurve || [];
     if (tempoStab < 0.60 && tempoCurve.length > 2) {
-      let lastBpm = Math.round(a.bpm || 120);
+      let lastBpm = clampBpm(a.bpm);
       for (const pt of tempoCurve) {
         const bpmVal = Math.round(pt.v);
         if (Math.abs(bpmVal - lastBpm) < 4) continue; // 4 BPM delta floor
@@ -963,7 +976,7 @@ class AutoShow {
             colorB: riseColB,
             colorC: palette[0],
             colorD: riseColB,
-            strobeSpeed: Math.round(60 * Math.min(1.5, iFactor)),
+            strobeSpeed: u8(60 * Math.min(1.5, iFactor)),
             strobeFunction: 'ramp-up',
             beatDivision: meter === 3 ? 1 : 2,
           },
@@ -978,7 +991,9 @@ class AutoShow {
           action: 'patch',
           data: {
             pattern: 'strobe',
-            strobeSpeed: Math.round(220 * Math.min(1.5, iFactor)),
+            // 220 × 1.5 is 330. This was the crash: any intensity above 58
+            // put the buildup peak past the channel's range.
+            strobeSpeed: u8(220 * Math.min(1.5, iFactor)),
             strobeFunction: 'break',
             beatDivision: meter === 3 ? 1 : 4,
           },
@@ -1495,7 +1510,20 @@ class AutoShow {
       const ev = this.timeline[i];
       if (ev.timeMs > posMs) break;
 
-      this._fireEvent(ev);
+      // One bad event must not take the rig down. This runs from a timer, so
+      // anything thrown here is an uncaught exception that ends the process —
+      // and it ends it mid-set, with the lights stuck on whatever they were
+      // last told. A rejected patch is worth a loud log and a skipped event;
+      // it is not worth the show. The cursor still advances, so a single
+      // malformed event cannot wedge the timeline either.
+      try {
+        this._fireEvent(ev);
+      } catch (err) {
+        console.error(
+          `[auto-show] event ${i} at ${ev.timeMs}ms (${ev.action}) rejected: ${err.message}`,
+          ev.data,
+        );
+      }
       this._lastEventIdx = i;
     }
   }
@@ -1513,9 +1541,16 @@ class AutoShow {
         this._activeEnergyClearAt = clearAt;
         this._applyPatch({ energyOverride: ev.data.id });
         setTimeout(() => {
-          // Only clear if this burst is still the active one (avoids races)
-          if (this.running && Date.now() >= this._activeEnergyClearAt - 5) {
-            this._applyPatch({ energyOverride: null });
+          // Its own timer, so it needs its own guard — a throw here would be
+          // just as fatal as one in _tick, and it would also leave the rig
+          // stuck holding the energy override it was about to clear.
+          try {
+            // Only clear if this burst is still the active one (avoids races)
+            if (this.running && Date.now() >= this._activeEnergyClearAt - 5) {
+              this._applyPatch({ energyOverride: null });
+            }
+          } catch (err) {
+            console.error(`[auto-show] could not clear energy override: ${err.message}`);
           }
         }, duration);
         break;

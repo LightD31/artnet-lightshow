@@ -276,3 +276,97 @@ test('login asks for the playlist scopes', () => {
   // Playback still has to work — the playlist scopes are additions, not a swap.
   assert.ok(scope.includes('user-read-playback-state'), scope);
 });
+
+// ── OAuth: proxy optional ───────────────────────────────────────────────────
+//
+// Spotify requires HTTPS for redirect URIs with one exception: loopback IP
+// literals. `http://127.0.0.1:PORT` is accepted; `http://localhost:PORT` was
+// dropped in February 2025 because localhost resolution varies. So the relay
+// that used to be mandatory is only needed to authorise from a device other
+// than the one running the server — and the default is now to go direct.
+
+test('with no proxy the flow goes straight to Spotify on a loopback redirect', () => {
+  const client = new SpotifyClient({ clientId: 'id', clientSecret: 'secret' });
+  client.setLoopbackPort(3000);
+
+  assert.strictEqual(client.usingProxy, false);
+
+  const url = new URL(client.getAuthorizeUrl());
+  assert.strictEqual(url.origin + url.pathname, 'https://accounts.spotify.com/authorize');
+
+  // The literal, not `localhost` and not whatever server.host is set to: this
+  // is the only http:// form Spotify will accept, and it is what the operator
+  // registers in the dashboard.
+  const redirect = url.searchParams.get('redirect_uri');
+  assert.strictEqual(redirect, 'http://127.0.0.1:3000/auth/spotify/callback');
+
+  // Spotify checks the token exchange's redirect_uri against the authorize
+  // request's, so the two have to be the same string.
+  assert.strictEqual(client.redirectUri, redirect);
+});
+
+test('the loopback redirect follows the port the server is actually on', () => {
+  const client = new SpotifyClient({ clientId: 'id', clientSecret: 'secret' });
+  client.setLoopbackPort(8080);
+  assert.strictEqual(client.redirectUri, 'http://127.0.0.1:8080/auth/spotify/callback');
+
+  // Junk leaves the last good value alone rather than producing a URL that
+  // could never match what is registered.
+  client.setLoopbackPort('not a port');
+  assert.strictEqual(client.redirectUri, 'http://127.0.0.1:8080/auth/spotify/callback');
+});
+
+test('a configured proxy still takes the relayed route', () => {
+  const client = new SpotifyClient({
+    clientId: 'id', clientSecret: 'secret', proxyBase: 'https://relay.example.com/',
+  });
+  client.localCallbackUrl = 'http://192.168.1.9:3000/auth/spotify/callback';
+
+  assert.strictEqual(client.usingProxy, true);
+  // Trailing slash trimmed, so the joined paths never double up.
+  assert.strictEqual(client.proxyBase, 'https://relay.example.com');
+
+  const url = new URL(client.getAuthorizeUrl());
+  assert.strictEqual(
+    url.origin + url.pathname, 'https://relay.example.com/api/v1/spotify/proxy/login',
+  );
+  // In proxy mode the authorize request names where the proxy forwards to,
+  // while the token exchange quotes the proxy's own callback.
+  assert.strictEqual(
+    url.searchParams.get('redirect_uri'), 'http://192.168.1.9:3000/auth/spotify/callback',
+  );
+  assert.strictEqual(
+    client.redirectUri, 'https://relay.example.com/api/v1/spotify/proxy/callback',
+  );
+});
+
+test('clearing the proxy in the settings page really turns it off', () => {
+  // configure() used to ignore a falsy proxyBase, so emptying the field left
+  // the old relay in place and the operator could not get back to direct.
+  const client = new SpotifyClient({
+    clientId: 'id', clientSecret: 'secret', proxyBase: 'https://relay.example.com',
+  });
+  assert.strictEqual(client.usingProxy, true);
+
+  client.configure({ proxyBase: '' });
+  client.setLoopbackPort(3000);
+
+  assert.strictEqual(client.usingProxy, false);
+  assert.strictEqual(client.redirectUri, 'http://127.0.0.1:3000/auth/spotify/callback');
+  assert.ok(client.getAuthorizeUrl().startsWith('https://accounts.spotify.com/authorize'));
+});
+
+test('the state nonce is issued and checked the same way in both modes', () => {
+  // Going direct means the nonce round-trips through Spotify untouched, which
+  // is the case the "allow unverified state" escape hatch exists to work
+  // around when a relay drops it.
+  for (const proxyBase of ['', 'https://relay.example.com']) {
+    const client = new SpotifyClient({ clientId: 'id', clientSecret: 'secret', proxyBase });
+    const state = new URL(client.getAuthorizeUrl()).searchParams.get('state');
+
+    assert.ok(state, `no state issued with proxyBase="${proxyBase}"`);
+    assert.strictEqual(client.consumeState('not-the-nonce'), false);
+    assert.strictEqual(client.consumeState(state), true);
+    assert.strictEqual(client.consumeState(state), false, 'single use');
+  }
+});

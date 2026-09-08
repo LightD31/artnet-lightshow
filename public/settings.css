@@ -446,6 +446,13 @@
   top: 8px;
   z-index: 20;
   overflow-x: auto;
+  /* .settings-main is a column flex container with a fixed height, so this bar
+     is a flex item — and flex items shrink to fit before the container scrolls.
+     On any tab whose content overflowed (Rig, Output, Control, Music) the bar
+     was squeezed from 40px down to 8px, its buttons collapsing to nothing but
+     their own padding. Pre-show and Server looked fine only because they are
+     short enough not to need the room. */
+  flex-shrink: 0;
 }
 .settings-tab {
   appearance: none;
@@ -459,6 +466,11 @@
   border-radius: var(--radius-sm);
   cursor: pointer;
   white-space: nowrap;
+  /* Same reason, one axis over: without it the buttons squash horizontally on a
+     narrow screen instead of the bar scrolling, which is what its overflow-x is
+     there for. `white-space: nowrap` only stops the text wrapping — it does not
+     stop the box being shrunk under it. */
+  flex-shrink: 0;
   transition: background var(--t), color var(--t);
 }
 .settings-tab:hover { color: var(--text); background: var(--card-hi); }

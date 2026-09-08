@@ -35,6 +35,10 @@ function createApplier({ midi, spotify, smtc, deezer, autoShow, applyPatch, broa
       ? configured.replace(/\/+$/, '')
       : `http://${shown}:${bootValues.server.port}`;
     spotify.localCallbackUrl = `${base}/auth/spotify/callback`;
+    // Without a proxy the redirect has to be the loopback literal on the port
+    // we are actually listening on, whatever `server.host` or `publicUrl` say —
+    // that is the only http:// form Spotify accepts.
+    spotify.setLoopbackPort(bootValues.server.port);
     return base;
   }
 

@@ -58,6 +58,9 @@ const SCOPES = [
 // approve the scopes, short enough that a leaked authorize URL goes stale.
 const STATE_TTL_MS = 10 * 60 * 1000;
 
+// Spotify's own authorize endpoint, used when no OAuth proxy is configured.
+const SPOTIFY_AUTHORIZE_URL = 'https://accounts.spotify.com/authorize';
+
 // Spotify ids are base-62 and 22 characters today, but the length has never
 // been part of the contract, so accept a range rather than pinning 22.
 const PLAYLIST_ID_RE = /^[A-Za-z0-9]{16,40}$/;
@@ -114,12 +117,20 @@ class SpotifyClient {
   constructor(config = {}) {
     this.clientId = '';
     this.clientSecret = '';
-    this.proxyBase = 'https://api.drndvs.fr';
-    // The redirect_uri used in the Spotify token exchange — must match the one
-    // the proxy used when redirecting to Spotify (i.e. the proxy's own callback).
+    // Blank means talk to Spotify directly, which is the normal case — see
+    // loopbackRedirectUri. A proxy is only needed to authorise from a device
+    // that is not the one running the server.
+    this.proxyBase = '';
+    // The port this server is listening on, for the loopback redirect. Set by
+    // the server once it is known; 3000 matches the settings default so the
+    // value is never nonsense before then.
+    this.loopbackPort = 3000;
+    // The redirect_uri sent in the Spotify token exchange. It must be byte-for
+    // byte the one the authorize request used, so both come from one place.
     this.redirectUri = '';
     this.configure(config);
-    // The local URL the proxy forwards the code to — set by server after port is known.
+    // The local URL the proxy forwards the code to — set by server after port
+    // is known. Only used in proxy mode.
     this.localCallbackUrl = '';
     this.accessToken = null;
     this.refreshToken = null;
@@ -149,11 +160,48 @@ class SpotifyClient {
   configure({ clientId, clientSecret, proxyBase } = {}) {
     if (clientId !== undefined) this.clientId = clientId || '';
     if (clientSecret !== undefined) this.clientSecret = clientSecret || '';
-    if (proxyBase !== undefined && proxyBase) this.proxyBase = proxyBase.replace(/\/+$/, '');
-    this.redirectUri = `${this.proxyBase}/api/v1/spotify/proxy/callback`;
+    // Assigned even when blank, so clearing the proxy in the settings page
+    // actually turns it off rather than leaving the last value in place.
+    if (proxyBase !== undefined) this.proxyBase = (proxyBase || '').replace(/\/+$/, '');
+    this._refreshRedirectUri();
     return this;
   }
 
+  /** True when the OAuth round trip goes through a relay instead of Spotify. */
+  get usingProxy() { return !!this.proxyBase; }
+
+  /**
+   * Where Spotify sends the browser back to when no proxy is configured.
+   *
+   * Spotify requires HTTPS for redirect URIs with exactly one exception:
+   * loopback IP literals. `http://127.0.0.1:PORT` is accepted (as is
+   * `http://[::1]:PORT`), while `http://localhost:PORT` was dropped in
+   * February 2025 because localhost resolution varies between machines. So a
+   * rig whose operator authorises from the machine running the server needs no
+   * relay at all — which is why the proxy is optional and off by default.
+   *
+   * The literal is deliberate: it is what Spotify accepts and what has to be
+   * registered in the app dashboard, whatever `server.host` happens to be.
+   */
+  get loopbackRedirectUri() {
+    return `http://127.0.0.1:${this.loopbackPort}/auth/spotify/callback`;
+  }
+
+  _refreshRedirectUri() {
+    this.redirectUri = this.usingProxy
+      ? `${this.proxyBase}/api/v1/spotify/proxy/callback`
+      : this.loopbackRedirectUri;
+  }
+
+  /** Tell the client which port to build the loopback redirect from. */
+  setLoopbackPort(port) {
+    const n = Number(port);
+    if (Number.isInteger(n) && n > 0 && n <= 65535) this.loopbackPort = n;
+    this._refreshRedirectUri();
+    return this;
+  }
+
+  /** The proxy's login endpoint. Meaningless without a proxy configured. */
   get loginUrl() { return `${this.proxyBase}/api/v1/spotify/proxy/login`; }
 
   get configured() {
@@ -181,19 +229,24 @@ class SpotifyClient {
    * this server actually started.
    */
   getAuthorizeUrl() {
-    const scopes = SCOPES.join(' ');
     const state = crypto.randomBytes(24).toString('base64url');
     this._pruneStates();
     this._pendingStates.set(state, Date.now());
     const params = new URLSearchParams({
       response_type: 'code',
       client_id: this.clientId,
-      scope: scopes,
+      scope: SCOPES.join(' '),
       state,
-      // Proxy forwards the code to this local URL after Spotify OAuth completes
-      redirect_uri: this.localCallbackUrl,
+      // With a proxy this names where the proxy should forward the code once
+      // Spotify has called *it* back; the token exchange then quotes the
+      // proxy's own callback. Without one there is no such indirection: the
+      // same loopback URL goes to Spotify here and to the token endpoint
+      // later, which is what Spotify checks them against each other for.
+      redirect_uri: this.usingProxy ? this.localCallbackUrl : this.loopbackRedirectUri,
     });
-    return `${this.loginUrl}?${params}`;
+    return this.usingProxy
+      ? `${this.loginUrl}?${params}`
+      : `${SPOTIFY_AUTHORIZE_URL}?${params}`;
   }
 
   /**
