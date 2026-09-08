@@ -2,7 +2,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { patchSchema, profileSchema, overrideSchema, deezerStateSchema, validate } = require('../../src/server/validation');
+const {
+  patchSchema, profileSchema, overrideSchema, deezerStateSchema,
+  fixtureRestoreSchema, validate,
+} = require('../../src/server/validation');
 
 const ok = (schema, v) => { validate(schema, v, 't'); return true; };
 const rejects = (schema, v) => assert.throws(() => validate(schema, v, 't'));
@@ -64,4 +67,42 @@ test('deezer state bounds text fields and queue length', () => {
   assert.ok(ok(deezerStateSchema, {}), 'an empty report is legal');
   rejects(deezerStateSchema, { current: { name: 'x'.repeat(1000) } });
   rejects(deezerStateSchema, { upcoming: new Array(500).fill({ name: 'a', artist: 'b' }) });
+});
+
+// An undo has to carry enough to put the fixture back exactly as it left —
+// including the override, or a fixture deleted while overridden comes back
+// reset to the pattern engine.
+test('a fixture restore carries the whole fixture and where it was', () => {
+  assert.ok(ok(fixtureRestoreSchema, {
+    index: 2,
+    fixture: { label: 'PAR 3', address: 25, universe: 1, profileId: 'cameo-root-par-6-12ch' },
+  }));
+
+  assert.ok(ok(fixtureRestoreSchema, {
+    index: 0,
+    fixture: {
+      label: 'PAR 1', address: 1, profileId: 'cameo-root-par-6-12ch',
+      override: { enabled: true, r: 255, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 200, strobe: 0, blackout: false },
+    },
+  }));
+});
+
+// A show saved before universes has no universe field; the route falls back to
+// the rig default, so the schema must let it through.
+test('a fixture restore may omit the universe and the override', () => {
+  assert.ok(ok(fixtureRestoreSchema, {
+    index: 0,
+    fixture: { label: 'PAR 1', address: 1, profileId: 'cameo-root-par-6-12ch' },
+  }));
+});
+
+test('a fixture restore is bounded like every other patch write', () => {
+  const fixture = { label: 'PAR 1', address: 1, profileId: 'cameo-root-par-6-12ch' };
+  rejects(fixtureRestoreSchema, { index: -1, fixture });
+  rejects(fixtureRestoreSchema, { index: 0, fixture: { ...fixture, address: 0 } });
+  rejects(fixtureRestoreSchema, { index: 0, fixture: { ...fixture, address: 513 } });
+  rejects(fixtureRestoreSchema, { index: 0, fixture: { ...fixture, universe: 32768 } });
+  rejects(fixtureRestoreSchema, { index: 0, fixture: { ...fixture, surprise: 1 } });
+  rejects(fixtureRestoreSchema, { fixture });                    // index required
+  rejects(fixtureRestoreSchema, { index: 0 });                   // fixture required
 });

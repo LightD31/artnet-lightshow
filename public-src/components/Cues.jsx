@@ -1,14 +1,11 @@
 import { useState } from 'preact/hooks';
-import { stateSig } from '../state.js';
+import { stateSig, api, toast } from '../state.js';
 import { colorToCss } from '../utils.js';
 
 // The cue list rides the state broadcast as summaries — id, name, and enough to
 // draw a swatch. Recall, save and edit all go through the REST endpoints, which
-// broadcast the new list back.
-const api = (path, init) => fetch(`/api/cues${path}`, {
-  headers: { 'Content-Type': 'application/json' },
-  ...init,
-});
+// broadcast the new list back; api() reports any refusal as a toast.
+const cueApi = (path, init) => api(`/api/cues${path}`, init);
 
 function Swatches({ colors, presets }) {
   return (
@@ -25,11 +22,30 @@ function Swatches({ colors, presets }) {
 function CueRow({ cue, presets, editing, setEditing }) {
   const [draft, setDraft] = useState(cue.name);
 
+  // Delete and rebuild-from-scratch are not the same thing, and "×" sits right
+  // next to "⟳" on this row. The server hands back the cue and where it was, so
+  // undo puts that exact cue back in that exact slot rather than appending a
+  // copy with a new id.
+  const remove = async () => {
+    const res = await cueApi(`/${cue.id}`, { method: 'DELETE' });
+    if (!res.ok) return;
+    toast.push({
+      message: `Deleted "${cue.name}"`,
+      action: {
+        label: 'Undo',
+        onClick: () => cueApi('/restore', {
+          method: 'POST',
+          body: JSON.stringify({ cue: res.cue, index: res.index }),
+        }),
+      },
+    });
+  };
+
   const commitRename = () => {
     const name = draft.trim();
     setEditing(null);
     if (!name || name === cue.name) return;
-    api(`/${cue.id}`, { method: 'PUT', body: JSON.stringify({ name }) });
+    cueApi(`/${cue.id}`, { method: 'PUT', body: JSON.stringify({ name }) });
   };
 
   if (editing) {
@@ -54,7 +70,7 @@ function CueRow({ cue, presets, editing, setEditing }) {
     <div class="cue-row">
       <button
         class={`cue-recall ${cue.blackout ? 'blackout' : ''}`}
-        onClick={() => api(`/${cue.id}/recall`, { method: 'POST' })}
+        onClick={() => cueApi(`/${cue.id}/recall`, { method: 'POST' })}
         title={`Recall "${cue.name}" — ${cue.pattern} at ${cue.bpm} BPM`}
       >
         <Swatches colors={cue.colors} presets={presets} />
@@ -69,12 +85,12 @@ function CueRow({ cue, presets, editing, setEditing }) {
       <button
         class="btn icon sm"
         title="Overwrite this cue with what's on stage now"
-        onClick={() => api(`/${cue.id}`, { method: 'PUT', body: JSON.stringify({ recapture: true }) })}
+        onClick={() => cueApi(`/${cue.id}`, { method: 'PUT', body: JSON.stringify({ recapture: true }) })}
       >⟳</button>
       <button
         class="btn icon sm danger"
         title="Delete"
-        onClick={() => api(`/${cue.id}`, { method: 'DELETE' })}
+        onClick={remove}
       >×</button>
     </div>
   );
@@ -87,15 +103,14 @@ export function Cues() {
   const [editing, setEditing] = useState(null);
   const [saving, setSaving] = useState(false);
   const [name, setName] = useState('');
-  const [error, setError] = useState('');
 
   const save = async () => {
-    setError('');
-    const res = await api('', {
+    const res = await cueApi('', {
       method: 'POST',
       body: JSON.stringify({ name: name.trim() || undefined }),
-    }).then((r) => r.json()).catch((e) => ({ ok: false, error: e.message }));
-    if (!res.ok) { setError(res.error || 'Could not save the cue'); return; }
+    });
+    // Keep the form open on failure so the name the operator typed survives.
+    if (!res.ok) return;
     setName('');
     setSaving(false);
   };
@@ -125,8 +140,6 @@ export function Cues() {
           + Save current look
         </button>
       )}
-
-      {error && <div class="cue-error">{error}</div>}
 
       {cues.length === 0
         ? <div class="cue-empty">No cues yet. Build a look, then save it here to get back to it in one press.</div>

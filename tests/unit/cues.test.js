@@ -113,8 +113,75 @@ test('recall puts the whole look back, including per-fixture overrides', () => {
 test('recall reports an unknown id instead of blacking the rig out', () => {
   const s = store();
   assert.strictEqual(s.recall('nope'), false);
-  assert.strictEqual(s.remove('nope'), false);
+  assert.strictEqual(s.remove('nope'), null);
   assert.strictEqual(s.update('nope', { name: 'x' }), null);
+});
+
+// Undo means "put that cue back", not "make a new one that looks like it": the
+// delete answer has to carry enough to restore the id and the position.
+test('delete hands back the cue it removed and where it was', () => {
+  const s = store();
+  s.create({ name: 'A' });
+  const b = s.create({ name: 'B' });
+  s.create({ name: 'C' });
+
+  const removed = s.remove(b.id);
+
+  assert.strictEqual(removed.index, 1);
+  assert.strictEqual(removed.cue.id, b.id);
+  assert.deepStrictEqual(s.list().map((c) => c.name), ['A', 'C']);
+});
+
+test('a restored cue keeps its id and goes back in its old slot', () => {
+  const s = store();
+  s.create({ name: 'A' });
+  const b = s.create({ name: 'B' });
+  s.create({ name: 'C' });
+
+  const { cue, index } = s.remove(b.id);
+  s.insert(cue, index);
+
+  assert.deepStrictEqual(s.list().map((c) => c.name), ['A', 'B', 'C']);
+  assert.strictEqual(s.list()[1].id, b.id, 'the same cue, not a copy');
+});
+
+// Pressing undo twice, or on a cue that has since been re-created, must not
+// leave two rows claiming one id.
+test('restoring a cue that is already there is refused, not duplicated', () => {
+  const s = store();
+  const a = s.create({ name: 'A' });
+  const { cue, index } = s.remove(a.id);
+
+  assert.ok(s.insert(cue, index));
+  assert.strictEqual(s.insert(cue, index), null, 'the second undo is a no-op');
+  assert.strictEqual(s.list().length, 1);
+});
+
+test('a restore survives a reload, like any other write', () => {
+  const a = store();
+  const cue = a.create({ name: 'Verse' });
+  const { cue: removed, index } = a.remove(cue.id);
+  a.insert(removed, index);
+
+  assert.deepStrictEqual(store().list().map((c) => c.name), ['Verse']);
+});
+
+// The index is a hint from a client that may be working from a stale list.
+test('an out-of-range index clamps instead of throwing', () => {
+  const s = store();
+  s.create({ name: 'A' });
+  const b = s.create({ name: 'B' });
+  const { cue } = s.remove(b.id);
+
+  s.insert(cue, 99);
+
+  assert.deepStrictEqual(s.list().map((c) => c.name), ['A', 'B']);
+});
+
+test('a restore is validated like any other stored cue', () => {
+  const s = store();
+  assert.throws(() => s.insert({ id: 'x', name: 'no look' }, 0));
+  assert.strictEqual(s.list().length, 0);
 });
 
 test('reorder follows the given order and keeps ids the caller left out', () => {

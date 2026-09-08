@@ -6,6 +6,43 @@ let state = {};
 let profiles = {};
 let pendingGdtf = null; // holds parsed GDTF data before user confirms mode
 
+/**
+ * Fetch a JSON API and say so when it refuses.
+ *
+ * Several call sites here were fire-and-forget, so a server that said no —
+ * "Profile is in use by patched fixtures", "Must have at least one fixture",
+ * "Patch is full" — produced exactly nothing on screen. Returns the parsed body
+ * either way, so callers that branch on it still can.
+ */
+async function apiJson(path, init) {
+  try {
+    const res = await fetch(path, init);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body.ok === false) {
+      Toast.error(body.error || `${(init && init.method) || 'GET'} ${path} failed (${res.status})`);
+      return { ok: false, error: body.error || `HTTP ${res.status}` };
+    }
+    return { ok: true, ...body };
+  } catch (err) {
+    Toast.error(`Could not reach the server: ${err.message}`);
+    return { ok: false, error: err.message };
+  }
+}
+
+/** JSON body helper — every POST/PUT here sends one. */
+const jsonBody = (method, body) => ({
+  method,
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(body),
+});
+
+// The patch table drives fixtures over the socket, which is exactly where the
+// server refuses an address past the end of a universe or a move over the
+// transmit cap. Without this the input silently reverted on the next broadcast.
+socket.on('error-msg', ({ message }) => {
+  if (message) Toast.error(message);
+});
+
 // ── Socket events ────────────────────────────────────────────────────────────
 
 socket.on('connect', () => {
@@ -184,7 +221,15 @@ function renderMidiMap() {
 
     const clear = el('button', 'btn btn-small remove-btn', '×');
     clear.title = 'Unbind';
-    clear.addEventListener('click', () => putBinding(row.kind, row.number, null));
+    clear.addEventListener('click', async () => {
+      const before = row.binding;
+      const res = await putBinding(row.kind, row.number, null);
+      if (!res.ok) return;
+      Toast.push({
+        message: `Unbound ${controlLabel(row.kind, row.number, before)}`,
+        action: { label: 'Undo', onClick: () => putBinding(row.kind, row.number, before) },
+      });
+    });
     actions.appendChild(clear);
 
     tr.appendChild(actions);
@@ -281,13 +326,11 @@ function hideLearnBanner() {
 async function startLearn(binding) {
   if (!binding) return;
   showLearnBanner('Press or move the control you want…');
+  // Not apiJson(): a learn that times out or is cancelled answers ok:false and
+  // is a normal outcome, not something to shout about — the banner says it.
   let res;
   try {
-    res = await fetch('/api/midi/learn', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(binding),
-    }).then(r => r.json());
+    res = await fetch('/api/midi/learn', jsonBody('POST', binding)).then(r => r.json());
   } catch (err) {
     res = { ok: false, error: err.message };
   }
@@ -302,15 +345,12 @@ async function startLearn(binding) {
 }
 
 async function putBinding(kind, number, binding) {
-  const res = await fetch('/api/midi/map/binding', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ kind, number, binding }),
-  }).then(r => r.json()).catch(err => ({ ok: false, error: err.message }));
+  const res = await apiJson('/api/midi/map/binding', jsonBody('PUT', { kind, number, binding }));
   if (res.ok) {
     midiMapData = { ...midiMapData, map: res.map, customised: res.customised };
     renderMidiMap();
   }
+  return res;
 }
 
 async function loadMidiMap() {
@@ -341,11 +381,27 @@ document.getElementById('midi-learn-cancel').addEventListener('click', () => {
   hideLearnBanner();
 });
 document.getElementById('midi-map-reset').addEventListener('click', async () => {
-  const res = await fetch('/api/midi/map/reset', { method: 'POST' }).then(r => r.json());
-  if (res.ok) {
-    midiMapData = { ...midiMapData, map: res.map, customised: res.customised };
-    renderMidiMap();
-  }
+  // Reset throws away a mapping that may have taken a while to build one
+  // control at a time. The map we are about to replace is right here, and
+  // PUT /api/midi/map takes a whole one, so undo costs nothing.
+  const before = midiMapData && midiMapData.map;
+  const res = await apiJson('/api/midi/map/reset', { method: 'POST' });
+  if (!res.ok) return;
+  midiMapData = { ...midiMapData, map: res.map, customised: res.customised };
+  renderMidiMap();
+  if (!before) return;
+  Toast.push({
+    message: 'Reset to the built-in X-Touch mapping',
+    action: {
+      label: 'Undo',
+      onClick: async () => {
+        const restored = await apiJson('/api/midi/map', jsonBody('PUT', before));
+        if (!restored.ok) return;
+        midiMapData = { ...midiMapData, map: restored.map, customised: restored.customised };
+        renderMidiMap();
+      },
+    },
+  });
 });
 
 // ── GDTF Import ──────────────────────────────────────────────────────────────
@@ -448,23 +504,17 @@ document.getElementById('gdtf-confirm').addEventListener('click', async () => {
     channelList: mode.channelList,
   };
 
-  try {
-    const res = await fetch('/api/profiles', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(profile),
-    });
-    const data = await res.json();
-
-    if (data.ok) {
-      document.getElementById('gdtf-status').textContent = `Profile "${profile.name} - ${profile.modeName}" added!`;
-      document.getElementById('gdtf-status').className = 'import-status success';
-      document.getElementById('gdtf-mode-select').style.display = 'none';
-      pendingGdtf = null;
-    }
-  } catch (err) {
-    document.getElementById('gdtf-status').textContent = 'Failed to save profile';
-    document.getElementById('gdtf-status').className = 'import-status error';
+  const data = await apiJson('/api/profiles', jsonBody('POST', profile));
+  const status = document.getElementById('gdtf-status');
+  if (data.ok) {
+    status.textContent = `Profile "${profile.name} - ${profile.modeName}" added!`;
+    status.className = 'import-status success';
+    document.getElementById('gdtf-mode-select').style.display = 'none';
+    pendingGdtf = null;
+  } else {
+    // apiJson already said what went wrong; leave it beside the control too.
+    status.textContent = data.error;
+    status.className = 'import-status error';
   }
 });
 
@@ -504,11 +554,22 @@ function renderProfiles() {
     container.appendChild(card);
   });
 
-  // Remove profile handlers
+  // Remove profile handlers. A GDTF import is a file the operator had to go
+  // and find, so losing one to a stray click is worse than it looks — and the
+  // whole profile is already here in `profiles`, so undo is just re-posting it.
   container.querySelectorAll('.remove-profile-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       const id = btn.dataset.id;
-      await fetch(`/api/profiles/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      const profile = profiles[id];
+      const res = await apiJson(`/api/profiles/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (!res.ok || !profile) return;
+      Toast.push({
+        message: `Removed "${profile.name}"`,
+        action: {
+          label: 'Undo',
+          onClick: () => apiJson('/api/profiles', jsonBody('POST', profile)),
+        },
+      });
     });
   });
 }
@@ -614,10 +675,22 @@ function renderPatchTable() {
   });
 
   // Remove fixture handlers
+  // Removing a fixture takes its address, universe and any override with it,
+  // and the button is a bare × in a dense table. The server answers with what
+  // it removed and from where, so undo puts it back in the same row.
   tbody.querySelectorAll('.remove-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       const id = parseInt(btn.dataset.id);
-      await fetch(`/api/fixtures/${id}`, { method: 'DELETE' });
+      const res = await apiJson(`/api/fixtures/${id}`, { method: 'DELETE' });
+      if (!res.ok) return;
+      Toast.push({
+        message: `Removed "${res.fixture.label}"`,
+        action: {
+          label: 'Undo',
+          onClick: () => apiJson('/api/fixtures/restore',
+            jsonBody('POST', { index: res.index, fixture: res.fixture })),
+        },
+      });
     });
   });
 }
@@ -649,7 +722,7 @@ function detectConflicts(fixtures) {
 // ── Add fixture ──────────────────────────────────────────────────────────────
 
 document.getElementById('add-fixture').addEventListener('click', async () => {
-  await fetch('/api/fixtures', { method: 'POST' });
+  await apiJson('/api/fixtures', { method: 'POST' });
 });
 
 // ── Show save/load ───────────────────────────────────────────────────────────
@@ -1065,7 +1138,7 @@ document.getElementById('preflight-run').addEventListener('click', async (e) => 
   // tool probes each spawn a process — say something rather than looking hung.
   host.appendChild(el('div', 'preflight-summary', 'Checking\u2026'));
   try {
-    const res = await fetch('/api/preflight').then(r => r.json());
+    const res = await apiJson('/api/preflight');
     if (res.ok) renderPreflight(res.report);
     else host.textContent = res.error || 'Preflight failed';
   } catch (err) {

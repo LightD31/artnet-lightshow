@@ -33,6 +33,7 @@ const BROWSER_GLOBALS = {
   setInterval: 'readonly', clearInterval: 'readonly',
   requestAnimationFrame: 'readonly', cancelAnimationFrame: 'readonly',
   io: 'readonly',            // socket.io client, loaded via <script> on settings.html
+  Toast: 'readonly',         // public/toast.js, loaded via <script> on both pages
   browser: 'readonly',       // WebExtension API
 };
 

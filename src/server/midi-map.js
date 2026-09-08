@@ -79,7 +79,9 @@ function defaultTypeFor(actionId) {
 // ── Schema ──────────────────────────────────────────────────────────────────
 
 const bindingSchema = z.object({
-  action: z.enum(ACTION_IDS),
+  // A custom message because the default lists all twenty-two ids, which is
+  // unreadable in the toast this reaches the operator through.
+  action: z.enum(ACTION_IDS, { errorMap: () => ({ message: 'is not a known action' }) }),
   type: z.enum(['relative', 'absolute']).optional(),
   scale: z.number().min(0.01).max(64).optional(),
   // Loose on purpose: a value is a pattern id, a colour index, a cue id or a

@@ -290,7 +290,7 @@ Cues live in the *Cues* card on the live page.
 - **Recall** — click the cue.
 - **✎** rename. Renaming never touches the stored look.
 - **⟳** overwrite the cue with what is on stage now.
-- **×** delete.
+- **×** delete — with an **Undo** that puts the same cue back in the same slot.
 
 A cue holds no patch data — no addresses, no universes, no Art-Net target — so
 recalling one can never re-address the rig or move a fixture to another universe
@@ -498,7 +498,8 @@ All endpoints return JSON. When a token is configured, send it as an
 |--------|------|-------------|
 | POST | `/api/fixture/:id/override` | Set a fixture override (JSON body) |
 | POST | `/api/fixture/:id/blackout/toggle` · `/api/fixture/:id/clear` | Per-fixture blackout / clear |
-| POST | `/api/fixtures` · DELETE `/api/fixtures/:id` | Add / remove a fixture (`{ universe }` optional on add) |
+| POST | `/api/fixtures` · DELETE `/api/fixtures/:id` | Add / remove a fixture (`{ universe }` optional on add; DELETE answers with the fixture and its index) |
+| POST | `/api/fixtures/restore` | Put a deleted fixture back (`{ index, fixture }`) |
 | POST | `/api/gdtf/parse` | Parse an uploaded `.gdtf` (multipart `gdtf`) |
 | POST | `/api/profiles` · DELETE `/api/profiles/:id` | Register / remove a fixture profile |
 | GET · POST | `/api/show` | Export / import the patch |
@@ -512,6 +513,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | PUT | `/api/cues/:id` | Rename (`{ name }`), overwrite from the live look (`{ recapture: true }`), or replace outright (`{ look }`) |
 | DELETE | `/api/cues/:id` | Delete a cue |
 | POST | `/api/cues/:id/recall` | Put a cue on stage |
+| POST | `/api/cues/restore` | Put a deleted cue back (`{ cue, index }` — what DELETE answered with) |
 | POST | `/api/cues/reorder` | Reorder the stack (`{ ids }`); ids left out keep their relative order |
 
 ### Auto show
@@ -564,6 +566,24 @@ universe), `auto-position`, `midi-status`, `midi-map`, `midi-learn` and
 `error-msg`.
 
 The `fixture` message carries `{ id, address?, universe?, label?, profileId? }`.
+
+---
+
+## Mistakes and feedback
+
+Anything the server refuses says so, in a toast in the corner — a DMX address
+past the end of a universe, a profile you cannot delete because fixtures are
+patched to it, a patch that is full. These used to be silent: the control just
+snapped back on the next broadcast.
+
+Deleting is undoable. Removing a **cue**, a **fixture** or a **fixture
+profile**, or resetting the **MIDI mapping**, offers an **Undo** for twelve
+seconds that puts the thing back where it was — a cue keeps its id and its
+position in the stack, a fixture keeps its address, universe and override.
+
+Undo is held to the same rules as the original action: if the patch changed
+while the toast was up, restoring a fixture that would now overlap or overflow
+a universe is refused and says why.
 
 ---
 

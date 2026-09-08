@@ -21,11 +21,14 @@ const {
   clearNonBuiltinProfiles,
 } = require('./profiles');
 const { MAX_UNIVERSES } = require('./universes');
-const { cues, cueWriteSchema, reorderSchema } = require('./cues');
+const { cues, cueWriteSchema, cueRestoreSchema, reorderSchema } = require('./cues');
 const {
   midiMap, ACTIONS, defaultTypeFor, mapSchema, learnSchema, bindingWriteSchema,
 } = require('./midi-map');
-const { profileSchema, showSchema, midiConnectSchema, deezerStateSchema, dmxUniverse, validate } = require('./validation');
+const {
+  profileSchema, showSchema, midiConnectSchema, deezerStateSchema,
+  fixtureRestoreSchema, dmxUniverse, validate,
+} = require('./validation');
 const { settings, RESTART_PATHS, CONFIG_FILE } = require('./settings');
 const { generateToken } = require('./auth');
 const { runPreflight } = require('./preflight');
@@ -368,14 +371,81 @@ function attachRoutes(app, deps) {
     res.json({ ok: true });
   });
 
+  // Answers with the fixture that was removed and its position, so the client
+  // can offer an undo. Fixture ids are positional and get reindexed on delete,
+  // so "put it back" needs the index as well as the fixture.
   app.delete('/api/fixtures/:id', (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (state.fixtures.length <= 1) return res.status(400).json({ ok: false, error: 'Must have at least one fixture' });
-    state.fixtures = state.fixtures.filter((f) => f.id !== id);
+    const index = state.fixtures.findIndex((f) => f.id === id);
+    if (index < 0) return res.status(404).json({ ok: false, error: 'No such fixture' });
+
+    const [removed] = state.fixtures.splice(index, 1);
     state.fixtures.forEach((f, i) => { f.id = i; });
     resizeFixtureBuffers();
     integrations.broadcast();
-    res.json({ ok: true });
+    res.json({
+      ok: true,
+      index,
+      fixture: {
+        label: removed.label,
+        address: removed.address,
+        universe: universeOf(removed),
+        profileId: removed.profileId,
+        override: removed.override,
+      },
+    });
+  });
+
+  /**
+   * Put a deleted fixture back at its old index.
+   *
+   * Held to exactly the same rules as adding one — the patch may have changed
+   * in the seconds the undo was on screen, and an undo that reintroduces an
+   * overlap or overflows a universe is worse than no undo at all.
+   */
+  app.post('/api/fixtures/restore', (req, res) => {
+    try {
+      const { index, fixture } = validate(fixtureRestoreSchema, req.body || {}, 'fixture-restore');
+      if (state.fixtures.length >= MAX_FIXTURES) {
+        return res.status(400).json({ ok: false, error: `Patch is full (${MAX_FIXTURES} fixtures)` });
+      }
+
+      const profiles = listProfiles();
+      const profileId = profiles[fixture.profileId] ? fixture.profileId : BUILTIN_PROFILE_ID;
+      const chCount = profiles[profileId].channelCount;
+      if (!fitsInUniverse(fixture.address, chCount)) {
+        return res.status(400).json({
+          ok: false,
+          error: `"${fixture.label}" at address ${fixture.address} needs ${chCount} channels and would end at `
+            + `${endChannel(fixture.address, chCount)}, past the ${UNIVERSE_SIZE}-channel universe`,
+        });
+      }
+
+      const restored = {
+        id: 0,                          // reassigned by the reindex below
+        label: fixture.label,
+        address: fixture.address,
+        universe: fixture.universe !== undefined ? fixture.universe : state.artnet.universe,
+        profileId,
+        override: fixture.override || null,
+      };
+
+      if (countUniverses([...state.fixtures, restored]) > MAX_UNIVERSES) {
+        return res.status(400).json({
+          ok: false,
+          error: `Universe ${restored.universe} would put the patch on more than the ${MAX_UNIVERSES} `
+            + 'universes this server transmits',
+        });
+      }
+
+      const at = Math.max(0, Math.min(state.fixtures.length, index));
+      state.fixtures.splice(at, 0, restored);
+      state.fixtures.forEach((f, i) => { f.id = i; });
+      resizeFixtureBuffers();
+      integrations.broadcast();
+      res.json({ ok: true, id: at });
+    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
   });
 
   app.get('/api/show', (_req, res) => {
@@ -511,12 +581,26 @@ function attachRoutes(app, deps) {
     } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
   });
 
+  // Answers with what was removed and from where, so the client can offer an
+  // undo that puts the same cue back in the same slot rather than appending a
+  // copy with a new id.
   app.delete('/api/cues/:id', (req, res) => {
     try {
-      if (!cues.remove(req.params.id)) return res.status(404).json({ ok: false, error: 'No such cue' });
+      const removed = cues.remove(req.params.id);
+      if (!removed) return res.status(404).json({ ok: false, error: 'No such cue' });
       integrations.broadcast();
-      res.json({ ok: true });
+      res.json({ ok: true, cue: removed.cue, index: removed.index });
     } catch (err) { res.status(err.status || 500).json({ ok: false, error: err.message }); }
+  });
+
+  app.post('/api/cues/restore', (req, res) => {
+    try {
+      const { cue, index } = validate(cueRestoreSchema, req.body || {}, 'cue-restore');
+      const restored = cues.insert(cue, index);
+      if (!restored) return res.status(409).json({ ok: false, error: 'That cue is already in the stack' });
+      integrations.broadcast();
+      res.json({ ok: true, cue: restored });
+    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
   });
 
   app.post('/api/cues/:id/recall', (req, res) => {
