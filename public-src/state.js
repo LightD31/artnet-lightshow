@@ -6,6 +6,16 @@ import { io } from 'socket.io-client';
 export const stateSig = signal({});
 export const connectedSig = signal(false);
 
+// Why the surface is barred, not just that it is. Socket.IO retries a dropped
+// connection on its own but gives up immediately on a handshake the server
+// rejected, so "reconnecting" was a promise the page could not keep: a browser
+// without the access token sat behind that veil forever while nothing retried.
+//   connecting    — first attempt, has never been online
+//   online        — live
+//   reconnecting  — was online, socket dropped, Socket.IO is retrying
+//   unauthorized  — handshake refused; public/auth.js is asking for the token
+export const connectionSig = signal({ status: 'connecting' });
+
 // Live DMX values, on their own signal so the 10 Hz stream only re-renders the
 // views that show DMX output (the monitor and the fixture previews) instead of
 // waking every control panel in the tree.
@@ -18,14 +28,54 @@ export const autoPositionSig = signal({ positionMs: 0, running: false, updatedAt
 // Auto-show timeline payload (loaded on demand from /api/auto/timeline).
 export const autoTimelineSig = signal({ data: null, fetchedKey: null });
 
-// Token comes from public/auth.js, which runs before this bundle.
+// Token comes from public/auth.js, which runs before this bundle. Guarded so the
+// bundle still works if it ever loads without it.
+const auth = (typeof window !== 'undefined' && window.LightshowAuth) || {
+  token: '', connected: () => {}, requireToken: () => {}, onToken: () => {},
+};
+
 export const socket = io({
   transports: ['websocket', 'polling'],
-  auth: { token: (typeof window !== 'undefined' && window.LIGHTSHOW_TOKEN) || '' },
+  auth: { token: auth.token || '' },
 });
 
-socket.on('connect',    () => { connectedSig.value = true;  });
-socket.on('disconnect', () => { connectedSig.value = false; });
+// Whether this page has ever had a live socket, which is what separates "not up
+// yet" from "we lost it". Kept apart from connectionSig, which is already
+// 'reconnecting' by the time the retry errors arrive.
+let everOnline = false;
+
+socket.on('connect', () => {
+  everOnline = true;
+  connectedSig.value = true;
+  connectionSig.value = { status: 'online' };
+  auth.connected();                       // clears the token prompt, if it was up
+});
+
+socket.on('disconnect', () => {
+  connectedSig.value = false;
+  connectionSig.value = { status: 'reconnecting' };
+});
+
+// A refused handshake and an unreachable server both land here. `socket.active`
+// tells them apart: true means Socket.IO is still retrying (server down, network
+// gone), false means it has given up because a middleware rejected us — which,
+// on this server, only happens for a missing or wrong token.
+socket.on('connect_error', () => {
+  connectedSig.value = false;
+  if (socket.active) {
+    connectionSig.value = { status: everOnline ? 'reconnecting' : 'connecting' };
+    return;
+  }
+  connectionSig.value = { status: 'unauthorized' };
+  auth.requireToken();
+});
+
+// Retry with whatever the operator typed into that prompt.
+auth.onToken((token) => {
+  socket.auth = { token };
+  connectionSig.value = { status: 'connecting' };
+  socket.connect();
+});
 
 // MERGE, don't replace. The first push on connect is the full snapshot
 // including the static catalogues (colour presets, patterns, strobe functions);

@@ -131,7 +131,16 @@ function createAuth({ token = '' } = {}) {
       || socket.handshake.query.token
       || '';
     if (safeEqual(presented, token)) return next();
-    next(new Error('unauthorized'));
+
+    // Socket.IO does not retry a handshake a middleware rejected, so this
+    // message is the only thing the operator gets — "unauthorized" left them
+    // staring at a page that claimed it was reconnecting. Say which of the two
+    // it is, and carry a code so the client does not have to match on wording.
+    const err = new Error(presented
+      ? 'Access token refused'
+      : 'This server requires an access token');
+    err.data = { code: 'unauthorized', presented: !!presented };
+    next(err);
   }
 
   return { enabled, httpMiddleware, socketMiddleware };

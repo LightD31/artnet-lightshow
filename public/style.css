@@ -2073,3 +2073,36 @@ input[type=range]::-moz-range-thumb {
 }
 .offline-body { margin: 0; font-size: 12px; line-height: 1.6; color: var(--text); }
 .offline-body.dim { margin-top: 8px; color: var(--muted); }
+
+/* A first connection has nothing to reconnect to yet, so it reads as waiting
+   rather than as something having gone wrong. */
+.offline-card.waiting { border-color: rgba(148, 163, 184, .45); }
+.offline-card.waiting .offline-title { color: var(--muted); }
+
+/* Token prompt (public/auth.js) — shown when the server refuses the handshake. */
+.token-form { display: flex; gap: 8px; margin-top: 14px; }
+.token-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-hi);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+}
+.token-input:focus { outline: none; border-color: var(--accent); }
+.token-submit {
+  padding: 8px 16px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: #fff;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background var(--t);
+}
+.token-submit:hover { background: var(--accent-hover); }

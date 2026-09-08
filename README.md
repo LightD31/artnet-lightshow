@@ -102,6 +102,13 @@ Then open the UI **once** per browser at
 `http://<machine>:3000/?token=<the token>`. The page stores it and strips it
 from the URL; later visits need nothing in the address bar.
 
+A browser that arrives without the token — including the one you generated it
+in, which has nothing stored until you do this — is told so and asked for it:
+the page covers itself with an **Access token required** prompt, and typing the
+token there connects on the spot, no reload and no hand-built URL. That is worth
+knowing because a refused handshake is never retried by the browser, so nothing
+recovers on its own until the token is entered.
+
 The same token goes in:
 
 - **Companion** → the connection's *Access token* field
@@ -706,6 +713,14 @@ position in the stack, a fixture keeps its address, universe and override.
 Undo is held to the same rules as the original action: if the patch changed
 while the toast was up, restoring a fixture that would now overlap or overflow
 a universe is refused and says why.
+
+A control that silently stopped working is worse than one that says so, so the
+page bars itself whenever the socket is not live, and says which of the three it
+is: **Connecting** while it is still coming up, **Disconnected** when a live
+connection dropped (the rig holds its last look, and the veil clears itself when
+the server comes back), and **Access token required** when the server refused
+this browser — the only one of the three that needs you, because it is the only
+one that never resolves on its own.
 
 ---
 

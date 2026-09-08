@@ -77,11 +77,32 @@ test('token middleware accepts header or query, rejects wrong and missing', () =
 test('socket handshake requires the token', () => {
   const auth = createAuth({ token: 'sesame' });
   const attempt = (token) => new Promise((resolve) => {
-    auth.socketMiddleware({ handshake: { auth: { token }, query: {} } }, (err) => resolve(!err));
+    auth.socketMiddleware({ handshake: { auth: { token }, query: {} } }, (err) => resolve(err || null));
   });
   return Promise.all([
-    attempt('sesame').then((ok) => assert.strictEqual(ok, true)),
-    attempt('nope').then((ok) => assert.strictEqual(ok, false)),
-    attempt(undefined).then((ok) => assert.strictEqual(ok, false)),
+    attempt('sesame').then((err) => assert.strictEqual(err, null)),
+    attempt('nope').then((err) => assert.ok(err)),
+    attempt(undefined).then((err) => assert.ok(err)),
   ]);
+});
+
+// Socket.IO never retries a handshake a middleware rejected, so this error is
+// the operator's only clue. It has to say which of the two it is, and carry a
+// code the client can key off without matching on wording.
+test('a refused handshake says why, and says it in a way the client can read', async () => {
+  const auth = createAuth({ token: 'sesame' });
+  const refuse = (handshake) => new Promise((resolve) => {
+    auth.socketMiddleware({ handshake }, resolve);
+  });
+
+  const missing = await refuse({ auth: {}, query: {} });
+  assert.match(missing.message, /requires an access token/i);
+  assert.deepStrictEqual(missing.data, { code: 'unauthorized', presented: false });
+
+  const wrong = await refuse({ auth: { token: 'nope' }, query: {} });
+  assert.match(wrong.message, /refused/i);
+  assert.deepStrictEqual(wrong.data, { code: 'unauthorized', presented: true });
+
+  // Never echo the configured token back to whoever guessed at it.
+  assert.ok(!missing.message.includes('sesame') && !wrong.message.includes('sesame'));
 });

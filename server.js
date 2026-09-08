@@ -131,9 +131,15 @@ server.listen(PORT, HOST, () => {
   console.log(`\n  ArtNet Lightshow  →  http://${shownHost}:${PORT}`);
   console.log(`  Settings          →  http://${shownHost}:${PORT}/settings.html  (everything is configured there)`);
   console.log(`  Config file       →  ${CONFIG_FILE}`);
+  // Deliberately not the token itself: this banner is the first thing anyone
+  // pastes into a bug report or a chat window.
   console.log(`  Access            →  ${auth.enabled
-    ? `token required (open /?token=… once per browser)`
+    ? 'token required — the page asks for it on first open'
     : 'no token — loopback only, this machine can reach it'}`);
+  if (auth.enabled) {
+    console.log(`                       (it is in ${CONFIG_FILE} under "server.token";`);
+    console.log(`                        http://${shownHost}:${PORT}/?token=… still works)`);
+  }
   console.log(`  ArtNet            →  ${state.artnet.host}:${state.artnet.port} universe ${state.artnet.universe}`);
   console.log(`  Fixtures          →  ${state.fixtures.length}x at DMX ${state.fixtures.map((f) => f.address).join(', ')}`);
   console.log(`  MIDI              →  ${midi.enabled ? 'connected' : 'not connected (pick a port in the settings page)'}`
