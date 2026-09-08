@@ -43,7 +43,10 @@ function downloadTimeoutMs() {
 // That is exactly how `strobeSpeed` at 330 (220 scaled by a 1.5 intensity
 // factor) killed a show. Scale first, then clamp, always.
 const u8 = (n) => Math.max(0, Math.min(255, Math.round(n) || 0));
-// Matches the patch schema's bpm bounds.
+// Matches the patch schema's bpm bounds — and only those. This is the guard
+// that stops an out-of-range value throwing inside a timer callback and taking
+// the server down; it is deliberately not a judgement about which tempos are
+// musically plausible. Buildups are allowed to be extreme.
 const clampBpm = (n) => Math.max(20, Math.min(300, Math.round(n) || 120));
 
 // How much the tempo has to move across a buildup before it counts as a ramp
@@ -1873,6 +1876,13 @@ class AutoShow {
         out.rollRatio = Math.round(ratio * 100) / 100;
         // One doubling → sixteenths, two → thirty-seconds. Below 1.4 there is
         // no roll worth the name and the rig should not pretend there is.
+        //
+        // 8 rather than the schema's 16 is a limit of the rig, not restraint.
+        // renderDmx runs at 40 fps, and the pattern steps every
+        // (60000 / bpm) / division ms: division 8 stays under the frame rate up
+        // to 300 BPM, while division 16 passes it above 150 — so on any dance
+        // tempo it would step faster than the frame it is drawn in and lose
+        // steps unevenly. That reads as irregular, not as faster.
         out.peakDivision = ratio >= 3 ? 8 : ratio >= 1.4 ? 4 : 2;
         out.riseDivision = Math.max(2, out.peakDivision / 2);
       }
@@ -1894,6 +1904,15 @@ class AutoShow {
       }
       const monotone = agree / (inWindow.length - 1);
 
+      // Nothing here rejects a ramp for being *large*. The periodic path next
+      // door skips any sample outside 50–220 BPM as a likely octave error, and
+      // it is right to: it runs across a whole drifting track, where a doubled
+      // reading is the common failure. A buildup is the opposite case. It is
+      // the one place a track is allowed to do something extreme on purpose,
+      // and a plausibility ceiling there would throw away the very tracks worth
+      // following. The filters below are for noise, not for size — a minimum
+      // movement and a direction that holds — so a ramp that is genuinely big
+      // gets followed rather than second-guessed.
       if (Math.abs(delta) >= TEMPO_RAMP_MIN_BPM && monotone >= 0.7) {
         // Where the track sits *after* the drop decides whether the ramp
         // resolves or sticks. A riser that pushes and falls back has to be
