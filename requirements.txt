@@ -1,5 +1,5 @@
-# Python dependencies for src/essentia-analyze.py (the audio analyser the
-# auto-show runs). Install with:
+# Python dependencies for src/analysis/ (the audio analysis pipeline the
+# auto-show runs, launched via src/analyze.py). Install with:
 #
 #     pip install -r requirements.txt
 #
@@ -23,9 +23,9 @@ soundfile>=0.12
 threadpoolctl>=3.1
 
 # ── Genre classification (PANNs) ────────────────────────────────────────────
-# Without these the analyser still runs, but classify_panns() catches the
-# ImportError and skips silently — palettes and patterns then fall back to the
-# mood/circumplex path and shows are quietly worse with no error shown.
+# Without these the analyser still runs, but src/analysis/tagger.py catches
+# the ImportError and skips silently — palettes and patterns then fall back to
+# the mood/circumplex path and shows are quietly worse with no error shown.
 #
 # torch is deliberately not pinned to an exact version: the right wheel depends
 # on platform and CUDA. If pip picks a build you don't want, install torch

@@ -21,7 +21,7 @@ const { settings } = require('./server/settings');
 
 // The analyzer cannot run without these. torch / panns_inference are
 // deliberately absent: genre classification degrades gracefully without them
-// (see the `[panns] skipped:` path in essentia-analyze.py).
+// (see the `[tagger] skipped:` path in src/analysis/tagger.py).
 const REQUIRED_MODULES = ['librosa', 'numpy', 'soundfile'];
 
 const CANDIDATES = process.platform === 'win32'

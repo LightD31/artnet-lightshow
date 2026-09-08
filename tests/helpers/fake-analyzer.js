@@ -1,6 +1,6 @@
 'use strict';
 
-// Stand-in for essentia-analyze.py --worker. Speaks the same NDJSON protocol and
+// Stand-in for src/analyze.py --worker. Speaks the same NDJSON protocol and
 // misbehaves on demand so the worker's failure handling can be tested.
 // FAKE_MODE: ok (default) | hang | wrongid | crash
 const readline = require('node:readline');

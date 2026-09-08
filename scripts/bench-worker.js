@@ -18,7 +18,7 @@ if (!fs.existsSync(WAV)) {
 }
 
 const PYTHON_EXE = require('../src/auto-show').PYTHON_EXE;
-const SCRIPT = path.join(__dirname, '..', 'src', 'essentia-analyze.py');
+const SCRIPT = path.join(__dirname, '..', 'src', 'analyze.py');
 
 (async () => {
   const t0 = Date.now();
