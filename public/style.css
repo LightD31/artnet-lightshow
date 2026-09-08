@@ -1926,3 +1926,35 @@ input[type=range]::-moz-range-thumb {
   .transport-source { margin-left: 0; width: 100%; }
   .transport-source .auto-select { flex: 1; }
 }
+
+/* =============================================================
+   OFFLINE
+   ============================================================= */
+.offline-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(8, 8, 12, .78);
+  backdrop-filter: blur(2px);
+}
+.offline-card {
+  max-width: 380px;
+  padding: 20px 22px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(239, 68, 68, .5);
+  background: var(--card);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, .6);
+}
+.offline-title {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #fca5a5;
+  margin-bottom: 8px;
+}
+.offline-body { margin: 0; font-size: 12px; line-height: 1.6; color: var(--text); }
+.offline-body.dim { margin-top: 8px; color: var(--muted); }
