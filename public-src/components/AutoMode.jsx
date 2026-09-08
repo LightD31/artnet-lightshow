@@ -33,6 +33,12 @@ const SOURCES = [
   { value: 'timer', label: 'Standalone timer' },
 ];
 
+// Milliseconds per press of the sync nudge buttons, and the slider's step.
+// Mirrors SYNC_NUDGE_MS in src/midi.js so a click here and an encoder detent
+// there move by the same amount. One millisecond would be unusable — nobody can
+// hear one — and a whole beat would overshoot the error every time.
+const SYNC_NUDGE_MS = 5;
+
 const PALETTE_SIZES = [
   { size: 2, hint: 'Two contrasting colours — reads cleanly on a small rig' },
   { size: 3, hint: 'Three well-separated hues' },
@@ -152,6 +158,13 @@ export function AutoMode() {
   };
 
   const intensity = as.intensity ?? 50;
+  const syncLimit = s.syncOffsetLimitMs ?? 2000;
+  const syncOffset = s.autoSyncOffsetMs ?? 0;
+  // Signed, because which way it is pointing is the whole question.
+  const syncLabel = `${syncOffset > 0 ? '+' : syncOffset < 0 ? '\u2212' : ''}${Math.abs(syncOffset)} ms`;
+  const nudgeSync = (by) => send({
+    autoSyncOffsetMs: Math.max(-syncLimit, Math.min(syncLimit, syncOffset + by)),
+  });
 
   return (
     <div class="auto-layout">
@@ -223,6 +236,46 @@ export function AutoMode() {
             </div>
             <p class="look-note">
               How hard the generated show pushes — accent density, drops and strobe bursts.
+            </p>
+
+            <div class="look-row">
+              <label class="look-label" for="auto-sync">Sync</label>
+              <button
+                type="button"
+                class="sync-nudge"
+                title="5 ms later"
+                aria-label="Lights 5 milliseconds later"
+                onClick={() => nudgeSync(-SYNC_NUDGE_MS)}
+              >&minus;</button>
+              <input
+                id="auto-sync"
+                class="look-slider"
+                type="range"
+                min={-syncLimit} max={syncLimit} step={SYNC_NUDGE_MS}
+                value={syncOffset}
+                aria-valuetext={syncLabel}
+                onInput={(e) => send({ autoSyncOffsetMs: Number(e.target.value) })}
+              />
+              <button
+                type="button"
+                class="sync-nudge"
+                title="5 ms earlier"
+                aria-label="Lights 5 milliseconds earlier"
+                onClick={() => nudgeSync(SYNC_NUDGE_MS)}
+              >+</button>
+              <button
+                type="button"
+                class="look-value sync-value"
+                title="Back to zero"
+                aria-label={`Sync offset ${syncLabel}. Reset to zero.`}
+                onClick={() => send({ autoSyncOffsetMs: 0 })}
+              >{syncLabel}</button>
+            </div>
+            <p class="look-note">
+              Lines the lights up with what the room hears. Raise it when the rig feels
+              late — a positive offset runs the show <em>ahead</em> of the reported track
+              position, covering player buffering, network and fixture lag. It is saved
+              with your settings, since the right value belongs to the rig, not the set.
             </p>
           </section>
 

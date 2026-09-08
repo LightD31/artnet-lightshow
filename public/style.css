@@ -1954,6 +1954,37 @@ input[type=range]::-moz-range-thumb {
   text-align: right;
 }
 .look-hint { font-size: 10px; color: var(--muted); }
+/* Fine adjustment: a ±2 s slider cannot be dragged to 5 ms, so the buttons are
+   how the offset actually gets dialled in and the slider is for coarse jumps. */
+.sync-nudge {
+  flex: none;
+  width: 22px; height: 22px;
+  padding: 0;
+  font-size: 13px; line-height: 1;
+  color: var(--text-2);
+  background: var(--card-hi);
+  border: 1px solid var(--border-hi);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.sync-nudge:hover { background: var(--surface-2); color: var(--text); }
+.sync-nudge:active { transform: translateY(1px); }
+/* The readout doubles as the reset, so it has to look pressable without
+   becoming another button competing with the two nudges. */
+.sync-value {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+  /* Restated rather than `font: inherit`: this rule comes after .look-value, so
+     the shorthand would win and drop the 11px mono the read-out is paired on. */
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--dim);
+  /* Wide enough for "-2000 ms" so the row does not shift as digits come and go. */
+  min-width: 58px;
+}
+.sync-value:hover { border-color: var(--border-hi); }
 .look-note { margin: 8px 0 0; font-size: 10px; line-height: 1.5; color: var(--muted); }
 
 /* — up next — */

@@ -80,32 +80,44 @@ const COLOR_PRESETS = [
   { name: 'Blackout',   r: 0,   g: 0,   b: 0,   w: 0,   a: 0,   uv: 0   }, // 14
 ];
 
+// ── Patterns ────────────────────────────────────────────────────────────────
+//
+// Grouped by what the rig actually *does*, because that is what an audience
+// tells apart. Twenty-five entries had collapsed into a handful of silhouettes
+// wearing different names: split / split-3 / split-4 were one pattern picked
+// three ways, as were chase / chase-3 / chase-4, alt-halves / alt-thirds /
+// alt-quarters, and pairs / pairs-4. The only thing the suffix changed was how
+// many colours the pattern reached for.
+//
+// Patterns now read that from the look itself (patterns.js paletteOf), so one
+// `split` covers all three sizes and the picker is eighteen genuinely different
+// motions rather than twenty-five names for eleven.
 const PATTERNS = [
-  { id: 'solid',        name: 'Solid',         desc: 'All fixtures same colour' },
+  // Whole rig, together.
+  { id: 'solid',        name: 'Solid',         desc: 'All fixtures on colour A' },
+  { id: 'fade',         name: 'Fade',          desc: 'All fixtures breathe together' },
+  { id: 'hit',          name: 'Hit',           desc: 'All fixtures punch on the beat, decay between' },
+  { id: 'strobe',       name: 'Strobe',        desc: 'All fixtures strobe on the beat' },
+  { id: 'color-cycle',  name: 'Colour Cycle',  desc: 'Whole rig steps to the next palette colour' },
+  { id: 'rainbow',      name: 'Rainbow',       desc: 'Full spectrum spread across the rig — ignores the palette' },
+
+  // One or two lamps travelling, the rest held low.
   { id: 'chase',        name: 'Chase →',       desc: 'One fixture at a time, forward' },
   { id: 'chase-rev',    name: 'Chase ←',       desc: 'One fixture at a time, reverse' },
-  { id: 'ping-pong',    name: 'Ping Pong',     desc: 'Forward then backward' },
-  { id: 'strobe',       name: 'Strobe',        desc: 'All fixtures strobe on beat' },
-  { id: 'fade',         name: 'Fade',          desc: 'Fade in/out together' },
-  { id: 'color-cycle',  name: 'Colour Cycle',  desc: 'Cycle through hues in sync' },
-  { id: 'rainbow',      name: 'Rainbow',       desc: 'Each fixture offset in hue' },
-  { id: 'twinkle',      name: 'Twinkle',       desc: 'Random fixtures flash' },
-  { id: 'split',        name: 'Split',         desc: 'Two colours alternating in pairs' },
-  { id: 'sparkle',      name: 'Sparkle',       desc: 'Bright random pulses, instant' },
-  { id: 'wave',         name: 'Wave',          desc: 'Sine brightness wave across fixtures' },
-  { id: 'stack-up',     name: 'Stack Up',      desc: 'Fill fixtures one-by-one then reset' },
-  { id: 'random-flash', name: 'Random Flash',  desc: 'Random fixture pops each beat' },
+  { id: 'ping-pong',    name: 'Ping Pong',     desc: 'One fixture at a time, forward then back' },
   { id: 'runner',       name: 'Runner',        desc: 'Chase with a fading trail' },
-  { id: 'pairs',        name: 'Pairs',         desc: 'Two adjacent fixtures chase' },
-  { id: 'hit',          name: 'Hit',           desc: 'All fixtures punch on beat, decay between' },
-  { id: 'alt-halves',   name: 'Alt Halves',    desc: 'Two halves swap colours each beat' },
-  { id: 'split-3',      name: 'Split 3',       desc: 'Three colours cycling across fixtures' },
-  { id: 'chase-3',      name: 'Chase 3',       desc: 'Chase rotating through three colours' },
-  { id: 'alt-thirds',   name: 'Alt Thirds',    desc: 'Three sections swap colours each beat' },
-  { id: 'split-4',      name: 'Split 4',       desc: 'Four colours cycling across fixtures' },
-  { id: 'chase-4',      name: 'Chase 4',       desc: 'Chase rotating through four colours' },
-  { id: 'alt-quarters', name: 'Alt Quarters',  desc: 'Four sections swap colours each beat' },
-  { id: 'pairs-4',      name: 'Pairs 4',       desc: 'Adjacent pairs chase with four colours' },
+  { id: 'pairs',        name: 'Pairs',         desc: 'Two adjacent fixtures travel together' },
+  { id: 'wave',         name: 'Wave',          desc: 'Sine brightness sweep across the rig' },
+  { id: 'stack-up',     name: 'Stack Up',      desc: 'Fill fixtures one by one, then reset' },
+
+  // Static blocks that rotate on the beat.
+  { id: 'split',        name: 'Split',         desc: 'Palette colours alternating per fixture' },
+  { id: 'sections',     name: 'Sections',      desc: 'Rig splits into one block per palette colour, blocks swap each beat' },
+
+  // Random.
+  { id: 'twinkle',      name: 'Twinkle',       desc: 'Soft random levels, nothing goes fully dark' },
+  { id: 'sparkle',      name: 'Sparkle',       desc: 'Hard random on/off, instant' },
+  { id: 'random-flash', name: 'Random Flash',  desc: 'One random fixture pops each beat' },
 ];
 
 const PATTERN_IDS = PATTERNS.map((p) => p.id);
@@ -140,6 +152,18 @@ const ENERGY_EFFECTS = [
 
 const ENERGY_EFFECT_IDS = ENERGY_EFFECTS.map((e) => e.id);
 
+// How far the operator can shift the generated show against the music, either
+// way. Two seconds covers every real source of lag — player buffering, a polled
+// and quantised position API, Art-Net across a network, fixture processing, and
+// the throw from a PA to the back of a room — with room to spare. Wider than
+// this and a mis-drag stops being a sync adjustment and starts being a
+// different part of the song.
+//
+// Lives here, with the other domain tables, because the settings store, the
+// patch validator, the MIDI surface and the auto show all need it, and this is
+// the only module among them that requires nothing itself.
+const SYNC_OFFSET_LIMIT_MS = 2000;
+
 const AUTO_SOURCES = ['auto', 'spotify', 'deezer', 'nowplaying', 'prolink', 'timer'];
 
 module.exports = {
@@ -151,4 +175,5 @@ module.exports = {
   ENERGY_EFFECTS,
   ENERGY_EFFECT_IDS,
   AUTO_SOURCES,
+  SYNC_OFFSET_LIMIT_MS,
 };

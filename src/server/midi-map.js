@@ -61,6 +61,7 @@ const ACTIONS = [
   { id: 'adjustFixtureDim',    label: 'Nudge fixture dimmer',        input: 'encoder', param: { key: 'fixture', kind: 'fixture', label: 'Fixture' } },
   { id: 'adjustFixtureMax',    label: 'Nudge fixture max brightness', input: 'encoder', param: { key: 'fixture', kind: 'fixture', label: 'Fixture' } },
   { id: 'adjustAutoIntensity', label: 'Nudge auto-show intensity',   input: 'encoder' },
+  { id: 'adjustAutoSync',      label: 'Nudge light/music sync',       input: 'encoder' },
 
   // Faders (absolute)
   { id: 'setMasterDimmer',     label: 'Master dimmer',               input: 'fader' },
@@ -69,6 +70,7 @@ const ACTIONS = [
   { id: 'setFixtureDim',       label: 'Fixture dimmer',              input: 'fader', param: { key: 'fixture', kind: 'fixture', label: 'Fixture' } },
   { id: 'setFixtureMax',       label: 'Fixture max brightness',      input: 'fader', param: { key: 'fixture', kind: 'fixture', label: 'Fixture' } },
   { id: 'setAutoIntensity',    label: 'Auto-show intensity',         input: 'fader' },
+  { id: 'setAutoSync',         label: 'Light/music sync offset',     input: 'fader' },
 ];
 
 const ACTION_IDS = ACTIONS.map((a) => a.id);

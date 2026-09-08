@@ -6,7 +6,8 @@ const {
   getClientState, getLiveState, getCatalogs, getDmxSnapshot, universeOf, state,
 } = require('../../src/server/state');
 
-const STATIC = ['colorPresets', 'patterns', 'energyEffects', 'strobeFunctions', 'palettes'];
+const STATIC = ['colorPresets', 'patterns', 'energyEffects', 'strobeFunctions', 'palettes',
+  'syncOffsetLimitMs'];
 
 // The static catalogues were 63% of a 7 KB payload and went out
 // ten times a second unchanged.

@@ -31,42 +31,38 @@ function hsvToRgb(h, s, v) {
   };
 }
 
+// Brightness for the lamps a travelling pattern is *not* on. Dark enough that
+// the moving lamp is what the eye follows, bright enough that the rig does not
+// look half-broken between hits. The old patterns each picked their own value
+// between 50 and 80, which made a chase and a runner sit at visibly different
+// levels for no reason.
+const BED = 45;
+
+/**
+ * The distinct colours the four slots hold, in slot order.
+ *
+ * A palette smaller than four slots wraps to fill them — a duo becomes A/B/A/B
+ * and a triad A/B/C/A (see server/palettes.js) — so counting distinct entries
+ * recovers the size the operator actually picked. Slots hold resolved preset
+ * objects out of one COLOR_PRESETS table, so two slots on the same preset are
+ * the same object and reference equality is the right test.
+ *
+ * This is what lets one `split` replace the old split / split-3 / split-4: a
+ * pattern uses as many colours as the look has, instead of the caller picking
+ * the variant whose name matches the palette size. Eight patterns collapsed
+ * into four this way, and the auto show no longer has to gate a `multi3` and a
+ * `multi4` pool on the palette it happened to lock.
+ */
+function paletteOf(ctx) {
+  const out = [];
+  for (const c of ctx.colors) if (c && !out.includes(c)) out.push(c);
+  return out.length ? out : [{ r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 }];
+}
+
 const PATTERN_FUNCS = {
+  // ── Whole rig ─────────────────────────────────────────────────────────────
+
   solid(ctx) {
-    const [colA] = ctx.colors;
-    for (let i = 0; i < ctx.fixtureCount; i++) ctx.write(i, colA, 255, 0);
-  },
-
-  chase(ctx) {
-    const [colA, colB] = ctx.colors;
-    const N = ctx.fixtureCount;
-    for (let i = 0; i < N; i++) {
-      const active = i === ctx.step % N;
-      ctx.write(i, active ? colA : colB, active ? 255 : 80, 0);
-    }
-  },
-
-  'chase-rev'(ctx) {
-    const [colA, colB] = ctx.colors;
-    const N = ctx.fixtureCount;
-    for (let i = 0; i < N; i++) {
-      const active = i === (N - 1 - ctx.step % N);
-      ctx.write(i, active ? colA : colB, active ? 255 : 80, 0);
-    }
-  },
-
-  'ping-pong'(ctx) {
-    const [colA, colB] = ctx.colors;
-    const N = ctx.fixtureCount;
-    const span = Math.max(2, N) * 2 - 2;
-    const pos = ctx.step % span;
-    const idx = pos < N ? pos : (span - pos);
-    for (let i = 0; i < N; i++) {
-      ctx.write(i, i === idx ? colA : colB, i === idx ? 255 : 80, 0);
-    }
-  },
-
-  strobe(ctx) {
     const [colA] = ctx.colors;
     for (let i = 0; i < ctx.fixtureCount; i++) ctx.write(i, colA, 255, 0);
   },
@@ -77,39 +73,93 @@ const PATTERN_FUNCS = {
     for (let i = 0; i < ctx.fixtureCount; i++) ctx.write(i, colA, 255, 0);
   },
 
+  hit(ctx) {
+    const [colA] = ctx.colors;
+    ctx.resetHitPhase();
+    for (let i = 0; i < ctx.fixtureCount; i++) ctx.write(i, colA, 255, 0);
+  },
+
+  strobe(ctx) {
+    const [colA] = ctx.colors;
+    for (let i = 0; i < ctx.fixtureCount; i++) ctx.write(i, colA, 255, 0);
+  },
+
   'color-cycle'(ctx) {
-    const col = hsvToRgb(ctx.hue, 1, 1);
+    // Steps the whole rig to the next colour in the look each beat. It used to
+    // sweep raw HSV, which ignored the palette entirely and so had to be kept
+    // out of every generated-show pool; driving it from the slots means it
+    // finally agrees with whatever look is on stage.
+    const pal = paletteOf(ctx);
+    const col = pal[ctx.step % pal.length];
     for (let i = 0; i < ctx.fixtureCount; i++) ctx.write(i, col, 255, 0);
   },
 
   rainbow(ctx) {
+    // The one deliberately palette-free look: a full spectrum spread across the
+    // rig. No set of six presets can approximate it, which is why it survives
+    // the fold — and why the auto show still leaves it alone.
     const N = Math.max(1, ctx.fixtureCount);
     for (let i = 0; i < ctx.fixtureCount; i++) {
-      const col = hsvToRgb(ctx.hue + (360 / N) * i, 1, 1);
-      ctx.write(i, col, 255, 0);
+      ctx.write(i, hsvToRgb(ctx.hue + (360 / N) * i, 1, 1), 255, 0);
     }
   },
 
-  twinkle(ctx) {
-    const [colA] = ctx.colors;
-    for (let i = 0; i < ctx.fixtureCount; i++) {
-      if (Math.random() < 0.4) ctx.twinkle[i] = Math.random() < 0.7 ? 255 : 60;
-      ctx.write(i, colA, ctx.twinkle[i], 0);
+  // ── Travelling ────────────────────────────────────────────────────────────
+  //
+  // All of these light one or two lamps at full and hold the rest at BED. The
+  // lit lamp takes the next colour in the look on every step, so a four-colour
+  // palette gets the old chase-4 behaviour and a two-colour palette alternates
+  // — one pattern instead of three.
+
+  chase(ctx) {
+    const pal = paletteOf(ctx);
+    const N = ctx.fixtureCount;
+    for (let i = 0; i < N; i++) {
+      const active = i === ctx.step % N;
+      ctx.write(i, active ? pal[ctx.step % pal.length] : pal[pal.length - 1], active ? 255 : BED, 0);
     }
   },
 
-  split(ctx) {
-    const [colA, colB] = ctx.colors;
-    for (let i = 0; i < ctx.fixtureCount; i++) {
-      ctx.write(i, (i + ctx.step) % 2 === 0 ? colA : colB, 255, 0);
+  'chase-rev'(ctx) {
+    const pal = paletteOf(ctx);
+    const N = ctx.fixtureCount;
+    for (let i = 0; i < N; i++) {
+      const active = i === (N - 1 - ctx.step % N);
+      ctx.write(i, active ? pal[ctx.step % pal.length] : pal[pal.length - 1], active ? 255 : BED, 0);
     }
   },
 
-  sparkle(ctx) {
-    const [colA] = ctx.colors;
-    for (let i = 0; i < ctx.fixtureCount; i++) {
-      const on = Math.random() < 0.35;
-      ctx.write(i, colA, on ? 255 : 0, 0);
+  'ping-pong'(ctx) {
+    const pal = paletteOf(ctx);
+    const N = ctx.fixtureCount;
+    const span = Math.max(2, N) * 2 - 2;
+    const pos = ctx.step % span;
+    const idx = pos < N ? pos : (span - pos);
+    for (let i = 0; i < N; i++) {
+      const active = i === idx;
+      ctx.write(i, active ? pal[ctx.step % pal.length] : pal[pal.length - 1], active ? 255 : BED, 0);
+    }
+  },
+
+  runner(ctx) {
+    const pal = paletteOf(ctx);
+    const N = Math.max(1, ctx.fixtureCount);
+    const lead = ctx.step % N;
+    const col = pal[ctx.step % pal.length];
+    for (let i = 0; i < N; i++) {
+      const dist = (lead - i + N) % N;
+      const b = dist === 0 ? 255 : dist === 1 ? 150 : dist === 2 ? 70 : 0;
+      ctx.write(i, col, b, 0);
+    }
+  },
+
+  pairs(ctx) {
+    const pal = paletteOf(ctx);
+    const N = Math.max(1, ctx.fixtureCount);
+    const pos = ctx.step % N;
+    for (let i = 0; i < N; i++) {
+      const on = (i === pos || i === (pos + 1) % N);
+      ctx.write(i, on ? pal[ctx.step % pal.length] : pal[pal.length - 1], on ? 255 : BED, 0);
     }
   },
 
@@ -117,134 +167,79 @@ const PATTERN_FUNCS = {
     const [colA] = ctx.colors;
     const N = Math.max(1, ctx.fixtureCount);
     for (let i = 0; i < N; i++) {
-      const phase = (ctx.step * 0.25) - (i * (Math.PI * 2 / N));
+      // One full sweep every eight beats. The phase used to advance 0.25 rad a
+      // beat — a quarter turn every twenty-five beats — so on anything shorter
+      // than a whole song the wave never visibly moved.
+      const phase = (ctx.step * (Math.PI * 2 / 8)) - (i * (Math.PI * 2 / N));
       const b = Math.round(((Math.sin(phase) + 1) / 2) * 215 + 40);
       ctx.write(i, colA, b, 0);
     }
   },
 
   'stack-up'(ctx) {
-    const [colA, colB] = ctx.colors;
+    const pal = paletteOf(ctx);
     const N = ctx.fixtureCount;
-    const cycle = N + 1;
-    const pos = ctx.step % cycle;
+    const pos = ctx.step % (N + 1);
     for (let i = 0; i < N; i++) {
       const lit = i < pos;
-      ctx.write(i, lit ? colA : colB, lit ? 255 : 60, 0);
+      // The stack builds in the look's colours rather than one flat wash, so a
+      // four-lamp rig fills with four different colours.
+      ctx.write(i, lit ? pal[i % pal.length] : pal[pal.length - 1], lit ? 255 : BED, 0);
+    }
+  },
+
+  // ── Sectional ─────────────────────────────────────────────────────────────
+
+  split(ctx) {
+    const pal = paletteOf(ctx);
+    for (let i = 0; i < ctx.fixtureCount; i++) {
+      ctx.write(i, pal[(i + ctx.step) % pal.length], 255, 0);
+    }
+  },
+
+  sections(ctx) {
+    // The rig divides into as many blocks as the look has colours and they
+    // rotate one place each beat. Was three patterns — alt-halves, alt-thirds,
+    // alt-quarters — that differed only in how many blocks they cut.
+    const pal = paletteOf(ctx);
+    const N = Math.max(1, ctx.fixtureCount);
+    const size = Math.max(1, Math.ceil(N / pal.length));
+    const rot = ctx.step % pal.length;
+    for (let i = 0; i < N; i++) {
+      const block = Math.min(pal.length - 1, Math.floor(i / size));
+      ctx.write(i, pal[(block + rot) % pal.length], 255, 0);
+    }
+  },
+
+  // ── Random ────────────────────────────────────────────────────────────────
+  //
+  // Three of them because they are three different looks, not three spellings
+  // of one: a soft shimmer that never goes dark, a hard scatter with gaps, and
+  // a single lamp popping against black.
+
+  twinkle(ctx) {
+    const pal = paletteOf(ctx);
+    for (let i = 0; i < ctx.fixtureCount; i++) {
+      if (Math.random() < 0.4) ctx.twinkle[i] = Math.random() < 0.7 ? 255 : 60;
+      ctx.write(i, pal[i % pal.length], ctx.twinkle[i], 0);
+    }
+  },
+
+  sparkle(ctx) {
+    const pal = paletteOf(ctx);
+    for (let i = 0; i < ctx.fixtureCount; i++) {
+      ctx.write(i, pal[i % pal.length], Math.random() < 0.35 ? 255 : 0, 0);
     }
   },
 
   'random-flash'(ctx) {
-    const [colA, colB] = ctx.colors;
+    const pal = paletteOf(ctx);
     const N = ctx.fixtureCount;
     const target = Math.floor(Math.random() * Math.max(1, N));
     for (let i = 0; i < N; i++) {
-      ctx.write(i, i === target ? colA : colB, i === target ? 255 : 0, 0);
-    }
-  },
-
-  runner(ctx) {
-    const [colA] = ctx.colors;
-    const N = Math.max(1, ctx.fixtureCount);
-    const lead = ctx.step % N;
-    for (let i = 0; i < N; i++) {
-      const dist = (lead - i + N) % N;
-      const b = dist === 0 ? 255 : dist === 1 ? 150 : dist === 2 ? 70 : 0;
-      ctx.write(i, colA, b, 0);
-    }
-  },
-
-  pairs(ctx) {
-    const [colA, colB] = ctx.colors;
-    const N = Math.max(1, ctx.fixtureCount);
-    const pos = ctx.step % N;
-    for (let i = 0; i < N; i++) {
-      const on = (i === pos || i === (pos + 1) % N);
-      ctx.write(i, on ? colA : colB, on ? 255 : 50, 0);
-    }
-  },
-
-  hit(ctx) {
-    const [colA] = ctx.colors;
-    ctx.resetHitPhase();
-    for (let i = 0; i < ctx.fixtureCount; i++) ctx.write(i, colA, 255, 0);
-  },
-
-  'alt-halves'(ctx) {
-    const [colA, colB] = ctx.colors;
-    const N = Math.max(1, ctx.fixtureCount);
-    const half = Math.max(1, Math.floor(N / 2));
-    const flipped = (ctx.step % 2) === 1;
-    for (let i = 0; i < N; i++) {
-      const firstHalf = i < half;
-      const useA = flipped ? !firstHalf : firstHalf;
-      ctx.write(i, useA ? colA : colB, 255, 0);
-    }
-  },
-
-  'split-3'(ctx) {
-    const cols = [ctx.colors[0], ctx.colors[1], ctx.colors[2]];
-    for (let i = 0; i < ctx.fixtureCount; i++) {
-      ctx.write(i, cols[(i + ctx.step) % 3], 255, 0);
-    }
-  },
-
-  'chase-3'(ctx) {
-    const cols = [ctx.colors[0], ctx.colors[1], ctx.colors[2]];
-    const N = ctx.fixtureCount;
-    for (let i = 0; i < N; i++) {
-      const active = i === ctx.step % N;
-      ctx.write(i, active ? cols[ctx.step % 3] : cols[i % 3], active ? 255 : 60, 0);
-    }
-  },
-
-  'alt-thirds'(ctx) {
-    const cols = [ctx.colors[0], ctx.colors[1], ctx.colors[2]];
-    const N = Math.max(1, ctx.fixtureCount);
-    const third = Math.max(1, Math.ceil(N / 3));
-    const rot = ctx.step % 3;
-    for (let i = 0; i < N; i++) {
-      const section = Math.min(2, Math.floor(i / third));
-      ctx.write(i, cols[(section + rot) % 3], 255, 0);
-    }
-  },
-
-  'split-4'(ctx) {
-    const cols = ctx.colors;
-    for (let i = 0; i < ctx.fixtureCount; i++) {
-      ctx.write(i, cols[(i + ctx.step) % 4], 255, 0);
-    }
-  },
-
-  'chase-4'(ctx) {
-    const cols = ctx.colors;
-    const N = ctx.fixtureCount;
-    for (let i = 0; i < N; i++) {
-      const active = i === ctx.step % N;
-      ctx.write(i, active ? cols[ctx.step % 4] : cols[i % 4], active ? 255 : 60, 0);
-    }
-  },
-
-  'alt-quarters'(ctx) {
-    const cols = ctx.colors;
-    const N = Math.max(1, ctx.fixtureCount);
-    const quarter = Math.max(1, Math.ceil(N / 4));
-    const rot = ctx.step % 4;
-    for (let i = 0; i < N; i++) {
-      const section = Math.min(3, Math.floor(i / quarter));
-      ctx.write(i, cols[(section + rot) % 4], 255, 0);
-    }
-  },
-
-  'pairs-4'(ctx) {
-    const cols = ctx.colors;
-    const N = Math.max(1, ctx.fixtureCount);
-    const pos = ctx.step % N;
-    for (let i = 0; i < N; i++) {
-      const on = (i === pos || i === (pos + 1) % N);
-      ctx.write(i, on ? cols[ctx.step % 4] : cols[i % 4], on ? 255 : 50, 0);
+      ctx.write(i, pal[ctx.step % pal.length], i === target ? 255 : 0, 0);
     }
   },
 };
 
-module.exports = { PATTERN_FUNCS, hsvToRgb };
+module.exports = { PATTERN_FUNCS, paletteOf, hsvToRgb };

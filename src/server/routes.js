@@ -950,6 +950,16 @@ function attachRoutes(app, deps) {
     } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
   });
 
+  // Nudging this mid-set is normal — an operator hears the lights lagging and
+  // corrects — so it gets its own endpoint alongside intensity rather than
+  // living only in the settings page.
+  app.post('/api/auto/sync-offset/:value', (req, res) => {
+    try {
+      applyPatch({ autoSyncOffsetMs: parseInt(req.params.value, 10) });
+      res.json({ ok: true, syncOffsetMs: state.autoSyncOffsetMs });
+    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+  });
+
   app.post('/api/auto/palette-size/:value', (req, res) => {
     try {
       applyPatch({ autoPaletteSize: parseInt(req.params.value, 10) });

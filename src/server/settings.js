@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { z } = require('zod');
+const { SYNC_OFFSET_LIMIT_MS } = require('./presets');
 
 /**
  * Persisted configuration, owned by the settings page.
@@ -70,6 +71,14 @@ const DEFAULTS = {
   },
   deezer: {
     arl: '',
+  },
+  auto: {
+    // Milliseconds the generated show runs ahead of the reported track
+    // position. Lives here rather than in run-time state because the right
+    // value is a property of the room and the rig — player buffering, a polled
+    // position API, Art-Net over the network, fixture latency, the throw from
+    // the PA — and so it holds from one night to the next.
+    syncOffsetMs: 0,
   },
   analysis: {
     analyzerTimeoutMs: 600000,
@@ -151,6 +160,9 @@ const schema = z.object({
   }).strict(),
   deezer: z.object({
     arl: z.string().max(512),
+  }).strict(),
+  auto: z.object({
+    syncOffsetMs: z.number().int().min(-SYNC_OFFSET_LIMIT_MS).max(SYNC_OFFSET_LIMIT_MS),
   }).strict(),
   analysis: z.object({
     // One minute floor: below that a normal track analysis would be killed

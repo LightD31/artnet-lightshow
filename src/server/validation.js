@@ -5,6 +5,7 @@ const net = require('net');
 const {
   COLOR_PRESETS,
   AUTO_SOURCES,
+  SYNC_OFFSET_LIMIT_MS,
 } = require('./presets');
 const { PALETTE_IDS } = require('./palettes');
 
@@ -66,6 +67,8 @@ const patchSchema = z.object({
   autoSource: z.enum(AUTO_SOURCES).optional(),
   autoPaletteSize: z.union([z.literal(2), z.literal(3), z.literal(4)]).optional(),
   autoIntensity: z.number().min(0).max(100).optional(),
+  autoSyncOffsetMs: z.number().int()
+    .min(-SYNC_OFFSET_LIMIT_MS).max(SYNC_OFFSET_LIMIT_MS).optional(),
   autoPrefetchDepth: z.number().int().min(1).max(5).optional(),
 }).strict();
 

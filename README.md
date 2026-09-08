@@ -18,9 +18,9 @@ via **Bitfocus Companion**, and a REST API.
 **Manual control**
 
 - **BPM engine** — tap tempo, manual entry, beat subdivision (1/1 … 1/16)
-- **25 patterns** — solid, chases, ping-pong, strobe, fade, colour cycle,
-  rainbow, twinkle, sparkle, wave, runner, splits and halves/thirds/quarters
-  variants for larger rigs
+- **18 patterns** — solid, chases, ping-pong, strobe, fade, colour cycle,
+  rainbow, twinkle, sparkle, wave, runner, splits and sections; each one takes
+  its colour count from the palette rather than needing a variant per size
 - **15 colour presets** — a nine-hue wheel with nothing closer than 30° on it,
   plus two whites, two pale washes and UV — and four colour slots (A–D) that
   patterns draw from
@@ -308,7 +308,7 @@ them do not implement it, and a broadcast rig works fine without ever replying.
 
 ---
 
-## Colours and palettes
+## Colours, patterns and palettes
 
 ### The colour presets
 
@@ -342,6 +342,38 @@ Yellow is the one that may look missing. The amber emitter puts Amber at 37° an
 an RGB yellow at 60°: a difference on a screen, not one across a dark room. Amber
 is also the more useful half of that pair on a party rig, since an RGB yellow
 tends to arrive as dirty white once there is any haze in the air.
+
+### The patterns
+
+Eighteen, grouped by what the rig actually *does* — which is what an audience
+tells apart:
+
+| | |
+|---|---|
+| **Whole rig** | Solid · Fade · Hit · Strobe · Colour Cycle · Rainbow |
+| **Travelling** | Chase → · Chase ← · Ping Pong · Runner · Pairs · Wave · Stack Up |
+| **Sectional** | Split · Sections |
+| **Random** | Twinkle · Sparkle · Random Flash |
+
+There used to be twenty-five, but several were one pattern wearing different
+names. `split`, `split-3` and `split-4` were the same renderer picked three
+ways; so were `chase` / `chase-3` / `chase-4`, `alt-halves` / `alt-thirds` /
+`alt-quarters`, and `pairs` / `pairs-4`. The only thing the suffix changed was
+how many colours the pattern reached for, which meant an operator on a
+two-colour palette had to know not to press the `-4` button.
+
+A pattern now reads that off the look itself: the four slots wrap a smaller
+palette (a duo fills them A/B/A/B), so counting the distinct ones recovers the
+size that was picked. One `split` covers all three. `alt-halves` became
+**Sections** — the rig divides into one block per palette colour and the blocks
+rotate each beat — because with a variable block count the old name was wrong
+two thirds of the time.
+
+**Rainbow** is the one pattern that ignores the palette, spreading a full
+spectrum across the rig; no set of solid presets approximates that, which is
+why it survives the fold and why the auto show never picks it. **Colour Cycle**
+used to ignore the palette too and was excluded for the same reason — it now
+steps the whole rig through the look's colours, so it has joined the pool.
 
 ### The palettes
 
@@ -557,6 +589,41 @@ Both are live: changing either rebuilds the timeline from the analysis already
 in hand, so the new setting takes effect on the next tick without re-analysing
 the track. Neither touches the master dimmer — that slider stays yours.
 
+### Sync — lining the lights up with the room
+
+There is always a gap between the audio a room hears and the light that answers
+it, and none of it is under this program's control. The player buffers. A
+position API like Spotify's is polled and quantised, so the number it reports is
+already a little stale. Art-Net crosses a network. The fixture has its own
+processing delay. And the PA is metres away from the audience, which is a few
+more milliseconds by itself. It adds up to a fixed error for a given rig — but a
+different one for every rig, so it cannot be derived, only dialled in.
+
+The **Sync** control in the *Look* panel does that. It shifts the whole
+generated show against the reported track position:
+
+- **Positive** runs the lights **ahead** — use it when the rig feels late.
+- **Negative** holds them back.
+- Range is ±2000 ms, in 5 ms steps.
+
+The `−` and `+` buttons move it 5 ms at a time, which is how it actually gets
+dialled in; the slider is for coarse jumps, and clicking the read-out puts it
+back to zero.
+
+Unlike palette and intensity, this one is **saved with your settings**
+(`auto.syncOffsetMs`), because the right value belongs to the rig and the room
+rather than to tonight's set — you calibrate it once and it is there next time.
+
+Nudging it mid-set never replays the show. Stepping the offset forward over an
+event skips that event rather than firing it: a backwards nudge could not
+un-fire what already played, and a forwards one that caught up would empty every
+event it crossed into the room in a single frame. The cost is a beat of the
+previous look; the alternative is a burst of strobe.
+
+It is on the control surface too — **Light/music sync offset** on a fader
+(centre is zero), **Nudge light/music sync** on an encoder at 5 ms a detent —
+and over REST at `POST /api/auto/sync-offset/:value`.
+
 Intensity is also on the control surface (**Auto-show intensity** on a fader,
 bound to fader 8 by default; **Nudge auto-show intensity** on an encoder) and
 over REST at `POST /api/auto/intensity/:value`, so it can be driven from a
@@ -645,8 +712,8 @@ the first port matching `/x.?touch/i`.
 | Control | Actions |
 |---------|---------|
 | **Buttons** | Tap tempo · Play/stop · Master blackout · Select pattern · Set colour slot A–D · Select palette · Set beat division · Energy override (hold) · Cycle the held energy effect · Cycle strobe function · Fixture blackout · Recall cue |
-| **Encoders** (relative) | Nudge BPM · Nudge master dimmer · Nudge strobe speed · Nudge fixture dimmer · Nudge fixture max brightness · Nudge auto-show intensity |
-| **Faders** (absolute) | Master dimmer · Strobe speed · BPM · Fixture dimmer · Fixture max brightness · Auto-show intensity |
+| **Encoders** (relative) | Nudge BPM · Nudge master dimmer · Nudge strobe speed · Nudge fixture dimmer · Nudge fixture max brightness · Nudge auto-show intensity · Nudge light/music sync |
+| **Faders** (absolute) | Master dimmer · Strobe speed · BPM · Fixture dimmer · Fixture max brightness · Auto-show intensity · Light/music sync offset |
 
 ---
 
@@ -725,6 +792,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/auto/start` · `/api/auto/stop` · `/api/auto/reset` | Playback control |
 | POST | `/api/auto/intensity/:value` | Generated-show energy, 0–100 |
 | POST | `/api/auto/palette-size/:value` | Colours per song: 2, 3 or 4 |
+| POST | `/api/auto/sync-offset/:value` | Light/music sync offset in ms, −2000 to 2000 |
 | GET | `/api/auto/state` · `/api/auto/timeline` | Status / generated timeline |
 | GET · DELETE | `/api/auto/cache` | List / clear cached analyses |
 | DELETE | `/api/auto/cache/entry` | Remove one cached analysis (`{ key }`) |
