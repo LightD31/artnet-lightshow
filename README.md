@@ -22,8 +22,12 @@ via **Bitfocus Companion**, and a REST API.
   rainbow, twinkle, sparkle, wave, runner, splits and halves/thirds/quarters
   variants for larger rigs
 - **24 colour presets** and four colour slots (A–D) that patterns draw from
+- **Palettes** — the auto show's sixteen hand-tuned looks, pickable by hand: one
+  press fills all four slots with colours that were chosen to sit together
 - **Per-fixture overrides** — independent RGBWAUV + dimmer + strobe, or an
   instant per-fixture blackout
+- **Per-fixture maximum brightness** — scale down a lamp that is too close to
+  the audience without taking it out of the show
 - **Energy overrides** — one-touch panic effects that trump everything except
   master blackout
 - **Master controls** — global dimmer, master blackout, play/stop
@@ -295,6 +299,58 @@ them do not implement it, and a broadcast rig works fine without ever replying.
 
 ---
 
+## Palettes
+
+Sixteen named looks — the same bank the auto show locks a song to, offered by
+hand. One press writes all four colour slots with colours that were picked to
+sit together, which is the fiddly part of driving the rig manually.
+
+Pick a size first: **2** for a small rig (two strongly contrasting hues that
+still read from the back of the room), **3** for three well-separated hues, or
+**4** for the full hand-tuned tetrad. Each size is its own bank rather than a
+slice of the four-colour one — a tetrad's two analogous colours look like one
+colour when there are only two lamps. A palette smaller than four slots wraps to
+fill them all, so the four-colour patterns still have something in every slot.
+
+The picker lives at the top of the *Colours* card. The active look stays named
+until you edit a slot by hand, at which point the rig is no longer showing that
+palette and the name goes.
+
+Palettes are also a bindable MIDI action (**Select palette**) and reachable over
+REST at `POST /api/palette/:id`.
+
+---
+
+## Fixture maximum brightness
+
+Every fixture carries a **brightness trim** — the *Max* slider on its card. It
+**scales** that fixture's output rather than clipping it: at 50% the fixture is
+half as bright at *every* level, not merely capped at half. A clamp would leave a
+fixture already sitting below the line untouched and only bite at the top, so the
+bottom of the throw would go dead and two fixtures on different trims would
+converge as they dimmed.
+
+It is a trim, not a look:
+
+- It applies to whatever is driving the fixture: the pattern engine, a
+  per-fixture override, or an energy override.
+- It does **not** put the fixture into override mode. Trimming a lamp that is
+  hanging a metre from someone's face should not also take it out of the show.
+- It is not captured in a cue, and recalling a cue does not change it. A trim
+  belongs with the patch — it describes where the lamp is hung, not what the
+  show is doing.
+- It survives clearing the override, and it rides the show file so a rig loads
+  back trimmed the way it was left.
+
+The grand master and the trim both multiply, so they compose: a fixture trimmed
+to 50% with the master at 50% comes up at 25%.
+
+Set it from the fixture card, from MIDI (**Fixture max brightness** on a fader,
+**Nudge fixture max brightness** on an encoder), or over REST at
+`POST /api/fixture/:id/max/:value`.
+
+---
+
 ## Cues
 
 A **cue** is the look on stage saved under a name: tempo and beat division,
@@ -309,10 +365,11 @@ Cues live in the *Cues* card on the live page.
 - **⟳** overwrite the cue with what is on stage now.
 - **×** delete — with an **Undo** that puts the same cue back in the same slot.
 
-A cue holds no patch data — no addresses, no universes, no Art-Net target — so
-recalling one can never re-address the rig or move a fixture to another universe
-mid-show. Fixtures the cue says nothing about are cleared rather than left
-holding the previous look: a cue is the whole rig, not a partial edit.
+A cue holds no patch data — no addresses, no universes, no Art-Net target, and
+no per-fixture brightness trim — so recalling one can never re-address the rig,
+move a fixture to another universe, or undo a trim mid-show. Fixtures the cue
+says nothing about are cleared rather than left holding the previous look: a cue
+is the whole rig, not a partial edit.
 
 They are stored in `config/cues.json` and survive restarts. Up to 128.
 
@@ -321,7 +378,9 @@ They are stored in `config/cues.json` and survive restarts. Up to 128.
 ## Energy overrides
 
 Panic-button effects that instantly override patterns and per-fixture settings.
-One at a time; they bypass the master dimmer and always output at full.
+One at a time. They are scaled by the grand master and each fixture's maximum
+brightness — the master is the one hand you keep on the whole rig, and it should
+still mean something at the moment you hit the blinder.
 
 | ID | Name | Effect |
 |----|------|--------|
@@ -405,6 +464,23 @@ Changing it recycles the analyzer process; no restart needed.
 The Deezer ARL cookie (settings page → *Deezer*) is optional but recommended:
 with it, audio is fetched by ISRC for an exact match instead of a yt-dlp search.
 
+### Shaping the generated show
+
+Two controls sit in the *Look* panel and decide how the generated show reads:
+
+- **Palette** — how many colours a song locks to (2, 3 or 4).
+- **Intensity** — 0–100, how hard the show pushes: accent density, drop effects,
+  strobe bursts and beat-division scaling. 50 is normal.
+
+Both are live: changing either rebuilds the timeline from the analysis already
+in hand, so the new setting takes effect on the next tick without re-analysing
+the track. Neither touches the master dimmer — that slider stays yours.
+
+Intensity is also on the control surface (**Auto-show intensity** on a fader,
+bound to fader 8 by default; **Nudge auto-show intensity** on an encoder) and
+over REST at `POST /api/auto/intensity/:value`, so it can be driven from a
+Stream Deck or a script mid-set rather than only from the browser.
+
 ---
 
 ## MIDI
@@ -473,6 +549,7 @@ the first port matching `/x.?touch/i`.
 | Encoders 3–6 | CC 12–15 (relative) | Fixture 1–4 dimmer |
 | Encoder 7 | CC 16 (relative) | Strobe speed |
 | Faders 1–4 | CC 1–4 (absolute) | Fixture 1–4 dimmer |
+| Fader 8 | CC 8 (absolute) | Auto-show intensity |
 | Fader 9 | CC 9 (absolute) | Master dimmer |
 | Encoder push 1 | Note 0 | Tap tempo |
 | Encoder push 2 | Note 1 | Toggle blackout |
@@ -486,9 +563,9 @@ the first port matching `/x.?touch/i`.
 
 | Control | Actions |
 |---------|---------|
-| **Buttons** | Tap tempo · Play/stop · Master blackout · Select pattern · Set colour slot A–D · Set beat division · Energy override (hold) · Cycle the held energy effect · Cycle strobe function · Fixture blackout · Recall cue |
-| **Encoders** (relative) | Nudge BPM · Nudge master dimmer · Nudge strobe speed · Nudge fixture dimmer |
-| **Faders** (absolute) | Master dimmer · Strobe speed · BPM · Fixture dimmer |
+| **Buttons** | Tap tempo · Play/stop · Master blackout · Select pattern · Set colour slot A–D · Select palette · Set beat division · Energy override (hold) · Cycle the held energy effect · Cycle strobe function · Fixture blackout · Recall cue |
+| **Encoders** (relative) | Nudge BPM · Nudge master dimmer · Nudge strobe speed · Nudge fixture dimmer · Nudge fixture max brightness · Nudge auto-show intensity |
+| **Faders** (absolute) | Master dimmer · Strobe speed · BPM · Fixture dimmer · Fixture max brightness · Auto-show intensity |
 
 ---
 
@@ -527,6 +604,8 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/blackout/toggle` · `/api/blackout/on` · `/api/blackout/off` | Master blackout |
 | POST | `/api/pattern/:id` | Set pattern (e.g. `chase`, `rainbow`) |
 | POST | `/api/color/:slot/:index` | Set colour slot `a`–`d` (index 0–23) |
+| GET | `/api/palettes` | The named looks, their colours at each size, and the one on stage |
+| POST | `/api/palette/:id` | Write all four slots from a look (`{ size }` — 2, 3 or 4; default 4) |
 | POST | `/api/energy/:id` · `/api/energy/off` | Energy override |
 
 ### Fixtures, profiles and shows
@@ -535,6 +614,7 @@ All endpoints return JSON. When a token is configured, send it as an
 |--------|------|-------------|
 | POST | `/api/fixture/:id/override` | Set a fixture override (JSON body) |
 | POST | `/api/fixture/:id/blackout/toggle` · `/api/fixture/:id/clear` | Per-fixture blackout / clear |
+| POST | `/api/fixture/:id/max/:value` | Fixture maximum brightness (0–255) — scales the fixture's output; not an override |
 | POST | `/api/fixtures` · DELETE `/api/fixtures/:id` | Add / remove a fixture (`{ universe }` optional on add; DELETE answers with the fixture and its index) |
 | POST | `/api/fixtures/restore` | Put a deleted fixture back (`{ index, fixture }`) |
 | POST | `/api/gdtf/parse` | Parse an uploaded `.gdtf` (multipart `gdtf`) |
@@ -562,6 +642,8 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/auto/download-analyze` | Analyse a YouTube URL or search |
 | POST | `/api/auto/analyze-upload` | Analyse an uploaded audio file (multipart `audio`) |
 | POST | `/api/auto/start` · `/api/auto/stop` · `/api/auto/reset` | Playback control |
+| POST | `/api/auto/intensity/:value` | Generated-show energy, 0–100 |
+| POST | `/api/auto/palette-size/:value` | Colours per song: 2, 3 or 4 |
 | GET | `/api/auto/state` · `/api/auto/timeline` | Status / generated timeline |
 | GET · DELETE | `/api/auto/cache` | List / clear cached analyses |
 | DELETE | `/api/auto/cache/entry` | Remove one cached analysis (`{ key }`) |
@@ -604,7 +686,8 @@ connect, changed fields thereafter), `dmx` (live channel values, keyed by
 universe), `auto-position`, `midi-status`, `midi-map`, `midi-learn` and
 `error-msg`.
 
-The `fixture` message carries `{ id, address?, universe?, label?, profileId? }`.
+The `fixture` message carries
+`{ id, address?, universe?, label?, profileId?, maxBrightness? }`.
 
 ---
 

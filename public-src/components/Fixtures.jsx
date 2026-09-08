@@ -12,6 +12,12 @@ function FixtureCard({ fix, state, dmx }) {
   const [draft, setDraft] = useState(() => ({ ...DEFAULT_OVERRIDE, ...(fix.override || {}) }));
   const [expanded, setExpanded] = useState(false);
 
+  // Dragged locally so the slider doesn't stutter against the 10 Hz broadcast,
+  // then handed back to the server value once the two agree again.
+  const serverMax = fix.maxBrightness ?? 255;
+  const [maxDraft, setMaxDraft] = useState(serverMax);
+  useEffect(() => { setMaxDraft(serverMax); }, [serverMax]);
+
   useEffect(() => {
     if (fix.override) setDraft((d) => ({ ...d, ...fix.override }));
   }, [JSON.stringify(fix.override)]);
@@ -67,6 +73,25 @@ function FixtureCard({ fix, state, dmx }) {
             onChange={(e) => emitFixture({ id: fix.id, address: parseInt(e.target.value, 10) || fix.address })}
           />
         </span>
+      </div>
+
+      {/* A trim, not a look: it scales everything the fixture puts out — the
+          pattern engine, an override, or an energy override — proportionally at
+          every level, and does not put the fixture into override mode. */}
+      <div class={`fixture-max ${maxDraft < 255 ? 'trimmed' : ''}`}>
+        <label for={`fix-max-${fix.id}`}>Max</label>
+        <input
+          id={`fix-max-${fix.id}`}
+          type="range" min="0" max="255"
+          value={maxDraft}
+          title="Scales this fixture's output — the pattern, any override, and energy overrides — under the grand master"
+          onInput={(e) => {
+            const value = parseInt(e.target.value, 10);
+            setMaxDraft(value);
+            emitFixture({ id: fix.id, maxBrightness: value });
+          }}
+        />
+        <span class="val">{Math.round((maxDraft / 255) * 100)}%</span>
       </div>
 
       <div class="override-section">

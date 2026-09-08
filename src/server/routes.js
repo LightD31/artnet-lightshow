@@ -5,8 +5,11 @@ const fsp = require('fs/promises');
 const os = require('os');
 const multer = require('multer');
 
-const { state, getClientState, universeOf, countUniverses, setDefaultUniverse } = require('./state');
-const { applyPatch, applyOverride, processTap } = require('./patch');
+const {
+  state, getClientState, universeOf, maxBrightnessOf, countUniverses, setDefaultUniverse,
+} = require('./state');
+const { applyPatch, applyOverride, setFixtureMaxBrightness, processTap } = require('./patch');
+const { PALETTES } = require('./palettes');
 const { resizeFixtureBuffers } = require('./engine');
 const { parseGDTF } = require('../gdtf');
 const {
@@ -121,6 +124,26 @@ function attachRoutes(app, deps) {
     } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
   });
 
+  // The named looks manual mode picks from, and the one on stage.
+  app.get('/api/palettes', (_req, res) => {
+    res.json({ ok: true, palettes: PALETTES, palette: state.palette });
+  });
+
+  // Writes all four colour slots from one look. `size` picks the bank (2, 3 or
+  // 4 colours); a smaller palette wraps to fill every slot.
+  app.post('/api/palette/:id', (req, res) => {
+    try {
+      const raw = (req.body && req.body.size) ?? req.query.size;
+      const size = raw === undefined ? 4 : parseInt(raw, 10);
+      applyPatch({ palette: req.params.id, paletteSize: size });
+      res.json({
+        ok: true,
+        palette: state.palette,
+        colorA: state.colorA, colorB: state.colorB, colorC: state.colorC, colorD: state.colorD,
+      });
+    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+  });
+
   app.post('/api/bpm/:value', (req, res) => {
     try {
       applyPatch({ bpm: parseInt(req.params.value, 10) });
@@ -177,6 +200,22 @@ function attachRoutes(app, deps) {
       });
       res.json({ ok: true });
     } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+  });
+
+  // A trim rather than an override: it scales whatever is driving the fixture —
+  // the pattern engine, an override, or an energy override — and survives
+  // clearing the override.
+  app.post('/api/fixture/:id/max/:value', (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    const value = parseInt(req.params.value, 10);
+    if (!Number.isInteger(value) || value < 0 || value > 255) {
+      return res.status(400).json({ ok: false, error: 'maxBrightness must be an integer from 0 to 255' });
+    }
+    if (!Number.isInteger(id) || id < 0 || id >= state.fixtures.length) {
+      return res.status(404).json({ ok: false, error: 'No such fixture' });
+    }
+    setFixtureMaxBrightness(id, value);
+    res.json({ ok: true, id, maxBrightness: maxBrightnessOf(state.fixtures[id]) });
   });
 
   app.post('/api/fixture/:id/clear', (req, res) => {
@@ -367,6 +406,7 @@ function attachRoutes(app, deps) {
       address,
       universe,
       profileId: BUILTIN_PROFILE_ID,
+      maxBrightness: 255,
       override: null,
     });
     resizeFixtureBuffers();
@@ -395,6 +435,7 @@ function attachRoutes(app, deps) {
         address: removed.address,
         universe: universeOf(removed),
         profileId: removed.profileId,
+        maxBrightness: maxBrightnessOf(removed),
         override: removed.override,
       },
     });
@@ -431,6 +472,7 @@ function attachRoutes(app, deps) {
         address: fixture.address,
         universe: fixture.universe !== undefined ? fixture.universe : state.artnet.universe,
         profileId,
+        maxBrightness: fixture.maxBrightness !== undefined ? fixture.maxBrightness : 255,
         override: fixture.override || null,
       };
 
@@ -461,6 +503,7 @@ function attachRoutes(app, deps) {
         address: f.address,
         universe: universeOf(f),
         profileId: f.profileId,
+        maxBrightness: maxBrightnessOf(f),
       })),
     });
   });
@@ -503,6 +546,7 @@ function attachRoutes(app, deps) {
           // fixtures belong on the show's own universe, where they used to be.
           universe: f.universe !== undefined ? f.universe : showUniverse,
           profileId: incoming[f.profileId] ? f.profileId : BUILTIN_PROFILE_ID,
+          maxBrightness: f.maxBrightness !== undefined ? f.maxBrightness : 255,
           override: null,
         }));
         for (const fix of next) {
@@ -895,6 +939,22 @@ function attachRoutes(app, deps) {
     autoShow.reset();
     integrations.broadcast();
     res.json({ ok: true });
+  });
+
+  // The energy slider, on its own endpoint so a Stream Deck button or a script
+  // can reach it without composing a state patch.
+  app.post('/api/auto/intensity/:value', (req, res) => {
+    try {
+      applyPatch({ autoIntensity: parseInt(req.params.value, 10) });
+      res.json({ ok: true, intensity: state.autoIntensity });
+    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+  });
+
+  app.post('/api/auto/palette-size/:value', (req, res) => {
+    try {
+      applyPatch({ autoPaletteSize: parseInt(req.params.value, 10) });
+      res.json({ ok: true, paletteSize: autoShow.paletteSize });
+    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
   });
 
   app.get('/api/auto/state', (_req, res) => {

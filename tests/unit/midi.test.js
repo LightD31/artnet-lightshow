@@ -20,19 +20,26 @@ function harness(map) {
     strobeSpeed: 0,
     strobeFunction: 'standard',
     energyOverride: null,
+    palette: null,
+    autoIntensity: 50,
     fixtures: [
-      { id: 0, label: 'PAR 1', override: null },
-      { id: 1, label: 'PAR 2', override: null },
+      { id: 0, label: 'PAR 1', override: null, maxBrightness: 255 },
+      { id: 1, label: 'PAR 2', override: null, maxBrightness: 255 },
     ],
   };
 
   const patches = [];
   const overrides = [];
+  const maxes = [];
   const taps = [];
   const leds = [];
 
   const midi = new MidiController(state, (p) => { patches.push(p); Object.assign(state, p); }, () => taps.push(Date.now()));
   midi.overrideFixture = (id, override) => overrides.push({ id, override });
+  midi.setFixtureMax = (id, value) => {
+    maxes.push({ id, value });
+    state.fixtures[id].maxBrightness = value;
+  };
 
   // Stand in for the easymidi Input/Output, which need a real port.
   const input = new EventEmitter();
@@ -44,7 +51,7 @@ function harness(map) {
 
   const cc = () => sent.filter((m) => m.type === 'cc');
 
-  return { midi, state, input, patches, overrides, taps, leds, sent, cc };
+  return { midi, state, input, patches, overrides, maxes, taps, leds, sent, cc };
 }
 
 test('a mapped note fires its action', () => {
@@ -448,4 +455,138 @@ test('remapping forgets what was sent, so the surface is redriven', () => {
   h.midi.setMap({ cc: { 9: { action: 'setMasterDimmer', type: 'absolute' } }, notes: {} });
 
   assert.strictEqual(h.cc().length, 1);
+});
+
+// ── Fixture max brightness ──────────────────────────────────────────────────
+// A trim is not an override: a fader that pulls a lamp's ceiling down must not
+// also take it out of the pattern engine.
+
+test('a fader bound to fixture max brightness trims without overriding', () => {
+  const h = harness({ cc: { 5: { action: 'setFixtureMax', type: 'absolute', fixture: 1 } }, notes: {} });
+
+  h.input.emit('cc', { controller: 5, value: 64, channel: 0 });
+
+  assert.deepStrictEqual(h.maxes, [{ id: 1, value: 129 }]);
+  assert.deepStrictEqual(h.overrides, [], 'the fixture must not be pushed into override mode');
+  assert.deepStrictEqual(h.patches, [], 'and nothing else about the show changes');
+});
+
+test('an encoder nudges fixture max brightness and clamps at the ends', () => {
+  const h = harness({ cc: { 12: { action: 'adjustFixtureMax', type: 'relative', scale: 4, fixture: 0 } }, notes: {} });
+
+  h.input.emit('cc', { controller: 12, value: 127, channel: 0 });   // one step CCW → -4
+  assert.deepStrictEqual(h.maxes.at(-1), { id: 0, value: 251 });
+
+  h.state.fixtures[0].maxBrightness = 2;
+  h.input.emit('cc', { controller: 12, value: 127, channel: 0 });
+  assert.deepStrictEqual(h.maxes.at(-1), { id: 0, value: 0 }, 'clamped at zero');
+
+  h.state.fixtures[0].maxBrightness = 254;
+  h.input.emit('cc', { controller: 12, value: 1, channel: 0 });     // one step CW → +4
+  assert.deepStrictEqual(h.maxes.at(-1), { id: 0, value: 255 }, 'clamped at full');
+});
+
+test('a max-brightness control is driven to the trim it holds', () => {
+  const h = harness({ cc: { 5: { action: 'setFixtureMax', type: 'absolute', fixture: 0 } }, notes: {} });
+  h.sent.length = 0;
+
+  h.state.fixtures[0].maxBrightness = 0;
+  h.midi.sendFeedback();
+  assert.deepStrictEqual(h.cc(), [{ type: 'cc', controller: 5, value: 0, channel: 0 }]);
+});
+
+// ── Auto-show intensity ─────────────────────────────────────────────────────
+// The energy slider is a percentage, not a DMX level, so the fader scales to
+// 0-100 rather than the 0-255 every other absolute action uses.
+
+test('a fader bound to auto-show intensity sends 0-100, not 0-255', () => {
+  const h = harness({ cc: { 8: { action: 'setAutoIntensity', type: 'absolute' } }, notes: {} });
+
+  h.input.emit('cc', { controller: 8, value: 127, channel: 0 });
+  assert.deepStrictEqual(h.patches.at(-1), { autoIntensity: 100 });
+
+  h.input.emit('cc', { controller: 8, value: 0, channel: 0 });
+  assert.deepStrictEqual(h.patches.at(-1), { autoIntensity: 0 });
+
+  h.input.emit('cc', { controller: 8, value: 64, channel: 0 });
+  assert.deepStrictEqual(h.patches.at(-1), { autoIntensity: 50 });
+});
+
+test('an encoder nudges auto-show intensity within 0-100', () => {
+  const h = harness({ cc: { 17: { action: 'adjustAutoIntensity', type: 'relative', scale: 5 } }, notes: {} });
+
+  h.input.emit('cc', { controller: 17, value: 1, channel: 0 });     // +5
+  assert.deepStrictEqual(h.patches.at(-1), { autoIntensity: 55 });
+
+  h.state.autoIntensity = 98;
+  h.input.emit('cc', { controller: 17, value: 1, channel: 0 });
+  assert.deepStrictEqual(h.patches.at(-1), { autoIntensity: 100 }, 'clamped at 100');
+
+  h.state.autoIntensity = 2;
+  h.input.emit('cc', { controller: 17, value: 127, channel: 0 });   // -5
+  assert.deepStrictEqual(h.patches.at(-1), { autoIntensity: 0 }, 'clamped at 0');
+});
+
+test('an intensity control is driven to the slider position', () => {
+  const h = harness({ cc: { 8: { action: 'setAutoIntensity', type: 'absolute' } }, notes: {} });
+  h.sent.length = 0;
+
+  h.state.autoIntensity = 100;
+  h.midi.sendFeedback();
+  assert.deepStrictEqual(h.cc(), [{ type: 'cc', controller: 8, value: 127, channel: 0 }]);
+});
+
+// ── Palettes ────────────────────────────────────────────────────────────────
+
+test('a button bound to a palette selects it', () => {
+  const h = harness({ cc: {}, notes: { 40: { action: 'setPalette', value: 'arctic' } } });
+
+  h.input.emit('noteon', { note: 40, velocity: 127, channel: 0 });
+
+  assert.deepStrictEqual(h.patches, [{ palette: 'arctic' }]);
+});
+
+test('a palette button with no palette bound does nothing', () => {
+  const h = harness({ cc: {}, notes: { 40: { action: 'setPalette' } } });
+
+  h.input.emit('noteon', { note: 40, velocity: 127, channel: 0 });
+
+  assert.deepStrictEqual(h.patches, []);
+});
+
+test('the palette button for the look on stage is the one that lights', () => {
+  const h = harness({
+    cc: {},
+    notes: {
+      40: { action: 'setPalette', value: 'arctic' },
+      41: { action: 'setPalette', value: 'volcanic' },
+    },
+  });
+  h.state.palette = 'volcanic';
+  h.leds.length = 0;
+
+  h.midi.sendFeedback();
+
+  assert.deepStrictEqual(
+    h.leds.map((m) => [m.note, m.velocity]),
+    [[40, 0], [41, 127]],
+  );
+});
+
+// The map's `value` is loose — it is a pattern id, a colour index, a cue id or
+// a palette name depending on the action — so a hand-edited midi-map.json can
+// hold one the server rejects. This handler runs inside an easymidi callback:
+// unguarded, one wrong entry takes the server down when that button is pressed.
+test('a binding the server refuses leaves the surface alive', () => {
+  const h = harness({ cc: {}, notes: { 40: { action: 'setPalette', value: 'not-a-look' } } });
+  h.midi.apply = () => { throw new Error('patch: palette is not a known palette'); };
+
+  assert.doesNotThrow(() => h.input.emit('noteon', { note: 40, velocity: 127, channel: 0 }));
+});
+
+test('a fader whose action the server refuses does not take the process down', () => {
+  const h = harness({ cc: { 9: { action: 'setMasterDimmer', type: 'absolute' } }, notes: {} });
+  h.midi.apply = () => { throw new Error('patch: masterDimmer out of range'); };
+
+  assert.doesNotThrow(() => h.input.emit('cc', { controller: 9, value: 64, channel: 0 }));
 });

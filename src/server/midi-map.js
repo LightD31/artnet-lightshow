@@ -52,18 +52,23 @@ const ACTIONS = [
   { id: 'cycleStrobeFunction', label: 'Cycle strobe function',       input: 'button' },
   { id: 'toggleFixBlackout',   label: 'Fixture blackout',            input: 'button', param: { key: 'fixture', kind: 'fixture', label: 'Fixture' } },
   { id: 'recallCue',           label: 'Recall cue',                  input: 'button', param: { key: 'value', kind: 'cue', label: 'Cue' } },
+  { id: 'setPalette',          label: 'Select palette',              input: 'button', param: { key: 'value', kind: 'palette', label: 'Palette' } },
 
   // Encoders (relative)
   { id: 'adjustBpm',           label: 'Nudge BPM',                   input: 'encoder' },
   { id: 'adjustMasterDimmer',  label: 'Nudge master dimmer',         input: 'encoder' },
   { id: 'adjustStrobeSpeed',   label: 'Nudge strobe speed',          input: 'encoder' },
   { id: 'adjustFixtureDim',    label: 'Nudge fixture dimmer',        input: 'encoder', param: { key: 'fixture', kind: 'fixture', label: 'Fixture' } },
+  { id: 'adjustFixtureMax',    label: 'Nudge fixture max brightness', input: 'encoder', param: { key: 'fixture', kind: 'fixture', label: 'Fixture' } },
+  { id: 'adjustAutoIntensity', label: 'Nudge auto-show intensity',   input: 'encoder' },
 
   // Faders (absolute)
   { id: 'setMasterDimmer',     label: 'Master dimmer',               input: 'fader' },
   { id: 'setStrobeSpeed',      label: 'Strobe speed',                input: 'fader' },
   { id: 'setBpm',              label: 'BPM',                         input: 'fader' },
   { id: 'setFixtureDim',       label: 'Fixture dimmer',              input: 'fader', param: { key: 'fixture', kind: 'fixture', label: 'Fixture' } },
+  { id: 'setFixtureMax',       label: 'Fixture max brightness',      input: 'fader', param: { key: 'fixture', kind: 'fixture', label: 'Fixture' } },
+  { id: 'setAutoIntensity',    label: 'Auto-show intensity',         input: 'fader' },
 ];
 
 const ACTION_IDS = ACTIONS.map((a) => a.id);
@@ -136,6 +141,10 @@ const DEFAULT_MAP = {
     2: { action: 'setFixtureDim', type: 'absolute', fixture: 1 },
     3: { action: 'setFixtureDim', type: 'absolute', fixture: 2 },
     4: { action: 'setFixtureDim', type: 'absolute', fixture: 3 },
+    // FD8 sits next to the master on the X-Touch, which is where the auto
+    // show's energy slider belongs: the two faders you reach for are "how
+    // bright" and "how hard".
+    8: { action: 'setAutoIntensity', type: 'absolute' },
     9: { action: 'setMasterDimmer', type: 'absolute' },
   },
   notes: {

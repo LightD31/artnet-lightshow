@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useState, useEffect } from 'preact/hooks';
 import { stateSig, send } from '../state.js';
 import { colorToCss } from '../utils.js';
 
@@ -8,6 +8,85 @@ const SLOTS = [
   { key: 'colorC', label: 'C', cssVar: 'var(--accent-3)' },
   { key: 'colorD', label: 'D', cssVar: 'var(--accent-4)' },
 ];
+
+const PALETTE_SIZES = [
+  { size: 2, hint: 'Two contrasting colours — reads cleanly on a small rig' },
+  { size: 3, hint: 'Three well-separated hues' },
+  { size: 4, hint: 'The full hand-tuned tetrad' },
+];
+
+/**
+ * The named looks the auto show picks from, offered by hand.
+ *
+ * Building four slots that sit together out of twenty-four swatches is the
+ * fiddly part of driving the rig manually, and the generated show already had a
+ * bank of answers. One press writes all four slots; the size picks which bank,
+ * and a palette smaller than four wraps to fill every slot.
+ */
+function PaletteRow({ palettes, active, presets }) {
+  const [size, setSize] = useState(() => {
+    const saved = parseInt(localStorage.getItem('lightshow.paletteSize'), 10);
+    return saved === 2 || saved === 3 ? saved : 4;
+  });
+  useEffect(() => { localStorage.setItem('lightshow.paletteSize', String(size)); }, [size]);
+
+  if (!palettes.length) return null;
+
+  const swatchBg = (i) => {
+    const c = presets[i];
+    if (!c) return '#333';
+    return c.name === 'Blackout' ? '#111' : colorToCss(c);
+  };
+
+  return (
+    <div class="palette-picker">
+      <div class="palette-head">
+        <span class="palette-title" id="manual-palette-label">Palettes</span>
+        <div class="segmented" role="group" aria-labelledby="manual-palette-label">
+          {PALETTE_SIZES.map(({ size: n, hint }) => (
+            <button
+              key={n}
+              type="button"
+              class={`segmented-btn ${size === n ? 'active' : ''}`}
+              aria-pressed={size === n}
+              title={hint}
+              onClick={() => {
+                setSize(n);
+                // Live, when a look is already on stage: "same palette, two
+                // colours". With nothing selected the server leaves the slots
+                // alone and this only sets what the next press will use.
+                if (active) send({ paletteSize: n });
+              }}
+            >{n}</button>
+          ))}
+        </div>
+      </div>
+
+      <div class="palette-grid">
+        {palettes.map((p) => {
+          const colors = (p.colors && p.colors[size]) || [];
+          return (
+            <button
+              key={p.id}
+              type="button"
+              class={`palette-btn ${active === p.id ? 'active' : ''}`}
+              aria-pressed={active === p.id}
+              title={`${p.name} — writes all four slots`}
+              onClick={() => send({ palette: p.id, paletteSize: size })}
+            >
+              <span class="palette-swatches">
+                {colors.map((idx, i) => (
+                  <span key={i} class="palette-swatch" style={{ background: swatchBg(idx) }} />
+                ))}
+              </span>
+              <span class="palette-name">{p.name}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 export function Colors() {
   const s = stateSig.value;
@@ -26,6 +105,8 @@ export function Colors() {
   return (
     <div class="card">
       <div class="card-title">Colours</div>
+
+      <PaletteRow palettes={s.palettes || []} active={s.palette || null} presets={presets} />
 
       {/* slot tabs */}
       <div class="color-slot-tabs" role="tablist">
@@ -111,6 +192,7 @@ export function Colors() {
       <div class="color-hint">
         Click a swatch to write into the active slot.
         <kbd>Shift</kbd> + click → paired slot. Right-click → paired slot.
+        A palette writes all four at once; editing a slot afterwards drops the name.
       </div>
     </div>
   );

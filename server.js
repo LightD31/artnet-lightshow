@@ -18,7 +18,7 @@ const { AnalysisCache } = require('./src/analysis-cache');
 
 const { state } = require('./src/server/state');
 const { startEngine, stopEngine } = require('./src/server/engine');
-const { applyPatch, applyOverride, processTap, setPersist } = require('./src/server/patch');
+const { applyPatch, applyOverride, setFixtureMaxBrightness, processTap, setPersist } = require('./src/server/patch');
 const { COLOR_PRESETS, PATTERNS } = require('./src/server/presets');
 const { setupIntegrations } = require('./src/server/integrations');
 const { attachRoutes } = require('./src/server/routes');
@@ -67,6 +67,7 @@ io.use(auth.socketMiddleware);
 
 const midi = new MidiController(state, applyPatch, processTap);
 midi.overrideFixture = applyOverride;
+midi.setFixtureMax = setFixtureMaxBrightness;
 
 // The control map is stored and relearnable, so the controller follows edits
 // without a reconnect. Cue recall is wired in from here rather than reached for

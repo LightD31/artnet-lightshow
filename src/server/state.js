@@ -9,6 +9,7 @@ const {
   STROBE_FUNCTIONS,
   ENERGY_EFFECTS,
 } = require('./presets');
+const { PALETTES } = require('./palettes');
 
 const DEFAULT_ADDRESSES = [1, 13, 25, 37];
 
@@ -34,6 +35,13 @@ const state = {
   strobeSpeed: 0,
   strobeFunction: 'standard',
   energyOverride: null,
+  // The named look the four colour slots came from, or null once any slot has
+  // been written by hand. Only a label — the slots are the truth.
+  palette: null,
+  // Mirrors the auto show's energy slider. The generated show owns the value;
+  // this copy is what the MIDI surface reads to light an encoder ring and what
+  // a client sees without asking the auto-show module.
+  autoIntensity: 50,
   prolinkEnabled: false,
   autoSource: 'auto',
   autoPrefetchDepth: 1,
@@ -52,8 +60,16 @@ state.fixtures = Array.from({ length: 4 }, (_, i) => ({
   address: DEFAULT_ADDRESSES[i],
   universe: state.artnet.universe,
   profileId: BUILTIN_PROFILE_ID,
+  // A trim, not a look: scales everything this fixture outputs, whatever is
+  // driving it. 255 is "no trim"; 128 is "half as bright at every level".
+  maxBrightness: 255,
   override: null,
 }));
+
+/** A fixture's brightness trim, tolerating a show saved before there was one. */
+function maxBrightnessOf(fixture) {
+  return Number.isInteger(fixture.maxBrightness) ? fixture.maxBrightness : 255;
+}
 
 /** The universe a fixture lives on, tolerating a show saved before universes. */
 function universeOf(fixture) {
@@ -132,6 +148,7 @@ function getCatalogs() {
     patterns: PATTERNS,
     energyEffects: ENERGY_EFFECTS,
     strobeFunctions: STROBE_FUNCTIONS,
+    palettes: PALETTES,
   };
 }
 
@@ -158,10 +175,16 @@ function getLiveState() {
     strobeSpeed: state.strobeSpeed,
     strobeFunction: state.strobeFunction,
     energyOverride: state.energyOverride,
+    palette: state.palette,
+    autoIntensity: state.autoIntensity,
     autoSource: state.autoSource,
     autoPrefetchDepth: state.autoPrefetchDepth,
     universes: activeUniverses(),
-    fixtures: state.fixtures.map((f) => ({ ...f, universe: universeOf(f) })),
+    fixtures: state.fixtures.map((f) => ({
+      ...f,
+      universe: universeOf(f),
+      maxBrightness: maxBrightnessOf(f),
+    })),
     profiles: { ...listProfiles() },
     ...extrasProvider(),
   };
@@ -198,6 +221,7 @@ function getClientState() {
 module.exports = {
   state,
   universeOf,
+  maxBrightnessOf,
   activeUniverses,
   countUniverses,
   setDefaultUniverse,

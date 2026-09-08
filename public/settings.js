@@ -169,6 +169,8 @@ function paramOptions(kind) {
       return (state.energyEffects || []).map(e => ({ value: e.id, label: e.name }));
     case 'cue':
       return (state.cues || []).map(c => ({ value: c.id, label: c.name }));
+    case 'palette':
+      return (state.palettes || []).map(p => ({ value: p.id, label: p.name }));
     case 'fixture':
       return (state.fixtures || []).map(f => ({ value: f.id, label: f.label }));
     case 'division':
