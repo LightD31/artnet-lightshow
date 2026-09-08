@@ -86,7 +86,7 @@ function downloadCached(query, { fresh } = {}) {
 
 function runAnalyzer(audioPath) {
   return new Promise((resolve, reject) => {
-    const script = path.join(__dirname, '..', 'src', 'essentia-analyze.py');
+    const script = path.join(__dirname, '..', 'src', 'analyze.py');
     const proc = spawn('python', [script, audioPath], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });

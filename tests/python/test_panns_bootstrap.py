@@ -11,30 +11,23 @@ there is no "after". These tests pin the invariants that keep the bootstrap
 reachable. They are all offline.
 """
 
+import importlib
 import importlib.util
-import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-
-
-def load_analyzer():
-    """Load essentia-analyze.py by path — it is a script, not an importable
-    module name."""
-    spec = importlib.util.spec_from_file_location(
-        'essentia_analyze', REPO / 'src' / 'essentia-analyze.py')
-    module = importlib.util.module_from_spec(spec)
-    sys.modules['essentia_analyze'] = module
-    spec.loader.exec_module(module)
-    return module
+sys.path.insert(0, str(REPO / 'src'))
 
 
 class PannsBootstrapOrdering(unittest.TestCase):
     def setUp(self):
-        self.ea = load_analyzer()
+        from analysis import tagger
+        # A fresh copy per test: these tests monkey-patch module globals, and a
+        # shared instance would leak a patched path into the next test.
+        self.ea = importlib.reload(tagger)
 
     def test_installed_check_does_not_execute_the_package(self):
         """The whole point: asking 'is it installed?' must not import it.
@@ -55,7 +48,7 @@ class PannsBootstrapOrdering(unittest.TestCase):
             sys.path.insert(0, tmp)
             try:
                 importlib.invalidate_caches()
-                self.assertTrue(self.ea._panns_installed(),
+                self.assertTrue(self.ea.installed(),
                                 'must detect the package')
                 self.assertFalse(marker.exists(),
                                  '__init__.py must not have been executed')
@@ -66,46 +59,47 @@ class PannsBootstrapOrdering(unittest.TestCase):
     def test_installed_check_is_false_when_absent(self):
         self.assertFalse(
             importlib.util.find_spec('panns_inference') is not None
-            and not self.ea._panns_installed())
+            and not self.ea.installed())
 
     def test_existing_labels_are_not_re_downloaded(self):
         calls = []
-        self.ea._run_panns_setup = lambda *a, **k: calls.append(a)
+        self.ea._run_setup = lambda *a, **k: calls.append(a)
         with tempfile.TemporaryDirectory() as tmp:
             labels = Path(tmp) / 'class_labels_indices.csv'
             labels.write_text('index,mid,display_name\n')
-            self.ea._PANNS_LABELS = str(labels)
-            self.assertTrue(self.ea._ensure_panns_labels())
+            self.ea._LABELS = str(labels)
+            self.assertTrue(self.ea.ensure_labels())
             self.assertEqual(calls, [], 'a present file needs no download')
 
     def test_missing_labels_trigger_the_labels_only_fetch(self):
         """Startup must never be able to kick off the 310 MB checkpoint."""
         calls = []
-        self.ea._run_panns_setup = lambda args, note: calls.append(list(args))
+        self.ea._run_setup = lambda args, note: calls.append(list(args))
         with tempfile.TemporaryDirectory() as tmp:
-            self.ea._PANNS_LABELS = str(Path(tmp) / 'nope.csv')
-            self.assertFalse(self.ea._ensure_panns_labels())
+            self.ea._LABELS = str(Path(tmp) / 'nope.csv')
+            self.assertFalse(self.ea.ensure_labels())
             self.assertEqual(calls, [['--labels-only']])
 
     def test_preload_skips_without_a_checkpoint_and_never_imports(self):
         """No checkpoint means no model, so preload must bail out before doing
         anything that could touch the package or the network."""
         calls = []
-        self.ea._run_panns_setup = lambda args, note: calls.append(list(args))
-        self.ea._panns_installed = lambda: True
+        self.ea._run_setup = lambda args, note: calls.append(list(args))
+        self.ea.installed = lambda: True
+        self.ea.checkpoint_present = lambda: False
         with tempfile.TemporaryDirectory() as tmp:
-            self.ea._PANNS_CKPT = str(Path(tmp) / 'absent.pth')
-            self.ea._preload_panns()
+            self.ea._CHECKPOINT = str(Path(tmp) / 'absent.pth')
+            self.ea.preload()
             self.assertEqual(calls, [], 'no download at server startup')
-            self.assertIsNone(self.ea._PANNS_AT)
+            self.assertIsNone(self.ea._MODEL)
 
     def test_analysis_path_asks_for_both_files(self):
         calls = []
-        self.ea._run_panns_setup = lambda args, note: calls.append(list(args))
+        self.ea._run_setup = lambda args, note: calls.append(list(args))
         with tempfile.TemporaryDirectory() as tmp:
-            self.ea._PANNS_LABELS = str(Path(tmp) / 'nope.csv')
-            self.ea._PANNS_CKPT = str(Path(tmp) / 'absent.pth')
-            self.assertFalse(self.ea._ensure_panns_files())
+            self.ea._LABELS = str(Path(tmp) / 'nope.csv')
+            self.ea._CHECKPOINT = str(Path(tmp) / 'absent.pth')
+            self.assertFalse(self.ea.ensure_files())
             self.assertEqual(calls, [[]], 'full setup, not --labels-only')
 
     def test_setup_script_accepts_labels_only(self):
