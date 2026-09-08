@@ -38,8 +38,13 @@ via **Bitfocus Companion**, and a REST API.
 
 **Automatic show**
 
-- Analyses a track (librosa + a PANNs genre classifier) and generates a timed
-  show: palette, pattern choices, drops, build-ups and accents
+- Analyses a track and generates a timed show: palette, pattern choices, drops,
+  build-ups and accents. The pipeline finds tempo, metre and downbeats, splits
+  the track into named sections (intro, verse, chorus, drop, breakdown, bridge,
+  outro), and describes seven frequency bands by what they are *doing* rather
+  than how loud they are — see [Audio analysis](docs/audio-analysis.md)
+- **Paces itself** — an accent budget per minute, quiet before and after a drop,
+  and sections that deliberately rest, so the big moments stay big
 - **Reads the buildup** — measures how far the snare roll subdivides and whether
   the tempo genuinely ramps into the drop, and drives the beat division and the
   beat clock from that rather than a fixed escalation
@@ -514,6 +519,8 @@ REST, or Companion. Clear with `energyOverride: null`.
 ## Auto show setup
 
 The analyser is Python. Manual control does not need any of this.
+[docs/audio-analysis.md](docs/audio-analysis.md) covers what it does, which
+numbers you can turn and where to extend it.
 
 ```bash
 pip install -r requirements.txt
@@ -526,7 +533,8 @@ covers yt-dlp; install ffmpeg with your package manager.
 
 If `torch`/`panns_inference` are missing the analyser still runs, but genre
 classification is skipped silently and palette selection falls back to a
-mood-based path — so run `--check` if shows look off.
+mood-based path — so run `--check` if shows look off. Everything else in the
+pipeline is signal processing with no model behind it, and works either way.
 
 You do not have to run the setup script by hand: the analyser fetches whatever
 is missing on its first analysis. `panns_inference` would otherwise try to
@@ -649,6 +657,40 @@ Two controls sit in the *Look* panel and decide how the generated show reads:
 Both are live: changing either rebuilds the timeline from the analysis already
 in hand, so the new setting takes effect on the next tick without re-analysing
 the track. Neither touches the master dimmer — that slider stays yours.
+
+Past 70, intensity also lifts a calm or rock track out of its tier *for drops
+only*. A fader that did nothing on a ballad is a fader you stop trusting; it
+buys the drops, never accent density, so the track still does not strobe through
+its verses.
+
+### Where the show rests
+
+The generated show spends a budget rather than reacting to everything. Contrast
+is the product: a show that flashes constantly has no big moments, because
+everything is one.
+
+- Accents are capped per rolling minute, from the track's style and the
+  intensity fader. Over budget, the least confident candidates are dropped.
+- Nothing fires in the two seconds before a drop, so the build-up's own arc has
+  the room to itself.
+- Nothing fires in the three seconds after one. The drop is the statement.
+- Intros, breakdowns and outros carry no accents at all and stay on quarter-note
+  movement. That is what makes the chorus after them land.
+- Sections the analyser clustered together get the same pattern and the same
+  palette rotation every time they return, so the second chorus reads as the
+  chorus rather than as a new idea.
+
+### Seeing what the analyser heard
+
+```bash
+python src/analyze.py track.wav --report report.html
+```
+
+writes a standalone page — no plotting library, no network — with the waveform
+and detected sections, beat markers scaled by per-beat confidence, all seven
+frequency bands, the impact curve with drops and build-ups over it, and every
+musical event on its own lane. It is the fastest way to answer "why did it do
+that there".
 
 ### Buildups — following what the music actually does
 
