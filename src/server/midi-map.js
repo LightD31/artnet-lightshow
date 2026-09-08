@@ -122,7 +122,11 @@ const bindingWriteSchema = z.object({
 
 // ── The built-in default: Behringer X-Touch Compact, Standard mode, Layer A ──
 //
-//   Encoders EN1-8 turn : CC 10-17, ch 1 (relative: 1-63=CW, 65-127=CCW)
+//   Encoders EN1-8 turn : CC 10-17, ch 1 (relative — the encoding is worked out
+//                         from the values the encoder sends; see midi.js
+//                         relEvidence. Behringer's own surfaces use binary
+//                         offset, 65 up and 63 down, not the two's complement
+//                         this comment used to claim.)
 //   Encoders EN1-8 push : Note 0-7,  ch 1
 //   Button row 1 (BT1-8)  : Note 16-23, ch 1
 //   Button row 2 (BT9-16) : Note 24-31, ch 1

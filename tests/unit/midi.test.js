@@ -590,3 +590,93 @@ test('a fader whose action the server refuses does not take the process down', (
 
   assert.doesNotThrow(() => h.input.emit('cc', { controller: 9, value: 64, channel: 0 }));
 });
+
+// ── Relative encoder encodings ──────────────────────────────────────────────
+//
+// An endless encoder sends "moved a bit, this way", and there are two ways to
+// spell it. Which one a controller uses is a device setting; nothing in the
+// message says which. This only decoded two's complement, so a Behringer
+// X-Touch — which sends binary offset, increment 65 and decrement 1 — had every
+// detent read as ±63 and threw the parameter to an end stop on the first click.
+
+test('an X-Touch encoder nudges by one detent, not to an end stop', () => {
+  // Binary offset: 65 is one click clockwise, 63 is one click back.
+  const h = harness({ cc: { 10: { action: 'adjustBpm', type: 'relative' } }, notes: {} });
+
+  h.input.emit('cc', { controller: 10, value: 65, channel: 0 });
+  assert.strictEqual(h.state.bpm, 121, 'clockwise is +1, not -63');
+
+  h.input.emit('cc', { controller: 10, value: 63, channel: 0 });
+  assert.strictEqual(h.state.bpm, 120, 'anticlockwise is -1, not +63');
+
+  // A faster spin is a few detents, still not the whole range.
+  h.input.emit('cc', { controller: 10, value: 67, channel: 0 });
+  assert.strictEqual(h.state.bpm, 123);
+});
+
+test('the reported symptom: one click no longer pins the value at its maximum', () => {
+  // Master dimmer carries a scale of 4, so the old decode moved it ±252 per
+  // click — the whole 0–255 range, in either direction, from one detent.
+  const h = harness({
+    cc: { 11: { action: 'adjustMasterDimmer', type: 'relative', scale: 4 } }, notes: {},
+  });
+  h.state.masterDimmer = 128;
+
+  h.input.emit('cc', { controller: 11, value: 63, channel: 0 });
+  assert.strictEqual(h.state.masterDimmer, 124, 'down by one detent × scale');
+  assert.notStrictEqual(h.state.masterDimmer, 255);
+
+  h.input.emit('cc', { controller: 11, value: 65, channel: 0 });
+  assert.strictEqual(h.state.masterDimmer, 128, 'and back up again');
+});
+
+test('a two’s-complement encoder still decodes the other way round', () => {
+  const h = harness({ cc: { 10: { action: 'adjustBpm', type: 'relative' } }, notes: {} });
+
+  h.input.emit('cc', { controller: 10, value: 1, channel: 0 });
+  assert.strictEqual(h.state.bpm, 121, 'clockwise is 1 here, not 65');
+
+  h.input.emit('cc', { controller: 10, value: 127, channel: 0 });
+  assert.strictEqual(h.state.bpm, 120, 'and anticlockwise is 127');
+});
+
+test('each encoder is judged on its own values', () => {
+  // A surface can mix encoder types, and one control's encoding says nothing
+  // about another's.
+  const h = harness({
+    cc: {
+      10: { action: 'adjustBpm', type: 'relative' },
+      16: { action: 'adjustStrobeSpeed', type: 'relative' },
+    },
+    notes: {},
+  });
+
+  h.input.emit('cc', { controller: 10, value: 65, channel: 0 });   // binary offset
+  h.input.emit('cc', { controller: 16, value: 1, channel: 0 });    // two's complement
+
+  assert.strictEqual(h.state.bpm, 121, 'up one');
+  assert.strictEqual(h.state.strobeSpeed, 1, 'also up one');
+});
+
+test('a no-movement message is not an edit', () => {
+  // 64 means "didn't move" in binary offset. Dispatching it as a change would
+  // clear the palette label and fight the control's own feedback.
+  const h = harness({ cc: { 10: { action: 'adjustBpm', type: 'relative' } }, notes: {} });
+
+  h.input.emit('cc', { controller: 10, value: 64, channel: 0 });
+
+  assert.deepStrictEqual(h.patches, [], 'nothing sent');
+  assert.strictEqual(h.state.bpm, 120);
+});
+
+test('an ambiguous first value does not lock in the wrong encoding', () => {
+  // Mid-range values are reachable by a fast spin under either encoding, so
+  // they are not evidence. The next unambiguous detent still settles it.
+  const h = harness({ cc: { 10: { action: 'adjustBpm', type: 'relative' } }, notes: {} });
+
+  h.input.emit('cc', { controller: 10, value: 20, channel: 0 });   // no evidence
+  h.state.bpm = 120;
+
+  h.input.emit('cc', { controller: 10, value: 65, channel: 0 });
+  assert.strictEqual(h.state.bpm, 121, 'settled on binary offset by the real detent');
+});

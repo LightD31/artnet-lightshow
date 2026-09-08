@@ -10,7 +10,8 @@
  * want, so any controller works.
  *
  * X-Touch Compact Standard mode, Layer A, for reference:
- *   Encoders EN1-8 turn : CC 10-17, ch 1 (relative: 1-63=CW, 65-127=CCW)
+ *   Encoders EN1-8 turn : CC 10-17, ch 1 (relative; the encoding is worked out
+ *                          from the values — see relEvidence)
  *   Encoders EN1-8 push : Note 0-7,  ch 1
  *   Button row 1 (BT1-8)  : Note 16-23, ch 1
  *   Button row 2 (BT9-16) : Note 24-31, ch 1
@@ -53,8 +54,45 @@ const LEARN_TIMEOUT_MS = 30000;
 // where the last frame said it was — the operator ends up fighting the motor.
 const ECHO_SUPPRESS_MS = 400;
 
-function relDelta(value) {
-  // Relative mode 1: 1-63 = CW (+), 65-127 = CCW (-)
+// ── Relative encoders ───────────────────────────────────────────────────────
+//
+// An endless encoder sends "moved a bit, this way", and there are two ways to
+// spell that. Which one a controller uses is a setting on the device; nothing
+// in the MIDI message says which you are being sent.
+//
+//   two's complement   CW 1, 2, 3 …        CCW 127, 126, 125 …   values hug 0/128
+//   binary offset      CW 65, 66, 67 …     CCW 63, 62, 61 …      values hug 64
+//
+// This only ever decoded two's complement, and Behringer's X-Touch family
+// sends binary offset — its MIDI implementation gives increment 65 and
+// decrement 1. Read the wrong way round, one detent clockwise came out as
+// 65 - 128 = -63 and one anticlockwise as +63: a single click threw the
+// parameter to an end stop, which is what "the nudge only goes to the maximum"
+// was. With a scale of 4 on the master dimmer it was ±252 per click.
+//
+// The two encodings put their values in different places, so the stream itself
+// says which is in use: nobody hand-turns an encoder 63 detents inside one MIDI
+// message, so a value next to 64 can only be binary offset, and one next to 0
+// or 127 can only be two's complement. That makes the first detent decisive.
+const REL_TWOS = 'twos';
+const REL_OFFSET = 'offset';
+
+// How close to a landmark a value has to be to count as evidence. Wide enough
+// for a fast spin (a few detents per message), far narrower than the 63 that
+// would be needed for the two encodings to be confused.
+const REL_EVIDENCE_BAND = 7;
+
+/** Which encoding this raw value could only have come from, or null. */
+function relEvidence(value) {
+  if (Math.abs(value - 64) <= REL_EVIDENCE_BAND) return REL_OFFSET;
+  if (value <= REL_EVIDENCE_BAND || value >= 127 - REL_EVIDENCE_BAND) return REL_TWOS;
+  return null;
+}
+
+function relDelta(value, mode) {
+  // Both encodings agree that 64 is "no movement", and neither sends it.
+  if (value === 64) return 0;
+  if (mode === REL_OFFSET) return value - 64;
   return value > 64 ? value - 128 : value;
 }
 
@@ -84,6 +122,9 @@ class MidiController {
     // to us. Both exist to keep the motors quiet — see _sendControlFeedback.
     this._lastCcOut = new Map();
     this._lastCcIn = new Map();
+    // Which relative encoding each encoder has shown itself to use, learned
+    // from the values it sends. See relEvidence.
+    this._relModes = new Map();
     this.controlFeedback = true;
   }
 
@@ -240,8 +281,19 @@ class MidiController {
       const binding = this._bindingFor('cc', controller, channel);
       if (!binding) return;
       if (binding.type === 'relative') {
-        const delta = relDelta(value) * (binding.scale || 1);
-        this._safely(binding, () => this._dispatchContinuous(binding, delta));
+        // Remembered per control, because a surface can mix encoder types and
+        // because the answer cannot change while the device is plugged in. A
+        // controller reconfigured mid-session is re-learned on the next restart.
+        const key = `${channel}:${controller}`;
+        const evidence = relEvidence(value);
+        if (evidence) this._relModes.set(key, evidence);
+        const delta = relDelta(value, this._relModes.get(key) || REL_TWOS)
+          * (binding.scale || 1);
+        // A no-movement message is not an edit: dispatching zero would still
+        // clear the palette label and suppress the control's own feedback.
+        if (delta !== 0) {
+          this._safely(binding, () => this._dispatchContinuous(binding, delta));
+        }
       } else {
         this._safely(binding, () => this._dispatchAbsolute(binding, value));
       }
