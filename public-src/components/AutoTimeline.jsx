@@ -39,22 +39,33 @@ function drawTimeline(canvas, data, posMs) {
   const ROW_EVENTS = { y: 124, h: 20 };
   const ROW_TIMELN = { y: 146, h: 30 };
 
-  // Segments + letter labels
+  // Sections. Colour by role where the analyser named one, falling back to the
+  // energy tier for documents from before roles existed — a cached analysis
+  // still draws, it just draws in three colours instead of seven.
   const segColors = { low: '#1e3a5f', mid: '#3a7099', high: '#ff6584' };
+  const roleColors = {
+    intro: '#3d5a80', verse: '#4f7cac', chorus: '#e07a5f', drop: '#d62839',
+    bridge: '#8367c7', breakdown: '#2a9d8f', outro: '#5c677d',
+  };
   (data.segments || []).forEach((seg) => {
     const x0 = xForSec(seg.start);
     const x1 = xForSec(seg.end);
     const w = Math.max(1, x1 - x0);
-    ctx.fillStyle = segColors[seg.level] || '#333';
+    ctx.fillStyle = roleColors[seg.role] || segColors[seg.level] || '#333';
     ctx.globalAlpha = 0.9;
     ctx.fillRect(x0, ROW_SEG.y, w, ROW_SEG.h);
     ctx.globalAlpha = 1;
-    if (seg.label && w > 18) {
+    // The role is what the show acts on, so it is what the operator needs to
+    // see; the cluster label only matters for telling two verses apart.
+    const caption = seg.role && seg.role !== 'unknown'
+      ? (w > 46 ? seg.role : seg.role[0].toUpperCase())
+      : seg.label;
+    if (caption && w > 18) {
       ctx.fillStyle = 'rgba(255,255,255,0.85)';
       ctx.font = 'bold 10px monospace';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
-      ctx.fillText(seg.label, x0 + 4, ROW_SEG.y + ROW_SEG.h / 2);
+      ctx.fillText(caption, x0 + 4, ROW_SEG.y + ROW_SEG.h / 2);
     }
   });
 

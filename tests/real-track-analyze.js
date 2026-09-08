@@ -134,13 +134,35 @@ function printSummary(analysis, timeline) {
   console.log(`  key/scale      ${analysis.key} ${analysis.scale}  (kstr ${analysis.keyStrength})`);
   console.log(`  meter          ${analysis.meter}  downbeats=${(analysis.downbeats || []).length}  dbConf=${analysis.downbeatConfidence}`);
 
+  if (analysis.loudness) {
+    const l = analysis.loudness;
+    console.log(`  loudness       ${l.integratedLufs} LUFS  range ${l.range} LU  peak ${l.truePeakDb} dBFS`
+      + `  (gain ${l.appliedGainDb} dB${l.denoised ? ', denoised' : ''})`);
+  }
+
   console.log('\n── Mood ────────────────────────────────────');
   console.log(`  valence        ${mood.valence}`);
   console.log(`  arousal        ${mood.arousal}`);
-  console.log(`  loudness       ${mood.loudness}`);
-  console.log(`  brightness     ${mood.brightness}`);
   console.log(`  danceability   ${mood.danceability}`);
   console.log(`  kickiness      ${mood.kickiness}`);
+  console.log(`  tension        ${mood.tension}`);
+
+  if (analysis.bands) {
+    console.log('\n── Bands ───────────────────────────────────');
+    console.log('  band        energy  attack   decay   rhy   perc    imp');
+    for (const b of Object.values(analysis.bands)) {
+      console.log(`  ${String(b.name).padEnd(10)}${fmt(b.energy)}${fmt(b.attackMs, 8, 0)}${fmt(b.decayMs, 8, 0)}`
+        + `${fmt(b.rhythmic, 6)}${fmt(b.percussive, 7)}${fmt(b.importance, 7)}`);
+    }
+  }
+
+  if (analysis.instruments && analysis.instruments.scores) {
+    const scores = Object.entries(analysis.instruments.scores)
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `${k}:${v}`)
+      .join('  ');
+    console.log(`\n  instruments    ${scores}`);
+  }
 
   if (analysis.genre) {
     const g = analysis.genre;
@@ -160,10 +182,12 @@ function printSummary(analysis, timeline) {
   }
 
   const segs = analysis.segments || [];
-  console.log(`\n── Segments (${segs.length}) ───────────────────────`);
-  console.log('  label    start     end   level      e     br     bs');
+  console.log(`\n── Sections (${segs.length}) ──────────────────────`);
+  console.log('  role       label    start     end   level      e     br     bs');
   for (const s of segs) {
-    console.log(`    ${String(s.label || '?').padEnd(4)}${fmt(s.start, 8, 1)}${fmt(s.end, 8, 1)}  ${String(s.level).padEnd(4)} ${fmt(s.energy)} ${fmt(s.brightness)} ${fmt(s.bass)}`);
+    console.log(`  ${String(s.role || '?').padEnd(10)} ${String(s.label || '?').padEnd(4)}`
+      + `${fmt(s.start, 8, 1)}${fmt(s.end, 8, 1)}  ${String(s.level).padEnd(4)}`
+      + ` ${fmt(s.energy)} ${fmt(s.brightness)} ${fmt(s.bass)}`);
   }
 
   const drops = analysis.drops || [];
@@ -178,7 +202,18 @@ function printSummary(analysis, timeline) {
   const buildups = analysis.buildups || [];
   console.log(`\n── Buildups (${buildups.length}) ───────────────────`);
   for (const b of buildups) {
-    console.log(`  ${fmt(b.start, 6, 1)} .. ${fmt(b.end, 6, 1)}  strength=${b.strength}`);
+    console.log(`  ${fmt(b.start, 6, 1)} .. ${fmt(b.end, 6, 1)}`
+      + `  intensity=${b.intensity}  roll=1/${(b.subdivision || 1) * 4}`);
+  }
+
+  const events = analysis.events || [];
+  if (events.length) {
+    const byType = {};
+    for (const e of events) byType[e.type] = (byType[e.type] || 0) + 1;
+    console.log(`\n── Musical events (${events.length}) ─────────────`);
+    for (const [k, v] of Object.entries(byType).sort((a, b) => b[1] - a[1])) {
+      console.log(`  ${k.padEnd(16)} ${v}`);
+    }
   }
 
   // Timeline event tallies

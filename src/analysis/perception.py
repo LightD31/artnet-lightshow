@@ -112,6 +112,10 @@ class Perception:
             'genre': {
                 'label': self.genre,
                 'confidence': round(self.genre_confidence, 3),
+                # The web client reads `labelConf`. Kept alongside the clearer
+                # name rather than renamed, because cached documents carry
+                # whichever one was current when they were written.
+                'labelConf': round(self.genre_confidence, 3),
                 'style': self.style,
                 'subScores': {k: round(v, 3) for k, v in self.subgenre_scores.items()},
                 'topTags': self.top_tags,
