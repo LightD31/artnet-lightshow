@@ -80,8 +80,15 @@ function createApplier({ midi, spotify, smtc, deezer, autoShow, applyPatch, broa
     }
   }
 
+  function applyControlFeedback() {
+    midi.setControlFeedback(settings.get('midi.controlFeedback'));
+  }
+
   function applyMidi() {
     midi.close();
+    // Set before connecting: connect() pushes the current show to the surface,
+    // and it should already know whether it is allowed to.
+    midi.setControlFeedback(settings.get('midi.controlFeedback'));
     midi.connect(settings.get('midi.input') || null, settings.get('midi.output') || null);
   }
 
@@ -123,7 +130,9 @@ function createApplier({ midi, spotify, smtc, deezer, autoShow, applyPatch, broa
   const HANDLERS = [
     { match: (k) => k.startsWith('artnet.'), run: applyArtnet },
     { match: (k) => k.startsWith('sacn.'), run: applySacn },
-    { match: (k) => k.startsWith('midi.'), run: applyMidi },
+    // Ports only: toggling feedback must not drop and reopen the port.
+    { match: (k) => k === 'midi.input' || k === 'midi.output', run: applyMidi },
+    { match: (k) => k === 'midi.controlFeedback', run: applyControlFeedback },
     { match: (k) => k === 'sources.smtc', run: applySmtc },
     { match: (k) => k === 'sources.prolink', run: applyProlink },
     { match: (k) => k.startsWith('spotify.') && k !== 'spotify.allowUnverifiedState', run: applySpotify },

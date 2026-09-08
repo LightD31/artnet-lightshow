@@ -141,6 +141,14 @@ document.getElementById('midi-connect').addEventListener('click', () => {
   socket.emit('midi-connect', { input, output });
 });
 
+// Motorised faders and encoder rings. Applied on its own so toggling it does
+// not drop and reopen the port the way changing a port does.
+document.getElementById('midi-control-feedback').addEventListener('change', async (e) => {
+  const controlFeedback = e.target.checked;
+  const res = await apiJson('/api/settings', jsonBody('PUT', { midi: { controlFeedback } }));
+  if (!res.ok) e.target.checked = !controlFeedback;   // put the box back
+});
+
 // ── MIDI mapping and learn ───────────────────────────────────────────────────
 // The map used to be a constant describing one controller; anything else was
 // unusable without editing source. Pick an action, press Learn, then move the
@@ -790,6 +798,7 @@ document.getElementById('load-show-file').addEventListener('change', async (e) =
 const SETTINGS_SPEC = [
   {
     id: 'sources',
+    group: 'music',
     title: 'Playback Sources',
     desc: 'Which sources may drive the auto-show. Takes effect immediately.',
     fields: [
@@ -801,6 +810,7 @@ const SETTINGS_SPEC = [
   },
   {
     id: 'sacn',
+    group: 'output',
     title: 'sACN (E1.31)',
     desc: 'What consoles and most modern nodes speak. Runs alongside Art-Net or instead of it '
       + '(turn Art-Net off above). Takes effect immediately.',
@@ -823,6 +833,7 @@ const SETTINGS_SPEC = [
   },
   {
     id: 'spotify',
+    group: 'music',
     title: 'Spotify',
     desc: 'Credentials from your Spotify app dashboard. Register the redirect URI shown in the server log.',
     fields: [
@@ -836,6 +847,7 @@ const SETTINGS_SPEC = [
   },
   {
     id: 'deezer',
+    group: 'music',
     title: 'Deezer',
     desc: 'An ARL cookie enables exact ISRC-matched audio. Without one, analysis falls back to a yt-dlp search.',
     fields: [
@@ -844,6 +856,7 @@ const SETTINGS_SPEC = [
   },
   {
     id: 'analysis',
+    group: 'music',
     title: 'Analysis',
     desc: 'Limits on the analyzer and the track downloader.',
     fields: [
@@ -1077,13 +1090,52 @@ async function generateToken(field) {
 
 function renderSettings() {
   if (!settingsData) return;
-  const groups = document.getElementById('settings-groups');
+  // Each spec declares the tab it lives in, so the rendered sections land
+  // beside the hand-written ones they belong with rather than in one block.
+  const hosts = {
+    output: document.getElementById('settings-output-group'),
+    music: document.getElementById('settings-music-group'),
+  };
   const serverGroup = document.getElementById('settings-server-group');
-  groups.textContent = '';
+  for (const host of Object.values(hosts)) host.textContent = '';
   serverGroup.textContent = '';
-  for (const spec of SETTINGS_SPEC) renderSection(spec, groups);
+
+  for (const spec of SETTINGS_SPEC) {
+    const host = hosts[spec.group] || hosts.music;
+    renderSection(spec, host);
+  }
   renderSection(SERVER_SPEC, serverGroup);
 }
+
+// ── Tabs ─────────────────────────────────────────────────────────────────────
+// Eleven sections in one scroll mixed the rig you build once with credentials
+// you touch twice a year. Same sections, grouped by when you reach for them.
+
+const TAB_KEY = 'lightshow.settingsTab';
+const TABS = ['check', 'rig', 'output', 'control', 'music', 'server'];
+
+function showTab(tab) {
+  const active = TABS.includes(tab) ? tab : 'check';
+  try { localStorage.setItem(TAB_KEY, active); } catch (_) { /* private mode */ }
+
+  document.querySelectorAll('[data-tab]').forEach((node) => {
+    node.hidden = node.dataset.tab !== active;
+  });
+  document.querySelectorAll('[data-tab-btn]').forEach((btn) => {
+    const on = btn.dataset.tabBtn === active;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+}
+
+document.getElementById('settings-tabs').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-tab-btn]');
+  if (btn) showTab(btn.dataset.tabBtn);
+});
+
+let savedTab = 'check';
+try { savedTab = localStorage.getItem(TAB_KEY) || 'check'; } catch (_) { /* private mode */ }
+showTab(savedTab);
 
 async function loadSettings() {
   try {
@@ -1092,6 +1144,11 @@ async function loadSettings() {
     if (!data.ok) return;
     settingsData = data;
     renderSettings();
+    // Hand-written control, so it is not covered by the spec renderer.
+    const feedback = document.getElementById('midi-control-feedback');
+    if (feedback && data.settings.midi) {
+      feedback.checked = data.settings.midi.controlFeedback !== false;
+    }
   } catch (_) { /* page still works without the config sections */ }
 }
 

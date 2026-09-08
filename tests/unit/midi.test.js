@@ -37,11 +37,14 @@ function harness(map) {
   // Stand in for the easymidi Input/Output, which need a real port.
   const input = new EventEmitter();
   midi.input = input;
-  midi.output = { send: (type, msg) => leds.push({ type, ...msg }) };
+  const sent = [];
+  midi.output = { send: (type, msg) => { sent.push({ type, ...msg }); if (type === 'noteon') leds.push({ type, ...msg }); } };
   if (map) midi.setMap(map);
   midi._bindInput();
 
-  return { midi, state, input, patches, overrides, taps, leds };
+  const cc = () => sent.filter((m) => m.type === 'cc');
+
+  return { midi, state, input, patches, overrides, taps, leds, sent, cc };
 }
 
 test('a mapped note fires its action', () => {
@@ -254,4 +257,195 @@ test('feedback says nothing about a button with no on/off state', () => {
   h.midi.sendFeedback();
 
   assert.deepStrictEqual(h.leds, [], 'tap tempo has no state to show');
+});
+
+// ── Motorised faders and encoder rings ──────────────────────────────────────
+// The X-Touch Compact's faders are motorised and its encoders have LED rings,
+// and both move by being sent the CC they would have sent us. Without this the
+// surface only ever pushed state: change the master dimmer in the browser and
+// the physical fader stayed put, so the next touch snapped the rig back.
+
+test('a fader is driven to the position of what it controls', () => {
+  const h = harness({ cc: { 9: { action: 'setMasterDimmer', type: 'absolute' } }, notes: {} });
+  // The map is applied in the harness, which already drove the fader to the
+  // starting master of 255. Move it somewhere else and watch it follow.
+  h.sent.length = 0;
+
+  h.state.masterDimmer = 0;
+  h.midi.sendFeedback();
+  assert.deepStrictEqual(h.cc(), [{ type: 'cc', controller: 9, value: 0, channel: 0 }]);
+
+  h.sent.length = 0;
+  h.state.masterDimmer = 255;
+  h.midi.sendFeedback();
+  assert.deepStrictEqual(h.cc(), [{ type: 'cc', controller: 9, value: 127, channel: 0 }]);
+});
+
+// Connecting drives the whole surface to the show, rather than leaving the
+// faders wherever they were physically left.
+test('applying a map pushes every mapped control at once', () => {
+  const h = harness({
+    cc: {
+      9: { action: 'setMasterDimmer', type: 'absolute' },
+      5: { action: 'setBpm', type: 'absolute' },
+    },
+    notes: {},
+  });
+
+  // The harness applied the map, which is what connect() does.
+  assert.deepStrictEqual(h.cc().map((m) => m.controller).sort(), [5, 9]);
+});
+
+test('a relative encoder gets a value too, for its LED ring', () => {
+  const h = harness({ cc: { 10: { action: 'adjustBpm', type: 'relative' } }, notes: {} });
+  h.sent.length = 0;
+
+  h.state.bpm = 160;   // (160-20)/280 = 0.5
+  h.midi.sendFeedback();
+
+  assert.strictEqual(h.cc()[0].value, 64);
+});
+
+/**
+ * A fader whose feedback disagrees with what it sends would drift every time
+ * the operator touched it.
+ *
+ * It cannot round-trip exactly in the middle of the range: a 7-bit fader has
+ * 128 positions for 281 BPM values, so one step is ~2.2 BPM and 160 comes back
+ * as 161. That is the hardware, not the mapping — what matters is that the
+ * fader sits at the *nearest* position, so touching it moves the tempo by at
+ * most one step rather than jumping.
+ *
+ * Fresh harness per case: a control that has sent us something is suppressed
+ * for a moment afterwards, which is the point of the test below.
+ */
+test('the BPM fader sits at the nearest position to the live tempo', () => {
+  const STEP_BPM = 280 / 127;
+
+  for (const bpm of [20, 90, 160, 240, 300]) {
+    const h = harness({ cc: { 5: { action: 'setBpm', type: 'absolute' } }, notes: {} });
+    h.sent.length = 0;
+
+    h.state.bpm = bpm;
+    h.midi.sendFeedback();
+    const value = h.cc()[0].value;
+
+    // Feed that position back in as if the fader had been moved there.
+    h.input.emit('cc', { controller: 5, value, channel: 0 });
+    assert.ok(
+      Math.abs(h.state.bpm - bpm) <= Math.ceil(STEP_BPM),
+      `round trip at ${bpm} BPM landed on ${h.state.bpm}, more than one fader step away`,
+    );
+  }
+});
+
+test('the ends of the BPM fader are exact', () => {
+  for (const bpm of [20, 300]) {
+    const h = harness({ cc: { 5: { action: 'setBpm', type: 'absolute' } }, notes: {} });
+    h.sent.length = 0;
+    h.state.bpm = bpm;
+    h.midi.sendFeedback();
+
+    h.input.emit('cc', { controller: 5, value: h.cc()[0].value, channel: 0 });
+    assert.strictEqual(h.state.bpm, bpm);
+  }
+});
+
+// No override means the pattern engine owns the fixture and it is at full,
+// which is where the fader should sit — ready to pull it down.
+test('a fixture with no override reads as full, which is where the fader belongs', () => {
+  const h = harness({ cc: { 1: { action: 'setFixtureDim', type: 'absolute', fixture: 0 } }, notes: {} });
+
+  h.state.fixtures[0].override = { enabled: true, dim: 0 };
+  h.midi.sendFeedback();
+  h.sent.length = 0;
+
+  h.state.fixtures[0].override = null;
+  h.midi.sendFeedback();
+
+  assert.strictEqual(h.cc()[0].value, 127);
+});
+
+// A motor re-driven to where it already is, at the broadcast rate, hums.
+test('an unchanged position is not sent again', () => {
+  const h = harness({ cc: { 9: { action: 'setMasterDimmer', type: 'absolute' } }, notes: {} });
+
+  h.midi.sendFeedback();
+  h.sent.length = 0;
+  h.midi.sendFeedback();
+  h.midi.sendFeedback();
+
+  assert.deepStrictEqual(h.cc(), [], 'nothing changed, so nothing was sent');
+
+  h.state.masterDimmer = 0;
+  h.midi.sendFeedback();
+  assert.strictEqual(h.cc().length, 1, 'but a real change is');
+});
+
+// Driving a fader back while a hand is on it makes the operator fight the motor.
+test('a control that just sent us something is left alone', () => {
+  const h = harness({ cc: { 9: { action: 'setMasterDimmer', type: 'absolute' } }, notes: {} });
+
+  h.input.emit('cc', { controller: 9, value: 100, channel: 0 });
+  h.sent.length = 0;
+
+  // Something else moves the master while the fader is still being touched.
+  h.state.masterDimmer = 12;
+  h.midi.sendFeedback();
+
+  assert.deepStrictEqual(h.cc(), [], 'the touched fader is not driven');
+});
+
+test('an untouched control is still driven while another is being moved', () => {
+  const h = harness({
+    cc: {
+      9: { action: 'setMasterDimmer', type: 'absolute' },
+      1: { action: 'setFixtureDim', type: 'absolute', fixture: 0 },
+    },
+    notes: {},
+  });
+  h.midi.sendFeedback();
+  h.input.emit('cc', { controller: 9, value: 100, channel: 0 });
+  h.sent.length = 0;
+
+  h.state.masterDimmer = 5;
+  h.state.fixtures[0].override = { enabled: true, dim: 0 };
+  h.midi.sendFeedback();
+
+  assert.deepStrictEqual(h.cc().map((m) => m.controller), [1], 'only the untouched one moves');
+});
+
+test('a trigger action has no position, so nothing is sent for it', () => {
+  const h = harness({ cc: { 20: { action: 'tap' } }, notes: {} });
+  h.sent.length = 0;
+
+  h.midi.sendFeedback();
+
+  assert.deepStrictEqual(h.cc(), []);
+});
+
+// A MIDI loopback would echo our feedback back in as operator input.
+test('feedback can be switched off entirely', () => {
+  const h = harness({ cc: { 9: { action: 'setMasterDimmer', type: 'absolute' } }, notes: {} });
+  h.midi.setControlFeedback(false);
+  h.sent.length = 0;
+
+  h.state.masterDimmer = 3;
+  h.midi.sendFeedback();
+
+  assert.deepStrictEqual(h.cc(), []);
+
+  h.midi.setControlFeedback(true);
+  assert.strictEqual(h.cc().length, 1, 'and back on again resends the position');
+});
+
+// A relearned map means what we last sent no longer describes the control.
+test('remapping forgets what was sent, so the surface is redriven', () => {
+  const h = harness({ cc: { 9: { action: 'setMasterDimmer', type: 'absolute' } }, notes: {} });
+  h.midi.sendFeedback();
+  h.sent.length = 0;
+
+  h.midi.setMap({ cc: { 9: { action: 'setMasterDimmer', type: 'absolute' } }, notes: {} });
+
+  assert.strictEqual(h.cc().length, 1);
 });

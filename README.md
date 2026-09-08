@@ -438,6 +438,26 @@ file does not exist and the default below is used.
 LED feedback follows the map: a button bound to the live pattern lights up
 wherever you put it, rather than wherever the X-Touch originally had it.
 
+### Motorised faders and encoder rings
+
+The X-Touch Compact's nine faders are motorised and its eight encoders have LED
+rings, and both move the same way — the server sends the controller the CC it
+would have sent you. So the surface tracks the show: change the master dimmer in
+the browser and the physical fader follows, instead of staying where it was and
+snapping the rig back on the next touch.
+
+A control you are touching is left alone for a moment afterwards, so you never
+fight the motor, and a position already sent is not sent again, because a motor
+re-driven to where it already is hums. Connecting drives the whole surface to
+the current show.
+
+On by default — a controller without motors just ignores the CC. Turn it off in
+**Settings → Control → MIDI** if a MIDI loopback echoes the feedback back in as
+input.
+
+A 7-bit fader has 128 positions for 281 tempo values, so a BPM fader sits at the
+nearest step (~2.2 BPM) rather than exactly on the beat count.
+
 `DEBUG_MIDI=1` logs every incoming message — useful when mapping an unfamiliar
 controller, far too noisy during a show.
 
@@ -612,6 +632,10 @@ Everything is configured in the **settings page** (the *Settings* link in the
 header, or `/settings.html`). There are no environment variables to set: the
 server stores your choices in `config/settings.json` and reads them from there.
 
+The page is grouped into tabs by when you reach for each thing — **Pre-show**,
+**Rig**, **Output**, **Control**, **Music**, **Server** — and remembers which one
+you were on.
+
 Open the page, change what you need, press **Apply**. Most settings take effect
 immediately.
 
@@ -619,7 +643,7 @@ immediately.
 |---------|----------|
 | **ArtNet Output** | Enabled, node IP, port, default universe |
 | **sACN (E1.31)** | Enabled, node IP, priority, source name, universe offset, component ID |
-| **MIDI** | Input and output port |
+| **MIDI** | Input and output port, motorised fader feedback |
 | **Playback Sources** | PRO DJ LINK, Windows now-playing (SMTC) |
 | **Spotify** | Client ID, client secret, OAuth proxy, unverified-state escape hatch |
 | **Deezer** | ARL cookie — exact ISRC-matched audio instead of a yt-dlp search |
