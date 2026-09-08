@@ -147,6 +147,7 @@ server.listen(PORT, HOST, () => {
   console.log(`  PRO DJ LINK       →  ${state.prolinkEnabled ? 'enabled' : 'disabled (enable it in the settings page)'}`);
   console.log(`  Spotify           →  ${spotify.configured ? 'configured (visit /auth/spotify to connect)' : 'not configured (add a client ID & secret in the settings page)'}`);
   if (spotify.configured) {
+    console.log(`  Spotify auth      →  ${spotify.usingProxy ? `via proxy ${spotify.proxyBase}` : 'direct (no proxy)'}`);
     console.log(`  Spotify redirect  →  register this URL in your Spotify dashboard:`);
     console.log(`                       ${spotify.redirectUri}`);
   }

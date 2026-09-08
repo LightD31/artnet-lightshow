@@ -66,7 +66,10 @@ const DEFAULTS = {
   spotify: {
     clientId: '',
     clientSecret: '',
-    proxyBase: 'https://api.drndvs.fr',
+    // Blank: authorise straight against Spotify using a 127.0.0.1 redirect,
+    // which Spotify allows and which needs no third party. Set a relay here
+    // only to authorise from a device other than the one running the server.
+    proxyBase: '',
     allowUnverifiedState: false,
   },
   deezer: {
@@ -153,8 +156,8 @@ const schema = z.object({
     clientId: z.string().max(256),
     clientSecret: z.string().max(256),
     proxyBase: z.string().max(2048).refine(
-      (v) => /^https?:\/\/[^\s]+$/.test(v),
-      { message: 'must be an http(s) URL' },
+      (v) => v === '' || /^https?:\/\/[^\s]+$/.test(v),
+      { message: 'must be blank or an http(s) URL' },
     ),
     allowUnverifiedState: z.boolean(),
   }).strict(),

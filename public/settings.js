@@ -860,14 +860,16 @@ const SETTINGS_SPEC = [
     id: 'spotify',
     group: 'music',
     title: 'Spotify',
-    desc: 'Credentials from your Spotify app dashboard. Register the redirect URI shown in the server log.',
+    desc: 'Credentials from your Spotify app dashboard. Register the redirect URI shown in the server log — by default that is http://127.0.0.1:<port>/auth/spotify/callback.',
     fields: [
       { path: 'spotify.clientId', label: 'Client ID', type: 'text' },
       { path: 'spotify.clientSecret', label: 'Client Secret', type: 'secret' },
-      { path: 'spotify.proxyBase', label: 'OAuth Proxy', type: 'text',
-        help: 'Relays the Spotify callback back to this machine.' },
+      { path: 'spotify.proxyBase', label: 'OAuth Proxy (optional)', type: 'text',
+        help: 'Leave blank to authorise straight against Spotify — it accepts a 127.0.0.1 '
+          + 'redirect, so no relay is needed when you connect from this machine. Set one '
+          + 'only to connect from a different device.' },
       { path: 'spotify.allowUnverifiedState', label: 'Allow Unverified State', type: 'toggle',
-        help: 'Only if your proxy strips the state parameter. Disables OAuth CSRF protection.' },
+        help: 'Only if a proxy strips the state parameter. Disables OAuth CSRF protection.' },
     ],
   },
   {

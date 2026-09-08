@@ -661,7 +661,12 @@ function attachRoutes(app, deps) {
   // ─── Spotify ──────────────────────────────────────────────────────────────
   app.get('/auth/spotify', (_req, res) => {
     if (!spotify.configured) {
-      return res.status(400).json({ ok: false, error: 'Set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET env vars' });
+      // Not env vars: settings.js deliberately never reads process.env, so
+      // pointing the operator at one would send them somewhere that cannot work.
+      return res.status(400).json({
+        ok: false,
+        error: 'Add a Spotify client ID and secret in the settings page first',
+      });
     }
     res.redirect(spotify.getAuthorizeUrl());
   });
@@ -683,9 +688,13 @@ function attachRoutes(app, deps) {
         console.warn('[spotify] rejected callback: missing or unrecognised state parameter');
         return res.status(400).send(
           'Spotify auth failed: missing or unrecognised state parameter. '
-          + 'Start the flow from /auth/spotify in this browser. If your OAuth proxy '
-          + 'does not forward the state parameter, enable "accept unverified state" '
-          + 'in the settings page (this disables OAuth CSRF protection).'
+          + 'Start the flow from /auth/spotify in this browser.'
+          + (spotify.usingProxy
+            ? ' If your OAuth proxy does not forward the state parameter, either clear '
+              + 'the proxy (Spotify accepts a 127.0.0.1 redirect directly, and the state '
+              + 'then round-trips intact) or enable "accept unverified state" in the '
+              + 'settings page — the latter disables OAuth CSRF protection.'
+            : '')
         );
       }
     }
