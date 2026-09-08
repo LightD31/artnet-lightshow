@@ -1,6 +1,6 @@
 import { render } from 'preact';
 import { useState, useEffect } from 'preact/hooks';
-import { stateSig, connectedSig } from './state.js';
+import { stateSig } from './state.js';
 
 import { Header } from './components/Header.jsx';
 import { CommandBar } from './components/CommandBar.jsx';
@@ -11,6 +11,7 @@ import { Patterns } from './components/Patterns.jsx';
 import { Cues } from './components/Cues.jsx';
 import { Fixtures } from './components/Fixtures.jsx';
 import { BottomDrawer } from './components/BottomDrawer.jsx';
+import { ConnectionVeil } from './components/ConnectionVeil.jsx';
 
 function ModeTabs({ mode, setMode }) {
   // Subscribes here rather than in Root, so an auto-show status change re-renders
@@ -86,11 +87,6 @@ function Root() {
     return () => document.removeEventListener('keydown', onKey);
   }, []);
 
-  // A dropped socket left every control looking live while doing nothing.
-  // Bar the surface instead: on a rig you are driving in the dark, a control
-  // that silently stopped working is worse than one that says so.
-  const connected = connectedSig.value;
-
   return (
     <>
       <Header />
@@ -100,18 +96,7 @@ function Root() {
         {mode === 'manual' ? <ManualView /> : <AutoView />}
       </main>
       <BottomDrawer />
-      {!connected && (
-        <div class="offline-veil" role="alert">
-          <div class="offline-card">
-            <div class="offline-title">Disconnected</div>
-            <p class="offline-body">
-              Lost the connection to the server. The rig holds its last look;
-              nothing you press here reaches it until this clears.
-            </p>
-            <p class="offline-body dim">Reconnecting…</p>
-          </div>
-        </div>
-      )}
+      <ConnectionVeil />
     </>
   );
 }

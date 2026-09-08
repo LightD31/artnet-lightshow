@@ -1,6 +1,10 @@
 'use strict';
 
-const socket = io({ auth: { token: window.LIGHTSHOW_TOKEN || '' } });
+// Token comes from public/auth.js, which runs before this file.
+const auth = window.LightshowAuth || {
+  token: '', connected: () => {}, requireToken: () => {}, onToken: () => {},
+};
+const socket = io({ auth: { token: auth.token || '' } });
 
 let state = {};
 let profiles = {};
@@ -47,10 +51,29 @@ socket.on('error-msg', ({ message }) => {
 
 socket.on('connect', () => {
   document.getElementById('status-dot').classList.add('connected');
+  auth.connected();                       // clears the token prompt, if it was up
 });
 
 socket.on('disconnect', () => {
   document.getElementById('status-dot').classList.remove('connected');
+});
+
+// `socket.active` is false only when a middleware rejected the handshake, which
+// on this server means the token. Socket.IO does not retry those, so without
+// this the page sat on a grey dot forever — on the one page whose whole job is
+// to fix configuration like this.
+socket.on('connect_error', () => {
+  document.getElementById('status-dot').classList.remove('connected');
+  if (!socket.active) auth.requireToken();
+});
+
+// Retry with whatever the operator typed into that prompt, then load the
+// settings the 401s dropped on the way in.
+auth.onToken((token) => {
+  socket.auth = { token };
+  socket.connect();
+  loadSettings();
+  loadMidiMap();
 });
 
 // MERGE, don't replace. The first push on connect is the full snapshot,
@@ -888,7 +911,7 @@ const SERVER_SPEC = {
       help: '127.0.0.1 keeps the rig on this machine. 0.0.0.0 exposes it to the network — which requires an access token.' },
     { path: 'server.port', label: 'Port', type: 'number', min: 1, max: 65535 },
     { path: 'server.token', label: 'Access Token', type: 'secret', generate: true,
-      help: 'Required whenever the bind address is not loopback. Open the UI once at /?token=… to store it in the browser.' },
+      help: 'Required whenever the bind address is not loopback. Each browser needs it once: open the UI at /?token=… , or type it into the prompt the page raises when it is refused.' },
     { path: 'server.publicUrl', label: 'Public URL', type: 'text',
       help: 'Only needed behind a reverse proxy, or when the OAuth callback must use a hostname.' },
   ],
