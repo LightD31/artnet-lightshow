@@ -40,6 +40,9 @@ via **Bitfocus Companion**, and a REST API.
 
 - Analyses a track (librosa + a PANNs genre classifier) and generates a timed
   show: palette, pattern choices, drops, build-ups and accents
+- **Reads the buildup** — measures how far the snare roll subdivides and whether
+  the tempo genuinely ramps into the drop, and drives the beat division and the
+  beat clock from that rather than a fixed escalation
 - Follows playback from **Spotify**, **PRO DJ LINK** (CDJs), the **Windows OS
   media session** (any player that reports to it), or the **Deezer web player**
   via the bundled browser extension
@@ -646,6 +649,55 @@ Two controls sit in the *Look* panel and decide how the generated show reads:
 Both are live: changing either rebuilds the timeline from the analysis already
 in hand, so the new setting takes effect on the next tick without re-analysing
 the track. Neither touches the master dimmer — that slider stays yours.
+
+### Buildups — following what the music actually does
+
+The eight seconds before a drop used to get the same treatment every time: beat
+division 1, then 2, then 4, whatever the track was doing. That is right often
+enough to look deliberate and wrong often enough to look mechanical. Those eight
+seconds are now measured.
+
+Two separate things happen in there, and they are independent — a track can do
+either, both or neither.
+
+**The roll.** Standard production practice is to double the *subdivision* at
+constant tempo: a snare on quarters, then eighths, then sixteenths, sometimes
+thirty-seconds. That is what an audience hears as "speeding up", and it never
+touches the BPM. Onset density measures it directly — the onsets in the last
+third of the buildup against the first third — and the rig's beat division
+follows how far it actually goes:
+
+| Onset density ratio | Peak beat division |
+|---|---|
+| under 1.4× | 2 — a riser with no roll under it; the rig does not sprint |
+| 1.4–3× | 4 — one doubling, the common case |
+| 3× and up | 8 — two doublings, all the way to thirty-seconds |
+
+A buildup that starts from silence has nothing in its early third, which would
+make the ratio a division by roughly zero; that case is detected and left on the
+default rather than slamming the rig to its fastest division. In 3/4 the
+division stays at 1 whatever the roll does, because subdividing a triple metre
+by two puts the rig on the off-beats of the bar.
+
+**The ramp.** Some tracks genuinely change tempo into a drop. Rarer than the
+roll, but when it happens the beat clock has to follow or the rig drifts out of
+time exactly when it is most exposed. The analyser's tempo curve is clamped to
+±15% of the global BPM and smoothed over ~2 s, so what survives is real: a
+change of 3 BPM or more across the buildup, moving mostly one way, is followed
+with stepped BPM patches.
+
+What happens *at* the drop is decided by the track, not by a guess — the tempo
+curve for the few seconds after the drop says whether the ramp resolved or
+stuck:
+
+- a push that falls back is undone at the drop, or every pattern after it runs
+  at the buildup's peak tempo;
+- a genuine tempo change is kept, for the same reason.
+
+On a track the analyser already considers unstable (`tempoStability` below 0.60)
+the periodic BPM path is emitting across the whole track from the same curve, so
+buildups leave the tempo alone — two sources of truth for the beat clock would
+fight each other.
 
 ### Sync — lining the lights up with the room
 

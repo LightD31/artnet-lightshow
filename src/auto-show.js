@@ -46,6 +46,12 @@ const u8 = (n) => Math.max(0, Math.min(255, Math.round(n) || 0));
 // Matches the patch schema's bpm bounds.
 const clampBpm = (n) => Math.max(20, Math.min(300, Math.round(n) || 120));
 
+// How much the tempo has to move across a buildup before it counts as a ramp
+// rather than as the tempogram wobbling. The curve is already clamped to ±15 %
+// of the global BPM and median-filtered over ~2 s, so what is left is small;
+// 3 BPM is about where a drift stops being deniable and starts being audible.
+const TEMPO_RAMP_MIN_BPM = 3;
+
 const GENRE_STYLES = {
   edm:       { tier: 'dance',    tetrads: ['synthwave', 'aurora', 'arctic'],
                patterns: ['pairs', 'runner', 'chase', 'split', 'stack-up', 'random-flash', 'hit', 'sections'] },
@@ -623,16 +629,19 @@ class AutoShow {
       return labelOffsets.get(label);
     };
 
+    // The track's own tempo, and what the beat clock returns to after anything
+    // that moves it. The analyser is a separate process doing signal processing
+    // on arbitrary audio, so a nonsense tempo out of it is clamped rather than
+    // allowed to throw at the patch validator.
+    const baseBpm = clampBpm(a.bpm);
+
     // Initial state — set BPM, make sure blackout is off, clear any stale energy.
     // Explicitly DO NOT touch masterDimmer.
     events.push({
       timeMs: 0,
       action: 'patch',
       data: {
-        // The analyser is a separate process doing signal processing on
-        // arbitrary audio; a nonsense tempo out of it should not be able to
-        // throw here either.
-        bpm: clampBpm(a.bpm),
+        bpm: baseBpm,
         beatDivision: 1,
         running: true,
         masterBlackout: false,
@@ -650,7 +659,7 @@ class AutoShow {
     const tempoStab = a.tempoStability != null ? a.tempoStability : 1;
     const tempoCurve = a.tempoCurve || [];
     if (tempoStab < 0.60 && tempoCurve.length > 2) {
-      let lastBpm = clampBpm(a.bpm);
+      let lastBpm = baseBpm;
       for (const pt of tempoCurve) {
         const bpmVal = Math.round(pt.v);
         if (Math.abs(bpmVal - lastBpm) < 4) continue; // 4 BPM delta floor
@@ -932,6 +941,11 @@ class AutoShow {
     //   peak    (75–92%)  — fast strobe 'break' stutter, beatDiv 4
     //   gap     (last ~150ms) — blackout silence before the drop
     //
+    // The two beat divisions are a fallback, not a fixed plan: _buildupAccel
+    // measures what the music actually does — how far the roll subdivides, and
+    // whether the tempo genuinely moves — and those numbers win when there are
+    // any. See that method for why the roll and the ramp are separate things.
+    //
     // Short buildups (< 2 s) skip the tension phase → rise + peak only.
     // Skip buildups entirely on calm tracks or very low intensity.
     if (!isCalm && iFactor >= 0.4) {
@@ -940,6 +954,12 @@ class AutoShow {
         const endMs = Math.round(build.end * 1000);
         const durMs = Math.max(1000, endMs - startMs);
         const isShort = durMs < 2000;
+        const accel = this._buildupAccel(build, a, baseBpm);
+        // 3/4 keeps beat division at 1 whatever the roll does: subdividing a
+        // triple metre by two puts the rig on the off-beats of the bar.
+        const triple = meter === 3;
+        const riseDiv = triple ? 1 : (accel && accel.riseDivision) || 2;
+        const peakDiv = triple ? 1 : (accel && accel.peakDivision) || 4;
 
         // ── Tension phase: restrain to build contrast ──
         if (!isShort) {
@@ -978,7 +998,7 @@ class AutoShow {
             colorD: riseColB,
             strobeSpeed: u8(60 * Math.min(1.5, iFactor)),
             strobeFunction: 'ramp-up',
-            beatDivision: meter === 3 ? 1 : 2,
+            beatDivision: riseDiv,
           },
         });
 
@@ -995,9 +1015,39 @@ class AutoShow {
             // put the buildup peak past the channel's range.
             strobeSpeed: u8(220 * Math.min(1.5, iFactor)),
             strobeFunction: 'break',
-            beatDivision: meter === 3 ? 1 : 4,
+            beatDivision: peakDiv,
           },
         });
+
+        // ── Ramp: follow a real tempo change through the buildup ──
+        // Only when the track is otherwise steady. On a genuinely drifting one
+        // the periodic-BPM path above is already emitting across the whole
+        // track, and two sources of truth for the beat clock would fight.
+        if (accel && accel.tempo && tempoStab >= 0.60) {
+          let lastEmitted = baseBpm;
+          for (const pt of accel.tempo.points) {
+            // Strictly inside the buildup: the drop instant belongs to the
+            // settle below. A ramp point landing on it too would put two BPM
+            // patches on the same millisecond, and which one won would come
+            // down to the sort being stable — the rig running the whole rest of
+            // the track at the buildup's peak tempo, on a coin toss.
+            if (pt.tMs >= endMs) break;
+            if (Math.abs(pt.bpm - lastEmitted) < 2) continue;
+            events.push({ timeMs: pt.tMs, action: 'patch', data: { bpm: pt.bpm } });
+            lastEmitted = pt.bpm;
+          }
+          // Put the clock where the track actually sits after the drop. A push
+          // that resolves has to be undone or every pattern past the drop runs
+          // fast; a real tempo change has to be kept for the same reason. The
+          // curve after the drop says which of the two this was.
+          if (Math.abs(accel.tempo.settleBpm - lastEmitted) >= 2) {
+            events.push({
+              timeMs: endMs,
+              action: 'patch',
+              data: { bpm: accel.tempo.settleBpm },
+            });
+          }
+        }
 
         // ── Gap: blackout silence so the drop contrast is maximal ──
         events.push({
@@ -1765,6 +1815,104 @@ class AutoShow {
     // whole "no consecutive repeats" property we wanted in the first place.
     if (len === 2) return idx & 1;
     return Math.round(idx * len * 0.618033988749895) % len;
+  }
+
+  /**
+   * How a buildup actually accelerates, measured instead of assumed.
+   *
+   * The show used to escalate every buildup the same way — beat division 1,
+   * then 2, then 4 — whatever the music was doing. That is right often enough
+   * to look deliberate and wrong often enough to look mechanical: a track that
+   * rolls all the way to 1/32 gets a rig running at a quarter of the note rate,
+   * and one with no roll at all gets a rig sprinting through a plain riser.
+   *
+   * Two different things are happening in the eight seconds before a drop, and
+   * they need separate treatment:
+   *
+   *   The roll. Standard production practice is to double the *subdivision* at
+   *   constant tempo — a snare hitting quarters, then eighths, then sixteenths,
+   *   sometimes thirty-seconds. That is what an audience hears as "speeding
+   *   up", and it never touches BPM. Onset density measures it directly: count
+   *   the onsets in the last third of the buildup against the first third and
+   *   the ratio is roughly the number of doublings.
+   *
+   *   The ramp. Some tracks genuinely change tempo into a drop. That is a real
+   *   BPM change and the beat clock has to follow it or the rig drifts out of
+   *   time exactly when it is most exposed. It is rarer than the roll, and the
+   *   two are independent — a track can do either, both or neither.
+   *
+   * Returns null when there is nothing measurable to act on, so the caller
+   * keeps the old fixed escalation rather than inventing numbers.
+   */
+  _buildupAccel(build, a, baseBpm) {
+    const startSec = build.start;
+    const endSec = build.end;
+    const span = endSec - startSec;
+    if (!(span > 0.5)) return null;
+
+    const out = { rollRatio: null, riseDivision: null, peakDivision: null, tempo: null };
+
+    // ── The roll: onset density, late third against early third ────────────
+    const onsets = Array.isArray(a.onsets) ? a.onsets : null;
+    if (onsets && onsets.length) {
+      const third = span / 3;
+      const countIn = (from, to) => {
+        let n = 0;
+        for (const t of onsets) {
+          if (t >= from && t < to) n++;
+          else if (t >= to) break;   // onsets are sorted
+        }
+        return n;
+      };
+      const early = countIn(startSec, startSec + third) / third;
+      const late = countIn(endSec - third, endSec) / third;
+      // An early third with nothing in it is a buildup that starts from silence
+      // rather than one that accelerates; a ratio against zero says nothing.
+      if (early >= 0.5) {
+        const ratio = late / early;
+        out.rollRatio = Math.round(ratio * 100) / 100;
+        // One doubling → sixteenths, two → thirty-seconds. Below 1.4 there is
+        // no roll worth the name and the rig should not pretend there is.
+        out.peakDivision = ratio >= 3 ? 8 : ratio >= 1.4 ? 4 : 2;
+        out.riseDivision = Math.max(2, out.peakDivision / 2);
+      }
+    }
+
+    // ── The ramp: does the tempo curve actually move across the window? ────
+    const curve = Array.isArray(a.tempoCurve) ? a.tempoCurve : [];
+    const inWindow = curve.filter((p) => p && p.t >= startSec && p.t <= endSec);
+    if (inWindow.length >= 3) {
+      const from = inWindow[0].v;
+      const to = inWindow[inWindow.length - 1].v;
+      const delta = to - from;
+      // Count the steps that agree with the overall direction. A curve that
+      // wanders up and down by the same total is noise, not a ramp.
+      let agree = 0;
+      for (let i = 1; i < inWindow.length; i++) {
+        const d = inWindow[i].v - inWindow[i - 1].v;
+        if (d !== 0 && Math.sign(d) === Math.sign(delta)) agree++;
+      }
+      const monotone = agree / (inWindow.length - 1);
+
+      if (Math.abs(delta) >= TEMPO_RAMP_MIN_BPM && monotone >= 0.7) {
+        // Where the track sits *after* the drop decides whether the ramp
+        // resolves or sticks. A riser that pushes and falls back has to be
+        // undone at the drop or every pattern after it runs at the wrong
+        // tempo; a genuine tempo change has to be kept for the same reason.
+        const after = curve.filter((p) => p && p.t > endSec && p.t <= endSec + 6);
+        const settle = after.length
+          ? after.reduce((sum, p) => sum + p.v, 0) / after.length
+          : baseBpm;
+        out.tempo = {
+          points: inWindow.map((p) => ({ tMs: Math.round(p.t * 1000), bpm: clampBpm(p.v) })),
+          settleBpm: clampBpm(settle),
+          fromBpm: clampBpm(from),
+          toBpm: clampBpm(to),
+        };
+      }
+    }
+
+    return (out.peakDivision || out.tempo) ? out : null;
   }
 
   _segmentStrobeSpeed(seg) {
