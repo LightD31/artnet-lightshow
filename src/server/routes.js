@@ -32,7 +32,10 @@ const {
 const { settings, RESTART_PATHS, CONFIG_FILE } = require('./settings');
 const { generateToken } = require('./auth');
 const { runPreflight } = require('./preflight');
-const { warmRequestSchema, parseSetList } = require('./warm');
+const {
+  warmRequestSchema, warmPlaylistSchema, parseSetList, fromSpotifyTracks,
+  MAX_TRACKS: MAX_WARM_TRACKS,
+} = require('./warm');
 const pythonEnv = require('../python-env');
 
 // Audio uploads genuinely need headroom; GDTF files do not. Separate limits so
@@ -662,6 +665,22 @@ function attachRoutes(app, deps) {
     res.json({ ok: true });
   });
 
+  /**
+   * The connected account's playlists, so warming can offer a picker instead of
+   * demanding a pasted link. Private ones need the playlist scope — a
+   * connection older than it gets the public subset, and `canReadPlaylists`
+   * on the Spotify status tells the UI to offer a reconnect.
+   */
+  app.get('/api/spotify/playlists', asyncHandler(async (_req, res) => {
+    if (!spotify.authenticated) return res.status(400).json({ ok: false, error: 'Spotify not connected' });
+    try {
+      const playlists = await spotify.getMyPlaylists();
+      res.json({ ok: true, playlists, canReadPlaylists: spotify.canReadPlaylists });
+    } catch (err) {
+      res.status(err.status === 401 ? 400 : 502).json({ ok: false, error: err.message });
+    }
+  }));
+
   app.get('/api/spotify/now-playing', asyncHandler(async (_req, res) => {
     try {
       const playing = await spotify.getCurrentlyPlaying();
@@ -932,11 +951,65 @@ function attachRoutes(app, deps) {
     const queue = await spotify.getQueue();
     if (!queue || !queue.length) return res.status(400).json({ ok: false, error: 'Spotify queue is empty' });
 
-    const inputs = queue.filter((t) => t && t.name).map((t) => ({
-      title: t.name, artist: t.artist, isrc: t.isrc, trackId: t.trackId, durationMs: t.durationMs,
-    }));
     try {
-      res.json({ ok: true, warm: integrations.warmer.start(inputs) });
+      res.json({ ok: true, warm: integrations.warmer.start(fromSpotifyTracks(queue)) });
+    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+  }));
+
+  /**
+   * Warm a Spotify playlist.
+   *
+   * The queue only exists once something is playing and rarely holds a whole
+   * night; a playlist is the set list most people already have. Takes a share
+   * link, a Spotify URI or a bare id.
+   */
+  app.post('/api/warm/spotify-playlist', asyncHandler(async (req, res) => {
+    if (!spotify.authenticated) return res.status(400).json({ ok: false, error: 'Spotify not connected' });
+
+    let body;
+    try {
+      body = validate(warmPlaylistSchema, req.body || {}, 'warm playlist');
+    } catch (err) { return res.status(err.status || 400).json({ ok: false, error: err.message }); }
+
+    let playlist;
+    try {
+      playlist = await spotify.getPlaylist(body.playlist, { limit: MAX_WARM_TRACKS });
+    } catch (err) {
+      // Spotify answers 404 for a playlist you cannot see, which is also what a
+      // private playlist looks like without the scope. Say which it probably is
+      // rather than leaving the operator to guess at a bare "not found".
+      if (err.status === 404 && !spotify.canReadPlaylists) {
+        return res.status(400).json({
+          ok: false,
+          error: 'Playlist not found. If it is private or collaborative, reconnect '
+            + 'Spotify — this connection predates the playlist permission.',
+        });
+      }
+      // A bad reference or a lapsed connection is the caller's to fix; a real
+      // 404 is the playlist's; anything else is Spotify failing on our behalf.
+      const status = err.status === 400 || err.status === 401 ? 400
+        : err.status === 404 ? 404
+          : 502;
+      return res.status(status).json({ ok: false, error: err.message });
+    }
+
+    const inputs = fromSpotifyTracks(playlist.tracks);
+    if (!inputs.length) {
+      return res.status(400).json({
+        ok: false,
+        error: `"${playlist.name}" has no tracks to warm`,
+      });
+    }
+
+    try {
+      res.json({
+        ok: true,
+        playlist: {
+          id: playlist.id, name: playlist.name, owner: playlist.owner,
+          total: playlist.total, truncated: playlist.truncated,
+        },
+        warm: integrations.warmer.start(inputs),
+      });
     } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
   }));
 

@@ -1768,6 +1768,31 @@ input[type=range]::-moz-range-thumb {
 .warm-failed { color: var(--accent-4); }
 .warm-current { color: var(--dim); }
 
+/* Spotify playlist source: pick one of the account's own, or paste a link. */
+.warm-playlist { margin-bottom: 10px; }
+.warm-playlist-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.warm-playlist-select,
+.warm-playlist-link {
+  flex: 1 1 160px;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 11px;
+}
+.warm-playlist-select:focus,
+.warm-playlist-link:focus { outline: none; border-color: var(--accent); }
+.warm-playlist-select:disabled,
+.warm-playlist-link:disabled { opacity: .5; }
+.warm-note {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.5;
+  margin: 6px 0 0;
+}
+
 .warm-input {
   width: 100%;
   box-sizing: border-box;
