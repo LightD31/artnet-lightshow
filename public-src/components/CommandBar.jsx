@@ -41,8 +41,12 @@ export function CommandBar() {
         </div>
         <button class="cb-tap" onClick={emitTap} title="Tap tempo (Space)">TAP</button>
         <div class="cb-bpm-controls">
-          <button class="btn icon sm" onClick={() => send({ bpm: bpm - 1 })}>−</button>
-          <button class="btn icon sm" onClick={() => send({ bpm: bpm + 1 })}>+</button>
+          {/* Wrapped: as bare children of the column flex these stretched to
+              full width and stacked, which is not what they are for. */}
+          <div class="cb-bpm-nudge">
+            <button class="btn icon sm" onClick={() => send({ bpm: bpm - 1 })} title="BPM −1">−</button>
+            <button class="btn icon sm" onClick={() => send({ bpm: bpm + 1 })} title="BPM +1">+</button>
+          </div>
           <div class="cb-divs">
             {DIVISIONS.map((d) => (
               <button

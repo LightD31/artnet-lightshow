@@ -1,37 +1,108 @@
 import { useEffect, useRef } from 'preact/hooks';
-import { stateSig, send, api } from '../state.js';
+import { stateSig, autoPositionSig, send, api } from '../state.js';
+import { fmtTime } from '../utils.js';
 import { AnalysisStats } from './AnalysisStats.jsx';
 import { AutoTimeline } from './AutoTimeline.jsx';
+import { Queue } from './Queue.jsx';
 
-const NEXT_LABELS = {
+/**
+ * The auto-show surface.
+ *
+ * Everything here is one of three things, and the layout says which: what the
+ * show is doing (transport), how it should look (palette and intensity), and
+ * what it knows (now playing, the queue, the analysis). The controls used to be
+ * a single wrapping row of seven differently-shaped widgets, with a redundant
+ * second transport button and three stacked source rows that were mostly about
+ * sources you were not using.
+ */
+
+const STATUS_TEXT = {
   idle: 'Idle',
-  prefetching: 'Prefetching',
-  ready: 'Ready',
-  queued: 'Queued',
-  error: 'Error',
-  empty: 'Queue empty',
-  unavailable: 'Unavailable',
+  downloading: 'Downloading audio',
+  analyzing: 'Analysing audio',
+  ready: 'Ready to start',
+  playing: 'Running',
 };
 
-function statusMessage(status) {
-  switch (status) {
-    case 'downloading': return 'Downloading full audio via yt-dlp…';
-    case 'analyzing':   return 'Analyzing audio with Essentia…';
-    case 'playing':     return 'Auto show running';
-    case 'ready':       return 'Analysis complete — ready to start';
-    default:            return '';
-  }
+const SOURCES = [
+  { value: 'auto', label: 'Auto-detect' },
+  { value: 'prolink', label: 'PRO DJ LINK' },
+  { value: 'spotify', label: 'Spotify' },
+  { value: 'deezer', label: 'Deezer (extension)' },
+  { value: 'nowplaying', label: 'Now playing (OS)' },
+  { value: 'timer', label: 'Standalone timer' },
+];
+
+const PALETTE_SIZES = [
+  { size: 2, hint: 'Two contrasting colours — reads cleanly on a small rig' },
+  { size: 3, hint: 'Three well-separated hues' },
+  { size: 4, hint: 'The full hand-tuned tetrad' },
+];
+
+/** One dot per playback source, so the strip says what is live at a glance. */
+function SourceDots({ s }) {
+  const sp = s.spotify || {};
+  const dz = s.deezer || {};
+  const np = s.nowPlaying || {};
+  const pl = s.prolink || {};
+
+  const sources = [
+    { id: 'prolink', label: 'PRO DJ LINK', live: !!pl.connected, detail: pl.track ? `${pl.track.artist || ''} — ${pl.track.title || ''}` : 'No CDJ' },
+    { id: 'spotify', label: 'Spotify', live: !!sp.authenticated, detail: sp.authenticated ? 'Connected' : sp.configured ? 'Not connected' : 'Not configured' },
+    { id: 'deezer', label: 'Deezer', live: !!dz.authenticated, detail: dz.authenticated ? `${dz.artist || ''} — ${dz.name || ''}` : 'Extension not connected' },
+    { id: 'os', label: 'OS media', live: !!np.authenticated, detail: np.authenticated ? `${np.artist || ''} — ${np.name || ''}` : 'Nothing detected' },
+  ];
+
+  return (
+    <div class="source-strip">
+      {sources.map((src) => (
+        <span key={src.id} class={`source-chip ${src.live ? 'live' : ''}`} title={src.detail}>
+          <span class="source-dot" />
+          {src.label}
+        </span>
+      ))}
+      {sp.authenticated ? (
+        <button
+          class="btn sm source-action"
+          onClick={() => api('/api/spotify/disconnect', { method: 'POST' })}
+        >Disconnect Spotify</button>
+      ) : sp.configured ? (
+        <button
+          class="btn sm source-action"
+          onClick={() => window.open('/auth/spotify', '_blank', 'width=500,height=700')}
+        >Connect Spotify</button>
+      ) : null}
+    </div>
+  );
+}
+
+/** Now playing, with where we are in the track. */
+function NowPlaying({ track }) {
+  const pos = autoPositionSig.value;
+  const duration = track.durationMs || 0;
+  const pct = duration > 0 ? Math.min(100, (pos.positionMs / duration) * 100) : 0;
+
+  return (
+    <section class="panel now-panel">
+      {track.albumArt && <img class="now-art" src={track.albumArt} alt="" />}
+      <div class="now-body">
+        <div class="now-name" title={track.name}>{track.name}</div>
+        <div class="now-artist" title={track.artist}>{track.artist}</div>
+        {duration > 0 && (
+          <div class="now-progress">
+            <div class="now-bar"><div class="now-bar-fill" style={{ width: `${pct}%` }} /></div>
+            <span class="now-time">{fmtTime(pos.positionMs)} / {fmtTime(duration)}</span>
+          </div>
+        )}
+      </div>
+    </section>
+  );
 }
 
 export function AutoMode() {
   const s = stateSig.value;
   const sp = s.spotify;
-  const np = s.nowPlaying || {};
-  const dz = s.deezer || {};
   const as = s.autoShow;
-  const next = s.spotifyNext;
-  const prefetchSlots = Array.isArray(s.spotifyPrefetch) ? s.spotifyPrefetch : [];
-  const prefetchDepth = Math.max(1, Math.min(5, s.autoPrefetchDepth || 1));
 
   const pendingStartRef = useRef(false);
   useEffect(() => {
@@ -43,18 +114,13 @@ export function AutoMode() {
 
   if (!sp || !as) return null;
 
-  const spotifyDot = sp.authenticated ? 'connected' : '';
-  const spotifyText = sp.authenticated
-    ? 'Spotify connected'
-    : sp.configured
-      ? 'Spotify not connected'
-      : 'Spotify not configured';
-
-  const busy = as.status === 'downloading' || as.status === 'analyzing';
+  const status = as.status || 'idle';
+  const busy = status === 'downloading' || status === 'analyzing';
+  const running = status === 'playing';
 
   const analyzeAndStart = () => {
-    if (as.status === 'playing') return;
-    if (as.status === 'ready')   { api('/api/auto/start', { method: 'POST' }); return; }
+    if (running) return;
+    if (status === 'ready') { api('/api/auto/start', { method: 'POST' }); return; }
 
     const source = s.autoSource || 'auto';
     const spotifyReady = sp.authenticated;
@@ -70,8 +136,7 @@ export function AutoMode() {
     // fires a start for a track that never analysed. api() reports the reason.
     const triggerAnalyze = (endpoint) => {
       pendingStartRef.current = true;
-      api(endpoint, { method: 'POST' })
-        .then((d) => { if (!d.ok) pendingStartRef.current = false; });
+      api(endpoint, { method: 'POST' }).then((d) => { if (!d.ok) pendingStartRef.current = false; });
     };
 
     if (useSpotify)         triggerAnalyze('/api/auto/analyze-spotify');
@@ -80,185 +145,112 @@ export function AutoMode() {
     else if (useProlink)    triggerAnalyze('/api/auto/analyze-prolink');
     else api('/api/auto/start', { method: 'POST' });
   };
-  const fallbackStatus = next && next.status ? next.status : 'idle';
+
+  const stop = () => {
+    pendingStartRef.current = false;
+    api('/api/auto/stop', { method: 'POST' });
+  };
+
+  const intensity = as.intensity ?? 50;
 
   return (
-    <>
-      {/* Compact 2-column control card */}
-      <div class="card auto-card-grid" id="auto-card">
-        <div class="auto-card-left">
-          <div class="auto-controls-row">
-            <span class={`auto-badge auto-badge-${as.status}`} style={{ marginLeft: 0 }}>{(as.status || '').toUpperCase()}</span>
-            <select
-              class="auto-select"
-              value={s.autoSource || 'auto'}
-              onChange={(e) => send({ autoSource: e.target.value })}
-              title="Source"
-            >
-              <option value="auto">Auto-detect</option>
-              <option value="prolink">PRO DJ LINK</option>
-              <option value="spotify">Spotify</option>
-              <option value="deezer">Deezer (extension)</option>
-              <option value="nowplaying">Now Playing (OS)</option>
-              <option value="timer">Standalone timer</option>
-            </select>
-            <div class="palette-size-toggle" role="group" aria-label="Palette size" title="Palette size">
-              {[2, 3, 4].map((sz) => (
-                <button
-                  key={sz}
-                  type="button"
-                  class={`btn palette-size-btn ${(as.paletteSize || 4) === sz ? 'active' : ''}`}
-                  onClick={() => send({ autoPaletteSize: sz })}
-                >{sz}</button>
-              ))}
+    <div class="auto-layout">
+      {/* One transport bar. Start and stop are the same button in two states —
+          two buttons, each disabled half the time, said the same thing twice. */}
+      <div class="auto-transport">
+        <button
+          class={`transport-btn ${running ? 'running' : ''}`}
+          disabled={busy}
+          onClick={running ? stop : analyzeAndStart}
+        >
+          <span class="transport-glyph">{busy ? '⟳' : running ? '■' : '▶'}</span>
+          <span>{busy ? 'Analysing…' : running ? 'Stop show' : 'Start show'}</span>
+        </button>
+
+        <span class={`auto-badge auto-badge-${status}`}>{STATUS_TEXT[status] || status}</span>
+
+        <span class="transport-spacer" />
+
+        <label class="transport-source">
+          <span class="transport-source-label">Follow</span>
+          <select
+            class="auto-select"
+            value={s.autoSource || 'auto'}
+            onChange={(e) => send({ autoSource: e.target.value })}
+          >
+            {SOURCES.map((src) => <option key={src.value} value={src.value}>{src.label}</option>)}
+          </select>
+        </label>
+      </div>
+
+      <div class="auto-columns">
+        <div class="auto-col">
+          {as.track && <NowPlaying track={as.track} />}
+
+          {/* The two controls that shape the generated show, together. The
+              intensity slider used to sit in the transport row as "INT". */}
+          <section class="panel look-panel">
+            <header class="panel-head"><h3 class="panel-title">Look</h3></header>
+
+            <div class="look-row">
+              <span class="look-label" id="palette-label">Palette</span>
+              <div class="segmented" role="group" aria-labelledby="palette-label">
+                {PALETTE_SIZES.map(({ size, hint }) => (
+                  <button
+                    key={size}
+                    type="button"
+                    class={`segmented-btn ${(as.paletteSize || 4) === size ? 'active' : ''}`}
+                    aria-pressed={(as.paletteSize || 4) === size}
+                    title={hint}
+                    onClick={() => send({ autoPaletteSize: size })}
+                  >{size}</button>
+                ))}
+              </div>
+              <span class="look-hint">colours per song</span>
             </div>
-            <div class="auto-prefetch" title="How many upcoming Spotify tracks to prefetch in the background">
-              <label>QUEUE</label>
+
+            <div class="look-row">
+              <label class="look-label" for="auto-intensity">Intensity</label>
               <input
-                type="number" min="1" max="5" step="1"
-                value={prefetchDepth}
-                onInput={(e) => {
-                  const v = Math.max(1, Math.min(5, parseInt(e.target.value, 10) || 1));
-                  send({ autoPrefetchDepth: v });
-                }}
-              />
-            </div>
-            <div class="auto-intensity">
-              <label title="Energy intensity">INT</label>
-              <input
+                id="auto-intensity"
+                class="look-slider"
                 type="range" min="0" max="100"
-                value={as.intensity ?? 50}
+                value={intensity}
+                aria-valuetext={`${intensity} percent`}
                 onInput={(e) => send({ autoIntensity: Number(e.target.value) })}
               />
-              <span class="val">{as.intensity ?? 50}</span>
+              <span class="look-value">{intensity}</span>
             </div>
-            <div class="auto-actions">
-              <button
-                class="btn active"
-                disabled={as.status === 'playing' || busy}
-                onClick={analyzeAndStart}
-              >{busy ? '⟳' : '▶'} {busy ? 'Analyzing' : 'Start'}</button>
-              <button
-                class="btn"
-                disabled={as.status !== 'playing'}
-                onClick={() => { pendingStartRef.current = false; api('/api/auto/stop', { method: 'POST' }); }}
-              >■</button>
-            </div>
-          </div>
+            <p class="look-note">
+              How hard the generated show pushes — accent density, drops and strobe bursts.
+            </p>
+          </section>
 
-          {as.track && (
-            <div class="auto-now-playing">
-              {as.track.albumArt && <img class="auto-album-art" src={as.track.albumArt} alt="" />}
-              <div class="auto-track-info">
-                <div class="auto-track-name">{as.track.name}</div>
-                <div class="auto-track-artist">{as.track.artist}</div>
-              </div>
-            </div>
-          )}
-
-          <div class="auto-status-row">
-            <div class={`status-dot ${spotifyDot}`} />
-            <span style={{ fontSize: '11px', color: 'var(--muted)' }}>{spotifyText}</span>
-            {!sp.authenticated && (
-              <button
-                class="btn sm"
-                style={{ marginLeft: 'auto' }}
-                onClick={() => window.open('/auth/spotify', '_blank', 'width=500,height=700')}
-              >Connect</button>
-            )}
-            {sp.authenticated && (
-              <button
-                class="btn sm danger"
-                style={{ marginLeft: 'auto' }}
-                onClick={() => api('/api/spotify/disconnect', { method: 'POST' })}
-              >Disconnect</button>
-            )}
-          </div>
-
-          <div class="auto-status-row">
-            <div class={`status-dot ${dz.authenticated ? 'connected' : ''}`} />
-            <span style={{ fontSize: '11px', color: 'var(--muted)' }}>
-              {dz.authenticated
-                ? `Deezer: ${dz.artist ? `${dz.artist} — ` : ''}${dz.name || 'unknown'}${dz.queueLength ? ` (+${dz.queueLength} queued)` : ''}`
-                : 'Deezer extension not connected'}
-            </span>
-          </div>
-
-          {dz.authenticated && Array.isArray(s.deezerPrefetch) && s.deezerPrefetch.length > 0 && (
-            <div class="auto-next-list">
-              {s.deezerPrefetch.map((slot, i) => (
-                <div key={slot.cacheKey || i} class={`auto-next-song ${i > 0 ? 'auto-next-song-sub' : ''}`}>
-                  <div class="auto-next-label">{i === 0 ? 'Up next' : `+${i}`}</div>
-                  <div class="auto-next-track">{slot.track?.name || '-'}</div>
-                  <div class="auto-next-meta">
-                    <span class="auto-next-artist">{slot.track?.artist || ''}</span>
-                    <span class={`auto-next-status ${slot.status || 'idle'}`} title={slot.message || ''}>
-                      {NEXT_LABELS[slot.status] || slot.status || 'Idle'}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div class="auto-status-row">
-            <div class={`status-dot ${np.authenticated ? 'connected' : ''}`} />
-            <span style={{ fontSize: '11px', color: 'var(--muted)' }}>
-              {np.authenticated
-                ? `Now playing: ${np.artist ? `${np.artist} — ` : ''}${np.name || 'unknown'}`
-                : 'No media detected (OS now-playing)'}
-            </span>
-          </div>
-
-          {sp.authenticated && (
-            <div class="auto-next-list">
-              {prefetchSlots.length === 0 || !prefetchSlots[0].track ? (
-                <div class="auto-next-song">
-                  <div class="auto-next-label">Up next</div>
-                  <div class="auto-next-track">-</div>
-                  <div class="auto-next-meta">
-                    <span class="auto-next-artist"></span>
-                    <span class={`auto-next-status ${fallbackStatus}`}>
-                      {NEXT_LABELS[fallbackStatus] || 'Idle'}
-                    </span>
-                  </div>
-                </div>
-              ) : (
-                prefetchSlots.map((slot, i) => (
-                  <div key={slot.cacheKey || i} class={`auto-next-song ${i > 0 ? 'auto-next-song-sub' : ''}`}>
-                    <div class="auto-next-label">{i === 0 ? 'Up next' : `+${i}`}</div>
-                    <div class="auto-next-track">{slot.track?.name || '-'}</div>
-                    <div class="auto-next-meta">
-                      <span class="auto-next-artist">{slot.track?.artist || ''}</span>
-                      <span
-                        class={`auto-next-status ${slot.status || 'idle'}`}
-                        title={slot.message || ''}
-                      >
-                        {NEXT_LABELS[slot.status] || slot.status || 'Idle'}
-                      </span>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-
-          {statusMessage(as.status) && (
-            <div class="auto-status-message">{statusMessage(as.status)}</div>
-          )}
+          <Queue />
+          <SourceDots s={s} />
         </div>
 
-        <div class="auto-card-right">
+        <div class="auto-col auto-col-analysis">
           {as.analysis ? (
-            <AnalysisStats as={as} colorPresets={s.colorPresets} />
+            <>
+              <section class="panel">
+                <header class="panel-head"><h3 class="panel-title">Analysis</h3></header>
+                <AnalysisStats as={as} colorPresets={s.colorPresets} />
+              </section>
+              <section class="panel timeline-panel">
+                <AutoTimeline />
+              </section>
+            </>
           ) : (
-            <div class="auto-empty">Run an auto-show to see analysis here.</div>
+            <section class="panel">
+              <p class="panel-empty">
+                No analysis yet. Start a show and the track&rsquo;s tempo, key, genre and
+                structure appear here.
+              </p>
+            </section>
           )}
-          <div class="auto-timeline-inline">
-            <AutoTimeline />
-          </div>
         </div>
       </div>
-    </>
+    </div>
   );
 }
