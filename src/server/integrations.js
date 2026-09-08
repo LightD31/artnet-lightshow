@@ -116,6 +116,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     },
     autoPaletteSize: (n) => autoShow.setPaletteSize(Number(n)),
     autoIntensity: (n) => autoShow.setIntensity(Number(n)),
+    autoSyncOffsetMs: (n) => autoShow.setSyncOffsetMs(Number(n)),
     autoPrefetchDepth: () => {
       // Depth change → trim slots that are now out of range and immediately
       // queue prefetches for newly in-range positions.

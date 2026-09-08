@@ -9,6 +9,7 @@ const deezer = require('./deezer');
 const AnalyzerWorker = require('./analyzer-worker');
 const pythonEnv = require('./python-env');
 const { paletteBankForSize } = require('./server/palettes');
+const { SYNC_OFFSET_LIMIT_MS } = require('./server/presets');
 
 // A download that never finishes is indistinguishable from one that never
 // started: the track change waits on this promise, so an unresponsive network
@@ -37,19 +38,19 @@ function downloadTimeoutMs() {
 //   calm      — no strobes, no drops
 const GENRE_STYLES = {
   edm:       { tier: 'dance',    tetrads: ['synthwave', 'aurora', 'arctic'],
-               patterns: ['pairs', 'runner', 'chase', 'split', 'stack-up', 'random-flash', 'hit', 'alt-halves', 'split-4', 'chase-4', 'pairs-4'] },
+               patterns: ['pairs', 'runner', 'chase', 'split', 'stack-up', 'random-flash', 'hit', 'sections'] },
   dubstep:   { tier: 'dance',    tetrads: ['volcanic', 'noirUv', 'synthwave'],
-               patterns: ['random-flash', 'stack-up', 'split', 'pairs', 'runner', 'hit', 'alt-halves', 'split-3', 'alt-thirds'] },
+               patterns: ['random-flash', 'stack-up', 'split', 'pairs', 'runner', 'hit', 'sections'] },
   trance:    { tier: 'dance',    tetrads: ['arctic', 'violetDream', 'aurora', 'synthwave'],
-               patterns: ['sparkle', 'wave', 'twinkle', 'runner', 'hit', 'chase-3', 'alt-thirds'] },
+               patterns: ['sparkle', 'wave', 'twinkle', 'runner', 'hit', 'chase', 'sections'] },
   disco:     { tier: 'dance',    tetrads: ['candyPop', 'sunsetDrive', 'solarPunch'],
-               patterns: ['ping-pong', 'chase', 'sparkle', 'pairs', 'alt-halves', 'split', 'split-4', 'alt-quarters', 'pairs-4'] },
+               patterns: ['ping-pong', 'chase', 'sparkle', 'pairs', 'sections', 'split'] },
   hiphop:    { tier: 'moderate', tetrads: ['volcanic', 'desert', 'royal'],
-               patterns: ['pairs', 'split', 'chase', 'stack-up', 'runner', 'alt-halves', 'split-3', 'chase-3'] },
+               patterns: ['pairs', 'split', 'chase', 'stack-up', 'runner', 'sections'] },
   pop:       { tier: 'moderate', tetrads: ['candyPop', 'sunsetDrive', 'tropical'],
-               patterns: ['ping-pong', 'wave', 'chase', 'sparkle', 'pairs', 'split-3', 'chase-4'] },
+               patterns: ['ping-pong', 'wave', 'chase', 'sparkle', 'pairs', 'split'] },
   funk:      { tier: 'moderate', tetrads: ['solarPunch', 'tropical', 'sunsetDrive'],
-               patterns: ['ping-pong', 'pairs', 'runner', 'chase', 'wave', 'alt-halves', 'split-4', 'alt-quarters'] },
+               patterns: ['ping-pong', 'pairs', 'runner', 'chase', 'wave', 'sections', 'split'] },
   rock:      { tier: 'rock',     tetrads: ['volcanic', 'solarPunch', 'desert'],
                patterns: ['chase', 'runner', 'pairs', 'ping-pong', 'stack-up'] },
   metal:     { tier: 'rock',     tetrads: ['volcanic', 'noirUv', 'royal'],
@@ -138,6 +139,11 @@ class AutoShow {
     this.paletteName = null;     // human-readable palette name (e.g. 'cyber', 'sunset')
     this.paletteSize = 4;        // 2 | 3 | 4 — picks between DUOS / TRIADS / TETRADS banks
     this.intensity = 50;         // 0–100 energy slider — scales accent density, drops, strobes
+    // Seeded from the store, not from zero: the offset is persisted (see
+    // settings.js `auto`), and state.js reads the same key, so starting at 0
+    // here would leave the show and the number on the operator's screen
+    // disagreeing until the first nudge.
+    this.syncOffsetMs = settings.group('auto').syncOffsetMs ?? 0;
     this._getPositionMs = null;
     this._loopTimer = null;
     this._lastEventIdx = -1;
@@ -161,9 +167,63 @@ class AutoShow {
     return !!(cacheKey && this._inFlight.has(cacheKey));
   }
 
-  /** Current playback position in ms, or 0 when not playing. */
+  /**
+   * Where the show is being played from, in ms — the position the source
+   * reports, shifted by the operator's sync offset. 0 when not playing.
+   *
+   * Everything that drives or seeks the timeline reads this rather than the
+   * raw source, so one number lines the whole show up with the room.
+   */
   getPositionMs() {
-    return this._getPositionMs ? this._getPositionMs() : 0;
+    if (!this._getPositionMs) return 0;
+    return this._getPositionMs() + this.syncOffsetMs;
+  }
+
+  /**
+   * Shift the whole show against the music, in milliseconds.
+   *
+   * There is always latency between the audio the room hears and the light
+   * that answers it, and none of it is under this program's control: the
+   * player buffers, Spotify's position API is polled and quantised, Art-Net
+   * crosses a network, the fixture has its own processing delay, and the PA
+   * itself is metres away from the audience. The sum is a fixed error for a
+   * given rig, but it is different for every rig — so it is a calibration, not
+   * something that can be derived.
+   *
+   * Positive means the lights run *ahead* of the reported position, which is
+   * what you want when the rig feels late. Negative holds them back.
+   *
+   * Applying it moves the playback cursor, so re-seek: nudging forward would
+   * otherwise machine-gun every event between the old position and the new one.
+   */
+  setSyncOffsetMs(ms) {
+    const n = Math.round(Number(ms));
+    if (!Number.isFinite(n)) return;
+    const clamped = Math.max(-SYNC_OFFSET_LIMIT_MS, Math.min(SYNC_OFFSET_LIMIT_MS, n));
+    if (clamped === this.syncOffsetMs) return;
+    this.syncOffsetMs = clamped;
+    this._reseek();
+  }
+
+  /**
+   * Park the playback cursor at the current position without firing anything.
+   *
+   * Rebuilding or re-timing the timeline under a running show leaves the
+   * cursor pointing into the old one; without this the next tick replays every
+   * past event at once, which on a live rig is a burst of energy overrides.
+   */
+  _reseek() {
+    if (!this.running || !this._getPositionMs) {
+      this._lastEventIdx = -1;
+      return;
+    }
+    const posMs = this.getPositionMs();
+    let last = -1;
+    for (let i = 0; i < this.timeline.length; i++) {
+      if (this.timeline[i].timeMs > posMs) break;
+      last = i;
+    }
+    this._lastEventIdx = last;
   }
 
   // ── 1. Analysis ─────────────────────────────────────────────────────────────
@@ -890,10 +950,8 @@ class AutoShow {
 
         // ── Rise phase: escalate pattern + colour + strobe ──
         const riseStart = isShort ? startMs : startMs + Math.round(durMs * 0.35);
-        const risePool = [
-          'chase-4', 'split-4', 'chase-3', 'split-3',
-          'chase', 'runner', 'stack-up',
-        ].filter(p => availablePatterns.has(p));
+        const risePool = ['chase', 'split', 'runner', 'stack-up']
+          .filter(p => availablePatterns.has(p));
         const risePat = risePool.length ? risePool[0] : 'chase';
         const riseColB = palette.length >= 2 ? palette[1] : palette[0];
         events.push({
@@ -1003,8 +1061,8 @@ class AutoShow {
 
         // Movement-pattern pool shared by slam and color-burst.
         const dropMovePool = tier === 'dance'
-          ? ['hit', 'runner', 'pairs-4', 'chase-4', 'split-4', 'alt-quarters', 'chase-3', 'split-3', 'alt-thirds', 'pairs', 'random-flash', 'alt-halves', 'stack-up']
-          : ['pairs-4', 'chase-4', 'split-4', 'chase-3', 'split-3', 'runner', 'pairs', 'chase', 'stack-up'];
+          ? ['hit', 'runner', 'pairs', 'chase', 'split', 'sections', 'random-flash', 'stack-up']
+          : ['pairs', 'chase', 'split', 'runner', 'stack-up'];
         const dropMoveFiltered = dropMovePool.filter(p => availablePatterns.has(p));
         const movePattern = dropMoveFiltered.length
           ? dropMoveFiltered[i % dropMoveFiltered.length]
@@ -1091,7 +1149,7 @@ class AutoShow {
           // ── Punch: no strobe overlay, immediate aggressive pattern ──
           // Impact comes from pattern + beat division, not energy effects.
           // The solid anchor reads for ~100 ms, then snaps to movement.
-          const punchPool = ['hit', 'alt-quarters', 'split-4', 'chase-4', 'alt-thirds', 'split-3', 'alt-halves', 'random-flash', 'stack-up']
+          const punchPool = ['hit', 'sections', 'split', 'chase', 'random-flash', 'stack-up']
             .filter(p => availablePatterns.has(p));
           const punchPattern = punchPool.length
             ? punchPool[i % punchPool.length]
@@ -1126,7 +1184,7 @@ class AutoShow {
           data: { id: 'color-strobe', durationMs: colorStrobeMs },
         });
 
-        const hypePool = ['hit', 'alt-quarters', 'pairs-4', 'chase-4', 'alt-thirds', 'chase-3', 'alt-halves', 'pairs']
+        const hypePool = ['hit', 'sections', 'pairs', 'chase']
           .filter(p => availablePatterns.has(p));
         if (hypePool.length) {
           events.push({
@@ -1431,7 +1489,7 @@ class AutoShow {
 
   _tick() {
     if (!this.running || !this._getPositionMs) return;
-    const posMs = this._getPositionMs();
+    const posMs = this.getPositionMs();
 
     for (let i = this._lastEventIdx + 1; i < this.timeline.length; i++) {
       const ev = this.timeline[i];
@@ -1543,20 +1601,7 @@ class AutoShow {
     this.paletteSize = size;
     if (this.analysis) {
       this.buildTimeline();
-      // Advance cursor to current position so we don't re-fire the entire
-      // past of the timeline (which would machine-gun energy bursts). The
-      // next tick picks up from the event immediately after posMs.
-      if (this.running && this._getPositionMs) {
-        const posMs = this._getPositionMs();
-        let last = -1;
-        for (let i = 0; i < this.timeline.length; i++) {
-          if (this.timeline[i].timeMs > posMs) break;
-          last = i;
-        }
-        this._lastEventIdx = last;
-      } else {
-        this._lastEventIdx = -1;
-      }
+      this._reseek();
     }
   }
 
@@ -1570,17 +1615,7 @@ class AutoShow {
     this.intensity = val;
     if (this.analysis) {
       this.buildTimeline();
-      if (this.running && this._getPositionMs) {
-        const posMs = this._getPositionMs();
-        let last = -1;
-        for (let i = 0; i < this.timeline.length; i++) {
-          if (this.timeline[i].timeMs > posMs) break;
-          last = i;
-        }
-        this._lastEventIdx = last;
-      } else {
-        this._lastEventIdx = -1;
-      }
+      this._reseek();
     }
   }
 
@@ -1589,31 +1624,25 @@ class AutoShow {
     const bass = segment.bass || 0;
     const arousal = mood.arousal || 0;
     const dance = mood.danceability != null ? mood.danceability : 0.5;
-    const palLen = Array.isArray(this.palette) ? this.palette.length : this.paletteSize;
 
     // Danceability biases the pool: rhythm-locked patterns when the pulse is
     // steady, flowy/ambient patterns when it isn't.
     //
-    // NOTE: 'rainbow' and 'color-cycle' are intentionally absent from every
-    // auto-show pool — those two patterns generate colours via hsvToRgb in
-    // the server and completely ignore the colA/colB channel, which would
-    // break the song's locked 4-colour tetrad. They remain available for
-    // manual selection from the UI.
-    const RHYTHMIC = new Set(['chase', 'runner', 'pairs', 'ping-pong', 'split',
-                              'stack-up', 'random-flash',
-                              'hit', 'alt-halves']);
+    // NOTE: 'rainbow' is intentionally absent from every auto-show pool. It
+    // generates colours via hsvToRgb and ignores the colour slots entirely,
+    // which would break the song's locked palette. It stays available for
+    // manual selection. 'color-cycle' used to be excluded for the same reason
+    // and no longer is — it steps through the locked palette now.
+    const RHYTHMIC = new Set(['chase', 'chase-rev', 'runner', 'pairs', 'ping-pong',
+                              'split', 'sections', 'stack-up', 'random-flash',
+                              'hit', 'color-cycle']);
     const FLOWY    = new Set(['solid', 'fade', 'wave', 'sparkle', 'twinkle']);
 
-    const multi3 = ['split-3', 'chase-3', 'alt-thirds'];
-    const multi4 = ['split-4', 'chase-4', 'alt-quarters', 'pairs-4'];
-    const has3 = palLen >= 3;
-    const has4 = palLen >= 4;
-    const withMulti = (basePool) => {
-      const extras = [];
-      if (has3) extras.push(...multi3);
-      if (has4) extras.push(...multi4);
-      return [...extras, ...basePool];
-    };
+    // Patterns used to come in -3 and -4 variants that differed only in how
+    // many colours they reached for, so this picker had to gate a `multi3` and
+    // a `multi4` pool on the size of the palette it had locked. They now read
+    // the colour count off the look itself (patterns.js paletteOf), so the
+    // pools below are just the patterns and `palLen` no longer gates anything.
 
     // Genre bias: when a style is known, intersect the level-driven pool
     // with the style's pattern list so (e.g.) metal tracks favour
@@ -1656,13 +1685,13 @@ class AutoShow {
       case 'low':
         // Calm: slow sustained patterns, light movement if there's any bass.
         if (bass < 0.2) return pickFrom(['solid', 'fade', 'wave']);
-        return pickFrom(withMulti(['solid', 'fade', 'wave', 'twinkle']));
+        return pickFrom(['solid', 'fade', 'wave', 'twinkle']);
 
       case 'mid':
         // Movement: bigger pool, picked by brightness/bass character.
-        if (brightness > 0.45) return pickFrom(withMulti(['ping-pong', 'wave', 'runner', 'chase', 'sparkle']));
-        if (bass > 0.4)        return pickFrom(withMulti(['alt-halves', 'split', 'pairs', 'runner', 'stack-up', 'chase']));
-        return pickFrom(withMulti(['chase', 'ping-pong', 'pairs', 'runner', 'wave']));
+        if (brightness > 0.45) return pickFrom(['ping-pong', 'wave', 'runner', 'chase', 'sparkle', 'color-cycle']);
+        if (bass > 0.4)        return pickFrom(['sections', 'split', 'pairs', 'runner', 'stack-up', 'chase']);
+        return pickFrom(['chase', 'ping-pong', 'pairs', 'runner', 'wave', 'chase-rev']);
 
       case 'high': {
         // Intensity: sparkly/flashy patterns on bright sections, hammering
@@ -1678,9 +1707,9 @@ class AutoShow {
         const segEnergy = segment.energy || 0;
         const veryHigh = arousal > 0.80 || segEnergy > 0.72;
         const withHit = (arr) => veryHigh ? arr : arr.filter(p => p !== 'hit');
-        if (brightness > 0.55) return pickFrom(withMulti(withHit(['sparkle', 'twinkle', 'random-flash', 'hit'])));
-        if (bass > 0.5)        return pickFrom(withMulti(withHit(['hit', 'alt-halves', 'pairs', 'stack-up', 'random-flash', 'split'])));
-        return pickFrom(withMulti(withHit(['chase', 'runner', 'hit', 'pairs', 'stack-up'])));
+        if (brightness > 0.55) return pickFrom(withHit(['sparkle', 'twinkle', 'random-flash', 'hit']));
+        if (bass > 0.5)        return pickFrom(withHit(['hit', 'sections', 'pairs', 'stack-up', 'random-flash', 'split']));
+        return pickFrom(withHit(['chase', 'runner', 'hit', 'pairs', 'stack-up', 'sections']));
       }
 
       default:
@@ -1800,6 +1829,7 @@ class AutoShow {
       paletteName: this.paletteName,
       paletteSize: this.paletteSize,
       intensity: this.intensity,
+      syncOffsetMs: this.syncOffsetMs,
       analysis: this.analysis ? {
         duration: this.analysis.duration,
         bpm: this.analysis.bpm,

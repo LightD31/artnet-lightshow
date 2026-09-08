@@ -8,6 +8,7 @@ const {
   PATTERNS,
   STROBE_FUNCTIONS,
   ENERGY_EFFECTS,
+  SYNC_OFFSET_LIMIT_MS,
 } = require('./presets');
 const { PALETTES } = require('./palettes');
 
@@ -42,6 +43,10 @@ const state = {
   // this copy is what the MIDI surface reads to light an encoder ring and what
   // a client sees without asking the auto-show module.
   autoIntensity: 50,
+  // Milliseconds the light show runs ahead of the reported track position.
+  // A rig calibration rather than a look, so it is seeded from settings and
+  // written back there whenever it changes — see patch.js.
+  autoSyncOffsetMs: settings.group('auto').syncOffsetMs,
   prolinkEnabled: false,
   autoSource: 'auto',
   autoPrefetchDepth: 1,
@@ -149,6 +154,9 @@ function getCatalogs() {
     energyEffects: ENERGY_EFFECTS,
     strobeFunctions: STROBE_FUNCTIONS,
     palettes: PALETTES,
+    // So the sync control can size itself from the server's limit rather than
+    // carrying a second copy of the number that silently drifts.
+    syncOffsetLimitMs: SYNC_OFFSET_LIMIT_MS,
   };
 }
 
@@ -177,6 +185,7 @@ function getLiveState() {
     energyOverride: state.energyOverride,
     palette: state.palette,
     autoIntensity: state.autoIntensity,
+    autoSyncOffsetMs: state.autoSyncOffsetMs,
     autoSource: state.autoSource,
     autoPrefetchDepth: state.autoPrefetchDepth,
     universes: activeUniverses(),

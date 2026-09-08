@@ -23,7 +23,12 @@
  */
 
 const { DEFAULT_MAP } = require('./server/midi-map');
-const { ENERGY_EFFECT_IDS, STROBE_FUNCTION_IDS } = require('./server/presets');
+const {
+  ENERGY_EFFECT_IDS, STROBE_FUNCTION_IDS, SYNC_OFFSET_LIMIT_MS,
+} = require('./server/presets');
+
+// Milliseconds per encoder detent when nudging the light/music sync.
+const SYNC_NUDGE_MS = 5;
 
 let easymidi;
 try {
@@ -420,6 +425,18 @@ class MidiController {
         // 0-100, not 0-255: the auto show's slider is a percentage.
         this.apply({ autoIntensity: clamp(Math.round((s.autoIntensity ?? 50) + delta), 0, 100) });
         break;
+      case 'adjustAutoSync':
+        // 5 ms a detent. One encoder click of 1 ms would be unusable — you
+        // cannot hear a millisecond — and a whole beat per click would overshoot
+        // the error every time. Five is small enough to creep up on the right
+        // answer and large enough to get there within a song.
+        this.apply({
+          autoSyncOffsetMs: clamp(
+            Math.round((s.autoSyncOffsetMs ?? 0) + delta * SYNC_NUDGE_MS),
+            -SYNC_OFFSET_LIMIT_MS, SYNC_OFFSET_LIMIT_MS,
+          ),
+        });
+        break;
     }
   }
 
@@ -453,6 +470,12 @@ class MidiController {
         break;
       case 'setAutoIntensity':
         this.apply({ autoIntensity: Math.round((raw / 127) * 100) });
+        break;
+      case 'setAutoSync':
+        // A fader spans the whole range, so centre detent (64) is zero offset.
+        this.apply({
+          autoSyncOffsetMs: Math.round(((raw - 63.5) / 63.5) * SYNC_OFFSET_LIMIT_MS),
+        });
         break;
     }
   }
@@ -556,6 +579,10 @@ class MidiController {
       case 'setAutoIntensity':
       case 'adjustAutoIntensity':
         return to127(s.autoIntensity ?? 50, 100);
+      case 'setAutoSync':
+      case 'adjustAutoSync':
+        // Bipolar, so centre the ring rather than parking it at the bottom.
+        return to127((s.autoSyncOffsetMs ?? 0) + SYNC_OFFSET_LIMIT_MS, SYNC_OFFSET_LIMIT_MS * 2);
       default:
         return null;
     }

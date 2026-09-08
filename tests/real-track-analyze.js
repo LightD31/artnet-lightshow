@@ -26,19 +26,12 @@ const AutoShow = require('../src/auto-show');
 const FIXTURE_DIR = path.join(__dirname, 'fixtures');
 if (!fs.existsSync(FIXTURE_DIR)) fs.mkdirSync(FIXTURE_DIR, { recursive: true });
 
-// Standard pattern pool the auto-show normally sees from the server. Kept in
-// sync with PATTERNS in server.js (add new ids here when the server gets
-// new renderers).
-const PATTERNS = [
-  'solid', 'fade', 'wave', 'chase', 'runner', 'pairs', 'split', 'stack-up',
-  'color-cycle', 'rainbow', 'sparkle', 'twinkle', 'ping-pong', 'random-flash',
-  'strobe', 'hit', 'alt-halves',
-].map(id => ({ id }));
-// The real table rather than a copy of it. A hand-maintained duplicate went
+// The real tables rather than copies of them. Hand-maintained duplicates went
 // stale the first time the colour list was reworked, which left this harness
-// clamping palette indices against the wrong length and printing colour names
-// the server had not had for a while.
-const { COLOR_PRESETS } = require('../src/server/presets');
+// clamping palette indices against the wrong length, printing colour names the
+// server had not had for a while, and offering the picker a pattern pool that
+// no longer matched what the engine could render.
+const { COLOR_PRESETS, PATTERNS } = require('../src/server/presets');
 
 function slugify(q) {
   return q.toLowerCase()

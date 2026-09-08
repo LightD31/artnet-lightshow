@@ -15,6 +15,7 @@ const hooks = {
   prolinkDisable: () => {},
   autoPaletteSize: () => {},
   autoIntensity: () => {},
+  autoSyncOffsetMs: () => {},
   autoPrefetchDepth: () => {},
   broadcast: () => {},
 };
@@ -114,6 +115,14 @@ function applyPatch(rawData) {
     // the two copies telling the same story.
     state.autoIntensity = Math.round(data.autoIntensity);
     hooks.autoIntensity(state.autoIntensity);
+  }
+  if (data.autoSyncOffsetMs !== undefined) {
+    // Persisted, unlike the rest of the auto controls: the right offset is a
+    // property of the room and the rig, not of tonight's set, so it should
+    // survive a restart rather than being dialled in again every show.
+    state.autoSyncOffsetMs = Math.round(data.autoSyncOffsetMs);
+    persist({ auto: { syncOffsetMs: state.autoSyncOffsetMs } });
+    hooks.autoSyncOffsetMs(state.autoSyncOffsetMs);
   }
   if (data.autoPrefetchDepth !== undefined) {
     state.autoPrefetchDepth = data.autoPrefetchDepth;
