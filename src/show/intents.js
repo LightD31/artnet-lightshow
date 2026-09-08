@@ -68,7 +68,13 @@ function tempo(timeMs, bpm, { source = 'curve', priority = PRIORITY.TEMPO } = {}
   return { timeMs: Math.round(timeMs), kind: INTENT.TEMPO, source, priority, bpm };
 }
 
-function dark(timeMs, { source = 'gap', priority = PRIORITY.SILENCE, colorIndex = 0 } = {}) {
+/**
+ * `colorIndex` left unset means "whatever the rig calls off" — the renderer
+ * fills it in. Passing one is for the rare case where a particular dark colour
+ * is wanted rather than the configured blackout.
+ */
+function dark(timeMs, { source = 'gap', priority = PRIORITY.SILENCE,
+  colorIndex = null } = {}) {
   return { timeMs: Math.round(timeMs), kind: INTENT.DARK, source, priority, colorIndex };
 }
 

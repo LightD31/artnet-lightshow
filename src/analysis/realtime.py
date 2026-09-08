@@ -38,13 +38,17 @@ from .events import (Event, BEAT, BAR, DROP, BUILDUP, ENERGY_SPIKE, BASS_HIT,
                      SILENCE, TRANSITION)
 
 
-def _fold_octave(bpm, reference, tolerance=0.12):
+def _fold_octave(bpm, reference, tolerance=0.10):
     """
-    Move `bpm` by whole octaves until it is closest to `reference`.
+    Move `bpm` by whole octaves until it lands on `reference`.
 
-    Returns it unchanged when there is no reference yet, or when the two are
-    already within `tolerance` of each other — a genuine tempo change (a DJ
-    mixing into a slower record) is not an octave flip and must be followed.
+    Only when it actually lands there. A reading that folds to within
+    `tolerance` of the running tempo is the same music counted at a different
+    metrical level — the estimator legitimately reports half tempo when the kick
+    drops out for a breakdown, and averaging 174 with 87 gives 130, a tempo the
+    track has never played. A reading that does not fold onto the reference is
+    describing different music, not a different octave of it, and must be
+    followed: a DJ mixing 174 into 100 is a real tempo change.
     """
     if reference <= 0 or bpm <= 0:
         return bpm
@@ -53,9 +57,7 @@ def _fold_octave(bpm, reference, tolerance=0.12):
         candidate = bpm * factor
         if abs(np.log2(candidate / reference)) < abs(np.log2(best / reference)):
             best = candidate
-    # Only fold when the fold actually lands near the reference; otherwise the
-    # estimate is describing different music, not a different octave of it.
-    if abs(best - reference) / reference <= tolerance * 3:
+    if abs(best - reference) / reference <= tolerance:
         return best
     return bpm
 

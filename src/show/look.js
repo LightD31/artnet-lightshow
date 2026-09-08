@@ -25,7 +25,13 @@ const { paletteBankForSize } = require('../server/palettes');
 //             proper drops only
 //   moderate  reduced bursts, no white strobe
 //   rock      light bursts, proper drops only
-//   calm      no strobes, no drops
+//   calm      fades and gradients, no bursts of any kind
+//
+// The tiers below `dance` have one escape hatch, and it is the operator's:
+// pushing the intensity fader past 70 lifts a calm or rock track out of its
+// tier for drops only. A fader that did nothing on a ballad would be a fader
+// the operator stops trusting — but it buys drops, never accent density, so
+// the track still does not strobe through its verses.
 const GENRE_STYLES = {
   edm:       { tier: 'dance',    tetrads: ['synthwave', 'aurora', 'arctic'],
                patterns: ['pairs', 'runner', 'chase', 'split', 'stack-up', 'random-flash', 'hit', 'sections'] },

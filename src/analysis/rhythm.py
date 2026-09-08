@@ -176,11 +176,18 @@ def pulse_score(onset_envelope, lag_frames, window=1, pulses_per_window=12):
     return float(np.mean(scores)), first_phase
 
 
-def estimate_tempo(onset_envelope, sr, hop_length, config: RhythmConfig):
+def estimate_tempo(onset_envelope, sr, hop_length, config: RhythmConfig,
+                   accent_envelope=None):
     """
     Global tempo from the onset autocorrelation, weighted by the tempo prior,
     then re-ranked by how well each surviving candidate's pulse train actually
     lands on the music.
+
+    `accent_envelope` is an optional second opinion used only for the
+    subdivision check at the end. Pass the low end: a broadband onset envelope
+    cannot tell a kick from a hi-hat, because a quiet hat's transient produces
+    as much spectral flux as a loud kick's, and it is exactly that confusion
+    that makes a track read at double tempo.
 
     Returns (bpm, confidence).
     """
@@ -247,6 +254,26 @@ def estimate_tempo(onset_envelope, sr, hop_length, config: RhythmConfig):
     runner_up = ranked[1][0] if len(ranked) > 1 else 0.0
     margin = (top_score - runner_up) / (top_score + 1e-9)
     confidence = dsp.clamp01(0.5 * margin + 0.5 * dsp.clamp01((fit - 1.0) / 1.5))
+
+    # Every other pulse markedly weaker than the one before it is the signature
+    # of counting the subdivision rather than the beat: at 180 the grid lands
+    # alternately on the kick and on the hi-hat between them, and both the
+    # pulse fit and the autocorrelation score that well. A listener taps the
+    # kick.
+    #
+    # Guarded by the prior as well as by the alternation, because the same
+    # pattern appears at the *true* tempo whenever the kick sits on one and
+    # three. Requiring the halved tempo to be the more plausible of the two
+    # means this can only ever pull a fast reading back towards tapping speed,
+    # never turn a 128 BPM track into a 64 BPM one.
+    halved = bpm / 2.0
+    accent = env if accent_envelope is None else np.asarray(accent_envelope, dtype=float)
+    prior_now = float(tempo_prior([bpm], config.tempo_prior_bpm, config.tempo_prior_std)[0])
+    prior_halved = float(tempo_prior([halved], config.tempo_prior_bpm,
+                                     config.tempo_prior_std)[0])
+    if (halved >= config.tempo_min and prior_halved > prior_now
+            and _alternates_strong_weak(accent, 60.0 * frame_rate / bpm)):
+        bpm = halved
     return float(bpm), float(confidence)
 
 
@@ -349,6 +376,56 @@ def fine_onsets(percussive, sr, n_fft=512, hop_length=128, delta=0.10,
     if idx.size == 0:
         return np.zeros(0), np.zeros(0)
     return idx * (hop_length / float(sr)), dsp.robust_norm(env)[idx]
+
+
+def low_band_flux(features):
+    """
+    Onset strength of the low end alone, on the frame grid.
+
+    The tactus is carried by the low end in almost all popular music, and the
+    low end is the one part of the spectrum a hi-hat does not appear in — which
+    makes this the right signal for deciding whether a candidate grid is
+    counting beats or counting eighths.
+    """
+    mask = (features.frequencies >= 30) & (features.frequencies < 160)
+    if not np.any(mask) or features.percussive_magnitude.size == 0:
+        return np.zeros(features.n_frames)
+    band = np.sqrt(np.mean(features.percussive_magnitude[mask] ** 2, axis=0))
+    return dsp.robust_norm(np.maximum(np.diff(band, prepend=band[:1]), 0.0))
+
+
+def _alternates_strong_weak(onset_envelope, lag_frames, ratio=0.75):
+    """
+    Is this grid counting the subdivision rather than the beat?
+
+    At double tempo the pulses alternate between the accented event and the one
+    between it, so the odd-numbered pulses are consistently weaker than the
+    even-numbered ones. At the true tactus both halves look the same. Measured
+    at the phase that best fits the envelope, so a grid that happens to start on
+    a weak pulse is not mistaken for an even one.
+
+    Returns True when the weak half sits below `ratio` of the strong half.
+    """
+    env = np.asarray(onset_envelope, dtype=float)
+    if env.size < lag_frames * 8 or lag_frames <= 1:
+        return False
+    _fit, _phase = pulse_score(env, lag_frames)
+
+    best = None
+    for phase in range(max(1, int(round(lag_frames)))):
+        idx = np.round(phase + np.arange(int((env.size - 1) // lag_frames) + 1)
+                       * lag_frames).astype(int)
+        idx = idx[idx < env.size]
+        if idx.size < 8:
+            continue
+        even = float(np.mean(env[idx[0::2]]))
+        odd = float(np.mean(env[idx[1::2]]))
+        strong, weak = (even, odd) if even >= odd else (odd, even)
+        if best is None or strong > best[0]:
+            best = (strong, weak)
+    if best is None or best[0] <= 1e-9:
+        return False
+    return (best[1] / best[0]) < ratio
 
 
 def tempo_curve(onset_envelope, sr, hop_length, global_bpm, config: RhythmConfig):
@@ -628,7 +705,8 @@ def analyse(audio, features, config: RhythmConfig = None) -> Rhythm:
         onset_env[:blend_len] = (0.6 * dsp.robust_norm(features.percussive_onset[:blend_len])
                                  + 0.4 * dsp.robust_norm(levelled_onset[:blend_len]))
 
-    bpm, tempo_conf = estimate_tempo(onset_env, sr, hop, config)
+    bpm, tempo_conf = estimate_tempo(onset_env, sr, hop, config,
+                                     accent_envelope=low_band_flux(features))
     t_times, t_values, stability = tempo_curve(onset_env, sr, hop, bpm, config)
 
     frames = track_beats(audio.percussive, onset_env, sr, hop, bpm, config)

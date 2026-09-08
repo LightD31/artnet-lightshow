@@ -155,6 +155,13 @@ def detect_drops(impact, times, frame_rate, beats, downbeats, config: DynamicsCo
 
     drops = []
     for i in candidates:
+        # A drop needs a breakdown before it and a sustain after it, and at the
+        # edges of the file there is no before and no after. Without this the
+        # fade-in from digital silence at the top of every track reads as a
+        # textbook drop — a large rise from nothing, sustained for the rest of
+        # the song — and the show fires its biggest gesture two seconds in.
+        if i < long_span or i + sustain_span >= impact.size:
+            continue
         rise_value = float(rise[i])
         if rise_value < config.drop_min_rise:
             continue

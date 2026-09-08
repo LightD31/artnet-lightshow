@@ -28,10 +28,16 @@ jobs:
       - name: Build client
         run: npm run build:client
 
-  # The analyzer is ~1,800 lines of Python that CI never touched. It does not
-  # run here (librosa + torch is a heavy install for a syntax-and-wiring check),
-  # but a compile pass and the bootstrap-ordering tests are cheap and catch the
-  # class of bug that only shows up on an operator's machine.
+  # The analysis pipeline is Python, and its correctness is not something the
+  # Node tests can reach: a beat grid 40 ms out produces a perfectly valid
+  # timeline full of cues that land late. So CI installs the scientific stack
+  # and runs the real thing against synthetic tracks whose tempo, metre and
+  # arrangement are known by construction.
+  #
+  # torch and panns_inference are deliberately not installed: the tagger is
+  # optional by design, every consumer treats a missing answer as "unknown",
+  # and a 2 GB wheel is a poor trade for exercising a code path that is already
+  # covered by the bootstrap-ordering tests.
   python:
     runs-on: ubuntu-latest
     steps:
@@ -40,11 +46,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: pip
+
+      - name: Install the analysis dependencies
+        run: pip install numpy scipy scikit-learn soundfile librosa threadpoolctl
 
       - name: Compile every module
         run: python -m compileall -q src scripts tests
 
-      - name: Bootstrap ordering tests
+      - name: Analysis tests
         run: python -m unittest discover -s tests/python -v
 
   audit:
