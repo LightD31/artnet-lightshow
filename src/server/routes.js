@@ -712,7 +712,9 @@ function attachRoutes(app, deps) {
   }));
 
   app.post('/api/spotify/disconnect', (_req, res) => {
-    spotify.disconnect();
+    // The operator asked to disconnect, so drop the saved session too —
+    // otherwise the next restart would silently sign back in.
+    spotify.disconnect({ forget: true });
     integrations.clearSpotifyNext();
     integrations.broadcast();
     res.json({ ok: true });

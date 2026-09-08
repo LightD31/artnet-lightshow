@@ -599,11 +599,35 @@ it is the redirect Spotify checks, not the address you browse the UI on.
 **When you still want a proxy.** The loopback redirect only works if the browser
 doing the authorisation is on the same machine as the server: a phone on the LAN
 that follows it would land on its *own* `127.0.0.1`. So if the rig is headless
-and you connect from a tablet, either
+and you drive it from a tablet, either
 
-- do the one-time connect from a browser on the server machine, or
+- do the connect once from a browser on the server machine — the session is
+  saved, so this really is once and not once per boot (see below), or
 - set *OAuth Proxy* to a relay, which is the original behaviour — the proxy
   takes Spotify's callback and forwards the code to this server's LAN address.
+
+### The connection survives a restart
+
+Connecting stores the Spotify **refresh token** in `settings.json` under
+`spotify.refreshToken`, and the server signs back in with it at startup. The
+banner says `reconnected from the saved session` when it works.
+
+Only the refresh token is kept. Access tokens last an hour, so one saved at
+shutdown would be stale by the next show, while the refresh token mints a fresh
+one on demand. Spotify sometimes hands back a *new* refresh token during a
+refresh; that is stored too, so the saved session cannot quietly go stale.
+
+It is a credential — anyone holding it can read the connected account until it
+is revoked — so it is treated like the client secret and the Deezer cookie:
+`settings.json` is written `0600`, and the settings page is only ever told
+*whether* one is set, never its value. There is no field for it; it is written
+by the server, not typed.
+
+Two things clear it: pressing **Disconnect**, and Spotify itself rejecting the
+stored token (revoked in your account, or the client ID changed underneath it) —
+in which case the server says so and leaves you to reconnect. A network failure
+at boot does *not* clear it, because a headless rig routinely comes up before
+its network does; it is simply retried on the next start.
 
 Going direct is also the safer of the two: the authorization code never passes
 through anyone else's server, and the OAuth `state` nonce round-trips through
@@ -919,7 +943,7 @@ immediately.
 | **sACN (E1.31)** | Enabled, node IP, priority, source name, universe offset, component ID |
 | **MIDI** | Input and output port, motorised fader feedback |
 | **Playback Sources** | PRO DJ LINK, Windows now-playing (SMTC) |
-| **Spotify** | Client ID, client secret, optional OAuth proxy, unverified-state escape hatch |
+| **Spotify** | Client ID, client secret, optional OAuth proxy, unverified-state escape hatch, and the saved session (server-written, never shown) |
 | **Deezer** | ARL cookie — exact ISRC-matched audio instead of a yt-dlp search |
 | **Analysis** | Analyzer and download timeouts, library folder, Python interpreter |
 | **Server & Access** | Bind address, port, access token, public URL |

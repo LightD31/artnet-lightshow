@@ -110,10 +110,54 @@ setPersist((patch) => {
   catch (err) { console.warn(`[settings] could not persist: ${err.message}`); }
 });
 
+// Keep the Spotify session across restarts. Only the refresh token is stored —
+// access tokens last an hour, so one saved at shutdown would be stale by the
+// next show, while the refresh token mints a fresh one on demand. Spotify may
+// rotate it on any refresh, so this fires on every change rather than only at
+// the initial connect.
+spotify.onTokens((refreshToken) => {
+  try { settings.update({ spotify: { refreshToken } }); }
+  catch (err) { console.warn(`[spotify] could not save the session: ${err.message}`); }
+});
+
 attachRoutes(app, { midi, autoShow, spotify, nowPlaying, deezerSource, prolink, analysisCache, integrations, applier });
 attachSockets(io, { midi, integrations });
 
 startEngine();
+
+/**
+ * Sign back in with the stored refresh token, if there is one.
+ *
+ * Deliberately not awaited: a rig should come up and start doing lights whether
+ * or not Spotify is reachable, and the poller starts on its own once this
+ * lands. The two failure modes are treated differently — Spotify rejecting the
+ * grant means the session is genuinely gone (revoked in the account, or the
+ * client id changed under it) and the stored token is cleared so the banner
+ * stops promising a connection that will never come; anything else is the
+ * network not being up yet, which a headless rig does at every boot, and the
+ * token is kept for the next attempt.
+ */
+function restoreSpotifySession() {
+  const stored = settings.get('spotify.refreshToken');
+  if (!stored || !spotify.configured) return;
+
+  spotify.restoreSession(stored)
+    .then((ok) => {
+      if (!ok) return;
+      spotify.startPolling();
+      integrations.broadcast();
+      console.log('  Spotify           →  reconnected from the saved session');
+    })
+    .catch((err) => {
+      // restoreSession has already cleared the stored token if Spotify rejected
+      // the grant, and kept it if the request simply never landed.
+      if (err && err.status >= 400 && err.status < 500) {
+        console.warn(`[spotify] saved session is no longer valid (${err.message}) — reconnect at /auth/spotify`);
+      } else {
+        console.warn(`[spotify] could not reconnect the saved session: ${err.message} — it will be retried on the next start`);
+      }
+    });
+}
 
 // ─── Listen ─────────────────────────────────────────────────────────────────
 
@@ -159,6 +203,8 @@ server.listen(PORT, HOST, () => {
   console.log(`  Python            →  ${pythonEnv.describe()}`);
   console.log(`  Auto Show         →  Essentia + Spotify integration\n`);
 
+  restoreSpotifySession();
+
   // Say this after the banner, where it won't scroll past unnoticed: otherwise
   // the first sign of a wrong interpreter is a traceback minutes into a set,
   // after a track has already downloaded.
@@ -181,6 +227,7 @@ function shutdown(signal) {
     ['engine', () => stopEngine()],
     ['smtc', () => smtc.stop()],
     ['autoShow', () => autoShow.destroy()],
+    // No `forget`: this is the way down, not the operator disconnecting.
     ['spotify', () => spotify.disconnect()],
     ['nowPlaying', () => nowPlaying.disconnect()],
     ['deezer', () => deezerSource.disconnect()],

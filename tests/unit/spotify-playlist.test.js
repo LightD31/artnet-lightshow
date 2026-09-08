@@ -370,3 +370,112 @@ test('the state nonce is issued and checked the same way in both modes', () => {
     assert.strictEqual(client.consumeState(state), false, 'single use');
   }
 });
+
+// ── Session persistence ─────────────────────────────────────────────────────
+//
+// Tokens used to live only in memory, so every restart signed the operator out
+// and the connect had to be redone from a browser on the server machine. The
+// refresh token is now stored, which puts two things at risk: saving one that
+// has since been rotated (the session dies at the next restart with no obvious
+// cause), and clearing a good one on the way down (server.js calls disconnect()
+// during shutdown as well as when the operator asks for it).
+
+test('the refresh token is handed over whenever Spotify issues or rotates one', () => {
+  const client = new SpotifyClient({ clientId: 'id', clientSecret: 'secret' });
+  const saved = [];
+  client.onTokens((t) => saved.push(t));
+
+  client._setTokens({ access_token: 'a1', refresh_token: 'r1', expires_in: 3600 });
+  assert.deepStrictEqual(saved, ['r1'], 'the initial connect is saved');
+
+  // Spotify usually echoes the same refresh token; that is not a change.
+  client._setTokens({ access_token: 'a2', refresh_token: 'r1', expires_in: 3600 });
+  assert.deepStrictEqual(saved, ['r1'], 'an unchanged token is not re-saved');
+
+  // A refresh with no refresh_token at all is normal and must not clear it.
+  client._setTokens({ access_token: 'a3', expires_in: 3600 });
+  assert.strictEqual(client.refreshToken, 'r1');
+  assert.deepStrictEqual(saved, ['r1']);
+
+  // A rotation has to reach the store, or the saved one goes stale.
+  client._setTokens({ access_token: 'a4', refresh_token: 'r2', expires_in: 3600 });
+  assert.deepStrictEqual(saved, ['r1', 'r2'], 'a rotated token is saved');
+
+  client.disconnect();
+});
+
+test('shutdown does not throw the saved session away', () => {
+  // server.js calls disconnect() on the way down. If that cleared the store,
+  // persisting the token would achieve nothing at all.
+  const client = new SpotifyClient({ clientId: 'id', clientSecret: 'secret' });
+  const saved = [];
+  client.onTokens((t) => saved.push(t));
+  client._setTokens({ access_token: 'a', refresh_token: 'r1', expires_in: 3600 });
+  saved.length = 0;
+
+  client.disconnect();
+
+  assert.deepStrictEqual(saved, [], 'nothing written to the store');
+  assert.strictEqual(client.authenticated, false, 'but the session is out of memory');
+});
+
+test('the operator disconnecting does throw it away', () => {
+  const client = new SpotifyClient({ clientId: 'id', clientSecret: 'secret' });
+  const saved = [];
+  client.onTokens((t) => saved.push(t));
+  client._setTokens({ access_token: 'a', refresh_token: 'r1', expires_in: 3600 });
+  saved.length = 0;
+
+  client.disconnect({ forget: true });
+
+  assert.deepStrictEqual(saved, [''], 'the store is cleared, so a restart stays signed out');
+});
+
+test('a store that throws does not take down the request that produced the token', () => {
+  // settings.update() can fail — a read-only config directory, a full disk.
+  // Losing the session on the next restart is bad; losing the OAuth callback
+  // that just succeeded is worse.
+  const client = new SpotifyClient({ clientId: 'id', clientSecret: 'secret' });
+  client.onTokens(() => { throw new Error('disk full'); });
+
+  assert.doesNotThrow(() => {
+    client._setTokens({ access_token: 'a', refresh_token: 'r1', expires_in: 3600 });
+  });
+  assert.strictEqual(client.authenticated, true, 'the connection still works this session');
+  client.disconnect();
+});
+
+test('restoring without a stored token or credentials is a no-op, not an error', async () => {
+  const bare = new SpotifyClient({ clientId: 'id', clientSecret: 'secret' });
+  assert.strictEqual(await bare.restoreSession(''), false);
+
+  // Credentials cleared out of the settings page: nothing to refresh against.
+  const unconfigured = new SpotifyClient({});
+  assert.strictEqual(await unconfigured.restoreSession('r1'), false);
+});
+
+test('a rejected grant drops the session, a network failure keeps it', async () => {
+  // The difference matters at boot: a headless rig routinely comes up before
+  // its network does, and must not lose a good session to that.
+  const rejected = new SpotifyClient({ clientId: 'id', clientSecret: 'secret' });
+  rejected.refreshAccessToken = async () => {
+    const err = new Error('Spotify API 400: invalid_grant');
+    err.status = 400;
+    throw err;
+  };
+  const cleared = [];
+  rejected.onTokens((t) => cleared.push(t));
+  await assert.rejects(() => rejected.restoreSession('revoked'), /invalid_grant/);
+  assert.strictEqual(rejected.refreshToken, null, 'a revoked token is dropped');
+  assert.deepStrictEqual(cleared, [''], 'and cleared from the store, so the banner stops promising it');
+
+  const offline = new SpotifyClient({ clientId: 'id', clientSecret: 'secret' });
+  offline.refreshAccessToken = async () => {
+    throw new Error('Spotify request failed: getaddrinfo ENOTFOUND');
+  };
+  const kept = [];
+  offline.onTokens((t) => kept.push(t));
+  await assert.rejects(() => offline.restoreSession('still-good'), /ENOTFOUND/);
+  assert.strictEqual(offline.refreshToken, 'still-good', 'kept for the next attempt');
+  assert.deepStrictEqual(kept, [], 'and the store is left alone');
+});

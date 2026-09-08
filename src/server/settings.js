@@ -66,6 +66,10 @@ const DEFAULTS = {
   spotify: {
     clientId: '',
     clientSecret: '',
+    // The connected session. Written by the server when Spotify issues or
+    // rotates it, never typed by anyone, so it has no field in the settings
+    // page — but it is a credential, so it is a secret path like the rest.
+    refreshToken: '',
     // Blank: authorise straight against Spotify using a 127.0.0.1 redirect,
     // which Spotify allows and which needs no third party. Set a relay here
     // only to authorise from a device other than the one running the server.
@@ -96,7 +100,7 @@ const DEFAULTS = {
 
 // Never leaves the server in plaintext. The UI gets a "configured" flag instead
 // and can set or clear the value, but never read it back.
-const SECRET_PATHS = ['server.token', 'spotify.clientSecret', 'deezer.arl'];
+const SECRET_PATHS = ['server.token', 'spotify.clientSecret', 'spotify.refreshToken', 'deezer.arl'];
 
 // Read once at boot, before anything is listening. Changing these persists
 // immediately but only takes effect on the next start.
@@ -155,6 +159,7 @@ const schema = z.object({
   spotify: z.object({
     clientId: z.string().max(256),
     clientSecret: z.string().max(256),
+    refreshToken: z.string().max(2048),
     proxyBase: z.string().max(2048).refine(
       (v) => v === '' || /^https?:\/\/[^\s]+$/.test(v),
       { message: 'must be blank or an http(s) URL' },
