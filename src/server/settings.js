@@ -53,6 +53,10 @@ const DEFAULTS = {
   midi: {
     input: '',
     output: '',
+    // Drive motorised faders and encoder LED rings back to the show's state.
+    // Harmless on a controller without them — it ignores the CC — but a MIDI
+    // loopback would echo our feedback in as operator input, so it is a switch.
+    controlFeedback: true,
   },
   sources: {
     prolink: false,
@@ -130,6 +134,7 @@ const schema = z.object({
   midi: z.object({
     input: z.string().max(256),
     output: z.string().max(256),
+    controlFeedback: z.boolean(),
   }).strict(),
   sources: z.object({
     prolink: z.boolean(),

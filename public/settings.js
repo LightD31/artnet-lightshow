@@ -141,6 +141,14 @@ document.getElementById('midi-connect').addEventListener('click', () => {
   socket.emit('midi-connect', { input, output });
 });
 
+// Motorised faders and encoder rings. Applied on its own so toggling it does
+// not drop and reopen the port the way changing a port does.
+document.getElementById('midi-control-feedback').addEventListener('change', async (e) => {
+  const controlFeedback = e.target.checked;
+  const res = await apiJson('/api/settings', jsonBody('PUT', { midi: { controlFeedback } }));
+  if (!res.ok) e.target.checked = !controlFeedback;   // put the box back
+});
+
 // ── MIDI mapping and learn ───────────────────────────────────────────────────
 // The map used to be a constant describing one controller; anything else was
 // unusable without editing source. Pick an action, press Learn, then move the
@@ -1092,6 +1100,11 @@ async function loadSettings() {
     if (!data.ok) return;
     settingsData = data;
     renderSettings();
+    // Hand-written control, so it is not covered by the spec renderer.
+    const feedback = document.getElementById('midi-control-feedback');
+    if (feedback && data.settings.midi) {
+      feedback.checked = data.settings.midi.controlFeedback !== false;
+    }
   } catch (_) { /* page still works without the config sections */ }
 }
 

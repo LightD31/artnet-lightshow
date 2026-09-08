@@ -41,6 +41,11 @@ const STROBE_FN_IDS = [
 // the rest of the night. Give up on it.
 const LEARN_TIMEOUT_MS = 30000;
 
+// After a control sends us a value, hold off echoing that control for a moment.
+// A motorised fader that is being moved by hand must not be driven back to
+// where the last frame said it was — the operator ends up fighting the motor.
+const ECHO_SUPPRESS_MS = 400;
+
 function relDelta(value) {
   // Relative mode 1: 1-63 = CW (+), 65-127 = CCW (-)
   return value > 64 ? value - 128 : value;
@@ -67,12 +72,34 @@ class MidiController {
 
     this._learn = null;       // { binding, resolve, timer } while learn is armed
     this._learnListeners = [];
+
+    // Control feedback: what we last sent to each CC, and when each last sent
+    // to us. Both exist to keep the motors quiet — see _sendControlFeedback.
+    this._lastCcOut = new Map();
+    this._lastCcIn = new Map();
+    this.controlFeedback = true;
   }
 
   /** Swap the control map. Takes effect on the next message; no reconnect. */
   setMap(map) {
     this.map = map || DEFAULT_MAP;
+    // A rebound control shows something different now, so nothing we sent for
+    // the old map still describes it.
+    this._lastCcOut.clear();
     this.sendFeedback();
+  }
+
+  /**
+   * Turn motorised-fader and encoder-ring feedback on or off.
+   *
+   * On by default: a controller without motors simply ignores the CC. It is a
+   * setting because a MIDI loopback — a virtual port wired back to our own
+   * input — would otherwise echo our feedback in as operator input.
+   */
+  setControlFeedback(enabled) {
+    this.controlFeedback = !!enabled;
+    this._lastCcOut.clear();
+    if (this.controlFeedback) this.sendFeedback();
   }
 
   listPorts() {
@@ -132,6 +159,10 @@ class MidiController {
 
       this._bindInput();
       this.enabled = true;
+      this._lastCcOut.clear();
+      // Drive the surface to the current show immediately, rather than waiting
+      // for the first thing to change.
+      this.sendFeedback();
       return true;
     } catch (err) {
       console.error('[MIDI] Failed to open MIDI port:', err.message);
@@ -194,6 +225,10 @@ class MidiController {
     // CC → encoder (relative) or fader (absolute)
     this.input.on('cc', ({ controller, value, channel }) => {
       if (this._captureLearn('cc', controller, channel)) return;
+
+      // Note the touch even when unmapped: a fader being moved is a fader we
+      // should not be driving, whatever it is bound to.
+      this._lastCcIn.set(controller, Date.now());
 
       const binding = this._bindingFor('cc', controller, channel);
       if (!binding) return;
@@ -383,18 +418,24 @@ class MidiController {
     if (this.overrideFixture) this.overrideFixture(id, override);
   }
 
-  // ── LED feedback ─────────────────────────────────────────────────────────────
+  // ── Feedback to the controller ───────────────────────────────────────────
 
   /**
-   * Light the notes whose bound action is currently the live one.
+   * Push the live state back to the controller: button LEDs, and the position
+   * of every continuous control.
    *
-   * Derived from the map rather than a hardcoded note list: a relearned layout
-   * used to keep lighting the X-Touch's original buttons, which is worse than
-   * no feedback at all.
+   * The second half is what makes a motorised surface worth having. The X-Touch
+   * Compact's nine faders are motorised and its eight encoders have LED rings,
+   * and both are driven the same way — send the controller the CC it would have
+   * sent you, and it moves. Without this the surface only ever *pushed* state:
+   * change the master dimmer in the browser and the physical fader stayed where
+   * it was, so the next touch snapped the rig back to a stale value.
    */
   sendFeedback() {
     if (!this.output) return;
     const s = this.state;
+
+    this._sendControlFeedback();
 
     for (const [note, binding] of Object.entries(this.map.notes || {})) {
       let lit = null;
@@ -419,6 +460,71 @@ class MidiController {
     }
   }
 
+  /**
+   * The 0-127 position of whatever a CC binding controls, or null when the
+   * action has no position to show (a trigger, an unknown action).
+   *
+   * Relative encoders get one too: the value does not move the encoder, but on
+   * a surface with LED rings it lights the ring to match, which is the same
+   * information the fader gives you by being somewhere.
+   */
+  _feedbackValue(binding) {
+    const s = this.state;
+    const to127 = (value, max) => Math.max(0, Math.min(127, Math.round((value / max) * 127)));
+
+    switch (binding.action) {
+      case 'setMasterDimmer':
+      case 'adjustMasterDimmer':
+        return to127(s.masterDimmer, 255);
+      case 'setStrobeSpeed':
+      case 'adjustStrobeSpeed':
+        return to127(s.strobeSpeed, 255);
+      case 'setBpm':
+      case 'adjustBpm':
+        // The inverse of the fader mapping in _dispatchAbsolute: 20-300 BPM.
+        return to127(s.bpm - 20, 280);
+      case 'setFixtureDim':
+      case 'adjustFixtureDim': {
+        const fix = s.fixtures[binding.fixture];
+        if (!fix) return null;
+        // No override means the pattern engine owns the fixture and it is at
+        // full — which is where the fader should sit, ready to pull it down.
+        const dim = (fix.override && fix.override.enabled) ? fix.override.dim : 255;
+        return to127(dim, 255);
+      }
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * Move every mapped continuous control to where the show actually is.
+   *
+   * Two guards, both about not fighting the operator or the hardware:
+   * a control that sent us something in the last moment is being touched, so it
+   * is left alone; and a value we already sent is not sent again, because a
+   * motor re-driven to its current position at the broadcast rate hums.
+   */
+  _sendControlFeedback() {
+    if (!this.controlFeedback) return;
+    const now = Date.now();
+
+    for (const [cc, binding] of Object.entries(this.map.cc || {})) {
+      const value = this._feedbackValue(binding);
+      if (value === null) continue;
+
+      const number = Number(cc);
+      const touchedAt = this._lastCcIn.get(number) || 0;
+      if (now - touchedAt < ECHO_SUPPRESS_MS) continue;
+      if (this._lastCcOut.get(number) === value) continue;
+
+      this._lastCcOut.set(number, value);
+      try {
+        this.output.send('cc', { controller: number, value, channel: binding.channel || 0 });
+      } catch (_) { /* the port can vanish mid-show; feedback is not worth dying for */ }
+    }
+  }
+
   _ledNote(note, velocity, channel = 0) {
     if (!this.output) return;
     try {
@@ -428,6 +534,10 @@ class MidiController {
 
   close() {
     this.cancelLearn('disconnected');
+    // Forget what we sent: the next connection has to push the full state so
+    // the faders fly to where the show is rather than staying where they lay.
+    this._lastCcOut.clear();
+    this._lastCcIn.clear();
     if (this.input)  { try { this.input.close();  } catch (_) {} }
     if (this.output) { try { this.output.close(); } catch (_) {} }
     this.enabled = false;
