@@ -39,17 +39,39 @@ test('a no-op update reports no changes', () => {
 // settings page must not leak the Deezer cookie.
 test('secrets are never handed back to the client', () => {
   const s = store().load();
-  s.update({ deezer: { arl: 'cookie-value' }, spotify: { clientSecret: 'shh' } });
+  s.update({
+    deezer: { arl: 'cookie-value' },
+    // The refresh token is a full Spotify session: anyone holding it can mint
+    // access tokens for the connected account until it is revoked. It is
+    // written by the server rather than typed, but it leaks exactly as badly.
+    spotify: { clientSecret: 'shh', refreshToken: 'a-live-session' },
+  });
 
   const { settings, secrets } = s.redacted();
   assert.strictEqual(settings.deezer.arl, '', 'redacted out');
   assert.strictEqual(settings.spotify.clientSecret, '');
+  assert.strictEqual(settings.spotify.refreshToken, '');
   assert.deepStrictEqual(secrets, {
     'server.token': false,
     'spotify.clientSecret': true,
+    'spotify.refreshToken': true,
     'deezer.arl': true,
   });
   assert.strictEqual(s.get('deezer.arl'), 'cookie-value', 'still readable server-side');
+  assert.strictEqual(s.get('spotify.refreshToken'), 'a-live-session');
+});
+
+// The settings page has no field for the refresh token, so its saves never
+// mention it. If an omitted secret were treated as "clear it", every visit to
+// the settings page would sign the operator out of Spotify.
+test('saving the settings page leaves the stored Spotify session alone', () => {
+  const s = store().load();
+  s.update({ spotify: { clientId: 'id', clientSecret: 'shh', refreshToken: 'a-live-session' } });
+
+  s.update({ spotify: { clientId: 'a-different-id' } });
+
+  assert.strictEqual(s.get('spotify.refreshToken'), 'a-live-session', 'session survived');
+  assert.strictEqual(s.get('spotify.clientSecret'), 'shh', 'so did the client secret');
 });
 
 test('the settings file is written 0600 — it holds secrets', { skip: process.platform === 'win32' }, () => {

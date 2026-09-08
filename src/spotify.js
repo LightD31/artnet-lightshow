@@ -140,6 +140,7 @@ class SpotifyClient {
     this._currentTrackId = null;
     this._onTrackChange = null;
     this._onPlaybackUpdate = null;
+    this._onTokens = null;
     // Pending OAuth state nonces → issue time. Without this the callback
     // accepts any code presented to it, so any page could bind this server to
     // an attacker's Spotify account.
@@ -515,8 +516,59 @@ class SpotifyClient {
   onTrackChange(fn) { this._onTrackChange = fn; }
   onPlaybackUpdate(fn) { this._onPlaybackUpdate = fn; }
 
-  /** Disconnect and clear tokens. */
-  disconnect() {
+  /**
+   * Register a callback fired whenever the refresh token changes.
+   *
+   * That token *is* the session: with it the server can mint access tokens
+   * indefinitely without the operator opening a browser again. Spotify may hand
+   * back a new one on any refresh, not just at the initial code exchange, so
+   * this fires on every change — saving only the first would go quietly stale
+   * and the session would die at the next restart with no obvious cause.
+   */
+  onTokens(fn) { this._onTokens = fn; }
+
+  /**
+   * Bring a stored session back after a restart.
+   *
+   * Only the refresh token is kept. Access tokens last an hour, so re-minting
+   * one is both simpler and always right, where a persisted access token would
+   * usually be stale by the time the next show starts.
+   *
+   * Throws with `err.status` set when Spotify rejects the grant — revoked in
+   * the account, or issued for different credentials — and without one when the
+   * request never got an answer. The caller needs that difference: a rig that
+   * boots before its network is up must not have its session deleted.
+   */
+  async restoreSession(refreshToken) {
+    if (!refreshToken || !this.configured) return false;
+    this.refreshToken = refreshToken;
+    try {
+      await this.refreshAccessToken();
+    } catch (err) {
+      this.accessToken = null;
+      this.expiresAt = 0;
+      // Keep the token on a network failure so a later attempt can use it;
+      // drop it, store included, once Spotify has actually said no. Deciding
+      // that here rather than at the call site keeps one rule for "the session
+      // is gone" instead of two that can drift apart.
+      if (err && err.status >= 400 && err.status < 500) {
+        this.refreshToken = null;
+        this._emitTokens('');
+      }
+      throw err;
+    }
+    return this.authenticated;
+  }
+
+  /**
+   * Stop polling and clear the session from memory.
+   *
+   * `forget` also clears the stored one, which is the operator pressing
+   * Disconnect. Shutdown must not pass it: this runs on the way down too, and
+   * wiping the saved session every time the server stopped would defeat the
+   * point of saving it.
+   */
+  disconnect({ forget = false } = {}) {
     this.stopPolling();
     if (this._refreshTimer) { clearTimeout(this._refreshTimer); this._refreshTimer = null; }
     this.accessToken = null;
@@ -526,6 +578,7 @@ class SpotifyClient {
     this._pendingStates.clear();
     this._rateLimitedUntil = 0;
     this.grantedScopes.clear();
+    if (forget) this._emitTokens('');
   }
 
   getStatus() {
@@ -547,7 +600,10 @@ class SpotifyClient {
     if (typeof data.scope === 'string') {
       this.grantedScopes = new Set(data.scope.split(/\s+/).filter(Boolean));
     }
-    if (data.refresh_token) this.refreshToken = data.refresh_token;
+    if (data.refresh_token && data.refresh_token !== this.refreshToken) {
+      this.refreshToken = data.refresh_token;
+      this._emitTokens(this.refreshToken);
+    }
     if (data.expires_in) {
       this.expiresAt = Date.now() + data.expires_in * 1000 - 60000; // 1 min buffer
       // Auto-refresh before expiry
@@ -557,6 +613,14 @@ class SpotifyClient {
       }, (data.expires_in - 120) * 1000);
       if (this._refreshTimer.unref) this._refreshTimer.unref();
     }
+  }
+
+  /** Hand the refresh token to whoever is storing it, without letting a
+   *  failure there take down the request that produced it. */
+  _emitTokens(token) {
+    if (!this._onTokens) return;
+    try { this._onTokens(token); }
+    catch (err) { console.warn(`[spotify] could not save the session: ${err.message}`); }
   }
 
   _tokenRequest(body) {
