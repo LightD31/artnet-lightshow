@@ -1,10 +1,23 @@
 // Approximate the visual mix on a screen for the rig's RGBWAUV channels.
 // Amber adds warm orange (R + 0.5 G); UV reads as blue-violet (R 0.2 + B 0.9).
+//
+// Out-of-gamut sums are scaled back proportionally rather than clamped per
+// channel. Clamping threw away exactly the difference that matters: any preset
+// driving white hard pins all three channels at 255, so Warm White and Cool
+// White — which differ only in temperature — came out as the same flat swatch
+// and the operator could not tell the two buttons apart. Scaling keeps the hue
+// and gives up only absolute brightness, which a swatch was never showing
+// truthfully anyway.
 export function colorToCss({ r, g, b, w = 0, a = 0, uv = 0 }) {
-  const rr = Math.min(255, r + w + Math.round(a * 1.0) + Math.round(uv * 0.2));
-  const gg = Math.min(255, g + w + Math.round(a * 0.5));
-  const bb = Math.min(255, b + w + Math.round(uv * 0.9));
-  return `rgb(${rr},${gg},${bb})`;
+  let rr = r + w + a + uv * 0.2;
+  let gg = g + w + a * 0.5;
+  let bb = b + w + uv * 0.9;
+  const peak = Math.max(rr, gg, bb);
+  if (peak > 255) {
+    const k = 255 / peak;
+    rr *= k; gg *= k; bb *= k;
+  }
+  return `rgb(${Math.round(rr)},${Math.round(gg)},${Math.round(bb)})`;
 }
 
 export function fmtTime(ms) {

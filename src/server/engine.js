@@ -62,14 +62,21 @@ function tickPattern() {
 function resolveEnergyOverride() {
   const colA = COLOR_PRESETS[state.colorA];
   switch (state.energyOverride) {
+    // Cold: no amber, so it reads as a hard white flash rather than a warm one.
     case 'white-strobe': return { col: { r: 255, g: 255, b: 255, w: 255, a: 0,   uv: 0   }, dim: 255, strobe: 255 };
-    case 'blinder':      return { col: { r: 255, g: 255, b: 255, w: 255, a: 0,   uv: 0   }, dim: 255, strobe: 0   };
-    case 'uv-strobe':    return { col: { r: 60,  g: 0,   b: 200, w: 0,   a: 0,   uv: 255 }, dim: 255, strobe: 255 };
     case 'color-strobe': return {
       col: { r: colA.r, g: colA.g, b: colA.b, w: colA.w || 0, a: colA.a || 0, uv: colA.uv || 0 },
       dim: 255, strobe: 255,
     };
-    case 'all-on':       return { col: { r: 255, g: 255, b: 255, w: 255, a: 255, uv: 255 }, dim: 255, strobe: 0   };
+    // Every emitter that makes visible light, amber included — this is the
+    // brightest the rig goes. UV is left out: it adds no perceived brightness
+    // to a white wall, and UV_BOOST would push that channel harder than the
+    // rest for nothing.
+    case 'blinder':      return { col: { r: 255, g: 255, b: 255, w: 255, a: 255, uv: 0   }, dim: 255, strobe: 0   };
+    case 'uv-wash':      return { col: { r: 0,   g: 0,   b: 0,   w: 0,   a: 0,   uv: 255 }, dim: 255, strobe: 0   };
+    // Momentary darkness. dim 0 as well as a black colour so the fixture's
+    // dimmer channel closes too, rather than leaving it open on black.
+    case 'kill':         return { col: { r: 0,   g: 0,   b: 0,   w: 0,   a: 0,   uv: 0   }, dim: 0,   strobe: 0   };
     default: return null;
   }
 }
