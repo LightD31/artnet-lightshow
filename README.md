@@ -823,6 +823,15 @@ the first port matching `/x.?touch/i`.
 |---------|---------|
 | **Buttons** | Tap tempo · Play/stop · Master blackout · Select pattern · Set colour slot A–D · Select palette · Set beat division · Energy override (hold) · Cycle the held energy effect · Cycle strobe function · Fixture blackout · Recall cue |
 | **Encoders** (relative) | Nudge BPM · Nudge master dimmer · Nudge strobe speed · Nudge fixture dimmer · Nudge fixture max brightness · Nudge auto-show intensity · Nudge light/music sync |
+
+An endless encoder sends "moved a bit, this way", and there are two ways to
+spell that — two's complement (1 up, 127 down) and binary offset (65 up, 63
+down). Which one a controller uses is a setting on the device, and nothing in
+the MIDI message says which you are being sent, so the encoding is worked out
+from the values themselves: a value next to 64 can only be binary offset, one
+next to 0 or 127 can only be two's complement. The first detent settles it, per
+encoder, so a surface may mix the two. Nothing needs configuring, and a
+controller you reconfigure is re-learned on the next restart.
 | **Faders** (absolute) | Master dimmer · Strobe speed · BPM · Fixture dimmer · Fixture max brightness · Auto-show intensity · Light/music sync offset |
 
 ---
