@@ -4,30 +4,24 @@ import { combineRgb } from '@companion-module/base'
 // server as palette indices, so order matters. Keep them in sync.
 
 export const COLOR_PRESETS = [
-	{ name: 'Crimson', r: 255, g: 18, b: 8, w: 0, a: 0, uv: 0 }, // 0
-	{ name: 'Flame', r: 255, g: 94, b: 0, w: 0, a: 130, uv: 0 }, // 1
-	{ name: 'Amber', r: 70, g: 20, b: 0, w: 0, a: 255, uv: 0 }, // 2
-	{ name: 'Sun', r: 255, g: 220, b: 18, w: 0, a: 120, uv: 0 }, // 3
-	{ name: 'Lime', r: 40, g: 255, b: 40, w: 0, a: 0, uv: 0 }, // 4
-	{ name: 'Aqua', r: 0, g: 225, b: 255, w: 0, a: 0, uv: 0 }, // 5
-	{ name: 'Cobalt', r: 20, g: 60, b: 255, w: 0, a: 0, uv: 0 }, // 6
-	{ name: 'Violet', r: 115, g: 20, b: 255, w: 0, a: 0, uv: 0 }, // 7
-	{ name: 'Fuchsia', r: 255, g: 0, b: 165, w: 0, a: 0, uv: 0 }, // 8
-	{ name: 'Daylight White', r: 0, g: 0, b: 0, w: 255, a: 0, uv: 0 }, // 9
-	{ name: 'UV', r: 0, g: 0, b: 0, w: 0, a: 0, uv: 255 }, // 10
-	{ name: 'Actinic', r: 85, g: 0, b: 255, w: 0, a: 0, uv: 0 }, // 11
-	{ name: 'Rose', r: 255, g: 84, b: 182, w: 0, a: 0, uv: 0 }, // 12
-	{ name: 'Teal', r: 0, g: 188, b: 160, w: 0, a: 0, uv: 0 }, // 13
-	{ name: 'Gold', r: 255, g: 155, b: 20, w: 0, a: 225, uv: 0 }, // 14
-	{ name: 'Tungsten White', r: 95, g: 35, b: 0, w: 255, a: 175, uv: 0 }, // 15
-	{ name: 'Mint', r: 0, g: 255, b: 145, w: 0, a: 0, uv: 0 }, // 16
-	{ name: 'Sky', r: 80, g: 185, b: 255, w: 0, a: 0, uv: 0 }, // 17
-	{ name: 'Indigo', r: 35, g: 0, b: 190, w: 0, a: 0, uv: 0 }, // 18
-	{ name: 'Coral', r: 255, g: 112, b: 78, w: 0, a: 55, uv: 0 }, // 19
-	{ name: 'Lavender', r: 165, g: 120, b: 255, w: 0, a: 0, uv: 0 }, // 20
-	{ name: 'Acid', r: 186, g: 255, b: 0, w: 0, a: 0, uv: 0 }, // 21
-	{ name: 'Moonlight', r: 30, g: 45, b: 85, w: 180, a: 0, uv: 0 }, // 22
-	{ name: 'Blackout', r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 }, // 23
+	// Saturated wheel — one entry per recognisable hue, none within 30° of
+	// another. The angle is the mixed hue, not the r/g/b triple.
+	{ name: 'Red', r: 255, g: 0, b: 0, w: 0, a: 0, uv: 0 }, // 0    0°
+	{ name: 'Amber', r: 200, g: 150, b: 0, w: 0, a: 255, uv: 0 }, // 1   37°
+	{ name: 'Lime', r: 150, g: 255, b: 0, w: 0, a: 0, uv: 0 }, // 2   85°
+	{ name: 'Green', r: 0, g: 255, b: 85, w: 0, a: 0, uv: 0 }, // 3  140°
+	{ name: 'Cyan', r: 0, g: 225, b: 255, w: 0, a: 0, uv: 0 }, // 4  187°
+	{ name: 'Blue', r: 0, g: 85, b: 255, w: 0, a: 0, uv: 0 }, // 5  220°
+	{ name: 'Congo Blue', r: 75, g: 0, b: 255, w: 0, a: 0, uv: 0 }, // 6  258°
+	{ name: 'Violet', r: 205, g: 0, b: 255, w: 0, a: 0, uv: 0 }, // 7  288°
+	{ name: 'Magenta', r: 255, g: 0, b: 150, w: 0, a: 0, uv: 0 }, // 8  325°
+	// Whites, then the pale tier, then UV.
+	{ name: 'Warm White', r: 90, g: 30, b: 0, w: 255, a: 200, uv: 0 }, // 9
+	{ name: 'Cool White', r: 0, g: 30, b: 80, w: 255, a: 0, uv: 0 }, // 10
+	{ name: 'Lavender', r: 130, g: 45, b: 200, w: 200, a: 0, uv: 0 }, // 11
+	{ name: 'Moonlight', r: 0, g: 70, b: 190, w: 190, a: 0, uv: 0 }, // 12
+	{ name: 'UV', r: 0, g: 0, b: 0, w: 0, a: 0, uv: 255 }, // 13
+	{ name: 'Blackout', r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 }, // 14
 ]
 
 export const PATTERNS = [
@@ -60,10 +54,10 @@ export const PATTERNS = [
 
 export const ENERGY_EFFECTS = [
 	{ id: 'white-strobe', name: 'White Strobe' },
-	{ id: 'blinder', name: 'Blinder' },
-	{ id: 'uv-strobe', name: 'UV Strobe' },
 	{ id: 'color-strobe', name: 'Colour Strobe' },
-	{ id: 'all-on', name: 'All On' },
+	{ id: 'blinder', name: 'Blinder' },
+	{ id: 'uv-wash', name: 'UV Wash' },
+	{ id: 'kill', name: 'Kill' },
 ]
 
 export const STROBE_FUNCTIONS = [
@@ -84,7 +78,7 @@ export const FIXTURE_COUNT = 4
 export const COLOR_SLOTS = [
 	{ id: 'colorA', label: 'A', actionId: 'set_color_a', feedbackId: 'color_a_active', defaultIndex: 0 },
 	{ id: 'colorB', label: 'B', actionId: 'set_color_b', feedbackId: 'color_b_active', defaultIndex: 6 },
-	{ id: 'colorC', label: 'C', actionId: 'set_color_c', feedbackId: 'color_c_active', defaultIndex: 3 },
+	{ id: 'colorC', label: 'C', actionId: 'set_color_c', feedbackId: 'color_c_active', defaultIndex: 4 },
 	{ id: 'colorD', label: 'D', actionId: 'set_color_d', feedbackId: 'color_d_active', defaultIndex: 8 },
 ]
 
@@ -115,13 +109,16 @@ export function strobeName(id) {
 
 // Map an RGBWAUV palette entry to a Companion RGB colour for button previews.
 // White lifts all channels, amber reads as warm orange, UV as blue-purple.
+// Mirrors colorToCss in public-src/utils.js, including the proportional
+// scale-back: clamping each channel at 255 made every white-heavy preset come
+// out the same flat white, so Warm White and Cool White were indistinguishable
+// on the buttons.
 export function presetColor(c) {
 	const w = c.w || 0
 	const a = c.a || 0
 	const uv = c.uv || 0
-	return combineRgb(
-		Math.min(255, c.r + w + Math.round(a * 1.0) + Math.round(uv * 0.2)),
-		Math.min(255, c.g + w + Math.round(a * 0.5)),
-		Math.min(255, c.b + w + Math.round(uv * 0.9)),
-	)
+	const rgb = [c.r + w + a + uv * 0.2, c.g + w + a * 0.5, c.b + w + uv * 0.9]
+	const peak = Math.max(...rgb)
+	const k = peak > 255 ? 255 / peak : 1
+	return combineRgb(...rgb.map((v) => Math.round(v * k)))
 }

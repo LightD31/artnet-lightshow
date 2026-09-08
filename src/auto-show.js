@@ -1496,12 +1496,22 @@ class AutoShow {
     // different look, but any single song is locked in for its full duration.
     const chosen = tetradNames[keyIdx % tetradNames.length];
     const bank = paletteBankForSize(this.paletteSize);
-    const raw = bank[chosen] || bank.cyber;
-    const name = bank[chosen] ? chosen : 'cyber';
+    // The fallback used to name a `cyber` look that no bank has ever had, so a
+    // genre table pointing at a renamed palette would reach `undefined` here and
+    // take the show down on the next line. Fall back to whatever the bank
+    // actually starts with instead.
+    const fallback = Object.keys(bank)[0];
+    const name = bank[chosen] ? chosen : fallback;
+    const raw = bank[name];
 
     // Validate against _colorPresets length so we never hand out an index the
-    // server will clamp or silently remap.
-    const maxIdx = Math.max(0, (this._colorPresets?.length || 17) - 1);
+    // server will clamp or silently remap. Without a preset table to measure
+    // against, trust the bank — it is checked against the real table in tests —
+    // rather than clamping to a hardcoded count that goes stale every time the
+    // colour list is reworked.
+    const maxIdx = Array.isArray(this._colorPresets) && this._colorPresets.length
+      ? this._colorPresets.length - 1
+      : Infinity;
     let palette = raw.map(i => Math.min(maxIdx, Math.max(0, i)));
 
     // Minor rotation by scale so major/minor variants of the same key feel

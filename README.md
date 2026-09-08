@@ -21,7 +21,9 @@ via **Bitfocus Companion**, and a REST API.
 - **25 patterns** — solid, chases, ping-pong, strobe, fade, colour cycle,
   rainbow, twinkle, sparkle, wave, runner, splits and halves/thirds/quarters
   variants for larger rigs
-- **24 colour presets** and four colour slots (A–D) that patterns draw from
+- **15 colour presets** — a nine-hue wheel with nothing closer than 30° on it,
+  plus two whites, two pale washes and UV — and four colour slots (A–D) that
+  patterns draw from
 - **Palettes** — the auto show's sixteen hand-tuned looks, pickable by hand: one
   press fills all four slots with colours that were chosen to sit together
 - **Per-fixture overrides** — independent RGBWAUV + dimmer + strobe, or an
@@ -306,11 +308,60 @@ them do not implement it, and a broadcast rig works fine without ever replying.
 
 ---
 
-## Palettes
+## Colours and palettes
+
+### The colour presets
+
+A party rig is watched from across a dark room, through haze, on lamps that are
+usually moving or flashing. Two colours a screen shows as clearly different — a
+260° violet and a 264° "actinic", say — arrive at the audience as the same
+colour, so a long list of near-neighbours is a list where most of the buttons do
+the same thing.
+
+The table is built the other way round: the fewest colours that are all
+*obviously* different from one another, with the four slots left to do the
+combining. Nine saturated hues, none closer than 30° on the wheel:
+
+| | | | |
+|---|---|---|---|
+| Red 0° | Amber 37° | Lime 85° | Green 140° |
+| Cyan 187° | Blue 220° | Congo Blue 258° | Violet 288° |
+| Magenta 325° | | | |
+
+Then five things a hue cannot do: **Warm White** and **Cool White** (warm-vs-cool
+is the one white distinction that carries across a room), **Lavender** and
+**Moonlight** (the pale tier — deliberately desaturated washes to leave up under
+everything else, for the quiet end of the night), and **UV**, which no RGB mix
+approximates. Plus **Blackout**, which stays last.
+
+Everything that used to sit between two of these — Coral, Flame, Gold, Sun,
+Yellow, Rose, Fuchsia, Teal, Mint, Sky, Indigo, Actinic, Acid — collapsed into
+its nearest neighbour. Nothing was lost that a pair of slots cannot rebuild.
+
+Yellow is the one that may look missing. The amber emitter puts Amber at 37° and
+an RGB yellow at 60°: a difference on a screen, not one across a dark room. Amber
+is also the more useful half of that pair on a party rig, since an RGB yellow
+tends to arrive as dirty white once there is any haze in the air.
+
+### The palettes
 
 Sixteen named looks — the same bank the auto show locks a song to, offered by
 hand. One press writes all four colour slots with colours that were picked to
 sit together, which is the fiddly part of driving the rig manually.
+
+Every four-colour look is four slots with four different jobs, in this order:
+
+| Slot | Job |
+|------|-----|
+| **A** | **dominant** — the colour the look is named for, the one most on stage |
+| **B** | **contrast** — its opposite. A and B carry `split`, `alt-halves` and the two-colour chases, so this pair has to survive being the only two colours in the room |
+| **C** | **accent** — a third well-separated hue for the 3- and 4-colour patterns |
+| **D** | **lift** — a white, a pale wash or UV. Not a fourth hue: without a brightness break, a four-colour chase reads as a rainbow rather than as a look |
+
+No two *saturated* colours in one look sit within 30° of each other. Where a look
+does hold two from the same family they are on different saturation tiers on
+purpose — `violetDream` puts its violet over a pale lavender — which the eye
+reads as depth rather than as a repeat.
 
 Pick a size first: **2** for a small rig (two strongly contrasting hues that
 still read from the back of the room), **3** for three well-separated hues, or
@@ -325,6 +376,10 @@ palette and the name goes.
 
 Palettes are also a bindable MIDI action (**Select palette**) and reachable over
 REST at `POST /api/palette/:id`.
+
+These rules are enforced by `tests/unit/color-design.test.js`, so a new preset
+that lands three degrees from an existing one fails the build rather than quietly
+making two buttons do the same thing.
 
 ---
 
@@ -380,6 +435,12 @@ is the whole rig, not a partial edit.
 
 They are stored in `config/cues.json` and survive restarts. Up to 128.
 
+Cues saved before the colour table was rebuilt do not carry over: they store
+colour *indices*, and every index now names a different colour. A stored index
+of 15 or above no longer exists at all, so such a file fails validation and is
+moved aside to `config/cues.json.invalid-<timestamp>` on the first start after
+the upgrade — nothing is deleted, but the set list has to be built again.
+
 ---
 
 ## Energy overrides
@@ -391,11 +452,24 @@ still mean something at the moment you hit the blinder.
 
 | ID | Name | Effect |
 |----|------|--------|
-| `white-strobe` | White Strobe | Full white + fast strobe |
-| `blinder` | Blinder | Full white wall of light |
-| `uv-strobe` | UV Strobe | Full UV + fast strobe |
-| `color-strobe` | Colour Strobe | Colour A + fast strobe |
-| `all-on` | All On | Every channel maxed |
+| `white-strobe` | White Strobe | Cold white, fastest strobe |
+| `color-strobe` | Colour Strobe | Colour A, fastest strobe |
+| `blinder` | Blinder | Every emitter at full — the brightest the rig goes |
+| `uv-wash` | UV Wash | Blacklight — UV alone, no strobe |
+| `kill` | Kill | Everything out for as long as it is held |
+
+Five effects covering four separate jobs, so no two buttons do the same thing: a
+strobe punch that is either cold or in the look's own colour, a held wall of
+light, and a held *dark* moment that is either blacklight or nothing at all.
+
+`blinder` and `all-on` used to be two entries that both meant "a white wall at
+full", differing only in whether amber and UV joined in — which from the floor is
+not a difference. They are now one effect driving every emitter that makes
+visible light, which is brighter than either was. `uv-strobe` gave way to
+`uv-wash`: a third strobe was the one thing the list already had.
+
+`kill` is not master blackout. The master is a latching switch on the whole rig;
+this is momentary and auto-clears, which is what you want under a thumb on a drop.
 
 Trigger from the UI, MIDI (encoder push 8 — hold to activate, release to clear),
 REST, or Companion. Clear with `energyOverride: null`.

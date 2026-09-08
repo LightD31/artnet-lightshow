@@ -34,15 +34,11 @@ const PATTERNS = [
   'color-cycle', 'rainbow', 'sparkle', 'twinkle', 'ping-pong', 'random-flash',
   'strobe', 'hit', 'alt-halves',
 ].map(id => ({ id }));
-// 17 presets total in server.js: 0-11 legacy (Red..UV(RGB)), 12 Pink,
-// 13 Teal, 14 Gold, 15 Warm White, 16 Blackout (sentinel, last).
-const COLOR_PRESETS = [
-  { name: 'Red' }, { name: 'Orange' }, { name: 'Amber' }, { name: 'Yellow' },
-  { name: 'Green' }, { name: 'Cyan' }, { name: 'Blue' }, { name: 'Purple' },
-  { name: 'Magenta' }, { name: 'White' }, { name: 'UV' }, { name: 'UV (RGB)' },
-  { name: 'Pink' }, { name: 'Teal' }, { name: 'Gold' }, { name: 'Warm White' },
-  { name: 'Blackout' },
-];
+// The real table rather than a copy of it. A hand-maintained duplicate went
+// stale the first time the colour list was reworked, which left this harness
+// clamping palette indices against the wrong length and printing colour names
+// the server had not had for a while.
+const { COLOR_PRESETS } = require('../src/server/presets');
 
 function slugify(q) {
   return q.toLowerCase()

@@ -16,37 +16,68 @@ const STROBE_FUNCTIONS = [
 
 const STROBE_FUNCTION_IDS = STROBE_FUNCTIONS.map((f) => f.id);
 
-// Palette rebuilt around practical lighting design goals:
-// - strong complementary contrast options
-// - warm/cool families for mood shaping
-// - neutral whites for subject visibility
-// - UV/actinic accents for effect looks
+// ── Colour presets ──────────────────────────────────────────────────────────
+//
+// A party rig is watched from across a dark room, through haze, on lamps that
+// are usually moving or flashing. Two colours that a screen shows as clearly
+// different — say a 260° violet and a 264° "actinic" — arrive at the audience
+// as the same colour, so a table full of near-neighbours is a table where most
+// of the buttons do the same thing. The list below is built the other way
+// round: pick the fewest colours that are all *obviously* different from each
+// other, and let the palettes and the four slots do the combining.
+//
+// The rule is one preset per recognisable hue, with no two saturated entries
+// closer than 30° on the wheel:
+//
+//   Red 0° · Amber 37° · Lime 85° · Green 140° · Cyan 187°
+//   Blue 220° · Congo 258° · Violet 288° · Magenta 325°
+//
+// Nine hues is the whole wheel at the resolution the eye resolves at distance.
+// Everything that used to sit between two of these (Coral, Flame, Gold, Sun,
+// Yellow, Rose, Fuchsia, Teal, Mint, Sky, Indigo, Actinic, Acid) collapsed into
+// its nearest neighbour; nothing was lost that a pair of slots cannot rebuild.
+//
+// Yellow is the one that may look missing. It went because the amber emitter
+// puts Amber at 37° and an RGB yellow at 60° — 23° apart, which is a difference
+// on a screen and not one across a dark room. Amber is also the more useful
+// half of that pair on a party rig: an RGB yellow tends to arrive as dirty
+// white once there is any haze in the air.
+//
+// Then three things a hue cannot do:
+//   - Warm/Cool White — the blinder and the "lights up" look. Two of them,
+//     because warm-vs-cool is the one white distinction that reads on stage.
+//   - Lavender / Moonlight — the pale tier. Deliberately desaturated: a wash
+//     you can leave up under everything else, for the chill-out end of the
+//     night, where a saturated colour would just be loud.
+//   - UV — blacklight, which no RGB mix approximates.
+//
 // `Blackout` stays last (auto-show.js looks it up by name).
 const COLOR_PRESETS = [
-  { name: 'Crimson',        r: 255, g: 18,  b: 8,   w: 0,   a: 0,   uv: 0   }, // 0
-  { name: 'Flame',          r: 255, g: 94,  b: 0,   w: 0,   a: 130, uv: 0   }, // 1
-  { name: 'Amber',          r: 70,  g: 20,  b: 0,   w: 0,   a: 255, uv: 0   }, // 2
-  { name: 'Sun',            r: 255, g: 220, b: 18,  w: 0,   a: 120, uv: 0   }, // 3
-  { name: 'Lime',           r: 40,  g: 255, b: 40,  w: 0,   a: 0,   uv: 0   }, // 4
-  { name: 'Aqua',           r: 0,   g: 225, b: 255, w: 0,   a: 0,   uv: 0   }, // 5
-  { name: 'Cobalt',         r: 20,  g: 60,  b: 255, w: 0,   a: 0,   uv: 0   }, // 6
-  { name: 'Violet',         r: 115, g: 20,  b: 255, w: 0,   a: 0,   uv: 0   }, // 7
-  { name: 'Fuchsia',        r: 255, g: 0,   b: 165, w: 0,   a: 0,   uv: 0   }, // 8
-  { name: 'Daylight White', r: 0,   g: 0,   b: 0,   w: 255, a: 0,   uv: 0   }, // 9
-  { name: 'UV',         r: 0,   g: 0,   b: 0,   w: 0,   a: 0,   uv: 255 }, // 10
-  { name: 'Actinic',        r: 85,  g: 0,   b: 255, w: 0,   a: 0,   uv: 0   }, // 11
-  { name: 'Rose',           r: 255, g: 84,  b: 182, w: 0,   a: 0,   uv: 0   }, // 12
-  { name: 'Teal',           r: 0,   g: 188, b: 160, w: 0,   a: 0,   uv: 0   }, // 13
-  { name: 'Gold',           r: 255, g: 155, b: 20,  w: 0,   a: 225, uv: 0   }, // 14
-  { name: 'Tungsten White', r: 95,  g: 35,  b: 0,   w: 255, a: 175, uv: 0   }, // 15
-  { name: 'Mint',           r: 0,   g: 255, b: 145, w: 0,   a: 0,   uv: 0   }, // 16
-  { name: 'Sky',            r: 80,  g: 185, b: 255, w: 0,   a: 0,   uv: 0   }, // 17
-  { name: 'Indigo',         r: 35,  g: 0,   b: 190, w: 0,   a: 0,   uv: 0   }, // 18
-  { name: 'Coral',          r: 255, g: 112, b: 78,  w: 0,   a: 55,  uv: 0   }, // 19
-  { name: 'Lavender',       r: 165, g: 120, b: 255, w: 0,   a: 0,   uv: 0   }, // 20
-  { name: 'Acid',           r: 186, g: 255, b: 0,   w: 0,   a: 0,   uv: 0   }, // 21
-  { name: 'Moonlight',      r: 30,  g: 45,  b: 85,  w: 180, a: 0,   uv: 0   }, // 22
-  { name: 'Blackout',       r: 0,   g: 0,   b: 0,   w: 0,   a: 0,   uv: 0   }, // 23
+  // Saturated wheel — the workhorses. One entry per recognisable hue. The
+  // angles are the *mixed* hue: Amber is mostly the amber emitter, so its r/g/b
+  // triple on its own reads much redder than what the lamp puts out.
+  { name: 'Red',        r: 255, g: 0,   b: 0,   w: 0,   a: 0,   uv: 0   }, // 0    0°
+  { name: 'Amber',      r: 200, g: 150, b: 0,   w: 0,   a: 255, uv: 0   }, // 1   37° amber emitter leads
+  { name: 'Lime',       r: 150, g: 255, b: 0,   w: 0,   a: 0,   uv: 0   }, // 2   85°
+  { name: 'Green',      r: 0,   g: 255, b: 85,  w: 0,   a: 0,   uv: 0   }, // 3  140° emerald, not the
+                                                                           //         yellowish raw primary
+  { name: 'Cyan',       r: 0,   g: 225, b: 255, w: 0,   a: 0,   uv: 0   }, // 4  187°
+  { name: 'Blue',       r: 0,   g: 85,  b: 255, w: 0,   a: 0,   uv: 0   }, // 5  220°
+  { name: 'Congo Blue', r: 75,  g: 0,   b: 255, w: 0,   a: 0,   uv: 0   }, // 6  258° the deep one
+  { name: 'Violet',     r: 205, g: 0,   b: 255, w: 0,   a: 0,   uv: 0   }, // 7  288°
+  { name: 'Magenta',    r: 255, g: 0,   b: 150, w: 0,   a: 0,   uv: 0   }, // 8  325° reads as hot pink
+
+  // Whites — warm and cool, the one white distinction that carries across a room.
+  { name: 'Warm White', r: 90,  g: 30,  b: 0,   w: 255, a: 200, uv: 0   }, // 9  tungsten
+  { name: 'Cool White', r: 0,   g: 30,  b: 80,  w: 255, a: 0,   uv: 0   }, // 10 daylight
+
+  // Pale tier — low saturation on purpose. These are washes to sit *under* a
+  // look, not colours to chase with.
+  { name: 'Lavender',   r: 130, g: 45,  b: 200, w: 200, a: 0,   uv: 0   }, // 11
+  { name: 'Moonlight',  r: 0,   g: 70,  b: 190, w: 190, a: 0,   uv: 0   }, // 12
+
+  { name: 'UV',         r: 0,   g: 0,   b: 0,   w: 0,   a: 0,   uv: 255 }, // 13
+  { name: 'Blackout',   r: 0,   g: 0,   b: 0,   w: 0,   a: 0,   uv: 0   }, // 14
 ];
 
 const PATTERNS = [
@@ -79,12 +110,32 @@ const PATTERNS = [
 
 const PATTERN_IDS = PATTERNS.map((p) => p.id);
 
+// ── Energy overrides ────────────────────────────────────────────────────────
+//
+// One-touch panic effects. They trump the pattern engine and per-fixture
+// overrides (see engine.js resolveEnergyOverride) — only master blackout wins.
+//
+// Same problem as the colour table: `blinder` and `all-on` were both "a white
+// wall at full", differing only in whether amber and UV joined in, which from
+// the floor is not a difference. They are now one effect that drives every
+// white-making emitter, which is both simpler and brighter than either was.
+//
+// What is left covers four separate things an operator reaches for, so no two
+// buttons do the same job:
+//   - a strobe punch, cold (white-strobe) or in the look's own colour
+//     (color-strobe)
+//   - a held wall of light (blinder)
+//   - a held *dark* moment — blacklight (uv-wash) or nothing at all (kill)
+//
+// `kill` is not master blackout: the master is a latching switch on the whole
+// rig, this is momentary and auto-clears, which is what you want under a thumb
+// on a drop.
 const ENERGY_EFFECTS = [
-  { id: 'white-strobe',  name: 'White Strobe',  desc: 'Full white + fast strobe' },
-  { id: 'blinder',       name: 'Blinder',       desc: 'Full white wall of light' },
-  { id: 'uv-strobe',     name: 'UV Strobe',     desc: 'Full UV + fast strobe' },
-  { id: 'color-strobe',  name: 'Colour Strobe', desc: 'Colour A + fast strobe' },
-  { id: 'all-on',        name: 'All On',        desc: 'Every channel maxed out' },
+  { id: 'white-strobe', name: 'White Strobe',  desc: 'Cold white, fastest strobe' },
+  { id: 'color-strobe', name: 'Colour Strobe', desc: 'Colour A, fastest strobe' },
+  { id: 'blinder',      name: 'Blinder',       desc: 'Every emitter at full — the brightest the rig goes' },
+  { id: 'uv-wash',      name: 'UV Wash',       desc: 'Blacklight — UV alone, no strobe' },
+  { id: 'kill',         name: 'Kill',          desc: 'Everything out for as long as it is held' },
 ];
 
 const ENERGY_EFFECT_IDS = ENERGY_EFFECTS.map((e) => e.id);

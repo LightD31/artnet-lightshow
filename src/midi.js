@@ -23,6 +23,7 @@
  */
 
 const { DEFAULT_MAP } = require('./server/midi-map');
+const { ENERGY_EFFECT_IDS, STROBE_FUNCTION_IDS } = require('./server/presets');
 
 let easymidi;
 try {
@@ -31,11 +32,12 @@ try {
   console.warn('[MIDI] easymidi not available — run `npm install easymidi` to enable MIDI support.');
 }
 
-const ENERGY_IDS = ['white-strobe', 'blinder', 'uv-strobe', 'color-strobe', 'all-on'];
-const STROBE_FN_IDS = [
-  'standard', 'ramp-up-down', 'ramp-up-down-rnd', 'ramp-up', 'ramp-up-rnd',
-  'ramp-down', 'ramp-down-rnd', 'random', 'break',
-];
+// Taken from the tables in server/presets.js rather than copied. These drive
+// the cycle buttons, so a hand-written copy that fell behind would leave the
+// surface cycling an effect the server no longer accepts — silently, since the
+// patch validator just drops an unknown id.
+const ENERGY_IDS = ENERGY_EFFECT_IDS;
+const STROBE_FN_IDS = STROBE_FUNCTION_IDS;
 
 // An armed learn that nobody completes would sit swallowing the next press for
 // the rest of the night. Give up on it.
@@ -349,13 +351,13 @@ class MidiController {
       case 'energyHold': {
         // Momentary: note-on activates, note-off (handled above) deactivates.
         // A bound effect wins; otherwise this button follows cycleEnergyEffect.
-        const effect = binding.value || this._energyEffect || 'white-strobe';
+        const effect = binding.value || this._energyEffect || ENERGY_IDS[0];
         this.apply({ energyOverride: effect });
         break;
       }
       case 'cycleEnergyEffect': {
         // Cycle which effect the energy hold button triggers (without activating it)
-        const curIdx = ENERGY_IDS.indexOf(this._energyEffect || 'white-strobe');
+        const curIdx = ENERGY_IDS.indexOf(this._energyEffect || ENERGY_IDS[0]);
         this._energyEffect = ENERGY_IDS[(curIdx + 1) % ENERGY_IDS.length];
         break;
       }
