@@ -430,3 +430,36 @@
 .preflight-detail { font-size: 11px; color: var(--muted); line-height: 1.5; }
 .preflight-fix { font-size: 11px; color: var(--dim); line-height: 1.5; margin-top: 2px; }
 .preflight-fix::before { content: '\2192  '; }
+
+/* =============================================================
+   SETTINGS TABS
+   ============================================================= */
+.settings-tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 14px;
+  padding: 3px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  position: sticky;
+  top: 8px;
+  z-index: 20;
+  overflow-x: auto;
+}
+.settings-tab {
+  appearance: none;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--t), color var(--t);
+}
+.settings-tab:hover { color: var(--text); background: var(--card-hi); }
+.settings-tab.active { background: var(--accent); color: #fff; }

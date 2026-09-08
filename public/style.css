@@ -1613,6 +1613,11 @@ input[type=range]::-moz-range-thumb {
 .warm-row.warming .warm-row-status { color: var(--accent); }
 .warm-row.error .warm-row-status { color: var(--accent-4); }
 
+/* The `hidden` attribute must win over any display rule a component sets on
+   itself. Without this, `.midi-learn-banner { display: flex }` beat the UA's
+   `[hidden] { display: none }` and the banner was permanently on screen. */
+[hidden] { display: none !important; }
+
 /* =============================================================
    TOASTS
    ============================================================= */

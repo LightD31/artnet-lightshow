@@ -25,8 +25,20 @@
 
 <main class="settings-main">
 
+  <!-- Grouped by when you touch them: a pre-show check, the rig you built
+       once, where DMX goes, the surfaces that drive it, the music it follows,
+       and the server itself. It was one eleven-section scroll. -->
+  <nav class="settings-tabs" role="tablist" id="settings-tabs">
+    <button type="button" role="tab" class="settings-tab" data-tab-btn="check">Pre-show</button>
+    <button type="button" role="tab" class="settings-tab" data-tab-btn="rig">Rig</button>
+    <button type="button" role="tab" class="settings-tab" data-tab-btn="output">Output</button>
+    <button type="button" role="tab" class="settings-tab" data-tab-btn="control">Control</button>
+    <button type="button" role="tab" class="settings-tab" data-tab-btn="music">Music</button>
+    <button type="button" role="tab" class="settings-tab" data-tab-btn="server">Server</button>
+  </nav>
+
   <!-- ── Preflight ──────────────────────────────────────── -->
-  <section class="card settings-section">
+  <section class="card settings-section" data-tab="check">
     <div class="card-title">Pre-show Check</div>
     <p class="section-desc">
       Everything in this stack degrades quietly on purpose, so the first sign of a broken rig is
@@ -38,7 +50,7 @@
   </section>
 
   <!-- ── ArtNet Settings ─────────────────────────────────── -->
-  <section class="card settings-section">
+  <section class="card settings-section" data-tab="output">
     <div class="card-title">ArtNet Output</div>
     <div class="settings-form">
       <div class="field">
@@ -65,7 +77,7 @@
   </section>
 
   <!-- ── MIDI ──────────────────────────────────────────────── -->
-  <section class="card settings-section">
+  <section class="card settings-section" data-tab="control">
     <div class="card-title">MIDI — X-Touch Compact</div>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
       <div id="midi-dot" class="status-dot"></div>
@@ -97,7 +109,7 @@
   </section>
 
   <!-- ── MIDI Mapping ─────────────────────────────── -->
-  <section class="card settings-section">
+  <section class="card settings-section" data-tab="control">
     <div class="card-title">MIDI Mapping</div>
     <p class="section-desc">
       Which message does what. Defaults to a Behringer X-Touch Compact in Standard mode
@@ -135,10 +147,11 @@
   <!-- ── Sources, integrations, analysis ─────────────────────
        Rendered from the field spec in settings.js so every setting gets the
        same layout, secret handling and restart badge. -->
-  <div id="settings-groups"></div>
+  <div id="settings-output-group" data-tab="output"></div>
+  <div id="settings-music-group" data-tab="music"></div>
 
   <!-- ── Fixture Profiles ────────────────────────────────── -->
-  <section class="card settings-section">
+  <section class="card settings-section" data-tab="rig">
     <div class="card-title">Fixture Profiles</div>
     <p class="section-desc">Import GDTF files to add fixture profiles, or use built-in profiles.</p>
 
@@ -168,7 +181,7 @@
   </section>
 
   <!-- ── Patch Table ─────────────────────────────────────── -->
-  <section class="card settings-section">
+  <section class="card settings-section" data-tab="rig">
     <div class="card-title">Fixture Patch</div>
     <p class="section-desc">Assign fixture profiles to a universe and DMX address. Addresses only
       collide within the same universe.</p>
@@ -194,7 +207,7 @@
   </section>
 
   <!-- ── Show File ───────────────────────────────────────── -->
-  <section class="card settings-section">
+  <section class="card settings-section" data-tab="rig">
     <div class="card-title">Show File</div>
     <p class="section-desc">Save or load the complete show configuration (patch, profiles, ArtNet settings).</p>
     <div class="show-actions">
@@ -206,7 +219,7 @@
   </section>
 
   <!-- ── Server & access (restart required) ──────────────── -->
-  <div id="settings-server-group"></div>
+  <div id="settings-server-group" data-tab="server"></div>
 
 </main>
 
