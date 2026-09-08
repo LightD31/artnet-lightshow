@@ -39,15 +39,15 @@ via **Bitfocus Companion**, and a REST API.
   via the bundled browser extension
 - Caches analyses on disk and **prefetches the next tracks in the queue**, so a
   track change flips instantly instead of stalling for a download
-- **Set-list warming** — paste tonight's tracks at load-in and have the whole
-  night analysed before doors open
+- **Set-list warming** — paste tonight's tracks (or point it at a Spotify
+  playlist) at load-in and have the whole night analysed before doors open
 
 **Before the show**
 
 - **Preflight** — one command that checks Art-Net reachability, the patch,
   Python, ffmpeg, yt-dlp and the genre model before doors open
-- **Set-list warming** — analyse the whole night up front rather than relying on
-  the live queue lookahead
+- **Set-list warming** — analyse the whole night up front, from a pasted list or
+  a Spotify playlist, rather than relying on the live queue lookahead
 
 **Fixtures**
 
@@ -214,6 +214,23 @@ A-Trak - Ray Ban Vision
 
 **Warm the Spotify queue** does the same for everything Spotify has queued,
 rather than only the next few.
+
+**Warm a Spotify playlist** takes the set list you already have. Pick one of the
+connected account's playlists from the dropdown, or paste a link to anyone's —
+a share link, a `spotify:playlist:…` URI or the bare id all work. Unlike the
+queue, a playlist exists before anything is playing, which is the case warming
+was built for.
+
+Tracks keep their Spotify id, so a warmed playlist track is already cached under
+the exact key the live path looks up when it plays. Podcast episodes and tracks
+pulled from the catalogue are skipped; local files in a playlist are warmed by
+name, the same way a pasted line is.
+
+Private and collaborative playlists need the `playlist-read-private` and
+`playlist-read-collaborative` scopes, which are requested at login. A Spotify
+connection made before this feature existed does not carry them — Spotify then
+reports your own playlist as simply not found — so reconnect Spotify in the
+settings page. Public playlists work either way.
 
 Progress is live — each track shows *queued*, *analysing*, *cached* or *failed*.
 Tracks already on disk are skipped without touching the analyser, so re-running
@@ -536,6 +553,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | GET | `/api/warm` | Progress: per-track status, counts, what is running |
 | POST | `/api/warm` | Start a run (`{ text }` — one `Artist - Title` per line — or `{ tracks }`) |
 | POST | `/api/warm/spotify-queue` | Warm everything Spotify has queued |
+| POST | `/api/warm/spotify-playlist` | Warm a playlist (`{ playlist }` — link, URI or id) |
 | DELETE | `/api/warm` | Stop a run, or clear a finished one |
 
 ### MIDI, PRO DJ LINK, integrations
@@ -554,6 +572,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | GET | `/auth/spotify` · `/auth/spotify/callback` | Spotify OAuth |
 | GET | `/api/preflight` | Run the pre-show check against the live subsystems |
 | GET | `/api/spotify/now-playing` · POST `/api/spotify/disconnect` | Spotify |
+| GET | `/api/spotify/playlists` | The connected account's playlists, for the warming picker |
 | POST | `/api/nowplaying/disconnect` | Drop the OS media session source |
 | POST | `/api/deezer/state` · `/api/deezer/disconnect` | Used by the browser extension |
 

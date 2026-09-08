@@ -13,6 +13,32 @@ const REQUEST_TIMEOUT_MS = 10000;
 const DEFAULT_RETRY_AFTER_MS = 5000;
 const MAX_RETRY_AFTER_MS = 5 * 60 * 1000;
 
+// Playlist reads are paged. 100 is Spotify's maximum page size for
+// /playlists/{id}/tracks, so this is the fewest round trips the API allows.
+const PLAYLIST_PAGE_SIZE = 100;
+
+// Ceiling on how much of a playlist we will walk. The warmer caps a run at 200
+// tracks anyway, and someone's 4000-track "everything" playlist should not turn
+// one button press into forty API calls.
+const MAX_PLAYLIST_TRACKS = 500;
+
+/**
+ * Scopes requested at login.
+ *
+ * The two playlist scopes exist for set-list warming: reading a *public*
+ * playlist needs no scope at all, but a private or collaborative one is
+ * invisible without them — and Spotify answers 404 rather than 403, so without
+ * the scope your own playlist simply appears not to exist. A connection made
+ * before these were added keeps working for playback; warming a private
+ * playlist from it needs a reconnect, which `canReadPlaylists` reports.
+ */
+const SCOPES = [
+  'user-read-playback-state',
+  'user-read-currently-playing',
+  'playlist-read-private',
+  'playlist-read-collaborative',
+];
+
 /**
  * Spotify Web API client with OAuth2 Authorization Code flow.
  *
@@ -31,6 +57,58 @@ const MAX_RETRY_AFTER_MS = 5 * 60 * 1000;
 // How long an issued OAuth state nonce stays valid. Long enough to log in and
 // approve the scopes, short enough that a leaked authorize URL goes stale.
 const STATE_TTL_MS = 10 * 60 * 1000;
+
+// Spotify ids are base-62 and 22 characters today, but the length has never
+// been part of the contract, so accept a range rather than pinning 22.
+const PLAYLIST_ID_RE = /^[A-Za-z0-9]{16,40}$/;
+
+// "Copy link to playlist" gives a URL, "Copy Spotify URI" gives a URI, and the
+// desktop app's share sheet adds an /intl-xx locale segment in some regions.
+const PLAYLIST_URI_RE = /^spotify:playlist:([A-Za-z0-9]+)$/;
+const PLAYLIST_URL_RE = /^https?:\/\/(?:open|play)\.spotify\.com\/(?:intl-[a-z]{2}(?:-[a-z]{2,4})?\/)?playlist\/([A-Za-z0-9]+)/i;
+
+/**
+ * Pull the playlist id out of whatever the operator pasted — a share link, a
+ * Spotify URI, or the bare id.
+ *
+ * Returns null for anything else. The id is interpolated into an API path, so
+ * only base-62 ever comes back out of here.
+ */
+function parsePlaylistRef(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return null;
+  const uri = raw.match(PLAYLIST_URI_RE);
+  if (uri) return uri[1];
+  const url = raw.match(PLAYLIST_URL_RE);
+  if (url) return url[1];
+  return PLAYLIST_ID_RE.test(raw) ? raw : null;
+}
+
+/**
+ * Turn one /playlists/{id}/tracks item into the track summary the rest of the
+ * app speaks, or null for an entry there is nothing to analyse in.
+ *
+ * Playlists are not just tracks: they carry podcast episodes, tracks that have
+ * been removed from the catalogue (a null `track`), and local files. Episodes
+ * and removed entries are dropped. Local files are kept — they have no Spotify
+ * id, but they do have a title and an artist, which is all the warmer needs to
+ * find the audio the same way a pasted set list does.
+ */
+function playlistItemToTrack(item) {
+  const track = item && item.track;
+  if (!track || !track.name) return null;
+  if (track.type && track.type !== 'track') return null;
+  return {
+    trackId: track.id || null,
+    name: track.name,
+    artist: (track.artists || []).map((a) => a.name).filter(Boolean).join(', '),
+    album: track.album?.name || '',
+    albumArt: track.album?.images?.[0]?.url || null,
+    durationMs: track.duration_ms || 0,
+    isrc: track.external_ids?.isrc || null,
+    isLocal: !!item.is_local,
+  };
+}
 
 class SpotifyClient {
   constructor(config = {}) {
@@ -58,6 +136,9 @@ class SpotifyClient {
     // Set while a 429 backoff window is in effect.
     this._rateLimitedUntil = 0;
     this._lastErrorLogAt = 0;
+    // Scopes Spotify actually granted, as reported by the token response. A
+    // token issued before a scope was added to SCOPES will not carry it.
+    this.grantedScopes = new Set();
   }
 
   /**
@@ -84,12 +165,23 @@ class SpotifyClient {
   }
 
   /**
+   * Whether this connection can see private and collaborative playlists.
+   *
+   * False for a session authorised before the playlist scopes were requested:
+   * everything else keeps working, and warming a private playlist needs a
+   * reconnect.
+   */
+  get canReadPlaylists() {
+    return this.grantedScopes.has('playlist-read-private');
+  }
+
+  /**
    * Build the proxy login URL for the user to visit. Issues a single-use state
    * nonce that consumeState() must later match, binding the callback to a flow
    * this server actually started.
    */
   getAuthorizeUrl() {
-    const scopes = 'user-read-playback-state user-read-currently-playing';
+    const scopes = SCOPES.join(' ');
     const state = crypto.randomBytes(24).toString('base64url');
     this._pruneStates();
     this._pendingStates.set(state, Date.now());
@@ -199,6 +291,128 @@ class SpotifyClient {
       }));
   }
 
+  /**
+   * Read a playlist's tracks, for warming a whole night from a playlist rather
+   * than the live queue (which only exists once something is playing) or a
+   * pasted list (which has to be typed).
+   *
+   * Accepts a share link, a Spotify URI or a bare id. Pages until the playlist
+   * ends or `limit` is reached, and reports `truncated` so the caller can say
+   * so rather than silently warming the first N.
+   */
+  async getPlaylist(ref, { limit = MAX_PLAYLIST_TRACKS } = {}) {
+    const id = parsePlaylistRef(ref);
+    if (!id) {
+      const err = new Error('Not a Spotify playlist link, URI or id');
+      err.status = 400;
+      throw err;
+    }
+    await this._ensureAuth();
+
+    const cap = Math.min(Math.max(1, Math.floor(limit) || 0), MAX_PLAYLIST_TRACKS);
+
+    // Ask only for what we render or warm. A playlist page with every field is
+    // hundreds of KB per 100 tracks, nearly all of it market availability lists.
+    const headFields = 'name,owner(display_name),tracks(total)';
+    const head = await this._apiGet(
+      `/v1/playlists/${id}?fields=${encodeURIComponent(headFields)}`
+    );
+    if (!head) {
+      const err = new Error('Spotify returned nothing for that playlist');
+      err.status = 404;
+      throw err;
+    }
+
+    const itemFields = 'next,total,items(is_local,track(id,name,type,duration_ms,'
+      + 'artists(name),album(name,images),external_ids(isrc)))';
+    const tracks = [];
+    let walked = 0;
+    let hasMore = true;
+
+    while (hasMore && walked < cap) {
+      const pageSize = Math.min(PLAYLIST_PAGE_SIZE, cap - walked);
+      const page = await this._apiGet(
+        `/v1/playlists/${id}/tracks?limit=${pageSize}&offset=${walked}`
+        + `&fields=${encodeURIComponent(itemFields)}`
+      );
+      const returned = page && Array.isArray(page.items) ? page.items : [];
+      if (!returned.length) break;
+      // Trust the cap over the response: a page that comes back longer than we
+      // asked for must not walk us past the limit.
+      const items = returned.slice(0, pageSize);
+      for (const item of items) {
+        const track = playlistItemToTrack(item);
+        if (track) tracks.push(track);
+      }
+      walked += items.length;
+      hasMore = !!(page && page.next);
+    }
+
+    const total = Number(head.tracks?.total) || walked;
+    return {
+      id,
+      name: head.name || 'Playlist',
+      owner: head.owner?.display_name || '',
+      total,
+      // What we actually walked, before episodes and dead entries were dropped.
+      truncated: hasMore && walked < total,
+      tracks,
+    };
+  }
+
+  /**
+   * List the playlists the connected account follows or owns, so the UI can
+   * offer a picker instead of demanding a pasted link.
+   *
+   * Private playlists only appear when `playlist-read-private` was granted —
+   * see SCOPES. A connection older than that scope gets a short public-only
+   * list rather than an error, which is why `canReadPlaylists` is on the status.
+   */
+  async getMyPlaylists({ limit = 100 } = {}) {
+    await this._ensureAuth();
+    const cap = Math.min(Math.max(1, Math.floor(limit) || 0), 200);
+    const out = [];
+    // Paged by what Spotify returned, not by what we kept — an entry can be
+    // dropped below, and paging on the kept count would ask for the same
+    // offset forever.
+    let offset = 0;
+    while (offset < cap) {
+      const pageSize = Math.min(50, cap - offset);
+      const page = await this._apiGet(`/v1/me/playlists?limit=${pageSize}&offset=${offset}`);
+      const items = (page && Array.isArray(page.items) ? page.items : []).slice(0, pageSize);
+      if (!items.length) break;
+      offset += items.length;
+      for (const pl of items) {
+        if (!pl || !pl.id) continue;
+        out.push({
+          id: pl.id,
+          name: pl.name || 'Untitled playlist',
+          owner: pl.owner?.display_name || '',
+          total: pl.tracks?.total || 0,
+        });
+      }
+      if (!page.next) break;
+    }
+    return out;
+  }
+
+  /**
+   * Make sure there is a usable access token, refreshing if it has expired.
+   *
+   * Unlike the polling reads, which return null when disconnected because a
+   * poller has nothing to say to a person, this throws: every caller is a
+   * button someone just pressed and is owed a reason.
+   */
+  async _ensureAuth() {
+    if (this.authenticated) return;
+    if (!this.refreshToken) {
+      const err = new Error('Spotify not connected');
+      err.status = 401;
+      throw err;
+    }
+    await this.refreshAccessToken();
+  }
+
   /** Start polling Spotify for playback changes. */
   startPolling(intervalMs = 2000) {
     this.stopPolling();
@@ -258,12 +472,14 @@ class SpotifyClient {
     this._currentTrackId = null;
     this._pendingStates.clear();
     this._rateLimitedUntil = 0;
+    this.grantedScopes.clear();
   }
 
   getStatus() {
     return {
       configured: this.configured,
       authenticated: this.authenticated,
+      canReadPlaylists: this.canReadPlaylists,
       currentTrackId: this._currentTrackId,
     };
   }
@@ -272,6 +488,12 @@ class SpotifyClient {
 
   _setTokens(data) {
     if (data.access_token) this.accessToken = data.access_token;
+    // Spotify echoes the granted scopes on both the code exchange and every
+    // refresh. A token minted before a scope was added never gains it, so this
+    // is how we know whether playlist reads will work before trying one.
+    if (typeof data.scope === 'string') {
+      this.grantedScopes = new Set(data.scope.split(/\s+/).filter(Boolean));
+    }
     if (data.refresh_token) this.refreshToken = data.refresh_token;
     if (data.expires_in) {
       this.expiresAt = Date.now() + data.expires_in * 1000 - 60000; // 1 min buffer
@@ -352,5 +574,12 @@ class SpotifyClient {
     return Math.min(seconds * 1000, MAX_RETRY_AFTER_MS);
   }
 }
+
+// Exposed as statics so the routes can validate a pasted reference before
+// spending a request on it, and the tests can exercise the parsing directly.
+SpotifyClient.parsePlaylistRef = parsePlaylistRef;
+SpotifyClient.playlistItemToTrack = playlistItemToTrack;
+SpotifyClient.MAX_PLAYLIST_TRACKS = MAX_PLAYLIST_TRACKS;
+SpotifyClient.SCOPES = SCOPES;
 
 module.exports = SpotifyClient;

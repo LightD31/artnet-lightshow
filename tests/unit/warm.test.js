@@ -3,7 +3,9 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { Warmer, parseSetList, buildJobs, toJob, MAX_TRACKS } = require('../../src/server/warm');
+const {
+  Warmer, parseSetList, buildJobs, toJob, fromSpotifyTracks, MAX_TRACKS,
+} = require('../../src/server/warm');
 
 // ── Set-list parsing ────────────────────────────────────────────────────────
 
@@ -42,6 +44,43 @@ test('an empty list parses to nothing rather than a blank entry', () => {
   assert.deepStrictEqual(parseSetList('\n\n  \n'), []);
   assert.deepStrictEqual(parseSetList(''), []);
   assert.deepStrictEqual(parseSetList(null), []);
+});
+
+// ── Spotify sources ─────────────────────────────────────────────────────────
+// The live queue and a playlist hand back the same track shape, and both want
+// the id and the ISRC carried through: the id so the warmed entry lands under
+// the key the live path looks up, the ISRC so the exact recording is fetched
+// rather than whatever a title search turns up.
+
+test('Spotify tracks keep the identity that makes warming them worth anything', () => {
+  const inputs = fromSpotifyTracks([{
+    trackId: 'abc123', name: 'Around the World', artist: 'Daft Punk',
+    isrc: 'GBDUW0000059', durationMs: 428000, album: 'Homework',
+  }]);
+
+  assert.deepStrictEqual(inputs, [{
+    title: 'Around the World', artist: 'Daft Punk', isrc: 'GBDUW0000059',
+    trackId: 'abc123', durationMs: 428000,
+  }]);
+
+  const [job] = buildJobs(inputs);
+  assert.strictEqual(job.cacheKey, 'spotify:abc123');
+  assert.strictEqual(job.query, 'Daft Punk - Around the World');
+  assert.strictEqual(job.isrc, 'GBDUW0000059');
+});
+
+// A playlist's local files have no Spotify id — they still warm, by name.
+test('a Spotify track without an id falls back to the query key', () => {
+  const [job] = buildJobs(fromSpotifyTracks([
+    { trackId: null, name: 'Untitled Edit', artist: 'Bootleg' },
+  ]));
+
+  assert.strictEqual(job.cacheKey, 'q:bootleg - untitled edit');
+});
+
+test('nameless entries never reach the warmer', () => {
+  assert.deepStrictEqual(fromSpotifyTracks([null, {}, { name: '' }, undefined]), []);
+  assert.deepStrictEqual(fromSpotifyTracks(null), []);
 });
 
 // ── Job building ────────────────────────────────────────────────────────────

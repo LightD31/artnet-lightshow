@@ -50,6 +50,12 @@ const warmRequestSchema = z.object({
   text: z.string().max(64 * 1024).optional(),
 }).strict();
 
+// A playlist to warm, as pasted: a share link, a Spotify URI or a bare id.
+// The id itself is parsed (and rejected) by the Spotify client.
+const warmPlaylistSchema = z.object({
+  playlist: z.string().min(1).max(512),
+}).strict();
+
 // "1. ", "01) ", "12 - " at the start of a pasted line.
 const LEADING_NUMBER_RE = /^\s*\d{1,3}\s*[.)\]-]\s+/;
 
@@ -61,6 +67,25 @@ function parseSetList(text) {
     .filter((line) => line && !line.startsWith('#'))
     .slice(0, MAX_TRACKS)
     .map((query) => ({ query }));
+}
+
+/**
+ * Map Spotify track summaries — from the live queue or from a playlist — onto
+ * warm inputs. Both sources hand back the same shape, and both want the same
+ * thing out of it: the Spotify id (so the warmed entry lands under the key the
+ * live path will look up) plus the ISRC, which finds the exact recording
+ * instead of whatever a title search turns up.
+ */
+function fromSpotifyTracks(tracks) {
+  return (tracks || [])
+    .filter((t) => t && t.name)
+    .map((t) => ({
+      title: t.name,
+      artist: t.artist,
+      isrc: t.isrc,
+      trackId: t.trackId,
+      durationMs: t.durationMs,
+    }));
 }
 
 /**
@@ -257,7 +282,9 @@ module.exports = {
   Warmer,
   MAX_TRACKS,
   warmRequestSchema,
+  warmPlaylistSchema,
   parseSetList,
+  fromSpotifyTracks,
   buildJobs,
   toJob,
   STATUSES: { PENDING, WARMING, READY, CACHED, ERROR, CANCELLED },
