@@ -8,6 +8,7 @@ const os = require('os');
 const deezer = require('./deezer');
 const AnalyzerWorker = require('./analyzer-worker');
 const pythonEnv = require('./python-env');
+const { paletteBankForSize } = require('./server/palettes');
 
 // A download that never finishes is indistinguishable from one that never
 // started: the track change waits on this promise, so an unresponsive network
@@ -18,90 +19,11 @@ function downloadTimeoutMs() {
   return settings.get('analysis.downloadTimeoutMs');
 }
 
-// ── Palette tetrads ─────────────────────────────────────────────────────────
-// Each song locks to a single 4-colour "look" from this bank for the whole
-// track. Hand-tuned for coherence — most follow the tetrad rule (two pairs of
-// analogous + complement) or split-complementary (one dominant + two accents).
-//
-// Colour preset indices (see server.js COLOR_PRESETS):
-//   0=Crimson 1=Flame 2=Amber 3=Sun 4=Lime 5=Aqua 6=Cobalt 7=Violet 8=Fuchsia
-//   9=Daylight White 10=UV 11=Actinic 12=Rose 13=Teal 14=Gold 15=Tungsten White
-//   16=Mint 17=Sky 18=Indigo 19=Coral 20=Lavender 21=Acid 22=Moonlight
-//
-// Ordering inside each tetrad matters: position 0 is the "anchor" that shows
-// up first, positions 1-3 fill out the coherent pairings.
-const TETRADS = {
-  synthwave:   [8, 6, 12, 11],  // Fuchsia / Cobalt / Rose / Actinic — high-energy club contrast
-  sunsetDrive: [1, 19, 8, 15],  // Flame / Coral / Fuchsia / Tungsten White — warm lead with glam accent
-  solarPunch:  [3, 2, 14, 6],   // Sun / Amber / Gold / Cobalt — warm dominant + cool counter
-  deepOcean:   [5, 13, 6, 17],  // Aqua / Teal / Cobalt / Sky — cool analogous depth
-  emeraldCity: [4, 16, 13, 14], // Lime / Mint / Teal / Gold — natural greens with premium warmth
-  arctic:      [17, 6, 9, 20],  // Sky / Cobalt / Daylight White / Lavender — icy cinematic look
-  violetDream: [7, 20, 8, 9],   // Violet / Lavender / Fuchsia / Daylight White — dreamy purple family
-  volcanic:    [0, 1, 14, 15],  // Crimson / Flame / Gold / Tungsten White — aggressive warm concert look
-  candyPop:    [12, 8, 3, 5],   // Rose / Fuchsia / Sun / Aqua — playful high-separation tetrad
-  halloween: [1, 7, 14, 10],  // Orange / Purple / Gold / UV — spooky
-  noirUv:      [10, 11, 18, 9], // UV / Actinic / Indigo / Daylight White — dark room + UV accent
-  desert:      [2, 14, 19, 15], // Amber / Gold / Coral / Tungsten White — earthy warm theatre wash
-  royal:       [7, 18, 14, 9],  // Violet / Indigo / Gold / Daylight White — regal stage contrast
-  tropical:    [16, 13, 3, 19], // Mint / Teal / Sun / Coral — festival warm/cool crossover
-  aurora:      [17, 16, 20, 11],// Sky / Mint / Lavender / Actinic — ethereal atmospheric blend
-  lunar:       [9, 15, 6, 18],  // Daylight White / Tungsten White / Cobalt / Indigo — monochrome+cold accents
-};
-
-// Triad banks (3-colour looks). Hand-picked — NOT slices of TETRADS — so the
-// 3-colour view stays visually coherent (triads favour three well-separated
-// hues instead of the tetrad's two analogous pairs). Keys match TETRADS so
-// the same genre/mood resolver can swap size without changing its logic.
-const TRIADS = {
-  synthwave:   [8, 6, 11],    // Fuchsia / Cobalt / Actinic
-  sunsetDrive: [1, 19, 15],   // Flame / Coral / Tungsten White
-  solarPunch:  [3, 14, 6],    // Sun / Gold / Cobalt
-  deepOcean:   [5, 13, 6],    // Aqua / Teal / Cobalt
-  emeraldCity: [4, 16, 14],   // Lime / Mint / Gold
-  arctic:      [17, 6, 9],    // Sky / Cobalt / Daylight White
-  violetDream: [7, 20, 9],    // Violet / Lavender / Daylight White
-  volcanic:    [0, 1, 15],    // Crimson / Flame / Tungsten White
-  candyPop:    [12, 3, 5],    // Rose / Sun / Aqua
-  halloween:   [1, 7, 10],    // Flame / Violet / UV
-  noirUv:      [10, 11, 18],  // UV / Actinic / Indigo
-  desert:      [2, 14, 19],   // Amber / Gold / Coral
-  royal:       [7, 14, 9],    // Violet / Gold / Daylight White
-  tropical:    [16, 13, 19],  // Mint / Teal / Coral
-  aurora:      [17, 16, 20],  // Sky / Mint / Lavender
-  lunar:       [9, 6, 18],    // Daylight White / Cobalt / Indigo
-};
-
-// Duo banks (2-colour looks). Complementary pairs that read cleanly on a
-// small rig — two hand-picked hues that contrast strongly instead of the
-// tetrad's analogous pair (which would look like a single colour from the
-// audience). Keys match TETRADS so the resolver works the same way.
-const DUOS = {
-  synthwave:   [8, 6],        // Fuchsia / Cobalt
-  sunsetDrive: [1, 17],       // Flame / Sky
-  solarPunch:  [3, 7],        // Sun / Violet
-  deepOcean:   [5, 13],       // Aqua / Teal
-  emeraldCity: [4, 14],       // Lime / Gold
-  arctic:      [17, 9],       // Sky / Daylight White
-  violetDream: [7, 9],        // Violet / Daylight White
-  volcanic:    [0, 15],       // Crimson / Tungsten White
-  candyPop:    [12, 5],       // Rose / Aqua
-  halloween:   [1, 10],       // Flame / UV
-  noirUv:      [10, 11],      // UV / Actinic
-  desert:      [2, 6],        // Amber / Cobalt
-  royal:       [7, 14],       // Violet / Gold
-  tropical:    [16, 19],      // Mint / Coral
-  aurora:      [16, 20],      // Mint / Lavender
-  lunar:       [9, 18],       // Daylight White / Indigo
-};
-
-// Look up the right bank for a given palette size. 4 is the default (the
-// hand-tuned tetrad set); 3 and 2 use dedicated banks above.
-function paletteBankForSize(size) {
-  if (size === 2) return DUOS;
-  if (size === 3) return TRIADS;
-  return TETRADS;
-}
+// ── Palette banks ───────────────────────────────────────────────────────────
+// Each song locks to a single "look" from these banks for the whole track.
+// They live in server/palettes.js because manual mode picks from the same list:
+// a look that reads well behind a generated show reads well behind a hand-driven
+// one, and keeping two copies meant the two modes would drift apart.
 
 // Each genre picks from a short preference list; which one it actually lands
 // on is keyed on the musical key so two EDM tracks in different keys get

@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const {
   patchSchema, profileSchema, overrideSchema, deezerStateSchema,
-  fixtureRestoreSchema, validate,
+  fixtureMessageSchema, fixtureRestoreSchema, showSchema, validate,
 } = require('../../src/server/validation');
 
 const ok = (schema, v) => { validate(schema, v, 't'); return true; };
@@ -105,4 +105,46 @@ test('a fixture restore is bounded like every other patch write', () => {
   rejects(fixtureRestoreSchema, { index: 0, fixture: { ...fixture, surprise: 1 } });
   rejects(fixtureRestoreSchema, { fixture });                    // index required
   rejects(fixtureRestoreSchema, { index: 0 });                   // fixture required
+});
+
+// A palette id reaches a bank lookup that returns undefined for anything it
+// does not know. Unlike a pattern id — which the engine can sensibly no-op on —
+// a palette that quietly does nothing reads as the colour buttons being broken,
+// so the schema names the looks it accepts.
+test('patch schema accepts known palettes and refuses the rest', () => {
+  assert.ok(ok(patchSchema, { palette: 'arctic' }));
+  assert.ok(ok(patchSchema, { palette: 'arctic', paletteSize: 2 }));
+  assert.ok(ok(patchSchema, { palette: null }));
+  rejects(patchSchema, { palette: 'not-a-look' });
+  rejects(patchSchema, { palette: 'arctic', paletteSize: 5 });
+  rejects(patchSchema, { palette: 'arctic', paletteSize: 0 });
+});
+
+test('the auto-show intensity is bounded to a percentage', () => {
+  assert.ok(ok(patchSchema, { autoIntensity: 0 }));
+  assert.ok(ok(patchSchema, { autoIntensity: 100 }));
+  rejects(patchSchema, { autoIntensity: -1 });
+  rejects(patchSchema, { autoIntensity: 101 });
+});
+
+// The trim rides the fixture message rather than the override, so it has to be
+// bounded there — and a show file has to be able to carry it home.
+test('fixture max brightness is bounded wherever it can be set', () => {
+  assert.ok(ok(fixtureMessageSchema, { id: 0, maxBrightness: 0 }));
+  assert.ok(ok(fixtureMessageSchema, { id: 0, maxBrightness: 255 }));
+  rejects(fixtureMessageSchema, { id: 0, maxBrightness: 256 });
+  rejects(fixtureMessageSchema, { id: 0, maxBrightness: -1 });
+
+  const fixture = { label: 'PAR', address: 1, profileId: 'p', maxBrightness: 128 };
+  assert.ok(ok(fixtureRestoreSchema, { index: 0, fixture }));
+  rejects(fixtureRestoreSchema, { index: 0, fixture: { ...fixture, maxBrightness: 300 } });
+
+  assert.ok(ok(showSchema, { fixtures: [{ address: 1, maxBrightness: 200 }] }));
+  rejects(showSchema, { fixtures: [{ address: 1, maxBrightness: 900 }] });
+});
+
+// A show saved before the trim existed has no maxBrightness at all, and must
+// load at full rather than at nothing.
+test('a show without a trim still validates', () => {
+  assert.ok(ok(showSchema, { fixtures: [{ label: 'PAR', address: 1, profileId: 'p' }] }));
 });

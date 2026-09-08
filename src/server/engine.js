@@ -1,6 +1,6 @@
 'use strict';
 
-const { state, getFixtureCount, universeOf, activeUniverses } = require('./state');
+const { state, getFixtureCount, universeOf, maxBrightnessOf, activeUniverses } = require('./state');
 const { COLOR_PRESETS, STROBE_FUNCTIONS } = require('./presets');
 const { getProfile, UV_BOOST } = require('./profiles');
 const { sendUniverse } = require('./output');
@@ -145,8 +145,22 @@ function renderDmx() {
 
       const ch = getProfile(fix).channelMap;
 
-      // Energy overrides bypass master dimmer — always full output
-      const ms = energy ? 1 : state.masterDimmer / 255;
+      // Two scalers sit above whatever is driving the fixture, and both apply
+      // to every source of light including an energy override. The grand master
+      // is the operator's one hand on the whole rig; the per-fixture trim is for
+      // the lamp hanging a metre from someone's face.
+      //
+      // Both multiply rather than clamp. A trim that clipped — min(level, trim)
+      // — would leave a fixture already below the line untouched and only bite
+      // at the top, so the bottom of the throw would go dead and two fixtures on
+      // different trims would converge as they dimmed. Multiplying keeps the
+      // whole range proportional: half the trim is half the output at every
+      // level.
+      //
+      // An energy override used to bypass the master and always output full,
+      // which meant the blinder came up at 100% no matter where the master sat —
+      // the one moment you most want the master to still mean something.
+      const ms = (state.masterDimmer / 255) * (maxBrightnessOf(fix) / 255);
       const ds = dim / 255;
       const ts = ms * ds;
 

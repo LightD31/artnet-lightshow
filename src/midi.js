@@ -210,7 +210,7 @@ class MidiController {
         if (binding.action === 'energyHold') this.apply({ energyOverride: null });
         return;
       }
-      this._dispatch(binding);
+      this._safely(binding, () => this._dispatch(binding));
     });
 
     // Explicit Note Off for controllers that send it separately
@@ -234,11 +234,30 @@ class MidiController {
       if (!binding) return;
       if (binding.type === 'relative') {
         const delta = relDelta(value) * (binding.scale || 1);
-        this._dispatchContinuous(binding, delta);
+        this._safely(binding, () => this._dispatchContinuous(binding, delta));
       } else {
-        this._dispatchAbsolute(binding, value);
+        this._safely(binding, () => this._dispatchAbsolute(binding, value));
       }
     });
+  }
+
+  /**
+   * Run a dispatch, surviving a binding the server refuses.
+   *
+   * The map's `value` is loose on purpose — it is a pattern id, a colour index,
+   * a cue id or a palette name depending on the action — so a hand-edited
+   * midi-map.json can hold one the server validates and rejects. applyPatch
+   * throws in that case, and this handler runs inside an easymidi event
+   * callback: unguarded, a single wrong entry in a config file takes the whole
+   * server down the first time that button is pressed, mid-show. A warning and
+   * a dead button is the right cost.
+   */
+  _safely(binding, run) {
+    try {
+      run();
+    } catch (err) {
+      console.warn(`[MIDI] ${binding.action} failed: ${err.message}`);
+    }
   }
 
   // ── Learn mode ───────────────────────────────────────────────────────────
@@ -357,6 +376,12 @@ class MidiController {
         // Wired up by server.js; a rig with no cue store just does nothing.
         if (this.recallCue && binding.value) this.recallCue(String(binding.value));
         break;
+      case 'setPalette':
+        // One press writes all four colour slots from a named look. The server
+        // rejects an id it does not know, which surfaces as a toast rather than
+        // a button that silently does nothing.
+        if (binding.value) this.apply({ palette: String(binding.value) });
+        break;
     }
     this.sendFeedback();
   }
@@ -382,6 +407,17 @@ class MidiController {
         });
         break;
       }
+      case 'adjustFixtureMax': {
+        const fix = s.fixtures[binding.fixture];
+        if (!fix) break;
+        const cur = Number.isInteger(fix.maxBrightness) ? fix.maxBrightness : 255;
+        this._emitFixMax(binding.fixture, clamp(cur + delta, 0, 255));
+        break;
+      }
+      case 'adjustAutoIntensity':
+        // 0-100, not 0-255: the auto show's slider is a percentage.
+        this.apply({ autoIntensity: clamp(Math.round((s.autoIntensity ?? 50) + delta), 0, 100) });
+        break;
     }
   }
 
@@ -408,14 +444,30 @@ class MidiController {
         });
         break;
       }
+      case 'setFixtureMax':
+        // Deliberately does NOT enable the override: scaling a fixture down is
+        // not the same as taking it out of the pattern engine.
+        if (s.fixtures[binding.fixture]) this._emitFixMax(binding.fixture, level);
+        break;
+      case 'setAutoIntensity':
+        this.apply({ autoIntensity: Math.round((raw / 127) * 100) });
+        break;
     }
   }
 
   // Override callback — set externally to wire into engine
   overrideFixture = null;
 
+  // Brightness-trim callback — likewise. Separate from overrideFixture because
+  // the trim is not part of the override.
+  setFixtureMax = null;
+
   _emitFixOverride(id, override) {
     if (this.overrideFixture) this.overrideFixture(id, override);
+  }
+
+  _emitFixMax(id, value) {
+    if (this.setFixtureMax) this.setFixtureMax(id, value);
   }
 
   // ── Feedback to the controller ───────────────────────────────────────────
@@ -446,6 +498,7 @@ class MidiController {
         case 'setColorC':        lit = binding.value === s.colorC; break;
         case 'setColorD':        lit = binding.value === s.colorD; break;
         case 'setBeatDivision':  lit = Number(binding.value) === s.beatDivision; break;
+        case 'setPalette':       lit = binding.value === s.palette; break;
         case 'toggleBlackout':   lit = !!s.masterBlackout; break;
         case 'togglePlay':       lit = !!s.running; break;
         case 'energyHold':       lit = !!s.energyOverride; break;
@@ -492,6 +545,15 @@ class MidiController {
         const dim = (fix.override && fix.override.enabled) ? fix.override.dim : 255;
         return to127(dim, 255);
       }
+      case 'setFixtureMax':
+      case 'adjustFixtureMax': {
+        const fix = s.fixtures[binding.fixture];
+        if (!fix) return null;
+        return to127(Number.isInteger(fix.maxBrightness) ? fix.maxBrightness : 255, 255);
+      }
+      case 'setAutoIntensity':
+      case 'adjustAutoIntensity':
+        return to127(s.autoIntensity ?? 50, 100);
       default:
         return null;
     }

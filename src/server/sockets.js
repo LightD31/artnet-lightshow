@@ -40,7 +40,7 @@ function attachSockets(io, { midi, integrations }) {
 
     socket.on('fixture', (payload) => {
       try {
-        const { id, address, universe, label, profileId } = validate(fixtureMessageSchema, payload, 'fixture-msg');
+        const { id, address, universe, label, profileId, maxBrightness } = validate(fixtureMessageSchema, payload, 'fixture-msg');
         if (id < 0 || id >= getFixtureCount()) return;
 
         const profiles = listProfiles();
@@ -78,6 +78,10 @@ function attachSockets(io, { midi, integrations }) {
         state.fixtures[id].universe = nextUniverse;
         state.fixtures[id].profileId = nextProfileId;
         if (label !== undefined) state.fixtures[id].label = label;
+        // A trim, not part of the patch: it needs none of the universe or
+        // address checks above, but it rides the same message so dragging the
+        // slider does not need a second channel.
+        if (maxBrightness !== undefined) state.fixtures[id].maxBrightness = maxBrightness;
         integrations.broadcast();
       } catch (err) {
         socket.emit('error-msg', { source: 'fixture', message: err.message });

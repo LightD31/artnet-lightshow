@@ -6,6 +6,7 @@ const {
   COLOR_PRESETS,
   AUTO_SOURCES,
 } = require('./presets');
+const { PALETTE_IDS } = require('./palettes');
 
 const u8 = z.number().int().min(0).max(255);
 const colorIdx = z.number().int().min(0).max(COLOR_PRESETS.length - 1);
@@ -48,6 +49,18 @@ const patchSchema = z.object({
   strobeSpeed: u8.optional(),
   strobeFunction: z.string().min(1).max(64).optional(),
   energyOverride: z.union([z.string().min(1).max(64), z.null()]).optional(),
+  // A named look from server/palettes.js. Writes all four colour slots at once;
+  // null just clears the label. Unknown ids are rejected rather than ignored —
+  // unlike a pattern id, a palette that silently does nothing looks like the
+  // colour buttons broke.
+  // The custom message because the default union error is a bare "Invalid
+  // input", which reaches the operator as a toast that says nothing.
+  palette: z.union([z.enum(PALETTE_IDS), z.null()], {
+    errorMap: () => ({ message: `is not a known palette (${PALETTE_IDS.join(', ')})` }),
+  }).optional(),
+  // Which bank the palette resolves against. Only meaningful alongside
+  // `palette`; a smaller palette wraps to fill all four slots.
+  paletteSize: z.union([z.literal(2), z.literal(3), z.literal(4)]).optional(),
   artnet: artnetSchema.optional(),
   prolinkEnabled: z.boolean().optional(),
   autoSource: z.enum(AUTO_SOURCES).optional(),
@@ -82,6 +95,9 @@ const fixtureMessageSchema = z.object({
   universe: dmxUniverse.optional(),
   label: z.string().max(64).optional(),
   profileId: z.string().min(1).max(128).optional(),
+  // The fixture's brightness trim: scales its output, whatever is driving it.
+  // Not part of the override — it applies to an energy override too.
+  maxBrightness: u8.optional(),
 }).strict();
 
 /**
@@ -97,6 +113,7 @@ const fixtureRestoreSchema = z.object({
     address: z.number().int().min(1).max(512),
     universe: dmxUniverse.optional(),
     profileId: z.string().min(1).max(128),
+    maxBrightness: u8.optional(),
     override: z.union([overrideSchema, z.null()]).optional(),
   }).strict(),
 }).strict();
@@ -149,6 +166,9 @@ const showSchema = z.object({
     // default universe, which is exactly where they used to live.
     universe: dmxUniverse.optional(),
     profileId: z.string().optional(),
+    // Absent in shows saved before the brightness trim existed: those load at
+    // 255 — no scaling — which is what they were rendering at.
+    maxBrightness: u8.optional(),
   })).optional(),
 }).passthrough();
 

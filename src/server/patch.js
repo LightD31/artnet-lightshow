@@ -4,6 +4,9 @@ const { state, getFixtureCount, setDefaultUniverse } = require('./state');
 const { restartBeatTimer } = require('./engine');
 const { patchSchema, overrideSchema, validate } = require('./validation');
 const { STROBE_FUNCTIONS, ENERGY_EFFECTS } = require('./presets');
+const { paletteSlots } = require('./palettes');
+
+const COLOR_SLOTS = ['colorA', 'colorB', 'colorC', 'colorD'];
 
 // Hooks the rest of the system can register to react to specific patch keys.
 // (Used for prolink enable/disable, autoShow palette/intensity, broadcasting.)
@@ -38,10 +41,38 @@ function applyPatch(rawData) {
     state._fadePhase = 0;
     state._hitPhase = 1;
   }
-  if (data.colorA !== undefined) state.colorA = data.colorA;
-  if (data.colorB !== undefined) state.colorB = data.colorB;
-  if (data.colorC !== undefined) state.colorC = data.colorC;
-  if (data.colorD !== undefined) state.colorD = data.colorD;
+  // A palette writes all four slots at once, before the individual ones, so a
+  // patch carrying both ("this look, but slot A in red") lands the way it reads.
+  //
+  // `paletteSize` on its own re-resolves the look already on stage at the new
+  // size — "same palette, two colours" — rather than doing nothing, which is
+  // what a size change with no palette named can only sensibly mean.
+  const wantsPalette = data.palette !== undefined
+    || (data.paletteSize !== undefined && state.palette);
+  let paletteApplied = false;
+
+  if (wantsPalette) {
+    const id = data.palette !== undefined ? data.palette : state.palette;
+    if (id === null) {
+      state.palette = null;
+    } else {
+      const slots = paletteSlots(id, data.paletteSize || 4);
+      if (slots) {
+        Object.assign(state, slots);
+        state.palette = id;
+        paletteApplied = true;
+      }
+    }
+  }
+
+  // Writing a slot by hand means the rig is no longer showing the named look,
+  // so the label goes. Writing the value it already had changes nothing and is
+  // left alone — re-clicking the swatch that is already lit is not an edit.
+  for (const slot of COLOR_SLOTS) {
+    if (data[slot] === undefined) continue;
+    if (!paletteApplied && data[slot] !== state[slot]) state.palette = null;
+    state[slot] = data[slot];
+  }
   if (data.masterDimmer !== undefined) state.masterDimmer = data.masterDimmer;
   if (data.masterBlackout !== undefined) state.masterBlackout = data.masterBlackout;
   if (data.strobeSpeed !== undefined) state.strobeSpeed = data.strobeSpeed;
@@ -77,7 +108,13 @@ function applyPatch(rawData) {
   }
 
   if (data.autoPaletteSize !== undefined) hooks.autoPaletteSize(data.autoPaletteSize);
-  if (data.autoIntensity !== undefined) hooks.autoIntensity(data.autoIntensity);
+  if (data.autoIntensity !== undefined) {
+    // Mirror it into state as well as handing it to the auto show: the MIDI
+    // surface reads state to light the encoder ring, and rounding here keeps
+    // the two copies telling the same story.
+    state.autoIntensity = Math.round(data.autoIntensity);
+    hooks.autoIntensity(state.autoIntensity);
+  }
   if (data.autoPrefetchDepth !== undefined) {
     state.autoPrefetchDepth = data.autoPrefetchDepth;
     hooks.autoPrefetchDepth(data.autoPrefetchDepth);
@@ -94,6 +131,23 @@ function applyOverride(id, rawOverride) {
     ? null
     : validate(overrideSchema, rawOverride, 'override');
   state.fixtures[id].override = override;
+  hooks.broadcast();
+}
+
+/**
+ * Set a fixture's brightness trim: a scale on everything it outputs.
+ *
+ * Separate from applyOverride on purpose: a trim is not a look. It survives the
+ * override being cleared, it is not captured in a cue, and it applies to
+ * whatever is driving the fixture — the pattern engine, an override, or an
+ * energy override. Trimming a fixture that is too close to the audience should
+ * not also mean taking it out of the show.
+ */
+function setFixtureMaxBrightness(id, value) {
+  if (id < 0 || id >= getFixtureCount()) return;
+  const raw = Number(value);
+  if (!Number.isFinite(raw)) return;
+  state.fixtures[id].maxBrightness = Math.max(0, Math.min(255, Math.round(raw)));
   hooks.broadcast();
 }
 
@@ -119,4 +173,11 @@ function processTap() {
   }, 3000);
 }
 
-module.exports = { applyPatch, applyOverride, processTap, setHooks, setPersist };
+module.exports = {
+  applyPatch,
+  applyOverride,
+  setFixtureMaxBrightness,
+  processTap,
+  setHooks,
+  setPersist,
+};

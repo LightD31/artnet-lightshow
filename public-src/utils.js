@@ -32,7 +32,9 @@ export function fixtureOutputColor(fix, state, dmxSnapshot) {
     if (fix.override.blackout) return '#000';
     const ov = fix.override;
     const dim = (ov.dim !== undefined ? ov.dim : 255) / 255;
-    const mDim = state.masterDimmer / 255;
+    // The same two scalers the engine applies: the grand master and the
+    // fixture's own trim.
+    const mDim = (state.masterDimmer / 255) * ((fix.maxBrightness ?? 255) / 255);
     return colorToCss({
       r:  Math.round(ov.r  * dim * mDim),
       g:  Math.round(ov.g  * dim * mDim),
