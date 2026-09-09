@@ -1,0 +1,345 @@
+{
+ "track": {
+  "name": "I'm Still Standing",
+  "artist": "Elton John",
+  "durationMs": 183440
+ },
+ "cachedAt": "2026-09-08T21:29:48.387Z",
+ "schemaVersion": "2.0",
+ "duration": 183.44,
+ "bpm": 88.8,
+ "meter": 4,
+ "tempoStability": 0.968,
+ "beatSource": "dp",
+ "downbeatConfidence": 0.049,
+ "key": "A#",
+ "scale": "minor",
+ "keyStrength": 0.488,
+ "mood": {
+  "valence": 0.526,
+  "arousal": 0.588,
+  "danceability": 0.847,
+  "kickiness": 0.289,
+  "tension": 0.27
+ },
+ "genre": {
+  "label": "rock",
+  "confidence": 0.81,
+  "labelConf": 0.81,
+  "style": "rock",
+  "subScores": {
+   "edm": 0.011,
+   "dubstep": 0,
+   "trance": 0,
+   "disco": 0.009,
+   "hiphop": 0.001,
+   "rock": 0.81,
+   "metal": 0.082,
+   "pop": 0.051,
+   "funk": 0.06,
+   "reggae": 0.089,
+   "country": 0.025,
+   "latin": 0.001,
+   "jazz": 0.044,
+   "classical": 0.005,
+   "folk": 0.011,
+   "ambient": 0.005
+  },
+  "topTags": [
+   {
+    "label": "music",
+    "p": 0.865
+   },
+   {
+    "label": "psychedelic rock",
+    "p": 0.316
+   },
+   {
+    "label": "rock and roll",
+    "p": 0.205
+   },
+   {
+    "label": "singing",
+    "p": 0.18
+   },
+   {
+    "label": "rock music",
+    "p": 0.143
+   },
+   {
+    "label": "roll",
+    "p": 0.106
+   }
+  ]
+ },
+ "segments": [
+  {
+   "start": 0,
+   "end": 41.97,
+   "label": "F",
+   "role": "intro",
+   "energy": 0.478,
+   "brightness": 0.397,
+   "bass": 0.406,
+   "rhythmic": 0.621,
+   "vocal": 0.241,
+   "level": "low",
+   "confidence": 0.4
+  },
+  {
+   "start": 41.97,
+   "end": 55.531,
+   "label": "D",
+   "role": "verse",
+   "energy": 0.594,
+   "brightness": 0.444,
+   "bass": 0.417,
+   "rhythmic": 0.561,
+   "vocal": 0.434,
+   "level": "high",
+   "confidence": 0.512
+  },
+  {
+   "start": 55.531,
+   "end": 71.129,
+   "label": "C",
+   "role": "drop",
+   "energy": 0.546,
+   "brightness": 0.49,
+   "bass": 0.389,
+   "rhythmic": 0.605,
+   "vocal": 0.257,
+   "level": "low",
+   "confidence": 0.574
+  },
+  {
+   "start": 71.129,
+   "end": 102.208,
+   "label": "F",
+   "role": "chorus",
+   "energy": 0.563,
+   "brightness": 0.438,
+   "bass": 0.416,
+   "rhythmic": 0.707,
+   "vocal": 0.337,
+   "level": "mid",
+   "confidence": 1
+  },
+  {
+   "start": 102.208,
+   "end": 117.046,
+   "label": "C",
+   "role": "verse",
+   "energy": 0.55,
+   "brightness": 0.493,
+   "bass": 0.398,
+   "rhythmic": 0.599,
+   "vocal": 0.279,
+   "level": "mid",
+   "confidence": 0.597
+  },
+  {
+   "start": 117.046,
+   "end": 135.268,
+   "label": "A",
+   "role": "bridge",
+   "energy": 0.657,
+   "brightness": 0.563,
+   "bass": 0.447,
+   "rhythmic": 0.629,
+   "vocal": 0.44,
+   "level": "high",
+   "confidence": 0.879
+  },
+  {
+   "start": 135.268,
+   "end": 148.793,
+   "label": "B",
+   "role": "bridge",
+   "energy": 0.602,
+   "brightness": 0.432,
+   "bass": 0.401,
+   "rhythmic": 0.609,
+   "vocal": 0.398,
+   "level": "high",
+   "confidence": 0.602
+  },
+  {
+   "start": 148.793,
+   "end": 182.834,
+   "label": "C",
+   "role": "outro",
+   "energy": 0.37,
+   "brightness": 0.528,
+   "bass": 0.288,
+   "rhythmic": 0.49,
+   "vocal": 0.145,
+   "level": "low",
+   "confidence": 0.549
+  }
+ ],
+ "drops": [
+  {
+   "t": 11.43,
+   "confidence": 0.679,
+   "rise": 0.251,
+   "breakdownScore": 0.435,
+   "sustainScore": 1,
+   "snapTo": "downbeat",
+   "kind": "hype"
+  },
+  {
+   "t": 65.736,
+   "confidence": 0.68,
+   "rise": 0.426,
+   "breakdownScore": 0.388,
+   "sustainScore": 0.668,
+   "snapTo": "downbeat",
+   "kind": "hype"
+  },
+  {
+   "t": 162.934,
+   "confidence": 0.699,
+   "rise": 0.416,
+   "breakdownScore": 0.353,
+   "sustainScore": 0.808,
+   "snapTo": "downbeat",
+   "kind": "hype"
+  }
+ ],
+ "buildups": [
+  {
+   "start": 9.752,
+   "end": 11.43,
+   "intensity": 0.785,
+   "subdivision": 1
+  },
+  {
+   "start": 64.041,
+   "end": 65.736,
+   "intensity": 1,
+   "subdivision": 1
+  },
+  {
+   "start": 161.193,
+   "end": 162.934,
+   "intensity": 0.873,
+   "subdivision": 1
+  }
+ ],
+ "downbeats": [
+  0.668,
+  3.204,
+  6.031,
+  8.713,
+  11.43,
+  14.158,
+  16.875,
+  19.557,
+  22.367,
+  25.06,
+  27.765,
+  30.482,
+  33.158,
+  35.84,
+  38.592,
+  41.273,
+  44.025,
+  46.765,
+  49.447,
+  52.175,
+  54.846,
+  57.545,
+  60.296,
+  62.967,
+  65.736,
+  68.389,
+  71.129,
+  73.857,
+  76.591,
+  79.238,
+  81.961,
+  84.666,
+  87.353,
+  90.064,
+  92.77,
+  95.451,
+  98.203,
+  100.897,
+  103.567,
+  106.237,
+  108.983,
+  111.653,
+  114.341,
+  117.046,
+  119.763,
+  122.514,
+  125.179,
+  127.878,
+  130.543,
+  133.224,
+  135.964,
+  138.658,
+  141.357,
+  144.086,
+  146.762,
+  149.449,
+  152.172,
+  154.831,
+  157.489,
+  160.189,
+  162.934,
+  165.57,
+  168.263,
+  170.916,
+  173.662,
+  176.315,
+  178.979,
+  181.58
+ ],
+ "beatStrengthStats": {
+  "count": 271,
+  "evenMean": 0.9246,
+  "oddMean": 0.9577
+ },
+ "instruments": {
+  "kick": 0.2848,
+  "bassline": 0.3757,
+  "snare": 0.4003,
+  "hats": 0.5147,
+  "vocal": 0.3639,
+  "synth": 0.2585
+ },
+ "bandImportance": {
+  "sub": 0.5342,
+  "bass": 0.5826,
+  "lowmid": 0.6756,
+  "mid": 0.6002,
+  "presence": 0.6382,
+  "high": 0.7201,
+  "air": 0.5977
+ },
+ "loudness": {
+  "integratedLufs": -10.93,
+  "range": 4.11,
+  "truePeakDb": -7.42,
+  "appliedGainDb": -7.07,
+  "noiseFloorDb": -31.48,
+  "snrDb": 40.43,
+  "denoised": false
+ },
+ "eventCounts": {
+  "SECTION": 8,
+  "TRANSITION": 8,
+  "BEAT": 271,
+  "SILENCE": 2,
+  "BAR": 68,
+  "BASS_HIT": 355,
+  "ENERGY_SPIKE": 2,
+  "BUILDUP": 3,
+  "DROP": 3,
+  "VOCAL_SECTION": 2,
+  "BREAK": 2,
+  "MELODY_CHANGE": 1
+ }
+}

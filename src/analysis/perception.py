@@ -61,9 +61,26 @@ SUBGENRES = {
     'classical': ['classical music', 'opera', 'choir', 'orchestra'],
     'folk':      ['folk music', 'acoustic guitar', 'traditional music',
                   'middle eastern music'],
-    'ambient':   ['ambient music', 'new-age music', 'gospel music',
-                  'christian music', 'piano'],
+    # `piano`, `gospel music` and `christian music` used to sit here. They are
+    # not genres in any sense the rig cares about — a piano appears in ballads,
+    # jazz and hip hop alike, and AudioSet fires `christian music` on close
+    # vocal harmony. Together they were enough to carry a Backstreet Boys track
+    # to `ambient`, and from there to the `calm` tier, which turns the whole
+    # show off. A label that does not predict how to light a track does not
+    # belong in a bucket that does.
+    'ambient':   ['ambient music', 'new-age music'],
 }
+
+# How sure the tagger has to be before its answer is allowed to set the show's
+# style, and by how much it has to beat the runner-up.
+#
+# The old floor of 0.08 with no margin let a four-way statistical tie decide:
+# on one track `ambient` won at 0.108 over `funk` at 0.105 — a three-percent
+# margin — and that coin toss put the track in the `calm` tier for its whole
+# duration. Below these thresholds the answer is noise and the signal-derived
+# style is the more honest one.
+GENRE_MIN_SCORE = 0.15
+GENRE_MIN_MARGIN = 1.5
 
 # Show style per subgenre. This is the contract with the show engine:
 #   dance     strobes, chases, hard cuts, fast beat divisions
@@ -252,19 +269,52 @@ def classify_genre(tags, mood, rhythm):
     for name, labels in SUBGENRES.items():
         scores[name] = float(sum(tags.get(label, 0.0) for label in labels))
 
-    label, confidence = max(scores.items(), key=lambda kv: kv[1])
-    if confidence < 0.08:
-        fallback = _style_from_signal(mood, rhythm)
-        fallback['subgenre_scores'] = scores
-        fallback['top_tags'] = _top_tags(tags)
-        return fallback
+    result = decide_genre(scores, mood, rhythm)
+    result['subgenre_scores'] = scores
+    result['top_tags'] = _top_tags(tags)
+    return result
+
+
+def decide_genre(scores, mood, rhythm):
+    """
+    Turn subgenre scores into a label and a show style.
+
+    Split out from the tagging so the decision can be tested against the scores
+    real tracks actually produced, without a 310 MB model in the loop.
+
+    Two guards, both there because of the same asymmetry: of the four styles,
+    `calm` is the only one that turns the show *off* — no strobes, no drops, no
+    accents — so a wrong `calm` costs the whole track, while a wrong `dance`
+    merely over-lights it. The thresholds and the veto below are not symmetric
+    for that reason.
+    """
+    if not scores:
+        return _style_from_signal(mood, rhythm)
+
+    ranked = sorted(scores.items(), key=lambda kv: -kv[1])
+    label, confidence = ranked[0]
+    runner_up = ranked[1][1] if len(ranked) > 1 else 0.0
+
+    confident = (confidence >= GENRE_MIN_SCORE
+                 and confidence >= runner_up * GENRE_MIN_MARGIN)
+    if not confident:
+        return _style_from_signal(mood, rhythm)
+
+    style = GENRE_STYLE.get(label, 'moderate')
+
+    # The veto. Even a confident tag does not get to call a track calm when the
+    # signal is plainly saying otherwise: a loud, danceable track lit as a
+    # ballad is the most visible failure the show engine has, and arousal and
+    # danceability are measured rather than inferred.
+    if style == 'calm' and mood['arousal'] >= 0.70 and mood['danceability'] >= 0.60:
+        style = _style_from_signal(mood, rhythm)['style']
 
     return {
         'genre': label,
         'genre_confidence': dsp.clamp01(confidence),
-        'style': GENRE_STYLE.get(label, 'moderate'),
-        'subgenre_scores': scores,
-        'top_tags': _top_tags(tags),
+        'style': style,
+        'subgenre_scores': {},
+        'top_tags': [],
     }
 
 

@@ -410,11 +410,9 @@ def assign_roles(sections: List[Section], duration, drops=(), config=None):
         }
         chorus_label = max(by_label, key=by_label.get)
 
-    drop_times = [d['t'] if isinstance(d, dict) else float(d) for d in (drops or [])]
-
     for i, section in enumerate(sections):
         role = 'verse'
-        in_drop = any(section.start - 0.5 <= t < section.end for t in drop_times)
+        in_drop = _starts_on_a_drop(section, drops, median_energy)
         first_third = section.start < duration / 3.0
         last_third = section.end > duration * 2.0 / 3.0
 
@@ -433,22 +431,74 @@ def assign_roles(sections: List[Section], duration, drops=(), config=None):
             role = 'bridge'
         section.role = role
 
-    # Reconcile by label, but never overwrite the structural roles: intro,
-    # outro and drop are defined by position and by the drop detector, and a
-    # majority vote from elsewhere in the track has nothing to say about them.
-    structural = {'intro', 'outro', 'drop'}
+    # Reconcile by label. Only intro and outro are exempt: those are defined by
+    # *position*, and the first section of a track is an intro however much it
+    # resembles the chorus. Everything else — `drop` included — has to agree
+    # across a cluster, because the show engine biases a section's energy tier
+    # by its role, and two appearances of one cluster that disagree get
+    # different beat divisions for identical music. That is precisely the
+    # "repeats look like repeats" property the clustering exists to provide.
+    positional = {'intro', 'outro'}
     by_label = {}
     for s in sections:
-        if s.role in structural:
+        if s.role in positional:
             continue
-        by_label.setdefault(s.label, []).append(s.role)
-    for label, roles in by_label.items():
-        winner = max(set(roles), key=roles.count)
-        for s in sections:
-            if s.label == label and s.role not in structural:
-                s.role = winner
+        by_label.setdefault(s.label, []).append(s)
+    for label, group in by_label.items():
+        roles = [s.role for s in group]
+        # Ties go to the role of the loudest section in the cluster, so the
+        # outcome does not depend on set iteration order.
+        best = max(group, key=lambda s: s.energy).role
+        winner = max(sorted(set(roles)), key=lambda r: (roles.count(r), r == best))
+        for s in group:
+            s.role = winner
 
     return sections
+
+
+def _starts_on_a_drop(section, drops, median_energy):
+    """
+    Is this section a *drop section*, as opposed to a section that happens to
+    contain a drop?
+
+    The distinction matters because it was being lost. "Contains a drop
+    anywhere" labelled five of the nine sections of a piano ballad `drop`, and
+    four of seven on a rap track, simply because the detector emits a few drops
+    on every track and most sections are long enough to contain one.
+
+    Three conditions, all of them saying the same thing from different angles —
+    that the drop is what the section *is*, not something that happens during
+    it:
+
+      it is a `proper` drop     a breakdown followed by a sustained slam. A
+                                `hype` moment is an accent inside a section.
+      it lands in the first
+      quarter of the section    a drop starts a section. One in the middle means
+                                the segmentation and the detector disagree, and
+                                neither reading is worth acting on.
+      the section is one of
+      the louder ones           at or above the track's median. A drop into a
+                                quiet passage is a transition, not a drop
+                                section.
+
+    Note this only changes the section's *label*, and through it the energy tier
+    the show engine gives it. The DROP event still fires at the same instant and
+    still gets the full drop gesture — the two were conflated, and they are not
+    the same thing.
+    """
+    if not drops or section.duration <= 0:
+        return False
+    if section.energy < median_energy:
+        return False
+    window = section.start + max(2.0, section.duration * 0.25)
+    for drop in drops:
+        t = drop['t'] if isinstance(drop, dict) else float(drop)
+        kind = drop.get('kind') if isinstance(drop, dict) else None
+        if kind is not None and kind != 'proper':
+            continue
+        if section.start - 0.5 <= t < window:
+            return True
+    return False
 
 
 # ── Fallback ────────────────────────────────────────────────────────────────
