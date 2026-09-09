@@ -74,12 +74,6 @@ class RhythmConfig:
     #: ambiguity (Klapuri's prior; 120 BPM is where listeners perceive tactus).
     tempo_prior_bpm: float = 120.0
     tempo_prior_std: float = 1.0
-    #: Beat tracker tightness. Higher tracks the prior harder and drifts less;
-    #: lower follows genuine rubato. 100 is librosa's default.
-    beat_tightness: float = 100.0
-    #: Below this tempo stability the track is treated as genuinely drifting
-    #: and the predominant-local-pulse tracker takes over from the DP one.
-    plp_stability_threshold: float = 0.60
     #: Window over which local tempo is measured, seconds.
     tempo_window_sec: float = 8.0
     #: Onset picking: a peak must exceed the local median by this much of the
@@ -201,6 +195,12 @@ class AnalysisConfig:
     realtime: RealtimeConfig = field(default_factory=RealtimeConfig)
     #: Run the optional PANNs genre/instrument tagger when it is installed.
     enable_tagger: bool = True
+    #: Separate the track into stems before measuring the instrument roles.
+    #: On by default: it is what makes those roles measurements rather than
+    #: guesses. Turning it off is a speed escape hatch — for a test that only
+    #: cares about rhythm, or a machine too slow to keep up at load-in — and
+    #: costs the nuance the stems provide, not the show.
+    separate_sources: bool = True
     #: Fan stages out across threads. Off makes profiling and debugging sane.
     parallel: bool = True
 

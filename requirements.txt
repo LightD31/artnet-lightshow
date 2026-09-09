@@ -3,14 +3,15 @@
 #
 #     pip install -r requirements.txt
 #
-# Then fetch the genre-classifier model once (~310 MB):
-#
-#     python scripts/setup-panns.py
-#     python scripts/setup-panns.py --check     # verify without downloading
-#
 # ffmpeg must also be on PATH — src/deezer.js shells out to it to convert
 # downloaded audio to WAV. It is not installable from pip; use your package
 # manager (apt install ffmpeg / brew install ffmpeg / winget install ffmpeg).
+#
+# Model weights download on first use (~80 MB for beat tracking, ~320 MB for
+# separation) into the torch hub cache. Warm them before a show rather than at
+# load-in on venue wifi:
+#
+#     python -c "from analysis import models; models.warm_up()"
 
 # ── Core analysis ───────────────────────────────────────────────────────────
 librosa>=0.10
@@ -22,16 +23,37 @@ soundfile>=0.12
 # Used to pin BLAS thread counts around the parallel analysis stages.
 threadpoolctl>=3.1
 
-# ── Genre classification (PANNs) ────────────────────────────────────────────
-# Without these the analyser still runs, but src/analysis/tagger.py catches
-# the ImportError and skips silently — palettes and patterns then fall back to
-# the mood/circumplex path and shows are quietly worse with no error shown.
+# ── Models ──────────────────────────────────────────────────────────────────
+# torch is required, not optional. The beat grid, the metre and the instrument
+# roles all come from models now, and there is no signal-processing fallback
+# for the beat grid: the fallback was the part that reported a 99 BPM pop song
+# at 198, and shipping a worse answer under the same field name is worse than
+# refusing to answer.
 #
-# torch is deliberately not pinned to an exact version: the right wheel depends
-# on platform and CUDA. If pip picks a build you don't want, install torch
-# yourself first (see https://pytorch.org/get-started/locally/) and then run
-# this file.
+# Not pinned to an exact version: the right wheel depends on platform and CUDA.
+# If pip picks a build you don't want — a CUDA build on a laptop, or a CPU
+# build on a machine with a GPU — install torch yourself first from
+# https://pytorch.org/get-started/locally/ and then run this file. The pipeline
+# uses CUDA when it is there and threads when it is not; set
+# ARTNET_ANALYSIS_DEVICE=cpu to force threads on a machine whose GPU is busy
+# driving a visualiser.
 torch>=2.0
+
+# Beat and downbeat tracking: Beat This! (Foscarin et al., ISMIR 2024).
+# Installed without madmom, so no Cython toolchain and no numpy pin.
+beat_this>=1.1
+
+# Source separation: Demucs v4. Instrument roles are read off its stems, which
+# is how "is there a singer" stopped being a guess about mid-band energy.
+demucs>=4.0
+
+# ── Genre and mood tagging (PANNs) ──────────────────────────────────────────
+# The one model that stays optional: it contributes a second opinion to genre
+# and to the instrument-role priors, and every consumer already treats a
+# missing answer as "unknown". Fetch the weights once (~310 MB) with:
+#
+#     python scripts/setup-panns.py
+#     python scripts/setup-panns.py --check     # verify without downloading
 panns_inference>=0.1.1
 
 # ── Audio download fallback ─────────────────────────────────────────────────

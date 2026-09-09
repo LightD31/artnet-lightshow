@@ -36,7 +36,8 @@ import numpy as np
 from . import (bands as bands_stage, dsp, dynamics as dynamics_stage,
                events as events_stage, features as features_stage,
                perception as perception_stage, preprocess as preprocess_stage,
-               rhythm as rhythm_stage, structure as structure_stage, tagger)
+               rhythm as rhythm_stage, stems as stems_stage,
+               structure as structure_stage, tagger)
 from .config import AnalysisConfig, DEFAULT
 from .version import SCHEMA_VERSION
 
@@ -60,13 +61,26 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
 
     try:
         audio = preprocess_stage.prepare(path, config.preprocess, target_duration_sec)
+
+        # Separation is the most expensive stage and needs nothing but the
+        # waveform, so it starts here and is collected as late as possible. On
+        # a GPU it genuinely overlaps the feature extraction below; on a CPU it
+        # queues behind it, which is no worse than running it in sequence.
+        stem_pool, stem_future = None, None
+        if config.separate_sources:
+            stem_pool = ThreadPoolExecutor(max_workers=1)
+            stem_future = stem_pool.submit(_safe_separate, audio)
+
         frames = features_stage.extract(audio, config.preprocess)
 
         rhythm = rhythm_stage.analyse(audio, frames, config.rhythm)
         band_map = bands_stage.analyse(frames, rhythm.beats)
 
         tags = _collect(tag_future)
-        roles = bands_stage.infer_roles(frames, band_map, tags)
+        stems = _collect(stem_future)
+        if stem_pool is not None:
+            stem_pool.shutdown(wait=False)
+        roles = bands_stage.infer_roles(frames, band_map, stems, tags)
 
         dynamics = dynamics_stage.analyse(frames, band_map, rhythm, config.dynamics)
 
@@ -93,7 +107,7 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
 
         document = json_safe(build_document(
             audio, frames, rhythm, band_map, roles, sections, dynamics,
-            perception, stream))
+            perception, stream, stems))
         document['meta']['elapsedSec'] = round(time.time() - started, 2)
         _log(f'{os.path.basename(path)}: {audio.duration:.1f}s analysed in '
              f'{document["meta"]["elapsedSec"]}s '
@@ -103,6 +117,14 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
     finally:
         if tag_pool is not None:
             tag_pool.shutdown(wait=False)
+
+
+def _safe_separate(audio):
+    try:
+        return stems_stage.separate(audio.mono, audio.sample_rate)
+    except Exception as exc:
+        _log(f'separation failed ({exc}); instrument roles fall back to bands')
+        return None
 
 
 def _safe_tag(path):
@@ -153,7 +175,7 @@ def json_safe(value):
 # ── Document assembly ───────────────────────────────────────────────────────
 
 def build_document(audio, frames, rhythm, band_map, roles, sections, dynamics,
-                   perception, stream):
+                   perception, stream, stems=None):
     """
     Assemble the analysis document.
 
@@ -233,6 +255,9 @@ def build_document(audio, frames, rhythm, band_map, roles, sections, dynamics,
         },
         'bands': band_curves,
         'instruments': roles.to_dict(times=times, duration=duration, curve_step=0.5),
+        # What the track is made of, as shares of total energy. Measured from
+        # the separated sources rather than inferred from the spectrum.
+        'sources': (stems.energies() if stems is not None else None),
         'structure': {
             'sections': [s.to_dict() for s in sections],
             'roles': sorted({s.role for s in sections}),
@@ -255,6 +280,8 @@ def build_document(audio, frames, rhythm, band_map, roles, sections, dynamics,
             'frames': frames.n_frames,
             'trimOffset': round(audio.trim_offset, 3),
             'taggerUsed': bool(perception.tags),
+            'beatSource': rhythm.source,
+            'separated': stems is not None,
         },
     }
     return document

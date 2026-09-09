@@ -242,11 +242,13 @@ class StreamingAnalyzer:
         """
         Re-estimate tempo from the rolling onset history.
 
-        Deliberately the *same* estimator the offline pipeline uses, run over a
-        ten-second window instead of a whole track. Two implementations of
-        "what tempo is this" would drift apart the moment either was tuned, and
-        the live show would then disagree with the cached analysis of the same
-        record.
+        The offline pipeline puts a beat-tracking transformer over the whole
+        file. Live there is no whole file and no room for its latency, so this
+        is the signal chain: autocorrelation over the last ten seconds of onset
+        history, weighted by the tempo prior. It has to get the pulse right
+        within a window the track is not changing much over, which is a far
+        easier problem than deciding a record's tempo from scratch — and the
+        octave folding below covers the one failure it still makes.
         """
         if len(self._onset_history) < 48:
             return

@@ -61,14 +61,24 @@ class AudioTestCase(unittest.TestCase):
 _ANALYSIS_CACHE = {}
 
 
-def analyse_track(track, name, target_duration=None):
-    key = (name, target_duration)
+def analyse_track(track, name, target_duration=None, separate=False):
+    """
+    Analyse a synthetic track, memoised across the suite.
+
+    Source separation is off unless a test asks for it. Demucs runs at roughly
+    0.6x realtime on CPU and nothing here except `Separation` is testing what it
+    produces — paying two minutes of it per suite run to reach the section
+    labeller is how a test suite stops being run.
+    """
+    key = (name, target_duration, separate)
     if key in _ANALYSIS_CACHE:
         return _ANALYSIS_CACHE[key]
     from analysis import pipeline
+    from analysis.config import AnalysisConfig
     directory = tempfile.mkdtemp()
     path = track.write(os.path.join(directory, f'{name}.wav'))
-    document = pipeline.analyze(path, target_duration_sec=target_duration)
+    document = pipeline.analyze(path, target_duration_sec=target_duration,
+                                config=AnalysisConfig(separate_sources=separate))
     _ANALYSIS_CACHE[key] = document
     return document
 

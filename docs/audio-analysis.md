@@ -169,73 +169,99 @@ described instead by:
   away from level because every mastered track has bass energy and ranking by it
   would put the bass band first on literally every song.
 
-**Instrument roles** — kick, bassline, snare, hats, vocal, synth — come from
-combining the harmonic/percussive split with band ranges, plus a movement
-weighting for vocals (a held pad must not read as a singer) and a chroma-change
-weighting for synths. AudioSet tags, when available, adjust the *scores* but
-never the curves: a missing or wrong tag costs the show nuance, not timing.
+**Instrument roles** — kick, bassline, snare, hats, vocal, synth — are read off
+**separated sources**. Demucs v4 splits the mix into drums, bass, vocals and
+everything else; the kick is then whatever is low and percussive *in the drums
+stem*, and the singer is whatever is in the vocals stem. The question stops
+being a judgement call: a track with no voice on it has an empty vocals stem.
+
+That replaces a set of rules that existed only to paper over the ambiguity of
+looking at the mix as a whole. A sustained synth bass read as a kick, because
+both are low and both move. A bright pad read as a voice, because both sit in
+the mids and both hold. The rules were tuned against those cases and lost
+somewhere else each time.
+
+A role's **score** is the 90th percentile of its curve, scaled by the square
+root of its stem's share of the mix. The percentile rather than the mean,
+because anything percussive is silent for most of every beat: a kick on every
+beat has a mean near 0.16, and scoring by the mean says a track built on that
+kick barely has one. The question the show cares about is whether it hits hard
+when it hits.
+
+Separation costs roughly 0.6× realtime on CPU and a few seconds on a GPU. Set
+`AnalysisConfig(separate_sources=False)` to skip it; roles then fall back to the
+band heuristics, which is a documented speed/quality knob rather than a failure
+path. AudioSet tags, when available, adjust the *scores* but never the curves: a
+missing or wrong tag costs the show nuance, not timing.
 
 ## Stage 4 — rhythm (`rhythm.py`)
 
 ```
-onset envelope → tempo → beat grid → metre → downbeats
+audio → beat model → beat grid → bar grid → tempo
 ```
 
-**Tempo.** Autocorrelation of the onset envelope, weighted by a log-normal prior
-centred on 120 BPM (perceived tempo clusters there on a log scale), reinforced
-by each candidate's own harmonics, then — and this is the part that matters —
-the top ten candidates are **re-ranked by pulse-train fit**.
+**Beats and downbeats come from a model.** [Beat This!][beatthis] (Foscarin et
+al., ISMIR 2024) is a transformer that predicts beat and downbeat activations
+directly from the spectrogram. It runs without the DBN post-processor, so madmom
+is not a dependency: no Cython, no C compiler, no package pinned to a numpy from
+2018 — which matters when the person installing this is a VJ on a Windows laptop
+rather than a researcher.
 
-Autocorrelation asks "does the signal look like itself a beat later", which a
-hi-hat pattern answers yes to at every subdivision. A pulse train asks a better
-question: *if I put a light on every one of these instants, how much of the
-music do I hit, and how much of what I hit is loud?* Two terms, multiplied:
+[beatthis]: https://github.com/CPJKU/beat_this
 
-* **precision** — mean envelope at the pulses over the overall mean. High when
-  the pulses land on transients, but half tempo scores just as well since it
-  lands on every other kick.
-* **recall** — the share of the envelope's energy near a pulse. This is what
-  half tempo cannot fake: it misses half the beats.
+This replaced a signal chain — autocorrelation, log-normal tempo prior, harmonic
+reinforcement, pulse-train re-ranking, dynamic-programming tracking, low-band
+subdivision check — that was carefully built and still reported a 99 BPM pop
+song at 198. Every part of it reasons about **periodicity**, and periodicity
+genuinely does not distinguish a song counted at 99 from the same song counted
+at 198. Both are correct descriptions of the signal. Only one is how the song is
+counted, and knowing which requires having heard music. The chain is gone rather
+than kept as a fallback: shipping a worse answer under the same field name is
+worse than refusing to answer, so a missing model raises `ModelUnavailable` and
+names the install command.
 
-Scored over short windows and averaged rather than over the whole track, because
-a candidate lag is only accurate to a fraction of a frame and over three minutes
-that error accumulates into hundreds of milliseconds of walk-off — which would
-score the *correct* tempo worse than a wrong one that happens to be closer to a
-whole number of frames.
+Two things are done to the model's raw output:
 
-A final check catches the remaining failure: if every other pulse is markedly
-weaker than the one before it — measured on a **low-band** onset envelope, where
-a hi-hat does not appear — the grid is counting the subdivision rather than the
-beat, and the tempo is halved. Guarded by the prior as well, so it can only pull
-a fast reading back towards tapping speed, never turn 128 BPM into 64.
+* **Doubled beats are thinned.** The model peak-picks on a 50 Hz grid, and on a
+  strong onset the peak occasionally straddles two frames and comes back as two
+  beats an eighth of a beat apart. One such pair in a four-minute track moves
+  the reported tempo: the period fit counts beats, so a single extra one
+  shortens the fitted period by 1/n and a 140 BPM track is reported at 142. Of a
+  too-close pair, the one nearer to where the running period says the beat
+  belongs is kept — keeping the earlier one is a coin flip, and on the case that
+  exposed this it was the wrong side of the coin.
+* **The bar grid is fitted, not read.** The model marks downbeats frame by frame
+  with no constraint that bars come out the same length, and on anything it
+  finds ambiguous they do not. `decode_downbeats` scores every (metre, phase)
+  pair by **precision × recall** against the activations and takes the best, so
+  bars are regular by construction. Recall alone would always pick the shortest
+  metre, since bar lines every two beats contain every bar line every four;
+  precision punishes the empty bar lines that come with it. Candidate metres
+  come from `RhythmConfig.meters`, 4 and 3 by default. The reference
+  implementation does this with an HMM, which is the part of madmom being
+  avoided.
 
-**Beats.** Dynamic-programming tracking seeded with that tempo, with a
-predominant-local-pulse tracker taking over when the tempo curve says the track
-genuinely drifts (stability below 0.60). Then two refinements:
+The fit score is reported as `downbeatConfidence`, and it is a real signal:
+steady 4/4 dance music scores 1.0, and audio the model is guessing on scores
+below 0.4. The show engine accents bars less when it is low, which is the right
+behaviour for a track whose bar lines nobody can hear either.
 
-* **Phase** — beats are snapped to a high-resolution onset envelope (512-point
-  window, 128-sample hop). Tempo tracking wants a long window; phase wants the
-  opposite, and a 2048-point window at 22 kHz reports onsets about 25 ms late,
-  every time. The fine grid puts them within ~5 ms.
-* **Period** — a least-squares fit through the whole grid. Beat times land on
-  frames, so the interval between two of them is quantised to ~23 ms, which at
-  140 BPM is 3.5 BPM of error in the median interval alone. The rounding pattern
-  across a hundred beats carries the fraction the individual intervals throw
-  away.
+**Tempo** is then whatever the beat grid describes — a least-squares fit through
+the whole grid, falling back to the median interval when the fit is loose
+(r² ≤ 0.999) because that means the track genuinely moves. The fit matters
+because the model's output is quantised to 20 ms: at 140 BPM the individual
+intervals are 0.42 or 0.44 against a true 0.4286, and only the rounding pattern
+across a hundred beats carries the fraction back.
+
+**Stability** is measured against that tempo rather than used to choose it: how
+far local tempo wanders from the grid is a property of the track the show engine
+reads.
 
 **Confidence** is per beat, not per track: onset strength blended with how
 regular the beat's spacing is. A strong hit off the grid is a fill; a weak beat
 exactly where the grid predicted is still a beat and the show can keep counting
 through it. A show that knows which beats it is sure of can accent those and let
 the rest pass, which is what a human operator does when the mix gets muddy.
-
-**Downbeats** come from scoring every (metre, phase) hypothesis against three
-pieces of evidence — low-end energy, spectral novelty, and harmonic change —
-because none is reliable alone. Beat one is often *not* the loudest beat; in
-most dance music the loudest beat is wherever the snare is. Harmonic change is
-the cue that survives a bar with no kick. 4/4 gets a small bias because it is
-overwhelmingly more common and a 3/4 hypothesis fits a 4/4 track's every-third
-pattern often enough to win a close contest on noise.
 
 ## Stage 5 — structure (`structure.py`)
 
@@ -425,6 +451,15 @@ whatever it was last told.
 Not a port of the offline pipeline — a different implementation of the same
 interface, because live there is no future to look at.
 
+**No models here.** Offline the beat grid comes from a transformer over the
+whole file; live there is no whole file, and running one over a rolling window
+costs more latency than a show can spend. So the live path keeps the signal
+chain — autocorrelation over the last ten seconds of onset history, weighted by
+the tempo prior — which is a much easier problem than deciding a record's tempo
+from scratch: the window is short enough that the track is not changing over it,
+and the one failure it still makes is the octave, which the folding below
+covers.
+
 * **Adaptive thresholds** — median plus a multiple of the median absolute
   deviation over a rolling ten-second window. MAD rather than standard
   deviation because the window contains the very peaks being detected, so a
@@ -529,23 +564,52 @@ stdout is the protocol.
 
 ## Performance
 
-On a four-minute track, one core of a recent laptop:
+Measured on a three-minute track, three CPU threads, no GPU:
 
-| Stage | Roughly |
+| | Wall clock | Relative to realtime |
+|---|---|---|
+| full pipeline | 107 s | 0.59× |
+| `separate_sources=False` | 24 s | 0.13× |
+
+Separation is three quarters of the cost on its own:
+
+| Stage | Seconds |
 |---|---|
-| preprocess (HPSS dominates) | 40 % |
-| features | 15 % |
-| rhythm | 15 % |
-| structure | 20 % |
-| everything else | 10 % |
+| separation (Demucs) | 76 |
+| preprocess (HPSS dominates) | 16 |
+| rhythm (beat model included) | 7 |
+| features | 2 |
+| bands, structure, dynamics, perception | 3 |
 
-The tagger, when installed, runs concurrently with all of it from the first
-instant — it reads the file directly and needs nothing from the rest — so it is
-effectively free. Structure and perception run side by side. The worker keeps
-librosa's imports, numba's JIT caches and the PyTorch model resident between
-tracks, so only the first analysis of a server's lifetime pays the cold start;
-`src/analyzer-worker.js` prewarms it during startup so even that lands while the
-operator is still opening the UI.
+**Device.** `models.device()` decides once per process: CUDA when it is there,
+otherwise threads, leaving one core free so an analysis cannot starve the
+Art-Net render loop. `ARTNET_ANALYSIS_DEVICE=cpu` forces threads — worth setting
+on a one-machine rig whose GPU is busy driving a visualiser, where competing for
+it costs more than it buys. A GPU turns the separation row from a minute into a
+few seconds, which is most of why the numbers above are the pessimistic case.
+
+**Separation runs in its own thread** alongside preprocessing and features. On a
+GPU that genuinely overlaps. On CPU it buys almost nothing, because Demucs is
+already using every core the process has — the numbers above are what that looks
+like, and they are the argument for `separate_sources=False` on a machine
+analysing a queue during a set rather than a library overnight. The tagger, when
+installed, starts even earlier: it reads the file directly and needs nothing from
+the rest. Structure and perception run side by side.
+
+**Weights are cached, and the cache is checked before the network.** Loading a
+checkpoint by short name sends the resolver to the network even when the file is
+already on disk, and a hung request there is a show that does not start — which
+is not hypothetical, it hung repeatedly while this was being built. Warm the
+cache before leaving for the venue:
+
+```bash
+python -c "from analysis import models; models.warm_up()"
+```
+
+The worker keeps librosa's imports, numba's JIT caches and both models resident
+between tracks, so only the first analysis of a server's lifetime pays the cold
+start; `src/analyzer-worker.js` prewarms it during startup so even that lands
+while the operator is still opening the UI.
 
 Curves are decimated to one point every half second before they enter the
 document. Undecimated, eleven curves on a four-minute track is tens of megabytes

@@ -34,12 +34,22 @@ jobs:
   # and runs the real thing against synthetic tracks whose tempo, metre and
   # arrangement are known by construction.
   #
-  # torch and panns_inference are deliberately not installed: the tagger is
-  # optional by design, every consumer treats a missing answer as "unknown",
-  # and a 2 GB wheel is a poor trade for exercising a code path that is already
-  # covered by the bootstrap-ordering tests.
+  # torch is installed here, CPU-only. It used to be skipped as a 2 GB wheel
+  # bought for an optional tagger — but the beat grid, the metre and the
+  # instrument roles all come from models now, and a CI run that skips them
+  # tests a pipeline nobody ships. The CPU index keeps the download to a few
+  # hundred megabytes; model weights are cached between runs, because a suite
+  # that re-downloads 400 MB of checkpoints every push is a suite people learn
+  # to ignore.
+  #
+  # panns_inference stays out: it really is optional, every consumer treats a
+  # missing answer as "unknown", and the bootstrap-ordering tests already cover
+  # the path.
   python:
     runs-on: ubuntu-latest
+    env:
+      # No GPU on a runner, and saying so skips the CUDA probe.
+      ARTNET_ANALYSIS_DEVICE: cpu
     steps:
       - uses: actions/checkout@v4
 
@@ -48,8 +58,29 @@ jobs:
           python-version: '3.11'
           cache: pip
 
+      - name: Install torch (CPU build)
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+
       - name: Install the analysis dependencies
         run: pip install numpy scipy scikit-learn soundfile librosa threadpoolctl
+             beat_this demucs
+
+      # Keyed on the model code rather than on the lockfile: the checkpoints
+      # change when models.py names a different one, not when a dependency
+      # bumps a patch version. Two directories, because the two models do not
+      # agree on where weights live — Beat This! uses the torch hub cache and
+      # Demucs pulls from the Hugging Face hub.
+      - name: Cache model checkpoints
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/torch
+            ~/.cache/huggingface
+          key: model-checkpoints-${{ hashFiles('src/analysis/models.py') }}
+          restore-keys: model-checkpoints-
+
+      - name: Fetch model weights
+        run: python -c "import sys; sys.path.insert(0, 'src'); from analysis import models; models.warm_up()"
 
       - name: Compile every module
         run: python -m compileall -q src scripts tests
