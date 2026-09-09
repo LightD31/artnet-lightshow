@@ -164,7 +164,11 @@ const ENERGY_EFFECT_IDS = ENERGY_EFFECTS.map((e) => e.id);
 // the only module among them that requires nothing itself.
 const SYNC_OFFSET_LIMIT_MS = 2000;
 
-const AUTO_SOURCES = ['auto', 'spotify', 'deezer', 'nowplaying', 'prolink', 'timer'];
+// 'hybrid' takes its content from Spotify (track identity, ISRC, duration and
+// the queue lookahead) and its clock from the OS media session, which is read
+// locally and so is both fresher and far steadier than a polled HTTP API.
+// See src/hybrid-source.js.
+const AUTO_SOURCES = ['auto', 'hybrid', 'spotify', 'deezer', 'nowplaying', 'prolink', 'timer'];
 
 module.exports = {
   STROBE_FUNCTIONS,

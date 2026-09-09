@@ -51,6 +51,11 @@ via **Bitfocus Companion**, and a REST API.
 - Follows playback from **Spotify**, **PRO DJ LINK** (CDJs), the **Windows OS
   media session** (any player that reports to it), or the **Deezer web player**
   via the bundled browser extension
+- **Spotify + OS clock** — a hybrid that takes the track, the ISRC and the queue
+  from Spotify and the *position* from the OS media session, which is read
+  locally rather than polled over the network. Around 11 ms of mean sync error
+  against Spotify's own 189 ms, and never a backward jump — see
+  [Spotify + OS clock](#spotify--os-clock-the-hybrid-source)
 - Caches analyses on disk and **prefetches the next tracks in the queue**, so a
   track change flips instantly instead of stalling for a download
 - **Set-list warming** — paste tonight's tracks (or point it at a Spotify
@@ -596,6 +601,7 @@ Changing it recycles the analyzer process; no restart needed.
 
 | Source | What it needs |
 |--------|---------------|
+| **Spotify + OS clock** | Both of the two below. The best option when you play Spotify on this machine — see [Spotify + OS clock](#spotify--os-clock-the-hybrid-source). |
 | **Spotify** | A client ID and secret in the settings page, then visit `/auth/spotify`. Register the redirect URI the server prints at startup — see [Spotify authorisation](#spotify-authorisation). |
 | **PRO DJ LINK** | CDJs on the same network. Toggle it in the settings page or on the main page. |
 | **Now playing (Windows)** | Nothing — reads the OS media session, so any player that reports to it works. Toggle it under *Playback Sources*. |
@@ -604,6 +610,51 @@ Changing it recycles the analyzer process; no restart needed.
 
 The Deezer ARL cookie (settings page → *Deezer*) is optional but recommended:
 with it, audio is fetched by ISRC for an exact match instead of a yt-dlp search.
+
+### Spotify + OS clock (the hybrid source)
+
+Neither Spotify nor the OS media session is good at both halves of the job, and
+this source takes each from whichever has it.
+
+**Spotify knows what is playing.** The track id, the ISRC that fetches the exact
+recording rather than a search result, the real duration, and — the part nothing
+else has — the *upcoming queue*, which is what lets the next few tracks be
+analysed before anyone hears them. What it is bad at is *where* playback is: it
+answers about once a second, over the network, with a position that was already
+a round trip old when it was measured.
+
+**The OS media session knows where playback is.** It is read locally with no
+network in the path, so its position is fresher and far steadier. What it does
+not expose is any track id or ISRC — only the artist and title strings the
+player chose to publish, which is not enough to fetch the right recording or to
+see what is coming next.
+
+So: content and queue from Spotify, clock from the OS. Measured against a
+simulated 1 Hz Spotify poll with ±350 ms of jitter, and a 2 Hz local session
+with ±60 ms:
+
+| | Mean error | 95th percentile | Backward jumps per 2 min |
+|---|---|---|---|
+| Spotify alone, interpolated | 189 ms | 337 ms | 27 |
+| Hybrid | 11 ms | 25 ms | 0 |
+
+The backward jumps matter as much as the error: a cursor that moves backwards
+re-crosses timeline events it has already fired, so the rig flashes twice for
+one beat. The hybrid clock is monotonic by construction — corrections go into
+its *speed*, capped at five percent, never into its position. See
+`src/playback-clock.js`.
+
+**It is never worse than plain Spotify.** The OS session only drives the clock
+while it is reporting the track Spotify says is playing — matched on title,
+artist and duration. When it is not (a different app took the media keys, the
+session went stale, you are playing on another device) the clock falls back to
+Spotify's own position, which is exactly what the Spotify source would have
+done. On a machine with no media session at all — anything but Windows today —
+hybrid still runs; it just runs on the Spotify clock.
+
+The *Follow* selector's **Auto-detect** picks it whenever both halves are live.
+The source strip shows which clock is driving, with the current drift in its
+tooltip.
 
 ### Spotify authorisation
 
