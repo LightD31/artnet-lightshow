@@ -293,9 +293,125 @@ class InstrumentRoles:
         return out
 
 
-def infer_roles(features, bands, tags=None):
+def infer_roles(features, bands, stems=None, tags=None):
     """
     Derive per-role activity curves and confidence scores.
+
+    Prefers separated stems, which answer the question directly: the kick is in
+    the drums stem, the voice is in the vocals stem. Falls back to the
+    band-and-attack-time heuristics below when separation is unavailable — a
+    worse answer, not no answer.
+    """
+    if stems is not None and stems.sample_rate:
+        return _roles_from_stems(features, stems, tags)
+    return _roles_from_bands(features, bands, tags)
+
+
+def _roles_from_stems(features, stems, tags=None):
+    """
+    Roles measured off the separated sources.
+
+    Everything here is a band of a stem rather than a band of the mix, which
+    removes the ambiguity the old rules existed to paper over. A sustained synth
+    bass no longer reads as a kick, because the kick is whatever is low and
+    percussive *in the drums stem*, and the synth is not in it. A bright pad no
+    longer reads as a voice for the same reason.
+    """
+    from . import stems as stems_mod
+
+    n = features.n_frames
+    if n == 0:
+        return InstrumentRoles()
+
+    def band_of(signal, low, high):
+        """A frequency slice of one stem, on the feature grid."""
+        if signal.size == 0:
+            return np.zeros(n)
+        import librosa
+        spec = np.abs(librosa.stft(signal, n_fft=features.n_fft,
+                                   hop_length=features.hop_length))
+        freqs = librosa.fft_frequencies(sr=features.sample_rate, n_fft=features.n_fft)
+        mask = (freqs >= low) & (freqs < min(high, features.sample_rate / 2.0))
+        if not np.any(mask):
+            return np.zeros(n)
+        level = np.sqrt(np.mean(spec[mask] ** 2, axis=0))
+        if level.size < n:
+            level = np.pad(level, (0, n - level.size), mode='edge')
+        return dsp.robust_norm(level[:n])
+
+    drums = stems.named('drums')
+    curves = {
+        'kick': band_of(drums, 30.0, 130.0),
+        'snare': band_of(drums, 180.0, 400.0) * 0.4 + band_of(drums, 1800.0, 5500.0) * 0.6,
+        'hats': band_of(drums, 6000.0, 14000.0),
+        'bassline': stems_mod.envelope(stems.named('bass'), features),
+        'vocal': stems_mod.envelope(stems.named('vocals'), features, smooth_sec=0.3),
+        'synth': stems_mod.envelope(stems.named('other'), features),
+    }
+
+    # The share of the mix each source occupies, which is a far better score
+    # than "how much mid-band harmonic energy moved" ever was.
+    share = stems.energies()
+
+    def presence(name):
+        """
+        How strong the role is when it plays, not how much of the time.
+
+        The mean would be the obvious summary and it is the wrong one for
+        anything percussive: a kick on every beat is silent for four fifths of
+        every beat, so its mean sits near 0.16 and a track built on it scores
+        as though it barely had a kick. The 90th percentile asks the question
+        the show actually cares about — when this thing hits, does it hit hard.
+        """
+        curve = curves[name]
+        return float(np.percentile(curve, 90)) if curve.size else 0.0
+
+    # Each stem's share is renormalised against the loudest stem, so a quiet
+    # mix does not read as an absent band. A source has to both be a real part
+    # of the mix and be audible when it plays.
+    loudest = max(share.values()) or 1.0
+
+    def score(stem, role):
+        return dsp.clamp01((share[stem] / loudest) ** 0.5 * presence(role))
+
+    scores = {
+        'kick': score('drums', 'kick'),
+        'snare': score('drums', 'snare'),
+        'hats': score('drums', 'hats'),
+        'bassline': score('bass', 'bassline'),
+        'vocal': score('vocals', 'vocal'),
+        'synth': score('other', 'synth'),
+    }
+
+    if tags:
+        for role, prior in _tag_priors(tags).items():
+            if prior > 0:
+                scores[role] = dsp.clamp01(0.8 * scores[role] + 0.2 * prior)
+
+    return InstrumentRoles(curves=curves, scores=scores)
+
+
+def _tag_priors(tags):
+    """AudioSet labels that corroborate a role. A weak second opinion only."""
+    return {
+        'vocal': max(tags.get('singing', 0.0), tags.get('speech', 0.0),
+                     tags.get('female singing', 0.0), tags.get('male singing', 0.0)),
+        'kick': max(tags.get('bass drum', 0.0), tags.get('drum kit', 0.0),
+                    tags.get('drum', 0.0)),
+        'hats': max(tags.get('hi-hat', 0.0), tags.get('cymbal', 0.0)),
+        'snare': tags.get('snare drum', 0.0),
+        'synth': max(tags.get('synthesizer', 0.0), tags.get('keyboard (musical)', 0.0)),
+        'bassline': max(tags.get('bass guitar', 0.0), tags.get('bass (instrument)', 0.0)),
+    }
+
+
+def _roles_from_bands(features, bands, tags=None):
+    """
+    The pre-separation fallback: roles guessed from band shape and attack time.
+
+    Kept for machines where the separation model is unavailable. It is the
+    weaker answer — a sustained synth bass reads as a kick here, and a bright
+    pad reads as a voice — which is precisely why the stem path above exists.
 
     `tags` is the optional AudioSet tag dictionary from the perception stage.
     When present it only ever *adjusts* the scores — the curves stay signal-
@@ -363,17 +479,7 @@ def infer_roles(features, bands, tags=None):
 
     if tags:
         # AudioSet labels are a strong prior on presence, a weak one on level.
-        boost = {
-            'vocal': max(tags.get('singing', 0.0), tags.get('speech', 0.0),
-                         tags.get('female singing', 0.0), tags.get('male singing', 0.0)),
-            'kick': max(tags.get('bass drum', 0.0), tags.get('drum kit', 0.0),
-                        tags.get('drum', 0.0)),
-            'hats': max(tags.get('hi-hat', 0.0), tags.get('cymbal', 0.0)),
-            'snare': tags.get('snare drum', 0.0),
-            'synth': max(tags.get('synthesizer', 0.0), tags.get('keyboard (musical)', 0.0)),
-            'bassline': max(tags.get('bass guitar', 0.0), tags.get('bass (instrument)', 0.0)),
-        }
-        for role, prior in boost.items():
+        for role, prior in _tag_priors(tags).items():
             if prior > 0:
                 scores[role] = dsp.clamp01(0.7 * scores[role] + 0.3 * prior + 0.15 * prior)
 

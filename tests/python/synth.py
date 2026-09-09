@@ -173,9 +173,52 @@ def four_on_the_floor(bpm=128.0, bars=32, sr=SR, meter=4, with_structure=True):
 
 
 def waltz(bpm=150.0, bars=24, sr=SR):
-    """Three beats to the bar, accent on one — for the metre detection tests."""
-    return four_on_the_floor(bpm=bpm, bars=bars, sr=sr, meter=3,
-                             with_structure=False)
+    """
+    Oom-pah-pah: a bass note on beat one, chords on two and three.
+
+    Deliberately not `four_on_the_floor(meter=3)`. That put a kick on every
+    beat and a snare on beat two, which carries no cue a listener would read as
+    triple time — the metre only showed up in the bar-length bass note. The
+    accompaniment pattern is what makes a waltz a waltz, so the fixture plays
+    one.
+    """
+    beat_sec = 60.0 / bpm
+    bar_sec = beat_sec * 3
+    n = int(bars * bar_sec * sr)
+    buf = np.zeros(n, dtype=np.float64)
+
+    beats, downbeats = [], []
+    # A slow I-vi-IV-V turn, so the harmony moves at bar rate like the real thing.
+    roots = [110.0, 130.81, 146.83, 164.81]
+    for bar in range(bars):
+        bar_t = bar * bar_sec
+        downbeats.append(bar_t)
+        root = roots[bar % len(roots)]
+        # Beat one: the bass, low and long.
+        _place(buf, tone(root / 2.0, beat_sec * 0.9, sr, harmonics=3, amplitude=0.5),
+               bar_t, sr)
+        # Beats two and three: short chords an octave up, quieter than the bass.
+        for b in (1, 2):
+            for interval in (0, 4, 7):
+                freq = root * 2.0 * (2 ** (interval / 12.0))
+                _place(buf, tone(freq, beat_sec * 0.45, sr, harmonics=2,
+                                 amplitude=0.16), bar_t + b * beat_sec, sr)
+        for b in range(3):
+            t = bar_t + b * beat_sec
+            beats.append(t)
+            # Kick on one, snare on two and three — the jazz-waltz pattern. The
+            # drums carry the metre for a beat tracker; the harmony alone does
+            # not, because a tracker keys off percussive onsets.
+            if b == 0:
+                _place(buf, kick(sr), t, sr, gain=0.9)
+            else:
+                _place(buf, snare(sr), t, sr, gain=0.4)
+            _place(buf, hat(sr), t, sr, gain=0.3)
+
+    peak = float(np.max(np.abs(buf))) or 1.0
+    samples = (buf / peak * 0.85).astype(np.float32)
+    sections = [{'name': 'verse', 'start': 0.0, 'end': bars * bar_sec}]
+    return Track(samples, sr, bpm, beats, downbeats, sections)
 
 
 def silence(seconds=5.0, sr=SR):

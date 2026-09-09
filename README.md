@@ -529,17 +529,34 @@ numbers you can turn and where to extend it.
 
 ```bash
 pip install -r requirements.txt
-python scripts/setup-panns.py          # one-time, ~310 MB genre model
+
+# Fetch the model weights now rather than at load-in on venue wifi (~400 MB)
+python -c "import sys; sys.path.insert(0, 'src'); from analysis import models; models.warm_up()"
+
+python scripts/setup-panns.py          # optional, ~310 MB genre model
 python scripts/setup-panns.py --check  # verify without downloading
 ```
 
 **ffmpeg** and **yt-dlp** must be on `PATH`. `pip install -r requirements.txt`
 covers yt-dlp; install ffmpeg with your package manager.
 
-If `torch`/`panns_inference` are missing the analyser still runs, but genre
+**torch is required.** The beat grid, the metre and the instrument roles come
+from models — a beat-tracking transformer and a source separator — and there is
+no signal-processing fallback for the beat grid. The chain that used to be there
+reported a 99 BPM pop song at 198, because reasoning about periodicity cannot
+tell a song counted at 99 from the same song counted at 198. An analyser that
+cannot load the model says so and names the install command, rather than quietly
+returning a worse answer under the same field name.
+
+CUDA is used when it is there and threads when it is not; `ARTNET_ANALYSIS_DEVICE=cpu`
+forces threads, which is worth setting on a one-machine rig whose GPU is already
+driving a visualiser. On CPU expect roughly 0.6× realtime, most of it separation
+— set `separate_sources=False` in `src/analysis/config.py` to trade the
+stem-derived instrument roles for a 4× faster analysis.
+
+`panns_inference` is the one part that stays optional: without it genre
 classification is skipped silently and palette selection falls back to a
-mood-based path — so run `--check` if shows look off. Everything else in the
-pipeline is signal processing with no model behind it, and works either way.
+mood-based path, so run `--check` if shows look off.
 
 You do not have to run the setup script by hand: the analyser fetches whatever
 is missing on its first analysis. `panns_inference` would otherwise try to
