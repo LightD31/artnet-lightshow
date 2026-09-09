@@ -263,7 +263,13 @@ Two additions on top:
 section 2 and section 5 are the same, never that they are the chorus. That comes
 from arrangement convention, stated explicitly in `assign_roles`:
 
-1. a section containing a detected drop is a `drop` — it overrides everything;
+1. a section is a `drop` only when a *proper* drop lands in its first quarter
+   and its energy is at or above the track's median. "Contains a drop
+   anywhere" is not enough — the detector emits a few drops on every track and
+   most sections are long enough to contain one, which labelled five of the
+   nine sections of a piano ballad `drop`. This changes only the section's
+   label and the energy tier the show gives it; the DROP *event* still fires at
+   the same instant and still gets the full gesture;
 2. the first section is an `intro` when it is quieter than the median or short
    (a track that opens at full tilt has no intro, and pretending otherwise costs
    the show its first thirty seconds);
@@ -276,7 +282,12 @@ from arrangement convention, stated explicitly in `assign_roles`:
 
 Sections sharing a label are then reconciled to one role by majority, because a
 chorus that lights differently on its second appearance reads as a mistake
-rather than as variety.
+rather than as variety. Only `intro` and `outro` are exempt: those are defined
+by *position*, and the first section of a track is an intro however much it
+resembles the chorus. Everything else — `drop` included — has to agree across a
+cluster, because the show engine biases a section's energy tier by its role, so
+two appearances of one cluster that disagree get different beat divisions for
+identical music.
 
 ## Stage 6 — dynamics (`dynamics.py`)
 
@@ -327,6 +338,19 @@ So every detector measures both sides of a transition:
   527 classes, folded into sixteen subgenres and then into one of four show
   styles. It answers what DSP cannot, because "electronic dance music" is a
   cultural category and not a spectral one.
+
+  The tag only gets to set the style when it clears `GENRE_MIN_SCORE` *and*
+  beats the runner-up by `GENRE_MIN_MARGIN`; otherwise the style comes from the
+  signal and the label stays `unknown`. The thresholds exist because the four
+  styles are not symmetric in what they cost: `calm` is the only one that turns
+  the show off — no strobes, no drops, no accents — so a wrong `calm` costs the
+  whole track while a wrong `dance` merely over-lights it. On real tracks a
+  near-tie between two buckets three percent apart was enough to silence a
+  song for three minutes.
+
+  For the same reason there is a veto: a confident `calm` is overridden when
+  arousal and danceability both say otherwise, because those are measured
+  rather than inferred.
 
   Entirely optional. Without torch installed, the style comes from tempo and
   arousal instead, and the genre label stays `unknown` — saying "this is house"
@@ -446,6 +470,10 @@ defaults. The ones most worth reaching for:
 | `dynamics.buildup_max_sec` | 16.0 | build-ups run longer or shorter in the genre |
 | `events.beat_min_confidence` | 0.10 | the show is accenting beats it should not trust |
 
+Two more live in `perception.py` rather than the config, because they are about
+trusting the tagger rather than about the signal: `GENRE_MIN_SCORE` (0.15) and
+`GENRE_MIN_MARGIN` (1.5).
+
 Show-side pacing is in `src/show/director.js`: `ACCENT_BUDGET`, `RECOVERY_SEC`,
 `ANTICIPATION_SEC`, `MIN_BURST_MS`, and the `ROLE_PROFILE` table that decides
 what each section role is allowed to do.
@@ -534,3 +562,14 @@ that only passes on a convincing synthetic mix is a test of the mix.
 python -m unittest discover -s tests/python     # analysis
 npm test                                        # show engine and server
 ```
+
+Synthetic signals prove the DSP is correct; they cannot prove the *judgement*
+on top of it is sensible, because a synthetic track has no genre, its sections
+are identical loops, and its arrangement is whatever the generator wrote. So
+`tests/fixtures/tracks/` holds the show-facing parts of real analyses — sections,
+drops, mood, subgenre scores, with the frame-level curves stripped — and
+`test_real_tracks.py` pins the decisions made on top of them. Both defects those
+five tracks exposed were in that layer, not in the signal processing.
+
+To add one: analyse a track, then keep the fields that file's generator keeps.
+Around 6 KB each, small enough to read in a diff.
