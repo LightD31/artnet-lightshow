@@ -10,6 +10,7 @@ const {
   keyForQuery,
   keyForProlinkTrack,
 } = require('../analysis-cache');
+const HybridSource = require('../hybrid-source');
 
 // Wires the auxiliary subsystems (MIDI feedback, Spotify, now-playing, PRO DJ
 // LINK, auto-show) into the engine + state. Returns the integration handle that
@@ -39,6 +40,11 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
 
   const autoPlayback = { progressMs: 0, isPlaying: false, updatedAt: 0 };
 
+  // Spotify for the content and the queue, the OS media session for the clock.
+  // Fed from both sets of callbacks below; it decides for itself which half is
+  // currently able to drive.
+  const hybrid = new HybridSource();
+
   // Set-list warming: analyses a whole night ahead of time rather than relying
   // on the live queue lookahead, which only sees one to five tracks and only
   // once something is playing. Progress rides the state broadcast.
@@ -54,6 +60,8 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   }
 
   function getProlinkPositionMs() { return prolink.getPositionMs(); }
+
+  function getHybridPositionMs() { return hybrid.getPositionMs(); }
 
   // Last live payload we sent, as JSON. Used to skip re-sending an identical
   // snapshot.
@@ -78,6 +86,12 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       spotifyNext: spotifyNextView(),
       spotifyPrefetch: spotifySlots,
       nowPlaying: nowPlaying.getStatus(),
+      hybrid: hybrid.getStatus(),
+      // Which source is *actually* driving right now. `state.autoSource` is
+      // the operator's choice, which is often 'auto' and so says nothing about
+      // what is happening; this is the answer to "why is the show following
+      // that".
+      activeSource: resolveAutoSource(),
       deezer: deezerSource.getStatus(),
       deezerPrefetch: deezerSlots,
       prolink: {
@@ -130,26 +144,46 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   });
 
   // Pick the active source for auto-show playback. Explicit user choice wins,
-  // then 'auto' falls through to: prolink > spotify > deezer > nowplaying > timer.
+  // then 'auto' falls through to:
+  //   prolink > hybrid > spotify > deezer > nowplaying > timer
+  //
+  // Hybrid outranks plain Spotify whenever the OS media session is also live,
+  // because it is the same source of content with a better clock and an
+  // automatic fallback to exactly the Spotify behaviour when the session stops
+  // matching — there is no state in which it is the worse of the two.
+  //
   // Deezer (extension) outranks generic SMTC: when Deezer plays in the browser
   // both see it, but the extension carries ISRC + queue, so it should win.
   function resolveAutoSource() {
     if (state.autoSource === 'prolink' && prolink.connected) return 'prolink';
+    // Hybrid asks only for Spotify: without the OS session it degrades to the
+    // Spotify clock rather than refusing to run, which is what the operator
+    // picking it would want on a machine where SMTC is unavailable.
+    if (state.autoSource === 'hybrid' && spotify.authenticated) return 'hybrid';
     if (state.autoSource === 'spotify' && spotify.authenticated) return 'spotify';
     if (state.autoSource === 'deezer' && deezerSource.authenticated) return 'deezer';
     if (state.autoSource === 'nowplaying' && nowPlaying.authenticated) return 'nowplaying';
     if (state.autoSource === 'timer') return 'timer';
     if (prolink.connected && prolink.getMaster()) return 'prolink';
+    if (spotify.authenticated && nowPlaying.authenticated) return 'hybrid';
     if (spotify.authenticated) return 'spotify';
     if (deezerSource.authenticated) return 'deezer';
     if (nowPlaying.authenticated) return 'nowplaying';
     return 'timer';
   }
 
+  /** Sources that take their content and their queue from Spotify. */
+  function usesSpotifyContent(source) {
+    return source === 'spotify' || source === 'hybrid';
+  }
+
   function startAutoShow() {
     const source = resolveAutoSource();
     if (source === 'prolink') {
       autoShow.start(getProlinkPositionMs);
+    } else if (source === 'hybrid') {
+      spotify.startPolling(1000);
+      autoShow.start(getHybridPositionMs);
     } else if (source === 'spotify') {
       spotify.startPolling(1000);
       autoShow.start(getAutoPositionMs);
@@ -229,7 +263,12 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
 
   // ─── Spotify polling ────────────────────────────────────────────────────
   spotify.onPlaybackUpdate((playing) => {
-    if (resolveAutoSource() !== 'spotify') return;
+    // Fed to the hybrid source unconditionally, whichever source is active, so
+    // that switching to it mid-show does not start from a cold clock. It only
+    // ever *reads* Spotify's position when the OS session cannot supply one.
+    hybrid.observeContent(playing);
+
+    if (!usesSpotifyContent(resolveAutoSource())) return;
     autoPlayback.progressMs = playing.progressMs;
     autoPlayback.isPlaying = playing.isPlaying;
     autoPlayback.updatedAt = Date.now();
@@ -344,7 +383,8 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
         && spotifySlots[0].track.artist === playing.artist) {
       spotifySlots = spotifySlots.slice(1);
     }
-    if (resolveAutoSource() !== 'spotify') return;
+    const source = resolveAutoSource();
+    if (!usesSpotifyContent(source)) return;
     if (autoShow.running) {
       autoShow.stop();
       autoShow.track = {
@@ -356,7 +396,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
         const query = `${playing.artist} - ${playing.name}`;
         const cacheKey = keyForSpotify(playing.trackId) || keyForQuery(query);
         await autoShow.downloadAndAnalyze(query, playing.durationMs / 1000, cacheKey, playing.isrc);
-        autoShow.start(getAutoPositionMs);
+        autoShow.start(source === 'hybrid' ? getHybridPositionMs : getAutoPositionMs);
         console.log('Auto show restarted for new track');
       } catch (err) {
         console.error('Auto show analysis failed for new track:', err.message);
@@ -368,6 +408,11 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
 
   // ─── Now playing (OS media session) ─────────────────────────────────────
   nowPlaying.onPlaybackUpdate((playing) => {
+    // The clock half of the hybrid source. Offered whatever the active source
+    // is; `hybrid` itself decides whether this session is the track Spotify
+    // says is playing and ignores it when it is not.
+    hybrid.observeSession(playing);
+
     if (resolveAutoSource() !== 'nowplaying') return;
     autoPlayback.progressMs = playing.progressMs;
     autoPlayback.isPlaying = playing.isPlaying;
@@ -475,34 +520,43 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   }
 
   // Broadcast playback position for the timeline visualiser at ~10 Hz.
-  setInterval(() => {
+  //
+  // These three timers are unref'd: the HTTP listener is what keeps the server
+  // alive, and a status sweep should not be the thing holding the process open.
+  // It also means a test can wire the integrations up without the run hanging
+  // afterwards on a heartbeat nobody is listening to.
+  const positionTimer = setInterval(() => {
     if (!autoShow.running) return;
     io.emit('auto-position', { positionMs: autoShow.getPositionMs(), running: true });
   }, 100);
+  if (positionTimer.unref) positionTimer.unref();
 
   // DMX values on their own high-rate channel. This is the only field that
   // genuinely changes every frame; sending it alone keeps the 10 Hz payload at
   // ~100 bytes instead of ~7 KB, and lets the client re-render just the DMX
   // views instead of the whole tree.
   let lastDmxJson = '';
-  setInterval(() => {
+  const dmxTimer = setInterval(() => {
     const snapshot = getDmxSnapshot();
     const json = JSON.stringify(snapshot);
     if (json === lastDmxJson) return;      // blackout / idle rig: nothing to send
     lastDmxJson = json;
     io.emit('dmx', snapshot);
   }, 100);
+  if (dmxTimer.unref) dmxTimer.unref();
 
   // Some status fields drift without any explicit event — `authenticated` on
   // the now-playing and Deezer sources expires on a staleness timer, and
   // Spotify's poll updates status without calling broadcast(). A low-rate
   // dirty-checked sweep picks those up; broadcast() covers everything else the
   // moment it changes.
-  setInterval(broadcast, 1000);
+  const statusTimer = setInterval(broadcast, 1000);
+  if (statusTimer.unref) statusTimer.unref();
 
   return {
     broadcast,
     warmer,
+    hybrid,
     prefetchNextFromQueue,
     clearSpotifyNext: () => {
       spotifySlots = [{ track: null, status: 'unavailable', message: 'Spotify disconnected', cacheKey: null }];
