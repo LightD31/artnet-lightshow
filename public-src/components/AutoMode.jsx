@@ -27,6 +27,7 @@ const STATUS_TEXT = {
 const SOURCES = [
   { value: 'auto', label: 'Auto-detect' },
   { value: 'prolink', label: 'PRO DJ LINK' },
+  { value: 'hybrid', label: 'Spotify + OS clock' },
   { value: 'spotify', label: 'Spotify' },
   { value: 'deezer', label: 'Deezer (extension)' },
   { value: 'nowplaying', label: 'Now playing (OS)' },
@@ -59,6 +60,21 @@ function SourceDots({ s }) {
     { id: 'os', label: 'OS media', live: !!np.authenticated, detail: np.authenticated ? `${np.artist || ''} — ${np.name || ''}` : 'Nothing detected' },
   ];
 
+  // Only while hybrid is the source actually driving: everywhere else the
+  // clock question has one obvious answer and a chip about it is noise.
+  const hy = s.hybrid || {};
+  const hybridActive = s.activeSource === 'hybrid';
+  const clockChip = hybridActive ? {
+    id: 'clock',
+    label: hy.driver === 'nowplaying' ? 'Clock: OS' : 'Clock: Spotify',
+    live: hy.driver === 'nowplaying',
+    detail: hy.driver === 'nowplaying'
+      ? `Position from the OS media session${hy.sessionApp ? ` (${hy.sessionApp})` : ''}`
+        + `; drift ${Math.round((hy.clock && hy.clock.driftMs) || 0)} ms`
+      : 'The OS session is not reporting the Spotify track — falling back to '
+        + "Spotify's own position",
+  } : null;
+
   return (
     <div class="source-strip">
       {sources.map((src) => (
@@ -67,6 +83,12 @@ function SourceDots({ s }) {
           {src.label}
         </span>
       ))}
+      {clockChip && (
+        <span class={`source-chip ${clockChip.live ? 'live' : ''}`} title={clockChip.detail}>
+          <span class="source-dot" />
+          {clockChip.label}
+        </span>
+      )}
       {sp.authenticated ? (
         <button
           class="btn sm source-action"
@@ -133,7 +155,10 @@ export function AutoMode() {
     const deezerReady = s.deezer && s.deezer.authenticated;
     const nowPlayingReady = s.nowPlaying && s.nowPlaying.authenticated;
     const prolinkReady = s.prolink && s.prolink.connected && s.prolink.track && s.prolink.track.title;
-    const useSpotify    = source === 'spotify'    || (source === 'auto' && spotifyReady);
+    // Hybrid takes its content from Spotify, so it analyses through the same
+    // endpoint; only the clock the server runs the timeline against differs.
+    const useSpotify    = source === 'spotify' || source === 'hybrid'
+                          || (source === 'auto' && spotifyReady);
     const useDeezer     = source === 'deezer'     || (source === 'auto' && !spotifyReady && deezerReady);
     const useNowPlaying = source === 'nowplaying' || (source === 'auto' && !spotifyReady && !deezerReady && nowPlayingReady);
     const useProlink    = source === 'prolink'    || (source === 'auto' && !spotifyReady && !deezerReady && !nowPlayingReady && prolinkReady);
