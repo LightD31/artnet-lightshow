@@ -18,6 +18,8 @@ every consumer reads the result.
 """
 
 from dataclasses import dataclass, field
+import os
+import sys
 
 import numpy as np
 
@@ -33,6 +35,7 @@ class Stems:
     vocals: np.ndarray = field(default_factory=lambda: np.zeros(0))
     other: np.ndarray = field(default_factory=lambda: np.zeros(0))
     sample_rate: int = 0
+    backend: str = 'demucs'
 
     def named(self, name):
         return getattr(self, name, np.zeros(0))
@@ -66,6 +69,19 @@ def separate(mono, sample_rate, overlap=0.10, segment_seconds=None):
     import librosa
     from demucs.apply import apply_model
 
+    # BS-RoFormer is preferred for the lighting roles. Keep the existing
+    # Demucs path as a measured fallback for installations without the optional
+    # adapter or checkpoint.
+    # The generic audio-separator registry cannot load every arbitrary
+    # community checkpoint. Keep this opt-in until a compatible registry model
+    # and config are explicitly supplied; this prevents a show from paying a
+    # failed load attempt on every track.
+    if os.environ.get('ARTNET_USE_BS_ROFORMER', '1').lower() not in ('0', 'false', 'no'):
+        try:
+            return separate_bs_roformer(mono, sample_rate)
+        except Exception as exc:
+            print(f'[stems] BS-RoFormer unavailable; using Demucs: {exc}', file=sys.stderr)
+
     model = models.separator()
     device = models.device()
 
@@ -97,6 +113,30 @@ def separate(mono, sample_rate, overlap=0.10, segment_seconds=None):
     return Stems(sample_rate=sample_rate,
                  **{name: out.get(name, np.zeros(mono.size, dtype=np.float32))
                     for name in ('drums', 'bass', 'vocals', 'other')})
+
+
+def separate_bs_roformer(mono, sample_rate):
+    """Run the configured four-stem BS-RoFormer and normalise its outputs."""
+    import os
+    import sys
+    import tempfile
+    import soundfile as sf
+    import librosa
+    separator = models.bs_roformer_separator()
+    with tempfile.TemporaryDirectory(prefix='artnet-bs-') as tmp:
+        source = os.path.join(tmp, 'input.wav')
+        sf.write(source, np.asarray(mono, dtype=np.float32), sample_rate)
+        paths = separator.separate(source)
+        stems = {}
+        for item in paths:
+            label = os.path.basename(item).lower()
+            name = next((n for n in ('drums', 'bass', 'vocals', 'other') if n in label), None)
+            if name:
+                signal, sr = librosa.load(item, sr=sample_rate, mono=True)
+                stems[name] = np.pad(signal, (0, max(0, len(mono) - len(signal))))[:len(mono)]
+    return Stems(sample_rate=sample_rate, backend='bs_roformer', **{
+        name: stems.get(name, np.zeros(len(mono), dtype=np.float32))
+        for name in ('drums', 'bass', 'vocals', 'other')})
 
 
 def envelope(signal, features, smooth_sec=0.0):

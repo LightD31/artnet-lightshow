@@ -1105,7 +1105,7 @@ function attachRoutes(app, deps) {
   // so MIDI and the playback sources report what is actually connected rather
   // than what is merely configured.
   app.get('/api/preflight', asyncHandler(async (_req, res) => {
-    const report = await runPreflight({ midi, spotify, prolink, analysisCache });
+    const report = await runPreflight({ midi, spotify, prolink, analysisCache, downloadModels: true });
     res.json({ ok: true, report });
   }));
 

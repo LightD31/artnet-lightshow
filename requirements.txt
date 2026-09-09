@@ -38,6 +38,17 @@ threadpoolctl>=3.1
 # ARTNET_ANALYSIS_DEVICE=cpu to force threads on a machine whose GPU is busy
 # driving a visualiser.
 torch>=2.0
+huggingface_hub>=0.23
+muq>=0.1
+# Optional preferred production adapters. The pipeline falls back cleanly when
+# these packages or their checkpoints are not present.
+# audio-separator imports onnxruntime even for PyTorch RoFormer models.
+# The base package omits it; select its CPU extra for a portable installation.
+# This does not disable CUDA inference in PyTorch.
+audio-separator[cpu]>=0.30
+onnxruntime>=1.17
+audioread>=3.0
+git+https://github.com/deezer/skey.git
 
 # Beat and downbeat tracking: Beat This! (Foscarin et al., ISMIR 2024).
 # Installed without madmom, so no Cython toolchain and no numpy pin.

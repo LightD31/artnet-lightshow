@@ -73,6 +73,13 @@ def require(package, install_hint):
     try:
         return importlib.import_module(package)
     except ImportError as exc:
+        missing = getattr(exc, 'name', None)
+        if missing and missing != package and not package.startswith(missing + '.'):
+            raise RuntimeError(
+                f'{package} could not load because its dependency {missing} '
+                f'is missing or cannot be imported ({exc}). '
+                f'Install the analysis dependencies into {sys.executable}: '
+                f'{install_hint}') from exc
         raise RuntimeError(
             f'{package} is required by the analyser but is not installed '
             f'({exc}). Install it with: {install_hint}') from exc
@@ -156,6 +163,33 @@ def separator(name='htdemucs'):
         model.eval()
         return model
     return cached(f'demucs:{name}', build)
+
+
+def bs_roformer_separator():
+    """Load the four-stem BS-RoFormer through audio-separator."""
+    def build():
+        module = require('audio_separator.separator', 'pip install -r requirements.txt')
+        Separator = module.Separator
+        model_dir = os.environ.get(
+            'ARTNET_MODEL_DIR', os.path.expanduser('~/.cache/artnet-lightshow/models'))
+        model = Separator(output_dir=None, output_format='WAV',
+                          model_file_dir=model_dir,
+                          log_level=40, use_autocast=False)
+        filename = os.environ.get('ARTNET_BS_ROFORMER_MODEL')
+        if not filename:
+            filename = 'BS-Roformer-SW.ckpt'
+        elif os.path.isfile(filename):
+            model_dir = os.path.dirname(filename)
+            filename = os.path.basename(filename)
+        try:
+            model.load_model(model_filename=filename)
+        except ValueError as exc:
+            raise RuntimeError(
+                f'BS-RoFormer checkpoint is not registered by audio-separator: {filename}. '
+                'Set ARTNET_BS_ROFORMER_MODEL to a supported audio-separator model name '
+                'or leave ARTNET_USE_BS_ROFORMER disabled.') from exc
+        return model
+    return cached('bs-roformer-4stem', build)
 
 
 def warm_up():

@@ -3,7 +3,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const { state, universeOf, activeUniverses } = require('./state');
 const { getProfile, fitsInUniverse, endChannel, UNIVERSE_SIZE } = require('./profiles');
@@ -390,6 +390,39 @@ function checkCues() {
   };
 }
 
+function checkAnalysisModels({ download = false } = {}) {
+  const root = process.env.ARTNET_MODEL_DIR
+    || path.join(os.homedir(), '.cache', 'artnet-lightshow', 'models');
+  const bs = path.join(root, 'BS-Roformer-SW.ckpt');
+  const bsReady = path.join(root, 'BS-Roformer-SW.ready');
+  const muq = path.join(root, 'muq');
+  const mulan = path.join(root, 'muq_mulan');
+  const skey = path.join(root, 'skey');
+  const beat = path.join(root, 'beat_this.ready');
+  const bsEnabled = !['0', 'false', 'no'].includes(String(process.env.ARTNET_USE_BS_ROFORMER || '0').toLowerCase());
+  const ready = (!bsEnabled || (fs.existsSync(bs) && fs.existsSync(bsReady))) && fs.existsSync(muq) && fs.existsSync(mulan)
+    && fs.existsSync(skey) && fs.existsSync(beat);
+  if (!ready && download) {
+    const py = process.env.ARTNET_PYTHON || pythonEnv.resolve().executable || 'python';
+    const script = path.join(__dirname, '..', '..', 'scripts', 'download-models.py');
+    const result = spawnSync(py, [script], { encoding: 'utf8', env: process.env });
+    if (result.status !== 0) {
+      return { id: 'models', label: 'Analysis models', status: WARN,
+        detail: `Model download failed: ${(result.stderr || '').trim() || 'Python unavailable'}.`,
+        fix: 'Install huggingface_hub and run npm run preflight.' };
+    }
+  }
+  const after = (!bsEnabled || (fs.existsSync(bs) && fs.existsSync(bsReady))) && fs.existsSync(muq) && fs.existsSync(mulan)
+    && fs.existsSync(skey) && fs.existsSync(beat);
+  return { id: 'models', label: 'Analysis models', status: after ? OK : WARN,
+    detail: after
+      ? (bsEnabled
+        ? 'BS-RoFormer, Beat This!, S-KEY, MuQ and MuQ-MuLan weights are ready.'
+        : 'Beat This!, S-KEY, MuQ and MuQ-MuLan are ready; Demucs is active for stems.')
+      : 'Pretrained weights are not available; deterministic analysis fallback remains active.',
+    fix: after ? null : 'Run the preflight again after installing huggingface_hub.' };
+}
+
 /**
  * Run every check.
  *
@@ -397,7 +430,7 @@ function checkCues() {
  * callable both from the server (which has live ones) and from the CLI (which
  * has none, and reports the checks that do not need them).
  */
-async function runPreflight({ midi, spotify, prolink, analysisCache } = {}) {
+async function runPreflight({ midi, spotify, prolink, analysisCache, downloadModels = false } = {}) {
   // The external-tool probes are independent and each costs a process spawn;
   // run them together rather than serially in front of an operator waiting on
   // the report.
@@ -420,6 +453,7 @@ async function runPreflight({ midi, spotify, prolink, analysisCache } = {}) {
     checkCache(analysisCache),
     checkPlaybackSources({ spotify, prolink }),
     checkCues(),
+    checkAnalysisModels({ download: downloadModels }),
   ];
 
   const counts = { ok: 0, warn: 0, fail: 0, info: 0 };
@@ -440,6 +474,7 @@ module.exports = {
   checkPatch,
   checkSacn,
   checkPanns,
+  checkAnalysisModels,
   checkAccess,
   checkMidi,
   STATUSES: { OK, WARN, FAIL, INFO },

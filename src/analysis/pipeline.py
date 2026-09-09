@@ -29,6 +29,7 @@ nested objects; the flat fields are a compatibility surface.
 import os
 import sys
 import time
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -40,6 +41,7 @@ from . import (bands as bands_stage, dsp, dynamics as dynamics_stage,
                structure as structure_stage, tagger)
 from .config import AnalysisConfig, DEFAULT
 from .version import SCHEMA_VERSION
+from . import model_adapters
 
 
 def _log(message):
@@ -109,6 +111,42 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
             audio, frames, rhythm, band_map, roles, sections, dynamics,
             perception, stream, stems))
         document['meta']['elapsedSec'] = round(time.time() - started, 2)
+        document['meta']['processingRatio'] = round(
+            document['meta']['elapsedSec'] / max(0.001, audio.duration), 4)
+        document['meta']['withinRealtimeBudget'] = (
+            document['meta']['processingRatio'] < 1.0)
+        document['track']['hash'] = _file_hash(path)
+        # Optional foundation-model passes are activated by local model
+        # configuration and never block the deterministic core pipeline.
+        try:
+            document['embeddings'] = model_adapters.muq_embeddings(audio.mono, audio.sample_rate)
+            document['semantic_scores'] = model_adapters.semantic_scores(
+                audio.mono, audio.sample_rate,
+                ('euphoric', 'dark', 'mechanical', 'organic', 'intimate',
+                 'aggressive', 'spacious', 'ceremonial', 'warm', 'cold',
+                 'suspended', 'triumphant'))
+        except Exception as exc:
+            _log(f'optional MuQ pass unavailable ({exc}); continuing without it')
+            document['embeddings'] = []
+            document['semantic_scores'] = []
+        document['meta']['modelUsage'] = {
+            'rhythm': 'beat_this',
+            'separation': getattr(stems, 'backend', 'none') if stems is not None else 'none',
+            'key': 'internal_perception',
+            'skey': False,
+            'muq': bool(document['embeddings']),
+            'muqMulan': bool(document['semantic_scores']),
+        }
+        try:
+            skey = model_adapters.skey_key(path)
+        except Exception as exc:
+            _log(f'optional S-KEY pass unavailable ({exc}); keeping internal key estimate')
+            skey = None
+        if skey:
+            document['key'] = skey['value']
+            document['track']['key'] = skey['value']
+            document['meta']['modelUsage']['key'] = 's-key'
+            document['meta']['modelUsage']['skey'] = True
         _log(f'{os.path.basename(path)}: {audio.duration:.1f}s analysed in '
              f'{document["meta"]["elapsedSec"]}s '
              f'({rhythm.bpm:.1f} BPM, {len(sections)} sections, '
@@ -125,6 +163,14 @@ def _safe_separate(audio):
     except Exception as exc:
         _log(f'separation failed ({exc}); instrument roles fall back to bands')
         return None
+
+
+def _file_hash(path):
+    digest = hashlib.sha256()
+    with open(path, 'rb') as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _safe_tag(path):
@@ -196,6 +242,13 @@ def build_document(audio, frames, rhythm, band_map, roles, sections, dynamics,
 
     document = {
         'schemaVersion': SCHEMA_VERSION,
+        'track': {
+            'hash': '',
+            'duration': round(duration, 3),
+            'bpm': round(rhythm.bpm, 2),
+            'key': perception.key,
+            'mode': perception.scale,
+        },
 
         # ── Compatibility surface ──
         # Flat field names the previous analyser emitted. The web client, the

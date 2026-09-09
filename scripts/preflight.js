@@ -19,6 +19,7 @@ require('dotenv').config();
 const path = require('path');
 const { runPreflight } = require('../src/server/preflight');
 const { AnalysisCache } = require('../src/analysis-cache');
+const { spawnSync } = require('child_process');
 
 // ANSI only when someone is actually looking at a terminal; piping this into a
 // log or a CI job should produce plain text.
@@ -50,6 +51,14 @@ function wrap(text, indent, width) {
 }
 
 async function main() {
+  if (process.argv.includes('--download-models')) {
+    const python = process.env.ARTNET_PYTHON || 'python';
+    console.log('  Downloading pretrained analysis weights from Hugging Face…');
+    const result = spawnSync(python, [path.join(__dirname, 'download-models.py')], {
+      stdio: 'inherit', env: process.env,
+    });
+    if (result.status !== 0) process.exit(result.status || 1);
+  }
   const analysisCache = new AnalysisCache(path.join(__dirname, '..', 'cache', 'analysis'));
 
   console.log('\n  Pre-show preflight\n');

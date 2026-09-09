@@ -39,6 +39,28 @@ class AnalysisCache {
     }
   }
 
+  /** Fixture-independent show timeline cache. Kept separate from analysis so
+   * director edits do not force source separation or model inference. */
+  getShow(key) { return this._readVariant(key, 'show'); }
+
+  setShow(key, show, meta = {}) { this._writeVariant(key, 'show', show, meta); }
+
+  _readVariant(key, variant) {
+    if (!key) return null;
+    try {
+      const entry = JSON.parse(fs.readFileSync(this._pathFor(`${variant}:${key}`), 'utf8'));
+      return entry && entry[variant] ? entry[variant] : null;
+    } catch (_) { return null; }
+  }
+
+  _writeVariant(key, variant, value, meta) {
+    if (!key || !value) return;
+    try {
+      const entry = { key, meta, cachedAt: new Date().toISOString(), [variant]: value };
+      fs.writeFileSync(this._pathFor(`${variant}:${key}`), JSON.stringify(entry));
+    } catch (e) { console.warn(`[analysis-cache] failed to write ${variant}: ${e.message}`); }
+  }
+
   /** Cheap existence check (no read/parse) — safe to poll. */
   has(key) {
     if (!key) return false;

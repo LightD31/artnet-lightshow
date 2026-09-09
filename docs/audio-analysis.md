@@ -52,6 +52,18 @@ file in the show layer that knows what a patch field is called.
 
 ## Running it
 
+Before a show, run `npm run preflight`. It downloads the configured pretrained
+weights into the local Art-Net model cache from Hugging Face. Set
+`ARTNET_MODEL_DIR` to move that cache, or `ARTNET_PYTHON` to select the Python
+environment. The RoFormer four-stem checkpoint is published by the community
+registry and its redistribution terms must be checked before commercial use.
+MuQ and MuQ-MuLan weights are CC-BY-NC 4.0; they are suitable for evaluation
+and non-commercial use unless you obtain separate permission.
+
+Set `ARTNET_MUQ_MODEL` and `ARTNET_MUQ_MULAN_MODEL` to the downloaded model
+directories to enable those passes. Without these variables the deterministic
+analysis path continues to run and playback is never held for model loading.
+
 ```bash
 # One track to stdout, plus an interactive debug page
 python src/analyze.py track.wav --report /tmp/report.html
