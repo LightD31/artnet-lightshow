@@ -246,8 +246,9 @@ class Warmer {
       this._onChange();
 
       try {
-        // Normal priority: a track change during a set submits at high
-        // priority and must not sit behind an hour of warming.
+        // Normal priority: a track change during a set submits as the
+        // current track, which must not sit behind an hour of warming — it
+        // interrupts the warm job in flight and this one resumes after.
         const result = await this._autoShow.prefetch(
           job.query, job.durationSec, job.cacheKey,
           { track: { name: job.query } }, job.isrc, 'normal',

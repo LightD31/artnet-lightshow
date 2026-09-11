@@ -12,6 +12,14 @@ const {
 } = require('../analysis-cache');
 const HybridSource = require('../hybrid-source');
 
+// A track change that lands while the previous track is still being analysed
+// hands the analyser to the new song and abandons the old job. That is the
+// priority rule working, not a failure — say so without crying error.
+function reportAnalysisError(label, err) {
+  if (err && err.superseded) console.log(`[auto-show] ${label} dropped: ${err.message}`);
+  else console.error(`${label}:`, err.message);
+}
+
 // Wires the auxiliary subsystems (MIDI feedback, Spotify, now-playing, PRO DJ
 // LINK, auto-show) into the engine + state. Returns the integration handle that
 // routes.js / sockets.js call back into.
@@ -237,7 +245,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       autoShow.start(getProlinkPositionMs);
       console.log('Auto show restarted for new CDJ track');
     } catch (err) {
-      console.error('PRO DJ LINK auto analysis failed:', err.message);
+      reportAnalysisError('PRO DJ LINK auto analysis failed', err);
     }
     broadcast();
   });
@@ -282,10 +290,11 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   /**
    * Peek the Spotify user queue and kick off background prefetches of the
    * next `state.autoPrefetchDepth` upcoming tracks so their analyses are
-   * already in the cache when they start playing. The analyzer worker has a
-   * FIFO queue so multiple prefetches serialize behind it — depth 5 just
+   * already in the cache when they start playing. The analyzer worker serves
+   * one at a time so multiple prefetches serialize behind it — depth 5 just
    * means more cache warming over the course of the current song, not
-   * concurrent CPU thrash. Safe to call while a show is running.
+   * concurrent CPU thrash — and the song that starts playing interrupts
+   * whichever one is running. Safe to call while a show is running.
    */
   async function prefetchNextFromQueue() {
     if (!spotify.authenticated) return;
@@ -399,7 +408,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
         autoShow.start(source === 'hybrid' ? getHybridPositionMs : getAutoPositionMs);
         console.log('Auto show restarted for new track');
       } catch (err) {
-        console.error('Auto show analysis failed for new track:', err.message);
+        reportAnalysisError('Auto show analysis failed for new track', err);
       }
       broadcast();
       prefetchNextFromQueue();
@@ -437,7 +446,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       autoShow.start(getAutoPositionMs);
       console.log('Auto show restarted for new now-playing track');
     } catch (err) {
-      console.error('Now-playing auto analysis failed for new track:', err.message);
+      reportAnalysisError('Now-playing auto analysis failed for new track', err);
     }
     broadcast();
   });
@@ -469,7 +478,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       autoShow.start(getAutoPositionMs);
       console.log('Auto show restarted for new Deezer track');
     } catch (err) {
-      console.error('Deezer auto analysis failed for new track:', err.message);
+      reportAnalysisError('Deezer auto analysis failed for new track', err);
     }
     broadcast();
   });

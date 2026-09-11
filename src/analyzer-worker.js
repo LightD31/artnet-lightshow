@@ -15,6 +15,24 @@ function storedTimeoutMs() {
   return settings.get('analysis.analyzerTimeoutMs');
 }
 
+// Priority bands, in served order. 'current' is the song the room is hearing
+// right now: it outranks everything else, and it is the only band allowed to
+// interrupt an analysis that has already started.
+const RANK = { current: 0, high: 1, normal: 2 };
+const DEFAULT_PRIORITY = 'normal';
+
+function rankOf(priority) {
+  const rank = RANK[priority];
+  return rank === undefined ? RANK[DEFAULT_PRIORITY] : rank;
+}
+
+/** The track was left behind before its analysis finished. */
+function supersededError() {
+  const err = new Error('superseded by a newer current track');
+  err.superseded = true;
+  return err;
+}
+
 /**
  * Long-lived Python analyzer process. Holds numba JIT caches and the PANNs
  * PyTorch model in memory between requests so we only pay the multi-second
@@ -26,8 +44,10 @@ function storedTimeoutMs() {
  *   ← {"id": <n>, "error": "..."}    on failure
  *
  * Concurrency: one request in flight at a time. Concurrent callers queue up
- * and are dispatched FIFO. The Python pipeline already saturates the CPU
- * (BLAS + numba), so running multiple analyses in parallel would just thrash.
+ * and are dispatched by priority, FIFO within a band. The Python pipeline
+ * already saturates the CPU (BLAS + numba), so running multiple analyses in
+ * parallel would just thrash. The song playing right now is the one exception
+ * to waiting your turn: it interrupts whatever is running (see _preempt).
  *
  * Lifecycle: the process is spawned lazily on the first analyze() call.
  * Crashes/exits reject pending requests and clear state; the next analyze()
@@ -72,52 +92,100 @@ class AnalyzerWorker {
 
   /**
    * Submit an analysis. `options.priority`:
-   *   - 'high'   — the "next song" path: jumps ahead of any pending normal
-   *                items so deeper-queue prefetches can't block the song the
-   *                user is about to hear. High requests still queue FIFO
-   *                among themselves and never preempt the in-flight task.
-   *   - 'normal' — default. Background prefetches deeper than slot 0.
+   *   - 'current' — the song playing right now. Served before everything else,
+   *                 and it does not wait for work already in flight: a running
+   *                 prefetch is paused and requeued, a running 'current' whose
+   *                 track has been left behind is rejected.
+   *   - 'high'    — the "next song" path: jumps ahead of any pending normal
+   *                 items so deeper-queue prefetches can't block the song the
+   *                 user is about to hear. High requests still queue FIFO
+   *                 among themselves and wait for the in-flight task.
+   *   - 'normal'  — default. Background prefetches deeper than slot 0.
+   *
+   * `options.tag` names the work (auto-show passes the cache key) so a later
+   * caller can find this request and promote it.
    */
   analyze(source, targetDurationSec, options = {}) {
     if (this._shuttingDown) {
       return Promise.reject(new Error('AnalyzerWorker is shutting down'));
     }
-    const priority = options.priority === 'high' ? 'high' : 'normal';
+    const priority = RANK[options.priority] === undefined ? DEFAULT_PRIORITY : options.priority;
     const tag = options.tag || null;
     return new Promise((resolve, reject) => {
       const id = this._nextId++;
       const entry = { id, source, targetDurationSec, priority, tag, resolve, reject };
       this._insertByPriority(entry);
+      this._preempt();
       this._tick();
     });
   }
 
   /**
-   * Promote a pending (not yet in-flight) request to high priority, moving
-   * it ahead of any normal-priority items currently in the queue. No-op when
-   * the request is already running (can't preempt the in-flight task) or
-   * when no entry matches the tag.
+   * Raise a pending (not yet in-flight) request to `priority`, moving it ahead
+   * of every lower-priority item in the queue. Used when a background prefetch
+   * turns out to be for the track that just started playing.
+   *
+   * A request that is already running is left alone: it is the work we wanted
+   * anyway, and restarting it would throw away everything it has done. No-op
+   * when no entry matches the tag, or when it already ranks that high.
    */
-  bumpToHigh(tag) {
-    if (!tag) return;
+  promote(tag, priority = 'high') {
+    if (!tag || RANK[priority] === undefined) return;
     const idx = this._queue.findIndex((e) => e.tag === tag);
     if (idx < 0) return;
     const entry = this._queue[idx];
-    if (entry.priority === 'high') return;
+    if (rankOf(entry.priority) <= rankOf(priority)) return;
     this._queue.splice(idx, 1);
-    entry.priority = 'high';
+    entry.priority = priority;
     this._insertByPriority(entry);
+    this._preempt();
   }
 
-  _insertByPriority(entry) {
-    if (entry.priority === 'high') {
-      // Insert after all other high-priority entries, before all normal ones.
-      let i = 0;
-      while (i < this._queue.length && this._queue[i].priority === 'high') i++;
-      this._queue.splice(i, 0, entry);
+  /**
+   * Queue by priority band, FIFO within the band. `front` puts the entry at
+   * the head of its own band instead of the tail — for work that already ran
+   * once and was interrupted, so it does not lose its place to its peers.
+   */
+  _insertByPriority(entry, { front = false } = {}) {
+    const rank = rankOf(entry.priority);
+    let i = 0;
+    while (i < this._queue.length
+      && (front ? rankOf(this._queue[i].priority) < rank
+        : rankOf(this._queue[i].priority) <= rank)) i++;
+    this._queue.splice(i, 0, entry);
+  }
+
+  /**
+   * Clear the way for the song that is playing right now.
+   *
+   * The analyser serves one request at a time and a track takes tens of
+   * seconds, so without this a prefetch that started moments before the track
+   * changed would hold the current song's show behind it — the one case where
+   * waiting your turn is the wrong answer.
+   *
+   * A preempted prefetch is requeued rather than failed: its audio is still on
+   * disk and its caller is still waiting, so it restarts once the current
+   * track is served. An older 'current' request is rejected instead — only one
+   * song plays at a time, so its track has already been left behind and its
+   * show would never be used.
+   */
+  _preempt() {
+    const waiting = this._queue[0];
+    if (!this._pending || !waiting || waiting.priority !== 'current') return;
+    // Already analysing this very track: let it run.
+    if (waiting.tag && waiting.tag === this._pending.tag) return;
+    const victim = this._pending;
+    this._pending = null;
+    this._clearTimeout();
+    if (victim.priority === 'current') {
+      console.log(`[analyzer] request ${victim.id} superseded — its track is no longer playing`);
+      victim.reject(supersededError());
     } else {
-      this._queue.push(entry);
+      console.log(`[analyzer] pausing request ${victim.id} for the track now playing`);
+      this._insertByPriority(victim, { front: true });
     }
+    this._recycleProcess();
+    this._tick();
   }
 
   /**
@@ -128,6 +196,16 @@ class AnalyzerWorker {
   restart(reason = 'configuration changed') {
     if (!this._proc) return;                 // next spawn already picks it up
     console.log(`[analyzer] recycling worker: ${reason}`);
+    this._recycleProcess();
+  }
+
+  /**
+   * Drop the worker process without failing the queue behind it: the exit
+   * handler recycles instead of rejecting, and the next _tick() spawns a
+   * fresh process and carries on.
+   */
+  _recycleProcess() {
+    if (!this._proc) return;
     this._recycling = true;
     const proc = this._proc;
     this._proc = null;
@@ -226,13 +304,7 @@ class AnalyzerWorker {
       console.warn(`[analyzer] request ${p.id} exceeded ${Math.round(this._timeoutMs() / 1000)}s — killing worker`);
       p.reject(new Error(`analysis timed out after ${Math.round(this._timeoutMs() / 1000)}s`));
     }
-    if (this._proc) {
-      this._recycling = true;
-      const proc = this._proc;
-      this._proc = null;
-      this._stdoutBuf = '';
-      try { proc.kill(); } catch (_) { /* already gone */ }
-    }
+    this._recycleProcess();
     // Fresh process, continue with whatever is queued.
     this._tick();
   }

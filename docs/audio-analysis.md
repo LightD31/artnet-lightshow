@@ -87,6 +87,16 @@ One request in flight at a time — the analysis already saturates the CPU acros
 BLAS and its own thread pools, so serving two would make both slower.
 `src/analyzer-worker.js` owns the queue, the priority ordering and the timeout.
 
+Requests are served by priority band — `current`, then `high`, then `normal` —
+FIFO within a band. The song playing right now is the one request that does not
+wait its turn: it interrupts the analysis in flight. An interrupted prefetch is
+requeued at the head of its band and restarts once the live track is served; its
+downloaded audio is still on disk and its caller never learns it was paused. An
+interrupted analysis of a track that has itself stopped playing is dropped
+rather than requeued — nobody is waiting on that show any more. Interrupting
+costs a worker respawn and its warm-up; waiting a prefetch out costs the better
+part of a minute with the room dark.
+
 ---
 
 ## Stage 1 — preprocessing (`preprocess.py`, `loudness.py`)

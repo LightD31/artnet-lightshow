@@ -22,6 +22,13 @@ function downloadTimeoutMs() {
   return settings.get('analysis.downloadTimeoutMs');
 }
 
+/** The show moved on to another track before this analysis finished. */
+function supersededError() {
+  const err = new Error('superseded by a newer current track');
+  err.superseded = true;
+  return err;
+}
+
 // The look vocabulary — palette banks, genre styles, pattern pools — lives in
 // src/show/look.js, and the decisions that use it live in src/show/director.js.
 // This file owns fetching audio, driving the analyser and playing a timeline
@@ -87,6 +94,10 @@ class AutoShow {
     // (e.g. a prefetch that's still running when the track changes) join the
     // same download/analyze job instead of racing it.
     this._inFlight = new Map(); // cacheKey -> Promise<analysis>
+    // Identifies the newest current-track job. Anything older that finishes
+    // late is for a song that has already been left behind and must not touch
+    // the running show.
+    this._currentJob = null;
   }
 
   get status() { return this._status; }
@@ -204,7 +215,8 @@ class AutoShow {
   _runAnalyzer(source, targetDurationSec = null, priority = 'normal', tag = null) {
     const tgt = Number.isFinite(targetDurationSec) && targetDurationSec > 0
       ? targetDurationSec : null;
-    console.log(`[analyzer] Analyzing${priority === 'high' ? ' (high)' : ''}: ${path.basename(source)}${tgt ? ` (target ${Math.round(tgt)}s)` : ''}`);
+    const band = priority === 'normal' ? '' : ` (${priority})`;
+    console.log(`[analyzer] Analyzing${band}: ${path.basename(source)}${tgt ? ` (target ${Math.round(tgt)}s)` : ''}`);
     return this._worker.analyze(source, tgt, { priority, tag }).then((result) => {
       console.log(`[analyzer] Models used (${path.basename(source)}): ${formatModelUsage(result)}`);
       return result;
@@ -225,11 +237,21 @@ class AutoShow {
     if (this._worker) this._worker.shutdown();
   }
 
+  /**
+   * Analyse a file the operator handed us and load it as the show. Same
+   * standing as `downloadAndAnalyze`: whatever is about to play in the room
+   * outranks background prefetches, and a newer one supersedes this.
+   */
   async analyze(source, cacheKey = null) {
+    const token = Symbol(cacheKey || source);
+    this._currentJob = token;
+    const isCurrent = () => this._currentJob === token;
+
     if (this._loadFromCache(cacheKey)) return this.analysis;
     this._status = 'analyzing';
     try {
-      const result = await this._runAnalyzer(source);
+      const result = await this._runAnalyzer(source, null, 'current', cacheKey);
+      if (!isCurrent()) throw supersededError();
       this.analysis = result;
       this.buildTimeline();
       this._status = 'ready';
@@ -238,7 +260,7 @@ class AutoShow {
       }
       return result;
     } catch (err) {
-      this._status = 'idle';
+      if (isCurrent()) this._status = 'idle';
       throw err;
     }
   }
@@ -285,8 +307,9 @@ class AutoShow {
       // Joining an existing fetch — if we're now urgent (downloadAndAnalyze
       // for the current track) but the original submission was a background
       // prefetch, promote the worker queue entry so it doesn't sit behind
-      // other normal-priority prefetches.
-      if (priority === 'high' && this._worker) this._worker.bumpToHigh(cacheKey);
+      // other prefetches. A prefetch that is already running stays running:
+      // it is the very work we need, just started early.
+      if (priority !== 'normal' && this._worker) this._worker.promote(cacheKey, priority);
       return this._inFlight.get(cacheKey);
     }
     const promise = this._fetchAnalysis(query, targetDurationSec, cacheKey, meta, isrc, onPhase, priority);
@@ -312,7 +335,7 @@ class AutoShow {
     if (this._inFlight.has(cacheKey)) return { skipped: true, reason: 'in-flight' };
 
     try {
-      console.log(`[auto-show] prefetching${priority === 'high' ? ' (high)' : ''}: ${query}`);
+      console.log(`[auto-show] prefetching${priority === 'normal' ? '' : ` (${priority})`}: ${query}`);
       await this._fetchShared(query, targetDurationSec, cacheKey, meta, isrc, null, priority);
       console.log(`[auto-show] prefetched and cached: ${cacheKey}`);
       return { skipped: false };
@@ -322,7 +345,21 @@ class AutoShow {
     }
   }
 
+  /**
+   * Analyse the song that is playing right now and load it as the show.
+   *
+   * Each call supersedes the one before it: only one song plays at a time, so
+   * a job still running when the track changes is working on a track the room
+   * has already left behind. It loses the analyser to the new one, and if it
+   * finishes anyway its result is dropped rather than replacing the running
+   * show with the previous track's timeline. Rejects with `err.superseded`
+   * set in that case — the caller should not start a show from it.
+   */
   async downloadAndAnalyze(query, targetDurationSec = null, cacheKey = null, isrc = null) {
+    const token = Symbol(cacheKey || query);
+    this._currentJob = token;
+    const isCurrent = () => this._currentJob === token;
+
     // Cache hit → skip the download entirely.
     if (this._loadFromCache(cacheKey)) {
       return { analysis: this.analysis, cached: true };
@@ -340,17 +377,18 @@ class AutoShow {
         // Flip the badge to ANALYZING once the WAV is on disk — librosa
         // alone takes 30-90s on a 3-5min track, and leaving "DOWNLOADING"
         // up that whole time reads as a hang.
-        (phase) => { if (phase === 'analyzing') this._status = 'analyzing'; },
-        // The track the user is about to hear — outranks any background
-        // prefetches sitting in the worker queue.
-        'high',
+        (phase) => { if (phase === 'analyzing' && isCurrent()) this._status = 'analyzing'; },
+        // The song the room is hearing — outranks every prefetch, and
+        // interrupts one that is already running rather than waiting it out.
+        'current',
       );
+      if (!isCurrent()) throw supersededError();
       this.analysis = analysis;
       this.buildTimeline();
       this._status = 'ready';
       return { analysis, cached: joining };
     } catch (err) {
-      this._status = 'idle';
+      if (isCurrent()) this._status = 'idle';
       throw err;
     }
   }

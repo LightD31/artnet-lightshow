@@ -263,10 +263,12 @@ Tracks already on disk are skipped without touching the analyser, so re-running
 a list is nearly instant. A track yt-dlp cannot find is recorded and the rest of
 the list continues.
 
-Warming runs at normal priority, so a track change during a set (which submits
-at high priority) never sits behind an hour of it. **Stop** ends the queue; the
-track being analysed at that moment finishes, since abandoning it would mean
-throwing away work that was nearly done.
+Warming runs at normal priority, so a track change during a set never sits
+behind an hour of it. The song that starts playing is submitted as the current
+track: it jumps the queue and interrupts the warm job already running, which
+keeps its audio and is re-analysed as soon as the live track is served.
+**Stop** ends the queue; the track being analysed at that moment finishes, since
+abandoning it would mean throwing away work that was nearly done.
 
 Up to 200 tracks per run.
 
