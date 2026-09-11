@@ -34,10 +34,27 @@ _MIN_CHECKPOINT_BYTES = int(3e8)
 
 SAMPLE_RATE = 32000
 CHUNK_SECONDS = 10  # the clip length the model was trained on
+#: Ten-second chunks pushed through Cnn14 at once. The model stays on the CPU
+#: (see `tag`), so this is bounded by working memory rather than by the card:
+#: four chunks is a couple of hundred megabytes of activations and keeps the
+#: analyser well clear of the render loop's headroom.
+BATCH_CHUNKS = max(1, int(os.environ.get('ARTNET_TAGGER_BATCH', '4')))
 
 
 def _log(message):
     print(f'[tagger] {message}', file=sys.stderr)
+
+
+def _batched(items, size):
+    """Yield consecutive equal-length runs of `items`, at most `size` long."""
+    group = []
+    for item in items:
+        if group and (len(item) != len(group[0]) or len(group) >= size):
+            yield group
+            group = []
+        group.append(item)
+    if group:
+        yield group
 
 
 def installed():
@@ -165,16 +182,23 @@ def tag(samples=None, sample_rate=None, path=None):
 
     samples = np.asarray(samples, dtype=np.float32)
     chunk = SAMPLE_RATE * CHUNK_SECONDS
+    pieces = [samples[start:start + chunk]
+              for start in range(0, max(1, len(samples)), chunk)]
+    pieces = [piece for piece in pieces if len(piece) >= SAMPLE_RATE]
+    if not pieces:
+        return None
+
+    # Chunks of the same length go through together. A four-minute track is
+    # roughly two dozen of them, and one call per chunk spends more time in
+    # Python and in per-call setup than in the network itself. Only the last
+    # chunk runs short, so in practice this is one batched call plus one.
     total = None
     used = 0
-    for start in range(0, max(1, len(samples)), chunk):
-        piece = samples[start:start + chunk]
-        if len(piece) < SAMPLE_RATE:
-            continue
-        clipwise, _embedding = _MODEL.inference(piece[np.newaxis, :])
-        probs = clipwise[0]
-        total = probs if total is None else total + probs
-        used += 1
+    for group in _batched(pieces, BATCH_CHUNKS):
+        clipwise, _embedding = _MODEL.inference(np.stack(group))
+        for probs in clipwise:
+            total = probs if total is None else total + probs
+            used += 1
     if total is None or used == 0:
         return None
 

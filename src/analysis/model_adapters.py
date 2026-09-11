@@ -100,12 +100,36 @@ def preload():
             print(f"[models] {kind} warm-up skipped: {exc}", file=sys.stderr)
 
 
+#: Windows pushed through MuQ in one forward pass. The windows overlap four to
+#: one, so a track is hundreds of them and one-at-a-time leaves the card idle
+#: between kernel launches while Python walks the loop. Eight is chosen to keep
+#: the activation working set small enough that batching never becomes the
+#: thing that runs the card out of memory.
+_MUQ_BATCH = max(1, int(os.environ.get("ARTNET_MUQ_BATCH", "8")))
+
+
+def _to_24k(waveform, sample_rate: int):
+    """The 24 kHz mono signal both MuQ towers want, resampled once."""
+    import numpy as np
+    audio = np.asarray(waveform, dtype=np.float32)
+    if int(sample_rate) == 24000:
+        return audio
+    import librosa
+    return librosa.resample(audio, orig_sr=sample_rate, target_sr=24000)
+
+
 def muq_embeddings(waveform, sample_rate: int, *, step_sec: float = 2.0):
     """Extract MuQ windows when ``muq`` and a configured checkpoint exist.
 
     MuQ requires 24 kHz input and fp32 inference.  The adapter intentionally
     does not download weights during a show; set ``ARTNET_MUQ_MODEL`` to a
     local checkpoint directory and provision it before playback.
+
+    Windows are encoded in batches. An eight-second window every two seconds
+    means a four-minute track is about a hundred and twenty forward passes, and
+    run one at a time each is small enough that the launch overhead costs more
+    than the arithmetic. The windows themselves are unchanged, so the vectors
+    are the same ones the show engine was reading before.
     """
     module = _optional("muq")
     model_id = _model_path("muq", "ARTNET_MUQ_MODEL")
@@ -113,22 +137,35 @@ def muq_embeddings(waveform, sample_rate: int, *, step_sec: float = 2.0):
         return []
     import numpy as np
     import torch
-    import librosa
+    from . import models
     model = _load_muq("MuQ", model_id)
     device = next(model.parameters()).device
-    audio = librosa.resample(np.asarray(waveform, dtype=np.float32),
-                             orig_sr=sample_rate, target_sr=24000)
+    audio = _to_24k(waveform, sample_rate)
     hop = max(1, int(step_sec * 24000)); window = 8 * 24000
+
+    # Every window but the last few is exactly `window` long; only the tail
+    # runs short. Batching needs equal lengths, so the full ones go through
+    # together and the ragged tail goes through as it did before.
+    starts = [s for s in range(0, len(audio), hop) if len(audio[s:s + window]) >= 24000]
+    full = [s for s in starts if len(audio[s:s + window]) == window]
+    tail = [s for s in starts if len(audio[s:s + window]) != window]
+
     result = []
-    with torch.no_grad():
-        for start in range(0, len(audio), hop):
-            chunk = audio[start:start + window]
-            if len(chunk) < 24000:
-                break
-            output = model(torch.from_numpy(chunk).unsqueeze(0).to(device))
+    with models.inference("muq"), torch.no_grad():
+        for index in range(0, len(full), _MUQ_BATCH):
+            group = full[index:index + _MUQ_BATCH]
+            batch = np.stack([audio[s:s + window] for s in group])
+            output = model(torch.from_numpy(batch).to(device))
+            vectors = output.last_hidden_state.mean(dim=1).float().cpu().tolist()
+            for start, vector in zip(group, vectors):
+                result.append({"time": round(start / 24000, 3), "vector": vector,
+                               "confidence": 1.0, "source": "muq"})
+        for start in tail:
+            output = model(torch.from_numpy(audio[start:start + window]).unsqueeze(0).to(device))
             vector = output.last_hidden_state.mean(dim=1)[0].float().cpu().tolist()
             result.append({"time": round(start / 24000, 3), "vector": vector,
                            "confidence": 1.0, "source": "muq"})
+    result.sort(key=lambda row: row["time"])
     return result
 
 
@@ -149,29 +186,69 @@ def mulan_scores(waveform, sample_rate: int, vocabularies):
         return {name: [] for name in vocabularies}
     import numpy as np
     import torch
-    import librosa
+    from . import models
     model = _load_muq("MuQMuLan", model_id)
     device = next(model.parameters()).device
-    audio = librosa.resample(np.asarray(waveform, dtype=np.float32),
-                             orig_sr=sample_rate, target_sr=24000)
+    audio = _to_24k(waveform, sample_rate)
     result = {}
-    with torch.no_grad():
+    with models.inference("muq-mulan"), torch.no_grad():
         embedded = model(wavs=torch.from_numpy(audio).unsqueeze(0).to(device))
         for name, vocabulary in vocabularies.items():
-            labels = list(vocabulary)
+            labels = tuple(vocabulary)
             if not labels:
                 result[name] = []
                 continue
-            text = model(texts=labels)
+            text = _text_latents(model, labels)
             scores = model.calc_similarity(embedded, text)[0].float().cpu().tolist()
             result[name] = [{"label": label, "score": float(score), "source": "muq-mulan"}
                             for label, score in zip(labels, scores)]
     return result
 
 
+# Text latents, keyed by the model instance and the exact label tuple. The
+# model is held alongside its latents so a dead object's id cannot be reused
+# for a live one.
+_TEXT_LATENTS = {}
+
+
+def _text_latents(model, labels):
+    """
+    Encode a vocabulary once per process rather than once per track.
+
+    The genre prompts and the mood words are fixed constants — the same
+    fifty-six strings for every track of every show — but the text tower is a
+    full XLM-RoBERTa and it was being run over them again for each one. Its
+    answer cannot change between tracks, so it is computed on the first track
+    and read from memory after.
+    """
+    key = (id(model), labels)
+    hit = _TEXT_LATENTS.get(key)
+    if hit is not None:
+        return hit[1]
+    latents = model(texts=list(labels))
+    _TEXT_LATENTS[key] = (model, latents)
+    return latents
+
+
 def semantic_scores(waveform, sample_rate: int, vocabulary):
     """Return MuQ-MuLan similarities for one vocabulary, or an empty list."""
     return mulan_scores(waveform, sample_rate, {"semantic": vocabulary})["semantic"]
+
+
+def muq_pass(waveform, sample_rate: int, vocabularies):
+    """
+    Every MuQ question about one track, asked in one visit to the card.
+
+    Both towers want the same 24 kHz signal, and resampling a four-minute track
+    is not free, so it happens once here rather than once inside each adapter.
+    Grouping them also lets the caller put the whole MuQ stage on a thread
+    beside the DSP: the embeddings used to run inline after the document was
+    assembled, which put the slowest optional model squarely on the critical
+    path for no reason — nothing later in the pipeline reads them.
+    """
+    audio = _to_24k(waveform, sample_rate)
+    return {"scores": mulan_scores(audio, 24000, vocabularies),
+            "embeddings": muq_embeddings(audio, 24000)}
 
 
 def skey_key(audio_path: str):

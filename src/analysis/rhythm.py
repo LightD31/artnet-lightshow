@@ -544,8 +544,9 @@ def model_beats(audio, config: RhythmConfig):
     from . import models
     try:
         tracker = models.beat_tracker()
-        beats, downbeats = tracker(np.asarray(audio.mono, dtype=np.float32),
-                                   audio.sample_rate)
+        with models.inference('beat_this'):
+            beats, downbeats = tracker(np.asarray(audio.mono, dtype=np.float32),
+                                       audio.sample_rate)
     except Exception as exc:
         raise ModelUnavailable(
             f'the beat model could not run ({exc}). Install the analysis '

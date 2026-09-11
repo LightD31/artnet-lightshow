@@ -17,8 +17,13 @@ reason the worker exists.
 **Failure.** A missing checkpoint on the machine at load-in is a show that does
 not happen, so the errors raised here name the model and say what to install
 rather than surfacing a bare ImportError from three frames down.
+
+**Room.** One card, several models, one process that never exits. `inference()`
+is how anything touches the GPU: it takes turns and it hands back what it
+reserved. See the note above it for why both halves matter.
 """
 
+import contextlib
 import os
 import sys
 import threading
@@ -28,6 +33,21 @@ import threading
 _LOCK = threading.RLock()
 _CACHE = {}
 _DEVICE = None
+
+# Held for the duration of one model's pass over one track. Separate from
+# _LOCK, which guards the cache dict: a model loading must not block a
+# different model that is mid-inference.
+_GPU_LOCK = threading.RLock()
+
+# Growable allocator segments, set before torch makes its first CUDA
+# allocation. The analyser is a long-lived process that sees a different track
+# length every time, so every pass asks for slightly different block sizes.
+# With fixed segments the freed blocks cannot be merged back together, and
+# after a few dozen tracks the card reports gigabytes free with no single piece
+# of it big enough to hold a checkpoint — which is what "not enough memory to
+# load a model" turns out to mean here. An operator who has already set this
+# keeps their value.
+os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'expandable_segments:True')
 
 
 def _log(message):
@@ -117,6 +137,91 @@ def cached(key, build):
         return _CACHE[key]
 
 
+def unload(key):
+    """
+    Drop a cached model and give the card back its weights.
+
+    Used where two models answer the same question and only one of them is
+    going to be asked — keeping the loser resident costs hundreds of megabytes
+    for the life of the process and buys nothing.
+    """
+    with _LOCK:
+        model = _CACHE.pop(key, None)
+    if model is None:
+        return False
+    del model
+    release_memory()
+    _log(f'unloaded {key}')
+    return True
+
+
+def on_gpu():
+    """Is the pipeline running on CUDA? Asked without importing torch."""
+    return str(device()).startswith('cuda')
+
+
+def release_memory():
+    """
+    Return the caching allocator's free blocks to the driver.
+
+    Worth doing between stages and between tracks, and not inside a loop: it
+    synchronises with the device, so calling it per window would cost more than
+    the fragmentation it prevents.
+    """
+    if not on_gpu():
+        return
+    try:
+        import torch
+        gc_collect()
+        torch.cuda.empty_cache()
+    except Exception as exc:  # pragma: no cover - diagnostics only
+        _log(f'could not release device memory: {exc}')
+
+
+def gc_collect():
+    """Drop unreachable tensors before asking the allocator to hand blocks back.
+
+    A tensor caught in a traceback or a reference cycle still owns its memory,
+    and `empty_cache()` can only free what nothing points at any more.
+    """
+    import gc
+    gc.collect()
+
+
+@contextlib.contextmanager
+def inference(label='model'):
+    """
+    Hold the device for one model's pass over one track, then hand it back.
+
+    Two separate problems, one context manager.
+
+    *Taking turns.* The pipeline deliberately runs the separator, the tagger
+    and MuQ-MuLan in parallel threads, which is right on a CPU and wrong on one
+    GPU: run concurrently their peak allocations add together rather than
+    taking turns, so a card that fits any one of them comfortably fits all
+    three only sometimes. Which tracks fail then depends on their length and on
+    who won the race, which is exactly the "occasionally" in the bug report.
+    Serialising costs close to nothing, because a single one of these models
+    already saturates the card — the threads still overlap the DSP stages,
+    which is where the parallelism was actually paying.
+
+    *Handing it back.* Releasing after each stage keeps the high-water mark at
+    one model's working set instead of the sum of every model that ran this
+    track.
+
+    On CPU this is a no-op wrapper: there is no single device to contend for,
+    and the existing parallelism is what the CPU numbers in the docs measure.
+    """
+    if not on_gpu():
+        yield
+        return
+    with _GPU_LOCK:
+        try:
+            yield
+        finally:
+            release_memory()
+
+
 # ── Beat and downbeat tracking ──────────────────────────────────────────────
 
 def beat_tracker():
@@ -192,14 +297,24 @@ def bs_roformer_separator():
     return cached('bs-roformer-4stem', build)
 
 
+def bs_roformer_enabled():
+    """Is BS-RoFormer the configured separator? One reader, several callers."""
+    return os.environ.get('ARTNET_USE_BS_ROFORMER', '1').lower() not in ('0', 'false', 'no')
+
+
 def warm_up():
     """
     Load every model now rather than on the first track.
 
     The worker is spawned at server start precisely so this cost lands while
     the operator is still opening the UI, not while a track is waiting.
+
+    Only the separator that is actually going to run is warmed. Loading both
+    used to leave whichever one lost sitting on the card for the life of the
+    process, which on an 8 GB card is memory the track being analysed needs.
     """
-    for load in (beat_tracker, separator):
+    chosen = bs_roformer_separator if bs_roformer_enabled() else separator
+    for load in (beat_tracker, chosen):
         try:
             load()
         except Exception as exc:

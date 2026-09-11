@@ -76,11 +76,18 @@ def separate(mono, sample_rate, overlap=0.10, segment_seconds=None):
     # community checkpoint. Keep this opt-in until a compatible registry model
     # and config are explicitly supplied; this prevents a show from paying a
     # failed load attempt on every track.
-    if os.environ.get('ARTNET_USE_BS_ROFORMER', '1').lower() not in ('0', 'false', 'no'):
+    if models.bs_roformer_enabled():
         try:
             return separate_bs_roformer(mono, sample_rate)
         except Exception as exc:
             print(f'[stems] BS-RoFormer unavailable; using Demucs: {exc}', file=sys.stderr)
+            # Never hold both. The usual reason this path is taken is that the
+            # card had no room for BS-RoFormer, and answering that by loading a
+            # second separator alongside it is how one bad track turns into
+            # every later track failing too. Dropping it also means the next
+            # track retries BS-RoFormer from a clean card rather than being
+            # quietly downgraded for the rest of the night.
+            models.unload('bs-roformer-4stem')
 
     model = models.separator()
     device = models.device()
@@ -95,12 +102,12 @@ def separate(mono, sample_rate, overlap=0.10, segment_seconds=None):
     kwargs = dict(device=device, split=True, overlap=overlap, progress=False)
     if segment_seconds:
         kwargs['segment'] = segment_seconds
-    with torch.no_grad():
-        separated = apply_model(model, tensor, **kwargs)[0]
+    with models.inference('demucs'), torch.no_grad():
+        separated = apply_model(model, tensor, **kwargs)[0].cpu()
 
     out = {}
     for name, source in zip(model.sources, separated):
-        signal = source.mean(dim=0).cpu().numpy()
+        signal = source.mean(dim=0).numpy()
         back = librosa.resample(signal, orig_sr=model.samplerate,
                                 target_sr=sample_rate)
         # Length can drift by a sample or two through two resamples; the rest
@@ -133,7 +140,8 @@ def separate_bs_roformer(mono, sample_rate):
         try:
             for target in targets:
                 target.output_dir = tmp
-            paths = separator.separate(source)
+            with models.inference('bs-roformer'):
+                paths = separator.separate(source)
         finally:
             for target, previous in zip(targets, previous_dirs):
                 target.output_dir = previous

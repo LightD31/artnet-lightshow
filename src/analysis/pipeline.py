@@ -71,12 +71,21 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
     # preprocessing is what failed.
     tag_pool, tag_future = None, None
     mulan_pool, mulan_future = None, None
-    if config.enable_tagger and tagger.installed():
-        tag_pool = ThreadPoolExecutor(max_workers=1)
-        tag_future = tag_pool.submit(_safe_tag, path)
+    tagging = config.enable_tagger and tagger.installed()
 
     try:
         audio = preprocess_stage.prepare(path, config.preprocess, target_duration_sec)
+
+        # The tagger used to read the file itself, which let it start before
+        # preprocessing — at the price of decoding and resampling the whole
+        # track a second time. Preprocessing already produces exactly what it
+        # wants: mono at 32 kHz, and loudness-normalised, so the same track
+        # masters at two levels no longer tags differently. Waiting for that
+        # costs less than the decode it saves, and it still overlaps every
+        # stage after this one.
+        if tagging:
+            tag_pool = ThreadPoolExecutor(max_workers=1)
+            tag_future = tag_pool.submit(_safe_tag, path, audio)
 
         # Separation is the most expensive stage and needs nothing but the
         # waveform, so it starts here and is collected as late as possible. On
@@ -90,10 +99,13 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
         # MuQ-MuLan answers the genre question, so it has to be collected
         # before perception rather than tacked on after the document is built.
         # It wants the waveform rather than the file, which is why it starts
-        # here and not alongside the AudioSet tagger.
+        # here and not alongside the AudioSet tagger. The timbre embeddings
+        # ride along on the same thread: they share the resample, and nothing
+        # in the pipeline reads them, so running them here rather than inline
+        # at the end takes the slowest optional model off the critical path.
         if config.enable_semantics:
             mulan_pool = ThreadPoolExecutor(max_workers=1)
-            mulan_future = mulan_pool.submit(_safe_mulan, audio)
+            mulan_future = mulan_pool.submit(_safe_muq, audio)
 
         frames = features_stage.extract(audio, config.preprocess)
 
@@ -102,7 +114,9 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
 
         tags = _collect(tag_future)
         stems = _collect(stem_future)
-        mulan = _collect(mulan_future) or {}
+        muq = _collect(mulan_future) or {}
+        mulan = muq.get('scores') or {}
+        embeddings = muq.get('embeddings') or []
         if stem_pool is not None:
             stem_pool.shutdown(wait=False)
         if mulan_pool is not None:
@@ -138,12 +152,9 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
             perception, stream, stems))
         document['track']['hash'] = _file_hash(path)
         # Optional foundation-model passes are activated by local model
-        # configuration and never block the deterministic core pipeline.
-        try:
-            document['embeddings'] = model_adapters.muq_embeddings(audio.mono, audio.sample_rate)
-        except Exception as exc:
-            _log(f'optional MuQ embeddings unavailable ({exc}); continuing without them')
-            document['embeddings'] = []
+        # configuration and never block the deterministic core pipeline. Both
+        # were collected above, off the critical path.
+        document['embeddings'] = embeddings
         document['semantic_scores'] = mulan.get('semantic') or []
         document['meta']['modelUsage'] = {
             'rhythm': 'beat_this',
@@ -184,6 +195,15 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
             tag_pool.shutdown(wait=False)
         if mulan_pool is not None:
             mulan_pool.shutdown(wait=False)
+        # The worker analyses one track after another for the life of the
+        # show, so whatever this track reserved has to go back before the next
+        # one asks for it — including on the failure path, where a half-built
+        # stage is exactly the case that leaves the most behind.
+        try:
+            from . import models
+            models.release_memory()
+        except Exception:
+            pass
 
 
 def _safe_separate(audio):
@@ -202,21 +222,33 @@ def _file_hash(path):
     return digest.hexdigest()
 
 
-def _safe_mulan(audio):
-    """Genre and mood prompts in one MuQ-MuLan pass, or `{}` when unavailable."""
+def _safe_muq(audio):
+    """Genre, mood and timbre in one MuQ visit, or `{}` when unavailable."""
     try:
-        return model_adapters.mulan_scores(audio.mono, audio.sample_rate, {
+        return model_adapters.muq_pass(audio.mono, audio.sample_rate, {
             'genre': perception_stage.genre_prompts(),
             'semantic': SEMANTIC_VOCABULARY,
         })
     except Exception as exc:
-        _log(f'optional MuQ-MuLan pass unavailable ({exc}); '
+        _log(f'optional MuQ pass unavailable ({exc}); '
              f'genre falls back to the AudioSet tagger or the signal')
         return {}
 
 
-def _safe_tag(path):
+def _safe_tag(path, audio=None):
+    """
+    Tag the already-decoded wideband signal, falling back to the file.
+
+    `wideband` is None when the source had no bandwidth above the analysis
+    rate. Resampling the mono signal up is still cheaper than decoding the file
+    again, and the model is robust to the missing top octave — it is the same
+    signal every other stage reads.
+    """
     try:
+        if audio is not None:
+            if audio.wideband is not None and audio.wideband_rate:
+                return tagger.tag(samples=audio.wideband, sample_rate=audio.wideband_rate)
+            return tagger.tag(samples=audio.mono, sample_rate=audio.sample_rate)
         return tagger.tag(path=path)
     except Exception as exc:
         _log(f'tagger failed: {exc}')

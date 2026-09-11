@@ -50,6 +50,57 @@ class ModelOutputs(unittest.TestCase):
         self.assertEqual(model.call_args_list[0].args[0].shape, (1, 4 * 24000))
         json.dumps(result, allow_nan=False)
 
+    def test_batched_windows_keep_every_window_on_its_own_timestamp(self):
+        # Windows are encoded in batches for speed. The risk that buys is a
+        # vector landing on the wrong timestamp, so the fake encoder returns
+        # something derived from the audio it was actually handed and the test
+        # checks each row against the window it claims to describe.
+        import numpy as np
+        import torch
+        audio = np.linspace(0.0, 1.0, 20 * 24000, dtype=np.float32)
+        window, hop = 8 * 24000, 2 * 24000
+
+        def encode(tensor):
+            out = MagicMock()
+            means = tensor.mean(dim=1)
+            out.last_hidden_state = means[:, None, None].repeat(1, 3, 4)
+            return out
+
+        model = MagicMock(side_effect=encode)
+        model.parameters.return_value = iter([torch.zeros(1)])
+        with patch.object(adapters, '_optional', return_value=object()), \
+             patch.object(adapters, '_load_muq', return_value=model):
+            result = adapters.muq_embeddings(audio, 24000)
+
+        starts = [s for s in range(0, len(audio), hop) if len(audio[s:s + window]) >= 24000]
+        self.assertEqual([row['time'] for row in result],
+                         [round(s / 24000, 3) for s in starts])
+        for row, start in zip(result, starts):
+            expected = float(np.mean(audio[start:start + window]))
+            for value in row['vector']:
+                self.assertAlmostEqual(value, expected, places=5)
+        # The point of batching: far fewer forward passes than windows.
+        self.assertLess(model.call_count, len(starts))
+
+    def test_text_vocabulary_is_encoded_once_across_tracks(self):
+        # The prompts are fixed constants, so the text tower must not run again
+        # for the second track of the night.
+        import numpy as np
+        import torch
+        model = MagicMock()
+        model.parameters.return_value = iter([torch.zeros(1), torch.zeros(1)])
+        model.calc_similarity.return_value = torch.tensor([[0.3, 0.1]])
+        with patch.object(adapters, '_optional', return_value=object()), \
+             patch.object(adapters, '_load_muq', return_value=model), \
+             patch.dict(adapters._TEXT_LATENTS, {}, clear=True):
+            for _ in range(2):
+                adapters.mulan_scores(np.zeros(24000, dtype=np.float32), 24000,
+                                      {'genre': ['techno', 'jazz']})
+            text_calls = [c for c in model.call_args_list if 'texts' in c.kwargs]
+            audio_calls = [c for c in model.call_args_list if 'wavs' in c.kwargs]
+        self.assertEqual(len(text_calls), 1)
+        self.assertEqual(len(audio_calls), 2)
+
     def test_one_audio_pass_serves_every_vocabulary(self):
         # The audio tower is the expensive half and its output does not depend
         # on the labels, so genre and mood must share a single encode.
