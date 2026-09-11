@@ -166,8 +166,10 @@ function printSummary(analysis, timeline) {
 
   if (analysis.genre) {
     const g = analysis.genre;
-    console.log('\n── Genre (PANNs) ───────────────────────────');
-    console.log(`  label          ${g.label} (${g.labelConf})`);
+    const from = { 'muq-mulan': 'MuQ-MuLan', panns: 'PANNs', signal: 'tempo/arousal' };
+    console.log('\n── Genre ───────────────────────────────────');
+    console.log(`  label          ${g.label} (${g.labelConf})`
+      + `  via ${from[g.source] || g.source || '?'}`);
     if (g.subScores) {
       const ranked = Object.entries(g.subScores)
         .sort((a, b) => b[1] - a[1])

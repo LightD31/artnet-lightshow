@@ -372,12 +372,27 @@ So every detector measures both sides of a transition:
   190 BPM and 60 BPM are both hard to dance to for opposite reasons.
 * **Kickiness** — is the low end punching or sustaining? Read off the kick
   *role*, not the raw bass band, because the band contains the bass line too.
-* **Genre** — the pipeline's only learned component: PANNs Cnn14 over AudioSet's
-  527 classes, folded into sixteen subgenres and then into one of four show
-  styles. It answers what DSP cannot, because "electronic dance music" is a
-  cultural category and not a spectral one.
+* **Genre** — MuQ-MuLan scored zero-shot against the sixteen subgenres, folded
+  into one of four show styles. It answers what DSP cannot, because "electronic
+  dance music" is a cultural category and not a spectral one.
 
-  The tag only gets to set the style when it clears `GENRE_MIN_SCORE` *and*
+  MuQ-MuLan is a joint music/text embedding, so the classes are whatever you
+  ask it for: `GENRE_PROMPTS` names the sixteen subgenres directly, in a few
+  phrasings each, and each subgenre takes its best-matching prompt. That is why
+  it replaced PANNs Cnn14 here. Cnn14 is a general-audio tagger trained on
+  AudioSet, so its 527 classes had to be *folded* into musical categories —
+  guessing that `independent music` means rock, that `flamenco` means latin,
+  that `christian music` fired on close vocal harmony does not mean gospel. The
+  fold, not the model's confidence, is where its worst answers came from, and a
+  model trained on music rather than on general audio does not need one.
+
+  Similarities are cosine values rather than probabilities, so they go through
+  a softmax at `GENRE_SOFTMAX_TEMPERATURE` before meeting the thresholds below.
+  The temperature is set by where it puts the floor: an undecided model sits at
+  1/16 = 0.06, and 0.15 lands almost exactly on a best prompt leading the field
+  by a tenth of a cosine.
+
+  The label only gets to set the style when it clears `GENRE_MIN_SCORE` *and*
   beats the runner-up by `GENRE_MIN_MARGIN`; otherwise the style comes from the
   signal and the label stays `unknown`. The thresholds exist because the four
   styles are not symmetric in what they cost: `calm` is the only one that turns
@@ -390,9 +405,13 @@ So every detector measures both sides of a transition:
   arousal and danceability both say otherwise, because those are measured
   rather than inferred.
 
-  Entirely optional. Without torch installed, the style comes from tempo and
-  arousal instead, and the genre label stays `unknown` — saying "this is house"
-  from a tempo is how a live band gets lit like a DJ set.
+  Three tiers, and every one of them is optional. Without the MuQ-MuLan
+  checkpoint the AudioSet fold answers instead, if `panns_inference` is
+  installed; without either, the style comes from tempo and arousal and the
+  label stays `unknown` — saying "this is house" from a tempo is how a live band
+  gets lit like a DJ set. `perception.genre.source` records which tier answered,
+  and it is not the same question as which model ran: a model that came back
+  undecided loses to the signal and says so.
 
 ## Stage 8 — musical events (`events.py`)
 
@@ -436,8 +455,11 @@ contents.
 `director.js` turns events into intents under an explicit contrast model:
 
 * **Accent budget** — a cap per rolling minute, from the show tier scaled by the
-  intensity fader (dance 12, moderate 7, rock 4, calm 0). Over budget, the
-  lowest-priority candidates go.
+  intensity fader (dance 12, moderate 7, rock 4, calm 0) and by where the drive
+  sits inside its tier. Candidates are considered **best first** rather than in
+  time order: walking the track from the start spent the budget on whatever
+  happened to come first, so a convincing accent ninety seconds in lost its
+  place to three unconvincing ones in the opening verse.
 * **Anticipation** — nothing in the two seconds before a drop except the
   build-up's own arc. A stray accent there spends the audience's attention a
   moment before the payoff needed it.
@@ -450,7 +472,58 @@ contents.
   carry no accents at all and are capped at quarter-note movement. That is what
   makes the chorus after them land.
 * **Repeats look like repeats** — pattern and palette rotation are keyed on the
-  section's cluster label.
+  passage's *identity*: the structure labeller's cluster where it has one, and
+  MuQ's timbre embeddings where it does not, which recognises a returning chorus
+  the labeller happened to split in two.
+
+### What the measurements decide
+
+Those rules did not change when the analysis did. What changed is what their
+thresholds read. Every decision used to be a comparison against a percentile
+level string (`low` / `mid` / `high`) or against `mood.arousal`, because that was
+all a document carried. `src/show/score.js` is the reader for everything else it
+now carries, and each question is asked of the thing that answers it:
+
+| Decision | Read from |
+| --- | --- |
+| How hard the rig may work (`drive`) | The whole subgenre distribution, weighted by which classifier answered and how concentrated it was, floored by measured arousal and danceability |
+| Which pattern a passage gets | The stem envelopes — is a voice or a kick carrying it — not how loud it is relative to the track |
+| Whether the beat clock subdivides | `rhythm.intensityCurve` and tempo stability. Arousal says how excited a track is; pulse says whether there is a beat steady enough to subdivide |
+| Stab or strobe | `bands.sub.attackMs` and its percussive share. A strobe spread over a kick is longer than the kick |
+| How long an accent holds | `bands.bass.decayMs` — the music's own release |
+| Whether the top of the vocabulary is affordable | Loudness crest. A brickwalled master has no headroom for a blinder to contrast against |
+| Which drop variant | `breakdownScore` and `sustainScore`, not the drop's index. The deeper the hole it came out of, the bigger the arrival |
+| How far a build-up's roll subdivides | `buildups[].subdivision`, which the analyser measured. Onset density is the fallback for older documents |
+| Whether two passages are the same idea | MuQ timbre embeddings |
+| Palette | The subgenre distribution and MuQ-MuLan's mood words, scored together with key and mood rather than one of them winning outright |
+
+**Drive replaced the tier.** The four tiers survive as names for where a drive
+landed, because a budget is easier to reason about in four rows than in a float.
+Nothing inside the director reads the name. The reason is the failure the
+distribution fixes: a near-tie between `ambient` and `funk` used to resolve by a
+three-percent margin, and `ambient` meant the show was off for the whole track.
+A weighted mean cannot do that — a track that cannot decide lands in the middle.
+
+**The expression channel.** Twice a second the director emits an `EXPRESSION`
+intent: level, bass, vocal, air, width, motion and decay, all 0..1. The engine
+interpolates towards it at frame rate underneath whatever pattern is running, so
+a chase through a breakdown and the same chase through the chorus after it are
+the same pattern in the same colours and do not read as remotely the same thing.
+It never touches the operator's master — a show that quietly rewrites the fader
+is a show the operator cannot take back.
+
+**The burst vocabulary** gained its quiet end for a reason the measurements made
+obvious. Everything above `color-punch` is a flash, so a track with a soft or
+unpercussive character had no accent it could use and therefore got none at all:
+`calm` scored a budget of zero and that was the whole story. A stab marks a
+transient without smearing it and a `glow` marks a moment on a ballad, so quiet
+music can now be accented at all. The blinder and the white strobe stay reserved
+for drops, which is what stops them meaning nothing by the second chorus.
+
+**How many colours.** With the palette size set to `auto`, the director sizes it
+per track: one colour per distinct passage, capped at four, reduced by one when
+the music cannot carry the separation (a narrow, atonal mix has nowhere to put a
+fourth hue). An explicit 2 / 3 / 4 from the operator always wins.
 
 `render.js` translates intents into patches, clamps every value to what the
 schema accepts, and debounces bursts. The clamping is not defensive
@@ -522,11 +595,18 @@ trusting the tagger rather than about the signal: `GENRE_MIN_SCORE` (0.15) and
 `GENRE_MIN_MARGIN` (1.5).
 
 Show-side pacing is in `src/show/director.js`: `ACCENT_BUDGET`, `RECOVERY_SEC`,
-`ANTICIPATION_SEC`, `MIN_BURST_MS`, and the `ROLE_PROFILE` table that decides
-what each section role is allowed to do.
+`ANTICIPATION_SEC`, `MIN_BURST_MS`, `EXPRESSION_STEP_SEC`, and the `ROLE_PROFILE`
+table that decides what each section role is allowed to do.
 
-Palette banks, genre-to-style mapping and the pattern pools are in
-`src/show/look.js`.
+Palette banks, the per-subgenre drive / palette / pattern tables and the burst
+choice are in `src/show/look.js`. `SUBGENRE_DRIVE` is the one to reach for first:
+it is the table that decides how hard each kind of music makes the rig work, and
+every other show-side threshold is downstream of it.
+
+`src/show/score.js` reads the continuous half of the document — stem envelopes,
+band character, loudness, timbre embeddings, the subgenre distribution — and
+`SEMANTIC_FULL_SPREAD` is its one calibration: how wide a spread across the mood
+vocabulary counts as the track having said something definite.
 
 ## Extension points
 
@@ -543,18 +623,30 @@ so an unhandled new type is inert rather than fatal.
 from a director pass, and handle it in `render.js`. Unknown kinds are skipped by
 the renderer.
 
-**A different show style.** `ROLE_PROFILE` and `ACCENT_BUDGET` in
-`director.js` are the two tables that define how a show paces itself. Changing
+**A different show style.** `ROLE_PROFILE` and `ACCENT_BUDGET` in `director.js`
+are the two tables that define how a show paces itself, and `SUBGENRE_DRIVE` in
+`look.js` is what decides how much of that budget a given track earns. Changing
 `ROLE_PROFILE.breakdown.accents` to `true` is a one-line way to see how much of
 the show's character comes from where it rests.
+
+**A new burst.** Add it to `BURST` in `src/show/intents.js`, give it a case in
+`resolveEnergyOverride` in `src/server/engine.js`, list it in `ENERGY_EFFECTS`
+in `presets.js` and place it in `BURST_PRIORITY` in `render.js` — that order is
+which gesture wins when two collide. Then return it from `look.burstFor()` under
+the measurement that should reach for it.
 
 **A different segmentation.** `structure.analyse()` returns a list of
 `Section`; anything that produces that list will work. `energy_sections()` is
 the built-in fallback and shows the minimum contract.
 
-**Another classifier.** `tagger.tag()` returns `{label: probability}` over
-AudioSet's vocabulary. Anything returning that shape can replace it; the
-consumers are `perception.classify_genre` and `bands.infer_roles`.
+**Another classifier.** Two seams, depending on which half you want to move.
+`model_adapters.mulan_scores()` returns `{vocabulary: [{label, score}]}` for
+any set of text prompts, and anything returning that shape for the `genre`
+vocabulary can replace MuQ-MuLan. Further down, `tagger.tag()` returns
+`{label: probability}` over AudioSet's vocabulary; its consumers are
+`perception.classify_genre`, as the genre fallback, and `bands.infer_roles`,
+which uses the instrument classes as role priors and does not care about
+genre at all.
 
 ## Debugging
 
@@ -649,3 +741,58 @@ five tracks exposed were in that layer, not in the signal processing.
 
 To add one: analyse a track, then keep the fields that file's generator keeps.
 Around 6 KB each, small enough to read in a diff.
+
+### MuQ and MuQ-MuLan runtime
+
+Install dependencies with `project_venv/bin/python -m pip install -r requirements.txt`.
+The Transformers version is pinned because MuQ calls the Conformer encoder's
+v4 hidden-state API directly; Transformers 5 is incompatible with this path.
+Run `project_venv/bin/python scripts/download-models.py` before playback to
+provision MuQ, MuQ-MuLan, and its XLM-RoBERTa text encoder/tokenizer.
+
+The adapters reuse models between tracks and follow `ARTNET_ANALYSIS_DEVICE`
+(or automatic CUDA selection). They read `ARTNET_MODEL_DIR`; individual local
+checkpoint paths can be set with `ARTNET_MUQ_MODEL`, `ARTNET_MUQ_MULAN_MODEL`,
+and `ARTNET_MUQ_TEXT_MODEL` (retain `xlm-roberta` in the text directory name,
+as the upstream loader uses it to select the architecture).
+MuQ-MuLan supports the published `pytorch_model.bin` checkpoint as well as
+safetensors. Its text encoder must be provisioned locally before analysis.
+
+The analysis document exposes `embeddings` and `semantic_scores` with separate
+`meta.modelUsage.muq` and `meta.modelUsage.muqMulan` flags. A failure in either
+optional pass leaves the other result intact. These outputs feed the show director: semantic similarities choose the palette
+and temper movement/accents, while embeddings detect recurring passages and
+texture changes.
+
+
+### Show score and expressive rendering
+
+Rich analysis documents use `src/show/score.js`; older cached documents keep the
+legacy director. The score uses these musical signals:
+
+| Analysis | Lighting decision |
+| --- | --- |
+| MuQ-MuLan similarities | Relative warm/cold, intimate, spacious and aggressive preferences for the track palette, movement and accent style; ambiguous similarities keep the key/mood palette |
+| MuQ embeddings | Repeated passage identities and restrained color changes at timbral changes |
+| Stem curves, scores and source shares | Bass/kick edge lighting, vocal centre lighting and snare/hat/synth texture; source confidence attenuates leakage |
+| Band curves, importance and rhythmicity | Activity and groove when stems are unavailable |
+| Band decay and percussion | Smooth envelope release and accent duration |
+| Energy, impact and loudness range | Scene brightness and dynamic contrast, below the operator master |
+| SNR and beat confidence | Discount uncertain accent candidates |
+| Stereo width/correlation | Spatial spread across the fixtures |
+| Spectral centroid, rolloff, flatness and zero-crossing rate | Air and texture |
+| Sections, vocal spans, silences, breaks, builds, drops and spikes | Rest, anticipation, recovery and budgeted accent timing |
+| Tempo/stability, key, mode, mood and genre | Tempo following and fallback look choices |
+
+`Ensemble` layers stem activity over centre/edge fixture groups. `Ribbon`
+continuously blends the chosen palette across the rig. Both render at DMX frame
+rate, with half-second analysis targets smoothed between updates. `Colour Punch`
+is a solid, non-strobing accent; strobes and white blinders require stronger
+musical evidence and share the accent budget.
+
+The intensity slider adjusts musical brightness, motion and accent allowance.
+It never changes the master dimmer. Silence closes automatic lighting at its
+exact boundary; stopping clears expressive controls. Seeking reconstructs the
+current scene and expression without firing missed bursts. Diagnostic fields
+such as model names, sample rate, file hashes and normalization gain are not
+converted into lighting effects.

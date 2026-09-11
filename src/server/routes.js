@@ -973,7 +973,8 @@ function attachRoutes(app, deps) {
 
   app.post('/api/auto/palette-size/:value', (req, res) => {
     try {
-      applyPatch({ autoPaletteSize: parseInt(req.params.value, 10) });
+      const raw = req.params.value;
+      applyPatch({ autoPaletteSize: raw === 'auto' ? 'auto' : parseInt(raw, 10) });
       res.json({ ok: true, paletteSize: autoShow.paletteSize });
     } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
   });

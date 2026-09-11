@@ -128,7 +128,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     prolinkDisable: () => {
       prolink.disable().catch(() => { /* ignore */ });
     },
-    autoPaletteSize: (n) => autoShow.setPaletteSize(Number(n)),
+    autoPaletteSize: (n) => autoShow.setPaletteSize(n === 'auto' ? 'auto' : Number(n)),
     autoIntensity: (n) => autoShow.setIntensity(Number(n)),
     autoSyncOffsetMs: (n) => autoShow.setSyncOffsetMs(Number(n)),
     autoPrefetchDepth: () => {

@@ -41,9 +41,10 @@ const SOURCES = [
 const SYNC_NUDGE_MS = 5;
 
 const PALETTE_SIZES = [
-  { size: 2, hint: 'Two contrasting colours — reads cleanly on a small rig' },
-  { size: 3, hint: 'Three well-separated hues' },
-  { size: 4, hint: 'The full hand-tuned tetrad' },
+  { size: 'auto', label: 'Auto', hint: 'Sized per song: one colour per distinct passage, as far as the music supports' },
+  { size: 2, label: '2', hint: 'Two contrasting colours — reads cleanly on a small rig' },
+  { size: 3, label: '3', hint: 'Three well-separated hues' },
+  { size: 4, label: '4', hint: 'The full hand-tuned tetrad' },
 ];
 
 /** One dot per playback source, so the strip says what is live at a glance. */
@@ -233,16 +234,23 @@ export function AutoMode() {
             <div class="look-row">
               <span class="look-label" id="palette-label">Palette</span>
               <div class="segmented" role="group" aria-labelledby="palette-label">
-                {PALETTE_SIZES.map(({ size, hint }) => (
-                  <button
-                    key={size}
-                    type="button"
-                    class={`segmented-btn ${(as.paletteSize || 4) === size ? 'active' : ''}`}
-                    aria-pressed={(as.paletteSize || 4) === size}
-                    title={hint}
-                    onClick={() => send({ autoPaletteSize: size })}
-                  >{size}</button>
-                ))}
+                {PALETTE_SIZES.map(({ size, label, hint }) => {
+                  // On 'auto' the button shows which size the track actually
+                  // resolved to, because that is what the operator is looking
+                  // at on the rig.
+                  const auto = as.paletteSizeMode === 'auto';
+                  const active = size === 'auto' ? auto : (!auto && (as.paletteSize || 4) === size);
+                  return (
+                    <button
+                      key={size}
+                      type="button"
+                      class={`segmented-btn ${active ? 'active' : ''}`}
+                      aria-pressed={active}
+                      title={hint}
+                      onClick={() => send({ autoPaletteSize: size })}
+                    >{size === 'auto' && auto && as.paletteSize ? `Auto · ${as.paletteSize}` : label}</button>
+                  );
+                })}
               </div>
               <span class="look-hint">colours per song</span>
             </div>

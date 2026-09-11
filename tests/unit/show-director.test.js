@@ -143,7 +143,10 @@ test('an intro opens on a slow look rather than giving away the chorus', () => {
   const { intents } = plan();
   const intro = from(intents, 'section:intro')[0];
   assert.ok(intro, 'the intro should get its own scene');
-  assert.ok(['fade', 'wave', 'solid'].includes(intro.pattern),
+  // `ribbon` joined the slow looks when the expression channel did: it is a
+  // continuous blend across the rig driven by what the music is doing, which is
+  // exactly what an intro wants and is the opposite of giving the chorus away.
+  assert.ok(['ribbon', 'fade', 'wave', 'solid'].includes(intro.pattern),
     `intro opened on ${intro.pattern}`);
   assert.strictEqual(intro.beatDivision, 1);
 });
@@ -334,4 +337,169 @@ test('silence in the track goes dark', () => {
   const dark = of(plan(a).intents, INTENT.DARK).filter((i) => i.source === 'silence');
   assert.strictEqual(dark.length, 1);
   assert.strictEqual(dark[0].timeMs, 30000);
+});
+
+// ── What the measurements decide ────────────────────────────────────────────
+//
+// Everything above pins the arrangement doctrine, which did not change. These
+// pin the inputs that did: the same decisions, now asked of the stems, the band
+// envelopes, the loudness profile and the subgenre distribution instead of of a
+// percentile level string.
+
+const { EXPRESSION_STEP_SEC, measureBuildup, strideFor } = require('../../src/show/director');
+
+/** The dance fixture, plus everything the current analyser also emits. */
+function measured(over = {}) {
+  const a = analysis();
+  const cv = (v) => Array.from({ length: 40 }, (_, i) => ({ t: i * 6, v }));
+  return {
+    ...a,
+    genre: { label: 'edm', confidence: 0.9, style: 'dance', source: 'muq-mulan',
+      subScores: { edm: 0.62, dubstep: 0.14, trance: 0.08, pop: 0.06, house: 0.04 } },
+    instruments: {
+      scores: { kick: 0.9, snare: 0.7, hats: 0.6, bassline: 0.8, vocal: 0.3, synth: 0.6 },
+      curves: { kick: cv(0.8), bassline: cv(0.7), hats: cv(0.5), vocal: cv(0.2),
+        snare: cv(0.5), synth: cv(0.4) },
+    },
+    sources: { drums: 0.4, bass: 0.3, vocals: 0.1, other: 0.2 },
+    bands: { sub: { percussive: 0.85, attackMs: 30, decayMs: 180, importance: 0.9, rhythmic: 0.8, curve: cv(0.8) },
+      bass: { percussive: 0.6, attackMs: 60, decayMs: 220, importance: 0.8, rhythmic: 0.7, curve: cv(0.7) } },
+    energyCurve: cv(0.8),
+    rhythm: { stability: 0.95, intensityCurve: cv(0.8), beatConfidences: [0.9, 0.9] },
+    loudness: { range: 8, snrDb: 40, truePeakDb: -1, integratedLufs: -9 },
+    stereo: { width: 0.7, correlation: 0.1 },
+    semantic_scores: [{ label: 'euphoric', score: 0.35 }, { label: 'triumphant', score: 0.3 },
+      { label: 'dark', score: -0.05 }, { label: 'intimate', score: 0 }],
+    ...over,
+  };
+}
+
+test('the drop variant comes from the drop, not from its position in the track', () => {
+  // Two drops with identical everything except the hole they came out of. The
+  // deep one is the slam; the sustained one is not. Under the old index
+  // rotation the answer depended only on which came first.
+  const deepFirst = measured({ drops: [
+    { t: 56 * BAR, confidence: 0.9, breakdownScore: 0.85, sustainScore: 0.3, kind: 'proper', snapTo: 'downbeat' },
+    { t: 88 * BAR, confidence: 0.9, breakdownScore: 0.1, sustainScore: 0.85, kind: 'proper', snapTo: 'downbeat' },
+  ] });
+  const deepSecond = measured({ drops: [
+    { t: 56 * BAR, confidence: 0.9, breakdownScore: 0.1, sustainScore: 0.85, kind: 'proper', snapTo: 'downbeat' },
+    { t: 88 * BAR, confidence: 0.9, breakdownScore: 0.85, sustainScore: 0.3, kind: 'proper', snapTo: 'downbeat' },
+  ] });
+  const slamsOf = (a) => new Set(plan(a, 100).intents
+    .filter((i) => i.source === 'drop:slam')
+    .map((i) => Math.round(i.timeMs / 1000)));
+
+  assert.ok([...slamsOf(deepFirst)].some((t) => Math.abs(t - 56 * BAR) < 3));
+  assert.ok([...slamsOf(deepSecond)].some((t) => Math.abs(t - 88 * BAR) < 3));
+});
+
+test('the build-up uses the subdivision the analyser measured', () => {
+  // The document counts the roll. Re-deriving it from onset density was the
+  // fallback for documents written before it did, and it is still only that.
+  const a = measured({ buildups: [{ start: 52 * BAR, end: 56 * BAR, intensity: 0.9, subdivision: 8 }] });
+  const out = measureBuildup({ start: 52 * BAR, end: 56 * BAR }, a, BPM);
+  assert.equal(out.peakDivision, 8);
+  assert.equal(out.riseDivision, 4);
+
+  const peak = plan(a, 75).intents.find((i) => i.source === 'buildup:peak');
+  assert.equal(peak.beatDivision, 8);
+});
+
+test('a subdivision the rig cannot step is capped rather than dropped', () => {
+  // renderDmx runs at 40 fps: division 16 passes the frame rate above 150 BPM
+  // and loses steps unevenly, which reads as irregular rather than as faster.
+  const a = measured({ buildups: [{ start: 52 * BAR, end: 56 * BAR, intensity: 1, subdivision: 32 }] });
+  assert.equal(measureBuildup({ start: 52 * BAR, end: 56 * BAR }, a, BPM).peakDivision, 8);
+});
+
+test('the budget is spent on the best accents, not the earliest ones', () => {
+  // The old pass walked the track from the start, so a convincing accent ninety
+  // seconds in lost its place to three unconvincing ones in the opening verse.
+  const a = measured();
+  a.beatStrengths = a.beats.map(() => 0.4);
+  const { intents } = plan(a, 50);
+  const kept = accents(intents).filter((i) => !i.source.startsWith('drop:'));
+  if (kept.length < 2) return;
+  const weakest = Math.min(...kept.map((i) => i.confidence));
+  const rejectedStronger = kept.some((i) => i.confidence < weakest);
+  assert.equal(rejectedStronger, false);
+});
+
+test('the expression channel runs the whole track and never touches the master', () => {
+  const a = measured();
+  const { intents } = plan(a, 50);
+  const music = intents.filter((i) => i.kind === INTENT.EXPRESSION && i.source === 'music');
+  const expected = Math.floor(a.duration / EXPRESSION_STEP_SEC);
+  assert.ok(music.length >= expected - 1, `${music.length} readings for ${a.duration}s`);
+  for (const reading of music) {
+    for (const [key, value] of Object.entries(reading.dynamics)) {
+      assert.ok(value >= 0 && value <= 1, `${key} was ${value}`);
+    }
+    assert.ok(!('masterDimmer' in reading.dynamics));
+  }
+});
+
+test('a breakdown reads differently from the chorus without changing the look', () => {
+  // The point of the continuous channel: same pattern, same colours, and the
+  // two do not read as remotely the same thing.
+  const a = measured();
+  const { intents } = plan(a, 50);
+  const at = (t) => intents.filter((i) => i.kind === INTENT.EXPRESSION
+    && i.source === 'music' && Math.abs(i.timeMs - t * 1000) < 600)[0];
+  const breakdown = at(48 * BAR);
+  const chorus = at(30 * BAR);
+  assert.ok(breakdown && chorus);
+  assert.ok(breakdown.dynamics.level < chorus.dynamics.level,
+    `breakdown ${breakdown.dynamics.level} vs chorus ${chorus.dynamics.level}`);
+});
+
+test('a silence closes the light without changing the colour under it', () => {
+  // Patching the colour to blackout as well would leave the rig on the blackout
+  // colour when the music came back, until some later scene restored it.
+  const a = measured();
+  a.events = require('../../src/show/musical-events').deriveEvents(a).concat([
+    { t: 30, type: 'SILENCE', confidence: 0.9, intensity: 0, duration: 0.4,
+      effect: 'blackout', data: { end: 30.4 } },
+  ]);
+  const { intents } = plan(a);
+  assert.deepStrictEqual(of(intents, INTENT.DARK).filter((i) => i.source === 'silence'), []);
+  const closed = intents.find((i) => i.kind === INTENT.EXPRESSION && i.timeMs === 30000);
+  assert.equal(closed.dynamics.level, 0);
+  const reopened = intents.find((i) => i.kind === INTENT.EXPRESSION && i.timeMs === 30400);
+  assert.ok(reopened.dynamics.level > 0);
+});
+
+test('a drop detected inside a silence does not fire', () => {
+  const a = measured();
+  a.events = require('../../src/show/musical-events').deriveEvents(a).concat([
+    { t: 30, type: 'SILENCE', confidence: 0.9, intensity: 0, duration: 2,
+      effect: 'blackout', data: { end: 32 } },
+    { t: 30.5, type: 'DROP', confidence: 0.95, intensity: 1, duration: 0,
+      effect: 'strobe', data: { kind: 'proper' } },
+  ]);
+  const inside = accents(plan(a, 100).intents)
+    .filter((i) => i.timeMs >= 30000 && i.timeMs < 32000);
+  assert.deepStrictEqual(inside, []);
+});
+
+test('asked to choose, the palette holds one colour per distinct passage', () => {
+  const director = (paletteSize) => new ShowDirector({
+    patterns: PATTERNS, colorPresets: COLOR_PRESETS, paletteSize, intensity: 50,
+  }).plan(measured());
+  const auto = director('auto');
+  assert.ok([2, 3, 4].includes(auto.paletteSize));
+  assert.equal(auto.palette.length, auto.paletteSize);
+  // An explicit choice is the operator looking at the rig, and it always wins.
+  assert.equal(director(2).paletteSize, 2);
+  assert.equal(director(4).paletteSize, 4);
+});
+
+test('the accent stride moves continuously rather than in four steps', () => {
+  const strides = [0.35, 0.5, 0.65, 0.8, 0.95].map((d) => strideFor(d, 1, 0.7));
+  for (let i = 1; i < strides.length; i++) {
+    assert.ok(strides[i] <= strides[i - 1], `stride went up: ${strides}`);
+  }
+  assert.ok(new Set(strides).size >= 3, `only ${new Set(strides).size} distinct strides`);
+  assert.equal(strideFor(0.1, 1, 0.5), 0, 'a passage this quiet proposes nothing');
 });

@@ -193,7 +193,13 @@ class AnalysisConfig:
     dynamics: DynamicsConfig = field(default_factory=DynamicsConfig)
     events: EventConfig = field(default_factory=EventConfig)
     realtime: RealtimeConfig = field(default_factory=RealtimeConfig)
-    #: Run the optional PANNs genre/instrument tagger when it is installed.
+    #: Run the MuQ-MuLan pass that scores the genre prompts and the mood
+    #: vocabulary. On by default and skipped for free when the checkpoint is
+    #: not provisioned; turning it off drops the genre back to the AudioSet
+    #: tagger, or to tempo and arousal when that is absent too.
+    enable_semantics: bool = True
+    #: Run the optional PANNs tagger when it is installed. It supplies the
+    #: instrument-role priors, and the genre fallback when MuQ-MuLan is off.
     enable_tagger: bool = True
     #: Separate the track into stems before measuring the instrument roles.
     #: On by default: it is what makes those roles measurements rather than

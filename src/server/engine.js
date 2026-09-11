@@ -51,6 +51,11 @@ function tickPattern() {
     step: state._step,
     hue: state._hue,
     twinkle: state._twinkle,
+    // Every pattern gets the expression channel, not only the two built around
+    // it. The stepped patterns use it for the things that are genuinely a
+    // property of the music rather than of the step — how far the unlit lamps
+    // sit above black, how dense a scatter is — and ignore it otherwise.
+    dynamics: state.showDynamics ? expression : null,
     write: setFixtureColor,
     resetHitPhase: () => { state._hitPhase = 0; },
   });
@@ -59,11 +64,27 @@ function tickPattern() {
   state._hue = (state._hue + 360 / Math.max(1, getFixtureCount())) % 360;
 }
 
+// The continuous expression channel, smoothed towards whatever the show last
+// asked for. Declared above the override resolver because `glow` reads it: a
+// soft accent that ignored what the music was doing would be a flash with a
+// lower number on it.
+const EXPRESSION_REST = Object.freeze({
+  level: 1, bass: .5, vocal: .5, air: .3, width: .5, motion: .3, decay: .25,
+});
+let expression = { ...EXPRESSION_REST };
+let expressionPhase = 0;
+
 function resolveEnergyOverride() {
   const colA = COLOR_PRESETS[state.colorA];
   switch (state.energyOverride) {
     // Cold: no amber, so it reads as a hard white flash rather than a warm one.
     case 'white-strobe': return { col: { r: 255, g: 255, b: 255, w: 255, a: 0,   uv: 0   }, dim: 255, strobe: 255 };
+    // The quiet end of the vocabulary. A lift rather than a flash, and the only
+    // accent soft enough for a ballad — before it existed every burst was too
+    // loud for quiet music, so quiet music got no accents at all. It rides the
+    // expression channel instead of overriding it, so it reads as the music
+    // swelling rather than as the rig interrupting.
+    case 'glow': return { col: colA, dim: Math.round(150 + 105 * expression.level), strobe: 0 };
     case 'color-strobe': return {
       col: { r: colA.r, g: colA.g, b: colA.b, w: colA.w || 0, a: colA.a || 0, uv: colA.uv || 0 },
       dim: 255, strobe: 255,
@@ -105,6 +126,35 @@ function renderDmx() {
     const bright = Math.round(35 + decay * 220);
     const colA = COLOR_PRESETS[state.colorA];
     for (let i = 0; i < getFixtureCount(); i++) setFixtureColor(i, colA, bright, 0);
+  }
+
+  const target = state.showDynamics;
+  if (target) {
+    const blend = 1 - Math.exp(-dt / (.12 + (target.decay || 0) * .45));
+    for (const key of Object.keys(expression)) {
+      if (target[key] != null) expression[key] += (target[key] - expression[key]) * blend;
+    }
+    // Silence must close immediately, even for long-decay music.
+    if (target.level === 0) expression.level = 0;
+  } else {
+    expression = { ...EXPRESSION_REST };
+  }
+  // How fast the expressive patterns travel across the rig.
+  //
+  // This used to advance in wall-clock seconds, and at a typical motion reading
+  // one crossing took about seven seconds — which reads as ambient whatever is
+  // playing underneath it. On a rig with no moving heads the travel *is* the
+  // movement, so it is tied to the beat instead: motion decides how many beats
+  // one crossing takes, eight when the track is barely moving and two when it
+  // is driving, and the sweep speeds up with the tempo rather than ignoring it.
+  const cycleSec = Math.max(.3, (60 / Math.max(20, state.bpm)) * (8 - 6 * expression.motion));
+  expressionPhase = (expressionPhase + dt / cycleSec) % 1;
+  if (state.running && ['ensemble', 'ribbon'].includes(state.pattern)) {
+    PATTERN_FUNCS[state.pattern]({
+      colors: [state.colorA, state.colorB, state.colorC, state.colorD].map(i => COLOR_PRESETS[i]),
+      fixtureCount: getFixtureCount(), phase: expressionPhase, dynamics: expression,
+      write: setFixtureColor,
+    });
   }
 
   const energy = state.energyOverride ? resolveEnergyOverride() : null;
@@ -167,6 +217,9 @@ function renderDmx() {
       // An energy override used to bypass the master and always output full,
       // which meant the blinder came up at 100% no matter where the master sat —
       // the one moment you most want the master to still mean something.
+      // Music scales the pattern underneath manual effects and fixture overrides.
+      if (!energy && !(fix.override && fix.override.enabled)) dim *= expression.level;
+      if (target?.level === 0 && !energy) dim = 0;
       const ms = (state.masterDimmer / 255) * (maxBrightnessOf(fix) / 255);
       const ds = dim / 255;
       const ts = ms * ds;

@@ -7,9 +7,9 @@ const fs = require('fs');
 const os = require('os');
 const deezer = require('./deezer');
 const AnalyzerWorker = require('./analyzer-worker');
+const { describeModelUsage, formatModelUsage } = require('./model-usage');
 const pythonEnv = require('./python-env');
 const { SYNC_OFFSET_LIMIT_MS } = require('./server/presets');
-const look = require('./show/look');
 const { ShowDirector, measureBuildup } = require('./show/director');
 const { renderIntents } = require('./show/render');
 
@@ -69,7 +69,9 @@ class AutoShow {
     this.track = null;
     this.palette = null;         // [idx, idx, …] — locked palette for current song (2, 3, or 4 colours)
     this.paletteName = null;     // human-readable palette name (e.g. 'cyber', 'sunset')
-    this.paletteSize = 4;        // 2 | 3 | 4 — picks between DUOS / TRIADS / TETRADS banks
+    // 2 | 3 | 4 — picks between the DUOS / TRIADS / TETRADS banks — or 'auto'
+    // to let the director choose one per track from the music.
+    this.paletteSize = 'auto';
     this.intensity = 50;         // 0–100 energy slider — scales accent density, drops, strobes
     // Seeded from the store, not from zero: the offset is persisted (see
     // settings.js `auto`), and state.js reads the same key, so starting at 0
@@ -151,10 +153,23 @@ class AutoShow {
     }
     const posMs = this.getPositionMs();
     let last = -1;
+    const restored = { energyOverride: null, showDynamics: null };
     for (let i = 0; i < this.timeline.length; i++) {
       if (this.timeline[i].timeMs > posMs) break;
+      const ev = this.timeline[i];
+      if (ev.action === 'patch') {
+        if (ev.data.showDynamics && restored.showDynamics) {
+          restored.showDynamics = { ...restored.showDynamics, ...ev.data.showDynamics };
+          const { showDynamics: _dynamics, ...rest } = ev.data;
+          Object.assign(restored, rest);
+        } else Object.assign(restored, ev.data);
+      }
       last = i;
     }
+    delete restored.masterDimmer;
+    restored.energyOverride = null;
+    if (this.timeline.some(e => e.data?.showDynamics)) this._applyPatch(restored);
+    this._lastPositionMs = posMs;
     this._lastEventIdx = last;
   }
 
@@ -169,6 +184,7 @@ class AutoShow {
     const cached = this._cache.get(cacheKey);
     if (!cached) return false;
     console.log(`[auto-show] analysis cache hit: ${cacheKey}`);
+    console.log(`[auto-show] Models used (cached ${cacheKey}): ${formatModelUsage(cached)}`);
     this.analysis = cached;
     this.buildTimeline();
     this._status = 'ready';
@@ -189,7 +205,10 @@ class AutoShow {
     const tgt = Number.isFinite(targetDurationSec) && targetDurationSec > 0
       ? targetDurationSec : null;
     console.log(`[analyzer] Analyzing${priority === 'high' ? ' (high)' : ''}: ${path.basename(source)}${tgt ? ` (target ${Math.round(tgt)}s)` : ''}`);
-    return this._worker.analyze(source, tgt, { priority, tag });
+    return this._worker.analyze(source, tgt, { priority, tag }).then((result) => {
+      console.log(`[analyzer] Models used (${path.basename(source)}): ${formatModelUsage(result)}`);
+      return result;
+    });
   }
 
   /**
@@ -496,6 +515,10 @@ class AutoShow {
     const plan = director.plan(this.analysis);
     this.palette = plan.palette;
     this.paletteName = plan.paletteName;
+    // What the director settled on. Identical to `paletteSize` unless that is
+    // 'auto', and it is what the client shows — an operator looking at the rig
+    // needs to know it is on three colours, not that something chose three.
+    this.resolvedPaletteSize = plan.paletteSize;
     this.intents = plan.intents;
     this.timeline = renderIntents(plan.intents, { blackoutIndex: this._blackoutIdx });
   }
@@ -509,6 +532,9 @@ class AutoShow {
     this._lastEventIdx = -1;
     this._activeEnergyClearAt = 0;
     this._status = 'playing';
+    this._expressive = this.timeline.some(e => e.data?.showDynamics);
+    this._lastPositionMs = undefined;
+    if (this._expressive) this._reseek();
     this._tick();
     this._loopTimer = setInterval(() => this._tick(), 20);
   }
@@ -518,7 +544,7 @@ class AutoShow {
     this._status = this.analysis ? 'ready' : 'idle';
     if (this._loopTimer) { clearInterval(this._loopTimer); this._loopTimer = null; }
     // Clear any lingering energy override so we don't leave the rig stuck
-    this._applyPatch({ energyOverride: null });
+    this._applyPatch({ energyOverride: null, showDynamics: null });
   }
 
   reset() {
@@ -535,6 +561,12 @@ class AutoShow {
   _tick() {
     if (!this.running || !this._getPositionMs) return;
     const posMs = this.getPositionMs();
+    if (this._expressive && Number.isFinite(this._lastPositionMs)
+        && (posMs < this._lastPositionMs - 100 || posMs > this._lastPositionMs + 1500)) {
+      this._reseek();
+      return;
+    }
+    this._lastPositionMs = posMs;
 
     for (let i = this._lastEventIdx + 1; i < this.timeline.length; i++) {
       const ev = this.timeline[i];
@@ -591,26 +623,18 @@ class AutoShow {
   // ── Mapping helpers ─────────────────────────────────────────────────────────
 
   /**
-   * The look for one track. Kept as a method because `setPaletteSize` and the
-   * client state both ask for it; the decision itself is in src/show/look.js.
-   */
-  _buildPalette(key, scale, mood = { valence: 0.5, arousal: 0.5 }, genreStyle = null) {
-    return look.buildPalette({
-      key, scale, mood, genreStyle,
-      paletteSize: this.paletteSize,
-      colorPresets: this._colorPresets,
-    });
-  }
-
-  /**
    * Swap the palette size live. Rebuilds the timeline from the current analysis
    * so the new palette takes effect on the next tick without re-analysing the
    * audio. No-op when paletteSize is already n.
    *
-   * Allowed values: 2 | 3 | 4. Anything else is clamped into that range.
+   * Allowed values: 2 | 3 | 4, or `'auto'` to hand the choice back to the
+   * director, which sizes the palette from how many distinct passages the track
+   * has and how much colour separation the music supports. An explicit choice
+   * always wins — this is a setting an operator makes while looking at the rig,
+   * and nothing measured should overrule that.
    */
   setPaletteSize(n) {
-    const size = n === 2 ? 2 : n === 3 ? 3 : 4;
+    const size = n === 'auto' ? 'auto' : n === 2 ? 2 : n === 3 ? 3 : 4;
     if (size === this.paletteSize) return;
     this.paletteSize = size;
     if (this.analysis) {
@@ -690,10 +714,12 @@ class AutoShow {
       track: this.track,
       palette: this.palette,
       paletteName: this.paletteName,
-      paletteSize: this.paletteSize,
+      paletteSize: this.resolvedPaletteSize || this.paletteSize,
+      paletteSizeMode: this.paletteSize === 'auto' ? 'auto' : 'manual',
       intensity: this.intensity,
       syncOffsetMs: this.syncOffsetMs,
       analysis: this.analysis ? {
+        models: describeModelUsage(this.analysis),
         duration: this.analysis.duration,
         bpm: this.analysis.bpm,
         tempoStability: this.analysis.tempoStability,

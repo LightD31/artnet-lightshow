@@ -206,17 +206,32 @@ function drawTimeline(canvas, data, posMs) {
     ctx.stroke();
   });
 
-  // Timeline events — patch dots (top), energy bursts (bottom)
+  // Timeline events — patches (top), energy bursts (bottom).
+  //
+  // Not every patch is a change you can see, and drawing them all as one mark
+  // made the row unreadable: the expression channel alone patches twice a
+  // second, so a solid line of dots labelled "Pattern" ran the length of a
+  // track in which the pattern had changed a dozen times. The three are drawn
+  // apart — a tall tick for a new pattern, a dot for a colour move, and a faint
+  // hairline for the continuous channel underneath both.
   const events = data.timeline || [];
   const patchY  = ROW_TIMELN.y + 6;
   const energyY = ROW_TIMELN.y + ROW_TIMELN.h - 6;
   events.forEach((ev) => {
     const x = xForMs(ev.timeMs);
     if (ev.action === 'patch') {
-      ctx.fillStyle = '#3b82f6';
-      ctx.beginPath();
-      ctx.arc(x, patchY, 2.2, 0, Math.PI * 2);
-      ctx.fill();
+      if (ev.pattern) {
+        ctx.fillStyle = '#60a5fa';
+        ctx.fillRect(x - 0.75, patchY - 5, 1.5, 10);
+      } else if (ev.colorA != null) {
+        ctx.fillStyle = '#3b82f6';
+        ctx.beginPath();
+        ctx.arc(x, patchY, 2.2, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.fillStyle = 'rgba(59, 130, 246, .28)';
+        ctx.fillRect(x, patchY - 1, 1, 2);
+      }
     } else if (ev.action === 'energy') {
       const w = Math.max(2, xForMs(ev.durationMs || 150) - xForMs(0));
       ctx.fillStyle = '#ffee44';
@@ -323,7 +338,9 @@ export function AutoTimeline() {
         <span><i class="swatch downbeat" />Downbeat</span>
         <span><i class="swatch buildup" />Build-up</span>
         <span><i class="swatch drop" />Drop</span>
-        <span><i class="swatch event-patch" />Pattern</span>
+        <span><i class="swatch event-pattern" />Pattern</span>
+        <span><i class="swatch event-patch" />Colour</span>
+        <span><i class="swatch event-express" />Expression</span>
         <span><i class="swatch event-energy" />Burst</span>
       </div>
     </div>

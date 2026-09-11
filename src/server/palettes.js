@@ -57,6 +57,26 @@ const TETRADS = {
   tropical:    [4, 1, 2, 10],  // Cyan / Amber / Lime / Cool White — sea, sun, palms
   aurora:      [3, 7, 4, 12],  // Green / Violet / Cyan / Moonlight — the actual northern-lights hues
   lunar:       [12, 9, 11, 10],// Moonlight / Warm White / Lavender / Cool White — the pale look
+
+  // ── White-forward looks ───────────────────────────────────────────────────
+  //
+  // Electronic music is lit white far more than a hue-first catalogue suggests,
+  // and a rig of static pars has no other way to read as *hard*. These put a
+  // white in the dominant slot rather than the lift, so the colour is what
+  // punctuates the white instead of the other way round. `arctic` was the only
+  // look doing this and it had to cover every club track on its own.
+  whiteout:    [10, 6, 8, 12], // Cool White / Congo / Magenta / Moonlight — white room, neon cuts
+  strobeLab:   [10, 4, 0, 9],  // Cool White / Cyan / Red / Warm White — clinical white, hot and cold
+  hardTechno:  [10, 0, 5, 12], // Cool White / Red / Blue / Moonlight — warehouse: white, siren, blue
+  ultraviolet: [13, 10, 8, 12],// UV / Cool White / Magenta / Moonlight — blacklight under a white slash
+  acidRave:    [2, 8, 6, 10],  // Lime / Magenta / Congo / Cool White — acid green against hot pink
+  iceFire:     [4, 0, 8, 10],  // Cyan / Red / Magenta / Cool White — the cold/hot split, hard edge
+
+  // ── Further hue looks ─────────────────────────────────────────────────────
+  midnight:    [5, 8, 2, 12],  // Blue / Magenta / Lime / Moonlight — deep blue with two sharp cuts
+  peppermint:  [0, 3, 4, 10],  // Red / Green / Cyan / Cool White — primary and bright, nothing muddy
+  mint:        [3, 0, 7, 10],  // Green / Red / Violet / Cool White — fresh green over a red contrast
+  nightDrive:  [6, 1, 4, 12],  // Congo / Amber / Cyan / Moonlight — headlights on a deep blue road
 };
 
 // ── Triads (3 colours) ──────────────────────────────────────────────────────
@@ -80,6 +100,16 @@ const TRIADS = {
   tropical:    [4, 1, 2],     // Cyan / Amber / Lime
   aurora:      [3, 7, 4],     // Green / Violet / Cyan
   lunar:       [12, 9, 11],   // Moonlight / Warm White / Lavender
+  whiteout:    [10, 6, 8],    // Cool White / Congo / Magenta
+  strobeLab:   [10, 4, 0],    // Cool White / Cyan / Red
+  hardTechno:  [10, 0, 5],    // Cool White / Red / Blue
+  ultraviolet: [13, 10, 8],   // UV / Cool White / Magenta
+  acidRave:    [2, 8, 6],     // Lime / Magenta / Congo
+  iceFire:     [4, 0, 8],     // Cyan / Red / Magenta
+  midnight:    [5, 8, 2],     // Blue / Magenta / Lime
+  peppermint:  [0, 3, 4],     // Red / Green / Cyan
+  mint:        [3, 0, 7],     // Green / Red / Violet
+  nightDrive:  [6, 1, 4],     // Congo / Amber / Cyan
 };
 
 // ── Duos (2 colours) ────────────────────────────────────────────────────────
@@ -106,6 +136,16 @@ const DUOS = {
   tropical:    [4, 1],        // Cyan / Amber
   aurora:      [3, 7],        // Green / Violet
   lunar:       [12, 9],       // Moonlight / Warm White
+  whiteout:    [10, 8],       // Cool White / Magenta — tier contrast
+  strobeLab:   [10, 0],       // Cool White / Red — tier contrast
+  hardTechno:  [10, 5],       // Cool White / Blue — tier contrast
+  ultraviolet: [13, 8],       // UV / Magenta
+  acidRave:    [2, 6],        // Lime / Congo
+  iceFire:     [4, 0],        // Cyan / Red
+  midnight:    [5, 8],        // Blue / Magenta
+  peppermint:  [0, 3],        // Red / Green
+  mint:        [3, 10],       // Green / Cool White — tier contrast
+  nightDrive:  [6, 12],       // Congo / Moonlight — tier contrast
 };
 
 /** Look up the right bank for a palette size. 4 is the default. */
@@ -134,6 +174,16 @@ const PALETTE_NAMES = {
   tropical:    'Tropical',
   aurora:      'Aurora',
   lunar:       'Lunar',
+  whiteout:    'Whiteout',
+  strobeLab:   'Strobe Lab',
+  hardTechno:  'Hard Techno',
+  ultraviolet: 'Ultraviolet',
+  acidRave:    'Acid Rave',
+  iceFire:     'Ice & Fire',
+  midnight:    'Midnight',
+  peppermint:  'Peppermint',
+  mint:        'Mint',
+  nightDrive:  'Night Drive',
 };
 
 /**

@@ -12,6 +12,7 @@ from pathlib import Path
 MODELS = {
     "muq": ("OpenMuQ/MuQ-large-msd-iter", None),
     "muq_mulan": ("OpenMuQ/MuQ-MuLan-large", None),
+    "xlm-roberta-base": ("FacebookAI/xlm-roberta-base", None),
     "skey": ("musetric/skey-onnx", None),
 }
 
@@ -30,7 +31,9 @@ def main():
             path = hf_hub_download(repo_id=repo, filename=filename, local_dir=target)
         else:
             path = snapshot_download(repo_id=repo, local_dir=target,
-                                     allow_patterns=["*.json", "*.bin", "*.safetensors", "*.pt"])
+                                     allow_patterns=(["*.json", "model.safetensors", "*.model"]
+                                                     if name == "xlm-roberta-base" else
+                                                     ["*.json", "*.bin", "*.safetensors", "*.pt"]))
         print(f"[models] {name}: {path}")
     # Use audio-separator's own registry for BS-RoFormer-SW. This downloads
     # both its checkpoint and YAML into the configured model directory and

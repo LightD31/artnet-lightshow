@@ -74,6 +74,9 @@ function applyPatch(rawData) {
     if (!paletteApplied && data[slot] !== state[slot]) state.palette = null;
     state[slot] = data[slot];
   }
+  if (data.showDynamics !== undefined) {
+    state.showDynamics = data.showDynamics === null ? null : { ...state.showDynamics, ...data.showDynamics };
+  }
   if (data.masterDimmer !== undefined) state.masterDimmer = data.masterDimmer;
   if (data.masterBlackout !== undefined) state.masterBlackout = data.masterBlackout;
   if (data.strobeSpeed !== undefined) state.strobeSpeed = data.strobeSpeed;

@@ -51,6 +51,7 @@ const state = {
   autoSource: 'auto',
   autoPrefetchDepth: 1,
   fixtures: [],
+  showDynamics: null,
   _step: 0,
   _pingDir: 1,
   _hue: 0,

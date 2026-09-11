@@ -162,3 +162,22 @@ test('the offset reaches clients alongside the rest of the auto-show state', () 
     assert.strictEqual(h.show.getClientState().syncOffsetMs, 120);
   } finally { h.stop(); }
 });
+
+test('expressive seeks restore current targets without replaying missed bursts', () => {
+  const h = harness([
+    { timeMs: 0, action: 'patch', data: { pattern: 'ensemble', showDynamics: { level: .5, bass: .8 } } },
+    { timeMs: 1000, action: 'energy', data: { id: 'blinder', durationMs: 350 } },
+    { timeMs: 2000, action: 'patch', data: { showDynamics: { level: .2, vocal: .9 } } },
+  ]);
+  try {
+    h.seek(4000); h.tick();
+    assert.strictEqual(h.fired.length, 1);
+    assert.strictEqual(h.fired[0].energyOverride, null);
+    assert.deepStrictEqual(h.fired[0].showDynamics, { level: .2, bass: .8, vocal: .9 });
+    h.fired.length = 0;
+    h.seek(100); h.tick();
+    assert.strictEqual(h.fired[0].showDynamics.level, .5);
+    h.show.stop();
+    assert.strictEqual(h.fired.at(-1).showDynamics, null);
+  } finally { h.stop(); }
+});

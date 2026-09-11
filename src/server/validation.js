@@ -45,6 +45,9 @@ const patchSchema = z.object({
   colorB: colorIdx.optional(),
   colorC: colorIdx.optional(),
   colorD: colorIdx.optional(),
+  showDynamics: z.object(Object.fromEntries(
+    ['level', 'bass', 'vocal', 'air', 'width', 'motion', 'decay']
+      .map(key => [key, z.number().min(0).max(1).optional()]))).strict().nullable().optional(),
   masterDimmer: u8.optional(),
   masterBlackout: z.boolean().optional(),
   strobeSpeed: u8.optional(),
@@ -65,7 +68,11 @@ const patchSchema = z.object({
   artnet: artnetSchema.optional(),
   prolinkEnabled: z.boolean().optional(),
   autoSource: z.enum(AUTO_SOURCES).optional(),
-  autoPaletteSize: z.union([z.literal(2), z.literal(3), z.literal(4)]).optional(),
+  // `'auto'` hands the choice to the director, which sizes the palette from the
+  // track. The manual `paletteSize` above stays 2 | 3 | 4: that one is the
+  // colour panel's own setting and there is no music behind it to ask.
+  autoPaletteSize: z.union([z.literal(2), z.literal(3), z.literal(4),
+    z.literal('auto')]).optional(),
   autoIntensity: z.number().min(0).max(100).optional(),
   autoSyncOffsetMs: z.number().int()
     .min(-SYNC_OFFSET_LIMIT_MS).max(SYNC_OFFSET_LIMIT_MS).optional(),

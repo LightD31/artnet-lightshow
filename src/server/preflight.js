@@ -20,7 +20,7 @@ const pythonEnv = require('../python-env');
  * The check you run before doors open.
  *
  * Every piece of this stack degrades quietly by design: Art-Net send failures
- * are logged and the render loop carries on, a missing PANNs checkpoint drops
+ * are logged and the render loop carries on, a missing MuQ-MuLan checkpoint drops
  * genre classification and falls back to a mood palette, an absent ffmpeg only
  * surfaces when the first track downloads. Individually that is the right
  * behaviour — none of it should take the show down mid-set. Collectively it
@@ -265,23 +265,23 @@ function checkPanns() {
 
   if (checkpoint === null || labels === null) {
     return {
-      id: 'panns', label: 'PANNs genre model', status: WARN,
-      detail: 'Not downloaded. The analyser still runs, but genre classification is skipped and '
-        + 'palettes fall back to a mood-based path.',
+      id: 'panns', label: 'PANNs tagger', status: WARN,
+      detail: 'Not downloaded. Genre comes from MuQ-MuLan either way — see Analysis models — so '
+        + 'this only costs the instrument-role priors and the genre fallback behind MuQ-MuLan.',
       fix: 'python scripts/setup-panns.py   (~310 MB, one time). It is also fetched automatically '
         + 'on the first track you analyse — which is a poor moment to discover a slow connection.',
     };
   }
   if (checkpoint !== PANNS_CHECKPOINT_SIZE) {
     return {
-      id: 'panns', label: 'PANNs genre model', status: WARN,
+      id: 'panns', label: 'PANNs tagger', status: WARN,
       detail: `The checkpoint at ${PANNS_CHECKPOINT} is ${checkpoint} bytes, not the expected `
         + `${PANNS_CHECKPOINT_SIZE} — it is probably a truncated download.`,
       fix: 'python scripts/setup-panns.py --check',
     };
   }
   return {
-    id: 'panns', label: 'PANNs genre model', status: OK,
+    id: 'panns', label: 'PANNs tagger', status: OK,
     detail: `Checkpoint and labels in place at ${PANNS_DIR}.`,
   };
 }
@@ -397,11 +397,12 @@ function checkAnalysisModels({ download = false } = {}) {
   const bsReady = path.join(root, 'BS-Roformer-SW.ready');
   const muq = path.join(root, 'muq');
   const mulan = path.join(root, 'muq_mulan');
+  const text = process.env.ARTNET_MUQ_TEXT_MODEL || path.join(root, 'xlm-roberta-base');
   const skey = path.join(root, 'skey');
   const beat = path.join(root, 'beat_this.ready');
   const bsEnabled = !['0', 'false', 'no'].includes(String(process.env.ARTNET_USE_BS_ROFORMER || '0').toLowerCase());
   const ready = (!bsEnabled || (fs.existsSync(bs) && fs.existsSync(bsReady))) && fs.existsSync(muq) && fs.existsSync(mulan)
-    && fs.existsSync(skey) && fs.existsSync(beat);
+    && fs.existsSync(text) && fs.existsSync(skey) && fs.existsSync(beat);
   if (!ready && download) {
     const py = process.env.ARTNET_PYTHON || pythonEnv.resolve().executable || 'python';
     const script = path.join(__dirname, '..', '..', 'scripts', 'download-models.py');
@@ -413,7 +414,7 @@ function checkAnalysisModels({ download = false } = {}) {
     }
   }
   const after = (!bsEnabled || (fs.existsSync(bs) && fs.existsSync(bsReady))) && fs.existsSync(muq) && fs.existsSync(mulan)
-    && fs.existsSync(skey) && fs.existsSync(beat);
+    && fs.existsSync(text) && fs.existsSync(skey) && fs.existsSync(beat);
   return { id: 'models', label: 'Analysis models', status: after ? OK : WARN,
     detail: after
       ? (bsEnabled

@@ -26,8 +26,11 @@ const u8 = (n) => Math.max(0, Math.min(255, Math.round(n) || 0));
 const clampBpm = (n) => Math.max(20, Math.min(300, Math.round(n) || 120));
 const division = (n) => Math.max(1, Math.min(16, Math.round(n) || 1));
 
-// Loudest wins when two bursts collide.
-const BURST_PRIORITY = { 'white-strobe': 3, blinder: 2, 'color-strobe': 1 };
+// Loudest wins when two bursts collide. The order is the vocabulary's own:
+// a glow is a lift, a punch is a stab, and the three above them are flashes.
+const BURST_PRIORITY = {
+  glow: 0, kill: 1, 'uv-wash': 2, 'color-strobe': 3, blinder: 4, 'white-strobe': 5,
+};
 
 // A burst may not start until the previous one has fully played out, plus this
 // gap. Without it a second burst 150 ms in clips the first one in half, and at
@@ -51,6 +54,10 @@ function renderIntents(intents, { blackoutIndex = 0 } = {}) {
 
   for (const intent of intents) {
     switch (intent.kind) {
+      case INTENT.EXPRESSION:
+        events.push({ timeMs: intent.timeMs, action: 'patch', data: { showDynamics: intent.dynamics,
+          ...(intent.dynamics?.level === 0 ? { energyOverride: null } : {}) } });
+        break;
       case INTENT.SCENE:
         events.push({ timeMs: intent.timeMs, action: 'patch', data: sceneData(intent) });
         break;
@@ -115,6 +122,7 @@ function sceneData(intent) {
   if (intent.strobeSpeed != null) data.strobeSpeed = u8(intent.strobeSpeed);
   if (intent.strobeFunction) data.strobeFunction = String(intent.strobeFunction);
   if (intent.bpm != null) data.bpm = clampBpm(intent.bpm);
+  if (intent.opening) data.showDynamics = null;
   if (intent.running != null) data.running = Boolean(intent.running);
   if (intent.masterBlackout != null) data.masterBlackout = Boolean(intent.masterBlackout);
   if (!KEEPS_ENERGY.has(intent.source)) data.energyOverride = null;

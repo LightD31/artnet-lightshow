@@ -126,13 +126,24 @@ def separate_bs_roformer(mono, sample_rate):
     with tempfile.TemporaryDirectory(prefix='artnet-bs-') as tmp:
         source = os.path.join(tmp, 'input.wav')
         sf.write(source, np.asarray(mono, dtype=np.float32), sample_rate)
-        paths = separator.separate(source)
+        # audio-separator copies output_dir into the loaded model. Redirect
+        # both: otherwise its WAVs land in the worker's current directory.
+        targets = [separator, separator.model_instance]
+        previous_dirs = [target.output_dir for target in targets]
+        try:
+            for target in targets:
+                target.output_dir = tmp
+            paths = separator.separate(source)
+        finally:
+            for target, previous in zip(targets, previous_dirs):
+                target.output_dir = previous
         stems = {}
         for item in paths:
             label = os.path.basename(item).lower()
             name = next((n for n in ('drums', 'bass', 'vocals', 'other') if n in label), None)
             if name:
-                signal, sr = librosa.load(item, sr=sample_rate, mono=True)
+                output = item if os.path.isabs(item) else os.path.join(tmp, item)
+                signal, sr = librosa.load(output, sr=sample_rate, mono=True)
                 stems[name] = np.pad(signal, (0, max(0, len(mono) - len(signal))))[:len(mono)]
     return Stems(sample_rate=sample_rate, backend='bs_roformer', **{
         name: stems.get(name, np.zeros(len(mono), dtype=np.float32))

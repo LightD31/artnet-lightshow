@@ -28,7 +28,7 @@ import sys
 import tempfile
 
 from .config import DEFAULT
-from . import pipeline, tagger
+from . import model_adapters, pipeline, tagger
 
 
 def _log(message):
@@ -151,6 +151,11 @@ def _warm_up():
         librosa.onset.onset_strength(y=silence, sr=22050)
     except Exception as exc:
         _log(f'warm-up skipped: {exc}')
+    if DEFAULT.enable_semantics:
+        try:
+            model_adapters.preload()
+        except Exception as exc:
+            _log(f'MuQ preload skipped: {exc}')
     if DEFAULT.enable_tagger:
         try:
             tagger.preload()

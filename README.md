@@ -64,7 +64,7 @@ via **Bitfocus Companion**, and a REST API.
 **Before the show**
 
 - **Preflight** — one command that checks Art-Net reachability, the patch,
-  Python, ffmpeg, yt-dlp and the genre model before doors open
+  Python, ffmpeg, yt-dlp and the analysis models before doors open
 - **Set-list warming** — analyse the whole night up front, from a pasted list or
   a Spotify playlist, rather than relying on the live queue lookahead
 
@@ -275,8 +275,8 @@ Up to 200 tracks per run.
 ## Pre-show check
 
 Everything in this stack degrades quietly on purpose. Art-Net send failures are
-logged and the render loop carries on. A missing PANNs checkpoint drops genre
-classification and falls back to a mood palette. An absent ffmpeg only surfaces
+logged and the render loop carries on. A missing MuQ-MuLan checkpoint drops
+genre classification and falls back to a mood palette. An absent ffmpeg only surfaces
 when the first track downloads. Individually that is right — none of it should
 take the show down mid-set. Collectively it means the first sign of a broken rig
 is the rig not working, in front of an audience.
@@ -309,8 +309,8 @@ What it checks: Art-Net reachability (it sends an ArtPoll and lists the nodes
 that answer), the sACN configuration and universe mapping, the fixture patch
 for overlaps and out-of-universe addresses, the bind address and token, the
 MIDI controller, the Python interpreter and the analyser's imports, ffmpeg,
-yt-dlp, the PANNs checkpoint, the analysis cache, and which playback sources
-are connected.
+yt-dlp, the analysis model weights, the optional PANNs checkpoint, the analysis
+cache, and which playback sources are connected.
 
 The same report is in the settings page under **Pre-show Check** — run there,
 it also sees the *live* MIDI and playback-source connections rather than only
@@ -533,7 +533,7 @@ pip install -r requirements.txt
 # Fetch the model weights now rather than at load-in on venue wifi (~400 MB)
 python -c "import sys; sys.path.insert(0, 'src'); from analysis import models; models.warm_up()"
 
-python scripts/setup-panns.py          # optional, ~310 MB genre model
+python scripts/setup-panns.py          # optional, ~310 MB instrument tagger
 python scripts/setup-panns.py --check  # verify without downloading
 ```
 
@@ -554,8 +554,11 @@ driving a visualiser. On CPU expect roughly 0.6× realtime, most of it separatio
 — set `separate_sources=False` in `src/analysis/config.py` to trade the
 stem-derived instrument roles for a 4× faster analysis.
 
-`panns_inference` is the one part that stays optional: without it genre
-classification is skipped silently and palette selection falls back to a
+`panns_inference` is the one part that stays optional. Genre no longer depends
+on it — that is MuQ-MuLan, scored zero-shot against the subgenres by name, and
+it comes down with the rest of the weights above. What PANNs still supplies is
+the instrument-role priors and a genre fallback for a rig that has it installed
+but no MuQ-MuLan checkpoint. Without either, palette selection falls back to a
 mood-based path, so run `--check` if shows look off.
 
 You do not have to run the setup script by hand: the analyser fetches whatever
@@ -718,7 +721,11 @@ needed at all.
 
 Two controls sit in the *Look* panel and decide how the generated show reads:
 
-- **Palette** — how many colours a song locks to (2, 3 or 4).
+- **Palette** — how many colours a song locks to: 2, 3, 4, or **Auto**. On Auto
+  the show sizes it per track — one colour per distinct passage, capped at four,
+  and one fewer when the music cannot carry the separation, because four hues on
+  a track with two ideas read as arbitrary rather than as rich. The button shows
+  what the current track resolved to. Picking a number yourself always wins.
 - **Intensity** — 0–100, how hard the show pushes: accent density, drop effects,
   strobe bursts and beat-division scaling. 50 is normal.
 
@@ -744,9 +751,19 @@ everything is one.
 - Nothing fires in the three seconds after one. The drop is the statement.
 - Intros, breakdowns and outros carry no accents at all and stay on quarter-note
   movement. That is what makes the chorus after them land.
-- Sections the analyser clustered together get the same pattern and the same
+- Passages the analyser recognises as the same get the same pattern and the same
   palette rotation every time they return, so the second chorus reads as the
-  chorus rather than as a new idea.
+  chorus rather than as a new idea. Recognition is the structure labeller's
+  clustering where it has an answer, and the timbre embeddings where it does not
+  — which catches a returning chorus the labeller split in two.
+
+The show also *reads the track continuously*, not only at section boundaries.
+Twice a second it takes the separated stems' levels — how much low end, whether
+a voice is present, how much air is on top, how fast the music is moving — and
+the rig follows them underneath whatever pattern is running. A chase through a
+breakdown and the same chase through the chorus after it are the same pattern in
+the same colours, and they do not look remotely the same. None of it touches the
+master dimmer.
 
 ### Seeing what the analyser heard
 
@@ -773,9 +790,10 @@ either, both or neither.
 **The roll.** Standard production practice is to double the *subdivision* at
 constant tempo: a snare on quarters, then eighths, then sixteenths, sometimes
 thirty-seconds. That is what an audience hears as "speeding up", and it never
-touches the BPM. Onset density measures it directly — the onsets in the last
-third of the buildup against the first third — and the rig's beat division
-follows how far it actually goes:
+touches the BPM. The analyser counts it and reports it as the buildup's
+`subdivision`, and the rig's beat division follows how far it actually goes. For
+documents written before the analyser counted it, onset density stands in — the
+onsets in the last third of the buildup against the first third:
 
 | Onset density ratio | Peak beat division |
 |---|---|

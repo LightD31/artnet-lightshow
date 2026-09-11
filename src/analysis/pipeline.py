@@ -15,9 +15,11 @@ exist, the bands are recomputed with the correlation term filled in. It costs
 one extra pass over already-computed spectrograms and it is what makes the
 `importance` score mean anything.
 
-*The tagger runs in parallel from the very start.* It reads the file directly
-and needs nothing from the rest of the pipeline, and on CPU it is several
-seconds. Started first and collected last, it is effectively free.
+*The learned classifiers run in parallel with the DSP.* Neither needs anything
+from the rest of the pipeline — the AudioSet tagger reads the file directly and
+MuQ-MuLan needs only the decoded waveform — and on CPU both are several seconds.
+Started as early as their input exists and collected just before the stage that
+consumes them, they cost close to nothing.
 
 The document it returns keeps every field name the previous analyser emitted,
 at the top level, alongside the new structured sections. That is deliberate:
@@ -44,6 +46,15 @@ from .version import SCHEMA_VERSION
 from . import model_adapters
 
 
+# The mood words MuQ-MuLan is asked about alongside the genre prompts. These
+# are descriptions of a look rather than of a genre: the show engine reads them
+# as colour and movement hints where the style only says how hard to push.
+SEMANTIC_VOCABULARY = (
+    'euphoric', 'dark', 'mechanical', 'organic', 'intimate', 'aggressive',
+    'spacious', 'ceremonial', 'warm', 'cold', 'suspended', 'triumphant',
+)
+
+
 def _log(message):
     print(f'[pipeline] {message}', file=sys.stderr)
 
@@ -56,7 +67,10 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
     if not os.path.isfile(path):
         raise FileNotFoundError(path)
 
+    # Declared before the try so the `finally` can shut them down even if
+    # preprocessing is what failed.
     tag_pool, tag_future = None, None
+    mulan_pool, mulan_future = None, None
     if config.enable_tagger and tagger.installed():
         tag_pool = ThreadPoolExecutor(max_workers=1)
         tag_future = tag_pool.submit(_safe_tag, path)
@@ -73,6 +87,14 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
             stem_pool = ThreadPoolExecutor(max_workers=1)
             stem_future = stem_pool.submit(_safe_separate, audio)
 
+        # MuQ-MuLan answers the genre question, so it has to be collected
+        # before perception rather than tacked on after the document is built.
+        # It wants the waveform rather than the file, which is why it starts
+        # here and not alongside the AudioSet tagger.
+        if config.enable_semantics:
+            mulan_pool = ThreadPoolExecutor(max_workers=1)
+            mulan_future = mulan_pool.submit(_safe_mulan, audio)
+
         frames = features_stage.extract(audio, config.preprocess)
 
         rhythm = rhythm_stage.analyse(audio, frames, config.rhythm)
@@ -80,8 +102,11 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
 
         tags = _collect(tag_future)
         stems = _collect(stem_future)
+        mulan = _collect(mulan_future) or {}
         if stem_pool is not None:
             stem_pool.shutdown(wait=False)
+        if mulan_pool is not None:
+            mulan_pool.shutdown(wait=False)
         roles = bands_stage.infer_roles(frames, band_map, stems, tags)
 
         dynamics = dynamics_stage.analyse(frames, band_map, rhythm, config.dynamics)
@@ -94,7 +119,8 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
                     structure_stage.analyse, frames, rhythm, roles,
                     [d.to_dict() for d in dynamics.drops], config.structure)
                 perception_future = pool.submit(
-                    perception_stage.analyse, frames, band_map, rhythm, roles, tags)
+                    perception_stage.analyse, frames, band_map, rhythm, roles,
+                    tags, mulan.get('genre'))
                 sections = sections_future.result()
                 perception = perception_future.result()
         else:
@@ -102,7 +128,7 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
                 frames, rhythm, roles, [d.to_dict() for d in dynamics.drops],
                 config.structure)
             perception = perception_stage.analyse(
-                frames, band_map, rhythm, roles, tags)
+                frames, band_map, rhythm, roles, tags, mulan.get('genre'))
 
         stream = events_stage.generate(frames, band_map, roles, rhythm, sections,
                                        dynamics, config.events)
@@ -110,29 +136,25 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
         document = json_safe(build_document(
             audio, frames, rhythm, band_map, roles, sections, dynamics,
             perception, stream, stems))
-        document['meta']['elapsedSec'] = round(time.time() - started, 2)
-        document['meta']['processingRatio'] = round(
-            document['meta']['elapsedSec'] / max(0.001, audio.duration), 4)
-        document['meta']['withinRealtimeBudget'] = (
-            document['meta']['processingRatio'] < 1.0)
         document['track']['hash'] = _file_hash(path)
         # Optional foundation-model passes are activated by local model
         # configuration and never block the deterministic core pipeline.
         try:
             document['embeddings'] = model_adapters.muq_embeddings(audio.mono, audio.sample_rate)
-            document['semantic_scores'] = model_adapters.semantic_scores(
-                audio.mono, audio.sample_rate,
-                ('euphoric', 'dark', 'mechanical', 'organic', 'intimate',
-                 'aggressive', 'spacious', 'ceremonial', 'warm', 'cold',
-                 'suspended', 'triumphant'))
         except Exception as exc:
-            _log(f'optional MuQ pass unavailable ({exc}); continuing without it')
+            _log(f'optional MuQ embeddings unavailable ({exc}); continuing without them')
             document['embeddings'] = []
-            document['semantic_scores'] = []
+        document['semantic_scores'] = mulan.get('semantic') or []
         document['meta']['modelUsage'] = {
             'rhythm': 'beat_this',
             'separation': getattr(stems, 'backend', 'none') if stems is not None else 'none',
             'key': 'internal_perception',
+            # A successful model run can legitimately return no tags (for
+            # silence), so use the submitted future rather than the result.
+            'tagger': 'panns' if tag_future is not None else 'none',
+            # What actually decided the show style, which is not the same as
+            # what ran: a model that came back undecided loses to the signal.
+            'genre': perception.genre_source,
             'skey': False,
             'muq': bool(document['embeddings']),
             'muqMulan': bool(document['semantic_scores']),
@@ -147,6 +169,11 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
             document['track']['key'] = skey['value']
             document['meta']['modelUsage']['key'] = 's-key'
             document['meta']['modelUsage']['skey'] = True
+        document['meta']['elapsedSec'] = round(time.time() - started, 2)
+        document['meta']['processingRatio'] = round(
+            document['meta']['elapsedSec'] / max(0.001, audio.duration), 4)
+        document['meta']['withinRealtimeBudget'] = (
+            document['meta']['processingRatio'] < 1.0)
         _log(f'{os.path.basename(path)}: {audio.duration:.1f}s analysed in '
              f'{document["meta"]["elapsedSec"]}s '
              f'({rhythm.bpm:.1f} BPM, {len(sections)} sections, '
@@ -155,6 +182,8 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
     finally:
         if tag_pool is not None:
             tag_pool.shutdown(wait=False)
+        if mulan_pool is not None:
+            mulan_pool.shutdown(wait=False)
 
 
 def _safe_separate(audio):
@@ -171,6 +200,19 @@ def _file_hash(path):
         for chunk in iter(lambda: handle.read(1024 * 1024), b''):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _safe_mulan(audio):
+    """Genre and mood prompts in one MuQ-MuLan pass, or `{}` when unavailable."""
+    try:
+        return model_adapters.mulan_scores(audio.mono, audio.sample_rate, {
+            'genre': perception_stage.genre_prompts(),
+            'semantic': SEMANTIC_VOCABULARY,
+        })
+    except Exception as exc:
+        _log(f'optional MuQ-MuLan pass unavailable ({exc}); '
+             f'genre falls back to the AudioSet tagger or the signal')
+        return {}
 
 
 def _safe_tag(path):

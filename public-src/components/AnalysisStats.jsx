@@ -110,5 +110,24 @@ export function AnalysisStats({ as, colorPresets }) {
     </div>
   );
 
+  blocks.push(
+    <section class="analysis-models" aria-label="Models used for this track">
+      <h4>Models used for this track</h4>
+      {a.models?.length ? (
+        <dl class="analysis-model-list">
+          {a.models.map(({ role, model, status }) => (
+            <div key={role} class={`analysis-model analysis-model-${status}`}>
+              <dt>{role}</dt>
+              <dd>
+                <strong>{model}</strong>
+                <span class="dim">{({ used: 'Used', fallback: 'Fallback', unused: 'Not used', unknown: 'Not recorded' })[status]}</span>
+              </dd>
+            </div>
+          ))}
+        </dl>
+      ) : <span class="dim">Model usage was not recorded for this analysis.</span>}
+    </section>
+  );
+
   return <div class="auto-analysis-stats">{blocks}</div>;
 }

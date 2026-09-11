@@ -186,7 +186,7 @@ class AnalyzerWorker {
     // tracebacks) to the Node console with a consistent prefix.
     for (const raw of chunk.split(/\r?\n/)) {
       const line = raw.trim();
-      if (line) console.log(`[analyzer] ${line}`);
+      if (line) console.log(line.startsWith('[analyzer]') ? line : `[analyzer] ${line}`);
     }
   }
 
@@ -256,7 +256,11 @@ class AnalyzerWorker {
     try {
       resp = JSON.parse(line);
     } catch (e) {
-      console.warn(`[analyzer] bad worker output: ${line.slice(0, 200)}`);
+      // A few third-party audio libraries print progress to stdout despite
+      // the NDJSON contract. It is diagnostic output, not a protocol error.
+      // Keep it visible without alarming the operator or disrupting the
+      // request currently in flight.
+      console.log(line.startsWith('[analyzer]') ? line : `[analyzer] ${line.slice(0, 200)}`);
       return;
     }
     if (!this._pending) {

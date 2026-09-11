@@ -118,6 +118,8 @@ const PATTERNS = [
   { id: 'twinkle',      name: 'Twinkle',       desc: 'Soft random levels, nothing goes fully dark' },
   { id: 'sparkle',      name: 'Sparkle',       desc: 'Hard random on/off, instant' },
   { id: 'random-flash', name: 'Random Flash',  desc: 'One random fixture pops each beat' },
+  { id: 'ensemble', name: 'Ensemble', desc: 'Bass at the edges, vocals in the centre, airy moving accents' },
+  { id: 'ribbon', name: 'Ribbon', desc: 'Continuous palette ribbons shaped by musical texture and width' },
 ];
 
 const PATTERN_IDS = PATTERNS.map((p) => p.id);
@@ -148,6 +150,7 @@ const ENERGY_EFFECTS = [
   { id: 'blinder',      name: 'Blinder',       desc: 'Every emitter at full — the brightest the rig goes' },
   { id: 'uv-wash',      name: 'UV Wash',       desc: 'Blacklight — UV alone, no strobe' },
   { id: 'kill',         name: 'Kill',          desc: 'Everything out for as long as it is held' },
+  { id: 'glow',         name: 'Glow',          desc: 'A soft lift in the current colour — the accent quiet music can take' },
 ];
 
 const ENERGY_EFFECT_IDS = ENERGY_EFFECTS.map((e) => e.id);
