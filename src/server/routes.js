@@ -6,7 +6,7 @@ const os = require('os');
 const multer = require('multer');
 
 const {
-  state, getClientState, universeOf, maxBrightnessOf, countUniverses, setDefaultUniverse,
+  state, getClientState, universeOf, maxBrightnessOf, countUniverses,
 } = require('./state');
 const { applyPatch, applyOverride, setFixtureMaxBrightness, processTap } = require('./patch');
 const { PALETTES } = require('./palettes');
@@ -14,7 +14,6 @@ const { resizeFixtureBuffers } = require('./engine');
 const { parseGDTF } = require('../gdtf');
 const {
   BUILTIN_PROFILE_ID,
-  BUILTIN_PROFILE_IDS,
   isBuiltinProfile,
   MAX_FIXTURES,
   UNIVERSE_SIZE,
@@ -23,15 +22,15 @@ const {
   registerProfile,
   unregisterProfile,
   listProfiles,
-  clearNonBuiltinProfiles,
 } = require('./profiles');
 const { MAX_UNIVERSES } = require('./universes');
 const { cues, cueWriteSchema, cueRestoreSchema, reorderSchema } = require('./cues');
+const { showStore, snapshotShow, applyShow } = require('./show-store');
 const {
   midiMap, ACTIONS, defaultTypeFor, mapSchema, learnSchema, bindingWriteSchema,
 } = require('./midi-map');
 const {
-  profileSchema, showSchema, midiConnectSchema, deezerStateSchema,
+  profileSchema, midiConnectSchema, deezerStateSchema,
   fixtureRestoreSchema, dmxUniverse, huePairSchema, validate,
 } = require('./validation');
 const output = require('./output');
@@ -343,6 +342,7 @@ function attachRoutes(app, deps) {
     try {
       const profile = validate(profileSchema, req.body, 'profile');
       if (!registerProfile(profile)) return res.status(400).json({ ok: false, error: 'Invalid profile' });
+      showStore.scheduleSave();
       integrations.broadcast();
       res.json({ ok: true });
     } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
@@ -354,6 +354,7 @@ function attachRoutes(app, deps) {
     const inUse = state.fixtures.some((f) => f.profileId === id);
     if (inUse) return res.status(400).json({ ok: false, error: 'Profile is in use by patched fixtures' });
     unregisterProfile(id);
+    showStore.scheduleSave();
     integrations.broadcast();
     res.json({ ok: true });
   });
@@ -414,6 +415,7 @@ function attachRoutes(app, deps) {
       override: null,
     });
     resizeFixtureBuffers();
+    showStore.scheduleSave();
     integrations.broadcast();
     res.json({ ok: true });
   });
@@ -430,6 +432,7 @@ function attachRoutes(app, deps) {
     const [removed] = state.fixtures.splice(index, 1);
     state.fixtures.forEach((f, i) => { f.id = i; });
     resizeFixtureBuffers();
+    showStore.scheduleSave();
     integrations.broadcast();
     res.json({
       ok: true,
@@ -492,116 +495,25 @@ function attachRoutes(app, deps) {
       state.fixtures.splice(at, 0, restored);
       state.fixtures.forEach((f, i) => { f.id = i; });
       resizeFixtureBuffers();
+      showStore.scheduleSave();
       integrations.broadcast();
       res.json({ ok: true, id: at });
     } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
   });
 
-  app.get('/api/show', (_req, res) => {
-    const profiles = listProfiles();
-    res.json({
-      artnet: state.artnet,
-      // Only the profiles that were imported. The built-ins are on every server
-      // already, so shipping them in the file would mean a show loaded onto a
-      // newer build quietly reinstating an older copy of them.
-      profiles: Object.values(profiles).filter((p) => !isBuiltinProfile(p.id)),
-      fixtures: state.fixtures.map((f) => ({
-        label: f.label,
-        address: f.address,
-        universe: universeOf(f),
-        profileId: f.profileId,
-        maxBrightness: maxBrightnessOf(f),
-      })),
-    });
-  });
+  // The show file: the patch as a portable document. The server saves it for
+  // the operator on every change (see show-store.js), so this is for moving a
+  // rig between machines or keeping a copy, not for not losing your work.
+  app.get('/api/show', (_req, res) => res.json(snapshotShow()));
 
   app.post('/api/show', (req, res) => {
     try {
-      const show = validate(showSchema, req.body, 'show');
-      const hasFixtures = Array.isArray(show.fixtures) && show.fixtures.length > 0;
-      if (hasFixtures && show.fixtures.length > MAX_FIXTURES) {
-        return res.status(400).json({
-          ok: false,
-          error: `Show has ${show.fixtures.length} fixtures, more than the ${MAX_FIXTURES} supported`,
-        });
-      }
-
-      // Resolve the incoming show against the profiles it *brings*, before
-      // touching live state. Loading a show is otherwise the one path that can
-      // half-apply: the old code swapped the profile registry first, so a show
-      // that failed later left the rig on a profile set no fixture referenced.
-      // It was also the one path that skipped the universe-bounds check the
-      // socket handler enforces, silently dropping the overhanging channels.
-      const incoming = Object.create(null);
-      // Every built-in, not just the fallback: a show whose fixtures sit on the
-      // Hue lamp profiles carries no copy of them, so resolving against the
-      // fallback alone would silently land those fixtures on a 12-channel par.
-      for (const id of BUILTIN_PROFILE_IDS) incoming[id] = listProfiles()[id];
-      if (Array.isArray(show.profiles)) {
-        for (const p of show.profiles) if (p && p.id) incoming[p.id] = p;
-      }
-
-      // A show file carries its own default universe, and the fixtures in it
-      // are resolved against that rather than the one the rig happens to be on.
-      const showUniverse = (show.artnet && show.artnet.universe !== undefined)
-        ? show.artnet.universe : state.artnet.universe;
-
-      let next = null;
-      if (hasFixtures) {
-        next = show.fixtures.map((f, i) => ({
-          id: i,
-          label: f.label || `Fixture ${i + 1}`,
-          address: f.address || 1,
-          // Shows saved before multi-universe carry no universe at all: those
-          // fixtures belong on the show's own universe, where they used to be.
-          universe: f.universe !== undefined ? f.universe : showUniverse,
-          profileId: incoming[f.profileId] ? f.profileId : BUILTIN_PROFILE_ID,
-          maxBrightness: f.maxBrightness !== undefined ? f.maxBrightness : 255,
-          override: null,
-        }));
-        for (const fix of next) {
-          const chCount = incoming[fix.profileId].channelCount;
-          if (!fitsInUniverse(fix.address, chCount)) {
-            return res.status(400).json({
-              ok: false,
-              error: `"${fix.label}" at address ${fix.address} needs ${chCount} channels and would end at `
-                + `${endChannel(fix.address, chCount)}, past the ${UNIVERSE_SIZE}-channel universe`,
-            });
-          }
-        }
-        const spanned = new Set([showUniverse, ...next.map((f) => f.universe)]);
-        if (spanned.size > MAX_UNIVERSES) {
-          return res.status(400).json({
-            ok: false,
-            error: `Show spans ${spanned.size} universes, more than the ${MAX_UNIVERSES} this server transmits`,
-          });
-        }
-      }
-
-      // Everything checked out — now apply.
-      if (Array.isArray(show.profiles)) {
-        clearNonBuiltinProfiles();
-        show.profiles.forEach((p) => { if (p && p.id) registerProfile(p); });
-      }
-      if (show.artnet) {
-        const { universe, ...rest } = show.artnet;
-        Object.assign(state.artnet, rest);
-        if (universe !== undefined) {
-          // With a fixture list the show already says where every fixture goes,
-          // so assign the default directly; dragging the old default's
-          // occupants along would fight it. Without one, this is the Art-Net
-          // panel's "move the rig" semantics.
-          if (next) state.artnet.universe = universe;
-          else setDefaultUniverse(universe);
-        }
-      }
-      if (next) {
-        state.fixtures = next;
-        resizeFixtureBuffers();
-      }
+      applyShow(req.body);
+      // The uploaded show is the rig now, so it is also what a restart restores.
+      showStore.scheduleSave();
       integrations.broadcast();
       res.json({ ok: true });
-    } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
   });
 
   // ─── Cue stack ────────────────────────────────────────────────────────────

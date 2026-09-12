@@ -9,6 +9,7 @@ const {
   validate,
 } = require('./validation');
 const { listProfiles, getProfile, endChannel, fitsInUniverse, UNIVERSE_SIZE } = require('./profiles');
+const { showStore } = require('./show-store');
 const { MAX_UNIVERSES } = require('./universes');
 const { settings } = require('./settings');
 const { midiMap } = require('./midi-map');
@@ -82,6 +83,7 @@ function attachSockets(io, { midi, integrations }) {
         // address checks above, but it rides the same message so dragging the
         // slider does not need a second channel.
         if (maxBrightness !== undefined) state.fixtures[id].maxBrightness = maxBrightness;
+        showStore.scheduleSave();
         integrations.broadcast();
       } catch (err) {
         socket.emit('error-msg', { source: 'fixture', message: err.message });

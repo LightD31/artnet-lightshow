@@ -2,8 +2,9 @@ node_modules/
 companion-module/node_modules/
 .env
 
-# Operator settings, written by the settings page. Holds secrets (Spotify
-# client secret, Deezer ARL, access token), so it never goes in the repo.
+# Everything the server writes for this installation: operator settings, the
+# fixture patch, cues, the MIDI map. The settings hold secrets (Spotify client
+# secret, Deezer ARL, access token), so none of it goes in the repo.
 config/
 
 cache/

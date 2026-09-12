@@ -18,6 +18,10 @@ const hooks = {
   autoSyncOffsetMs: () => {},
   autoPrefetchDepth: () => {},
   broadcast: () => {},
+  // The patch changed: save it. Registered by server.js rather than required
+  // here, because the show store reads this module's state and requiring it
+  // back would be a cycle.
+  showChanged: () => {},
 };
 
 function setHooks(partial) { Object.assign(hooks, partial); }
@@ -96,6 +100,9 @@ function applyPatch(rawData) {
     Object.assign(state.artnet, rest);
     if (universe !== undefined) setDefaultUniverse(universe);
     persist({ artnet: { ...state.artnet } });
+    // Moving the rig's default universe takes its fixtures with it, so the
+    // saved patch has to follow.
+    if (universe !== undefined) hooks.showChanged();
   }
   if (data.autoSource !== undefined) state.autoSource = data.autoSource;
 
@@ -160,6 +167,7 @@ function setFixtureMaxBrightness(id, value) {
   const raw = Number(value);
   if (!Number.isFinite(raw)) return;
   state.fixtures[id].maxBrightness = Math.max(0, Math.min(255, Math.round(raw)));
+  hooks.showChanged();
   hooks.broadcast();
 }
 

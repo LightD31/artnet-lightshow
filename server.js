@@ -18,7 +18,9 @@ const { AnalysisCache } = require('./src/analysis-cache');
 
 const { state } = require('./src/server/state');
 const { startEngine, stopEngine } = require('./src/server/engine');
-const { applyPatch, applyOverride, setFixtureMaxBrightness, processTap, setPersist } = require('./src/server/patch');
+const {
+  applyPatch, applyOverride, setFixtureMaxBrightness, processTap, setPersist, setHooks,
+} = require('./src/server/patch');
 const { COLOR_PRESETS, PATTERNS } = require('./src/server/presets');
 const { setupIntegrations } = require('./src/server/integrations');
 const { attachRoutes } = require('./src/server/routes');
@@ -28,6 +30,7 @@ const { settings, CONFIG_FILE, warnAboutLegacyEnv } = require('./src/server/sett
 const { createApplier } = require('./src/server/apply');
 const { midiMap } = require('./src/server/midi-map');
 const { cues } = require('./src/server/cues');
+const { showStore, SHOW_FILE } = require('./src/server/show-store');
 const pythonEnv = require('./src/python-env');
 
 // A .env from before settings moved into the UI would otherwise go quiet: the
@@ -94,6 +97,11 @@ const integrations = setupIntegrations({ io, midi, spotify, nowPlaying, deezerSo
 const smtc = new SmtcReader();
 smtc.onUpdate((payload) => nowPlaying.updatePlayback(payload));
 
+// The patch the operator left behind, put back before anything reads the
+// fixture list: the applier binds Hue channels to fixtures, the engine sizes
+// its buffers to them, and the banner below prints them.
+const patchRestored = showStore.restore();
+
 // Everything configurable is pushed into the subsystems from one place, both
 // here at boot and again whenever the settings page saves.
 const applier = createApplier({
@@ -109,6 +117,11 @@ setPersist((patch) => {
   try { settings.update(patch); }
   catch (err) { console.warn(`[settings] could not persist: ${err.message}`); }
 });
+
+// The patch itself is not a setting — it is the rig — so it has its own file.
+// Edits reach it from the patch panel, the fixture routes and the socket, and
+// every one of them saves, so the rig comes back as it was left.
+setHooks({ showChanged: () => showStore.scheduleSave() });
 
 // Keep the Spotify session across restarts. Only the refresh token is stored —
 // access tokens last an hour, so one saved at shutdown would be stale by the
@@ -185,7 +198,8 @@ server.listen(PORT, HOST, () => {
     console.log(`                        http://${shownHost}:${PORT}/?token=… still works)`);
   }
   console.log(`  ArtNet            →  ${state.artnet.host}:${state.artnet.port} universe ${state.artnet.universe}`);
-  console.log(`  Fixtures          →  ${state.fixtures.length}x at DMX ${state.fixtures.map((f) => f.address).join(', ')}`);
+  console.log(`  Fixtures          →  ${state.fixtures.length}x at DMX ${state.fixtures.map((f) => f.address).join(', ')}`
+    + `  [${patchRestored ? `saved patch, ${SHOW_FILE}` : 'default patch — saved as you change it'}]`);
   console.log(`  MIDI              →  ${midi.enabled ? 'connected' : 'not connected (pick a port in the settings page)'}`
     + `  [${midiMap.snapshot().customised ? 'custom map' : 'default X-Touch map'}]`);
   console.log(`  PRO DJ LINK       →  ${state.prolinkEnabled ? 'enabled' : 'disabled (enable it in the settings page)'}`);
@@ -233,6 +247,9 @@ function shutdown(signal) {
     ['deezer', () => deezerSource.disconnect()],
     ['prolink', () => prolink.destroy()],
     ['midi', () => midi.close()],
+    // Lands a debounced patch write that had not fired yet. A no-op when the
+    // file already matches, which is the usual case.
+    ['show', () => showStore.save()],
   ]) {
     try { fn(); } catch (err) { console.warn(`[shutdown] ${what}: ${err.message}`); }
   }
