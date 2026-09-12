@@ -212,6 +212,12 @@ const midiConnectSchema = z.object({
   output: z.string().nullable().optional(),
 }).strict();
 
+// Pairing is the one Hue call that names a bridge the settings do not hold yet:
+// the operator has just picked it off the discovery list, or typed it in.
+const huePairSchema = z.object({
+  host: z.string().min(1).max(253),
+}).strict();
+
 function validate(schema, value, label) {
   const result = schema.safeParse(value);
   if (!result.success) {
@@ -234,5 +240,6 @@ module.exports = {
   profileSchema,
   showSchema,
   midiConnectSchema,
+  huePairSchema,
   validate,
 };

@@ -88,7 +88,14 @@ BLAS and its own thread pools, so serving two would make both slower.
 `src/analyzer-worker.js` owns the queue, the priority ordering and the timeout.
 
 Requests are served by priority band — `current`, then `high`, then `normal` —
-FIFO within a band. The song playing right now is the one request that does not
+and within a band by playback-queue position: the order the listener will hear
+the tracks in is the order they are analysed in, so prefetching five deep never
+makes the next song wait for the fifth. Work with no place in the queue (an
+operator's own file, a set-list warm job) waits behind every upcoming track,
+FIFO among its peers. Each queue peek re-ranks the prefetches still waiting, so
+a queue that reshapes mid-song — a track queued, a track skipped, a radio tail
+rebuilt — moves them with it; a track that drops out of the queue loses the
+position it was given. The song playing right now is the one request that does not
 wait its turn: it interrupts the analysis in flight. An interrupted prefetch is
 requeued at the head of its band and restarts once the live track is served; its
 downloaded audio is still on disk and its caller never learns it was paused. An

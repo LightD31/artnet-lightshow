@@ -16,7 +16,7 @@
     "check": "npm run lint && npm test"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "dependencies": {
     "@preact/signals": "^1.2.3",
@@ -27,6 +27,7 @@
     "fast-xml-parser": "^5.5.9",
     "jszip": "^3.10.1",
     "multer": "^2.1.1",
+    "node-dtls-client": "^2.0.3",
     "preact": "^10.19.3",
     "prolink-connect": "^0.11.0",
     "socket.io": "^4.7.2",

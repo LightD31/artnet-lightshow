@@ -45,20 +45,28 @@ test('secrets are never handed back to the client', () => {
     // access tokens for the connected account until it is revoked. It is
     // written by the server rather than typed, but it leaks exactly as badly.
     spotify: { clientSecret: 'shh', refreshToken: 'a-live-session' },
+    // Bridge-issued rather than typed, and together they are the DTLS identity
+    // and the pre-shared key — enough to drive the whole Hue system.
+    hue: { username: 'app-key', clientKey: 'abcdef01' },
   });
 
   const { settings, secrets } = s.redacted();
   assert.strictEqual(settings.deezer.arl, '', 'redacted out');
   assert.strictEqual(settings.spotify.clientSecret, '');
   assert.strictEqual(settings.spotify.refreshToken, '');
+  assert.strictEqual(settings.hue.username, '');
+  assert.strictEqual(settings.hue.clientKey, '');
   assert.deepStrictEqual(secrets, {
     'server.token': false,
     'spotify.clientSecret': true,
     'spotify.refreshToken': true,
     'deezer.arl': true,
+    'hue.username': true,
+    'hue.clientKey': true,
   });
   assert.strictEqual(s.get('deezer.arl'), 'cookie-value', 'still readable server-side');
   assert.strictEqual(s.get('spotify.refreshToken'), 'a-live-session');
+  assert.strictEqual(s.get('hue.clientKey'), 'abcdef01');
 });
 
 // The settings page has no field for the refresh token, so its saves never
@@ -137,4 +145,29 @@ test('legacy env vars are named as ignored, not silently dropped', () => {
   assert.deepStrictEqual(found, ['ARTNET_HOST', 'DEEZER_ARL'], 'unrelated vars ignored');
   assert.match(lines.join('\n'), /no longer read/);
   assert.deepStrictEqual(warnAboutLegacyEnv({}, () => {}), [], 'silent when there is no .env');
+});
+
+// One Hue stream message carries at most 20 channel slots, so a longer list
+// could never be sent in full. Refused rather than silently truncated.
+test('more Hue bindings than the protocol can carry are refused', () => {
+  const s = store().load();
+  const channels = (n) => Array.from({ length: n }, (_, i) => ({ channel: i, fixture: 0 }));
+
+  assert.deepStrictEqual(
+    s.update({ hue: { channels: channels(20) } }),
+    ['hue.channels'],
+    'twenty is the limit, and is allowed',
+  );
+  assert.throws(() => s.update({ hue: { channels: channels(21) } }));
+});
+
+// The application id is the DTLS identity and is stored alongside the keys.
+// Unlike them it is not a secret, so it stays readable by the settings page.
+test('the Hue application id round-trips and is not redacted', () => {
+  const s = store().load();
+  s.update({ hue: { applicationId: 'a966c4cc-018d-4422-aad8-414843fc4fad' } });
+  assert.strictEqual(
+    s.redacted().settings.hue.applicationId,
+    'a966c4cc-018d-4422-aad8-414843fc4fad',
+  );
 });

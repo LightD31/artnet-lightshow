@@ -246,9 +246,11 @@ class Warmer {
       this._onChange();
 
       try {
-        // Normal priority: a track change during a set submits as the
-        // current track, which must not sit behind an hour of warming — it
-        // interrupts the warm job in flight and this one resumes after.
+        // Normal priority and no queue position: a track change during a set
+        // submits as the current track, which must not sit behind an hour of
+        // warming — it interrupts the warm job in flight and this one resumes
+        // after. Prefetches for the upcoming queue have a position and so are
+        // served ahead of warm jobs waiting in the same band.
         const result = await this._autoShow.prefetch(
           job.query, job.durationSec, job.cacheKey,
           { track: { name: job.query } }, job.isrc, 'normal',

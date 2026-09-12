@@ -84,6 +84,37 @@ function createApplier({ midi, spotify, smtc, deezer, autoShow, applyPatch, broa
     }
   }
 
+  /**
+   * Push the Hue configuration at the output layer, which owns the session.
+   *
+   * No connecting happens here: the module brings the session up from the first
+   * rendered frame and retries on its own schedule. Saving settings with a
+   * bridge that is switched off should not block the settings page.
+   */
+  function applyHue() {
+    const config = settings.group('hue');
+    output.configureHue(config);
+    // A pairing made before the application id was fetched at pair time has to
+    // resolve it on the first connect. Store it when that happens so the next
+    // start does not ask the bridge again.
+    output.onHueApplicationId((applicationId) => {
+      if (settings.get('hue.applicationId') === applicationId) return;
+      try {
+        settings.update({ hue: { applicationId } });
+      } catch (err) {
+        console.warn(`[hue] could not store the application id: ${err.message}`);
+      }
+    });
+    if (!config.enabled) return;
+    if (!config.host || !config.username || !config.clientKey || !config.entertainmentId) {
+      console.warn('[hue] output is on but the bridge is not fully set up yet — '
+        + 'pair with it and pick an entertainment area in Settings → Philips Hue.');
+      return;
+    }
+    console.log(`[hue] output enabled → ${config.host}, area ${config.entertainmentId}, `
+      + `${config.channels.length} channel${config.channels.length === 1 ? '' : 's'} bound`);
+  }
+
   function applyControlFeedback() {
     midi.setControlFeedback(settings.get('midi.controlFeedback'));
   }
@@ -134,6 +165,7 @@ function createApplier({ midi, spotify, smtc, deezer, autoShow, applyPatch, broa
   const HANDLERS = [
     { match: (k) => k.startsWith('artnet.'), run: applyArtnet },
     { match: (k) => k.startsWith('sacn.'), run: applySacn },
+    { match: (k) => k.startsWith('hue.'), run: applyHue },
     // Ports only: toggling feedback must not drop and reopen the port.
     { match: (k) => k === 'midi.input' || k === 'midi.output', run: applyMidi },
     { match: (k) => k === 'midi.controlFeedback', run: applyControlFeedback },
@@ -151,6 +183,7 @@ function createApplier({ midi, spotify, smtc, deezer, autoShow, applyPatch, broa
       applyArtnet();
       ensureSacnCid();
       applySacn();
+      applyHue();
       applySpotify();
       applyMidi();
       applySmtc();

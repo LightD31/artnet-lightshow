@@ -87,6 +87,7 @@ function build() {
     isCached: () => false,
     isPrefetching: () => false,
     prefetch: async () => ({ skipped: true, reason: 'already-cached' }),
+    applyQueueOrder() {},
     setPaletteSize() {}, setIntensity() {}, setSyncOffsetMs() {},
   };
 

@@ -563,7 +563,9 @@ function renderProfiles() {
 
   Object.values(profiles).forEach(p => {
     const card = document.createElement('div');
-    const isBuiltin = p.id === 'cameo-root-par-6-12ch';
+    // From the server's catalogues rather than a hardcoded id, so a profile that
+    // ships with the server never offers a Remove button that would be refused.
+    const isBuiltin = (state.builtinProfileIds || []).includes(p.id);
     card.className = 'profile-card' + (isBuiltin ? ' builtin' : '');
 
     const mappedChannels = Object.keys(p.channelMap || {}).join(', ');
@@ -820,6 +822,239 @@ document.getElementById('load-show-file').addEventListener('change', async (e) =
 // A 'secret' is never sent to the browser: the server reports only whether one
 // is set, and we send a new value only when the operator actually types one.
 
+// ── Philips Hue ──────────────────────────────────────────────────────────────
+// The one section whose configuration is not simply typed in: the bridge issues
+// its own credentials when you press its link button, and the list of
+// entertainment areas only exists on the bridge. So the section renders a small
+// workflow — find a bridge, pair, pick an area, bind its channels to fixtures —
+// on top of the ordinary fields.
+
+let hueAreas = [];        // [{ id, name, channels: [{ id }] }]
+let hueBridges = [];      // discovered, or empty
+let hueInfo = null;       // { status, paired, host, entertainmentId, channels }
+let hueNotice = null;     // transient line under the buttons
+
+/** The area currently selected in the form, falling back to what is saved. */
+function selectedHueArea() {
+  const select = document.getElementById('set-hue.entertainmentId');
+  const id = select ? select.value : at(settingsData.settings, 'hue.entertainmentId');
+  return hueAreas.find((a) => a.id === id) || null;
+}
+
+/** Bindings read off the table, or the saved ones before it has been drawn. */
+function hueBindings() {
+  const rows = document.querySelectorAll('[data-hue-channel]');
+  if (!rows.length) return at(settingsData.settings, 'hue.channels') || [];
+  const out = [];
+  for (const row of rows) {
+    if (row.value === '') continue;         // "not used" — leave the lamp alone
+    out.push({ channel: Number(row.dataset.hueChannel), fixture: Number(row.value) });
+  }
+  return out;
+}
+
+async function hueFetch(path, options) {
+  const res = await fetch(path, options);
+  const data = await res.json().catch(() => ({ ok: false, error: 'bad response' }));
+  if (!data.ok) throw new Error(data.error || 'request failed');
+  return data;
+}
+
+async function loadHueStatus() {
+  try {
+    hueInfo = await hueFetch('/api/hue/status');
+    // Areas are only readable once paired, and re-reading them keeps the
+    // channel table honest when someone edits the area in the Hue app.
+    if (hueInfo.paired) {
+      const data = await hueFetch('/api/hue/areas');
+      hueAreas = data.areas || [];
+    }
+  } catch (_) {
+    // A bridge that is off must not stop the rest of the page rendering.
+  }
+  renderSettings();
+}
+
+async function discoverHueBridges() {
+  hueNotice = { text: 'Looking for bridges…', ok: true };
+  renderSettings();
+  try {
+    const data = await hueFetch('/api/hue/discover');
+    hueBridges = data.bridges || [];
+    hueNotice = hueBridges.length
+      ? { text: `Found ${hueBridges.length} bridge${hueBridges.length === 1 ? '' : 's'}.`, ok: true }
+      : {
+        text: data.error
+          ? `No bridges found — ${data.error}. Type the bridge IP in above.`
+          : 'No bridges answered. Type the bridge IP in above.',
+        ok: false,
+      };
+    if (hueBridges.length === 1) {
+      const input = document.getElementById('set-hue.host');
+      if (input && !input.value) input.value = hueBridges[0].host;
+    }
+  } catch (err) {
+    hueNotice = { text: err.message, ok: false };
+  }
+  renderSettings();
+}
+
+async function pairHueBridge() {
+  const input = document.getElementById('set-hue.host');
+  const host = input ? input.value.trim() : '';
+  if (!host) {
+    hueNotice = { text: 'Enter the bridge address first, or press Find Bridges.', ok: false };
+    renderSettings();
+    return;
+  }
+
+  hueNotice = { text: 'Press the round button on the bridge now…', ok: true };
+  renderSettings();
+
+  try {
+    const data = await hueFetch('/api/hue/pair', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ host }),
+    });
+    hueAreas = data.areas || [];
+    hueNotice = {
+      text: data.areasError
+        ? `Paired, but the areas could not be read — ${data.areasError}`
+        : `Paired with ${host}. Pick an entertainment area below.`,
+      ok: !data.areasError,
+    };
+    await loadSettings();
+    await loadHueStatus();
+  } catch (err) {
+    hueNotice = { text: err.message, ok: false };
+    renderSettings();
+  }
+}
+
+async function forgetHueBridge() {
+  try {
+    await hueFetch('/api/hue/disconnect', { method: 'POST' });
+    hueAreas = [];
+    hueBridges = [];
+    hueNotice = { text: 'Bridge forgotten. Remove this integration in the Hue app under linked devices.', ok: true };
+    await loadSettings();
+    await loadHueStatus();
+  } catch (err) {
+    hueNotice = { text: err.message, ok: false };
+    renderSettings();
+  }
+}
+
+/** The pairing controls, the live status line, and the channel table. */
+function renderHueExtra(form) {
+  const paired = !!(hueInfo && hueInfo.paired);
+
+  const row = el('div', 'field setting-field');
+  row.appendChild(el('label', null, 'Bridge'));
+  const controls = el('div', 'setting-control');
+
+  const find = el('button', 'btn btn-small', 'Find Bridges');
+  find.type = 'button';
+  find.addEventListener('click', discoverHueBridges);
+  controls.appendChild(find);
+
+  const pairBtn = el('button', 'btn btn-small', paired ? 'Pair Again' : 'Pair');
+  pairBtn.type = 'button';
+  pairBtn.title = 'Press the round button on the bridge, then this';
+  pairBtn.addEventListener('click', pairHueBridge);
+  controls.appendChild(pairBtn);
+
+  if (paired) {
+    const forget = el('button', 'btn btn-small remove-btn', 'Forget');
+    forget.type = 'button';
+    forget.addEventListener('click', forgetHueBridge);
+    controls.appendChild(forget);
+  }
+  row.appendChild(controls);
+  form.appendChild(row);
+
+  if (hueBridges.length) {
+    const list = el('p', 'setting-help', `On this network: ${hueBridges.map((b) => b.host).join(', ')}`);
+    form.appendChild(list);
+  }
+  if (hueNotice) {
+    form.appendChild(el('p', `setting-help setting-note${hueNotice.ok ? '' : ' warn'}`, hueNotice.text));
+  }
+
+  // What the stream is actually doing, which is the question you have when the
+  // lamps are dark but everything above looks right.
+  if (hueInfo && hueInfo.status) {
+    const live = hueInfo.status;
+    const text = live.error
+      ? `Stream: ${live.status} — ${live.error}`
+      : `Stream: ${live.status}`;
+    form.appendChild(el('p', `setting-help setting-note${live.status === 'failed' ? ' warn' : ''}`, text));
+  }
+
+  if (!paired) return;
+
+  const area = selectedHueArea();
+  if (!area) {
+    form.appendChild(el('p', 'setting-help', 'Pick an entertainment area to bind its channels to fixtures.'));
+    return;
+  }
+
+  form.appendChild(el('div', 'card-title', 'Channels'));
+  form.appendChild(el('p', 'section-desc',
+    'Each Hue channel shows the colour of the fixture it follows, after the dimmer, '
+    + 'trim, master and blackout — so Hue lamps respond to every pattern and cue the '
+    + 'pars do. Lamp names come from the Hue app. Leave a channel unused to let the '
+    + 'bridge hold its own colour.'));
+
+  const saved = new Map((at(settingsData.settings, 'hue.channels') || []).map((c) => [c.channel, c.fixture]));
+  const fixtures = state.fixtures || [];
+
+  const table = el('table', 'patch-table');
+  const head = el('tr');
+  head.appendChild(el('th', null, 'Hue channel'));
+  head.appendChild(el('th', null, 'Lamp'));
+  head.appendChild(el('th', null, 'Follows fixture'));
+  table.appendChild(head);
+
+  for (const channel of area.channels) {
+    const tr = el('tr');
+    tr.appendChild(el('td', null, `#${channel.id}`));
+    // The name the lamp has in the Hue app. Binding by channel number alone
+    // meant counting round the room to work out which lamp #3 was.
+    tr.appendChild(el('td', null, channel.name || '—'));
+
+    const cell = el('td');
+    const select = document.createElement('select');
+    select.dataset.hueChannel = String(channel.id);
+
+    const none = document.createElement('option');
+    none.value = '';
+    none.textContent = 'not used';
+    select.appendChild(none);
+
+    for (const fix of fixtures) {
+      const option = document.createElement('option');
+      option.value = String(fix.id);
+      option.textContent = fix.label;
+      select.appendChild(option);
+    }
+    const bound = saved.get(channel.id);
+    select.value = bound === undefined ? '' : String(bound);
+
+    cell.appendChild(select);
+    tr.appendChild(cell);
+    table.appendChild(tr);
+  }
+  form.appendChild(table);
+
+  if (!fixtures.length) {
+    form.appendChild(el('p', 'setting-help setting-note warn',
+      'No fixtures are patched, so there is nothing for a Hue channel to follow. '
+      + 'Patch the rig first — add fixtures for Hue-only lamps if they have no DMX equivalent.'));
+  }
+}
+
 const SETTINGS_SPEC = [
   {
     id: 'sources',
@@ -855,6 +1090,27 @@ const SETTINGS_SPEC = [
         help: 'How a receiver tells sources apart. Generated on first start and stable from then on '
           + '— change it only if two servers on the network ended up sharing one.' },
     ],
+  },
+  {
+    id: 'hue',
+    group: 'output',
+    title: 'Philips Hue',
+    desc: 'Drive Hue lamps from the same show as the pars. Unlike Art-Net and sACN this does not '
+      + 'carry a universe: each channel of an entertainment area follows one rig fixture. '
+      + 'Build the area in the Hue app first, then pair here.',
+    fields: [
+      { path: 'hue.enabled', label: 'Enabled', type: 'toggle' },
+      { path: 'hue.host', label: 'Bridge Address', type: 'text',
+        help: 'The bridge IP. Press Find Bridges to look it up, or type it in — a show network '
+          + 'with no route to the internet has to be typed in.' },
+      { path: 'hue.entertainmentId', label: 'Entertainment Area', type: 'select',
+        empty: 'pair with a bridge first',
+        options: () => hueAreas.map((a) => ({ value: a.id, label: `${a.name} (${a.channels.length} channels)` })),
+        help: 'Areas are built in the Hue app, where the lamps are already placed on a floor plan. '
+          + 'A bridge streams one area at a time.' },
+    ],
+    extra: renderHueExtra,
+    collect: () => ({ 'hue.channels': hueBindings() }),
   },
   {
     id: 'spotify',
@@ -952,6 +1208,29 @@ function fieldInput(field) {
     return input;
   }
 
+  if (field.type === 'select') {
+    const select = document.createElement('select');
+    select.id = `set-${field.path}`;
+    const options = field.options ? field.options() : [];
+    // A value that is set but no longer in the list still has to be shown, or
+    // the control would silently claim the setting is something it isn't.
+    const known = options.some((o) => String(o.value) === String(value || ''));
+    if (!options.length || !known) {
+      const ph = document.createElement('option');
+      ph.value = value || '';
+      ph.textContent = options.length ? `${value} (not on the bridge)` : (field.empty || 'none');
+      select.appendChild(ph);
+    }
+    for (const opt of options) {
+      const node = document.createElement('option');
+      node.value = opt.value;
+      node.textContent = opt.label;
+      select.appendChild(node);
+    }
+    select.value = value || '';
+    return select;
+  }
+
   const input = document.createElement('input');
   input.id = `set-${field.path}`;
   if (field.type === 'secret') {
@@ -1024,6 +1303,10 @@ function renderSection(spec, host) {
     }
   }
 
+  // A section whose configuration cannot be expressed as a list of fields —
+  // Hue's pairing and channel bindings — renders its own controls here.
+  if (spec.extra) spec.extra(form, spec);
+
   const actions = el('div', 'setting-actions');
   const save = el('button', 'btn active', 'Apply');
   save.type = 'button';
@@ -1062,6 +1345,7 @@ async function saveSettings(spec, overrides = {}) {
       if (!input) continue;
       if (field.type === 'toggle') value = input.checked;
       else if (field.type === 'number') value = Number(input.value);
+      else if (field.type === 'select') value = input.value;
       else if (field.type === 'secret') {
         // Blank means "leave it alone" — the real value was never sent here, so
         // submitting the empty box would otherwise wipe it on every save.
@@ -1070,6 +1354,13 @@ async function saveSettings(spec, overrides = {}) {
       } else value = input.value;
     }
 
+    patch[group] = patch[group] || {};
+    patch[group][key] = value;
+  }
+
+  // Values that are not a single input — the Hue channel bindings are a table.
+  for (const [path, value] of Object.entries(spec.collect ? spec.collect() : {})) {
+    const [group, key] = path.split('.');
     patch[group] = patch[group] || {};
     patch[group][key] = value;
   }
@@ -1234,3 +1525,6 @@ document.getElementById('preflight-run').addEventListener('click', async (e) => 
 
 loadSettings();
 loadMidiMap();
+// Separate from loadSettings on purpose: this one talks to the bridge, and a
+// bridge that is switched off must not hold up the rest of the settings page.
+loadHueStatus();

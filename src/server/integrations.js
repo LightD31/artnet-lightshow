@@ -291,9 +291,9 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
    * Peek the Spotify user queue and kick off background prefetches of the
    * next `state.autoPrefetchDepth` upcoming tracks so their analyses are
    * already in the cache when they start playing. The analyzer worker serves
-   * one at a time so multiple prefetches serialize behind it — depth 5 just
-   * means more cache warming over the course of the current song, not
-   * concurrent CPU thrash — and the song that starts playing interrupts
+   * one at a time, in queue order, so multiple prefetches serialize behind it —
+   * depth 5 just means more cache warming over the course of the current song,
+   * not concurrent CPU thrash — and the song that starts playing interrupts
    * whichever one is running. Safe to call while a show is running.
    */
   async function prefetchNextFromQueue() {
@@ -340,12 +340,19 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       spotifySlots = newSlots.map(({ _query, _isrc, _durationMs, ...slot }) => slot);
       broadcast();
 
-      // Fire prefetches in order. Each one writes its result back to the
-      // matching slot (by cacheKey) so out-of-order completion is harmless.
-      for (const seed of newSlots) {
+      // Re-rank prefetches that are already waiting before adding to them: the
+      // queue may have reshaped since the last peek, and the track that is now
+      // next must not sit behind one the listener pushed further down.
+      autoShow.applyQueueOrder(newSlots.map((s) => s.cacheKey));
+
+      // Fire prefetches in queue order, and tell the analyzer that order so a
+      // deeper slot can't delay a nearer one. Each one writes its result back
+      // to the matching slot (by cacheKey) so out-of-order completion is
+      // harmless.
+      for (const [queuePos, seed] of newSlots.entries()) {
         const { cacheKey, _query, _isrc, _durationMs, track } = seed;
         const meta = { track };
-        autoShow.prefetch(_query, (_durationMs || 0) / 1000, cacheKey, meta, _isrc)
+        autoShow.prefetch(_query, (_durationMs || 0) / 1000, cacheKey, meta, _isrc, 'normal', queuePos)
           .then((r) => {
             const slot = spotifySlots.find((s) => s.cacheKey === cacheKey);
             if (!slot) return;  // depth shrank or queue rotated past this slot
@@ -502,12 +509,17 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     // from real state means a cached track is always 'ready' with no prefetch
     // job — so it can never blip back to 'prefetching'. Only a genuinely new
     // (uncached, not-yet-running) track kicks off a prefetch.
-    const slots = upcoming.map((t) => {
+
+    // Deezer's queue reshapes constantly (Flow and radio rebuild the tail), so
+    // re-rank the prefetches already waiting to the list as it stands now.
+    autoShow.applyQueueOrder(upcoming.map((t) => keyForQuery(`${t.artist} - ${t.name}`)));
+
+    const slots = upcoming.map((t, queuePos) => {
       const query = `${t.artist} - ${t.name}`;
       const cacheKey = keyForQuery(query);
       const cached = autoShow.isCached(cacheKey);
       if (!cached && !autoShow.isPrefetching(cacheKey)) {
-        autoShow.prefetch(query, (t.durationMs || 0) / 1000, cacheKey, { track: { name: t.name, artist: t.artist } }, t.isrc)
+        autoShow.prefetch(query, (t.durationMs || 0) / 1000, cacheKey, { track: { name: t.name, artist: t.artist } }, t.isrc, 'normal', queuePos)
           .then((r) => { if (!r.skipped && !r.error) console.log(`[deezer] prefetched: ${query}`); })
           .catch(() => { /* ignore */ });
       }

@@ -12,6 +12,7 @@ const { settings } = require('./settings');
 const { discoverNodes, probeSend } = require('./artnet');
 const output = require('./output');
 const { MIN_UNIVERSE, MAX_UNIVERSE } = require('./sacn');
+const { listEntertainmentConfigs } = require('./hue');
 const { cues } = require('./cues');
 const { midiMap } = require('./midi-map');
 const pythonEnv = require('../python-env');
@@ -150,6 +151,115 @@ function checkSacn() {
     id: 'sacn', label: 'sACN output', status: OK,
     detail: `${where}, priority ${config.priority}, as "${config.sourceName}". `
       + `Universes ${mapped.map(([from, to]) => `${from}→${to}`).join(', ')}.`,
+  };
+}
+
+/**
+ * Philips Hue: is the bridge there, does the area still exist, and is every
+ * channel bound to a fixture that is still in the patch?
+ *
+ * The last question is the one worth asking before doors. A Hue binding names a
+ * fixture id, and deleting that fixture from the patch leaves the binding
+ * pointing at nothing — the lamp simply stops being sent, which on the night
+ * looks like a dead lamp rather than a configuration mistake.
+ */
+async function checkHue() {
+  const config = output.getHueConfig();
+  if (!config.enabled) {
+    return {
+      id: 'hue', label: 'Philips Hue', status: INFO,
+      detail: 'Disabled. Turn it on in Settings → Philips Hue to drive Hue lamps from the show.',
+    };
+  }
+
+  const missing = [];
+  if (!config.host) missing.push('bridge address');
+  if (!config.username || !config.clientKey) missing.push('pairing');
+  if (!config.entertainmentId) missing.push('entertainment area');
+  if (missing.length) {
+    return {
+      id: 'hue', label: 'Philips Hue', status: FAIL,
+      detail: `Output is on but the ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not set up.`,
+      fix: 'Open Settings → Philips Hue, find the bridge, press its link button to pair, then pick an area.',
+    };
+  }
+
+  if (!config.channels.length) {
+    return {
+      id: 'hue', label: 'Philips Hue', status: WARN,
+      detail: `Paired with ${config.host}, but no Hue channel is bound to a fixture, so nothing will light.`,
+      fix: 'Bind each channel to a fixture in Settings → Philips Hue.',
+    };
+  }
+
+  const known = new Set(state.fixtures.map((f) => f.id));
+  const orphans = config.channels.filter((c) => !known.has(c.fixture));
+  if (orphans.length) {
+    return {
+      id: 'hue', label: 'Philips Hue', status: FAIL,
+      detail: `Channel ${orphans.map((c) => c.channel).join(', ')} `
+        + `${orphans.length === 1 ? 'is' : 'are'} bound to a fixture that is no longer in the patch, `
+        + `so ${orphans.length === 1 ? 'that lamp' : 'those lamps'} will never be sent a colour.`,
+      fix: 'Re-bind them in Settings → Philips Hue, or put the missing fixtures back.',
+    };
+  }
+
+  let areas;
+  try {
+    areas = await listEntertainmentConfigs(config.host, config.username);
+  } catch (err) {
+    return {
+      id: 'hue', label: 'Philips Hue', status: FAIL,
+      detail: `Cannot reach the bridge at ${config.host} — ${err.message}`,
+      fix: 'Check the bridge is powered and on this network, and that its IP has not changed.',
+    };
+  }
+
+  const area = areas.find((a) => a.id === config.entertainmentId);
+  if (!area) {
+    return {
+      id: 'hue', label: 'Philips Hue', status: FAIL,
+      detail: `The bridge at ${config.host} has no entertainment area ${config.entertainmentId} any more.`,
+      fix: 'It was probably renamed or rebuilt in the Hue app. Pick the area again in Settings → Philips Hue.',
+    };
+  }
+
+  // A channel the area does not define is accepted by the bridge and quietly
+  // ignored, so it would never surface as an error at show time.
+  const areaChannels = new Set(area.channels.map((c) => c.id));
+  const lampNames = new Map(area.channels.filter((c) => c.name).map((c) => [c.id, c.name]));
+  const unknown = config.channels.filter((c) => !areaChannels.has(c.channel)).map((c) => c.channel);
+  if (unknown.length) {
+    return {
+      id: 'hue', label: 'Philips Hue', status: WARN,
+      detail: `"${area.name}" has no channel ${unknown.join(', ')}, so those bindings go nowhere. `
+        + `The area defines ${areaChannels.size} channel${areaChannels.size === 1 ? '' : 's'}.`,
+      fix: 'The area was probably changed in the Hue app. Re-bind the channels in Settings → Philips Hue.',
+    };
+  }
+
+  const live = output.getHueStatus();
+  if (live.status === 'failed') {
+    return {
+      id: 'hue', label: 'Philips Hue', status: WARN,
+      detail: `"${area.name}" on ${config.host} is set up correctly, but the last stream attempt failed — ${live.error}.`,
+      fix: 'A bridge only allows one entertainment stream at a time. Close the Hue app\'s sync or any other tool streaming to it.',
+    };
+  }
+
+  // Name the lamps rather than the channel numbers: "Right follows PAR 1" is
+  // checkable against the room, "#0 → 0" is not.
+  const bound = config.channels
+    .map((c) => {
+      const fixture = state.fixtures.find((f) => f.id === c.fixture);
+      return `${lampNames.get(c.channel) || `#${c.channel}`} → ${fixture.label}`;
+    })
+    .join(', ');
+
+  return {
+    id: 'hue', label: 'Philips Hue', status: OK,
+    detail: `"${area.name}" on ${config.host}, `
+      + `${config.channels.length} of ${areaChannels.size} channel${areaChannels.size === 1 ? '' : 's'} bound: ${bound}.`,
   };
 }
 
@@ -435,8 +545,9 @@ async function runPreflight({ midi, spotify, prolink, analysisCache, downloadMod
   // The external-tool probes are independent and each costs a process spawn;
   // run them together rather than serially in front of an operator waiting on
   // the report.
-  const [artnet, ffmpeg, ytDlp] = await Promise.all([
+  const [artnet, hue, ffmpeg, ytDlp] = await Promise.all([
     checkArtnet(),
+    checkHue(),
     checkFfmpeg(),
     checkYtDlp(),
   ]);
@@ -444,6 +555,7 @@ async function runPreflight({ midi, spotify, prolink, analysisCache, downloadMod
   const checks = [
     artnet,
     checkSacn(),
+    hue,
     checkPatch(),
     checkAccess(),
     checkMidi(midi),
@@ -474,6 +586,7 @@ module.exports = {
   // standing up a server.
   checkPatch,
   checkSacn,
+  checkHue,
   checkPanns,
   checkAnalysisModels,
   checkAccess,

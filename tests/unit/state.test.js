@@ -7,7 +7,7 @@ const {
 } = require('../../src/server/state');
 
 const STATIC = ['colorPresets', 'patterns', 'energyEffects', 'strobeFunctions', 'palettes',
-  'syncOffsetLimitMs'];
+  'syncOffsetLimitMs', 'builtinProfileIds'];
 
 // The static catalogues were 63% of a 7 KB payload and went out
 // ten times a second unchanged.
@@ -37,6 +37,10 @@ test('catalogues are the static half and the DMX snapshot is bytes keyed by univ
   const cat = getCatalogs();
   assert.deepStrictEqual(Object.keys(cat).sort(), [...STATIC].sort());
   assert.ok(cat.colorPresets.length > 0 && cat.patterns.length > 0);
+  // The UI decides which profiles may be deleted from this rather than from a
+  // hardcoded id, so it has to name every profile that ships with the server.
+  assert.ok(cat.builtinProfileIds.includes('cameo-root-par-6-12ch'));
+  assert.ok(cat.builtinProfileIds.includes('generic-hue-lamp-7ch'));
 
   const snap = getDmxSnapshot();
   assert.ok(!Array.isArray(snap) && typeof snap === 'object');

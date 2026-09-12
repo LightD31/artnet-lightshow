@@ -14,6 +14,8 @@ const { resizeFixtureBuffers } = require('./engine');
 const { parseGDTF } = require('../gdtf');
 const {
   BUILTIN_PROFILE_ID,
+  BUILTIN_PROFILE_IDS,
+  isBuiltinProfile,
   MAX_FIXTURES,
   UNIVERSE_SIZE,
   endChannel,
@@ -30,8 +32,10 @@ const {
 } = require('./midi-map');
 const {
   profileSchema, showSchema, midiConnectSchema, deezerStateSchema,
-  fixtureRestoreSchema, dmxUniverse, validate,
+  fixtureRestoreSchema, dmxUniverse, huePairSchema, validate,
 } = require('./validation');
+const output = require('./output');
+const { discoverBridges, pair: pairBridge, listEntertainmentConfigs } = require('./hue');
 const { settings, RESTART_PATHS, CONFIG_FILE } = require('./settings');
 const { generateToken } = require('./auth');
 const { runPreflight } = require('./preflight');
@@ -346,7 +350,7 @@ function attachRoutes(app, deps) {
 
   app.delete('/api/profiles/:id', (req, res) => {
     const id = req.params.id;
-    if (id === BUILTIN_PROFILE_ID) return res.status(400).json({ ok: false, error: 'Cannot remove built-in profile' });
+    if (isBuiltinProfile(id)) return res.status(400).json({ ok: false, error: 'Cannot remove built-in profile' });
     const inUse = state.fixtures.some((f) => f.profileId === id);
     if (inUse) return res.status(400).json({ ok: false, error: 'Profile is in use by patched fixtures' });
     unregisterProfile(id);
@@ -497,7 +501,10 @@ function attachRoutes(app, deps) {
     const profiles = listProfiles();
     res.json({
       artnet: state.artnet,
-      profiles: Object.values(profiles).filter((p) => p.id !== BUILTIN_PROFILE_ID),
+      // Only the profiles that were imported. The built-ins are on every server
+      // already, so shipping them in the file would mean a show loaded onto a
+      // newer build quietly reinstating an older copy of them.
+      profiles: Object.values(profiles).filter((p) => !isBuiltinProfile(p.id)),
       fixtures: state.fixtures.map((f) => ({
         label: f.label,
         address: f.address,
@@ -526,7 +533,10 @@ function attachRoutes(app, deps) {
       // It was also the one path that skipped the universe-bounds check the
       // socket handler enforces, silently dropping the overhanging channels.
       const incoming = Object.create(null);
-      incoming[BUILTIN_PROFILE_ID] = listProfiles()[BUILTIN_PROFILE_ID];
+      // Every built-in, not just the fallback: a show whose fixtures sit on the
+      // Hue lamp profiles carries no copy of them, so resolving against the
+      // fallback alone would silently land those fixtures on a 12-channel par.
+      for (const id of BUILTIN_PROFILE_IDS) incoming[id] = listProfiles()[id];
       if (Array.isArray(show.profiles)) {
         for (const p of show.profiles) if (p && p.id) incoming[p.id] = p;
       }
@@ -1114,6 +1124,106 @@ function attachRoutes(app, deps) {
   // Everything the operator can configure. Secrets are never sent back: the
   // client gets a per-secret "is one set?" flag and may replace or clear a
   // value, but cannot read it.
+  // ─── Philips Hue ──────────────────────────────────────────────────────────
+  // Pairing and area selection cannot be plain settings fields: the bridge
+  // issues the credentials itself, and the list of areas only exists on the
+  // bridge. These are the calls the settings page drives that with.
+
+  app.get('/api/hue/status', (_req, res) => {
+    const config = output.getHueConfig();
+    res.json({
+      ok: true,
+      status: output.getHueStatus(),
+      // Never the credentials — only whether we have them.
+      paired: !!(config.username && config.clientKey),
+      host: config.host,
+      entertainmentId: config.entertainmentId,
+      channels: config.channels,
+    });
+  });
+
+  app.get('/api/hue/discover', asyncHandler(async (_req, res) => {
+    const { bridges, error } = await discoverBridges();
+    // Not an error status: discovery needs internet access the show network may
+    // well not have, and typing the IP in is a perfectly normal path.
+    res.json({ ok: true, bridges, error });
+  }));
+
+  /**
+   * Pair with a bridge and store what it issues.
+   *
+   * The link button has to have been pressed in the last 30 seconds, so the
+   * "press it and try again" answer is an ordinary outcome rather than a
+   * failure — the page reports it and lets the operator retry.
+   */
+  app.post('/api/hue/pair', asyncHandler(async (req, res) => {
+    const { host } = validate(huePairSchema, req.body || {}, 'hue pair');
+    const result = await pairBridge(host, { label: os.hostname() });
+    if (!result.ok) {
+      return res.status(result.pressLink ? 409 : 502)
+        .json({ ok: false, error: result.error, pressLink: !!result.pressLink });
+    }
+
+    const changed = settings.update({
+      hue: {
+        host,
+        username: result.username,
+        clientKey: result.clientKey,
+        applicationId: result.applicationId || '',
+      },
+    });
+    applier.applyChanged(changed);
+
+    // Hand back the areas straight away: pairing is only ever done in order to
+    // pick one, and a second round trip here just adds a step to the setup.
+    let areas = [];
+    let areasError = null;
+    try {
+      areas = await listEntertainmentConfigs(host, result.username);
+    } catch (err) {
+      areasError = err.message;
+    }
+    res.json({ ok: true, host, areas, areasError });
+  }));
+
+  /** The entertainment areas on the paired bridge, with their channel ids. */
+  app.get('/api/hue/areas', asyncHandler(async (_req, res) => {
+    const config = output.getHueConfig();
+    if (!config.host || !config.username) {
+      return res.status(409).json({ ok: false, error: 'Pair with a bridge first.' });
+    }
+    try {
+      const areas = await listEntertainmentConfigs(config.host, config.username);
+      res.json({ ok: true, areas });
+    } catch (err) {
+      res.status(502).json({ ok: false, error: err.message });
+    }
+  }));
+
+  /**
+   * Forget the bridge.
+   *
+   * Clears the credentials and turns the output off, because leaving it enabled
+   * with nothing to connect to would have the render loop retrying a bridge the
+   * operator has just said they are done with. The application key stays
+   * registered on the bridge itself — Hue offers no way to revoke it from here,
+   * so that is done in the Hue app under linked devices.
+   */
+  app.post('/api/hue/disconnect', (_req, res) => {
+    try {
+      const changed = settings.update({
+        hue: {
+          enabled: false, host: '', username: '', clientKey: '', applicationId: '',
+          entertainmentId: '', channels: [],
+        },
+      });
+      applier.applyChanged(changed);
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(400).json({ ok: false, error: err.message });
+    }
+  });
+
   app.get('/api/settings', (_req, res) => {
     const { settings: values, secrets } = settings.redacted();
     res.json({

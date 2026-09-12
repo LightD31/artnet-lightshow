@@ -2,8 +2,13 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 // Observe actual DMX frames without sending them to a fixture or network.
+// The stub has to cover everything the engine calls, Hue included — it is a
+// stand-in for the whole output layer, not just the Art-Net path.
 const outputPath = require.resolve('../../src/server/output');
-require.cache[outputPath] = { id: outputPath, filename: outputPath, loaded: true, exports: { sendUniverse() {} } };
+require.cache[outputPath] = {
+  id: outputPath, filename: outputPath, loaded: true,
+  exports: { sendUniverse() {}, sendHue() {}, stopHue() {} },
+};
 const { state } = require('../../src/server/state');
 const { startEngine, stopEngine } = require('../../src/server/engine');
 const { applyPatch } = require('../../src/server/patch');

@@ -6,7 +6,7 @@ const assert = require('node:assert');
 const { state } = require('../../src/server/state');
 const output = require('../../src/server/output');
 const {
-  checkPatch, checkSacn, checkPanns, checkAccess, checkMidi, probeCommand, STATUSES,
+  checkPatch, checkSacn, checkHue, checkPanns, checkAccess, checkMidi, probeCommand, STATUSES,
 } = require('../../src/server/preflight');
 const { buildArtPoll, parseArtPollReply } = require('../../src/server/artnet');
 
@@ -176,4 +176,73 @@ test('a working binary reports its first line of output', async () => {
 
   assert.strictEqual(result.ok, true);
   assert.match(result.version, /^v\d+\./);
+});
+
+// ── Philips Hue ─────────────────────────────────────────────────────────────
+// The checks that matter here are the ones that fail silently at show time: a
+// binding pointing at a deleted fixture, or an area that was rebuilt in the Hue
+// app. Neither reaches the bridge as an error — the lamp just never lights.
+
+/** Run a Hue check with a given config, then put the old one back. */
+async function withHue(config, fn) {
+  const before = output.getHueConfig();
+  try {
+    output.configureHue({
+      enabled: false, host: '', username: '', clientKey: '', entertainmentId: '', channels: [],
+      ...config,
+    });
+    return await fn();
+  } finally {
+    output.configureHue({ ...before });
+  }
+}
+
+test('Hue output that is off is information, not a warning', async () => {
+  const check = await withHue({ enabled: false }, () => checkHue());
+  assert.strictEqual(check.status, STATUSES.INFO);
+});
+
+test('Hue output enabled with no pairing names what is missing', async () => {
+  const check = await withHue({ enabled: true, host: '10.0.0.9' }, () => checkHue());
+  assert.strictEqual(check.status, STATUSES.FAIL);
+  assert.match(check.detail, /pairing/);
+  assert.match(check.detail, /entertainment area/);
+  assert.ok(check.fix, 'a failure says what to do about it');
+});
+
+test('a paired bridge with nothing bound warns rather than passing', async () => {
+  const check = await withHue({
+    enabled: true, host: '10.0.0.9', username: 'key', clientKey: 'aabb',
+    entertainmentId: '0123abcd-1234-5678-9abc-def012345678', channels: [],
+  }, () => checkHue());
+  assert.strictEqual(check.status, STATUSES.WARN);
+  assert.match(check.detail, /no Hue channel/);
+});
+
+// The failure this exists to catch: delete a fixture, and the Hue channel bound
+// to it stops being sent. On the night that looks like a dead lamp.
+test('a binding pointing at a deleted fixture is a failure, before the bridge is contacted', async () => {
+  const check = await withHue({
+    enabled: true, host: '10.0.0.9', username: 'key', clientKey: 'aabb',
+    entertainmentId: '0123abcd-1234-5678-9abc-def012345678',
+    channels: [{ channel: 0, fixture: 4242 }],
+  }, () => checkHue());
+  assert.strictEqual(check.status, STATUSES.FAIL);
+  assert.match(check.detail, /no longer in the patch/);
+});
+
+// An unreachable bridge must be reported as such rather than throwing out of
+// the whole preflight run.
+test('a bridge that cannot be reached is a failure with the reason attached', async () => {
+  const check = await withHue({
+    enabled: true,
+    // .invalid is reserved by RFC 2606 and is guaranteed never to resolve, so
+    // this fails on DNS immediately. An unroutable IP would test the same path
+    // but spend the full REST timeout doing it, on every run of the suite.
+    host: 'bridge.invalid', username: 'key', clientKey: 'aabb',
+    entertainmentId: '0123abcd-1234-5678-9abc-def012345678',
+    channels: [{ channel: 0, fixture: state.fixtures[0].id }],
+  }, () => checkHue());
+  assert.strictEqual(check.status, STATUSES.FAIL);
+  assert.match(check.detail, /Cannot reach the bridge/);
 });

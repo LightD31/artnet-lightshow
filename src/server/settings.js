@@ -51,6 +51,32 @@ const DEFAULTS = {
     // first start and stored here.
     cid: '',
   },
+  // Philips Hue Entertainment. Off by default: it needs credentials the bridge
+  // itself has to issue, so there is nothing sensible to default to. Unlike
+  // Art-Net and sACN this does not carry a universe — each Hue channel is bound
+  // to a rig fixture and shows that fixture's colour.
+  hue: {
+    enabled: false,
+    // The bridge's address. Found for you in the settings page, or typed in
+    // when the show network has no route to Philips' discovery service.
+    host: '',
+    // Both issued by the bridge during pairing, never typed by anyone: the
+    // application key is the DTLS identity, the client key is the pre-shared
+    // key itself. Secrets, so they are write-only from the UI's point of view.
+    username: '',
+    clientKey: '',
+    // The bridge's id for this application, which is what the DTLS handshake
+    // uses as its identity. Issued alongside the keys and fetched during
+    // pairing; resolved on first connect for pairings made before that.
+    applicationId: '',
+    // Which entertainment area to drive. Areas are built in the Hue app, since
+    // that is where the lamps have already been placed on a floor plan.
+    entertainmentId: '',
+    // Which fixture each Hue channel follows: [{ channel, fixture }]. A channel
+    // with no binding is simply not sent, which leaves the bridge holding its
+    // last value for that lamp rather than forcing it black.
+    channels: [],
+  },
   midi: {
     input: '',
     output: '',
@@ -100,7 +126,11 @@ const DEFAULTS = {
 
 // Never leaves the server in plaintext. The UI gets a "configured" flag instead
 // and can set or clear the value, but never read it back.
-const SECRET_PATHS = ['server.token', 'spotify.clientSecret', 'spotify.refreshToken', 'deezer.arl'];
+const SECRET_PATHS = [
+  'server.token', 'spotify.clientSecret', 'spotify.refreshToken', 'deezer.arl',
+  // Bridge-issued, and together they are full control of the Hue system.
+  'hue.username', 'hue.clientKey',
+];
 
 // Read once at boot, before anything is listening. Changing these persists
 // immediately but only takes effect on the next start.
@@ -146,6 +176,33 @@ const schema = z.object({
       (v) => v === '' || /^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$/.test(v),
       { message: 'must be blank or a UUID' },
     ),
+  }).strict(),
+  hue: z.object({
+    enabled: z.boolean(),
+    host: z.string().max(253).refine(
+      (v) => v === '' || HOSTNAME_RE.test(v),
+      { message: 'must be blank or the bridge IP address or hostname' },
+    ),
+    username: z.string().max(128),
+    applicationId: z.string().max(128),
+    // 32 hex characters as issued, but accept any even-length hex run so a
+    // future bridge with a longer key is a firmware note rather than a bug.
+    clientKey: z.string().max(128).refine(
+      (v) => v === '' || /^(?:[0-9a-fA-F]{2})+$/.test(v),
+      { message: 'must be blank or the hex client key issued by the bridge' },
+    ),
+    entertainmentId: z.string().max(64).refine(
+      (v) => v === '' || /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(v),
+      { message: 'must be blank or an entertainment area id' },
+    ),
+    // Hue channel ids are a byte. Twenty is the protocol's own limit — one
+    // stream message carries at most 20 channel slots, and an entertainment
+    // area cannot hold more lights than that — so a longer list could never be
+    // sent in full and is refused rather than silently truncated.
+    channels: z.array(z.object({
+      channel: z.number().int().min(0).max(255),
+      fixture: z.number().int().min(0),
+    }).strict()).max(20),
   }).strict(),
   midi: z.object({
     input: z.string().max(256),
@@ -200,6 +257,22 @@ function clone(value) {
 
 function getPath(obj, dotted) {
   return dotted.split('.').reduce((acc, key) => (acc == null ? acc : acc[key]), obj);
+}
+
+/**
+ * Did a setting actually change?
+ *
+ * Identity is enough for the scalars that make up almost all of this tree, but
+ * hue.channels is a list: validation rebuilds it on every save, so `!==` would
+ * call it changed every time the page was saved and re-apply the Hue config for
+ * nothing. These values are plain JSON by construction, so comparing their
+ * serialisations is both correct and cheap at the once-per-save rate this runs
+ * at.
+ */
+function sameValue(a, b) {
+  if (a === b) return true;
+  if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false;
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 /** Two-level merge — the settings tree is deliberately only groups and keys. */
@@ -322,7 +395,7 @@ class SettingsStore {
     const changed = [];
     for (const [group, values] of Object.entries(next)) {
       for (const [key, value] of Object.entries(values)) {
-        if (this._values[group][key] !== value) changed.push(`${group}.${key}`);
+        if (!sameValue(this._values[group][key], value)) changed.push(`${group}.${key}`);
       }
     }
     if (!changed.length) return changed;

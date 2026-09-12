@@ -212,12 +212,12 @@ class AutoShow {
    * when yt-dlp can't find a candidate within its ±5s filter and has to
    * fall back to an unfiltered search that may include long intros/outros.
    */
-  _runAnalyzer(source, targetDurationSec = null, priority = 'normal', tag = null) {
+  _runAnalyzer(source, targetDurationSec = null, priority = 'normal', tag = null, queuePos = null) {
     const tgt = Number.isFinite(targetDurationSec) && targetDurationSec > 0
       ? targetDurationSec : null;
     const band = priority === 'normal' ? '' : ` (${priority})`;
     console.log(`[analyzer] Analyzing${band}: ${path.basename(source)}${tgt ? ` (target ${Math.round(tgt)}s)` : ''}`);
-    return this._worker.analyze(source, tgt, { priority, tag }).then((result) => {
+    return this._worker.analyze(source, tgt, { priority, tag, queuePos }).then((result) => {
       console.log(`[analyzer] Models used (${path.basename(source)}): ${formatModelUsage(result)}`);
       return result;
     });
@@ -230,6 +230,16 @@ class AutoShow {
   /** Recycle the analyzer process — used when the interpreter changes. */
   restartWorker(reason) {
     if (this._worker) this._worker.restart(reason);
+  }
+
+  /**
+   * Tell the analyzer the playback queue's current shape, as cache keys in
+   * queue order. Prefetches already waiting are re-ranked to match, so a track
+   * that has moved up is analysed before the ones behind it and one that has
+   * dropped out stops holding up the tracks that are still coming.
+   */
+  applyQueueOrder(cacheKeys) {
+    if (this._worker) this._worker.setQueueOrder(cacheKeys);
   }
 
   destroy() {
@@ -273,7 +283,7 @@ class AutoShow {
    * go through this, and the one that needs to mutate instance state does so
    * on its own side of the in-flight boundary.
    */
-  async _fetchAnalysis(query, targetDurationSec, cacheKey, meta, isrc, onPhase, priority) {
+  async _fetchAnalysis(query, targetDurationSec, cacheKey, meta, isrc, onPhase, priority, queuePos) {
     let audioPath = null;
     try {
       audioPath = await this._downloadAudio(query, targetDurationSec, isrc);
@@ -283,7 +293,7 @@ class AutoShow {
       // tolerance, and trim beatless padding when the yt-dlp fallback grabs
       // a longer version. The cacheKey doubles as the worker-queue tag so
       // a later high-priority join can find and bump this entry.
-      const analysis = await this._runAnalyzer(audioPath, targetDurationSec, priority, cacheKey);
+      const analysis = await this._runAnalyzer(audioPath, targetDurationSec, priority, cacheKey, queuePos);
       if (cacheKey && this._cache) {
         this._cache.set(cacheKey, analysis, meta || {});
       }
@@ -302,7 +312,7 @@ class AutoShow {
    * the originator's worker-queue position; joiners ride the existing job's
    * priority (whatever it was when first submitted).
    */
-  _fetchShared(query, targetDurationSec, cacheKey, meta, isrc, onPhase, priority) {
+  _fetchShared(query, targetDurationSec, cacheKey, meta, isrc, onPhase, priority, queuePos) {
     if (cacheKey && this._inFlight.has(cacheKey)) {
       // Joining an existing fetch — if we're now urgent (downloadAndAnalyze
       // for the current track) but the original submission was a background
@@ -312,7 +322,7 @@ class AutoShow {
       if (priority !== 'normal' && this._worker) this._worker.promote(cacheKey, priority);
       return this._inFlight.get(cacheKey);
     }
-    const promise = this._fetchAnalysis(query, targetDurationSec, cacheKey, meta, isrc, onPhase, priority);
+    const promise = this._fetchAnalysis(query, targetDurationSec, cacheKey, meta, isrc, onPhase, priority, queuePos);
     if (cacheKey) {
       this._inFlight.set(cacheKey, promise);
       const cleanup = () => this._inFlight.delete(cacheKey);
@@ -327,16 +337,20 @@ class AutoShow {
    * cache for a queued-up track while the current one is still playing, so
    * track changes flip instantly to a cache hit.
    *
+   * `queuePos` is the track's place in the playback queue, 0 being the next
+   * song up: the analyzer serves the upcoming tracks in that order, so a
+   * deeper slot never delays a nearer one.
+   *
    * Returns { skipped: boolean, reason?: string, error?: string }.
    */
-  async prefetch(query, targetDurationSec, cacheKey, meta = {}, isrc = null, priority = 'normal') {
+  async prefetch(query, targetDurationSec, cacheKey, meta = {}, isrc = null, priority = 'normal', queuePos = null) {
     if (!cacheKey || !this._cache) return { skipped: true, reason: 'no-cache' };
     if (this._cache.get(cacheKey)) return { skipped: true, reason: 'already-cached' };
     if (this._inFlight.has(cacheKey)) return { skipped: true, reason: 'in-flight' };
 
     try {
       console.log(`[auto-show] prefetching${priority === 'normal' ? '' : ` (${priority})`}: ${query}`);
-      await this._fetchShared(query, targetDurationSec, cacheKey, meta, isrc, null, priority);
+      await this._fetchShared(query, targetDurationSec, cacheKey, meta, isrc, null, priority, queuePos);
       console.log(`[auto-show] prefetched and cached: ${cacheKey}`);
       return { skipped: false };
     } catch (err) {

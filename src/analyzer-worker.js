@@ -26,6 +26,23 @@ function rankOf(priority) {
   return rank === undefined ? RANK[DEFAULT_PRIORITY] : rank;
 }
 
+// Within a band, work is served in playback-queue order: the sooner the room
+// will hear a track, the sooner it is analysed. `order` is that position, 0
+// being the next song up. Work with no place in the queue — an operator's own
+// file, a set-list warm job — carries UNQUEUED and waits behind every upcoming
+// track, FIFO among its peers.
+const UNQUEUED = Infinity;
+
+/** Serving order: band first, then playback-queue position. Ties stay FIFO. */
+function compareSlots(a, b) {
+  const band = rankOf(a.priority) - rankOf(b.priority);
+  if (band !== 0) return band;
+  const ao = a.order === undefined ? UNQUEUED : a.order;
+  const bo = b.order === undefined ? UNQUEUED : b.order;
+  if (ao === bo) return 0;
+  return ao < bo ? -1 : 1;
+}
+
 /** The track was left behind before its analysis finished. */
 function supersededError() {
   const err = new Error('superseded by a newer current track');
@@ -104,6 +121,11 @@ class AnalyzerWorker {
    *
    * `options.tag` names the work (auto-show passes the cache key) so a later
    * caller can find this request and promote it.
+   *
+   * `options.queuePos` is the track's position in the playback queue, 0 being
+   * the next song up. Lower positions are served first within a band, so the
+   * order the listener will hear the tracks in is the order they are analysed
+   * in. Omit it for work that has no place in the queue.
    */
   analyze(source, targetDurationSec, options = {}) {
     if (this._shuttingDown) {
@@ -111,9 +133,11 @@ class AnalyzerWorker {
     }
     const priority = RANK[options.priority] === undefined ? DEFAULT_PRIORITY : options.priority;
     const tag = options.tag || null;
+    const order = Number.isFinite(options.queuePos) && options.queuePos >= 0
+      ? options.queuePos : UNQUEUED;
     return new Promise((resolve, reject) => {
       const id = this._nextId++;
-      const entry = { id, source, targetDurationSec, priority, tag, resolve, reject };
+      const entry = { id, source, targetDurationSec, priority, tag, order, resolve, reject };
       this._insertByPriority(entry);
       this._preempt();
       this._tick();
@@ -142,17 +166,44 @@ class AnalyzerWorker {
   }
 
   /**
-   * Queue by priority band, FIFO within the band. `front` puts the entry at
-   * the head of its own band instead of the tail — for work that already ran
-   * once and was interrupted, so it does not lose its place to its peers.
+   * Queue by band then playback-queue position, FIFO among equals. `front`
+   * puts the entry at the head of its own group instead of the tail — for work
+   * that already ran once and was interrupted, so it does not lose its place
+   * to its peers.
    */
   _insertByPriority(entry, { front = false } = {}) {
-    const rank = rankOf(entry.priority);
     let i = 0;
-    while (i < this._queue.length
-      && (front ? rankOf(this._queue[i].priority) < rank
-        : rankOf(this._queue[i].priority) <= rank)) i++;
+    while (i < this._queue.length) {
+      const cmp = compareSlots(this._queue[i], entry);
+      if (cmp > 0 || (cmp === 0 && front)) break;
+      i++;
+    }
     this._queue.splice(i, 0, entry);
+  }
+
+  /**
+   * Re-rank pending work to the playback queue as it stands now. The queue
+   * reshapes while prefetches wait — the listener queues a song, skips one,
+   * lets a radio reshuffle the tail — and an entry submitted when its track
+   * was fourth in line must not hold up the track that is now next.
+   *
+   * `tags` is the upcoming tracks' tags in queue order. Pending work that is
+   * no longer in the queue falls behind all of it rather than keeping the good
+   * position it was given earlier.
+   *
+   * Bands still win, so the song playing right now keeps the head of the queue
+   * even though it is not an upcoming track. Work already in flight is left
+   * alone: only the current track is worth interrupting (see _preempt).
+   */
+  setQueueOrder(tags) {
+    if (!Array.isArray(tags) || !this._queue.length) return;
+    for (const entry of this._queue) {
+      if (entry.priority === 'current') continue;
+      const idx = entry.tag ? tags.indexOf(entry.tag) : -1;
+      entry.order = idx < 0 ? UNQUEUED : idx;
+    }
+    // Stable in Node, so entries that tie keep the order they arrived in.
+    this._queue.sort(compareSlots);
   }
 
   /**

@@ -3,7 +3,7 @@
 const { state, getFixtureCount, universeOf, maxBrightnessOf, activeUniverses } = require('./state');
 const { COLOR_PRESETS, STROBE_FUNCTIONS } = require('./presets');
 const { getProfile, UV_BOOST } = require('./profiles');
-const { sendUniverse } = require('./output');
+const { sendUniverse, sendHue, stopHue } = require('./output');
 const universes = require('./universes');
 const { PATTERN_FUNCS } = require('./patterns');
 
@@ -245,6 +245,17 @@ function renderDmx() {
       if (ch.blue !== undefined)  dmx[base + ch.blue]  = Math.round(col.b * ts);
       if (ch.white !== undefined) dmx[base + ch.white] = Math.round(col.w * ts);
       if (ch.amber !== undefined) dmx[base + ch.amber] = Math.round(col.a * ts);
+
+      // A lamp with separate warm and cool white dies (a Hue bulb) rather than
+      // one white emitter and an amber one. The look's colour model has no
+      // fourth and fifth primary to give them, and inventing one would leave
+      // every existing preset and pattern driving nothing — so they are fed
+      // from the two components that already carry exactly this meaning: the
+      // neutral white content, and the warm content. "Cool White" (white at
+      // full) and "Warm White" (white and amber together) then land on such a
+      // lamp as the whites they are named after.
+      if (ch.coolWhite !== undefined) dmx[base + ch.coolWhite] = Math.round(col.w * ts);
+      if (ch.warmWhite !== undefined) dmx[base + ch.warmWhite] = Math.round(col.a * ts);
       if (ch.uv !== undefined)    dmx[base + ch.uv]    = Math.min(255, Math.round(col.uv * ts * UV_BOOST));
     }
   }
@@ -255,6 +266,11 @@ function renderDmx() {
   // One last all-zero frame for any universe that just left the patch, so its
   // node doesn't sit holding the look it was showing when the fixture moved.
   for (const [universe, frame] of universes.drainRetired()) sendUniverse(universe, frame);
+
+  // Hue is fed once per frame rather than once per universe: one message covers
+  // the whole entertainment area, and it reads the colours back out of the
+  // buffers that were just filled in above.
+  sendHue();
 }
 
 let beatInterval = null;
@@ -296,6 +312,11 @@ function stopEngine() {
     sendUniverse(universe, universes.getBuffer(universe));
   }
   for (const [universe, frame] of universes.drainRetired()) sendUniverse(universe, frame);
+  // Same courtesy for the bridge: one black frame so the lamps go out, then
+  // close the session rather than leaving the area locked to a stream that has
+  // stopped arriving.
+  sendHue();
+  stopHue();
 }
 
 module.exports = {

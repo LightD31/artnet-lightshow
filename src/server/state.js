@@ -1,6 +1,6 @@
 'use strict';
 
-const { BUILTIN_PROFILE_ID, getProfile, listProfiles } = require('./profiles');
+const { BUILTIN_PROFILE_ID, BUILTIN_PROFILE_IDS, getProfile, listProfiles } = require('./profiles');
 const { settings } = require('./settings');
 const universes = require('./universes');
 const {
@@ -155,6 +155,11 @@ function getCatalogs() {
     energyEffects: ENERGY_EFFECTS,
     strobeFunctions: STROBE_FUNCTIONS,
     palettes: PALETTES,
+    // Which profiles ship with the server. The UI needs this to know which ones
+    // it must not offer to delete — it used to test against the one built-in id
+    // it had hardcoded, which stopped being the whole truth once the Hue lamp
+    // profiles arrived and left them showing a Remove button the server refuses.
+    builtinProfileIds: [...BUILTIN_PROFILE_IDS],
     // So the sync control can size itself from the server's limit rather than
     // carrying a second copy of the number that silently drifts.
     syncOffsetLimitMs: SYNC_OFFSET_LIMIT_MS,
