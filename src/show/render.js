@@ -124,7 +124,6 @@ function sceneData(intent) {
   if (intent.bpm != null) data.bpm = clampBpm(intent.bpm);
   if (intent.opening) data.showDynamics = null;
   if (intent.running != null) data.running = Boolean(intent.running);
-  if (intent.masterBlackout != null) data.masterBlackout = Boolean(intent.masterBlackout);
   if (!KEEPS_ENERGY.has(intent.source)) data.energyOverride = null;
   return data;
 }

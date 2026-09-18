@@ -705,6 +705,7 @@ function renderPatchTable() {
         value = Number.isInteger(parsed) && parsed >= 0 ? parsed : 0;
       }
 
+      if (!socket.connected) { Toast.error('Disconnected — reconnect before editing the patch.'); return; }
       socket.emit('fixture', { id, [field]: value });
     });
   });

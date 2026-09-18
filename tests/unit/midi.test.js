@@ -145,6 +145,20 @@ test('note-on with velocity 0 releases a held energy button', () => {
   assert.strictEqual(h.state.energyOverride, null);
 });
 
+test('fixture blackout keeps the previous look and releases it cleanly', () => {
+  const h = harness({ cc: {}, notes: { 8: { action: 'toggleFixBlackout', fixture: 0 } } });
+  h.state.fixtures[0].override = {
+    enabled: true, r: 12, g: 34, b: 56, w: 0, a: 0, uv: 0, dim: 200, strobe: 0, blackout: false,
+  };
+  h.input.emit('noteon', { note: 8, velocity: 127, channel: 0 });
+  assert.strictEqual(h.overrides.at(-1).override.blackout, true);
+  h.state.fixtures[0].override = h.overrides.at(-1).override;
+  h.input.emit('noteon', { note: 8, velocity: 127, channel: 0 });
+  assert.deepStrictEqual(h.overrides.at(-1).override, {
+    enabled: true, r: 12, g: 34, b: 56, w: 0, a: 0, uv: 0, dim: 200, strobe: 0, blackout: false,
+  });
+});
+
 test('cue recall goes through the callback the server wires in', () => {
   const h = harness({ cc: {}, notes: { 50: { action: 'recallCue', value: 'abc123' } } });
   const recalled = [];

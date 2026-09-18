@@ -424,11 +424,20 @@ class MidiController {
         break;
       }
       case 'toggleFixBlackout': {
-        const fix = s.fixtures[binding.fixture];
+        const fix = s.fixtures.find((fixture) => fixture.id === binding.fixture);
+        if (!fix) break;
         const cur = fix && fix.override;
         const newBo = !(cur && cur.blackout);
-        // emitted via separate override channel — handled externally
-        this._emitFixOverride(binding.fixture, { enabled: true, r: 0, g: 0, b: 0, w: 0, dim: 0, strobe: 0, blackout: newBo });
+        if (!newBo && cur && cur.blackout && !cur.enabled) {
+          this._emitFixOverride(binding.fixture, null);
+          break;
+        }
+        // Blackout is a gate, not a replacement look. Clearing it restores the
+        // prior override; if there was none, return to the pattern engine.
+        this._emitFixOverride(binding.fixture, {
+          ...(cur || { enabled: false, r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 255, strobe: 0 }),
+          blackout: newBo,
+        });
         break;
       }
       case 'recallCue':
@@ -458,7 +467,7 @@ class MidiController {
         this.apply({ strobeSpeed: clamp(s.strobeSpeed + delta, 0, 255) });
         break;
       case 'adjustFixtureDim': {
-        const fix = s.fixtures[binding.fixture];
+        const fix = s.fixtures.find((fixture) => fixture.id === binding.fixture);
         if (!fix) break;
         const cur = (fix.override && fix.override.enabled) ? fix.override.dim : 255;
         this._emitFixOverride(binding.fixture, {
@@ -467,7 +476,7 @@ class MidiController {
         break;
       }
       case 'adjustFixtureMax': {
-        const fix = s.fixtures[binding.fixture];
+        const fix = s.fixtures.find((fixture) => fixture.id === binding.fixture);
         if (!fix) break;
         const cur = Number.isInteger(fix.maxBrightness) ? fix.maxBrightness : 255;
         this._emitFixMax(binding.fixture, clamp(cur + delta, 0, 255));
@@ -507,7 +516,7 @@ class MidiController {
         this.apply({ bpm: Math.round(20 + (raw / 127) * 280) });
         break;
       case 'setFixtureDim': {
-        const fix = s.fixtures[binding.fixture];
+        const fix = s.fixtures.find((fixture) => fixture.id === binding.fixture);
         if (!fix) break;
         this._emitFixOverride(binding.fixture, {
           ...(fix.override || { r: 0, g: 0, b: 0, w: 0, strobe: 0 }),
@@ -518,7 +527,7 @@ class MidiController {
       case 'setFixtureMax':
         // Deliberately does NOT enable the override: scaling a fixture down is
         // not the same as taking it out of the pattern engine.
-        if (s.fixtures[binding.fixture]) this._emitFixMax(binding.fixture, level);
+        if (s.fixtures.some((fixture) => fixture.id === binding.fixture)) this._emitFixMax(binding.fixture, level);
         break;
       case 'setAutoIntensity':
         this.apply({ autoIntensity: Math.round((raw / 127) * 100) });
@@ -580,7 +589,7 @@ class MidiController {
         case 'togglePlay':       lit = !!s.running; break;
         case 'energyHold':       lit = !!s.energyOverride; break;
         case 'toggleFixBlackout': {
-          const fix = s.fixtures[binding.fixture];
+          const fix = s.fixtures.find((fixture) => fixture.id === binding.fixture);
           lit = !!(fix && fix.override && fix.override.blackout);
           break;
         }
@@ -615,7 +624,7 @@ class MidiController {
         return to127(s.bpm - 20, 280);
       case 'setFixtureDim':
       case 'adjustFixtureDim': {
-        const fix = s.fixtures[binding.fixture];
+        const fix = s.fixtures.find((fixture) => fixture.id === binding.fixture);
         if (!fix) return null;
         // No override means the pattern engine owns the fixture and it is at
         // full — which is where the fader should sit, ready to pull it down.
@@ -624,7 +633,7 @@ class MidiController {
       }
       case 'setFixtureMax':
       case 'adjustFixtureMax': {
-        const fix = s.fixtures[binding.fixture];
+        const fix = s.fixtures.find((fixture) => fixture.id === binding.fixture);
         if (!fix) return null;
         return to127(Number.isInteger(fix.maxBrightness) ? fix.maxBrightness : 255, 255);
       }

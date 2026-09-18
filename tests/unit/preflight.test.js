@@ -9,6 +9,7 @@ const {
   checkPatch, checkSacn, checkHue, checkPanns, checkAccess, checkMidi, probeCommand, STATUSES,
 } = require('../../src/server/preflight');
 const { buildArtPoll, parseArtPollReply } = require('../../src/server/artnet');
+const { settings } = require('../../src/server/settings');
 
 // ── Art-Net discovery packets ───────────────────────────────────────────────
 
@@ -112,8 +113,16 @@ test('a fixture running past the end of its universe is a failure', () => {
 
 function withSacn(config, fn) {
   const before = output.getSacnConfig();
+  const universe = state.artnet.universe;
+  const fixtureUniverses = state.fixtures.map((fixture) => fixture.universe);
+  state.artnet.universe = 0;
+  state.fixtures.forEach((fixture) => { fixture.universe = 0; });
   output.configureSacn(config);
-  try { return fn(); } finally { output.configureSacn(before); }
+  try { return fn(); } finally {
+    output.configureSacn(before);
+    state.artnet.universe = universe;
+    state.fixtures.forEach((fixture, index) => { fixture.universe = fixtureUniverses[index]; });
+  }
 }
 
 test('sACN turned off is reported, not treated as a problem', () => {
@@ -154,7 +163,9 @@ test('a loopback bind with no token is reported as safe rather than open', () =>
   assert.ok([STATUSES.INFO, STATUSES.OK].includes(result.status));
 });
 
-test('no MIDI controller configured is information, not a warning', () => {
+test('no MIDI controller configured is information, not a warning', (t) => {
+  const originalGet = settings.get.bind(settings);
+  t.mock.method(settings, 'get', (key) => key === 'midi.input' ? '' : originalGet(key));
   const result = checkMidi({ enabled: false, listPorts: () => ({ inputs: [], outputs: [] }) });
   assert.strictEqual(result.status, STATUSES.INFO);
 });

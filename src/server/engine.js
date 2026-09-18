@@ -76,7 +76,7 @@ let expressionPhase = 0;
 
 function resolveEnergyOverride() {
   const colA = COLOR_PRESETS[state.colorA];
-  switch (state.energyOverride) {
+  switch (state.heldEnergy ?? state.energyOverride) {
     // Cold: no amber, so it reads as a hard white flash rather than a warm one.
     case 'white-strobe': return { col: { r: 255, g: 255, b: 255, w: 255, a: 0,   uv: 0   }, dim: 255, strobe: 255 };
     // The quiet end of the vocabulary. A lift rather than a flash, and the only
@@ -157,7 +157,7 @@ function renderDmx() {
     });
   }
 
-  const energy = state.energyOverride ? resolveEnergyOverride() : null;
+  const energy = (state.heldEnergy ?? state.energyOverride) ? resolveEnergyOverride() : null;
 
   // Allocate a buffer for every universe the patch now spans and retire the
   // ones it left. Done every frame rather than on patch edits: a fixture moved
@@ -185,7 +185,7 @@ function renderDmx() {
 
       if (energy) {
         col = energy.col; dim = energy.dim; strobe = energy.strobe;
-      } else if (fix.override && fix.override.enabled) {
+      } else if (fix.override && (fix.override.enabled || fix.override.blackout)) {
         const ov = fix.override;
         if (ov.blackout) {
           col = { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 }; dim = 0; strobe = 0;

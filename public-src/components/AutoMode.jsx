@@ -151,18 +151,13 @@ export function AutoMode() {
     if (running) return;
     if (status === 'ready') { api('/api/auto/start', { method: 'POST' }); return; }
 
-    const source = s.autoSource || 'auto';
-    const spotifyReady = sp.authenticated;
-    const deezerReady = s.deezer && s.deezer.authenticated;
-    const nowPlayingReady = s.nowPlaying && s.nowPlaying.authenticated;
-    const prolinkReady = s.prolink && s.prolink.connected && s.prolink.track && s.prolink.track.title;
-    // Hybrid takes its content from Spotify, so it analyses through the same
-    // endpoint; only the clock the server runs the timeline against differs.
-    const useSpotify    = source === 'spotify' || source === 'hybrid'
-                          || (source === 'auto' && spotifyReady);
-    const useDeezer     = source === 'deezer'     || (source === 'auto' && !spotifyReady && deezerReady);
-    const useNowPlaying = source === 'nowplaying' || (source === 'auto' && !spotifyReady && !deezerReady && nowPlayingReady);
-    const useProlink    = source === 'prolink'    || (source === 'auto' && !spotifyReady && !deezerReady && !nowPlayingReady && prolinkReady);
+    const requestedSource = s.autoSource || 'auto';
+    // The server is authoritative about source priority. In auto mode it may
+    // choose PRO DJ LINK over Spotify (or Deezer over generic OS media), so
+    // deciding from credentials here can analyse one track and then run the
+    // timeline against another clock. Explicit choices still use their own
+    // endpoint so an unavailable source produces its useful error message.
+    const source = requestedSource === 'auto' ? (s.activeSource || 'timer') : requestedSource;
 
     // A failed analyse must clear the pending flag, or the next status change
     // fires a start for a track that never analysed. api() reports the reason.
@@ -171,10 +166,10 @@ export function AutoMode() {
       api(endpoint, { method: 'POST' }).then((d) => { if (!d.ok) pendingStartRef.current = false; });
     };
 
-    if (useSpotify)         triggerAnalyze('/api/auto/analyze-spotify');
-    else if (useDeezer)     triggerAnalyze('/api/auto/analyze-deezer');
-    else if (useNowPlaying) triggerAnalyze('/api/auto/analyze-nowplaying');
-    else if (useProlink)    triggerAnalyze('/api/auto/analyze-prolink');
+    if (source === 'spotify' || source === 'hybrid') triggerAnalyze('/api/auto/analyze-spotify');
+    else if (source === 'deezer') triggerAnalyze('/api/auto/analyze-deezer');
+    else if (source === 'nowplaying') triggerAnalyze('/api/auto/analyze-nowplaying');
+    else if (source === 'prolink') triggerAnalyze('/api/auto/analyze-prolink');
     else api('/api/auto/start', { method: 'POST' });
   };
 

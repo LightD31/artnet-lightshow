@@ -6,7 +6,7 @@ const os = require('os');
 const multer = require('multer');
 
 const {
-  state, getClientState, universeOf, maxBrightnessOf, countUniverses,
+  state, getClientState, getFixture, allocateFixtureId, universeOf, maxBrightnessOf, countUniverses,
 } = require('./state');
 const { applyPatch, applyOverride, setFixtureMaxBrightness, processTap } = require('./patch');
 const { PALETTES } = require('./palettes');
@@ -195,11 +195,17 @@ function attachRoutes(app, deps) {
   app.post('/api/fixture/:id/blackout/toggle', (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);
-      const cur = state.fixtures[id] && state.fixtures[id].override;
+      const fixture = getFixture(id);
+      if (!fixture) return res.status(404).json({ ok: false, error: 'No such fixture' });
+      const cur = fixture.override;
+      const blackout = !(cur && cur.blackout);
+      if (!blackout && cur && cur.blackout && !cur.enabled) {
+        applyOverride(id, null);
+        return res.json({ ok: true });
+      }
       applyOverride(id, {
-        ...(cur || { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 0, strobe: 0 }),
-        enabled: true,
-        blackout: !(cur && cur.blackout),
+        ...(cur || { enabled: false, r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 255, strobe: 0 }),
+        blackout,
       });
       res.json({ ok: true });
     } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
@@ -214,11 +220,12 @@ function attachRoutes(app, deps) {
     if (!Number.isInteger(value) || value < 0 || value > 255) {
       return res.status(400).json({ ok: false, error: 'maxBrightness must be an integer from 0 to 255' });
     }
-    if (!Number.isInteger(id) || id < 0 || id >= state.fixtures.length) {
+    const fixture = getFixture(id);
+    if (!fixture) {
       return res.status(404).json({ ok: false, error: 'No such fixture' });
     }
     setFixtureMaxBrightness(id, value);
-    res.json({ ok: true, id, maxBrightness: maxBrightnessOf(state.fixtures[id]) });
+    res.json({ ok: true, id, maxBrightness: maxBrightnessOf(fixture) });
   });
 
   app.post('/api/fixture/:id/clear', (req, res) => {
@@ -396,7 +403,6 @@ function attachRoutes(app, deps) {
           + `would end at ${endChannel(address, chCount)}, past the ${UNIVERSE_SIZE}-channel universe`,
       });
     }
-    const newId = state.fixtures.length;
     const next = [...state.fixtures, { universe }];
     if (countUniverses(next) > MAX_UNIVERSES) {
       return res.status(400).json({
@@ -405,6 +411,7 @@ function attachRoutes(app, deps) {
           + 'universes this server transmits',
       });
     }
+    const newId = allocateFixtureId();
     state.fixtures.push({
       id: newId,
       label: `Fixture ${newId + 1}`,
@@ -421,8 +428,7 @@ function attachRoutes(app, deps) {
   });
 
   // Answers with the fixture that was removed and its position, so the client
-  // can offer an undo. Fixture ids are positional and get reindexed on delete,
-  // so "put it back" needs the index as well as the fixture.
+  // can offer an undo. The id is stable because external bindings refer to it.
   app.delete('/api/fixtures/:id', (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (state.fixtures.length <= 1) return res.status(400).json({ ok: false, error: 'Must have at least one fixture' });
@@ -430,7 +436,6 @@ function attachRoutes(app, deps) {
     if (index < 0) return res.status(404).json({ ok: false, error: 'No such fixture' });
 
     const [removed] = state.fixtures.splice(index, 1);
-    state.fixtures.forEach((f, i) => { f.id = i; });
     resizeFixtureBuffers();
     showStore.scheduleSave();
     integrations.broadcast();
@@ -438,6 +443,7 @@ function attachRoutes(app, deps) {
       ok: true,
       index,
       fixture: {
+        id: removed.id,
         label: removed.label,
         address: removed.address,
         universe: universeOf(removed),
@@ -474,7 +480,7 @@ function attachRoutes(app, deps) {
       }
 
       const restored = {
-        id: 0,                          // reassigned by the reindex below
+        id: fixture.id,
         label: fixture.label,
         address: fixture.address,
         universe: fixture.universe !== undefined ? fixture.universe : state.artnet.universe,
@@ -482,6 +488,10 @@ function attachRoutes(app, deps) {
         maxBrightness: fixture.maxBrightness !== undefined ? fixture.maxBrightness : 255,
         override: fixture.override || null,
       };
+
+      if (state.fixtures.some((existing) => existing.id === restored.id)) {
+        return res.status(409).json({ ok: false, error: 'That fixture id is already in use' });
+      }
 
       if (countUniverses([...state.fixtures, restored]) > MAX_UNIVERSES) {
         return res.status(400).json({
@@ -492,12 +502,13 @@ function attachRoutes(app, deps) {
       }
 
       const at = Math.max(0, Math.min(state.fixtures.length, index));
+      if (restored.id === undefined) restored.id = allocateFixtureId();
+      state.nextFixtureId = Math.max(state.nextFixtureId, restored.id + 1);
       state.fixtures.splice(at, 0, restored);
-      state.fixtures.forEach((f, i) => { f.id = i; });
       resizeFixtureBuffers();
       showStore.scheduleSave();
       integrations.broadcast();
-      res.json({ ok: true, id: at });
+      res.json({ ok: true, id: restored.id });
     } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
   });
 

@@ -1,9 +1,10 @@
-import { useEffect } from 'preact/hooks';
-import { stateSig, send, emitTap } from '../state.js';
+import { useEffect, useRef } from 'preact/hooks';
+import { stateSig, send, emitTap, energyHold } from '../state.js';
 
 const DIVISIONS = [1, 2, 4, 8];
 
 export function CommandBar() {
+  const pressRef = useRef(null);
   const s = stateSig.value;
   const bpm = s.bpm || 120;
   const division = s.beatDivision || 1;
@@ -13,7 +14,8 @@ export function CommandBar() {
   useEffect(() => {
     const onKey = (e) => {
       if (e.code !== 'Space') return;
-      if (e.target.tagName === 'INPUT' || e.target.isContentEditable) return;
+      if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
+      if (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(e.target.tagName) || e.target.isContentEditable) return;
       e.preventDefault();
       emitTap();
     };
@@ -25,8 +27,43 @@ export function CommandBar() {
   const masterPct = Math.round((dim / 255) * 100);
   const effects = s.energyEffects || [];
 
-  const activate = (id) => (e) => { e.preventDefault(); send({ energyOverride: id }); };
-  const deactivate = (id) => () => { if (s.energyOverride === id) send({ energyOverride: null }); };
+  const release = () => {
+    pressRef.current = null;
+    energyHold.release();
+  };
+  useEffect(() => {
+    const hidden = () => { if (document.hidden) release(); };
+    window.addEventListener('blur', release);
+    document.addEventListener('visibilitychange', hidden);
+    return () => {
+      release();
+      window.removeEventListener('blur', release);
+      document.removeEventListener('visibilitychange', hidden);
+    };
+  }, []);
+
+  const activate = (id) => (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    if (energyHold.press(id)) {
+      pressRef.current = { id, pointer: e.pointerId };
+      e.currentTarget.setPointerCapture(e.pointerId);
+    }
+  };
+  const deactivate = (id) => (e) => {
+    if (pressRef.current?.id === id && pressRef.current.pointer === e.pointerId) release();
+  };
+  const keyDown = (id) => (e) => {
+    if (![' ', 'Enter'].includes(e.key)) return;
+    e.preventDefault();
+    if (!e.repeat && energyHold.press(id)) pressRef.current = { id, key: e.key };
+  };
+  const keyUp = (id) => (e) => {
+    if (pressRef.current?.id === id && pressRef.current.key === e.key) {
+      e.preventDefault();
+      release();
+    }
+  };
 
   return (
     <div class="command-bar">
@@ -100,12 +137,14 @@ export function CommandBar() {
             <button
               key={eff.id}
               class={`cb-energy-btn ${s.energyOverride === eff.id ? 'active' : ''}`}
-              onMouseDown={activate(eff.id)}
-              onMouseUp={deactivate(eff.id)}
-              onMouseLeave={deactivate(eff.id)}
-              onTouchStart={activate(eff.id)}
-              onTouchEnd={deactivate(eff.id)}
-              onTouchCancel={deactivate(eff.id)}
+              onPointerDown={activate(eff.id)}
+              onPointerUp={deactivate(eff.id)}
+              onPointerCancel={deactivate(eff.id)}
+              onLostPointerCapture={deactivate(eff.id)}
+              onKeyDown={keyDown(eff.id)}
+              onKeyUp={keyUp(eff.id)}
+              onBlur={() => { if (pressRef.current?.id === eff.id) release(); }}
+              style={{ touchAction: 'none' }}
               title={`${eff.name} — ${eff.desc} (hold)`}
             >
               <span class="cb-energy-name">{eff.name}</span>

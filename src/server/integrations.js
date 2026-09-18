@@ -546,9 +546,17 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   // alive, and a status sweep should not be the thing holding the process open.
   // It also means a test can wire the integrations up without the run hanging
   // afterwards on a heartbeat nobody is listening to.
+  let lastPosition = { positionMs: 0, running: false };
   const positionTimer = setInterval(() => {
-    if (!autoShow.running) return;
-    io.emit('auto-position', { positionMs: autoShow.getPositionMs(), running: true });
+    if (!autoShow.running) {
+      if (lastPosition.running) {
+        lastPosition = { ...lastPosition, running: false };
+        io.emit('auto-position', lastPosition);
+      }
+      return;
+    }
+    lastPosition = { positionMs: autoShow.getPositionMs(), running: true };
+    io.emit('auto-position', lastPosition);
   }, 100);
   if (positionTimer.unref) positionTimer.unref();
 

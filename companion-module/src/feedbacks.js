@@ -1,5 +1,5 @@
 import { combineRgb } from '@companion-module/base'
-import { COLOR_CHOICES, COLOR_SLOTS, ENERGY_CHOICES, FIXTURE_COUNT, PATTERN_CHOICES } from './constants.js'
+import { COLOR_CHOICES, COLOR_SLOTS, ENERGY_CHOICES, PATTERN_CHOICES } from './constants.js'
 
 export function UpdateFeedbacks(self) {
 	const feedbacks = {
@@ -43,14 +43,14 @@ export function UpdateFeedbacks(self) {
 				{
 					type: 'number',
 					id: 'fixture',
-					label: `Fixture (1-${FIXTURE_COUNT})`,
+					label: 'Fixture number (ID + 1)',
 					default: 1,
 					min: 1,
-					max: FIXTURE_COUNT,
+					max: Number.MAX_SAFE_INTEGER,
 				},
 			],
 			callback: ({ options }) => {
-				const fix = self.liveState.fixtures && self.liveState.fixtures[options.fixture - 1]
+				const fix = self.liveState.fixtures?.find((fixture) => fixture.id === Number(options.fixture) - 1)
 				return !!(fix && fix.override && fix.override.blackout)
 			},
 		},
@@ -63,14 +63,14 @@ export function UpdateFeedbacks(self) {
 				{
 					type: 'number',
 					id: 'fixture',
-					label: `Fixture (1-${FIXTURE_COUNT})`,
+					label: 'Fixture number (ID + 1)',
 					default: 1,
 					min: 1,
-					max: FIXTURE_COUNT,
+					max: Number.MAX_SAFE_INTEGER,
 				},
 			],
 			callback: ({ options }) => {
-				const fix = self.liveState.fixtures && self.liveState.fixtures[options.fixture - 1]
+				const fix = self.liveState.fixtures?.find((fixture) => fixture.id === Number(options.fixture) - 1)
 				return !!(fix && fix.override && fix.override.enabled)
 			},
 		},

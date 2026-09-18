@@ -1,6 +1,6 @@
 'use strict';
 
-const { state, getClientState, getFixtureCount, countUniverses, universeOf } = require('./state');
+const { state, getClientState, getFixture, countUniverses, universeOf } = require('./state');
 const { applyPatch, applyOverride, processTap } = require('./patch');
 const {
   overrideMessageSchema,
@@ -13,8 +13,14 @@ const { showStore } = require('./show-store');
 const { MAX_UNIVERSES } = require('./universes');
 const { settings } = require('./settings');
 const { midiMap } = require('./midi-map');
+const { EnergyHold } = require('./energy-hold');
+const { ENERGY_EFFECTS } = require('./presets');
 
 function attachSockets(io, { midi, integrations }) {
+  const holds = new EnergyHold((effect) => {
+    state.heldEnergy = effect;
+    integrations.broadcast();
+  });
   // Learn is a whole-server mode, not a per-socket one: whoever armed it needs
   // to see the capture, and every other open settings page needs to stop
   // showing a stale map. Both go to everyone.
@@ -42,13 +48,14 @@ function attachSockets(io, { midi, integrations }) {
     socket.on('fixture', (payload) => {
       try {
         const { id, address, universe, label, profileId, maxBrightness } = validate(fixtureMessageSchema, payload, 'fixture-msg');
-        if (id < 0 || id >= getFixtureCount()) return;
+        const fixture = getFixture(id);
+        if (!fixture) return;
 
         const profiles = listProfiles();
         const nextProfileId = (profileId !== undefined && profiles[profileId])
-          ? profileId : state.fixtures[id].profileId;
-        const nextAddress = address !== undefined ? address : state.fixtures[id].address;
-        const nextUniverse = universe !== undefined ? universe : universeOf(state.fixtures[id]);
+          ? profileId : fixture.profileId;
+        const nextAddress = address !== undefined ? address : fixture.address;
+        const nextUniverse = universe !== undefined ? universe : universeOf(fixture);
 
         // A fixture has to fit inside its universe. Past channel 512 the writes
         // land outside the DMX buffer and Node drops them silently, leaving the
@@ -65,24 +72,24 @@ function attachSockets(io, { midi, integrations }) {
 
         // Each universe is another stream going out at the render rate, so the
         // patch may not spread across more of them than the engine transmits.
-        const proposed = state.fixtures.map((f, i) => (i === id ? { ...f, universe: nextUniverse } : f));
+        const proposed = state.fixtures.map((f) => (f.id === id ? { ...f, universe: nextUniverse } : f));
         if (countUniverses(proposed) > MAX_UNIVERSES) {
           socket.emit('error-msg', {
             source: 'fixture',
-            message: `Moving "${state.fixtures[id].label}" to universe ${nextUniverse} would put the `
+            message: `Moving "${fixture.label}" to universe ${nextUniverse} would put the `
               + `patch on more than the ${MAX_UNIVERSES} universes this server transmits`,
           });
           return;
         }
 
-        state.fixtures[id].address = nextAddress;
-        state.fixtures[id].universe = nextUniverse;
-        state.fixtures[id].profileId = nextProfileId;
-        if (label !== undefined) state.fixtures[id].label = label;
+        fixture.address = nextAddress;
+        fixture.universe = nextUniverse;
+        fixture.profileId = nextProfileId;
+        if (label !== undefined) fixture.label = label;
         // A trim, not part of the patch: it needs none of the universe or
         // address checks above, but it rides the same message so dragging the
         // slider does not need a second channel.
-        if (maxBrightness !== undefined) state.fixtures[id].maxBrightness = maxBrightness;
+        if (maxBrightness !== undefined) fixture.maxBrightness = maxBrightness;
         showStore.scheduleSave();
         integrations.broadcast();
       } catch (err) {
@@ -91,6 +98,15 @@ function attachSockets(io, { midi, integrations }) {
     });
 
     socket.on('tap', processTap);
+
+    socket.on('energy-hold', (payload) => {
+      if (!payload || typeof payload.token !== 'string' || !payload.token.length || payload.token.length > 64) return;
+      const { action, token, effect } = payload;
+      if (action === 'press' && ENERGY_EFFECTS.some((e) => e.id === effect)) {
+        holds.press(socket.id, token, effect);
+      } else if (action === 'renew') holds.renew(socket.id, token);
+      else if (action === 'release') holds.release(socket.id, token);
+    });
 
     socket.on('midi-connect', (payload) => {
       try {
@@ -109,7 +125,10 @@ function attachSockets(io, { midi, integrations }) {
       }
     });
 
-    socket.on('disconnect', () => console.log('Client disconnected:', socket.id));
+    socket.on('disconnect', () => {
+      holds.disconnect(socket.id);
+      console.log('Client disconnected:', socket.id);
+    });
   });
 }
 

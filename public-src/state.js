@@ -1,5 +1,6 @@
 import { signal } from '@preact/signals';
 import { io } from 'socket.io-client';
+import { createHoldControl } from './hold-control.js';
 
 // Single source of truth on the client. Mirrors the server's getClientState()
 // snapshot; components read from it via the signal.
@@ -39,6 +40,10 @@ export const socket = io({
   auth: { token: auth.token || '' },
 });
 
+// Created before socket listeners are registered so a very fast disconnect
+// during page startup cannot hit a temporal-dead-zone reference.
+export const energyHold = createHoldControl((payload) => emitLive('energy-hold', payload));
+
 // Whether this page has ever had a live socket, which is what separates "not up
 // yet" from "we lost it". Kept apart from connectionSig, which is already
 // 'reconnecting' by the time the retry errors arrive.
@@ -52,6 +57,8 @@ socket.on('connect', () => {
 });
 
 socket.on('disconnect', () => {
+  energyHold.release();
+  freezePosition();
   connectedSig.value = false;
   connectionSig.value = { status: 'reconnecting' };
 });
@@ -85,6 +92,7 @@ socket.on('state', (s) => {
   if (!s) return;
   if (s.dmxSnapshot) dmxSig.value = s.dmxSnapshot;   // full snapshot on connect
   stateSig.value = { ...stateSig.value, ...s };
+  if (s.autoShow && !s.autoShow.running) freezePosition();
 });
 
 socket.on('dmx', (snapshot) => { dmxSig.value = snapshot || {}; });
@@ -137,7 +145,21 @@ export async function api(path, init) {
   }
 }
 
-export function send(patch) { socket.emit('set', patch); }
-export function emitOverride(id, override) { socket.emit('override', { id, override }); }
-export function emitFixture(payload) { socket.emit('fixture', payload); }
-export function emitTap() { socket.emit('tap'); }
+// Live actions must never queue up for replay after reconnecting.
+export function emitLive(event, payload) {
+  if (!socket.connected) return false;
+  socket.emit(event, payload);
+  return true;
+}
+
+export function send(patch) { return emitLive('set', patch); }
+export function emitOverride(id, override) { return emitLive('override', { id, override }); }
+export function emitFixture(payload) { return emitLive('fixture', payload); }
+export function emitTap() { return emitLive('tap'); }
+
+function freezePosition() {
+  const ap = autoPositionSig.value;
+  if (!ap.running) return;
+  const now = performance.now();
+  autoPositionSig.value = { ...ap, positionMs: ap.positionMs + Math.min(250, now - ap.updatedAt), running: false, updatedAt: now };
+}

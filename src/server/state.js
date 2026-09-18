@@ -36,6 +36,7 @@ const state = {
   strobeSpeed: 0,
   strobeFunction: 'standard',
   energyOverride: null,
+  heldEnergy: null,
   // The named look the four colour slots came from, or null once any slot has
   // been written by hand. Only a label — the slots are the truth.
   palette: null,
@@ -51,6 +52,9 @@ const state = {
   autoSource: 'auto',
   autoPrefetchDepth: 1,
   fixtures: [],
+  // Fixture ids are references used by Hue, MIDI and cues. They never change
+  // when a fixture is deleted or reordered in the patch array.
+  nextFixtureId: 4,
   showDynamics: null,
   _step: 0,
   _pingDir: 1,
@@ -127,6 +131,22 @@ function setDefaultUniverse(next) {
 
 function getFixtureCount() { return state.fixtures.length; }
 
+function getFixture(id) {
+  return state.fixtures.find((fixture) => fixture.id === id) || null;
+}
+
+function allocateFixtureId() {
+  const highest = state.fixtures.reduce((max, fixture) => Math.max(max, fixture.id), -1);
+  const id = Math.max(state.nextFixtureId, highest + 1);
+  if (!Number.isSafeInteger(id) || id >= Number.MAX_SAFE_INTEGER) {
+    const err = new Error('No more fixture ids available');
+    err.status = 400;
+    throw err;
+  }
+  state.nextFixtureId = id + 1;
+  return id;
+}
+
 /** How many channels of `universe` are worth showing in the monitor. */
 function getDmxSnapshotSize(universe) {
   let maxEnd = 0;
@@ -188,7 +208,7 @@ function getLiveState() {
     masterBlackout: state.masterBlackout,
     strobeSpeed: state.strobeSpeed,
     strobeFunction: state.strobeFunction,
-    energyOverride: state.energyOverride,
+    energyOverride: state.heldEnergy ?? state.energyOverride,
     palette: state.palette,
     autoIntensity: state.autoIntensity,
     autoSyncOffsetMs: state.autoSyncOffsetMs,
@@ -241,6 +261,8 @@ module.exports = {
   countUniverses,
   setDefaultUniverse,
   getFixtureCount,
+  getFixture,
+  allocateFixtureId,
   getDmxSnapshotSize,
   getClientState,
   getLiveState,

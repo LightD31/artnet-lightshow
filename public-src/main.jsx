@@ -79,7 +79,8 @@ function Root() {
   // Keyboard shortcuts: 1 → Manual, 2 → Auto
   useEffect(() => {
     const onKey = (e) => {
-      if (e.target.tagName === 'INPUT' || e.target.isContentEditable) return;
+      if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) || e.target.isContentEditable) return;
       if (e.key === '1') setMode('manual');
       else if (e.key === '2') setMode('auto');
     };

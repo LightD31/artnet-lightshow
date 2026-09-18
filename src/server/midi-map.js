@@ -25,7 +25,7 @@ const { z } = require('zod');
  *           (fader, 0-127 scaled to 0-255). CC bindings only.
  *   scale   step multiplier for relative encoders.
  *   value   what the action sets: a pattern id, colour index, cue id…
- *   fixture which fixture the action applies to, by index.
+ *   fixture which fixture the action applies to, by its stable id.
  *   channel restrict to one MIDI channel (0-15). Absent matches any, which is
  *           what a single-layer controller wants; a controller whose second
  *           layer repeats the same note numbers on another channel needs it.
@@ -95,7 +95,7 @@ const bindingSchema = z.object({
   // beat division depending on the action, and the dispatcher already no-ops on
   // anything it does not recognise.
   value: z.union([z.string().max(64), z.number()]).optional(),
-  fixture: z.number().int().min(0).max(63).optional(),
+  fixture: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - 1).optional(),
   channel: z.number().int().min(0).max(15).optional(),
 }).strict();
 

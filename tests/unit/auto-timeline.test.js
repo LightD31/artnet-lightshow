@@ -136,6 +136,55 @@ test('a nonsense tempo out of the analyser does not produce an invalid patch', (
 
 // Belt and braces for everything above: even if some future path does emit
 // something the schema rejects, it must cost that one event, not the process.
+test('a repeated start preserves playback and stop clears every tick', (t) => {
+  const s = show();
+  t.after(() => s.stop());
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const applied = [];
+  s._applyPatch = (patch) => applied.push(patch);
+  s.timeline = [
+    { timeMs: 0, action: 'patch', data: { pattern: 'chase' } },
+    { timeMs: 20, action: 'patch', data: { pattern: 'split' } },
+    { timeMs: 60, action: 'patch', data: { pattern: 'solid' } },
+  ];
+  let position = 0;
+  const tick = t.mock.method(s, '_tick');
+  s.start(() => position);
+  position = 20;
+  t.mock.timers.tick(20);
+
+  // A retry must neither switch clocks nor replay events already delivered.
+  s.start(() => 1000);
+  assert.strictEqual(s.getPositionMs(), 20);
+  assert.deepStrictEqual(applied.map((p) => p.pattern), ['chase', 'split']);
+  position = 60;
+  t.mock.timers.tick(40);
+  assert.deepStrictEqual(applied.map((p) => p.pattern), ['chase', 'split', 'solid']);
+
+  s.stop();
+  const stoppedAt = tick.mock.callCount();
+  t.mock.timers.tick(100);
+  assert.strictEqual(tick.mock.callCount(), stoppedAt, 'no playback timer survives stop');
+});
+
+test('intensity zero remains zero instead of falling back to the default', () => {
+  const s = show();
+  s.setIntensity(0);
+  assert.strictEqual(s.intensity, 0);
+});
+
+test('auto-show patches cannot release the operator blackout', () => {
+  const applied = [];
+  const s = new AutoShow((patch) => applied.push(patch), COLOR_PRESETS, PATTERNS);
+  s._worker.shutdown();
+  s.timeline = [{ timeMs: 0, action: 'patch', data: {
+    pattern: 'chase', masterBlackout: false, masterDimmer: 255,
+  } }];
+  s.start(() => 0);
+  s.stop();
+  assert.deepStrictEqual(applied[0], { pattern: 'chase' });
+});
+
 test('an event the engine rejects is skipped rather than ending the show', () => {
   const applied = [];
   const s = new AutoShow((patch) => {

@@ -370,7 +370,6 @@ class ShowDirector {
       bpm: context.baseBpm,
       beatDivision: 1,
       running: true,
-      masterBlackout: false,
       strobeSpeed: 0,
       strobeFunction: 'standard',
       opening: true,

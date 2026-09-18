@@ -60,6 +60,7 @@ module.exports = [
       'public/app.bundle.js',      // generated
       'cache/**',
       'tests/fixtures/**',
+      '.venv/**',
     ],
   },
 

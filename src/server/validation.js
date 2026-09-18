@@ -10,6 +10,7 @@ const {
 const { PALETTE_IDS } = require('./palettes');
 
 const u8 = z.number().int().min(0).max(255);
+const fixtureId = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1);
 const colorIdx = z.number().int().min(0).max(COLOR_PRESETS.length - 1);
 
 // Hostname per RFC 1123, or an IPv4 literal. Rejecting junk here means a typo
@@ -93,14 +94,14 @@ const overrideSchema = z.object({
 }).strict();
 
 const overrideMessageSchema = z.object({
-  id: z.number().int().nonnegative(),
+  id: fixtureId,
   override: z.union([overrideSchema, z.null()]),
 });
 
 const dmxUniverse = z.number().int().min(0).max(32767);
 
 const fixtureMessageSchema = z.object({
-  id: z.number().int().nonnegative(),
+  id: fixtureId,
   address: z.number().int().min(1).max(512).optional(),
   universe: dmxUniverse.optional(),
   label: z.string().max(64).optional(),
@@ -119,6 +120,7 @@ const fixtureMessageSchema = z.object({
 const fixtureRestoreSchema = z.object({
   index: z.number().int().min(0).max(255),
   fixture: z.object({
+    id: fixtureId.optional(),
     label: z.string().max(64),
     address: z.number().int().min(1).max(512),
     universe: dmxUniverse.optional(),
@@ -167,9 +169,11 @@ const profileSchema = z.object({
   });
 
 const showSchema = z.object({
+  nextFixtureId: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
   artnet: artnetSchema.optional(),
   profiles: z.array(profileSchema).optional(),
   fixtures: z.array(z.object({
+    id: fixtureId.optional(),
     label: z.string().max(64).optional(),
     address: z.number().int().min(1).max(512).optional(),
     // Absent in shows saved before multi-universe: those load onto the rig's
@@ -230,6 +234,7 @@ function validate(schema, value, label) {
 }
 
 module.exports = {
+  fixtureId,
   dmxUniverse,
   patchSchema,
   deezerStateSchema,

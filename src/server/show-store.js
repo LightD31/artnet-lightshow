@@ -58,11 +58,13 @@ function snapshotShow() {
   const profiles = listProfiles();
   return {
     artnet: { ...state.artnet },
+    nextFixtureId: state.nextFixtureId,
     // Only the profiles that were imported. The built-ins are on every server
     // already, so shipping them in the file would mean a show loaded onto a
     // newer build quietly reinstating an older copy of them.
     profiles: Object.values(profiles).filter((p) => !isBuiltinProfile(p.id)),
     fixtures: state.fixtures.map((f) => ({
+      id: f.id,
       label: f.label,
       address: f.address,
       universe: universeOf(f),
@@ -107,8 +109,10 @@ function applyShow(rawShow) {
 
   let next = null;
   if (hasFixtures) {
+    const ids = show.fixtures.map((fixture, i) => fixture.id ?? i);
+    if (new Set(ids).size !== ids.length) throw badShow('Show contains duplicate fixture ids');
     next = show.fixtures.map((f, i) => ({
-      id: i,
+      id: ids[i],
       label: f.label || `Fixture ${i + 1}`,
       address: f.address || 1,
       // Shows saved before multi-universe carry no universe at all: those
@@ -150,6 +154,8 @@ function applyShow(rawShow) {
   }
   if (next) {
     state.fixtures = next;
+    const highest = next.reduce((max, fixture) => Math.max(max, fixture.id), -1);
+    state.nextFixtureId = Math.max(state.nextFixtureId, show.nextFixtureId || 0, highest + 1);
     resizeFixtureBuffers();
   }
   return show;

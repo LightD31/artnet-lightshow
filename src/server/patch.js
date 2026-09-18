@@ -1,6 +1,6 @@
 'use strict';
 
-const { state, getFixtureCount, setDefaultUniverse } = require('./state');
+const { state, getFixture, setDefaultUniverse } = require('./state');
 const { restartBeatTimer } = require('./engine');
 const { patchSchema, overrideSchema, validate } = require('./validation');
 const { STROBE_FUNCTIONS, ENERGY_EFFECTS } = require('./presets');
@@ -145,11 +145,12 @@ function applyPatch(rawData) {
 }
 
 function applyOverride(id, rawOverride) {
-  if (id < 0 || id >= getFixtureCount()) return;
+  const fixture = getFixture(id);
+  if (!fixture) return;
   const override = rawOverride === null
     ? null
     : validate(overrideSchema, rawOverride, 'override');
-  state.fixtures[id].override = override;
+  fixture.override = override;
   hooks.broadcast();
 }
 
@@ -163,10 +164,11 @@ function applyOverride(id, rawOverride) {
  * not also mean taking it out of the show.
  */
 function setFixtureMaxBrightness(id, value) {
-  if (id < 0 || id >= getFixtureCount()) return;
+  const fixture = getFixture(id);
+  if (!fixture) return;
   const raw = Number(value);
   if (!Number.isFinite(raw)) return;
-  state.fixtures[id].maxBrightness = Math.max(0, Math.min(255, Math.round(raw)));
+  fixture.maxBrightness = Math.max(0, Math.min(255, Math.round(raw)));
   hooks.showChanged();
   hooks.broadcast();
 }

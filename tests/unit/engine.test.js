@@ -25,6 +25,7 @@ function channels(address, count, universe = state.artnet.universe) {
 const anyLit = (vals) => vals.some((v) => v !== 0);
 
 test.before(() => {
+  state.artnet.enabled = false;
   applyPatch({ pattern: 'solid', running: true, masterDimmer: 255, colorA: 1, masterBlackout: false });
   startEngine();
 });
@@ -42,7 +43,6 @@ test('a deleted fixture stops being driven instead of latching its last look', a
 
   // Exactly what DELETE /api/fixtures/:id does.
   state.fixtures = state.fixtures.filter((f) => f.id !== doomed.id);
-  state.fixtures.forEach((f, i) => { f.id = i; });
   resizeFixtureBuffers();
   await frames();
 

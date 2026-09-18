@@ -178,6 +178,7 @@ class AutoShow {
       last = i;
     }
     delete restored.masterDimmer;
+    delete restored.masterBlackout;
     restored.energyOverride = null;
     if (this.timeline.some(e => e.data?.showDynamics)) this._applyPatch(restored);
     this._lastPositionMs = posMs;
@@ -579,6 +580,9 @@ class AutoShow {
 
   start(getPositionMs) {
     if (!this.timeline.length) return;
+    // A second client or a retried request must not reset the cursor, replay
+    // events, or leave an extra playback interval that stop() cannot clear.
+    if (this.running) return;
     this._getPositionMs = getPositionMs;
     this.running = true;
     this._lastEventIdx = -1;
@@ -644,11 +648,12 @@ class AutoShow {
 
   _fireEvent(ev) {
     switch (ev.action) {
-      case 'patch':
-        // Safety net: never allow a timeline event to move the master fader.
-        if (ev.data && 'masterDimmer' in ev.data) delete ev.data.masterDimmer;
-        this._applyPatch(ev.data);
+      case 'patch': {
+        // Master controls belong to the operator, including for old timelines.
+        const { masterDimmer: _dimmer, masterBlackout: _blackout, ...patch } = ev.data || {};
+        this._applyPatch(patch);
         break;
+      }
       case 'energy': {
         const duration = ev.data.durationMs || 200;
         const clearAt = Date.now() + duration;
@@ -700,7 +705,9 @@ class AutoShow {
    * drop effects and beat-division scaling adjust on the fly.
    */
   setIntensity(n) {
-    const val = Math.max(0, Math.min(100, Math.round(Number(n) || 50)));
+    const numeric = Number(n);
+    if (!Number.isFinite(numeric)) return;
+    const val = Math.max(0, Math.min(100, Math.round(numeric)));
     if (val === this.intensity) return;
     this.intensity = val;
     if (this.analysis) {

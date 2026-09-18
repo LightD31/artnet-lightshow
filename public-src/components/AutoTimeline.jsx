@@ -273,7 +273,8 @@ function timelineKey(s) {
 function currentPosMs() {
   const ap = autoPositionSig.value;
   if (!ap.running) return ap.positionMs;
-  return ap.positionMs + (performance.now() - ap.updatedAt);
+  // Do not keep inventing playback when the server stops reporting position.
+  return ap.positionMs + Math.min(250, performance.now() - ap.updatedAt);
 }
 
 export function AutoTimeline() {

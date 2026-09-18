@@ -5,9 +5,9 @@ const path = require('path');
 const crypto = require('crypto');
 const { z } = require('zod');
 
-const { state, getFixtureCount } = require('./state');
+const { state } = require('./state');
 const { applyPatch, applyOverride } = require('./patch');
-const { overrideSchema } = require('./validation');
+const { overrideSchema, fixtureId } = require('./validation');
 const { COLOR_PRESETS } = require('./presets');
 
 /**
@@ -46,9 +46,15 @@ const lookSchema = z.object({
   strobeSpeed: z.number().int().min(0).max(255),
   strobeFunction: z.string().min(1).max(64),
   energyOverride: z.union([z.string().min(1).max(64), z.null()]),
-  // One entry per fixture, positional. null means "no override on that fixture".
+  // New cues carry ids beside their overrides so deleting a fixture cannot
+  // make a cue's look land on a different light. Old cues without this field
+  // use the original ids (0, 1, ...) if they predate this field.
+  fixtureIds: z.array(fixtureId).max(64).optional(),
   overrides: z.array(z.union([overrideSchema, z.null()])).max(64),
-}).strict();
+}).strict().refine((look) => !look.fixtureIds || (
+  look.fixtureIds.length === look.overrides.length
+    && new Set(look.fixtureIds).size === look.fixtureIds.length
+), { message: 'fixtureIds must contain one unique id per override' });
 
 const cueSchema = z.object({
   id: z.string().min(1).max(64),
@@ -108,6 +114,7 @@ function captureLook() {
     strobeSpeed: state.strobeSpeed,
     strobeFunction: state.strobeFunction,
     energyOverride: state.energyOverride,
+    fixtureIds: state.fixtures.map((f) => f.id),
     overrides: state.fixtures.map((f) => (f.override ? { ...f.override } : null)),
   };
 }
@@ -121,13 +128,11 @@ function captureLook() {
  * them — a cue is the whole rig, not a partial edit.
  */
 function recallLook(look) {
-  const { overrides, ...patch } = look;
+  const { fixtureIds, overrides, ...patch } = look;
   applyPatch(patch);
 
-  const count = getFixtureCount();
-  for (let i = 0; i < count; i++) {
-    applyOverride(i, (overrides && overrides[i]) || null);
-  }
+  const byId = new Map((overrides || []).map((override, index) => [fixtureIds?.[index] ?? index, override]));
+  for (const fixture of state.fixtures) applyOverride(fixture.id, byId.get(fixture.id) || null);
 }
 
 class CueStore {

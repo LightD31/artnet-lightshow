@@ -86,7 +86,11 @@ export default class ArtnetLightshowInstance extends InstanceBase {
 		})
 
 		this.socket.on('state', (state) => {
+			const previousFixtures = JSON.stringify(this.liveState.fixtures?.map(({ id, label }) => [id, label]))
 			this.liveState = state || {}
+			if (previousFixtures !== JSON.stringify(this.liveState.fixtures?.map(({ id, label }) => [id, label]))) {
+				UpdateActions(this)
+			}
 			UpdateVariableValues(this)
 			this.checkAllFeedbacks()
 		})

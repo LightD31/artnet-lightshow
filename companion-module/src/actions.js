@@ -9,6 +9,10 @@ import {
 } from './constants.js'
 
 export function UpdateActions(self) {
+	const fixtureForNumber = (number) => self.liveState.fixtures?.find((fixture) => fixture.id === Number(number) - 1)
+	const fixtureChoices = self.liveState.fixtures
+		? self.liveState.fixtures.map((fixture) => ({ id: fixture.id + 1, label: `${fixture.id + 1}: ${fixture.label}` }))
+		: Array.from({ length: FIXTURE_COUNT }, (_, i) => ({ id: i + 1, label: `PAR ${i + 1}` }))
 	const actions = {
 		set_pattern: {
 			name: 'Set Pattern',
@@ -120,10 +124,10 @@ export function UpdateActions(self) {
 				{
 					type: 'number',
 					id: 'fixture',
-					label: `Fixture (1-${FIXTURE_COUNT})`,
+					label: 'Fixture number (ID + 1)',
 					default: 1,
 					min: 1,
-					max: FIXTURE_COUNT,
+					max: Number.MAX_SAFE_INTEGER,
 				},
 				{
 					type: 'dropdown',
@@ -138,11 +142,20 @@ export function UpdateActions(self) {
 				},
 			],
 			callback: ({ options }) => {
-				const id = options.fixture - 1
-				const fix = self.liveState.fixtures && self.liveState.fixtures[id]
-				const cur = fix && fix.override && fix.override.blackout
-				const next = options.mode === 'toggle' ? !cur : options.mode === 'on'
-				self.sendOverride(id, { enabled: true, r: 0, g: 0, b: 0, w: 0, dim: 0, strobe: 0, blackout: next })
+				const fix = fixtureForNumber(options.fixture)
+				if (!fix) return
+				const cur = fix.override
+				const next = options.mode === 'toggle' ? !cur?.blackout : options.mode === 'on'
+				if (!next && cur?.blackout && !cur.enabled) {
+					self.sendOverride(fix.id, null)
+					return
+				}
+				self.sendOverride(fix.id, {
+					...(cur || {
+						enabled: false, r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 255, strobe: 0,
+					}),
+					blackout: next,
+				})
 			},
 		},
 
@@ -152,10 +165,10 @@ export function UpdateActions(self) {
 				{
 					type: 'number',
 					id: 'fixture',
-					label: `Fixture (1-${FIXTURE_COUNT})`,
+					label: 'Fixture number (ID + 1)',
 					default: 1,
 					min: 1,
-					max: FIXTURE_COUNT,
+					max: Number.MAX_SAFE_INTEGER,
 				},
 				{ type: 'colorpicker', id: 'rgb', label: 'RGB Colour', default: combineRgb(255, 0, 0) },
 				{ type: 'number', id: 'white', label: 'White (0-255)', default: 0, min: 0, max: 255 },
@@ -165,7 +178,9 @@ export function UpdateActions(self) {
 			],
 			callback: ({ options }) => {
 				const rgb = options.rgb
-				self.sendOverride(options.fixture - 1, {
+				const fix = fixtureForNumber(options.fixture)
+				if (!fix) return
+				self.sendOverride(fix.id, {
 					enabled: true,
 					r: (rgb >> 16) & 0xff,
 					g: (rgb >> 8) & 0xff,
@@ -190,15 +205,16 @@ export function UpdateActions(self) {
 					default: 'all',
 					choices: [
 						{ id: 'all', label: 'All fixtures' },
-						...Array.from({ length: FIXTURE_COUNT }, (_, i) => ({ id: i + 1, label: `PAR ${i + 1}` })),
+						...fixtureChoices,
 					],
 				},
 			],
 			callback: ({ options }) => {
 				if (options.fixture === 'all') {
-					for (let i = 0; i < FIXTURE_COUNT; i++) self.sendOverride(i, null)
+					for (const fixture of self.liveState.fixtures || []) self.sendOverride(fixture.id, null)
 				} else {
-					self.sendOverride(options.fixture - 1, null)
+					const fixture = fixtureForNumber(options.fixture)
+					if (fixture) self.sendOverride(fixture.id, null)
 				}
 			},
 		},

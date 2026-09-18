@@ -305,7 +305,7 @@ test('an analysis with nothing in it still produces a usable opening', () => {
   const opening = from(intents, 'opening')[0];
   assert.ok(opening);
   assert.strictEqual(opening.running, true);
-  assert.strictEqual(opening.masterBlackout, false);
+  assert.strictEqual(opening.masterBlackout, undefined);
 });
 
 test('a nonsense tempo is clamped rather than passed through', () => {

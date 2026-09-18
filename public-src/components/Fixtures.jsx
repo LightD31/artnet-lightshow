@@ -19,7 +19,7 @@ function FixtureCard({ fix, state, dmx }) {
   useEffect(() => { setMaxDraft(serverMax); }, [serverMax]);
 
   useEffect(() => {
-    if (fix.override) setDraft((d) => ({ ...d, ...fix.override }));
+    setDraft((d) => ({ ...d, ...(fix.override || { enabled: false, blackout: false }) }));
   }, [JSON.stringify(fix.override)]);
 
   const sendOverride = (next) => {
@@ -34,7 +34,10 @@ function FixtureCard({ fix, state, dmx }) {
   };
 
   const toggleBlackout = () => {
-    emitOverride(fix.id, { ...draft, enabled: true, r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 0, strobe: 0, blackout: !bo });
+    // Blackout is a gate; keep the underlying override so releasing it restores
+    // the look instead of leaving an enabled override with every channel zero.
+    if (bo && !ov) emitOverride(fix.id, null);
+    else emitOverride(fix.id, { ...draft, enabled: !!ov, blackout: !bo });
   };
 
   const clearOverride = () => {
