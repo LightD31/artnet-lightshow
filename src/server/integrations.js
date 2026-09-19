@@ -11,6 +11,7 @@ const {
   keyForProlinkTrack,
 } = require('../analysis-cache');
 const HybridSource = require('../hybrid-source');
+const { sampleAutoPosition } = require('./auto-position');
 
 // A track change that lands while the previous track is still being analysed
 // hands the analyser to the new song and abandons the old job. That is the
@@ -546,17 +547,13 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   // alive, and a status sweep should not be the thing holding the process open.
   // It also means a test can wire the integrations up without the run hanging
   // afterwards on a heartbeat nobody is listening to.
-  let lastPosition = { positionMs: 0, running: false };
+  let lastPosition = {};
   const positionTimer = setInterval(() => {
-    if (!autoShow.running) {
-      if (lastPosition.running) {
-        lastPosition = { ...lastPosition, running: false };
-        io.emit('auto-position', lastPosition);
-      }
-      return;
+    const position = sampleAutoPosition(autoShow, lastPosition);
+    if (position.running || JSON.stringify(position) !== JSON.stringify(lastPosition)) {
+      io.emit('auto-position', position);
     }
-    lastPosition = { positionMs: autoShow.getPositionMs(), running: true };
-    io.emit('auto-position', lastPosition);
+    lastPosition = position;
   }, 100);
   if (positionTimer.unref) positionTimer.unref();
 

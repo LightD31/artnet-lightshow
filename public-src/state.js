@@ -1,6 +1,7 @@
 import { signal } from '@preact/signals';
 import { io } from 'socket.io-client';
 import { createHoldControl } from './hold-control.js';
+import { timelinePosition } from './timeline-state.js';
 
 // Single source of truth on the client. Mirrors the server's getClientState()
 // snapshot; components read from it via the signal.
@@ -27,7 +28,7 @@ export const dmxSig = signal({});
 export const autoPositionSig = signal({ positionMs: 0, running: false, updatedAt: 0 });
 
 // Auto-show timeline payload (loaded on demand from /api/auto/timeline).
-export const autoTimelineSig = signal({ data: null, fetchedKey: null });
+export const autoTimelineSig = signal({ data: null, key: null, status: 'idle', error: null });
 
 // Token comes from public/auth.js, which runs before this bundle. Guarded so the
 // bundle still works if it ever loads without it.
@@ -96,8 +97,11 @@ socket.on('state', (s) => {
 });
 
 socket.on('dmx', (snapshot) => { dmxSig.value = snapshot || {}; });
-socket.on('auto-position', ({ positionMs, running }) => {
-  autoPositionSig.value = { positionMs, running: !!running, updatedAt: performance.now() };
+socket.on('auto-position', ({ positionMs, running, advancing, revision }) => {
+  if (!Number.isFinite(positionMs)) return;
+  const currentRevision = stateSig.value.autoShow?.timelineRevision;
+  if (revision != null && currentRevision != null && revision !== currentRevision) return;
+  autoPositionSig.value = { positionMs, running: !!running, advancing, revision, updatedAt: performance.now() };
 });
 
 // Toast comes from public/toast.js, which runs before this bundle. Guarded so
@@ -161,5 +165,5 @@ function freezePosition() {
   const ap = autoPositionSig.value;
   if (!ap.running) return;
   const now = performance.now();
-  autoPositionSig.value = { ...ap, positionMs: ap.positionMs + Math.min(250, now - ap.updatedAt), running: false, updatedAt: now };
+  autoPositionSig.value = { ...ap, positionMs: timelinePosition(ap, now), running: false, advancing: false, updatedAt: now };
 }

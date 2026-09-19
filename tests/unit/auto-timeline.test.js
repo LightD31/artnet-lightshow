@@ -173,6 +173,15 @@ test('intensity zero remains zero instead of falling back to the default', () =>
   assert.strictEqual(s.intensity, 0);
 });
 
+test('rebuilding a timeline publishes a new revision', () => {
+  const s = show();
+  s.analysis = analysis();
+  s.buildTimeline();
+  const first = s.getClientState().timelineRevision;
+  s.setIntensity(75);
+  assert.notStrictEqual(s.getClientState().timelineRevision, first);
+});
+
 test('auto-show patches cannot release the operator blackout', () => {
   const applied = [];
   const s = new AutoShow((patch) => applied.push(patch), COLOR_PRESETS, PATTERNS);
@@ -182,7 +191,9 @@ test('auto-show patches cannot release the operator blackout', () => {
   } }];
   s.start(() => 0);
   s.stop();
-  assert.deepStrictEqual(applied[0], { pattern: 'chase' });
+  assert.equal(applied[0].pattern, 'chase');
+  assert.equal(applied[0].masterBlackout, undefined);
+  assert.equal(applied[0].masterDimmer, undefined);
 });
 
 test('an event the engine rejects is skipped rather than ending the show', () => {

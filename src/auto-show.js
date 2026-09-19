@@ -1,6 +1,7 @@
 'use strict';
 
 const { spawn } = require('child_process');
+const { randomUUID } = require('crypto');
 const { settings } = require('./server/settings');
 const path = require('path');
 const fs = require('fs');
@@ -72,6 +73,9 @@ class AutoShow {
     this._blackoutIdx = blackoutIdx >= 0 ? blackoutIdx : 12;
     this.analysis = null;
     this.timeline = [];
+    // Track metadata and event count can stay unchanged after a replan. An
+    // opaque revision also prevents collisions when the server restarts.
+    this.timelineRevision = randomUUID();
     this.running = false;
     this.track = null;
     this.palette = null;         // [idx, idx, …] — locked palette for current song (2, 3, or 4 colours)
@@ -89,7 +93,7 @@ class AutoShow {
     this._loopTimer = null;
     this._lastEventIdx = -1;
     this._status = 'idle';
-    this._activeEnergyClearAt = 0; // guard against overlapping energy overrides
+    this._energyTimer = null;
     // Shared in-flight work map so concurrent callers for the same cacheKey
     // (e.g. a prefetch that's still running when the track changes) join the
     // same download/analyze job instead of racing it.
@@ -151,7 +155,7 @@ class AutoShow {
   }
 
   /**
-   * Park the playback cursor at the current position without firing anything.
+   * Restore the current scene without replaying past bursts.
    *
    * Rebuilding or re-timing the timeline under a running show leaves the
    * cursor pointing into the old one; without this the next tick replays every
@@ -163,13 +167,14 @@ class AutoShow {
       return;
     }
     const posMs = this.getPositionMs();
+    if (!Number.isFinite(posMs)) return;
     let last = -1;
     const restored = { energyOverride: null, showDynamics: null };
     for (let i = 0; i < this.timeline.length; i++) {
       if (this.timeline[i].timeMs > posMs) break;
       const ev = this.timeline[i];
       if (ev.action === 'patch') {
-        if (ev.data.showDynamics && restored.showDynamics) {
+        if (ev.data?.showDynamics && restored.showDynamics) {
           restored.showDynamics = { ...restored.showDynamics, ...ev.data.showDynamics };
           const { showDynamics: _dynamics, ...rest } = ev.data;
           Object.assign(restored, rest);
@@ -179,8 +184,22 @@ class AutoShow {
     }
     delete restored.masterDimmer;
     delete restored.masterBlackout;
+    // A seek must restore the complete current scene for every timeline. The
+    // old expressive-only guard left legacy pattern/colour shows visually
+    // stale after a pause, offset nudge, or live replan.
     restored.energyOverride = null;
-    if (this.timeline.some(e => e.data?.showDynamics)) this._applyPatch(restored);
+    if (last < 0) {
+      this._cancelEnergyTimer();
+      this._lastPositionMs = posMs;
+      this._lastEventIdx = -1;
+      return;
+    }
+    this._cancelEnergyTimer();
+    try {
+      this._applyPatch(restored);
+    } catch (err) {
+      console.error(`[auto-show] could not restore scene: ${err.message}`);
+    }
     this._lastPositionMs = posMs;
     this._lastEventIdx = last;
   }
@@ -574,6 +593,8 @@ class AutoShow {
     this.resolvedPaletteSize = plan.paletteSize;
     this.intents = plan.intents;
     this.timeline = renderIntents(plan.intents, { blackoutIndex: this._blackoutIdx });
+    this.timelineRevision = randomUUID();
+    if (this.running) this._reseek();
   }
 
   // ── 3. Playback ─────────────────────────────────────────────────────────────
@@ -586,11 +607,11 @@ class AutoShow {
     this._getPositionMs = getPositionMs;
     this.running = true;
     this._lastEventIdx = -1;
-    this._activeEnergyClearAt = 0;
-    this._status = 'playing';
-    this._expressive = this.timeline.some(e => e.data?.showDynamics);
     this._lastPositionMs = undefined;
-    if (this._expressive) this._reseek();
+    this._status = 'playing';
+    // Start from the current source position. Historical patches establish
+    // the look; energy events are deliberately represented as cleared state.
+    this._reseek();
     this._tick();
     this._loopTimer = setInterval(() => this._tick(), 20);
   }
@@ -599,6 +620,7 @@ class AutoShow {
     this.running = false;
     this._status = this.analysis ? 'ready' : 'idle';
     if (this._loopTimer) { clearInterval(this._loopTimer); this._loopTimer = null; }
+    this._cancelEnergyTimer();
     // Clear any lingering energy override so we don't leave the rig stuck
     this._applyPatch({ energyOverride: null, showDynamics: null });
   }
@@ -607,6 +629,7 @@ class AutoShow {
     this.stop();
     this.analysis = null;
     this.timeline = [];
+    this.timelineRevision = randomUUID();
     this.track = null;
     this.palette = null;
     this.paletteName = null;
@@ -617,7 +640,8 @@ class AutoShow {
   _tick() {
     if (!this.running || !this._getPositionMs) return;
     const posMs = this.getPositionMs();
-    if (this._expressive && Number.isFinite(this._lastPositionMs)
+    if (!Number.isFinite(posMs)) return;
+    if (Number.isFinite(this._lastPositionMs)
         && (posMs < this._lastPositionMs - 100 || posMs > this._lastPositionMs + 1500)) {
       this._reseek();
       return;
@@ -651,21 +675,21 @@ class AutoShow {
       case 'patch': {
         // Master controls belong to the operator, including for old timelines.
         const { masterDimmer: _dimmer, masterBlackout: _blackout, ...patch } = ev.data || {};
+        if ('energyOverride' in patch) this._cancelEnergyTimer();
         this._applyPatch(patch);
         break;
       }
       case 'energy': {
         const duration = ev.data.durationMs || 200;
-        const clearAt = Date.now() + duration;
-        this._activeEnergyClearAt = clearAt;
+        this._cancelEnergyTimer();
         this._applyPatch({ energyOverride: ev.data.id });
-        setTimeout(() => {
+        this._energyTimer = setTimeout(() => {
+          this._energyTimer = null;
           // Its own timer, so it needs its own guard — a throw here would be
           // just as fatal as one in _tick, and it would also leave the rig
           // stuck holding the energy override it was about to clear.
           try {
-            // Only clear if this burst is still the active one (avoids races)
-            if (this.running && Date.now() >= this._activeEnergyClearAt - 5) {
+            if (this.running) {
               this._applyPatch({ energyOverride: null });
             }
           } catch (err) {
@@ -675,6 +699,11 @@ class AutoShow {
         break;
       }
     }
+  }
+
+  _cancelEnergyTimer() {
+    if (this._energyTimer !== null) clearTimeout(this._energyTimer);
+    this._energyTimer = null;
   }
 
   // ── Mapping helpers ─────────────────────────────────────────────────────────
@@ -696,7 +725,6 @@ class AutoShow {
     this.paletteSize = size;
     if (this.analysis) {
       this.buildTimeline();
-      this._reseek();
     }
   }
 
@@ -712,7 +740,6 @@ class AutoShow {
     this.intensity = val;
     if (this.analysis) {
       this.buildTimeline();
-      this._reseek();
     }
   }
 
@@ -740,6 +767,7 @@ class AutoShow {
       durationMs: ev.data && ev.data.durationMs,
     }));
     return {
+      revision: this.timelineRevision,
       duration: a.duration,
       bpm: a.bpm,
       tempoCurve: a.tempoCurve || [],
@@ -798,6 +826,7 @@ class AutoShow {
         buildupCount: this.analysis.buildups?.length || 0,
       } : null,
       timelineLength: this.timeline.length,
+      timelineRevision: this.timelineRevision,
     };
   }
 }

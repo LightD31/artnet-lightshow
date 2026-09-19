@@ -84,7 +84,7 @@ test('a positive offset fires an event before the track reaches it', () => {
 // avoided: a backwards nudge can never un-fire what already played, and a
 // forwards one that replayed would dump a burst of energy overrides into the
 // room in a single frame. A skipped pattern event costs a beat of the old look.
-test('a nudge that steps over an event skips it rather than firing a burst', () => {
+test('a nudge that steps over an event restores the look rather than firing a burst', () => {
   const h = harness([ev(5000, 'chase')]);
   try {
     h.seek(4900);
@@ -93,7 +93,7 @@ test('a nudge that steps over an event skips it rather than firing a burst', () 
 
     h.show.setSyncOffsetMs(200); // now playing from 5100, past the event
     h.tick();
-    assert.deepStrictEqual(h.fired, [], 'stepped over, not replayed');
+    assert.deepStrictEqual(h.fired, [{ pattern: 'chase', energyOverride: null, showDynamics: null }], 'stepped over, current look restored once');
   } finally { h.stop(); }
 });
 
@@ -104,18 +104,20 @@ test('nudging the offset forward does not replay the whole past', () => {
   try {
     h.seek(4000);
     h.tick();
-    // a fired on start()'s tick at position 0 and was cleared; b, c and d here.
-    assert.strictEqual(h.fired.length, 3, 'everything up to 4 s has played');
+    // The cursor jumped over b/c/d, so the current look is restored once rather
+    // than replaying every historical patch in one timer tick.
+    assert.deepStrictEqual(h.fired, [{ pattern: 'd', energyOverride: null, showDynamics: null }]);
     h.fired.length = 0;
 
     h.show.setSyncOffsetMs(500);
     h.tick();
-    assert.deepStrictEqual(h.fired, [], 'a nudge must not re-fire what already played');
+    assert.deepStrictEqual(h.fired, [{ pattern: 'd', energyOverride: null, showDynamics: null }], 'a nudge restores the current look without replaying the past');
 
     // The cursor is still in the right place: the next event still lands.
-    h.seek(8600);
+    h.fired.length = 0;
+    h.seek(9000);
     h.tick();
-    assert.deepStrictEqual(h.fired, [{ pattern: 'e' }], 'and the show carries on from there');
+    assert.deepStrictEqual(h.fired, [{ pattern: 'e', energyOverride: null, showDynamics: null }], 'and the show carries on from there');
   } finally { h.stop(); }
 });
 
@@ -129,11 +131,14 @@ test('a large jump forward parks the cursor instead of emptying the timeline', (
     // Two seconds ahead in one move: b, c and d are all now in the past.
     h.show.setSyncOffsetMs(SYNC_OFFSET_LIMIT_MS);
     h.tick();
-    assert.deepStrictEqual(h.fired, [], 'skipped, not fired in a burst');
+    assert.deepStrictEqual(h.fired, [{ pattern: 'd', energyOverride: null, showDynamics: null }], 'current look restored, not fired in a burst');
 
     h.seek(3100);
     h.tick();
-    assert.deepStrictEqual(h.fired, [{ pattern: 'e' }], 'the next real event still fires');
+    assert.deepStrictEqual(h.fired, [
+      { pattern: 'd', energyOverride: null, showDynamics: null },
+      { pattern: 'e', energyOverride: null, showDynamics: null },
+    ], 'the next real event still fires after restoring the skipped scene');
   } finally { h.stop(); }
 });
 

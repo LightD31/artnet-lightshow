@@ -19,14 +19,14 @@ const NODE_GLOBALS = {
   setTimeout: 'readonly', clearTimeout: 'readonly',
   setInterval: 'readonly', clearInterval: 'readonly', setImmediate: 'readonly',
   URL: 'readonly', URLSearchParams: 'readonly', TextEncoder: 'readonly',
-  fetch: 'readonly', AbortSignal: 'readonly', Headers: 'readonly',
+  fetch: 'readonly', AbortSignal: 'readonly', AbortController: 'readonly', Headers: 'readonly',
   globalThis: 'readonly', structuredClone: 'readonly',
 };
 
 const BROWSER_GLOBALS = {
   window: 'readonly', document: 'readonly', navigator: 'readonly',
   localStorage: 'readonly', sessionStorage: 'readonly',
-  fetch: 'readonly', Headers: 'readonly', Request: 'readonly', Response: 'readonly',
+  fetch: 'readonly', AbortController: 'readonly', Headers: 'readonly', Request: 'readonly', Response: 'readonly',
   URL: 'readonly', URLSearchParams: 'readonly', FormData: 'readonly', Blob: 'readonly',
   console: 'readonly', performance: 'readonly', history: 'readonly',
   setTimeout: 'readonly', clearTimeout: 'readonly',

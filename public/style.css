@@ -1447,6 +1447,8 @@ input[type=range]::-moz-range-thumb {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
   margin-bottom: 8px;
   font-size: 11px;
 }
@@ -1455,6 +1457,11 @@ input[type=range]::-moz-range-thumb {
   color: var(--dim);
   letter-spacing: 0.12em;
   text-transform: uppercase;
+}
+.auto-timeline-status { color: var(--muted); font-size: 10px; }
+.auto-timeline-status.error {
+  border: 0; padding: 0; background: transparent; color: var(--danger, #ff657a);
+  cursor: pointer; font: inherit;
 }
 .auto-timeline-time { font-family: 'JetBrains Mono', monospace; color: var(--muted); font-size: 11px; }
 .auto-timeline-time span { color: var(--text); }
@@ -1465,7 +1472,7 @@ input[type=range]::-moz-range-thumb {
   height: 200px;
   background: #0a0a0f;
   border-radius: 8px;
-  cursor: crosshair;
+  cursor: default;
   border: 1px solid var(--border);
 }
 
