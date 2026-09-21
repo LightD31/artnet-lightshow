@@ -375,8 +375,13 @@ function buildPalette({ key, scale, mood = {}, score = null, paletteSize = 4,
 
   // Minor keys rotate the palette so major and minor variants of the same key
   // feel different without breaking the look's coherence.
+  //
+  // A tetrad swaps its dominant and contrast and leaves C and D where they are.
+  // It used to swap C and D as well, which moved the lift out of slot D on
+  // every minor-key track — the one slot palettes.js reserves for a brightness
+  // break, so four-colour patterns on half the catalogue read as a rainbow.
   if (scale === 'minor') {
-    if (palette.length === 4) palette = [palette[1], palette[0], palette[3], palette[2]];
+    if (palette.length === 4) palette = [palette[1], palette[0], palette[2], palette[3]];
     else if (palette.length === 3) palette = [palette[1], palette[2], palette[0]];
     else if (palette.length === 2) palette = [palette[1], palette[0]];
   }
@@ -519,7 +524,12 @@ function pickPattern({ character, available, score = null, seed = 0, drive = 0.5
   // patterns lead the pool rather than the expressive ones, because this branch
   // is where most of a mid-energy track lands and a rig with no moving heads
   // needs the movement to come from somewhere.
-  return pickFrom(['chase', 'runner', 'ping-pong', 'pairs', 'ensemble', 'ribbon', 'wave']);
+  // `color-cycle` was made palette-aware in 5649646 precisely so the show could
+  // reach for it, and sat in the bright rhythmic pool beside chase, runner and
+  // ping-pong. The stem-based rewrite of this function dropped that pool and it
+  // with it, while RHYTHMIC above still lists it — vocabulary the show could no
+  // longer say. It goes back beside the patterns it used to keep company with.
+  return pickFrom(['chase', 'runner', 'ping-pong', 'pairs', 'ensemble', 'ribbon', 'wave', 'color-cycle']);
 }
 
 /**

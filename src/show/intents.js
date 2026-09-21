@@ -100,11 +100,16 @@ function color(timeMs, colors, { source = 'melody', priority = PRIORITY.MELODY }
   return { timeMs: Math.round(timeMs), kind: INTENT.COLOR, source, priority, colors };
 }
 
+/**
+ * `confidence` is how sure the analyser is the moment is real; `intensity` is
+ * how big it is musically, 0.5 when nothing was measured. The contrast pass
+ * spends its budget on both.
+ */
 function accent(timeMs, burst, durationMs,
-  { source = 'bar', priority = PRIORITY.BAR_ACCENT, confidence = 1 } = {}) {
+  { source = 'bar', priority = PRIORITY.BAR_ACCENT, confidence = 1, intensity = 0.5 } = {}) {
   return {
     timeMs: Math.round(timeMs), kind: INTENT.ACCENT, source, priority,
-    burst, durationMs: Math.round(durationMs), confidence,
+    burst, durationMs: Math.round(durationMs), confidence, intensity,
   };
 }
 

@@ -9,7 +9,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const { ShowDirector, ROLE_PROFILE, ACCENT_BUDGET } = require('../../src/show/director');
-const { INTENT, BURST } = require('../../src/show/intents');
+const { INTENT, BURST, PRIORITY, accent } = require('../../src/show/intents');
 const { COLOR_PRESETS, PATTERNS } = require('../../src/server/presets');
 
 const BPM = 128;
@@ -116,6 +116,21 @@ test('two bursts never overlap', () => {
     assert.ok(gap >= 0,
       `burst at ${bursts[i].timeMs}ms starts inside the one before it`);
   }
+});
+
+test('an accent never starts inside a burst another pass committed to', () => {
+  // A drop's blinder and strobe run past its first bar at 128 BPM, but they are
+  // planned outside the contrast pass, so its overlap check could not see them.
+  // Sixteen accents across the analysis cache started inside one.
+  const director = new ShowDirector({ patterns: PATTERNS, colorPresets: COLOR_PRESETS, intensity: 50 });
+  const strobe = accent(60000, BURST.FLASH, 2500, { source: 'drop:slam', priority: PRIORITY.DROP });
+  const kept = director._applyContrast(
+    [accent(62000, BURST.FLASH, 300, { confidence: 1 })],
+    { drops: [], vocals: [], silences: [], breaks: [],
+      tier: 'dance', factor: 1, effective: 1, score: { confidence: 1 } },
+    [strobe],
+  );
+  assert.equal(kept.length, 0);
 });
 
 test('the intensity fader really does change how much the show does', () => {
@@ -424,6 +439,45 @@ test('the budget is spent on the best accents, not the earliest ones', () => {
   const weakest = Math.min(...kept.map((i) => i.confidence));
   const rejectedStronger = kept.some((i) => i.confidence < weakest);
   assert.equal(rejectedStronger, false);
+});
+
+test('among equally confident spikes, the budget goes to the biggest', () => {
+  // The analyser gives every energy spike the same confidence and measures its
+  // size in `intensity`. Ranked on confidence alone they all tied, the tie fell
+  // to time order, and the budget went to whichever came first. Thirty spikes
+  // in one minute, the loudest last, against a budget of twenty.
+  const director = new ShowDirector({ patterns: PATTERNS, colorPresets: COLOR_PRESETS, intensity: 50 });
+  const spikes = Array.from({ length: 30 }, (_, i) => accent(i * 1900, BURST.FLASH, 300, {
+    source: 'spike', priority: PRIORITY.BAR_ACCENT, confidence: 0.6, intensity: 0.5 + i / 60,
+  }));
+  const kept = director._applyContrast(spikes, {
+    drops: [], vocals: [], silences: [], breaks: [],
+    tier: 'dance', factor: 1, effective: 1, score: { confidence: 1 },
+  });
+  assert.equal(kept.length, ACCENT_BUDGET.dance);
+  const quietestKept = Math.min(...kept.map((k) => k.intensity));
+  const dropped = spikes.filter((s) => !kept.includes(s));
+  assert.ok(dropped.every((d) => d.intensity < quietestKept),
+    `kept down to ${quietestKept.toFixed(2)}, dropped up to ${Math.max(...dropped.map((d) => d.intensity)).toFixed(2)}`);
+});
+
+test('the quiet around a drop is a bar long, whatever the tempo', () => {
+  // A flat two seconds let an accent land most of the way through the drop's
+  // first bar at 70 BPM, and held one back past the second bar line at 175.
+  const director = new ShowDirector({ patterns: PATTERNS, colorPresets: COLOR_PRESETS, intensity: 50 });
+  const survives = (barSec, atSec) => director._applyContrast(
+    [accent(60000 + atSec * 1000, BURST.FLASH, 300, { confidence: 1 })],
+    { drops: [{ t: 60 }], vocals: [], silences: [], breaks: [],
+      tier: 'dance', factor: 1, effective: 1, score: { confidence: 1 }, barSec },
+  ).length === 1;
+
+  const slow = 60 / 70 * 4;
+  assert.equal(survives(slow, slow * 0.7), false, 'inside the first bar of the drop at 70 BPM');
+  assert.equal(survives(slow, slow), true, 'on the next bar line');
+  assert.equal(survives(slow, -slow * 0.7), false, 'inside the bar leading in');
+
+  const fast = 60 / 175 * 4;
+  assert.equal(survives(fast, 1.6), true, 'past the first bar at 175 BPM');
 });
 
 test('the expression channel runs the whole track and never touches the master', () => {

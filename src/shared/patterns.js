@@ -1,5 +1,7 @@
 'use strict';
 
+const { colourMixer } = require('./color');
+
 // Pure pattern functions. Each takes (ctx) where:
 //   ctx.colors        : array of resolved Colour A..D presets
 //   ctx.fixtureCount  : N fixtures
@@ -131,14 +133,15 @@ const PATTERN_FUNCS = {
     // track keeps the whole rig alive and a sparse one lets the crest be the
     // only thing on stage.
     const floor = 18 + 55 * d.air;
+    // Round the colour wheel rather than through the middle of it: A and B are
+    // opposites, and averaging them per channel left a washed-out grey band
+    // across the middle of the rig. See shared/color.js.
+    const mix = pal.length === 1 ? null : colourMixer(pal[0], pal[1 % pal.length]);
     for (let i = 0; i < ctx.fixtureCount; i++) {
       const x = ctx.xs ? ctx.xs[i] : i / Math.max(1, ctx.fixtureCount - 1);
       const wave = (1 + Math.sin(phase * Math.PI * 2 + x * d.width * Math.PI * 2)) / 2;
       const crest = Math.pow(wave, 1.5);
-      const a = pal[0], b = pal[1 % pal.length];
-      const col = Object.fromEntries(['r', 'g', 'b', 'w', 'a', 'uv'].map(k => [k,
-        Math.round((a[k] || 0) * (1 - wave) + (b[k] || 0) * wave)]));
-      ctx.write(i, pal.length === 1 ? pal[0] : col, Math.round(floor + crest * (255 - floor)), 0);
+      ctx.write(i, mix ? mix(wave) : pal[0], Math.round(floor + crest * (255 - floor)), 0);
     }
   },
   // ── Whole rig ─────────────────────────────────────────────────────────────

@@ -120,9 +120,17 @@ const RESTING_ROLES = new Set(['intro', 'outro', 'breakdown']);
 // quiet one still barely at all.
 const ACCENT_BUDGET = { dance: 20, moderate: 12, rock: 7, calm: 0, unknown: 10 };
 
-// Seconds of quiet the director keeps after a drop, and before one.
-const RECOVERY_SEC = 2.0;
-const ANTICIPATION_SEC = 2.0;
+// The quiet the director keeps around a drop: the bar that leads into it, and
+// the drop's own first bar. Counted in bars because that is what the music
+// counts in — a flat two seconds was more than a bar at 175 BPM and let an
+// accent land most of the way through the drop's first bar at 70. Bounded so a
+// misread downbeat grid (half-bar downbeats are the usual one) cannot shrink
+// the window to nothing, and an unknown bar falls back to the old two seconds.
+const DROP_GUARD_BARS = 1;
+const DROP_GUARD_SEC = { min: 1.5, max: 4, fallback: 2 };
+// Downbeats wander by a percent or two; the bar line either side of the window
+// belongs outside it.
+const BAR_JITTER = 0.05;
 
 // Minimum burst length. At 40 Hz DMX, 300 ms is about twelve frames plus two or
 // three pulses of the fixture's own strobe channel — below that an LED par has
@@ -170,7 +178,7 @@ class ShowDirector {
   plan(analysis) {
     const context = this._context(normalise(analysis));
 
-    const intents = [
+    const planned = [
       ...this._openingIntent(context),
       ...this._planTempo(context),
       ...this._planSections(context),
@@ -179,8 +187,12 @@ class ShowDirector {
       ...this._planDrops(context),
       ...this._planQuiet(context),
       ...this._planColourMoves(context),
-      ...this._applyContrast(this._planAccents(context), context),
     ];
+    // The bursts those passes already committed to — a drop's blinder and
+    // strobe, a build-up's peak — are booked before any accent is considered,
+    // so an accent can never start inside one.
+    const booked = planned.filter((i) => i.kind === INTENT.ACCENT);
+    const intents = [...planned, ...this._applyContrast(this._planAccents(context), context, booked)];
 
     // Low priority first, so that when two intents want the same millisecond
     // the stronger decision is the one the renderer applies last and therefore
@@ -243,7 +255,13 @@ class ShowDirector {
 
     const meter = analysis.meter || 4;
     const downbeats = list(analysis.downbeats);
-    const barSec = downbeats.length >= 2 ? (downbeats[1] - downbeats[0]) : null;
+    // A bar's length: the median gap between downbeats. It used to be the
+    // first gap alone, which is the least trustworthy one in the track — it sits
+    // on the pickup or the intro, where the tracker has the least context — and
+    // on the committed tracks it was off by up to 6%. Every look scheduled as
+    // "n bars later" then drifted by that much per bar: 1.3 s, half a bar, eight
+    // bars in, so scene changes landed between the bar lines instead of on them.
+    const barSec = medianGap(downbeats);
     const baseBpm = clampBpm(analysis.bpm);
     const duration = Math.max(0, finite(analysis.duration,
       Math.max(0, ...sections.map((s) => s.end))));
@@ -252,6 +270,9 @@ class ShowDirector {
       analysis, events, grouped, mood, score, drive, tier, factor, effective,
       isCalm, isLight, palette, paletteName, paletteSize, meter, downbeats,
       barSec, baseBpm, duration, sections, identities,
+      trackSeed: trackSeedOf(analysis),
+      // The last time each recurring passage comes round — the track's arc.
+      finalReturns: lastReturns(sections),
       // Whether the document carries the continuous data at all. It decides how
       // a silence is expressed, and nothing else — every other pass degrades
       // inside itself rather than branching on this.
@@ -268,6 +289,7 @@ class ShowDirector {
       spikes: grouped.get(EVENT.ENERGY_SPIKE) || [],
       bassHits: grouped.get(EVENT.BASS_HIT) || [],
       snapToDownbeatMs: this._snapper(downbeats, barSec),
+      barsAfterMs: barWalker(downbeats, barSec),
       sectionAt: (t) => sections.find((s) => t >= s.start && t < s.end) || null,
     };
   }
@@ -412,13 +434,19 @@ class ShowDirector {
     const { sections, palette, barSec, available } = context;
     const intents = [];
     const patternByIdentity = new Map();
+    const { finalReturns } = context;
+    // What each passage ran at the first time round, which its last return is
+    // lifted from.
+    const firstDivision = new Map();
     let lastKey = '';
 
     for (const section of sections) {
       const timeMs = context.snapToDownbeatMs(section.start);
       const pattern = this._patternFor(section, patternByIdentity, context);
       const colours = coloursFor(section.identity, palette);
-      const beatDivision = this._divisionFor(section, context);
+      const beatDivision = this._divisionFor(section, context,
+        finalReturns.has(section) ? { from: firstDivision.get(passageOf(section)) || 1 } : null);
+      if (!firstDivision.has(passageOf(section))) firstDivision.set(passageOf(section), beatDivision);
 
       // strobeSpeed is only honoured when the pattern *is* the strobe, so it is
       // zeroed otherwise — a leftover speed from a build-up peak would
@@ -445,9 +473,10 @@ class ShowDirector {
       // `solid` is a static look. Four bars of it is a held moment; thirty
       // seconds of it is the show having stalled.
       if (pattern === 'solid' && barSec) {
-        const followUpMs = timeMs + Math.round(barSec * 4 * 1000);
-        if (followUpMs + 500 < section.end * 1000) {
-          const followUp = ['ribbon', 'fade', 'wave'].find((p) => available.has(p));
+        // Four real bars on, so the change lands on a bar line.
+        const followUpMs = context.barsAfterMs(timeMs, 4);
+        if (followUpMs != null && followUpMs + 500 < section.end * 1000) {
+          const followUp = restingPattern(RESTING_LOOKS, available, context.trackSeed + section.identity);
           if (followUp) {
             intents.push(scene(followUpMs, {
               pattern: followUp, colors: colours, beatDivision,
@@ -461,16 +490,24 @@ class ShowDirector {
   }
 
   _patternFor(section, patternByIdentity, context) {
-    if (patternByIdentity.has(section.identity)) return patternByIdentity.get(section.identity);
+    const { available, mood, score, trackSeed } = context;
 
-    const { available, mood, score } = context;
     // A role with a preference gets it when the rig has it: an intro that opens
     // on a chase is an intro that has given away the chorus.
-    const preferred = section.profile.prefer
-      && section.profile.prefer.find((p) => available.has(p));
-    const pattern = preferred || look.pickPattern({
+    //
+    // Checked before the identity cache, not after it. The structure labeller
+    // can put an outro in the same cluster as a chorus — it often is the
+    // chorus, fading — and the cache then handed the outro the chorus's driving
+    // pattern, so the rule that outros rest was quietly overridden. A resting
+    // choice is also kept out of the cache, so an intro sharing a chorus's
+    // cluster does not hand the chorus its resting look either.
+    const resting = restingPattern(section.profile.prefer, available, trackSeed + section.identity);
+    if (resting) return resting;
+
+    if (patternByIdentity.has(section.identity)) return patternByIdentity.get(section.identity);
+    const pattern = look.pickPattern({
       character: section.character, available, score,
-      seed: section.identity, drive: section.drive,
+      seed: section.identity + trackSeed, drive: section.drive,
       dance: unit(mood.danceability, 0.5),
     });
     patternByIdentity.set(section.identity, pattern);
@@ -491,7 +528,7 @@ class ShowDirector {
    * Triple metre stays on quarters throughout — subdividing 3/4 by two puts the
    * rig on the off-beats of the bar.
    */
-  _divisionFor(section, context) {
+  _divisionFor(section, context, arc = null) {
     const { meter, score, isCalm } = context;
     if (isCalm || meter === 3 || context.factor < 0.5) return 1;
     if (section.resting) return 1;
@@ -509,6 +546,14 @@ class ShowDirector {
     let division = 1;
     if (section.drive >= 0.55 && pulse >= 0.5) division = 2;
     if (section.drive >= 0.72 && pulse >= 0.62 && section.weight >= 0.62) division = 4;
+    // The track's arc. A returning chorus keeps its pattern and colours — that
+    // is how the room knows it is the chorus — but the last time it comes round
+    // it steps up one subdivision from whichever is faster, the first time
+    // through or its own reading. Its own reading alone could come out *below*
+    // the first chorus, and the song's biggest moment then looked smaller than
+    // its first. Only on a pulse steady enough to carry it, and never past
+    // what the role allows.
+    if (arc && pulse >= 0.5) division = Math.min(4, Math.max(division, arc.from) * 2);
     return Math.min(division, section.profile.maxDivision);
   }
 
@@ -532,11 +577,27 @@ class ShowDirector {
     let rotateBars = section.drive >= 0.8 ? 2 : section.drive >= 0.6 ? 4 : 8;
     if (context.factor > 0) rotateBars = Math.max(2, Math.round(rotateBars / context.factor));
 
+    // Phrase lengths only. Popular music moves in groups of two, four and eight
+    // bars, and a change on bar three of a four-bar phrase reads as a mistake
+    // even when the energy justified it — the analyser's own events.py says as
+    // much. Dividing by the intensity factor used to produce strides of three,
+    // five, six or seven bars, each of which walks off the phrase within two
+    // cycles. Rounded in log space, so the fader still moves it both ways.
+    rotateBars = Math.min(16, Math.max(2, 2 ** Math.round(Math.log2(rotateBars))));
+
+    // Counted from the section's own start rather than from the analyser's
+    // global phrase index (bar number modulo four from the first downbeat). The
+    // section boundary is the one place the structure labeller asserted a new
+    // phrase begins; the global count is only right if the track's first bar
+    // happens to open a phrase, and one pickup bar or a six-bar intro shifts it
+    // for the rest of the song. On the committed tracks, drops that start
+    // squarely on a bar line sit at global phrase positions 1 and 3.
     const endMs = Math.round(section.end * 1000);
-    const stepMs = Math.round(rotateBars * barSec * 1000);
+    const at = (k) => context.barsAfterMs(current.timeMs, k * rotateBars);
     // A single mid-section swap reads as a glitch rather than as development;
     // only rotate when there is room for at least two full cycles.
-    if (endMs - current.timeMs < stepMs * 2) return [];
+    const secondCycle = at(2);
+    if (secondCycle == null || secondCycle > endMs) return [];
 
     // Walk seeds with a coprime stride until two *distinct* alternates turn up.
     // Fixed offsets collide whenever both land on the same slot of a short pool.
@@ -545,7 +606,7 @@ class ShowDirector {
     for (let step = 1; step < 24 && alternates.length < 2; step++) {
       const candidate = look.pickPattern({
         character: section.character, available, score,
-        seed: section.identity * 7 + step * 13, drive: section.drive,
+        seed: section.identity * 7 + step * 13 + context.trackSeed, drive: section.drive,
         dance: unit(mood.danceability, 0.5),
       });
       if (!seen.has(candidate)) {
@@ -557,12 +618,12 @@ class ShowDirector {
 
     const intents = [];
     let i = 0;
-    for (let at = current.timeMs + stepMs; at + 1000 < endMs; at += stepMs) {
-      const inDrop = drops.some((d) => Math.abs(d.t * 1000 - at) < 2000);
-      const inBuildup = buildups.some((b) => at >= b.t * 1000 - 200
-        && at <= endOf(b) * 1000 + 200);
+    for (let k = 1, when = at(1); when != null && when + 1000 < endMs; k++, when = at(k)) {
+      const inDrop = drops.some((d) => Math.abs(d.t * 1000 - when) < 2000);
+      const inBuildup = buildups.some((b) => when >= b.t * 1000 - 200
+        && when <= endOf(b) * 1000 + 200);
       if (!inDrop && !inBuildup) {
-        intents.push(scene(at, {
+        intents.push(scene(when, {
           pattern: alternates[i % alternates.length],
           colors: current.colours,
           beatDivision: current.beatDivision,
@@ -690,7 +751,7 @@ class ShowDirector {
     const stability = finite(analysis.tempoStability, 1);
     const intents = [];
 
-    for (const event of buildups) {
+    for (const [buildupIndex, event] of buildups.entries()) {
       const startMs = Math.round(event.t * 1000);
       const endSec = endOf(event);
       const endMs = Math.round(endSec * 1000);
@@ -703,7 +764,7 @@ class ShowDirector {
       const peakDivision = triple ? 1 : (measured && measured.peakDivision) || 4;
 
       if (!short) {
-        const tensionPattern = ['ribbon', 'fade', 'wave'].find((p) => available.has(p)) || 'fade';
+        const tensionPattern = restingPattern(RESTING_LOOKS, available, context.trackSeed + buildupIndex) || 'fade';
         intents.push(scene(startMs, {
           pattern: tensionPattern,
           colors: [palette[0], palette[0], palette[0], palette[0]],  // deliberate narrowing
@@ -925,8 +986,8 @@ class ShowDirector {
     }
 
     if (!isCalm) {
-      for (const event of breaks) {
-        const pattern = ['ribbon', 'fade', 'wave', 'solid'].find((p) => available.has(p));
+      for (const [breakIndex, event] of breaks.entries()) {
+        const pattern = restingPattern([...RESTING_LOOKS, 'solid'], available, context.trackSeed + breakIndex);
         if (!pattern) continue;
         intents.push(scene(Math.round(event.t * 1000), {
           pattern,
@@ -968,11 +1029,22 @@ class ShowDirector {
     });
     const inBuildup = (ms) => buildups.some((b) => ms >= b.t * 1000 && ms <= endOf(b) * 1000);
 
+    // A move writes a whole look, not one slot. It used to write slot A alone,
+    // so `split`, `sections` and the multi-colour chases ran on one colour from
+    // the walk and three left over from whichever scene came last — and since
+    // the walk could land on the lift, slot A was sometimes white under a
+    // saturated D. Turning the section's own hues keeps every slot in its role.
+    //
+    // The turn is never the section's own (offset 0): that is what the scene
+    // already put on stage, and the first move in every section used to write
+    // exactly that, changing nothing at the moment the music did.
     let step = 0;
     const emit = (t, source) => {
       const section = context.sectionAt(t);
-      const colours = coloursFor(section ? section.identity : 0, palette);
-      intents.push(color(t * 1000, [colours[look.goldenStep(step, colours.length)]], { source }));
+      const h = hueCount(palette);
+      const base = look.goldenStep(section ? section.identity : 0, h);
+      const turn = h > 1 ? base + 1 + (step % (h - 1)) : base;
+      intents.push(color(t * 1000, slotsFor(palette, turn), { source }));
       step++;
     };
 
@@ -1039,7 +1111,7 @@ class ShowDirector {
 
     const dance = unit((context.mood || {}).danceability, 0.5);
     const candidates = [];
-    const propose = (t, confidence, source, priority) => {
+    const propose = (t, confidence, source, priority, intensity = 0.5) => {
       const section = context.sectionAt(t);
       if (!section || !section.profile.accents || section.resting) return;
       if (section.drive < 0.28) return;
@@ -1061,7 +1133,7 @@ class ShowDirector {
         ? Math.round(110 + (1 - unit(score.articulation, 0.5)) * 190)
         : MIN_BURST_MS;
       candidates.push(accent(t * 1000, burst, Math.max(120, durationMs), {
-        source, priority, confidence: unit(confidence, 0.5),
+        source, priority, confidence: unit(confidence, 0.5), intensity: unit(intensity, 0.5),
       }));
     };
 
@@ -1075,7 +1147,11 @@ class ShowDirector {
         const section = context.sectionAt(bar.t);
         index++;
         if (!section) continue;
-        const every = strideFor(section.drive, context.factor, dance);
+        let every = strideFor(section.drive, context.factor, dance);
+        // The last chorus is punctuated twice as often: the arc's other lever,
+        // for the choruses already running as fast a subdivision as the rig
+        // can step.
+        if (every && context.finalReturns.has(section)) every = Math.max(1, Math.round(every / 2));
         if (!every || index % every !== 0) continue;
         propose(bar.t, bar.confidence == null ? 0.5 : bar.confidence,
           'bar', PRIORITY.BAR_ACCENT);
@@ -1096,17 +1172,21 @@ class ShowDirector {
         // whichever grid it came off.
         const minGap = every * 4 * (60 / Math.max(20, context.baseBpm));
         if (beat.t - lastT < minGap) continue;
-        propose(beat.t, beat.confidence, 'beat', PRIORITY.BEAT_ACCENT);
+        propose(beat.t, beat.confidence, 'beat', PRIORITY.BEAT_ACCENT, beat.intensity);
         lastT = beat.t;
       }
     }
 
     // Moments the track marked itself. Worth more than a bar line, because
     // something actually happened.
-    for (const event of spikes) propose(event.t, event.confidence, 'spike', PRIORITY.BAR_ACCENT);
+    // The analyser gives every spike the same confidence and says how big it
+    // was in `intensity`, so that is what separates one from the next.
+    for (const event of spikes) {
+      propose(event.t, event.confidence, 'spike', PRIORITY.BAR_ACCENT, event.intensity);
+    }
     for (const event of bassHits) {
       if (event.confidence < 0.7) continue;
-      propose(event.t, event.confidence * 0.8, 'instrument', PRIORITY.BEAT_ACCENT);
+      propose(event.t, event.confidence * 0.8, 'instrument', PRIORITY.BEAT_ACCENT, event.intensity);
     }
 
     return candidates;
@@ -1119,10 +1199,10 @@ class ShowDirector {
    * show decides which ones it can afford, in one place, with the whole track
    * in view. Five rules:
    *
-   *   anticipation  nothing in the couple of seconds before a drop. The
+   *   anticipation  nothing in the bar before a drop. The
    *                 build-up's own arc owns that window, and an accent there
    *                 spends attention a moment before the payoff needed it.
-   *   recovery      nothing for three seconds after a drop. The drop *is* the
+   *   recovery      nothing in the drop's first bar. The drop *is* the
    *                 statement; carrying on flashing over it reads as the rig
    *                 not having noticed.
    *   quiet         nothing inside a silence or a break. Those are the contrast
@@ -1136,13 +1216,15 @@ class ShowDirector {
    * change from the previous pass, which walked the track from the start and so
    * spent its budget on whatever happened to come first; a convincing accent
    * ninety seconds in lost to three unconvincing ones in the opening verse.
-   * Confidence is what "best" means, weighted by how much the document is worth
-   * trusting at all.
+   * "Best" is confidence scaled by how big the moment is, weighted by how much
+   * the document is worth trusting at all. Confidence alone tied every energy
+   * spike — the analyser gives them all the same — so the tie fell back to time
+   * order and the opening minute's small spikes beat the chorus's big ones.
    *
    * Drop accents are exempt: they are the moments the budget exists to protect.
    */
-  _applyContrast(accents, context) {
-    const { drops, vocals, silences, breaks, tier, factor, effective, score } = context;
+  _applyContrast(accents, context, booked = []) {
+    const { drops, vocals, silences, breaks, tier, factor, effective, score, barSec } = context;
     const base = ACCENT_BUDGET[tier] != null ? ACCENT_BUDGET[tier] : ACCENT_BUDGET.unknown;
     // Scaled by where the drive sits inside its tier, so two dance tracks at
     // opposite ends of the tier do not get identical accent density. Never
@@ -1152,13 +1234,26 @@ class ShowDirector {
       * (0.55 + unit(effective) * 0.45));
 
     const dropTimes = drops.map((d) => d.t * 1000);
+    const guardMs = 1000 * (barSec
+      ? Math.min(DROP_GUARD_SEC.max, Math.max(DROP_GUARD_SEC.min, DROP_GUARD_BARS * barSec))
+      : DROP_GUARD_SEC.fallback);
     const kept = [];
     const trust = 0.6 + 0.4 * unit(score.confidence, 0.8);
 
+    // At the neutral intensity of 0.5 this is confidence alone, so a bar line
+    // with nothing measured ranks exactly as it always did.
+    //
+    // Inside the last return of a passage an accent ranks a third higher. The
+    // per-minute cap still holds; this decides where it is spent when the final
+    // chorus and its neighbours compete for it, which the final chorus used to
+    // lose — across the analysis cache its accent rate came out below the first
+    // time through (10.3 a minute against 12.8), and is now level with it. What
+    // it still loses is to the vocal and drop rules, which it should.
+    const climax = (x) => (context.finalReturns?.has(context.sectionAt?.(x.timeMs / 1000)) ? 4 / 3 : 1);
+    const strength = (x) => (x.confidence || 0) * (0.5 + unit(x.intensity, 0.5)) * climax(x);
     const ranked = accents.slice().sort((a, b) => {
       if (a.priority !== b.priority) return b.priority - a.priority;
-      const byConfidence = (b.confidence || 0) - (a.confidence || 0);
-      return byConfidence || a.timeMs - b.timeMs;
+      return (strength(b) - strength(a)) || a.timeMs - b.timeMs;
     });
 
     for (const intent of ranked) {
@@ -1166,8 +1261,8 @@ class ShowDirector {
       if (intent.confidence * trust < 0.3) continue;
 
       const t = intent.timeMs;
-      if (dropTimes.some((d) => t >= d - ANTICIPATION_SEC * 1000 && t < d)) continue;
-      if (dropTimes.some((d) => t >= d && t <= d + RECOVERY_SEC * 1000)) continue;
+      if (dropTimes.some((d) => t >= d - guardMs * (1 + BAR_JITTER) && t < d)) continue;
+      if (dropTimes.some((d) => t >= d && t < d + guardMs * (1 - BAR_JITTER))) continue;
       if (spanAt(silences, t / 1000) || spanAt(breaks, t / 1000)) continue;
 
       // A sung phrase wants atmosphere. Strobing over a vocal is the single
@@ -1180,7 +1275,9 @@ class ShowDirector {
         if (kept.some((k) => Math.abs(k.timeMs - t) < 8000)) continue;
       }
 
-      if (overlaps(kept, intent)) continue;
+      // Bursts other passes own block an overlap, but are not this pass's to
+      // return or to count against the budget.
+      if (overlaps(kept, intent) || overlaps(booked, intent)) continue;
       if (budgetPerMinute <= 0) continue;
       if (exceedsBudget(kept, intent, budgetPerMinute)) continue;
 
@@ -1322,31 +1419,166 @@ function splitRestingAtDrops(raw, drops) {
   return out;
 }
 
-/** Four colour slots for a passage, offset so each identity reads differently. */
-function coloursFor(identity, palette) {
-  if (!palette.length) return [0, 0, 0, 0];
-  const base = look.goldenStep(identity, palette.length);
-  const at = (offset) => palette[(base + offset) % palette.length];
-  return [
-    at(0),
-    palette.length >= 2 ? at(1) : at(0),
-    palette.length >= 3 ? at(2) : at(0),
-    palette.length >= 4 ? at(3) : at(1),
-  ];
+// The looks a passage rests on: none of them travels on the beat.
+const RESTING_LOOKS = ['ribbon', 'fade', 'wave'];
+
+/**
+ * One of a resting role's preferred looks, rotated by `seed`; null for a role
+ * with no preference.
+ *
+ * The first available entry used to win every time, so every intro, every
+ * build-up's tension and every break of every track in a set was `ribbon`.
+ * `solid` is a static look — held for a moment, it is a statement; held for an
+ * intro, the show has stalled — so it is only the fallback for a rig with none
+ * of the moving ones.
+ */
+function restingPattern(prefer, available, seed) {
+  if (!prefer) return null;
+  const moving = prefer.filter((p) => p !== 'solid' && available.has(p));
+  if (moving.length) return moving[Math.abs(Math.round(seed)) % moving.length];
+  return prefer.find((p) => available.has(p)) || null;
 }
 
-/** A drop's colours: the palette's most separated pair, walked per drop. */
+/**
+ * A number that is the same for every plan of one track and differs between
+ * tracks, mixed into every pattern choice.
+ *
+ * Choices were seeded by a section's identity alone, and identities are small
+ * integers counted from zero — so two tracks with the same shape, genre and
+ * character got the same patterns in the same order, and the first passage of
+ * every track took the first entry of its pool. The seed spends the pools across
+ * a night while keeping each track's show exactly repeatable. Hashed from what
+ * identifies the recording, because a cached document from before the analyser
+ * carried an id has only its name, artist and length.
+ */
+function trackSeedOf(analysis) {
+  const t = (analysis && analysis.track) || {};
+  const text = `${t.artist || ''}|${t.name || ''}|${Math.round(finite(analysis && analysis.duration, 0))}`;
+  let h = 0x811c9dc5;  // FNV-1a
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h % 9973;
+}
+
+/** The median gap between successive downbeats, in seconds, or null. */
+function medianGap(downbeats) {
+  const gaps = [];
+  for (let i = 1; i < downbeats.length; i++) {
+    const gap = downbeats[i] - downbeats[i - 1];
+    if (gap > 0) gaps.push(gap);
+  }
+  if (!gaps.length) return null;
+  gaps.sort((a, b) => a - b);
+  const mid = gaps.length >> 1;
+  return gaps.length % 2 ? gaps[mid] : (gaps[mid - 1] + gaps[mid]) / 2;
+}
+
+/**
+ * "n bars after this moment", counted on the downbeats the tracker found.
+ *
+ * Counting real downbeats rather than multiplying a bar length means a look
+ * scheduled sixteen bars on lands on the sixteenth bar line even when the
+ * tempo breathes — and a live band's always does. The count starts from the
+ * downbeat nearest `fromMs`, so a caller passing a section start that was
+ * already snapped to a bar line walks from exactly that bar.
+ *
+ * Past the last tracked downbeat it extrapolates at the median bar; with no
+ * downbeats at all it falls back to wall-clock bars, and with no bar length
+ * either it returns null and the caller does without.
+ */
+/**
+ * Which passage a section is a return of: its identity *in its role*. The
+ * labeller often clusters a verse with the chorus it leads into, and the last
+ * section of that cluster being a verse does not make it the last chorus.
+ */
+const passageOf = (section) => `${section.identity}|${section.role}`;
+
+/**
+ * The sections that are the last time a passage comes round: the final
+ * occurrence of each passage heard more than once. Resting passages are left
+ * out — an outro repeating the intro is not a climax.
+ */
+function lastReturns(sections) {
+  const last = new Map();
+  const count = new Map();
+  for (const section of sections) {
+    if (section.resting || section.identity == null) continue;
+    const key = passageOf(section);
+    count.set(key, (count.get(key) || 0) + 1);
+    last.set(key, section);
+  }
+  return new Set([...last].filter(([key]) => count.get(key) > 1).map(([, s]) => s));
+}
+
+function barWalker(downbeats, barSec) {
+  return (fromMs, bars) => {
+    const t = fromMs / 1000;
+    if (downbeats.length) {
+      let lo = 0;
+      let hi = downbeats.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (downbeats[mid] < t) lo = mid + 1; else hi = mid;
+      }
+      if (lo > 0 && Math.abs(downbeats[lo - 1] - t) <= Math.abs(downbeats[lo] - t)) lo--;
+      const target = lo + bars;
+      if (target < downbeats.length) return Math.round(downbeats[target] * 1000);
+      if (barSec) {
+        const last = downbeats.length - 1;
+        return Math.round((downbeats[last] + (target - last) * barSec) * 1000);
+      }
+    }
+    return barSec ? Math.round(fromMs + bars * barSec * 1000) : null;
+  };
+}
+
+/** How many of a palette's entries are hues that may rotate between slots. */
+function hueCount(palette) {
+  return palette.length === 4 ? 3 : palette.length;
+}
+
+/**
+ * The four slots for a palette, with its hues turned `turn` places.
+ *
+ * Only the hues turn. A four-colour palette's last entry is its *lift* — a
+ * white, a pale wash or UV — and palettes.js is explicit about why it lives in
+ * slot D: without a brightness break, a four-colour chase reads as a rainbow
+ * rather than as a look. Rotating all four used to walk that lift into A, B or
+ * C on most sections and put a saturated hue in D, which is precisely the
+ * rainbow the banks were built to prevent. So the lift stays pinned, and a
+ * passage's identity decides which of the three hues leads.
+ *
+ * Two- and three-colour banks have no lift and turn whole, filling the spare
+ * slots from the front as they always have.
+ */
+function slotsFor(palette, turn) {
+  const n = palette.length;
+  if (!n) return [0, 0, 0, 0];
+  const h = hueCount(palette);
+  const at = (i) => palette[(((turn + i) % h) + h) % h];
+  if (n === 4) return [at(0), at(1), at(2), palette[3]];
+  if (n === 3) return [at(0), at(1), at(2), at(0)];
+  if (n === 2) return [at(0), at(1), at(0), at(1)];
+  return [at(0), at(0), at(0), at(0)];
+}
+
+/** Four colour slots for a passage, offset so each identity reads differently. */
+function coloursFor(identity, palette) {
+  return slotsFor(palette, look.goldenStep(identity, hueCount(palette)));
+}
+
+/**
+ * A drop's colours, walked per drop.
+ *
+ * A and B of every bank are its designed contrast pair, and turning the hues
+ * keeps them adjacent, so each drop still arrives on two colours built to be
+ * seen against each other — with the lift held in D for the patterns that use
+ * a brightness break.
+ */
 function dropColours(index, palette) {
-  const length = palette.length;
-  if (!length) return [0, 0, 0, 0];
-  const slot = look.goldenStep(index, length);
-  const opposite = Math.max(1, Math.floor(length / 2));
-  return [
-    palette[slot] || 0,
-    length >= 2 ? palette[(slot + opposite) % length] : palette[slot] || 0,
-    length >= 3 ? palette[(slot + 2) % length] : palette[slot] || 0,
-    length >= 4 ? palette[(slot + 3) % length] : palette[slot] || 0,
-  ];
+  return slotsFor(palette, look.goldenStep(index, hueCount(palette)));
 }
 
 /**
