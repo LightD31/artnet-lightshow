@@ -1,4 +1,4 @@
-import { signal } from '@preact/signals';
+import { computed, signal } from '@preact/signals';
 import { io } from 'socket.io-client';
 import { createHoldControl } from './hold-control.js';
 import { timelinePosition } from './timeline-state.js';
@@ -23,12 +23,36 @@ export const connectionSig = signal({ status: 'connecting' });
 // waking every control panel in the tree.
 export const dmxSig = signal({});
 
+// The *shape* of that stream — which universes are live and how many channels
+// each carries — as a comparable string. It recomputes on every frame but its
+// value changes only when the rig does, so a component reading this instead of
+// dmxSig lays out the monitor once rather than ten times a second. The values
+// themselves are written into the cells imperatively.
+export const dmxShapeSig = computed(() => {
+  const snap = dmxSig.value || {};
+  return Object.keys(snap).map(Number).sort((a, b) => a - b)
+    .map((u) => `${u}:${(snap[u] || []).length}`).join(',');
+});
+
 // Auto-show playback position (pushed from server at ~10 Hz). Held in its own
 // signal so the timeline visualiser can re-render without churning the rest.
 export const autoPositionSig = signal({ positionMs: 0, running: false, updatedAt: 0 });
 
 // Auto-show timeline payload (loaded on demand from /api/auto/timeline).
 export const autoTimelineSig = signal({ data: null, key: null, status: 'idle', error: null });
+
+// Stage preview panel state. The panel is mounted in both the manual and the
+// auto view, and two copies of this in component state meant an operator who
+// started positioning fixtures in one view found the other still in live mode —
+// or worse, rehearsing at a different position. It is one panel to the person
+// using it, so it gets one piece of state.
+//
+// The drag in progress deliberately stays local to the component: it belongs to
+// one pointer on one surface, and sharing it would let a drag begun in one view
+// go on driving a lamp in the other.
+export const stagePreviewSig = signal({
+  edit: false, rehearsal: false, playing: false, position: 0,
+});
 
 // Token comes from public/auth.js, which runs before this bundle. Guarded so the
 // bundle still works if it ever loads without it.

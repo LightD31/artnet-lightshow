@@ -70,6 +70,7 @@ function snapshotShow() {
       universe: universeOf(f),
       profileId: f.profileId,
       maxBrightness: maxBrightnessOf(f),
+      position: f.position ? { ...f.position } : null,
     })),
   };
 }
@@ -120,6 +121,7 @@ function applyShow(rawShow) {
       universe: f.universe !== undefined ? f.universe : showUniverse,
       profileId: incoming[f.profileId] ? f.profileId : BUILTIN_PROFILE_ID,
       maxBrightness: f.maxBrightness !== undefined ? f.maxBrightness : 255,
+      position: f.position ? { ...f.position } : null,
       override: null,
     }));
     for (const fix of next) {

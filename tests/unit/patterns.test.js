@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { PATTERN_FUNCS } = require('../../src/server/patterns');
+const { PATTERN_FUNCS } = require('../../src/shared/patterns');
 const { PATTERNS, COLOR_PRESETS } = require('../../src/server/presets');
 
 test('every advertised pattern has an implementation, and vice versa', () => {
@@ -50,7 +50,7 @@ test('each pattern writes valid colours for every fixture count it is offered at
 // than a loss if a two-colour palette really does drive them with two colours
 // and a four-colour one with four.
 
-const { paletteOf } = require('../../src/server/patterns');
+const { paletteOf } = require('../../src/shared/patterns');
 
 /** The four slots as a palette of `size` wraps them: a duo is A/B/A/B. */
 function slotsOf(size) {

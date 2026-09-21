@@ -765,6 +765,9 @@ class AutoShow {
       pattern: ev.data && ev.data.pattern,
       colorA: ev.data && ev.data.colorA,
       durationMs: ev.data && ev.data.durationMs,
+      source: ev.source,
+      kind: ev.kind,
+      data: ev.data,
     }));
     return {
       revision: this.timelineRevision,

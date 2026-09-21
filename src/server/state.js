@@ -219,6 +219,7 @@ function getLiveState() {
       ...f,
       universe: universeOf(f),
       maxBrightness: maxBrightnessOf(f),
+      position: f.position ? { ...f.position } : null,
     })),
     profiles: { ...listProfiles() },
     ...extrasProvider(),

@@ -53,6 +53,7 @@ function renderIntents(intents, { blackoutIndex = 0 } = {}) {
   const events = [];
 
   for (const intent of intents) {
+    const first = events.length;
     switch (intent.kind) {
       case INTENT.EXPRESSION:
         events.push({ timeMs: intent.timeMs, action: 'patch', data: { showDynamics: intent.dynamics,
@@ -103,6 +104,12 @@ function renderIntents(intents, { blackoutIndex = 0 } = {}) {
 
       default:
         break;
+    }
+    // Keep the director's actual decision alongside the output, including
+    // after burst arbitration, so the performance UI can explain the show.
+    for (let i = first; i < events.length; i++) {
+      events[i].source = intent.source;
+      events[i].kind = intent.kind;
     }
   }
 

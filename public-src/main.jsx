@@ -10,6 +10,7 @@ import { Warm } from './components/Warm.jsx';
 import { Patterns } from './components/Patterns.jsx';
 import { Cues } from './components/Cues.jsx';
 import { Fixtures } from './components/Fixtures.jsx';
+import { StagePreview } from './components/StagePreview.jsx';
 import { BottomDrawer } from './components/BottomDrawer.jsx';
 import { ConnectionVeil } from './components/ConnectionVeil.jsx';
 
@@ -51,7 +52,7 @@ function ManualView() {
     <div class="manual-view">
       <div class="manual-col col-patterns"><Cues /><Patterns /></div>
       <div class="manual-col col-colors"><Colors /></div>
-      <div class="manual-col col-fixtures"><Fixtures /></div>
+      <div class="manual-col col-fixtures"><StagePreview /><Fixtures /></div>
     </div>
   );
 }

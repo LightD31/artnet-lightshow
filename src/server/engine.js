@@ -2,10 +2,17 @@
 
 const { state, getFixtureCount, universeOf, maxBrightnessOf, activeUniverses } = require('./state');
 const { COLOR_PRESETS, STROBE_FUNCTIONS } = require('./presets');
-const { getProfile, UV_BOOST } = require('./profiles');
+const { getProfile } = require('./profiles');
 const { sendUniverse, sendHue, stopHue } = require('./output');
 const universes = require('./universes');
-const { PATTERN_FUNCS } = require('./patterns');
+const { PATTERN_FUNCS } = require('../shared/patterns');
+const { spatialLayout } = require('../shared/stage');
+// Shared with the browser's rehearsal preview so the two cannot drift. See the
+// header of that file for why this is not simply inlined here.
+const {
+  EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues,
+  fadeCycleSec, fadeBrightness, hitBeatSec, hitBrightness, motionCycleSec,
+} = require('../shared/look-math');
 
 const fixtureColors = Array.from({ length: 4 }, () => ({
   r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 255, strobe: 0,
@@ -35,10 +42,22 @@ function setFixtureColor(idx, color, dim, strobe) {
   };
 }
 
+/**
+ * Patterns write to slots 0…n−1 in the order they travel; this routes slot k to
+ * the k-th fixture from stage left, as placed on the stage plot, and hands the
+ * continuous patterns each slot's real position across the rig. With nothing
+ * placed it is the identity, and every pattern renders exactly as before.
+ */
+function layoutWriter() {
+  const { order, xs } = spatialLayout(state.fixtures);
+  return { xs, write: (k, color, dim, strobe) => setFixtureColor(order[k], color, dim, strobe) };
+}
+
 function tickPattern() {
   if (!state.running) return;
   const fn = PATTERN_FUNCS[state.pattern];
   if (!fn) return;
+  const { xs, write } = layoutWriter();
 
   fn({
     colors: [
@@ -56,7 +75,8 @@ function tickPattern() {
     // property of the music rather than of the step — how far the unlit lamps
     // sit above black, how dense a scatter is — and ignore it otherwise.
     dynamics: state.showDynamics ? expression : null,
-    write: setFixtureColor,
+    write,
+    xs,
     resetHitPhase: () => { state._hitPhase = 0; },
   });
 
@@ -65,41 +85,15 @@ function tickPattern() {
 }
 
 // The continuous expression channel, smoothed towards whatever the show last
-// asked for. Declared above the override resolver because `glow` reads it: a
-// soft accent that ignored what the music was doing would be a flash with a
-// lower number on it.
-const EXPRESSION_REST = Object.freeze({
-  level: 1, bass: .5, vocal: .5, air: .3, width: .5, motion: .3, decay: .25,
-});
+// asked for. `glow` reads it: a soft accent that ignored what the music was
+// doing would be a flash with a lower number on it.
 let expression = { ...EXPRESSION_REST };
 let expressionPhase = 0;
 
-function resolveEnergyOverride() {
-  const colA = COLOR_PRESETS[state.colorA];
-  switch (state.heldEnergy ?? state.energyOverride) {
-    // Cold: no amber, so it reads as a hard white flash rather than a warm one.
-    case 'white-strobe': return { col: { r: 255, g: 255, b: 255, w: 255, a: 0,   uv: 0   }, dim: 255, strobe: 255 };
-    // The quiet end of the vocabulary. A lift rather than a flash, and the only
-    // accent soft enough for a ballad — before it existed every burst was too
-    // loud for quiet music, so quiet music got no accents at all. It rides the
-    // expression channel instead of overriding it, so it reads as the music
-    // swelling rather than as the rig interrupting.
-    case 'glow': return { col: colA, dim: Math.round(150 + 105 * expression.level), strobe: 0 };
-    case 'color-strobe': return {
-      col: { r: colA.r, g: colA.g, b: colA.b, w: colA.w || 0, a: colA.a || 0, uv: colA.uv || 0 },
-      dim: 255, strobe: 255,
-    };
-    // Every emitter that makes visible light, amber included — this is the
-    // brightest the rig goes. UV is left out: it adds no perceived brightness
-    // to a white wall, and UV_BOOST would push that channel harder than the
-    // rest for nothing.
-    case 'blinder':      return { col: { r: 255, g: 255, b: 255, w: 255, a: 255, uv: 0   }, dim: 255, strobe: 0   };
-    case 'uv-wash':      return { col: { r: 0,   g: 0,   b: 0,   w: 0,   a: 0,   uv: 255 }, dim: 255, strobe: 0   };
-    // Momentary darkness. dim 0 as well as a black colour so the fixture's
-    // dimmer channel closes too, rather than leaving it open on black.
-    case 'kill':         return { col: { r: 0,   g: 0,   b: 0,   w: 0,   a: 0,   uv: 0   }, dim: 0,   strobe: 0   };
-    default: return null;
-  }
+/** The burst currently forced on every fixture, or null. */
+function currentEnergy() {
+  const id = state.heldEnergy ?? state.energyOverride;
+  return id ? resolveEnergyOverride(id, COLOR_PRESETS[state.colorA], expression.level) : null;
 }
 
 let lastRenderTs = Date.now();
@@ -111,34 +105,22 @@ function renderDmx() {
 
   // Continuous fade — runs at the full DMX rate (40 Hz). Full cycle spans 8 beats.
   if (state.running && state.pattern === 'fade') {
-    const cycleSeconds = (60 / Math.max(1, state.bpm)) * 8;
-    state._fadePhase = (state._fadePhase + dt / cycleSeconds) % 1;
-    const bright = Math.round(((Math.sin(state._fadePhase * Math.PI * 2 - Math.PI / 2) + 1) / 2) * 230 + 25);
+    state._fadePhase = (state._fadePhase + dt / fadeCycleSec(state.bpm)) % 1;
+    const bright = fadeBrightness(state._fadePhase);
     const colA = COLOR_PRESETS[state.colorA];
     for (let i = 0; i < getFixtureCount(); i++) setFixtureColor(i, colA, bright, 0);
   }
 
   // 'hit' decay 255 → 35 over one beat. tickPattern resets _hitPhase on each beat.
   if (state.running && state.pattern === 'hit') {
-    const beatSec = Math.max(0.05, (60 / Math.max(1, state.bpm)) / Math.max(1, state.beatDivision));
-    state._hitPhase = Math.min(1, (state._hitPhase ?? 1) + dt / beatSec);
-    const decay = Math.pow(1 - state._hitPhase, 1.8);
-    const bright = Math.round(35 + decay * 220);
+    state._hitPhase = Math.min(1, (state._hitPhase ?? 1) + dt / hitBeatSec(state.bpm, state.beatDivision));
+    const bright = hitBrightness(state._hitPhase);
     const colA = COLOR_PRESETS[state.colorA];
     for (let i = 0; i < getFixtureCount(); i++) setFixtureColor(i, colA, bright, 0);
   }
 
   const target = state.showDynamics;
-  if (target) {
-    const blend = 1 - Math.exp(-dt / (.12 + (target.decay || 0) * .45));
-    for (const key of Object.keys(expression)) {
-      if (target[key] != null) expression[key] += (target[key] - expression[key]) * blend;
-    }
-    // Silence must close immediately, even for long-decay music.
-    if (target.level === 0) expression.level = 0;
-  } else {
-    expression = { ...EXPRESSION_REST };
-  }
+  expression = blendExpression(expression, target, dt);
   // How fast the expressive patterns travel across the rig.
   //
   // This used to advance in wall-clock seconds, and at a typical motion reading
@@ -147,17 +129,17 @@ function renderDmx() {
   // movement, so it is tied to the beat instead: motion decides how many beats
   // one crossing takes, eight when the track is barely moving and two when it
   // is driving, and the sweep speeds up with the tempo rather than ignoring it.
-  const cycleSec = Math.max(.3, (60 / Math.max(20, state.bpm)) * (8 - 6 * expression.motion));
-  expressionPhase = (expressionPhase + dt / cycleSec) % 1;
+  expressionPhase = (expressionPhase + dt / motionCycleSec(state.bpm, expression.motion)) % 1;
   if (state.running && ['ensemble', 'ribbon'].includes(state.pattern)) {
+    const { xs, write } = layoutWriter();
     PATTERN_FUNCS[state.pattern]({
       colors: [state.colorA, state.colorB, state.colorC, state.colorD].map(i => COLOR_PRESETS[i]),
       fixtureCount: getFixtureCount(), phase: expressionPhase, dynamics: expression,
-      write: setFixtureColor,
+      write, xs,
     });
   }
 
-  const energy = (state.heldEnergy ?? state.energyOverride) ? resolveEnergyOverride() : null;
+  const energy = currentEnergy();
 
   // Allocate a buffer for every universe the patch now spans and retire the
   // ones it left. Done every frame rather than on patch edits: a fixture moved
@@ -240,11 +222,16 @@ function renderDmx() {
         }
       }
 
-      if (ch.red !== undefined)   dmx[base + ch.red]   = Math.round(col.r * ts);
-      if (ch.green !== undefined) dmx[base + ch.green] = Math.round(col.g * ts);
-      if (ch.blue !== undefined)  dmx[base + ch.blue]  = Math.round(col.b * ts);
-      if (ch.white !== undefined) dmx[base + ch.white] = Math.round(col.w * ts);
-      if (ch.amber !== undefined) dmx[base + ch.amber] = Math.round(col.a * ts);
+      // One resolution of colour × scale for every emitter, shared with the
+      // rehearsal preview; this loop only routes the results onto the channels
+      // the fixture's profile actually names.
+      const v = emitterValues(col, ts);
+
+      if (ch.red !== undefined)   dmx[base + ch.red]   = v.r;
+      if (ch.green !== undefined) dmx[base + ch.green] = v.g;
+      if (ch.blue !== undefined)  dmx[base + ch.blue]  = v.b;
+      if (ch.white !== undefined) dmx[base + ch.white] = v.w;
+      if (ch.amber !== undefined) dmx[base + ch.amber] = v.a;
 
       // A lamp with separate warm and cool white dies (a Hue bulb) rather than
       // one white emitter and an amber one. The look's colour model has no
@@ -254,9 +241,9 @@ function renderDmx() {
       // neutral white content, and the warm content. "Cool White" (white at
       // full) and "Warm White" (white and amber together) then land on such a
       // lamp as the whites they are named after.
-      if (ch.coolWhite !== undefined) dmx[base + ch.coolWhite] = Math.round(col.w * ts);
-      if (ch.warmWhite !== undefined) dmx[base + ch.warmWhite] = Math.round(col.a * ts);
-      if (ch.uv !== undefined)    dmx[base + ch.uv]    = Math.min(255, Math.round(col.uv * ts * UV_BOOST));
+      if (ch.coolWhite !== undefined) dmx[base + ch.coolWhite] = v.w;
+      if (ch.warmWhite !== undefined) dmx[base + ch.warmWhite] = v.a;
+      if (ch.uv !== undefined)    dmx[base + ch.uv]    = v.uv;
     }
   }
 

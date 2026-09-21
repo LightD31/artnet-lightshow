@@ -95,6 +95,19 @@ module.exports = [
         varsIgnorePattern: '^(_|[A-Z])',
         caughtErrors: 'none',
       }],
+
+      // The bundle runs in a browser, so anything it pulls out of src/ has to
+      // be free of server state, transports and Node built-ins. src/shared/ is
+      // the half that promises that; src/server/ and src/show/ do not, and one
+      // `require('./state')` added to a file down there would break the client
+      // build with nothing to say why. Move the pure part of a module into
+      // src/shared/ rather than widening this rule.
+      'no-restricted-imports': ['error', {
+        patterns: [{
+          group: ['**/src/server/**', '**/src/show/**'],
+          message: 'The browser bundle may only import from src/shared/ — see eslint.config.js.',
+        }],
+      }],
     },
   },
 

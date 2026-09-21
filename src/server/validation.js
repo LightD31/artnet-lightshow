@@ -11,6 +11,10 @@ const { PALETTE_IDS } = require('./palettes');
 
 const u8 = z.number().int().min(0).max(255);
 const fixtureId = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1);
+const fixturePosition = z.object({
+  x: z.number().finite().min(0).max(100),
+  y: z.number().finite().min(0).max(100),
+}).strict();
 const colorIdx = z.number().int().min(0).max(COLOR_PRESETS.length - 1);
 
 // Hostname per RFC 1123, or an IPv4 literal. Rejecting junk here means a typo
@@ -102,6 +106,7 @@ const dmxUniverse = z.number().int().min(0).max(32767);
 
 const fixtureMessageSchema = z.object({
   id: fixtureId,
+  position: fixturePosition.nullable().optional(),
   address: z.number().int().min(1).max(512).optional(),
   universe: dmxUniverse.optional(),
   label: z.string().max(64).optional(),
@@ -121,6 +126,7 @@ const fixtureRestoreSchema = z.object({
   index: z.number().int().min(0).max(255),
   fixture: z.object({
     id: fixtureId.optional(),
+    position: fixturePosition.nullable().optional(),
     label: z.string().max(64),
     address: z.number().int().min(1).max(512),
     universe: dmxUniverse.optional(),
@@ -174,6 +180,7 @@ const showSchema = z.object({
   profiles: z.array(profileSchema).optional(),
   fixtures: z.array(z.object({
     id: fixtureId.optional(),
+    position: fixturePosition.nullable().optional(),
     label: z.string().max(64).optional(),
     address: z.number().int().min(1).max(512).optional(),
     // Absent in shows saved before multi-universe: those load onto the rig's

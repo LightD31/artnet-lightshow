@@ -1486,6 +1486,27 @@ input[type=range]::-moz-range-thumb {
 }
 .auto-timeline-legend span { display: inline-flex; align-items: center; gap: 4px; }
 .auto-timeline-legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--border); }
+.auto-timeline-canvas-wrap { position: relative; }
+.auto-timeline-tooltip {
+  position: absolute;
+  top: 8px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: min(220px, 70%);
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(12, 13, 20, .94);
+  color: var(--text);
+  font-size: 10px;
+  line-height: 1.2;
+  pointer-events: none;
+  z-index: 2;
+}
+.auto-timeline-tooltip strong { color: var(--accent, #fff); font-family: 'JetBrains Mono', monospace; }
+.auto-timeline-tooltip span { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .auto-timeline-legend .swatch.seg-low    { background: #1e3a5f; }
 .auto-timeline-legend .swatch.seg-mid    { background: #3a7099; }
 .auto-timeline-legend .swatch.seg-high   { background: #ff6584; }
@@ -2013,6 +2034,164 @@ input[type=range]::-moz-range-thumb {
 }
 .queue-list { display: flex; flex-direction: column; }
 .queue-row {
+/* — stage preview —
+ *
+ * A plan view of the room with the audience at the bottom. Each lamp is placed
+ * absolutely from the x/y stored on its fixture, so this geometry has to agree
+ * with the offsets StagePreview.jsx uses both to position a lamp and to
+ * hit-test a drag. It does not carry its own copy of them: the component sets
+ * --stage-lamp-w / --stage-lamp-h on the surface from the same constants it
+ * computes `left` and `top` with, and everything here reads those back. The
+ * fallbacks are only for a lamp rendered outside a surface.
+ */
+.stage-surface {
+  position: relative;
+  /* In the auto view the panel gets a wide column, and 3:2 of that is taller
+     than the screen, so the height is capped. The explicit width matters: with
+     width:auto, CSS transfers a max-height through the aspect ratio into an
+     implied max-width, and the stage shrank to 630px wide with the rest of the
+     column empty. A definite width makes the ratio yield instead. */
+  width: 100%;
+  aspect-ratio: 3 / 2;
+  min-height: 200px;
+  max-height: 420px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  /* The audience edge is lit, the back of the stage is not — so the plan view
+     reads the right way up without needing to lean on the two labels. */
+  background:
+    radial-gradient(130% 75% at 50% 100%, rgba(59, 130, 246, .07), transparent 70%),
+    var(--bg);
+  overflow: hidden;
+}
+
+.stage-back,
+.stage-audience {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: .14em;
+  line-height: 1;
+  color: var(--border-hi);
+  pointer-events: none;
+  user-select: none;
+}
+.stage-back     { top: 3px; }
+.stage-audience { bottom: 3px; }
+
+.stage-fixture {
+  position: absolute;
+  /* `left`/`top` carry the lamp's centre, which is what the drag maths solves
+     for — so the box is centred on that point rather than hung from it. */
+  transform: translate(-50%, -50%);
+  width: var(--stage-lamp-w, 56px);
+  height: var(--stage-lamp-h, 72px);
+  padding: 0;
+  appearance: none;
+  background: none;
+  border: 0;
+  cursor: default;
+}
+
+.stage-glow {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, .14);
+  background: var(--light, #222);
+  /* The bloom is the lamp's own colour, so an unlit fixture casts nothing and
+     a bright one spills the way the real thing does. */
+  box-shadow: 0 0 14px -2px var(--light, transparent), inset 0 -4px 8px rgba(0, 0, 0, .35);
+  transition: background var(--t-fast) linear, box-shadow var(--t-fast) linear;
+}
+
+/* The number rides on top of the glow, so it has to stay legible against every
+   colour a fixture can take — white on a hard shadow rather than a fixed
+   foreground that would vanish on pale amber. */
+.stage-lamp {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  font: 700 11px/1 var(--mono);
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, .95), 0 0 2px rgba(0, 0, 0, .9);
+  pointer-events: none;
+}
+
+.stage-label {
+  position: absolute;
+  top: 38px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: var(--stage-lamp-w, 56px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 9px;
+  line-height: 1.2;
+  text-align: center;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.stage-surface.editing,
+.stage-surface.editing .stage-fixture { cursor: grab; }
+.stage-surface.editing .stage-fixture:active { cursor: grabbing; }
+.stage-surface.editing .stage-glow {
+  border-color: var(--accent);
+  border-style: dashed;
+}
+
+/* The ring goes on the glow rather than the button box: the box is mostly empty
+   space, and an outline around it reads as a stray rectangle on the stage. */
+.stage-fixture:focus-visible { outline: none; }
+.stage-fixture:focus-visible .stage-glow {
+  box-shadow: var(--glow), 0 0 14px -2px var(--light, transparent);
+}
+
+.stage-surface .panel-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 0 16px;
+  text-align: center;
+}
+
+.stage-panel .panel-head .btn { margin-left: auto; }
+
+.stage-rehearsal {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.stage-rehearsal input[type=range] { flex: 1 1 120px; min-width: 90px; }
+.stage-rehearsal > span {
+  font: 600 10px/1 var(--mono);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.stage-rehearsal .look-note { flex-basis: 100%; margin: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-glow { transition: none; }
+}
+
   display: flex;
   align-items: center;
   gap: 10px;

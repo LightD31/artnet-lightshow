@@ -16,6 +16,36 @@ export function timelinePosition(position, now, durationMs) {
   return Math.max(0, Math.min(end, base + elapsed));
 }
 
+/** Return the musical and lighting context nearest an operator's pointer. */
+export function timelineDetails(data, positionMs, windowMs = 400) {
+  if (!data || !Number.isFinite(data.duration) || data.duration <= 0) {
+    return { positionMs: 0, percent: 0, section: null, events: [] };
+  }
+  const durationMs = data.duration * 1000;
+  const position = Math.max(0, Math.min(durationMs, Number(positionMs) || 0));
+  const segment = (data.segments || []).find((candidate) => {
+    const start = Number(candidate.start) * 1000;
+    const end = Number(candidate.end) * 1000;
+    return Number.isFinite(start) && Number.isFinite(end) && position >= start && position <= end;
+  });
+  const events = (data.timeline || [])
+    .filter((event) => Number.isFinite(event.timeMs) && Math.abs(event.timeMs - position) <= windowMs)
+    .slice(0, 5)
+    .map((event) => ({
+      timeMs: event.timeMs,
+      label: event.action === 'energy'
+        ? `${event.id || 'Energy'} burst`
+        : event.pattern ? `Pattern: ${event.pattern}`
+          : event.colorA != null ? 'Colour change' : 'Look update',
+    }));
+  return {
+    positionMs: position,
+    percent: (position / durationMs) * 100,
+    section: segment ? (segment.role || segment.label || 'Section') : null,
+    events,
+  };
+}
+
 // A request owns its result until cancelled. Aborting alone is insufficient:
 // an already-resolved response can still finish parsing after a track change.
 export function loadTimeline(key, publish, { fetcher = fetch, timeoutMs = 15000 } = {}) {

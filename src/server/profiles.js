@@ -36,7 +36,11 @@ function fitsInUniverse(address, channelCount) {
 
 // UV LEDs are physically dimmer than RGBW — boost their DMX value so they
 // remain visually competitive at lower dimmer settings.
-const UV_BOOST = 1.8;
+//
+// Defined in src/shared/look-math.js, which is where the arithmetic that
+// applies it lives and is reachable from the browser preview too. Re-exported
+// here because this is where callers have always asked for it.
+const { UV_BOOST } = require('../shared/look-math');
 
 // Ids that would collide with object-machinery keys. Rejected at registration
 // as defence in depth alongside the null-prototype registry below.

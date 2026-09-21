@@ -4,6 +4,7 @@ import { fmtTime } from '../utils.js';
 import { AnalysisStats } from './AnalysisStats.jsx';
 import { AutoTimeline } from './AutoTimeline.jsx';
 import { Queue } from './Queue.jsx';
+import { StagePreview } from './StagePreview.jsx';
 
 /**
  * The auto-show surface.
@@ -109,7 +110,7 @@ function SourceDots({ s }) {
 function NowPlaying({ track }) {
   const pos = autoPositionSig.value;
   const duration = track.durationMs || 0;
-  const pct = duration > 0 ? Math.min(100, (pos.positionMs / duration) * 100) : 0;
+  const pct = duration > 0 ? Math.max(0, Math.min(100, (pos.positionMs / duration) * 100)) : 0;
 
   return (
     <section class="panel now-panel">
@@ -312,6 +313,7 @@ export function AutoMode() {
         </div>
 
         <div class="auto-col auto-col-analysis">
+          <StagePreview />
           {as.analysis ? (
             <>
               <section class="panel">

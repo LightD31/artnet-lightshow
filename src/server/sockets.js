@@ -47,7 +47,7 @@ function attachSockets(io, { midi, integrations }) {
 
     socket.on('fixture', (payload) => {
       try {
-        const { id, address, universe, label, profileId, maxBrightness } = validate(fixtureMessageSchema, payload, 'fixture-msg');
+        const { id, address, universe, label, profileId, maxBrightness, position } = validate(fixtureMessageSchema, payload, 'fixture-msg');
         const fixture = getFixture(id);
         if (!fixture) return;
 
@@ -90,6 +90,7 @@ function attachSockets(io, { midi, integrations }) {
         // address checks above, but it rides the same message so dragging the
         // slider does not need a second channel.
         if (maxBrightness !== undefined) fixture.maxBrightness = maxBrightness;
+        if (position !== undefined) fixture.position = position;
         showStore.scheduleSave();
         integrations.broadcast();
       } catch (err) {

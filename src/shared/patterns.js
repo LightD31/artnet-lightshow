@@ -97,7 +97,11 @@ const PATTERN_FUNCS = {
     const phase = ctx.phase ?? ctx.step * .25;
     const pal = paletteOf(ctx);
     for (let i = 0; i < ctx.fixtureCount; i++) {
-      const x = ctx.fixtureCount > 1 ? i / (ctx.fixtureCount - 1) : .5;
+      // Where this lamp stands across the rig: the operator's placement when
+      // there is one (see shared/stage.js), even spacing otherwise. With real
+      // positions the centre is the middle of the stage, not the middle of
+      // the patch list.
+      const x = ctx.xs ? ctx.xs[i] : ctx.fixtureCount > 1 ? i / (ctx.fixtureCount - 1) : .5;
       const centre = ctx.fixtureCount <= 2 ? .5 : 1 - Math.abs(2 * x - 1);
       // Between half a cycle and a full one across the rig. It used to be one
       // to two, which on four lamps aliases exactly: at two cycles the rig
@@ -128,7 +132,7 @@ const PATTERN_FUNCS = {
     // only thing on stage.
     const floor = 18 + 55 * d.air;
     for (let i = 0; i < ctx.fixtureCount; i++) {
-      const x = i / Math.max(1, ctx.fixtureCount - 1);
+      const x = ctx.xs ? ctx.xs[i] : i / Math.max(1, ctx.fixtureCount - 1);
       const wave = (1 + Math.sin(phase * Math.PI * 2 + x * d.width * Math.PI * 2)) / 2;
       const crest = Math.pow(wave, 1.5);
       const a = pal[0], b = pal[1 % pal.length];
@@ -267,7 +271,14 @@ const PATTERN_FUNCS = {
       // One full sweep every eight beats. The phase used to advance 0.25 rad a
       // beat — a quarter turn every twenty-five beats — so on anything shorter
       // than a whole song the wave never visibly moved.
-      const phase = (ctx.step * (Math.PI * 2 / 8)) - (i * (Math.PI * 2 / N) * spread);
+      // The lamp's real place across the rig, scaled to the range i/N covers.
+      // Without positions this is the original expression, operand for operand:
+      // an unplaced rig must render exactly as it always has, and reordering the
+      // arithmetic can move a rounded DMX value by one.
+      const offset = ctx.xs
+        ? (ctx.xs[i] * (N - 1) / N) * Math.PI * 2 * spread
+        : (i * (Math.PI * 2 / N) * spread);
+      const phase = (ctx.step * (Math.PI * 2 / 8)) - offset;
       const b = Math.round(((Math.sin(phase) + 1) / 2) * 215 + 40);
       ctx.write(i, colA, b, 0);
     }

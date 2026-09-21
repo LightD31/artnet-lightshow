@@ -449,6 +449,7 @@ function attachRoutes(app, deps) {
         universe: universeOf(removed),
         profileId: removed.profileId,
         maxBrightness: maxBrightnessOf(removed),
+        position: removed.position || null,
         override: removed.override,
       },
     });
@@ -486,6 +487,7 @@ function attachRoutes(app, deps) {
         universe: fixture.universe !== undefined ? fixture.universe : state.artnet.universe,
         profileId,
         maxBrightness: fixture.maxBrightness !== undefined ? fixture.maxBrightness : 255,
+        position: fixture.position || null,
         override: fixture.override || null,
       };
 

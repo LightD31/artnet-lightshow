@@ -81,7 +81,7 @@ test('expressive opening survives same-time scene patches and quiet spans block 
 });
 
 test('stereo width and vocal activity change the rendered pattern, for one through eight lamps', () => {
-  const { PATTERN_FUNCS } = require('../../src/server/patterns');
+  const { PATTERN_FUNCS } = require('../../src/shared/patterns');
   const draw = (count, vocal, width) => {
     const rows = [];
     PATTERN_FUNCS.ensemble({ colors: COLOR_PRESETS.slice(0, 4), fixtureCount: count, phase: .2,
