@@ -106,15 +106,17 @@ function buildArtDmxPacket(universe, dmxData, seq = nextSequence()) {
   return packet;
 }
 
+/** Queue one frame. False when there is no address to send it to yet. */
 function sendArtDmx({ host, port, universe }, dmxData) {
   const address = resolveHost(host);
-  if (!address) return;                 // unresolved host — nothing to send to yet
+  if (!address) return false;           // unresolved host — nothing to send to yet
 
   const packet = buildArtDmxPacket(universe, dmxData);
   // The callback keeps per-send failures out of the socket's 'error' event.
   udpSocket.send(packet, 0, packet.length, port, address, (err) => {
     if (err) logSendFailure(err);
   });
+  return true;
 }
 
 // ── Discovery (ArtPoll / ArtPollReply) ──────────────────────────────────────

@@ -96,10 +96,13 @@ function currentEnergy() {
   return id ? resolveEnergyOverride(id, COLOR_PRESETS[state.colorA], expression.level) : null;
 }
 
-let lastRenderTs = Date.now();
+// Frame time comes from the monotonic clock. Date.now() is the wall clock, and
+// an NTP correction steps it: forwards and a fade jumps; backwards and dt
+// clamps to zero and the rig freezes for a frame.
+let lastRenderTs = performance.now();
 
 function renderDmx() {
-  const now = Date.now();
+  const now = performance.now();
   const dt = Math.max(0, Math.min(0.25, (now - lastRenderTs) / 1000));
   lastRenderTs = now;
 
@@ -201,7 +204,10 @@ function renderDmx() {
       // the one moment you most want the master to still mean something.
       // Music scales the pattern underneath manual effects and fixture overrides.
       if (!energy && !(fix.override && fix.override.enabled)) dim *= expression.level;
-      if (target?.level === 0 && !energy) dim = 0;
+      // Silence puts out what the music drives, and a pinned fixture is not
+      // driven by the music: it holds through the quiet the same as it holds
+      // through the level above.
+      if (target?.level === 0 && !energy && !(fix.override && fix.override.enabled)) dim = 0;
       const ms = (state.masterDimmer / 255) * (maxBrightnessOf(fix) / 255);
       const ds = dim / 255;
       const ts = ms * ds;
@@ -265,13 +271,30 @@ let renderInterval = null;
 
 function bpmInterval() { return (60000 / state.bpm) / state.beatDivision; }
 
+/**
+ * (Re)start the beat clock from now.
+ *
+ * Each beat is due at start + n × period and is scheduled against that, not a
+ * period after the last one fired. setInterval does the latter, so every late
+ * callback pushes all the ones after it: measured under the render load it
+ * lost about half a millisecond a beat, which at 120 BPM puts a tapped tempo
+ * a sixteenth behind the music inside three minutes.
+ */
 function restartBeatTimer({ tickNow = false } = {}) {
-  if (beatInterval) clearInterval(beatInterval);
+  if (beatInterval) clearTimeout(beatInterval);
   beatInterval = null;
-  if (state.running) {
-    if (tickNow) tickPattern();
-    beatInterval = setInterval(tickPattern, bpmInterval());
-  }
+  if (!state.running) return;
+  if (tickNow) tickPattern();
+  const period = bpmInterval();
+  const start = performance.now();
+  let n = 0;
+  const schedule = () => {
+    // After a stall (a blocked event loop, a suspended laptop) resume on the
+    // grid rather than firing every missed beat back to back.
+    n = Math.max(n + 1, Math.floor((performance.now() - start) / period) + 1);
+    beatInterval = setTimeout(() => { tickPattern(); schedule(); }, start + n * period - performance.now());
+  };
+  schedule();
 }
 
 function startEngine() {
@@ -289,7 +312,7 @@ function startEngine() {
  * power-cycles them.
  */
 function stopEngine() {
-  if (beatInterval) clearInterval(beatInterval);
+  if (beatInterval) clearTimeout(beatInterval);
   if (renderInterval) clearInterval(renderInterval);
   beatInterval = null;
   renderInterval = null;

@@ -214,15 +214,18 @@ function sendHue() {
 /**
  * Put one universe on every enabled wire.
  *
- * Returns the protocols it actually reached, which the preflight check uses to
- * tell "nothing is configured" apart from "it went out and nobody answered".
+ * Returns the protocols the frame was handed to. Art-Net counts only once its
+ * host has resolved: until then the frame is dropped, and reporting it as sent
+ * would say the rig is being driven when nothing has left the machine. (The
+ * preflight check probes the wire itself rather than reading this.)
  */
 function sendUniverse(universe, frame) {
   const sent = [];
 
   if (state.artnet.enabled !== false) {
-    sendArtDmx({ host: state.artnet.host, port: state.artnet.port, universe }, frame);
-    sent.push('artnet');
+    if (sendArtDmx({ host: state.artnet.host, port: state.artnet.port, universe }, frame)) {
+      sent.push('artnet');
+    }
   }
 
   if (sacn.enabled) {

@@ -334,3 +334,22 @@ test('a white ambiance lamp is not also given its dimmer as white', () => {
     });
   });
 });
+
+// Until a hostname resolves, Art-Net frames are dropped. sendUniverse used to
+// report them as sent regardless.
+test('an Art-Net frame is only reported sent once its host has an address', () => {
+  const { state } = require('../../src/server/state');
+  const before = { ...state.artnet };
+  const warn = console.warn;
+  console.warn = () => {};              // the failed lookup logs asynchronously
+  try {
+    Object.assign(state.artnet, { enabled: true, host: 'no-such-node.invalid', port: 9 });
+    assert.ok(!output.sendUniverse(0, Buffer.alloc(512)).includes('artnet'), 'an unresolved host sends nothing');
+
+    Object.assign(state.artnet, { host: '127.0.0.1' });
+    assert.ok(output.sendUniverse(0, Buffer.alloc(512)).includes('artnet'), 'an address sends');
+  } finally {
+    Object.assign(state.artnet, before);
+    setTimeout(() => { console.warn = warn; }, 50);
+  }
+});

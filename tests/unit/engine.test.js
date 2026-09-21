@@ -311,3 +311,72 @@ test('trims stay in proportion to each other as the master falls', async () => {
     applyPatch({ masterDimmer: 255 });
   }
 });
+
+// A fixture the operator has pinned is spared the music's level — that is what
+// pinning it is for. The silence rule below it then zeroed every fixture that
+// was not in an energy burst, pinned or not, so a pinned lamp dropped out on
+// every quiet passage in the track and came back when the music did.
+test('a pinned fixture stays lit through a silence', async () => {
+  const pinned = state.fixtures[0];
+  const free = state.fixtures[1];
+  applyPatch({ pattern: 'solid', colorA: 9, masterDimmer: 255, masterBlackout: false });
+  restartBeatTimer({ tickNow: true });
+
+  try {
+    applyOverride(pinned.id, { enabled: true, r: 200, g: 0, b: 0, w: 0, dim: 255, strobe: 0 });
+    applyPatch({ showDynamics: { level: 0, motion: 0, width: 0.5, air: 0.5 } });
+    await frames(4);
+
+    assert.strictEqual(dimmerOf(free), 0, 'the music-driven fixture goes dark in the silence');
+    assert.strictEqual(dimmerOf(pinned), 255, 'the pinned fixture holds its level');
+    assert.strictEqual(redOf(pinned), 200, 'and its colour');
+  } finally {
+    applyOverride(pinned.id, null);
+    applyPatch({ showDynamics: null });
+  }
+});
+
+// The beat clock keeps time against the music, not against its own last tick.
+// setInterval scheduled each beat a period after the previous callback ran, so
+// under load every late beat delayed all the ones after it, and a tapped tempo
+// fell steadily behind the song.
+//
+// Measured as where each beat lands inside its period rather than by counting
+// beats: after a real stall the clock skips the beats it missed instead of
+// firing them back to back, so a busy machine can cost a beat without the
+// clock having drifted at all.
+test('the beat clock does not fall behind under load', async () => {
+  const saved = { bpm: state.bpm, beatDivision: state.beatDivision };
+  const PERIOD = 50;
+  const ticks = [];
+  let step = state._step;
+  Object.defineProperty(state, '_step', {
+    configurable: true, enumerable: true,
+    get: () => step,
+    set: (v) => { step = v; ticks.push(performance.now()); },
+  });
+  // A busy event loop, as the render loop and a socket burst make it.
+  const hog = setInterval(() => { const until = performance.now() + 7; while (performance.now() < until); }, 13);
+  try {
+    Object.assign(state, { bpm: 60000 / PERIOD, beatDivision: 1, running: true });
+    applyPatch({ pattern: 'chase' });
+    ticks.length = 0;
+    const start = performance.now();
+    restartBeatTimer();
+    await new Promise((r) => setTimeout(r, 40 * PERIOD + PERIOD / 2));
+    // How far into its period each beat fired, 0…1. On time is near 0; a
+    // clock that drifts sweeps the whole range as its lateness builds up.
+    // Measured here: a median of 0.05–0.08 on time, 0.40–0.54 with setInterval.
+    const into = ticks.map((t) => ((t - start) / PERIOD) % 1).sort((a, b) => a - b);
+    assert.ok(ticks.length >= 30, `only ${ticks.length} beats`);
+    const median = into[into.length >> 1];
+    assert.ok(median < 0.25, `the median beat fired ${Math.round(median * 100)}% of the way into its period`);
+  } finally {
+    clearInterval(hog);
+    delete state._step;
+    state._step = step;
+    Object.assign(state, saved);
+    applyPatch({ pattern: 'solid' });
+    restartBeatTimer();
+  }
+});

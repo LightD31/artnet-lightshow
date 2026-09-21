@@ -20,7 +20,7 @@ const NODE_GLOBALS = {
   setInterval: 'readonly', clearInterval: 'readonly', setImmediate: 'readonly',
   URL: 'readonly', URLSearchParams: 'readonly', TextEncoder: 'readonly',
   fetch: 'readonly', AbortSignal: 'readonly', AbortController: 'readonly', Headers: 'readonly',
-  globalThis: 'readonly', structuredClone: 'readonly',
+  globalThis: 'readonly', structuredClone: 'readonly', performance: 'readonly',
 };
 
 const BROWSER_GLOBALS = {
