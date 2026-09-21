@@ -29,6 +29,7 @@ const BROWSER_GLOBALS = {
   fetch: 'readonly', AbortController: 'readonly', Headers: 'readonly', Request: 'readonly', Response: 'readonly',
   URL: 'readonly', URLSearchParams: 'readonly', FormData: 'readonly', Blob: 'readonly',
   console: 'readonly', performance: 'readonly', history: 'readonly',
+  getComputedStyle: 'readonly',
   setTimeout: 'readonly', clearTimeout: 'readonly',
   setInterval: 'readonly', clearInterval: 'readonly',
   requestAnimationFrame: 'readonly', cancelAnimationFrame: 'readonly',

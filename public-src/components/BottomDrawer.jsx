@@ -19,18 +19,31 @@ export function BottomDrawer() {
 
   return (
     <div class={`bottom-drawer ${open ? 'open' : ''}`}>
+      {/* The strip stays clickable as a convenience, but it is no longer the
+          only way to work the drawer: the toggle below is a real button with
+          its own handler, so the control is reachable and announced rather
+          than being an unlabelled div that happened to respond to clicks. */}
       <div class="bd-handle" onClick={() => setOpen((v) => !v)}>
-        <div class="bd-tabs">
+        <div class="bd-tabs" role="group" aria-label="Drawer panels">
           {visibleTabs.map((t) => (
             <button
               key={t.id}
+              type="button"
+              aria-pressed={tab === t.id && open}
               class={`bd-tab ${tab === t.id && open ? 'active' : ''}`}
               onClick={(e) => { e.stopPropagation(); setTab(t.id); setOpen(true); }}
             >{t.label}</button>
           ))}
         </div>
-        <button class="bd-toggle" title={open ? 'Collapse' : 'Expand'}>
-          <span>{open ? '▾' : '▴'}</span>
+        <button
+          type="button"
+          class="bd-toggle"
+          aria-expanded={open}
+          aria-label={open ? 'Collapse drawer' : 'Expand drawer'}
+          title={open ? 'Collapse' : 'Expand'}
+          onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+        >
+          <span aria-hidden="true">{open ? '▾' : '▴'}</span>
         </button>
       </div>
       {open && (

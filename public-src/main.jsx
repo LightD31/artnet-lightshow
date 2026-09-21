@@ -13,6 +13,7 @@ import { Fixtures } from './components/Fixtures.jsx';
 import { StagePreview } from './components/StagePreview.jsx';
 import { BottomDrawer } from './components/BottomDrawer.jsx';
 import { ConnectionVeil } from './components/ConnectionVeil.jsx';
+import { ShortcutsOverlay } from './components/Shortcuts.jsx';
 
 function ModeTabs({ mode, setMode }) {
   // Subscribes here rather than in Root, so an auto-show status change re-renders
@@ -98,6 +99,7 @@ function Root() {
         {mode === 'manual' ? <ManualView /> : <AutoView />}
       </main>
       <BottomDrawer />
+      <ShortcutsOverlay />
       <ConnectionVeil />
     </>
   );

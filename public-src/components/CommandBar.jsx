@@ -15,6 +15,11 @@ export function CommandBar() {
     const onKey = (e) => {
       if (e.code !== 'Space') return;
       if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
+      // Space belongs to whatever is focused, and only falls through to tap
+      // tempo when that is nothing. Tested on focusability rather than on a list
+      // of tag names: the timeline canvas is a tabIndex="0" element that no list
+      // would have named, and pressing Space on it changed the BPM mid-set.
+      if (e.target !== document.body && e.target.tabIndex >= 0) return;
       if (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(e.target.tagName) || e.target.isContentEditable) return;
       e.preventDefault();
       emitTap();

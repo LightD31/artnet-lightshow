@@ -6,7 +6,18 @@ const CHANNELS = ['r', 'g', 'b', 'w', 'a', 'uv', 'dim', 'strobe'];
 const CHANNEL_LABELS = { r: 'Red', g: 'Green', b: 'Blue', w: 'White', a: 'Amber', uv: 'UV', dim: 'Dim', strobe: 'Strb' };
 const DEFAULT_OVERRIDE = { enabled: false, r: 255, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 255, strobe: 0, blackout: false };
 
-function FixtureCard({ fix, state, dmx }) {
+/**
+ * The lit swatch, and the only part of a card that follows the DMX stream.
+ *
+ * It reads dmxSig itself so the 10 Hz broadcast wakes one `<div>` per fixture
+ * instead of every card — with the read in Fixtures() the whole grid, its
+ * address inputs and its override sliders re-rendered ten times a second.
+ */
+function FixturePreview({ fix, state }) {
+  return <div class="fixture-preview" style={{ background: fixtureOutputColor(fix, state, dmxSig.value) }} />;
+}
+
+function FixtureCard({ fix, state }) {
   const ov = (fix.override && fix.override.enabled) ? fix.override : null;
   const bo = !!(fix.override && fix.override.blackout);
   const [draft, setDraft] = useState(() => ({ ...DEFAULT_OVERRIDE, ...(fix.override || {}) }));
@@ -18,9 +29,15 @@ function FixtureCard({ fix, state, dmx }) {
   const [maxDraft, setMaxDraft] = useState(serverMax);
   useEffect(() => { setMaxDraft(serverMax); }, [serverMax]);
 
+  // A value the effect can compare, built from the fields the override actually
+  // has. JSON.stringify would do, but its key order is whatever the sender used
+  // and it re-parses the whole object on every render of the card.
+  const ovKey = fix.override
+    ? `${!!fix.override.enabled}|${!!fix.override.blackout}|${CHANNELS.map((c) => fix.override[c] ?? 0).join(',')}`
+    : 'none';
   useEffect(() => {
     setDraft((d) => ({ ...d, ...(fix.override || { enabled: false, blackout: false }) }));
-  }, [JSON.stringify(fix.override)]);
+  }, [ovKey]);
 
   const sendOverride = (next) => {
     setDraft(next);
@@ -50,12 +67,24 @@ function FixtureCard({ fix, state, dmx }) {
 
   return (
     <div class={`fixture-card ${ov ? 'overridden' : ''}`}>
-      <div class="fixture-preview" style={{ background: fixtureOutputColor(fix, state, dmx) }} />
+      <FixturePreview fix={fix} state={state} />
       <div class="fixture-header">
         <span
           class="fixture-name"
           contentEditable
+          role="textbox"
+          aria-label={`Fixture name: ${fix.label}`}
           spellcheck={false}
+          // Committing only on blur left no way to finish, or to abandon, an
+          // edit from the keyboard.
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+            else if (e.key === 'Escape') {
+              e.preventDefault();
+              e.currentTarget.textContent = fix.label;
+              e.currentTarget.blur();
+            }
+          }}
           onBlur={(e) => emitFixture({ id: fix.id, label: e.target.textContent.trim() })}
         >{fix.label}</span>
         <span class="fixture-addr" title="Universe / DMX address">
@@ -137,13 +166,12 @@ function FixtureCard({ fix, state, dmx }) {
 
 export function Fixtures() {
   const s = stateSig.value;
-  const dmx = dmxSig.value;
   const fixtures = s.fixtures || [];
   return (
     <div class="card">
       <div class="card-title">Fixtures</div>
       <div class="fixtures-grid">
-        {fixtures.map((f) => <FixtureCard key={f.id} fix={f} state={s} dmx={dmx} />)}
+        {fixtures.map((f) => <FixtureCard key={f.id} fix={f} state={s} />)}
       </div>
     </div>
   );

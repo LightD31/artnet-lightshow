@@ -14,7 +14,11 @@ const opts = {
   jsx: 'automatic',
   jsxImportSource: 'preact',
   minify: !watch,
-  sourcemap: watch,
+  // Emitted for the minified build too. The bundle is served from the same
+  // machine that runs the show, so the .map costs nothing until someone opens
+  // devtools — and the moment it is worth having is a stack trace from a crash
+  // mid-set, which without this reads as one column of a single minified line.
+  sourcemap: true,
   logLevel: 'info',
   loader: { '.js': 'jsx' },
 };
