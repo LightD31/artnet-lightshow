@@ -10,7 +10,7 @@ const {
 } = require('./state');
 const { applyPatch, applyOverride, setFixtureMaxBrightness, processTap } = require('./patch');
 const { PALETTES } = require('./palettes');
-const { resizeFixtureBuffers } = require('./engine');
+const { resizeFixtureBuffers, startSyncTest } = require('./engine');
 const { parseGDTF } = require('../gdtf');
 const {
   BUILTIN_PROFILE_ID,
@@ -1065,6 +1065,12 @@ function attachRoutes(app, deps) {
       entertainmentId: config.entertainmentId,
       channels: config.channels,
     });
+  });
+
+  // Ten seconds of one white flash a second on every fixture, to film the pars
+  // against the Hue lamps while setting hue.latencyMs.
+  app.post('/api/hue/sync-test', (_req, res) => {
+    res.json({ ok: true, seconds: startSyncTest(10) });
   });
 
   app.get('/api/hue/discover', asyncHandler(async (_req, res) => {

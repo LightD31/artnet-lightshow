@@ -364,6 +364,21 @@ would band on a DMX par do not here.
 - **Forget** clears the credentials here but does not unregister this server on
   the bridge. Remove it in the Hue app under linked devices.
 
+**Lining the pars up with the lamps**
+
+Art-Net reaches a node in about a millisecond; a Hue lamp hears the same frame
+through the bridge and a ZigBee hop, tens of milliseconds later. On a mixed rig
+every hit therefore lands on the pars first and the lamps after, which on a
+snare reads as two events. **Pars Delay (ms)** in Settings → Philips Hue holds
+the Art-Net and sACN output back by that much; Hue is sent each frame as soon
+as it is rendered. It defaults to 0 and only applies while Hue output is on.
+
+To tune it, press **Flash for 10 s** under the stream status: every fixture
+flashes white once a second. Film a par and a lamp together in slow motion,
+raise the delay until the two flashes land on the same frame, and save. Start
+around 50 ms. The shutdown blackout skips the delay, so the rig still goes
+dark the moment the server stops.
+
 ### Universes
 
 Each fixture carries a **universe** alongside its DMX address, so a rig can be
@@ -1254,6 +1269,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/hue/pair` | Pair with `{ host }` — the bridge link button must have been pressed in the last 30 seconds. Answers `409` with `pressLink: true` if it has not |
 | GET | `/api/hue/areas` | Entertainment areas on the paired bridge, with their channel ids and lamp names |
 | POST | `/api/hue/disconnect` | Forget the bridge and turn the output off |
+| POST | `/api/hue/sync-test` | Flash every fixture white once a second for 10 s, to tune `hue.latencyMs` |
 
 Credentials are never returned by any of these — `/api/hue/status` reports only
 whether a pairing exists. The channel bindings themselves are ordinary settings,
@@ -1368,10 +1384,18 @@ panel; changes there are persisted to the same file.
 
 ## Keyboard shortcuts
 
+Press **?** in the app for this list.
+
 | Key | Action |
 |-----|--------|
-| **Space** | Tap tempo |
+| **Space** | Tap tempo (not while a control has focus) |
 | **1** / **2** | Manual / Auto Show tab |
+| **←** **→** **↑** **↓**, **Home** / **End** | Move within the colour grid |
+| **Enter** / **Shift+Enter** | Write the focused swatch into the active slot / the paired slot (A↔B, C↔D) |
+| **Shift+click** or **right-click** | Write a swatch into the paired slot |
+| **Space** or **Enter** on an energy button | Hold the effect until released |
+| **←** **→** **↑** **↓** (**Shift** for bigger steps) | Nudge the focused fixture on the stage plot |
+| **?** / **Esc** | Show / close the shortcuts overlay |
 
 ---
 

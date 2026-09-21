@@ -171,3 +171,12 @@ test('the Hue application id round-trips and is not redacted', () => {
     'a966c4cc-018d-4422-aad8-414843fc4fad',
   );
 });
+
+test('the Hue pars delay defaults to off and refuses a value in the wrong unit', () => {
+  const { schema } = require('../../src/server/settings');
+  assert.strictEqual(DEFAULTS.hue.latencyMs, 0, 'nothing is delayed until someone tunes it');
+  const hue = (latencyMs) => schema.safeParse({ ...DEFAULTS, hue: { ...DEFAULTS.hue, latencyMs } }).success;
+  assert.ok(hue(60));
+  assert.ok(!hue(600), 'over half a second is seconds typed as milliseconds');
+  assert.ok(!hue(-1));
+});

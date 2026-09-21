@@ -90,8 +90,30 @@ function tickPattern() {
 let expression = { ...EXPRESSION_REST };
 let expressionPhase = 0;
 
+// The Hue sync test: every fixture flashes white for a tenth of a second,
+// once a second, so the pars and the Hue lamps can be filmed side by side and
+// the latency setting turned until the two flashes land together.
+const SYNC_FLASH_MS = 100;
+let syncTest = null;             // { start, until } on the monotonic clock
+
+function startSyncTest(seconds = 10) {
+  const start = performance.now();
+  syncTest = { start, until: start + seconds * 1000 };
+  return seconds;
+}
+
+function syncTestEnergy() {
+  if (!syncTest) return null;
+  const now = performance.now();
+  if (now >= syncTest.until) { syncTest = null; return null; }
+  const lit = (now - syncTest.start) % 1000 < SYNC_FLASH_MS;
+  return { col: { r: 255, g: 255, b: 255, w: 255, a: 0, uv: 0 }, dim: lit ? 255 : 0, strobe: 0 };
+}
+
 /** The burst currently forced on every fixture, or null. */
 function currentEnergy() {
+  const test = syncTestEnergy();
+  if (test) return test;
   const id = state.heldEnergy ?? state.energyOverride;
   return id ? resolveEnergyOverride(id, COLOR_PRESETS[state.colorA], expression.level) : null;
 }
@@ -258,7 +280,7 @@ function renderDmx() {
   }
   // One last all-zero frame for any universe that just left the patch, so its
   // node doesn't sit holding the look it was showing when the fixture moved.
-  for (const [universe, frame] of universes.drainRetired()) sendUniverse(universe, frame);
+  for (const [universe, frame] of universes.drainRetired()) sendUniverse(universe, frame, { immediate: true });
 
   // Hue is fed once per frame rather than once per universe: one message covers
   // the whole entertainment area, and it reads the colours back out of the
@@ -319,9 +341,9 @@ function stopEngine() {
   universes.sync(activeUniverses());
   universes.clearAll();
   for (const universe of universes.list()) {
-    sendUniverse(universe, universes.getBuffer(universe));
+    sendUniverse(universe, universes.getBuffer(universe), { immediate: true });
   }
-  for (const [universe, frame] of universes.drainRetired()) sendUniverse(universe, frame);
+  for (const [universe, frame] of universes.drainRetired()) sendUniverse(universe, frame, { immediate: true });
   // Same courtesy for the bridge: one black frame so the lamps go out, then
   // close the session rather than leaving the area locked to a stream that has
   // stopped arriving.
@@ -334,4 +356,5 @@ module.exports = {
   stopEngine,
   restartBeatTimer,
   resizeFixtureBuffers,
+  startSyncTest,
 };

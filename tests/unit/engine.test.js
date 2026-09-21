@@ -5,7 +5,7 @@ const assert = require('node:assert');
 
 const { state, universeOf } = require('../../src/server/state');
 const universes = require('../../src/server/universes');
-const { startEngine, stopEngine, restartBeatTimer, resizeFixtureBuffers } = require('../../src/server/engine');
+const { startEngine, stopEngine, restartBeatTimer, resizeFixtureBuffers, startSyncTest } = require('../../src/server/engine');
 const { applyPatch, applyOverride, setFixtureMaxBrightness } = require('../../src/server/patch');
 
 // renderDmx isn't exported — it runs on the engine's own 25 ms interval, so the
@@ -379,4 +379,25 @@ test('the beat clock does not fall behind under load', async () => {
     applyPatch({ pattern: 'solid' });
     restartBeatTimer();
   }
+});
+
+// The Hue sync test: every fixture white for the first tenth of each second,
+// dark for the rest, then the show comes back.
+test('the sync test flashes the whole rig once a second, then hands it back', async () => {
+  applyPatch({ pattern: 'solid', colorA: 1, masterDimmer: 255, masterBlackout: false });
+  restartBeatTimer({ tickNow: true });
+  await frames();
+  const before = channels(state.fixtures[0].address, 12);
+
+  startSyncTest(0.4);
+  await frames(1);
+  for (const fix of state.fixtures) {
+    assert.strictEqual(dimmerOf(fix), 255, `${fix.label} flashes`);
+    assert.strictEqual(redOf(fix), 255, `${fix.label} flashes white`);
+  }
+  await new Promise((r) => setTimeout(r, 150));
+  for (const fix of state.fixtures) assert.strictEqual(dimmerOf(fix), 0, `${fix.label} is dark between flashes`);
+
+  await new Promise((r) => setTimeout(r, 300));
+  assert.deepStrictEqual(channels(state.fixtures[0].address, 12), before, 'the look comes back when it ends');
 });

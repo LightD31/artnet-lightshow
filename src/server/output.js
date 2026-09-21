@@ -44,9 +44,11 @@ function getSacnConfig() { return { ...sacn }; }
 // Hue channel bindings, cached here for the same reason as the sACN settings:
 // this is read once per rendered frame and settings.group() deep-clones.
 let hueChannels = [];
+let hueLatencyMs = 0;
 
 function configureHue(config) {
-  const { channels, ...rest } = config || {};
+  const { channels, latencyMs, ...rest } = config || {};
+  if (Number.isFinite(latencyMs)) hueLatencyMs = Math.max(0, Math.min(500, Math.round(latencyMs)));
   if (Array.isArray(channels)) {
     hueChannels = channels
       .filter((c) => c && Number.isInteger(c.channel) && Number.isInteger(c.fixture))
@@ -56,7 +58,30 @@ function configureHue(config) {
   return getHueConfig();
 }
 
-function getHueConfig() { return { ...hue.getConfig(), channels: hueChannels.map((c) => ({ ...c })) }; }
+function getHueConfig() {
+  return { ...hue.getConfig(), channels: hueChannels.map((c) => ({ ...c })), latencyMs: hueLatencyMs };
+}
+
+// ── Hue latency compensation ────────────────────────────────────────────────
+// Art-Net reaches a node in about a millisecond; a Hue lamp hears about a
+// frame through the bridge and a Zigbee hop, tens of milliseconds later. So on
+// a mixed rig every accent landed on the pars first and the lamps after it,
+// which on a snare hit is plainly two events. The fast wire is the one that
+// can wait: each universe's frames queue here and go out `hueLatencyMs` after
+// they were rendered, while Hue is sent the current frame as before.
+
+const delayLine = new Map();     // universe → [{ at, frame }]
+
+/** The newest frame for this universe old enough to send, or null. */
+function delayedFrame(universe, frame, delayMs) {
+  const now = performance.now();
+  const queue = delayLine.get(universe) || [];
+  queue.push({ at: now, frame: Buffer.from(frame) });
+  let ready = null;
+  while (queue.length && queue[0].at <= now - delayMs) ready = queue.shift().frame;
+  delayLine.set(universe, queue);
+  return ready;
+}
 
 /** Let the applier persist an application id the module had to resolve itself. */
 function onHueApplicationId(fn) { hue.setApplicationIdSink(fn); }
@@ -218,9 +243,20 @@ function sendHue() {
  * host has resolved: until then the frame is dropped, and reporting it as sent
  * would say the rig is being driven when nothing has left the machine. (The
  * preflight check probes the wire itself rather than reading this.)
+ *
+ * With Hue compensation on, the frame is queued and an older one goes out in
+ * its place. `immediate` skips the queue — for the blackout sent at shutdown
+ * and when a universe leaves the patch, which must not wait behind the look
+ * they are replacing — and discards what was waiting.
  */
-function sendUniverse(universe, frame) {
+function sendUniverse(universe, frame, { immediate = false } = {}) {
   const sent = [];
+  if (!immediate && hueLatencyMs > 0 && hue.getConfig().enabled) {
+    frame = delayedFrame(universe, frame, hueLatencyMs);
+    if (!frame) return sent;
+  } else {
+    delayLine.delete(universe);
+  }
 
   if (state.artnet.enabled !== false) {
     if (sendArtDmx({ host: state.artnet.host, port: state.artnet.port, universe }, frame)) {

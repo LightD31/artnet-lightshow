@@ -353,3 +353,69 @@ test('an Art-Net frame is only reported sent once its host has an address', () =
     setTimeout(() => { console.warn = warn; }, 50);
   }
 });
+
+// ── Hue latency compensation ─────────────────────────────────────────────────
+// The pars are held back so they land with the Hue lamps. Checked on the wire:
+// a UDP socket stands in for the Art-Net node and records what arrives.
+
+async function artnetCapture(fn) {
+  const dgram = require('dgram');
+  const { state } = require('../../src/server/state');
+  const socket = dgram.createSocket('udp4');
+  const got = [];
+  socket.on('message', (msg) => got.push({ at: performance.now(), marker: msg[18] }));
+  await new Promise((r) => socket.bind(0, '127.0.0.1', r));
+  const before = { ...state.artnet };
+  const hueBefore = output.getHueConfig();
+  Object.assign(state.artnet, { enabled: true, host: '127.0.0.1', port: socket.address().port });
+  try {
+    await fn();
+    await new Promise((r) => setTimeout(r, 40));        // let the last datagrams land
+    return got;
+  } finally {
+    Object.assign(state.artnet, before);
+    output.configureHue({ enabled: hueBefore.enabled, latencyMs: hueBefore.latencyMs });
+    socket.close();
+  }
+}
+
+const frameMarked = (marker) => { const f = Buffer.alloc(512); f[0] = marker; return f; };
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+test('with Hue on, Art-Net frames go out the configured delay after they were rendered', async () => {
+  let start = 0;
+  const got = await artnetCapture(async () => {
+    output.configureHue({ enabled: true, latencyMs: 80 });
+    start = performance.now();
+    // A frame every 20 ms for 200 ms, each one marked with its number.
+    for (let i = 1; i <= 10; i++) { output.sendUniverse(0, frameMarked(i)); await wait(20); }
+  });
+  assert.ok(got.length > 0, 'frames still go out');
+  assert.ok(got[0].at - start >= 75, `the first frame went out ${Math.round(got[0].at - start)} ms after it was rendered`);
+  const markers = got.map((g) => g.marker);
+  assert.deepStrictEqual(markers, markers.slice().sort((a, b) => a - b), 'in the order they were rendered');
+  assert.ok(Math.max(...markers) < 10, 'and the newest frame is still waiting its turn');
+});
+
+test('without Hue, or at zero delay, frames go straight out', async () => {
+  for (const config of [{ enabled: false, latencyMs: 80 }, { enabled: true, latencyMs: 0 }]) {
+    const got = await artnetCapture(async () => {
+      output.configureHue(config);
+      output.sendUniverse(0, frameMarked(7));
+    });
+    assert.deepStrictEqual(got.map((g) => g.marker), [7], JSON.stringify(config));
+  }
+});
+
+test('a blackout sent immediately does not wait behind the look it replaces', async () => {
+  // Shutdown and a universe leaving the patch send one last black frame. Queued
+  // behind the delay it would arrive after the process had gone, or not at all.
+  const got = await artnetCapture(async () => {
+    output.configureHue({ enabled: true, latencyMs: 200 });
+    output.sendUniverse(0, frameMarked(5));
+    output.sendUniverse(0, frameMarked(0), { immediate: true });
+    await wait(250);
+    output.sendUniverse(0, frameMarked(9));
+  });
+  assert.deepStrictEqual(got.map((g) => g.marker), [0], 'only the blackout, and the queued look is dropped');
+});

@@ -76,6 +76,11 @@ const DEFAULTS = {
     // with no binding is simply not sent, which leaves the bridge holding its
     // last value for that lamp rather than forcing it black.
     channels: [],
+    // How far the Art-Net and sACN output is held back so the pars land with
+    // the Hue lamps. The bridge and its Zigbee relay add a delay the DMX wire
+    // does not have, so on a mixed rig every hit reaches the pars first. Tuned
+    // by eye against the sync test; 0 sends everything the moment it renders.
+    latencyMs: 0,
   },
   midi: {
     input: '',
@@ -203,6 +208,9 @@ const schema = z.object({
       channel: z.number().int().min(0).max(255),
       fixture: z.number().int().min(0),
     }).strict()).max(20),
+    // Half a second is far past any bridge; anything that long is a setting
+    // typed in the wrong unit.
+    latencyMs: z.number().int().min(0).max(500),
   }).strict(),
   midi: z.object({
     input: z.string().max(256),

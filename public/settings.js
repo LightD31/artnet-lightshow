@@ -995,6 +995,25 @@ function renderHueExtra(form) {
 
   if (!paired) return;
 
+  const syncRow = el('div', 'field setting-field');
+  syncRow.appendChild(el('label', null, 'Sync Test'));
+  const syncControls = el('div', 'setting-control');
+  const syncBtn = el('button', 'btn btn-small', 'Flash for 10 s');
+  syncBtn.type = 'button';
+  syncBtn.title = 'Every fixture flashes white once a second, pars and Hue lamps together';
+  syncBtn.addEventListener('click', async () => {
+    try {
+      await hueFetch('/api/hue/sync-test', { method: 'POST' });
+      hueNotice = { text: 'Flashing once a second for 10 s. Save the delay first if you changed it.', ok: true };
+    } catch (err) {
+      hueNotice = { text: err.message, ok: false };
+    }
+    renderSettings();
+  });
+  syncControls.appendChild(syncBtn);
+  syncRow.appendChild(syncControls);
+  form.appendChild(syncRow);
+
   const area = selectedHueArea();
   if (!area) {
     form.appendChild(el('p', 'setting-help', 'Pick an entertainment area to bind its channels to fixtures.'));
@@ -1109,6 +1128,10 @@ const SETTINGS_SPEC = [
         options: () => hueAreas.map((a) => ({ value: a.id, label: `${a.name} (${a.channels.length} channels)` })),
         help: 'Areas are built in the Hue app, where the lamps are already placed on a floor plan. '
           + 'A bridge streams one area at a time.' },
+      { path: 'hue.latencyMs', label: 'Pars Delay (ms)', type: 'number', min: 0, max: 500,
+        help: 'Hue lamps answer later than the pars, so every hit lands on the pars first. This holds '
+          + 'the Art-Net and sACN output back to match. Start around 50: run the sync test, film it '
+          + 'in slow motion, and raise this until the pars and lamps flash together.' },
     ],
     extra: renderHueExtra,
     collect: () => ({ 'hue.channels': hueBindings() }),
