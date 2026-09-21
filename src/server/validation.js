@@ -46,6 +46,8 @@ const patchSchema = z.object({
   beatDivision: z.number().int().min(1).max(16).optional(),
   running: z.boolean().optional(),
   pattern: z.string().min(1).max(64).optional(),
+  // Crossfade into this patch's pattern and colours rather than cutting.
+  fadeMs: z.number().int().min(0).max(10000).optional(),
   colorA: colorIdx.optional(),
   colorB: colorIdx.optional(),
   colorC: colorIdx.optional(),

@@ -132,6 +132,18 @@ const DROP_GUARD_SEC = { min: 1.5, max: 4, fallback: 2 };
 // belongs outside it.
 const BAR_JITTER = 0.05;
 
+// How long a section's look takes to arrive, in bars, by where the music is
+// going. Into a breakdown or an outro the room is settling and a cut would jar;
+// into a chorus or a drop the change *is* the moment, and fading it would
+// blunt exactly what the section boundary is for. Anything unlisted gets the
+// verse's half bar.
+const SECTION_FADE_BARS = { breakdown: 2, outro: 2, intro: 1, verse: 0.5, bridge: 0.5, chorus: 0, drop: 0 };
+// Roles where even a rotation inside the section is a cut on the downbeat.
+const CUT_ROLES = new Set(['chorus', 'drop']);
+// A fade longer than this stops reading as a transition and starts reading as
+// the rig being slow.
+const MAX_FADE_MS = 4000;
+
 // Minimum burst length. At 40 Hz DMX, 300 ms is about twelve frames plus two or
 // three pulses of the fixture's own strobe channel — below that an LED par has
 // not finished responding before it is told to stop.
@@ -290,6 +302,9 @@ class ShowDirector {
       bassHits: grouped.get(EVENT.BASS_HIT) || [],
       snapToDownbeatMs: this._snapper(downbeats, barSec),
       barsAfterMs: barWalker(downbeats, barSec),
+      // A fade of this many bars, in ms. Two seconds stands in for a bar the
+      // analyser could not measure.
+      fadeMs: (bars) => Math.round(Math.min(MAX_FADE_MS, bars * (barSec || 2) * 1000)),
       sectionAt: (t) => sections.find((s) => t >= s.start && t < s.end) || null,
     };
   }
@@ -460,10 +475,13 @@ class ShowDirector {
       if (key === lastKey) continue;
       lastKey = key;
 
+      // The opening look is simply there; everything after it arrives the way
+      // the music does.
+      const fadeMs = timeMs < 500 ? 0 : context.fadeMs(SECTION_FADE_BARS[section.role] ?? 0.5);
       intents.push(scene(timeMs, {
         pattern, colors: colours, beatDivision, strobeSpeed, strobeFunction,
         role: section.role, label: section.label, level: section.level,
-        identity: section.identity,
+        identity: section.identity, ...(fadeMs > 0 ? { fadeMs } : {}),
       }, { source: `section:${section.role}` }));
 
       intents.push(...this._rotateWithin(section, {
@@ -480,7 +498,7 @@ class ShowDirector {
           if (followUp) {
             intents.push(scene(followUpMs, {
               pattern: followUp, colors: colours, beatDivision,
-              strobeSpeed: 0, strobeFunction,
+              strobeSpeed: 0, strobeFunction, fadeMs: context.fadeMs(1),
             }, { source: 'section:solid-followup', priority: PRIORITY.ROTATION }));
           }
         }
@@ -617,6 +635,9 @@ class ShowDirector {
     if (!alternates.length) return [];
 
     const intents = [];
+    // A beat's blend between rotations, except where the section wants its
+    // changes to land on the downbeat.
+    const rotationFade = CUT_ROLES.has(section.role) ? 0 : context.fadeMs(0.25);
     let i = 0;
     for (let k = 1, when = at(1); when != null && when + 1000 < endMs; k++, when = at(k)) {
       const inDrop = drops.some((d) => Math.abs(d.t * 1000 - when) < 2000);
@@ -629,6 +650,7 @@ class ShowDirector {
           beatDivision: current.beatDivision,
           strobeSpeed: 0,
           strobeFunction: current.strobeFunction,
+          ...(rotationFade > 0 ? { fadeMs: rotationFade } : {}),
         }, { source: 'rotation', priority: PRIORITY.ROTATION }));
       }
       i++;
@@ -1044,7 +1066,9 @@ class ShowDirector {
       const h = hueCount(palette);
       const base = look.goldenStep(section ? section.identity : 0, h);
       const turn = h > 1 ? base + 1 + (step % (h - 1)) : base;
-      intents.push(color(t * 1000, slotsFor(palette, turn), { source }));
+      // A beat's blend: the melody moved, and the colour follows it rather
+      // than jumping.
+      intents.push(color(t * 1000, slotsFor(palette, turn), { source, fadeMs: context.fadeMs(0.25) }));
       step++;
     };
 

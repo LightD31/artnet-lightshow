@@ -111,3 +111,46 @@ test('a UV wash previews with the boost the rig applies', () => {
   // 255 * 1.8 clamps to 255 rather than wrapping or previewing at 141.
   assert.strictEqual(previewEmitters(1, 'uv-wash').uv, 255);
 });
+
+// Fades have to rehearse as they play: a preview that cut where the rig fades
+// would show a breakdown arriving two bars before it does.
+test('a crossfade previews partway through, and finishes where the rig does', () => {
+  const timeline = [
+    { timeMs: 0, action: 'patch', data: { pattern: 'solid', colorA: 0, bpm: 120, beatDivision: 1 } },
+    { timeMs: 1000, action: 'patch', data: { colorA: 5, fadeMs: 1000 } },
+  ];
+  const sample = createPreviewSampler(timeline);
+  const at = (ms) => sample(ms, [{ maxBrightness: 255 }], COLOR_PRESETS)[0];
+
+  assert.deepStrictEqual([at(900).r, at(900).b], [255, 0], 'red before the fade');
+  const mid = at(1500);
+  assert.ok(mid.r > 0 && mid.b > 0, `both halfway: ${JSON.stringify(mid)}`);
+  assert.deepStrictEqual([at(2100).r, at(2100).g, at(2100).b], [0, 85, 255], 'blue after it');
+});
+
+test('a look without a fade cuts in the preview too', () => {
+  const sample = createPreviewSampler([
+    { timeMs: 0, action: 'patch', data: { pattern: 'solid', colorA: 0, bpm: 120, beatDivision: 1 } },
+    { timeMs: 1000, action: 'patch', data: { colorA: 5, fadeMs: 2000 } },
+    { timeMs: 1200, action: 'patch', data: { colorA: 3 } },
+  ]);
+  const [first] = sample(1250, [{ maxBrightness: 255 }], COLOR_PRESETS);
+  assert.deepStrictEqual([first.r, first.g, first.b], [0, 255, 85]);
+});
+
+test('the preview blends the same values the engine does', () => {
+  // Frozen at the same point of the same fade, both sides go through
+  // blendFixture; compare what each makes of it.
+  const { blendFixture } = require('../../src/shared/look-math');
+  const red = { ...COLOR_PRESETS[0], dim: 255, strobe: 0 };
+  const blue = { ...COLOR_PRESETS[5], dim: 255, strobe: 0 };
+  const expected = blendFixture(red, blue, 0.5);
+  const sample = createPreviewSampler([
+    { timeMs: 0, action: 'patch', data: { pattern: 'solid', colorA: 0, bpm: 120, beatDivision: 1 } },
+    { timeMs: 1000, action: 'patch', data: { colorA: 5, fadeMs: 1000 } },
+  ]);
+  const [mid] = sample(1500, [{ maxBrightness: 255 }], COLOR_PRESETS);
+  const scale = expected.dim / 255;
+  assert.deepStrictEqual([mid.r, mid.g, mid.b],
+    [Math.round(expected.r * scale), Math.round(expected.g * scale), Math.round(expected.b * scale)]);
+});

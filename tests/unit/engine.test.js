@@ -401,3 +401,44 @@ test('the sync test flashes the whole rig once a second, then hands it back', as
   await new Promise((r) => setTimeout(r, 300));
   assert.deepStrictEqual(channels(state.fixtures[0].address, 12), before, 'the look comes back when it ends');
 });
+
+// ── Crossfades ───────────────────────────────────────────────────────────────
+
+/** Red and blue of a fixture, at the built-in profile's offsets. */
+const rgbOf = (fix) => {
+  const buf = universes.getBuffer(universeOf(fix));
+  return { r: buf[fix.address - 1 + 3], b: buf[fix.address - 1 + 5] };
+};
+
+test('a look that asks for a fade blends into place instead of cutting', async () => {
+  const fix = state.fixtures[0];
+  applyPatch({ pattern: 'solid', colorA: 0, masterDimmer: 255, masterBlackout: false, showDynamics: null });
+  restartBeatTimer({ tickNow: true });
+  await frames(3);
+  assert.deepStrictEqual(rgbOf(fix), { r: 255, b: 0 }, 'red to begin with');
+
+  applyPatch({ colorA: 5, fadeMs: 400 });
+  restartBeatTimer({ tickNow: true });
+  await new Promise((r) => setTimeout(r, 200));
+  const mid = rgbOf(fix);
+  assert.ok(mid.r > 0 && mid.b > 0, `halfway it is both: ${JSON.stringify(mid)}`);
+
+  await new Promise((r) => setTimeout(r, 300));
+  assert.deepStrictEqual(rgbOf(fix), { r: 0, b: 255 }, 'and blue once the fade is done');
+});
+
+test('a look without a fade cuts, even in the middle of one', async () => {
+  const fix = state.fixtures[0];
+  applyPatch({ pattern: 'solid', colorA: 0, showDynamics: null });
+  restartBeatTimer({ tickNow: true });
+  await frames(3);
+  applyPatch({ colorA: 5, fadeMs: 2000 });
+  restartBeatTimer({ tickNow: true });
+  await frames(2);
+  // A drop lands on the downbeat, not two seconds later.
+  applyPatch({ colorA: 3 });
+  restartBeatTimer({ tickNow: true });
+  await frames(2);
+  const buf = universes.getBuffer(universeOf(fix));
+  assert.deepStrictEqual([buf[fix.address + 2], buf[fix.address + 3], buf[fix.address + 4]], [0, 255, 85], 'straight to green');
+});

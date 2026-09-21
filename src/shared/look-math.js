@@ -16,6 +16,8 @@
  * browser bundle it.
  */
 
+const { colourMixer } = require('./color');
+
 // A UV die reads far dimmer to the eye than the same number on a primary, so it
 // is driven harder to sit level with the rest of the mix. Defined here rather
 // than in profiles.js because the preview needs it too and must not grow its
@@ -130,8 +132,24 @@ function emitterValues(col, scale) {
   };
 }
 
+/**
+ * One fixture partway through a crossfade from the look it was showing to the
+ * one it is heading for, t in 0..1.
+ *
+ * Colour travels round the wheel like `ribbon`'s blend, so a fade between two
+ * opposite colours does not pass through grey; the level moves linearly, and
+ * the strobe channel is the destination's from the first frame — a strobe
+ * rate has no in-between worth showing.
+ */
+function blendFixture(from, to, t) {
+  if (t >= 1) return to;
+  const col = colourMixer(from, to)(t);
+  return { ...col, dim: Math.round(from.dim + (to.dim - from.dim) * t), strobe: to.strobe };
+}
+
 module.exports = {
   UV_BOOST,
+  blendFixture,
   EXPRESSION_REST,
   resolveEnergyOverride,
   fadeCycleSec,

@@ -70,6 +70,7 @@ function renderIntents(intents, { blackoutIndex = 0 } = {}) {
           if (value != null && slots[i]) data[slots[i]] = Math.max(0, Math.round(value));
         });
         if (Object.keys(data).length) {
+          if (intent.fadeMs > 0) data.fadeMs = Math.min(10000, Math.round(intent.fadeMs));
           events.push({ timeMs: intent.timeMs, action: 'patch', data });
         }
         break;
@@ -125,6 +126,7 @@ function sceneData(intent) {
     if (value != null && slots[i]) data[slots[i]] = Math.max(0, Math.round(value));
   });
 
+  if (intent.fadeMs > 0) data.fadeMs = Math.min(10000, Math.round(intent.fadeMs));
   if (intent.beatDivision != null) data.beatDivision = division(intent.beatDivision);
   if (intent.strobeSpeed != null) data.strobeSpeed = u8(intent.strobeSpeed);
   if (intent.strobeFunction) data.strobeFunction = String(intent.strobeFunction);

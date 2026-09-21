@@ -1,7 +1,7 @@
 'use strict';
 
 const { state, getFixture, setDefaultUniverse } = require('./state');
-const { restartBeatTimer } = require('./engine');
+const { restartBeatTimer, beginFade } = require('./engine');
 const { patchSchema, overrideSchema, validate } = require('./validation');
 const { STROBE_FUNCTIONS, ENERGY_EFFECTS } = require('./presets');
 const { paletteSlots } = require('./palettes');
@@ -36,6 +36,12 @@ function applyPatch(rawData) {
   // Validate at the boundary. Throws on invalid input.
   const data = validate(patchSchema, rawData || {}, 'patch');
   let restartTimer = false;
+
+  // A new look fades if it asks to and cuts if it does not — and a cut
+  // cancels a fade still running, so a drop lands hard even mid-breakdown-fade.
+  const changesLook = data.pattern !== undefined || data.palette !== undefined
+    || COLOR_SLOTS.some((slot) => data[slot] !== undefined);
+  if (data.fadeMs !== undefined || changesLook) beginFade(data.fadeMs || 0);
 
   if (data.bpm !== undefined) { state.bpm = data.bpm; restartTimer = true; }
   if (data.beatDivision !== undefined) { state.beatDivision = data.beatDivision; restartTimer = true; }

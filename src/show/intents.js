@@ -96,8 +96,8 @@ function expression(timeMs, dynamics, { source = 'music', priority = PRIORITY.EX
   return { timeMs: Math.round(timeMs), kind: INTENT.EXPRESSION, source, priority, dynamics };
 }
 
-function color(timeMs, colors, { source = 'melody', priority = PRIORITY.MELODY } = {}) {
-  return { timeMs: Math.round(timeMs), kind: INTENT.COLOR, source, priority, colors };
+function color(timeMs, colors, { source = 'melody', priority = PRIORITY.MELODY, fadeMs = 0 } = {}) {
+  return { timeMs: Math.round(timeMs), kind: INTENT.COLOR, source, priority, colors, ...(fadeMs > 0 ? { fadeMs } : {}) };
 }
 
 /**

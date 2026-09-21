@@ -10,7 +10,7 @@ const { spatialLayout } = require('../shared/stage');
 // Shared with the browser's rehearsal preview so the two cannot drift. See the
 // header of that file for why this is not simply inlined here.
 const {
-  EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues,
+  EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture,
   fadeCycleSec, fadeBrightness, hitBeatSec, hitBrightness, motionCycleSec,
 } = require('../shared/look-math');
 
@@ -89,6 +89,20 @@ function tickPattern() {
 // doing would be a flash with a lower number on it.
 let expression = { ...EXPRESSION_REST };
 let expressionPhase = 0;
+
+// ── Crossfades ───────────────────────────────────────────────────────────────
+// A scene change used to be a cut, always. The show now asks for a fade where
+// the music does — long into a breakdown, none into a drop — and the engine
+// blends each fixture from what it was last showing to what the new look
+// renders, frame by frame, so a moving pattern keeps moving underneath.
+// Only the pattern layer fades: a burst or a pinned fixture sits on top.
+const shown = [];                // the pattern layer as it went out last frame
+let fade = null;                 // { start, ms, from }
+
+/** Fade from what is on stage now over `ms`; 0 cuts, cancelling any fade. */
+function beginFade(ms) {
+  fade = ms > 0 ? { start: performance.now(), ms, from: shown.map((c) => ({ ...c })) } : null;
+}
 
 // The Hue sync test: every fixture flashes white for a tenth of a second,
 // once a second, so the pars and the Hue lamps can be filmed side by side and
@@ -181,6 +195,12 @@ function renderDmx() {
   // per universe per frame is far cheaper than the bug.
   universes.clearAll();
 
+  let fadeT = 1;
+  if (fade) {
+    fadeT = (now - fade.start) / fade.ms;
+    if (fadeT >= 1) fade = null;
+  }
+
   // With the buffers already cleared, a blackout is simply empty universes.
   if (!state.masterBlackout) {
     const fixtureCount = getFixtureCount();
@@ -189,6 +209,12 @@ function renderDmx() {
       const dmx = universes.getBuffer(universeOf(fix));
       const base = fix.address - 1;
       let col, dim, strobe;
+
+      // The pattern layer, partway through a fade if one is running. Kept
+      // whatever sits on top of it this frame, so a fade that starts under a
+      // burst starts from the look and not from the burst.
+      const layer = fade && fade.from[i] ? blendFixture(fade.from[i], fixtureColors[i], fadeT) : fixtureColors[i];
+      shown[i] = layer;
 
       if (energy) {
         col = energy.col; dim = energy.dim; strobe = energy.strobe;
@@ -202,9 +228,8 @@ function renderDmx() {
           strobe = ov.strobe !== undefined ? ov.strobe : 0;
         }
       } else {
-        const fc = fixtureColors[i];
-        col = { r: fc.r, g: fc.g, b: fc.b, w: fc.w, a: fc.a || 0, uv: fc.uv || 0 };
-        dim = fc.dim; strobe = fc.strobe;
+        col = { r: layer.r, g: layer.g, b: layer.b, w: layer.w, a: layer.a || 0, uv: layer.uv || 0 };
+        dim = layer.dim; strobe = layer.strobe;
       }
 
       const ch = getProfile(fix).channelMap;
@@ -357,4 +382,5 @@ module.exports = {
   restartBeatTimer,
   resizeFixtureBuffers,
   startSyncTest,
+  beginFade,
 };

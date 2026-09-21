@@ -23,9 +23,11 @@
 const { PATTERN_FUNCS } = require('./patterns');
 const { spatialLayout } = require('./stage');
 const {
-  EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues,
+  EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture,
   fadeCycleSec, fadeBrightness, hitBeatSec, hitBrightness, motionCycleSec,
 } = require('./look-math');
+
+const LOOK_KEYS = ['pattern', 'palette', 'colorA', 'colorB', 'colorC', 'colorD'];
 
 const OPENING = {
   pattern: 'solid', colorA: 0, colorB: 0, colorC: 0, colorD: 0, bpm: 120, beatDivision: 1,
@@ -41,6 +43,9 @@ function createPreviewSampler(events = []) {
   // lands on the same value the engine reaches in forty steps a second.
   let expression = { ...EXPRESSION_REST };
   let motionPhase = 0;
+  // The crossfade in progress, as the engine keeps it: which frame was on
+  // stage when it began, and when. A new look without a fade cuts it short.
+  let fade = null;
   let lastMs = events.length && Number.isFinite(events[0].timeMs) ? events[0].timeMs : 0;
 
   const frames = [];
@@ -58,21 +63,21 @@ function createPreviewSampler(events = []) {
       if (dynamics) look.showDynamics = dynamics;
       if (patch.pattern) patternAt = event.timeMs;
       if ('energyOverride' in patch) burst = null;
+      if (patch.fadeMs > 0) fade = { from: frames.length - 1, start: event.timeMs, ms: patch.fadeMs };
+      else if (LOOK_KEYS.some((k) => patch[k] !== undefined)) fade = null;
     } else if (event.action === 'energy') {
       burst = { id: patch.id || event.id, end: event.timeMs + (patch.durationMs || event.durationMs || 200) };
     }
-    frames.push({ timeMs: event.timeMs, look, patternAt, burst, expression, motionPhase });
+    frames.push({ timeMs: event.timeMs, look, patternAt, burst, expression, motionPhase, fade });
   }
 
-  return (positionMs, fixtures, presets) => {
-    let lo = 0, hi = frames.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >>> 1;
-      if (frames[mid].timeMs <= positionMs) lo = mid + 1; else hi = mid;
-    }
-    const frame = frames[lo - 1];
-    if (!frame || !presets?.length) return fixtures.map(() => ({ r: 0, g: 0, b: 0 }));
-
+  /**
+   * What the pattern layer shows at a moment: the pattern and colours, with the
+   * two continuous patterns and any crossfade applied — everything the engine
+   * computes before a burst, the music's level and the trims go on top.
+   */
+  function patternLayer(index, positionMs, fixtures, presets) {
+    const frame = frames[index];
     const s = frame.look;
     const dyn = s.showDynamics || null;
     const since = Math.max(0, positionMs - frame.timeMs) / 1000;
@@ -98,13 +103,41 @@ function createPreviewSampler(events = []) {
 
     // The two patterns the engine drives continuously rather than per beat, so
     // they are recomputed here from elapsed time for the same reason.
+    let layer = output.map(({ color, dim }) => {
+      if (s.pattern === 'fade') return { color: colors[0], dim: fadeBrightness(elapsed / fadeCycleSec(s.bpm) % 1) };
+      if (s.pattern === 'hit') return { color: colors[0], dim: hitBrightness(elapsed / hitBeatSec(s.bpm, s.beatDivision) % 1) };
+      return { color, dim };
+    });
+
+    // A crossfade starts from the look as it stood when the fade began, frozen
+    // there, exactly as the engine snapshots it.
+    const f = frame.fade;
+    if (f && f.from >= 0 && positionMs < f.start + f.ms) {
+      const from = patternLayer(f.from, f.start, fixtures, presets).layer;
+      const t = Math.max(0, positionMs - f.start) / f.ms;
+      layer = layer.map((to, i) => {
+        const mixed = blendFixture({ ...from[i].color, dim: from[i].dim, strobe: 0 }, { ...to.color, dim: to.dim, strobe: 0 }, t);
+        return { color: mixed, dim: mixed.dim };
+      });
+    }
+    return { layer, colors, expr, dyn };
+  }
+
+  return (positionMs, fixtures, presets) => {
+    let lo = 0, hi = frames.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (frames[mid].timeMs <= positionMs) lo = mid + 1; else hi = mid;
+    }
+    const frame = frames[lo - 1];
+    if (!frame || !presets?.length) return fixtures.map(() => ({ r: 0, g: 0, b: 0 }));
+
+    const { layer, colors, expr, dyn } = patternLayer(lo - 1, positionMs, fixtures, presets);
     const energy = frame.burst && positionMs < frame.burst.end
       ? resolveEnergyOverride(frame.burst.id, colors[0], expr.level)
       : null;
 
-    return output.map(({ color, dim }, i) => {
-      if (s.pattern === 'fade') { color = colors[0]; dim = fadeBrightness(elapsed / fadeCycleSec(s.bpm) % 1); }
-      if (s.pattern === 'hit') { color = colors[0]; dim = hitBrightness(elapsed / hitBeatSec(s.bpm, s.beatDivision) % 1); }
+    return layer.map(({ color, dim }, i) => {
       if (energy) {
         color = energy.col;
         dim = energy.dim;

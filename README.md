@@ -931,10 +931,13 @@ is the product: a show that flashes constantly has no big moments, because
 everything is one.
 
 - Accents are capped per rolling minute, from the track's style and the
-  intensity fader. Over budget, the least confident candidates are dropped.
-- Nothing fires in the two seconds before a drop, so the build-up's own arc has
-  the room to itself.
-- Nothing fires in the three seconds after one. The drop is the statement.
+  intensity fader. Over budget, the weakest candidates are dropped — weakest
+  meaning least confident *and* smallest: a big energy spike outranks a small
+  one the analyser was equally sure of.
+- Nothing fires in the bar before a drop, so the build-up's own arc has the room
+  to itself, and nothing in the drop's first bar — the drop is the statement.
+  Counted in bars so it scales with the tempo, and never inside a burst the
+  drop itself fired.
 - Intros, breakdowns and outros carry no accents at all and stay on quarter-note
   movement. That is what makes the chorus after them land.
 - Passages the analyser recognises as the same get the same pattern and the same
@@ -942,6 +945,14 @@ everything is one.
   chorus rather than as a new idea. Recognition is the structure labeller's
   clustering where it has an answer, and the timbre embeddings where it does not
   — which catches a returning chorus the labeller split in two.
+- The last time a passage comes round is the biggest: it keeps its look but
+  steps up one beat subdivision where the pulse can carry it, and wins the
+  accent budget when it competes for it.
+- Looks arrive the way the music does. Into a breakdown or an outro the rig
+  crossfades over two bars (never more than four seconds), into a verse over
+  half a bar, and into a chorus or a drop it cuts on the downbeat. Colour moves
+  and rotations inside a section blend over a beat. The rehearsal preview shows
+  the same fades.
 
 The show also *reads the track continuously*, not only at section boundaries.
 Twice a second it takes the separated stems' levels — how much low end, whether
