@@ -90,8 +90,16 @@ function parsePlaylistRef(input) {
 }
 
 /**
- * Turn one /playlists/{id}/tracks item into the track summary the rest of the
+ * Turn one /playlists/{id}/items entry into the track summary the rest of the
  * app speaks, or null for an entry there is nothing to analyse in.
+ *
+ * Spotify's February 2026 Web API changes renamed the entry's `track` to
+ * `item` (and the endpoint from /tracks to /items). Both shapes are read, so a
+ * recorded response or a grandfathered app keeps working.
+ *
+ * The ISRC is kept when Spotify sends it. When it does not — Spotify's
+ * migration guide lists `external_ids` as removed for development-mode apps —
+ * the download path looks one up by name instead (see src/isrc.js).
  *
  * Playlists are not just tracks: they carry podcast episodes, tracks that have
  * been removed from the catalogue (a null `track`), and local files. Episodes
@@ -100,7 +108,7 @@ function parsePlaylistRef(input) {
  * find the audio the same way a pasted set list does.
  */
 function playlistItemToTrack(item) {
-  const track = item && item.track;
+  const track = item && (item.item || item.track);
   if (!track || !track.name) return null;
   if (track.type && track.type !== 'track') return null;
   return {
@@ -113,6 +121,14 @@ function playlistItemToTrack(item) {
     isrc: track.external_ids?.isrc || null,
     isLocal: !!item.is_local,
   };
+}
+
+/** Spotify will not list this playlist's tracks for this account. */
+function notYourPlaylistError() {
+  const err = new Error('Spotify only lists the tracks of playlists you own or collaborate on. '
+    + 'Copy it into one of your own playlists (Add to other playlist), or paste the tracks as a set list.');
+  err.status = 403;
+  return err;
 }
 
 class SpotifyClient {
@@ -147,6 +163,8 @@ class SpotifyClient {
     // accepts any code presented to it, so any page could bind this server to
     // an attacker's Spotify account.
     this._pendingStates = new Map();
+    // Which playlist endpoint this app answers on: 'items' or 'tracks'. See _playlistPage.
+    this._playlistApi = null;
     // Set while a 429 backoff window is in effect.
     this._rateLimitedUntil = 0;
     this._lastErrorLogAt = 0;
@@ -375,9 +393,9 @@ class SpotifyClient {
 
     // Ask only for what we render or warm. A playlist page with every field is
     // hundreds of KB per 100 tracks, nearly all of it market availability lists.
-    const headFields = 'name,owner(display_name),tracks(total)';
+    // The total comes from the item pages, which carry it under either API.
     const head = await this._apiGet(
-      `/v1/playlists/${id}?fields=${encodeURIComponent(headFields)}`
+      `/v1/playlists/${id}?fields=${encodeURIComponent('name,owner(display_name)')}`
     );
     if (!head) {
       const err = new Error('Spotify returned nothing for that playlist');
@@ -385,18 +403,15 @@ class SpotifyClient {
       throw err;
     }
 
-    const itemFields = 'next,total,items(is_local,track(id,name,type,duration_ms,'
-      + 'artists(name),album(name,images),external_ids(isrc)))';
     const tracks = [];
     let walked = 0;
     let hasMore = true;
+    let total = null;
 
     while (hasMore && walked < cap) {
       const pageSize = Math.min(PLAYLIST_PAGE_SIZE, cap - walked);
-      const page = await this._apiGet(
-        `/v1/playlists/${id}/tracks?limit=${pageSize}&offset=${walked}`
-        + `&fields=${encodeURIComponent(itemFields)}`
-      );
+      const page = await this._playlistPage(id, pageSize, walked);
+      if (page && Number.isFinite(page.total)) total = page.total;
       const returned = page && Array.isArray(page.items) ? page.items : [];
       if (!returned.length) break;
       // Trust the cap over the response: a page that comes back longer than we
@@ -410,7 +425,7 @@ class SpotifyClient {
       hasMore = !!(page && page.next);
     }
 
-    const total = Number(head.tracks?.total) || walked;
+    total = total ?? walked;
     return {
       id,
       name: head.name || 'Playlist',
@@ -420,6 +435,43 @@ class SpotifyClient {
       truncated: hasMore && walked < total,
       tracks,
     };
+  }
+
+  /**
+   * One page of a playlist's entries.
+   *
+   * Spotify's February 2026 changes renamed /playlists/{id}/tracks to /items
+   * and each entry's `track` to `item`. Which one an app gets depends on
+   * whether Spotify has moved it over, so the new name is tried first and the
+   * old one on a 404; whichever answers is remembered.
+   *
+   * The ISRC is asked for either way. Where Spotify still sends it, it is the
+   * exact recording and nothing has to be looked up.
+   */
+  async _playlistPage(id, limit, offset) {
+    const trackFields = 'id,name,type,duration_ms,artists(name),album(name,images),external_ids(isrc)';
+    const apis = this._playlistApi === 'tracks'
+      ? [{ path: 'tracks', entry: 'track' }]
+      : [{ path: 'items', entry: 'item' }, { path: 'tracks', entry: 'track' }];
+
+    for (const [i, api] of apis.entries()) {
+      const fields = `next,total,items(is_local,${api.entry}(${trackFields}))`;
+      try {
+        const page = await this._apiGet(
+          `/v1/playlists/${id}/${api.path}?limit=${limit}&offset=${offset}`
+          + `&fields=${encodeURIComponent(fields)}`
+        );
+        this._playlistApi = api.path;
+        return page;
+      } catch (err) {
+        // Since February 2026 Spotify lists the contents only of playlists the
+        // account owns or collaborates on; anyone else's is refused.
+        if (err.status === 403) throw notYourPlaylistError();
+        if (err.status === 404 && i < apis.length - 1) continue;
+        throw err;
+      }
+    }
+    return null;
   }
 
   /**
@@ -450,7 +502,7 @@ class SpotifyClient {
           id: pl.id,
           name: pl.name || 'Untitled playlist',
           owner: pl.owner?.display_name || '',
-          total: pl.tracks?.total || 0,
+          total: pl.items?.total ?? pl.tracks?.total ?? 0,
         });
       }
       if (!page.next) break;

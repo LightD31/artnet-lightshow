@@ -39,7 +39,7 @@ they are fixed**; they are tracked privately and are the first item of Phase 0. 
 
 ### A2. Broken by external changes (High)
 5. **[V] Spotify February 2026 dev-mode migration** (applied to existing apps 9 March 2026):
-   - **ISRC is gone.** `external_ids` was removed from the Track object, so `isrc` is always null (`src/spotify.js:111,318,344`). The exact-audio Deezer path is dead, and every Spotify track falls back to a yt-dlp *search*, which risks the wrong edit and therefore a wrong timeline.
+   - **ISRC may be missing.** The guide lists `external_ids` as removed from the Track object for development-mode apps; where that applies, `isrc` is null (`src/spotify.js:111,318,344`), the exact-audio Deezer path is skipped, and the track falls back to a yt-dlp *search*, which risks the wrong edit and therefore a wrong timeline. In practice Spotify still sends it to at least some apps, so the fix keeps it when present and looks one up only when it is not.
    - **Playlists moved.** `GET /playlists/{id}/tracks` became `/items`, `tracks.total` became `items.total`, and `items[].track` became `items[].item` (`spotify.js:100,372-411`). Playlists the user doesn't own or collaborate on now return no items.
 6. **[V] yt-dlp needs a JavaScript runtime for YouTube** since 2025.11.12. `_ytDlpExec` (`auto-show.js:480`) passes no `--js-runtimes`, and preflight doesn't check for one. Node itself is a supported runtime.
 

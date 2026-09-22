@@ -430,10 +430,14 @@ A-Trak - Ray Ban Vision
 rather than only the next few.
 
 **Warm a Spotify playlist** takes the set list you already have. Pick one of the
-connected account's playlists from the dropdown, or paste a link to anyone's —
-a share link, a `spotify:playlist:…` URI or the bare id all work. Unlike the
-queue, a playlist exists before anything is playing, which is the case warming
-was built for.
+connected account's playlists from the dropdown, or paste a link — a share link,
+a `spotify:playlist:…` URI or the bare id all work. Unlike the queue, a playlist
+exists before anything is playing, which is the case warming was built for.
+
+Since Spotify's February 2026 API changes, it only lists the tracks of playlists
+the connected account **owns or collaborates on**. To warm someone else's, add
+its tracks to one of your own playlists first (*Add to other playlist* in the
+Spotify app), or paste them as a set list.
 
 Tracks keep their Spotify id, so a warmed playlist track is already cached under
 the exact key the live path looks up when it plays. Podcast episodes and tracks

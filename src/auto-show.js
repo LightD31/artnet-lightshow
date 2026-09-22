@@ -14,6 +14,7 @@ const { SYNC_OFFSET_LIMIT_MS } = require('./server/presets');
 const { ShowDirector, measureBuildup } = require('./show/director');
 const { renderIntents } = require('./show/render');
 const { guarded } = require('./server/guard');
+const { resolveIsrc, splitQuery } = require('./isrc');
 
 // A download that never finishes is indistinguishable from one that never
 // started: the track change waits on this promise, so an unresponsive network
@@ -439,6 +440,18 @@ class AutoShow {
    */
   async _downloadAudio(query, targetDurationSec = null, isrc = null) {
     const isUrl = /^https?:\/\//.test(query);
+
+    // A track can arrive without an ISRC: the OS media session and PRO DJ LINK
+    // never carry one, and Spotify's February 2026 changes drop it for some
+    // apps. With Deezer set up, one looked up by name and length still gets
+    // the exact recording rather than a search hit.
+    if (!isrc && !isUrl && deezer.isAvailable()) {
+      const parts = splitQuery(query);
+      if (parts) {
+        isrc = await resolveIsrc({ ...parts, durationSec: targetDurationSec });
+        if (isrc) console.log(`[isrc] "${query}" → ${isrc}`);
+      }
+    }
 
     // Try Deezer first when we have an ISRC and Deezer is initialized
     if (isrc && !isUrl && deezer.isAvailable()) {
