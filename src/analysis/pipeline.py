@@ -43,7 +43,7 @@ from . import (bands as bands_stage, dsp, dynamics as dynamics_stage,
                structure as structure_stage, tagger)
 from .config import AnalysisConfig, DEFAULT
 from .version import SCHEMA_VERSION
-from . import model_adapters
+from . import model_adapters, models
 
 
 # The mood words MuQ-MuLan is asked about alongside the genre prompts. These
@@ -72,6 +72,14 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
     tag_pool, tag_future = None, None
     mulan_pool, mulan_future = None, None
     tagging = config.enable_tagger and tagger.installed()
+
+    # Import torch here, before the stage threads start. Left to them, the
+    # separator's thread and this one import it for the first time at once,
+    # and one of them gets a partially initialised module ("cannot import name
+    # 'Buffer'"). The worker warms up first and never sees it; a one-shot
+    # `analyze.py track.wav` did, and lost both its stems and its beats.
+    import torch  # noqa: F401
+    models.device()
 
     try:
         audio = preprocess_stage.prepare(path, config.preprocess, target_duration_sec)
@@ -200,7 +208,6 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
         # one asks for it — including on the failure path, where a half-built
         # stage is exactly the case that leaves the most behind.
         try:
-            from . import models
             models.release_memory()
         except Exception:
             pass
