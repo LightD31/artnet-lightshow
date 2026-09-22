@@ -1,0 +1,152 @@
+'use strict';
+
+// The one clock every pattern keeps time by: which source it follows, how it
+// hands over between them, and what the operator's tap and tempo do to it.
+
+const test = require('node:test');
+const assert = require('node:assert');
+const { Conductor } = require('../../src/server/conductor');
+const { makeGrid } = require('../../src/shared/beat-clock');
+
+const close = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
+
+/** A conductor on a clock the test moves by hand. */
+function rig({ bpm = 120 } = {}) {
+  let t = 1000;
+  const c = new Conductor({ now: () => t, bpm });
+  return { c, advance: (ms) => { t += ms; }, get t() { return t; } };
+}
+
+const grid128 = () => makeGrid(Array.from({ length: 512 }, (_, i) => i * (60 / 128)));
+
+test('with nothing else playing it free-runs at the operator\'s tempo', () => {
+  const r = rig({ bpm: 120 });
+  r.c.now();
+  r.advance(1500);
+  const reading = r.c.now();
+  assert.strictEqual(reading.source, 'tap');
+  assert.ok(close(reading.beatPos, 3), `three beats in 1.5 s at 120: ${reading.beatPos}`);
+});
+
+test('a tempo change keeps the phase: it speeds up from here, not from zero', () => {
+  const r = rig({ bpm: 120 });
+  r.c.now();
+  r.advance(1000);                         // 2 beats in
+  r.c.setBpm(60);
+  r.advance(1000);                         // plus 1 beat at 60
+  assert.ok(close(r.c.now().beatPos, 3));
+});
+
+test('a tap lands a beat on the tap', () => {
+  const r = rig({ bpm: 120 });
+  r.c.now();
+  r.advance(1300);                         // 2.6 beats in
+  r.c.tap();
+  assert.strictEqual(r.c.now().beatPos, 3, 'jumps to the next whole beat');
+  r.advance(500);
+  assert.ok(close(r.c.now().beatPos, 4));
+});
+
+test('stopping the patterns freezes the free clock', () => {
+  const r = rig({ bpm: 120 });
+  r.c.now();
+  r.advance(1000);
+  r.c.setRunning(false);
+  r.advance(5000);
+  assert.ok(close(r.c.now().beatPos, 2));
+  r.c.setRunning(true);
+  r.advance(500);
+  assert.ok(close(r.c.now().beatPos, 3));
+});
+
+test('the auto show\'s grid wins over everything, and a track over the free clock', () => {
+  const r = rig();
+  const grid = grid128();
+  let autoPos = null;
+  r.c.setAutoSource(() => (autoPos == null ? null : { grid, positionMs: autoPos }));
+  r.c.setTrack({ key: 't', grid, positionMs: () => 60000 * 4 / 128 });   // beat 4
+  assert.strictEqual(r.c.now().source, 'track');
+  assert.ok(close(r.c.now().beatPos, 4));
+
+  autoPos = 60000 * 10 / 128;                                              // beat 10
+  const reading = r.c.now();
+  assert.strictEqual(reading.source, 'auto');
+  assert.ok(close(reading.beatPos, 10));
+  assert.ok(close(reading.bpm, 128, 1e-6), 'tempo read off the grid');
+});
+
+test('a playing CDJ beats a cached track when the auto show is off', () => {
+  const r = rig();
+  r.c.setTrack({ key: 't', grid: grid128(), positionMs: () => 0 });
+  r.c.setProlinkSource(() => ({ beatPos: 42.5, bpm: 126 }));
+  const reading = r.c.now();
+  assert.deepStrictEqual([reading.source, reading.beatPos, reading.bpm], ['cdj', 42.5, 126]);
+});
+
+// Stopping the auto show mid-song must not make the rig lurch: the free clock
+// picks up the beat and the tempo it had reached.
+test('when a source stops, the free clock carries on from where it was', () => {
+  const r = rig({ bpm: 90 });
+  const grid = grid128();
+  let running = true;
+  let pos = 0;
+  r.c.setAutoSource(() => (running ? { grid, positionMs: pos } : null));
+  let adopted = null;
+  r.c.onAdoptBpm((bpm) => { adopted = bpm; });
+
+  pos = 60000 * 16 / 128;
+  const before = r.c.now();
+  running = false;
+  r.advance(60000 / 128);                   // one more beat of time
+  const after = r.c.now();
+  assert.strictEqual(after.source, 'tap');
+  assert.ok(close(after.beatPos, before.beatPos + 1, 1e-6), `${before.beatPos} → ${after.beatPos}`);
+  assert.strictEqual(after.epoch, before.epoch, 'a continuation, not a jump');
+  assert.ok(close(adopted, 128, 1e-6), 'and at the tempo the music had');
+});
+
+test('a seek or a new source starts a new epoch; steady playback does not', () => {
+  const r = rig();
+  const grid = grid128();
+  let pos = 0;
+  r.c.setAutoSource(() => ({ grid, positionMs: pos }));
+  const first = r.c.now().epoch;
+  for (let i = 0; i < 100; i++) { r.advance(25); pos += 25; }
+  assert.strictEqual(r.c.now().epoch, first, 'playing through');
+  pos -= 10000;                             // seek back ten seconds
+  assert.strictEqual(r.c.now().epoch, first + 1, 'a seek');
+  r.advance(25); pos += 25;
+  pos += 60000;                             // jump a minute ahead
+  assert.strictEqual(r.c.now().epoch, first + 2, 'a jump forward');
+});
+
+// The operator can always take the tempo back by hand — until the music moves
+// on to the next track, which locks again.
+test('a tap takes over from a locked track until the next track', () => {
+  const r = rig();
+  const grid = grid128();
+  r.c.setTrack({ key: 'song-1', grid, positionMs: () => 5000 });
+  assert.strictEqual(r.c.now().source, 'track');
+  r.c.tap();
+  assert.strictEqual(r.c.now().source, 'tap', 'the tap wins');
+  r.c.setTrack({ key: 'song-1', grid, positionMs: () => 6000 });
+  assert.strictEqual(r.c.now().source, 'tap', 'the same track stays overridden');
+  r.c.setTrack({ key: 'song-2', grid, positionMs: () => 0 });
+  assert.strictEqual(r.c.now().source, 'track', 'a new track locks again');
+
+  r.c.setBpm(100);
+  assert.strictEqual(r.c.now().source, 'tap', 'a typed tempo is an override too');
+  r.c.clearTrack({ key: 'song-3' });
+  r.c.setBpm(101, { manual: false });
+  r.c.setTrack({ key: 'song-4', grid, positionMs: () => 0 });
+  assert.strictEqual(r.c.now().source, 'track', 'a CDJ-reported tempo is not an override');
+});
+
+test('a scene can be anchored at the moment it was scheduled', () => {
+  const r = rig();
+  const grid = grid128();
+  r.c.setAutoSource(() => ({ grid, positionMs: 30000 }));
+  assert.ok(close(r.c.beatAtTrackMs(60000 * 8 / 128), 8));
+  r.c.setAutoSource(() => null);
+  assert.strictEqual(r.c.beatAtTrackMs(1000), null, 'no grid, no anchor time');
+});

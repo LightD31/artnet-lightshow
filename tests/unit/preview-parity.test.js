@@ -17,7 +17,8 @@ const assert = require('node:assert');
 const { state } = require('../../src/server/state');
 const universes = require('../../src/server/universes');
 const { getProfile } = require('../../src/server/profiles');
-const { startEngine, stopEngine, restartBeatTimer } = require('../../src/server/engine');
+const { startEngine, stopEngine } = require('../../src/server/engine');
+const { conductor } = require('../../src/server/conductor');
 const { applyPatch } = require('../../src/server/patch');
 const { COLOR_PRESETS } = require('../../src/server/presets');
 const { createPreviewSampler } = require('../../src/shared/preview');
@@ -83,7 +84,7 @@ test.after(() => stopEngine());
 for (const burst of ['blinder', 'white-strobe', 'uv-wash', 'kill', 'color-strobe', 'glow']) {
   test(`${burst} previews as the rig drives it`, async () => {
     applyPatch({ colorA: 1, energyOverride: burst, masterDimmer: 255, masterBlackout: false });
-    restartBeatTimer({ tickNow: true });
+    conductor.tap();
     await frames();
 
     const rig = rigEmitters();
@@ -94,7 +95,7 @@ for (const burst of ['blinder', 'white-strobe', 'uv-wash', 'kill', 'color-strobe
 
 test('a plain lit look previews as the rig drives it', async () => {
   applyPatch({ colorA: 3, energyOverride: null, masterDimmer: 255, masterBlackout: false });
-  restartBeatTimer({ tickNow: true });
+  conductor.tap();
   await frames();
 
   const rig = rigEmitters();

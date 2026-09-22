@@ -11,6 +11,7 @@ const {
   SYNC_OFFSET_LIMIT_MS,
 } = require('./presets');
 const { PALETTES } = require('./palettes');
+const { conductor } = require('./conductor');
 
 const DEFAULT_ADDRESSES = [1, 13, 25, 37];
 
@@ -59,11 +60,11 @@ const state = {
   // A split look from the auto show: which fixture group holds a wash while
   // the rest run the pattern. Null is the whole rig on the pattern.
   split: null,
-  _step: 0,
-  _pingDir: 1,
-  _hue: 0,
-  _fadePhase: 0,
-  _hitPhase: 1,
+  // Where the running pattern counts its steps from, on the step grid of the
+  // musical clock, and which of the clock's epochs that grid belongs to. Set
+  // when a scene changes the pattern or the division (patch.js); the engine
+  // re-anchors when the music jumps. See src/shared/beat-clock.js.
+  patternAnchor: null,
   _twinkle: new Array(4).fill(0),
 };
 
@@ -200,6 +201,10 @@ function getLiveState() {
     // because everything is JSON-serialised on the way out.
     artnet: { ...state.artnet },
     bpm: state.bpm,
+    // What the pattern clock is locked to right now — the auto show's grid, a
+    // CDJ, the playing track, or the operator's own tempo — and the tempo it
+    // is keeping. See conductor.js.
+    clock: conductor.status(),
     beatDivision: state.beatDivision,
     running: state.running,
     pattern: state.pattern,

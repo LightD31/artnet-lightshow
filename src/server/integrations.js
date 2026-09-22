@@ -2,7 +2,7 @@
 
 const { state, getLiveState, getDmxSnapshot } = require('./state');
 const { setHooks } = require('./patch');
-const { restartBeatTimer } = require('./engine');
+const { conductor } = require('./conductor');
 const { guarded } = require('./guard');
 const PlaybackClock = require('../playback-clock');
 const { cues } = require('./cues');
@@ -230,10 +230,14 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   // ─── Prolink callbacks ──────────────────────────────────────────────────
   prolink.onTempoChange((bpm) => {
     if (!state.prolinkEnabled) return;
-    const rounded = Math.round(bpm);
-    if (rounded >= 20 && rounded <= 300 && rounded !== state.bpm) {
-      state.bpm = rounded;
-      restartBeatTimer();
+    // Kept to a hundredth, not rounded: a deck pitched to 127.6 BPM is not at
+    // 128, and a whole-number clock ran off its beat within a phrase. While
+    // the deck is playing the clock follows its beats directly (conductor.js);
+    // this is the tempo it keeps if the deck stops reporting.
+    const tempo = Math.round(bpm * 100) / 100;
+    if (tempo >= 20 && tempo <= 300 && Math.abs(tempo - state.bpm) >= 0.05) {
+      state.bpm = tempo;
+      conductor.setBpm(tempo, { manual: false });
       broadcast();
     }
   });

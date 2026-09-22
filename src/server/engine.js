@@ -6,14 +6,18 @@ const { getProfile } = require('./profiles');
 const { sendUniverse, sendHue, stopHue } = require('./output');
 const universes = require('./universes');
 const { guarded } = require('./guard');
+const { conductor } = require('./conductor');
 const { PATTERN_FUNCS } = require('../shared/patterns');
 const { spatialLayout, washFixtures } = require('../shared/stage');
 // Shared with the browser's rehearsal preview so the two cannot drift. See the
 // header of that file for why this is not simply inlined here.
 const {
   EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture,
-  fadeCycleSec, fadeBrightness, hitBeatSec, hitBrightness, motionCycleSec,
+  fadeBrightness, hitBrightness,
 } = require('../shared/look-math');
+const {
+  anchorStep, stepAt, hitPhase, fadePhase, motionAdvance,
+} = require('../shared/beat-clock');
 
 const fixtureColors = Array.from({ length: 4 }, () => ({
   r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 255, strobe: 0,
@@ -69,22 +73,72 @@ function paintWash() {
   for (const i of wash) setFixtureColor(i, colB, 255, 0);
 }
 
-function tickPattern() {
+// Patterns that roll dice. They re-roll when the step moves or the look
+// changes — a twinkle redrawn forty times a second is noise, not a twinkle.
+const RANDOM_PATTERNS = new Set(['twinkle', 'sparkle', 'random-flash']);
+let lastRandomKey = null;
+
+/**
+ * The step the pattern is on, counted from its anchor on the step grid.
+ *
+ * The anchor is set when a scene changes the pattern or the division (see
+ * patch.js). When the music itself jumps — a seek, a new track, another source
+ * taking over the clock — the old anchor belongs to a beat position that no
+ * longer exists, so the pattern re-anchors where the music now is.
+ */
+function patternStep(reading) {
+  const division = Math.max(1, state.beatDivision || 1);
+  if (!state.patternAnchor || state.patternAnchor.epoch !== reading.epoch) {
+    state.patternAnchor = { step: anchorStep(reading.beatPos, division), epoch: reading.epoch };
+  }
+  const anchor = state.patternAnchor.step;
+  return { step: stepAt(reading.beatPos, anchor, division), anchor, division };
+}
+
+/**
+ * Write the pattern layer for this frame, from the musical clock.
+ *
+ * The step is a function of where the music is, not a counter a timer
+ * advances, so it cannot drift off the beat and lands on the same step
+ * however the moment was reached. Deterministic patterns render every frame,
+ * so a colour or a split shows the moment it is set rather than on the next
+ * beat.
+ */
+function renderPattern(reading) {
   if (!state.running) return;
   const fn = PATTERN_FUNCS[state.pattern];
   if (!fn) return;
+  const { step, anchor, division } = patternStep(reading);
+  const colors = [state.colorA, state.colorB, state.colorC, state.colorD].map((i) => COLOR_PRESETS[i]);
+  const total = getFixtureCount();
+
+  // The two whole-rig envelopes: an eight-beat breath from the scene's
+  // anchor, and a decay across every step.
+  if (state.pattern === 'fade' || state.pattern === 'hit') {
+    const bright = state.pattern === 'fade'
+      ? fadeBrightness(fadePhase(reading.beatPos, anchor, division))
+      : hitBrightness(hitPhase(reading.beatPos, division));
+    for (let i = 0; i < total; i++) setFixtureColor(i, colors[0], bright, 0);
+    return;
+  }
+
   const { xs, write, count } = layoutWriter();
+  if (state.pattern === 'ensemble' || state.pattern === 'ribbon') {
+    fn({ colors, fixtureCount: count, phase: expressionPhase, dynamics: expression, write, xs });
+    return;
+  }
+
+  if (RANDOM_PATTERNS.has(state.pattern)) {
+    const key = `${state.pattern}|${step}|${state.colorA},${state.colorB},${state.colorC},${state.colorD}|${state.split}|${total}`;
+    if (key === lastRandomKey) return;
+    lastRandomKey = key;
+  }
 
   fn({
-    colors: [
-      COLOR_PRESETS[state.colorA],
-      COLOR_PRESETS[state.colorB],
-      COLOR_PRESETS[state.colorC],
-      COLOR_PRESETS[state.colorD],
-    ],
+    colors,
     fixtureCount: count,
-    step: state._step,
-    hue: state._hue,
+    step,
+    hue: (step * 360 / Math.max(1, total)) % 360,
     twinkle: state._twinkle,
     // Every pattern gets the expression channel, not only the two built around
     // it. The stepped patterns use it for the things that are genuinely a
@@ -93,11 +147,8 @@ function tickPattern() {
     dynamics: state.showDynamics ? expression : null,
     write,
     xs,
-    resetHitPhase: () => { state._hitPhase = 0; },
+    resetHitPhase: () => {},
   });
-
-  state._step++;
-  state._hue = (state._hue + 360 / Math.max(1, getFixtureCount())) % 360;
 }
 
 // The continuous expression channel, smoothed towards whatever the show last
@@ -153,48 +204,41 @@ function currentEnergy() {
 // clamps to zero and the rig freezes for a frame.
 let lastRenderTs = performance.now();
 
+// Run at the top of every frame, before the clock is read: the auto show fires
+// whatever is due by now, so a cue lands on the frame it was scheduled for
+// rather than up to a poll interval later.
+let frameHook = null;
+const runFrameHook = guarded('frame-hook', () => { if (frameHook) frameHook(); });
+
+/** Register what runs at the start of each frame (the auto show's cursor). */
+function setFrameHook(fn) {
+  frameHook = typeof fn === 'function' ? fn : null;
+}
+
+let lastReading = null;
+
 function renderDmx() {
   const now = performance.now();
   const dt = Math.max(0, Math.min(0.25, (now - lastRenderTs) / 1000));
   lastRenderTs = now;
 
-  // Continuous fade — runs at the full DMX rate (40 Hz). Full cycle spans 8 beats.
-  if (state.running && state.pattern === 'fade') {
-    state._fadePhase = (state._fadePhase + dt / fadeCycleSec(state.bpm)) % 1;
-    const bright = fadeBrightness(state._fadePhase);
-    const colA = COLOR_PRESETS[state.colorA];
-    for (let i = 0; i < getFixtureCount(); i++) setFixtureColor(i, colA, bright, 0);
-  }
-
-  // 'hit' decay 255 → 35 over one beat. tickPattern resets _hitPhase on each beat.
-  if (state.running && state.pattern === 'hit') {
-    state._hitPhase = Math.min(1, (state._hitPhase ?? 1) + dt / hitBeatSec(state.bpm, state.beatDivision));
-    const bright = hitBrightness(state._hitPhase);
-    const colA = COLOR_PRESETS[state.colorA];
-    for (let i = 0; i < getFixtureCount(); i++) setFixtureColor(i, colA, bright, 0);
-  }
+  runFrameHook();
 
   const target = state.showDynamics;
   expression = blendExpression(expression, target, dt);
-  // How fast the expressive patterns travel across the rig.
-  //
-  // This used to advance in wall-clock seconds, and at a typical motion reading
-  // one crossing took about seven seconds — which reads as ambient whatever is
-  // playing underneath it. On a rig with no moving heads the travel *is* the
-  // movement, so it is tied to the beat instead: motion decides how many beats
-  // one crossing takes, eight when the track is barely moving and two when it
-  // is driving, and the sweep speeds up with the tempo rather than ignoring it.
-  expressionPhase = (expressionPhase + dt / motionCycleSec(state.bpm, expression.motion)) % 1;
-  if (state.running && ['ensemble', 'ribbon'].includes(state.pattern)) {
-    const { xs, write, count } = layoutWriter();
-    PATTERN_FUNCS[state.pattern]({
-      colors: [state.colorA, state.colorB, state.colorC, state.colorD].map(i => COLOR_PRESETS[i]),
-      fixtureCount: count, phase: expressionPhase, dynamics: expression,
-      write, xs,
-    });
-  }
-  // After every pattern has written, so the wash wins on its own lamps
-  // whichever of them ran this frame.
+
+  const reading = conductor.now();
+  // How fast the expressive patterns travel across the rig: motion decides how
+  // many beats one crossing takes, eight when the track is barely moving and
+  // two when it is driving. Counted in beats of the musical clock, so the sweep
+  // follows the track's own tempo — and a jump in the music does not fling it.
+  const dBeats = lastReading && lastReading.epoch === reading.epoch
+    ? Math.min(4, Math.max(0, reading.beatPos - lastReading.beatPos)) : 0;
+  lastReading = reading;
+  expressionPhase = (expressionPhase + motionAdvance(dBeats, expression.motion)) % 1;
+
+  renderPattern(reading);
+  // After the pattern has written, so the wash wins on its own lamps.
   paintWash();
 
   const energy = currentEnergy();
@@ -332,47 +376,14 @@ function renderDmx() {
   sendHue();
 }
 
-let beatInterval = null;
 let renderInterval = null;
 
-function bpmInterval() { return (60000 / state.bpm) / state.beatDivision; }
-
-/**
- * (Re)start the beat clock from now.
- *
- * Each beat is due at start + n × period and is scheduled against that, not a
- * period after the last one fired. setInterval does the latter, so every late
- * callback pushes all the ones after it: measured under the render load it
- * lost about half a millisecond a beat, which at 120 BPM puts a tapped tempo
- * a sixteenth behind the music inside three minutes.
- */
-function restartBeatTimer({ tickNow = false } = {}) {
-  if (beatInterval) clearTimeout(beatInterval);
-  beatInterval = null;
-  if (!state.running) return;
-  if (tickNow) tickPattern();
-  const period = bpmInterval();
-  const start = performance.now();
-  let n = 0;
-  const schedule = () => {
-    // After a stall (a blocked event loop, a suspended laptop) resume on the
-    // grid rather than firing every missed beat back to back.
-    n = Math.max(n + 1, Math.floor((performance.now() - start) / period) + 1);
-    // The next beat is booked whatever this one does: a pattern that throws
-    // once must not stop the beat clock for the rest of the night.
-    beatInterval = setTimeout(() => { safeTick(); schedule(); }, start + n * period - performance.now());
-  };
-  schedule();
-}
-
-const safeTick = guarded('beat', tickPattern);
 // One bad frame is reported and the next one renders; unguarded, a throw here
 // ended the process and left every fixture latched on its last frame.
 const safeRender = guarded('render', renderDmx);
 
 function startEngine() {
   if (renderInterval) return;           // idempotent: never stack render loops
-  restartBeatTimer();
   renderInterval = setInterval(safeRender, 25);
 }
 
@@ -385,9 +396,7 @@ function startEngine() {
  * power-cycles them.
  */
 function stopEngine() {
-  if (beatInterval) clearTimeout(beatInterval);
   if (renderInterval) clearInterval(renderInterval);
-  beatInterval = null;
   renderInterval = null;
   universes.sync(activeUniverses());
   universes.clearAll();
@@ -405,7 +414,7 @@ function stopEngine() {
 module.exports = {
   startEngine,
   stopEngine,
-  restartBeatTimer,
+  setFrameHook,
   resizeFixtureBuffers,
   startSyncTest,
   beginFade,

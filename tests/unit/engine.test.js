@@ -5,7 +5,8 @@ const assert = require('node:assert');
 
 const { state, universeOf } = require('../../src/server/state');
 const universes = require('../../src/server/universes');
-const { startEngine, stopEngine, restartBeatTimer, resizeFixtureBuffers, startSyncTest } = require('../../src/server/engine');
+const { startEngine, stopEngine, resizeFixtureBuffers, startSyncTest } = require('../../src/server/engine');
+const { conductor } = require('../../src/server/conductor');
 const { applyPatch, applyOverride, setFixtureMaxBrightness } = require('../../src/server/patch');
 
 // renderDmx isn't exported — it runs on the engine's own 25 ms interval, so the
@@ -34,7 +35,7 @@ test.after(() => stopEngine());
 
 test('a deleted fixture stops being driven instead of latching its last look', async () => {
   applyPatch({ masterBlackout: false });
-  restartBeatTimer({ tickNow: true });
+  conductor.tap();
   await frames();
 
   const doomed = state.fixtures[state.fixtures.length - 1];
@@ -58,7 +59,7 @@ test('re-addressing a fixture clears the channels it moved away from', async () 
   const fix = state.fixtures[0];
   const from = fix.address;
   applyPatch({ masterBlackout: false });
-  restartBeatTimer({ tickNow: true });
+  conductor.tap();
   await frames();
   assert.ok(anyLit(channels(from, 12)), 'fixture should be lit at its original address');
 
@@ -77,7 +78,7 @@ test('re-addressing a fixture clears the channels it moved away from', async () 
 
 test('master blackout clears the whole universe, not just patched channels', async () => {
   applyPatch({ masterBlackout: false });
-  restartBeatTimer({ tickNow: true });
+  conductor.tap();
   await frames();
 
   // Strand a value outside every fixture's footprint, as a removed or
@@ -103,7 +104,7 @@ test('a fixture on another universe writes into that universe, not universe 0', 
   const { address } = fix;
 
   applyPatch({ masterBlackout: false });
-  restartBeatTimer({ tickNow: true });
+  conductor.tap();
   await frames();
   assert.ok(anyLit(channels(address, 12, home)), 'fixture is lit on its own universe first');
 
@@ -138,7 +139,7 @@ test('a universe that leaves the patch is retired with a final blackout frame', 
 
 test('stopEngine leaves the rig dark rather than holding the last look', async () => {
   applyPatch({ masterBlackout: false });
-  restartBeatTimer({ tickNow: true });
+  conductor.tap();
   startEngine();
   await frames();
   assert.ok(anyLit(Array.from(dmx())), 'something should be lit before shutdown');
@@ -168,7 +169,7 @@ const redOf = (fix) => universes.getBuffer(universeOf(fix))[fix.address - 1 + 3]
 test('a fixture max brightness trims its output without overriding it', async () => {
   const fix = state.fixtures[0];
   applyPatch({ pattern: 'solid', colorA: 9, masterDimmer: 255, masterBlackout: false });
-  restartBeatTimer({ tickNow: true });
+  conductor.tap();
   await frames();
 
   const full = dimmerOf(fix);
@@ -193,7 +194,7 @@ test('a fixture max brightness trims its output without overriding it', async ()
 test('a fixture max brightness of 0 puts that fixture out', async () => {
   const fix = state.fixtures[0];
   applyPatch({ pattern: 'solid', colorA: 9, masterDimmer: 255, masterBlackout: false });
-  restartBeatTimer({ tickNow: true });
+  conductor.tap();
   await frames();
 
   try {
@@ -291,7 +292,7 @@ test('trims stay in proportion to each other as the master falls', async () => {
   const half = state.fixtures[0];
   const full = state.fixtures[1];
   applyPatch({ pattern: 'solid', colorA: 9, masterDimmer: 255, masterBlackout: false });
-  restartBeatTimer({ tickNow: true });
+  conductor.tap();
 
   try {
     setFixtureMaxBrightness(half.id, 128);
@@ -320,7 +321,7 @@ test('a pinned fixture stays lit through a silence', async () => {
   const pinned = state.fixtures[0];
   const free = state.fixtures[1];
   applyPatch({ pattern: 'solid', colorA: 9, masterDimmer: 255, masterBlackout: false });
-  restartBeatTimer({ tickNow: true });
+  conductor.tap();
 
   try {
     applyOverride(pinned.id, { enabled: true, r: 200, g: 0, b: 0, w: 0, dim: 255, strobe: 0 });
@@ -336,59 +337,33 @@ test('a pinned fixture stays lit through a silence', async () => {
   }
 });
 
-// The beat clock keeps time against the music, not against its own last tick.
-// setInterval scheduled each beat a period after the previous callback ran, so
-// under load every late beat delayed all the ones after it, and a tapped tempo
-// fell steadily behind the song.
-//
-// Measured as where each beat lands inside its period rather than by counting
-// beats: after a real stall the clock skips the beats it missed instead of
-// firing them back to back, so a busy machine can cost a beat without the
-// clock having drifted at all.
-test('the beat clock does not fall behind under load', async () => {
-  const saved = { bpm: state.bpm, beatDivision: state.beatDivision };
-  const PERIOD = 50;
-  const ticks = [];
-  let step = state._step;
-  Object.defineProperty(state, '_step', {
-    configurable: true, enumerable: true,
-    get: () => step,
-    set: (v) => { step = v; ticks.push(performance.now()); },
-  });
+// The pattern clock keeps time against the music, not against its own last
+// tick. The old beat timer scheduled each step a period after the previous one
+// ran, so under load every late step delayed all the ones after it and a
+// tapped tempo fell steadily behind the song. Steps are now read off the
+// musical clock, so a busy event loop can make a frame late but can never make
+// the count fall behind: the gap between elapsed time and steps taken stays
+// inside one step for the whole run instead of growing.
+test('the pattern clock does not fall behind under load', async () => {
+  const { PATTERN_FUNCS } = require('../../src/shared/patterns');
+  const chase = PATTERN_FUNCS.chase;
+  const seen = [];
+  PATTERN_FUNCS.chase = (ctx) => { seen.push({ t: performance.now(), step: ctx.step }); return chase(ctx); };
   // A busy event loop, as the render loop and a socket burst make it.
   const hog = setInterval(() => { const until = performance.now() + 7; while (performance.now() < until); }, 13);
   try {
-    Object.assign(state, { bpm: 60000 / PERIOD, beatDivision: 1, running: true });
-    applyPatch({ pattern: 'chase' });
-    // How far into its period each beat fired, 0…1. On time is near 0; a
-    // clock that drifts sweeps the whole range as its lateness builds up.
-    // Measured here: a median of 0.05–0.08 on time, 0.40–0.54 with setInterval.
-    //
-    // Up to three runs, because a machine saturated by something else (the
-    // whole suite in parallel beside a model benchmark did it) can make any
-    // clock late. setInterval never came near the line in any run, so a
-    // retry cannot let the drift back in.
-    const attempts = [];
-    for (let attempt = 0; attempt < 3; attempt++) {
-      ticks.length = 0;
-      const start = performance.now();
-      restartBeatTimer();
-      await new Promise((r) => setTimeout(r, 40 * PERIOD + PERIOD / 2));
-      const into = ticks.map((t) => ((t - start) / PERIOD) % 1).sort((a, b) => a - b);
-      attempts.push({ beats: ticks.length, median: into[into.length >> 1] });
-      if (ticks.length >= 30 && into[into.length >> 1] < 0.25) break;
-    }
-    const best = attempts[attempts.length - 1];
-    assert.ok(best.beats >= 30, `only ${best.beats} beats`);
-    assert.ok(best.median < 0.25,
-      `the median beat fired ${attempts.map((a) => Math.round(a.median * 100)).join('%, ')}% of the way into its period`);
+    applyPatch({ bpm: 300, beatDivision: 4, pattern: 'chase', running: true });
+    await new Promise((r) => setTimeout(r, 2000));
+    assert.ok(seen.length > 20, `only ${seen.length} frames rendered`);
+    const perMs = (300 / 60000) * 4;
+    const residual = seen.map((x) => (x.t - seen[0].t) * perMs - (x.step - seen[0].step));
+    const spread = Math.max(...residual) - Math.min(...residual);
+    assert.ok(spread < 1.5, `the step count strayed ${spread.toFixed(2)} steps from elapsed time over ${seen.length} frames`);
+    assert.ok(seen[seen.length - 1].step - seen[0].step >= 30, 'and it kept stepping');
   } finally {
     clearInterval(hog);
-    delete state._step;
-    state._step = step;
-    Object.assign(state, saved);
-    applyPatch({ pattern: 'solid' });
-    restartBeatTimer();
+    PATTERN_FUNCS.chase = chase;
+    applyPatch({ bpm: 120, beatDivision: 1, pattern: 'solid' });
   }
 });
 
@@ -396,7 +371,7 @@ test('the beat clock does not fall behind under load', async () => {
 // dark for the rest, then the show comes back.
 test('the sync test flashes the whole rig once a second, then hands it back', async () => {
   applyPatch({ pattern: 'solid', colorA: 1, masterDimmer: 255, masterBlackout: false });
-  restartBeatTimer({ tickNow: true });
+  conductor.tap();
   await frames();
   const before = channels(state.fixtures[0].address, 12);
 
@@ -424,12 +399,12 @@ const rgbOf = (fix) => {
 test('a look that asks for a fade blends into place instead of cutting', async () => {
   const fix = state.fixtures[0];
   applyPatch({ pattern: 'solid', colorA: 0, masterDimmer: 255, masterBlackout: false, showDynamics: null });
-  restartBeatTimer({ tickNow: true });
+  conductor.tap();
   await frames(3);
   assert.deepStrictEqual(rgbOf(fix), { r: 255, b: 0 }, 'red to begin with');
 
   applyPatch({ colorA: 5, fadeMs: 400 });
-  restartBeatTimer({ tickNow: true });
+  conductor.tap();
   await new Promise((r) => setTimeout(r, 200));
   const mid = rgbOf(fix);
   assert.ok(mid.r > 0 && mid.b > 0, `halfway it is both: ${JSON.stringify(mid)}`);
@@ -441,14 +416,14 @@ test('a look that asks for a fade blends into place instead of cutting', async (
 test('a look without a fade cuts, even in the middle of one', async () => {
   const fix = state.fixtures[0];
   applyPatch({ pattern: 'solid', colorA: 0, showDynamics: null });
-  restartBeatTimer({ tickNow: true });
+  conductor.tap();
   await frames(3);
   applyPatch({ colorA: 5, fadeMs: 2000 });
-  restartBeatTimer({ tickNow: true });
+  conductor.tap();
   await frames(2);
   // A drop lands on the downbeat, not two seconds later.
   applyPatch({ colorA: 3 });
-  restartBeatTimer({ tickNow: true });
+  conductor.tap();
   await frames(2);
   const buf = universes.getBuffer(universeOf(fix));
   assert.deepStrictEqual([buf[fix.address + 2], buf[fix.address + 3], buf[fix.address + 4]], [0, 255, 85], 'straight to green');
@@ -460,14 +435,14 @@ test('a split look holds one group on colour B while the rest run the pattern', 
   try {
     a.group = 'front'; b.group = 'back';
     applyPatch({ pattern: 'solid', colorA: 0, colorB: 5, showDynamics: null, split: 1 });
-    restartBeatTimer({ tickNow: true });
+    conductor.tap();
     await frames(3);
     assert.deepStrictEqual(rgbOf(a), { r: 255, b: 0 }, 'front runs the pattern in A');
     assert.deepStrictEqual(rgbOf(b), { r: 0, b: 255 }, 'back holds the wash in B');
     assert.deepStrictEqual(rgbOf(c), { r: 255, b: 0 }, 'ungrouped runs the pattern');
 
     applyPatch({ split: null });
-    restartBeatTimer({ tickNow: true });
+    conductor.tap();
     await frames(3);
     assert.deepStrictEqual(rgbOf(b), { r: 255, b: 0 }, 'unsplit, the whole rig is the pattern');
   } finally {
@@ -481,7 +456,7 @@ test('a split with only one group in use leaves the look whole', async () => {
   try {
     a.group = 'front';
     applyPatch({ pattern: 'solid', colorA: 0, colorB: 5, showDynamics: null, split: 0 });
-    restartBeatTimer({ tickNow: true });
+    conductor.tap();
     await frames(3);
     for (const f of state.fixtures) assert.deepStrictEqual(rgbOf(f), { r: 255, b: 0 }, f.label);
   } finally {

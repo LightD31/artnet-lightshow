@@ -9,7 +9,8 @@ const assert = require('node:assert');
 const { state } = require('../../src/server/state');
 const universes = require('../../src/server/universes');
 const { getProfile } = require('../../src/server/profiles');
-const { startEngine, stopEngine, restartBeatTimer } = require('../../src/server/engine');
+const { startEngine, stopEngine } = require('../../src/server/engine');
+const { conductor } = require('../../src/server/conductor');
 const { applyPatch } = require('../../src/server/patch');
 const { spatialLayout } = require('../../src/shared/stage');
 
@@ -47,7 +48,7 @@ test('a chase travels in stage order on a rig patched right to left', async () =
 
   const lit = [];
   for (let k = 0; k < n; k++) {
-    restartBeatTimer({ tickNow: true });
+    conductor.tap();
     await frames();
     const d = dimmers();
     lit.push(d.indexOf(Math.max(...d)));
