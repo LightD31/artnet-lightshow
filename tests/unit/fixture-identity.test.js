@@ -62,3 +62,16 @@ test('duplicate fixture ids in a show are rejected', () => {
     { id: 7, address: 13, profileId: 'cameo-root-par-6-12ch' },
   ] }), /duplicate fixture ids/);
 });
+
+test('a fixture group and stage position survive a save and reload', () => {
+  withFixtures([
+    { id: 4, label: 'Front', address: 1, universe: 0, profileId: 'cameo-root-par-6-12ch', maxBrightness: 255, override: null,
+      group: 'front', position: { x: 20, y: 90 } },
+    { id: 9, label: 'Back', address: 13, universe: 0, profileId: 'cameo-root-par-6-12ch', maxBrightness: 255, override: null },
+  ], () => {
+    const saved = JSON.parse(JSON.stringify(snapshotShow()));   // as it goes to disk
+    applyShow(saved);
+    assert.deepStrictEqual(state.fixtures.map((f) => f.group), ['front', null]);
+    assert.deepStrictEqual(state.fixtures[0].position, { x: 20, y: 90 });
+  });
+});

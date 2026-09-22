@@ -450,6 +450,7 @@ function attachRoutes(app, deps) {
         profileId: removed.profileId,
         maxBrightness: maxBrightnessOf(removed),
         position: removed.position || null,
+        group: removed.group || null,
         override: removed.override,
       },
     });
@@ -488,6 +489,7 @@ function attachRoutes(app, deps) {
         profileId,
         maxBrightness: fixture.maxBrightness !== undefined ? fixture.maxBrightness : 255,
         position: fixture.position || null,
+        group: fixture.group || null,
         override: fixture.override || null,
       };
 

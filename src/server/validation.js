@@ -8,6 +8,7 @@ const {
   SYNC_OFFSET_LIMIT_MS,
 } = require('./presets');
 const { PALETTE_IDS } = require('./palettes');
+const { FIXTURE_GROUPS } = require('../shared/stage');
 
 const u8 = z.number().int().min(0).max(255);
 const fixtureId = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1);
@@ -15,6 +16,7 @@ const fixturePosition = z.object({
   x: z.number().finite().min(0).max(100),
   y: z.number().finite().min(0).max(100),
 }).strict();
+const fixtureGroup = z.enum(FIXTURE_GROUPS);
 const colorIdx = z.number().int().min(0).max(COLOR_PRESETS.length - 1);
 
 // Hostname per RFC 1123, or an IPv4 literal. Rejecting junk here means a typo
@@ -48,6 +50,9 @@ const patchSchema = z.object({
   pattern: z.string().min(1).max(64).optional(),
   // Crossfade into this patch's pattern and colours rather than cutting.
   fadeMs: z.number().int().min(0).max(10000).optional(),
+  // Split the look: one fixture group holds a wash in colour B while the rest
+  // run the pattern. The number picks which group; null runs the whole rig.
+  split: z.number().int().min(0).max(1e9).nullable().optional(),
   colorA: colorIdx.optional(),
   colorB: colorIdx.optional(),
   colorC: colorIdx.optional(),
@@ -109,6 +114,7 @@ const dmxUniverse = z.number().int().min(0).max(32767);
 const fixtureMessageSchema = z.object({
   id: fixtureId,
   position: fixturePosition.nullable().optional(),
+  group: fixtureGroup.nullable().optional(),
   address: z.number().int().min(1).max(512).optional(),
   universe: dmxUniverse.optional(),
   label: z.string().max(64).optional(),
@@ -129,6 +135,7 @@ const fixtureRestoreSchema = z.object({
   fixture: z.object({
     id: fixtureId.optional(),
     position: fixturePosition.nullable().optional(),
+    group: fixtureGroup.nullable().optional(),
     label: z.string().max(64),
     address: z.number().int().min(1).max(512),
     universe: dmxUniverse.optional(),
@@ -183,6 +190,7 @@ const showSchema = z.object({
   fixtures: z.array(z.object({
     id: fixtureId.optional(),
     position: fixturePosition.nullable().optional(),
+    group: fixtureGroup.nullable().optional(),
     label: z.string().max(64).optional(),
     address: z.number().int().min(1).max(512).optional(),
     // Absent in shows saved before multi-universe: those load onto the rig's

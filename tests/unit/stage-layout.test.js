@@ -103,3 +103,19 @@ test('the normalised span uses the true extremes even when a column is reordered
   // Order is [0 (front), 1 (back), 2]; x 10 is the leftmost, so it maps to 0.
   assert.deepStrictEqual(xs.map((x) => +x.toFixed(4)), [0.0063, 0, 1]);
 });
+
+// ── Split looks ──────────────────────────────────────────────────────────────
+const { washFixtures } = require('../../src/shared/stage');
+
+test('a split picks its wash group from the groups the rig actually uses', () => {
+  const rig = [{ group: 'front' }, { group: 'back' }, { group: 'front' }, {}, { group: 'back' }];
+  assert.deepStrictEqual([...washFixtures(rig, 0)], [0, 2], 'seed 0: the first group in use');
+  assert.deepStrictEqual([...washFixtures(rig, 1)], [1, 4], 'seed 1: the next');
+  assert.deepStrictEqual([...washFixtures(rig, 2)], [0, 2], 'and round again');
+});
+
+test('with fewer than two groups in use there is nothing to split', () => {
+  assert.strictEqual(washFixtures([{ group: 'front' }, {}, { group: 'front' }], 3).size, 0);
+  assert.strictEqual(washFixtures([{}, {}], 0).size, 0);
+  assert.strictEqual(washFixtures([{ group: 'front' }, { group: 'back' }], null).size, 0, 'no split asked for');
+});

@@ -40,7 +40,7 @@ function applyPatch(rawData) {
   // A new look fades if it asks to and cuts if it does not — and a cut
   // cancels a fade still running, so a drop lands hard even mid-breakdown-fade.
   const changesLook = data.pattern !== undefined || data.palette !== undefined
-    || COLOR_SLOTS.some((slot) => data[slot] !== undefined);
+    || data.split !== undefined || COLOR_SLOTS.some((slot) => data[slot] !== undefined);
   if (data.fadeMs !== undefined || changesLook) beginFade(data.fadeMs || 0);
 
   if (data.bpm !== undefined) { state.bpm = data.bpm; restartTimer = true; }
@@ -84,6 +84,7 @@ function applyPatch(rawData) {
     if (!paletteApplied && data[slot] !== state[slot]) state.palette = null;
     state[slot] = data[slot];
   }
+  if (data.split !== undefined) state.split = data.split;
   if (data.showDynamics !== undefined) {
     state.showDynamics = data.showDynamics === null ? null : { ...state.showDynamics, ...data.showDynamics };
   }

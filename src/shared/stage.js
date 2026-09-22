@@ -81,4 +81,31 @@ function spatialLayout(fixtures) {
   return { order, xs };
 }
 
-module.exports = { isPlaced, defaultPosition, stagePositions, spatialLayout };
+// ── Groups ───────────────────────────────────────────────────────────────────
+// Where a fixture hangs, from a fixed set so the show and the operator mean the
+// same thing by each name. Ungrouped fixtures are simply part of the rig.
+const FIXTURE_GROUPS = ['front', 'back', 'room', 'floor'];
+
+/**
+ * Which fixtures hold the wash when the show splits a look.
+ *
+ * A split look has one group holding a steady wash in the contrast colour
+ * while everything else runs the pattern — two layers rather than one look on
+ * every lamp. The show plans without knowing the rig, so it asks for a split
+ * with a seed and this picks the group from the ones actually in use. Fewer
+ * than two groups in use means there is nothing to split between, and the
+ * whole rig runs the pattern exactly as it would unsplit.
+ *
+ * @returns {Set<number>} patch indices of the wash fixtures (empty: no split)
+ */
+function washFixtures(fixtures, seed) {
+  if (seed == null) return new Set();
+  const used = FIXTURE_GROUPS.filter((g) => fixtures.some((f) => f.group === g));
+  if (used.length < 2) return new Set();
+  const wash = used[((seed % used.length) + used.length) % used.length];
+  return new Set(fixtures.map((f, i) => (f.group === wash ? i : -1)).filter((i) => i >= 0));
+}
+
+module.exports = {
+  isPlaced, defaultPosition, stagePositions, spatialLayout, FIXTURE_GROUPS, washFixtures,
+};

@@ -27,6 +27,8 @@ test('a scene becomes one patch carrying the whole look', () => {
     pattern: 'chase', colorA: 1, colorB: 2, colorC: 3, colorD: 4,
     beatDivision: 2, strobeSpeed: 100, strobeFunction: 'random',
     energyOverride: null,
+    // Not split: every scene says so, so it never inherits an earlier split.
+    split: null,
   });
 });
 

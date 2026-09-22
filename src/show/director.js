@@ -140,6 +140,16 @@ const BAR_JITTER = 0.05;
 const SECTION_FADE_BARS = { breakdown: 2, outro: 2, intro: 1, verse: 0.5, bridge: 0.5, chorus: 0, drop: 0 };
 // Roles where even a rotation inside the section is a cut on the downbeat.
 const CUT_ROLES = new Set(['chorus', 'drop']);
+// Patterns that travel on colour A, and so gain a second layer when one group
+// holds a wash in B beside them. The rest either already put B across the rig
+// (split, sections, ribbon, ensemble) or are whole-rig gestures that a wash
+// would only dilute (solid, fade, hit, strobe, the colour cycles).
+const SPLITTABLE = new Set(['chase', 'chase-rev', 'ping-pong', 'runner', 'pairs', 'wave',
+  'stack-up', 'twinkle', 'sparkle', 'random-flash']);
+// How hard a passage has to drive before its look splits in two. Below this a
+// second layer is clutter rather than depth.
+const SPLIT_DRIVE = 0.5;
+
 // A fade longer than this stops reading as a transition and starts reading as
 // the rig being slow.
 const MAX_FADE_MS = 4000;
@@ -471,17 +481,23 @@ class ShowDirector {
       const strobeFunction = section.resting ? 'standard'
         : look.strobeFunctionFor(section.character, context.score);
 
-      const key = `${pattern}|${colours.join('|')}|${strobeSpeed}|${strobeFunction}|${beatDivision}`;
+      const key = `${pattern}|${colours.join('|')}|${strobeSpeed}|${strobeFunction}|${beatDivision}|${splitFor(section, pattern, context)}`;
       if (key === lastKey) continue;
       lastKey = key;
 
       // The opening look is simply there; everything after it arrives the way
       // the music does.
       const fadeMs = timeMs < 500 ? 0 : context.fadeMs(SECTION_FADE_BARS[section.role] ?? 0.5);
+      // A driving passage on a travelling pattern splits: one fixture group
+      // holds a wash while the rest carry the pattern. Seeded by the passage,
+      // so a returning chorus splits the same way; which group that means is
+      // the engine's call, from the groups the rig actually has.
+      const split = splitFor(section, pattern, context);
       intents.push(scene(timeMs, {
         pattern, colors: colours, beatDivision, strobeSpeed, strobeFunction,
         role: section.role, label: section.label, level: section.level,
         identity: section.identity, ...(fadeMs > 0 ? { fadeMs } : {}),
+        ...(split != null ? { split } : {}),
       }, { source: `section:${section.role}` }));
 
       intents.push(...this._rotateWithin(section, {
@@ -651,6 +667,8 @@ class ShowDirector {
           strobeSpeed: 0,
           strobeFunction: current.strobeFunction,
           ...(rotationFade > 0 ? { fadeMs: rotationFade } : {}),
+          ...(splitFor(section, alternates[i % alternates.length], context) != null
+            ? { split: splitFor(section, alternates[i % alternates.length], context) } : {}),
         }, { source: 'rotation', priority: PRIORITY.ROTATION }));
       }
       i++;
@@ -1512,6 +1530,12 @@ function medianGap(downbeats) {
  * downbeats at all it falls back to wall-clock bars, and with no bar length
  * either it returns null and the caller does without.
  */
+/** The split seed for a section on this pattern, or null to run the whole rig. */
+function splitFor(section, pattern, context) {
+  if (section.resting || section.drive < SPLIT_DRIVE || !SPLITTABLE.has(pattern)) return null;
+  return Math.abs(section.identity + context.trackSeed) % 1000;
+}
+
 /**
  * Which passage a section is a return of: its identity *in its role*. The
  * labeller often clusters a verse with the chorus it leads into, and the last

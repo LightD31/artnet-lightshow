@@ -21,13 +21,13 @@
 // Per-fixture maximum brightness *is* applied, because that is a property of
 // where the lamp hangs rather than of what the operator is doing right now.
 const { PATTERN_FUNCS } = require('./patterns');
-const { spatialLayout } = require('./stage');
+const { spatialLayout, washFixtures } = require('./stage');
 const {
   EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture,
   fadeCycleSec, fadeBrightness, hitBeatSec, hitBrightness, motionCycleSec,
 } = require('./look-math');
 
-const LOOK_KEYS = ['pattern', 'palette', 'colorA', 'colorB', 'colorC', 'colorD'];
+const LOOK_KEYS = ['pattern', 'palette', 'split', 'colorA', 'colorB', 'colorC', 'colorD'];
 
 const OPENING = {
   pattern: 'solid', colorA: 0, colorB: 0, colorC: 0, colorD: 0, bpm: 120, beatDivision: 1,
@@ -92,18 +92,23 @@ function createPreviewSampler(events = []) {
     const output = fixtures.map(() => ({ color: colors[0], dim: 0 }));
     const fn = PATTERN_FUNCS[s.pattern] || PATTERN_FUNCS.solid;
     // The same stage order the engine routes through, so a chase rehearsed
-    // here travels across the plot exactly as it will across the room.
-    const { order, xs } = spatialLayout(fixtures);
+    // here travels across the plot exactly as it will across the room — and in
+    // a split look, across only the fixtures not holding the wash.
+    const wash = washFixtures(fixtures, s.split);
+    const members = fixtures.map((_, i) => i).filter((i) => !wash.has(i));
+    const { order, xs } = spatialLayout(members.map((i) => fixtures[i]));
     fn({
-      colors, fixtureCount: fixtures.length, step, phase, xs,
+      colors, fixtureCount: members.length, step, phase, xs,
       hue: (step * 360 / Math.max(1, fixtures.length)) % 360,
       dynamics: dyn ? expr : null, twinkle: fixtures.map(() => 0), resetHitPhase: () => {},
-      write: (k, color, dim) => { output[order[k]] = { color, dim }; },
+      write: (k, color, dim) => { output[members[order[k]]] = { color, dim }; },
     });
 
     // The two patterns the engine drives continuously rather than per beat, so
-    // they are recomputed here from elapsed time for the same reason.
-    let layer = output.map(({ color, dim }) => {
+    // they are recomputed here from elapsed time for the same reason. The wash
+    // goes on last, as the engine paints it.
+    let layer = output.map(({ color, dim }, i) => {
+      if (wash.has(i)) return { color: colors[1], dim: 255 };
       if (s.pattern === 'fade') return { color: colors[0], dim: fadeBrightness(elapsed / fadeCycleSec(s.bpm) % 1) };
       if (s.pattern === 'hit') return { color: colors[0], dim: hitBrightness(elapsed / hitBeatSec(s.bpm, s.beatDivision) % 1) };
       return { color, dim };

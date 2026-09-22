@@ -154,3 +154,12 @@ test('the preview blends the same values the engine does', () => {
   assert.deepStrictEqual([mid.r, mid.g, mid.b],
     [Math.round(expected.r * scale), Math.round(expected.g * scale), Math.round(expected.b * scale)]);
 });
+
+test('a split look rehearses as the rig plays it', () => {
+  const sample = createPreviewSampler([
+    { timeMs: 0, action: 'patch', data: { pattern: 'solid', colorA: 0, colorB: 5, bpm: 120, beatDivision: 1, split: 1 } },
+  ]);
+  const rig = [{ group: 'front' }, { group: 'back' }, {}];
+  const out = sample(100, rig, COLOR_PRESETS);
+  assert.deepStrictEqual(out.map((c) => [c.r, c.b]), [[255, 0], [0, 255], [255, 0]]);
+});

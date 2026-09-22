@@ -638,6 +638,21 @@ It is a trim, not a look:
 The grand master and the trim both multiply, so they compose: a fixture trimmed
 to 50% with the master at 50% comes up at 25%.
 
+## Fixture groups
+
+Each fixture card has a **Group**: Front, Back, Room or Floor. The auto show
+uses them to split a look in two. In a driving passage on a travelling pattern
+(a chase, a runner, a sparkle), one group holds a steady wash in colour B while
+the rest of the rig runs the pattern in stage order among themselves. The same
+chorus splits the same way each time it returns; which group washes is picked
+from the groups actually in use.
+
+Nothing splits with fewer than two groups in use, so an ungrouped rig runs
+exactly as before. Resting passages, drops, build-ups and whole-rig looks
+(solid, strobe, fade, hit, ribbon, ensemble) always use the whole rig, and
+ungrouped fixtures always run the pattern. The rehearsal preview shows the
+split too. Groups are saved with the patch.
+
 Set it from the fixture card, from MIDI (**Fixture max brightness** on a fader,
 **Nudge fixture max brightness** on an encoder), or over REST at
 `POST /api/fixture/:id/max/:value`.
@@ -1295,7 +1310,9 @@ universe), `auto-position`, `midi-status`, `midi-map`, `midi-learn` and
 `error-msg`.
 
 The `fixture` message carries
-`{ id, address?, universe?, label?, profileId?, maxBrightness? }`.
+`{ id, address?, universe?, label?, profileId?, maxBrightness?, position?, group? }`.
+`position` is `{ x, y }` in percent of the stage plot, or `null`; `group` is one
+of `front`, `back`, `room`, `floor`, or `null`.
 
 ---
 

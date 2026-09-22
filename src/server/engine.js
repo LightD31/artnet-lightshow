@@ -6,7 +6,7 @@ const { getProfile } = require('./profiles');
 const { sendUniverse, sendHue, stopHue } = require('./output');
 const universes = require('./universes');
 const { PATTERN_FUNCS } = require('../shared/patterns');
-const { spatialLayout } = require('../shared/stage');
+const { spatialLayout, washFixtures } = require('../shared/stage');
 // Shared with the browser's rehearsal preview so the two cannot drift. See the
 // header of that file for why this is not simply inlined here.
 const {
@@ -49,15 +49,30 @@ function setFixtureColor(idx, color, dim, strobe) {
  * placed it is the identity, and every pattern renders exactly as before.
  */
 function layoutWriter() {
-  const { order, xs } = spatialLayout(state.fixtures);
-  return { xs, write: (k, color, dim, strobe) => setFixtureColor(order[k], color, dim, strobe) };
+  // In a split look the wash group is not the pattern's to write: the pattern
+  // travels across the rest of the rig, in stage order among themselves.
+  const wash = washFixtures(state.fixtures, state.split);
+  const members = state.fixtures.map((_, i) => i).filter((i) => !wash.has(i));
+  const { order, xs } = spatialLayout(members.map((i) => state.fixtures[i]));
+  return {
+    xs, count: members.length,
+    write: (k, color, dim, strobe) => setFixtureColor(members[order[k]], color, dim, strobe),
+  };
+}
+
+/** Hold the split look's wash group on colour B, at full, under the music. */
+function paintWash() {
+  const wash = washFixtures(state.fixtures, state.split);
+  if (!wash.size || !state.running) return;
+  const colB = COLOR_PRESETS[state.colorB];
+  for (const i of wash) setFixtureColor(i, colB, 255, 0);
 }
 
 function tickPattern() {
   if (!state.running) return;
   const fn = PATTERN_FUNCS[state.pattern];
   if (!fn) return;
-  const { xs, write } = layoutWriter();
+  const { xs, write, count } = layoutWriter();
 
   fn({
     colors: [
@@ -66,7 +81,7 @@ function tickPattern() {
       COLOR_PRESETS[state.colorC],
       COLOR_PRESETS[state.colorD],
     ],
-    fixtureCount: getFixtureCount(),
+    fixtureCount: count,
     step: state._step,
     hue: state._hue,
     twinkle: state._twinkle,
@@ -170,13 +185,16 @@ function renderDmx() {
   // is driving, and the sweep speeds up with the tempo rather than ignoring it.
   expressionPhase = (expressionPhase + dt / motionCycleSec(state.bpm, expression.motion)) % 1;
   if (state.running && ['ensemble', 'ribbon'].includes(state.pattern)) {
-    const { xs, write } = layoutWriter();
+    const { xs, write, count } = layoutWriter();
     PATTERN_FUNCS[state.pattern]({
       colors: [state.colorA, state.colorB, state.colorC, state.colorD].map(i => COLOR_PRESETS[i]),
-      fixtureCount: getFixtureCount(), phase: expressionPhase, dynamics: expression,
+      fixtureCount: count, phase: expressionPhase, dynamics: expression,
       write, xs,
     });
   }
+  // After every pattern has written, so the wash wins on its own lamps
+  // whichever of them ran this frame.
+  paintWash();
 
   const energy = currentEnergy();
 

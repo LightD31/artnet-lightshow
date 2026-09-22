@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'preact/hooks';
 import { stateSig, dmxSig, emitOverride, emitFixture } from '../state.js';
 import { fixtureOutputColor } from '../utils.js';
+import { FIXTURE_GROUPS } from '../../src/shared/stage.js';
+
+const GROUP_LABELS = { front: 'Front', back: 'Back', room: 'Room', floor: 'Floor' };
 
 const CHANNELS = ['r', 'g', 'b', 'w', 'a', 'uv', 'dim', 'strobe'];
 const CHANNEL_LABELS = { r: 'Red', g: 'Green', b: 'Blue', w: 'White', a: 'Amber', uv: 'UV', dim: 'Dim', strobe: 'Strb' };
@@ -124,6 +127,22 @@ function FixtureCard({ fix, state }) {
           }}
         />
         <span class="val">{Math.round((maxDraft / 255) * 100)}%</span>
+      </div>
+
+      {/* Where the lamp hangs. In a driving passage the auto show can split the
+          look: one group holds a wash while the rest run the pattern. Needs
+          two groups in use to do anything. */}
+      <div class="fixture-max fixture-group">
+        <label for={`fix-group-${fix.id}`}>Group</label>
+        <select
+          id={`fix-group-${fix.id}`}
+          value={fix.group || ''}
+          title="In busy passages the auto show can hold one group on a wash while the others run the pattern"
+          onChange={(e) => emitFixture({ id: fix.id, group: e.target.value || null })}
+        >
+          <option value="">None</option>
+          {FIXTURE_GROUPS.map((g) => <option key={g} value={g}>{GROUP_LABELS[g]}</option>)}
+        </select>
       </div>
 
       <div class="override-section">

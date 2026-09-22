@@ -184,6 +184,9 @@ class AutoShow {
     }
     delete restored.masterDimmer;
     delete restored.masterBlackout;
+    // A seek lands on the scene; it does not fade into it from wherever the
+    // rig happened to be.
+    delete restored.fadeMs;
     // A seek must restore the complete current scene for every timeline. The
     // old expressive-only guard left legacy pattern/colour shows visually
     // stale after a pause, offset nudge, or live replan.
@@ -622,7 +625,7 @@ class AutoShow {
     if (this._loopTimer) { clearInterval(this._loopTimer); this._loopTimer = null; }
     this._cancelEnergyTimer();
     // Clear any lingering energy override so we don't leave the rig stuck
-    this._applyPatch({ energyOverride: null, showDynamics: null });
+    this._applyPatch({ energyOverride: null, showDynamics: null, split: null });
   }
 
   reset() {

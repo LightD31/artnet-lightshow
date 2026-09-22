@@ -56,6 +56,9 @@ const state = {
   // when a fixture is deleted or reordered in the patch array.
   nextFixtureId: 4,
   showDynamics: null,
+  // A split look from the auto show: which fixture group holds a wash while
+  // the rest run the pattern. Null is the whole rig on the pattern.
+  split: null,
   _step: 0,
   _pingDir: 1,
   _hue: 0,

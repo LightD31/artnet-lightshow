@@ -1168,6 +1168,7 @@ input[type=range]::-moz-range-thumb {
   font-weight: 700;
 }
 .fixture-max input[type=range] { flex: 1; cursor: pointer; }
+.fixture-group select { flex: 1; min-width: 0; }
 .fixture-max .val {
   width: 36px;
   text-align: right;

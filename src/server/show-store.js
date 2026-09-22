@@ -71,6 +71,7 @@ function snapshotShow() {
       profileId: f.profileId,
       maxBrightness: maxBrightnessOf(f),
       position: f.position ? { ...f.position } : null,
+      group: f.group || null,
     })),
   };
 }
@@ -122,6 +123,7 @@ function applyShow(rawShow) {
       profileId: incoming[f.profileId] ? f.profileId : BUILTIN_PROFILE_ID,
       maxBrightness: f.maxBrightness !== undefined ? f.maxBrightness : 255,
       position: f.position ? { ...f.position } : null,
+      group: f.group || null,
       override: null,
     }));
     for (const fix of next) {

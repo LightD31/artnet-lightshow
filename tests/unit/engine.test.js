@@ -442,3 +442,39 @@ test('a look without a fade cuts, even in the middle of one', async () => {
   const buf = universes.getBuffer(universeOf(fix));
   assert.deepStrictEqual([buf[fix.address + 2], buf[fix.address + 3], buf[fix.address + 4]], [0, 255, 85], 'straight to green');
 });
+
+// ── Split looks ──────────────────────────────────────────────────────────────
+test('a split look holds one group on colour B while the rest run the pattern', async () => {
+  const [a, b, c] = state.fixtures;
+  try {
+    a.group = 'front'; b.group = 'back';
+    applyPatch({ pattern: 'solid', colorA: 0, colorB: 5, showDynamics: null, split: 1 });
+    restartBeatTimer({ tickNow: true });
+    await frames(3);
+    assert.deepStrictEqual(rgbOf(a), { r: 255, b: 0 }, 'front runs the pattern in A');
+    assert.deepStrictEqual(rgbOf(b), { r: 0, b: 255 }, 'back holds the wash in B');
+    assert.deepStrictEqual(rgbOf(c), { r: 255, b: 0 }, 'ungrouped runs the pattern');
+
+    applyPatch({ split: null });
+    restartBeatTimer({ tickNow: true });
+    await frames(3);
+    assert.deepStrictEqual(rgbOf(b), { r: 255, b: 0 }, 'unsplit, the whole rig is the pattern');
+  } finally {
+    for (const f of state.fixtures) delete f.group;
+    applyPatch({ split: null });
+  }
+});
+
+test('a split with only one group in use leaves the look whole', async () => {
+  const [a] = state.fixtures;
+  try {
+    a.group = 'front';
+    applyPatch({ pattern: 'solid', colorA: 0, colorB: 5, showDynamics: null, split: 0 });
+    restartBeatTimer({ tickNow: true });
+    await frames(3);
+    for (const f of state.fixtures) assert.deepStrictEqual(rgbOf(f), { r: 255, b: 0 }, f.label);
+  } finally {
+    delete a.group;
+    applyPatch({ split: null });
+  }
+});
