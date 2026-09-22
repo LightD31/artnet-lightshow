@@ -19,6 +19,7 @@ const {
   UNIVERSE_SIZE,
   endChannel,
   fitsInUniverse,
+  universeOverflow,
   registerProfile,
   unregisterProfile,
   listProfiles,
@@ -30,12 +31,13 @@ const {
   midiMap, ACTIONS, defaultTypeFor, mapSchema, learnSchema, bindingWriteSchema,
 } = require('./midi-map');
 const {
-  profileSchema, midiConnectSchema, deezerStateSchema,
+  profileSchema, deezerStateSchema,
   fixtureRestoreSchema, dmxUniverse, huePairSchema, validate,
 } = require('./validation');
 const output = require('./output');
 const { discoverBridges, pair: pairBridge, listEntertainmentConfigs } = require('./hue');
 const { settings, RESTART_PATHS, CONFIG_FILE } = require('./settings');
+const { connectMidi } = require('./midi-connect');
 const { generateToken } = require('./auth');
 const { runPreflight } = require('./preflight');
 const {
@@ -68,14 +70,6 @@ function assertLocalPathAllowed(source) {
 }
 
 /** Remember the chosen MIDI ports so the pick survives a restart. */
-function persistMidi({ input, output }) {
-  try {
-    settings.update({ midi: { input: input || '', output: output || '' } });
-  } catch (err) {
-    console.warn(`[settings] could not persist MIDI ports: ${err.message}`);
-  }
-}
-
 function asyncHandler(fn) {
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 }
@@ -238,11 +232,7 @@ function attachRoutes(app, deps) {
 
   app.post('/api/midi/connect', (req, res) => {
     try {
-      const body = validate(midiConnectSchema, req.body || {}, 'midi-connect');
-      midi.close();
-      const ok = midi.connect(body.input || null, body.output || null);
-      persistMidi(body);
-      res.json({ ok, enabled: midi.enabled, ports: midi.listPorts() });
+      res.json(connectMidi(midi, req.body));
     } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
   });
 
@@ -473,13 +463,8 @@ function attachRoutes(app, deps) {
       const profiles = listProfiles();
       const profileId = profiles[fixture.profileId] ? fixture.profileId : BUILTIN_PROFILE_ID;
       const chCount = profiles[profileId].channelCount;
-      if (!fitsInUniverse(fixture.address, chCount)) {
-        return res.status(400).json({
-          ok: false,
-          error: `"${fixture.label}" at address ${fixture.address} needs ${chCount} channels and would end at `
-            + `${endChannel(fixture.address, chCount)}, past the ${UNIVERSE_SIZE}-channel universe`,
-        });
-      }
+      const overflow = universeOverflow(fixture.label, fixture.address, chCount);
+      if (overflow) return res.status(400).json({ ok: false, error: overflow });
 
       const restored = {
         id: fixture.id,

@@ -5,13 +5,12 @@ const { applyPatch, applyOverride, processTap } = require('./patch');
 const {
   overrideMessageSchema,
   fixtureMessageSchema,
-  midiConnectSchema,
   validate,
 } = require('./validation');
-const { listProfiles, getProfile, endChannel, fitsInUniverse, UNIVERSE_SIZE } = require('./profiles');
+const { listProfiles, getProfile, universeOverflow } = require('./profiles');
 const { showStore } = require('./show-store');
 const { MAX_UNIVERSES } = require('./universes');
-const { settings } = require('./settings');
+const { connectMidi } = require('./midi-connect');
 const { midiMap } = require('./midi-map');
 const { EnergyHold } = require('./energy-hold');
 const { ENERGY_EFFECTS } = require('./presets');
@@ -61,12 +60,9 @@ function attachSockets(io, { midi, integrations }) {
         // land outside the DMX buffer and Node drops them silently, leaving the
         // fixture half-controllable with no error.
         const chCount = getProfile({ profileId: nextProfileId }).channelCount;
-        if (!fitsInUniverse(nextAddress, chCount)) {
-          socket.emit('error-msg', {
-            source: 'fixture',
-            message: `Address ${nextAddress} + ${chCount} channels ends at `
-              + `${endChannel(nextAddress, chCount)}, past the ${UNIVERSE_SIZE}-channel universe`,
-          });
+        const overflow = universeOverflow(label ?? fixture.label, nextAddress, chCount);
+        if (overflow) {
+          socket.emit('error-msg', { source: 'fixture', message: overflow });
           return;
         }
 
@@ -112,16 +108,7 @@ function attachSockets(io, { midi, integrations }) {
 
     socket.on('midi-connect', (payload) => {
       try {
-        // Same schema the REST route uses — these two paths had drifted apart.
-        const { input, output } = validate(midiConnectSchema, payload || {}, 'midi-connect');
-        midi.close();
-        const ok = midi.connect(input || null, output || null);
-        try {
-          settings.update({ midi: { input: input || '', output: output || '' } });
-        } catch (err) {
-          console.warn(`[settings] could not persist MIDI ports: ${err.message}`);
-        }
-        socket.emit('midi-status', { ok, ports: midi.listPorts(), enabled: midi.enabled });
+        socket.emit('midi-status', connectMidi(midi, payload));
       } catch (err) {
         socket.emit('error-msg', { source: 'midi-connect', message: err.message });
       }

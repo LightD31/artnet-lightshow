@@ -12,9 +12,7 @@ const {
   BUILTIN_PROFILE_IDS,
   isBuiltinProfile,
   MAX_FIXTURES,
-  UNIVERSE_SIZE,
-  endChannel,
-  fitsInUniverse,
+  universeOverflow,
   registerProfile,
   clearNonBuiltinProfiles,
   listProfiles,
@@ -128,10 +126,8 @@ function applyShow(rawShow) {
     }));
     for (const fix of next) {
       const chCount = incoming[fix.profileId].channelCount;
-      if (!fitsInUniverse(fix.address, chCount)) {
-        throw badShow(`"${fix.label}" at address ${fix.address} needs ${chCount} channels and would end at `
-          + `${endChannel(fix.address, chCount)}, past the ${UNIVERSE_SIZE}-channel universe`);
-      }
+      const overflow = universeOverflow(fix.label, fix.address, chCount);
+      if (overflow) throw badShow(overflow);
     }
     const spanned = new Set([showUniverse, ...next.map((f) => f.universe)]);
     if (spanned.size > MAX_UNIVERSES) {

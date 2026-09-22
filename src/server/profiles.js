@@ -34,6 +34,17 @@ function fitsInUniverse(address, channelCount) {
   return address >= 1 && endChannel(address, channelCount) <= UNIVERSE_SIZE;
 }
 
+/**
+ * Why a fixture does not fit its universe, in words an operator can act on, or
+ * null when it does. One wording for every path that patches a fixture: editing
+ * one, restoring a deleted one and loading a show used to say it three ways.
+ */
+function universeOverflow(label, address, channelCount) {
+  if (fitsInUniverse(address, channelCount)) return null;
+  return `"${label}" at address ${address} needs ${channelCount} channels and would end at `
+    + `${endChannel(address, channelCount)}, past the ${UNIVERSE_SIZE}-channel universe`;
+}
+
 // UV LEDs are physically dimmer than RGBW — boost their DMX value so they
 // remain visually competitive at lower dimmer settings.
 //
@@ -227,6 +238,7 @@ module.exports = {
   MAX_FIXTURES,
   endChannel,
   fitsInUniverse,
+  universeOverflow,
   UV_BOOST,
   RESERVED_PROFILE_IDS,
   getProfile,

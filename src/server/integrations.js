@@ -72,6 +72,10 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
 
   function getHybridPositionMs() { return hybrid.getPositionMs(); }
 
+  // How many upcoming tracks to prefetch. Validated to 1..5 on the way in; the
+  // clamp stays for a state object that did not come through validation.
+  const prefetchDepth = () => Math.max(1, Math.min(5, state.autoPrefetchDepth || 1));
+
   // Last live payload we sent, as JSON. Used to skip re-sending an identical
   // snapshot.
   let lastLiveJson = '';
@@ -143,7 +147,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     autoPrefetchDepth: () => {
       // Depth change → trim slots that are now out of range and immediately
       // queue prefetches for newly in-range positions.
-      const depth = Math.max(1, Math.min(5, state.autoPrefetchDepth || 1));
+      const depth = prefetchDepth();
       if (spotifySlots.length > depth) {
         spotifySlots = spotifySlots.slice(0, depth);
       }
@@ -300,7 +304,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   async function prefetchNextFromQueue() {
     if (!spotify.authenticated) return;
     lastQueuePeekAt = Date.now();
-    const depth = Math.max(1, Math.min(5, state.autoPrefetchDepth || 1));
+    const depth = prefetchDepth();
 
     try {
       const queue = await spotify.getQueue();
@@ -485,7 +489,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       if (deezerSlots.length) { deezerSlots = []; lastDeezerSlotsSig = ''; broadcast(); }
       return;
     }
-    const depth = Math.max(1, Math.min(5, state.autoPrefetchDepth || 1));
+    const depth = prefetchDepth();
     const upcoming = deezerSource.getQueue().slice(0, depth);
 
     // Derive each slot's status SYNCHRONOUSLY from the cache/in-flight state
