@@ -183,3 +183,15 @@ test('shutdown rejects work rather than leaving it pending', async () => {
   w.shutdown();
   await assert.rejects(p, /shutting down|worker/);
 });
+
+// A worker whose GPU FFT faulted answers its track and asks to be replaced:
+// every later GPU call in that process fails too. The next request must go to
+// a fresh process, and the queue behind it must survive the swap.
+test('a worker that asks to be recycled is replaced before the next request', async () => {
+  const w = worker('gpufault');
+  try {
+    const [first, second] = await Promise.all([w.analyze('/tmp/a.wav', null), w.analyze('/tmp/b.wav', null)]);
+    assert.ok(first.pid && second.pid, 'both requests answered');
+    assert.notStrictEqual(first.pid, second.pid, 'the second track went to a new process');
+  } finally { w.shutdown(); }
+});

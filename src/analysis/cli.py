@@ -28,7 +28,7 @@ import sys
 import tempfile
 
 from .config import DEFAULT
-from . import model_adapters, pipeline, tagger
+from . import model_adapters, models, pipeline, tagger
 
 
 def _log(message):
@@ -131,6 +131,10 @@ def worker_loop():
             import traceback
             traceback.print_exc(file=sys.stderr)
             response = {'id': request_id, 'error': str(exc)}
+        if models.gpu_fault():
+            # A faulted GPU FFT stays broken for the life of the process. The
+            # track has its answer; ask for a fresh worker for the next one.
+            response['recycle'] = True
         sys.stdout.write(json.dumps(response) + '\n')
         sys.stdout.flush()
 

@@ -542,11 +542,19 @@ def model_beats(audio, config: RhythmConfig):
     quietly papered over.
     """
     from . import models
+    signal = np.asarray(audio.mono, dtype=np.float32)
     try:
-        tracker = models.beat_tracker()
-        with models.inference('beat_this'):
-            beats, downbeats = tracker(np.asarray(audio.mono, dtype=np.float32),
-                                       audio.sample_rate)
+        try:
+            tracker = models.beat_tracker(on='cpu' if models.gpu_fault() else None)
+            with models.inference('beat_this'):
+                beats, downbeats = tracker(signal, audio.sample_rate)
+        except Exception as exc:
+            # A faulted GPU FFT stays broken for the process; the beat grid
+            # is the one answer the show cannot do without, so it gets a
+            # second go on the CPU rather than failing the track.
+            if not models.gpu_fault(exc):
+                raise
+            beats, downbeats = models.beat_tracker(on='cpu')(signal, audio.sample_rate)
     except Exception as exc:
         raise ModelUnavailable(
             f'the beat model could not run ({exc}). Install the analysis '

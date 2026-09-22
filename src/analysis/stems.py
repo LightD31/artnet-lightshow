@@ -77,10 +77,11 @@ def separate(mono, sample_rate, overlap=0.10, segment_seconds=None):
     # community checkpoint. Keep this opt-in until a compatible registry model
     # and config are explicitly supplied; this prevents a show from paying a
     # failed load attempt on every track.
-    if models.bs_roformer_enabled():
+    if models.bs_roformer_enabled() and not models.gpu_fault():
         try:
             return separate_bs_roformer(mono, sample_rate)
         except Exception as exc:
+            models.gpu_fault(exc)
             print(f'[stems] BS-RoFormer unavailable; using Demucs: {exc}', file=sys.stderr)
             # Never hold both. The usual reason this path is taken is that the
             # card had no room for BS-RoFormer, and answering that by loading a
@@ -91,7 +92,7 @@ def separate(mono, sample_rate, overlap=0.10, segment_seconds=None):
             models.unload('bs-roformer-4stem')
 
     model = models.separator()
-    device = models.device()
+    device = 'cpu' if models.gpu_fault() else models.device()
 
     # Demucs wants stereo at its own rate. The analysis signal is mono at
     # 22.05 kHz, so it goes up and the stems come back down.
@@ -103,8 +104,17 @@ def separate(mono, sample_rate, overlap=0.10, segment_seconds=None):
     kwargs = dict(device=device, split=True, overlap=overlap, progress=False)
     if segment_seconds:
         kwargs['segment'] = segment_seconds
-    with models.inference('demucs'), torch.no_grad():
-        separated = apply_model(model, tensor, **kwargs)[0].cpu()
+    try:
+        with models.inference('demucs'), torch.no_grad():
+            separated = apply_model(model, tensor, **kwargs)[0].cpu()
+    except Exception as exc:
+        # A GPU that faulted mid-track stays faulted; Demucs on the CPU is
+        # slower but still an answer (see models.gpu_fault).
+        if device == 'cpu' or not models.gpu_fault(exc):
+            raise
+        kwargs['device'] = 'cpu'
+        with torch.no_grad():
+            separated = apply_model(model, tensor, **kwargs)[0].cpu()
 
     out = {}
     for name, source in zip(model.sources, separated):

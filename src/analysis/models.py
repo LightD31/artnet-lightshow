@@ -173,6 +173,36 @@ def unload(key):
     return True
 
 
+_GPU_FAULT = None
+
+
+def gpu_fault(exc=None):
+    """
+    Record, or report, that the GPU's FFT has broken for this process.
+
+    AMD's ROCm nightlies sometimes fail a GPU FFT with HIPFFT_PARSE_ERROR,
+    intermittently and only under the pipeline's parallel load, and once one
+    has failed every later one in the process fails too — the beat model, then
+    each separator in turn. So the first such error marks the process: the
+    stage that hit it reruns on the CPU, later stages go straight to the CPU,
+    and the worker asks to be replaced once the track is answered, which is
+    what gives the next track a working GPU again.
+
+    Called with an exception, returns whether it was such a fault (and records
+    it). Called bare, returns the recorded fault or None.
+    """
+    global _GPU_FAULT
+    if exc is None:
+        return _GPU_FAULT
+    text = str(exc)
+    if not any(mark in text for mark in ('HIPFFT_', 'CUFFT_', 'cuFFT error', 'hipErrorLaunchFailure')):
+        return False
+    if _GPU_FAULT is None:
+        _GPU_FAULT = text
+        _log(f'GPU fault ({text}); finishing this track on the CPU, then restarting the worker')
+    return True
+
+
 def on_gpu():
     """Is the pipeline running on CUDA? Asked without importing torch."""
     return str(device()).startswith('cuda')
@@ -242,7 +272,7 @@ def inference(label='model'):
 
 # ── Beat and downbeat tracking ──────────────────────────────────────────────
 
-def beat_tracker():
+def beat_tracker(on=None):
     """
     Beat This! (Foscarin et al., ISMIR 2024) — a transformer that predicts beats
     and downbeats directly.
@@ -254,17 +284,21 @@ def beat_tracker():
     rather than a researcher.
 
     Run without the DBN post-processor, so madmom is not a dependency at all.
+    `on='cpu'` builds a second instance on the CPU, for when the GPU has
+    faulted (see `gpu_fault`).
     """
+    target = on or device()
+
     def build():
         require('beat_this', 'pip install -r requirements.txt')
         from beat_this.inference import Audio2Beats
         local = local_checkpoint('beat_this-final0.ckpt')
         if local:
             _log('loading beat_this from cache')
-            return Audio2Beats(checkpoint_path=local, device=device(), dbn=False)
+            return Audio2Beats(checkpoint_path=local, device=target, dbn=False)
         _log('downloading beat_this checkpoint (~80 MB, once)…')
-        return Audio2Beats(device=device(), dbn=False)
-    return cached('beat_this', build)
+        return Audio2Beats(device=target, dbn=False)
+    return cached('beat_this' if target == device() else f'beat_this:{target}', build)
 
 
 # ── Source separation ───────────────────────────────────────────────────────

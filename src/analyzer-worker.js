@@ -402,6 +402,13 @@ class AnalyzerWorker {
     this._clearTimeout();
     if (resp.error) p.reject(new Error(resp.error));
     else p.resolve(resp.result);
+    // The worker's GPU has faulted and stays broken for that process (see
+    // models.gpu_fault). Replace it before the next request goes out, the way
+    // a timeout does, so the queue carries on rather than failing with it.
+    if (resp.recycle) {
+      console.warn('[analyzer] worker asked to be replaced (GPU fault); restarting it');
+      this._recycleProcess();
+    }
     this._tick();
   }
 
