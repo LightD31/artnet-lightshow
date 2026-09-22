@@ -139,6 +139,42 @@ class ModelOutputs(unittest.TestCase):
         self.assertEqual([row['score'] for row in result], [0.25, -0.5])
 
 
+@needs_audio
+class SKey(unittest.TestCase):
+    def test_audio_is_read_without_torchaudio_load(self):
+        # torchaudio 2.9+ routes `load` through torchcodec, which the ROCm
+        # wheels do not ship; S-KEY's own loader then fails and every track
+        # silently loses its key. The adapter reads the file itself.
+        import types
+        import numpy as np
+        import soundfile as sf
+        seen = {}
+
+        def detect_key(path, device='cpu'):
+            import sys
+            seen['waveform'] = module.load_audio(path, 22050)
+            # S-KEY prints its answer with an emoji. On the real stdout that
+            # is the worker's protocol stream, and on Windows it raises.
+            if sys.stdout is sys.__stdout__:
+                raise UnicodeEncodeError('charmap', '✅', 0, 1, 'printed to the protocol stream')
+            print('✅ Predicted key: A minor')
+            return ['A minor']
+
+        module = types.SimpleNamespace(detect_key=detect_key,
+                                       load_audio=MagicMock(side_effect=RuntimeError('torchcodec')))
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / 'tone.wav')
+            t = np.arange(44100) / 44100
+            sf.write(path, np.stack([0.2 * np.sin(2 * np.pi * 440 * t), 0.1 * np.sin(2 * np.pi * 440 * t)], axis=1), 44100)
+            with patch.object(adapters, '_optional', return_value=module):
+                result = adapters.skey_key(path)
+        self.assertEqual(result, {'value': 'A minor', 'confidence': 1.0, 'source': 's-key'})
+        waveform = seen['waveform']
+        self.assertEqual(tuple(waveform.shape[:1]), (1,))
+        self.assertAlmostEqual(waveform.shape[1], 22050, delta=2)
+        self.assertAlmostEqual(float(waveform.abs().max()), 1.0, places=5)
+
+
 class Miopen(unittest.TestCase):
     # AMD's Windows ROCm wheels cannot compile MIOpen's BatchNorm kernel, so
     # every model with a BatchNorm layer failed on the GPU until it was off.

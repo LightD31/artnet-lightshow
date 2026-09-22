@@ -251,13 +251,50 @@ def muq_pass(waveform, sample_rate: int, vocabularies):
             "embeddings": muq_embeddings(audio, 24000)}
 
 
+def _skey_load_audio(song_path, sr, mono=True, normalize=True):
+    """
+    S-KEY's `load_audio`, read with soundfile instead of `torchaudio.load`.
+
+    From torchaudio 2.9, `load` needs torchcodec, which is not built for every
+    torch — AMD's ROCm wheels for Windows have none — and S-KEY has no fallback.
+    The adapter swallows the error, so the symptom was not a failure but every
+    track quietly losing its key. Same contract: (channels, samples) at `sr`,
+    peak-normalised.
+    """
+    import numpy as np
+    import soundfile as sf
+    import librosa
+    import torch
+    if not Path(song_path).exists():
+        raise FileNotFoundError(f"File {song_path} not found.")
+    signal, file_sr = sf.read(song_path, dtype="float32", always_2d=True)
+    signal = signal.T
+    if mono and signal.shape[0] > 1:
+        signal = signal.mean(axis=0, keepdims=True)
+    if file_sr != sr:
+        signal = librosa.resample(signal, orig_sr=file_sr, target_sr=int(sr))
+    waveform = torch.from_numpy(np.ascontiguousarray(signal, dtype=np.float32))
+    if normalize:
+        peak = torch.max(torch.abs(waveform))
+        if peak > 0:
+            waveform = waveform / peak
+    return waveform
+
+
 def skey_key(audio_path: str):
     """Return S-KEY's global key when the optional Deezer package is present."""
     module = _optional("skey.key_detection")
     if module is None:
         return None
+    module.load_audio = _skey_load_audio
     try:
-        result = module.detect_key(audio_path, device=os.environ.get('ARTNET_ANALYSIS_DEVICE', 'cpu'))
+        # S-KEY prints its answer, emoji included, to stdout. That is the
+        # worker's JSON protocol stream, and on a Windows console the emoji
+        # alone raises — which the except below turned into "no key", every
+        # track. Its chatter goes nowhere; the return value is the answer.
+        import io
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = module.detect_key(audio_path, device=os.environ.get('ARTNET_ANALYSIS_DEVICE', 'cpu'))
         value = result[0] if isinstance(result, list) else result
         return {"value": str(value), "confidence": 1.0, "source": "s-key"}
     except Exception:
