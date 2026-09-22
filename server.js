@@ -106,7 +106,7 @@ const deezerSource = new DeezerSource();
 const analysisCache = new AnalysisCache(path.join(__dirname, 'cache', 'analysis'));
 const autoShow = new AutoShow(applyPatch, COLOR_PRESETS, PATTERNS, analysisCache);
 
-const integrations = setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolink, autoShow });
+const integrations = setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolink, autoShow, analysisCache });
 
 // One clock for every pattern (see src/server/conductor.js). The render loop
 // drives the auto show's cursor, so a cue fires on the frame it is due, and

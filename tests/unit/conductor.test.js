@@ -105,7 +105,7 @@ test('when a source stops, the free clock carries on from where it was', () => {
   assert.ok(close(adopted, 128, 1e-6), 'and at the tempo the music had');
 });
 
-test('a seek or a new source starts a new epoch; steady playback does not', () => {
+test('a seek or a jump starts a new epoch; steady playback does not', () => {
   const r = rig();
   const grid = grid128();
   let pos = 0;
@@ -175,4 +175,61 @@ test('a paused track hands over to the free clock, and locks again on resume', (
 
   r.advance(25); pos += 25;
   assert.strictEqual(r.c.now().source, 'auto', 'playing again, locked again');
+});
+
+// Stopping the auto show on a song the clock then follows by itself is the
+// same beats read off the same grid: the chase must not restart for it. A
+// source that counts from somewhere else entirely is a new start.
+test('a hand-over between sources that agree keeps the count going', () => {
+  const r = rig({ bpm: 90 });
+  const grid = grid128();
+  let pos = 60000 * 20 / 128;
+  let showRunning = true;
+  r.c.setAutoSource(() => (showRunning ? { grid, positionMs: pos } : null));
+  r.c.setTrack({ key: 'song', grid, positionMs: () => pos });
+  const first = r.c.now();
+  assert.strictEqual(first.source, 'auto');
+
+  showRunning = false;
+  r.advance(25); pos += 25;
+  const after = r.c.now();
+  assert.strictEqual(after.source, 'track');
+  assert.strictEqual(after.epoch, first.epoch, 'the same beats, no restart');
+
+  // Free-running far from the song's count, then locking to it: a new start.
+  r.c.clearTrack({ key: 'other' });
+  for (let i = 0; i < 400; i++) { r.advance(25); r.c.now(); }
+  const free = r.c.now();
+  r.c.setTrack({ key: 'song-2', grid, positionMs: () => 1000 });
+  assert.strictEqual(r.c.now().epoch, free.epoch + 1);
+});
+
+// A typed tempo or a tap takes the clock back from a locked track in time with
+// it: from the beat the music is on, at the tempo the operator asked for.
+test('taking the tempo back from a locked track keeps the beat', () => {
+  const r = rig({ bpm: 90 });
+  const grid = grid128();
+  let pos = 60000 * 16.5 / 128;
+  r.c.setTrack({ key: 'song', grid, positionMs: () => pos });
+  const locked = r.c.now();
+  assert.strictEqual(locked.source, 'track');
+
+  r.c.setBpm(100);
+  const typed = r.c.now();
+  assert.deepStrictEqual([typed.source, typed.bpm], ['tap', 100], 'the typed tempo, not the song\'s');
+  assert.ok(close(typed.beatPos, 16.5), `from the beat the song was on: ${typed.beatPos}`);
+  assert.strictEqual(typed.epoch, locked.epoch, 'no restart');
+
+  // A single tap on a fresh song: the beat snaps to the tap, the song's tempo
+  // carries on until a second tap measures a new one.
+  let adopted = null;
+  r.c.onAdoptBpm((bpm) => { adopted = bpm; });
+  r.c.setTrack({ key: 'song-2', grid, positionMs: () => pos });
+  r.advance(25); pos += 25;
+  assert.strictEqual(r.c.now().source, 'track');
+  r.c.tap();
+  const tapped = r.c.now();
+  assert.strictEqual(tapped.source, 'tap');
+  assert.strictEqual(tapped.beatPos, 17, 'the next whole beat');
+  assert.ok(close(tapped.bpm, 128, 1e-6) && close(adopted, 128, 1e-6), 'at the song\'s tempo');
 });

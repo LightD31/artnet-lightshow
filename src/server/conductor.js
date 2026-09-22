@@ -54,6 +54,7 @@ class Conductor {
     this._epoch = 0;
     this._onAdoptBpm = () => {};
     this._still = {};                   // per grid source: { positionMs, since }
+    this._tookOver = false;             // the operator just took the tempo from a track
   }
 
   /** `fn()` → `{ grid, positionMs }` while the auto show is running, else null. */
@@ -98,19 +99,36 @@ class Conductor {
     const value = Number(bpm);
     if (!Number.isFinite(value)) return;
     const t = this._now();
-    this._free = { ...this._free, at: t, beatPos: this._freeBeatAt(t), bpm: clampBpm(value) };
+    const current = this._current(t);
+    const takesOver = manual && current.source === 'track';
+    // Taking over from a locked track starts from the beat the music is on,
+    // not from wherever the idle free clock had wandered to.
+    const beatPos = takesOver ? current.beatPos : this._freeBeatAt(t);
+    this._free = { ...this._free, at: t, beatPos, bpm: clampBpm(value) };
     if (manual && this._track) this._override = true;
+    if (takesOver) this._tookOver = true;
   }
 
   /**
    * A tap is a beat. The free clock jumps to the next whole beat, so the step
-   * lands on the tap as it always has, and a locked track hands the tempo over.
+   * lands on the tap as it always has, and a locked track hands the tempo over
+   * — at the song's tempo, until a second tap says otherwise.
    */
   tap() {
     const t = this._now();
-    const from = this._last && this._last.source === 'tap' ? this._freeBeatAt(t) : this._current(t).beatPos;
-    this._free = { ...this._free, at: t, beatPos: Math.floor(from + 1e-9) + 1 };
+    const current = this._current(t);
+    const takesOver = current.source === 'track';
+    this._free = {
+      ...this._free,
+      at: t,
+      beatPos: Math.floor(current.beatPos + 1e-9) + 1,
+      bpm: takesOver ? clampBpm(current.bpm) : this._free.bpm,
+    };
     if (this._track) this._override = true;
+    if (takesOver) {
+      this._tookOver = true;
+      this._onAdoptBpm(this._free.bpm);
+    }
   }
 
   /** Stopping the patterns freezes the free clock where it is. */
@@ -160,16 +178,19 @@ class Conductor {
   /**
    * Where the music is now: `{ beatPos, bpm, source, epoch }`.
    *
-   * Handing over to the free clock carries the beat position and tempo on.
-   * Every other change of source, and any jump the elapsed time cannot
-   * explain, starts a new epoch.
+   * A locked source that stops answering hands over to the free clock, which
+   * carries its beat position and tempo on. Any jump the elapsed time cannot
+   * explain starts a new epoch — a seek, a new track, or a source whose count
+   * has nothing to do with the last one's. A change of source that carries on
+   * counting (the auto show stopping on a track the clock then follows on its
+   * own) does not, so the chase does not restart for it.
    */
   now() {
     const t = this._now();
     let reading = this._current(t);
     const last = this._last;
 
-    if (last && reading.source === 'tap' && last.source !== 'tap') {
+    if (last && reading.source === 'tap' && last.source !== 'tap' && !this._tookOver) {
       // A locked source stopped answering: carry on from where it was.
       const beatPos = last.beatPos + ((t - last.t) / 60000) * last.bpm;
       this._free = { ...this._free, at: t, beatPos, bpm: clampBpm(last.bpm) };
@@ -178,12 +199,9 @@ class Conductor {
     } else if (last) {
       const expected = ((t - last.t) / 60000) * Math.max(last.bpm, reading.bpm);
       const moved = reading.beatPos - last.beatPos;
-      if (reading.source !== last.source
-        || moved < -BACKWARD_JUMP_BEATS
-        || moved > expected + FORWARD_JUMP_BEATS) {
-        this._epoch++;
-      }
+      if (moved < -BACKWARD_JUMP_BEATS || moved > expected + FORWARD_JUMP_BEATS) this._epoch++;
     }
+    this._tookOver = false;
 
     this._last = { ...reading, t };
     return { ...reading, epoch: this._epoch };

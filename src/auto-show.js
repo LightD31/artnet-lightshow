@@ -109,11 +109,15 @@ class AutoShow {
     // The analysed beat grid of the loaded track, which the pattern clock
     // locks to while the show runs (see server/conductor.js).
     this._grid = null;
+    // The cache key the loaded analysis was read or written under, so the
+    // pattern clock can reuse the grid already in memory for that track.
+    this.analysisKey = null;
     // When the server's render loop drives the cursor (useFrameClock), there is
     // no timer of its own.
     this._frameDriven = false;
-    // Told the key of every analysis this instance writes to the cache, so the
-    // pattern clock can lock to a track whose analysis has just arrived.
+    // Told `(key, analysis)` for every analysis this instance writes to the
+    // cache, so the pattern clock can lock to a track whose analysis has just
+    // arrived.
     this.onAnalysisCached = null;
   }
 
@@ -144,9 +148,14 @@ class AutoShow {
   /** The loaded track's beat grid, or null. */
   beatGrid() { return this._grid; }
 
-  _noteCached(cacheKey) {
+  /** The beat grid already in memory for a cache key, or null. */
+  gridFor(cacheKey) {
+    return cacheKey && cacheKey === this.analysisKey ? this._grid : null;
+  }
+
+  _noteCached(cacheKey, analysis) {
     if (cacheKey && typeof this.onAnalysisCached === 'function') {
-      try { this.onAnalysisCached(cacheKey); } catch (err) {
+      try { this.onAnalysisCached(cacheKey, analysis); } catch (err) {
         console.warn(`[auto-show] onAnalysisCached: ${err.message}`);
       }
     }
@@ -284,6 +293,7 @@ class AutoShow {
     console.log(`[auto-show] analysis cache hit: ${cacheKey}`);
     console.log(`[auto-show] Models used (cached ${cacheKey}): ${formatModelUsage(cached)}`);
     this.analysis = cached;
+    this.analysisKey = cacheKey;
     this.buildTimeline();
     this._status = 'ready';
     return true;
@@ -350,11 +360,12 @@ class AutoShow {
       const result = await this._runAnalyzer(source, null, 'current', cacheKey);
       if (!isCurrent()) throw supersededError();
       this.analysis = result;
+      this.analysisKey = cacheKey;
       this.buildTimeline();
       this._status = 'ready';
       if (cacheKey && this._cache) {
         await this._cache.save(cacheKey, result, { track: this.track });
-        this._noteCached(cacheKey);
+        this._noteCached(cacheKey, result);
       }
       return result;
     } catch (err) {
@@ -384,7 +395,7 @@ class AutoShow {
       const analysis = await this._runAnalyzer(audioPath, targetDurationSec, priority, cacheKey, queuePos);
       if (cacheKey && this._cache) {
         await this._cache.save(cacheKey, analysis, meta || {});
-        this._noteCached(cacheKey);
+        this._noteCached(cacheKey, analysis);
       }
       return analysis;
     } finally {
@@ -487,6 +498,7 @@ class AutoShow {
       );
       if (!isCurrent()) throw supersededError();
       this.analysis = analysis;
+      this.analysisKey = cacheKey;
       this.buildTimeline();
       this._status = 'ready';
       return { analysis, cached: joining };
@@ -727,6 +739,7 @@ class AutoShow {
   reset() {
     this.stop();
     this.analysis = null;
+    this.analysisKey = null;
     this._grid = null;
     this.timeline = [];
     this.timelineRevision = randomUUID();
