@@ -150,3 +150,29 @@ test('a scene can be anchored at the moment it was scheduled', () => {
   r.c.setAutoSource(() => null);
   assert.strictEqual(r.c.beatAtTrackMs(1000), null, 'no grid, no anchor time');
 });
+
+// A paused track's position stands still. Locking to it would freeze the rig on
+// one step for the length of the pause, which looks like a crash; the chase
+// carries on at the song's tempo instead, and locks again when it resumes.
+test('a paused track hands over to the free clock, and locks again on resume', () => {
+  const r = rig({ bpm: 90 });
+  const grid = grid128();
+  let pos = 60000 * 8 / 128;
+  r.c.setAutoSource(() => ({ grid, positionMs: pos }));
+  for (let i = 0; i < 10; i++) { r.advance(25); pos += 25; r.c.now(); }
+  assert.strictEqual(r.c.now().source, 'auto');
+
+  const pausedAt = r.c.now().beatPos;
+  for (let i = 0; i < 4; i++) { r.advance(25); r.c.now(); }
+  assert.strictEqual(r.c.now().source, 'auto', 'a frame or two without movement is not a pause');
+  for (let i = 0; i < 8; i++) { r.advance(25); r.c.now(); }
+  const paused = r.c.now();
+  assert.strictEqual(paused.source, 'tap', 'the pause is noticed');
+  r.advance(500);
+  assert.ok(r.c.now().beatPos > pausedAt + 1, 'and the chase keeps moving');
+  assert.ok(close(r.c.now().bpm, 128, 1e-6), 'at the song\'s tempo');
+  assert.strictEqual(r.c.beatAtTrackMs(pos), null, 'no grid to anchor to while paused');
+
+  r.advance(25); pos += 25;
+  assert.strictEqual(r.c.now().source, 'auto', 'playing again, locked again');
+});

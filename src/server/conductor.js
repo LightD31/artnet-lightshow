@@ -23,15 +23,22 @@ const { beatPositionAt, localBpm } = require('../shared/beat-clock');
  * A source that stops answering hands over to the free clock at the beat
  * position and tempo it had reached, so stopping the auto show mid-song does
  * not make the rig lurch — the chase carries on in time until someone changes
- * it. Any real discontinuity (a seek, a new track, a different source taking
- * over) bumps `epoch`, which tells the engine to re-anchor its patterns rather
- * than wait for a beat position that has just jumped away from them.
+ * it. A paused track counts as stopped: its position stands still, and a rig
+ * frozen on one step for the length of a pause looks broken, where carrying on
+ * at the song's tempo looks like the show waiting for the music. Any real
+ * discontinuity (a seek, a new track, a different source taking over) bumps
+ * `epoch`, which tells the engine to re-anchor its patterns rather than wait
+ * for a beat position that has just jumped away from them.
  */
 
 // A reading that moves back by more than this, or forward by this much more
 // than the elapsed time explains, is a discontinuity rather than jitter.
 const BACKWARD_JUMP_BEATS = 0.25;
 const FORWARD_JUMP_BEATS = 2;
+
+// A track whose position has not moved for this long is paused, not playing.
+// Longer than any gap between two frames, shorter than a beat at any tempo.
+const STALL_MS = 200;
 
 const clampBpm = (bpm) => Math.max(20, Math.min(300, bpm));
 
@@ -46,6 +53,7 @@ class Conductor {
     this._last = null;                  // the previous reading, for continuity
     this._epoch = 0;
     this._onAdoptBpm = () => {};
+    this._still = {};                   // per grid source: { positionMs, since }
   }
 
   /** `fn()` → `{ grid, positionMs }` while the auto show is running, else null. */
@@ -111,26 +119,41 @@ class Conductor {
     this._free = { ...this._free, at: t, beatPos: this._freeBeatAt(t), running: !!running };
   }
 
-  /** The reading from the best source that answers, without bookkeeping. */
-  _current(t) {
-    const auto = this._autoSource();
-    if (auto && auto.grid) {
-      const beatPos = beatPositionAt(auto.grid, auto.positionMs);
-      if (Number.isFinite(beatPos)) {
-        return { beatPos, bpm: localBpm(auto.grid, auto.positionMs), source: 'auto' };
-      }
+  /** Whether a grid source's position is still moving, i.e. not paused. */
+  _moving(source, positionMs, t) {
+    const still = this._still[source];
+    if (!still || Math.abs(positionMs - still.positionMs) > 0.5) {
+      this._still[source] = { positionMs, since: t };
+      return true;
     }
+    return t - still.since < STALL_MS;
+  }
+
+  /** A reading off a beat grid, or null when the position is unusable or paused. */
+  _gridReading(source, grid, positionMs, t) {
+    if (!grid || !Number.isFinite(positionMs)) {
+      // Forget where it stood, so a show started later is not judged paused
+      // for landing on the same position the last one stopped at.
+      delete this._still[source];
+      return null;
+    }
+    const beatPos = beatPositionAt(grid, positionMs);
+    if (!Number.isFinite(beatPos) || !this._moving(source, positionMs, t)) return null;
+    return { beatPos, bpm: localBpm(grid, positionMs), source };
+  }
+
+  /** The reading from the best source that answers. */
+  _current(t) {
+    const auto = this._autoSource() || {};
+    const fromAuto = this._gridReading('auto', auto.grid, auto.positionMs, t);
+    if (fromAuto) return fromAuto;
     const cdj = this._prolinkSource();
     if (cdj && Number.isFinite(cdj.beatPos)) {
       return { beatPos: cdj.beatPos, bpm: Number.isFinite(cdj.bpm) && cdj.bpm > 0 ? cdj.bpm : this._free.bpm, source: 'cdj' };
     }
-    if (this._track && !this._override) {
-      const pos = this._track.positionMs();
-      const beatPos = Number.isFinite(pos) ? beatPositionAt(this._track.grid, pos) : null;
-      if (Number.isFinite(beatPos)) {
-        return { beatPos, bpm: localBpm(this._track.grid, pos), source: 'track' };
-      }
-    }
+    const track = this._track && !this._override ? this._track : null;
+    const fromTrack = this._gridReading('track', track && track.grid, track ? track.positionMs() : NaN, t);
+    if (fromTrack) return fromTrack;
     return { beatPos: this._freeBeatAt(t), bpm: this._free.bpm, source: 'tap' };
   }
 
@@ -173,9 +196,9 @@ class Conductor {
    */
   beatAtTrackMs(ms) {
     if (!Number.isFinite(ms)) return null;
-    const auto = this._autoSource();
-    if (auto && auto.grid) return beatPositionAt(auto.grid, ms);
-    if (this._track && !this._override && !this._prolinkSource()) return beatPositionAt(this._track.grid, ms);
+    const { source } = this._current(this._now());
+    if (source === 'auto') return beatPositionAt(this._autoSource().grid, ms);
+    if (source === 'track') return beatPositionAt(this._track.grid, ms);
     return null;
   }
 
@@ -189,4 +212,4 @@ class Conductor {
 // The server has one clock. Tests make their own.
 const conductor = new Conductor();
 
-module.exports = { Conductor, conductor, BACKWARD_JUMP_BEATS, FORWARD_JUMP_BEATS };
+module.exports = { Conductor, conductor, BACKWARD_JUMP_BEATS, FORWARD_JUMP_BEATS, STALL_MS };

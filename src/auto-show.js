@@ -15,6 +15,7 @@ const { ShowDirector, measureBuildup } = require('./show/director');
 const { renderIntents } = require('./show/render');
 const { guarded } = require('./server/guard');
 const { resolveIsrc, splitQuery } = require('./isrc');
+const { gridFromAnalysis } = require('./shared/beat-clock');
 const ytdlp = require('./ytdlp');
 
 // A download that never finishes is indistinguishable from one that never
@@ -105,6 +106,50 @@ class AutoShow {
     // late is for a song that has already been left behind and must not touch
     // the running show.
     this._currentJob = null;
+    // The analysed beat grid of the loaded track, which the pattern clock
+    // locks to while the show runs (see server/conductor.js).
+    this._grid = null;
+    // When the server's render loop drives the cursor (useFrameClock), there is
+    // no timer of its own.
+    this._frameDriven = false;
+    // Told the key of every analysis this instance writes to the cache, so the
+    // pattern clock can lock to a track whose analysis has just arrived.
+    this.onAnalysisCached = null;
+  }
+
+  /**
+   * Let the render loop drive the cursor. Each frame calls tick() before it
+   * renders, so a cue fires on the frame it is due — the 20 ms poll of its own
+   * added up to a frame of lateness, different every time.
+   */
+  useFrameClock() {
+    this._frameDriven = true;
+    if (this._loopTimer) { clearInterval(this._loopTimer); this._loopTimer = null; }
+  }
+
+  /** Fire whatever is due by now. Called once per frame by the render loop. */
+  tick() { this._tick(); }
+
+  /**
+   * What the pattern clock locks to while the show runs: the track's beat grid
+   * and where the show is in it. Null when stopped or when the analysis has no
+   * grid.
+   */
+  beatSource() {
+    if (!this.running || !this._grid || !this._getPositionMs) return null;
+    const positionMs = this.getPositionMs();
+    return Number.isFinite(positionMs) ? { grid: this._grid, positionMs } : null;
+  }
+
+  /** The loaded track's beat grid, or null. */
+  beatGrid() { return this._grid; }
+
+  _noteCached(cacheKey) {
+    if (cacheKey && typeof this.onAnalysisCached === 'function') {
+      try { this.onAnalysisCached(cacheKey); } catch (err) {
+        console.warn(`[auto-show] onAnalysisCached: ${err.message}`);
+      }
+    }
   }
 
   get status() { return this._status; }
@@ -172,10 +217,15 @@ class AutoShow {
     const posMs = this.getPositionMs();
     if (!Number.isFinite(posMs)) return;
     let last = -1;
+    let anchorMs;
     const restored = { energyOverride: null, showDynamics: null };
     for (let i = 0; i < this.timeline.length; i++) {
       if (this.timeline[i].timeMs > posMs) break;
       const ev = this.timeline[i];
+      if (ev.action === 'patch' && ev.data
+        && (ev.data.pattern !== undefined || ev.data.beatDivision !== undefined)) {
+        anchorMs = ev.timeMs;
+      }
       if (ev.action === 'patch') {
         if (ev.data?.showDynamics && restored.showDynamics) {
           restored.showDynamics = { ...restored.showDynamics, ...ev.data.showDynamics };
@@ -190,6 +240,11 @@ class AutoShow {
     // A seek lands on the scene; it does not fade into it from wherever the
     // rig happened to be.
     delete restored.fadeMs;
+    // The restored pattern counts its steps from the beat its scene was
+    // scheduled on, so a seek lands on the same step playing through would.
+    if (anchorMs !== undefined && (restored.pattern !== undefined || restored.beatDivision !== undefined)) {
+      restored.anchorMs = anchorMs;
+    }
     // A seek must restore the complete current scene for every timeline. The
     // old expressive-only guard left legacy pattern/colour shows visually
     // stale after a pause, offset nudge, or live replan.
@@ -299,6 +354,7 @@ class AutoShow {
       this._status = 'ready';
       if (cacheKey && this._cache) {
         await this._cache.save(cacheKey, result, { track: this.track });
+        this._noteCached(cacheKey);
       }
       return result;
     } catch (err) {
@@ -328,6 +384,7 @@ class AutoShow {
       const analysis = await this._runAnalyzer(audioPath, targetDurationSec, priority, cacheKey, queuePos);
       if (cacheKey && this._cache) {
         await this._cache.save(cacheKey, analysis, meta || {});
+        this._noteCached(cacheKey);
       }
       return analysis;
     } finally {
@@ -625,6 +682,7 @@ class AutoShow {
       blackoutIndex: this._blackoutIdx,
     });
 
+    this._grid = gridFromAnalysis(this.analysis);
     const plan = director.plan(this.analysis);
     this.palette = plan.palette;
     this.paletteName = plan.paletteName;
@@ -654,7 +712,7 @@ class AutoShow {
     // the look; energy events are deliberately represented as cleared state.
     this._reseek();
     this._tick();
-    this._loopTimer = setInterval(guarded('auto-show', () => this._tick()), 20);
+    if (!this._frameDriven) this._loopTimer = setInterval(guarded('auto-show', () => this._tick()), 20);
   }
 
   stop() {
@@ -669,6 +727,7 @@ class AutoShow {
   reset() {
     this.stop();
     this.analysis = null;
+    this._grid = null;
     this.timeline = [];
     this.timelineRevision = randomUUID();
     this.track = null;
@@ -717,6 +776,9 @@ class AutoShow {
         // Master controls belong to the operator, including for old timelines.
         const { masterDimmer: _dimmer, masterBlackout: _blackout, ...patch } = ev.data || {};
         if ('energyOverride' in patch) this._cancelEnergyTimer();
+        // A scene counts its pattern's steps from the beat it was scheduled
+        // on, not from the frame that happened to fire it.
+        if (patch.pattern !== undefined || patch.beatDivision !== undefined) patch.anchorMs = ev.timeMs;
         this._applyPatch(patch);
         break;
       }
