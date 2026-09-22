@@ -83,8 +83,8 @@ async function resolveLocalPath(source) {
   return resolved;
 }
 
-const AUDIO_EXTENSIONS = ['.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac', '.wma', '.opus', '.aiff', '.aif'];
-const DIRECT_AUDIO_RE = /\.(mp3|wav|ogg|flac|m4a|aac|wma|opus|aiff?)(\?|$)/i;
+const AUDIO_EXTENSIONS = ['.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac', '.wma', '.opus', '.webm', '.aiff', '.aif'];
+const DIRECT_AUDIO_RE = /\.(mp3|wav|ogg|flac|m4a|aac|wma|opus|webm|aiff?)(\?|$)/i;
 
 /**
  * What an operator typed into "Analyse", classified before anything touches it.
