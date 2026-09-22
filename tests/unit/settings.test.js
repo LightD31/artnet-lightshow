@@ -180,3 +180,12 @@ test('the Hue pars delay defaults to off and refuses a value in the wrong unit',
   assert.ok(!hue(600), 'over half a second is seconds typed as milliseconds');
   assert.ok(!hue(-1));
 });
+
+test('the separator defaults to Demucs and takes only the two it knows', () => {
+  const { schema } = require('../../src/server/settings');
+  assert.strictEqual(DEFAULTS.analysis.separator, 'demucs', 'the one that keeps up with a live set');
+  const sep = (separator) => schema.safeParse({ ...DEFAULTS, analysis: { ...DEFAULTS.analysis, separator } }).success;
+  assert.ok(sep('bs-roformer'));
+  assert.ok(!sep('roformer'));
+  assert.ok(!sep(''));
+});

@@ -152,6 +152,11 @@ function createApplier({ midi, spotify, smtc, deezer, autoShow, applyPatch, broa
     return info;
   }
 
+  function applySeparator() {
+    console.log(`[analysis] separator is now ${settings.get('analysis.separator')}`);
+    if (autoShow && autoShow.restartWorker) autoShow.restartWorker('separator changed');
+  }
+
   function applyDeezer() {
     const arl = settings.get('deezer.arl');
     if (!arl) return;
@@ -175,6 +180,7 @@ function createApplier({ midi, spotify, smtc, deezer, autoShow, applyPatch, broa
     { match: (k) => k === 'server.publicUrl', run: refreshCallbackUrl },
     { match: (k) => k === 'deezer.arl', run: applyDeezer },
     { match: (k) => k === 'analysis.pythonPath', run: applyPython },
+    { match: (k) => k === 'analysis.separator', run: applySeparator },
   ];
 
   return {

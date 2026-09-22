@@ -350,8 +350,14 @@ def bs_roformer_separator():
 
 
 def bs_roformer_enabled():
-    """Is BS-RoFormer the configured separator? One reader, several callers."""
-    return os.environ.get('ARTNET_USE_BS_ROFORMER', '1').lower() not in ('0', 'false', 'no')
+    """
+    Is BS-RoFormer the configured separator? One reader, several callers.
+
+    The server sets ARTNET_USE_BS_ROFORMER from the settings page's Separator
+    field when it starts the worker. Unset — a one-shot run from the command
+    line — it is Demucs, the same default as the settings page.
+    """
+    return os.environ.get('ARTNET_USE_BS_ROFORMER', '0').lower() not in ('0', 'false', 'no', '')
 
 
 def warm_up():

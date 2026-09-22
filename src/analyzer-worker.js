@@ -15,6 +15,16 @@ function storedTimeoutMs() {
   return settings.get('analysis.analyzerTimeoutMs');
 }
 
+/**
+ * The worker's environment: this process's, plus the separator the settings
+ * page chose. Read at spawn, so a change applies to the next worker — and
+ * changing it restarts the worker (see apply.js).
+ */
+function workerEnv() {
+  const bsRoformer = settings.get('analysis.separator') === 'bs-roformer';
+  return { ...process.env, ARTNET_USE_BS_ROFORMER: bsRoformer ? '1' : '0' };
+}
+
 // Priority bands, in served order. 'current' is the song the room is hearing
 // right now: it outranks everything else, and it is the only band allowed to
 // interrupt an analysis that has already started.
@@ -247,7 +257,14 @@ class AnalyzerWorker {
   restart(reason = 'configuration changed') {
     if (!this._proc) return;                 // next spawn already picks it up
     console.log(`[analyzer] recycling worker: ${reason}`);
+    // Work in flight starts again on the new worker, at the head of its band.
+    // Left pending, it sat on a killed process until the timeout.
+    const running = this._pending;
+    this._pending = null;
+    this._clearTimeout();
+    if (running) this._insertByPriority(running, { front: true });
     this._recycleProcess();
+    this._tick();
   }
 
   /**
@@ -284,6 +301,7 @@ class AnalyzerWorker {
   _spawn() {
     const proc = spawn(this._resolvePython(), [this._scriptPath, '--worker'], {
       stdio: ['pipe', 'pipe', 'pipe'],
+      env: workerEnv(),
     });
 
     proc.stdout.setEncoding('utf8');

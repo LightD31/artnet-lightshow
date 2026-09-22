@@ -510,7 +510,7 @@ function checkAnalysisModels({ download = false } = {}) {
   const text = process.env.ARTNET_MUQ_TEXT_MODEL || path.join(root, 'xlm-roberta-base');
   const skey = path.join(root, 'skey');
   const beat = path.join(root, 'beat_this.ready');
-  const bsEnabled = !['0', 'false', 'no'].includes(String(process.env.ARTNET_USE_BS_ROFORMER || '0').toLowerCase());
+  const bsEnabled = settings.get('analysis.separator') === 'bs-roformer';
   const ready = (!bsEnabled || (fs.existsSync(bs) && fs.existsSync(bsReady))) && fs.existsSync(muq) && fs.existsSync(mulan)
     && fs.existsSync(text) && fs.existsSync(skey) && fs.existsSync(beat);
   if (!ready && download) {

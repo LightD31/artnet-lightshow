@@ -195,3 +195,38 @@ test('a worker that asks to be recycled is replaced before the next request', as
     assert.notStrictEqual(first.pid, second.pid, 'the second track went to a new process');
   } finally { w.shutdown(); }
 });
+
+// The settings page's Separator reaches Python as ARTNET_USE_BS_ROFORMER,
+// read when the worker starts.
+test('the worker is started with the separator the settings page chose', async () => {
+  const { settings } = require('../../src/server/settings');
+  const original = settings._values.analysis.separator;
+  try {
+    for (const [separator, flag] of [['demucs', '0'], ['bs-roformer', '1']]) {
+      settings._values.analysis.separator = separator;
+      const w = worker('env');
+      try {
+        assert.strictEqual((await w.analyze('/tmp/a.wav', null)).separator, flag, separator);
+      } finally { w.shutdown(); }
+    }
+  } finally {
+    settings._values.analysis.separator = original;
+  }
+});
+
+// Changing the separator (or the interpreter) restarts the worker. Work that
+// was running must go to the new process, not sit on the killed one until the
+// timeout.
+test('a restart hands the running analysis to the new worker', async () => {
+  const w = worker('hangslow');
+  try {
+    const slow = w.analyze('/tmp/slow.wav', null);
+    slow.catch(() => {});
+    await new Promise((r) => setTimeout(r, 200));
+    const before = w._proc.pid;
+    const running = w._pending;
+    w.restart('separator changed');
+    assert.ok(w._proc && w._proc.pid !== before, 'a new process was started');
+    assert.strictEqual(w._pending, running, 'the same request is in flight on it');
+  } finally { w.shutdown(); }
+});

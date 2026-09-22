@@ -78,13 +78,10 @@ def separate(mono, sample_rate, overlap=0.10, segment_seconds=None, stereo_loade
     import librosa
     from demucs.apply import apply_model
 
-    # BS-RoFormer is preferred for the lighting roles. Keep the existing
-    # Demucs path as a measured fallback for installations without the optional
-    # adapter or checkpoint.
-    # The generic audio-separator registry cannot load every arbitrary
-    # community checkpoint. Keep this opt-in until a compatible registry model
-    # and config are explicitly supplied; this prevents a show from paying a
-    # failed load attempt on every track.
+    # BS-RoFormer when the settings page asks for it (see
+    # models.bs_roformer_enabled), with Demucs as the fallback if it cannot
+    # load or run. Demucs is the default: BS-RoFormer takes about seven times
+    # as long, which on an integrated GPU is longer than the track plays.
     if models.bs_roformer_enabled() and not models.gpu_fault():
         try:
             return separate_bs_roformer(mono, sample_rate, stereo_loader)

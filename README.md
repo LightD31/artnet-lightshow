@@ -755,6 +755,20 @@ driving a visualiser. On CPU expect roughly 0.6× realtime, most of it separatio
 — set `separate_sources=False` in `src/analysis/config.py` to trade the
 stem-derived instrument roles for a 4× faster analysis.
 
+**Separator.** Settings → Analysis → **Separator** picks the model that splits
+each track into stems. **Demucs** is the default and keeps up with a live set.
+**BS-RoFormer** takes about seven times as long, so the playing track is rarely
+ready in time. On a Radeon 890M, a 3½-minute track takes about 60 s with Demucs
+and about 400 s with BS-RoFormer. Changing it restarts the analyzer; tracks
+already analysed keep their cached result.
+
+**AMD GPUs** run through ROCm. Install torch from AMD's index before
+`requirements.txt`; the comment above `torch` there has the command and the
+version pairing. The analyser turns AMD's MIOpen library off, because
+the Windows nightlies cannot compile its BatchNorm kernel. It also handles a
+known ROCm fault: when a GPU FFT fails mid-track, that track finishes on the
+CPU and the analyzer restarts itself before the next one.
+
 `panns_inference` is the one part that stays optional. Genre no longer depends
 on it — that is MuQ-MuLan, scored zero-shot against the subgenres by name, and
 it comes down with the rest of the weights above. What PANNs still supplies is

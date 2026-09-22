@@ -1175,6 +1175,15 @@ const SETTINGS_SPEC = [
         help: 'How long yt-dlp may run before it is killed.' },
       { path: 'analysis.localRoot', label: 'Library Folder', type: 'text',
         help: 'Confine "analyze a local file" to this folder. Blank allows any path.' },
+      { path: 'analysis.separator', label: 'Separator', type: 'select',
+        options: () => [
+          { value: 'demucs', label: 'Demucs (fast)' },
+          { value: 'bs-roformer', label: 'BS-RoFormer (slow)' },
+        ],
+        help: 'Splits each track into drums, bass, vocals and other. Demucs keeps up with a live set; '
+          + 'BS-RoFormer takes about seven times as long (around 6 minutes a track on an integrated '
+          + 'GPU), so the playing track is rarely ready in time. Changing it restarts the analyzer; '
+          + 'tracks already analysed keep their result.' },
       { path: 'analysis.pythonPath', label: 'Python', type: 'text',
         help: 'Blank auto-detects, preferring an interpreter that can import the analyzer\'s '
           + 'dependencies. Set a full path when pip installed into a different Python than the '

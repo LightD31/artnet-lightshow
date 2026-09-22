@@ -2,7 +2,8 @@
 
 // Stand-in for src/analyze.py --worker. Speaks the same NDJSON protocol and
 // misbehaves on demand so the worker's failure handling can be tested.
-// FAKE_MODE: ok (default) | hang | wrongid | crash | hangslow | gpufault
+// FAKE_MODE: ok (default) | hang | wrongid | crash | hangslow | gpufault | env
+// env answers with the separator flag it was started with, and its pid.
 // gpufault answers, asks to be recycled, and would crash on a second request:
 // a process whose GPU faulted is not to be trusted with another track.
 // hangslow never answers a source containing "slow" and answers everything
@@ -18,6 +19,10 @@ rl.on('line', (line) => {
   if (mode === 'hang') return;
   if (mode === 'hangslow' && String(req.source).includes('slow')) return;
   if (mode === 'crash') process.exit(1);
+  if (mode === 'env') {
+    process.stdout.write(JSON.stringify({ id: req.id, result: { separator: process.env.ARTNET_USE_BS_ROFORMER, pid: process.pid } }) + '\n');
+    return;
+  }
   if (mode === 'gpufault') {
     if (served++) process.exit(1);
     process.stdout.write(JSON.stringify({ id: req.id, result: { pid: process.pid }, recycle: true }) + '\n');

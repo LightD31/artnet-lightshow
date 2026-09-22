@@ -126,6 +126,12 @@ const DEFAULTS = {
     // the analyzer's dependencies. Set it when you have several Pythons and
     // pip installed into a different one than the launcher resolves to.
     pythonPath: '',
+    // Which model splits a track into drums, bass, vocals and other.
+    // BS-RoFormer is the more careful of the two and takes about seven times
+    // as long: on a Radeon 890M it needs ~400 s for a 3.5-minute track, which
+    // is slower than the track plays, where Demucs needs ~60 s. The default is
+    // the one that keeps up with a live set.
+    separator: 'demucs',
   },
 };
 
@@ -244,6 +250,7 @@ const schema = z.object({
     downloadTimeoutMs: z.number().int().min(10000).max(3600000),
     localRoot: z.string().max(4096),
     pythonPath: z.string().max(4096),
+    separator: z.enum(['demucs', 'bs-roformer']),
   }).strict(),
 }).strict();
 
