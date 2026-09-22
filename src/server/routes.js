@@ -954,9 +954,9 @@ function attachRoutes(app, deps) {
     res.json({ ok: true, data });
   });
 
-  app.get('/api/auto/cache', (_req, res) => {
-    res.json({ ok: true, entries: analysisCache.list() });
-  });
+  app.get('/api/auto/cache', asyncHandler(async (_req, res) => {
+    res.json({ ok: true, entries: await analysisCache.list() });
+  }));
 
   app.delete('/api/auto/cache', (_req, res) => {
     const removed = analysisCache.clear();

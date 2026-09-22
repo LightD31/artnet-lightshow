@@ -32,6 +32,27 @@ function setHooks(partial) { Object.assign(hooks, partial); }
 let persist = () => {};
 function setPersist(fn) { persist = fn; }
 
+// The sync offset is dialled in with an encoder or a slider, 5 ms a detent,
+// and each change used to rewrite settings.json synchronously on the thread
+// that renders DMX. It is saved once the hand comes off instead; the value in
+// memory — the one the show uses — changes at once either way.
+const SYNC_OFFSET_SAVE_DELAY_MS = 750;
+let syncOffsetSaveTimer = null;
+
+function persistSyncOffsetSoon() {
+  if (syncOffsetSaveTimer) clearTimeout(syncOffsetSaveTimer);
+  syncOffsetSaveTimer = setTimeout(flushPendingPersist, SYNC_OFFSET_SAVE_DELAY_MS);
+  if (syncOffsetSaveTimer.unref) syncOffsetSaveTimer.unref();
+}
+
+/** Save a change still waiting on its delay. Called on the way down. */
+function flushPendingPersist() {
+  if (!syncOffsetSaveTimer) return;
+  clearTimeout(syncOffsetSaveTimer);
+  syncOffsetSaveTimer = null;
+  persist({ auto: { syncOffsetMs: state.autoSyncOffsetMs } });
+}
+
 function applyPatch(rawData) {
   // Validate at the boundary. Throws on invalid input.
   const data = validate(patchSchema, rawData || {}, 'patch');
@@ -138,7 +159,7 @@ function applyPatch(rawData) {
     // property of the room and the rig, not of tonight's set, so it should
     // survive a restart rather than being dialled in again every show.
     state.autoSyncOffsetMs = Math.round(data.autoSyncOffsetMs);
-    persist({ auto: { syncOffsetMs: state.autoSyncOffsetMs } });
+    persistSyncOffsetSoon();
     hooks.autoSyncOffsetMs(state.autoSyncOffsetMs);
   }
   if (data.autoPrefetchDepth !== undefined) {
@@ -203,6 +224,7 @@ function processTap() {
 }
 
 module.exports = {
+  flushPendingPersist,
   applyPatch,
   applyOverride,
   setFixtureMaxBrightness,

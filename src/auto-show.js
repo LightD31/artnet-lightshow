@@ -216,10 +216,16 @@ class AutoShow {
    * Load a previously-analyzed result from the cache without touching audio.
    * Returns true on hit, false on miss.
    */
-  _loadFromCache(cacheKey) {
+  async _loadFromCache(cacheKey, isCurrent = () => true) {
     if (!cacheKey || !this._cache) return false;
-    const cached = this._cache.get(cacheKey);
+    // Asynchronous: a document is megabytes, and a synchronous read of it on
+    // a track change stalled the render loop at exactly the moment the room
+    // was listening hardest.
+    const cached = await this._cache.load(cacheKey);
     if (!cached) return false;
+    // The read yielded, and the track may have changed meanwhile. A late hit
+    // must not replace the show that is now current.
+    if (!isCurrent()) throw supersededError();
     console.log(`[auto-show] analysis cache hit: ${cacheKey}`);
     console.log(`[auto-show] Models used (cached ${cacheKey}): ${formatModelUsage(cached)}`);
     this.analysis = cached;
@@ -283,7 +289,7 @@ class AutoShow {
     this._currentJob = token;
     const isCurrent = () => this._currentJob === token;
 
-    if (this._loadFromCache(cacheKey)) return this.analysis;
+    if (await this._loadFromCache(cacheKey, isCurrent)) return this.analysis;
     this._status = 'analyzing';
     try {
       const result = await this._runAnalyzer(source, null, 'current', cacheKey);
@@ -292,7 +298,7 @@ class AutoShow {
       this.buildTimeline();
       this._status = 'ready';
       if (cacheKey && this._cache) {
-        this._cache.set(cacheKey, result, { track: this.track });
+        await this._cache.save(cacheKey, result, { track: this.track });
       }
       return result;
     } catch (err) {
@@ -321,7 +327,7 @@ class AutoShow {
       // a later high-priority join can find and bump this entry.
       const analysis = await this._runAnalyzer(audioPath, targetDurationSec, priority, cacheKey, queuePos);
       if (cacheKey && this._cache) {
-        this._cache.set(cacheKey, analysis, meta || {});
+        await this._cache.save(cacheKey, analysis, meta || {});
       }
       return analysis;
     } finally {
@@ -371,7 +377,7 @@ class AutoShow {
    */
   async prefetch(query, targetDurationSec, cacheKey, meta = {}, isrc = null, priority = 'normal', queuePos = null) {
     if (!cacheKey || !this._cache) return { skipped: true, reason: 'no-cache' };
-    if (this._cache.get(cacheKey)) return { skipped: true, reason: 'already-cached' };
+    if (this._cache.has(cacheKey)) return { skipped: true, reason: 'already-cached' };
     if (this._inFlight.has(cacheKey)) return { skipped: true, reason: 'in-flight' };
 
     try {
@@ -401,7 +407,7 @@ class AutoShow {
     const isCurrent = () => this._currentJob === token;
 
     // Cache hit → skip the download entirely.
-    if (this._loadFromCache(cacheKey)) {
+    if (await this._loadFromCache(cacheKey, isCurrent)) {
       return { analysis: this.analysis, cached: true };
     }
 

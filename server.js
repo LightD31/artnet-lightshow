@@ -19,7 +19,7 @@ const { AnalysisCache } = require('./src/analysis-cache');
 const { state } = require('./src/server/state');
 const { startEngine, stopEngine } = require('./src/server/engine');
 const {
-  applyPatch, applyOverride, setFixtureMaxBrightness, processTap, setPersist, setHooks,
+  applyPatch, applyOverride, setFixtureMaxBrightness, processTap, setPersist, setHooks, flushPendingPersist,
 } = require('./src/server/patch');
 const { COLOR_PRESETS, PATTERNS } = require('./src/server/presets');
 const { setupIntegrations } = require('./src/server/integrations');
@@ -281,6 +281,8 @@ function shutdown(signal) {
     // Lands a debounced patch write that had not fired yet. A no-op when the
     // file already matches, which is the usual case.
     ['show', () => showStore.save()],
+    // Likewise a sync offset nudged in the last moment before quitting.
+    ['settings', () => flushPendingPersist()],
   ]) {
     try { fn(); } catch (err) { console.warn(`[shutdown] ${what}: ${err.message}`); }
   }

@@ -257,3 +257,44 @@ test('a bridge that cannot be reached is a failure with the reason attached', as
   assert.strictEqual(check.status, STATUSES.FAIL);
   assert.match(check.detail, /Cannot reach the bridge/);
 });
+
+// Model weights run to gigabytes. The server's check used to download them
+// with spawnSync — Art-Net output frozen for the whole download, and a new
+// download on every run that found them missing.
+test('missing model weights are fetched in the background, once',
+  { skip: process.platform === 'win32' && 'uses a POSIX shell stand-in' }, async () => {
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const path = require('node:path');
+    const { checkAnalysisModels, _modelDownload } = require('../../src/server/preflight');
+
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'models-'));
+    const calls = path.join(dir, 'calls.log');
+    const fake = path.join(dir, 'fake-python');
+    fs.writeFileSync(fake, `#!/bin/sh\necho run >> "${calls}"\nsleep 0.3\nexit 0\n`, { mode: 0o755 });
+    const saved = { dir: process.env.ARTNET_MODEL_DIR, py: process.env.ARTNET_PYTHON };
+    process.env.ARTNET_MODEL_DIR = path.join(dir, 'empty');
+    process.env.ARTNET_PYTHON = fake;
+    const log = console.log;
+    console.log = () => {};
+    try {
+      const started = Date.now();
+      const first = checkAnalysisModels({ download: true });
+      assert.ok(Date.now() - started < 200, 'did not wait for the download');
+      assert.match(first.detail, /background/);
+      const second = checkAnalysisModels({ download: true });
+      assert.match(second.detail, /background/);
+
+      await _modelDownload().promise;
+      // Finished without error but the weights are still not all there: say
+      // so, and do not start the same download again.
+      const after = checkAnalysisModels({ download: true });
+      assert.doesNotMatch(after.detail, /background/);
+      assert.strictEqual(fs.readFileSync(calls, 'utf8').trim().split('\n').length, 1, 'one download');
+    } finally {
+      console.log = log;
+      if (saved.dir === undefined) delete process.env.ARTNET_MODEL_DIR; else process.env.ARTNET_MODEL_DIR = saved.dir;
+      if (saved.py === undefined) delete process.env.ARTNET_PYTHON; else process.env.ARTNET_PYTHON = saved.py;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
