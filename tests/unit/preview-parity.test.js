@@ -164,3 +164,98 @@ test('a split look rehearses as the rig plays it', () => {
   const out = sample(100, rig, COLOR_PRESETS);
   assert.deepStrictEqual(out.map((c) => [c.r, c.b]), [[255, 0], [0, 255], [255, 0]]);
 });
+
+// ── Stepping on the beat grid ───────────────────────────────────────────────
+// A rehearsal view is only worth having if the chase it shows is on the step
+// the room will see at that moment. Both sides now count in beats of the
+// analysed grid, with each scene anchored on the beat it was scheduled for, so
+// they agree on the step — not merely on the colours.
+
+const { makeGrid } = require('../../src/shared/beat-clock');
+const { setFrameHook } = require('../../src/server/engine');
+const AutoShow = require('../../src/auto-show');
+
+/** What the rig drives every fixture's emitters at. */
+function rigAll() {
+  return state.fixtures.map((fix) => {
+    const buf = universes.getBuffer(fix.universe ?? state.artnet.universe);
+    const ch = getProfile(fix).channelMap;
+    const out = {};
+    for (const name of EMITTERS) if (ch[name] !== undefined) out[AS_KEY[name]] = buf[fix.address - 1 + ch[name]];
+    return out;
+  });
+}
+
+test('rig and preview step a scheduled scene on the same beats', async () => {
+  // 123.7 BPM from 0.35 s in: not a whole tempo, and not starting at zero.
+  const beats = Array.from({ length: 200 }, (_, i) => 0.35 + i * (60 / 123.7));
+  const beatMs = (b) => (0.35 + b * (60 / 123.7)) * 1000;
+  const timeline = [
+    { timeMs: 0, action: 'patch', data: { pattern: 'solid', colorA: 1, colorB: 5, colorC: 1, colorD: 5, split: null, bpm: 124, beatDivision: 1 } },
+    { timeMs: 2300, action: 'patch', data: { pattern: 'chase', beatDivision: 2 } },
+    { timeMs: 6000, action: 'patch', data: { colorA: 3 } },
+    { timeMs: 9000, action: 'patch', data: { pattern: 'fade', beatDivision: 1 } },
+    { timeMs: 16000, action: 'patch', data: { pattern: 'hit', beatDivision: 2 } },
+    { timeMs: 60 * 60 * 1000, action: 'patch', data: { pattern: 'solid' } },
+  ];
+  const sample = createPreviewSampler(timeline, { beats });
+
+  // The real auto show, wired to the engine as server.js wires it: fired from
+  // the render loop, and the pattern clock reading its grid. Jumping between
+  // the checks below is a seek, which it answers the way it does on stage.
+  const show = new AutoShow(applyPatch, COLOR_PRESETS, []);
+  show.useFrameClock();
+  show.syncOffsetMs = 0;
+  show.timeline = timeline;
+  show._grid = makeGrid(beats);
+  // Each read nudges the position on by a hair more than the conductor's
+  // pause threshold, so it counts as playing without racing a real clock.
+  let pos = 0;
+  setFrameHook(() => show.tick());
+  conductor.setAutoSource(() => show.beatSource());
+
+  try {
+    applyPatch({ masterDimmer: 255, masterBlackout: false, energyOverride: null, showDynamics: null, running: true });
+    show.start(() => (pos += 0.6));
+    // Midway through steps, so a frame either side reads the same step.
+    const checks = [
+      { at: beatMs(5.25), tolerance: 0 },   // chase, in eighths
+      { at: beatMs(6.75), tolerance: 0 },
+      { at: beatMs(9.25), tolerance: 0 },
+      { at: beatMs(12.25), tolerance: 0 },  // after the colour change
+      { at: beatMs(22.5), tolerance: 3 },   // fade, a slow sine
+      { at: beatMs(26), tolerance: 3 },
+      { at: beatMs(40.4), tolerance: 6 },   // hit, late in its decay
+      { at: beatMs(7.75), tolerance: 0 },   // and a seek back into the chase
+    ];
+    for (const { at, tolerance } of checks) {
+      pos = at;
+      await frames(3);
+      const rig = rigAll();
+      const preview = sample(pos, state.fixtures, COLOR_PRESETS);
+      rig.forEach((lamp, i) => {
+        for (const key of Object.keys(lamp)) {
+          assert.ok(Math.abs(lamp[key] - preview[i][key]) <= tolerance,
+            `at ${at.toFixed(0)} ms, fixture ${i} ${key}: rig ${lamp[key]}, preview ${preview[i][key]}`);
+        }
+      });
+    }
+  } finally {
+    show.stop();
+    show._worker.shutdown();
+    setFrameHook(null);
+    conductor.setAutoSource(null);
+  }
+});
+
+// Without a grid (an old timeline) the preview counts at the timeline's own
+// tempo marks, as the rig's free clock would, from each scene's start.
+test('a timeline with no grid steps at its own tempo', () => {
+  const sample = createPreviewSampler([
+    { timeMs: 0, action: 'patch', data: { pattern: 'chase', colorA: 1, colorB: 5, bpm: 120, beatDivision: 1 } },
+  ]);
+  const rig = [{}, {}, {}, {}];
+  const brightness = (c) => Math.max(c.r, c.g, c.b, c.w, c.a);
+  const lit = (ms) => sample(ms, rig, COLOR_PRESETS).findIndex((c) => brightness(c) > 200);
+  assert.deepStrictEqual([lit(250), lit(750), lit(1250), lit(1750)], [0, 1, 2, 3], 'a step every half second');
+});

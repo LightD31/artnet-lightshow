@@ -58,7 +58,10 @@ class Conductor {
     this._tookOver = false;             // the operator just took the tempo from a track
   }
 
-  /** `fn()` → `{ grid, positionMs }` while the auto show is running, else null. */
+  /**
+   * `fn()` → `{ grid, positionMs, anchorMs? }` while the auto show is running,
+   * else null. `anchorMs` is when the scene now playing was scheduled.
+   */
   setAutoSource(fn) { this._autoSource = typeof fn === 'function' ? fn : () => null; }
 
   /** `fn()` → `{ beatPos, bpm }` while a master deck is playing, else null. */
@@ -151,8 +154,12 @@ class Conductor {
     return t - still.since < STALL_MS;
   }
 
-  /** A reading off a beat grid, or null when the position is unusable or paused. */
-  _gridReading(source, grid, positionMs, t) {
+  /**
+   * A reading off a beat grid, or null when the position is unusable or
+   * paused. `anchorMs`, when the source knows it, is when the running scene
+   * was scheduled: carried as `anchorBeat` for re-anchoring after a jump.
+   */
+  _gridReading(source, grid, positionMs, t, anchorMs = null) {
     if (!grid || !Number.isFinite(positionMs)) {
       // Forget where it stood, so a show started later is not judged paused
       // for landing on the same position the last one stopped at.
@@ -161,13 +168,15 @@ class Conductor {
     }
     const beatPos = beatPositionAt(grid, positionMs);
     if (!Number.isFinite(beatPos) || !this._moving(source, positionMs, t)) return null;
-    return { beatPos, bpm: localBpm(grid, positionMs), source };
+    const reading = { beatPos, bpm: localBpm(grid, positionMs), source };
+    if (Number.isFinite(anchorMs)) reading.anchorBeat = beatPositionAt(grid, anchorMs);
+    return reading;
   }
 
   /** The reading from the best source that answers. */
   _current(t) {
     const auto = this._autoSource() || {};
-    const fromAuto = this._gridReading('auto', auto.grid, auto.positionMs, t);
+    const fromAuto = this._gridReading('auto', auto.grid, auto.positionMs, t, auto.anchorMs);
     if (fromAuto) return fromAuto;
     const cdj = this._prolinkSource();
     if (cdj && Number.isFinite(cdj.beatPos)) {
@@ -180,7 +189,9 @@ class Conductor {
   }
 
   /**
-   * Where the music is now: `{ beatPos, bpm, source, epoch }`.
+   * Where the music is now: `{ beatPos, bpm, source, epoch, anchorBeat? }`,
+   * `anchorBeat` being the beat the running scene was scheduled on when the
+   * source knows it.
    *
    * A locked source that stops answering hands over to the free clock, which
    * carries its beat position and tempo on. Any jump the elapsed time cannot

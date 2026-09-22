@@ -142,7 +142,34 @@ class AutoShow {
   beatSource() {
     if (!this.running || !this._grid || !this._getPositionMs) return null;
     const positionMs = this.getPositionMs();
-    return Number.isFinite(positionMs) ? { grid: this._grid, positionMs } : null;
+    if (!Number.isFinite(positionMs)) return null;
+    return { grid: this._grid, positionMs, anchorMs: this._sceneAnchorMs(positionMs) };
+  }
+
+  /**
+   * The track time of the scene the pattern at `positionMs` belongs to: the
+   * last event at or before it that set the pattern or its division, or null.
+   * After a seek the pattern clock counts from there, so arriving by a seek
+   * lands on the step that playing through would have.
+   */
+  _sceneAnchorMs(positionMs) {
+    const index = this._anchorIndex;
+    if (!index || index.timeline !== this.timeline || index.length !== this.timeline.length) {
+      const times = [];
+      for (const ev of this.timeline) {
+        if (ev.action === 'patch' && ev.data
+          && (ev.data.pattern !== undefined || ev.data.beatDivision !== undefined)) times.push(ev.timeMs);
+      }
+      this._anchorIndex = { timeline: this.timeline, length: this.timeline.length, times };
+    }
+    const { times } = this._anchorIndex;
+    let lo = 0;
+    let hi = times.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (times[mid] <= positionMs) lo = mid + 1; else hi = mid;
+    }
+    return lo ? times[lo - 1] : null;
   }
 
   /** The loaded track's beat grid, or null. */
@@ -226,17 +253,12 @@ class AutoShow {
     const posMs = this.getPositionMs();
     if (!Number.isFinite(posMs)) return;
     let last = -1;
-    let anchorMs;
     let lastPatchMs;
     const restored = { energyOverride: null, showDynamics: null };
     for (let i = 0; i < this.timeline.length; i++) {
       if (this.timeline[i].timeMs > posMs) break;
       const ev = this.timeline[i];
       if (ev.action === 'patch') lastPatchMs = ev.timeMs;
-      if (ev.action === 'patch' && ev.data
-        && (ev.data.pattern !== undefined || ev.data.beatDivision !== undefined)) {
-        anchorMs = ev.timeMs;
-      }
       if (ev.action === 'patch') {
         if (ev.data?.showDynamics && restored.showDynamics) {
           restored.showDynamics = { ...restored.showDynamics, ...ev.data.showDynamics };
@@ -254,7 +276,8 @@ class AutoShow {
     // The restored pattern counts its steps from the beat its scene was
     // scheduled on, so a seek lands on the same step playing through would.
     // Without a pattern to anchor, it still says it came from the timeline.
-    if (anchorMs !== undefined) restored.anchorMs = anchorMs;
+    const anchorMs = this._sceneAnchorMs(posMs);
+    if (anchorMs !== null) restored.anchorMs = anchorMs;
     else if (lastPatchMs !== undefined) restored.anchorMs = lastPatchMs;
     // A seek must restore the complete current scene for every timeline. The
     // old expressive-only guard left legacy pattern/colour shows visually

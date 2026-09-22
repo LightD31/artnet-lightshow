@@ -84,12 +84,16 @@ let lastRandomKey = null;
  * The anchor is set when a scene changes the pattern or the division (see
  * patch.js). When the music itself jumps — a seek, a new track, another source
  * taking over the clock — the old anchor belongs to a beat position that no
- * longer exists, so the pattern re-anchors where the music now is.
+ * longer exists, so the pattern re-anchors: on its scene's beat when the auto
+ * show says which that is, else where the music now is.
  */
 function patternStep(reading) {
   const division = Math.max(1, state.beatDivision || 1);
   if (!state.patternAnchor || state.patternAnchor.epoch !== reading.epoch) {
-    state.patternAnchor = { step: anchorStep(reading.beatPos, division), epoch: reading.epoch };
+    // After a seek in the auto show, from the beat its scene was scheduled on,
+    // so the chase is on the step that playing through would have reached.
+    const from = Number.isFinite(reading.anchorBeat) ? reading.anchorBeat : reading.beatPos;
+    state.patternAnchor = { step: anchorStep(from, division), epoch: reading.epoch };
   }
   const anchor = state.patternAnchor.step;
   return { step: stepAt(reading.beatPos, anchor, division), anchor, division };

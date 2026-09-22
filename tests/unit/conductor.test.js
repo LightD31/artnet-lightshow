@@ -256,3 +256,13 @@ test('the tempo is reported when it moves, not on every frame', () => {
   r.c.now();
   assert.deepStrictEqual(reported, [120, 123.7, 125]);
 });
+
+test('the auto show\'s reading says which beat its scene was scheduled on', () => {
+  const r = rig();
+  const grid = grid128();
+  r.c.setAutoSource(() => ({ grid, positionMs: 60000 * 10.4 / 128, anchorMs: 60000 * 8 / 128 }));
+  const reading = r.c.now();
+  assert.ok(close(reading.anchorBeat, 8), 'for re-anchoring after a seek');
+  r.c.setAutoSource(() => ({ grid, positionMs: 60000 * 10.4 / 128 }));
+  assert.strictEqual(r.c.now().anchorBeat, undefined, 'and nothing when it does not know');
+});
