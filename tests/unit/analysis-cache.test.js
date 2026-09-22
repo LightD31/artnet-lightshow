@@ -44,9 +44,9 @@ test('cache round-trips, lists and clears', () => {
     assert.strictEqual(cache.get('missing'), null);
     assert.strictEqual(cache.has('missing'), false);
 
-    cache.set('k1', { bpm: 128, duration: 200 }, { track: { name: 'x' } });
+    cache.set('k1', { schemaVersion: '2.0', bpm: 128, duration: 200 }, { track: { name: 'x' } });
     assert.strictEqual(cache.has('k1'), true);
-    assert.deepStrictEqual(cache.get('k1'), { bpm: 128, duration: 200 });
+    assert.deepStrictEqual(cache.get('k1'), { schemaVersion: '2.0', bpm: 128, duration: 200 });
 
     const [entry] = cache.list();
     assert.strictEqual(entry.key, 'k1');
@@ -62,4 +62,34 @@ test('cache round-trips, lists and clears', () => {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// The analyser marks what it wrote; version.py names the oldest a consumer can
+// still read. Older entries used to replay forever after an analyser upgrade.
+test('an entry from an analyser too old to read is a miss, and goes', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cache-test-'));
+  const log = console.log;
+  console.log = () => {};
+  try {
+    const cache = new AnalysisCache(dir);
+    cache.set('old', { schemaVersion: '1.4', bpm: 120 });
+    cache.set('none', { bpm: 120 });
+    cache.set('now', { schemaVersion: '2.0', bpm: 120 });
+    cache.set('newer', { schemaVersion: '2.3', bpm: 120 });
+
+    assert.strictEqual(cache.get('old'), null);
+    assert.strictEqual(cache.has('old'), false, 'removed, so the warmer stops counting it');
+    assert.strictEqual(cache.get('none'), null, 'unversioned is pre-2.0');
+    assert.strictEqual(cache.get('now').bpm, 120);
+    assert.strictEqual(cache.get('newer').bpm, 120, 'additive changes stay readable');
+  } finally {
+    console.log = log;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the oldest readable version comes from the analyser itself', () => {
+  const { MIN_COMPATIBLE } = require('../../src/analysis-cache');
+  const source = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'analysis', 'version.py'), 'utf8');
+  assert.match(source, new RegExp(`^MIN_COMPATIBLE = '${MIN_COMPATIBLE.join('\.')}'`, 'm'));
 });

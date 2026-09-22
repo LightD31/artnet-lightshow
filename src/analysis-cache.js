@@ -15,6 +15,31 @@ const crypto = require('crypto');
  * track change, manual Spotify analyze, YouTube URL, search query, local
  * file, upload).
  */
+// ── Schema compatibility ─────────────────────────────────────────────────────
+// The analyser stamps every document with its schema version, and version.py
+// names the oldest one a consumer can still read. Taken from that file rather
+// than restated here, so bumping the analyser is the only edit a breaking
+// change needs. An entry older than that is a miss: replaying it would drive
+// tonight's show from a document the director no longer understands, silently,
+// for as long as the track stays in the cache.
+function readMinCompatible() {
+  try {
+    const source = fs.readFileSync(path.join(__dirname, 'analysis', 'version.py'), 'utf8');
+    const m = source.match(/^MIN_COMPATIBLE\s*=\s*['"](\d+)\.(\d+)['"]/m);
+    if (m) return [Number(m[1]), Number(m[2])];
+  } catch (_) { /* fall through */ }
+  return [2, 0];
+}
+const MIN_COMPATIBLE = readMinCompatible();
+
+/** Whether a document's schemaVersion is one this build can still replay. */
+function isCompatible(analysis, min = MIN_COMPATIBLE) {
+  const m = /^(\d+)\.(\d+)/.exec(String(analysis?.schemaVersion ?? ''));
+  if (!m) return false;
+  const [major, minor] = [Number(m[1]), Number(m[2])];
+  return major > min[0] || (major === min[0] && minor >= min[1]);
+}
+
 class AnalysisCache {
   constructor(dir) {
     this.dir = dir;
@@ -33,32 +58,18 @@ class AnalysisCache {
       if (!fs.existsSync(p)) return null;
       const entry = JSON.parse(fs.readFileSync(p, 'utf8'));
       if (!entry || !entry.analysis) return null;
+      if (!isCompatible(entry.analysis)) {
+        // Removed rather than skipped, so has(), which the warmer and the
+        // prefetch poll, stops reporting it as analysed.
+        console.log(`[analysis-cache] ${key}: schema ${entry.analysis.schemaVersion ?? 'none'} `
+          + `is older than ${MIN_COMPATIBLE.join('.')}; it will be re-analysed`);
+        try { fs.unlinkSync(p); } catch (_) { /* already gone */ }
+        return null;
+      }
       return entry.analysis;
     } catch (_) {
       return null;
     }
-  }
-
-  /** Fixture-independent show timeline cache. Kept separate from analysis so
-   * director edits do not force source separation or model inference. */
-  getShow(key) { return this._readVariant(key, 'show'); }
-
-  setShow(key, show, meta = {}) { this._writeVariant(key, 'show', show, meta); }
-
-  _readVariant(key, variant) {
-    if (!key) return null;
-    try {
-      const entry = JSON.parse(fs.readFileSync(this._pathFor(`${variant}:${key}`), 'utf8'));
-      return entry && entry[variant] ? entry[variant] : null;
-    } catch (_) { return null; }
-  }
-
-  _writeVariant(key, variant, value, meta) {
-    if (!key || !value) return;
-    try {
-      const entry = { key, meta, cachedAt: new Date().toISOString(), [variant]: value };
-      fs.writeFileSync(this._pathFor(`${variant}:${key}`), JSON.stringify(entry));
-    } catch (e) { console.warn(`[analysis-cache] failed to write ${variant}: ${e.message}`); }
   }
 
   /** Cheap existence check (no read/parse) — safe to poll. */
@@ -182,6 +193,8 @@ function keyForProlinkTrack({ deviceId, slot, trackId, title, artist } = {}) {
 
 module.exports = {
   AnalysisCache,
+  isCompatible,
+  MIN_COMPATIBLE,
   keyForSpotify,
   keyForYouTube,
   keyForQuery,
