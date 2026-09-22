@@ -355,3 +355,28 @@ test('a failed analysis on a track change is reported, and the show stays stoppe
   assert.strictEqual(rig.autoShow.running, false);
   assert.strictEqual(rig.started.length, 0);
 });
+
+// Spotify alone used to re-anchor on every poll: a report a little behind the
+// previous one moved the show backwards, which re-seeks the timeline and
+// restarts the pattern. It now runs through the same smoothing clock as the
+// hybrid source.
+test('with Spotify alone, a slightly late report does not move the show backwards', () => {
+  const rig = build();
+  rig.spotify.authenticated = true;
+  rig.nowPlaying.authenticated = false;
+
+  withSource('spotify', () => {
+    rig.integrations.startAutoShow();
+    const t0 = Date.now();
+    rig.spotify.emitPlayback({ ...SPOTIFY_TRACK, progressMs: 30000, sampledAt: t0 - 1000 });
+    const before = rig.started[0]();
+    // One second later by the wall clock, Spotify reports only 800 ms of
+    // progress: 200 ms of jitter, not a seek.
+    rig.spotify.emitPlayback({ ...SPOTIFY_TRACK, progressMs: 30800, sampledAt: t0 });
+    const after = rig.started[0]();
+    assert.ok(after >= before, `moved from ${before} back to ${after}`);
+    // A seek is still followed at once.
+    rig.spotify.emitPlayback({ ...SPOTIFY_TRACK, progressMs: 120000, sampledAt: Date.now() });
+    assert.ok(Math.abs(rig.started[0]() - 120000) < 100);
+  });
+});

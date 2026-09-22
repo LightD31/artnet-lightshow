@@ -13,10 +13,11 @@
  *   - getPositionMs()           → callback handed to autoShow.start()
  *
  * Position derivation is anchored to the master CDJ's `beat` counter (the beat
- * 'timestamp' from each status packet) plus the track's beat grid (offsets in
- * ms). Between status packets we extrapolate using the local wall clock — each
- * incoming beat re-anchors, so pitch / nudge / scratch / seek all snap within
- * one auto-show tick (20 ms).
+ * number in each status packet) plus the track's beat grid (offsets in ms).
+ * Between status packets the position runs on the monotonic clock at the
+ * deck's pitch; each packet only corrects it back inside the beat it reports,
+ * so pitch / nudge / seek are followed without the position ever restarting
+ * a beat it is already partway through (see _reanchor).
  *
  * The package is CommonJS (verified at install time), so we can require() it
  * directly. If the require fails (wrong Node version, package corrupt) the
@@ -54,10 +55,12 @@ class ProLink {
     this._masterBeatInMeasure = 0;
     this._masterPlayState = 0;
 
-    // Position tracking
+    // Position tracking, all on the monotonic clock: an NTP step in the wall
+    // clock must not move the show.
+    this._now = () => performance.now();
     this._lastBeat = null;        // beat counter from latest packet
-    this._lastBeatAtMs = 0;       // local Date.now() when _lastBeat was captured
-    this._lastPacketAtMs = 0;
+    this._anchor = null;          // { posMs, at, rate } — see _reanchor
+    this._lastMasterPacketAt = 0; // when the master last reported
     this._beatGrid = null;        // Array<{offset_ms, count, bpm}>, one entry per beat
     this._trackDurationMs = 0;
     this._frozenPositionMs = 0;
@@ -128,9 +131,12 @@ class ProLink {
   /** Position in ms within the loaded master track. 0 when nothing is playing. */
   getPositionMs() {
     if (!this._masterTrackId) return 0;
+    const now = this._now();
 
-    // Stale-packet cutoff: master may have gone away. Freeze, don't drift.
-    if (this._lastPacketAtMs && Date.now() - this._lastPacketAtMs > STALE_PACKET_MS) {
+    // Stale-packet cutoff: the master may have gone away. Freeze, don't drift.
+    // Judged on the master's own packets — another deck still reporting says
+    // nothing about whether the one the show follows is.
+    if (this._lastMasterPacketAt && now - this._lastMasterPacketAt > STALE_PACKET_MS) {
       this._stale = true;
       return this._lastComputedPositionMs || 0;
     }
@@ -141,13 +147,51 @@ class ProLink {
       return this._frozenPositionMs;
     }
 
-    if (this._lastBeat == null) return 0;
-
-    const baseMs = this._beatMsFromGrid(this._lastBeat);
-    const elapsed = Date.now() - this._lastBeatAtMs;
-    const pos = baseMs + elapsed;
+    if (!this._anchor) return 0;
+    const pos = this._anchor.posMs + (now - this._anchor.at) * this._anchor.rate;
     this._lastComputedPositionMs = pos;
     return pos;
+  }
+
+  /**
+   * Fold one status packet's beat number into the running position.
+   *
+   * A status packet arrives about five times a second and names the beat the
+   * deck is in, not where in it. The old code took the packet's *arrival* as
+   * the start of that beat, so every packet snapped the position back to the
+   * top of the beat: a sawtooth the size of a packet interval, five times a
+   * second, each one far enough backwards to make the show re-seek and
+   * restart its pattern.
+   *
+   * Instead the position keeps running at the deck's own speed (track tempo ×
+   * pitch) and a packet only corrects it:
+   *
+   *   - still inside the reported beat: left alone — the normal case;
+   *   - within a beat of it: pulled back to its nearer edge, which removes
+   *     drift without restarting anything;
+   *   - further off (a seek, a loop, a new track, the first packet): placed at
+   *     the reported beat, plus half the time since the previous packet when
+   *     the beat has only just changed — the boundary fell somewhere in that
+   *     gap, and its middle is the unbiased guess.
+   */
+  _reanchor({ beat, beatChanged, now, previousPacketAt, rate }) {
+    const lo = this._beatMsFromGrid(beat);
+    const hi = this._beatMsFromGrid(beat + 1);
+    const span = Math.max(1, hi - lo);
+    const predicted = this._anchor
+      ? this._anchor.posMs + (now - this._anchor.at) * this._anchor.rate
+      : null;
+
+    let posMs;
+    if (predicted != null && predicted >= lo - span && predicted <= hi + span) {
+      posMs = Math.min(Math.max(predicted, lo), hi);
+    } else {
+      const sinceBoundary = beatChanged && previousPacketAt
+        ? Math.min(span, ((now - previousPacketAt) / 2) * rate)
+        : 0;
+      posMs = lo + sinceBoundary;
+    }
+    return { posMs, at: now, rate };
   }
 
   // ── Lifecycle ───────────────────────────────────────────────────────────────
@@ -257,7 +301,6 @@ class ProLink {
 
   _onStatus(s) {
     if (!s) return;
-    this._lastPacketAtMs = Date.now();
 
     // ── Track all players: detect load / eject on any CDJ ────────────────────
     // s.deviceId is the player (CDJ 1-4) that sent this packet.
@@ -319,6 +362,9 @@ class ProLink {
 
     // Only the master drives our state. Ignore packets from non-master devices.
     if (!s.isMaster) return;
+    const now = this._now();
+    const previousPacketAt = this._lastMasterPacketAt;
+    this._lastMasterPacketAt = now;
 
     // Effective BPM = trackBPM * (1 + effectivePitch / 100). prolink-connect
     // reports pitch in percent (e.g. -6.0 = -6%, +6.0 = +6%).
@@ -400,13 +446,24 @@ class ProLink {
       // getter takes the active path.
       this._frozenPositionMs = this.getPositionMs();
     }
+    // Resuming: carry on from where the deck stopped, not from where the
+    // anchor would have run to had it never paused.
+    if (wasFrozen && !isFrozen && this._anchor) {
+      this._anchor = { ...this._anchor, posMs: this._frozenPositionMs, at: now };
+    }
     this._masterPlayState = s.playState;
 
-    // Update beat anchor only when actually playing — pause/cue packets carry
-    // the last-known beat but we don't want to advance from them.
-    if (typeof s.beat === 'number' && s.beat > 0) {
+    const hasBeat = typeof s.beat === 'number' && s.beat > 0;
+    if (hasBeat && isFrozen) {
+      // A cue jump while paused moves the deck without playing it.
+      if (s.beat !== this._lastBeat) this._frozenPositionMs = this._beatMsFromGrid(s.beat);
       this._lastBeat = s.beat;
-      this._lastBeatAtMs = Date.now();
+    } else if (hasBeat) {
+      const rate = 1 + pitchPct / 100;
+      this._anchor = this._reanchor({
+        beat: s.beat, beatChanged: s.beat !== this._lastBeat, now, previousPacketAt, rate,
+      });
+      this._lastBeat = s.beat;
     }
   }
 
@@ -434,8 +491,10 @@ class ProLink {
   _beatMsFromGrid(beatN) {
     const grid = this._beatGrid;
     if (!grid || !grid.length) {
-      // No beatgrid yet → linear estimate from BPM
-      const bpm = this._masterBpm > 0 ? this._masterBpm : (this._masterTrackBpm || 120);
+      // No beatgrid yet → linear estimate from BPM. The track's own tempo, not
+      // the pitched one: this is a position in the track, which pitch does
+      // not stretch — it only changes how fast the deck moves through it.
+      const bpm = this._masterTrackBpm > 0 ? this._masterTrackBpm : (this._masterBpm || 120);
       return Math.max(0, (beatN - 1) * (60000 / bpm));
     }
     // Clamp to grid bounds
@@ -461,7 +520,7 @@ class ProLink {
     this._masterBeatInMeasure = 0;
     this._masterPlayState = 0;
     this._lastBeat = null;
-    this._lastBeatAtMs = 0;
+    this._anchor = null;
     this._beatGrid = null;
     this._trackDurationMs = 0;
     this._frozenPositionMs = 0;

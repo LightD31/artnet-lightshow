@@ -179,15 +179,26 @@ function keyForBuffer(buf) {
 }
 
 /**
- * Stable key for a track loaded on a CDJ via PRO DJ LINK. Prefers the
- * rekordbox identity tuple; falls back to a search-query key when only
- * title+artist are known.
+ * Stable key for a track loaded on a CDJ via PRO DJ LINK.
+ *
+ * Keyed on what the track *is* — artist, title and length — whenever rekordbox
+ * says. The device/slot/id tuple is only an address: rekordbox numbers tracks
+ * per export, so the same id on another DJ's USB stick, or on the same stick
+ * after a re-export, is a different song, and a key built from it handed that
+ * song the wrong analysis. The length is part of the key because it is also
+ * what picks the download, so an extended mix and a radio edit stay apart.
+ *
+ * The tuple is still the fallback for a track rekordbox has no metadata for.
  */
-function keyForProlinkTrack({ deviceId, slot, trackId, title, artist } = {}) {
+function keyForProlinkTrack({ deviceId, slot, trackId, title, artist, durationMs } = {}) {
+  if (title && artist) {
+    const norm = `${artist} - ${title}`.trim().toLowerCase().replace(/\s+/g, ' ');
+    const seconds = Number.isFinite(durationMs) && durationMs > 0 ? Math.round(durationMs / 1000) : 0;
+    return `prolink:${norm}:${seconds}`;
+  }
   if (deviceId != null && slot != null && trackId) {
     return `prolink:${deviceId}:${slot}:${trackId}`;
   }
-  if (title && artist) return keyForQuery(`${artist} - ${title}`);
   return null;
 }
 

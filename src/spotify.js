@@ -330,9 +330,17 @@ class SpotifyClient {
       if (this.refreshToken) await this.refreshAccessToken();
       else return null;
     }
+    const sentAt = Date.now();
     const data = await this._apiGet('/v1/me/player/currently-playing');
+    const receivedAt = Date.now();
     if (!data || !data.item) return null;
     return {
+      // When `progressMs` was true: the middle of the round trip, which is the
+      // best estimate of when Spotify's server read it. Stamping it on arrival
+      // instead put the show behind by half a round trip, and by a different
+      // amount on every poll. (Spotify's own `timestamp` field is when the
+      // playback state last *changed*, not when this position was read.)
+      sampledAt: Math.round((sentAt + receivedAt) / 2),
       trackId: data.item.id,
       name: data.item.name,
       artist: data.item.artists.map(a => a.name).join(', '),

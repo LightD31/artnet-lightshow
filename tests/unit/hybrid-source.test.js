@@ -160,6 +160,21 @@ test('one disagreeing report does not flap the clock over', () => {
   assert.ok(!h.source.matched, 'and gives up after a few');
 });
 
+// When the OS session stops matching (another app took the media keys), the
+// clock used to be reset and read 0:00 until Spotify's next poll: the show
+// jumped to the top of the track and back, re-seeking twice.
+test('handing the clock back to Spotify keeps the position', () => {
+  const h = harness();
+  h.source.observeContent({ ...SPOTIFY, progressMs: 30000 }, h.now);
+  h.source.observeSession(session({ progressMs: 30000 }), h.now);
+  for (let i = 0; i < MISMATCH_GRACE; i++) {
+    h.source.observeSession(session({ name: 'Something Else' }), h.advance(500));
+  }
+  assert.ok(!h.source.matched);
+  const position = h.source.getPositionMs(h.now);
+  assert.ok(Math.abs(position - (30000 + MISMATCH_GRACE * 500)) < 200, `position ${position}`);
+});
+
 // ── Track changes ───────────────────────────────────────────────────────────
 
 test('a new Spotify track resets the clock rather than carrying the old one', () => {

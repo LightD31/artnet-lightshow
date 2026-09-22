@@ -33,8 +33,17 @@ test('cache keys are stable and distinct per source', () => {
   assert.strictEqual(keyForBuffer(Buffer.alloc(0)), null);
 
   assert.strictEqual(keyForProlinkTrack({ deviceId: 1, slot: 2, trackId: 3 }), 'prolink:1:2:3');
-  assert.strictEqual(keyForProlinkTrack({ title: 'T', artist: 'A' }), 'q:a - t');
+  assert.strictEqual(keyForProlinkTrack({ title: 'T', artist: 'A' }), 'prolink:a - t:0');
   assert.strictEqual(keyForProlinkTrack({}), null);
+  // rekordbox ids are per export: the same id on two sticks is two songs, and
+  // the same song on two sticks is one analysis.
+  const onStickA = { deviceId: 2, slot: 3, trackId: 17, artist: 'Justice', title: 'Genesis', durationMs: 234000 };
+  const onStickB = { ...onStickA, deviceId: 3, trackId: 902 };
+  const otherSong = { ...onStickA, artist: 'Daft Punk', title: 'Rollin\' & Scratchin\'' };
+  assert.strictEqual(keyForProlinkTrack(onStickA), keyForProlinkTrack(onStickB));
+  assert.notStrictEqual(keyForProlinkTrack(onStickA), keyForProlinkTrack(otherSong));
+  // An extended mix and a radio edit are different downloads.
+  assert.notStrictEqual(keyForProlinkTrack(onStickA), keyForProlinkTrack({ ...onStickA, durationMs: 397000 }));
 });
 
 test('cache round-trips, lists and clears', () => {
