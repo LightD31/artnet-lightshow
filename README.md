@@ -57,7 +57,8 @@ via **Bitfocus Companion**, and a REST API.
   locally rather than polled over the network. Around 11 ms of mean sync error
   against Spotify's own 189 ms, and never a backward jump — see
   [Spotify + OS clock](#spotify--os-clock-the-hybrid-source)
-- Caches analyses on disk and **prefetches the next tracks in the queue**, so a
+- Caches analyses on disk (up to 4 GB, dropping the least recently played
+  first) and **prefetches the next tracks in the queue**, so a
   track change flips instantly instead of stalling for a download
 - **Set-list warming** — paste tonight's tracks (or point it at a Spotify
   playlist) at load-in and have the whole night analysed before doors open
@@ -511,7 +512,9 @@ cache, and which playback sources are connected.
 
 The same report is in the settings page under **Pre-show Check** — run there,
 it also sees the *live* MIDI and playback-source connections rather than only
-what is configured.
+what is configured. If analysis model weights are missing it starts
+downloading them in the background and says so; the show keeps running, and
+running the check again reports when they are ready.
 
 A node that never answers an ArtPoll is a warning, not a failure: plenty of
 them do not implement it, and a broadcast rig works fine without ever replying.

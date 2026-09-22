@@ -578,7 +578,7 @@ function checkAnalysisModels({ download = false } = {}) {
     if (!job.done) {
       const minutes = Math.floor((Date.now() - job.startedAt) / 60000);
       return { id: 'models', label: 'Analysis models', status: WARN,
-        detail: `Downloading the model weights in the background (started ${minutes ? `${minutes} min` : 'just now'} ago). `
+        detail: `Downloading the model weights in the background (started ${minutes ? `${minutes} min ago` : 'just now'}). `
           + 'The show keeps running meanwhile.',
         fix: 'Run the check again when it has finished.' };
     }
