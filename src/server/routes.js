@@ -740,74 +740,58 @@ function attachRoutes(app, deps) {
     }
   }));
 
-  app.post('/api/auto/analyze-spotify', asyncHandler(async (_req, res) => {
-    if (!spotify.authenticated) return res.status(400).json({ ok: false, error: 'Spotify not connected' });
-    try {
-      const playing = await spotify.getCurrentlyPlaying();
-      if (!playing) return res.status(400).json({ ok: false, error: 'No track currently playing on Spotify' });
+  /**
+   * Analyse whatever a playback source says is playing now.
+   *
+   * One handler for the sources that report a track rather than hand over
+   * audio. They differ only in how they are asked, what they are called when
+   * they are not connected, and the cache key: Spotify has a stable track id,
+   * the others only a name.
+   */
+  function analyzePlaying({ source, notConnected, nothingPlaying, keyFor = () => null, after }) {
+    return asyncHandler(async (_req, res) => {
+      if (!source.authenticated) return res.status(400).json({ ok: false, error: notConnected });
+      try {
+        const playing = await source.getCurrentlyPlaying();
+        if (!playing) return res.status(400).json({ ok: false, error: nothingPlaying });
 
-      autoShow.track = {
-        name: playing.name, artist: playing.artist, album: playing.album,
-        albumArt: playing.albumArt, durationMs: playing.durationMs,
-      };
-      integrations.broadcast();
+        autoShow.track = {
+          name: playing.name, artist: playing.artist, album: playing.album,
+          albumArt: playing.albumArt, durationMs: playing.durationMs,
+        };
+        integrations.broadcast();
 
-      const query = `${playing.artist} - ${playing.name}`;
-      const cacheKey = keyForSpotify(playing.trackId) || keyForQuery(query);
-      await autoShow.downloadAndAnalyze(query, playing.durationMs / 1000, cacheKey, playing.isrc);
+        const query = `${playing.artist} - ${playing.name}`;
+        const cacheKey = keyFor(playing) || keyForQuery(query);
+        await autoShow.downloadAndAnalyze(query, playing.durationMs / 1000, cacheKey, playing.isrc);
 
-      integrations.broadcast();
-      res.json({ ok: true, track: autoShow.track, analysis: autoShow.getClientState().analysis });
-      integrations.prefetchNextFromQueue();
-    } catch (err) {
-      res.status(500).json({ ok: false, error: err.message });
-    }
+        integrations.broadcast();
+        res.json({ ok: true, track: autoShow.track, analysis: autoShow.getClientState().analysis });
+        if (after) after();
+      } catch (err) {
+        res.status(500).json({ ok: false, error: err.message });
+      }
+    });
+  }
+
+  app.post('/api/auto/analyze-spotify', analyzePlaying({
+    source: spotify,
+    notConnected: 'Spotify not connected',
+    nothingPlaying: 'No track currently playing on Spotify',
+    keyFor: (playing) => keyForSpotify(playing.trackId),
+    after: () => integrations.prefetchNextFromQueue(),
   }));
 
-  app.post('/api/auto/analyze-nowplaying', asyncHandler(async (_req, res) => {
-    if (!nowPlaying.authenticated) return res.status(400).json({ ok: false, error: 'Nothing is currently playing' });
-    try {
-      const playing = await nowPlaying.getCurrentlyPlaying();
-      if (!playing) return res.status(400).json({ ok: false, error: 'Nothing is currently playing' });
-
-      autoShow.track = {
-        name: playing.name, artist: playing.artist, album: playing.album,
-        albumArt: playing.albumArt, durationMs: playing.durationMs,
-      };
-      integrations.broadcast();
-
-      const query = `${playing.artist} - ${playing.name}`;
-      const cacheKey = keyForQuery(query);
-      await autoShow.downloadAndAnalyze(query, playing.durationMs / 1000, cacheKey, playing.isrc);
-
-      integrations.broadcast();
-      res.json({ ok: true, track: autoShow.track, analysis: autoShow.getClientState().analysis });
-    } catch (err) {
-      res.status(500).json({ ok: false, error: err.message });
-    }
+  app.post('/api/auto/analyze-nowplaying', analyzePlaying({
+    source: nowPlaying,
+    notConnected: 'Nothing is currently playing',
+    nothingPlaying: 'Nothing is currently playing',
   }));
 
-  app.post('/api/auto/analyze-deezer', asyncHandler(async (_req, res) => {
-    if (!deezerSource.authenticated) return res.status(400).json({ ok: false, error: 'Deezer extension not connected' });
-    try {
-      const playing = await deezerSource.getCurrentlyPlaying();
-      if (!playing) return res.status(400).json({ ok: false, error: 'No track currently playing on Deezer' });
-
-      autoShow.track = {
-        name: playing.name, artist: playing.artist, album: playing.album,
-        albumArt: playing.albumArt, durationMs: playing.durationMs,
-      };
-      integrations.broadcast();
-
-      const query = `${playing.artist} - ${playing.name}`;
-      const cacheKey = keyForQuery(query);
-      await autoShow.downloadAndAnalyze(query, playing.durationMs / 1000, cacheKey, playing.isrc);
-
-      integrations.broadcast();
-      res.json({ ok: true, track: autoShow.track, analysis: autoShow.getClientState().analysis });
-    } catch (err) {
-      res.status(500).json({ ok: false, error: err.message });
-    }
+  app.post('/api/auto/analyze-deezer', analyzePlaying({
+    source: deezerSource,
+    notConnected: 'Deezer extension not connected',
+    nothingPlaying: 'No track currently playing on Deezer',
   }));
 
   app.post('/api/auto/download-analyze', asyncHandler(async (req, res) => {
