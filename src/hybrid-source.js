@@ -170,8 +170,11 @@ class HybridSource {
     if (!playing) return;
     this._session = playing;
     this._sessionAt = at;
-    this._evaluateMatch();
-    if (!this._matched) return;
+    const agrees = this._evaluateMatch();
+    // A report that disagrees never moves the clock, even inside the grace
+    // period that keeps the match from flapping: it is describing some other
+    // track, and its position would drag the show there for a second or two.
+    if (!this._matched || !agrees) return;
     this._driver = 'nowplaying';
     this._clock.observe(playing.progressMs, { isPlaying: playing.isPlaying, at });
   }
@@ -189,7 +192,7 @@ class HybridSource {
     this.setContent(playing);
     if (this._sessionIsLive() && this._matched) return;
     this._driver = 'spotify';
-    this._clock.observe(playing.progressMs, { isPlaying: playing.isPlaying, at });
+    this._clock.observe(playing.progressMs, { isPlaying: playing.isPlaying, at, now: this._now() });
   }
 
   /** Where the show is now, in milliseconds. */
@@ -206,22 +209,29 @@ class HybridSource {
    * direction that matters. Matching engages at once; unmatching takes a few
    * consecutive disagreements, because the two sources never change track on
    * the same tick and a single-report test would hand the clock back and forth
-   * across every track boundary.
+   * across every track boundary. Returns whether this report agrees.
    */
   _evaluateMatch() {
     const agrees = tracksMatch(this._content, this._session);
     if (agrees) {
-      if (!this._matched) this._clock.reset();   // new clock source, new fix
+      // Taking over: the OS report that triggered this is observed straight
+      // after, so the clock snaps to the better source with no gap.
+      if (!this._matched) this._clock.reset();
       this._matched = true;
       this._mismatches = 0;
-      return;
+      return true;
     }
-    if (!this._matched) return;
-    if (++this._mismatches < MISMATCH_GRACE) return;
+    if (!this._matched) return false;
+    if (++this._mismatches < MISMATCH_GRACE) return false;
+    // Handing back to Spotify keeps the clock running. It used to be reset
+    // here, and nothing observes it until Spotify's next poll — up to a second
+    // of the show reading 0:00, then jumping back, each of which re-seeks the
+    // timeline. The same song is still playing, so Spotify's next report is
+    // just a correction to the position the clock already has.
     this._matched = false;
     this._mismatches = 0;
-    this._clock.reset();
     this._driver = 'spotify';
+    return false;
   }
 
   /** A snapshot for the UI: which half is doing what, and how well. */

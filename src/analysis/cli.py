@@ -43,7 +43,16 @@ def download(url):
     suffix = '.mp3' if '.mp3' in url else '.ogg'
     handle, path = tempfile.mkstemp(suffix=suffix)
     os.close(handle)
-    urllib.request.urlretrieve(url, path)
+    try:
+        urllib.request.urlretrieve(url, path)
+    except BaseException:
+        # The caller never learns the path of a download that failed, so this
+        # is the only place that can remove it.
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        raise
     return path
 
 
@@ -55,6 +64,24 @@ def resolve(source):
 
 
 # ── Worker ──────────────────────────────────────────────────────────────────
+
+def _encode_reply(response):
+    """
+    One reply line, always valid JSON.
+
+    `json.dumps` writes NaN and Infinity as bare tokens by default, which no
+    JSON parser accepts: the Node side would sit on the request until its
+    timeout. Anything non-finite that got past the document's own clean-up is
+    turned into null here, and if even that fails the reply becomes an error
+    rather than an unreadable line.
+    """
+    from .pipeline import json_safe
+    try:
+        return json.dumps(json_safe(response), allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        return json.dumps({'id': response.get('id'),
+                           'error': f'result could not be encoded: {exc}'})
+
 
 def watch_parent():
     """
@@ -135,7 +162,7 @@ def worker_loop():
             # A faulted GPU FFT stays broken for the life of the process. The
             # track has its answer; ask for a fresh worker for the next one.
             response['recycle'] = True
-        sys.stdout.write(json.dumps(response) + '\n')
+        sys.stdout.write(_encode_reply(response) + '\n')
         sys.stdout.flush()
 
 

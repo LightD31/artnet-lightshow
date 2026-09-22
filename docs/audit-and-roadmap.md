@@ -39,7 +39,7 @@ they are fixed**; they are tracked privately and are the first item of Phase 0. 
 
 ### A2. Broken by external changes (High)
 5. **[V] Spotify February 2026 dev-mode migration** (applied to existing apps 9 March 2026):
-   - **ISRC is gone.** `external_ids` was removed from the Track object, so `isrc` is always null (`src/spotify.js:111,318,344`). The exact-audio Deezer path is dead, and every Spotify track falls back to a yt-dlp *search*, which risks the wrong edit and therefore a wrong timeline.
+   - **ISRC may be missing.** The guide lists `external_ids` as removed from the Track object for development-mode apps; where that applies, `isrc` is null (`src/spotify.js:111,318,344`), the exact-audio Deezer path is skipped, and the track falls back to a yt-dlp *search*, which risks the wrong edit and therefore a wrong timeline. In practice Spotify still sends it to at least some apps, so the fix keeps it when present and looks one up only when it is not.
    - **Playlists moved.** `GET /playlists/{id}/tracks` became `/items`, `tracks.total` became `items.total`, and `items[].track` became `items[].item` (`spotify.js:100,372-411`). Playlists the user doesn't own or collaborate on now return no items.
 6. **[V] yt-dlp needs a JavaScript runtime for YouTube** since 2025.11.12. `_ytDlpExec` (`auto-show.js:480`) passes no `--js-runtimes`, and preflight doesn't check for one. Node itself is a supported runtime.
 
@@ -70,7 +70,7 @@ they are fixed**; they are tracked privately and are the first item of Phase 0. 
     - **Restart race:** the single `_recycling` boolean and an exit handler that ignores which process exited mean fast track skips orphan a GPU-holding Python process and reject the whole queue (`analyzer-worker.js:275,340`).
     - **No stdin `error` listener** (`:444`), so an EPIPE crashes Node.
     - **NaN hangs a request for 600 s:** a line that doesn't parse is ignored until the timeout, and `embeddings`/S-KEY are added *after* `json_safe` (`pipeline.py:158-189`).
-14. **[V] Concurrent prefetches collide.** Temp names are `auto-dl-${Date.now()}` (`auto-show.js:470`) and the Spotify prefetch loop starts several in one tick (`integrations.js:357`), so wrong audio can be cached under another track's key.
+14. **[V] Concurrent prefetches can collide.** Temp names are `auto-dl-${Date.now()}` (`auto-show.js:470`) and the Spotify prefetch loop starts several in one tick (`integrations.js:357`). Only the time it takes to spawn yt-dlp keeps them in different milliseconds; two that do share one overwrite each other, and the wrong audio is cached under another track's key.
 15. **[V] Main-thread stalls in the process that renders DMX:**
     - `GET /api/auto/cache` parses every cached analysis synchronously (`analysis-cache.js:115`).
     - `GET /api/preflight` runs the model download with `spawnSync` (`preflight.js:519`).

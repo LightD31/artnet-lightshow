@@ -5,6 +5,7 @@ const { COLOR_PRESETS, STROBE_FUNCTIONS } = require('./presets');
 const { getProfile } = require('./profiles');
 const { sendUniverse, sendHue, stopHue } = require('./output');
 const universes = require('./universes');
+const { guarded } = require('./guard');
 const { PATTERN_FUNCS } = require('../shared/patterns');
 const { spatialLayout, washFixtures } = require('../shared/stage');
 // Shared with the browser's rehearsal preview so the two cannot drift. See the
@@ -357,15 +358,22 @@ function restartBeatTimer({ tickNow = false } = {}) {
     // After a stall (a blocked event loop, a suspended laptop) resume on the
     // grid rather than firing every missed beat back to back.
     n = Math.max(n + 1, Math.floor((performance.now() - start) / period) + 1);
-    beatInterval = setTimeout(() => { tickPattern(); schedule(); }, start + n * period - performance.now());
+    // The next beat is booked whatever this one does: a pattern that throws
+    // once must not stop the beat clock for the rest of the night.
+    beatInterval = setTimeout(() => { safeTick(); schedule(); }, start + n * period - performance.now());
   };
   schedule();
 }
 
+const safeTick = guarded('beat', tickPattern);
+// One bad frame is reported and the next one renders; unguarded, a throw here
+// ended the process and left every fixture latched on its last frame.
+const safeRender = guarded('render', renderDmx);
+
 function startEngine() {
   if (renderInterval) return;           // idempotent: never stack render loops
   restartBeatTimer();
-  renderInterval = setInterval(renderDmx, 25);
+  renderInterval = setInterval(safeRender, 25);
 }
 
 /**

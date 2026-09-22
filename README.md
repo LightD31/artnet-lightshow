@@ -57,7 +57,8 @@ via **Bitfocus Companion**, and a REST API.
   locally rather than polled over the network. Around 11 ms of mean sync error
   against Spotify's own 189 ms, and never a backward jump — see
   [Spotify + OS clock](#spotify--os-clock-the-hybrid-source)
-- Caches analyses on disk and **prefetches the next tracks in the queue**, so a
+- Caches analyses on disk (up to 4 GB, dropping the least recently played
+  first) and **prefetches the next tracks in the queue**, so a
   track change flips instantly instead of stalling for a download
 - **Set-list warming** — paste tonight's tracks (or point it at a Spotify
   playlist) at load-in and have the whole night analysed before doors open
@@ -133,7 +134,14 @@ The same token goes in:
 - **Browser extension** → its preferences page (server URL and token)
 
 Cross-origin requests are refused whether or not a token is set, so a website
-you happen to have open in another tab cannot drive the rig.
+you happen to have open in another tab cannot drive the rig — over HTTP or over
+the live socket.
+
+The server also only answers to names it knows: any IP address, `localhost`, and
+this machine's own host name (bare or with `.local`). That stops a web page from
+pointing its own domain at your machine to get around the origin check. If you
+reach the rig by some other name — `lights.lan`, a reverse proxy — set that
+address as the **Public URL** in *Server & Access*.
 
 ---
 
@@ -423,10 +431,14 @@ A-Trak - Ray Ban Vision
 rather than only the next few.
 
 **Warm a Spotify playlist** takes the set list you already have. Pick one of the
-connected account's playlists from the dropdown, or paste a link to anyone's —
-a share link, a `spotify:playlist:…` URI or the bare id all work. Unlike the
-queue, a playlist exists before anything is playing, which is the case warming
-was built for.
+connected account's playlists from the dropdown, or paste a link — a share link,
+a `spotify:playlist:…` URI or the bare id all work. Unlike the queue, a playlist
+exists before anything is playing, which is the case warming was built for.
+
+Since Spotify's February 2026 API changes, it only lists the tracks of playlists
+the connected account **owns or collaborates on**. To warm someone else's, add
+its tracks to one of your own playlists first (*Add to other playlist* in the
+Spotify app), or paste them as a set list.
 
 Tracks keep their Spotify id, so a warmed playlist track is already cached under
 the exact key the live path looks up when it plays. Podcast episodes and tracks
@@ -500,7 +512,9 @@ cache, and which playback sources are connected.
 
 The same report is in the settings page under **Pre-show Check** — run there,
 it also sees the *live* MIDI and playback-source connections rather than only
-what is configured.
+what is configured. If analysis model weights are missing it starts
+downloading them in the background and says so; the show keeps running, and
+running the check again reports when they are ready.
 
 A node that never answers an ArtPoll is a warning, not a failure: plenty of
 them do not implement it, and a broadcast rig works fine without ever replying.
@@ -740,6 +754,11 @@ python scripts/setup-panns.py --check  # verify without downloading
 
 **ffmpeg** and **yt-dlp** must be on `PATH`. `pip install -r requirements.txt`
 covers yt-dlp; install ffmpeg with your package manager.
+
+yt-dlp needs to be **2025.11.12 or newer**: YouTube now requires a JavaScript
+runtime to download at all. You do not need to install one — the server hands
+yt-dlp the Node it is itself running on. The pre-show check warns about an older
+yt-dlp; `pip install -U "yt-dlp[default]"` updates it.
 
 **torch is required.** The beat grid, the metre and the instrument roles come
 from models — a beat-tracking transformer and a source separator — and there is
@@ -1294,7 +1313,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/midi/learn/cancel` | Disarm learn |
 | POST | `/api/prolink/enable` · `/disable` · `/toggle` | PRO DJ LINK |
 | GET | `/auth/spotify` · `/auth/spotify/callback` | Spotify OAuth |
-| GET | `/api/preflight` | Run the pre-show check against the live subsystems |
+| POST | `/api/preflight` | Run the pre-show check against the live subsystems |
 | GET | `/api/spotify/now-playing` · POST `/api/spotify/disconnect` | Spotify |
 | GET | `/api/spotify/playlists` | The connected account's playlists, for the warming picker |
 | POST | `/api/nowplaying/disconnect` | Drop the OS media session source |

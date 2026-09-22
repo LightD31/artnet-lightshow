@@ -92,7 +92,10 @@ async function parseGDTF(fileBuffer) {
     );
   }
 
-  const xmlContent = await descFile.async('string');
+  // The declared size above comes from the archive itself, so a crafted file
+  // can simply understate it. Inflate as a stream and stop at the limit, so
+  // what bounds the heap is the bytes actually produced.
+  const xmlContent = await inflateCapped(descFile, MAX_DESCRIPTION_BYTES);
 
   const parser = new XMLParser({
     ignoreAttributes: false,
@@ -184,4 +187,40 @@ async function parseGDTF(fileBuffer) {
   return { name, manufacturer, modes };
 }
 
-module.exports = { parseGDTF };
+/**
+ * Decompress one zip entry to a UTF-8 string, refusing once more than `limit`
+ * bytes have come out.
+ */
+function inflateCapped(entry, limit) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let total = 0;
+    let settled = false;
+    const stream = entry.internalStream('uint8array');
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      try { stream.pause(); } catch (_) { /* already stopped */ }
+      reject(err);
+    };
+    stream
+      .on('data', (chunk) => {
+        if (settled) return;
+        total += chunk.length;
+        if (total > limit) {
+          fail(new Error(`description.xml is too large (over ${Math.round(limit / 1024 / 1024)} MB once decompressed)`));
+          return;
+        }
+        chunks.push(Buffer.from(chunk.buffer, chunk.byteOffset, chunk.length));
+      })
+      .on('error', fail)
+      .on('end', () => {
+        if (settled) return;
+        settled = true;
+        resolve(Buffer.concat(chunks).toString('utf8'));
+      })
+      .resume();
+  });
+}
+
+module.exports = { parseGDTF, inflateCapped };

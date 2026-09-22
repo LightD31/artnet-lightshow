@@ -53,6 +53,15 @@ function compareSlots(a, b) {
   return ao < bo ? -1 : 1;
 }
 
+/**
+ * Is this unparsable stdout line the worker's reply to request `id`, rather
+ * than a library's progress output? Replies are a single JSON object that
+ * starts with the id (see cli.py).
+ */
+function looksLikeReply(line, id) {
+  return new RegExp(`^\\{\\s*"id"\\s*:\\s*${Number(id)}\\s*[,}]`).test(line);
+}
+
 /** The track was left behind before its analysis finished. */
 function supersededError() {
   const err = new Error('superseded by a newer current track');
@@ -103,9 +112,6 @@ class AnalyzerWorker {
     this._nextId = 1;
     this._shuttingDown = false;
     this._timeoutTimer = null;
-    // Set while we deliberately kill a wedged worker, so the exit handler
-    // recycles the process instead of failing the whole queue with it.
-    this._recycling = false;
   }
 
   /**
@@ -274,7 +280,9 @@ class AnalyzerWorker {
    */
   _recycleProcess() {
     if (!this._proc) return;
-    this._recycling = true;
+    // Forgetting the process first is what makes this a recycle rather than a
+    // crash: its handlers only act while it is still `this._proc`, so its exit
+    // cannot fail the queue — however many recycles happen before it closes.
     const proc = this._proc;
     this._proc = null;
     this._stdoutBuf = '';
@@ -304,12 +312,28 @@ class AnalyzerWorker {
       env: workerEnv(),
     });
 
+    // Every handler is bound to *this* process. A recycled worker takes a
+    // moment to die, and in that moment a new one is already running: a
+    // single "recycling" flag let the second of two quick recycles clear the
+    // new process on the old one's exit, orphaning it with its GPU memory
+    // and rejecting its whole queue. Output from a retired process could also
+    // be parsed as the new one's reply.
+    const current = () => proc === this._proc;
+
     proc.stdout.setEncoding('utf8');
     proc.stderr.setEncoding('utf8');
-    proc.stdout.on('data', (chunk) => this._onStdout(chunk));
+    proc.stdout.on('data', (chunk) => { if (current()) this._onStdout(chunk); });
+    // A retiring worker's log lines are still worth seeing.
     proc.stderr.on('data', (chunk) => this._onStderr(chunk));
-    proc.on('error', (err) => this._onExit(`spawn error: ${err.message}`));
+    // Writing to a worker that has just died fails asynchronously with EPIPE.
+    // Unhandled, that 'error' event takes the whole server down; the 'close'
+    // that follows is what deals with the dead worker.
+    proc.stdin.on('error', (err) => {
+      if (current()) console.warn(`[analyzer] could not write to the worker: ${err.message}`);
+    });
+    proc.on('error', (err) => { if (current()) this._onExit(`spawn error: ${err.message}`); });
     proc.on('close', (code, signal) => {
+      if (!current()) return;
       const reason = signal ? `signal ${signal}` : `code ${code}`;
       this._onExit(`worker exited (${reason})`);
     });
@@ -338,12 +362,6 @@ class AnalyzerWorker {
   }
 
   _onExit(reason) {
-    // Deliberate recycle after a timeout: the pending request was already
-    // rejected and the queue is intentionally preserved.
-    if (this._recycling) {
-      this._recycling = false;
-      return;
-    }
     if (!this._proc) return;
     this._proc = null;
     this._stdoutBuf = '';
@@ -397,6 +415,19 @@ class AnalyzerWorker {
     try {
       resp = JSON.parse(line);
     } catch (e) {
+      // The worker's reply that did not parse — a NaN slipped into it, or it
+      // was truncated. Waiting would hold this request, and every one queued
+      // behind it, until the timeout ten minutes later. The worker has
+      // finished with it either way, so fail it now and move on.
+      if (this._pending && looksLikeReply(line, this._pending.id)) {
+        console.warn(`[analyzer] unreadable reply to request ${this._pending.id}: ${e.message}`);
+        const p = this._pending;
+        this._pending = null;
+        this._clearTimeout();
+        p.reject(new Error(`the analyser returned an unreadable result (${e.message})`));
+        this._tick();
+        return;
+      }
       // A few third-party audio libraries print progress to stdout despite
       // the NDJSON contract. It is diagnostic output, not a protocol error.
       // Keep it visible without alarming the operator or disrupting the

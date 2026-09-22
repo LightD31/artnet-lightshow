@@ -189,3 +189,31 @@ test('the separator defaults to Demucs and takes only the two it knows', () => {
   assert.ok(!sep('roformer'));
   assert.ok(!sep(''));
 });
+
+// Whatever pythonPath names is executed, so it has to be named like a Python.
+test('pythonPath only accepts a Python interpreter', () => {
+  const { patchSchema } = require('../../src/server/settings');
+  const ok = (v) => patchSchema.safeParse({ analysis: { pythonPath: v } }).success;
+  for (const v of ['', 'python', 'py', '/usr/bin/python3', '/opt/bin/python3.12',
+    'C:\\Users\\me\\miniconda3\\python.exe', 'pythonw.exe']) {
+    assert.strictEqual(ok(v), true, v);
+  }
+  for (const v of ['C:\\Windows\\System32\\cmd.exe', '/bin/sh', 'python3; rm -rf /',
+    '/tmp/auto-analyze-1.exe', 'C:\\Temp\\python.exe.bat']) {
+    assert.strictEqual(ok(v), false, v);
+  }
+});
+
+// A rule added later must not quarantine the whole file — credentials and all
+// — over one field an older build accepted.
+test('a stored pythonPath the new rule refuses is cleared, and the rest loads', () => {
+  const s = store();
+  fs.writeFileSync(s.file, JSON.stringify({
+    analysis: { pythonPath: 'C:\\tools\\run-analyser.bat' },
+    spotify: { clientId: 'keep-me' },
+  }));
+  s.load();
+  assert.strictEqual(s.get('analysis.pythonPath'), '');
+  assert.strictEqual(s.get('spotify.clientId'), 'keep-me');
+  assert.ok(fs.existsSync(s.file), 'not moved aside');
+});

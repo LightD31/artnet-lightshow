@@ -45,9 +45,11 @@ test('a reference that would escape the API path does not parse', () => {
 
 // ── Playlist items ──────────────────────────────────────────────────────────
 
+// The shape since Spotify's February 2026 changes: the entry is `item`, not
+// `track`. The legacy shape is covered separately below.
 const trackItem = (over = {}) => ({
   is_local: false,
-  track: {
+  item: {
     id: 'abc123',
     name: 'Around the World',
     type: 'track',
@@ -72,6 +74,19 @@ test('a playlist track carries the id, ISRC and duration the warmer wants', () =
   });
 });
 
+// Before February 2026 the entry was `track`. A recorded response, or an app
+// Spotify has not migrated, still answers that way.
+test('the pre-2026 entry shape is still read', () => {
+  const legacy = { is_local: false, track: trackItem().item };
+  assert.strictEqual(playlistItemToTrack(legacy).trackId, 'abc123');
+});
+
+// Since February 2026 development-mode apps get no external_ids at all.
+test('a track without external_ids has no ISRC, and that is not an error', () => {
+  const { external_ids: _gone, ...bare } = trackItem().item;
+  assert.strictEqual(playlistItemToTrack({ item: bare }).isrc, null);
+});
+
 test('several artists are joined the way every other source joins them', () => {
   const item = trackItem({ artists: [{ name: 'Justice' }, { name: 'Uffie' }] });
   assert.strictEqual(playlistItemToTrack(item).artist, 'Justice, Uffie');
@@ -79,10 +94,10 @@ test('several artists are joined the way every other source joins them', () => {
 
 // A playlist is not just tracks.
 test('episodes and entries with nothing left to analyse are dropped', () => {
-  assert.strictEqual(playlistItemToTrack({ track: null }), null, 'removed from the catalogue');
+  assert.strictEqual(playlistItemToTrack({ item: null }), null, 'removed from the catalogue');
   assert.strictEqual(playlistItemToTrack(null), null);
-  assert.strictEqual(playlistItemToTrack({ track: { name: 'Ep. 12', type: 'episode' } }), null);
-  assert.strictEqual(playlistItemToTrack({ track: { id: 'x', type: 'track' } }), null, 'no name');
+  assert.strictEqual(playlistItemToTrack({ item: { name: 'Ep. 12', type: 'episode' } }), null);
+  assert.strictEqual(playlistItemToTrack({ item: { id: 'x', type: 'track' } }), null, 'no name');
 });
 
 // A local file has no Spotify id, but it has a title and an artist, which is
@@ -90,7 +105,7 @@ test('episodes and entries with nothing left to analyse are dropped', () => {
 test('a local file is kept and falls back to a search by name', () => {
   const local = playlistItemToTrack({
     is_local: true,
-    track: {
+    item: {
       id: null, name: 'Untitled Edit', type: 'track', duration_ms: 300000,
       artists: [{ name: 'Bootleg' }], album: { name: '' },
     },
@@ -117,17 +132,18 @@ function fakeClient({ head, pages = [], scopes = 'playlist-read-private' } = {})
   let page = 0;
   client._apiGet = async (path) => {
     calls.push(path);
-    if (path.includes('/tracks?')) return pages[page++] ?? { items: [], next: null };
+    if (path.includes('/items?')) return pages[page++] ?? { items: [], next: null };
     return head;
   };
   return { client, calls };
 }
 
-const page = (items, next = null) => ({ items, next, total: items.length });
+// `total` is the whole playlist's length, as Spotify reports it on every page.
+const page = (items, next = null, total = items.length) => ({ items, next, total });
 
 test('a playlist comes back as tracks, named and counted', async () => {
   const { client, calls } = fakeClient({
-    head: { name: 'Friday', owner: { display_name: 'Léa' }, tracks: { total: 2 } },
+    head: { name: 'Friday', owner: { display_name: 'Léa' }, items: { total: 2 } },
     pages: [page([trackItem(), trackItem({ id: 'def456', name: 'Genesis' })])],
   });
 
@@ -147,8 +163,8 @@ test('a playlist comes back as tracks, named and counted', async () => {
 test('a playlist longer than one page is walked to the end', async () => {
   const first = Array.from({ length: 100 }, (_, i) => trackItem({ id: `a${i}`, name: `Track ${i}` }));
   const { client, calls } = fakeClient({
-    head: { name: 'Long', tracks: { total: 150 } },
-    pages: [page(first, 'next-url'), page([trackItem({ id: 'b0', name: 'Last' })])],
+    head: { name: 'Long', items: { total: 150 } },
+    pages: [page(first, 'next-url', 101), page([trackItem({ id: 'b0', name: 'Last' })], null, 101)],
   });
 
   const playlist = await client.getPlaylist(ID);
@@ -163,15 +179,15 @@ test('a playlist longer than one page is walked to the end', async () => {
 test('a playlist past the limit stops early and says so', async () => {
   const full = Array.from({ length: 100 }, (_, i) => trackItem({ id: `a${i}` }));
   const { client, calls } = fakeClient({
-    head: { name: 'Everything', tracks: { total: 4000 } },
-    pages: [page(full, 'next-url'), page(full, 'next-url'), page(full, 'next-url')],
+    head: { name: 'Everything', items: { total: 4000 } },
+    pages: [page(full, 'next-url', 4000), page(full, 'next-url', 4000), page(full, 'next-url', 4000)],
   });
 
   const playlist = await client.getPlaylist(ID, { limit: 150 });
 
   assert.strictEqual(playlist.tracks.length, 150);
   assert.strictEqual(playlist.truncated, true);
-  assert.strictEqual(calls.filter((c) => c.includes('/tracks?')).length, 2);
+  assert.strictEqual(calls.filter((c) => c.includes('/items?')).length, 2);
   assert.ok(calls.some((c) => c.includes('limit=50')), 'the last page asks only for the remainder');
 });
 
@@ -185,6 +201,55 @@ test('the limit is clamped to the ceiling however it is asked for', async () => 
   // because a caller passed Infinity.
   const playlist = await client.getPlaylist(ID, { limit: 10 ** 9 });
   assert.ok(playlist.tracks.length <= MAX_PLAYLIST_TRACKS);
+});
+
+// Spotify now lists the contents only of playlists the account owns or
+// collaborates on. Someone else's playlist is refused, or comes back empty.
+test('someone else\'s playlist says why it cannot be read', async () => {
+  const { client } = fakeClient({ head: { name: 'Theirs' } });
+  client._apiGet = async (path) => {
+    if (path.includes('/items?')) { const err = new Error('Spotify API 403'); err.status = 403; throw err; }
+    return { name: 'Theirs' };
+  };
+  await assert.rejects(client.getPlaylist(ID), (err) => err.status === 403 && /own or collaborate/.test(err.message));
+});
+
+// Which endpoint an app gets depends on whether Spotify has moved it to the
+// 2026 API. The new name is tried first, the old one on a 404, and whichever
+// answered is used from then on.
+test('an app still on the old playlist API is read through /tracks', async () => {
+  const client = new SpotifyClient({ clientId: 'id', clientSecret: 'secret' });
+  client.accessToken = 'token';
+  client.expiresAt = Date.now() + 60000;
+  const calls = [];
+  client._apiGet = async (path) => {
+    calls.push(path);
+    if (path.includes('/items?')) { const err = new Error('Spotify API 404'); err.status = 404; throw err; }
+    if (path.includes('/tracks?')) {
+      return { items: [{ is_local: false, track: trackItem().item }], next: null, total: 1 };
+    }
+    return { name: 'Old API' };
+  };
+
+  const first = await client.getPlaylist(ID);
+  assert.strictEqual(first.tracks[0].isrc, 'GBDUW0000059', 'the ISRC Spotify sent is kept');
+  assert.strictEqual(first.total, 1);
+  const tracksCall = calls.find((c) => c.includes('/tracks?'));
+  assert.ok(decodeURIComponent(tracksCall).includes('track(') && decodeURIComponent(tracksCall).includes('external_ids(isrc)'));
+
+  calls.length = 0;
+  await client.getPlaylist(ID);
+  assert.ok(!calls.some((c) => c.includes('/items?')), 'the answering endpoint is remembered');
+});
+
+// Where Spotify still sends the ISRC it is the exact recording; asking for it
+// costs nothing, and dropping it from the field filter would throw it away.
+test('the ISRC is asked for on the current API too', async () => {
+  const { client, calls } = fakeClient({ head: { name: 'Mine' }, pages: [page([trackItem()])] });
+  const playlist = await client.getPlaylist(ID);
+  assert.strictEqual(playlist.tracks[0].isrc, 'GBDUW0000059');
+  const itemsCall = calls.find((c) => c.includes('/items?'));
+  assert.ok(decodeURIComponent(itemsCall).includes('item(') && decodeURIComponent(itemsCall).includes('external_ids(isrc)'));
 });
 
 test('a reference that is not a playlist fails before spending a request', async () => {
@@ -212,7 +277,7 @@ test('the picker list pages until Spotify runs out', async () => {
   client.expiresAt = Date.now() + 60000;
   const pages = [
     { items: Array.from({ length: 50 }, (_, i) => ({ id: `p${i}`, name: `List ${i}`, owner: { display_name: 'me' }, tracks: { total: i } })), next: 'more' },
-    { items: [{ id: 'last', name: 'Encore', tracks: { total: 3 } }], next: null },
+    { items: [{ id: 'last', name: 'Encore', items: { total: 3 } }], next: null },
   ];
   let n = 0;
   client._apiGet = async () => pages[n++] ?? { items: [], next: null };
@@ -478,4 +543,16 @@ test('a rejected grant drops the session, a network failure keeps it', async () 
   await assert.rejects(() => offline.restoreSession('still-good'), /ENOTFOUND/);
   assert.strictEqual(offline.refreshToken, 'still-good', 'kept for the next attempt');
   assert.deepStrictEqual(kept, [], 'and the store is left alone');
+});
+
+// /auth/spotify is reachable by anyone who can reach the server, so the map
+// of outstanding nonces must not grow with every hit.
+test('outstanding OAuth states are bounded, oldest dropped first', () => {
+  const client = new SpotifyClient({ clientId: 'id', clientSecret: 'secret' });
+  const first = new URL(client.getAuthorizeUrl()).searchParams.get('state');
+  for (let i = 0; i < 200; i++) client.getAuthorizeUrl();
+  assert.ok(client._pendingStates.size <= 32, `size ${client._pendingStates.size}`);
+  assert.strictEqual(client.consumeState(first), false, 'the oldest was evicted');
+  const latest = new URL(client.getAuthorizeUrl()).searchParams.get('state');
+  assert.strictEqual(client.consumeState(latest), true);
 });

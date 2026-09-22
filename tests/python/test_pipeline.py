@@ -238,5 +238,27 @@ class StemRoles(AudioTestCase):
             self.assertEqual(curve.size, self.features.n_frames, name)
 
 
+@needs_audio
+class WorkerReply(unittest.TestCase):
+    """The reply line is the one thing the Node side must always be able to
+    parse: an unreadable one used to hold the request until the ten-minute
+    timeout, and every track queued behind it."""
+
+    def test_non_finite_values_reach_the_wire_as_null(self):
+        import numpy as np
+        from analysis.cli import _encode_reply
+        line = _encode_reply({'id': 7, 'result': {
+            'embeddings': [[1.0, float('nan')]], 'score': np.float32('inf')}})
+        self.assertTrue(line.startswith('{"id": 7'), 'the id leads, as the Node side expects')
+        self.assertEqual(json.loads(line), {
+            'id': 7, 'result': {'embeddings': [[1.0, None]], 'score': None}})
+
+    def test_a_result_that_cannot_be_encoded_becomes_an_error(self):
+        from analysis.cli import _encode_reply
+        reply = json.loads(_encode_reply({'id': 3, 'result': {'bad': object()}}))
+        self.assertEqual(reply['id'], 3)
+        self.assertIn('could not be encoded', reply['error'])
+
+
 if __name__ == '__main__':
     unittest.main()

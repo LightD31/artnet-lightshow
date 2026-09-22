@@ -3,7 +3,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn, spawnSync } = require('child_process');
+const { spawn } = require('child_process');
 
 const { state, universeOf, activeUniverses } = require('./state');
 const { getProfile, fitsInUniverse, endChannel, UNIVERSE_SIZE } = require('./profiles');
@@ -16,6 +16,7 @@ const { listEntertainmentConfigs } = require('./hue');
 const { cues } = require('./cues');
 const { midiMap } = require('./midi-map');
 const pythonEnv = require('../python-env');
+const ytdlp = require('../ytdlp');
 
 /**
  * The check you run before doors open.
@@ -353,10 +354,23 @@ async function checkYtDlp() {
         + (hasDeezer
           ? 'Deezer is configured, so ISRC-matched tracks still download; anything Deezer cannot match will fail.'
           : 'Nothing can be downloaded for analysis.'),
-      fix: 'pip install yt-dlp  (or download it from https://github.com/yt-dlp/yt-dlp)',
+      fix: 'pip install -U "yt-dlp[default]"  (or download it from https://github.com/yt-dlp/yt-dlp)',
     };
   }
-  return { id: 'yt-dlp', label: 'yt-dlp', status: OK, detail: `version ${r.version}` };
+  // Since 2025.11.12 YouTube needs a JavaScript runtime, which the server
+  // hands yt-dlp itself (see src/ytdlp.js) — but an older yt-dlp can neither
+  // use one nor keep up with YouTube's current challenges.
+  if (!ytdlp.needsJsRuntime(r.version)) {
+    return {
+      id: 'yt-dlp', label: 'yt-dlp', status: WARN,
+      detail: `version ${r.version} predates ${ytdlp.JS_RUNTIME_SINCE}; YouTube downloads are likely to fail.`,
+      fix: 'pip install -U "yt-dlp[default]"  (or download the latest from https://github.com/yt-dlp/yt-dlp)',
+    };
+  }
+  return {
+    id: 'yt-dlp', label: 'yt-dlp', status: OK,
+    detail: `version ${r.version}, JavaScript runtime: Node ${process.versions.node} (this server).`,
+  };
 }
 
 // Kept in step with scripts/setup-panns.py, which downloads these.
@@ -411,7 +425,7 @@ function checkCache(analysisCache) {
     };
   }
 
-  const entries = analysisCache.list().length;
+  const entries = analysisCache.count();
   return {
     id: 'cache', label: 'Analysis cache', status: OK,
     detail: `${entries} cached ${entries === 1 ? 'analysis' : 'analyses'} in ${dir}.`,
@@ -500,6 +514,51 @@ function checkCues() {
   };
 }
 
+// Model weights run to gigabytes. The server's pre-show check used to fetch
+// them with spawnSync, which froze the process — Art-Net output included — for
+// as long as the download took, and started over on every run that found them
+// missing. It now starts one download in the background, reports on it, and
+// never starts a second while one is running or after one has succeeded.
+const MODEL_DOWNLOAD_TIMEOUT_MS = 60 * 60 * 1000;
+let modelDownload = null;        // { startedAt, done, error, promise }
+
+function startModelDownload() {
+  if (modelDownload && (!modelDownload.done || !modelDownload.error)) return modelDownload;
+  const py = process.env.ARTNET_PYTHON || pythonEnv.resolve().executable || 'python';
+  const script = path.join(__dirname, '..', '..', 'scripts', 'download-models.py');
+  const job = { startedAt: Date.now(), done: false, error: null, promise: null };
+  job.promise = new Promise((resolve) => {
+    let stderr = '';
+    const finish = (error) => {
+      if (job.done) return;
+      clearTimeout(timer);
+      job.done = true;
+      job.error = error;
+      if (error) console.warn(`[preflight] model download failed: ${error}`);
+      else console.log('[preflight] model download finished');
+      resolve(job);
+    };
+    let child;
+    try {
+      child = spawn(py, [script], { env: process.env, windowsHide: true });
+    } catch (err) {
+      finish(err.message);
+      return;
+    }
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch (_) { /* already gone */ }
+      finish(`timed out after ${MODEL_DOWNLOAD_TIMEOUT_MS / 60000} minutes`);
+    }, MODEL_DOWNLOAD_TIMEOUT_MS);
+    if (timer.unref) timer.unref();
+    child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-2000); });
+    child.on('error', (err) => finish(err.message));
+    child.on('close', (code) => finish(code === 0 ? null : (stderr.trim() || `exit code ${code}`)));
+  });
+  modelDownload = job;
+  console.log('[preflight] downloading analysis model weights in the background');
+  return job;
+}
+
 function checkAnalysisModels({ download = false } = {}) {
   const root = process.env.ARTNET_MODEL_DIR
     || path.join(os.homedir(), '.cache', 'artnet-lightshow', 'models');
@@ -513,25 +572,30 @@ function checkAnalysisModels({ download = false } = {}) {
   const bsEnabled = settings.get('analysis.separator') === 'bs-roformer';
   const ready = (!bsEnabled || (fs.existsSync(bs) && fs.existsSync(bsReady))) && fs.existsSync(muq) && fs.existsSync(mulan)
     && fs.existsSync(text) && fs.existsSync(skey) && fs.existsSync(beat);
+
   if (!ready && download) {
-    const py = process.env.ARTNET_PYTHON || pythonEnv.resolve().executable || 'python';
-    const script = path.join(__dirname, '..', '..', 'scripts', 'download-models.py');
-    const result = spawnSync(py, [script], { encoding: 'utf8', env: process.env });
-    if (result.status !== 0) {
+    const job = startModelDownload();
+    if (!job.done) {
+      const minutes = Math.floor((Date.now() - job.startedAt) / 60000);
       return { id: 'models', label: 'Analysis models', status: WARN,
-        detail: `Model download failed: ${(result.stderr || '').trim() || 'Python unavailable'}.`,
-        fix: 'Install huggingface_hub and run npm run preflight.' };
+        detail: `Downloading the model weights in the background (started ${minutes ? `${minutes} min ago` : 'just now'}). `
+          + 'The show keeps running meanwhile.',
+        fix: 'Run the check again when it has finished.' };
+    }
+    if (job.error) {
+      return { id: 'models', label: 'Analysis models', status: WARN,
+        detail: `Model download failed: ${job.error}.`,
+        fix: 'Install huggingface_hub and run the check again, or run npm run preflight.' };
     }
   }
-  const after = (!bsEnabled || (fs.existsSync(bs) && fs.existsSync(bsReady))) && fs.existsSync(muq) && fs.existsSync(mulan)
-    && fs.existsSync(text) && fs.existsSync(skey) && fs.existsSync(beat);
-  return { id: 'models', label: 'Analysis models', status: after ? OK : WARN,
-    detail: after
+
+  return { id: 'models', label: 'Analysis models', status: ready ? OK : WARN,
+    detail: ready
       ? (bsEnabled
         ? 'BS-RoFormer, Beat This!, S-KEY, MuQ and MuQ-MuLan weights are ready.'
         : 'Beat This!, S-KEY, MuQ and MuQ-MuLan are ready; Demucs is active for stems.')
       : 'Pretrained weights are not available; deterministic analysis fallback remains active.',
-    fix: after ? null : 'Run the preflight again after installing huggingface_hub.' };
+    fix: ready ? null : 'Run the preflight again after installing huggingface_hub.' };
 }
 
 /**
@@ -588,6 +652,7 @@ module.exports = {
   checkSacn,
   checkHue,
   checkPanns,
+  _modelDownload: () => modelDownload,
   checkAnalysisModels,
   checkAccess,
   checkMidi,

@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
+const { randomUUID } = require('crypto');
 const dfi = require('d-fi-core');
 
 // Bounds on the audio download. Previously unbounded on all three counts: a
@@ -75,10 +76,13 @@ async function downloadByIsrc(trackName, isrc) {
     ? dfi.decryptDownload(rawBuffer, trackInfo.SNG_ID)
     : rawBuffer;
 
-  // 5. Write to a temp MP3 file
-  const basename = `deezer-dl-${Date.now()}`;
+  // 5. Write to a temp MP3 file. Random rather than timestamped, so two
+  // prefetches started in the same millisecond cannot share a file; and
+  // written asynchronously, because a synchronous write of a whole track
+  // stalls the render loop that shares this thread.
+  const basename = `deezer-dl-${randomUUID()}`;
   const mp3Path = path.join(os.tmpdir(), `${basename}.mp3`);
-  fs.writeFileSync(mp3Path, audioBuffer);
+  await fs.promises.writeFile(mp3Path, audioBuffer);
 
   // 6. Convert MP3 → WAV via ffmpeg (the analyzer expects WAV)
   const wavPath = path.join(os.tmpdir(), `${basename}.wav`);

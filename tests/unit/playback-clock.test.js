@@ -183,3 +183,23 @@ test('a negative or nonsense observation is clamped rather than trusted', () => 
   clock.observe(NaN, { isPlaying: true, at: 1000 });
   assert.ok(Number.isFinite(clock.positionMs(1000)));
 });
+
+// A polled source's sample is timed at the middle of the round trip, so it is
+// already in the past when it arrives. Anchoring the correction back there
+// applied the new speed to time that had already been read out, and the next
+// reading could come out lower than the last one.
+test('a sample from the past slows the clock without stepping it back', () => {
+  const clock = new PlaybackClock();
+  clock.observe(30000, { isPlaying: true, at: 1000, now: 1000 });
+  const before = clock.positionMs(2100);           // read just before the report lands
+  // Sampled at 2000, arriving at 2100, 200 ms behind the clock: a slew.
+  assert.strictEqual(clock.observe(30800, { isPlaying: true, at: 2000, now: 2100 }), 'slew');
+  assert.ok(clock.positionMs(2100) >= before, `${clock.positionMs(2100)} < ${before}`);
+  assert.ok(clock.rate < 1, 'and it is running slow to absorb the error');
+});
+
+test('a snap carries a past sample forward to the moment it arrived', () => {
+  const clock = new PlaybackClock();
+  clock.observe(120000, { isPlaying: true, at: 5000, now: 5150 });
+  assert.strictEqual(clock.positionMs(5150), 120150);
+});

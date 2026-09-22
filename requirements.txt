@@ -86,4 +86,9 @@ panns_inference>=0.1.1
 
 # ── Audio download fallback ─────────────────────────────────────────────────
 # Used when a track has no ISRC or Deezer is not configured.
-yt-dlp>=2024.1.1
+#
+# 2025.11.12 or newer: YouTube now needs an external JavaScript runtime to
+# solve its challenges. The server passes its own Node to yt-dlp, so nothing
+# else has to be installed — but the `default` extra is what brings the
+# challenge-solver scripts (yt-dlp-ejs) along with a pip install.
+yt-dlp[default]>=2025.11.12

@@ -1546,7 +1546,7 @@ document.getElementById('preflight-run').addEventListener('click', async (e) => 
   // tool probes each spawn a process — say something rather than looking hung.
   host.appendChild(el('div', 'preflight-summary', 'Checking\u2026'));
   try {
-    const res = await apiJson('/api/preflight');
+    const res = await apiJson('/api/preflight', { method: 'POST' });
     if (res.ok) renderPreflight(res.report);
     else host.textContent = res.error || 'Preflight failed';
   } catch (err) {

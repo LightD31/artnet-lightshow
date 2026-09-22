@@ -230,3 +230,42 @@ test('a restart hands the running analysis to the new worker', async () => {
     assert.strictEqual(w._pending, running, 'the same request is in flight on it');
   } finally { w.shutdown(); }
 });
+
+// Two track changes in quick succession recycle two workers before either has
+// died. The old single "recycling" flag let the second death clear the *new*
+// worker, rejecting the current track and orphaning a process.
+test('two quick recycles do not take down the worker that replaced them', async () => {
+  const w = worker('hangslow', { timeoutMs: 5000 });
+  try {
+    const first = w.analyze('/tmp/slow-a.wav', null, { priority: 'current', tag: 'a' });
+    first.catch(() => {});
+    const second = w.analyze('/tmp/slow-b.wav', null, { priority: 'current', tag: 'b' });
+    second.catch(() => {});
+    const third = w.analyze('/tmp/late-c.wav', null, { priority: 'current', tag: 'c' });
+    const result = await third;
+    assert.strictEqual(result.source, '/tmp/late-c.wav');
+    assert.ok(w._proc && w._proc.pid === result.pid, 'the worker that answered is still the live one');
+    await assert.rejects(first, /superseded/);
+    await assert.rejects(second, /superseded/);
+  } finally { w.shutdown(); }
+});
+
+// A reply with a bare NaN is valid Python output and unreadable JSON. It used
+// to be logged as chatter while the request waited out the timeout.
+test('an unreadable reply fails its request at once instead of timing out', async () => {
+  const w = worker('nanreply', { timeoutMs: 20000 });
+  try {
+    const started = Date.now();
+    await assert.rejects(w.analyze('/tmp/a.wav', null), /unreadable/);
+    assert.ok(Date.now() - started < 5000, 'did not wait for the timeout');
+  } finally { w.shutdown(); }
+});
+
+// Writing to a worker that has already died raises EPIPE on its stdin. With
+// no listener that is an unhandled 'error' event, and it ends the server.
+test('a worker that dies at once rejects the request without crashing the server', async () => {
+  const w = worker('exitnow', { timeoutMs: 5000 });
+  try {
+    await assert.rejects(w.analyze('/tmp/a.wav', null), /exited|write|worker/);
+  } finally { w.shutdown(); }
+});

@@ -3,6 +3,8 @@
 const { state, getLiveState, getDmxSnapshot } = require('./state');
 const { setHooks } = require('./patch');
 const { restartBeatTimer } = require('./engine');
+const { guarded } = require('./guard');
+const PlaybackClock = require('../playback-clock');
 const { cues } = require('./cues');
 const { Warmer } = require('./warm');
 const {
@@ -47,7 +49,24 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     return spotifySlots[0] || emptySlot('idle', '');
   }
 
-  const autoPlayback = { progressMs: 0, isPlaying: false, updatedAt: 0 };
+  // The position the single-source modes (Spotify alone, the OS media
+  // session, the Deezer extension) play the show against. It used to be the
+  // last report plus the time since it arrived, re-anchored on every report —
+  // so each report's error moved the show, and a report a little behind the
+  // last one moved it backwards, which re-seeks the timeline and restarts the
+  // pattern. The clock absorbs small errors into its speed instead and only
+  // snaps on a real jump (a seek, a new track); see playback-clock.js.
+  const sourceClock = new PlaybackClock();
+
+  /** Fold one playback report from the active single source into the clock. */
+  function observePlayback(playing) {
+    const now = Date.now();
+    sourceClock.observe(playing.progressMs, {
+      isPlaying: playing.isPlaying,
+      at: Number.isFinite(playing.sampledAt) ? playing.sampledAt : now,
+      now,
+    });
+  }
 
   // Spotify for the content and the queue, the OS media session for the clock.
   // Fed from both sets of callbacks below; it decides for itself which half is
@@ -64,8 +83,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   const QUEUE_PEEK_INTERVAL_MS = 15000;
 
   function getAutoPositionMs() {
-    if (!autoPlayback.isPlaying) return autoPlayback.progressMs;
-    return autoPlayback.progressMs + (Date.now() - autoPlayback.updatedAt);
+    return sourceClock.positionMs();
   }
 
   function getProlinkPositionMs() { return prolink.getPositionMs(); }
@@ -279,12 +297,10 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     // Fed to the hybrid source unconditionally, whichever source is active, so
     // that switching to it mid-show does not start from a cold clock. It only
     // ever *reads* Spotify's position when the OS session cannot supply one.
-    hybrid.observeContent(playing);
+    hybrid.observeContent(playing, Number.isFinite(playing.sampledAt) ? playing.sampledAt : undefined);
 
     if (!usesSpotifyContent(resolveAutoSource())) return;
-    autoPlayback.progressMs = playing.progressMs;
-    autoPlayback.isPlaying = playing.isPlaying;
-    autoPlayback.updatedAt = Date.now();
+    observePlayback(playing);
 
     if (autoShow.running && Date.now() - lastQueuePeekAt >= QUEUE_PEEK_INTERVAL_MS) {
       lastQueuePeekAt = Date.now();
@@ -452,9 +468,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     hybrid.observeSession(playing);
 
     if (resolveAutoSource() !== 'nowplaying') return;
-    autoPlayback.progressMs = playing.progressMs;
-    autoPlayback.isPlaying = playing.isPlaying;
-    autoPlayback.updatedAt = Date.now();
+    observePlayback(playing);
   });
 
   nowPlaying.onTrackChange(async (playing) => {
@@ -467,9 +481,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   // ─── Deezer (browser extension) ─────────────────────────────────────────
   deezerSource.onPlaybackUpdate((playing) => {
     if (resolveAutoSource() !== 'deezer') return;
-    autoPlayback.progressMs = playing.progressMs;
-    autoPlayback.isPlaying = playing.isPlaying;
-    autoPlayback.updatedAt = Date.now();
+    observePlayback(playing);
   });
 
   deezerSource.onTrackChange(async (playing) => {
@@ -536,13 +548,13 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   // It also means a test can wire the integrations up without the run hanging
   // afterwards on a heartbeat nobody is listening to.
   let lastPosition = {};
-  const positionTimer = setInterval(() => {
+  const positionTimer = setInterval(guarded('auto-position', () => {
     const position = sampleAutoPosition(autoShow, lastPosition);
     if (position.running || JSON.stringify(position) !== JSON.stringify(lastPosition)) {
       io.emit('auto-position', position);
     }
     lastPosition = position;
-  }, 100);
+  }), 100);
   if (positionTimer.unref) positionTimer.unref();
 
   // DMX values on their own high-rate channel. This is the only field that
@@ -550,13 +562,13 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   // ~100 bytes instead of ~7 KB, and lets the client re-render just the DMX
   // views instead of the whole tree.
   let lastDmxJson = '';
-  const dmxTimer = setInterval(() => {
+  const dmxTimer = setInterval(guarded('dmx-broadcast', () => {
     const snapshot = getDmxSnapshot();
     const json = JSON.stringify(snapshot);
     if (json === lastDmxJson) return;      // blackout / idle rig: nothing to send
     lastDmxJson = json;
     io.emit('dmx', snapshot);
-  }, 100);
+  }), 100);
   if (dmxTimer.unref) dmxTimer.unref();
 
   // Some status fields drift without any explicit event — `authenticated` on
@@ -564,7 +576,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   // Spotify's poll updates status without calling broadcast(). A low-rate
   // dirty-checked sweep picks those up; broadcast() covers everything else the
   // moment it changes.
-  const statusTimer = setInterval(broadcast, 1000);
+  const statusTimer = setInterval(guarded('status-broadcast', broadcast), 1000);
   if (statusTimer.unref) statusTimer.unref();
 
   return {

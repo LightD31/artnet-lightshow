@@ -19,19 +19,25 @@ const { AnalysisCache } = require('./src/analysis-cache');
 const { state } = require('./src/server/state');
 const { startEngine, stopEngine } = require('./src/server/engine');
 const {
-  applyPatch, applyOverride, setFixtureMaxBrightness, processTap, setPersist, setHooks,
+  applyPatch, applyOverride, setFixtureMaxBrightness, processTap, setPersist, setHooks, flushPendingPersist,
 } = require('./src/server/patch');
 const { COLOR_PRESETS, PATTERNS } = require('./src/server/presets');
 const { setupIntegrations } = require('./src/server/integrations');
 const { attachRoutes } = require('./src/server/routes');
 const { attachSockets } = require('./src/server/sockets');
-const { createAuth, configError, isLoopbackHost } = require('./src/server/auth');
+const { createAuth, configError, hostOfUrl, isLoopbackHost } = require('./src/server/auth');
 const { settings, CONFIG_FILE, warnAboutLegacyEnv } = require('./src/server/settings');
 const { createApplier } = require('./src/server/apply');
 const { midiMap } = require('./src/server/midi-map');
 const { cues } = require('./src/server/cues');
 const { showStore, SHOW_FILE } = require('./src/server/show-store');
 const pythonEnv = require('./src/python-env');
+const { installProcessSafetyNet } = require('./src/server/guard');
+
+// Before anything else can fail: a fault the code did not expect is reported
+// and the rig keeps running, rather than the process exiting with every
+// fixture latched on its last frame. See src/server/guard.js.
+installProcessSafetyNet();
 
 // A .env from before settings moved into the UI would otherwise go quiet: the
 // rig would come up on defaults with no clue why. Say which variables are now
@@ -52,11 +58,21 @@ if (fatal) {
   process.exit(1);
 }
 
-const auth = createAuth({ token: LIGHTSHOW_TOKEN });
+const auth = createAuth({
+  token: LIGHTSHOW_TOKEN,
+  // Names beyond the ones every machine has (IP literals, localhost, its own
+  // host name). Read per request so a public URL saved in the settings page
+  // applies without a restart.
+  allowedHosts: () => [HOST, hostOfUrl(settings.get('server.publicUrl'))],
+});
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, { allowRequest: auth.allowSocketRequest });
+
+// Before anything else, static files included: a page reached through a name
+// this machine is not known by is a DNS-rebinding page, and it gets nothing.
+app.use(auth.hostMiddleware);
 
 // Static assets stay open: they carry no secrets, and the page needs to load
 // before it can present a token. Everything that reads or changes show state
@@ -175,6 +191,21 @@ function restoreSpotifySession() {
 // ─── Listen ─────────────────────────────────────────────────────────────────
 
 const PORT = settings.get('server.port');
+
+// The safety net keeps the process up through unexpected faults, which is the
+// wrong answer for this one: a server that cannot listen is no server at all,
+// and staying up would leave the operator with a console and no page.
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\nPort ${PORT} is already in use — is another copy of the lightshow running? `
+      + 'Stop it, or change the port in config/settings.json (server.port).\n');
+  } else {
+    console.error(`\nCould not listen on ${HOST}:${PORT}: ${err.message}\n`);
+  }
+  try { stopEngine(); } catch (_) { /* on the way out regardless */ }
+  process.exit(1);
+});
+
 server.listen(PORT, HOST, () => {
   // Where the OAuth proxy sends the operator's browser back to. Must be an
   // address that browser can actually reach: "localhost" is only right when the
@@ -250,6 +281,8 @@ function shutdown(signal) {
     // Lands a debounced patch write that had not fired yet. A no-op when the
     // file already matches, which is the usual case.
     ['show', () => showStore.save()],
+    // Likewise a sync offset nudged in the last moment before quitting.
+    ['settings', () => flushPendingPersist()],
   ]) {
     try { fn(); } catch (err) { console.warn(`[shutdown] ${what}: ${err.message}`); }
   }

@@ -13,6 +13,9 @@ const pythonEnv = require('./python-env');
 const { SYNC_OFFSET_LIMIT_MS } = require('./server/presets');
 const { ShowDirector, measureBuildup } = require('./show/director');
 const { renderIntents } = require('./show/render');
+const { guarded } = require('./server/guard');
+const { resolveIsrc, splitQuery } = require('./isrc');
+const ytdlp = require('./ytdlp');
 
 // A download that never finishes is indistinguishable from one that never
 // started: the track change waits on this promise, so an unresponsive network
@@ -213,10 +216,16 @@ class AutoShow {
    * Load a previously-analyzed result from the cache without touching audio.
    * Returns true on hit, false on miss.
    */
-  _loadFromCache(cacheKey) {
+  async _loadFromCache(cacheKey, isCurrent = () => true) {
     if (!cacheKey || !this._cache) return false;
-    const cached = this._cache.get(cacheKey);
+    // Asynchronous: a document is megabytes, and a synchronous read of it on
+    // a track change stalled the render loop at exactly the moment the room
+    // was listening hardest.
+    const cached = await this._cache.load(cacheKey);
     if (!cached) return false;
+    // The read yielded, and the track may have changed meanwhile. A late hit
+    // must not replace the show that is now current.
+    if (!isCurrent()) throw supersededError();
     console.log(`[auto-show] analysis cache hit: ${cacheKey}`);
     console.log(`[auto-show] Models used (cached ${cacheKey}): ${formatModelUsage(cached)}`);
     this.analysis = cached;
@@ -280,7 +289,7 @@ class AutoShow {
     this._currentJob = token;
     const isCurrent = () => this._currentJob === token;
 
-    if (this._loadFromCache(cacheKey)) return this.analysis;
+    if (await this._loadFromCache(cacheKey, isCurrent)) return this.analysis;
     this._status = 'analyzing';
     try {
       const result = await this._runAnalyzer(source, null, 'current', cacheKey);
@@ -289,7 +298,7 @@ class AutoShow {
       this.buildTimeline();
       this._status = 'ready';
       if (cacheKey && this._cache) {
-        this._cache.set(cacheKey, result, { track: this.track });
+        await this._cache.save(cacheKey, result, { track: this.track });
       }
       return result;
     } catch (err) {
@@ -318,7 +327,7 @@ class AutoShow {
       // a later high-priority join can find and bump this entry.
       const analysis = await this._runAnalyzer(audioPath, targetDurationSec, priority, cacheKey, queuePos);
       if (cacheKey && this._cache) {
-        this._cache.set(cacheKey, analysis, meta || {});
+        await this._cache.save(cacheKey, analysis, meta || {});
       }
       return analysis;
     } finally {
@@ -368,7 +377,7 @@ class AutoShow {
    */
   async prefetch(query, targetDurationSec, cacheKey, meta = {}, isrc = null, priority = 'normal', queuePos = null) {
     if (!cacheKey || !this._cache) return { skipped: true, reason: 'no-cache' };
-    if (this._cache.get(cacheKey)) return { skipped: true, reason: 'already-cached' };
+    if (this._cache.has(cacheKey)) return { skipped: true, reason: 'already-cached' };
     if (this._inFlight.has(cacheKey)) return { skipped: true, reason: 'in-flight' };
 
     try {
@@ -398,7 +407,7 @@ class AutoShow {
     const isCurrent = () => this._currentJob === token;
 
     // Cache hit → skip the download entirely.
-    if (this._loadFromCache(cacheKey)) {
+    if (await this._loadFromCache(cacheKey, isCurrent)) {
       return { analysis: this.analysis, cached: true };
     }
 
@@ -439,6 +448,18 @@ class AutoShow {
   async _downloadAudio(query, targetDurationSec = null, isrc = null) {
     const isUrl = /^https?:\/\//.test(query);
 
+    // A track can arrive without an ISRC: the OS media session and PRO DJ LINK
+    // never carry one, and Spotify's February 2026 changes drop it for some
+    // apps. With Deezer set up, one looked up by name and length still gets
+    // the exact recording rather than a search hit.
+    if (!isrc && !isUrl && deezer.isAvailable()) {
+      const parts = splitQuery(query);
+      if (parts) {
+        isrc = await resolveIsrc({ ...parts, durationSec: targetDurationSec });
+        if (isrc) console.log(`[isrc] "${query}" → ${isrc}`);
+      }
+    }
+
     // Try Deezer first when we have an ISRC and Deezer is initialized
     if (isrc && !isUrl && deezer.isAvailable()) {
       try {
@@ -449,25 +470,29 @@ class AutoShow {
     }
 
     // Fallback: yt-dlp
+    const runtime = ytdlp.runtimeArgs(await ytdlp.version());
     const hasTarget = Number.isFinite(targetDurationSec) && targetDurationSec > 0;
     if (hasTarget && !isUrl) {
       try {
-        return await this._ytDlpExec(query, targetDurationSec);
+        return await this._ytDlpExec(query, targetDurationSec, runtime);
       } catch (err) {
         // No video passed the duration filter — retry without it.
         if (/output file not found/i.test(err.message)) {
           console.warn(`[yt-dlp] No result matched ${Math.round(targetDurationSec)}s ±5s, retrying without duration filter`);
-          return this._ytDlpExec(query, null);
+          return this._ytDlpExec(query, null, runtime);
         }
         throw err;
       }
     }
-    return this._ytDlpExec(query, null);
+    return this._ytDlpExec(query, null, runtime);
   }
 
-  _ytDlpExec(query, targetDurationSec) {
+  _ytDlpExec(query, targetDurationSec, runtimeArgs = []) {
     return new Promise((resolve, reject) => {
-      const basename = `auto-dl-${Date.now()}`;
+      // Random, not a timestamp: prefetches are started several to a tick,
+      // and two downloads sharing a name overwrote each other — one track's
+      // audio then got analysed and cached under another track's key.
+      const basename = `auto-dl-${randomUUID()}`;
       const outputTemplate = path.join(os.tmpdir(), `${basename}.%(ext)s`);
       const expectedWav = path.join(os.tmpdir(), `${basename}.wav`);
 
@@ -483,6 +508,7 @@ class AutoShow {
         '--audio-quality', '0',
         '--no-playlist',
         '--no-warnings',
+        ...runtimeArgs,
       ];
 
       if (useFilter) {
@@ -521,9 +547,20 @@ class AutoShow {
         ));
       });
 
+      // What a failed or killed run left behind: a partial download, a
+      // half-converted file. Nothing else will ever remove them.
+      const discardPartials = () => {
+        try {
+          for (const f of fs.readdirSync(os.tmpdir())) {
+            if (f.startsWith(basename)) fs.rmSync(path.join(os.tmpdir(), f), { force: true });
+          }
+        } catch (_) { /* best effort */ }
+      };
+
       proc.on('close', (code) => {
         clearTimeout(timer);
         if (timedOut) {
+          discardPartials();
           return reject(new Error(
             `yt-dlp timed out after ${Math.round(downloadTimeoutMs() / 1000)}s `
             + '(raise the download timeout in the settings page)'
@@ -532,6 +569,7 @@ class AutoShow {
         // yt-dlp exits 101 when --max-downloads is reached — that's the normal
         // success path for a filtered search, so treat it the same as 0.
         if (code !== 0 && code !== 101) {
+          discardPartials();
           return reject(new Error(`yt-dlp failed (exit ${code}): ${stderr || stdout}`));
         }
 
@@ -616,7 +654,7 @@ class AutoShow {
     // the look; energy events are deliberately represented as cleared state.
     this._reseek();
     this._tick();
-    this._loopTimer = setInterval(() => this._tick(), 20);
+    this._loopTimer = setInterval(guarded('auto-show', () => this._tick()), 20);
   }
 
   stop() {
