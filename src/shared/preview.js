@@ -131,7 +131,7 @@ function createPreviewSampler(events = [], grid = null) {
     fn({
       colors, fixtureCount: members.length, step, phase, xs,
       hue: (step * 360 / Math.max(1, fixtures.length)) % 360,
-      dynamics: dyn ? expr : null, twinkle: fixtures.map(() => 0), resetHitPhase: () => {},
+      dynamics: dyn ? expr : null, twinkle: fixtures.map(() => 0),
       write: (k, color, dim) => { output[members[order[k]]] = { color, dim }; },
     });
 

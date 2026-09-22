@@ -18,7 +18,9 @@ via **Bitfocus Companion**, and a REST API.
 
 **Manual control**
 
-- **BPM engine** — tap tempo, manual entry, beat subdivision (1/1 … 1/16)
+- **Musical clock** — patterns step on the song's own beats: the auto show's
+  analysed grid, a CDJ's rekordbox grid, or the cached analysis of whatever is
+  playing — else tap tempo or a BPM typed to a tenth. Beat subdivision 1/1 … 1/16
 - **18 patterns** — solid, chases, ping-pong, strobe, fade, colour cycle,
   rainbow, twinkle, sparkle, wave, runner, splits and sections; each one takes
   its colour count from the palette rather than needing a variant per size
@@ -521,6 +523,45 @@ them do not implement it, and a broadcast rig works fine without ever replying.
 
 ---
 
+## Keeping time — the musical clock
+
+Every pattern keeps time by one clock: a continuous beat position, 0 on the
+first beat of the song, 1 on the second, 2.5 halfway between the third and the
+fourth. Each chase step, the fade's eight-beat breath, the hit's decay and the
+sweep of the expressive patterns are worked out from it every frame, so nothing
+accumulates and nothing drifts: a chase is on the same step whether the show
+played into the moment or was seeked there.
+
+What the clock follows, best first — the badge under the BPM says which:
+
+| Badge | Following |
+|---|---|
+| **Auto** | The auto show is running: the track's analysed beat grid at the show's position, sync offset included. A drummer who pushes the chorus or a DJ who pitches the track is followed beat by beat. |
+| **CDJ** | PRO DJ LINK is on and the master deck is playing: the deck's position through rekordbox's own beat grid. |
+| **Track** | The auto show is off, but the song playing (Spotify, the hybrid source, the OS media session or the Deezer extension) has an analysis in the cache: manual patterns lock to its beats. A song that is not analysed yet locks as soon as a prefetch, a warm or an analyse request writes one. |
+| **Tap** | None of those: a free-running clock at the BPM you tap, type, nudge or send over MIDI. |
+
+The BPM read-out follows the clock, to a tenth: a 123.7 BPM song shows 123.7,
+and ± nudges from there. **Tapping or setting a BPM takes the tempo back from a
+locked song** until the next song, which locks again; the take-over starts from
+the beat the music is on, and a single tap keeps the song's tempo until a second
+tap measures a new one. Recalling a cue while the clock follows a song brings
+back the look and leaves the song's tempo in charge.
+
+When a song pauses, the clock carries on at its tempo rather than freezing the
+rig on one step, and locks again when the music resumes. Stopping the auto show
+hands over to the song or the free clock mid-beat, without restarting the chase.
+
+A scene from the auto show counts its steps from the beat it was scheduled on,
+not from the frame that fired it, and cues fire from the render loop itself, so
+each lands in the frame it is due. Walked against the analysed beats of the
+test tracks, every step shows within one 25 ms render frame of its beat for the
+whole track. The timer-driven chase this replaced ran at a whole-number BPM from
+whenever its scene happened to fire; modelled on the same tracks, it was 80–200
+ms off the beat by the end of a sixteen-bar scene.
+
+---
+
 ## Colours, patterns and palettes
 
 ### The colour presets
@@ -691,7 +732,8 @@ A cue holds no patch data — no addresses, no universes, no Art-Net target, and
 no per-fixture brightness trim — so recalling one can never re-address the rig,
 move a fixture to another universe, or undo a trim mid-show. Fixtures the cue
 says nothing about are cleared rather than left holding the previous look: a cue
-is the whole rig, not a partial edit.
+is the whole rig, not a partial edit. The saved tempo applies when the clock is
+running free; while it follows a song, the song's tempo stands.
 
 They are stored in `config/cues.json` and survive restarts. Up to 128.
 
@@ -1000,7 +1042,7 @@ everything is one.
   crossfades over two bars (never more than four seconds), into a verse over
   half a bar, and into a chorus or a drop it cuts on the downbeat. Colour moves
   and rotations inside a section blend over a beat. The rehearsal preview shows
-  the same fades.
+  the same fades, and steps its chases on the same analysed beats as the rig.
 
 The show also *reads the track continuously*, not only at section boundaries.
 Twice a second it takes the separated stems' levels — how much low end, whether
@@ -1085,7 +1127,8 @@ different one for every rig, so it cannot be derived, only dialled in.
 The **Sync** control in the *Look* panel does that. It shifts the whole
 generated show against the reported track position:
 
-- **Positive** runs the lights **ahead** — use it when the rig feels late.
+- **Positive** runs the lights **ahead** — use it when the rig feels late. It
+  moves the pattern clock with the cues: the chase steps on the shifted beats.
 - **Negative** holds them back.
 - Range is ±2000 ms, in 5 ms steps.
 
@@ -1238,7 +1281,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/set` | Patch state fields (JSON body) |
 | POST | `/api/tap` | Tap tempo |
 | POST | `/api/play` · `/api/stop` | Start / stop the pattern engine |
-| POST | `/api/bpm/:value` | Set BPM (20–300) |
+| POST | `/api/bpm/:value` | Set BPM (20–300, fractions allowed) |
 | POST | `/api/bpm/adjust/:delta` | Nudge BPM |
 | POST | `/api/master/:value` | Master dimmer (0–255) |
 | POST | `/api/blackout/toggle` · `/api/blackout/on` · `/api/blackout/off` | Master blackout |

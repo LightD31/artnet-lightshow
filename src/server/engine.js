@@ -151,7 +151,6 @@ function renderPattern(reading) {
     dynamics: state.showDynamics ? expression : null,
     write,
     xs,
-    resetHitPhase: () => {},
   });
 }
 

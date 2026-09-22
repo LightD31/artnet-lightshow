@@ -25,7 +25,6 @@ test('each pattern writes valid colours for every fixture count it is offered at
           hue: (step * 45) % 360,
           twinkle: new Array(fixtureCount).fill(0),
           write: (idx, color, dim, strobe) => written.set(idx, { color, dim, strobe }),
-          resetHitPhase: () => {},
         });
       }
 
@@ -71,7 +70,6 @@ function coloursUsed(id, size, fixtureCount = 4) {
       hue: 0,
       twinkle,
       write: (_i, color, dim) => { if (dim > 0) seen.add(color); },
-      resetHitPhase: () => {},
     });
   }
   return seen;
