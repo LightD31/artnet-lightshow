@@ -390,6 +390,34 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     }
   }
 
+  /**
+   * A new track on a source that is driving a running show: stop, analyse the
+   * new track (or load it from cache), and start again on the given clock.
+   *
+   * Shared by every source that reports tracks rather than handing over audio.
+   * What differs between them — whether they are the active source, the cache
+   * key, which clock the show follows — is decided by the caller.
+   */
+  async function restartShowFor(playing, { cacheKey, clock, what }) {
+    autoShow.stop();
+    autoShow.track = {
+      name: playing.name, artist: playing.artist, album: playing.album,
+      albumArt: playing.albumArt, durationMs: playing.durationMs,
+    };
+    broadcast();
+    try {
+      const query = `${playing.artist} - ${playing.name}`;
+      // An ISRC means the exact audio through src/deezer.js; without one, or
+      // when that fails, yt-dlp searches for the query.
+      await autoShow.downloadAndAnalyze(query, playing.durationMs / 1000, cacheKey || keyForQuery(query), playing.isrc);
+      autoShow.start(clock);
+      console.log(`Auto show restarted for new ${what} track`);
+    } catch (err) {
+      reportAnalysisError(`${what} auto analysis failed for new track`, err);
+    }
+    broadcast();
+  }
+
   spotify.onTrackChange(async (playing) => {
     console.log(`Spotify track changed: ${playing.artist} — ${playing.name}`);
     // The track we were prefetching as "next" has become the current track —
@@ -403,22 +431,11 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     const source = resolveAutoSource();
     if (!usesSpotifyContent(source)) return;
     if (autoShow.running) {
-      autoShow.stop();
-      autoShow.track = {
-        name: playing.name, artist: playing.artist, album: playing.album,
-        albumArt: playing.albumArt, durationMs: playing.durationMs,
-      };
-      broadcast();
-      try {
-        const query = `${playing.artist} - ${playing.name}`;
-        const cacheKey = keyForSpotify(playing.trackId) || keyForQuery(query);
-        await autoShow.downloadAndAnalyze(query, playing.durationMs / 1000, cacheKey, playing.isrc);
-        autoShow.start(source === 'hybrid' ? getHybridPositionMs : getAutoPositionMs);
-        console.log('Auto show restarted for new track');
-      } catch (err) {
-        reportAnalysisError('Auto show analysis failed for new track', err);
-      }
-      broadcast();
+      await restartShowFor(playing, {
+        cacheKey: keyForSpotify(playing.trackId),
+        clock: source === 'hybrid' ? getHybridPositionMs : getAutoPositionMs,
+        what: 'Spotify',
+      });
       prefetchNextFromQueue();
     }
   });
@@ -440,23 +457,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     console.log(`Now playing changed: ${playing.artist} — ${playing.name}`);
     if (resolveAutoSource() !== 'nowplaying') return;
     if (!autoShow.running) return;
-
-    autoShow.stop();
-    autoShow.track = {
-      name: playing.name, artist: playing.artist, album: playing.album,
-      albumArt: playing.albumArt, durationMs: playing.durationMs,
-    };
-    broadcast();
-    try {
-      const query = `${playing.artist} - ${playing.name}`;
-      const cacheKey = keyForQuery(query);
-      await autoShow.downloadAndAnalyze(query, playing.durationMs / 1000, cacheKey, playing.isrc);
-      autoShow.start(getAutoPositionMs);
-      console.log('Auto show restarted for new now-playing track');
-    } catch (err) {
-      reportAnalysisError('Now-playing auto analysis failed for new track', err);
-    }
-    broadcast();
+    await restartShowFor(playing, { clock: getAutoPositionMs, what: 'now-playing' });
   });
 
   // ─── Deezer (browser extension) ─────────────────────────────────────────
@@ -471,24 +472,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     console.log(`Deezer track changed: ${playing.artist} — ${playing.name}`);
     if (resolveAutoSource() !== 'deezer') return;
     if (!autoShow.running) return;
-
-    autoShow.stop();
-    autoShow.track = {
-      name: playing.name, artist: playing.artist, album: playing.album,
-      albumArt: playing.albumArt, durationMs: playing.durationMs,
-    };
-    broadcast();
-    try {
-      const query = `${playing.artist} - ${playing.name}`;
-      const cacheKey = keyForQuery(query);
-      // ISRC → exact Deezer audio via src/deezer.js (falls back to yt-dlp).
-      await autoShow.downloadAndAnalyze(query, playing.durationMs / 1000, cacheKey, playing.isrc);
-      autoShow.start(getAutoPositionMs);
-      console.log('Auto show restarted for new Deezer track');
-    } catch (err) {
-      reportAnalysisError('Deezer auto analysis failed for new track', err);
-    }
-    broadcast();
+    await restartShowFor(playing, { clock: getAutoPositionMs, what: 'Deezer' });
   });
 
   // Build prefetch slots for the upcoming Deezer queue (the extension can see

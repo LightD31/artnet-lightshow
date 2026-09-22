@@ -295,3 +295,63 @@ test('the resolved source is published, not just the operator’s choice', () =>
     assert.ok(live.hybrid, 'with the hybrid status alongside it');
   });
 });
+
+// ── Track changes, per source ────────────────────────────────────────────────
+// Three handlers that were copies of one another now share restartShowFor.
+// Each source must still restart only a show it is driving, and key its cache
+// the way it always has.
+
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+for (const [source, rigKey, expectedKey] of [
+  ['spotify', 'spotify', 'spotify:spotify-1'],
+  ['nowplaying', 'nowPlaying', 'q:porter robinson, madeon - shelter'],
+  ['deezer', 'deezerSource', 'q:porter robinson, madeon - shelter'],
+]) {
+  test(`a ${source} track change restarts the show it is driving`, async () => {
+    const rig = build();
+    rig[rigKey].authenticated = true;
+    rig.autoShow.running = true;
+    const analysed = [];
+    rig.autoShow.downloadAndAnalyze = async (...args) => { analysed.push(args); };
+
+    await withSource(source, async () => { rig[rigKey].emitTrack(SPOTIFY_TRACK); await settle(); });
+
+    assert.deepStrictEqual(analysed, [['Porter Robinson, Madeon - Shelter', 220, expectedKey, 'USUG11600982']]);
+    assert.strictEqual(rig.started.length, 1, 'and starts it again');
+    assert.strictEqual(rig.autoShow.track.name, 'Shelter');
+  });
+
+  test(`a ${source} track change leaves a show it is not driving alone`, async () => {
+    const rig = build();
+    rig[rigKey].authenticated = true;
+    const analysed = [];
+    rig.autoShow.downloadAndAnalyze = async (...args) => { analysed.push(args); };
+
+    rig.autoShow.running = false;
+    await withSource(source, async () => { rig[rigKey].emitTrack(SPOTIFY_TRACK); await settle(); });
+    // Another connected source driving: an unconnected choice would fall
+    // back to this one, which would then really be driving.
+    const [other, otherKey] = source === 'nowplaying' ? ['deezer', 'deezerSource'] : ['nowplaying', 'nowPlaying'];
+    rig[otherKey].authenticated = true;
+    rig.autoShow.running = true;
+    await withSource(other, async () => { rig[rigKey].emitTrack(SPOTIFY_TRACK); await settle(); });
+
+    assert.deepStrictEqual(analysed, [], 'neither a stopped show nor another source\'s show');
+    assert.strictEqual(rig.started.length, 0);
+  });
+}
+
+test('a failed analysis on a track change is reported, and the show stays stopped', async () => {
+  const rig = build();
+  rig.deezerSource.authenticated = true;
+  rig.autoShow.running = true;
+  rig.autoShow.downloadAndAnalyze = async () => { throw new Error('no audio'); };
+  const warn = console.warn; const error = console.error;
+  console.warn = () => {}; console.error = () => {};
+  try {
+    await withSource('deezer', async () => { rig.deezerSource.emitTrack(SPOTIFY_TRACK); await settle(); });
+  } finally { console.warn = warn; console.error = error; }
+  assert.strictEqual(rig.autoShow.running, false);
+  assert.strictEqual(rig.started.length, 0);
+});
