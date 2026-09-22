@@ -91,5 +91,5 @@ test('an entry from an analyser too old to read is a miss, and goes', () => {
 test('the oldest readable version comes from the analyser itself', () => {
   const { MIN_COMPATIBLE } = require('../../src/analysis-cache');
   const source = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'analysis', 'version.py'), 'utf8');
-  assert.match(source, new RegExp(`^MIN_COMPATIBLE = '${MIN_COMPATIBLE.join('\.')}'`, 'm'));
+  assert.match(source, new RegExp(`^MIN_COMPATIBLE = '${MIN_COMPATIBLE.join('\\.')}'`, 'm'));
 });

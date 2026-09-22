@@ -40,15 +40,21 @@ test('a name that is not an interpreter probes as null, not a crash', () => {
 // The bug this guards: probing with `--version` alone picks whichever Python
 // answers first, which on Windows is the launcher — while pip installed into a
 // conda env. The server then starts clean and dies on the first track.
-test('an interpreter that has the dependencies is preferred over one that does not', noPython, () => {
+test('an interpreter that has the dependencies is preferred over one that does not', noPython, (t) => {
+  const bare = pythonEnv.probe(PY);
+  // With the project venv activated — VS Code does it for every terminal — the
+  // python on PATH already has everything, and there is no bare interpreter
+  // to contrast with. That is the machine being set up, not the probe failing.
+  if (bare.missing.length === 0) {
+    t.skip(`${bare.executable} already has the analysis modules (an activated venv?)`);
+    return;
+  }
+
   // A directory of stub modules turns any interpreter into one that "has" them.
   const stubs = fs.mkdtempSync(path.join(os.tmpdir(), 'py-stubs-'));
   for (const mod of pythonEnv.REQUIRED_MODULES) {
     fs.writeFileSync(path.join(stubs, `${mod}.py`), '# stub\n');
   }
-
-  const bare = pythonEnv.probe(PY);
-  assert.ok(bare.missing.length > 0, 'the plain interpreter is missing the real deps');
 
   // Same interpreter, but able to resolve the modules.
   const withPath = (() => {
