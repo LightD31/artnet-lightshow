@@ -63,6 +63,11 @@ class PreparedAudio:
     denoised: bool = False
     #: Seconds trimmed from the head when aligning to a known track length.
     trim_offset: float = 0.0
+    #: The file this came from and how many channels it had, so source
+    #: separation can go back to the real stereo at its own rate instead of
+    #: being handed the mono analysis signal. See `load_for_separation`.
+    source_path: str = ''
+    source_channels: int = 1
 
 
 def _log(msg):
@@ -376,4 +381,34 @@ def prepare(path, config: PreprocessConfig = None, target_duration_sec=None):
         snr_db=float(snr_db),
         denoised=denoised,
         trim_offset=float(trim_offset),
+        source_path=path,
+        source_channels=int(channels.shape[0]),
     )
+
+
+def load_for_separation(audio: PreparedAudio, rate):
+    """
+    The source as a source separator wants it: stereo, at `rate`, trimmed and
+    gain-matched to exactly the span the mono analysis signal covers.
+
+    Separation used to be handed the mono analysis signal, resampled up and
+    copied into two identical channels. That throws away the two things a
+    stereo-trained separator leans on hardest: the difference between the
+    channels, and everything above 11 kHz. Returns None for a mono source or
+    when the file cannot be read again, and the caller falls back to mono.
+    """
+    if audio.source_channels < 2 or not audio.source_path:
+        return None
+    try:
+        channels, sr = _load_stereo(audio.source_path, rate)
+    except Exception as exc:
+        _log(f'stereo reload for separation failed ({exc}); separating the mono signal')
+        return None
+    if channels.shape[0] < 2:
+        return None
+    head = int(round(audio.trim_offset * sr))
+    want = int(round(audio.duration * sr))
+    channels = channels[:, head:head + want]
+    if audio.applied_gain_db:
+        channels = channels * (10.0 ** (audio.applied_gain_db / 20.0))
+    return np.ascontiguousarray(channels, dtype=np.float32)

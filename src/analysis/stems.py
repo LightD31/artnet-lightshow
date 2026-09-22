@@ -58,9 +58,17 @@ class Stems:
         return {name: value / total for name, value in levels.items()}
 
 
-def separate(mono, sample_rate, overlap=0.10, segment_seconds=None):
+def separate(mono, sample_rate, overlap=0.10, segment_seconds=None, stereo_loader=None):
     """
     Split `mono` into stems, returned at the same rate and length.
+
+    `stereo_loader(rate)` returns the same span of the source as (2, n) at
+    `rate`, or None. When it gives one, Demucs separates the real stereo at its
+    own rate instead of the mono signal copied into two channels: it has the
+    channel difference and the top octave to work with. Called only once the
+    separator is loaded, so a track that never reaches Demucs never pays for
+    the reload. The stems still come back at `sample_rate`, one per sample of
+    `mono`.
 
     `overlap` trades quality for time. Demucs defaults to 0.25; 0.10 is roughly
     a fifth faster and the difference does not survive the downstream use, which
@@ -79,7 +87,7 @@ def separate(mono, sample_rate, overlap=0.10, segment_seconds=None):
     # failed load attempt on every track.
     if models.bs_roformer_enabled() and not models.gpu_fault():
         try:
-            return separate_bs_roformer(mono, sample_rate)
+            return separate_bs_roformer(mono, sample_rate, stereo_loader)
         except Exception as exc:
             models.gpu_fault(exc)
             print(f'[stems] BS-RoFormer unavailable; using Demucs: {exc}', file=sys.stderr)
@@ -94,12 +102,17 @@ def separate(mono, sample_rate, overlap=0.10, segment_seconds=None):
     model = models.separator()
     device = 'cpu' if models.gpu_fault() else models.device()
 
-    # Demucs wants stereo at its own rate. The analysis signal is mono at
-    # 22.05 kHz, so it goes up and the stems come back down.
-    resampled = librosa.resample(np.asarray(mono, dtype=np.float32),
-                                 orig_sr=sample_rate, target_sr=model.samplerate)
-    stereo = np.vstack([resampled, resampled])
-    tensor = torch.tensor(stereo, dtype=torch.float32)[None]
+    # Demucs wants stereo at its own rate. Given the real stereo at that rate it
+    # gets it; otherwise the mono analysis signal goes up to its rate and is
+    # copied into both channels. Either way the stems come back down.
+    stereo = stereo_loader(model.samplerate) if stereo_loader else None
+    if stereo is not None and np.ndim(stereo) == 2 and stereo.shape[0] == 2:
+        pair = np.asarray(stereo, dtype=np.float32)
+    else:
+        resampled = librosa.resample(np.asarray(mono, dtype=np.float32),
+                                     orig_sr=sample_rate, target_sr=model.samplerate)
+        pair = np.vstack([resampled, resampled])
+    tensor = torch.tensor(pair, dtype=torch.float32)[None]
 
     kwargs = dict(device=device, split=True, overlap=overlap, progress=False)
     if segment_seconds:
@@ -133,6 +146,11 @@ def separate(mono, sample_rate, overlap=0.10, segment_seconds=None):
                     for name in ('drums', 'bass', 'vocals', 'other')})
 
 
+# The rate BS-RoFormer's checkpoints are trained at; audio-separator resamples
+# anything else to it on load, so handing it the source at this rate costs no
+# extra pass.
+BS_ROFORMER_RATE = 44100
+
 # One cached separator is shared by every caller, and each call points its
 # output directory at its own temp folder and back. Two calls at once — a
 # failed analysis leaves its separation thread running into the next track —
@@ -147,8 +165,13 @@ STEM_OF = {'drums': 'drums', 'bass': 'bass', 'vocals': 'vocals', 'other': 'other
            'guitar': 'other', 'piano': 'other'}
 
 
-def separate_bs_roformer(mono, sample_rate):
-    """Run the configured four-stem BS-RoFormer and normalise its outputs."""
+def separate_bs_roformer(mono, sample_rate, stereo_loader=None):
+    """
+    Run the configured four-stem BS-RoFormer and normalise its outputs.
+
+    Like Demucs, it is given the real stereo at its own rate when
+    `stereo_loader` can supply it, and the mono analysis signal otherwise.
+    """
     import os
     import sys
     import tempfile
@@ -157,7 +180,11 @@ def separate_bs_roformer(mono, sample_rate):
     separator = models.bs_roformer_separator()
     with tempfile.TemporaryDirectory(prefix='artnet-bs-') as tmp:
         source = os.path.join(tmp, 'input.wav')
-        sf.write(source, np.asarray(mono, dtype=np.float32), sample_rate)
+        stereo = stereo_loader(BS_ROFORMER_RATE) if stereo_loader else None
+        if stereo is not None and np.ndim(stereo) == 2 and stereo.shape[0] == 2:
+            sf.write(source, np.asarray(stereo, dtype=np.float32).T, BS_ROFORMER_RATE)
+        else:
+            sf.write(source, np.asarray(mono, dtype=np.float32), sample_rate)
         # audio-separator copies output_dir into the loaded model. Redirect
         # both: otherwise its WAVs land in the worker's current directory.
         with _BS_ROFORMER_LOCK:

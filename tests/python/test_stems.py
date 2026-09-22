@@ -102,5 +102,52 @@ class SixStemCheckpoint(unittest.TestCase):
                                    SixStems.LEVELS[stem], places=2, msg=stem)
 
 
+@needs_audio
+class StereoInput(unittest.TestCase):
+    # The separators are stereo-trained; they were handed the mono analysis
+    # signal copied into two identical channels.
+    def write(self, directory, channels):
+        import numpy as np
+        import soundfile as sf
+        t = np.arange(44100 * 3) / 44100
+        tones = [0.3 * np.sin(2 * np.pi * f * t) for f in (440, 660)][:channels]
+        path = os.path.join(directory, f'{channels}ch.wav')
+        sf.write(path, np.stack(tones, axis=1), 44100)
+        return path
+
+    def test_the_real_channels_come_back_at_the_asked_rate(self):
+        import numpy as np
+        from analysis import preprocess
+        with tempfile.TemporaryDirectory() as directory:
+            audio = preprocess.prepare(self.write(directory, 2))
+            pair = preprocess.load_for_separation(audio, 44100)
+            mono = preprocess.prepare(self.write(directory, 1))
+            self.assertIsNone(preprocess.load_for_separation(mono, 44100))
+        self.assertEqual(pair.shape[0], 2)
+        self.assertAlmostEqual(pair.shape[1] / 44100, audio.duration, delta=0.01)
+        self.assertLess(abs(np.corrcoef(pair[0], pair[1])[0, 1]), 0.1, 'the channels differ')
+
+    def test_demucs_is_given_the_pair(self):
+        import numpy as np
+        import torch
+        seen = {}
+
+        def apply_model(model, tensor, device=None, **kwargs):
+            seen['tensor'] = tensor
+            return torch.zeros(1, 4, 2, tensor.shape[-1])
+
+        left, right = np.ones(44100, dtype=np.float32), -np.ones(44100, dtype=np.float32)
+        model = types.SimpleNamespace(samplerate=44100, sources=['drums', 'bass', 'other', 'vocals'])
+        with patch.object(models, 'bs_roformer_enabled', return_value=False), \
+             patch.object(models, 'separator', return_value=model), \
+             patch.object(models, 'device', return_value='cpu'), \
+             patch.object(models, 'on_gpu', return_value=False), \
+             patch('demucs.apply.apply_model', side_effect=apply_model):
+            stems.separate(np.zeros(22050, dtype=np.float32), 22050,
+                           stereo_loader=lambda rate: np.stack([left, right]))
+        self.assertEqual(float(seen['tensor'][0, 0, 0]), 1.0)
+        self.assertEqual(float(seen['tensor'][0, 1, 0]), -1.0)
+
+
 if __name__ == '__main__':
     unittest.main()

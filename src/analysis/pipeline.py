@@ -215,7 +215,9 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
 
 def _safe_separate(audio):
     try:
-        return stems_stage.separate(audio.mono, audio.sample_rate)
+        return stems_stage.separate(
+            audio.mono, audio.sample_rate,
+            stereo_loader=lambda rate: preprocess_stage.load_for_separation(audio, rate))
     except Exception as exc:
         _log(f'separation failed ({exc}); instrument roles fall back to bands')
         return None
