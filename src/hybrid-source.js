@@ -192,7 +192,7 @@ class HybridSource {
     this.setContent(playing);
     if (this._sessionIsLive() && this._matched) return;
     this._driver = 'spotify';
-    this._clock.observe(playing.progressMs, { isPlaying: playing.isPlaying, at });
+    this._clock.observe(playing.progressMs, { isPlaying: playing.isPlaying, at, now: this._now() });
   }
 
   /** Where the show is now, in milliseconds. */

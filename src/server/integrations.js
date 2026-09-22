@@ -60,9 +60,11 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
 
   /** Fold one playback report from the active single source into the clock. */
   function observePlayback(playing) {
+    const now = Date.now();
     sourceClock.observe(playing.progressMs, {
       isPlaying: playing.isPlaying,
-      at: Number.isFinite(playing.sampledAt) ? playing.sampledAt : Date.now(),
+      at: Number.isFinite(playing.sampledAt) ? playing.sampledAt : now,
+      now,
     });
   }
 

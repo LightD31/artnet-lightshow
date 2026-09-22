@@ -125,19 +125,24 @@ class PlaybackClock {
    *   to now. Pass the time the sample was taken rather than the time it
    *   arrived when the two differ — for a polled HTTP API they differ by the
    *   whole round trip.
+   * @param {number}  [meta.now]        when the observation arrived; defaults
+   *   to `at`. The error is measured at `at`, but the correction starts from
+   *   `now`: re-anchoring back at `at` would apply the new speed to time that
+   *   has already been read out, and the position could step backwards.
    * @returns {'snap'|'slew'|'hold'} what the clock did with it.
    */
   observe(observedMs, meta = {}) {
     const at = Number.isFinite(meta.at) ? meta.at : Date.now();
+    const now = Number.isFinite(meta.now) ? Math.max(meta.now, at) : at;
     const position = Math.max(0, Number(observedMs) || 0);
     const playing = meta.isPlaying === undefined ? this._playing : !!meta.isPlaying;
 
-    this._lastObservedAt = at;
+    this._lastObservedAt = now;
 
     // Nothing to correct against, or a transition that is discontinuous by
-    // definition: take the observation as given.
+    // definition: take the observation as given, carried forward to now.
     if (!this._haveFix || playing !== this._playing) {
-      this._snap(position, playing, at);
+      this._snap(playing ? position + (now - at) : position, playing, now);
       return 'snap';
     }
 
@@ -145,25 +150,24 @@ class PlaybackClock {
       // Paused: the position should not be moving, so any change is the truth
       // rather than an error to absorb.
       this._basePositionMs = position;
-      this._baseAt = at;
+      this._baseAt = now;
       this._lastErrorMs = 0;
       return 'hold';
     }
 
-    const predicted = this.positionMs(at);
-    const error = position - predicted;
+    const error = position - this.positionMs(at);
     this._lastErrorMs = error;
 
     if (Math.abs(error) >= this.options.snapThresholdMs) {
-      this._snap(position, playing, at);
+      this._snap(position + (now - at), playing, now);
       return 'snap';
     }
 
     // Re-anchor on the *predicted* position, not the observed one, and put the
     // correction into the rate. Anchoring on the observation would be the jump
     // this class exists to avoid.
-    this._basePositionMs = predicted;
-    this._baseAt = at;
+    this._basePositionMs = this.positionMs(now);
+    this._baseAt = now;
     this._rate = this._clampRate(1 + error / this.options.absorbMs);
     return 'slew';
   }
