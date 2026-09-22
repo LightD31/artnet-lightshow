@@ -647,7 +647,8 @@ are the two tables that define how a show paces itself, and `SUBGENRE_DRIVE` in
 the show's character comes from where it rests.
 
 **A new burst.** Add it to `BURST` in `src/show/intents.js`, give it a case in
-`resolveEnergyOverride` in `src/server/engine.js`, list it in `ENERGY_EFFECTS`
+`resolveEnergyOverride` in `src/shared/look-math.js` (the engine and the
+rehearsal preview both resolve bursts there), list it in `ENERGY_EFFECTS`
 in `presets.js` and place it in `BURST_PRIORITY` in `render.js` — that order is
 which gesture wins when two collide. Then return it from `look.burstFor()` under
 the measurement that should reach for it.
