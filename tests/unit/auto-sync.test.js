@@ -245,7 +245,7 @@ test('a scene carries the time it was scheduled for, played through or seeked in
     assert.strictEqual(h.fired.at(-1).anchorMs, 2000, 'fired 10 ms late, anchored on time');
     h.seek(3010);
     h.show.tick();
-    assert.strictEqual(h.fired.at(-1).anchorMs, undefined, 'a colour change leaves the chase alone');
+    assert.strictEqual(h.fired.at(-1).anchorMs, 3000, 'every change from the show says when it was due');
 
     h.fired.length = 0;
     h.seek(9000);                           // seek well past both

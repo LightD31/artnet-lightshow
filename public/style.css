@@ -260,6 +260,20 @@ main {
 .cb-bpm.pulse .cb-bpm-num {
   animation: bpm-pulse var(--bpm-period, 500ms) cubic-bezier(.2, .7, .2, 1) infinite;
 }
+/* What the pattern clock keeps time by: Auto / CDJ / Track / Tap. */
+.cb-bpm-source {
+  margin-top: 4px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  cursor: help;
+}
+.cb-bpm-source.locked { color: var(--accent); border-color: var(--accent); }
 
 .cb-tap {
   height: 44px;

@@ -187,14 +187,14 @@ function attachRoutes(app, deps) {
 
   app.post('/api/bpm/:value', (req, res) => {
     try {
-      applyPatch({ bpm: parseInt(req.params.value, 10) });
+      applyPatch({ bpm: Number(req.params.value) });
       res.json({ ok: true, bpm: state.bpm });
     } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
   });
 
   app.post('/api/bpm/adjust/:delta', (req, res) => {
     try {
-      applyPatch({ bpm: state.bpm + parseInt(req.params.delta, 10) });
+      applyPatch({ bpm: Math.round((state.bpm + Number(req.params.delta)) * 100) / 100 });
       res.json({ ok: true, bpm: state.bpm });
     } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
   });

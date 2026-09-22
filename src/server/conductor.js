@@ -52,7 +52,8 @@ class Conductor {
     this._override = false;             // a tap or typed BPM beats the track source
     this._last = null;                  // the previous reading, for continuity
     this._epoch = 0;
-    this._onAdoptBpm = () => {};
+    this._onTempo = () => {};
+    this._reportedBpm = null;
     this._still = {};                   // per grid source: { positionMs, since }
     this._tookOver = false;             // the operator just took the tempo from a track
   }
@@ -81,8 +82,14 @@ class Conductor {
 
   get trackKey() { return this._track ? this._track.key : null; }
 
-  /** Called with the tempo the free clock takes over from a source that stopped. */
-  onAdoptBpm(fn) { this._onAdoptBpm = typeof fn === 'function' ? fn : () => {}; }
+  /**
+   * Called with the clock's tempo, to a hundredth, whenever it moves by a
+   * twentieth of a BPM or more: the song's while one is followed, the one the
+   * free clock carried on at when it stopped, the operator's otherwise. The
+   * server keeps its BPM read-out on it, so a ±1 nudge moves from the tempo
+   * the rig is actually running at.
+   */
+  onTempo(fn) { this._onTempo = typeof fn === 'function' ? fn : () => {}; }
 
   _freeBeatAt(t) {
     const f = this._free;
@@ -125,10 +132,7 @@ class Conductor {
       bpm: takesOver ? clampBpm(current.bpm) : this._free.bpm,
     };
     if (this._track) this._override = true;
-    if (takesOver) {
-      this._tookOver = true;
-      this._onAdoptBpm(this._free.bpm);
-    }
+    if (takesOver) this._tookOver = true;
   }
 
   /** Stopping the patterns freezes the free clock where it is. */
@@ -194,7 +198,6 @@ class Conductor {
       // A locked source stopped answering: carry on from where it was.
       const beatPos = last.beatPos + ((t - last.t) / 60000) * last.bpm;
       this._free = { ...this._free, at: t, beatPos, bpm: clampBpm(last.bpm) };
-      this._onAdoptBpm(this._free.bpm);
       reading = this._current(t);
     } else if (last) {
       const expected = ((t - last.t) / 60000) * Math.max(last.bpm, reading.bpm);
@@ -202,6 +205,12 @@ class Conductor {
       if (moved < -BACKWARD_JUMP_BEATS || moved > expected + FORWARD_JUMP_BEATS) this._epoch++;
     }
     this._tookOver = false;
+
+    const tempo = Math.round(reading.bpm * 100) / 100;
+    if (this._reportedBpm === null || Math.abs(tempo - this._reportedBpm) >= 0.05) {
+      this._reportedBpm = tempo;
+      this._onTempo(tempo);
+    }
 
     this._last = { ...reading, t };
     return { ...reading, epoch: this._epoch };

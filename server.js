@@ -116,7 +116,7 @@ autoShow.useFrameClock();
 setFrameHook(() => autoShow.tick());
 conductor.setAutoSource(() => autoShow.beatSource());
 conductor.setProlinkSource(() => (state.prolinkEnabled && !autoShow.running ? prolink.getBeatReading() : null));
-conductor.onAdoptBpm((bpm) => { state.bpm = Math.round(bpm * 10) / 10; });
+conductor.onTempo((bpm) => { state.bpm = bpm; });
 
 // Windows "now playing" (SMTC) feeds the generic now-playing source: we read
 // the OS media session, so any player that reports to it (Deezer, Tidal,

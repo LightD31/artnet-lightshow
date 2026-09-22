@@ -112,15 +112,15 @@ function trackMsAtBeat(grid, beatPos) {
 
 /**
  * The tempo at a track time, from the beats around it: the median of the
- * nearest few intervals, so a single misplaced beat does not make the BPM
- * read-out jump.
+ * nearest nine intervals, so a single misplaced beat, or a drummer's push on
+ * one of them, does not make the BPM read-out jump.
  */
 function localBpm(grid, tMs) {
   if (!grid) return null;
   const b = grid.beats;
   const at = Math.max(0, Math.min(b.length - 2, Math.floor(beatPositionAt(grid, tMs))));
   const gaps = [];
-  for (let i = Math.max(0, at - 2); i <= Math.min(b.length - 2, at + 2); i++) gaps.push(b[i + 1] - b[i]);
+  for (let i = Math.max(0, at - 4); i <= Math.min(b.length - 2, at + 4); i++) gaps.push(b[i + 1] - b[i]);
   const gap = median(gaps) || grid.interval;
   return 60 / gap;
 }

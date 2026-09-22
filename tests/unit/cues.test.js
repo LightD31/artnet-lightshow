@@ -236,3 +236,24 @@ test('a look holds no patch data', () => {
     assert.strictEqual(look[key], undefined, `${key} must not be part of a cue`);
   }
 });
+
+// A cue saved in a quiet moment at 90 BPM must not drag a set that is locked
+// to a 128 BPM song down to 90 — or take the clock off the song at all.
+test('while the clock follows a song, recall keeps the song\'s tempo', () => {
+  const { conductor } = require('../../src/server/conductor');
+  const { makeGrid } = require('../../src/shared/beat-clock');
+  applyPatch({ pattern: 'rainbow', bpm: 90 });
+  const saved = captureLook();
+
+  let pos = 10000;
+  conductor.setTrack({ key: 'song', grid: makeGrid(Array.from({ length: 512 }, (_, i) => i * (60 / 128))), positionMs: () => (pos += 25) });
+  try {
+    assert.strictEqual(conductor.now().source, 'track');
+    applyPatch({ pattern: 'chase' });
+    recallLook(saved);
+    assert.strictEqual(state.pattern, 'rainbow', 'the look comes back');
+    assert.strictEqual(conductor.now().source, 'track', 'the clock stays on the song');
+  } finally {
+    conductor.clearTrack();
+  }
+});

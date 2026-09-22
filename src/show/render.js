@@ -23,7 +23,9 @@
 const { INTENT } = require('./intents');
 
 const u8 = (n) => Math.max(0, Math.min(255, Math.round(n) || 0));
-const clampBpm = (n) => Math.max(20, Math.min(300, Math.round(n) || 120));
+// Kept to a hundredth: a 123.7 BPM track is not at 124, and the tempo the
+// show reports is the one the free clock carries on at when the show stops.
+const clampBpm = (n) => Math.max(20, Math.min(300, Math.round(n * 100) / 100 || 120));
 const division = (n) => Math.max(1, Math.min(16, Math.round(n) || 1));
 
 // Loudest wins when two bursts collide. The order is the vocabulary's own:

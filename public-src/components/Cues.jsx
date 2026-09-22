@@ -1,6 +1,6 @@
 import { useState } from 'preact/hooks';
 import { stateSig, api, toast } from '../state.js';
-import { colorToCss } from '../utils.js';
+import { colorToCss, formatBpm } from '../utils.js';
 
 // The cue list rides the state broadcast as summaries — id, name, and enough to
 // draw a swatch. Recall, save and edit all go through the REST endpoints, which
@@ -71,11 +71,11 @@ function CueRow({ cue, presets, editing, setEditing }) {
       <button
         class={`cue-recall ${cue.blackout ? 'blackout' : ''}`}
         onClick={() => cueApi(`/${cue.id}/recall`, { method: 'POST' })}
-        title={`Recall "${cue.name}" — ${cue.pattern} at ${cue.bpm} BPM`}
+        title={`Recall "${cue.name}" — ${cue.pattern} at ${formatBpm(cue.bpm)} BPM`}
       >
         <Swatches colors={cue.colors} presets={presets} />
         <span class="cue-name">{cue.name}</span>
-        <span class="cue-meta">{cue.pattern} · {cue.bpm}</span>
+        <span class="cue-meta">{cue.pattern} · {formatBpm(cue.bpm)}</span>
       </button>
       <button
         class="btn icon sm"

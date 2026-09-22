@@ -227,10 +227,12 @@ class AutoShow {
     if (!Number.isFinite(posMs)) return;
     let last = -1;
     let anchorMs;
+    let lastPatchMs;
     const restored = { energyOverride: null, showDynamics: null };
     for (let i = 0; i < this.timeline.length; i++) {
       if (this.timeline[i].timeMs > posMs) break;
       const ev = this.timeline[i];
+      if (ev.action === 'patch') lastPatchMs = ev.timeMs;
       if (ev.action === 'patch' && ev.data
         && (ev.data.pattern !== undefined || ev.data.beatDivision !== undefined)) {
         anchorMs = ev.timeMs;
@@ -251,9 +253,9 @@ class AutoShow {
     delete restored.fadeMs;
     // The restored pattern counts its steps from the beat its scene was
     // scheduled on, so a seek lands on the same step playing through would.
-    if (anchorMs !== undefined && (restored.pattern !== undefined || restored.beatDivision !== undefined)) {
-      restored.anchorMs = anchorMs;
-    }
+    // Without a pattern to anchor, it still says it came from the timeline.
+    if (anchorMs !== undefined) restored.anchorMs = anchorMs;
+    else if (lastPatchMs !== undefined) restored.anchorMs = lastPatchMs;
     // A seek must restore the complete current scene for every timeline. The
     // old expressive-only guard left legacy pattern/colour shows visually
     // stale after a pause, offset nudge, or live replan.
@@ -789,9 +791,11 @@ class AutoShow {
         // Master controls belong to the operator, including for old timelines.
         const { masterDimmer: _dimmer, masterBlackout: _blackout, ...patch } = ev.data || {};
         if ('energyOverride' in patch) this._cancelEnergyTimer();
-        // A scene counts its pattern's steps from the beat it was scheduled
-        // on, not from the frame that happened to fire it.
-        if (patch.pattern !== undefined || patch.beatDivision !== undefined) patch.anchorMs = ev.timeMs;
+        // The track time it was scheduled for. A scene counts its pattern's
+        // steps from that beat, not from the frame that happened to fire it,
+        // and a tempo mark from the show is not the operator taking the
+        // tempo back from a track (see server/patch.js).
+        patch.anchorMs = ev.timeMs;
         this._applyPatch(patch);
         break;
       }

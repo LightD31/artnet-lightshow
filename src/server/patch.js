@@ -66,6 +66,9 @@ function applyPatch(rawData) {
   if (data.fadeMs !== undefined || changesLook) beginFade(data.fadeMs || 0);
 
   if (data.bpm !== undefined) {
+    // To a hundredth: finer than any source measures, and 123.7 + 1 from a
+    // nudge lands on 124.7 rather than on float noise.
+    data.bpm = Math.round(data.bpm * 100) / 100;
     state.bpm = data.bpm;
     // The free clock's tempo, from the beat it is on now. A tempo typed or
     // nudged by hand also takes the clock back from a locked track; the auto

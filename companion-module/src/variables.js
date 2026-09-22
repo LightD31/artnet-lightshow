@@ -1,8 +1,11 @@
 import { colorName, energyName, patternName, strobeName } from './constants.js'
 
+const CLOCK_LABELS = { auto: 'Auto', cdj: 'CDJ', track: 'Track', tap: 'Tap' }
+
 export function UpdateVariableDefinitions(self) {
 	self.setVariableDefinitions({
 		bpm: { name: 'Current BPM' },
+		clock_source: { name: 'What the patterns keep time by (Auto, CDJ, Track or Tap)' },
 		beat_division: { name: 'Beat division' },
 		playing: { name: 'Show is playing (true/false)' },
 		pattern: { name: 'Active pattern name' },
@@ -22,7 +25,9 @@ export function UpdateVariableDefinitions(self) {
 export function UpdateVariableValues(self) {
 	const s = self.liveState
 	self.setVariableValues({
-		bpm: s.bpm,
+		// To a tenth: the rig keeps a hundredth, which is more than a button can show.
+		bpm: Number.isFinite(s.bpm) ? Math.round(s.bpm * 10) / 10 : s.bpm,
+		clock_source: CLOCK_LABELS[s.clock && s.clock.source] || 'Tap',
 		beat_division: s.beatDivision,
 		playing: !!s.running,
 		pattern: patternName(s.pattern),

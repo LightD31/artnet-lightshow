@@ -92,7 +92,7 @@ test('when a source stops, the free clock carries on from where it was', () => {
   let pos = 0;
   r.c.setAutoSource(() => (running ? { grid, positionMs: pos } : null));
   let adopted = null;
-  r.c.onAdoptBpm((bpm) => { adopted = bpm; });
+  r.c.onTempo((bpm) => { adopted = bpm; });
 
   pos = 60000 * 16 / 128;
   const before = r.c.now();
@@ -223,7 +223,7 @@ test('taking the tempo back from a locked track keeps the beat', () => {
   // A single tap on a fresh song: the beat snaps to the tap, the song's tempo
   // carries on until a second tap measures a new one.
   let adopted = null;
-  r.c.onAdoptBpm((bpm) => { adopted = bpm; });
+  r.c.onTempo((bpm) => { adopted = bpm; });
   r.c.setTrack({ key: 'song-2', grid, positionMs: () => pos });
   r.advance(25); pos += 25;
   assert.strictEqual(r.c.now().source, 'track');
@@ -232,4 +232,27 @@ test('taking the tempo back from a locked track keeps the beat', () => {
   assert.strictEqual(tapped.source, 'tap');
   assert.strictEqual(tapped.beatPos, 17, 'the next whole beat');
   assert.ok(close(tapped.bpm, 128, 1e-6) && close(adopted, 128, 1e-6), 'at the song\'s tempo');
+});
+
+// The BPM read-out, and the ±1 nudges that start from it, follow the tempo the
+// rig is running at — not a number left over from before the song.
+test('the tempo is reported when it moves, not on every frame', () => {
+  const r = rig({ bpm: 120 });
+  const reported = [];
+  r.c.onTempo((bpm) => reported.push(bpm));
+  r.c.now();
+  r.c.now();
+  assert.deepStrictEqual(reported, [120], 'once, not per frame');
+
+  let pos = 5000;
+  r.c.setTrack({ key: 'song', grid: makeGrid(Array.from({ length: 256 }, (_, i) => i * (60 / 123.7))), positionMs: () => pos });
+  for (let i = 0; i < 40; i++) { r.advance(25); pos += 25; r.c.now(); }
+  assert.deepStrictEqual(reported, [120, 123.7], 'the song\'s tempo, to a hundredth');
+
+  r.c.setBpm(123.72);
+  r.c.now();
+  assert.deepStrictEqual(reported, [120, 123.7], 'a change under a twentieth of a BPM is not news');
+  r.c.setBpm(125);
+  r.c.now();
+  assert.deepStrictEqual(reported, [120, 123.7, 125]);
 });
