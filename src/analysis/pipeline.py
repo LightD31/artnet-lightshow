@@ -193,6 +193,11 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
             document['meta']['elapsedSec'] / max(0.001, audio.duration), 4)
         document['meta']['withinRealtimeBudget'] = (
             document['meta']['processingRatio'] < 1.0)
+        # Once more over the finished document: the embeddings, the MuLan
+        # scores and the S-KEY result were attached after the first pass, and
+        # a NaN in any of them would reach the wire as a bare `NaN` that no
+        # JSON parser accepts.
+        document = json_safe(document)
         _log(f'{os.path.basename(path)}: {audio.duration:.1f}s analysed in '
              f'{document["meta"]["elapsedSec"]}s '
              f'({rhythm.bpm:.1f} BPM, {len(sections)} sections, '

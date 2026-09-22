@@ -3,6 +3,7 @@
 const { state, getLiveState, getDmxSnapshot } = require('./state');
 const { setHooks } = require('./patch');
 const { restartBeatTimer } = require('./engine');
+const { guarded } = require('./guard');
 const { cues } = require('./cues');
 const { Warmer } = require('./warm');
 const {
@@ -536,13 +537,13 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   // It also means a test can wire the integrations up without the run hanging
   // afterwards on a heartbeat nobody is listening to.
   let lastPosition = {};
-  const positionTimer = setInterval(() => {
+  const positionTimer = setInterval(guarded('auto-position', () => {
     const position = sampleAutoPosition(autoShow, lastPosition);
     if (position.running || JSON.stringify(position) !== JSON.stringify(lastPosition)) {
       io.emit('auto-position', position);
     }
     lastPosition = position;
-  }, 100);
+  }), 100);
   if (positionTimer.unref) positionTimer.unref();
 
   // DMX values on their own high-rate channel. This is the only field that
@@ -550,13 +551,13 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   // ~100 bytes instead of ~7 KB, and lets the client re-render just the DMX
   // views instead of the whole tree.
   let lastDmxJson = '';
-  const dmxTimer = setInterval(() => {
+  const dmxTimer = setInterval(guarded('dmx-broadcast', () => {
     const snapshot = getDmxSnapshot();
     const json = JSON.stringify(snapshot);
     if (json === lastDmxJson) return;      // blackout / idle rig: nothing to send
     lastDmxJson = json;
     io.emit('dmx', snapshot);
-  }, 100);
+  }), 100);
   if (dmxTimer.unref) dmxTimer.unref();
 
   // Some status fields drift without any explicit event — `authenticated` on
@@ -564,7 +565,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   // Spotify's poll updates status without calling broadcast(). A low-rate
   // dirty-checked sweep picks those up; broadcast() covers everything else the
   // moment it changes.
-  const statusTimer = setInterval(broadcast, 1000);
+  const statusTimer = setInterval(guarded('status-broadcast', broadcast), 1000);
   if (statusTimer.unref) statusTimer.unref();
 
   return {

@@ -13,6 +13,7 @@ const pythonEnv = require('./python-env');
 const { SYNC_OFFSET_LIMIT_MS } = require('./server/presets');
 const { ShowDirector, measureBuildup } = require('./show/director');
 const { renderIntents } = require('./show/render');
+const { guarded } = require('./server/guard');
 
 // A download that never finishes is indistinguishable from one that never
 // started: the track change waits on this promise, so an unresponsive network
@@ -616,7 +617,7 @@ class AutoShow {
     // the look; energy events are deliberately represented as cleared state.
     this._reseek();
     this._tick();
-    this._loopTimer = setInterval(() => this._tick(), 20);
+    this._loopTimer = setInterval(guarded('auto-show', () => this._tick()), 20);
   }
 
   stop() {

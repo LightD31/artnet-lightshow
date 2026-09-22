@@ -32,6 +32,12 @@ const { midiMap } = require('./src/server/midi-map');
 const { cues } = require('./src/server/cues');
 const { showStore, SHOW_FILE } = require('./src/server/show-store');
 const pythonEnv = require('./src/python-env');
+const { installProcessSafetyNet } = require('./src/server/guard');
+
+// Before anything else can fail: a fault the code did not expect is reported
+// and the rig keeps running, rather than the process exiting with every
+// fixture latched on its last frame. See src/server/guard.js.
+installProcessSafetyNet();
 
 // A .env from before settings moved into the UI would otherwise go quiet: the
 // rig would come up on defaults with no clue why. Say which variables are now
@@ -185,6 +191,21 @@ function restoreSpotifySession() {
 // ─── Listen ─────────────────────────────────────────────────────────────────
 
 const PORT = settings.get('server.port');
+
+// The safety net keeps the process up through unexpected faults, which is the
+// wrong answer for this one: a server that cannot listen is no server at all,
+// and staying up would leave the operator with a console and no page.
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\nPort ${PORT} is already in use — is another copy of the lightshow running? `
+      + 'Stop it, or change the port in config/settings.json (server.port).\n');
+  } else {
+    console.error(`\nCould not listen on ${HOST}:${PORT}: ${err.message}\n`);
+  }
+  try { stopEngine(); } catch (_) { /* on the way out regardless */ }
+  process.exit(1);
+});
+
 server.listen(PORT, HOST, () => {
   // Where the OAuth proxy sends the operator's browser back to. Must be an
   // address that browser can actually reach: "localhost" is only right when the
