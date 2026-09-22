@@ -133,7 +133,14 @@ The same token goes in:
 - **Browser extension** → its preferences page (server URL and token)
 
 Cross-origin requests are refused whether or not a token is set, so a website
-you happen to have open in another tab cannot drive the rig.
+you happen to have open in another tab cannot drive the rig — over HTTP or over
+the live socket.
+
+The server also only answers to names it knows: any IP address, `localhost`, and
+this machine's own host name (bare or with `.local`). That stops a web page from
+pointing its own domain at your machine to get around the origin check. If you
+reach the rig by some other name — `lights.lan`, a reverse proxy — set that
+address as the **Public URL** in *Server & Access*.
 
 ---
 
@@ -1294,7 +1301,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/midi/learn/cancel` | Disarm learn |
 | POST | `/api/prolink/enable` · `/disable` · `/toggle` | PRO DJ LINK |
 | GET | `/auth/spotify` · `/auth/spotify/callback` | Spotify OAuth |
-| GET | `/api/preflight` | Run the pre-show check against the live subsystems |
+| POST | `/api/preflight` | Run the pre-show check against the live subsystems |
 | GET | `/api/spotify/now-playing` · POST `/api/spotify/disconnect` | Spotify |
 | GET | `/api/spotify/playlists` | The connected account's playlists, for the warming picker |
 | POST | `/api/nowplaying/disconnect` | Drop the OS media session source |

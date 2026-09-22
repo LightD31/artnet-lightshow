@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const path = require('path');
 const fsp = require('fs/promises');
 const os = require('os');
@@ -49,24 +50,67 @@ const pythonEnv = require('../python-env');
 // Audio uploads genuinely need headroom; GDTF files do not. Separate limits so
 // the fixture importer isn't handed a 50 MB budget it has no use for — a real
 // GDTF is a few hundred KB.
-const uploadAudio = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
-const uploadGdtf = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
+// One file and a handful of fields per request: both are held in memory.
+const uploadAudio = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024, files: 1, fields: 8 } });
+const uploadGdtf = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024, files: 1, fields: 8 } });
 
-// Local-file analysis reads an arbitrary path off the filesystem. When a
-// library folder is set in the settings page, confine it to that subtree;
-// blank keeps the old behaviour (fine on a loopback-only bind, less so once the
-// server is exposed). Read per request so a change applies without a restart.
-function assertLocalPathAllowed(source) {
+// Local-file analysis reads a path off the filesystem. When a library folder is
+// set in the settings page it is confined to that subtree; blank keeps the old
+// behaviour of any absolute path. Read per request so a change applies without
+// a restart.
+//
+// Both sides are resolved with realpath, so a symlink inside the folder cannot
+// point the analyser somewhere outside it.
+async function resolveLocalPath(source) {
+  let resolved;
+  try {
+    resolved = await fsp.realpath(source);
+  } catch (_) {
+    const err = new Error(`No such file: ${source}`);
+    err.status = 404;
+    throw err;
+  }
   const configured = settings.get('analysis.localRoot');
-  if (!configured) return;
-  const root = path.resolve(configured);
-  const resolved = path.resolve(source);
+  if (!configured) return resolved;
+  let root;
+  try { root = await fsp.realpath(configured); } catch (_) { root = path.resolve(configured); }
   const prefix = root.endsWith(path.sep) ? root : root + path.sep;
   if (resolved !== root && !resolved.startsWith(prefix)) {
     const err = new Error(`Local file analysis is restricted to ${root}`);
     err.status = 403;
     throw err;
   }
+  return resolved;
+}
+
+const AUDIO_EXTENSIONS = ['.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac', '.wma', '.opus', '.aiff', '.aif'];
+const DIRECT_AUDIO_RE = /\.(mp3|wav|ogg|flac|m4a|aac|wma|opus|aiff?)(\?|$)/i;
+
+/**
+ * What an operator typed into "Analyse", classified before anything touches it.
+ *
+ *   url     an http(s) link — a direct audio file or a page yt-dlp understands
+ *   local   an absolute path on this machine
+ *   search  anything else, handed to yt-dlp as a search
+ *
+ * Refused outright: UNC and device paths (\\server\share, //server/share,
+ * \\?\C:), which on Windows make the machine authenticate to whatever server
+ * the path names; any other URL scheme (file:, ftp:, smb:); and a relative
+ * path to an audio file, whose meaning depends on the server's working folder.
+ */
+function classifyAnalyzeSource(source) {
+  const text = String(source).trim();
+  const refuse = (message) => {
+    const err = new Error(message);
+    err.status = 400;
+    throw err;
+  };
+  if (/^[\\/]{2}/.test(text)) refuse('Network (UNC) paths are not accepted — copy the file to this machine first');
+  if (/^https?:\/\//i.test(text)) return { kind: 'url', source: text, direct: DIRECT_AUDIO_RE.test(text) };
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) refuse('Only http(s) links, absolute file paths or a search can be analysed');
+  if (/^[a-zA-Z]:[\\/]/.test(text) || text.startsWith('/')) return { kind: 'local', source: text };
+  if (DIRECT_AUDIO_RE.test(text) && /[\\/]/.test(text)) refuse('Give the full path to the file, not a relative one');
+  return { kind: 'search', source: text };
 }
 
 /** Remember the chosen MIDI ports so the pick survives a restart. */
@@ -595,7 +639,7 @@ function attachRoutes(app, deps) {
 
   app.get('/auth/spotify/callback', asyncHandler(async (req, res) => {
     const code = req.query.code;
-    if (!code) return res.status(400).send('Missing authorization code');
+    if (!code) return res.status(400).type('text/plain').send('Missing authorization code');
 
     // Bind this callback to a flow this server started. Without it, any page
     // could navigate the operator's browser here with an attacker's code and
@@ -608,7 +652,7 @@ function attachRoutes(app, deps) {
         );
       } else {
         console.warn('[spotify] rejected callback: missing or unrecognised state parameter');
-        return res.status(400).send(
+        return res.status(400).type('text/plain').send(
           'Spotify auth failed: missing or unrecognised state parameter. '
           + 'Start the flow from /auth/spotify in this browser.'
           + (spotify.usingProxy
@@ -629,7 +673,9 @@ function attachRoutes(app, deps) {
       res.send('<html><body style="background:#0d0d0f;color:#e8e8f0;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh"><div style="text-align:center"><h2 style="color:#44ff88">Spotify Connected</h2><p>You can close this window and return to the lightshow.</p><script>setTimeout(()=>window.close(),2000)</script></div></body></html>');
     } catch (err) {
       console.error('Spotify auth error:', err.message);
-      res.status(500).send(`Spotify auth failed: ${err.message}`);
+      // Plain text: the message can carry whatever Spotify or a proxy sent
+      // back, and as HTML on this origin it would run in the operator's browser.
+      res.status(500).type('text/plain').send(`Spotify auth failed: ${err.message}`);
     }
   }));
 
@@ -703,20 +749,20 @@ function attachRoutes(app, deps) {
     const { source } = req.body || {};
     if (!source) return res.status(400).json({ ok: false, error: 'Provide a source (file path, URL, or YouTube search)' });
 
-    const isLocalFile = /^[a-zA-Z]:[\\/]|^\//.test(source);
-    const isDirectAudio = /\.(mp3|wav|ogg|flac|m4a|aac|wma)(\?|$)/i.test(source);
-
     try {
-      if (isLocalFile || isDirectAudio) {
-        if (isLocalFile) assertLocalPathAllowed(source);
-        autoShow.track = { name: path.basename(source), artist: 'Local file', album: '', albumArt: null };
-        const cacheKey = isLocalFile ? keyForLocalFile(source) : `url:${source}`;
-        await autoShow.analyze(source, cacheKey);
+      const input = classifyAnalyzeSource(source);
+      if (input.kind === 'local') {
+        const file = await resolveLocalPath(input.source);
+        autoShow.track = { name: path.basename(file), artist: 'Local file', album: '', albumArt: null };
+        await autoShow.analyze(file, keyForLocalFile(file));
+      } else if (input.kind === 'url' && input.direct) {
+        autoShow.track = { name: path.basename(new URL(input.source).pathname), artist: 'Link', album: '', albumArt: null };
+        await autoShow.analyze(input.source, `url:${input.source}`);
       } else {
-        autoShow.track = { name: source, artist: '', album: '', albumArt: null };
+        autoShow.track = { name: input.source, artist: '', album: '', albumArt: null };
         integrations.broadcast();
-        const cacheKey = keyForYouTube(source) || keyForQuery(source);
-        await autoShow.downloadAndAnalyze(source, null, cacheKey);
+        const cacheKey = keyForYouTube(input.source) || keyForQuery(input.source);
+        await autoShow.downloadAndAnalyze(input.source, null, cacheKey);
       }
       integrations.broadcast();
       res.json({ ok: true, analysis: autoShow.getClientState().analysis });
@@ -796,7 +842,14 @@ function attachRoutes(app, deps) {
 
   app.post('/api/auto/analyze-upload', uploadAudio.single('audio'), asyncHandler(async (req, res) => {
     if (!req.file) return res.status(400).json({ ok: false, error: 'No audio file uploaded' });
-    const tmpPath = path.join(os.tmpdir(), `auto-analyze-${Date.now()}${path.extname(req.file.originalname) || '.mp3'}`);
+    // The extension is the only part of the client's file name that reaches the
+    // disk, and only from a fixed list: a name the client chose, or an
+    // executable extension, has no business sitting in the temp folder.
+    const ext = path.extname(req.file.originalname || '').toLowerCase();
+    if (!AUDIO_EXTENSIONS.includes(ext)) {
+      return res.status(400).json({ ok: false, error: `Not an audio file (${AUDIO_EXTENSIONS.join(', ')})` });
+    }
+    const tmpPath = path.join(os.tmpdir(), `auto-analyze-${crypto.randomUUID()}${ext}`);
     try {
       // Async on purpose: this buffer can be 50 MB, and a synchronous write of
       // that size stalls the event loop — which here means the 40 Hz Art-Net
@@ -1011,7 +1064,11 @@ function attachRoutes(app, deps) {
   // The same checks `npm run preflight` runs, with the live subsystems wired in
   // so MIDI and the playback sources report what is actually connected rather
   // than what is merely configured.
-  app.get('/api/preflight', asyncHandler(async (_req, res) => {
+  //
+  // POST, not GET: it probes the network, spawns tools and may download
+  // models. A GET can be fired from any web page by an <img> tag with no
+  // Origin header, which is exactly what the origin check cannot catch.
+  app.post('/api/preflight', asyncHandler(async (_req, res) => {
     const report = await runPreflight({ midi, spotify, prolink, analysisCache, downloadModels: true });
     res.json({ ok: true, report });
   }));
@@ -1201,4 +1258,4 @@ function attachRoutes(app, deps) {
   });
 }
 
-module.exports = { attachRoutes };
+module.exports = { attachRoutes, classifyAnalyzeSource, resolveLocalPath };

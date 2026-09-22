@@ -57,6 +57,8 @@ const SCOPES = [
 // How long an issued OAuth state nonce stays valid. Long enough to log in and
 // approve the scopes, short enough that a leaked authorize URL goes stale.
 const STATE_TTL_MS = 10 * 60 * 1000;
+// Outstanding authorization flows kept at once; see getAuthorizeUrl().
+const MAX_PENDING_STATES = 32;
 
 // Spotify's own authorize endpoint, used when no OAuth proxy is configured.
 const SPOTIFY_AUTHORIZE_URL = 'https://accounts.spotify.com/authorize';
@@ -232,6 +234,12 @@ class SpotifyClient {
   getAuthorizeUrl() {
     const state = crypto.randomBytes(24).toString('base64url');
     this._pruneStates();
+    // Anyone who can reach /auth/spotify can start a flow, so the map is
+    // bounded: past the cap the oldest outstanding nonce is dropped. A real
+    // operator has one or two flows open, never dozens.
+    while (this._pendingStates.size >= MAX_PENDING_STATES) {
+      this._pendingStates.delete(this._pendingStates.keys().next().value);
+    }
     this._pendingStates.set(state, Date.now());
     const params = new URLSearchParams({
       response_type: 'code',

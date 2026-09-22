@@ -479,3 +479,15 @@ test('a rejected grant drops the session, a network failure keeps it', async () 
   assert.strictEqual(offline.refreshToken, 'still-good', 'kept for the next attempt');
   assert.deepStrictEqual(kept, [], 'and the store is left alone');
 });
+
+// /auth/spotify is reachable by anyone who can reach the server, so the map
+// of outstanding nonces must not grow with every hit.
+test('outstanding OAuth states are bounded, oldest dropped first', () => {
+  const client = new SpotifyClient({ clientId: 'id', clientSecret: 'secret' });
+  const first = new URL(client.getAuthorizeUrl()).searchParams.get('state');
+  for (let i = 0; i < 200; i++) client.getAuthorizeUrl();
+  assert.ok(client._pendingStates.size <= 32, `size ${client._pendingStates.size}`);
+  assert.strictEqual(client.consumeState(first), false, 'the oldest was evicted');
+  const latest = new URL(client.getAuthorizeUrl()).searchParams.get('state');
+  assert.strictEqual(client.consumeState(latest), true);
+});

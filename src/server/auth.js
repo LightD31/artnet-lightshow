@@ -1,6 +1,8 @@
 'use strict';
 
 const crypto = require('crypto');
+const net = require('net');
+const os = require('os');
 
 /**
  * Access control for the control surface.
@@ -16,7 +18,9 @@ const crypto = require('crypto');
  *      token, a website the operator has open in another tab can POST to
  *      localhost — several control routes take no body, which makes them
  *      "simple" cross-origin requests that skip preflight entirely. The origin
- *      check below rejects those regardless of whether a token is configured.
+ *      check below rejects those regardless of whether a token is configured,
+ *      and the host check rejects a page that re-points its own domain at this
+ *      machine (DNS rebinding), which the origin check alone cannot see.
  *
  * This is proportionate defence for a tool on a venue network. It is not a
  * hardened auth system: one shared secret, no users, no revocation.
@@ -97,6 +101,71 @@ function originAllowed(req) {
   }
 }
 
+/**
+ * The host name a `Host` header names, lower-cased, without port or brackets.
+ * Empty when there is nothing usable in it.
+ */
+function hostnameOf(hostHeader) {
+  let raw = String(hostHeader || '').trim().toLowerCase();
+  if (!raw) return '';
+  if (raw.startsWith('[')) {
+    const end = raw.indexOf(']');
+    return end > 0 ? raw.slice(1, end) : '';
+  }
+  // One colon is a port; several are an unbracketed IPv6 literal.
+  const colon = raw.indexOf(':');
+  if (colon >= 0 && colon === raw.lastIndexOf(':')) raw = raw.slice(0, colon);
+  return raw.endsWith('.') ? raw.slice(0, -1) : raw;
+}
+
+/** The names this machine answers to on a LAN without any configuration. */
+function machineNames() {
+  const names = new Set();
+  const full = String(os.hostname() || '').trim().toLowerCase();
+  if (!full) return names;
+  const short = full.split('.')[0];
+  for (const name of [full, short]) {
+    names.add(name);
+    names.add(`${name}.local`);
+  }
+  return names;
+}
+
+/**
+ * May a request carrying this `Host` header reach the server?
+ *
+ * The origin check alone cannot stop DNS rebinding: a page on
+ * attacker.example re-resolves its own name to 127.0.0.1, and from then on its
+ * requests carry `Origin: http://attacker.example:3000` *and*
+ * `Host: attacker.example:3000`, so origin and host agree and the request
+ * looks same-origin. What it cannot fake is a host name this machine is
+ * actually known by, so the Host header is checked against those:
+ *
+ *   - any IP literal — rebinding needs a name, and an address typed into the
+ *     address bar is the normal way to reach the rig from a phone;
+ *   - localhost and *.localhost, which browsers never resolve through DNS;
+ *   - this machine's own host name, bare and with `.local`;
+ *   - whatever the operator configured: the bind host and the public URL.
+ *
+ * A request with no Host header at all is not a browser (HTTP/1.1 browsers
+ * always send one), so it is left to the token check.
+ */
+function hostAllowed(hostHeader, extraNames = []) {
+  if (hostHeader === undefined || hostHeader === null || hostHeader === '') return true;
+  const name = hostnameOf(hostHeader);
+  if (!name) return false;
+  if (net.isIP(name)) return true;
+  if (name === 'localhost' || name.endsWith('.localhost')) return true;
+  if (machineNames().has(name)) return true;
+  return extraNames.some((extra) => hostnameOf(extra) === name);
+}
+
+/** The host name of a configured URL such as `server.publicUrl`, or ''. */
+function hostOfUrl(value) {
+  if (!value) return '';
+  try { return new URL(value).host; } catch (_) { return ''; }
+}
+
 /** Pull a presented token out of an Express request. */
 function tokenFromRequest(req) {
   return req.headers['x-lightshow-token']
@@ -104,14 +173,61 @@ function tokenFromRequest(req) {
     || '';
 }
 
+// A refused Host is almost always an operator reaching the rig by a name the
+// server does not know, so it is worth one console line — but only one per
+// name, since a browser retries.
+const warnedHosts = new Set();
+
+function warnRefusedHost(name) {
+  if (warnedHosts.has(name) || warnedHosts.size > 32) return;
+  warnedHosts.add(name);
+  console.warn(`[auth] refused a request for host "${name}". If that is how you reach this machine, `
+    + 'set it as the Public URL in Settings → Server & Access.');
+}
+
 /**
  * Build the Express middleware and the Socket.IO handshake guard.
  *
  * `token` empty means authentication is disabled — only valid on a loopback
- * bind, which configError() enforces at startup. The origin check still runs.
+ * bind, which configError() enforces at startup. The origin and host checks
+ * still run.
+ *
+ * `allowedHosts` returns extra host names to accept (the configured bind host
+ * and public URL). It is a function so a public URL changed in the settings
+ * page applies without a restart.
  */
-function createAuth({ token = '' } = {}) {
+function createAuth({ token = '', allowedHosts = () => [] } = {}) {
   const enabled = !!token;
+
+  /** Refuse requests addressed to a host name this machine is not known by. */
+  function hostMiddleware(req, res, next) {
+    if (hostAllowed(req.headers.host, allowedHosts())) return next();
+    const name = hostnameOf(req.headers.host);
+    warnRefusedHost(name);
+    return res.status(403).type('text/plain').send(
+      `Host "${name}" is not one this server answers to. Open it by IP address, `
+      + 'by localhost, or by this machine\'s name, or set that name as the Public URL '
+      + 'in Settings → Server & Access.',
+    );
+  }
+
+  /**
+   * Socket.IO `allowRequest`: the handshake is an HTTP request that never
+   * passes through Express, so it gets the host and origin checks here.
+   *
+   * The origin check matters most on this path. Browsers do not apply CORS to
+   * WebSockets, so without it any page the operator has open could connect to
+   * ws://127.0.0.1 and send `set` — blackout, strobe, the Art-Net target —
+   * whether or not a token is configured.
+   */
+  function allowSocketRequest(req, callback) {
+    if (!hostAllowed(req.headers.host, allowedHosts())) {
+      warnRefusedHost(hostnameOf(req.headers.host));
+      return callback('Host not allowed', false);
+    }
+    if (!originAllowed(req)) return callback('Cross-origin connection refused', false);
+    return callback(null, true);
+  }
 
   function httpMiddleware(req, res, next) {
     if (!originAllowed(req)) {
@@ -143,13 +259,16 @@ function createAuth({ token = '' } = {}) {
     next(err);
   }
 
-  return { enabled, httpMiddleware, socketMiddleware };
+  return { enabled, hostMiddleware, allowSocketRequest, httpMiddleware, socketMiddleware };
 }
 
 module.exports = {
   createAuth,
   configError,
   generateToken,
+  hostAllowed,
+  hostnameOf,
+  hostOfUrl,
   isLoopbackHost,
   originAllowed,
   safeEqual,

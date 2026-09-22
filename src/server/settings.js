@@ -148,6 +148,8 @@ const SECRET_PATHS = [
 const RESTART_PATHS = ['server.host', 'server.port', 'server.token'];
 
 // Hostname per RFC 1123, an IPv4 literal, or the two "all interfaces" forms.
+// python, python3, python3.12, python3.12t, pythonw, py — with .exe on Windows.
+const PYTHON_BASENAME_RE = /^(python(\d+(\.\d+)*t?)?w?|py)(\.exe)?$/i;
 const HOSTNAME_RE = /^(?=.{1,253}$)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
 const netHost = z.string().min(1).max(253).refine(
   (v) => v === '::' || v === '::1' || HOSTNAME_RE.test(v),
@@ -249,7 +251,13 @@ const schema = z.object({
     analyzerTimeoutMs: z.number().int().min(60000).max(3600000),
     downloadTimeoutMs: z.number().int().min(10000).max(3600000),
     localRoot: z.string().max(4096),
-    pythonPath: z.string().max(4096),
+    // Whatever is named here is executed, so it has to at least be named like
+    // a Python interpreter (python, python3, python3.12, pythonw.exe, py.exe…).
+    // That keeps the setting from being a way to run an arbitrary program.
+    pythonPath: z.string().max(4096).refine(
+      (value) => value === '' || PYTHON_BASENAME_RE.test(value.trim().split(/[\\/]/).pop()),
+      'must be the path to a Python interpreter (python, python3, pythonw, py)',
+    ),
     separator: z.enum(['demucs', 'bs-roformer']),
   }).strict(),
 }).strict();
@@ -300,6 +308,25 @@ function merge(base, patch) {
   return out;
 }
 
+/**
+ * Clear stored values that an older build accepted and this one refuses.
+ * Mutates `parsed`; returns the dotted paths it cleared.
+ */
+function clearNewlyInvalidFields(parsed) {
+  const cleared = [];
+  const analysis = parsed && typeof parsed === 'object' ? parsed.analysis : null;
+  if (analysis && typeof analysis.pythonPath === 'string') {
+    const check = schema.shape.analysis.shape.pythonPath.safeParse(analysis.pythonPath);
+    if (!check.success) {
+      console.warn(`[settings] analysis.pythonPath "${analysis.pythonPath}" is not a Python interpreter `
+        + '— cleared; the analyser will look for one on PATH. Set it again in Settings → Analysis.');
+      analysis.pythonPath = '';
+      cleared.push('analysis.pythonPath');
+    }
+  }
+  return cleared;
+}
+
 class SettingsStore {
   constructor(file) {
     this.file = file;
@@ -329,6 +356,11 @@ class SettingsStore {
     } catch (err) {
       return this._quarantine(`invalid JSON (${err.message})`);
     }
+
+    // A rule added after the file was written must not throw away the whole
+    // file — Spotify credentials, the token, the Hue pairing — for the sake of
+    // one field. Such fields are cleared here, loudly, and the rest loads.
+    clearNewlyInvalidFields(parsed);
 
     // Merge onto defaults first so a file written by an older build, missing
     // keys added since, still loads instead of failing validation wholesale.

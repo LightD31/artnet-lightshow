@@ -106,3 +106,55 @@ test('a refused handshake says why, and says it in a way the client can read', a
   // Never echo the configured token back to whoever guessed at it.
   assert.ok(!missing.message.includes('sesame') && !wrong.message.includes('sesame'));
 });
+
+// DNS rebinding: a page re-points its own domain at 127.0.0.1, so its requests
+// arrive with Origin and Host that agree. Only the host name gives it away.
+test('host check refuses names this machine is not known by', () => {
+  const os = require('os');
+  const { hostAllowed } = require('../../src/server/auth');
+  const own = os.hostname().toLowerCase();
+
+  for (const host of ['127.0.0.1:3000', '192.168.1.20:3000', '[::1]:3000', 'localhost:3000',
+    'LOCALHOST', 'app.localhost:3000', `${own}:3000`, `${own.split('.')[0]}.local:3000`, undefined, '']) {
+    assert.strictEqual(hostAllowed(host), true, String(host));
+  }
+  for (const host of ['attacker.example:3000', 'attacker.example', 'localhost.attacker.example',
+    `${own}.attacker.example:3000`, '[garbage']) {
+    assert.strictEqual(hostAllowed(host), false, host);
+  }
+  // Configured names — the bind host and the public URL — are accepted.
+  assert.strictEqual(hostAllowed('lights.lan:3000', ['lights.lan:8443']), true);
+  assert.strictEqual(hostAllowed('lights.lan', ['other.lan']), false);
+});
+
+test('host middleware answers 403 before anything else runs', () => {
+  const auth = createAuth({ token: '', allowedHosts: () => ['lights.lan'] });
+  const run = (host) => {
+    let status = null; let nexted = false;
+    const res = {
+      status(c) { status = c; return this; },
+      type() { return this; },
+      send() { return this; },
+    };
+    auth.hostMiddleware({ headers: { host } }, res, () => { nexted = true; });
+    return { status, nexted };
+  };
+  assert.deepStrictEqual(run('localhost:3000'), { status: null, nexted: true });
+  assert.deepStrictEqual(run('lights.lan'), { status: null, nexted: true });
+  assert.deepStrictEqual(run('rebind.example:3000'), { status: 403, nexted: false });
+});
+
+// Browsers do not apply CORS to WebSockets, so the socket handshake has to
+// check the Origin itself — with or without a token configured.
+test('socket handshake refuses other origins and unknown hosts, token or not', async () => {
+  for (const token of ['', 'sesame']) {
+    const auth = createAuth({ token });
+    const allow = (headers) => new Promise((resolve) => {
+      auth.allowSocketRequest({ headers }, (err, ok) => resolve({ err, ok }));
+    });
+    assert.strictEqual((await allow({ host: 'localhost:3000' })).ok, true, 'no Origin (Companion)');
+    assert.strictEqual((await allow({ host: 'localhost:3000', origin: 'http://localhost:3000' })).ok, true);
+    assert.strictEqual((await allow({ host: 'localhost:3000', origin: 'https://evil.example' })).ok, false);
+    assert.strictEqual((await allow({ host: 'evil.example:3000', origin: 'http://evil.example:3000' })).ok, false);
+  }
+});

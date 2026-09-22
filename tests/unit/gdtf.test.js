@@ -53,3 +53,15 @@ test('refuses a zip bomb before decompressing it', async () => {
   assert.ok(buf.length < 1024 * 1024, 'compresses to well under a megabyte');
   await assert.rejects(parseGDTF(buf), /too large/);
 });
+
+// The declared size is the archive's own claim. The stream cap is what holds
+// when a crafted archive understates it.
+test('stops inflating at the limit whatever the archive declares', async () => {
+  const { inflateCapped } = require('../../src/gdtf');
+  const zip = new JSZip();
+  zip.file('description.xml', 'B'.repeat(4 * 1024 * 1024));
+  const loaded = await JSZip.loadAsync(await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }));
+  const entry = loaded.file('description.xml');
+  await assert.rejects(inflateCapped(entry, 64 * 1024), /too large/);
+  assert.strictEqual((await inflateCapped(entry, 8 * 1024 * 1024)).length, 4 * 1024 * 1024);
+});

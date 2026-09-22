@@ -79,3 +79,51 @@ test('each source says in its own words that it is not connected, or not playing
     });
   }
 });
+
+// What "Analyse" accepts. UNC paths make Windows authenticate to whatever
+// server they name, other URL schemes reach places yt-dlp and librosa should
+// not, and a relative path means whatever the server's working folder says.
+test('analyse input is classified, and unsafe forms are refused', () => {
+  const { classifyAnalyzeSource } = require('../../src/server/routes');
+  const kind = (s) => classifyAnalyzeSource(s).kind;
+
+  assert.strictEqual(kind('/music/set/track.flac'), 'local');
+  assert.strictEqual(kind('C:\\Music\\track.mp3'), 'local');
+  assert.strictEqual(kind('D:/Music/track.wav'), 'local');
+  assert.strictEqual(kind('https://example.com/a.mp3'), 'url');
+  assert.strictEqual(classifyAnalyzeSource('https://example.com/a.mp3').direct, true);
+  assert.strictEqual(classifyAnalyzeSource('https://youtu.be/abc').direct, false);
+  assert.strictEqual(kind('Daft Punk - Around the World'), 'search');
+
+  for (const bad of ['\\\\fileserver\\share\\a.mp3', '//fileserver/share/a.mp3', '\\\\?\\C:\\a.mp3',
+    'file:///etc/passwd.mp3', 'smb://host/a.mp3', 'ftp://host/a.wav', '../../secret/a.mp3', 'music\\a.mp3']) {
+    assert.throws(() => classifyAnalyzeSource(bad), (err) => err.status === 400, bad);
+  }
+});
+
+test('a local file is resolved through symlinks and held to the library folder', async () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { resolveLocalPath } = require('../../src/server/routes');
+  const { settings } = require('../../src/server/settings');
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lib-'));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'out-'));
+  fs.writeFileSync(path.join(root, 'in.mp3'), 'x');
+  fs.writeFileSync(path.join(outside, 'out.mp3'), 'x');
+  const link = path.join(root, 'escape.mp3');
+  let linked = true;
+  try { fs.symlinkSync(path.join(outside, 'out.mp3'), link); } catch (_) { linked = false; }
+
+  const original = settings.get('analysis.localRoot');
+  settings._values.analysis.localRoot = root;
+  try {
+    assert.strictEqual(await resolveLocalPath(path.join(root, 'in.mp3')), fs.realpathSync(path.join(root, 'in.mp3')));
+    await assert.rejects(resolveLocalPath(path.join(outside, 'out.mp3')), (e) => e.status === 403);
+    await assert.rejects(resolveLocalPath(path.join(root, 'missing.mp3')), (e) => e.status === 404);
+    if (linked) await assert.rejects(resolveLocalPath(link), (e) => e.status === 403, 'symlink out of the folder');
+  } finally {
+    settings._values.analysis.localRoot = original;
+  }
+});

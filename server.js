@@ -25,7 +25,7 @@ const { COLOR_PRESETS, PATTERNS } = require('./src/server/presets');
 const { setupIntegrations } = require('./src/server/integrations');
 const { attachRoutes } = require('./src/server/routes');
 const { attachSockets } = require('./src/server/sockets');
-const { createAuth, configError, isLoopbackHost } = require('./src/server/auth');
+const { createAuth, configError, hostOfUrl, isLoopbackHost } = require('./src/server/auth');
 const { settings, CONFIG_FILE, warnAboutLegacyEnv } = require('./src/server/settings');
 const { createApplier } = require('./src/server/apply');
 const { midiMap } = require('./src/server/midi-map');
@@ -52,11 +52,21 @@ if (fatal) {
   process.exit(1);
 }
 
-const auth = createAuth({ token: LIGHTSHOW_TOKEN });
+const auth = createAuth({
+  token: LIGHTSHOW_TOKEN,
+  // Names beyond the ones every machine has (IP literals, localhost, its own
+  // host name). Read per request so a public URL saved in the settings page
+  // applies without a restart.
+  allowedHosts: () => [HOST, hostOfUrl(settings.get('server.publicUrl'))],
+});
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, { allowRequest: auth.allowSocketRequest });
+
+// Before anything else, static files included: a page reached through a name
+// this machine is not known by is a DNS-rebinding page, and it gets nothing.
+app.use(auth.hostMiddleware);
 
 // Static assets stay open: they carry no secrets, and the page needs to load
 // before it can present a token. Everything that reads or changes show state

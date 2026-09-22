@@ -207,6 +207,10 @@ function getProfile(fixture) {
 function registerProfile(profile) {
   if (!profile || !profile.id || !profile.name || !profile.channelCount) return false;
   if (RESERVED_PROFILE_IDS.has(profile.id)) return false;
+  // A built-in is defined by this file. An upload or a show file carrying the
+  // same id would otherwise replace it for every fixture patched to it — and a
+  // show file saved with the built-ins in it would pin an old copy forever.
+  if (isBuiltinProfile(profile.id)) return false;
   fixtureProfiles[profile.id] = profile;
   return true;
 }

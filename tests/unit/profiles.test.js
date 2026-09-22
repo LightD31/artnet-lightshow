@@ -114,3 +114,13 @@ test('loading a show cannot wipe the built-in profiles', () => {
   assert.ok(left[HUE_WHITE_PROFILE_ID]);
   assert.ok(left[BUILTIN_PROFILE_ID]);
 });
+
+// A built-in is defined in code; an upload or a show file with the same id
+// must not replace it for every fixture patched to it.
+test('a built-in profile cannot be overwritten', () => {
+  const { registerProfile, getProfile, BUILTIN_PROFILE_ID } = require('../../src/server/profiles');
+  const before = getProfile({ profileId: BUILTIN_PROFILE_ID });
+  const ok = registerProfile({ id: BUILTIN_PROFILE_ID, name: 'Impostor', channelCount: 1, channelMap: {} });
+  assert.strictEqual(ok, false);
+  assert.strictEqual(getProfile({ profileId: BUILTIN_PROFILE_ID }), before);
+});
