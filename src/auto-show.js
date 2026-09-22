@@ -15,6 +15,7 @@ const { ShowDirector, measureBuildup } = require('./show/director');
 const { renderIntents } = require('./show/render');
 const { guarded } = require('./server/guard');
 const { resolveIsrc, splitQuery } = require('./isrc');
+const ytdlp = require('./ytdlp');
 
 // A download that never finishes is indistinguishable from one that never
 // started: the track change waits on this promise, so an unresponsive network
@@ -463,25 +464,29 @@ class AutoShow {
     }
 
     // Fallback: yt-dlp
+    const runtime = ytdlp.runtimeArgs(await ytdlp.version());
     const hasTarget = Number.isFinite(targetDurationSec) && targetDurationSec > 0;
     if (hasTarget && !isUrl) {
       try {
-        return await this._ytDlpExec(query, targetDurationSec);
+        return await this._ytDlpExec(query, targetDurationSec, runtime);
       } catch (err) {
         // No video passed the duration filter — retry without it.
         if (/output file not found/i.test(err.message)) {
           console.warn(`[yt-dlp] No result matched ${Math.round(targetDurationSec)}s ±5s, retrying without duration filter`);
-          return this._ytDlpExec(query, null);
+          return this._ytDlpExec(query, null, runtime);
         }
         throw err;
       }
     }
-    return this._ytDlpExec(query, null);
+    return this._ytDlpExec(query, null, runtime);
   }
 
-  _ytDlpExec(query, targetDurationSec) {
+  _ytDlpExec(query, targetDurationSec, runtimeArgs = []) {
     return new Promise((resolve, reject) => {
-      const basename = `auto-dl-${Date.now()}`;
+      // Random, not a timestamp: prefetches are started several to a tick,
+      // and two downloads sharing a name overwrote each other — one track's
+      // audio then got analysed and cached under another track's key.
+      const basename = `auto-dl-${randomUUID()}`;
       const outputTemplate = path.join(os.tmpdir(), `${basename}.%(ext)s`);
       const expectedWav = path.join(os.tmpdir(), `${basename}.wav`);
 
@@ -497,6 +502,7 @@ class AutoShow {
         '--audio-quality', '0',
         '--no-playlist',
         '--no-warnings',
+        ...runtimeArgs,
       ];
 
       if (useFilter) {
@@ -535,9 +541,20 @@ class AutoShow {
         ));
       });
 
+      // What a failed or killed run left behind: a partial download, a
+      // half-converted file. Nothing else will ever remove them.
+      const discardPartials = () => {
+        try {
+          for (const f of fs.readdirSync(os.tmpdir())) {
+            if (f.startsWith(basename)) fs.rmSync(path.join(os.tmpdir(), f), { force: true });
+          }
+        } catch (_) { /* best effort */ }
+      };
+
       proc.on('close', (code) => {
         clearTimeout(timer);
         if (timedOut) {
+          discardPartials();
           return reject(new Error(
             `yt-dlp timed out after ${Math.round(downloadTimeoutMs() / 1000)}s `
             + '(raise the download timeout in the settings page)'
@@ -546,6 +563,7 @@ class AutoShow {
         // yt-dlp exits 101 when --max-downloads is reached — that's the normal
         // success path for a filtered search, so treat it the same as 0.
         if (code !== 0 && code !== 101) {
+          discardPartials();
           return reject(new Error(`yt-dlp failed (exit ${code}): ${stderr || stdout}`));
         }
 

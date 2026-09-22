@@ -70,7 +70,7 @@ they are fixed**; they are tracked privately and are the first item of Phase 0. 
     - **Restart race:** the single `_recycling` boolean and an exit handler that ignores which process exited mean fast track skips orphan a GPU-holding Python process and reject the whole queue (`analyzer-worker.js:275,340`).
     - **No stdin `error` listener** (`:444`), so an EPIPE crashes Node.
     - **NaN hangs a request for 600 s:** a line that doesn't parse is ignored until the timeout, and `embeddings`/S-KEY are added *after* `json_safe` (`pipeline.py:158-189`).
-14. **[V] Concurrent prefetches collide.** Temp names are `auto-dl-${Date.now()}` (`auto-show.js:470`) and the Spotify prefetch loop starts several in one tick (`integrations.js:357`), so wrong audio can be cached under another track's key.
+14. **[V] Concurrent prefetches can collide.** Temp names are `auto-dl-${Date.now()}` (`auto-show.js:470`) and the Spotify prefetch loop starts several in one tick (`integrations.js:357`). Only the time it takes to spawn yt-dlp keeps them in different milliseconds; two that do share one overwrite each other, and the wrong audio is cached under another track's key.
 15. **[V] Main-thread stalls in the process that renders DMX:**
     - `GET /api/auto/cache` parses every cached analysis synchronously (`analysis-cache.js:115`).
     - `GET /api/preflight` runs the model download with `spawnSync` (`preflight.js:519`).

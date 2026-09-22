@@ -16,6 +16,7 @@ const { listEntertainmentConfigs } = require('./hue');
 const { cues } = require('./cues');
 const { midiMap } = require('./midi-map');
 const pythonEnv = require('../python-env');
+const ytdlp = require('../ytdlp');
 
 /**
  * The check you run before doors open.
@@ -353,10 +354,23 @@ async function checkYtDlp() {
         + (hasDeezer
           ? 'Deezer is configured, so ISRC-matched tracks still download; anything Deezer cannot match will fail.'
           : 'Nothing can be downloaded for analysis.'),
-      fix: 'pip install yt-dlp  (or download it from https://github.com/yt-dlp/yt-dlp)',
+      fix: 'pip install -U "yt-dlp[default]"  (or download it from https://github.com/yt-dlp/yt-dlp)',
     };
   }
-  return { id: 'yt-dlp', label: 'yt-dlp', status: OK, detail: `version ${r.version}` };
+  // Since 2025.11.12 YouTube needs a JavaScript runtime, which the server
+  // hands yt-dlp itself (see src/ytdlp.js) — but an older yt-dlp can neither
+  // use one nor keep up with YouTube's current challenges.
+  if (!ytdlp.needsJsRuntime(r.version)) {
+    return {
+      id: 'yt-dlp', label: 'yt-dlp', status: WARN,
+      detail: `version ${r.version} predates ${ytdlp.JS_RUNTIME_SINCE}; YouTube downloads are likely to fail.`,
+      fix: 'pip install -U "yt-dlp[default]"  (or download the latest from https://github.com/yt-dlp/yt-dlp)',
+    };
+  }
+  return {
+    id: 'yt-dlp', label: 'yt-dlp', status: OK,
+    detail: `version ${r.version}, JavaScript runtime: Node ${process.versions.node} (this server).`,
+  };
 }
 
 // Kept in step with scripts/setup-panns.py, which downloads these.

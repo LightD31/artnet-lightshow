@@ -752,6 +752,11 @@ python scripts/setup-panns.py --check  # verify without downloading
 **ffmpeg** and **yt-dlp** must be on `PATH`. `pip install -r requirements.txt`
 covers yt-dlp; install ffmpeg with your package manager.
 
+yt-dlp needs to be **2025.11.12 or newer**: YouTube now requires a JavaScript
+runtime to download at all. You do not need to install one — the server hands
+yt-dlp the Node it is itself running on. The pre-show check warns about an older
+yt-dlp; `pip install -U "yt-dlp[default]"` updates it.
+
 **torch is required.** The beat grid, the metre and the instrument roles come
 from models — a beat-tracking transformer and a source separator — and there is
 no signal-processing fallback for the beat grid. The chain that used to be there
