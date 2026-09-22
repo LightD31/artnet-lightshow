@@ -130,6 +130,12 @@ def separate(mono, sample_rate, overlap=0.10, segment_seconds=None):
 # directory where it never looks for them.
 _BS_ROFORMER_LOCK = threading.Lock()
 
+# What each separator output counts as. The default checkpoint,
+# BS-Roformer-SW, has six stems; guitar and piano are what Demucs calls
+# "other", and dropping them left "other" with only what was left over.
+STEM_OF = {'drums': 'drums', 'bass': 'bass', 'vocals': 'vocals', 'other': 'other',
+           'guitar': 'other', 'piano': 'other'}
+
 
 def separate_bs_roformer(mono, sample_rate):
     """Run the configured four-stem BS-RoFormer and normalise its outputs."""
@@ -158,11 +164,13 @@ def separate_bs_roformer(mono, sample_rate):
         stems = {}
         for item in paths:
             label = os.path.basename(item).lower()
-            name = next((n for n in ('drums', 'bass', 'vocals', 'other') if n in label), None)
-            if name:
+            source_name = next((n for n in STEM_OF if f'({n})' in label), None)
+            if source_name:
+                name = STEM_OF[source_name]
                 output = item if os.path.isabs(item) else os.path.join(tmp, item)
                 signal, sr = librosa.load(output, sr=sample_rate, mono=True)
-                stems[name] = np.pad(signal, (0, max(0, len(mono) - len(signal))))[:len(mono)]
+                signal = np.pad(signal, (0, max(0, len(mono) - len(signal))))[:len(mono)]
+                stems[name] = stems[name] + signal if name in stems else signal
     return Stems(sample_rate=sample_rate, backend='bs_roformer', **{
         name: stems.get(name, np.zeros(len(mono), dtype=np.float32))
         for name in ('drums', 'bass', 'vocals', 'other')})

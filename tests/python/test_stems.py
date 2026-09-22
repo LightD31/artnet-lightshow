@@ -71,5 +71,36 @@ class BsRoformer(unittest.TestCase):
             self.assertGreater(float(np.abs(result.vocals).max()), 0.4)
 
 
+class SixStems(FakeSeparator):
+    LEVELS = {'drums': 0.1, 'bass': 0.2, 'vocals': 0.3, 'other': 0.05, 'guitar': 0.15, 'piano': 0.25}
+
+    def separate(self, source):
+        import numpy as np
+        import soundfile as sf
+        names = []
+        for stem, level in self.LEVELS.items():
+            name = f'input_({stem})_BS-Roformer-SW.wav'
+            sf.write(os.path.join(self.model_instance.output_dir, name),
+                     np.full(22050, level, dtype=np.float32), 22050)
+            names.append(name)
+        return names
+
+
+@needs_audio
+class SixStemCheckpoint(unittest.TestCase):
+    def test_guitar_and_piano_count_as_other(self):
+        # The default checkpoint splits guitar and piano out of "other".
+        # Dropping them left "other" holding only the remainder.
+        import numpy as np
+        with patch.object(models, 'bs_roformer_separator', return_value=SixStems()), \
+             patch.object(models, 'on_gpu', return_value=False):
+            result = stems.separate_bs_roformer(np.zeros(22050, dtype=np.float32), 22050)
+        middle = slice(5000, 15000)
+        self.assertAlmostEqual(float(np.median(result.other[middle])), 0.45, places=2)
+        for stem in ('drums', 'bass', 'vocals'):
+            self.assertAlmostEqual(float(np.median(result.named(stem)[middle])),
+                                   SixStems.LEVELS[stem], places=2, msg=stem)
+
+
 if __name__ == '__main__':
     unittest.main()
