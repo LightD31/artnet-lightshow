@@ -75,3 +75,38 @@ test('a fixture group and stage position survive a save and reload', () => {
     assert.deepStrictEqual(state.fixtures[0].position, { x: 20, y: 90 });
   });
 });
+
+// ── LED bars ─────────────────────────────────────────────────────────────────
+
+const barProfile = {
+  id: 'acme-bar-4', name: 'Bar', channelCount: 12, channelMap: {},
+  cells: Array.from({ length: 4 }, (_, i) => ({ channelMap: { red: i * 3, green: i * 3 + 1, blue: i * 3 + 2 } })),
+};
+
+test('a bar\'s line on the stage survives a save and reload', () => {
+  withFixtures([
+    { id: 1, label: 'Bar', address: 1, universe: 0, profileId: 'acme-bar-4', maxBrightness: 255, override: null,
+      position: { x: 40, y: 20 }, geometry: { length: 30, angle: 90 } },
+    { id: 2, label: 'Par', address: 13, universe: 0, profileId: 'cameo-root-par-6-12ch', maxBrightness: 255, override: null },
+  ], () => {
+    const saved = JSON.parse(JSON.stringify({ ...snapshotShow(), profiles: [barProfile] }));
+    applyShow(saved);
+    assert.deepStrictEqual(state.fixtures[0].geometry, { length: 30, angle: 90 });
+    assert.strictEqual(state.fixtures[1].geometry, null);
+    assert.strictEqual(state.fixtures[0].profileId, 'acme-bar-4', 'on the profile the show brought');
+  });
+});
+
+test('a show with more cells than the engine renders is refused whole', () => {
+  const huge = {
+    id: 'acme-strip-170', name: 'Strip', channelCount: 510, channelMap: {},
+    cells: Array.from({ length: 170 }, (_, i) => ({ channelMap: { red: i * 3, green: i * 3 + 1, blue: i * 3 + 2 } })),
+  };
+  withFixtures([
+    { id: 1, label: 'Par', address: 1, universe: 0, profileId: 'cameo-root-par-6-12ch', maxBrightness: 255, override: null },
+  ], () => {
+    const fixtures = Array.from({ length: 13 }, (_, i) => ({ id: i, address: 1, universe: i, profileId: 'acme-strip-170' }));
+    assert.throws(() => applyShow({ profiles: [huge], fixtures }), /more than the 2048/);
+    assert.strictEqual(state.fixtures.length, 1, 'and nothing on the rig changed');
+  });
+});

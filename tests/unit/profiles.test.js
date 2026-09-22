@@ -124,3 +124,37 @@ test('a built-in profile cannot be overwritten', () => {
   assert.strictEqual(ok, false);
   assert.strictEqual(getProfile({ profileId: BUILTIN_PROFILE_ID }), before);
 });
+
+// ── Cells ─────────────────────────────────────────────────────────────────────
+
+test('anything that caches the rig can tell when a profile under it changed', () => {
+  const {
+    profilesRevision, registerProfile, unregisterProfile, clearNonBuiltinProfiles,
+  } = require('../../src/server/profiles');
+  const before = profilesRevision();
+  registerProfile({ id: 'rev-test', name: 'Rev', channelCount: 3, channelMap: { red: 0 } });
+  const registered = profilesRevision();
+  assert.ok(registered > before, 'registering');
+  unregisterProfile('rev-test');
+  assert.ok(profilesRevision() > registered, 'removing');
+  const removed = profilesRevision();
+  clearNonBuiltinProfiles();
+  assert.ok(profilesRevision() > removed, 'clearing for a show load');
+  assert.strictEqual(registerProfile({ id: 'cameo-root-par-6-12ch', name: 'x', channelCount: 1, channelMap: {} }), false);
+  assert.strictEqual(profilesRevision(), removed + 1, 'a refused registration changes nothing');
+});
+
+// Each cell is rendered every frame; sixty-four copies of one outsized
+// profile must not be able to ask for eleven thousand of them.
+test('a patch may not have more cells than the engine renders', () => {
+  const { unitCapOverflow, MAX_UNITS } = require('../../src/server/profiles');
+  const { cellsOf, unitCount } = require('../../src/shared/rig');
+  const big = { cells: Array.from({ length: 170 }, (_, i) => ({ channelMap: { red: i } })) };
+  assert.strictEqual(unitCount(big), 170);
+  assert.strictEqual(unitCount({ cells: [{ channelMap: { red: 0 } }] }), 1, 'one cell is a single light');
+  assert.strictEqual(cellsOf({}), null);
+  const fixtures = (n) => Array.from({ length: n }, () => ({ profileId: 'big' }));
+  const profileOf = () => big;
+  assert.strictEqual(unitCapOverflow(fixtures(12), profileOf), null, `${12 * 170} fits in ${MAX_UNITS}`);
+  assert.match(unitCapOverflow(fixtures(13), profileOf), /2210 lights .* more than the 2048/);
+});

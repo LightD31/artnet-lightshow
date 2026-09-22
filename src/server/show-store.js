@@ -13,6 +13,7 @@ const {
   isBuiltinProfile,
   MAX_FIXTURES,
   universeOverflow,
+  unitCapOverflow,
   registerProfile,
   clearNonBuiltinProfiles,
   listProfiles,
@@ -70,6 +71,7 @@ function snapshotShow() {
       maxBrightness: maxBrightnessOf(f),
       position: f.position ? { ...f.position } : null,
       group: f.group || null,
+      geometry: f.geometry ? { ...f.geometry } : null,
     })),
   };
 }
@@ -122,6 +124,7 @@ function applyShow(rawShow) {
       maxBrightness: f.maxBrightness !== undefined ? f.maxBrightness : 255,
       position: f.position ? { ...f.position } : null,
       group: f.group || null,
+      geometry: f.geometry ? { ...f.geometry } : null,
       override: null,
     }));
     for (const fix of next) {
@@ -129,6 +132,8 @@ function applyShow(rawShow) {
       const overflow = universeOverflow(fix.label, fix.address, chCount);
       if (overflow) throw badShow(overflow);
     }
+    const tooMany = unitCapOverflow(next, (fix) => incoming[fix.profileId]);
+    if (tooMany) throw badShow(tooMany);
     const spanned = new Set([showUniverse, ...next.map((f) => f.universe)]);
     if (spanned.size > MAX_UNIVERSES) {
       throw badShow(`Show spans ${spanned.size} universes, more than the ${MAX_UNIVERSES} this server transmits`);

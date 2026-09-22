@@ -148,3 +148,50 @@ test('fixture max brightness is bounded wherever it can be set', () => {
 test('a show without a trim still validates', () => {
   assert.ok(ok(showSchema, { fixtures: [{ label: 'PAR', address: 1, profileId: 'p' }] }));
 });
+
+// ── LED bars: cells and geometry ─────────────────────────────────────────────
+
+/** An eight-cell RGB bar with a master dimmer and strobe in front of the cells. */
+function bar(over = {}) {
+  const cells = Array.from({ length: 8 }, (_, i) => ({
+    name: `Pixel ${i + 1}`,
+    channelMap: { red: 2 + i * 3, green: 3 + i * 3, blue: 4 + i * 3 },
+  }));
+  return {
+    id: 'acme-bar-8', name: 'Bar', channelCount: 26,
+    channelMap: { dimmer: 0, strobe: 1 },
+    channelList: [{ offset: 2, name: 'Pixel 1 Red', attribute: 'red', cell: 0 }],
+    cells, ...over,
+  };
+}
+
+test('a bar profile names each of its cells\' channels', () => {
+  assert.ok(ok(profileSchema, bar()));
+  const parsed = validate(profileSchema, bar(), 't');
+  assert.strictEqual(parsed.cells.length, 8);
+  assert.strictEqual(parsed.channelList[0].cell, 0, 'the cell a channel belongs to is kept for the monitor');
+});
+
+// Every one of these would put two looks on one byte, write outside the
+// fixture, or call something a cell that makes no light.
+test('a cell may not share a channel, leave the footprint or make no light', () => {
+  const cells = bar().cells;
+  rejects(profileSchema, bar({ cells: [cells[0], { channelMap: { red: 2, green: 30 } }] }));   // shares red@2
+  rejects(profileSchema, bar({ cells: [cells[0], { channelMap: { red: 26 } }] }));             // past the footprint
+  rejects(profileSchema, bar({ cells: [cells[0], { channelMap: { red: 0 } }] }));              // the fixture's dimmer
+  rejects(profileSchema, bar({ cells: [cells[0], { channelMap: { dimmer: 8 } }] }));           // no light in it
+  rejects(profileSchema, bar({ cells: [cells[0]] }), 'one cell is not a bar');
+  rejects(profileSchema, bar({ cells: [cells[0], { channelMap: { red: 5 }, extra: 1 }] }), 'cells are strict');
+});
+
+test('a fixture\'s line on the stage is bounded wherever it is set', () => {
+  const geometry = { length: 20, angle: -45 };
+  assert.ok(ok(fixtureMessageSchema, { id: 1, geometry }));
+  assert.ok(ok(fixtureMessageSchema, { id: 1, geometry: null }), 'null puts it back to the default');
+  rejects(fixtureMessageSchema, { id: 1, geometry: { length: 0, angle: 0 } });
+  rejects(fixtureMessageSchema, { id: 1, geometry: { length: 20, angle: 181 } });
+  rejects(fixtureMessageSchema, { id: 1, geometry: { length: 20 } });
+  assert.ok(ok(fixtureRestoreSchema, { index: 0, fixture: { label: 'Bar', address: 1, profileId: 'x', geometry } }));
+  const show = validate(showSchema, { fixtures: [{ label: 'Bar', address: 1, geometry }] }, 't');
+  assert.deepStrictEqual(show.fixtures[0].geometry, geometry, 'a show file keeps it');
+});
