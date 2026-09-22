@@ -20,6 +20,7 @@ every consumer reads the result.
 from dataclasses import dataclass, field
 import os
 import sys
+import threading
 
 import numpy as np
 
@@ -122,6 +123,14 @@ def separate(mono, sample_rate, overlap=0.10, segment_seconds=None):
                     for name in ('drums', 'bass', 'vocals', 'other')})
 
 
+# One cached separator is shared by every caller, and each call points its
+# output directory at its own temp folder and back. Two calls at once — a
+# failed analysis leaves its separation thread running into the next track —
+# interleave those swaps, and one call's stems land in the process's working
+# directory where it never looks for them.
+_BS_ROFORMER_LOCK = threading.Lock()
+
+
 def separate_bs_roformer(mono, sample_rate):
     """Run the configured four-stem BS-RoFormer and normalise its outputs."""
     import os
@@ -135,16 +144,17 @@ def separate_bs_roformer(mono, sample_rate):
         sf.write(source, np.asarray(mono, dtype=np.float32), sample_rate)
         # audio-separator copies output_dir into the loaded model. Redirect
         # both: otherwise its WAVs land in the worker's current directory.
-        targets = [separator, separator.model_instance]
-        previous_dirs = [target.output_dir for target in targets]
-        try:
-            for target in targets:
-                target.output_dir = tmp
-            with models.inference('bs-roformer'):
-                paths = separator.separate(source)
-        finally:
-            for target, previous in zip(targets, previous_dirs):
-                target.output_dir = previous
+        with _BS_ROFORMER_LOCK:
+            targets = [separator, separator.model_instance]
+            previous_dirs = [target.output_dir for target in targets]
+            try:
+                for target in targets:
+                    target.output_dir = tmp
+                with models.inference('bs-roformer'):
+                    paths = separator.separate(source)
+            finally:
+                for target, previous in zip(targets, previous_dirs):
+                    target.output_dir = previous
         stems = {}
         for item in paths:
             label = os.path.basename(item).lower()
