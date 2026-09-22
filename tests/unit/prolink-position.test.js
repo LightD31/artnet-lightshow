@@ -106,3 +106,33 @@ test('only the master\'s silence makes the position stale', () => {
   d.pos();
   assert.strictEqual(d.p.stale, true);
 });
+
+// ── In beats, for the pattern clock ───────────────────────────────────────────
+
+test('the deck\'s beat reading follows its position through rekordbox\'s grid', () => {
+  const d = deck({ bpm: 120 });
+  assert.strictEqual(d.p.getBeatReading(), null, 'nothing loaded, nothing to lock to');
+  play(d, { seconds: 4, pitch: 5 });
+  const counted = d.p.getBeatReading();
+  assert.ok(counted, 'without a grid it counts at the track tempo');
+  assert.ok(Math.abs(counted.beatPos - d.pos() / 500) < 1e-6);
+  assert.ok(Math.abs(counted.bpm - 126) < 1e-6, 'and reports the pitched tempo the room hears');
+
+  // rekordbox's grid, first beat 300 ms in, so the beats are not where the
+  // track tempo alone would put them.
+  d.p._beatGrid = Array.from({ length: 64 }, (_, i) => ({ offset: 300 + i * 500, count: (i % 4) + 1, bpm: 120 }));
+  const locked = d.p.getBeatReading();
+  assert.ok(Math.abs(locked.beatPos - (d.pos() - 300) / 500) < 1e-6, 'through the grid');
+});
+
+test('a paused or silent deck has no beat reading', () => {
+  const d = deck({ bpm: 120 });
+  play(d, { seconds: 2 });
+  assert.ok(d.p.getBeatReading());
+  d.status({ beat: 5, playState: PAUSED });
+  assert.strictEqual(d.p.getBeatReading(), null, 'paused');
+  d.status({ beat: 5 });
+  assert.ok(d.p.getBeatReading(), 'playing again');
+  d.advance(6000);                          // the master stops reporting
+  assert.strictEqual(d.p.getBeatReading(), null, 'stale');
+});

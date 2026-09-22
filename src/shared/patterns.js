@@ -5,13 +5,15 @@ const { colourMixer } = require('./color');
 // Pure pattern functions. Each takes (ctx) where:
 //   ctx.colors        : array of resolved Colour A..D presets
 //   ctx.fixtureCount  : N fixtures
-//   ctx.step          : current beat step (advances each tick)
+//   ctx.step          : steps of the beat grid since the scene's anchor
+//                       (shared/beat-clock.js)
 //   ctx.hue           : rotating hue for color-cycle / rainbow
 //   ctx.twinkle       : per-fixture stochastic memory (mutated for 'twinkle')
 //   ctx.write(i, color, dim, strobe) — sets fixture i's render colour
 //
-// renderDmx (engine.js) handles 'fade' and 'hit' continuous dynamics in the
-// 40 Hz render path; tickPattern only seeds the colour for those.
+// 'fade' and 'hit' are whole-rig envelopes: the engine and the preview set
+// their brightness from the beat position themselves (beat-clock.js
+// fadePhase / hitPhase); the functions here only seed the colour.
 
 function hsvToRgb(h, s, v) {
   h = ((h % 360) + 360) % 360;
@@ -159,7 +161,6 @@ const PATTERN_FUNCS = {
 
   hit(ctx) {
     const [colA] = ctx.colors;
-    ctx.resetHitPhase();
     for (let i = 0; i < ctx.fixtureCount; i++) ctx.write(i, colA, 255, 0);
   },
 

@@ -32,6 +32,28 @@ export function fmtPct(v) {
   return `${Math.round(v * 100)}%`;
 }
 
+/** A tempo as a person reads it: whole when it is whole, else to a tenth. */
+export function formatBpm(bpm) {
+  const n = Number(bpm);
+  if (bpm == null || !Number.isFinite(n)) return '—';
+  const tenth = Math.round(n * 10) / 10;
+  return Number.isInteger(tenth) ? String(tenth) : tenth.toFixed(1);
+}
+
+// What the pattern clock is keeping time by (server/conductor.js), as the
+// tempo block names it.
+const CLOCK_SOURCES = {
+  auto: { label: 'Auto', locked: true, title: 'Patterns step on the auto show\'s analysed beats' },
+  cdj: { label: 'CDJ', locked: true, title: 'Patterns step on the master deck\'s beats (PRO DJ LINK)' },
+  track: { label: 'Track', locked: true, title: 'Patterns step on the playing song\'s analysed beats. Tap or set a BPM to take over until the next song' },
+  tap: { label: 'Tap', locked: false, title: 'Patterns run free at this BPM: tap tempo, the ± buttons or MIDI set it' },
+};
+
+export function clockSource(id) {
+  const key = Object.hasOwn(CLOCK_SOURCES, id) ? id : 'tap';
+  return { id: key, ...CLOCK_SOURCES[key] };
+}
+
 export function fmtNum(v, digits = 2) {
   if (v == null || !Number.isFinite(v)) return '–';
   return v.toFixed(digits);

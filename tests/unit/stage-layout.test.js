@@ -52,13 +52,13 @@ test('every pattern renders an unplaced rig exactly as it did before positions e
       const run = (extra) => {
         const out = [];
         fn({ colors, fixtureCount: 6, step, hue: 60, phase: .37, dynamics, twinkle: new Array(6).fill(0),
-          resetHitPhase: () => {}, write: (i, c, d) => { out[i] = [c, d]; }, ...extra });
+          write: (i, c, d) => { out[i] = [c, d]; }, ...extra });
         return out;
       };
       const { order, xs } = spatialLayout([{}, {}, {}, {}, {}, {}]);
       const routed = [];
       fn({ colors, fixtureCount: 6, step, hue: 60, phase: .37, dynamics, twinkle: new Array(6).fill(0),
-        resetHitPhase: () => {}, xs, write: (k, c, d) => { routed[order[k]] = [c, d]; } });
+        xs, write: (k, c, d) => { routed[order[k]] = [c, d]; } });
       assert.deepStrictEqual(routed, run({}), `${name} at step ${step}`);
     }
   }

@@ -46,7 +46,9 @@ export function StagePreview() {
   // flag in an effect keeps the panel honest the moment the analysis goes away,
   // and means losing it does not cost the operator their scrub position.
   const rehearsal = stagePreviewSig.value.rehearsal && !!data;
-  const sample = useMemo(() => createPreviewSampler(data?.timeline), [data]);
+  // The timeline data carries the analysed beats, so the chase steps here on
+  // the same beats the rig will step on.
+  const sample = useMemo(() => createPreviewSampler(data?.timeline, data), [data]);
   const preview = rehearsal ? sample(position, fixtures, s.colorPresets) : null;
   // Read inside the branch that uses it: a signal subscribes on read, so while
   // rehearsing this panel is driven by its own scrub position and has no reason

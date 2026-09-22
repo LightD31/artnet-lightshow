@@ -1,4 +1,5 @@
 import { connectedSig, stateSig } from '../state.js';
+import { formatBpm, clockSource } from '../utils.js';
 
 function MasterPill({ master, blackout }) {
   if (blackout) return null;
@@ -11,11 +12,12 @@ function MasterPill({ master, blackout }) {
   );
 }
 
-function BpmPill({ bpm, running }) {
+function BpmPill({ bpm, running, source }) {
+  const clock = clockSource(source);
   return (
-    <div class={`stat-pill ${running ? 'live' : ''}`} title="BPM">
+    <div class={`stat-pill ${running ? 'live' : ''}`} title={`BPM · ${clock.label}: ${clock.title}`}>
       <span class="label">BPM</span>
-      <span>{bpm ?? '—'}</span>
+      <span>{formatBpm(bpm)}</span>
     </div>
   );
 }
@@ -36,7 +38,7 @@ export function Header() {
       </nav>
 
       <div class="header-stats">
-        {s.bpm != null && <BpmPill bpm={s.bpm} running={!!s.running} />}
+        {s.bpm != null && <BpmPill bpm={s.bpm} running={!!s.running} source={s.clock && s.clock.source} />}
         {!blackout && <MasterPill master={s.masterDimmer} blackout={blackout} />}
         {blackout && (
           <div class="stat-pill alert" title="Master blackout active">

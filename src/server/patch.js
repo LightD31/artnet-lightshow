@@ -1,7 +1,9 @@
 'use strict';
 
 const { state, getFixture, setDefaultUniverse } = require('./state');
-const { restartBeatTimer, beginFade } = require('./engine');
+const { beginFade } = require('./engine');
+const { conductor } = require('./conductor');
+const { anchorStep } = require('../shared/beat-clock');
 const { patchSchema, overrideSchema, validate } = require('./validation');
 const { STROBE_FUNCTIONS, ENERGY_EFFECTS } = require('./presets');
 const { paletteSlots } = require('./palettes');
@@ -56,7 +58,6 @@ function flushPendingPersist() {
 function applyPatch(rawData) {
   // Validate at the boundary. Throws on invalid input.
   const data = validate(patchSchema, rawData || {}, 'patch');
-  let restartTimer = false;
 
   // A new look fades if it asks to and cuts if it does not — and a cut
   // cancels a fade still running, so a drop lands hard even mid-breakdown-fade.
@@ -64,15 +65,33 @@ function applyPatch(rawData) {
     || data.split !== undefined || COLOR_SLOTS.some((slot) => data[slot] !== undefined);
   if (data.fadeMs !== undefined || changesLook) beginFade(data.fadeMs || 0);
 
-  if (data.bpm !== undefined) { state.bpm = data.bpm; restartTimer = true; }
-  if (data.beatDivision !== undefined) { state.beatDivision = data.beatDivision; restartTimer = true; }
-  if (data.running !== undefined) { state.running = data.running; restartTimer = true; }
-  if (data.pattern !== undefined) {
-    state.pattern = data.pattern;
-    state._step = 0;
-    state._fadePhase = 0;
-    state._hitPhase = 1;
+  if (data.bpm !== undefined) {
+    // To a hundredth: finer than any source measures, and 123.7 + 1 from a
+    // nudge lands on 124.7 rather than on float noise.
+    data.bpm = Math.round(data.bpm * 100) / 100;
+    state.bpm = data.bpm;
+    // The free clock's tempo, from the beat it is on now. A tempo typed or
+    // nudged by hand also takes the clock back from a locked track; the auto
+    // show's own tempo marks do not need to, since its grid outranks it.
+    conductor.setBpm(data.bpm, { manual: data.anchorMs === undefined });
   }
+  if (data.running !== undefined) {
+    state.running = data.running;
+    conductor.setRunning(data.running);
+  }
+
+  // A new pattern or division counts its steps from here — from fixture one on
+  // the next step of the grid, as it always has. A scene from the auto show
+  // says when it was scheduled, and counts from that beat instead, so a scene
+  // fired a frame late and a scene restored by a seek land on the same step.
+  // Re-sending the pattern already running (a button pressed twice) is not a
+  // change and does not restart it.
+  const patternChanges = data.pattern !== undefined && data.pattern !== state.pattern;
+  const divisionChanges = data.beatDivision !== undefined && data.beatDivision !== state.beatDivision;
+  const scheduled = data.anchorMs !== undefined && (data.pattern !== undefined || data.beatDivision !== undefined);
+  if (data.beatDivision !== undefined) state.beatDivision = data.beatDivision;
+  if (data.pattern !== undefined) state.pattern = data.pattern;
+  if (patternChanges || divisionChanges || scheduled) anchorPattern(data.anchorMs);
   // A palette writes all four slots at once, before the individual ones, so a
   // patch carrying both ("this look, but slot A in red") lands the way it reads.
   //
@@ -167,9 +186,20 @@ function applyPatch(rawData) {
     hooks.autoPrefetchDepth(data.autoPrefetchDepth);
   }
 
-  if (restartTimer) restartBeatTimer();
   hooks.broadcast();
   return data;
+}
+
+/**
+ * Anchor the running pattern's step count on the musical clock: at the beat a
+ * scene was scheduled for when there is a grid to read it from, else where the
+ * music is now. Rounded onto the step grid, so the pattern steps on the beat.
+ */
+function anchorPattern(anchorMs) {
+  const reading = conductor.now();
+  const scheduled = anchorMs !== undefined ? conductor.beatAtTrackMs(anchorMs) : null;
+  const beatPos = Number.isFinite(scheduled) ? scheduled : reading.beatPos;
+  state.patternAnchor = { step: anchorStep(beatPos, state.beatDivision || 1), epoch: reading.epoch };
 }
 
 function applyOverride(id, rawOverride) {
@@ -211,12 +241,13 @@ function processTap() {
     const diffs = [];
     for (let i = 1; i < tapTimes.length; i++) diffs.push(tapTimes[i] - tapTimes[i - 1]);
     const avg = diffs.reduce((a, b) => a + b, 0) / diffs.length;
-    state.bpm = Math.max(20, Math.min(300, Math.round(60000 / avg)));
+    // A tenth of a BPM: finer than a hand can tap, coarse enough to read.
+    state.bpm = Math.max(20, Math.min(300, Math.round(600000 / avg) / 10));
+    conductor.setBpm(state.bpm);
   }
-  // A tap *is* a beat: advance the pattern immediately and phase-align the next
-  // tick. Without this, rapid taps would clear and re-arm the beat interval
-  // faster than it could fire, freezing patterns.
-  restartBeatTimer({ tickNow: true });
+  // A tap *is* a beat: the clock jumps to the next whole beat, so the step
+  // lands on the tap, and a track the clock was locked to hands the tempo over.
+  conductor.tap();
   hooks.broadcast();
   setTimeout(() => {
     if (tapTimes.length > 0 && Date.now() - tapTimes[tapTimes.length - 1] > 2500) tapTimes.length = 0;

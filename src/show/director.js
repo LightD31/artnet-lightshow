@@ -74,7 +74,9 @@ const {
 // stops an out-of-range value throwing inside a timer callback and taking the
 // server down mid-set; it is deliberately not a judgement about which tempos
 // are musically plausible, because build-ups are allowed to be extreme.
-const clampBpm = (n) => Math.max(20, Math.min(300, Math.round(n) || 120));
+// Kept to a hundredth: a 123.7 BPM track is not at 124, and the tempo the
+// show reports is the one the free clock carries on at when the show stops.
+const clampBpm = (n) => Math.max(20, Math.min(300, Math.round(n * 100) / 100 || 120));
 const u8 = (n) => Math.max(0, Math.min(255, Math.round(n) || 0));
 
 // How far the tempo has to move across a build-up before it counts as a ramp

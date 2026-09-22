@@ -2,7 +2,7 @@
 
 const { state, getLiveState, getDmxSnapshot } = require('./state');
 const { setHooks } = require('./patch');
-const { restartBeatTimer } = require('./engine');
+const { conductor } = require('./conductor');
 const { guarded } = require('./guard');
 const PlaybackClock = require('../playback-clock');
 const { cues } = require('./cues');
@@ -14,6 +14,7 @@ const {
 } = require('../analysis-cache');
 const HybridSource = require('../hybrid-source');
 const { sampleAutoPosition } = require('./auto-position');
+const { gridFromAnalysis } = require('../shared/beat-clock');
 
 // A track change that lands while the previous track is still being analysed
 // hands the analyser to the new song and abandons the old job. That is the
@@ -26,7 +27,7 @@ function reportAnalysisError(label, err) {
 // Wires the auxiliary subsystems (MIDI feedback, Spotify, now-playing, PRO DJ
 // LINK, auto-show) into the engine + state. Returns the integration handle that
 // routes.js / sockets.js call back into.
-function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolink, autoShow }) {
+function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolink, autoShow, analysisCache = null }) {
   // Slot statuses, one per upcoming track up to state.autoPrefetchDepth.
   // slots[0] is the immediate next track (back-compat with the old
   // spotifyNext shape — that field still mirrors slots[0]).
@@ -227,13 +228,97 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     return source;
   }
 
+  // ─── The pattern clock's track lock ─────────────────────────────────────
+  // With the auto show off, manual patterns still lock to the music whenever
+  // the song playing has a cached analysis: the conductor's `track` source
+  // (see conductor.js). A running show outranks it, and a CDJ is followed
+  // through its own grid instead, so this only ever names the track that the
+  // playback source says is on and the clock that source is played from.
+
+  // The last track each source reported, whether or not it was active then.
+  const lastTrack = { spotify: null, nowplaying: null, deezer: null };
+  // The track that is playing but not yet analysed, locked to once it is.
+  let pendingTrackKey = null;
+  let lockGeneration = 0;
+
+  /** The playing track's cache key and clock, for the active source. */
+  function playingTrack() {
+    const source = resolveAutoSource();
+    if (usesSpotifyContent(source) && lastTrack.spotify) {
+      const p = lastTrack.spotify;
+      return {
+        key: keyForSpotify(p.trackId) || keyForQuery(`${p.artist} - ${p.name}`),
+        clock: source === 'hybrid' ? getHybridPositionMs : getAutoPositionMs,
+      };
+    }
+    if ((source === 'nowplaying' || source === 'deezer') && lastTrack[source]) {
+      const p = lastTrack[source];
+      return { key: keyForQuery(`${p.artist} - ${p.name}`), clock: getAutoPositionMs };
+    }
+    return null;
+  }
+
+  function lockTo(playing, grid) {
+    pendingTrackKey = null;
+    // The same position the auto show would play from, offset and all.
+    conductor.setTrack({ key: playing.key, grid, positionMs: () => playing.clock() + autoShow.syncOffsetMs });
+  }
+
+  /**
+   * Point the track lock at whatever is playing now. The grid comes from the
+   * auto show when it already has this track in memory, else from the cache;
+   * a track with no analysis yet is remembered and locked to when one lands.
+   */
+  function lockToPlayingTrack() {
+    const generation = ++lockGeneration;
+    const playing = playingTrack();
+    if (!playing || !playing.key) {
+      pendingTrackKey = null;
+      conductor.clearTrack();
+      return Promise.resolve();
+    }
+    const inMemory = autoShow.gridFor(playing.key);
+    if (inMemory) {
+      lockTo(playing, inMemory);
+      return Promise.resolve();
+    }
+    // Let go of the last song straight away: its beats read against this
+    // song's position would be a beat grid for the wrong music.
+    if (conductor.trackKey !== playing.key) conductor.clearTrack({ key: playing.key });
+    pendingTrackKey = playing.key;
+    // A running show loads the new song itself (restartShowFor) and locks from
+    // memory once it has; reading the same megabytes here too would parse them
+    // twice on the thread the render loop shares.
+    if (autoShow.running || !analysisCache || !autoShow.isCached(playing.key)) return Promise.resolve();
+    return analysisCache.load(playing.key)
+      .then((analysis) => {
+        if (generation !== lockGeneration) return;   // the track moved on meanwhile
+        const grid = gridFromAnalysis(analysis);
+        if (grid) lockTo(playing, grid);
+      })
+      .catch((err) => console.warn(`[conductor] could not load ${playing.key}: ${err.message}`));
+  }
+
+  // A prefetch, a warm or an analyse request that finishes for the song that
+  // is on locks the patterns to it there and then.
+  autoShow.onAnalysisCached = (key, analysis) => {
+    if (!key || key !== pendingTrackKey) return;
+    const playing = playingTrack();
+    const grid = gridFromAnalysis(analysis);
+    if (playing && playing.key === key && grid) lockTo(playing, grid);
+  };
+
   // ─── Prolink callbacks ──────────────────────────────────────────────────
   prolink.onTempoChange((bpm) => {
     if (!state.prolinkEnabled) return;
-    const rounded = Math.round(bpm);
-    if (rounded >= 20 && rounded <= 300 && rounded !== state.bpm) {
-      state.bpm = rounded;
-      restartBeatTimer();
+    // Kept to a hundredth, not rounded: a deck pitched to 127.6 BPM is not at
+    // 128, and a whole-number clock ran off its beat within a phrase. While
+    // the deck is playing the clock follows its beats directly (conductor.js);
+    // this is the tempo it keeps if the deck stops reporting.
+    const tempo = Math.round(bpm * 100) / 100;
+    if (tempo >= 20 && tempo <= 300 && Math.abs(tempo - state.bpm) >= 0.05) {
+      state.bpm = tempo;
+      conductor.setBpm(tempo, { manual: false });
       broadcast();
     }
   });
@@ -435,6 +520,8 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     } catch (err) {
       reportAnalysisError(`${what} auto analysis failed for new track`, err);
     }
+    // The show has the new song in memory now; lock to it for when it stops.
+    lockToPlayingTrack();
     broadcast();
   }
 
@@ -448,8 +535,10 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
         && spotifySlots[0].track.artist === playing.artist) {
       spotifySlots = spotifySlots.slice(1);
     }
+    lastTrack.spotify = playing;
     const source = resolveAutoSource();
     if (!usesSpotifyContent(source)) return;
+    lockToPlayingTrack();
     if (autoShow.running) {
       await restartShowFor(playing, {
         cacheKey: keyForSpotify(playing.trackId),
@@ -473,7 +562,9 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
 
   nowPlaying.onTrackChange(async (playing) => {
     console.log(`Now playing changed: ${playing.artist} — ${playing.name}`);
+    lastTrack.nowplaying = playing;
     if (resolveAutoSource() !== 'nowplaying') return;
+    lockToPlayingTrack();
     if (!autoShow.running) return;
     await restartShowFor(playing, { clock: getAutoPositionMs, what: 'now-playing' });
   });
@@ -486,7 +577,9 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
 
   deezerSource.onTrackChange(async (playing) => {
     console.log(`Deezer track changed: ${playing.artist} — ${playing.name}`);
+    lastTrack.deezer = playing;
     if (resolveAutoSource() !== 'deezer') return;
+    lockToPlayingTrack();
     if (!autoShow.running) return;
     await restartShowFor(playing, { clock: getAutoPositionMs, what: 'Deezer' });
   });
@@ -589,6 +682,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     },
     startAutoShow,
     resolveAutoSource,
+    lockToPlayingTrack,
     // Called by the Deezer browser extension (via routes) with the web player's
     // current track + upcoming queue.
     onDeezerState(payload) {

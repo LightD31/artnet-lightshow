@@ -20,12 +20,22 @@
 //
 // Per-fixture maximum brightness *is* applied, because that is a property of
 // where the lamp hangs rather than of what the operator is doing right now.
+//
+// Time is counted the way the rig counts it (shared/beat-clock.js): in beats of
+// the track's analysed grid, with each scene's pattern anchored on the beat it
+// was scheduled for. So a chase rehearsed here is on the step the room will
+// see at that moment, not on one worked out from elapsed seconds at a rounded
+// tempo. A timeline with no grid is counted at its own tempo marks, as the
+// rig's free clock would.
 const { PATTERN_FUNCS } = require('./patterns');
 const { spatialLayout, washFixtures } = require('./stage');
 const {
   EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture,
-  fadeCycleSec, fadeBrightness, hitBeatSec, hitBrightness, motionCycleSec,
+  fadeBrightness, hitBrightness,
 } = require('./look-math');
+const {
+  gridFromAnalysis, beatPositionAt, anchorStep, stepAt, fadePhase, hitPhase, motionAdvance,
+} = require('./beat-clock');
 
 const LOOK_KEYS = ['pattern', 'palette', 'split', 'colorA', 'colorB', 'colorC', 'colorD'];
 
@@ -33,9 +43,14 @@ const OPENING = {
   pattern: 'solid', colorA: 0, colorB: 0, colorC: 0, colorD: 0, bpm: 120, beatDivision: 1,
 };
 
-function createPreviewSampler(events = []) {
+/**
+ * `grid` is the analysis the timeline was planned from — `{ beats, downbeats,
+ * meter }`, as the timeline data carries it — or nothing.
+ */
+function createPreviewSampler(events = [], grid = null) {
+  const beatGrid = gridFromAnalysis(grid);
   let look = { ...OPENING };
-  let patternAt = 0;
+  let anchor = 0;
   let burst = null;
   // Carried across the walk so each frame records where the continuous channels
   // had got to by the time it fired. The blend below is a first-order lag, and
@@ -47,12 +62,24 @@ function createPreviewSampler(events = []) {
   // stage when it began, and when. A new look without a fade cuts it short.
   let fade = null;
   let lastMs = events.length && Number.isFinite(events[0].timeMs) ? events[0].timeMs : 0;
+  // Without a grid, the beat count the free clock would have reached: each
+  // stretch between events at the tempo in force across it.
+  let freeBeats = 0;
 
   const frames = [];
+  /** Where the music is at `timeMs`, in beats, within frame `f` (or the walk so far). */
+  const beatAt = (timeMs, f) => (beatGrid
+    ? beatPositionAt(beatGrid, timeMs)
+    : f.beatPos + ((timeMs - f.timeMs) / 60000) * Math.max(20, f.look.bpm || 120));
+
   for (const event of events) {
     if (!Number.isFinite(event.timeMs)) continue;
     const dt = Math.max(0, (event.timeMs - lastMs) / 1000);
-    motionPhase = (motionPhase + dt / motionCycleSec(look.bpm, expression.motion)) % 1;
+    const walked = { timeMs: lastMs, beatPos: freeBeats, look };
+    const beatsBefore = beatAt(lastMs, walked);
+    const beatPos = beatAt(event.timeMs, walked);
+    freeBeats = beatPos;
+    motionPhase = (motionPhase + motionAdvance(beatPos - beatsBefore, expression.motion)) % 1;
     expression = blendExpression(expression, look.showDynamics || null, dt);
     lastMs = event.timeMs;
 
@@ -61,14 +88,18 @@ function createPreviewSampler(events = []) {
       const dynamics = patch.showDynamics && { ...look.showDynamics, ...patch.showDynamics };
       look = { ...look, ...patch };
       if (dynamics) look.showDynamics = dynamics;
-      if (patch.pattern) patternAt = event.timeMs;
+      // As the rig anchors a scheduled scene (server/patch.js): on the step
+      // grid, at the beat the scene was due.
+      if (patch.pattern !== undefined || patch.beatDivision !== undefined) {
+        anchor = anchorStep(beatPos, look.beatDivision || 1);
+      }
       if ('energyOverride' in patch) burst = null;
       if (patch.fadeMs > 0) fade = { from: frames.length - 1, start: event.timeMs, ms: patch.fadeMs };
       else if (LOOK_KEYS.some((k) => patch[k] !== undefined)) fade = null;
     } else if (event.action === 'energy') {
       burst = { id: patch.id || event.id, end: event.timeMs + (patch.durationMs || event.durationMs || 200) };
     }
-    frames.push({ timeMs: event.timeMs, look, patternAt, burst, expression, motionPhase, fade });
+    frames.push({ timeMs: event.timeMs, beatPos, look, anchor, burst, expression, motionPhase, fade });
   }
 
   /**
@@ -83,10 +114,10 @@ function createPreviewSampler(events = []) {
     const since = Math.max(0, positionMs - frame.timeMs) / 1000;
     const expr = blendExpression(frame.expression, dyn, since);
 
-    const elapsed = Math.max(0, positionMs - frame.patternAt) / 1000;
-    const beatSec = 60 / Math.max(20, s.bpm || 120);
-    const step = Math.floor(elapsed / beatSec * (s.beatDivision || 1));
-    const phase = (frame.motionPhase + since / motionCycleSec(s.bpm, expr.motion)) % 1;
+    const division = Math.max(1, s.beatDivision || 1);
+    const beatPos = beatAt(positionMs, frame);
+    const step = stepAt(beatPos, frame.anchor, division);
+    const phase = (frame.motionPhase + motionAdvance(beatPos - frame.beatPos, expr.motion)) % 1;
 
     const colors = ['colorA', 'colorB', 'colorC', 'colorD'].map((key) => presets[s[key]] || presets[0]);
     const output = fixtures.map(() => ({ color: colors[0], dim: 0 }));
@@ -100,17 +131,16 @@ function createPreviewSampler(events = []) {
     fn({
       colors, fixtureCount: members.length, step, phase, xs,
       hue: (step * 360 / Math.max(1, fixtures.length)) % 360,
-      dynamics: dyn ? expr : null, twinkle: fixtures.map(() => 0), resetHitPhase: () => {},
+      dynamics: dyn ? expr : null, twinkle: fixtures.map(() => 0),
       write: (k, color, dim) => { output[members[order[k]]] = { color, dim }; },
     });
 
-    // The two patterns the engine drives continuously rather than per beat, so
-    // they are recomputed here from elapsed time for the same reason. The wash
-    // goes on last, as the engine paints it.
+    // The two whole-rig envelopes, from the same beat position and anchor the
+    // engine reads them from. The wash goes on last, as the engine paints it.
     let layer = output.map(({ color, dim }, i) => {
       if (wash.has(i)) return { color: colors[1], dim: 255 };
-      if (s.pattern === 'fade') return { color: colors[0], dim: fadeBrightness(elapsed / fadeCycleSec(s.bpm) % 1) };
-      if (s.pattern === 'hit') return { color: colors[0], dim: hitBrightness(elapsed / hitBeatSec(s.bpm, s.beatDivision) % 1) };
+      if (s.pattern === 'fade') return { color: colors[0], dim: fadeBrightness(fadePhase(beatPos, frame.anchor, division)) };
+      if (s.pattern === 'hit') return { color: colors[0], dim: hitBrightness(hitPhase(beatPos, division)) };
       return { color, dim };
     });
 

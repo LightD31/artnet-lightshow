@@ -25,6 +25,8 @@
  * working.
  */
 
+const { makeGrid, beatPositionAt } = require('./shared/beat-clock');
+
 let prolink = null;
 let CDJStatus = null;
 try {
@@ -62,6 +64,8 @@ class ProLink {
     this._anchor = null;          // { posMs, at, rate } — see _reanchor
     this._lastMasterPacketAt = 0; // when the master last reported
     this._beatGrid = null;        // Array<{offset_ms, count, bpm}>, one entry per beat
+    this._clockGridFor = null;    // the _beatGrid _clockGridCache was built from
+    this._clockGridCache = null;
     this._trackDurationMs = 0;
     this._frozenPositionMs = 0;
     this._lastComputedPositionMs = 0;
@@ -113,6 +117,44 @@ class ProLink {
   }
 
   getTrack() { return this._track; }
+
+  /**
+   * Where the master deck is, in beats, for the pattern clock (see
+   * server/conductor.js): `{ beatPos, bpm }`, or null unless a deck is playing
+   * and still reporting.
+   *
+   * The smoothed position is read through rekordbox's own beat grid, so the
+   * steps land on the beats the DJ sees on the deck; without a grid yet it is
+   * counted at the track's tempo. `bpm` is the pitched tempo the room hears.
+   */
+  getBeatReading() {
+    if (!this._masterTrackId || !this._anchor) return null;
+    if (this._isFrozenState(this._masterPlayState)) return null;
+    const posMs = this.getPositionMs();
+    if (this._stale || !Number.isFinite(posMs)) return null;
+    const grid = this._clockGrid();
+    let beatPos;
+    if (grid) {
+      beatPos = beatPositionAt(grid, posMs);
+    } else {
+      const trackBpm = this._masterTrackBpm > 0 ? this._masterTrackBpm : this._masterBpm;
+      if (!(trackBpm > 0)) return null;
+      beatPos = (posMs / 60000) * trackBpm;
+    }
+    if (!Number.isFinite(beatPos)) return null;
+    return { beatPos, bpm: this._masterBpm > 0 ? this._masterBpm : null };
+  }
+
+  /** rekordbox's grid in the shape beat-clock reads, built once per track. */
+  _clockGrid() {
+    const source = this._beatGrid;
+    if (!Array.isArray(source) || source.length < 2) return null;
+    if (this._clockGridFor !== source) {
+      this._clockGridFor = source;
+      this._clockGridCache = makeGrid(source.map((b) => Number(b && b.offset) / 1000));
+    }
+    return this._clockGridCache;
+  }
 
   /**
    * Returns an array of { playerId, track } for every CDJ that currently has a

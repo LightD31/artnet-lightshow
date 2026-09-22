@@ -17,7 +17,8 @@ const AutoShow = require('./src/auto-show');
 const { AnalysisCache } = require('./src/analysis-cache');
 
 const { state } = require('./src/server/state');
-const { startEngine, stopEngine } = require('./src/server/engine');
+const { startEngine, stopEngine, setFrameHook } = require('./src/server/engine');
+const { conductor } = require('./src/server/conductor');
 const {
   applyPatch, applyOverride, setFixtureMaxBrightness, processTap, setPersist, setHooks, flushPendingPersist,
 } = require('./src/server/patch');
@@ -105,7 +106,17 @@ const deezerSource = new DeezerSource();
 const analysisCache = new AnalysisCache(path.join(__dirname, 'cache', 'analysis'));
 const autoShow = new AutoShow(applyPatch, COLOR_PRESETS, PATTERNS, analysisCache);
 
-const integrations = setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolink, autoShow });
+const integrations = setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolink, autoShow, analysisCache });
+
+// One clock for every pattern (see src/server/conductor.js). The render loop
+// drives the auto show's cursor, so a cue fires on the frame it is due, and
+// the pattern clock follows the show's beat grid while it runs, else the
+// master deck's, else the playing track's, else the operator's tap.
+autoShow.useFrameClock();
+setFrameHook(() => autoShow.tick());
+conductor.setAutoSource(() => autoShow.beatSource());
+conductor.setProlinkSource(() => (state.prolinkEnabled && !autoShow.running ? prolink.getBeatReading() : null));
+conductor.onTempo((bpm) => { state.bpm = bpm; });
 
 // Windows "now playing" (SMTC) feeds the generic now-playing source: we read
 // the OS media session, so any player that reports to it (Deezer, Tidal,

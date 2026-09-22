@@ -51,7 +51,7 @@ function stubSource(extra = {}) {
   };
 }
 
-function build() {
+function build({ analysisCache = null } = {}) {
   const started = [];
   const spotify = stubSource({
     startPolling() { this.polling = true; },
@@ -85,6 +85,8 @@ function build() {
     start(getPosition) { started.push(getPosition); this.running = true; },
     stop() { this.running = false; },
     isCached: () => false,
+    gridFor: () => null,
+    syncOffsetMs: 0,
     isPrefetching: () => false,
     prefetch: async () => ({ skipped: true, reason: 'already-cached' }),
     applyQueueOrder() {},
@@ -94,7 +96,7 @@ function build() {
   const integrations = setupIntegrations({
     io: { emit() {} },
     midi: { enabled: false, sendFeedback() {}, listPorts: () => [] },
-    spotify, nowPlaying, deezerSource, prolink, autoShow,
+    spotify, nowPlaying, deezerSource, prolink, autoShow, analysisCache,
   });
   return { integrations, spotify, nowPlaying, deezerSource, prolink, autoShow, started };
 }
@@ -378,5 +380,105 @@ test('with Spotify alone, a slightly late report does not move the show backward
     // A seek is still followed at once.
     rig.spotify.emitPlayback({ ...SPOTIFY_TRACK, progressMs: 120000, sampledAt: Date.now() });
     assert.ok(Math.abs(rig.started[0]() - 120000) < 100);
+  });
+});
+
+// ── The pattern clock's track lock ──────────────────────────────────────────
+// With the auto show off, manual patterns lock to the song that is playing
+// whenever its analysis is cached (conductor.js, the `track` source).
+
+const { conductor } = require('../../src/server/conductor');
+const { keyForSpotify } = require('../../src/analysis-cache');
+
+const beatsAt = (bpm) => Array.from({ length: 600 }, (_, i) => i * (60 / bpm));
+
+/** A cache holding `docs` by key, counting the reads. */
+function cacheOf(docs) {
+  const loads = [];
+  return { loads, load: async (key) => { loads.push(key); return docs[key] || null; } };
+}
+
+test('with the show off, a cached track locks the patterns to its beats', async () => {
+  const key = keyForSpotify(SPOTIFY_TRACK.trackId);
+  const cache = cacheOf({ [key]: { beats: beatsAt(128) } });
+  const rig = build({ analysisCache: cache });
+  rig.spotify.authenticated = true;
+  rig.autoShow.isCached = (k) => k === key;
+  rig.autoShow.syncOffsetMs = 100;
+
+  await withSource('spotify', async () => {
+    rig.spotify.emitPlayback({ ...SPOTIFY_TRACK, progressMs: 30000, sampledAt: Date.now() });
+    rig.spotify.emitTrack(SPOTIFY_TRACK);
+    await settle();
+  });
+
+  assert.deepStrictEqual(cache.loads, [key]);
+  assert.strictEqual(conductor.trackKey, key);
+  const reading = conductor.now();
+  assert.strictEqual(reading.source, 'track');
+  // 30.1 s into a 128 BPM grid (the sync offset included): beat 64.2.
+  assert.ok(Math.abs(reading.beatPos - (30100 / 1000) * (128 / 60)) < 0.2, `beat ${reading.beatPos}`);
+  assert.ok(Math.abs(reading.bpm - 128) < 1e-6);
+  conductor.clearTrack();
+});
+
+test('a track with no analysis yet locks the moment one lands', async () => {
+  const cache = cacheOf({});
+  const rig = build({ analysisCache: cache });
+  rig.spotify.authenticated = true;
+  const key = keyForSpotify(SPOTIFY_TRACK.trackId);
+
+  await withSource('spotify', async () => {
+    rig.spotify.emitPlayback({ ...SPOTIFY_TRACK, sampledAt: Date.now() });
+    rig.spotify.emitTrack(SPOTIFY_TRACK);
+    await settle();
+    assert.strictEqual(conductor.trackKey, null, 'nothing to lock to yet');
+    assert.deepStrictEqual(cache.loads, [], 'and no read of a document that is not there');
+
+    rig.autoShow.onAnalysisCached('spotify:someone-else', { beats: beatsAt(100) });
+    assert.strictEqual(conductor.trackKey, null, 'another song\'s analysis is not this one');
+    rig.autoShow.onAnalysisCached(key, { beats: beatsAt(128) });
+    assert.strictEqual(conductor.trackKey, key, 'the prefetch finished: locked');
+  });
+  conductor.clearTrack();
+});
+
+// While the show runs it loads the new song itself; reading the same document
+// again here would parse megabytes twice on the render loop's thread. It
+// locks from the show's copy once the show has restarted.
+test('a running show shares its copy of the analysis with the track lock', async () => {
+  const key = keyForSpotify(SPOTIFY_TRACK.trackId);
+  const cache = cacheOf({ [key]: { beats: beatsAt(128) } });
+  const rig = build({ analysisCache: cache });
+  rig.spotify.authenticated = true;
+  rig.autoShow.running = true;
+  rig.autoShow.isCached = () => true;
+  const { makeGrid } = require('../../src/shared/beat-clock');
+  let loaded = null;
+  rig.autoShow.downloadAndAnalyze = async (query, sec, cacheKey) => { loaded = cacheKey; };
+  rig.autoShow.gridFor = (k) => (k === loaded ? makeGrid(beatsAt(128)) : null);
+
+  await withSource('spotify', async () => {
+    rig.spotify.emitTrack(SPOTIFY_TRACK);
+    await settle();
+  });
+  assert.deepStrictEqual(cache.loads, [], 'no second read');
+  assert.strictEqual(conductor.trackKey, key, 'locked from the show\'s copy');
+  conductor.clearTrack();
+});
+
+test('a new song lets go of the last one\'s beats at once', async () => {
+  const key = keyForSpotify(SPOTIFY_TRACK.trackId);
+  const cache = cacheOf({ [key]: { beats: beatsAt(128) } });
+  const rig = build({ analysisCache: cache });
+  rig.spotify.authenticated = true;
+  rig.autoShow.isCached = (k) => k === key;
+
+  await withSource('spotify', async () => {
+    rig.spotify.emitTrack(SPOTIFY_TRACK);
+    await settle();
+    assert.strictEqual(conductor.trackKey, key);
+    rig.spotify.emitTrack({ ...SPOTIFY_TRACK, trackId: 'spotify-2', name: 'Other' });
+    assert.strictEqual(conductor.trackKey, null, 'the old grid is not read against the new song');
   });
 });

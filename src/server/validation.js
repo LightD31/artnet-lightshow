@@ -44,7 +44,12 @@ const artnetSchema = z.object({
 // silently no-ops on unknown ids, matching the previous lenient behaviour
 // and giving auto-show.js room for new pattern pools without a schema bump.
 const patchSchema = z.object({
-  bpm: z.number().int().min(20).max(300).optional(),
+  // Not rounded: a track at 123.7 BPM run at 124 drifts a beat off the music
+  // in under a minute.
+  bpm: z.number().min(20).max(300).optional(),
+  // The timeline time a scene was scheduled for, so its pattern counts from
+  // that beat however late the frame that fired it was. Set by the auto show.
+  anchorMs: z.number().finite().optional(),
   beatDivision: z.number().int().min(1).max(16).optional(),
   running: z.boolean().optional(),
   pattern: z.string().min(1).max(64).optional(),

@@ -43,7 +43,7 @@ Start the server with `npm start` in the project root. The connection shows **OK
 
 ## Variables
 
-`bpm`, `beat_division`, `playing`, `pattern`, `pattern_id`, `color_a` … `color_d`, `master_dimmer`, `master_blackout`, `strobe_function`, `strobe_speed`, `energy_override`
+`bpm` (to a tenth), `clock_source` (what the patterns keep time by: Auto, CDJ, Track or Tap), `beat_division`, `playing`, `pattern`, `pattern_id`, `color_a` … `color_d`, `master_dimmer`, `master_blackout`, `strobe_function`, `strobe_speed`, `energy_override`
 
 ## Presets
 

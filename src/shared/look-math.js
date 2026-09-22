@@ -63,23 +63,13 @@ function resolveEnergyOverride(id, colA, level = 1) {
   }
 }
 
-/** Seconds for one full `fade` cycle: eight beats. */
-function fadeCycleSec(bpm) {
-  return (60 / Math.max(1, bpm)) * 8;
-}
-
-/** `fade`'s sine, 25..255. `phase` is 0..1 across the cycle. */
+/** `fade`'s sine, 25..255. `phase` is 0..1 across its eight beats (beat-clock.js). */
 function fadeBrightness(phase) {
   return Math.round(((Math.sin(phase * Math.PI * 2 - Math.PI / 2) + 1) / 2) * 230 + 25);
 }
 
-/** Seconds of one `hit` decay: a beat at the current subdivision. */
-function hitBeatSec(bpm, beatDivision) {
-  return Math.max(0.05, (60 / Math.max(1, bpm)) / Math.max(1, beatDivision));
-}
-
 /**
- * `hit`'s decay, 255 down to 35 over one beat.
+ * `hit`'s decay, 255 down to 35 over one step (beat-clock.js `hitPhase`).
  *
  * `phase` is clamped rather than wrapped, and that is the point: past the end of
  * the beat the lamp *holds* at 35 until the beat clock resets it. Letting it
@@ -89,11 +79,6 @@ function hitBeatSec(bpm, beatDivision) {
 function hitBrightness(phase) {
   const p = Math.max(0, Math.min(1, phase));
   return Math.round(35 + Math.pow(1 - p, 1.8) * 220);
-}
-
-/** Seconds for an expressive pattern to travel once across the rig. */
-function motionCycleSec(bpm, motion) {
-  return Math.max(.3, (60 / Math.max(20, bpm)) * (8 - 6 * motion));
 }
 
 /**
@@ -152,11 +137,8 @@ module.exports = {
   blendFixture,
   EXPRESSION_REST,
   resolveEnergyOverride,
-  fadeCycleSec,
   fadeBrightness,
-  hitBeatSec,
   hitBrightness,
-  motionCycleSec,
   blendExpression,
   emitterValues,
 };

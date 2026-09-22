@@ -39,7 +39,7 @@ export function UpdateActions(self) {
 			options: [{ type: 'number', id: 'delta', label: 'Amount (±)', default: 5, min: -100, max: 100 }],
 			callback: ({ options }) => {
 				const current = self.liveState.bpm || 120
-				self.sendSet({ bpm: Math.max(20, Math.min(300, current + options.delta)) })
+				self.sendSet({ bpm: Math.max(20, Math.min(300, Math.round((current + options.delta) * 100) / 100)) })
 			},
 		},
 

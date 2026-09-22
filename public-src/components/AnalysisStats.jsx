@@ -1,4 +1,4 @@
-import { fmtPct, fmtNum, colorToCss } from '../utils.js';
+import { fmtPct, fmtNum, colorToCss, formatBpm } from '../utils.js';
 
 const GENRE_COLORS = {
   edm: '#ff2fb2', dubstep: '#ff3b5f', trance: '#8f6bff', disco: '#ff6ecf',
@@ -65,7 +65,7 @@ export function AnalysisStats({ as, colorPresets }) {
   // Track basics
   blocks.push(
     <div class="auto-analysis-row">
-      <span>BPM: <strong>{a.bpm}</strong></span>
+      <span>BPM: <strong>{formatBpm(a.bpm)}</strong></span>
       {a.tempoStability != null && (
         <span title="Tempo stability — 1.0 = locked, lower = drifting">
           Stability: <strong>{fmtPct(a.tempoStability)}</strong>

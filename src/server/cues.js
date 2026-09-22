@@ -7,6 +7,7 @@ const { z } = require('zod');
 
 const { state } = require('./state');
 const { applyPatch, applyOverride } = require('./patch');
+const { conductor } = require('./conductor');
 const { overrideSchema, fixtureId } = require('./validation');
 const { COLOR_PRESETS } = require('./presets');
 
@@ -33,7 +34,7 @@ const colorIdx = z.number().int().min(0).max(COLOR_PRESETS.length - 1);
 // no fixture patch, no Art-Net target, no analysis. Recalling a cue must never
 // re-address the rig or move it to another universe mid-show.
 const lookSchema = z.object({
-  bpm: z.number().int().min(20).max(300),
+  bpm: z.number().min(20).max(300),
   beatDivision: z.number().int().min(1).max(16),
   running: z.boolean(),
   pattern: z.string().min(1).max(64),
@@ -128,7 +129,11 @@ function captureLook() {
  * them — a cue is the whole rig, not a partial edit.
  */
 function recallLook(look) {
-  const { fixtureIds, overrides, ...patch } = look;
+  const { fixtureIds, overrides, bpm, ...patch } = look;
+  // The saved tempo is for a set with no music to follow. While the clock is
+  // locked to the song playing, the song's tempo stands: a cue is a look, and
+  // recalling one is not the operator taking the tempo back by hand.
+  if (conductor.status().source === 'tap') patch.bpm = bpm;
   applyPatch(patch);
 
   const byId = new Map((overrides || []).map((override, index) => [fixtureIds?.[index] ?? index, override]));
