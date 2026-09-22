@@ -76,6 +76,7 @@ def device():
         if torch.cuda.is_available():
             _DEVICE = 'cuda'
             _log(f'device: cuda ({torch.cuda.get_device_name(0)})')
+            _avoid_miopen(torch)
         else:
             # Threads rather than a GPU. Leave one core for the Art-Net render
             # loop and the web server: a analysis that starves the output is
@@ -85,6 +86,23 @@ def device():
             _DEVICE = 'cpu'
             _log(f'device: cpu ({max(1, cores - 1)} of {cores} threads)')
         return _DEVICE
+
+
+def _avoid_miopen(torch):
+    """
+    On a ROCm build, use PyTorch's own GPU kernels rather than MIOpen's.
+
+    MIOpen compiles some kernels on first use, BatchNorm among them, and AMD's
+    Windows wheels ship a runtime compiler that cannot find the C++ standard
+    headers: the compile fails, and every model with a BatchNorm layer (the
+    beat tracker, PANNs) fails with `miopenStatusUnknownError`. PyTorch's
+    native kernels run the same layers at much the same speed on an RDNA 3.5
+    iGPU, so nothing is lost by skipping MIOpen. Set ARTNET_MIOPEN=1 to try it
+    again on a build that has fixed this.
+    """
+    if getattr(torch.version, 'hip', None) and os.environ.get('ARTNET_MIOPEN', '') != '1':
+        torch.backends.cudnn.enabled = False
+        _log('MIOpen off (ROCm): using PyTorch kernels; ARTNET_MIOPEN=1 to re-enable')
 
 
 def require(package, install_hint):

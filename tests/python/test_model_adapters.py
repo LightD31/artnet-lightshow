@@ -137,3 +137,29 @@ class ModelOutputs(unittest.TestCase):
             result = adapters.semantic_scores(np.zeros(24000, dtype=np.float32), 24000, ['warm', 'cold'])
         self.assertEqual([row['label'] for row in result], ['warm', 'cold'])
         self.assertEqual([row['score'] for row in result], [0.25, -0.5])
+
+
+class Miopen(unittest.TestCase):
+    # AMD's Windows ROCm wheels cannot compile MIOpen's BatchNorm kernel, so
+    # every model with a BatchNorm layer failed on the GPU until it was off.
+    def fake_torch(self, hip):
+        import types
+        return types.SimpleNamespace(version=types.SimpleNamespace(hip=hip),
+                                     backends=types.SimpleNamespace(cudnn=types.SimpleNamespace(enabled=True)))
+
+    def test_off_on_rocm_unless_asked_for(self):
+        rocm = self.fake_torch('7.16')
+        with patch.dict('os.environ', {}, clear=False):
+            import os
+            os.environ.pop('ARTNET_MIOPEN', None)
+            models._avoid_miopen(rocm)
+        self.assertFalse(rocm.backends.cudnn.enabled)
+        opted_in = self.fake_torch('7.16')
+        with patch.dict('os.environ', {'ARTNET_MIOPEN': '1'}):
+            models._avoid_miopen(opted_in)
+        self.assertTrue(opted_in.backends.cudnn.enabled)
+
+    def test_cuda_keeps_cudnn(self):
+        cuda = self.fake_torch(None)
+        models._avoid_miopen(cuda)
+        self.assertTrue(cuda.backends.cudnn.enabled)

@@ -37,6 +37,17 @@ threadpoolctl>=3.1
 # uses CUDA when it is there and threads when it is not; set
 # ARTNET_ANALYSIS_DEVICE=cpu to force threads on a machine whose GPU is busy
 # driving a visualiser.
+#
+# AMD GPUs (ROCm, including Radeon 780M/890M iGPUs on Windows): install from
+# AMD's index before this file. Pin torch to the release torchvision was built
+# against: torchvision 0.28 needs torch 2.13, and with 2.14 it cannot load its
+# native ops ("operator torchvision::nms does not exist"):
+#
+#     pip install --index-url https://nightly.repo.amd.com/rocm/whl-next/ ^
+#         "torch[device-gfx1150]==2.13.*" "torchvision[device-gfx1150]" torchaudio
+#
+# (gfx1150 is the 890M; use your card's gfx target.) The analyser turns MIOpen
+# off on ROCm; see models._avoid_miopen.
 torch>=2.0
 huggingface_hub>=0.23
 muq>=0.1
@@ -50,7 +61,11 @@ transformers==4.51.3
 audio-separator[cpu]>=0.30
 onnxruntime>=1.17
 audioread>=3.0
-git+https://github.com/deezer/skey.git
+# S-KEY (key detection) is not listed here because it pins torch and
+# torchaudio to 2.7.x, and installing it replaces any other torch — a GPU build
+# included — with the 2.7 CPU wheel. Install it on its own, without its pins:
+#
+#     pip install --no-deps git+https://github.com/deezer/skey.git
 
 # Beat and downbeat tracking: Beat This! (Foscarin et al., ISMIR 2024).
 # Installed without madmom, so no Cython toolchain and no numpy pin.
