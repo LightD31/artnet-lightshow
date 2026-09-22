@@ -421,4 +421,8 @@ module.exports = {
   resizeFixtureBuffers,
   startSyncTest,
   beginFade,
+  // One frame, synchronously: for tests that pin exactly what the rig puts out
+  // and for measuring what a frame costs. The server only ever renders from
+  // the loop startEngine runs.
+  renderFrame: renderDmx,
 };
