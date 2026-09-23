@@ -2,7 +2,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert';
-import { barProfile } from '../../src/server/bar-profile.js';
+import { barProfile } from '../../src/server/bar-profile.ts';
 
 test('eight RGBW cells after a dimmer and a strobe', () => {
   const p = barProfile({ id: 'acme-bar-8', name: 'Acme Bar', cells: 8, firstChannel: 3, order: 'RGBW', dimmer: 1, strobe: 2 });

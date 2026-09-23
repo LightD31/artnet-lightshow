@@ -21,7 +21,7 @@
  * feedback follows a relearned layout instead of pointing at the old buttons.
  */
 
-import { DEFAULT_MAP } from './server/midi-map.js';
+import { DEFAULT_MAP } from './server/midi-map.ts';
 import { createRequire } from 'node:module';
 
 import { ENERGY_EFFECT_IDS, STROBE_FUNCTION_IDS, SYNC_OFFSET_LIMIT_MS } from './server/presets.ts';

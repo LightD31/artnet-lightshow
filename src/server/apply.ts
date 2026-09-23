@@ -3,6 +3,26 @@ import { settings } from './settings.ts';
 import * as output from './output.ts';
 import { generateCid } from './sacn.ts';
 import * as pythonEnv from '../python-env.js';
+import { messageOf } from '../errors.ts';
+
+/** The subsystems settings are pushed into. */
+export interface ApplierDeps {
+  midi: {
+    close(): void;
+    connect(input: string | null, output: string | null): boolean;
+    setControlFeedback(on: boolean): void;
+  };
+  spotify: {
+    localCallbackUrl: string;
+    setLoopbackPort(port: number): void;
+    configure(config: { clientId: string; clientSecret: string; proxyBase: string }): void;
+  };
+  smtc: { start(): void; stop(): void };
+  deezer: { init(arl: string): Promise<unknown> };
+  autoShow?: { restartWorker?(reason: string): void } | null;
+  applyPatch(patch: unknown): unknown;
+  broadcast(): void;
+}
 
 /**
  * Push stored settings into the running subsystems.
@@ -14,7 +34,7 @@ import * as pythonEnv from '../python-env.js';
  * from the store at call time by the code that uses them, so they need no
  * action at all.
  */
-function createApplier({ midi, spotify, smtc, deezer, autoShow, applyPatch, broadcast }) {
+function createApplier({ midi, spotify, smtc, deezer, autoShow, applyPatch, broadcast }: ApplierDeps) {
   // What this process actually booted with, for pending-restart detection.
   const bootValues = {
     server: {
@@ -71,7 +91,7 @@ function createApplier({ midi, spotify, smtc, deezer, autoShow, applyPatch, broa
     try {
       settings.update({ sacn: { cid: generateCid() } });
     } catch (err) {
-      console.warn(`[sacn] could not store a component id: ${err.message} — using a temporary one`);
+      console.warn(`[sacn] could not store a component id: ${messageOf(err)} — using a temporary one`);
     }
   }
 
@@ -103,7 +123,7 @@ function createApplier({ midi, spotify, smtc, deezer, autoShow, applyPatch, broa
       try {
         settings.update({ hue: { applicationId } });
       } catch (err) {
-        console.warn(`[hue] could not store the application id: ${err.message}`);
+        console.warn(`[hue] could not store the application id: ${messageOf(err)}`);
       }
     });
     if (!config.enabled) return;
@@ -162,13 +182,13 @@ function createApplier({ midi, spotify, smtc, deezer, autoShow, applyPatch, broa
     const arl = settings.get('deezer.arl');
     if (!arl) return;
     deezer.init(arl).catch((err) => {
-      console.warn(`[deezer] Init failed: ${err.message} — will fall back to yt-dlp`);
+      console.warn(`[deezer] Init failed: ${messageOf(err)} — will fall back to yt-dlp`);
     });
   }
 
   // changed key prefix → what to re-apply. Grouped so one save touching three
   // Spotify fields reconfigures the client once.
-  const HANDLERS = [
+  const HANDLERS: { match: (key: string) => boolean; run: () => unknown }[] = [
     { match: (k) => k.startsWith('artnet.'), run: applyArtnet },
     { match: (k) => k.startsWith('sacn.'), run: applySacn },
     { match: (k) => k.startsWith('hue.'), run: applyHue },
@@ -199,10 +219,10 @@ function createApplier({ midi, spotify, smtc, deezer, autoShow, applyPatch, broa
     },
 
     /** Just what a save touched. */
-    applyChanged(changed) {
+    applyChanged(changed: string[]) {
       for (const { match, run } of HANDLERS) {
         if (changed.some(match)) {
-          try { run(); } catch (err) { console.warn(`[settings] apply failed: ${err.message}`); }
+          try { run(); } catch (err) { console.warn(`[settings] apply failed: ${messageOf(err)}`); }
         }
       }
       broadcast();

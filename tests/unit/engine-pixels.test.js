@@ -8,7 +8,7 @@ import { state } from '../../src/server/state.ts';
 import * as universes from '../../src/server/universes.ts';
 import { renderFrame, resizeFixtureBuffers } from '../../src/server/engine.ts';
 import { conductor } from '../../src/server/conductor.ts';
-import { applyPatch, applyOverride } from '../../src/server/patch.js';
+import { applyPatch, applyOverride } from '../../src/server/patch.ts';
 import { registerProfile, unregisterProfile } from '../../src/server/profiles.ts';
 import { hueChannelColors, configureHue } from '../../src/server/output.ts';
 import { cellDrive } from '../../src/shared/look-math.ts';

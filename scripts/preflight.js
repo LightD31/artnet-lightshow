@@ -15,7 +15,7 @@
 import 'dotenv/config';
 
 import path from 'node:path';
-import { runPreflight } from '../src/server/preflight.js';
+import { runPreflight } from '../src/server/preflight.ts';
 import { AnalysisCache } from '../src/analysis-cache.js';
 import { spawnSync } from 'node:child_process';
 

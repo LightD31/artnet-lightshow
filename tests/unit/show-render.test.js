@@ -8,7 +8,7 @@ import assert from 'node:assert';
 
 import { renderIntents, debounceBursts, DEBOUNCE_SAFETY_MS } from '../../src/show/render.ts';
 import { scene, color, accent, tempo, dark, BURST } from '../../src/show/intents.ts';
-import { patchSchema } from '../../src/server/validation.js';
+import { patchSchema } from '../../src/server/validation.ts';
 
 const patches = (events) => events.filter((e) => e.action === 'patch');
 const bursts = (events) => events.filter((e) => e.action === 'energy');

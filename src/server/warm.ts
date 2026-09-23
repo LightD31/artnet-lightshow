@@ -1,5 +1,49 @@
 import { z } from 'zod';
 import { keyForSpotify, keyForQuery, keyForYouTube } from '../analysis-cache.js';
+import { HttpError, messageOf } from '../errors.ts';
+
+export type WarmStatus = 'pending' | 'warming' | 'ready' | 'cached' | 'error' | 'cancelled';
+
+/** One track of a set list being warmed. */
+export interface WarmJob {
+  query: string;
+  cacheKey: string;
+  isrc: string | null;
+  durationSec: number | null;
+  status: WarmStatus;
+  message: string;
+}
+
+/** A track as a set list or a playlist names it. */
+export type WarmInput = z.output<typeof trackInputSchema>;
+
+/** A playlist track as the Spotify client returns it. */
+export interface PlaylistTrack {
+  name?: string;
+  artist?: string;
+  isrc?: string | null;
+  trackId?: string | number | null;
+  durationMs?: number;
+}
+
+/** What the warmer needs of the auto show. */
+export interface WarmTarget {
+  isCached(cacheKey: string): boolean;
+  prefetch(query: string, durationSec: number | null, cacheKey: string, meta: unknown,
+    isrc: string | null, priority: string): Promise<{ error?: string; skipped?: boolean; reason?: string }>;
+}
+
+export interface WarmProgress {
+  running: boolean;
+  total: number;
+  done: number;
+  ready: number;
+  failed: number;
+  current: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  tracks: Pick<WarmJob, 'query' | 'cacheKey' | 'status' | 'message'>[];
+}
 
 /**
  * Warm the analysis cache for a whole set list, ahead of the show.
@@ -24,12 +68,12 @@ import { keyForSpotify, keyForQuery, keyForYouTube } from '../analysis-cache.js'
 const MAX_TRACKS = 200;
 
 // Track statuses, in the order one moves through them.
-const PENDING = 'pending';
-const WARMING = 'warming';
-const READY = 'ready';
-const CACHED = 'cached';
-const ERROR = 'error';
-const CANCELLED = 'cancelled';
+const PENDING: WarmStatus = 'pending';
+const WARMING: WarmStatus = 'warming';
+const READY: WarmStatus = 'ready';
+const CACHED: WarmStatus = 'cached';
+const ERROR: WarmStatus = 'error';
+const CANCELLED: WarmStatus = 'cancelled';
 
 const trackInputSchema = z.object({
   // Either a ready-made query, or the parts to build one from.
@@ -58,7 +102,7 @@ const warmPlaylistSchema = z.object({
 const LEADING_NUMBER_RE = /^\s*\d{1,3}\s*[.)\]-]\s+/;
 
 /** Turn a pasted set list into track inputs. */
-function parseSetList(text) {
+function parseSetList(text: unknown): { query: string }[] {
   return String(text || '')
     .split(/\r?\n/)
     .map((line) => line.replace(LEADING_NUMBER_RE, '').trim())
@@ -74,9 +118,9 @@ function parseSetList(text) {
  * live path will look up) plus the ISRC, which finds the exact recording
  * instead of whatever a title search turns up.
  */
-function fromSpotifyTracks(tracks) {
+function fromSpotifyTracks(tracks: readonly PlaylistTrack[] | null | undefined): WarmInput[] {
   return (tracks || [])
-    .filter((t) => t && t.name)
+    .filter((t): t is PlaylistTrack & { name: string } => !!(t && t.name))
     .map((t) => ({
       title: t.name,
       artist: t.artist,
@@ -94,7 +138,7 @@ function fromSpotifyTracks(tracks) {
  * have one, a YouTube id for a URL, and otherwise the normalised
  * "artist - title" query, which is what every other source falls back to.
  */
-function toJob(input) {
+function toJob(input: WarmInput): WarmJob | null {
   const query = input.query || [input.artist, input.title].filter(Boolean).join(' - ');
   if (!query) return null;
 
@@ -112,9 +156,9 @@ function toJob(input) {
 }
 
 /** Build the job list, dropping duplicates so a repeated track is warmed once. */
-function buildJobs(inputs) {
-  const seen = new Set();
-  const jobs = [];
+function buildJobs(inputs: readonly WarmInput[]): WarmJob[] {
+  const seen = new Set<string>();
+  const jobs: WarmJob[] = [];
   for (const input of inputs) {
     const job = toJob(input);
     if (!job || seen.has(job.cacheKey)) continue;
@@ -126,7 +170,15 @@ function buildJobs(inputs) {
 }
 
 class Warmer {
-  constructor({ autoShow, onChange = () => {} }) {
+  declare _autoShow: WarmTarget;
+  declare _onChange: () => void;
+  declare _jobs: WarmJob[];
+  declare _running: boolean;
+  declare _cancelled: boolean;
+  declare _startedAt: string | null;
+  declare _finishedAt: string | null;
+
+  constructor({ autoShow, onChange = () => {} }: { autoShow: WarmTarget; onChange?: () => void }) {
     this._autoShow = autoShow;
     this._onChange = onChange;
     this._jobs = [];
@@ -136,10 +188,10 @@ class Warmer {
     this._finishedAt = null;
   }
 
-  get running() { return this._running; }
+  get running(): boolean { return this._running; }
 
   /** The progress view the UI renders and the REST endpoints return. */
-  status() {
+  status(): WarmProgress {
     const done = this._jobs.filter((j) => j.status !== PENDING && j.status !== WARMING).length;
     const current = this._jobs.find((j) => j.status === WARMING);
     return {
@@ -161,18 +213,14 @@ class Warmer {
    * Start warming. Rejects a second run rather than interleaving two set lists,
    * which would make the progress list meaningless and the ordering arbitrary.
    */
-  start(inputs) {
+  start(inputs: readonly WarmInput[]): WarmProgress {
     if (this._running) {
-      const err = new Error('Already warming — cancel the current run first');
-      err.status = 409;
-      throw err;
+      throw new HttpError(409, 'Already warming — cancel the current run first');
     }
 
     const jobs = buildJobs(inputs);
     if (!jobs.length) {
-      const err = new Error('Nothing to warm — no usable track names in that list');
-      err.status = 400;
-      throw err;
+      throw new HttpError(400, 'Nothing to warm — no usable track names in that list');
     }
 
     this._jobs = jobs;
@@ -186,7 +234,7 @@ class Warmer {
     // progress over the state broadcast. Warming a forty-track set is minutes
     // of work, not a request.
     this._run().catch((err) => {
-      console.warn(`[warm] run failed: ${err.message}`);
+      console.warn(`[warm] run failed: ${messageOf(err)}`);
       this._running = false;
       this._finishedAt = new Date().toISOString();
       this._onChange();
@@ -203,7 +251,7 @@ class Warmer {
    * finishes — its result goes in the cache, which is what was wanted anyway —
    * and nothing else starts.
    */
-  cancel() {
+  cancel(): boolean {
     if (!this._running) return false;
     this._cancelled = true;
     for (const job of this._jobs) {
@@ -217,7 +265,7 @@ class Warmer {
   }
 
   /** Drop a finished run's list. Refuses while one is in progress. */
-  clear() {
+  clear(): boolean {
     if (this._running) return false;
     this._jobs = [];
     this._startedAt = null;
@@ -226,7 +274,7 @@ class Warmer {
     return true;
   }
 
-  async _run() {
+  async _run(): Promise<void> {
     for (const job of this._jobs) {
       if (this._cancelled) break;
 
@@ -266,7 +314,7 @@ class Warmer {
         }
       } catch (err) {
         job.status = ERROR;
-        job.message = err.message;
+        job.message = messageOf(err);
       }
       this._onChange();
     }

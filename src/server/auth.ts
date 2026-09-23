@@ -1,6 +1,21 @@
 import crypto from 'node:crypto';
 import net from 'node:net';
 import os from 'node:os';
+import type { IncomingHttpHeaders, IncomingMessage } from 'node:http';
+import type { NextFunction, Request, Response } from 'express';
+import type { Socket } from 'socket.io';
+
+/** Socket.IO's answer to a handshake: an error, or whether to let it in. */
+type AllowCallback = (err: string | null | undefined, success: boolean) => void;
+
+/** The access checks, for Express and for Socket.IO. */
+export interface Auth {
+  enabled: boolean;
+  hostMiddleware(req: Request, res: Response, next: NextFunction): void;
+  allowSocketRequest(req: IncomingMessage, callback: AllowCallback): void;
+  httpMiddleware(req: Request, res: Response, next: NextFunction): void;
+  socketMiddleware(socket: Socket, next: (err?: Error) => void): void;
+}
 
 /**
  * Access control for the control surface.
@@ -27,12 +42,12 @@ import os from 'node:os';
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '::ffff:127.0.0.1']);
 
 /** True when `host` only accepts connections from this machine. */
-function isLoopbackHost(host) {
+function isLoopbackHost(host: unknown): boolean {
   return LOOPBACK_HOSTS.has(String(host || '').trim().toLowerCase());
 }
 
 /** Constant-time string compare that tolerates differing lengths. */
-function safeEqual(a, b) {
+function safeEqual(a: unknown, b: unknown): boolean {
   const bufA = Buffer.from(String(a || ''), 'utf8');
   const bufB = Buffer.from(String(b || ''), 'utf8');
   if (bufA.length !== bufB.length) {
@@ -44,7 +59,7 @@ function safeEqual(a, b) {
 }
 
 /** Generate a token suitable for LIGHTSHOW_TOKEN. */
-function generateToken() {
+function generateToken(): string {
   return crypto.randomBytes(24).toString('base64url');
 }
 
@@ -52,7 +67,11 @@ function generateToken() {
  * Refuse to start in a configuration that silently exposes the rig.
  * Returns a fatal message, or null when the configuration is acceptable.
  */
-function configError({ host, token, configFile = 'config/settings.json' }) {
+function configError({ host, token, configFile = 'config/settings.json' }: {
+  host: string;
+  token: string;
+  configFile?: string;
+}): string | null {
   if (isLoopbackHost(host) || token) return null;
   // The settings page normally refuses to save this combination, so reaching
   // here means the file was hand-edited — and with the server refusing to
@@ -81,7 +100,7 @@ function configError({ host, token, configFile = 'config/settings.json' }) {
  * reliable filter for cross-site requests. Non-browser clients (Companion,
  * curl, scripts) send no Origin and are unaffected.
  */
-function originAllowed(req) {
+function originAllowed(req: { headers: IncomingHttpHeaders }): boolean {
   const origin = req.headers.origin;
   if (!origin) return true;                       // not a browser-initiated cross-origin request
 
@@ -103,7 +122,7 @@ function originAllowed(req) {
  * The host name a `Host` header names, lower-cased, without port or brackets.
  * Empty when there is nothing usable in it.
  */
-function hostnameOf(hostHeader) {
+function hostnameOf(hostHeader: unknown): string {
   let raw = String(hostHeader || '').trim().toLowerCase();
   if (!raw) return '';
   if (raw.startsWith('[')) {
@@ -117,8 +136,8 @@ function hostnameOf(hostHeader) {
 }
 
 /** The names this machine answers to on a LAN without any configuration. */
-function machineNames() {
-  const names = new Set();
+function machineNames(): Set<string> {
+  const names = new Set<string>();
   const full = String(os.hostname() || '').trim().toLowerCase();
   if (!full) return names;
   const short = full.split('.')[0];
@@ -148,7 +167,7 @@ function machineNames() {
  * A request with no Host header at all is not a browser (HTTP/1.1 browsers
  * always send one), so it is left to the token check.
  */
-function hostAllowed(hostHeader, extraNames = []) {
+function hostAllowed(hostHeader: unknown, extraNames: readonly string[] = []): boolean {
   if (hostHeader === undefined || hostHeader === null || hostHeader === '') return true;
   const name = hostnameOf(hostHeader);
   if (!name) return false;
@@ -159,13 +178,13 @@ function hostAllowed(hostHeader, extraNames = []) {
 }
 
 /** The host name of a configured URL such as `server.publicUrl`, or ''. */
-function hostOfUrl(value) {
+function hostOfUrl(value: string | null | undefined): string {
   if (!value) return '';
   try { return new URL(value).host; } catch (_) { return ''; }
 }
 
 /** Pull a presented token out of an Express request. */
-function tokenFromRequest(req) {
+function tokenFromRequest(req: Request): unknown {
   return req.headers['x-lightshow-token']
     || (req.query && req.query.token)
     || '';
@@ -176,7 +195,7 @@ function tokenFromRequest(req) {
 // name, since a browser retries.
 const warnedHosts = new Set();
 
-function warnRefusedHost(name) {
+function warnRefusedHost(name: string): void {
   if (warnedHosts.has(name) || warnedHosts.size > 32) return;
   warnedHosts.add(name);
   console.warn(`[auth] refused a request for host "${name}". If that is how you reach this machine, `
@@ -194,11 +213,14 @@ function warnRefusedHost(name) {
  * and public URL). It is a function so a public URL changed in the settings
  * page applies without a restart.
  */
-function createAuth({ token = '', allowedHosts = () => [] } = {}) {
+function createAuth({ token = '', allowedHosts = () => [] }: {
+  token?: string;
+  allowedHosts?: () => string[];
+} = {}): Auth {
   const enabled = !!token;
 
   /** Refuse requests addressed to a host name this machine is not known by. */
-  function hostMiddleware(req, res, next) {
+  function hostMiddleware(req: Request, res: Response, next: NextFunction) {
     if (hostAllowed(req.headers.host, allowedHosts())) return next();
     const name = hostnameOf(req.headers.host);
     warnRefusedHost(name);
@@ -218,7 +240,7 @@ function createAuth({ token = '', allowedHosts = () => [] } = {}) {
    * ws://127.0.0.1 and send `set` — blackout, strobe, the Art-Net target —
    * whether or not a token is configured.
    */
-  function allowSocketRequest(req, callback) {
+  function allowSocketRequest(req: IncomingMessage, callback: AllowCallback) {
     if (!hostAllowed(req.headers.host, allowedHosts())) {
       warnRefusedHost(hostnameOf(req.headers.host));
       return callback('Host not allowed', false);
@@ -227,7 +249,7 @@ function createAuth({ token = '', allowedHosts = () => [] } = {}) {
     return callback(null, true);
   }
 
-  function httpMiddleware(req, res, next) {
+  function httpMiddleware(req: Request, res: Response, next: NextFunction) {
     if (!originAllowed(req)) {
       return res.status(403).json({ ok: false, error: 'Cross-origin request refused' });
     }
@@ -239,7 +261,7 @@ function createAuth({ token = '', allowedHosts = () => [] } = {}) {
     });
   }
 
-  function socketMiddleware(socket, next) {
+  function socketMiddleware(socket: Socket, next: (err?: Error) => void) {
     if (!enabled) return next();
     const presented = (socket.handshake.auth && socket.handshake.auth.token)
       || socket.handshake.query.token
@@ -250,7 +272,7 @@ function createAuth({ token = '', allowedHosts = () => [] } = {}) {
     // message is the only thing the operator gets — "unauthorized" left them
     // staring at a page that claimed it was reconnecting. Say which of the two
     // it is, and carry a code so the client does not have to match on wording.
-    const err = new Error(presented
+    const err: Error & { data?: unknown } = new Error(presented
       ? 'Access token refused'
       : 'This server requires an access token');
     err.data = { code: 'unauthorized', presented: !!presented };

@@ -4,11 +4,13 @@ import crypto from 'node:crypto';
 import { z } from 'zod';
 
 import { state } from './state.ts';
-import { applyPatch, applyOverride } from './patch.js';
+import { applyPatch, applyOverride } from './patch.ts';
 import { conductor } from './conductor.ts';
-import { overrideSchema, fixtureId } from './validation.js';
+import { overrideSchema, fixtureId } from './validation.ts';
 import { COLOR_PRESETS } from './presets.ts';
 import { PIXEL_MAPS } from '../shared/rig.ts';
+import { HttpError, codeOf, messageOf } from '../errors.ts';
+import type { OverrideInput } from './validation.ts';
 
 /**
  * Named looks, saved and recalled.
@@ -92,12 +94,16 @@ const reorderSchema = z.object({
 }).strict();
 
 /** POST /api/cues/restore: put a just-deleted cue back where it was. */
+/** A stored look: everything a cue puts back on stage. */
+export type Look = z.output<typeof lookSchema>;
+export type Cue = z.output<typeof cueSchema>;
+
 const cueRestoreSchema = z.object({
   cue: cueSchema,
   index: z.number().int().min(0).max(MAX_CUES).optional(),
 }).strict();
 
-function newId() {
+function newId(): string {
   return crypto.randomBytes(8).toString('hex');
 }
 
@@ -131,20 +137,25 @@ function captureLook() {
  * about are *cleared* rather than left holding whatever the last look put on
  * them — a cue is the whole rig, not a partial edit.
  */
-function recallLook(look) {
-  const { fixtureIds, overrides, bpm, ...patch } = look;
+function recallLook(look: Look): void {
+  const { fixtureIds, overrides, bpm, ...rest } = look;
+  const patch: typeof rest & { bpm?: number } = rest;
   // The saved tempo is for a set with no music to follow. While the clock is
   // locked to the song playing, the song's tempo stands: a cue is a look, and
   // recalling one is not the operator taking the tempo back by hand.
   if (conductor.status().source === 'tap') patch.bpm = bpm;
   applyPatch(patch);
 
-  const byId = new Map((overrides || []).map((override, index) => [fixtureIds?.[index] ?? index, override]));
+  const byId = new Map<number, OverrideInput | null>((overrides || [])
+    .map((override, index) => [fixtureIds?.[index] ?? index, override]));
   for (const fixture of state.fixtures) applyOverride(fixture.id, byId.get(fixture.id) || null);
 }
 
 class CueStore {
-  constructor(file) {
+  declare file: string;
+  declare _cues: Cue[];
+
+  constructor(file: string) {
     this.file = file;
     this._cues = [];
   }
@@ -154,13 +165,13 @@ class CueStore {
    * is moved aside rather than deleted, so a hand-edit that went wrong is
    * recoverable and the show still starts.
    */
-  load() {
+  load(): this {
     let raw;
     try {
       raw = fs.readFileSync(this.file, 'utf8');
     } catch (err) {
-      if (err.code !== 'ENOENT') {
-        console.warn(`[cues] cannot read ${this.file}: ${err.message} — starting with no cues`);
+      if (codeOf(err) !== 'ENOENT') {
+        console.warn(`[cues] cannot read ${this.file}: ${messageOf(err)} — starting with no cues`);
       }
       return this;
     }
@@ -169,7 +180,7 @@ class CueStore {
     try {
       parsed = JSON.parse(raw);
     } catch (err) {
-      return this._quarantine(`invalid JSON (${err.message})`);
+      return this._quarantine(`invalid JSON (${messageOf(err)})`);
     }
 
     const result = fileSchema.safeParse(parsed);
@@ -182,20 +193,20 @@ class CueStore {
     return this;
   }
 
-  _quarantine(reason) {
+  _quarantine(reason: string): this {
     const backup = `${this.file}.invalid-${Date.now()}`;
     try {
       fs.renameSync(this.file, backup);
       console.warn(`[cues] ${this.file}: ${reason}`);
       console.warn(`[cues] moved it to ${backup} and started with no cues`);
     } catch (err) {
-      console.warn(`[cues] ${this.file}: ${reason} (could not move aside: ${err.message})`);
+      console.warn(`[cues] ${this.file}: ${reason} (could not move aside: ${messageOf(err)})`);
     }
     this._cues = [];
     return this;
   }
 
-  save() {
+  save(): void {
     const dir = path.dirname(this.file);
     fs.mkdirSync(dir, { recursive: true });
     const tmp = `${this.file}.tmp`;
@@ -204,7 +215,7 @@ class CueStore {
   }
 
   /** Every cue, in show order, with its full look. */
-  list() {
+  list(): Cue[] {
     return this._cues.map((c) => JSON.parse(JSON.stringify(c)));
   }
 
@@ -225,19 +236,17 @@ class CueStore {
     }));
   }
 
-  get(id) {
+  get(id: string): Cue | null {
     return this._cues.find((c) => c.id === id) || null;
   }
 
   /** Save a new cue. `look` defaults to what is on stage now. */
-  create({ name, look }) {
+  create({ name, look }: { name?: string; look?: unknown }): Cue {
     if (this._cues.length >= MAX_CUES) {
-      const err = new Error(`Cue stack is full (${MAX_CUES} cues)`);
-      err.status = 400;
-      throw err;
+      throw new HttpError(400, `Cue stack is full (${MAX_CUES} cues)`);
     }
     const now = new Date().toISOString();
-    const cue = {
+    const cue: Cue = {
       id: newId(),
       name: name || `Cue ${this._cues.length + 1}`,
       createdAt: now,
@@ -254,7 +263,7 @@ class CueStore {
    * `recapture` nor `look`, the stored look is left alone — a rename must
    * never quietly overwrite it with whatever happens to be on stage.
    */
-  update(id, { name, look, recapture }) {
+  update(id: string, { name, look, recapture }: { name?: string; look?: unknown; recapture?: boolean }): Cue | null {
     const cue = this.get(id);
     if (!cue) return null;
     if (name !== undefined) cue.name = name;
@@ -274,7 +283,7 @@ class CueStore {
    *
    * @returns {{cue, index}|null} null when the id is unknown.
    */
-  remove(id) {
+  remove(id: string): { cue: Cue; index: number } | null {
     const index = this._cues.findIndex((c) => c.id === id);
     if (index < 0) return null;
     const [cue] = this._cues.splice(index, 1);
@@ -288,15 +297,13 @@ class CueStore {
    * Idempotent on the id: pressing undo twice, or on a cue that has since been
    * re-created, must not end up with two rows claiming the same id.
    */
-  insert(cue, index) {
+  insert(cue: unknown, index?: number): Cue | null {
     const parsed = cueSchema.parse(cue);
     if (this.get(parsed.id)) return null;
     if (this._cues.length >= MAX_CUES) {
-      const err = new Error(`Cue stack is full (${MAX_CUES} cues)`);
-      err.status = 400;
-      throw err;
+      throw new HttpError(400, `Cue stack is full (${MAX_CUES} cues)`);
     }
-    const at = Math.max(0, Math.min(this._cues.length, Number.isInteger(index) ? index : this._cues.length));
+    const at = Math.max(0, Math.min(this._cues.length, Number.isInteger(index) ? index as number : this._cues.length));
     this._cues.splice(at, 0, parsed);
     this._persist();
     return parsed;
@@ -306,9 +313,9 @@ class CueStore {
    * Reorder the stack. Ids not in the list keep their relative order at the
    * end, so a client working from a stale list cannot drop cues by omission.
    */
-  reorder(ids) {
+  reorder(ids: readonly string[]): Cue[] {
     const byId = new Map(this._cues.map((c) => [c.id, c]));
-    const ordered = [];
+    const ordered: Cue[] = [];
     for (const id of ids) {
       const cue = byId.get(id);
       if (cue && !ordered.includes(cue)) ordered.push(cue);
@@ -320,7 +327,7 @@ class CueStore {
   }
 
   /** Put a stored cue on stage. Returns false when the id is unknown. */
-  recall(id) {
+  recall(id: string): boolean {
     const cue = this.get(id);
     if (!cue) return false;
     recallLook(cue.look);
@@ -330,14 +337,12 @@ class CueStore {
   // A failed write must not leave the process disagreeing with the file: a cue
   // the operator thinks is saved and isn't would come back missing after a
   // restart, mid-set.
-  _persist() {
+  _persist(): void {
     try {
       this.save();
     } catch (err) {
-      console.warn(`[cues] could not save ${this.file}: ${err.message}`);
-      const wrapped = new Error(`Could not save cues: ${err.message}`);
-      wrapped.status = 500;
-      throw wrapped;
+      console.warn(`[cues] could not save ${this.file}: ${messageOf(err)}`);
+      throw new HttpError(500, `Could not save cues: ${messageOf(err)}`);
     }
   }
 }

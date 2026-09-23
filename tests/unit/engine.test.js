@@ -5,7 +5,7 @@ import { state, universeOf } from '../../src/server/state.ts';
 import * as universes from '../../src/server/universes.ts';
 import { startEngine, stopEngine, resizeFixtureBuffers, startSyncTest } from '../../src/server/engine.ts';
 import { conductor } from '../../src/server/conductor.ts';
-import { applyPatch, applyOverride, setFixtureMaxBrightness } from '../../src/server/patch.js';
+import { applyPatch, applyOverride, setFixtureMaxBrightness } from '../../src/server/patch.ts';
 import { PATTERN_FUNCS } from '../../src/shared/patterns.ts';
 
 // renderDmx isn't exported — it runs on the engine's own 25 ms interval, so the

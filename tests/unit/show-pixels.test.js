@@ -10,7 +10,7 @@ import path from 'node:path';
 
 import AutoShow from '../../src/auto-show.js';
 import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.ts';
-import { patchSchema } from '../../src/server/validation.js';
+import { patchSchema } from '../../src/server/validation.ts';
 import { PIXEL_MAPS } from '../../src/shared/rig.ts';
 
 const PIXEL_IDS = new Set(PATTERNS.filter((p) => p.pixel).map((p) => p.id));

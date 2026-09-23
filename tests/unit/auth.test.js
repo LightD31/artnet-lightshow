@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { createAuth, configError, isLoopbackHost, originAllowed, safeEqual } from '../../src/server/auth.js';
+import { createAuth, configError, isLoopbackHost, originAllowed, safeEqual } from '../../src/server/auth.ts';
 import os from 'node:os';
-import { hostAllowed } from '../../src/server/auth.js';
+import { hostAllowed } from '../../src/server/auth.ts';
 
 test('loopback hosts are recognised', () => {
   for (const h of ['127.0.0.1', 'localhost', '::1', 'LOCALHOST']) {

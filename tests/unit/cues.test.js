@@ -4,9 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { CueStore, captureLook, recallLook, MAX_CUES } from '../../src/server/cues.js';
+import { CueStore, captureLook, recallLook, MAX_CUES } from '../../src/server/cues.ts';
 import { state } from '../../src/server/state.ts';
-import { applyPatch, applyOverride } from '../../src/server/patch.js';
+import { applyPatch, applyOverride } from '../../src/server/patch.ts';
 import { stopEngine } from '../../src/server/engine.ts';
 import { conductor } from '../../src/server/conductor.ts';
 import { makeGrid } from '../../src/shared/beat-clock.ts';

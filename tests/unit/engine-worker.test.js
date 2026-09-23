@@ -12,9 +12,9 @@ import { state } from '../../src/server/state.ts';
 import * as universes from '../../src/server/universes.ts';
 import { createRenderer } from '../../src/server/renderer.ts';
 import { startEngine, stopEngine, engineStatus } from '../../src/server/engine.ts';
-import { applyPatch } from '../../src/server/patch.js';
+import { applyPatch } from '../../src/server/patch.ts';
 import { getProfile, profilesRevision, registerProfile, unregisterProfile } from '../../src/server/profiles.ts';
-import { barProfile } from '../../src/server/bar-profile.js';
+import { barProfile } from '../../src/server/bar-profile.ts';
 import { FRAME_MS } from '../../src/server/frame-clock.ts';
 
 const WORKER = path.join(import.meta.dirname, '..', '..', 'src', 'server', 'engine-worker.ts');

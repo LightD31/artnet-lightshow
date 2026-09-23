@@ -5,7 +5,10 @@ import { state, universeOf, maxBrightnessOf, setDefaultUniverse } from './state.
 import { resizeFixtureBuffers } from './engine.ts';
 import { BUILTIN_PROFILE_ID, BUILTIN_PROFILE_IDS, isBuiltinProfile, MAX_FIXTURES, universeOverflow, unitCapOverflow, registerProfile, clearNonBuiltinProfiles, listProfiles } from './profiles.ts';
 import { MAX_UNIVERSES } from './universes.ts';
-import { showSchema, validate } from './validation.js';
+import { showSchema, validate } from './validation.ts';
+import { HttpError, codeOf, messageOf } from '../errors.ts';
+import type { ShowFile } from './validation.ts';
+import type { Fixture, Profile } from '../types/rig.ts';
 
 /**
  * The patch, saved for you.
@@ -32,10 +35,8 @@ import { showSchema, validate } from './validation.js';
 // the render loop should not be interleaved with a file write per pixel moved.
 const SAVE_DEBOUNCE_MS = 400;
 
-function badShow(message) {
-  const err = new Error(message);
-  err.status = 400;
-  return err;
+function badShow(message: string): HttpError {
+  return new HttpError(400, message);
 }
 
 /** The rig as a portable show file — the body of GET /api/show. */
@@ -74,14 +75,15 @@ function snapshotShow() {
  * skipped the universe-bounds check the socket handler enforces, silently
  * dropping the overhanging channels.
  */
-function applyShow(rawShow) {
+function applyShow(rawShow: unknown): ShowFile {
   const show = validate(showSchema, rawShow, 'show');
-  const hasFixtures = Array.isArray(show.fixtures) && show.fixtures.length > 0;
-  if (hasFixtures && show.fixtures.length > MAX_FIXTURES) {
-    throw badShow(`Show has ${show.fixtures.length} fixtures, more than the ${MAX_FIXTURES} supported`);
+  const fixtures = Array.isArray(show.fixtures) ? show.fixtures : [];
+  const hasFixtures = fixtures.length > 0;
+  if (hasFixtures && fixtures.length > MAX_FIXTURES) {
+    throw badShow(`Show has ${fixtures.length} fixtures, more than the ${MAX_FIXTURES} supported`);
   }
 
-  const incoming = Object.create(null);
+  const incoming: Record<string, Profile> = Object.create(null);
   // Every built-in, not just the fallback: a show whose fixtures sit on the
   // Hue lamp profiles carries no copy of them, so resolving against the
   // fallback alone would silently land those fixtures on a 12-channel par.
@@ -95,18 +97,18 @@ function applyShow(rawShow) {
   const showUniverse = (show.artnet && show.artnet.universe !== undefined)
     ? show.artnet.universe : state.artnet.universe;
 
-  let next = null;
+  let next: Fixture[] | null = null;
   if (hasFixtures) {
-    const ids = show.fixtures.map((fixture, i) => fixture.id ?? i);
+    const ids = fixtures.map((fixture, i) => fixture.id ?? i);
     if (new Set(ids).size !== ids.length) throw badShow('Show contains duplicate fixture ids');
-    next = show.fixtures.map((f, i) => ({
+    next = fixtures.map((f, i): Fixture => ({
       id: ids[i],
       label: f.label || `Fixture ${i + 1}`,
       address: f.address || 1,
       // Shows saved before multi-universe carry no universe at all: those
       // fixtures belong on the show's own universe, where they used to be.
       universe: f.universe !== undefined ? f.universe : showUniverse,
-      profileId: incoming[f.profileId] ? f.profileId : BUILTIN_PROFILE_ID,
+      profileId: f.profileId !== undefined && incoming[f.profileId] ? f.profileId : BUILTIN_PROFILE_ID,
       maxBrightness: f.maxBrightness !== undefined ? f.maxBrightness : 255,
       position: f.position ? { ...f.position } : null,
       group: f.group || null,
@@ -153,7 +155,12 @@ function applyShow(rawShow) {
 }
 
 class ShowStore {
-  constructor(file, { debounceMs = SAVE_DEBOUNCE_MS } = {}) {
+  declare file: string;
+  declare _debounceMs: number;
+  declare _timer: ReturnType<typeof setTimeout> | null;
+  declare _saved: string | null;
+
+  constructor(file: string, { debounceMs = SAVE_DEBOUNCE_MS } = {}) {
     this.file = file;
     this._debounceMs = debounceMs;
     this._timer = null;
@@ -168,20 +175,20 @@ class ShowStore {
    * deleted, so a hand-edit that went wrong is recoverable, and the show still
    * starts on the defaults.
    */
-  load() {
+  load(): unknown {
     let raw;
     try {
       raw = fs.readFileSync(this.file, 'utf8');
     } catch (err) {
-      if (err.code !== 'ENOENT') {
-        console.warn(`[show] cannot read ${this.file}: ${err.message} — starting on the default patch`);
+      if (codeOf(err) !== 'ENOENT') {
+        console.warn(`[show] cannot read ${this.file}: ${messageOf(err)} — starting on the default patch`);
       }
       return null;
     }
     try {
       return JSON.parse(raw);
     } catch (err) {
-      return this._quarantine(`invalid JSON (${err.message})`);
+      return this._quarantine(`invalid JSON (${messageOf(err)})`);
     }
   }
 
@@ -196,13 +203,13 @@ class ShowStore {
    * beats refusing to start, and moving it aside means the operator's file is
    * still there instead of being overwritten by the first change they make.
    */
-  restore() {
+  restore(): boolean {
     const show = this.load();
     if (!show) return false;
     try {
       applyShow(show);
     } catch (err) {
-      this._quarantine(`does not fit this rig (${err.message})`);
+      this._quarantine(`does not fit this rig (${messageOf(err)})`);
       return false;
     }
     // In sync with the file now, so no change-driven write repeats it.
@@ -210,19 +217,19 @@ class ShowStore {
     return true;
   }
 
-  _quarantine(reason) {
+  _quarantine(reason: string): null {
     const backup = `${this.file}.invalid-${Date.now()}`;
     try {
       fs.renameSync(this.file, backup);
       console.warn(`[show] ${this.file}: ${reason}`);
       console.warn(`[show] moved it to ${backup} and started on the default patch`);
     } catch (err) {
-      console.warn(`[show] ${this.file}: ${reason} (could not move aside: ${err.message})`);
+      console.warn(`[show] ${this.file}: ${reason} (could not move aside: ${messageOf(err)})`);
     }
     return null;
   }
 
-  _serialise() {
+  _serialise(): string {
     return `${JSON.stringify(snapshotShow(), null, 2)}\n`;
   }
 
@@ -230,7 +237,7 @@ class ShowStore {
    * Note that the patch changed. The write lands a moment later, so a drag that
    * emits thirty edits writes once.
    */
-  scheduleSave() {
+  scheduleSave(): void {
     if (this._timer) return;
     this._timer = setTimeout(() => {
       this._timer = null;
@@ -246,7 +253,7 @@ class ShowStore {
    * operator is mid-show, and a rig that stops doing lights because a disk is
    * full is worse than one whose patch has to be re-entered.
    */
-  save() {
+  save(): boolean {
     if (this._timer) {
       clearTimeout(this._timer);
       this._timer = null;
@@ -261,7 +268,7 @@ class ShowStore {
       this._saved = body;
       return true;
     } catch (err) {
-      console.warn(`[show] could not save the patch to ${this.file}: ${err.message}`);
+      console.warn(`[show] could not save the patch to ${this.file}: ${messageOf(err)}`);
       return false;
     }
   }

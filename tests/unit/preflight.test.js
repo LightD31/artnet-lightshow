@@ -3,7 +3,7 @@ import assert from 'node:assert';
 
 import { state } from '../../src/server/state.ts';
 import * as output from '../../src/server/output.ts';
-import { checkPatch, checkSacn, checkHue, checkPanns, checkAccess, checkMidi, probeCommand, STATUSES } from '../../src/server/preflight.js';
+import { checkPatch, checkSacn, checkHue, checkPanns, checkAccess, checkMidi, probeCommand, STATUSES } from '../../src/server/preflight.ts';
 import { buildArtPoll, parseArtPollReply } from '../../src/server/artnet.ts';
 import { settings } from '../../src/server/settings.ts';
 
@@ -316,11 +316,11 @@ test('missing model weights are fetched in the background, once',
 
 // ── Engine ──────────────────────────────────────────────────────────────────
 
-import { checkEngine } from '../../src/server/preflight.js';
+import { checkEngine } from '../../src/server/preflight.ts';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { checkAnalysisModels, _modelDownload } from '../../src/server/preflight.js';
+import { checkAnalysisModels, _modelDownload } from '../../src/server/preflight.ts';
 
 const timing = { frames: 2640, rate: 44, renderMs: { p50: 0.2, p95: 0.8, max: 3 }, lateMs: { p50: 0, p95: 0.4, max: 2 } };
 

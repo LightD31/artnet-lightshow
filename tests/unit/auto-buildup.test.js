@@ -11,7 +11,7 @@ import assert from 'node:assert';
 
 import AutoShow from '../../src/auto-show.js';
 import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.ts';
-import { patchSchema } from '../../src/server/validation.js';
+import { patchSchema } from '../../src/server/validation.ts';
 
 const BUILD = { start: 72, end: 80, strength: 0.8 };
 const DROP_MS = 80000;

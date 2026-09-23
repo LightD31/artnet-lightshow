@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sampleAutoPosition } from '../../src/server/auto-position.js';
+import { sampleAutoPosition } from '../../src/server/auto-position.ts';
 
 function show(overrides = {}) {
   return {

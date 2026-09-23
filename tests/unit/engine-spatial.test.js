@@ -9,7 +9,7 @@ import * as universes from '../../src/server/universes.ts';
 import { getProfile } from '../../src/server/profiles.ts';
 import { startEngine, stopEngine } from '../../src/server/engine.ts';
 import { conductor } from '../../src/server/conductor.ts';
-import { applyPatch } from '../../src/server/patch.js';
+import { applyPatch } from '../../src/server/patch.ts';
 import { spatialLayout } from '../../src/shared/stage.ts';
 
 const frames = (n = 3) => new Promise((r) => setTimeout(r, 25 * n + 20));

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { state } from '../../src/server/state.ts';
 import { startEngine, stopEngine } from '../../src/server/engine.ts';
-import { applyPatch } from '../../src/server/patch.js';
+import { applyPatch } from '../../src/server/patch.ts';
 import { getProfile } from '../../src/server/profiles.ts';
 import * as universes from '../../src/server/universes.ts';
 

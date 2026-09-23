@@ -13,10 +13,57 @@ import * as output from './output.ts';
 import { engineStatus } from './engine.ts';
 import { MIN_UNIVERSE, MAX_UNIVERSE } from './sacn.ts';
 import { listEntertainmentConfigs } from './hue.ts';
-import { cues } from './cues.js';
-import { midiMap } from './midi-map.js';
+import { cues } from './cues.ts';
+import { midiMap } from './midi-map.ts';
 import * as pythonEnv from '../python-env.js';
 import * as ytdlp from '../ytdlp.js';
+import { codeOf, messageOf } from '../errors.ts';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { EngineStatus } from './engine.ts';
+
+export type CheckStatus = 'ok' | 'warn' | 'fail' | 'info';
+
+/** One row of the pre-show report. */
+export interface Check {
+  id: string;
+  label: string;
+  status: CheckStatus;
+  detail: string;
+  fix?: string | null;
+  /** The Art-Net check lists the nodes that answered. */
+  nodes?: unknown[];
+}
+
+/** What running a command said. */
+export interface ProbeResult {
+  ok: boolean;
+  version?: string;
+  error: string | null;
+}
+
+export interface PreflightReport {
+  ok: boolean;
+  counts: Record<CheckStatus, number>;
+  checks: Check[];
+  at: string;
+}
+
+/** The live subsystems the checks read, when there are any (none from the CLI). */
+export interface PreflightSubjects {
+  midi?: { enabled: boolean; listPorts(): { inputs: string[] } } | null;
+  spotify?: { authenticated?: boolean; configured?: boolean } | null;
+  prolink?: { connected?: boolean } | null;
+  analysisCache?: { dir?: string; count(): number } | null;
+  downloadModels?: boolean;
+  standalone?: boolean;
+}
+
+interface ModelDownload {
+  startedAt: number;
+  done: boolean;
+  error: string | null;
+  promise: Promise<ModelDownload> | null;
+}
 
 /**
  * The check you run before doors open.
@@ -39,25 +86,25 @@ import * as ytdlp from '../ytdlp.js';
  *   info  nothing to verify, just worth seeing
  */
 
-const OK = 'ok';
-const WARN = 'warn';
-const FAIL = 'fail';
-const INFO = 'info';
+const OK: CheckStatus = 'ok';
+const WARN: CheckStatus = 'warn';
+const FAIL: CheckStatus = 'fail';
+const INFO: CheckStatus = 'info';
 
 /** Run a command and capture its first line of output. */
-function probeCommand(command, args, timeoutMs = 5000) {
+function probeCommand(command: string, args: string[], timeoutMs = 5000): Promise<ProbeResult> {
   return new Promise((resolve) => {
-    let child;
+    let child: ChildProcessWithoutNullStreams;
     try {
       child = spawn(command, args, { windowsHide: true });
     } catch (err) {
-      resolve({ ok: false, error: err.message });
+      resolve({ ok: false, error: messageOf(err) });
       return;
     }
 
     let out = '';
     let settled = false;
-    const finish = (result) => {
+    const finish = (result: ProbeResult) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -72,7 +119,7 @@ function probeCommand(command, args, timeoutMs = 5000) {
     child.stderr.on('data', (d) => { out += d; });
     child.on('error', (err) => finish({
       ok: false,
-      error: err.code === 'ENOENT' ? 'not found on PATH' : err.message,
+      error: codeOf(err) === 'ENOENT' ? 'not found on PATH' : err.message,
     }));
     child.on('close', (code) => finish({
       ok: code === 0,
@@ -84,7 +131,7 @@ function probeCommand(command, args, timeoutMs = 5000) {
 
 // ── Individual checks ───────────────────────────────────────────────────────
 
-async function checkArtnet() {
+async function checkArtnet(): Promise<Check> {
   if (state.artnet.enabled === false) {
     return {
       id: 'artnet', label: 'Art-Net output', status: INFO,
@@ -145,7 +192,7 @@ async function checkArtnet() {
  * main thread that is what a busy server does to the rig — which is why the
  * engine has a thread of its own, and why this says so when it has not.
  */
-function checkEngine(status = engineStatus(), { standalone = false } = {}) {
+function checkEngine(status: EngineStatus = engineStatus(), { standalone = false } = {}): Check {
   const label = 'Engine';
   if (!status.thread) {
     // `npm run preflight` runs on its own, before the server is started: there
@@ -156,7 +203,7 @@ function checkEngine(status = engineStatus(), { standalone = false } = {}) {
     return { id: 'engine', label, status: FAIL, detail: 'Not rendering.', fix: 'Restart the server.' };
   }
   const where = status.thread === 'worker' ? 'on its own thread' : 'on the main thread';
-  const timing = status.frames
+  const timing = status.frames && status.renderMs && status.lateMs
     ? ` ${status.rate} frames a second; ${status.renderMs.p95} ms to render a frame (p95), `
       + `${status.lateMs.p95} ms late at most on 19 frames of 20.`
     : '';
@@ -189,7 +236,7 @@ function checkEngine(status = engineStatus(), { standalone = false } = {}) {
   return { id: 'engine', label, status: OK, detail: `Rendering ${where}.${timing}${note}` };
 }
 
-function checkSacn() {
+function checkSacn(): Check {
   const config = output.getSacnConfig();
   if (!config.enabled) {
     return {
@@ -236,7 +283,7 @@ function checkSacn() {
  * pointing at nothing — the lamp simply stops being sent, which on the night
  * looks like a dead lamp rather than a configuration mistake.
  */
-async function checkHue() {
+async function checkHue(): Promise<Check> {
   const config = output.getHueConfig();
   if (!config.enabled) {
     return {
@@ -283,7 +330,7 @@ async function checkHue() {
   } catch (err) {
     return {
       id: 'hue', label: 'Philips Hue', status: FAIL,
-      detail: `Cannot reach the bridge at ${config.host} — ${err.message}`,
+      detail: `Cannot reach the bridge at ${config.host} — ${messageOf(err)}`,
       fix: 'Check the bridge is powered and on this network, and that its IP has not changed.',
     };
   }
@@ -325,7 +372,7 @@ async function checkHue() {
   const bound = config.channels
     .map((c) => {
       const fixture = state.fixtures.find((f) => f.id === c.fixture);
-      return `${lampNames.get(c.channel) || `#${c.channel}`} → ${fixture.label}`;
+      return `${lampNames.get(c.channel) || `#${c.channel}`} → ${fixture ? fixture.label : `fixture ${c.fixture}`}`;
     })
     .join(', ');
 
@@ -336,7 +383,7 @@ async function checkHue() {
   };
 }
 
-function checkPatch() {
+function checkPatch(): Check {
   const problems = [];
 
   for (const fix of state.fixtures) {
@@ -381,7 +428,7 @@ function checkPatch() {
   };
 }
 
-function checkPython() {
+function checkPython(): Check {
   const info = pythonEnv.resolve();
   if (!info.ok) {
     return {
@@ -404,7 +451,7 @@ function checkPython() {
   };
 }
 
-async function checkFfmpeg() {
+async function checkFfmpeg(): Promise<Check> {
   const r = await probeCommand('ffmpeg', ['-version']);
   if (!r.ok) {
     return {
@@ -413,10 +460,10 @@ async function checkFfmpeg() {
       fix: 'Install ffmpeg with your package manager and make sure it is on PATH.',
     };
   }
-  return { id: 'ffmpeg', label: 'ffmpeg', status: OK, detail: r.version };
+  return { id: 'ffmpeg', label: 'ffmpeg', status: OK, detail: r.version ?? '' };
 }
 
-async function checkYtDlp() {
+async function checkYtDlp(): Promise<Check> {
   const r = await probeCommand('yt-dlp', ['--version']);
   if (!r.ok) {
     const hasDeezer = !!settings.get('deezer.arl');
@@ -432,7 +479,7 @@ async function checkYtDlp() {
   // Since 2025.11.12 YouTube needs a JavaScript runtime, which the server
   // hands yt-dlp itself (see src/ytdlp.js) — but an older yt-dlp can neither
   // use one nor keep up with YouTube's current challenges.
-  if (!ytdlp.needsJsRuntime(r.version)) {
+  if (!ytdlp.needsJsRuntime(r.version ?? '')) {
     return {
       id: 'yt-dlp', label: 'yt-dlp', status: WARN,
       detail: `version ${r.version} predates ${ytdlp.JS_RUNTIME_SINCE}; YouTube downloads are likely to fail.`,
@@ -451,8 +498,8 @@ const PANNS_CHECKPOINT = path.join(PANNS_DIR, 'Cnn14_mAP=0.431.pth');
 const PANNS_LABELS = path.join(PANNS_DIR, 'class_labels_indices.csv');
 const PANNS_CHECKPOINT_SIZE = 327428481;
 
-function checkPanns() {
-  const sizeOf = (file) => {
+function checkPanns(): Check {
+  const sizeOf = (file: string) => {
     try { return fs.statSync(file).size; } catch (_) { return null; }
   };
 
@@ -482,7 +529,7 @@ function checkPanns() {
   };
 }
 
-function checkCache(analysisCache) {
+function checkCache(analysisCache: PreflightSubjects['analysisCache']): Check {
   const dir = analysisCache && analysisCache.dir;
   if (!dir) return { id: 'cache', label: 'Analysis cache', status: INFO, detail: 'Not configured.' };
 
@@ -492,19 +539,19 @@ function checkCache(analysisCache) {
   } catch (err) {
     return {
       id: 'cache', label: 'Analysis cache', status: FAIL,
-      detail: `${dir} is not writable — ${err.message}. Every track would be re-analysed from scratch.`,
+      detail: `${dir} is not writable — ${messageOf(err)}. Every track would be re-analysed from scratch.`,
       fix: 'Fix the permissions on that folder.',
     };
   }
 
-  const entries = analysisCache.count();
+  const entries = (analysisCache as { count(): number }).count();
   return {
     id: 'cache', label: 'Analysis cache', status: OK,
     detail: `${entries} cached ${entries === 1 ? 'analysis' : 'analyses'} in ${dir}.`,
   };
 }
 
-function checkMidi(midi) {
+function checkMidi(midi: PreflightSubjects['midi']): Check {
   if (!midi) return { id: 'midi', label: 'MIDI', status: INFO, detail: 'Not available.' };
 
   const wanted = settings.get('midi.input');
@@ -533,8 +580,8 @@ function checkMidi(midi) {
   };
 }
 
-function checkPlaybackSources({ spotify, prolink } = {}) {
-  const configured = [];
+function checkPlaybackSources({ spotify, prolink }: Pick<PreflightSubjects, 'spotify' | 'prolink'> = {}): Check {
+  const configured: string[] = [];
   if (spotify && spotify.authenticated) configured.push('Spotify (connected)');
   else if (spotify && spotify.configured) configured.push('Spotify (configured, not connected — visit /auth/spotify)');
   if (prolink && prolink.connected) configured.push('PRO DJ LINK (connected)');
@@ -552,7 +599,7 @@ function checkPlaybackSources({ spotify, prolink } = {}) {
   return { id: 'sources', label: 'Playback sources', status: OK, detail: configured.join(', ') };
 }
 
-function checkAccess() {
+function checkAccess(): Check {
   const host = settings.get('server.host');
   const hasToken = !!settings.get('server.token');
   const loopback = ['127.0.0.1', 'localhost', '::1'].includes(String(host).toLowerCase());
@@ -578,7 +625,7 @@ function checkAccess() {
   };
 }
 
-function checkCues() {
+function checkCues(): Check {
   const count = cues.summaries().length;
   return {
     id: 'cues', label: 'Cues', status: INFO,
@@ -592,16 +639,16 @@ function checkCues() {
 // missing. It now starts one download in the background, reports on it, and
 // never starts a second while one is running or after one has succeeded.
 const MODEL_DOWNLOAD_TIMEOUT_MS = 60 * 60 * 1000;
-let modelDownload = null;        // { startedAt, done, error, promise }
+let modelDownload: ModelDownload | null = null;
 
-function startModelDownload() {
+function startModelDownload(): ModelDownload {
   if (modelDownload && (!modelDownload.done || !modelDownload.error)) return modelDownload;
   const py = process.env.ARTNET_PYTHON || pythonEnv.resolve().executable || 'python';
   const script = path.join(import.meta.dirname, '..', '..', 'scripts', 'download-models.py');
-  const job = { startedAt: Date.now(), done: false, error: null, promise: null };
+  const job: ModelDownload = { startedAt: Date.now(), done: false, error: null, promise: null };
   job.promise = new Promise((resolve) => {
     let stderr = '';
-    const finish = (error) => {
+    const finish = (error: string | null) => {
       if (job.done) return;
       clearTimeout(timer);
       job.done = true;
@@ -614,7 +661,7 @@ function startModelDownload() {
     try {
       child = spawn(py, [script], { env: process.env, windowsHide: true });
     } catch (err) {
-      finish(err.message);
+      finish(messageOf(err));
       return;
     }
     const timer = setTimeout(() => {
@@ -631,7 +678,7 @@ function startModelDownload() {
   return job;
 }
 
-function checkAnalysisModels({ download = false } = {}) {
+function checkAnalysisModels({ download = false } = {}): Check {
   const root = process.env.ARTNET_MODEL_DIR
     || path.join(os.homedir(), '.cache', 'artnet-lightshow', 'models');
   const bs = path.join(root, 'BS-Roformer-SW.ckpt');
@@ -677,7 +724,8 @@ function checkAnalysisModels({ download = false } = {}) {
  * callable both from the server (which has live ones) and from the CLI (which
  * has none, and reports the checks that do not need them).
  */
-async function runPreflight({ midi, spotify, prolink, analysisCache, downloadModels = false, standalone = false } = {}) {
+async function runPreflight({ midi, spotify, prolink, analysisCache, downloadModels = false, standalone = false }:
+  PreflightSubjects = {}): Promise<PreflightReport> {
   // The external-tool probes are independent and each costs a process spawn;
   // run them together rather than serially in front of an operator waiting on
   // the report.
@@ -688,7 +736,7 @@ async function runPreflight({ midi, spotify, prolink, analysisCache, downloadMod
     checkYtDlp(),
   ]);
 
-  const checks = [
+  const checks: Check[] = [
     checkEngine(engineStatus(), { standalone }),
     artnet,
     checkSacn(),
@@ -706,7 +754,7 @@ async function runPreflight({ midi, spotify, prolink, analysisCache, downloadMod
     checkAnalysisModels({ download: downloadModels }),
   ];
 
-  const counts = { ok: 0, warn: 0, fail: 0, info: 0 };
+  const counts: Record<CheckStatus, number> = { ok: 0, warn: 0, fail: 0, info: 0 };
   for (const check of checks) counts[check.status]++;
 
   return { ok: counts.fail === 0, counts, checks, at: new Date().toISOString() };

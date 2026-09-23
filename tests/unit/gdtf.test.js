@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import JSZip from 'jszip';
 import { parseGDTF } from '../../src/gdtf.js';
 import { inflateCapped } from '../../src/gdtf.js';
-import { profileSchema, validate } from '../../src/server/validation.js';
+import { profileSchema, validate } from '../../src/server/validation.ts';
 
 function gdtf(xml) {
   const z = new JSZip();

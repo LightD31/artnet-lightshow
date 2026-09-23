@@ -4,6 +4,17 @@ import { COLOR_PRESETS, AUTO_SOURCES, SYNC_OFFSET_LIMIT_MS } from './presets.ts'
 import { PALETTE_IDS } from './palettes.ts';
 import { FIXTURE_GROUPS } from '../shared/stage.ts';
 import { EMITTERS, PIXEL_MAPS, MAX_CELLS_PER_FIXTURE } from '../shared/rig.ts';
+import { HttpError } from '../errors.ts';
+
+/** Input that failed its schema: a 400, with zod's issues for the client. */
+export class ValidationError extends HttpError {
+  issues: z.ZodIssue[];
+
+  constructor(message: string, issues: z.ZodIssue[]) {
+    super(400, message);
+    this.issues = issues;
+  }
+}
 
 const u8 = z.number().int().min(0).max(255);
 const fixtureId = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1);
@@ -20,6 +31,7 @@ const fixtureGeometry = z.object({
   angle: z.number().finite().min(-180).max(180),
 }).strict();
 const colorIdx = z.number().int().min(0).max(COLOR_PRESETS.length - 1);
+const unitValue = z.number().min(0).max(1).optional();
 
 // Hostname per RFC 1123, or an IPv4 literal. Rejecting junk here means a typo
 // in the ArtNet panel surfaces as a validation error instead of a stream of
@@ -68,9 +80,10 @@ const patchSchema = z.object({
   colorB: colorIdx.optional(),
   colorC: colorIdx.optional(),
   colorD: colorIdx.optional(),
-  showDynamics: z.object(Object.fromEntries(
-    ['level', 'bass', 'vocal', 'air', 'width', 'motion', 'decay']
-      .map(key => [key, z.number().min(0).max(1).optional()]))).strict().nullable().optional(),
+  showDynamics: z.object({
+    level: unitValue, bass: unitValue, vocal: unitValue, air: unitValue,
+    width: unitValue, motion: unitValue, decay: unitValue,
+  }).strict().nullable().optional(),
   masterDimmer: u8.optional(),
   masterBlackout: z.boolean().optional(),
   strobeSpeed: u8.optional(),
@@ -82,7 +95,7 @@ const patchSchema = z.object({
   // colour buttons broke.
   // The custom message because the default union error is a bare "Invalid
   // input", which reaches the operator as a toast that says nothing.
-  palette: z.union([z.enum(PALETTE_IDS), z.null()], {
+  palette: z.union([z.enum(PALETTE_IDS as [string, ...string[]]), z.null()], {
     errorMap: () => ({ message: `is not a known palette (${PALETTE_IDS.join(', ')})` }),
   }).optional(),
   // Which bank the palette resolves against. Only meaningful alongside
@@ -162,6 +175,13 @@ const fixtureRestoreSchema = z.object({
 // object machinery before they get anywhere near the registry.
 const RESERVED_PROFILE_IDS = ['__proto__', 'constructor', 'prototype'];
 
+/** A profile's channel maps, as checkCells reads them. */
+interface CellCheck {
+  channelCount: number;
+  channelMap?: Record<string, number>;
+  cells: { name?: string; channelMap: Record<string, number> }[];
+}
+
 const profileSchema = z.object({
   id: z.string().min(1).max(128)
     .refine((v) => !RESERVED_PROFILE_IDS.includes(v), { message: 'is a reserved id' }),
@@ -192,7 +212,7 @@ const profileSchema = z.object({
   // already derives channelCount from the highest offset; this holds the
   // hand-written and API-posted paths to the same rule.
   .superRefine((profile, ctx) => {
-    const over = [];
+    const over: string[] = [];
     for (const [attr, offset] of Object.entries(profile.channelMap || {})) {
       if (offset >= profile.channelCount) over.push(`${attr}@${offset}`);
     }
@@ -203,7 +223,7 @@ const profileSchema = z.object({
         message: `maps channels outside the profile's ${profile.channelCount}-channel footprint: ${over.join(', ')}`,
       });
     }
-    if (profile.cells) checkCells(profile, ctx);
+    if (profile.cells) checkCells({ ...profile, cells: profile.cells }, ctx);
   });
 
 /**
@@ -211,12 +231,12 @@ const profileSchema = z.object({
  * channel the whole fixture uses, would have two looks fighting over one
  * byte; a cell with no light in it is not a cell.
  */
-function checkCells(profile, ctx) {
+function checkCells(profile: CellCheck, ctx: z.RefinementCtx): void {
   const fixtureLevel = new Set(Object.values(profile.channelMap || {}));
-  const owner = new Map();
+  const owner = new Map<number, string>();
   profile.cells.forEach((cell, index) => {
     const label = cell.name || `cell ${index + 1}`;
-    const problems = [];
+    const problems: string[] = [];
     for (const [attr, offset] of Object.entries(cell.channelMap)) {
       if (offset >= profile.channelCount) problems.push(`${attr}@${offset} is outside the footprint`);
       else if (fixtureLevel.has(offset)) problems.push(`${attr}@${offset} is a fixture-level channel`);
@@ -291,16 +311,25 @@ const huePairSchema = z.object({
   host: z.string().min(1).max(253),
 }).strict();
 
-function validate(schema, value, label) {
+function validate<S extends z.ZodTypeAny>(schema: S, value: unknown, label: string): z.output<S> {
   const result = schema.safeParse(value);
   if (!result.success) {
-    const err = new Error(`${label}: ${result.error.issues.map((i) => `${i.path.join('.') || '<root>'} ${i.message}`).join('; ')}`);
-    err.status = 400;
-    err.issues = result.error.issues;
-    throw err;
+    throw new ValidationError(
+      `${label}: ${result.error.issues.map((i) => `${i.path.join('.') || '<root>'} ${i.message}`).join('; ')}`,
+      result.error.issues,
+    );
   }
   return result.data;
 }
+
+/** A look change, as applyPatch takes it. */
+export type Patch = z.output<typeof patchSchema>;
+export type OverrideInput = z.output<typeof overrideSchema>;
+export type FixtureEdit = z.output<typeof fixtureMessageSchema>;
+export type FixtureRestore = z.output<typeof fixtureRestoreSchema>;
+export type ProfileInput = z.output<typeof profileSchema>;
+export type ShowFile = z.output<typeof showSchema>;
+export type DeezerState = z.output<typeof deezerStateSchema>;
 
 export {
   fixtureId,

@@ -17,7 +17,7 @@ import * as universes from '../../src/server/universes.ts';
 import { getProfile } from '../../src/server/profiles.ts';
 import { startEngine, stopEngine } from '../../src/server/engine.ts';
 import { conductor } from '../../src/server/conductor.ts';
-import { applyPatch } from '../../src/server/patch.js';
+import { applyPatch } from '../../src/server/patch.ts';
 import { COLOR_PRESETS } from '../../src/server/presets.ts';
 import { createPreviewSampler } from '../../src/shared/preview.ts';
 

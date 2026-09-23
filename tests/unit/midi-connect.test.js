@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import { connectMidi } from '../../src/server/midi-connect.js';
+import { connectMidi } from '../../src/server/midi-connect.ts';
 import { settings } from '../../src/server/settings.ts';
 
 function fakeMidi(opens = true) {

@@ -3,7 +3,7 @@ import assert from 'node:assert';
 
 import { PALETTES, PALETTE_IDS, TETRADS, TRIADS, DUOS, paletteColors, paletteSlots } from '../../src/server/palettes.ts';
 import { COLOR_PRESETS } from '../../src/server/presets.ts';
-import { applyPatch } from '../../src/server/patch.js';
+import { applyPatch } from '../../src/server/patch.ts';
 import { state } from '../../src/server/state.ts';
 
 test('every look exists at all three sizes with the right number of colours', () => {

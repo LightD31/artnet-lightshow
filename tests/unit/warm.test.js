@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import { Warmer, parseSetList, buildJobs, toJob, fromSpotifyTracks, MAX_TRACKS } from '../../src/server/warm.js';
+import { Warmer, parseSetList, buildJobs, toJob, fromSpotifyTracks, MAX_TRACKS } from '../../src/server/warm.ts';
 
 // ── Set-list parsing ────────────────────────────────────────────────────────
 

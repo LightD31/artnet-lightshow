@@ -178,7 +178,7 @@ const SYNC_OFFSET_LIMIT_MS = 2000;
 // the queue lookahead) and its clock from the OS media session, which is read
 // locally and so is both fresher and far steadier than a polled HTTP API.
 // See src/hybrid-source.js.
-const AUTO_SOURCES = ['auto', 'hybrid', 'spotify', 'deezer', 'nowplaying', 'prolink', 'timer'];
+const AUTO_SOURCES = ['auto', 'hybrid', 'spotify', 'deezer', 'nowplaying', 'prolink', 'timer'] as const;
 
 export {
   STROBE_FUNCTIONS,

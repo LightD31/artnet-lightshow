@@ -10,7 +10,7 @@ import assert from 'node:assert';
 import { state } from '../../src/server/state.ts';
 import { renderFrame, resizeFixtureBuffers } from '../../src/server/engine.ts';
 import { conductor } from '../../src/server/conductor.ts';
-import { applyPatch } from '../../src/server/patch.js';
+import { applyPatch } from '../../src/server/patch.ts';
 import { registerProfile, unregisterProfile } from '../../src/server/profiles.ts';
 
 const CELLS = 16;

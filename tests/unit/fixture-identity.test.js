@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert';
 
 import { state } from '../../src/server/state.ts';
-import { snapshotShow, applyShow } from '../../src/server/show-store.js';
-import { captureLook, recallLook } from '../../src/server/cues.js';
+import { snapshotShow, applyShow } from '../../src/server/show-store.ts';
+import { captureLook, recallLook } from '../../src/server/cues.ts';
 import { stopEngine } from '../../src/server/engine.ts';
 
 // These tests inspect state and DMX buffers, never the physical rig.

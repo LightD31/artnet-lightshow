@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { EnergyHold, HOLD_TIMEOUT_MS } from '../../src/server/energy-hold.js';
+import { EnergyHold, HOLD_TIMEOUT_MS } from '../../src/server/energy-hold.ts';
 
 test('an energy hold releases on the matching token', () => {
   const events = [];

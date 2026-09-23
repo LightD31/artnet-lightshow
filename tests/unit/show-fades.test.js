@@ -9,7 +9,7 @@ import path from 'node:path';
 
 import { ShowDirector } from '../../src/show/director.ts';
 import { renderIntents } from '../../src/show/render.ts';
-import { patchSchema } from '../../src/server/validation.js';
+import { patchSchema } from '../../src/server/validation.ts';
 import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.ts';
 
 const TRACKS = path.join(import.meta.dirname, '..', 'fixtures', 'tracks');

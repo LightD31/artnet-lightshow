@@ -15,7 +15,7 @@ import assert from 'node:assert';
 
 import AutoShow from '../../src/auto-show.js';
 import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.ts';
-import { patchSchema } from '../../src/server/validation.js';
+import { patchSchema } from '../../src/server/validation.ts';
 
 /**
  * An analysis that exercises the paths that emit numbers: a buildup (tension /

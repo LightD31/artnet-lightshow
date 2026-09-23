@@ -1,6 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
+import { HttpError, codeOf, messageOf } from '../errors.ts';
+
+/** Something a MIDI control can be bound to. */
+export interface MidiAction {
+  id: string;
+  label: string;
+  input: 'button' | 'encoder' | 'fader';
+  /** What the binding has to say besides the action: a fixture, a value. */
+  param?: { key: 'value' | 'fixture'; kind: string; label: string; optional?: boolean };
+}
 
 /**
  * The MIDI control map: which message does what.
@@ -34,7 +44,7 @@ import { z } from 'zod';
 // a picker: which kind of control suits it, and what (if anything) it needs to
 // be told. `param.kind` tells the UI which list to offer.
 
-const ACTIONS = [
+const ACTIONS: MidiAction[] = [
   // Buttons
   { id: 'tap',                 label: 'Tap tempo',                   input: 'button' },
   { id: 'togglePlay',          label: 'Play / stop',                 input: 'button' },
@@ -75,7 +85,7 @@ const ACTION_IDS = ACTIONS.map((a) => a.id);
 const ACTION_BY_ID = new Map(ACTIONS.map((a) => [a.id, a]));
 
 /** The control type an action expects, for defaulting a learned CC binding. */
-function defaultTypeFor(actionId) {
+function defaultTypeFor(actionId: string): 'relative' | 'absolute' {
   const action = ACTION_BY_ID.get(actionId);
   if (!action) return 'absolute';
   return action.input === 'encoder' ? 'relative' : 'absolute';
@@ -86,7 +96,7 @@ function defaultTypeFor(actionId) {
 const bindingSchema = z.object({
   // A custom message because the default lists all twenty-two ids, which is
   // unreadable in the toast this reaches the operator through.
-  action: z.enum(ACTION_IDS, { errorMap: () => ({ message: 'is not a known action' }) }),
+  action: z.enum(ACTION_IDS as [string, ...string[]], { errorMap: () => ({ message: 'is not a known action' }) }),
   type: z.enum(['relative', 'absolute']).optional(),
   scale: z.number().min(0.01).max(64).optional(),
   // Loose on purpose: a value is a pattern id, a colour index, a cue id or a
@@ -130,7 +140,15 @@ const bindingWriteSchema = z.object({
 //   Button row 2 (BT9-16) : Note 24-31, ch 1
 //   Faders FD1-9 : CC 1-9, ch 1 (absolute 0-127)
 
-const DEFAULT_MAP = {
+/** One control's binding. */
+export type MidiBinding = z.output<typeof bindingSchema>;
+
+/** Every binding, by control change and by note number. */
+export type MidiMap = z.output<typeof mapSchema>;
+
+type MidiListener = (map: MidiMap) => void;
+
+const DEFAULT_MAP: MidiMap = {
   cc: {
     // Relative encoders EN1-EN8 turn: CC10-CC17
     10: { action: 'adjustBpm',          type: 'relative', scale: 1 },
@@ -182,12 +200,17 @@ const DEFAULT_MAP = {
   },
 };
 
-function clone(value) {
+function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
 }
 
 class MidiMapStore {
-  constructor(file) {
+  declare file: string;
+  declare _map: MidiMap;
+  declare _customised: boolean;
+  declare _listeners: MidiListener[];
+
+  constructor(file: string) {
     this.file = file;
     this._map = clone(DEFAULT_MAP);
     this._customised = false;
@@ -200,13 +223,13 @@ class MidiMapStore {
    * A corrupt one is moved aside rather than deleted, and the default is used,
    * so a bad hand-edit costs you your mapping and not your show.
    */
-  load() {
+  load(): this {
     let raw;
     try {
       raw = fs.readFileSync(this.file, 'utf8');
     } catch (err) {
-      if (err.code !== 'ENOENT') {
-        console.warn(`[midi] cannot read ${this.file}: ${err.message} — using the default map`);
+      if (codeOf(err) !== 'ENOENT') {
+        console.warn(`[midi] cannot read ${this.file}: ${messageOf(err)} — using the default map`);
       }
       return this;
     }
@@ -215,7 +238,7 @@ class MidiMapStore {
     try {
       parsed = JSON.parse(raw);
     } catch (err) {
-      return this._quarantine(`invalid JSON (${err.message})`);
+      return this._quarantine(`invalid JSON (${messageOf(err)})`);
     }
 
     const result = mapSchema.safeParse(parsed);
@@ -229,21 +252,21 @@ class MidiMapStore {
     return this;
   }
 
-  _quarantine(reason) {
+  _quarantine(reason: string): this {
     const backup = `${this.file}.invalid-${Date.now()}`;
     try {
       fs.renameSync(this.file, backup);
       console.warn(`[midi] ${this.file}: ${reason}`);
       console.warn(`[midi] moved it to ${backup} and fell back to the default map`);
     } catch (err) {
-      console.warn(`[midi] ${this.file}: ${reason} (could not move aside: ${err.message})`);
+      console.warn(`[midi] ${this.file}: ${reason} (could not move aside: ${messageOf(err)})`);
     }
     this._map = clone(DEFAULT_MAP);
     this._customised = false;
     return this;
   }
 
-  save() {
+  save(): void {
     const dir = path.dirname(this.file);
     fs.mkdirSync(dir, { recursive: true });
     const tmp = `${this.file}.tmp`;
@@ -253,10 +276,10 @@ class MidiMapStore {
   }
 
   /** The live map. Callers must not mutate it — use setBinding/replace. */
-  get() { return this._map; }
+  get(): MidiMap { return this._map; }
 
   /** A copy, for handing to a client. */
-  snapshot() {
+  snapshot(): { map: MidiMap; customised: boolean } {
     return { map: clone(this._map), customised: this._customised };
   }
 
@@ -268,13 +291,13 @@ class MidiMapStore {
    * leave one tap button, not two. Bindings that differ by fixture or value are
    * genuinely different controls and are left alone.
    */
-  setBinding(kind, number, binding) {
+  setBinding(kind: 'cc' | 'notes', number: number, binding: unknown): MidiMap {
     const key = String(number);
     if (binding === null) {
       delete this._map[kind][key];
     } else {
       const parsed = bindingSchema.parse(binding);
-      for (const side of ['cc', 'notes']) {
+      for (const side of ['cc', 'notes'] as const) {
         for (const [existingKey, existing] of Object.entries(this._map[side])) {
           if (side === kind && existingKey === key) continue;
           if (sameControl(existing, parsed)) delete this._map[side][existingKey];
@@ -287,19 +310,19 @@ class MidiMapStore {
   }
 
   /** Replace the whole map — used by an import, or a hand-written file. */
-  replace(map) {
+  replace(map: unknown): MidiMap {
     this._map = mapSchema.parse(map);
     this._persist();
     return this._map;
   }
 
   /** Back to the built-in X-Touch layout, and forget the stored file. */
-  reset() {
+  reset(): MidiMap {
     this._map = clone(DEFAULT_MAP);
     try {
       fs.unlinkSync(this.file);
     } catch (err) {
-      if (err.code !== 'ENOENT') console.warn(`[midi] could not remove ${this.file}: ${err.message}`);
+      if (codeOf(err) !== 'ENOENT') console.warn(`[midi] could not remove ${this.file}: ${messageOf(err)}`);
     }
     this._customised = false;
     this._notify();
@@ -307,29 +330,27 @@ class MidiMapStore {
   }
 
   /** Called with the new map after every change. */
-  onChange(fn) { this._listeners.push(fn); }
+  onChange(fn: MidiListener): void { this._listeners.push(fn); }
 
-  _notify() {
+  _notify(): void {
     for (const fn of this._listeners) {
-      try { fn(this._map); } catch (err) { console.warn(`[midi] map listener: ${err.message}`); }
+      try { fn(this._map); } catch (err) { console.warn(`[midi] map listener: ${messageOf(err)}`); }
     }
   }
 
-  _persist() {
+  _persist(): void {
     try {
       this.save();
     } catch (err) {
-      console.warn(`[midi] could not save ${this.file}: ${err.message}`);
-      const wrapped = new Error(`Could not save the MIDI map: ${err.message}`);
-      wrapped.status = 500;
-      throw wrapped;
+      console.warn(`[midi] could not save ${this.file}: ${messageOf(err)}`);
+      throw new HttpError(500, `Could not save the MIDI map: ${messageOf(err)}`);
     }
     this._notify();
   }
 }
 
 /** Two bindings that drive the same thing, so relearning moves rather than duplicates. */
-function sameControl(a, b) {
+function sameControl(a: MidiBinding, b: MidiBinding): boolean {
   return a.action === b.action
     && (a.fixture ?? null) === (b.fixture ?? null)
     && (a.value ?? null) === (b.value ?? null);

@@ -10,10 +10,13 @@
 
 import { z } from 'zod';
 import { MAX_CELLS_PER_FIXTURE } from '../shared/rig.ts';
-import { profileSchema, validate } from './validation.js';
+import { profileSchema, validate } from './validation.ts';
+import { HttpError } from '../errors.ts';
+import type { ProfileInput } from './validation.ts';
+import type { ChannelListEntry, ChannelMap, ProfileCell } from '../types/rig.ts';
 
 // One letter per channel of a cell, in the order the manual lists them.
-const LETTERS = {
+const LETTERS: Record<string, { attribute: string; name: string }> = {
   R: { attribute: 'red', name: 'Red' },
   G: { attribute: 'green', name: 'Green' },
   B: { attribute: 'blue', name: 'Blue' },
@@ -48,13 +51,13 @@ const barSpecSchema = z.object({
  * The profile for a bar, validated as any other profile is. Throws with a
  * `status` of 400 when the numbers do not describe a bar that fits.
  */
-function barProfile(spec) {
+function barProfile(spec: unknown): ProfileInput {
   const bar = validate(barSpecSchema, spec, 'bar');
   const stride = bar.stride ?? bar.order.length;
   if (stride < bar.order.length) throw badBar(`each cell has ${bar.order.length} channels, so cells cannot start ${stride} apart`);
 
-  const channelMap = {};
-  const channelList = [];
+  const channelMap: ChannelMap = {};
+  const channelList: ChannelListEntry[] = [];
   if (bar.dimmer !== undefined) {
     channelMap.dimmer = bar.dimmer - 1;
     channelList.push({ offset: bar.dimmer - 1, name: 'Dimmer', attribute: 'dimmer' });
@@ -64,10 +67,10 @@ function barProfile(spec) {
     channelList.push({ offset: bar.strobe - 1, name: 'Strobe', attribute: 'strobe' });
   }
 
-  const cells = [];
+  const cells: ProfileCell[] = [];
   for (let c = 0; c < bar.cells; c++) {
     const start = bar.firstChannel - 1 + c * stride;
-    const map = {};
+    const map: ChannelMap = {};
     [...bar.order].forEach((letter, k) => {
       const { attribute, name } = LETTERS[letter];
       map[attribute] = start + k;
@@ -94,10 +97,8 @@ function barProfile(spec) {
   }, 'bar');
 }
 
-function badBar(message) {
-  const err = new Error(`bar: ${message}`);
-  err.status = 400;
-  return err;
+function badBar(message: string): HttpError {
+  return new HttpError(400, `bar: ${message}`);
 }
 
 export {

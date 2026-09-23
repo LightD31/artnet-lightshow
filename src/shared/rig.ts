@@ -21,7 +21,7 @@ const EMITTERS = ['red', 'green', 'blue', 'white', 'amber', 'uv', 'warmWhite', '
 
 // How a pixel effect is laid over the cells: across the whole stage, along each
 // bar on its own, or mirrored about the centre of the stage.
-const PIXEL_MAPS = ['stage', 'bar', 'mirror'];
+const PIXEL_MAPS = ['stage', 'bar', 'mirror'] as const;
 
 // A universe holds 170 three-channel cells; no single fixture has more.
 const MAX_CELLS_PER_FIXTURE = 170;

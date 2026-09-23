@@ -5,26 +5,26 @@ import os from 'node:os';
 import multer from 'multer';
 
 import { state, getClientState, getFixture, allocateFixtureId, universeOf, maxBrightnessOf, countUniverses } from './state.ts';
-import { applyPatch, applyOverride, setFixtureMaxBrightness, processTap } from './patch.js';
+import { applyPatch, applyOverride, setFixtureMaxBrightness, processTap } from './patch.ts';
 import { PALETTES } from './palettes.ts';
 import { resizeFixtureBuffers, startSyncTest, engineStatus } from './engine.ts';
 import { parseGDTF } from '../gdtf.js';
 import { BUILTIN_PROFILE_ID, isBuiltinProfile, MAX_FIXTURES, UNIVERSE_SIZE, endChannel, fitsInUniverse, universeOverflow, registerProfile, unregisterProfile, listProfiles, unitCapOverflow } from './profiles.ts';
 import { MAX_UNIVERSES } from './universes.ts';
-import { cues, cueWriteSchema, cueRestoreSchema, reorderSchema } from './cues.js';
-import { showStore, snapshotShow, applyShow } from './show-store.js';
-import { barProfile } from './bar-profile.js';
-import { midiMap, ACTIONS, defaultTypeFor, mapSchema, learnSchema, bindingWriteSchema } from './midi-map.js';
-import { profileSchema, deezerStateSchema, fixtureRestoreSchema, dmxUniverse, huePairSchema, validate } from './validation.js';
+import { cues, cueWriteSchema, cueRestoreSchema, reorderSchema } from './cues.ts';
+import { showStore, snapshotShow, applyShow } from './show-store.ts';
+import { barProfile } from './bar-profile.ts';
+import { midiMap, ACTIONS, defaultTypeFor, mapSchema, learnSchema, bindingWriteSchema } from './midi-map.ts';
+import { profileSchema, deezerStateSchema, fixtureRestoreSchema, dmxUniverse, huePairSchema, validate } from './validation.ts';
 import * as output from './output.ts';
 import { discoverNodes } from './artnet.ts';
 import { interfaces } from './artnet-nodes.ts';
 import { discoverBridges, pair as pairBridge, listEntertainmentConfigs } from './hue.ts';
 import { settings, RESTART_PATHS, CONFIG_FILE } from './settings.ts';
-import { connectMidi } from './midi-connect.js';
-import { generateToken } from './auth.js';
-import { runPreflight } from './preflight.js';
-import { warmRequestSchema, warmPlaylistSchema, parseSetList, fromSpotifyTracks, MAX_TRACKS as MAX_WARM_TRACKS } from './warm.js';
+import { connectMidi } from './midi-connect.ts';
+import { generateToken } from './auth.ts';
+import { runPreflight } from './preflight.ts';
+import { warmRequestSchema, warmPlaylistSchema, parseSetList, fromSpotifyTracks, MAX_TRACKS as MAX_WARM_TRACKS } from './warm.ts';
 import * as pythonEnv from '../python-env.js';
 import {
   keyForSpotify, keyForYouTube, keyForQuery, keyForLocalFile, keyForBuffer, keyForProlinkTrack,

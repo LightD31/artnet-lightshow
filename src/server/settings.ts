@@ -27,6 +27,14 @@ export type Settings = z.infer<typeof schema>;
 /** Any subset of the settings, group by group: what PUT /api/settings takes. */
 export type SettingsPatch = { [G in keyof Settings]?: Partial<Settings[G]> };
 
+/** A setting's dotted path: 'server.host', 'artnet.universe'… */
+export type SettingPath = { [G in keyof Settings]: `${G}.${keyof Settings[G] & string}` }[keyof Settings];
+
+/** The value at a dotted path. */
+export type SettingAt<P extends string> = P extends `${infer G}.${infer K}`
+  ? G extends keyof Settings ? K extends keyof Settings[G] ? Settings[G][K] : never : never
+  : never;
+
 /** Called after an update with the dotted keys that changed and the new settings. */
 export type SettingsListener = (changed: string[], settings: Settings) => void;
 
@@ -433,6 +441,8 @@ class SettingsStore {
   /** One group, e.g. settings.group('artnet'). */
   group<G extends keyof Settings>(name: G): Settings[G] { return clone(this._values[name]); }
 
+  get<P extends SettingPath>(dotted: P): SettingAt<P>;
+  get(dotted: string): unknown;
   get(dotted: string): unknown { return getPath(this._values, dotted); }
 
   /**

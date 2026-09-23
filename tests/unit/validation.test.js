@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { patchSchema, profileSchema, overrideSchema, deezerStateSchema, fixtureMessageSchema, fixtureRestoreSchema, showSchema, validate } from '../../src/server/validation.js';
+import { patchSchema, profileSchema, overrideSchema, deezerStateSchema, fixtureMessageSchema, fixtureRestoreSchema, showSchema, validate } from '../../src/server/validation.ts';
 
 const ok = (schema, v) => { validate(schema, v, 't'); return true; };
 const rejects = (schema, v) => assert.throws(() => validate(schema, v, 't'));

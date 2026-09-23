@@ -90,7 +90,7 @@ function spatialLayout(fixtures: readonly StageFixture[]): SpatialLayout {
 // ── Groups ───────────────────────────────────────────────────────────────────
 // Where a fixture hangs, from a fixed set so the show and the operator mean the
 // same thing by each name. Ungrouped fixtures are simply part of the rig.
-const FIXTURE_GROUPS = ['front', 'back', 'room', 'floor'];
+const FIXTURE_GROUPS = ['front', 'back', 'room', 'floor'] as const;
 
 /**
  * Which fixtures hold the wash when the show splits a look.

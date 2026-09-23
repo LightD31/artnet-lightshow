@@ -2,15 +2,29 @@ import { state, getFixture, setDefaultUniverse } from './state.ts';
 import { beginFade } from './engine.ts';
 import { conductor } from './conductor.ts';
 import { anchorStep } from '../shared/beat-clock.ts';
-import { patchSchema, overrideSchema, validate } from './validation.js';
+import { patchSchema, overrideSchema, validate } from './validation.ts';
 import { STROBE_FUNCTIONS, ENERGY_EFFECTS } from './presets.ts';
 import { paletteSlots } from './palettes.ts';
+import type { Patch } from './validation.ts';
+import type { SettingsPatch } from './settings.ts';
 
-const COLOR_SLOTS = ['colorA', 'colorB', 'colorC', 'colorD'];
+/** What the rest of the server does when a patch touches it (set by integrations). */
+export interface PatchHooks {
+  prolinkEnable(): void;
+  prolinkDisable(): void;
+  autoPaletteSize(size: NonNullable<Patch['autoPaletteSize']>): void;
+  autoIntensity(value: number): void;
+  autoSyncOffsetMs(value: number): void;
+  autoPrefetchDepth(value: number): void;
+  broadcast(): void;
+  showChanged(): void;
+}
+
+const COLOR_SLOTS = ['colorA', 'colorB', 'colorC', 'colorD'] as const;
 
 // Hooks the rest of the system can register to react to specific patch keys.
 // (Used for prolink enable/disable, autoShow palette/intensity, broadcasting.)
-const hooks = {
+const hooks: PatchHooks = {
   prolinkEnable: () => {},
   prolinkDisable: () => {},
   autoPaletteSize: () => {},
@@ -24,36 +38,37 @@ const hooks = {
   showChanged: () => {},
 };
 
-function setHooks(partial) { Object.assign(hooks, partial); }
+function setHooks(partial: Partial<PatchHooks>): void { Object.assign(hooks, partial); }
 
 // Art-Net and PRO DJ LINK are reachable from the main page as well as the
 // settings page. Without this, changing them there would work until the next
 // restart and then silently revert to whatever the settings page holds.
-let persist = () => {};
-function setPersist(fn) { persist = fn; }
+let persist: (partial: SettingsPatch) => void = () => {};
+function setPersist(fn: (partial: SettingsPatch) => void): void { persist = fn; }
 
 // The sync offset is dialled in with an encoder or a slider, 5 ms a detent,
 // and each change used to rewrite settings.json synchronously on the thread
 // that renders DMX. It is saved once the hand comes off instead; the value in
 // memory — the one the show uses — changes at once either way.
 const SYNC_OFFSET_SAVE_DELAY_MS = 750;
-let syncOffsetSaveTimer = null;
+let syncOffsetSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
-function persistSyncOffsetSoon() {
+function persistSyncOffsetSoon(): void {
   if (syncOffsetSaveTimer) clearTimeout(syncOffsetSaveTimer);
-  syncOffsetSaveTimer = setTimeout(flushPendingPersist, SYNC_OFFSET_SAVE_DELAY_MS);
-  if (syncOffsetSaveTimer.unref) syncOffsetSaveTimer.unref();
+  const timer = setTimeout(flushPendingPersist, SYNC_OFFSET_SAVE_DELAY_MS);
+  if (timer.unref) timer.unref();
+  syncOffsetSaveTimer = timer;
 }
 
 /** Save a change still waiting on its delay. Called on the way down. */
-function flushPendingPersist() {
+function flushPendingPersist(): void {
   if (!syncOffsetSaveTimer) return;
   clearTimeout(syncOffsetSaveTimer);
   syncOffsetSaveTimer = null;
   persist({ auto: { syncOffsetMs: state.autoSyncOffsetMs } });
 }
 
-function applyPatch(rawData) {
+function applyPatch(rawData: unknown): Patch {
   // Validate at the boundary. Throws on invalid input.
   const data = validate(patchSchema, rawData || {}, 'patch');
 
@@ -119,9 +134,10 @@ function applyPatch(rawData) {
   // so the label goes. Writing the value it already had changes nothing and is
   // left alone — re-clicking the swatch that is already lit is not an edit.
   for (const slot of COLOR_SLOTS) {
-    if (data[slot] === undefined) continue;
-    if (!paletteApplied && data[slot] !== state[slot]) state.palette = null;
-    state[slot] = data[slot];
+    const value = data[slot];
+    if (value === undefined) continue;
+    if (!paletteApplied && value !== state[slot]) state.palette = null;
+    state[slot] = value;
   }
   if (data.split !== undefined) state.split = data.split;
   if (data.pixelMap !== undefined) state.pixelMap = data.pixelMap;
@@ -195,14 +211,14 @@ function applyPatch(rawData) {
  * scene was scheduled for when there is a grid to read it from, else where the
  * music is now. Rounded onto the step grid, so the pattern steps on the beat.
  */
-function anchorPattern(anchorMs) {
+function anchorPattern(anchorMs: number | undefined): void {
   const reading = conductor.now();
   const scheduled = anchorMs !== undefined ? conductor.beatAtTrackMs(anchorMs) : null;
-  const beatPos = Number.isFinite(scheduled) ? scheduled : reading.beatPos;
+  const beatPos = scheduled !== null && Number.isFinite(scheduled) ? scheduled : reading.beatPos;
   state.patternAnchor = { step: anchorStep(beatPos, state.beatDivision || 1), epoch: reading.epoch };
 }
 
-function applyOverride(id, rawOverride) {
+function applyOverride(id: number, rawOverride: unknown): void {
   const fixture = getFixture(id);
   if (!fixture) return;
   const override = rawOverride === null
@@ -221,7 +237,7 @@ function applyOverride(id, rawOverride) {
  * energy override. Trimming a fixture that is too close to the audience should
  * not also mean taking it out of the show.
  */
-function setFixtureMaxBrightness(id, value) {
+function setFixtureMaxBrightness(id: number, value: unknown): void {
   const fixture = getFixture(id);
   if (!fixture) return;
   const raw = Number(value);
@@ -231,9 +247,9 @@ function setFixtureMaxBrightness(id, value) {
   hooks.broadcast();
 }
 
-const tapTimes = [];
+const tapTimes: number[] = [];
 
-function processTap() {
+function processTap(): void {
   const now = Date.now();
   tapTimes.push(now);
   if (tapTimes.length > 8) tapTimes.shift();
