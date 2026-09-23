@@ -95,6 +95,10 @@ const STALE_MS = 500;
 const OFFSET_WINDOW_MS = 5000;
 // Recent levels kept for cross-correlation against a track's analysis.
 const ENVELOPE_SEC = 30;
+// The analyser re-judges its lock on the tempo every two seconds, and a drop or
+// a breakdown can cost it one judgement while the grid runs on regardless:
+// the beat is still trusted this long after the last locked line.
+const LOCK_HOLD_MS = 4000;
 
 type Spawner = (exe: string, args: string[]) => ChildProcessWithoutNullStreams;
 
@@ -110,6 +114,7 @@ class LiveInput {
   declare _stopped: boolean;
   declare _reading: LiveReading | null;
   declare _readingAt: number;
+  declare _lockedAt: number;
   declare _offsets: { at: number; offset: number }[];
   declare _envelope: LiveEnvelopePoint[];
   declare _ready: { backend: string | null; device: string | null } | null;
@@ -130,6 +135,7 @@ class LiveInput {
     this._stopped = true;
     this._reading = null;
     this._readingAt = 0;
+    this._lockedAt = -Infinity;
     this._offsets = [];
     this._envelope = [];
     this._ready = null;
@@ -265,6 +271,7 @@ class LiveInput {
     const wasListening = this._isFresh(now);
     this._reading = r;
     this._readingAt = now;
+    if (r.locked) this._lockedAt = now;
     // The least-delayed arrival of the last few seconds: pipes and the event
     // loop only ever add delay, so the smallest offset is the truest.
     const offset = now - r.captured * 1000;
@@ -298,7 +305,8 @@ class LiveInput {
   getBeatReading(): { beatPos: number; bpm: number } | null {
     const r = this._reading;
     const streamNow = this.streamNowMs();
-    if (!r || streamNow === null || r.beat == null || !r.locked || !(r.bpm > 0)) return null;
+    if (!r || streamNow === null || r.beat == null || !(r.bpm > 0)) return null;
+    if (!r.locked && this._now() - this._lockedAt > LOCK_HOLD_MS) return null;
     const beatPos = r.beat + ((streamNow / 1000 - r.t) * r.bpm) / 60;
     return Number.isFinite(beatPos) ? { beatPos, bpm: r.bpm } : null;
   }

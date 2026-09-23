@@ -53,6 +53,15 @@ test('no beat without a lock, and none once the lines stop', () => {
   const c = clocked();
   c.live.handleLine(state({ locked: false }));
   assert.strictEqual(c.live.getBeatReading(), null, 'heard, but no grid yet');
+  // Locked, then a moment's doubt after a drop: the grid runs on, and so does
+  // the beat — for a few seconds.
+  c.live.handleLine(state());
+  c.advance(2000);
+  c.live.handleLine(state({ locked: false }));
+  assert.ok(c.live.getBeatReading(), 'held through a lapse');
+  c.advance(2100);
+  c.live.handleLine(state({ locked: false }));
+  assert.strictEqual(c.live.getBeatReading(), null, 'not for long');
   c.live.handleLine(state({ beat: null }));
   assert.strictEqual(c.live.getBeatReading(), null);
   c.live.handleLine(state());
