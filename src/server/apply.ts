@@ -19,6 +19,7 @@ export interface ApplierDeps {
   };
   smtc: { start(): void; stop(): void };
   live?: { start(options: { source: 'loopback' | 'input'; device?: string; latencyMs?: number }): void; stop(): void } | null;
+  midiClock?: { setPort(port: string): void } | null;
   deezer: { init(arl: string): Promise<unknown> };
   autoShow?: { restartWorker?(reason: string): void } | null;
   applyPatch(patch: unknown): unknown;
@@ -35,7 +36,7 @@ export interface ApplierDeps {
  * from the store at call time by the code that uses them, so they need no
  * action at all.
  */
-function createApplier({ midi, spotify, smtc, live = null, deezer, autoShow, applyPatch, broadcast }: ApplierDeps) {
+function createApplier({ midi, spotify, smtc, live = null, midiClock = null, deezer, autoShow, applyPatch, broadcast }: ApplierDeps) {
   // What this process actually booted with, for pending-restart detection.
   const bootValues = {
     server: {
@@ -162,6 +163,10 @@ function createApplier({ midi, spotify, smtc, live = null, deezer, autoShow, app
     broadcast();
   }
 
+  function applyMidiClock() {
+    if (midiClock) midiClock.setPort(settings.get('midi.clockOutput'));
+  }
+
   function applyProlink() {
     // Routed through applyPatch so the enable/disable hooks and the broadcast
     // fire exactly as they do when the toggle is used on the main page.
@@ -204,6 +209,7 @@ function createApplier({ midi, spotify, smtc, live = null, deezer, autoShow, app
     // Ports only: toggling feedback must not drop and reopen the port.
     { match: (k) => k === 'midi.input' || k === 'midi.output', run: applyMidi },
     { match: (k) => k === 'midi.controlFeedback', run: applyControlFeedback },
+    { match: (k) => k === 'midi.clockOutput', run: applyMidiClock },
     { match: (k) => k === 'sources.smtc', run: applySmtc },
     { match: (k) => k === 'sources.prolink', run: applyProlink },
     { match: (k) => k.startsWith('live.'), run: applyLive },
@@ -223,6 +229,7 @@ function createApplier({ midi, spotify, smtc, live = null, deezer, autoShow, app
       applyHue();
       applySpotify();
       applyMidi();
+      applyMidiClock();
       applySmtc();
       applyLive();
       applyDeezer();

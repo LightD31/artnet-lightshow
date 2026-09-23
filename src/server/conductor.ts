@@ -313,6 +313,15 @@ class Conductor {
     return null;
   }
 
+  /**
+   * Where the music is now, without moving anything: no epoch, no hand-over
+   * to the free clock, no tempo report. For readers other than the engine —
+   * the MIDI clock — which must not change what the engine will read next.
+   */
+  peek(): ClockReading {
+    return this._current(this._now());
+  }
+
   /** What the rig is locked to, for the UI: `{ source, bpm }`. */
   status(): { source: ClockSource; bpm: number } {
     const reading = this._last || this._current(this._now());

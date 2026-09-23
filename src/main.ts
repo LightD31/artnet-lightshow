@@ -4,9 +4,10 @@ import http from 'node:http';
 import express from 'express';
 import { Server } from 'socket.io';
 
-import MidiController from './midi.ts';
+import MidiController, { openMidiOutput } from './midi.ts';
 import ProLink from './prolink.ts';
 import LiveInput from './live-input.ts';
+import MidiClock from './midi-clock.ts';
 import SpotifyClient from './spotify.ts';
 import NowPlayingSource from './nowplaying-source.ts';
 import SmtcReader from './smtc-source.ts';
@@ -118,6 +119,8 @@ setFrameHook(() => autoShow.tick());
 conductor.setAutoSource(() => autoShow.beatSource());
 conductor.setProlinkSource(() => (state.prolinkEnabled && !autoShow.running ? prolink.getBeatReading() : null));
 conductor.setLiveSource(() => liveInput.getBeatReading());
+// The same clock, out to MIDI (settings: midi.clockOutput).
+const midiClock = new MidiClock({ open: openMidiOutput, beatPos: () => conductor.peek().beatPos });
 conductor.onTempo((bpm) => { state.bpm = bpm; });
 
 // Windows "now playing" (SMTC) feeds the generic now-playing source: we read
@@ -134,7 +137,7 @@ const patchRestored = showStore.restore();
 // Everything configurable is pushed into the subsystems from one place, both
 // here at boot and again whenever the settings page saves.
 const applier = createApplier({
-  midi, spotify, smtc, live: liveInput, deezer, autoShow, applyPatch,
+  midi, spotify, smtc, live: liveInput, midiClock, deezer, autoShow, applyPatch,
   broadcast: () => integrations.broadcast(),
 });
 applier.applyAll();
@@ -299,6 +302,7 @@ function shutdown(signal: string): void {
     ['deezer', () => deezerSource.disconnect()],
     ['prolink', () => prolink.destroy()],
     ['live input', () => liveInput.stop()],
+    ['midi clock', () => midiClock.stop()],
     ['midi', () => midi.close()],
     // Lands a debounced patch write that had not fired yet. A no-op when the
     // file already matches, which is the usual case.

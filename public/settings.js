@@ -273,6 +273,10 @@ function renderMidiStatus(midi) {
   if (text) text.textContent = midi.enabled ? 'Connected' : 'Not connected';
 
   const ports = midi.ports || { inputs: [], outputs: [] };
+  // The clock port picker is built from the same list.
+  const outputsChanged = JSON.stringify(ports.outputs || []) !== JSON.stringify(midiOutputs);
+  midiOutputs = ports.outputs || [];
+  if (outputsChanged && typeof renderSettings === 'function' && settingsData) renderSettings();
   ['input', 'output'].forEach(dir => {
     const sel = document.getElementById(`midi-${dir}`);
     if (!sel) return;
@@ -1153,6 +1157,7 @@ async function loadNetworkInterfaces() {
 }
 loadNetworkInterfaces();
 let liveDevices = { outputs: [], inputs: [] };   // audio devices the live input can hear
+let midiOutputs = [];                           // MIDI output ports, for the clock
 
 async function loadLiveDevices() {
   try {
@@ -1475,6 +1480,23 @@ const SETTINGS_SPEC = [
         help: 'How much later the room hears the music than this computer does. Positive when the '
           + 'PA is behind the sound card; negative for a line-in off the booth, which arrives after '
           + 'the room has heard it. 0 is right for most setups.' },
+    ],
+  },
+  {
+    id: 'midiClock',
+    group: 'music',
+    title: 'MIDI Clock Out',
+    desc: 'Send the tempo the lights keep — the show\'s, a CDJ\'s, the live input\'s or a tap — as MIDI '
+      + 'clock, so a drum machine, a DAW or a visuals app plays in the same time. Takes effect immediately.',
+    fields: [
+      { path: 'midi.clockOutput', label: 'Clock Port', type: 'select',
+        options: () => [
+          { value: '', label: 'Off' },
+          ...midiOutputs.map((name) => ({ value: name, label: name })),
+        ],
+        missing: (value) => `${value} (not connected)`,
+        help: 'A port of its own, not the controller\'s: a control surface has no use for a clock. To reach '
+          + 'software on this machine, create a loopback port (loopMIDI on Windows, IAC on macOS) and pick it here.' },
     ],
   },
   {

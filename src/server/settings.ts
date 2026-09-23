@@ -115,6 +115,9 @@ const DEFAULTS: Settings = {
     // Harmless on a controller without them — it ignores the CC — but a MIDI
     // loopback would echo our feedback in as operator input, so it is a switch.
     controlFeedback: true,
+    // Send the pattern clock as MIDI clock to this port — a drum machine, a
+    // DAW, visuals through a loopback port. Blank sends none.
+    clockOutput: '',
   },
   sources: {
     prolink: false,
@@ -281,6 +284,7 @@ const schema = z.object({
     input: z.string().max(256),
     output: z.string().max(256),
     controlFeedback: z.boolean(),
+    clockOutput: z.string().max(256),
   }).strict(),
   sources: z.object({
     prolink: z.boolean(),
