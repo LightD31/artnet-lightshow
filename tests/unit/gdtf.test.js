@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import JSZip from 'jszip';
-import { parseGDTF } from '../../src/gdtf.js';
-import { inflateCapped } from '../../src/gdtf.js';
+import { parseGDTF } from '../../src/gdtf.ts';
+import { inflateCapped } from '../../src/gdtf.ts';
 import { profileSchema, validate } from '../../src/server/validation.ts';
 
 function gdtf(xml) {

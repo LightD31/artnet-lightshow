@@ -6,7 +6,7 @@ import { guarded } from './guard.ts';
 import PlaybackClock from '../playback-clock.ts';
 import { cues } from './cues.ts';
 import { Warmer } from './warm.ts';
-import { keyForSpotify, keyForQuery, keyForProlinkTrack } from '../analysis-cache.js';
+import { keyForSpotify, keyForQuery, keyForProlinkTrack } from '../analysis-cache.ts';
 import HybridSource from '../hybrid-source.ts';
 import { sampleAutoPosition } from './auto-position.ts';
 import { gridFromAnalysis } from '../shared/beat-clock.ts';

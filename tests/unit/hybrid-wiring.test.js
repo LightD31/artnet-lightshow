@@ -385,7 +385,7 @@ test('with Spotify alone, a slightly late report does not move the show backward
 // whenever its analysis is cached (conductor.js, the `track` source).
 
 import { conductor } from '../../src/server/conductor.ts';
-import { keyForSpotify } from '../../src/analysis-cache.js';
+import { keyForSpotify } from '../../src/analysis-cache.ts';
 import { getLiveState } from '../../src/server/state.ts';
 import { makeGrid } from '../../src/shared/beat-clock.ts';
 

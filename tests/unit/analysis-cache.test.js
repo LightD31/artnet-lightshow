@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { AnalysisCache, keyForSpotify, keyForYouTube, keyForQuery, keyForBuffer, keyForProlinkTrack } from '../../src/analysis-cache.js';
-import { MIN_COMPATIBLE } from '../../src/analysis-cache.js';
+import { AnalysisCache, keyForSpotify, keyForYouTube, keyForQuery, keyForBuffer, keyForProlinkTrack } from '../../src/analysis-cache.ts';
+import { MIN_COMPATIBLE } from '../../src/analysis-cache.ts';
 
 test('cache keys are stable and distinct per source', () => {
   assert.strictEqual(keyForSpotify('abc'), 'spotify:abc');

@@ -5,7 +5,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import * as deezer from './deezer.ts';
-import AnalyzerWorker from './analyzer-worker.js';
+import AnalyzerWorker from './analyzer-worker.ts';
 import { describeModelUsage, formatModelUsage } from './model-usage.ts';
 import * as pythonEnv from './python-env.ts';
 import { SYNC_OFFSET_LIMIT_MS } from './server/presets.ts';

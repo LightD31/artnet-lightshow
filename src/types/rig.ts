@@ -145,3 +145,21 @@ export type ShowDynamics = Partial<Expression>;
 
 /** How a pixel effect is laid over the cells of LED bars. */
 export type PixelMap = 'stage' | 'bar' | 'mirror';
+
+/** One DMX mode of an imported fixture (GDTF or OFL), ready to become a profile. */
+export interface ImportedMode {
+  modeName: string;
+  channelCount: number;
+  channelMap: ChannelMap;
+  channelList: ChannelListEntry[];
+  cells?: ProfileCell[];
+  /** What the import could not carry over, in words an operator can act on. */
+  warnings?: string[];
+}
+
+/** A fixture file, read: its name, its maker and every mode it defines. */
+export interface ImportedFixture {
+  name: string;
+  manufacturer: string;
+  modes: ImportedMode[];
+}

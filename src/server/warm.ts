@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { keyForSpotify, keyForQuery, keyForYouTube } from '../analysis-cache.js';
+import { keyForSpotify, keyForQuery, keyForYouTube } from '../analysis-cache.ts';
 import { HttpError, messageOf } from '../errors.ts';
 
 export type WarmStatus = 'pending' | 'warming' | 'ready' | 'cached' | 'error' | 'cancelled';

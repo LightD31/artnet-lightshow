@@ -8,7 +8,7 @@ import { state, getClientState, getFixture, allocateFixtureId, universeOf, maxBr
 import { applyPatch, applyOverride, setFixtureMaxBrightness, processTap } from './patch.ts';
 import { PALETTES } from './palettes.ts';
 import { resizeFixtureBuffers, startSyncTest, engineStatus } from './engine.ts';
-import { parseGDTF } from '../gdtf.js';
+import { parseGDTF } from '../gdtf.ts';
 import { BUILTIN_PROFILE_ID, isBuiltinProfile, MAX_FIXTURES, UNIVERSE_SIZE, endChannel, fitsInUniverse, universeOverflow, registerProfile, unregisterProfile, listProfiles, unitCapOverflow } from './profiles.ts';
 import { MAX_UNIVERSES } from './universes.ts';
 import { cues, cueWriteSchema, cueRestoreSchema, reorderSchema } from './cues.ts';
@@ -28,7 +28,7 @@ import { warmRequestSchema, warmPlaylistSchema, parseSetList, fromSpotifyTracks,
 import * as pythonEnv from '../python-env.ts';
 import {
   keyForSpotify, keyForYouTube, keyForQuery, keyForLocalFile, keyForBuffer, keyForProlinkTrack,
-} from '../analysis-cache.js';
+} from '../analysis-cache.ts';
 
 // Audio uploads genuinely need headroom; GDTF files do not. Separate limits so
 // the fixture importer isn't handed a 50 MB budget it has no use for — a real

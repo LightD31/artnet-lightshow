@@ -6,10 +6,44 @@ import { spawn } from 'node:child_process';
 // Generous by design: a cold start plus a long track is well
 // under this, so hitting it means something is genuinely stuck.
 import { settings } from './server/settings.ts';
+import { messageOf } from './errors.ts';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { Analysis } from './show/score.ts';
+
+/** How urgently an analysis is wanted (see analyze). */
+export type AnalysisPriority = 'current' | 'high' | 'normal';
+
+export interface AnalyzeOptions {
+  priority?: AnalysisPriority | string;
+  /** Names the work, so a later caller can find and promote it. */
+  tag?: string | null;
+  /** The track's place in the playback queue, 0 being next. */
+  queuePos?: number | null;
+}
+
+/** One request, waiting or in flight. */
+interface Request {
+  id: number;
+  source: unknown;
+  targetDurationSec: number | null | undefined;
+  priority: AnalysisPriority;
+  tag: string | null;
+  order: number;
+  resolve: (analysis: Analysis) => void;
+  reject: (err: Error) => void;
+}
+
+/** A line the Python worker answers with. */
+interface WorkerReply {
+  id?: number;
+  result?: Analysis;
+  error?: string;
+  recycle?: boolean;
+}
 
 // Read per call, not once at load: the operator can change it in the settings
 // page and the next analysis should honour the new value without a restart.
-function storedTimeoutMs() {
+function storedTimeoutMs(): number {
   return settings.get('analysis.analyzerTimeoutMs');
 }
 
@@ -18,7 +52,7 @@ function storedTimeoutMs() {
  * page chose. Read at spawn, so a change applies to the next worker — and
  * changing it restarts the worker (see apply.js).
  */
-function workerEnv() {
+function workerEnv(): NodeJS.ProcessEnv {
   const bsRoformer = settings.get('analysis.separator') === 'bs-roformer';
   return { ...process.env, ARTNET_USE_BS_ROFORMER: bsRoformer ? '1' : '0' };
 }
@@ -26,12 +60,12 @@ function workerEnv() {
 // Priority bands, in served order. 'current' is the song the room is hearing
 // right now: it outranks everything else, and it is the only band allowed to
 // interrupt an analysis that has already started.
-const RANK = { current: 0, high: 1, normal: 2 };
-const DEFAULT_PRIORITY = 'normal';
+const RANK: Record<string, number | undefined> = { current: 0, high: 1, normal: 2 };
+const DEFAULT_PRIORITY: AnalysisPriority = 'normal';
 
-function rankOf(priority) {
+function rankOf(priority: string): number {
   const rank = RANK[priority];
-  return rank === undefined ? RANK[DEFAULT_PRIORITY] : rank;
+  return rank === undefined ? RANK[DEFAULT_PRIORITY] as number : rank;
 }
 
 // Within a band, work is served in playback-queue order: the sooner the room
@@ -42,7 +76,7 @@ function rankOf(priority) {
 const UNQUEUED = Infinity;
 
 /** Serving order: band first, then playback-queue position. Ties stay FIFO. */
-function compareSlots(a, b) {
+function compareSlots(a: Pick<Request, 'priority' | 'order'>, b: Pick<Request, 'priority' | 'order'>): number {
   const band = rankOf(a.priority) - rankOf(b.priority);
   if (band !== 0) return band;
   const ao = a.order === undefined ? UNQUEUED : a.order;
@@ -56,15 +90,13 @@ function compareSlots(a, b) {
  * than a library's progress output? Replies are a single JSON object that
  * starts with the id (see cli.py).
  */
-function looksLikeReply(line, id) {
+function looksLikeReply(line: string, id: number): boolean {
   return new RegExp(`^\\{\\s*"id"\\s*:\\s*${Number(id)}\\s*[,}]`).test(line);
 }
 
 /** The track was left behind before its analysis finished. */
-function supersededError() {
-  const err = new Error('superseded by a newer current track');
-  err.superseded = true;
-  return err;
+function supersededError(): Error & { superseded: true } {
+  return Object.assign(new Error('superseded by a newer current track'), { superseded: true as const });
 }
 
 /**
@@ -88,6 +120,17 @@ function supersededError() {
  * respawns. shutdown() ends stdin and lets the worker exit naturally.
  */
 class AnalyzerWorker {
+  declare _resolvePython: () => string;
+  declare _scriptPath: string;
+  declare _timeoutMs: () => number;
+  declare _proc: ChildProcessWithoutNullStreams | null;
+  declare _pending: Request | null;
+  declare _queue: Request[];
+  declare _stdoutBuf: string;
+  declare _nextId: number;
+  declare _shuttingDown: boolean;
+  declare _timeoutTimer: ReturnType<typeof setTimeout> | null;
+
   /**
    * `pythonExe` may be a string or a function returning one. As a function it
    * is called at spawn time, so changing the interpreter in the settings page
@@ -97,7 +140,8 @@ class AnalyzerWorker {
    * function returning one. Left unset it follows the settings page, read per
    * request so a change applies to the next analysis without a restart.
    */
-  constructor(pythonExe, scriptPath, { timeoutMs } = {}) {
+  constructor(pythonExe: string | (() => string), scriptPath: string,
+    { timeoutMs }: { timeoutMs?: number | (() => number) } = {}) {
     this._resolvePython = typeof pythonExe === 'function' ? pythonExe : () => pythonExe;
     this._scriptPath = scriptPath;
     this._timeoutMs = timeoutMs === undefined
@@ -117,7 +161,7 @@ class AnalyzerWorker {
    * PANNs preload happens during server startup instead of on the first
    * analyze() call. Safe to call multiple times — no-ops if already spawned.
    */
-  prewarm() {
+  prewarm(): void {
     if (!this._proc && !this._shuttingDown) this._spawn();
   }
 
@@ -141,17 +185,19 @@ class AnalyzerWorker {
    * order the listener will hear the tracks in is the order they are analysed
    * in. Omit it for work that has no place in the queue.
    */
-  analyze(source, targetDurationSec, options = {}) {
+  analyze(source: unknown, targetDurationSec: number | null | undefined, options: AnalyzeOptions = {}): Promise<Analysis> {
     if (this._shuttingDown) {
       return Promise.reject(new Error('AnalyzerWorker is shutting down'));
     }
-    const priority = RANK[options.priority] === undefined ? DEFAULT_PRIORITY : options.priority;
+    const priority = (options.priority === undefined || RANK[options.priority] === undefined
+      ? DEFAULT_PRIORITY : options.priority) as AnalysisPriority;
     const tag = options.tag || null;
-    const order = Number.isFinite(options.queuePos) && options.queuePos >= 0
-      ? options.queuePos : UNQUEUED;
-    return new Promise((resolve, reject) => {
+    const queuePos = options.queuePos;
+    const order = typeof queuePos === 'number' && Number.isFinite(queuePos) && queuePos >= 0
+      ? queuePos : UNQUEUED;
+    return new Promise<Analysis>((resolve, reject) => {
       const id = this._nextId++;
-      const entry = { id, source, targetDurationSec, priority, tag, order, resolve, reject };
+      const entry: Request = { id, source, targetDurationSec, priority, tag, order, resolve, reject };
       this._insertByPriority(entry);
       this._preempt();
       this._tick();
@@ -167,7 +213,7 @@ class AnalyzerWorker {
    * anyway, and restarting it would throw away everything it has done. No-op
    * when no entry matches the tag, or when it already ranks that high.
    */
-  promote(tag, priority = 'high') {
+  promote(tag: string | null | undefined, priority: AnalysisPriority = 'high'): void {
     if (!tag || RANK[priority] === undefined) return;
     const idx = this._queue.findIndex((e) => e.tag === tag);
     if (idx < 0) return;
@@ -185,7 +231,7 @@ class AnalyzerWorker {
    * that already ran once and was interrupted, so it does not lose its place
    * to its peers.
    */
-  _insertByPriority(entry, { front = false } = {}) {
+  _insertByPriority(entry: Request, { front = false } = {}): void {
     let i = 0;
     while (i < this._queue.length) {
       const cmp = compareSlots(this._queue[i], entry);
@@ -209,7 +255,7 @@ class AnalyzerWorker {
    * even though it is not an upcoming track. Work already in flight is left
    * alone: only the current track is worth interrupting (see _preempt).
    */
-  setQueueOrder(tags) {
+  setQueueOrder(tags: unknown): void {
     if (!Array.isArray(tags) || !this._queue.length) return;
     for (const entry of this._queue) {
       if (entry.priority === 'current') continue;
@@ -234,7 +280,7 @@ class AnalyzerWorker {
    * song plays at a time, so its track has already been left behind and its
    * show would never be used.
    */
-  _preempt() {
+  _preempt(): void {
     const waiting = this._queue[0];
     if (!this._pending || !waiting || waiting.priority !== 'current') return;
     // Already analysing this very track: let it run.
@@ -258,7 +304,7 @@ class AnalyzerWorker {
    * Used when the interpreter changes under us — the running process is still
    * the old Python, and nothing else would replace it.
    */
-  restart(reason = 'configuration changed') {
+  restart(reason = 'configuration changed'): void {
     if (!this._proc) return;                 // next spawn already picks it up
     console.log(`[analyzer] recycling worker: ${reason}`);
     // Work in flight starts again on the new worker, at the head of its band.
@@ -276,7 +322,7 @@ class AnalyzerWorker {
    * handler recycles instead of rejecting, and the next _tick() spawns a
    * fresh process and carries on.
    */
-  _recycleProcess() {
+  _recycleProcess(): void {
     if (!this._proc) return;
     // Forgetting the process first is what makes this a recycle rather than a
     // crash: its handlers only act while it is still `this._proc`, so its exit
@@ -287,7 +333,7 @@ class AnalyzerWorker {
     try { proc.kill(); } catch (_) { /* already gone */ }
   }
 
-  shutdown() {
+  shutdown(): void {
     this._shuttingDown = true;
     this._clearTimeout();
     this._failPending('worker shutting down');
@@ -304,7 +350,7 @@ class AnalyzerWorker {
 
   // ── internals ────────────────────────────────────────────────────────────
 
-  _spawn() {
+  _spawn(): void {
     const proc = spawn(this._resolvePython(), [this._scriptPath, '--worker'], {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: workerEnv(),
@@ -320,9 +366,9 @@ class AnalyzerWorker {
 
     proc.stdout.setEncoding('utf8');
     proc.stderr.setEncoding('utf8');
-    proc.stdout.on('data', (chunk) => { if (current()) this._onStdout(chunk); });
+    proc.stdout.on('data', (chunk: string) => { if (current()) this._onStdout(chunk); });
     // A retiring worker's log lines are still worth seeing.
-    proc.stderr.on('data', (chunk) => this._onStderr(chunk));
+    proc.stderr.on('data', (chunk: string) => this._onStderr(chunk));
     // Writing to a worker that has just died fails asynchronously with EPIPE.
     // Unhandled, that 'error' event takes the whole server down; the 'close'
     // that follows is what deals with the dead worker.
@@ -339,7 +385,7 @@ class AnalyzerWorker {
     this._proc = proc;
   }
 
-  _onStdout(chunk) {
+  _onStdout(chunk: string): void {
     this._stdoutBuf += chunk;
     let nl;
     while ((nl = this._stdoutBuf.indexOf('\n')) >= 0) {
@@ -350,7 +396,7 @@ class AnalyzerWorker {
     }
   }
 
-  _onStderr(chunk) {
+  _onStderr(chunk: string): void {
     // Surface analyzer log lines (`[panns] skipped: …`, `[trim] …s → …s`,
     // tracebacks) to the Node console with a consistent prefix.
     for (const raw of chunk.split(/\r?\n/)) {
@@ -359,7 +405,7 @@ class AnalyzerWorker {
     }
   }
 
-  _onExit(reason) {
+  _onExit(reason: string): void {
     if (!this._proc) return;
     this._proc = null;
     this._stdoutBuf = '';
@@ -369,7 +415,7 @@ class AnalyzerWorker {
     this._failPending(reason);
   }
 
-  _clearTimeout() {
+  _clearTimeout(): void {
     if (this._timeoutTimer) {
       clearTimeout(this._timeoutTimer);
       this._timeoutTimer = null;
@@ -381,7 +427,7 @@ class AnalyzerWorker {
    * just that caller and recycle the worker — the queue behind it is still
    * good work and gets re-dispatched to the fresh process.
    */
-  _onTimeout() {
+  _onTimeout(): void {
     const p = this._pending;
     this._pending = null;
     this._timeoutTimer = null;
@@ -394,7 +440,7 @@ class AnalyzerWorker {
     this._tick();
   }
 
-  _failPending(reason) {
+  _failPending(reason: string): void {
     this._clearTimeout();
     if (this._pending) {
       const p = this._pending;
@@ -408,8 +454,8 @@ class AnalyzerWorker {
     }
   }
 
-  _deliver(line) {
-    let resp;
+  _deliver(line: string): void {
+    let resp: WorkerReply;
     try {
       resp = JSON.parse(line);
     } catch (e) {
@@ -418,11 +464,11 @@ class AnalyzerWorker {
       // behind it, until the timeout ten minutes later. The worker has
       // finished with it either way, so fail it now and move on.
       if (this._pending && looksLikeReply(line, this._pending.id)) {
-        console.warn(`[analyzer] unreadable reply to request ${this._pending.id}: ${e.message}`);
+        console.warn(`[analyzer] unreadable reply to request ${this._pending.id}: ${messageOf(e)}`);
         const p = this._pending;
         this._pending = null;
         this._clearTimeout();
-        p.reject(new Error(`the analyser returned an unreadable result (${e.message})`));
+        p.reject(new Error(`the analyser returned an unreadable result (${messageOf(e)})`));
         this._tick();
         return;
       }
@@ -448,7 +494,7 @@ class AnalyzerWorker {
     this._pending = null;
     this._clearTimeout();
     if (resp.error) p.reject(new Error(resp.error));
-    else p.resolve(resp.result);
+    else p.resolve(resp.result as Analysis);
     // The worker's GPU has faulted and stays broken for that process (see
     // models.gpu_fault). Replace it before the next request goes out, the way
     // a timeout does, so the queue carries on rather than failing with it.
@@ -459,24 +505,26 @@ class AnalyzerWorker {
     this._tick();
   }
 
-  _tick() {
+  _tick(): void {
     if (this._pending || !this._queue.length) return;
     if (!this._proc) this._spawn();
-    const next = this._queue.shift();
+    const next = this._queue.shift() as Request;
     this._pending = next;
     const msg = JSON.stringify({
       id: next.id,
       source: next.source,
-      targetDurationSec: Number.isFinite(next.targetDurationSec) ? next.targetDurationSec : null,
+      targetDurationSec: typeof next.targetDurationSec === 'number' && Number.isFinite(next.targetDurationSec)
+        ? next.targetDurationSec : null,
     });
     try {
-      this._proc.stdin.write(msg + '\n');
+      (this._proc as ChildProcessWithoutNullStreams).stdin.write(msg + '\n');
       this._clearTimeout();
-      this._timeoutTimer = setTimeout(() => this._onTimeout(), this._timeoutMs());
-      if (this._timeoutTimer.unref) this._timeoutTimer.unref();
+      const timer = setTimeout(() => this._onTimeout(), this._timeoutMs());
+      if (timer.unref) timer.unref();
+      this._timeoutTimer = timer;
     } catch (err) {
       this._pending = null;
-      next.reject(new Error(`failed to send to worker: ${err.message}`));
+      next.reject(new Error(`failed to send to worker: ${messageOf(err)}`));
     }
   }
 }

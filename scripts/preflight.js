@@ -16,7 +16,7 @@ import 'dotenv/config';
 
 import path from 'node:path';
 import { runPreflight } from '../src/server/preflight.ts';
-import { AnalysisCache } from '../src/analysis-cache.js';
+import { AnalysisCache } from '../src/analysis-cache.ts';
 import { spawnSync } from 'node:child_process';
 
 // ANSI only when someone is actually looking at a terminal; piping this into a

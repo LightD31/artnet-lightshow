@@ -1,13 +1,83 @@
 import JSZip from 'jszip';
 import { XMLParser } from 'fast-xml-parser';
 import { EMITTERS, MAX_CELLS_PER_FIXTURE } from './shared/rig.ts';
+import type { ChannelListEntry, ChannelMap, ImportedFixture, ImportedMode } from './types/rig.ts';
+
+// The parts of description.xml this reads. It comes from a file anyone can
+// write, so every attribute is treated as possibly missing.
+type XmlNode = { [key: string]: unknown };
+
+interface XmlChannelFunction {
+  '@_Attribute'?: string;
+  '@_Name'?: string;
+}
+
+interface XmlLogicalChannel {
+  '@_Attribute'?: string;
+  ChannelFunction?: XmlChannelFunction[];
+}
+
+interface XmlDmxChannel {
+  '@_Offset'?: string | number;
+  '@_Geometry'?: string;
+  '@_DMXBreak'?: string;
+  LogicalChannel?: XmlLogicalChannel[];
+}
+
+interface XmlDmxMode {
+  '@_Name'?: string;
+  '@_Geometry'?: string;
+  DMXChannels?: { DMXChannel?: XmlDmxChannel[] };
+}
+
+interface XmlFixtureType {
+  '@_Name'?: string;
+  '@_LongName'?: string;
+  '@_Manufacturer'?: string;
+  DMXModes?: { DMXMode?: XmlDmxMode[] };
+  Geometries?: XmlNode;
+}
+
+/** A GeometryReference: the template it places and where its channels land. */
+interface GeometryRef {
+  name: string | undefined;
+  template: string | undefined;
+  breaks: { dmxBreak: number; offset: number }[];
+}
+
+interface GeometryIndex {
+  topOf: Map<string, string>;
+  references: GeometryRef[];
+}
+
+/** One channel of a mode, placed: which geometry, which bytes, what it does. */
+interface ModeEntry {
+  key: string | undefined;
+  bytes: number[];
+  attrName: string | null;
+  displayName: string;
+  order: number;
+  attribute?: string | null;
+}
+
+/** JSZip's streamed read of one entry (not in its published types). */
+interface ChunkStream {
+  on(event: 'data', fn: (chunk: Uint8Array) => void): ChunkStream;
+  on(event: 'error', fn: (err: Error) => void): ChunkStream;
+  on(event: 'end', fn: () => void): ChunkStream;
+  pause(): ChunkStream;
+  resume(): ChunkStream;
+}
+
+/** A value, or a list of them, as a list (the XML parser gives either). */
+const asList = <T>(value: T | T[] | null | undefined): T[] => (value == null ? [] : ([] as T[]).concat(value));
 
 // Upper bound on the decompressed description.xml. Real fixture definitions are
 // a few hundred KB at most; anything past this is a zip bomb, not a fixture.
 const MAX_DESCRIPTION_BYTES = 16 * 1024 * 1024;
 
 // Map GDTF attribute names to our internal channel attributes
-const ATTR_MAP = {
+const ATTR_MAP: Record<string, string> = {
   'Dimmer':           'dimmer',
   'Dimmer1':          'dimmer',
   'DimmerFine':       'dimmerFine',
@@ -56,13 +126,13 @@ const ATTR_MAP = {
 };
 
 /** A GDTF attribute without its dotted qualifiers or trailing number. */
-function attributeBase(attrString) {
+function attributeBase(attrString: string | null | undefined): string {
   // GDTF attributes can be dotted like "Dimmer.Dimmer.Dimmer 1"
   // Take the first segment
   return attrString ? attrString.split('.')[0].replace(/\s+\d+$/, '') : '';
 }
 
-function resolveAttribute(attrString) {
+function resolveAttribute(attrString: string | null | undefined): string | null {
   if (!attrString) return null;
   return ATTR_MAP[attributeBase(attrString)] || ATTR_MAP[attrString] || null;
 }
@@ -72,11 +142,11 @@ function resolveAttribute(attrString) {
  * @param {Buffer} fileBuffer - The .gdtf file contents
  * @returns {Promise<{name, manufacturer, modes: Array<{modeName, channelCount, channelMap, channelList}>}>}
  */
-async function parseGDTF(fileBuffer) {
+async function parseGDTF(fileBuffer: Buffer | Uint8Array | ArrayBuffer): Promise<ImportedFixture> {
   const zip = await JSZip.loadAsync(fileBuffer);
 
   // Find description.xml (case-insensitive)
-  let descFile = null;
+  let descFile = null as JSZip.JSZipObject | null;
   zip.forEach((relativePath, entry) => {
     if (relativePath.toLowerCase() === 'description.xml') {
       descFile = entry;
@@ -91,8 +161,9 @@ async function parseGDTF(fileBuffer) {
   // a megabyte; without this a small upload can expand to gigabytes of heap and
   // take the process down. The size is read from the central
   // directory, so this check happens before any decompression.
-  const declaredSize = descFile._data && descFile._data.uncompressedSize;
-  if (Number.isFinite(declaredSize) && declaredSize > MAX_DESCRIPTION_BYTES) {
+  const internals = (descFile as unknown as { _data?: { uncompressedSize?: number } })._data;
+  const declaredSize = internals && internals.uncompressedSize;
+  if (typeof declaredSize === 'number' && Number.isFinite(declaredSize) && declaredSize > MAX_DESCRIPTION_BYTES) {
     throw new Error(
       `description.xml is too large (${Math.round(declaredSize / 1024 / 1024)} MB, limit ` +
       `${Math.round(MAX_DESCRIPTION_BYTES / 1024 / 1024)} MB)`
@@ -113,7 +184,7 @@ async function parseGDTF(fileBuffer) {
   const parsed = parser.parse(xmlContent);
 
   // Navigate the GDTF XML structure
-  const fixtureType = parsed.GDTF?.FixtureType || parsed.FixtureType;
+  const fixtureType: XmlFixtureType | undefined = parsed.GDTF?.FixtureType || parsed.FixtureType;
   if (!fixtureType) {
     throw new Error('Invalid GDTF: no FixtureType element found');
   }
@@ -146,23 +217,23 @@ async function parseGDTF(fileBuffer) {
  * the only kind a GeometryReference may point at), and every reference with
  * the template it places and its breaks.
  */
-function indexGeometries(root) {
-  const topOf = new Map();
-  const references = [];
-  const visit = (node, top) => {
+function indexGeometries(root: XmlNode | undefined): GeometryIndex {
+  const topOf = new Map<string, string>();
+  const references: GeometryRef[] = [];
+  const visit = (node: XmlNode | undefined, top: string | null | undefined) => {
     for (const [key, value] of Object.entries(node || {})) {
       if (key.startsWith('@_') || key === '#text') continue;
-      for (const child of [].concat(value)) {
+      for (const child of asList(value as XmlNode | XmlNode[])) {
         if (!child || typeof child !== 'object') continue;
-        const name = child['@_Name'];
+        const name = child['@_Name'] as string | undefined;
         const ancestor = top ?? name;
-        if (name != null && !topOf.has(name)) topOf.set(name, ancestor);
+        if (name != null && !topOf.has(name)) topOf.set(name, top ?? name);
         if (key === 'GeometryReference') {
           references.push({
             name,
-            template: child['@_Geometry'],
-            breaks: [].concat(child.Break || []).map((b) => ({
-              dmxBreak: parseInt(b['@_DMXBreak'] ?? '1', 10) || 1,
+            template: child['@_Geometry'] as string | undefined,
+            breaks: asList(child.Break as XmlNode | XmlNode[] | undefined).map((b) => ({
+              dmxBreak: parseInt(String(b['@_DMXBreak'] ?? '1'), 10) || 1,
               offset: dmxOffset(b['@_DMXOffset']),
             })),
           });
@@ -176,7 +247,7 @@ function indexGeometries(root) {
 }
 
 /** A Break's DMXOffset: an address, or "universe.address" counted from 1.1. */
-function dmxOffset(raw) {
+function dmxOffset(raw: unknown): number {
   const text = String(raw ?? '1');
   if (text.includes('.')) {
     const [universe, address] = text.split('.').map((v) => parseInt(v, 10));
@@ -186,14 +257,14 @@ function dmxOffset(raw) {
 }
 
 /** The attribute and a display name for one DMXChannel, as the flat parser read them. */
-function describeChannel(ch, fallbackName) {
-  const logical = [].concat(ch.LogicalChannel || []);
-  let attrName = null;
+function describeChannel(ch: XmlDmxChannel, fallbackName: string): { attrName: string | null; displayName: string } {
+  const logical = asList(ch.LogicalChannel);
+  let attrName: string | null = null;
   let displayName = fallbackName;
   if (logical.length > 0) {
     const lc = logical[0];
     attrName = lc['@_Attribute'] || null;
-    const cf = [].concat(lc.ChannelFunction || []);
+    const cf = asList(lc.ChannelFunction);
     if (cf.length > 0 && cf[0]['@_Attribute']) {
       attrName = attrName || cf[0]['@_Attribute'];
       if (cf[0]['@_Name']) displayName = cf[0]['@_Name'];
@@ -206,12 +277,12 @@ function describeChannel(ch, fallbackName) {
  * One DMX mode as a profile: its footprint, its fixture-level channel map, and
  * — for a fixture that is several lights — its cells, in the order they sit.
  */
-function parseMode(mode, geometries) {
+function parseMode(mode: XmlDmxMode, geometries: GeometryIndex): ImportedMode {
   const modeName = mode['@_Name'] || 'Default';
   const root = mode['@_Geometry'] || null;
   const channels = mode.DMXChannels?.DMXChannel || [];
-  const warnings = [];
-  const entries = [];            // { key, bytes: [coarse, fine…] (0-based), attrName, displayName, order }
+  const warnings: string[] = [];
+  const entries: ModeEntry[] = [];
 
   channels.forEach((ch, idx) => {
     // A channel without an address is virtual: a control the fixture's own
@@ -228,7 +299,7 @@ function parseMode(mode, geometries) {
 
     // A channel on a geometry that is placed by references is a template:
     // one copy per reference, at that reference's offset.
-    const template = geometries.topOf.get(geometry);
+    const template = geometry ? geometries.topOf.get(geometry) : undefined;
     const refs = template ? geometries.references.filter((r) => r.template === template) : [];
     const instances = refs.length
       ? refs.map((r) => {
@@ -237,7 +308,7 @@ function parseMode(mode, geometries) {
           ? r.breaks[r.breaks.length - 1]
           : r.breaks.find((x) => x.dmxBreak === (parseInt(channelBreak, 10) || 1));
         return b ? { key: r.name, shift: b.offset - 1, dmxBreak: b.dmxBreak } : null;
-      }).filter(Boolean)
+      }).filter((i): i is { key: string | undefined; shift: number; dmxBreak: number } => i !== null)
       : [{ key: geometry, shift: 0, dmxBreak: channelBreak === 'Overwrite' ? 1 : (parseInt(channelBreak, 10) || 1) }];
 
     for (const { key, shift, dmxBreak } of instances) {
@@ -268,20 +339,20 @@ function parseMode(mode, geometries) {
 
   // Cells: the geometries that make light, if there are at least two of them.
   // The mode's own geometry is the fixture as a whole, never a cell.
-  const firstAddress = new Map();
+  const firstAddress = new Map<string, number>();
   for (const e of entries) {
-    if (!e.key || e.key === root || !EMITTERS.includes(e.attribute)) continue;
+    if (!e.key || e.key === root || !e.attribute || !EMITTERS.includes(e.attribute)) continue;
     firstAddress.set(e.key, Math.min(firstAddress.get(e.key) ?? Infinity, e.bytes[0]));
   }
-  let cellKeys = [...firstAddress.keys()].sort((a, b) => firstAddress.get(a) - firstAddress.get(b));
+  let cellKeys = [...firstAddress.keys()].sort((a, b) => (firstAddress.get(a) as number) - (firstAddress.get(b) as number));
   if (cellKeys.length < 2) cellKeys = [];
   if (cellKeys.length > MAX_CELLS_PER_FIXTURE) {
     warnings.push(`${cellKeys.length} cells is more than the ${MAX_CELLS_PER_FIXTURE} a fixture may have; only the first are used`);
     cellKeys = cellKeys.slice(0, MAX_CELLS_PER_FIXTURE);
   }
-  const cellIndex = new Map(cellKeys.map((key, i) => [key, i]));
+  const cellIndex = new Map<string | undefined, number>(cellKeys.map((key, i) => [key, i]));
 
-  const channelList = [];
+  const channelList: (ChannelListEntry & { gdtfAttribute: string | null })[] = [];
   for (const e of entries) {
     const cell = cellIndex.get(e.key);
     const name = cell !== undefined && e.key && !e.displayName.startsWith(e.key) ? `${e.key} ${e.displayName}` : e.displayName;
@@ -300,14 +371,14 @@ function parseMode(mode, geometries) {
 
   // Only the first occurrence of each attribute is driven, per cell and for
   // the fixture as a whole; a 16-bit dimmer's fine byte is its dimmerFine.
-  const mapInto = (map, e) => {
+  const mapInto = (map: ChannelMap, e: ModeEntry) => {
     if (!e.attribute || e.attribute in map) return;
     map[e.attribute] = e.bytes[0];
     if (e.attribute === 'dimmer' && e.bytes.length > 1 && !('dimmerFine' in map)) map.dimmerFine = e.bytes[1];
   };
   const inOrder = [...entries].sort((a, b) => a.order - b.order || a.bytes[0] - b.bytes[0]);
-  const channelMap = {};
-  const cellMaps = cellKeys.map(() => ({}));
+  const channelMap: ChannelMap = {};
+  const cellMaps: ChannelMap[] = cellKeys.map(() => ({}));
   for (const e of inOrder) {
     const cell = cellIndex.get(e.key);
     if (cell !== undefined) mapInto(cellMaps[cell], e);
@@ -323,7 +394,7 @@ function parseMode(mode, geometries) {
   // channel's fine byte is part of it.
   const channelCount = channelList.reduce((max, ch) => Math.max(max, ch.offset), -1) + 1;
 
-  const result = { modeName, channelCount, channelMap, channelList };
+  const result: ImportedMode = { modeName, channelCount, channelMap, channelList };
   if (cellKeys.length) result.cells = cellKeys.map((key, i) => ({ name: String(key).slice(0, 64), channelMap: cellMaps[i] }));
   if (warnings.length) result.warnings = warnings;
   return result;
@@ -333,20 +404,20 @@ function parseMode(mode, geometries) {
  * Decompress one zip entry to a UTF-8 string, refusing once more than `limit`
  * bytes have come out.
  */
-function inflateCapped(entry, limit) {
+function inflateCapped(entry: JSZip.JSZipObject, limit: number): Promise<string> {
   return new Promise((resolve, reject) => {
-    const chunks = [];
+    const chunks: Buffer[] = [];
     let total = 0;
     let settled = false;
-    const stream = entry.internalStream('uint8array');
-    const fail = (err) => {
+    const stream = (entry as unknown as { internalStream(type: 'uint8array'): ChunkStream }).internalStream('uint8array');
+    const fail = (err: unknown) => {
       if (settled) return;
       settled = true;
       try { stream.pause(); } catch (_) { /* already stopped */ }
       reject(err);
     };
     stream
-      .on('data', (chunk) => {
+      .on('data', (chunk: Uint8Array) => {
         if (settled) return;
         total += chunk.length;
         if (total > limit) {
