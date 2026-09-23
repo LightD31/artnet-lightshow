@@ -59,7 +59,7 @@ cp "$in" "$out"
 
 test('an exact source analyses its file whole, and never falls back to a search itself', async () => {
   const saved = [];
-  const cache = { has: () => false, save: async (key, _analysis, meta) => { saved.push({ key, meta }); } };
+  const cache = { has: () => false, save: async (key, analysis, meta) => { saved.push({ key, meta, analysis }); } };
   const show = new AutoShow(() => {}, [{ name: 'Blackout' }], [], cache);
   try {
     const searched = [];
@@ -69,15 +69,22 @@ test('an exact source analyses its file whole, and never falls back to a search 
     const file = path.join(os.tmpdir(), `exact-${process.pid}.wav`);
     fs.writeFileSync(file, 'RIFF');
 
-    show.setExactAudio('prolink-file:a - s:301', async () => file);
+    show.setExactAudio('prolink-file:a - s:301', { fetch: async () => file, refine: (a) => ({ ...a, beatSource: 'rekordbox' }) });
     const r = await show.prefetch('A - S', 301, 'prolink-file:a - s:301', { title: 'S' });
     assert.deepStrictEqual(r, { skipped: false });
     assert.deepStrictEqual(analysed, [{ file, target: null }], 'the file is the track: nothing to trim');
     assert.deepStrictEqual(searched, []);
     assert.ok(!fs.existsSync(file), 'and removed afterwards');
     assert.deepStrictEqual(saved.map((s) => s.key), ['prolink-file:a - s:301']);
+    assert.strictEqual(saved[0].analysis.beatSource, 'rekordbox', 'refined before it is cached');
 
-    show.setExactAudio('prolink-file:b - t:200', async () => null);
+    // A refinement that fails keeps the analysis as it came.
+    fs.writeFileSync(file, 'RIFF');
+    show.setExactAudio('prolink-file:a - s:302', { fetch: async () => file, refine: () => { throw new Error('bad grid'); } });
+    assert.deepStrictEqual(await show.prefetch('A - S', 302, 'prolink-file:a - s:302'), { skipped: false });
+    assert.deepStrictEqual(saved[1].analysis, { beats: [0, 0.5, 1] });
+
+    show.setExactAudio('prolink-file:b - t:200', { fetch: async () => null });
     const failed = await show.prefetch('B - T', 200, 'prolink-file:b - t:200');
     assert.match(failed.error, /own audio file could not be fetched/);
     assert.deepStrictEqual(searched, [], 'no search under the exact key');
@@ -109,7 +116,7 @@ function rig({ canFetch = true, fetched = { data: Buffer.from('audio'), fileName
     getPositionMs: () => 0, getClientState: () => ({}), start() {}, stop() {},
     isCached: (key) => cached.includes(key), gridFor: () => null, isPrefetching: () => false,
     applyQueueOrder() {}, setPaletteSize() {}, setIntensity() {}, setSyncOffsetMs() {},
-    setExactAudio(key, fn) { exact.set(key, fn); },
+    setExactAudio(key, source) { exact.set(key, source); },
     // The file source is registered before its key is asked for; whether it
     // yields a file is the player's business, stood in for by `fetched`.
     fileFails(key) {

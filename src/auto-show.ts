@@ -43,6 +43,14 @@ interface NamedPreset {
 // few before them.
 const EXACT_AUDIO_KEPT = 32;
 
+/** Where a track's own audio comes from, and what else is known about that file. */
+export interface ExactAudio {
+  /** A temp audio file this module then owns and deletes, or null. */
+  fetch: () => Promise<string | null>;
+  /** The file's analysis, with whatever else is known about it folded in. */
+  refine?: (analysis: Analysis) => Promise<Analysis> | Analysis;
+}
+
 /** What prefetch() did. */
 export interface PrefetchResult {
   skipped: boolean;
@@ -113,7 +121,7 @@ class AutoShow {
   declare _status: AutoShowStatus;
   declare _energyTimer: ReturnType<typeof setTimeout> | null;
   declare _inFlight: Map<string, Promise<Analysis>>;
-  declare _exactAudio: Map<string, () => Promise<string | null>>;
+  declare _exactAudio: Map<string, ExactAudio>;
   declare _currentJob: symbol | null;
   declare _grid: BeatGrid | null;
   declare _pixels: boolean;
@@ -482,11 +490,13 @@ class AutoShow {
    * cannot be had. An analysis under that key is then made from that file and
    * nothing else — no search by name, no trimming to a length — and fails if
    * the file cannot be fetched, so the caller can fall back to a key of its
-   * own for a search.
+   * own for a search. `refine`, when given, sees the analysis before it is
+   * cached, to fold in what the file's source knows about it (see
+   * rekordbox-analysis.ts); if it fails, the analysis is kept as it was.
    */
-  setExactAudio(cacheKey: string, fetch: () => Promise<string | null>): void {
+  setExactAudio(cacheKey: string, source: ExactAudio): void {
     this._exactAudio.delete(cacheKey);
-    this._exactAudio.set(cacheKey, fetch);
+    this._exactAudio.set(cacheKey, source);
     while (this._exactAudio.size > EXACT_AUDIO_KEPT) {
       this._exactAudio.delete(this._exactAudio.keys().next().value as string);
     }
@@ -507,7 +517,7 @@ class AutoShow {
     try {
       const exact = cacheKey ? this._exactAudio.get(cacheKey) : undefined;
       if (exact) {
-        audioPath = await exact();
+        audioPath = await exact.fetch();
         if (!audioPath) throw new Error('the track\'s own audio file could not be fetched');
         // The file is the track: nothing to trim it to.
         targetDurationSec = null;
@@ -520,7 +530,14 @@ class AutoShow {
       // tolerance, and trim beatless padding when the yt-dlp fallback grabs
       // a longer version. The cacheKey doubles as the worker-queue tag so
       // a later high-priority join can find and bump this entry.
-      const analysis = await this._runAnalyzer(audioPath, targetDurationSec, priority, cacheKey, queuePos);
+      let analysis = await this._runAnalyzer(audioPath, targetDurationSec, priority, cacheKey, queuePos);
+      if (exact && exact.refine) {
+        try {
+          analysis = await exact.refine(analysis);
+        } catch (err) {
+          console.warn(`[auto-show] kept the analysis as it was for ${cacheKey}: ${messageOf(err)}`);
+        }
+      }
       if (cacheKey && this._cache) {
         await this._cache.save(cacheKey, analysis, meta || {});
         this._noteCached(cacheKey, analysis);

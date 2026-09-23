@@ -12,6 +12,7 @@ import { sampleAutoPosition } from './auto-position.ts';
 import { gridFromAnalysis } from '../shared/beat-clock.ts';
 import { messageOf } from '../errors.ts';
 import { audioToTempWav } from '../audio-file.ts';
+import { applyRekordbox } from '../rekordbox-analysis.ts';
 import type { Server } from 'socket.io';
 import type AutoShow from '../auto-show.ts';
 import type { AnalysisCache } from '../analysis-cache.ts';
@@ -390,9 +391,19 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     const out: { key: string; exact: boolean }[] = [];
     const exactKey = prolink.canFetchAudio(track) ? keyForProlinkTrack(track, { exact: true }) : null;
     if (exactKey) {
-      autoShow.setExactAudio(exactKey, async () => {
-        const file = await prolink.fetchAudio(track);
-        return file ? audioToTempWav(file.data, file.fileName) : null;
+      autoShow.setExactAudio(exactKey, {
+        fetch: async () => {
+          const file = await prolink.fetchAudio(track);
+          return file ? audioToTempWav(file.data, file.fileName) : null;
+        },
+        // rekordbox's grid and phrases, for this very file.
+        refine: async (analysis) => applyRekordbox(analysis, {
+          beatGrid: track.beatGrid,
+          songStructure: await prolink.fetchSongStructure(track).catch((err) => {
+            console.warn(`[prolink] no phrases for "${cdjQuery(track)}": ${messageOf(err)}`);
+            return null;
+          }),
+        }),
       });
       out.push({ key: exactKey, exact: true });
     }

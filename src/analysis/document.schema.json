@@ -25,6 +25,8 @@
     "mood": { "$ref": "#/$defs/Mood" },
     "genre": { "$ref": "#/$defs/Genre" },
     "segments": { "type": "array", "items": { "$ref": "#/$defs/Section" }, "description": "The track's sections, in order." },
+    "sectionSource": { "type": "string", "description": "Where the sections came from: the analyser, or 'rekordbox' when a CDJ track's phrases replaced them." },
+    "phraseMood": { "enum": ["high", "mid", "low"], "description": "rekordbox's phrase mood, when its phrases are the sections: high for club tracks, mid and low for songs." },
     "onsets": { "type": "array", "items": { "type": "number" } },
     "kickOnsets": { "type": "array", "items": { "type": "number" } },
     "drops": { "type": "array", "items": { "$ref": "#/$defs/Drop" } },
