@@ -306,6 +306,13 @@ export function AutoMode() {
               position, covering player buffering, network and fixture lag. It is saved
               with your settings, since the right value belongs to the rig, not the set.
             </p>
+            {s.live && s.live.listening && as.running && (
+              <p class="look-note" aria-live="polite">
+                {as.autoSyncMs
+                  ? <>Heard by the live input: the source runs {Math.abs(as.autoSyncMs)} ms {as.autoSyncMs > 0 ? 'behind' : 'ahead of'} the music, and the show is corrected for it.</>
+                  : <>The live input is lining this track up with what it hears.</>}
+              </p>
+            )}
           </section>
 
           <Queue />

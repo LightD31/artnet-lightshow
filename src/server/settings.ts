@@ -131,6 +131,9 @@ const DEFAULTS: Settings = {
     // How much later the room hears the audio than it is captured: positive
     // for loopback ahead of a PA, negative for a line-in off the booth.
     latencyMs: 0,
+    // Line a known track's show up with what the live input hears, rather
+    // than trust the playback source's position (see auto-sync.ts).
+    autoSync: true,
   },
   spotify: {
     clientId: '',
@@ -285,6 +288,7 @@ const schema = z.object({
     source: z.enum(['loopback', 'input']),
     device: z.string().max(256),
     latencyMs: z.number().int().min(-500).max(500),
+    autoSync: z.boolean(),
   }).strict(),
   spotify: z.object({
     clientId: z.string().max(256),

@@ -1464,6 +1464,9 @@ const SETTINGS_SPEC = [
         missing: (value) => `${value} (not found)`,
         help: 'Refreshes when the page loads. A device that is not plugged in now keeps its name '
           + 'and is used when it comes back.' },
+      { path: 'live.autoSync', label: 'Auto-Sync', type: 'toggle',
+        help: 'Line a known track\'s show up with what is heard, rather than trust where Spotify or the '
+          + 'media session says the song is. The Sync slider then only has to cover the lights\' own delay.' },
       { path: 'live.latencyMs', label: 'Room Latency (ms)', type: 'number', min: -500, max: 500,
         help: 'How much later the room hears the music than this computer does. Positive when the '
           + 'PA is behind the sound card; negative for a line-in off the booth, which arrives after '

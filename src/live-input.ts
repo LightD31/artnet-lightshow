@@ -53,6 +53,13 @@ export interface LiveReading {
   bands: Record<string, number | null>;
 }
 
+/** One hop's onset strength and level, in stream time. */
+export interface LiveEnvelopePoint {
+  t: number;
+  flux: number;
+  rms: number;
+}
+
 /** A musical event, in the offline analyser's vocabulary, in stream time. */
 export interface LiveEvent {
   t: number;
@@ -104,7 +111,7 @@ class LiveInput {
   declare _reading: LiveReading | null;
   declare _readingAt: number;
   declare _offsets: { at: number; offset: number }[];
-  declare _envelope: { t: number; flux: number; rms: number }[];
+  declare _envelope: LiveEnvelopePoint[];
   declare _ready: { backend: string | null; device: string | null } | null;
   declare _error: string | null;
   declare _onEvent: ((event: LiveEvent) => void) | null;
@@ -302,7 +309,7 @@ class LiveInput {
   }
 
   /** The last `seconds` of per-hop onset flux and level, oldest first, in stream time. */
-  recentEnvelope(seconds = ENVELOPE_SEC): { t: number; flux: number; rms: number }[] {
+  recentEnvelope(seconds = ENVELOPE_SEC): LiveEnvelopePoint[] {
     const last = this._envelope[this._envelope.length - 1];
     if (!last) return [];
     return this._envelope.filter((e) => last.t - e.t <= seconds);

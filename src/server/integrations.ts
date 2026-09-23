@@ -13,6 +13,8 @@ import { gridFromAnalysis } from '../shared/beat-clock.ts';
 import { messageOf } from '../errors.ts';
 import { audioToTempWav } from '../audio-file.ts';
 import { applyRekordbox } from '../rekordbox-analysis.ts';
+import { AutoSync } from '../auto-sync.ts';
+import { settings } from './settings.ts';
 import type { Server } from 'socket.io';
 import type AutoShow from '../auto-show.ts';
 import type { AnalysisCache } from '../analysis-cache.ts';
@@ -540,9 +542,21 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   // ─── Live input ─────────────────────────────────────────────────────────
   // Its status rides the broadcast: on every change, and once a second while
   // it listens, for the tempo and the level meter.
+  // A known track's show is lined up with what it hears (auto-sync.ts),
+  // except on a CDJ, whose position is exact, and on the timer, which has no
+  // track.
+  const autoSync = liveInput ? new AutoSync({
+    show: autoShow,
+    live: liveInput,
+    enabled: () => settings.get('live.autoSync') && !['prolink', 'timer'].includes(resolveAutoSource()),
+  }) : null;
   if (liveInput) {
     liveInput.onStatus(() => broadcast());
-    const liveTimer = setInterval(() => { if (liveInput.running) broadcast(); }, 1000);
+    const liveTimer = setInterval(guarded('live input', () => {
+      if (!liveInput.running) return;
+      if (autoSync) autoSync.tick();
+      broadcast();
+    }), 1000);
     liveTimer.unref();
   }
 

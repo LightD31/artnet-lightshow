@@ -114,6 +114,7 @@ class AutoShow {
   declare intents: Intent[] | undefined;
   declare intensity: number;
   declare syncOffsetMs: number;
+  declare autoSyncMs: number;
   declare _getPositionMs: (() => number) | null;
   declare _loopTimer: ReturnType<typeof setInterval> | null;
   declare _lastEventIdx: number;
@@ -172,6 +173,9 @@ class AutoShow {
     // here would leave the show and the number on the operator's screen
     // disagreeing until the first nudge.
     this.syncOffsetMs = settings.group('auto').syncOffsetMs ?? 0;
+    // What auto-sync has measured the source to be off by, for this track
+    // (see auto-sync.ts). Starts at nothing with every show.
+    this.autoSyncMs = 0;
     this._getPositionMs = null;
     this._loopTimer = null;
     this._lastEventIdx = -1;
@@ -295,7 +299,18 @@ class AutoShow {
    */
   getPositionMs(): number {
     if (!this._getPositionMs) return 0;
-    return this._getPositionMs() + this.syncOffsetMs;
+    return this._getPositionMs() + this.syncOffsetMs + this.autoSyncMs;
+  }
+
+  /**
+   * Move the show by what auto-sync measured. Bounded like the manual offset:
+   * a source more than two seconds out is a different part of the song, not
+   * an error to correct. A correction big enough to skip events re-seeks, as
+   * any jump in position does.
+   */
+  adjustAutoSync(deltaMs: number): void {
+    if (!Number.isFinite(deltaMs)) return;
+    this.autoSyncMs = Math.max(-SYNC_OFFSET_LIMIT_MS, Math.min(SYNC_OFFSET_LIMIT_MS, this.autoSyncMs + deltaMs));
   }
 
   /**
@@ -893,6 +908,9 @@ class AutoShow {
     if (this.running) return;
     this._getPositionMs = getPositionMs;
     this._startFadeMs = Math.max(0, Math.min(10000, Math.round(Number(fadeMs) || 0)));
+    // A new show is a new track, or the same one from another source: what
+    // the last one was off by says nothing about this one.
+    this.autoSyncMs = 0;
     this.running = true;
     this._lastEventIdx = -1;
     this._lastPositionMs = undefined;
@@ -1120,6 +1138,7 @@ class AutoShow {
       paletteSizeMode: this.paletteSize === 'auto' ? 'auto' : 'manual',
       intensity: this.intensity,
       syncOffsetMs: this.syncOffsetMs,
+      autoSyncMs: Math.round(this.autoSyncMs),
       // Planned for a rig with LED bars: its looks may draw across cells.
       pixels: this._pixels,
       analysis: this.analysis ? {
