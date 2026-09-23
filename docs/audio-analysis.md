@@ -567,12 +567,16 @@ covers.
   deviation because the window contains the very peaks being detected, so a
   standard deviation is inflated by them and the detector goes deaf exactly
   when the music gets busy.
-* **A phase-locked loop** rather than a tracker: an oscillator runs at the
-  current tempo and is nudged by onsets arriving near where it expected one.
-  Proportional term for phase, a much smaller integral term for frequency —
-  without the second one the loop re-earns the same 100 ms of drift every bar.
-  Only onsets within a third of a beat count: anything further is a syncopation,
-  and following it walks the grid onto the off-beat.
+* **A predicted grid** rather than a tracker: an oscillator runs at the
+  current tempo, and twice a second its phase is re-fitted to the last four
+  seconds of onsets — the phase at which a grid of that tempo collects the most
+  onset strength — and moved half-way there, with a much smaller correction to
+  the period so the loop does not re-earn the same drift every bar. A window of
+  several beats outvotes a syncopated hit or a missing kick. The loop used to be
+  nudged by every onset near a predicted beat instead, and every hat and snare
+  pushed the grid a little later; at a fine hop it ran away from the music
+  (12–22 beats dropped in 20 seconds of four-on-the-floor), and even at the
+  default hop the 90th-percentile error was 66–295 ms. It is now 24–48 ms.
 * **Octave folding** — when the kick drops out for a breakdown the estimator
   legitimately reports half tempo, and averaging 174 with 87 gives 130, a tempo
   the track has never played. A reading that folds to within 10 % of the running
@@ -583,6 +587,12 @@ covers.
 
 Latency is one hop (23 ms at the defaults) plus the caller's own buffering.
 Throughput is roughly fifty times real time on one core.
+
+The live input service (`src/live_input.py`, `analysis/live.py`) runs it on a
+256-sample hop, 12 ms, capturing from a sound card itself (see the README's
+*Live input*): its grid sits within 10 ms of the beat on the synthetic tracks
+once the half-window lag of the onset function is taken off, with a 90th
+percentile of 17–33 ms.
 
 ---
 

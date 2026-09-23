@@ -20,8 +20,9 @@ via **Bitfocus Companion**, and a REST API.
 **Manual control**
 
 - **Musical clock** — patterns step on the song's own beats: the auto show's
-  analysed grid, a CDJ's rekordbox grid, or the cached analysis of whatever is
-  playing — else tap tempo or a BPM typed to a tenth. Beat subdivision 1/1 … 1/16
+  analysed grid, a CDJ's rekordbox grid, the cached analysis of whatever is
+  playing, or the beat the live input hears — else tap tempo or a BPM typed to a
+  tenth. Beat subdivision 1/1 … 1/16. It also goes out as **MIDI clock**
 - **18 patterns** — solid, chases, ping-pong, strobe, fade, colour cycle,
   rainbow, twinkle, sparkle, wave, runner, splits and sections; each one takes
   its colour count from the palette rather than needing a variant per size
@@ -59,6 +60,14 @@ via **Bitfocus Companion**, and a REST API.
 - Follows playback from **Spotify**, **PRO DJ LINK** (CDJs), the **Windows OS
   media session** (any player that reports to it), or the **Deezer web player**
   via the bundled browser extension
+- **CDJs, properly** — follows the deck the room hears (on air, not just the
+  tempo master), to the millisecond on a CDJ-3000; analyses the exact file off
+  the USB stick rather than searching for it; takes rekordbox's beat grid and
+  phrases (intro, up, down, chorus…) as the show's; and crossfades the lights
+  through a DJ's mix from one deck to the other — see [PRO DJ LINK](#pro-dj-link)
+- **Live input** — hears the music as it plays (what this PC plays, or a line-in
+  off the booth), lines a known track's show up with what the room hears, and
+  plays music nothing has analysed **by ear** — see [Live input](#live-input)
 - **Spotify + OS clock** — a hybrid that takes the track, the ISRC and the queue
   from Spotify and the *position* from the OS media session, which is read
   locally rather than polled over the network. Around 11 ms of mean sync error
@@ -778,8 +787,9 @@ What the clock follows, best first — the badge under the BPM says which:
 | Badge | Following |
 |---|---|
 | **Auto** | The auto show is running: the track's analysed beat grid at the show's position, sync offset included. A drummer who pushes the chorus or a DJ who pitches the track is followed beat by beat. |
-| **CDJ** | PRO DJ LINK is on and the master deck is playing: the deck's position through rekordbox's own beat grid. |
+| **CDJ** | PRO DJ LINK is on and a deck is playing: the position of the deck the room hears, through rekordbox's own beat grid. |
 | **Track** | The auto show is off, but the song playing (Spotify, the hybrid source, the OS media session or the Deezer extension) has an analysis in the cache: manual patterns lock to its beats. A song that is not analysed yet locks as soon as a prefetch, a warm or an analyse request writes one. |
+| **Live** | The live input hears the music and has found its beat: for a track nothing else knows. See [Live input](#live-input). |
 | **Tap** | None of those: a free-running clock at the BPM you tap, type, nudge or send over MIDI. |
 
 The BPM read-out follows the clock, to a tenth: a 123.7 BPM song shows 123.7,
@@ -1140,13 +1150,47 @@ Changing it recycles the analyzer process; no restart needed.
 |--------|---------------|
 | **Spotify + OS clock** | Both of the two below. The best option when you play Spotify on this machine — see [Spotify + OS clock](#spotify--os-clock-the-hybrid-source). |
 | **Spotify** | A client ID and secret in the settings page, then visit `/auth/spotify`. Register the redirect URI the server prints at startup — see [Spotify authorisation](#spotify-authorisation). |
-| **PRO DJ LINK** | CDJs on the same network. Toggle it in the settings page or on the main page. |
+| **PRO DJ LINK** | CDJs on the same network. Toggle it in the settings page or on the main page. See [PRO DJ LINK](#pro-dj-link). |
 | **Now playing (Windows)** | Nothing — reads the OS media session, so any player that reports to it works. Toggle it under *Playback Sources*. |
 | **Deezer** | The extension in `browser-extension/` (see its README). Carries ISRC and the upcoming queue, so it prefetches. |
+| **Live input (by ear)** | The [live input](#live-input) on. Needs no analysis: the show answers what it hears. *Auto-detect* falls back to it before the timer. |
 | **Timer** | Fallback: plays the analysed timeline against a wall clock. |
 
 The Deezer ARL cookie (settings page → *Deezer*) is optional but recommended:
 with it, audio is fetched by ISRC for an exact match instead of a yt-dlp search.
+
+### PRO DJ LINK
+
+Turn it on under *Playback Sources* (or on the main page) with the CDJs and the
+mixer on the same network as this machine. It uses
+[alphatheta-connect](https://github.com/chrisle/alphatheta-connect), installed
+with the rest by `npm install` — it builds a native SQLite module, so an install
+that cannot build it leaves PRO DJ LINK reporting why and everything else
+working.
+
+- **Which deck.** The show follows the deck the room hears: the tempo master
+  while it is on air, else the deck it already follows, else the one that has
+  been on air longest. *On air* is the DJM's: its channel is up. Without a DJM
+  on the network every playing deck counts. A change waits three quarters of a
+  second, so a fader flicked through a scratch does not throw the show across.
+- **Where it is.** Each deck is placed by its status packets, pinned on every
+  beat by its beat packets, and on a CDJ-3000 set outright every 30 ms by its
+  absolute-position packets — through loops, hot cues, scratching and reverse
+  play. The *PRO DJ LINK* panel shows each deck, which is on air, the master,
+  and which the show follows.
+- **The exact file.** A track on a USB stick or SD card in a player is fetched
+  off it over the network and analysed as it is: the recording the DJ plays, so
+  the analysis lines up with the deck to the millisecond. It is cached apart from
+  a search result, which is only the fallback (rekordbox over the link, a CD, or
+  a fetch that fails). Every loaded track is prefetched this way.
+- **rekordbox's grid and phrases.** The deck's beat grid becomes the analysis's
+  beats, and rekordbox's phrase analysis its sections — for club tracks
+  Intro/Up/Down/Chorus/Outro as intro/verse/breakdown/drop/outro, for songs
+  intro/verse/bridge/chorus/outro — so the looks change where the DJ's rekordbox
+  says the chorus starts, and a returning chorus gets the same look.
+- **Through a mix.** When the show moves to the incoming deck, the outgoing
+  track's show plays on, on its own deck, until the incoming track is ready, then
+  the lights crossfade over two bars. After a cut, they cut.
 
 ### Spotify + OS clock (the hybrid source)
 
@@ -1422,11 +1466,57 @@ Stream Deck or a script mid-set rather than only from the browser.
 
 ---
 
+## Live input
+
+The live input hears the music as it plays: **what this computer plays** (any
+player, straight from the sound card, no cable) or **an input** — a line off the
+booth output, the only way to hear a set played on other equipment. Turn it on in
+*Settings → Live Input*; it needs the Python packages in `requirements.txt`
+(`soundcard`, with `sounddevice` as a fallback for inputs).
+
+A Python process (`src/live_input.py`) reads the audio a 12 ms hop at a time and
+tracks the beat with no look-ahead; the server reads it onto its own clock, so the
+beat it reports for *now* was within 9–13 ms of the true beat on a test track
+played in real time. What it is used for:
+
+- **Keeping the beat.** The pattern clock follows it (**Live** badge) whenever
+  nothing better knows the music.
+- **Auto-sync.** With a known track's show running from Spotify, the hybrid
+  source, the OS media session or Deezer, the last 16 seconds of what it hears
+  are compared with the track's analysed onsets once a second, and the show is
+  moved by however far the source is off — typically the few hundred
+  milliseconds a polled position is out, different for every track. A lag is
+  only taken when it clearly beats the lag one beat along, and only when two
+  measurements agree; the auto panel says what it corrected. The **Sync** slider
+  is then left to cover the lights' own delay. Not used for CDJs, whose position
+  is exact.
+- **Playing by ear.** With the auto show on and no analysed track to play — the
+  source is *Live input (by ear)*, or the next track is still being analysed —
+  the show answers what it hears: a new look at each change of section (cut on
+  the way up, faded on the way down), the pattern doubling through a build-up, a
+  burst on the drop, and darkness in the silences. The auto panel shows **By ear**.
+
+*Room latency* (ms) covers the distance between the sound card and the room:
+positive when the room hears the music later than this machine does, negative
+for a line-in that arrives after the room has heard it.
+
+---
+
 ## MIDI
 
 Any MIDI controller works. Pick its ports in the settings page (the choice is
 remembered), then map it — either keep the built-in layout, or relearn the
 bindings you want onto the controls you have.
+
+### MIDI clock out
+
+*Settings → MIDI Clock Out* sends the tempo the lights keep — the show's, a
+CDJ's, the live input's or a tap — as MIDI clock (24 pulses a beat, with start
+and stop) to a port of its own, so a drum machine, a DAW or a visuals app plays
+in the same time. To reach software on this machine, create a loopback port
+(loopMIDI on Windows, IAC on macOS) and pick it. The pulses are counted off the
+clock's beat position, so they cannot drift; when the music jumps, the count
+starts again from there rather than sending a burst.
 
 ### MIDI learn
 
@@ -1633,6 +1723,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/midi/learn` | Arm learn; the request is held open until a control moves |
 | POST | `/api/midi/learn/cancel` | Disarm learn |
 | POST | `/api/prolink/enable` · `/disable` · `/toggle` | PRO DJ LINK |
+| GET | `/api/live/devices` | The audio outputs and inputs the live input can hear, and its capture library |
 | GET | `/auth/spotify` · `/auth/spotify/callback` | Spotify OAuth |
 | POST | `/api/preflight` | Run the pre-show check against the live subsystems |
 | GET | `/api/spotify/now-playing` · POST `/api/spotify/disconnect` | Spotify |
@@ -1720,6 +1811,8 @@ immediately.
 | **Philips Hue** | Enabled, bridge address, pairing, entertainment area, channel-to-fixture bindings |
 | **MIDI** | Input and output port, motorised fader feedback |
 | **Playback Sources** | PRO DJ LINK, Windows now-playing (SMTC) |
+| **Live Input** | Enabled, what to listen to, device, auto-sync, play by ear, room latency |
+| **MIDI Clock Out** | The port the clock goes to, or off |
 | **Spotify** | Client ID, client secret, optional OAuth proxy, unverified-state escape hatch, and the saved session (server-written, never shown) |
 | **Deezer** | ARL cookie — exact ISRC-matched audio instead of a yt-dlp search |
 | **Analysis** | Analyzer and download timeouts, library folder, Python interpreter |
