@@ -8,8 +8,8 @@ import assert from 'node:assert';
 
 import { colourMixer, chromaOf } from '../../src/shared/color.ts';
 import { PATTERN_FUNCS } from '../../src/shared/patterns.ts';
-import { COLOR_PRESETS } from '../../src/server/presets.js';
-import { TETRADS } from '../../src/server/palettes.js';
+import { COLOR_PRESETS } from '../../src/server/presets.ts';
+import { TETRADS } from '../../src/server/palettes.ts';
 
 const P = Object.fromEntries(COLOR_PRESETS.map((c) => [c.name, c]));
 const KEYS = ['r', 'g', 'b', 'w', 'a', 'uv'];

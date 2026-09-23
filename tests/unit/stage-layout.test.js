@@ -9,7 +9,7 @@ import assert from 'node:assert';
 import { spatialLayout, stagePositions } from '../../src/shared/stage.ts';
 import { PATTERN_FUNCS } from '../../src/shared/patterns.ts';
 import { createPreviewSampler } from '../../src/shared/preview.ts';
-import { COLOR_PRESETS } from '../../src/server/presets.js';
+import { COLOR_PRESETS } from '../../src/server/presets.ts';
 
 const at = (x, y = 35) => ({ position: { x, y } });
 

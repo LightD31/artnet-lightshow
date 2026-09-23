@@ -9,7 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert';
 
 import AutoShow from '../../src/auto-show.js';
-import { SYNC_OFFSET_LIMIT_MS } from '../../src/server/presets.js';
+import { SYNC_OFFSET_LIMIT_MS } from '../../src/server/presets.ts';
 
 const ev = (timeMs, id) => ({ timeMs, action: 'patch', data: { pattern: id } });
 

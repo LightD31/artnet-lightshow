@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import * as hue from '../../src/server/hue.js';
+import * as hue from '../../src/server/hue.ts';
 const { nameChannel } = hue;
 
 // ── Packet layout ───────────────────────────────────────────────────────────

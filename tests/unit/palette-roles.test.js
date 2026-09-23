@@ -17,8 +17,8 @@ import { ShowDirector, coloursFor } from '../../src/show/director.ts';
 import { buildPalette } from '../../src/show/look.ts';
 import { deriveEvents, EVENT } from '../../src/show/musical-events.ts';
 import { INTENT } from '../../src/show/intents.ts';
-import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.js';
-import { TETRADS } from '../../src/server/palettes.js';
+import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.ts';
+import { TETRADS } from '../../src/server/palettes.ts';
 
 const TRACKS = path.join(import.meta.dirname, '..', 'fixtures', 'tracks');
 const tracks = fs.readdirSync(TRACKS).filter((f) => f.endsWith('.json'))

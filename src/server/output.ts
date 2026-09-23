@@ -1,10 +1,20 @@
-import { state, universeOf } from './state.js';
-import { getProfile } from './profiles.js';
+import { state, universeOf } from './state.ts';
+import { getProfile } from './profiles.ts';
 import { cellsOf, EMITTERS } from '../shared/rig.ts';
-import * as universes from './universes.js';
-import { createTransmitter, sacnUniverseFor as mapSacnUniverse } from './transmit.js';
-import { createDiscovery, interfaces, isBroadcastTarget, isLoopbackTarget } from './artnet-nodes.js';
-import * as hue from './hue.js';
+import * as universes from './universes.ts';
+import { createTransmitter, sacnUniverseFor as mapSacnUniverse } from './transmit.ts';
+import { createDiscovery, interfaces, isBroadcastTarget, isLoopbackTarget } from './artnet-nodes.ts';
+import * as hue from './hue.ts';
+import type { HueChannelColour } from './hue.ts';
+import type { SacnOutput, SendOptions, TransmitConfig } from './transmit.ts';
+import type { Settings } from './settings.ts';
+import type { ChannelMap } from '../types/rig.ts';
+
+/** A Hue entertainment channel, and the fixture whose colour it shows. */
+export type HueBinding = Settings['hue']['channels'][number];
+
+/** Reads one channel of a fixture's DMX; 0 for a channel it does not have. */
+type ChannelReader = (offset: number | undefined) => number;
 
 /**
  * Where a rendered universe goes.
@@ -24,7 +34,7 @@ import * as hue from './hue.js';
  * The applier calls configureSacn() at boot and again whenever they change.
  */
 
-let sacn = {
+let sacn: SacnOutput = {
   enabled: false,
   host: '',
   priority: 100,
@@ -34,21 +44,21 @@ let sacn = {
   interface: '',
 };
 
-function configureSacn(config) {
+function configureSacn(config: Partial<SacnOutput> | null | undefined): SacnOutput {
   sacn = { ...sacn, ...config };
   return sacn;
 }
 
-function getSacnConfig() { return { ...sacn }; }
+function getSacnConfig(): SacnOutput { return { ...sacn }; }
 
 // Hue channel bindings, cached here for the same reason as the sACN settings:
 // this is read once per rendered frame and settings.group() deep-clones.
-let hueChannels = [];
+let hueChannels: HueBinding[] = [];
 let hueLatencyMs = 0;
 
-function configureHue(config) {
-  const { channels, latencyMs, ...rest } = config || {};
-  if (Number.isFinite(latencyMs)) hueLatencyMs = Math.max(0, Math.min(500, Math.round(latencyMs)));
+function configureHue(config: Partial<Settings['hue']> | null | undefined): Settings['hue'] {
+  const { channels, latencyMs, ...rest }: Partial<Settings['hue']> = config || {};
+  if (typeof latencyMs === 'number' && Number.isFinite(latencyMs)) hueLatencyMs = Math.max(0, Math.min(500, Math.round(latencyMs)));
   if (Array.isArray(channels)) {
     hueChannels = channels
       .filter((c) => c && Number.isInteger(c.channel) && Number.isInteger(c.fixture))
@@ -59,11 +69,11 @@ function configureHue(config) {
 }
 
 /** The fixture ids a Hue channel follows. */
-function hueFollowedFixtures() {
+function hueFollowedFixtures(): Set<number> {
   return new Set(hueChannels.map((c) => c.fixture));
 }
 
-function getHueConfig() {
+function getHueConfig(): Settings['hue'] {
   return { ...hue.getConfig(), channels: hueChannels.map((c) => ({ ...c })), latencyMs: hueLatencyMs };
 }
 
@@ -76,7 +86,7 @@ const transmitter = createTransmitter();
  * and a target that is a broadcast rather than a node or this machine (see
  * artnet-nodes.js).
  */
-function artnetDiscoveryWanted() {
+function artnetDiscoveryWanted(): boolean {
   const a = state.artnet;
   return a.enabled !== false && a.discovery !== false && isBroadcastTarget(a.host) && !isLoopbackTarget(a.host);
 }
@@ -93,7 +103,7 @@ const artnetDiscovery = createDiscovery({
  * Art-Net target, the sACN settings, and how long to hold both back for Hue.
  * The engine's worker thread gets this with every frame it is sent.
  */
-function transmitConfig() {
+function transmitConfig(): TransmitConfig {
   return {
     artnet: {
       enabled: state.artnet.enabled,
@@ -108,13 +118,13 @@ function transmitConfig() {
 }
 
 /** Let the applier persist an application id the module had to resolve itself. */
-function onHueApplicationId(fn) { hue.setApplicationIdSink(fn); }
+function onHueApplicationId(fn: (id: string) => void): void { hue.setApplicationIdSink(fn); }
 
 /**
  * The sACN universe a rig universe maps to, or null outside what E1.31 allows
  * (see transmit.js). The offset defaults to the configured one.
  */
-function sacnUniverseFor(universe, offset = sacn.universeOffset) {
+function sacnUniverseFor(universe: number, offset = sacn.universeOffset): number | null {
   return mapSacnUniverse(universe, offset);
 }
 
@@ -169,7 +179,7 @@ const UV_BLUE = 0.85;
  * warm beats a brighter one that has gone neutral, and brightness is what the
  * dimmer is for — whereas nothing downstream can put a lost hue back.
  */
-function normalizeMix(r, g, b) {
+function normalizeMix(r: number, g: number, b: number): { r: number; g: number; b: number } {
   const peak = Math.max(r, g, b);
   const scale = peak > 255 ? 255 / peak : 1;
   return {
@@ -179,7 +189,7 @@ function normalizeMix(r, g, b) {
   };
 }
 
-function clamp255(value) {
+function clamp255(value: number): number {
   return value > 255 ? 255 : (value < 0 ? 0 : Math.round(value));
 }
 
@@ -196,8 +206,8 @@ function clamp255(value) {
  * to its dimmer as neutral white, so binding one to a Hue lamp still does the
  * obvious thing instead of nothing.
  */
-function hueChannelColors() {
-  const out = [];
+function hueChannelColors(): HueChannelColour[] {
+  const out: HueChannelColour[] = [];
   if (!hueChannels.length) return out;
 
   for (const binding of hueChannels) {
@@ -208,7 +218,7 @@ function hueChannelColors() {
     const profile = getProfile(fix);
     const ch = profile.channelMap;
     const base = fix.address - 1;
-    const at = (offset) => (offset === undefined ? 0 : (dmx[base + offset] || 0));
+    const at: ChannelReader = (offset) => (offset === undefined ? 0 : (dmx[base + offset] || 0));
 
     // A fixture with nothing that makes coloured light — a plain dimmer-only
     // lamp — is read as neutral white at its level. Tested against every
@@ -238,7 +248,7 @@ function hueChannelColors() {
 }
 
 /** One light's emitters folded into red, green and blue, before normalising. */
-function emitterMix(ch, at) {
+function emitterMix(ch: ChannelMap, at: ChannelReader): [number, number, number] {
   const r = at(ch.red);
   const g = at(ch.green);
   const b = at(ch.blue);
@@ -261,7 +271,7 @@ function emitterMix(ch, at) {
  * carries every channel in the entertainment area, whatever universes their
  * fixtures happen to live on. Called once per rendered frame.
  */
-function sendHue() {
+function sendHue(): boolean {
   return hue.sendFrame(hueChannelColors());
 }
 
@@ -270,12 +280,13 @@ function sendHue() {
  * protocols the frame was handed to; `immediate` skips the Hue delay line and
  * `terminate` ends the universe's sACN stream (see transmit.js).
  */
-function sendUniverse(universe, frame, { immediate = false, terminate = false } = {}) {
+function sendUniverse(universe: number, frame: Buffer, { immediate = false, terminate = false }: SendOptions = {}):
+  ('artnet' | 'sacn')[] {
   return transmitter.send(universe, frame, transmitConfig(), { immediate, terminate });
 }
 
 /** After the last universe of a frame: the ArtSync, when it is on. */
-function endFrame() {
+function endFrame(): void {
   transmitter.endFrame(transmitConfig());
 }
 

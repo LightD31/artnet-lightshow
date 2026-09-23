@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import { createClockFollower } from '../../src/server/clock-follow.js';
-import { BACKWARD_JUMP_BEATS } from '../../src/server/conductor.js';
+import { createClockFollower } from '../../src/server/clock-follow.ts';
+import { BACKWARD_JUMP_BEATS } from '../../src/server/conductor.ts';
 
 const reading = (beatPos, extra = {}) => ({ beatPos, bpm: 120, source: 'tap', epoch: 0, ...extra });
 

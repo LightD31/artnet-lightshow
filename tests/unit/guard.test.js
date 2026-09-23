@@ -4,7 +4,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert';
-import { guarded, report } from '../../src/server/guard.js';
+import { guarded, report } from '../../src/server/guard.ts';
 
 function captureErrors(fn) {
   const lines = [];

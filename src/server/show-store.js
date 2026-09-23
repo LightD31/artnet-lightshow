@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { state, universeOf, maxBrightnessOf, setDefaultUniverse } from './state.js';
-import { resizeFixtureBuffers } from './engine.js';
-import { BUILTIN_PROFILE_ID, BUILTIN_PROFILE_IDS, isBuiltinProfile, MAX_FIXTURES, universeOverflow, unitCapOverflow, registerProfile, clearNonBuiltinProfiles, listProfiles } from './profiles.js';
-import { MAX_UNIVERSES } from './universes.js';
+import { state, universeOf, maxBrightnessOf, setDefaultUniverse } from './state.ts';
+import { resizeFixtureBuffers } from './engine.ts';
+import { BUILTIN_PROFILE_ID, BUILTIN_PROFILE_IDS, isBuiltinProfile, MAX_FIXTURES, universeOverflow, unitCapOverflow, registerProfile, clearNonBuiltinProfiles, listProfiles } from './profiles.ts';
+import { MAX_UNIVERSES } from './universes.ts';
 import { showSchema, validate } from './validation.js';
 
 /**

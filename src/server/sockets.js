@@ -1,13 +1,13 @@
-import { state, getClientState, getFixture, countUniverses, universeOf } from './state.js';
+import { state, getClientState, getFixture, countUniverses, universeOf } from './state.ts';
 import { applyPatch, applyOverride, processTap } from './patch.js';
 import { overrideMessageSchema, fixtureMessageSchema, validate } from './validation.js';
-import { listProfiles, getProfile, universeOverflow, unitCapOverflow } from './profiles.js';
+import { listProfiles, getProfile, universeOverflow, unitCapOverflow } from './profiles.ts';
 import { showStore } from './show-store.js';
-import { MAX_UNIVERSES } from './universes.js';
+import { MAX_UNIVERSES } from './universes.ts';
 import { connectMidi } from './midi-connect.js';
 import { midiMap } from './midi-map.js';
 import { EnergyHold } from './energy-hold.js';
-import { ENERGY_EFFECTS } from './presets.js';
+import { ENERGY_EFFECTS } from './presets.ts';
 
 function attachSockets(io, { midi, integrations }) {
   const holds = new EnergyHold((effect) => {

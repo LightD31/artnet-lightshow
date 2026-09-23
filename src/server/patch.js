@@ -1,10 +1,10 @@
-import { state, getFixture, setDefaultUniverse } from './state.js';
-import { beginFade } from './engine.js';
-import { conductor } from './conductor.js';
+import { state, getFixture, setDefaultUniverse } from './state.ts';
+import { beginFade } from './engine.ts';
+import { conductor } from './conductor.ts';
 import { anchorStep } from '../shared/beat-clock.ts';
 import { patchSchema, overrideSchema, validate } from './validation.js';
-import { STROBE_FUNCTIONS, ENERGY_EFFECTS } from './presets.js';
-import { paletteSlots } from './palettes.js';
+import { STROBE_FUNCTIONS, ENERGY_EFFECTS } from './presets.ts';
+import { paletteSlots } from './palettes.ts';
 
 const COLOR_SLOTS = ['colorA', 'colorB', 'colorC', 'colorD'];
 

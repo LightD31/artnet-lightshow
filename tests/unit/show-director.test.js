@@ -9,7 +9,7 @@ import assert from 'node:assert';
 import { ShowDirector, ROLE_PROFILE, ACCENT_BUDGET } from '../../src/show/director.ts';
 import { INTENT, BURST, PRIORITY, accent } from '../../src/show/intents.ts';
 import { deriveEvents } from '../../src/show/musical-events.ts';
-import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.js';
+import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.ts';
 
 const BPM = 128;
 const BEAT = 60 / BPM;

@@ -1,8 +1,8 @@
-import { state, getLiveState, getDmxSnapshot, setExtrasProvider } from './state.js';
+import { state, getLiveState, getDmxSnapshot, setExtrasProvider } from './state.ts';
 import { setHooks } from './patch.js';
-import { conductor } from './conductor.js';
-import { currentRig } from './rig.js';
-import { guarded } from './guard.js';
+import { conductor } from './conductor.ts';
+import { currentRig } from './rig.ts';
+import { guarded } from './guard.ts';
 import PlaybackClock from '../playback-clock.js';
 import { cues } from './cues.js';
 import { Warmer } from './warm.js';

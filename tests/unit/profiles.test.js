@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { BUILTIN_PROFILE_ID, BUILTIN_PROFILE_IDS, HUE_COLOR_PROFILE_ID, HUE_WHITE_AMBIANCE_PROFILE_ID, HUE_WHITE_PROFILE_ID, isBuiltinProfile, getProfile, registerProfile, unregisterProfile, listProfiles, clearNonBuiltinProfiles } from '../../src/server/profiles.js';
-import { profilesRevision, unitCapOverflow, MAX_UNITS } from '../../src/server/profiles.js';
+import { BUILTIN_PROFILE_ID, BUILTIN_PROFILE_IDS, HUE_COLOR_PROFILE_ID, HUE_WHITE_AMBIANCE_PROFILE_ID, HUE_WHITE_PROFILE_ID, isBuiltinProfile, getProfile, registerProfile, unregisterProfile, listProfiles, clearNonBuiltinProfiles } from '../../src/server/profiles.ts';
+import { profilesRevision, unitCapOverflow, MAX_UNITS } from '../../src/server/profiles.ts';
 import { cellsOf, unitCount } from '../../src/shared/rig.ts';
 
 test('built-in profile is always resolvable', () => {

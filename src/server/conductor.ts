@@ -1,4 +1,5 @@
 import { beatPositionAt, localBpm } from '../shared/beat-clock.ts';
+import type { BeatGrid } from '../shared/beat-clock.ts';
 
 /**
  * The Conductor: the one clock every pattern keeps time by.
@@ -38,10 +39,67 @@ const FORWARD_JUMP_BEATS = 2;
 // Longer than any gap between two frames, shorter than a beat at any tempo.
 const STALL_MS = 200;
 
-const clampBpm = (bpm) => Math.max(20, Math.min(300, bpm));
+const clampBpm = (bpm: number): number => Math.max(20, Math.min(300, bpm));
+
+/** What the clock is locked to. */
+export type ClockSource = 'auto' | 'cdj' | 'track' | 'tap';
+
+/** Where the music is, in beats, and at what tempo. */
+export interface ClockReading {
+  beatPos: number;
+  bpm: number;
+  source: ClockSource;
+  /** The beat the running scene was scheduled on, when the source knows it. */
+  anchorBeat?: number;
+}
+
+/** A reading, with the epoch that changes at every discontinuity. */
+export interface MusicalTime extends ClockReading {
+  epoch: number;
+}
+
+/** The auto show's clock while it runs. */
+export interface AutoClock {
+  grid: BeatGrid | null;
+  positionMs: number;
+  /** When the scene now playing was scheduled, in track time. */
+  anchorMs?: number | null;
+}
+
+/** A master deck's clock while it plays. */
+export interface DeckClock {
+  beatPos: number;
+  bpm?: number;
+}
+
+interface TrackLock {
+  key: string | null | undefined;
+  grid: BeatGrid;
+  positionMs: () => number;
+}
+
+interface FreeClock {
+  at: number;
+  beatPos: number;
+  bpm: number;
+  running: boolean;
+}
 
 class Conductor {
-  constructor({ now = () => performance.now(), bpm = 120 } = {}) {
+  declare _now: () => number;
+  declare _free: FreeClock;
+  declare _autoSource: () => AutoClock | null;
+  declare _prolinkSource: () => DeckClock | null;
+  declare _track: TrackLock | null;
+  declare _override: boolean;
+  declare _last: (ClockReading & { t: number }) | null;
+  declare _epoch: number;
+  declare _onTempo: (bpm: number) => void;
+  declare _reportedBpm: number | null;
+  declare _still: Record<string, { positionMs: number; since: number }>;
+  declare _tookOver: boolean;
+
+  constructor({ now = () => performance.now(), bpm = 120 }: { now?: () => number; bpm?: number } = {}) {
     this._now = now;
     this._free = { at: now(), beatPos: 0, bpm, running: true };
     this._autoSource = () => null;
@@ -60,28 +118,32 @@ class Conductor {
    * `fn()` → `{ grid, positionMs, anchorMs? }` while the auto show is running,
    * else null. `anchorMs` is when the scene now playing was scheduled.
    */
-  setAutoSource(fn) { this._autoSource = typeof fn === 'function' ? fn : () => null; }
+  setAutoSource(fn: (() => AutoClock | null) | null | undefined): void { this._autoSource = typeof fn === 'function' ? fn : () => null; }
 
   /** `fn()` → `{ beatPos, bpm }` while a master deck is playing, else null. */
-  setProlinkSource(fn) { this._prolinkSource = typeof fn === 'function' ? fn : () => null; }
+  setProlinkSource(fn: (() => DeckClock | null) | null | undefined): void { this._prolinkSource = typeof fn === 'function' ? fn : () => null; }
 
   /**
    * Lock manual patterns to a playing track. A different track clears any
    * override the operator set on the last one; the same track keeps it.
    */
-  setTrack({ key, grid, positionMs } = {}) {
+  setTrack({ key, grid, positionMs }: {
+    key?: string | null;
+    grid?: BeatGrid | null;
+    positionMs?: () => number;
+  } = {}): void {
     if (!grid || typeof positionMs !== 'function') return this.clearTrack({ key });
     if (!this._track || this._track.key !== key) this._override = false;
     this._track = { key, grid, positionMs };
   }
 
   /** No lockable track is playing. `key` names the track that is, if any. */
-  clearTrack({ key = null } = {}) {
+  clearTrack({ key = null }: { key?: string | null } = {}): void {
     if (!this._track || this._track.key !== key) this._override = false;
     this._track = null;
   }
 
-  get trackKey() { return this._track ? this._track.key : null; }
+  get trackKey(): string | null | undefined { return this._track ? this._track.key : null; }
 
   /**
    * Called with the clock's tempo, to a hundredth, whenever it moves by a
@@ -90,9 +152,9 @@ class Conductor {
    * server keeps its BPM read-out on it, so a ±1 nudge moves from the tempo
    * the rig is actually running at.
    */
-  onTempo(fn) { this._onTempo = typeof fn === 'function' ? fn : () => {}; }
+  onTempo(fn: ((bpm: number) => void) | null | undefined): void { this._onTempo = typeof fn === 'function' ? fn : () => {}; }
 
-  _freeBeatAt(t) {
+  _freeBeatAt(t: number): number {
     const f = this._free;
     return f.running ? f.beatPos + ((t - f.at) / 60000) * f.bpm : f.beatPos;
   }
@@ -103,7 +165,7 @@ class Conductor {
    * than jumping it. `manual` (the default) means a person set it, which takes
    * the tempo back from a locked track; a tempo reported by a CDJ does not.
    */
-  setBpm(bpm, { manual = true } = {}) {
+  setBpm(bpm: unknown, { manual = true } = {}): void {
     const value = Number(bpm);
     if (!Number.isFinite(value)) return;
     const t = this._now();
@@ -122,7 +184,7 @@ class Conductor {
    * lands on the tap as it always has, and a locked track hands the tempo over
    * — at the song's tempo, until a second tap says otherwise.
    */
-  tap() {
+  tap(): void {
     const t = this._now();
     const current = this._current(t);
     const takesOver = current.source === 'track';
@@ -137,13 +199,13 @@ class Conductor {
   }
 
   /** Stopping the patterns freezes the free clock where it is. */
-  setRunning(running) {
+  setRunning(running: unknown): void {
     const t = this._now();
     this._free = { ...this._free, at: t, beatPos: this._freeBeatAt(t), running: !!running };
   }
 
   /** Whether a grid source's position is still moving, i.e. not paused. */
-  _moving(source, positionMs, t) {
+  _moving(source: string, positionMs: number, t: number): boolean {
     const still = this._still[source];
     if (!still || Math.abs(positionMs - still.positionMs) > 0.5) {
       this._still[source] = { positionMs, since: t };
@@ -157,8 +219,9 @@ class Conductor {
    * paused. `anchorMs`, when the source knows it, is when the running scene
    * was scheduled: carried as `anchorBeat` for re-anchoring after a jump.
    */
-  _gridReading(source, grid, positionMs, t, anchorMs = null) {
-    if (!grid || !Number.isFinite(positionMs)) {
+  _gridReading(source: 'auto' | 'track', grid: BeatGrid | null | undefined, positionMs: number | undefined,
+    t: number, anchorMs: number | null | undefined = null): ClockReading | null {
+    if (!grid || typeof positionMs !== 'number' || !Number.isFinite(positionMs)) {
       // Forget where it stood, so a show started later is not judged paused
       // for landing on the same position the last one stopped at.
       delete this._still[source];
@@ -166,19 +229,20 @@ class Conductor {
     }
     const beatPos = beatPositionAt(grid, positionMs);
     if (!Number.isFinite(beatPos) || !this._moving(source, positionMs, t)) return null;
-    const reading = { beatPos, bpm: localBpm(grid, positionMs), source };
-    if (Number.isFinite(anchorMs)) reading.anchorBeat = beatPositionAt(grid, anchorMs);
+    const reading: ClockReading = { beatPos, bpm: localBpm(grid, positionMs), source };
+    if (typeof anchorMs === 'number' && Number.isFinite(anchorMs)) reading.anchorBeat = beatPositionAt(grid, anchorMs);
     return reading;
   }
 
   /** The reading from the best source that answers. */
-  _current(t) {
-    const auto = this._autoSource() || {};
+  _current(t: number): ClockReading {
+    const auto: Partial<AutoClock> = this._autoSource() || {};
     const fromAuto = this._gridReading('auto', auto.grid, auto.positionMs, t, auto.anchorMs);
     if (fromAuto) return fromAuto;
     const cdj = this._prolinkSource();
     if (cdj && Number.isFinite(cdj.beatPos)) {
-      return { beatPos: cdj.beatPos, bpm: Number.isFinite(cdj.bpm) && cdj.bpm > 0 ? cdj.bpm : this._free.bpm, source: 'cdj' };
+      const bpm = cdj.bpm !== undefined && Number.isFinite(cdj.bpm) && cdj.bpm > 0 ? cdj.bpm : this._free.bpm;
+      return { beatPos: cdj.beatPos, bpm, source: 'cdj' };
     }
     const track = this._track && !this._override ? this._track : null;
     const fromTrack = this._gridReading('track', track && track.grid, track ? track.positionMs() : NaN, t);
@@ -198,7 +262,7 @@ class Conductor {
    * counting (the auto show stopping on a track the clock then follows on its
    * own) does not, so the chase does not restart for it.
    */
-  now() {
+  now(): MusicalTime {
     const t = this._now();
     let reading = this._current(t);
     const last = this._last;
@@ -230,16 +294,16 @@ class Conductor {
    * a pattern to the moment its scene was scheduled rather than the moment it
    * happened to fire. Null when no grid is driving.
    */
-  beatAtTrackMs(ms) {
-    if (!Number.isFinite(ms)) return null;
+  beatAtTrackMs(ms: unknown): number | null {
+    if (typeof ms !== 'number' || !Number.isFinite(ms)) return null;
     const { source } = this._current(this._now());
-    if (source === 'auto') return beatPositionAt(this._autoSource().grid, ms);
-    if (source === 'track') return beatPositionAt(this._track.grid, ms);
+    if (source === 'auto') return beatPositionAt(this._autoSource()?.grid, ms);
+    if (source === 'track') return beatPositionAt(this._track?.grid, ms);
     return null;
   }
 
   /** What the rig is locked to, for the UI: `{ source, bpm }`. */
-  status() {
+  status(): { source: ClockSource; bpm: number } {
     const reading = this._last || this._current(this._now());
     return { source: reading.source, bpm: Math.round(reading.bpm * 10) / 10 };
   }

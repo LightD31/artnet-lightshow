@@ -52,24 +52,25 @@ export type LayerSet = (unit: number, colour: Colour, dim: number, strobe: numbe
  * @param rig    from shared/rig.js buildRig
  * @param look   { pattern, colors: [A, B, C, D], split, pixelMap }
  * @param clock  { beatPos, step, anchor, division, phase, expression,
- *                 dynamicsOn, fixtureCount, twinkle }
+ *                 dynamicsOn, fixtureCount, twinkle }, or null to paint only
+ *                 the wash
  * @param set    (unit, colour, dim, strobe) => void
  * @param opts   skipPattern: leave the pattern's units as they are (a random
  *               pattern between re-rolls) and paint only the wash
  */
-function renderLayer(rig: Rig, look: LayerLook, clock: LayerClock, set: LayerSet, { skipPattern = false } = {}): void {
+function renderLayer(rig: Rig, look: LayerLook, clock: LayerClock | null, set: LayerSet, { skipPattern = false } = {}): void {
   const { pattern, colors } = look;
   const layout = rig.layout(look.split, look.pixelMap);
   const unitTotal = rig.units.length;
 
-  if (pattern === 'fade' || pattern === 'hit') {
+  if (clock && (pattern === 'fade' || pattern === 'hit')) {
     // The two whole-rig envelopes: an eight-beat breath from the scene's
     // anchor, and a decay across every step.
     const bright = pattern === 'fade'
       ? fadeBrightness(fadePhase(clock.beatPos, clock.anchor, clock.division))
       : hitBrightness(hitPhase(clock.beatPos, clock.division));
     for (let u = 0; u < unitTotal; u++) set(u, colors[0], bright, 0);
-  } else if (!skipPattern) {
+  } else if (clock && !skipPattern) {
     const fn = PATTERN_FUNCS[pattern];
     if (fn) fn(patternContext(rig, layout, look, clock, set));
   }

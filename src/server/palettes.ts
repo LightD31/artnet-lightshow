@@ -1,4 +1,4 @@
-import { COLOR_PRESETS } from './presets.js';
+import { COLOR_PRESETS } from './presets.ts';
 
 /**
  * Named colour looks, shared by the auto show and manual mode.
@@ -38,7 +38,10 @@ import { COLOR_PRESETS } from './presets.js';
 
 // ── Tetrads (4 colours) ─────────────────────────────────────────────────────
 // [dominant, contrast, accent, lift] — see the note above.
-const TETRADS = {
+/** A bank: look id to colour-preset indices. */
+export type PaletteBank = Record<string, number[]>;
+
+const TETRADS: PaletteBank = {
   synthwave:   [8, 4, 6, 12],  // Magenta / Cyan / Congo / Moonlight — the neon pair, cooled off
   sunsetDrive: [1, 6, 8, 9],   // Amber / Congo / Magenta / Warm White — last light against night sky
   solarPunch:  [0, 5, 2, 10],  // Red / Blue / Lime / Cool White — a primary triad, maximum separation
@@ -81,7 +84,7 @@ const TETRADS = {
 // Mostly [dominant, contrast, accent] — the lift is what a third lamp can
 // least afford to spend itself on. `desert` and `lunar` keep a pale entry
 // because that *is* their look.
-const TRIADS = {
+const TRIADS: PaletteBank = {
   synthwave:   [8, 4, 6],     // Magenta / Cyan / Congo
   sunsetDrive: [1, 6, 8],     // Amber / Congo / Magenta
   solarPunch:  [0, 5, 2],     // Red / Blue / Lime
@@ -117,7 +120,7 @@ const TRIADS = {
 // colour the tetrad does not use — `desert` takes Blue rather than its pale
 // Moonlight, `royal` drops to two of its four — because a tint cannot hold up
 // half a rig on its own.
-const DUOS = {
+const DUOS: PaletteBank = {
   synthwave:   [8, 4],        // Magenta / Cyan
   sunsetDrive: [1, 6],        // Amber / Congo
   solarPunch:  [0, 5],        // Red / Blue
@@ -147,7 +150,7 @@ const DUOS = {
 };
 
 /** Look up the right bank for a palette size. 4 is the default. */
-function paletteBankForSize(size) {
+function paletteBankForSize(size: number): PaletteBank {
   if (size === 2) return DUOS;
   if (size === 3) return TRIADS;
   return TETRADS;
@@ -155,7 +158,7 @@ function paletteBankForSize(size) {
 
 // Display names for the picker. The bank keys are camelCase identifiers; these
 // are what the operator reads on the button.
-const PALETTE_NAMES = {
+const PALETTE_NAMES: Record<string, string> = {
   synthwave:   'Synthwave',
   sunsetDrive: 'Sunset Drive',
   solarPunch:  'Solar Punch',
@@ -202,7 +205,7 @@ const PALETTE_IDS = PALETTES.map((p) => p.id);
  * not a look we know. Indices are clamped to the preset table so a bank entry
  * can never hand out something the engine would read past the end of.
  */
-function paletteColors(id, size = 4) {
+function paletteColors(id: string, size = 4): number[] | null {
   const bank = paletteBankForSize(size);
   const raw = bank[id];
   if (!Array.isArray(raw) || !raw.length) return null;
@@ -218,7 +221,7 @@ function paletteColors(id, size = 4) {
  * have something in every slot — while the look stays the two or three colours
  * that were chosen to sit together.
  */
-function paletteSlots(id, size = 4) {
+function paletteSlots(id: string, size = 4): { colorA: number; colorB: number; colorC: number; colorD: number } | null {
   const colors = paletteColors(id, size);
   if (!colors) return null;
   return {

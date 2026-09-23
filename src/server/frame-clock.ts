@@ -29,29 +29,52 @@ const MAX_BEHIND_FRAMES = 2;
 const STATS_WINDOW_S = 60;
 
 /** Milliseconds on the process-wide monotonic clock. */
-function hrtimeMs() {
+function hrtimeMs(): number {
   return Number(process.hrtime.bigint()) / 1e6;
 }
 
 /** The index of the first deadline at or after `t`. */
-function nextIndex(t, epoch, phase, period) {
+function nextIndex(t: number, epoch: number, phase: number, period: number): number {
   return Math.max(0, Math.ceil((t - epoch - phase) / period - 1e-9));
 }
 
 /** The value at fraction `q` of an ascending list. */
-function quantile(sorted, q) {
+function quantile(sorted: readonly number[], q: number): number {
   if (!sorted.length) return 0;
   return sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
 }
 
-const round2 = (v) => Math.round(v * 100) / 100;
+const round2 = (v: number): number => Math.round(v * 100) / 100;
 
 /**
  * How the frames have been going: how late each went out against its
  * deadline, and how long each took. A fixed ring, so a show that runs all
  * night costs the same as one that started a minute ago.
  */
+/** Percentiles of a timing, in milliseconds. */
+export interface Spread {
+  p50: number;
+  p95: number;
+  max: number;
+}
+
+export interface FrameSummary {
+  frames: number;
+  lateMs: Spread;
+  renderMs: Spread;
+  lateFrames: number;
+  skippedFrames: number;
+}
+
 class FrameStats {
+  declare periodMs: number;
+  declare _size: number;
+  declare _late: Float64Array;
+  declare _work: Float64Array;
+  declare _count: number;
+  declare _next: number;
+  declare skipped: number;
+
   constructor(periodMs = FRAME_MS, windowS = STATS_WINDOW_S) {
     this.periodMs = periodMs;
     this._size = Math.max(1, Math.round((windowS * 1000) / periodMs));
@@ -62,7 +85,7 @@ class FrameStats {
     this.skipped = 0;
   }
 
-  record(lateMs, workMs) {
+  record(lateMs: number, workMs: number): void {
     this._late[this._next] = Math.max(0, lateMs);
     this._work[this._next] = Math.max(0, workMs);
     this._next = (this._next + 1) % this._size;
@@ -70,7 +93,7 @@ class FrameStats {
   }
 
   /** p50/p95/max of lateness and render time, and the frames that went out late. */
-  summary() {
+  summary(): FrameSummary {
     const n = this._count;
     const late = Array.from(this._late.subarray(0, n)).sort((a, b) => a - b);
     const work = Array.from(this._work.subarray(0, n)).sort((a, b) => a - b);
@@ -98,6 +121,15 @@ class FrameStats {
  * clock does not move while the test ticks) the loop runs at exactly the
  * period, as an interval would.
  */
+/** A running frame loop (see createTicker). */
+export interface Ticker {
+  stats: FrameStats;
+  periodMs: number;
+  start(): void;
+  stop(): void;
+  readonly running: boolean;
+}
+
 function createTicker({
   onTick,
   periodMs = FRAME_MS,
@@ -105,18 +137,25 @@ function createTicker({
   epochMs = null,
   now = hrtimeMs,
   stats = new FrameStats(periodMs),
-} = {}) {
-  let timer = null;
+}: {
+  onTick: (dueMs: number, nowMs: number) => void;
+  periodMs?: number;
+  phaseMs?: number;
+  epochMs?: number | null;
+  now?: () => number;
+  stats?: FrameStats;
+}): Ticker {
+  let timer: ReturnType<typeof setTimeout> | null = null;
   let index = 0;
   let epoch = 0;
   let running = false;
 
-  function arm(from) {
+  function arm(from: number): void {
     const due = epoch + phaseMs + index * periodMs;
     timer = setTimeout(fire, Math.max(0, due - from));
   }
 
-  function fire() {
+  function fire(): void {
     timer = null;
     let due = epoch + phaseMs + index * periodMs;
     const t = now();
@@ -144,7 +183,7 @@ function createTicker({
       if (running) return;
       running = true;
       const t = now();
-      epoch = Number.isFinite(epochMs) ? epochMs : t;
+      epoch = typeof epochMs === 'number' && Number.isFinite(epochMs) ? epochMs : t;
       index = nextIndex(t, epoch, phaseMs, periodMs);
       arm(t);
     },

@@ -4,11 +4,11 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import { createRenderer, softStrobeHz, SOFT_STROBE_MAX_HZ } from '../../src/server/renderer.js';
-import * as universes from '../../src/server/universes.js';
-import { getProfile, profilesRevision, registerProfile, unregisterProfile, BUILTIN_PROFILE_ID, HUE_COLOR_PROFILE_ID } from '../../src/server/profiles.js';
+import { createRenderer, softStrobeHz, SOFT_STROBE_MAX_HZ } from '../../src/server/renderer.ts';
+import * as universes from '../../src/server/universes.ts';
+import { getProfile, profilesRevision, registerProfile, unregisterProfile, BUILTIN_PROFILE_ID, HUE_COLOR_PROFILE_ID } from '../../src/server/profiles.ts';
 import { barProfile } from '../../src/server/bar-profile.js';
-import { FRAME_MS } from '../../src/server/frame-clock.js';
+import { FRAME_MS } from '../../src/server/frame-clock.ts';
 
 const BAR = barProfile({ id: 'soft-strobe-bar', name: 'No-strobe Bar', cells: 4, firstChannel: 2, order: 'RGB', dimmer: 1 });
 

@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { classifyAnalyzeSource, resolveLocalPath } from '../../src/server/routes.js';
-import { settings } from '../../src/server/settings.js';
+import { settings } from '../../src/server/settings.ts';
 
 const PLAYING = {
   trackId: 'sp1', isrc: 'GBAYE0601498', name: 'Crazy', artist: 'Gnarls Barkley',

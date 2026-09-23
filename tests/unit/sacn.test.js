@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import { PACKET_SIZE, buildE131Packet, multicastAddress, cidFromUuid, generateCid } from '../../src/server/sacn.js';
+import { PACKET_SIZE, buildE131Packet, multicastAddress, cidFromUuid, generateCid } from '../../src/server/sacn.ts';
 
 const CID = cidFromUuid('7b2d4c1e-9f30-4a55-8c11-a0b3d5e7f902');
 
@@ -93,7 +93,7 @@ test('CIDs come from UUIDs, and junk is rejected rather than half-parsed', () =>
 
 // ── Stream termination and universe discovery ──────────────────────────────
 
-import { buildDiscoveryPackets, sendSacn, OPTION_STREAM_TERMINATED, TERMINATION_PACKETS, DISCOVERY_UNIVERSE, PORT } from '../../src/server/sacn.js';
+import { buildDiscoveryPackets, sendSacn, OPTION_STREAM_TERMINATED, TERMINATION_PACKETS, DISCOVERY_UNIVERSE, PORT } from '../../src/server/sacn.ts';
 
 test('a terminated packet sets options bit 6 and nothing else', () => {
   assert.strictEqual(build({ terminated: true })[112], OPTION_STREAM_TERMINATED);
@@ -157,7 +157,7 @@ test('a terminated stream is the frame, then three stream-terminated packets', a
 
 // ── The transmitter ends streams and announces them ─────────────────────────
 
-import { createTransmitter } from '../../src/server/transmit.js';
+import { createTransmitter } from '../../src/server/transmit.ts';
 import dgram from 'node:dgram';
 
 function sacnRecorder(clock) {

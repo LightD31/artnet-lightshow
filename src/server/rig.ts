@@ -9,15 +9,17 @@
  * short signature once a frame costs a few microseconds.
  */
 
-import { state } from './state.js';
-import { getProfile, profilesRevision } from './profiles.js';
+import { state } from './state.ts';
+import { getProfile, profilesRevision } from './profiles.ts';
 import { buildRig, rigSignature } from '../shared/rig.ts';
+import type { Rig } from '../shared/rig.ts';
+import type { Fixture } from '../types/rig.ts';
 
-let cached = null;
+let cached: Rig<Fixture> | null = null;
 let cachedKey = '';
 
 /** The rig as it stands now. */
-function currentRig() {
+function currentRig(): Rig<Fixture> {
   const key = rigSignature(state.fixtures, profilesRevision());
   if (!cached || key !== cachedKey || cached.fixtures !== state.fixtures) {
     cached = buildRig(state.fixtures, getProfile);
@@ -27,7 +29,7 @@ function currentRig() {
 }
 
 /** Forget the cached rig, so the next frame builds it afresh. */
-function invalidateRig() {
+function invalidateRig(): void {
   cached = null;
 }
 

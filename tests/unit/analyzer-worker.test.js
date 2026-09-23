@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert';
 import path from 'node:path';
 import AnalyzerWorker from '../../src/analyzer-worker.js';
-import { settings } from '../../src/server/settings.js';
+import { settings } from '../../src/server/settings.ts';
 
 const FAKE = path.join(import.meta.dirname, '..', 'helpers', 'fake-analyzer.js');
 const worker = (mode, opts) => {

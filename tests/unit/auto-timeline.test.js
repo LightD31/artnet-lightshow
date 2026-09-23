@@ -14,7 +14,7 @@ import test from 'node:test';
 import assert from 'node:assert';
 
 import AutoShow from '../../src/auto-show.js';
-import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.js';
+import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.ts';
 import { patchSchema } from '../../src/server/validation.js';
 
 /**

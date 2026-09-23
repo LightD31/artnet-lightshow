@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import { state } from '../../src/server/state.js';
+import { state } from '../../src/server/state.ts';
 import { snapshotShow, applyShow } from '../../src/server/show-store.js';
 import { captureLook, recallLook } from '../../src/server/cues.js';
-import { stopEngine } from '../../src/server/engine.js';
+import { stopEngine } from '../../src/server/engine.ts';
 
 // These tests inspect state and DMX buffers, never the physical rig.
 state.artnet.enabled = false;

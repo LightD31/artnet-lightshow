@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import * as output from '../../src/server/output.js';
+import * as output from '../../src/server/output.ts';
 
 // Art-Net counts universes from 0, sACN from 1. Getting the offset wrong sends
 // every fixture one universe away from where the console is listening.
@@ -42,8 +42,8 @@ test('configureSacn merges over the defaults and reads back', () => {
 // Hue lamp obey the dimmer, the trim, the master and blackout for free — so
 // these tests read the buffer the same way the real path does.
 
-import * as universes from '../../src/server/universes.js';
-import { state, universeOf } from '../../src/server/state.js';
+import * as universes from '../../src/server/universes.ts';
+import { state, universeOf } from '../../src/server/state.ts';
 
 // Builtin profile offsets, from the fixture at address 1 (base 0).
 const RED = 3, GREEN = 4, BLUE = 5, WHITE = 6, AMBER = 7, UV = 8;
@@ -199,7 +199,7 @@ test('malformed bindings are dropped at configure time', () => {
 // These check that such a fixture reaches the bridge correctly, since the whole
 // point of the profiles is that no special case is needed anywhere.
 
-import { HUE_COLOR_PROFILE_ID, HUE_WHITE_PROFILE_ID, getProfile } from '../../src/server/profiles.js';
+import { HUE_COLOR_PROFILE_ID, HUE_WHITE_PROFILE_ID, getProfile } from '../../src/server/profiles.ts';
 
 /** Temporarily move a fixture onto another profile. */
 function onProfile(fixture, profileId, fn) {
@@ -272,7 +272,7 @@ test('pars and Hue lamps are read through their own profiles in one frame', () =
 // the warm and cool dies fold into the RGB that goes out — at their real colour
 // temperature, which is what keeps a warm wash warm.
 
-import { HUE_WHITE_AMBIANCE_PROFILE_ID } from '../../src/server/profiles.js';
+import { HUE_WHITE_AMBIANCE_PROFILE_ID } from '../../src/server/profiles.ts';
 import dgram from 'node:dgram';
 
 test('the warm white die folds in warm, not neutral and not orange', () => {

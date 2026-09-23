@@ -1,5 +1,96 @@
 import https from 'node:https';
+import type { IncomingHttpHeaders } from 'node:http';
 import { dtls } from 'node-dtls-client';
+import { messageOf } from '../errors.ts';
+
+/** What the Hue output needs to stream (the settings' hue group, less the channel map). */
+export interface HueConfig {
+  enabled: boolean;
+  host: string;
+  username: string;
+  clientKey: string;
+  applicationId: string;
+  entertainmentId: string;
+}
+
+/** One entertainment channel's colour, 0–255 a component. */
+export interface HueChannelColour {
+  id: number;
+  r: number;
+  g: number;
+  b: number;
+}
+
+export type HueState = 'idle' | 'connecting' | 'streaming' | 'failed';
+
+export interface HueStatus {
+  status: HueState;
+  enabled: boolean;
+  configured: boolean;
+  host: string;
+  entertainmentId: string;
+  error: string | null;
+}
+
+/** An entertainment area, as the settings page lists it. */
+export interface EntertainmentArea {
+  id: string;
+  name: string;
+  status: string;
+  channels: { id: number; name: string; position: unknown }[];
+}
+
+export type PairResult =
+  | { ok: true; username: string; clientKey: string; applicationId: string }
+  | { ok: false; error: string; pressLink: boolean };
+
+interface BridgeRequest {
+  method?: string;
+  path: string;
+  key?: string;
+  body?: unknown;
+  withHeaders?: boolean;
+}
+
+// The bits of the bridge's CLIP v2 answers this module reads. They come off
+// the network, so every field is treated as possibly missing.
+interface ClipList<T> {
+  data?: T[];
+}
+
+interface ClipDevice {
+  id: string;
+  metadata?: { name?: string };
+  product_data?: { product_name?: string };
+}
+
+interface ClipService {
+  id: string;
+  owner?: { rid?: string };
+}
+
+interface ClipChannel {
+  channel_id: number;
+  position?: unknown;
+  members?: { service?: { rid?: string } }[];
+}
+
+interface ClipEntertainmentConfig {
+  id: string;
+  metadata?: { name?: string };
+  status?: string;
+  channels?: ClipChannel[];
+}
+
+type PairReply = {
+  success?: { username?: string; clientkey?: string };
+  error?: { type?: number; description?: string };
+}[];
+
+interface Lamp {
+  name: string;
+  product: string;
+}
 
 /**
  * Philips Hue Entertainment output.
@@ -41,7 +132,7 @@ const STREAM_PORT = 2100;
 // library advertise everything keeps the ClientHello small and the handshake
 // predictable — and if a firmware update ever drops it, the failure is a clear
 // handshake error rather than a silently renegotiated weaker suite.
-const CIPHER_SUITE = 'TLS_PSK_WITH_AES_128_GCM_SHA256';
+const CIPHER_SUITE = 'TLS_PSK_WITH_AES_128_GCM_SHA256' as const;
 
 // A bridge on the LAN answers in milliseconds. This is long enough to cover a
 // busy bridge and short enough that a wrong IP fails while the operator is
@@ -88,7 +179,10 @@ const MAX_CHANNELS = 20;
  * the Philips root CA and matching the bridge ID) buys nothing here: the
  * credentials this carries are bridge-issued and only control lamps.
  */
-function bridgeRequest(host, { method = 'GET', path, key, body, withHeaders = false } = {}) {
+function bridgeRequest(host: string, options: BridgeRequest & { withHeaders: true }):
+  Promise<{ body: unknown; headers: IncomingHttpHeaders }>;
+function bridgeRequest(host: string, options: BridgeRequest): Promise<unknown>;
+function bridgeRequest(host: string, { method = 'GET', path, key, body, withHeaders = false }: BridgeRequest): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const payload = body === undefined ? null : Buffer.from(JSON.stringify(body));
     const req = https.request({
@@ -104,8 +198,8 @@ function bridgeRequest(host, { method = 'GET', path, key, body, withHeaders = fa
       },
       timeout: REST_TIMEOUT_MS,
     }, (res) => {
-      const chunks = [];
-      res.on('data', (c) => chunks.push(c));
+      const chunks: Buffer[] = [];
+      res.on('data', (c: Buffer) => chunks.push(c));
       res.on('end', () => {
         const text = Buffer.concat(chunks).toString('utf8');
         let parsed;
@@ -115,7 +209,7 @@ function bridgeRequest(host, { method = 'GET', path, key, body, withHeaders = fa
           reject(new Error(`bridge returned ${res.statusCode} with a non-JSON body`));
           return;
         }
-        if (res.statusCode >= 400) {
+        if ((res.statusCode ?? 0) >= 400) {
           reject(new Error(describeClipError(parsed) || `bridge returned HTTP ${res.statusCode}`));
           return;
         }
@@ -131,8 +225,9 @@ function bridgeRequest(host, { method = 'GET', path, key, body, withHeaders = fa
 }
 
 /** The first human-readable error out of a CLIP v2 response, if there is one. */
-function describeClipError(parsed) {
-  const errors = parsed && Array.isArray(parsed.errors) ? parsed.errors : [];
+function describeClipError(parsed: unknown): string | null {
+  const list = parsed && typeof parsed === 'object' ? (parsed as { errors?: unknown }).errors : null;
+  const errors: { description?: string }[] = Array.isArray(list) ? list : [];
   if (errors.length && errors[0].description) return errors[0].description;
   return null;
 }
@@ -144,20 +239,20 @@ function describeClipError(parsed) {
  * that have checked in, and a show network usually has neither. A failure here
  * is not an error, it just means the operator types the IP in.
  */
-async function discoverBridges() {
+async function discoverBridges(): Promise<{ bridges: { id: string; host: string }[]; error: string | null }> {
   try {
     const res = await fetch(DISCOVERY_URL, { signal: AbortSignal.timeout(REST_TIMEOUT_MS) });
     if (!res.ok) return { bridges: [], error: `discovery service returned HTTP ${res.status}` };
-    const list = await res.json();
+    const list: unknown = await res.json();
     if (!Array.isArray(list)) return { bridges: [], error: 'discovery service returned an unexpected body' };
     return {
       bridges: list
-        .filter((b) => b && b.internalipaddress)
+        .filter((b): b is { id?: string; internalipaddress: string } => b && b.internalipaddress)
         .map((b) => ({ id: b.id || '', host: b.internalipaddress })),
       error: null,
     };
   } catch (err) {
-    return { bridges: [], error: err.message };
+    return { bridges: [], error: messageOf(err) };
   }
 }
 
@@ -172,8 +267,8 @@ async function discoverBridges() {
  *
  * Returns { ok: true, username, clientKey } or { ok: false, error, pressLink }.
  */
-async function pair(host, { label = 'lightshow' } = {}) {
-  let parsed;
+async function pair(host: string, { label = 'lightshow' } = {}): Promise<PairResult> {
+  let parsed: unknown;
   try {
     // The old /api endpoint, not CLIP v2: pairing is the one call that by
     // definition cannot carry an application key, and v2 has no unauthenticated
@@ -184,10 +279,10 @@ async function pair(host, { label = 'lightshow' } = {}) {
       body: { devicetype: `${DEVICE_TYPE}#${label}`.slice(0, 62), generateclientkey: true },
     });
   } catch (err) {
-    return { ok: false, error: err.message, pressLink: false };
+    return { ok: false, error: messageOf(err), pressLink: false };
   }
 
-  const first = Array.isArray(parsed) ? parsed[0] : null;
+  const first = Array.isArray(parsed) ? (parsed as PairReply)[0] : null;
   if (first && first.success && first.success.username) {
     const clientKey = first.success.clientkey || '';
     if (!clientKey) {
@@ -235,10 +330,11 @@ async function pair(host, { label = 'lightshow' } = {}) {
  * is a bridge that still accepts the application key as the identity, and that
  * fallback should not be an error.
  */
-async function fetchApplicationId(host, key) {
+async function fetchApplicationId(host: string, key: string): Promise<string | null> {
   try {
     const { headers } = await bridgeRequest(host, { path: '/auth/v1', key, withHeaders: true });
-    return headers['hue-application-id'] || null;
+    const id = headers['hue-application-id'];
+    return (Array.isArray(id) ? id[0] : id) || null;
   } catch (_) {
     return null;
   }
@@ -261,15 +357,15 @@ async function fetchApplicationId(host, key) {
  * channel ids are the truth, so a bridge that will not answer these should cost
  * a plainer UI rather than an error.
  */
-async function fetchLampNames(host, key) {
-  const names = new Map();
+async function fetchLampNames(host: string, key: string): Promise<Map<string, Lamp>> {
+  const names = new Map<string, Lamp>();
   try {
     const [services, devices] = await Promise.all([
-      bridgeRequest(host, { path: '/clip/v2/resource/entertainment', key }),
-      bridgeRequest(host, { path: '/clip/v2/resource/device', key }),
+      bridgeRequest(host, { path: '/clip/v2/resource/entertainment', key }) as Promise<ClipList<ClipService> | null>,
+      bridgeRequest(host, { path: '/clip/v2/resource/device', key }) as Promise<ClipList<ClipDevice> | null>,
     ]);
 
-    const deviceById = new Map();
+    const deviceById = new Map<string, Lamp>();
     for (const device of (devices && devices.data) || []) {
       deviceById.set(device.id, {
         name: (device.metadata && device.metadata.name) || '',
@@ -297,13 +393,14 @@ async function fetchLampNames(host, key) {
  * so a device appearing more than once in the area has its channels numbered in
  * the order the area lists them.
  */
-function nameChannel(channel, names, segmentCounts, seen) {
-  const labels = [];
+function nameChannel(channel: ClipChannel, names: Map<string, Lamp>, segmentCounts: Map<string, number>,
+  seen: Map<string, number>): string {
+  const labels: string[] = [];
   for (const member of channel.members || []) {
     const rid = member.service && member.service.rid;
     const lamp = rid ? names.get(rid) : null;
-    if (!lamp) continue;
-    if (segmentCounts.get(rid) > 1) {
+    if (!rid || !lamp) continue;
+    if ((segmentCounts.get(rid) || 0) > 1) {
       const index = (seen.get(rid) || 0) + 1;
       seen.set(rid, index);
       labels.push(`${lamp.name} ${index}`);
@@ -323,25 +420,25 @@ function nameChannel(channel, names, segmentCounts, seen) {
  * channel layout is a property of the room (which lamp is where) and the app is
  * where someone has already placed them on a floor plan.
  */
-async function listEntertainmentConfigs(host, key) {
+async function listEntertainmentConfigs(host: string, key: string): Promise<EntertainmentArea[]> {
   const parsed = await bridgeRequest(host, {
     path: '/clip/v2/resource/entertainment_configuration',
     key,
-  });
+  }) as ClipList<ClipEntertainmentConfig> | null;
   const data = parsed && Array.isArray(parsed.data) ? parsed.data : [];
   const names = await fetchLampNames(host, key);
 
   return data.map((cfg) => {
     // How many channels each lamp renders in *this* area, which is what decides
     // whether its channels need numbering.
-    const segmentCounts = new Map();
+    const segmentCounts = new Map<string, number>();
     for (const ch of cfg.channels || []) {
       for (const member of ch.members || []) {
         const rid = member.service && member.service.rid;
         if (rid) segmentCounts.set(rid, (segmentCounts.get(rid) || 0) + 1);
       }
     }
-    const seen = new Map();
+    const seen = new Map<string, number>();
 
     return {
       id: cfg.id,
@@ -357,7 +454,7 @@ async function listEntertainmentConfigs(host, key) {
 }
 
 /** Open or close the bridge's streaming session for an area. */
-async function setStreaming(host, key, configId, active) {
+async function setStreaming(host: string, key: string, configId: string, active: boolean): Promise<void> {
   await bridgeRequest(host, {
     method: 'PUT',
     path: `/clip/v2/resource/entertainment_configuration/${encodeURIComponent(configId)}`,
@@ -390,7 +487,7 @@ const HEADER_BYTES = 16;
  * never reach full output). The extra depth is real: the bridge interpolates
  * between frames, so an 8-bit fade that would band on a DMX par does not here.
  */
-function buildStreamMessage(configId, channels, sequence = 0) {
+function buildStreamMessage(configId: unknown, channels: readonly HueChannelColour[], sequence = 0): Buffer {
   const id = String(configId || '');
   const packet = Buffer.alloc(HEADER_BYTES + CONFIG_ID_BYTES + channels.length * CHANNEL_BYTES);
 
@@ -418,7 +515,7 @@ function buildStreamMessage(configId, channels, sequence = 0) {
 }
 
 /** 0–255 to 0–65535, evenly. */
-function to16(value) {
+function to16(value: unknown): number {
   const v = Math.max(0, Math.min(255, Math.round(Number(value) || 0)));
   return v * 257;
 }
@@ -438,10 +535,10 @@ function to16(value) {
  * handshake attempt. The engine calls sendFrame() 44 times a second and must
  * never be the thing that decides whether to reconnect.
  */
-const IDLE = 'idle';
-const CONNECTING = 'connecting';
-const STREAMING = 'streaming';
-const FAILED = 'failed';
+const IDLE: HueState = 'idle';
+const CONNECTING: HueState = 'connecting';
+const STREAMING: HueState = 'streaming';
+const FAILED: HueState = 'failed';
 
 // Back off after a failure, doubling to a ceiling. A bridge that is powered off
 // should cost one attempt a minute, not forty a second — but a bridge that was
@@ -449,7 +546,7 @@ const FAILED = 'failed';
 const RETRY_BASE_MS = 2000;
 const RETRY_MAX_MS = 60000;
 
-let config = {
+let config: HueConfig = {
   enabled: false,
   host: '',
   username: '',
@@ -461,17 +558,17 @@ let config = {
 // Resolved once per session when the stored credentials predate this being
 // fetched at pairing time. Never persisted from here — the applier owns
 // settings — so a restart re-resolves it, which costs one request.
-let resolvedApplicationId = null;
+let resolvedApplicationId: string | null = null;
 
 /** Callback the applier sets so a lazily-fetched id gets written to settings. */
-let onApplicationId = null;
-function setApplicationIdSink(fn) { onApplicationId = fn; }
+let onApplicationId: ((id: string) => void) | null = null;
+function setApplicationIdSink(fn: ((id: string) => void) | null): void { onApplicationId = fn; }
 
-let status = IDLE;
-let socket = null;
+let status: HueState = IDLE;
+let socket: dtls.Socket | null = null;
 let sequence = 0;
 let lastSentAt = 0;
-let lastError = null;
+let lastError: string | null = null;
 let retryAt = 0;
 let retryDelay = RETRY_BASE_MS;
 // Set while the REST "start" has been issued, so teardown knows it owes the
@@ -479,11 +576,11 @@ let retryDelay = RETRY_BASE_MS;
 let sessionOpen = false;
 
 /** Is everything needed to stream actually filled in? */
-function isConfigured(c = config) {
+function isConfigured(c: HueConfig = config): boolean {
   return !!(c.host && c.username && c.clientKey && c.entertainmentId);
 }
 
-function getStatus() {
+function getStatus(): HueStatus {
   return {
     status,
     enabled: !!config.enabled,
@@ -501,11 +598,11 @@ function getStatus() {
  * bridge would otherwise be left with a session open against the old area, and
  * it only allows one at a time, so the next start would be refused.
  */
-function configure(next) {
+function configure(next: Partial<HueConfig> | null | undefined): HueConfig {
   const previous = config;
   config = { ...config, ...next };
 
-  const moved = ['host', 'username', 'clientKey', 'applicationId', 'entertainmentId']
+  const moved = (['host', 'username', 'clientKey', 'applicationId', 'entertainmentId'] as const)
     .some((k) => previous[k] !== config[k]);
 
   // A different bridge or app key means the cached id belongs to someone else.
@@ -526,7 +623,7 @@ function configure(next) {
   return { ...config };
 }
 
-function getConfig() { return { ...config }; }
+function getConfig(): HueConfig { return { ...config }; }
 
 /**
  * Bring the session up: REST start, then DTLS handshake.
@@ -535,7 +632,7 @@ function getConfig() { return { ...config }; }
  * frames that arrive while it runs are dropped. A light show cannot block on a
  * handshake.
  */
-async function connect() {
+async function connect(): Promise<void> {
   if (status === CONNECTING || status === STREAMING) return;
   if (!config.enabled || !isConfigured()) return;
 
@@ -563,11 +660,11 @@ async function connect() {
     await setStreaming(config.host, config.username, config.entertainmentId, true);
     sessionOpen = true;
   } catch (err) {
-    fail(`could not start the entertainment session: ${err.message}`);
+    fail(`could not start the entertainment session: ${messageOf(err)}`);
     return;
   }
 
-  let pending;
+  let pending: dtls.Socket;
   try {
     pending = dtls.createSocket({
       type: 'udp4',
@@ -582,7 +679,7 @@ async function connect() {
       timeout: HANDSHAKE_TIMEOUT_MS,
     });
   } catch (err) {
-    fail(`could not open the stream socket: ${err.message}`);
+    fail(`could not open the stream socket: ${messageOf(err)}`);
     return;
   }
 
@@ -599,7 +696,7 @@ async function connect() {
     console.log(`[hue] streaming to ${config.host}, area ${config.entertainmentId}`);
   });
 
-  pending.on('error', (err) => {
+  pending.on('error', (err: Error) => {
     if (socket !== pending) return;
     fail(err.message);
   });
@@ -615,7 +712,7 @@ async function connect() {
 }
 
 /** Record a failure, drop the session, and schedule the next attempt. */
-function fail(message) {
+function fail(message: string): void {
   lastError = message;
   console.warn(`[hue] ${message}`);
   status = FAILED;
@@ -631,7 +728,7 @@ function fail(message) {
  * to a stream that is no longer arriving, the lamps hold their last colour
  * until the bridge's own timeout, and the Hue app shows the area as busy.
  */
-function teardown() {
+function teardown(): void {
   const dying = socket;
   socket = null;
   if (dying) {
@@ -639,13 +736,13 @@ function teardown() {
   }
   if (sessionOpen && config.host && config.username && config.entertainmentId) {
     setStreaming(config.host, config.username, config.entertainmentId, false)
-      .catch((err) => console.warn(`[hue] could not close the session cleanly: ${err.message}`));
+      .catch((err) => console.warn(`[hue] could not close the session cleanly: ${messageOf(err)}`));
   }
   sessionOpen = false;
 }
 
 /** Stop streaming and stay stopped until something asks for it again. */
-async function stop() {
+async function stop(): Promise<void> {
   if (status === IDLE && !socket && !sessionOpen) return;
   status = IDLE;
   lastError = null;
@@ -661,7 +758,7 @@ async function stop() {
  *
  * @param {Array<{id:number,r:number,g:number,b:number}>} channels
  */
-function sendFrame(channels) {
+function sendFrame(channels: readonly HueChannelColour[]): boolean {
   if (!config.enabled || !isConfigured()) return false;
 
   // Nothing bound: stay off the bridge entirely. Opening a session puts the
@@ -681,7 +778,7 @@ function sendFrame(channels) {
   if (status === IDLE || (status === FAILED && Date.now() >= retryAt)) {
     // Fire and forget: the handshake resolves into the socket, and the frames
     // in between are simply not sent.
-    connect().catch((err) => fail(err.message));
+    connect().catch((err) => fail(messageOf(err)));
     return false;
   }
   if (status !== STREAMING || !socket) return false;
@@ -700,14 +797,14 @@ function sendFrame(channels) {
       if (err && status === STREAMING) fail(`send failed: ${err.message}`);
     });
   } catch (err) {
-    fail(`send failed: ${err.message}`);
+    fail(`send failed: ${messageOf(err)}`);
     return false;
   }
   return true;
 }
 
 /** Tests only — a running show has no reason to forget its session. */
-function _reset() {
+function _reset(): void {
   socket = null;
   sessionOpen = false;
   status = IDLE;

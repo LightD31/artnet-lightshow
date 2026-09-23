@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import { FRAME_MS, FRAME_RATE, MAX_BEHIND_FRAMES, nextIndex, FrameStats, createTicker } from '../../src/server/frame-clock.js';
+import { FRAME_MS, FRAME_RATE, MAX_BEHIND_FRAMES, nextIndex, FrameStats, createTicker } from '../../src/server/frame-clock.ts';
 
 test('the frame grid runs at forty-four frames a second', () => {
   assert.strictEqual(FRAME_RATE, 44);

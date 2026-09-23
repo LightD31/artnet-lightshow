@@ -1,13 +1,58 @@
-import { BUILTIN_PROFILE_ID, BUILTIN_PROFILE_IDS, getProfile, listProfiles } from './profiles.js';
-import { settings } from './settings.js';
-import * as universes from './universes.js';
-import { COLOR_PRESETS, PATTERNS, STROBE_FUNCTIONS, ENERGY_EFFECTS, SYNC_OFFSET_LIMIT_MS } from './presets.js';
-import { PALETTES } from './palettes.js';
-import { conductor } from './conductor.js';
+import { BUILTIN_PROFILE_ID, BUILTIN_PROFILE_IDS, getProfile, listProfiles } from './profiles.ts';
+import { settings } from './settings.ts';
+import * as universes from './universes.ts';
+import { COLOR_PRESETS, PATTERNS, STROBE_FUNCTIONS, ENERGY_EFFECTS, SYNC_OFFSET_LIMIT_MS } from './presets.ts';
+import { PALETTES } from './palettes.ts';
+import { conductor } from './conductor.ts';
+import { HttpError } from '../errors.ts';
+import type { Settings } from './settings.ts';
+import type { Fixture, PixelMap, ShowDynamics } from '../types/rig.ts';
+
+/** Where a running pattern counts its steps from (see patch.ts). */
+export interface PatternAnchor {
+  step: number;
+  /** The musical clock's epoch the step belongs to. */
+  epoch: number;
+}
+
+/** The live show: the look, the masters, the patch. */
+export interface ShowState {
+  artnet: Settings['artnet'];
+  bpm: number;
+  beatDivision: number;
+  running: boolean;
+  pattern: string;
+  colorA: number;
+  colorB: number;
+  colorC: number;
+  colorD: number;
+  masterDimmer: number;
+  masterBlackout: boolean;
+  strobeSpeed: number;
+  strobeFunction: string;
+  /** An energy effect's id, or null. */
+  energyOverride: string | null;
+  heldEnergy: string | null;
+  palette: string | null;
+  autoIntensity: number;
+  autoSyncOffsetMs: number;
+  prolinkEnabled: boolean;
+  autoSource: string;
+  autoPrefetchDepth: number;
+  fixtures: Fixture[];
+  nextFixtureId: number;
+  showDynamics: ShowDynamics | null;
+  split: number | null;
+  pixelMap: PixelMap;
+  patternAnchor: PatternAnchor | null;
+}
+
+/** A fixture as a client sees it: its universe and trim filled in. */
+export type ClientFixture = Fixture & { universe: number; maxBrightness: number };
 
 const DEFAULT_ADDRESSES = [1, 13, 25, 37];
 
-const state = {
+const state: ShowState = {
   // Seeded from the settings store at boot. Live edits go through applyPatch
   // (the Art-Net panel on the main page) and are persisted back by server.js,
   // so the two never drift.
@@ -75,13 +120,13 @@ state.fixtures = Array.from({ length: 4 }, (_, i) => ({
 }));
 
 /** A fixture's brightness trim, tolerating a show saved before there was one. */
-function maxBrightnessOf(fixture) {
-  return Number.isInteger(fixture.maxBrightness) ? fixture.maxBrightness : 255;
+function maxBrightnessOf(fixture: Pick<Fixture, 'maxBrightness'>): number {
+  return Number.isInteger(fixture.maxBrightness) ? fixture.maxBrightness as number : 255;
 }
 
 /** The universe a fixture lives on, tolerating a show saved before universes. */
-function universeOf(fixture) {
-  return Number.isInteger(fixture.universe) ? fixture.universe : state.artnet.universe;
+function universeOf(fixture: Pick<Fixture, 'universe'>): number {
+  return Number.isInteger(fixture.universe) ? fixture.universe as number : state.artnet.universe;
 }
 
 /**
@@ -91,7 +136,7 @@ function universeOf(fixture) {
  * on it still needs a frame going out, or a node that was streaming a moment
  * ago is left holding its last look.
  */
-function activeUniverses() {
+function activeUniverses(): number[] {
   const active = new Set([state.artnet.universe]);
   for (const fix of state.fixtures) active.add(universeOf(fix));
   return [...active].sort((a, b) => a - b);
@@ -102,10 +147,10 @@ function activeUniverses() {
  * default universe (which is always transmitted). Used to hold edits to the
  * output cap before they reach the render loop.
  */
-function countUniverses(fixtures) {
+function countUniverses(fixtures: readonly Pick<Fixture, 'universe'>[]): number {
   const seen = new Set([state.artnet.universe]);
   for (const fix of fixtures) {
-    seen.add(Number.isInteger(fix.universe) ? fix.universe : state.artnet.universe);
+    seen.add(Number.isInteger(fix.universe) ? fix.universe as number : state.artnet.universe);
   }
   return seen.size;
 }
@@ -118,7 +163,7 @@ function countUniverses(fixtures) {
  * still means "put the rig over there". Fixtures deliberately patched onto
  * another universe are left alone.
  */
-function setDefaultUniverse(next) {
+function setDefaultUniverse(next: number): void {
   const previous = state.artnet.universe;
   if (next === previous) return;
   for (const fix of state.fixtures) {
@@ -127,26 +172,24 @@ function setDefaultUniverse(next) {
   state.artnet.universe = next;
 }
 
-function getFixtureCount() { return state.fixtures.length; }
+function getFixtureCount(): number { return state.fixtures.length; }
 
-function getFixture(id) {
+function getFixture(id: number): Fixture | null {
   return state.fixtures.find((fixture) => fixture.id === id) || null;
 }
 
-function allocateFixtureId() {
+function allocateFixtureId(): number {
   const highest = state.fixtures.reduce((max, fixture) => Math.max(max, fixture.id), -1);
   const id = Math.max(state.nextFixtureId, highest + 1);
   if (!Number.isSafeInteger(id) || id >= Number.MAX_SAFE_INTEGER) {
-    const err = new Error('No more fixture ids available');
-    err.status = 400;
-    throw err;
+    throw new HttpError(400, 'No more fixture ids available');
   }
   state.nextFixtureId = id + 1;
   return id;
 }
 
 /** How many channels of `universe` are worth showing in the monitor. */
-function getDmxSnapshotSize(universe) {
+function getDmxSnapshotSize(universe: number): number {
   let maxEnd = 0;
   for (const fix of state.fixtures) {
     if (universeOf(fix) !== universe) continue;
@@ -159,9 +202,9 @@ function getDmxSnapshotSize(universe) {
 
 // Returns the snapshot the UI consumes. Heavyweight fields (autoShow, prolink,
 // spotify) are filled in by integrations.js via injectExtras.
-let extrasProvider = () => ({});
+let extrasProvider: () => Record<string, unknown> = () => ({});
 
-function setExtrasProvider(fn) { extrasProvider = fn; }
+function setExtrasProvider(fn: () => Record<string, unknown>): void { extrasProvider = fn; }
 
 // The static half of the snapshot: fixed at boot and identical on every
 // broadcast. It was 63% of a 7 KB payload going out 10 times a second, so it is
@@ -236,8 +279,8 @@ function getLiveState() {
  * universes there is no single 512-channel picture to send, and the monitor
  * needs to know which universe a value belongs to.
  */
-function getDmxSnapshot() {
-  const out = {};
+function getDmxSnapshot(): Record<number, number[]> {
+  const out: Record<number, number[]> = {};
   for (const universe of activeUniverses()) {
     const size = getDmxSnapshotSize(universe);
     out[universe] = Array.from(universes.getBuffer(universe).subarray(0, size));

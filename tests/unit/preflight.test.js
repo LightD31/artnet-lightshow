@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import { state } from '../../src/server/state.js';
-import * as output from '../../src/server/output.js';
+import { state } from '../../src/server/state.ts';
+import * as output from '../../src/server/output.ts';
 import { checkPatch, checkSacn, checkHue, checkPanns, checkAccess, checkMidi, probeCommand, STATUSES } from '../../src/server/preflight.js';
-import { buildArtPoll, parseArtPollReply } from '../../src/server/artnet.js';
-import { settings } from '../../src/server/settings.js';
+import { buildArtPoll, parseArtPollReply } from '../../src/server/artnet.ts';
+import { settings } from '../../src/server/settings.ts';
 
 // ── Art-Net discovery packets ───────────────────────────────────────────────
 

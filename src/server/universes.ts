@@ -1,4 +1,4 @@
-import { UNIVERSE_SIZE } from './profiles.js';
+import { UNIVERSE_SIZE } from './profiles.ts';
 
 /**
  * DMX output buffers, one per universe.
@@ -34,7 +34,26 @@ const FREE = -1;
 const ZERO_FRAME = Buffer.alloc(UNIVERSE_SIZE, 0);
 
 /** Fresh shared memory for a store: pass it to another thread to share it. */
-function allocateShared() {
+/** The memory a universe store lives in, shareable with another thread. */
+export interface SharedUniverses {
+  data: SharedArrayBuffer;
+  slots: SharedArrayBuffer;
+}
+
+/** One thread's view of the universes (see createUniverseStore). */
+export interface UniverseStore {
+  shared: SharedUniverses;
+  getBuffer(universe: number): Buffer;
+  list(): number[];
+  count(): number;
+  clearAll(): void;
+  sync(active: Iterable<number>): void;
+  drainRetired(): [number, Buffer][];
+  reset(): void;
+  setWritable(value: boolean): void;
+}
+
+function allocateShared(): SharedUniverses {
   const slots = new SharedArrayBuffer(MAX_UNIVERSES * Int32Array.BYTES_PER_ELEMENT);
   new Int32Array(slots).fill(FREE);
   return { data: new SharedArrayBuffer(MAX_UNIVERSES * UNIVERSE_SIZE), slots };
@@ -45,21 +64,21 @@ function allocateShared() {
  * thread that does not render: it never allocates, and a universe the renderer
  * has not allocated reads as a frame of nothing.
  */
-function createUniverseStore(shared = allocateShared(), { readOnly = false } = {}) {
+function createUniverseStore(shared: SharedUniverses = allocateShared(), { readOnly = false } = {}): UniverseStore {
   const table = new Int32Array(shared.slots);
   const views = Array.from({ length: MAX_UNIVERSES }, (_, i) => Buffer.from(shared.data, i * UNIVERSE_SIZE, UNIVERSE_SIZE));
-  const retiring = new Set();     // universes owed a final blackout frame
+  const retiring = new Set<number>();     // universes owed a final blackout frame
   // A write past the cap goes here rather than into another universe's slot,
   // and is never transmitted.
   const overflow = Buffer.alloc(UNIVERSE_SIZE);
   let writable = !readOnly;
 
-  function slotOf(universe) {
+  function slotOf(universe: number): number {
     for (let i = 0; i < MAX_UNIVERSES; i++) if (Atomics.load(table, i) === universe) return i;
     return -1;
   }
 
-  function allocate(universe) {
+  function allocate(universe: number): number {
     for (let i = 0; i < MAX_UNIVERSES; i++) {
       if (Atomics.load(table, i) === FREE) {
         views[i].fill(0);
@@ -71,7 +90,7 @@ function createUniverseStore(shared = allocateShared(), { readOnly = false } = {
   }
 
   /** The buffer for `universe`, allocated on first use. */
-  function getBuffer(universe) {
+  function getBuffer(universe: number): Buffer {
     let slot = slotOf(universe);
     if (slot < 0) {
       if (!writable) return ZERO_FRAME;
@@ -82,8 +101,8 @@ function createUniverseStore(shared = allocateShared(), { readOnly = false } = {
   }
 
   /** Universes currently allocated, ascending. */
-  function list() {
-    const out = [];
+  function list(): number[] {
+    const out: number[] = [];
     for (let i = 0; i < MAX_UNIVERSES; i++) {
       const universe = Atomics.load(table, i);
       if (universe !== FREE) out.push(universe);
@@ -106,7 +125,7 @@ function createUniverseStore(shared = allocateShared(), { readOnly = false } = {
    * between universes takes effect immediately and nothing has to remember to
    * call it.
    */
-  function sync(active) {
+  function sync(active: Iterable<number>): void {
     const wanted = new Set(active);
     for (const universe of list()) {
       if (!wanted.has(universe)) retiring.add(universe);
@@ -123,9 +142,9 @@ function createUniverseStore(shared = allocateShared(), { readOnly = false } = {
    * Universes that have left the patch, together with the frame to send them.
    * Removes them, so each is only blacked out once.
    */
-  function drainRetired() {
+  function drainRetired(): [number, Buffer][] {
     if (!retiring.size) return [];
-    const out = [];
+    const out: [number, Buffer][] = [];
     for (const universe of retiring) {
       const slot = slotOf(universe);
       if (slot >= 0) Atomics.store(table, slot, FREE);
@@ -151,7 +170,7 @@ function createUniverseStore(shared = allocateShared(), { readOnly = false } = {
     drainRetired,
     reset,
     /** Whether this thread may allocate: false while the worker renders. */
-    setWritable(value) { writable = !!value; },
+    setWritable(value: boolean) { writable = !!value; },
   };
 }
 

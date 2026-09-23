@@ -12,13 +12,13 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import { state } from '../../src/server/state.js';
-import * as universes from '../../src/server/universes.js';
-import { getProfile } from '../../src/server/profiles.js';
-import { startEngine, stopEngine } from '../../src/server/engine.js';
-import { conductor } from '../../src/server/conductor.js';
+import { state } from '../../src/server/state.ts';
+import * as universes from '../../src/server/universes.ts';
+import { getProfile } from '../../src/server/profiles.ts';
+import { startEngine, stopEngine } from '../../src/server/engine.ts';
+import { conductor } from '../../src/server/conductor.ts';
 import { applyPatch } from '../../src/server/patch.js';
-import { COLOR_PRESETS } from '../../src/server/presets.js';
+import { COLOR_PRESETS } from '../../src/server/presets.ts';
 import { createPreviewSampler } from '../../src/shared/preview.ts';
 
 const FRAME_MS = 25;
@@ -169,7 +169,7 @@ test('a split look rehearses as the rig plays it', () => {
 // they agree on the step — not merely on the colours.
 
 import { makeGrid } from '../../src/shared/beat-clock.ts';
-import { setFrameHook } from '../../src/server/engine.js';
+import { setFrameHook } from '../../src/server/engine.ts';
 import AutoShow from '../../src/auto-show.js';
 
 /** What the rig drives every fixture's emitters at. */
@@ -262,9 +262,9 @@ test('a timeline with no grid steps at its own tempo', () => {
 // through the same pattern layer as the rig, so a wave rehearsed along a bar
 // is the wave the bar will play.
 
-import { registerProfile, unregisterProfile, getProfile as profileFor } from '../../src/server/profiles.js';
+import { registerProfile, unregisterProfile, getProfile as profileFor } from '../../src/server/profiles.ts';
 import { buildRig } from '../../src/shared/rig.ts';
-import { renderFrame, resizeFixtureBuffers } from '../../src/server/engine.js';
+import { renderFrame, resizeFixtureBuffers } from '../../src/server/engine.ts';
 import { blendFixture, EXPRESSION_REST } from '../../src/shared/look-math.ts';
 
 const BARE_BAR = {

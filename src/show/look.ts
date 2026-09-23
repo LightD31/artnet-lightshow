@@ -19,7 +19,7 @@
  * between them, which is where it actually sounds like it is.
  */
 
-import { paletteBankForSize } from '../server/palettes.js';
+import { paletteBankForSize } from '../server/palettes.ts';
 import { blend, unit } from './score.ts';
 import type { Analysis, Reading, Score } from './score.ts';
 import type { BurstKind } from './intents.ts';

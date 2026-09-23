@@ -1,5 +1,29 @@
 import dgram from 'node:dgram';
 import crypto from 'node:crypto';
+import { messageOf } from '../errors.ts';
+
+/** One universe's stream, as the transmitter sends it. */
+export interface SacnTarget {
+  universe: number;
+  /** The source's CID as a UUID; blank for this process's own. */
+  cid: string;
+  sourceName: string;
+  priority: number;
+  /** A unicast receiver, or blank for the universe's multicast group. */
+  host: string;
+  iface?: string;
+  terminate?: boolean;
+}
+
+/** What a sACN packet carries besides the slots. */
+export interface E131Source {
+  universe: number;
+  cid: Buffer;
+  sourceName: string;
+  priority: number;
+  sequence: number;
+  terminated?: boolean;
+}
 
 /**
  * sACN / E1.31 output.
@@ -53,7 +77,7 @@ const DISCOVERY_PAGE_SIZE = 512;
 const PDU_FLAGS = 0x7000;
 
 // Opened by the first frame, like the Art-Net socket (see artnet.js).
-let udpSocket = null;
+let udpSocket: dgram.Socket | null = null;
 let socketReady = false;
 // The local address multicast leaves from, as last applied ('' is the OS's
 // choice). A machine with a show network and a house network needs to say
@@ -62,47 +86,48 @@ let appliedInterface = '';
 let wantedInterface = '';
 
 /** Point multicast at a local interface, once the socket can take it. */
-function applyInterface() {
-  if (!socketReady || wantedInterface === appliedInterface) return;
+function applyInterface(): void {
+  if (!udpSocket || !socketReady || wantedInterface === appliedInterface) return;
   try {
     udpSocket.setMulticastInterface(wantedInterface || '0.0.0.0');
     appliedInterface = wantedInterface;
   } catch (err) {
-    logSendFailure(new Error(`cannot send multicast from ${wantedInterface}: ${err.message}`));
+    logSendFailure(new Error(`cannot send multicast from ${wantedInterface}: ${messageOf(err)}`));
     // Not retried every frame: the address is not on this machine.
     appliedInterface = wantedInterface;
   }
 }
 
-function sendSocket() {
+function sendSocket(): dgram.Socket {
   if (udpSocket) return udpSocket;
-  udpSocket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+  const socket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+  udpSocket = socket;
 
   // Same reasoning as artnet.js: without an 'error' listener a send failure
   // becomes an unhandled event and kills the process, and the target here is
   // operator-editable while frames go out at the render rate.
-  udpSocket.on('error', (err) => logSendFailure(err));
+  socket.on('error', (err) => logSendFailure(err));
 
-  udpSocket.bind(() => {
+  socket.bind(() => {
     socketReady = true;
     // One hop by default: a lighting network is a LAN, and a stray multicast
     // group leaking into the rest of the building helps nobody.
-    try { udpSocket.setMulticastTTL(1); } catch (_) { /* not always permitted */ }
-    try { udpSocket.setBroadcast(true); } catch (_) { /* nor is this */ }
+    try { socket.setMulticastTTL(1); } catch (_) { /* not always permitted */ }
+    try { socket.setBroadcast(true); } catch (_) { /* nor is this */ }
     applyInterface();
   });
 
   // Send-only, exactly like the Art-Net socket: the HTTP listener is what
   // should keep the process alive.
-  udpSocket.unref();
-  return udpSocket;
+  socket.unref();
+  return socket;
 }
 
 const LOG_INTERVAL_MS = 5000;
 let lastLoggedAt = 0;
 let suppressedCount = 0;
 
-function logSendFailure(err) {
+function logSendFailure(err: unknown): void {
   const now = Date.now();
   if (now - lastLoggedAt < LOG_INTERVAL_MS) {
     suppressedCount++;
@@ -111,7 +136,7 @@ function logSendFailure(err) {
   const extra = suppressedCount > 0 ? ` (${suppressedCount} more since last message)` : '';
   suppressedCount = 0;
   lastLoggedAt = now;
-  console.warn(`[sacn] send failed: ${err.message}${extra}`);
+  console.warn(`[sacn] send failed: ${messageOf(err)}${extra}`);
 }
 
 /**
@@ -123,35 +148,35 @@ function logSendFailure(err) {
  * one. The operator's is stored in settings; a random one is generated here
  * only so an unconfigured server still emits something valid.
  */
-function cidFromUuid(uuid) {
+function cidFromUuid(uuid: unknown): Buffer | null {
   const hex = String(uuid || '').replace(/-/g, '');
   if (!/^[0-9a-fA-F]{32}$/.test(hex)) return null;
   return Buffer.from(hex, 'hex');
 }
 
-let fallbackCid = null;
-function generateCid() {
+let fallbackCid: Buffer | null = null;
+function generateCid(): string {
   return crypto.randomUUID();
 }
 
-function resolveCid(uuid) {
+function resolveCid(uuid: unknown): Buffer {
   const cid = cidFromUuid(uuid);
   if (cid) return cid;
-  if (!fallbackCid) fallbackCid = cidFromUuid(generateCid());
+  if (!fallbackCid) fallbackCid = cidFromUuid(generateCid()) as Buffer;
   return fallbackCid;
 }
 
 /** The multicast group for a universe: 239.255.<high>.<low> (E1.31 §9.3.1). */
-function multicastAddress(universe) {
+function multicastAddress(universe: number): string {
   return `239.255.${(universe >> 8) & 0xff}.${universe & 0xff}`;
 }
 
 // One sequence counter per universe. Receivers use it to drop out-of-order
 // UDP, and E1.31 wraps the full 0-255 (unlike Art-Net, where 0 means
 // "sequencing disabled").
-const sequences = new Map();
+const sequences = new Map<number, number>();
 
-function nextSequence(universe) {
+function nextSequence(universe: number): number {
   const next = ((sequences.get(universe) || 0) + 1) & 0xff;
   sequences.set(universe, next);
   return next;
@@ -168,7 +193,8 @@ function nextSequence(universe) {
  * @param {number} opts.sequence    0–255
  * @param {Buffer} dmxData          at least 512 bytes of channel data
  */
-function buildE131Packet({ universe, cid, sourceName, priority, sequence, terminated = false }, dmxData) {
+function buildE131Packet({ universe, cid, sourceName, priority, sequence, terminated = false }: E131Source,
+  dmxData: Buffer): Buffer {
   const packet = Buffer.alloc(PACKET_SIZE);
 
   // ── Root layer ───────────────────────────────────────────────────────────
@@ -216,7 +242,8 @@ function buildE131Packet({ universe, cid, sourceName, priority, sequence, termin
  * 2.5-second timeout — and a console on the same universe takes over cleanly.
  * `iface` is the local address multicast leaves from ('' for the default).
  */
-function sendSacn({ universe, cid, sourceName, priority, host, iface = '', terminate = false }, dmxData) {
+function sendSacn({ universe, cid, sourceName, priority, host, iface = '', terminate = false }: SacnTarget,
+  dmxData: Buffer): boolean {
   const socket = sendSocket();
   wantedInterface = iface || '';
   if (!socketReady) return false;
@@ -229,7 +256,7 @@ function sendSacn({ universe, cid, sourceName, priority, host, iface = '', termi
   // group — which is how sACN is normally deployed and needs no configuration.
   const target = host || multicastAddress(universe);
   const source = { universe, cid: resolveCid(cid), sourceName, priority };
-  const send = (packet) => socket.send(packet, 0, packet.length, PORT, target, (err) => {
+  const send = (packet: Buffer) => socket.send(packet, 0, packet.length, PORT, target, (err) => {
     if (err) logSendFailure(err);
   });
 
@@ -250,12 +277,16 @@ function sendSacn({ universe, cid, sourceName, priority, host, iface = '', termi
  *   38..111   Framing layer    (vector VECTOR_E131_EXTENDED_DISCOVERY, name, 4 reserved)
  *   112..     Discovery layer  (vector UNIVERSE_LIST, page, last page, universes)
  */
-function buildDiscoveryPackets({ cid, sourceName, universes }) {
+function buildDiscoveryPackets({ cid, sourceName, universes }: {
+  cid: Buffer;
+  sourceName: string;
+  universes: Iterable<number>;
+}): Buffer[] {
   const sorted = [...new Set(universes)]
     .filter((u) => Number.isInteger(u) && u >= MIN_UNIVERSE && u <= MAX_UNIVERSE)
     .sort((a, b) => a - b);
   const pages = Math.max(1, Math.ceil(sorted.length / DISCOVERY_PAGE_SIZE));
-  const packets = [];
+  const packets: Buffer[] = [];
   for (let page = 0; page < pages; page++) {
     const list = sorted.slice(page * DISCOVERY_PAGE_SIZE, (page + 1) * DISCOVERY_PAGE_SIZE);
     const size = 120 + list.length * 2;
@@ -288,7 +319,12 @@ function buildDiscoveryPackets({ cid, sourceName, universes }) {
  * node's web page can list it without being told. Always to the discovery
  * group, whatever the data goes to.
  */
-function sendSacnDiscovery({ cid, sourceName, universes, iface = '' }) {
+function sendSacnDiscovery({ cid, sourceName, universes, iface = '' }: {
+  cid: string;
+  sourceName: string;
+  universes: Iterable<number>;
+  iface?: string;
+}): boolean {
   const socket = sendSocket();
   wantedInterface = iface || '';
   if (!socketReady) return false;

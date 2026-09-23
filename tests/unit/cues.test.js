@@ -5,10 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { CueStore, captureLook, recallLook, MAX_CUES } from '../../src/server/cues.js';
-import { state } from '../../src/server/state.js';
+import { state } from '../../src/server/state.ts';
 import { applyPatch, applyOverride } from '../../src/server/patch.js';
-import { stopEngine } from '../../src/server/engine.js';
-import { conductor } from '../../src/server/conductor.js';
+import { stopEngine } from '../../src/server/engine.ts';
+import { conductor } from '../../src/server/conductor.ts';
 import { makeGrid } from '../../src/shared/beat-clock.ts';
 
 let dir;

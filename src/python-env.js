@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { settings } from './server/settings.js';
+import { settings } from './server/settings.ts';
 
 /**
  * Pick the Python interpreter that runs the analyzer.

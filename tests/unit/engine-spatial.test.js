@@ -4,11 +4,11 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import { state } from '../../src/server/state.js';
-import * as universes from '../../src/server/universes.js';
-import { getProfile } from '../../src/server/profiles.js';
-import { startEngine, stopEngine } from '../../src/server/engine.js';
-import { conductor } from '../../src/server/conductor.js';
+import { state } from '../../src/server/state.ts';
+import * as universes from '../../src/server/universes.ts';
+import { getProfile } from '../../src/server/profiles.ts';
+import { startEngine, stopEngine } from '../../src/server/engine.ts';
+import { conductor } from '../../src/server/conductor.ts';
 import { applyPatch } from '../../src/server/patch.js';
 import { spatialLayout } from '../../src/shared/stage.ts';
 

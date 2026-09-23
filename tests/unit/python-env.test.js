@@ -6,7 +6,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 import * as pythonEnv from '../../src/python-env.js';
-import { settings } from '../../src/server/settings.js';
+import { settings } from '../../src/server/settings.ts';
 
 // Find a real interpreter to probe against; without one there is nothing
 // meaningful to assert, so the suite skips rather than pretending to pass.

@@ -8,16 +8,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 
-import { state } from '../../src/server/state.js';
-import * as universes from '../../src/server/universes.js';
-import { createRenderer } from '../../src/server/renderer.js';
-import { startEngine, stopEngine, engineStatus } from '../../src/server/engine.js';
+import { state } from '../../src/server/state.ts';
+import * as universes from '../../src/server/universes.ts';
+import { createRenderer } from '../../src/server/renderer.ts';
+import { startEngine, stopEngine, engineStatus } from '../../src/server/engine.ts';
 import { applyPatch } from '../../src/server/patch.js';
-import { getProfile, profilesRevision, registerProfile, unregisterProfile } from '../../src/server/profiles.js';
+import { getProfile, profilesRevision, registerProfile, unregisterProfile } from '../../src/server/profiles.ts';
 import { barProfile } from '../../src/server/bar-profile.js';
-import { FRAME_MS } from '../../src/server/frame-clock.js';
+import { FRAME_MS } from '../../src/server/frame-clock.ts';
 
-const WORKER = path.join(import.meta.dirname, '..', '..', 'src', 'server', 'engine-worker.js');
+const WORKER = path.join(import.meta.dirname, '..', '..', 'src', 'server', 'engine-worker.ts');
 
 /** The same seeded stand-in for Math.random the worker uses in capture mode. */
 function seeded(seed) {

@@ -13,10 +13,10 @@
  */
 
 const REPORT_INTERVAL_MS = 5000;
-const reports = new Map();       // where → { at, suppressed }
+const reports = new Map<string, { at: number; suppressed: number }>();
 
 /** Log a contained fault, at most once per interval for each `where`. */
-function report(where, err) {
+function report(where: string, err: unknown): void {
   const now = Date.now();
   const last = reports.get(where) || { at: -Infinity, suppressed: 0 };
   if (now - last.at < REPORT_INTERVAL_MS) {
@@ -26,7 +26,8 @@ function report(where, err) {
   }
   const extra = last.suppressed ? ` (and ${last.suppressed} more since the last report)` : '';
   reports.set(where, { at: now, suppressed: 0 });
-  const detail = err && err.stack ? err.stack : String(err);
+  const stack = err && typeof err === 'object' ? (err as { stack?: unknown }).stack : undefined;
+  const detail = stack ? stack : String(err);
   console.error(`[${where}] ${detail}${extra}`);
 }
 
@@ -35,8 +36,9 @@ function report(where, err) {
  * `createTicker({ onTick: guarded('render', renderDmx) })` keeps rendering the
  * next frame even if this one failed.
  */
-function guarded(where, fn) {
-  return function guardedCall(...args) {
+function guarded<A extends unknown[], R, T = unknown>(where: string,
+  fn: (this: T, ...args: A) => R): (this: T, ...args: A) => R | undefined {
+  return function guardedCall(this: T, ...args: A): R | undefined {
     try {
       return fn.apply(this, args);
     } catch (err) {
@@ -58,7 +60,7 @@ let installed = false;
  * rig that keeps running on slightly inconsistent state is far better than
  * one frozen on its last frame mid-set. The fault is still reported.
  */
-function installProcessSafetyNet() {
+function installProcessSafetyNet(): void {
   if (installed) return;
   installed = true;
   process.on('uncaughtException', (err) => report('uncaught exception', err));

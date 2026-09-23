@@ -3,11 +3,11 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { z } from 'zod';
 
-import { state } from './state.js';
+import { state } from './state.ts';
 import { applyPatch, applyOverride } from './patch.js';
-import { conductor } from './conductor.js';
+import { conductor } from './conductor.ts';
 import { overrideSchema, fixtureId } from './validation.js';
-import { COLOR_PRESETS } from './presets.js';
+import { COLOR_PRESETS } from './presets.ts';
 import { PIXEL_MAPS } from '../shared/rig.ts';
 
 /**

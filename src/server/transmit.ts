@@ -1,5 +1,45 @@
-import { sendArtDmx, sendArtSync } from './artnet.js';
-import { sendSacn, sendSacnDiscovery, MIN_UNIVERSE, MAX_UNIVERSE, DISCOVERY_INTERVAL_MS } from './sacn.js';
+import { sendArtDmx, sendArtSync } from './artnet.ts';
+import { sendSacn, sendSacnDiscovery, MIN_UNIVERSE, MAX_UNIVERSE, DISCOVERY_INTERVAL_MS } from './sacn.ts';
+import type { ArtDmxTarget } from './artnet.ts';
+import type { ArtRoutes } from './artnet-nodes.ts';
+import type { SacnTarget } from './sacn.ts';
+import type { Settings } from './settings.ts';
+
+/** Where Art-Net goes, and which nodes claimed which universes. */
+export interface ArtnetOutput {
+  enabled: boolean;
+  host: string;
+  port: number;
+  sync: boolean;
+  routes?: ArtRoutes | null;
+}
+
+export type SacnOutput = Settings['sacn'];
+
+/** Every wire a frame goes out on, and how long the fast ones wait for Hue. */
+export interface TransmitConfig {
+  artnet: ArtnetOutput;
+  sacn: SacnOutput;
+  delayMs: number;
+}
+
+/** The packets themselves; swapped for fakes in tests. */
+export interface Wires {
+  artnet(target: ArtDmxTarget, frame: Buffer): boolean;
+  artnetSync(target: { host: string; port: number }): unknown;
+  sacn(target: SacnTarget, frame: Buffer): boolean;
+  sacnDiscovery(packet: { cid: string; sourceName: string; universes: number[]; iface: string }): unknown;
+}
+
+export interface SendOptions {
+  immediate?: boolean;
+  terminate?: boolean;
+}
+
+export interface Transmitter {
+  send(universe: number, frame: Buffer, config: TransmitConfig, options?: SendOptions): ('artnet' | 'sacn')[];
+  endFrame(config: TransmitConfig | null | undefined): void;
+}
 
 // A universe counts as one this source is sending for this long after its
 // last packet: long enough to span a Hue delay, short enough that one the rig
@@ -27,18 +67,18 @@ const ZERO_FRAME = Buffer.alloc(512);
  * falls outside what E1.31 allows, which the caller reports rather than
  * silently sending nowhere.
  */
-function sacnUniverseFor(universe, offset) {
+function sacnUniverseFor(universe: number, offset: number): number | null {
   const mapped = universe + offset;
   if (!Number.isInteger(mapped) || mapped < MIN_UNIVERSE || mapped > MAX_UNIVERSE) return null;
   return mapped;
 }
 
-const DEFAULT_WIRES = {
+const DEFAULT_WIRES: Wires = {
   artnet: sendArtDmx, artnetSync: sendArtSync, sacn: sendSacn, sacnDiscovery: sendSacnDiscovery,
 };
 
 /** What makes one sACN stream another: a change here ends the old one. */
-function sacnStreamKey(sacn) {
+function sacnStreamKey(sacn: SacnOutput | null | undefined): string | null {
   if (!sacn || !sacn.enabled) return null;
   return [sacn.host, sacn.universeOffset, sacn.cid, sacn.sourceName, sacn.priority, sacn.interface].join('|');
 }
@@ -48,13 +88,16 @@ function sacnStreamKey(sacn) {
  * artnetSync(target), sacn(target, frame), sacnDiscovery(source) }`, each
  * returning whether anything left.
  */
-function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now() } = {}) {
+function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now() }: {
+  wires?: Wires;
+  now?: () => number;
+} = {}): Transmitter {
   // Where this frame's Art-Net went, for the ArtSync that closes it.
-  const syncTargets = new Set();
+  const syncTargets = new Set<string>();
   // The sACN universes this source is sending (mapped universe → last sent),
   // the settings they were sent with, and when discovery last went out.
-  const sacnSent = new Map();
-  let sacnStream = null;           // { key, config }
+  const sacnSent = new Map<number, number>();
+  let sacnStream: { key: string; config: SacnOutput } | null = null;
   let lastDiscovery = -Infinity;
 
   // ── Hue latency compensation ──────────────────────────────────────────────
@@ -64,15 +107,15 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
   // it, which on a snare hit is plainly two events. The fast wire is the one
   // that can wait: each universe's frames queue here and go out `delayMs`
   // after they were rendered, while Hue is sent the current frame.
-  const delayLine = new Map();     // universe → [{ at, frame }]
+  const delayLine = new Map<number, { at: number; frame: Buffer }[]>();
 
   /** The newest frame for this universe old enough to send, or null. */
-  function delayedFrame(universe, frame, delayMs) {
+  function delayedFrame(universe: number, frame: Buffer, delayMs: number): Buffer | null {
     const t = now();
     const queue = delayLine.get(universe) || [];
     queue.push({ at: t, frame: Buffer.from(frame) });
-    let ready = null;
-    while (queue.length && queue[0].at <= t - delayMs) ready = queue.shift().frame;
+    let ready: Buffer | null = null;
+    while (queue.length && queue[0].at <= t - delayMs) ready = (queue.shift() as { frame: Buffer }).frame;
     delayLine.set(universe, queue);
     return ready;
   }
@@ -97,11 +140,13 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
    * is not coming back: sACN follows the frame with its stream-terminated
    * packets.
    */
-  function send(universe, frame, config, { immediate = false, terminate = false } = {}) {
-    const sent = [];
+  function send(universe: number, frame: Buffer, config: TransmitConfig,
+    { immediate = false, terminate = false }: SendOptions = {}): ('artnet' | 'sacn')[] {
+    const sent: ('artnet' | 'sacn')[] = [];
     if (!immediate && config.delayMs > 0) {
-      frame = delayedFrame(universe, frame, config.delayMs);
-      if (!frame) return sent;
+      const ready = delayedFrame(universe, frame, config.delayMs);
+      if (!ready) return sent;
+      frame = ready;
     } else {
       delayLine.delete(universe);
     }
@@ -124,7 +169,7 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
     return sent;
   }
 
-  function sendSacnUniverse(sacn, mapped, frame, terminate) {
+  function sendSacnUniverse(sacn: SacnOutput, mapped: number, frame: Buffer, terminate: boolean): boolean {
     const ok = wires.sacn({
       universe: mapped,
       cid: sacn.cid,
@@ -145,7 +190,7 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
    * with the old settings, rather than left for each receiver to time out.
    * Checked before anything goes out under the new settings.
    */
-  function syncSacnStream(sacn) {
+  function syncSacnStream(sacn: SacnOutput | null | undefined): void {
     const key = sacnStreamKey(sacn);
     if (sacnStream && sacnStream.key !== key) {
       const old = sacnStream.config;
@@ -154,14 +199,14 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
       sacnSent.clear();
       lastDiscovery = -Infinity;
     }
-    sacnStream = key ? { key, config: { ...sacn } } : null;
+    sacnStream = key && sacn ? { key, config: { ...sacn } } : null;
   }
 
   /** The sACN side of closing a frame: every ten seconds, the discovery list. */
-  function endSacnFrame(sacn) {
+  function endSacnFrame(sacn: SacnOutput | null | undefined): void {
     const t = now();
     syncSacnStream(sacn);
-    if (!sacnStream) return;
+    if (!sacnStream || !sacn) return;
 
     for (const [mapped, at] of sacnSent) if (t - at > SACN_ACTIVE_MS) sacnSent.delete(mapped);
     if (sacnSent.size && t - lastDiscovery >= DISCOVERY_INTERVAL_MS) {
@@ -176,7 +221,7 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
    * Close the frame: with ArtSync on, tell every node this frame's Art-Net
    * went to that it can output it now.
    */
-  function endFrame(config) {
+  function endFrame(config: TransmitConfig | null | undefined): void {
     const artnet = config && config.artnet;
     if (artnet && artnet.sync && artnet.enabled !== false) {
       for (const host of syncTargets) wires.artnetSync({ host, port: artnet.port });

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { buildArtDmxPacket, buildArtSync } from '../../src/server/artnet.js';
+import { buildArtDmxPacket, buildArtSync } from '../../src/server/artnet.ts';
 
 test('Art-Net packet header is well formed', () => {
   const dmx = Buffer.alloc(512);

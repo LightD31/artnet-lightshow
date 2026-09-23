@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { z } from 'zod';
-import { SYNC_OFFSET_LIMIT_MS } from './presets.js';
+import { SYNC_OFFSET_LIMIT_MS } from './presets.ts';
+import { HttpError, codeOf, messageOf } from '../errors.ts';
 
 /**
  * Persisted configuration, owned by the settings page.
@@ -20,7 +21,16 @@ import { SYNC_OFFSET_LIMIT_MS } from './presets.js';
  * so it is written 0600 and must stay out of version control.
  */
 
-const DEFAULTS = {
+/** Every setting, as validated by `schema` below. */
+export type Settings = z.infer<typeof schema>;
+
+/** Any subset of the settings, group by group: what PUT /api/settings takes. */
+export type SettingsPatch = { [G in keyof Settings]?: Partial<Settings[G]> };
+
+/** Called after an update with the dotted keys that changed and the new settings. */
+export type SettingsListener = (changed: string[], settings: Settings) => void;
+
+const DEFAULTS: Settings = {
   server: {
     host: '127.0.0.1',
     port: 3000,
@@ -279,7 +289,7 @@ const schema = z.object({
     // a Python interpreter (python, python3, python3.12, pythonw.exe, py.exe…).
     // That keeps the setting from being a way to run an arbitrary program.
     pythonPath: z.string().max(4096).refine(
-      (value) => value === '' || PYTHON_BASENAME_RE.test(value.trim().split(/[\\/]/).pop()),
+      (value) => value === '' || PYTHON_BASENAME_RE.test(value.trim().split(/[\\/]/).pop() ?? ''),
       'must be the path to a Python interpreter (python, python3, pythonw, py)',
     ),
     separator: z.enum(['demucs', 'bs-roformer']),
@@ -294,16 +304,16 @@ const patchSchema = z.object(
 ).strict();
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '::ffff:127.0.0.1']);
-function isLoopback(host) {
+function isLoopback(host: unknown): boolean {
   return LOOPBACK_HOSTS.has(String(host || '').trim().toLowerCase());
 }
 
-function clone(value) {
+function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
 }
 
-function getPath(obj, dotted) {
-  return dotted.split('.').reduce((acc, key) => (acc == null ? acc : acc[key]), obj);
+function getPath(obj: unknown, dotted: string): unknown {
+  return dotted.split('.').reduce<unknown>((acc, key) => (acc == null ? acc : (acc as Record<string, unknown>)[key]), obj);
 }
 
 /**
@@ -316,29 +326,30 @@ function getPath(obj, dotted) {
  * serialisations is both correct and cheap at the once-per-save rate this runs
  * at.
  */
-function sameValue(a, b) {
+function sameValue(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false;
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
 /** Two-level merge — the settings tree is deliberately only groups and keys. */
-function merge(base, patch) {
-  const out = clone(base);
+function merge(base: Settings, patch: unknown): Settings {
+  const out = clone(base) as Record<string, object>;
   for (const [group, values] of Object.entries(patch || {})) {
     if (!values || typeof values !== 'object') continue;
     out[group] = { ...out[group], ...values };
   }
-  return out;
+  return out as Settings;
 }
 
 /**
  * Clear stored values that an older build accepted and this one refuses.
  * Mutates `parsed`; returns the dotted paths it cleared.
  */
-function clearNewlyInvalidFields(parsed) {
-  const cleared = [];
-  const analysis = parsed && typeof parsed === 'object' ? parsed.analysis : null;
+function clearNewlyInvalidFields(parsed: unknown): string[] {
+  const cleared: string[] = [];
+  const analysis = parsed && typeof parsed === 'object'
+    ? (parsed as { analysis?: { pythonPath?: unknown } }).analysis : null;
   if (analysis && typeof analysis.pythonPath === 'string') {
     const check = schema.shape.analysis.shape.pythonPath.safeParse(analysis.pythonPath);
     if (!check.success) {
@@ -352,7 +363,11 @@ function clearNewlyInvalidFields(parsed) {
 }
 
 class SettingsStore {
-  constructor(file) {
+  declare file: string;
+  declare _values: Settings;
+  declare _listeners: SettingsListener[];
+
+  constructor(file: string) {
     this.file = file;
     this._values = clone(DEFAULTS);
     this._listeners = [];
@@ -363,13 +378,13 @@ class SettingsStore {
    * schema-invalid one is moved aside rather than deleted, so a hand-edit that
    * went wrong is recoverable, and the show still starts on defaults.
    */
-  load() {
+  load(): this {
     let raw;
     try {
       raw = fs.readFileSync(this.file, 'utf8');
     } catch (err) {
-      if (err.code !== 'ENOENT') {
-        console.warn(`[settings] cannot read ${this.file}: ${err.message} — using defaults`);
+      if (codeOf(err) !== 'ENOENT') {
+        console.warn(`[settings] cannot read ${this.file}: ${messageOf(err)} — using defaults`);
       }
       return this;
     }
@@ -378,7 +393,7 @@ class SettingsStore {
     try {
       parsed = JSON.parse(raw);
     } catch (err) {
-      return this._quarantine(`invalid JSON (${err.message})`);
+      return this._quarantine(`invalid JSON (${messageOf(err)})`);
     }
 
     // A rule added after the file was written must not throw away the whole
@@ -399,39 +414,40 @@ class SettingsStore {
     return this;
   }
 
-  _quarantine(reason) {
+  _quarantine(reason: string): this {
     const backup = `${this.file}.invalid-${Date.now()}`;
     try {
       fs.renameSync(this.file, backup);
       console.warn(`[settings] ${this.file}: ${reason}`);
       console.warn(`[settings] moved it to ${backup} and started on defaults`);
     } catch (err) {
-      console.warn(`[settings] ${this.file}: ${reason} (could not move aside: ${err.message})`);
+      console.warn(`[settings] ${this.file}: ${reason} (could not move aside: ${messageOf(err)})`);
     }
     this._values = clone(DEFAULTS);
     return this;
   }
 
   /** Full effective settings, secrets included. Server-side callers only. */
-  all() { return clone(this._values); }
+  all(): Settings { return clone(this._values); }
 
   /** One group, e.g. settings.group('artnet'). */
-  group(name) { return clone(this._values[name]); }
+  group<G extends keyof Settings>(name: G): Settings[G] { return clone(this._values[name]); }
 
-  get(dotted) { return getPath(this._values, dotted); }
+  get(dotted: string): unknown { return getPath(this._values, dotted); }
 
   /**
    * The client-facing view: secrets replaced by a boolean saying whether one is
    * set. The UI can set or clear a secret but can never read it back, so a
    * shoulder-surfer or a stray screenshot doesn't leak the Deezer cookie.
    */
-  redacted() {
+  redacted(): { settings: Settings; secrets: Record<string, boolean> } {
     const out = this.all();
-    const secrets = {};
+    const groups = out as unknown as Record<string, Record<string, unknown>>;
+    const secrets: Record<string, boolean> = {};
     for (const dotted of SECRET_PATHS) {
       const [group, key] = dotted.split('.');
-      secrets[dotted] = !!out[group][key];
-      out[group][key] = '';
+      secrets[dotted] = !!groups[group][key];
+      groups[group][key] = '';
     }
     return { settings: out, secrets };
   }
@@ -444,7 +460,7 @@ class SettingsStore {
    * value every time the page saved, so the UI only includes a secret when the
    * operator actually typed one (or explicitly cleared it).
    */
-  update(patch) {
+  update(patch: unknown): string[] {
     const parsedPatch = patchSchema.parse(patch || {});
     const next = schema.parse(merge(this._values, parsedPatch));
 
@@ -453,20 +469,19 @@ class SettingsStore {
     // then there is no UI left to undo it from. The startup guard still exists
     // as a backstop for a hand-edited file; this stops the UI walking into it.
     if (!isLoopback(next.server.host) && !next.server.token) {
-      const err = new Error(
+      throw new HttpError(400,
         'Set an access token before binding to ' + next.server.host + '. '
         + 'Without one, anyone on the network could black out the rig, so the '
         + 'server refuses to start — and you would have to edit settings.json '
         + 'by hand to recover. Use Generate next to Access Token.',
       );
-      err.status = 400;
-      throw err;
     }
 
-    const changed = [];
+    const current = this._values as unknown as Record<string, Record<string, unknown>>;
+    const changed: string[] = [];
     for (const [group, values] of Object.entries(next)) {
       for (const [key, value] of Object.entries(values)) {
-        if (!sameValue(this._values[group][key], value)) changed.push(`${group}.${key}`);
+        if (!sameValue(current[group][key], value)) changed.push(`${group}.${key}`);
       }
     }
     if (!changed.length) return changed;
@@ -480,13 +495,13 @@ class SettingsStore {
       throw err;
     }
     for (const fn of this._listeners) {
-      try { fn(changed, this.all()); } catch (e) { console.warn(`[settings] listener: ${e.message}`); }
+      try { fn(changed, this.all()); } catch (e) { console.warn(`[settings] listener: ${messageOf(e)}`); }
     }
     return changed;
   }
 
   /** Write atomically and 0600 — this file holds secrets. */
-  save() {
+  save(): void {
     const dir = path.dirname(this.file);
     fs.mkdirSync(dir, { recursive: true });
     const tmp = `${this.file}.tmp`;
@@ -496,14 +511,14 @@ class SettingsStore {
   }
 
   /** Called with (changedKeys, settings) after every successful update. */
-  onChange(fn) { this._listeners.push(fn); }
+  onChange(fn: SettingsListener): void { this._listeners.push(fn); }
 
   /**
    * Which restart-only settings differ from what this process actually booted
    * with. The page uses it to show "restart to apply" against the right rows
    * instead of nagging about every save.
    */
-  pendingRestart(bootValues) {
+  pendingRestart(bootValues: unknown): string[] {
     return RESTART_PATHS.filter((dotted) => getPath(bootValues, dotted) !== this.get(dotted));
   }
 }
@@ -526,7 +541,8 @@ const LEGACY_ENV = [
  * quiet: the rig would come up on defaults with no clue why. Name the variables
  * that are now ignored and where to put them instead.
  */
-function warnAboutLegacyEnv(env = process.env, log = console.warn) {
+function warnAboutLegacyEnv(env: NodeJS.ProcessEnv = process.env,
+  log: (message: string) => void = console.warn): string[] {
   const present = LEGACY_ENV.filter((name) => env[name] !== undefined && env[name] !== '');
   if (!present.length) return present;
   log(`\n[settings] These environment variables are no longer read: ${present.join(', ')}`);

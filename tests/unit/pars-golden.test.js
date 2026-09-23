@@ -16,12 +16,12 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { state } from '../../src/server/state.js';
-import * as universes from '../../src/server/universes.js';
-import { renderFrame, resizeFixtureBuffers } from '../../src/server/engine.js';
-import { conductor } from '../../src/server/conductor.js';
+import { state } from '../../src/server/state.ts';
+import * as universes from '../../src/server/universes.ts';
+import { renderFrame, resizeFixtureBuffers } from '../../src/server/engine.ts';
+import { conductor } from '../../src/server/conductor.ts';
 import { applyPatch, applyOverride, setFixtureMaxBrightness } from '../../src/server/patch.js';
-import { PATTERNS, COLOR_PRESETS } from '../../src/server/presets.js';
+import { PATTERNS, COLOR_PRESETS } from '../../src/server/presets.ts';
 import { createPreviewSampler } from '../../src/shared/preview.ts';
 import AutoShow from '../../src/auto-show.js';
 

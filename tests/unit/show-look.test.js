@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 
 import * as look from '../../src/show/look.ts';
 import { makeScore } from '../../src/show/score.ts';
-import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.js';
+import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.ts';
 
 const AVAILABLE = new Set(PATTERNS.map((p) => p.id));
 const LOUD = { valence: 0.6, arousal: 0.88, danceability: 0.85, kickiness: 0.8 };

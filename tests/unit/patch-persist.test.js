@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { applyPatch, setPersist, flushPendingPersist } from '../../src/server/patch.js';
-import { state } from '../../src/server/state.js';
+import { state } from '../../src/server/state.ts';
 
 test('a run of sync-offset nudges is saved once, with the last value', async () => {
   const saved = [];

@@ -1,3 +1,5 @@
+import type { Fixture, Profile } from '../types/rig.ts';
+
 // The profile a new fixture gets, and the fallback for a profile id nothing
 // knows about. One of several built-ins — see BUILTIN_PROFILE_IDS.
 const BUILTIN_PROFILE_ID = 'cameo-root-par-6-12ch';
@@ -29,12 +31,12 @@ const MAX_FIXTURES = 64;
 const MAX_UNITS = 2048;
 
 /** Last channel a fixture at `address` with `channelCount` channels occupies. */
-function endChannel(address, channelCount) {
+function endChannel(address: number, channelCount: number): number {
   return address + channelCount - 1;
 }
 
 /** Does a fixture patched here fit inside the universe? */
-function fitsInUniverse(address, channelCount) {
+function fitsInUniverse(address: number, channelCount: number): boolean {
   return address >= 1 && endChannel(address, channelCount) <= UNIVERSE_SIZE;
 }
 
@@ -43,7 +45,7 @@ function fitsInUniverse(address, channelCount) {
  * null when it does. One wording for every path that patches a fixture: editing
  * one, restoring a deleted one and loading a show used to say it three ways.
  */
-function universeOverflow(label, address, channelCount) {
+function universeOverflow(label: string, address: number, channelCount: number): string | null {
   if (fitsInUniverse(address, channelCount)) return null;
   return `"${label}" at address ${address} needs ${channelCount} channels and would end at `
     + `${endChannel(address, channelCount)}, past the ${UNIVERSE_SIZE}-channel universe`;
@@ -65,7 +67,7 @@ const RESERVED_PROFILE_IDS = new Set(['__proto__', 'constructor', 'prototype']);
 // Null-prototype map: profile ids come straight from user input (GDTF upload,
 // POST /api/profiles), and on a plain object literal an id of "__proto__" would
 // reassign this object's prototype instead of adding a key.
-const fixtureProfiles = Object.assign(Object.create(null), {
+const fixtureProfiles: Record<string, Profile> = Object.assign(Object.create(null), {
   [BUILTIN_PROFILE_ID]: {
     id: BUILTIN_PROFILE_ID,
     name: 'ROOT PAR 6',
@@ -204,7 +206,7 @@ const BUILTIN_PROFILE_IDS = new Set([
 const HUE_PROFILE_IDS = new Set([HUE_COLOR_PROFILE_ID, HUE_WHITE_AMBIANCE_PROFILE_ID, HUE_WHITE_PROFILE_ID]);
 
 /** Does this profile ship with the server, rather than being imported? */
-function isBuiltinProfile(id) {
+function isBuiltinProfile(id: string): boolean {
   return BUILTIN_PROFILE_IDS.has(id);
 }
 
@@ -213,15 +215,15 @@ function isBuiltinProfile(id) {
 let revision = 0;
 
 /** Changes whenever a profile is added, replaced or removed. */
-function profilesRevision() {
+function profilesRevision(): number {
   return revision;
 }
 
-function getProfile(fixture) {
+function getProfile(fixture: Pick<Fixture, 'profileId'>): Profile {
   return fixtureProfiles[fixture.profileId] || fixtureProfiles[BUILTIN_PROFILE_ID];
 }
 
-function registerProfile(profile) {
+function registerProfile(profile: Profile | null | undefined): boolean {
   if (!profile || !profile.id || !profile.name || !profile.channelCount) return false;
   if (RESERVED_PROFILE_IDS.has(profile.id)) return false;
   // A built-in is defined by this file. An upload or a show file carrying the
@@ -233,18 +235,18 @@ function registerProfile(profile) {
   return true;
 }
 
-function unregisterProfile(id) {
+function unregisterProfile(id: string): boolean {
   if (isBuiltinProfile(id)) return false;
   delete fixtureProfiles[id];
   revision++;
   return true;
 }
 
-function listProfiles() {
+function listProfiles(): Record<string, Profile> {
   return fixtureProfiles;
 }
 
-function clearNonBuiltinProfiles() {
+function clearNonBuiltinProfiles(): void {
   Object.keys(fixtureProfiles).forEach((id) => {
     if (!isBuiltinProfile(id)) delete fixtureProfiles[id];
   });
@@ -256,7 +258,8 @@ function clearNonBuiltinProfiles() {
  * `profileOf` resolves a fixture's profile — the live registry by default, or
  * the profiles a show is bringing with it.
  */
-function unitCapOverflow(fixtures, profileOf = getProfile) {
+function unitCapOverflow<F extends Pick<Fixture, 'profileId'>>(fixtures: Iterable<F>,
+  profileOf: (fixture: F) => Pick<Profile, 'cells'> | null | undefined = getProfile): string | null {
   const total = countUnits(fixtures, profileOf);
   if (total <= MAX_UNITS) return null;
   return `The patch would have ${total} lights (cells), more than the ${MAX_UNITS} the engine renders`;

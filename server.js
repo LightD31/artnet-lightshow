@@ -14,23 +14,23 @@ import * as deezer from './src/deezer.js';
 import AutoShow from './src/auto-show.js';
 import { AnalysisCache } from './src/analysis-cache.js';
 
-import { state } from './src/server/state.js';
-import { startEngine, stopEngine, setFrameHook } from './src/server/engine.js';
-import { artnetDiscovery } from './src/server/output.js';
-import { conductor } from './src/server/conductor.js';
+import { state } from './src/server/state.ts';
+import { startEngine, stopEngine, setFrameHook } from './src/server/engine.ts';
+import { artnetDiscovery } from './src/server/output.ts';
+import { conductor } from './src/server/conductor.ts';
 import { applyPatch, applyOverride, setFixtureMaxBrightness, processTap, setPersist, setHooks, flushPendingPersist } from './src/server/patch.js';
-import { COLOR_PRESETS, PATTERNS } from './src/server/presets.js';
+import { COLOR_PRESETS, PATTERNS } from './src/server/presets.ts';
 import { setupIntegrations } from './src/server/integrations.js';
 import { attachRoutes } from './src/server/routes.js';
 import { attachSockets } from './src/server/sockets.js';
 import { createAuth, configError, hostOfUrl, isLoopbackHost } from './src/server/auth.js';
-import { settings, CONFIG_FILE, warnAboutLegacyEnv } from './src/server/settings.js';
+import { settings, CONFIG_FILE, warnAboutLegacyEnv } from './src/server/settings.ts';
 import { createApplier } from './src/server/apply.js';
 import { midiMap } from './src/server/midi-map.js';
 import { cues } from './src/server/cues.js';
 import { showStore, SHOW_FILE } from './src/server/show-store.js';
 import * as pythonEnv from './src/python-env.js';
-import { installProcessSafetyNet } from './src/server/guard.js';
+import { installProcessSafetyNet } from './src/server/guard.ts';
 
 // Before anything else can fail: a fault the code did not expect is reported
 // and the rig keeps running, rather than the process exiting with every

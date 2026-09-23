@@ -10,7 +10,7 @@ import path from 'node:path';
 import { ShowDirector } from '../../src/show/director.ts';
 import { renderIntents } from '../../src/show/render.ts';
 import { patchSchema } from '../../src/server/validation.js';
-import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.js';
+import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.ts';
 
 const TRACKS = path.join(import.meta.dirname, '..', 'fixtures', 'tracks');
 const tracks = fs.readdirSync(TRACKS).filter((f) => f.endsWith('.json'))

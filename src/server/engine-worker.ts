@@ -26,20 +26,32 @@
 
 import { parentPort, workerData } from 'node:worker_threads';
 
-import { createRenderer } from './renderer.js';
-import { createUniverseStore } from './universes.js';
-import { createTransmitter } from './transmit.js';
-import { createTicker, hrtimeMs, FRAME_MS } from './frame-clock.js';
-import { createClockFollower } from './clock-follow.js';
-import { getProfile, profilesRevision, registerProfile, clearNonBuiltinProfiles } from './profiles.js';
-import { guarded } from './guard.js';
+import { createRenderer } from './renderer.ts';
+import { createUniverseStore } from './universes.ts';
+import { createTransmitter } from './transmit.ts';
+import { createTicker, hrtimeMs, FRAME_MS } from './frame-clock.ts';
+import { createClockFollower } from './clock-follow.ts';
+import { getProfile, profilesRevision, registerProfile, clearNonBuiltinProfiles } from './profiles.ts';
+import { guarded } from './guard.ts';
+import type { MusicalTime } from './conductor.ts';
+import type { EngineWorkerData, FromWorker, RenderedFrames, ToWorker } from './engine-messages.ts';
+import type { Ticker } from './frame-clock.ts';
+import type { RenderInput } from './renderer.ts';
+import type { TransmitConfig } from './transmit.ts';
+import type { Profile } from '../types/rig.ts';
+
+if (!parentPort) throw new Error('engine-worker.ts runs as a worker thread');
+const port = parentPort;
+
+/** Tell the main thread something. */
+const post = (msg: FromWorker) => port.postMessage(msg);
 
 const {
   shared, epochMs, periodMs = FRAME_MS, capture = false, seed = null, startNow = null,
-} = workerData || {};
+} = (workerData || {}) as EngineWorkerData;
 
 /** A seeded stand-in for Math.random, so a test can roll the same dice on both threads. */
-function seeded(value) {
+function seeded(value: number): () => number {
   let a = value >>> 0;
   return () => {
     a = (a + 0x6D2B79F5) >>> 0;
@@ -49,27 +61,27 @@ function seeded(value) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-if (capture && Number.isInteger(seed)) Math.random = seeded(seed);
+if (capture && Number.isInteger(seed)) Math.random = seeded(seed as number);
 
 const store = createUniverseStore(shared);
 const transmitter = createTransmitter();
 const renderer = createRenderer({
   profileOf: getProfile,
   profilesRevision,
-  now: Number.isFinite(startNow) ? startNow : hrtimeMs(),
+  now: typeof startNow === 'number' && Number.isFinite(startNow) ? startNow : hrtimeMs(),
 });
 const follow = createClockFollower();
 
-let snapshot = null;             // { input, outputs } from the main thread
+let snapshot: { input: RenderInput; outputs: TransmitConfig } | null = null;   // from the main thread
 let lastStatsAt = -Infinity;
 
 /** The imported profiles, replaced wholesale. The built-ins are already here. */
-function setProfiles(profiles) {
+function setProfiles(profiles: Profile[] | null | undefined): void {
   clearNonBuiltinProfiles();
   for (const profile of profiles || []) registerProfile(profile);
 }
 
-function transmit(outputs) {
+function transmit(outputs: TransmitConfig): void {
   for (const universe of store.list()) transmitter.send(universe, store.getBuffer(universe), outputs);
   for (const [universe, frame] of store.drainRetired()) {
     transmitter.send(universe, frame, outputs, { immediate: true, terminate: true });
@@ -77,23 +89,23 @@ function transmit(outputs) {
   transmitter.endFrame(outputs);
 }
 
-let ticker = null;
+let ticker: Ticker | null = null;
 
-function renderTick(due, now) {
+function renderTick(due: number, now: number): void {
   if (!snapshot) return;
   const reading = follow.at(now);
   if (!reading) return;
   renderer.frame(snapshot.input, reading, now, store);
   transmit(snapshot.outputs);
-  parentPort.postMessage({ type: 'frame' });
+  post({ type: 'frame' });
   if (now - lastStatsAt >= 1000) {
     lastStatsAt = now;
-    parentPort.postMessage({ type: 'stats', stats: ticker.stats.summary() });
+    if (ticker) post({ type: 'stats', stats: ticker.stats.summary() });
   }
 }
 
 /** Every universe out now, bypassing the Hue delay, then say so. */
-function blackout() {
+function blackout(): void {
   if (snapshot) {
     store.sync(snapshot.input.universes);
     store.clearAll();
@@ -111,16 +123,17 @@ function blackout() {
 }
 
 /** One frame on request, for tests: the universes' bytes come back. */
-function renderOnce({ input, reading, now }) {
+function renderOnce({ input, reading, now }: { input: RenderInput; reading: MusicalTime; now: number }): RenderedFrames {
   renderer.frame(input, reading, now, store);
-  const frames = {};
+  const frames: RenderedFrames = {};
   for (const universe of store.list()) frames[universe] = Array.from(store.getBuffer(universe));
   for (const [universe] of store.drainRetired()) frames[universe] = null;
   return frames;
 }
 
-parentPort.on('message', guarded('engine-worker', (msg) => {
-  switch (msg && msg.type) {
+port.on('message', guarded('engine-worker', (msg: ToWorker | null) => {
+  if (!msg) return;
+  switch (msg.type) {
     case 'profiles':
       setProfiles(msg.profiles);
       break;
@@ -129,12 +142,12 @@ parentPort.on('message', guarded('engine-worker', (msg) => {
       follow.push(msg.reading, msg.at);
       break;
     case 'render':
-      parentPort.postMessage({ type: 'rendered', id: msg.id, frames: renderOnce(msg) });
+      post({ type: 'rendered', id: msg.id, frames: renderOnce(msg) });
       break;
     case 'stop':
       if (ticker) ticker.stop();
       blackout();
-      parentPort.postMessage({ type: 'stopped' });
+      post({ type: 'stopped' });
       break;
     default:
       break;
@@ -145,4 +158,4 @@ if (!capture) {
   ticker = createTicker({ onTick: guarded('render', renderTick), periodMs, epochMs });
   ticker.start();
 }
-parentPort.postMessage({ type: 'ready' });
+post({ type: 'ready' });

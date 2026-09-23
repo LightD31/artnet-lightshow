@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ShowDirector } from '../../src/show/director.ts';
 import { renderIntents } from '../../src/show/render.ts';
-import { PATTERNS, COLOR_PRESETS } from '../../src/server/presets.js';
+import { PATTERNS, COLOR_PRESETS } from '../../src/server/presets.ts';
 import { patchSchema } from '../../src/server/validation.js';
 import { makeScore, semantics } from '../../src/show/score.ts';
 import { PATTERN_FUNCS } from '../../src/shared/patterns.ts';

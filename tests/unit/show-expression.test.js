@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { state } from '../../src/server/state.js';
-import { startEngine, stopEngine } from '../../src/server/engine.js';
+import { state } from '../../src/server/state.ts';
+import { startEngine, stopEngine } from '../../src/server/engine.ts';
 import { applyPatch } from '../../src/server/patch.js';
-import { getProfile } from '../../src/server/profiles.js';
-import * as universes from '../../src/server/universes.js';
+import { getProfile } from '../../src/server/profiles.ts';
+import * as universes from '../../src/server/universes.ts';
 
 // Observe actual DMX frames without sending them to a fixture or network:
 // every output is off (Hue and sACN are off by default), so the engine renders

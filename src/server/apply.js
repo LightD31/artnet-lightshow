@@ -1,7 +1,7 @@
-import { state, setDefaultUniverse } from './state.js';
-import { settings } from './settings.js';
-import * as output from './output.js';
-import { generateCid } from './sacn.js';
+import { state, setDefaultUniverse } from './state.ts';
+import { settings } from './settings.ts';
+import * as output from './output.ts';
+import { generateCid } from './sacn.ts';
 import * as pythonEnv from '../python-env.js';
 
 /**

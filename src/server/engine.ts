@@ -1,15 +1,31 @@
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 
-import { state, universeOf, maxBrightnessOf, activeUniverses } from './state.js';
-import { getProfile, profilesRevision, listProfiles, isBuiltinProfile } from './profiles.js';
-import * as output from './output.js';
-import * as universes from './universes.js';
-import { guarded, report } from './guard.js';
-import { conductor } from './conductor.js';
-import { invalidateRig } from './rig.js';
-import { createRenderer } from './renderer.js';
-import { createTicker, hrtimeMs, FRAME_MS } from './frame-clock.js';
+import { state, universeOf, maxBrightnessOf, activeUniverses } from './state.ts';
+import { getProfile, profilesRevision, listProfiles, isBuiltinProfile } from './profiles.ts';
+import * as output from './output.ts';
+import * as universes from './universes.ts';
+import { guarded, report } from './guard.ts';
+import { conductor } from './conductor.ts';
+import { invalidateRig } from './rig.ts';
+import { createRenderer } from './renderer.ts';
+import { createTicker, hrtimeMs, FRAME_MS } from './frame-clock.ts';
+import { messageOf } from '../errors.ts';
+import type { FromWorker, ToWorker } from './engine-messages.ts';
+import type { FrameSummary, Ticker } from './frame-clock.ts';
+import type { FadeRequest, RenderInput, SyncTestRequest } from './renderer.ts';
+import type { Profile } from '../types/rig.ts';
+
+/** Where frames are rendered: a thread of their own, or this one. */
+export type EngineThread = 'worker' | 'main';
+
+/** Where frames are rendered and how the frames have been going. */
+export type EngineStatus = {
+  thread: EngineThread | null;
+  running: boolean;
+  rate: number;
+  fellBack: string | null;
+} & Partial<FrameSummary>;
 
 /**
  * The engine: renders a frame of the rig on every tick of the frame clock and
@@ -22,7 +38,7 @@ import { createTicker, hrtimeMs, FRAME_MS } from './frame-clock.js';
  *
  * It runs the renderer in one of two places:
  *
- *   worker  (the server's default) a thread of its own, engine-worker.js. The
+ *   worker  (the server's default) a thread of its own, engine-worker.ts. The
  *           main thread runs a *control tick* a few milliseconds ahead of every
  *           frame on the same frame grid — the auto show's cursor, the musical
  *           clock, a snapshot posted across — and the worker renders on time
@@ -56,17 +72,17 @@ const renderer = createRenderer({ profileOf: getProfile, profilesRevision, now: 
 
 // Requests the renderer picks up at the start of its next frame. Numbered, so
 // the same request is never adopted twice and a new one always is.
-let fadeRequest = null;          // { seq, ms, at }
-let syncRequest = null;          // { seq, seconds, at }
+let fadeRequest: FadeRequest | null = null;
+let syncRequest: SyncTestRequest | null = null;
 let requestSeq = 0;
 
 /** Fade from what is on stage now over `ms`; 0 cuts, cancelling any fade. */
-function beginFade(ms) {
+function beginFade(ms: number): void {
   fadeRequest = { seq: ++requestSeq, ms, at: clock() };
 }
 
 /** Flash every fixture once a second for `seconds`, for the Hue sync test. */
-function startSyncTest(seconds = 10) {
+function startSyncTest(seconds = 10): number {
   syncRequest = { seq: ++requestSeq, seconds, at: clock() };
   return seconds;
 }
@@ -76,7 +92,7 @@ function startSyncTest(seconds = 10) {
  * masters, the patch (each fixture's universe and trim resolved), and any
  * fade or sync test asked for.
  */
-function renderInput() {
+function renderInput(): RenderInput {
   // A fixture a Hue lamp follows is never strobed in software: the lamp would
   // flash with it, and a Hue bridge is no strobe (see renderer.js).
   const followed = output.hueFollowedFixtures ? output.hueFollowedFixtures() : null;
@@ -118,11 +134,11 @@ function renderInput() {
 // Run at the top of every frame, before the clock is read: the auto show fires
 // whatever is due by now, so a cue lands on the frame it was scheduled for
 // rather than up to a poll interval later.
-let frameHook = null;
+let frameHook: (() => void) | null = null;
 const runFrameHook = guarded('frame-hook', () => { if (frameHook) frameHook(); });
 
 /** Register what runs at the start of each frame (the auto show's cursor). */
-function setFrameHook(fn) {
+function setFrameHook(fn: (() => void) | null | undefined): void {
   frameHook = typeof fn === 'function' ? fn : null;
 }
 
@@ -130,13 +146,13 @@ function setFrameHook(fn) {
  * The patch changed: forget the picture of the rig, so the next frame builds
  * it afresh rather than finding out from its signature.
  */
-function resizeFixtureBuffers() {
+function resizeFixtureBuffers(): void {
   invalidateRig();
   renderer.invalidateRig();
 }
 
 /** Put every allocated universe on the wire, and black out the ones retired. */
-function transmitFrame() {
+function transmitFrame(): void {
   for (const universe of universes.list()) {
     output.sendUniverse(universe, universes.getBuffer(universe));
   }
@@ -148,7 +164,7 @@ function transmitFrame() {
   output.endFrame();
 }
 
-function renderDmx() {
+function renderDmx(): void {
   const now = clock();
   runFrameHook();
   renderer.frame(renderInput(), conductor.now(), now, universes);
@@ -165,18 +181,23 @@ const safeRender = guarded('render', renderDmx);
 
 // ── The drivers ─────────────────────────────────────────────────────────────
 
-let ticker = null;               // this thread's frame loop, or the control tick
-let worker = null;               // the engine thread, while one is running
-let thread = null;               // 'worker' | 'main' | null (stopped)
-let workerStats = null;          // the worker's last timing report
-let fellBack = null;             // why the engine is here and not in its worker
-let crashes = [];
+let ticker: Ticker | null = null;               // this thread's frame loop, or the control tick
+let worker: Worker | null = null;               // the engine thread, while one is running
+let thread: EngineThread | null = null;         // null while stopped
+let workerStats: FrameSummary | null = null;    // the worker's last timing report
+let fellBack: string | null = null;             // why the engine is here and not in its worker
+let crashes: number[] = [];
 let postedRevision = -1;
-let stopping = null;             // resolves when the worker has blacked out
-let restartTimer = null;
-let workerFile = path.join(import.meta.dirname, 'engine-worker.js');
+let stopping: (() => void) | null = null;       // resolves when the worker has blacked out
+let restartTimer: ReturnType<typeof setTimeout> | null = null;
+let workerFile = path.join(import.meta.dirname, 'engine-worker.ts');
 
-function startMainDriver() {
+/** Tell the worker something. */
+function post(w: Worker, msg: ToWorker): void {
+  w.postMessage(msg);
+}
+
+function startMainDriver(): void {
   thread = 'main';
   clock = () => performance.now();
   universes.setWritable(true);
@@ -185,7 +206,7 @@ function startMainDriver() {
 }
 
 /** The imported profiles; the worker has the built-ins already. */
-function importedProfiles() {
+function importedProfiles(): Profile[] {
   return Object.values(listProfiles()).filter((p) => !isBuiltinProfile(p.id));
 }
 
@@ -194,17 +215,17 @@ function importedProfiles() {
  * clock, and post the worker what it needs to render. The profiles go across
  * only when they have changed.
  */
-function controlTick() {
+function controlTick(): void {
   if (!worker) return;
   runFrameHook();
   const reading = conductor.now();
   const at = hrtimeMs();
   const revision = profilesRevision();
   if (revision !== postedRevision) {
-    worker.postMessage({ type: 'profiles', profiles: importedProfiles() });
+    post(worker, { type: 'profiles', profiles: importedProfiles() });
     postedRevision = revision;
   }
-  worker.postMessage({
+  post(worker, {
     type: 'snapshot',
     at,
     input: renderInput(),
@@ -215,8 +236,9 @@ function controlTick() {
   });
 }
 
-function onWorkerMessage(msg) {
-  switch (msg && msg.type) {
+function onWorkerMessage(msg: FromWorker | null): void {
+  if (!msg) return;
+  switch (msg.type) {
     case 'frame':
       // The frame is already in the shared buffers: Hue reads it from there.
       output.sendHue();
@@ -232,14 +254,14 @@ function onWorkerMessage(msg) {
   }
 }
 
-function spawnWorker(epochMs) {
+function spawnWorker(epochMs: number): void {
   let ready = false;
   const w = new Worker(workerFile, {
     workerData: { shared: universes.shared, epochMs, periodMs: FRAME_MS },
   });
   worker = w;
   postedRevision = -1;
-  w.on('message', (msg) => {
+  w.on('message', (msg: FromWorker | null) => {
     if (msg && msg.type === 'ready') ready = true;
     guarded('engine', onWorkerMessage)(msg);
   });
@@ -267,7 +289,7 @@ function spawnWorker(epochMs) {
   });
 }
 
-function startWorkerDriver() {
+function startWorkerDriver(): void {
   thread = 'worker';
   clock = hrtimeMs;
   // Only the rendering thread allocates a universe's slot in shared memory.
@@ -289,9 +311,9 @@ function startWorkerDriver() {
  * own thread and can read the frames as they are written). `file` swaps the
  * worker's script, for testing what happens when one will not run.
  */
-function startEngine({ thread: where = 'main', file = null } = {}) {
+function startEngine({ thread: where = 'main', file = null }: { thread?: EngineThread; file?: string | null } = {}): void {
   if (thread) return;                   // idempotent: never stack render loops
-  workerFile = file || path.join(import.meta.dirname, 'engine-worker.js');
+  workerFile = file || path.join(import.meta.dirname, 'engine-worker.ts');
   fellBack = null;
   crashes = [];
   if (where === 'worker') {
@@ -299,7 +321,7 @@ function startEngine({ thread: where = 'main', file = null } = {}) {
       startWorkerDriver();
       return;
     } catch (err) {
-      fellBack = `the engine thread could not start (${err.message})`;
+      fellBack = `the engine thread could not start (${messageOf(err)})`;
       console.warn(`[engine] ${fellBack} — rendering on the main thread instead`);
       if (ticker) ticker.stop();
       worker = null;
@@ -309,7 +331,7 @@ function startEngine({ thread: where = 'main', file = null } = {}) {
 }
 
 /** Put every universe out now, from this thread, bypassing any delay. */
-function blackout() {
+function blackout(): void {
   universes.setWritable(true);
   universes.sync(activeUniverses());
   universes.clearAll();
@@ -323,7 +345,7 @@ function blackout() {
 }
 
 /** One black frame so the Hue lamps go out, then close the stream. */
-function hueOut() {
+function hueOut(): void {
   // Rather than leaving the area locked to a stream that has stopped arriving.
   output.sendHue();
   output.stopHue();
@@ -341,7 +363,7 @@ function hueOut() {
  * (it owns the sockets the rig has been listening to); if it has not answered
  * in a moment, this thread does it instead.
  */
-function stopEngine() {
+function stopEngine(): Promise<void> {
   if (ticker) ticker.stop();
   ticker = null;
   if (restartTimer) clearTimeout(restartTimer);
@@ -359,7 +381,7 @@ function stopEngine() {
   }
 
   return new Promise((resolve) => {
-    const finish = (blackedOut) => {
+    const finish = (blackedOut: boolean) => {
       clearTimeout(timer);
       stopping = null;
       if (!blackedOut) blackout();
@@ -371,7 +393,7 @@ function stopEngine() {
     const timer = setTimeout(() => finish(false), STOP_TIMEOUT_MS);
     stopping = () => finish(true);
     try {
-      w.postMessage({ type: 'stop' });
+      post(w, { type: 'stop' });
     } catch (_) {
       finish(false);
     }
@@ -379,7 +401,7 @@ function stopEngine() {
 }
 
 /** Where frames are rendered and how the frames have been going (FrameStats). */
-function engineStatus() {
+function engineStatus(): EngineStatus {
   const stats = thread === 'worker' ? workerStats : (ticker ? ticker.stats.summary() : null);
   return {
     thread,

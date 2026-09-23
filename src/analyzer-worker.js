@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 // the auto-show silently stops picking up new tracks with no error anywhere.
 // Generous by design: a cold start plus a long track is well
 // under this, so hitting it means something is genuinely stuck.
-import { settings } from './server/settings.js';
+import { settings } from './server/settings.ts';
 
 // Read per call, not once at load: the operator can change it in the settings
 // page and the next analysis should honour the new value without a restart.

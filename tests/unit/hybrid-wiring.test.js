@@ -8,7 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert';
 
 import { setupIntegrations } from '../../src/server/integrations.js';
-import { state } from '../../src/server/state.js';
+import { state } from '../../src/server/state.ts';
 
 const SPOTIFY_TRACK = {
   trackId: 'spotify-1',
@@ -384,9 +384,9 @@ test('with Spotify alone, a slightly late report does not move the show backward
 // With the auto show off, manual patterns lock to the song that is playing
 // whenever its analysis is cached (conductor.js, the `track` source).
 
-import { conductor } from '../../src/server/conductor.js';
+import { conductor } from '../../src/server/conductor.ts';
 import { keyForSpotify } from '../../src/analysis-cache.js';
-import { getLiveState } from '../../src/server/state.js';
+import { getLiveState } from '../../src/server/state.ts';
 import { makeGrid } from '../../src/shared/beat-clock.ts';
 
 const beatsAt = (bpm) => Array.from({ length: 600 }, (_, i) => i * (60 / bpm));

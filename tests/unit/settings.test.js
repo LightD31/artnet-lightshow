@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { SettingsStore, DEFAULTS, warnAboutLegacyEnv } from '../../src/server/settings.js';
-import { schema, patchSchema } from '../../src/server/settings.js';
+import { SettingsStore, DEFAULTS, warnAboutLegacyEnv } from '../../src/server/settings.ts';
+import { schema, patchSchema } from '../../src/server/settings.ts';
 
 let counter = 0;
 function store() {

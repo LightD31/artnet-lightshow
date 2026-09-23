@@ -10,8 +10,8 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import { COLOR_PRESETS } from '../../src/server/presets.js';
-import { TETRADS, TRIADS, DUOS, PALETTE_IDS } from '../../src/server/palettes.js';
+import { COLOR_PRESETS } from '../../src/server/presets.ts';
+import { TETRADS, TRIADS, DUOS, PALETTE_IDS } from '../../src/server/palettes.ts';
 
 /**
  * What a preset looks like once the emitters mix, rather than what its r/g/b

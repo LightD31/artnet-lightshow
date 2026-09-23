@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import * as universes from '../../src/server/universes.js';
+import * as universes from '../../src/server/universes.ts';
 
 test.beforeEach(() => universes.reset());
 test.after(() => universes.reset());

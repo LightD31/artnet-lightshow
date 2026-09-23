@@ -17,11 +17,20 @@
  * track — is taken as it comes.
  */
 
-import { BACKWARD_JUMP_BEATS } from './conductor.js';
+import { BACKWARD_JUMP_BEATS } from './conductor.ts';
+import type { MusicalTime } from './conductor.ts';
 
-function createClockFollower({ backwardJump = BACKWARD_JUMP_BEATS } = {}) {
-  let sample = null;             // the latest reading, and when it was taken
-  let last = null;               // what was last handed out: { beatPos, epoch }
+/** A Conductor reading as posted to the worker; `moving: false` is a held clock. */
+export type PostedReading = MusicalTime & { moving?: boolean };
+
+export interface ClockFollower {
+  push(reading: PostedReading | null | undefined, at: number): void;
+  at(t: number): MusicalTime | null;
+}
+
+function createClockFollower({ backwardJump = BACKWARD_JUMP_BEATS } = {}): ClockFollower {
+  let sample: (PostedReading & { at: number }) | null = null;   // the latest reading, and when it was taken
+  let last: { beatPos: number; epoch: number } | null = null;    // what was last handed out
 
   return {
     /** A reading from the Conductor, taken at `at` on the shared clock. */
@@ -39,8 +48,8 @@ function createClockFollower({ backwardJump = BACKWARD_JUMP_BEATS } = {}) {
         beatPos = last.beatPos;
       }
       last = { beatPos, epoch: sample.epoch };
-      const reading = { beatPos, bpm: sample.bpm, source: sample.source, epoch: sample.epoch };
-      if (Number.isFinite(sample.anchorBeat)) reading.anchorBeat = sample.anchorBeat;
+      const reading: MusicalTime = { beatPos, bpm: sample.bpm, source: sample.source, epoch: sample.epoch };
+      if (sample.anchorBeat !== undefined && Number.isFinite(sample.anchorBeat)) reading.anchorBeat = sample.anchorBeat;
       return reading;
     },
   };

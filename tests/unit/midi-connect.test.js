@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert';
 
 import { connectMidi } from '../../src/server/midi-connect.js';
-import { settings } from '../../src/server/settings.js';
+import { settings } from '../../src/server/settings.ts';
 
 function fakeMidi(opens = true) {
   const calls = [];

@@ -5,9 +5,9 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import { writeDimmer, createRenderer } from '../../src/server/renderer.js';
-import * as universes from '../../src/server/universes.js';
-import { getProfile, profilesRevision, BUILTIN_PROFILE_ID } from '../../src/server/profiles.js';
+import { writeDimmer, createRenderer } from '../../src/server/renderer.ts';
+import * as universes from '../../src/server/universes.ts';
+import { getProfile, profilesRevision, BUILTIN_PROFILE_ID } from '../../src/server/profiles.ts';
 
 const FINE = { dimmer: 0, dimmerFine: 1 };
 const COARSE = { dimmer: 0 };

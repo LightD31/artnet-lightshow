@@ -1,5 +1,5 @@
 import { validate, midiConnectSchema } from './validation.js';
-import { settings } from './settings.js';
+import { settings } from './settings.ts';
 
 /**
  * Open the named MIDI ports and remember them for the next start.

@@ -24,7 +24,7 @@
 import { DEFAULT_MAP } from './server/midi-map.js';
 import { createRequire } from 'node:module';
 
-import { ENERGY_EFFECT_IDS, STROBE_FUNCTION_IDS, SYNC_OFFSET_LIMIT_MS } from './server/presets.js';
+import { ENERGY_EFFECT_IDS, STROBE_FUNCTION_IDS, SYNC_OFFSET_LIMIT_MS } from './server/presets.ts';
 
 // Loaded through require so it can stay optional: a missing or broken native
 // MIDI binding turns MIDI off rather than stopping the server from starting.
