@@ -8,7 +8,7 @@ const socket = io({ auth: { token: auth.token || '' } });
 
 let state = {};
 let profiles = {};
-let pendingGdtf = null; // holds parsed GDTF data before user confirms mode
+let pendingGdtf = null; // an imported fixture (GDTF or OFL) until its mode is picked
 
 /**
  * Fetch a JSON API and say so when it refuses.
@@ -505,49 +505,91 @@ document.getElementById('midi-map-reset').addEventListener('click', async () => 
   });
 });
 
-// ── GDTF Import ──────────────────────────────────────────────────────────────
+// ── Fixture import: GDTF, OFL files, the Open Fixture Library ───────────────
+// Every way in answers with the same { name, manufacturer, modes } fixture, so
+// they all end in the same mode picker.
 
-document.getElementById('gdtf-file').addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-
+/** Run one import (`load` resolves to the server's response) and open its mode picker. */
+async function importFixture(pending, load) {
   const statusEl = document.getElementById('gdtf-status');
-  statusEl.textContent = 'Parsing...';
+  statusEl.textContent = pending;
   statusEl.className = 'import-status';
-
-  const formData = new FormData();
-  formData.append('gdtf', file);
-
+  let data;
   try {
-    const res = await fetch('/api/gdtf/parse', { method: 'POST', body: formData });
-    const data = await res.json();
-
-    if (!data.ok) {
-      statusEl.textContent = data.error || 'Failed to parse GDTF';
-      statusEl.className = 'import-status error';
-      return;
-    }
-
-    statusEl.textContent = `Parsed: ${data.fixture.name} by ${data.fixture.manufacturer}`;
-    statusEl.className = 'import-status success';
-
-    pendingGdtf = data.fixture;
-    showModeSelector(data.fixture);
+    data = await (await load()).json();
   } catch (err) {
-    statusEl.textContent = 'Upload failed';
-    statusEl.className = 'import-status error';
+    data = { ok: false, error: 'Could not reach the server' };
   }
+  if (!data.ok) {
+    statusEl.textContent = data.error || 'Import failed';
+    statusEl.className = 'import-status error';
+    return;
+  }
+  statusEl.textContent = `Read: ${data.fixture.name} by ${data.fixture.manufacturer}`;
+  statusEl.className = 'import-status success';
+  pendingGdtf = data.fixture;
+  showModeSelector(data.fixture);
+}
 
-  // Reset file input
-  e.target.value = '';
+/** An <input type=file> whose file is posted to `url` as `field`. */
+function fileImport(inputId, url, field) {
+  document.getElementById(inputId).addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const formData = new FormData();
+    formData.append(field, file);
+    await importFixture('Reading…', () => fetch(url, { method: 'POST', body: formData }));
+    e.target.value = '';
+  });
+}
+
+fileImport('gdtf-file', '/api/gdtf/parse', 'gdtf');
+fileImport('ofl-file', '/api/ofl/parse', 'ofl');
+
+document.getElementById('ofl-search').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const query = document.getElementById('ofl-query').value.trim();
+  const box = document.getElementById('ofl-results');
+  box.hidden = false;
+  if (query.length < 2) {
+    box.replaceChildren(el('div', 'ofl-note', 'Type at least two letters'));
+    return;
+  }
+  box.replaceChildren(el('div', 'ofl-note', 'Searching…'));
+  let data;
+  try {
+    data = await (await fetch(`/api/ofl/search?q=${encodeURIComponent(query)}`)).json();
+  } catch (err) {
+    data = { ok: false, error: 'Could not reach the server' };
+  }
+  box.replaceChildren();
+  if (!data.ok) {
+    box.appendChild(el('div', 'ofl-note error', data.error || 'The search failed'));
+    return;
+  }
+  if (!data.results.length) {
+    box.appendChild(el('div', 'ofl-note', `Nothing in the Open Fixture Library matches "${query}"`));
+    return;
+  }
+  data.results.forEach((hit) => {
+    const row = el('button', 'ofl-hit');
+    row.type = 'button';
+    row.appendChild(el('span', 'ofl-hit-name', hit.name));
+    row.appendChild(el('span', 'ofl-hit-maker', [hit.manufacturer, ...hit.categories].join(' · ')));
+    row.addEventListener('click', () => importFixture(`Fetching ${hit.name}…`, () =>
+      fetch(`/api/ofl/fixture/${encodeURIComponent(hit.manufacturerKey)}/${encodeURIComponent(hit.fixtureKey)}`)));
+    box.appendChild(row);
+  });
 });
 
 function showModeSelector(fixture) {
   const container = document.getElementById('gdtf-mode-select');
   container.style.display = '';
 
-  document.getElementById('gdtf-fixture-name').textContent =
-    `${fixture.manufacturer} ${fixture.name}`;
+  document.getElementById('gdtf-fixture-name').textContent = fixture.name;
+  // An OFL file does not say who makes the fixture, so the maker can be typed in.
+  document.getElementById('gdtf-manufacturer').value = fixture.manufacturer === 'Unknown' ? '' : fixture.manufacturer;
+  document.getElementById('gdtf-manufacturer').placeholder = 'Who makes it';
 
   const modeSelect = document.getElementById('gdtf-mode');
   modeSelect.innerHTML = '';
@@ -558,11 +600,12 @@ function showModeSelector(fixture) {
     modeSelect.appendChild(opt);
   });
 
-  renderChannelPreview(fixture.modes[0]);
+  renderChannelPreview(fixture.modes[0], 'gdtf-channel-preview', fixture.warnings);
 
-  modeSelect.addEventListener('change', () => {
-    renderChannelPreview(fixture.modes[parseInt(modeSelect.value)]);
-  });
+  // Assigned rather than added, so a second import does not leave the first's handler behind.
+  modeSelect.onchange = () => {
+    renderChannelPreview(fixture.modes[parseInt(modeSelect.value)], 'gdtf-channel-preview', fixture.warnings);
+  };
 }
 
 // Build an element with text content set safely. Every value rendered by this
@@ -575,18 +618,38 @@ function el(tag, className, text) {
   return node;
 }
 
-function renderChannelPreview(mode, containerId = 'gdtf-channel-preview') {
+// The attributes the show writes. A channel is highlighted in the preview only
+// when one of these maps it: a profile can name its gobo, but nothing moves it.
+const DRIVEN_ATTRIBUTES = new Set(['dimmer', 'dimmerFine', 'strobe', 'red', 'green', 'blue', 'white', 'amber', 'uv', 'warmWhite', 'coolWhite']);
+
+function drivenOffsets(mode) {
+  const driven = new Set();
+  const add = (map) => Object.entries(map || {}).forEach(([attr, offset]) => {
+    if (DRIVEN_ATTRIBUTES.has(attr)) driven.add(offset);
+  });
+  add(mode.channelMap);
+  (mode.cells || []).forEach((cell) => add(cell.channelMap));
+  return driven;
+}
+
+function renderChannelPreview(mode, containerId = 'gdtf-channel-preview', fixtureWarnings = []) {
   const container = document.getElementById(containerId);
   container.innerHTML = '';
-  // A bar says how many lights it is before the channel list, and anything
-  // the import had to leave out says so.
-  if (mode.cells) container.appendChild(el('div', 'ch-summary', `${mode.cells.length} cells, each driven on its own`));
-  (mode.warnings || []).forEach((warning) => container.appendChild(el('div', 'ch-warning', warning)));
+  const driven = drivenOffsets(mode);
+  const held = new Map((mode.defaults || []).map((d) => [d.offset, d.value]));
+  // What the mode is before its channels, and anything the import had to
+  // leave out or hold says so.
+  const drives = `${driven.size} of ${mode.channelCount} channels driven by the show (highlighted)`;
+  container.appendChild(el('div', 'ch-summary', mode.cells ? `${mode.cells.length} cells, each driven on its own · ${drives}` : drives));
+  [...fixtureWarnings, ...(mode.warnings || [])].forEach((warning) => container.appendChild(el('div', 'ch-warning', warning)));
   mode.channelList.forEach(ch => {
-    const isMapped = ch.attribute && ch.attribute !== 'unknown';
-    const tag = el('span', 'ch-tag' + (isMapped ? ' mapped' : ''));
+    const tag = el('span', 'ch-tag' + (driven.has(ch.offset) ? ' mapped' : ''));
     tag.appendChild(el('span', 'ch-num', ch.offset + 1));
     tag.appendChild(el('span', 'ch-name', ch.name));
+    if (held.has(ch.offset)) {
+      tag.appendChild(el('span', 'ch-held', `=${held.get(ch.offset)}`));
+      tag.title = `The show does not drive this channel; it is held at ${held.get(ch.offset)}`;
+    }
     container.appendChild(tag);
   });
 }
@@ -596,13 +659,14 @@ document.getElementById('gdtf-confirm').addEventListener('click', async () => {
 
   const modeIdx = parseInt(document.getElementById('gdtf-mode').value);
   const mode = pendingGdtf.modes[modeIdx];
+  const manufacturer = document.getElementById('gdtf-manufacturer').value.trim() || pendingGdtf.manufacturer;
 
-  const profileId = slugify(`${pendingGdtf.manufacturer}-${pendingGdtf.name}-${mode.modeName}`);
+  const profileId = slugify(`${manufacturer}-${pendingGdtf.name}-${mode.modeName}`);
 
   const profile = {
     id: profileId,
     name: pendingGdtf.name,
-    manufacturer: pendingGdtf.manufacturer,
+    manufacturer,
     modeName: mode.modeName,
     channelCount: mode.channelCount,
     channelMap: mode.channelMap,
@@ -613,6 +677,9 @@ document.getElementById('gdtf-confirm').addEventListener('click', async () => {
     // was imported before cells existed replaces it, and every fixture on it
     // becomes a bar of lights on the next frame.
     ...(mode.cells ? { cells: mode.cells } : {}),
+    // Channels the show does not drive and must not leave at 0 (an OFL
+    // shutter that is closed at 0, a dimmer the show leaves at full).
+    ...(mode.defaults ? { defaults: mode.defaults } : {}),
   };
 
   const data = await apiJson('/api/profiles', jsonBody('POST', profile));
