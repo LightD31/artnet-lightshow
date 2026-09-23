@@ -1026,6 +1026,22 @@ input[type=range]::-moz-range-thumb {
 /* =============================================================
    PATTERNS
    ============================================================= */
+/* The pixel effects under the lamp patterns, and how they lie over the bars. */
+.card-subtitle {
+  margin: 12px 0 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.pixel-map {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+
 .pattern-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -2174,6 +2190,45 @@ input[type=range]::-moz-range-thumb {
 .stage-fixture:focus-visible .stage-glow {
   box-shadow: var(--glow), 0 0 14px -2px var(--light, transparent);
 }
+
+/* An LED bar: its cells along its line, each lit as the rig lights it, with
+   the bar's number riding at its centre rather than a lamp above it. */
+.stage-cell {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  transform: translate(-50%, -50%);
+  background: var(--light, #222);
+  box-shadow: 0 0 6px -1px var(--light, transparent);
+  pointer-events: none;
+}
+.stage-fixture.bar .stage-glow,
+.stage-fixture.bar .stage-lamp {
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 20px;
+  height: 20px;
+}
+.stage-fixture.bar .stage-glow { box-shadow: inset 0 -2px 4px rgba(0, 0, 0, .35); }
+.stage-fixture.bar .stage-lamp { font-size: 9px; }
+.stage-fixture.bar .stage-label { top: calc(50% + 12px); }
+.stage-surface.editing .stage-fixture.bar .stage-glow { border-color: var(--accent); }
+
+/* The far end of a bar, in positioning mode: drag it round to turn the bar,
+   out or in to change its length. */
+.stage-handle {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  border: 2px solid var(--accent);
+  background: var(--bg);
+  cursor: grab;
+}
+.stage-handle:active { cursor: grabbing; }
 
 .stage-surface .panel-empty {
   position: absolute;

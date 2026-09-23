@@ -120,6 +120,15 @@ const PATTERNS = [
   { id: 'random-flash', name: 'Random Flash',  desc: 'One random fixture pops each beat' },
   { id: 'ensemble', name: 'Ensemble', desc: 'Bass at the edges, vocals in the centre, airy moving accents' },
   { id: 'ribbon', name: 'Ribbon', desc: 'Continuous palette ribbons shaped by musical texture and width' },
+
+  // Pictures drawn across every cell of every LED bar. They run on pars too,
+  // as four samples of the same picture; `pixel` marks them for the picker
+  // and for the auto show, which reaches for them only on a rig with bars.
+  { id: 'gradient', name: 'Gradient', desc: 'The look\'s colours as a gradient scrolling across the rig', pixel: true },
+  { id: 'comet',    name: 'Comet',    desc: 'A head crossing the rig every four steps with a fading tail', pixel: true },
+  { id: 'burst',    name: 'Burst',    desc: 'A ring thrown out from the centre of the stage on every step', pixel: true },
+  { id: 'plasma',   name: 'Plasma',   desc: 'Slow interfering waves in the look\'s colours', pixel: true },
+  { id: 'meter',    name: 'Meter',    desc: 'A level meter filled by the low end, kicked on every step', pixel: true },
 ];
 
 const PATTERN_IDS = PATTERNS.map((p) => p.id);

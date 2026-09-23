@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'preact/hooks';
 import { stateSig, dmxSig, emitOverride, emitFixture } from '../state.js';
-import { fixtureOutputColor } from '../utils.js';
+import { fixtureOutputColor, fixtureCellColors } from '../utils.js';
 import { FIXTURE_GROUPS } from '../../src/shared/stage.js';
 
 const GROUP_LABELS = { front: 'Front', back: 'Back', room: 'Room', floor: 'Floor' };
@@ -17,7 +17,13 @@ const DEFAULT_OVERRIDE = { enabled: false, r: 255, g: 0, b: 0, w: 0, a: 0, uv: 0
  * address inputs and its override sliders re-rendered ten times a second.
  */
 function FixturePreview({ fix, state }) {
-  return <div class="fixture-preview" style={{ background: fixtureOutputColor(fix, state, dmxSig.value) }} />;
+  // An LED bar shows every cell, left to right, in hard steps rather than a
+  // blend: that is what the bar itself looks like.
+  const cells = fixtureCellColors(fix, state, dmxSig.value);
+  const background = cells
+    ? `linear-gradient(90deg, ${cells.map((c, i) => `${c} ${(i / cells.length) * 100}% ${((i + 1) / cells.length) * 100}%`).join(', ')})`
+    : fixtureOutputColor(fix, state, dmxSig.value);
+  return <div class="fixture-preview" style={{ background }} title={cells ? `${cells.length} cells` : undefined} />;
 }
 
 function FixtureCard({ fix, state }) {

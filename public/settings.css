@@ -115,6 +115,40 @@
   color: #fff;
 }
 
+/* The bar maker: the same field layout as the GDTF mode picker. */
+.bar-maker { margin-top: 12px; }
+.bar-maker summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  padding: 4px 0;
+}
+.bar-maker input {
+  flex: 1;
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: inherit;
+}
+.bar-maker input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* What an import is, and what it had to leave out, above the channel tags. */
+.ch-summary,
+.ch-warning {
+  flex-basis: 100%;
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+.ch-summary { color: var(--text); }
+.ch-warning { color: #f59e0b; }
+
 /* ── Profiles list ──────────────────────────────────────── */
 .profiles-list {
   display: grid;

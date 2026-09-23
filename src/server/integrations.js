@@ -3,6 +3,7 @@
 const { state, getLiveState, getDmxSnapshot } = require('./state');
 const { setHooks } = require('./patch');
 const { conductor } = require('./conductor');
+const { currentRig } = require('./rig');
 const { guarded } = require('./guard');
 const PlaybackClock = require('../playback-clock');
 const { cues } = require('./cues');
@@ -100,6 +101,9 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   let lastLiveJson = '';
 
   function broadcast() {
+    // Every edit to the patch ends in a broadcast, which makes this the one
+    // place the show hears whether the rig has LED bars to draw on.
+    if (typeof autoShow.setRig === 'function') autoShow.setRig({ hasPixels: currentRig().hasPixels });
     const live = getLiveState();
     const json = JSON.stringify(live);
     if (json !== lastLiveJson) {

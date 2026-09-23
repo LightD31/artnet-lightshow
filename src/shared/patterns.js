@@ -4,12 +4,19 @@ const { colourMixer } = require('./color');
 
 // Pure pattern functions. Each takes (ctx) where:
 //   ctx.colors        : array of resolved Colour A..D presets
-//   ctx.fixtureCount  : N fixtures
+//   ctx.fixtureCount  : N slots — fixtures, or for a CELL_PATTERNS entry every
+//                       cell of every bar (see shared/layer.js)
 //   ctx.step          : steps of the beat grid since the scene's anchor
 //                       (shared/beat-clock.js)
+//   ctx.stepPos       : the same count, continuous (2.5 is halfway through the
+//                       third step)
+//   ctx.stepPhase     : how far through the current step, 0..1
+//   ctx.phase         : the expressive patterns' travel, 0..1, moved by motion
 //   ctx.hue           : rotating hue for color-cycle / rainbow
-//   ctx.twinkle       : per-fixture stochastic memory (mutated for 'twinkle')
-//   ctx.write(i, color, dim, strobe) — sets fixture i's render colour
+//   ctx.twinkle       : per-slot stochastic memory (mutated for 'twinkle')
+//   ctx.xs, ctx.ys    : each slot's place across the rig, 0..1 (xs may be null:
+//                       even spacing); ys on the same scale, or null
+//   ctx.write(i, color, dim, strobe) — sets slot i's render colour
 //
 // 'fade' and 'hit' are whole-rig envelopes: the engine and the preview set
 // their brightness from the beat position themselves (beat-clock.js
@@ -85,6 +92,64 @@ function paletteOf(ctx) {
   const out = [];
   for (const c of ctx.colors) if (c && !out.includes(c)) out.push(c);
   return out.length ? out : [{ r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 }];
+}
+
+// Patterns that are a picture across the rig rather than a sequence of lamps:
+// they run on every cell of every bar, so a wave rolls smoothly along a bar
+// instead of the whole bar taking one colour. The rest step through fixtures,
+// and a bar takes its slot's colour on every cell.
+const CELL_PATTERNS = new Set([
+  'ensemble', 'ribbon', 'wave', 'rainbow', 'twinkle', 'sparkle',
+  'gradient', 'comet', 'burst', 'plasma', 'meter',
+]);
+
+/** Where slot i sits across the rig, 0..1: its placed position, or even spacing. */
+function xOf(ctx, i) {
+  if (ctx.xs) return ctx.xs[i];
+  return ctx.fixtureCount > 1 ? i / (ctx.fixtureCount - 1) : 0.5;
+}
+
+/** And front to back, on the same scale; the middle when nothing says. */
+function yOf(ctx, i) {
+  return ctx.ys ? ctx.ys[i] : 0.5;
+}
+
+const frac = (v) => v - Math.floor(v);
+
+// ── Palette gradients ────────────────────────────────────────────────────────
+// The pixel effects paint a continuous gradient through the look's colours, A
+// into B into C and back round to A. Blending round the colour wheel (see
+// color.js) is too costly to do for every cell of every bar forty times a
+// second, so each palette's gradient is worked out once, 64 steps between each
+// pair of colours, and looked up. Engine and preview share this table, so
+// they paint the same colour for the same place.
+const GRADIENT_STEPS = 64;
+const gradients = new Map();
+
+function gradientOf(pal) {
+  const key = pal.map((c) => `${c.r},${c.g},${c.b},${c.w || 0},${c.a || 0},${c.uv || 0}`).join('|');
+  let table = gradients.get(key);
+  if (!table) {
+    if (gradients.size > 32) gradients.clear();
+    table = [];
+    for (let k = 0; k < pal.length; k++) {
+      const mix = colourMixer(pal[k], pal[(k + 1) % pal.length]);
+      for (let s = 0; s < GRADIENT_STEPS; s++) {
+        // The ends are the palette's own colours, by reference, so a look
+        // that lands exactly on one shows exactly that preset.
+        table.push(s === 0 ? pal[k] : mix(s / GRADIENT_STEPS));
+      }
+    }
+    gradients.set(key, table);
+  }
+  return table;
+}
+
+/** The colour at `p` round the palette's cycle (0 and 1 are colour A). */
+function gradientAt(pal, p) {
+  if (pal.length === 1) return pal[0];
+  const table = gradientOf(pal);
+  return table[Math.floor(frac(p) * table.length) % table.length];
 }
 
 const PATTERN_FUNCS = {
@@ -363,4 +428,96 @@ const PATTERN_FUNCS = {
   },
 };
 
-module.exports = { PATTERN_FUNCS, paletteOf, hsvToRgb, bedOf, BED };
+// ── Pixel effects ─────────────────────────────────────────────────────────────
+//
+// Built for LED bars: pictures drawn across every cell, not a colour per
+// lamp. They run on a rig of pars too — four lamps are four samples of the
+// same picture — but they come into their own when a bar has sixteen cells to
+// draw it with. All are functions of where a cell is and where the music is
+// (ctx.stepPos, ctx.stepPhase), so the rehearsal preview draws exactly what
+// the rig will.
+
+Object.assign(PATTERN_FUNCS, {
+  // The look's colours laid out as a gradient across the rig, scrolling one
+  // full cycle every sixteen steps. Wider music spreads it further.
+  gradient(ctx) {
+    const pal = paletteOf(ctx);
+    const span = 0.5 + dyn(ctx, 'width', 0.5);
+    const scroll = (ctx.stepPos ?? ctx.step) / 16;
+    for (let i = 0; i < ctx.fixtureCount; i++) {
+      ctx.write(i, gradientAt(pal, xOf(ctx, i) * span - scroll), 255, 0);
+    }
+  },
+
+  // A bright head crossing the rig every four steps, trailing a tail that is
+  // long when the music is barely moving and short when it drives. The head
+  // runs on past the far side until its tail has left the rig, so a lap ends
+  // dark rather than lighting both ends at once, and each lap takes the next
+  // colour of the look.
+  comet(ctx) {
+    const pal = paletteOf(ctx);
+    const bed = bedOf(ctx);
+    const pos = (ctx.stepPos ?? ctx.step) / 4;
+    const tail = 0.12 + 0.3 * (1 - dyn(ctx, 'motion', 0.3));
+    const head = frac(pos) * (1 + tail);
+    const lap = Math.floor(pos);
+    const colour = pal[lap % pal.length];
+    for (let i = 0; i < ctx.fixtureCount; i++) {
+      const behind = head - xOf(ctx, i);
+      if (behind >= 0 && behind < tail) {
+        const level = Math.pow(1 - behind / tail, 1.6);
+        ctx.write(i, colour, Math.round(bed + (255 - bed) * level), 0);
+      } else {
+        ctx.write(i, pal[pal.length - 1], bed, 0);
+      }
+    }
+  },
+
+  // A ring thrown out from the middle of the stage on every step, fading as
+  // it goes; decay in the music widens it into a softer wave.
+  burst(ctx) {
+    const pal = paletteOf(ctx);
+    const bed = bedOf(ctx);
+    const radius = (ctx.stepPhase ?? 0) * 1.15;
+    const width = 0.08 + 0.1 * dyn(ctx, 'decay', 0.25);
+    const colour = pal[ctx.step % pal.length];
+    for (let i = 0; i < ctx.fixtureCount; i++) {
+      const dist = Math.hypot(xOf(ctx, i) - 0.5, yOf(ctx, i) - 0.5) / 0.5;
+      const ring = Math.exp(-(((dist - radius) / width) ** 2)) * (1 - 0.5 * Math.min(1, radius));
+      ctx.write(i, ring > 0.2 ? colour : pal[pal.length - 1], Math.round(bed + (255 - bed) * ring), 0);
+    }
+  },
+
+  // Slow interference of three waves across the rig, in the look's colours: a
+  // field that never repeats the same way twice in a phrase. Texture in the
+  // music lifts the dark parts of it.
+  plasma(ctx) {
+    const pal = paletteOf(ctx);
+    const t = ((ctx.stepPos ?? ctx.step) * Math.PI * 2) / 32;
+    const f = (0.6 + 1.4 * dyn(ctx, 'width', 0.5)) * Math.PI * 2;
+    const floor = 20 + 60 * dyn(ctx, 'air', 0.3);
+    for (let i = 0; i < ctx.fixtureCount; i++) {
+      const x = xOf(ctx, i);
+      const y = yOf(ctx, i);
+      const v = (Math.sin(x * f + t) + Math.sin(y * f * 0.8 - t * 1.3) + Math.sin((x + y) * f * 0.5 + t * 0.7) + 3) / 6;
+      ctx.write(i, gradientAt(pal, v), Math.round(floor + Math.pow(v, 1.5) * (255 - floor)), 0);
+    }
+  },
+
+  // A level meter across the rig, filled by the low end of the music and
+  // kicked a little further on every step. Laid out mirrored, it fills from
+  // the middle out; per bar, every bar is its own meter.
+  meter(ctx) {
+    const pal = paletteOf(ctx);
+    const bed = bedOf(ctx);
+    const kick = Math.pow(1 - (ctx.stepPhase ?? 0), 3) * 0.15;
+    const fill = Math.min(1, dyn(ctx, 'level', 0.8) * (0.25 + 0.75 * dyn(ctx, 'bass', 0.5)) * 0.85 + kick);
+    for (let i = 0; i < ctx.fixtureCount; i++) {
+      const x = xOf(ctx, i);
+      if (x > fill) ctx.write(i, pal[pal.length - 1], bed, 0);
+      else ctx.write(i, fill - x < 0.08 ? pal[1 % pal.length] : pal[0], 255, 0);
+    }
+  },
+});
+
+module.exports = { PATTERN_FUNCS, CELL_PATTERNS, paletteOf, hsvToRgb, bedOf, BED, gradientAt };

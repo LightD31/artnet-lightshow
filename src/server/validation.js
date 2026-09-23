@@ -9,6 +9,7 @@ const {
 } = require('./presets');
 const { PALETTE_IDS } = require('./palettes');
 const { FIXTURE_GROUPS } = require('../shared/stage');
+const { EMITTERS, PIXEL_MAPS, MAX_CELLS_PER_FIXTURE } = require('../shared/rig');
 
 const u8 = z.number().int().min(0).max(255);
 const fixtureId = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1);
@@ -17,6 +18,13 @@ const fixturePosition = z.object({
   y: z.number().finite().min(0).max(100),
 }).strict();
 const fixtureGroup = z.enum(FIXTURE_GROUPS);
+// A bar's line on the stage plot, centred on its position: how long it is in
+// percent of the stage's width, and which way it points (degrees clockwise on
+// the plot, 0 with its first cell at stage left).
+const fixtureGeometry = z.object({
+  length: z.number().finite().min(1).max(100),
+  angle: z.number().finite().min(-180).max(180),
+}).strict();
 const colorIdx = z.number().int().min(0).max(COLOR_PRESETS.length - 1);
 
 // Hostname per RFC 1123, or an IPv4 literal. Rejecting junk here means a typo
@@ -58,6 +66,8 @@ const patchSchema = z.object({
   // Split the look: one fixture group holds a wash in colour B while the rest
   // run the pattern. The number picks which group; null runs the whole rig.
   split: z.number().int().min(0).max(1e9).nullable().optional(),
+  // How a pixel effect is laid over the cells of LED bars. See shared/rig.js.
+  pixelMap: z.enum(PIXEL_MAPS).optional(),
   colorA: colorIdx.optional(),
   colorB: colorIdx.optional(),
   colorC: colorIdx.optional(),
@@ -127,6 +137,7 @@ const fixtureMessageSchema = z.object({
   // The fixture's brightness trim: scales its output, whatever is driving it.
   // Not part of the override — it applies to an energy override too.
   maxBrightness: u8.optional(),
+  geometry: fixtureGeometry.nullable().optional(),
 }).strict();
 
 /**
@@ -141,6 +152,7 @@ const fixtureRestoreSchema = z.object({
     id: fixtureId.optional(),
     position: fixturePosition.nullable().optional(),
     group: fixtureGroup.nullable().optional(),
+    geometry: fixtureGeometry.nullable().optional(),
     label: z.string().max(64),
     address: z.number().int().min(1).max(512),
     universe: dmxUniverse.optional(),
@@ -166,7 +178,16 @@ const profileSchema = z.object({
     offset: z.number().int().min(0).max(511),
     name: z.string().min(1),
     attribute: z.string().min(1),
+    // Which cell the channel drives, for labelling the monitor.
+    cell: z.number().int().min(0).max(MAX_CELLS_PER_FIXTURE - 1).optional(),
   })).optional(),
+  // The cells of a fixture that is more than one light — an LED bar — in the
+  // order they sit along it. Each has its own channels, at offsets inside the
+  // fixture's footprint; the fixture-level channelMap keeps what they share.
+  cells: z.array(z.object({
+    name: z.string().max(64).optional(),
+    channelMap: z.record(z.number().int().min(0).max(511)),
+  }).strict()).min(2).max(MAX_CELLS_PER_FIXTURE).optional(),
 }).passthrough()
   // channelCount is the fixture's DMX footprint: it decides where the *next*
   // fixture can be patched and what the universe-bounds check reserves. An
@@ -186,7 +207,36 @@ const profileSchema = z.object({
         message: `maps channels outside the profile's ${profile.channelCount}-channel footprint: ${over.join(', ')}`,
       });
     }
+    if (profile.cells) checkCells(profile, ctx);
   });
+
+/**
+ * A cell drives channels of its own. Two cells on one channel, or a cell on a
+ * channel the whole fixture uses, would have two looks fighting over one
+ * byte; a cell with no light in it is not a cell.
+ */
+function checkCells(profile, ctx) {
+  const fixtureLevel = new Set(Object.values(profile.channelMap || {}));
+  const owner = new Map();
+  profile.cells.forEach((cell, index) => {
+    const label = cell.name || `cell ${index + 1}`;
+    const problems = [];
+    for (const [attr, offset] of Object.entries(cell.channelMap)) {
+      if (offset >= profile.channelCount) problems.push(`${attr}@${offset} is outside the footprint`);
+      else if (fixtureLevel.has(offset)) problems.push(`${attr}@${offset} is a fixture-level channel`);
+      else if (owner.has(offset)) problems.push(`${attr}@${offset} is also ${owner.get(offset)}'s`);
+      else owner.set(offset, label);
+    }
+    if (!EMITTERS.some((attr) => cell.channelMap[attr] !== undefined)) problems.push('drives no light');
+    if (problems.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['cells', index],
+        message: `${label}: ${problems.join('; ')}`,
+      });
+    }
+  });
+}
 
 const showSchema = z.object({
   nextFixtureId: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
@@ -196,6 +246,7 @@ const showSchema = z.object({
     id: fixtureId.optional(),
     position: fixturePosition.nullable().optional(),
     group: fixtureGroup.nullable().optional(),
+    geometry: fixtureGeometry.nullable().optional(),
     label: z.string().max(64).optional(),
     address: z.number().int().min(1).max(512).optional(),
     // Absent in shows saved before multi-universe: those load onto the rig's

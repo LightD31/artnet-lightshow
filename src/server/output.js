@@ -2,6 +2,7 @@
 
 const { state, universeOf } = require('./state');
 const { getProfile } = require('./profiles');
+const { cellsOf, EMITTERS } = require('../shared/rig');
 const universes = require('./universes');
 const { sendArtDmx } = require('./artnet');
 const { sendSacn, MIN_UNIVERSE, MAX_UNIVERSE } = require('./sacn');
@@ -187,7 +188,8 @@ function hueChannelColors() {
     if (!fix) continue;
 
     const dmx = universes.getBuffer(universeOf(fix));
-    const ch = getProfile(fix).channelMap;
+    const profile = getProfile(fix);
+    const ch = profile.channelMap;
     const base = fix.address - 1;
     const at = (offset) => (offset === undefined ? 0 : (dmx[base + offset] || 0));
 
@@ -196,33 +198,43 @@ function hueChannelColors() {
     // emitter rather than the primaries alone: a tunable-white lamp has warm
     // and cool dies but no primaries, and falling back for it would add the
     // dimmer on top of the whites and double the brightness.
-    const hasEmitter = ['red', 'green', 'blue', 'white', 'warmWhite', 'coolWhite', 'amber', 'uv']
-      .some((name) => ch[name] !== undefined);
+    const hasEmitter = cellsOf(profile) || EMITTERS.some((name) => ch[name] !== undefined);
     if (!hasEmitter) {
       const level = at(ch.dimmer);
       out.push({ id: binding.channel, r: level, g: level, b: level });
       continue;
     }
 
-    const r = at(ch.red);
-    const g = at(ch.green);
-    const b = at(ch.blue);
-    const w = at(ch.white);
-    const a = at(ch.amber);
-    const uv = at(ch.uv);
-    const ww = at(ch.warmWhite);
-    const cw = at(ch.coolWhite);
-
-    out.push({
-      id: binding.channel,
-      ...normalizeMix(
-        r + w + a + ww + cw + uv * UV_RED,
-        g + w + a * AMBER_GREEN + ww * WARM_WHITE_GREEN + cw * COOL_WHITE_GREEN,
-        b + w + ww * WARM_WHITE_BLUE + cw * COOL_WHITE_BLUE + uv * UV_BLUE,
-      ),
-    });
+    // An LED bar has no one colour: the lamp shows the bar's overall glow, the
+    // mean of its cells. A single cell would flicker with every comet passing
+    // it; the mean moves with the bar as a whole.
+    const cells = cellsOf(profile);
+    const maps = cells ? cells.map((cell) => cell.channelMap) : [ch];
+    let r = 0; let g = 0; let b = 0;
+    for (const map of maps) {
+      const [cr, cg, cb] = emitterMix(map, at);
+      r += cr; g += cg; b += cb;
+    }
+    out.push({ id: binding.channel, ...normalizeMix(r / maps.length, g / maps.length, b / maps.length) });
   }
   return out;
+}
+
+/** One light's emitters folded into red, green and blue, before normalising. */
+function emitterMix(ch, at) {
+  const r = at(ch.red);
+  const g = at(ch.green);
+  const b = at(ch.blue);
+  const w = at(ch.white);
+  const a = at(ch.amber);
+  const uv = at(ch.uv);
+  const ww = at(ch.warmWhite);
+  const cw = at(ch.coolWhite);
+  return [
+    r + w + a + ww + cw + uv * UV_RED,
+    g + w + a * AMBER_GREEN + ww * WARM_WHITE_GREEN + cw * COOL_WHITE_GREEN,
+    b + w + ww * WARM_WHITE_BLUE + cw * COOL_WHITE_BLUE + uv * UV_BLUE,
+  ];
 }
 
 /**

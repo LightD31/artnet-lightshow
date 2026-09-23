@@ -24,6 +24,12 @@ const UNIVERSE_SIZE = 512;
 // without bound.
 const MAX_FIXTURES = 64;
 
+// Every light the engine renders — a par, or one cell of an LED bar — is
+// worked out every frame. Sixty-four sixteen-cell bars is 1,024; the cap
+// leaves room above that without letting one oversized profile patched
+// sixty-four times ask for eleven thousand.
+const MAX_UNITS = 2048;
+
 /** Last channel a fixture at `address` with `channelCount` channels occupies. */
 function endChannel(address, channelCount) {
   return address + channelCount - 1;
@@ -52,6 +58,7 @@ function universeOverflow(label, address, channelCount) {
 // applies it lives and is reachable from the browser preview too. Re-exported
 // here because this is where callers have always asked for it.
 const { UV_BOOST } = require('../shared/look-math');
+const { countUnits } = require('../shared/rig');
 
 // Ids that would collide with object-machinery keys. Rejected at registration
 // as defence in depth alongside the null-prototype registry below.
@@ -200,6 +207,15 @@ function isBuiltinProfile(id) {
   return BUILTIN_PROFILE_IDS.has(id);
 }
 
+// Bumped whenever the registry changes, so anything that caches what the rig
+// looks like (see src/server/rig.js) knows a profile under it has changed.
+let revision = 0;
+
+/** Changes whenever a profile is added, replaced or removed. */
+function profilesRevision() {
+  return revision;
+}
+
 function getProfile(fixture) {
   return fixtureProfiles[fixture.profileId] || fixtureProfiles[BUILTIN_PROFILE_ID];
 }
@@ -212,12 +228,14 @@ function registerProfile(profile) {
   // show file saved with the built-ins in it would pin an old copy forever.
   if (isBuiltinProfile(profile.id)) return false;
   fixtureProfiles[profile.id] = profile;
+  revision++;
   return true;
 }
 
 function unregisterProfile(id) {
   if (isBuiltinProfile(id)) return false;
   delete fixtureProfiles[id];
+  revision++;
   return true;
 }
 
@@ -229,6 +247,18 @@ function clearNonBuiltinProfiles() {
   Object.keys(fixtureProfiles).forEach((id) => {
     if (!isBuiltinProfile(id)) delete fixtureProfiles[id];
   });
+  revision++;
+}
+
+/**
+ * Why a patch has more cells than the engine renders, or null when it fits.
+ * `profileOf` resolves a fixture's profile — the live registry by default, or
+ * the profiles a show is bringing with it.
+ */
+function unitCapOverflow(fixtures, profileOf = getProfile) {
+  const total = countUnits(fixtures, profileOf);
+  if (total <= MAX_UNITS) return null;
+  return `The patch would have ${total} lights (cells), more than the ${MAX_UNITS} the engine renders`;
 }
 
 module.exports = {
@@ -240,6 +270,9 @@ module.exports = {
   isBuiltinProfile,
   UNIVERSE_SIZE,
   MAX_FIXTURES,
+  MAX_UNITS,
+  unitCapOverflow,
+  profilesRevision,
   endChannel,
   fitsInUniverse,
   universeOverflow,

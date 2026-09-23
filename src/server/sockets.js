@@ -7,7 +7,7 @@ const {
   fixtureMessageSchema,
   validate,
 } = require('./validation');
-const { listProfiles, getProfile, universeOverflow } = require('./profiles');
+const { listProfiles, getProfile, universeOverflow, unitCapOverflow } = require('./profiles');
 const { showStore } = require('./show-store');
 const { MAX_UNIVERSES } = require('./universes');
 const { connectMidi } = require('./midi-connect');
@@ -46,7 +46,7 @@ function attachSockets(io, { midi, integrations }) {
 
     socket.on('fixture', (payload) => {
       try {
-        const { id, address, universe, label, profileId, maxBrightness, position, group } = validate(fixtureMessageSchema, payload, 'fixture-msg');
+        const { id, address, universe, label, profileId, maxBrightness, position, group, geometry } = validate(fixtureMessageSchema, payload, 'fixture-msg');
         const fixture = getFixture(id);
         if (!fixture) return;
 
@@ -68,7 +68,14 @@ function attachSockets(io, { midi, integrations }) {
 
         // Each universe is another stream going out at the render rate, so the
         // patch may not spread across more of them than the engine transmits.
-        const proposed = state.fixtures.map((f) => (f.id === id ? { ...f, universe: nextUniverse } : f));
+        const proposed = state.fixtures.map((f) => (f.id === id ? { ...f, universe: nextUniverse, profileId: nextProfileId } : f));
+        // And a bar's cells are each rendered every frame, so a profile change
+        // may not take the patch past the cells the engine renders.
+        const tooMany = nextProfileId !== fixture.profileId ? unitCapOverflow(proposed) : null;
+        if (tooMany) {
+          socket.emit('error-msg', { source: 'fixture', message: tooMany });
+          return;
+        }
         if (countUniverses(proposed) > MAX_UNIVERSES) {
           socket.emit('error-msg', {
             source: 'fixture',
@@ -88,6 +95,7 @@ function attachSockets(io, { midi, integrations }) {
         if (maxBrightness !== undefined) fixture.maxBrightness = maxBrightness;
         if (position !== undefined) fixture.position = position;
         if (group !== undefined) fixture.group = group;
+        if (geometry !== undefined) fixture.geometry = geometry;
         showStore.scheduleSave();
         integrations.broadcast();
       } catch (err) {

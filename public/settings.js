@@ -486,7 +486,7 @@ function showModeSelector(fixture) {
   fixture.modes.forEach((mode, i) => {
     const opt = document.createElement('option');
     opt.value = i;
-    opt.textContent = `${mode.modeName} (${mode.channelCount}ch)`;
+    opt.textContent = `${mode.modeName} (${mode.channelCount}ch${mode.cells ? `, ${mode.cells.length} cells` : ''})`;
     modeSelect.appendChild(opt);
   });
 
@@ -507,9 +507,13 @@ function el(tag, className, text) {
   return node;
 }
 
-function renderChannelPreview(mode) {
-  const container = document.getElementById('gdtf-channel-preview');
+function renderChannelPreview(mode, containerId = 'gdtf-channel-preview') {
+  const container = document.getElementById(containerId);
   container.innerHTML = '';
+  // A bar says how many lights it is before the channel list, and anything
+  // the import had to leave out says so.
+  if (mode.cells) container.appendChild(el('div', 'ch-summary', `${mode.cells.length} cells, each driven on its own`));
+  (mode.warnings || []).forEach((warning) => container.appendChild(el('div', 'ch-warning', warning)));
   mode.channelList.forEach(ch => {
     const isMapped = ch.attribute && ch.attribute !== 'unknown';
     const tag = el('span', 'ch-tag' + (isMapped ? ' mapped' : ''));
@@ -534,7 +538,13 @@ document.getElementById('gdtf-confirm').addEventListener('click', async () => {
     modeName: mode.modeName,
     channelCount: mode.channelCount,
     channelMap: mode.channelMap,
-    channelList: mode.channelList,
+    channelList: mode.channelList.map(({ offset, name, attribute, cell }) => ({
+      offset, name, attribute, ...(cell !== undefined ? { cell } : {}),
+    })),
+    // An LED bar's cells, each with its own channels. Re-importing a bar that
+    // was imported before cells existed replaces it, and every fixture on it
+    // becomes a bar of lights on the next frame.
+    ...(mode.cells ? { cells: mode.cells } : {}),
   };
 
   const data = await apiJson('/api/profiles', jsonBody('POST', profile));
@@ -546,6 +556,68 @@ document.getElementById('gdtf-confirm').addEventListener('click', async () => {
     pendingGdtf = null;
   } else {
     // apiJson already said what went wrong; leave it beside the control too.
+    status.textContent = data.error;
+    status.className = 'import-status error';
+  }
+});
+
+// ── LED bar maker ────────────────────────────────────────────────────────────
+// A profile for a bar with no GDTF file, from its cell count and channel order
+// (src/server/bar-profile.js). The server builds it, so the preview here and
+// the profile that is added are the same thing.
+
+function barSpec() {
+  const num = (id) => {
+    const raw = document.getElementById(id).value.trim();
+    return raw === '' ? undefined : Number(raw);
+  };
+  const name = document.getElementById('bar-name').value.trim() || 'LED Bar';
+  const cells = num('bar-cells');
+  const order = document.getElementById('bar-order').value.trim().toUpperCase();
+  return {
+    id: slugify(`custom-${name}-${cells}-${order}`),
+    name,
+    cells,
+    firstChannel: num('bar-first'),
+    order,
+    stride: num('bar-stride'),
+    dimmer: num('bar-dimmer'),
+    strobe: num('bar-strobe'),
+  };
+}
+
+let barPreviewTimer = null;
+async function previewBar() {
+  const status = document.getElementById('bar-status');
+  const res = await fetch('/api/profiles/bar?dryRun=1', jsonBody('POST', barSpec()));
+  const data = await res.json().catch(() => ({ ok: false, error: 'No answer from the server' }));
+  const preview = document.getElementById('bar-preview');
+  if (!data.ok) {
+    preview.innerHTML = '';
+    status.textContent = data.error;
+    status.className = 'import-status error';
+    return;
+  }
+  status.textContent = `${data.profile.channelCount} channels`;
+  status.className = 'import-status';
+  renderChannelPreview(data.profile, 'bar-preview');
+}
+
+document.getElementById('bar-maker').addEventListener('input', () => {
+  clearTimeout(barPreviewTimer);
+  barPreviewTimer = setTimeout(previewBar, 250);
+});
+document.getElementById('bar-maker').addEventListener('toggle', (e) => {
+  if (e.target.open) previewBar();
+});
+
+document.getElementById('bar-add').addEventListener('click', async () => {
+  const status = document.getElementById('bar-status');
+  const data = await apiJson('/api/profiles/bar', jsonBody('POST', barSpec()));
+  if (data.ok) {
+    status.textContent = `Profile "${data.profile.name}" added — pick it for a fixture in the patch below.`;
+    status.className = 'import-status success';
+  } else {
     status.textContent = data.error;
     status.className = 'import-status error';
   }
@@ -571,7 +643,8 @@ function renderProfiles() {
     const mappedChannels = Object.keys(p.channelMap || {}).join(', ');
     card.appendChild(el('span', 'profile-name', p.name));
     card.appendChild(el('span', 'profile-manufacturer', p.manufacturer));
-    card.appendChild(el('span', 'profile-mode', `${p.modeName} — ${p.channelCount}ch`));
+    const cells = Array.isArray(p.cells) && p.cells.length >= 2 ? `, ${p.cells.length} cells` : '';
+    card.appendChild(el('span', 'profile-mode', `${p.modeName} — ${p.channelCount}ch${cells}`));
     card.appendChild(el('span', 'profile-channels', `Mapped: ${mappedChannels || 'none'}`));
 
     const actions = el('div', 'profile-actions');
@@ -680,7 +753,8 @@ function renderPatchTable() {
     if (hasConflict) addrCell.appendChild(el('span', 'conflict-warning', 'Address overlap!'));
     tr.appendChild(addrCell);
 
-    tr.appendChild(el('td', 'ch-count', chCount));
+    const cellCount = Array.isArray(profile.cells) && profile.cells.length >= 2 ? profile.cells.length : 0;
+    tr.appendChild(el('td', 'ch-count', cellCount ? `${chCount} (${cellCount} cells)` : chCount));
 
     const removeCell = el('td');
     const removeBtn = el('button', 'remove-btn', '×');

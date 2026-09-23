@@ -118,6 +118,36 @@ function emitterValues(col, scale) {
 }
 
 /**
+ * How one cell of an LED bar is driven, so that it looks exactly like a par
+ * with the same channels would at the same level.
+ *
+ * A par gets its level twice: once on its dimmer channel, once in its colour
+ * values (both `dim × master`), so light goes with the square of the level. A
+ * bar's cells share at most one fixture dimmer, which can only be as high as
+ * the brightest cell (`top`); each cell makes up the rest itself — on its own
+ * dimmer when it has one, else in its colour. A look the same on every cell
+ * therefore drives a bar with exactly a par's bytes, and a cell at a lower
+ * level looks like a par at that level.
+ *
+ * @param dim            the cell's level, 0..255, after the music and silence
+ * @param top            the brightest cell's level in the same fixture
+ * @param ms             grand master × the fixture's trim, 0..1
+ * @param fixtureDimmer  does the fixture have a dimmer channel of its own
+ * @param cellDimmer     does this cell have a dimmer channel of its own
+ * @returns { cellDim, scale } — the cell dimmer's value, and the colour scale
+ *          for emitterValues. The fixture dimmer itself is round(top × ms).
+ */
+function cellDrive(dim, top, ms, fixtureDimmer, cellDimmer) {
+  const scale = ms * dim / 255;
+  if (!fixtureDimmer) return { cellDim: Math.round(dim * ms), scale };
+  if (top <= 0) return { cellDim: 0, scale: 0 };
+  return {
+    cellDim: Math.round((255 * dim) / top),
+    scale: cellDimmer || dim === top ? scale : (scale * dim) / top,
+  };
+}
+
+/**
  * One fixture partway through a crossfade from the look it was showing to the
  * one it is heading for, t in 0..1.
  *
@@ -128,8 +158,30 @@ function emitterValues(col, scale) {
  */
 function blendFixture(from, to, t) {
   if (t >= 1) return to;
-  const col = colourMixer(from, to)(t);
+  const col = blendColour(from, to, t);
   return { ...col, dim: Math.round(from.dim + (to.dim - from.dim) * t), strobe: to.strobe };
+}
+
+// Within one frame of a fade every light is at the same point of it, and most
+// of them are fading between the same two colours — a bar of sixteen cells in
+// one colour is sixteen identical blends. The colour-space walk is the costly
+// part of a frame, so the result is kept for the rest of the frame. Exact: the
+// key is everything the blend reads.
+let blendMemoT = NaN;
+const blendMemo = new Map();
+
+function blendColour(from, to, t) {
+  if (t !== blendMemoT || blendMemo.size > 4096) {
+    blendMemo.clear();
+    blendMemoT = t;
+  }
+  const key = `${from.r},${from.g},${from.b},${from.w},${from.a},${from.uv}|${to.r},${to.g},${to.b},${to.w},${to.a},${to.uv}`;
+  let col = blendMemo.get(key);
+  if (!col) {
+    col = colourMixer(from, to)(t);
+    blendMemo.set(key, col);
+  }
+  return col;
 }
 
 module.exports = {
@@ -141,4 +193,5 @@ module.exports = {
   hitBrightness,
   blendExpression,
   emitterValues,
+  cellDrive,
 };

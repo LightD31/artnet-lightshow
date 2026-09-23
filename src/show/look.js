@@ -81,23 +81,27 @@ const SUBGENRE_PALETTES = {
 // Pattern pools per subgenre, used as a bias rather than as a filter: the
 // measured character below decides *what kind* of pattern the passage wants,
 // and this decides which of those the genre would reach for.
+//
+// The pixel effects at the end of each list are only ever in a pool on a rig
+// with LED bars (see pickPattern's `pixels`); listing them here is what keeps
+// the genre bias from filtering them straight back out when they are.
 const SUBGENRE_PATTERNS = {
-  edm:       ['pairs', 'runner', 'ensemble', 'split', 'stack-up', 'random-flash', 'hit', 'sections'],
-  dubstep:   ['random-flash', 'stack-up', 'split', 'pairs', 'ensemble', 'hit', 'sections'],
-  trance:    ['ribbon', 'sparkle', 'wave', 'twinkle', 'runner', 'ensemble', 'sections'],
-  disco:     ['ping-pong', 'chase', 'sparkle', 'pairs', 'sections', 'split'],
-  hiphop:    ['pairs', 'split', 'ensemble', 'stack-up', 'runner', 'sections'],
-  pop:       ['ping-pong', 'wave', 'ensemble', 'sparkle', 'pairs', 'split'],
-  funk:      ['ping-pong', 'pairs', 'runner', 'chase', 'ensemble', 'sections', 'split'],
-  rock:      ['chase', 'runner', 'pairs', 'ping-pong', 'stack-up', 'ensemble'],
-  metal:     ['stack-up', 'split', 'random-flash', 'runner', 'pairs', 'hit'],
-  country:   ['wave', 'chase', 'runner', 'ping-pong', 'fade', 'ribbon'],
-  reggae:    ['wave', 'fade', 'ribbon', 'chase', 'ping-pong', 'pairs'],
-  latin:     ['ping-pong', 'runner', 'chase', 'pairs', 'wave', 'ensemble'],
-  jazz:      ['ribbon', 'solid', 'fade', 'wave', 'twinkle', 'sparkle'],
-  classical: ['ribbon', 'solid', 'fade', 'wave', 'twinkle'],
-  folk:      ['ribbon', 'solid', 'fade', 'wave', 'twinkle'],
-  ambient:   ['ribbon', 'solid', 'fade', 'wave', 'twinkle', 'sparkle'],
+  edm:       ['pairs', 'runner', 'ensemble', 'split', 'stack-up', 'random-flash', 'hit', 'sections', 'comet', 'burst'],
+  dubstep:   ['random-flash', 'stack-up', 'split', 'pairs', 'ensemble', 'hit', 'sections', 'burst'],
+  trance:    ['ribbon', 'sparkle', 'wave', 'twinkle', 'runner', 'ensemble', 'sections', 'gradient', 'plasma'],
+  disco:     ['ping-pong', 'chase', 'sparkle', 'pairs', 'sections', 'split', 'comet'],
+  hiphop:    ['pairs', 'split', 'ensemble', 'stack-up', 'runner', 'sections', 'burst'],
+  pop:       ['ping-pong', 'wave', 'ensemble', 'sparkle', 'pairs', 'split', 'gradient', 'comet'],
+  funk:      ['ping-pong', 'pairs', 'runner', 'chase', 'ensemble', 'sections', 'split', 'comet'],
+  rock:      ['chase', 'runner', 'pairs', 'ping-pong', 'stack-up', 'ensemble', 'comet'],
+  metal:     ['stack-up', 'split', 'random-flash', 'runner', 'pairs', 'hit', 'burst'],
+  country:   ['wave', 'chase', 'runner', 'ping-pong', 'fade', 'ribbon', 'gradient'],
+  reggae:    ['wave', 'fade', 'ribbon', 'chase', 'ping-pong', 'pairs', 'gradient'],
+  latin:     ['ping-pong', 'runner', 'chase', 'pairs', 'wave', 'ensemble', 'comet'],
+  jazz:      ['ribbon', 'solid', 'fade', 'wave', 'twinkle', 'sparkle', 'plasma', 'gradient'],
+  classical: ['ribbon', 'solid', 'fade', 'wave', 'twinkle', 'gradient'],
+  folk:      ['ribbon', 'solid', 'fade', 'wave', 'twinkle', 'gradient'],
+  ambient:   ['ribbon', 'solid', 'fade', 'wave', 'twinkle', 'sparkle', 'plasma', 'gradient'],
 };
 
 // What MuQ-MuLan's mood words say about colour. Two words per bank, because a
@@ -187,8 +191,8 @@ function keyIndexOf(key) {
 // frame rate rather than stepped by the beat clock, so they read as whatever
 // the music is doing and suit both.
 const RHYTHMIC = new Set(['chase', 'chase-rev', 'runner', 'pairs', 'ping-pong',
-  'split', 'sections', 'stack-up', 'random-flash', 'hit', 'color-cycle']);
-const FLOWY = new Set(['solid', 'fade', 'wave', 'sparkle', 'twinkle']);
+  'split', 'sections', 'stack-up', 'random-flash', 'hit', 'color-cycle', 'comet', 'burst']);
+const FLOWY = new Set(['solid', 'fade', 'wave', 'sparkle', 'twinkle', 'gradient', 'plasma']);
 const EXPRESSIVE = new Set(['ensemble', 'ribbon']);
 
 /**
@@ -450,7 +454,7 @@ function goldenStep(index, length) {
  * and ignores the colour slots, which would break the track's locked palette.
  */
 function pickPattern({ character, available, score = null, seed = 0, drive = 0.5,
-  dance = 0.5 }) {
+  dance = 0.5, pixels = false }) {
   const c = character || {};
   const low = unit(c.kick) * 0.6 + unit(c.bassline) * 0.4;
   const voice = unit(c.vocal);
@@ -461,8 +465,11 @@ function pickPattern({ character, available, score = null, seed = 0, drive = 0.5
   const genrePool = new Set([...blend(score ? score.subgenre : {}, SUBGENRE_PATTERNS).keys()]);
   const trust = unit(score && score.genreTrust);
 
-  const pickFrom = (pool) => {
-    let filtered = pool.filter((p) => available.has(p));
+  // On a rig with LED bars each branch's pool also takes the pictures drawn
+  // across the cells that suit it. Appended, and only then: a pool is picked
+  // from by index, so a rig of pars must see exactly the pools it always has.
+  const pickFrom = (pool, pixelPool = []) => {
+    let filtered = (pixels ? [...pool, ...pixelPool] : pool).filter((p) => available.has(p));
     // The genre bias is a preference, not a filter: it only applies when the
     // classifier earned some trust and when it leaves something to pick from.
     if (trust >= 0.25 && genrePool.size) {
@@ -488,7 +495,7 @@ function pickPattern({ character, available, score = null, seed = 0, drive = 0.5
 
   // Quiet: nothing is carrying the passage, so nothing should be chasing.
   if (energy < 0.25 || drive < 0.22) {
-    return pickFrom(['ribbon', 'fade', 'solid', 'wave', 'twinkle']);
+    return pickFrom(['ribbon', 'fade', 'solid', 'wave', 'twinkle'], ['gradient', 'plasma']);
   }
 
   // Vocal-led. The voice is the thing the audience is following, and light that
@@ -501,23 +508,23 @@ function pickPattern({ character, available, score = null, seed = 0, drive = 0.5
   // the passages that are genuinely both, and a driving one gets patterns that
   // still move without reaching for the strobe end of the vocabulary.
   if (voice > low + 0.12) {
-    return pickFrom(drive >= 0.5 || energy >= 0.5
-      ? ['pairs', 'sections', 'ensemble', 'split', 'ping-pong', 'runner', 'chase']
-      : ['ensemble', 'ribbon', 'wave', 'fade', 'twinkle', 'solid']);
+    return drive >= 0.5 || energy >= 0.5
+      ? pickFrom(['pairs', 'sections', 'ensemble', 'split', 'ping-pong', 'runner', 'chase'], ['comet'])
+      : pickFrom(['ensemble', 'ribbon', 'wave', 'fade', 'twinkle', 'solid'], ['gradient']);
   }
 
   // Low-end-led with a pulse to lock to: the passage has a groove and the rig
   // should be in it.
   if (low >= 0.4 && pulse >= 0.5) {
     const hard = drive >= 0.75 && (energy > 0.7 || pulse > 0.75);
-    return pickFrom(hard
-      ? ['hit', 'stack-up', 'sections', 'pairs', 'split', 'random-flash', 'ensemble']
-      : ['pairs', 'sections', 'ensemble', 'runner', 'split', 'chase', 'stack-up']);
+    return hard
+      ? pickFrom(['hit', 'stack-up', 'sections', 'pairs', 'split', 'random-flash', 'ensemble'], ['burst', 'comet'])
+      : pickFrom(['pairs', 'sections', 'ensemble', 'runner', 'split', 'chase', 'stack-up'], ['comet', 'burst']);
   }
 
   // Top-heavy: shimmer rather than punch.
   if (air > 0.45 && air > low) {
-    return pickFrom(['sparkle', 'twinkle', 'ensemble', 'ribbon', 'wave', 'random-flash']);
+    return pickFrom(['sparkle', 'twinkle', 'ensemble', 'ribbon', 'wave', 'random-flash'], ['plasma']);
   }
 
   // Everything else: moving, but not committed to the beat. The travelling
@@ -529,7 +536,7 @@ function pickPattern({ character, available, score = null, seed = 0, drive = 0.5
   // ping-pong. The stem-based rewrite of this function dropped that pool and it
   // with it, while RHYTHMIC above still lists it — vocabulary the show could no
   // longer say. It goes back beside the patterns it used to keep company with.
-  return pickFrom(['chase', 'runner', 'ping-pong', 'pairs', 'ensemble', 'ribbon', 'wave', 'color-cycle']);
+  return pickFrom(['chase', 'runner', 'ping-pong', 'pairs', 'ensemble', 'ribbon', 'wave', 'color-cycle'], ['comet', 'gradient']);
 }
 
 /**

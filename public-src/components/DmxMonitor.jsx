@@ -10,7 +10,11 @@ function buildChannelLabels(s, universe) {
     if (!profile) continue;
     const base = fix.address - 1;
     for (const ch of (profile.channelList || [])) {
-      const shortName = (ch.attribute || ch.name || '').substring(0, 3).toUpperCase();
+      // A bar's cell channels read as their colour and cell: R12 is cell
+      // twelve's red.
+      const shortName = ch.cell !== undefined
+        ? `${(ch.attribute || '?')[0].toUpperCase()}${ch.cell + 1}`
+        : (ch.attribute || ch.name || '').substring(0, 3).toUpperCase();
       labels[base + ch.offset] = shortName || String(ch.offset + 1);
     }
   }

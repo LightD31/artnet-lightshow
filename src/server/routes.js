@@ -24,10 +24,12 @@ const {
   registerProfile,
   unregisterProfile,
   listProfiles,
+  unitCapOverflow,
 } = require('./profiles');
 const { MAX_UNIVERSES } = require('./universes');
 const { cues, cueWriteSchema, cueRestoreSchema, reorderSchema } = require('./cues');
 const { showStore, snapshotShow, applyShow } = require('./show-store');
+const { barProfile } = require('./bar-profile');
 const {
   midiMap, ACTIONS, defaultTypeFor, mapSchema, learnSchema, bindingWriteSchema,
 } = require('./midi-map');
@@ -382,12 +384,46 @@ function attachRoutes(app, deps) {
   app.post('/api/profiles', (req, res) => {
     try {
       const profile = validate(profileSchema, req.body, 'profile');
+      // Re-importing a profile that is already patched changes every fixture
+      // on it at once — a GDTF that now counts its fine channels is a channel
+      // longer — so those fixtures are held to the same rules as patching them.
+      const blocked = profileChangeBlocked(profile);
+      if (blocked) return res.status(400).json({ ok: false, error: blocked });
       if (!registerProfile(profile)) return res.status(400).json({ ok: false, error: 'Invalid profile' });
       showStore.scheduleSave();
       integrations.broadcast();
       res.json({ ok: true });
     } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
   });
+
+  // A bar profile from its cell count and channel order (bar-profile.js).
+  // `?dryRun=1` answers with the profile without adding it, for the preview.
+  app.post('/api/profiles/bar', (req, res) => {
+    try {
+      const profile = barProfile(req.body || {});
+      if (req.query.dryRun === '1') return res.json({ ok: true, profile });
+      if (isBuiltinProfile(profile.id)) return res.status(400).json({ ok: false, error: 'That id is a built-in profile' });
+      const blocked = profileChangeBlocked(profile);
+      if (blocked) return res.status(400).json({ ok: false, error: blocked });
+      if (!registerProfile(profile)) return res.status(400).json({ ok: false, error: 'Invalid profile' });
+      showStore.scheduleSave();
+      integrations.broadcast();
+      res.json({ ok: true, profile });
+    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+  });
+
+  /** Why replacing a profile with `profile` would break the patch, or null. */
+  function profileChangeBlocked(profile) {
+    const users = state.fixtures.filter((f) => f.profileId === profile.id);
+    for (const fixture of users) {
+      const overflow = universeOverflow(fixture.label, fixture.address, profile.channelCount);
+      if (overflow) return overflow;
+    }
+    const profiles = listProfiles();
+    return users.length
+      ? unitCapOverflow(state.fixtures, (f) => (f.profileId === profile.id ? profile : profiles[f.profileId] || profiles[BUILTIN_PROFILE_ID]))
+      : null;
+  }
 
   app.delete('/api/profiles/:id', (req, res) => {
     const id = req.params.id;
@@ -437,7 +473,9 @@ function attachRoutes(app, deps) {
           + `would end at ${endChannel(address, chCount)}, past the ${UNIVERSE_SIZE}-channel universe`,
       });
     }
-    const next = [...state.fixtures, { universe }];
+    const next = [...state.fixtures, { universe, profileId: BUILTIN_PROFILE_ID }];
+    const tooMany = unitCapOverflow(next);
+    if (tooMany) return res.status(400).json({ ok: false, error: tooMany });
     if (countUniverses(next) > MAX_UNIVERSES) {
       return res.status(400).json({
         ok: false,
@@ -485,6 +523,7 @@ function attachRoutes(app, deps) {
         maxBrightness: maxBrightnessOf(removed),
         position: removed.position || null,
         group: removed.group || null,
+        geometry: removed.geometry || null,
         override: removed.override,
       },
     });
@@ -519,12 +558,16 @@ function attachRoutes(app, deps) {
         maxBrightness: fixture.maxBrightness !== undefined ? fixture.maxBrightness : 255,
         position: fixture.position || null,
         group: fixture.group || null,
+        geometry: fixture.geometry || null,
         override: fixture.override || null,
       };
 
       if (state.fixtures.some((existing) => existing.id === restored.id)) {
         return res.status(409).json({ ok: false, error: 'That fixture id is already in use' });
       }
+
+      const tooMany = unitCapOverflow([...state.fixtures, restored]);
+      if (tooMany) return res.status(400).json({ ok: false, error: tooMany });
 
       if (countUniverses([...state.fixtures, restored]) > MAX_UNIVERSES) {
         return res.status(400).json({

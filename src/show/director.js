@@ -147,7 +147,7 @@ const CUT_ROLES = new Set(['chorus', 'drop']);
 // (split, sections, ribbon, ensemble) or are whole-rig gestures that a wash
 // would only dilute (solid, fade, hit, strobe, the colour cycles).
 const SPLITTABLE = new Set(['chase', 'chase-rev', 'ping-pong', 'runner', 'pairs', 'wave',
-  'stack-up', 'twinkle', 'sparkle', 'random-flash']);
+  'stack-up', 'twinkle', 'sparkle', 'random-flash', 'comet', 'burst']);
 // How hard a passage has to drive before its look splits in two. Below this a
 // second layer is clutter rather than depth.
 const SPLIT_DRIVE = 0.5;
@@ -184,12 +184,16 @@ class ShowDirector {
    * @param {number} options.blackoutIndex colour index that means "off"
    */
   constructor({ patterns = [], colorPresets = null, paletteSize = 4,
-    intensity = 50, blackoutIndex = 0 } = {}) {
+    intensity = 50, blackoutIndex = 0, pixels = false } = {}) {
     this.patterns = patterns;
     this.colorPresets = colorPresets;
     this.paletteSize = paletteSize;
     this.intensity = intensity;
     this.blackoutIndex = blackoutIndex;
+    // Does the rig have LED bars to draw on? Only then does the show reach
+    // for the pictures drawn across cells, and say how to lay them over the
+    // bars; a rig of pars plans exactly as it always has.
+    this.pixels = !!pixels;
   }
 
   /**
@@ -223,6 +227,8 @@ class ShowDirector {
     // the one that wins.
     intents.sort((a, b) => a.timeMs - b.timeMs || a.priority - b.priority);
 
+    if (context.pixels) this._mapPixels(intents, context);
+
     return {
       intents: this._dedupeTempo(intents),
       palette: context.palette,
@@ -230,6 +236,29 @@ class ShowDirector {
       paletteSize: context.paletteSize,
       context,
     };
+  }
+
+  /**
+   * On a rig with LED bars, every scene says how its picture lies over them.
+   * A resting passage spreads it across the stage, where it reads as one
+   * slow field; a drop mirrors it about the centre, so it hits both sides at
+   * once; everything else is chosen per passage, so a returning chorus comes
+   * back laid out the way it was.
+   */
+  _mapPixels(intents, context) {
+    const resting = new Set([...RESTING_LOOKS, 'solid', ...PIXEL_RESTING_LOOKS]);
+    for (const intent of intents) {
+      if (intent.kind !== INTENT.SCENE || !intent.pattern) continue;
+      const section = context.sectionAt(intent.timeMs / 1000);
+      if (resting.has(intent.pattern) || (section && section.profile && section.profile.prefer)) {
+        intent.pixelMap = 'stage';
+      } else if (String(intent.source).startsWith('drop:')) {
+        intent.pixelMap = 'mirror';
+      } else {
+        const identity = section ? section.identity : 0;
+        intent.pixelMap = PIXEL_MAPS[Math.abs(identity * 5 + context.trackSeed) % PIXEL_MAPS.length];
+      }
+    }
   }
 
   // ── Context ─────────────────────────────────────────────────────────────
@@ -302,6 +331,7 @@ class ShowDirector {
       // inside itself rather than branching on this.
       continuous: hasScore(analysis),
       available: new Set(this.patterns.map((p) => p.id)),
+      pixels: this.pixels,
       drops: grouped.get(EVENT.DROP) || [],
       buildups: grouped.get(EVENT.BUILDUP) || [],
       bars: grouped.get(EVENT.BAR) || [],
@@ -512,7 +542,7 @@ class ShowDirector {
         // Four real bars on, so the change lands on a bar line.
         const followUpMs = context.barsAfterMs(timeMs, 4);
         if (followUpMs != null && followUpMs + 500 < section.end * 1000) {
-          const followUp = restingPattern(RESTING_LOOKS, available, context.trackSeed + section.identity);
+          const followUp = restingPattern(restingLooks(RESTING_LOOKS, context), available, context.trackSeed + section.identity);
           if (followUp) {
             intents.push(scene(followUpMs, {
               pattern: followUp, colors: colours, beatDivision,
@@ -537,14 +567,14 @@ class ShowDirector {
     // pattern, so the rule that outros rest was quietly overridden. A resting
     // choice is also kept out of the cache, so an intro sharing a chorus's
     // cluster does not hand the chorus its resting look either.
-    const resting = restingPattern(section.profile.prefer, available, trackSeed + section.identity);
+    const resting = restingPattern(restingLooks(section.profile.prefer, context), available, trackSeed + section.identity);
     if (resting) return resting;
 
     if (patternByIdentity.has(section.identity)) return patternByIdentity.get(section.identity);
     const pattern = look.pickPattern({
       character: section.character, available, score,
       seed: section.identity + trackSeed, drive: section.drive,
-      dance: unit(mood.danceability, 0.5),
+      dance: unit(mood.danceability, 0.5), pixels: context.pixels,
     });
     patternByIdentity.set(section.identity, pattern);
     return pattern;
@@ -643,7 +673,7 @@ class ShowDirector {
       const candidate = look.pickPattern({
         character: section.character, available, score,
         seed: section.identity * 7 + step * 13 + context.trackSeed, drive: section.drive,
-        dance: unit(mood.danceability, 0.5),
+        dance: unit(mood.danceability, 0.5), pixels: context.pixels,
       });
       if (!seen.has(candidate)) {
         alternates.push(candidate);
@@ -806,7 +836,7 @@ class ShowDirector {
       const peakDivision = triple ? 1 : (measured && measured.peakDivision) || 4;
 
       if (!short) {
-        const tensionPattern = restingPattern(RESTING_LOOKS, available, context.trackSeed + buildupIndex) || 'fade';
+        const tensionPattern = restingPattern(restingLooks(RESTING_LOOKS, context), available, context.trackSeed + buildupIndex) || 'fade';
         intents.push(scene(startMs, {
           pattern: tensionPattern,
           colors: [palette[0], palette[0], palette[0], palette[0]],  // deliberate narrowing
@@ -1029,7 +1059,7 @@ class ShowDirector {
 
     if (!isCalm) {
       for (const [breakIndex, event] of breaks.entries()) {
-        const pattern = restingPattern([...RESTING_LOOKS, 'solid'], available, context.trackSeed + breakIndex);
+        const pattern = restingPattern(restingLooks([...RESTING_LOOKS, 'solid'], context), available, context.trackSeed + breakIndex);
         if (!pattern) continue;
         intents.push(scene(Math.round(event.t * 1000), {
           pattern,
@@ -1465,6 +1495,18 @@ function splitRestingAtDrops(raw, drops) {
 
 // The looks a passage rests on: none of them travels on the beat.
 const RESTING_LOOKS = ['ribbon', 'fade', 'wave'];
+
+// And the resting pictures drawn across LED bars, offered beside them when the
+// rig has bars. After them, never instead: a resting choice is picked by index.
+const PIXEL_RESTING_LOOKS = ['gradient', 'plasma'];
+
+function restingLooks(prefer, context) {
+  return prefer && context.pixels ? [...prefer, ...PIXEL_RESTING_LOOKS] : prefer;
+}
+
+// How a scene lays a picture over the bars: across the stage, mirrored about
+// its centre, or along every bar on its own.
+const PIXEL_MAPS = ['stage', 'mirror', 'bar'];
 
 /**
  * One of a resting role's preferred looks, rotated by `seed`; null for a role
