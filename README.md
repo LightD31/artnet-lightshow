@@ -272,6 +272,13 @@ The import reads what GDTF says about the fixture's shape too:
 - **Virtual channels** (no `Offset`) take no DMX address.
 - A lamp with **warm and cool white** dies drives both; GDTF's amber,
   `ColorAdd_RY`, is amber.
+- **Shutters and strobes** are read from their channel functions. A strobe
+  channel is the show's strobe only when it is open at rest and strobes across
+  the show's standard range (128–250); otherwise the show flashes the fixture
+  itself. A shutter closed at rest is held open, a dimmer the show does not
+  drive is held at full, and every other channel it does not drive sits at the
+  file's default (`InitialFunction`, or GDTF 1.0's `Default`). Before this, a
+  moving head whose shutter is closed at 0 imported dark.
 - A channel on a **second DMX break**, or past channel 512, is left out, and the
   import says so beside the channel list.
 
