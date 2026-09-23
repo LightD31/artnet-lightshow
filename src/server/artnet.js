@@ -8,7 +8,7 @@ const udpSocket = dgram.createSocket('udp4');
 
 // A dgram socket with no 'error' listener turns any send failure into an
 // unhandled 'error' event, which terminates the process. Since the Art-Net
-// target is operator-editable and renderDmx() sends at 40 Hz, a typo in the
+// target is operator-editable and renderDmx() sends at 44 Hz, a typo in the
 // settings panel used to be enough to kill the server mid-show.
 //
 // Failures here are also almost always transient or configuration-level

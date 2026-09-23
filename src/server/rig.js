@@ -13,24 +13,14 @@
 
 const { state } = require('./state');
 const { getProfile, profilesRevision } = require('./profiles');
-const { buildRig } = require('../shared/rig');
+const { buildRig, rigSignature } = require('../shared/rig');
 
 let cached = null;
 let cachedKey = '';
 
-function signature() {
-  let key = `${profilesRevision()}|${state.fixtures.length}`;
-  for (const f of state.fixtures) {
-    const p = f.position;
-    const g = f.geometry;
-    key += `|${f.profileId};${p ? `${p.x},${p.y}` : ''};${f.group || ''};${g ? `${g.length},${g.angle}` : ''}`;
-  }
-  return key;
-}
-
 /** The rig as it stands now. */
 function currentRig() {
-  const key = signature();
+  const key = rigSignature(state.fixtures, profilesRevision());
   if (!cached || key !== cachedKey || cached.fixtures !== state.fixtures) {
     cached = buildRig(state.fixtures, getProfile);
     cachedKey = key;

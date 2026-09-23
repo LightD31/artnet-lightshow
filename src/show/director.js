@@ -156,7 +156,7 @@ const SPLIT_DRIVE = 0.5;
 // the rig being slow.
 const MAX_FADE_MS = 4000;
 
-// Minimum burst length. At 40 Hz DMX, 300 ms is about twelve frames plus two or
+// Minimum burst length. At 44 Hz DMX, 300 ms is about thirteen frames plus two or
 // three pulses of the fixture's own strobe channel — below that an LED par has
 // not finished responding before it is told to stop.
 const MIN_BURST_MS = 300;

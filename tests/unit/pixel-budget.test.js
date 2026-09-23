@@ -1,8 +1,8 @@
 'use strict';
 
 // What a frame costs on the largest rig this is built for: sixty-four LED bars
-// of sixteen RGBW cells, 1,024 lights, rendered forty times a second on the
-// thread that also serves the UI. The render loop has 25 ms per frame; the
+// of sixteen RGBW cells, 1,024 lights, rendered forty-four times a second.
+// The render loop has 22.7 ms per frame (frame-clock.js FRAME_MS); the
 // assertion is deliberately loose so a slow CI runner does not fail it, and
 // the numbers are printed so a regression shows up long before it would.
 

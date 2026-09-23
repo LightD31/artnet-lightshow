@@ -22,7 +22,7 @@ const hue = require('./hue');
  * cues as the pars — see hueChannelColors().
  *
  * The sACN settings are cached rather than read from the store per frame:
- * `settings.group()` deep-clones, and this runs 40 times a second per universe.
+ * `settings.group()` deep-clones, and this runs 44 times a second per universe.
  * The applier calls configureSacn() at boot and again whenever they change.
  */
 

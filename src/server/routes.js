@@ -895,7 +895,7 @@ function attachRoutes(app, deps) {
     const tmpPath = path.join(os.tmpdir(), `auto-analyze-${crypto.randomUUID()}${ext}`);
     try {
       // Async on purpose: this buffer can be 50 MB, and a synchronous write of
-      // that size stalls the event loop — which here means the 40 Hz Art-Net
+      // that size stalls the event loop — which here means the 44 Hz Art-Net
       // render loop stops sending frames and the rig visibly freezes mid-show.
       await fsp.writeFile(tmpPath, req.file.buffer);
       autoShow.track = { name: req.file.originalname, artist: 'Local file', album: '', albumArt: null };

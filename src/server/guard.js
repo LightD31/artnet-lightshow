@@ -3,7 +3,7 @@
 /**
  * Keep one fault from ending the show.
  *
- * Everything that drives the rig runs from a timer: the 40 Hz render, the beat
+ * Everything that drives the rig runs from a timer: the 44 Hz render, the beat
  * clock, the auto show's cursor, the status sweeps. A throw inside any of them
  * is an uncaught exception, and Node's answer to that is to exit — at which
  * point the fixtures latch whatever frame they last received and hold it for
@@ -34,8 +34,8 @@ function report(where, err) {
 
 /**
  * Wrap a callback so a throw is reported instead of escaping. For timers:
- * `setInterval(guarded('render', renderDmx), 25)` keeps rendering the next
- * frame even if this one failed.
+ * `createTicker({ onTick: guarded('render', renderDmx) })` keeps rendering the
+ * next frame even if this one failed.
  */
 function guarded(where, fn) {
   return function guardedCall(...args) {

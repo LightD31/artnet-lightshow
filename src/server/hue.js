@@ -62,7 +62,7 @@ const DEVICE_TYPE = 'artnet-lightshow';
 
 // Hue asks for a continuous 50-60 Hz stream, repeating the last message if
 // nothing changed, because the transport is lossy UDP with no retries. The
-// engine renders at 40 Hz, which is close enough and keeps one frame rate in
+// engine renders at 44 Hz, which is close enough and keeps one frame rate in
 // the system. The floor here is the ceiling that matters: it stops a faster
 // render loop from ever outrunning what the bridge will accept.
 //
@@ -437,7 +437,7 @@ function to16(value) {
  *
  * `failed` exists so that a bridge that is off, unreachable or already being
  * streamed to by someone else does not turn every render frame into a fresh
- * handshake attempt. The engine calls sendFrame() 40 times a second and must
+ * handshake attempt. The engine calls sendFrame() 44 times a second and must
  * never be the thing that decides whether to reconnect.
  */
 const IDLE = 'idle';
