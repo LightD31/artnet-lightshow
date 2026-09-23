@@ -6,11 +6,11 @@ import test from 'node:test';
 import assert from 'node:assert';
 import express from 'express';
 
-import { attachRoutes } from '../../src/server/routes.js';
+import { attachRoutes } from '../../src/server/routes.ts';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { classifyAnalyzeSource, resolveLocalPath } from '../../src/server/routes.js';
+import { classifyAnalyzeSource, resolveLocalPath } from '../../src/server/routes.ts';
 import { settings } from '../../src/server/settings.ts';
 
 const PLAYING = {

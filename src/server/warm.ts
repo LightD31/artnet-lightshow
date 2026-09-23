@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { keyForSpotify, keyForQuery, keyForYouTube } from '../analysis-cache.ts';
 import { HttpError, messageOf } from '../errors.ts';
+import type { CacheMeta } from '../analysis-cache.ts';
+import type { AnalysisPriority } from '../analyzer-worker.ts';
 
 export type WarmStatus = 'pending' | 'warming' | 'ready' | 'cached' | 'error' | 'cancelled';
 
@@ -29,8 +31,8 @@ export interface PlaylistTrack {
 /** What the warmer needs of the auto show. */
 export interface WarmTarget {
   isCached(cacheKey: string): boolean;
-  prefetch(query: string, durationSec: number | null, cacheKey: string, meta: unknown,
-    isrc: string | null, priority: string): Promise<{ error?: string; skipped?: boolean; reason?: string }>;
+  prefetch(query: string, durationSec: number | null, cacheKey: string, meta: CacheMeta,
+    isrc: string | null, priority: AnalysisPriority): Promise<{ error?: string; skipped?: boolean; reason?: string }>;
 }
 
 export interface WarmProgress {

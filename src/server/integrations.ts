@@ -10,36 +10,88 @@ import { keyForSpotify, keyForQuery, keyForProlinkTrack } from '../analysis-cach
 import HybridSource from '../hybrid-source.ts';
 import { sampleAutoPosition } from './auto-position.ts';
 import { gridFromAnalysis } from '../shared/beat-clock.ts';
+import { messageOf } from '../errors.ts';
+import type { Server } from 'socket.io';
+import type AutoShow from '../auto-show.ts';
+import type { AnalysisCache } from '../analysis-cache.ts';
+import type DeezerSource from '../deezer-source.ts';
+import type MidiController from '../midi.ts';
+import type NowPlayingSource from '../nowplaying-source.ts';
+import type ProLink from '../prolink.ts';
+import type SpotifyClient from '../spotify.ts';
+import type { BeatGrid } from '../shared/beat-clock.ts';
+import type { AutoPosition } from './auto-position.ts';
+import type { DeezerState } from './validation.ts';
+import type { NowPlaying } from '../types/playback.ts';
+
+/** Everything the integrations wire together. */
+export interface IntegrationDeps {
+  io: Server;
+  midi: MidiController;
+  spotify: SpotifyClient;
+  nowPlaying: NowPlayingSource;
+  deezerSource: DeezerSource;
+  prolink: ProLink;
+  autoShow: AutoShow;
+  analysisCache?: AnalysisCache | null;
+}
+
+/** Which source the auto show follows. */
+export type AutoSource = 'prolink' | 'hybrid' | 'spotify' | 'deezer' | 'nowplaying' | 'timer';
+
+/** A queued track, as a prefetch slot shows it. */
+interface SlotTrack {
+  name: string;
+  artist: string;
+  album: string;
+  albumArt: string | null;
+  durationMs: number;
+}
+
+/** One upcoming track and how its analysis is coming along. */
+export interface PrefetchSlot {
+  track: SlotTrack | null;
+  status: string;
+  message: string;
+  cacheKey: string | null;
+}
+
+/** The track playing now: its cache key and the clock its show follows. */
+interface PlayingTrack {
+  key: string | null;
+  clock: () => number;
+}
 
 // A track change that lands while the previous track is still being analysed
 // hands the analyser to the new song and abandons the old job. That is the
 // priority rule working, not a failure — say so without crying error.
-function reportAnalysisError(label, err) {
-  if (err && err.superseded) console.log(`[auto-show] ${label} dropped: ${err.message}`);
-  else console.error(`${label}:`, err.message);
+function reportAnalysisError(label: string, err: unknown): void {
+  if (err && (err as { superseded?: boolean }).superseded) console.log(`[auto-show] ${label} dropped: ${messageOf(err)}`);
+  else console.error(`${label}:`, messageOf(err));
 }
 
 // Wires the auxiliary subsystems (MIDI feedback, Spotify, now-playing, PRO DJ
 // LINK, auto-show) into the engine + state. Returns the integration handle that
 // routes.js / sockets.js call back into.
-function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolink, autoShow, analysisCache = null }) {
+function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolink, autoShow, analysisCache = null }:
+  IntegrationDeps) {
   // Slot statuses, one per upcoming track up to state.autoPrefetchDepth.
   // slots[0] is the immediate next track (back-compat with the old
   // spotifyNext shape — that field still mirrors slots[0]).
   // Statuses: idle | prefetching | ready | queued | error | empty | unavailable
-  let spotifySlots = [];
+  let spotifySlots: PrefetchSlot[] = [];
 
   // Deezer prefetch slots (same shape/UI as spotifySlots), fed from the
   // extension's queue. lastDeezerQueueSig avoids rebuilding (and flickering
   // statuses) on every 1 Hz update when the queue hasn't actually changed.
-  let deezerSlots = [];
+  let deezerSlots: PrefetchSlot[] = [];
   let lastDeezerSlotsSig = '';
 
-  function emptySlot(reason = 'empty', message = 'Queue is empty') {
+  function emptySlot(reason = 'empty', message = 'Queue is empty'): PrefetchSlot {
     return { track: null, status: reason, message, cacheKey: null };
   }
 
-  function spotifyNextView() {
+  function spotifyNextView(): PrefetchSlot {
     // Back-compat: callers (and the old UI) read `spotifyNext.track / .status /
     // .message / .cacheKey` directly. Keep that working by mirroring slot 0.
     return spotifySlots[0] || emptySlot('idle', '');
@@ -55,11 +107,11 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   const sourceClock = new PlaybackClock();
 
   /** Fold one playback report from the active single source into the clock. */
-  function observePlayback(playing) {
+  function observePlayback(playing: NowPlaying): void {
     const now = Date.now();
     sourceClock.observe(playing.progressMs, {
       isPlaying: playing.isPlaying,
-      at: Number.isFinite(playing.sampledAt) ? playing.sampledAt : now,
+      at: typeof playing.sampledAt === 'number' && Number.isFinite(playing.sampledAt) ? playing.sampledAt : now,
       now,
     });
   }
@@ -78,13 +130,13 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   let lastQueuePeekAt = 0;
   const QUEUE_PEEK_INTERVAL_MS = 15000;
 
-  function getAutoPositionMs() {
+  function getAutoPositionMs(): number {
     return sourceClock.positionMs();
   }
 
-  function getProlinkPositionMs() { return prolink.getPositionMs(); }
+  function getProlinkPositionMs(): number { return prolink.getPositionMs(); }
 
-  function getHybridPositionMs() { return hybrid.getPositionMs(); }
+  function getHybridPositionMs(): number { return hybrid.getPositionMs(); }
 
   // How many upcoming tracks to prefetch. Validated to 1..5 on the way in; the
   // clamp stays for a state object that did not come through validation.
@@ -94,7 +146,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   // snapshot.
   let lastLiveJson = '';
 
-  function broadcast() {
+  function broadcast(): void {
     // Every edit to the patch ends in a broadcast, which makes this the one
     // place the show hears whether the rig has LED bars to draw on.
     if (typeof autoShow.setRig === 'function') autoShow.setRig({ hasPixels: currentRig().hasPixels });
@@ -150,7 +202,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     broadcast,
     prolinkEnable: () => {
       prolink.enable().catch((err) => {
-        console.error('PRO DJ LINK enable failed:', err.message);
+        console.error('PRO DJ LINK enable failed:', messageOf(err));
         state.prolinkEnabled = false;
         broadcast();
       });
@@ -184,7 +236,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   //
   // Deezer (extension) outranks generic SMTC: when Deezer plays in the browser
   // both see it, but the extension carries ISRC + queue, so it should win.
-  function resolveAutoSource() {
+  function resolveAutoSource(): AutoSource {
     if (state.autoSource === 'prolink' && prolink.connected) return 'prolink';
     // Hybrid asks only for Spotify: without the OS session it degrades to the
     // Spotify clock rather than refusing to run, which is what the operator
@@ -203,11 +255,11 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   }
 
   /** Sources that take their content and their queue from Spotify. */
-  function usesSpotifyContent(source) {
+  function usesSpotifyContent(source: AutoSource): boolean {
     return source === 'spotify' || source === 'hybrid';
   }
 
-  function startAutoShow() {
+  function startAutoShow(): AutoSource {
     const source = resolveAutoSource();
     if (source === 'prolink') {
       autoShow.start(getProlinkPositionMs);
@@ -234,13 +286,13 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   // playback source says is on and the clock that source is played from.
 
   // The last track each source reported, whether or not it was active then.
-  const lastTrack = { spotify: null, nowplaying: null, deezer: null };
+  const lastTrack: Record<'spotify' | 'nowplaying' | 'deezer', NowPlaying | null> = { spotify: null, nowplaying: null, deezer: null };
   // The track that is playing but not yet analysed, locked to once it is.
-  let pendingTrackKey = null;
+  let pendingTrackKey: string | null = null;
   let lockGeneration = 0;
 
   /** The playing track's cache key and clock, for the active source. */
-  function playingTrack() {
+  function playingTrack(): PlayingTrack | null {
     const source = resolveAutoSource();
     if (usesSpotifyContent(source) && lastTrack.spotify) {
       const p = lastTrack.spotify;
@@ -250,13 +302,13 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       };
     }
     if ((source === 'nowplaying' || source === 'deezer') && lastTrack[source]) {
-      const p = lastTrack[source];
+      const p = lastTrack[source] as NowPlaying;
       return { key: keyForQuery(`${p.artist} - ${p.name}`), clock: getAutoPositionMs };
     }
     return null;
   }
 
-  function lockTo(playing, grid) {
+  function lockTo(playing: PlayingTrack, grid: BeatGrid): void {
     pendingTrackKey = null;
     // The same position the auto show would play from, offset and all.
     conductor.setTrack({ key: playing.key, grid, positionMs: () => playing.clock() + autoShow.syncOffsetMs });
@@ -267,7 +319,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
    * auto show when it already has this track in memory, else from the cache;
    * a track with no analysis yet is remembered and locked to when one lands.
    */
-  function lockToPlayingTrack() {
+  function lockToPlayingTrack(): Promise<void> {
     const generation = ++lockGeneration;
     const playing = playingTrack();
     if (!playing || !playing.key) {
@@ -294,7 +346,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
         const grid = gridFromAnalysis(analysis);
         if (grid) lockTo(playing, grid);
       })
-      .catch((err) => console.warn(`[conductor] could not load ${playing.key}: ${err.message}`));
+      .catch((err) => console.warn(`[conductor] could not load ${playing.key}: ${messageOf(err)}`));
   }
 
   // A prefetch, a warm or an analyse request that finishes for the song that
@@ -326,6 +378,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   });
   prolink.onMasterChange(() => broadcast());
   prolink.onTrackChange(async (track) => {
+    if (!track) return;
     console.log(`PRO DJ LINK track changed: ${track.artist || '?'} — ${track.title || '?'}`);
     broadcast();
     if (!autoShow.running) return;
@@ -380,7 +433,8 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     // Fed to the hybrid source unconditionally, whichever source is active, so
     // that switching to it mid-show does not start from a cold clock. It only
     // ever *reads* Spotify's position when the OS session cannot supply one.
-    hybrid.observeContent(playing, Number.isFinite(playing.sampledAt) ? playing.sampledAt : undefined);
+    hybrid.observeContent(playing,
+      typeof playing.sampledAt === 'number' && Number.isFinite(playing.sampledAt) ? playing.sampledAt : undefined);
 
     if (!usesSpotifyContent(resolveAutoSource())) return;
     observePlayback(playing);
@@ -400,7 +454,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
    * not concurrent CPU thrash — and the song that starts playing interrupts
    * whichever one is running. Safe to call while a show is running.
    */
-  async function prefetchNextFromQueue() {
+  async function prefetchNextFromQueue(): Promise<void> {
     if (!spotify.authenticated) return;
     lastQueuePeekAt = Date.now();
     const depth = prefetchDepth();
@@ -480,16 +534,16 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
             const slot = spotifySlots.find((s) => s.cacheKey === cacheKey);
             if (slot) {
               slot.status = 'error';
-              slot.message = err.message;
+              slot.message = messageOf(err);
               broadcast();
             }
-            console.warn(`[prefetch] unexpected error: ${err.message}`);
+            console.warn(`[prefetch] unexpected error: ${messageOf(err)}`);
           });
       }
     } catch (err) {
-      spotifySlots = [{ track: null, status: 'error', message: err.message, cacheKey: null }];
+      spotifySlots = [{ track: null, status: 'error', message: messageOf(err), cacheKey: null }];
       broadcast();
-      console.warn(`[prefetch] queue lookup failed: ${err.message}`);
+      console.warn(`[prefetch] queue lookup failed: ${messageOf(err)}`);
     }
   }
 
@@ -501,7 +555,8 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
    * What differs between them — whether they are the active source, the cache
    * key, which clock the show follows — is decided by the caller.
    */
-  async function restartShowFor(playing, { cacheKey, clock, what }) {
+  async function restartShowFor(playing: NowPlaying,
+    { cacheKey, clock, what }: { cacheKey?: string | null; clock: () => number; what: string }): Promise<void> {
     autoShow.stop();
     autoShow.track = {
       name: playing.name, artist: playing.artist, album: playing.album,
@@ -587,7 +642,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   // next" list. Only when Deezer is the active source, so we don't burn the
   // analyzer while another source drives the show. autoShow.prefetch dedupes on
   // cache + in-flight, so re-running is cheap.
-  function prefetchDeezerQueue() {
+  function prefetchDeezerQueue(): void {
     if (resolveAutoSource() !== 'deezer') {
       if (deezerSlots.length) { deezerSlots = []; lastDeezerSlotsSig = ''; broadcast(); }
       return;
@@ -606,7 +661,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     // re-rank the prefetches already waiting to the list as it stands now.
     autoShow.applyQueueOrder(upcoming.map((t) => keyForQuery(`${t.artist} - ${t.name}`)));
 
-    const slots = upcoming.map((t, queuePos) => {
+    const slots = upcoming.map((t, queuePos): PrefetchSlot => {
       const query = `${t.artist} - ${t.name}`;
       const cacheKey = keyForQuery(query);
       const cached = autoShow.isCached(cacheKey);
@@ -638,7 +693,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   // alive, and a status sweep should not be the thing holding the process open.
   // It also means a test can wire the integrations up without the run hanging
   // afterwards on a heartbeat nobody is listening to.
-  let lastPosition = {};
+  let lastPosition: Partial<AutoPosition> = {};
   const positionTimer = setInterval(guarded('auto-position', () => {
     const position = sampleAutoPosition(autoShow, lastPosition);
     if (position.running || JSON.stringify(position) !== JSON.stringify(lastPosition)) {
@@ -683,7 +738,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     lockToPlayingTrack,
     // Called by the Deezer browser extension (via routes) with the web player's
     // current track + upcoming queue.
-    onDeezerState(payload) {
+    onDeezerState(payload: DeezerState | null | undefined) {
       if (!payload) return;
       if (payload.current) deezerSource.updatePlayback(payload.current);
       deezerSource.updateQueue(payload.upcoming || []);

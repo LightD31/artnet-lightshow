@@ -29,6 +29,40 @@ import * as pythonEnv from '../python-env.ts';
 import {
   keyForSpotify, keyForYouTube, keyForQuery, keyForLocalFile, keyForBuffer, keyForProlinkTrack,
 } from '../analysis-cache.ts';
+import { HttpError, messageOf, statusOf } from '../errors.ts';
+import type { Express, NextFunction, Request, RequestHandler, Response } from 'express';
+import type AutoShow from '../auto-show.ts';
+import type { AnalysisCache } from '../analysis-cache.ts';
+import type DeezerSource from '../deezer-source.ts';
+import type MidiController from '../midi.ts';
+import type NowPlayingSource from '../nowplaying-source.ts';
+import type ProLink from '../prolink.ts';
+import type SpotifyClient from '../spotify.ts';
+import type { createApplier } from './apply.ts';
+import type { setupIntegrations } from './integrations.ts';
+import type { ArtNode } from './artnet.ts';
+import type { EntertainmentArea } from './hue.ts';
+import type { NowPlaying, PlaybackSource } from '../types/playback.ts';
+import type { Profile } from '../types/rig.ts';
+
+/** The live subsystems the routes drive. */
+export interface RouteDeps {
+  midi: MidiController;
+  autoShow: AutoShow;
+  spotify: SpotifyClient;
+  nowPlaying: NowPlayingSource;
+  deezerSource: DeezerSource;
+  prolink: ProLink;
+  analysisCache: AnalysisCache;
+  integrations: ReturnType<typeof setupIntegrations>;
+  applier: ReturnType<typeof createApplier>;
+}
+
+/** What the operator typed into "Analyse", classified (see classifyAnalyzeSource). */
+export type AnalyzeSource =
+  | { kind: 'url'; source: string; direct: boolean }
+  | { kind: 'local'; source: string }
+  | { kind: 'search'; source: string };
 
 // Audio uploads genuinely need headroom; GDTF files do not. Separate limits so
 // the fixture importer isn't handed a 50 MB budget it has no use for — a real
@@ -44,24 +78,20 @@ const uploadGdtf = multer({ storage: multer.memoryStorage(), limits: { fileSize:
 //
 // Both sides are resolved with realpath, so a symlink inside the folder cannot
 // point the analyser somewhere outside it.
-async function resolveLocalPath(source) {
-  let resolved;
+async function resolveLocalPath(source: string): Promise<string> {
+  let resolved: string;
   try {
     resolved = await fsp.realpath(source);
   } catch (_) {
-    const err = new Error(`No such file: ${source}`);
-    err.status = 404;
-    throw err;
+    throw new HttpError(404, `No such file: ${source}`);
   }
   const configured = settings.get('analysis.localRoot');
   if (!configured) return resolved;
-  let root;
+  let root: string;
   try { root = await fsp.realpath(configured); } catch (_) { root = path.resolve(configured); }
   const prefix = root.endsWith(path.sep) ? root : root + path.sep;
   if (resolved !== root && !resolved.startsWith(prefix)) {
-    const err = new Error(`Local file analysis is restricted to ${root}`);
-    err.status = 403;
-    throw err;
+    throw new HttpError(403, `Local file analysis is restricted to ${root}`);
   }
   return resolved;
 }
@@ -81,12 +111,10 @@ const DIRECT_AUDIO_RE = /\.(mp3|wav|ogg|flac|m4a|aac|wma|opus|webm|aiff?)(\?|$)/
  * the path names; any other URL scheme (file:, ftp:, smb:); and a relative
  * path to an audio file, whose meaning depends on the server's working folder.
  */
-function classifyAnalyzeSource(source) {
+function classifyAnalyzeSource(source: unknown): AnalyzeSource {
   const text = String(source).trim();
-  const refuse = (message) => {
-    const err = new Error(message);
-    err.status = 400;
-    throw err;
+  const refuse = (message: string): never => {
+    throw new HttpError(400, message);
   };
   if (/^[\\/]{2}/.test(text)) refuse('Network (UNC) paths are not accepted — copy the file to this machine first');
   if (/^https?:\/\//i.test(text)) return { kind: 'url', source: text, direct: DIRECT_AUDIO_RE.test(text) };
@@ -97,11 +125,11 @@ function classifyAnalyzeSource(source) {
 }
 
 /** Remember the chosen MIDI ports so the pick survives a restart. */
-function asyncHandler(fn) {
-  return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+function asyncHandler(fn: (req: Request, res: Response, next: NextFunction) => unknown): RequestHandler {
+  return (req, res, next) => { Promise.resolve(fn(req, res, next)).catch(next); };
 }
 
-function attachRoutes(app, deps) {
+function attachRoutes(app: Express, deps: RouteDeps): void {
   const { midi, autoShow, spotify, nowPlaying, deezerSource, prolink, analysisCache, integrations, applier } = deps;
 
   // ─── State ────────────────────────────────────────────────────────────────
@@ -112,7 +140,7 @@ function attachRoutes(app, deps) {
       applyPatch(req.body);
       res.json({ ok: true, state: getClientState() });
     } catch (err) {
-      res.status(err.status || 400).json({ ok: false, error: err.message });
+      res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) });
     }
   });
 
@@ -136,16 +164,16 @@ function attachRoutes(app, deps) {
     try {
       applyPatch({ pattern: req.params.id });
       res.json({ ok: true, pattern: state.pattern });
-    } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(400).json({ ok: false, error: messageOf(err) }); }
   });
 
   app.post('/api/color/:slot/:index', (req, res) => {
-    const slotMap = { a: 'colorA', b: 'colorB', c: 'colorC', d: 'colorD' };
+    const slotMap: Record<string, string> = { a: 'colorA', b: 'colorB', c: 'colorC', d: 'colorD' };
     const slot = slotMap[req.params.slot] || 'colorA';
     try {
       applyPatch({ [slot]: parseInt(req.params.index, 10) });
       res.json({ ok: true, colorA: state.colorA, colorB: state.colorB, colorC: state.colorC, colorD: state.colorD });
-    } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(400).json({ ok: false, error: messageOf(err) }); }
   });
 
   // The named looks manual mode picks from, and the one on stage.
@@ -165,21 +193,21 @@ function attachRoutes(app, deps) {
         palette: state.palette,
         colorA: state.colorA, colorB: state.colorB, colorC: state.colorC, colorD: state.colorD,
       });
-    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
   app.post('/api/bpm/:value', (req, res) => {
     try {
       applyPatch({ bpm: Number(req.params.value) });
       res.json({ ok: true, bpm: state.bpm });
-    } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(400).json({ ok: false, error: messageOf(err) }); }
   });
 
   app.post('/api/bpm/adjust/:delta', (req, res) => {
     try {
       applyPatch({ bpm: Math.round((state.bpm + Number(req.params.delta)) * 100) / 100 });
       res.json({ ok: true, bpm: state.bpm });
-    } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(400).json({ ok: false, error: messageOf(err) }); }
   });
 
   app.post('/api/play', (_req, res) => { applyPatch({ running: true });  res.json({ ok: true }); });
@@ -189,7 +217,7 @@ function attachRoutes(app, deps) {
     try {
       applyPatch({ masterDimmer: parseInt(req.params.value, 10) });
       res.json({ ok: true, masterDimmer: state.masterDimmer });
-    } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(400).json({ ok: false, error: messageOf(err) }); }
   });
 
   // Note: /api/energy/off must come before :id
@@ -202,7 +230,7 @@ function attachRoutes(app, deps) {
     try {
       applyPatch({ energyOverride: req.params.id });
       res.json({ ok: true, energyOverride: state.energyOverride });
-    } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(400).json({ ok: false, error: messageOf(err) }); }
   });
 
   // ─── Per-fixture overrides ────────────────────────────────────────────────
@@ -210,7 +238,7 @@ function attachRoutes(app, deps) {
     try {
       applyOverride(parseInt(req.params.id, 10), req.body);
       res.json({ ok: true });
-    } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(400).json({ ok: false, error: messageOf(err) }); }
   });
 
   app.post('/api/fixture/:id/blackout/toggle', (req, res) => {
@@ -229,7 +257,7 @@ function attachRoutes(app, deps) {
         blackout,
       });
       res.json({ ok: true });
-    } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(400).json({ ok: false, error: messageOf(err) }); }
   });
 
   // A trim rather than an override: it scales whatever is driving the fixture —
@@ -260,7 +288,7 @@ function attachRoutes(app, deps) {
   app.post('/api/midi/connect', (req, res) => {
     try {
       res.json(connectMidi(midi, req.body));
-    } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(400).json({ ok: false, error: messageOf(err) }); }
   });
 
   // ─── MIDI mapping and learn ───────────────────────────────────────────────
@@ -281,7 +309,7 @@ function attachRoutes(app, deps) {
     try {
       midiMap.replace(validate(mapSchema, req.body || {}, 'midi-map'));
       res.json({ ok: true, ...midiMap.snapshot() });
-    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
   app.post('/api/midi/map/reset', (_req, res) => {
@@ -295,7 +323,7 @@ function attachRoutes(app, deps) {
       const { kind, number, binding } = validate(bindingWriteSchema, req.body || {}, 'midi-binding');
       midiMap.setBinding(kind, number, binding);
       res.json({ ok: true, ...midiMap.snapshot() });
-    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
   /**
@@ -313,7 +341,7 @@ function attachRoutes(app, deps) {
     try {
       binding = validate(learnSchema, req.body || {}, 'midi-learn');
     } catch (err) {
-      return res.status(400).json({ ok: false, error: err.message });
+      return res.status(400).json({ ok: false, error: messageOf(err) });
     }
 
     // A CC binding needs to know whether the control is an encoder or a fader.
@@ -331,7 +359,7 @@ function attachRoutes(app, deps) {
     try {
       midiMap.setBinding(captured.kind, captured.number, stored);
     } catch (err) {
-      return res.status(err.status || 500).json({ ok: false, error: err.message });
+      return res.status(statusOf(err) || 500).json({ ok: false, error: messageOf(err) });
     }
 
     res.json({
@@ -346,9 +374,9 @@ function attachRoutes(app, deps) {
   });
 
   // ─── PRO DJ LINK ──────────────────────────────────────────────────────────
-  app.post('/api/prolink/enable',  (_req, res) => { applyPatch({ prolinkEnabled: true });  res.json({ ok: true, prolink: getClientState().prolink }); });
-  app.post('/api/prolink/disable', (_req, res) => { applyPatch({ prolinkEnabled: false }); res.json({ ok: true, prolink: getClientState().prolink }); });
-  app.post('/api/prolink/toggle',  (_req, res) => { applyPatch({ prolinkEnabled: !state.prolinkEnabled }); res.json({ ok: true, prolink: getClientState().prolink }); });
+  app.post('/api/prolink/enable',  (_req, res) => { applyPatch({ prolinkEnabled: true });  res.json({ ok: true, prolink: (getClientState() as Record<string, unknown>).prolink }); });
+  app.post('/api/prolink/disable', (_req, res) => { applyPatch({ prolinkEnabled: false }); res.json({ ok: true, prolink: (getClientState() as Record<string, unknown>).prolink }); });
+  app.post('/api/prolink/toggle',  (_req, res) => { applyPatch({ prolinkEnabled: !state.prolinkEnabled }); res.json({ ok: true, prolink: (getClientState() as Record<string, unknown>).prolink }); });
 
   // ─── GDTF / Profiles / Fixtures / Show ────────────────────────────────────
   app.post('/api/gdtf/parse', uploadGdtf.single('gdtf'), asyncHandler(async (req, res) => {
@@ -357,8 +385,8 @@ function attachRoutes(app, deps) {
       const result = await parseGDTF(req.file.buffer);
       res.json({ ok: true, fixture: result });
     } catch (err) {
-      console.error('GDTF parse error:', err.message);
-      res.status(400).json({ ok: false, error: err.message });
+      console.error('GDTF parse error:', messageOf(err));
+      res.status(400).json({ ok: false, error: messageOf(err) });
     }
   }));
 
@@ -374,7 +402,7 @@ function attachRoutes(app, deps) {
       showStore.scheduleSave();
       integrations.broadcast();
       res.json({ ok: true });
-    } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(400).json({ ok: false, error: messageOf(err) }); }
   });
 
   // A bar profile from its cell count and channel order (bar-profile.js).
@@ -390,11 +418,11 @@ function attachRoutes(app, deps) {
       showStore.scheduleSave();
       integrations.broadcast();
       res.json({ ok: true, profile });
-    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
   /** Why replacing a profile with `profile` would break the patch, or null. */
-  function profileChangeBlocked(profile) {
+  function profileChangeBlocked(profile: Profile): string | null {
     const users = state.fixtures.filter((f) => f.profileId === profile.id);
     for (const fixture of users) {
       const overflow = universeOverflow(fixture.label, fixture.address, profile.channelCount);
@@ -561,12 +589,12 @@ function attachRoutes(app, deps) {
       const at = Math.max(0, Math.min(state.fixtures.length, index));
       if (restored.id === undefined) restored.id = allocateFixtureId();
       state.nextFixtureId = Math.max(state.nextFixtureId, restored.id + 1);
-      state.fixtures.splice(at, 0, restored);
+      state.fixtures.splice(at, 0, restored as typeof restored & { id: number });
       resizeFixtureBuffers();
       showStore.scheduleSave();
       integrations.broadcast();
       res.json({ ok: true, id: restored.id });
-    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
   // The show file: the patch as a portable document. The server saves it for
@@ -581,7 +609,7 @@ function attachRoutes(app, deps) {
       showStore.scheduleSave();
       integrations.broadcast();
       res.json({ ok: true });
-    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
   // ─── Cue stack ────────────────────────────────────────────────────────────
@@ -595,7 +623,7 @@ function attachRoutes(app, deps) {
       const cue = cues.create(body);
       integrations.broadcast();
       res.json({ ok: true, cue });
-    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
   // Note: /api/cues/reorder must come before :id
@@ -605,7 +633,7 @@ function attachRoutes(app, deps) {
       cues.reorder(ids);
       integrations.broadcast();
       res.json({ ok: true, cues: cues.summaries() });
-    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
   app.put('/api/cues/:id', (req, res) => {
@@ -615,7 +643,7 @@ function attachRoutes(app, deps) {
       if (!cue) return res.status(404).json({ ok: false, error: 'No such cue' });
       integrations.broadcast();
       res.json({ ok: true, cue });
-    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
   // Answers with what was removed and from where, so the client can offer an
@@ -627,7 +655,7 @@ function attachRoutes(app, deps) {
       if (!removed) return res.status(404).json({ ok: false, error: 'No such cue' });
       integrations.broadcast();
       res.json({ ok: true, cue: removed.cue, index: removed.index });
-    } catch (err) { res.status(err.status || 500).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(statusOf(err) || 500).json({ ok: false, error: messageOf(err) }); }
   });
 
   app.post('/api/cues/restore', (req, res) => {
@@ -637,7 +665,7 @@ function attachRoutes(app, deps) {
       if (!restored) return res.status(409).json({ ok: false, error: 'That cue is already in the stack' });
       integrations.broadcast();
       res.json({ ok: true, cue: restored });
-    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
   app.post('/api/cues/:id/recall', (req, res) => {
@@ -645,7 +673,7 @@ function attachRoutes(app, deps) {
       if (!cues.recall(req.params.id)) return res.status(404).json({ ok: false, error: 'No such cue' });
       // recallLook goes through applyPatch, which broadcasts on its own.
       res.json({ ok: true, state: getClientState() });
-    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
   // ─── Spotify ──────────────────────────────────────────────────────────────
@@ -662,7 +690,7 @@ function attachRoutes(app, deps) {
   });
 
   app.get('/auth/spotify/callback', asyncHandler(async (req, res) => {
-    const code = req.query.code;
+    const code = typeof req.query.code === 'string' ? req.query.code : '';
     if (!code) return res.status(400).type('text/plain').send('Missing authorization code');
 
     // Bind this callback to a flow this server started. Without it, any page
@@ -696,10 +724,10 @@ function attachRoutes(app, deps) {
       integrations.broadcast();
       res.send('<html><body style="background:#0d0d0f;color:#e8e8f0;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh"><div style="text-align:center"><h2 style="color:#44ff88">Spotify Connected</h2><p>You can close this window and return to the lightshow.</p><script>setTimeout(()=>window.close(),2000)</script></div></body></html>');
     } catch (err) {
-      console.error('Spotify auth error:', err.message);
+      console.error('Spotify auth error:', messageOf(err));
       // Plain text: the message can carry whatever Spotify or a proxy sent
       // back, and as HTML on this origin it would run in the operator's browser.
-      res.status(500).type('text/plain').send(`Spotify auth failed: ${err.message}`);
+      res.status(500).type('text/plain').send(`Spotify auth failed: ${messageOf(err)}`);
     }
   }));
 
@@ -724,7 +752,7 @@ function attachRoutes(app, deps) {
       const playlists = await spotify.getMyPlaylists();
       res.json({ ok: true, playlists, canReadPlaylists: spotify.canReadPlaylists });
     } catch (err) {
-      res.status(err.status === 401 ? 400 : 502).json({ ok: false, error: err.message });
+      res.status(statusOf(err) === 401 ? 400 : 502).json({ ok: false, error: messageOf(err) });
     }
   }));
 
@@ -733,7 +761,7 @@ function attachRoutes(app, deps) {
       const playing = await spotify.getCurrentlyPlaying();
       res.json({ ok: true, playing });
     } catch (err) {
-      res.status(500).json({ ok: false, error: err.message });
+      res.status(500).json({ ok: false, error: messageOf(err) });
     }
   }));
 
@@ -757,7 +785,7 @@ function attachRoutes(app, deps) {
     try {
       integrations.onDeezerState(validate(deezerStateSchema, req.body || {}, 'deezer-state'));
       res.json({ ok: true, status: deezerSource.getStatus() });
-    } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(400).json({ ok: false, error: messageOf(err) }); }
   });
 
   app.post('/api/deezer/disconnect', (_req, res) => {
@@ -789,7 +817,7 @@ function attachRoutes(app, deps) {
       integrations.broadcast();
       res.json({ ok: true, analysis: autoShow.getClientState().analysis });
     } catch (err) {
-      res.status(err.status || 500).json({ ok: false, error: err.message });
+      res.status(statusOf(err) || 500).json({ ok: false, error: messageOf(err) });
     }
   }));
 
@@ -801,7 +829,13 @@ function attachRoutes(app, deps) {
    * they are not connected, and the cache key: Spotify has a stable track id,
    * the others only a name.
    */
-  function analyzePlaying({ source, notConnected, nothingPlaying, keyFor = () => null, after }) {
+  function analyzePlaying({ source, notConnected, nothingPlaying, keyFor = () => null, after }: {
+    source: PlaybackSource;
+    notConnected: string;
+    nothingPlaying: string;
+    keyFor?: (playing: NowPlaying) => string | null;
+    after?: () => unknown;
+  }): RequestHandler {
     return asyncHandler(async (_req, res) => {
       if (!source.authenticated) return res.status(400).json({ ok: false, error: notConnected });
       try {
@@ -822,7 +856,7 @@ function attachRoutes(app, deps) {
         res.json({ ok: true, track: autoShow.track, analysis: autoShow.getClientState().analysis });
         if (after) after();
       } catch (err) {
-        res.status(500).json({ ok: false, error: err.message });
+        res.status(500).json({ ok: false, error: messageOf(err) });
       }
     });
   }
@@ -858,7 +892,7 @@ function attachRoutes(app, deps) {
       integrations.broadcast();
       res.json({ ok: true, analysis: autoShow.getClientState().analysis });
     } catch (err) {
-      res.status(500).json({ ok: false, error: err.message });
+      res.status(500).json({ ok: false, error: messageOf(err) });
     }
   }));
 
@@ -883,7 +917,7 @@ function attachRoutes(app, deps) {
       integrations.broadcast();
       res.json({ ok: true, track: autoShow.track, analysis: autoShow.getClientState().analysis });
     } catch (err) {
-      res.status(500).json({ ok: false, error: err.message });
+      res.status(500).json({ ok: false, error: messageOf(err) });
     } finally {
       await fsp.unlink(tmpPath).catch(() => { /* already gone */ });
     }
@@ -910,7 +944,7 @@ function attachRoutes(app, deps) {
       integrations.broadcast();
       res.json({ ok: true, track: autoShow.track, analysis: autoShow.getClientState().analysis });
     } catch (err) {
-      res.status(500).json({ ok: false, error: err.message });
+      res.status(500).json({ ok: false, error: messageOf(err) });
     }
   }));
 
@@ -939,7 +973,7 @@ function attachRoutes(app, deps) {
     try {
       applyPatch({ autoIntensity: parseInt(req.params.value, 10) });
       res.json({ ok: true, intensity: state.autoIntensity });
-    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
   // Nudging this mid-set is normal — an operator hears the lights lagging and
@@ -949,7 +983,7 @@ function attachRoutes(app, deps) {
     try {
       applyPatch({ autoSyncOffsetMs: parseInt(req.params.value, 10) });
       res.json({ ok: true, syncOffsetMs: state.autoSyncOffsetMs });
-    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
   app.post('/api/auto/palette-size/:value', (req, res) => {
@@ -957,7 +991,7 @@ function attachRoutes(app, deps) {
       const raw = req.params.value;
       applyPatch({ autoPaletteSize: raw === 'auto' ? 'auto' : parseInt(raw, 10) });
       res.json({ ok: true, paletteSize: autoShow.paletteSize });
-    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
   app.get('/api/auto/state', (_req, res) => {
@@ -1005,7 +1039,7 @@ function attachRoutes(app, deps) {
         return res.status(400).json({ ok: false, error: 'Provide a set list as `text` or `tracks`' });
       }
       res.json({ ok: true, warm: integrations.warmer.start(inputs) });
-    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
   /** Warm everything Spotify has queued, rather than only the next few. */
@@ -1016,7 +1050,7 @@ function attachRoutes(app, deps) {
 
     try {
       res.json({ ok: true, warm: integrations.warmer.start(fromSpotifyTracks(queue)) });
-    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   }));
 
   /**
@@ -1032,7 +1066,7 @@ function attachRoutes(app, deps) {
     let body;
     try {
       body = validate(warmPlaylistSchema, req.body || {}, 'warm playlist');
-    } catch (err) { return res.status(err.status || 400).json({ ok: false, error: err.message }); }
+    } catch (err) { return res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
 
     let playlist;
     try {
@@ -1041,7 +1075,7 @@ function attachRoutes(app, deps) {
       // Spotify answers 404 for a playlist you cannot see, which is also what a
       // private playlist looks like without the scope. Say which it probably is
       // rather than leaving the operator to guess at a bare "not found".
-      if (err.status === 404 && !spotify.canReadPlaylists) {
+      if (statusOf(err) === 404 && !spotify.canReadPlaylists) {
         return res.status(400).json({
           ok: false,
           error: 'Playlist not found. If it is private or collaborative, reconnect '
@@ -1050,10 +1084,10 @@ function attachRoutes(app, deps) {
       }
       // A bad reference or a lapsed connection is the caller's to fix; a real
       // 404 is the playlist's; anything else is Spotify failing on our behalf.
-      const status = err.status === 400 || err.status === 401 ? 400
-        : err.status === 404 ? 404
+      const status = statusOf(err) === 400 || statusOf(err) === 401 ? 400
+        : statusOf(err) === 404 ? 404
           : 502;
-      return res.status(status).json({ ok: false, error: err.message });
+      return res.status(status).json({ ok: false, error: messageOf(err) });
     }
 
     const inputs = fromSpotifyTracks(playlist.tracks);
@@ -1073,7 +1107,7 @@ function attachRoutes(app, deps) {
         },
         warm: integrations.warmer.start(inputs),
       });
-    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
+    } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   }));
 
   app.delete('/api/warm', (_req, res) => {
@@ -1137,7 +1171,8 @@ function attachRoutes(app, deps) {
       await new Promise((r) => setTimeout(r, 1200));
     }
     const status = discovery.status();
-    let { nodes, error } = status;
+    let nodes: (ArtNode & { from: string; seenAt?: number })[] = status.nodes;
+    let error = status.error;
     if (scan && !discovery.active) {
       const hosts = interfaces().map((i) => i.broadcast);
       if (hosts.length) {
@@ -1202,12 +1237,12 @@ function attachRoutes(app, deps) {
 
     // Hand back the areas straight away: pairing is only ever done in order to
     // pick one, and a second round trip here just adds a step to the setup.
-    let areas = [];
-    let areasError = null;
+    let areas: EntertainmentArea[] = [];
+    let areasError: string | null = null;
     try {
       areas = await listEntertainmentConfigs(host, result.username);
     } catch (err) {
-      areasError = err.message;
+      areasError = messageOf(err);
     }
     res.json({ ok: true, host, areas, areasError });
   }));
@@ -1222,7 +1257,7 @@ function attachRoutes(app, deps) {
       const areas = await listEntertainmentConfigs(config.host, config.username);
       res.json({ ok: true, areas });
     } catch (err) {
-      res.status(502).json({ ok: false, error: err.message });
+      res.status(502).json({ ok: false, error: messageOf(err) });
     }
   }));
 
@@ -1246,7 +1281,7 @@ function attachRoutes(app, deps) {
       applier.applyChanged(changed);
       res.json({ ok: true });
     } catch (err) {
-      res.status(400).json({ ok: false, error: err.message });
+      res.status(400).json({ ok: false, error: messageOf(err) });
     }
   });
 
@@ -1286,9 +1321,11 @@ function attachRoutes(app, deps) {
       });
     } catch (err) {
       // Zod errors carry the offending path; surface it rather than a bare 500.
-      const detail = err.issues
-        ? err.issues.map((i) => `${i.path.join('.') || '<root>'} ${i.message}`).join('; ')
-        : err.message;
+      const issues = err && typeof err === 'object'
+        ? (err as { issues?: { path: PropertyKey[]; message: string }[] }).issues : undefined;
+      const detail = issues
+        ? issues.map((i) => `${i.path.join('.') || '<root>'} ${i.message}`).join('; ')
+        : messageOf(err);
       res.status(400).json({ ok: false, error: detail });
     }
   });
@@ -1307,25 +1344,26 @@ function attachRoutes(app, deps) {
   // with an HTML page carrying the stack trace (it only hides it when NODE_ENV
   // is 'production', which a locally-run show tool never sets). Every other
   // route here answers JSON; this makes the failure paths agree.
-  app.use((err, _req, res, _next) => {
+  app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     if (res.headersSent) return;
+    const e = (err ?? {}) as { code?: string; field?: string; status?: number; statusCode?: number; stack?: string; message?: string };
 
     // Multer signals "too big" with a code rather than a status.
-    if (err && err.code === 'LIMIT_FILE_SIZE') {
+    if (e.code === 'LIMIT_FILE_SIZE') {
       return res.status(413).json({ ok: false, error: 'Uploaded file is too large' });
     }
-    if (err && err.code === 'LIMIT_UNEXPECTED_FILE') {
-      return res.status(400).json({ ok: false, error: `Unexpected file field "${err.field}"` });
+    if (e.code === 'LIMIT_UNEXPECTED_FILE') {
+      return res.status(400).json({ ok: false, error: `Unexpected file field "${e.field}"` });
     }
 
-    const status = err && (err.status || err.statusCode);
+    const status = statusOf(err) || e.statusCode;
     if (status && status >= 400 && status < 500) {
-      return res.status(status).json({ ok: false, error: err.message });
+      return res.status(status).json({ ok: false, error: messageOf(err) });
     }
 
     // Genuine server-side faults: log the detail, return only the message.
-    console.error('[api] unhandled error:', err && err.stack ? err.stack : err);
-    res.status(500).json({ ok: false, error: (err && err.message) || 'Internal error' });
+    console.error('[api] unhandled error:', e.stack ? e.stack : err);
+    res.status(500).json({ ok: false, error: e.message || 'Internal error' });
   });
 }
 

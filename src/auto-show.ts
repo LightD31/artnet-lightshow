@@ -430,7 +430,7 @@ class AutoShow {
    * that has moved up is analysed before the ones behind it and one that has
    * dropped out stops holding up the tracks that are still coming.
    */
-  applyQueueOrder(cacheKeys: string[]): void {
+  applyQueueOrder(cacheKeys: readonly (string | null)[]): void {
     if (this._worker) this._worker.setQueueOrder(cacheKeys);
   }
 

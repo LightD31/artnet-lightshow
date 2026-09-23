@@ -3,7 +3,7 @@
 // including paused players and a PRO DJ LINK clock frozen after lost packets.
 /** What the auto show says about where it is. */
 export interface PositionSource {
-  timelineRevision: number;
+  timelineRevision: string;
   running: boolean;
   getPositionMs(): number;
 }
@@ -13,7 +13,7 @@ export interface AutoPosition {
   running: boolean;
   /** The clock is really moving, not armed on a paused source. */
   advancing: boolean;
-  revision: number;
+  revision: string;
 }
 
 function sampleAutoPosition(show: PositionSource, previous: Partial<AutoPosition> = {}): AutoPosition {

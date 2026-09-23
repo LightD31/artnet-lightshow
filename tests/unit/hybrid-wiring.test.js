@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import { setupIntegrations } from '../../src/server/integrations.js';
+import { setupIntegrations } from '../../src/server/integrations.ts';
 import { state } from '../../src/server/state.ts';
 
 const SPOTIFY_TRACK = {

@@ -37,8 +37,8 @@ export interface ProlinkTrackRef {
   deviceId?: number | null;
   slot?: string | number | null;
   trackId?: number | string | null;
-  title?: string;
-  artist?: string;
+  title?: string | null;
+  artist?: string | null;
   durationMs?: number;
 }
 
