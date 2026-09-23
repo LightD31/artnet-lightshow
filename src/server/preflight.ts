@@ -4,7 +4,8 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 
 import { state, universeOf, activeUniverses } from './state.ts';
-import { getProfile, fitsInUniverse, endChannel, UNIVERSE_SIZE } from './profiles.ts';
+import { getProfile } from './profiles.ts';
+import { fitIssue, footprintOf, overlaps } from '../shared/placement.ts';
 import { MAX_UNIVERSES } from './universes.ts';
 import { settings } from './settings.ts';
 import { discoverNodes, probeSend } from './artnet.ts';
@@ -387,24 +388,18 @@ function checkPatch(): Check {
   const problems = [];
 
   for (const fix of state.fixtures) {
-    const profile = getProfile(fix);
-    if (!fitsInUniverse(fix.address, profile.channelCount)) {
-      problems.push(`"${fix.label}" at ${fix.address} ends at ${endChannel(fix.address, profile.channelCount)}, `
-        + `past the ${UNIVERSE_SIZE}-channel universe`);
-    }
+    const issue = fitIssue(fix.label, fix.address, getProfile(fix), universeOf(fix));
+    if (issue) problems.push(issue);
   }
 
-  // Two fixtures only fight over an address when they share a universe.
+  // Two fixtures only fight over an address when they share a universe — a
+  // strip running on into the next counts on every universe it covers.
+  const footprints = state.fixtures.map((f) => footprintOf(universeOf(f), f.address, getProfile(f)));
   for (let i = 0; i < state.fixtures.length; i++) {
-    const a = state.fixtures[i];
-    const aEnd = endChannel(a.address, getProfile(a).channelCount);
     for (let j = i + 1; j < state.fixtures.length; j++) {
-      const b = state.fixtures[j];
-      if (universeOf(a) !== universeOf(b)) continue;
-      const bEnd = endChannel(b.address, getProfile(b).channelCount);
-      if (a.address <= bEnd && b.address <= aEnd) {
-        problems.push(`"${a.label}" and "${b.label}" overlap on universe ${universeOf(a)}`);
-      }
+      if (!overlaps(footprints[i], footprints[j])) continue;
+      const shared = footprints[i].find((x) => footprints[j].some((y) => y.universe === x.universe))?.universe;
+      problems.push(`"${state.fixtures[i].label}" and "${state.fixtures[j].label}" overlap on universe ${shared}`);
     }
   }
 

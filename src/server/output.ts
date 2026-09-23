@@ -1,6 +1,7 @@
 import { state, universeOf } from './state.ts';
 import { getProfile } from './profiles.ts';
 import { cellsOf, EMITTERS } from '../shared/rig.ts';
+import { channelReader } from '../shared/placement.ts';
 import * as universes from './universes.ts';
 import { createTransmitter, sacnUniverseFor as mapSacnUniverse } from './transmit.ts';
 import { createDiscovery, interfaces, isBroadcastTarget, isLoopbackTarget } from './artnet-nodes.ts';
@@ -214,11 +215,10 @@ function hueChannelColors(): HueChannelColour[] {
     const fix = state.fixtures.find((f) => f.id === binding.fixture);
     if (!fix) continue;
 
-    const dmx = universes.getBuffer(universeOf(fix));
     const profile = getProfile(fix);
     const ch = profile.channelMap;
-    const base = fix.address - 1;
-    const at: ChannelReader = (offset) => (offset === undefined ? 0 : (dmx[base + offset] || 0));
+    // Through the placement, so a strip running on over several universes reads right.
+    const at: ChannelReader = channelReader(universeOf(fix), fix.address, profile, (u) => universes.getBuffer(u));
 
     // A fixture with nothing that makes coloured light — a plain dimmer-only
     // lamp — is read as neutral white at its level. Tested against every

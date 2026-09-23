@@ -23,8 +23,12 @@ const EMITTERS = ['red', 'green', 'blue', 'white', 'amber', 'uv', 'warmWhite', '
 // bar on its own, or mirrored about the centre of the stage.
 const PIXEL_MAPS = ['stage', 'bar', 'mirror'] as const;
 
-// A universe holds 170 three-channel cells; no single fixture has more.
-const MAX_CELLS_PER_FIXTURE = 170;
+// The most cells one fixture has: a 1,024-pixel strip, or a 32 × 32 panel. A
+// strip longer than a universe runs on into the next (shared/placement.ts).
+const MAX_CELLS_PER_FIXTURE = 1024;
+
+// The longest profile: 1,024 RGBW pixels, eight universes.
+const MAX_PROFILE_CHANNELS = 4096;
 
 /** One light: a par, or one cell of a bar. */
 export interface Unit {
@@ -249,6 +253,7 @@ export {
   EMITTERS,
   PIXEL_MAPS,
   MAX_CELLS_PER_FIXTURE,
+  MAX_PROFILE_CHANNELS,
   cellsOf,
   unitCount,
   countUnits,

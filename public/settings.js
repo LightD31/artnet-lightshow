@@ -830,7 +830,10 @@ function renderPatchTable() {
   state.fixtures.forEach((fix) => {
     const profile = profiles[fix.profileId] || {};
     const chCount = profile.channelCount || 12;
-    const endAddr = fix.address + chCount - 1;
+    const parts = footprint(fix, profile);
+    const last = parts[parts.length - 1];
+    // A strip longer than a universe says where it ends: "1–150 on 3" after 2.
+    const range = parts.length > 1 ? `${fix.address}–${last.last} on ${last.universe}` : `${fix.address}–${last.last}`;
     const hasConflict = conflicts.has(fix.id);
 
     const tr = document.createElement('tr');
@@ -884,7 +887,7 @@ function renderPatchTable() {
     addrInput.dataset.id = fix.id;
     addrInput.style.width = '70px';
     addrCell.appendChild(addrInput);
-    addrCell.appendChild(el('span', 'addr-range', `${fix.address}–${endAddr}`));
+    addrCell.appendChild(el('span', 'addr-range', range));
     if (hasConflict) addrCell.appendChild(el('span', 'conflict-warning', 'Address overlap!'));
     tr.appendChild(addrCell);
 
@@ -940,24 +943,37 @@ function renderPatchTable() {
   });
 }
 
+/**
+ * The channels a fixture occupies, per universe: one run from its address, or —
+ * for a strip longer than a universe — whole cells to each universe it runs on
+ * into, from channel 1. The same rule as src/shared/placement.ts, which this
+ * page (a plain script) cannot import.
+ */
+function footprint(fix, profile) {
+  const count = profile.channelCount || 12;
+  const universe = fix.universe ?? 0;
+  const cells = Array.isArray(profile.cells) ? profile.cells.length : 0;
+  if (count <= 512 || cells < 2) return [{ universe, first: fix.address, last: fix.address + count - 1 }];
+  const width = count / cells;
+  const perUniverse = Math.floor(512 / width);
+  const parts = [];
+  for (let k = 0; k * perUniverse < cells; k++) {
+    parts.push({ universe: universe + k, first: 1, last: Math.min(perUniverse, cells - k * perUniverse) * width });
+  }
+  return parts;
+}
+
 // Two fixtures only fight over an address when they are on the same universe —
 // channel 1 of universe 0 and channel 1 of universe 1 are different wires.
 function detectConflicts(fixtures) {
   const conflicts = new Set();
+  const parts = fixtures.map((f) => footprint(f, profiles[f.profileId] || {}));
   for (let i = 0; i < fixtures.length; i++) {
-    const a = fixtures[i];
-    const pa = profiles[a.profileId] || {};
-    const aEnd = a.address + (pa.channelCount || 12) - 1;
-
     for (let j = i + 1; j < fixtures.length; j++) {
-      const b = fixtures[j];
-      if ((a.universe ?? 0) !== (b.universe ?? 0)) continue;
-      const pb = profiles[b.profileId] || {};
-      const bEnd = b.address + (pb.channelCount || 12) - 1;
-
-      if (a.address <= bEnd && b.address <= aEnd) {
-        conflicts.add(a.id);
-        conflicts.add(b.id);
+      const clash = parts[i].some((x) => parts[j].some((y) => x.universe === y.universe && x.first <= y.last && y.first <= x.last));
+      if (clash) {
+        conflicts.add(fixtures[i].id);
+        conflicts.add(fixtures[j].id);
       }
     }
   }

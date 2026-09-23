@@ -3,7 +3,8 @@ import net from 'node:net';
 import { COLOR_PRESETS, AUTO_SOURCES, SYNC_OFFSET_LIMIT_MS } from './presets.ts';
 import { PALETTE_IDS } from './palettes.ts';
 import { FIXTURE_GROUPS } from '../shared/stage.ts';
-import { EMITTERS, PIXEL_MAPS, MAX_CELLS_PER_FIXTURE } from '../shared/rig.ts';
+import { EMITTERS, PIXEL_MAPS, MAX_CELLS_PER_FIXTURE, MAX_PROFILE_CHANNELS } from '../shared/rig.ts';
+import { stripIssue } from '../shared/placement.ts';
 import { HttpError } from '../errors.ts';
 
 /** Input that failed its schema: a 400, with zod's issues for the client. */
@@ -188,10 +189,11 @@ const profileSchema = z.object({
   name: z.string().min(1).max(128),
   manufacturer: z.string().max(128).optional(),
   modeName: z.string().max(128).optional(),
-  channelCount: z.number().int().min(1).max(512),
-  channelMap: z.record(z.number().int().min(0).max(511)),
+  // Up to a universe for any fixture; a strip may run on over several.
+  channelCount: z.number().int().min(1).max(MAX_PROFILE_CHANNELS),
+  channelMap: z.record(z.number().int().min(0).max(MAX_PROFILE_CHANNELS - 1)),
   channelList: z.array(z.object({
-    offset: z.number().int().min(0).max(511),
+    offset: z.number().int().min(0).max(MAX_PROFILE_CHANNELS - 1),
     name: z.string().min(1),
     attribute: z.string().min(1),
     // Which cell the channel drives, for labelling the monitor.
@@ -202,15 +204,15 @@ const profileSchema = z.object({
   // fixture's footprint; the fixture-level channelMap keeps what they share.
   cells: z.array(z.object({
     name: z.string().max(64).optional(),
-    channelMap: z.record(z.number().int().min(0).max(511)),
+    channelMap: z.record(z.number().int().min(0).max(MAX_PROFILE_CHANNELS - 1)),
   }).strict()).min(2).max(MAX_CELLS_PER_FIXTURE).optional(),
   // Channels the show does not drive and the value each sits at instead of 0:
   // a shutter whose 0 is closed, a dimmer the show leaves at full. Written
   // under every frame, so a channel the show does drive still wins.
   defaults: z.array(z.object({
-    offset: z.number().int().min(0).max(511),
+    offset: z.number().int().min(0).max(MAX_PROFILE_CHANNELS - 1),
     value: u8,
-  }).strict()).max(512).optional(),
+  }).strict()).max(MAX_PROFILE_CHANNELS).optional(),
 }).passthrough()
   // channelCount is the fixture's DMX footprint: it decides where the *next*
   // fixture can be patched and what the universe-bounds check reserves. An
@@ -239,6 +241,9 @@ const profileSchema = z.object({
       });
     }
     if (profile.cells) checkCells({ ...profile, cells: profile.cells }, ctx);
+    // Longer than a universe: only a strip can run on into the next one.
+    const long = stripIssue(profile);
+    if (long) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['channelCount'], message: long });
   });
 
 /**

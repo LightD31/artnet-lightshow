@@ -23,10 +23,11 @@ import { UNIVERSE_SIZE } from './profiles.ts';
  * frames, which for a monitor and a Hue lamp is indistinguishable from either.
  */
 
-// Every extra universe is another packet at the render rate. A show that wants
-// more than this is not a light show any more, and the cap keeps a typo in the
-// universe field (or a scripted loop) from turning into a packet storm.
-const MAX_UNIVERSES = 32;
+// Every extra universe is another packet at the render rate. Sixty-four is the
+// engine's 4,096 cells as RGB pixels (25 universes at 170 a universe) with the
+// rest of a rig beside them; past it, the cap keeps a typo in the universe
+// field (or a scripted loop) from turning into a packet storm.
+const MAX_UNIVERSES = 64;
 
 const FREE = -1;
 

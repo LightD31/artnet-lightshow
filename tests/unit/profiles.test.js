@@ -144,6 +144,6 @@ test('a patch may not have more cells than the engine renders', () => {
   assert.strictEqual(cellsOf({}), null);
   const fixtures = (n) => Array.from({ length: n }, () => ({ profileId: 'big' }));
   const profileOf = () => big;
-  assert.strictEqual(unitCapOverflow(fixtures(12), profileOf), null, `${12 * 170} fits in ${MAX_UNITS}`);
-  assert.match(unitCapOverflow(fixtures(13), profileOf), /2210 lights .* more than the 2048/);
+  assert.strictEqual(unitCapOverflow(fixtures(24), profileOf), null, `${24 * 170} fits in ${MAX_UNITS}`);
+  assert.match(unitCapOverflow(fixtures(25), profileOf), /4250 lights .* more than the 4096/);
 });

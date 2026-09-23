@@ -81,8 +81,12 @@ function barProfile(spec: unknown): ProfileInput {
   channelList.sort((a, b) => a.offset - b.offset);
 
   const channelCount = channelList.reduce((max, ch) => Math.max(max, ch.offset), -1) + 1;
-  if (channelCount > 512) {
-    throw badBar(`${bar.cells} cells of ${stride} channels from channel ${bar.firstChannel} end at ${channelCount}, past the 512-channel universe`);
+  // Past one universe, only a plain strip of pixels runs on into the next
+  // (shared/placement.ts): from channel 1, no gaps, nothing for the whole bar.
+  const plain = bar.firstChannel === 1 && stride === bar.order.length && bar.dimmer === undefined && bar.strobe === undefined;
+  if (channelCount > 512 && !plain) {
+    throw badBar(`${bar.cells} cells of ${stride} channels from channel ${bar.firstChannel} end at ${channelCount}, past the 512-channel universe; `
+      + 'a strip longer than a universe runs on into the next only as plain pixels from channel 1, with no gaps and no bar dimmer or strobe');
   }
 
   return validate(profileSchema, {

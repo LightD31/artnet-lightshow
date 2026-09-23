@@ -65,9 +65,9 @@ function attachSockets(io: Server, { midi, integrations }: {
 
         // A fixture has to fit inside its universe. Past channel 512 the writes
         // land outside the DMX buffer and Node drops them silently, leaving the
-        // fixture half-controllable with no error.
-        const chCount = getProfile({ profileId: nextProfileId }).channelCount;
-        const overflow = universeOverflow(label ?? fixture.label, nextAddress, chCount);
+        // fixture half-controllable with no error. A strip longer than a
+        // universe runs on into the next, from channel 1.
+        const overflow = universeOverflow(label ?? fixture.label, nextAddress, getProfile({ profileId: nextProfileId }), nextUniverse);
         if (overflow) {
           socket.emit('error-msg', { source: 'fixture', message: overflow });
           return;

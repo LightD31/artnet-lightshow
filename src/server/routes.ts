@@ -11,6 +11,7 @@ import { resizeFixtureBuffers, startSyncTest, engineStatus } from './engine.ts';
 import { parseGDTF } from '../gdtf.ts';
 import { BUILTIN_PROFILE_ID, isBuiltinProfile, MAX_FIXTURES, UNIVERSE_SIZE, endChannel, fitsInUniverse, universeOverflow, registerProfile, unregisterProfile, listProfiles, unitCapOverflow } from './profiles.ts';
 import { MAX_UNIVERSES } from './universes.ts';
+import { footprintOf } from '../shared/placement.ts';
 import { cues, cueWriteSchema, cueRestoreSchema, reorderSchema } from './cues.ts';
 import { showStore, snapshotShow, applyShow } from './show-store.ts';
 import { barProfile } from './bar-profile.ts';
@@ -471,7 +472,7 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
   function profileChangeBlocked(profile: Profile): string | null {
     const users = state.fixtures.filter((f) => f.profileId === profile.id);
     for (const fixture of users) {
-      const overflow = universeOverflow(fixture.label, fixture.address, profile.channelCount);
+      const overflow = universeOverflow(fixture.label, fixture.address, profile, universeOf(fixture));
       if (overflow) return overflow;
     }
     const profiles = listProfiles();
@@ -508,13 +509,14 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
       universe = parsed.data;
     }
 
+    // Behind everything on that universe, a strip running on into it included.
     let maxEnd = 0;
     const profiles = listProfiles();
     for (const fix of state.fixtures) {
-      if (universeOf(fix) !== universe) continue;
       const profile = profiles[fix.profileId] || profiles[BUILTIN_PROFILE_ID];
-      const end = fix.address + profile.channelCount;
-      if (end > maxEnd) maxEnd = end;
+      for (const part of footprintOf(universeOf(fix), fix.address, profile)) {
+        if (part.universe === universe && part.last + 1 > maxEnd) maxEnd = part.last + 1;
+      }
     }
     const chCount = profiles[BUILTIN_PROFILE_ID].channelCount;
     // Auto-address after the last patched fixture. Clamping to a fixed 501 used
@@ -600,8 +602,7 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
 
       const profiles = listProfiles();
       const profileId = profiles[fixture.profileId] ? fixture.profileId : BUILTIN_PROFILE_ID;
-      const chCount = profiles[profileId].channelCount;
-      const overflow = universeOverflow(fixture.label, fixture.address, chCount);
+      const overflow = universeOverflow(fixture.label, fixture.address, profiles[profileId], fixture.universe ?? state.artnet.universe);
       if (overflow) return res.status(400).json({ ok: false, error: overflow });
 
       const restored = {
