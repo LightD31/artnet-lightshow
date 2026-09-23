@@ -11,7 +11,7 @@ import NowPlayingSource from './src/nowplaying-source.ts';
 import SmtcReader from './src/smtc-source.ts';
 import DeezerSource from './src/deezer-source.ts';
 import * as deezer from './src/deezer.ts';
-import AutoShow from './src/auto-show.js';
+import AutoShow from './src/auto-show.ts';
 import { AnalysisCache } from './src/analysis-cache.ts';
 
 import { state } from './src/server/state.ts';

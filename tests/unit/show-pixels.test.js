@@ -8,7 +8,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import AutoShow from '../../src/auto-show.js';
+import AutoShow from '../../src/auto-show.ts';
 import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.ts';
 import { patchSchema } from '../../src/server/validation.ts';
 import { PIXEL_MAPS } from '../../src/shared/rig.ts';

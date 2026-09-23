@@ -23,7 +23,7 @@ import { conductor } from '../../src/server/conductor.ts';
 import { applyPatch, applyOverride, setFixtureMaxBrightness } from '../../src/server/patch.ts';
 import { PATTERNS, COLOR_PRESETS } from '../../src/server/presets.ts';
 import { createPreviewSampler } from '../../src/shared/preview.ts';
-import AutoShow from '../../src/auto-show.js';
+import AutoShow from '../../src/auto-show.ts';
 
 // The engine hash changed once, on purpose: the built-in par's dimmer is
 // 16-bit, and its fine channel used to be written 0. It now carries the low

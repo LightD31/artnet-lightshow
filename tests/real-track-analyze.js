@@ -19,7 +19,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import AutoShow from '../src/auto-show.js';
+import AutoShow from '../src/auto-show.ts';
 
 const FIXTURE_DIR = path.join(import.meta.dirname, 'fixtures');
 if (!fs.existsSync(FIXTURE_DIR)) fs.mkdirSync(FIXTURE_DIR, { recursive: true });

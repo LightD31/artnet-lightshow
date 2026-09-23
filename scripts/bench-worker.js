@@ -6,7 +6,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import AnalyzerWorker from '../src/analyzer-worker.ts';
-import AutoShow from '../src/auto-show.js';
+import AutoShow from '../src/auto-show.ts';
 
 const WAV = process.argv[2] || 'C:\\Users\\Tom\\AppData\\Local\\Temp\\deezer-dl-1779732820391.wav';
 const DURATION = Number(process.argv[3]) || 238.0;

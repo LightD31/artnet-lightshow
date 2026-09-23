@@ -15,21 +15,52 @@ import { guarded } from './server/guard.ts';
 import { resolveIsrc, splitQuery } from './isrc.ts';
 import { gridFromAnalysis } from './shared/beat-clock.ts';
 import * as ytdlp from './ytdlp.ts';
+import { messageOf } from './errors.ts';
+import type { AnalysisCache, CacheMeta } from './analysis-cache.ts';
+import type { AnalysisPriority } from './analyzer-worker.ts';
+import type { BeatGrid } from './shared/beat-clock.ts';
+import type { PatternDescriptor } from './show/director.ts';
+import type { Intent } from './show/intents.ts';
+import type { EnergyData, PatchData, TimelineEvent } from './show/render.ts';
+import type { Analysis } from './show/score.ts';
+
+export type AutoShowStatus = 'idle' | 'downloading' | 'analyzing' | 'ready' | 'playing';
+
+/** The track the show is for, as the playback source named it. */
+export interface ShowTrack {
+  name?: string;
+  artist?: string;
+  [key: string]: unknown;
+}
+
+/** A colour preset, as far as finding the blackout goes. */
+interface NamedPreset {
+  name?: string;
+  id?: string;
+}
+
+/** What prefetch() did. */
+export interface PrefetchResult {
+  skipped: boolean;
+  reason?: string;
+  error?: string;
+}
+
+/** A timeline patch as it is replayed: the renderer's fields, and the scheduled time. */
+type ReplayedPatch = PatchData & { masterDimmer?: number; masterBlackout?: boolean; anchorMs?: number };
 
 // A download that never finishes is indistinguishable from one that never
 // started: the track change waits on this promise, so an unresponsive network
 // or a yt-dlp stuck on an extractor would leave the show on the previous
 // track's timeline with no error and no recovery. The analyzer worker already
 // bounds its own stage; this bounds the download.
-function downloadTimeoutMs() {
+function downloadTimeoutMs(): number {
   return settings.get('analysis.downloadTimeoutMs');
 }
 
 /** The show moved on to another track before this analysis finished. */
-function supersededError() {
-  const err = new Error('superseded by a newer current track');
-  err.superseded = true;
-  return err;
+function supersededError(): Error & { superseded: true } {
+  return Object.assign(new Error('superseded by a newer current track'), { superseded: true as const });
 }
 
 // The look vocabulary — palette banks, genre styles, pattern pools — lives in
@@ -53,7 +84,43 @@ function supersededError() {
  *   4. stop()            – halt playback
  */
 class AutoShow {
-  constructor(applyPatch, colorPresets, patterns, cache = null) {
+  declare _applyPatch: (patch: object) => unknown;
+  declare _colorPresets: readonly NamedPreset[];
+  declare _patterns: readonly PatternDescriptor[];
+  declare _cache: AnalysisCache | null;
+  declare _worker: AnalyzerWorker;
+  declare _blackoutIdx: number;
+  declare analysis: Analysis | null;
+  declare timeline: TimelineEvent[];
+  declare timelineRevision: string;
+  declare running: boolean;
+  declare track: ShowTrack | null;
+  declare palette: number[] | null;
+  declare paletteName: string | null;
+  declare paletteSize: number | 'auto';
+  declare resolvedPaletteSize: number | undefined;
+  declare intents: Intent[] | undefined;
+  declare intensity: number;
+  declare syncOffsetMs: number;
+  declare _getPositionMs: (() => number) | null;
+  declare _loopTimer: ReturnType<typeof setInterval> | null;
+  declare _lastEventIdx: number;
+  declare _lastPositionMs: number | undefined;
+  declare _status: AutoShowStatus;
+  declare _energyTimer: ReturnType<typeof setTimeout> | null;
+  declare _inFlight: Map<string, Promise<Analysis>>;
+  declare _currentJob: symbol | null;
+  declare _grid: BeatGrid | null;
+  declare _pixels: boolean;
+  declare analysisKey: string | null;
+  declare _frameDriven: boolean;
+  declare _anchorIndex: { timeline: TimelineEvent[]; length: number; times: number[] } | undefined;
+  declare onAnalysisCached: ((cacheKey: string, analysis: Analysis) => void) | null;
+
+  declare static PYTHON_EXE: string;
+
+  constructor(applyPatch: (patch: object) => unknown, colorPresets: readonly NamedPreset[],
+    patterns: readonly PatternDescriptor[], cache: AnalysisCache | null = null) {
     this._applyPatch = applyPatch;
     this._colorPresets = colorPresets;
     this._patterns = patterns;
@@ -127,20 +194,20 @@ class AutoShow {
    * renders, so a cue fires on the frame it is due — the 20 ms poll of its own
    * added up to a frame of lateness, different every time.
    */
-  useFrameClock() {
+  useFrameClock(): void {
     this._frameDriven = true;
     if (this._loopTimer) { clearInterval(this._loopTimer); this._loopTimer = null; }
   }
 
   /** Fire whatever is due by now. Called once per frame by the render loop. */
-  tick() { this._tick(); }
+  tick(): void { this._tick(); }
 
   /**
    * What the pattern clock locks to while the show runs: the track's beat grid
    * and where the show is in it. Null when stopped or when the analysis has no
    * grid.
    */
-  beatSource() {
+  beatSource(): { grid: BeatGrid; positionMs: number; anchorMs: number | null } | null {
     if (!this.running || !this._grid || !this._getPositionMs) return null;
     const positionMs = this.getPositionMs();
     if (!Number.isFinite(positionMs)) return null;
@@ -153,17 +220,18 @@ class AutoShow {
    * After a seek the pattern clock counts from there, so arriving by a seek
    * lands on the step that playing through would have.
    */
-  _sceneAnchorMs(positionMs) {
-    const index = this._anchorIndex;
+  _sceneAnchorMs(positionMs: number): number | null {
+    let index = this._anchorIndex;
     if (!index || index.timeline !== this.timeline || index.length !== this.timeline.length) {
-      const times = [];
+      const times: number[] = [];
       for (const ev of this.timeline) {
         if (ev.action === 'patch' && ev.data
           && (ev.data.pattern !== undefined || ev.data.beatDivision !== undefined)) times.push(ev.timeMs);
       }
-      this._anchorIndex = { timeline: this.timeline, length: this.timeline.length, times };
+      index = { timeline: this.timeline, length: this.timeline.length, times };
+      this._anchorIndex = index;
     }
-    const { times } = this._anchorIndex;
+    const { times } = index;
     let lo = 0;
     let hi = times.length;
     while (lo < hi) {
@@ -174,30 +242,30 @@ class AutoShow {
   }
 
   /** The loaded track's beat grid, or null. */
-  beatGrid() { return this._grid; }
+  beatGrid(): BeatGrid | null { return this._grid; }
 
   /** The beat grid already in memory for a cache key, or null. */
-  gridFor(cacheKey) {
+  gridFor(cacheKey: string | null | undefined): BeatGrid | null {
     return cacheKey && cacheKey === this.analysisKey ? this._grid : null;
   }
 
-  _noteCached(cacheKey, analysis) {
+  _noteCached(cacheKey: string | null, analysis: Analysis): void {
     if (cacheKey && typeof this.onAnalysisCached === 'function') {
       try { this.onAnalysisCached(cacheKey, analysis); } catch (err) {
-        console.warn(`[auto-show] onAnalysisCached: ${err.message}`);
+        console.warn(`[auto-show] onAnalysisCached: ${messageOf(err)}`);
       }
     }
   }
 
-  get status() { return this._status; }
+  get status(): AutoShowStatus { return this._status; }
 
   /** True when this cacheKey's analysis is already on disk (cheap check). */
-  isCached(cacheKey) {
+  isCached(cacheKey: string | null | undefined): boolean {
     return !!(cacheKey && this._cache && this._cache.has(cacheKey));
   }
 
   /** True when a download/analyze for this cacheKey is currently running. */
-  isPrefetching(cacheKey) {
+  isPrefetching(cacheKey: string | null | undefined): boolean {
     return !!(cacheKey && this._inFlight.has(cacheKey));
   }
 
@@ -208,7 +276,7 @@ class AutoShow {
    * Everything that drives or seeks the timeline reads this rather than the
    * raw source, so one number lines the whole show up with the room.
    */
-  getPositionMs() {
+  getPositionMs(): number {
     if (!this._getPositionMs) return 0;
     return this._getPositionMs() + this.syncOffsetMs;
   }
@@ -230,7 +298,7 @@ class AutoShow {
    * Applying it moves the playback cursor, so re-seek: nudging forward would
    * otherwise machine-gun every event between the old position and the new one.
    */
-  setSyncOffsetMs(ms) {
+  setSyncOffsetMs(ms: unknown): void {
     const n = Math.round(Number(ms));
     if (!Number.isFinite(n)) return;
     const clamped = Math.max(-SYNC_OFFSET_LIMIT_MS, Math.min(SYNC_OFFSET_LIMIT_MS, n));
@@ -246,7 +314,7 @@ class AutoShow {
    * cursor pointing into the old one; without this the next tick replays every
    * past event at once, which on a live rig is a burst of energy overrides.
    */
-  _reseek() {
+  _reseek(): void {
     if (!this.running || !this._getPositionMs) {
       this._lastEventIdx = -1;
       return;
@@ -254,8 +322,8 @@ class AutoShow {
     const posMs = this.getPositionMs();
     if (!Number.isFinite(posMs)) return;
     let last = -1;
-    let lastPatchMs;
-    const restored = { energyOverride: null, showDynamics: null };
+    let lastPatchMs: number | undefined;
+    const restored: ReplayedPatch = { energyOverride: null, showDynamics: null };
     for (let i = 0; i < this.timeline.length; i++) {
       if (this.timeline[i].timeMs > posMs) break;
       const ev = this.timeline[i];
@@ -294,7 +362,7 @@ class AutoShow {
     try {
       this._applyPatch(restored);
     } catch (err) {
-      console.error(`[auto-show] could not restore scene: ${err.message}`);
+      console.error(`[auto-show] could not restore scene: ${messageOf(err)}`);
     }
     this._lastPositionMs = posMs;
     this._lastEventIdx = last;
@@ -306,7 +374,7 @@ class AutoShow {
    * Load a previously-analyzed result from the cache without touching audio.
    * Returns true on hit, false on miss.
    */
-  async _loadFromCache(cacheKey, isCurrent = () => true) {
+  async _loadFromCache(cacheKey: string | null, isCurrent: () => boolean = () => true): Promise<boolean> {
     if (!cacheKey || !this._cache) return false;
     // Asynchronous: a document is megabytes, and a synchronous read of it on
     // a track change stalled the render loop at exactly the moment the room
@@ -335,8 +403,9 @@ class AutoShow {
    * when yt-dlp can't find a candidate within its ±5s filter and has to
    * fall back to an unfiltered search that may include long intros/outros.
    */
-  _runAnalyzer(source, targetDurationSec = null, priority = 'normal', tag = null, queuePos = null) {
-    const tgt = Number.isFinite(targetDurationSec) && targetDurationSec > 0
+  _runAnalyzer(source: string, targetDurationSec: number | null = null, priority: AnalysisPriority = 'normal',
+    tag: string | null = null, queuePos: number | null = null): Promise<Analysis> {
+    const tgt = typeof targetDurationSec === 'number' && Number.isFinite(targetDurationSec) && targetDurationSec > 0
       ? targetDurationSec : null;
     const band = priority === 'normal' ? '' : ` (${priority})`;
     console.log(`[analyzer] Analyzing${band}: ${path.basename(source)}${tgt ? ` (target ${Math.round(tgt)}s)` : ''}`);
@@ -351,7 +420,7 @@ class AutoShow {
    * Safe to call multiple times.
    */
   /** Recycle the analyzer process — used when the interpreter changes. */
-  restartWorker(reason) {
+  restartWorker(reason: string): void {
     if (this._worker) this._worker.restart(reason);
   }
 
@@ -361,11 +430,11 @@ class AutoShow {
    * that has moved up is analysed before the ones behind it and one that has
    * dropped out stops holding up the tracks that are still coming.
    */
-  applyQueueOrder(cacheKeys) {
+  applyQueueOrder(cacheKeys: string[]): void {
     if (this._worker) this._worker.setQueueOrder(cacheKeys);
   }
 
-  destroy() {
+  destroy(): void {
     this.stop();
     if (this._worker) this._worker.shutdown();
   }
@@ -375,7 +444,7 @@ class AutoShow {
    * standing as `downloadAndAnalyze`: whatever is about to play in the room
    * outranks background prefetches, and a newer one supersedes this.
    */
-  async analyze(source, cacheKey = null) {
+  async analyze(source: string, cacheKey: string | null = null): Promise<Analysis | null> {
     const token = Symbol(cacheKey || source);
     this._currentJob = token;
     const isCurrent = () => this._currentJob === token;
@@ -408,8 +477,10 @@ class AutoShow {
    * go through this, and the one that needs to mutate instance state does so
    * on its own side of the in-flight boundary.
    */
-  async _fetchAnalysis(query, targetDurationSec, cacheKey, meta, isrc, onPhase, priority, queuePos) {
-    let audioPath = null;
+  async _fetchAnalysis(query: string, targetDurationSec: number | null, cacheKey: string | null,
+    meta: CacheMeta | undefined, isrc: string | null, onPhase: ((phase: string) => void) | null,
+    priority: AnalysisPriority, queuePos?: number | null): Promise<Analysis> {
+    let audioPath: string | null = null;
     try {
       audioPath = await this._downloadAudio(query, targetDurationSec, isrc);
       if (onPhase) onPhase('analyzing');
@@ -438,7 +509,9 @@ class AutoShow {
    * the originator's worker-queue position; joiners ride the existing job's
    * priority (whatever it was when first submitted).
    */
-  _fetchShared(query, targetDurationSec, cacheKey, meta, isrc, onPhase, priority, queuePos) {
+  _fetchShared(query: string, targetDurationSec: number | null, cacheKey: string | null,
+    meta: CacheMeta | undefined, isrc: string | null, onPhase: ((phase: string) => void) | null,
+    priority: AnalysisPriority, queuePos?: number | null): Promise<Analysis> {
     if (cacheKey && this._inFlight.has(cacheKey)) {
       // Joining an existing fetch — if we're now urgent (downloadAndAnalyze
       // for the current track) but the original submission was a background
@@ -446,7 +519,7 @@ class AutoShow {
       // other prefetches. A prefetch that is already running stays running:
       // it is the very work we need, just started early.
       if (priority !== 'normal' && this._worker) this._worker.promote(cacheKey, priority);
-      return this._inFlight.get(cacheKey);
+      return this._inFlight.get(cacheKey) as Promise<Analysis>;
     }
     const promise = this._fetchAnalysis(query, targetDurationSec, cacheKey, meta, isrc, onPhase, priority, queuePos);
     if (cacheKey) {
@@ -469,7 +542,8 @@ class AutoShow {
    *
    * Returns { skipped: boolean, reason?: string, error?: string }.
    */
-  async prefetch(query, targetDurationSec, cacheKey, meta = {}, isrc = null, priority = 'normal', queuePos = null) {
+  async prefetch(query: string, targetDurationSec: number | null, cacheKey: string | null, meta: CacheMeta = {},
+    isrc: string | null = null, priority: AnalysisPriority = 'normal', queuePos: number | null = null): Promise<PrefetchResult> {
     if (!cacheKey || !this._cache) return { skipped: true, reason: 'no-cache' };
     if (this._cache.has(cacheKey)) return { skipped: true, reason: 'already-cached' };
     if (this._inFlight.has(cacheKey)) return { skipped: true, reason: 'in-flight' };
@@ -480,8 +554,8 @@ class AutoShow {
       console.log(`[auto-show] prefetched and cached: ${cacheKey}`);
       return { skipped: false };
     } catch (err) {
-      console.warn(`[auto-show] prefetch failed for ${cacheKey}: ${err.message}`);
-      return { skipped: false, error: err.message };
+      console.warn(`[auto-show] prefetch failed for ${cacheKey}: ${messageOf(err)}`);
+      return { skipped: false, error: messageOf(err) };
     }
   }
 
@@ -495,7 +569,8 @@ class AutoShow {
    * show with the previous track's timeline. Rejects with `err.superseded`
    * set in that case — the caller should not start a show from it.
    */
-  async downloadAndAnalyze(query, targetDurationSec = null, cacheKey = null, isrc = null) {
+  async downloadAndAnalyze(query: string, targetDurationSec: number | null = null, cacheKey: string | null = null,
+    isrc: string | null = null): Promise<{ analysis: Analysis | null; cached: boolean }> {
     const token = Symbol(cacheKey || query);
     this._currentJob = token;
     const isCurrent = () => this._currentJob === token;
@@ -507,7 +582,7 @@ class AutoShow {
 
     // If a prefetch for this key is already running, join it instead of
     // kicking off a parallel yt-dlp/analyzer job for the same track.
-    const joining = cacheKey && this._inFlight.has(cacheKey);
+    const joining = !!cacheKey && this._inFlight.has(cacheKey);
     this._status = joining ? 'analyzing' : 'downloading';
 
     try {
@@ -540,7 +615,7 @@ class AutoShow {
    * audio-only and correct duration. Falls back to yt-dlp when Deezer is
    * unavailable, the ISRC lookup fails, or the source is a direct URL.
    */
-  async _downloadAudio(query, targetDurationSec = null, isrc = null) {
+  async _downloadAudio(query: string, targetDurationSec: number | null = null, isrc: string | null = null): Promise<string> {
     const isUrl = /^https?:\/\//.test(query);
 
     // A track can arrive without an ISRC: the OS media session and PRO DJ LINK
@@ -560,20 +635,21 @@ class AutoShow {
       try {
         return await deezer.downloadByIsrc(query, isrc);
       } catch (err) {
-        console.warn(`[deezer] Failed for "${query}" (ISRC: ${isrc}): ${err.message} — falling back to yt-dlp`);
+        console.warn(`[deezer] Failed for "${query}" (ISRC: ${isrc}): ${messageOf(err)} — falling back to yt-dlp`);
       }
     }
 
     // Fallback: yt-dlp
     const runtime = ytdlp.runtimeArgs(await ytdlp.version());
-    const hasTarget = Number.isFinite(targetDurationSec) && targetDurationSec > 0;
-    if (hasTarget && !isUrl) {
+    const target = typeof targetDurationSec === 'number' && Number.isFinite(targetDurationSec) && targetDurationSec > 0
+      ? targetDurationSec : null;
+    if (target !== null && !isUrl) {
       try {
-        return await this._ytDlpExec(query, targetDurationSec, runtime);
+        return await this._ytDlpExec(query, target, runtime);
       } catch (err) {
         // No video passed the duration filter — retry without it.
-        if (/output file not found/i.test(err.message)) {
-          console.warn(`[yt-dlp] No result matched ${Math.round(targetDurationSec)}s ±5s, retrying without duration filter`);
+        if (/output file not found/i.test(messageOf(err))) {
+          console.warn(`[yt-dlp] No result matched ${Math.round(target)}s ±5s, retrying without duration filter`);
           return this._ytDlpExec(query, null, runtime);
         }
         throw err;
@@ -582,7 +658,7 @@ class AutoShow {
     return this._ytDlpExec(query, null, runtime);
   }
 
-  _ytDlpExec(query, targetDurationSec, runtimeArgs = []) {
+  _ytDlpExec(query: string, targetDurationSec: number | null, runtimeArgs: string[] = []): Promise<string> {
     return new Promise((resolve, reject) => {
       // Random, not a timestamp: prefetches are started several to a tick,
       // and two downloads sharing a name overwrote each other — one track's
@@ -592,7 +668,9 @@ class AutoShow {
       const expectedWav = path.join(os.tmpdir(), `${basename}.wav`);
 
       const isUrl = /^https?:\/\//.test(query);
-      const useFilter = !isUrl && Number.isFinite(targetDurationSec) && targetDurationSec > 0;
+      const duration = typeof targetDurationSec === 'number' && Number.isFinite(targetDurationSec) && targetDurationSec > 0
+        ? targetDurationSec : null;
+      const useFilter = !isUrl && duration !== null;
       // With a duration filter we widen the search so yt-dlp has more candidates
       // to skim through before giving up.
       const source = isUrl ? query : (useFilter ? `ytsearch5:${query}` : `ytsearch1:${query}`);
@@ -608,8 +686,8 @@ class AutoShow {
 
       if (useFilter) {
         const tolerance = 5; // seconds
-        const minDur = Math.max(1, Math.floor(targetDurationSec - tolerance));
-        const maxDur = Math.ceil(targetDurationSec + tolerance);
+        const minDur = Math.max(1, Math.floor(duration - tolerance));
+        const maxDur = Math.ceil(duration + tolerance);
         args.push('--match-filter', `duration >= ${minDur} & duration <= ${maxDur}`);
         // Stop after the first candidate that passes the filter.
         args.push('--max-downloads', '1');
@@ -617,7 +695,7 @@ class AutoShow {
 
       args.push('-o', outputTemplate, source);
 
-      console.log(`[yt-dlp] Downloading: ${query}${useFilter ? ` (target ${Math.round(targetDurationSec)}s ±5s)` : ''}`);
+      console.log(`[yt-dlp] Downloading: ${query}${useFilter ? ` (target ${Math.round(duration)}s ±5s)` : ''}`);
       const proc = spawn('yt-dlp', args, {
         stdio: ['ignore', 'pipe', 'pipe'],
       });
@@ -625,8 +703,8 @@ class AutoShow {
       let stdout = '';
       let stderr = '';
       let timedOut = false;
-      proc.stdout.on('data', (d) => { stdout += d; });
-      proc.stderr.on('data', (d) => { stderr += d; });
+      proc.stdout.on('data', (d: Buffer) => { stdout += d; });
+      proc.stderr.on('data', (d: Buffer) => { stderr += d; });
 
       const timer = setTimeout(() => {
         timedOut = true;
@@ -709,7 +787,7 @@ class AutoShow {
    * about *why* the show does what it does lives in the director; everything
    * about what a patch field is called lives in the renderer.
    */
-  buildTimeline() {
+  buildTimeline(): void {
     if (!this.analysis) return;
 
     const director = new ShowDirector({
@@ -737,7 +815,7 @@ class AutoShow {
 
   // ── 3. Playback ─────────────────────────────────────────────────────────────
 
-  start(getPositionMs) {
+  start(getPositionMs: () => number): void {
     if (!this.timeline.length) return;
     // A second client or a retried request must not reset the cursor, replay
     // events, or leave an extra playback interval that stop() cannot clear.
@@ -754,7 +832,7 @@ class AutoShow {
     if (!this._frameDriven) this._loopTimer = setInterval(guarded('auto-show', () => this._tick()), 20);
   }
 
-  stop() {
+  stop(): void {
     this.running = false;
     this._status = this.analysis ? 'ready' : 'idle';
     if (this._loopTimer) { clearInterval(this._loopTimer); this._loopTimer = null; }
@@ -763,7 +841,7 @@ class AutoShow {
     this._applyPatch({ energyOverride: null, showDynamics: null, split: null });
   }
 
-  reset() {
+  reset(): void {
     this.stop();
     this.analysis = null;
     this.analysisKey = null;
@@ -777,12 +855,12 @@ class AutoShow {
     this._status = 'idle';
   }
 
-  _tick() {
+  _tick(): void {
     if (!this.running || !this._getPositionMs) return;
     const posMs = this.getPositionMs();
     if (!Number.isFinite(posMs)) return;
-    if (Number.isFinite(this._lastPositionMs)
-        && (posMs < this._lastPositionMs - 100 || posMs > this._lastPositionMs + 1500)) {
+    const last = this._lastPositionMs;
+    if (last !== undefined && Number.isFinite(last) && (posMs < last - 100 || posMs > last + 1500)) {
       this._reseek();
       return;
     }
@@ -802,7 +880,7 @@ class AutoShow {
         this._fireEvent(ev);
       } catch (err) {
         console.error(
-          `[auto-show] event ${i} at ${ev.timeMs}ms (${ev.action}) rejected: ${err.message}`,
+          `[auto-show] event ${i} at ${ev.timeMs}ms (${ev.action}) rejected: ${messageOf(err)}`,
           ev.data,
         );
       }
@@ -810,11 +888,12 @@ class AutoShow {
     }
   }
 
-  _fireEvent(ev) {
+  _fireEvent(ev: TimelineEvent): void {
     switch (ev.action) {
       case 'patch': {
         // Master controls belong to the operator, including for old timelines.
-        const { masterDimmer: _dimmer, masterBlackout: _blackout, ...patch } = ev.data || {};
+        const { masterDimmer: _dimmer, masterBlackout: _blackout, ...rest } = (ev.data || {}) as ReplayedPatch;
+        const patch: ReplayedPatch = rest;
         if ('energyOverride' in patch) this._cancelEnergyTimer();
         // The track time it was scheduled for. A scene counts its pattern's
         // steps from that beat, not from the frame that happened to fire it,
@@ -838,7 +917,7 @@ class AutoShow {
               this._applyPatch({ energyOverride: null });
             }
           } catch (err) {
-            console.error(`[auto-show] could not clear energy override: ${err.message}`);
+            console.error(`[auto-show] could not clear energy override: ${messageOf(err)}`);
           }
         }, duration);
         break;
@@ -846,7 +925,7 @@ class AutoShow {
     }
   }
 
-  _cancelEnergyTimer() {
+  _cancelEnergyTimer(): void {
     if (this._energyTimer !== null) clearTimeout(this._energyTimer);
     this._energyTimer = null;
   }
@@ -864,7 +943,7 @@ class AutoShow {
    * always wins — this is a setting an operator makes while looking at the rig,
    * and nothing measured should overrule that.
    */
-  setPaletteSize(n) {
+  setPaletteSize(n: unknown): void {
     const size = n === 'auto' ? 'auto' : n === 2 ? 2 : n === 3 ? 3 : 4;
     if (size === this.paletteSize) return;
     this.paletteSize = size;
@@ -877,7 +956,7 @@ class AutoShow {
    * Set the energy intensity (0-100). Rebuilds the timeline so accent density,
    * drop effects and beat-division scaling adjust on the fly.
    */
-  setIntensity(n) {
+  setIntensity(n: unknown): void {
     const numeric = Number(n);
     if (!Number.isFinite(numeric)) return;
     const val = Math.max(0, Math.min(100, Math.round(numeric)));
@@ -893,7 +972,7 @@ class AutoShow {
    * replans the track, as a palette or intensity change does, so the looks
    * that draw across cells come and go with the bars.
    */
-  setRig({ hasPixels = false } = {}) {
+  setRig({ hasPixels = false }: { hasPixels?: boolean } = {}): void {
     const pixels = !!hasPixels;
     if (pixels === this._pixels) return;
     this._pixels = pixels;
@@ -901,7 +980,7 @@ class AutoShow {
   }
 
   /** See src/show/director.js — measured build-up acceleration. */
-  _buildupAccel(build, a, baseBpm) {
+  _buildupAccel(build: { start: number; end: number }, a: Analysis, baseBpm: number): ReturnType<typeof measureBuildup> {
     return measureBuildup(build, a, baseBpm);
   }
 
@@ -915,17 +994,20 @@ class AutoShow {
     if (!this.analysis) return null;
     const a = this.analysis;
     // Slim timeline: drop internal markers, keep only what the UI draws.
-    const timeline = this.timeline.map(ev => ({
+    const timeline = this.timeline.map((ev) => {
+      const data = ev.data as Partial<PatchData & EnergyData> | undefined;
+      return {
       timeMs: ev.timeMs,
       action: ev.action,
-      id: ev.data && ev.data.id,
-      pattern: ev.data && ev.data.pattern,
-      colorA: ev.data && ev.data.colorA,
-      durationMs: ev.data && ev.data.durationMs,
+      id: data && data.id,
+      pattern: data && data.pattern,
+      colorA: data && data.colorA,
+      durationMs: data && data.durationMs,
       source: ev.source,
       kind: ev.kind,
       data: ev.data,
-    }));
+      };
+    });
     return {
       revision: this.timelineRevision,
       duration: a.duration,

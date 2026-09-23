@@ -170,7 +170,7 @@ test('a split look rehearses as the rig plays it', () => {
 
 import { makeGrid } from '../../src/shared/beat-clock.ts';
 import { setFrameHook } from '../../src/server/engine.ts';
-import AutoShow from '../../src/auto-show.js';
+import AutoShow from '../../src/auto-show.ts';
 
 /** What the rig drives every fixture's emitters at. */
 function rigAll() {

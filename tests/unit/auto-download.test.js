@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import AutoShow from '../../src/auto-show.js';
+import AutoShow from '../../src/auto-show.ts';
 import * as ytdlp from '../../src/ytdlp.ts';
 
 // A yt-dlp that reports a given version, records its arguments, and writes
