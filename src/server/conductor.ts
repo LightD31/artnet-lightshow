@@ -69,7 +69,7 @@ export interface AutoClock {
 /** A master deck's clock while it plays. */
 export interface DeckClock {
   beatPos: number;
-  bpm?: number;
+  bpm?: number | null;
 }
 
 interface TrackLock {
@@ -241,7 +241,7 @@ class Conductor {
     if (fromAuto) return fromAuto;
     const cdj = this._prolinkSource();
     if (cdj && Number.isFinite(cdj.beatPos)) {
-      const bpm = cdj.bpm !== undefined && Number.isFinite(cdj.bpm) && cdj.bpm > 0 ? cdj.bpm : this._free.bpm;
+      const bpm = typeof cdj.bpm === 'number' && Number.isFinite(cdj.bpm) && cdj.bpm > 0 ? cdj.bpm : this._free.bpm;
       return { beatPos: cdj.beatPos, bpm, source: 'cdj' };
     }
     const track = this._track && !this._override ? this._track : null;

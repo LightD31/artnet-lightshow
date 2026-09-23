@@ -19,7 +19,7 @@
     "check": "npm run lint && npm run typecheck && npm test"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.18"
   },
   "dependencies": {
     "@preact/signals": "^1.2.3",

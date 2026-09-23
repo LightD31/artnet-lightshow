@@ -19,12 +19,10 @@
     "resolveJsonModule": true,
     "strict": true,
     "noFallthroughCasesInSwitch": true,
-    "skipLibCheck": true,
-    // While the migration is under way, the .ts files may import modules that
-    // are still .js; those are read for their shapes but not checked.
-    "allowJs": true,
-    "checkJs": false
+    "skipLibCheck": true
   },
-  "include": ["src/**/*.ts", "src/**/*.js", "scripts/**/*.ts"],
+  // The tests stay JavaScript: they run against the .ts modules but are not
+  // checked. The browser bundle (public-src) is built by esbuild.
+  "include": ["src/**/*.ts", "scripts/**/*.ts"],
   "exclude": ["node_modules", "src/analysis"]
 }
