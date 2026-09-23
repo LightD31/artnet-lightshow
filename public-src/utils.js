@@ -59,26 +59,94 @@ export function fmtNum(v, digits = 2) {
   return v.toFixed(digits);
 }
 
+// An LED bar's profile lists its cells, each with its own channels (see
+// src/shared/rig.js). Read here without importing it: this module is loaded on
+// its own by the tests, so it stays free of imports.
+const cellsOfProfile = (profile) => (profile && Array.isArray(profile.cells) && profile.cells.length >= 2
+  ? profile.cells : null);
+
+/** A pinned fixture's colour, through the grand master and its own trim. */
+function overrideLight(fix, state) {
+  const ov = fix.override;
+  const dim = (ov.dim !== undefined ? ov.dim : 255) / 255;
+  // The same two scalers the engine applies: the grand master and the
+  // fixture's own trim.
+  const mDim = (state.masterDimmer / 255) * ((fix.maxBrightness ?? 255) / 255);
+  return {
+    r:  Math.round(ov.r  * dim * mDim),
+    g:  Math.round(ov.g  * dim * mDim),
+    b:  Math.round(ov.b  * dim * mDim),
+    w:  Math.round(ov.w  * dim * mDim),
+    a:  Math.round((ov.a  || 0) * dim * mDim),
+    uv: Math.round((ov.uv || 0) * dim * mDim),
+  };
+}
+
+/** One light's emitters out of a universe snapshot, through its channel map. */
+function readLight(snap, base, ch, scale) {
+  const at = (offset) => (offset !== undefined && base + offset < snap.length ? snap[base + offset] : 0);
+  const k = scale * (ch.dimmer !== undefined && base + ch.dimmer < snap.length ? snap[base + ch.dimmer] / 255 : 1);
+  return {
+    r:  Math.round(at(ch.red)   * k),
+    g:  Math.round(at(ch.green) * k),
+    b:  Math.round(at(ch.blue)  * k),
+    w:  Math.round(at(ch.white) * k),
+    a:  Math.round(at(ch.amber) * k),
+    uv: Math.round(at(ch.uv)    * k),
+  };
+}
+
+const BLACK = { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 };
+
+/**
+ * What each cell of an LED bar is showing, as emitter values, or null for a
+ * fixture that is one light. The bar's own dimmer scales every cell.
+ */
+export function fixtureCellLights(fix, state, dmxSnapshot) {
+  if (!fix) return null;
+  const profile = state.profiles && state.profiles[fix.profileId];
+  const cells = cellsOfProfile(profile);
+  if (!cells) return null;
+  if (state.masterBlackout) return cells.map(() => BLACK);
+  if (fix.override && fix.override.enabled) {
+    const light = fix.override.blackout ? BLACK : overrideLight(fix, state);
+    return cells.map(() => light);
+  }
+  const all = dmxSnapshot || state.dmxSnapshot || {};
+  const snap = all[fix.universe ?? 0] || [];
+  const base = fix.address - 1;
+  const ch = profile.channelMap || {};
+  const barDim = ch.dimmer !== undefined && base + ch.dimmer < snap.length ? snap[base + ch.dimmer] / 255 : 1;
+  return cells.map((cell) => readLight(snap, base, cell.channelMap || {}, barDim));
+}
+
+/** Each cell of a bar as a CSS colour, or null for a fixture that is one light. */
+export function fixtureCellColors(fix, state, dmxSnapshot) {
+  const lights = fixtureCellLights(fix, state, dmxSnapshot);
+  return lights ? lights.map(colorToCss) : null;
+}
+
+/** The mean of several lights: a bar's overall glow, in one swatch. */
+export function meanLight(lights) {
+  const sum = { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 };
+  for (const light of lights) for (const key of Object.keys(sum)) sum[key] += light[key] || 0;
+  const n = Math.max(1, lights.length);
+  for (const key of Object.keys(sum)) sum[key] = Math.round(sum[key] / n);
+  return sum;
+}
+
 export function fixtureOutputColor(fix, state, dmxSnapshot) {
   if (!fix) return '#000';
   if (state.masterBlackout) return '#000';
 
   if (fix.override && fix.override.enabled) {
     if (fix.override.blackout) return '#000';
-    const ov = fix.override;
-    const dim = (ov.dim !== undefined ? ov.dim : 255) / 255;
-    // The same two scalers the engine applies: the grand master and the
-    // fixture's own trim.
-    const mDim = (state.masterDimmer / 255) * ((fix.maxBrightness ?? 255) / 255);
-    return colorToCss({
-      r:  Math.round(ov.r  * dim * mDim),
-      g:  Math.round(ov.g  * dim * mDim),
-      b:  Math.round(ov.b  * dim * mDim),
-      w:  Math.round(ov.w  * dim * mDim),
-      a:  Math.round((ov.a  || 0) * dim * mDim),
-      uv: Math.round((ov.uv || 0) * dim * mDim),
-    });
+    return colorToCss(overrideLight(fix, state));
   }
+
+  // A bar is many colours at once; its swatch is their mean.
+  const cells = fixtureCellLights(fix, state, dmxSnapshot);
+  if (cells) return colorToCss(meanLight(cells));
 
   // Read DMX snapshot through the fixture's profile channel map. The snapshot
   // is keyed by universe, so pick out the one this fixture lives on.
@@ -87,17 +155,5 @@ export function fixtureOutputColor(fix, state, dmxSnapshot) {
   const snap = all[fix.universe ?? 0] || [];
   const profile = state.profiles && state.profiles[fix.profileId];
   if (!profile || !profile.channelMap) return '#111';
-
-  const ch = profile.channelMap;
-  const dimCh = ch.dimmer !== undefined ? ch.dimmer : -1;
-  const dimScale = dimCh >= 0 && base + dimCh < snap.length ? snap[base + dimCh] / 255 : 1;
-  const get = (attr) => (ch[attr] !== undefined && base + ch[attr] < snap.length ? snap[base + ch[attr]] : 0);
-  return colorToCss({
-    r:  Math.round(get('red')   * dimScale),
-    g:  Math.round(get('green') * dimScale),
-    b:  Math.round(get('blue')  * dimScale),
-    w:  Math.round(get('white') * dimScale),
-    a:  Math.round(get('amber') * dimScale),
-    uv: Math.round(get('uv')    * dimScale),
-  });
+  return colorToCss(readLight(snap, base, profile.channelMap, 1));
 }

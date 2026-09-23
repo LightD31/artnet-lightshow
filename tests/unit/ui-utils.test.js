@@ -30,3 +30,46 @@ test('the clock badge names every source, and anything else as the free clock', 
   assert.equal(utils.clockSource(undefined).id, 'tap');
   assert.equal(utils.clockSource('toString').id, 'tap', 'not a prototype key');
 });
+
+// ── LED bars in the browser ─────────────────────────────────────────────────
+
+const barState = (snapshot, extra = {}) => ({
+  masterDimmer: 255,
+  masterBlackout: false,
+  profiles: {
+    bar: {
+      channelMap: { dimmer: 0 },
+      cells: [
+        { channelMap: { red: 1, green: 2, blue: 3 } },
+        { channelMap: { red: 4, green: 5, blue: 6 } },
+      ],
+    },
+    par: { channelMap: { dimmer: 0, red: 1, green: 2, blue: 3 } },
+  },
+  dmxSnapshot: { 0: snapshot },
+  ...extra,
+});
+
+test('a bar\'s cells are read out of the snapshot through their own channels', () => {
+  const state = barState([128, 255, 0, 0, 0, 0, 255]);
+  const fix = { profileId: 'bar', address: 1, universe: 0 };
+  const lights = utils.fixtureCellLights(fix, state);
+  assert.deepEqual(lights.map((l) => [l.r, l.g, l.b]), [[128, 0, 0], [0, 0, 128]], 'through the bar\'s dimmer');
+  assert.deepEqual(utils.fixtureCellColors(fix, state), ['rgb(128,0,0)', 'rgb(0,0,128)']);
+  assert.equal(utils.fixtureOutputColor(fix, state), 'rgb(64,0,64)', 'its swatch is the mean');
+  assert.equal(utils.fixtureCellColors({ profileId: 'par', address: 1, universe: 0 }, state), null, 'a par is one light');
+});
+
+test('a pinned or blacked-out bar shows the same on every cell', () => {
+  const fix = {
+    profileId: 'bar', address: 1, universe: 0,
+    override: { enabled: true, r: 200, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 255, blackout: false },
+  };
+  assert.deepEqual(utils.fixtureCellColors(fix, barState([])), ['rgb(200,0,0)', 'rgb(200,0,0)']);
+  assert.deepEqual(utils.fixtureCellColors(fix, barState([], { masterBlackout: true })), ['rgb(0,0,0)', 'rgb(0,0,0)']);
+});
+
+test('a par reads exactly as it always did', () => {
+  const state = barState([128, 200, 100, 50]);
+  assert.equal(utils.fixtureOutputColor({ profileId: 'par', address: 1, universe: 0 }, state), 'rgb(100,50,25)');
+});
