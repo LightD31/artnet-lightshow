@@ -29,7 +29,7 @@ import type { Rig } from '../shared/rig.ts';
 import type { MusicalTime } from './conductor.ts';
 import type { PatternAnchor } from './state.ts';
 import type { UniverseStore } from './universes.ts';
-import type { ChannelMap, Colour, Expression, Override, PixelMap, Profile, ShowDynamics, StageFixture } from '../types/rig.ts';
+import type { ChannelDefault, ChannelMap, Colour, Expression, Override, PixelMap, Profile, ShowDynamics, StageFixture } from '../types/rig.ts';
 
 /** A fixture as a frame needs it: its universe and trim resolved. */
 export interface RenderFixture extends StageFixture {
@@ -166,6 +166,16 @@ function writeDimmer(dmx: Dmx, base: number, ch: ChannelMap, level: number): voi
   const v16 = Math.round((clamped / 255) * 65535);
   dmx[base + ch.dimmer] = v16 >> 8;
   dmx[base + ch.dimmerFine] = v16 & 0xff;
+}
+
+/**
+ * Put a profile's undriven channels at their defaults (profileSchema's
+ * `defaults`). Written first, so a channel the show drives — a strobe that is
+ * open at rest and flashing now — still ends up at the show's value.
+ */
+function writeDefaults(dmx: Dmx, base: number, defaults: ChannelDefault[] | undefined): void {
+  if (!defaults) return;
+  for (let i = 0; i < defaults.length; i++) dmx[base + defaults[i].offset] = defaults[i].value;
 }
 
 /**
@@ -433,9 +443,11 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     energy: EnergyLook | null, now: number): void {
     const dmx = store.getBuffer(fix.universe);
     const base = fix.address - 1;
-    const ch = profileOf(fix).channelMap;
+    const profile = profileOf(fix);
+    const ch = profile.channelMap;
     const ms = mastersOf(input, fix);
 
+    writeDefaults(dmx, base, profile.defaults);
     if (!strobe(dmx, base, fix, ch, strobeRequest(input, energy, flash), now)) return;
     writeDimmer(dmx, base, ch, dim * ms);
     writeEmitters(dmx, base, ch, col, ms * (dim / 255));
@@ -451,9 +463,11 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     energy: EnergyLook | null, now: number): void {
     const dmx = store.getBuffer(fix.universe);
     const base = fix.address - 1;
-    const ch = profileOf(fix).channelMap;
+    const profile = profileOf(fix);
+    const ch = profile.channelMap;
     const ms = mastersOf(input, fix);
 
+    writeDefaults(dmx, base, profile.defaults);
     let top = 0;
     let flash = 0;
     for (const light of lights) {

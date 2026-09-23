@@ -175,21 +175,36 @@
   <!-- ── Fixture Profiles ────────────────────────────────── -->
   <section class="card settings-section" data-tab="rig">
     <div class="card-title">Fixture Profiles</div>
-    <p class="section-desc">Import GDTF files to add fixture profiles, or use built-in profiles.</p>
+    <p class="section-desc">Import a GDTF or Open Fixture Library file, find a fixture in the Open Fixture Library, or use a built-in profile.</p>
 
     <div class="gdtf-import">
       <label class="file-upload-btn btn active" for="gdtf-file">
         Import GDTF File
       </label>
       <input type="file" id="gdtf-file" accept=".gdtf" style="display:none" />
+      <label class="file-upload-btn btn active" for="ofl-file" title="A fixture's .json file, downloaded from open-fixture-library.org">
+        Import OFL File
+      </label>
+      <input type="file" id="ofl-file" accept=".json,application/json" style="display:none" />
       <span id="gdtf-status" class="import-status"></span>
     </div>
+
+    <!-- The Open Fixture Library online: pick a result to see its modes -->
+    <form class="ofl-search" id="ofl-search" role="search">
+      <input id="ofl-query" type="search" maxlength="100" placeholder="Search the Open Fixture Library: pixel bar, root par…" aria-label="Search the Open Fixture Library" />
+      <button class="btn" type="submit">Search</button>
+    </form>
+    <div id="ofl-results" class="ofl-results" hidden></div>
 
     <!-- GDTF mode selector (shown after import) -->
     <div id="gdtf-mode-select" class="gdtf-mode-select" style="display:none">
       <div class="field">
         <label>Fixture</label>
         <span id="gdtf-fixture-name" class="fixture-info-text"></span>
+      </div>
+      <div class="field">
+        <label for="gdtf-manufacturer">Manufacturer</label>
+        <input id="gdtf-manufacturer" type="text" maxlength="128" />
       </div>
       <div class="field">
         <label>DMX Mode</label>

@@ -151,3 +151,105 @@ test('channels this rig cannot reach are left out and said so', async () => {
   assert.match(m.warnings[0], /DMX break 2/);
   assert.match(m.warnings[1], /past channel 512/);
 });
+
+// ── Shutters, strobes and values at rest ─────────────────────────────────────
+// The engine writes 0 to what it does not drive, and a strobe channel only
+// while strobing: a shutter closed at 0 would leave the fixture dark.
+
+// A channel with its functions: [name, attribute, DMXFrom, Default?, [[set name, DMXFrom]…]?]
+const withFunctions = ({ off, attr, initial, defaultValue, functions, geometry = 'Base' }) =>
+  `<DMXChannel Offset='${off}' Geometry='${geometry}'`
+  + `${initial ? ` InitialFunction='${geometry}_${attr}.${attr}.${initial}'` : ''}${defaultValue ? ` Default='${defaultValue}'` : ''}>`
+  + `<LogicalChannel Attribute='${attr}'>`
+  + functions.map(([name, fnAttr, from, def, sets = []]) => `<ChannelFunction Name='${name}' Attribute='${fnAttr}' DMXFrom='${from}'${def ? ` Default='${def}'` : ''}>`
+    + sets.map(([setName, setFrom]) => `<ChannelSet Name='${setName}' DMXFrom='${setFrom}'/>`).join('')
+    + '</ChannelFunction>').join('')
+  + '</LogicalChannel></DMXChannel>';
+
+const oneLight = (...channels) => `<GDTF><FixtureType Name='Head' Manufacturer='Acme'><Geometries><Geometry Name='Base'/></Geometries>`
+  + `<DMXModes><DMXMode Name='M' Geometry='Base'><DMXChannels>${channels.join('')}</DMXChannels></DMXMode></DMXModes></FixtureType></GDTF>`;
+
+const DIMMER = withFunctions({ off: 1, attr: 'Dimmer', functions: [['Dimmer', 'Dimmer', '0/1']] });
+const RED = withFunctions({ off: 3, attr: 'ColorAdd_R', functions: [['Red', 'ColorAdd_R', '0/1']] });
+const readOne = async (...channels) => (await parseGDTF(await gdtf(oneLight(...channels)))).modes[0];
+
+test('a shutter closed at 0 is held open, and is still the strobe when it strobes as the show does', async () => {
+  const shutter = withFunctions({
+    off: 2, attr: 'Shutter1',
+    functions: [['Closed', 'Shutter1', '0/1', '0/1'], ['Open', 'Shutter1', '32/1'], ['Strobe', 'Shutter1Strobe', '64/1']],
+  });
+  const m = await readOne(DIMMER, shutter, RED);
+  assert.deepStrictEqual(m.channelMap, { dimmer: 0, strobe: 1, red: 2 });
+  assert.deepStrictEqual(m.defaults, [{ offset: 1, value: 32 }], 'open between flashes');
+  assert.deepStrictEqual(m.warnings, ['Shutter1 on channel 2 is held at 32, open, so the light is not shut']);
+  validate(profileSchema, { id: 'acme-head', name: 'Head', ...m }, 'profile');
+});
+
+test('a shutter open at 0 that strobes across 128–250 is the strobe, with nothing held', async () => {
+  const shutter = withFunctions({
+    off: 2, attr: 'Shutter1',
+    functions: [['Open', 'Shutter1', '0/1'], ['Strobe', 'Shutter1Strobe', '10/1']],
+  });
+  const m = await readOne(DIMMER, shutter, RED);
+  assert.deepStrictEqual(m.channelMap, { dimmer: 0, strobe: 1, red: 2 });
+  assert.strictEqual(m.defaults, undefined);
+  assert.strictEqual(m.warnings, undefined);
+
+  // One function named in sets, starting where GDTF 1.1 says it does.
+  const named = withFunctions({
+    off: 2, attr: 'Shutter1', initial: 'Shutter',
+    functions: [['Shutter', 'Shutter1', '0/1', '20/1', [['Closed', '0/1'], ['Open', '20/1'], ['Strobe slow to fast', '40/1']]]],
+  });
+  const n = await readOne(DIMMER, named, RED);
+  assert.strictEqual(n.channelMap.strobe, 1);
+  assert.deepStrictEqual(n.defaults, [{ offset: 1, value: 20 }]);
+  assert.strictEqual(n.warnings, undefined, 'its own default is open: nothing to say');
+});
+
+test('a strobe that is not open at rest, or does not strobe across the range, is left to the software strobe', async () => {
+  const strobesAtZero = withFunctions({ off: 2, attr: 'Shutter1', functions: [['Strobe', 'Shutter1Strobe', '0/1']] });
+  const a = await readOne(DIMMER, strobesAtZero, RED);
+  assert.deepStrictEqual(a.channelMap, { dimmer: 0, red: 2 });
+  assert.strictEqual(a.channelList[1].attribute, 'strobe', 'still labelled for the monitor');
+  assert.deepStrictEqual(a.warnings, ['Shutter1 on channel 2 does not strobe as the show expects (open at rest, flashing from 128 to 250), so the show flashes this fixture itself']);
+
+  const randomAbove = withFunctions({
+    off: 2, attr: 'Shutter1',
+    functions: [['Open', 'Shutter1', '0/1'], ['Strobe', 'Shutter1Strobe', '8/1'], ['Random', 'Shutter1StrobeRandom', '200/1']],
+  });
+  const b = await readOne(DIMMER, randomAbove, RED);
+  assert.strictEqual(b.channelMap.strobe, undefined);
+  assert.match(b.warnings[0], /does not strobe as the show expects/);
+
+  const closedOnly = withFunctions({
+    off: 2, attr: 'Shutter1',
+    functions: [['Closed', 'Shutter1', '0/1'], ['Pulse', 'Shutter1StrobeRandom', '128/1']],
+  });
+  const c = await readOne(DIMMER, closedOnly, RED);
+  assert.strictEqual(c.defaults, undefined);
+  assert.match(c.warnings.at(-1), /Shutter1 on channel 2 shuts the light at rest and has no open value/);
+});
+
+test('an undriven dimmer is held at full, and other channels at their defaults, 16-bit too', async () => {
+  const second = withFunctions({ off: 2, attr: 'Dimmer', functions: [['Dimmer', 'Dimmer', '0/1']] });
+  const pan = withFunctions({ off: '4,5', attr: 'Pan', functions: [['Pan', 'Pan', '0/2', '32767/2']] });
+  const macro = withFunctions({ off: 6, attr: 'ColorMacro1', defaultValue: '0/1', functions: [['Off', 'NoFeature', '0/1'], ['Macro', 'ColorMacro1', '8/1']] });
+  const m = await readOne(DIMMER, second, RED, pan, macro);
+  assert.deepStrictEqual(m.channelMap, { dimmer: 0, red: 2, pan: 3, macro: 5 });
+  assert.deepStrictEqual(m.defaults, [{ offset: 1, value: 255 }, { offset: 3, value: 127 }, { offset: 4, value: 255 }]);
+  assert.deepStrictEqual(m.warnings, ['Dimmer on channel 2 is held at 255, full: the show does not drive it']);
+});
+
+test('a bar\'s shutter in every cell is held open, said once for all of them', async () => {
+  const geometries = `<Geometry Name='Base'>${[1, 2, 3].map((n) => `<Geometry Name='Pixel ${n}'/>`).join('')}</Geometry>`;
+  const xml = `<GDTF><FixtureType Name='Bar' Manufacturer='Acme'><Geometries>${geometries}</Geometries><DMXModes><DMXMode Name='Pixel' Geometry='Base'><DMXChannels>`
+    + [1, 2, 3].map((n) => withFunctions({ off: 1 + (n - 1) * 2, attr: 'ColorAdd_R', geometry: `Pixel ${n}`, functions: [['Red', 'ColorAdd_R', '0/1']] })
+      + withFunctions({ off: 2 + (n - 1) * 2, attr: 'Shutter1', geometry: `Pixel ${n}`, functions: [['Closed', 'Shutter1', '0/1'], ['Open', 'Shutter1', '16/1']] })).join('')
+    + '</DMXChannels></DMXMode></DMXModes></FixtureType></GDTF>';
+  const [m] = (await parseGDTF(await gdtf(xml))).modes;
+  assert.strictEqual(m.cells.length, 3);
+  assert.strictEqual(m.channelList[1].attribute, 'shutter', 'a shutter that never flashes is not a strobe');
+  assert.deepStrictEqual(m.defaults, [{ offset: 1, value: 16 }, { offset: 3, value: 16 }, { offset: 5, value: 16 }]);
+  assert.deepStrictEqual(m.warnings, ['Shutter1 on channels 2, 4 and 6 is held at 16, open, so the light is not shut']);
+  validate(profileSchema, { id: 'acme-bar', name: 'Bar', ...m }, 'profile');
+});

@@ -14,6 +14,8 @@ import { MAX_UNIVERSES } from './universes.ts';
 import { cues, cueWriteSchema, cueRestoreSchema, reorderSchema } from './cues.ts';
 import { showStore, snapshotShow, applyShow } from './show-store.ts';
 import { barProfile } from './bar-profile.ts';
+import { parseOfl } from './ofl.ts';
+import { createOflLibrary } from './ofl-library.ts';
 import { midiMap, ACTIONS, defaultTypeFor, mapSchema, learnSchema, bindingWriteSchema } from './midi-map.ts';
 import { profileSchema, deezerStateSchema, fixtureRestoreSchema, dmxUniverse, huePairSchema, validate } from './validation.ts';
 import * as output from './output.ts';
@@ -42,6 +44,7 @@ import type { createApplier } from './apply.ts';
 import type { setupIntegrations } from './integrations.ts';
 import type { ArtNode } from './artnet.ts';
 import type { EntertainmentArea } from './hue.ts';
+import type { OflLibrary } from './ofl-library.ts';
 import type { NowPlaying, PlaybackSource } from '../types/playback.ts';
 import type { Profile } from '../types/rig.ts';
 
@@ -56,6 +59,8 @@ export interface RouteDeps {
   analysisCache: AnalysisCache;
   integrations: ReturnType<typeof setupIntegrations>;
   applier: ReturnType<typeof createApplier>;
+  /** The Open Fixture Library online; the real one unless a test stands in. */
+  oflLibrary?: OflLibrary;
 }
 
 /** What the operator typed into "Analyse", classified (see classifyAnalyzeSource). */
@@ -70,6 +75,8 @@ export type AnalyzeSource =
 // One file and a handful of fields per request: both are held in memory.
 const uploadAudio = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024, files: 1, fields: 8 } });
 const uploadGdtf = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024, files: 1, fields: 8 } });
+// An OFL fixture is plain JSON, tens of KB even for a pixel bar.
+const uploadOfl = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 8 } });
 
 // Local-file analysis reads a path off the filesystem. When a library folder is
 // set in the settings page it is confined to that subtree; blank keeps the old
@@ -131,6 +138,7 @@ function asyncHandler(fn: (req: Request, res: Response, next: NextFunction) => u
 
 function attachRoutes(app: Express, deps: RouteDeps): void {
   const { midi, autoShow, spotify, nowPlaying, deezerSource, prolink, analysisCache, integrations, applier } = deps;
+  const oflLibrary = deps.oflLibrary || createOflLibrary();
 
   // ─── State ────────────────────────────────────────────────────────────────
   app.get('/api/state', (_req, res) => res.json(getClientState()));
@@ -387,6 +395,44 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
     } catch (err) {
       console.error('GDTF parse error:', messageOf(err));
       res.status(400).json({ ok: false, error: messageOf(err) });
+    }
+  }));
+
+  // ─── Open Fixture Library ─────────────────────────────────────────────────
+  // A downloaded OFL fixture file (no internet needed), or a fixture searched
+  // for and fetched from the library online. Both answer as /api/gdtf/parse
+  // does, so the page offers their modes the same way.
+  app.post('/api/ofl/parse', uploadOfl.single('ofl'), (req, res) => {
+    if (!req.file) return res.status(400).json({ ok: false, error: 'No file uploaded' });
+    let json: unknown;
+    try {
+      json = JSON.parse(req.file.buffer.toString('utf8'));
+    } catch (_) {
+      return res.status(400).json({ ok: false, error: 'That file is not JSON: an Open Fixture Library fixture is a .json file' });
+    }
+    try {
+      const manufacturer = typeof req.body?.manufacturer === 'string' ? req.body.manufacturer.trim() : null;
+      res.json({ ok: true, fixture: parseOfl(json, { manufacturer }) });
+    } catch (err) {
+      res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) });
+    }
+  });
+
+  app.get('/api/ofl/search', asyncHandler(async (req, res) => {
+    try {
+      const results = await oflLibrary.search(typeof req.query.q === 'string' ? req.query.q : '');
+      res.json({ ok: true, results });
+    } catch (err) {
+      res.status(statusOf(err) || 502).json({ ok: false, error: messageOf(err) });
+    }
+  }));
+
+  app.get('/api/ofl/fixture/:manufacturer/:fixture', asyncHandler(async (req, res) => {
+    try {
+      const fixture = await oflLibrary.fixture(String(req.params.manufacturer), String(req.params.fixture));
+      res.json({ ok: true, fixture });
+    } catch (err) {
+      res.status(statusOf(err) || 502).json({ ok: false, error: messageOf(err) });
     }
   }));
 

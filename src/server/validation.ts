@@ -204,6 +204,13 @@ const profileSchema = z.object({
     name: z.string().max(64).optional(),
     channelMap: z.record(z.number().int().min(0).max(511)),
   }).strict()).min(2).max(MAX_CELLS_PER_FIXTURE).optional(),
+  // Channels the show does not drive and the value each sits at instead of 0:
+  // a shutter whose 0 is closed, a dimmer the show leaves at full. Written
+  // under every frame, so a channel the show does drive still wins.
+  defaults: z.array(z.object({
+    offset: z.number().int().min(0).max(511),
+    value: u8,
+  }).strict()).max(512).optional(),
 }).passthrough()
   // channelCount is the fixture's DMX footprint: it decides where the *next*
   // fixture can be patched and what the universe-bounds check reserves. An
@@ -221,6 +228,14 @@ const profileSchema = z.object({
         code: z.ZodIssueCode.custom,
         path: ['channelMap'],
         message: `maps channels outside the profile's ${profile.channelCount}-channel footprint: ${over.join(', ')}`,
+      });
+    }
+    const outside = (profile.defaults || []).filter((d) => d.offset >= profile.channelCount);
+    if (outside.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['defaults'],
+        message: `holds channels outside the profile's ${profile.channelCount}-channel footprint: ${outside.map((d) => d.offset).join(', ')}`,
       });
     }
     if (profile.cells) checkCells({ ...profile, cells: profile.cells }, ctx);
