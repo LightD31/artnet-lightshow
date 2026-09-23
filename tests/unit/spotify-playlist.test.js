@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import SpotifyClient from '../../src/spotify.js';
+import SpotifyClient from '../../src/spotify.ts';
 
 const { parsePlaylistRef, playlistItemToTrack, MAX_PLAYLIST_TRACKS } = SpotifyClient;
 

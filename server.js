@@ -4,9 +4,9 @@ import http from 'node:http';
 import express from 'express';
 import { Server } from 'socket.io';
 
-import MidiController from './src/midi.js';
-import ProLink from './src/prolink.js';
-import SpotifyClient from './src/spotify.js';
+import MidiController from './src/midi.ts';
+import ProLink from './src/prolink.ts';
+import SpotifyClient from './src/spotify.ts';
 import NowPlayingSource from './src/nowplaying-source.ts';
 import SmtcReader from './src/smtc-source.ts';
 import DeezerSource from './src/deezer-source.ts';

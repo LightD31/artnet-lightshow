@@ -27,21 +27,150 @@
 import { createRequire } from 'node:module';
 
 import { makeGrid, beatPositionAt } from './shared/beat-clock.ts';
+import { messageOf } from './errors.ts';
+import type { BeatGrid } from './shared/beat-clock.ts';
+
+// prolink-connect is optional, so it is loaded at run time and described here
+// by the parts this module uses rather than imported for its types.
+
+/** One CDJ status packet. */
+interface CdjStatus {
+  deviceId: number;
+  trackId: number;
+  trackDeviceId: number;
+  trackSlot: number;
+  trackType: number;
+  isMaster: boolean;
+  trackBPM: number | null;
+  effectivePitch: number;
+  beatInMeasure: number;
+  playState: number;
+  beat: number | null;
+}
+
+/** One beat of rekordbox's grid. */
+export interface BeatGridEntry {
+  offset: number;
+  count?: number;
+  bpm: number;
+}
+
+interface TrackMetadata {
+  title?: string;
+  duration?: number;
+  artist?: { name?: string } | null;
+  album?: { name?: string } | null;
+  beatGrid?: BeatGridEntry[] | null;
+}
+
+interface Emitter {
+  on(event: string, fn: (...args: never[]) => void): unknown;
+  off(event: string, fn: (...args: never[]) => void): unknown;
+}
+
+interface ProlinkNetwork {
+  autoconfigFromPeers(): Promise<unknown>;
+  connect(): void;
+  disconnect?(): Promise<unknown>;
+  statusEmitter?: Emitter | null;
+  deviceManager?: (Emitter & { devices?: Map<unknown, unknown> }) | null;
+  db?: {
+    getMetadata(query: { deviceId: number; trackSlot: number; trackType: number; trackId: number }):
+      Promise<TrackMetadata | null>;
+  } | null;
+}
+
+interface ProlinkModule {
+  bringOnline(): Promise<ProlinkNetwork>;
+  CDJStatus?: { PlayState?: Record<string, number> };
+}
+
+/** A track loaded on a deck, as rekordbox describes it. */
+export interface ProlinkTrack {
+  trackId: number;
+  deviceId: number;
+  slot: number;
+  title: string | null;
+  artist: string | null;
+  album?: string | null;
+  durationMs: number;
+  beatGrid?: BeatGridEntry[] | null;
+}
+
+/** The master deck, for the UI. */
+export interface ProlinkMaster {
+  deviceId: number;
+  trackId: number | null;
+  slot: number | null;
+  bpm: number;
+  trackBpm: number;
+  pitch: number;
+  beat: number | null;
+  beatInMeasure: number;
+  playState: number;
+}
+
+/** Where the master deck's position runs from. */
+interface Anchor {
+  posMs: number;
+  at: number;
+  rate: number;
+}
 
 const require = createRequire(import.meta.url);
 
-let prolink = null;
-let CDJStatus = null;
+let prolink: ProlinkModule | null = null;
+let CDJStatus: ProlinkModule['CDJStatus'] | null = null;
 try {
-  prolink = require('prolink-connect');
-  CDJStatus = prolink.CDJStatus; // PlayState enum lives here
+  const loaded = require('prolink-connect') as ProlinkModule;
+  prolink = loaded;
+  CDJStatus = loaded.CDJStatus; // PlayState enum lives here
 } catch (err) {
-  console.error('[prolink] failed to load prolink-connect:', err.message);
+  console.error('[prolink] failed to load prolink-connect:', messageOf(err));
 }
 
 const STALE_PACKET_MS = 5000;
 
 class ProLink {
+  declare _network: ProlinkNetwork | null;
+  declare _enabled: boolean;
+  declare _connected: boolean;
+  declare _lastError: string | null;
+  declare _peers: number;
+  declare _masterDeviceId: number | null;
+  declare _masterTrackId: number | null;
+  declare _masterSlot: number | null;
+  declare _masterTrackType: number | null;
+  declare _masterBpm: number;
+  declare _masterTrackBpm: number;
+  declare _masterPitch: number;
+  declare _masterBeatInMeasure: number;
+  declare _masterPlayState: number;
+  declare _now: () => number;
+  declare _lastBeat: number | null;
+  declare _anchor: Anchor | null;
+  declare _lastMasterPacketAt: number;
+  declare _beatGrid: BeatGridEntry[] | null;
+  declare _clockGridFor: BeatGridEntry[] | null;
+  declare _clockGridCache: BeatGrid | null;
+  declare _trackDurationMs: number;
+  declare _frozenPositionMs: number;
+  declare _lastComputedPositionMs: number;
+  declare _stale: boolean;
+  declare _track: ProlinkTrack | null;
+  declare _playerTracks: Map<number, string>;
+  declare _playerTrackData: Map<number, ProlinkTrack | null>;
+  declare _seenTrackIdentities: Set<string>;
+  declare _onTempoChange: ((bpm: number) => void) | null;
+  declare _onPeersChange: ((peers: number) => void) | null;
+  declare _onMasterChange: ((master: ProlinkMaster | null) => void) | null;
+  declare _onTrackChange: ((track: ProlinkTrack | null) => void) | null;
+  declare _onAnyTrackLoaded: ((track: ProlinkTrack) => void) | null;
+  declare _onLoadedTracksChange: ((tracks: { playerId: number; track: ProlinkTrack | null }[]) => void) | null;
+  declare _statusHandler: ((s: CdjStatus) => void) | null;
+  declare _connectedHandler: (() => void) | null;
+  declare _disconnectedHandler: (() => void) | null;
+
   constructor() {
     this._network = null;
     this._enabled = false;
@@ -96,15 +225,15 @@ class ProLink {
 
   // ── Public getters ──────────────────────────────────────────────────────────
 
-  get enabled() { return this._enabled; }
-  get connected() { return this._connected; }
-  get lastError() { return this._lastError; }
-  get stale() { return this._stale; }
+  get enabled(): boolean { return this._enabled; }
+  get connected(): boolean { return this._connected; }
+  get lastError(): string | null { return this._lastError; }
+  get stale(): boolean { return this._stale; }
 
-  getNumPeers() { return this._peers; }
-  getTempo() { return this._masterBpm || 0; }
+  getNumPeers(): number { return this._peers; }
+  getTempo(): number { return this._masterBpm || 0; }
 
-  getMaster() {
+  getMaster(): ProlinkMaster | null {
     if (this._masterDeviceId == null) return null;
     return {
       deviceId: this._masterDeviceId,
@@ -119,7 +248,7 @@ class ProLink {
     };
   }
 
-  getTrack() { return this._track; }
+  getTrack(): ProlinkTrack | null { return this._track; }
 
   /**
    * Where the master deck is, in beats, for the pattern clock (see
@@ -130,13 +259,13 @@ class ProLink {
    * steps land on the beats the DJ sees on the deck; without a grid yet it is
    * counted at the track's tempo. `bpm` is the pitched tempo the room hears.
    */
-  getBeatReading() {
+  getBeatReading(): { beatPos: number; bpm: number | null } | null {
     if (!this._masterTrackId || !this._anchor) return null;
     if (this._isFrozenState(this._masterPlayState)) return null;
     const posMs = this.getPositionMs();
     if (this._stale || !Number.isFinite(posMs)) return null;
     const grid = this._clockGrid();
-    let beatPos;
+    let beatPos: number;
     if (grid) {
       beatPos = beatPositionAt(grid, posMs);
     } else {
@@ -149,7 +278,7 @@ class ProLink {
   }
 
   /** rekordbox's grid in the shape beat-clock reads, built once per track. */
-  _clockGrid() {
+  _clockGrid(): BeatGrid | null {
     const source = this._beatGrid;
     if (!Array.isArray(source) || source.length < 2) return null;
     if (this._clockGridFor !== source) {
@@ -164,8 +293,8 @@ class ProLink {
    * track loaded, sorted by playerId. `track` is null while metadata is still
    * being resolved from rekordbox.
    */
-  getLoadedTracks() {
-    const result = [];
+  getLoadedTracks(): { playerId: number; track: ProlinkTrack | null }[] {
+    const result: { playerId: number; track: ProlinkTrack | null }[] = [];
     for (const [playerId, track] of this._playerTrackData) {
       result.push({ playerId, track });
     }
@@ -174,7 +303,7 @@ class ProLink {
   }
 
   /** Position in ms within the loaded master track. 0 when nothing is playing. */
-  getPositionMs() {
+  getPositionMs(): number {
     if (!this._masterTrackId) return 0;
     const now = this._now();
 
@@ -219,7 +348,13 @@ class ProLink {
    *     the beat has only just changed — the boundary fell somewhere in that
    *     gap, and its middle is the unbiased guess.
    */
-  _reanchor({ beat, beatChanged, now, previousPacketAt, rate }) {
+  _reanchor({ beat, beatChanged, now, previousPacketAt, rate }: {
+    beat: number;
+    beatChanged: boolean;
+    now: number;
+    previousPacketAt: number;
+    rate: number;
+  }): Anchor {
     const lo = this._beatMsFromGrid(beat);
     const hi = this._beatMsFromGrid(beat + 1);
     const span = Math.max(1, hi - lo);
@@ -227,7 +362,7 @@ class ProLink {
       ? this._anchor.posMs + (now - this._anchor.at) * this._anchor.rate
       : null;
 
-    let posMs;
+    let posMs: number;
     if (predicted != null && predicted >= lo - span && predicted <= hi + span) {
       posMs = Math.min(Math.max(predicted, lo), hi);
     } else {
@@ -241,7 +376,7 @@ class ProLink {
 
   // ── Lifecycle ───────────────────────────────────────────────────────────────
 
-  async enable() {
+  async enable(): Promise<void> {
     if (!prolink) {
       const err = new Error('prolink-connect not available — check Node version (need >= 20)');
       this._lastError = err.message;
@@ -253,23 +388,25 @@ class ProLink {
     this._lastError = null;
 
     try {
-      this._network = await prolink.bringOnline();
+      const network = await prolink.bringOnline();
+      this._network = network;
       // Wait for any device to show up so we can determine the right NIC.
       // This will hang forever if no CDJs are present, so we timeout it.
-      await this._withTimeout(this._network.autoconfigFromPeers(), 10000, 'autoconfig timeout (no devices found on the network)');
-      this._network.connect();
+      await this._withTimeout(network.autoconfigFromPeers(), 10000, 'autoconfig timeout (no devices found on the network)');
+      network.connect();
       this._connected = true;
 
       // Status updates
-      const statusEmitter = this._network.statusEmitter;
+      const statusEmitter = network.statusEmitter;
       if (!statusEmitter) {
         throw new Error('statusEmitter unavailable after connect()');
       }
-      this._statusHandler = (s) => this._onStatus(s);
-      statusEmitter.on('status', this._statusHandler);
+      const statusHandler = (s: CdjStatus) => this._onStatus(s);
+      this._statusHandler = statusHandler;
+      statusEmitter.on('status', statusHandler);
 
       // Device list updates → peer count
-      const dm = this._network.deviceManager;
+      const dm = network.deviceManager;
       if (dm) {
         const updatePeers = () => {
           const next = dm.devices ? dm.devices.size : 0;
@@ -278,27 +415,29 @@ class ProLink {
             if (this._onPeersChange) this._onPeersChange(this._peers);
           }
         };
-        this._connectedHandler = () => updatePeers();
-        this._disconnectedHandler = () => updatePeers();
-        dm.on('connected', this._connectedHandler);
-        dm.on('disconnected', this._disconnectedHandler);
+        const connectedHandler = () => updatePeers();
+        const disconnectedHandler = () => updatePeers();
+        this._connectedHandler = connectedHandler;
+        this._disconnectedHandler = disconnectedHandler;
+        dm.on('connected', connectedHandler);
+        dm.on('disconnected', disconnectedHandler);
         updatePeers();
       }
 
       console.log('[prolink] connected to PRO DJ LINK network');
     } catch (err) {
-      this._lastError = err.message;
+      this._lastError = messageOf(err);
       this._connected = false;
       this._enabled = false;
       // Attempt cleanup so a retry can rebind sockets
       try { if (this._network && this._network.disconnect) await this._network.disconnect(); } catch (_) {}
       this._network = null;
-      console.error('[prolink] enable failed:', err.message);
+      console.error('[prolink] enable failed:', messageOf(err));
       throw err;
     }
   }
 
-  async disable() {
+  async disable(): Promise<void> {
     if (!this._enabled && !this._connected) return;
     this._enabled = false;
     this._connected = false;
@@ -313,7 +452,7 @@ class ProLink {
         if (this._network.disconnect) await this._network.disconnect();
       }
     } catch (err) {
-      console.error('[prolink] disable cleanup error:', err.message);
+      console.error('[prolink] disable cleanup error:', messageOf(err));
     } finally {
       this._network = null;
       this._statusHandler = null;
@@ -328,23 +467,23 @@ class ProLink {
     }
   }
 
-  destroy() {
+  destroy(): void {
     // Fire-and-forget; don't await on shutdown.
     this.disable().catch(() => {});
   }
 
   // ── Listeners ───────────────────────────────────────────────────────────────
 
-  onTempoChange(fn)          { this._onTempoChange          = fn; }
-  onPeersChange(fn)          { this._onPeersChange          = fn; }
-  onMasterChange(fn)         { this._onMasterChange         = fn; }
-  onTrackChange(fn)          { this._onTrackChange          = fn; }
-  onAnyTrackLoaded(fn)       { this._onAnyTrackLoaded       = fn; }
-  onLoadedTracksChange(fn)   { this._onLoadedTracksChange   = fn; }
+  onTempoChange(fn: ProLink['_onTempoChange']): void               { this._onTempoChange          = fn; }
+  onPeersChange(fn: ProLink['_onPeersChange']): void               { this._onPeersChange          = fn; }
+  onMasterChange(fn: ProLink['_onMasterChange']): void             { this._onMasterChange         = fn; }
+  onTrackChange(fn: ProLink['_onTrackChange']): void               { this._onTrackChange          = fn; }
+  onAnyTrackLoaded(fn: ProLink['_onAnyTrackLoaded']): void         { this._onAnyTrackLoaded       = fn; }
+  onLoadedTracksChange(fn: ProLink['_onLoadedTracksChange']): void { this._onLoadedTracksChange   = fn; }
 
   // ── Status packet handler ───────────────────────────────────────────────────
 
-  _onStatus(s) {
+  _onStatus(s: CdjStatus | null | undefined): void {
     if (!s) return;
 
     // ── Track all players: detect load / eject on any CDJ ────────────────────
@@ -390,7 +529,7 @@ class ProLink {
                 }
               })
               .catch(() => {
-                const fallback = { trackId: tId, deviceId: devId, slot, title: null, artist: null, durationMs: 0 };
+                const fallback: ProlinkTrack = { trackId: tId, deviceId: devId, slot, title: null, artist: null, durationMs: 0 };
                 if (this._playerTracks.get(playerId) === identity) {
                   this._playerTrackData.set(playerId, fallback);
                   if (this._onLoadedTracksChange) this._onLoadedTracksChange(this.getLoadedTracks());
@@ -452,8 +591,8 @@ class ProLink {
             }
           })
           .catch((err) => {
-            console.error('[prolink] metadata lookup failed:', err.message);
-            const fallback = {
+            console.error('[prolink] metadata lookup failed:', messageOf(err));
+            const fallback: ProlinkTrack = {
               trackId: resolvingTrackId,
               deviceId: resolvingDeviceId,
               slot: resolvingSlot,
@@ -498,23 +637,24 @@ class ProLink {
     }
     this._masterPlayState = s.playState;
 
-    const hasBeat = typeof s.beat === 'number' && s.beat > 0;
+    const beat = s.beat;
+    const hasBeat = typeof beat === 'number' && beat > 0;
     if (hasBeat && isFrozen) {
       // A cue jump while paused moves the deck without playing it.
-      if (s.beat !== this._lastBeat) this._frozenPositionMs = this._beatMsFromGrid(s.beat);
-      this._lastBeat = s.beat;
+      if (beat !== this._lastBeat) this._frozenPositionMs = this._beatMsFromGrid(beat);
+      this._lastBeat = beat;
     } else if (hasBeat) {
       const rate = 1 + pitchPct / 100;
       this._anchor = this._reanchor({
-        beat: s.beat, beatChanged: s.beat !== this._lastBeat, now, previousPacketAt, rate,
+        beat, beatChanged: beat !== this._lastBeat, now, previousPacketAt, rate,
       });
-      this._lastBeat = s.beat;
+      this._lastBeat = beat;
     }
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
 
-  _isFrozenState(playState) {
+  _isFrozenState(playState: number): boolean {
     if (!CDJStatus || !CDJStatus.PlayState) {
       // Numeric fallback if the enum import didn't pan out.
       // Paused = 5, Cued = 6, Loading = 2, Empty = 0
@@ -533,7 +673,7 @@ class ProLink {
    * Translate a beat number (1-indexed) to milliseconds within the track.
    * The beat grid is one entry per beat in order, with `offset` in ms.
    */
-  _beatMsFromGrid(beatN) {
+  _beatMsFromGrid(beatN: number): number {
     const grid = this._beatGrid;
     if (!grid || !grid.length) {
       // No beatgrid yet → linear estimate from BPM. The track's own tempo, not
@@ -554,7 +694,7 @@ class ProLink {
     return grid[beatN - 1].offset;
   }
 
-  _resetMaster() {
+  _resetMaster(): void {
     this._masterDeviceId = null;
     this._masterTrackId = null;
     this._masterSlot = null;
@@ -574,7 +714,7 @@ class ProLink {
     this._track = null;
   }
 
-  async _resolveTrackMetadata(deviceId, slot, trackType, trackId) {
+  async _resolveTrackMetadata(deviceId: number, slot: number, trackType: number, trackId: number): Promise<ProlinkTrack | null> {
     if (!this._network || !this._network.db) {
       throw new Error('database service not available');
     }
@@ -602,9 +742,9 @@ class ProLink {
     };
   }
 
-  _withTimeout(promise, ms, message) {
-    let to;
-    const timeout = new Promise((_, reject) => {
+  _withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+    let to: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
       to = setTimeout(() => reject(new Error(message)), ms);
     });
     return Promise.race([promise, timeout]).finally(() => clearTimeout(to));

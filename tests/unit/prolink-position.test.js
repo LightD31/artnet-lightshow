@@ -5,7 +5,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert';
-import ProLink from '../../src/prolink.js';
+import ProLink from '../../src/prolink.ts';
 
 const PLAYING = 3;              // prolink-connect PlayState.Playing
 const PAUSED = 5;

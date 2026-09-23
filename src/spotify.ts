@@ -1,4 +1,99 @@
 import crypto from 'node:crypto';
+import { HttpError, messageOf, statusOf } from './errors.ts';
+import type { NowPlaying, PlayingListener } from './types/playback.ts';
+
+/** A failed Spotify request: its HTTP status, and on a 429 how long to wait. */
+class SpotifyError extends HttpError {
+  retryAfterMs?: number;
+
+  constructor(status: number, message: string, retryAfterMs?: number) {
+    super(status, message);
+    if (retryAfterMs !== undefined) this.retryAfterMs = retryAfterMs;
+  }
+}
+
+// The parts of Spotify's Web API answers this client reads.
+interface SpotifyTrackItem {
+  id?: string;
+  name?: string;
+  type?: string;
+  duration_ms?: number;
+  artists?: { name?: string }[];
+  album?: { name?: string; images?: { url?: string }[] };
+  external_ids?: { isrc?: string };
+  preview_url?: string | null;
+}
+
+/** The currently-playing item: the fields this client relies on being there. */
+interface SpotifyPlayingItem {
+  id: string;
+  name: string;
+  artists: { name: string }[];
+  album: { name: string; images: { url?: string }[] };
+  duration_ms: number;
+  external_ids?: { isrc?: string };
+  preview_url?: string | null;
+}
+
+interface SpotifyPlaylistEntry {
+  item?: SpotifyTrackItem | null;
+  track?: SpotifyTrackItem | null;
+  is_local?: boolean;
+}
+
+interface SpotifyPage<T> {
+  items?: T[];
+  next?: string | null;
+  total?: number;
+}
+
+interface SpotifyPlaylistSummary {
+  id?: string;
+  name?: string;
+  owner?: { display_name?: string };
+  items?: { total?: number };
+  tracks?: { total?: number };
+}
+
+/** What the token endpoint answers. */
+export interface SpotifyTokens {
+  access_token?: string;
+  refresh_token?: string;
+  expires_in?: number;
+  scope?: string;
+}
+
+/** A playlist entry, as the warmer and the UI take it. */
+export interface PlaylistTrack {
+  trackId: string | null;
+  name: string;
+  artist: string;
+  album: string;
+  albumArt: string | null;
+  durationMs: number;
+  isrc: string | null;
+  isLocal: boolean;
+}
+
+/** A track in the listener's queue. */
+export interface SpotifyQueueTrack {
+  trackId: string;
+  name: string;
+  artist: string;
+  album: string;
+  albumArt: string | null;
+  durationMs: number;
+  isrc: string | null;
+}
+
+export interface SpotifyPlaylist {
+  id: string;
+  name: string;
+  owner: string;
+  total: number;
+  truncated: boolean;
+  tracks: PlaylistTrack[];
+}
 
 // Every Spotify call is bounded. The previous hand-rolled https client had no
 // timeout at all, so one hung connection leaked a promise that never settled
@@ -30,6 +125,13 @@ const MAX_PLAYLIST_TRACKS = 500;
  * before these were added keeps working for playback; warming a private
  * playlist from it needs a reconnect, which `canReadPlaylists` reports.
  */
+/** What configure() takes; a key left out is left alone. */
+interface SpotifyConfig {
+  clientId?: string;
+  clientSecret?: string;
+  proxyBase?: string;
+}
+
 const SCOPES = [
   'user-read-playback-state',
   'user-read-currently-playing',
@@ -77,7 +179,7 @@ const PLAYLIST_URL_RE = /^https?:\/\/(?:open|play)\.spotify\.com\/(?:intl-[a-z]{
  * Returns null for anything else. The id is interpolated into an API path, so
  * only base-62 ever comes back out of here.
  */
-function parsePlaylistRef(input) {
+function parsePlaylistRef(input: unknown): string | null {
   const raw = String(input || '').trim();
   if (!raw) return null;
   const uri = raw.match(PLAYLIST_URI_RE);
@@ -105,7 +207,7 @@ function parsePlaylistRef(input) {
  * id, but they do have a title and an artist, which is all the warmer needs to
  * find the audio the same way a pasted set list does.
  */
-function playlistItemToTrack(item) {
+function playlistItemToTrack(item: SpotifyPlaylistEntry | null | undefined): PlaylistTrack | null {
   const track = item && (item.item || item.track);
   if (!track || !track.name) return null;
   if (track.type && track.type !== 'track') return null;
@@ -122,15 +224,39 @@ function playlistItemToTrack(item) {
 }
 
 /** Spotify will not list this playlist's tracks for this account. */
-function notYourPlaylistError() {
-  const err = new Error('Spotify only lists the tracks of playlists you own or collaborate on. '
+function notYourPlaylistError(): HttpError {
+  return new HttpError(403, 'Spotify only lists the tracks of playlists you own or collaborate on. '
     + 'Copy it into one of your own playlists (Add to other playlist), or paste the tracks as a set list.');
-  err.status = 403;
-  return err;
 }
 
 class SpotifyClient {
-  constructor(config = {}) {
+  declare clientId: string;
+  declare clientSecret: string;
+  declare proxyBase: string;
+  declare loopbackPort: number;
+  declare redirectUri: string;
+  declare localCallbackUrl: string;
+  declare accessToken: string | null;
+  declare refreshToken: string | null;
+  declare expiresAt: number;
+  declare _refreshTimer: ReturnType<typeof setTimeout> | null;
+  declare _pollTimer: ReturnType<typeof setInterval> | null;
+  declare _currentTrackId: string | null;
+  declare _onTrackChange: PlayingListener | null;
+  declare _onPlaybackUpdate: PlayingListener | null;
+  declare _onTokens: ((refreshToken: string) => void) | null;
+  declare _pendingStates: Map<string, number>;
+  declare _playlistApi: 'items' | 'tracks' | null;
+  declare _rateLimitedUntil: number;
+  declare _lastErrorLogAt: number;
+  declare grantedScopes: Set<string>;
+
+  declare static parsePlaylistRef: typeof parsePlaylistRef;
+  declare static playlistItemToTrack: typeof playlistItemToTrack;
+  declare static MAX_PLAYLIST_TRACKS: number;
+  declare static SCOPES: string[];
+
+  constructor(config: SpotifyConfig = {}) {
     this.clientId = '';
     this.clientSecret = '';
     // Blank means talk to Spotify directly, which is the normal case — see
@@ -176,7 +302,7 @@ class SpotifyClient {
    * whenever the settings page saves, so editing the client id or the proxy
    * takes effect without a restart. Only keys actually present are changed.
    */
-  configure({ clientId, clientSecret, proxyBase } = {}) {
+  configure({ clientId, clientSecret, proxyBase }: SpotifyConfig = {}): this {
     if (clientId !== undefined) this.clientId = clientId || '';
     if (clientSecret !== undefined) this.clientSecret = clientSecret || '';
     // Assigned even when blank, so clearing the proxy in the settings page
@@ -187,7 +313,7 @@ class SpotifyClient {
   }
 
   /** True when the OAuth round trip goes through a relay instead of Spotify. */
-  get usingProxy() { return !!this.proxyBase; }
+  get usingProxy(): boolean { return !!this.proxyBase; }
 
   /**
    * Where Spotify sends the browser back to when no proxy is configured.
@@ -202,18 +328,18 @@ class SpotifyClient {
    * The literal is deliberate: it is what Spotify accepts and what has to be
    * registered in the app dashboard, whatever `server.host` happens to be.
    */
-  get loopbackRedirectUri() {
+  get loopbackRedirectUri(): string {
     return `http://127.0.0.1:${this.loopbackPort}/auth/spotify/callback`;
   }
 
-  _refreshRedirectUri() {
+  _refreshRedirectUri(): void {
     this.redirectUri = this.usingProxy
       ? `${this.proxyBase}/api/v1/spotify/proxy/callback`
       : this.loopbackRedirectUri;
   }
 
   /** Tell the client which port to build the loopback redirect from. */
-  setLoopbackPort(port) {
+  setLoopbackPort(port: unknown): this {
     const n = Number(port);
     if (Number.isInteger(n) && n > 0 && n <= 65535) this.loopbackPort = n;
     this._refreshRedirectUri();
@@ -221,13 +347,13 @@ class SpotifyClient {
   }
 
   /** The proxy's login endpoint. Meaningless without a proxy configured. */
-  get loginUrl() { return `${this.proxyBase}/api/v1/spotify/proxy/login`; }
+  get loginUrl(): string { return `${this.proxyBase}/api/v1/spotify/proxy/login`; }
 
-  get configured() {
+  get configured(): boolean {
     return !!(this.clientId && this.clientSecret);
   }
 
-  get authenticated() {
+  get authenticated(): boolean {
     return !!(this.accessToken && Date.now() < this.expiresAt);
   }
 
@@ -238,7 +364,7 @@ class SpotifyClient {
    * everything else keeps working, and warming a private playlist needs a
    * reconnect.
    */
-  get canReadPlaylists() {
+  get canReadPlaylists(): boolean {
     return this.grantedScopes.has('playlist-read-private');
   }
 
@@ -247,14 +373,14 @@ class SpotifyClient {
    * nonce that consumeState() must later match, binding the callback to a flow
    * this server actually started.
    */
-  getAuthorizeUrl() {
+  getAuthorizeUrl(): string {
     const state = crypto.randomBytes(24).toString('base64url');
     this._pruneStates();
     // Anyone who can reach /auth/spotify can start a flow, so the map is
     // bounded: past the cap the oldest outstanding nonce is dropped. A real
     // operator has one or two flows open, never dozens.
     while (this._pendingStates.size >= MAX_PENDING_STATES) {
-      this._pendingStates.delete(this._pendingStates.keys().next().value);
+      this._pendingStates.delete(this._pendingStates.keys().next().value as string);
     }
     this._pendingStates.set(state, Date.now());
     const params = new URLSearchParams({
@@ -278,20 +404,20 @@ class SpotifyClient {
    * Verify and burn a state nonce from the OAuth callback. Returns true only
    * for a nonce this server issued within STATE_TTL_MS and has not yet used.
    */
-  consumeState(state) {
+  consumeState(state: unknown): boolean {
     this._pruneStates();
-    if (!state || !this._pendingStates.has(state)) return false;
+    if (typeof state !== 'string' || !state || !this._pendingStates.has(state)) return false;
     this._pendingStates.delete(state);
     return true;
   }
 
   /** True when at least one authorization flow is currently outstanding. */
-  get hasPendingState() {
+  get hasPendingState(): boolean {
     this._pruneStates();
     return this._pendingStates.size > 0;
   }
 
-  _pruneStates() {
+  _pruneStates(): void {
     const cutoff = Date.now() - STATE_TTL_MS;
     for (const [nonce, issuedAt] of this._pendingStates) {
       if (issuedAt < cutoff) this._pendingStates.delete(nonce);
@@ -299,7 +425,7 @@ class SpotifyClient {
   }
 
   /** Exchange an authorization code for access + refresh tokens. */
-  async exchangeCode(code) {
+  async exchangeCode(code: string): Promise<SpotifyTokens> {
     const body = new URLSearchParams({
       grant_type: 'authorization_code',
       code,
@@ -311,7 +437,7 @@ class SpotifyClient {
   }
 
   /** Refresh the access token using the stored refresh token. */
-  async refreshAccessToken() {
+  async refreshAccessToken(): Promise<SpotifyTokens> {
     if (!this.refreshToken) throw new Error('No refresh token');
     const body = new URLSearchParams({
       grant_type: 'refresh_token',
@@ -323,13 +449,14 @@ class SpotifyClient {
   }
 
   /** Get the currently playing track from Spotify. */
-  async getCurrentlyPlaying() {
+  async getCurrentlyPlaying(): Promise<NowPlaying | null> {
     if (!this.authenticated) {
       if (this.refreshToken) await this.refreshAccessToken();
       else return null;
     }
     const sentAt = Date.now();
-    const data = await this._apiGet('/v1/me/player/currently-playing');
+    const data = await this._apiGet<{ item?: SpotifyPlayingItem | null; progress_ms: number; is_playing: boolean }>(
+      '/v1/me/player/currently-playing');
     const receivedAt = Date.now();
     if (!data || !data.item) return null;
     return {
@@ -357,22 +484,22 @@ class SpotifyClient {
    * Returns a slim array of track summaries, or null if unauthenticated/empty.
    * Requires the `user-read-playback-state` scope (already in getAuthorizeUrl).
    */
-  async getQueue() {
+  async getQueue(): Promise<SpotifyQueueTrack[] | null> {
     if (!this.authenticated) {
       if (this.refreshToken) await this.refreshAccessToken();
       else return null;
     }
-    const data = await this._apiGet('/v1/me/player/queue');
+    const data = await this._apiGet<{ queue?: SpotifyTrackItem[] }>('/v1/me/player/queue');
     if (!data || !Array.isArray(data.queue)) return null;
     return data.queue
-      .filter(item => item && item.id && item.type === 'track')
-      .map(item => ({
+      .filter((item): item is SpotifyTrackItem & { id: string } => !!(item && item.id && item.type === 'track'))
+      .map((item): SpotifyQueueTrack => ({
         trackId: item.id,
-        name: item.name,
+        name: item.name as string,
         artist: (item.artists || []).map(a => a.name).join(', '),
         album: item.album?.name || '',
         albumArt: item.album?.images?.[0]?.url || null,
-        durationMs: item.duration_ms,
+        durationMs: item.duration_ms as number,
         isrc: item.external_ids?.isrc || null,
       }));
   }
@@ -386,12 +513,10 @@ class SpotifyClient {
    * ends or `limit` is reached, and reports `truncated` so the caller can say
    * so rather than silently warming the first N.
    */
-  async getPlaylist(ref, { limit = MAX_PLAYLIST_TRACKS } = {}) {
+  async getPlaylist(ref: unknown, { limit = MAX_PLAYLIST_TRACKS } = {}): Promise<SpotifyPlaylist> {
     const id = parsePlaylistRef(ref);
     if (!id) {
-      const err = new Error('Not a Spotify playlist link, URI or id');
-      err.status = 400;
-      throw err;
+      throw new HttpError(400, 'Not a Spotify playlist link, URI or id');
     }
     await this._ensureAuth();
 
@@ -400,24 +525,22 @@ class SpotifyClient {
     // Ask only for what we render or warm. A playlist page with every field is
     // hundreds of KB per 100 tracks, nearly all of it market availability lists.
     // The total comes from the item pages, which carry it under either API.
-    const head = await this._apiGet(
+    const head = await this._apiGet<{ name?: string; owner?: { display_name?: string } }>(
       `/v1/playlists/${id}?fields=${encodeURIComponent('name,owner(display_name)')}`
     );
     if (!head) {
-      const err = new Error('Spotify returned nothing for that playlist');
-      err.status = 404;
-      throw err;
+      throw new HttpError(404, 'Spotify returned nothing for that playlist');
     }
 
-    const tracks = [];
+    const tracks: PlaylistTrack[] = [];
     let walked = 0;
     let hasMore = true;
-    let total = null;
+    let total: number | null = null;
 
     while (hasMore && walked < cap) {
       const pageSize = Math.min(PLAYLIST_PAGE_SIZE, cap - walked);
       const page = await this._playlistPage(id, pageSize, walked);
-      if (page && Number.isFinite(page.total)) total = page.total;
+      if (page && typeof page.total === 'number' && Number.isFinite(page.total)) total = page.total;
       const returned = page && Array.isArray(page.items) ? page.items : [];
       if (!returned.length) break;
       // Trust the cap over the response: a page that comes back longer than we
@@ -454,16 +577,16 @@ class SpotifyClient {
    * The ISRC is asked for either way. Where Spotify still sends it, it is the
    * exact recording and nothing has to be looked up.
    */
-  async _playlistPage(id, limit, offset) {
+  async _playlistPage(id: string, limit: number, offset: number): Promise<SpotifyPage<SpotifyPlaylistEntry> | null> {
     const trackFields = 'id,name,type,duration_ms,artists(name),album(name,images),external_ids(isrc)';
-    const apis = this._playlistApi === 'tracks'
+    const apis: { path: 'items' | 'tracks'; entry: string }[] = this._playlistApi === 'tracks'
       ? [{ path: 'tracks', entry: 'track' }]
       : [{ path: 'items', entry: 'item' }, { path: 'tracks', entry: 'track' }];
 
     for (const [i, api] of apis.entries()) {
       const fields = `next,total,items(is_local,${api.entry}(${trackFields}))`;
       try {
-        const page = await this._apiGet(
+        const page = await this._apiGet<SpotifyPage<SpotifyPlaylistEntry>>(
           `/v1/playlists/${id}/${api.path}?limit=${limit}&offset=${offset}`
           + `&fields=${encodeURIComponent(fields)}`
         );
@@ -472,8 +595,8 @@ class SpotifyClient {
       } catch (err) {
         // Since February 2026 Spotify lists the contents only of playlists the
         // account owns or collaborates on; anyone else's is refused.
-        if (err.status === 403) throw notYourPlaylistError();
-        if (err.status === 404 && i < apis.length - 1) continue;
+        if (statusOf(err) === 403) throw notYourPlaylistError();
+        if (statusOf(err) === 404 && i < apis.length - 1) continue;
         throw err;
       }
     }
@@ -488,17 +611,17 @@ class SpotifyClient {
    * see SCOPES. A connection older than that scope gets a short public-only
    * list rather than an error, which is why `canReadPlaylists` is on the status.
    */
-  async getMyPlaylists({ limit = 100 } = {}) {
+  async getMyPlaylists({ limit = 100 } = {}): Promise<{ id: string; name: string; owner: string; total: number }[]> {
     await this._ensureAuth();
     const cap = Math.min(Math.max(1, Math.floor(limit) || 0), 200);
-    const out = [];
+    const out: { id: string; name: string; owner: string; total: number }[] = [];
     // Paged by what Spotify returned, not by what we kept — an entry can be
     // dropped below, and paging on the kept count would ask for the same
     // offset forever.
     let offset = 0;
     while (offset < cap) {
       const pageSize = Math.min(50, cap - offset);
-      const page = await this._apiGet(`/v1/me/playlists?limit=${pageSize}&offset=${offset}`);
+      const page = await this._apiGet<SpotifyPage<SpotifyPlaylistSummary>>(`/v1/me/playlists?limit=${pageSize}&offset=${offset}`);
       const items = (page && Array.isArray(page.items) ? page.items : []).slice(0, pageSize);
       if (!items.length) break;
       offset += items.length;
@@ -511,7 +634,7 @@ class SpotifyClient {
           total: pl.items?.total ?? pl.tracks?.total ?? 0,
         });
       }
-      if (!page.next) break;
+      if (!page || !page.next) break;
     }
     return out;
   }
@@ -523,20 +646,18 @@ class SpotifyClient {
    * poller has nothing to say to a person, this throws: every caller is a
    * button someone just pressed and is owed a reason.
    */
-  async _ensureAuth() {
+  async _ensureAuth(): Promise<void> {
     if (this.authenticated) return;
     if (!this.refreshToken) {
-      const err = new Error('Spotify not connected');
-      err.status = 401;
-      throw err;
+      throw new HttpError(401, 'Spotify not connected');
     }
     await this.refreshAccessToken();
   }
 
   /** Start polling Spotify for playback changes. */
-  startPolling(intervalMs = 2000) {
+  startPolling(intervalMs = 2000): void {
     this.stopPolling();
-    this._pollTimer = setInterval(async () => {
+    const timer = setInterval(async () => {
       // Honour a rate-limit window before issuing anything new.
       if (Date.now() < this._rateLimitedUntil) return;
       try {
@@ -553,7 +674,8 @@ class SpotifyClient {
         this._noteRequestError(err);
       }
     }, intervalMs);
-    if (this._pollTimer.unref) this._pollTimer.unref();
+    if (timer.unref) timer.unref();
+    this._pollTimer = timer;
   }
 
   /**
@@ -561,9 +683,9 @@ class SpotifyClient {
    * asked for; anything else is logged at most once per minute so a persistent
    * outage is visible without flooding the console at 1 Hz.
    */
-  _noteRequestError(err) {
-    if (err && err.status === 429) {
-      const waitMs = err.retryAfterMs || DEFAULT_RETRY_AFTER_MS;
+  _noteRequestError(err: unknown): void {
+    if (statusOf(err) === 429) {
+      const waitMs = (err as SpotifyError).retryAfterMs || DEFAULT_RETRY_AFTER_MS;
       this._rateLimitedUntil = Date.now() + waitMs;
       console.warn(`[spotify] rate limited — backing off ${Math.round(waitMs / 1000)}s`);
       return;
@@ -571,16 +693,16 @@ class SpotifyClient {
     const now = Date.now();
     if (now - this._lastErrorLogAt > 60000) {
       this._lastErrorLogAt = now;
-      console.warn(`[spotify] ${err && err.message ? err.message : err}`);
+      console.warn(`[spotify] ${err instanceof Error && err.message ? err.message : err}`);
     }
   }
 
-  stopPolling() {
+  stopPolling(): void {
     if (this._pollTimer) { clearInterval(this._pollTimer); this._pollTimer = null; }
   }
 
-  onTrackChange(fn) { this._onTrackChange = fn; }
-  onPlaybackUpdate(fn) { this._onPlaybackUpdate = fn; }
+  onTrackChange(fn: PlayingListener | null): void { this._onTrackChange = fn; }
+  onPlaybackUpdate(fn: PlayingListener | null): void { this._onPlaybackUpdate = fn; }
 
   /**
    * Register a callback fired whenever the refresh token changes.
@@ -591,7 +713,7 @@ class SpotifyClient {
    * this fires on every change — saving only the first would go quietly stale
    * and the session would die at the next restart with no obvious cause.
    */
-  onTokens(fn) { this._onTokens = fn; }
+  onTokens(fn: ((refreshToken: string) => void) | null): void { this._onTokens = fn; }
 
   /**
    * Bring a stored session back after a restart.
@@ -605,7 +727,7 @@ class SpotifyClient {
    * request never got an answer. The caller needs that difference: a rig that
    * boots before its network is up must not have its session deleted.
    */
-  async restoreSession(refreshToken) {
+  async restoreSession(refreshToken: string | null | undefined): Promise<boolean> {
     if (!refreshToken || !this.configured) return false;
     this.refreshToken = refreshToken;
     try {
@@ -617,7 +739,8 @@ class SpotifyClient {
       // drop it, store included, once Spotify has actually said no. Deciding
       // that here rather than at the call site keeps one rule for "the session
       // is gone" instead of two that can drift apart.
-      if (err && err.status >= 400 && err.status < 500) {
+      const status = statusOf(err);
+      if (status !== undefined && status >= 400 && status < 500) {
         this.refreshToken = null;
         this._emitTokens('');
       }
@@ -634,7 +757,7 @@ class SpotifyClient {
    * wiping the saved session every time the server stopped would defeat the
    * point of saving it.
    */
-  disconnect({ forget = false } = {}) {
+  disconnect({ forget = false } = {}): void {
     this.stopPolling();
     if (this._refreshTimer) { clearTimeout(this._refreshTimer); this._refreshTimer = null; }
     this.accessToken = null;
@@ -647,7 +770,7 @@ class SpotifyClient {
     if (forget) this._emitTokens('');
   }
 
-  getStatus() {
+  getStatus(): { configured: boolean; authenticated: boolean; canReadPlaylists: boolean; currentTrackId: string | null } {
     return {
       configured: this.configured,
       authenticated: this.authenticated,
@@ -658,7 +781,7 @@ class SpotifyClient {
 
   // ── Internal ─────────────────────────────────────────────
 
-  _setTokens(data) {
+  _setTokens(data: SpotifyTokens): void {
     if (data.access_token) this.accessToken = data.access_token;
     // Spotify echoes the granted scopes on both the code exchange and every
     // refresh. A token minted before a scope was added never gains it, so this
@@ -674,31 +797,32 @@ class SpotifyClient {
       this.expiresAt = Date.now() + data.expires_in * 1000 - 60000; // 1 min buffer
       // Auto-refresh before expiry
       if (this._refreshTimer) clearTimeout(this._refreshTimer);
-      this._refreshTimer = setTimeout(() => {
+      const timer = setTimeout(() => {
         this.refreshAccessToken().catch((err) => this._noteRequestError(err));
       }, (data.expires_in - 120) * 1000);
-      if (this._refreshTimer.unref) this._refreshTimer.unref();
+      if (timer.unref) timer.unref();
+      this._refreshTimer = timer;
     }
   }
 
   /** Hand the refresh token to whoever is storing it, without letting a
    *  failure there take down the request that produced it. */
-  _emitTokens(token) {
+  _emitTokens(token: string): void {
     if (!this._onTokens) return;
     try { this._onTokens(token); }
-    catch (err) { console.warn(`[spotify] could not save the session: ${err.message}`); }
+    catch (err) { console.warn(`[spotify] could not save the session: ${messageOf(err)}`); }
   }
 
-  _tokenRequest(body) {
+  _tokenRequest(body: string): Promise<SpotifyTokens> {
     const auth = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
-    return this._request('POST', 'https://accounts.spotify.com/api/token', {
+    return this._request<SpotifyTokens>('POST', 'https://accounts.spotify.com/api/token', {
       'Content-Type': 'application/x-www-form-urlencoded',
       'Authorization': `Basic ${auth}`,
-    }, body);
+    }, body) as Promise<SpotifyTokens>;
   }
 
-  _apiGet(path) {
-    return this._request('GET', `https://api.spotify.com${path}`, {
+  _apiGet<T>(path: string): Promise<T | null> {
+    return this._request<T>('GET', `https://api.spotify.com${path}`, {
       'Authorization': `Bearer ${this.accessToken}`,
     });
   }
@@ -711,8 +835,8 @@ class SpotifyClient {
    * `err.retryAfterMs` — callers previously got the error body parsed as if it
    * were data, which turned an auth failure into a silent wrong answer.
    */
-  async _request(method, urlStr, headers, body) {
-    let res;
+  async _request<T>(method: string, urlStr: string, headers: Record<string, string>, body?: string): Promise<T | null> {
+    let res: Response;
     try {
       res = await fetch(urlStr, {
         method,
@@ -722,37 +846,33 @@ class SpotifyClient {
       });
     } catch (err) {
       // AbortError from the timeout, DNS failure, connection reset…
+      const name = err && typeof err === 'object' ? (err as { name?: unknown }).name : undefined;
       const wrapped = new Error(
-        err.name === 'TimeoutError' || err.name === 'AbortError'
+        name === 'TimeoutError' || name === 'AbortError'
           ? `Spotify request timed out after ${REQUEST_TIMEOUT_MS}ms`
-          : `Spotify request failed: ${err.message}`
+          : `Spotify request failed: ${messageOf(err)}`
       );
       wrapped.cause = err;
       throw wrapped;
     }
 
     if (res.status === 429) {
-      const err = new Error('Spotify rate limit hit');
-      err.status = 429;
-      err.retryAfterMs = this._parseRetryAfter(res.headers.get('retry-after'));
-      throw err;
+      throw new SpotifyError(429, 'Spotify rate limit hit', this._parseRetryAfter(res.headers.get('retry-after')));
     }
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      const err = new Error(`Spotify API ${res.status}${text ? `: ${text.slice(0, 200)}` : ''}`);
-      err.status = res.status;
-      throw err;
+      throw new SpotifyError(res.status, `Spotify API ${res.status}${text ? `: ${text.slice(0, 200)}` : ''}`);
     }
 
     if (res.status === 204) return null;
     const text = await res.text();
     if (!text) return null;
-    try { return JSON.parse(text); } catch { return null; }
+    try { return JSON.parse(text) as T; } catch { return null; }
   }
 
-  _parseRetryAfter(header) {
-    const seconds = Number.parseInt(header, 10);
+  _parseRetryAfter(header: string | null): number {
+    const seconds = Number.parseInt(header ?? '', 10);
     if (!Number.isFinite(seconds) || seconds < 0) return DEFAULT_RETRY_AFTER_MS;
     return Math.min(seconds * 1000, MAX_RETRY_AFTER_MS);
   }

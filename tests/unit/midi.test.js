@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert';
 import { EventEmitter } from 'node:events';
 
-import MidiController from '../../src/midi.js';
+import MidiController from '../../src/midi.ts';
 
 // A stand-in for the state the controller reads and the callbacks it drives, so
 // these tests need neither a MIDI port nor the engine.

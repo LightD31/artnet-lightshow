@@ -25,6 +25,55 @@ import { DEFAULT_MAP } from './server/midi-map.ts';
 import { createRequire } from 'node:module';
 
 import { ENERGY_EFFECT_IDS, STROBE_FUNCTION_IDS, SYNC_OFFSET_LIMIT_MS } from './server/presets.ts';
+import { messageOf } from './errors.ts';
+import type { MidiBinding, MidiMap } from './server/midi-map.ts';
+import type { ShowState } from './server/state.ts';
+import type { Override } from './types/rig.ts';
+
+// easymidi is optional, so it is loaded at run time and described here by the
+// parts this module uses.
+interface NoteMessage { note: number; velocity: number; channel: number }
+interface CcMessage { controller: number; value: number; channel: number }
+interface PitchMessage { value: number; channel: number }
+
+interface MidiInput {
+  on(event: 'noteon' | 'noteoff', fn: (message: NoteMessage) => void): void;
+  on(event: 'cc', fn: (message: CcMessage) => void): void;
+  on(event: 'pitch', fn: (message: PitchMessage) => void): void;
+  close(): void;
+}
+
+interface MidiOutput {
+  send(type: 'cc', message: CcMessage): void;
+  send(type: 'noteon', message: NoteMessage): void;
+  close(): void;
+}
+
+interface EasyMidi {
+  getInputs(): string[];
+  getOutputs(): string[];
+  Input: new (name: string) => MidiInput;
+  Output: new (name: string) => MidiOutput;
+}
+
+/** The ports this machine has. */
+export interface MidiPortList {
+  inputs: string[];
+  outputs: string[];
+}
+
+/** A control captured by learn mode. */
+export interface LearnCapture {
+  kind: 'cc' | 'notes';
+  number: number;
+  channel: number;
+  binding: MidiBinding;
+}
+
+/** A learn-mode transition, for every open settings page. */
+export type LearnEvent = { status: string; binding: MidiBinding } & Partial<LearnCapture>;
+
+type RelMode = 'twos' | 'offset';
 
 // Loaded through require so it can stay optional: a missing or broken native
 // MIDI binding turns MIDI off rather than stopping the server from starting.
@@ -33,9 +82,9 @@ const require = createRequire(import.meta.url);
 // Milliseconds per encoder detent when nudging the light/music sync.
 const SYNC_NUDGE_MS = 5;
 
-let easymidi;
+let easymidi: EasyMidi | undefined;
 try {
-  easymidi = require('easymidi');
+  easymidi = require('easymidi') as EasyMidi;
 } catch (_) {
   console.warn('[MIDI] easymidi not available — run `npm install easymidi` to enable MIDI support.');
 }
@@ -76,8 +125,8 @@ const ECHO_SUPPRESS_MS = 400;
 // says which is in use: nobody hand-turns an encoder 63 detents inside one MIDI
 // message, so a value next to 64 can only be binary offset, and one next to 0
 // or 127 can only be two's complement. That makes the first detent decisive.
-const REL_TWOS = 'twos';
-const REL_OFFSET = 'offset';
+const REL_TWOS: RelMode = 'twos';
+const REL_OFFSET: RelMode = 'offset';
 
 // How close to a landmark a value has to be to count as evidence. Wide enough
 // for a fast spin (a few detents per message), far narrower than the 63 that
@@ -85,25 +134,42 @@ const REL_OFFSET = 'offset';
 const REL_EVIDENCE_BAND = 7;
 
 /** Which encoding this raw value could only have come from, or null. */
-function relEvidence(value) {
+function relEvidence(value: number): RelMode | null {
   if (Math.abs(value - 64) <= REL_EVIDENCE_BAND) return REL_OFFSET;
   if (value <= REL_EVIDENCE_BAND || value >= 127 - REL_EVIDENCE_BAND) return REL_TWOS;
   return null;
 }
 
-function relDelta(value, mode) {
+function relDelta(value: number, mode: RelMode): number {
   // Both encodings agree that 64 is "no movement", and neither sends it.
   if (value === 64) return 0;
   if (mode === REL_OFFSET) return value - 64;
   return value > 64 ? value - 128 : value;
 }
 
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
 
 // ── MidiController class ──────────────────────────────────────────────────────
 
 class MidiController {
-  constructor(stateRef, applyFn, tapFn) {
+  declare state: ShowState;
+  declare apply: (patch: Record<string, unknown>) => unknown;
+  declare tap: () => void;
+  declare input: MidiInput | null;
+  declare output: MidiOutput | null;
+  declare map: MidiMap;
+  declare enabled: boolean;
+  declare recallCue: ((id: string) => unknown) | null;
+  declare _learn: { binding: MidiBinding; resolve: (capture: LearnCapture | null) => void; timer: ReturnType<typeof setTimeout> } | null;
+  declare _learnListeners: ((event: LearnEvent) => void)[];
+  declare _lastCcOut: Map<number, number>;
+  declare _lastCcIn: Map<number, number>;
+  declare _relModes: Map<string, RelMode>;
+  declare controlFeedback: boolean;
+  declare _cachedPorts: MidiPortList | null;
+  declare _energyEffect: string | undefined;
+
+  constructor(stateRef: ShowState, applyFn: (patch: Record<string, unknown>) => unknown, tapFn: () => void) {
     this.state = stateRef;
     this.apply = applyFn;    // fn(patch) — same as socket 'set' event
     this.tap   = tapFn;       // fn() — trigger tap tempo
@@ -131,7 +197,7 @@ class MidiController {
   }
 
   /** Swap the control map. Takes effect on the next message; no reconnect. */
-  setMap(map) {
+  setMap(map: MidiMap | null | undefined): void {
     this.map = map || DEFAULT_MAP;
     // A rebound control shows something different now, so nothing we sent for
     // the old map still describes it.
@@ -146,13 +212,13 @@ class MidiController {
    * setting because a MIDI loopback — a virtual port wired back to our own
    * input — would otherwise echo our feedback in as operator input.
    */
-  setControlFeedback(enabled) {
+  setControlFeedback(enabled: unknown): void {
     this.controlFeedback = !!enabled;
     this._lastCcOut.clear();
     if (this.controlFeedback) this.sendFeedback();
   }
 
-  listPorts() {
+  listPorts(): MidiPortList {
     if (!easymidi) return { inputs: [], outputs: [] };
     // Cache the result — enumerate once, refresh only on explicit connect/close
     if (this._cachedPorts) return this._cachedPorts;
@@ -164,12 +230,12 @@ class MidiController {
     return this._cachedPorts;
   }
 
-  refreshPorts() {
+  refreshPorts(): MidiPortList {
     this._cachedPorts = null;
     return this.listPorts();
   }
 
-  connect(inputName, outputName) {
+  connect(inputName: string | null, outputName: string | null): boolean {
     if (!easymidi) {
       console.warn('[MIDI] easymidi not loaded — MIDI unavailable.');
       return false;
@@ -185,7 +251,7 @@ class MidiController {
     console.log('[MIDI] Available outputs:', outputs);
 
     // Auto-detect X-Touch Compact if no name given
-    const findPort = (list, hint) => {
+    const findPort = (list: string[], hint: string | null): string | null => {
       if (hint) return list.find(n => n === hint) || null;
       return list.find(n => /x.?touch/i.test(n)) || list[0] || null;
     };
@@ -215,20 +281,22 @@ class MidiController {
       this.sendFeedback();
       return true;
     } catch (err) {
-      console.error('[MIDI] Failed to open MIDI port:', err.message);
+      console.error('[MIDI] Failed to open MIDI port:', messageOf(err));
       return false;
     }
   }
 
   /** The binding for an incoming message, honouring an optional channel filter. */
-  _bindingFor(kind, number, channel) {
+  _bindingFor(kind: 'cc' | 'notes', number: number, channel: number): MidiBinding | null {
     const binding = this.map[kind] && this.map[kind][number];
     if (!binding) return null;
     if (binding.channel !== undefined && binding.channel !== channel) return null;
     return binding;
   }
 
-  _bindInput() {
+  _bindInput(): void {
+    const input = this.input;
+    if (!input) return;
     // this.map is read at dispatch time rather than captured here, so a
     // relearned binding takes effect immediately instead of on the next
     // reconnect.
@@ -237,18 +305,18 @@ class MidiController {
     // controller, unusable during a show — a single encoder sweep is hundreds
     // of lines. Off unless DEBUG_MIDI=1.
     if (process.env.DEBUG_MIDI === '1') {
-      this.input.on('noteon',  ({ note, velocity, channel }) =>
+      input.on('noteon',  ({ note, velocity, channel }) =>
         console.log(`[MIDI] noteon  ch=${channel + 1} note=${note} vel=${velocity}  → ${this.map.notes[note] ? this.map.notes[note].action : 'unmapped'}`));
-      this.input.on('noteoff', ({ note, channel }) =>
+      input.on('noteoff', ({ note, channel }) =>
         console.log(`[MIDI] noteoff ch=${channel + 1} note=${note}`));
-      this.input.on('cc',      ({ controller, value, channel }) =>
+      input.on('cc',      ({ controller, value, channel }) =>
         console.log(`[MIDI] cc      ch=${channel + 1} cc=${controller} val=${value}  → ${this.map.cc[controller] ? this.map.cc[controller].action : 'unmapped'}`));
-      this.input.on('pitch',   ({ value, channel }) =>
+      input.on('pitch',   ({ value, channel }) =>
         console.log(`[MIDI] pitch   ch=${channel + 1} val=${value}`));
     }
 
     // Note On → button press
-    this.input.on('noteon', ({ note, velocity, channel }) => {
+    input.on('noteon', ({ note, velocity, channel }) => {
       // A learn in progress swallows the message: the operator is telling us
       // which control they mean, not asking for it to fire.
       if (velocity > 0 && this._captureLearn('notes', note, channel)) return;
@@ -264,7 +332,7 @@ class MidiController {
     });
 
     // Explicit Note Off for controllers that send it separately
-    this.input.on('noteoff', ({ note, channel }) => {
+    input.on('noteoff', ({ note, channel }) => {
       const binding = this._bindingFor('notes', note, channel);
       if (binding && binding.action === 'energyHold') {
         this.apply({ energyOverride: null });
@@ -273,7 +341,7 @@ class MidiController {
     });
 
     // CC → encoder (relative) or fader (absolute)
-    this.input.on('cc', ({ controller, value, channel }) => {
+    input.on('cc', ({ controller, value, channel }) => {
       if (this._captureLearn('cc', controller, channel)) return;
 
       // Note the touch even when unmapped: a fader being moved is a fader we
@@ -313,11 +381,11 @@ class MidiController {
    * server down the first time that button is pressed, mid-show. A warning and
    * a dead button is the right cost.
    */
-  _safely(binding, run) {
+  _safely(binding: MidiBinding, run: () => void): void {
     try {
       run();
     } catch (err) {
-      console.warn(`[MIDI] ${binding.action} failed: ${err.message}`);
+      console.warn(`[MIDI] ${binding.action} failed: ${messageOf(err)}`);
     }
   }
 
@@ -331,9 +399,9 @@ class MidiController {
    * cancels the first, so a client that changed its mind cannot leave one armed
    * behind it.
    */
-  startLearn(binding) {
+  startLearn(binding: MidiBinding): Promise<LearnCapture | null> {
     this.cancelLearn('superseded');
-    return new Promise((resolve) => {
+    return new Promise<LearnCapture | null>((resolve) => {
       const timer = setTimeout(() => this.cancelLearn('timeout'), LEARN_TIMEOUT_MS);
       timer.unref();
       this._learn = { binding, resolve, timer };
@@ -341,7 +409,7 @@ class MidiController {
     });
   }
 
-  cancelLearn(reason = 'cancelled') {
+  cancelLearn(reason = 'cancelled'): boolean {
     const learn = this._learn;
     if (!learn) return false;
     this._learn = null;
@@ -351,33 +419,33 @@ class MidiController {
     return true;
   }
 
-  get learning() { return !!this._learn; }
+  get learning(): boolean { return !!this._learn; }
 
   /** True when this message was consumed by an armed learn. */
-  _captureLearn(kind, number, channel) {
+  _captureLearn(kind: 'cc' | 'notes', number: number, channel: number): boolean {
     const learn = this._learn;
     if (!learn) return false;
     this._learn = null;
     clearTimeout(learn.timer);
 
-    const captured = { kind, number, channel, binding: learn.binding };
+    const captured: LearnCapture = { kind, number, channel, binding: learn.binding };
     learn.resolve(captured);
     this._emitLearn({ status: 'captured', ...captured });
     return true;
   }
 
   /** Register a listener for learn-mode transitions (armed/captured/cancelled). */
-  onLearn(fn) { this._learnListeners.push(fn); }
+  onLearn(fn: (event: LearnEvent) => void): void { this._learnListeners.push(fn); }
 
-  _emitLearn(event) {
+  _emitLearn(event: LearnEvent): void {
     for (const fn of this._learnListeners) {
-      try { fn(event); } catch (err) { console.warn(`[MIDI] learn listener: ${err.message}`); }
+      try { fn(event); } catch (err) { console.warn(`[MIDI] learn listener: ${messageOf(err)}`); }
     }
   }
 
   // ── Dispatch ─────────────────────────────────────────────────────────────
 
-  _dispatch(binding) {
+  _dispatch(binding: MidiBinding): void {
     const s = this.state;
     switch (binding.action) {
       case 'tap':
@@ -431,12 +499,12 @@ class MidiController {
         const cur = fix && fix.override;
         const newBo = !(cur && cur.blackout);
         if (!newBo && cur && cur.blackout && !cur.enabled) {
-          this._emitFixOverride(binding.fixture, null);
+          this._emitFixOverride(fix.id, null);
           break;
         }
         // Blackout is a gate, not a replacement look. Clearing it restores the
         // prior override; if there was none, return to the pattern engine.
-        this._emitFixOverride(binding.fixture, {
+        this._emitFixOverride(fix.id, {
           ...(cur || { enabled: false, r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 255, strobe: 0 }),
           blackout: newBo,
         });
@@ -456,7 +524,7 @@ class MidiController {
     this.sendFeedback();
   }
 
-  _dispatchContinuous(binding, delta) {
+  _dispatchContinuous(binding: MidiBinding, delta: number): void {
     const s = this.state;
     switch (binding.action) {
       case 'adjustBpm':
@@ -471,8 +539,8 @@ class MidiController {
       case 'adjustFixtureDim': {
         const fix = s.fixtures.find((fixture) => fixture.id === binding.fixture);
         if (!fix) break;
-        const cur = (fix.override && fix.override.enabled) ? fix.override.dim : 255;
-        this._emitFixOverride(binding.fixture, {
+        const cur = (fix.override && fix.override.enabled) ? fix.override.dim ?? 255 : 255;
+        this._emitFixOverride(fix.id, {
           ...(fix.override || {}), enabled: true, dim: clamp(cur + delta, 0, 255), blackout: false,
         });
         break;
@@ -480,8 +548,8 @@ class MidiController {
       case 'adjustFixtureMax': {
         const fix = s.fixtures.find((fixture) => fixture.id === binding.fixture);
         if (!fix) break;
-        const cur = Number.isInteger(fix.maxBrightness) ? fix.maxBrightness : 255;
-        this._emitFixMax(binding.fixture, clamp(cur + delta, 0, 255));
+        const cur = Number.isInteger(fix.maxBrightness) ? fix.maxBrightness as number : 255;
+        this._emitFixMax(fix.id, clamp(cur + delta, 0, 255));
         break;
       }
       case 'adjustAutoIntensity':
@@ -504,7 +572,7 @@ class MidiController {
   }
 
   /** `raw` is the 0-127 the controller sent; each action scales it itself. */
-  _dispatchAbsolute(binding, raw) {
+  _dispatchAbsolute(binding: MidiBinding, raw: number): void {
     const s = this.state;
     const level = Math.round((raw / 127) * 255);
     switch (binding.action) {
@@ -520,7 +588,7 @@ class MidiController {
       case 'setFixtureDim': {
         const fix = s.fixtures.find((fixture) => fixture.id === binding.fixture);
         if (!fix) break;
-        this._emitFixOverride(binding.fixture, {
+        this._emitFixOverride(fix.id, {
           ...(fix.override || { r: 0, g: 0, b: 0, w: 0, strobe: 0 }),
           enabled: true, dim: level, blackout: false,
         });
@@ -529,7 +597,7 @@ class MidiController {
       case 'setFixtureMax':
         // Deliberately does NOT enable the override: scaling a fixture down is
         // not the same as taking it out of the pattern engine.
-        if (s.fixtures.some((fixture) => fixture.id === binding.fixture)) this._emitFixMax(binding.fixture, level);
+        if (s.fixtures.some((fixture) => fixture.id === binding.fixture)) this._emitFixMax(binding.fixture as number, level);
         break;
       case 'setAutoIntensity':
         this.apply({ autoIntensity: Math.round((raw / 127) * 100) });
@@ -544,17 +612,17 @@ class MidiController {
   }
 
   // Override callback — set externally to wire into engine
-  overrideFixture = null;
+  overrideFixture: ((id: number, override: Partial<Override> | null) => void) | null = null;
 
   // Brightness-trim callback — likewise. Separate from overrideFixture because
   // the trim is not part of the override.
-  setFixtureMax = null;
+  setFixtureMax: ((id: number, value: number) => void) | null = null;
 
-  _emitFixOverride(id, override) {
+  _emitFixOverride(id: number, override: Partial<Override> | null): void {
     if (this.overrideFixture) this.overrideFixture(id, override);
   }
 
-  _emitFixMax(id, value) {
+  _emitFixMax(id: number, value: number): void {
     if (this.setFixtureMax) this.setFixtureMax(id, value);
   }
 
@@ -571,14 +639,14 @@ class MidiController {
    * change the master dimmer in the browser and the physical fader stayed where
    * it was, so the next touch snapped the rig back to a stale value.
    */
-  sendFeedback() {
+  sendFeedback(): void {
     if (!this.output) return;
     const s = this.state;
 
     this._sendControlFeedback();
 
     for (const [note, binding] of Object.entries(this.map.notes || {})) {
-      let lit = null;
+      let lit: boolean | null = null;
       switch (binding.action) {
         case 'setPattern':       lit = binding.value === s.pattern; break;
         case 'setColorA':        lit = binding.value === s.colorA; break;
@@ -609,9 +677,9 @@ class MidiController {
    * a surface with LED rings it lights the ring to match, which is the same
    * information the fader gives you by being somewhere.
    */
-  _feedbackValue(binding) {
+  _feedbackValue(binding: MidiBinding): number | null {
     const s = this.state;
-    const to127 = (value, max) => Math.max(0, Math.min(127, Math.round((value / max) * 127)));
+    const to127 = (value: number, max: number) => Math.max(0, Math.min(127, Math.round((value / max) * 127)));
 
     switch (binding.action) {
       case 'setMasterDimmer':
@@ -630,14 +698,14 @@ class MidiController {
         if (!fix) return null;
         // No override means the pattern engine owns the fixture and it is at
         // full — which is where the fader should sit, ready to pull it down.
-        const dim = (fix.override && fix.override.enabled) ? fix.override.dim : 255;
+        const dim = (fix.override && fix.override.enabled) ? fix.override.dim ?? 255 : 255;
         return to127(dim, 255);
       }
       case 'setFixtureMax':
       case 'adjustFixtureMax': {
         const fix = s.fixtures.find((fixture) => fixture.id === binding.fixture);
         if (!fix) return null;
-        return to127(Number.isInteger(fix.maxBrightness) ? fix.maxBrightness : 255, 255);
+        return to127(Number.isInteger(fix.maxBrightness) ? fix.maxBrightness as number : 255, 255);
       }
       case 'setAutoIntensity':
       case 'adjustAutoIntensity':
@@ -659,8 +727,9 @@ class MidiController {
    * is left alone; and a value we already sent is not sent again, because a
    * motor re-driven to its current position at the broadcast rate hums.
    */
-  _sendControlFeedback() {
-    if (!this.controlFeedback) return;
+  _sendControlFeedback(): void {
+    const output = this.output;
+    if (!this.controlFeedback || !output) return;
     const now = Date.now();
 
     for (const [cc, binding] of Object.entries(this.map.cc || {})) {
@@ -674,19 +743,19 @@ class MidiController {
 
       this._lastCcOut.set(number, value);
       try {
-        this.output.send('cc', { controller: number, value, channel: binding.channel || 0 });
+        output.send('cc', { controller: number, value, channel: binding.channel || 0 });
       } catch (_) { /* the port can vanish mid-show; feedback is not worth dying for */ }
     }
   }
 
-  _ledNote(note, velocity, channel = 0) {
+  _ledNote(note: number, velocity: number, channel = 0): void {
     if (!this.output) return;
     try {
       this.output.send('noteon', { note, velocity, channel });
     } catch (_) { /* the port can vanish mid-show; feedback is not worth dying for */ }
   }
 
-  close() {
+  close(): void {
     this.cancelLearn('disconnected');
     // Forget what we sent: the next connection has to push the full state so
     // the faders fly to where the show is rather than staying where they lay.
