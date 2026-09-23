@@ -16,6 +16,8 @@ import type { BeatGrid } from '../shared/beat-clock.ts';
  *   track  the auto show is off, but the track playing has a cached analysis:
  *          manual patterns lock to its grid too. A tap or a typed BPM takes
  *          the tempo back by hand until the next track.
+ *   live   the live input hears the music and has found its beat: the grid
+ *          it keeps (see live-input.ts), for a track nothing else knows.
  *   tap    none of those: a free-running clock at the operator's BPM, set by
  *          tap tempo, BPM entry or MIDI.
  *
@@ -42,7 +44,7 @@ const STALL_MS = 200;
 const clampBpm = (bpm: number): number => Math.max(20, Math.min(300, bpm));
 
 /** What the clock is locked to. */
-export type ClockSource = 'auto' | 'cdj' | 'track' | 'tap';
+export type ClockSource = 'auto' | 'cdj' | 'track' | 'live' | 'tap';
 
 /** Where the music is, in beats, and at what tempo. */
 export interface ClockReading {
@@ -66,7 +68,7 @@ export interface AutoClock {
   anchorMs?: number | null;
 }
 
-/** A master deck's clock while it plays. */
+/** A deck's clock while it plays, or the live input's while it hears a beat. */
 export interface DeckClock {
   beatPos: number;
   bpm?: number | null;
@@ -90,6 +92,7 @@ class Conductor {
   declare _free: FreeClock;
   declare _autoSource: () => AutoClock | null;
   declare _prolinkSource: () => DeckClock | null;
+  declare _liveSource: () => DeckClock | null;
   declare _track: TrackLock | null;
   declare _override: boolean;
   declare _last: (ClockReading & { t: number }) | null;
@@ -104,6 +107,7 @@ class Conductor {
     this._free = { at: now(), beatPos: 0, bpm, running: true };
     this._autoSource = () => null;
     this._prolinkSource = () => null;
+    this._liveSource = () => null;
     this._track = null;                 // { key, grid, positionMs }
     this._override = false;             // a tap or typed BPM beats the track source
     this._last = null;                  // the previous reading, for continuity
@@ -122,6 +126,9 @@ class Conductor {
 
   /** `fn()` → `{ beatPos, bpm }` while a master deck is playing, else null. */
   setProlinkSource(fn: (() => DeckClock | null) | null | undefined): void { this._prolinkSource = typeof fn === 'function' ? fn : () => null; }
+
+  /** `fn()` → `{ beatPos, bpm }` while the live input hears a beat, else null. */
+  setLiveSource(fn: (() => DeckClock | null) | null | undefined): void { this._liveSource = typeof fn === 'function' ? fn : () => null; }
 
   /**
    * Lock manual patterns to a playing track. A different track clears any
@@ -247,6 +254,10 @@ class Conductor {
     const track = this._track && !this._override ? this._track : null;
     const fromTrack = this._gridReading('track', track && track.grid, track ? track.positionMs() : NaN, t);
     if (fromTrack) return fromTrack;
+    const live = this._liveSource();
+    if (live && Number.isFinite(live.beatPos) && typeof live.bpm === 'number' && live.bpm > 0) {
+      return { beatPos: live.beatPos, bpm: live.bpm, source: 'live' };
+    }
     return { beatPos: this._freeBeatAt(t), bpm: this._free.bpm, source: 'tap' };
   }
 

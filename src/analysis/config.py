@@ -175,9 +175,14 @@ class RealtimeConfig:
     onset_k: float = 1.6
     #: Tempo is re-estimated this often, seconds.
     tempo_refresh_sec: float = 2.0
-    #: How strongly a detected onset pulls the beat phase, 0..1. Low values
-    #: ride through a missed beat; high values chase every stray hit.
-    phase_lock_strength: float = 0.25
+    #: How often the beat phase is re-fitted to the recent onsets, seconds.
+    phase_refresh_sec: float = 0.5
+    #: How much onset history each re-fit reads, seconds: enough beats that a
+    #: syncopated bar is outvoted, few enough to follow a drifting tempo.
+    phase_window_sec: float = 4.0
+    #: How far each re-fit moves the grid towards the phase it found, 0..1.
+    #: Low values ride through a messy passage; high values chase it.
+    phase_lock_strength: float = 0.5
     #: The loop's frequency term: how much a phase error also adjusts the beat
     #: period. Much smaller than the phase term — this corrects a tempo that is
     #: slightly wrong, and at a larger value it would let a syncopated passage

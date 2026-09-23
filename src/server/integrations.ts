@@ -20,6 +20,7 @@ import type DeezerSource from '../deezer-source.ts';
 import type MidiController from '../midi.ts';
 import type NowPlayingSource from '../nowplaying-source.ts';
 import type ProLink from '../prolink.ts';
+import type LiveInput from '../live-input.ts';
 import type { ProlinkTrack, TrackChange } from '../prolink.ts';
 import type { AnalysisPriority } from '../analyzer-worker.ts';
 import type SpotifyClient from '../spotify.ts';
@@ -38,6 +39,7 @@ export interface IntegrationDeps {
   prolink: ProLink;
   autoShow: AutoShow;
   analysisCache?: AnalysisCache | null;
+  liveInput?: LiveInput | null;
 }
 
 /** Which source the auto show follows. */
@@ -77,8 +79,8 @@ function reportAnalysisError(label: string, err: unknown): void {
 // Wires the auxiliary subsystems (MIDI feedback, Spotify, now-playing, PRO DJ
 // LINK, auto-show) into the engine + state. Returns the integration handle that
 // routes.js / sockets.js call back into.
-function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolink, autoShow, analysisCache = null }:
-  IntegrationDeps) {
+function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolink, autoShow, analysisCache = null,
+  liveInput = null }: IntegrationDeps) {
   // Slot statuses, one per upcoming track up to state.autoPrefetchDepth.
   // slots[0] is the immediate next track (back-compat with the old
   // spotifyNext shape — that field still mirrors slots[0]).
@@ -197,6 +199,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
         stale: prolink.stale,
         lastError: prolink.lastError,
       },
+      live: liveInput ? liveInput.status() : null,
       autoShow: autoShow.getClientState(),
       // Summaries, not the stored looks: a hundred full cues would ride every
       // broadcast, and the buttons only need a name and a swatch.
@@ -533,6 +536,15 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     broadcast();
   });
   prolink.onLoadedTracksChange(() => broadcast());
+
+  // ─── Live input ─────────────────────────────────────────────────────────
+  // Its status rides the broadcast: on every change, and once a second while
+  // it listens, for the tempo and the level meter.
+  if (liveInput) {
+    liveInput.onStatus(() => broadcast());
+    const liveTimer = setInterval(() => { if (liveInput.running) broadcast(); }, 1000);
+    liveTimer.unref();
+  }
 
   // Analyse every track loaded on any CDJ ahead of time. Fires once per track
   // (deviceId:slot:trackId) per session.

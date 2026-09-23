@@ -84,6 +84,15 @@ demucs>=4.0
 #     python scripts/setup-panns.py --check     # verify without downloading
 panns_inference>=0.1.1
 
+# ── Live input ──────────────────────────────────────────────────────────────
+# The live input service (src/live_input.py) hears the music as it plays.
+# soundcard captures what the PC itself plays (WASAPI loopback on Windows, the
+# output's monitor on Linux) and any input; sounddevice is its fallback for a
+# line-in. Both load their system audio library when first used, not when
+# installed, so a machine without one only loses live input.
+soundcard>=0.4.6
+sounddevice>=0.5
+
 # ── Audio download fallback ─────────────────────────────────────────────────
 # Used when a track has no ISRC or Deezer is not configured.
 #

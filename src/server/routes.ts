@@ -42,6 +42,7 @@ import type DeezerSource from '../deezer-source.ts';
 import type MidiController from '../midi.ts';
 import type NowPlayingSource from '../nowplaying-source.ts';
 import type ProLink from '../prolink.ts';
+import { listLiveDevices } from '../live-input.ts';
 import type SpotifyClient from '../spotify.ts';
 import type { createApplier } from './apply.ts';
 import type { setupIntegrations } from './integrations.ts';
@@ -1338,6 +1339,17 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
   app.get('/api/network/interfaces', (_req, res) => {
     res.json({ ok: true, interfaces: interfaces().map(({ name, address, netmask }) => ({ name, address, netmask })) });
   });
+
+  // The audio devices the live input can hear: outputs for loopback, inputs
+  // for a line-in. Asks the Python service, so it also says whether one of its
+  // capture libraries is installed.
+  app.get('/api/live/devices', asyncHandler(async (_req, res) => {
+    try {
+      res.json({ ok: true, ...(await listLiveDevices()) });
+    } catch (err) {
+      res.json({ ok: false, error: messageOf(err) });
+    }
+  }));
 
   app.get('/api/hue/discover', asyncHandler(async (_req, res) => {
     const { bridges, error } = await discoverBridges();

@@ -6,6 +6,7 @@ import { Server } from 'socket.io';
 
 import MidiController from './midi.ts';
 import ProLink from './prolink.ts';
+import LiveInput from './live-input.ts';
 import SpotifyClient from './spotify.ts';
 import NowPlayingSource from './nowplaying-source.ts';
 import SmtcReader from './smtc-source.ts';
@@ -97,6 +98,7 @@ midi.recallCue = (id) => {
 };
 
 const prolink = new ProLink();
+const liveInput = new LiveInput();
 const spotify = new SpotifyClient();
 const nowPlaying = new NowPlayingSource();
 const deezerSource = new DeezerSource();
@@ -104,16 +106,18 @@ const deezerSource = new DeezerSource();
 const analysisCache = new AnalysisCache(path.join(import.meta.dirname, '..', 'cache', 'analysis'));
 const autoShow = new AutoShow(applyPatch, COLOR_PRESETS, PATTERNS, analysisCache);
 
-const integrations = setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolink, autoShow, analysisCache });
+const integrations = setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolink, autoShow, analysisCache, liveInput });
 
 // One clock for every pattern (see src/server/conductor.js). The render loop
 // drives the auto show's cursor, so a cue fires on the frame it is due, and
 // the pattern clock follows the show's beat grid while it runs, else the
-// master deck's, else the playing track's, else the operator's tap.
+// playing deck's, else the playing track's, else the beat the live input
+// hears, else the operator's tap.
 autoShow.useFrameClock();
 setFrameHook(() => autoShow.tick());
 conductor.setAutoSource(() => autoShow.beatSource());
 conductor.setProlinkSource(() => (state.prolinkEnabled && !autoShow.running ? prolink.getBeatReading() : null));
+conductor.setLiveSource(() => liveInput.getBeatReading());
 conductor.onTempo((bpm) => { state.bpm = bpm; });
 
 // Windows "now playing" (SMTC) feeds the generic now-playing source: we read
@@ -130,7 +134,7 @@ const patchRestored = showStore.restore();
 // Everything configurable is pushed into the subsystems from one place, both
 // here at boot and again whenever the settings page saves.
 const applier = createApplier({
-  midi, spotify, smtc, deezer, autoShow, applyPatch,
+  midi, spotify, smtc, live: liveInput, deezer, autoShow, applyPatch,
   broadcast: () => integrations.broadcast(),
 });
 applier.applyAll();
@@ -294,6 +298,7 @@ function shutdown(signal: string): void {
     ['nowPlaying', () => nowPlaying.disconnect()],
     ['deezer', () => deezerSource.disconnect()],
     ['prolink', () => prolink.destroy()],
+    ['live input', () => liveInput.stop()],
     ['midi', () => midi.close()],
     // Lands a debounced patch write that had not fired yet. A no-op when the
     // file already matches, which is the usual case.
