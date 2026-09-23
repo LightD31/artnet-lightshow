@@ -640,7 +640,8 @@ function renderChannelPreview(mode, containerId = 'gdtf-channel-preview', fixtur
   // What the mode is before its channels, and anything the import had to
   // leave out or hold says so.
   const drives = `${driven.size} of ${mode.channelCount} channels driven by the show (highlighted)`;
-  container.appendChild(el('div', 'ch-summary', mode.cells ? `${mode.cells.length} cells, each driven on its own · ${drives}` : drives));
+  const panel = mode.grid ? ` in a ${mode.grid.columns} × ${mode.grid.rows} grid` : '';
+  container.appendChild(el('div', 'ch-summary', mode.cells ? `${mode.cells.length} cells${panel}, each driven on its own · ${drives}` : drives));
   [...fixtureWarnings, ...(mode.warnings || [])].forEach((warning) => container.appendChild(el('div', 'ch-warning', warning)));
   mode.channelList.forEach(ch => {
     const tag = el('span', 'ch-tag' + (driven.has(ch.offset) ? ' mapped' : ''));
@@ -677,6 +678,8 @@ document.getElementById('gdtf-confirm').addEventListener('click', async () => {
     // was imported before cells existed replaces it, and every fixture on it
     // becomes a bar of lights on the next frame.
     ...(mode.cells ? { cells: mode.cells } : {}),
+    // A panel: its cells in rows and columns.
+    ...(mode.grid ? { grid: mode.grid } : {}),
     // Channels the show does not drive and must not leave at 0 (an OFL
     // shutter that is closed at 0, a dimmer the show leaves at full).
     ...(mode.defaults ? { defaults: mode.defaults } : {}),

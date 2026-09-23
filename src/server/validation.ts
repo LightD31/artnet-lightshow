@@ -18,6 +18,8 @@ export class ValidationError extends HttpError {
 }
 
 const u8 = z.number().int().min(0).max(255);
+const gridSize = z.number().int().min(1).max(MAX_CELLS_PER_FIXTURE);
+const gridIndex = z.number().int().min(0).max(MAX_CELLS_PER_FIXTURE - 1);
 const fixtureId = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1);
 const fixturePosition = z.object({
   x: z.number().finite().min(0).max(100),
@@ -205,7 +207,12 @@ const profileSchema = z.object({
   cells: z.array(z.object({
     name: z.string().max(64).optional(),
     channelMap: z.record(z.number().int().min(0).max(MAX_PROFILE_CHANNELS - 1)),
+    // Where the cell is in the grid below, column and row from 0.
+    at: z.object({ x: gridIndex, y: gridIndex }).strict().optional(),
   }).strict()).min(2).max(MAX_CELLS_PER_FIXTURE).optional(),
+  // A panel — an LED matrix — has its cells in rows and columns rather than
+  // along a line. Cells without `at` fill it row by row in the order listed.
+  grid: z.object({ columns: gridSize, rows: gridSize }).strict().optional(),
   // Channels the show does not drive and the value each sits at instead of 0:
   // a shutter whose 0 is closed, a dimmer the show leaves at full. Written
   // under every frame, so a channel the show does drive still wins.
@@ -241,10 +248,38 @@ const profileSchema = z.object({
       });
     }
     if (profile.cells) checkCells({ ...profile, cells: profile.cells }, ctx);
+    checkGrid(profile, ctx);
     // Longer than a universe: only a strip can run on into the next one.
     const long = stripIssue(profile);
     if (long) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['channelCount'], message: long });
   });
+
+/** A panel's grid holds every cell, each in a place of its own. */
+function checkGrid(profile: { grid?: { columns: number; rows: number }; cells?: { at?: { x: number; y: number } }[] }, ctx: z.RefinementCtx): void {
+  const { grid, cells } = profile;
+  if (!grid) {
+    if (cells && cells.some((cell) => cell.at)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['cells'], message: 'places cells in a grid but has no grid' });
+    }
+    return;
+  }
+  if (!cells) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['grid'], message: 'is a grid of cells, but the profile has none' });
+    return;
+  }
+  const taken = new Map<string, number>();
+  cells.forEach((cell, c) => {
+    const at = cell.at || { x: c % grid.columns, y: Math.floor(c / grid.columns) };
+    const where = `${at.x},${at.y}`;
+    if (at.x >= grid.columns || at.y >= grid.rows) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['cells', c], message: `sits at column ${at.x + 1}, row ${at.y + 1}, outside the ${grid.columns} × ${grid.rows} grid` });
+    } else if (taken.has(where)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['cells', c], message: `sits where cell ${(taken.get(where) as number) + 1} does` });
+    } else {
+      taken.set(where, c);
+    }
+  });
+}
 
 /**
  * A cell drives channels of its own. Two cells on one channel, or a cell on a

@@ -54,6 +54,20 @@ export interface ChannelMap {
 export interface ProfileCell {
   name?: string;
   channelMap: ChannelMap;
+  /** Where the cell is in its profile's grid, counted from 0 (column, row). */
+  at?: GridPoint;
+}
+
+/** A column and a row of a grid, counted from 0. */
+export interface GridPoint {
+  x: number;
+  y: number;
+}
+
+/** A panel's cells in rows and columns: an LED matrix. */
+export interface Grid {
+  columns: number;
+  rows: number;
 }
 
 /** One channel of a profile, for listing and labelling. */
@@ -86,6 +100,8 @@ export interface Profile {
   channelList?: ChannelListEntry[];
   /** An LED bar's cells, in the order they sit along it (2 or more). */
   cells?: ProfileCell[];
+  /** A panel: the cells in rows and columns rather than along a line. */
+  grid?: Grid;
   /** Undriven channels that must not sit at 0, written under every frame. */
   defaults?: ChannelDefault[];
   [key: string]: unknown;
@@ -164,6 +180,7 @@ export interface ImportedMode {
   channelMap: ChannelMap;
   channelList: ChannelListEntry[];
   cells?: ProfileCell[];
+  grid?: Grid;
   defaults?: ChannelDefault[];
   /** What the import could not carry over, in words an operator can act on. */
   warnings?: string[];

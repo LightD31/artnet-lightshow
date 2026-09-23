@@ -136,16 +136,27 @@ test('perChannel repeats each template channel across the pixels before the next
   assert.deepStrictEqual(mode.cells.map((c) => c.channelMap), [0, 1, 2, 3].map((i) => ({ red: i, green: 4 + i, blue: 8 + i })));
 });
 
-test('a grid is laid along one line, row by row, and says so', () => {
+test('pixels on two axes import as a panel, each cell where it is in the grid', () => {
   const mode = one(fixture({}, {}, {
     matrix: { pixelCount: [3, 2, 1] },
     templateChannels: RGB,
     modes: [{ name: 'Grid', channels: [{ insert: 'matrixChannels', repeatFor: 'eachPixelYXZ', channelOrder: 'perPixel', templateChannels: ['Red $pixelKey', 'Green $pixelKey', 'Blue $pixelKey'] }] }],
   }));
-  // Patched a column at a time; laid out a row at a time.
+  // Patched a column at a time; a panel of three columns and two rows.
+  assert.deepStrictEqual(mode.grid, { columns: 3, rows: 2 });
   assert.deepStrictEqual(mode.cells.map((c) => c.name), ['Pixel (1, 1)', 'Pixel (2, 1)', 'Pixel (3, 1)', 'Pixel (1, 2)', 'Pixel (2, 2)', 'Pixel (3, 2)']);
+  assert.deepStrictEqual(mode.cells.map((c) => c.at), [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }, { x: 2, y: 1 }]);
   assert.deepStrictEqual(mode.cells[1].channelMap, { red: 6, green: 7, blue: 8 });
-  assert.ok(warned(mode, /3 × 2 grid; they are laid along one line/));
+  assert.strictEqual(mode.warnings, undefined);
+  validate(profileSchema, { id: 'panel', name: 'Panel', ...mode }, 'profile');
+
+  const cube = one(fixture({}, {}, {
+    matrix: { pixelCount: [2, 2, 2] },
+    templateChannels: RGB,
+    modes: [{ name: 'Cube', channels: [{ insert: 'matrixChannels', repeatFor: 'eachPixelXYZ', channelOrder: 'perPixel', templateChannels: ['Red $pixelKey'] }] }],
+  }));
+  assert.strictEqual(cube.grid, undefined);
+  assert.ok(warned(cube, /2 × 2 × 2 cube; they are laid along one line/));
 });
 
 test('a switching channel is what it is at its trigger\'s default', () => {

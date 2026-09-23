@@ -174,12 +174,15 @@ export function StagePreview() {
         const color = preview
           ? colorToCss(bar ? meanLight(preview.slice(start, start + count)) : preview[start])
           : connected ? fixtureOutputColor(fix, s, dmx) : '#222';
-        const line = bar ? lineOf(fix, count, fix.position ? 0 : unplaced) : null;
+        // A panel's line is its top edge, as wide as its columns (shared/rig.js).
+        const grid = rig.grids[i];
+        const line = bar ? lineOf(fix, grid ? grid.columns : count, fix.position ? 0 : unplaced) : null;
+        const shape = grid ? `a panel of ${grid.columns} × ${grid.rows} cells` : `a bar of ${count} cells`;
         const turnHelp = bar ? ' [ and ] turn it, minus and equals change its length, 0 resets both.' : '';
         return <button key={fix.id} type="button" class={`stage-fixture ${bar ? 'bar' : ''}`}
           style={{ ...placeAt(point), '--light': color }}
-          aria-label={`${fix.label}${bar ? `, a bar of ${count} cells` : ''}, position ${Math.round(point.x)}, ${Math.round(point.y)}${edit ? `. Arrow keys move, Shift moves faster.${turnHelp}` : ''}`}
-          title={`${fix.label} · Universe ${fix.universe ?? 0} / ${fix.address}${bar ? ` · ${count} cells` : ''}`}
+          aria-label={`${fix.label}${bar ? `, ${shape}` : ''}, position ${Math.round(point.x)}, ${Math.round(point.y)}${edit ? `. Arrow keys move, Shift moves faster.${turnHelp}` : ''}`}
+          title={`${fix.label} · Universe ${fix.universe ?? 0} / ${fix.address}${bar ? ` · ${grid ? `${grid.columns} × ${grid.rows}` : count} cells` : ''}`}
           onPointerDown={(event) => grab(event, fix.id)}
           onPointerMove={move} onPointerUp={(event) => finish(event, true)}
           onPointerCancel={(event) => finish(event, false)} onLostPointerCapture={(event) => finish(event, false)}
@@ -213,7 +216,8 @@ export function StagePreview() {
         if (!rig.cellMaps[i]) return null;
         const centre = positions[i];
         const { count } = rig.ranges[i];
-        const line = lineOf(fix, count, fix.position ? 0 : unplaced);
+        const grid = rig.grids[i];
+        const line = lineOf(fix, grid ? grid.columns : count, fix.position ? 0 : unplaced);
         const rad = (line.angle * Math.PI) / 180;
         const end = { x: centre.x + (line.length / 2) * Math.cos(rad), y: centre.y + (line.length / 2) * Math.sin(rad) };
         return <button key={`turn-${fix.id}`} type="button" class="stage-handle" style={placeAt(end)}

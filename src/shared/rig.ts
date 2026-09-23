@@ -1,5 +1,5 @@
 import { isPlaced, stagePositions, spatialLayout, washFixtures } from './stage.ts';
-import type { ChannelMap, Geometry, PixelMap, Point, Profile, ProfileCell, StageFixture } from '../types/rig.ts';
+import type { ChannelMap, Geometry, Grid, GridPoint, PixelMap, Point, Profile, ProfileCell, StageFixture } from '../types/rig.ts';
 
 /**
  * The rig as the pattern layer sees it: fixtures, and the cells inside them.
@@ -59,17 +59,35 @@ export interface Rig<F extends StageFixture = StageFixture> {
   cellMaps: (ChannelMap[] | null)[];
   points: Point[];
   local: number[];
+  localY: number[];
+  grids: (Grid | null)[];
   hasPixels: boolean;
   layout(split?: number | null, pixelMap?: PixelMap | string | null): Layout;
 }
 
 /** The profile a fixture runs, or nothing when it has none. */
-export type ProfileLookup<F> = (fixture: F) => Pick<Profile, 'cells'> | null | undefined;
+export type ProfileLookup<F> = (fixture: F) => Pick<Profile, 'cells' | 'grid'> | null | undefined;
 
 /** The profile's cells, or null for a fixture that is one light. */
 function cellsOf(profile: Pick<Profile, 'cells'> | null | undefined): ProfileCell[] | null {
   const cells = profile && profile.cells;
   return Array.isArray(cells) && cells.length >= 2 ? cells : null;
+}
+
+/**
+ * A panel's grid and where each of its cells is in it: a cell's own `at`, or
+ * row by row in the order the cells are listed. Null for a profile that is
+ * not a panel.
+ */
+function gridOf(profile: Pick<Profile, 'cells' | 'grid'> | null | undefined): (Grid & { at: GridPoint[] }) | null {
+  const cells = cellsOf(profile);
+  const grid = profile && profile.grid;
+  if (!cells || !grid || !(grid.columns >= 1) || !(grid.rows >= 1)) return null;
+  return {
+    columns: grid.columns,
+    rows: grid.rows,
+    at: cells.map((cell, c) => cell.at || { x: c % grid.columns, y: Math.floor(c / grid.columns) }),
+  };
 }
 
 /** How many lights a fixture on this profile is: its cells, or one. */
@@ -89,8 +107,9 @@ function countUnits<F>(fixtures: Iterable<F>, profileOf: ProfileLookup<F>): numb
 
 /**
  * A bar's line on the stage plot: its own geometry, or a default that grows
- * with the number of cells — and, for a bar nobody has placed, stays short
- * enough not to run into its neighbours in the default spread.
+ * with the number of cells (a panel's columns) — and, for a bar nobody has
+ * placed, stays short enough not to run into its neighbours in the default
+ * spread. A panel's line is its top edge; its rows run down from it.
  */
 function lineOf(fixture: StageFixture, cells: number, unplaced: number): Geometry {
   const g = fixture.geometry;
@@ -123,41 +142,65 @@ function buildRig<F extends StageFixture>(fixtures: readonly F[], profileOf: Pro
   const cellMaps: (ChannelMap[] | null)[] = [];
   const points: Point[] = [];
   const local: number[] = [];
+  const localY: number[] = [];
+  const grids: (Grid | null)[] = [];
   let hasPixels = false;
 
   fixtures.forEach((fixture, i) => {
     const start = units.length;
-    const cells = cellsOf(profileOf(fixture));
+    const profile = profileOf(fixture);
+    const cells = cellsOf(profile);
     if (!cells) {
       units.push({ fixture: i, cell: 0 });
       points.push(centres[i]);
       local.push(0.5);
+      localY.push(0.5);
       ranges.push({ start, count: 1 });
       cellMaps.push(null);
+      grids.push(null);
       return;
     }
     hasPixels = true;
     const n = cells.length;
-    const { length, angle } = lineOf(fixture, n, isPlaced(fixture.position) ? 0 : unplaced);
+    const grid = gridOf(profile);
+    const { length, angle } = lineOf(fixture, grid ? grid.columns : n, isPlaced(fixture.position) ? 0 : unplaced);
     const cos = Math.cos((angle * Math.PI) / 180);
     const sin = Math.sin((angle * Math.PI) / 180);
     // Along the bar reads left to right on the plot; a bar standing upright
     // reads from the back of the stage to the front.
     const forward = Math.abs(cos) > 1e-9 ? cos > 0 : sin > 0;
-    for (let c = 0; c < n; c++) {
-      const t = (c + 0.5) / n - 0.5;
-      units.push({ fixture: i, cell: c });
-      points.push({ x: centres[i].x + t * length * cos, y: centres[i].y + t * length * sin });
-      const along = n > 1 ? c / (n - 1) : 0.5;
-      local.push(forward ? along : 1 - along);
+    if (grid) {
+      // A panel: a rectangle of square cells centred on its position, its
+      // columns along the line and its rows at right angles to it.
+      const height = (length * grid.rows) / grid.columns;
+      for (let c = 0; c < n; c++) {
+        const { x, y } = grid.at[c];
+        const u = (x + 0.5) / grid.columns - 0.5;
+        const v = (y + 0.5) / grid.rows - 0.5;
+        units.push({ fixture: i, cell: c });
+        points.push({ x: centres[i].x + u * length * cos - v * height * sin, y: centres[i].y + u * length * sin + v * height * cos });
+        const across = grid.columns > 1 ? x / (grid.columns - 1) : 0.5;
+        local.push(forward ? across : 1 - across);
+        localY.push(grid.rows > 1 ? y / (grid.rows - 1) : 0.5);
+      }
+    } else {
+      for (let c = 0; c < n; c++) {
+        const t = (c + 0.5) / n - 0.5;
+        units.push({ fixture: i, cell: c });
+        points.push({ x: centres[i].x + t * length * cos, y: centres[i].y + t * length * sin });
+        const along = n > 1 ? c / (n - 1) : 0.5;
+        local.push(forward ? along : 1 - along);
+        localY.push(0.5);
+      }
     }
     ranges.push({ start, count: n });
     cellMaps.push(cells.map((cell) => cell.channelMap));
+    grids.push(grid ? { columns: grid.columns, rows: grid.rows } : null);
   });
 
   const layouts = new Map<string, Layout>();
   return {
-    fixtures, units, ranges, cellMaps, points, local, hasPixels,
+    fixtures, units, ranges, cellMaps, points, local, localY, grids, hasPixels,
     /** The travel order for a look, cached per split and pixel map. */
     layout(split = null, pixelMap = 'stage') {
       const key = `${split}|${hasPixels ? pixelMap : ''}`;
@@ -203,7 +246,7 @@ function rigSignature(fixtures: readonly StageFixture[], revision: number | stri
  * byte for byte what the patterns got before.
  */
 function layoutOf(rig: Rig, split: number | null | undefined, pixelMap: string | null | undefined): Layout {
-  const { fixtures, ranges, points, local } = rig;
+  const { fixtures, ranges, points, local, localY } = rig;
   const wash = washFixtures(fixtures, split);
   const members = fixtures.map((_, i) => i).filter((i) => !wash.has(i));
   const { order, xs } = spatialLayout(members.map((i) => fixtures[i]));
@@ -218,7 +261,9 @@ function layoutOf(rig: Rig, split: number | null | undefined, pixelMap: string |
     const { start, count } = ranges[members[k]];
     const cells: number[] = [];
     for (let u = start; u < start + count; u++) cells.push(u);
-    cells.sort((a, b) => points[a].x - points[b].x || a - b);
+    // A panel's column is a tie across: its cells go top to bottom.
+    if (rig.grids[members[k]]) cells.sort((a, b) => points[a].x - points[b].x || points[a].y - points[b].y || a - b);
+    else cells.sort((a, b) => points[a].x - points[b].x || a - b);
     list.push(...cells);
   }
 
@@ -239,8 +284,10 @@ function layoutOf(rig: Rig, split: number | null | undefined, pixelMap: string |
   }
 
   if (pixelMap === 'bar') {
+    // Each fixture draws the whole picture itself: along a bar, and across and
+    // down a panel.
     unitXs = list.map((u) => local[u]);
-    unitYs = list.map(() => 0.5);
+    unitYs = list.map((u) => localY[u]);
   } else if (pixelMap === 'mirror') {
     const n = list.length;
     const base = unitXs || list.map((_, k) => (n > 1 ? k / (n - 1) : 0.5));
@@ -255,6 +302,7 @@ export {
   MAX_CELLS_PER_FIXTURE,
   MAX_PROFILE_CHANNELS,
   cellsOf,
+  gridOf,
   unitCount,
   countUnits,
   lineOf,
