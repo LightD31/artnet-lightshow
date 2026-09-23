@@ -1086,14 +1086,17 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
   }));
 
   app.post('/api/auto/start', (_req, res) => {
-    if (!autoShow.analysis) return res.status(400).json({ ok: false, error: 'No analysis loaded. Analyze a track first.' });
+    // Playing by ear needs no analysis: that is what it is for.
+    if (!autoShow.analysis && integrations.resolveAutoSource() !== 'live') {
+      return res.status(400).json({ ok: false, error: 'No analysis loaded. Analyze a track first, or turn on the live input to play by ear.' });
+    }
     const source = integrations.startAutoShow();
     integrations.broadcast();
     res.json({ ok: true, source });
   });
 
   app.post('/api/auto/stop', (_req, res) => {
-    autoShow.stop();
+    integrations.stopAutoShow();
     integrations.broadcast();
     res.json({ ok: true });
   });

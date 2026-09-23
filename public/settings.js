@@ -1467,6 +1467,10 @@ const SETTINGS_SPEC = [
       { path: 'live.autoSync', label: 'Auto-Sync', type: 'toggle',
         help: 'Line a known track\'s show up with what is heard, rather than trust where Spotify or the '
           + 'media session says the song is. The Sync slider then only has to cover the lights\' own delay.' },
+      { path: 'live.director', label: 'Play By Ear', type: 'toggle',
+        help: 'With the auto show on and no analysed track to play — the next one still being analysed, '
+          + 'or music nothing can name — answer what is heard: new looks on section changes, bursts on '
+          + 'drops, dark in the silences.' },
       { path: 'live.latencyMs', label: 'Room Latency (ms)', type: 'number', min: -500, max: 500,
         help: 'How much later the room hears the music than this computer does. Positive when the '
           + 'PA is behind the sound card; negative for a line-in off the booth, which arrives after '

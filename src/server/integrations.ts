@@ -1,5 +1,5 @@
 import { state, getLiveState, getDmxSnapshot, setExtrasProvider } from './state.ts';
-import { setHooks } from './patch.ts';
+import { setHooks, applyPatch } from './patch.ts';
 import { conductor } from './conductor.ts';
 import { currentRig } from './rig.ts';
 import { guarded } from './guard.ts';
@@ -14,6 +14,8 @@ import { messageOf } from '../errors.ts';
 import { audioToTempWav } from '../audio-file.ts';
 import { applyRekordbox } from '../rekordbox-analysis.ts';
 import { AutoSync } from '../auto-sync.ts';
+import LiveDirector from '../show/live-director.ts';
+import { PATTERNS } from './presets.ts';
 import { settings } from './settings.ts';
 import type { Server } from 'socket.io';
 import type AutoShow from '../auto-show.ts';
@@ -45,7 +47,7 @@ export interface IntegrationDeps {
 }
 
 /** Which source the auto show follows. */
-export type AutoSource = 'prolink' | 'hybrid' | 'spotify' | 'deezer' | 'nowplaying' | 'timer';
+export type AutoSource = 'prolink' | 'hybrid' | 'spotify' | 'deezer' | 'nowplaying' | 'live' | 'timer';
 
 /** A queued track, as a prefetch slot shows it. */
 interface SlotTrack {
@@ -188,6 +190,9 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       // what is happening; this is the answer to "why is the show following
       // that".
       activeSource: resolveAutoSource(),
+      // The operator has the show on — which a track change, loading the next
+      // analysis, or playing by ear all keep true while no timeline runs.
+      showOn: showWanted,
       deezer: deezerSource.getStatus(),
       deezerPrefetch: deezerSlots,
       prolink: {
@@ -201,7 +206,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
         stale: prolink.stale,
         lastError: prolink.lastError,
       },
-      live: liveInput ? liveInput.status() : null,
+      live: liveInput ? { ...liveInput.status(), director: liveDirector ? liveDirector.status() : null } : null,
       autoShow: autoShow.getClientState(),
       // Summaries, not the stored looks: a hundred full cues would ride every
       // broadcast, and the buttons only need a name and a swatch.
@@ -242,7 +247,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
 
   // Pick the active source for auto-show playback. Explicit user choice wins,
   // then 'auto' falls through to:
-  //   prolink > hybrid > spotify > deezer > nowplaying > timer
+  //   prolink > hybrid > spotify > deezer > nowplaying > live > timer
   //
   // Hybrid outranks plain Spotify whenever the OS media session is also live,
   // because it is the same source of content with a better clock and an
@@ -260,13 +265,21 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     if (state.autoSource === 'spotify' && spotify.authenticated) return 'spotify';
     if (state.autoSource === 'deezer' && deezerSource.authenticated) return 'deezer';
     if (state.autoSource === 'nowplaying' && nowPlaying.authenticated) return 'nowplaying';
+    if (state.autoSource === 'live' && liveListening()) return 'live';
     if (state.autoSource === 'timer') return 'timer';
     if (prolink.connected && prolink.getFollowed()) return 'prolink';
     if (spotify.authenticated && nowPlaying.authenticated) return 'hybrid';
     if (spotify.authenticated) return 'spotify';
     if (deezerSource.authenticated) return 'deezer';
     if (nowPlaying.authenticated) return 'nowplaying';
+    // Something is heard but nothing names it: play by ear rather than
+    // against a stopwatch.
+    if (liveListening()) return 'live';
     return 'timer';
+  }
+
+  function liveListening(): boolean {
+    return !!liveInput && liveInput.status().listening;
   }
 
   /** Sources that take their content and their queue from Spotify. */
@@ -274,8 +287,18 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     return source === 'spotify' || source === 'hybrid';
   }
 
+  // Whether the operator has the auto show on. It stays on across a track
+  // change, while the show itself stops to load the next track's analysis.
+  let showWanted = false;
+
   function startAutoShow(): AutoSource {
     const source = resolveAutoSource();
+    showWanted = true;
+    if (source === 'live') {
+      // No timeline to play: the live director answers what is heard.
+      syncLiveDirector();
+      return source;
+    }
     if (source === 'prolink') {
       showDeck = prolink.getFollowed()?.deviceId ?? null;
       autoShow.start(getProlinkPositionMs);
@@ -291,7 +314,36 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       const startTime = Date.now();
       autoShow.start(() => Date.now() - startTime);
     }
+    syncLiveDirector();
     return source;
+  }
+
+  function stopAutoShow(): void {
+    showWanted = false;
+    autoShow.stop();
+    syncLiveDirector();
+  }
+
+  // ─── Playing by ear ─────────────────────────────────────────────────────
+  // With the auto show on and no timeline running — the source is `live`, or
+  // the next track is still being analysed — the live director answers what
+  // the live input hears. Its patches never reach the rig while a timeline
+  // runs, so the second it takes to notice one has started cannot fight it.
+  const liveDirector = liveInput ? new LiveDirector({
+    applyPatch: (patch) => { if (!autoShow.running) applyPatch(patch); },
+    patterns: PATTERNS,
+    pixels: () => currentRig().hasPixels,
+  }) : null;
+  if (liveInput && liveDirector) {
+    liveInput.onReading((r) => liveDirector.onReading(r));
+    liveInput.onEvent((e) => liveDirector.onEvent(e));
+  }
+
+  function syncLiveDirector(): void {
+    if (!liveDirector) return;
+    const drive = showWanted && !autoShow.running && liveListening() && settings.get('live.director');
+    if (drive && !liveDirector.active) liveDirector.start();
+    else if (!drive && liveDirector.active) liveDirector.stop();
   }
 
   // ─── The pattern clock's track lock ─────────────────────────────────────
@@ -543,16 +595,17 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   // Its status rides the broadcast: on every change, and once a second while
   // it listens, for the tempo and the level meter.
   // A known track's show is lined up with what it hears (auto-sync.ts),
-  // except on a CDJ, whose position is exact, and on the timer, which has no
-  // track.
+  // except on a CDJ, whose position is exact, and by ear or on the timer,
+  // which have no track.
   const autoSync = liveInput ? new AutoSync({
     show: autoShow,
     live: liveInput,
-    enabled: () => settings.get('live.autoSync') && !['prolink', 'timer'].includes(resolveAutoSource()),
+    enabled: () => settings.get('live.autoSync') && !['prolink', 'live', 'timer'].includes(resolveAutoSource()),
   }) : null;
   if (liveInput) {
     liveInput.onStatus(() => broadcast());
     const liveTimer = setInterval(guarded('live input', () => {
+      syncLiveDirector();
       if (!liveInput.running) return;
       if (autoSync) autoSync.tick();
       broadcast();
@@ -872,6 +925,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       spotifySlots = [{ track: null, status: 'unavailable', message: 'Spotify disconnected', cacheKey: null }];
     },
     startAutoShow,
+    stopAutoShow,
     resolveAutoSource,
     analyseCdjTrack,
     lockToPlayingTrack,

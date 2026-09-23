@@ -134,6 +134,9 @@ const DEFAULTS: Settings = {
     // Line a known track's show up with what the live input hears, rather
     // than trust the playback source's position (see auto-sync.ts).
     autoSync: true,
+    // With the auto show on and no analysed track to play — the next one still
+    // being analysed, or music nothing can name — answer what is heard.
+    director: true,
   },
   spotify: {
     clientId: '',
@@ -289,6 +292,7 @@ const schema = z.object({
     device: z.string().max(256),
     latencyMs: z.number().int().min(-500).max(500),
     autoSync: z.boolean(),
+    director: z.boolean(),
   }).strict(),
   spotify: z.object({
     clientId: z.string().max(256),

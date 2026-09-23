@@ -32,6 +32,7 @@ const SOURCES = [
   { value: 'spotify', label: 'Spotify' },
   { value: 'deezer', label: 'Deezer (extension)' },
   { value: 'nowplaying', label: 'Now playing (OS)' },
+  { value: 'live', label: 'Live input (by ear)' },
   { value: 'timer', label: 'Standalone timer' },
 ];
 
@@ -60,6 +61,7 @@ function SourceDots({ s }) {
     { id: 'spotify', label: 'Spotify', live: !!sp.authenticated, detail: sp.authenticated ? 'Connected' : sp.configured ? 'Not connected' : 'Not configured' },
     { id: 'deezer', label: 'Deezer', live: !!dz.authenticated, detail: dz.authenticated ? `${dz.artist || ''} — ${dz.name || ''}` : 'Extension not connected' },
     { id: 'os', label: 'OS media', live: !!np.authenticated, detail: np.authenticated ? `${np.artist || ''} — ${np.name || ''}` : 'Nothing detected' },
+    { id: 'live', label: 'Live input', live: !!(s.live && s.live.listening), detail: s.live && s.live.listening ? (s.live.bpm ? `Hearing ${s.live.bpm.toFixed(1)} BPM` : 'Listening') : 'Off' },
   ];
 
   // Only while hybrid is the source actually driving: everywhere else the
@@ -145,8 +147,10 @@ export function AutoMode() {
   if (!sp || !as) return null;
 
   const status = as.status || 'idle';
-  const busy = status === 'downloading' || status === 'analyzing';
-  const running = status === 'playing';
+  // Playing by ear runs the show with no timeline, and so no busy badge.
+  const byEar = !!(s.showOn && s.live && s.live.director && s.live.director.active && status !== 'playing');
+  const busy = !byEar && (status === 'downloading' || status === 'analyzing');
+  const running = status === 'playing' || byEar;
 
   const analyzeAndStart = () => {
     if (running) return;
@@ -202,7 +206,9 @@ export function AutoMode() {
           <span>{busy ? 'Analysing…' : running ? 'Stop show' : 'Start show'}</span>
         </button>
 
-        <span class={`auto-badge auto-badge-${status}`}>{STATUS_TEXT[status] || status}</span>
+        {byEar
+          ? <span class="auto-badge auto-badge-playing" title="No analysed track to play: answering what the live input hears">By ear</span>
+          : <span class={`auto-badge auto-badge-${status}`}>{STATUS_TEXT[status] || status}</span>}
 
         <span class="transport-spacer" />
 
