@@ -25,7 +25,7 @@ test('cells with their own dimmer, spaced wider than their channels', () => {
 
 test('numbers that do not describe a bar that fits are refused', () => {
   const base = { id: 'x', name: 'X', cells: 8, firstChannel: 1, order: 'RGB' };
-  assert.throws(() => barProfile({ ...base, cells: 171 }), /cells/);
+  assert.throws(() => barProfile({ ...base, cells: 1025 }), /cells/, 'no more than 1,024');
   assert.throws(() => barProfile({ ...base, order: 'RGBR' }), /each letter once/);
   assert.throws(() => barProfile({ ...base, order: 'D' }), /at least one colour/);
   assert.throws(() => barProfile({ ...base, stride: 2 }), /cannot start 2 apart/);

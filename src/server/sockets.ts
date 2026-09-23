@@ -8,6 +8,7 @@ import { connectMidi } from './midi-connect.ts';
 import { midiMap } from './midi-map.ts';
 import { EnergyHold } from './energy-hold.ts';
 import { ENERGY_EFFECTS } from './presets.ts';
+import { ddpConflict } from './ddp-routes.ts';
 import { messageOf } from '../errors.ts';
 import type { Server } from 'socket.io';
 import type { MidiPorts } from './midi-connect.ts';
@@ -53,7 +54,7 @@ function attachSockets(io: Server, { midi, integrations }: {
 
     socket.on('fixture', (payload) => {
       try {
-        const { id, address, universe, label, profileId, maxBrightness, position, group, geometry } = validate(fixtureMessageSchema, payload, 'fixture-msg');
+        const { id, address, universe, label, profileId, maxBrightness, position, group, geometry, output } = validate(fixtureMessageSchema, payload, 'fixture-msg');
         const fixture = getFixture(id);
         if (!fixture) return;
 
@@ -65,9 +66,9 @@ function attachSockets(io: Server, { midi, integrations }: {
 
         // A fixture has to fit inside its universe. Past channel 512 the writes
         // land outside the DMX buffer and Node drops them silently, leaving the
-        // fixture half-controllable with no error.
-        const chCount = getProfile({ profileId: nextProfileId }).channelCount;
-        const overflow = universeOverflow(label ?? fixture.label, nextAddress, chCount);
+        // fixture half-controllable with no error. A strip longer than a
+        // universe runs on into the next, from channel 1.
+        const overflow = universeOverflow(label ?? fixture.label, nextAddress, getProfile({ profileId: nextProfileId }), nextUniverse);
         if (overflow) {
           socket.emit('error-msg', { source: 'fixture', message: overflow });
           return;
@@ -75,7 +76,16 @@ function attachSockets(io: Server, { midi, integrations }: {
 
         // Each universe is another stream going out at the render rate, so the
         // patch may not spread across more of them than the engine transmits.
-        const proposed = state.fixtures.map((f) => (f.id === id ? { ...f, universe: nextUniverse, profileId: nextProfileId } : f));
+        const nextOutput = output !== undefined ? output : fixture.output ?? null;
+        const proposed = state.fixtures.map((f) => (f.id === id
+          ? { ...f, address: nextAddress, universe: nextUniverse, profileId: nextProfileId, output: nextOutput } : f));
+        // A universe that goes to a WLED over DDP goes nowhere else, so nothing
+        // else may be patched on it.
+        const wled = ddpConflict(proposed, getProfile, universeOf);
+        if (wled) {
+          socket.emit('error-msg', { source: 'fixture', message: wled });
+          return;
+        }
         // And a bar's cells are each rendered every frame, so a profile change
         // may not take the patch past the cells the engine renders.
         const tooMany = nextProfileId !== fixture.profileId ? unitCapOverflow(proposed) : null;
@@ -103,6 +113,7 @@ function attachSockets(io: Server, { midi, integrations }: {
         if (position !== undefined) fixture.position = position;
         if (group !== undefined) fixture.group = group;
         if (geometry !== undefined) fixture.geometry = geometry;
+        if (output !== undefined) fixture.output = output;
         showStore.scheduleSave();
         integrations.broadcast();
       } catch (err) {

@@ -1,21 +1,27 @@
 import { useEffect, useMemo, useRef } from 'preact/hooks';
 import { stateSig, dmxSig, dmxShapeSig } from '../state.js';
+import { channelPlace, stripOf } from '../../src/shared/placement.ts';
 
 function buildChannelLabels(s, universe) {
   const labels = {};
   if (!s.fixtures || !s.profiles) return labels;
   for (const fix of s.fixtures) {
-    if ((fix.universe ?? 0) !== universe) continue;
     const profile = s.profiles[fix.profileId];
     if (!profile) continue;
-    const base = fix.address - 1;
+    // A strip longer than a universe runs on into the next ones: each channel
+    // is labelled on the universe it is on.
+    const strip = stripOf(profile);
+    const home = fix.universe ?? 0;
+    if (!strip && home !== universe) continue;
     for (const ch of (profile.channelList || [])) {
+      const place = channelPlace(strip, fix.address, ch.offset);
+      if (home + place.universe !== universe) continue;
       // A bar's cell channels read as their colour and cell: R12 is cell
       // twelve's red.
       const shortName = ch.cell !== undefined
         ? `${(ch.attribute || '?')[0].toUpperCase()}${ch.cell + 1}`
         : (ch.attribute || ch.name || '').substring(0, 3).toUpperCase();
-      labels[base + ch.offset] = shortName || String(ch.offset + 1);
+      labels[place.index] = shortName || String(ch.offset + 1);
     }
   }
   return labels;

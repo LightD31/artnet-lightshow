@@ -195,6 +195,68 @@ async function loadArtnetNodes(scan) {
 document.getElementById('artnet-scan').addEventListener('click', () => loadArtnetNodes(true));
 loadArtnetNodes(false);
 
+// ── WLED ────────────────────────────────────────────────────────────────────
+// The WLEDs that answered mDNS, and adding one: the server asks it what it is,
+// builds its profile and patches it on universes of its own, sent DDP.
+
+async function findWled() {
+  const status = document.getElementById('wled-status');
+  const box = document.getElementById('wled-devices');
+  status.textContent = 'Asking the network…';
+  box.replaceChildren();
+  const data = await apiJson('/api/wled/discover');
+  if (!data.ok) { status.textContent = data.error; return; }
+  const devices = data.devices || [];
+  status.textContent = devices.length
+    ? `${devices.length} WLED${devices.length === 1 ? '' : 's'} answered`
+    : 'No WLED answered. mDNS does not cross routers or VLANs: add one by its address below.';
+  if (!devices.length) return;
+  const table = el('table', 'patch-table');
+  const head = el('tr');
+  for (const h of ['WLED', 'Address', 'LEDs', '']) head.appendChild(el('th', null, h));
+  table.appendChild(head);
+  for (const device of devices) {
+    const tr = el('tr');
+    tr.appendChild(el('td', null, device.name));
+    tr.appendChild(el('td', null, device.host));
+    const leds = device.error ? device.error
+      : `${device.leds}${device.rgbw ? ' RGBW' : ' RGB'}${device.matrix ? `, ${device.matrix.w} × ${device.matrix.h}` : ''}`;
+    tr.appendChild(el('td', null, leds));
+    const cell = el('td');
+    if (device.patched) cell.appendChild(el('span', 'setting-help', `Patched as "${device.patched}"`));
+    else if (!device.error) {
+      const add = el('button', 'btn btn-small', 'Add to patch');
+      add.type = 'button';
+      add.addEventListener('click', () => addWled(device.host, cell));
+      cell.appendChild(add);
+    }
+    tr.appendChild(cell);
+    table.appendChild(tr);
+  }
+  box.appendChild(table);
+}
+
+/** Add a WLED; `cell`, from the list of those found, then says it is patched. */
+async function addWled(host, cell) {
+  const status = document.getElementById('wled-status');
+  status.textContent = `Asking ${host}…`;
+  const data = await apiJson('/api/wled/add', jsonBody('POST', { host }));
+  if (!data.ok) { status.textContent = data.error; return; }
+  const where = data.fixture.universe;
+  status.textContent = `Added "${data.fixture.label}": ${data.profile.modeName}, from universe ${where}.`;
+  if (cell) cell.replaceChildren(el('span', 'setting-help', `Patched as "${data.fixture.label}"`));
+  Toast.push({ message: `Added ${data.fixture.label} to the patch` });
+}
+
+document.getElementById('wled-scan').addEventListener('click', findWled);
+document.getElementById('wled-add').addEventListener('click', () => {
+  const host = document.getElementById('wled-host').value.trim();
+  if (host) addWled(host);
+});
+document.getElementById('wled-host').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('wled-add').click();
+});
+
 // ── MIDI settings ────────────────────────────────────────────────────────────
 
 socket.on('midi-status', ({ ok, enabled }) => {
@@ -640,7 +702,8 @@ function renderChannelPreview(mode, containerId = 'gdtf-channel-preview', fixtur
   // What the mode is before its channels, and anything the import had to
   // leave out or hold says so.
   const drives = `${driven.size} of ${mode.channelCount} channels driven by the show (highlighted)`;
-  container.appendChild(el('div', 'ch-summary', mode.cells ? `${mode.cells.length} cells, each driven on its own · ${drives}` : drives));
+  const panel = mode.grid ? ` in a ${mode.grid.columns} × ${mode.grid.rows} grid` : '';
+  container.appendChild(el('div', 'ch-summary', mode.cells ? `${mode.cells.length} cells${panel}, each driven on its own · ${drives}` : drives));
   [...fixtureWarnings, ...(mode.warnings || [])].forEach((warning) => container.appendChild(el('div', 'ch-warning', warning)));
   mode.channelList.forEach(ch => {
     const tag = el('span', 'ch-tag' + (driven.has(ch.offset) ? ' mapped' : ''));
@@ -677,6 +740,8 @@ document.getElementById('gdtf-confirm').addEventListener('click', async () => {
     // was imported before cells existed replaces it, and every fixture on it
     // becomes a bar of lights on the next frame.
     ...(mode.cells ? { cells: mode.cells } : {}),
+    // A panel: its cells in rows and columns.
+    ...(mode.grid ? { grid: mode.grid } : {}),
     // Channels the show does not drive and must not leave at 0 (an OFL
     // shutter that is closed at 0, a dimmer the show leaves at full).
     ...(mode.defaults ? { defaults: mode.defaults } : {}),
@@ -830,7 +895,10 @@ function renderPatchTable() {
   state.fixtures.forEach((fix) => {
     const profile = profiles[fix.profileId] || {};
     const chCount = profile.channelCount || 12;
-    const endAddr = fix.address + chCount - 1;
+    const parts = footprint(fix, profile);
+    const last = parts[parts.length - 1];
+    // A strip longer than a universe says where it ends: "1–150 on 3" after 2.
+    const range = parts.length > 1 ? `${fix.address}–${last.last} on ${last.universe}` : `${fix.address}–${last.last}`;
     const hasConflict = conflicts.has(fix.id);
 
     const tr = document.createElement('tr');
@@ -872,6 +940,18 @@ function renderPatchTable() {
     uniInput.dataset.id = fix.id;
     uniInput.style.width = '70px';
     uniCell.appendChild(uniInput);
+    // A WLED's universes go to it over DDP: its address, editable, and
+    // emptied to send the fixture on Art-Net and sACN instead.
+    if (fix.output && fix.output.protocol === 'ddp') {
+      const hostInput = el('input', 'wled-host');
+      hostInput.type = 'text';
+      hostInput.value = fix.output.host;
+      hostInput.title = 'Sent to this WLED over DDP. Empty it to send on Art-Net and sACN instead.';
+      hostInput.dataset.field = 'outputHost';
+      hostInput.dataset.id = fix.id;
+      uniCell.appendChild(el('span', 'addr-range', 'WLED'));
+      uniCell.appendChild(hostInput);
+    }
     tr.appendChild(uniCell);
 
     const addrCell = el('td');
@@ -884,7 +964,7 @@ function renderPatchTable() {
     addrInput.dataset.id = fix.id;
     addrInput.style.width = '70px';
     addrCell.appendChild(addrInput);
-    addrCell.appendChild(el('span', 'addr-range', `${fix.address}–${endAddr}`));
+    addrCell.appendChild(el('span', 'addr-range', range));
     if (hasConflict) addrCell.appendChild(el('span', 'conflict-warning', 'Address overlap!'));
     tr.appendChild(addrCell);
 
@@ -915,6 +995,11 @@ function renderPatchTable() {
       }
 
       if (!socket.connected) { Toast.error('Disconnected — reconnect before editing the patch.'); return; }
+      if (field === 'outputHost') {
+        const host = String(value).trim();
+        socket.emit('fixture', { id, output: host ? { protocol: 'ddp', host } : null });
+        return;
+      }
       socket.emit('fixture', { id, [field]: value });
     });
   });
@@ -940,24 +1025,37 @@ function renderPatchTable() {
   });
 }
 
+/**
+ * The channels a fixture occupies, per universe: one run from its address, or —
+ * for a strip longer than a universe — whole cells to each universe it runs on
+ * into, from channel 1. The same rule as src/shared/placement.ts, which this
+ * page (a plain script) cannot import.
+ */
+function footprint(fix, profile) {
+  const count = profile.channelCount || 12;
+  const universe = fix.universe ?? 0;
+  const cells = Array.isArray(profile.cells) ? profile.cells.length : 0;
+  if (count <= 512 || cells < 2) return [{ universe, first: fix.address, last: fix.address + count - 1 }];
+  const width = count / cells;
+  const perUniverse = Math.floor(512 / width);
+  const parts = [];
+  for (let k = 0; k * perUniverse < cells; k++) {
+    parts.push({ universe: universe + k, first: 1, last: Math.min(perUniverse, cells - k * perUniverse) * width });
+  }
+  return parts;
+}
+
 // Two fixtures only fight over an address when they are on the same universe —
 // channel 1 of universe 0 and channel 1 of universe 1 are different wires.
 function detectConflicts(fixtures) {
   const conflicts = new Set();
+  const parts = fixtures.map((f) => footprint(f, profiles[f.profileId] || {}));
   for (let i = 0; i < fixtures.length; i++) {
-    const a = fixtures[i];
-    const pa = profiles[a.profileId] || {};
-    const aEnd = a.address + (pa.channelCount || 12) - 1;
-
     for (let j = i + 1; j < fixtures.length; j++) {
-      const b = fixtures[j];
-      if ((a.universe ?? 0) !== (b.universe ?? 0)) continue;
-      const pb = profiles[b.profileId] || {};
-      const bEnd = b.address + (pb.channelCount || 12) - 1;
-
-      if (a.address <= bEnd && b.address <= aEnd) {
-        conflicts.add(a.id);
-        conflicts.add(b.id);
+      const clash = parts[i].some((x) => parts[j].some((y) => x.universe === y.universe && x.first <= y.last && y.first <= x.last));
+      if (clash) {
+        conflicts.add(fixtures[i].id);
+        conflicts.add(fixtures[j].id);
       }
     }
   }

@@ -3,7 +3,8 @@ import net from 'node:net';
 import { COLOR_PRESETS, AUTO_SOURCES, SYNC_OFFSET_LIMIT_MS } from './presets.ts';
 import { PALETTE_IDS } from './palettes.ts';
 import { FIXTURE_GROUPS } from '../shared/stage.ts';
-import { EMITTERS, PIXEL_MAPS, MAX_CELLS_PER_FIXTURE } from '../shared/rig.ts';
+import { EMITTERS, PIXEL_MAPS, MAX_CELLS_PER_FIXTURE, MAX_PROFILE_CHANNELS } from '../shared/rig.ts';
+import { stripIssue } from '../shared/placement.ts';
 import { HttpError } from '../errors.ts';
 
 /** Input that failed its schema: a 400, with zod's issues for the client. */
@@ -17,6 +18,8 @@ export class ValidationError extends HttpError {
 }
 
 const u8 = z.number().int().min(0).max(255);
+const gridSize = z.number().int().min(1).max(MAX_CELLS_PER_FIXTURE);
+const gridIndex = z.number().int().min(0).max(MAX_CELLS_PER_FIXTURE - 1);
 const fixtureId = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1);
 const fixturePosition = z.object({
   x: z.number().finite().min(0).max(100),
@@ -37,6 +40,14 @@ const unitValue = z.number().min(0).max(1).optional();
 // in the ArtNet panel surfaces as a validation error instead of a stream of
 // failed sends.
 const HOSTNAME_RE = /^(?=.{1,253}$)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+
+// A fixture sent to a device of its own: a WLED over DDP, by its hostname or
+// address. Its universes then go there and nowhere else (ddp-routes.ts).
+const fixtureOutput = z.object({
+  protocol: z.literal('ddp'),
+  host: z.string().regex(HOSTNAME_RE, 'is not a hostname or an IPv4 address'),
+  port: z.number().int().min(1).max(65535).optional(),
+}).strict();
 
 // A string of dotted numeric labels is someone typing an IP, so hold it to
 // IPv4 rules rather than letting "2.255.255.256" through as a hostname (which
@@ -147,6 +158,7 @@ const fixtureMessageSchema = z.object({
   // Not part of the override — it applies to an energy override too.
   maxBrightness: u8.optional(),
   geometry: fixtureGeometry.nullable().optional(),
+  output: fixtureOutput.nullable().optional(),
 }).strict();
 
 /**
@@ -162,6 +174,7 @@ const fixtureRestoreSchema = z.object({
     position: fixturePosition.nullable().optional(),
     group: fixtureGroup.nullable().optional(),
     geometry: fixtureGeometry.nullable().optional(),
+    output: fixtureOutput.nullable().optional(),
     label: z.string().max(64),
     address: z.number().int().min(1).max(512),
     universe: dmxUniverse.optional(),
@@ -188,10 +201,11 @@ const profileSchema = z.object({
   name: z.string().min(1).max(128),
   manufacturer: z.string().max(128).optional(),
   modeName: z.string().max(128).optional(),
-  channelCount: z.number().int().min(1).max(512),
-  channelMap: z.record(z.number().int().min(0).max(511)),
+  // Up to a universe for any fixture; a strip may run on over several.
+  channelCount: z.number().int().min(1).max(MAX_PROFILE_CHANNELS),
+  channelMap: z.record(z.number().int().min(0).max(MAX_PROFILE_CHANNELS - 1)),
   channelList: z.array(z.object({
-    offset: z.number().int().min(0).max(511),
+    offset: z.number().int().min(0).max(MAX_PROFILE_CHANNELS - 1),
     name: z.string().min(1),
     attribute: z.string().min(1),
     // Which cell the channel drives, for labelling the monitor.
@@ -202,15 +216,20 @@ const profileSchema = z.object({
   // fixture's footprint; the fixture-level channelMap keeps what they share.
   cells: z.array(z.object({
     name: z.string().max(64).optional(),
-    channelMap: z.record(z.number().int().min(0).max(511)),
+    channelMap: z.record(z.number().int().min(0).max(MAX_PROFILE_CHANNELS - 1)),
+    // Where the cell is in the grid below, column and row from 0.
+    at: z.object({ x: gridIndex, y: gridIndex }).strict().optional(),
   }).strict()).min(2).max(MAX_CELLS_PER_FIXTURE).optional(),
+  // A panel — an LED matrix — has its cells in rows and columns rather than
+  // along a line. Cells without `at` fill it row by row in the order listed.
+  grid: z.object({ columns: gridSize, rows: gridSize }).strict().optional(),
   // Channels the show does not drive and the value each sits at instead of 0:
   // a shutter whose 0 is closed, a dimmer the show leaves at full. Written
   // under every frame, so a channel the show does drive still wins.
   defaults: z.array(z.object({
-    offset: z.number().int().min(0).max(511),
+    offset: z.number().int().min(0).max(MAX_PROFILE_CHANNELS - 1),
     value: u8,
-  }).strict()).max(512).optional(),
+  }).strict()).max(MAX_PROFILE_CHANNELS).optional(),
 }).passthrough()
   // channelCount is the fixture's DMX footprint: it decides where the *next*
   // fixture can be patched and what the universe-bounds check reserves. An
@@ -239,7 +258,38 @@ const profileSchema = z.object({
       });
     }
     if (profile.cells) checkCells({ ...profile, cells: profile.cells }, ctx);
+    checkGrid(profile, ctx);
+    // Longer than a universe: only a strip can run on into the next one.
+    const long = stripIssue(profile);
+    if (long) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['channelCount'], message: long });
   });
+
+/** A panel's grid holds every cell, each in a place of its own. */
+function checkGrid(profile: { grid?: { columns: number; rows: number }; cells?: { at?: { x: number; y: number } }[] }, ctx: z.RefinementCtx): void {
+  const { grid, cells } = profile;
+  if (!grid) {
+    if (cells && cells.some((cell) => cell.at)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['cells'], message: 'places cells in a grid but has no grid' });
+    }
+    return;
+  }
+  if (!cells) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['grid'], message: 'is a grid of cells, but the profile has none' });
+    return;
+  }
+  const taken = new Map<string, number>();
+  cells.forEach((cell, c) => {
+    const at = cell.at || { x: c % grid.columns, y: Math.floor(c / grid.columns) };
+    const where = `${at.x},${at.y}`;
+    if (at.x >= grid.columns || at.y >= grid.rows) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['cells', c], message: `sits at column ${at.x + 1}, row ${at.y + 1}, outside the ${grid.columns} × ${grid.rows} grid` });
+    } else if (taken.has(where)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['cells', c], message: `sits where cell ${(taken.get(where) as number) + 1} does` });
+    } else {
+      taken.set(where, c);
+    }
+  });
+}
 
 /**
  * A cell drives channels of its own. Two cells on one channel, or a cell on a
@@ -278,6 +328,7 @@ const showSchema = z.object({
     position: fixturePosition.nullable().optional(),
     group: fixtureGroup.nullable().optional(),
     geometry: fixtureGeometry.nullable().optional(),
+    output: fixtureOutput.nullable().optional(),
     label: z.string().max(64).optional(),
     address: z.number().int().min(1).max(512).optional(),
     // Absent in shows saved before multi-universe: those load onto the rig's
@@ -322,6 +373,12 @@ const midiConnectSchema = z.object({
 
 // Pairing is the one Hue call that names a bridge the settings do not hold yet:
 // the operator has just picked it off the discovery list, or typed it in.
+// POST /api/wled/add: a WLED by its hostname or address, and what to call it.
+const wledAddSchema = z.object({
+  host: z.string().regex(HOSTNAME_RE, 'is not a hostname or an IPv4 address'),
+  label: z.string().trim().min(1).max(64).optional(),
+}).strict();
+
 const huePairSchema = z.object({
   host: z.string().min(1).max(253),
 }).strict();
@@ -359,5 +416,6 @@ export {
   showSchema,
   midiConnectSchema,
   huePairSchema,
+  wledAddSchema,
   validate,
 };

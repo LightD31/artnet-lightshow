@@ -98,6 +98,29 @@
     </div>
   </section>
 
+  <!-- ── WLED ─────────────────────────────────────────────── -->
+  <section class="card settings-section" data-tab="output">
+    <div class="card-title">WLED</div>
+    <p class="section-desc">WLED strips and panels, sent their pixels over DDP rather than Art-Net. Adding one reads its LED count (and its grid, set up as a panel) from the device and patches it on universes of its own; it is then a bar on the stage plot like any other.</p>
+    <div class="settings-form">
+      <div class="field">
+        <label>Devices</label>
+        <div class="setting-control">
+          <button class="btn btn-small" type="button" id="wled-scan">Find WLEDs</button>
+          <small class="setting-help" id="wled-status"></small>
+        </div>
+      </div>
+      <div id="wled-devices"></div>
+      <div class="field">
+        <label for="wled-host">Add by address</label>
+        <div class="setting-control">
+          <input id="wled-host" type="text" maxlength="253" placeholder="192.168.1.50 or wled-porch.local" />
+          <button class="btn active btn-small" type="button" id="wled-add">Add</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- ── MIDI ──────────────────────────────────────────────── -->
   <section class="card settings-section" data-tab="control">
     <div class="card-title">MIDI — X-Touch Compact</div>
@@ -220,7 +243,7 @@
       <p class="section-desc">For a bar that has no GDTF file: how many cells it has, where the first cell starts, and the order of each cell's channels (R G B W A U, and D for a cell's own dimmer).</p>
       <div class="gdtf-mode-select">
         <div class="field"><label for="bar-name">Name</label><input id="bar-name" type="text" maxlength="128" placeholder="LED Bar 16" /></div>
-        <div class="field"><label for="bar-cells">Cells</label><input id="bar-cells" type="number" min="2" max="170" value="16" /></div>
+        <div class="field"><label for="bar-cells">Cells</label><input id="bar-cells" type="number" min="2" max="1024" value="16" /></div>
         <div class="field"><label for="bar-first">First cell at</label><input id="bar-first" type="number" min="1" max="512" value="3" /></div>
         <div class="field"><label for="bar-order">Cell channels</label><input id="bar-order" type="text" maxlength="8" value="RGB" /></div>
         <div class="field"><label for="bar-stride">Cell spacing</label><input id="bar-stride" type="number" min="1" max="64" placeholder="same as channels" /></div>

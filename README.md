@@ -83,7 +83,12 @@ via **Bitfocus Companion**, and a REST API.
   `.json`, or search the Open Fixture Library from the settings page; pick a
   DMX mode, patch it
 - **Multiple universes** — every fixture names the universe it lives on, so a
-  rig is no longer capped at one node's 512 channels
+  rig is no longer capped at one node's 512 channels; a pixel strip longer than
+  a universe runs on into the next ones, 170 RGB pixels to each
+- **WLED** — find WLED strips and panels on the network and add one in a click;
+  it is sent its pixels over DDP
+- **Panels** — an LED matrix is a grid of cells on the stage plot, and the pixel
+  effects draw across and down it
 - **Art-Net and sACN (E1.31)** — run either, or both at once while a venue is
   migrating from one to the other. Art-Net finds the nodes on the network and
   sends each its universes directly, with ArtSync if you want it; sACN ends its
@@ -364,9 +369,56 @@ as well. A bar without a strobe channel is flashed in software (see
 [Strobe](#strobe-without-a-strobe-channel)). A Hue lamp bound to a bar shows the
 mean of its cells.
 
-**How much.** The engine renders up to 2,048 cells. Sixty-four sixteen-cell
-bars — 1,024 cells — cost well under 2 ms a frame for most patterns, 4 ms for
-Ribbon's colour-wheel blend, out of the 22.7 ms each frame has.
+**Panels.** A profile can put its cells in rows and columns — an LED matrix —
+with `grid: { columns, rows }`, each cell's place in it given by `at: { x, y }`
+or, without, row by row in the order the cells are listed (so a panel wired as
+a serpentine says so cell by cell). On the stage plot a panel is a rectangle of
+square cells: its line, turned and stretched like a bar's, is its top edge, and
+its rows run below it. The pictures cross it in two dimensions, and with **Per
+bar** each panel draws the whole picture across and down itself. An Open
+Fixture Library matrix of two axes imports as a panel, and so does a WLED set up
+as one.
+
+**Strips longer than a universe.** A profile longer than 512 channels must be a
+plain strip — equal cells one after another, nothing for the whole fixture —
+patched at channel 1. It runs on into the next universes with whole pixels to
+each, as pixel controllers (and WLED over Art-Net) expect: 170 RGB pixels, or
+128 RGBW, to a universe. The patch table shows where it ends ("1–390 on 2"),
+and everything that reads the rig — the monitor, the previews, the Hue lamps,
+the overlap checks — follows each pixel to its universe. The bar maker builds
+one when it is plain pixels from channel 1.
+
+**How much.** The engine renders up to 4,096 cells, up to 1,024 to a fixture
+(a 1,024-pixel strip, or a 32 × 32 panel). Measured on the engine's thread,
+4,096 cells cost 0.5–2 ms a frame for most patterns and 6–7 ms for the heaviest
+(Plasma, Gradient), out of the 22.7 ms each frame has.
+
+### WLED
+
+[WLED](https://kno.wled.ge) strips and panels are sent their pixels over
+[DDP](https://kno.wled.ge/interfaces/ddp/) — one run of bytes per frame, 480
+RGB pixels to a packet — rather than as universes of Art-Net.
+
+**Settings → Output → WLED → Find WLEDs** asks the network (mDNS, which does not
+cross routers or VLANs) and lists every WLED that answers with its LED count;
+**Add to patch**, or **Add by address** for one mDNS cannot see. Adding one asks
+it for its name, how many LEDs it has, whether they have a white channel, and —
+set up as a 2D panel in WLED — its width and height, and builds its profile from
+that. It is patched on the first free universes from 1, from channel 1, and is
+then a fixture like any other: on the stage plot, in the patterns, in the
+monitor.
+
+- Its universes go to it and nowhere else, so nothing else may be patched on
+  them; the patch says so if you try.
+- Its row in the patch table shows its address. Change it when the WLED moves;
+  empty it to send the fixture on Art-Net and sACN instead.
+- Removed from the patch, it is sent one dark frame. WLED then hands the strip
+  back to its own effects after its realtime timeout (Settings → Sync
+  Interfaces in WLED), so set a preset of "off" there if it should stay dark.
+- The pre-show check asks every WLED in the patch: one that does not answer
+  fails, and one whose LED count has changed since it was added warns.
+- A WLED with more than 1,024 LEDs is more than one fixture takes: split it into
+  segments in WLED and give each its own address, or drive it over Art-Net.
 
 ### Output protocols
 
@@ -590,7 +642,7 @@ fixture you deliberately patched somewhere else stays put.
 
 Universes with nothing patched on them are transmitted for one final all-zero
 frame and then dropped, so a node never sits holding the look it had when its
-last fixture moved away. The server transmits at most **32** universes.
+last fixture moved away. The server transmits at most **64** universes.
 
 ---
 
@@ -1517,9 +1569,11 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/ofl/parse` | Parse an uploaded Open Fixture Library `.json` (multipart `ofl`, optional `manufacturer`) |
 | GET | `/api/ofl/search?q=` | Search the Open Fixture Library online: `{ results: [{ manufacturerKey, fixtureKey, manufacturer, name, categories }] }` |
 | GET | `/api/ofl/fixture/:manufacturer/:fixture` | Fetch a fixture from the Open Fixture Library and parse it, as `/api/ofl/parse` answers |
-| POST | `/api/profiles` · DELETE `/api/profiles/:id` | Register / remove a fixture profile (`cells` makes it an LED bar; `defaults: [{ offset, value }]` holds undriven channels off 0) |
+| POST | `/api/profiles` · DELETE `/api/profiles/:id` | Register / remove a fixture profile (`cells` makes it an LED bar, `grid` a panel; `defaults: [{ offset, value }]` holds undriven channels off 0) |
 | POST | `/api/profiles/bar` | Build and register an LED bar profile from `{ id, name, cells, firstChannel, order, stride?, dimmer?, strobe? }`; `?dryRun=1` answers with it without registering |
 | GET · POST | `/api/show` | Export / import the patch |
+| GET | `/api/wled/discover` | Ask the network for WLEDs (mDNS): `{ devices: [{ host, name, leds, rgbw, matrix, version, patched }] }` |
+| POST | `/api/wled/add` | Add a WLED to the patch from `{ host, label? }`: its profile from `/json/info`, on free universes, sent DDP |
 
 ### Outputs
 
@@ -1610,11 +1664,13 @@ universe), `auto-position`, `midi-status`, `midi-map`, `midi-learn` and
 `error-msg`.
 
 The `fixture` message carries
-`{ id, address?, universe?, label?, profileId?, maxBrightness?, position?, group?, geometry? }`.
+`{ id, address?, universe?, label?, profileId?, maxBrightness?, position?, group?, geometry?, output? }`.
 `position` is `{ x, y }` in percent of the stage plot, or `null`; `group` is one
-of `front`, `back`, `room`, `floor`, or `null`; `geometry` is an LED bar's line,
-`{ length, angle }` (length 1–100 in stage percent, angle −180–180 degrees
-clockwise on the plot), or `null` for the default.
+of `front`, `back`, `room`, `floor`, or `null`; `geometry` is an LED bar's line
+(a panel's top edge), `{ length, angle }` (length 1–100 in stage percent, angle
+−180–180 degrees clockwise on the plot), or `null` for the default; `output` is
+`{ protocol: 'ddp', host, port? }` to send the fixture's universes to a WLED, or
+`null` for Art-Net and sACN.
 
 ---
 

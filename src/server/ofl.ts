@@ -626,8 +626,21 @@ function readMode(mode: OflMode, matrix: Matrix | null, index: Index): ImportedM
     cellScopes = cellScopes.slice(0, MAX_CELLS_PER_FIXTURE);
   }
   const cellOf = new Map(cellScopes.map((scope, i) => [scope, i]));
-  if (cellScopes.length && isPixel(cellScopes[0]) && matrix && matrix.axes.length > 1) {
-    warnings.push(`The pixels are a ${matrix.size.filter((n) => n > 1).join(' × ')} grid; they are laid along one line, row by row`);
+  // Pixels on two axes are a panel: its grid, and where each cell is in it.
+  // Three axes cannot be drawn on a plan, so a cube is laid along one line.
+  let grid: { columns: number; rows: number; at: (scope: string) => { x: number; y: number } } | null = null;
+  if (cellScopes.length && isPixel(cellScopes[0]) && matrix && matrix.axes.length === 2) {
+    const [across, down] = matrix.axes.map((a) => AXIS_INDEX[a]);
+    grid = {
+      columns: matrix.size[across],
+      rows: matrix.size[down],
+      at: (scope) => {
+        const pos = matrix.position.get(scope) as Position;
+        return { x: pos[across] - 1, y: pos[down] - 1 };
+      },
+    };
+  } else if (cellScopes.length && isPixel(cellScopes[0]) && matrix && matrix.axes.length > 2) {
+    warnings.push(`The pixels are a ${matrix.size.join(' × ')} cube; they are laid along one line, row by row`);
   }
 
   // Which map drives each channel: the fixture's, a cell's, or none.
@@ -716,7 +729,9 @@ function readMode(mode: OflMode, matrix: Matrix | null, index: Index): ImportedM
     result.cells = cellScopes.map((scope, i): ProfileCell => ({
       name: (isPixel(scope) ? `Pixel ${scope}` : `Group ${scope}`).slice(0, 64),
       channelMap: cellMaps[i],
+      ...(grid ? { at: grid.at(scope) } : {}),
     }));
+    if (grid) result.grid = { columns: grid.columns, rows: grid.rows };
   }
   if (defaults.length) result.defaults = defaults;
   const unique = [...new Set(warnings)];

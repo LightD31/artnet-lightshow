@@ -2,14 +2,9 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import path from 'node:path';
-
-let utils;
-test.before(async () => {
-  const source = fs.readFileSync(path.join(import.meta.dirname, '../../public-src/utils.js'), 'utf8');
-  utils = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
-});
+// An ES module like the server, so it is imported as it is; it reads a
+// fixture's channels through src/shared/placement.ts.
+import * as utils from '../../public-src/utils.js';
 
 test('a whole tempo reads whole, anything else to a tenth', () => {
   assert.equal(utils.formatBpm(128), '128');

@@ -1,3 +1,4 @@
+import { UNIVERSE_SIZE, fitIssue } from '../shared/placement.ts';
 import type { Fixture, Profile } from '../types/rig.ts';
 
 // The profile a new fixture gets, and the fallback for a profile id nothing
@@ -14,21 +15,23 @@ const HUE_COLOR_PROFILE_ID = 'generic-hue-lamp-7ch';
 const HUE_WHITE_AMBIANCE_PROFILE_ID = 'generic-hue-white-ambiance-3ch';
 const HUE_WHITE_PROFILE_ID = 'generic-hue-white-lamp-1ch';
 
-// One DMX universe. A fixture patched past it has its writes silently dropped
-// by the 512-byte buffer, leaving it half-controllable with no error, so every
-// path that sets an address checks against this.
-const UNIVERSE_SIZE = 512;
+// One DMX universe (UNIVERSE_SIZE, from shared/placement.ts). A fixture
+// patched past it has its writes silently dropped by the 512-byte buffer,
+// leaving it half-controllable with no error, so every path that sets an
+// address checks it with universeOverflow — which also lets a pixel strip
+// longer than a universe run on into the next.
 
 // A show is a handful of fixtures. The cap exists so a stuck client or a
 // scripted loop cannot grow the patch (and with it every state broadcast)
 // without bound.
 const MAX_FIXTURES = 64;
 
-// Every light the engine renders — a par, or one cell of an LED bar — is
-// worked out every frame. Sixty-four sixteen-cell bars is 1,024; the cap
-// leaves room above that without letting one oversized profile patched
-// sixty-four times ask for eleven thousand.
-const MAX_UNITS = 2048;
+// Every light the engine renders — a par, or one cell of an LED bar or strip —
+// is worked out every frame. Measured on the worker thread: 4,096 cells cost
+// 0.5–2 ms a frame for most patterns and 6–7 ms for the heaviest (plasma,
+// gradient), of the 22.7 ms a frame has; 8,192 cost twice that, which a
+// slower laptop would not keep up with. Sixty-four sixteen-cell bars is 1,024.
+const MAX_UNITS = 4096;
 
 /** Last channel a fixture at `address` with `channelCount` channels occupies. */
 function endChannel(address: number, channelCount: number): number {
@@ -41,14 +44,14 @@ function fitsInUniverse(address: number, channelCount: number): boolean {
 }
 
 /**
- * Why a fixture does not fit its universe, in words an operator can act on, or
- * null when it does. One wording for every path that patches a fixture: editing
- * one, restoring a deleted one and loading a show used to say it three ways.
+ * Why a fixture does not fit where it is patched, in words an operator can act
+ * on, or null when it does. One wording for every path that patches a fixture:
+ * editing one, restoring a deleted one and loading a show used to say it three
+ * ways. A strip longer than a universe fits from channel 1 (shared/placement).
  */
-function universeOverflow(label: string, address: number, channelCount: number): string | null {
-  if (fitsInUniverse(address, channelCount)) return null;
-  return `"${label}" at address ${address} needs ${channelCount} channels and would end at `
-    + `${endChannel(address, channelCount)}, past the ${UNIVERSE_SIZE}-channel universe`;
+function universeOverflow(label: string, address: number, profile: Pick<Profile, 'channelCount' | 'channelMap' | 'cells'>,
+  universe?: number): string | null {
+  return fitIssue(label, address, profile, universe);
 }
 
 // UV LEDs are physically dimmer than RGBW — boost their DMX value so they

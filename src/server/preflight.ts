@@ -4,7 +4,8 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 
 import { state, universeOf, activeUniverses } from './state.ts';
-import { getProfile, fitsInUniverse, endChannel, UNIVERSE_SIZE } from './profiles.ts';
+import { getProfile } from './profiles.ts';
+import { fitIssue, footprintOf, overlaps } from '../shared/placement.ts';
 import { MAX_UNIVERSES } from './universes.ts';
 import { settings } from './settings.ts';
 import { discoverNodes, probeSend } from './artnet.ts';
@@ -13,6 +14,9 @@ import * as output from './output.ts';
 import { engineStatus } from './engine.ts';
 import { MIN_UNIVERSE, MAX_UNIVERSE } from './sacn.ts';
 import { listEntertainmentConfigs } from './hue.ts';
+import { wledClient } from './wled.ts';
+import { unitCount } from '../shared/rig.ts';
+import type { WledClient } from './wled.ts';
 import { cues } from './cues.ts';
 import { midiMap } from './midi-map.ts';
 import * as pythonEnv from '../python-env.ts';
@@ -275,6 +279,48 @@ function checkSacn(): Check {
 }
 
 /**
+ * The WLEDs in the patch: does each answer, and is it still the length it was
+ * patched as? A WLED re-set to fewer LEDs takes the pixels past its end
+ * nowhere; one given more leaves them to its own effects.
+ */
+async function checkWled(client: Pick<WledClient, 'info'> = wledClient): Promise<Check> {
+  const wleds = state.fixtures.filter((f) => f.output?.protocol === 'ddp');
+  if (!wleds.length) {
+    return { id: 'wled', label: 'WLED', status: INFO, detail: 'None in the patch. Add one under Settings → Output → WLED.' };
+  }
+  const answers = await Promise.all(wleds.map(async (fix) => {
+    const host = (fix.output as { host: string }).host;
+    const patched = unitCount(getProfile(fix));
+    try {
+      const info = await client.info(host);
+      return { fix, host, patched, leds: info.leds, error: null };
+    } catch (err) {
+      return { fix, host, patched, leds: 0, error: err instanceof Error ? err.message : String(err) };
+    }
+  }));
+  const silent = answers.filter((a) => a.error);
+  const resized = answers.filter((a) => !a.error && a.leds !== a.patched);
+  if (silent.length) {
+    return {
+      id: 'wled', label: 'WLED', status: FAIL,
+      detail: silent.map((a) => `"${a.fix.label}" at ${a.host} does not answer (${a.error})`).join('; '),
+      fix: 'Check it is powered and on this network, or correct its address in Settings → Fixture Patch.',
+    };
+  }
+  if (resized.length) {
+    return {
+      id: 'wled', label: 'WLED', status: WARN,
+      detail: resized.map((a) => `"${a.fix.label}" reports ${a.leds} LEDs but is patched as ${a.patched}`).join('; '),
+      fix: 'Remove it from the patch and add it again under Settings → Output → WLED.',
+    };
+  }
+  return {
+    id: 'wled', label: 'WLED', status: OK,
+    detail: answers.map((a) => `"${a.fix.label}" at ${a.host}, ${a.leds} LEDs`).join('; ') + ', sent over DDP.',
+  };
+}
+
+/**
  * Philips Hue: is the bridge there, does the area still exist, and is every
  * channel bound to a fixture that is still in the patch?
  *
@@ -387,24 +433,18 @@ function checkPatch(): Check {
   const problems = [];
 
   for (const fix of state.fixtures) {
-    const profile = getProfile(fix);
-    if (!fitsInUniverse(fix.address, profile.channelCount)) {
-      problems.push(`"${fix.label}" at ${fix.address} ends at ${endChannel(fix.address, profile.channelCount)}, `
-        + `past the ${UNIVERSE_SIZE}-channel universe`);
-    }
+    const issue = fitIssue(fix.label, fix.address, getProfile(fix), universeOf(fix));
+    if (issue) problems.push(issue);
   }
 
-  // Two fixtures only fight over an address when they share a universe.
+  // Two fixtures only fight over an address when they share a universe — a
+  // strip running on into the next counts on every universe it covers.
+  const footprints = state.fixtures.map((f) => footprintOf(universeOf(f), f.address, getProfile(f)));
   for (let i = 0; i < state.fixtures.length; i++) {
-    const a = state.fixtures[i];
-    const aEnd = endChannel(a.address, getProfile(a).channelCount);
     for (let j = i + 1; j < state.fixtures.length; j++) {
-      const b = state.fixtures[j];
-      if (universeOf(a) !== universeOf(b)) continue;
-      const bEnd = endChannel(b.address, getProfile(b).channelCount);
-      if (a.address <= bEnd && b.address <= aEnd) {
-        problems.push(`"${a.label}" and "${b.label}" overlap on universe ${universeOf(a)}`);
-      }
+      if (!overlaps(footprints[i], footprints[j])) continue;
+      const shared = footprints[i].find((x) => footprints[j].some((y) => y.universe === x.universe))?.universe;
+      problems.push(`"${state.fixtures[i].label}" and "${state.fixtures[j].label}" overlap on universe ${shared}`);
     }
   }
 
@@ -729,9 +769,10 @@ async function runPreflight({ midi, spotify, prolink, analysisCache, downloadMod
   // The external-tool probes are independent and each costs a process spawn;
   // run them together rather than serially in front of an operator waiting on
   // the report.
-  const [artnet, hue, ffmpeg, ytDlp] = await Promise.all([
+  const [artnet, hue, wled, ffmpeg, ytDlp] = await Promise.all([
     checkArtnet(),
     checkHue(),
+    checkWled(),
     checkFfmpeg(),
     checkYtDlp(),
   ]);
@@ -741,6 +782,7 @@ async function runPreflight({ midi, spotify, prolink, analysisCache, downloadMod
     artnet,
     checkSacn(),
     hue,
+    wled,
     checkPatch(),
     checkAccess(),
     checkMidi(midi),
@@ -774,6 +816,7 @@ export {
   checkEngine,
   checkSacn,
   checkHue,
+  checkWled,
   checkPanns,
   checkAnalysisModels,
   checkAccess,

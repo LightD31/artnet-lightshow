@@ -1,3 +1,5 @@
+import { channelReader } from '../src/shared/placement.ts';
+
 // Approximate the visual mix on a screen for the rig's RGBWAUV channels.
 // Amber adds warm orange (R + 0.5 G); UV reads as blue-violet (R 0.2 + B 0.9).
 //
@@ -82,10 +84,17 @@ function overrideLight(fix, state) {
   };
 }
 
-/** One light's emitters out of a universe snapshot, through its channel map. */
-function readLight(snap, base, ch, scale) {
-  const at = (offset) => (offset !== undefined && base + offset < snap.length ? snap[base + offset] : 0);
-  const k = scale * (ch.dimmer !== undefined && base + ch.dimmer < snap.length ? snap[base + ch.dimmer] / 255 : 1);
+/**
+ * A fixture's channels in the snapshot, through its placement: a strip that
+ * runs on over several universes reads each cell from the one it is on.
+ */
+function fixtureReader(fix, profile, all) {
+  return channelReader(fix.universe ?? 0, fix.address, profile, (u) => all[u]);
+}
+
+/** One light's emitters, read through its channel map. */
+function readLight(at, ch, scale) {
+  const k = scale * (ch.dimmer !== undefined ? at(ch.dimmer) / 255 : 1);
   return {
     r:  Math.round(at(ch.red)   * k),
     g:  Math.round(at(ch.green) * k),
@@ -112,12 +121,10 @@ export function fixtureCellLights(fix, state, dmxSnapshot) {
     const light = fix.override.blackout ? BLACK : overrideLight(fix, state);
     return cells.map(() => light);
   }
-  const all = dmxSnapshot || state.dmxSnapshot || {};
-  const snap = all[fix.universe ?? 0] || [];
-  const base = fix.address - 1;
+  const at = fixtureReader(fix, profile, dmxSnapshot || state.dmxSnapshot || {});
   const ch = profile.channelMap || {};
-  const barDim = ch.dimmer !== undefined && base + ch.dimmer < snap.length ? snap[base + ch.dimmer] / 255 : 1;
-  return cells.map((cell) => readLight(snap, base, cell.channelMap || {}, barDim));
+  const barDim = ch.dimmer !== undefined ? at(ch.dimmer) / 255 : 1;
+  return cells.map((cell) => readLight(at, cell.channelMap || {}, barDim));
 }
 
 /** Each cell of a bar as a CSS colour, or null for a fixture that is one light. */
@@ -150,10 +157,8 @@ export function fixtureOutputColor(fix, state, dmxSnapshot) {
 
   // Read DMX snapshot through the fixture's profile channel map. The snapshot
   // is keyed by universe, so pick out the one this fixture lives on.
-  const base = fix.address - 1;
-  const all = dmxSnapshot || state.dmxSnapshot || {};
-  const snap = all[fix.universe ?? 0] || [];
   const profile = state.profiles && state.profiles[fix.profileId];
   if (!profile || !profile.channelMap) return '#111';
-  return colorToCss(readLight(snap, base, profile.channelMap, 1));
+  const at = fixtureReader(fix, profile, dmxSnapshot || state.dmxSnapshot || {});
+  return colorToCss(readLight(at, profile.channelMap, 1));
 }

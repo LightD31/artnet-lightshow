@@ -21,6 +21,7 @@ import { FRAME_MS } from './frame-clock.ts';
 import { PATTERN_FUNCS } from '../shared/patterns.ts';
 import { renderLayer } from '../shared/layer.ts';
 import { buildRig, rigSignature } from '../shared/rig.ts';
+import { cellPlace, channelPlace, stripOf } from '../shared/placement.ts';
 // Shared with the browser's rehearsal preview so the two cannot drift.
 import { EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture, cellDrive } from '../shared/look-math.ts';
 import { anchorStep, stepAt, motionAdvance } from '../shared/beat-clock.ts';
@@ -176,6 +177,16 @@ function writeDimmer(dmx: Dmx, base: number, ch: ChannelMap, level: number): voi
 function writeDefaults(dmx: Dmx, base: number, defaults: ChannelDefault[] | undefined): void {
   if (!defaults) return;
   for (let i = 0; i < defaults.length; i++) dmx[base + defaults[i].offset] = defaults[i].value;
+}
+
+/** writeDefaults for a strip that runs over several universes. */
+function writeStripDefaults(store: FrameStore, fix: RenderFixture, strip: NonNullable<ReturnType<typeof stripOf>>,
+  defaults: ChannelDefault[] | undefined): void {
+  if (!defaults) return;
+  for (const { offset, value } of defaults) {
+    const place = channelPlace(strip, fix.address, offset);
+    store.getBuffer(fix.universe + place.universe)[place.index] = value;
+  }
 }
 
 /**
@@ -466,8 +477,12 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     const profile = profileOf(fix);
     const ch = profile.channelMap;
     const ms = mastersOf(input, fix);
+    // A strip longer than a universe runs on into the next ones, whole cells
+    // to a universe (shared/placement.ts); anything else is all on its own.
+    const strip = stripOf(profile);
 
-    writeDefaults(dmx, base, profile.defaults);
+    if (strip) writeStripDefaults(store, fix, strip, profile.defaults);
+    else writeDefaults(dmx, base, profile.defaults);
     let top = 0;
     let flash = 0;
     for (const light of lights) {
@@ -482,8 +497,15 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       const cell = cells[c];
       const { col, dim } = lights[c];
       const { cellDim, scale } = cellDrive(dim, top, ms, fixtureDimmer, cell.dimmer !== undefined);
-      if (cell.dimmer !== undefined) dmx[base + cell.dimmer] = cellDim;
-      writeEmitters(dmx, base, cell, col, scale);
+      let out = dmx;
+      let at = base;
+      if (strip) {
+        const place = cellPlace(strip, fix.address, c);
+        if (place.universe) out = store.getBuffer(fix.universe + place.universe);
+        at = place.shift;
+      }
+      if (cell.dimmer !== undefined) out[at + cell.dimmer] = cellDim;
+      writeEmitters(out, at, cell, col, scale);
     }
   }
 

@@ -1,12 +1,14 @@
 import { state, universeOf } from './state.ts';
 import { getProfile } from './profiles.ts';
 import { cellsOf, EMITTERS } from '../shared/rig.ts';
+import { channelReader } from '../shared/placement.ts';
 import * as universes from './universes.ts';
 import { createTransmitter, sacnUniverseFor as mapSacnUniverse } from './transmit.ts';
 import { createDiscovery, interfaces, isBroadcastTarget, isLoopbackTarget } from './artnet-nodes.ts';
 import * as hue from './hue.ts';
 import type { HueChannelColour } from './hue.ts';
-import type { SacnOutput, SendOptions, TransmitConfig } from './transmit.ts';
+import { ddpRoutes } from './ddp-routes.ts';
+import type { SacnOutput, SendOptions, TransmitConfig, Wire } from './transmit.ts';
 import type { Settings } from './settings.ts';
 import type { ChannelMap } from '../types/rig.ts';
 
@@ -114,6 +116,7 @@ function transmitConfig(): TransmitConfig {
     },
     sacn: { ...sacn },
     delayMs: hueLatencyMs > 0 && hue.getConfig().enabled ? hueLatencyMs : 0,
+    ddp: ddpRoutes(state.fixtures, getProfile, universeOf),
   };
 }
 
@@ -214,11 +217,10 @@ function hueChannelColors(): HueChannelColour[] {
     const fix = state.fixtures.find((f) => f.id === binding.fixture);
     if (!fix) continue;
 
-    const dmx = universes.getBuffer(universeOf(fix));
     const profile = getProfile(fix);
     const ch = profile.channelMap;
-    const base = fix.address - 1;
-    const at: ChannelReader = (offset) => (offset === undefined ? 0 : (dmx[base + offset] || 0));
+    // Through the placement, so a strip running on over several universes reads right.
+    const at: ChannelReader = channelReader(universeOf(fix), fix.address, profile, (u) => universes.getBuffer(u));
 
     // A fixture with nothing that makes coloured light — a plain dimmer-only
     // lamp — is read as neutral white at its level. Tested against every
@@ -281,7 +283,7 @@ function sendHue(): boolean {
  * `terminate` ends the universe's sACN stream (see transmit.js).
  */
 function sendUniverse(universe: number, frame: Buffer, { immediate = false, terminate = false }: SendOptions = {}):
-  ('artnet' | 'sacn')[] {
+  Wire[] {
   return transmitter.send(universe, frame, transmitConfig(), { immediate, terminate });
 }
 

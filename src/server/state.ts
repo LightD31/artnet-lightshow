@@ -5,8 +5,9 @@ import { COLOR_PRESETS, PATTERNS, STROBE_FUNCTIONS, ENERGY_EFFECTS, SYNC_OFFSET_
 import { PALETTES } from './palettes.ts';
 import { conductor } from './conductor.ts';
 import { HttpError } from '../errors.ts';
+import { footprintOf, universesOf } from '../shared/placement.ts';
 import type { Settings } from './settings.ts';
-import type { Fixture, PixelMap, ShowDynamics } from '../types/rig.ts';
+import type { Fixture, PixelMap, Profile, ShowDynamics } from '../types/rig.ts';
 
 /** Where a running pattern counts its steps from (see patch.ts). */
 export interface PatternAnchor {
@@ -138,19 +139,23 @@ function universeOf(fixture: Pick<Fixture, 'universe'>): number {
  */
 function activeUniverses(): number[] {
   const active = new Set([state.artnet.universe]);
-  for (const fix of state.fixtures) active.add(universeOf(fix));
+  for (const fix of state.fixtures) for (const u of universesOf(universeOf(fix), getProfile(fix))) active.add(u);
   return [...active].sort((a, b) => a - b);
 }
 
 /**
  * How many distinct universes a proposed fixture list would span, counting the
- * default universe (which is always transmitted). Used to hold edits to the
- * output cap before they reach the render loop.
+ * default universe (which is always transmitted) and every universe a long
+ * strip runs on into. Used to hold edits to the output cap before they reach
+ * the render loop. `profileOf` resolves a fixture's profile — the live
+ * registry by default, or the profiles a show is bringing with it.
  */
-function countUniverses(fixtures: readonly Pick<Fixture, 'universe'>[]): number {
+function countUniverses(fixtures: readonly Pick<Fixture, 'universe' | 'profileId'>[],
+  profileOf: (fixture: Pick<Fixture, 'profileId'>) => Profile = getProfile): number {
   const seen = new Set([state.artnet.universe]);
   for (const fix of fixtures) {
-    seen.add(Number.isInteger(fix.universe) ? fix.universe as number : state.artnet.universe);
+    const universe = Number.isInteger(fix.universe) ? fix.universe as number : state.artnet.universe;
+    for (const u of universesOf(universe, profileOf(fix))) seen.add(u);
   }
   return seen.size;
 }
@@ -192,10 +197,9 @@ function allocateFixtureId(): number {
 function getDmxSnapshotSize(universe: number): number {
   let maxEnd = 0;
   for (const fix of state.fixtures) {
-    if (universeOf(fix) !== universe) continue;
-    const profile = getProfile(fix);
-    const end = fix.address - 1 + profile.channelCount;
-    if (end > maxEnd) maxEnd = end;
+    for (const part of footprintOf(universeOf(fix), fix.address, getProfile(fix))) {
+      if (part.universe === universe && part.last > maxEnd) maxEnd = part.last;
+    }
   }
   return Math.min(universes.UNIVERSE_SIZE, maxEnd);
 }

@@ -9,15 +9,18 @@ import { applyPatch, applyOverride, setFixtureMaxBrightness, processTap } from '
 import { PALETTES } from './palettes.ts';
 import { resizeFixtureBuffers, startSyncTest, engineStatus } from './engine.ts';
 import { parseGDTF } from '../gdtf.ts';
-import { BUILTIN_PROFILE_ID, isBuiltinProfile, MAX_FIXTURES, UNIVERSE_SIZE, endChannel, fitsInUniverse, universeOverflow, registerProfile, unregisterProfile, listProfiles, unitCapOverflow } from './profiles.ts';
+import { BUILTIN_PROFILE_ID, isBuiltinProfile, MAX_FIXTURES, UNIVERSE_SIZE, endChannel, fitsInUniverse, universeOverflow, registerProfile, unregisterProfile, listProfiles, getProfile, unitCapOverflow } from './profiles.ts';
 import { MAX_UNIVERSES } from './universes.ts';
+import { footprintOf, universeCount } from '../shared/placement.ts';
+import { ddpConflict } from './ddp-routes.ts';
 import { cues, cueWriteSchema, cueRestoreSchema, reorderSchema } from './cues.ts';
 import { showStore, snapshotShow, applyShow } from './show-store.ts';
 import { barProfile } from './bar-profile.ts';
 import { parseOfl } from './ofl.ts';
 import { createOflLibrary } from './ofl-library.ts';
+import { wledClient, wledProfile } from './wled.ts';
 import { midiMap, ACTIONS, defaultTypeFor, mapSchema, learnSchema, bindingWriteSchema } from './midi-map.ts';
-import { profileSchema, deezerStateSchema, fixtureRestoreSchema, dmxUniverse, huePairSchema, validate } from './validation.ts';
+import { profileSchema, deezerStateSchema, fixtureRestoreSchema, dmxUniverse, huePairSchema, wledAddSchema, validate } from './validation.ts';
 import * as output from './output.ts';
 import { discoverNodes } from './artnet.ts';
 import { interfaces } from './artnet-nodes.ts';
@@ -45,8 +48,9 @@ import type { setupIntegrations } from './integrations.ts';
 import type { ArtNode } from './artnet.ts';
 import type { EntertainmentArea } from './hue.ts';
 import type { OflLibrary } from './ofl-library.ts';
+import type { WledClient } from './wled.ts';
 import type { NowPlaying, PlaybackSource } from '../types/playback.ts';
-import type { Profile } from '../types/rig.ts';
+import type { Fixture, Profile } from '../types/rig.ts';
 
 /** The live subsystems the routes drive. */
 export interface RouteDeps {
@@ -61,6 +65,8 @@ export interface RouteDeps {
   applier: ReturnType<typeof createApplier>;
   /** The Open Fixture Library online; the real one unless a test stands in. */
   oflLibrary?: OflLibrary;
+  /** Finding and asking WLEDs; the real network unless a test stands in. */
+  wled?: WledClient;
 }
 
 /** What the operator typed into "Analyse", classified (see classifyAnalyzeSource). */
@@ -139,6 +145,7 @@ function asyncHandler(fn: (req: Request, res: Response, next: NextFunction) => u
 function attachRoutes(app: Express, deps: RouteDeps): void {
   const { midi, autoShow, spotify, nowPlaying, deezerSource, prolink, analysisCache, integrations, applier } = deps;
   const oflLibrary = deps.oflLibrary || createOflLibrary();
+  const wled = deps.wled || wledClient;
 
   // ─── State ────────────────────────────────────────────────────────────────
   app.get('/api/state', (_req, res) => res.json(getClientState()));
@@ -436,6 +443,85 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
     }
   }));
 
+  // ─── WLED ─────────────────────────────────────────────────────────────────
+  // Find the WLEDs on the network, and add one: its profile from what it says
+  // it is, patched on universes of its own and sent DDP (ddp-routes.ts).
+  app.get('/api/wled/discover', asyncHandler(async (_req, res) => {
+    try {
+      const found = await wled.discover();
+      const devices = await Promise.all(found.map(async (device) => {
+        const patched = state.fixtures.find((f) => f.output?.protocol === 'ddp' && f.output.host === device.host);
+        const base = { ...device, patched: patched ? patched.label : null };
+        try {
+          const info = await wled.info(device.host);
+          return { ...base, name: info.name, leds: info.leds, rgbw: info.rgbw, matrix: info.matrix, version: info.version };
+        } catch (err) {
+          return { ...base, error: messageOf(err) };
+        }
+      }));
+      res.json({ ok: true, devices });
+    } catch (err) {
+      res.status(statusOf(err) || 500).json({ ok: false, error: messageOf(err) });
+    }
+  }));
+
+  app.post('/api/wled/add', asyncHandler(async (req, res) => {
+    try {
+      const { host, label } = validate(wledAddSchema, req.body || {}, 'wled');
+      if (state.fixtures.length >= MAX_FIXTURES) {
+        return res.status(400).json({ ok: false, error: `Patch is full (${MAX_FIXTURES} fixtures)` });
+      }
+      const sameHost = state.fixtures.find((f) => f.output?.protocol === 'ddp' && f.output.host.toLowerCase() === host.toLowerCase());
+      if (sameHost) return res.status(409).json({ ok: false, error: `${host} is patched already, as "${sameHost.label}"` });
+
+      const info = await wled.info(host);
+      const profile = wledProfile(info, host);
+      // The profile is named for the WLED's own address (its MAC), so the same
+      // device found at a new IP is the fixture that is already there.
+      const sameDevice = state.fixtures.find((f) => f.profileId === profile.id);
+      if (sameDevice) {
+        return res.status(409).json({ ok: false, error: `${info.name} is patched already, as "${sameDevice.label}"; change its address in the patch table` });
+      }
+      const universe = freeUniverses(universeCount(profile));
+      if (universe === null) return res.status(400).json({ ok: false, error: 'No free universes left for it' });
+      const fixture: Fixture = {
+        id: -1, label: (label || info.name).slice(0, 64), address: 1, universe, profileId: profile.id, maxBrightness: 255,
+        override: null, position: null, group: null, geometry: null, output: { protocol: 'ddp', host },
+      };
+      const next = [...state.fixtures, fixture];
+      const profileOf = (f: Pick<Fixture, 'profileId'>) => (f.profileId === profile.id ? profile : getProfile(f));
+      const tooMany = unitCapOverflow(next, profileOf);
+      if (tooMany) return res.status(400).json({ ok: false, error: tooMany });
+      if (countUniverses(next, profileOf) > MAX_UNIVERSES) {
+        return res.status(400).json({ ok: false, error: `${info.name} would put the patch on more than the ${MAX_UNIVERSES} universes this server transmits` });
+      }
+      if (!registerProfile(profile)) return res.status(400).json({ ok: false, error: 'Invalid profile' });
+      fixture.id = allocateFixtureId();
+      state.fixtures.push(fixture);
+      resizeFixtureBuffers();
+      showStore.scheduleSave();
+      integrations.broadcast();
+      res.json({ ok: true, fixture, profile, info });
+    } catch (err) {
+      res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) });
+    }
+  }));
+
+  /**
+   * The first run of `count` universes nothing is patched on, from 1: the
+   * rig's default universe stays clear, since new fixtures land on it.
+   */
+  function freeUniverses(count: number): number | null {
+    const used = new Set<number>([state.artnet.universe]);
+    for (const f of state.fixtures) for (const part of footprintOf(universeOf(f), f.address, getProfile(f))) used.add(part.universe);
+    for (let u = 1; u + count - 1 <= 32767; u++) {
+      let free = true;
+      for (let k = 0; k < count && free; k++) free = !used.has(u + k);
+      if (free) return u;
+    }
+    return null;
+  }
+
   app.post('/api/profiles', (req, res) => {
     try {
       const profile = validate(profileSchema, req.body, 'profile');
@@ -471,13 +557,14 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
   function profileChangeBlocked(profile: Profile): string | null {
     const users = state.fixtures.filter((f) => f.profileId === profile.id);
     for (const fixture of users) {
-      const overflow = universeOverflow(fixture.label, fixture.address, profile.channelCount);
+      const overflow = universeOverflow(fixture.label, fixture.address, profile, universeOf(fixture));
       if (overflow) return overflow;
     }
+    if (!users.length) return null;
     const profiles = listProfiles();
-    return users.length
-      ? unitCapOverflow(state.fixtures, (f) => (f.profileId === profile.id ? profile : profiles[f.profileId] || profiles[BUILTIN_PROFILE_ID]))
-      : null;
+    const profileOf = (f: Pick<Fixture, 'profileId'>) => (f.profileId === profile.id ? profile : profiles[f.profileId] || profiles[BUILTIN_PROFILE_ID]);
+    // A WLED's profile growing reaches onto more universes, which must be free.
+    return unitCapOverflow(state.fixtures, profileOf) || ddpConflict(state.fixtures, profileOf, universeOf);
   }
 
   app.delete('/api/profiles/:id', (req, res) => {
@@ -508,13 +595,14 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
       universe = parsed.data;
     }
 
+    // Behind everything on that universe, a strip running on into it included.
     let maxEnd = 0;
     const profiles = listProfiles();
     for (const fix of state.fixtures) {
-      if (universeOf(fix) !== universe) continue;
       const profile = profiles[fix.profileId] || profiles[BUILTIN_PROFILE_ID];
-      const end = fix.address + profile.channelCount;
-      if (end > maxEnd) maxEnd = end;
+      for (const part of footprintOf(universeOf(fix), fix.address, profile)) {
+        if (part.universe === universe && part.last + 1 > maxEnd) maxEnd = part.last + 1;
+      }
     }
     const chCount = profiles[BUILTIN_PROFILE_ID].channelCount;
     // Auto-address after the last patched fixture. Clamping to a fixed 501 used
@@ -531,6 +619,9 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
     const next = [...state.fixtures, { universe, profileId: BUILTIN_PROFILE_ID }];
     const tooMany = unitCapOverflow(next);
     if (tooMany) return res.status(400).json({ ok: false, error: tooMany });
+    const wled = ddpConflict([...state.fixtures, { id: -1, label: `Fixture ${state.fixtures.length + 1}`, address, universe, profileId: BUILTIN_PROFILE_ID }],
+      getProfile, universeOf);
+    if (wled) return res.status(400).json({ ok: false, error: wled });
     if (countUniverses(next) > MAX_UNIVERSES) {
       return res.status(400).json({
         ok: false,
@@ -579,6 +670,7 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
         position: removed.position || null,
         group: removed.group || null,
         geometry: removed.geometry || null,
+        output: removed.output || null,
         override: removed.override,
       },
     });
@@ -600,8 +692,7 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
 
       const profiles = listProfiles();
       const profileId = profiles[fixture.profileId] ? fixture.profileId : BUILTIN_PROFILE_ID;
-      const chCount = profiles[profileId].channelCount;
-      const overflow = universeOverflow(fixture.label, fixture.address, chCount);
+      const overflow = universeOverflow(fixture.label, fixture.address, profiles[profileId], fixture.universe ?? state.artnet.universe);
       if (overflow) return res.status(400).json({ ok: false, error: overflow });
 
       const restored = {
@@ -614,6 +705,7 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
         position: fixture.position || null,
         group: fixture.group || null,
         geometry: fixture.geometry || null,
+        output: fixture.output || null,
         override: fixture.override || null,
       };
 
@@ -623,6 +715,8 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
 
       const tooMany = unitCapOverflow([...state.fixtures, restored]);
       if (tooMany) return res.status(400).json({ ok: false, error: tooMany });
+      const wled = ddpConflict([...state.fixtures, restored as Fixture], getProfile, universeOf);
+      if (wled) return res.status(400).json({ ok: false, error: wled });
 
       if (countUniverses([...state.fixtures, restored]) > MAX_UNIVERSES) {
         return res.status(400).json({

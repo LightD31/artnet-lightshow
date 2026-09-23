@@ -1,5 +1,7 @@
 import { sendArtDmx, sendArtSync } from './artnet.ts';
 import { sendSacn, sendSacnDiscovery, MIN_UNIVERSE, MAX_UNIVERSE, DISCOVERY_INTERVAL_MS } from './sacn.ts';
+import { sendDdp } from './ddp.ts';
+import type { DdpRoute } from './ddp-routes.ts';
 import type { ArtDmxTarget } from './artnet.ts';
 import type { ArtRoutes } from './artnet-nodes.ts';
 import type { SacnTarget } from './sacn.ts';
@@ -21,6 +23,16 @@ export interface TransmitConfig {
   artnet: ArtnetOutput;
   sacn: SacnOutput;
   delayMs: number;
+  /** The WLEDs, and the universes that are theirs (ddp-routes.ts). */
+  ddp?: DdpRoute[];
+}
+
+/** One frame of a WLED's pixels, as the wire takes it. */
+export interface DdpTarget {
+  host: string;
+  port: number;
+  sequence: number;
+  rgbw: boolean;
 }
 
 /** The packets themselves; swapped for fakes in tests. */
@@ -29,6 +41,7 @@ export interface Wires {
   artnetSync(target: { host: string; port: number }): unknown;
   sacn(target: SacnTarget, frame: Buffer): boolean;
   sacnDiscovery(packet: { cid: string; sourceName: string; universes: number[]; iface: string }): unknown;
+  ddp(target: DdpTarget, data: Uint8Array): boolean;
 }
 
 export interface SendOptions {
@@ -36,8 +49,10 @@ export interface SendOptions {
   terminate?: boolean;
 }
 
+export type Wire = 'artnet' | 'sacn' | 'ddp';
+
 export interface Transmitter {
-  send(universe: number, frame: Buffer, config: TransmitConfig, options?: SendOptions): ('artnet' | 'sacn')[];
+  send(universe: number, frame: Buffer, config: TransmitConfig, options?: SendOptions): Wire[];
   endFrame(config: TransmitConfig | null | undefined): void;
 }
 
@@ -74,8 +89,23 @@ function sacnUniverseFor(universe: number, offset: number): number | null {
 }
 
 const DEFAULT_WIRES: Wires = {
-  artnet: sendArtDmx, artnetSync: sendArtSync, sacn: sendSacn, sacnDiscovery: sendSacnDiscovery,
+  artnet: sendArtDmx, artnetSync: sendArtSync, sacn: sendSacn, sacnDiscovery: sendSacnDiscovery, ddp: sendDdp,
 };
+
+/** The universes a config sends to WLEDs, worked out once per config. */
+const ddpUniversesOf = new WeakMap<DdpRoute[], Set<number>>();
+function ddpUniverses(routes: DdpRoute[] | undefined): Set<number> | null {
+  if (!routes || !routes.length) return null;
+  let set = ddpUniversesOf.get(routes);
+  if (!set) {
+    set = new Set(routes.flatMap((route) => route.parts.map((part) => part.universe)));
+    ddpUniversesOf.set(routes, set);
+  }
+  return set;
+}
+
+/** What makes one WLED another: where its frames go. */
+const ddpKey = (route: Pick<DdpRoute, 'host' | 'port'>) => `${route.host}:${route.port}`;
 
 /** What makes one sACN stream another: a change here ends the old one. */
 function sacnStreamKey(sacn: SacnOutput | null | undefined): string | null {
@@ -99,6 +129,13 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
   const sacnSent = new Map<number, number>();
   let sacnStream: { key: string; config: SacnOutput } | null = null;
   let lastDiscovery = -Infinity;
+  // This frame's universes for the WLEDs, gathered until the frame ends and
+  // each WLED can be sent its pixels as one run; the WLEDs sent to last
+  // frame, so one that leaves the patch is sent a dark frame to end on; and
+  // each WLED's sequence number.
+  const ddpFrames = new Map<number, Buffer>();
+  let ddpSent = new Map<string, { route: DdpRoute; bytes: number }>();
+  const ddpSequence = new Map<string, number>();
 
   // ── Hue latency compensation ──────────────────────────────────────────────
   // Art-Net reaches a node in about a millisecond; a Hue lamp hears about a
@@ -141,14 +178,23 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
    * packets.
    */
   function send(universe: number, frame: Buffer, config: TransmitConfig,
-    { immediate = false, terminate = false }: SendOptions = {}): ('artnet' | 'sacn')[] {
-    const sent: ('artnet' | 'sacn')[] = [];
+    { immediate = false, terminate = false }: SendOptions = {}): Wire[] {
+    const sent: Wire[] = [];
     if (!immediate && config.delayMs > 0) {
       const ready = delayedFrame(universe, frame, config.delayMs);
       if (!ready) return sent;
       frame = ready;
     } else {
       delayLine.delete(universe);
+    }
+
+    // A WLED's universe is its alone: it waits for the frame's end, when the
+    // WLED is sent every universe of its pixels as one run.
+    const toWled = ddpUniverses(config.ddp);
+    if (toWled && toWled.has(universe)) {
+      ddpFrames.set(universe, frame);
+      sent.push('ddp');
+      return sent;
     }
 
     const { artnet, sacn } = config;
@@ -222,12 +268,47 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
    * went to that it can output it now.
    */
   function endFrame(config: TransmitConfig | null | undefined): void {
+    endDdpFrame(config && config.ddp);
     const artnet = config && config.artnet;
     if (artnet && artnet.sync && artnet.enabled !== false) {
       for (const host of syncTargets) wires.artnetSync({ host, port: artnet.port });
     }
     syncTargets.clear();
     endSacnFrame(config && config.sacn);
+  }
+
+  /**
+   * Send every WLED its pixels: its universes' bytes, in order, as one run.
+   * A WLED whose universes did not all arrive this frame (held in the Hue
+   * delay line) waits for the next. One that has left the patch is sent a
+   * dark frame, so it does not hold its last look until WLED's own timeout
+   * hands it back to its effects.
+   */
+  function endDdpFrame(routes: DdpRoute[] | null | undefined): void {
+    const now = new Map<string, { route: DdpRoute; bytes: number }>();
+    for (const route of routes || []) {
+      const bytes = route.parts.reduce((sum, part) => sum + part.bytes, 0);
+      now.set(ddpKey(route), { route, bytes });
+      if (!route.parts.every((part) => ddpFrames.has(part.universe))) continue;
+      const data = new Uint8Array(bytes);
+      let at = 0;
+      for (const part of route.parts) {
+        const frame = ddpFrames.get(part.universe) as Buffer;
+        data.set(frame.subarray(part.from, part.from + part.bytes), at);
+        at += part.bytes;
+      }
+      sendToWled(route, data);
+    }
+    for (const [key, gone] of ddpSent) if (!now.has(key)) sendToWled(gone.route, new Uint8Array(gone.bytes));
+    ddpSent = now;
+    ddpFrames.clear();
+  }
+
+  function sendToWled(route: DdpRoute, data: Uint8Array): void {
+    const key = ddpKey(route);
+    const sequence = (ddpSequence.get(key) || 0) % 15 + 1;
+    ddpSequence.set(key, sequence);
+    wires.ddp({ host: route.host, port: route.port, sequence, rgbw: route.rgbw }, data);
   }
 
   return { send, endFrame };
