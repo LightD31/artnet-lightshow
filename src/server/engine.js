@@ -79,6 +79,9 @@ function startSyncTest(seconds = 10) {
  * fade or sync test asked for.
  */
 function renderInput() {
+  // A fixture a Hue lamp follows is never strobed in software: the lamp would
+  // flash with it, and a Hue bridge is no strobe (see renderer.js).
+  const followed = output.hueFollowedFixtures ? output.hueFollowedFixtures() : null;
   return {
     running: state.running,
     pattern: state.pattern,
@@ -109,6 +112,7 @@ function renderInput() {
       position: f.position || null,
       group: f.group || null,
       geometry: f.geometry || null,
+      hue: !!(followed && followed.has(f.id)),
     })),
   };
 }

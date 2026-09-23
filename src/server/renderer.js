@@ -18,6 +18,8 @@
  */
 
 const { COLOR_PRESETS, STROBE_FUNCTIONS } = require('./presets');
+const { HUE_PROFILE_IDS } = require('./profiles');
+const { FRAME_MS } = require('./frame-clock');
 const { PATTERN_FUNCS } = require('../shared/patterns');
 const { renderLayer } = require('../shared/layer');
 const { buildRig, rigSignature } = require('../shared/rig');
@@ -37,6 +39,58 @@ const RANDOM_PATTERNS = new Set(['twinkle', 'sparkle', 'random-flash']);
 const SYNC_FLASH_MS = 100;
 
 const blankUnit = () => ({ r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 255, strobe: 0 });
+
+// ── Software strobe ──────────────────────────────────────────────────────────
+// A fixture with a strobe channel flashes itself: the strobe value goes to
+// that channel and the lamp's own electronics do the rest. A fixture without
+// one — plenty of LED bars and cheap pars — used to sit there steady through
+// the strobe pattern and every strobing burst. It is now flashed here instead,
+// by leaving it dark on the frames between flashes.
+//
+// 1 to 20 flashes a second, as the fixtures' own standard strobe runs, and no
+// faster than every other frame. Each flash lasts at least one frame (so none
+// falls between two), a third of the period at most, and never more than 50 ms:
+// a strobe is a flash, not a blink.
+const SOFT_STROBE_MIN_HZ = 1;
+const SOFT_STROBE_MAX_HZ = Math.min(20, 1000 / (2 * FRAME_MS));
+const SOFT_FLASH_MAX_MS = 50;
+
+/** Flashes a second for a strobe value of 1–255. */
+function softStrobeHz(raw) {
+  return SOFT_STROBE_MIN_HZ + (Math.min(255, raw) / 255) * (SOFT_STROBE_MAX_HZ - SOFT_STROBE_MIN_HZ);
+}
+
+/**
+ * Is a software-strobed fixture lit on the frame at `now`? Periodic, on the
+ * clock, so every such fixture flashes together; the random strobe functions
+ * flash each fixture on its own, at the same average rate.
+ */
+function softStrobeLit({ raw, fnId }, now) {
+  const hz = softStrobeHz(raw);
+  if (/random|rnd/.test(fnId)) return Math.random() < (hz * FRAME_MS) / 1000;
+  const period = 1000 / hz;
+  const flash = Math.min(SOFT_FLASH_MAX_MS, Math.max(FRAME_MS, 0.3 * period));
+  return ((now % period) + period) % period < flash;
+}
+
+/**
+ * Write a dimmer level (0–255, fractional) to its channel — as a 16-bit value
+ * across the coarse and fine channels when the profile has a fine one. The
+ * fine byte used to be written 0, so a 16-bit fixture fading out stepped
+ * through 256 levels when it can do 65,536: the steps are what a slow fade
+ * into black looks like on an LED.
+ */
+function writeDimmer(dmx, base, ch, level) {
+  if (ch.dimmer === undefined) return;
+  const clamped = level > 255 ? 255 : (level > 0 ? level : 0);
+  if (ch.dimmerFine === undefined) {
+    dmx[base + ch.dimmer] = Math.round(clamped);
+    return;
+  }
+  const v16 = Math.round((clamped / 255) * 65535);
+  dmx[base + ch.dimmer] = v16 >> 8;
+  dmx[base + ch.dimmerFine] = v16 & 0xff;
+}
 
 /**
  * @param profileOf         fixture → its profile
@@ -260,30 +314,46 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     return (input.masterDimmer / 255) * (fix.maxBrightness / 255);
   }
 
-  /** The strobe channel's value, or null to leave it closed. */
-  function strobeValue(input, energy, strobe) {
+  /** The strobe asked for — `{ raw, fnId }` — or null for none. */
+  function strobeRequest(input, energy, strobe) {
     // Energy overrides force 'standard' strobe so a colour-strobe burst never
     // inherits a slow ramp/break function from the prior segment.
     const raw = energy ? strobe : (input.pattern === 'strobe' ? input.strobeSpeed : strobe);
     if (!(raw > 0)) return null;
-    const fnId = energy ? 'standard' : input.strobeFunction;
-    const fn = STROBE_FUNCTIONS.find((f) => f.id === fnId) || STROBE_FUNCTIONS[0];
-    return fn.lo + Math.round((raw / 255) * (fn.hi - fn.lo));
+    return { raw, fnId: energy ? 'standard' : input.strobeFunction };
+  }
+
+  /** The strobe channel's value, or null to leave it closed. */
+  function strobeValue(request) {
+    if (!request) return null;
+    const fn = STROBE_FUNCTIONS.find((f) => f.id === request.fnId) || STROBE_FUNCTIONS[0];
+    return fn.lo + Math.round((request.raw / 255) * (fn.hi - fn.lo));
+  }
+
+  /**
+   * Handle the strobe for a fixture: its strobe channel when it has one,
+   * else the software strobe. False when the fixture is dark this frame.
+   * Never for a Hue lamp or a fixture one follows: a bridge cannot flash.
+   */
+  function strobe(dmx, base, fix, ch, request, now) {
+    if (ch.strobe !== undefined) {
+      const value = strobeValue(request);
+      if (value !== null) dmx[base + ch.strobe] = value;
+      return true;
+    }
+    if (!request || fix.hue || HUE_PROFILE_IDS.has(fix.profileId)) return true;
+    return softStrobeLit(request, now);
   }
 
   /** A fixture that is one light. */
-  function writePar(input, store, fix, { col, dim, strobe }, energy) {
+  function writePar(input, store, fix, { col, dim, strobe: flash }, energy, now) {
     const dmx = store.getBuffer(fix.universe);
     const base = fix.address - 1;
     const ch = profileOf(fix).channelMap;
     const ms = mastersOf(input, fix);
 
-    if (ch.dimmer !== undefined)     dmx[base + ch.dimmer] = Math.round(dim * ms);
-    if (ch.dimmerFine !== undefined) dmx[base + ch.dimmerFine] = 0;
-    if (ch.strobe !== undefined) {
-      const value = strobeValue(input, energy, strobe);
-      if (value !== null) dmx[base + ch.strobe] = value;
-    }
+    if (!strobe(dmx, base, fix, ch, strobeRequest(input, energy, flash), now)) return;
+    writeDimmer(dmx, base, ch, dim * ms);
     writeEmitters(dmx, base, ch, col, ms * (dim / 255));
   }
 
@@ -293,25 +363,21 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
    * cellDrive in look-math.js), so a look the same on every cell drives a bar
    * exactly as it drives a par, and kill or silence closes the bar's dimmer.
    */
-  function writeBar(input, store, fix, cells, lights, energy) {
+  function writeBar(input, store, fix, cells, lights, energy, now) {
     const dmx = store.getBuffer(fix.universe);
     const base = fix.address - 1;
     const ch = profileOf(fix).channelMap;
     const ms = mastersOf(input, fix);
 
     let top = 0;
-    let strobe = 0;
+    let flash = 0;
     for (const light of lights) {
       if (light.dim > top) top = light.dim;
-      if (light.strobe > strobe) strobe = light.strobe;
+      if (light.strobe > flash) flash = light.strobe;
     }
+    if (!strobe(dmx, base, fix, ch, strobeRequest(input, energy, flash), now)) return;
     const fixtureDimmer = ch.dimmer !== undefined;
-    if (fixtureDimmer)               dmx[base + ch.dimmer] = Math.round(top * ms);
-    if (ch.dimmerFine !== undefined) dmx[base + ch.dimmerFine] = 0;
-    if (ch.strobe !== undefined) {
-      const value = strobeValue(input, energy, strobe);
-      if (value !== null) dmx[base + ch.strobe] = value;
-    }
+    writeDimmer(dmx, base, ch, top * ms);
 
     for (let c = 0; c < cells.length; c++) {
       const cell = cells[c];
@@ -387,8 +453,8 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
         // layer partway through any fade), then the music's level on top.
         const lights = [];
         for (let u = start; u < start + count; u++) lights.push(lightOf(u, fix, energy, fadeT, target));
-        if (cells) writeBar(input, store, fix, cells, lights, energy);
-        else writePar(input, store, fix, lights[0], energy);
+        if (cells) writeBar(input, store, fix, cells, lights, energy, now);
+        else writePar(input, store, fix, lights[0], energy, now);
       }
     }
     return rigNow;
@@ -423,4 +489,6 @@ function writeEmitters(dmx, base, ch, col, scale) {
   if (ch.uv !== undefined)        dmx[base + ch.uv]        = v.uv;
 }
 
-module.exports = { createRenderer, SYNC_FLASH_MS };
+module.exports = {
+  createRenderer, SYNC_FLASH_MS, softStrobeHz, softStrobeLit, writeDimmer, SOFT_STROBE_MAX_HZ,
+};

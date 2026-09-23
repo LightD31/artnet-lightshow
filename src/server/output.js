@@ -62,6 +62,11 @@ function configureHue(config) {
   return getHueConfig();
 }
 
+/** The fixture ids a Hue channel follows. */
+function hueFollowedFixtures() {
+  return new Set(hueChannels.map((c) => c.fixture));
+}
+
 function getHueConfig() {
   return { ...hue.getConfig(), channels: hueChannels.map((c) => ({ ...c })), latencyMs: hueLatencyMs };
 }
@@ -291,6 +296,7 @@ module.exports = {
   onHueApplicationId,
   getHueStatus: () => hue.getStatus(),
   hueChannelColors,
+  hueFollowedFixtures,
   sendHue,
   stopHue: () => hue.stop(),
 };

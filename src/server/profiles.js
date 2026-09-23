@@ -202,6 +202,9 @@ const BUILTIN_PROFILE_IDS = new Set([
   HUE_WHITE_PROFILE_ID,
 ]);
 
+// The profiles that stand for a Hue lamp rather than a DMX fixture.
+const HUE_PROFILE_IDS = new Set([HUE_COLOR_PROFILE_ID, HUE_WHITE_AMBIANCE_PROFILE_ID, HUE_WHITE_PROFILE_ID]);
+
 /** Does this profile ship with the server, rather than being imported? */
 function isBuiltinProfile(id) {
   return BUILTIN_PROFILE_IDS.has(id);
@@ -267,6 +270,7 @@ module.exports = {
   HUE_COLOR_PROFILE_ID,
   HUE_WHITE_AMBIANCE_PROFILE_ID,
   HUE_WHITE_PROFILE_ID,
+  HUE_PROFILE_IDS,
   isBuiltinProfile,
   UNIVERSE_SIZE,
   MAX_FIXTURES,
