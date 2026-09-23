@@ -13,10 +13,10 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { ShowDirector, coloursFor } from '../../src/show/director.js';
-import { buildPalette } from '../../src/show/look.js';
-import { deriveEvents, EVENT } from '../../src/show/musical-events.js';
-import { INTENT } from '../../src/show/intents.js';
+import { ShowDirector, coloursFor } from '../../src/show/director.ts';
+import { buildPalette } from '../../src/show/look.ts';
+import { deriveEvents, EVENT } from '../../src/show/musical-events.ts';
+import { INTENT } from '../../src/show/intents.ts';
 import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.js';
 import { TETRADS } from '../../src/server/palettes.js';
 

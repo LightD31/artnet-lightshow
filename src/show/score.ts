@@ -24,10 +24,67 @@
  * planned from the mix alone.
  */
 
-const unit = (v, fallback = 0) => (Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : fallback);
-const list = (v) => (Array.isArray(v) ? v : []);
-const finite = (v, fallback = 0) => (Number.isFinite(v) ? v : fallback);
-const mean = (values) => (values.length
+import type { AnalysisDocument, CurvePoint, Embedding, Genre, LabelScore, Mood, Section } from '../types/analysis.ts';
+
+/** A section as a document spells it; an older document may miss any field. */
+export type Segment = Partial<Omit<Section, 'label'>> & { label?: string | null };
+
+/**
+ * An analysis document as the show reads it. Every field may be missing: a
+ * cached document from an older analyser lacks whatever was added since, and
+ * the show degrades rather than refusing it.
+ */
+export type Analysis = Partial<Omit<AnalysisDocument, 'mood' | 'genre' | 'segments'>> & {
+  mood?: Partial<Mood>;
+  genre?: Genre | null;
+  segments?: Segment[];
+};
+
+/** What is playing at an instant, each reading 0..1. */
+export interface Reading {
+  kick: number;
+  snare: number;
+  hats: number;
+  bassline: number;
+  vocal: number;
+  synth: number;
+  energy: number;
+  impact: number;
+  pulse: number;
+  texture: number;
+  range: number;
+}
+
+/** The continuous half of a track's analysis (see makeScore). */
+export interface Score {
+  semantic: Record<string, number>;
+  subgenre: Record<string, number>;
+  genreTrust: number;
+  separated: boolean;
+  confidence: number;
+  stability: number;
+  keyStrength: number;
+  articulation: number;
+  decay: number;
+  width: number;
+  range: number;
+  crest: number;
+  texture: number;
+  sample(t: number): Reading;
+  span(start: number, end: number, steps?: number): Reading;
+  vector(start: number, end: number): number[] | undefined;
+  novelty(t: number): number;
+}
+
+const isNumber = (v: unknown): v is number => Number.isFinite(v);
+const unit = (v: unknown, fallback = 0): number => (isNumber(v) ? Math.max(0, Math.min(1, v)) : fallback);
+function list<T>(v: readonly T[] | null | undefined): readonly T[];
+function list(v: unknown): readonly unknown[];
+function list(v: unknown): readonly unknown[] {
+  return Array.isArray(v) ? v : [];
+}
+const finite = (v: unknown, fallback = 0): number => (isNumber(v) ? v : fallback);
+const mean = (values: readonly number[]): number | null => (values.length
   ? values.reduce((sum, v) => sum + v, 0) / values.length : null);
 
 /**
@@ -38,11 +95,11 @@ const mean = (values) => (values.length
  * analyser's hop. Interpolating instead is what lets the expression channel
  * follow a swell rather than step up it.
  */
-function curve(raw, fallback = 0) {
+function curve(raw: readonly CurvePoint[] | null | undefined, fallback = 0): (t: number) => number {
   const points = list(raw)
     .filter((p) => p && Number.isFinite(p.t) && Number.isFinite(p.v))
     .sort((a, b) => a.t - b.t);
-  return (t) => {
+  return (t: number) => {
     if (!points.length) return fallback;
     let lo = 0;
     let hi = points.length - 1;
@@ -80,7 +137,7 @@ const SEMANTIC_FULL_SPREAD = 0.2;
  * no spread at all returns nothing rather than an arbitrary winner. A track
  * that is equally "warm" and "cold" has told us it is neither.
  */
-function semantics(raw) {
+function semantics(raw: readonly LabelScore[] | null | undefined): Record<string, number> {
   const entries = list(raw).filter((p) => p && typeof p.label === 'string'
     && Number.isFinite(p.score));
   if (!entries.length) return {};
@@ -94,7 +151,7 @@ function semantics(raw) {
     [p.label, unit((p.score - low) / spread) * strength]));
 }
 
-function cosine(a, b) {
+function cosine(a: readonly number[] | null | undefined, b: readonly number[] | null | undefined): number {
   if (!a || !b || a.length !== b.length) return 0;
   let dot = 0;
   let aa = 0;
@@ -118,7 +175,7 @@ function cosine(a, b) {
  * Weights are scaled by how much the label is worth trusting, so a confident
  * distribution pulls hard and a flat one barely moves anything.
  */
-function subgenreWeights(genre) {
+function subgenreWeights(genre: Genre | null | undefined): { weights: Record<string, number>; trust: number } {
   const scores = genre && genre.subScores;
   if (!scores || typeof scores !== 'object') return { weights: {}, trust: 0 };
   const entries = Object.entries(scores).filter(([, v]) => Number.isFinite(v) && v > 0);
@@ -138,7 +195,7 @@ function subgenreWeights(genre) {
   // A zero-shot music model is worth more here than a general-audio tagger
   // folded into musical categories; the fold is lossy in exactly these
   // categories. See `GENRE_PROMPTS` in the analyser for why.
-  const source = genre.source === 'muq-mulan' ? 1 : genre.source === 'panns' ? 0.75 : 0.5;
+  const source = genre?.source === 'muq-mulan' ? 1 : genre.source === 'panns' ? 0.75 : 0.5;
   return { weights, trust: unit(peak * 0.6 + lead * 0.4) * source };
 }
 
@@ -150,27 +207,35 @@ function subgenreWeights(genre) {
  * pattern pools alike, so those three cannot drift apart in how they read the
  * same distribution.
  */
-function blend(weights, table, value = () => 1) {
-  const out = new Map();
+function blend<K>(
+  weights: Record<string, number>,
+  table: Record<string, K | readonly K[]>,
+  value: (item: K, name: string, entry: K | readonly K[]) => number = () => 1,
+): Map<K, number> {
+  const out = new Map<K, number>();
   for (const [name, weight] of Object.entries(weights)) {
     const entry = table[name];
     if (entry == null) continue;
-    for (const item of (Array.isArray(entry) ? entry : [entry])) {
-      const key = Array.isArray(entry) ? item : entry;
+    for (const item of (isList(entry) ? entry : [entry])) {
+      const key = item;
       out.set(key, (out.get(key) || 0) + weight * value(item, name, entry));
     }
   }
   return out;
 }
 
+const isList = <K>(entry: K | readonly K[]): entry is readonly K[] => Array.isArray(entry);
+
+type Role = 'kick' | 'snare' | 'hats' | 'bassline' | 'vocal' | 'synth';
+
 /**
  * Build the score for one analysis document.
  */
-function makeScore(analysis) {
-  const a = analysis || {};
+function makeScore(analysis: Analysis | null | undefined): Score {
+  const a: Analysis = analysis || {};
   const bands = a.bands || {};
   const roles = a.instruments || {};
-  const sources = a.sources || {};
+  const sources: Record<string, number> = a.sources || {};
 
   // ── Instrument envelopes ─────────────────────────────────────────────────
   //
@@ -178,12 +243,12 @@ function makeScore(analysis) {
   // about the vocals stem rather than about mid-band movement. Falling back to
   // a frequency band is a worse answer to the same question, not a different
   // one, so the fallback is per-role and silent.
-  const ROLE_BAND = { kick: 'sub', snare: 'mid', hats: 'high', bassline: 'bass', vocal: 'mid', synth: 'presence' };
-  const ROLE_SOURCE = { kick: 'drums', snare: 'drums', hats: 'drums', bassline: 'bass', vocal: 'vocals', synth: 'other' };
+  const ROLE_BAND: Record<Role, string> = { kick: 'sub', snare: 'mid', hats: 'high', bassline: 'bass', vocal: 'mid', synth: 'presence' };
+  const ROLE_SOURCE: Record<Role, string> = { kick: 'drums', snare: 'drums', hats: 'drums', bassline: 'bass', vocal: 'vocals', synth: 'other' };
   const sourceMax = Math.max(0.001, ...Object.values(sources).filter(Number.isFinite));
   const separated = !!roles.curves;
 
-  const envelopes = Object.fromEntries(Object.keys(ROLE_BAND).map((name) => {
+  const envelopes = Object.fromEntries((Object.keys(ROLE_BAND) as Role[]).map((name) => {
     const band = bands[ROLE_BAND[name]];
     const read = curve((roles.curves && roles.curves[name]) || (band && band.curve));
     // How much of the rig's attention this role has earned. Without a role
@@ -198,12 +263,12 @@ function makeScore(analysis) {
     const source = sources[ROLE_SOURCE[name]];
     const share = Number.isFinite(source) ? Math.sqrt(unit(source / sourceMax)) : 1;
     const gain = Math.sqrt(strength * share);
-    return [name, (t) => unit(read(t)) * gain];
+    return [name, (t: number) => unit(read(t)) * gain];
   }));
 
   // ── Level, impact, pulse ─────────────────────────────────────────────────
-  const sectionEnergy = (t) => unit(list(a.segments)
-    .find((p) => t >= p.start && t < p.end)?.energy, 0.4);
+  const sectionEnergy = (t: number) => unit(list(a.segments)
+    .find((p) => p.start !== undefined && p.end !== undefined && t >= p.start && t < p.end)?.energy, 0.4);
   const energy = list(a.energyCurve).length ? curve(a.energyCurve, 0.4) : sectionEnergy;
   const impact = curve(a.dynamics?.impactCurve);
 
@@ -282,7 +347,7 @@ function makeScore(analysis) {
   // ── Timbre ───────────────────────────────────────────────────────────────
   const embeddings = list(a.embeddings).filter((p) => p && Number.isFinite(p.time)
     && Array.isArray(p.vector) && p.vector.length && p.vector.every(Number.isFinite));
-  const nearest = (t) => embeddings.reduce((best, p) => (!best
+  const nearest = (t: number) => embeddings.reduce<Embedding | null>((best, p) => (!best
     || Math.abs(p.time - t) < Math.abs(best.time - t) ? p : best), null);
 
   const semantic = semantics(a.semantic_scores);
@@ -306,7 +371,7 @@ function makeScore(analysis) {
     /** Everything that varies with time, read at `t`. */
     sample(t) {
       const r = Object.fromEntries(Object.entries(envelopes)
-        .map(([key, read]) => [key, read(t)]));
+        .map(([key, read]) => [key, read(t)])) as Record<Role, number>;
       return {
         ...r,
         energy: unit(energy(t)),
@@ -322,11 +387,11 @@ function makeScore(analysis) {
     /** The mean reading across a span — the character of a whole section. */
     span(start, end, steps = 12) {
       const step = Math.max(0.25, (end - start) / steps);
-      const rows = [];
+      const rows: Reading[] = [];
       for (let t = start; t < end; t += step) rows.push(this.sample(t));
       if (!rows.length) rows.push(this.sample(start));
-      return Object.fromEntries(Object.keys(rows[0])
-        .map((key) => [key, mean(rows.map((r) => r[key]))]));
+      return Object.fromEntries((Object.keys(rows[0]) as (keyof Reading)[])
+        .map((key) => [key, mean(rows.map((r) => r[key]))])) as unknown as Reading;
     },
 
     /** The mean timbre vector over a span, for identity matching. */
@@ -334,7 +399,7 @@ function makeScore(analysis) {
       const rows = embeddings.filter((p) => p.time >= start && p.time < end);
       if (!rows.length) return nearest((start + end) / 2)?.vector;
       const valid = rows.filter((p) => p.vector.length === rows[0].vector.length);
-      return valid[0].vector.map((_, i) => mean(valid.map((p) => p.vector[i])));
+      return valid[0].vector.map((_, i) => mean(valid.map((p) => p.vector[i])) ?? 0);
     },
 
     /**
@@ -353,7 +418,7 @@ function makeScore(analysis) {
 }
 
 /** Does this document carry any of the continuous data at all? */
-function hasScore(a) {
+function hasScore(a: Analysis | null | undefined): boolean {
   return !!(a && (a.instruments?.curves || a.bands
     || list(a.embeddings).length || list(a.semantic_scores).length));
 }

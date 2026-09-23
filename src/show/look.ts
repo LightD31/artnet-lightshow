@@ -20,7 +20,16 @@
  */
 
 import { paletteBankForSize } from '../server/palettes.js';
-import { blend, unit } from './score.js';
+import { blend, unit } from './score.ts';
+import type { Analysis, Reading, Score } from './score.ts';
+import type { BurstKind } from './intents.ts';
+import type { Genre, Mood } from '../types/analysis.ts';
+
+/** How hard the rig works, named. */
+export type Tier = 'dance' | 'moderate' | 'rock' | 'calm';
+
+/** What is playing across a passage; any reading may be missing. */
+export type Character = Partial<Reading>;
 
 // ── How hard the rig works ──────────────────────────────────────────────────
 //
@@ -34,7 +43,7 @@ import { blend, unit } from './score.js';
 // show turned off for the whole track. Averaging cannot do that: a track that
 // cannot decide between the two lands in the middle and gets a middling show,
 // which is the honest answer to an ambiguous question.
-const SUBGENRE_DRIVE = {
+const SUBGENRE_DRIVE: Record<string, number> = {
   edm: 1.0, dubstep: 1.0, trance: 0.9, disco: 0.85,
   hiphop: 0.62, pop: 0.6, funk: 0.62,
   metal: 0.52, rock: 0.46, reggae: 0.4, latin: 0.5, country: 0.34,
@@ -45,7 +54,7 @@ const SUBGENRE_DRIVE = {
 // budget and the operator-facing report are both easier to reason about in
 // four names than in a float — but every decision inside the director reads
 // the number, not the name.
-const TIER_FLOOR = { dance: 0.72, moderate: 0.55, rock: 0.32, calm: 0 };
+const TIER_FLOOR: Record<Tier, number> = { dance: 0.72, moderate: 0.55, rock: 0.32, calm: 0 };
 
 // Palette banks each subgenre reaches for, best first. Blended across the
 // distribution and then scored against the mood words below, so the palette is
@@ -57,7 +66,7 @@ const TIER_FLOOR = { dance: 0.72, moderate: 0.55, rock: 0.32, calm: 0 };
 // lead with the white-forward banks: that music is lit white far more than a
 // hue-first catalogue suggests, and on a rig with no moving heads white is the
 // only way to read as hard.
-const SUBGENRE_PALETTES = {
+const SUBGENRE_PALETTES: Record<string, string[]> = {
   edm:       ['synthwave', 'whiteout', 'aurora', 'strobeLab', 'arctic', 'hardTechno'],
   dubstep:   ['volcanic', 'ultraviolet', 'hardTechno', 'noirUv', 'synthwave', 'acidRave'],
   trance:    ['arctic', 'whiteout', 'violetDream', 'aurora', 'midnight', 'strobeLab'],
@@ -83,7 +92,7 @@ const SUBGENRE_PALETTES = {
 // The pixel effects at the end of each list are only ever in a pool on a rig
 // with LED bars (see pickPattern's `pixels`); listing them here is what keeps
 // the genre bias from filtering them straight back out when they are.
-const SUBGENRE_PATTERNS = {
+const SUBGENRE_PATTERNS: Record<string, string[]> = {
   edm:       ['pairs', 'runner', 'ensemble', 'split', 'stack-up', 'random-flash', 'hit', 'sections', 'comet', 'burst'],
   dubstep:   ['random-flash', 'stack-up', 'split', 'pairs', 'ensemble', 'hit', 'sections', 'burst'],
   trance:    ['ribbon', 'sparkle', 'wave', 'twinkle', 'runner', 'ensemble', 'sections', 'gradient', 'plasma'],
@@ -115,7 +124,7 @@ const SUBGENRE_PATTERNS = {
 //
 // No pair is used twice, so the table can actually separate the banks it scores
 // rather than electing several of them at once.
-const SEMANTIC_PALETTES = {
+const SEMANTIC_PALETTES: Record<string, [string, string]> = {
   desert:      ['warm', 'organic'],
   lunar:       ['intimate', 'ceremonial'],
   deepOcean:   ['spacious', 'suspended'],
@@ -175,9 +184,9 @@ const KEYS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
  * Written to survive the spellings the analyser and the clients actually use:
  * a bare pitch class, a pitch class and a mode, and a flat rather than a sharp.
  */
-const FLATS = { Db: 'C#', Eb: 'D#', Gb: 'F#', Ab: 'G#', Bb: 'A#' };
+const FLATS: Record<string, string> = { Db: 'C#', Eb: 'D#', Gb: 'F#', Ab: 'G#', Bb: 'A#' };
 
-function keyIndexOf(key) {
+function keyIndexOf(key: unknown): number {
   const token = String(key == null ? '' : key).trim().split(/[\s/|-]+/)[0];
   if (!token) return 0;
   const pitch = token[0].toUpperCase() + token.slice(1).replace(/[^#b]/g, '');
@@ -213,7 +222,17 @@ const EXPRESSIVE = new Set(['ensemble', 'ribbon']);
  * arousal of 0.9 untrue, and lighting a loud track like a ballad is the most
  * visible failure this engine has.
  */
-function driveFor(analysis, mood, score) {
+// A style the analyser declared, for documents with no distribution.
+const STYLE_DRIVE: Record<string, number> = { dance: 0.85, moderate: 0.6, rock: 0.42, calm: 0.12 };
+
+function driveFor(analysis: Analysis | null | undefined, mood: Partial<Mood> | null | undefined,
+  score: Score | null | undefined): {
+  drive: number;
+  tier: Tier;
+  measured: number;
+  classified: number | null;
+  trust: number;
+} {
   const arousal = unit(mood && mood.arousal, 0.5);
   const dance = unit(mood && mood.danceability, 0.5);
   // What the signal alone would ask for. Danceability matters as much as
@@ -221,7 +240,7 @@ function driveFor(analysis, mood, score) {
   const measured = unit(0.15 + arousal * 0.55 + dance * 0.3);
 
   const votes = blend(score ? score.subgenre : {}, SUBGENRE_DRIVE);
-  let classified = null;
+  let classified: number | null = null;
   let trust = 0;
   if (votes.size) {
     let sum = 0;
@@ -237,8 +256,8 @@ function driveFor(analysis, mood, score) {
     // with the shape thrown away — so it is trusted by its own confidence
     // rather than dismissed. Dismissing it is how a document written by an
     // older analyser lost its style entirely and got lit from its tempo.
-    const genre = (analysis && analysis.genre) || {};
-    const fromStyle = { dance: 0.85, moderate: 0.6, rock: 0.42, calm: 0.12 }[genre.style];
+    const genre: Partial<Genre> = (analysis && analysis.genre) || {};
+    const fromStyle = STYLE_DRIVE[String(genre.style)];
     if (fromStyle != null) {
       classified = fromStyle;
       trust = unit(genre.confidence ?? genre.labelConf, 0.6) * 0.9;
@@ -253,7 +272,7 @@ function driveFor(analysis, mood, score) {
   return { drive: unit(floored), tier: tierOf(floored), measured, classified, trust };
 }
 
-function tierOf(drive) {
+function tierOf(drive: number): Tier {
   return drive >= TIER_FLOOR.dance ? 'dance'
     : drive >= TIER_FLOOR.moderate ? 'moderate'
       : drive >= TIER_FLOOR.rock ? 'rock' : 'calm';
@@ -282,10 +301,17 @@ function tierOf(drive) {
  * genre a night of one palette.
  */
 function buildPalette({ key, scale, mood = {}, score = null, paletteSize = 4,
-  colorPresets = null }) {
-  const bank = paletteBankForSize(paletteSize);
-  const scores = new Map();
-  const add = (name, weight) => {
+  colorPresets = null }: {
+  key?: string | null;
+  scale?: string | null;
+  mood?: Partial<Mood>;
+  score?: Score | null;
+  paletteSize?: number;
+  colorPresets?: readonly unknown[] | null;
+}): { palette: number[]; name: string } {
+  const bank: Record<string, number[]> = paletteBankForSize(paletteSize);
+  const scores = new Map<string, number>();
+  const add = (name: string, weight: number) => {
     if (!bank[name] || !(weight > 0)) return;
     scores.set(name, (scores.get(name) || 0) + weight);
   };
@@ -304,7 +330,7 @@ function buildPalette({ key, scale, mood = {}, score = null, paletteSize = 4,
   // the entry point spends the whole row across an evening while leaving each
   // individual track's choice fixed and repeatable.
   const trust = unit(score && score.genreTrust);
-  if (trust > 0) {
+  if (score && trust > 0) {
     const votes = blend(score.subgenre, SUBGENRE_PALETTES,
       (name, subgenre, ranked) => {
         const rank = (ranked.indexOf(name) - keyIndex + ranked.length * 2) % ranked.length;
@@ -328,7 +354,7 @@ function buildPalette({ key, scale, mood = {}, score = null, paletteSize = 4,
   //
   // The scale sits alongside a confident genre rather than above it, so the two
   // readings argue rather than one of them deciding.
-  const semantic = (score && score.semantic) || {};
+  const semantic: Record<string, number> = (score && score.semantic) || {};
   for (const [name, [first, second]] of Object.entries(SEMANTIC_PALETTES)) {
     const agreement = Math.min(unit(semantic[first]), unit(semantic[second]));
     if (agreement >= 0.5) add(name, (agreement - 0.4) * 1.6);
@@ -410,7 +436,11 @@ function buildPalette({ key, scale, mood = {}, score = null, paletteSize = 4,
  * which is also why minimal techno looks right in two and disco looks right in
  * four without either being a rule about genre.
  */
-function paletteSizeFor({ score = null, identities = 0, mood = {} } = {}) {
+function paletteSizeFor({ score = null, identities = 0, mood = {} }: {
+  score?: Score | null;
+  identities?: number;
+  mood?: Partial<Mood>;
+} = {}): number {
   const wanted = Math.max(2, Math.min(4, identities || 2));
   const support = 0.45 * unit(score && score.keyStrength, 0.5)
     + 0.3 * unit(score && score.width, 0.5)
@@ -429,7 +459,7 @@ function paletteSizeFor({ score = null, identities = 0, mood = {} } = {}) {
  * Plain `idx % len` slides one slot at a time, which on a small palette makes
  * consecutive sections look almost identical.
  */
-function goldenStep(index, length) {
+function goldenStep(index: number, length: number): number {
   if (!length) return 0;
   // At two colours plain alternation is strictly better: the golden step rounds
   // into back-to-back repeats at i = 2, 3, losing the only property it was for.
@@ -452,8 +482,16 @@ function goldenStep(index, length) {
  * and ignores the colour slots, which would break the track's locked palette.
  */
 function pickPattern({ character, available, score = null, seed = 0, drive = 0.5,
-  dance = 0.5, pixels = false }) {
-  const c = character || {};
+  dance = 0.5, pixels = false }: {
+  character?: Character | null;
+  available: ReadonlySet<string>;
+  score?: Score | null;
+  seed?: number;
+  drive?: number;
+  dance?: number;
+  pixels?: boolean;
+}): string {
+  const c: Character = character || {};
   const low = unit(c.kick) * 0.6 + unit(c.bassline) * 0.4;
   const voice = unit(c.vocal);
   const air = unit(c.texture) * 0.6 + unit(c.hats) * 0.4;
@@ -466,7 +504,7 @@ function pickPattern({ character, available, score = null, seed = 0, drive = 0.5
   // On a rig with LED bars each branch's pool also takes the pictures drawn
   // across the cells that suit it. Appended, and only then: a pool is picked
   // from by index, so a rig of pars must see exactly the pools it always has.
-  const pickFrom = (pool, pixelPool = []) => {
+  const pickFrom = (pool: string[], pixelPool: string[] = []): string => {
     let filtered = (pixels ? [...pool, ...pixelPool] : pool).filter((p) => available.has(p));
     // The genre bias is a preference, not a filter: it only applies when the
     // classifier earned some trust and when it leaves something to pick from.
@@ -546,8 +584,8 @@ function pickPattern({ character, available, score = null, seed = 0, drive = 0.5
  * like every other one. `score.articulation` is the measurement — a percussive,
  * fast-attacking bottom end against a slow, sustained one.
  */
-function strobeFunctionFor(character, score) {
-  const c = character || {};
+function strobeFunctionFor(character: Character | null | undefined, score: Score | null | undefined): string {
+  const c: Character = character || {};
   const articulation = unit(score && score.articulation, 0.5);
   const air = unit(c.texture);
   const low = unit(c.kick) * 0.6 + unit(c.bassline) * 0.4;
@@ -566,8 +604,9 @@ function strobeFunctionFor(character, score) {
  * high energy is a wall of sound, and strobing over it reads as a blur rather
  * than as excitement.
  */
-function strobeSpeedFor(character, score, drive) {
-  const c = character || {};
+function strobeSpeedFor(character: Character | null | undefined, score: Score | null | undefined,
+  drive: number): number {
+  const c: Character = character || {};
   const energy = unit(c.energy);
   const articulation = unit(score && score.articulation, 0.5);
   if (drive < 0.5 || energy < 0.45 || articulation < 0.35) return 0;
@@ -604,9 +643,16 @@ function strobeSpeedFor(character, score, drive) {
  * reads as a weak blinder. Taking the light away has neither problem.
  */
 function burstFor({ moment = 'accent', character, score, drive,
-  headroom = true, vocal = false }) {
-  const c = character || {};
-  const semantic = (score && score.semantic) || {};
+  headroom = true, vocal = false }: {
+  moment?: 'accent' | 'drop';
+  character?: Character | null;
+  score?: Score | null;
+  drive: number;
+  headroom?: boolean;
+  vocal?: boolean;
+}): BurstKind {
+  const c: Character = character || {};
+  const semantic: Record<string, number> = (score && score.semantic) || {};
   const energy = unit(c.energy);
   const air = unit(c.texture) * 0.6 + unit(c.hats) * 0.4;
   const articulation = unit(score && score.articulation, 0.5);

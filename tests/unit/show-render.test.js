@@ -6,8 +6,8 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import { renderIntents, debounceBursts, DEBOUNCE_SAFETY_MS } from '../../src/show/render.js';
-import { scene, color, accent, tempo, dark, BURST } from '../../src/show/intents.js';
+import { renderIntents, debounceBursts, DEBOUNCE_SAFETY_MS } from '../../src/show/render.ts';
+import { scene, color, accent, tempo, dark, BURST } from '../../src/show/intents.ts';
 import { patchSchema } from '../../src/server/validation.js';
 
 const patches = (events) => events.filter((e) => e.action === 'patch');

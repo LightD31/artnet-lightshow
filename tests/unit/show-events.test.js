@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import { EVENT, deriveEvents, normalise, byType, inSpan, nearAny } from '../../src/show/musical-events.js';
+import { EVENT, deriveEvents, normalise, byType, inSpan, nearAny } from '../../src/show/musical-events.ts';
 
 /** A pre-2.0 analysis document: no `events` array anywhere. */
 function legacy(over = {}) {

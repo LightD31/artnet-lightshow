@@ -6,9 +6,9 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import { ShowDirector, ROLE_PROFILE, ACCENT_BUDGET } from '../../src/show/director.js';
-import { INTENT, BURST, PRIORITY, accent } from '../../src/show/intents.js';
-import { deriveEvents } from '../../src/show/musical-events.js';
+import { ShowDirector, ROLE_PROFILE, ACCENT_BUDGET } from '../../src/show/director.ts';
+import { INTENT, BURST, PRIORITY, accent } from '../../src/show/intents.ts';
+import { deriveEvents } from '../../src/show/musical-events.ts';
 import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.js';
 
 const BPM = 128;
@@ -360,7 +360,7 @@ test('silence in the track goes dark', () => {
 // envelopes, the loudness profile and the subgenre distribution instead of of a
 // percentile level string.
 
-import { EXPRESSION_STEP_SEC, measureBuildup, strideFor } from '../../src/show/director.js';
+import { EXPRESSION_STEP_SEC, measureBuildup, strideFor } from '../../src/show/director.ts';
 
 /** The dance fixture, plus everything the current analyser also emits. */
 function measured(over = {}) {

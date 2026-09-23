@@ -20,6 +20,26 @@
  * magnitude, not a brightness — the director decides what to spend on it.
  */
 
+import type { Drop, MusicalEvent, Span } from '../types/analysis.ts';
+import type { Analysis } from './score.ts';
+
+/** An event with every field filled in (see normalise). */
+export interface ShowEvent {
+  /** Seconds from the start of the track. */
+  t: number;
+  type: string;
+  confidence: number;
+  intensity: number;
+  duration: number;
+  effect: string;
+  /** Type-specific detail, as the analyser wrote it. */
+  data: Record<string, unknown>;
+}
+
+// Fields documents written before the schema carried, still read here.
+type LegacyDrop = Drop & { time?: number };
+type LegacyBuildup = Span & { strength?: number };
+
 const EVENT = Object.freeze({
   BEAT: 'BEAT',
   BAR: 'BAR',
@@ -35,15 +55,15 @@ const EVENT = Object.freeze({
   SECTION: 'SECTION',
 });
 
-const num = (v, fallback = 0) => (Number.isFinite(Number(v)) ? Number(v) : fallback);
-const clamp01 = (v) => Math.max(0, Math.min(1, num(v, 0)));
+const num = (v: unknown, fallback = 0): number => (Number.isFinite(Number(v)) ? Number(v) : fallback);
+const clamp01 = (v: unknown): number => Math.max(0, Math.min(1, num(v, 0)));
 
 /**
  * Normalise one event, filling in anything the producer left out.
  * Returns null for an event with no usable timestamp — a NaN `t` would sort
  * unpredictably and then fire at a moment nobody can reason about.
  */
-function normalise(raw) {
+function normalise(raw: Partial<MusicalEvent> | null | undefined): ShowEvent | null {
   if (!raw || typeof raw !== 'object') return null;
   const t = Number(raw.t);
   if (!Number.isFinite(t) || t < 0) return null;
@@ -54,7 +74,7 @@ function normalise(raw) {
     intensity: raw.intensity == null ? 0.5 : clamp01(raw.intensity),
     duration: Math.max(0, num(raw.duration, 0)),
     effect: raw.effect || 'accent',
-    data: raw.data && typeof raw.data === 'object' ? raw.data : {},
+    data: raw.data && typeof raw.data === 'object' ? raw.data as Record<string, unknown> : {},
   };
 }
 
@@ -65,11 +85,11 @@ function normalise(raw) {
  * returns a time-sorted array, and never throws on a malformed document — a
  * bad analysis should cost the show its nuance, not its existence.
  */
-function deriveEvents(analysis) {
+function deriveEvents(analysis: Analysis | null | undefined): ShowEvent[] {
   if (!analysis || typeof analysis !== 'object') return [];
   const supplied = Array.isArray(analysis.events) ? analysis.events : null;
   const events = supplied && supplied.length
-    ? supplied.map(normalise).filter(Boolean)
+    ? supplied.map((raw) => normalise(raw)).filter((e): e is ShowEvent => e !== null)
     : synthesise(analysis);
   events.sort((a, b) => a.t - b.t || priority(a.type) - priority(b.type));
   return events;
@@ -78,11 +98,11 @@ function deriveEvents(analysis) {
 // Ties at the same instant resolve in this order, so a director processing the
 // stream in sequence sees context (the section) before the thing that happens
 // inside it (the drop), and the drop last of all — it must win.
-const ORDER = [EVENT.SECTION, EVENT.TRANSITION, EVENT.BAR, EVENT.BEAT,
+const ORDER: readonly string[] = [EVENT.SECTION, EVENT.TRANSITION, EVENT.BAR, EVENT.BEAT,
   EVENT.BASS_HIT, EVENT.MELODY_CHANGE, EVENT.VOCAL_SECTION, EVENT.BREAK,
   EVENT.SILENCE, EVENT.ENERGY_SPIKE, EVENT.BUILDUP, EVENT.DROP];
 
-function priority(type) {
+function priority(type: string): number {
   const index = ORDER.indexOf(type);
   return index < 0 ? ORDER.length : index;
 }
@@ -95,8 +115,8 @@ function priority(type) {
  * them — a missing event type is a show with less nuance, an invented one is a
  * show that lights the wrong moments confidently.
  */
-function synthesise(analysis) {
-  const events = [];
+function synthesise(analysis: Analysis): ShowEvent[] {
+  const events: ShowEvent[] = [];
   const beats = Array.isArray(analysis.beats) ? analysis.beats : [];
   const strengths = Array.isArray(analysis.beatStrengths) ? analysis.beatStrengths : [];
   const downbeats = Array.isArray(analysis.downbeats) ? analysis.downbeats : [];
@@ -157,7 +177,7 @@ function synthesise(analysis) {
     });
   });
 
-  for (const drop of (Array.isArray(analysis.drops) ? analysis.drops : [])) {
+  for (const drop of (Array.isArray(analysis.drops) ? analysis.drops : []) as LegacyDrop[]) {
     // Older documents used `t`; a couple of fixtures in the wild use `time`.
     const t = num(drop.t != null ? drop.t : drop.time, -1);
     if (t < 0) continue;
@@ -172,7 +192,7 @@ function synthesise(analysis) {
     });
   }
 
-  for (const build of (Array.isArray(analysis.buildups) ? analysis.buildups : [])) {
+  for (const build of (Array.isArray(analysis.buildups) ? analysis.buildups : []) as LegacyBuildup[]) {
     const t = num(build.start, -1);
     const end = num(build.end, -1);
     if (t < 0 || end <= t) continue;
@@ -197,26 +217,30 @@ function synthesise(analysis) {
 }
 
 /** Group a stream by type, for the director's lookups. */
-function byType(events) {
-  const map = new Map();
+function byType(events: readonly ShowEvent[]): Map<string, ShowEvent[]> {
+  const map = new Map<string, ShowEvent[]>();
   for (const event of events) {
-    if (!map.has(event.type)) map.set(event.type, []);
-    map.get(event.type).push(event);
+    let group = map.get(event.type);
+    if (!group) {
+      group = [];
+      map.set(event.type, group);
+    }
+    group.push(event);
   }
   return map;
 }
 
 /** Does `t` fall inside any of these span events (with an optional margin)? */
-function inSpan(spans, t, marginBefore = 0, marginAfter = 0) {
+function inSpan(spans: readonly ShowEvent[], t: number, marginBefore = 0, marginAfter = 0): boolean {
   for (const span of spans) {
-    const end = span.data && span.data.end != null ? span.data.end : span.t + span.duration;
+    const end = span.data && span.data.end != null ? span.data.end as number : span.t + span.duration;
     if (t >= span.t - marginBefore && t <= end + marginAfter) return true;
   }
   return false;
 }
 
 /** Is `t` within `window` seconds of any of these instant events? */
-function nearAny(events, t, window) {
+function nearAny(events: readonly ShowEvent[], t: number, window: number): boolean {
   for (const event of events) {
     if (Math.abs(event.t - t) <= window) return true;
   }

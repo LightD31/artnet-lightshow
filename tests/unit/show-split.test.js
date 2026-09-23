@@ -7,8 +7,8 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { ShowDirector } from '../../src/show/director.js';
-import { renderIntents } from '../../src/show/render.js';
+import { ShowDirector } from '../../src/show/director.ts';
+import { renderIntents } from '../../src/show/render.ts';
 import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.js';
 
 const TRACKS = path.join(import.meta.dirname, '..', 'fixtures', 'tracks');

@@ -61,10 +61,74 @@
  * passes below spend more conservatively.
  */
 
-import { EVENT, deriveEvents, byType } from './musical-events.js';
-import * as look from './look.js';
-import { makeScore, hasScore, cosine, unit, list, finite } from './score.js';
-import { INTENT, BURST, PRIORITY, scene, expression, color, accent, tempo, dark } from './intents.js';
+import { EVENT, deriveEvents, byType } from './musical-events.ts';
+import * as look from './look.ts';
+import { makeScore, hasScore, cosine, unit, list, finite } from './score.ts';
+import { INTENT, BURST, PRIORITY, scene, expression, color, accent, tempo, dark } from './intents.ts';
+import type { AccentIntent, Intent } from './intents.ts';
+import type { ShowEvent } from './musical-events.ts';
+import type { Analysis, Segment } from './score.ts';
+import type { Drop, Genre, Mood, Section } from '../types/analysis.ts';
+
+/** The analysis with its two shapes folded into one (see normalise). */
+export type DirectorAnalysis = Analysis & {
+  mood: Partial<Mood>;
+  genre: Genre | null;
+};
+
+/** How a section role is played (see ROLE_PROFILE). */
+export interface RoleProfile {
+  levelBias: number;
+  accents: boolean;
+  maxDivision: number;
+  prefer: string[] | null;
+}
+
+/** A pattern the rig can run. */
+export interface PatternDescriptor {
+  id: string;
+  [key: string]: unknown;
+}
+
+export interface DirectorOptions {
+  patterns?: readonly PatternDescriptor[];
+  colorPresets?: readonly unknown[] | null;
+  paletteSize?: number | 'auto';
+  intensity?: number;
+  blackoutIndex?: number;
+  pixels?: boolean;
+}
+
+/** A section as the director plans it: what plays in it, and which idea it is. */
+export type PlannedSection = ReturnType<ShowDirector['_sections']>[number];
+
+/** Everything the planning passes share (see _context). */
+export type PlanContext = ReturnType<ShowDirector['_context']>;
+
+/** What plan() returns. */
+export interface Plan {
+  intents: Intent[];
+  palette: number[];
+  paletteName: string;
+  paletteSize: number;
+  context: PlanContext;
+}
+
+/** A measured build-up (see measureBuildup). */
+export interface BuildupMeasure {
+  rollRatio: number | null;
+  riseDivision: number | null;
+  peakDivision: number | null;
+  tempo: {
+    points: { tMs: number; bpm: number }[];
+    settleBpm: number;
+    fromBpm: number;
+    toBpm: number;
+  } | null;
+}
+
+/** A value off a loosely typed object, for fields the schema does not name. */
+const field = (o: object, key: string): unknown => (o as Record<string, unknown>)[key];
 
 // Matches the patch schema's bpm bounds, and only those. This is the guard that
 // stops an out-of-range value throwing inside a timer callback and taking the
@@ -72,8 +136,8 @@ import { INTENT, BURST, PRIORITY, scene, expression, color, accent, tempo, dark 
 // are musically plausible, because build-ups are allowed to be extreme.
 // Kept to a hundredth: a 123.7 BPM track is not at 124, and the tempo the
 // show reports is the one the free clock carries on at when the show stops.
-const clampBpm = (n) => Math.max(20, Math.min(300, Math.round(n * 100) / 100 || 120));
-const u8 = (n) => Math.max(0, Math.min(255, Math.round(n) || 0));
+const clampBpm = (n: number | undefined): number => Math.max(20, Math.min(300, Math.round((n as number) * 100) / 100 || 120));
+const u8 = (n: number): number => Math.max(0, Math.min(255, Math.round(n) || 0));
 
 // How far the tempo has to move across a build-up before it counts as a ramp
 // rather than as the tempogram wobbling. The curve is already clamped to ±15 %
@@ -95,7 +159,7 @@ const DRIFT_THRESHOLD = 0.60;
  *   maxDivision ceiling on how far the beat clock subdivides here
  *   prefer      patterns to reach for first, when the rig has them
  */
-const ROLE_PROFILE = {
+const ROLE_PROFILE: Record<string, RoleProfile> = {
   intro:     { levelBias: -0.18, accents: false, maxDivision: 1, prefer: ['ribbon', 'fade', 'wave', 'solid'] },
   verse:     { levelBias: 0,     accents: true,  maxDivision: 2, prefer: null },
   chorus:    { levelBias: 0.12,  accents: true,  maxDivision: 4, prefer: null },
@@ -108,6 +172,9 @@ const ROLE_PROFILE = {
 
 const RESTING_ROLES = new Set(['intro', 'outro', 'breakdown']);
 
+// The analyser's percentile level, as a second opinion on a section's weight.
+const LEVEL_WEIGHT: Record<string, number> = { low: 0.2, mid: 0.5, high: 0.82 };
+
 // Accents allowed per minute at full drive, before the intensity fader scales
 // it. Low on purpose — drops and build-ups carry the big moments and bar
 // accents are garnish — but not as low as they were. The first pass at these
@@ -116,7 +183,7 @@ const RESTING_ROLES = new Set(['intro', 'outro', 'breakdown']);
 // accent every nine seconds reads as the show having lost interest. These sit
 // between the two: a driving track punctuates about every three seconds and a
 // quiet one still barely at all.
-const ACCENT_BUDGET = { dance: 20, moderate: 12, rock: 7, calm: 0, unknown: 10 };
+const ACCENT_BUDGET: Record<string, number> = { dance: 20, moderate: 12, rock: 7, calm: 0, unknown: 10 };
 
 // The quiet the director keeps around a drop: the bar that leads into it, and
 // the drop's own first bar. Counted in bars because that is what the music
@@ -135,7 +202,7 @@ const BAR_JITTER = 0.05;
 // into a chorus or a drop the change *is* the moment, and fading it would
 // blunt exactly what the section boundary is for. Anything unlisted gets the
 // verse's half bar.
-const SECTION_FADE_BARS = { breakdown: 2, outro: 2, intro: 1, verse: 0.5, bridge: 0.5, chorus: 0, drop: 0 };
+const SECTION_FADE_BARS: Record<string, number> = { breakdown: 2, outro: 2, intro: 1, verse: 0.5, bridge: 0.5, chorus: 0, drop: 0 };
 // Roles where even a rotation inside the section is a cut on the downbeat.
 const CUT_ROLES = new Set(['chorus', 'drop']);
 // Patterns that travel on colour A, and so gain a second layer when one group
@@ -170,6 +237,13 @@ const IDENTITY_SIMILARITY = 0.94;
 
 
 class ShowDirector {
+  declare patterns: readonly PatternDescriptor[];
+  declare colorPresets: readonly unknown[] | null;
+  declare paletteSize: number | 'auto';
+  declare intensity: number;
+  declare blackoutIndex: number;
+  declare pixels: boolean;
+
   /**
    * @param {object} options
    * @param {Array}  options.patterns      pattern descriptors the rig supports
@@ -180,7 +254,7 @@ class ShowDirector {
    * @param {number} options.blackoutIndex colour index that means "off"
    */
   constructor({ patterns = [], colorPresets = null, paletteSize = 4,
-    intensity = 50, blackoutIndex = 0, pixels = false } = {}) {
+    intensity = 50, blackoutIndex = 0, pixels = false }: DirectorOptions = {}) {
     this.patterns = patterns;
     this.colorPresets = colorPresets;
     this.paletteSize = paletteSize;
@@ -199,7 +273,7 @@ class ShowDirector {
    * intents are time sorted and have already been through the contrast pass, so
    * what comes out is what the show will actually do.
    */
-  plan(analysis) {
+  plan(analysis: Analysis | null | undefined): Plan {
     const context = this._context(normalise(analysis));
 
     const planned = [
@@ -215,8 +289,8 @@ class ShowDirector {
     // The bursts those passes already committed to — a drop's blinder and
     // strobe, a build-up's peak — are booked before any accent is considered,
     // so an accent can never start inside one.
-    const booked = planned.filter((i) => i.kind === INTENT.ACCENT);
-    const intents = [...planned, ...this._applyContrast(this._planAccents(context), context, booked)];
+    const booked = planned.filter((i): i is AccentIntent => i.kind === INTENT.ACCENT);
+    const intents: Intent[] = [...planned, ...this._applyContrast(this._planAccents(context), context, booked)];
 
     // Low priority first, so that when two intents want the same millisecond
     // the stronger decision is the one the renderer applies last and therefore
@@ -241,7 +315,7 @@ class ShowDirector {
    * once; everything else is chosen per passage, so a returning chorus comes
    * back laid out the way it was.
    */
-  _mapPixels(intents, context) {
+  _mapPixels(intents: Intent[], context: PlanContext): void {
     const resting = new Set([...RESTING_LOOKS, 'solid', ...PIXEL_RESTING_LOOKS]);
     for (const intent of intents) {
       if (intent.kind !== INTENT.SCENE || !intent.pattern) continue;
@@ -266,10 +340,10 @@ class ShowDirector {
    * apart between passes: the drive (how hard the rig is allowed to work), the
    * palette, and the character of each section.
    */
-  _context(analysis) {
+  _context(analysis: DirectorAnalysis) {
     const events = deriveEvents(analysis);
     const grouped = byType(events);
-    const mood = analysis.mood || {};
+    const mood: Partial<Mood> = analysis.mood || {};
     const score = makeScore(analysis);
 
     const { drive, tier } = look.driveFor(analysis, mood, score);
@@ -294,7 +368,7 @@ class ShowDirector {
     const sections = this._sections(analysis, { score, drive, isCalm });
     const identities = new Set(sections.map((s) => s.identity)).size;
 
-    const paletteSize = this.paletteSize === 'auto'
+    const paletteSize: number = this.paletteSize === 'auto'
       ? look.paletteSizeFor({ score, identities, mood })
       : this.paletteSize;
     const { palette, name: paletteName } = look.buildPalette({
@@ -342,8 +416,8 @@ class ShowDirector {
       barsAfterMs: barWalker(downbeats, barSec),
       // A fade of this many bars, in ms. Two seconds stands in for a bar the
       // analyser could not measure.
-      fadeMs: (bars) => Math.round(Math.min(MAX_FADE_MS, bars * (barSec || 2) * 1000)),
-      sectionAt: (t) => sections.find((s) => t >= s.start && t < s.end) || null,
+      fadeMs: (bars: number) => Math.round(Math.min(MAX_FADE_MS, bars * (barSec || 2) * 1000)),
+      sectionAt: (t: number) => sections.find((s) => t >= s.start && t < s.end) || null,
     };
   }
 
@@ -363,7 +437,11 @@ class ShowDirector {
    * right; where it disagrees or is missing, the timbre embeddings decide, and
    * they recognise a returning chorus the labeller happened to split in two.
    */
-  _sections(analysis, { score, drive, isCalm }) {
+  _sections(analysis: DirectorAnalysis, { score, drive, isCalm }: {
+    score: ReturnType<typeof makeScore>;
+    drive: number;
+    isCalm: boolean;
+  }) {
     const raw = splitRestingAtDrops(list(analysis.segments), list(analysis.drops));
     if (!raw.length) return [];
 
@@ -371,7 +449,7 @@ class ShowDirector {
     // `low` in every section even when it is genuinely energetic. The measured
     // energy is the corrective: it is absolute, and it is what the weight below
     // is actually built from.
-    const memories = [];
+    const memories: { label: string | null | undefined; vector: number[] | undefined; identity: number }[] = [];
     return raw.map((section, index) => {
       const role = section.role || 'unknown';
       const profile = ROLE_PROFILE[role] || ROLE_PROFILE.unknown;
@@ -388,7 +466,7 @@ class ShowDirector {
       // How much of the rig this passage has earned, 0..1. Measured energy
       // leads; the analyser's own level is kept as a second opinion because it
       // knows the track's own distribution, which absolute energy does not.
-      const fromLevel = { low: 0.2, mid: 0.5, high: 0.82 }[section.level];
+      const fromLevel = section.level ? LEVEL_WEIGHT[section.level] : undefined;
       const measured = unit(character.energy, 0.45);
       let weight = fromLevel == null ? measured : measured * 0.65 + fromLevel * 0.35;
       weight = unit(weight + profile.levelBias);
@@ -401,7 +479,7 @@ class ShowDirector {
         rawLevel: section.level,
         // Kept because the segment schema and the operator-facing views still
         // speak in levels; nothing in this file decides from it any more.
-        level: weight >= 0.68 ? 'high' : weight >= 0.36 ? 'mid' : 'low',
+        level: (weight >= 0.68 ? 'high' : weight >= 0.36 ? 'mid' : 'low') as Section['level'],
         resting: RESTING_ROLES.has(role) || weight < 0.18,
         start,
         end,
@@ -419,7 +497,7 @@ class ShowDirector {
    * half a bar the boundary is left alone — that is a different bar, and moving
    * it there would be a bigger lie than the one being fixed.
    */
-  _snapper(downbeats, barSec) {
+  _snapper(downbeats: readonly number[], barSec: number | null): (t: number) => number {
     if (!downbeats.length || !barSec) return (t) => Math.round(t * 1000);
     return (t) => {
       let lo = 0;
@@ -440,7 +518,7 @@ class ShowDirector {
   // ── Passes ──────────────────────────────────────────────────────────────
 
   /** Put the rig into a known state before anything else happens. */
-  _openingIntent(context) {
+  _openingIntent(context: PlanContext): Intent[] {
     return [scene(0, {
       bpm: context.baseBpm,
       beatDivision: 1,
@@ -458,13 +536,13 @@ class ShowDirector {
    * tempo curve, stability below 0.60 means the tempo really does move. Stable
    * tracks skip this entirely rather than jittering the beat clock.
    */
-  _planTempo(context) {
+  _planTempo(context: PlanContext): Intent[] {
     const { analysis } = context;
     const stability = finite(analysis.tempoStability, 1);
     const curve = list(analysis.tempoCurve);
     if (stability >= DRIFT_THRESHOLD || curve.length <= 2) return [];
 
-    const intents = [];
+    const intents: Intent[] = [];
     let last = context.baseBpm;
     for (const point of curve) {
       const bpm = Math.round(point.v);
@@ -483,14 +561,14 @@ class ShowDirector {
    * returning chorus returns to the same look whether the analyser recognised
    * it by cluster label or by timbre.
    */
-  _planSections(context) {
+  _planSections(context: PlanContext): Intent[] {
     const { sections, palette, barSec, available } = context;
-    const intents = [];
-    const patternByIdentity = new Map();
+    const intents: Intent[] = [];
+    const patternByIdentity = new Map<number, string>();
     const { finalReturns } = context;
     // What each passage ran at the first time round, which its last return is
     // lifted from.
-    const firstDivision = new Map();
+    const firstDivision = new Map<string, number>();
     let lastKey = '';
 
     for (const section of sections) {
@@ -551,7 +629,7 @@ class ShowDirector {
     return intents;
   }
 
-  _patternFor(section, patternByIdentity, context) {
+  _patternFor(section: PlannedSection, patternByIdentity: Map<number, string>, context: PlanContext): string {
     const { available, mood, score, trackSeed } = context;
 
     // A role with a preference gets it when the rig has it: an intro that opens
@@ -566,7 +644,8 @@ class ShowDirector {
     const resting = restingPattern(restingLooks(section.profile.prefer, context), available, trackSeed + section.identity);
     if (resting) return resting;
 
-    if (patternByIdentity.has(section.identity)) return patternByIdentity.get(section.identity);
+    const known = patternByIdentity.get(section.identity);
+    if (known !== undefined) return known;
     const pattern = look.pickPattern({
       character: section.character, available, score,
       seed: section.identity + trackSeed, drive: section.drive,
@@ -590,7 +669,7 @@ class ShowDirector {
    * Triple metre stays on quarters throughout — subdividing 3/4 by two puts the
    * rig on the off-beats of the bar.
    */
-  _divisionFor(section, context, arc = null) {
+  _divisionFor(section: PlannedSection, context: PlanContext, arc: { from: number } | null = null): number {
     const { meter, score, isCalm } = context;
     if (isCalm || meter === 3 || context.factor < 0.5) return 1;
     if (section.resting) return 1;
@@ -627,7 +706,13 @@ class ShowDirector {
    * Repeated sections rotate identically — the rotation is seeded from the
    * identity — so verse one and verse two stay in step visually.
    */
-  _rotateWithin(section, current, context) {
+  _rotateWithin(section: PlannedSection, current: {
+    pattern: string;
+    colours: number[];
+    beatDivision: number;
+    strobeFunction: string;
+    timeMs: number;
+  }, context: PlanContext): Intent[] {
     const { barSec, isCalm, available, mood, score, drops, buildups } = context;
     if (isCalm || !barSec || current.pattern === 'solid' || section.resting) return [];
 
@@ -655,7 +740,7 @@ class ShowDirector {
     // for the rest of the song. On the committed tracks, drops that start
     // squarely on a bar line sit at global phrase positions 1 and 3.
     const endMs = Math.round(section.end * 1000);
-    const at = (k) => context.barsAfterMs(current.timeMs, k * rotateBars);
+    const at = (k: number) => context.barsAfterMs(current.timeMs, k * rotateBars);
     // A single mid-section swap reads as a glitch rather than as development;
     // only rotate when there is room for at least two full cycles.
     const secondCycle = at(2);
@@ -663,7 +748,7 @@ class ShowDirector {
 
     // Walk seeds with a coprime stride until two *distinct* alternates turn up.
     // Fixed offsets collide whenever both land on the same slot of a short pool.
-    const alternates = [];
+    const alternates: string[] = [];
     const seen = new Set([current.pattern]);
     for (let step = 1; step < 24 && alternates.length < 2; step++) {
       const candidate = look.pickPattern({
@@ -678,7 +763,7 @@ class ShowDirector {
     }
     if (!alternates.length) return [];
 
-    const intents = [];
+    const intents: Intent[] = [];
     // A beat's blend between rotations, except where the section wants its
     // changes to land on the downbeat.
     const rotationFade = CUT_ROLES.has(section.role) ? 0 : context.fadeMs(0.25);
@@ -688,6 +773,7 @@ class ShowDirector {
       const inBuildup = buildups.some((b) => when >= b.t * 1000 - 200
         && when <= endOf(b) * 1000 + 200);
       if (!inDrop && !inBuildup) {
+        const split = splitFor(section, alternates[i % alternates.length], context);
         intents.push(scene(when, {
           pattern: alternates[i % alternates.length],
           colors: current.colours,
@@ -695,8 +781,7 @@ class ShowDirector {
           strobeSpeed: 0,
           strobeFunction: current.strobeFunction,
           ...(rotationFade > 0 ? { fadeMs: rotationFade } : {}),
-          ...(splitFor(section, alternates[i % alternates.length], context) != null
-            ? { split: splitFor(section, alternates[i % alternates.length], context) } : {}),
+          ...(split != null ? { split } : {}),
         }, { source: 'rotation', priority: PRIORITY.ROTATION }));
       }
       i++;
@@ -721,11 +806,11 @@ class ShowDirector {
    * Nothing here touches the operator's master. A show that quietly rewrites
    * the fader is a show the operator cannot take back.
    */
-  _planExpression(context) {
+  _planExpression(context: PlanContext): Intent[] {
     const { score, duration, silences, breaks, buildups, vocals } = context;
     if (!(duration > 0)) return [];
 
-    const intents = [];
+    const intents: Intent[] = [];
     const factor = Math.max(0, Math.min(2, context.factor));
     const intimate = unit((score.semantic || {}).intimate);
     const bassDecay = unit(score.decay, 0.25);
@@ -812,12 +897,12 @@ class ShowDirector {
    * already counted it — that is what `buildups[].subdivision` is — and the
    * onset-density fallback below only runs for documents that predate it.
    */
-  _planBuildups(context) {
+  _planBuildups(context: PlanContext): Intent[] {
     const { buildups, palette, meter, isCalm, factor, available, analysis, baseBpm } = context;
     if (isCalm || factor < 0.4) return [];
 
     const stability = finite(analysis.tempoStability, 1);
-    const intents = [];
+    const intents: Intent[] = [];
 
     for (const [buildupIndex, event] of buildups.entries()) {
       const startMs = Math.round(event.t * 1000);
@@ -910,11 +995,11 @@ class ShowDirector {
    * A solid anchor at the exact instant is always emitted first so every
    * fixture snaps to the same hot colour before anything else happens.
    */
-  _planDrops(context) {
+  _planDrops(context: PlanContext): Intent[] {
     const { drops, palette, meter, isCalm, isLight, factor, score, available } = context;
     if (isCalm) return [];
 
-    const intents = [];
+    const intents: Intent[] = [];
 
     drops.forEach((event, index) => {
       const timeMs = Math.round(event.t * 1000);
@@ -1032,9 +1117,9 @@ class ShowDirector {
    * strobe. Doing nothing here would leave the previous section's look running
    * through the one moment the audience is meant to notice the difference.
    */
-  _planQuiet(context) {
+  _planQuiet(context: PlanContext): Intent[] {
     const { silences, breaks, palette, available, isCalm, continuous } = context;
-    const intents = [];
+    const intents: Intent[] = [];
 
     // How a silence is closed depends on what the rig has to close it with.
     //
@@ -1088,14 +1173,14 @@ class ShowDirector {
    * groove through beat division, and colour flips on top read as twitchy
    * rather than as energetic.
    */
-  _planColourMoves(context) {
+  _planColourMoves(context: PlanContext): Intent[] {
     const { melodies, bassHits, bars, palette, score, drops, buildups, isCalm } = context;
-    const intents = [];
-    const inDrop = (ms) => drops.some((d) => {
+    const intents: Intent[] = [];
+    const inDrop = (ms: number) => drops.some((d) => {
       const delta = ms - d.t * 1000;
       return delta >= -1500 && delta <= 2500;
     });
-    const inBuildup = (ms) => buildups.some((b) => ms >= b.t * 1000 && ms <= endOf(b) * 1000);
+    const inBuildup = (ms: number) => buildups.some((b) => ms >= b.t * 1000 && ms <= endOf(b) * 1000);
 
     // A move writes a whole look, not one slot. It used to write slot A alone,
     // so `split`, `sections` and the multi-colour chases ran on one colour from
@@ -1107,7 +1192,7 @@ class ShowDirector {
     // already put on stage, and the first move in every section used to write
     // exactly that, changing nothing at the moment the music did.
     let step = 0;
-    const emit = (t, source) => {
+    const emit = (t: number, source: string) => {
       const section = context.sectionAt(t);
       const h = hueCount(palette);
       const base = look.goldenStep(section ? section.identity : 0, h);
@@ -1175,13 +1260,13 @@ class ShowDirector {
    * the soft ones existed a calm track's only options were "too loud" and
    * "nothing", so it always got nothing.
    */
-  _planAccents(context) {
+  _planAccents(context: PlanContext): AccentIntent[] {
     const { bars, beats, spikes, bassHits, score, isCalm, analysis } = context;
     if (isCalm) return [];
 
     const dance = unit((context.mood || {}).danceability, 0.5);
-    const candidates = [];
-    const propose = (t, confidence, source, priority, intensity = 0.5) => {
+    const candidates: AccentIntent[] = [];
+    const propose = (t: number, confidence: number, source: string, priority: number, intensity = 0.5) => {
       const section = context.sectionAt(t);
       if (!section || !section.profile.accents || section.resting) return;
       if (section.drive < 0.28) return;
@@ -1293,7 +1378,8 @@ class ShowDirector {
    *
    * Drop accents are exempt: they are the moments the budget exists to protect.
    */
-  _applyContrast(accents, context, booked = []) {
+  _applyContrast(accents: readonly AccentIntent[], context: PlanContext,
+    booked: readonly AccentIntent[] = []): AccentIntent[] {
     const { drops, vocals, silences, breaks, tier, factor, effective, score, barSec } = context;
     const base = ACCENT_BUDGET[tier] != null ? ACCENT_BUDGET[tier] : ACCENT_BUDGET.unknown;
     // Scaled by where the drive sits inside its tier, so two dance tracks at
@@ -1307,7 +1393,7 @@ class ShowDirector {
     const guardMs = 1000 * (barSec
       ? Math.min(DROP_GUARD_SEC.max, Math.max(DROP_GUARD_SEC.min, DROP_GUARD_BARS * barSec))
       : DROP_GUARD_SEC.fallback);
-    const kept = [];
+    const kept: AccentIntent[] = [];
     const trust = 0.6 + 0.4 * unit(score.confidence, 0.8);
 
     // At the neutral intensity of 0.5 this is confidence alone, so a bar line
@@ -1319,8 +1405,11 @@ class ShowDirector {
     // lose — across the analysis cache its accent rate came out below the first
     // time through (10.3 a minute against 12.8), and is now level with it. What
     // it still loses is to the vocal and drop rules, which it should.
-    const climax = (x) => (context.finalReturns?.has(context.sectionAt?.(x.timeMs / 1000)) ? 4 / 3 : 1);
-    const strength = (x) => (x.confidence || 0) * (0.5 + unit(x.intensity, 0.5)) * climax(x);
+    const climax = (x: AccentIntent) => {
+      const section = context.sectionAt?.(x.timeMs / 1000);
+      return section && context.finalReturns?.has(section) ? 4 / 3 : 1;
+    };
+    const strength = (x: AccentIntent) => (x.confidence || 0) * (0.5 + unit(x.intensity, 0.5)) * climax(x);
     const ranked = accents.slice().sort((a, b) => {
       if (a.priority !== b.priority) return b.priority - a.priority;
       return (strength(b) - strength(a)) || a.timeMs - b.timeMs;
@@ -1365,8 +1454,8 @@ class ShowDirector {
    * of the track at a build-up's peak tempo. The later intent wins, because the
    * passes are ordered so the more specific one is emitted last.
    */
-  _dedupeTempo(intents) {
-    const seen = new Map();
+  _dedupeTempo(intents: Intent[]): Intent[] {
+    const seen = new Map<number, number>();
     intents.forEach((intent, index) => {
       if (intent.kind !== INTENT.TEMPO) return;
       seen.set(intent.timeMs, index);
@@ -1386,8 +1475,8 @@ class ShowDirector {
  * compatibility surface the web client and the cache still read. Doing this
  * once here is what lets every pass below name one field.
  */
-function normalise(analysis) {
-  const a = analysis || {};
+function normalise(analysis: Analysis | null | undefined): DirectorAnalysis {
+  const a: Analysis = analysis || {};
   return {
     ...a,
     mood: a.mood || a.perception?.mood || {},
@@ -1401,14 +1490,14 @@ function normalise(analysis) {
 }
 
 /** The end of a span event, however the document spelled it. */
-function endOf(event) {
+function endOf(event: ShowEvent): number {
   const end = event && event.data ? event.data.end : undefined;
-  if (Number.isFinite(end)) return end;
+  if (typeof end === 'number' && Number.isFinite(end)) return end;
   return finite(event && event.t) + finite(event && event.duration);
 }
 
 /** The span containing `t`, or undefined. */
-function spanAt(events, t) {
+function spanAt(events: readonly ShowEvent[], t: number): ShowEvent | undefined {
   return events.find((e) => t >= e.t && t < endOf(e));
 }
 
@@ -1432,7 +1521,7 @@ function spanAt(events, t) {
  * decided deserved no accents, no subdivision and a level cut — and then went
  * on resting through what was often half the track.
  */
-function splitRestingAtDrops(raw, drops) {
+function splitRestingAtDrops(raw: readonly Segment[], drops: readonly Drop[]): readonly Segment[] {
   if (!raw.length || !drops.length) return raw;
   // A copy: a boundary correction below rewrites the *next* segment, and the
   // array handed in belongs to the analysis document the cache holds.
@@ -1445,10 +1534,10 @@ function splitRestingAtDrops(raw, drops) {
 
   // A `hype` drop is a small one and does not get to re-role a passage; a
   // document that predates the kind field is judged on its confidence alone.
-  const qualifies = (d, from, to) => d && finite(d.confidence, 0) >= 0.6
+  const qualifies = (d: Drop, from: number, to: number) => d && finite(d.confidence, 0) >= 0.6
     && d.kind !== 'hype' && d.t >= from && d.t <= to;
 
-  const out = [];
+  const out: Segment[] = [];
   for (let i = 0; i < segments.length; i++) {
     const section = segments[i];
     const start = finite(section.start);
@@ -1496,7 +1585,7 @@ const RESTING_LOOKS = ['ribbon', 'fade', 'wave'];
 // rig has bars. After them, never instead: a resting choice is picked by index.
 const PIXEL_RESTING_LOOKS = ['gradient', 'plasma'];
 
-function restingLooks(prefer, context) {
+function restingLooks(prefer: string[] | null, context: { pixels: boolean }): string[] | null {
   return prefer && context.pixels ? [...prefer, ...PIXEL_RESTING_LOOKS] : prefer;
 }
 
@@ -1514,7 +1603,7 @@ const PIXEL_MAPS = ['stage', 'mirror', 'bar'];
  * intro, the show has stalled — so it is only the fallback for a rig with none
  * of the moving ones.
  */
-function restingPattern(prefer, available, seed) {
+function restingPattern(prefer: string[] | null, available: ReadonlySet<string>, seed: number): string | null {
   if (!prefer) return null;
   const moving = prefer.filter((p) => p !== 'solid' && available.has(p));
   if (moving.length) return moving[Math.abs(Math.round(seed)) % moving.length];
@@ -1533,9 +1622,9 @@ function restingPattern(prefer, available, seed) {
  * identifies the recording, because a cached document from before the analyser
  * carried an id has only its name, artist and length.
  */
-function trackSeedOf(analysis) {
-  const t = (analysis && analysis.track) || {};
-  const text = `${t.artist || ''}|${t.name || ''}|${Math.round(finite(analysis && analysis.duration, 0))}`;
+function trackSeedOf(analysis: DirectorAnalysis | null | undefined): number {
+  const t: object = (analysis && analysis.track) || {};
+  const text = `${field(t, 'artist') || ''}|${field(t, 'name') || ''}|${Math.round(finite(analysis && analysis.duration, 0))}`;
   let h = 0x811c9dc5;  // FNV-1a
   for (let i = 0; i < text.length; i++) {
     h ^= text.charCodeAt(i);
@@ -1545,8 +1634,8 @@ function trackSeedOf(analysis) {
 }
 
 /** The median gap between successive downbeats, in seconds, or null. */
-function medianGap(downbeats) {
-  const gaps = [];
+function medianGap(downbeats: readonly number[]): number | null {
+  const gaps: number[] = [];
   for (let i = 1; i < downbeats.length; i++) {
     const gap = downbeats[i] - downbeats[i - 1];
     if (gap > 0) gaps.push(gap);
@@ -1571,7 +1660,7 @@ function medianGap(downbeats) {
  * either it returns null and the caller does without.
  */
 /** The split seed for a section on this pattern, or null to run the whole rig. */
-function splitFor(section, pattern, context) {
+function splitFor(section: PlannedSection, pattern: string, context: { trackSeed: number }): number | null {
   if (section.resting || section.drive < SPLIT_DRIVE || !SPLITTABLE.has(pattern)) return null;
   return Math.abs(section.identity + context.trackSeed) % 1000;
 }
@@ -1581,26 +1670,26 @@ function splitFor(section, pattern, context) {
  * labeller often clusters a verse with the chorus it leads into, and the last
  * section of that cluster being a verse does not make it the last chorus.
  */
-const passageOf = (section) => `${section.identity}|${section.role}`;
+const passageOf = (section: PlannedSection): string => `${section.identity}|${section.role}`;
 
 /**
  * The sections that are the last time a passage comes round: the final
  * occurrence of each passage heard more than once. Resting passages are left
  * out — an outro repeating the intro is not a climax.
  */
-function lastReturns(sections) {
-  const last = new Map();
-  const count = new Map();
+function lastReturns(sections: readonly PlannedSection[]): Set<PlannedSection> {
+  const last = new Map<string, PlannedSection>();
+  const count = new Map<string, number>();
   for (const section of sections) {
     if (section.resting || section.identity == null) continue;
     const key = passageOf(section);
     count.set(key, (count.get(key) || 0) + 1);
     last.set(key, section);
   }
-  return new Set([...last].filter(([key]) => count.get(key) > 1).map(([, s]) => s));
+  return new Set([...last].filter(([key]) => (count.get(key) || 0) > 1).map(([, s]) => s));
 }
 
-function barWalker(downbeats, barSec) {
+function barWalker(downbeats: readonly number[], barSec: number | null): (fromMs: number, bars: number) => number | null {
   return (fromMs, bars) => {
     const t = fromMs / 1000;
     if (downbeats.length) {
@@ -1623,7 +1712,7 @@ function barWalker(downbeats, barSec) {
 }
 
 /** How many of a palette's entries are hues that may rotate between slots. */
-function hueCount(palette) {
+function hueCount(palette: readonly number[]): number {
   return palette.length === 4 ? 3 : palette.length;
 }
 
@@ -1641,11 +1730,11 @@ function hueCount(palette) {
  * Two- and three-colour banks have no lift and turn whole, filling the spare
  * slots from the front as they always have.
  */
-function slotsFor(palette, turn) {
+function slotsFor(palette: readonly number[], turn: number): number[] {
   const n = palette.length;
   if (!n) return [0, 0, 0, 0];
   const h = hueCount(palette);
-  const at = (i) => palette[(((turn + i) % h) + h) % h];
+  const at = (i: number) => palette[(((turn + i) % h) + h) % h];
   if (n === 4) return [at(0), at(1), at(2), palette[3]];
   if (n === 3) return [at(0), at(1), at(2), at(0)];
   if (n === 2) return [at(0), at(1), at(0), at(1)];
@@ -1653,7 +1742,7 @@ function slotsFor(palette, turn) {
 }
 
 /** Four colour slots for a passage, offset so each identity reads differently. */
-function coloursFor(identity, palette) {
+function coloursFor(identity: number, palette: readonly number[]): number[] {
   return slotsFor(palette, look.goldenStep(identity, hueCount(palette)));
 }
 
@@ -1665,7 +1754,7 @@ function coloursFor(identity, palette) {
  * seen against each other — with the lift held in D for the patterns that use
  * a brightness break.
  */
-function dropColours(index, palette) {
+function dropColours(index: number, palette: readonly number[]): number[] {
   return slotsFor(palette, look.goldenStep(index, hueCount(palette)));
 }
 
@@ -1677,7 +1766,7 @@ function dropColours(index, palette) {
  * everything in between actually reachable rather than snapped to one of four
  * rows. Zero means "propose nothing here".
  */
-function strideFor(drive, factor, dance) {
+function strideFor(drive: number, factor: number, dance: number): number {
   if (drive < 0.3) return 0;
   const push = drive * 0.75 + dance * 0.25;
   const bars = Math.round(2 ** (4.2 - push * 3.2));   // 18 bars at 0, 2 at 1
@@ -1686,7 +1775,7 @@ function strideFor(drive, factor, dance) {
 }
 
 /** Would this burst start before an already-kept one has finished? */
-function overlaps(kept, intent) {
+function overlaps(kept: readonly AccentIntent[], intent: AccentIntent): boolean {
   const SAFETY_MS = 60;
   return kept.some((k) => intent.timeMs < k.timeMs + k.durationMs + SAFETY_MS
     && k.timeMs < intent.timeMs + intent.durationMs + SAFETY_MS);
@@ -1699,7 +1788,7 @@ function overlaps(kept, intent) {
  * minute before it: candidates arrive best-first rather than in time order, so
  * a later accent can be the one that overfills an earlier window.
  */
-function exceedsBudget(kept, intent, budgetPerMinute) {
+function exceedsBudget(kept: readonly AccentIntent[], intent: AccentIntent, budgetPerMinute: number): boolean {
   const MINUTE = 60000;
   const times = kept.filter((k) => k.priority < PRIORITY.DROP).map((k) => k.timeMs);
   times.push(intent.timeMs);
@@ -1733,13 +1822,14 @@ function exceedsBudget(kept, intent, budgetPerMinute) {
  * Returns null when there is nothing measurable, so the caller keeps its own
  * default rather than acting on an invented number.
  */
-function measureBuildup(build, analysis, baseBpm) {
+function measureBuildup(build: { start: number; end: number }, analysis: Analysis,
+  baseBpm: number): BuildupMeasure | null {
   const startSec = build.start;
   const endSec = build.end;
   const span = endSec - startSec;
   if (!(span > 0.5)) return null;
 
-  const out = { rollRatio: null, riseDivision: null, peakDivision: null, tempo: null };
+  const out: BuildupMeasure = { rollRatio: null, riseDivision: null, peakDivision: null, tempo: null };
 
   // The analyser's own count, when the document carries one. Capped at 8 for a
   // limit of the rig rather than of restraint: renderDmx runs at 40 fps and the
@@ -1748,7 +1838,7 @@ function measureBuildup(build, analysis, baseBpm) {
   // unevenly — which reads as irregular rather than as faster.
   const declared = list(analysis.buildups).find((b) => b
     && Math.abs(finite(b.start) - startSec) < 0.5);
-  if (declared && Number.isFinite(declared.subdivision) && declared.subdivision >= 2) {
+  if (declared && declared.subdivision !== undefined && Number.isFinite(declared.subdivision) && declared.subdivision >= 2) {
     out.peakDivision = Math.min(8, Math.max(2, Math.round(declared.subdivision)));
     out.riseDivision = Math.max(2, out.peakDivision / 2);
   }
@@ -1756,7 +1846,7 @@ function measureBuildup(build, analysis, baseBpm) {
   const onsets = list(analysis.onsets);
   if (!out.peakDivision && onsets.length) {
     const third = span / 3;
-    const countIn = (from, to) => {
+    const countIn = (from: number, to: number) => {
       let n = 0;
       for (const t of onsets) {
         if (t >= from && t < to) n++;

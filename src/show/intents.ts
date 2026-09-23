@@ -14,6 +14,8 @@
  * are the ones that go.
  */
 
+import type { ShowDynamics } from '../types/rig.ts';
+
 const INTENT = Object.freeze({
   /** Establish a whole look: pattern, colours, beat division, strobe channel. */
   SCENE: 'SCENE',
@@ -82,7 +84,78 @@ const PRIORITY = Object.freeze({
   BEAT_ACCENT: 10,
 });
 
-function scene(timeMs, payload, { source = 'section', priority = PRIORITY.SECTION } = {}) {
+export type IntentKind = (typeof INTENT)[keyof typeof INTENT];
+export type BurstKind = (typeof BURST)[keyof typeof BURST];
+
+/** Where an intent came from, and how it ranks against others at its instant. */
+interface IntentOptions {
+  source?: string;
+  priority?: number;
+}
+
+interface IntentBase {
+  timeMs: number;
+  source: string;
+  priority: number;
+}
+
+/** Everything a scene may set. Colours are indices into the colour table. */
+export interface ScenePayload {
+  pattern?: string;
+  colors?: number[];
+  beatDivision?: number;
+  strobeSpeed?: number;
+  strobeFunction?: string;
+  bpm?: number;
+  running?: boolean;
+  /** The first scene of a show, which also clears the expression channel. */
+  opening?: boolean;
+  role?: string;
+  label?: string | null;
+  level?: string;
+  identity?: number;
+  fadeMs?: number;
+  split?: number;
+  pixelMap?: string;
+}
+
+export interface SceneIntent extends IntentBase, ScenePayload {
+  kind: typeof INTENT.SCENE;
+}
+
+export interface ExpressionIntent extends IntentBase {
+  kind: typeof INTENT.EXPRESSION;
+  dynamics: ShowDynamics;
+}
+
+export interface ColorIntent extends IntentBase {
+  kind: typeof INTENT.COLOR;
+  colors: number[];
+  fadeMs?: number;
+}
+
+export interface AccentIntent extends IntentBase {
+  kind: typeof INTENT.ACCENT;
+  burst: BurstKind;
+  durationMs: number;
+  confidence: number;
+  intensity: number;
+}
+
+export interface TempoIntent extends IntentBase {
+  kind: typeof INTENT.TEMPO;
+  bpm: number;
+}
+
+export interface DarkIntent extends IntentBase {
+  kind: typeof INTENT.DARK;
+  colorIndex: number | null;
+}
+
+export type Intent = SceneIntent | ExpressionIntent | ColorIntent | AccentIntent | TempoIntent | DarkIntent;
+
+function scene(timeMs: number, payload: ScenePayload,
+  { source = 'section', priority = PRIORITY.SECTION }: IntentOptions = {}): SceneIntent {
   return { timeMs: Math.round(timeMs), kind: INTENT.SCENE, source, priority, ...payload };
 }
 
@@ -90,11 +163,13 @@ function scene(timeMs, payload, { source = 'section', priority = PRIORITY.SECTIO
  * A reading of the continuous channel. `dynamics` carries only the fields that
  * moved, and the engine interpolates towards them at frame rate.
  */
-function expression(timeMs, dynamics, { source = 'music', priority = PRIORITY.EXPRESSION } = {}) {
+function expression(timeMs: number, dynamics: ShowDynamics,
+  { source = 'music', priority = PRIORITY.EXPRESSION }: IntentOptions = {}): ExpressionIntent {
   return { timeMs: Math.round(timeMs), kind: INTENT.EXPRESSION, source, priority, dynamics };
 }
 
-function color(timeMs, colors, { source = 'melody', priority = PRIORITY.MELODY, fadeMs = 0 } = {}) {
+function color(timeMs: number, colors: number[],
+  { source = 'melody', priority = PRIORITY.MELODY, fadeMs = 0 }: IntentOptions & { fadeMs?: number } = {}): ColorIntent {
   return { timeMs: Math.round(timeMs), kind: INTENT.COLOR, source, priority, colors, ...(fadeMs > 0 ? { fadeMs } : {}) };
 }
 
@@ -103,15 +178,17 @@ function color(timeMs, colors, { source = 'melody', priority = PRIORITY.MELODY, 
  * how big it is musically, 0.5 when nothing was measured. The contrast pass
  * spends its budget on both.
  */
-function accent(timeMs, burst, durationMs,
-  { source = 'bar', priority = PRIORITY.BAR_ACCENT, confidence = 1, intensity = 0.5 } = {}) {
+function accent(timeMs: number, burst: BurstKind, durationMs: number,
+  { source = 'bar', priority = PRIORITY.BAR_ACCENT, confidence = 1, intensity = 0.5 }:
+  IntentOptions & { confidence?: number; intensity?: number } = {}): AccentIntent {
   return {
     timeMs: Math.round(timeMs), kind: INTENT.ACCENT, source, priority,
     burst, durationMs: Math.round(durationMs), confidence, intensity,
   };
 }
 
-function tempo(timeMs, bpm, { source = 'curve', priority = PRIORITY.TEMPO } = {}) {
+function tempo(timeMs: number, bpm: number,
+  { source = 'curve', priority = PRIORITY.TEMPO }: IntentOptions = {}): TempoIntent {
   return { timeMs: Math.round(timeMs), kind: INTENT.TEMPO, source, priority, bpm };
 }
 
@@ -120,8 +197,8 @@ function tempo(timeMs, bpm, { source = 'curve', priority = PRIORITY.TEMPO } = {}
  * fills it in. Passing one is for the rare case where a particular dark colour
  * is wanted rather than the configured blackout.
  */
-function dark(timeMs, { source = 'gap', priority = PRIORITY.SILENCE,
-  colorIndex = null } = {}) {
+function dark(timeMs: number, { source = 'gap', priority = PRIORITY.SILENCE,
+  colorIndex = null }: IntentOptions & { colorIndex?: number | null } = {}): DarkIntent {
   return { timeMs: Math.round(timeMs), kind: INTENT.DARK, source, priority, colorIndex };
 }
 

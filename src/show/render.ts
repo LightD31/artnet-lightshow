@@ -18,17 +18,67 @@
  *   is cut off before the fixtures have finished responding to it.
  */
 
-import { INTENT } from './intents.js';
+import { INTENT } from './intents.ts';
+import type { Intent, IntentKind, SceneIntent } from './intents.ts';
+import type { ShowDynamics } from '../types/rig.ts';
 
-const u8 = (n) => Math.max(0, Math.min(255, Math.round(n) || 0));
+/** The patch fields a timeline event sets. */
+export interface PatchData {
+  pattern?: string;
+  colorA?: number;
+  colorB?: number;
+  colorC?: number;
+  colorD?: number;
+  fadeMs?: number;
+  split?: number | null;
+  pixelMap?: string;
+  beatDivision?: number;
+  strobeSpeed?: number;
+  strobeFunction?: string;
+  bpm?: number;
+  showDynamics?: ShowDynamics | null;
+  running?: boolean;
+  energyOverride?: null;
+}
+
+/** A burst: which one, and for how long. */
+export interface EnergyData {
+  id: string;
+  durationMs: number;
+}
+
+interface EventBase {
+  timeMs: number;
+  /** The director's decision behind the event, for the performance view. */
+  source?: string;
+  kind?: IntentKind;
+}
+
+export interface PatchEvent extends EventBase {
+  action: 'patch';
+  data: PatchData;
+}
+
+export interface EnergyEvent extends EventBase {
+  action: 'energy';
+  data: EnergyData;
+}
+
+/** One entry of the timeline the playback loop fires. */
+export type TimelineEvent = PatchEvent | EnergyEvent;
+
+type ColourSlot = 'colorA' | 'colorB' | 'colorC' | 'colorD';
+const SLOTS: readonly ColourSlot[] = ['colorA', 'colorB', 'colorC', 'colorD'];
+
+const u8 = (n: number): number => Math.max(0, Math.min(255, Math.round(n) || 0));
 // Kept to a hundredth: a 123.7 BPM track is not at 124, and the tempo the
 // show reports is the one the free clock carries on at when the show stops.
-const clampBpm = (n) => Math.max(20, Math.min(300, Math.round(n * 100) / 100 || 120));
-const division = (n) => Math.max(1, Math.min(16, Math.round(n) || 1));
+const clampBpm = (n: number): number => Math.max(20, Math.min(300, Math.round(n * 100) / 100 || 120));
+const division = (n: number): number => Math.max(1, Math.min(16, Math.round(n) || 1));
 
 // Loudest wins when two bursts collide. The order is the vocabulary's own:
 // a glow is a lift, a punch is a stab, and the three above them are flashes.
-const BURST_PRIORITY = {
+const BURST_PRIORITY: Record<string, number> = {
   glow: 0, kill: 1, 'uv-wash': 2, 'color-strobe': 3, blinder: 4, 'white-strobe': 5,
 };
 
@@ -49,8 +99,8 @@ const KEEPS_ENERGY = new Set(['buildup:tension', 'buildup:rise', 'buildup:peak',
  * Returns `[{ timeMs, action: 'patch' | 'energy', data }]`, time sorted, with
  * bursts debounced.
  */
-function renderIntents(intents, { blackoutIndex = 0 } = {}) {
-  const events = [];
+function renderIntents(intents: readonly Intent[], { blackoutIndex = 0 } = {}): TimelineEvent[] {
+  const events: TimelineEvent[] = [];
 
   for (const intent of intents) {
     const first = events.length;
@@ -64,13 +114,12 @@ function renderIntents(intents, { blackoutIndex = 0 } = {}) {
         break;
 
       case INTENT.COLOR: {
-        const data = {};
-        const slots = ['colorA', 'colorB', 'colorC', 'colorD'];
+        const data: PatchData = {};
         (intent.colors || []).forEach((value, i) => {
-          if (value != null && slots[i]) data[slots[i]] = Math.max(0, Math.round(value));
+          if (value != null && SLOTS[i]) data[SLOTS[i]] = Math.max(0, Math.round(value));
         });
         if (Object.keys(data).length) {
-          if (intent.fadeMs > 0) data.fadeMs = Math.min(10000, Math.round(intent.fadeMs));
+          if (intent.fadeMs && intent.fadeMs > 0) data.fadeMs = Math.min(10000, Math.round(intent.fadeMs));
           events.push({ timeMs: intent.timeMs, action: 'patch', data });
         }
         break;
@@ -117,19 +166,18 @@ function renderIntents(intents, { blackoutIndex = 0 } = {}) {
   return debounceBursts(sortEvents(events));
 }
 
-function sceneData(intent) {
-  const data = {};
+function sceneData(intent: SceneIntent): PatchData {
+  const data: PatchData = {};
   if (intent.pattern) data.pattern = String(intent.pattern);
 
-  const slots = ['colorA', 'colorB', 'colorC', 'colorD'];
   (intent.colors || []).forEach((value, i) => {
-    if (value != null && slots[i]) data[slots[i]] = Math.max(0, Math.round(value));
+    if (value != null && SLOTS[i]) data[SLOTS[i]] = Math.max(0, Math.round(value));
   });
 
-  if (intent.fadeMs > 0) data.fadeMs = Math.min(10000, Math.round(intent.fadeMs));
+  if (intent.fadeMs && intent.fadeMs > 0) data.fadeMs = Math.min(10000, Math.round(intent.fadeMs));
   // Every scene says whether it is split, so a drop's whole-rig hit after a
   // split chorus is whole-rig rather than inheriting the split.
-  data.split = Number.isInteger(intent.split) ? intent.split : null;
+  data.split = Number.isInteger(intent.split) ? intent.split as number : null;
   // How the picture lies over the rig's LED bars; only planned when it has any.
   if (intent.pixelMap) data.pixelMap = String(intent.pixelMap);
   if (intent.beatDivision != null) data.beatDivision = division(intent.beatDivision);
@@ -150,7 +198,7 @@ function sceneData(intent) {
  * same downbeat, and the boundary's `energyOverride: null` would otherwise
  * cancel the burst that started a moment earlier on the same millisecond.
  */
-function sortEvents(events) {
+function sortEvents<E extends { timeMs: number; action: string }>(events: readonly E[]): E[] {
   return events
     .map((event, index) => ({ event, index }))
     .sort((a, b) => {
@@ -169,9 +217,9 @@ function sortEvents(events) {
  * a white strobe that arrives during a colour strobe is the bigger musical
  * moment, and the colour strobe was the one that turned out to be premature.
  */
-function debounceBursts(events) {
-  const out = [];
-  let active = null;
+function debounceBursts(events: readonly TimelineEvent[]): TimelineEvent[] {
+  const out: TimelineEvent[] = [];
+  let active: EnergyEvent | null = null;
   let activeEnd = -Infinity;
 
   for (const event of events) {

@@ -6,8 +6,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import * as look from '../../src/show/look.js';
-import { makeScore } from '../../src/show/score.js';
+import * as look from '../../src/show/look.ts';
+import { makeScore } from '../../src/show/score.ts';
 import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.js';
 
 const AVAILABLE = new Set(PATTERNS.map((p) => p.id));
