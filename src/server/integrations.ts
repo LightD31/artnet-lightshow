@@ -11,6 +11,7 @@ import HybridSource from '../hybrid-source.ts';
 import { sampleAutoPosition } from './auto-position.ts';
 import { gridFromAnalysis } from '../shared/beat-clock.ts';
 import { messageOf } from '../errors.ts';
+import { audioToTempWav } from '../audio-file.ts';
 import type { Server } from 'socket.io';
 import type AutoShow from '../auto-show.ts';
 import type { AnalysisCache } from '../analysis-cache.ts';
@@ -18,6 +19,7 @@ import type DeezerSource from '../deezer-source.ts';
 import type MidiController from '../midi.ts';
 import type NowPlayingSource from '../nowplaying-source.ts';
 import type ProLink from '../prolink.ts';
+import type { ProlinkTrack } from '../prolink.ts';
 import type SpotifyClient from '../spotify.ts';
 import type { BeatGrid } from '../shared/beat-clock.ts';
 import type { AutoPosition } from './auto-position.ts';
@@ -377,6 +379,67 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     broadcast();
   });
   prolink.onFollowChange(() => broadcast());
+  // ─── CDJ tracks ─────────────────────────────────────────────────────────
+  // A CDJ track is analysed from its own file, fetched off the player over
+  // the network, whenever the player can hand it over: the analysis then lines
+  // up with the deck, and with rekordbox's grid and phrases, to the
+  // millisecond. A search by name is the fallback, under a key of its own.
+
+  /** The analyses a CDJ track can have, best first. */
+  function cdjSources(track: ProlinkTrack): { key: string; exact: boolean }[] {
+    const out: { key: string; exact: boolean }[] = [];
+    const exactKey = prolink.canFetchAudio(track) ? keyForProlinkTrack(track, { exact: true }) : null;
+    if (exactKey) {
+      autoShow.setExactAudio(exactKey, async () => {
+        const file = await prolink.fetchAudio(track);
+        return file ? audioToTempWav(file.data, file.fileName) : null;
+      });
+      out.push({ key: exactKey, exact: true });
+    }
+    const searchKey = track.title && track.artist ? keyForProlinkTrack(track) : null;
+    if (searchKey) out.push({ key: searchKey, exact: false });
+    return out;
+  }
+
+  const cdjQuery = (track: ProlinkTrack) => (track.title && track.artist ? `${track.artist} - ${track.title}` : `CDJ track ${track.trackId}`);
+  const cdjDurationSec = (track: ProlinkTrack) => (track.durationMs ? track.durationMs / 1000 : null);
+
+  /** Load a CDJ track's analysis as the show: its own file's, else a search's. */
+  async function analyseCdjTrack(track: ProlinkTrack): Promise<void> {
+    const sources = cdjSources(track);
+    if (!sources.length) throw new Error('Track has no rekordbox metadata — cannot search');
+    // An analysis already made plays now: making the exact one takes a
+    // minute, and the prefetch has it ready by the next time the track loads.
+    const ready = sources.find((s) => autoShow.isCached(s.key));
+    let lastErr: unknown = null;
+    for (const source of ready ? [ready] : sources) {
+      try {
+        await autoShow.downloadAndAnalyze(cdjQuery(track), source.exact ? null : cdjDurationSec(track), source.key);
+        return;
+      } catch (err) {
+        if ((err as { superseded?: boolean }).superseded) throw err;
+        lastErr = err;
+        if (source.exact) console.warn(`[prolink] could not analyse the track's own file (${messageOf(err)}); searching for it instead`);
+      }
+    }
+    throw lastErr;
+  }
+
+  /** Analyse a CDJ track ahead of time: its own file, else a search. */
+  async function prefetchCdjTrack(track: ProlinkTrack): Promise<void> {
+    const meta = { title: track.title || undefined, artist: track.artist || undefined };
+    for (const source of cdjSources(track)) {
+      if (autoShow.isCached(source.key)) return;
+      const r = await autoShow.prefetch(cdjQuery(track), source.exact ? null : cdjDurationSec(track), source.key, meta);
+      if (r.skipped) return;
+      if (!r.error) {
+        console.log(`[prolink] prefetched ${source.exact ? 'from the player' : 'by search'}: ${cdjQuery(track)}`);
+        return;
+      }
+      console.warn(`[prolink] prefetch ${source.exact ? 'from the player' : 'by search'} failed for "${cdjQuery(track)}": ${r.error}`);
+    }
+  }
+
   prolink.onTrackChange(async (track) => {
     if (!track) return;
     console.log(`PRO DJ LINK track changed: ${track.artist || '?'} — ${track.title || '?'}`);
@@ -394,13 +457,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     };
     broadcast();
     try {
-      if (!track.title || !track.artist) {
-        throw new Error('Track has no rekordbox metadata — cannot search');
-      }
-      const query = `${track.artist} - ${track.title}`;
-      const cacheKey = keyForProlinkTrack(track);
-      // The downloaded WAV is unlinked by auto-show's own finally block.
-      await autoShow.downloadAndAnalyze(query, (track.durationMs || 0) / 1000, cacheKey);
+      await analyseCdjTrack(track);
       autoShow.start(getProlinkPositionMs);
       console.log('Auto show restarted for new CDJ track');
     } catch (err) {
@@ -410,22 +467,10 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   });
   prolink.onLoadedTracksChange(() => broadcast());
 
-  // Prefetch analysis for every track loaded on any CDJ. Fires once per unique
-  // track identity (deviceId:slot:trackId) per session — duplicates skipped.
+  // Analyse every track loaded on any CDJ ahead of time. Fires once per track
+  // (deviceId:slot:trackId) per session.
   prolink.onAnyTrackLoaded((track) => {
-    if (!track.title || !track.artist) return;
-    const cacheKey = keyForProlinkTrack(track);
-    if (!cacheKey) return;
-    const query = `${track.artist} - ${track.title}`;
-    const durationSec = track.durationMs ? track.durationMs / 1000 : null;
-    const meta = { title: track.title, artist: track.artist };
-    autoShow.prefetch(query, durationSec, cacheKey, meta)
-      .then((r) => {
-        if (r.skipped) return;
-        if (r.error) console.warn(`[prolink] prefetch failed for "${query}": ${r.error}`);
-        else console.log(`[prolink] prefetched: ${query}`);
-      })
-      .catch(() => { /* ignore */ });
+    prefetchCdjTrack(track).catch((err) => console.warn(`[prolink] prefetch failed: ${messageOf(err)}`));
   });
 
   // ─── Spotify polling ────────────────────────────────────────────────────
@@ -735,6 +780,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     },
     startAutoShow,
     resolveAutoSource,
+    analyseCdjTrack,
     lockToPlayingTrack,
     // Called by the Deezer browser extension (via routes) with the web player's
     // current track + upcoming queue.

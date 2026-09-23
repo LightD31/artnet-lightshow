@@ -175,6 +175,9 @@ const ON_AIR_MEMORY_MS = 10_000;
 // rekordbox tracks kept for fetching their audio and phrases after the fact:
 // the decks' and the few before them.
 const RAW_TRACKS_KEPT = 32;
+// The media a player serves over NFS: its SD card (2) and USB stick (3).
+// rekordbox over the link (4) and CDs (1) do not.
+const NFS_SLOTS = new Set([2, 3]);
 
 // The package's warnings and errors, once each a while; its chatter, never.
 function makeLogger(): Logger {
@@ -649,6 +652,12 @@ class ProLink {
     const raw = this._rawTracks.get(`${track.deviceId}:${track.slot}:${track.trackId}`);
     if (!raw) return null;
     return { raw, query: { deviceId: track.deviceId, trackSlot: track.slot, trackType: track.trackType ?? 1 } };
+  }
+
+  /** Whether the track's own file can be fetched off the player it is on. */
+  canFetchAudio(track: ProlinkTrack): boolean {
+    const found = this._rawFor(track);
+    return !!(this._network && this._network.db && found && found.raw.filePath && NFS_SLOTS.has(track.slot));
   }
 
   /**

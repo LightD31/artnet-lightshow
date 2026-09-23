@@ -32,7 +32,7 @@ import { runPreflight } from './preflight.ts';
 import { warmRequestSchema, warmPlaylistSchema, parseSetList, fromSpotifyTracks, MAX_TRACKS as MAX_WARM_TRACKS } from './warm.ts';
 import * as pythonEnv from '../python-env.ts';
 import {
-  keyForSpotify, keyForYouTube, keyForQuery, keyForLocalFile, keyForBuffer, keyForProlinkTrack,
+  keyForSpotify, keyForYouTube, keyForQuery, keyForLocalFile, keyForBuffer,
 } from '../analysis-cache.ts';
 import { HttpError, messageOf, statusOf } from '../errors.ts';
 import type { Express, NextFunction, Request, RequestHandler, Response } from 'express';
@@ -1066,20 +1066,16 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
   app.post('/api/auto/analyze-prolink', asyncHandler(async (_req, res) => {
     if (!prolink.connected) return res.status(400).json({ ok: false, error: 'PRO DJ LINK not connected' });
     const track = prolink.getTrack();
-    if (!track) return res.status(400).json({ ok: false, error: 'No track loaded on the master CDJ' });
-    if (!track.title || !track.artist) return res.status(400).json({ ok: false, error: 'Track has no rekordbox metadata — cannot search' });
+    if (!track) return res.status(400).json({ ok: false, error: 'No track on the deck the show follows' });
 
     try {
       autoShow.track = {
-        name: track.title, artist: track.artist, album: track.album || '',
+        name: track.title || `Track ${track.trackId}`, artist: track.artist || 'PRO DJ LINK', album: track.album || '',
         albumArt: null, durationMs: track.durationMs || 0,
       };
       integrations.broadcast();
 
-      const query = `${track.artist} - ${track.title}`;
-      const cacheKey = keyForProlinkTrack(track);
-      // The downloaded WAV is unlinked by auto-show's own finally block.
-      await autoShow.downloadAndAnalyze(query, (track.durationMs || 0) / 1000, cacheKey);
+      await integrations.analyseCdjTrack(track);
 
       integrations.broadcast();
       res.json({ ok: true, track: autoShow.track, analysis: autoShow.getClientState().analysis });

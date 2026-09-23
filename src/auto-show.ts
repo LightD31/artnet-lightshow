@@ -39,6 +39,10 @@ interface NamedPreset {
   id?: string;
 }
 
+// Exact-audio sources remembered, newest last: the tracks on the decks and a
+// few before them.
+const EXACT_AUDIO_KEPT = 32;
+
 /** What prefetch() did. */
 export interface PrefetchResult {
   skipped: boolean;
@@ -109,6 +113,7 @@ class AutoShow {
   declare _status: AutoShowStatus;
   declare _energyTimer: ReturnType<typeof setTimeout> | null;
   declare _inFlight: Map<string, Promise<Analysis>>;
+  declare _exactAudio: Map<string, () => Promise<string | null>>;
   declare _currentJob: symbol | null;
   declare _grid: BeatGrid | null;
   declare _pixels: boolean;
@@ -167,6 +172,8 @@ class AutoShow {
     // (e.g. a prefetch that's still running when the track changes) join the
     // same download/analyze job instead of racing it.
     this._inFlight = new Map(); // cacheKey -> Promise<analysis>
+    // Where a track's own audio file comes from, by cacheKey (setExactAudio).
+    this._exactAudio = new Map();
     // Identifies the newest current-track job. Anything older that finishes
     // late is for a song that has already been left behind and must not touch
     // the running show.
@@ -470,6 +477,22 @@ class AutoShow {
   }
 
   /**
+   * Say where the exact audio for `cacheKey` comes from: `fetch()` resolves to
+   * a temp audio file this module then owns (and deletes), or null when it
+   * cannot be had. An analysis under that key is then made from that file and
+   * nothing else — no search by name, no trimming to a length — and fails if
+   * the file cannot be fetched, so the caller can fall back to a key of its
+   * own for a search.
+   */
+  setExactAudio(cacheKey: string, fetch: () => Promise<string | null>): void {
+    this._exactAudio.delete(cacheKey);
+    this._exactAudio.set(cacheKey, fetch);
+    while (this._exactAudio.size > EXACT_AUDIO_KEPT) {
+      this._exactAudio.delete(this._exactAudio.keys().next().value as string);
+    }
+  }
+
+  /**
    * Shared work helper: download audio, run the analyzer, write to cache,
    * clean up the temp file. Returns the raw analysis JSON.
    *
@@ -482,7 +505,15 @@ class AutoShow {
     priority: AnalysisPriority, queuePos?: number | null): Promise<Analysis> {
     let audioPath: string | null = null;
     try {
-      audioPath = await this._downloadAudio(query, targetDurationSec, isrc);
+      const exact = cacheKey ? this._exactAudio.get(cacheKey) : undefined;
+      if (exact) {
+        audioPath = await exact();
+        if (!audioPath) throw new Error('the track\'s own audio file could not be fetched');
+        // The file is the track: nothing to trim it to.
+        targetDurationSec = null;
+      } else {
+        audioPath = await this._downloadAudio(query, targetDurationSec, isrc);
+      }
       if (onPhase) onPhase('analyzing');
       // Always pass the target duration to the analyzer when we have one —
       // it will no-op when the downloaded length is already within the ±2s
