@@ -46,6 +46,8 @@ const artnetSchema = z.object({
   host: artnetHost.optional(),
   port: z.number().int().min(1).max(65535).optional(),
   universe: z.number().int().min(0).max(32767).optional(),
+  discovery: z.boolean().optional(),
+  sync: z.boolean().optional(),
 }).strict();
 
 // Pattern / strobeFunction / energyOverride accept any string — the engine

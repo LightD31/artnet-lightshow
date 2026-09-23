@@ -27,8 +27,14 @@ const { PATTERNS, COLOR_PRESETS } = require('../../src/server/presets');
 const { createPreviewSampler } = require('../../src/shared/preview');
 const AutoShow = require('../../src/auto-show');
 
+// The engine hash changed once, on purpose: the built-in par's dimmer is
+// 16-bit, and its fine channel used to be written 0. It now carries the low
+// byte of the level (renderer.js writeDimmer), and the coarse byte is that
+// level's high byte rather than its rounding. With the fine write taken back
+// out, every frame matches the hash taken before the pixel work
+// (e2498330…1dad) — nothing else about a rig of pars moved.
 const GOLDEN = {
-  engine: 'e2498330292d723cec278d8f41a34b866cdd70d0ef5ece27d2ad18a5dc1b1dad',
+  engine: '1e425b3fafbb63d4b6f79f0e5c0664473c97516dff137a907eb0704683019c97',
   preview: 'd6cfb97766c9ebcb5e646d0749f496c5c6c7213a1f33a07bcb009fa81b70ed2a',
   director: '439b3a2570f5d4ebd40ab199541b9ee5d07a8d71fef8f6f6f97359f0535ec419',
 };

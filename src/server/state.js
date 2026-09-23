@@ -68,7 +68,6 @@ const state = {
   // when a scene changes the pattern or the division (patch.js); the engine
   // re-anchors when the music jumps. See src/shared/beat-clock.js.
   patternAnchor: null,
-  _twinkle: new Array(4).fill(0),
 };
 
 state.fixtures = Array.from({ length: 4 }, (_, i) => ({

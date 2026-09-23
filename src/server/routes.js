@@ -11,7 +11,7 @@ const {
 } = require('./state');
 const { applyPatch, applyOverride, setFixtureMaxBrightness, processTap } = require('./patch');
 const { PALETTES } = require('./palettes');
-const { resizeFixtureBuffers, startSyncTest } = require('./engine');
+const { resizeFixtureBuffers, startSyncTest, engineStatus } = require('./engine');
 const { parseGDTF } = require('../gdtf');
 const {
   BUILTIN_PROFILE_ID,
@@ -38,6 +38,8 @@ const {
   fixtureRestoreSchema, dmxUniverse, huePairSchema, validate,
 } = require('./validation');
 const output = require('./output');
+const { discoverNodes } = require('./artnet');
+const { interfaces } = require('./artnet-nodes');
 const { discoverBridges, pair: pairBridge, listEntertainmentConfigs } = require('./hue');
 const { settings, RESTART_PATHS, CONFIG_FILE } = require('./settings');
 const { connectMidi } = require('./midi-connect');
@@ -895,7 +897,7 @@ function attachRoutes(app, deps) {
     const tmpPath = path.join(os.tmpdir(), `auto-analyze-${crypto.randomUUID()}${ext}`);
     try {
       // Async on purpose: this buffer can be 50 MB, and a synchronous write of
-      // that size stalls the event loop — which here means the 40 Hz Art-Net
+      // that size stalls the event loop — which here means the 44 Hz Art-Net
       // render loop stops sending frames and the rig visibly freezes mid-show.
       await fsp.writeFile(tmpPath, req.file.buffer);
       autoShow.track = { name: req.file.originalname, artist: 'Local file', album: '', albumArt: null };
@@ -1144,6 +1146,51 @@ function attachRoutes(app, deps) {
     res.json({ ok: true, seconds: startSyncTest(10) });
   });
 
+  /**
+   * The Art-Net nodes on the network. While the rig broadcasts, the server
+   * keeps this list itself and sends each node its universes directly; `scan`
+   * asks the network now — a fresh poll when the list is being kept, a one-off
+   * on every interface when it is not (a rig sending to one node already).
+   */
+  app.get('/api/artnet/nodes', asyncHandler(async (req, res) => {
+    const discovery = output.artnetDiscovery;
+    const scan = req.query.scan === '1' || req.query.scan === 'true';
+    if (scan && discovery.active) {
+      discovery.pollNow();
+      await new Promise((r) => setTimeout(r, 1200));
+    }
+    const status = discovery.status();
+    let { nodes, error } = status;
+    if (scan && !discovery.active) {
+      const hosts = interfaces().map((i) => i.broadcast);
+      if (hosts.length) {
+        const found = await discoverNodes({ hosts, port: 6454, timeoutMs: 1200 });
+        nodes = found.nodes;
+        error = found.error;
+      }
+    }
+    res.json({
+      ok: true,
+      // Whether the server is keeping the list and routing by it, or not.
+      routing: status.active,
+      error,
+      nodes: nodes.map((n) => ({
+        address: n.from || n.address,
+        shortName: n.shortName,
+        longName: n.longName,
+        outputs: n.outputs,
+        mac: n.mac,
+        seenAgoMs: n.seenAt ? Math.max(0, Date.now() - n.seenAt) : 0,
+      })),
+    });
+  }));
+
+  // This machine's IPv4 addresses, for choosing which network sACN multicast
+  // leaves on.
+  app.get('/api/network/interfaces', (_req, res) => {
+    res.json({ ok: true, interfaces: interfaces().map(({ name, address, netmask }) => ({ name, address, netmask })) });
+  });
+
   app.get('/api/hue/discover', asyncHandler(async (_req, res) => {
     const { bridges, error } = await discoverBridges();
     // Not an error status: discovery needs internet access the show network may
@@ -1240,6 +1287,10 @@ function attachRoutes(app, deps) {
       python: pythonEnv.resolve(),
       // Read-only context the page shows next to the restart-only fields.
       running: applier.bootValues.server,
+      // Where the engine is actually rendering and how its frames are going,
+      // shown under the thread setting — it can differ from the setting when
+      // the worker could not run, and that is worth saying.
+      engine: engineStatus(),
       configFile: CONFIG_FILE,
     });
   });

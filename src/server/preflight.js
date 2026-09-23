@@ -10,7 +10,9 @@ const { getProfile, fitsInUniverse, endChannel, UNIVERSE_SIZE } = require('./pro
 const { MAX_UNIVERSES } = require('./universes');
 const { settings } = require('./settings');
 const { discoverNodes, probeSend } = require('./artnet');
+const { interfaces } = require('./artnet-nodes');
 const output = require('./output');
+const { engineStatus } = require('./engine');
 const { MIN_UNIVERSE, MAX_UNIVERSE } = require('./sacn');
 const { listEntertainmentConfigs } = require('./hue');
 const { cues } = require('./cues');
@@ -102,7 +104,17 @@ async function checkArtnet() {
     };
   }
 
-  const { nodes, error } = await discoverNodes({ host: target.host, port: target.port });
+  // While the server keeps the node list itself, it holds the Art-Net port:
+  // ask it for a fresh poll rather than binding the port a second time.
+  let nodes;
+  let error;
+  if (output.artnetDiscovery.active) {
+    output.artnetDiscovery.pollNow();
+    await new Promise((r) => setTimeout(r, 1500));
+    ({ nodes, error } = output.artnetDiscovery.status());
+  } else {
+    ({ nodes, error } = await discoverNodes({ host: target.host, port: target.port }));
+  }
   if (error) {
     return {
       id: 'artnet', label: 'Art-Net output', status: WARN,
@@ -122,9 +134,56 @@ async function checkArtnet() {
   return {
     id: 'artnet', label: 'Art-Net output', status: OK,
     detail: `${nodes.length} node${nodes.length === 1 ? '' : 's'} answered: `
-      + nodes.map((n) => `${n.shortName || n.longName || 'unnamed'} at ${n.from} (universe ${n.universe})`).join(', '),
+      + nodes.map((n) => `${n.shortName || n.longName || 'unnamed'} at ${n.from} (${
+        n.outputs && n.outputs.length > 1 ? `universes ${n.outputs.join(', ')}` : `universe ${n.universe}`})`).join(', ')
+      + (output.artnetDiscovery.active ? ' — each is sent its universes directly.' : ''),
     nodes,
   };
+}
+
+/**
+ * The engine: is it rendering, where, and have its frames been going out on
+ * time? A frame half a period late is visibly off the beat grid, and on the
+ * main thread that is what a busy server does to the rig — which is why the
+ * engine has a thread of its own, and why this says so when it has not.
+ */
+function checkEngine(status = engineStatus()) {
+  const label = 'Engine';
+  if (!status.thread) {
+    return { id: 'engine', label, status: FAIL, detail: 'Not rendering.', fix: 'Restart the server.' };
+  }
+  const where = status.thread === 'worker' ? 'on its own thread' : 'on the main thread';
+  const timing = status.frames
+    ? ` ${status.rate} frames a second; ${status.renderMs.p95} ms to render a frame (p95), `
+      + `${status.lateMs.p95} ms late at most on 19 frames of 20.`
+    : '';
+  const late = (status.lateFrames || 0) + (status.skippedFrames || 0);
+  // A dropped frame is worth a warning; a frame that went out a little late
+  // now and then (a laptop waking a core, a garbage collection) is not, until
+  // it is one in a hundred.
+  const worrying = (status.skippedFrames || 0) > 0
+    || (status.lateFrames || 0) > Math.max(2, 0.01 * (status.frames || 0));
+
+  if (status.fellBack) {
+    return {
+      id: 'engine', label, status: WARN,
+      detail: `Rendering ${where}, because ${status.fellBack}.${timing}`,
+      fix: 'The rig still runs, but a busy server can now delay it. Restart the server; if this keeps '
+        + 'happening, note the error the log shows for the engine thread.',
+    };
+  }
+  if (worrying) {
+    return {
+      id: 'engine', label, status: WARN,
+      detail: `Rendering ${where}, but ${late} frame${late === 1 ? '' : 's'} went out late or not at all `
+        + `in the last minute.${timing}`,
+      fix: status.thread === 'worker'
+        ? 'The machine itself is short of time: close other heavy programs, or plug a laptop in.'
+        : 'Set Settings → Engine → Render On to its own thread and restart.',
+    };
+  }
+  const note = late ? ` ${late} frame${late === 1 ? '' : 's'} a little late in the last minute.` : '';
+  return { id: 'engine', label, status: OK, detail: `Rendering ${where}.${timing}${note}` };
 }
 
 function checkSacn() {
@@ -147,7 +206,17 @@ function checkSacn() {
     };
   }
 
-  const where = config.host ? `unicast to ${config.host}` : 'multicast';
+  if (config.interface && !interfaces().some((i) => i.address === config.interface)) {
+    return {
+      id: 'sacn', label: 'sACN output', status: FAIL,
+      detail: `Multicast is set to leave from ${config.interface}, which is not an address of this machine.`,
+      fix: 'Pick the show network under Settings → sACN (E1.31) → Network, or let the computer choose.',
+    };
+  }
+
+  const where = config.host
+    ? `unicast to ${config.host}`
+    : `multicast${config.interface ? ` from ${config.interface}` : ''}`;
   return {
     id: 'sacn', label: 'sACN output', status: OK,
     detail: `${where}, priority ${config.priority}, as "${config.sourceName}". `
@@ -617,6 +686,7 @@ async function runPreflight({ midi, spotify, prolink, analysisCache, downloadMod
   ]);
 
   const checks = [
+    checkEngine(),
     artnet,
     checkSacn(),
     hue,
@@ -649,6 +719,7 @@ module.exports = {
   // Exported for tests, which drive them against a doctored state rather than
   // standing up a server.
   checkPatch,
+  checkEngine,
   checkSacn,
   checkHue,
   checkPanns,

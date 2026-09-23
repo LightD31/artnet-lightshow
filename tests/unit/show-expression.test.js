@@ -7,7 +7,7 @@ const assert = require('node:assert/strict');
 const outputPath = require.resolve('../../src/server/output');
 require.cache[outputPath] = {
   id: outputPath, filename: outputPath, loaded: true,
-  exports: { sendUniverse() {}, sendHue() {}, stopHue() {} },
+  exports: { sendUniverse() {}, endFrame() {}, sendHue() {}, stopHue() {} },
 };
 const { state } = require('../../src/server/state');
 const { startEngine, stopEngine } = require('../../src/server/engine');
@@ -16,7 +16,7 @@ const { getProfile } = require('../../src/server/profiles');
 const universes = require('../../src/server/universes');
 
 test('music dims the rendered scene; silence closes it; master still scales an override', t => {
-  t.mock.timers.enable({ apis: ['setInterval', 'Date'], now: Date.now() });
+  t.mock.timers.enable({ apis: ['setInterval', 'setTimeout', 'Date'], now: Date.now() });
   const fixture = state.fixtures[0];
   const channel = getProfile(fixture).channelMap;
   const read = name => universes.getBuffer(state.artnet.universe)[fixture.address - 1 + channel[name]];

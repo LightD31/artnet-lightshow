@@ -25,8 +25,10 @@ test('ArtPoll is a well-formed 14-byte packet', () => {
   assert.strictEqual(p[12] & 0x02, 0, 'we do not ask for unsolicited replies');
 });
 
-/** A minimal ArtPollReply, as a node would send it. */
-function fakeReply({ ip = [192, 168, 1, 50], net = 0, sub = 3, shortName = 'DMX-1', longName = 'Node One' } = {}) {
+/** An ArtPollReply, as a node would send it: `outputs` are its output ports' SwOut nibbles. */
+function fakeReply({
+  ip = [192, 168, 1, 50], net = 0, sub = 0, outputs = [3], shortName = 'DMX-1', longName = 'Node One', bindIndex = 1,
+} = {}) {
   const buf = Buffer.alloc(239);
   buf.write('Art-Net\0', 0, 'ascii');
   buf.writeUInt16LE(0x2100, 8);
@@ -36,6 +38,13 @@ function fakeReply({ ip = [192, 168, 1, 50], net = 0, sub = 3, shortName = 'DMX-
   buf[19] = sub;
   buf.write(shortName, 26, 18, 'latin1');
   buf.write(longName, 44, 64, 'latin1');
+  buf.writeUInt16BE(outputs.length, 172);
+  outputs.forEach((swOut, i) => {
+    buf[174 + i] = 0x80;                 // this port outputs DMX from the network
+    buf[190 + i] = swOut;
+  });
+  [0x00, 0x11, 0x22, 0x33, 0x44, 0x55].forEach((b, i) => { buf[201 + i] = b; });
+  buf[211] = bindIndex;
   return buf;
 }
 
@@ -47,10 +56,24 @@ test('an ArtPollReply yields the node identity worth showing an operator', () =>
   assert.strictEqual(reply.shortName, 'DMX-1');
   assert.strictEqual(reply.longName, 'Node One');
   assert.strictEqual(reply.universe, 3);
+  assert.deepStrictEqual(reply.outputs, [3]);
+  assert.strictEqual(reply.mac, '00:11:22:33:44:55');
+  assert.strictEqual(reply.bindIndex, 1);
 });
 
-test('the reply universe combines the net and subnet bytes', () => {
-  assert.strictEqual(parseArtPollReply(fakeReply({ net: 1, sub: 2 })).universe, 258);
+// A port's universe is its port-address: 7 bits of net, 4 of subnet, and 4
+// of universe that each port sets for itself. The old reading ran the net and
+// subnet bytes together and ignored the port, so a node on subnet 1 was listed
+// on universe 1 when it was listening to 16.
+test('each output port\'s universe combines the net, the subnet and its own nibble', () => {
+  assert.deepStrictEqual(parseArtPollReply(fakeReply({ net: 1, sub: 2, outputs: [0] })).outputs, [256 + 32]);
+  assert.deepStrictEqual(parseArtPollReply(fakeReply({ sub: 1, outputs: [0, 1, 2, 3] })).outputs, [16, 17, 18, 19]);
+});
+
+test('ports that do not output DMX are not listed', () => {
+  const buf = fakeReply({ outputs: [0, 1] });
+  buf[175] = 0x40;                       // port 2 is an input
+  assert.deepStrictEqual(parseArtPollReply(buf).outputs, [0]);
 });
 
 test('anything that is not an ArtPollReply is rejected rather than misread', () => {
@@ -298,3 +321,42 @@ test('missing model weights are fetched in the background, once',
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+// ── Engine ──────────────────────────────────────────────────────────────────
+
+const { checkEngine } = require('../../src/server/preflight');
+
+const timing = { frames: 2640, rate: 44, renderMs: { p50: 0.2, p95: 0.8, max: 3 }, lateMs: { p50: 0, p95: 0.4, max: 2 } };
+
+test('an engine on its own thread, on time, passes', () => {
+  const r = checkEngine({ thread: 'worker', fellBack: null, lateFrames: 0, skippedFrames: 0, ...timing });
+  assert.strictEqual(r.status, 'ok');
+  assert.match(r.detail, /own thread/);
+  assert.match(r.detail, /44 frames a second/);
+});
+
+test('dropped frames, or many late ones, are a warning with the fix for where it runs', () => {
+  const onMain = checkEngine({ thread: 'main', fellBack: null, lateFrames: 3, skippedFrames: 9, ...timing });
+  assert.strictEqual(onMain.status, 'warn');
+  assert.match(onMain.detail, /12 frames went out late/);
+  assert.match(onMain.fix, /its own thread/);
+  const onWorker = checkEngine({ thread: 'worker', fellBack: null, lateFrames: 40, skippedFrames: 0, ...timing });
+  assert.strictEqual(onWorker.status, 'warn', 'forty of 2,640 is more than one in a hundred');
+  assert.match(onWorker.fix, /machine itself/);
+});
+
+test('the odd frame a little late is noted, not warned about', () => {
+  const r = checkEngine({ thread: 'worker', fellBack: null, lateFrames: 1, skippedFrames: 0, ...timing });
+  assert.strictEqual(r.status, 'ok');
+  assert.match(r.detail, /1 frame a little late/);
+});
+
+test('an engine that fell back to the main thread says why', () => {
+  const r = checkEngine({ thread: 'main', fellBack: 'the engine thread could not start (exit 1)', lateFrames: 0, skippedFrames: 0, ...timing });
+  assert.strictEqual(r.status, 'warn');
+  assert.match(r.detail, /could not start/);
+});
+
+test('an engine that is not running fails', () => {
+  assert.strictEqual(checkEngine({ thread: null }).status, 'fail');
+});

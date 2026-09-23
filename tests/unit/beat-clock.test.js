@@ -8,6 +8,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { FRAME_MS } = require('../../src/server/frame-clock');
 const {
   makeGrid, gridFromAnalysis, beatPositionAt, trackMsAtBeat, localBpm,
   anchorStep, stepAt, hitPhase, fadePhase, motionAdvance,
@@ -111,7 +112,7 @@ test('stepping a real track lands every step on its beat, with no drift', () => 
     const doc = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
     const grid = gridFromAnalysis(doc.analysis || doc);
     assert.ok(grid, `${file} has a grid`);
-    const frameMs = 25;
+    const frameMs = FRAME_MS;
     const endMs = grid.beats[grid.beats.length - 1] * 1000;
     let last = null;
     let changes = 0;

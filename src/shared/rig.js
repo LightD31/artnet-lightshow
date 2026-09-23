@@ -129,6 +129,23 @@ function buildRig(fixtures, profileOf) {
 }
 
 /**
+ * A short key for everything a rig built by buildRig depends on: which
+ * profile each fixture runs (and `revision`, which changes whenever a profile
+ * does), where it stands, its group and its line. Two patches with the same
+ * key build the same rig, so a cache can compare this once a frame instead of
+ * relying on every edit to announce itself.
+ */
+function rigSignature(fixtures, revision = 0) {
+  let key = `${revision}|${fixtures.length}`;
+  for (const f of fixtures) {
+    const p = f.position;
+    const g = f.geometry;
+    key += `|${f.profileId};${p ? `${p.x},${p.y}` : ''};${f.group || ''};${g ? `${g.length},${g.angle}` : ''}`;
+  }
+  return key;
+}
+
+/**
  * The order the patterns travel in, for fixtures and for units.
  *
  *   wash      — the fixtures holding the split look's wash (patch indices)
@@ -200,4 +217,5 @@ module.exports = {
   countUnits,
   lineOf,
   buildRig,
+  rigSignature,
 };

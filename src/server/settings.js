@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('fs');
+const net = require('net');
 const path = require('path');
 const { z } = require('zod');
 const { SYNC_OFFSET_LIMIT_MS } = require('./presets');
@@ -33,6 +34,12 @@ const DEFAULTS = {
     host: '2.255.255.255',
     port: 6454,
     universe: 0,
+    // While the target is a broadcast address, find the nodes on the network
+    // and send each the universes it outputs directly (see artnet-nodes.js).
+    discovery: true,
+    // ArtSync after every frame, so the nodes change all their universes at
+    // once. Off by default: a node that has seen one waits for the next.
+    sync: false,
   },
   // sACN / E1.31: what consoles and most modern nodes speak. Off by default —
   // enabling it is a deliberate act, and a rig can run it alongside Art-Net or
@@ -50,6 +57,9 @@ const DEFAULTS = {
     // fresh one each boot reads as a second source arriving. Generated on
     // first start and stored here.
     cid: '',
+    // The local address multicast leaves from. Blank lets the OS choose; name
+    // the show network's address on a machine that is also on another one.
+    interface: '',
   },
   // Philips Hue Entertainment. Off by default: it needs credentials the bridge
   // itself has to issue, so there is nothing sensible to default to. Unlike
@@ -118,6 +128,13 @@ const DEFAULTS = {
     // the PA — and so it holds from one night to the next.
     syncOffsetMs: 0,
   },
+  engine: {
+    // Where frames are rendered. 'worker' gives the engine a thread of its
+    // own, so the rig keeps its timing while the main thread plans a track,
+    // parses an upload or serves the UI; 'main' renders on the main thread as
+    // it always used to, and is there for diagnosing a problem.
+    thread: 'worker',
+  },
   analysis: {
     analyzerTimeoutMs: 600000,
     downloadTimeoutMs: 300000,
@@ -145,7 +162,7 @@ const SECRET_PATHS = [
 
 // Read once at boot, before anything is listening. Changing these persists
 // immediately but only takes effect on the next start.
-const RESTART_PATHS = ['server.host', 'server.port', 'server.token'];
+const RESTART_PATHS = ['server.host', 'server.port', 'server.token', 'engine.thread'];
 
 // Hostname per RFC 1123, an IPv4 literal, or the two "all interfaces" forms.
 // python, python3, python3.12, python3.12t, pythonw, py — with .exe on Windows.
@@ -172,6 +189,8 @@ const schema = z.object({
     host: netHost,
     port: z.number().int().min(1).max(65535),
     universe: z.number().int().min(0).max(32767),
+    discovery: z.boolean(),
+    sync: z.boolean(),
   }).strict(),
   sacn: z.object({
     enabled: z.boolean(),
@@ -188,6 +207,10 @@ const schema = z.object({
     cid: z.string().max(64).refine(
       (v) => v === '' || /^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$/.test(v),
       { message: 'must be blank or a UUID' },
+    ),
+    interface: z.string().max(15).refine(
+      (v) => v === '' || net.isIPv4(v),
+      { message: 'must be blank or an IPv4 address of this machine' },
     ),
   }).strict(),
   hue: z.object({
@@ -244,6 +267,9 @@ const schema = z.object({
   }).strict(),
   auto: z.object({
     syncOffsetMs: z.number().int().min(-SYNC_OFFSET_LIMIT_MS).max(SYNC_OFFSET_LIMIT_MS),
+  }).strict(),
+  engine: z.object({
+    thread: z.enum(['worker', 'main']),
   }).strict(),
   analysis: z.object({
     // One minute floor: below that a normal track analysis would be killed

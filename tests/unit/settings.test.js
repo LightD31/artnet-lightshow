@@ -128,12 +128,15 @@ test('a file from an older build gains new keys as defaults', () => {
 
 test('pendingRestart reports only bootstrap keys that drifted', () => {
   const s = store().load();
-  const boot = { server: { host: '127.0.0.1', port: 3000, token: '' } };
+  const boot = { server: { host: '127.0.0.1', port: 3000, token: '' }, engine: { thread: 'worker' } };
   assert.deepStrictEqual(s.pendingRestart(boot), []);
   s.update({ server: { port: 4000 } });
   assert.deepStrictEqual(s.pendingRestart(boot), ['server.port']);
   s.update({ artnet: { universe: 4 } });
   assert.deepStrictEqual(s.pendingRestart(boot), ['server.port'], 'live keys never need a restart');
+  // The engine picks its thread once, at start.
+  s.update({ engine: { thread: 'main' } });
+  assert.deepStrictEqual(s.pendingRestart(boot), ['server.port', 'engine.thread']);
 });
 
 // A leftover .env would otherwise go quiet: the rig comes up on defaults with

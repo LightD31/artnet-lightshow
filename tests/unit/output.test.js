@@ -419,3 +419,29 @@ test('a blackout sent immediately does not wait behind the look it replaces', as
   });
   assert.deepStrictEqual(got.map((g) => g.marker), [0], 'only the blackout, and the queued look is dropped');
 });
+
+// ── ArtSync on the wire ──────────────────────────────────────────────────────
+
+test('with ArtSync on, each frame is followed by an OpSync to the same node', async () => {
+  const dgram = require('dgram');
+  const { state } = require('../../src/server/state');
+  const socket = dgram.createSocket('udp4');
+  const ops = [];
+  socket.on('message', (msg) => ops.push(msg.readUInt16LE(8)));
+  await new Promise((r) => socket.bind(0, '127.0.0.1', r));
+  const before = { ...state.artnet };
+  Object.assign(state.artnet, { enabled: true, host: '127.0.0.1', port: socket.address().port, sync: true });
+  try {
+    output.sendUniverse(0, Buffer.alloc(512));
+    output.sendUniverse(1, Buffer.alloc(512));
+    output.endFrame();
+    state.artnet.sync = false;
+    output.sendUniverse(0, Buffer.alloc(512));
+    output.endFrame();
+    await new Promise((r) => setTimeout(r, 60));
+    assert.deepStrictEqual(ops, [0x5000, 0x5000, 0x5200, 0x5000], 'two universes, one sync; then no sync once it is off');
+  } finally {
+    Object.assign(state.artnet, before);
+    socket.close();
+  }
+});

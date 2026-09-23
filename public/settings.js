@@ -92,7 +92,7 @@ socket.on('state', (s) => {
 
 // ── ArtNet settings ──────────────────────────────────────────────────────────
 
-const ARTNET_FIELDS = ['artnet-enabled', 'artnet-host', 'artnet-port', 'artnet-universe'];
+const ARTNET_FIELDS = ['artnet-enabled', 'artnet-host', 'artnet-port', 'artnet-universe', 'artnet-discovery', 'artnet-sync'];
 
 ARTNET_FIELDS.forEach(id => {
   const node = document.getElementById(id);
@@ -111,6 +111,10 @@ function syncArtnetFields(s) {
   if (!h.dataset.dirty) h.value = s.artnet.host;
   if (!p.dataset.dirty) p.value = s.artnet.port;
   if (!u.dataset.dirty) u.value = s.artnet.universe;
+  const d = document.getElementById('artnet-discovery');
+  const y = document.getElementById('artnet-sync');
+  if (!d.dataset.dirty) d.checked = s.artnet.discovery !== false;
+  if (!y.dataset.dirty) y.checked = !!s.artnet.sync;
 }
 
 document.getElementById('artnet-save').addEventListener('click', () => {
@@ -120,12 +124,76 @@ document.getElementById('artnet-save').addEventListener('click', () => {
       host: document.getElementById('artnet-host').value,
       port: parseInt(document.getElementById('artnet-port').value),
       universe: parseInt(document.getElementById('artnet-universe').value),
+      discovery: document.getElementById('artnet-discovery').checked,
+      sync: document.getElementById('artnet-sync').checked,
     }
   });
   ARTNET_FIELDS.forEach(id => {
     delete document.getElementById(id).dataset.dirty;
   });
+  // The node list depends on the target: a broadcast is routed, one node is not.
+  setTimeout(() => loadArtnetNodes(false), 500);
 });
+
+// ── Art-Net nodes ───────────────────────────────────────────────────────────
+// Who answered a poll, and which universes each outputs. "Send to this node"
+// puts its address in the Node IP field, for a rig that should talk to one
+// node and nothing else.
+
+async function loadArtnetNodes(scan) {
+  const status = document.getElementById('artnet-nodes-status');
+  const box = document.getElementById('artnet-nodes');
+  if (!status || !box) return;
+  if (scan) status.textContent = 'Asking the network…';
+  let data;
+  try {
+    const res = await fetch(`/api/artnet/nodes${scan ? '?scan=1' : ''}`);
+    data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'request failed');
+  } catch (err) {
+    status.textContent = `Could not ask: ${err.message}`;
+    return;
+  }
+  const nodes = data.nodes || [];
+  status.textContent = nodes.length
+    ? `${nodes.length} node${nodes.length === 1 ? '' : 's'} answered`
+      + (data.routing ? ' — each is sent its universes directly.' : '.')
+    : (data.error
+      ? `No answer — ${data.error}`
+      : (data.routing || scan
+        ? 'No node has answered. Many never reply to polls; if the rig is dark, check the Node IP and the subnet.'
+        : 'Press Find Nodes Now to ask the network.'));
+  box.replaceChildren();
+  if (!nodes.length) return;
+
+  const table = el('table', 'patch-table');
+  const head = el('tr');
+  for (const h of ['Node', 'Address', 'Universes', '']) head.appendChild(el('th', null, h));
+  table.appendChild(head);
+  for (const node of nodes) {
+    const tr = el('tr');
+    tr.appendChild(el('td', null, node.shortName || node.longName || 'unnamed'));
+    tr.appendChild(el('td', null, node.address));
+    tr.appendChild(el('td', null, node.outputs && node.outputs.length ? node.outputs.join(', ') : '—'));
+    const cell = el('td');
+    const use = el('button', 'btn btn-small', 'Send to this node');
+    use.type = 'button';
+    use.title = 'Put this address in Node IP; press Apply to use it';
+    use.addEventListener('click', () => {
+      const host = document.getElementById('artnet-host');
+      host.value = node.address;
+      host.dataset.dirty = 'true';
+      host.focus();
+    });
+    cell.appendChild(use);
+    tr.appendChild(cell);
+    table.appendChild(tr);
+  }
+  box.appendChild(table);
+}
+
+document.getElementById('artnet-scan').addEventListener('click', () => loadArtnetNodes(true));
+loadArtnetNodes(false);
 
 // ── MIDI settings ────────────────────────────────────────────────────────────
 
@@ -906,6 +974,19 @@ document.getElementById('load-show-file').addEventListener('change', async (e) =
 
 let hueAreas = [];        // [{ id, name, channels: [{ id }] }]
 let hueBridges = [];      // discovered, or empty
+let networkInterfaces = [];   // this machine's IPv4 addresses, for the sACN network
+
+async function loadNetworkInterfaces() {
+  try {
+    const res = await fetch('/api/network/interfaces');
+    const data = await res.json();
+    if (data.ok) {
+      networkInterfaces = data.interfaces || [];
+      if (typeof renderSettings === 'function' && settingsData) renderSettings();
+    }
+  } catch (_) { /* the select still offers the default */ }
+}
+loadNetworkInterfaces();
 let hueInfo = null;       // { status, paired, host, entertainmentId, channels }
 let hueNotice = null;     // transient line under the buttons
 
@@ -1180,9 +1261,34 @@ const SETTINGS_SPEC = [
       { path: 'sacn.universeOffset', label: 'Universe Offset', type: 'number', min: -32767, max: 63999,
         help: 'Art-Net counts universes from 0 and sACN from 1, so +1 lines them up: a fixture on '
           + 'universe 0 goes out as sACN universe 1.' },
+      { path: 'sacn.interface', label: 'Network', type: 'select',
+        options: () => [
+          { value: '', label: 'Let the computer choose' },
+          ...networkInterfaces.map((i) => ({ value: i.address, label: `${i.name} — ${i.address}` })),
+        ],
+        missing: (value) => `${value} (not on this machine)`,
+        help: 'Which network the multicast groups go out on. Only matters on a machine that is on '
+          + 'more than one — pick the one the nodes are on.' },
       { path: 'sacn.cid', label: 'Component ID', type: 'text',
         help: 'How a receiver tells sources apart. Generated on first start and stable from then on '
           + '— change it only if two servers on the network ended up sharing one.' },
+    ],
+  },
+  {
+    id: 'engine',
+    group: 'output',
+    title: 'Engine',
+    desc: 'Where frames are rendered. Applies on the next restart.',
+    fields: [
+      { path: 'engine.thread', label: 'Render On', type: 'select',
+        options: () => [
+          { value: 'worker', label: 'Its own thread (recommended)' },
+          { value: 'main', label: 'The main thread' },
+        ],
+        help: 'On its own thread the rig keeps time while the server plans the next track, imports '
+          + 'a fixture file or serves the UI. The main thread is how it used to run — only worth '
+          + 'choosing to rule the thread out when chasing a problem.',
+        note: engineNote },
     ],
   },
   {
@@ -1284,6 +1390,19 @@ const SERVER_SPEC = {
 
 let settingsData = null;   // { settings, secrets, restartKeys, pendingRestart, running, python }
 
+/** Where the engine is rendering right now, and how its frames have been going. */
+function engineNote(data) {
+  const e = data && data.engine;
+  if (!e || !e.thread) return null;
+  const where = e.thread === 'worker' ? 'its own thread' : 'the main thread';
+  const timing = e.frames
+    ? ` — ${e.rate} frames a second, ${e.renderMs.p95} ms to render (p95), `
+      + `${e.lateFrames + e.skippedFrames} late or dropped in the last minute`
+    : '';
+  if (e.fellBack) return { ok: false, text: `Currently: ${where}, because ${e.fellBack}${timing}.` };
+  return { ok: true, text: `Currently: ${where}${timing}.` };
+}
+
 /**
  * What the server actually resolved, rather than what the box says. "I ran pip
  * install" and "the analyzer can import librosa" are different claims, and on a
@@ -1325,7 +1444,9 @@ function fieldInput(field) {
     if (!options.length || !known) {
       const ph = document.createElement('option');
       ph.value = value || '';
-      ph.textContent = options.length ? `${value} (not on the bridge)` : (field.empty || 'none');
+      ph.textContent = options.length
+        ? (field.missing ? field.missing(value) : `${value} (not on the bridge)`)
+        : (field.empty || 'none');
       select.appendChild(ph);
     }
     for (const opt of options) {
