@@ -24,6 +24,10 @@ via **Bitfocus Companion**, and a REST API.
 - **18 patterns** — solid, chases, ping-pong, strobe, fade, colour cycle,
   rainbow, twinkle, sparkle, wave, runner, splits and sections; each one takes
   its colour count from the palette rather than needing a variant per size
+- **LED bars** — every cell of a bar is a light of its own: import one from
+  GDTF or build its profile from the manual, lay it on the stage plot, and the
+  wave, ribbon, rainbow and five pixel effects (gradient, comet, burst, plasma,
+  meter) draw across its cells
 - **15 colour presets** — a nine-hue wheel with nothing closer than 30° on it,
   plus two whites, two pale washes and UV — and four colour slots (A–D) that
   patterns draw from
@@ -244,6 +248,65 @@ removes them.
 channel map is derived automatically. Patch fixtures to the new profile in the
 same page. The patch table flags address overlaps, and the server refuses a
 fixture whose channels would run past the end of the universe.
+
+The import reads what GDTF says about the fixture's shape too:
+
+- **A fixture with a geometry per cell** — an LED bar's `Pixel 1` … `Pixel 16`,
+  either as geometries of their own or as one template placed N times by
+  `GeometryReference`s — imports as a bar with cells (see below). The mode list
+  says how many.
+- **16-bit channels** (`Offset="1,2"`) count their fine byte in the footprint,
+  and a 16-bit dimmer's fine byte is mapped.
+- **Virtual channels** (no `Offset`) take no DMX address.
+- A lamp with **warm and cool white** dies drives both; GDTF's amber,
+  `ColorAdd_RY`, is amber.
+- A channel on a **second DMX break**, or past channel 512, is left out, and the
+  import says so beside the channel list.
+
+A bar imported before cells existed is still one light. Import it again: the
+profile is replaced under the same id, and every fixture on it becomes a bar of
+cells on the next frame.
+
+### LED bars
+
+A bar is eight, sixteen or more lights in one fixture, each cell with its own
+red, green and blue (and white, amber, UV or a cell dimmer). Every cell is
+rendered as a light of its own: a wave rolls along a bar, a comet runs down it,
+and a gradient spreads across all of them.
+
+**Getting one into the patch**
+
+- From **GDTF**, as above.
+- Without a GDTF file, **Settings → Fixture Profiles → Make an LED bar
+  profile**: the number of cells, the channel the first cell starts on, the
+  order of each cell's channels (`RGB`, `RGBW`, `DRGB` with a cell dimmer
+  first…), the spacing between cells if the bar leaves gaps, and the channels
+  the whole bar shares (a master dimmer, a strobe). The channels preview as you
+  type; the numbers are on the back of the bar's manual.
+
+**On the stage plot** a bar is drawn as its cells, along a line centred on its
+position. In **Position fixtures** mode, drag the handle at its far end to turn
+it and to lengthen or shorten it; with the bar focused, `[` and `]` turn it,
+`-` and `=` change its length, and `0` puts it back to a straight line across
+the stage. That line is where the cells are for every pattern, so draw it where
+the bar hangs.
+
+**How patterns use the cells.** The pictures — Wave, Ribbon, Ensemble, Rainbow,
+Twinkle, Sparkle and the five pixel effects — are drawn across every cell. The
+stepped patterns — the chases, Split, Sections and the like — travel through
+*fixtures*, and a bar takes its step's colour on every cell, so a chase across
+four pars and two bars has six stops, not thirty-six.
+
+**Levels.** Each cell is driven so it looks exactly as a par with the same
+channels would at the same level: the bar's dimmer follows its brightest cell,
+and each cell makes up the rest. A look that is the same on every cell drives a
+bar with exactly a par's values; a kill or a silence closes the bar's dimmer
+as well. A bar without a strobe channel ignores the strobe pattern and strobe
+bursts. A Hue lamp bound to a bar shows the mean of its cells.
+
+**How much.** The engine renders up to 2,048 cells. Sixty-four sixteen-cell
+bars — 1,024 cells — cost well under 2 ms a frame for most patterns, 4 ms for
+Ribbon's colour-wheel blend, out of the 25 ms each frame has.
 
 ### Output protocols
 
@@ -629,6 +692,23 @@ why it survives the fold and why the auto show never picks it. **Colour Cycle**
 used to ignore the palette too and was excluded for the same reason — it now
 steps the whole rig through the look's colours, so it has joined the pool.
 
+**Pixel effects** — pictures drawn across every cell of the rig's LED bars.
+They run on pars too, as a handful of samples of the same picture, but they are
+made for bars:
+
+| | |
+|---|---|
+| **Gradient** | The look's colours as a gradient across the rig, scrolling a full cycle every sixteen steps |
+| **Comet** | A head crossing the rig every four steps with a tail that is long in slow music and short when it drives; each lap in the next colour |
+| **Burst** | A ring thrown out from the centre of the stage on every step |
+| **Plasma** | Three slow interfering waves in the look's colours |
+| **Meter** | A level meter filled by the low end and kicked on every step |
+
+With bars in the patch, the pattern card also offers how a picture lies over
+them: **Across stage** (one picture over every bar, as they stand on the plot),
+**Per bar** (each bar draws the whole picture along itself) or **Mirrored**
+(the picture mirrored about the centre of the stage). Cues remember the choice.
+
 ### The palettes
 
 Sixteen named looks — the same bank the auto show locks a song to, offered by
@@ -1009,6 +1089,13 @@ Both are live: changing either rebuilds the timeline from the analysis already
 in hand, so the new setting takes effect on the next tick without re-analysing
 the track. Neither touches the master dimmer — that slider stays yours.
 
+With LED bars in the patch, the show plans for them too: resting passages may
+settle on a gradient or plasma field, driving ones reach for the comet and the
+burst, and every scene says how its picture lies over the bars — resting looks
+across the stage, drops mirrored about the centre, the rest chosen per passage
+so a returning chorus comes back laid out as it was. Adding or removing the
+last bar replans the track. A rig of pars plans exactly as it always has.
+
 Past 70, intensity also lifts a calm or rock track out of its tier *for drops
 only*. A fader that did nothing on a ballad is a fader you stop trusting; it
 buys the drops, never accent density, so the track still does not strobe through
@@ -1301,7 +1388,8 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/fixtures` · DELETE `/api/fixtures/:id` | Add / remove a fixture (`{ universe }` optional on add; DELETE answers with the fixture and its index) |
 | POST | `/api/fixtures/restore` | Put a deleted fixture back (`{ index, fixture }`) |
 | POST | `/api/gdtf/parse` | Parse an uploaded `.gdtf` (multipart `gdtf`) |
-| POST | `/api/profiles` · DELETE `/api/profiles/:id` | Register / remove a fixture profile |
+| POST | `/api/profiles` · DELETE `/api/profiles/:id` | Register / remove a fixture profile (`cells` makes it an LED bar) |
+| POST | `/api/profiles/bar` | Build and register an LED bar profile from `{ id, name, cells, firstChannel, order, stride?, dimmer?, strobe? }`; `?dryRun=1` answers with it without registering |
 | GET · POST | `/api/show` | Export / import the patch |
 
 ### Cues
@@ -1386,9 +1474,11 @@ universe), `auto-position`, `midi-status`, `midi-map`, `midi-learn` and
 `error-msg`.
 
 The `fixture` message carries
-`{ id, address?, universe?, label?, profileId?, maxBrightness?, position?, group? }`.
+`{ id, address?, universe?, label?, profileId?, maxBrightness?, position?, group?, geometry? }`.
 `position` is `{ x, y }` in percent of the stage plot, or `null`; `group` is one
-of `front`, `back`, `room`, `floor`, or `null`.
+of `front`, `back`, `room`, `floor`, or `null`; `geometry` is an LED bar's line,
+`{ length, angle }` (length 1–100 in stage percent, angle −180–180 degrees
+clockwise on the plot), or `null` for the default.
 
 ---
 
