@@ -35,6 +35,7 @@ let sacn = {
   sourceName: 'ArtNet Lightshow',
   universeOffset: 1,
   cid: '',
+  interface: '',
 };
 
 function configureSacn(config) {
@@ -265,11 +266,11 @@ function sendHue() {
 
 /**
  * Put one universe on every enabled wire, from this thread. Returns the
- * protocols the frame was handed to; `immediate` skips the Hue delay line
- * (see transmit.js).
+ * protocols the frame was handed to; `immediate` skips the Hue delay line and
+ * `terminate` ends the universe's sACN stream (see transmit.js).
  */
-function sendUniverse(universe, frame, { immediate = false } = {}) {
-  return transmitter.send(universe, frame, transmitConfig(), { immediate });
+function sendUniverse(universe, frame, { immediate = false, terminate = false } = {}) {
+  return transmitter.send(universe, frame, transmitConfig(), { immediate, terminate });
 }
 
 /** After the last universe of a frame: the ArtSync, when it is on. */

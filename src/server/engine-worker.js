@@ -73,7 +73,9 @@ function setProfiles(profiles) {
 
 function transmit(outputs) {
   for (const universe of store.list()) transmitter.send(universe, store.getBuffer(universe), outputs);
-  for (const [universe, frame] of store.drainRetired()) transmitter.send(universe, frame, outputs, { immediate: true });
+  for (const [universe, frame] of store.drainRetired()) {
+    transmitter.send(universe, frame, outputs, { immediate: true, terminate: true });
+  }
   transmitter.endFrame(outputs);
 }
 
@@ -99,9 +101,11 @@ function blackout() {
     store.clearAll();
     const outputs = snapshot.outputs;
     for (const universe of store.list()) {
-      transmitter.send(universe, store.getBuffer(universe), outputs, { immediate: true });
+      transmitter.send(universe, store.getBuffer(universe), outputs, { immediate: true, terminate: true });
     }
-    for (const [universe, frame] of store.drainRetired()) transmitter.send(universe, frame, outputs, { immediate: true });
+    for (const [universe, frame] of store.drainRetired()) {
+      transmitter.send(universe, frame, outputs, { immediate: true, terminate: true });
+    }
     transmitter.endFrame(outputs);
   } else {
     store.clearAll();

@@ -974,6 +974,19 @@ document.getElementById('load-show-file').addEventListener('change', async (e) =
 
 let hueAreas = [];        // [{ id, name, channels: [{ id }] }]
 let hueBridges = [];      // discovered, or empty
+let networkInterfaces = [];   // this machine's IPv4 addresses, for the sACN network
+
+async function loadNetworkInterfaces() {
+  try {
+    const res = await fetch('/api/network/interfaces');
+    const data = await res.json();
+    if (data.ok) {
+      networkInterfaces = data.interfaces || [];
+      if (typeof renderSettings === 'function' && settingsData) renderSettings();
+    }
+  } catch (_) { /* the select still offers the default */ }
+}
+loadNetworkInterfaces();
 let hueInfo = null;       // { status, paired, host, entertainmentId, channels }
 let hueNotice = null;     // transient line under the buttons
 
@@ -1248,6 +1261,14 @@ const SETTINGS_SPEC = [
       { path: 'sacn.universeOffset', label: 'Universe Offset', type: 'number', min: -32767, max: 63999,
         help: 'Art-Net counts universes from 0 and sACN from 1, so +1 lines them up: a fixture on '
           + 'universe 0 goes out as sACN universe 1.' },
+      { path: 'sacn.interface', label: 'Network', type: 'select',
+        options: () => [
+          { value: '', label: 'Let the computer choose' },
+          ...networkInterfaces.map((i) => ({ value: i.address, label: `${i.name} — ${i.address}` })),
+        ],
+        missing: (value) => `${value} (not on this machine)`,
+        help: 'Which network the multicast groups go out on. Only matters on a machine that is on '
+          + 'more than one — pick the one the nodes are on.' },
       { path: 'sacn.cid', label: 'Component ID', type: 'text',
         help: 'How a receiver tells sources apart. Generated on first start and stable from then on '
           + '— change it only if two servers on the network ended up sharing one.' },
@@ -1423,7 +1444,9 @@ function fieldInput(field) {
     if (!options.length || !known) {
       const ph = document.createElement('option');
       ph.value = value || '';
-      ph.textContent = options.length ? `${value} (not on the bridge)` : (field.empty || 'none');
+      ph.textContent = options.length
+        ? (field.missing ? field.missing(value) : `${value} (not on the bridge)`)
+        : (field.empty || 'none');
       select.appendChild(ph);
     }
     for (const opt of options) {

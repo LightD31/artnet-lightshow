@@ -140,7 +140,9 @@ function transmitFrame() {
   }
   // One last all-zero frame for any universe that just left the patch, so its
   // node doesn't sit holding the look it was showing when the fixture moved.
-  for (const [universe, frame] of universes.drainRetired()) output.sendUniverse(universe, frame, { immediate: true });
+  for (const [universe, frame] of universes.drainRetired()) {
+    output.sendUniverse(universe, frame, { immediate: true, terminate: true });
+  }
   output.endFrame();
 }
 
@@ -310,9 +312,11 @@ function blackout() {
   universes.sync(activeUniverses());
   universes.clearAll();
   for (const universe of universes.list()) {
-    output.sendUniverse(universe, universes.getBuffer(universe), { immediate: true });
+    output.sendUniverse(universe, universes.getBuffer(universe), { immediate: true, terminate: true });
   }
-  for (const [universe, frame] of universes.drainRetired()) output.sendUniverse(universe, frame, { immediate: true });
+  for (const [universe, frame] of universes.drainRetired()) {
+    output.sendUniverse(universe, frame, { immediate: true, terminate: true });
+  }
   output.endFrame();
 }
 

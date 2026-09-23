@@ -1185,6 +1185,12 @@ function attachRoutes(app, deps) {
     });
   }));
 
+  // This machine's IPv4 addresses, for choosing which network sACN multicast
+  // leaves on.
+  app.get('/api/network/interfaces', (_req, res) => {
+    res.json({ ok: true, interfaces: interfaces().map(({ name, address, netmask }) => ({ name, address, netmask })) });
+  });
+
   app.get('/api/hue/discover', asyncHandler(async (_req, res) => {
     const { bridges, error } = await discoverBridges();
     // Not an error status: discovery needs internet access the show network may

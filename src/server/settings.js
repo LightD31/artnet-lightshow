@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('fs');
+const net = require('net');
 const path = require('path');
 const { z } = require('zod');
 const { SYNC_OFFSET_LIMIT_MS } = require('./presets');
@@ -56,6 +57,9 @@ const DEFAULTS = {
     // fresh one each boot reads as a second source arriving. Generated on
     // first start and stored here.
     cid: '',
+    // The local address multicast leaves from. Blank lets the OS choose; name
+    // the show network's address on a machine that is also on another one.
+    interface: '',
   },
   // Philips Hue Entertainment. Off by default: it needs credentials the bridge
   // itself has to issue, so there is nothing sensible to default to. Unlike
@@ -203,6 +207,10 @@ const schema = z.object({
     cid: z.string().max(64).refine(
       (v) => v === '' || /^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$/.test(v),
       { message: 'must be blank or a UUID' },
+    ),
+    interface: z.string().max(15).refine(
+      (v) => v === '' || net.isIPv4(v),
+      { message: 'must be blank or an IPv4 address of this machine' },
     ),
   }).strict(),
   hue: z.object({

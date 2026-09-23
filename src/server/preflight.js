@@ -10,6 +10,7 @@ const { getProfile, fitsInUniverse, endChannel, UNIVERSE_SIZE } = require('./pro
 const { MAX_UNIVERSES } = require('./universes');
 const { settings } = require('./settings');
 const { discoverNodes, probeSend } = require('./artnet');
+const { interfaces } = require('./artnet-nodes');
 const output = require('./output');
 const { MIN_UNIVERSE, MAX_UNIVERSE } = require('./sacn');
 const { listEntertainmentConfigs } = require('./hue');
@@ -159,7 +160,17 @@ function checkSacn() {
     };
   }
 
-  const where = config.host ? `unicast to ${config.host}` : 'multicast';
+  if (config.interface && !interfaces().some((i) => i.address === config.interface)) {
+    return {
+      id: 'sacn', label: 'sACN output', status: FAIL,
+      detail: `Multicast is set to leave from ${config.interface}, which is not an address of this machine.`,
+      fix: 'Pick the show network under Settings → sACN (E1.31) → Network, or let the computer choose.',
+    };
+  }
+
+  const where = config.host
+    ? `unicast to ${config.host}`
+    : `multicast${config.interface ? ` from ${config.interface}` : ''}`;
   return {
     id: 'sacn', label: 'sACN output', status: OK,
     detail: `${where}, priority ${config.priority}, as "${config.sourceName}". `
