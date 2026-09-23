@@ -98,6 +98,29 @@
     </div>
   </section>
 
+  <!-- ── WLED ─────────────────────────────────────────────── -->
+  <section class="card settings-section" data-tab="output">
+    <div class="card-title">WLED</div>
+    <p class="section-desc">WLED strips and panels, sent their pixels over DDP rather than Art-Net. Adding one reads its LED count (and its grid, set up as a panel) from the device and patches it on universes of its own; it is then a bar on the stage plot like any other.</p>
+    <div class="settings-form">
+      <div class="field">
+        <label>Devices</label>
+        <div class="setting-control">
+          <button class="btn btn-small" type="button" id="wled-scan">Find WLEDs</button>
+          <small class="setting-help" id="wled-status"></small>
+        </div>
+      </div>
+      <div id="wled-devices"></div>
+      <div class="field">
+        <label for="wled-host">Add by address</label>
+        <div class="setting-control">
+          <input id="wled-host" type="text" maxlength="253" placeholder="192.168.1.50 or wled-porch.local" />
+          <button class="btn active btn-small" type="button" id="wled-add">Add</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- ── MIDI ──────────────────────────────────────────────── -->
   <section class="card settings-section" data-tab="control">
     <div class="card-title">MIDI — X-Touch Compact</div>

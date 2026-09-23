@@ -14,6 +14,9 @@ import * as output from './output.ts';
 import { engineStatus } from './engine.ts';
 import { MIN_UNIVERSE, MAX_UNIVERSE } from './sacn.ts';
 import { listEntertainmentConfigs } from './hue.ts';
+import { wledClient } from './wled.ts';
+import { unitCount } from '../shared/rig.ts';
+import type { WledClient } from './wled.ts';
 import { cues } from './cues.ts';
 import { midiMap } from './midi-map.ts';
 import * as pythonEnv from '../python-env.ts';
@@ -272,6 +275,48 @@ function checkSacn(): Check {
     id: 'sacn', label: 'sACN output', status: OK,
     detail: `${where}, priority ${config.priority}, as "${config.sourceName}". `
       + `Universes ${mapped.map(([from, to]) => `${from}→${to}`).join(', ')}.`,
+  };
+}
+
+/**
+ * The WLEDs in the patch: does each answer, and is it still the length it was
+ * patched as? A WLED re-set to fewer LEDs takes the pixels past its end
+ * nowhere; one given more leaves them to its own effects.
+ */
+async function checkWled(client: Pick<WledClient, 'info'> = wledClient): Promise<Check> {
+  const wleds = state.fixtures.filter((f) => f.output?.protocol === 'ddp');
+  if (!wleds.length) {
+    return { id: 'wled', label: 'WLED', status: INFO, detail: 'None in the patch. Add one under Settings → Output → WLED.' };
+  }
+  const answers = await Promise.all(wleds.map(async (fix) => {
+    const host = (fix.output as { host: string }).host;
+    const patched = unitCount(getProfile(fix));
+    try {
+      const info = await client.info(host);
+      return { fix, host, patched, leds: info.leds, error: null };
+    } catch (err) {
+      return { fix, host, patched, leds: 0, error: err instanceof Error ? err.message : String(err) };
+    }
+  }));
+  const silent = answers.filter((a) => a.error);
+  const resized = answers.filter((a) => !a.error && a.leds !== a.patched);
+  if (silent.length) {
+    return {
+      id: 'wled', label: 'WLED', status: FAIL,
+      detail: silent.map((a) => `"${a.fix.label}" at ${a.host} does not answer (${a.error})`).join('; '),
+      fix: 'Check it is powered and on this network, or correct its address in Settings → Fixture Patch.',
+    };
+  }
+  if (resized.length) {
+    return {
+      id: 'wled', label: 'WLED', status: WARN,
+      detail: resized.map((a) => `"${a.fix.label}" reports ${a.leds} LEDs but is patched as ${a.patched}`).join('; '),
+      fix: 'Remove it from the patch and add it again under Settings → Output → WLED.',
+    };
+  }
+  return {
+    id: 'wled', label: 'WLED', status: OK,
+    detail: answers.map((a) => `"${a.fix.label}" at ${a.host}, ${a.leds} LEDs`).join('; ') + ', sent over DDP.',
   };
 }
 
@@ -724,9 +769,10 @@ async function runPreflight({ midi, spotify, prolink, analysisCache, downloadMod
   // The external-tool probes are independent and each costs a process spawn;
   // run them together rather than serially in front of an operator waiting on
   // the report.
-  const [artnet, hue, ffmpeg, ytDlp] = await Promise.all([
+  const [artnet, hue, wled, ffmpeg, ytDlp] = await Promise.all([
     checkArtnet(),
     checkHue(),
+    checkWled(),
     checkFfmpeg(),
     checkYtDlp(),
   ]);
@@ -736,6 +782,7 @@ async function runPreflight({ midi, spotify, prolink, analysisCache, downloadMod
     artnet,
     checkSacn(),
     hue,
+    wled,
     checkPatch(),
     checkAccess(),
     checkMidi(midi),
@@ -769,6 +816,7 @@ export {
   checkEngine,
   checkSacn,
   checkHue,
+  checkWled,
   checkPanns,
   checkAnalysisModels,
   checkAccess,

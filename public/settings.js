@@ -195,6 +195,66 @@ async function loadArtnetNodes(scan) {
 document.getElementById('artnet-scan').addEventListener('click', () => loadArtnetNodes(true));
 loadArtnetNodes(false);
 
+// ── WLED ────────────────────────────────────────────────────────────────────
+// The WLEDs that answered mDNS, and adding one: the server asks it what it is,
+// builds its profile and patches it on universes of its own, sent DDP.
+
+async function findWled() {
+  const status = document.getElementById('wled-status');
+  const box = document.getElementById('wled-devices');
+  status.textContent = 'Asking the network…';
+  box.replaceChildren();
+  const data = await apiJson('/api/wled/discover');
+  if (!data.ok) { status.textContent = data.error; return; }
+  const devices = data.devices || [];
+  status.textContent = devices.length
+    ? `${devices.length} WLED${devices.length === 1 ? '' : 's'} answered`
+    : 'No WLED answered. mDNS does not cross routers or VLANs: add one by its address below.';
+  if (!devices.length) return;
+  const table = el('table', 'patch-table');
+  const head = el('tr');
+  for (const h of ['WLED', 'Address', 'LEDs', '']) head.appendChild(el('th', null, h));
+  table.appendChild(head);
+  for (const device of devices) {
+    const tr = el('tr');
+    tr.appendChild(el('td', null, device.name));
+    tr.appendChild(el('td', null, device.host));
+    const leds = device.error ? device.error
+      : `${device.leds}${device.rgbw ? ' RGBW' : ' RGB'}${device.matrix ? `, ${device.matrix.w} × ${device.matrix.h}` : ''}`;
+    tr.appendChild(el('td', null, leds));
+    const cell = el('td');
+    if (device.patched) cell.appendChild(el('span', 'setting-help', `Patched as "${device.patched}"`));
+    else if (!device.error) {
+      const add = el('button', 'btn btn-small', 'Add to patch');
+      add.type = 'button';
+      add.addEventListener('click', () => addWled(device.host));
+      cell.appendChild(add);
+    }
+    tr.appendChild(cell);
+    table.appendChild(tr);
+  }
+  box.appendChild(table);
+}
+
+async function addWled(host) {
+  const status = document.getElementById('wled-status');
+  status.textContent = `Asking ${host}…`;
+  const data = await apiJson('/api/wled/add', jsonBody('POST', { host }));
+  if (!data.ok) { status.textContent = data.error; return; }
+  const where = data.fixture.universe;
+  status.textContent = `Added "${data.fixture.label}": ${data.profile.modeName}, from universe ${where}.`;
+  Toast.push({ message: `Added ${data.fixture.label} to the patch` });
+}
+
+document.getElementById('wled-scan').addEventListener('click', findWled);
+document.getElementById('wled-add').addEventListener('click', () => {
+  const host = document.getElementById('wled-host').value.trim();
+  if (host) addWled(host);
+});
+document.getElementById('wled-host').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('wled-add').click();
+});
+
 // ── MIDI settings ────────────────────────────────────────────────────────────
 
 socket.on('midi-status', ({ ok, enabled }) => {
@@ -878,6 +938,18 @@ function renderPatchTable() {
     uniInput.dataset.id = fix.id;
     uniInput.style.width = '70px';
     uniCell.appendChild(uniInput);
+    // A WLED's universes go to it over DDP: its address, editable, and
+    // emptied to send the fixture on Art-Net and sACN instead.
+    if (fix.output && fix.output.protocol === 'ddp') {
+      const hostInput = el('input', 'wled-host');
+      hostInput.type = 'text';
+      hostInput.value = fix.output.host;
+      hostInput.title = 'Sent to this WLED over DDP. Empty it to send on Art-Net and sACN instead.';
+      hostInput.dataset.field = 'outputHost';
+      hostInput.dataset.id = fix.id;
+      uniCell.appendChild(el('span', 'addr-range', 'WLED'));
+      uniCell.appendChild(hostInput);
+    }
     tr.appendChild(uniCell);
 
     const addrCell = el('td');
@@ -921,6 +993,11 @@ function renderPatchTable() {
       }
 
       if (!socket.connected) { Toast.error('Disconnected — reconnect before editing the patch.'); return; }
+      if (field === 'outputHost') {
+        const host = String(value).trim();
+        socket.emit('fixture', { id, output: host ? { protocol: 'ddp', host } : null });
+        return;
+      }
       socket.emit('fixture', { id, [field]: value });
     });
   });

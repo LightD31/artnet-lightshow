@@ -373,6 +373,12 @@ const midiConnectSchema = z.object({
 
 // Pairing is the one Hue call that names a bridge the settings do not hold yet:
 // the operator has just picked it off the discovery list, or typed it in.
+// POST /api/wled/add: a WLED by its hostname or address, and what to call it.
+const wledAddSchema = z.object({
+  host: z.string().regex(HOSTNAME_RE, 'is not a hostname or an IPv4 address'),
+  label: z.string().trim().min(1).max(64).optional(),
+}).strict();
+
 const huePairSchema = z.object({
   host: z.string().min(1).max(253),
 }).strict();
@@ -410,5 +416,6 @@ export {
   showSchema,
   midiConnectSchema,
   huePairSchema,
+  wledAddSchema,
   validate,
 };
