@@ -29,6 +29,7 @@ const {
 const { MAX_UNIVERSES } = require('./universes');
 const { cues, cueWriteSchema, cueRestoreSchema, reorderSchema } = require('./cues');
 const { showStore, snapshotShow, applyShow } = require('./show-store');
+const { barProfile } = require('./bar-profile');
 const {
   midiMap, ACTIONS, defaultTypeFor, mapSchema, learnSchema, bindingWriteSchema,
 } = require('./midi-map');
@@ -393,6 +394,22 @@ function attachRoutes(app, deps) {
       integrations.broadcast();
       res.json({ ok: true });
     } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+  });
+
+  // A bar profile from its cell count and channel order (bar-profile.js).
+  // `?dryRun=1` answers with the profile without adding it, for the preview.
+  app.post('/api/profiles/bar', (req, res) => {
+    try {
+      const profile = barProfile(req.body || {});
+      if (req.query.dryRun === '1') return res.json({ ok: true, profile });
+      if (isBuiltinProfile(profile.id)) return res.status(400).json({ ok: false, error: 'That id is a built-in profile' });
+      const blocked = profileChangeBlocked(profile);
+      if (blocked) return res.status(400).json({ ok: false, error: blocked });
+      if (!registerProfile(profile)) return res.status(400).json({ ok: false, error: 'Invalid profile' });
+      showStore.scheduleSave();
+      integrations.broadcast();
+      res.json({ ok: true, profile });
+    } catch (err) { res.status(err.status || 400).json({ ok: false, error: err.message }); }
   });
 
   /** Why replacing a profile with `profile` would break the patch, or null. */

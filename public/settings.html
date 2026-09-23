@@ -177,6 +177,24 @@
       <button class="btn active" id="gdtf-confirm">Add Profile</button>
     </div>
 
+    <!-- An LED bar without a GDTF file: built from the numbers in its manual -->
+    <details class="bar-maker" id="bar-maker">
+      <summary>Make an LED bar profile</summary>
+      <p class="section-desc">For a bar that has no GDTF file: how many cells it has, where the first cell starts, and the order of each cell's channels (R G B W A U, and D for a cell's own dimmer).</p>
+      <div class="gdtf-mode-select">
+        <div class="field"><label for="bar-name">Name</label><input id="bar-name" type="text" maxlength="128" placeholder="LED Bar 16" /></div>
+        <div class="field"><label for="bar-cells">Cells</label><input id="bar-cells" type="number" min="2" max="170" value="16" /></div>
+        <div class="field"><label for="bar-first">First cell at</label><input id="bar-first" type="number" min="1" max="512" value="3" /></div>
+        <div class="field"><label for="bar-order">Cell channels</label><input id="bar-order" type="text" maxlength="8" value="RGB" /></div>
+        <div class="field"><label for="bar-stride">Cell spacing</label><input id="bar-stride" type="number" min="1" max="64" placeholder="same as channels" /></div>
+        <div class="field"><label for="bar-dimmer">Bar dimmer</label><input id="bar-dimmer" type="number" min="1" max="512" value="1" placeholder="none" /></div>
+        <div class="field"><label for="bar-strobe">Bar strobe</label><input id="bar-strobe" type="number" min="1" max="512" value="2" placeholder="none" /></div>
+        <div id="bar-preview" class="channel-preview"></div>
+        <span id="bar-status" class="import-status"></span>
+        <button class="btn active" id="bar-add">Add Bar Profile</button>
+      </div>
+    </details>
+
     <div class="profiles-list" id="profiles-list"></div>
   </section>
 
