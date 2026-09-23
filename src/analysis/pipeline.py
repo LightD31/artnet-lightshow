@@ -67,11 +67,18 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
     if not os.path.isfile(path):
         raise FileNotFoundError(path)
 
-    # Declared before the try so the `finally` can shut them down even if
-    # preprocessing is what failed.
+    # Declared before the try so the `finally` can shut them down whichever
+    # stage failed. The separation pool used to be declared inside it, and an
+    # exception between its start and its collection left it behind.
     tag_pool, tag_future = None, None
     mulan_pool, mulan_future = None, None
-    tagging = config.enable_tagger and tagger.installed()
+    stem_pool, stem_future = None, None
+    beat_pool, beat_turn = None, None
+    key_pool, key_future = None, None
+    # Only a tagger whose weights are already here. The analysis never
+    # downloads: 310 MB fetched mid-track on venue wifi is a track that does
+    # not get analysed, and possibly the one after it.
+    tagging = config.enable_tagger and tagger.ready()
 
     # Import torch here, before the stage threads start. Left to them, the
     # separator's thread and this one import it for the first time at once,
@@ -83,6 +90,15 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
 
     try:
         audio = preprocess_stage.prepare(path, config.preprocess, target_duration_sec)
+
+        # The beat model first, on its own thread and first in line for the
+        # card. Everything from the rhythm stage on waits for the grid, and it
+        # needs nothing but the decoded audio — so it runs beside the feature
+        # extraction instead of after it, and the separator and MuQ, started
+        # next, queue behind it instead of in front of it.
+        beat_turn = models.reserve_first_turn()
+        beat_pool = ThreadPoolExecutor(max_workers=1)
+        beat_future = beat_pool.submit(_beat_pass, audio, config.rhythm, beat_turn)
 
         # The tagger used to read the file itself, which let it start before
         # preprocessing — at the price of decoding and resampling the whole
@@ -99,7 +115,6 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
         # waveform, so it starts here and is collected as late as possible. On
         # a GPU it genuinely overlaps the feature extraction below; on a CPU it
         # queues behind it, which is no worse than running it in sequence.
-        stem_pool, stem_future = None, None
         if config.separate_sources:
             stem_pool = ThreadPoolExecutor(max_workers=1)
             stem_future = stem_pool.submit(_safe_separate, audio)
@@ -115,9 +130,16 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
             mulan_pool = ThreadPoolExecutor(max_workers=1)
             mulan_future = mulan_pool.submit(_safe_muq, audio)
 
+        # The key model reads the decoded file rather than decoding it again,
+        # and nothing but the document waits for it.
+        if model_adapters.skey_available():
+            key_pool = ThreadPoolExecutor(max_workers=1)
+            key_future = key_pool.submit(_safe_skey, audio)
+
         frames = features_stage.extract(audio, config.preprocess)
 
-        rhythm = rhythm_stage.analyse(audio, frames, config.rhythm)
+        rhythm = rhythm_stage.analyse(audio, frames, config.rhythm,
+                                      model_result=beat_future.result)
         band_map = bands_stage.analyse(frames, rhythm.beats)
 
         tags = _collect(tag_future)
@@ -125,10 +147,6 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
         muq = _collect(mulan_future) or {}
         mulan = muq.get('scores') or {}
         embeddings = muq.get('embeddings') or []
-        if stem_pool is not None:
-            stem_pool.shutdown(wait=False)
-        if mulan_pool is not None:
-            mulan_pool.shutdown(wait=False)
         roles = bands_stage.infer_roles(frames, band_map, stems, tags)
 
         dynamics = dynamics_stage.analyse(frames, band_map, rhythm, config.dynamics)
@@ -178,11 +196,7 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
             'muq': bool(document['embeddings']),
             'muqMulan': bool(document['semantic_scores']),
         }
-        try:
-            skey = model_adapters.skey_key(path)
-        except Exception as exc:
-            _log(f'optional S-KEY pass unavailable ({exc}); keeping internal key estimate')
-            skey = None
+        skey = _collect(key_future)
         if skey:
             document['key'] = skey['value']
             document['track']['key'] = skey['value']
@@ -204,10 +218,12 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
              f'{len(dynamics.drops)} drops, {len(stream)} events)')
         return document
     finally:
-        if tag_pool is not None:
-            tag_pool.shutdown(wait=False)
-        if mulan_pool is not None:
-            mulan_pool.shutdown(wait=False)
+        for pool in (beat_pool, stem_pool, tag_pool, mulan_pool, key_pool):
+            if pool is not None:
+                pool.shutdown(wait=False)
+        # A beat pass that never reached the card must not keep it from the
+        # next track.
+        models.cancel_turn(beat_turn)
         # The worker analyses one track after another for the life of the
         # show, so whatever this track reserved has to go back before the next
         # one asks for it — including on the failure path, where a half-built
@@ -216,6 +232,23 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
             models.release_memory()
         except Exception:
             pass
+
+
+def _beat_pass(audio, config, turn):
+    """The beat model's pass; its reserved turn is given up if it never ran."""
+    try:
+        return rhythm_stage.model_beats(audio, config)
+    finally:
+        models.cancel_turn(turn)
+
+
+def _safe_skey(audio):
+    try:
+        return model_adapters.skey_key(audio.source_path, samples=audio.source,
+                                       sample_rate=audio.source_rate)
+    except Exception as exc:
+        _log(f'optional S-KEY pass unavailable ({exc}); keeping internal key estimate')
+        return None
 
 
 def _safe_separate(audio):

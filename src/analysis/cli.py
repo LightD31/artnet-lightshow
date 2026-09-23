@@ -173,6 +173,10 @@ def _warm_up():
     librosa and numba in particular JIT on first use; without this the first
     track of the night is several seconds slower than every one after it, and
     that is exactly the track someone is standing there waiting for.
+
+    Then the models, the beat model first: the docs always said the worker
+    loaded them at start, and it never did — the first track loaded them
+    itself, on the clock. The optional ones follow, from disk only.
     """
     try:
         import numpy as np
@@ -182,6 +186,11 @@ def _warm_up():
         librosa.onset.onset_strength(y=silence, sr=22050)
     except Exception as exc:
         _log(f'warm-up skipped: {exc}')
+    try:
+        loaded = models.warm_up()
+        _log(f'models ready: {", ".join(loaded) or "none"} on {models.device()}')
+    except Exception as exc:
+        _log(f'model warm-up skipped: {exc}')
     if DEFAULT.enable_semantics:
         try:
             model_adapters.preload()
@@ -196,7 +205,7 @@ def _warm_up():
 
 # ── Live ────────────────────────────────────────────────────────────────────
 
-def live_loop(rate, block=4096):
+def live_loop(rate, block=None):
     """
     Stream raw float32 mono PCM in on stdin, musical events out on stdout.
 
@@ -204,18 +213,31 @@ def live_loop(rate, block=4096):
     has the samples as floats, and asking it to encode a container just so this
     process can decode it again would add latency to the one mode where latency
     is the whole point.
+
+    Read a hop at a time, as the samples arrive. It used to wait for 4096
+    samples, which is 186 ms at 22 kHz before anything was heard, however
+    fast the analyser itself was.
     """
     import numpy as np
     from .realtime import StreamingAnalyzer
 
     analyzer = StreamingAnalyzer(DEFAULT.realtime, sample_rate=rate)
+    block = int(block or DEFAULT.realtime.hop_length)
     stream = sys.stdin.buffer
-    print(f'[analyzer] live mode at {rate} Hz', file=sys.stderr, flush=True)
+    print(f'[analyzer] live mode at {rate} Hz, {block}-sample reads',
+          file=sys.stderr, flush=True)
 
+    pending = b''
     while True:
-        raw = stream.read(block * 4)
+        raw = stream.read1(block * 4) if hasattr(stream, 'read1') else stream.read(block * 4)
         if not raw:
             break
+        # A read ends wherever the pipe did, which need not be on a sample.
+        raw = pending + raw
+        whole = len(raw) - len(raw) % 4
+        raw, pending = raw[:whole], raw[whole:]
+        if not raw:
+            continue
         samples = np.frombuffer(raw, dtype=np.float32)
         for event in analyzer.push(samples):
             sys.stdout.write(json.dumps(event.to_dict()) + '\n')

@@ -546,7 +546,9 @@ def model_beats(audio, config: RhythmConfig):
     try:
         try:
             tracker = models.beat_tracker(on='cpu' if models.gpu_fault() else None)
-            with models.inference('beat_this'):
+            # First in line for the card: everything after this stage waits
+            # on the grid, and nothing waits on the separator yet.
+            with models.inference('beat_this', first=True):
                 beats, downbeats = tracker(signal, audio.sample_rate)
         except Exception as exc:
             # A faulted GPU FFT stays broken for the process; the beat grid
@@ -622,7 +624,13 @@ def decode_downbeats(beats, activations, meters=(4, 3)):
 
 # ── Entry point ─────────────────────────────────────────────────────────────
 
-def analyse(audio, features, config: RhythmConfig = None) -> Rhythm:
+def analyse(audio, features, config: RhythmConfig = None, model_result=None) -> Rhythm:
+    """
+    The rhythm stage. `model_result`, when given, returns the beat model's
+    `(beats, downbeats)`: the pipeline starts that pass on its own thread as
+    soon as the audio is decoded, beside the feature extraction, rather than
+    after it.
+    """
     import librosa
 
     config = config or RhythmConfig()
@@ -647,7 +655,7 @@ def analyse(audio, features, config: RhythmConfig = None) -> Rhythm:
     # make came from reasoning about periodicity, and periodicity genuinely
     # cannot tell a song counted at 99 from the same song counted at 198 — a
     # listener can, because they have heard how songs are counted. So has this.
-    beats, model_downbeats = model_beats(audio, config)
+    beats, model_downbeats = model_result() if model_result else model_beats(audio, config)
     source = 'model'
     frames = librosa.time_to_frames(beats, sr=sr, hop_length=hop) \
         if beats.size else np.zeros(0, dtype=int)

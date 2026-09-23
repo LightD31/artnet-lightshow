@@ -6,7 +6,7 @@ Everything downstream reads thresholds off absolute numbers ("energy above
 0.55", "a rise of 0.22"). Those numbers only mean anything if the input has
 been put on a known scale first, which is what this stage is for:
 
-  * decode and resample to the analysis rate, keeping both channels
+  * decode once, keeping both channels, and resample to the analysis rate
   * measure real loudness (BS.1770 LUFS) and normalise to a fixed target
   * remove subsonic rumble and, when the recording needs it, broadband noise
   * derive a separate gain-levelled copy for the rhythm stage only
@@ -64,10 +64,15 @@ class PreparedAudio:
     #: Seconds trimmed from the head when aligning to a known track length.
     trim_offset: float = 0.0
     #: The file this came from and how many channels it had, so source
-    #: separation can go back to the real stereo at its own rate instead of
-    #: being handed the mono analysis signal. See `load_for_separation`.
+    #: separation can have the real stereo at its own rate instead of the
+    #: mono analysis signal. See `load_for_separation`.
     source_path: str = ''
     source_channels: int = 1
+    #: The decoded file at its own rate, up to two channels, untrimmed and
+    #: without gain: what every other rate is resampled from, so the file is
+    #: decoded once per track. None when it was not kept.
+    source: np.ndarray = None
+    source_rate: int = 0
 
 
 def _log(msg):
@@ -76,30 +81,41 @@ def _log(msg):
 
 # ── Loading ─────────────────────────────────────────────────────────────────
 
-def _load_stereo(path, target_sr):
+def decode(path):
     """
-    Decode to (channels, samples) at `target_sr`, keeping up to two channels.
+    Decode the file once, at its own rate: (channels, samples), up to two
+    channels, and the rate.
 
-    librosa resamples with a high-quality polyphase filter by default, so
-    "automatic resampling" here is genuinely band-limited rather than the
-    nearest-neighbour drop that a naive decoder does.
+    Every rate the analysis wants is resampled from this. The file used to be
+    decoded four times per track — at the analysis rate, again for the
+    wideband pass, again in stereo for the separator and once more for the key
+    model — and on a long MP3 each decode is seconds of CPU.
     """
     import librosa
-    y, sr = librosa.load(path, sr=target_sr, mono=False)
+    y, sr = librosa.load(path, sr=None, mono=False)
     y = np.atleast_2d(np.asarray(y, dtype=np.float32))
     if y.shape[0] > 2:
         y = y[:2]
     return y, int(sr)
 
 
-def _source_bandwidth(path):
-    """Native sample rate of the file, or 0 when it cannot be read cheaply."""
-    try:
-        import soundfile as sf
-        info = sf.info(path)
-        return int(info.samplerate)
-    except Exception:
-        return 0
+def resample(channels, rate, target):
+    """
+    `channels` from `rate` to `target` with the band-limited filter
+    `librosa.load` resamples with, so the result is the signal a decode
+    straight to `target` would have given.
+    """
+    if int(rate) == int(target):
+        return np.asarray(channels, dtype=np.float32)
+    import librosa
+    return np.asarray(librosa.resample(channels, orig_sr=int(rate), target_sr=int(target)),
+                      dtype=np.float32)
+
+
+def _load_stereo(path, target_sr):
+    """Decode to (channels, samples) at `target_sr`, keeping up to two channels."""
+    y, sr = decode(path)
+    return resample(y, sr, target_sr), int(target_sr)
 
 
 # ── Filtering ───────────────────────────────────────────────────────────────
@@ -288,7 +304,9 @@ def prepare(path, config: PreprocessConfig = None, target_duration_sec=None):
     if not os.path.isfile(path):
         raise FileNotFoundError(path)
 
-    channels, sr = _load_stereo(path, config.sample_rate)
+    source, native = decode(path)
+    sr = int(config.sample_rate)
+    channels = resample(source, native, sr)
 
     # ── Stereo measurements, taken before anything is collapsed to mono ──
     if channels.shape[0] >= 2:
@@ -346,11 +364,10 @@ def prepare(path, config: PreprocessConfig = None, target_duration_sec=None):
 
     # ── Wideband pass for `air` and the tagger ──
     wideband, wb_rate = None, 0
-    native = _source_bandwidth(path)
-    if native == 0 or native > config.sample_rate:
+    if native > sr:
         try:
-            wideband, wb_rate = librosa.load(path, sr=config.wideband_rate, mono=True)
-            wb_rate = int(wb_rate)
+            wb_rate = int(config.wideband_rate)
+            wideband = resample(np.mean(source, axis=0), native, wb_rate)
             if trim_offset > 0:
                 head = int(round(trim_offset * wb_rate))
                 want = int(round(duration * wb_rate))
@@ -383,6 +400,8 @@ def prepare(path, config: PreprocessConfig = None, target_duration_sec=None):
         trim_offset=float(trim_offset),
         source_path=path,
         source_channels=int(channels.shape[0]),
+        source=source,
+        source_rate=native,
     )
 
 
@@ -396,13 +415,21 @@ def load_for_separation(audio: PreparedAudio, rate):
     stereo-trained separator leans on hardest: the difference between the
     channels, and everything above 11 kHz. Returns None for a mono source or
     when the file cannot be read again, and the caller falls back to mono.
+
+    Resampled from the decode `prepare` kept; the file is read again only when
+    there is none.
     """
-    if audio.source_channels < 2 or not audio.source_path:
+    if audio.source_channels < 2:
         return None
     try:
-        channels, sr = _load_stereo(audio.source_path, rate)
+        if audio.source is not None and audio.source_rate:
+            channels, sr = resample(audio.source, audio.source_rate, rate), int(rate)
+        elif audio.source_path:
+            channels, sr = _load_stereo(audio.source_path, rate)
+        else:
+            return None
     except Exception as exc:
-        _log(f'stereo reload for separation failed ({exc}); separating the mono signal')
+        _log(f'stereo resample for separation failed ({exc}); separating the mono signal')
         return None
     if channels.shape[0] < 2:
         return None

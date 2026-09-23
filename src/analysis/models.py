@@ -34,10 +34,77 @@ _LOCK = threading.RLock()
 _CACHE = {}
 _DEVICE = None
 
-# Held for the duration of one model's pass over one track. Separate from
-# _LOCK, which guards the cache dict: a model loading must not block a
-# different model that is mid-inference.
-_GPU_LOCK = threading.RLock()
+
+class _Turns:
+    """
+    The card, one model's pass at a time, with the beat model at the front.
+
+    Held for the duration of one model's pass over one track. Separate from
+    _LOCK, which guards the cache dict: a model loading must not block a
+    different model that is mid-inference.
+
+    Every pass takes its turn, but not every pass is equally urgent. The beat
+    grid is what the rest of the analysis is built on — the bands, the
+    dynamics and the sections all wait for it — while the separator and MuQ
+    are collected later. Queued behind them the beat model used to wait out
+    a whole separation, with the DSP that follows it idle for as long. A
+    pass that asks to go `first` goes before anyone else waiting, and the
+    pipeline can `reserve` it a place before the others are even started.
+    Nothing is interrupted: a pass that has the card keeps it to the end.
+
+    Re-entrant for the thread that holds it, as the RLock it replaced was.
+    """
+
+    def __init__(self):
+        self._cond = threading.Condition()
+        self._owner = None
+        self._depth = 0
+        self._reserved = []
+        self._first_waiting = 0
+
+    def reserve(self):
+        """Keep the next `first` turn for a pass that has not asked yet."""
+        token = object()
+        with self._cond:
+            self._reserved.append(token)
+        return token
+
+    def cancel(self, token):
+        """Give up a reservation that was never used. Safe once it has been."""
+        with self._cond:
+            if token in self._reserved:
+                self._reserved.remove(token)
+                self._cond.notify_all()
+
+    def acquire(self, first=False):
+        me = threading.get_ident()
+        with self._cond:
+            if self._owner == me:
+                self._depth += 1
+                return
+            if first:
+                self._first_waiting += 1
+            try:
+                while self._owner is not None or (
+                        not first and (self._reserved or self._first_waiting)):
+                    self._cond.wait()
+            finally:
+                if first:
+                    self._first_waiting -= 1
+            if first and self._reserved:
+                self._reserved.pop(0)
+            self._owner = me
+            self._depth = 1
+
+    def release(self):
+        with self._cond:
+            self._depth -= 1
+            if self._depth == 0:
+                self._owner = None
+                self._cond.notify_all()
+
+
+_TURNS = _Turns()
 
 # Growable allocator segments, set before torch makes its first CUDA
 # allocation. The analyser is a long-lived process that sees a different track
@@ -67,25 +134,59 @@ def device():
     with _LOCK:
         if _DEVICE is not None:
             return _DEVICE
-        override = os.environ.get('ARTNET_ANALYSIS_DEVICE', '').strip()
-        if override:
-            _DEVICE = override
-            _log(f'device: {_DEVICE} (from ARTNET_ANALYSIS_DEVICE)')
-            return _DEVICE
         import torch
-        if torch.cuda.is_available():
-            _DEVICE = 'cuda'
-            _log(f'device: cuda ({torch.cuda.get_device_name(0)})')
-            _avoid_miopen(torch)
+        chosen = _override(torch)
+        if chosen:
+            source = 'from ARTNET_ANALYSIS_DEVICE'
+        elif torch.cuda.is_available():
+            chosen, source = 'cuda', torch.cuda.get_device_name(0)
         else:
+            chosen, source = 'cpu', None
+        # The same set-up whichever way the device was chosen. The override
+        # used to return before it, so forcing the card on a ROCm build left
+        # MIOpen on (every BatchNorm model failing), and forcing the CPU left
+        # torch on every core, starving the render loop.
+        if chosen.startswith('cuda'):
+            _avoid_miopen(torch)
+            _log(f'device: {chosen} ({source})')
+        elif chosen == 'cpu':
             # Threads rather than a GPU. Leave one core for the Art-Net render
             # loop and the web server: a analysis that starves the output is
             # worse than one that takes a few seconds longer.
             cores = os.cpu_count() or 4
             torch.set_num_threads(max(1, cores - 1))
-            _DEVICE = 'cpu'
-            _log(f'device: cpu ({max(1, cores - 1)} of {cores} threads)')
+            _log(f'device: cpu ({max(1, cores - 1)} of {cores} threads'
+                 f'{", " + source if source else ""})')
+        else:
+            _log(f'device: {chosen} ({source})')
+        _DEVICE = chosen
         return _DEVICE
+
+
+def _override(torch):
+    """
+    ARTNET_ANALYSIS_DEVICE, if it names a device this torch can use.
+
+    A typo, or `cuda` on a CPU-only build, used to be handed to every model
+    as it was, and every track failed at its first tensor. Now it is named in
+    the log and the device is chosen as if it were not set.
+    """
+    wanted = os.environ.get('ARTNET_ANALYSIS_DEVICE', '').strip().lower()
+    if not wanted:
+        return None
+    try:
+        parsed = torch.device(wanted)
+    except (RuntimeError, ValueError, TypeError):
+        _log(f'ARTNET_ANALYSIS_DEVICE={wanted!r} is not a device; choosing one')
+        return None
+    if parsed.type == 'cuda' and not torch.cuda.is_available():
+        _log(f'ARTNET_ANALYSIS_DEVICE={wanted!r}, but this torch has no usable GPU; '
+             'choosing one')
+        return None
+    if parsed.type not in ('cpu', 'cuda', 'mps', 'xpu'):
+        _log(f'ARTNET_ANALYSIS_DEVICE={wanted!r} is not supported here; choosing one')
+        return None
+    return wanted
 
 
 def _avoid_miopen(torch):
@@ -237,7 +338,7 @@ def gc_collect():
 
 
 @contextlib.contextmanager
-def inference(label='model'):
+def inference(label='model', first=False):
     """
     Hold the device for one model's pass over one track, then hand it back.
 
@@ -257,17 +358,40 @@ def inference(label='model'):
     one model's working set instead of the sum of every model that ran this
     track.
 
+    *Going first.* `first=True` is for the beat model: it takes the next turn
+    ahead of anyone already waiting (see `_Turns`).
+
     On CPU this is a no-op wrapper: there is no single device to contend for,
     and the existing parallelism is what the CPU numbers in the docs measure.
     """
     if not on_gpu():
         yield
         return
-    with _GPU_LOCK:
+    _TURNS.acquire(first=first)
+    try:
+        yield
+    finally:
         try:
-            yield
-        finally:
             release_memory()
+        finally:
+            _TURNS.release()
+
+
+def reserve_first_turn():
+    """
+    Hold the card's next turn for the beat model before anything else asks.
+
+    The pipeline starts the separator and MuQ on their own threads at the top
+    of a track; whichever reaches the card first would otherwise have it for
+    tens of seconds. Returns a token for `cancel_turn`, or None on the CPU.
+    """
+    return _TURNS.reserve() if on_gpu() else None
+
+
+def cancel_turn(token):
+    """Release a reservation that was never taken — the pass failed early."""
+    if token is not None:
+        _TURNS.cancel(token)
 
 
 # ── Beat and downbeat tracking ──────────────────────────────────────────────
@@ -327,17 +451,14 @@ def bs_roformer_separator():
     def build():
         module = require('audio_separator.separator', 'pip install -r requirements.txt')
         Separator = module.Separator
-        model_dir = os.environ.get(
-            'ARTNET_MODEL_DIR', os.path.expanduser('~/.cache/artnet-lightshow/models'))
+        model_dir, filename = bs_roformer_checkpoint()
+        # The directory has to be known before the separator is built: it is
+        # read once, at construction. A checkpoint given as a path used to
+        # set it afterwards, and audio-separator looked for the file in the
+        # default directory instead.
         model = Separator(output_dir=None, output_format='WAV',
                           model_file_dir=model_dir,
                           log_level=40, use_autocast=False)
-        filename = os.environ.get('ARTNET_BS_ROFORMER_MODEL')
-        if not filename:
-            filename = 'BS-Roformer-SW.ckpt'
-        elif os.path.isfile(filename):
-            model_dir = os.path.dirname(filename)
-            filename = os.path.basename(filename)
         try:
             model.load_model(model_filename=filename)
         except ValueError as exc:
@@ -347,6 +468,23 @@ def bs_roformer_separator():
                 'or leave ARTNET_USE_BS_ROFORMER disabled.') from exc
         return model
     return cached('bs-roformer-4stem', build)
+
+
+def bs_roformer_checkpoint():
+    """
+    (directory, filename) of the BS-RoFormer checkpoint to load.
+
+    ARTNET_BS_ROFORMER_MODEL is either a model name audio-separator knows,
+    looked for in the model directory, or the path to a checkpoint anywhere.
+    """
+    model_dir = os.environ.get(
+        'ARTNET_MODEL_DIR', os.path.expanduser('~/.cache/artnet-lightshow/models'))
+    filename = os.environ.get('ARTNET_BS_ROFORMER_MODEL', '').strip()
+    if not filename:
+        return model_dir, 'BS-Roformer-SW.ckpt'
+    if os.path.isfile(filename):
+        return os.path.dirname(os.path.abspath(filename)), os.path.basename(filename)
+    return model_dir, filename
 
 
 def bs_roformer_enabled():
@@ -370,10 +508,17 @@ def warm_up():
     Only the separator that is actually going to run is warmed. Loading both
     used to leave whichever one lost sitting on the card for the life of the
     process, which on an 8 GB card is memory the track being analysed needs.
+
+    The beat model loads first: it is the one no track can do without, and a
+    worker that runs out of room or time loading the rest still has it.
+    Returns the names of the models that loaded.
     """
     chosen = bs_roformer_separator if bs_roformer_enabled() else separator
-    for load in (beat_tracker, chosen):
+    loaded = []
+    for name, load in (('beat_this', beat_tracker), (chosen.__name__, chosen)):
         try:
             load()
+            loaded.append(name)
         except Exception as exc:
-            _log(f'warm-up failed: {exc}')
+            _log(f'warm-up of {name} failed: {exc}')
+    return loaded

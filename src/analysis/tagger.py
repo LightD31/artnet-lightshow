@@ -104,12 +104,17 @@ def ensure_labels():
     return os.path.isfile(_LABELS)
 
 
-def ensure_files():
-    """Labels CSV plus the ~310 MB checkpoint."""
-    if os.path.isfile(_LABELS) and checkpoint_present():
-        return True
-    _run_setup([], 'model files missing — running setup-panns.py (one-time ~310 MB download)')
-    return os.path.isfile(_LABELS) and checkpoint_present()
+def ready():
+    """
+    Can a track be tagged without fetching anything? Package, checkpoint and
+    labels all present — asked without importing the package.
+
+    The analysis only ever asks this. It used to fetch whatever was missing
+    itself, which put a 310 MB download inside a track's analysis, with the
+    track waiting on venue wifi. Fetching is `scripts/setup-panns.py` and the
+    model manager's job, before the show.
+    """
+    return installed() and checkpoint_present() and os.path.isfile(_LABELS)
 
 
 def preload():
@@ -152,8 +157,9 @@ def tag(samples=None, sample_rate=None, path=None):
     if not installed():
         _log('skipped: panns_inference is not installed')
         return None
-    if not ensure_files():
-        _log('model files still missing after setup — skipping')
+    if not ready():
+        _log('skipped: weights not downloaded (run scripts/setup-panns.py, '
+             'or download them from Settings → Analysis models)')
         return None
 
     try:
