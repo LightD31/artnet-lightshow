@@ -180,7 +180,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
         enabled: state.prolinkEnabled,
         connected: prolink.connected,
         peers: prolink.getNumPeers(),
-        master: prolink.getMaster(),
+        followed: prolink.getFollowed(),
         track: prolink.getTrack(),
         loadedTracks: prolink.getLoadedTracks(),
         bpm: prolink.getTempo(),
@@ -246,7 +246,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     if (state.autoSource === 'deezer' && deezerSource.authenticated) return 'deezer';
     if (state.autoSource === 'nowplaying' && nowPlaying.authenticated) return 'nowplaying';
     if (state.autoSource === 'timer') return 'timer';
-    if (prolink.connected && prolink.getMaster()) return 'prolink';
+    if (prolink.connected && prolink.getFollowed()) return 'prolink';
     if (spotify.authenticated && nowPlaying.authenticated) return 'hybrid';
     if (spotify.authenticated) return 'spotify';
     if (deezerSource.authenticated) return 'deezer';
@@ -376,7 +376,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     console.log(`PRO DJ LINK devices: ${peers}`);
     broadcast();
   });
-  prolink.onMasterChange(() => broadcast());
+  prolink.onFollowChange(() => broadcast());
   prolink.onTrackChange(async (track) => {
     if (!track) return;
     console.log(`PRO DJ LINK track changed: ${track.artist || '?'} — ${track.title || '?'}`);

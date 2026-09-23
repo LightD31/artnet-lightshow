@@ -67,12 +67,12 @@ function build({ analysisCache = null } = {}) {
     stale: false,
     lastError: null,
     getNumPeers: () => 0,
-    getMaster: () => null,
+    getFollowed: () => null,
     getTrack: () => null,
     getLoadedTracks: () => [],
     getTempo: () => 0,
     getPositionMs: () => 0,
-    onTempoChange() {}, onPeersChange() {}, onMasterChange() {},
+    onTempoChange() {}, onPeersChange() {}, onFollowChange() {},
     onTrackChange() {}, onLoadedTracksChange() {}, onAnyTrackLoaded() {},
   };
   const autoShow = {
@@ -163,7 +163,7 @@ test('auto still prefers a connected CDJ over everything', () => {
   rig.spotify.authenticated = true;
   rig.nowPlaying.authenticated = true;
   rig.prolink.connected = true;
-  rig.prolink.getMaster = () => ({ id: 1 });
+  rig.prolink.getFollowed = () => ({ deviceId: 1 });
   withSource('auto', () => {
     assert.strictEqual(rig.integrations.resolveAutoSource(), 'prolink');
   });
