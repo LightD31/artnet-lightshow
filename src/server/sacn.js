@@ -40,25 +40,32 @@ const VECTOR_DMP_SET_PROPERTY = 0x02;
 // the PDU's own length, counted from its first byte to the end of the packet.
 const PDU_FLAGS = 0x7000;
 
-const udpSocket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
-
-// Same reasoning as artnet.js: without an 'error' listener a send failure
-// becomes an unhandled event and kills the process, and the target here is
-// operator-editable while frames go out at the render rate.
-udpSocket.on('error', (err) => logSendFailure(err));
-
+// Opened by the first frame, like the Art-Net socket (see artnet.js).
+let udpSocket = null;
 let socketReady = false;
-udpSocket.bind(() => {
-  socketReady = true;
-  // One hop by default: a lighting network is a LAN, and a stray multicast
-  // group leaking into the rest of the building helps nobody.
-  try { udpSocket.setMulticastTTL(1); } catch (_) { /* not always permitted */ }
-  try { udpSocket.setBroadcast(true); } catch (_) { /* nor is this */ }
-});
 
-// Send-only, exactly like the Art-Net socket: the HTTP listener is what should
-// keep the process alive.
-udpSocket.unref();
+function sendSocket() {
+  if (udpSocket) return udpSocket;
+  udpSocket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+
+  // Same reasoning as artnet.js: without an 'error' listener a send failure
+  // becomes an unhandled event and kills the process, and the target here is
+  // operator-editable while frames go out at the render rate.
+  udpSocket.on('error', (err) => logSendFailure(err));
+
+  udpSocket.bind(() => {
+    socketReady = true;
+    // One hop by default: a lighting network is a LAN, and a stray multicast
+    // group leaking into the rest of the building helps nobody.
+    try { udpSocket.setMulticastTTL(1); } catch (_) { /* not always permitted */ }
+    try { udpSocket.setBroadcast(true); } catch (_) { /* nor is this */ }
+  });
+
+  // Send-only, exactly like the Art-Net socket: the HTTP listener is what
+  // should keep the process alive.
+  udpSocket.unref();
+  return udpSocket;
+}
 
 const LOG_INTERVAL_MS = 5000;
 let lastLoggedAt = 0;
@@ -173,6 +180,7 @@ function buildE131Packet({ universe, cid, sourceName, priority, sequence }, dmxD
  * reserves those, and a receiver would ignore the packet anyway.
  */
 function sendSacn({ universe, cid, sourceName, priority, host }, dmxData) {
+  const socket = sendSocket();
   if (!socketReady) return false;
   if (!Number.isInteger(universe) || universe < MIN_UNIVERSE || universe > MAX_UNIVERSE) {
     return false;
@@ -189,7 +197,7 @@ function sendSacn({ universe, cid, sourceName, priority, host }, dmxData) {
   // Unicast when the operator named a node, otherwise the universe's multicast
   // group — which is how sACN is normally deployed and needs no configuration.
   const target = host || multicastAddress(universe);
-  udpSocket.send(packet, 0, packet.length, PORT, target, (err) => {
+  socket.send(packet, 0, packet.length, PORT, target, (err) => {
     if (err) logSendFailure(err);
   });
   return true;

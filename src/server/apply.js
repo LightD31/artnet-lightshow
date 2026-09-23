@@ -24,6 +24,9 @@ function createApplier({ midi, spotify, smtc, deezer, autoShow, applyPatch, broa
       port: settings.get('server.port'),
       token: settings.get('server.token'),
     },
+    engine: {
+      thread: settings.get('engine.thread'),
+    },
   };
 
   /** The URL the OAuth proxy sends the operator's browser back to. */

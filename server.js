@@ -163,7 +163,8 @@ spotify.onTokens((refreshToken) => {
 attachRoutes(app, { midi, autoShow, spotify, nowPlaying, deezerSource, prolink, analysisCache, integrations, applier });
 attachSockets(io, { midi, integrations });
 
-startEngine();
+// On a thread of its own unless the settings say otherwise (engine.thread).
+startEngine({ thread: settings.get('engine.thread') });
 
 /**
  * Sign back in with the stored refresh token, if there is one.
@@ -213,8 +214,9 @@ server.on('error', (err) => {
   } else {
     console.error(`\nCould not listen on ${HOST}:${PORT}: ${err.message}\n`);
   }
-  try { stopEngine(); } catch (_) { /* on the way out regardless */ }
-  process.exit(1);
+  let engineDown = Promise.resolve();
+  try { engineDown = stopEngine(); } catch (_) { /* on the way out regardless */ }
+  Promise.resolve(engineDown).catch(() => {}).finally(() => process.exit(1));
 });
 
 server.listen(PORT, HOST, () => {
@@ -278,9 +280,12 @@ function shutdown(signal) {
   shuttingDown = true;
   console.log(`\n${signal} — blacking out and shutting down…`);
 
-  // Each of these is independent: one throwing must not skip the rest.
+  // Each of these is independent: one throwing must not skip the rest. The
+  // engine answers once the rig is blacked out; the server waits for that
+  // before it closes.
+  let engineDown = Promise.resolve();
   for (const [what, fn] of [
-    ['engine', () => stopEngine()],
+    ['engine', () => { engineDown = stopEngine(); }],
     ['smtc', () => smtc.stop()],
     ['autoShow', () => autoShow.destroy()],
     // No `forget`: this is the way down, not the operator disconnecting.
@@ -298,7 +303,7 @@ function shutdown(signal) {
     try { fn(); } catch (err) { console.warn(`[shutdown] ${what}: ${err.message}`); }
   }
 
-  server.close(() => process.exit(0));
+  Promise.resolve(engineDown).catch(() => {}).finally(() => server.close(() => process.exit(0)));
   // Don't hang on a lingering keep-alive socket or an in-flight analysis.
   setTimeout(() => process.exit(0), 2000).unref();
 }

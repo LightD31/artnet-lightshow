@@ -1186,6 +1186,23 @@ const SETTINGS_SPEC = [
     ],
   },
   {
+    id: 'engine',
+    group: 'output',
+    title: 'Engine',
+    desc: 'Where frames are rendered. Applies on the next restart.',
+    fields: [
+      { path: 'engine.thread', label: 'Render On', type: 'select',
+        options: () => [
+          { value: 'worker', label: 'Its own thread (recommended)' },
+          { value: 'main', label: 'The main thread' },
+        ],
+        help: 'On its own thread the rig keeps time while the server plans the next track, imports '
+          + 'a fixture file or serves the UI. The main thread is how it used to run — only worth '
+          + 'choosing to rule the thread out when chasing a problem.',
+        note: engineNote },
+    ],
+  },
+  {
     id: 'hue',
     group: 'output',
     title: 'Philips Hue',
@@ -1283,6 +1300,19 @@ const SERVER_SPEC = {
 };
 
 let settingsData = null;   // { settings, secrets, restartKeys, pendingRestart, running, python }
+
+/** Where the engine is rendering right now, and how its frames have been going. */
+function engineNote(data) {
+  const e = data && data.engine;
+  if (!e || !e.thread) return null;
+  const where = e.thread === 'worker' ? 'its own thread' : 'the main thread';
+  const timing = e.frames
+    ? ` — ${e.rate} frames a second, ${e.renderMs.p95} ms to render (p95), `
+      + `${e.lateFrames + e.skippedFrames} late or dropped in the last minute`
+    : '';
+  if (e.fellBack) return { ok: false, text: `Currently: ${where}, because ${e.fellBack}${timing}.` };
+  return { ok: true, text: `Currently: ${where}${timing}.` };
+}
 
 /**
  * What the server actually resolved, rather than what the box says. "I ran pip

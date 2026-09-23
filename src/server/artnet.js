@@ -4,26 +4,36 @@ const dgram = require('dgram');
 const net = require('net');
 const dns = require('dns');
 
-const udpSocket = dgram.createSocket('udp4');
+// The send socket, opened by the first frame sent rather than when this module
+// loads: the engine renders in a worker thread, and the main thread (which
+// loads this module for discovery and the pre-show check) has no frames to
+// send and no reason to hold a socket for them.
+let udpSocket = null;
 
-// A dgram socket with no 'error' listener turns any send failure into an
-// unhandled 'error' event, which terminates the process. Since the Art-Net
-// target is operator-editable and renderDmx() sends at 44 Hz, a typo in the
-// settings panel used to be enough to kill the server mid-show.
-//
-// Failures here are also almost always transient or configuration-level
-// (unreachable host, broadcast not permitted), so the right response is to log
-// and keep rendering, not to die.
-udpSocket.on('error', (err) => logSendFailure(err));
+function sendSocket() {
+  if (udpSocket) return udpSocket;
+  udpSocket = dgram.createSocket('udp4');
 
-udpSocket.bind(() => {
-  try { udpSocket.setBroadcast(true); } catch (_) { /* not all networks allow it */ }
-});
+  // A dgram socket with no 'error' listener turns any send failure into an
+  // unhandled 'error' event, which terminates the process. Since the Art-Net
+  // target is operator-editable and renderDmx() sends at 44 Hz, a typo in the
+  // settings panel used to be enough to kill the server mid-show.
+  //
+  // Failures here are also almost always transient or configuration-level
+  // (unreachable host, broadcast not permitted), so the right response is to
+  // log and keep rendering, not to die.
+  udpSocket.on('error', (err) => logSendFailure(err));
 
-// This socket only ever sends. The HTTP listener is what should keep the server
-// alive, so don't let a bound send-only socket hold the event loop open — it
-// otherwise stops any script that merely imports this module from exiting.
-udpSocket.unref();
+  udpSocket.bind(() => {
+    try { udpSocket.setBroadcast(true); } catch (_) { /* not all networks allow it */ }
+  });
+
+  // This socket only ever sends. The HTTP listener is what should keep the
+  // server alive, so don't let a bound send-only socket hold the event loop
+  // open — it otherwise stops any script that merely sends a frame from exiting.
+  udpSocket.unref();
+  return udpSocket;
+}
 
 // Art-Net output is a firehose; a broken target would otherwise produce 40
 // identical log lines a second and bury everything else. Report the first
@@ -113,7 +123,7 @@ function sendArtDmx({ host, port, universe }, dmxData) {
 
   const packet = buildArtDmxPacket(universe, dmxData);
   // The callback keeps per-send failures out of the socket's 'error' event.
-  udpSocket.send(packet, 0, packet.length, port, address, (err) => {
+  sendSocket().send(packet, 0, packet.length, port, address, (err) => {
     if (err) logSendFailure(err);
   });
   return true;

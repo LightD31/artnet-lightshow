@@ -11,7 +11,7 @@ const {
 } = require('./state');
 const { applyPatch, applyOverride, setFixtureMaxBrightness, processTap } = require('./patch');
 const { PALETTES } = require('./palettes');
-const { resizeFixtureBuffers, startSyncTest } = require('./engine');
+const { resizeFixtureBuffers, startSyncTest, engineStatus } = require('./engine');
 const { parseGDTF } = require('../gdtf');
 const {
   BUILTIN_PROFILE_ID,
@@ -1240,6 +1240,10 @@ function attachRoutes(app, deps) {
       python: pythonEnv.resolve(),
       // Read-only context the page shows next to the restart-only fields.
       running: applier.bootValues.server,
+      // Where the engine is actually rendering and how its frames are going,
+      // shown under the thread setting — it can differ from the setting when
+      // the worker could not run, and that is worth saying.
+      engine: engineStatus(),
       configFile: CONFIG_FILE,
     });
   });

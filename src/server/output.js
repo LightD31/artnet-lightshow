@@ -4,8 +4,7 @@ const { state, universeOf } = require('./state');
 const { getProfile } = require('./profiles');
 const { cellsOf, EMITTERS } = require('../shared/rig');
 const universes = require('./universes');
-const { sendArtDmx } = require('./artnet');
-const { sendSacn, MIN_UNIVERSE, MAX_UNIVERSE } = require('./sacn');
+const { createTransmitter, sacnUniverseFor: mapSacnUniverse } = require('./transmit');
 const hue = require('./hue');
 
 /**
@@ -63,42 +62,32 @@ function getHueConfig() {
   return { ...hue.getConfig(), channels: hueChannels.map((c) => ({ ...c })), latencyMs: hueLatencyMs };
 }
 
-// ── Hue latency compensation ────────────────────────────────────────────────
-// Art-Net reaches a node in about a millisecond; a Hue lamp hears about a
-// frame through the bridge and a Zigbee hop, tens of milliseconds later. So on
-// a mixed rig every accent landed on the pars first and the lamps after it,
-// which on a snare hit is plainly two events. The fast wire is the one that
-// can wait: each universe's frames queue here and go out `hueLatencyMs` after
-// they were rendered, while Hue is sent the current frame as before.
+// The wires, for frames rendered on this thread: the engine when it runs here,
+// and the blackout at shutdown. See transmit.js for the Hue delay line.
+const transmitter = createTransmitter();
 
-const delayLine = new Map();     // universe → [{ at, frame }]
-
-/** The newest frame for this universe old enough to send, or null. */
-function delayedFrame(universe, frame, delayMs) {
-  const now = performance.now();
-  const queue = delayLine.get(universe) || [];
-  queue.push({ at: now, frame: Buffer.from(frame) });
-  let ready = null;
-  while (queue.length && queue[0].at <= now - delayMs) ready = queue.shift().frame;
-  delayLine.set(universe, queue);
-  return ready;
+/**
+ * Everything the transmitter needs to know about the outputs, read once: the
+ * Art-Net target, the sACN settings, and how long to hold both back for Hue.
+ * The engine's worker thread gets this with every frame it is sent.
+ */
+function transmitConfig() {
+  return {
+    artnet: { enabled: state.artnet.enabled, host: state.artnet.host, port: state.artnet.port },
+    sacn: { ...sacn },
+    delayMs: hueLatencyMs > 0 && hue.getConfig().enabled ? hueLatencyMs : 0,
+  };
 }
 
 /** Let the applier persist an application id the module had to resolve itself. */
 function onHueApplicationId(fn) { hue.setApplicationIdSink(fn); }
 
 /**
- * The sACN universe a rig universe maps to.
- *
- * Art-Net counts universes from 0 and sACN from 1, so the default offset of 1
- * lines them up the way every other tool does. Returns null when the result
- * falls outside what E1.31 allows, which the caller reports rather than
- * silently sending nowhere.
+ * The sACN universe a rig universe maps to, or null outside what E1.31 allows
+ * (see transmit.js). The offset defaults to the configured one.
  */
 function sacnUniverseFor(universe, offset = sacn.universeOffset) {
-  const mapped = universe + offset;
-  if (!Number.isInteger(mapped) || mapped < MIN_UNIVERSE || mapped > MAX_UNIVERSE) return null;
-  return mapped;
+  return mapSacnUniverse(universe, offset);
 }
 
 // ── Hue ─────────────────────────────────────────────────────────────────────
@@ -249,47 +238,12 @@ function sendHue() {
 }
 
 /**
- * Put one universe on every enabled wire.
- *
- * Returns the protocols the frame was handed to. Art-Net counts only once its
- * host has resolved: until then the frame is dropped, and reporting it as sent
- * would say the rig is being driven when nothing has left the machine. (The
- * preflight check probes the wire itself rather than reading this.)
- *
- * With Hue compensation on, the frame is queued and an older one goes out in
- * its place. `immediate` skips the queue — for the blackout sent at shutdown
- * and when a universe leaves the patch, which must not wait behind the look
- * they are replacing — and discards what was waiting.
+ * Put one universe on every enabled wire, from this thread. Returns the
+ * protocols the frame was handed to; `immediate` skips the Hue delay line
+ * (see transmit.js).
  */
 function sendUniverse(universe, frame, { immediate = false } = {}) {
-  const sent = [];
-  if (!immediate && hueLatencyMs > 0 && hue.getConfig().enabled) {
-    frame = delayedFrame(universe, frame, hueLatencyMs);
-    if (!frame) return sent;
-  } else {
-    delayLine.delete(universe);
-  }
-
-  if (state.artnet.enabled !== false) {
-    if (sendArtDmx({ host: state.artnet.host, port: state.artnet.port, universe }, frame)) {
-      sent.push('artnet');
-    }
-  }
-
-  if (sacn.enabled) {
-    const mapped = sacnUniverseFor(universe);
-    if (mapped !== null && sendSacn({
-      universe: mapped,
-      cid: sacn.cid,
-      sourceName: sacn.sourceName,
-      priority: sacn.priority,
-      host: sacn.host,
-    }, frame)) {
-      sent.push('sacn');
-    }
-  }
-
-  return sent;
+  return transmitter.send(universe, frame, transmitConfig(), { immediate });
 }
 
 module.exports = {
@@ -297,6 +251,7 @@ module.exports = {
   getSacnConfig,
   sacnUniverseFor,
   sendUniverse,
+  transmitConfig,
   configureHue,
   getHueConfig,
   onHueApplicationId,

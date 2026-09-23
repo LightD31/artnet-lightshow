@@ -118,6 +118,13 @@ const DEFAULTS = {
     // the PA — and so it holds from one night to the next.
     syncOffsetMs: 0,
   },
+  engine: {
+    // Where frames are rendered. 'worker' gives the engine a thread of its
+    // own, so the rig keeps its timing while the main thread plans a track,
+    // parses an upload or serves the UI; 'main' renders on the main thread as
+    // it always used to, and is there for diagnosing a problem.
+    thread: 'worker',
+  },
   analysis: {
     analyzerTimeoutMs: 600000,
     downloadTimeoutMs: 300000,
@@ -145,7 +152,7 @@ const SECRET_PATHS = [
 
 // Read once at boot, before anything is listening. Changing these persists
 // immediately but only takes effect on the next start.
-const RESTART_PATHS = ['server.host', 'server.port', 'server.token'];
+const RESTART_PATHS = ['server.host', 'server.port', 'server.token', 'engine.thread'];
 
 // Hostname per RFC 1123, an IPv4 literal, or the two "all interfaces" forms.
 // python, python3, python3.12, python3.12t, pythonw, py — with .exe on Windows.
@@ -244,6 +251,9 @@ const schema = z.object({
   }).strict(),
   auto: z.object({
     syncOffsetMs: z.number().int().min(-SYNC_OFFSET_LIMIT_MS).max(SYNC_OFFSET_LIMIT_MS),
+  }).strict(),
+  engine: z.object({
+    thread: z.enum(['worker', 'main']),
   }).strict(),
   analysis: z.object({
     // One minute floor: below that a normal track analysis would be killed
