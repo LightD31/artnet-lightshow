@@ -6,7 +6,8 @@ automatic mode that analyses the music you're playing and builds a show from
 it.
 
 Ships configured for **4× Cameo ROOT PAR 6**, but any fixture works — import a
-GDTF profile and patch it in the UI.
+GDTF file, or find the fixture in the Open Fixture Library, and patch it in the
+UI.
 
 Control surfaces: the web UI, **any MIDI controller** (with MIDI learn; a
 Behringer X-Touch Compact is mapped out of the box), an **Elgato Stream Deck**
@@ -78,7 +79,9 @@ via **Bitfocus Companion**, and a REST API.
 
 **Fixtures**
 
-- **GDTF import** — drop in a `.gdtf` file, pick a DMX mode, patch it
+- **GDTF and Open Fixture Library import** — drop in a `.gdtf` file or an OFL
+  `.json`, or search the Open Fixture Library from the settings page; pick a
+  DMX mode, patch it
 - **Multiple universes** — every fixture names the universe it lives on, so a
   rig is no longer capped at one node's 512 channels
 - **Art-Net and sACN (E1.31)** — run either, or both at once while a venue is
@@ -96,6 +99,9 @@ via **Bitfocus Companion**, and a REST API.
 ---
 
 ## Quick start
+
+Needs **Node.js 22.18 or newer**: the server is TypeScript, and Node runs it as
+it is. `npm start` says so plainly on an older Node.
 
 ```bash
 npm install
@@ -273,6 +279,46 @@ A bar imported before cells existed is still one light. Import it again: the
 profile is replaced under the same id, and every fixture on it becomes a bar of
 cells on the next frame.
 
+### Other fixtures — the Open Fixture Library
+
+The [Open Fixture Library](https://open-fixture-library.org) describes
+thousands of fixtures, most of the cheap LED bars and pars among them, which
+rarely ship a GDTF file. Two ways in, both under **Settings → Fixture
+Profiles**, both ending in the same mode picker as a GDTF import:
+
+- **Search the Open Fixture Library**: type a name ("pixel bar", "root par") and
+  pick a result. Needs the internet; the server fetches the fixture from
+  open-fixture-library.org and nowhere else.
+- **Import OFL File**: a fixture's `.json`, downloaded from its page on the
+  library. Works offline. The file does not say who makes the fixture, so type
+  the maker into the picker's *Manufacturer* field.
+
+What a mode becomes:
+
+- **Dimmer and colours** are what the show drives: red, green, blue, white,
+  amber and UV (warm and cold white each when a lamp has both). A dimmer with
+  its fine channel in the mode is 16-bit. Cyan, magenta, yellow, lime and indigo
+  are not mixed, and the picker says so.
+- **Pixels become cells.** A pixel bar's per-pixel mode imports as a bar with a
+  cell per pixel, and a mode that drives halves or quarters as a bar with a cell
+  per group. Cells go in the order they sit along the bar, which is not always
+  the order they are numbered. A group of every pixel (OFL's "Master") is the
+  whole fixture. A grid of pixels is laid along one line, row by row.
+- **The strobe channel** becomes the show's strobe when it is open at rest and
+  flashes across the show's standard strobe range (128–250). Otherwise the show
+  flashes the fixture itself, as for a fixture without one.
+- **Every other channel** sits at the library's default value, except that a
+  shutter closed at 0 is held open and a dimmer the show does not drive is held
+  at full, so an imported fixture is never dark for a reason you cannot see. The
+  channel preview highlights what the show drives and shows `=value` on what it
+  holds.
+- A channel that **changes meaning with another** (a speed that becomes a sound
+  sensitivity once a program runs) is read as what it is while that other
+  channel sits where the import holds it.
+
+Modes the show cannot use (more than 512 channels) are left out, and the picker
+says why.
+
 ### LED bars
 
 A bar is eight, sixteen or more lights in one fixture, each cell with its own
@@ -282,8 +328,8 @@ and a gradient spreads across all of them.
 
 **Getting one into the patch**
 
-- From **GDTF**, as above.
-- Without a GDTF file, **Settings → Fixture Profiles → Make an LED bar
+- From **GDTF** or the **Open Fixture Library**, as above.
+- Without either, **Settings → Fixture Profiles → Make an LED bar
   profile**: the number of cells, the channel the first cell starts on, the
   order of each cell's channels (`RGB`, `RGBW`, `DRGB` with a cell dimmer
   first…), the spacing between cells if the bar leaves gaps, and the channels
@@ -1461,7 +1507,10 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/fixtures` · DELETE `/api/fixtures/:id` | Add / remove a fixture (`{ universe }` optional on add; DELETE answers with the fixture and its index) |
 | POST | `/api/fixtures/restore` | Put a deleted fixture back (`{ index, fixture }`) |
 | POST | `/api/gdtf/parse` | Parse an uploaded `.gdtf` (multipart `gdtf`) |
-| POST | `/api/profiles` · DELETE `/api/profiles/:id` | Register / remove a fixture profile (`cells` makes it an LED bar) |
+| POST | `/api/ofl/parse` | Parse an uploaded Open Fixture Library `.json` (multipart `ofl`, optional `manufacturer`) |
+| GET | `/api/ofl/search?q=` | Search the Open Fixture Library online: `{ results: [{ manufacturerKey, fixtureKey, manufacturer, name, categories }] }` |
+| GET | `/api/ofl/fixture/:manufacturer/:fixture` | Fetch a fixture from the Open Fixture Library and parse it, as `/api/ofl/parse` answers |
+| POST | `/api/profiles` · DELETE `/api/profiles/:id` | Register / remove a fixture profile (`cells` makes it an LED bar; `defaults: [{ offset, value }]` holds undriven channels off 0) |
 | POST | `/api/profiles/bar` | Build and register an LED bar profile from `{ id, name, cells, firstChannel, order, stride?, dimmer?, strobe? }`; `?dryRun=1` answers with it without registering |
 | GET · POST | `/api/show` | Export / import the patch |
 
@@ -1677,18 +1726,34 @@ Press **?** in the app for this list.
 
 ```bash
 npm run lint         # ESLint
+npm run typecheck    # tsc, strict
 npm test             # node:test unit suite
-npm run check        # both
+npm run check        # all three
 npm run preflight    # pre-show check (exits 1 if something will not work)
 npm run watch:client # rebuild the client bundle on change
 npm run dev          # server with --watch
+npm run gen:analysis-types  # after changing the analysis document schema
 ```
+
+**TypeScript, run as it is.** Everything in `src/` is strict TypeScript that
+Node 22.18+ runs directly by stripping the types: nothing is compiled, and
+`tsc` only checks. So the code sticks to syntax Node can strip (no enums,
+namespaces or parameter properties), type-only imports say `import type`, and
+imports name the `.ts` file. `server.js` is a small bootstrap that checks the
+Node version and loads `src/main.ts`. The tests are ES-module JavaScript that
+import the `.ts` modules.
+
+**The analysis document** — what the Python analyser writes and the show is
+built from — is described once, in `src/analysis/document.schema.json`. The
+Python tests validate real analyser output against it, and
+`npm run gen:analysis-types` generates `src/types/analysis.ts` from it; a unit
+test fails when the generated file is out of date.
 
 `public/app.bundle.js` is generated from `public-src/` by esbuild and is not
 committed; `npm start` builds it automatically via `prestart`.
 
-CI runs lint, tests, a client build and `npm audit --omit=dev` on every push and
-pull request.
+CI runs lint, the typecheck, tests, a client build, the Python analysis tests
+and `npm audit --omit=dev` on every push and pull request.
 
 ---
 
