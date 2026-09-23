@@ -8,7 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import HybridSource, { tracksMatch, normalise, MISMATCH_GRACE } from '../../src/hybrid-source.js';
+import HybridSource, { tracksMatch, normalise, MISMATCH_GRACE } from '../../src/hybrid-source.ts';
 
 const SPOTIFY = {
   trackId: '4uLU6hMCjMI75M1A2tKUQC',

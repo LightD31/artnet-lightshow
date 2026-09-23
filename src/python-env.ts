@@ -1,6 +1,21 @@
 import { spawnSync } from 'node:child_process';
 import { settings } from './server/settings.ts';
 
+/** What probing one interpreter found. */
+export interface PythonProbe {
+  exe: string;
+  ok: boolean;
+  version: string;
+  executable: string;
+  missing: string[];
+}
+
+/** The interpreter the analyser will run, and how it was chosen. */
+export interface PythonInfo extends PythonProbe {
+  source: 'configured' | 'detected' | 'fallback';
+  considered?: PythonProbe[];
+}
+
 /**
  * Pick the Python interpreter that runs the analyzer.
  *
@@ -40,7 +55,7 @@ print(','.join(m for m in mods if u.find_spec(m) is None))
  * Interrogate one interpreter.
  * @returns {{exe, ok, version, executable, missing}|null} null if it won't run.
  */
-function probe(exe) {
+function probe(exe: string): PythonProbe | null {
   let r;
   try {
     r = spawnSync(exe, ['-c', PROBE], { encoding: 'utf8', timeout: 30000 });
@@ -60,7 +75,7 @@ function probe(exe) {
   };
 }
 
-let cached = null;
+let cached: PythonInfo | null = null;
 
 /**
  * Resolve the interpreter to use, with the reasoning behind the choice.
@@ -68,7 +83,7 @@ let cached = null;
  * An explicit path from the settings page always wins — it is the operator
  * saying "use this one", and second-guessing it would just hide their mistake.
  */
-function resolve({ refresh = false } = {}) {
+function resolve({ refresh = false } = {}): PythonInfo {
   if (cached && !refresh) return cached;
 
   const configured = settings.get('analysis.pythonPath');
@@ -80,7 +95,7 @@ function resolve({ refresh = false } = {}) {
     return cached;
   }
 
-  const probed = [];
+  const probed: PythonProbe[] = [];
   for (const name of CANDIDATES) {
     const info = probe(name);
     if (!info) continue;
@@ -102,12 +117,12 @@ function resolve({ refresh = false } = {}) {
 }
 
 /** Just the executable, for spawning. Resolved lazily and cached. */
-function pythonExe() {
+function pythonExe(): string {
   return resolve().exe;
 }
 
 /** One line for the startup banner. */
-function describe() {
+function describe(): string {
   const info = resolve();
   if (!info.ok) return `${info.exe} — NOT RUNNABLE`;
   const where = info.executable && info.executable !== info.exe ? ` → ${info.executable}` : '';
@@ -119,11 +134,11 @@ function describe() {
  * Warn at startup rather than at the first track change. Without this the
  * failure surfaces minutes into a set, after a download, as a traceback.
  */
-function warnIfUnusable(log = console.warn) {
+function warnIfUnusable(log: (line: string) => void = console.warn): PythonInfo | null {
   const info = resolve();
   if (info.ok && !info.missing.length) return null;
 
-  const lines = [];
+  const lines: string[] = [];
   if (!info.ok) {
     lines.push(`[python] "${info.exe}" cannot be run — audio analysis will fail.`);
   } else {

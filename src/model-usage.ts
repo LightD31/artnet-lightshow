@@ -1,14 +1,26 @@
 // Describe the models that produced this track, including cached analyses.
 // Missing provenance in an older document must not imply a model ran.
-function describeModelUsage(analysis) {
+import type { Analysis } from './show/score.ts';
+
+export type ModelStatus = 'used' | 'fallback' | 'unused' | 'unknown';
+
+/** Which model did one part of an analysis, and whether it was the real one. */
+export interface ModelUse {
+  role: string;
+  model: string;
+  status: ModelStatus;
+}
+
+function describeModelUsage(analysis: Analysis | null | undefined): ModelUse[] {
   const meta = analysis?.meta || {};
-  const usage = meta.modelUsage || {};
-  const named = (role, value, names, fallbacks = {}) => {
+  const usage: Record<string, string | boolean> = meta.modelUsage || {};
+  const named = (role: string, value: unknown, names: Record<string, string>,
+    fallbacks: Record<string, string> = {}): ModelUse => {
     if (typeof value !== 'string' || !value) return { role, model: 'Unknown', status: 'unknown' };
     if (fallbacks[value]) return { role, model: fallbacks[value], status: 'fallback' };
     return { role, model: names[value] || value, status: 'used' };
   };
-  const optional = (role, model, used) => ({
+  const optional = (role: string, model: string, used: unknown): ModelUse => ({
     role, model, status: used === true ? 'used' : used === false ? 'unused' : 'unknown',
   });
   const tagger = usage.tagger ?? (meta.taggerUsed === true ? 'panns'
@@ -31,9 +43,9 @@ function describeModelUsage(analysis) {
   ];
 }
 
-function formatModelUsage(analysis) {
+function formatModelUsage(analysis: Analysis | null | undefined): string {
   return describeModelUsage(analysis).map(({ role, model, status }) => {
-    const suffix = { used: '', fallback: ' (fallback)', unused: ' (not used)', unknown: ' (not recorded)' }[status];
+    const suffix = ({ used: '', fallback: ' (fallback)', unused: ' (not used)', unknown: ' (not recorded)' } as const)[status];
     return `${role}: ${model}${suffix}`;
   }).join('; ');
 }

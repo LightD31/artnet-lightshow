@@ -15,11 +15,37 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import readline from 'node:readline';
+import { messageOf } from './errors.ts';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { NowPlaying } from './types/playback.ts';
+
+/** A line from the PowerShell reader. */
+interface SmtcLine {
+  ok?: boolean;
+  error?: string;
+  title?: string;
+  artist?: string;
+  album?: string;
+  durationMs?: number;
+  positionMs?: number;
+  isPlaying?: boolean;
+  appId?: string;
+}
 
 const RESTART_DELAY_MS = 3000;
 
 class SmtcReader {
-  constructor({ scriptPath, intervalMs = 500 } = {}) {
+  declare _scriptPath: string;
+  declare _intervalMs: number;
+  declare _proc: ChildProcessWithoutNullStreams | null;
+  declare _rl: readline.Interface | null;
+  declare _restartTimer: ReturnType<typeof setTimeout> | null;
+  declare _stopped: boolean;
+  declare _onUpdate: ((playing: NowPlaying) => void) | null;
+  declare _onIdle: (() => void) | null;
+  declare _loggedError: boolean;
+
+  constructor({ scriptPath, intervalMs = 500 }: { scriptPath?: string; intervalMs?: number } = {}) {
     this._scriptPath = scriptPath
       || path.join(import.meta.dirname, '..', 'scripts', 'smtc-nowplaying.ps1');
     this._intervalMs = intervalMs;
@@ -33,12 +59,12 @@ class SmtcReader {
   }
 
   /** Called with a normalized playback snapshot on every poll with a track. */
-  onUpdate(fn) { this._onUpdate = fn; }
+  onUpdate(fn: ((playing: NowPlaying) => void) | null): void { this._onUpdate = fn; }
   /** Called when nothing is playing (no active SMTC session). */
-  onIdle(fn) { this._onIdle = fn; }
+  onIdle(fn: (() => void) | null): void { this._onIdle = fn; }
 
   /** Start reading. No-op (returns false) on non-Windows platforms. */
-  start() {
+  start(): boolean {
     if (process.platform !== 'win32') {
       console.warn('[smtc] not on Windows — now-playing source disabled');
       return false;
@@ -48,7 +74,7 @@ class SmtcReader {
     return true;
   }
 
-  _spawn() {
+  _spawn(): void {
     if (this._stopped) return;
 
     // Use the absolute path to Windows PowerShell 5.1: `powershell.exe` on PATH
@@ -62,11 +88,11 @@ class SmtcReader {
       '-File', this._scriptPath, '-IntervalMs', String(this._intervalMs),
     ];
 
-    let proc;
+    let proc: ChildProcessWithoutNullStreams;
     try {
       proc = spawn(psExe, args, { windowsHide: true });
     } catch (err) {
-      console.warn(`[smtc] failed to spawn PowerShell: ${err.message}`);
+      console.warn(`[smtc] failed to spawn PowerShell: ${messageOf(err)}`);
       this._scheduleRestart();
       return;
     }
@@ -77,7 +103,7 @@ class SmtcReader {
     this._rl.on('line', (line) => this._handleLine(line));
 
     let stderr = '';
-    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    proc.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
 
     proc.on('error', (err) => console.warn(`[smtc] PowerShell error: ${err.message}`));
     proc.on('close', (code) => {
@@ -91,7 +117,7 @@ class SmtcReader {
     console.log('[smtc] now-playing reader started');
   }
 
-  _scheduleRestart() {
+  _scheduleRestart(): void {
     if (this._stopped || this._restartTimer) return;
     this._restartTimer = setTimeout(() => {
       this._restartTimer = null;
@@ -99,11 +125,11 @@ class SmtcReader {
     }, RESTART_DELAY_MS);
   }
 
-  _handleLine(line) {
+  _handleLine(line: string): void {
     line = line.trim();
     if (!line) return;
 
-    let msg;
+    let msg: SmtcLine;
     try { msg = JSON.parse(line); }
     catch { return; } // partial/garbled line — skip
 
@@ -127,7 +153,7 @@ class SmtcReader {
   }
 
   /** Map an SMTC line to the NowPlayingSource.updatePlayback() payload shape. */
-  _toPayload(msg) {
+  _toPayload(msg: SmtcLine): NowPlaying {
     const artist = msg.artist || '';
     const title = msg.title || '';
     return {
@@ -146,7 +172,7 @@ class SmtcReader {
     };
   }
 
-  stop() {
+  stop(): void {
     this._stopped = true;
     if (this._restartTimer) { clearTimeout(this._restartTimer); this._restartTimer = null; }
     if (this._rl) { try { this._rl.close(); } catch (_) { /* ignore */ } this._rl = null; }

@@ -11,9 +11,17 @@
  * false once `STALE_MS` has elapsed without one, so when playback stops the
  * source cleanly drops out as an available auto-source.
  */
+import type { NowPlaying, PlaybackSource, PlaybackUpdate, PlayingListener } from './types/playback.ts';
+
 const STALE_MS = 10000;
 
-class NowPlayingSource {
+class NowPlayingSource implements PlaybackSource {
+  declare _playing: NowPlaying | null;
+  declare _currentTrackId: string | null;
+  declare _lastUpdateAt: number;
+  declare _onTrackChange: PlayingListener | null;
+  declare _onPlaybackUpdate: PlayingListener | null;
+
   constructor() {
     this._playing = null;         // last full playback snapshot
     this._currentTrackId = null;
@@ -23,10 +31,10 @@ class NowPlayingSource {
   }
 
   /** Always "configured" — there's no server-side key required. */
-  get configured() { return true; }
+  get configured(): boolean { return true; }
 
   /** Authenticated = something is actively reporting playback. */
-  get authenticated() {
+  get authenticated(): boolean {
     return !!(this._playing && Date.now() - this._lastUpdateAt < STALE_MS);
   }
 
@@ -34,9 +42,9 @@ class NowPlayingSource {
    * Apply a playback update. Mirrors the fields SpotifyClient.getCurrentlyPlaying()
    * returns so downstream code is shared.
    */
-  updatePlayback(payload) {
+  updatePlayback(payload: PlaybackUpdate | null | undefined): void {
     if (!payload || !payload.trackId) return;
-    const playing = {
+    const playing: NowPlaying = {
       trackId: String(payload.trackId),
       name: payload.name || '',
       artist: payload.artist || '',
@@ -59,16 +67,16 @@ class NowPlayingSource {
   }
 
   /** Same shape as SpotifyClient.getCurrentlyPlaying() — used by analyze route. */
-  async getCurrentlyPlaying() {
+  async getCurrentlyPlaying(): Promise<NowPlaying | null> {
     if (!this.authenticated) return null;
     return this._playing;
   }
 
-  onTrackChange(fn) { this._onTrackChange = fn; }
-  onPlaybackUpdate(fn) { this._onPlaybackUpdate = fn; }
+  onTrackChange(fn: PlayingListener | null): void { this._onTrackChange = fn; }
+  onPlaybackUpdate(fn: PlayingListener | null): void { this._onPlaybackUpdate = fn; }
 
   /** Clear any held playback state. */
-  disconnect() {
+  disconnect(): void {
     this._playing = null;
     this._currentTrackId = null;
     this._lastUpdateAt = 0;

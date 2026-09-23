@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import AutoShow from '../../src/auto-show.js';
-import * as ytdlp from '../../src/ytdlp.js';
+import * as ytdlp from '../../src/ytdlp.ts';
 
 // A yt-dlp that reports a given version, records its arguments, and writes
 // `<template>.wav` where -o asked for it — which is all the real one is asked

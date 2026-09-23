@@ -4,7 +4,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert';
-import * as ytdlp from '../../src/ytdlp.js';
+import * as ytdlp from '../../src/ytdlp.ts';
 
 test('versions are compared as dates', () => {
   assert.ok(ytdlp.dateOf('2025.11.12') > ytdlp.dateOf('2025.9.26'));

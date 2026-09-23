@@ -25,7 +25,7 @@ import { connectMidi } from './midi-connect.ts';
 import { generateToken } from './auth.ts';
 import { runPreflight } from './preflight.ts';
 import { warmRequestSchema, warmPlaylistSchema, parseSetList, fromSpotifyTracks, MAX_TRACKS as MAX_WARM_TRACKS } from './warm.ts';
-import * as pythonEnv from '../python-env.js';
+import * as pythonEnv from '../python-env.ts';
 import {
   keyForSpotify, keyForYouTube, keyForQuery, keyForLocalFile, keyForBuffer, keyForProlinkTrack,
 } from '../analysis-cache.js';

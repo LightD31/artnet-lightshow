@@ -12,9 +12,18 @@
  * extension is actively reporting — it fades after STALE_MS so closing the
  * Deezer tab cleanly drops Deezer as an available auto-source.
  */
+import type { NowPlaying, PlaybackSource, PlaybackUpdate, PlayingListener, QueuedTrack } from './types/playback.ts';
+
 const STALE_MS = 10000;
 
-class DeezerSource {
+class DeezerSource implements PlaybackSource {
+  declare _playing: NowPlaying | null;
+  declare _currentTrackId: string | null;
+  declare _queue: QueuedTrack[];
+  declare _lastUpdateAt: number;
+  declare _onTrackChange: PlayingListener | null;
+  declare _onPlaybackUpdate: PlayingListener | null;
+
   constructor() {
     this._playing = null;
     this._currentTrackId = null;
@@ -25,21 +34,21 @@ class DeezerSource {
   }
 
   /** Always "configured" — no server-side key; the extension does the work. */
-  get configured() { return true; }
+  get configured(): boolean { return true; }
 
   /** Authenticated = the extension is actively reporting playback. */
-  get authenticated() {
+  get authenticated(): boolean {
     return !!(this._playing && Date.now() - this._lastUpdateAt < STALE_MS);
   }
 
   /** Apply a current-track update pushed from the extension. */
-  updatePlayback(payload) {
+  updatePlayback(payload: PlaybackUpdate | null | undefined): void {
     if (!payload) return;
     const name = payload.name || payload.title || '';
     const artist = payload.artist || '';
     if (!name && !payload.trackId) return;
     const trackId = String(payload.trackId || payload.isrc || `${artist}|${name}`);
-    const playing = {
+    const playing: NowPlaying = {
       trackId,
       name,
       artist,
@@ -62,30 +71,30 @@ class DeezerSource {
   }
 
   /** Replace the upcoming queue (used for prefetch). */
-  updateQueue(tracks) {
-    this._queue = (Array.isArray(tracks) ? tracks : [])
-      .map((t) => (t ? {
+  updateQueue(tracks: unknown): void {
+    this._queue = (Array.isArray(tracks) ? tracks as PlaybackUpdate[] : [])
+      .map((t): QueuedTrack | null => (t ? {
         name: t.name || t.title || '',
         artist: t.artist || '',
         isrc: t.isrc || null,
         durationMs: Number(t.durationMs) || 0,
       } : null))
-      .filter((t) => t && t.name && t.artist);
+      .filter((t): t is QueuedTrack => !!(t && t.name && t.artist));
   }
 
-  getQueue() { return this._queue; }
+  getQueue(): QueuedTrack[] { return this._queue; }
 
   /** Same shape as SpotifyClient.getCurrentlyPlaying() — used by analyze route. */
-  async getCurrentlyPlaying() {
+  async getCurrentlyPlaying(): Promise<NowPlaying | null> {
     if (!this.authenticated) return null;
     return this._playing;
   }
 
-  onTrackChange(fn) { this._onTrackChange = fn; }
-  onPlaybackUpdate(fn) { this._onPlaybackUpdate = fn; }
+  onTrackChange(fn: PlayingListener | null): void { this._onTrackChange = fn; }
+  onPlaybackUpdate(fn: PlayingListener | null): void { this._onPlaybackUpdate = fn; }
 
   /** Clear playback + queue — called when the Deezer tab disconnects. */
-  disconnect() {
+  disconnect(): void {
     this._playing = null;
     this._currentTrackId = null;
     this._queue = [];

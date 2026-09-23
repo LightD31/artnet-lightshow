@@ -6,6 +6,7 @@ import os from 'node:os';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import dfi from 'd-fi-core';
+import { messageOf } from './errors.ts';
 
 // Bounds on the audio download. Previously unbounded on all three counts: a
 // redirect loop recursed until it blew the stack, a stalled connection hung
@@ -20,7 +21,7 @@ let initialized = false;
  * Initialize the Deezer API with an ARL cookie token.
  * Must be called once before any download. No-ops on subsequent calls.
  */
-async function init(arl) {
+async function init(arl: string): Promise<void> {
   if (initialized) return;
   if (!arl) throw new Error('DEEZER_ARL not set');
   await dfi.initDeezerApi(arl);
@@ -31,7 +32,7 @@ async function init(arl) {
 /**
  * Check whether Deezer downloads are available (ARL configured + init'd).
  */
-function isAvailable() {
+function isAvailable(): boolean {
   return initialized;
 }
 
@@ -43,7 +44,7 @@ function isAvailable() {
  * @param {string} isrc       – ISRC code (e.g. "USUM71820728")
  * @returns {Promise<string>} – absolute path to a temp .wav file
  */
-async function downloadByIsrc(trackName, isrc) {
+async function downloadByIsrc(trackName: string, isrc: string): Promise<string> {
   // 1. Resolve ISRC → Deezer track info
   console.log(`[deezer] Looking up ISRC ${isrc} for "${trackName}"`);
   const trackInfo = await dfi.isrc2deezer(trackName, isrc);
@@ -101,11 +102,12 @@ async function downloadByIsrc(trackName, isrc) {
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 /** Download a URL to a Buffer, with a redirect cap, timeout and size ceiling. */
-function _downloadUrl(url, redirectsLeft = MAX_REDIRECTS) {
+function _downloadUrl(url: string, redirectsLeft = MAX_REDIRECTS): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const client = url.startsWith('https') ? https : http;
     const req = client.get(url, (res) => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+      const status = res.statusCode ?? 0;
+      if (status >= 300 && status < 400 && res.headers.location) {
         res.resume();                       // drain so the socket can be reused
         if (redirectsLeft <= 0) {
           return reject(new Error(`[deezer] too many redirects (>${MAX_REDIRECTS}) downloading audio`));
@@ -120,7 +122,7 @@ function _downloadUrl(url, redirectsLeft = MAX_REDIRECTS) {
 
       // Trust the declared length when present, but still enforce the ceiling
       // as bytes arrive — content-length is advisory.
-      const declared = Number.parseInt(res.headers['content-length'], 10);
+      const declared = Number.parseInt(res.headers['content-length'] ?? '', 10);
       if (Number.isFinite(declared) && declared > MAX_DOWNLOAD_BYTES) {
         res.destroy();
         return reject(new Error(
@@ -129,9 +131,9 @@ function _downloadUrl(url, redirectsLeft = MAX_REDIRECTS) {
         ));
       }
 
-      const chunks = [];
+      const chunks: Buffer[] = [];
       let received = 0;
-      res.on('data', (chunk) => {
+      res.on('data', (chunk: Buffer) => {
         received += chunk.length;
         if (received > MAX_DOWNLOAD_BYTES) {
           res.destroy();
@@ -154,7 +156,7 @@ function _downloadUrl(url, redirectsLeft = MAX_REDIRECTS) {
 }
 
 /** Convert MP3 → WAV using ffmpeg. */
-function _mp3ToWav(inputPath, outputPath) {
+function _mp3ToWav(inputPath: string, outputPath: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const proc = spawn('ffmpeg', [
       '-y', '-i', inputPath,
@@ -166,7 +168,7 @@ function _mp3ToWav(inputPath, outputPath) {
     proc.stderr.on('data', (d) => { stderr += d; });
 
     proc.on('error', (err) => {
-      reject(new Error(`ffmpeg not found: ${err.message}`));
+      reject(new Error(`ffmpeg not found: ${messageOf(err)}`));
     });
     proc.on('close', (code) => {
       if (code !== 0) return reject(new Error(`ffmpeg failed (exit ${code}): ${stderr}`));

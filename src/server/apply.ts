@@ -2,7 +2,7 @@ import { state, setDefaultUniverse } from './state.ts';
 import { settings } from './settings.ts';
 import * as output from './output.ts';
 import { generateCid } from './sacn.ts';
-import * as pythonEnv from '../python-env.js';
+import * as pythonEnv from '../python-env.ts';
 import { messageOf } from '../errors.ts';
 
 /** The subsystems settings are pushed into. */

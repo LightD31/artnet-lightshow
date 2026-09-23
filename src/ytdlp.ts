@@ -18,9 +18,9 @@ import { execFile } from 'node:child_process';
 // The first release that requires, and accepts, --js-runtimes.
 const JS_RUNTIME_SINCE = '2025.11.12';
 
-let versionPromise = null;
+let versionPromise: Promise<string | null> | null = null;
 
-function probeVersion() {
+function probeVersion(): Promise<string | null> {
   return new Promise((resolve) => {
     execFile('yt-dlp', ['--version'], { timeout: 15000, windowsHide: true }, (err, stdout) => {
       resolve(err ? null : String(stdout || '').trim().split(/\s+/)[0] || null);
@@ -29,7 +29,7 @@ function probeVersion() {
 }
 
 /** The installed yt-dlp's version string, e.g. "2025.11.12", or null. */
-function version() {
+function version(): Promise<string | null> {
   if (!versionPromise) {
     versionPromise = probeVersion().then((v) => {
       if (!v) versionPromise = null;
@@ -40,22 +40,22 @@ function version() {
 }
 
 /** yt-dlp versions are dates; compare them as YYYYMMDD numbers. */
-function dateOf(v) {
+function dateOf(v: unknown): number {
   const m = /^(\d{4})\.(\d{1,2})\.(\d{1,2})/.exec(String(v || ''));
   return m ? Number(m[1]) * 10000 + Number(m[2]) * 100 + Number(m[3]) : 0;
 }
 
 /** Does this version need, and understand, --js-runtimes? */
-function needsJsRuntime(v) {
+function needsJsRuntime(v: unknown): boolean {
   return dateOf(v) >= dateOf(JS_RUNTIME_SINCE);
 }
 
 /** The arguments that hand yt-dlp a JavaScript runtime, for this version. */
-function runtimeArgs(v, execPath = process.execPath) {
+function runtimeArgs(v: unknown, execPath = process.execPath): string[] {
   return needsJsRuntime(v) ? ['--js-runtimes', `node:${execPath}`] : [];
 }
 
-function _reset() { versionPromise = null; }
+function _reset(): void { versionPromise = null; }
 
 export {
   version,

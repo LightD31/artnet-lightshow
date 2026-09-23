@@ -30,7 +30,25 @@
  * than the choice of source.
  */
 
-import PlaybackClock from './playback-clock.js';
+import PlaybackClock from './playback-clock.ts';
+import type { PlaybackClockStatus } from './playback-clock.ts';
+import type { NowPlaying } from './types/playback.ts';
+
+/** Which half drives the clock. */
+export type HybridDriver = 'nowplaying' | 'spotify' | 'none';
+
+/** The fields two reports are compared on. */
+type TrackIdentity = Pick<NowPlaying, 'name' | 'artist' | 'durationMs'>;
+
+export interface HybridStatus {
+  driver: HybridDriver;
+  matched: boolean;
+  sessionLive: boolean;
+  sessionApp: string | null;
+  sessionTrack: string | null;
+  contentTrack: string | null;
+  clock: PlaybackClockStatus;
+}
 
 // How long an OS-session report stays usable. It arrives about twice a second,
 // so a second and a half without one means the reader has stopped or the
@@ -50,7 +68,7 @@ const MISMATCH_GRACE = 3;
 
 
 /** Strip a title or artist down to something two players might agree on. */
-function normalise(text) {
+function normalise(text: unknown): string {
   return String(text || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')   // combining marks left by NFD
@@ -72,7 +90,7 @@ function normalise(text) {
  * agreement there stands in for an artist match, and disagreement past the
  * tolerance vetoes the whole thing.
  */
-function tracksMatch(a, b) {
+function tracksMatch(a: TrackIdentity | null | undefined, b: TrackIdentity | null | undefined): boolean {
   if (!a || !b) return false;
 
   const titleA = normalise(a.name);
@@ -101,12 +119,21 @@ function tracksMatch(a, b) {
 
 
 class HybridSource {
+  declare _clock: PlaybackClock;
+  declare _now: () => number;
+  declare _content: NowPlaying | null;
+  declare _session: NowPlaying | null;
+  declare _sessionAt: number;
+  declare _matched: boolean;
+  declare _mismatches: number;
+  declare _driver: HybridDriver;
+
   /**
    * @param {object} [options]
    * @param {PlaybackClock} [options.clock]  injectable, for tests
    * @param {function} [options.now]         injectable clock, for tests
    */
-  constructor({ clock, now } = {}) {
+  constructor({ clock, now }: { clock?: PlaybackClock; now?: () => number } = {}) {
     this._clock = clock || new PlaybackClock();
     this._now = now || (() => Date.now());
     this._content = null;         // the Spotify track the show is following
@@ -118,10 +145,10 @@ class HybridSource {
   }
 
   /** Which source is currently driving the clock. */
-  get driver() { return this._driver; }
+  get driver(): HybridDriver { return this._driver; }
 
   /** Is the OS session reporting the track Spotify says is playing? */
-  get matched() { return this._matched; }
+  get matched(): boolean { return this._matched; }
 
   /**
    * The track the show is following, from Spotify.
@@ -130,7 +157,7 @@ class HybridSource {
    * to do with the old one's, and slewing between them would run the new song
    * against the tail of the old timeline.
    */
-  setContent(playing) {
+  setContent(playing: NowPlaying | null | undefined): void {
     if (!playing || !playing.trackId) return;
     const changed = !this._content || this._content.trackId !== playing.trackId;
     this._content = playing;
@@ -147,7 +174,7 @@ class HybridSource {
   }
 
   /** Forget everything. Used when the show stops or the source is switched away. */
-  reset() {
+  reset(): void {
     this._clock.reset();
     this._content = null;
     this._session = null;
@@ -164,7 +191,7 @@ class HybridSource {
    * reader those are the same instant, which is much of why this path is better
    * than the Spotify one.
    */
-  observeSession(playing, at = this._now()) {
+  observeSession(playing: NowPlaying | null | undefined, at = this._now()): void {
     if (!playing) return;
     this._session = playing;
     this._sessionAt = at;
@@ -181,7 +208,7 @@ class HybridSource {
    * A report from Spotify. Carries the content either way, and drives the clock
    * only while the OS session is not available to do it better.
    */
-  observeContent(playing, at = this._now()) {
+  observeContent(playing: NowPlaying | null | undefined, at = this._now()): void {
     // No track id means the content is unidentified — an advert, a podcast, a
     // local file Spotify will not name. `setContent` already refuses it, and
     // the clock has to refuse it too: running the show against the position of
@@ -194,11 +221,11 @@ class HybridSource {
   }
 
   /** Where the show is now, in milliseconds. */
-  getPositionMs(now = this._now()) {
+  getPositionMs(now = this._now()): number {
     return this._clock.positionMs(now);
   }
 
-  _sessionIsLive() {
+  _sessionIsLive(): boolean {
     return !!this._session && (this._now() - this._sessionAt) < CLOCK_STALE_MS;
   }
 
@@ -209,7 +236,7 @@ class HybridSource {
    * the same tick and a single-report test would hand the clock back and forth
    * across every track boundary. Returns whether this report agrees.
    */
-  _evaluateMatch() {
+  _evaluateMatch(): boolean {
     const agrees = tracksMatch(this._content, this._session);
     if (agrees) {
       // Taking over: the OS report that triggered this is observed straight
@@ -233,7 +260,7 @@ class HybridSource {
   }
 
   /** A snapshot for the UI: which half is doing what, and how well. */
-  getStatus() {
+  getStatus(): HybridStatus {
     const sessionLive = this._sessionIsLive();
     return {
       driver: this._driver,

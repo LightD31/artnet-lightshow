@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import PlaybackClock from '../../src/playback-clock.js';
+import PlaybackClock from '../../src/playback-clock.ts';
 
 test('the first observation is taken as ground truth', () => {
   const clock = new PlaybackClock();

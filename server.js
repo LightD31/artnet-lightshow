@@ -7,10 +7,10 @@ import { Server } from 'socket.io';
 import MidiController from './src/midi.js';
 import ProLink from './src/prolink.js';
 import SpotifyClient from './src/spotify.js';
-import NowPlayingSource from './src/nowplaying-source.js';
-import SmtcReader from './src/smtc-source.js';
-import DeezerSource from './src/deezer-source.js';
-import * as deezer from './src/deezer.js';
+import NowPlayingSource from './src/nowplaying-source.ts';
+import SmtcReader from './src/smtc-source.ts';
+import DeezerSource from './src/deezer-source.ts';
+import * as deezer from './src/deezer.ts';
 import AutoShow from './src/auto-show.js';
 import { AnalysisCache } from './src/analysis-cache.js';
 
@@ -29,7 +29,7 @@ import { createApplier } from './src/server/apply.ts';
 import { midiMap } from './src/server/midi-map.ts';
 import { cues } from './src/server/cues.ts';
 import { showStore, SHOW_FILE } from './src/server/show-store.ts';
-import * as pythonEnv from './src/python-env.js';
+import * as pythonEnv from './src/python-env.ts';
 import { installProcessSafetyNet } from './src/server/guard.ts';
 
 // Before anything else can fail: a fault the code did not expect is reported

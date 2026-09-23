@@ -4,17 +4,17 @@ import { settings } from './server/settings.ts';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
-import * as deezer from './deezer.js';
+import * as deezer from './deezer.ts';
 import AnalyzerWorker from './analyzer-worker.js';
-import { describeModelUsage, formatModelUsage } from './model-usage.js';
-import * as pythonEnv from './python-env.js';
+import { describeModelUsage, formatModelUsage } from './model-usage.ts';
+import * as pythonEnv from './python-env.ts';
 import { SYNC_OFFSET_LIMIT_MS } from './server/presets.ts';
 import { ShowDirector, measureBuildup } from './show/director.ts';
 import { renderIntents } from './show/render.ts';
 import { guarded } from './server/guard.ts';
-import { resolveIsrc, splitQuery } from './isrc.js';
+import { resolveIsrc, splitQuery } from './isrc.ts';
 import { gridFromAnalysis } from './shared/beat-clock.ts';
-import * as ytdlp from './ytdlp.js';
+import * as ytdlp from './ytdlp.ts';
 
 // A download that never finishes is indistinguishable from one that never
 // started: the track change waits on this promise, so an unresponsive network

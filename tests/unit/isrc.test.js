@@ -4,7 +4,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert';
-import { resolveIsrc, splitQuery, normalise, _cache } from '../../src/isrc.js';
+import { resolveIsrc, splitQuery, normalise, _cache } from '../../src/isrc.ts';
 
 const quiet = { warn() {} };
 

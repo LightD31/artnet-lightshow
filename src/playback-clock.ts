@@ -27,7 +27,31 @@
  * the music is, not where the last poll said it was.
  */
 
-const DEFAULTS = {
+/** How the clock follows its source (see DEFAULTS). */
+export interface PlaybackClockOptions {
+  snapThresholdMs: number;
+  absorbMs: number;
+  maxSlew: number;
+  staleMs: number;
+}
+
+/** When an observation was true and when it arrived, and whether it is playing. */
+export interface Observation {
+  isPlaying?: boolean;
+  at?: number;
+  now?: number;
+}
+
+export interface PlaybackClockStatus {
+  hasFix: boolean;
+  isPlaying: boolean;
+  positionMs: number;
+  driftMs: number;
+  rate: number;
+  snaps: number;
+}
+
+const DEFAULTS: PlaybackClockOptions = {
   /**
    * Error beyond which the clock snaps instead of slewing, in milliseconds.
    * Below this is jitter to be smoothed; above it is a real discontinuity, and
@@ -56,13 +80,23 @@ const DEFAULTS = {
 
 
 class PlaybackClock {
-  constructor(options = {}) {
+  declare options: PlaybackClockOptions;
+  declare _basePositionMs: number;
+  declare _baseAt: number;
+  declare _rate: number;
+  declare _playing: boolean;
+  declare _haveFix: boolean;
+  declare _lastObservedAt: number;
+  declare _lastErrorMs: number;
+  declare _snaps: number;
+
+  constructor(options: Partial<PlaybackClockOptions> = {}) {
     this.options = { ...DEFAULTS, ...options };
     this.reset();
   }
 
   /** Forget everything. The next observation is taken as ground truth. */
-  reset() {
+  reset(): void {
     this._basePositionMs = 0;
     this._baseAt = 0;
     this._rate = 1;
@@ -74,19 +108,19 @@ class PlaybackClock {
   }
 
   /** Has the clock been given anything to work from? */
-  get hasFix() { return this._haveFix; }
+  get hasFix(): boolean { return this._haveFix; }
 
-  get isPlaying() { return this._playing; }
+  get isPlaying(): boolean { return this._playing; }
 
   /** Signed error of the most recent observation, in milliseconds. */
-  get driftMs() { return this._lastErrorMs; }
+  get driftMs(): number { return this._lastErrorMs; }
 
   /** Current speed as a ratio of real time. 1 is exact. */
-  get rate() { return this._rate; }
+  get rate(): number { return this._rate; }
 
   /** How many times the clock has had to snap. A rising count means the
    *  source is reporting discontinuities, not jitter. */
-  get snaps() { return this._snaps; }
+  get snaps(): number { return this._snaps; }
 
   /**
    * Where the show is now, in milliseconds.
@@ -95,7 +129,7 @@ class PlaybackClock {
    * percent of real time and only ever positive — so this is monotonic between
    * snaps, and the timeline cursor can never re-cross an event it has fired.
    */
-  positionMs(now = Date.now()) {
+  positionMs(now = Date.now()): number {
     if (!this._haveFix) return 0;
     if (!this._playing) return this._basePositionMs;
     const elapsed = Math.max(0, now - this._baseAt);
@@ -129,9 +163,9 @@ class PlaybackClock {
    *   has already been read out, and the position could step backwards.
    * @returns {'snap'|'slew'|'hold'} what the clock did with it.
    */
-  observe(observedMs, meta = {}) {
-    const at = Number.isFinite(meta.at) ? meta.at : Date.now();
-    const now = Number.isFinite(meta.now) ? Math.max(meta.now, at) : at;
+  observe(observedMs: unknown, meta: Observation = {}): 'snap' | 'slew' | 'hold' {
+    const at = typeof meta.at === 'number' && Number.isFinite(meta.at) ? meta.at : Date.now();
+    const now = typeof meta.now === 'number' && Number.isFinite(meta.now) ? Math.max(meta.now, at) : at;
     const position = Math.max(0, Number(observedMs) || 0);
     const playing = meta.isPlaying === undefined ? this._playing : !!meta.isPlaying;
 
@@ -175,7 +209,7 @@ class PlaybackClock {
    * `observe` handles the usual case; this is for a source that reports a stop
    * with no number attached.
    */
-  pause(now = Date.now()) {
+  pause(now = Date.now()): void {
     if (!this._haveFix) return;
     this._basePositionMs = this.positionMs(now);
     this._baseAt = now;
@@ -183,7 +217,7 @@ class PlaybackClock {
     this._rate = 1;
   }
 
-  _snap(positionMs, playing, at) {
+  _snap(positionMs: number, playing: boolean, at: number): void {
     this._basePositionMs = positionMs;
     this._baseAt = at;
     this._playing = playing;
@@ -193,13 +227,13 @@ class PlaybackClock {
     this._haveFix = true;
   }
 
-  _clampRate(rate) {
+  _clampRate(rate: number): number {
     const { maxSlew } = this.options;
     return Math.max(1 - maxSlew, Math.min(1 + maxSlew, rate));
   }
 
   /** A snapshot for the UI and for logs. */
-  getStatus() {
+  getStatus(): PlaybackClockStatus {
     return {
       hasFix: this._haveFix,
       isPlaying: this._playing,
