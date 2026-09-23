@@ -1,15 +1,13 @@
-'use strict';
-
 // A 16-bit dimmer gets its fine byte. It used to be written 0, which left a
 // fixture that can do 65,536 levels stepping through 256 of them — and the
 // steps are what a slow fade to black looks like on an LED.
 
-const test = require('node:test');
-const assert = require('node:assert');
+import test from 'node:test';
+import assert from 'node:assert';
 
-const { writeDimmer, createRenderer } = require('../../src/server/renderer');
-const universes = require('../../src/server/universes');
-const { getProfile, profilesRevision, BUILTIN_PROFILE_ID } = require('../../src/server/profiles');
+import { writeDimmer, createRenderer } from '../../src/server/renderer.ts';
+import * as universes from '../../src/server/universes.ts';
+import { getProfile, profilesRevision, BUILTIN_PROFILE_ID } from '../../src/server/profiles.ts';
 
 const FINE = { dimmer: 0, dimmerFine: 1 };
 const COARSE = { dimmer: 0 };

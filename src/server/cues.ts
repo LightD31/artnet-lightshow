@@ -1,0 +1,367 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { z } from 'zod';
+
+import { state } from './state.ts';
+import { applyPatch, applyOverride } from './patch.ts';
+import { conductor } from './conductor.ts';
+import { overrideSchema, fixtureId } from './validation.ts';
+import { COLOR_PRESETS } from './presets.ts';
+import { PIXEL_MAPS } from '../shared/rig.ts';
+import { HttpError, codeOf, messageOf } from '../errors.ts';
+import type { OverrideInput } from './validation.ts';
+
+/**
+ * Named looks, saved and recalled.
+ *
+ * A cue is a snapshot of everything that decides what the rig is doing right
+ * now — tempo, pattern, palette, master, strobe, and each fixture's override —
+ * captured under a name so it can be put back on stage in one press. That is
+ * what a console's cue stack is for, and without one the only way back to a
+ * look you liked was to rebuild it by hand while the room watched.
+ *
+ * Stored in config/cues.json next to the settings. A corrupt file is moved
+ * aside rather than deleted, and the show still starts.
+ */
+
+// A cue list is a set list, not a database. The cap keeps a stuck client from
+// growing the file (and the state broadcast) without bound.
+const MAX_CUES = 128;
+
+const colorIdx = z.number().int().min(0).max(COLOR_PRESETS.length - 1);
+
+// What a cue restores. Deliberately the operator-facing look and nothing else:
+// no fixture patch, no Art-Net target, no analysis. Recalling a cue must never
+// re-address the rig or move it to another universe mid-show.
+const lookSchema = z.object({
+  bpm: z.number().min(20).max(300),
+  beatDivision: z.number().int().min(1).max(16),
+  running: z.boolean(),
+  pattern: z.string().min(1).max(64),
+  colorA: colorIdx,
+  colorB: colorIdx,
+  colorC: colorIdx,
+  colorD: colorIdx,
+  masterDimmer: z.number().int().min(0).max(255),
+  masterBlackout: z.boolean(),
+  strobeSpeed: z.number().int().min(0).max(255),
+  strobeFunction: z.string().min(1).max(64),
+  energyOverride: z.union([z.string().min(1).max(64), z.null()]),
+  // Absent in cues saved before LED bars: those recall with the pixel map
+  // that is already on stage.
+  pixelMap: z.enum(PIXEL_MAPS).optional(),
+  // New cues carry ids beside their overrides so deleting a fixture cannot
+  // make a cue's look land on a different light. Old cues without this field
+  // use the original ids (0, 1, ...) if they predate this field.
+  fixtureIds: z.array(fixtureId).max(64).optional(),
+  overrides: z.array(z.union([overrideSchema, z.null()])).max(64),
+}).strict().refine((look) => !look.fixtureIds || (
+  look.fixtureIds.length === look.overrides.length
+    && new Set(look.fixtureIds).size === look.fixtureIds.length
+), { message: 'fixtureIds must contain one unique id per override' });
+
+const cueSchema = z.object({
+  id: z.string().min(1).max(64),
+  name: z.string().min(1).max(80),
+  createdAt: z.string().max(40),
+  updatedAt: z.string().max(40),
+  look: lookSchema,
+}).strict();
+
+const fileSchema = z.object({
+  cues: z.array(cueSchema).max(MAX_CUES),
+}).strict();
+
+/**
+ * The body of POST /api/cues and PUT /api/cues/:id.
+ *
+ * On create, an absent look means "capture what is on stage now". On update,
+ * an absent look leaves the stored one alone, so renaming a cue never quietly
+ * overwrites its look — `recapture` is how you ask for that, and it is a
+ * separate flag because the client only holds cue *summaries* and so cannot
+ * send a complete look back. A caller may still send one outright, which is
+ * how a cue exported from one rig loads onto another.
+ */
+const cueWriteSchema = z.object({
+  name: z.string().min(1).max(80).optional(),
+  look: lookSchema.optional(),
+  recapture: z.boolean().optional(),
+}).strict();
+
+const reorderSchema = z.object({
+  ids: z.array(z.string().min(1).max(64)).max(MAX_CUES),
+}).strict();
+
+/** POST /api/cues/restore: put a just-deleted cue back where it was. */
+/** A stored look: everything a cue puts back on stage. */
+export type Look = z.output<typeof lookSchema>;
+export type Cue = z.output<typeof cueSchema>;
+
+const cueRestoreSchema = z.object({
+  cue: cueSchema,
+  index: z.number().int().min(0).max(MAX_CUES).optional(),
+}).strict();
+
+function newId(): string {
+  return crypto.randomBytes(8).toString('hex');
+}
+
+/** Everything on stage right now, as a cue look. */
+function captureLook() {
+  return {
+    bpm: state.bpm,
+    beatDivision: state.beatDivision,
+    running: state.running,
+    pattern: state.pattern,
+    colorA: state.colorA,
+    colorB: state.colorB,
+    colorC: state.colorC,
+    colorD: state.colorD,
+    masterDimmer: state.masterDimmer,
+    masterBlackout: state.masterBlackout,
+    strobeSpeed: state.strobeSpeed,
+    strobeFunction: state.strobeFunction,
+    energyOverride: state.energyOverride,
+    pixelMap: state.pixelMap,
+    fixtureIds: state.fixtures.map((f) => f.id),
+    overrides: state.fixtures.map((f) => (f.override ? { ...f.override } : null)),
+  };
+}
+
+/**
+ * Put a look back on stage.
+ *
+ * The overrides go on after the patch so a cue captured with a fixture
+ * overridden reproduces exactly that, and fixtures the cue has nothing to say
+ * about are *cleared* rather than left holding whatever the last look put on
+ * them — a cue is the whole rig, not a partial edit.
+ */
+function recallLook(look: Look): void {
+  const { fixtureIds, overrides, bpm, ...rest } = look;
+  const patch: typeof rest & { bpm?: number } = rest;
+  // The saved tempo is for a set with no music to follow. While the clock is
+  // locked to the song playing, the song's tempo stands: a cue is a look, and
+  // recalling one is not the operator taking the tempo back by hand.
+  if (conductor.status().source === 'tap') patch.bpm = bpm;
+  applyPatch(patch);
+
+  const byId = new Map<number, OverrideInput | null>((overrides || [])
+    .map((override, index) => [fixtureIds?.[index] ?? index, override]));
+  for (const fixture of state.fixtures) applyOverride(fixture.id, byId.get(fixture.id) || null);
+}
+
+class CueStore {
+  declare file: string;
+  declare _cues: Cue[];
+
+  constructor(file: string) {
+    this.file = file;
+    this._cues = [];
+  }
+
+  /**
+   * Read cues.json. A missing file is normal (no cues saved yet). A corrupt one
+   * is moved aside rather than deleted, so a hand-edit that went wrong is
+   * recoverable and the show still starts.
+   */
+  load(): this {
+    let raw;
+    try {
+      raw = fs.readFileSync(this.file, 'utf8');
+    } catch (err) {
+      if (codeOf(err) !== 'ENOENT') {
+        console.warn(`[cues] cannot read ${this.file}: ${messageOf(err)} — starting with no cues`);
+      }
+      return this;
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      return this._quarantine(`invalid JSON (${messageOf(err)})`);
+    }
+
+    const result = fileSchema.safeParse(parsed);
+    if (!result.success) {
+      const detail = result.error.issues.map((i) => `${i.path.join('.')} ${i.message}`).join('; ');
+      return this._quarantine(detail);
+    }
+
+    this._cues = result.data.cues;
+    return this;
+  }
+
+  _quarantine(reason: string): this {
+    const backup = `${this.file}.invalid-${Date.now()}`;
+    try {
+      fs.renameSync(this.file, backup);
+      console.warn(`[cues] ${this.file}: ${reason}`);
+      console.warn(`[cues] moved it to ${backup} and started with no cues`);
+    } catch (err) {
+      console.warn(`[cues] ${this.file}: ${reason} (could not move aside: ${messageOf(err)})`);
+    }
+    this._cues = [];
+    return this;
+  }
+
+  save(): void {
+    const dir = path.dirname(this.file);
+    fs.mkdirSync(dir, { recursive: true });
+    const tmp = `${this.file}.tmp`;
+    fs.writeFileSync(tmp, `${JSON.stringify({ cues: this._cues }, null, 2)}\n`);
+    fs.renameSync(tmp, this.file);
+  }
+
+  /** Every cue, in show order, with its full look. */
+  list(): Cue[] {
+    return this._cues.map((c) => JSON.parse(JSON.stringify(c)));
+  }
+
+  /**
+   * The list the UI renders: identity plus enough to draw a swatch, without the
+   * per-fixture overrides. A hundred full looks ride every state broadcast
+   * otherwise, and the buttons never needed them.
+   */
+  summaries() {
+    return this._cues.map((c) => ({
+      id: c.id,
+      name: c.name,
+      updatedAt: c.updatedAt,
+      pattern: c.look.pattern,
+      bpm: c.look.bpm,
+      colors: [c.look.colorA, c.look.colorB, c.look.colorC, c.look.colorD],
+      blackout: c.look.masterBlackout,
+    }));
+  }
+
+  get(id: string): Cue | null {
+    return this._cues.find((c) => c.id === id) || null;
+  }
+
+  /** Save a new cue. `look` defaults to what is on stage now. */
+  create({ name, look }: { name?: string; look?: unknown }): Cue {
+    if (this._cues.length >= MAX_CUES) {
+      throw new HttpError(400, `Cue stack is full (${MAX_CUES} cues)`);
+    }
+    const now = new Date().toISOString();
+    const cue: Cue = {
+      id: newId(),
+      name: name || `Cue ${this._cues.length + 1}`,
+      createdAt: now,
+      updatedAt: now,
+      look: lookSchema.parse(look || captureLook()),
+    };
+    this._cues.push(cue);
+    this._persist();
+    return cue;
+  }
+
+  /**
+   * Rename a cue, re-capture it over the live look, or both. With neither
+   * `recapture` nor `look`, the stored look is left alone — a rename must
+   * never quietly overwrite it with whatever happens to be on stage.
+   */
+  update(id: string, { name, look, recapture }: { name?: string; look?: unknown; recapture?: boolean }): Cue | null {
+    const cue = this.get(id);
+    if (!cue) return null;
+    if (name !== undefined) cue.name = name;
+    if (recapture) cue.look = lookSchema.parse(captureLook());
+    else if (look !== undefined) cue.look = lookSchema.parse(look);
+    cue.updatedAt = new Date().toISOString();
+    this._persist();
+    return cue;
+  }
+
+  /**
+   * Delete a cue and hand back what was removed, and from where.
+   *
+   * The caller needs both to offer an undo: re-creating a cue from its look
+   * alone would give it a new id and drop it at the end of the stack, which is
+   * not what "undo" means to someone who just deleted the wrong row.
+   *
+   * @returns {{cue, index}|null} null when the id is unknown.
+   */
+  remove(id: string): { cue: Cue; index: number } | null {
+    const index = this._cues.findIndex((c) => c.id === id);
+    if (index < 0) return null;
+    const [cue] = this._cues.splice(index, 1);
+    this._persist();
+    return { cue, index };
+  }
+
+  /**
+   * Put a removed cue back where it was, id intact.
+   *
+   * Idempotent on the id: pressing undo twice, or on a cue that has since been
+   * re-created, must not end up with two rows claiming the same id.
+   */
+  insert(cue: unknown, index?: number): Cue | null {
+    const parsed = cueSchema.parse(cue);
+    if (this.get(parsed.id)) return null;
+    if (this._cues.length >= MAX_CUES) {
+      throw new HttpError(400, `Cue stack is full (${MAX_CUES} cues)`);
+    }
+    const at = Math.max(0, Math.min(this._cues.length, Number.isInteger(index) ? index as number : this._cues.length));
+    this._cues.splice(at, 0, parsed);
+    this._persist();
+    return parsed;
+  }
+
+  /**
+   * Reorder the stack. Ids not in the list keep their relative order at the
+   * end, so a client working from a stale list cannot drop cues by omission.
+   */
+  reorder(ids: readonly string[]): Cue[] {
+    const byId = new Map(this._cues.map((c) => [c.id, c]));
+    const ordered: Cue[] = [];
+    for (const id of ids) {
+      const cue = byId.get(id);
+      if (cue && !ordered.includes(cue)) ordered.push(cue);
+    }
+    for (const cue of this._cues) if (!ordered.includes(cue)) ordered.push(cue);
+    this._cues = ordered;
+    this._persist();
+    return this._cues;
+  }
+
+  /** Put a stored cue on stage. Returns false when the id is unknown. */
+  recall(id: string): boolean {
+    const cue = this.get(id);
+    if (!cue) return false;
+    recallLook(cue.look);
+    return true;
+  }
+
+  // A failed write must not leave the process disagreeing with the file: a cue
+  // the operator thinks is saved and isn't would come back missing after a
+  // restart, mid-set.
+  _persist(): void {
+    try {
+      this.save();
+    } catch (err) {
+      console.warn(`[cues] could not save ${this.file}: ${messageOf(err)}`);
+      throw new HttpError(500, `Could not save cues: ${messageOf(err)}`);
+    }
+  }
+}
+
+// Fixed location for the same reason settings.json is: it is how you *find* the
+// cues, not itself a setting. Tests construct their own CueStore.
+const CUES_FILE = path.join(import.meta.dirname, '..', '..', 'config', 'cues.json');
+const cues = new CueStore(CUES_FILE).load();
+
+export {
+  cues,
+  CUES_FILE,
+  CueStore,
+  MAX_CUES,
+  lookSchema,
+  cueSchema,
+  cueWriteSchema,
+  cueRestoreSchema,
+  reorderSchema,
+  captureLook,
+  recallLook,
+};

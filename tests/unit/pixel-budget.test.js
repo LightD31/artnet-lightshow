@@ -1,19 +1,17 @@
-'use strict';
-
 // What a frame costs on the largest rig this is built for: sixty-four LED bars
 // of sixteen RGBW cells, 1,024 lights, rendered forty-four times a second.
 // The render loop has 22.7 ms per frame (frame-clock.js FRAME_MS); the
 // assertion is deliberately loose so a slow CI runner does not fail it, and
 // the numbers are printed so a regression shows up long before it would.
 
-const test = require('node:test');
-const assert = require('node:assert');
+import test from 'node:test';
+import assert from 'node:assert';
 
-const { state } = require('../../src/server/state');
-const { renderFrame, resizeFixtureBuffers } = require('../../src/server/engine');
-const { conductor } = require('../../src/server/conductor');
-const { applyPatch } = require('../../src/server/patch');
-const { registerProfile, unregisterProfile } = require('../../src/server/profiles');
+import { state } from '../../src/server/state.ts';
+import { renderFrame, resizeFixtureBuffers } from '../../src/server/engine.ts';
+import { conductor } from '../../src/server/conductor.ts';
+import { applyPatch } from '../../src/server/patch.ts';
+import { registerProfile, unregisterProfile } from '../../src/server/profiles.ts';
 
 const CELLS = 16;
 const BAR = {

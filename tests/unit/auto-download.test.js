@@ -1,16 +1,14 @@
-'use strict';
-
 // Downloads through a stand-in yt-dlp on PATH: what it is asked to do, and
 // that two downloads started together cannot land in the same file.
 
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
-const AutoShow = require('../../src/auto-show');
-const ytdlp = require('../../src/ytdlp');
+import AutoShow from '../../src/auto-show.ts';
+import * as ytdlp from '../../src/ytdlp.ts';
 
 // A yt-dlp that reports a given version, records its arguments, and writes
 // `<template>.wav` where -o asked for it — which is all the real one is asked

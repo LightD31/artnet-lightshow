@@ -1,5 +1,3 @@
-'use strict';
-
 // Hybrid takes the clock from the OS media session and the content from
 // Spotify. Almost all of its risk is in one question — is the session the OS is
 // reporting actually the track Spotify says is playing — so that is where most
@@ -7,11 +5,10 @@
 // plain Spotify: whenever the session cannot be trusted, the clock falls back
 // to exactly what the Spotify source would have done.
 
-const test = require('node:test');
-const assert = require('node:assert');
+import test from 'node:test';
+import assert from 'node:assert';
 
-const HybridSource = require('../../src/hybrid-source');
-const { tracksMatch, normalise, MISMATCH_GRACE } = HybridSource;
+import HybridSource, { tracksMatch, normalise, MISMATCH_GRACE } from '../../src/hybrid-source.ts';
 
 const SPOTIFY = {
   trackId: '4uLU6hMCjMI75M1A2tKUQC',

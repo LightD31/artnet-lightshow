@@ -1,13 +1,11 @@
-'use strict';
-
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 
 let timelineDetails;
 test.before(async () => {
-  const source = fs.readFileSync(path.join(__dirname, '../../public-src/timeline-state.js'), 'utf8');
+  const source = fs.readFileSync(path.join(import.meta.dirname, '../../public-src/timeline-state.js'), 'utf8');
   ({ timelineDetails } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`));
 });
 

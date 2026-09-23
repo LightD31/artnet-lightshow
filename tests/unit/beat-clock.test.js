@@ -1,18 +1,13 @@
-'use strict';
-
 // Musical time, as both the rig and the rehearsal preview count it. One
 // continuous beat position from the analysed grid, and every step and phase
 // derived from it — so nothing accumulates and nothing can drift.
 
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('node:fs');
-const path = require('node:path');
-const { FRAME_MS } = require('../../src/server/frame-clock');
-const {
-  makeGrid, gridFromAnalysis, beatPositionAt, trackMsAtBeat, localBpm,
-  anchorStep, stepAt, hitPhase, fadePhase, motionAdvance,
-} = require('../../src/shared/beat-clock');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'node:fs';
+import path from 'node:path';
+import { FRAME_MS } from '../../src/server/frame-clock.ts';
+import { makeGrid, gridFromAnalysis, beatPositionAt, trackMsAtBeat, localBpm, anchorStep, stepAt, hitPhase, fadePhase, motionAdvance } from '../../src/shared/beat-clock.ts';
 
 const close = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
 
@@ -107,7 +102,7 @@ test('motion is counted in beats: eight per crossing when still, two when drivin
 // of step lands in the first frame after its beat, and the count after four
 // minutes is exactly the number of beats — no drift, whatever the tempo does.
 test('stepping a real track lands every step on its beat, with no drift', () => {
-  const dir = path.join(__dirname, '..', 'fixtures', 'tracks');
+  const dir = path.join(import.meta.dirname, '..', 'fixtures', 'tracks');
   for (const file of fs.readdirSync(dir)) {
     const doc = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
     const grid = gridFromAnalysis(doc.analysis || doc);

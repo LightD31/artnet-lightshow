@@ -1,17 +1,15 @@
-'use strict';
-
 // `ribbon` crossfades slot A into slot B across the rig. A and B are opposites
 // by design, and averaging them per channel washed the middle of the rig out
 // to grey — on ten of the twenty-four coloured banks it kept under half the
 // saturation of either end. The blend now goes round the colour wheel.
 
-const test = require('node:test');
-const assert = require('node:assert');
+import test from 'node:test';
+import assert from 'node:assert';
 
-const { colourMixer, chromaOf } = require('../../src/shared/color');
-const { PATTERN_FUNCS } = require('../../src/shared/patterns');
-const { COLOR_PRESETS } = require('../../src/server/presets');
-const { TETRADS } = require('../../src/server/palettes');
+import { colourMixer, chromaOf } from '../../src/shared/color.ts';
+import { PATTERN_FUNCS } from '../../src/shared/patterns.ts';
+import { COLOR_PRESETS } from '../../src/server/presets.ts';
+import { TETRADS } from '../../src/server/palettes.ts';
 
 const P = Object.fromEntries(COLOR_PRESETS.map((c) => [c.name, c]));
 const KEYS = ['r', 'g', 'b', 'w', 'a', 'uv'];

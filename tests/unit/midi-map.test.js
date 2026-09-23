@@ -1,14 +1,10 @@
-'use strict';
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-
-const {
-  MidiMapStore, DEFAULT_MAP, ACTIONS, defaultTypeFor, sameControl, mapSchema,
-} = require('../../src/server/midi-map');
+import { MidiMapStore, DEFAULT_MAP, ACTIONS, defaultTypeFor, sameControl, mapSchema } from '../../src/server/midi-map.ts';
 
 let dir;
 let file;

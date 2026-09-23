@@ -1,9 +1,9 @@
-'use strict';
-
-const test = require('node:test');
-const assert = require('node:assert');
-const JSZip = require('jszip');
-const { parseGDTF } = require('../../src/gdtf');
+import test from 'node:test';
+import assert from 'node:assert';
+import JSZip from 'jszip';
+import { parseGDTF } from '../../src/gdtf.ts';
+import { inflateCapped } from '../../src/gdtf.ts';
+import { profileSchema, validate } from '../../src/server/validation.ts';
 
 function gdtf(xml) {
   const z = new JSZip();
@@ -57,7 +57,6 @@ test('refuses a zip bomb before decompressing it', async () => {
 // The declared size is the archive's own claim. The stream cap is what holds
 // when a crafted archive understates it.
 test('stops inflating at the limit whatever the archive declares', async () => {
-  const { inflateCapped } = require('../../src/gdtf');
   const zip = new JSZip();
   zip.file('description.xml', 'B'.repeat(4 * 1024 * 1024));
   const loaded = await JSZip.loadAsync(await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }));
@@ -96,7 +95,6 @@ test('a bar with a geometry per pixel imports as cells, in address order', async
   assert.deepStrictEqual([cell3.name, cell3.cell], ['Pixel 3 Red', 2]);
   assert.strictEqual(m.warnings, undefined);
   // And it is a profile the server accepts as it stands.
-  const { profileSchema, validate } = require('../../src/server/validation');
   validate(profileSchema, { id: 'acme-bar', name: 'Bar', ...m }, 'profile');
 });
 

@@ -1,13 +1,12 @@
-'use strict';
-
 // Quick check that the persistent worker actually warms up between requests.
 // Runs three analyses back-to-back through one AnalyzerWorker; the first one
 // pays import + JIT + (if installed) PANNs model load. Subsequent ones should
 // land much faster because everything stays resident in the Python process.
 
-const path = require('path');
-const fs = require('fs');
-const AnalyzerWorker = require('../src/analyzer-worker');
+import path from 'node:path';
+import fs from 'node:fs';
+import AnalyzerWorker from '../src/analyzer-worker.ts';
+import AutoShow from '../src/auto-show.ts';
 
 const WAV = process.argv[2] || 'C:\\Users\\Tom\\AppData\\Local\\Temp\\deezer-dl-1779732820391.wav';
 const DURATION = Number(process.argv[3]) || 238.0;
@@ -17,8 +16,8 @@ if (!fs.existsSync(WAV)) {
   process.exit(1);
 }
 
-const PYTHON_EXE = require('../src/auto-show').PYTHON_EXE;
-const SCRIPT = path.join(__dirname, '..', 'src', 'analyze.py');
+const PYTHON_EXE = AutoShow.PYTHON_EXE;
+const SCRIPT = path.join(import.meta.dirname, '..', 'src', 'analyze.py');
 
 (async () => {
   const t0 = Date.now();

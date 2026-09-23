@@ -1,15 +1,7 @@
-'use strict';
+import test from 'node:test';
+import assert from 'node:assert';
 
-const test = require('node:test');
-const assert = require('node:assert');
-
-const {
-  PACKET_SIZE,
-  buildE131Packet,
-  multicastAddress,
-  cidFromUuid,
-  generateCid,
-} = require('../../src/server/sacn');
+import { PACKET_SIZE, buildE131Packet, multicastAddress, cidFromUuid, generateCid } from '../../src/server/sacn.ts';
 
 const CID = cidFromUuid('7b2d4c1e-9f30-4a55-8c11-a0b3d5e7f902');
 
@@ -101,9 +93,7 @@ test('CIDs come from UUIDs, and junk is rejected rather than half-parsed', () =>
 
 // ── Stream termination and universe discovery ──────────────────────────────
 
-const {
-  buildDiscoveryPackets, sendSacn, OPTION_STREAM_TERMINATED, TERMINATION_PACKETS, DISCOVERY_UNIVERSE, PORT,
-} = require('../../src/server/sacn');
+import { buildDiscoveryPackets, sendSacn, OPTION_STREAM_TERMINATED, TERMINATION_PACKETS, DISCOVERY_UNIVERSE, PORT } from '../../src/server/sacn.ts';
 
 test('a terminated packet sets options bit 6 and nothing else', () => {
   assert.strictEqual(build({ terminated: true })[112], OPTION_STREAM_TERMINATED);
@@ -141,7 +131,6 @@ test('more than 512 universes go out as pages', () => {
 });
 
 test('a terminated stream is the frame, then three stream-terminated packets', async (t) => {
-  const dgram = require('node:dgram');
   const socket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
   const got = [];
   socket.on('message', (msg) => got.push({ options: msg[112], sequence: msg[111], universe: msg.readUInt16BE(113) }));
@@ -168,7 +157,8 @@ test('a terminated stream is the frame, then three stream-terminated packets', a
 
 // ── The transmitter ends streams and announces them ─────────────────────────
 
-const { createTransmitter } = require('../../src/server/transmit');
+import { createTransmitter } from '../../src/server/transmit.ts';
+import dgram from 'node:dgram';
 
 function sacnRecorder(clock) {
   const log = [];

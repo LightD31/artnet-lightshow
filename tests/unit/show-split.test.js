@@ -1,19 +1,17 @@
-'use strict';
-
 // Split looks: in a driving passage on a travelling pattern, one fixture group
 // holds a wash in colour B while the rest carry the pattern. The director asks
 // for the split; the engine decides which group from the rig it has.
 
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'node:fs';
+import path from 'node:path';
 
-const { ShowDirector } = require('../../src/show/director');
-const { renderIntents } = require('../../src/show/render');
-const { COLOR_PRESETS, PATTERNS } = require('../../src/server/presets');
+import { ShowDirector } from '../../src/show/director.ts';
+import { renderIntents } from '../../src/show/render.ts';
+import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.ts';
 
-const TRACKS = path.join(__dirname, '..', 'fixtures', 'tracks');
+const TRACKS = path.join(import.meta.dirname, '..', 'fixtures', 'tracks');
 const tracks = fs.readdirSync(TRACKS).filter((f) => f.endsWith('.json'))
   .map((f) => JSON.parse(fs.readFileSync(path.join(TRACKS, f), 'utf8')));
 

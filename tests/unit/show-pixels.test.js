@@ -1,23 +1,21 @@
-'use strict';
-
 // The auto show on a rig with LED bars: it reaches for the pictures drawn
 // across cells, and says how each scene lays them over the bars. On a rig of
 // pars it plans exactly as before (pars-golden.test.js pins that byte for
 // byte); these pin what changes when there are bars.
 
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('node:fs');
-const path = require('node:path');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'node:fs';
+import path from 'node:path';
 
-const AutoShow = require('../../src/auto-show');
-const { COLOR_PRESETS, PATTERNS } = require('../../src/server/presets');
-const { patchSchema } = require('../../src/server/validation');
-const { PIXEL_MAPS } = require('../../src/shared/rig');
+import AutoShow from '../../src/auto-show.ts';
+import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.ts';
+import { patchSchema } from '../../src/server/validation.ts';
+import { PIXEL_MAPS } from '../../src/shared/rig.ts';
 
 const PIXEL_IDS = new Set(PATTERNS.filter((p) => p.pixel).map((p) => p.id));
 const RESTING = new Set(['ribbon', 'fade', 'wave', 'solid', 'gradient', 'plasma']);
-const TRACKS = path.join(__dirname, '..', 'fixtures', 'tracks');
+const TRACKS = path.join(import.meta.dirname, '..', 'fixtures', 'tracks');
 
 function plan(file, { pixels, intensity = 60 }) {
   const doc = JSON.parse(fs.readFileSync(path.join(TRACKS, file), 'utf8'));

@@ -1,15 +1,13 @@
-'use strict';
-
 // The tempo read-out and the badge beside it, as the browser shows them.
 
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 
 let utils;
 test.before(async () => {
-  const source = fs.readFileSync(path.join(__dirname, '../../public-src/utils.js'), 'utf8');
+  const source = fs.readFileSync(path.join(import.meta.dirname, '../../public-src/utils.js'), 'utf8');
   utils = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 });
 

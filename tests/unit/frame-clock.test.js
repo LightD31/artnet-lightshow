@@ -1,11 +1,7 @@
-'use strict';
+import test from 'node:test';
+import assert from 'node:assert';
 
-const test = require('node:test');
-const assert = require('node:assert');
-
-const {
-  FRAME_MS, FRAME_RATE, MAX_BEHIND_FRAMES, nextIndex, FrameStats, createTicker,
-} = require('../../src/server/frame-clock');
+import { FRAME_MS, FRAME_RATE, MAX_BEHIND_FRAMES, nextIndex, FrameStats, createTicker } from '../../src/server/frame-clock.ts';
 
 test('the frame grid runs at forty-four frames a second', () => {
   assert.strictEqual(FRAME_RATE, 44);
@@ -27,10 +23,10 @@ test('nextIndex finds the first deadline at or after a time', () => {
 function drive({ firings, lateBy = () => 0, phaseMs = 0, periodMs = 10 }) {
   let t = 1000;
   const pending = [];
-  const realSetTimeout = global.setTimeout;
-  const realClearTimeout = global.clearTimeout;
-  global.setTimeout = (fn, delay) => { const h = { fn, at: t + delay }; pending.push(h); return h; };
-  global.clearTimeout = (h) => { const i = pending.indexOf(h); if (i >= 0) pending.splice(i, 1); };
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  globalThis.setTimeout = (fn, delay) => { const h = { fn, at: t + delay }; pending.push(h); return h; };
+  globalThis.clearTimeout = (h) => { const i = pending.indexOf(h); if (i >= 0) pending.splice(i, 1); };
   const ticks = [];
   let ticker;
   try {
@@ -43,8 +39,8 @@ function drive({ firings, lateBy = () => 0, phaseMs = 0, periodMs = 10 }) {
     }
     ticker.stop();
   } finally {
-    global.setTimeout = realSetTimeout;
-    global.clearTimeout = realClearTimeout;
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.clearTimeout = realClearTimeout;
   }
   return { ticks, stats: ticker.stats };
 }

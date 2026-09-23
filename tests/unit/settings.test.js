@@ -1,12 +1,11 @@
-'use strict';
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-
-const { SettingsStore, DEFAULTS, warnAboutLegacyEnv } = require('../../src/server/settings');
+import { SettingsStore, DEFAULTS, warnAboutLegacyEnv } from '../../src/server/settings.ts';
+import { schema, patchSchema } from '../../src/server/settings.ts';
 
 let counter = 0;
 function store() {
@@ -176,7 +175,6 @@ test('the Hue application id round-trips and is not redacted', () => {
 });
 
 test('the Hue pars delay defaults to off and refuses a value in the wrong unit', () => {
-  const { schema } = require('../../src/server/settings');
   assert.strictEqual(DEFAULTS.hue.latencyMs, 0, 'nothing is delayed until someone tunes it');
   const hue = (latencyMs) => schema.safeParse({ ...DEFAULTS, hue: { ...DEFAULTS.hue, latencyMs } }).success;
   assert.ok(hue(60));
@@ -185,7 +183,6 @@ test('the Hue pars delay defaults to off and refuses a value in the wrong unit',
 });
 
 test('the separator defaults to Demucs and takes only the two it knows', () => {
-  const { schema } = require('../../src/server/settings');
   assert.strictEqual(DEFAULTS.analysis.separator, 'demucs', 'the one that keeps up with a live set');
   const sep = (separator) => schema.safeParse({ ...DEFAULTS, analysis: { ...DEFAULTS.analysis, separator } }).success;
   assert.ok(sep('bs-roformer'));
@@ -195,7 +192,6 @@ test('the separator defaults to Demucs and takes only the two it knows', () => {
 
 // Whatever pythonPath names is executed, so it has to be named like a Python.
 test('pythonPath only accepts a Python interpreter', () => {
-  const { patchSchema } = require('../../src/server/settings');
   const ok = (v) => patchSchema.safeParse({ analysis: { pythonPath: v } }).success;
   for (const v of ['', 'python', 'py', '/usr/bin/python3', '/opt/bin/python3.12',
     'C:\\Users\\me\\miniconda3\\python.exe', 'pythonw.exe']) {

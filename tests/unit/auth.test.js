@@ -1,8 +1,8 @@
-'use strict';
-
-const test = require('node:test');
-const assert = require('node:assert');
-const { createAuth, configError, isLoopbackHost, originAllowed, safeEqual } = require('../../src/server/auth');
+import test from 'node:test';
+import assert from 'node:assert';
+import { createAuth, configError, isLoopbackHost, originAllowed, safeEqual } from '../../src/server/auth.ts';
+import os from 'node:os';
+import { hostAllowed } from '../../src/server/auth.ts';
 
 test('loopback hosts are recognised', () => {
   for (const h of ['127.0.0.1', 'localhost', '::1', 'LOCALHOST']) {
@@ -110,8 +110,6 @@ test('a refused handshake says why, and says it in a way the client can read', a
 // DNS rebinding: a page re-points its own domain at 127.0.0.1, so its requests
 // arrive with Origin and Host that agree. Only the host name gives it away.
 test('host check refuses names this machine is not known by', () => {
-  const os = require('os');
-  const { hostAllowed } = require('../../src/server/auth');
   const own = os.hostname().toLowerCase();
 
   for (const host of ['127.0.0.1:3000', '192.168.1.20:3000', '[::1]:3000', 'localhost:3000',

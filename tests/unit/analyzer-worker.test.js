@@ -1,11 +1,10 @@
-'use strict';
+import test from 'node:test';
+import assert from 'node:assert';
+import path from 'node:path';
+import AnalyzerWorker from '../../src/analyzer-worker.ts';
+import { settings } from '../../src/server/settings.ts';
 
-const test = require('node:test');
-const assert = require('node:assert');
-const path = require('node:path');
-const AnalyzerWorker = require('../../src/analyzer-worker');
-
-const FAKE = path.join(__dirname, '..', 'helpers', 'fake-analyzer.js');
+const FAKE = path.join(import.meta.dirname, '..', 'helpers', 'fake-analyzer.js');
 const worker = (mode, opts) => {
   process.env.FAKE_MODE = mode;
   return new AnalyzerWorker(process.execPath, FAKE, opts);
@@ -199,7 +198,6 @@ test('a worker that asks to be recycled is replaced before the next request', as
 // The settings page's Separator reaches Python as ARTNET_USE_BS_ROFORMER,
 // read when the worker starts.
 test('the worker is started with the separator the settings page chose', async () => {
-  const { settings } = require('../../src/server/settings');
   const original = settings._values.analysis.separator;
   try {
     for (const [separator, flag] of [['demucs', '0'], ['bs-roformer', '1']]) {

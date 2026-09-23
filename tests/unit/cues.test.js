@@ -1,15 +1,15 @@
-'use strict';
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-
-const { CueStore, captureLook, recallLook, MAX_CUES } = require('../../src/server/cues');
-const { state } = require('../../src/server/state');
-const { applyPatch, applyOverride } = require('../../src/server/patch');
-const { stopEngine } = require('../../src/server/engine');
+import { CueStore, captureLook, recallLook, MAX_CUES } from '../../src/server/cues.ts';
+import { state } from '../../src/server/state.ts';
+import { applyPatch, applyOverride } from '../../src/server/patch.ts';
+import { stopEngine } from '../../src/server/engine.ts';
+import { conductor } from '../../src/server/conductor.ts';
+import { makeGrid } from '../../src/shared/beat-clock.ts';
 
 let dir;
 let file;
@@ -240,8 +240,6 @@ test('a look holds no patch data', () => {
 // A cue saved in a quiet moment at 90 BPM must not drag a set that is locked
 // to a 128 BPM song down to 90 — or take the clock off the song at all.
 test('while the clock follows a song, recall keeps the song\'s tempo', () => {
-  const { conductor } = require('../../src/server/conductor');
-  const { makeGrid } = require('../../src/shared/beat-clock');
   applyPatch({ pattern: 'rainbow', bpm: 90 });
   const saved = captureLook();
 

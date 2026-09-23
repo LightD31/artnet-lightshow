@@ -12,6 +12,7 @@ import unittest
 
 import synth
 from support import AudioTestCase, analyse_track, needs_audio
+from analysis import schema
 
 
 # Field names the web client, the timeline view and the on-disk cache all read.
@@ -37,6 +38,11 @@ class Document(AudioTestCase):
         in wherever a comparison result reaches a dict. The failure mode is the
         worker returning an error for a track it analysed perfectly."""
         json.dumps(self.doc, allow_nan=False)
+
+    def test_it_matches_the_document_schema(self):
+        """The schema the show engine's types are generated from. A field
+        renamed here and not there fails now, not on stage."""
+        self.assertEqual(schema.errors(self.doc), [])
 
     def test_every_field_the_client_reads_is_still_there(self):
         for field in COMPATIBILITY_FIELDS:
@@ -116,12 +122,14 @@ class Degenerate(AudioTestCase):
     def test_silence(self):
         doc = analyse_track(synth.silence(6.0), 'silence-doc')
         json.dumps(doc, allow_nan=False)
+        self.assertEqual(schema.errors(doc), [])
         self.assertEqual(doc['drops'], [])
         self.assertLess(doc['mood']['arousal'], 0.4)
 
     def test_white_noise(self):
         doc = analyse_track(synth.noise(8.0), 'noise-doc')
         json.dumps(doc, allow_nan=False)
+        self.assertEqual(schema.errors(doc), [])
         for field in COMPATIBILITY_FIELDS:
             self.assertIn(field, doc)
 

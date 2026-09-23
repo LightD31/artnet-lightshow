@@ -21,6 +21,11 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # The server is TypeScript run by Node's type stripping, which checks
+      # nothing — this is where the types are checked.
+      - name: Typecheck
+        run: npm run typecheck
+
       - name: Test
         run: npm test
 

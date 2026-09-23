@@ -1,16 +1,15 @@
-'use strict';
-
 // The director is where the show gets its judgement, so these tests are about
 // judgement rather than about output format: does it rest where a designer
 // would rest, does it stay inside its budget, does a returning chorus look like
 // the chorus. The rendering tests next door cover the format.
 
-const test = require('node:test');
-const assert = require('node:assert');
+import test from 'node:test';
+import assert from 'node:assert';
 
-const { ShowDirector, ROLE_PROFILE, ACCENT_BUDGET } = require('../../src/show/director');
-const { INTENT, BURST, PRIORITY, accent } = require('../../src/show/intents');
-const { COLOR_PRESETS, PATTERNS } = require('../../src/server/presets');
+import { ShowDirector, ROLE_PROFILE, ACCENT_BUDGET } from '../../src/show/director.ts';
+import { INTENT, BURST, PRIORITY, accent } from '../../src/show/intents.ts';
+import { deriveEvents } from '../../src/show/musical-events.ts';
+import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.ts';
 
 const BPM = 128;
 const BEAT = 60 / BPM;
@@ -345,7 +344,7 @@ test('silence in the track goes dark', () => {
     events: null,
     segments: analysis().segments,
   });
-  a.events = require('../../src/show/musical-events').deriveEvents(a).concat([
+  a.events = deriveEvents(a).concat([
     { t: 30, type: 'SILENCE', confidence: 0.9, intensity: 0, duration: 2,
       effect: 'blackout', data: { end: 32 } },
   ]);
@@ -361,7 +360,7 @@ test('silence in the track goes dark', () => {
 // envelopes, the loudness profile and the subgenre distribution instead of of a
 // percentile level string.
 
-const { EXPRESSION_STEP_SEC, measureBuildup, strideFor } = require('../../src/show/director');
+import { EXPRESSION_STEP_SEC, measureBuildup, strideFor } from '../../src/show/director.ts';
 
 /** The dance fixture, plus everything the current analyser also emits. */
 function measured(over = {}) {
@@ -512,7 +511,7 @@ test('a silence closes the light without changing the colour under it', () => {
   // Patching the colour to blackout as well would leave the rig on the blackout
   // colour when the music came back, until some later scene restored it.
   const a = measured();
-  a.events = require('../../src/show/musical-events').deriveEvents(a).concat([
+  a.events = deriveEvents(a).concat([
     { t: 30, type: 'SILENCE', confidence: 0.9, intensity: 0, duration: 0.4,
       effect: 'blackout', data: { end: 30.4 } },
   ]);
@@ -526,7 +525,7 @@ test('a silence closes the light without changing the colour under it', () => {
 
 test('a drop detected inside a silence does not fire', () => {
   const a = measured();
-  a.events = require('../../src/show/musical-events').deriveEvents(a).concat([
+  a.events = deriveEvents(a).concat([
     { t: 30, type: 'SILENCE', confidence: 0.9, intensity: 0, duration: 2,
       effect: 'blackout', data: { end: 32 } },
     { t: 30.5, type: 'DROP', confidence: 0.95, intensity: 1, duration: 0,

@@ -1,8 +1,6 @@
-'use strict';
-
-// Flat config. Three source shapes live in this repo and they do not share a
-// module system or set of globals, so each gets its own block:
-//   - the Node server (CommonJS)
+// Flat config. Four source shapes live in this repo and they do not share a
+// module system, a syntax or a set of globals, so each gets its own block:
+//   - the Node server (TypeScript, and the ES-module JavaScript around it)
 //   - the browser client (public-src, ESM + JSX; public/, classic scripts)
 //   - the Companion module (ESM, its own package)
 //
@@ -10,12 +8,11 @@
 // bindings, accidental globals, unreachable code — without turning a working
 // project into a lint backlog.
 
-const js = require('@eslint/js');
+import js from '@eslint/js';
+import tseslint from 'typescript-eslint';
 
 const NODE_GLOBALS = {
-  require: 'readonly', module: 'writable', exports: 'writable',
   process: 'readonly', console: 'readonly', Buffer: 'readonly',
-  __dirname: 'readonly', __filename: 'readonly',
   setTimeout: 'readonly', clearTimeout: 'readonly',
   setInterval: 'readonly', clearInterval: 'readonly', setImmediate: 'readonly',
   URL: 'readonly', URLSearchParams: 'readonly', TextEncoder: 'readonly',
@@ -53,7 +50,7 @@ const COMMON_RULES = {
   'prefer-const': ['error', { destructuring: 'all' }],
 };
 
-module.exports = [
+export default [
   {
     ignores: [
       'node_modules/**',
@@ -65,15 +62,38 @@ module.exports = [
     ],
   },
 
-  // ── Node server (CommonJS) ────────────────────────────────────────────────
+  // ── Node server (ES modules) ──────────────────────────────────────────────
   {
-    files: ['server.js', 'src/**/*.js', 'scripts/**/*.js', 'tests/**/*.js'],
+    files: ['server.js', 'eslint.config.js', 'src/**/*.js', 'scripts/**/*.js', 'tests/**/*.js'],
     languageOptions: {
-      ecmaVersion: 2023,
-      sourceType: 'commonjs',
+      ecmaVersion: 2024,
+      sourceType: 'module',
       globals: NODE_GLOBALS,
     },
     rules: { ...js.configs.recommended.rules, ...COMMON_RULES },
+  },
+
+  // ── Node server, TypeScript ───────────────────────────────────────────────
+  // Parsed by typescript-eslint; the same small rule set, less the two rules
+  // the type checker already enforces better (undefined names, and unused
+  // bindings, which have a TypeScript-aware twin that knows about types).
+  {
+    files: ['src/**/*.ts', 'scripts/**/*.ts'],
+    languageOptions: {
+      parser: tseslint.parser,
+      ecmaVersion: 2024,
+      sourceType: 'module',
+      globals: NODE_GLOBALS,
+    },
+    plugins: { '@typescript-eslint': tseslint.plugin },
+    rules: {
+      ...js.configs.recommended.rules,
+      ...COMMON_RULES,
+      'no-undef': 'off',
+      'no-redeclare': 'off',
+      'no-unused-vars': 'off',
+      '@typescript-eslint/no-unused-vars': COMMON_RULES['no-unused-vars'],
+    },
   },
 
   // ── Browser client bundled by esbuild (ESM + JSX) ─────────────────────────
@@ -100,7 +120,7 @@ module.exports = [
       // The bundle runs in a browser, so anything it pulls out of src/ has to
       // be free of server state, transports and Node built-ins. src/shared/ is
       // the half that promises that; src/server/ and src/show/ do not, and one
-      // `require('./state')` added to a file down there would break the client
+      // `import './state.js'` added to a file down there would break the client
       // build with nothing to say why. Move the pure part of a module into
       // src/shared/ rather than widening this rule.
       'no-restricted-imports': ['error', {

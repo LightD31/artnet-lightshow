@@ -1,12 +1,10 @@
-'use strict';
-
 // A throw inside a timer used to end the process, leaving every fixture
 // latched on its last frame. The guard contains it and reports it — once per
 // interval, not forty times a second.
 
-const test = require('node:test');
-const assert = require('node:assert');
-const { guarded, report } = require('../../src/server/guard');
+import test from 'node:test';
+import assert from 'node:assert';
+import { guarded, report } from '../../src/server/guard.ts';
 
 function captureErrors(fn) {
   const lines = [];

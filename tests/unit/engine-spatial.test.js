@@ -1,18 +1,16 @@
-'use strict';
-
 // The live engine routes pattern slots through the stage layout: a chase on a
 // rig patched right-to-left still travels left to right across the room.
 
-const test = require('node:test');
-const assert = require('node:assert');
+import test from 'node:test';
+import assert from 'node:assert';
 
-const { state } = require('../../src/server/state');
-const universes = require('../../src/server/universes');
-const { getProfile } = require('../../src/server/profiles');
-const { startEngine, stopEngine } = require('../../src/server/engine');
-const { conductor } = require('../../src/server/conductor');
-const { applyPatch } = require('../../src/server/patch');
-const { spatialLayout } = require('../../src/shared/stage');
+import { state } from '../../src/server/state.ts';
+import * as universes from '../../src/server/universes.ts';
+import { getProfile } from '../../src/server/profiles.ts';
+import { startEngine, stopEngine } from '../../src/server/engine.ts';
+import { conductor } from '../../src/server/conductor.ts';
+import { applyPatch } from '../../src/server/patch.ts';
+import { spatialLayout } from '../../src/shared/stage.ts';
 
 const frames = (n = 3) => new Promise((r) => setTimeout(r, 25 * n + 20));
 

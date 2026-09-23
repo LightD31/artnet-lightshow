@@ -1,9 +1,7 @@
-'use strict';
+import test from 'node:test';
+import assert from 'node:assert';
 
-const test = require('node:test');
-const assert = require('node:assert');
-
-const hue = require('../../src/server/hue');
+import * as hue from '../../src/server/hue.ts';
 const { nameChannel } = hue;
 
 // ── Packet layout ───────────────────────────────────────────────────────────

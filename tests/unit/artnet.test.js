@@ -1,8 +1,6 @@
-'use strict';
-
-const test = require('node:test');
-const assert = require('node:assert');
-const { buildArtDmxPacket, buildArtSync } = require('../../src/server/artnet');
+import test from 'node:test';
+import assert from 'node:assert';
+import { buildArtDmxPacket, buildArtSync } from '../../src/server/artnet.ts';
 
 test('Art-Net packet header is well formed', () => {
   const dmx = Buffer.alloc(512);

@@ -1,5 +1,3 @@
-'use strict';
-
 // The generated timeline is fired from a timer, and applyPatch throws on a
 // value the schema rejects. So an out-of-range number in here is not a bad
 // look — it is an uncaught exception that ends the process mid-set, leaving the
@@ -12,12 +10,12 @@
 // Rather than pin the one line that was wrong, these tests push every patch the
 // builder can emit through the real schema, across the whole intensity range.
 
-const test = require('node:test');
-const assert = require('node:assert');
+import test from 'node:test';
+import assert from 'node:assert';
 
-const AutoShow = require('../../src/auto-show');
-const { COLOR_PRESETS, PATTERNS } = require('../../src/server/presets');
-const { patchSchema } = require('../../src/server/validation');
+import AutoShow from '../../src/auto-show.ts';
+import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.ts';
+import { patchSchema } from '../../src/server/validation.ts';
 
 /**
  * An analysis that exercises the paths that emit numbers: a buildup (tension /

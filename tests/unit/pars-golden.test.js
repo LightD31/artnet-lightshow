@@ -1,5 +1,3 @@
-'use strict';
-
 // What a rig of pars puts out, pinned byte for byte.
 //
 // Pixel support rebuilds the pattern layer, the rehearsal preview and parts of
@@ -12,20 +10,20 @@
 // monotonic clock, the musical clock (a fake master deck), and the dice the
 // random patterns roll.
 
-const test = require('node:test');
-const assert = require('node:assert');
-const crypto = require('node:crypto');
-const fs = require('node:fs');
-const path = require('node:path');
+import test from 'node:test';
+import assert from 'node:assert';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
-const { state } = require('../../src/server/state');
-const universes = require('../../src/server/universes');
-const { renderFrame, resizeFixtureBuffers } = require('../../src/server/engine');
-const { conductor } = require('../../src/server/conductor');
-const { applyPatch, applyOverride, setFixtureMaxBrightness } = require('../../src/server/patch');
-const { PATTERNS, COLOR_PRESETS } = require('../../src/server/presets');
-const { createPreviewSampler } = require('../../src/shared/preview');
-const AutoShow = require('../../src/auto-show');
+import { state } from '../../src/server/state.ts';
+import * as universes from '../../src/server/universes.ts';
+import { renderFrame, resizeFixtureBuffers } from '../../src/server/engine.ts';
+import { conductor } from '../../src/server/conductor.ts';
+import { applyPatch, applyOverride, setFixtureMaxBrightness } from '../../src/server/patch.ts';
+import { PATTERNS, COLOR_PRESETS } from '../../src/server/presets.ts';
+import { createPreviewSampler } from '../../src/shared/preview.ts';
+import AutoShow from '../../src/auto-show.ts';
 
 // The engine hash changed once, on purpose: the built-in par's dimmer is
 // 16-bit, and its fine channel used to be written 0. It now carries the low
@@ -199,7 +197,7 @@ function previewHash() {
 
 function directorHash() {
   const hash = crypto.createHash('sha256');
-  const dir = path.join(__dirname, '..', 'fixtures', 'tracks');
+  const dir = path.join(import.meta.dirname, '..', 'fixtures', 'tracks');
   for (const file of fs.readdirSync(dir).sort()) {
     const doc = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
     for (const intensity of [25, 50, 90]) {

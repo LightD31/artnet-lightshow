@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'preact/hooks';
 import { stateSig, dmxSig, emitOverride, emitFixture } from '../state.js';
 import { fixtureOutputColor, fixtureCellColors } from '../utils.js';
-import { FIXTURE_GROUPS } from '../../src/shared/stage.js';
+import { FIXTURE_GROUPS } from '../../src/shared/stage.ts';
 
 const GROUP_LABELS = { front: 'Front', back: 'Back', room: 'Room', floor: 'Floor' };
 

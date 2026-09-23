@@ -1,10 +1,6 @@
-'use strict';
-
-const test = require('node:test');
-const assert = require('node:assert');
-const {
-  getClientState, getLiveState, getCatalogs, getDmxSnapshot, universeOf, state,
-} = require('../../src/server/state');
+import test from 'node:test';
+import assert from 'node:assert';
+import { getClientState, getLiveState, getCatalogs, getDmxSnapshot, universeOf, state } from '../../src/server/state.ts';
 
 const STATIC = ['colorPresets', 'patterns', 'energyEffects', 'strobeFunctions', 'palettes',
   'syncOffsetLimitMs', 'builtinProfileIds'];

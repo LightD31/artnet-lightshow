@@ -1,16 +1,14 @@
-'use strict';
-
 // The look vocabulary decides what a track looks like before any timeline
 // exists, so these tests are about that judgement on its own: how much of the
 // rig a track earns, which colours it gets, how many of them, and which of the
 // five bursts a moment deserves.
 
-const test = require('node:test');
-const assert = require('node:assert/strict');
+import test from 'node:test';
+import assert from 'node:assert/strict';
 
-const look = require('../../src/show/look');
-const { makeScore } = require('../../src/show/score');
-const { COLOR_PRESETS, PATTERNS } = require('../../src/server/presets');
+import * as look from '../../src/show/look.ts';
+import { makeScore } from '../../src/show/score.ts';
+import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.ts';
 
 const AVAILABLE = new Set(PATTERNS.map((p) => p.id));
 const LOUD = { valence: 0.6, arousal: 0.88, danceability: 0.85, kickiness: 0.8 };

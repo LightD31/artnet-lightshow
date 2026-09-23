@@ -1,0 +1,283 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/LightD31/artnet-lightshow/src/analysis/document.schema.json",
+  "title": "AnalysisDocument",
+  "description": "What the analyser says about a track: its beat grid, its sections, its dynamics and its event stream. Written by src/analysis/pipeline.py, read by the show engine. The TypeScript types in src/types/analysis.ts are generated from this file (npm run gen:analysis-types); src/analysis/schema.py validates the pipeline's output against it. Only the fields every 2.x document carries are required at the top level: cached documents are replayed across minor versions, and a field added since is simply absent from the older ones.",
+  "type": "object",
+  "required": ["schemaVersion", "track", "duration", "bpm", "beats", "downbeats", "segments", "events"],
+  "properties": {
+    "schemaVersion": { "type": "string", "description": "major.minor; see src/analysis/version.py." },
+    "track": { "$ref": "#/$defs/Track" },
+
+    "duration": { "type": "number", "description": "Seconds." },
+    "bpm": { "type": "number", "description": "The track's tempo, to a tenth." },
+    "tempoCurve": { "type": "array", "items": { "$ref": "#/$defs/CurvePoint" }, "description": "Local tempo every two seconds." },
+    "tempoStability": { "type": "number", "description": "0..1: how steady the tempo is." },
+    "beatSource": { "type": "string", "description": "Which tracker found the beats." },
+    "beats": { "type": "array", "items": { "type": "number" }, "description": "Beat times, seconds." },
+    "beatStrengths": { "type": "array", "items": { "type": "number" } },
+    "downbeats": { "type": "array", "items": { "type": "number" }, "description": "Bar-start times, seconds." },
+    "meter": { "type": "integer", "description": "Beats per bar." },
+    "downbeatConfidence": { "type": "number" },
+    "key": { "type": ["string", "null"] },
+    "scale": { "type": ["string", "null"] },
+    "keyStrength": { "type": "number" },
+    "mood": { "$ref": "#/$defs/Mood" },
+    "genre": { "$ref": "#/$defs/Genre" },
+    "segments": { "type": "array", "items": { "$ref": "#/$defs/Section" }, "description": "The track's sections, in order." },
+    "onsets": { "type": "array", "items": { "type": "number" } },
+    "kickOnsets": { "type": "array", "items": { "type": "number" } },
+    "drops": { "type": "array", "items": { "$ref": "#/$defs/Drop" } },
+    "buildups": { "type": "array", "items": { "$ref": "#/$defs/Span" } },
+    "energyCurve": { "type": "array", "items": { "$ref": "#/$defs/CurvePoint" } },
+    "bassCurve": { "type": "array", "items": { "$ref": "#/$defs/CurvePoint" } },
+    "kickCurve": { "type": "array", "items": { "$ref": "#/$defs/CurvePoint" } },
+    "highCurve": { "type": "array", "items": { "$ref": "#/$defs/CurvePoint" } },
+
+    "loudness": { "$ref": "#/$defs/Loudness" },
+    "stereo": { "$ref": "#/$defs/Stereo" },
+    "rhythm": { "$ref": "#/$defs/Rhythm" },
+    "bands": { "type": "object", "additionalProperties": { "$ref": "#/$defs/Band" }, "description": "Per frequency band, by name (sub, bass, low-mid, mid, high-mid, high, air)." },
+    "instruments": { "$ref": "#/$defs/Instruments" },
+    "sources": {
+      "type": ["object", "null"],
+      "additionalProperties": { "type": "number" },
+      "description": "Share of total energy per separated stem, or null when nothing was separated."
+    },
+    "structure": { "$ref": "#/$defs/Structure" },
+    "dynamics": { "$ref": "#/$defs/Dynamics" },
+    "perception": { "$ref": "#/$defs/Perception" },
+    "features": { "type": "object", "additionalProperties": { "$ref": "#/$defs/FeatureStat" } },
+    "events": { "type": "array", "items": { "$ref": "#/$defs/MusicalEvent" }, "description": "The event stream, in time order." },
+    "embeddings": { "type": "array", "items": { "$ref": "#/$defs/Embedding" }, "description": "MuQ windows; empty when the model is not installed." },
+    "semantic_scores": { "type": "array", "items": { "$ref": "#/$defs/LabelScore" }, "description": "MuQ-MuLan similarity to the mood vocabulary." },
+    "meta": { "$ref": "#/$defs/Meta" }
+  },
+  "$defs": {
+    "Track": {
+      "type": "object",
+      "required": ["hash", "duration"],
+      "properties": {
+        "hash": { "type": "string" },
+        "duration": { "type": "number" },
+        "bpm": { "type": "number" },
+        "key": { "type": ["string", "null"] },
+        "mode": { "type": ["string", "null"] }
+      }
+    },
+    "CurvePoint": {
+      "type": "object",
+      "required": ["t", "v"],
+      "properties": {
+        "t": { "type": "number", "description": "Seconds." },
+        "v": { "type": "number" }
+      }
+    },
+    "Mood": {
+      "type": "object",
+      "required": ["valence", "arousal", "danceability", "kickiness", "tension"],
+      "properties": {
+        "valence": { "type": "number" },
+        "arousal": { "type": "number" },
+        "danceability": { "type": "number" },
+        "kickiness": { "type": "number" },
+        "tension": { "type": "number" }
+      }
+    },
+    "Genre": {
+      "type": "object",
+      "required": ["label", "confidence"],
+      "properties": {
+        "label": { "type": "string" },
+        "confidence": { "type": "number" },
+        "labelConf": { "type": "number", "description": "The same as confidence; the name older clients read." },
+        "style": { "type": "string" },
+        "source": { "type": "string", "description": "muq-mulan, panns or signal." },
+        "subScores": { "type": "object", "additionalProperties": { "type": "number" } },
+        "topTags": { "type": "array", "items": {} }
+      }
+    },
+    "Section": {
+      "type": "object",
+      "required": ["start", "end", "label", "role", "energy", "level"],
+      "properties": {
+        "start": { "type": "number" },
+        "end": { "type": "number" },
+        "label": { "type": "string" },
+        "role": { "type": "string" },
+        "energy": { "type": "number" },
+        "brightness": { "type": "number" },
+        "bass": { "type": "number" },
+        "rhythmic": { "type": "number" },
+        "vocal": { "type": "number" },
+        "level": { "enum": ["low", "mid", "high"] },
+        "confidence": { "type": "number" }
+      }
+    },
+    "Drop": {
+      "type": "object",
+      "required": ["t", "confidence"],
+      "properties": {
+        "t": { "type": "number" },
+        "confidence": { "type": "number" },
+        "rise": { "type": "number" },
+        "breakdownScore": { "type": "number" },
+        "sustainScore": { "type": "number" },
+        "snapTo": { "type": "string", "description": "What the drop was snapped to: raw, beat or downbeat." },
+        "kind": { "type": "string" }
+      }
+    },
+    "Span": {
+      "type": "object",
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "type": "number" },
+        "end": { "type": "number" },
+        "intensity": { "type": "number" },
+        "subdivision": { "type": "integer", "description": "For build-ups: how finely the roll subdivides by the end." }
+      }
+    },
+    "Loudness": {
+      "type": "object",
+      "properties": {
+        "integratedLufs": { "type": ["number", "null"] },
+        "range": { "type": "number" },
+        "truePeakDb": { "type": ["number", "null"] },
+        "appliedGainDb": { "type": "number" },
+        "noiseFloorDb": { "type": ["number", "null"] },
+        "snrDb": { "type": ["number", "null"] },
+        "denoised": { "type": "boolean" }
+      }
+    },
+    "Stereo": {
+      "type": "object",
+      "properties": {
+        "width": { "type": ["number", "null"] },
+        "correlation": { "type": ["number", "null"] }
+      }
+    },
+    "Rhythm": {
+      "type": "object",
+      "properties": {
+        "bpm": { "type": "number" },
+        "beatPeriod": { "type": "number" },
+        "barPeriod": { "type": "number" },
+        "meter": { "type": "integer" },
+        "stability": { "type": "number" },
+        "source": { "type": "string" },
+        "downbeatConfidence": { "type": "number" },
+        "beatConfidences": { "type": "array", "items": { "type": "number" } },
+        "onsetStrengths": { "type": "array", "items": { "type": "number" } },
+        "intensityCurve": { "type": "array", "items": { "$ref": "#/$defs/CurvePoint" } }
+      }
+    },
+    "Band": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string" },
+        "range": { "type": "array", "items": { "type": "number" } },
+        "energy": { "type": "number" },
+        "attackMs": { "type": "number" },
+        "decayMs": { "type": "number" },
+        "variation": { "type": "number" },
+        "rhythmic": { "type": "number" },
+        "percussive": { "type": "number" },
+        "importance": { "type": "number" },
+        "curve": { "type": "array", "items": { "$ref": "#/$defs/CurvePoint" } }
+      }
+    },
+    "Instruments": {
+      "type": "object",
+      "properties": {
+        "scores": { "type": "object", "additionalProperties": { "type": "number" }, "description": "0..1 per role: kick, snare, hats, bassline, vocal, synth…" },
+        "curves": { "type": "object", "additionalProperties": { "type": "array", "items": { "$ref": "#/$defs/CurvePoint" } } }
+      }
+    },
+    "Structure": {
+      "type": "object",
+      "properties": {
+        "sections": { "type": "array", "items": { "$ref": "#/$defs/Section" } },
+        "roles": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "Dynamics": {
+      "type": "object",
+      "properties": {
+        "drops": { "type": "array", "items": { "$ref": "#/$defs/Drop" } },
+        "buildups": { "type": "array", "items": { "$ref": "#/$defs/Span" } },
+        "breaks": { "type": "array", "items": { "$ref": "#/$defs/Span" } },
+        "silences": { "type": "array", "items": { "$ref": "#/$defs/Span" } },
+        "spikes": { "type": "array", "items": { "$ref": "#/$defs/Span" } },
+        "impactCurve": { "type": "array", "items": { "$ref": "#/$defs/CurvePoint" } }
+      }
+    },
+    "Perception": {
+      "type": "object",
+      "properties": {
+        "key": { "type": ["string", "null"] },
+        "scale": { "type": ["string", "null"] },
+        "keyStrength": { "type": "number" },
+        "mood": { "$ref": "#/$defs/Mood" },
+        "genre": { "$ref": "#/$defs/Genre" }
+      }
+    },
+    "FeatureStat": {
+      "type": "object",
+      "properties": {
+        "mean": { "type": "number" },
+        "std": { "type": "number" },
+        "p90": { "type": "number" }
+      }
+    },
+    "MusicalEvent": {
+      "type": "object",
+      "required": ["t", "type"],
+      "properties": {
+        "t": { "type": "number", "description": "Seconds." },
+        "type": { "type": "string", "description": "BEAT, BAR, DROP, BUILDUP, ENERGY_SPIKE, BASS_HIT, VOCAL_SECTION, MELODY_CHANGE, SILENCE, TRANSITION, BREAK or SECTION." },
+        "confidence": { "type": "number" },
+        "intensity": { "type": "number" },
+        "duration": { "type": "number" },
+        "effect": { "type": "string", "description": "The look the analyser suggests: accent, pulse, flash, blinder, ramp…" },
+        "data": { "type": "object", "description": "Type-specific detail: a beat's place in the bar, a section's role, a build-up's end…" }
+      }
+    },
+    "Embedding": {
+      "type": "object",
+      "required": ["time", "vector"],
+      "properties": {
+        "time": { "type": "number" },
+        "vector": { "type": "array", "items": { "type": "number" } },
+        "confidence": { "type": "number" },
+        "source": { "type": "string" }
+      }
+    },
+    "LabelScore": {
+      "type": "object",
+      "required": ["label", "score"],
+      "properties": {
+        "label": { "type": "string" },
+        "score": { "type": "number" },
+        "source": { "type": "string" }
+      }
+    },
+    "Meta": {
+      "type": "object",
+      "properties": {
+        "sampleRate": { "type": "integer" },
+        "hopLength": { "type": "integer" },
+        "nFft": { "type": "integer" },
+        "frames": { "type": "integer" },
+        "trimOffset": { "type": "number" },
+        "taggerUsed": { "type": "boolean" },
+        "beatSource": { "type": "string" },
+        "separated": { "type": "boolean" },
+        "modelUsage": { "type": "object", "additionalProperties": { "type": ["string", "boolean"] } },
+        "elapsedSec": { "type": "number" },
+        "processingRatio": { "type": "number" },
+        "withinRealtimeBudget": { "type": "boolean" }
+      }
+    }
+  }
+}

@@ -16,14 +16,12 @@
  * so iterating on analyzer / show tweaks doesn't re-download.
  */
 
-'use strict';
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import AutoShow from '../src/auto-show.ts';
 
-const { spawn } = require('child_process');
-const fs = require('fs');
-const path = require('path');
-const AutoShow = require('../src/auto-show');
-
-const FIXTURE_DIR = path.join(__dirname, 'fixtures');
+const FIXTURE_DIR = path.join(import.meta.dirname, 'fixtures');
 if (!fs.existsSync(FIXTURE_DIR)) fs.mkdirSync(FIXTURE_DIR, { recursive: true });
 
 // The real tables rather than copies of them. Hand-maintained duplicates went
@@ -31,7 +29,7 @@ if (!fs.existsSync(FIXTURE_DIR)) fs.mkdirSync(FIXTURE_DIR, { recursive: true });
 // clamping palette indices against the wrong length, printing colour names the
 // server had not had for a while, and offering the picker a pattern pool that
 // no longer matched what the engine could render.
-const { COLOR_PRESETS, PATTERNS } = require('../src/server/presets');
+import { COLOR_PRESETS, PATTERNS } from '../src/server/presets.ts';
 
 function slugify(q) {
   return q.toLowerCase()
@@ -86,7 +84,7 @@ function downloadCached(query, { fresh } = {}) {
 
 function runAnalyzer(audioPath) {
   return new Promise((resolve, reject) => {
-    const script = path.join(__dirname, '..', 'src', 'analyze.py');
+    const script = path.join(import.meta.dirname, '..', 'src', 'analyze.py');
     const proc = spawn('python', [script, audioPath], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });

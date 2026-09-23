@@ -1,13 +1,9 @@
-'use strict';
+import test from 'node:test';
+import assert from 'node:assert';
+import { EventEmitter } from 'node:events';
 
-const test = require('node:test');
-const assert = require('node:assert');
-const { EventEmitter } = require('node:events');
-
-const {
-  NodeTable, createDiscovery, interfaces, isBroadcastTarget, isLoopbackTarget, EXPIRE_MS,
-} = require('../../src/server/artnet-nodes');
-const { createTransmitter } = require('../../src/server/transmit');
+import { NodeTable, createDiscovery, interfaces, isBroadcastTarget, isLoopbackTarget, EXPIRE_MS } from '../../src/server/artnet-nodes.ts';
+import { createTransmitter } from '../../src/server/transmit.ts';
 
 const node = (outputs, extra = {}) => ({ shortName: 'N', longName: 'Node', outputs, universe: outputs[0], bindIndex: 0, ...extra });
 

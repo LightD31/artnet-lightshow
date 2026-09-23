@@ -1,17 +1,15 @@
-'use strict';
-
 // Patterns travel across the stage as the operator placed it, not in the order
 // the fixtures were patched. On a rig of pars along a truss plus Hue lamps
 // around the room, patch order sent a chase from the back corner to the far
 // side and back.
 
-const test = require('node:test');
-const assert = require('node:assert');
+import test from 'node:test';
+import assert from 'node:assert';
 
-const { spatialLayout, stagePositions } = require('../../src/shared/stage');
-const { PATTERN_FUNCS } = require('../../src/shared/patterns');
-const { createPreviewSampler } = require('../../src/shared/preview');
-const { COLOR_PRESETS } = require('../../src/server/presets');
+import { spatialLayout, stagePositions } from '../../src/shared/stage.ts';
+import { PATTERN_FUNCS } from '../../src/shared/patterns.ts';
+import { createPreviewSampler } from '../../src/shared/preview.ts';
+import { COLOR_PRESETS } from '../../src/server/presets.ts';
 
 const at = (x, y = 35) => ({ position: { x, y } });
 
@@ -105,7 +103,7 @@ test('the normalised span uses the true extremes even when a column is reordered
 });
 
 // ── Split looks ──────────────────────────────────────────────────────────────
-const { washFixtures } = require('../../src/shared/stage');
+import { washFixtures } from '../../src/shared/stage.ts';
 
 test('a split picks its wash group from the groups the rig actually uses', () => {
   const rig = [{ group: 'front' }, { group: 'back' }, { group: 'front' }, {}, { group: 'back' }];
