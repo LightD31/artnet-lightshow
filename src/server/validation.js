@@ -9,7 +9,7 @@ const {
 } = require('./presets');
 const { PALETTE_IDS } = require('./palettes');
 const { FIXTURE_GROUPS } = require('../shared/stage');
-const { EMITTERS, MAX_CELLS_PER_FIXTURE } = require('../shared/rig');
+const { EMITTERS, PIXEL_MAPS, MAX_CELLS_PER_FIXTURE } = require('../shared/rig');
 
 const u8 = z.number().int().min(0).max(255);
 const fixtureId = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1);
@@ -66,6 +66,8 @@ const patchSchema = z.object({
   // Split the look: one fixture group holds a wash in colour B while the rest
   // run the pattern. The number picks which group; null runs the whole rig.
   split: z.number().int().min(0).max(1e9).nullable().optional(),
+  // How a pixel effect is laid over the cells of LED bars. See shared/rig.js.
+  pixelMap: z.enum(PIXEL_MAPS).optional(),
   colorA: colorIdx.optional(),
   colorB: colorIdx.optional(),
   colorC: colorIdx.optional(),

@@ -60,6 +60,9 @@ const state = {
   // A split look from the auto show: which fixture group holds a wash while
   // the rest run the pattern. Null is the whole rig on the pattern.
   split: null,
+  // How a pixel effect is laid over the cells of LED bars: across the stage,
+  // along each bar, or mirrored about the centre. Ignored on a rig of pars.
+  pixelMap: 'stage',
   // Where the running pattern counts its steps from, on the step grid of the
   // musical clock, and which of the clock's epochs that grid belongs to. Set
   // when a scene changes the pattern or the division (patch.js); the engine
@@ -216,6 +219,7 @@ function getLiveState() {
     masterBlackout: state.masterBlackout,
     strobeSpeed: state.strobeSpeed,
     strobeFunction: state.strobeFunction,
+    pixelMap: state.pixelMap,
     energyOverride: state.heldEnergy ?? state.energyOverride,
     palette: state.palette,
     autoIntensity: state.autoIntensity,

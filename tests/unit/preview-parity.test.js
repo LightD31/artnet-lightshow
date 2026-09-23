@@ -259,3 +259,73 @@ test('a timeline with no grid steps at its own tempo', () => {
   const lit = (ms) => sample(ms, rig, COLOR_PRESETS).findIndex((c) => brightness(c) > 200);
   assert.deepStrictEqual([lit(250), lit(750), lit(1250), lit(1750)], [0, 1, 2, 3], 'a step every half second');
 });
+
+// ── LED bars ────────────────────────────────────────────────────────────────
+// The preview answers per light — one entry per par, one per cell of a bar —
+// through the same pattern layer as the rig, so a wave rehearsed along a bar
+// is the wave the bar will play.
+
+const { registerProfile, unregisterProfile, getProfile: profileFor } = require('../../src/server/profiles');
+const { buildRig } = require('../../src/shared/rig');
+const { renderFrame, resizeFixtureBuffers } = require('../../src/server/engine');
+
+const BARE_BAR = {
+  id: 'parity-bar', name: 'Parity bar', channelCount: 24, channelMap: {},
+  cells: Array.from({ length: 8 }, (_, i) => ({ channelMap: { red: i * 3, green: i * 3 + 1, blue: i * 3 + 2 } })),
+};
+
+test('rig and preview agree on every cell of a bar', () => {
+  registerProfile(BARE_BAR);
+  const before = state.fixtures;
+  let beat = 0;
+  conductor.setProlinkSource(() => ({ beatPos: beat, bpm: 120 }));
+  try {
+    stopEngine();                                   // one frame at a time from here
+    state.fixtures = [
+      { id: 0, label: 'Par', address: 1, universe: 0, profileId: 'cameo-root-par-6-12ch', maxBrightness: 255, override: null, position: { x: 15, y: 40 } },
+      { id: 1, label: 'Bar', address: 13, universe: 0, profileId: 'parity-bar', maxBrightness: 200, override: null, position: { x: 55, y: 40 }, geometry: { length: 40, angle: 0 } },
+    ];
+    resizeFixtureBuffers();
+    const rig = buildRig(state.fixtures, profileFor);
+    for (const pattern of ['wave', 'rainbow', 'chase', 'solid']) {
+      const look = { pattern, colorA: 1, colorB: 5, colorC: 3, colorD: 8, bpm: 120, beatDivision: 2, split: null };
+      const sample = createPreviewSampler([{ timeMs: 0, action: 'patch', data: look }]);
+      beat = 0;
+      applyPatch({ ...look, running: true, masterDimmer: 255, masterBlackout: false, energyOverride: null, showDynamics: null });
+      for (beat = 0.1; beat < 6; beat += 0.25) {
+        renderFrame();
+        const preview = sample(beat * 500, state.fixtures, COLOR_PRESETS, rig);
+        assert.strictEqual(preview.length, 9, 'one light for the par, eight for the bar');
+        const dmx = universes.getBuffer(0);
+        assert.deepStrictEqual([dmx[3], dmx[4], dmx[5]], [preview[0].r, preview[0].g, preview[0].b], `${pattern} par at ${beat}`);
+        for (let c = 0; c < 8; c++) {
+          const at = 12 + c * 3;
+          assert.deepStrictEqual([dmx[at], dmx[at + 1], dmx[at + 2]], [preview[1 + c].r, preview[1 + c].g, preview[1 + c].b],
+            `${pattern} cell ${c + 1} at beat ${beat}`);
+        }
+      }
+    }
+  } finally {
+    conductor.setProlinkSource(null);
+    state.fixtures = before;
+    resizeFixtureBuffers();
+    unregisterProfile('parity-bar');
+    startEngine();
+  }
+});
+
+// The rig always hands ribbon and ensemble its expression channel — resting
+// values when no show is feeding it. The preview used to hand them nothing, so
+// they fell back to defaults of their own and rehearsed a different ribbon.
+test('the expressive patterns rehearse without a show as the rig plays them', () => {
+  const { EXPRESSION_REST } = require('../../src/shared/look-math');
+  const rig = [{ maxBrightness: 255 }, { maxBrightness: 255 }, { maxBrightness: 255 }, { maxBrightness: 255 }, { maxBrightness: 255 }];
+  for (const pattern of ['ribbon', 'ensemble']) {
+    const look = { pattern, colorA: 1, colorB: 5, colorC: 1, colorD: 5, bpm: 120, beatDivision: 1 };
+    const bare = createPreviewSampler([{ timeMs: 0, action: 'patch', data: { ...look, showDynamics: null } }]);
+    const resting = createPreviewSampler([{ timeMs: 0, action: 'patch', data: { ...look, showDynamics: { ...EXPRESSION_REST } } }]);
+    for (const t of [0, 700, 1900]) {
+      assert.deepStrictEqual(bare(t, rig, COLOR_PRESETS), resting(t, rig, COLOR_PRESETS), `${pattern} at ${t} ms`);
+    }
+  }
+});

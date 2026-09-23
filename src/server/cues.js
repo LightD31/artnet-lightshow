@@ -10,6 +10,7 @@ const { applyPatch, applyOverride } = require('./patch');
 const { conductor } = require('./conductor');
 const { overrideSchema, fixtureId } = require('./validation');
 const { COLOR_PRESETS } = require('./presets');
+const { PIXEL_MAPS } = require('../shared/rig');
 
 /**
  * Named looks, saved and recalled.
@@ -47,6 +48,9 @@ const lookSchema = z.object({
   strobeSpeed: z.number().int().min(0).max(255),
   strobeFunction: z.string().min(1).max(64),
   energyOverride: z.union([z.string().min(1).max(64), z.null()]),
+  // Absent in cues saved before LED bars: those recall with the pixel map
+  // that is already on stage.
+  pixelMap: z.enum(PIXEL_MAPS).optional(),
   // New cues carry ids beside their overrides so deleting a fixture cannot
   // make a cue's look land on a different light. Old cues without this field
   // use the original ids (0, 1, ...) if they predate this field.
@@ -115,6 +119,7 @@ function captureLook() {
     strobeSpeed: state.strobeSpeed,
     strobeFunction: state.strobeFunction,
     energyOverride: state.energyOverride,
+    pixelMap: state.pixelMap,
     fixtureIds: state.fixtures.map((f) => f.id),
     overrides: state.fixtures.map((f) => (f.override ? { ...f.override } : null)),
   };

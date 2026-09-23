@@ -27,17 +27,21 @@
 // see at that moment, not on one worked out from elapsed seconds at a rounded
 // tempo. A timeline with no grid is counted at its own tempo marks, as the
 // rig's free clock would.
+//
+// It draws the pattern layer through the same function the rig does
+// (shared/layer.js), so it answers per light: one entry per par, one per cell
+// of an LED bar, in the rig's order (shared/rig.js).
 const { PATTERN_FUNCS } = require('./patterns');
-const { spatialLayout, washFixtures } = require('./stage');
+const { renderLayer } = require('./layer');
+const { buildRig } = require('./rig');
 const {
   EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture,
-  fadeBrightness, hitBrightness,
 } = require('./look-math');
 const {
-  gridFromAnalysis, beatPositionAt, anchorStep, stepAt, fadePhase, hitPhase, motionAdvance,
+  gridFromAnalysis, beatPositionAt, anchorStep, stepAt, motionAdvance,
 } = require('./beat-clock');
 
-const LOOK_KEYS = ['pattern', 'palette', 'split', 'colorA', 'colorB', 'colorC', 'colorD'];
+const LOOK_KEYS = ['pattern', 'palette', 'split', 'pixelMap', 'colorA', 'colorB', 'colorC', 'colorD'];
 
 const OPENING = {
   pattern: 'solid', colorA: 0, colorB: 0, colorC: 0, colorD: 0, bpm: 120, beatDivision: 1,
@@ -105,9 +109,10 @@ function createPreviewSampler(events = [], grid = null) {
   /**
    * What the pattern layer shows at a moment: the pattern and colours, with the
    * two continuous patterns and any crossfade applied — everything the engine
-   * computes before a burst, the music's level and the trims go on top.
+   * computes before a burst, the music's level and the trims go on top. One
+   * entry per light of `rig`.
    */
-  function patternLayer(index, positionMs, fixtures, presets) {
+  function patternLayer(index, positionMs, rig, presets) {
     const frame = frames[index];
     const s = frame.look;
     const dyn = s.showDynamics || null;
@@ -120,59 +125,64 @@ function createPreviewSampler(events = [], grid = null) {
     const phase = (frame.motionPhase + motionAdvance(beatPos - frame.beatPos, expr.motion)) % 1;
 
     const colors = ['colorA', 'colorB', 'colorC', 'colorD'].map((key) => presets[s[key]] || presets[0]);
-    const output = fixtures.map(() => ({ color: colors[0], dim: 0 }));
-    const fn = PATTERN_FUNCS[s.pattern] || PATTERN_FUNCS.solid;
-    // The same stage order the engine routes through, so a chase rehearsed
-    // here travels across the plot exactly as it will across the room — and in
-    // a split look, across only the fixtures not holding the wash.
-    const wash = washFixtures(fixtures, s.split);
-    const members = fixtures.map((_, i) => i).filter((i) => !wash.has(i));
-    const { order, xs } = spatialLayout(members.map((i) => fixtures[i]));
-    fn({
-      colors, fixtureCount: members.length, step, phase, xs,
-      hue: (step * 360 / Math.max(1, fixtures.length)) % 360,
-      dynamics: dyn ? expr : null, twinkle: fixtures.map(() => 0),
-      write: (k, color, dim) => { output[members[order[k]]] = { color, dim }; },
-    });
-
-    // The two whole-rig envelopes, from the same beat position and anchor the
-    // engine reads them from. The wash goes on last, as the engine paints it.
-    let layer = output.map(({ color, dim }, i) => {
-      if (wash.has(i)) return { color: colors[1], dim: 255 };
-      if (s.pattern === 'fade') return { color: colors[0], dim: fadeBrightness(fadePhase(beatPos, frame.anchor, division)) };
-      if (s.pattern === 'hit') return { color: colors[0], dim: hitBrightness(hitPhase(beatPos, division)) };
-      return { color, dim };
-    });
+    const layer = rig.units.map(() => ({ color: colors[0], dim: 0 }));
+    // The same layer the engine draws, so a chase rehearsed here travels across
+    // the plot exactly as it will across the room — in stage order, around a
+    // split look's wash, and along the cells of every bar.
+    renderLayer(rig, {
+      pattern: PATTERN_FUNCS[s.pattern] ? s.pattern : 'solid',
+      colors,
+      split: s.split,
+      pixelMap: s.pixelMap,
+    }, {
+      beatPos,
+      step,
+      anchor: frame.anchor,
+      division,
+      phase,
+      expression: expr,
+      dynamicsOn: !!dyn,
+      fixtureCount: rig.fixtures.length,
+      twinkle: rig.units.map(() => 0),
+    }, (u, color, dim) => { layer[u] = { color, dim }; });
 
     // A crossfade starts from the look as it stood when the fade began, frozen
     // there, exactly as the engine snapshots it.
     const f = frame.fade;
     if (f && f.from >= 0 && positionMs < f.start + f.ms) {
-      const from = patternLayer(f.from, f.start, fixtures, presets).layer;
+      const from = patternLayer(f.from, f.start, rig, presets).layer;
       const t = Math.max(0, positionMs - f.start) / f.ms;
-      layer = layer.map((to, i) => {
-        const mixed = blendFixture({ ...from[i].color, dim: from[i].dim, strobe: 0 }, { ...to.color, dim: to.dim, strobe: 0 }, t);
-        return { color: mixed, dim: mixed.dim };
-      });
+      return {
+        layer: layer.map((to, u) => {
+          const mixed = blendFixture({ ...from[u].color, dim: from[u].dim, strobe: 0 }, { ...to.color, dim: to.dim, strobe: 0 }, t);
+          return { color: mixed, dim: mixed.dim };
+        }),
+        colors, expr, dyn,
+      };
     }
     return { layer, colors, expr, dyn };
   }
 
-  return (positionMs, fixtures, presets) => {
+  /**
+   * The rig's lights at `positionMs`, as emitter values: one entry per par and
+   * one per cell of each bar. `rig` is the rig built with the profiles (see
+   * shared/rig.js); without one, every fixture is taken as a single light.
+   */
+  return (positionMs, fixtures, presets, rig = buildRig(fixtures, () => null)) => {
     let lo = 0, hi = frames.length;
     while (lo < hi) {
       const mid = (lo + hi) >>> 1;
       if (frames[mid].timeMs <= positionMs) lo = mid + 1; else hi = mid;
     }
     const frame = frames[lo - 1];
-    if (!frame || !presets?.length) return fixtures.map(() => ({ r: 0, g: 0, b: 0 }));
+    if (!frame || !presets?.length) return rig.units.map(() => ({ r: 0, g: 0, b: 0 }));
 
-    const { layer, colors, expr, dyn } = patternLayer(lo - 1, positionMs, fixtures, presets);
+    const { layer, colors, expr, dyn } = patternLayer(lo - 1, positionMs, rig, presets);
     const energy = frame.burst && positionMs < frame.burst.end
       ? resolveEnergyOverride(frame.burst.id, colors[0], expr.level)
       : null;
 
-    return layer.map(({ color, dim }, i) => {
+    return layer.map(({ color, dim }, u) => {
       if (energy) {
         color = energy.col;
         dim = energy.dim;
@@ -180,7 +190,8 @@ function createPreviewSampler(events = [], grid = null) {
         dim *= expr.level;
         if (dyn && dyn.level === 0) dim = 0;
       }
-      const scale = (dim / 255) * ((fixtures[i].maxBrightness ?? 255) / 255);
+      const fixture = fixtures[rig.units[u].fixture];
+      const scale = (dim / 255) * ((fixture.maxBrightness ?? 255) / 255);
       return emitterValues(color, scale);
     });
   };

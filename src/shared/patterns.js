@@ -4,12 +4,19 @@ const { colourMixer } = require('./color');
 
 // Pure pattern functions. Each takes (ctx) where:
 //   ctx.colors        : array of resolved Colour A..D presets
-//   ctx.fixtureCount  : N fixtures
+//   ctx.fixtureCount  : N slots — fixtures, or for a CELL_PATTERNS entry every
+//                       cell of every bar (see shared/layer.js)
 //   ctx.step          : steps of the beat grid since the scene's anchor
 //                       (shared/beat-clock.js)
+//   ctx.stepPos       : the same count, continuous (2.5 is halfway through the
+//                       third step)
+//   ctx.stepPhase     : how far through the current step, 0..1
+//   ctx.phase         : the expressive patterns' travel, 0..1, moved by motion
 //   ctx.hue           : rotating hue for color-cycle / rainbow
-//   ctx.twinkle       : per-fixture stochastic memory (mutated for 'twinkle')
-//   ctx.write(i, color, dim, strobe) — sets fixture i's render colour
+//   ctx.twinkle       : per-slot stochastic memory (mutated for 'twinkle')
+//   ctx.xs, ctx.ys    : each slot's place across the rig, 0..1 (xs may be null:
+//                       even spacing); ys on the same scale, or null
+//   ctx.write(i, color, dim, strobe) — sets slot i's render colour
 //
 // 'fade' and 'hit' are whole-rig envelopes: the engine and the preview set
 // their brightness from the beat position themselves (beat-clock.js
@@ -86,6 +93,12 @@ function paletteOf(ctx) {
   for (const c of ctx.colors) if (c && !out.includes(c)) out.push(c);
   return out.length ? out : [{ r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 }];
 }
+
+// Patterns that are a picture across the rig rather than a sequence of lamps:
+// they run on every cell of every bar, so a wave rolls smoothly along a bar
+// instead of the whole bar taking one colour. The rest step through fixtures,
+// and a bar takes its slot's colour on every cell.
+const CELL_PATTERNS = new Set(['ensemble', 'ribbon', 'wave', 'rainbow', 'twinkle', 'sparkle']);
 
 const PATTERN_FUNCS = {
   // The two expressive patterns are driven at frame rate by the expression
@@ -363,4 +376,4 @@ const PATTERN_FUNCS = {
   },
 };
 
-module.exports = { PATTERN_FUNCS, paletteOf, hsvToRgb, bedOf, BED };
+module.exports = { PATTERN_FUNCS, CELL_PATTERNS, paletteOf, hsvToRgb, bedOf, BED };

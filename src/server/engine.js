@@ -7,35 +7,43 @@ const { sendUniverse, sendHue, stopHue } = require('./output');
 const universes = require('./universes');
 const { guarded } = require('./guard');
 const { conductor } = require('./conductor');
+const { currentRig, invalidateRig } = require('./rig');
 const { PATTERN_FUNCS } = require('../shared/patterns');
-const { spatialLayout, washFixtures } = require('../shared/stage');
+const { renderLayer } = require('../shared/layer');
 // Shared with the browser's rehearsal preview so the two cannot drift. See the
 // header of that file for why this is not simply inlined here.
 const {
-  EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture,
-  fadeBrightness, hitBrightness,
+  EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture, cellDrive,
 } = require('../shared/look-math');
-const {
-  anchorStep, stepAt, hitPhase, fadePhase, motionAdvance,
-} = require('../shared/beat-clock');
+const { anchorStep, stepAt, motionAdvance } = require('../shared/beat-clock');
 
-const fixtureColors = Array.from({ length: 4 }, () => ({
+// The pattern layer, one entry per light: a par is one, each cell of an LED
+// bar another (see shared/rig.js). On a rig of pars, entry i is fixture i.
+const unitColors = Array.from({ length: 4 }, () => ({
   r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 255, strobe: 0,
 }));
 
-function resizeFixtureBuffers() {
-  while (fixtureColors.length < state.fixtures.length) {
-    fixtureColors.push({ r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 255, strobe: 0 });
+/** Size the per-light buffers to the rig. Cheap when nothing changed. */
+function sizeUnitBuffers(count) {
+  while (unitColors.length < count) {
+    unitColors.push({ r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 255, strobe: 0 });
   }
-  if (fixtureColors.length > state.fixtures.length) {
-    fixtureColors.length = state.fixtures.length;
-  }
-  while (state._twinkle.length < state.fixtures.length) state._twinkle.push(0);
-  state._twinkle.length = state.fixtures.length;
+  if (unitColors.length > count) unitColors.length = count;
+  while (state._twinkle.length < count) state._twinkle.push(0);
+  state._twinkle.length = count;
 }
 
-function setFixtureColor(idx, color, dim, strobe) {
-  fixtureColors[idx] = {
+/**
+ * The patch changed: rebuild the picture of the rig and size the buffers to
+ * it now, rather than on the next frame.
+ */
+function resizeFixtureBuffers() {
+  invalidateRig();
+  sizeUnitBuffers(currentRig().units.length);
+}
+
+function setUnitColor(u, color, dim, strobe) {
+  unitColors[u] = {
     r: color.r,
     g: color.g,
     b: color.b,
@@ -45,32 +53,6 @@ function setFixtureColor(idx, color, dim, strobe) {
     dim,
     strobe,
   };
-}
-
-/**
- * Patterns write to slots 0…n−1 in the order they travel; this routes slot k to
- * the k-th fixture from stage left, as placed on the stage plot, and hands the
- * continuous patterns each slot's real position across the rig. With nothing
- * placed it is the identity, and every pattern renders exactly as before.
- */
-function layoutWriter() {
-  // In a split look the wash group is not the pattern's to write: the pattern
-  // travels across the rest of the rig, in stage order among themselves.
-  const wash = washFixtures(state.fixtures, state.split);
-  const members = state.fixtures.map((_, i) => i).filter((i) => !wash.has(i));
-  const { order, xs } = spatialLayout(members.map((i) => state.fixtures[i]));
-  return {
-    xs, count: members.length,
-    write: (k, color, dim, strobe) => setFixtureColor(members[order[k]], color, dim, strobe),
-  };
-}
-
-/** Hold the split look's wash group on colour B, at full, under the music. */
-function paintWash() {
-  const wash = washFixtures(state.fixtures, state.split);
-  if (!wash.size || !state.running) return;
-  const colB = COLOR_PRESETS[state.colorB];
-  for (const i of wash) setFixtureColor(i, colB, 255, 0);
 }
 
 // Patterns that roll dice. They re-roll when the step moves or the look
@@ -100,58 +82,50 @@ function patternStep(reading) {
 }
 
 /**
- * Write the pattern layer for this frame, from the musical clock.
+ * Write the pattern layer for this frame, from the musical clock, through the
+ * layer the rehearsal preview draws with too (shared/layer.js).
  *
  * The step is a function of where the music is, not a counter a timer
  * advances, so it cannot drift off the beat and lands on the same step
  * however the moment was reached. Deterministic patterns render every frame,
  * so a colour or a split shows the moment it is set rather than on the next
- * beat.
+ * beat. Stopped, the layer holds what it last showed.
  */
-function renderPattern(reading) {
+function renderPattern(rig, reading) {
   if (!state.running) return;
-  const fn = PATTERN_FUNCS[state.pattern];
-  if (!fn) return;
+  const known = !!PATTERN_FUNCS[state.pattern];
+  const look = {
+    pattern: state.pattern,
+    colors: [state.colorA, state.colorB, state.colorC, state.colorD].map((i) => COLOR_PRESETS[i]),
+    split: state.split,
+    pixelMap: state.pixelMap,
+  };
+  if (!known) {
+    // Nothing to draw, but a split look's wash still holds.
+    renderLayer(rig, look, null, setUnitColor, { skipPattern: true });
+    return;
+  }
+
   const { step, anchor, division } = patternStep(reading);
-  const colors = [state.colorA, state.colorB, state.colorC, state.colorD].map((i) => COLOR_PRESETS[i]);
-  const total = getFixtureCount();
-
-  // The two whole-rig envelopes: an eight-beat breath from the scene's
-  // anchor, and a decay across every step.
-  if (state.pattern === 'fade' || state.pattern === 'hit') {
-    const bright = state.pattern === 'fade'
-      ? fadeBrightness(fadePhase(reading.beatPos, anchor, division))
-      : hitBrightness(hitPhase(reading.beatPos, division));
-    for (let i = 0; i < total; i++) setFixtureColor(i, colors[0], bright, 0);
-    return;
-  }
-
-  const { xs, write, count } = layoutWriter();
-  if (state.pattern === 'ensemble' || state.pattern === 'ribbon') {
-    fn({ colors, fixtureCount: count, phase: expressionPhase, dynamics: expression, write, xs });
-    return;
-  }
-
+  let skipPattern = false;
   if (RANDOM_PATTERNS.has(state.pattern)) {
-    const key = `${state.pattern}|${step}|${state.colorA},${state.colorB},${state.colorC},${state.colorD}|${state.split}|${total}`;
-    if (key === lastRandomKey) return;
+    const pixels = rig.hasPixels ? `|${rig.units.length}|${state.pixelMap}` : '';
+    const key = `${state.pattern}|${step}|${state.colorA},${state.colorB},${state.colorC},${state.colorD}|${state.split}|${getFixtureCount()}${pixels}`;
+    skipPattern = key === lastRandomKey;
     lastRandomKey = key;
   }
 
-  fn({
-    colors,
-    fixtureCount: count,
+  renderLayer(rig, look, {
+    beatPos: reading.beatPos,
     step,
-    hue: (step * 360 / Math.max(1, total)) % 360,
+    anchor,
+    division,
+    phase: expressionPhase,
+    expression,
+    dynamicsOn: !!state.showDynamics,
+    fixtureCount: getFixtureCount(),
     twinkle: state._twinkle,
-    // Every pattern gets the expression channel, not only the two built around
-    // it. The stepped patterns use it for the things that are genuinely a
-    // property of the music rather than of the step — how far the unlit lamps
-    // sit above black, how dense a scatter is — and ignore it otherwise.
-    dynamics: state.showDynamics ? expression : null,
-    write,
-    xs,
-  });
+  }, setUnitColor, { skipPattern });
 }
 
 // The continuous expression channel, smoothed towards whatever the show last
@@ -163,10 +137,10 @@ let expressionPhase = 0;
 // ── Crossfades ───────────────────────────────────────────────────────────────
 // A scene change used to be a cut, always. The show now asks for a fade where
 // the music does — long into a breakdown, none into a drop — and the engine
-// blends each fixture from what it was last showing to what the new look
+// blends each light from what it was last showing to what the new look
 // renders, frame by frame, so a moving pattern keeps moving underneath.
 // Only the pattern layer fades: a burst or a pinned fixture sits on top.
-const shown = [];                // the pattern layer as it went out last frame
+const shown = [];                // the pattern layer as it went out last frame, per light
 let fade = null;                 // { start, ms, from }
 
 /** Fade from what is on stage now over `ms`; 0 cuts, cancelling any fade. */
@@ -220,6 +194,145 @@ function setFrameHook(fn) {
 
 let lastReading = null;
 
+/**
+ * What one light shows this frame before the masters: a burst over
+ * everything, a pinned fixture over the look, else the pattern layer
+ * (partway through a fade if one is running). The music scales the pattern
+ * underneath manual effects and fixture overrides; silence puts out what the
+ * music drives, and a pinned fixture is not driven by the music — it holds
+ * through the quiet the same as it holds through the level above.
+ */
+function lightOf(u, fix, energy, fadeT, target) {
+  // Kept whatever sits on top of it this frame, so a fade that starts under a
+  // burst starts from the look and not from the burst.
+  const layer = fade && fade.from[u] ? blendFixture(fade.from[u], unitColors[u], fadeT) : unitColors[u];
+  shown[u] = layer;
+
+  let col; let dim; let strobe;
+  if (energy) {
+    col = energy.col; dim = energy.dim; strobe = energy.strobe;
+  } else if (fix.override && (fix.override.enabled || fix.override.blackout)) {
+    const ov = fix.override;
+    if (ov.blackout) {
+      col = { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 }; dim = 0; strobe = 0;
+    } else {
+      col = { r: ov.r, g: ov.g, b: ov.b, w: ov.w, a: ov.a || 0, uv: ov.uv || 0 };
+      dim = ov.dim !== undefined ? ov.dim : 255;
+      strobe = ov.strobe !== undefined ? ov.strobe : 0;
+    }
+  } else {
+    col = { r: layer.r, g: layer.g, b: layer.b, w: layer.w, a: layer.a || 0, uv: layer.uv || 0 };
+    dim = layer.dim; strobe = layer.strobe;
+  }
+
+  const pinned = fix.override && fix.override.enabled;
+  if (!energy && !pinned) dim *= expression.level;
+  if (target?.level === 0 && !energy && !pinned) dim = 0;
+  return { col, dim, strobe };
+}
+
+// Two scalers sit above whatever is driving a fixture, and both apply to every
+// source of light including an energy override. The grand master is the
+// operator's one hand on the whole rig; the per-fixture trim is for the lamp
+// hanging a metre from someone's face.
+//
+// Both multiply rather than clamp. A trim that clipped — min(level, trim) —
+// would leave a fixture already below the line untouched and only bite at the
+// top, so the bottom of the throw would go dead and two fixtures on different
+// trims would converge as they dimmed. Multiplying keeps the whole range
+// proportional: half the trim is half the output at every level.
+//
+// An energy override used to bypass the master and always output full, which
+// meant the blinder came up at 100% no matter where the master sat — the one
+// moment you most want the master to still mean something.
+function mastersOf(fix) {
+  return (state.masterDimmer / 255) * (maxBrightnessOf(fix) / 255);
+}
+
+/** The strobe channel's value, or null to leave it closed. */
+function strobeValue(energy, strobe) {
+  // Energy overrides force 'standard' strobe so a colour-strobe burst never
+  // inherits a slow ramp/break function from the prior segment.
+  const raw = energy ? strobe : (state.pattern === 'strobe' ? state.strobeSpeed : strobe);
+  if (!(raw > 0)) return null;
+  const fnId = energy ? 'standard' : state.strobeFunction;
+  const fn = STROBE_FUNCTIONS.find((f) => f.id === fnId) || STROBE_FUNCTIONS[0];
+  return fn.lo + Math.round((raw / 255) * (fn.hi - fn.lo));
+}
+
+/**
+ * Route one resolved colour onto the channels a map names. One resolution of
+ * colour × scale for every emitter, shared with the rehearsal preview.
+ *
+ * A lamp with separate warm and cool white dies (a Hue bulb) rather than one
+ * white emitter and an amber one gets them from the two components that
+ * already carry exactly that meaning: the neutral white content, and the warm
+ * content. "Cool White" (white at full) and "Warm White" (white and amber
+ * together) then land on such a lamp as the whites they are named after.
+ */
+function writeEmitters(dmx, base, ch, col, scale) {
+  const v = emitterValues(col, scale);
+  if (ch.red !== undefined)       dmx[base + ch.red]       = v.r;
+  if (ch.green !== undefined)     dmx[base + ch.green]     = v.g;
+  if (ch.blue !== undefined)      dmx[base + ch.blue]      = v.b;
+  if (ch.white !== undefined)     dmx[base + ch.white]     = v.w;
+  if (ch.amber !== undefined)     dmx[base + ch.amber]     = v.a;
+  if (ch.coolWhite !== undefined) dmx[base + ch.coolWhite] = v.w;
+  if (ch.warmWhite !== undefined) dmx[base + ch.warmWhite] = v.a;
+  if (ch.uv !== undefined)        dmx[base + ch.uv]        = v.uv;
+}
+
+/** A fixture that is one light. */
+function writePar(fix, { col, dim, strobe }, energy) {
+  const dmx = universes.getBuffer(universeOf(fix));
+  const base = fix.address - 1;
+  const ch = getProfile(fix).channelMap;
+  const ms = mastersOf(fix);
+
+  if (ch.dimmer !== undefined)     dmx[base + ch.dimmer] = Math.round(dim * ms);
+  if (ch.dimmerFine !== undefined) dmx[base + ch.dimmerFine] = 0;
+  if (ch.strobe !== undefined) {
+    const value = strobeValue(energy, strobe);
+    if (value !== null) dmx[base + ch.strobe] = value;
+  }
+  writeEmitters(dmx, base, ch, col, ms * (dim / 255));
+}
+
+/**
+ * An LED bar: the channels the bar shares, then every cell's own. Each cell
+ * comes out as a par with the same channels would at its level (see cellDrive
+ * in look-math.js), so a look the same on every cell drives a bar exactly as
+ * it drives a par, and kill or silence closes the bar's dimmer too.
+ */
+function writeBar(fix, cells, lights, energy) {
+  const dmx = universes.getBuffer(universeOf(fix));
+  const base = fix.address - 1;
+  const ch = getProfile(fix).channelMap;
+  const ms = mastersOf(fix);
+
+  let top = 0;
+  let strobe = 0;
+  for (const light of lights) {
+    if (light.dim > top) top = light.dim;
+    if (light.strobe > strobe) strobe = light.strobe;
+  }
+  const fixtureDimmer = ch.dimmer !== undefined;
+  if (fixtureDimmer)               dmx[base + ch.dimmer] = Math.round(top * ms);
+  if (ch.dimmerFine !== undefined) dmx[base + ch.dimmerFine] = 0;
+  if (ch.strobe !== undefined) {
+    const value = strobeValue(energy, strobe);
+    if (value !== null) dmx[base + ch.strobe] = value;
+  }
+
+  for (let c = 0; c < cells.length; c++) {
+    const cell = cells[c];
+    const { col, dim } = lights[c];
+    const { cellDim, scale } = cellDrive(dim, top, ms, fixtureDimmer, cell.dimmer !== undefined);
+    if (cell.dimmer !== undefined) dmx[base + cell.dimmer] = cellDim;
+    writeEmitters(dmx, base, cell, col, scale);
+  }
+}
+
 function renderDmx() {
   const now = performance.now();
   const dt = Math.max(0, Math.min(0.25, (now - lastRenderTs) / 1000));
@@ -240,9 +353,9 @@ function renderDmx() {
   lastReading = reading;
   expressionPhase = (expressionPhase + motionAdvance(dBeats, expression.motion)) % 1;
 
-  renderPattern(reading);
-  // After the pattern has written, so the wash wins on its own lamps.
-  paintWash();
+  const rig = currentRig();
+  sizeUnitBuffers(rig.units.length);
+  renderPattern(rig, reading);
 
   const energy = currentEnergy();
 
@@ -272,97 +385,14 @@ function renderDmx() {
     const fixtureCount = getFixtureCount();
     for (let i = 0; i < fixtureCount; i++) {
       const fix = state.fixtures[i];
-      const dmx = universes.getBuffer(universeOf(fix));
-      const base = fix.address - 1;
-      let col, dim, strobe;
-
-      // The pattern layer, partway through a fade if one is running. Kept
-      // whatever sits on top of it this frame, so a fade that starts under a
-      // burst starts from the look and not from the burst.
-      const layer = fade && fade.from[i] ? blendFixture(fade.from[i], fixtureColors[i], fadeT) : fixtureColors[i];
-      shown[i] = layer;
-
-      if (energy) {
-        col = energy.col; dim = energy.dim; strobe = energy.strobe;
-      } else if (fix.override && (fix.override.enabled || fix.override.blackout)) {
-        const ov = fix.override;
-        if (ov.blackout) {
-          col = { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 }; dim = 0; strobe = 0;
-        } else {
-          col = { r: ov.r, g: ov.g, b: ov.b, w: ov.w, a: ov.a || 0, uv: ov.uv || 0 };
-          dim = ov.dim !== undefined ? ov.dim : 255;
-          strobe = ov.strobe !== undefined ? ov.strobe : 0;
-        }
-      } else {
-        col = { r: layer.r, g: layer.g, b: layer.b, w: layer.w, a: layer.a || 0, uv: layer.uv || 0 };
-        dim = layer.dim; strobe = layer.strobe;
-      }
-
-      const ch = getProfile(fix).channelMap;
-
-      // Two scalers sit above whatever is driving the fixture, and both apply
-      // to every source of light including an energy override. The grand master
-      // is the operator's one hand on the whole rig; the per-fixture trim is for
-      // the lamp hanging a metre from someone's face.
-      //
-      // Both multiply rather than clamp. A trim that clipped — min(level, trim)
-      // — would leave a fixture already below the line untouched and only bite
-      // at the top, so the bottom of the throw would go dead and two fixtures on
-      // different trims would converge as they dimmed. Multiplying keeps the
-      // whole range proportional: half the trim is half the output at every
-      // level.
-      //
-      // An energy override used to bypass the master and always output full,
-      // which meant the blinder came up at 100% no matter where the master sat —
-      // the one moment you most want the master to still mean something.
-      // Music scales the pattern underneath manual effects and fixture overrides.
-      if (!energy && !(fix.override && fix.override.enabled)) dim *= expression.level;
-      // Silence puts out what the music drives, and a pinned fixture is not
-      // driven by the music: it holds through the quiet the same as it holds
-      // through the level above.
-      if (target?.level === 0 && !energy && !(fix.override && fix.override.enabled)) dim = 0;
-      const ms = (state.masterDimmer / 255) * (maxBrightnessOf(fix) / 255);
-      const ds = dim / 255;
-      const ts = ms * ds;
-
-      if (ch.dimmer !== undefined)     dmx[base + ch.dimmer] = Math.round(dim * ms);
-      if (ch.dimmerFine !== undefined) dmx[base + ch.dimmerFine] = 0;
-
-      // Energy overrides force 'standard' strobe so a colour-strobe burst never
-      // inherits a slow ramp/break function from the prior segment.
-      if (ch.strobe !== undefined) {
-        const rawStrobe = energy
-          ? strobe
-          : (state.pattern === 'strobe' ? state.strobeSpeed : strobe);
-        if (rawStrobe > 0) {
-          const fnId = energy ? 'standard' : state.strobeFunction;
-          const fn = STROBE_FUNCTIONS.find((f) => f.id === fnId) || STROBE_FUNCTIONS[0];
-          dmx[base + ch.strobe] = fn.lo + Math.round((rawStrobe / 255) * (fn.hi - fn.lo));
-        }
-      }
-
-      // One resolution of colour × scale for every emitter, shared with the
-      // rehearsal preview; this loop only routes the results onto the channels
-      // the fixture's profile actually names.
-      const v = emitterValues(col, ts);
-
-      if (ch.red !== undefined)   dmx[base + ch.red]   = v.r;
-      if (ch.green !== undefined) dmx[base + ch.green] = v.g;
-      if (ch.blue !== undefined)  dmx[base + ch.blue]  = v.b;
-      if (ch.white !== undefined) dmx[base + ch.white] = v.w;
-      if (ch.amber !== undefined) dmx[base + ch.amber] = v.a;
-
-      // A lamp with separate warm and cool white dies (a Hue bulb) rather than
-      // one white emitter and an amber one. The look's colour model has no
-      // fourth and fifth primary to give them, and inventing one would leave
-      // every existing preset and pattern driving nothing — so they are fed
-      // from the two components that already carry exactly this meaning: the
-      // neutral white content, and the warm content. "Cool White" (white at
-      // full) and "Warm White" (white and amber together) then land on such a
-      // lamp as the whites they are named after.
-      if (ch.coolWhite !== undefined) dmx[base + ch.coolWhite] = v.w;
-      if (ch.warmWhite !== undefined) dmx[base + ch.warmWhite] = v.a;
-      if (ch.uv !== undefined)    dmx[base + ch.uv]    = v.uv;
+      const { start, count } = rig.ranges[i];
+      const cells = rig.cellMaps[i];
+      // Each light: its source (a burst, a pinned fixture, or the pattern
+      // layer partway through any fade), then the music's level on top.
+      const lights = [];
+      for (let u = start; u < start + count; u++) lights.push(lightOf(u, fix, energy, fadeT, target));
+      if (cells) writeBar(fix, cells, lights, energy);
+      else writePar(fix, lights[0], energy);
     }
   }
 
