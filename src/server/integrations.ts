@@ -20,7 +20,8 @@ import type DeezerSource from '../deezer-source.ts';
 import type MidiController from '../midi.ts';
 import type NowPlayingSource from '../nowplaying-source.ts';
 import type ProLink from '../prolink.ts';
-import type { ProlinkTrack } from '../prolink.ts';
+import type { ProlinkTrack, TrackChange } from '../prolink.ts';
+import type { AnalysisPriority } from '../analyzer-worker.ts';
 import type SpotifyClient from '../spotify.ts';
 import type { BeatGrid } from '../shared/beat-clock.ts';
 import type { AutoPosition } from './auto-position.ts';
@@ -137,7 +138,13 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     return sourceClock.positionMs();
   }
 
-  function getProlinkPositionMs(): number { return prolink.getPositionMs(); }
+  // The deck the running show's track is on. The show plays on that deck's
+  // clock rather than on whichever deck is followed now: through a mix, the
+  // outgoing track's show carries on while the incoming one is made ready.
+  let showDeck: number | null = null;
+  function getProlinkPositionMs(): number {
+    return showDeck === null ? prolink.getPositionMs() : prolink.getDeckPositionMs(showDeck);
+  }
 
   function getHybridPositionMs(): number { return hybrid.getPositionMs(); }
 
@@ -265,6 +272,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   function startAutoShow(): AutoSource {
     const source = resolveAutoSource();
     if (source === 'prolink') {
+      showDeck = prolink.getFollowed()?.deviceId ?? null;
       autoShow.start(getProlinkPositionMs);
     } else if (source === 'hybrid') {
       spotify.startPolling(1000);
@@ -412,6 +420,18 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     return out;
   }
 
+  /**
+   * How long the lights take to follow a mix from one deck to the next: two
+   * bars of the incoming track after a blend, and a cut after a cut — a DJ who
+   * slams the fader across wants the room to change at once.
+   */
+  function handoffFadeMs(change: TrackChange, bpm: number): number {
+    if (!change.handoff) return 0;
+    const beatMs = bpm > 0 ? 60000 / bpm : 500;
+    if (change.overlapMs < 4 * beatMs) return 0;
+    return Math.min(10000, Math.round(8 * beatMs));
+  }
+
   const cdjQuery = (track: ProlinkTrack) => (track.title && track.artist ? `${track.artist} - ${track.title}` : `CDJ track ${track.trackId}`);
   const cdjDurationSec = (track: ProlinkTrack) => (track.durationMs ? track.durationMs / 1000 : null);
 
@@ -436,12 +456,21 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     throw lastErr;
   }
 
-  /** Analyse a CDJ track ahead of time: its own file, else a search. */
-  async function prefetchCdjTrack(track: ProlinkTrack): Promise<void> {
+  /**
+   * Analyse a CDJ track ahead of time — its own file, else a search — without
+   * touching the running show. `current` for the track a mix is moving to:
+   * it waits for an analysis already under way, and moves it to the front.
+   */
+  async function prefetchCdjTrack(track: ProlinkTrack, priority: AnalysisPriority = 'normal'): Promise<void> {
     const meta = { title: track.title || undefined, artist: track.artist || undefined };
     for (const source of cdjSources(track)) {
       if (autoShow.isCached(source.key)) return;
-      const r = await autoShow.prefetch(cdjQuery(track), source.exact ? null : cdjDurationSec(track), source.key, meta);
+      const r = await autoShow.prefetch(cdjQuery(track), source.exact ? null : cdjDurationSec(track), source.key, meta, null, priority);
+      if (r.skipped && r.reason === 'in-flight' && priority === 'current') {
+        await autoShow.awaitInFlight(source.key, priority);
+        if (autoShow.isCached(source.key)) return;
+        continue;
+      }
       if (r.skipped) return;
       if (!r.error) {
         console.log(`[prolink] prefetched ${source.exact ? 'from the player' : 'by search'}: ${cdjQuery(track)}`);
@@ -451,28 +480,55 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     }
   }
 
-  prolink.onTrackChange(async (track) => {
+  // Only the newest track change may start a show. One still making its
+  // track ready has stopped the show, and a newer one must still take over.
+  let cdjGeneration = 0;
+  let cdjChanging = 0;
+
+  prolink.onTrackChange(async (track, change) => {
     if (!track) return;
-    console.log(`PRO DJ LINK track changed: ${track.artist || '?'} — ${track.title || '?'}`);
+    console.log(`PRO DJ LINK track changed: ${track.artist || '?'} — ${track.title || '?'}`
+      + (change?.handoff ? ` (mixed in from CDJ-${change.fromPlayer})` : ''));
     broadcast();
-    if (!autoShow.running) return;
+    if (!autoShow.running && !cdjChanging) return;
     if (resolveAutoSource() !== 'prolink') return;
 
-    autoShow.stop();
-    autoShow.track = {
-      name: track.title || `Track ${track.trackId}`,
-      artist: track.artist || 'PRO DJ LINK',
-      album: track.album || '',
-      albumArt: null,
-      durationMs: track.durationMs || 0,
+    const generation = ++cdjGeneration;
+    const isCurrent = () => generation === cdjGeneration;
+    const toPlayer = change?.toPlayer ?? prolink.getFollowed()?.deviceId ?? null;
+    const fadeMs = change ? handoffFadeMs(change, prolink.getTempo()) : 0;
+    const setTrack = () => {
+      autoShow.track = {
+        name: track.title || `Track ${track.trackId}`,
+        artist: track.artist || 'PRO DJ LINK',
+        album: track.album || '',
+        albumArt: null,
+        durationMs: track.durationMs || 0,
+      };
     };
-    broadcast();
+    cdjChanging++;
     try {
+      // In a mix the outgoing show plays on, on its own deck, while the
+      // incoming track's analysis is made; a new track on the same deck has
+      // nothing left to play on.
+      const outgoingPlays = !!change?.handoff && showDeck !== null && showDeck !== toPlayer;
+      if (outgoingPlays) {
+        await prefetchCdjTrack(track, 'current');
+        if (!isCurrent()) return;
+      }
+      autoShow.stop();
+      setTrack();
+      broadcast();
       await analyseCdjTrack(track);
-      autoShow.start(getProlinkPositionMs);
-      console.log('Auto show restarted for new CDJ track');
+      if (!isCurrent()) return;
+      showDeck = toPlayer;
+      autoShow.start(getProlinkPositionMs, { fadeMs });
+      console.log(`Auto show restarted for new CDJ track${fadeMs ? `, crossfading over ${(fadeMs / 1000).toFixed(1)} s` : ''}`);
     } catch (err) {
+      if ((err as { superseded?: boolean }).superseded) return;
       reportAnalysisError('PRO DJ LINK auto analysis failed', err);
+    } finally {
+      cdjChanging--;
     }
     broadcast();
   });

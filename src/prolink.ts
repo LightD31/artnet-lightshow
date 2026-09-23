@@ -325,10 +325,18 @@ class ProLink {
 
   /** Position in ms within the followed deck's track. */
   getPositionMs(): number {
-    const d = this._followedDeck();
+    // A deck gone quiet holds where it got to rather than drifting on.
+    return this._followed === null ? 0 : this.getDeckPositionMs(this._followed);
+  }
+
+  /**
+   * Position in ms within one deck's track, followed or not: the show on the
+   * outgoing deck of a mix plays on while the incoming track is analysed.
+   */
+  getDeckPositionMs(playerId: number): number {
+    const d = this._decks.get(playerId);
     if (!d || !d.hasTrack) return 0;
     const now = this._now();
-    // A deck gone quiet holds where it got to rather than drifting on.
     if (d.isStale(now)) return d.positionMs(d.lastStatusAt + STALE_PACKET_MS);
     return d.positionMs(now);
   }

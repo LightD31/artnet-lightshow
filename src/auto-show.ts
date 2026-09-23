@@ -117,6 +117,7 @@ class AutoShow {
   declare _getPositionMs: (() => number) | null;
   declare _loopTimer: ReturnType<typeof setInterval> | null;
   declare _lastEventIdx: number;
+  declare _startFadeMs: number;
   declare _lastPositionMs: number | undefined;
   declare _status: AutoShowStatus;
   declare _energyTimer: ReturnType<typeof setTimeout> | null;
@@ -174,6 +175,7 @@ class AutoShow {
     this._getPositionMs = null;
     this._loopTimer = null;
     this._lastEventIdx = -1;
+    this._startFadeMs = 0;
     this._status = 'idle';
     this._energyTimer = null;
     // Shared in-flight work map so concurrent callers for the same cacheKey
@@ -355,8 +357,11 @@ class AutoShow {
     delete restored.masterDimmer;
     delete restored.masterBlackout;
     // A seek lands on the scene; it does not fade into it from wherever the
-    // rig happened to be.
+    // rig happened to be — unless the show was started to crossfade in.
     delete restored.fadeMs;
+    if (this._startFadeMs > 0) restored.fadeMs = this._startFadeMs;
+    // Once only, and not saved for a later seek when there is no scene yet.
+    this._startFadeMs = 0;
     // The restored pattern counts its steps from the beat its scene was
     // scheduled on, so a seek lands on the same step playing through would.
     // Without a pattern to anchor, it still says it came from the timeline.
@@ -576,6 +581,18 @@ class AutoShow {
       promise.then(cleanup, cleanup);
     }
     return promise;
+  }
+
+  /**
+   * Wait for an analysis already being made for `cacheKey`, moved up the
+   * analyser's queue to `priority`. Resolves either way, without touching the
+   * running show; `isCached` then says whether it worked.
+   */
+  async awaitInFlight(cacheKey: string, priority: AnalysisPriority = 'current'): Promise<void> {
+    const pending = this._inFlight.get(cacheKey);
+    if (!pending) return;
+    if (this._worker) this._worker.promote(cacheKey, priority);
+    await pending.catch(() => {});
   }
 
   /**
@@ -863,12 +880,19 @@ class AutoShow {
 
   // ── 3. Playback ─────────────────────────────────────────────────────────────
 
-  start(getPositionMs: () => number): void {
+  /**
+   * Play the timeline against `getPositionMs`. `fadeMs` crossfades from
+   * whatever the rig shows into the scene the show starts on — the lights
+   * following a DJ's blend from one track to the next — where a start
+   * otherwise lands on its scene at once.
+   */
+  start(getPositionMs: () => number, { fadeMs = 0 }: { fadeMs?: number } = {}): void {
     if (!this.timeline.length) return;
     // A second client or a retried request must not reset the cursor, replay
     // events, or leave an extra playback interval that stop() cannot clear.
     if (this.running) return;
     this._getPositionMs = getPositionMs;
+    this._startFadeMs = Math.max(0, Math.min(10000, Math.round(Number(fadeMs) || 0)));
     this.running = true;
     this._lastEventIdx = -1;
     this._lastPositionMs = undefined;
@@ -882,6 +906,7 @@ class AutoShow {
 
   stop(): void {
     this.running = false;
+    this._startFadeMs = 0;
     this._status = this.analysis ? 'ready' : 'idle';
     if (this._loopTimer) { clearInterval(this._loopTimer); this._loopTimer = null; }
     this._cancelEnergyTimer();
