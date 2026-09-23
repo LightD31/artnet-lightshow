@@ -22,6 +22,12 @@ than buried in a threshold.
 The show engine uses both: boundaries decide *when* to change the look, roles
 decide *what to change it to*, and a section labelled `chorus` gets the same
 look every time it comes back because the label, not the clock, drives it.
+
+When a structure model has named the sections (SongFormer, see songformer.py),
+`from_model` builds them from its answer instead: its boundaries, put on the
+bar line, and its functions as the roles, with the self-similarity clusters
+still deciding which sections are the same music. The rules above are the
+fallback, for a track the model did not see.
 """
 
 from dataclasses import dataclass, field
@@ -33,7 +39,7 @@ from . import dsp
 from .config import StructureConfig
 
 
-ROLES = ('intro', 'verse', 'chorus', 'drop', 'bridge', 'breakdown', 'outro')
+ROLES = ('intro', 'verse', 'prechorus', 'chorus', 'drop', 'bridge', 'breakdown', 'outro')
 
 
 @dataclass
@@ -51,6 +57,9 @@ class Section:
     #: 'low' | 'mid' | 'high' — coarse level, kept for the show engine.
     level: str = 'mid'
     confidence: float = 0.0
+    #: What a structure model called it (intro, verse, pre-chorus, chorus,
+    #: bridge, inst, outro, silence), when one did.
+    function: str = None
 
     @property
     def duration(self):
@@ -69,6 +78,7 @@ class Section:
             'vocal': round(self.vocal, 3),
             'level': self.level,
             'confidence': round(self.confidence, 3),
+            **({'function': self.function} if self.function else {}),
         }
 
 
@@ -539,20 +549,51 @@ def energy_sections(features, rhythm_intensity, vocal_curve, config: StructureCo
 
 # ── Entry point ─────────────────────────────────────────────────────────────
 
-def analyse(features, rhythm, roles=None, drops=(), config: StructureConfig = None):
-    """Segment the track and name the sections. Returns a list of `Section`."""
+def _similarity(features, rhythm, config):
+    """(beat-synchronous feature stack, cluster labels per beat), either None."""
     import librosa
+    beat_frames = librosa.time_to_frames(
+        rhythm.beats, sr=features.sample_rate, hop_length=features.hop_length) \
+        if rhythm.beats.size else np.zeros(0, dtype=int)
+    stack = beat_synchronous_features(features, beat_frames)
+    labels = laplacian_labels(stack, config) if stack is not None else None
+    return stack, labels
 
+
+def _cover(sections, duration):
+    """
+    Stretch the first and last sections to the ends of the track.
+
+    Sections are built on the beat grid, and a beatless intro or a tail of
+    reverb has no beats: the seconds before the first beat and after the last
+    were in no section at all, and the show had nothing to say about them.
+    They belong to the section next to them.
+    """
+    if sections:
+        sections[0].start = 0.0
+        sections[-1].end = max(sections[-1].end, duration)
+    return sections
+
+
+def analyse(features, rhythm, roles=None, drops=(), config: StructureConfig = None,
+            model_sections=None):
+    """
+    Segment the track and name the sections. Returns a list of `Section`.
+
+    `model_sections`, a structure model's answer (see `from_model`), is used
+    when it has one; the labeller answers otherwise.
+    """
     config = config or StructureConfig()
     vocal_curve = roles.curve('vocal') if roles is not None else None
     duration = float(features.times[-1]) if features.times.size else 0.0
 
-    beat_frames = librosa.time_to_frames(
-        rhythm.beats, sr=features.sample_rate, hop_length=features.hop_length) \
-        if rhythm.beats.size else np.zeros(0, dtype=int)
+    stack, labels = _similarity(features, rhythm, config)
 
-    stack = beat_synchronous_features(features, beat_frames)
-    labels = laplacian_labels(stack, config) if stack is not None else None
+    if model_sections:
+        built = from_model(model_sections, features, rhythm, roles, drops, config,
+                           similarity=(stack, labels))
+        if built:
+            return built
 
     if labels is None:
         sections = energy_sections(features, rhythm.intensity, vocal_curve, config)
@@ -586,7 +627,7 @@ def analyse(features, rhythm, roles=None, drops=(), config: StructureConfig = No
             label=chr(ord('A') + int(labels[b0]) % 26),
             confidence=dsp.clamp01(0.4 + 0.6 * confidence)))
 
-    sections = _merge_short(sections, config.min_section_sec)
+    sections = _cover(_merge_short(sections, config.min_section_sec), duration)
     for s in sections:
         _measure(s, features, rhythm.intensity, vocal_curve)
     energies = [s.energy for s in sections]
@@ -594,3 +635,149 @@ def analyse(features, rhythm, roles=None, drops=(), config: StructureConfig = No
         s.level = _level(s.energy, energies)
 
     return assign_roles(sections, duration, drops, config)
+
+
+# ── From a structure model ──────────────────────────────────────────────────
+
+#: A structure model's section functions, as the show's roles. `inst` and
+#: `silence` are not here: what an instrumental passage is to a lighting
+#: designer depends on how loud it is and where it falls (see `_model_role`).
+FUNCTION_ROLES = {
+    'intro': 'intro', 'verse': 'verse', 'pre-chorus': 'prechorus', 'prechorus': 'prechorus',
+    'chorus': 'chorus', 'bridge': 'bridge', 'outro': 'outro',
+}
+
+
+def _snap(t, beats, downbeats, beat_period, bar_period):
+    """
+    A model boundary, onto the bar line beside it when there is one.
+
+    The model places boundaries on its own frame grid, a tenth of a second
+    apart, and a look that changes a tenth of a second off the downbeat reads
+    as late. Near a bar line it goes there; near only a beat, to the beat; far
+    from both — a misread grid — it stays where the model put it.
+    """
+    if downbeats.size and bar_period > 0:
+        i = int(np.argmin(np.abs(downbeats - t)))
+        if abs(downbeats[i] - t) <= max(0.6, bar_period / 4):
+            return float(downbeats[i])
+    if beats.size and beat_period > 0:
+        i = int(np.argmin(np.abs(beats - t)))
+        if abs(beats[i] - t) <= beat_period / 2:
+            return float(beats[i])
+    return float(t)
+
+
+#: Functions a detected drop does not override: where a track starts and
+#: ends, a gap, and the build that leads into the drop rather than the drop.
+NOT_A_DROP = {'intro', 'outro', 'silence', 'pre-chorus', 'prechorus'}
+
+
+def _model_role(section, index, count, drops, median_energy):
+    function = (section.function or '').lower()
+    # A proper drop that starts a loud section is the strongest evidence there
+    # is, and the model was trained on songs rather than on club tracks: run
+    # on one, it calls the drop a verse as readily as a chorus.
+    if function not in NOT_A_DROP and _starts_on_a_drop(section, drops, median_energy):
+        return 'drop'
+    role = FUNCTION_ROLES.get(function)
+    if role:
+        return role
+    first, last = index == 0, index == count - 1
+    if function == 'silence':
+        return 'intro' if first else 'outro' if last else 'breakdown'
+    if function == 'inst':
+        if first and (section.energy <= median_energy or section.duration < 20.0):
+            return 'intro'
+        if last and section.energy <= median_energy:
+            return 'outro'
+        if section.level == 'low':
+            return 'breakdown'
+        return 'chorus' if section.level == 'high' else 'verse'
+    return 'verse'
+
+
+def from_model(model_sections, features, rhythm, roles=None, drops=(), config=None,
+               similarity=None):
+    """
+    Sections from a structure model's `[{'start', 'end', 'label'}, …]`.
+
+    The model decides where the boundaries are and what each section is. Two
+    things still come from here:
+
+      where exactly   each boundary goes to the bar line near it (`_snap`)
+      which are the   the self-similarity cluster most of a section's beats
+      same music      fall in is its `label`, so a chorus that comes back
+                      gets the same look, as it does from the labeller
+
+    A section that starts on a detected drop is a `drop` whatever the model
+    called it (bar an intro, an outro, a silence or a pre-chorus), and the
+    sections sharing its function and its cluster agree on it.
+    """
+    config = config or StructureConfig()
+    duration = float(features.times[-1]) if features.times.size else 0.0
+    rows = sorted((r for r in model_sections or [] if r.get('end', 0) > r.get('start', 0)),
+                  key=lambda r: r['start'])
+    if not rows or duration <= 0:
+        return []
+    stack, labels = similarity if similarity is not None else _similarity(features, rhythm, config)
+    beats = np.asarray(rhythm.beats, dtype=float)
+    downbeats = np.asarray(rhythm.downbeats, dtype=float)
+    novelty = None
+    if stack is not None:
+        novelty = novelty_curve(stack, min(config.novelty_kernel_beats, max(2, stack.shape[1] // 6)))
+
+    edges, functions = [0.0], [str(rows[0]['label'])]
+    for row in rows[1:]:
+        t = _snap(float(row['start']), beats, downbeats, rhythm.beat_period, rhythm.bar_period)
+        if t - edges[-1] < 1.0 or t >= duration - 1.0:
+            continue
+        edges.append(t)
+        functions.append(str(row['label']))
+    edges.append(duration)
+
+    vocal_curve = roles.curve('vocal') if roles is not None else None
+    sections = []
+    for i, function in enumerate(functions):
+        start, end = edges[i], edges[i + 1]
+        label, confidence = function, 0.8
+        if labels is not None and beats.size:
+            inside = np.flatnonzero((beats[:labels.size] >= start) & (beats[:labels.size] < end))
+            if inside.size:
+                cluster = int(np.bincount(labels[inside]).argmax())
+                label = chr(ord('A') + cluster % 26)
+                if novelty is not None and inside[0] < novelty.size:
+                    # A boundary the repetition structure agrees with is surer.
+                    confidence = 0.7 + 0.3 * float(novelty[inside[0]])
+        sections.append(Section(start=start, end=end, label=label, function=function,
+                                confidence=dsp.clamp01(confidence)))
+
+    # The model folds its own fragments, and a four-bar breakdown it found is
+    # a section: only what snapping squeezed below two bars is folded here.
+    shortest = min(config.min_section_sec, max(4.0, 2 * rhythm.bar_period))
+    sections = _cover(_merge_short(sections, shortest), duration)
+    for s in sections:
+        _measure(s, features, rhythm.intensity, vocal_curve)
+    energies = [s.energy for s in sections]
+    median_energy = float(np.median(energies))
+    for s in sections:
+        s.level = _level(s.energy, energies)
+    for i, s in enumerate(sections):
+        s.role = _model_role(s, i, len(sections), drops, median_energy)
+
+    # One drop, one look: repeats of the same music agree on whether they are
+    # a drop, as the labeller's sections do.
+    groups = {}
+    for s in sections:
+        if (s.function or '').lower() not in NOT_A_DROP and s.role not in ('intro', 'outro'):
+            groups.setdefault((s.function, s.label), []).append(s)
+    for group in groups.values():
+        drop = sum(s.role == 'drop' for s in group) * 2 >= len(group)
+        for s in group:
+            if drop and s.energy >= median_energy:
+                s.role = 'drop'
+            elif s.role == 'drop':
+                s.role = _model_role(Section(start=s.start, end=s.end, label=s.label,
+                                             function=s.function, energy=s.energy, level=s.level),
+                                     sections.index(s), len(sections), (), median_energy)
+    return sections

@@ -34,7 +34,7 @@ rl.on('line', (line) => {
   }
   if (mode === 'crash') process.exit(1);
   if (mode === 'env') {
-    process.stdout.write(JSON.stringify({ id: req.id, result: { separator: process.env.ARTNET_USE_BS_ROFORMER, pid: process.pid } }) + '\n');
+    process.stdout.write(JSON.stringify({ id: req.id, result: { separator: process.env.ARTNET_USE_BS_ROFORMER, structure: process.env.ARTNET_STRUCTURE_MODEL, pid: process.pid } }) + '\n');
     return;
   }
   if (mode === 'gpufault') {

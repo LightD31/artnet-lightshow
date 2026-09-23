@@ -1620,6 +1620,18 @@ const SETTINGS_SPEC = [
           + 'BS-RoFormer takes about seven times as long (around 6 minutes a track on an integrated '
           + 'GPU), so the playing track is rarely ready in time. Changing it restarts the analyzer; '
           + 'tracks already analysed keep their result.' },
+      { path: 'analysis.structureModel', label: 'Structure', type: 'select',
+        options: () => [
+          { value: 'auto', label: 'Auto (SongFormer on a GPU)' },
+          { value: 'songformer', label: 'SongFormer, also on CPU (slow)' },
+          { value: 'off', label: 'Self-similarity only' },
+        ],
+        help: 'Names each section: intro, verse, pre-chorus, chorus, bridge, outro. SongFormer '
+          + 'was trained on thousands of annotated songs; it needs its 2.7 GB of weights '
+          + '(Analysis models, below) and takes a few seconds a track on a GPU, but most of the '
+          + 'track\'s length and 8-10 GB of memory on a CPU. Without it the sections come from '
+          + 'where the music repeats, with arrangement rules for the names. Changing it '
+          + 'restarts the analyzer.' },
       { path: 'analysis.pythonPath', label: 'Python', type: 'text',
         help: 'Blank auto-detects, preferring an interpreter that can import the analyzer\'s '
           + 'dependencies. Set a full path when pip installed into a different Python than the '

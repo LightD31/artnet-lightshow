@@ -212,6 +212,23 @@ test('the worker is started with the separator the settings page chose', async (
   }
 });
 
+// And its Structure field as ARTNET_STRUCTURE_MODEL, which decides whether
+// SongFormer names the sections.
+test('the worker is started with the structure model the settings page chose', async () => {
+  const original = settings._values.analysis.structureModel;
+  try {
+    for (const mode of ['auto', 'songformer', 'off']) {
+      settings._values.analysis.structureModel = mode;
+      const w = worker('env');
+      try {
+        assert.strictEqual((await w.analyze('/tmp/a.wav', null)).structure, mode);
+      } finally { w.shutdown(); }
+    }
+  } finally {
+    settings._values.analysis.structureModel = original;
+  }
+});
+
 // Changing the separator (or the interpreter) restarts the worker. Work that
 // was running must go to the new process, not sit on the killed one until the
 // timeout.

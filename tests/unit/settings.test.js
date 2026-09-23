@@ -190,6 +190,14 @@ test('the separator defaults to Demucs and takes only the two it knows', () => {
   assert.ok(!sep(''));
 });
 
+test('SongFormer runs by default only where it keeps up, and the field takes only its three', () => {
+  assert.strictEqual(DEFAULTS.analysis.structureModel, 'auto', 'on a GPU, not on a CPU');
+  const mode = (structureModel) => schema.safeParse({ ...DEFAULTS, analysis: { ...DEFAULTS.analysis, structureModel } }).success;
+  for (const ok of ['auto', 'songformer', 'off']) assert.ok(mode(ok), ok);
+  assert.ok(!mode('edmformer'), 'no weights were ever released');
+  assert.ok(!mode(''));
+});
+
 // Whatever pythonPath names is executed, so it has to be named like a Python.
 test('pythonPath only accepts a Python interpreter', () => {
   const ok = (v) => patchSchema.safeParse({ analysis: { pythonPath: v } }).success;

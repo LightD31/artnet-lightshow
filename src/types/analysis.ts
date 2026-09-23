@@ -39,8 +39,8 @@ export interface AnalysisDocument {
   /** The track's sections, in order. */
   segments: Section[];
   /**
-   * Where the sections came from: the analyser, or 'rekordbox' when a CDJ track's phrases replaced
-   * them.
+   * Where the sections came from: 'songformer' when the structure model named them, 'analysis' for
+   * the self-similarity labeller, or 'rekordbox' when a CDJ track's phrases replaced them.
    */
   sectionSource?: string;
   /**
@@ -115,6 +115,7 @@ export interface Section {
   start: number;
   end: number;
   label: string;
+  /** intro, verse, prechorus, chorus, drop, bridge, breakdown or outro. */
   role: string;
   energy: number;
   brightness?: number;
@@ -123,6 +124,11 @@ export interface Section {
   vocal?: number;
   level: "low" | "mid" | "high";
   confidence?: number;
+  /**
+   * What a structure model called the section (intro, verse, pre-chorus, chorus, bridge, inst,
+   * outro, silence), when one named it.
+   */
+  function?: string;
 }
 
 export interface Drop {

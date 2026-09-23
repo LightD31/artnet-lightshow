@@ -48,13 +48,17 @@ function storedTimeoutMs(): number {
 }
 
 /**
- * The worker's environment: this process's, plus the separator the settings
- * page chose. Read at spawn, so a change applies to the next worker — and
- * changing it restarts the worker (see apply.js).
+ * The worker's environment: this process's, plus the separator and the
+ * structure model the settings page chose. Read at spawn, so a change applies
+ * to the next worker — and changing either restarts the worker (see apply.ts).
  */
 function workerEnv(): NodeJS.ProcessEnv {
   const bsRoformer = settings.get('analysis.separator') === 'bs-roformer';
-  return { ...process.env, ARTNET_USE_BS_ROFORMER: bsRoformer ? '1' : '0' };
+  return {
+    ...process.env,
+    ARTNET_USE_BS_ROFORMER: bsRoformer ? '1' : '0',
+    ARTNET_STRUCTURE_MODEL: settings.get('analysis.structureModel') || 'auto',
+  };
 }
 
 // Priority bands, in served order. 'current' is the song the room is hearing

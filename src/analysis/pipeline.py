@@ -39,7 +39,7 @@ import numpy as np
 from . import (bands as bands_stage, dsp, dynamics as dynamics_stage,
                events as events_stage, features as features_stage,
                perception as perception_stage, preprocess as preprocess_stage,
-               rhythm as rhythm_stage, stems as stems_stage,
+               rhythm as rhythm_stage, songformer, stems as stems_stage,
                structure as structure_stage, tagger)
 from .config import AnalysisConfig, DEFAULT
 from .version import SCHEMA_VERSION
@@ -75,6 +75,7 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
     stem_pool, stem_future = None, None
     beat_pool, beat_turn = None, None
     key_pool, key_future = None, None
+    form_pool, form_future = None, None
     # Only a tagger whose weights are already here. The analysis never
     # downloads: 310 MB fetched mid-track on venue wifi is a track that does
     # not get analysed, and possibly the one after it.
@@ -130,6 +131,13 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
             mulan_pool = ThreadPoolExecutor(max_workers=1)
             mulan_future = mulan_pool.submit(_safe_muq, audio)
 
+        # SongFormer names the sections (see songformer.py). The slowest model
+        # here, and needed only by the structure stage, so it starts now and
+        # is collected last.
+        if songformer.wanted(config.structure_model):
+            form_pool = ThreadPoolExecutor(max_workers=1)
+            form_future = form_pool.submit(_safe_songformer, audio)
+
         # The key model reads the decoded file rather than decoding it again,
         # and nothing but the document waits for it.
         if model_adapters.skey_available():
@@ -150,6 +158,7 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
         roles = bands_stage.infer_roles(frames, band_map, stems, tags)
 
         dynamics = dynamics_stage.analyse(frames, band_map, rhythm, config.dynamics)
+        model_sections = _collect(form_future) or None
 
         # Structure and perception are independent of each other and are the
         # two slowest remaining stages, so they run side by side.
@@ -157,7 +166,8 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
             with ThreadPoolExecutor(max_workers=2) as pool:
                 sections_future = pool.submit(
                     structure_stage.analyse, frames, rhythm, roles,
-                    [d.to_dict() for d in dynamics.drops], config.structure)
+                    [d.to_dict() for d in dynamics.drops], config.structure,
+                    model_sections)
                 perception_future = pool.submit(
                     perception_stage.analyse, frames, band_map, rhythm, roles,
                     tags, mulan.get('genre'))
@@ -166,7 +176,7 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
         else:
             sections = structure_stage.analyse(
                 frames, rhythm, roles, [d.to_dict() for d in dynamics.drops],
-                config.structure)
+                config.structure, model_sections)
             perception = perception_stage.analyse(
                 frames, band_map, rhythm, roles, tags, mulan.get('genre'))
 
@@ -177,6 +187,8 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
             audio, frames, rhythm, band_map, roles, sections, dynamics,
             perception, stream, stems))
         document['track']['hash'] = _file_hash(path)
+        named_by_model = any(s.function for s in sections)
+        document['sectionSource'] = 'songformer' if named_by_model else 'analysis'
         # Optional foundation-model passes are activated by local model
         # configuration and never block the deterministic core pipeline. Both
         # were collected above, off the critical path.
@@ -193,6 +205,7 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
             # what ran: a model that came back undecided loses to the signal.
             'genre': perception.genre_source,
             'skey': False,
+            'structure': 'songformer' if named_by_model else 'laplacian',
             'muq': bool(document['embeddings']),
             'muqMulan': bool(document['semantic_scores']),
         }
@@ -218,7 +231,7 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
              f'{len(dynamics.drops)} drops, {len(stream)} events)')
         return document
     finally:
-        for pool in (beat_pool, stem_pool, tag_pool, mulan_pool, key_pool):
+        for pool in (beat_pool, stem_pool, tag_pool, mulan_pool, key_pool, form_pool):
             if pool is not None:
                 pool.shutdown(wait=False)
         # A beat pass that never reached the card must not keep it from the
@@ -240,6 +253,19 @@ def _beat_pass(audio, config, turn):
         return rhythm_stage.model_beats(audio, config)
     finally:
         models.cancel_turn(turn)
+
+
+def _safe_songformer(audio):
+    """SongFormer's sections, from the decoded mix, on the analysis clock; or None."""
+    try:
+        head = int(round(audio.trim_offset * audio.source_rate))
+        want = int(round(audio.duration * audio.source_rate))
+        mix = np.mean(audio.source, axis=0)[head:head + want]
+        return songformer.sections(mix, audio.source_rate)
+    except Exception as exc:
+        models.gpu_fault(exc)
+        _log(f'SongFormer unavailable ({exc}); the sections come from self-similarity')
+        return None
 
 
 def _safe_skey(audio):
