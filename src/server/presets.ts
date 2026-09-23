@@ -127,6 +127,8 @@ const PATTERNS = [
   { id: 'burst',    name: 'Burst',    desc: 'A ring thrown out from the centre of the stage on every step', pixel: true },
   { id: 'plasma',   name: 'Plasma',   desc: 'Slow interfering waves in the look\'s colours', pixel: true },
   { id: 'meter',    name: 'Meter',    desc: 'A level meter filled by the low end, kicked on every step', pixel: true },
+  { id: 'drums',    name: 'Drums',    desc: 'The kit as it is hit: kick from the middle, snare at the ends, hats scattered', pixel: true },
+  { id: 'stems',    name: 'Stems',    desc: 'Voice, band, drums and bass in zones out from the centre, each as loud as it plays', pixel: true },
 ];
 
 const PATTERN_IDS = PATTERNS.map((p) => p.id);

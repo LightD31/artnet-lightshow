@@ -6,7 +6,10 @@ Bump the *major* part when a consumer that reads the document would break
 each entry and re-analyses anything older than MIN_COMPATIBLE.
 """
 
-SCHEMA_VERSION = '2.0'
+# 2.1: sections may carry a SongFormer `function` and the `prechorus` role,
+# `sectionSource` is always set, and `pulse` holds the stem envelopes and the
+# drum lanes. Additive: 2.0 documents still play, without them.
+SCHEMA_VERSION = '2.1'
 
 # Documents older than this are re-analysed rather than replayed: the 1.x
 # analyser had no event stream, no band detail and no section roles.

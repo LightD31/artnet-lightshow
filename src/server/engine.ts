@@ -14,7 +14,7 @@ import { messageOf } from '../errors.ts';
 import type { FromWorker, ToWorker } from './engine-messages.ts';
 import type { FrameSummary, Ticker } from './frame-clock.ts';
 import type { FadeRequest, RenderInput, SyncTestRequest } from './renderer.ts';
-import type { Profile } from '../types/rig.ts';
+import type { Profile, PulseReading } from '../types/rig.ts';
 
 /** Where frames are rendered: a thread of their own, or this one. */
 export type EngineThread = 'worker' | 'main';
@@ -116,6 +116,7 @@ function renderInput(): RenderInput {
     fade: fadeRequest,
     syncTest: syncRequest,
     universes: activeUniverses(),
+    pulse: runPulseSource(),
     fixtures: state.fixtures.map((f) => ({
       id: f.id,
       address: f.address,
@@ -140,6 +141,28 @@ const runFrameHook = guarded('frame-hook', () => { if (frameHook) frameHook(); }
 /** Register what runs at the start of each frame (the auto show's cursor). */
 function setFrameHook(fn: (() => void) | null | undefined): void {
   frameHook = typeof fn === 'function' ? fn : null;
+}
+
+// Where the music is at pixel rate (show/pulse.ts): read with each frame's
+// input, after the frame hook has moved the show on. Seven numbers, so it
+// rides in the snapshot the engine thread renders from.
+let pulseSource: (() => PulseReading | null) | null = null;
+let pulseFailed = false;
+function runPulseSource(): PulseReading | null {
+  if (!pulseSource) return null;
+  try {
+    return pulseSource();
+  } catch (err) {
+    if (!pulseFailed) console.warn(`[engine] pulse source failed: ${err instanceof Error ? err.message : String(err)}`);
+    pulseFailed = true;
+    return null;
+  }
+}
+
+/** Register what says how the music moves inside the beat (the auto show's pulse). */
+function setPulseSource(fn: (() => PulseReading | null) | null | undefined): void {
+  pulseSource = typeof fn === 'function' ? fn : null;
+  pulseFailed = false;
 }
 
 /**
@@ -417,6 +440,7 @@ export {
   stopEngine,
   engineStatus,
   setFrameHook,
+  setPulseSource,
   resizeFixtureBuffers,
   startSyncTest,
   beginFade,

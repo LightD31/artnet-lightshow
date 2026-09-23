@@ -17,7 +17,7 @@ import AutoShow from './auto-show.ts';
 import { AnalysisCache } from './analysis-cache.ts';
 
 import { state } from './server/state.ts';
-import { startEngine, stopEngine, setFrameHook } from './server/engine.ts';
+import { startEngine, stopEngine, setFrameHook, setPulseSource } from './server/engine.ts';
 import { artnetDiscovery } from './server/output.ts';
 import { conductor } from './server/conductor.ts';
 import { applyPatch, applyOverride, setFixtureMaxBrightness, processTap, setPersist, setHooks, flushPendingPersist } from './server/patch.ts';
@@ -116,6 +116,7 @@ const integrations = setupIntegrations({ io, midi, spotify, nowPlaying, deezerSo
 // hears, else the operator's tap.
 autoShow.useFrameClock();
 setFrameHook(() => autoShow.tick());
+setPulseSource(() => autoShow.pulse());
 conductor.setAutoSource(() => autoShow.beatSource());
 conductor.setProlinkSource(() => (state.prolinkEnabled && !autoShow.running ? prolink.getBeatReading() : null));
 conductor.setLiveSource(() => liveInput.getBeatReading());

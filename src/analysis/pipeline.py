@@ -39,7 +39,8 @@ import numpy as np
 from . import (bands as bands_stage, dsp, dynamics as dynamics_stage,
                events as events_stage, features as features_stage,
                perception as perception_stage, preprocess as preprocess_stage,
-               rhythm as rhythm_stage, songformer, stems as stems_stage,
+               pulse as pulse_stage, rhythm as rhythm_stage, songformer,
+               stems as stems_stage,
                structure as structure_stage, tagger)
 from .config import AnalysisConfig, DEFAULT
 from .version import SCHEMA_VERSION
@@ -183,9 +184,15 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
         stream = events_stage.generate(frames, band_map, roles, rhythm, sections,
                                        dynamics, config.events)
 
+        try:
+            pulse = pulse_stage.analyse(audio, stems)
+        except Exception as exc:
+            _log(f'pixel envelopes unavailable ({exc})')
+            pulse = None
+
         document = json_safe(build_document(
             audio, frames, rhythm, band_map, roles, sections, dynamics,
-            perception, stream, stems))
+            perception, stream, stems, pulse))
         document['track']['hash'] = _file_hash(path)
         named_by_model = any(s.function for s in sections)
         document['sectionSource'] = 'songformer' if named_by_model else 'analysis'
@@ -368,7 +375,7 @@ def json_safe(value):
 # ── Document assembly ───────────────────────────────────────────────────────
 
 def build_document(audio, frames, rhythm, band_map, roles, sections, dynamics,
-                   perception, stream, stems=None):
+                   perception, stream, stems=None, pulse=None):
     """
     Assemble the analysis document.
 
@@ -473,6 +480,8 @@ def build_document(audio, frames, rhythm, band_map, roles, sections, dynamics,
         'perception': perception.to_dict(),
         'features': features_stage.summarise(frames),
         'events': [e.to_dict() for e in stream],
+        # The music at pixel rate, for the LED bars (see pulse.py).
+        **({'pulse': pulse} if pulse else {}),
         'meta': {
             'sampleRate': frames.sample_rate,
             'hopLength': frames.hop_length,

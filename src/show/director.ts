@@ -402,7 +402,7 @@ class ShowDirector {
       // a silence is expressed, and nothing else — every other pass degrades
       // inside itself rather than branching on this.
       continuous: hasScore(analysis),
-      available: new Set(this.patterns.map((p) => p.id)),
+      available: look.availableFor(this.patterns, analysis),
       pixels: this.pixels,
       drops: grouped.get(EVENT.DROP) || [],
       buildups: grouped.get(EVENT.BUILDUP) || [],

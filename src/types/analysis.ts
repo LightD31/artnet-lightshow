@@ -38,6 +38,7 @@ export interface AnalysisDocument {
   genre?: Genre;
   /** The track's sections, in order. */
   segments: Section[];
+  pulse?: Pulse;
   /**
    * Where the sections came from: 'songformer' when the structure model named them, 'analysis' for
    * the self-similarity labeller, or 'rekordbox' when a CDJ track's phrases replaced them.
@@ -129,6 +130,27 @@ export interface Section {
    * outro, silence), when one named it.
    */
   function?: string;
+}
+
+/** The music at pixel rate (src/analysis/pulse.py): each stem's level and every drum hit. */
+export interface Pulse {
+  /** Envelope points per second. */
+  rate: number;
+  /** Each envelope is base64 of one byte per point, 0..255 for 0..1. */
+  encoding: "u8-base64";
+  /** Whether the lanes came from the separated drum stem or the percussive half of the mix. */
+  source?: "stems" | "mix";
+  /** mix, and drums, bass, vocals and other when the track was separated. */
+  envelopes: Record<string, string>;
+  /** kick, snare and hats. */
+  lanes: Record<string, Lane>;
+}
+
+export interface Lane {
+  /** Hit times, seconds. */
+  t: number[];
+  /** How hard each was hit, 0..1. */
+  s: number[];
 }
 
 export interface Drop {
