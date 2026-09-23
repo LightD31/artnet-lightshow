@@ -287,7 +287,7 @@ test('rig and preview agree on every cell of a bar', () => {
     ];
     resizeFixtureBuffers();
     const rig = buildRig(state.fixtures, profileFor);
-    for (const pattern of ['wave', 'rainbow', 'chase', 'solid']) {
+    for (const pattern of ['wave', 'rainbow', 'chase', 'solid', 'gradient', 'comet', 'burst', 'plasma', 'meter']) {
       const look = { pattern, colorA: 1, colorB: 5, colorC: 3, colorD: 8, bpm: 120, beatDivision: 2, split: null };
       const sample = createPreviewSampler([{ timeMs: 0, action: 'patch', data: look }]);
       beat = 0;

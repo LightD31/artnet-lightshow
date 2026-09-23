@@ -61,6 +61,9 @@ test('a thousand cells render well inside a frame', () => {
     run('ribbon', { pattern: 'ribbon', showDynamics: { level: 0.8, width: 0.6, air: 0.5, motion: 0.6 } });
     run('chase', { pattern: 'chase', showDynamics: null });
     run('twinkle', { pattern: 'twinkle' });
+    run('gradient', { pattern: 'gradient', pixelMap: 'stage' });
+    run('plasma', { pattern: 'plasma', pixelMap: 'mirror' });
+    run('comet', { pattern: 'comet', pixelMap: 'bar' });
     run('crossfade', { pattern: 'wave', colorA: 6, fadeMs: 5000 });
 
     delete timings['warm-up'];
