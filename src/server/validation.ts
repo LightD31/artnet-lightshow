@@ -41,6 +41,14 @@ const unitValue = z.number().min(0).max(1).optional();
 // failed sends.
 const HOSTNAME_RE = /^(?=.{1,253}$)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
 
+// A fixture sent to a device of its own: a WLED over DDP, by its hostname or
+// address. Its universes then go there and nowhere else (ddp-routes.ts).
+const fixtureOutput = z.object({
+  protocol: z.literal('ddp'),
+  host: z.string().regex(HOSTNAME_RE, 'is not a hostname or an IPv4 address'),
+  port: z.number().int().min(1).max(65535).optional(),
+}).strict();
+
 // A string of dotted numeric labels is someone typing an IP, so hold it to
 // IPv4 rules rather than letting "2.255.255.256" through as a hostname (which
 // RFC 1123 would technically permit) and failing later at DNS.
@@ -150,6 +158,7 @@ const fixtureMessageSchema = z.object({
   // Not part of the override — it applies to an energy override too.
   maxBrightness: u8.optional(),
   geometry: fixtureGeometry.nullable().optional(),
+  output: fixtureOutput.nullable().optional(),
 }).strict();
 
 /**
@@ -165,6 +174,7 @@ const fixtureRestoreSchema = z.object({
     position: fixturePosition.nullable().optional(),
     group: fixtureGroup.nullable().optional(),
     geometry: fixtureGeometry.nullable().optional(),
+    output: fixtureOutput.nullable().optional(),
     label: z.string().max(64),
     address: z.number().int().min(1).max(512),
     universe: dmxUniverse.optional(),
@@ -318,6 +328,7 @@ const showSchema = z.object({
     position: fixturePosition.nullable().optional(),
     group: fixtureGroup.nullable().optional(),
     geometry: fixtureGeometry.nullable().optional(),
+    output: fixtureOutput.nullable().optional(),
     label: z.string().max(64).optional(),
     address: z.number().int().min(1).max(512).optional(),
     // Absent in shows saved before multi-universe: those load onto the rig's

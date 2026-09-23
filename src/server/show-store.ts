@@ -6,6 +6,7 @@ import { resizeFixtureBuffers } from './engine.ts';
 import { BUILTIN_PROFILE_ID, BUILTIN_PROFILE_IDS, isBuiltinProfile, MAX_FIXTURES, universeOverflow, unitCapOverflow, registerProfile, clearNonBuiltinProfiles, listProfiles } from './profiles.ts';
 import { MAX_UNIVERSES } from './universes.ts';
 import { universesOf } from '../shared/placement.ts';
+import { ddpConflict } from './ddp-routes.ts';
 import { showSchema, validate } from './validation.ts';
 import { HttpError, codeOf, messageOf } from '../errors.ts';
 import type { ShowFile } from './validation.ts';
@@ -60,6 +61,7 @@ function snapshotShow() {
       position: f.position ? { ...f.position } : null,
       group: f.group || null,
       geometry: f.geometry ? { ...f.geometry } : null,
+      output: f.output ? { ...f.output } : null,
     })),
   };
 }
@@ -114,6 +116,7 @@ function applyShow(rawShow: unknown): ShowFile {
       position: f.position ? { ...f.position } : null,
       group: f.group || null,
       geometry: f.geometry ? { ...f.geometry } : null,
+      output: f.output ? { ...f.output } : null,
       override: null,
     }));
     for (const fix of next) {
@@ -122,6 +125,8 @@ function applyShow(rawShow: unknown): ShowFile {
     }
     const tooMany = unitCapOverflow(next, (fix) => incoming[fix.profileId]);
     if (tooMany) throw badShow(tooMany);
+    const wled = ddpConflict(next, (fix) => incoming[fix.profileId] as Profile, (fix) => fix.universe as number);
+    if (wled) throw badShow(wled);
     const spanned = new Set([showUniverse, ...next.flatMap((f) => universesOf(f.universe as number, incoming[f.profileId]))]);
     if (spanned.size > MAX_UNIVERSES) {
       throw badShow(`Show spans ${spanned.size} universes, more than the ${MAX_UNIVERSES} this server transmits`);

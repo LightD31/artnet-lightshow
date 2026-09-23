@@ -9,9 +9,10 @@ import { applyPatch, applyOverride, setFixtureMaxBrightness, processTap } from '
 import { PALETTES } from './palettes.ts';
 import { resizeFixtureBuffers, startSyncTest, engineStatus } from './engine.ts';
 import { parseGDTF } from '../gdtf.ts';
-import { BUILTIN_PROFILE_ID, isBuiltinProfile, MAX_FIXTURES, UNIVERSE_SIZE, endChannel, fitsInUniverse, universeOverflow, registerProfile, unregisterProfile, listProfiles, unitCapOverflow } from './profiles.ts';
+import { BUILTIN_PROFILE_ID, isBuiltinProfile, MAX_FIXTURES, UNIVERSE_SIZE, endChannel, fitsInUniverse, universeOverflow, registerProfile, unregisterProfile, listProfiles, getProfile, unitCapOverflow } from './profiles.ts';
 import { MAX_UNIVERSES } from './universes.ts';
 import { footprintOf } from '../shared/placement.ts';
+import { ddpConflict } from './ddp-routes.ts';
 import { cues, cueWriteSchema, cueRestoreSchema, reorderSchema } from './cues.ts';
 import { showStore, snapshotShow, applyShow } from './show-store.ts';
 import { barProfile } from './bar-profile.ts';
@@ -47,7 +48,7 @@ import type { ArtNode } from './artnet.ts';
 import type { EntertainmentArea } from './hue.ts';
 import type { OflLibrary } from './ofl-library.ts';
 import type { NowPlaying, PlaybackSource } from '../types/playback.ts';
-import type { Profile } from '../types/rig.ts';
+import type { Fixture, Profile } from '../types/rig.ts';
 
 /** The live subsystems the routes drive. */
 export interface RouteDeps {
@@ -475,10 +476,11 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
       const overflow = universeOverflow(fixture.label, fixture.address, profile, universeOf(fixture));
       if (overflow) return overflow;
     }
+    if (!users.length) return null;
     const profiles = listProfiles();
-    return users.length
-      ? unitCapOverflow(state.fixtures, (f) => (f.profileId === profile.id ? profile : profiles[f.profileId] || profiles[BUILTIN_PROFILE_ID]))
-      : null;
+    const profileOf = (f: Pick<Fixture, 'profileId'>) => (f.profileId === profile.id ? profile : profiles[f.profileId] || profiles[BUILTIN_PROFILE_ID]);
+    // A WLED's profile growing reaches onto more universes, which must be free.
+    return unitCapOverflow(state.fixtures, profileOf) || ddpConflict(state.fixtures, profileOf, universeOf);
   }
 
   app.delete('/api/profiles/:id', (req, res) => {
@@ -533,6 +535,9 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
     const next = [...state.fixtures, { universe, profileId: BUILTIN_PROFILE_ID }];
     const tooMany = unitCapOverflow(next);
     if (tooMany) return res.status(400).json({ ok: false, error: tooMany });
+    const wled = ddpConflict([...state.fixtures, { id: -1, label: `Fixture ${state.fixtures.length + 1}`, address, universe, profileId: BUILTIN_PROFILE_ID }],
+      getProfile, universeOf);
+    if (wled) return res.status(400).json({ ok: false, error: wled });
     if (countUniverses(next) > MAX_UNIVERSES) {
       return res.status(400).json({
         ok: false,
@@ -581,6 +586,7 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
         position: removed.position || null,
         group: removed.group || null,
         geometry: removed.geometry || null,
+        output: removed.output || null,
         override: removed.override,
       },
     });
@@ -615,6 +621,7 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
         position: fixture.position || null,
         group: fixture.group || null,
         geometry: fixture.geometry || null,
+        output: fixture.output || null,
         override: fixture.override || null,
       };
 
@@ -624,6 +631,8 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
 
       const tooMany = unitCapOverflow([...state.fixtures, restored]);
       if (tooMany) return res.status(400).json({ ok: false, error: tooMany });
+      const wled = ddpConflict([...state.fixtures, restored as Fixture], getProfile, universeOf);
+      if (wled) return res.status(400).json({ ok: false, error: wled });
 
       if (countUniverses([...state.fixtures, restored]) > MAX_UNIVERSES) {
         return res.status(400).json({

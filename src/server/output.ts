@@ -7,7 +7,8 @@ import { createTransmitter, sacnUniverseFor as mapSacnUniverse } from './transmi
 import { createDiscovery, interfaces, isBroadcastTarget, isLoopbackTarget } from './artnet-nodes.ts';
 import * as hue from './hue.ts';
 import type { HueChannelColour } from './hue.ts';
-import type { SacnOutput, SendOptions, TransmitConfig } from './transmit.ts';
+import { ddpRoutes } from './ddp-routes.ts';
+import type { SacnOutput, SendOptions, TransmitConfig, Wire } from './transmit.ts';
 import type { Settings } from './settings.ts';
 import type { ChannelMap } from '../types/rig.ts';
 
@@ -115,6 +116,7 @@ function transmitConfig(): TransmitConfig {
     },
     sacn: { ...sacn },
     delayMs: hueLatencyMs > 0 && hue.getConfig().enabled ? hueLatencyMs : 0,
+    ddp: ddpRoutes(state.fixtures, getProfile, universeOf),
   };
 }
 
@@ -281,7 +283,7 @@ function sendHue(): boolean {
  * `terminate` ends the universe's sACN stream (see transmit.js).
  */
 function sendUniverse(universe: number, frame: Buffer, { immediate = false, terminate = false }: SendOptions = {}):
-  ('artnet' | 'sacn')[] {
+  Wire[] {
   return transmitter.send(universe, frame, transmitConfig(), { immediate, terminate });
 }
 

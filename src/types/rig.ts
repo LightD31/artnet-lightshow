@@ -151,6 +151,15 @@ export interface Fixture extends StageFixture {
   profileId: string;
   maxBrightness?: number;
   override?: Override | null;
+  /** Where its universes go, when not Art-Net and sACN: a WLED over DDP. */
+  output?: FixtureOutput | null;
+}
+
+/** A fixture sent to a device of its own rather than on the rig's universes. */
+export interface FixtureOutput {
+  protocol: 'ddp';
+  host: string;
+  port?: number;
 }
 
 /**
