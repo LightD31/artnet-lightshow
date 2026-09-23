@@ -237,6 +237,22 @@ Every phase is its own PR, keeps `npm run check` and the Python suite green, and
   - a reseek does not reset the phase.
 
 ### Phase 2 — Engine v2: TypeScript, worker thread, pixels, outputs
+
+> **Status.**
+> - **2a (#44, merged):** LED bars, meaning cells, geometry, the pixel effects, GDTF cells and 16-bit/virtual channels,
+>   and the bar maker.
+> - **2b:** the worker-thread engine at 44 Hz on a drift-corrected clock, with a main-thread fallback. On the output
+>   side:
+>   - Art-Net: per-universe sequence, ArtSync, and ArtPoll discovery with unicast routing.
+>   - sACN: termination, discovery and interface choice.
+>   - 16-bit dimming, plus a software strobe for fixtures with no strobe channel.
+> - **Deliberately dropped:**
+>   - **Temporal dithering:** at 44 Hz it flickers visibly at the low levels it is meant to smooth.
+>   - **Send-on-change with keep-alive:** nodes that time out would blink, and unicast routing already takes the load
+>     off the network.
+> - **Still to do:**
+>   - TypeScript and analysis-document types (2c)
+>   - WLED/DDP, strips spanning universes, matrix geometry and OFL import (2d)
 - **TypeScript**, starting with `src/shared`, `src/show` and `src/server`.
 - **Analysis-document types** generated from a Python JSON Schema, which replaces the dead `schema.py`.
 - **`worker_threads` engine** owning the Conductor, rendering and outputs, at 44 Hz with a drift-corrected timer.

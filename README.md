@@ -82,7 +82,13 @@ via **Bitfocus Companion**, and a REST API.
 - **Multiple universes** — every fixture names the universe it lives on, so a
   rig is no longer capped at one node's 512 channels
 - **Art-Net and sACN (E1.31)** — run either, or both at once while a venue is
-  migrating from one to the other
+  migrating from one to the other. Art-Net finds the nodes on the network and
+  sends each its universes directly, with ArtSync if you want it; sACN ends its
+  streams properly and announces its universes
+- **Its own thread** — the engine renders on a thread of its own at 44 frames a
+  second, so planning a track or serving the UI never holds up the rig
+- **16-bit dimming** where the fixture has it, and a software strobe for
+  fixtures that have no strobe channel
 - **Philips Hue** — Hue lamps follow rig fixtures through the Entertainment API,
   so they respond to every pattern, palette and cue the pars do
 - Save and load the whole patch as a show file
@@ -301,12 +307,13 @@ four pars and two bars has six stops, not thirty-six.
 channels would at the same level: the bar's dimmer follows its brightest cell,
 and each cell makes up the rest. A look that is the same on every cell drives a
 bar with exactly a par's values; a kill or a silence closes the bar's dimmer
-as well. A bar without a strobe channel ignores the strobe pattern and strobe
-bursts. A Hue lamp bound to a bar shows the mean of its cells.
+as well. A bar without a strobe channel is flashed in software (see
+[Strobe](#strobe-without-a-strobe-channel)). A Hue lamp bound to a bar shows the
+mean of its cells.
 
 **How much.** The engine renders up to 2,048 cells. Sixty-four sixteen-cell
 bars — 1,024 cells — cost well under 2 ms a frame for most patterns, 4 ms for
-Ribbon's colour-wheel blend, out of the 25 ms each frame has.
+Ribbon's colour-wheel blend, out of the 22.7 ms each frame has.
 
 ### Output protocols
 
@@ -319,8 +326,39 @@ and a console on sACN at the same time.
 | Settings section | *ArtNet Output* | *sACN (E1.31)* |
 | Default | on | off |
 | Port | 6454 | 5568 |
-| Addressing | broadcast or unicast to the node IP | multicast to `239.255.x.y` per universe, or unicast to a node IP |
+| Addressing | broadcast, or straight to the nodes it finds; or unicast to the node IP | multicast to `239.255.x.y` per universe, or unicast to a node IP |
 | Universe numbering | from 0 | from 1 |
+| Frame sync | ArtSync (optional) | — |
+| On stop | a black frame | a black frame, then stream-terminated packets |
+
+**Finding Art-Net nodes.** While *Node IP* is a broadcast address — the default
+`2.255.255.255`, or anything ending in `.255` — and **Find Nodes** is on (the
+default), the server polls every network it is on every three seconds and
+sends each universe a node outputs straight to that node. That is what makes a
+first night on a `192.168.x` network light up without typing anything, and it
+keeps the rig's traffic off every other device on the network. A universe no
+node claims still goes to the broadcast address, so a node that never answers
+polls — plenty don't — is driven exactly as before. The nodes that answered are
+listed under *ArtNet Output*, with *Send to this node* to talk to one node and
+nothing else. With *Node IP* set to one node, or to this machine (a visualiser
+running here), nothing is polled and nothing changes.
+
+**ArtSync.** With it on, every frame ends with an ArtSync, and a node that
+supports it changes all its universes at that instant — a wall of LED bars
+across several universes moves as one instead of in a ripple. Leave it off for
+nodes that don't support it.
+
+**Ending a stream.** A universe that leaves the patch, and every universe when
+the server stops, gets one black frame; over sACN that is followed by three
+stream-terminated packets, so a receiver lets go at once instead of holding
+the last frame until it times out. Changing sACN's settings (another offset,
+another node, turning it off) ends the old streams the same way. Every ten
+seconds the server also lists the universes it is sending on sACN's discovery
+group, so a console can show this source without being told.
+
+**Network.** On a machine that is on two networks — the show network and the
+house one — pick the show network under *sACN (E1.31) → Network*, so the
+multicast groups go out where the nodes are.
 
 sACN is off until you turn it on. Once it is, leave *Node IP* blank for the
 normal deployment — each universe multicasts to its own group and receivers
@@ -340,6 +378,39 @@ network ended up sharing one.
 same universe.
 
 To run sACN *only*, turn **ArtNet Output → Enabled** off.
+
+### The engine
+
+Every frame is rendered on a thread of its own, forty-four times a second —
+the fastest a full DMX line refreshes, and the most E1.31 lets a source send.
+The main thread runs the server, the UI, the auto show's planning, the uploads
+and the integrations; any of those can hold it for tens of milliseconds, and
+the moment a new track starts is exactly when it does. The engine's thread
+keeps rendering through that: a few milliseconds before each frame the main
+thread fires the auto show's cues and hands the engine the look and where the
+music is, and when that hand-off is late the frame still goes out on time, with
+the beat carried forward.
+
+Each frame is due at a fixed time, so a late frame does not push the rest later
+and the rig does not drift. **Settings → Engine** shows where the engine is
+rendering and how its frames have gone over the last minute; the pre-show check
+warns about frames that went out late. *Render On → The main thread* is how it
+ran before, and is only worth choosing to rule the thread out when chasing a
+problem. If the thread cannot start, or stops three times in a minute, the
+engine renders on the main thread instead and says why.
+
+**16-bit dimming.** A fixture whose profile has a *Dimmer Fine* channel is
+dimmed with sixteen bits, so a slow fade to black glides where it used to step.
+
+#### Strobe without a strobe channel
+
+A fixture with a strobe channel strobes itself. One without — plenty of LED bars
+and cheap pars — is flashed in software through the strobe pattern and every
+strobing burst: one to twenty flashes a second from the strobe speed, each a
+frame to 50 ms long, all such fixtures together (the random strobe functions
+flash each on its own). A Hue lamp, or a fixture a Hue channel follows, is never
+flashed: a bridge cannot keep up, and Hue's own guidance is to keep effects
+slower than that.
 
 ### Philips Hue
 
@@ -421,7 +492,7 @@ would band on a DMX par do not here.
   stream message can address, so that is the cap on channel bindings.
 - The stream is DTLS 1.2 with a pre-shared key on UDP 2100, and the bridge drops
   it after about ten seconds of silence. The show's own frames are the
-  keepalive, going out at the render rate of 40 Hz against Hue's recommended
+  keepalive, going out at the render rate of 44 Hz against Hue's recommended
   50-60 Hz. Note that is the *message* rate: the bridge relays over ZigBee at a
   maximum of 25 Hz, so Hue's guidance is to keep effects themselves below about
   12.5 Hz, which is a property of the show rather than of this transport.
@@ -549,6 +620,7 @@ It asks every one of those questions while there is still time to fix the
 answer, and exits non-zero if something will not work:
 
 ```
+  [ok]   Engine             Rendering on its own thread. 44 frames a second; 0.8 ms to render a frame (p95), …
   [ok]   Art-Net output     2 nodes answered: DMX-1 at 192.168.1.50 (universe 0), …
   [--]   sACN output        Disabled. Turn it on in Settings → sACN (E1.31) …
   [ok]   Philips Hue        "Living Room" on 192.168.1.40, 3 of 5 channels bound to fixtures.
@@ -566,8 +638,9 @@ answer, and exits non-zero if something will not work:
 | `FAIL` | Will not work. Exits 1. |
 | `--` | Nothing to verify, just worth seeing. |
 
-What it checks: Art-Net reachability (it sends an ArtPoll and lists the nodes
-that answer), the sACN configuration and universe mapping, the Hue bridge (that
+What it checks: the engine (where it is rendering, and whether its frames have
+gone out on time), Art-Net reachability (it sends an ArtPoll and lists the nodes
+that answer), the sACN configuration, universe mapping and network, the Hue bridge (that
 it answers, that the entertainment area still exists, and that every channel is
 bound to a fixture that is still patched), the fixture patch
 for overlaps and out-of-universe addresses, the bind address and token, the
@@ -618,7 +691,7 @@ hands over to the song or the free clock mid-beat, without restarting the chase.
 A scene from the auto show counts its steps from the beat it was scheduled on,
 not from the frame that fired it, and cues fire from the render loop itself, so
 each lands in the frame it is due. Walked against the analysed beats of the
-test tracks, every step shows within one 25 ms render frame of its beat for the
+test tracks, every step shows within one 22.7 ms render frame of its beat for the
 whole track. The timer-driven chase this replaced ran at a whole-number BPM from
 whenever its scene happened to fire; modelled on the same tracks, it was 80–200
 ms off the beat by the end of a sixteen-bar scene.
@@ -1391,6 +1464,13 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/profiles` · DELETE `/api/profiles/:id` | Register / remove a fixture profile (`cells` makes it an LED bar) |
 | POST | `/api/profiles/bar` | Build and register an LED bar profile from `{ id, name, cells, firstChannel, order, stride?, dimmer?, strobe? }`; `?dryRun=1` answers with it without registering |
 | GET · POST | `/api/show` | Export / import the patch |
+
+### Outputs
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/artnet/nodes` | The Art-Net nodes that answered, with the universes each outputs, and whether frames are being routed by them; `?scan=1` asks the network now |
+| GET | `/api/network/interfaces` | This machine's IPv4 addresses, for sACN's network |
 
 ### Cues
 

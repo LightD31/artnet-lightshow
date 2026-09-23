@@ -321,3 +321,42 @@ test('missing model weights are fetched in the background, once',
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+// ── Engine ──────────────────────────────────────────────────────────────────
+
+const { checkEngine } = require('../../src/server/preflight');
+
+const timing = { frames: 2640, rate: 44, renderMs: { p50: 0.2, p95: 0.8, max: 3 }, lateMs: { p50: 0, p95: 0.4, max: 2 } };
+
+test('an engine on its own thread, on time, passes', () => {
+  const r = checkEngine({ thread: 'worker', fellBack: null, lateFrames: 0, skippedFrames: 0, ...timing });
+  assert.strictEqual(r.status, 'ok');
+  assert.match(r.detail, /own thread/);
+  assert.match(r.detail, /44 frames a second/);
+});
+
+test('dropped frames, or many late ones, are a warning with the fix for where it runs', () => {
+  const onMain = checkEngine({ thread: 'main', fellBack: null, lateFrames: 3, skippedFrames: 9, ...timing });
+  assert.strictEqual(onMain.status, 'warn');
+  assert.match(onMain.detail, /12 frames went out late/);
+  assert.match(onMain.fix, /its own thread/);
+  const onWorker = checkEngine({ thread: 'worker', fellBack: null, lateFrames: 40, skippedFrames: 0, ...timing });
+  assert.strictEqual(onWorker.status, 'warn', 'forty of 2,640 is more than one in a hundred');
+  assert.match(onWorker.fix, /machine itself/);
+});
+
+test('the odd frame a little late is noted, not warned about', () => {
+  const r = checkEngine({ thread: 'worker', fellBack: null, lateFrames: 1, skippedFrames: 0, ...timing });
+  assert.strictEqual(r.status, 'ok');
+  assert.match(r.detail, /1 frame a little late/);
+});
+
+test('an engine that fell back to the main thread says why', () => {
+  const r = checkEngine({ thread: 'main', fellBack: 'the engine thread could not start (exit 1)', lateFrames: 0, skippedFrames: 0, ...timing });
+  assert.strictEqual(r.status, 'warn');
+  assert.match(r.detail, /could not start/);
+});
+
+test('an engine that is not running fails', () => {
+  assert.strictEqual(checkEngine({ thread: null }).status, 'fail');
+});

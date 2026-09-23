@@ -12,6 +12,7 @@ const { settings } = require('./settings');
 const { discoverNodes, probeSend } = require('./artnet');
 const { interfaces } = require('./artnet-nodes');
 const output = require('./output');
+const { engineStatus } = require('./engine');
 const { MIN_UNIVERSE, MAX_UNIVERSE } = require('./sacn');
 const { listEntertainmentConfigs } = require('./hue');
 const { cues } = require('./cues');
@@ -138,6 +139,51 @@ async function checkArtnet() {
       + (output.artnetDiscovery.active ? ' — each is sent its universes directly.' : ''),
     nodes,
   };
+}
+
+/**
+ * The engine: is it rendering, where, and have its frames been going out on
+ * time? A frame half a period late is visibly off the beat grid, and on the
+ * main thread that is what a busy server does to the rig — which is why the
+ * engine has a thread of its own, and why this says so when it has not.
+ */
+function checkEngine(status = engineStatus()) {
+  const label = 'Engine';
+  if (!status.thread) {
+    return { id: 'engine', label, status: FAIL, detail: 'Not rendering.', fix: 'Restart the server.' };
+  }
+  const where = status.thread === 'worker' ? 'on its own thread' : 'on the main thread';
+  const timing = status.frames
+    ? ` ${status.rate} frames a second; ${status.renderMs.p95} ms to render a frame (p95), `
+      + `${status.lateMs.p95} ms late at most on 19 frames of 20.`
+    : '';
+  const late = (status.lateFrames || 0) + (status.skippedFrames || 0);
+  // A dropped frame is worth a warning; a frame that went out a little late
+  // now and then (a laptop waking a core, a garbage collection) is not, until
+  // it is one in a hundred.
+  const worrying = (status.skippedFrames || 0) > 0
+    || (status.lateFrames || 0) > Math.max(2, 0.01 * (status.frames || 0));
+
+  if (status.fellBack) {
+    return {
+      id: 'engine', label, status: WARN,
+      detail: `Rendering ${where}, because ${status.fellBack}.${timing}`,
+      fix: 'The rig still runs, but a busy server can now delay it. Restart the server; if this keeps '
+        + 'happening, note the error the log shows for the engine thread.',
+    };
+  }
+  if (worrying) {
+    return {
+      id: 'engine', label, status: WARN,
+      detail: `Rendering ${where}, but ${late} frame${late === 1 ? '' : 's'} went out late or not at all `
+        + `in the last minute.${timing}`,
+      fix: status.thread === 'worker'
+        ? 'The machine itself is short of time: close other heavy programs, or plug a laptop in.'
+        : 'Set Settings → Engine → Render On to its own thread and restart.',
+    };
+  }
+  const note = late ? ` ${late} frame${late === 1 ? '' : 's'} a little late in the last minute.` : '';
+  return { id: 'engine', label, status: OK, detail: `Rendering ${where}.${timing}${note}` };
 }
 
 function checkSacn() {
@@ -640,6 +686,7 @@ async function runPreflight({ midi, spotify, prolink, analysisCache, downloadMod
   ]);
 
   const checks = [
+    checkEngine(),
     artnet,
     checkSacn(),
     hue,
@@ -672,6 +719,7 @@ module.exports = {
   // Exported for tests, which drive them against a doctored state rather than
   // standing up a server.
   checkPatch,
+  checkEngine,
   checkSacn,
   checkHue,
   checkPanns,
