@@ -109,6 +109,9 @@ class AutoShow {
     // The analysed beat grid of the loaded track, which the pattern clock
     // locks to while the show runs (see server/conductor.js).
     this._grid = null;
+    // Whether the rig has LED bars. The director reaches for the pictures drawn
+    // across cells only when it does (see setRig).
+    this._pixels = false;
     // The cache key the loaded analysis was read or written under, so the
     // pattern clock can reuse the grid already in memory for that track.
     this.analysisKey = null;
@@ -717,6 +720,7 @@ class AutoShow {
       paletteSize: this.paletteSize,
       intensity: this.intensity,
       blackoutIndex: this._blackoutIdx,
+      pixels: this._pixels,
     });
 
     this._grid = gridFromAnalysis(this.analysis);
@@ -886,6 +890,18 @@ class AutoShow {
     }
   }
 
+  /**
+   * Tell the show what the rig is. A patch that gains or loses its LED bars
+   * replans the track, as a palette or intensity change does, so the looks
+   * that draw across cells come and go with the bars.
+   */
+  setRig({ hasPixels = false } = {}) {
+    const pixels = !!hasPixels;
+    if (pixels === this._pixels) return;
+    this._pixels = pixels;
+    if (this.analysis) this.buildTimeline();
+  }
+
   /** See src/show/director.js — measured build-up acceleration. */
   _buildupAccel(build, a, baseBpm) {
     return measureBuildup(build, a, baseBpm);
@@ -951,6 +967,8 @@ class AutoShow {
       paletteSizeMode: this.paletteSize === 'auto' ? 'auto' : 'manual',
       intensity: this.intensity,
       syncOffsetMs: this.syncOffsetMs,
+      // Planned for a rig with LED bars: its looks may draw across cells.
+      pixels: this._pixels,
       analysis: this.analysis ? {
         models: describeModelUsage(this.analysis),
         duration: this.analysis.duration,

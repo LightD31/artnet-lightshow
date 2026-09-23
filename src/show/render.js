@@ -132,6 +132,8 @@ function sceneData(intent) {
   // Every scene says whether it is split, so a drop's whole-rig hit after a
   // split chorus is whole-rig rather than inheriting the split.
   data.split = Number.isInteger(intent.split) ? intent.split : null;
+  // How the picture lies over the rig's LED bars; only planned when it has any.
+  if (intent.pixelMap) data.pixelMap = String(intent.pixelMap);
   if (intent.beatDivision != null) data.beatDivision = division(intent.beatDivision);
   if (intent.strobeSpeed != null) data.strobeSpeed = u8(intent.strobeSpeed);
   if (intent.strobeFunction) data.strobeFunction = String(intent.strobeFunction);
