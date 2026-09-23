@@ -486,7 +486,7 @@ function showModeSelector(fixture) {
   fixture.modes.forEach((mode, i) => {
     const opt = document.createElement('option');
     opt.value = i;
-    opt.textContent = `${mode.modeName} (${mode.channelCount}ch)`;
+    opt.textContent = `${mode.modeName} (${mode.channelCount}ch${mode.cells ? `, ${mode.cells.length} cells` : ''})`;
     modeSelect.appendChild(opt);
   });
 
@@ -507,9 +507,13 @@ function el(tag, className, text) {
   return node;
 }
 
-function renderChannelPreview(mode) {
-  const container = document.getElementById('gdtf-channel-preview');
+function renderChannelPreview(mode, containerId = 'gdtf-channel-preview') {
+  const container = document.getElementById(containerId);
   container.innerHTML = '';
+  // A bar says how many lights it is before the channel list, and anything
+  // the import had to leave out says so.
+  if (mode.cells) container.appendChild(el('div', 'ch-summary', `${mode.cells.length} cells, each driven on its own`));
+  (mode.warnings || []).forEach((warning) => container.appendChild(el('div', 'ch-warning', warning)));
   mode.channelList.forEach(ch => {
     const isMapped = ch.attribute && ch.attribute !== 'unknown';
     const tag = el('span', 'ch-tag' + (isMapped ? ' mapped' : ''));
@@ -534,7 +538,13 @@ document.getElementById('gdtf-confirm').addEventListener('click', async () => {
     modeName: mode.modeName,
     channelCount: mode.channelCount,
     channelMap: mode.channelMap,
-    channelList: mode.channelList,
+    channelList: mode.channelList.map(({ offset, name, attribute, cell }) => ({
+      offset, name, attribute, ...(cell !== undefined ? { cell } : {}),
+    })),
+    // An LED bar's cells, each with its own channels. Re-importing a bar that
+    // was imported before cells existed replaces it, and every fixture on it
+    // becomes a bar of lights on the next frame.
+    ...(mode.cells ? { cells: mode.cells } : {}),
   };
 
   const data = await apiJson('/api/profiles', jsonBody('POST', profile));

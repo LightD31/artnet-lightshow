@@ -115,6 +115,16 @@
   color: #fff;
 }
 
+/* What an import is, and what it had to leave out, above the channel tags. */
+.ch-summary,
+.ch-warning {
+  flex-basis: 100%;
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+.ch-summary { color: var(--text); }
+.ch-warning { color: #f59e0b; }
+
 /* ── Profiles list ──────────────────────────────────────── */
 .profiles-list {
   display: grid;
