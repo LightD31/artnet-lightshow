@@ -3,6 +3,11 @@
 // The render loop has 22.7 ms per frame (frame-clock.js FRAME_MS); the
 // assertion is deliberately loose so a slow CI runner does not fail it, and
 // the numbers are printed so a regression shows up long before it would.
+//
+// It is judged on the CPU time the process spent rendering, not the wall
+// clock: the test files run side by side, and on a small CI runner another
+// file's work preempting this one made a 2.7 ms frame read as 17 ms of wall
+// time. The wall-clock figures are printed alongside.
 
 import test from 'node:test';
 import assert from 'node:assert';
@@ -41,14 +46,17 @@ test('a thousand cells render well inside a frame', () => {
     const run = (label, patch, frames = 80) => {
       applyPatch({ running: true, masterDimmer: 255, masterBlackout: false, colorA: 1, colorB: 5, colorC: 3, colorD: 8, ...patch });
       const ms = [];
+      const cpu0 = process.cpuUsage();
       for (let f = 0; f < frames; f++) {
         beat += 0.1;
         const t0 = performance.now();
         renderFrame();
         ms.push(performance.now() - t0);
       }
+      const cpu = process.cpuUsage(cpu0);
       ms.sort((a, b) => a - b);
       timings[label] = {
+        cpu: (cpu.user + cpu.system) / 1000 / frames,
         mean: ms.reduce((a, b) => a + b, 0) / ms.length,
         p95: ms[Math.floor(ms.length * 0.95)],
       };
@@ -66,9 +74,9 @@ test('a thousand cells render well inside a frame', () => {
 
     delete timings['warm-up'];
     console.log(`[budget] ${state.fixtures.length} bars × ${CELLS} cells:`);
-    for (const [label, { mean, p95 }] of Object.entries(timings)) {
-      console.log(`[budget]   ${label.padEnd(10)} mean ${mean.toFixed(2)} ms  p95 ${p95.toFixed(2)} ms`);
-      assert.ok(mean < 8, `${label} takes ${mean.toFixed(2)} ms a frame on average`);
+    for (const [label, { cpu, mean, p95 }] of Object.entries(timings)) {
+      console.log(`[budget]   ${label.padEnd(10)} cpu ${cpu.toFixed(2)} ms  wall mean ${mean.toFixed(2)} ms  p95 ${p95.toFixed(2)} ms`);
+      assert.ok(cpu < 8, `${label} takes ${cpu.toFixed(2)} ms of CPU a frame on average`);
     }
   } finally {
     conductor.setProlinkSource(null);
