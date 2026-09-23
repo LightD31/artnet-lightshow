@@ -1,9 +1,7 @@
-'use strict';
+import test from 'node:test';
+import assert from 'node:assert';
 
-const test = require('node:test');
-const assert = require('node:assert');
-
-const output = require('../../src/server/output');
+import * as output from '../../src/server/output.js';
 
 // Art-Net counts universes from 0, sACN from 1. Getting the offset wrong sends
 // every fixture one universe away from where the console is listening.
@@ -44,8 +42,8 @@ test('configureSacn merges over the defaults and reads back', () => {
 // Hue lamp obey the dimmer, the trim, the master and blackout for free — so
 // these tests read the buffer the same way the real path does.
 
-const universes = require('../../src/server/universes');
-const { state, universeOf } = require('../../src/server/state');
+import * as universes from '../../src/server/universes.js';
+import { state, universeOf } from '../../src/server/state.js';
 
 // Builtin profile offsets, from the fixture at address 1 (base 0).
 const RED = 3, GREEN = 4, BLUE = 5, WHITE = 6, AMBER = 7, UV = 8;
@@ -201,9 +199,7 @@ test('malformed bindings are dropped at configure time', () => {
 // These check that such a fixture reaches the bridge correctly, since the whole
 // point of the profiles is that no special case is needed anywhere.
 
-const {
-  HUE_COLOR_PROFILE_ID, HUE_WHITE_PROFILE_ID, getProfile,
-} = require('../../src/server/profiles');
+import { HUE_COLOR_PROFILE_ID, HUE_WHITE_PROFILE_ID, getProfile } from '../../src/server/profiles.js';
 
 /** Temporarily move a fixture onto another profile. */
 function onProfile(fixture, profileId, fn) {
@@ -276,7 +272,8 @@ test('pars and Hue lamps are read through their own profiles in one frame', () =
 // the warm and cool dies fold into the RGB that goes out — at their real colour
 // temperature, which is what keeps a warm wash warm.
 
-const { HUE_WHITE_AMBIANCE_PROFILE_ID } = require('../../src/server/profiles');
+import { HUE_WHITE_AMBIANCE_PROFILE_ID } from '../../src/server/profiles.js';
+import dgram from 'node:dgram';
 
 test('the warm white die folds in warm, not neutral and not orange', () => {
   const fixture = state.fixtures[0];
@@ -338,7 +335,6 @@ test('a white ambiance lamp is not also given its dimmer as white', () => {
 // Until a hostname resolves, Art-Net frames are dropped. sendUniverse used to
 // report them as sent regardless.
 test('an Art-Net frame is only reported sent once its host has an address', () => {
-  const { state } = require('../../src/server/state');
   const before = { ...state.artnet };
   const warn = console.warn;
   console.warn = () => {};              // the failed lookup logs asynchronously
@@ -359,8 +355,6 @@ test('an Art-Net frame is only reported sent once its host has an address', () =
 // a UDP socket stands in for the Art-Net node and records what arrives.
 
 async function artnetCapture(fn) {
-  const dgram = require('dgram');
-  const { state } = require('../../src/server/state');
   const socket = dgram.createSocket('udp4');
   const got = [];
   socket.on('message', (msg) => got.push({ at: performance.now(), marker: msg[18] }));
@@ -423,8 +417,6 @@ test('a blackout sent immediately does not wait behind the look it replaces', as
 // ── ArtSync on the wire ──────────────────────────────────────────────────────
 
 test('with ArtSync on, each frame is followed by an OpSync to the same node', async () => {
-  const dgram = require('dgram');
-  const { state } = require('../../src/server/state');
   const socket = dgram.createSocket('udp4');
   const ops = [];
   socket.on('message', (msg) => ops.push(msg.readUInt16LE(8)));

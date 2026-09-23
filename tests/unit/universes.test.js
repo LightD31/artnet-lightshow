@@ -1,9 +1,7 @@
-'use strict';
+import test from 'node:test';
+import assert from 'node:assert';
 
-const test = require('node:test');
-const assert = require('node:assert');
-
-const universes = require('../../src/server/universes');
+import * as universes from '../../src/server/universes.js';
 
 test.beforeEach(() => universes.reset());
 test.after(() => universes.reset());

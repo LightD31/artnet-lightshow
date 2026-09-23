@@ -1,13 +1,11 @@
-'use strict';
-
 // One implementation behind both ways of connecting a controller — the
 // settings page's REST call and the main UI's socket message.
 
-const test = require('node:test');
-const assert = require('node:assert');
+import test from 'node:test';
+import assert from 'node:assert';
 
-const { connectMidi } = require('../../src/server/midi-connect');
-const { settings } = require('../../src/server/settings');
+import { connectMidi } from '../../src/server/midi-connect.js';
+import { settings } from '../../src/server/settings.js';
 
 function fakeMidi(opens = true) {
   const calls = [];

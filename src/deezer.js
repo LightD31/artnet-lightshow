@@ -1,13 +1,11 @@
-'use strict';
-
-const https = require('https');
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const { spawn } = require('child_process');
-const { randomUUID } = require('crypto');
-const dfi = require('d-fi-core');
+import https from 'node:https';
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import dfi from 'd-fi-core';
 
 // Bounds on the audio download. Previously unbounded on all three counts: a
 // redirect loop recursed until it blew the stack, a stalled connection hung
@@ -177,4 +175,8 @@ function _mp3ToWav(inputPath, outputPath) {
   });
 }
 
-module.exports = { init, isAvailable, downloadByIsrc };
+export {
+  init,
+  isAvailable,
+  downloadByIsrc,
+};

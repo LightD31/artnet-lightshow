@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * The show director.
  *
@@ -63,12 +61,10 @@
  * passes below spend more conservatively.
  */
 
-const { EVENT, deriveEvents, byType } = require('./musical-events');
-const look = require('./look');
-const { makeScore, hasScore, cosine, unit, list, finite } = require('./score');
-const {
-  INTENT, BURST, PRIORITY, scene, expression, color, accent, tempo, dark,
-} = require('./intents');
+import { EVENT, deriveEvents, byType } from './musical-events.js';
+import * as look from './look.js';
+import { makeScore, hasScore, cosine, unit, list, finite } from './score.js';
+import { INTENT, BURST, PRIORITY, scene, expression, color, accent, tempo, dark } from './intents.js';
 
 // Matches the patch schema's bpm bounds, and only those. This is the guard that
 // stops an out-of-range value throwing inside a timer callback and taking the
@@ -1823,9 +1819,20 @@ function measureBuildup(build, analysis, baseBpm) {
   return (out.peakDivision || out.tempo) ? out : null;
 }
 
-module.exports = {
-  ShowDirector, measureBuildup, normalise, strideFor, coloursFor,
-  ROLE_PROFILE, ACCENT_BUDGET, RESTING_ROLES,
-  TEMPO_RAMP_MIN_BPM, DRIFT_THRESHOLD, MIN_BURST_MS, EXPRESSION_STEP_SEC,
-  IDENTITY_SIMILARITY, clampBpm, u8,
+export {
+  ShowDirector,
+  measureBuildup,
+  normalise,
+  strideFor,
+  coloursFor,
+  ROLE_PROFILE,
+  ACCENT_BUDGET,
+  RESTING_ROLES,
+  TEMPO_RAMP_MIN_BPM,
+  DRIFT_THRESHOLD,
+  MIN_BURST_MS,
+  EXPRESSION_STEP_SEC,
+  IDENTITY_SIMILARITY,
+  clampBpm,
+  u8,
 };

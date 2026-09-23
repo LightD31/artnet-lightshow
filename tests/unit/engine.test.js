@@ -1,13 +1,12 @@
-'use strict';
+import test from 'node:test';
+import assert from 'node:assert';
 
-const test = require('node:test');
-const assert = require('node:assert');
-
-const { state, universeOf } = require('../../src/server/state');
-const universes = require('../../src/server/universes');
-const { startEngine, stopEngine, resizeFixtureBuffers, startSyncTest } = require('../../src/server/engine');
-const { conductor } = require('../../src/server/conductor');
-const { applyPatch, applyOverride, setFixtureMaxBrightness } = require('../../src/server/patch');
+import { state, universeOf } from '../../src/server/state.js';
+import * as universes from '../../src/server/universes.js';
+import { startEngine, stopEngine, resizeFixtureBuffers, startSyncTest } from '../../src/server/engine.js';
+import { conductor } from '../../src/server/conductor.js';
+import { applyPatch, applyOverride, setFixtureMaxBrightness } from '../../src/server/patch.js';
+import { PATTERN_FUNCS } from '../../src/shared/patterns.js';
 
 // renderDmx isn't exported — it runs on the engine's own 25 ms interval, so the
 // tests drive it by starting the engine and waiting for a frame.
@@ -345,7 +344,6 @@ test('a pinned fixture stays lit through a silence', async () => {
 // the count fall behind: the gap between elapsed time and steps taken stays
 // inside one step for the whole run instead of growing.
 test('the pattern clock does not fall behind under load', async () => {
-  const { PATTERN_FUNCS } = require('../../src/shared/patterns');
   const chase = PATTERN_FUNCS.chase;
   const seen = [];
   PATTERN_FUNCS.chase = (ctx) => { seen.push({ t: performance.now(), step: ctx.step }); return chase(ctx); };

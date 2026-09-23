@@ -1,5 +1,3 @@
-'use strict';
-
 // Stand-in for src/analyze.py --worker. Speaks the same NDJSON protocol and
 // misbehaves on demand so the worker's failure handling can be tested.
 // FAKE_MODE: ok (default) | hang | wrongid | crash | hangslow | gpufault | env
@@ -13,7 +11,7 @@
 // reading anything, so the first write to its stdin lands on a closed pipe.
 // In hangslow, a source containing "late" is answered after 300 ms: long
 // enough for recycled workers to die first.
-const readline = require('node:readline');
+import readline from 'node:readline';
 
 const mode = process.env.FAKE_MODE || 'ok';
 if (mode === 'exitnow') process.exit(3);

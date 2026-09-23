@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * Keep one fault from ending the show.
  *
@@ -67,4 +65,9 @@ function installProcessSafetyNet() {
   process.on('unhandledRejection', (reason) => report('unhandled rejection', reason));
 }
 
-module.exports = { guarded, report, installProcessSafetyNet, REPORT_INTERVAL_MS };
+export {
+  guarded,
+  report,
+  installProcessSafetyNet,
+  REPORT_INTERVAL_MS,
+};

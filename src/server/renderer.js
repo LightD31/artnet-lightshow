@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * The render core: what the rig puts out for one frame.
  *
@@ -17,17 +15,15 @@
  * one when the main thread is busy. Either way a frame is the same bytes.
  */
 
-const { COLOR_PRESETS, STROBE_FUNCTIONS } = require('./presets');
-const { HUE_PROFILE_IDS } = require('./profiles');
-const { FRAME_MS } = require('./frame-clock');
-const { PATTERN_FUNCS } = require('../shared/patterns');
-const { renderLayer } = require('../shared/layer');
-const { buildRig, rigSignature } = require('../shared/rig');
+import { COLOR_PRESETS, STROBE_FUNCTIONS } from './presets.js';
+import { HUE_PROFILE_IDS } from './profiles.js';
+import { FRAME_MS } from './frame-clock.js';
+import { PATTERN_FUNCS } from '../shared/patterns.js';
+import { renderLayer } from '../shared/layer.js';
+import { buildRig, rigSignature } from '../shared/rig.js';
 // Shared with the browser's rehearsal preview so the two cannot drift.
-const {
-  EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture, cellDrive,
-} = require('../shared/look-math');
-const { anchorStep, stepAt, motionAdvance } = require('../shared/beat-clock');
+import { EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture, cellDrive } from '../shared/look-math.js';
+import { anchorStep, stepAt, motionAdvance } from '../shared/beat-clock.js';
 
 // Patterns that roll dice. They re-roll when the step moves or the look
 // changes — a twinkle redrawn every frame is noise, not a twinkle.
@@ -489,6 +485,11 @@ function writeEmitters(dmx, base, ch, col, scale) {
   if (ch.uv !== undefined)        dmx[base + ch.uv]        = v.uv;
 }
 
-module.exports = {
-  createRenderer, SYNC_FLASH_MS, softStrobeHz, softStrobeLit, writeDimmer, SOFT_STROBE_MAX_HZ,
+export {
+  createRenderer,
+  SYNC_FLASH_MS,
+  softStrobeHz,
+  softStrobeLit,
+  writeDimmer,
+  SOFT_STROBE_MAX_HZ,
 };

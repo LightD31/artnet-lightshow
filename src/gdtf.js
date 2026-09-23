@@ -1,8 +1,6 @@
-'use strict';
-
-const JSZip = require('jszip');
-const { XMLParser } = require('fast-xml-parser');
-const { EMITTERS, MAX_CELLS_PER_FIXTURE } = require('./shared/rig');
+import JSZip from 'jszip';
+import { XMLParser } from 'fast-xml-parser';
+import { EMITTERS, MAX_CELLS_PER_FIXTURE } from './shared/rig.js';
 
 // Upper bound on the decompressed description.xml. Real fixture definitions are
 // a few hundred KB at most; anything past this is a zip bomb, not a fixture.
@@ -367,4 +365,7 @@ function inflateCapped(entry, limit) {
   });
 }
 
-module.exports = { parseGDTF, inflateCapped };
+export {
+  parseGDTF,
+  inflateCapped,
+};

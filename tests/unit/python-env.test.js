@@ -1,13 +1,12 @@
-'use strict';
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const { execFileSync } = require('node:child_process');
-
-const pythonEnv = require('../../src/python-env');
+import * as pythonEnv from '../../src/python-env.js';
+import { settings } from '../../src/server/settings.js';
 
 // Find a real interpreter to probe against; without one there is nothing
 // meaningful to assert, so the suite skips rather than pretending to pass.
@@ -71,7 +70,6 @@ test('an interpreter that has the dependencies is preferred over one that does n
 });
 
 test('an explicit path wins over detection, and a broken one is reported not swallowed', noPython, () => {
-  const { settings } = require('../../src/server/settings');
   const original = settings.get('analysis.pythonPath');
 
   // Reach past update() deliberately: this is about resolution, and update()

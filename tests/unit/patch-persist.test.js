@@ -1,13 +1,11 @@
-'use strict';
-
 // The sync offset is dialled in 5 ms a detent. Each detent used to rewrite
 // settings.json synchronously on the render thread; the save now waits for
 // the hand to come off, while the value the show uses changes at once.
 
-const test = require('node:test');
-const assert = require('node:assert');
-const { applyPatch, setPersist, flushPendingPersist } = require('../../src/server/patch');
-const { state } = require('../../src/server/state');
+import test from 'node:test';
+import assert from 'node:assert';
+import { applyPatch, setPersist, flushPendingPersist } from '../../src/server/patch.js';
+import { state } from '../../src/server/state.js';
 
 test('a run of sync-offset nudges is saved once, with the last value', async () => {
   const saved = [];

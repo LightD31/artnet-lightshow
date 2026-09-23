@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * Hybrid playback source: the OS media session for *when*, Spotify for *what*.
  *
@@ -32,7 +30,7 @@
  * than the choice of source.
  */
 
-const PlaybackClock = require('./playback-clock');
+import PlaybackClock from './playback-clock.js';
 
 // How long an OS-session report stays usable. It arrives about twice a second,
 // so a second and a half without one means the reader has stopped or the
@@ -251,8 +249,8 @@ class HybridSource {
   }
 }
 
-module.exports = HybridSource;
-module.exports.tracksMatch = tracksMatch;
-module.exports.normalise = normalise;
-module.exports.CLOCK_STALE_MS = CLOCK_STALE_MS;
-module.exports.MISMATCH_GRACE = MISMATCH_GRACE;
+export default HybridSource;
+export { tracksMatch };
+export { normalise };
+export { CLOCK_STALE_MS };
+export { MISMATCH_GRACE };

@@ -1,25 +1,23 @@
-'use strict';
-
 // The engine's worker thread renders exactly what the main thread would, and
 // keeps rendering when the main thread cannot.
 
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const { Worker } = require('node:worker_threads');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { Worker } from 'node:worker_threads';
 
-const { state } = require('../../src/server/state');
-const universes = require('../../src/server/universes');
-const { createRenderer } = require('../../src/server/renderer');
-const { startEngine, stopEngine, engineStatus } = require('../../src/server/engine');
-const { applyPatch } = require('../../src/server/patch');
-const { getProfile, profilesRevision, registerProfile, unregisterProfile } = require('../../src/server/profiles');
-const { barProfile } = require('../../src/server/bar-profile');
-const { FRAME_MS } = require('../../src/server/frame-clock');
+import { state } from '../../src/server/state.js';
+import * as universes from '../../src/server/universes.js';
+import { createRenderer } from '../../src/server/renderer.js';
+import { startEngine, stopEngine, engineStatus } from '../../src/server/engine.js';
+import { applyPatch } from '../../src/server/patch.js';
+import { getProfile, profilesRevision, registerProfile, unregisterProfile } from '../../src/server/profiles.js';
+import { barProfile } from '../../src/server/bar-profile.js';
+import { FRAME_MS } from '../../src/server/frame-clock.js';
 
-const WORKER = path.join(__dirname, '..', '..', 'src', 'server', 'engine-worker.js');
+const WORKER = path.join(import.meta.dirname, '..', '..', 'src', 'server', 'engine-worker.js');
 
 /** The same seeded stand-in for Math.random the worker uses in capture mode. */
 function seeded(seed) {

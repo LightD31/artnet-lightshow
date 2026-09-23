@@ -1,20 +1,18 @@
-'use strict';
-
 // A night of different songs should not look like one song. Choices were seeded
 // by a passage's identity alone — small integers from zero — so tracks of the
 // same shape got the same patterns in the same order, and every intro, build-up
 // tension and break in every track was `ribbon`. Each track now has its own
 // seed; each track's show stays exactly repeatable.
 
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'node:fs';
+import path from 'node:path';
 
-const { ShowDirector } = require('../../src/show/director');
-const { COLOR_PRESETS, PATTERNS } = require('../../src/server/presets');
+import { ShowDirector } from '../../src/show/director.js';
+import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.js';
 
-const TRACKS = path.join(__dirname, '..', 'fixtures', 'tracks');
+const TRACKS = path.join(import.meta.dirname, '..', 'fixtures', 'tracks');
 const tracks = fs.readdirSync(TRACKS).filter((f) => f.endsWith('.json'))
   .map((f) => JSON.parse(fs.readFileSync(path.join(TRACKS, f), 'utf8')));
 

@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * Find a recording's ISRC from its artist, title and length.
  *
@@ -126,4 +124,9 @@ async function resolveIsrc({ artist, title, durationSec } = {}, { fetchImpl = fe
   return isrc;
 }
 
-module.exports = { resolveIsrc, splitQuery, normalise, _cache: cache };
+export {
+  resolveIsrc,
+  splitQuery,
+  normalise,
+  cache as _cache,
+};

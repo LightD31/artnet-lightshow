@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * A monotonic playback clock that converges on observations instead of
  * snapping to them.
@@ -213,5 +211,5 @@ class PlaybackClock {
   }
 }
 
-module.exports = PlaybackClock;
-module.exports.DEFAULTS = DEFAULTS;
+export default PlaybackClock;
+export { DEFAULTS };

@@ -1,6 +1,4 @@
-'use strict';
-
-const crypto = require('crypto');
+import crypto from 'node:crypto';
 
 // Every Spotify call is bounded. The previous hand-rolled https client had no
 // timeout at all, so one hung connection leaked a promise that never settled
@@ -767,4 +765,4 @@ SpotifyClient.playlistItemToTrack = playlistItemToTrack;
 SpotifyClient.MAX_PLAYLIST_TRACKS = MAX_PLAYLIST_TRACKS;
 SpotifyClient.SCOPES = SCOPES;
 
-module.exports = SpotifyClient;
+export default SpotifyClient;

@@ -1,15 +1,13 @@
-'use strict';
-
 // The clock exists because every position source reports in coarse, jittery
 // samples and the obvious interpolation re-anchors on each one. These tests are
 // mostly about the two properties that follow from that: the position must
 // never jump, and it must never run backwards — a reversing cursor re-crosses
 // timeline events it has already fired.
 
-const test = require('node:test');
-const assert = require('node:assert');
+import test from 'node:test';
+import assert from 'node:assert';
 
-const PlaybackClock = require('../../src/playback-clock');
+import PlaybackClock from '../../src/playback-clock.js';
 
 test('the first observation is taken as ground truth', () => {
   const clock = new PlaybackClock();

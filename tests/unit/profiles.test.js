@@ -1,13 +1,8 @@
-'use strict';
-
-const test = require('node:test');
-const assert = require('node:assert');
-const {
-  BUILTIN_PROFILE_ID, BUILTIN_PROFILE_IDS, HUE_COLOR_PROFILE_ID,
-  HUE_WHITE_AMBIANCE_PROFILE_ID, HUE_WHITE_PROFILE_ID,
-  isBuiltinProfile, getProfile, registerProfile, unregisterProfile,
-  listProfiles, clearNonBuiltinProfiles,
-} = require('../../src/server/profiles');
+import test from 'node:test';
+import assert from 'node:assert';
+import { BUILTIN_PROFILE_ID, BUILTIN_PROFILE_IDS, HUE_COLOR_PROFILE_ID, HUE_WHITE_AMBIANCE_PROFILE_ID, HUE_WHITE_PROFILE_ID, isBuiltinProfile, getProfile, registerProfile, unregisterProfile, listProfiles, clearNonBuiltinProfiles } from '../../src/server/profiles.js';
+import { profilesRevision, unitCapOverflow, MAX_UNITS } from '../../src/server/profiles.js';
+import { cellsOf, unitCount } from '../../src/shared/rig.js';
 
 test('built-in profile is always resolvable', () => {
   assert.strictEqual(getProfile({ profileId: BUILTIN_PROFILE_ID }).channelCount, 12);
@@ -118,7 +113,6 @@ test('loading a show cannot wipe the built-in profiles', () => {
 // A built-in is defined in code; an upload or a show file with the same id
 // must not replace it for every fixture patched to it.
 test('a built-in profile cannot be overwritten', () => {
-  const { registerProfile, getProfile, BUILTIN_PROFILE_ID } = require('../../src/server/profiles');
   const before = getProfile({ profileId: BUILTIN_PROFILE_ID });
   const ok = registerProfile({ id: BUILTIN_PROFILE_ID, name: 'Impostor', channelCount: 1, channelMap: {} });
   assert.strictEqual(ok, false);
@@ -128,9 +122,6 @@ test('a built-in profile cannot be overwritten', () => {
 // ── Cells ─────────────────────────────────────────────────────────────────────
 
 test('anything that caches the rig can tell when a profile under it changed', () => {
-  const {
-    profilesRevision, registerProfile, unregisterProfile, clearNonBuiltinProfiles,
-  } = require('../../src/server/profiles');
   const before = profilesRevision();
   registerProfile({ id: 'rev-test', name: 'Rev', channelCount: 3, channelMap: { red: 0 } });
   const registered = profilesRevision();
@@ -147,8 +138,6 @@ test('anything that caches the rig can tell when a profile under it changed', ()
 // Each cell is rendered every frame; sixty-four copies of one outsized
 // profile must not be able to ask for eleven thousand of them.
 test('a patch may not have more cells than the engine renders', () => {
-  const { unitCapOverflow, MAX_UNITS } = require('../../src/server/profiles');
-  const { cellsOf, unitCount } = require('../../src/shared/rig');
   const big = { cells: Array.from({ length: 170 }, (_, i) => ({ channelMap: { red: i } })) };
   assert.strictEqual(unitCount(big), 170);
   assert.strictEqual(unitCount({ cells: [{ channelMap: { red: 0 } }] }), 1, 'one cell is a single light');

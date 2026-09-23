@@ -1,24 +1,22 @@
-'use strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
 
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { spawn } = require('child_process');
-
-const { state, universeOf, activeUniverses } = require('./state');
-const { getProfile, fitsInUniverse, endChannel, UNIVERSE_SIZE } = require('./profiles');
-const { MAX_UNIVERSES } = require('./universes');
-const { settings } = require('./settings');
-const { discoverNodes, probeSend } = require('./artnet');
-const { interfaces } = require('./artnet-nodes');
-const output = require('./output');
-const { engineStatus } = require('./engine');
-const { MIN_UNIVERSE, MAX_UNIVERSE } = require('./sacn');
-const { listEntertainmentConfigs } = require('./hue');
-const { cues } = require('./cues');
-const { midiMap } = require('./midi-map');
-const pythonEnv = require('../python-env');
-const ytdlp = require('../ytdlp');
+import { state, universeOf, activeUniverses } from './state.js';
+import { getProfile, fitsInUniverse, endChannel, UNIVERSE_SIZE } from './profiles.js';
+import { MAX_UNIVERSES } from './universes.js';
+import { settings } from './settings.js';
+import { discoverNodes, probeSend } from './artnet.js';
+import { interfaces } from './artnet-nodes.js';
+import * as output from './output.js';
+import { engineStatus } from './engine.js';
+import { MIN_UNIVERSE, MAX_UNIVERSE } from './sacn.js';
+import { listEntertainmentConfigs } from './hue.js';
+import { cues } from './cues.js';
+import { midiMap } from './midi-map.js';
+import * as pythonEnv from '../python-env.js';
+import * as ytdlp from '../ytdlp.js';
 
 /**
  * The check you run before doors open.
@@ -147,9 +145,14 @@ async function checkArtnet() {
  * main thread that is what a busy server does to the rig — which is why the
  * engine has a thread of its own, and why this says so when it has not.
  */
-function checkEngine(status = engineStatus()) {
+function checkEngine(status = engineStatus(), { standalone = false } = {}) {
   const label = 'Engine';
   if (!status.thread) {
+    // `npm run preflight` runs on its own, before the server is started: there
+    // is no engine in that process to report on.
+    if (standalone) {
+      return { id: 'engine', label, status: INFO, detail: 'Checked on its own — start the server to see how its frames are going.' };
+    }
     return { id: 'engine', label, status: FAIL, detail: 'Not rendering.', fix: 'Restart the server.' };
   }
   const where = status.thread === 'worker' ? 'on its own thread' : 'on the main thread';
@@ -594,7 +597,7 @@ let modelDownload = null;        // { startedAt, done, error, promise }
 function startModelDownload() {
   if (modelDownload && (!modelDownload.done || !modelDownload.error)) return modelDownload;
   const py = process.env.ARTNET_PYTHON || pythonEnv.resolve().executable || 'python';
-  const script = path.join(__dirname, '..', '..', 'scripts', 'download-models.py');
+  const script = path.join(import.meta.dirname, '..', '..', 'scripts', 'download-models.py');
   const job = { startedAt: Date.now(), done: false, error: null, promise: null };
   job.promise = new Promise((resolve) => {
     let stderr = '';
@@ -674,7 +677,7 @@ function checkAnalysisModels({ download = false } = {}) {
  * callable both from the server (which has live ones) and from the CLI (which
  * has none, and reports the checks that do not need them).
  */
-async function runPreflight({ midi, spotify, prolink, analysisCache, downloadModels = false } = {}) {
+async function runPreflight({ midi, spotify, prolink, analysisCache, downloadModels = false, standalone = false } = {}) {
   // The external-tool probes are independent and each costs a process spawn;
   // run them together rather than serially in front of an operator waiting on
   // the report.
@@ -686,7 +689,7 @@ async function runPreflight({ midi, spotify, prolink, analysisCache, downloadMod
   ]);
 
   const checks = [
-    checkEngine(),
+    checkEngine(engineStatus(), { standalone }),
     artnet,
     checkSacn(),
     hue,
@@ -709,23 +712,22 @@ async function runPreflight({ midi, spotify, prolink, analysisCache, downloadMod
   return { ok: counts.fail === 0, counts, checks, at: new Date().toISOString() };
 }
 
-module.exports = {
+export const _modelDownload = () => modelDownload;
+export const STATUSES = { OK, WARN, FAIL, INFO };
+
+export {
   runPreflight,
   probeCommand,
   PANNS_DIR,
   PANNS_CHECKPOINT,
   PANNS_LABELS,
   PANNS_CHECKPOINT_SIZE,
-  // Exported for tests, which drive them against a doctored state rather than
-  // standing up a server.
   checkPatch,
   checkEngine,
   checkSacn,
   checkHue,
   checkPanns,
-  _modelDownload: () => modelDownload,
   checkAnalysisModels,
   checkAccess,
   checkMidi,
-  STATUSES: { OK, WARN, FAIL, INFO },
 };

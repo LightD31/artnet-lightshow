@@ -1,7 +1,5 @@
-'use strict';
-
-const https = require('https');
-const { dtls } = require('node-dtls-client');
+import https from 'node:https';
+import { dtls } from 'node-dtls-client';
 
 /**
  * Philips Hue Entertainment output.
@@ -723,7 +721,9 @@ function _reset() {
   onApplicationId = null;
 }
 
-module.exports = {
+export const STATES = { IDLE, CONNECTING, STREAMING, FAILED };
+
+export {
   STREAM_PORT,
   CIPHER_SUITE,
   MAX_CHANNELS,
@@ -732,7 +732,6 @@ module.exports = {
   HEADER_BYTES,
   CONFIG_ID_BYTES,
   CHANNEL_BYTES,
-  STATES: { IDLE, CONNECTING, STREAMING, FAILED },
   discoverBridges,
   pair,
   fetchApplicationId,

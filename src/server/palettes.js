@@ -1,6 +1,4 @@
-'use strict';
-
-const { COLOR_PRESETS } = require('./presets');
+import { COLOR_PRESETS } from './presets.js';
 
 /**
  * Named colour looks, shared by the auto show and manual mode.
@@ -231,7 +229,7 @@ function paletteSlots(id, size = 4) {
   };
 }
 
-module.exports = {
+export {
   TETRADS,
   TRIADS,
   DUOS,

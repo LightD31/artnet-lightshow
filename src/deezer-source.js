@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * Deezer source — driven by the Firefox extension (browser-extension/).
  *
@@ -109,4 +107,4 @@ class DeezerSource {
   }
 }
 
-module.exports = DeezerSource;
+export default DeezerSource;

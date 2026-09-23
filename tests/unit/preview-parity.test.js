@@ -1,5 +1,3 @@
-'use strict';
-
 // The rehearsal preview and the live engine have to resolve a look to the same
 // emitter values. They are separate code paths — one writes DMX buffers through
 // a profile's channel map, the other returns colours for the browser — so the
@@ -11,17 +9,17 @@
 // as well, and it omitted the UV boost entirely, so a UV wash previewed at a
 // little over half the level it reaches on stage.
 
-const test = require('node:test');
-const assert = require('node:assert');
+import test from 'node:test';
+import assert from 'node:assert';
 
-const { state } = require('../../src/server/state');
-const universes = require('../../src/server/universes');
-const { getProfile } = require('../../src/server/profiles');
-const { startEngine, stopEngine } = require('../../src/server/engine');
-const { conductor } = require('../../src/server/conductor');
-const { applyPatch } = require('../../src/server/patch');
-const { COLOR_PRESETS } = require('../../src/server/presets');
-const { createPreviewSampler } = require('../../src/shared/preview');
+import { state } from '../../src/server/state.js';
+import * as universes from '../../src/server/universes.js';
+import { getProfile } from '../../src/server/profiles.js';
+import { startEngine, stopEngine } from '../../src/server/engine.js';
+import { conductor } from '../../src/server/conductor.js';
+import { applyPatch } from '../../src/server/patch.js';
+import { COLOR_PRESETS } from '../../src/server/presets.js';
+import { createPreviewSampler } from '../../src/shared/preview.js';
 
 const FRAME_MS = 25;
 const frames = (n = 3) => new Promise((r) => setTimeout(r, FRAME_MS * n + 20));
@@ -142,7 +140,6 @@ test('a look without a fade cuts in the preview too', () => {
 test('the preview blends the same values the engine does', () => {
   // Frozen at the same point of the same fade, both sides go through
   // blendFixture; compare what each makes of it.
-  const { blendFixture } = require('../../src/shared/look-math');
   const red = { ...COLOR_PRESETS[0], dim: 255, strobe: 0 };
   const blue = { ...COLOR_PRESETS[5], dim: 255, strobe: 0 };
   const expected = blendFixture(red, blue, 0.5);
@@ -171,9 +168,9 @@ test('a split look rehearses as the rig plays it', () => {
 // analysed grid, with each scene anchored on the beat it was scheduled for, so
 // they agree on the step — not merely on the colours.
 
-const { makeGrid } = require('../../src/shared/beat-clock');
-const { setFrameHook } = require('../../src/server/engine');
-const AutoShow = require('../../src/auto-show');
+import { makeGrid } from '../../src/shared/beat-clock.js';
+import { setFrameHook } from '../../src/server/engine.js';
+import AutoShow from '../../src/auto-show.js';
 
 /** What the rig drives every fixture's emitters at. */
 function rigAll() {
@@ -265,9 +262,10 @@ test('a timeline with no grid steps at its own tempo', () => {
 // through the same pattern layer as the rig, so a wave rehearsed along a bar
 // is the wave the bar will play.
 
-const { registerProfile, unregisterProfile, getProfile: profileFor } = require('../../src/server/profiles');
-const { buildRig } = require('../../src/shared/rig');
-const { renderFrame, resizeFixtureBuffers } = require('../../src/server/engine');
+import { registerProfile, unregisterProfile, getProfile as profileFor } from '../../src/server/profiles.js';
+import { buildRig } from '../../src/shared/rig.js';
+import { renderFrame, resizeFixtureBuffers } from '../../src/server/engine.js';
+import { blendFixture, EXPRESSION_REST } from '../../src/shared/look-math.js';
 
 const BARE_BAR = {
   id: 'parity-bar', name: 'Parity bar', channelCount: 24, channelMap: {},
@@ -318,7 +316,6 @@ test('rig and preview agree on every cell of a bar', () => {
 // values when no show is feeding it. The preview used to hand them nothing, so
 // they fell back to defaults of their own and rehearsed a different ribbon.
 test('the expressive patterns rehearse without a show as the rig plays them', () => {
-  const { EXPRESSION_REST } = require('../../src/shared/look-math');
   const rig = [{ maxBrightness: 255 }, { maxBrightness: 255 }, { maxBrightness: 255 }, { maxBrightness: 255 }, { maxBrightness: 255 }];
   for (const pattern of ['ribbon', 'ensemble']) {
     const look = { pattern, colorA: 1, colorB: 5, colorC: 1, colorD: 5, bpm: 120, beatDivision: 1 };

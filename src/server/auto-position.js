@@ -1,5 +1,3 @@
-'use strict';
-
 // Keep the last stopped position, and distinguish an armed show from a source
 // whose clock is actually moving. This works for every position provider,
 // including paused players and a PRO DJ LINK clock frozen after lost packets.
@@ -18,4 +16,6 @@ function sampleAutoPosition(show, previous = {}) {
   };
 }
 
-module.exports = { sampleAutoPosition };
+export {
+  sampleAutoPosition,
+};

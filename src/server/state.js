@@ -1,17 +1,9 @@
-'use strict';
-
-const { BUILTIN_PROFILE_ID, BUILTIN_PROFILE_IDS, getProfile, listProfiles } = require('./profiles');
-const { settings } = require('./settings');
-const universes = require('./universes');
-const {
-  COLOR_PRESETS,
-  PATTERNS,
-  STROBE_FUNCTIONS,
-  ENERGY_EFFECTS,
-  SYNC_OFFSET_LIMIT_MS,
-} = require('./presets');
-const { PALETTES } = require('./palettes');
-const { conductor } = require('./conductor');
+import { BUILTIN_PROFILE_ID, BUILTIN_PROFILE_IDS, getProfile, listProfiles } from './profiles.js';
+import { settings } from './settings.js';
+import * as universes from './universes.js';
+import { COLOR_PRESETS, PATTERNS, STROBE_FUNCTIONS, ENERGY_EFFECTS, SYNC_OFFSET_LIMIT_MS } from './presets.js';
+import { PALETTES } from './palettes.js';
+import { conductor } from './conductor.js';
 
 const DEFAULT_ADDRESSES = [1, 13, 25, 37];
 
@@ -265,7 +257,7 @@ function getClientState() {
   };
 }
 
-module.exports = {
+export {
   state,
   universeOf,
   maxBrightnessOf,

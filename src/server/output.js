@@ -1,14 +1,10 @@
-'use strict';
-
-const { state, universeOf } = require('./state');
-const { getProfile } = require('./profiles');
-const { cellsOf, EMITTERS } = require('../shared/rig');
-const universes = require('./universes');
-const { createTransmitter, sacnUniverseFor: mapSacnUniverse } = require('./transmit');
-const {
-  createDiscovery, interfaces, isBroadcastTarget, isLoopbackTarget,
-} = require('./artnet-nodes');
-const hue = require('./hue');
+import { state, universeOf } from './state.js';
+import { getProfile } from './profiles.js';
+import { cellsOf, EMITTERS } from '../shared/rig.js';
+import * as universes from './universes.js';
+import { createTransmitter, sacnUniverseFor as mapSacnUniverse } from './transmit.js';
+import { createDiscovery, interfaces, isBroadcastTarget, isLoopbackTarget } from './artnet-nodes.js';
+import * as hue from './hue.js';
 
 /**
  * Where a rendered universe goes.
@@ -283,7 +279,10 @@ function endFrame() {
   transmitter.endFrame(transmitConfig());
 }
 
-module.exports = {
+export const getHueStatus = () => hue.getStatus();
+export const stopHue = () => hue.stop();
+
+export {
   configureSacn,
   getSacnConfig,
   sacnUniverseFor,
@@ -294,9 +293,7 @@ module.exports = {
   configureHue,
   getHueConfig,
   onHueApplicationId,
-  getHueStatus: () => hue.getStatus(),
   hueChannelColors,
   hueFollowedFixtures,
   sendHue,
-  stopHue: () => hue.stop(),
 };

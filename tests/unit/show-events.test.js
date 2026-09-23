@@ -1,15 +1,12 @@
-'use strict';
-
 // The boundary between the analyser and the show engine. Two things have to
 // hold: the stream the analyser produced survives normalisation intact, and a
 // cached document from before the event layer existed still produces a usable
 // stream — a schema change should cost the cache its nuance, not its contents.
 
-const test = require('node:test');
-const assert = require('node:assert');
+import test from 'node:test';
+import assert from 'node:assert';
 
-const { EVENT, deriveEvents, normalise, byType, inSpan, nearAny } =
-  require('../../src/show/musical-events');
+import { EVENT, deriveEvents, normalise, byType, inSpan, nearAny } from '../../src/show/musical-events.js';
 
 /** A pre-2.0 analysis document: no `events` array anywhere. */
 function legacy(over = {}) {

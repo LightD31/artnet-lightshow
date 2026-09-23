@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * The engine's own thread.
  *
@@ -26,15 +24,15 @@
  * reply carries the bytes.
  */
 
-const { parentPort, workerData } = require('worker_threads');
+import { parentPort, workerData } from 'node:worker_threads';
 
-const { createRenderer } = require('./renderer');
-const { createUniverseStore } = require('./universes');
-const { createTransmitter } = require('./transmit');
-const { createTicker, hrtimeMs, FRAME_MS } = require('./frame-clock');
-const { createClockFollower } = require('./clock-follow');
-const { getProfile, profilesRevision, registerProfile, clearNonBuiltinProfiles } = require('./profiles');
-const { guarded } = require('./guard');
+import { createRenderer } from './renderer.js';
+import { createUniverseStore } from './universes.js';
+import { createTransmitter } from './transmit.js';
+import { createTicker, hrtimeMs, FRAME_MS } from './frame-clock.js';
+import { createClockFollower } from './clock-follow.js';
+import { getProfile, profilesRevision, registerProfile, clearNonBuiltinProfiles } from './profiles.js';
+import { guarded } from './guard.js';
 
 const {
   shared, epochMs, periodMs = FRAME_MS, capture = false, seed = null, startNow = null,

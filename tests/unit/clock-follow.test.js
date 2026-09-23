@@ -1,10 +1,8 @@
-'use strict';
+import test from 'node:test';
+import assert from 'node:assert';
 
-const test = require('node:test');
-const assert = require('node:assert');
-
-const { createClockFollower } = require('../../src/server/clock-follow');
-const { BACKWARD_JUMP_BEATS } = require('../../src/server/conductor');
+import { createClockFollower } from '../../src/server/clock-follow.js';
+import { BACKWARD_JUMP_BEATS } from '../../src/server/conductor.js';
 
 const reading = (beatPos, extra = {}) => ({ beatPos, bpm: 120, source: 'tap', epoch: 0, ...extra });
 

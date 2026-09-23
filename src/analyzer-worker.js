@@ -1,13 +1,11 @@
-'use strict';
-
-const { spawn } = require('child_process');
+import { spawn } from 'node:child_process';
 
 // Hard ceiling on a single analysis. Without one, a wedged Python process
 // leaves _pending unsettled forever and every queued prefetch waits behind it —
 // the auto-show silently stops picking up new tracks with no error anywhere.
 // Generous by design: a cold start plus a long track is well
 // under this, so hitting it means something is genuinely stuck.
-const { settings } = require('./server/settings');
+import { settings } from './server/settings.js';
 
 // Read per call, not once at load: the operator can change it in the settings
 // page and the next analysis should honour the new value without a restart.
@@ -483,4 +481,4 @@ class AnalyzerWorker {
   }
 }
 
-module.exports = AnalyzerWorker;
+export default AnalyzerWorker;

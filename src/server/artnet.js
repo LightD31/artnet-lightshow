@@ -1,8 +1,6 @@
-'use strict';
-
-const dgram = require('dgram');
-const net = require('net');
-const dns = require('dns');
+import dgram from 'node:dgram';
+import net from 'node:net';
+import dns from 'node:dns';
 
 // The send socket, opened by the first frame sent rather than when this module
 // loads: the engine renders in a worker thread, and the main thread (which
@@ -323,7 +321,7 @@ function probeSend({ host, port, universe = 0 }, timeoutMs = 2000) {
   });
 }
 
-module.exports = {
+export {
   ARTNET_PORT,
   OP_POLL,
   OP_POLL_REPLY,

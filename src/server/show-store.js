@@ -1,25 +1,11 @@
-'use strict';
+import fs from 'node:fs';
+import path from 'node:path';
 
-const fs = require('fs');
-const path = require('path');
-
-const {
-  state, universeOf, maxBrightnessOf, setDefaultUniverse,
-} = require('./state');
-const { resizeFixtureBuffers } = require('./engine');
-const {
-  BUILTIN_PROFILE_ID,
-  BUILTIN_PROFILE_IDS,
-  isBuiltinProfile,
-  MAX_FIXTURES,
-  universeOverflow,
-  unitCapOverflow,
-  registerProfile,
-  clearNonBuiltinProfiles,
-  listProfiles,
-} = require('./profiles');
-const { MAX_UNIVERSES } = require('./universes');
-const { showSchema, validate } = require('./validation');
+import { state, universeOf, maxBrightnessOf, setDefaultUniverse } from './state.js';
+import { resizeFixtureBuffers } from './engine.js';
+import { BUILTIN_PROFILE_ID, BUILTIN_PROFILE_IDS, isBuiltinProfile, MAX_FIXTURES, universeOverflow, unitCapOverflow, registerProfile, clearNonBuiltinProfiles, listProfiles } from './profiles.js';
+import { MAX_UNIVERSES } from './universes.js';
+import { showSchema, validate } from './validation.js';
 
 /**
  * The patch, saved for you.
@@ -283,10 +269,10 @@ class ShowStore {
 
 // Fixed location, for the same reason settings.json and cues.json are: it is
 // how you *find* the patch, not itself a setting. Tests build their own store.
-const SHOW_FILE = path.join(__dirname, '..', '..', 'config', 'show.json');
+const SHOW_FILE = path.join(import.meta.dirname, '..', '..', 'config', 'show.json');
 const showStore = new ShowStore(SHOW_FILE);
 
-module.exports = {
+export {
   showStore,
   ShowStore,
   SHOW_FILE,

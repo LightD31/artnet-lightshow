@@ -1,6 +1,4 @@
-'use strict';
-
-const { UNIVERSE_SIZE } = require('./profiles');
+import { UNIVERSE_SIZE } from './profiles.js';
 
 /**
  * DMX output buffers, one per universe.
@@ -160,19 +158,20 @@ function createUniverseStore(shared = allocateShared(), { readOnly = false } = {
 // The main thread's store. The engine's worker opens the same memory.
 const store = createUniverseStore();
 
-module.exports = {
+export const shared = store.shared;
+export const getBuffer = store.getBuffer;
+export const list = store.list;
+export const count = store.count;
+export const clearAll = store.clearAll;
+export const sync = store.sync;
+export const drainRetired = store.drainRetired;
+export const reset = store.reset;
+export const setWritable = store.setWritable;
+
+export {
   MAX_UNIVERSES,
   UNIVERSE_SIZE,
   ZERO_FRAME,
   allocateShared,
   createUniverseStore,
-  shared: store.shared,
-  getBuffer: store.getBuffer,
-  list: store.list,
-  count: store.count,
-  clearAll: store.clearAll,
-  sync: store.sync,
-  drainRetired: store.drainRetired,
-  reset: store.reset,
-  setWritable: store.setWritable,
 };

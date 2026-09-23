@@ -1,12 +1,10 @@
-'use strict';
-
 // Spotify stopped handing over ISRCs in February 2026. The lookup that
 // replaces it must find the right *edit*, and must say "don't know" rather
 // than guess — a wrong recording puts every cue in the wrong place.
 
-const test = require('node:test');
-const assert = require('node:assert');
-const { resolveIsrc, splitQuery, normalise, _cache } = require('../../src/isrc');
+import test from 'node:test';
+import assert from 'node:assert';
+import { resolveIsrc, splitQuery, normalise, _cache } from '../../src/isrc.js';
 
 const quiet = { warn() {} };
 

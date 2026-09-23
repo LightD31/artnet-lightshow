@@ -1,17 +1,14 @@
-'use strict';
-
 // The renderer is the last thing between the show's judgement and a DMX frame,
 // so its job is narrow and its failures are loud: the timeline fires from a
 // timer, and a value the patch schema rejects is an uncaught exception that
 // ends the process mid-set with the rig stuck on whatever it was last told.
 
-const test = require('node:test');
-const assert = require('node:assert');
+import test from 'node:test';
+import assert from 'node:assert';
 
-const { renderIntents, debounceBursts, DEBOUNCE_SAFETY_MS } =
-  require('../../src/show/render');
-const { scene, color, accent, tempo, dark, BURST } = require('../../src/show/intents');
-const { patchSchema } = require('../../src/server/validation');
+import { renderIntents, debounceBursts, DEBOUNCE_SAFETY_MS } from '../../src/show/render.js';
+import { scene, color, accent, tempo, dark, BURST } from '../../src/show/intents.js';
+import { patchSchema } from '../../src/server/validation.js';
 
 const patches = (events) => events.filter((e) => e.action === 'patch');
 const bursts = (events) => events.filter((e) => e.action === 'energy');

@@ -1,6 +1,4 @@
-'use strict';
-
-const { isPlaced, stagePositions, spatialLayout, washFixtures } = require('./stage');
+import { isPlaced, stagePositions, spatialLayout, washFixtures } from './stage.js';
 
 /**
  * The rig as the pattern layer sees it: fixtures, and the cells inside them.
@@ -208,7 +206,7 @@ function layoutOf(rig, split, pixelMap) {
   return layout;
 }
 
-module.exports = {
+export {
   EMITTERS,
   PIXEL_MAPS,
   MAX_CELLS_PER_FIXTURE,

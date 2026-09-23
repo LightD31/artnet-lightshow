@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-'use strict';
-
 /**
  * Pre-show preflight: one command that checks everything that fails quietly.
  *
@@ -14,12 +12,12 @@
  * it can be run before the server is started, or alongside it.
  */
 
-require('dotenv').config();
+import 'dotenv/config';
 
-const path = require('path');
-const { runPreflight } = require('../src/server/preflight');
-const { AnalysisCache } = require('../src/analysis-cache');
-const { spawnSync } = require('child_process');
+import path from 'node:path';
+import { runPreflight } from '../src/server/preflight.js';
+import { AnalysisCache } from '../src/analysis-cache.js';
+import { spawnSync } from 'node:child_process';
 
 // ANSI only when someone is actually looking at a terminal; piping this into a
 // log or a CI job should produce plain text.
@@ -54,12 +52,12 @@ async function main() {
   if (process.argv.includes('--download-models')) {
     const python = process.env.ARTNET_PYTHON || 'python';
     console.log('  Downloading pretrained analysis weights from Hugging Face…');
-    const result = spawnSync(python, [path.join(__dirname, 'download-models.py')], {
+    const result = spawnSync(python, [path.join(import.meta.dirname, 'download-models.py')], {
       stdio: 'inherit', env: process.env,
     });
     if (result.status !== 0) process.exit(result.status || 1);
   }
-  const analysisCache = new AnalysisCache(path.join(__dirname, '..', 'cache', 'analysis'));
+  const analysisCache = new AnalysisCache(path.join(import.meta.dirname, '..', 'cache', 'analysis'));
 
   console.log('\n  Pre-show preflight\n');
 
@@ -67,7 +65,7 @@ async function main() {
   // MIDI/Spotify/PRO DJ LINK checks report what is configured rather than what
   // is connected. Everything that matters for output and analysis is checked
   // from the stored config, which is the same config the server will read.
-  const report = await runPreflight({ analysisCache });
+  const report = await runPreflight({ analysisCache, standalone: true });
 
   const labelWidth = Math.max(...report.checks.map((c) => c.label.length));
   // Two spaces, a six-character mark, a space, the label column, two spaces.

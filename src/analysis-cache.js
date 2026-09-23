@@ -1,9 +1,7 @@
-'use strict';
-
-const fs = require('fs');
-const fsp = require('fs/promises');
-const path = require('path');
-const crypto = require('crypto');
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
+import crypto from 'node:crypto';
 
 /**
  * Simple file-backed cache for audio analysis results.
@@ -25,7 +23,7 @@ const crypto = require('crypto');
 // for as long as the track stays in the cache.
 function readMinCompatible() {
   try {
-    const source = fs.readFileSync(path.join(__dirname, 'analysis', 'version.py'), 'utf8');
+    const source = fs.readFileSync(path.join(import.meta.dirname, 'analysis', 'version.py'), 'utf8');
     const m = source.match(/^MIN_COMPATIBLE\s*=\s*['"](\d+)\.(\d+)['"]/m);
     if (m) return [Number(m[1]), Number(m[2])];
   } catch (_) { /* fall through */ }
@@ -394,7 +392,7 @@ function keyForProlinkTrack({ deviceId, slot, trackId, title, artist, durationMs
   return null;
 }
 
-module.exports = {
+export {
   AnalysisCache,
   isCompatible,
   MIN_COMPATIBLE,

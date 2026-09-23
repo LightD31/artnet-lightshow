@@ -1,8 +1,6 @@
-'use strict';
-
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const { sampleAutoPosition } = require('../../src/server/auto-position');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { sampleAutoPosition } from '../../src/server/auto-position.js';
 
 function show(overrides = {}) {
   return {

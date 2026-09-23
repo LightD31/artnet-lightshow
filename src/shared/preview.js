@@ -1,5 +1,3 @@
-'use strict';
-
 // Pure rehearsal sampler. Replays a planned timeline so the browser can show
 // what a track will look like before the room is full.
 //
@@ -31,15 +29,11 @@
 // It draws the pattern layer through the same function the rig does
 // (shared/layer.js), so it answers per light: one entry per par, one per cell
 // of an LED bar, in the rig's order (shared/rig.js).
-const { PATTERN_FUNCS } = require('./patterns');
-const { renderLayer } = require('./layer');
-const { buildRig } = require('./rig');
-const {
-  EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture,
-} = require('./look-math');
-const {
-  gridFromAnalysis, beatPositionAt, anchorStep, stepAt, motionAdvance,
-} = require('./beat-clock');
+import { PATTERN_FUNCS } from './patterns.js';
+import { renderLayer } from './layer.js';
+import { buildRig } from './rig.js';
+import { EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture } from './look-math.js';
+import { gridFromAnalysis, beatPositionAt, anchorStep, stepAt, motionAdvance } from './beat-clock.js';
 
 const LOOK_KEYS = ['pattern', 'palette', 'split', 'pixelMap', 'colorA', 'colorB', 'colorC', 'colorD'];
 
@@ -197,4 +191,6 @@ function createPreviewSampler(events = [], grid = null) {
   };
 }
 
-module.exports = { createPreviewSampler };
+export {
+  createPreviewSampler,
+};

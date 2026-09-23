@@ -1,13 +1,11 @@
-'use strict';
-
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const {
-  AnalysisCache, keyForSpotify, keyForYouTube, keyForQuery, keyForBuffer, keyForProlinkTrack,
-} = require('../../src/analysis-cache');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { AnalysisCache, keyForSpotify, keyForYouTube, keyForQuery, keyForBuffer, keyForProlinkTrack } from '../../src/analysis-cache.js';
+import { MIN_COMPATIBLE } from '../../src/analysis-cache.js';
 
 test('cache keys are stable and distinct per source', () => {
   assert.strictEqual(keyForSpotify('abc'), 'spotify:abc');
@@ -98,8 +96,7 @@ test('an entry from an analyser too old to read is a miss, and goes', () => {
 });
 
 test('the oldest readable version comes from the analyser itself', () => {
-  const { MIN_COMPATIBLE } = require('../../src/analysis-cache');
-  const source = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'analysis', 'version.py'), 'utf8');
+  const source = fs.readFileSync(path.join(import.meta.dirname, '..', '..', 'src', 'analysis', 'version.py'), 'utf8');
   assert.match(source, new RegExp(`^MIN_COMPATIBLE = '${MIN_COMPATIBLE.join('\\.')}'`, 'm'));
 });
 
@@ -128,7 +125,7 @@ test('listing reads summaries, and gives an entry from before them one', async (
   try {
     await cache.save('new', { schemaVersion: '2.0', bpm: 100 });
     // An entry written by an older build: no summary alongside it.
-    const legacy = path.join(dir, `${require('node:crypto').createHash('sha1').update('old').digest('hex')}.json`);
+    const legacy = path.join(dir, `${crypto.createHash('sha1').update('old').digest('hex')}.json`);
     fs.writeFileSync(legacy, JSON.stringify({ key: 'old', meta: {}, cachedAt: '2020-01-01T00:00:00Z',
       analysis: { schemaVersion: '2.0', bpm: 90 } }));
 

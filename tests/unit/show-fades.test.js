@@ -1,20 +1,18 @@
-'use strict';
-
 // Every scene change used to be a cut. The show now fades where the music
 // settles and cuts where it hits: long into a breakdown or an outro, none into
 // a chorus or a drop.
 
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'node:fs';
+import path from 'node:path';
 
-const { ShowDirector } = require('../../src/show/director');
-const { renderIntents } = require('../../src/show/render');
-const { patchSchema } = require('../../src/server/validation');
-const { COLOR_PRESETS, PATTERNS } = require('../../src/server/presets');
+import { ShowDirector } from '../../src/show/director.js';
+import { renderIntents } from '../../src/show/render.js';
+import { patchSchema } from '../../src/server/validation.js';
+import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.js';
 
-const TRACKS = path.join(__dirname, '..', 'fixtures', 'tracks');
+const TRACKS = path.join(import.meta.dirname, '..', 'fixtures', 'tracks');
 const tracks = fs.readdirSync(TRACKS).filter((f) => f.endsWith('.json'))
   .map((f) => JSON.parse(fs.readFileSync(path.join(TRACKS, f), 'utf8')));
 

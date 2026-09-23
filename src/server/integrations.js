@@ -1,21 +1,15 @@
-'use strict';
-
-const { state, getLiveState, getDmxSnapshot } = require('./state');
-const { setHooks } = require('./patch');
-const { conductor } = require('./conductor');
-const { currentRig } = require('./rig');
-const { guarded } = require('./guard');
-const PlaybackClock = require('../playback-clock');
-const { cues } = require('./cues');
-const { Warmer } = require('./warm');
-const {
-  keyForSpotify,
-  keyForQuery,
-  keyForProlinkTrack,
-} = require('../analysis-cache');
-const HybridSource = require('../hybrid-source');
-const { sampleAutoPosition } = require('./auto-position');
-const { gridFromAnalysis } = require('../shared/beat-clock');
+import { state, getLiveState, getDmxSnapshot, setExtrasProvider } from './state.js';
+import { setHooks } from './patch.js';
+import { conductor } from './conductor.js';
+import { currentRig } from './rig.js';
+import { guarded } from './guard.js';
+import PlaybackClock from '../playback-clock.js';
+import { cues } from './cues.js';
+import { Warmer } from './warm.js';
+import { keyForSpotify, keyForQuery, keyForProlinkTrack } from '../analysis-cache.js';
+import HybridSource from '../hybrid-source.js';
+import { sampleAutoPosition } from './auto-position.js';
+import { gridFromAnalysis } from '../shared/beat-clock.js';
 
 // A track change that lands while the previous track is still being analysed
 // hands the analyser to the new song and abandons the old job. That is the
@@ -149,7 +143,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       midi: { enabled: midi.enabled, ports: midi.listPorts() },
     };
   }
-  require('./state').setExtrasProvider(extras);
+  setExtrasProvider(extras);
 
   // Hook the patch module so it can react to higher-level concerns.
   setHooks({
@@ -704,4 +698,6 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   };
 }
 
-module.exports = { setupIntegrations };
+export {
+  setupIntegrations,
+};

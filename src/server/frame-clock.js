@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * The frame clock: when each frame is due, and how close to it it went out.
  *
@@ -159,7 +157,7 @@ function createTicker({
   };
 }
 
-module.exports = {
+export {
   FRAME_RATE,
   FRAME_MS,
   MAX_BEHIND_FRAMES,

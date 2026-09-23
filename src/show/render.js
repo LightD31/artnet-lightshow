@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * Intents to Art-Net patches.
  *
@@ -20,7 +18,7 @@
  *   is cut off before the fixtures have finished responding to it.
  */
 
-const { INTENT } = require('./intents');
+import { INTENT } from './intents.js';
 
 const u8 = (n) => Math.max(0, Math.min(255, Math.round(n) || 0));
 // Kept to a hundredth: a 123.7 BPM track is not at 124, and the tempo the
@@ -205,4 +203,9 @@ function debounceBursts(events) {
   return out;
 }
 
-module.exports = { renderIntents, sortEvents, debounceBursts, DEBOUNCE_SAFETY_MS };
+export {
+  renderIntents,
+  sortEvents,
+  debounceBursts,
+  DEBOUNCE_SAFETY_MS,
+};

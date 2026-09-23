@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * PRO DJ LINK wrapper around the `prolink-connect` package.
  *
@@ -19,13 +17,18 @@
  * so pitch / nudge / seek are followed without the position ever restarting
  * a beat it is already partway through (see _reanchor).
  *
- * The package is CommonJS (verified at install time), so we can require() it
- * directly. If the require fails (wrong Node version, package corrupt) the
+ * The package is CommonJS (verified at install time), so it is loaded with a
+ * plain require() through createRequire — synchronously, and inside a try, so
+ * that it stays optional. If the require fails (wrong Node version, package corrupt) the
  * wrapper degrades gracefully: enable() rejects, the rest of the app keeps
  * working.
  */
 
-const { makeGrid, beatPositionAt } = require('./shared/beat-clock');
+import { createRequire } from 'node:module';
+
+import { makeGrid, beatPositionAt } from './shared/beat-clock.js';
+
+const require = createRequire(import.meta.url);
 
 let prolink = null;
 let CDJStatus = null;
@@ -608,4 +611,4 @@ class ProLink {
   }
 }
 
-module.exports = ProLink;
+export default ProLink;

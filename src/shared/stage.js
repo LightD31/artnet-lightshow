@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * Where the fixtures stand, and the order the patterns travel across them.
  *
@@ -106,6 +104,11 @@ function washFixtures(fixtures, seed) {
   return new Set(fixtures.map((f, i) => (f.group === wash ? i : -1)).filter((i) => i >= 0));
 }
 
-module.exports = {
-  isPlaced, defaultPosition, stagePositions, spatialLayout, FIXTURE_GROUPS, washFixtures,
+export {
+  isPlaced,
+  defaultPosition,
+  stagePositions,
+  spatialLayout,
+  FIXTURE_GROUPS,
+  washFixtures,
 };

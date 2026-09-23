@@ -1,12 +1,10 @@
-'use strict';
+import test from 'node:test';
+import assert from 'node:assert';
 
-const test = require('node:test');
-const assert = require('node:assert');
-
-const { state } = require('../../src/server/state');
-const { snapshotShow, applyShow } = require('../../src/server/show-store');
-const { captureLook, recallLook } = require('../../src/server/cues');
-const { stopEngine } = require('../../src/server/engine');
+import { state } from '../../src/server/state.js';
+import { snapshotShow, applyShow } from '../../src/server/show-store.js';
+import { captureLook, recallLook } from '../../src/server/cues.js';
+import { stopEngine } from '../../src/server/engine.js';
 
 // These tests inspect state and DMX buffers, never the physical rig.
 state.artnet.enabled = false;

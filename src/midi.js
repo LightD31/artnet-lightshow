@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * MIDI control surface.
  *
@@ -23,10 +21,14 @@
  * feedback follows a relearned layout instead of pointing at the old buttons.
  */
 
-const { DEFAULT_MAP } = require('./server/midi-map');
-const {
-  ENERGY_EFFECT_IDS, STROBE_FUNCTION_IDS, SYNC_OFFSET_LIMIT_MS,
-} = require('./server/presets');
+import { DEFAULT_MAP } from './server/midi-map.js';
+import { createRequire } from 'node:module';
+
+import { ENERGY_EFFECT_IDS, STROBE_FUNCTION_IDS, SYNC_OFFSET_LIMIT_MS } from './server/presets.js';
+
+// Loaded through require so it can stay optional: a missing or broken native
+// MIDI binding turns MIDI off rather than stopping the server from starting.
+const require = createRequire(import.meta.url);
 
 // Milliseconds per encoder detent when nudging the light/music sync.
 const SYNC_NUDGE_MS = 5;
@@ -697,4 +699,4 @@ class MidiController {
   }
 }
 
-module.exports = MidiController;
+export default MidiController;

@@ -1,5 +1,3 @@
-'use strict';
-
 // Every four-colour bank in palettes.js gives its slots jobs: A dominant, B its
 // contrast, C an accent, D a *lift* — a white, a pale wash or UV — "not a
 // fourth hue: without a brightness break, a four-colour chase reads as a
@@ -10,19 +8,19 @@
 // and D before either ran. Across the five committed tracks only 45 of 139 full
 // looks kept the lift in D. These tests hold it there.
 
-const test = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'node:fs';
+import path from 'node:path';
 
-const { ShowDirector, coloursFor } = require('../../src/show/director');
-const { buildPalette } = require('../../src/show/look');
-const { deriveEvents, EVENT } = require('../../src/show/musical-events');
-const { INTENT } = require('../../src/show/intents');
-const { COLOR_PRESETS, PATTERNS } = require('../../src/server/presets');
-const { TETRADS } = require('../../src/server/palettes');
+import { ShowDirector, coloursFor } from '../../src/show/director.js';
+import { buildPalette } from '../../src/show/look.js';
+import { deriveEvents, EVENT } from '../../src/show/musical-events.js';
+import { INTENT } from '../../src/show/intents.js';
+import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.js';
+import { TETRADS } from '../../src/server/palettes.js';
 
-const TRACKS = path.join(__dirname, '..', 'fixtures', 'tracks');
+const TRACKS = path.join(import.meta.dirname, '..', 'fixtures', 'tracks');
 const tracks = fs.readdirSync(TRACKS).filter((f) => f.endsWith('.json'))
   .map((f) => ({ name: f.replace(/\.json$/, ''), doc: JSON.parse(fs.readFileSync(path.join(TRACKS, f), 'utf8')) }));
 

@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * Blending one look colour into another, the way it should read on stage.
  *
@@ -117,4 +115,7 @@ function chromaOf(col) {
   return toLch(col).C;
 }
 
-module.exports = { colourMixer, chromaOf };
+export {
+  colourMixer,
+  chromaOf,
+};

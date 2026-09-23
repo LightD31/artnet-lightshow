@@ -1,16 +1,14 @@
-'use strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { z } from 'zod';
 
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const { z } = require('zod');
-
-const { state } = require('./state');
-const { applyPatch, applyOverride } = require('./patch');
-const { conductor } = require('./conductor');
-const { overrideSchema, fixtureId } = require('./validation');
-const { COLOR_PRESETS } = require('./presets');
-const { PIXEL_MAPS } = require('../shared/rig');
+import { state } from './state.js';
+import { applyPatch, applyOverride } from './patch.js';
+import { conductor } from './conductor.js';
+import { overrideSchema, fixtureId } from './validation.js';
+import { COLOR_PRESETS } from './presets.js';
+import { PIXEL_MAPS } from '../shared/rig.js';
 
 /**
  * Named looks, saved and recalled.
@@ -346,10 +344,10 @@ class CueStore {
 
 // Fixed location for the same reason settings.json is: it is how you *find* the
 // cues, not itself a setting. Tests construct their own CueStore.
-const CUES_FILE = path.join(__dirname, '..', '..', 'config', 'cues.json');
+const CUES_FILE = path.join(import.meta.dirname, '..', '..', 'config', 'cues.json');
 const cues = new CueStore(CUES_FILE).load();
 
-module.exports = {
+export {
   cues,
   CUES_FILE,
   CueStore,

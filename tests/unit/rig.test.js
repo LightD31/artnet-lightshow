@@ -1,12 +1,10 @@
-'use strict';
-
 // The rig as lights: a par is one, each cell of an LED bar another. What the
 // pattern layer sees, and so the order every pattern travels in.
 
-const test = require('node:test');
-const assert = require('node:assert');
-const { buildRig, lineOf } = require('../../src/shared/rig');
-const { spatialLayout } = require('../../src/shared/stage');
+import test from 'node:test';
+import assert from 'node:assert';
+import { buildRig, lineOf } from '../../src/shared/rig.js';
+import { spatialLayout } from '../../src/shared/stage.js';
 
 const bar = (n) => ({ cells: Array.from({ length: n }, (_, i) => ({ channelMap: { red: i * 3, green: i * 3 + 1, blue: i * 3 + 2 } })) });
 const profiles = { bar4: bar(4), bar8: bar(8) };

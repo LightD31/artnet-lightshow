@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * The musical event stream, as the show engine sees it.
  *
@@ -225,4 +223,12 @@ function nearAny(events, t, window) {
   return false;
 }
 
-module.exports = { EVENT, deriveEvents, synthesise, normalise, byType, inSpan, nearAny };
+export {
+  EVENT,
+  deriveEvents,
+  synthesise,
+  normalise,
+  byType,
+  inSpan,
+  nearAny,
+};

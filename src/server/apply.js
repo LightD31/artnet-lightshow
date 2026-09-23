@@ -1,10 +1,8 @@
-'use strict';
-
-const { state, setDefaultUniverse } = require('./state');
-const { settings } = require('./settings');
-const output = require('./output');
-const { generateCid } = require('./sacn');
-const pythonEnv = require('../python-env');
+import { state, setDefaultUniverse } from './state.js';
+import { settings } from './settings.js';
+import * as output from './output.js';
+import { generateCid } from './sacn.js';
+import * as pythonEnv from '../python-env.js';
 
 /**
  * Push stored settings into the running subsystems.
@@ -218,4 +216,6 @@ function createApplier({ midi, spotify, smtc, deezer, autoShow, applyPatch, broa
   };
 }
 
-module.exports = { createApplier };
+export {
+  createApplier,
+};

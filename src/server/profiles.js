@@ -1,5 +1,3 @@
-'use strict';
-
 // The profile a new fixture gets, and the fallback for a profile id nothing
 // knows about. One of several built-ins — see BUILTIN_PROFILE_IDS.
 const BUILTIN_PROFILE_ID = 'cameo-root-par-6-12ch';
@@ -57,8 +55,8 @@ function universeOverflow(label, address, channelCount) {
 // Defined in src/shared/look-math.js, which is where the arithmetic that
 // applies it lives and is reachable from the browser preview too. Re-exported
 // here because this is where callers have always asked for it.
-const { UV_BOOST } = require('../shared/look-math');
-const { countUnits } = require('../shared/rig');
+import { UV_BOOST } from '../shared/look-math.js';
+import { countUnits } from '../shared/rig.js';
 
 // Ids that would collide with object-machinery keys. Rejected at registration
 // as defence in depth alongside the null-prototype registry below.
@@ -264,7 +262,7 @@ function unitCapOverflow(fixtures, profileOf = getProfile) {
   return `The patch would have ${total} lights (cells), more than the ${MAX_UNITS} the engine renders`;
 }
 
-module.exports = {
+export {
   BUILTIN_PROFILE_ID,
   BUILTIN_PROFILE_IDS,
   HUE_COLOR_PROFILE_ID,

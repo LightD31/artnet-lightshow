@@ -1,8 +1,6 @@
-'use strict';
-
-const fs = require('fs');
-const path = require('path');
-const { z } = require('zod');
+import fs from 'node:fs';
+import path from 'node:path';
+import { z } from 'zod';
 
 /**
  * The MIDI control map: which message does what.
@@ -339,10 +337,10 @@ function sameControl(a, b) {
 
 // Fixed location, for the same reason settings.json is: it is how you find the
 // map, not itself a setting. Tests construct their own store.
-const MIDI_MAP_FILE = path.join(__dirname, '..', '..', 'config', 'midi-map.json');
+const MIDI_MAP_FILE = path.join(import.meta.dirname, '..', '..', 'config', 'midi-map.json');
 const midiMap = new MidiMapStore(MIDI_MAP_FILE).load();
 
-module.exports = {
+export {
   midiMap,
   MIDI_MAP_FILE,
   MidiMapStore,

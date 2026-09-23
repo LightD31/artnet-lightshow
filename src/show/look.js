@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * The look vocabulary: which colours a track gets, which pattern suits a
  * passage of it, and how hard the rig is allowed to work.
@@ -21,8 +19,8 @@
  * between them, which is where it actually sounds like it is.
  */
 
-const { paletteBankForSize } = require('../server/palettes');
-const { blend, unit } = require('./score');
+import { paletteBankForSize } from '../server/palettes.js';
+import { blend, unit } from './score.js';
 
 // ── How hard the rig works ──────────────────────────────────────────────────
 //
@@ -657,9 +655,24 @@ function burstFor({ moment = 'accent', character, score, drive,
   return 'color-strobe';
 }
 
-module.exports = {
-  SUBGENRE_DRIVE, SUBGENRE_PALETTES, SUBGENRE_PATTERNS, SEMANTIC_PALETTES,
-  CIRCUMPLEX_TETRADS, TIER_FLOOR, RHYTHMIC, FLOWY, EXPRESSIVE,
-  driveFor, tierOf, buildPalette, paletteSizeFor, goldenStep, pickPattern, keyIndexOf,
-  strobeFunctionFor, strobeSpeedFor, burstFor,
+export {
+  SUBGENRE_DRIVE,
+  SUBGENRE_PALETTES,
+  SUBGENRE_PATTERNS,
+  SEMANTIC_PALETTES,
+  CIRCUMPLEX_TETRADS,
+  TIER_FLOOR,
+  RHYTHMIC,
+  FLOWY,
+  EXPRESSIVE,
+  driveFor,
+  tierOf,
+  buildPalette,
+  paletteSizeFor,
+  goldenStep,
+  pickPattern,
+  keyIndexOf,
+  strobeFunctionFor,
+  strobeSpeedFor,
+  burstFor,
 };

@@ -1,16 +1,14 @@
-'use strict';
-
 // The hybrid source itself is covered next door. What is easy to get wrong is
 // the wiring: which source resolves when, which callbacks feed which half, and
 // whether the show ends up running against the OS clock or Spotify's. Those are
 // one-line mistakes that no unit test of either class would catch, so this
 // stands the real integrations module up against stub subsystems.
 
-const test = require('node:test');
-const assert = require('node:assert');
+import test from 'node:test';
+import assert from 'node:assert';
 
-const { setupIntegrations } = require('../../src/server/integrations');
-const { state } = require('../../src/server/state');
+import { setupIntegrations } from '../../src/server/integrations.js';
+import { state } from '../../src/server/state.js';
 
 const SPOTIFY_TRACK = {
   trackId: 'spotify-1',
@@ -290,7 +288,6 @@ test('the resolved source is published, not just the operator’s choice', () =>
   rig.spotify.authenticated = true;
   rig.nowPlaying.authenticated = true;
   withSource('auto', () => {
-    const { getLiveState } = require('../../src/server/state');
     const live = getLiveState();
     assert.strictEqual(live.autoSource, 'auto', 'the choice');
     assert.strictEqual(live.activeSource, 'hybrid', 'and what it resolved to');
@@ -387,8 +384,10 @@ test('with Spotify alone, a slightly late report does not move the show backward
 // With the auto show off, manual patterns lock to the song that is playing
 // whenever its analysis is cached (conductor.js, the `track` source).
 
-const { conductor } = require('../../src/server/conductor');
-const { keyForSpotify } = require('../../src/analysis-cache');
+import { conductor } from '../../src/server/conductor.js';
+import { keyForSpotify } from '../../src/analysis-cache.js';
+import { getLiveState } from '../../src/server/state.js';
+import { makeGrid } from '../../src/shared/beat-clock.js';
 
 const beatsAt = (bpm) => Array.from({ length: 600 }, (_, i) => i * (60 / bpm));
 
@@ -453,7 +452,6 @@ test('a running show shares its copy of the analysis with the track lock', async
   rig.spotify.authenticated = true;
   rig.autoShow.running = true;
   rig.autoShow.isCached = () => true;
-  const { makeGrid } = require('../../src/shared/beat-clock');
   let loaded = null;
   rig.autoShow.downloadAndAnalyze = async (query, sec, cacheKey) => { loaded = cacheKey; };
   rig.autoShow.gridFor = (k) => (k === loaded ? makeGrid(beatsAt(128)) : null);

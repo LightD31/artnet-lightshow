@@ -1,8 +1,6 @@
-'use strict';
-
-const test = require('node:test');
-const assert = require('node:assert');
-const { EnergyHold, HOLD_TIMEOUT_MS } = require('../../src/server/energy-hold');
+import test from 'node:test';
+import assert from 'node:assert';
+import { EnergyHold, HOLD_TIMEOUT_MS } from '../../src/server/energy-hold.js';
 
 test('an energy hold releases on the matching token', () => {
   const events = [];

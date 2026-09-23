@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * Generic "now playing" source.
  *
@@ -89,4 +87,4 @@ class NowPlayingSource {
   }
 }
 
-module.exports = NowPlayingSource;
+export default NowPlayingSource;

@@ -1,5 +1,3 @@
-'use strict';
-
 // Each entry defines a DMX range on channel 3. Speed-based functions map
 // the 0-255 strobeSpeed value into the [lo..hi] range (slow → fast).
 const STROBE_FUNCTIONS = [
@@ -182,7 +180,7 @@ const SYNC_OFFSET_LIMIT_MS = 2000;
 // See src/hybrid-source.js.
 const AUTO_SOURCES = ['auto', 'hybrid', 'spotify', 'deezer', 'nowplaying', 'prolink', 'timer'];
 
-module.exports = {
+export {
   STROBE_FUNCTIONS,
   STROBE_FUNCTION_IDS,
   COLOR_PRESETS,

@@ -1,11 +1,11 @@
-'use strict';
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const { ShowDirector } = require('../../src/show/director');
-const { renderIntents } = require('../../src/show/render');
-const { PATTERNS, COLOR_PRESETS } = require('../../src/server/presets');
-const { patchSchema } = require('../../src/server/validation');
-const { makeScore, semantics } = require('../../src/show/score');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { ShowDirector } from '../../src/show/director.js';
+import { renderIntents } from '../../src/show/render.js';
+import { PATTERNS, COLOR_PRESETS } from '../../src/server/presets.js';
+import { patchSchema } from '../../src/server/validation.js';
+import { makeScore, semantics } from '../../src/show/score.js';
+import { PATTERN_FUNCS } from '../../src/shared/patterns.js';
 const cv = v => [{ t: 0, v }, { t: 40, v }];
 function track(extra = {}) {
   return { duration: 40, bpm: 120, meter: 4, key: 'C', scale: 'major',
@@ -81,7 +81,6 @@ test('expressive opening survives same-time scene patches and quiet spans block 
 });
 
 test('stereo width and vocal activity change the rendered pattern, for one through eight lamps', () => {
-  const { PATTERN_FUNCS } = require('../../src/shared/patterns');
   const draw = (count, vocal, width) => {
     const rows = [];
     PATTERN_FUNCS.ensemble({ colors: COLOR_PRESETS.slice(0, 4), fixtureCount: count, phase: .2,

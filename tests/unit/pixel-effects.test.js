@@ -1,13 +1,11 @@
-'use strict';
-
 // The pictures drawn across every cell of every LED bar. Each is a function of
 // where a cell is and where the music is, so the rehearsal preview draws
 // exactly what the rig will — which these pin down as behaviour.
 
-const test = require('node:test');
-const assert = require('node:assert');
-const { PATTERN_FUNCS, CELL_PATTERNS, gradientAt } = require('../../src/shared/patterns');
-const { COLOR_PRESETS, PATTERNS } = require('../../src/server/presets');
+import test from 'node:test';
+import assert from 'node:assert';
+import { PATTERN_FUNCS, CELL_PATTERNS, gradientAt } from '../../src/shared/patterns.js';
+import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.js';
 
 const RED = COLOR_PRESETS[0];
 const BLUE = COLOR_PRESETS[5];

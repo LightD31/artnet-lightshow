@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * What the music is doing, at any instant.
  *
@@ -360,7 +358,16 @@ function hasScore(a) {
     || list(a.embeddings).length || list(a.semantic_scores).length));
 }
 
-module.exports = {
-  makeScore, hasScore, semantics, subgenreWeights, blend, cosine, curve,
-  SEMANTIC_FULL_SPREAD, unit, list, finite,
+export {
+  makeScore,
+  hasScore,
+  semantics,
+  subgenreWeights,
+  blend,
+  cosine,
+  curve,
+  SEMANTIC_FULL_SPREAD,
+  unit,
+  list,
+  finite,
 };

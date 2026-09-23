@@ -1,7 +1,5 @@
-'use strict';
-
-const { z } = require('zod');
-const { keyForSpotify, keyForQuery, keyForYouTube } = require('../analysis-cache');
+import { z } from 'zod';
+import { keyForSpotify, keyForQuery, keyForYouTube } from '../analysis-cache.js';
 
 /**
  * Warm the analysis cache for a whole set list, ahead of the show.
@@ -281,7 +279,9 @@ class Warmer {
   }
 }
 
-module.exports = {
+export const STATUSES = { PENDING, WARMING, READY, CACHED, ERROR, CANCELLED };
+
+export {
   Warmer,
   MAX_TRACKS,
   warmRequestSchema,
@@ -290,5 +290,4 @@ module.exports = {
   fromSpotifyTracks,
   buildJobs,
   toJob,
-  STATUSES: { PENDING, WARMING, READY, CACHED, ERROR, CANCELLED },
 };

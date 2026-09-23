@@ -1,5 +1,3 @@
-'use strict';
-
 // Describe the models that produced this track, including cached analyses.
 // Missing provenance in an older document must not imply a model ran.
 function describeModelUsage(analysis) {
@@ -40,4 +38,7 @@ function formatModelUsage(analysis) {
   }).join('; ');
 }
 
-module.exports = { describeModelUsage, formatModelUsage };
+export {
+  describeModelUsage,
+  formatModelUsage,
+};

@@ -1,17 +1,15 @@
-'use strict';
+import path from 'node:path';
+import { Worker } from 'node:worker_threads';
 
-const path = require('path');
-const { Worker } = require('worker_threads');
-
-const { state, universeOf, maxBrightnessOf, activeUniverses } = require('./state');
-const { getProfile, profilesRevision, listProfiles, isBuiltinProfile } = require('./profiles');
-const output = require('./output');
-const universes = require('./universes');
-const { guarded, report } = require('./guard');
-const { conductor } = require('./conductor');
-const { invalidateRig } = require('./rig');
-const { createRenderer } = require('./renderer');
-const { createTicker, hrtimeMs, FRAME_MS } = require('./frame-clock');
+import { state, universeOf, maxBrightnessOf, activeUniverses } from './state.js';
+import { getProfile, profilesRevision, listProfiles, isBuiltinProfile } from './profiles.js';
+import * as output from './output.js';
+import * as universes from './universes.js';
+import { guarded, report } from './guard.js';
+import { conductor } from './conductor.js';
+import { invalidateRig } from './rig.js';
+import { createRenderer } from './renderer.js';
+import { createTicker, hrtimeMs, FRAME_MS } from './frame-clock.js';
 
 /**
  * The engine: renders a frame of the rig on every tick of the frame clock and
@@ -176,7 +174,7 @@ let crashes = [];
 let postedRevision = -1;
 let stopping = null;             // resolves when the worker has blacked out
 let restartTimer = null;
-let workerFile = path.join(__dirname, 'engine-worker.js');
+let workerFile = path.join(import.meta.dirname, 'engine-worker.js');
 
 function startMainDriver() {
   thread = 'main';
@@ -293,7 +291,7 @@ function startWorkerDriver() {
  */
 function startEngine({ thread: where = 'main', file = null } = {}) {
   if (thread) return;                   // idempotent: never stack render loops
-  workerFile = file || path.join(__dirname, 'engine-worker.js');
+  workerFile = file || path.join(import.meta.dirname, 'engine-worker.js');
   fellBack = null;
   crashes = [];
   if (where === 'worker') {
@@ -392,7 +390,7 @@ function engineStatus() {
   };
 }
 
-module.exports = {
+export {
   startEngine,
   stopEngine,
   engineStatus,
@@ -402,8 +400,5 @@ module.exports = {
   beginFade,
   renderInput,
   CONTROL_LEAD_MS,
-  // One frame, synchronously: for tests that pin exactly what the rig puts out
-  // and for measuring what a frame costs. The server only ever renders from
-  // the loop startEngine runs.
-  renderFrame: renderDmx,
+  renderDmx as renderFrame,
 };

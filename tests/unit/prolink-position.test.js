@@ -1,13 +1,11 @@
-'use strict';
-
 // The master deck's position, as the auto show reads it. Status packets
 // arrive about five times a second and name the beat, not the moment within
 // it — the position between them has to run on its own and must not snap
 // back to the top of the beat on every packet.
 
-const test = require('node:test');
-const assert = require('node:assert');
-const ProLink = require('../../src/prolink');
+import test from 'node:test';
+import assert from 'node:assert';
+import ProLink from '../../src/prolink.js';
 
 const PLAYING = 3;              // prolink-connect PlayState.Playing
 const PAUSED = 5;

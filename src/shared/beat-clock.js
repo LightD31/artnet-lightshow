@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * Musical time: where in the music a moment falls, counted in beats.
  *
@@ -169,7 +167,7 @@ function motionAdvance(dBeats, motion = 0.3) {
   return Math.max(0, dBeats) / (8 - 6 * m);
 }
 
-module.exports = {
+export {
   FADE_BEATS,
   makeGrid,
   gridFromAnalysis,

@@ -1,6 +1,4 @@
-'use strict';
-
-const { colourMixer } = require('./color');
+import { colourMixer } from './color.js';
 
 // Pure pattern functions. Each takes (ctx) where:
 //   ctx.colors        : array of resolved Colour A..D presets
@@ -520,4 +518,12 @@ Object.assign(PATTERN_FUNCS, {
   },
 });
 
-module.exports = { PATTERN_FUNCS, CELL_PATTERNS, paletteOf, hsvToRgb, bedOf, BED, gradientAt };
+export {
+  PATTERN_FUNCS,
+  CELL_PATTERNS,
+  paletteOf,
+  hsvToRgb,
+  bedOf,
+  BED,
+  gradientAt,
+};

@@ -1,10 +1,8 @@
-'use strict';
+import dgram from 'node:dgram';
+import net from 'node:net';
+import os from 'node:os';
 
-const dgram = require('dgram');
-const net = require('net');
-const os = require('os');
-
-const { ARTNET_PORT, buildArtPoll, parseArtPollReply } = require('./artnet');
+import { ARTNET_PORT, buildArtPoll, parseArtPollReply } from './artnet.js';
 
 /**
  * The Art-Net nodes on the network, and where each universe should go.
@@ -217,7 +215,7 @@ function createDiscovery({
   };
 }
 
-module.exports = {
+export {
   POLL_INTERVAL_MS,
   EXPIRE_MS,
   NodeTable,

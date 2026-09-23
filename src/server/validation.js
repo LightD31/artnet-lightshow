@@ -1,15 +1,9 @@
-'use strict';
-
-const { z } = require('zod');
-const net = require('net');
-const {
-  COLOR_PRESETS,
-  AUTO_SOURCES,
-  SYNC_OFFSET_LIMIT_MS,
-} = require('./presets');
-const { PALETTE_IDS } = require('./palettes');
-const { FIXTURE_GROUPS } = require('../shared/stage');
-const { EMITTERS, PIXEL_MAPS, MAX_CELLS_PER_FIXTURE } = require('../shared/rig');
+import { z } from 'zod';
+import net from 'node:net';
+import { COLOR_PRESETS, AUTO_SOURCES, SYNC_OFFSET_LIMIT_MS } from './presets.js';
+import { PALETTE_IDS } from './palettes.js';
+import { FIXTURE_GROUPS } from '../shared/stage.js';
+import { EMITTERS, PIXEL_MAPS, MAX_CELLS_PER_FIXTURE } from '../shared/rig.js';
 
 const u8 = z.number().int().min(0).max(255);
 const fixtureId = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1);
@@ -308,7 +302,7 @@ function validate(schema, value, label) {
   return result.data;
 }
 
-module.exports = {
+export {
   fixtureId,
   dmxUniverse,
   patchSchema,

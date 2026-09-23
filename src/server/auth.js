@@ -1,8 +1,6 @@
-'use strict';
-
-const crypto = require('crypto');
-const net = require('net');
-const os = require('os');
+import crypto from 'node:crypto';
+import net from 'node:net';
+import os from 'node:os';
 
 /**
  * Access control for the control surface.
@@ -262,7 +260,7 @@ function createAuth({ token = '', allowedHosts = () => [] } = {}) {
   return { enabled, hostMiddleware, allowSocketRequest, httpMiddleware, socketMiddleware };
 }
 
-module.exports = {
+export {
   createAuth,
   configError,
   generateToken,

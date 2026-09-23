@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * The live rig as lights (see src/shared/rig.js), built from the patch and the
  * profile registry and kept until either changes.
@@ -11,9 +9,9 @@
  * short signature once a frame costs a few microseconds.
  */
 
-const { state } = require('./state');
-const { getProfile, profilesRevision } = require('./profiles');
-const { buildRig, rigSignature } = require('../shared/rig');
+import { state } from './state.js';
+import { getProfile, profilesRevision } from './profiles.js';
+import { buildRig, rigSignature } from '../shared/rig.js';
 
 let cached = null;
 let cachedKey = '';
@@ -33,4 +31,7 @@ function invalidateRig() {
   cached = null;
 }
 
-module.exports = { currentRig, invalidateRig };
+export {
+  currentRig,
+  invalidateRig,
+};

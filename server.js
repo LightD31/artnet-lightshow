@@ -1,40 +1,36 @@
-'use strict';
+import 'dotenv/config';
+import path from 'node:path';
+import http from 'node:http';
+import express from 'express';
+import { Server } from 'socket.io';
 
-require('dotenv').config();
-const path = require('path');
-const http = require('http');
-const express = require('express');
-const { Server } = require('socket.io');
+import MidiController from './src/midi.js';
+import ProLink from './src/prolink.js';
+import SpotifyClient from './src/spotify.js';
+import NowPlayingSource from './src/nowplaying-source.js';
+import SmtcReader from './src/smtc-source.js';
+import DeezerSource from './src/deezer-source.js';
+import * as deezer from './src/deezer.js';
+import AutoShow from './src/auto-show.js';
+import { AnalysisCache } from './src/analysis-cache.js';
 
-const MidiController = require('./src/midi');
-const ProLink = require('./src/prolink');
-const SpotifyClient = require('./src/spotify');
-const NowPlayingSource = require('./src/nowplaying-source');
-const SmtcReader = require('./src/smtc-source');
-const DeezerSource = require('./src/deezer-source');
-const deezer = require('./src/deezer');
-const AutoShow = require('./src/auto-show');
-const { AnalysisCache } = require('./src/analysis-cache');
-
-const { state } = require('./src/server/state');
-const { startEngine, stopEngine, setFrameHook } = require('./src/server/engine');
-const { artnetDiscovery } = require('./src/server/output');
-const { conductor } = require('./src/server/conductor');
-const {
-  applyPatch, applyOverride, setFixtureMaxBrightness, processTap, setPersist, setHooks, flushPendingPersist,
-} = require('./src/server/patch');
-const { COLOR_PRESETS, PATTERNS } = require('./src/server/presets');
-const { setupIntegrations } = require('./src/server/integrations');
-const { attachRoutes } = require('./src/server/routes');
-const { attachSockets } = require('./src/server/sockets');
-const { createAuth, configError, hostOfUrl, isLoopbackHost } = require('./src/server/auth');
-const { settings, CONFIG_FILE, warnAboutLegacyEnv } = require('./src/server/settings');
-const { createApplier } = require('./src/server/apply');
-const { midiMap } = require('./src/server/midi-map');
-const { cues } = require('./src/server/cues');
-const { showStore, SHOW_FILE } = require('./src/server/show-store');
-const pythonEnv = require('./src/python-env');
-const { installProcessSafetyNet } = require('./src/server/guard');
+import { state } from './src/server/state.js';
+import { startEngine, stopEngine, setFrameHook } from './src/server/engine.js';
+import { artnetDiscovery } from './src/server/output.js';
+import { conductor } from './src/server/conductor.js';
+import { applyPatch, applyOverride, setFixtureMaxBrightness, processTap, setPersist, setHooks, flushPendingPersist } from './src/server/patch.js';
+import { COLOR_PRESETS, PATTERNS } from './src/server/presets.js';
+import { setupIntegrations } from './src/server/integrations.js';
+import { attachRoutes } from './src/server/routes.js';
+import { attachSockets } from './src/server/sockets.js';
+import { createAuth, configError, hostOfUrl, isLoopbackHost } from './src/server/auth.js';
+import { settings, CONFIG_FILE, warnAboutLegacyEnv } from './src/server/settings.js';
+import { createApplier } from './src/server/apply.js';
+import { midiMap } from './src/server/midi-map.js';
+import { cues } from './src/server/cues.js';
+import { showStore, SHOW_FILE } from './src/server/show-store.js';
+import * as pythonEnv from './src/python-env.js';
+import { installProcessSafetyNet } from './src/server/guard.js';
 
 // Before anything else can fail: a fault the code did not expect is reported
 // and the rig keeps running, rather than the process exiting with every
@@ -79,7 +75,7 @@ app.use(auth.hostMiddleware);
 // Static assets stay open: they carry no secrets, and the page needs to load
 // before it can present a token. Everything that reads or changes show state
 // goes through the guard.
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(import.meta.dirname, 'public')));
 app.use('/api', auth.httpMiddleware);   // before express.json: reject first, parse after
 app.use(express.json());
 io.use(auth.socketMiddleware);
@@ -104,7 +100,7 @@ const spotify = new SpotifyClient();
 const nowPlaying = new NowPlayingSource();
 const deezerSource = new DeezerSource();
 
-const analysisCache = new AnalysisCache(path.join(__dirname, 'cache', 'analysis'));
+const analysisCache = new AnalysisCache(path.join(import.meta.dirname, 'cache', 'analysis'));
 const autoShow = new AutoShow(applyPatch, COLOR_PRESETS, PATTERNS, analysisCache);
 
 const integrations = setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolink, autoShow, analysisCache });

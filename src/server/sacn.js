@@ -1,7 +1,5 @@
-'use strict';
-
-const dgram = require('dgram');
-const crypto = require('crypto');
+import dgram from 'node:dgram';
+import crypto from 'node:crypto';
 
 /**
  * sACN / E1.31 output.
@@ -304,7 +302,7 @@ function sendSacnDiscovery({ cid, sourceName, universes, iface = '' }) {
   return true;
 }
 
-module.exports = {
+export {
   PORT,
   PACKET_SIZE,
   MIN_UNIVERSE,

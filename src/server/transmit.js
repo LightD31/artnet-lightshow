@@ -1,9 +1,5 @@
-'use strict';
-
-const { sendArtDmx, sendArtSync } = require('./artnet');
-const {
-  sendSacn, sendSacnDiscovery, MIN_UNIVERSE, MAX_UNIVERSE, DISCOVERY_INTERVAL_MS,
-} = require('./sacn');
+import { sendArtDmx, sendArtSync } from './artnet.js';
+import { sendSacn, sendSacnDiscovery, MIN_UNIVERSE, MAX_UNIVERSE, DISCOVERY_INTERVAL_MS } from './sacn.js';
 
 // A universe counts as one this source is sending for this long after its
 // last packet: long enough to span a Hue delay, short enough that one the rig
@@ -192,4 +188,7 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
   return { send, endFrame };
 }
 
-module.exports = { createTransmitter, sacnUniverseFor };
+export {
+  createTransmitter,
+  sacnUniverseFor,
+};

@@ -1,5 +1,3 @@
-'use strict';
-
 // A browser must keep a momentary effect alive. Losing the release packet,
 // closing the tab, or a broken connection can therefore never latch the effect.
 const HOLD_TIMEOUT_MS = 1200;
@@ -46,4 +44,7 @@ class EnergyHold {
   }
 }
 
-module.exports = { EnergyHold, HOLD_TIMEOUT_MS };
+export {
+  EnergyHold,
+  HOLD_TIMEOUT_MS,
+};

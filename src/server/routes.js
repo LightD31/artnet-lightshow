@@ -1,55 +1,34 @@
-'use strict';
+import crypto from 'node:crypto';
+import path from 'node:path';
+import fsp from 'node:fs/promises';
+import os from 'node:os';
+import multer from 'multer';
 
-const crypto = require('crypto');
-const path = require('path');
-const fsp = require('fs/promises');
-const os = require('os');
-const multer = require('multer');
-
-const {
-  state, getClientState, getFixture, allocateFixtureId, universeOf, maxBrightnessOf, countUniverses,
-} = require('./state');
-const { applyPatch, applyOverride, setFixtureMaxBrightness, processTap } = require('./patch');
-const { PALETTES } = require('./palettes');
-const { resizeFixtureBuffers, startSyncTest, engineStatus } = require('./engine');
-const { parseGDTF } = require('../gdtf');
-const {
-  BUILTIN_PROFILE_ID,
-  isBuiltinProfile,
-  MAX_FIXTURES,
-  UNIVERSE_SIZE,
-  endChannel,
-  fitsInUniverse,
-  universeOverflow,
-  registerProfile,
-  unregisterProfile,
-  listProfiles,
-  unitCapOverflow,
-} = require('./profiles');
-const { MAX_UNIVERSES } = require('./universes');
-const { cues, cueWriteSchema, cueRestoreSchema, reorderSchema } = require('./cues');
-const { showStore, snapshotShow, applyShow } = require('./show-store');
-const { barProfile } = require('./bar-profile');
-const {
-  midiMap, ACTIONS, defaultTypeFor, mapSchema, learnSchema, bindingWriteSchema,
-} = require('./midi-map');
-const {
-  profileSchema, deezerStateSchema,
-  fixtureRestoreSchema, dmxUniverse, huePairSchema, validate,
-} = require('./validation');
-const output = require('./output');
-const { discoverNodes } = require('./artnet');
-const { interfaces } = require('./artnet-nodes');
-const { discoverBridges, pair: pairBridge, listEntertainmentConfigs } = require('./hue');
-const { settings, RESTART_PATHS, CONFIG_FILE } = require('./settings');
-const { connectMidi } = require('./midi-connect');
-const { generateToken } = require('./auth');
-const { runPreflight } = require('./preflight');
-const {
-  warmRequestSchema, warmPlaylistSchema, parseSetList, fromSpotifyTracks,
-  MAX_TRACKS: MAX_WARM_TRACKS,
-} = require('./warm');
-const pythonEnv = require('../python-env');
+import { state, getClientState, getFixture, allocateFixtureId, universeOf, maxBrightnessOf, countUniverses } from './state.js';
+import { applyPatch, applyOverride, setFixtureMaxBrightness, processTap } from './patch.js';
+import { PALETTES } from './palettes.js';
+import { resizeFixtureBuffers, startSyncTest, engineStatus } from './engine.js';
+import { parseGDTF } from '../gdtf.js';
+import { BUILTIN_PROFILE_ID, isBuiltinProfile, MAX_FIXTURES, UNIVERSE_SIZE, endChannel, fitsInUniverse, universeOverflow, registerProfile, unregisterProfile, listProfiles, unitCapOverflow } from './profiles.js';
+import { MAX_UNIVERSES } from './universes.js';
+import { cues, cueWriteSchema, cueRestoreSchema, reorderSchema } from './cues.js';
+import { showStore, snapshotShow, applyShow } from './show-store.js';
+import { barProfile } from './bar-profile.js';
+import { midiMap, ACTIONS, defaultTypeFor, mapSchema, learnSchema, bindingWriteSchema } from './midi-map.js';
+import { profileSchema, deezerStateSchema, fixtureRestoreSchema, dmxUniverse, huePairSchema, validate } from './validation.js';
+import * as output from './output.js';
+import { discoverNodes } from './artnet.js';
+import { interfaces } from './artnet-nodes.js';
+import { discoverBridges, pair as pairBridge, listEntertainmentConfigs } from './hue.js';
+import { settings, RESTART_PATHS, CONFIG_FILE } from './settings.js';
+import { connectMidi } from './midi-connect.js';
+import { generateToken } from './auth.js';
+import { runPreflight } from './preflight.js';
+import { warmRequestSchema, warmPlaylistSchema, parseSetList, fromSpotifyTracks, MAX_TRACKS as MAX_WARM_TRACKS } from './warm.js';
+import * as pythonEnv from '../python-env.js';
+import {
+  keyForSpotify, keyForYouTube, keyForQuery, keyForLocalFile, keyForBuffer, keyForProlinkTrack,
+} from '../analysis-cache.js';
 
 // Audio uploads genuinely need headroom; GDTF files do not. Separate limits so
 // the fixture importer isn't handed a 50 MB budget it has no use for — a real
@@ -787,8 +766,6 @@ function attachRoutes(app, deps) {
   });
 
   // ─── Auto-show ────────────────────────────────────────────────────────────
-  const { keyForSpotify, keyForYouTube, keyForQuery, keyForLocalFile, keyForBuffer, keyForProlinkTrack } =
-    require('../analysis-cache');
 
   app.post('/api/auto/analyze', asyncHandler(async (req, res) => {
     const { source } = req.body || {};
@@ -1352,4 +1329,8 @@ function attachRoutes(app, deps) {
   });
 }
 
-module.exports = { attachRoutes, classifyAnalyzeSource, resolveLocalPath };
+export {
+  attachRoutes,
+  classifyAnalyzeSource,
+  resolveLocalPath,
+};

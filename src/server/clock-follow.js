@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * The musical clock as the engine's worker thread sees it.
  *
@@ -19,7 +17,7 @@
  * track — is taken as it comes.
  */
 
-const { BACKWARD_JUMP_BEATS } = require('./conductor');
+import { BACKWARD_JUMP_BEATS } from './conductor.js';
 
 function createClockFollower({ backwardJump = BACKWARD_JUMP_BEATS } = {}) {
   let sample = null;             // the latest reading, and when it was taken
@@ -48,4 +46,6 @@ function createClockFollower({ backwardJump = BACKWARD_JUMP_BEATS } = {}) {
   };
 }
 
-module.exports = { createClockFollower };
+export {
+  createClockFollower,
+};

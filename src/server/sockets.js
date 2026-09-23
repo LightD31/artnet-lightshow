@@ -1,19 +1,13 @@
-'use strict';
-
-const { state, getClientState, getFixture, countUniverses, universeOf } = require('./state');
-const { applyPatch, applyOverride, processTap } = require('./patch');
-const {
-  overrideMessageSchema,
-  fixtureMessageSchema,
-  validate,
-} = require('./validation');
-const { listProfiles, getProfile, universeOverflow, unitCapOverflow } = require('./profiles');
-const { showStore } = require('./show-store');
-const { MAX_UNIVERSES } = require('./universes');
-const { connectMidi } = require('./midi-connect');
-const { midiMap } = require('./midi-map');
-const { EnergyHold } = require('./energy-hold');
-const { ENERGY_EFFECTS } = require('./presets');
+import { state, getClientState, getFixture, countUniverses, universeOf } from './state.js';
+import { applyPatch, applyOverride, processTap } from './patch.js';
+import { overrideMessageSchema, fixtureMessageSchema, validate } from './validation.js';
+import { listProfiles, getProfile, universeOverflow, unitCapOverflow } from './profiles.js';
+import { showStore } from './show-store.js';
+import { MAX_UNIVERSES } from './universes.js';
+import { connectMidi } from './midi-connect.js';
+import { midiMap } from './midi-map.js';
+import { EnergyHold } from './energy-hold.js';
+import { ENERGY_EFFECTS } from './presets.js';
 
 function attachSockets(io, { midi, integrations }) {
   const holds = new EnergyHold((effect) => {
@@ -129,4 +123,6 @@ function attachSockets(io, { midi, integrations }) {
   });
 }
 
-module.exports = { attachSockets };
+export {
+  attachSockets,
+};

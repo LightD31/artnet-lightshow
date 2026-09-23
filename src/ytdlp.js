@@ -1,6 +1,4 @@
-'use strict';
-
-const { execFile } = require('child_process');
+import { execFile } from 'node:child_process';
 
 /**
  * What the installed yt-dlp needs to be told.
@@ -59,4 +57,11 @@ function runtimeArgs(v, execPath = process.execPath) {
 
 function _reset() { versionPromise = null; }
 
-module.exports = { version, needsJsRuntime, runtimeArgs, dateOf, JS_RUNTIME_SINCE, _reset };
+export {
+  version,
+  needsJsRuntime,
+  runtimeArgs,
+  dateOf,
+  JS_RUNTIME_SINCE,
+  _reset,
+};

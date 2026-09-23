@@ -1,19 +1,17 @@
-'use strict';
-
 // LED bars on the rig: every cell of a bar is a light of its own, driven so
 // that it looks exactly like a par would at the same level.
 
-const test = require('node:test');
-const assert = require('node:assert');
+import test from 'node:test';
+import assert from 'node:assert';
 
-const { state } = require('../../src/server/state');
-const universes = require('../../src/server/universes');
-const { renderFrame, resizeFixtureBuffers } = require('../../src/server/engine');
-const { conductor } = require('../../src/server/conductor');
-const { applyPatch, applyOverride } = require('../../src/server/patch');
-const { registerProfile, unregisterProfile } = require('../../src/server/profiles');
-const { hueChannelColors, configureHue } = require('../../src/server/output');
-const { cellDrive } = require('../../src/shared/look-math');
+import { state } from '../../src/server/state.js';
+import * as universes from '../../src/server/universes.js';
+import { renderFrame, resizeFixtureBuffers } from '../../src/server/engine.js';
+import { conductor } from '../../src/server/conductor.js';
+import { applyPatch, applyOverride } from '../../src/server/patch.js';
+import { registerProfile, unregisterProfile } from '../../src/server/profiles.js';
+import { hueChannelColors, configureHue } from '../../src/server/output.js';
+import { cellDrive } from '../../src/shared/look-math.js';
 
 // Eight RGB cells behind a master dimmer and a strobe channel.
 const BAR = {

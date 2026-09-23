@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * Lighting intents — what the show wants to happen, in rig-neutral terms.
  *
@@ -127,4 +125,14 @@ function dark(timeMs, { source = 'gap', priority = PRIORITY.SILENCE,
   return { timeMs: Math.round(timeMs), kind: INTENT.DARK, source, priority, colorIndex };
 }
 
-module.exports = { INTENT, BURST, PRIORITY, scene, expression, color, accent, tempo, dark };
+export {
+  INTENT,
+  BURST,
+  PRIORITY,
+  scene,
+  expression,
+  color,
+  accent,
+  tempo,
+  dark,
+};

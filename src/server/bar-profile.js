@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * A profile for an LED bar, from the few numbers on the back of its manual.
  *
@@ -10,9 +8,9 @@
  * the first cell starts, and the order of each cell's channels.
  */
 
-const { z } = require('zod');
-const { MAX_CELLS_PER_FIXTURE } = require('../shared/rig');
-const { profileSchema, validate } = require('./validation');
+import { z } from 'zod';
+import { MAX_CELLS_PER_FIXTURE } from '../shared/rig.js';
+import { profileSchema, validate } from './validation.js';
 
 // One letter per channel of a cell, in the order the manual lists them.
 const LETTERS = {
@@ -102,4 +100,7 @@ function badBar(message) {
   return err;
 }
 
-module.exports = { barProfile, barSpecSchema };
+export {
+  barProfile,
+  barSpecSchema,
+};

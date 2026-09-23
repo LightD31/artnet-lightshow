@@ -1,9 +1,7 @@
-'use strict';
-
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 
 function fakeCanvas(width = 100, height = 50) {
   const calls = [];
@@ -22,9 +20,9 @@ function fakeCanvas(width = 100, height = 50) {
 
 let createTimelineRenderer;
 test.before(async () => {
-  global.window = { devicePixelRatio: 1 };
-  global.document = { createElement: () => fakeCanvas() };
-  const source = fs.readFileSync(path.join(__dirname, '../../public-src/timeline-renderer.js'), 'utf8');
+  globalThis.window = { devicePixelRatio: 1 };
+  globalThis.document = { createElement: () => fakeCanvas() };
+  const source = fs.readFileSync(path.join(import.meta.dirname, '../../public-src/timeline-renderer.js'), 'utf8');
   ({ createTimelineRenderer } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`));
 });
 

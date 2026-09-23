@@ -1,13 +1,11 @@
-'use strict';
-
-const path = require('path');
-const esbuild = require('esbuild');
+import path from 'node:path';
+import esbuild from 'esbuild';
 
 const watch = process.argv.includes('--watch');
 
 const opts = {
-  entryPoints: [path.join(__dirname, '..', 'public-src', 'main.jsx')],
-  outfile: path.join(__dirname, '..', 'public', 'app.bundle.js'),
+  entryPoints: [path.join(import.meta.dirname, '..', 'public-src', 'main.jsx')],
+  outfile: path.join(import.meta.dirname, '..', 'public', 'app.bundle.js'),
   bundle: true,
   format: 'iife',
   target: ['es2020'],

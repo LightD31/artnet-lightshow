@@ -1,15 +1,11 @@
-'use strict';
+import test from 'node:test';
+import assert from 'node:assert';
 
-const test = require('node:test');
-const assert = require('node:assert');
-
-const { state } = require('../../src/server/state');
-const output = require('../../src/server/output');
-const {
-  checkPatch, checkSacn, checkHue, checkPanns, checkAccess, checkMidi, probeCommand, STATUSES,
-} = require('../../src/server/preflight');
-const { buildArtPoll, parseArtPollReply } = require('../../src/server/artnet');
-const { settings } = require('../../src/server/settings');
+import { state } from '../../src/server/state.js';
+import * as output from '../../src/server/output.js';
+import { checkPatch, checkSacn, checkHue, checkPanns, checkAccess, checkMidi, probeCommand, STATUSES } from '../../src/server/preflight.js';
+import { buildArtPoll, parseArtPollReply } from '../../src/server/artnet.js';
+import { settings } from '../../src/server/settings.js';
 
 // ── Art-Net discovery packets ───────────────────────────────────────────────
 
@@ -286,10 +282,6 @@ test('a bridge that cannot be reached is a failure with the reason attached', as
 // download on every run that found them missing.
 test('missing model weights are fetched in the background, once',
   { skip: process.platform === 'win32' && 'uses a POSIX shell stand-in' }, async () => {
-    const fs = require('node:fs');
-    const os = require('node:os');
-    const path = require('node:path');
-    const { checkAnalysisModels, _modelDownload } = require('../../src/server/preflight');
 
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'models-'));
     const calls = path.join(dir, 'calls.log');
@@ -324,7 +316,11 @@ test('missing model weights are fetched in the background, once',
 
 // ── Engine ──────────────────────────────────────────────────────────────────
 
-const { checkEngine } = require('../../src/server/preflight');
+import { checkEngine } from '../../src/server/preflight.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { checkAnalysisModels, _modelDownload } from '../../src/server/preflight.js';
 
 const timing = { frames: 2640, rate: 44, renderMs: { p50: 0.2, p95: 0.8, max: 3 }, lateMs: { p50: 0, p95: 0.4, max: 2 } };
 
@@ -359,4 +355,10 @@ test('an engine that fell back to the main thread says why', () => {
 
 test('an engine that is not running fails', () => {
   assert.strictEqual(checkEngine({ thread: null }).status, 'fail');
+});
+
+test('run on its own, before the server, there is no engine to report on', () => {
+  const r = checkEngine({ thread: null }, { standalone: true });
+  assert.strictEqual(r.status, 'info');
+  assert.match(r.detail, /start the server/);
 });

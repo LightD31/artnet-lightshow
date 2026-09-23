@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * Windows "now playing" reader (System Media Transport Controls).
  *
@@ -14,16 +12,16 @@
  * whole downstream auto-show pipeline is reused unchanged.
  */
 
-const { spawn } = require('child_process');
-const path = require('path');
-const readline = require('readline');
+import { spawn } from 'node:child_process';
+import path from 'node:path';
+import readline from 'node:readline';
 
 const RESTART_DELAY_MS = 3000;
 
 class SmtcReader {
   constructor({ scriptPath, intervalMs = 500 } = {}) {
     this._scriptPath = scriptPath
-      || path.join(__dirname, '..', 'scripts', 'smtc-nowplaying.ps1');
+      || path.join(import.meta.dirname, '..', 'scripts', 'smtc-nowplaying.ps1');
     this._intervalMs = intervalMs;
     this._proc = null;
     this._rl = null;
@@ -156,4 +154,4 @@ class SmtcReader {
   }
 }
 
-module.exports = SmtcReader;
+export default SmtcReader;

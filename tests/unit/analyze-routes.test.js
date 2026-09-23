@@ -1,14 +1,17 @@
-'use strict';
-
 // The "analyse what is playing" routes, mounted for real on an Express app
 // with stand-in sources. They were three copies of one handler; this pins what
 // each one asks of the auto show so the shared version cannot drift from them.
 
-const test = require('node:test');
-const assert = require('node:assert');
-const express = require('express');
+import test from 'node:test';
+import assert from 'node:assert';
+import express from 'express';
 
-const { attachRoutes } = require('../../src/server/routes');
+import { attachRoutes } from '../../src/server/routes.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { classifyAnalyzeSource, resolveLocalPath } from '../../src/server/routes.js';
+import { settings } from '../../src/server/settings.js';
 
 const PLAYING = {
   trackId: 'sp1', isrc: 'GBAYE0601498', name: 'Crazy', artist: 'Gnarls Barkley',
@@ -84,7 +87,6 @@ test('each source says in its own words that it is not connected, or not playing
 // server they name, other URL schemes reach places yt-dlp and librosa should
 // not, and a relative path means whatever the server's working folder says.
 test('analyse input is classified, and unsafe forms are refused', () => {
-  const { classifyAnalyzeSource } = require('../../src/server/routes');
   const kind = (s) => classifyAnalyzeSource(s).kind;
 
   assert.strictEqual(kind('/music/set/track.flac'), 'local');
@@ -102,11 +104,6 @@ test('analyse input is classified, and unsafe forms are refused', () => {
 });
 
 test('a local file is resolved through symlinks and held to the library folder', async () => {
-  const fs = require('fs');
-  const os = require('os');
-  const path = require('path');
-  const { resolveLocalPath } = require('../../src/server/routes');
-  const { settings } = require('../../src/server/settings');
 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lib-'));
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'out-'));

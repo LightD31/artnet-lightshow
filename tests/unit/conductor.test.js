@@ -1,12 +1,10 @@
-'use strict';
-
 // The one clock every pattern keeps time by: which source it follows, how it
 // hands over between them, and what the operator's tap and tempo do to it.
 
-const test = require('node:test');
-const assert = require('node:assert');
-const { Conductor } = require('../../src/server/conductor');
-const { makeGrid } = require('../../src/shared/beat-clock');
+import test from 'node:test';
+import assert from 'node:assert';
+import { Conductor } from '../../src/server/conductor.js';
+import { makeGrid } from '../../src/shared/beat-clock.js';
 
 const close = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
 

@@ -1,5 +1,3 @@
-'use strict';
-
 // The sync offset shifts the whole generated show against the music, to cover
 // the latency between the audio a room hears and the light that answers it.
 // Two things have to hold for it to be usable live: the shift has to actually
@@ -7,11 +5,11 @@
 // forward that re-fired every event since the start of the track would empty a
 // song's worth of strobe bursts into the room at once.
 
-const test = require('node:test');
-const assert = require('node:assert');
+import test from 'node:test';
+import assert from 'node:assert';
 
-const AutoShow = require('../../src/auto-show');
-const { SYNC_OFFSET_LIMIT_MS } = require('../../src/server/presets');
+import AutoShow from '../../src/auto-show.js';
+import { SYNC_OFFSET_LIMIT_MS } from '../../src/server/presets.js';
 
 const ev = (timeMs, id) => ({ timeMs, action: 'patch', data: { pattern: id } });
 
@@ -192,9 +190,9 @@ test('expressive seeks restore current targets without replaying missed bursts',
 // of every frame, so a cue fires in the very frame it falls due instead of up
 // to a 20 ms poll later — and a different amount later every time.
 
-const fs = require('node:fs');
-const path = require('node:path');
-const { beatPositionAt } = require('../../src/shared/beat-clock');
+import fs from 'node:fs';
+import path from 'node:path';
+import { beatPositionAt } from '../../src/shared/beat-clock.js';
 
 /** A frame-driven show over a real analysed track, at a position we control. */
 function frameHarness() {
@@ -259,7 +257,7 @@ test('a scene carries the time it was scheduled for, played through or seeked in
 test('while it runs, the pattern clock reads the track\'s beat grid at the show\'s position', () => {
   const h = frameHarness();
   try {
-    const file = path.join(__dirname, '..', 'fixtures', 'tracks', 'orelsan-boss.json');
+    const file = path.join(import.meta.dirname, '..', 'fixtures', 'tracks', 'orelsan-boss.json');
     const doc = JSON.parse(fs.readFileSync(file, 'utf8'));
     h.show.analysis = doc.analysis || doc;
     h.show.buildTimeline();

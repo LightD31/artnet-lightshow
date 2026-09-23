@@ -1,9 +1,7 @@
-'use strict';
+import test from 'node:test';
+import assert from 'node:assert';
 
-const test = require('node:test');
-const assert = require('node:assert');
-
-const SpotifyClient = require('../../src/spotify');
+import SpotifyClient from '../../src/spotify.js';
 
 const { parsePlaylistRef, playlistItemToTrack, MAX_PLAYLIST_TRACKS } = SpotifyClient;
 

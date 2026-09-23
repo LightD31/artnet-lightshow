@@ -1,10 +1,8 @@
-'use strict';
-
-const fs = require('fs');
-const net = require('net');
-const path = require('path');
-const { z } = require('zod');
-const { SYNC_OFFSET_LIMIT_MS } = require('./presets');
+import fs from 'node:fs';
+import net from 'node:net';
+import path from 'node:path';
+import { z } from 'zod';
+import { SYNC_OFFSET_LIMIT_MS } from './presets.js';
 
 /**
  * Persisted configuration, owned by the settings page.
@@ -544,14 +542,14 @@ function warnAboutLegacyEnv(env = process.env, log = console.warn) {
 // The file location is fixed on purpose: it is how you *find* the settings, not
 // itself a setting, and leaving it env-configurable would reintroduce the split
 // brain this change removes. Tests construct their own SettingsStore instead.
-const CONFIG_FILE = path.join(__dirname, '..', '..', 'config', 'settings.json');
+const CONFIG_FILE = path.join(import.meta.dirname, '..', '..', 'config', 'settings.json');
 //
 // Loaded on construction so require order cannot matter: state.js reads
 // settings.group('artnet') at module scope, and it must see the stored values
 // rather than bare defaults regardless of who requires whom first.
 const settings = new SettingsStore(CONFIG_FILE).load();
 
-module.exports = {
+export {
   settings,
   CONFIG_FILE,
   SettingsStore,

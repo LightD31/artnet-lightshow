@@ -1,19 +1,15 @@
-'use strict';
-const test = require('node:test');
-const assert = require('node:assert/strict');
-// Observe actual DMX frames without sending them to a fixture or network.
-// The stub has to cover everything the engine calls, Hue included — it is a
-// stand-in for the whole output layer, not just the Art-Net path.
-const outputPath = require.resolve('../../src/server/output');
-require.cache[outputPath] = {
-  id: outputPath, filename: outputPath, loaded: true,
-  exports: { sendUniverse() {}, endFrame() {}, sendHue() {}, stopHue() {} },
-};
-const { state } = require('../../src/server/state');
-const { startEngine, stopEngine } = require('../../src/server/engine');
-const { applyPatch } = require('../../src/server/patch');
-const { getProfile } = require('../../src/server/profiles');
-const universes = require('../../src/server/universes');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { state } from '../../src/server/state.js';
+import { startEngine, stopEngine } from '../../src/server/engine.js';
+import { applyPatch } from '../../src/server/patch.js';
+import { getProfile } from '../../src/server/profiles.js';
+import * as universes from '../../src/server/universes.js';
+
+// Observe actual DMX frames without sending them to a fixture or network:
+// every output is off (Hue and sACN are off by default), so the engine renders
+// into its buffers and nothing leaves the machine.
+state.artnet.enabled = false;
 
 test('music dims the rendered scene; silence closes it; master still scales an override', t => {
   t.mock.timers.enable({ apis: ['setInterval', 'setTimeout', 'Date'], now: Date.now() });

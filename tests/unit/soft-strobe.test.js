@@ -1,18 +1,14 @@
-'use strict';
-
 // A fixture with no strobe channel is flashed in software through the strobe
 // pattern and every strobing burst, where it used to sit there steady.
 
-const test = require('node:test');
-const assert = require('node:assert');
+import test from 'node:test';
+import assert from 'node:assert';
 
-const { createRenderer, softStrobeHz, SOFT_STROBE_MAX_HZ } = require('../../src/server/renderer');
-const universes = require('../../src/server/universes');
-const {
-  getProfile, profilesRevision, registerProfile, unregisterProfile, BUILTIN_PROFILE_ID, HUE_COLOR_PROFILE_ID,
-} = require('../../src/server/profiles');
-const { barProfile } = require('../../src/server/bar-profile');
-const { FRAME_MS } = require('../../src/server/frame-clock');
+import { createRenderer, softStrobeHz, SOFT_STROBE_MAX_HZ } from '../../src/server/renderer.js';
+import * as universes from '../../src/server/universes.js';
+import { getProfile, profilesRevision, registerProfile, unregisterProfile, BUILTIN_PROFILE_ID, HUE_COLOR_PROFILE_ID } from '../../src/server/profiles.js';
+import { barProfile } from '../../src/server/bar-profile.js';
+import { FRAME_MS } from '../../src/server/frame-clock.js';
 
 const BAR = barProfile({ id: 'soft-strobe-bar', name: 'No-strobe Bar', cells: 4, firstChannel: 2, order: 'RGB', dimmer: 1 });
 

@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * The pattern layer: what the look puts on every light, before a burst, a
  * pinned fixture, the music's level and the masters go on top.
@@ -16,9 +14,9 @@
  * write keep whatever the caller already holds for them.
  */
 
-const { PATTERN_FUNCS, CELL_PATTERNS } = require('./patterns');
-const { fadeBrightness, hitBrightness } = require('./look-math');
-const { fadePhase, hitPhase } = require('./beat-clock');
+import { PATTERN_FUNCS, CELL_PATTERNS } from './patterns.js';
+import { fadeBrightness, hitBrightness } from './look-math.js';
+import { fadePhase, hitPhase } from './beat-clock.js';
 
 /**
  * @param rig    from shared/rig.js buildRig
@@ -93,4 +91,6 @@ function patternContext(rig, layout, look, clock, set) {
   return ctx;
 }
 
-module.exports = { renderLayer };
+export {
+  renderLayer,
+};

@@ -1,11 +1,7 @@
-'use strict';
+import test from 'node:test';
+import assert from 'node:assert';
 
-const test = require('node:test');
-const assert = require('node:assert');
-
-const {
-  Warmer, parseSetList, buildJobs, toJob, fromSpotifyTracks, MAX_TRACKS,
-} = require('../../src/server/warm');
+import { Warmer, parseSetList, buildJobs, toJob, fromSpotifyTracks, MAX_TRACKS } from '../../src/server/warm.js';
 
 // ── Set-list parsing ────────────────────────────────────────────────────────
 

@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * The per-frame maths that decides what a fixture is actually emitting.
  *
@@ -16,7 +14,7 @@
  * browser bundle it.
  */
 
-const { colourMixer } = require('./color');
+import { colourMixer } from './color.js';
 
 // A UV die reads far dimmer to the eye than the same number on a primary, so it
 // is driven harder to sit level with the rest of the mix. Defined here rather
@@ -184,7 +182,7 @@ function blendColour(from, to, t) {
   return col;
 }
 
-module.exports = {
+export {
   UV_BOOST,
   blendFixture,
   EXPRESSION_REST,

@@ -1,14 +1,10 @@
-'use strict';
+import test from 'node:test';
+import assert from 'node:assert';
 
-const test = require('node:test');
-const assert = require('node:assert');
-
-const {
-  PALETTES, PALETTE_IDS, TETRADS, TRIADS, DUOS, paletteColors, paletteSlots,
-} = require('../../src/server/palettes');
-const { COLOR_PRESETS } = require('../../src/server/presets');
-const { applyPatch } = require('../../src/server/patch');
-const { state } = require('../../src/server/state');
+import { PALETTES, PALETTE_IDS, TETRADS, TRIADS, DUOS, paletteColors, paletteSlots } from '../../src/server/palettes.js';
+import { COLOR_PRESETS } from '../../src/server/presets.js';
+import { applyPatch } from '../../src/server/patch.js';
+import { state } from '../../src/server/state.js';
 
 test('every look exists at all three sizes with the right number of colours', () => {
   for (const id of PALETTE_IDS) {

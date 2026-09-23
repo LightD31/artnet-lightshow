@@ -1,6 +1,4 @@
-'use strict';
-
-const { beatPositionAt, localBpm } = require('../shared/beat-clock');
+import { beatPositionAt, localBpm } from '../shared/beat-clock.js';
 
 /**
  * The Conductor: the one clock every pattern keeps time by.
@@ -250,4 +248,10 @@ class Conductor {
 // The server has one clock. Tests make their own.
 const conductor = new Conductor();
 
-module.exports = { Conductor, conductor, BACKWARD_JUMP_BEATS, FORWARD_JUMP_BEATS, STALL_MS };
+export {
+  Conductor,
+  conductor,
+  BACKWARD_JUMP_BEATS,
+  FORWARD_JUMP_BEATS,
+  STALL_MS,
+};

@@ -1,12 +1,10 @@
-'use strict';
-
-const { state, getFixture, setDefaultUniverse } = require('./state');
-const { beginFade } = require('./engine');
-const { conductor } = require('./conductor');
-const { anchorStep } = require('../shared/beat-clock');
-const { patchSchema, overrideSchema, validate } = require('./validation');
-const { STROBE_FUNCTIONS, ENERGY_EFFECTS } = require('./presets');
-const { paletteSlots } = require('./palettes');
+import { state, getFixture, setDefaultUniverse } from './state.js';
+import { beginFade } from './engine.js';
+import { conductor } from './conductor.js';
+import { anchorStep } from '../shared/beat-clock.js';
+import { patchSchema, overrideSchema, validate } from './validation.js';
+import { STROBE_FUNCTIONS, ENERGY_EFFECTS } from './presets.js';
+import { paletteSlots } from './palettes.js';
 
 const COLOR_SLOTS = ['colorA', 'colorB', 'colorC', 'colorD'];
 
@@ -256,7 +254,7 @@ function processTap() {
   }, 3000);
 }
 
-module.exports = {
+export {
   flushPendingPersist,
   applyPatch,
   applyOverride,

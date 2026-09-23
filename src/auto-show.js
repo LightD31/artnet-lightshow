@@ -1,22 +1,20 @@
-'use strict';
-
-const { spawn } = require('child_process');
-const { randomUUID } = require('crypto');
-const { settings } = require('./server/settings');
-const path = require('path');
-const fs = require('fs');
-const os = require('os');
-const deezer = require('./deezer');
-const AnalyzerWorker = require('./analyzer-worker');
-const { describeModelUsage, formatModelUsage } = require('./model-usage');
-const pythonEnv = require('./python-env');
-const { SYNC_OFFSET_LIMIT_MS } = require('./server/presets');
-const { ShowDirector, measureBuildup } = require('./show/director');
-const { renderIntents } = require('./show/render');
-const { guarded } = require('./server/guard');
-const { resolveIsrc, splitQuery } = require('./isrc');
-const { gridFromAnalysis } = require('./shared/beat-clock');
-const ytdlp = require('./ytdlp');
+import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { settings } from './server/settings.js';
+import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
+import * as deezer from './deezer.js';
+import AnalyzerWorker from './analyzer-worker.js';
+import { describeModelUsage, formatModelUsage } from './model-usage.js';
+import * as pythonEnv from './python-env.js';
+import { SYNC_OFFSET_LIMIT_MS } from './server/presets.js';
+import { ShowDirector, measureBuildup } from './show/director.js';
+import { renderIntents } from './show/render.js';
+import { guarded } from './server/guard.js';
+import { resolveIsrc, splitQuery } from './isrc.js';
+import { gridFromAnalysis } from './shared/beat-clock.js';
+import * as ytdlp from './ytdlp.js';
 
 // A download that never finishes is indistinguishable from one that never
 // started: the track change waits on this promise, so an unresponsive network
@@ -61,7 +59,7 @@ class AutoShow {
     this._patterns = patterns;
     this._cache = cache;
     this._worker = new AnalyzerWorker(
-      pythonEnv.pythonExe, path.join(__dirname, 'analyze.py'),
+      pythonEnv.pythonExe, path.join(import.meta.dirname, 'analyze.py'),
     );
     // Spin up the Python process immediately so its imports + PANNs preload
     // happen during server startup, hidden behind the user opening the UI
@@ -995,8 +993,9 @@ class AutoShow {
   }
 }
 
-module.exports = AutoShow;
 // Kept as a getter: callers (the startup banner, scripts/bench-worker.js) read
 // it after the settings store has loaded, and it must reflect a configured
-// interpreter rather than a value frozen at require time.
-Object.defineProperty(module.exports, 'PYTHON_EXE', { get: () => pythonEnv.pythonExe() });
+// interpreter rather than a value frozen at load time.
+Object.defineProperty(AutoShow, 'PYTHON_EXE', { get: () => pythonEnv.pythonExe() });
+
+export default AutoShow;

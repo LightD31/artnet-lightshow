@@ -1,7 +1,5 @@
-'use strict';
-
-const { validate, midiConnectSchema } = require('./validation');
-const { settings } = require('./settings');
+import { validate, midiConnectSchema } from './validation.js';
+import { settings } from './settings.js';
 
 /**
  * Open the named MIDI ports and remember them for the next start.
@@ -24,4 +22,6 @@ function connectMidi(midi, payload) {
   return { ok, enabled: midi.enabled, ports: midi.listPorts() };
 }
 
-module.exports = { connectMidi };
+export {
+  connectMidi,
+};

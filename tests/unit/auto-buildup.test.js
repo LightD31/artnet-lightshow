@@ -1,5 +1,3 @@
-'use strict';
-
 // The eight seconds before a drop used to get the same treatment whatever the
 // music did: beat division 1, then 2, then 4. These cover measuring it instead.
 //
@@ -8,12 +6,12 @@
 // at constant tempo) and the ramp (a real BPM change, which the beat clock has
 // to follow or the rig drifts out of time exactly when it is most exposed).
 
-const test = require('node:test');
-const assert = require('node:assert');
+import test from 'node:test';
+import assert from 'node:assert';
 
-const AutoShow = require('../../src/auto-show');
-const { COLOR_PRESETS, PATTERNS } = require('../../src/server/presets');
-const { patchSchema } = require('../../src/server/validation');
+import AutoShow from '../../src/auto-show.js';
+import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.js';
+import { patchSchema } from '../../src/server/validation.js';
 
 const BUILD = { start: 72, end: 80, strength: 0.8 };
 const DROP_MS = 80000;

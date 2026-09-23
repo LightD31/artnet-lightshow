@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "ArtNet light show controller for 4x Cameo ROOT PAR 6",
   "main": "server.js",
+  "type": "module",
   "scripts": {
     "build:client": "node scripts/build-client.js",
     "watch:client": "node scripts/build-client.js --watch",

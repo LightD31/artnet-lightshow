@@ -1,7 +1,5 @@
-'use strict';
-
-const { spawnSync } = require('child_process');
-const { settings } = require('./server/settings');
+import { spawnSync } from 'node:child_process';
+import { settings } from './server/settings.js';
 
 /**
  * Pick the Python interpreter that runs the analyzer.
@@ -149,7 +147,9 @@ function warnIfUnusable(log = console.warn) {
   return info;
 }
 
-module.exports = {
+export const _reset = () => { cached = null; };
+
+export {
   REQUIRED_MODULES,
   CANDIDATES,
   probe,
@@ -157,6 +157,4 @@ module.exports = {
   pythonExe,
   describe,
   warnIfUnusable,
-  // Tests and the settings applier re-resolve after the configured path changes.
-  _reset: () => { cached = null; },
 };

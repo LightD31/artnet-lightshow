@@ -1,5 +1,3 @@
-'use strict';
-
 // The colour table and the palette banks are hand-written, and the failure mode
 // when they drift is quiet: a new preset lands three degrees from an existing
 // one, a look picks up two colours from the same family, and from the floor
@@ -9,11 +7,11 @@
 // These tests are the design rules from presets.js and palettes.js written down
 // so an edit has to argue with them.
 
-const test = require('node:test');
-const assert = require('node:assert');
+import test from 'node:test';
+import assert from 'node:assert';
 
-const { COLOR_PRESETS } = require('../../src/server/presets');
-const { TETRADS, TRIADS, DUOS, PALETTE_IDS } = require('../../src/server/palettes');
+import { COLOR_PRESETS } from '../../src/server/presets.js';
+import { TETRADS, TRIADS, DUOS, PALETTE_IDS } from '../../src/server/palettes.js';
 
 /**
  * What a preset looks like once the emitters mix, rather than what its r/g/b
