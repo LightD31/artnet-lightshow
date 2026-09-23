@@ -1,6 +1,6 @@
-// Flat config. Three source shapes live in this repo and they do not share a
-// module system or set of globals, so each gets its own block:
-//   - the Node server (ES modules)
+// Flat config. Four source shapes live in this repo and they do not share a
+// module system, a syntax or a set of globals, so each gets its own block:
+//   - the Node server (TypeScript, and the ES-module JavaScript around it)
 //   - the browser client (public-src, ESM + JSX; public/, classic scripts)
 //   - the Companion module (ESM, its own package)
 //
@@ -9,6 +9,7 @@
 // project into a lint backlog.
 
 import js from '@eslint/js';
+import tseslint from 'typescript-eslint';
 
 const NODE_GLOBALS = {
   process: 'readonly', console: 'readonly', Buffer: 'readonly',
@@ -70,6 +71,29 @@ export default [
       globals: NODE_GLOBALS,
     },
     rules: { ...js.configs.recommended.rules, ...COMMON_RULES },
+  },
+
+  // ── Node server, TypeScript ───────────────────────────────────────────────
+  // Parsed by typescript-eslint; the same small rule set, less the two rules
+  // the type checker already enforces better (undefined names, and unused
+  // bindings, which have a TypeScript-aware twin that knows about types).
+  {
+    files: ['src/**/*.ts', 'scripts/**/*.ts'],
+    languageOptions: {
+      parser: tseslint.parser,
+      ecmaVersion: 2024,
+      sourceType: 'module',
+      globals: NODE_GLOBALS,
+    },
+    plugins: { '@typescript-eslint': tseslint.plugin },
+    rules: {
+      ...js.configs.recommended.rules,
+      ...COMMON_RULES,
+      'no-undef': 'off',
+      'no-redeclare': 'off',
+      'no-unused-vars': 'off',
+      '@typescript-eslint/no-unused-vars': COMMON_RULES['no-unused-vars'],
+    },
   },
 
   // ── Browser client bundled by esbuild (ESM + JSX) ─────────────────────────

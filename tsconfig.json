@@ -1,0 +1,30 @@
+{
+  // The server is TypeScript run as-is by Node's type stripping (Node 22.18+):
+  // nothing is compiled, so tsc only checks. Everything here follows from that.
+  //   - erasableSyntaxOnly: only syntax Node can strip (no enums, namespaces,
+  //     parameter properties).
+  //   - verbatimModuleSyntax: type-only imports say so, so stripping them
+  //     leaves no import of a name that does not exist at runtime.
+  //   - allowImportingTsExtensions: imports name the .ts file Node will load.
+  "compilerOptions": {
+    "target": "es2024",
+    "lib": ["es2024"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "types": ["node"],
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "resolveJsonModule": true,
+    "strict": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true,
+    // While the migration is under way, the .ts files may import modules that
+    // are still .js; those are read for their shapes but not checked.
+    "allowJs": true,
+    "checkJs": false
+  },
+  "include": ["src/**/*.ts", "src/**/*.js", "scripts/**/*.ts"],
+  "exclude": ["node_modules", "src/analysis"]
+}

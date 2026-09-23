@@ -13,8 +13,9 @@
     "preflight": "node scripts/preflight.js --download-models",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
+    "typecheck": "tsc -p tsconfig.json",
     "test": "node --test",
-    "check": "npm run lint && npm test"
+    "check": "npm run lint && npm run typecheck && npm test"
   },
   "engines": {
     "node": ">=22"
@@ -36,8 +37,13 @@
     "zod": "^3.22.4"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.2.0",
+    "@types/node": "^22.20.4",
     "esbuild": "^0.25.12",
-    "eslint": "^9.39.5"
+    "eslint": "^9.39.5",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.70.1"
   },
   "overrides": {
     "better-sqlite3": "^12.0.0",
