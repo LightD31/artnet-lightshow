@@ -65,6 +65,15 @@ export interface ChannelListEntry {
   cell?: number;
 }
 
+/**
+ * A channel the show does not drive, and the value it sits at instead of 0:
+ * a shutter whose 0 is closed, a dimmer the show leaves at full.
+ */
+export interface ChannelDefault {
+  offset: number;
+  value: number;
+}
+
 /** What a kind of fixture is, channel by channel. */
 export interface Profile {
   id: string;
@@ -77,6 +86,8 @@ export interface Profile {
   channelList?: ChannelListEntry[];
   /** An LED bar's cells, in the order they sit along it (2 or more). */
   cells?: ProfileCell[];
+  /** Undriven channels that must not sit at 0, written under every frame. */
+  defaults?: ChannelDefault[];
   [key: string]: unknown;
 }
 
@@ -153,6 +164,7 @@ export interface ImportedMode {
   channelMap: ChannelMap;
   channelList: ChannelListEntry[];
   cells?: ProfileCell[];
+  defaults?: ChannelDefault[];
   /** What the import could not carry over, in words an operator can act on. */
   warnings?: string[];
 }
@@ -162,4 +174,6 @@ export interface ImportedFixture {
   name: string;
   manufacturer: string;
   modes: ImportedMode[];
+  /** Modes the import had to leave out, and why. */
+  warnings?: string[];
 }
