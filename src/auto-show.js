@@ -13,7 +13,7 @@ import { ShowDirector, measureBuildup } from './show/director.js';
 import { renderIntents } from './show/render.js';
 import { guarded } from './server/guard.js';
 import { resolveIsrc, splitQuery } from './isrc.js';
-import { gridFromAnalysis } from './shared/beat-clock.js';
+import { gridFromAnalysis } from './shared/beat-clock.ts';
 import * as ytdlp from './ytdlp.js';
 
 // A download that never finishes is indistinguishable from one that never

@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { stateSig, dmxSig, autoTimelineSig, connectedSig, emitFixture, stagePreviewSig } from '../state.js';
 import { colorToCss, fixtureOutputColor, fixtureCellColors, meanLight, fmtTime } from '../utils.js';
 import { timelineKey } from '../timeline-state.js';
-import { createPreviewSampler } from '../../src/shared/preview.js';
-import { stagePositions } from '../../src/shared/stage.js';
-import { buildRig, lineOf } from '../../src/shared/rig.js';
+import { createPreviewSampler } from '../../src/shared/preview.ts';
+import { stagePositions } from '../../src/shared/stage.ts';
+import { buildRig, lineOf } from '../../src/shared/rig.ts';
 
 const clamp = (n) => Math.max(0, Math.min(100, n));
 const round1 = (n) => Math.round(n * 10) / 10;

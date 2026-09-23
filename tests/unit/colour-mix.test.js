@@ -6,8 +6,8 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import { colourMixer, chromaOf } from '../../src/shared/color.js';
-import { PATTERN_FUNCS } from '../../src/shared/patterns.js';
+import { colourMixer, chromaOf } from '../../src/shared/color.ts';
+import { PATTERN_FUNCS } from '../../src/shared/patterns.ts';
 import { COLOR_PRESETS } from '../../src/server/presets.js';
 import { TETRADS } from '../../src/server/palettes.js';
 

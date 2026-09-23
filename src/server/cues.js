@@ -8,7 +8,7 @@ import { applyPatch, applyOverride } from './patch.js';
 import { conductor } from './conductor.js';
 import { overrideSchema, fixtureId } from './validation.js';
 import { COLOR_PRESETS } from './presets.js';
-import { PIXEL_MAPS } from '../shared/rig.js';
+import { PIXEL_MAPS } from '../shared/rig.ts';
 
 /**
  * Named looks, saved and recalled.

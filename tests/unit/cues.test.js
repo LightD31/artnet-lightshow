@@ -9,7 +9,7 @@ import { state } from '../../src/server/state.js';
 import { applyPatch, applyOverride } from '../../src/server/patch.js';
 import { stopEngine } from '../../src/server/engine.js';
 import { conductor } from '../../src/server/conductor.js';
-import { makeGrid } from '../../src/shared/beat-clock.js';
+import { makeGrid } from '../../src/shared/beat-clock.ts';
 
 let dir;
 let file;

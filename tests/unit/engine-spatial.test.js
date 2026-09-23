@@ -10,7 +10,7 @@ import { getProfile } from '../../src/server/profiles.js';
 import { startEngine, stopEngine } from '../../src/server/engine.js';
 import { conductor } from '../../src/server/conductor.js';
 import { applyPatch } from '../../src/server/patch.js';
-import { spatialLayout } from '../../src/shared/stage.js';
+import { spatialLayout } from '../../src/shared/stage.ts';
 
 const frames = (n = 3) => new Promise((r) => setTimeout(r, 25 * n + 20));
 

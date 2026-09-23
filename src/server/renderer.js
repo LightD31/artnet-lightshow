@@ -18,12 +18,12 @@
 import { COLOR_PRESETS, STROBE_FUNCTIONS } from './presets.js';
 import { HUE_PROFILE_IDS } from './profiles.js';
 import { FRAME_MS } from './frame-clock.js';
-import { PATTERN_FUNCS } from '../shared/patterns.js';
-import { renderLayer } from '../shared/layer.js';
-import { buildRig, rigSignature } from '../shared/rig.js';
+import { PATTERN_FUNCS } from '../shared/patterns.ts';
+import { renderLayer } from '../shared/layer.ts';
+import { buildRig, rigSignature } from '../shared/rig.ts';
 // Shared with the browser's rehearsal preview so the two cannot drift.
-import { EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture, cellDrive } from '../shared/look-math.js';
-import { anchorStep, stepAt, motionAdvance } from '../shared/beat-clock.js';
+import { EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture, cellDrive } from '../shared/look-math.ts';
+import { anchorStep, stepAt, motionAdvance } from '../shared/beat-clock.ts';
 
 // Patterns that roll dice. They re-roll when the step moves or the look
 // changes — a twinkle redrawn every frame is noise, not a twinkle.

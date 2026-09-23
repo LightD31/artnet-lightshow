@@ -192,7 +192,7 @@ test('expressive seeks restore current targets without replaying missed bursts',
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { beatPositionAt } from '../../src/shared/beat-clock.js';
+import { beatPositionAt } from '../../src/shared/beat-clock.ts';
 
 /** A frame-driven show over a real analysed track, at a position we control. */
 function frameHarness() {

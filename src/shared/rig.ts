@@ -1,4 +1,5 @@
-import { isPlaced, stagePositions, spatialLayout, washFixtures } from './stage.js';
+import { isPlaced, stagePositions, spatialLayout, washFixtures } from './stage.ts';
+import type { ChannelMap, Geometry, PixelMap, Point, Profile, ProfileCell, StageFixture } from '../types/rig.ts';
 
 /**
  * The rig as the pattern layer sees it: fixtures, and the cells inside them.
@@ -25,20 +26,56 @@ const PIXEL_MAPS = ['stage', 'bar', 'mirror'];
 // A universe holds 170 three-channel cells; no single fixture has more.
 const MAX_CELLS_PER_FIXTURE = 170;
 
+/** One light: a par, or one cell of a bar. */
+export interface Unit {
+  /** The fixture's index in the patch. */
+  fixture: number;
+  /** Which of its cells (0 for a par). */
+  cell: number;
+}
+
+/** A fixture's units: `count` of them from `start`. */
+export interface UnitRange {
+  start: number;
+  count: number;
+}
+
+/** The order the patterns travel in, for fixtures and for units (see layoutOf). */
+export interface Layout {
+  wash: Set<number>;
+  fixtures: { members: number[]; order: number[]; xs: number[] | null };
+  units: { list: number[]; xs: number[] | null; ys: number[] | null };
+}
+
+/** The rig as lights (see buildRig). */
+export interface Rig<F extends StageFixture = StageFixture> {
+  fixtures: readonly F[];
+  units: Unit[];
+  ranges: UnitRange[];
+  cellMaps: (ChannelMap[] | null)[];
+  points: Point[];
+  local: number[];
+  hasPixels: boolean;
+  layout(split?: number | null, pixelMap?: PixelMap | string | null): Layout;
+}
+
+/** The profile a fixture runs, or nothing when it has none. */
+export type ProfileLookup<F> = (fixture: F) => Pick<Profile, 'cells'> | null | undefined;
+
 /** The profile's cells, or null for a fixture that is one light. */
-function cellsOf(profile) {
+function cellsOf(profile: Pick<Profile, 'cells'> | null | undefined): ProfileCell[] | null {
   const cells = profile && profile.cells;
   return Array.isArray(cells) && cells.length >= 2 ? cells : null;
 }
 
 /** How many lights a fixture on this profile is: its cells, or one. */
-function unitCount(profile) {
+function unitCount(profile: Pick<Profile, 'cells'> | null | undefined): number {
   const cells = cellsOf(profile);
   return cells ? cells.length : 1;
 }
 
 /** How many lights a patch is in total. */
-function countUnits(fixtures, profileOf) {
+function countUnits<F>(fixtures: Iterable<F>, profileOf: ProfileLookup<F>): number {
   let total = 0;
   for (const fixture of fixtures) total += unitCount(profileOf(fixture));
   return total;
@@ -51,7 +88,7 @@ function countUnits(fixtures, profileOf) {
  * with the number of cells — and, for a bar nobody has placed, stays short
  * enough not to run into its neighbours in the default spread.
  */
-function lineOf(fixture, cells, unplaced) {
+function lineOf(fixture: StageFixture, cells: number, unplaced: number): Geometry {
   const g = fixture.geometry;
   if (g && Number.isFinite(g.length) && Number.isFinite(g.angle)) return { length: g.length, angle: g.angle };
   let length = Math.max(8, Math.min(25, 1.5 * cells));
@@ -74,14 +111,14 @@ function lineOf(fixture, cells, unplaced) {
  * A rig of pars has exactly one unit per fixture, at the same index, so
  * everything built on units is what it was built on fixtures before bars.
  */
-function buildRig(fixtures, profileOf) {
+function buildRig<F extends StageFixture>(fixtures: readonly F[], profileOf: ProfileLookup<F>): Rig<F> {
   const centres = stagePositions(fixtures);
   const unplaced = fixtures.filter((f) => !isPlaced(f.position)).length;
-  const units = [];
-  const ranges = [];
-  const cellMaps = [];
-  const points = [];
-  const local = [];
+  const units: Unit[] = [];
+  const ranges: UnitRange[] = [];
+  const cellMaps: (ChannelMap[] | null)[] = [];
+  const points: Point[] = [];
+  const local: number[] = [];
   let hasPixels = false;
 
   fixtures.forEach((fixture, i) => {
@@ -114,14 +151,18 @@ function buildRig(fixtures, profileOf) {
     cellMaps.push(cells.map((cell) => cell.channelMap));
   });
 
-  const layouts = new Map();
+  const layouts = new Map<string, Layout>();
   return {
     fixtures, units, ranges, cellMaps, points, local, hasPixels,
     /** The travel order for a look, cached per split and pixel map. */
     layout(split = null, pixelMap = 'stage') {
       const key = `${split}|${hasPixels ? pixelMap : ''}`;
-      if (!layouts.has(key)) layouts.set(key, layoutOf(this, split, pixelMap));
-      return layouts.get(key);
+      let layout = layouts.get(key);
+      if (!layout) {
+        layout = layoutOf(this, split, pixelMap);
+        layouts.set(key, layout);
+      }
+      return layout;
     },
   };
 }
@@ -133,7 +174,7 @@ function buildRig(fixtures, profileOf) {
  * key build the same rig, so a cache can compare this once a frame instead of
  * relying on every edit to announce itself.
  */
-function rigSignature(fixtures, revision = 0) {
+function rigSignature(fixtures: readonly StageFixture[], revision: number | string = 0): string {
   let key = `${revision}|${fixtures.length}`;
   for (const f of fixtures) {
     const p = f.position;
@@ -157,29 +198,28 @@ function rigSignature(fixtures, revision = 0) {
  * With no bars in the rig, units are the fixtures and xs is the fixtures' own:
  * byte for byte what the patterns got before.
  */
-function layoutOf(rig, split, pixelMap) {
+function layoutOf(rig: Rig, split: number | null | undefined, pixelMap: string | null | undefined): Layout {
   const { fixtures, ranges, points, local } = rig;
   const wash = washFixtures(fixtures, split);
   const members = fixtures.map((_, i) => i).filter((i) => !wash.has(i));
   const { order, xs } = spatialLayout(members.map((i) => fixtures[i]));
-  const layout = { wash, fixtures: { members, order, xs } };
+  const layoutFixtures = { members, order, xs };
 
   if (!rig.hasPixels) {
-    layout.units = { list: order.map((k) => ranges[members[k]].start), xs, ys: null };
-    return layout;
+    return { wash, fixtures: layoutFixtures, units: { list: order.map((k) => ranges[members[k]].start), xs, ys: null } };
   }
 
-  const list = [];
+  const list: number[] = [];
   for (const k of order) {
     const { start, count } = ranges[members[k]];
-    const cells = [];
+    const cells: number[] = [];
     for (let u = start; u < start + count; u++) cells.push(u);
     cells.sort((a, b) => points[a].x - points[b].x || a - b);
     list.push(...cells);
   }
 
-  let unitXs = null;
-  let unitYs = null;
+  let unitXs: number[] | null = null;
+  let unitYs: number[] | null = null;
   if (list.length) {
     let lo = Infinity; let hi = -Infinity; let top = Infinity; let bottom = -Infinity;
     for (const u of list) {
@@ -202,8 +242,7 @@ function layoutOf(rig, split, pixelMap) {
     const base = unitXs || list.map((_, k) => (n > 1 ? k / (n - 1) : 0.5));
     unitXs = base.map((x) => Math.abs(2 * x - 1));
   }
-  layout.units = { list, xs: unitXs, ys: unitYs };
-  return layout;
+  return { wash, fixtures: layoutFixtures, units: { list, xs: unitXs, ys: unitYs } };
 }
 
 export {

@@ -22,7 +22,7 @@ import { renderFrame, resizeFixtureBuffers } from '../../src/server/engine.js';
 import { conductor } from '../../src/server/conductor.js';
 import { applyPatch, applyOverride, setFixtureMaxBrightness } from '../../src/server/patch.js';
 import { PATTERNS, COLOR_PRESETS } from '../../src/server/presets.js';
-import { createPreviewSampler } from '../../src/shared/preview.js';
+import { createPreviewSampler } from '../../src/shared/preview.ts';
 import AutoShow from '../../src/auto-show.js';
 
 // The engine hash changed once, on purpose: the built-in par's dimmer is

@@ -28,8 +28,12 @@
  * Pure and dependency-free: the engine and the browser rehearsal both run it.
  */
 
+import type { Colour, EmitterLevels } from '../types/rig.ts';
+
+type Triple = [number, number, number];
+
 // Oklab, after Björn Ottosson (2020), on linear RGB in 0..1.
-function toOklab(r, g, b) {
+function toOklab(r: number, g: number, b: number): Triple {
   const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
   const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
   const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
@@ -40,7 +44,7 @@ function toOklab(r, g, b) {
   ];
 }
 
-function fromOklab(L, a, b) {
+function fromOklab(L: number, a: number, b: number): Triple {
   const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
   const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
   const s = (L - 0.0894841775 * a - 1.2914855480 * b) ** 3;
@@ -56,9 +60,9 @@ function fromOklab(L, a, b) {
 // does not swing through whatever angle rounding happened to leave on the white.
 const ACHROMATIC = 0.02;
 
-const inGamut = (rgb) => rgb.every((v) => v >= -1e-6 && v <= 1 + 1e-6);
+const inGamut = (rgb: Triple): boolean => rgb.every((v) => v >= -1e-6 && v <= 1 + 1e-6);
 
-function toLch(col) {
+function toLch(col: Colour): { L: number; C: number; h: number } {
   const [L, a, b] = toOklab((col.r || 0) / 255, (col.g || 0) / 255, (col.b || 0) / 255);
   return { L, C: Math.hypot(a, b), h: Math.atan2(b, a) };
 }
@@ -69,7 +73,7 @@ function toLch(col) {
  * Built once per pair — the ends are converted once — and then called per lamp,
  * because a pattern asks for many points along the same crossfade every frame.
  */
-function colourMixer(from, to) {
+function colourMixer(from: Colour, to: Colour): (t: number) => EmitterLevels {
   const A = toLch(from);
   const B = toLch(to);
   const hueA = A.C < ACHROMATIC ? B.h : A.h;
@@ -78,14 +82,14 @@ function colourMixer(from, to) {
   if (dh > Math.PI) dh -= 2 * Math.PI;
   if (dh < -Math.PI) dh += 2 * Math.PI;
 
-  const lerp = (x, y, t) => x + (y - x) * t;
-  const dies = (t) => ({
+  const lerp = (x: number, y: number, t: number): number => x + (y - x) * t;
+  const dies = (t: number) => ({
     w: Math.round(lerp(from.w || 0, to.w || 0, t)),
     a: Math.round(lerp(from.a || 0, to.a || 0, t)),
     uv: Math.round(lerp(from.uv || 0, to.uv || 0, t)),
   });
 
-  return (t) => {
+  return (t: number): EmitterLevels => {
     if (t <= 0) return { r: from.r || 0, g: from.g || 0, b: from.b || 0, ...dies(0) };
     if (t >= 1) return { r: to.r || 0, g: to.g || 0, b: to.b || 0, ...dies(1) };
     const L = lerp(A.L, B.L, t);
@@ -111,7 +115,7 @@ function colourMixer(from, to) {
 }
 
 /** Oklab chroma of a colour's RGB emitters, treating DMX as linear light. */
-function chromaOf(col) {
+function chromaOf(col: Colour): number {
   return toLch(col).C;
 }
 

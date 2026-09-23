@@ -1,4 +1,4 @@
-import { beatPositionAt, localBpm } from '../shared/beat-clock.js';
+import { beatPositionAt, localBpm } from '../shared/beat-clock.ts';
 
 /**
  * The Conductor: the one clock every pattern keeps time by.

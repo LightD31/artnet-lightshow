@@ -1,4 +1,5 @@
-import { colourMixer } from './color.js';
+import { colourMixer } from './color.ts';
+import type { Colour, Expression } from '../types/rig.ts';
 
 // Pure pattern functions. Each takes (ctx) where:
 //   ctx.colors        : array of resolved Colour A..D presets
@@ -20,7 +21,25 @@ import { colourMixer } from './color.js';
 // their brightness from the beat position themselves (beat-clock.js
 // fadePhase / hitPhase); the functions here only seed the colour.
 
-function hsvToRgb(h, s, v) {
+/** What a pattern is handed for one frame (see shared/layer.ts). */
+export interface PatternContext {
+  colors: readonly Colour[];
+  fixtureCount: number;
+  step: number;
+  stepPos?: number;
+  stepPhase?: number;
+  phase?: number;
+  hue: number;
+  twinkle: number[];
+  xs: readonly number[] | null;
+  ys: readonly number[] | null;
+  dynamics: Readonly<Expression> | null;
+  write(i: number, colour: Colour, dim: number, strobe: number): void;
+}
+
+export type PatternFn = (ctx: PatternContext) => void;
+
+function hsvToRgb(h: number, s: number, v: number): Colour {
   h = ((h % 360) + 360) % 360;
   const c = v * s;
   const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
@@ -58,7 +77,7 @@ const BED = 45;
  * how much texture is on top of the track — because that is what fills the
  * space between hits in the music too.
  */
-function bedOf(ctx) {
+function bedOf(ctx: PatternContext): number {
   const d = ctx.dynamics;
   if (!d) return BED;
   const level = d.level == null ? 1 : d.level;
@@ -66,9 +85,9 @@ function bedOf(ctx) {
 }
 
 /** A 0..1 reading from the expression channel, or a default without one. */
-function dyn(ctx, key, fallback) {
+function dyn(ctx: PatternContext, key: keyof Expression, fallback: number): number {
   const value = ctx.dynamics ? ctx.dynamics[key] : undefined;
-  return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : fallback;
+  return value !== undefined && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : fallback;
 }
 
 /**
@@ -86,8 +105,8 @@ function dyn(ctx, key, fallback) {
  * into four this way, and the auto show no longer has to gate a `multi3` and a
  * `multi4` pool on the palette it happened to lock.
  */
-function paletteOf(ctx) {
-  const out = [];
+function paletteOf(ctx: Pick<PatternContext, 'colors'>): Colour[] {
+  const out: Colour[] = [];
   for (const c of ctx.colors) if (c && !out.includes(c)) out.push(c);
   return out.length ? out : [{ r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 }];
 }
@@ -102,17 +121,17 @@ const CELL_PATTERNS = new Set([
 ]);
 
 /** Where slot i sits across the rig, 0..1: its placed position, or even spacing. */
-function xOf(ctx, i) {
+function xOf(ctx: PatternContext, i: number): number {
   if (ctx.xs) return ctx.xs[i];
   return ctx.fixtureCount > 1 ? i / (ctx.fixtureCount - 1) : 0.5;
 }
 
 /** And front to back, on the same scale; the middle when nothing says. */
-function yOf(ctx, i) {
+function yOf(ctx: PatternContext, i: number): number {
   return ctx.ys ? ctx.ys[i] : 0.5;
 }
 
-const frac = (v) => v - Math.floor(v);
+const frac = (v: number): number => v - Math.floor(v);
 
 // ── Palette gradients ────────────────────────────────────────────────────────
 // The pixel effects paint a continuous gradient through the look's colours, A
@@ -122,9 +141,9 @@ const frac = (v) => v - Math.floor(v);
 // pair of colours, and looked up. Engine and preview share this table, so
 // they paint the same colour for the same place.
 const GRADIENT_STEPS = 64;
-const gradients = new Map();
+const gradients = new Map<string, Colour[]>();
 
-function gradientOf(pal) {
+function gradientOf(pal: readonly Colour[]): Colour[] {
   const key = pal.map((c) => `${c.r},${c.g},${c.b},${c.w || 0},${c.a || 0},${c.uv || 0}`).join('|');
   let table = gradients.get(key);
   if (!table) {
@@ -144,13 +163,13 @@ function gradientOf(pal) {
 }
 
 /** The colour at `p` round the palette's cycle (0 and 1 are colour A). */
-function gradientAt(pal, p) {
+function gradientAt(pal: readonly Colour[], p: number): Colour {
   if (pal.length === 1) return pal[0];
   const table = gradientOf(pal);
   return table[Math.floor(frac(p) * table.length) % table.length];
 }
 
-const PATTERN_FUNCS = {
+const PATTERN_FUNCS: Record<string, PatternFn> = {
   // The two expressive patterns are driven at frame rate by the expression
   // channel rather than stepped by the beat clock, which is what lets them
   // follow a swell. It is also what made them the quietest things in the
@@ -516,7 +535,7 @@ Object.assign(PATTERN_FUNCS, {
       else ctx.write(i, fill - x < 0.08 ? pal[1 % pal.length] : pal[0], 255, 0);
     }
   },
-});
+} satisfies Record<string, PatternFn>);
 
 export {
   PATTERN_FUNCS,

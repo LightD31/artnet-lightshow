@@ -9,7 +9,7 @@ import { Warmer } from './warm.js';
 import { keyForSpotify, keyForQuery, keyForProlinkTrack } from '../analysis-cache.js';
 import HybridSource from '../hybrid-source.js';
 import { sampleAutoPosition } from './auto-position.js';
-import { gridFromAnalysis } from '../shared/beat-clock.js';
+import { gridFromAnalysis } from '../shared/beat-clock.ts';
 
 // A track change that lands while the previous track is still being analysed
 // hands the analyser to the new song and abandons the old job. That is the

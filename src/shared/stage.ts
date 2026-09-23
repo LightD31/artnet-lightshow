@@ -13,7 +13,9 @@
  * three copies of the default spread would be three chances to disagree.
  */
 
-const isPlaced = (p) => !!p && Number.isFinite(p.x) && Number.isFinite(p.y);
+import type { Point, StageFixture } from '../types/rig.ts';
+
+const isPlaced = (p: Point | null | undefined): p is Point => !!p && Number.isFinite(p.x) && Number.isFinite(p.y);
 
 // How close two fixtures' x positions must be, in percent of the stage width,
 // to count as one column. A few percent is the precision of a drag on the plot.
@@ -23,12 +25,12 @@ const COLUMN_TOLERANCE = 3;
  * Where a never-placed fixture sits: spread evenly across the stage among the
  * *other unplaced* fixtures, at a nominal depth.
  */
-function defaultPosition(k, unplaced) {
+function defaultPosition(k: number, unplaced: number): Point {
   return { x: 100 * (k + 1) / (unplaced + 1), y: 35 };
 }
 
 /** Every fixture's position, stored or default, in patch order. */
-function stagePositions(fixtures) {
+function stagePositions(fixtures: readonly StageFixture[]): Point[] {
   const unplaced = fixtures.filter((f) => !isPlaced(f.position));
   return fixtures.map((f) => (isPlaced(f.position)
     ? f.position
@@ -50,7 +52,13 @@ function stagePositions(fixtures) {
  * guarantee rather than a coincidence of the default spread — rounding in
  * normalised positions could otherwise move a DMX value by one.
  */
-function spatialLayout(fixtures) {
+/** The order patterns travel in, and where each slot sits across the rig. */
+export interface SpatialLayout {
+  order: number[];
+  xs: number[] | null;
+}
+
+function spatialLayout(fixtures: readonly StageFixture[]): SpatialLayout {
   const n = fixtures.length;
   if (!fixtures.some((f) => isPlaced(f.position))) {
     return { order: fixtures.map((_, i) => i), xs: null };
@@ -62,7 +70,7 @@ function spatialLayout(fixtures) {
   // truss and the lamp hung above it — and a column is walked front to back.
   // Ordering on raw x instead let a fraction of a percent decide, so the chase
   // went back-then-front in one column and front-then-back in the next.
-  const order = [];
+  const order: number[] = [];
   for (let i = 0; i < byX.length;) {
     let j = i + 1;
     while (j < byX.length && pos[byX[j]].x - pos[byX[i]].x <= COLUMN_TOLERANCE) j++;
@@ -96,7 +104,7 @@ const FIXTURE_GROUPS = ['front', 'back', 'room', 'floor'];
  *
  * @returns {Set<number>} patch indices of the wash fixtures (empty: no split)
  */
-function washFixtures(fixtures, seed) {
+function washFixtures(fixtures: readonly StageFixture[], seed: number | null | undefined): Set<number> {
   if (seed == null) return new Set();
   const used = FIXTURE_GROUPS.filter((g) => fixtures.some((f) => f.group === g));
   if (used.length < 2) return new Set();

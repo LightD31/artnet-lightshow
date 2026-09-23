@@ -7,7 +7,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 import { FRAME_MS } from '../../src/server/frame-clock.js';
-import { makeGrid, gridFromAnalysis, beatPositionAt, trackMsAtBeat, localBpm, anchorStep, stepAt, hitPhase, fadePhase, motionAdvance } from '../../src/shared/beat-clock.js';
+import { makeGrid, gridFromAnalysis, beatPositionAt, trackMsAtBeat, localBpm, anchorStep, stepAt, hitPhase, fadePhase, motionAdvance } from '../../src/shared/beat-clock.ts';
 
 const close = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
 

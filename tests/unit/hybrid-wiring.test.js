@@ -387,7 +387,7 @@ test('with Spotify alone, a slightly late report does not move the show backward
 import { conductor } from '../../src/server/conductor.js';
 import { keyForSpotify } from '../../src/analysis-cache.js';
 import { getLiveState } from '../../src/server/state.js';
-import { makeGrid } from '../../src/shared/beat-clock.js';
+import { makeGrid } from '../../src/shared/beat-clock.ts';
 
 const beatsAt = (bpm) => Array.from({ length: 600 }, (_, i) => i * (60 / bpm));
 

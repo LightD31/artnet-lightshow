@@ -18,13 +18,26 @@
  * Pure functions only: shared by the server engine and the browser preview.
  */
 
+/** A beat grid ready for lookups: beat times in seconds, and the median interval. */
+export interface BeatGrid {
+  beats: number[];
+  interval: number;
+}
+
+/** What gridFromAnalysis reads of an analysis document. */
+export interface GridSource {
+  beats?: unknown;
+  downbeats?: unknown;
+  meter?: unknown;
+}
+
 /** A fade breathes once every eight beats: two bars of four. */
 const FADE_BEATS = 8;
 
 // Numeric slack for float noise: 3 × (1/3) must still floor to 1.
 const EPS = 1e-9;
 
-function median(values) {
+function median(values: number[]): number | null {
   if (!values.length) return null;
   const sorted = [...values].sort((a, b) => a - b);
   const mid = sorted.length >> 1;
@@ -39,9 +52,9 @@ function median(values) {
  * median interval is what the grid extrapolates with past either end. Returns
  * null for fewer than two usable beats: one beat has no tempo.
  */
-function makeGrid(beatsSec) {
+function makeGrid(beatsSec: unknown): BeatGrid | null {
   if (!Array.isArray(beatsSec)) return null;
-  const beats = [];
+  const beats: number[] = [];
   for (const b of beatsSec) {
     const t = Number(b);
     if (!Number.isFinite(t)) continue;
@@ -49,23 +62,23 @@ function makeGrid(beatsSec) {
     beats.push(t);
   }
   if (beats.length < 2) return null;
-  const gaps = [];
+  const gaps: number[] = [];
   for (let i = 1; i < beats.length; i++) gaps.push(beats[i] - beats[i - 1]);
-  return { beats, interval: median(gaps) };
+  return { beats, interval: median(gaps) as number };
 }
 
 /**
  * The grid for an analysis document: its beats, or — for a document that only
  * kept its downbeats — beats spread evenly across each bar.
  */
-function gridFromAnalysis(analysis) {
+function gridFromAnalysis(analysis: GridSource | null | undefined): BeatGrid | null {
   if (!analysis) return null;
   const direct = makeGrid(analysis.beats);
   if (direct) return direct;
   const downbeats = makeGrid(analysis.downbeats);
   if (!downbeats) return null;
   const meter = Math.max(1, Math.round(Number(analysis.meter) || 4));
-  const beats = [];
+  const beats: number[] = [];
   const d = downbeats.beats;
   for (let i = 0; i < d.length - 1; i++) {
     for (let k = 0; k < meter; k++) beats.push(d[i] + ((d[i + 1] - d[i]) * k) / meter);
@@ -81,7 +94,9 @@ function gridFromAnalysis(analysis) {
  * before the first beat and after the last it carries on at the median
  * interval, so it never stalls or runs backwards at either end of a track.
  */
-function beatPositionAt(grid, tMs) {
+function beatPositionAt(grid: BeatGrid, tMs: number): number;
+function beatPositionAt(grid: BeatGrid | null | undefined, tMs: number): number | null;
+function beatPositionAt(grid: BeatGrid | null | undefined, tMs: number): number | null {
   if (!grid) return null;
   const t = tMs / 1000;
   const b = grid.beats;
@@ -98,7 +113,9 @@ function beatPositionAt(grid, tMs) {
 }
 
 /** The track time, in milliseconds, of a beat position. The inverse of beatPositionAt. */
-function trackMsAtBeat(grid, beatPos) {
+function trackMsAtBeat(grid: BeatGrid, beatPos: number): number;
+function trackMsAtBeat(grid: BeatGrid | null | undefined, beatPos: number): number | null;
+function trackMsAtBeat(grid: BeatGrid | null | undefined, beatPos: number): number | null {
   if (!grid) return null;
   const b = grid.beats;
   const n = b.length;
@@ -113,11 +130,13 @@ function trackMsAtBeat(grid, beatPos) {
  * nearest nine intervals, so a single misplaced beat, or a drummer's push on
  * one of them, does not make the BPM read-out jump.
  */
-function localBpm(grid, tMs) {
+function localBpm(grid: BeatGrid, tMs: number): number;
+function localBpm(grid: BeatGrid | null | undefined, tMs: number): number | null;
+function localBpm(grid: BeatGrid | null | undefined, tMs: number): number | null {
   if (!grid) return null;
   const b = grid.beats;
   const at = Math.max(0, Math.min(b.length - 2, Math.floor(beatPositionAt(grid, tMs))));
-  const gaps = [];
+  const gaps: number[] = [];
   for (let i = Math.max(0, at - 4); i <= Math.min(b.length - 2, at + 4); i++) gaps.push(b[i + 1] - b[i]);
   const gap = median(gaps) || grid.interval;
   return 60 / gap;
@@ -130,17 +149,17 @@ function localBpm(grid, tMs) {
  * frame or so after it, and a scene that fired 10 ms late must still start on
  * step 0 of that beat, not wait for the next one.
  */
-function anchorStep(beatPos, division = 1) {
+function anchorStep(beatPos: number, division = 1): number {
   return Math.round(beatPos * Math.max(1, division));
 }
 
 /** The step a pattern is on: how many steps of the grid since its anchor. */
-function stepAt(beatPos, anchor, division = 1) {
+function stepAt(beatPos: number, anchor: number, division = 1): number {
   return Math.max(0, Math.floor(beatPos * Math.max(1, division) + EPS) - anchor);
 }
 
 /** How far through its current step the beat position is, 0..1. */
-function hitPhase(beatPos, division = 1) {
+function hitPhase(beatPos: number, division = 1): number {
   const x = beatPos * Math.max(1, division);
   return Math.max(0, Math.min(1, x - Math.floor(x + EPS)));
 }
@@ -150,7 +169,7 @@ function hitPhase(beatPos, division = 1) {
  * anchor — so a fade starts from its trough when its scene starts, as it
  * always has.
  */
-function fadePhase(beatPos, anchor = 0, division = 1) {
+function fadePhase(beatPos: number, anchor = 0, division = 1): number {
   const since = beatPos - anchor / Math.max(1, division);
   const p = (since / FADE_BEATS) % 1;
   return p < 0 ? p + 1 : p;
@@ -162,7 +181,7 @@ function fadePhase(beatPos, anchor = 0, division = 1) {
  * it is driving — the same speeds as before, now counted in beats rather than
  * in seconds at a remembered BPM.
  */
-function motionAdvance(dBeats, motion = 0.3) {
+function motionAdvance(dBeats: number, motion = 0.3): number {
   const m = Math.max(0, Math.min(1, Number.isFinite(motion) ? motion : 0.3));
   return Math.max(0, dBeats) / (8 - 6 * m);
 }

@@ -11,7 +11,7 @@ import { conductor } from '../../src/server/conductor.js';
 import { applyPatch, applyOverride } from '../../src/server/patch.js';
 import { registerProfile, unregisterProfile } from '../../src/server/profiles.js';
 import { hueChannelColors, configureHue } from '../../src/server/output.js';
-import { cellDrive } from '../../src/shared/look-math.js';
+import { cellDrive } from '../../src/shared/look-math.ts';
 
 // Eight RGB cells behind a master dimmer and a strobe channel.
 const BAR = {

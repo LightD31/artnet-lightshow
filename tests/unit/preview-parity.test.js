@@ -19,7 +19,7 @@ import { startEngine, stopEngine } from '../../src/server/engine.js';
 import { conductor } from '../../src/server/conductor.js';
 import { applyPatch } from '../../src/server/patch.js';
 import { COLOR_PRESETS } from '../../src/server/presets.js';
-import { createPreviewSampler } from '../../src/shared/preview.js';
+import { createPreviewSampler } from '../../src/shared/preview.ts';
 
 const FRAME_MS = 25;
 const frames = (n = 3) => new Promise((r) => setTimeout(r, FRAME_MS * n + 20));
@@ -168,7 +168,7 @@ test('a split look rehearses as the rig plays it', () => {
 // analysed grid, with each scene anchored on the beat it was scheduled for, so
 // they agree on the step — not merely on the colours.
 
-import { makeGrid } from '../../src/shared/beat-clock.js';
+import { makeGrid } from '../../src/shared/beat-clock.ts';
 import { setFrameHook } from '../../src/server/engine.js';
 import AutoShow from '../../src/auto-show.js';
 
@@ -263,9 +263,9 @@ test('a timeline with no grid steps at its own tempo', () => {
 // is the wave the bar will play.
 
 import { registerProfile, unregisterProfile, getProfile as profileFor } from '../../src/server/profiles.js';
-import { buildRig } from '../../src/shared/rig.js';
+import { buildRig } from '../../src/shared/rig.ts';
 import { renderFrame, resizeFixtureBuffers } from '../../src/server/engine.js';
-import { blendFixture, EXPRESSION_REST } from '../../src/shared/look-math.js';
+import { blendFixture, EXPRESSION_REST } from '../../src/shared/look-math.ts';
 
 const BARE_BAR = {
   id: 'parity-bar', name: 'Parity bar', channelCount: 24, channelMap: {},

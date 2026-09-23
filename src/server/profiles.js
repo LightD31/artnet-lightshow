@@ -55,8 +55,8 @@ function universeOverflow(label, address, channelCount) {
 // Defined in src/shared/look-math.js, which is where the arithmetic that
 // applies it lives and is reachable from the browser preview too. Re-exported
 // here because this is where callers have always asked for it.
-import { UV_BOOST } from '../shared/look-math.js';
-import { countUnits } from '../shared/rig.js';
+import { UV_BOOST } from '../shared/look-math.ts';
+import { countUnits } from '../shared/rig.ts';
 
 // Ids that would collide with object-machinery keys. Rejected at registration
 // as defence in depth alongside the null-prototype registry below.

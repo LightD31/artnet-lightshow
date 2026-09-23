@@ -6,9 +6,9 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import { spatialLayout, stagePositions } from '../../src/shared/stage.js';
-import { PATTERN_FUNCS } from '../../src/shared/patterns.js';
-import { createPreviewSampler } from '../../src/shared/preview.js';
+import { spatialLayout, stagePositions } from '../../src/shared/stage.ts';
+import { PATTERN_FUNCS } from '../../src/shared/patterns.ts';
+import { createPreviewSampler } from '../../src/shared/preview.ts';
 import { COLOR_PRESETS } from '../../src/server/presets.js';
 
 const at = (x, y = 35) => ({ position: { x, y } });
@@ -103,7 +103,7 @@ test('the normalised span uses the true extremes even when a column is reordered
 });
 
 // ── Split looks ──────────────────────────────────────────────────────────────
-import { washFixtures } from '../../src/shared/stage.js';
+import { washFixtures } from '../../src/shared/stage.ts';
 
 test('a split picks its wash group from the groups the rig actually uses', () => {
   const rig = [{ group: 'front' }, { group: 'back' }, { group: 'front' }, {}, { group: 'back' }];

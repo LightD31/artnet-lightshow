@@ -29,15 +29,79 @@
 // It draws the pattern layer through the same function the rig does
 // (shared/layer.js), so it answers per light: one entry per par, one per cell
 // of an LED bar, in the rig's order (shared/rig.js).
-import { PATTERN_FUNCS } from './patterns.js';
-import { renderLayer } from './layer.js';
-import { buildRig } from './rig.js';
-import { EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture } from './look-math.js';
-import { gridFromAnalysis, beatPositionAt, anchorStep, stepAt, motionAdvance } from './beat-clock.js';
+import { PATTERN_FUNCS } from './patterns.ts';
+import { renderLayer } from './layer.ts';
+import { buildRig } from './rig.ts';
+import { EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture } from './look-math.ts';
+import { gridFromAnalysis, beatPositionAt, anchorStep, stepAt, motionAdvance } from './beat-clock.ts';
+import type { GridSource } from './beat-clock.ts';
+import type { Rig } from './rig.ts';
+import type { Colour, Expression, ShowDynamics, StageFixture } from '../types/rig.ts';
+
+/** The look as a planned timeline builds it up, patch by patch. */
+export interface PreviewLook {
+  pattern: string;
+  colorA: number;
+  colorB: number;
+  colorC: number;
+  colorD: number;
+  bpm: number;
+  beatDivision: number;
+  split?: number | null;
+  pixelMap?: string | null;
+  showDynamics?: ShowDynamics | null;
+  [key: string]: unknown;
+}
+
+/** What a patch event carries: look keys, and how it arrives. */
+export type PreviewPatch = Partial<PreviewLook> & {
+  fadeMs?: number;
+  id?: string;
+  durationMs?: number;
+};
+
+/** One event of a planned timeline. */
+export interface PreviewEvent {
+  timeMs: number;
+  action?: string;
+  id?: string;
+  durationMs?: number;
+  data?: PreviewPatch | null;
+}
+
+/** A fixture as the preview needs it: where it stands and how bright it may go. */
+export interface PreviewFixture extends StageFixture {
+  maxBrightness?: number;
+}
+
+/** The rig's lights at a moment: one colour per unit, emitter values 0–255. */
+export type PreviewSample = (
+  positionMs: number,
+  fixtures: readonly PreviewFixture[],
+  presets: readonly Colour[] | null | undefined,
+  rig?: Rig,
+) => Colour[];
+
+interface Frame {
+  timeMs: number;
+  beatPos: number;
+  look: PreviewLook;
+  anchor: number;
+  burst: { id: string | undefined; end: number } | null;
+  expression: Expression;
+  motionPhase: number;
+  fade: { from: number; start: number; ms: number } | null;
+}
+
+interface LayerEntry {
+  color: Colour;
+  dim: number;
+}
 
 const LOOK_KEYS = ['pattern', 'palette', 'split', 'pixelMap', 'colorA', 'colorB', 'colorC', 'colorD'];
+const COLOUR_KEYS = ['colorA', 'colorB', 'colorC', 'colorD'] as const;
 
-const OPENING = {
+const OPENING: PreviewLook = {
   pattern: 'solid', colorA: 0, colorB: 0, colorC: 0, colorD: 0, bpm: 120, beatDivision: 1,
 };
 
@@ -45,28 +109,28 @@ const OPENING = {
  * `grid` is the analysis the timeline was planned from — `{ beats, downbeats,
  * meter }`, as the timeline data carries it — or nothing.
  */
-function createPreviewSampler(events = [], grid = null) {
+function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSource | null = null): PreviewSample {
   const beatGrid = gridFromAnalysis(grid);
-  let look = { ...OPENING };
+  let look: PreviewLook = { ...OPENING };
   let anchor = 0;
-  let burst = null;
+  let burst: Frame['burst'] = null;
   // Carried across the walk so each frame records where the continuous channels
   // had got to by the time it fired. The blend below is a first-order lag, and
   // that is exact over any step while the target holds — so one step per event
   // lands on the same value the engine reaches in forty steps a second.
-  let expression = { ...EXPRESSION_REST };
+  let expression: Expression = { ...EXPRESSION_REST };
   let motionPhase = 0;
   // The crossfade in progress, as the engine keeps it: which frame was on
   // stage when it began, and when. A new look without a fade cuts it short.
-  let fade = null;
+  let fade: Frame['fade'] = null;
   let lastMs = events.length && Number.isFinite(events[0].timeMs) ? events[0].timeMs : 0;
   // Without a grid, the beat count the free clock would have reached: each
   // stretch between events at the tempo in force across it.
   let freeBeats = 0;
 
-  const frames = [];
+  const frames: Frame[] = [];
   /** Where the music is at `timeMs`, in beats, within frame `f` (or the walk so far). */
-  const beatAt = (timeMs, f) => (beatGrid
+  const beatAt = (timeMs: number, f: Pick<Frame, 'timeMs' | 'beatPos' | 'look'>): number => (beatGrid
     ? beatPositionAt(beatGrid, timeMs)
     : f.beatPos + ((timeMs - f.timeMs) / 60000) * Math.max(20, f.look.bpm || 120));
 
@@ -81,7 +145,7 @@ function createPreviewSampler(events = [], grid = null) {
     expression = blendExpression(expression, look.showDynamics || null, dt);
     lastMs = event.timeMs;
 
-    const patch = event.data || {};
+    const patch: PreviewPatch = event.data || {};
     if (event.action === 'patch') {
       const dynamics = patch.showDynamics && { ...look.showDynamics, ...patch.showDynamics };
       look = { ...look, ...patch };
@@ -92,7 +156,7 @@ function createPreviewSampler(events = [], grid = null) {
         anchor = anchorStep(beatPos, look.beatDivision || 1);
       }
       if ('energyOverride' in patch) burst = null;
-      if (patch.fadeMs > 0) fade = { from: frames.length - 1, start: event.timeMs, ms: patch.fadeMs };
+      if (patch.fadeMs && patch.fadeMs > 0) fade = { from: frames.length - 1, start: event.timeMs, ms: patch.fadeMs };
       else if (LOOK_KEYS.some((k) => patch[k] !== undefined)) fade = null;
     } else if (event.action === 'energy') {
       burst = { id: patch.id || event.id, end: event.timeMs + (patch.durationMs || event.durationMs || 200) };
@@ -106,7 +170,12 @@ function createPreviewSampler(events = [], grid = null) {
    * computes before a burst, the music's level and the trims go on top. One
    * entry per light of `rig`.
    */
-  function patternLayer(index, positionMs, rig, presets) {
+  function patternLayer(index: number, positionMs: number, rig: Rig, presets: readonly Colour[]): {
+    layer: LayerEntry[];
+    colors: Colour[];
+    expr: Expression;
+    dyn: ShowDynamics | null;
+  } {
     const frame = frames[index];
     const s = frame.look;
     const dyn = s.showDynamics || null;
@@ -118,8 +187,8 @@ function createPreviewSampler(events = [], grid = null) {
     const step = stepAt(beatPos, frame.anchor, division);
     const phase = (frame.motionPhase + motionAdvance(beatPos - frame.beatPos, expr.motion)) % 1;
 
-    const colors = ['colorA', 'colorB', 'colorC', 'colorD'].map((key) => presets[s[key]] || presets[0]);
-    const layer = rig.units.map(() => ({ color: colors[0], dim: 0 }));
+    const colors = COLOUR_KEYS.map((key) => presets[s[key]] || presets[0]);
+    const layer: LayerEntry[] = rig.units.map(() => ({ color: colors[0], dim: 0 }));
     // The same layer the engine draws, so a chase rehearsed here travels across
     // the plot exactly as it will across the room — in stage order, around a
     // split look's wash, and along the cells of every bar.

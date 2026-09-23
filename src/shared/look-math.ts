@@ -14,7 +14,21 @@
  * browser bundle it.
  */
 
-import { colourMixer } from './color.js';
+import { colourMixer } from './color.ts';
+import type { Colour, EmitterLevels, Expression, FullColour, ShowDynamics } from '../types/rig.ts';
+
+/** What an energy burst forces on every fixture. */
+export interface EnergyLook {
+  col: Colour;
+  dim: number;
+  strobe: number;
+}
+
+/** A light as the pattern layer holds it: a colour, a level and a strobe value. */
+export interface UnitLight extends Colour {
+  dim: number;
+  strobe: number;
+}
 
 // A UV die reads far dimmer to the eye than the same number on a primary, so it
 // is driven harder to sit level with the rest of the mix. Defined here rather
@@ -25,7 +39,7 @@ const UV_BOOST = 1.8;
 // Where the expression channel sits when no show is driving it: full level,
 // everything else mid. Frozen because it is the value the engine falls back to
 // by assignment, and a mutated rest state would be a very confusing bug.
-const EXPRESSION_REST = Object.freeze({
+const EXPRESSION_REST: Readonly<Expression> = Object.freeze({
   level: 1, bass: .5, vocal: .5, air: .3, width: .5, motion: .3, decay: .25,
 });
 
@@ -37,8 +51,8 @@ const EXPRESSION_REST = Object.freeze({
  * still reflects what the music is doing instead of being a flash with a lower
  * number on it.
  */
-function resolveEnergyOverride(id, colA, level = 1) {
-  const a = colA || { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 };
+function resolveEnergyOverride(id: string | null | undefined, colA: Colour | null | undefined, level = 1): EnergyLook | null {
+  const a: Colour = colA || { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 };
   switch (id) {
     // Cold: no amber, so it reads as a hard white flash rather than a warm one.
     case 'white-strobe': return { col: { r: 255, g: 255, b: 255, w: 255, a: 0, uv: 0 }, dim: 255, strobe: 255 };
@@ -62,7 +76,7 @@ function resolveEnergyOverride(id, colA, level = 1) {
 }
 
 /** `fade`'s sine, 25..255. `phase` is 0..1 across its eight beats (beat-clock.js). */
-function fadeBrightness(phase) {
+function fadeBrightness(phase: number): number {
   return Math.round(((Math.sin(phase * Math.PI * 2 - Math.PI / 2) + 1) / 2) * 230 + 25);
 }
 
@@ -74,7 +88,7 @@ function fadeBrightness(phase) {
  * wrap turns a decay into a sawtooth that re-triggers on its own, which is what
  * the preview used to do and the rig never did.
  */
-function hitBrightness(phase) {
+function hitBrightness(phase: number): number {
   const p = Math.max(0, Math.min(1, phase));
   return Math.round(35 + Math.pow(1 - p, 1.8) * 220);
 }
@@ -86,12 +100,13 @@ function hitBrightness(phase) {
  * running value assigns the result. Silence closes immediately even for
  * long-decay music — a room that is supposed to be dark cannot fade there.
  */
-function blendExpression(current, target, dt) {
+function blendExpression(current: Expression, target: ShowDynamics | null | undefined, dt: number): Expression {
   if (!target) return { ...EXPRESSION_REST };
-  const next = { ...current };
+  const next: Expression = { ...current };
   const blend = 1 - Math.exp(-dt / (.12 + (target.decay || 0) * .45));
-  for (const key of Object.keys(next)) {
-    if (target[key] != null) next[key] += (target[key] - next[key]) * blend;
+  for (const key of Object.keys(next) as (keyof Expression)[]) {
+    const goal = target[key];
+    if (goal != null) next[key] += (goal - next[key]) * blend;
   }
   if (target.level === 0) next.level = 0;
   return next;
@@ -104,7 +119,7 @@ function blendExpression(current, target, dt) {
  * and the UV boost. Both callers take the whole object: the engine writes the
  * members its profile's channel map names, and the preview mixes them to screen.
  */
-function emitterValues(col, scale) {
+function emitterValues(col: Colour, scale: number): EmitterLevels {
   return {
     r: Math.round((col.r || 0) * scale),
     g: Math.round((col.g || 0) * scale),
@@ -135,7 +150,7 @@ function emitterValues(col, scale) {
  * @returns { cellDim, scale } — the cell dimmer's value, and the colour scale
  *          for emitterValues. The fixture dimmer itself is round(top × ms).
  */
-function cellDrive(dim, top, ms, fixtureDimmer, cellDimmer) {
+function cellDrive(dim: number, top: number, ms: number, fixtureDimmer: boolean, cellDimmer: boolean): { cellDim: number; scale: number } {
   const scale = ms * dim / 255;
   if (!fixtureDimmer) return { cellDim: Math.round(dim * ms), scale };
   if (top <= 0) return { cellDim: 0, scale: 0 };
@@ -154,7 +169,7 @@ function cellDrive(dim, top, ms, fixtureDimmer, cellDimmer) {
  * the strobe channel is the destination's from the first frame — a strobe
  * rate has no in-between worth showing.
  */
-function blendFixture(from, to, t) {
+function blendFixture(from: UnitLight, to: UnitLight, t: number): UnitLight {
   if (t >= 1) return to;
   const col = blendColour(from, to, t);
   return { ...col, dim: Math.round(from.dim + (to.dim - from.dim) * t), strobe: to.strobe };
@@ -166,9 +181,9 @@ function blendFixture(from, to, t) {
 // part of a frame, so the result is kept for the rest of the frame. Exact: the
 // key is everything the blend reads.
 let blendMemoT = NaN;
-const blendMemo = new Map();
+const blendMemo = new Map<string, FullColour>();
 
-function blendColour(from, to, t) {
+function blendColour(from: Colour, to: Colour, t: number): FullColour {
   if (t !== blendMemoT || blendMemo.size > 4096) {
     blendMemo.clear();
     blendMemoT = t;

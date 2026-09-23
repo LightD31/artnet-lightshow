@@ -1,7 +1,7 @@
 import { state, getFixture, setDefaultUniverse } from './state.js';
 import { beginFade } from './engine.js';
 import { conductor } from './conductor.js';
-import { anchorStep } from '../shared/beat-clock.js';
+import { anchorStep } from '../shared/beat-clock.ts';
 import { patchSchema, overrideSchema, validate } from './validation.js';
 import { STROBE_FUNCTIONS, ENERGY_EFFECTS } from './presets.js';
 import { paletteSlots } from './palettes.js';

@@ -9,7 +9,7 @@
  */
 
 import { z } from 'zod';
-import { MAX_CELLS_PER_FIXTURE } from '../shared/rig.js';
+import { MAX_CELLS_PER_FIXTURE } from '../shared/rig.ts';
 import { profileSchema, validate } from './validation.js';
 
 // One letter per channel of a cell, in the order the manual lists them.

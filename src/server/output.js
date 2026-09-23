@@ -1,6 +1,6 @@
 import { state, universeOf } from './state.js';
 import { getProfile } from './profiles.js';
-import { cellsOf, EMITTERS } from '../shared/rig.js';
+import { cellsOf, EMITTERS } from '../shared/rig.ts';
 import * as universes from './universes.js';
 import { createTransmitter, sacnUniverseFor as mapSacnUniverse } from './transmit.js';
 import { createDiscovery, interfaces, isBroadcastTarget, isLoopbackTarget } from './artnet-nodes.js';

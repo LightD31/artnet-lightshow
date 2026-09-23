@@ -26,7 +26,7 @@
 
 import { createRequire } from 'node:module';
 
-import { makeGrid, beatPositionAt } from './shared/beat-clock.js';
+import { makeGrid, beatPositionAt } from './shared/beat-clock.ts';
 
 const require = createRequire(import.meta.url);
 

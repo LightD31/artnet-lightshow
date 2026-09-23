@@ -11,7 +11,7 @@
 
 import { state } from './state.js';
 import { getProfile, profilesRevision } from './profiles.js';
-import { buildRig, rigSignature } from '../shared/rig.js';
+import { buildRig, rigSignature } from '../shared/rig.ts';
 
 let cached = null;
 let cachedKey = '';

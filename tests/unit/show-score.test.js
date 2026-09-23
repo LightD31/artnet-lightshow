@@ -5,7 +5,7 @@ import { renderIntents } from '../../src/show/render.js';
 import { PATTERNS, COLOR_PRESETS } from '../../src/server/presets.js';
 import { patchSchema } from '../../src/server/validation.js';
 import { makeScore, semantics } from '../../src/show/score.js';
-import { PATTERN_FUNCS } from '../../src/shared/patterns.js';
+import { PATTERN_FUNCS } from '../../src/shared/patterns.ts';
 const cv = v => [{ t: 0, v }, { t: 40, v }];
 function track(extra = {}) {
   return { duration: 40, bpm: 120, meter: 4, key: 'C', scale: 'major',

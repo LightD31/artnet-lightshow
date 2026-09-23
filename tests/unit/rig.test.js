@@ -3,8 +3,8 @@
 
 import test from 'node:test';
 import assert from 'node:assert';
-import { buildRig, lineOf } from '../../src/shared/rig.js';
-import { spatialLayout } from '../../src/shared/stage.js';
+import { buildRig, lineOf } from '../../src/shared/rig.ts';
+import { spatialLayout } from '../../src/shared/stage.ts';
 
 const bar = (n) => ({ cells: Array.from({ length: n }, (_, i) => ({ channelMap: { red: i * 3, green: i * 3 + 1, blue: i * 3 + 2 } })) });
 const profiles = { bar4: bar(4), bar8: bar(8) };

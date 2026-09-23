@@ -14,9 +14,39 @@
  * write keep whatever the caller already holds for them.
  */
 
-import { PATTERN_FUNCS, CELL_PATTERNS } from './patterns.js';
-import { fadeBrightness, hitBrightness } from './look-math.js';
-import { fadePhase, hitPhase } from './beat-clock.js';
+import { PATTERN_FUNCS, CELL_PATTERNS } from './patterns.ts';
+import { fadeBrightness, hitBrightness } from './look-math.ts';
+import { fadePhase, hitPhase } from './beat-clock.ts';
+import type { PatternContext } from './patterns.ts';
+import type { Layout, Rig } from './rig.ts';
+import type { Colour, Expression } from '../types/rig.ts';
+
+/** What the look asks the pattern layer for. */
+export interface LayerLook {
+  pattern: string;
+  /** Colours A–D, resolved. */
+  colors: readonly Colour[];
+  /** The split look's wash seed, or nothing for an unsplit look. */
+  split?: number | null;
+  pixelMap?: string | null;
+}
+
+/** Where the music is, for the pattern layer. */
+export interface LayerClock {
+  beatPos: number;
+  step: number;
+  anchor: number;
+  division: number;
+  phase: number;
+  expression: Readonly<Expression>;
+  /** Is a show feeding the expression channel. */
+  dynamicsOn: boolean;
+  fixtureCount: number;
+  twinkle: number[];
+}
+
+/** Receives each unit's value. */
+export type LayerSet = (unit: number, colour: Colour, dim: number, strobe: number) => void;
 
 /**
  * @param rig    from shared/rig.js buildRig
@@ -27,7 +57,7 @@ import { fadePhase, hitPhase } from './beat-clock.js';
  * @param opts   skipPattern: leave the pattern's units as they are (a random
  *               pattern between re-rolls) and paint only the wash
  */
-function renderLayer(rig, look, clock, set, { skipPattern = false } = {}) {
+function renderLayer(rig: Rig, look: LayerLook, clock: LayerClock, set: LayerSet, { skipPattern = false } = {}): void {
   const { pattern, colors } = look;
   const layout = rig.layout(look.split, look.pixelMap);
   const unitTotal = rig.units.length;
@@ -52,10 +82,10 @@ function renderLayer(rig, look, clock, set, { skipPattern = false } = {}) {
   }
 }
 
-function patternContext(rig, layout, look, clock, set) {
+function patternContext(rig: Rig, layout: Layout, look: LayerLook, clock: LayerClock, set: LayerSet): PatternContext {
   const { pattern, colors } = look;
   const division = Math.max(1, clock.division || 1);
-  const ctx = {
+  const common = {
     colors,
     step: clock.step,
     stepPos: Math.max(0, clock.beatPos * division - clock.anchor),
@@ -73,22 +103,26 @@ function patternContext(rig, layout, look, clock, set) {
 
   if (CELL_PATTERNS.has(pattern)) {
     const { list, xs, ys } = layout.units;
-    ctx.fixtureCount = list.length;
-    ctx.xs = xs;
-    ctx.ys = ys;
-    ctx.write = (k, colour, dim, strobe) => set(list[k], colour, dim, strobe);
-  } else {
-    const { members, order, xs } = layout.fixtures;
-    ctx.fixtureCount = members.length;
-    ctx.xs = xs;
-    ctx.ys = null;
-    // A bar is one slot of a chase: every cell takes the slot's colour.
-    ctx.write = (k, colour, dim, strobe) => {
-      const { start, count } = rig.ranges[members[order[k]]];
-      for (let u = start; u < start + count; u++) set(u, colour, dim, strobe);
+    return {
+      ...common,
+      fixtureCount: list.length,
+      xs,
+      ys,
+      write: (k, colour, dim, strobe) => set(list[k], colour, dim, strobe),
     };
   }
-  return ctx;
+  const { members, order, xs } = layout.fixtures;
+  return {
+    ...common,
+    fixtureCount: members.length,
+    xs,
+    ys: null,
+    // A bar is one slot of a chase: every cell takes the slot's colour.
+    write: (k, colour, dim, strobe) => {
+      const { start, count } = rig.ranges[members[order[k]]];
+      for (let u = start; u < start + count; u++) set(u, colour, dim, strobe);
+    },
+  };
 }
 
 export {

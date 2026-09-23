@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { Conductor } from '../../src/server/conductor.js';
-import { makeGrid } from '../../src/shared/beat-clock.js';
+import { makeGrid } from '../../src/shared/beat-clock.ts';
 
 const close = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
 

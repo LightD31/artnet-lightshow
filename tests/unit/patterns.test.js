@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { PATTERN_FUNCS } from '../../src/shared/patterns.js';
+import { PATTERN_FUNCS } from '../../src/shared/patterns.ts';
 import { PATTERNS, COLOR_PRESETS } from '../../src/server/presets.js';
 
 test('every advertised pattern has an implementation, and vice versa', () => {
@@ -47,7 +47,7 @@ test('each pattern writes valid colours for every fixture count it is offered at
 // than a loss if a two-colour palette really does drive them with two colours
 // and a four-colour one with four.
 
-import { paletteOf } from '../../src/shared/patterns.js';
+import { paletteOf } from '../../src/shared/patterns.ts';
 
 /** The four slots as a palette of `size` wraps them: a duo is A/B/A/B. */
 function slotsOf(size) {

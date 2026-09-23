@@ -4,7 +4,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert';
-import { PATTERN_FUNCS, CELL_PATTERNS, gradientAt } from '../../src/shared/patterns.js';
+import { PATTERN_FUNCS, CELL_PATTERNS, gradientAt } from '../../src/shared/patterns.ts';
 import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.js';
 
 const RED = COLOR_PRESETS[0];

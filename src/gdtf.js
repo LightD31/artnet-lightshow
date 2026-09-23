@@ -1,6 +1,6 @@
 import JSZip from 'jszip';
 import { XMLParser } from 'fast-xml-parser';
-import { EMITTERS, MAX_CELLS_PER_FIXTURE } from './shared/rig.js';
+import { EMITTERS, MAX_CELLS_PER_FIXTURE } from './shared/rig.ts';
 
 // Upper bound on the decompressed description.xml. Real fixture definitions are
 // a few hundred KB at most; anything past this is a zip bomb, not a fixture.

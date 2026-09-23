@@ -6,7 +6,7 @@ import * as universes from '../../src/server/universes.js';
 import { startEngine, stopEngine, resizeFixtureBuffers, startSyncTest } from '../../src/server/engine.js';
 import { conductor } from '../../src/server/conductor.js';
 import { applyPatch, applyOverride, setFixtureMaxBrightness } from '../../src/server/patch.js';
-import { PATTERN_FUNCS } from '../../src/shared/patterns.js';
+import { PATTERN_FUNCS } from '../../src/shared/patterns.ts';
 
 // renderDmx isn't exported — it runs on the engine's own 25 ms interval, so the
 // tests drive it by starting the engine and waiting for a frame.
