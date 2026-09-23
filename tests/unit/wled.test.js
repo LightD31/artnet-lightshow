@@ -81,7 +81,7 @@ test('what a WLED says it is', () => {
 test('its profile: a strip of its LEDs, a panel when it is one', () => {
   const strip = wledProfile(readInfo(INFO, 'x'), '10.0.0.50');
   assert.strictEqual(strip.id, 'wled-a1b2c3d4e5f6');
-  assert.strictEqual(strip.name, 'WLED Porch');
+  assert.strictEqual(strip.name, 'Porch');
   assert.strictEqual(strip.modeName, '60 pixels, RGB');
   assert.strictEqual(strip.channelCount, 180);
   assert.deepStrictEqual(strip.cells[59].channelMap, { red: 177, green: 178, blue: 179 });
@@ -124,6 +124,13 @@ test('asking a WLED over HTTP, and what goes wrong', async () => {
     const slow = await wledInfo('127.0.0.1', { port, fetchImpl: async () => { throw new DOMException('timed out', 'TimeoutError'); } })
       .catch((err) => err);
     assert.strictEqual(slow.status, 504);
+    const endless = await wledInfo('127.0.0.1', {
+      port,
+      fetchImpl: async () => new Response(new ReadableStream({
+        pull(controller) { controller.enqueue(new Uint8Array(64 * 1024).fill(32)); },
+      })),
+    }).catch((err) => err);
+    assert.match(endless.message, /sent too much to be a WLED's info/, 'a body with no end is cut off');
   } finally {
     server.close();
   }

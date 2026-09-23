@@ -256,8 +256,10 @@ Every phase is its own PR, keeps `npm run check` and the Python suite green, and
 >   - **Temporal dithering:** at 44 Hz it flickers visibly at the low levels it is meant to smooth.
 >   - **Send-on-change with keep-alive:** nodes that time out would blink, and unicast routing already takes the load
 >     off the network.
-> - **Still to do (2d):** WLED/DDP, strips spanning universes, and matrix geometry (a grid imports today laid along
->   one line).
+> - **2d:** strips longer than a universe run on into the next ones (whole pixels to each, from channel 1); panels
+>   (profiles with a grid, drawn as rectangles on the stage plot, sampled in two dimensions); WLED found over mDNS,
+>   added in a click from its `/json/info`, and sent DDP; caps raised against a measured budget to 4,096 cells,
+>   1,024 to a fixture and 64 universes.
 - **TypeScript**, starting with `src/shared`, `src/show` and `src/server`.
 - **Analysis-document types** generated from a Python JSON Schema, which replaces the dead `schema.py`.
 - **`worker_threads` engine** owning the Conductor, rendering and outputs, at 44 Hz with a drift-corrected timer.

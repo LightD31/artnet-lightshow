@@ -169,11 +169,7 @@ async function info(host: string, { fetchImpl = fetch, port }: { fetchImpl?: typ
       signal: AbortSignal.timeout(INFO_TIMEOUT_MS), redirect: 'error', headers: { accept: 'application/json' },
     });
     if (!res.ok) throw new HttpError(502, `${host} answered ${res.status}: is it a WLED?`);
-    const declared = Number(res.headers.get('content-length'));
-    if (declared > INFO_MAX_BYTES) throw new HttpError(502, `${host} sent too much to be a WLED's info`);
-    const text = await res.text();
-    if (text.length > INFO_MAX_BYTES) throw new HttpError(502, `${host} sent too much to be a WLED's info`);
-    raw = JSON.parse(text);
+    raw = JSON.parse(await readCapped(res, host));
   } catch (err) {
     if (err instanceof HttpError) throw err;
     if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
@@ -184,6 +180,27 @@ async function info(host: string, { fetchImpl = fetch, port }: { fetchImpl?: typ
     throw new HttpError(502, `Cannot reach ${host} (${messageOf(err)}${cause})`);
   }
   return readInfo(raw, host);
+}
+
+/** A response body as text, refused past INFO_MAX_BYTES however it is sent. */
+async function readCapped(res: Response, host: string): Promise<string> {
+  const tooMuch = () => new HttpError(502, `${host} sent too much to be a WLED's info`);
+  if (Number(res.headers.get('content-length')) > INFO_MAX_BYTES) throw tooMuch();
+  if (!res.body) return '';
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > INFO_MAX_BYTES) {
+      await reader.cancel().catch(() => {});
+      throw tooMuch();
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString('utf8');
 }
 
 /** The fields a profile needs, from a WLED's /json/info, checked. */
@@ -225,7 +242,7 @@ function wledProfile(wled: WledInfo, host: string): ProfileInput {
   const kind = wled.rgbw ? 'RGBW' : 'RGB';
   const profile = {
     id,
-    name: `WLED ${wled.name}`.slice(0, 128),
+    name: wled.name.slice(0, 128),
     manufacturer: 'WLED',
     modeName: `${wled.leds} ${wled.leds === 1 ? 'pixel' : 'pixels'}, ${kind}${grid ? `, ${grid.columns} × ${grid.rows}` : ''}`,
     channelCount: wled.leds * width,

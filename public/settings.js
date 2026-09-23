@@ -227,7 +227,7 @@ async function findWled() {
     else if (!device.error) {
       const add = el('button', 'btn btn-small', 'Add to patch');
       add.type = 'button';
-      add.addEventListener('click', () => addWled(device.host));
+      add.addEventListener('click', () => addWled(device.host, cell));
       cell.appendChild(add);
     }
     tr.appendChild(cell);
@@ -236,13 +236,15 @@ async function findWled() {
   box.appendChild(table);
 }
 
-async function addWled(host) {
+/** Add a WLED; `cell`, from the list of those found, then says it is patched. */
+async function addWled(host, cell) {
   const status = document.getElementById('wled-status');
   status.textContent = `Asking ${host}…`;
   const data = await apiJson('/api/wled/add', jsonBody('POST', { host }));
   if (!data.ok) { status.textContent = data.error; return; }
   const where = data.fixture.universe;
   status.textContent = `Added "${data.fixture.label}": ${data.profile.modeName}, from universe ${where}.`;
+  if (cell) cell.replaceChildren(el('span', 'setting-help', `Patched as "${data.fixture.label}"`));
   Toast.push({ message: `Added ${data.fixture.label} to the patch` });
 }
 
