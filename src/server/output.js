@@ -5,6 +5,9 @@ const { getProfile } = require('./profiles');
 const { cellsOf, EMITTERS } = require('../shared/rig');
 const universes = require('./universes');
 const { createTransmitter, sacnUniverseFor: mapSacnUniverse } = require('./transmit');
+const {
+  createDiscovery, interfaces, isBroadcastTarget, isLoopbackTarget,
+} = require('./artnet-nodes');
 const hue = require('./hue');
 
 /**
@@ -67,13 +70,36 @@ function getHueConfig() {
 const transmitter = createTransmitter();
 
 /**
+ * Whether to ask the network which nodes are there: Art-Net on, discovery on,
+ * and a target that is a broadcast rather than a node or this machine (see
+ * artnet-nodes.js).
+ */
+function artnetDiscoveryWanted() {
+  const a = state.artnet;
+  return a.enabled !== false && a.discovery !== false && isBroadcastTarget(a.host) && !isLoopbackTarget(a.host);
+}
+
+const artnetDiscovery = createDiscovery({
+  shouldPoll: artnetDiscoveryWanted,
+  // Every interface's own broadcast, and the target itself (2.255.255.255 on a
+  // machine with no address on that network still reaches a node routed there).
+  targets: () => [...interfaces().map((i) => i.broadcast), state.artnet.host],
+});
+
+/**
  * Everything the transmitter needs to know about the outputs, read once: the
  * Art-Net target, the sACN settings, and how long to hold both back for Hue.
  * The engine's worker thread gets this with every frame it is sent.
  */
 function transmitConfig() {
   return {
-    artnet: { enabled: state.artnet.enabled, host: state.artnet.host, port: state.artnet.port },
+    artnet: {
+      enabled: state.artnet.enabled,
+      host: state.artnet.host,
+      port: state.artnet.port,
+      sync: !!state.artnet.sync,
+      routes: artnetDiscovery.routes(),
+    },
     sacn: { ...sacn },
     delayMs: hueLatencyMs > 0 && hue.getConfig().enabled ? hueLatencyMs : 0,
   };
@@ -246,12 +272,19 @@ function sendUniverse(universe, frame, { immediate = false } = {}) {
   return transmitter.send(universe, frame, transmitConfig(), { immediate });
 }
 
+/** After the last universe of a frame: the ArtSync, when it is on. */
+function endFrame() {
+  transmitter.endFrame(transmitConfig());
+}
+
 module.exports = {
   configureSacn,
   getSacnConfig,
   sacnUniverseFor,
   sendUniverse,
+  endFrame,
   transmitConfig,
+  artnetDiscovery,
   configureHue,
   getHueConfig,
   onHueApplicationId,

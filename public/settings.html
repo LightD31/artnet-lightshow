@@ -72,7 +72,29 @@
         <small class="setting-help">The rig's default universe: it seeds new fixtures, and fixtures
           sitting on it follow when you change it.</small>
       </div>
+      <div class="field">
+        <label>Find Nodes</label>
+        <input type="checkbox" id="artnet-discovery" checked />
+        <small class="setting-help">While the Node IP is a broadcast address (ending in .255), ask the
+          network which nodes are there and send each one its universes directly. Universes no node
+          claims still go to the broadcast address.</small>
+      </div>
+      <div class="field">
+        <label>ArtSync</label>
+        <input type="checkbox" id="artnet-sync" />
+        <small class="setting-help">Tell the nodes to change every universe at the same instant, so a
+          wall of LED bars moves as one. Only for nodes that support it: a node that has seen ArtSync
+          waits for it.</small>
+      </div>
       <button class="btn active" id="artnet-save">Apply</button>
+      <div class="field">
+        <label>Nodes</label>
+        <div class="setting-control">
+          <button class="btn btn-small" type="button" id="artnet-scan">Find Nodes Now</button>
+          <small class="setting-help" id="artnet-nodes-status"></small>
+        </div>
+      </div>
+      <div id="artnet-nodes"></div>
     </div>
   </section>
 

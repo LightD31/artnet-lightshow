@@ -92,7 +92,7 @@ socket.on('state', (s) => {
 
 // ── ArtNet settings ──────────────────────────────────────────────────────────
 
-const ARTNET_FIELDS = ['artnet-enabled', 'artnet-host', 'artnet-port', 'artnet-universe'];
+const ARTNET_FIELDS = ['artnet-enabled', 'artnet-host', 'artnet-port', 'artnet-universe', 'artnet-discovery', 'artnet-sync'];
 
 ARTNET_FIELDS.forEach(id => {
   const node = document.getElementById(id);
@@ -111,6 +111,10 @@ function syncArtnetFields(s) {
   if (!h.dataset.dirty) h.value = s.artnet.host;
   if (!p.dataset.dirty) p.value = s.artnet.port;
   if (!u.dataset.dirty) u.value = s.artnet.universe;
+  const d = document.getElementById('artnet-discovery');
+  const y = document.getElementById('artnet-sync');
+  if (!d.dataset.dirty) d.checked = s.artnet.discovery !== false;
+  if (!y.dataset.dirty) y.checked = !!s.artnet.sync;
 }
 
 document.getElementById('artnet-save').addEventListener('click', () => {
@@ -120,12 +124,76 @@ document.getElementById('artnet-save').addEventListener('click', () => {
       host: document.getElementById('artnet-host').value,
       port: parseInt(document.getElementById('artnet-port').value),
       universe: parseInt(document.getElementById('artnet-universe').value),
+      discovery: document.getElementById('artnet-discovery').checked,
+      sync: document.getElementById('artnet-sync').checked,
     }
   });
   ARTNET_FIELDS.forEach(id => {
     delete document.getElementById(id).dataset.dirty;
   });
+  // The node list depends on the target: a broadcast is routed, one node is not.
+  setTimeout(() => loadArtnetNodes(false), 500);
 });
+
+// ── Art-Net nodes ───────────────────────────────────────────────────────────
+// Who answered a poll, and which universes each outputs. "Send to this node"
+// puts its address in the Node IP field, for a rig that should talk to one
+// node and nothing else.
+
+async function loadArtnetNodes(scan) {
+  const status = document.getElementById('artnet-nodes-status');
+  const box = document.getElementById('artnet-nodes');
+  if (!status || !box) return;
+  if (scan) status.textContent = 'Asking the network…';
+  let data;
+  try {
+    const res = await fetch(`/api/artnet/nodes${scan ? '?scan=1' : ''}`);
+    data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'request failed');
+  } catch (err) {
+    status.textContent = `Could not ask: ${err.message}`;
+    return;
+  }
+  const nodes = data.nodes || [];
+  status.textContent = nodes.length
+    ? `${nodes.length} node${nodes.length === 1 ? '' : 's'} answered`
+      + (data.routing ? ' — each is sent its universes directly.' : '.')
+    : (data.error
+      ? `No answer — ${data.error}`
+      : (data.routing || scan
+        ? 'No node has answered. Many never reply to polls; if the rig is dark, check the Node IP and the subnet.'
+        : 'Press Find Nodes Now to ask the network.'));
+  box.replaceChildren();
+  if (!nodes.length) return;
+
+  const table = el('table', 'patch-table');
+  const head = el('tr');
+  for (const h of ['Node', 'Address', 'Universes', '']) head.appendChild(el('th', null, h));
+  table.appendChild(head);
+  for (const node of nodes) {
+    const tr = el('tr');
+    tr.appendChild(el('td', null, node.shortName || node.longName || 'unnamed'));
+    tr.appendChild(el('td', null, node.address));
+    tr.appendChild(el('td', null, node.outputs && node.outputs.length ? node.outputs.join(', ') : '—'));
+    const cell = el('td');
+    const use = el('button', 'btn btn-small', 'Send to this node');
+    use.type = 'button';
+    use.title = 'Put this address in Node IP; press Apply to use it';
+    use.addEventListener('click', () => {
+      const host = document.getElementById('artnet-host');
+      host.value = node.address;
+      host.dataset.dirty = 'true';
+      host.focus();
+    });
+    cell.appendChild(use);
+    tr.appendChild(cell);
+    table.appendChild(tr);
+  }
+  box.appendChild(table);
+}
+
+document.getElementById('artnet-scan').addEventListener('click', () => loadArtnetNodes(true));
+loadArtnetNodes(false);
 
 // ── MIDI settings ────────────────────────────────────────────────────────────
 

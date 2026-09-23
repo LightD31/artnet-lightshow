@@ -38,6 +38,8 @@ const {
   fixtureRestoreSchema, dmxUniverse, huePairSchema, validate,
 } = require('./validation');
 const output = require('./output');
+const { discoverNodes } = require('./artnet');
+const { interfaces } = require('./artnet-nodes');
 const { discoverBridges, pair: pairBridge, listEntertainmentConfigs } = require('./hue');
 const { settings, RESTART_PATHS, CONFIG_FILE } = require('./settings');
 const { connectMidi } = require('./midi-connect');
@@ -1143,6 +1145,45 @@ function attachRoutes(app, deps) {
   app.post('/api/hue/sync-test', (_req, res) => {
     res.json({ ok: true, seconds: startSyncTest(10) });
   });
+
+  /**
+   * The Art-Net nodes on the network. While the rig broadcasts, the server
+   * keeps this list itself and sends each node its universes directly; `scan`
+   * asks the network now — a fresh poll when the list is being kept, a one-off
+   * on every interface when it is not (a rig sending to one node already).
+   */
+  app.get('/api/artnet/nodes', asyncHandler(async (req, res) => {
+    const discovery = output.artnetDiscovery;
+    const scan = req.query.scan === '1' || req.query.scan === 'true';
+    if (scan && discovery.active) {
+      discovery.pollNow();
+      await new Promise((r) => setTimeout(r, 1200));
+    }
+    const status = discovery.status();
+    let { nodes, error } = status;
+    if (scan && !discovery.active) {
+      const hosts = interfaces().map((i) => i.broadcast);
+      if (hosts.length) {
+        const found = await discoverNodes({ hosts, port: 6454, timeoutMs: 1200 });
+        nodes = found.nodes;
+        error = found.error;
+      }
+    }
+    res.json({
+      ok: true,
+      // Whether the server is keeping the list and routing by it, or not.
+      routing: status.active,
+      error,
+      nodes: nodes.map((n) => ({
+        address: n.from || n.address,
+        shortName: n.shortName,
+        longName: n.longName,
+        outputs: n.outputs,
+        mac: n.mac,
+        seenAgoMs: n.seenAt ? Math.max(0, Date.now() - n.seenAt) : 0,
+      })),
+    });
+  }));
 
   app.get('/api/hue/discover', asyncHandler(async (_req, res) => {
     const { bridges, error } = await discoverBridges();

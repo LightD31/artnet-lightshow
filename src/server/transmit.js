@@ -1,6 +1,6 @@
 'use strict';
 
-const { sendArtDmx } = require('./artnet');
+const { sendArtDmx, sendArtSync } = require('./artnet');
 const { sendSacn, MIN_UNIVERSE, MAX_UNIVERSE } = require('./sacn');
 
 /**
@@ -28,11 +28,17 @@ function sacnUniverseFor(universe, offset) {
   return mapped;
 }
 
+const DEFAULT_WIRES = { artnet: sendArtDmx, artnetSync: sendArtSync, sacn: sendSacn };
+
 /**
  * `wires` stands in for the sockets in tests: `{ artnet(target, frame),
- * sacn(target, frame) }`, each returning whether the frame left.
+ * artnetSync(target), sacn(target, frame) }`, each returning whether anything
+ * left.
  */
-function createTransmitter({ wires = { artnet: sendArtDmx, sacn: sendSacn }, now = () => performance.now() } = {}) {
+function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now() } = {}) {
+  // Where this frame's Art-Net went, for the ArtSync that closes it.
+  const syncTargets = new Set();
+
   // ── Hue latency compensation ──────────────────────────────────────────────
   // Art-Net reaches a node in about a millisecond; a Hue lamp hears about a
   // frame through the bridge and a Zigbee hop, tens of milliseconds later. So
@@ -56,8 +62,10 @@ function createTransmitter({ wires = { artnet: sendArtDmx, sacn: sendSacn }, now
   /**
    * Put one universe on every enabled wire.
    *
-   * `config` is `{ artnet: { enabled, host, port }, sacn: { enabled, host,
-   * priority, sourceName, universeOffset, cid }, delayMs }`.
+   * `config` is `{ artnet: { enabled, host, port, sync, routes }, sacn: {
+   * enabled, host, priority, sourceName, universeOffset, cid }, delayMs }`.
+   * `routes` (from artnet-nodes.js) names the nodes that output a universe;
+   * a universe with none goes to `host`.
    *
    * Returns the protocols the frame was handed to. Art-Net counts only once
    * its host has resolved: until then the frame is dropped, and reporting it
@@ -80,7 +88,12 @@ function createTransmitter({ wires = { artnet: sendArtDmx, sacn: sendSacn }, now
 
     const { artnet, sacn } = config;
     if (artnet && artnet.enabled !== false) {
-      if (wires.artnet({ host: artnet.host, port: artnet.port, universe }, frame)) sent.push('artnet');
+      const claimed = artnet.routes && artnet.routes[universe];
+      const hosts = claimed && claimed.length ? claimed : [artnet.host];
+      if (wires.artnet({ hosts, port: artnet.port, universe }, frame)) {
+        sent.push('artnet');
+        if (artnet.sync) for (const host of hosts) syncTargets.add(host);
+      }
     }
 
     if (sacn && sacn.enabled) {
@@ -98,7 +111,19 @@ function createTransmitter({ wires = { artnet: sendArtDmx, sacn: sendSacn }, now
     return sent;
   }
 
-  return { send };
+  /**
+   * Close the frame: with ArtSync on, tell every node this frame's Art-Net
+   * went to that it can output it now.
+   */
+  function endFrame(config) {
+    const artnet = config && config.artnet;
+    if (artnet && artnet.sync && artnet.enabled !== false) {
+      for (const host of syncTargets) wires.artnetSync({ host, port: artnet.port });
+    }
+    syncTargets.clear();
+  }
+
+  return { send, endFrame };
 }
 
 module.exports = { createTransmitter, sacnUniverseFor };

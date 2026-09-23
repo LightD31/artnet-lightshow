@@ -102,7 +102,17 @@ async function checkArtnet() {
     };
   }
 
-  const { nodes, error } = await discoverNodes({ host: target.host, port: target.port });
+  // While the server keeps the node list itself, it holds the Art-Net port:
+  // ask it for a fresh poll rather than binding the port a second time.
+  let nodes;
+  let error;
+  if (output.artnetDiscovery.active) {
+    output.artnetDiscovery.pollNow();
+    await new Promise((r) => setTimeout(r, 1500));
+    ({ nodes, error } = output.artnetDiscovery.status());
+  } else {
+    ({ nodes, error } = await discoverNodes({ host: target.host, port: target.port }));
+  }
   if (error) {
     return {
       id: 'artnet', label: 'Art-Net output', status: WARN,
@@ -122,7 +132,9 @@ async function checkArtnet() {
   return {
     id: 'artnet', label: 'Art-Net output', status: OK,
     detail: `${nodes.length} node${nodes.length === 1 ? '' : 's'} answered: `
-      + nodes.map((n) => `${n.shortName || n.longName || 'unnamed'} at ${n.from} (universe ${n.universe})`).join(', '),
+      + nodes.map((n) => `${n.shortName || n.longName || 'unnamed'} at ${n.from} (${
+        n.outputs && n.outputs.length > 1 ? `universes ${n.outputs.join(', ')}` : `universe ${n.universe}`})`).join(', ')
+      + (output.artnetDiscovery.active ? ' — each is sent its universes directly.' : ''),
     nodes,
   };
 }

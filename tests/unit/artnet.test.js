@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { buildArtDmxPacket } = require('../../src/server/artnet');
+const { buildArtDmxPacket, buildArtSync } = require('../../src/server/artnet');
 
 test('Art-Net packet header is well formed', () => {
   const dmx = Buffer.alloc(512);
@@ -33,4 +33,26 @@ test('sequence counter advances 1..255 and never emits 0', () => {
   assert.ok(seen.every((v) => v >= 1 && v <= 255), 'stays in 1..255');
   const wrap = seen.indexOf(255);
   assert.strictEqual(seen[wrap + 1], 1, 'wraps from 255 back to 1, skipping 0');
+});
+
+// A receiver orders a universe's packets by their numbers, so each universe
+// counts its own: with one shared counter, universe 1's numbers jumped by
+// however many other universes went out in between.
+test('each universe keeps its own sequence', () => {
+  const dmx = Buffer.alloc(512);
+  const first = buildArtDmxPacket(40, dmx)[12];
+  buildArtDmxPacket(41, dmx);
+  buildArtDmxPacket(42, dmx);
+  assert.strictEqual(buildArtDmxPacket(40, dmx)[12], first + 1, 'untouched by the others');
+  assert.strictEqual(buildArtDmxPacket(43, dmx)[12], 1, 'a new universe starts at 1');
+});
+
+test('ArtSync is the fourteen-byte OpSync packet', () => {
+  const p = buildArtSync();
+  assert.strictEqual(p.length, 14);
+  assert.strictEqual(p.subarray(0, 8).toString('ascii'), 'Art-Net\0');
+  assert.strictEqual(p.readUInt16LE(8), 0x5200, 'OpSync');
+  assert.strictEqual(p.readUInt16BE(10), 14, 'protocol version');
+  assert.strictEqual(p[12], 0);
+  assert.strictEqual(p[13], 0);
 });

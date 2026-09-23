@@ -18,6 +18,7 @@ const { AnalysisCache } = require('./src/analysis-cache');
 
 const { state } = require('./src/server/state');
 const { startEngine, stopEngine, setFrameHook } = require('./src/server/engine');
+const { artnetDiscovery } = require('./src/server/output');
 const { conductor } = require('./src/server/conductor');
 const {
   applyPatch, applyOverride, setFixtureMaxBrightness, processTap, setPersist, setHooks, flushPendingPersist,
@@ -165,6 +166,8 @@ attachSockets(io, { midi, integrations });
 
 // On a thread of its own unless the settings say otherwise (engine.thread).
 startEngine({ thread: settings.get('engine.thread') });
+// While Art-Net broadcasts, find the nodes and send each its universes.
+artnetDiscovery.start();
 
 /**
  * Sign back in with the stored refresh token, if there is one.
@@ -286,6 +289,7 @@ function shutdown(signal) {
   let engineDown = Promise.resolve();
   for (const [what, fn] of [
     ['engine', () => { engineDown = stopEngine(); }],
+    ['artnet', () => artnetDiscovery.stop()],
     ['smtc', () => smtc.stop()],
     ['autoShow', () => autoShow.destroy()],
     // No `forget`: this is the way down, not the operator disconnecting.

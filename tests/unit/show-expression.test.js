@@ -7,7 +7,7 @@ const assert = require('node:assert/strict');
 const outputPath = require.resolve('../../src/server/output');
 require.cache[outputPath] = {
   id: outputPath, filename: outputPath, loaded: true,
-  exports: { sendUniverse() {}, sendHue() {}, stopHue() {} },
+  exports: { sendUniverse() {}, endFrame() {}, sendHue() {}, stopHue() {} },
 };
 const { state } = require('../../src/server/state');
 const { startEngine, stopEngine } = require('../../src/server/engine');

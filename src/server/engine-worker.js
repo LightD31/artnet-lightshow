@@ -74,6 +74,7 @@ function setProfiles(profiles) {
 function transmit(outputs) {
   for (const universe of store.list()) transmitter.send(universe, store.getBuffer(universe), outputs);
   for (const [universe, frame] of store.drainRetired()) transmitter.send(universe, frame, outputs, { immediate: true });
+  transmitter.endFrame(outputs);
 }
 
 let ticker = null;
@@ -101,6 +102,7 @@ function blackout() {
       transmitter.send(universe, store.getBuffer(universe), outputs, { immediate: true });
     }
     for (const [universe, frame] of store.drainRetired()) transmitter.send(universe, frame, outputs, { immediate: true });
+    transmitter.endFrame(outputs);
   } else {
     store.clearAll();
   }

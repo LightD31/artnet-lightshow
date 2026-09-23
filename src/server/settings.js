@@ -33,6 +33,12 @@ const DEFAULTS = {
     host: '2.255.255.255',
     port: 6454,
     universe: 0,
+    // While the target is a broadcast address, find the nodes on the network
+    // and send each the universes it outputs directly (see artnet-nodes.js).
+    discovery: true,
+    // ArtSync after every frame, so the nodes change all their universes at
+    // once. Off by default: a node that has seen one waits for the next.
+    sync: false,
   },
   // sACN / E1.31: what consoles and most modern nodes speak. Off by default —
   // enabling it is a deliberate act, and a rig can run it alongside Art-Net or
@@ -179,6 +185,8 @@ const schema = z.object({
     host: netHost,
     port: z.number().int().min(1).max(65535),
     universe: z.number().int().min(0).max(32767),
+    discovery: z.boolean(),
+    sync: z.boolean(),
   }).strict(),
   sacn: z.object({
     enabled: z.boolean(),

@@ -141,6 +141,7 @@ function transmitFrame() {
   // One last all-zero frame for any universe that just left the patch, so its
   // node doesn't sit holding the look it was showing when the fixture moved.
   for (const [universe, frame] of universes.drainRetired()) output.sendUniverse(universe, frame, { immediate: true });
+  output.endFrame();
 }
 
 function renderDmx() {
@@ -312,6 +313,7 @@ function blackout() {
     output.sendUniverse(universe, universes.getBuffer(universe), { immediate: true });
   }
   for (const [universe, frame] of universes.drainRetired()) output.sendUniverse(universe, frame, { immediate: true });
+  output.endFrame();
 }
 
 /** One black frame so the Hue lamps go out, then close the stream. */

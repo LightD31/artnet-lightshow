@@ -93,17 +93,21 @@ function resolveHost(host) {
   return resolved.host === host ? resolved.address : null;
 }
 
-// Art-Net sequence counter. 0 tells receivers "sequencing disabled", so they
-// cannot discard out-of-order UDP packets; 1-255 wrapping is what the spec
-// asks for.
-let sequence = 0;
+// Art-Net sequence counters, one per universe: a receiver uses the number to
+// put a universe's packets back in order, so it has to count that universe's
+// packets and nobody else's. One counter shared by every universe made each
+// universe's numbers jump by however many others went out in between. 0 tells
+// receivers "sequencing disabled"; 1-255 wrapping is what the spec asks for.
+const sequences = new Map();
 
-function nextSequence() {
-  sequence = sequence >= 255 ? 1 : sequence + 1;
-  return sequence;
+function nextSequence(universe) {
+  const last = sequences.get(universe) || 0;
+  const next = last >= 255 ? 1 : last + 1;
+  sequences.set(universe, next);
+  return next;
 }
 
-function buildArtDmxPacket(universe, dmxData, seq = nextSequence()) {
+function buildArtDmxPacket(universe, dmxData, seq = nextSequence(universe & 0x7fff)) {
   const packet = Buffer.alloc(18 + 512);
   packet.write('Art-Net\0', 0, 'ascii');
   packet.writeUInt16LE(0x5000, 8);
@@ -116,16 +120,60 @@ function buildArtDmxPacket(universe, dmxData, seq = nextSequence()) {
   return packet;
 }
 
-/** Queue one frame. False when there is no address to send it to yet. */
-function sendArtDmx({ host, port, universe }, dmxData) {
+const OP_SYNC = 0x5200;
+
+/**
+ * ArtSync: "output what you have been sent, now".
+ *
+ * A node that has seen one holds each ArtDmx it receives until the next
+ * ArtSync, so every universe of a frame changes at the same instant rather
+ * than one after another as their packets arrive — which on a wall of LED
+ * bars spread over several universes is the difference between one movement
+ * and a ripple. A node that stops receiving them goes back to outputting on
+ * arrival after four seconds.
+ */
+function buildArtSync() {
+  const packet = Buffer.alloc(14);
+  packet.write('Art-Net\0', 0, 'ascii');
+  packet.writeUInt16LE(OP_SYNC, 8);
+  packet.writeUInt16BE(14, 10);          // protocol version
+  packet[12] = 0;                        // Aux1
+  packet[13] = 0;                        // Aux2
+  return packet;
+}
+
+const SYNC_PACKET = buildArtSync();
+
+/** Send an ArtSync. False when there is no address to send it to yet. */
+function sendArtSync({ host, port }) {
   const address = resolveHost(host);
-  if (!address) return false;           // unresolved host — nothing to send to yet
+  if (!address) return false;
+  sendSocket().send(SYNC_PACKET, 0, SYNC_PACKET.length, port, address, (err) => {
+    if (err) logSendFailure(err);
+  });
+  return true;
+}
+
+/**
+ * Queue one frame to `host`, or to each of `hosts` (the nodes that output this
+ * universe). One packet, one sequence number, however many nodes get it.
+ * False when there is no address to send it to yet.
+ */
+function sendArtDmx({ host, hosts, port, universe }, dmxData) {
+  const addresses = [];
+  for (const target of hosts || [host]) {
+    const address = resolveHost(target);   // an unresolved host — nothing to send to yet
+    if (address && !addresses.includes(address)) addresses.push(address);
+  }
+  if (!addresses.length) return false;
 
   const packet = buildArtDmxPacket(universe, dmxData);
   // The callback keeps per-send failures out of the socket's 'error' event.
-  sendSocket().send(packet, 0, packet.length, port, address, (err) => {
-    if (err) logSendFailure(err);
-  });
+  for (const address of addresses) {
+    sendSocket().send(packet, 0, packet.length, port, address, (err) => {
+      if (err) logSendFailure(err);
+    });
+  }
   return true;
 }
 
@@ -157,8 +205,11 @@ function buildArtPoll(talkToMe = 0) {
 /**
  * Read an ArtPollReply, or null if this is not one.
  *
- * Only the fields worth showing an operator: who answered, what it calls
- * itself, and which universe it is listening on.
+ * Who answered, what it calls itself, and which universes its output ports
+ * are listening to. A port's universe is its Art-Net port-address: 7 bits of
+ * net, 4 of subnet and 4 of universe, the last per port (SwOut). A node with
+ * more than four ports answers once per group of four, told apart by its bind
+ * index.
  */
 function parseArtPollReply(buf) {
   if (!buf || buf.length < 207) return null;
@@ -166,15 +217,28 @@ function parseArtPollReply(buf) {
   if (buf.readUInt16LE(8) !== OP_POLL_REPLY) return null;
 
   const trim = (start, len) => buf.subarray(start, start + len).toString('latin1').replace(/\0.*$/s, '').trim();
+  const net = buf[18] & 0x7f;
+  const subnet = buf[19] & 0x0f;
+  const outputs = [];
+  for (let i = 0; i < 4; i++) {
+    // Bit 7 of the port type: this port outputs DMX from the network.
+    if (buf[174 + i] & 0x80) outputs.push((net << 8) | (subnet << 4) | (buf[190 + i] & 0x0f));
+  }
+  const mac = buf.length >= 207
+    ? Array.from(buf.subarray(201, 207), (b) => b.toString(16).padStart(2, '0')).join(':')
+    : null;
 
   return {
     address: `${buf[10]}.${buf[11]}.${buf[12]}.${buf[13]}`,
     port: buf.readUInt16LE(14),
     shortName: trim(26, 18),
     longName: trim(44, 64),
-    // Net (byte 18) and subnet/universe (byte 19) together give the 15-bit
-    // universe the node's first output port is bound to.
-    universe: ((buf[18] & 0x7f) << 8) | buf[19],
+    // The universes this node outputs, and the first of them — what the
+    // pre-show check names when it lists who answered.
+    outputs,
+    universe: outputs.length ? outputs[0] : ((net << 8) | (subnet << 4)),
+    mac,
+    bindIndex: buf.length > 211 ? buf[211] : 0,
   };
 }
 
@@ -187,7 +251,7 @@ function parseArtPollReply(buf) {
  * bind failure comes back as a result rather than a throw — it means "could not
  * ask", not "nothing is there".
  */
-function discoverNodes({ host, port = ARTNET_PORT, timeoutMs = 1500 } = {}) {
+function discoverNodes({ host, hosts = null, port = ARTNET_PORT, timeoutMs = 1500 } = {}) {
   return new Promise((resolve) => {
     const nodes = new Map();
     const socket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
@@ -213,11 +277,16 @@ function discoverNodes({ host, port = ARTNET_PORT, timeoutMs = 1500 } = {}) {
     socket.bind(ARTNET_PORT, () => {
       try { socket.setBroadcast(true); } catch (_) { /* not all networks allow it */ }
       const packet = buildArtPoll();
-      socket.send(packet, 0, packet.length, port, host, (err) => {
-        // A send failure is the answer: nothing will reply to a poll that never
-        // left, and "network is unreachable" is exactly what preflight is for.
-        if (err) finish(err.message);
-      });
+      const targets = [...new Set(hosts || [host])];
+      let failed = 0;
+      for (const target of targets) {
+        socket.send(packet, 0, packet.length, port, target, (err) => {
+          // A send failure is the answer: nothing will reply to a poll that
+          // never left, and "network is unreachable" is exactly what preflight
+          // is for. With several targets, only when none of them could be sent.
+          if (err && ++failed === targets.length) finish(err.message);
+        });
+      }
     });
   });
 }
@@ -256,7 +325,12 @@ function probeSend({ host, port, universe = 0 }, timeoutMs = 2000) {
 
 module.exports = {
   ARTNET_PORT,
+  OP_POLL,
+  OP_POLL_REPLY,
+  OP_SYNC,
   buildArtDmxPacket,
+  buildArtSync,
+  sendArtSync,
   buildArtPoll,
   parseArtPollReply,
   discoverNodes,
