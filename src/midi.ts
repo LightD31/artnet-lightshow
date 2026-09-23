@@ -46,6 +46,7 @@ interface MidiInput {
 interface MidiOutput {
   send(type: 'cc', message: CcMessage): void;
   send(type: 'noteon', message: NoteMessage): void;
+  send(type: 'clock' | 'start' | 'stop'): void;
   close(): void;
 }
 
@@ -768,4 +769,16 @@ class MidiController {
   }
 }
 
+/**
+ * Open an output port by name, for sending something other than control
+ * feedback (the MIDI clock). Null when MIDI is unavailable or the port is not
+ * there.
+ */
+function openMidiOutput(name: string): MidiOutput | null {
+  if (!easymidi || !name) return null;
+  if (!easymidi.getOutputs().includes(name)) return null;
+  return new easymidi.Output(name);
+}
+
+export { openMidiOutput };
 export default MidiController;

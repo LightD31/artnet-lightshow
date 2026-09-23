@@ -115,10 +115,31 @@ const DEFAULTS: Settings = {
     // Harmless on a controller without them — it ignores the CC — but a MIDI
     // loopback would echo our feedback in as operator input, so it is a switch.
     controlFeedback: true,
+    // Send the pattern clock as MIDI clock to this port — a drum machine, a
+    // DAW, visuals through a loopback port. Blank sends none.
+    clockOutput: '',
   },
   sources: {
     prolink: false,
     smtc: true,
+  },
+  live: {
+    // Hear the music as it plays (src/live-input.ts): for the beat of a track
+    // no source knows, and to line a known track's show up with the room.
+    enabled: false,
+    // 'loopback' hears what this computer plays; 'input' a line-in or mic.
+    source: 'loopback',
+    // Blank for the system default; otherwise a device name, or part of one.
+    device: '',
+    // How much later the room hears the audio than it is captured: positive
+    // for loopback ahead of a PA, negative for a line-in off the booth.
+    latencyMs: 0,
+    // Line a known track's show up with what the live input hears, rather
+    // than trust the playback source's position (see auto-sync.ts).
+    autoSync: true,
+    // With the auto show on and no analysed track to play — the next one still
+    // being analysed, or music nothing can name — answer what is heard.
+    director: true,
   },
   spotify: {
     clientId: '',
@@ -263,10 +284,19 @@ const schema = z.object({
     input: z.string().max(256),
     output: z.string().max(256),
     controlFeedback: z.boolean(),
+    clockOutput: z.string().max(256),
   }).strict(),
   sources: z.object({
     prolink: z.boolean(),
     smtc: z.boolean(),
+  }).strict(),
+  live: z.object({
+    enabled: z.boolean(),
+    source: z.enum(['loopback', 'input']),
+    device: z.string().max(256),
+    latencyMs: z.number().int().min(-500).max(500),
+    autoSync: z.boolean(),
+    director: z.boolean(),
   }).strict(),
   spotify: z.object({
     clientId: z.string().max(256),

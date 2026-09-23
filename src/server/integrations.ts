@@ -1,5 +1,5 @@
 import { state, getLiveState, getDmxSnapshot, setExtrasProvider } from './state.ts';
-import { setHooks } from './patch.ts';
+import { setHooks, applyPatch } from './patch.ts';
 import { conductor } from './conductor.ts';
 import { currentRig } from './rig.ts';
 import { guarded } from './guard.ts';
@@ -11,6 +11,12 @@ import HybridSource from '../hybrid-source.ts';
 import { sampleAutoPosition } from './auto-position.ts';
 import { gridFromAnalysis } from '../shared/beat-clock.ts';
 import { messageOf } from '../errors.ts';
+import { audioToTempWav } from '../audio-file.ts';
+import { applyRekordbox } from '../rekordbox-analysis.ts';
+import { AutoSync } from '../auto-sync.ts';
+import LiveDirector from '../show/live-director.ts';
+import { PATTERNS } from './presets.ts';
+import { settings } from './settings.ts';
 import type { Server } from 'socket.io';
 import type AutoShow from '../auto-show.ts';
 import type { AnalysisCache } from '../analysis-cache.ts';
@@ -18,6 +24,9 @@ import type DeezerSource from '../deezer-source.ts';
 import type MidiController from '../midi.ts';
 import type NowPlayingSource from '../nowplaying-source.ts';
 import type ProLink from '../prolink.ts';
+import type LiveInput from '../live-input.ts';
+import type { ProlinkTrack, TrackChange } from '../prolink.ts';
+import type { AnalysisPriority } from '../analyzer-worker.ts';
 import type SpotifyClient from '../spotify.ts';
 import type { BeatGrid } from '../shared/beat-clock.ts';
 import type { AutoPosition } from './auto-position.ts';
@@ -34,10 +43,11 @@ export interface IntegrationDeps {
   prolink: ProLink;
   autoShow: AutoShow;
   analysisCache?: AnalysisCache | null;
+  liveInput?: LiveInput | null;
 }
 
 /** Which source the auto show follows. */
-export type AutoSource = 'prolink' | 'hybrid' | 'spotify' | 'deezer' | 'nowplaying' | 'timer';
+export type AutoSource = 'prolink' | 'hybrid' | 'spotify' | 'deezer' | 'nowplaying' | 'live' | 'timer';
 
 /** A queued track, as a prefetch slot shows it. */
 interface SlotTrack {
@@ -73,8 +83,8 @@ function reportAnalysisError(label: string, err: unknown): void {
 // Wires the auxiliary subsystems (MIDI feedback, Spotify, now-playing, PRO DJ
 // LINK, auto-show) into the engine + state. Returns the integration handle that
 // routes.js / sockets.js call back into.
-function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolink, autoShow, analysisCache = null }:
-  IntegrationDeps) {
+function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolink, autoShow, analysisCache = null,
+  liveInput = null }: IntegrationDeps) {
   // Slot statuses, one per upcoming track up to state.autoPrefetchDepth.
   // slots[0] is the immediate next track (back-compat with the old
   // spotifyNext shape — that field still mirrors slots[0]).
@@ -134,7 +144,13 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     return sourceClock.positionMs();
   }
 
-  function getProlinkPositionMs(): number { return prolink.getPositionMs(); }
+  // The deck the running show's track is on. The show plays on that deck's
+  // clock rather than on whichever deck is followed now: through a mix, the
+  // outgoing track's show carries on while the incoming one is made ready.
+  let showDeck: number | null = null;
+  function getProlinkPositionMs(): number {
+    return showDeck === null ? prolink.getPositionMs() : prolink.getDeckPositionMs(showDeck);
+  }
 
   function getHybridPositionMs(): number { return hybrid.getPositionMs(); }
 
@@ -174,19 +190,23 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       // what is happening; this is the answer to "why is the show following
       // that".
       activeSource: resolveAutoSource(),
+      // The operator has the show on — which a track change, loading the next
+      // analysis, or playing by ear all keep true while no timeline runs.
+      showOn: showWanted,
       deezer: deezerSource.getStatus(),
       deezerPrefetch: deezerSlots,
       prolink: {
         enabled: state.prolinkEnabled,
         connected: prolink.connected,
         peers: prolink.getNumPeers(),
-        master: prolink.getMaster(),
+        followed: prolink.getFollowed(),
         track: prolink.getTrack(),
         loadedTracks: prolink.getLoadedTracks(),
         bpm: prolink.getTempo(),
         stale: prolink.stale,
         lastError: prolink.lastError,
       },
+      live: liveInput ? { ...liveInput.status(), director: liveDirector ? liveDirector.status() : null } : null,
       autoShow: autoShow.getClientState(),
       // Summaries, not the stored looks: a hundred full cues would ride every
       // broadcast, and the buttons only need a name and a swatch.
@@ -227,7 +247,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
 
   // Pick the active source for auto-show playback. Explicit user choice wins,
   // then 'auto' falls through to:
-  //   prolink > hybrid > spotify > deezer > nowplaying > timer
+  //   prolink > hybrid > spotify > deezer > nowplaying > live > timer
   //
   // Hybrid outranks plain Spotify whenever the OS media session is also live,
   // because it is the same source of content with a better clock and an
@@ -245,13 +265,21 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     if (state.autoSource === 'spotify' && spotify.authenticated) return 'spotify';
     if (state.autoSource === 'deezer' && deezerSource.authenticated) return 'deezer';
     if (state.autoSource === 'nowplaying' && nowPlaying.authenticated) return 'nowplaying';
+    if (state.autoSource === 'live' && liveListening()) return 'live';
     if (state.autoSource === 'timer') return 'timer';
-    if (prolink.connected && prolink.getMaster()) return 'prolink';
+    if (prolink.connected && prolink.getFollowed()) return 'prolink';
     if (spotify.authenticated && nowPlaying.authenticated) return 'hybrid';
     if (spotify.authenticated) return 'spotify';
     if (deezerSource.authenticated) return 'deezer';
     if (nowPlaying.authenticated) return 'nowplaying';
+    // Something is heard but nothing names it: play by ear rather than
+    // against a stopwatch.
+    if (liveListening()) return 'live';
     return 'timer';
+  }
+
+  function liveListening(): boolean {
+    return !!liveInput && liveInput.status().listening;
   }
 
   /** Sources that take their content and their queue from Spotify. */
@@ -259,9 +287,20 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     return source === 'spotify' || source === 'hybrid';
   }
 
+  // Whether the operator has the auto show on. It stays on across a track
+  // change, while the show itself stops to load the next track's analysis.
+  let showWanted = false;
+
   function startAutoShow(): AutoSource {
     const source = resolveAutoSource();
+    showWanted = true;
+    if (source === 'live') {
+      // No timeline to play: the live director answers what is heard.
+      syncLiveDirector();
+      return source;
+    }
     if (source === 'prolink') {
+      showDeck = prolink.getFollowed()?.deviceId ?? null;
       autoShow.start(getProlinkPositionMs);
     } else if (source === 'hybrid') {
       spotify.startPolling(1000);
@@ -275,7 +314,36 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       const startTime = Date.now();
       autoShow.start(() => Date.now() - startTime);
     }
+    syncLiveDirector();
     return source;
+  }
+
+  function stopAutoShow(): void {
+    showWanted = false;
+    autoShow.stop();
+    syncLiveDirector();
+  }
+
+  // ─── Playing by ear ─────────────────────────────────────────────────────
+  // With the auto show on and no timeline running — the source is `live`, or
+  // the next track is still being analysed — the live director answers what
+  // the live input hears. Its patches never reach the rig while a timeline
+  // runs, so the second it takes to notice one has started cannot fight it.
+  const liveDirector = liveInput ? new LiveDirector({
+    applyPatch: (patch) => { if (!autoShow.running) applyPatch(patch); },
+    patterns: PATTERNS,
+    pixels: () => currentRig().hasPixels,
+  }) : null;
+  if (liveInput && liveDirector) {
+    liveInput.onReading((r) => liveDirector.onReading(r));
+    liveInput.onEvent((e) => liveDirector.onEvent(e));
+  }
+
+  function syncLiveDirector(): void {
+    if (!liveDirector) return;
+    const drive = showWanted && !autoShow.running && liveListening() && settings.get('live.director');
+    if (drive && !liveDirector.active) liveDirector.start();
+    else if (!drive && liveDirector.active) liveDirector.stop();
   }
 
   // ─── The pattern clock's track lock ─────────────────────────────────────
@@ -376,56 +444,179 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     console.log(`PRO DJ LINK devices: ${peers}`);
     broadcast();
   });
-  prolink.onMasterChange(() => broadcast());
-  prolink.onTrackChange(async (track) => {
+  prolink.onFollowChange(() => broadcast());
+  // ─── CDJ tracks ─────────────────────────────────────────────────────────
+  // A CDJ track is analysed from its own file, fetched off the player over
+  // the network, whenever the player can hand it over: the analysis then lines
+  // up with the deck, and with rekordbox's grid and phrases, to the
+  // millisecond. A search by name is the fallback, under a key of its own.
+
+  /** The analyses a CDJ track can have, best first. */
+  function cdjSources(track: ProlinkTrack): { key: string; exact: boolean }[] {
+    const out: { key: string; exact: boolean }[] = [];
+    const exactKey = prolink.canFetchAudio(track) ? keyForProlinkTrack(track, { exact: true }) : null;
+    if (exactKey) {
+      autoShow.setExactAudio(exactKey, {
+        fetch: async () => {
+          const file = await prolink.fetchAudio(track);
+          return file ? audioToTempWav(file.data, file.fileName) : null;
+        },
+        // rekordbox's grid and phrases, for this very file.
+        refine: async (analysis) => applyRekordbox(analysis, {
+          beatGrid: track.beatGrid,
+          songStructure: await prolink.fetchSongStructure(track).catch((err) => {
+            console.warn(`[prolink] no phrases for "${cdjQuery(track)}": ${messageOf(err)}`);
+            return null;
+          }),
+        }),
+      });
+      out.push({ key: exactKey, exact: true });
+    }
+    const searchKey = track.title && track.artist ? keyForProlinkTrack(track) : null;
+    if (searchKey) out.push({ key: searchKey, exact: false });
+    return out;
+  }
+
+  /**
+   * How long the lights take to follow a mix from one deck to the next: two
+   * bars of the incoming track after a blend, and a cut after a cut — a DJ who
+   * slams the fader across wants the room to change at once.
+   */
+  function handoffFadeMs(change: TrackChange, bpm: number): number {
+    if (!change.handoff) return 0;
+    const beatMs = bpm > 0 ? 60000 / bpm : 500;
+    if (change.overlapMs < 4 * beatMs) return 0;
+    return Math.min(10000, Math.round(8 * beatMs));
+  }
+
+  const cdjQuery = (track: ProlinkTrack) => (track.title && track.artist ? `${track.artist} - ${track.title}` : `CDJ track ${track.trackId}`);
+  const cdjDurationSec = (track: ProlinkTrack) => (track.durationMs ? track.durationMs / 1000 : null);
+
+  /** Load a CDJ track's analysis as the show: its own file's, else a search's. */
+  async function analyseCdjTrack(track: ProlinkTrack): Promise<void> {
+    const sources = cdjSources(track);
+    if (!sources.length) throw new Error('Track has no rekordbox metadata — cannot search');
+    // An analysis already made plays now: making the exact one takes a
+    // minute, and the prefetch has it ready by the next time the track loads.
+    const ready = sources.find((s) => autoShow.isCached(s.key));
+    let lastErr: unknown = null;
+    for (const source of ready ? [ready] : sources) {
+      try {
+        await autoShow.downloadAndAnalyze(cdjQuery(track), source.exact ? null : cdjDurationSec(track), source.key);
+        return;
+      } catch (err) {
+        if ((err as { superseded?: boolean }).superseded) throw err;
+        lastErr = err;
+        if (source.exact) console.warn(`[prolink] could not analyse the track's own file (${messageOf(err)}); searching for it instead`);
+      }
+    }
+    throw lastErr;
+  }
+
+  /**
+   * Analyse a CDJ track ahead of time — its own file, else a search — without
+   * touching the running show. `current` for the track a mix is moving to:
+   * it waits for an analysis already under way, and moves it to the front.
+   */
+  async function prefetchCdjTrack(track: ProlinkTrack, priority: AnalysisPriority = 'normal'): Promise<void> {
+    const meta = { title: track.title || undefined, artist: track.artist || undefined };
+    for (const source of cdjSources(track)) {
+      if (autoShow.isCached(source.key)) return;
+      const r = await autoShow.prefetch(cdjQuery(track), source.exact ? null : cdjDurationSec(track), source.key, meta, null, priority);
+      if (r.skipped && r.reason === 'in-flight' && priority === 'current') {
+        await autoShow.awaitInFlight(source.key, priority);
+        if (autoShow.isCached(source.key)) return;
+        continue;
+      }
+      if (r.skipped) return;
+      if (!r.error) {
+        console.log(`[prolink] prefetched ${source.exact ? 'from the player' : 'by search'}: ${cdjQuery(track)}`);
+        return;
+      }
+      console.warn(`[prolink] prefetch ${source.exact ? 'from the player' : 'by search'} failed for "${cdjQuery(track)}": ${r.error}`);
+    }
+  }
+
+  // Only the newest track change may start a show. One still making its
+  // track ready has stopped the show, and a newer one must still take over.
+  let cdjGeneration = 0;
+  let cdjChanging = 0;
+
+  prolink.onTrackChange(async (track, change) => {
     if (!track) return;
-    console.log(`PRO DJ LINK track changed: ${track.artist || '?'} — ${track.title || '?'}`);
+    console.log(`PRO DJ LINK track changed: ${track.artist || '?'} — ${track.title || '?'}`
+      + (change?.handoff ? ` (mixed in from CDJ-${change.fromPlayer})` : ''));
     broadcast();
-    if (!autoShow.running) return;
+    if (!autoShow.running && !cdjChanging) return;
     if (resolveAutoSource() !== 'prolink') return;
 
-    autoShow.stop();
-    autoShow.track = {
-      name: track.title || `Track ${track.trackId}`,
-      artist: track.artist || 'PRO DJ LINK',
-      album: track.album || '',
-      albumArt: null,
-      durationMs: track.durationMs || 0,
+    const generation = ++cdjGeneration;
+    const isCurrent = () => generation === cdjGeneration;
+    const toPlayer = change?.toPlayer ?? prolink.getFollowed()?.deviceId ?? null;
+    const fadeMs = change ? handoffFadeMs(change, prolink.getTempo()) : 0;
+    const setTrack = () => {
+      autoShow.track = {
+        name: track.title || `Track ${track.trackId}`,
+        artist: track.artist || 'PRO DJ LINK',
+        album: track.album || '',
+        albumArt: null,
+        durationMs: track.durationMs || 0,
+      };
     };
-    broadcast();
+    cdjChanging++;
     try {
-      if (!track.title || !track.artist) {
-        throw new Error('Track has no rekordbox metadata — cannot search');
+      // In a mix the outgoing show plays on, on its own deck, while the
+      // incoming track's analysis is made; a new track on the same deck has
+      // nothing left to play on.
+      const outgoingPlays = !!change?.handoff && showDeck !== null && showDeck !== toPlayer;
+      if (outgoingPlays) {
+        await prefetchCdjTrack(track, 'current');
+        if (!isCurrent()) return;
       }
-      const query = `${track.artist} - ${track.title}`;
-      const cacheKey = keyForProlinkTrack(track);
-      // The downloaded WAV is unlinked by auto-show's own finally block.
-      await autoShow.downloadAndAnalyze(query, (track.durationMs || 0) / 1000, cacheKey);
-      autoShow.start(getProlinkPositionMs);
-      console.log('Auto show restarted for new CDJ track');
+      autoShow.stop();
+      setTrack();
+      broadcast();
+      await analyseCdjTrack(track);
+      if (!isCurrent()) return;
+      showDeck = toPlayer;
+      autoShow.start(getProlinkPositionMs, { fadeMs });
+      console.log(`Auto show restarted for new CDJ track${fadeMs ? `, crossfading over ${(fadeMs / 1000).toFixed(1)} s` : ''}`);
     } catch (err) {
+      if ((err as { superseded?: boolean }).superseded) return;
       reportAnalysisError('PRO DJ LINK auto analysis failed', err);
+    } finally {
+      cdjChanging--;
     }
     broadcast();
   });
   prolink.onLoadedTracksChange(() => broadcast());
 
-  // Prefetch analysis for every track loaded on any CDJ. Fires once per unique
-  // track identity (deviceId:slot:trackId) per session — duplicates skipped.
+  // ─── Live input ─────────────────────────────────────────────────────────
+  // Its status rides the broadcast: on every change, and once a second while
+  // it listens, for the tempo and the level meter.
+  // A known track's show is lined up with what it hears (auto-sync.ts),
+  // except on a CDJ, whose position is exact, and by ear or on the timer,
+  // which have no track.
+  const autoSync = liveInput ? new AutoSync({
+    show: autoShow,
+    live: liveInput,
+    enabled: () => settings.get('live.autoSync') && !['prolink', 'live', 'timer'].includes(resolveAutoSource()),
+  }) : null;
+  if (liveInput) {
+    liveInput.onStatus(() => broadcast());
+    const liveTimer = setInterval(guarded('live input', () => {
+      syncLiveDirector();
+      if (!liveInput.running) return;
+      if (autoSync) autoSync.tick();
+      broadcast();
+    }), 1000);
+    liveTimer.unref();
+  }
+
+  // Analyse every track loaded on any CDJ ahead of time. Fires once per track
+  // (deviceId:slot:trackId) per session.
   prolink.onAnyTrackLoaded((track) => {
-    if (!track.title || !track.artist) return;
-    const cacheKey = keyForProlinkTrack(track);
-    if (!cacheKey) return;
-    const query = `${track.artist} - ${track.title}`;
-    const durationSec = track.durationMs ? track.durationMs / 1000 : null;
-    const meta = { title: track.title, artist: track.artist };
-    autoShow.prefetch(query, durationSec, cacheKey, meta)
-      .then((r) => {
-        if (r.skipped) return;
-        if (r.error) console.warn(`[prolink] prefetch failed for "${query}": ${r.error}`);
-        else console.log(`[prolink] prefetched: ${query}`);
-      })
-      .catch(() => { /* ignore */ });
+    prefetchCdjTrack(track).catch((err) => console.warn(`[prolink] prefetch failed: ${messageOf(err)}`));
   });
 
   // ─── Spotify polling ────────────────────────────────────────────────────
@@ -734,7 +925,9 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       spotifySlots = [{ track: null, status: 'unavailable', message: 'Spotify disconnected', cacheKey: null }];
     },
     startAutoShow,
+    stopAutoShow,
     resolveAutoSource,
+    analyseCdjTrack,
     lockToPlayingTrack,
     // Called by the Deezer browser extension (via routes) with the web player's
     // current track + upcoming queue.

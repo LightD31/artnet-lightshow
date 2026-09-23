@@ -13,14 +13,14 @@ export function Prolink() {
   const p = s.prolink;
   if (!p) return null;
 
-  const masterTrackId = p.master ? p.master.trackId : null;
-  const tracks = Array.isArray(p.loadedTracks) ? p.loadedTracks : [];
+  const followed = p.followed || null;
+  const decks = Array.isArray(p.loadedTracks) ? p.loadedTracks : [];
 
   const trackText = (() => {
     if (p.track && (p.track.title || p.track.artist)) {
       return `${p.track.title || '?'} — ${p.track.artist || '?'}`;
     }
-    if (p.master && p.master.trackId) return 'Loading metadata…';
+    if (followed && followed.trackId) return 'Loading metadata…';
     return '—';
   })();
 
@@ -40,26 +40,26 @@ export function Prolink() {
       <div class="prolink-info">
         <div>{p.peers} device{p.peers !== 1 ? 's' : ''}</div>
         <div>
-          {p.master
-            ? <>Master: <strong>CDJ-{p.master.deviceId}</strong> · {p.master.bpm ? p.master.bpm.toFixed(1) : '—'} BPM · beat {p.master.beatInMeasure || '–'}/4</>
-            : 'No master'}
+          {followed
+            ? <>Following <strong>CDJ-{followed.deviceId}</strong> · {followed.bpm ? followed.bpm.toFixed(1) : '—'} BPM · beat {followed.beatInMeasure || '–'}/4{followed.absolute ? ' · exact position' : ''}</>
+            : 'No deck playing'}
         </div>
         <div>{trackText}</div>
       </div>
 
-      {tracks.length > 0 && (
+      {decks.length > 0 && (
         <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-          {tracks.map(({ playerId, track }) => {
-            const isMaster = track && masterTrackId && track.trackId === masterTrackId;
+          {decks.map(({ playerId, track, playing, onAir, master, followed: isFollowed }) => {
             const title = track && track.title ? track.title : track ? `Track ${track.trackId}` : '…';
             const artist = track && track.artist ? track.artist : '';
+            const flags = [master && 'MASTER', onAir && 'ON AIR', !playing && 'stopped'].filter(Boolean).join(' · ');
             return (
               <div
                 key={playerId}
                 title={artist ? `${artist} — ${title}` : title}
                 style={{
                   fontSize: '11px',
-                  color: isMaster ? 'var(--accent-3)' : 'var(--muted)',
+                  color: isFollowed ? 'var(--accent-3)' : 'var(--muted)',
                   lineHeight: 1.4,
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
@@ -67,9 +67,10 @@ export function Prolink() {
                 }}
               >
                 <span style={{ opacity: 0.6 }}>CDJ-{playerId}</span>{' '}
-                {isMaster ? '▶ ' : ''}
+                {isFollowed ? '▶ ' : ''}
                 <strong style={{ fontWeight: 600 }}>{title}</strong>
                 {artist && <span style={{ opacity: 0.7 }}> — {artist}</span>}
+                {flags && <span style={{ opacity: 0.6 }}> · {flags}</span>}
               </div>
             );
           })}

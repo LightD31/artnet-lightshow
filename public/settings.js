@@ -273,6 +273,10 @@ function renderMidiStatus(midi) {
   if (text) text.textContent = midi.enabled ? 'Connected' : 'Not connected';
 
   const ports = midi.ports || { inputs: [], outputs: [] };
+  // The clock port picker is built from the same list.
+  const outputsChanged = JSON.stringify(ports.outputs || []) !== JSON.stringify(midiOutputs);
+  midiOutputs = ports.outputs || [];
+  if (outputsChanged && typeof renderSettings === 'function' && settingsData) renderSettings();
   ['input', 'output'].forEach(dir => {
     const sel = document.getElementById(`midi-${dir}`);
     if (!sel) return;
@@ -1152,6 +1156,33 @@ async function loadNetworkInterfaces() {
   } catch (_) { /* the select still offers the default */ }
 }
 loadNetworkInterfaces();
+let liveDevices = { outputs: [], inputs: [] };   // audio devices the live input can hear
+let midiOutputs = [];                           // MIDI output ports, for the clock
+
+async function loadLiveDevices() {
+  try {
+    const res = await fetch('/api/live/devices');
+    const data = await res.json();
+    if (data.ok) {
+      liveDevices = { outputs: data.outputs || [], inputs: data.inputs || [] };
+      if (typeof renderSettings === 'function' && settingsData) renderSettings();
+    }
+  } catch (_) { /* the select still offers the default */ }
+}
+loadLiveDevices();
+
+// The device list is outputs for loopback and inputs for an input: rebuild it
+// when the choice changes, on the default until one is picked.
+document.addEventListener('change', (e) => {
+  if (!e.target || e.target.id !== 'set-live.source') return;
+  const current = document.getElementById('set-live.device');
+  const section = SETTINGS_SPEC.find((s) => s.id === 'live');
+  const field = section && section.fields.find((f) => f.path === 'live.device');
+  if (!current || !field) return;
+  const fresh = fieldInput(field);
+  fresh.value = '';
+  current.replaceWith(fresh);
+});
 let hueInfo = null;       // { status, paired, host, entertainmentId, channels }
 let hueNotice = null;     // transient line under the buttons
 
@@ -1406,6 +1437,66 @@ const SETTINGS_SPEC = [
         help: 'Follow CDJs on the network for tempo and track changes.' },
       { path: 'sources.smtc', label: 'Now Playing', type: 'toggle',
         help: 'Read the Windows media session, so any player drives the show. Windows only.' },
+    ],
+  },
+  {
+    id: 'live',
+    group: 'music',
+    title: 'Live Input',
+    desc: 'Hear the music as it plays. Patterns keep the beat of any track, known or not, and a '
+      + 'show made for a known track lines itself up with what the room hears. Needs the Python '
+      + 'packages in requirements.txt. Takes effect immediately.',
+    fields: [
+      { path: 'live.enabled', label: 'Enabled', type: 'toggle' },
+      { path: 'live.source', label: 'Listen To', type: 'select',
+        options: () => [
+          { value: 'loopback', label: 'What this computer plays' },
+          { value: 'input', label: 'An input (line-in or microphone)' },
+        ],
+        help: 'What this computer plays is the easy one: Spotify, a browser, anything, straight from '
+          + 'the sound card with no cable. An input takes a line off the booth output — the only '
+          + 'way to hear a set played on other equipment.' },
+      { path: 'live.device', label: 'Device', type: 'select',
+        options: () => {
+          const source = document.getElementById('set-live.source');
+          const loopback = (source ? source.value : at(settingsData.settings, 'live.source')) !== 'input';
+          const names = (loopback ? liveDevices.outputs : liveDevices.inputs) || [];
+          return [
+            { value: '', label: loopback ? 'The default output' : 'The default input' },
+            ...names.map((name) => ({ value: name, label: name })),
+          ];
+        },
+        missing: (value) => `${value} (not found)`,
+        help: 'Refreshes when the page loads. A device that is not plugged in now keeps its name '
+          + 'and is used when it comes back.' },
+      { path: 'live.autoSync', label: 'Auto-Sync', type: 'toggle',
+        help: 'Line a known track\'s show up with what is heard, rather than trust where Spotify or the '
+          + 'media session says the song is. The Sync slider then only has to cover the lights\' own delay.' },
+      { path: 'live.director', label: 'Play By Ear', type: 'toggle',
+        help: 'With the auto show on and no analysed track to play — the next one still being analysed, '
+          + 'or music nothing can name — answer what is heard: new looks on section changes, bursts on '
+          + 'drops, dark in the silences.' },
+      { path: 'live.latencyMs', label: 'Room Latency (ms)', type: 'number', min: -500, max: 500,
+        help: 'How much later the room hears the music than this computer does. Positive when the '
+          + 'PA is behind the sound card; negative for a line-in off the booth, which arrives after '
+          + 'the room has heard it. 0 is right for most setups.' },
+    ],
+  },
+  {
+    id: 'midiClock',
+    group: 'music',
+    title: 'MIDI Clock Out',
+    desc: 'Send the tempo the lights keep — the show\'s, a CDJ\'s, the live input\'s or a tap — as MIDI '
+      + 'clock, so a drum machine, a DAW or a visuals app plays in the same time. Takes effect immediately.',
+    fields: [
+      { path: 'midi.clockOutput', label: 'Clock Port', type: 'select',
+        options: () => [
+          { value: '', label: 'Off' },
+          ...midiOutputs.map((name) => ({ value: name, label: name })),
+        ],
+        missing: (value) => `${value} (not connected)`,
+        help: 'A port of its own, not the controller\'s: a control surface has no use for a clock. To reach '
+          + 'software on this machine, create a loopback port (loopMIDI on Windows, IAC on macOS) and pick it here.' },
     ],
   },
   {
@@ -1846,7 +1937,9 @@ document.getElementById('settings-tabs').addEventListener('click', (e) => {
 
 let savedTab = 'check';
 try { savedTab = localStorage.getItem(TAB_KEY) || 'check'; } catch (_) { /* private mode */ }
-showTab(savedTab);
+// A link can name the tab: /settings.html#music opens on the music sources.
+const linkedTab = window.location.hash.slice(1);
+showTab(TABS.includes(linkedTab) ? linkedTab : savedTab);
 
 async function loadSettings() {
   try {

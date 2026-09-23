@@ -3,10 +3,9 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import dfi from 'd-fi-core';
-import { messageOf } from './errors.ts';
+import { toWav } from './audio-file.ts';
 
 // Bounds on the audio download. Previously unbounded on all three counts: a
 // redirect loop recursed until it blew the stack, a stalled connection hung
@@ -86,7 +85,7 @@ async function downloadByIsrc(trackName: string, isrc: string): Promise<string> 
   // 6. Convert MP3 → WAV via ffmpeg (the analyzer expects WAV)
   const wavPath = path.join(os.tmpdir(), `${basename}.wav`);
   try {
-    await _mp3ToWav(mp3Path, wavPath);
+    await toWav(mp3Path, wavPath);
     // Clean up the intermediate MP3
     try { fs.unlinkSync(mp3Path); } catch (_) {}
     console.log(`[deezer] Ready: ${wavPath}`);
@@ -152,28 +151,6 @@ function _downloadUrl(url: string, redirectsLeft = MAX_REDIRECTS): Promise<Buffe
       req.destroy(new Error(`[deezer] download timed out after ${DOWNLOAD_TIMEOUT_MS}ms`));
     });
     req.on('error', reject);
-  });
-}
-
-/** Convert MP3 → WAV using ffmpeg. */
-function _mp3ToWav(inputPath: string, outputPath: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn('ffmpeg', [
-      '-y', '-i', inputPath,
-      '-ar', '44100', '-ac', '2', '-f', 'wav',
-      outputPath,
-    ], { stdio: ['ignore', 'pipe', 'pipe'] });
-
-    let stderr = '';
-    proc.stderr.on('data', (d) => { stderr += d; });
-
-    proc.on('error', (err) => {
-      reject(new Error(`ffmpeg not found: ${messageOf(err)}`));
-    });
-    proc.on('close', (code) => {
-      if (code !== 0) return reject(new Error(`ffmpeg failed (exit ${code}): ${stderr}`));
-      resolve(outputPath);
-    });
   });
 }
 

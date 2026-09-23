@@ -216,3 +216,13 @@ test('a stored pythonPath the new rule refuses is cleared, and the rest loads', 
   assert.strictEqual(s.get('spotify.clientId'), 'keep-me');
   assert.ok(fs.existsSync(s.file), 'not moved aside');
 });
+
+test('live input settings: off by default, a source it knows, a latency in range', () => {
+  assert.deepStrictEqual(DEFAULTS.live, { enabled: false, source: 'loopback', device: '', latencyMs: 0, autoSync: true, director: true });
+  const s = store().load();
+  assert.deepStrictEqual(s.update({ live: { enabled: true, source: 'input', device: 'Line In', latencyMs: -40 } }).sort(),
+    ['live.device', 'live.enabled', 'live.latencyMs', 'live.source']);
+  assert.throws(() => s.update({ live: { source: 'microphone' } }));
+  assert.throws(() => s.update({ live: { latencyMs: 2000 } }));
+  assert.strictEqual(s.get('live.source'), 'input', 'a refused update changes nothing');
+});

@@ -32,7 +32,7 @@ import { runPreflight } from './preflight.ts';
 import { warmRequestSchema, warmPlaylistSchema, parseSetList, fromSpotifyTracks, MAX_TRACKS as MAX_WARM_TRACKS } from './warm.ts';
 import * as pythonEnv from '../python-env.ts';
 import {
-  keyForSpotify, keyForYouTube, keyForQuery, keyForLocalFile, keyForBuffer, keyForProlinkTrack,
+  keyForSpotify, keyForYouTube, keyForQuery, keyForLocalFile, keyForBuffer,
 } from '../analysis-cache.ts';
 import { HttpError, messageOf, statusOf } from '../errors.ts';
 import type { Express, NextFunction, Request, RequestHandler, Response } from 'express';
@@ -42,6 +42,7 @@ import type DeezerSource from '../deezer-source.ts';
 import type MidiController from '../midi.ts';
 import type NowPlayingSource from '../nowplaying-source.ts';
 import type ProLink from '../prolink.ts';
+import { listLiveDevices } from '../live-input.ts';
 import type SpotifyClient from '../spotify.ts';
 import type { createApplier } from './apply.ts';
 import type { setupIntegrations } from './integrations.ts';
@@ -1066,20 +1067,16 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
   app.post('/api/auto/analyze-prolink', asyncHandler(async (_req, res) => {
     if (!prolink.connected) return res.status(400).json({ ok: false, error: 'PRO DJ LINK not connected' });
     const track = prolink.getTrack();
-    if (!track) return res.status(400).json({ ok: false, error: 'No track loaded on the master CDJ' });
-    if (!track.title || !track.artist) return res.status(400).json({ ok: false, error: 'Track has no rekordbox metadata — cannot search' });
+    if (!track) return res.status(400).json({ ok: false, error: 'No track on the deck the show follows' });
 
     try {
       autoShow.track = {
-        name: track.title, artist: track.artist, album: track.album || '',
+        name: track.title || `Track ${track.trackId}`, artist: track.artist || 'PRO DJ LINK', album: track.album || '',
         albumArt: null, durationMs: track.durationMs || 0,
       };
       integrations.broadcast();
 
-      const query = `${track.artist} - ${track.title}`;
-      const cacheKey = keyForProlinkTrack(track);
-      // The downloaded WAV is unlinked by auto-show's own finally block.
-      await autoShow.downloadAndAnalyze(query, (track.durationMs || 0) / 1000, cacheKey);
+      await integrations.analyseCdjTrack(track);
 
       integrations.broadcast();
       res.json({ ok: true, track: autoShow.track, analysis: autoShow.getClientState().analysis });
@@ -1089,14 +1086,17 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
   }));
 
   app.post('/api/auto/start', (_req, res) => {
-    if (!autoShow.analysis) return res.status(400).json({ ok: false, error: 'No analysis loaded. Analyze a track first.' });
+    // Playing by ear needs no analysis: that is what it is for.
+    if (!autoShow.analysis && integrations.resolveAutoSource() !== 'live') {
+      return res.status(400).json({ ok: false, error: 'No analysis loaded. Analyze a track first, or turn on the live input to play by ear.' });
+    }
     const source = integrations.startAutoShow();
     integrations.broadcast();
     res.json({ ok: true, source });
   });
 
   app.post('/api/auto/stop', (_req, res) => {
-    autoShow.stop();
+    integrations.stopAutoShow();
     integrations.broadcast();
     res.json({ ok: true });
   });
@@ -1342,6 +1342,17 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
   app.get('/api/network/interfaces', (_req, res) => {
     res.json({ ok: true, interfaces: interfaces().map(({ name, address, netmask }) => ({ name, address, netmask })) });
   });
+
+  // The audio devices the live input can hear: outputs for loopback, inputs
+  // for a line-in. Asks the Python service, so it also says whether one of its
+  // capture libraries is installed.
+  app.get('/api/live/devices', asyncHandler(async (_req, res) => {
+    try {
+      res.json({ ok: true, ...(await listLiveDevices()) });
+    } catch (err) {
+      res.json({ ok: false, error: messageOf(err) });
+    }
+  }));
 
   app.get('/api/hue/discover', asyncHandler(async (_req, res) => {
     const { bridges, error } = await discoverBridges();

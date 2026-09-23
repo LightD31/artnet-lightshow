@@ -39,6 +39,18 @@ interface NamedPreset {
   id?: string;
 }
 
+// Exact-audio sources remembered, newest last: the tracks on the decks and a
+// few before them.
+const EXACT_AUDIO_KEPT = 32;
+
+/** Where a track's own audio comes from, and what else is known about that file. */
+export interface ExactAudio {
+  /** A temp audio file this module then owns and deletes, or null. */
+  fetch: () => Promise<string | null>;
+  /** The file's analysis, with whatever else is known about it folded in. */
+  refine?: (analysis: Analysis) => Promise<Analysis> | Analysis;
+}
+
 /** What prefetch() did. */
 export interface PrefetchResult {
   skipped: boolean;
@@ -102,13 +114,16 @@ class AutoShow {
   declare intents: Intent[] | undefined;
   declare intensity: number;
   declare syncOffsetMs: number;
+  declare autoSyncMs: number;
   declare _getPositionMs: (() => number) | null;
   declare _loopTimer: ReturnType<typeof setInterval> | null;
   declare _lastEventIdx: number;
+  declare _startFadeMs: number;
   declare _lastPositionMs: number | undefined;
   declare _status: AutoShowStatus;
   declare _energyTimer: ReturnType<typeof setTimeout> | null;
   declare _inFlight: Map<string, Promise<Analysis>>;
+  declare _exactAudio: Map<string, ExactAudio>;
   declare _currentJob: symbol | null;
   declare _grid: BeatGrid | null;
   declare _pixels: boolean;
@@ -158,15 +173,21 @@ class AutoShow {
     // here would leave the show and the number on the operator's screen
     // disagreeing until the first nudge.
     this.syncOffsetMs = settings.group('auto').syncOffsetMs ?? 0;
+    // What auto-sync has measured the source to be off by, for this track
+    // (see auto-sync.ts). Starts at nothing with every show.
+    this.autoSyncMs = 0;
     this._getPositionMs = null;
     this._loopTimer = null;
     this._lastEventIdx = -1;
+    this._startFadeMs = 0;
     this._status = 'idle';
     this._energyTimer = null;
     // Shared in-flight work map so concurrent callers for the same cacheKey
     // (e.g. a prefetch that's still running when the track changes) join the
     // same download/analyze job instead of racing it.
     this._inFlight = new Map(); // cacheKey -> Promise<analysis>
+    // Where a track's own audio file comes from, by cacheKey (setExactAudio).
+    this._exactAudio = new Map();
     // Identifies the newest current-track job. Anything older that finishes
     // late is for a song that has already been left behind and must not touch
     // the running show.
@@ -278,7 +299,18 @@ class AutoShow {
    */
   getPositionMs(): number {
     if (!this._getPositionMs) return 0;
-    return this._getPositionMs() + this.syncOffsetMs;
+    return this._getPositionMs() + this.syncOffsetMs + this.autoSyncMs;
+  }
+
+  /**
+   * Move the show by what auto-sync measured. Bounded like the manual offset:
+   * a source more than two seconds out is a different part of the song, not
+   * an error to correct. A correction big enough to skip events re-seeks, as
+   * any jump in position does.
+   */
+  adjustAutoSync(deltaMs: number): void {
+    if (!Number.isFinite(deltaMs)) return;
+    this.autoSyncMs = Math.max(-SYNC_OFFSET_LIMIT_MS, Math.min(SYNC_OFFSET_LIMIT_MS, this.autoSyncMs + deltaMs));
   }
 
   /**
@@ -340,8 +372,11 @@ class AutoShow {
     delete restored.masterDimmer;
     delete restored.masterBlackout;
     // A seek lands on the scene; it does not fade into it from wherever the
-    // rig happened to be.
+    // rig happened to be — unless the show was started to crossfade in.
     delete restored.fadeMs;
+    if (this._startFadeMs > 0) restored.fadeMs = this._startFadeMs;
+    // Once only, and not saved for a later seek when there is no scene yet.
+    this._startFadeMs = 0;
     // The restored pattern counts its steps from the beat its scene was
     // scheduled on, so a seek lands on the same step playing through would.
     // Without a pattern to anchor, it still says it came from the timeline.
@@ -470,6 +505,24 @@ class AutoShow {
   }
 
   /**
+   * Say where the exact audio for `cacheKey` comes from: `fetch()` resolves to
+   * a temp audio file this module then owns (and deletes), or null when it
+   * cannot be had. An analysis under that key is then made from that file and
+   * nothing else — no search by name, no trimming to a length — and fails if
+   * the file cannot be fetched, so the caller can fall back to a key of its
+   * own for a search. `refine`, when given, sees the analysis before it is
+   * cached, to fold in what the file's source knows about it (see
+   * rekordbox-analysis.ts); if it fails, the analysis is kept as it was.
+   */
+  setExactAudio(cacheKey: string, source: ExactAudio): void {
+    this._exactAudio.delete(cacheKey);
+    this._exactAudio.set(cacheKey, source);
+    while (this._exactAudio.size > EXACT_AUDIO_KEPT) {
+      this._exactAudio.delete(this._exactAudio.keys().next().value as string);
+    }
+  }
+
+  /**
    * Shared work helper: download audio, run the analyzer, write to cache,
    * clean up the temp file. Returns the raw analysis JSON.
    *
@@ -482,14 +535,29 @@ class AutoShow {
     priority: AnalysisPriority, queuePos?: number | null): Promise<Analysis> {
     let audioPath: string | null = null;
     try {
-      audioPath = await this._downloadAudio(query, targetDurationSec, isrc);
+      const exact = cacheKey ? this._exactAudio.get(cacheKey) : undefined;
+      if (exact) {
+        audioPath = await exact.fetch();
+        if (!audioPath) throw new Error('the track\'s own audio file could not be fetched');
+        // The file is the track: nothing to trim it to.
+        targetDurationSec = null;
+      } else {
+        audioPath = await this._downloadAudio(query, targetDurationSec, isrc);
+      }
       if (onPhase) onPhase('analyzing');
       // Always pass the target duration to the analyzer when we have one —
       // it will no-op when the downloaded length is already within the ±2s
       // tolerance, and trim beatless padding when the yt-dlp fallback grabs
       // a longer version. The cacheKey doubles as the worker-queue tag so
       // a later high-priority join can find and bump this entry.
-      const analysis = await this._runAnalyzer(audioPath, targetDurationSec, priority, cacheKey, queuePos);
+      let analysis = await this._runAnalyzer(audioPath, targetDurationSec, priority, cacheKey, queuePos);
+      if (exact && exact.refine) {
+        try {
+          analysis = await exact.refine(analysis);
+        } catch (err) {
+          console.warn(`[auto-show] kept the analysis as it was for ${cacheKey}: ${messageOf(err)}`);
+        }
+      }
       if (cacheKey && this._cache) {
         await this._cache.save(cacheKey, analysis, meta || {});
         this._noteCached(cacheKey, analysis);
@@ -528,6 +596,18 @@ class AutoShow {
       promise.then(cleanup, cleanup);
     }
     return promise;
+  }
+
+  /**
+   * Wait for an analysis already being made for `cacheKey`, moved up the
+   * analyser's queue to `priority`. Resolves either way, without touching the
+   * running show; `isCached` then says whether it worked.
+   */
+  async awaitInFlight(cacheKey: string, priority: AnalysisPriority = 'current'): Promise<void> {
+    const pending = this._inFlight.get(cacheKey);
+    if (!pending) return;
+    if (this._worker) this._worker.promote(cacheKey, priority);
+    await pending.catch(() => {});
   }
 
   /**
@@ -815,12 +895,22 @@ class AutoShow {
 
   // ── 3. Playback ─────────────────────────────────────────────────────────────
 
-  start(getPositionMs: () => number): void {
+  /**
+   * Play the timeline against `getPositionMs`. `fadeMs` crossfades from
+   * whatever the rig shows into the scene the show starts on — the lights
+   * following a DJ's blend from one track to the next — where a start
+   * otherwise lands on its scene at once.
+   */
+  start(getPositionMs: () => number, { fadeMs = 0 }: { fadeMs?: number } = {}): void {
     if (!this.timeline.length) return;
     // A second client or a retried request must not reset the cursor, replay
     // events, or leave an extra playback interval that stop() cannot clear.
     if (this.running) return;
     this._getPositionMs = getPositionMs;
+    this._startFadeMs = Math.max(0, Math.min(10000, Math.round(Number(fadeMs) || 0)));
+    // A new show is a new track, or the same one from another source: what
+    // the last one was off by says nothing about this one.
+    this.autoSyncMs = 0;
     this.running = true;
     this._lastEventIdx = -1;
     this._lastPositionMs = undefined;
@@ -834,6 +924,7 @@ class AutoShow {
 
   stop(): void {
     this.running = false;
+    this._startFadeMs = 0;
     this._status = this.analysis ? 'ready' : 'idle';
     if (this._loopTimer) { clearInterval(this._loopTimer); this._loopTimer = null; }
     this._cancelEnergyTimer();
@@ -1047,6 +1138,7 @@ class AutoShow {
       paletteSizeMode: this.paletteSize === 'auto' ? 'auto' : 'manual',
       intensity: this.intensity,
       syncOffsetMs: this.syncOffsetMs,
+      autoSyncMs: Math.round(this.autoSyncMs),
       // Planned for a rig with LED bars: its looks may draw across cells.
       pixels: this._pixels,
       analysis: this.analysis ? {

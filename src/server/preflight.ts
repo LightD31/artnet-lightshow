@@ -22,6 +22,8 @@ import { midiMap } from './midi-map.ts';
 import * as pythonEnv from '../python-env.ts';
 import * as ytdlp from '../ytdlp.ts';
 import { codeOf, messageOf } from '../errors.ts';
+import { listLiveDevices } from '../live-input.ts';
+import type { LiveDevices } from '../live-input.ts';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { EngineStatus } from './engine.ts';
 
@@ -639,6 +641,47 @@ function checkPlaybackSources({ spotify, prolink }: Pick<PreflightSubjects, 'spo
   return { id: 'sources', label: 'Playback sources', status: OK, detail: configured.join(', ') };
 }
 
+/**
+ * The live input, when it is on: a capture library the service can import,
+ * and the device it is set to among those it finds.
+ */
+async function checkLiveInput(): Promise<Check> {
+  const config = settings.group('live');
+  if (!config.enabled) {
+    return { id: 'live', label: 'Live input', status: INFO, detail: 'Off. Turn it on in Settings → Live Input to follow the music by ear.' };
+  }
+  let devices: LiveDevices;
+  try {
+    devices = await listLiveDevices();
+  } catch (err) {
+    return {
+      id: 'live', label: 'Live input', status: WARN, detail: messageOf(err),
+      fix: 'Check the Python interpreter in Settings → Analysis, and install requirements.txt into it.',
+    };
+  }
+  if (!devices.backend) {
+    return {
+      id: 'live', label: 'Live input', status: WARN,
+      detail: 'No capture library: the live input cannot hear anything.',
+      fix: 'Install it into the analysis Python: pip install soundcard',
+    };
+  }
+  const listed = config.source === 'loopback' ? devices.outputs : devices.inputs;
+  const wanted = config.device;
+  if (wanted && !listed.some((name) => name.toLowerCase().includes(wanted.toLowerCase()))) {
+    return {
+      id: 'live', label: 'Live input', status: WARN,
+      detail: `"${wanted}" is not among the ${config.source === 'loopback' ? 'outputs' : 'inputs'} (${listed.join(', ') || 'none'}).`,
+      fix: 'Plug it in, or pick another in Settings → Live Input.',
+    };
+  }
+  const which = wanted || (config.source === 'loopback' ? devices.defaultOutput : devices.defaultInput) || 'the default device';
+  return {
+    id: 'live', label: 'Live input', status: OK,
+    detail: `${config.source === 'loopback' ? 'Hears what' : 'Listens to'} ${which}${config.source === 'loopback' ? ' plays' : ''} (${devices.backend}).`,
+  };
+}
+
 function checkAccess(): Check {
   const host = settings.get('server.host');
   const hasToken = !!settings.get('server.token');
@@ -769,12 +812,13 @@ async function runPreflight({ midi, spotify, prolink, analysisCache, downloadMod
   // The external-tool probes are independent and each costs a process spawn;
   // run them together rather than serially in front of an operator waiting on
   // the report.
-  const [artnet, hue, wled, ffmpeg, ytDlp] = await Promise.all([
+  const [artnet, hue, wled, ffmpeg, ytDlp, live] = await Promise.all([
     checkArtnet(),
     checkHue(),
     checkWled(),
     checkFfmpeg(),
     checkYtDlp(),
+    checkLiveInput(),
   ]);
 
   const checks: Check[] = [
@@ -792,6 +836,7 @@ async function runPreflight({ midi, spotify, prolink, analysisCache, downloadMod
     checkPanns(),
     checkCache(analysisCache),
     checkPlaybackSources({ spotify, prolink }),
+    live,
     checkCues(),
     checkAnalysisModels({ download: downloadModels }),
   ];

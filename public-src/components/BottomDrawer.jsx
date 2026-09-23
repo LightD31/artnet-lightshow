@@ -3,11 +3,13 @@ import { stateSig } from '../state.js';
 import { Strobe } from './Strobe.jsx';
 import { DmxMonitor } from './DmxMonitor.jsx';
 import { Prolink } from './Prolink.jsx';
+import { LiveInput } from './LiveInput.jsx';
 
 const TABS = [
   { id: 'dmx',     label: 'DMX Monitor' },
   { id: 'strobe',  label: 'Strobe',  showWhen: (s) => s.pattern === 'strobe' },
   { id: 'prolink', label: 'PRO DJ LINK' },
+  { id: 'live',    label: 'Live Input' },
 ];
 
 export function BottomDrawer() {
@@ -51,6 +53,7 @@ export function BottomDrawer() {
           {tab === 'dmx'     && <DmxMonitor />}
           {tab === 'strobe'  && <Strobe />}
           {tab === 'prolink' && <Prolink />}
+          {tab === 'live'    && <LiveInput />}
         </div>
       )}
     </div>

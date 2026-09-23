@@ -38,6 +38,16 @@ export interface AnalysisDocument {
   genre?: Genre;
   /** The track's sections, in order. */
   segments: Section[];
+  /**
+   * Where the sections came from: the analyser, or 'rekordbox' when a CDJ track's phrases replaced
+   * them.
+   */
+  sectionSource?: string;
+  /**
+   * rekordbox's phrase mood, when its phrases are the sections: high for club tracks, mid and low
+   * for songs.
+   */
+  phraseMood?: "high" | "mid" | "low";
   onsets?: number[];
   kickOnsets?: number[];
   drops?: Drop[];

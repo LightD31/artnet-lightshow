@@ -282,6 +282,29 @@ Every phase is its own PR, keeps `npm run check` and the Python suite green, and
 - Cues, palettes and energy effects carry over through an adapter.
 
 ### Phase 3 — Sources v2: CDJs, Spotify, live input
+
+> **Status (#49).**
+> - **CDJs:**
+>   - alphatheta-connect 0.27.0 is pinned, with npm overrides pointing its `file:` dependencies at the registry.
+>   - Beat and absolute-position packets are read on our own socket: the library parses beat packets as positions.
+>   - The show follows the deck on air, not only the master.
+>   - The exact file is fetched over NFS and cached apart from search results.
+>   - rekordbox's grid and PSSI phrases become the beats and sections.
+>   - The show crossfades between decks, with the outgoing show playing on its own deck until the incoming track
+>     is ready.
+>   - Fader levels are left out: the DJM only reports them to a device posing as Stagehand, and on-air carries the
+>     same decision.
+> - **Live input:**
+>   - soundcard capture (WASAPI loopback, Linux monitors) or a line-in, at a 256-sample hop.
+>   - The live beat tracker now re-fits its phase to the last 4 s of onsets instead of nudging on every onset:
+>     that nudging let hats and snares walk the grid off the music.
+>   - Auto-sync by cross-correlating the live onsets with the analysed ones.
+>   - A live director for music with no analysis.
+>   - MIDI clock out.
+> - **Not done:**
+>   - The neural online tracker (BeatNet+/BEAST): the fixed PLL is within 10 ms on the test material, so it can wait
+>     for a real need.
+>   - Ableton Link: MIDI clock covers the same software through a loopback port, with nothing native to build.
 - **Replace `prolink-connect` with `alphatheta-connect`:**
   - beat packets drive the Conductor (true phase lock), with 30 ms absolute position on CDJ-3000;
   - the rekordbox grid becomes the beat grid;

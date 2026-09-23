@@ -13,11 +13,14 @@ of that one fact:
   median plus a multiple of the median absolute deviation, which is robust to
   the outliers a fixed standard deviation is not.
 
-* The beat grid is *predicted*, not tracked. A phase-locked oscillator runs at
-  the current tempo estimate and is nudged by each onset that arrives near
-  where it expected one. This is what keeps the show on the beat through a bar
-  where the kick drops out, and it is why the pull strength is low: chasing
-  every stray hit is how a live beat tracker loses the grid entirely.
+* The beat grid is *predicted*, not tracked. An oscillator runs at the current
+  tempo estimate, and twice a second its phase is re-fitted to the last few
+  seconds of onsets — the phase that lines the most onset strength up on a
+  grid of that tempo — and moved part of the way there. This is what keeps the
+  show on the beat through a bar where the kick drops out. Nudging it from
+  each onset instead, as it once was, let every hat and snare push the
+  predicted beat a little later, and at a fine hop the beat ran away from the
+  music entirely.
 
 * Drops are called on the rise, not on the sustain. Waiting four seconds to
   confirm a drop is correct offline and useless live. Confidence is reported
@@ -102,6 +105,7 @@ class StreamingAnalyzer:
 
         self._frame_index = 0
         self._frames_since_tempo = 0
+        self._frames_since_phase = 0
         self._bpm = 0.0
         self._period_frames = 0.0
         self._next_beat_frame = None
@@ -138,6 +142,24 @@ class StreamingAnalyzer:
             bands={name: self._recent(hist) for name, hist in self._band_history.items()},
             locked=self._locked,
         )
+
+    def beat_position(self):
+        """
+        Beats counted by the grid, continuously: 3.25 is a quarter of the way
+        into the fourth beat. None until there is a grid. It jumps only when the
+        grid is re-found after losing lock.
+        """
+        if self._next_beat_frame is None or self._period_frames <= 0:
+            return None
+        # Not through _phase(), whose wrap reads a beat that is a frame overdue
+        # (it fires on the next frame) as one just begun: a whole beat back.
+        return self._beat_count - (self._next_beat_frame - self._frame_index) / self._period_frames
+
+    def last_frame(self):
+        """The newest frame's spectral flux and RMS level, unsmoothed."""
+        flux = self._onset_history[-1] if self._onset_history else 0.0
+        rms = self._energy_history[-1] if self._energy_history else 0.0
+        return float(flux), float(rms)
 
     def push(self, samples):
         """
@@ -194,6 +216,10 @@ class StreamingAnalyzer:
         if self._frames_since_tempo * self.hop / self.sample_rate >= self.config.tempo_refresh_sec:
             self._frames_since_tempo = 0
             self._estimate_tempo()
+        self._frames_since_phase += 1
+        if self._frames_since_phase * self.hop / self.sample_rate >= self.config.phase_refresh_sec:
+            self._frames_since_phase = 0
+            self._refit_phase()
 
         events.extend(self._beat_events())
         events.extend(self._dynamics_events(energy))
@@ -233,7 +259,6 @@ class StreamingAnalyzer:
             events.append(Event(t=self.time, type=BASS_HIT, confidence=0.6,
                                 intensity=dsp.clamp01(low / (baseline * 3.0)),
                                 effect='pulse', data={'live': True}))
-        self._pull_phase()
         return events
 
     # ── Tempo and phase ─────────────────────────────────────────────────────
@@ -285,15 +310,20 @@ class StreamingAnalyzer:
         if self._next_beat_frame is None or not was_locked:
             self._align_phase(window)
 
-    def _align_phase(self, window):
-        """Set the oscillator's phase to whichever one the recent onsets fit."""
+    def _fit_next_beat(self, window):
+        """
+        The next beat frame that the onsets in `window` (the newest last) fit
+        best: the phase, in half-frame steps, whose grid at the current period
+        collects the most onset strength. None without two beats of history.
+        """
         period = self._period_frames
         if period <= 1 or window.size < period * 2:
-            return
+            return None
         count = int((window.size - 1) // period) + 1
-        best_phase, best_score = 0, -1.0
-        for phase in range(int(round(period))):
-            idx = np.round(phase + np.arange(count) * period).astype(int)
+        best_phase, best_score = 0.0, -1.0
+        steps = np.arange(count) * period
+        for phase in np.arange(0.0, period, 0.5):
+            idx = np.round(phase + steps).astype(int)
             idx = idx[idx < window.size]
             if idx.size < 2:
                 continue
@@ -303,33 +333,39 @@ class StreamingAnalyzer:
         # Absolute frame of the last predicted beat inside the window.
         last_in_window = best_phase + period * int((window.size - 1 - best_phase) // period)
         offset = (window.size - 1) - last_in_window
-        self._next_beat_frame = self._frame_index - offset + period
+        return self._frame_index - offset + period
 
-    def _pull_phase(self):
+    def _align_phase(self, window):
+        """Set the oscillator's phase to whichever one the recent onsets fit."""
+        target = self._fit_next_beat(window)
+        if target is not None:
+            self._next_beat_frame = target
+
+    def _refit_phase(self):
         """
-        Nudge the predicted beat towards an onset that arrived near it.
+        Move the running grid part of the way to the phase the last few
+        seconds of onsets fit.
 
-        Only near ones count: an onset a whole eighth away from the prediction
-        is a syncopation, and following it walks the grid onto the off-beat —
-        the failure that makes a live show feel like it is fighting the music.
+        A window of several beats outvotes a syncopated hit or a missing kick,
+        which a correction from each onset could not: every hat and snare
+        pushed that grid a little, and the pushes added up to a beat that never
+        came.
         """
-        if self._next_beat_frame is None or self._period_frames <= 0:
+        if self._next_beat_frame is None or self._period_frames <= 0 or not self._locked:
             return
-        error = self._frame_index - self._next_beat_frame
-        # Wrap into ±half a beat.
-        error = (error + self._period_frames / 2.0) % self._period_frames \
-            - self._period_frames / 2.0
-        if abs(error) > self._period_frames * 0.35:
+        frames = int(self.config.phase_window_sec * self.sample_rate / self.hop)
+        window = np.fromiter(self._onset_history, dtype=float)[-frames:]
+        target = self._fit_next_beat(window)
+        if target is None:
             return
-
-        # Proportional term: move the next predicted beat towards the onset.
+        period = self._period_frames
+        # Wrap into ±half a beat: a whole beat either way is the same grid.
+        error = (target - self._next_beat_frame + period / 2.0) % period - period / 2.0
         self._next_beat_frame += error * self.config.phase_lock_strength
 
-        # Integral term: if the errors keep pointing the same way the *period*
-        # is wrong, not the phase, and correcting phase alone means re-earning
-        # the same 100 ms of drift every bar. A small frequency nudge is what
-        # makes the loop hold over minutes rather than seconds. Clamped so a
-        # run of syncopated hits cannot walk the tempo away.
+        # Frequency term: errors that keep pointing the same way mean the
+        # *period* is wrong, not the phase. Clamped so a run of syncopation
+        # cannot walk the tempo away.
         self._period_frames += error * self.config.frequency_lock_strength
         if self._bpm > 0:
             frame_rate = self.sample_rate / float(self.hop)

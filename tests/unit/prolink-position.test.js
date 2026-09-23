@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert';
 import ProLink from '../../src/prolink.ts';
 
-const PLAYING = 3;              // prolink-connect PlayState.Playing
+const PLAYING = 3;              // alphatheta-connect PlayState.Playing
 const PAUSED = 5;
 
 /** A deck at `bpm` with no beat grid, driven by hand on a fake clock. */
@@ -15,8 +15,8 @@ function deck({ bpm = 120 } = {}) {
   const p = new ProLink();
   let now = 1000;
   p._now = () => now;
-  // No network: metadata lookups fail fast and fall back, which is fine here.
-  p._resolveTrackMetadata = () => Promise.reject(new Error('offline'));
+  // No network: rekordbox has nothing to say, which is fine here.
+  p._resolveTrackMetadata = () => Promise.resolve(null);
   const beatMs = 60000 / bpm;
   const status = ({ beat, pitch = 0, playState = PLAYING }) => p._onStatus({
     isMaster: true, deviceId: 1, trackDeviceId: 1, trackSlot: 3, trackType: 1, trackId: 42,
@@ -118,7 +118,7 @@ test('the deck\'s beat reading follows its position through rekordbox\'s grid', 
 
   // rekordbox's grid, first beat 300 ms in, so the beats are not where the
   // track tempo alone would put them.
-  d.p._beatGrid = Array.from({ length: 64 }, (_, i) => ({ offset: 300 + i * 500, count: (i % 4) + 1, bpm: 120 }));
+  d.p._decks.get(1).grid = Array.from({ length: 64 }, (_, i) => ({ offset: 300 + i * 500, count: (i % 4) + 1, bpm: 120 }));
   const locked = d.p.getBeatReading();
   assert.ok(Math.abs(locked.beatPos - (d.pos() - 300) / 500) < 1e-6, 'through the grid');
 });
