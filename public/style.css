@@ -476,6 +476,197 @@ main {
   margin-left: 2px;
 }
 
+.mode-tab-key { display: none; }
+/* Perform has no command bar above it to stick under. */
+.mode-tabs.in-perform { position: static; }
+
+/* Read by screen readers, not drawn. */
+.sr-only {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0);
+  white-space: nowrap; border: 0;
+}
+/* The first stop in the tab order, shown only when the keyboard reaches it. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 8px;
+  z-index: 1000;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  text-decoration: none;
+}
+.skip-link:focus { left: 12px; }
+
+/* =============================================================
+   PERFORM VIEW — a tablet mid-set: big targets, nothing to read twice
+   ============================================================= */
+.perform-view { display: grid; gap: 12px; }
+
+.perform-now {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 16px;
+  padding: 14px 16px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.perform-kicker {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.perform-track { display: block; font-size: 24px; font-weight: 750; line-height: 1.2; overflow-wrap: anywhere; }
+.perform-artist { display: block; font-size: 16px; color: var(--text-2); }
+.perform-next-name { display: block; font-size: 17px; font-weight: 650; overflow-wrap: anywhere; }
+.perform-next-state { font-size: 13px; color: var(--muted); }
+.perform-next-state.state-ready { color: var(--green); }
+.perform-view .muted { color: var(--muted); font-weight: 500; }
+.perform-progress {
+  position: relative;
+  height: 24px;
+  margin-top: 10px;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.perform-progress-fill { position: absolute; inset: 0 auto 0 0; background: var(--accent); opacity: .4; }
+.perform-progress-time { position: relative; padding: 0 8px; font: 600 13px/24px var(--mono); }
+
+.perform-sync { display: flex; flex-wrap: wrap; gap: 8px; }
+.perform-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 6px 14px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 14px;
+}
+.perform-chip-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--border-hi); flex: none; }
+.perform-chip-label { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.perform-chip-value { font-weight: 600; }
+.chip-ok .perform-chip-dot { background: var(--green); }
+.chip-warn { border-color: var(--amber); }
+.chip-warn .perform-chip-dot { background: var(--amber); }
+.chip-off { border-color: var(--red); }
+.chip-off .perform-chip-dot { background: var(--red); }
+
+.perform-body { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; }
+.perform-controls { display: grid; gap: 12px; }
+
+.perform-pads { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.perform-pad {
+  min-height: 104px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 10px;
+  background: var(--card);
+  border: 2px solid var(--border-hi);
+  border-radius: var(--radius-lg);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.perform-pad-name { font-size: 20px; font-weight: 800; letter-spacing: .03em; text-transform: uppercase; text-align: center; }
+.perform-pad-hint { font-size: 12px; color: var(--muted); }
+.perform-pad:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.perform-pad.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.perform-pad.active .perform-pad-hint { color: rgba(255, 255, 255, .9); }
+.pad-blackout { border-color: var(--red); }
+.pad-blackout.active { background: var(--red); border-color: var(--red); }
+.pad-blinder.active, .pad-white-strobe.active { background: #fafafa; border-color: #fafafa; color: #09090b; }
+.pad-blinder.active .perform-pad-hint, .pad-white-strobe.active .perform-pad-hint { color: #3f3f46; }
+.pad-uv-wash.active { background: #7c3aed; border-color: #7c3aed; }
+.pad-kill.active { background: #000; border-color: var(--text); }
+.pad-tap { border-style: dashed; }
+.perform-latch { grid-column: 1 / -1; display: inline-flex; align-items: center; gap: 10px; min-height: 44px; font-size: 15px; cursor: pointer; }
+.perform-latch input { width: 24px; height: 24px; accent-color: var(--accent); }
+
+.perform-palettes { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.perform-palette {
+  min-height: 68px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--card);
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.perform-palette.active { border-color: var(--accent); box-shadow: var(--glow); }
+.perform-palette:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.perform-palette-swatches { display: flex; height: 24px; border-radius: var(--radius-sm); overflow: hidden; }
+.perform-palette-swatches span { flex: 1; }
+.perform-palette-name { font-size: 14px; font-weight: 650; }
+
+.perform-faders {
+  display: flex;
+  gap: 18px;
+  padding: 14px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.perform-fader { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.perform-fader-label { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.perform-fader-value { font: 650 17px var(--mono); }
+/* A fader that stands up, with a thumb a thumb can find. */
+.perform-fader input[type=range] {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 14px;
+  height: 340px;
+  cursor: pointer;
+}
+.perform-fader input[type=range]::-webkit-slider-thumb { width: 44px; height: 30px; border-radius: 6px; }
+.perform-fader input[type=range]::-moz-range-thumb { width: 44px; height: 30px; border-radius: 6px; }
+
+/* Clear of the floating shortcuts button. */
+.perform-view { padding-bottom: 48px; }
+
+@media (max-width: 900px) {
+  .perform-now { grid-template-columns: 1fr; }
+  /* One column: the faders come straight after the pads, where a thumb is,
+     not below two dozen palettes. */
+  .perform-body { display: flex; flex-direction: column; align-items: stretch; }
+  .perform-controls { display: contents; }
+  .perform-pads { order: 1; }
+  .perform-faders { order: 2; justify-content: center; }
+  .perform-palettes { order: 3; }
+  .perform-fader input[type=range] { height: 240px; }
+}
+@media (max-width: 560px) {
+  .perform-pads { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .perform-pad { min-height: 88px; }
+  .perform-faders { flex-direction: column; align-items: stretch; }
+  .perform-fader { flex-direction: row; }
+  .perform-fader input[type=range] { writing-mode: horizontal-tb; direction: ltr; flex: 1; width: auto; height: 14px; }
+  .perform-fader input[type=range]::-webkit-slider-thumb { width: 30px; height: 44px; }
+}
+
 /* =============================================================
    MANUAL VIEW — 3-column working surface
    ============================================================= */

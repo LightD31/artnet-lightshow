@@ -1,12 +1,37 @@
-import { useEffect, useRef } from 'preact/hooks';
-import { send, emitTap, energyHold, pick } from '../state.js';
+import { useEffect } from 'preact/hooks';
+import { send, emitTap, pick } from '../state.js';
 import { formatBpm, clockSource } from '../utils.js';
 import { useDraft } from '../draft.js';
+import { useEnergyPads } from '../energy-pad.js';
 
 const DIVISIONS = [1, 2, 4, 8];
 
+/**
+ * Whether Space on this element taps the tempo.
+ *
+ * Space belongs to whatever is focused, and only falls through to tap tempo
+ * when that is nothing — tested on focusability rather than on a list of tag
+ * names, since the timeline canvas is a tabIndex="0" element that no list
+ * would have named, and pressing Space on it changed the BPM mid-set.
+ *
+ * With one exception: a button or fader the pointer last touched. A click
+ * leaves focus on the button, so after pressing Blackout, Space pressed
+ * Blackout again instead of tapping — the tap key stopped working after the
+ * first click of the night (A7.26). Such a control keeps Space when the
+ * keyboard brought focus to it (:focus-visible), and hands it to the tempo
+ * when the pointer did.
+ */
+function spaceIsTap(target) {
+  if (!target || target === document.body || target === document.documentElement) return true;
+  if (target.isContentEditable) return false;
+  const pointerFocused = typeof target.matches === 'function' && !target.matches(':focus-visible');
+  if (target.tagName === 'BUTTON') return pointerFocused;
+  if (target.tagName === 'INPUT' && target.type === 'range') return pointerFocused;
+  return !(target.tabIndex >= 0 || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
+}
+
 export function CommandBar() {
-  const pressRef = useRef(null);
+  const [, padProps] = useEnergyPads();
   const s = pick(['bpm', 'beatDivision', 'clock', 'running', 'masterDimmer', 'masterBlackout', 'energyEffects', 'energyOverride']);
   const bpm = s.bpm || 120;
   const division = s.beatDivision || 1;
@@ -20,13 +45,8 @@ export function CommandBar() {
   useEffect(() => {
     const onKey = (e) => {
       if (e.code !== 'Space') return;
-      if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
-      // Space belongs to whatever is focused, and only falls through to tap
-      // tempo when that is nothing. Tested on focusability rather than on a list
-      // of tag names: the timeline canvas is a tabIndex="0" element that no list
-      // would have named, and pressing Space on it changed the BPM mid-set.
-      if (e.target !== document.body && e.target.tabIndex >= 0) return;
-      if (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(e.target.tagName) || e.target.isContentEditable) return;
+      if (e.repeat || e.ctrlKey || e.altKey || e.metaKey || e.defaultPrevented) return;
+      if (!spaceIsTap(e.target)) return;
       e.preventDefault();
       emitTap();
     };
@@ -37,44 +57,6 @@ export function CommandBar() {
   const [dim, onMaster, commitMaster] = useDraft(s.masterDimmer ?? 255, (v) => send({ masterDimmer: v }));
   const masterPct = Math.round((dim / 255) * 100);
   const effects = s.energyEffects || [];
-
-  const release = () => {
-    pressRef.current = null;
-    energyHold.release();
-  };
-  useEffect(() => {
-    const hidden = () => { if (document.hidden) release(); };
-    window.addEventListener('blur', release);
-    document.addEventListener('visibilitychange', hidden);
-    return () => {
-      release();
-      window.removeEventListener('blur', release);
-      document.removeEventListener('visibilitychange', hidden);
-    };
-  }, []);
-
-  const activate = (id) => (e) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    if (energyHold.press(id)) {
-      pressRef.current = { id, pointer: e.pointerId };
-      e.currentTarget.setPointerCapture(e.pointerId);
-    }
-  };
-  const deactivate = (id) => (e) => {
-    if (pressRef.current?.id === id && pressRef.current.pointer === e.pointerId) release();
-  };
-  const keyDown = (id) => (e) => {
-    if (![' ', 'Enter'].includes(e.key)) return;
-    e.preventDefault();
-    if (!e.repeat && energyHold.press(id)) pressRef.current = { id, key: e.key };
-  };
-  const keyUp = (id) => (e) => {
-    if (pressRef.current?.id === id && pressRef.current.key === e.key) {
-      e.preventDefault();
-      release();
-    }
-  };
 
   return (
     <div class="command-bar">
@@ -152,14 +134,7 @@ export function CommandBar() {
             <button
               key={eff.id}
               class={`cb-energy-btn ${s.energyOverride === eff.id ? 'active' : ''}`}
-              onPointerDown={activate(eff.id)}
-              onPointerUp={deactivate(eff.id)}
-              onPointerCancel={deactivate(eff.id)}
-              onLostPointerCapture={deactivate(eff.id)}
-              onKeyDown={keyDown(eff.id)}
-              onKeyUp={keyUp(eff.id)}
-              onBlur={() => { if (pressRef.current?.id === eff.id) release(); }}
-              style={{ touchAction: 'none' }}
+              {...padProps(eff.id)}
               title={`${eff.name} — ${eff.desc} (hold)`}
             >
               <span class="cb-energy-name">{eff.name}</span>

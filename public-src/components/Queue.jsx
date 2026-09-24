@@ -31,7 +31,7 @@ const STATUS_LABEL = {
  * Prefer whichever list has entries; fall back to a connected source so the
  * panel can still explain itself when nothing is queued yet.
  */
-function activeQueue(s) {
+export function activeQueue(s) {
   const spotify = Array.isArray(s.spotifyPrefetch) ? s.spotifyPrefetch : [];
   const deezer = Array.isArray(s.deezerPrefetch) ? s.deezerPrefetch : [];
 
