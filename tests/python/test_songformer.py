@@ -75,22 +75,73 @@ class WhenItRuns(unittest.TestCase):
 
 
 @needs_audio
+class FakeModel:
+    """Stands in for SongFormer: records what it was given and how it was set."""
+
+    def __init__(self, rows):
+        self.rows = rows
+        self.config = types.SimpleNamespace(win_size=420, hop_size=420)
+        self.seen = {}
+
+    def parameters(self):
+        import torch
+        return iter([torch.zeros(1)])
+
+    def __call__(self, audio):
+        self.seen = {'length': len(audio), 'window': (self.config.win_size, self.config.hop_size)}
+        return self.rows
+
+
 class Inference(unittest.TestCase):
     def test_the_mix_goes_in_at_24_khz_and_the_rows_come_back_on_the_track(self):
         import numpy as np
-        seen = {}
-
-        def model(audio):
-            seen['length'] = len(audio)
-            return [{'label': 'intro', 'start': 0.0, 'end': 4.2},
-                    {'label': 'chorus', 'start': 4.2, 'end': 12.9}]  # past the end
-
+        model = FakeModel([{'label': 'intro', 'start': 0.0, 'end': 4.2},
+                           {'label': 'chorus', 'start': 4.2, 'end': 12.9}])  # past the end
         stereo = np.zeros((2, 44100 * 10), dtype=np.float32)
-        with patch.object(songformer, 'load', return_value=model):
+        with patch.object(songformer, 'load', return_value=model), \
+             patch.object(songformer, 'available_gb', return_value=30.0):
             rows = songformer.sections(stereo, 44100)
-        self.assertAlmostEqual(seen['length'], 24000 * 10, delta=2)
+        self.assertAlmostEqual(model.seen['length'], 24000 * 10, delta=2)
         self.assertEqual(rows, [{'start': 0.0, 'end': 4.2, 'label': 'intro'},
                                 {'start': 4.2, 'end': 10.0, 'label': 'chorus'}])
+
+    def test_short_of_memory_it_reads_in_shorter_windows_or_not_at_all(self):
+        """Read whole, a five-minute track took SongFormer past 14 GB on a
+        16 GB machine, and the kernel killed the worker — the track lost its
+        analysis instead of falling back to the labeller."""
+        import numpy as np
+        model = FakeModel([{'label': 'verse', 'start': 0.0, 'end': 311.0}])
+        track = np.zeros(311 * 24000, dtype=np.float32)
+        with patch.object(songformer, 'load', return_value=model), \
+             patch.object(songformer, 'available_gb', return_value=10.0):
+            songformer.sections(track, 24000)
+        self.assertEqual(model.seen['window'], (180, 180), 'two equal windows')
+        with patch.object(songformer, 'load', return_value=model), \
+             patch.object(songformer, 'available_gb', return_value=0.5):
+            with self.assertRaises(MemoryError):
+                songformer.sections(track, 24000)
+
+
+class Windows(unittest.TestCase):
+    def test_the_window_is_the_longest_that_fits(self):
+        w = songformer.window_for
+        self.assertEqual(w(250, 30.0), 360, 'plenty of room: the track is read whole')
+        self.assertEqual(w(600, 60.0), 300, 'longer than 420 s: equal windows, not 420 and a scrap')
+        self.assertEqual(w(311, 10.0), 180)
+        self.assertEqual(w(180, 2.0), 90)
+        self.assertEqual(w(420, None), 150, 'unknown memory is taken as 8 GB')
+        for free in (1.0, 4.0, 10.0, 40.0):
+            window = w(10_000, free)
+            self.assertEqual(window % 30, 0, 'whole 30-second steps, which the model reads in')
+            self.assertLessEqual(songformer.GB_PER_SECOND_SQUARED * window ** 2,
+                                 free * songformer.MEMORY_SHARE + 1e-9)
+        with self.assertRaises(MemoryError):
+            w(200, 0.5)
+
+    def test_the_tail_guard_follows_the_window(self):
+        import numpy as np
+        step = 180 * songformer.RATE
+        self.assertEqual(songformer._fit_windows(np.zeros(2 * step + 500), 180).size, 2 * step)
 
 
 # What SongFormer said about `four_on_the_floor(bars=48)` at 128 BPM, whose

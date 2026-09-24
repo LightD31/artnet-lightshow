@@ -279,7 +279,7 @@ MODELS = [
     hf_model("songformer", "SongFormer", "Names the sections: intro, verse, pre-chorus, chorus, bridge, outro.",
              "optional", 2_860_000_000, "CC BY 4.0 (its MuQ backbone CC BY-NC 4.0)", "ASLP-lab/SongFormer",
              ["model.safetensors"], ignore=["*.pt", "musicfm/figs/*"],
-             note="Runs by default only on a GPU: on a CPU it takes most of the track's length and 8-10 GB of memory.",
+             note="Runs by default only on a GPU: on a CPU it takes most of the track's length.",
              variable="ARTNET_SONGFORMER_MODEL"),
     Model("bs_roformer", "BS-RoFormer SW", "The slower, more careful separator (Settings → Separator).",
           "optional", 700_000_000, "MIT", _bs_roformer_present, _bs_roformer_fetch,

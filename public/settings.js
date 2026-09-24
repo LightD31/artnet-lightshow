@@ -1748,7 +1748,8 @@ const SETTINGS_SPEC = [
         help: 'Names each section: intro, verse, pre-chorus, chorus, bridge, outro. SongFormer '
           + 'was trained on thousands of annotated songs; it needs its 2.9 GB of weights '
           + '(Analysis models, below) and takes a few seconds a track on a GPU, but most of the '
-          + 'track\'s length and 8-10 GB of memory on a CPU. Without it the sections come from '
+          + 'track\'s length on a CPU, reading in windows sized to the free memory. Without it '
+          + 'the sections come from '
           + 'where the music repeats, with arrangement rules for the names. Changing it '
           + 'restarts the analyzer.' },
       { path: 'analysis.pythonPath', label: 'Python', type: 'text',

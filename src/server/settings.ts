@@ -188,8 +188,8 @@ const DEFAULTS: Settings = {
     separator: 'demucs',
     // Where a track's sections come from. 'auto' asks SongFormer when the
     // analyser has a GPU and its weights are downloaded, and the self-similarity
-    // labeller otherwise: on a CPU SongFormer takes most of the track's length
-    // and 8-10 GB of memory. 'songformer' asks it on a CPU too; 'off' never.
+    // labeller otherwise: on a CPU SongFormer takes most of the track's length.
+    // 'songformer' asks it on a CPU too; 'off' never.
     structureModel: 'auto',
   },
 };

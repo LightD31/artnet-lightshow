@@ -331,8 +331,9 @@ Every phase is its own PR, keeps `npm run check` and the Python suite green, and
 >     label, so the drop detector decides, as it already does over the labeller's clusters.
 >   - The Laplacian labeller is the fallback. Its sections now reach the ends of the track.
 > - **SongFormer's cost:**
->   - Measured on a 4-core CPU: 0.75× the track's length and 8-10 GB of RAM, because its attention is quadratic in
->     the track length.
+>   - Measured on a 4-core CPU: 0.75× the track's length.
+>   - Its attention is quadratic in the window it reads: a five-minute track read whole was killed for memory on a
+>     16 GB machine. The window is now sized to the free memory, and too little falls back to the labeller.
 >   - So `auto` runs it only on a GPU, and Settings → Structure can force it on or off.
 >   - `bench-analyze.py --structure songformer` is the 890M benchmark still to run.
 > - **Not done:**

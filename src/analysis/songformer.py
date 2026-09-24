@@ -11,11 +11,19 @@ pre-chorus, chorus, bridge, instrumental, outro, silence.
 
 It is optional, and heavy. The published checkpoint carries both of its
 self-supervised backbones (MuQ and MusicFM, 690 M parameters, 2.9 GB), and it
-reads the whole track in one 420-second window, so its attention grows with the
-square of the track's length. On a four-core laptop CPU it runs at about three
-quarters of real time with 8-10 GB of RAM in use; on a GPU it is a few seconds.
-So the default, `auto`, runs it only when the analyser has a GPU and the
-weights are on disk, and the self-similarity labeller answers otherwise.
+reads a track in windows of up to 420 seconds, so its attention grows with the
+square of the window. Measured on a CPU, beyond its 3.6 GB of weights it needs
+about 1.25e-4 GB per second² of window: 4 GB at 180 s, 7 GB at 240 s, 22 GB for
+a whole 420 s. A five-minute track read in one window was killed for memory on
+a 16 GB machine — the worker with it, and the track lost its analysis rather
+than falling back. So the window is chosen from the memory free when it runs
+(`window_for`): as long as fits, and a longer track in equal windows. The model
+reads a track longer than its window that way anyway; it is how it was built.
+
+On a four-core laptop CPU it runs at about three quarters of real time; on a
+GPU it is a few seconds. So the default, `auto`, runs it only when the analyser
+has a GPU and the weights are on disk, and the self-similarity labeller answers
+otherwise.
 `ARTNET_STRUCTURE_MODEL` (the settings page's Structure field) chooses:
 
     auto        SongFormer on a GPU, the labeller on a CPU
@@ -41,6 +49,7 @@ that.
 
 import contextlib
 import importlib.util
+import math
 import os
 import sys
 import types
@@ -50,8 +59,17 @@ from . import models
 
 #: The rate both backbones were trained at.
 RATE = 24000
-#: The model's analysis window, in seconds (its config's `win_size`).
+#: The model's analysis window, in seconds (its config's `win_size`): the
+#: longest it reads at once, and what it reads when memory allows.
 WINDOW_SEC = 420
+#: The shortest window worth reading: below this the model sees too little of
+#: the song to place its sections, and the labeller is the better answer.
+MIN_WINDOW_SEC = 60
+#: Working memory beyond the weights, per second² of window (measured on CPU).
+GB_PER_SECOND_SQUARED = 1.25e-4
+#: How much of the free memory it may take: the separator and MuQ may be
+#: running beside it.
+MEMORY_SHARE = 0.6
 #: What must be in the model directory for it to load.
 REQUIRED_FILES = ('model.safetensors', 'modeling_songformer.py', 'config.json',
                   'muq_config2.json', 'msd_stats.json')
@@ -150,7 +168,52 @@ def load():
     return models.cached(f'songformer:{directory}:{target}', build)
 
 
-def _fit_windows(audio):
+def available_gb(device):
+    """Memory free for the model now: the card's, or the machine's. None if unknown."""
+    if str(device).startswith('cuda'):
+        try:
+            import torch
+            return torch.cuda.mem_get_info()[0] / 1e9
+        except Exception:
+            return None
+    try:
+        import psutil
+        return psutil.virtual_memory().available / 1e9
+    except Exception:
+        pass
+    try:
+        with open('/proc/meminfo') as handle:
+            for line in handle:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) / 1e6
+    except OSError:
+        pass
+    return None
+
+
+def window_for(duration, free_gb):
+    """
+    The window to read a track of `duration` seconds in, given `free_gb`.
+
+    The longest whole number of 30-second steps (the model's inner windows)
+    whose working memory fits in its share of what is free, at most 420 s.
+    A track longer than that is read in equal windows rather than full ones
+    and a scrap. Raises MemoryError when not even MIN_WINDOW_SEC fits.
+    Unknown free memory is treated as 8 GB.
+    """
+    budget = (8.0 if free_gb is None else free_gb) * MEMORY_SHARE
+    fits = math.sqrt(max(0.0, budget) / GB_PER_SECOND_SQUARED)
+    window = min(WINDOW_SEC, int(fits // 30) * 30)
+    if window < MIN_WINDOW_SEC:
+        raise MemoryError(f'SongFormer needs {GB_PER_SECOND_SQUARED * MIN_WINDOW_SEC ** 2 / MEMORY_SHARE:.1f} GB '
+                          f'free for its shortest window; {free_gb:.1f} GB is')
+    if duration <= window:
+        return window
+    count = math.ceil(duration / window)
+    return min(window, int(math.ceil(duration / count / 30)) * 30)
+
+
+def _fit_windows(audio, window=WINDOW_SEC):
     """
     Trim a tail the model would never finish.
 
@@ -158,7 +221,7 @@ def _fit_windows(audio):
     so a track a few milliseconds longer than a multiple of the window hangs
     the worker. Those milliseconds carry no structure.
     """
-    step = WINDOW_SEC * RATE
+    step = window * RATE
     tail = len(audio) % step
     if 0 < tail <= 1024 and len(audio) > step:
         return audio[:len(audio) - tail]
@@ -170,8 +233,8 @@ def sections(samples, sample_rate):
     Sections of mono `samples`, as `[{'start', 'end', 'label'}, …]` in seconds.
 
     Labels are SongFormer's own: intro, verse, pre-chorus, chorus, bridge,
-    inst, outro, silence. Raises when the model cannot run; the caller keeps
-    the labeller's answer.
+    inst, outro, silence. Raises when the model cannot run, or when there is
+    not the memory to; the caller keeps the labeller's answer.
     """
     import numpy as np
     import torch
@@ -179,12 +242,20 @@ def sections(samples, sample_rate):
     audio = np.asarray(samples, dtype=np.float32)
     if audio.ndim > 1:
         audio = audio.mean(axis=0)
-    audio = _fit_windows(resample(audio, sample_rate, RATE))
+    audio = resample(audio, sample_rate, RATE)
     if audio.size < RATE * 5:
         return []
     model = load()
+    device = next(model.parameters()).device
     with models.inference('songformer'), torch.inference_mode(), \
             contextlib.redirect_stdout(sys.stderr):
+        # Measured once the card is ours: the models before this one have
+        # handed back what they held.
+        window = window_for(audio.size / RATE, available_gb(device))
+        if window < WINDOW_SEC:
+            _log(f'reading in {window} s windows ({audio.size / RATE:.0f} s track)')
+        audio = _fit_windows(audio, window)
+        model.config.win_size = model.config.hop_size = window
         rows = model(audio)
     duration = audio.size / RATE
     out = []

@@ -1121,8 +1121,12 @@ on thousands of annotated songs. It knows a pre-chorus, a chorus that is not the
 loudest part, and an instrumental break. Without it, the sections come from where
 the music repeats, and arrangement rules supply the names. **Auto** uses SongFormer
 when the analyser has a GPU and its weights (2.9 GB) are downloaded. On a CPU it
-takes most of the track's length and 8-10 GB of memory, so there it is only used
-when set to **SongFormer**. Try it on the show machine first:
+takes most of the track's length, so there it is only used when set to
+**SongFormer**. Its memory grows with the square of how much of the track it
+reads at once, so it reads in windows sized to the memory that is free: a long
+track in a machine with little to spare is read in shorter windows, and one
+that has not enough for even a minute falls back to the arrangement rules. Try
+it on the show machine first:
 `python scripts/bench-analyze.py track.wav --structure songformer`.
 
 **Separator.** Settings → Analysis → **Separator** picks the model that splits

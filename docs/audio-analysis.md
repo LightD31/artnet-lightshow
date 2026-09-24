@@ -398,9 +398,20 @@ answer:
   says `sectionSource: "songformer"`.
 
 It is heavy. The checkpoint carries both of its backbones (MuQ and MusicFM,
-690 M parameters, 2.9 GB) and reads the whole track in one 420-second window,
-so its attention grows with the square of the track's length. On a four-core
-laptop CPU a three-minute track takes 134 s and 8-10 GB of RAM; on a GPU it is
+690 M parameters, 2.9 GB, about 3.6 GB in memory). It reads a track in windows
+of up to 420 seconds, and its attention grows with the square of the window:
+measured on a CPU, about 1.25e-4 GB per second², so 4 GB beyond the weights for
+180 s, 7 GB for 240 s and 22 GB for a whole 420 s. Read whole, a five-minute
+track was killed for memory on a 16 GB machine, and the worker went with it —
+the track lost its analysis instead of falling back. So the window is chosen
+from the memory free when it runs (`songformer.window_for`): the longest whole
+number of 30-second steps whose working memory fits in 60 % of what is free
+(the card's on a GPU), with a long track split into equal windows. When not
+even 60 seconds fits, it raises, and the labeller answers. The model reads
+tracks longer than 420 s in windows anyway; how much a shorter window costs
+in labelling quality has not been measured.
+
+On a four-core laptop CPU a three-minute track takes 134 s; on a GPU it is
 seconds. So Settings → Structure (`ARTNET_STRUCTURE_MODEL`) is:
 
 | | |
