@@ -32,6 +32,8 @@ import os
 import sys
 import time
 import hashlib
+import contextlib
+import functools
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -39,7 +41,8 @@ import numpy as np
 from . import (bands as bands_stage, dsp, dynamics as dynamics_stage,
                events as events_stage, features as features_stage,
                perception as perception_stage, preprocess as preprocess_stage,
-               rhythm as rhythm_stage, stems as stems_stage,
+               pulse as pulse_stage, rhythm as rhythm_stage, songformer,
+               stems as stems_stage,
                structure as structure_stage, tagger)
 from .config import AnalysisConfig, DEFAULT
 from .version import SCHEMA_VERSION
@@ -59,6 +62,31 @@ def _log(message):
     print(f'[pipeline] {message}', file=sys.stderr)
 
 
+class Timings(dict):
+    """
+    Seconds per stage, for `meta.timings` and scripts/bench-analyze.py.
+
+    The stages on their own threads are timed on those threads, so a model's
+    time is its own and not the time the main thread spent waiting for it —
+    which is recorded too, as `wait.*`, because that is what the track pays.
+    """
+
+    @contextlib.contextmanager
+    def stage(self, name):
+        started = time.perf_counter()
+        try:
+            yield
+        finally:
+            self[name] = round(self.get(name, 0.0) + time.perf_counter() - started, 3)
+
+    def timed(self, name, fn):
+        @functools.wraps(fn)
+        def run(*args, **kwargs):
+            with self.stage(name):
+                return fn(*args, **kwargs)
+        return run
+
+
 def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
     """Analyse one audio file and return the document as a plain dict."""
     config = config or DEFAULT
@@ -67,11 +95,19 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
     if not os.path.isfile(path):
         raise FileNotFoundError(path)
 
-    # Declared before the try so the `finally` can shut them down even if
-    # preprocessing is what failed.
+    # Declared before the try so the `finally` can shut them down whichever
+    # stage failed. The separation pool used to be declared inside it, and an
+    # exception between its start and its collection left it behind.
     tag_pool, tag_future = None, None
     mulan_pool, mulan_future = None, None
-    tagging = config.enable_tagger and tagger.installed()
+    stem_pool, stem_future = None, None
+    beat_pool, beat_turn = None, None
+    key_pool, key_future = None, None
+    form_pool, form_future = None, None
+    # Only a tagger whose weights are already here. The analysis never
+    # downloads: 310 MB fetched mid-track on venue wifi is a track that does
+    # not get analysed, and possibly the one after it.
+    tagging = config.enable_tagger and tagger.ready()
 
     # Import torch here, before the stage threads start. Left to them, the
     # separator's thread and this one import it for the first time at once,
@@ -81,8 +117,19 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
     import torch  # noqa: F401
     models.device()
 
+    timings = Timings()
     try:
-        audio = preprocess_stage.prepare(path, config.preprocess, target_duration_sec)
+        with timings.stage('preprocess'):
+            audio = preprocess_stage.prepare(path, config.preprocess, target_duration_sec)
+
+        # The beat model first, on its own thread and first in line for the
+        # card. Everything from the rhythm stage on waits for the grid, and it
+        # needs nothing but the decoded audio — so it runs beside the feature
+        # extraction instead of after it, and the separator and MuQ, started
+        # next, queue behind it instead of in front of it.
+        beat_turn = models.reserve_first_turn()
+        beat_pool = ThreadPoolExecutor(max_workers=1)
+        beat_future = beat_pool.submit(timings.timed('beats', _beat_pass), audio, config.rhythm, beat_turn)
 
         # The tagger used to read the file itself, which let it start before
         # preprocessing — at the price of decoding and resampling the whole
@@ -93,16 +140,15 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
         # stage after this one.
         if tagging:
             tag_pool = ThreadPoolExecutor(max_workers=1)
-            tag_future = tag_pool.submit(_safe_tag, path, audio)
+            tag_future = tag_pool.submit(timings.timed('tagger', _safe_tag), path, audio)
 
         # Separation is the most expensive stage and needs nothing but the
         # waveform, so it starts here and is collected as late as possible. On
         # a GPU it genuinely overlaps the feature extraction below; on a CPU it
         # queues behind it, which is no worse than running it in sequence.
-        stem_pool, stem_future = None, None
         if config.separate_sources:
             stem_pool = ThreadPoolExecutor(max_workers=1)
-            stem_future = stem_pool.submit(_safe_separate, audio)
+            stem_future = stem_pool.submit(timings.timed('separation', _safe_separate), audio)
 
         # MuQ-MuLan answers the genre question, so it has to be collected
         # before perception rather than tacked on after the document is built.
@@ -113,52 +159,86 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
         # at the end takes the slowest optional model off the critical path.
         if config.enable_semantics:
             mulan_pool = ThreadPoolExecutor(max_workers=1)
-            mulan_future = mulan_pool.submit(_safe_muq, audio)
+            mulan_future = mulan_pool.submit(timings.timed('muq', _safe_muq), audio)
 
-        frames = features_stage.extract(audio, config.preprocess)
+        # SongFormer names the sections (see songformer.py). The slowest model
+        # here, and needed only by the structure stage, so it starts now and
+        # is collected last.
+        if songformer.wanted(config.structure_model):
+            form_pool = ThreadPoolExecutor(max_workers=1)
+            form_future = form_pool.submit(timings.timed('songformer', _safe_songformer), audio)
 
-        rhythm = rhythm_stage.analyse(audio, frames, config.rhythm)
-        band_map = bands_stage.analyse(frames, rhythm.beats)
+        # The key model reads the decoded file rather than decoding it again,
+        # and nothing but the document waits for it.
+        if model_adapters.skey_available():
+            key_pool = ThreadPoolExecutor(max_workers=1)
+            key_future = key_pool.submit(timings.timed('skey', _safe_skey), audio)
 
-        tags = _collect(tag_future)
-        stems = _collect(stem_future)
-        muq = _collect(mulan_future) or {}
+        with timings.stage('features'):
+            frames = features_stage.extract(audio, config.preprocess)
+
+        with timings.stage('wait.beats'):
+            beat_future.exception()
+        with timings.stage('rhythm'):
+            rhythm = rhythm_stage.analyse(audio, frames, config.rhythm,
+                                          model_result=beat_future.result)
+        with timings.stage('bands'):
+            band_map = bands_stage.analyse(frames, rhythm.beats)
+
+        with timings.stage('wait.models'):
+            tags = _collect(tag_future)
+            stems = _collect(stem_future)
+            muq = _collect(mulan_future) or {}
         mulan = muq.get('scores') or {}
         embeddings = muq.get('embeddings') or []
-        if stem_pool is not None:
-            stem_pool.shutdown(wait=False)
-        if mulan_pool is not None:
-            mulan_pool.shutdown(wait=False)
-        roles = bands_stage.infer_roles(frames, band_map, stems, tags)
+        with timings.stage('roles'):
+            roles = bands_stage.infer_roles(frames, band_map, stems, tags)
 
-        dynamics = dynamics_stage.analyse(frames, band_map, rhythm, config.dynamics)
+        with timings.stage('dynamics'):
+            dynamics = dynamics_stage.analyse(frames, band_map, rhythm, config.dynamics)
+        with timings.stage('wait.songformer'):
+            model_sections = _collect(form_future) or None
 
         # Structure and perception are independent of each other and are the
         # two slowest remaining stages, so they run side by side.
         if config.parallel:
             with ThreadPoolExecutor(max_workers=2) as pool:
                 sections_future = pool.submit(
-                    structure_stage.analyse, frames, rhythm, roles,
-                    [d.to_dict() for d in dynamics.drops], config.structure)
+                    timings.timed('structure', structure_stage.analyse), frames, rhythm, roles,
+                    [d.to_dict() for d in dynamics.drops], config.structure,
+                    model_sections)
                 perception_future = pool.submit(
-                    perception_stage.analyse, frames, band_map, rhythm, roles,
+                    timings.timed('perception', perception_stage.analyse), frames, band_map, rhythm, roles,
                     tags, mulan.get('genre'))
                 sections = sections_future.result()
                 perception = perception_future.result()
         else:
-            sections = structure_stage.analyse(
-                frames, rhythm, roles, [d.to_dict() for d in dynamics.drops],
-                config.structure)
-            perception = perception_stage.analyse(
-                frames, band_map, rhythm, roles, tags, mulan.get('genre'))
+            with timings.stage('structure'):
+                sections = structure_stage.analyse(
+                    frames, rhythm, roles, [d.to_dict() for d in dynamics.drops],
+                    config.structure, model_sections)
+            with timings.stage('perception'):
+                perception = perception_stage.analyse(
+                    frames, band_map, rhythm, roles, tags, mulan.get('genre'))
 
-        stream = events_stage.generate(frames, band_map, roles, rhythm, sections,
-                                       dynamics, config.events)
+        with timings.stage('events'):
+            stream = events_stage.generate(frames, band_map, roles, rhythm, sections,
+                                           dynamics, config.events)
 
-        document = json_safe(build_document(
-            audio, frames, rhythm, band_map, roles, sections, dynamics,
-            perception, stream, stems))
+        with timings.stage('pulse'):
+            try:
+                pulse = pulse_stage.analyse(audio, stems)
+            except Exception as exc:
+                _log(f'pixel envelopes unavailable ({exc})')
+                pulse = None
+
+        with timings.stage('document'):
+            document = json_safe(build_document(
+                audio, frames, rhythm, band_map, roles, sections, dynamics,
+                perception, stream, stems, pulse))
         document['track']['hash'] = _file_hash(path)
+        named_by_model = any(s.function for s in sections)
+        document['sectionSource'] = 'songformer' if named_by_model else 'analysis'
         # Optional foundation-model passes are activated by local model
         # configuration and never block the deterministic core pipeline. Both
         # were collected above, off the critical path.
@@ -175,20 +255,19 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
             # what ran: a model that came back undecided loses to the signal.
             'genre': perception.genre_source,
             'skey': False,
+            'structure': 'songformer' if named_by_model else 'laplacian',
             'muq': bool(document['embeddings']),
             'muqMulan': bool(document['semantic_scores']),
         }
-        try:
-            skey = model_adapters.skey_key(path)
-        except Exception as exc:
-            _log(f'optional S-KEY pass unavailable ({exc}); keeping internal key estimate')
-            skey = None
+        with timings.stage('wait.skey'):
+            skey = _collect(key_future)
         if skey:
             document['key'] = skey['value']
             document['track']['key'] = skey['value']
             document['meta']['modelUsage']['key'] = 's-key'
             document['meta']['modelUsage']['skey'] = True
         document['meta']['elapsedSec'] = round(time.time() - started, 2)
+        document['meta']['timings'] = dict(timings)
         document['meta']['processingRatio'] = round(
             document['meta']['elapsedSec'] / max(0.001, audio.duration), 4)
         document['meta']['withinRealtimeBudget'] = (
@@ -204,10 +283,12 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
              f'{len(dynamics.drops)} drops, {len(stream)} events)')
         return document
     finally:
-        if tag_pool is not None:
-            tag_pool.shutdown(wait=False)
-        if mulan_pool is not None:
-            mulan_pool.shutdown(wait=False)
+        for pool in (beat_pool, stem_pool, tag_pool, mulan_pool, key_pool, form_pool):
+            if pool is not None:
+                pool.shutdown(wait=False)
+        # A beat pass that never reached the card must not keep it from the
+        # next track.
+        models.cancel_turn(beat_turn)
         # The worker analyses one track after another for the life of the
         # show, so whatever this track reserved has to go back before the next
         # one asks for it — including on the failure path, where a half-built
@@ -216,6 +297,36 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
             models.release_memory()
         except Exception:
             pass
+
+
+def _beat_pass(audio, config, turn):
+    """The beat model's pass; its reserved turn is given up if it never ran."""
+    try:
+        return rhythm_stage.model_beats(audio, config)
+    finally:
+        models.cancel_turn(turn)
+
+
+def _safe_songformer(audio):
+    """SongFormer's sections, from the decoded mix, on the analysis clock; or None."""
+    try:
+        head = int(round(audio.trim_offset * audio.source_rate))
+        want = int(round(audio.duration * audio.source_rate))
+        mix = np.mean(audio.source, axis=0)[head:head + want]
+        return songformer.sections(mix, audio.source_rate)
+    except Exception as exc:
+        models.gpu_fault(exc)
+        _log(f'SongFormer unavailable ({exc}); the sections come from self-similarity')
+        return None
+
+
+def _safe_skey(audio):
+    try:
+        return model_adapters.skey_key(audio.source_path, samples=audio.source,
+                                       sample_rate=audio.source_rate)
+    except Exception as exc:
+        _log(f'optional S-KEY pass unavailable ({exc}); keeping internal key estimate')
+        return None
 
 
 def _safe_separate(audio):
@@ -309,7 +420,7 @@ def json_safe(value):
 # ── Document assembly ───────────────────────────────────────────────────────
 
 def build_document(audio, frames, rhythm, band_map, roles, sections, dynamics,
-                   perception, stream, stems=None):
+                   perception, stream, stems=None, pulse=None):
     """
     Assemble the analysis document.
 
@@ -414,6 +525,8 @@ def build_document(audio, frames, rhythm, band_map, roles, sections, dynamics,
         'perception': perception.to_dict(),
         'features': features_stage.summarise(frames),
         'events': [e.to_dict() for e in stream],
+        # The music at pixel rate, for the LED bars (see pulse.py).
+        **({'pulse': pulse} if pulse else {}),
         'meta': {
             'sampleRate': frames.sample_rate,
             'hopLength': frames.hop_length,

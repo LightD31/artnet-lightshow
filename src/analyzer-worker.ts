@@ -48,13 +48,17 @@ function storedTimeoutMs(): number {
 }
 
 /**
- * The worker's environment: this process's, plus the separator the settings
- * page chose. Read at spawn, so a change applies to the next worker — and
- * changing it restarts the worker (see apply.js).
+ * The worker's environment: this process's, plus the separator and the
+ * structure model the settings page chose. Read at spawn, so a change applies
+ * to the next worker — and changing either restarts the worker (see apply.ts).
  */
 function workerEnv(): NodeJS.ProcessEnv {
   const bsRoformer = settings.get('analysis.separator') === 'bs-roformer';
-  return { ...process.env, ARTNET_USE_BS_ROFORMER: bsRoformer ? '1' : '0' };
+  return {
+    ...process.env,
+    ARTNET_USE_BS_ROFORMER: bsRoformer ? '1' : '0',
+    ARTNET_STRUCTURE_MODEL: settings.get('analysis.structureModel') || 'auto',
+  };
 }
 
 // Priority bands, in served order. 'current' is the song the room is hearing
@@ -130,6 +134,7 @@ class AnalyzerWorker {
   declare _nextId: number;
   declare _shuttingDown: boolean;
   declare _timeoutTimer: ReturnType<typeof setTimeout> | null;
+  declare _recycleWhenIdle: string | null;
 
   /**
    * `pythonExe` may be a string or a function returning one. As a function it
@@ -154,6 +159,7 @@ class AnalyzerWorker {
     this._nextId = 1;
     this._shuttingDown = false;
     this._timeoutTimer = null;
+    this._recycleWhenIdle = null;
   }
 
   /**
@@ -303,9 +309,19 @@ class AnalyzerWorker {
    * Drop the current worker process so the next analysis spawns a fresh one.
    * Used when the interpreter changes under us — the running process is still
    * the old Python, and nothing else would replace it.
+   *
+   * `whenIdle` lets an analysis already running finish on the old process
+   * first: right for new model weights, which only add to what the next
+   * track gets, where starting the running one over would throw minutes of
+   * work away. Without it, the running analysis starts again on the new one.
    */
-  restart(reason = 'configuration changed'): void {
+  restart(reason = 'configuration changed', { whenIdle = false }: { whenIdle?: boolean } = {}): void {
     if (!this._proc) return;                 // next spawn already picks it up
+    if (whenIdle && this._pending) {
+      this._recycleWhenIdle = reason;
+      return;
+    }
+    this._recycleWhenIdle = null;
     console.log(`[analyzer] recycling worker: ${reason}`);
     // Work in flight starts again on the new worker, at the head of its band.
     // Left pending, it sat on a killed process until the timeout.
@@ -501,7 +517,11 @@ class AnalyzerWorker {
     if (resp.recycle) {
       console.warn('[analyzer] worker asked to be replaced (GPU fault); restarting it');
       this._recycleProcess();
+    } else if (this._recycleWhenIdle) {
+      console.log(`[analyzer] recycling worker: ${this._recycleWhenIdle}`);
+      this._recycleProcess();
     }
+    this._recycleWhenIdle = null;
     this._tick();
   }
 

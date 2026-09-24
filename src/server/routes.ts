@@ -29,6 +29,7 @@ import { settings, RESTART_PATHS, CONFIG_FILE } from './settings.ts';
 import { connectMidi } from './midi-connect.ts';
 import { generateToken } from './auth.ts';
 import { runPreflight } from './preflight.ts';
+import { modelManager, modelDownloadSchema } from './model-manager.ts';
 import { warmRequestSchema, warmPlaylistSchema, parseSetList, fromSpotifyTracks, MAX_TRACKS as MAX_WARM_TRACKS } from './warm.ts';
 import * as pythonEnv from '../python-env.ts';
 import {
@@ -1267,6 +1268,27 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
   app.post('/api/preflight', asyncHandler(async (_req, res) => {
     const report = await runPreflight({ midi, spotify, prolink, analysisCache, downloadModels: true });
     res.json({ ok: true, report });
+  }));
+
+  // ─── Analysis models ──────────────────────────────────────────────────────
+  // What is on this machine and fetching the rest (see model-manager.ts). The
+  // list runs a Python process, so it is cached for a few seconds; the page
+  // polls it while a download runs to draw the progress.
+  app.get('/api/models', asyncHandler(async (req, res) => {
+    try {
+      const listing = await modelManager.list({ refresh: req.query.refresh === '1' });
+      res.json({ ok: true, ...listing, job: modelManager.job() });
+    } catch (err) {
+      res.json({ ok: false, error: messageOf(err), job: modelManager.job() });
+    }
+  }));
+
+  app.post('/api/models/download', asyncHandler(async (req, res) => {
+    const { ids } = validate(modelDownloadSchema, req.body || {}, 'models');
+    const known = new Set((await modelManager.list()).models.map((m) => m.id));
+    const unknown = ids.filter((id) => !known.has(id));
+    if (unknown.length) throw new HttpError(400, `unknown model: ${unknown.join(', ')}`);
+    res.json({ ok: true, job: modelManager.download(ids) });
   }));
 
   // ─── Settings ─────────────────────────────────────────────────────────────

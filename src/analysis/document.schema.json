@@ -25,7 +25,8 @@
     "mood": { "$ref": "#/$defs/Mood" },
     "genre": { "$ref": "#/$defs/Genre" },
     "segments": { "type": "array", "items": { "$ref": "#/$defs/Section" }, "description": "The track's sections, in order." },
-    "sectionSource": { "type": "string", "description": "Where the sections came from: the analyser, or 'rekordbox' when a CDJ track's phrases replaced them." },
+    "pulse": { "$ref": "#/$defs/Pulse" },
+    "sectionSource": { "type": "string", "description": "Where the sections came from: 'songformer' when the structure model named them, 'analysis' for the self-similarity labeller, or 'rekordbox' when a CDJ track's phrases replaced them." },
     "phraseMood": { "enum": ["high", "mid", "low"], "description": "rekordbox's phrase mood, when its phrases are the sections: high for club tracks, mid and low for songs." },
     "onsets": { "type": "array", "items": { "type": "number" } },
     "kickOnsets": { "type": "array", "items": { "type": "number" } },
@@ -106,14 +107,39 @@
         "start": { "type": "number" },
         "end": { "type": "number" },
         "label": { "type": "string" },
-        "role": { "type": "string" },
+        "role": { "type": "string", "description": "intro, verse, prechorus, chorus, drop, bridge, instrumental, breakdown or outro." },
         "energy": { "type": "number" },
         "brightness": { "type": "number" },
         "bass": { "type": "number" },
         "rhythmic": { "type": "number" },
         "vocal": { "type": "number" },
         "level": { "enum": ["low", "mid", "high"] },
-        "confidence": { "type": "number" }
+        "confidence": { "type": "number" },
+        "function": { "type": "string", "description": "What a structure model called the section (intro, verse, pre-chorus, chorus, bridge, inst, outro, silence), when one named it." }
+      }
+    },
+    "Pulse": {
+      "type": "object",
+      "description": "The music at pixel rate (src/analysis/pulse.py): each stem's level and every drum hit.",
+      "required": ["rate", "encoding", "envelopes", "lanes"],
+      "properties": {
+        "rate": { "type": "number", "description": "Envelope points per second." },
+        "encoding": { "enum": ["u8-base64"], "description": "Each envelope is base64 of one byte per point, 0..255 for 0..1." },
+        "source": { "enum": ["stems", "mix"], "description": "Whether the lanes came from the separated drum stem or the percussive half of the mix." },
+        "envelopes": { "type": "object", "additionalProperties": { "type": "string" }, "description": "mix, and drums, bass, vocals and other when the track was separated." },
+        "lanes": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/Lane" },
+          "description": "kick, snare and hats."
+        }
+      }
+    },
+    "Lane": {
+      "type": "object",
+      "required": ["t", "s"],
+      "properties": {
+        "t": { "type": "array", "items": { "type": "number" }, "description": "Hit times, seconds." },
+        "s": { "type": "array", "items": { "type": "number" }, "description": "How hard each was hit, 0..1." }
       }
     },
     "Drop": {
@@ -277,6 +303,7 @@
         "separated": { "type": "boolean" },
         "modelUsage": { "type": "object", "additionalProperties": { "type": ["string", "boolean"] } },
         "elapsedSec": { "type": "number" },
+        "timings": { "type": "object", "additionalProperties": { "type": "number" }, "description": "Seconds per stage; `wait.*` is what the main thread spent waiting on a model's thread." },
         "processingRatio": { "type": "number" },
         "withinRealtimeBudget": { "type": "boolean" }
       }

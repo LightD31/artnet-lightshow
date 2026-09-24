@@ -17,7 +17,7 @@ import AutoShow from './auto-show.ts';
 import { AnalysisCache } from './analysis-cache.ts';
 
 import { state } from './server/state.ts';
-import { startEngine, stopEngine, setFrameHook } from './server/engine.ts';
+import { startEngine, stopEngine, setFrameHook, setPulseSource } from './server/engine.ts';
 import { artnetDiscovery } from './server/output.ts';
 import { conductor } from './server/conductor.ts';
 import { applyPatch, applyOverride, setFixtureMaxBrightness, processTap, setPersist, setHooks, flushPendingPersist } from './server/patch.ts';
@@ -31,6 +31,7 @@ import { createApplier } from './server/apply.ts';
 import { midiMap } from './server/midi-map.ts';
 import { cues } from './server/cues.ts';
 import { showStore, SHOW_FILE } from './server/show-store.ts';
+import { modelManager } from './server/model-manager.ts';
 import * as pythonEnv from './python-env.ts';
 import { installProcessSafetyNet } from './server/guard.ts';
 import { messageOf } from './errors.ts';
@@ -116,6 +117,15 @@ const integrations = setupIntegrations({ io, midi, spotify, nowPlaying, deezerSo
 // hears, else the operator's tap.
 autoShow.useFrameClock();
 setFrameHook(() => autoShow.tick());
+setPulseSource(() => autoShow.pulse());
+// A model downloaded while the server runs is used from the next worker on:
+// restart it, so it loads (and warms) what just arrived — once the track it
+// may be analysing is done, not by starting that one over.
+modelManager.onFinished((job) => {
+  if (Object.values(job.models).some((m) => m.state === 'done') && autoShow.restartWorker) {
+    autoShow.restartWorker('analysis models downloaded', { whenIdle: true });
+  }
+});
 conductor.setAutoSource(() => autoShow.beatSource());
 conductor.setProlinkSource(() => (state.prolinkEnabled && !autoShow.running ? prolink.getBeatReading() : null));
 conductor.setLiveSource(() => liveInput.getBeatReading());

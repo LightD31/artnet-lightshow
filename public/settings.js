@@ -1183,6 +1183,125 @@ document.addEventListener('change', (e) => {
   fresh.value = '';
   current.replaceWith(fresh);
 });
+// ── Analysis models ─────────────────────────────────────────────────────────
+// What is on this machine and fetching the rest (server/model-manager.ts). The
+// panel redraws itself in place while a download runs — never the whole page,
+// which would throw away whatever is being typed in another section.
+
+let modelsInfo = null;    // { ok, root, models, job } from /api/models
+let modelsPoll = null;
+
+async function loadModels({ refresh = false } = {}) {
+  try {
+    const res = await fetch(`/api/models${refresh ? '?refresh=1' : ''}`);
+    modelsInfo = await res.json();
+  } catch (err) {
+    modelsInfo = { ok: false, error: err.message };
+  }
+  fillModelsPanel();
+  const running = !!(modelsInfo && modelsInfo.job && modelsInfo.job.ok === null);
+  if (running && !modelsPoll) modelsPoll = setInterval(() => loadModels(), 1000);
+  if (!running && modelsPoll) {
+    clearInterval(modelsPoll);
+    modelsPoll = null;
+    // What just finished changed what is here.
+    if (modelsInfo && modelsInfo.job) loadModels({ refresh: true });
+  }
+}
+
+async function downloadModels(ids) {
+  const res = await apiJson('/api/models/download', jsonBody('POST', { ids }));
+  if (res.ok) loadModels();
+}
+
+const megabytes = (bytes) => (bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`);
+const TIER_LABEL = { required: 'required', recommended: 'recommended', optional: 'optional' };
+
+function modelsSpecExtra(form) {
+  const panel = el('div', 'models-panel');
+  panel.id = 'models-panel';
+  form.appendChild(panel);
+  // Filled here, before the section reaches the document: looked up by id it
+  // would not be found yet, and the list that already arrived never shown.
+  fillModelsPanel(panel);
+}
+
+function fillModelsPanel(panel = document.getElementById('models-panel')) {
+  if (!panel) return;
+  panel.replaceChildren();
+  if (!modelsInfo) {
+    panel.appendChild(el('p', 'setting-help', 'Asking the analyser what it has…'));
+    return;
+  }
+  if (!modelsInfo.ok) {
+    panel.appendChild(el('p', 'setting-help setting-note warn', modelsInfo.error || 'Could not list the models.'));
+    return;
+  }
+  const job = modelsInfo.job;
+  const running = !!(job && job.ok === null);
+  const models = modelsInfo.models || [];
+  const missing = models.filter((m) => !m.present && m.tier !== 'optional');
+
+  const top = el('div', 'setting-actions models-actions');
+  const all = el('button', 'btn btn-small active',
+    missing.length ? `Download what the show needs (${megabytes(missing.reduce((n, m) => n + m.size, 0))})` : 'Everything the show needs is here');
+  all.type = 'button';
+  all.disabled = running || !missing.length;
+  all.addEventListener('click', () => downloadModels(missing.map((m) => m.id)));
+  top.appendChild(all);
+  const again = el('button', 'btn btn-small', 'Check Again');
+  again.type = 'button';
+  again.disabled = running;
+  again.addEventListener('click', () => loadModels({ refresh: true }));
+  top.appendChild(again);
+  panel.appendChild(top);
+
+  const table = el('div', 'models-list');
+  for (const model of models) {
+    const row = el('div', `models-row${model.present ? ' present' : ''}`);
+    const head = el('div', 'models-head');
+    head.appendChild(el('strong', null, model.name));
+    head.appendChild(el('span', `setting-badge models-tier ${model.tier}`, TIER_LABEL[model.tier] || model.tier));
+    head.appendChild(el('span', 'models-size', megabytes(model.size)));
+    row.appendChild(head);
+    row.appendChild(el('p', 'setting-help', model.purpose + (model.note ? ` ${model.note}` : '')));
+    row.appendChild(el('p', 'setting-help models-license', `Licence: ${model.license}`));
+
+    const progress = job && job.models ? job.models[model.id] : null;
+    const status = el('div', 'models-status');
+    if (progress && progress.state === 'downloading') {
+      const bar = el('div', 'warm-bar');
+      const fill = el('div', 'warm-bar-fill');
+      const share = progress.total ? Math.min(1, progress.bytes / progress.total) : 0;
+      fill.style.width = `${Math.round(share * 100)}%`;
+      bar.appendChild(fill);
+      status.appendChild(bar);
+      status.appendChild(el('span', 'setting-help', progress.total
+        ? `${megabytes(progress.bytes)} of ${megabytes(progress.total)}`
+        : `${megabytes(progress.bytes)} so far`));
+    } else if (progress && progress.state === 'queued' && running) {
+      status.appendChild(el('span', 'setting-help', 'Waiting its turn'));
+    } else if (progress && progress.state === 'error') {
+      status.appendChild(el('span', 'setting-help setting-note warn', `Failed: ${progress.message}`));
+    } else if (model.present) {
+      status.appendChild(el('span', 'setting-help models-here', 'Downloaded'));
+    } else {
+      const get = el('button', 'btn btn-small', 'Download');
+      get.type = 'button';
+      get.disabled = running;
+      get.addEventListener('click', () => downloadModels([model.id]));
+      status.appendChild(get);
+    }
+    row.appendChild(status);
+    table.appendChild(row);
+  }
+  panel.appendChild(table);
+  if (job && job.ok === false && job.error) {
+    panel.appendChild(el('p', 'setting-help setting-note warn', `The last download failed: ${job.error}`));
+  }
+  if (modelsInfo.root) panel.appendChild(el('p', 'setting-help', `Kept in ${modelsInfo.root}.`));
+}
+
 let hueInfo = null;       // { status, paired, host, entertainmentId, channels }
 let hueNotice = null;     // transient line under the buttons
 
@@ -1620,12 +1739,35 @@ const SETTINGS_SPEC = [
           + 'BS-RoFormer takes about seven times as long (around 6 minutes a track on an integrated '
           + 'GPU), so the playing track is rarely ready in time. Changing it restarts the analyzer; '
           + 'tracks already analysed keep their result.' },
+      { path: 'analysis.structureModel', label: 'Structure', type: 'select',
+        options: () => [
+          { value: 'auto', label: 'Auto (SongFormer on a GPU)' },
+          { value: 'songformer', label: 'SongFormer, also on CPU (slow)' },
+          { value: 'off', label: 'Self-similarity only' },
+        ],
+        help: 'Names each section: intro, verse, pre-chorus, chorus, bridge, outro. SongFormer '
+          + 'was trained on thousands of annotated songs; it needs its 2.9 GB of weights '
+          + '(Analysis models, below) and takes a few seconds a track on a GPU, but most of the '
+          + 'track\'s length on a CPU, reading in windows sized to the free memory. Without it '
+          + 'the sections come from '
+          + 'where the music repeats, with arrangement rules for the names. Changing it '
+          + 'restarts the analyzer.' },
       { path: 'analysis.pythonPath', label: 'Python', type: 'text',
         help: 'Blank auto-detects, preferring an interpreter that can import the analyzer\'s '
           + 'dependencies. Set a full path when pip installed into a different Python than the '
           + 'one that gets picked.',
         note: pythonNote },
     ],
+  },
+  {
+    id: 'models',
+    group: 'music',
+    title: 'Analysis Models',
+    desc: 'The pretrained models the analysis runs. They are fetched here, before the show, never by '
+      + 'the analysis itself: gigabytes on venue wifi while a track waits is the worst time to find '
+      + 'out the connection is slow. The analyser restarts to pick up what was downloaded.',
+    fields: [],
+    extra: modelsSpecExtra,
   },
 ];
 
@@ -1791,13 +1933,15 @@ function renderSection(spec, host) {
   // Hue's pairing and channel bindings — renders its own controls here.
   if (spec.extra) spec.extra(form, spec);
 
-  const actions = el('div', 'setting-actions');
-  const save = el('button', 'btn active', 'Apply');
-  save.type = 'button';
-  save.addEventListener('click', () => saveSettings(spec));
-  actions.appendChild(save);
-  actions.appendChild(el('span', 'import-status', ''));
-  form.appendChild(actions);
+  if (spec.fields.length) {
+    const actions = el('div', 'setting-actions');
+    const save = el('button', 'btn active', 'Apply');
+    save.type = 'button';
+    save.addEventListener('click', () => saveSettings(spec));
+    actions.appendChild(save);
+    actions.appendChild(el('span', 'import-status', ''));
+    form.appendChild(actions);
+  }
 
   section.appendChild(form);
   host.appendChild(section);
@@ -2014,3 +2158,5 @@ loadMidiMap();
 // Separate from loadSettings on purpose: this one talks to the bridge, and a
 // bridge that is switched off must not hold up the rest of the settings page.
 loadHueStatus();
+// And this one runs a Python process to look at the model directory.
+loadModels();

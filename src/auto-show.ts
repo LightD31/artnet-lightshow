@@ -11,6 +11,7 @@ import * as pythonEnv from './python-env.ts';
 import { SYNC_OFFSET_LIMIT_MS } from './server/presets.ts';
 import { ShowDirector, measureBuildup } from './show/director.ts';
 import { renderIntents } from './show/render.ts';
+import { pulseTrack } from './show/pulse.ts';
 import { guarded } from './server/guard.ts';
 import { resolveIsrc, splitQuery } from './isrc.ts';
 import { gridFromAnalysis } from './shared/beat-clock.ts';
@@ -23,6 +24,8 @@ import type { PatternDescriptor } from './show/director.ts';
 import type { Intent } from './show/intents.ts';
 import type { EnergyData, PatchData, TimelineEvent } from './show/render.ts';
 import type { Analysis } from './show/score.ts';
+import type { PulseTrack } from './show/pulse.ts';
+import type { PulseReading } from './types/rig.ts';
 
 export type AutoShowStatus = 'idle' | 'downloading' | 'analyzing' | 'ready' | 'playing';
 
@@ -127,6 +130,7 @@ class AutoShow {
   declare _currentJob: symbol | null;
   declare _grid: BeatGrid | null;
   declare _pixels: boolean;
+  declare _pulse: PulseTrack | null;
   declare analysisKey: string | null;
   declare _frameDriven: boolean;
   declare _anchorIndex: { timeline: TimelineEvent[]; length: number; times: number[] } | undefined;
@@ -198,6 +202,8 @@ class AutoShow {
     // Whether the rig has LED bars. The director reaches for the pictures drawn
     // across cells only when it does (see setRig).
     this._pixels = false;
+    // The track's pulse, read every frame for the pixel patterns (show/pulse.ts).
+    this._pulse = null;
     // The cache key the loaded analysis was read or written under, so the
     // pattern clock can reuse the grid already in memory for that track.
     this.analysisKey = null;
@@ -233,6 +239,16 @@ class AutoShow {
     const positionMs = this.getPositionMs();
     if (!Number.isFinite(positionMs)) return null;
     return { grid: this._grid, positionMs, anchorMs: this._sceneAnchorMs(positionMs) };
+  }
+
+  /**
+   * The music at pixel rate where the show is now — each stem's level and the
+   * drum hits — or null when stopped or when the analysis has no pulse.
+   */
+  pulse(): PulseReading | null {
+    if (!this.running || !this._pulse || !this._getPositionMs) return null;
+    const positionMs = this.getPositionMs();
+    return Number.isFinite(positionMs) ? this._pulse.at(positionMs) : null;
   }
 
   /**
@@ -455,8 +471,8 @@ class AutoShow {
    * Safe to call multiple times.
    */
   /** Recycle the analyzer process — used when the interpreter changes. */
-  restartWorker(reason: string): void {
-    if (this._worker) this._worker.restart(reason);
+  restartWorker(reason: string, opts: { whenIdle?: boolean } = {}): void {
+    if (this._worker) this._worker.restart(reason, opts);
   }
 
   /**
@@ -880,6 +896,7 @@ class AutoShow {
     });
 
     this._grid = gridFromAnalysis(this.analysis);
+    this._pulse = pulseTrack(this.analysis.pulse);
     const plan = director.plan(this.analysis);
     this.palette = plan.palette;
     this.paletteName = plan.paletteName;
@@ -937,6 +954,7 @@ class AutoShow {
     this.analysis = null;
     this.analysisKey = null;
     this._grid = null;
+    this._pulse = null;
     this.timeline = [];
     this.timelineRevision = randomUUID();
     this.track = null;

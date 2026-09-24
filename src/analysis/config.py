@@ -214,6 +214,10 @@ class AnalysisConfig:
     separate_sources: bool = True
     #: Fan stages out across threads. Off makes profiling and debugging sane.
     parallel: bool = True
+    #: Where the sections come from: 'auto', 'songformer' or 'off' (see
+    #: songformer.py). None reads ARTNET_STRUCTURE_MODEL, which the server sets
+    #: from the settings page.
+    structure_model: str = None
 
     def tuned(self, **overrides) -> 'AnalysisConfig':
         """Return a copy with top-level fields replaced. Useful from tests."""

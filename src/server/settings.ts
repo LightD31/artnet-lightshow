@@ -186,6 +186,11 @@ const DEFAULTS: Settings = {
     // is slower than the track plays, where Demucs needs ~60 s. The default is
     // the one that keeps up with a live set.
     separator: 'demucs',
+    // Where a track's sections come from. 'auto' asks SongFormer when the
+    // analyser has a GPU and its weights are downloaded, and the self-similarity
+    // labeller otherwise: on a CPU SongFormer takes most of the track's length.
+    // 'songformer' asks it on a CPU too; 'off' never.
+    structureModel: 'auto',
   },
 };
 
@@ -331,6 +336,7 @@ const schema = z.object({
       'must be the path to a Python interpreter (python, python3, pythonw, py)',
     ),
     separator: z.enum(['demucs', 'bs-roformer']),
+    structureModel: z.enum(['auto', 'songformer', 'off']),
   }).strict(),
 }).strict();
 

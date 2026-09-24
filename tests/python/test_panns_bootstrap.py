@@ -93,14 +93,31 @@ class PannsBootstrapOrdering(unittest.TestCase):
             self.assertEqual(calls, [], 'no download at server startup')
             self.assertIsNone(self.ea._MODEL)
 
-    def test_analysis_path_asks_for_both_files(self):
+    def test_the_analysis_path_never_downloads(self):
+        """A track waiting on a 310 MB download over venue wifi is a track
+        that does not get analysed. Missing weights mean no tags, now."""
         calls = []
         self.ea._run_setup = lambda args, note: calls.append(list(args))
+        self.ea.installed = lambda: True
         with tempfile.TemporaryDirectory() as tmp:
             self.ea._LABELS = str(Path(tmp) / 'nope.csv')
             self.ea._CHECKPOINT = str(Path(tmp) / 'absent.pth')
-            self.assertFalse(self.ea.ensure_files())
-            self.assertEqual(calls, [[]], 'full setup, not --labels-only')
+            self.assertFalse(self.ea.ready())
+            self.assertIsNone(self.ea.tag(path=str(Path(tmp) / 'track.wav')))
+            self.assertEqual(calls, [], 'no setup run from inside an analysis')
+            self.assertIsNone(self.ea._MODEL)
+
+    def test_ready_needs_the_package_the_checkpoint_and_the_labels(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            labels = Path(tmp) / 'class_labels_indices.csv'
+            self.ea._LABELS = str(labels)
+            self.ea.installed = lambda: True
+            self.ea.checkpoint_present = lambda: True
+            self.assertFalse(self.ea.ready(), 'no labels')
+            labels.write_text('index,mid,display_name\n')
+            self.assertTrue(self.ea.ready())
+            self.ea.installed = lambda: False
+            self.assertFalse(self.ea.ready(), 'no package')
 
     def test_setup_script_accepts_labels_only(self):
         """The analyzer shells out with this flag; it has to exist."""

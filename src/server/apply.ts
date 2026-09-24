@@ -192,6 +192,11 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
     if (autoShow && autoShow.restartWorker) autoShow.restartWorker('separator changed');
   }
 
+  function applyStructureModel() {
+    console.log(`[analysis] structure model is now ${settings.get('analysis.structureModel')}`);
+    if (autoShow && autoShow.restartWorker) autoShow.restartWorker('structure model changed');
+  }
+
   function applyDeezer() {
     const arl = settings.get('deezer.arl');
     if (!arl) return;
@@ -218,6 +223,7 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
     { match: (k) => k === 'deezer.arl', run: applyDeezer },
     { match: (k) => k === 'analysis.pythonPath', run: applyPython },
     { match: (k) => k === 'analysis.separator', run: applySeparator },
+    { match: (k) => k === 'analysis.structureModel', run: applyStructureModel },
   ];
 
   return {

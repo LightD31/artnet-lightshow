@@ -1,5 +1,12 @@
 # Python dependencies for src/analysis/ (the audio analysis pipeline the
-# auto-show runs, launched via src/analyze.py). Install with:
+# auto-show runs, launched via src/analyze.py).
+#
+# The locked way, which also gets torch, torchaudio and torchvision from one
+# build (pyproject.toml, uv.lock):
+#
+#     uv sync --extra cpu        # or --extra cu128 (NVIDIA), --extra rocm (AMD, Linux)
+#
+# The server finds the .venv that makes. Otherwise, into a Python of your own:
 #
 #     pip install -r requirements.txt
 #
@@ -7,11 +14,11 @@
 # downloaded audio to WAV. It is not installable from pip; use your package
 # manager (apt install ffmpeg / brew install ffmpeg / winget install ffmpeg).
 #
-# Model weights download on first use (~80 MB for beat tracking, ~320 MB for
-# separation) into the torch hub cache. Warm them before a show rather than at
-# load-in on venue wifi:
+# Model weights are fetched before the show, never by the analysis itself:
+# Settings → Analysis models in the web UI, or
 #
-#     python -c "from analysis import models; models.warm_up()"
+#     python scripts/download-models.py            # what the show needs
+#     python scripts/download-models.py --list     # what is here
 
 # ── Core analysis ───────────────────────────────────────────────────────────
 librosa>=0.10
@@ -53,6 +60,20 @@ huggingface_hub>=0.23
 muq>=0.1
 # MuQ calls the Conformer encoder directly and requires its v4 hidden states API.
 transformers==4.51.3
+# MuQ's x_clip needs torchvision, and it has to be the torchvision built for the
+# torch above: one from another build installs cleanly and then fails every
+# model with "operator torchvision::nms does not exist". Install it from the
+# same index as torch (the uv route above does this for you).
+torchvision
+safetensors>=0.4
+# SongFormer (optional; src/analysis/songformer.py). Its code ships with its
+# weights and imports these. msaf, which it also names, is stubbed: it pins
+# enum34, which breaks the standard library on Python 3.
+einops>=0.7
+x-transformers>=1.0
+ema-pytorch>=0.2
+loguru>=0.7
+omegaconf>=2.3
 # Optional preferred production adapters. The pipeline falls back cleanly when
 # these packages or their checkpoints are not present.
 # audio-separator imports onnxruntime even for PyTorch RoFormer models.
@@ -78,7 +99,8 @@ demucs>=4.0
 # ── Genre and mood tagging (PANNs) ──────────────────────────────────────────
 # The one model that stays optional: it contributes a second opinion to genre
 # and to the instrument-role priors, and every consumer already treats a
-# missing answer as "unknown". Fetch the weights once (~310 MB) with:
+# missing answer as "unknown". Fetch the weights once (~310 MB) under
+# Settings → Analysis models, or with:
 #
 #     python scripts/setup-panns.py
 #     python scripts/setup-panns.py --check     # verify without downloading

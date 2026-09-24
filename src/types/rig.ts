@@ -179,6 +179,23 @@ export interface Expression {
 /** What a show asks the expression channel for; any key may be missing. */
 export type ShowDynamics = Partial<Expression>;
 
+/**
+ * The music at this frame, at pixel rate (src/show/pulse.ts), each 0–1: the
+ * mix's level and each separated stem's, and how recently and how hard the
+ * kick, the snare and the hats were hit — 1 on the hit, falling away after.
+ * A stem the track was not separated into is missing.
+ */
+export interface PulseReading {
+  mix: number;
+  drums?: number;
+  bass?: number;
+  vocals?: number;
+  other?: number;
+  kick: number;
+  snare: number;
+  hats: number;
+}
+
 /** How a pixel effect is laid over the cells of LED bars. */
 export type PixelMap = 'stage' | 'bar' | 'mirror';
 

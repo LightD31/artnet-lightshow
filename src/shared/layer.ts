@@ -19,7 +19,7 @@ import { fadeBrightness, hitBrightness } from './look-math.ts';
 import { fadePhase, hitPhase } from './beat-clock.ts';
 import type { PatternContext } from './patterns.ts';
 import type { Layout, Rig } from './rig.ts';
-import type { Colour, Expression } from '../types/rig.ts';
+import type { Colour, Expression, PulseReading } from '../types/rig.ts';
 
 /** What the look asks the pattern layer for. */
 export interface LayerLook {
@@ -41,6 +41,8 @@ export interface LayerClock {
   expression: Readonly<Expression>;
   /** Is a show feeding the expression channel. */
   dynamicsOn: boolean;
+  /** The music at pixel rate, when a show with an analysed track runs. */
+  pulse?: Readonly<PulseReading> | null;
   fixtureCount: number;
   twinkle: number[];
 }
@@ -100,6 +102,7 @@ function patternContext(rig: Rig, layout: Layout, look: LayerLook, clock: LayerC
     // unlit lamps sit above black, how dense a scatter is), and only when a
     // show is running it.
     dynamics: pattern === 'ensemble' || pattern === 'ribbon' || clock.dynamicsOn ? clock.expression : null,
+    pulse: clock.pulse ?? null,
   };
 
   if (CELL_PATTERNS.has(pattern)) {

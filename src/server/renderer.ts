@@ -30,7 +30,7 @@ import type { Rig } from '../shared/rig.ts';
 import type { MusicalTime } from './conductor.ts';
 import type { PatternAnchor } from './state.ts';
 import type { UniverseStore } from './universes.ts';
-import type { ChannelDefault, ChannelMap, Colour, Expression, Override, PixelMap, Profile, ShowDynamics, StageFixture } from '../types/rig.ts';
+import type { ChannelDefault, ChannelMap, Colour, Expression, Override, PixelMap, Profile, PulseReading, ShowDynamics, StageFixture } from '../types/rig.ts';
 
 /** A fixture as a frame needs it: its universe and trim resolved. */
 export interface RenderFixture extends StageFixture {
@@ -76,6 +76,8 @@ export interface RenderInput {
   /** An energy effect's id, or null. */
   energy: string | null;
   showDynamics: ShowDynamics | null;
+  /** The music at pixel rate, while a show with an analysed track runs. */
+  pulse?: PulseReading | null;
   patternAnchor: PatternAnchor | null;
   fade: FadeRequest | null;
   syncTest: SyncTestRequest | null;
@@ -346,6 +348,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       phase: expressionPhase,
       expression,
       dynamicsOn: !!input.showDynamics,
+      pulse: input.pulse ?? null,
       fixtureCount,
       twinkle,
     }, setUnitColor, { skipPattern });

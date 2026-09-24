@@ -93,18 +93,18 @@ const SUBGENRE_PALETTES: Record<string, string[]> = {
 // with LED bars (see pickPattern's `pixels`); listing them here is what keeps
 // the genre bias from filtering them straight back out when they are.
 const SUBGENRE_PATTERNS: Record<string, string[]> = {
-  edm:       ['pairs', 'runner', 'ensemble', 'split', 'stack-up', 'random-flash', 'hit', 'sections', 'comet', 'burst'],
-  dubstep:   ['random-flash', 'stack-up', 'split', 'pairs', 'ensemble', 'hit', 'sections', 'burst'],
-  trance:    ['ribbon', 'sparkle', 'wave', 'twinkle', 'runner', 'ensemble', 'sections', 'gradient', 'plasma'],
-  disco:     ['ping-pong', 'chase', 'sparkle', 'pairs', 'sections', 'split', 'comet'],
-  hiphop:    ['pairs', 'split', 'ensemble', 'stack-up', 'runner', 'sections', 'burst'],
-  pop:       ['ping-pong', 'wave', 'ensemble', 'sparkle', 'pairs', 'split', 'gradient', 'comet'],
-  funk:      ['ping-pong', 'pairs', 'runner', 'chase', 'ensemble', 'sections', 'split', 'comet'],
-  rock:      ['chase', 'runner', 'pairs', 'ping-pong', 'stack-up', 'ensemble', 'comet'],
-  metal:     ['stack-up', 'split', 'random-flash', 'runner', 'pairs', 'hit', 'burst'],
-  country:   ['wave', 'chase', 'runner', 'ping-pong', 'fade', 'ribbon', 'gradient'],
-  reggae:    ['wave', 'fade', 'ribbon', 'chase', 'ping-pong', 'pairs', 'gradient'],
-  latin:     ['ping-pong', 'runner', 'chase', 'pairs', 'wave', 'ensemble', 'comet'],
+  edm:       ['pairs', 'runner', 'ensemble', 'split', 'stack-up', 'random-flash', 'hit', 'sections', 'comet', 'burst', 'drums'],
+  dubstep:   ['random-flash', 'stack-up', 'split', 'pairs', 'ensemble', 'hit', 'sections', 'burst', 'drums'],
+  trance:    ['ribbon', 'sparkle', 'wave', 'twinkle', 'runner', 'ensemble', 'sections', 'gradient', 'plasma', 'stems'],
+  disco:     ['ping-pong', 'chase', 'sparkle', 'pairs', 'sections', 'split', 'comet', 'drums'],
+  hiphop:    ['pairs', 'split', 'ensemble', 'stack-up', 'runner', 'sections', 'burst', 'drums', 'stems'],
+  pop:       ['ping-pong', 'wave', 'ensemble', 'sparkle', 'pairs', 'split', 'gradient', 'comet', 'stems'],
+  funk:      ['ping-pong', 'pairs', 'runner', 'chase', 'ensemble', 'sections', 'split', 'comet', 'drums', 'stems'],
+  rock:      ['chase', 'runner', 'pairs', 'ping-pong', 'stack-up', 'ensemble', 'comet', 'drums', 'stems'],
+  metal:     ['stack-up', 'split', 'random-flash', 'runner', 'pairs', 'hit', 'burst', 'drums'],
+  country:   ['wave', 'chase', 'runner', 'ping-pong', 'fade', 'ribbon', 'gradient', 'stems'],
+  reggae:    ['wave', 'fade', 'ribbon', 'chase', 'ping-pong', 'pairs', 'gradient', 'stems'],
+  latin:     ['ping-pong', 'runner', 'chase', 'pairs', 'wave', 'ensemble', 'comet', 'drums'],
   jazz:      ['ribbon', 'solid', 'fade', 'wave', 'twinkle', 'sparkle', 'plasma', 'gradient'],
   classical: ['ribbon', 'solid', 'fade', 'wave', 'twinkle', 'gradient'],
   folk:      ['ribbon', 'solid', 'fade', 'wave', 'twinkle', 'gradient'],
@@ -198,8 +198,13 @@ function keyIndexOf(key: unknown): number {
 // frame rate rather than stepped by the beat clock, so they read as whatever
 // the music is doing and suit both.
 const RHYTHMIC = new Set(['chase', 'chase-rev', 'runner', 'pairs', 'ping-pong',
-  'split', 'sections', 'stack-up', 'random-flash', 'hit', 'color-cycle', 'comet', 'burst']);
+  'split', 'sections', 'stack-up', 'random-flash', 'hit', 'color-cycle', 'comet', 'burst', 'drums']);
 const FLOWY = new Set(['solid', 'fade', 'wave', 'sparkle', 'twinkle', 'gradient', 'plasma']);
+// Pictures of the analysis's pulse (show/pulse.ts): the drum hits and the stem
+// levels at pixel rate. They fall back to the clock without it, but the auto
+// show offers them only for a track whose analysis carries it — see
+// `availableFor`.
+const PULSE_PATTERNS = new Set(['drums', 'stems']);
 const EXPRESSIVE = new Set(['ensemble', 'ribbon']);
 
 /**
@@ -545,7 +550,7 @@ function pickPattern({ character, available, score = null, seed = 0, drive = 0.5
   // still move without reaching for the strobe end of the vocabulary.
   if (voice > low + 0.12) {
     return drive >= 0.5 || energy >= 0.5
-      ? pickFrom(['pairs', 'sections', 'ensemble', 'split', 'ping-pong', 'runner', 'chase'], ['comet'])
+      ? pickFrom(['pairs', 'sections', 'ensemble', 'split', 'ping-pong', 'runner', 'chase'], ['comet', 'stems'])
       : pickFrom(['ensemble', 'ribbon', 'wave', 'fade', 'twinkle', 'solid'], ['gradient']);
   }
 
@@ -554,8 +559,8 @@ function pickPattern({ character, available, score = null, seed = 0, drive = 0.5
   if (low >= 0.4 && pulse >= 0.5) {
     const hard = drive >= 0.75 && (energy > 0.7 || pulse > 0.75);
     return hard
-      ? pickFrom(['hit', 'stack-up', 'sections', 'pairs', 'split', 'random-flash', 'ensemble'], ['burst', 'comet'])
-      : pickFrom(['pairs', 'sections', 'ensemble', 'runner', 'split', 'chase', 'stack-up'], ['comet', 'burst']);
+      ? pickFrom(['hit', 'stack-up', 'sections', 'pairs', 'split', 'random-flash', 'ensemble'], ['burst', 'comet', 'drums'])
+      : pickFrom(['pairs', 'sections', 'ensemble', 'runner', 'split', 'chase', 'stack-up'], ['comet', 'burst', 'drums']);
   }
 
   // Top-heavy: shimmer rather than punch.
@@ -572,7 +577,17 @@ function pickPattern({ character, available, score = null, seed = 0, drive = 0.5
   // ping-pong. The stem-based rewrite of this function dropped that pool and it
   // with it, while RHYTHMIC above still lists it — vocabulary the show could no
   // longer say. It goes back beside the patterns it used to keep company with.
-  return pickFrom(['chase', 'runner', 'ping-pong', 'pairs', 'ensemble', 'ribbon', 'wave', 'color-cycle'], ['comet', 'gradient']);
+  return pickFrom(['chase', 'runner', 'ping-pong', 'pairs', 'ensemble', 'ribbon', 'wave', 'color-cycle'], ['comet', 'gradient', 'stems']);
+}
+
+/**
+ * The patterns the show may use for one track: the rig's, less the pictures of
+ * the pulse when the analysis has none to draw them from.
+ */
+function availableFor(patterns: readonly { id: string }[], analysis: { pulse?: unknown } | null | undefined): Set<string> {
+  const ids = new Set(patterns.map((p) => p.id));
+  if (!analysis || !analysis.pulse) for (const id of PULSE_PATTERNS) ids.delete(id);
+  return ids;
 }
 
 /**
@@ -711,6 +726,8 @@ export {
   RHYTHMIC,
   FLOWY,
   EXPRESSIVE,
+  PULSE_PATTERNS,
+  availableFor,
   driveFor,
   tierOf,
   buildPalette,

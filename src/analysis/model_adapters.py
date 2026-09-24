@@ -107,6 +107,17 @@ def preload():
 #: thing that runs the card out of memory.
 _MUQ_BATCH = max(1, int(os.environ.get("ARTNET_MUQ_BATCH", "8")))
 
+#: Decimal places an embedding keeps. A track is about a hundred and twenty
+#: 1024-wide vectors, and at full float precision they were most of a
+#: several-megabyte document that went over a socket to the browser and into
+#: the cache. Four places is far below the spread between two windows'
+#: vectors, so no similarity a consumer computes can tell the difference.
+EMBEDDING_DIGITS = 4
+
+
+def _rounded(vector):
+    return [round(float(v), EMBEDDING_DIGITS) for v in vector]
+
 
 def _to_24k(waveform, sample_rate: int):
     """The 24 kHz mono signal both MuQ towers want, resampled once."""
@@ -158,12 +169,12 @@ def muq_embeddings(waveform, sample_rate: int, *, step_sec: float = 2.0):
             output = model(torch.from_numpy(batch).to(device))
             vectors = output.last_hidden_state.mean(dim=1).float().cpu().tolist()
             for start, vector in zip(group, vectors):
-                result.append({"time": round(start / 24000, 3), "vector": vector,
+                result.append({"time": round(start / 24000, 3), "vector": _rounded(vector),
                                "confidence": 1.0, "source": "muq"})
         for start in tail:
             output = model(torch.from_numpy(audio[start:start + window]).unsqueeze(0).to(device))
             vector = output.last_hidden_state.mean(dim=1)[0].float().cpu().tolist()
-            result.append({"time": round(start / 24000, 3), "vector": vector,
+            result.append({"time": round(start / 24000, 3), "vector": _rounded(vector),
                            "confidence": 1.0, "source": "muq"})
     result.sort(key=lambda row: row["time"])
     return result
@@ -245,10 +256,25 @@ def muq_pass(waveform, sample_rate: int, vocabularies):
     beside the DSP: the embeddings used to run inline after the document was
     assembled, which put the slowest optional model squarely on the critical
     path for no reason — nothing later in the pipeline reads them.
+
+    The two are separate models with separate checkpoints, and one failing
+    says nothing about the other: MuLan's text tower missing used to cost the
+    track its embeddings too, and an embedding pass that ran out of memory
+    its genre. Each is asked on its own, and what fails comes back empty.
     """
     audio = _to_24k(waveform, sample_rate)
-    return {"scores": mulan_scores(audio, 24000, vocabularies),
-            "embeddings": muq_embeddings(audio, 24000)}
+    try:
+        scores = mulan_scores(audio, 24000, vocabularies)
+    except Exception as exc:
+        print(f"[models] MuQ-MuLan unavailable ({exc}); genre and mood fall back",
+              file=sys.stderr)
+        scores = {}
+    try:
+        embeddings = muq_embeddings(audio, 24000)
+    except Exception as exc:
+        print(f"[models] MuQ embeddings unavailable ({exc})", file=sys.stderr)
+        embeddings = []
+    return {"scores": scores, "embeddings": embeddings}
 
 
 def _skey_load_audio(song_path, sr, mono=True, normalize=True):
@@ -281,12 +307,54 @@ def _skey_load_audio(song_path, sr, mono=True, normalize=True):
     return waveform
 
 
-def skey_key(audio_path: str):
-    """Return S-KEY's global key when the optional Deezer package is present."""
+def skey_available():
+    """Is S-KEY installed — asked without importing it, which loads torch models."""
+    import importlib.util
+    try:
+        return importlib.util.find_spec("skey") is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def _decoded_loader(samples, samples_rate):
+    """
+    S-KEY's `load_audio`, served from a signal the pipeline already decoded.
+
+    Same contract as `_skey_load_audio`: (channels, samples) at `sr`,
+    peak-normalised. The path it is handed is ignored.
+    """
+    def load_audio(_song_path, sr, mono=True, normalize=True):
+        import numpy as np
+        import librosa
+        import torch
+        signal = np.atleast_2d(np.asarray(samples, dtype=np.float32))
+        if mono and signal.shape[0] > 1:
+            signal = signal.mean(axis=0, keepdims=True)
+        if int(samples_rate) != int(sr):
+            signal = librosa.resample(signal, orig_sr=int(samples_rate), target_sr=int(sr))
+        waveform = torch.from_numpy(np.ascontiguousarray(signal, dtype=np.float32))
+        if normalize:
+            peak = torch.max(torch.abs(waveform))
+            if peak > 0:
+                waveform = waveform / peak
+        return waveform
+    return load_audio
+
+
+def skey_key(audio_path: str, samples=None, sample_rate=None):
+    """
+    Return S-KEY's global key when the optional Deezer package is present.
+
+    Given `samples` (the file as the pipeline decoded it, channels first) and
+    their `sample_rate`, S-KEY reads those instead of decoding the file again.
+    """
     module = _optional("skey.key_detection")
     if module is None:
         return None
-    module.load_audio = _skey_load_audio
+    if samples is not None and sample_rate:
+        module.load_audio = _decoded_loader(samples, sample_rate)
+    else:
+        module.load_audio = _skey_load_audio
     try:
         # S-KEY prints its answer, emoji included, to stdout. That is the
         # worker's JSON protocol stream, and on a Windows console the emoji

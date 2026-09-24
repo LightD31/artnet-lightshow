@@ -1,5 +1,5 @@
 import { colourMixer } from './color.ts';
-import type { Colour, Expression } from '../types/rig.ts';
+import type { Colour, Expression, PulseReading } from '../types/rig.ts';
 
 // Pure pattern functions. Each takes (ctx) where:
 //   ctx.colors        : array of resolved Colour A..D presets
@@ -34,6 +34,9 @@ export interface PatternContext {
   xs: readonly number[] | null;
   ys: readonly number[] | null;
   dynamics: Readonly<Expression> | null;
+  /** The music at pixel rate (show/pulse.ts), or null: every pattern has to
+   *  look right without it — the preview, a manual look, an older analysis. */
+  pulse?: Readonly<PulseReading> | null;
   write(i: number, colour: Colour, dim: number, strobe: number): void;
 }
 
@@ -117,7 +120,7 @@ function paletteOf(ctx: Pick<PatternContext, 'colors'>): Colour[] {
 // and a bar takes its slot's colour on every cell.
 const CELL_PATTERNS = new Set([
   'ensemble', 'ribbon', 'wave', 'rainbow', 'twinkle', 'sparkle',
-  'gradient', 'comet', 'burst', 'plasma', 'meter',
+  'gradient', 'comet', 'burst', 'plasma', 'meter', 'drums', 'stems',
 ]);
 
 /** Where slot i sits across the rig, 0..1: its placed position, or even spacing. */
@@ -527,15 +530,93 @@ Object.assign(PATTERN_FUNCS, {
   meter(ctx) {
     const pal = paletteOf(ctx);
     const bed = bedOf(ctx);
-    const kick = Math.pow(1 - (ctx.stepPhase ?? 0), 3) * 0.15;
-    const fill = Math.min(1, dyn(ctx, 'level', 0.8) * (0.25 + 0.75 * dyn(ctx, 'bass', 0.5)) * 0.85 + kick);
+    // With the pulse, the low end is the bass stem and the kick is the kick
+    // as it was hit; without it, the expression channel and the step.
+    const p = ctx.pulse;
+    const kick = (p ? p.kick : Math.pow(1 - (ctx.stepPhase ?? 0), 3)) * 0.15;
+    const low = p ? (p.bass ?? p.mix) : dyn(ctx, 'bass', 0.5);
+    const loud = p ? p.mix : dyn(ctx, 'level', 0.8);
+    const fill = Math.min(1, loud * (0.25 + 0.75 * low) * 0.85 + kick);
     for (let i = 0; i < ctx.fixtureCount; i++) {
       const x = xOf(ctx, i);
       if (x > fill) ctx.write(i, pal[pal.length - 1], bed, 0);
       else ctx.write(i, fill - x < 0.08 ? pal[1 % pal.length] : pal[0], 255, 0);
     }
   },
+
+  // The kit, as it is played: the kick fills the bar from its middle and falls
+  // back, the snare cracks at its two ends, the hats light a scatter of cells
+  // that moves on with every hit. With the pulse these are the real hits read
+  // off the drum stem; without one, a kick on every step, a snare on every
+  // other and a hat between, so the pattern still reads in the preview and on
+  // a manual look.
+  drums(ctx) {
+    const pal = paletteOf(ctx);
+    const bed = Math.round(bedOf(ctx) * 0.6);
+    const hits = ctx.pulse ?? kitFromTheClock(ctx);
+    const reach = 0.15 + 0.85 * hits.kick;
+    const hatSeed = Math.floor((ctx.stepPos ?? ctx.step) * 2);
+    for (let i = 0; i < ctx.fixtureCount; i++) {
+      const fromMiddle = Math.abs(xOf(ctx, i) - 0.5) * 2;
+      const kick = hits.kick * clamp01((reach - fromMiddle) / 0.12);
+      const snare = hits.snare * clamp01((fromMiddle - 0.55) / 0.3);
+      const hat = scatter(i, hatSeed) < 0.28 ? hits.hats : 0;
+      // The strongest of the three owns the cell.
+      if (kick >= snare && kick >= hat && kick > 0.02) {
+        ctx.write(i, pal[0], Math.round(bed + (255 - bed) * kick), 0);
+      } else if (snare >= hat && snare > 0.02) {
+        ctx.write(i, pal[1 % pal.length], Math.round(bed + (255 - bed) * snare), 0);
+      } else if (hat > 0.02) {
+        ctx.write(i, pal[2 % pal.length], Math.round(bed + (255 - bed) * hat), 0);
+      } else {
+        ctx.write(i, pal[pal.length - 1], bed, 0);
+      }
+    }
+  },
+
+  // The arrangement, laid out from the middle of the rig: the voice at the
+  // centre, then the rest of the band, the drums, and the bass at the far
+  // ends, each zone as loud as its stem is playing and in its own colour. On
+  // a track that was not separated the expression channel stands in for the
+  // stems.
+  stems(ctx) {
+    const pal = paletteOf(ctx);
+    const floor = 10;
+    const p = ctx.pulse;
+    const levels = p && p.bass !== undefined
+      ? [p.vocals ?? 0, p.other ?? 0, p.drums ?? 0, p.bass ?? 0]
+      : [dyn(ctx, 'vocal', 0.5), dyn(ctx, 'air', 0.3), p ? p.mix : dyn(ctx, 'level', 0.6), dyn(ctx, 'bass', 0.5)];
+    for (let i = 0; i < ctx.fixtureCount; i++) {
+      const fromMiddle = Math.min(0.999, Math.abs(xOf(ctx, i) - 0.5) * 2);
+      const zone = Math.floor(fromMiddle * 4);
+      const v = levels[zone];
+      ctx.write(i, pal[zone % pal.length], Math.round(floor + (255 - floor) * Math.pow(v, 1.4)), 0);
+    }
+  },
 } satisfies Record<string, PatternFn>);
+
+const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+/** A stable pseudo-random 0..1 per cell and seed: the same scatter on every frame of a hit. */
+function scatter(i: number, seed: number): number {
+  let h = Math.imul(i + 1, 0x9E3779B1) ^ Math.imul(seed + 7, 0x85EBCA77);
+  h = Math.imul(h ^ (h >>> 15), 0x2C1B3C6D);
+  h ^= h >>> 13;
+  return (h >>> 0) / 4294967296;
+}
+
+/** A kit played by the clock, for when there is no pulse: kick every step,
+ *  snare every other, a hat on each off-step. */
+function kitFromTheClock(ctx: PatternContext): { kick: number; snare: number; hats: number } {
+  const phase = ctx.stepPhase ?? 0;
+  const kick = Math.exp(-phase * 5);
+  const offPhase = (phase + 0.5) % 1;
+  return {
+    kick,
+    snare: ctx.step % 2 === 1 ? kick : 0,
+    hats: Math.exp(-offPhase * 9) * 0.7,
+  };
+}
 
 export {
   PATTERN_FUNCS,

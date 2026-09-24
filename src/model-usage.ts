@@ -38,6 +38,10 @@ function describeModelUsage(analysis: Analysis | null | undefined): ModelUse[] {
     named('Genre', genre, { 'muq-mulan': 'MuQ-MuLan (zero-shot)', panns: 'PANNs (Cnn14)' },
       { signal: 'Tempo / arousal' }),
     named('Tagging', tagger, { panns: 'PANNs (Cnn14)' }, { none: 'Not used' }),
+    // Documents from before SongFormer did not record it: they are the
+    // labeller's, and say so rather than "not recorded".
+    named('Structure', usage.structure ?? (usage.rhythm ? 'laplacian' : null),
+      { songformer: 'SongFormer' }, { laplacian: 'Self-similarity' }),
     optional('Embeddings', 'MuQ', usage.muq),
     optional('Semantics', 'MuQ-MuLan', usage.muqMulan),
   ];
