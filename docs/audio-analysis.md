@@ -388,8 +388,9 @@ answer:
   intro or outro at the ends. Silence is a breakdown in the middle;
 * **a drop is a drop whatever the model called it.** A section that starts on a
   proper drop becomes a `drop`, unless the model named it an intro, outro,
-  silence or pre-chorus. The model was trained on songs, and run on a club
-  track it calls the drop a verse;
+  silence or pre-chorus. SongFormer has no drop label, so which of its eight a
+  drop section gets is not something to rely on; the drop detector decides, as
+  it already does over the labeller's clusters;
 * **which sections are the same music** still comes from the self-similarity
   clusters: each section's `label` is the cluster most of its beats fall in, so
   a returning chorus gets its look back;

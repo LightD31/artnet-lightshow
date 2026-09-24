@@ -28,9 +28,15 @@ directory, so that directory goes on `sys.path` once, when it first loads. Its
 one import nothing here needs, msaf's evaluation metrics, is stubbed rather than
 installed: msaf pins `enum34`, which breaks the standard library on any Python 3.
 
-The companion EDM model (EDMFormer) has no released weights; on dance music the
-fusion in `structure.from_model` turns a chorus or an instrumental that starts
-on a detected drop into a `drop`, which is the distinction it would have drawn.
+The companion EDM model (EDMFormer) has no released weights, and SongFormer's
+labels include no drop. The fusion in `structure.from_model` makes a section
+that starts on a detected drop a `drop`, which is the distinction EDMFormer
+would have drawn.
+
+What it has been checked on: synthetic tracks, which prove the plumbing (it
+loads, runs, and its answer is fused and validated) and nothing about how well
+it labels real music. The published SongFormBench results are the evidence for
+that.
 """
 
 import contextlib

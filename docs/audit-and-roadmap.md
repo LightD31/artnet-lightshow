@@ -327,8 +327,8 @@ Every phase is its own PR, keeps `npm run check` and the Python suite green, and
 >   - SongFormer names the sections: its functions become the roles, with a new `prechorus` role, and its boundaries
 >     are snapped to the bar line.
 >   - The self-similarity clusters still decide which sections are the same music.
->   - A section that starts on a detected drop is a `drop` whatever SongFormer called it: the model was trained on
->     songs, and on a club track it calls the drop a verse.
+>   - A section that starts on a detected drop is a `drop` whatever SongFormer called it: SongFormer has no drop
+>     label, so the drop detector decides, as it already does over the labeller's clusters.
 >   - The Laplacian labeller is the fallback. Its sections now reach the ends of the track.
 > - **SongFormer's cost:**
 >   - Measured on a 4-core CPU: 0.75× the track's length and 8-10 GB of RAM, because its attention is quadratic in

@@ -675,9 +675,10 @@ NOT_A_DROP = {'intro', 'outro', 'silence', 'pre-chorus', 'prechorus'}
 
 def _model_role(section, index, count, drops, median_energy):
     function = (section.function or '').lower()
-    # A proper drop that starts a loud section is the strongest evidence there
-    # is, and the model was trained on songs rather than on club tracks: run
-    # on one, it calls the drop a verse as readily as a chorus.
+    # SongFormer has no label for a drop — its eight are intro, verse,
+    # pre-chorus, chorus, bridge, inst, outro and silence — so which of them
+    # a drop section gets is not something to rely on. The drop detector
+    # decides, as it does over the labeller's clusters (`assign_roles`).
     if function not in NOT_A_DROP and _starts_on_a_drop(section, drops, median_energy):
         return 'drop'
     role = FUNCTION_ROLES.get(function)

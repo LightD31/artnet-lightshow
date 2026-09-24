@@ -149,8 +149,9 @@ class Fusion(AudioTestCase):
             self.assertIn(section.role, structure.ROLES)
 
     def test_a_drop_is_a_drop_whatever_the_model_called_it(self):
-        """Run for real on this track, SongFormer — trained on songs, not club
-        tracks — called the drop a verse. The detected drop wins."""
+        """SongFormer has no drop label, so a drop section can come back as
+        any of its eight (on this synthetic track, run for real, it came back
+        as a verse). The detected drop decides."""
         from analysis import structure
         on_drop = any(abs(d['t'] - 30.0) < 2.0 and d.get('kind', 'proper') == 'proper'
                       for d in self.drops)
