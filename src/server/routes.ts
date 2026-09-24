@@ -29,6 +29,7 @@ import { settings, RESTART_PATHS, CONFIG_FILE } from './settings.ts';
 import { connectMidi } from './midi-connect.ts';
 import { generateToken } from './auth.ts';
 import { runPreflight } from './preflight.ts';
+import { attachRigRoutes } from './rig-routes.ts';
 import { modelManager, modelDownloadSchema } from './model-manager.ts';
 import { warmRequestSchema, warmPlaylistSchema, parseSetList, fromSpotifyTracks, MAX_TRACKS as MAX_WARM_TRACKS } from './warm.ts';
 import * as pythonEnv from '../python-env.ts';
@@ -1592,6 +1593,9 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
   app.post('/api/settings/token/suggest', (_req, res) => {
     res.json({ ok: true, token: generateToken() });
   });
+
+  // Identify and discovery: finding the rig and making it show itself.
+  attachRigRoutes(app, { wled, broadcast: () => integrations.broadcast() });
 
   // ─── Error handler ────────────────────────────────────────────────────────
   // Must be registered last. Without it, anything that reaches next(err) — an

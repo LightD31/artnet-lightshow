@@ -11,6 +11,7 @@ import { invalidateRig } from './rig.ts';
 import { createRenderer } from './renderer.ts';
 import { createTicker, hrtimeMs, FRAME_MS } from './frame-clock.ts';
 import { messageOf } from '../errors.ts';
+import { createIdentify } from './identify.ts';
 import type { FromWorker, ToWorker } from './engine-messages.ts';
 import type { FrameSummary, Ticker } from './frame-clock.ts';
 import type { FadeRequest, RenderInput, SyncTestRequest } from './renderer.ts';
@@ -87,6 +88,10 @@ function startSyncTest(seconds = 10): number {
   return seconds;
 }
 
+// The fixtures showing themselves on the rig (identify.ts), stamped on the
+// same clock as the fades so the worker times them as it times those.
+const identify = createIdentify({ clock: () => clock() });
+
 /**
  * Everything a frame depends on, read off the live state: the look, the
  * masters, the patch (each fixture's universe and trim resolved), and any
@@ -119,6 +124,7 @@ function renderInput(): RenderInput {
     patternAnchor: state.patternAnchor,
     fade: fadeRequest,
     syncTest: syncRequest,
+    identify: identify.request(),
     universes: activeUniverses(),
     pulse: runPulseSource(),
     fixtures: state.fixtures.map((f) => ({
@@ -447,6 +453,7 @@ export {
   setPulseSource,
   resizeFixtureBuffers,
   startSyncTest,
+  identify,
   beginFade,
   renderInput,
   CONTROL_LEAD_MS,

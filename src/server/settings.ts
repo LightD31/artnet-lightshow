@@ -177,6 +177,12 @@ const DEFAULTS: Settings = {
     // Off by default: most of what a party rig is for is above it.
     flashLimit: false,
   },
+  // The first-run setup (the page's onboarding wizard): offered until it has
+  // been finished or skipped once. A settings file from before the wizard
+  // belongs to a rig that is set up already (see load()).
+  setup: {
+    completed: false,
+  },
   engine: {
     // Where frames are rendered. 'worker' gives the engine a thread of its
     // own, so the rig keeps its timing while the main thread plans a track,
@@ -335,6 +341,9 @@ const schema = z.object({
   safety: z.object({
     flashLimit: z.boolean(),
   }).strict(),
+  setup: z.object({
+    completed: z.boolean(),
+  }).strict(),
   engine: z.object({
     thread: z.enum(['worker', 'main']),
   }).strict(),
@@ -454,6 +463,13 @@ class SettingsStore {
       parsed = JSON.parse(raw);
     } catch (err) {
       return this._quarantine(`invalid JSON (${messageOf(err)})`);
+    }
+
+    // Written before the setup wizard existed: this rig was set up without
+    // it, and offering it now would walk the operator through a rig they
+    // already built.
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && !('setup' in parsed)) {
+      (parsed as Record<string, unknown>).setup = { completed: true };
     }
 
     // A rule added after the file was written must not throw away the whole
