@@ -42,6 +42,16 @@
   --accent-3:    #f59e0b;   /* amber-500   (slot C / warning) */
   --accent-4:    #ef4444;   /* red-500     (slot D / danger)  */
 
+  /* text on a tinted ground, per tone: light on the dark theme, deep on the light */
+  --text-red:   #fca5a5;
+  --text-green: #4ade80;
+  --text-amber: #fcd34d;
+  --text-blue:  #60a5fa;
+  --text-on-red:   #ffd7dd;
+  --text-on-amber: #ffe5bf;
+  --text-on-green: #b3f5d4;
+  --text-hover: #fff;
+
   /* semantics */
   --red:       #ef4444;   /* red-500 */
   --green:     #10b981;   /* emerald-500 */
@@ -69,10 +79,66 @@
   --t-slow:    .25s;
 }
 
+/* Light: for a daylight stage or an office. Same roles, zinc on white; every
+   text colour keeps at least 4.5:1 against the surface it sits on. */
+:root[data-theme="light"] {
+  --bg: #f4f4f5; --surface: #ffffff; --surface-2: #f4f4f5; --card: #ffffff; --card-hi: #f4f4f5;
+  --border: #e4e4e7; --border-hi: #a1a1aa;
+  --text: #09090b; --text-2: #27272a; --muted: #52525b; --dim: #3f3f46;
+  --accent: #2563eb; --accent-hover: #1d4ed8; --accent-2: #047857; --accent-3: #b45309; --accent-4: #dc2626;
+  --red: #dc2626; --green: #047857; --amber: #b45309;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .08); --shadow: 0 1px 3px rgba(0, 0, 0, .1); --shadow-lg: 0 4px 16px rgba(0, 0, 0, .12);
+  --glow: 0 0 0 2px rgba(37, 99, 235, .45);
+  --text-red: #b91c1c; --text-green: #047857; --text-amber: #92400e; --text-blue: #1d4ed8;
+  --text-on-red: #991b1b; --text-on-amber: #92400e; --text-on-green: #065f46; --text-hover: #09090b;
+  --scheme: light;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --bg: #f4f4f5; --surface: #ffffff; --surface-2: #f4f4f5; --card: #ffffff; --card-hi: #f4f4f5;
+    --border: #e4e4e7; --border-hi: #a1a1aa;
+    --text: #09090b; --text-2: #27272a; --muted: #52525b; --dim: #3f3f46;
+    --accent: #2563eb; --accent-hover: #1d4ed8; --accent-2: #047857; --accent-3: #b45309; --accent-4: #dc2626;
+    --red: #dc2626; --green: #047857; --amber: #b45309;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, .08); --shadow: 0 1px 3px rgba(0, 0, 0, .1); --shadow-lg: 0 4px 16px rgba(0, 0, 0, .12);
+    --glow: 0 0 0 2px rgba(37, 99, 235, .45);
+    --text-red: #b91c1c; --text-green: #047857; --text-amber: #92400e; --text-blue: #1d4ed8;
+    --text-on-red: #991b1b; --text-on-amber: #92400e; --text-on-green: #065f46; --text-hover: #09090b;
+    --scheme: light;
+  }
+}
+/* Red night: for a dark room, where a white screen ruins the operator's night
+   vision and lights up the front row. The darkest surfaces there are, and the
+   whole page — swatches, previews and the DMX monitor included — drawn in red
+   alone, so nothing on it is anything but dim red light. */
+:root[data-theme="red"] {
+  /* Greys: the page is turned grey and then multiplied by red (below), so
+     these set how bright each part of it glows, not its colour. */
+  --bg: #000000; --surface: #0a0a0a; --surface-2: #121212; --card: #0c0c0c; --card-hi: #1a1a1a;
+  --border: #2e2e2e; --border-hi: #4a4a4a;
+  --text: #ffffff; --text-2: #e4e4e4; --muted: #bdbdbd; --dim: #e4e4e4;
+  --accent: #6e6e6e; --accent-hover: #858585;
+  --glow: 0 0 0 2px rgba(255, 255, 255, .5);
+  --shadow-sm: none; --shadow: none; --shadow-lg: none;
+}
+/* Grey first, then multiplied by red: what is left is only red light, as
+   bright as the page was. A sepia-and-hue filter left golds and oranges.
+   Red on black tops out near 5:1, which is the price of the night vision. */
+:root[data-theme="red"] body { filter: grayscale(1); }
+:root[data-theme="red"]::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: #ff0000;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+  z-index: 2147483647;
+}
+
 html, body {
   background: var(--bg);
   background-image: var(--bg-grad);
-  color-scheme: dark;
+  color-scheme: var(--scheme, dark);
   color: var(--text);
   font-family: var(--font-sans);
   font-size: 14px;
@@ -166,18 +232,18 @@ header h1 span { color: var(--accent); }
 .stat-pill.alert {
   background: rgba(239, 68, 68, .18);
   border-color: rgba(239, 68, 68, .55);
-  color: #ffd7dd;
+  color: var(--text-on-red);
   animation: gentle-pulse 1.5s ease-in-out infinite;
 }
 .stat-pill.energy {
   background: rgba(245, 158, 11, .18);
   border-color: rgba(245, 158, 11, .55);
-  color: #ffe5bf;
+  color: var(--text-on-amber);
 }
 .stat-pill.live {
   background: rgba(16, 185, 129, .14);
   border-color: rgba(16, 185, 129, .45);
-  color: #b3f5d4;
+  color: var(--text-on-green);
 }
 
 @keyframes gentle-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .65; } }
@@ -331,7 +397,7 @@ main {
   border-radius: 8px;
   background: rgba(239, 68, 68, .14);
   border: 1px solid rgba(239, 68, 68, .35);
-  color: #ffb6c0;
+  color: var(--text-red);
   font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.18em;
@@ -339,7 +405,7 @@ main {
   transition: all var(--t);
   flex-shrink: 0;
 }
-.cb-blackout:hover { background: rgba(239, 68, 68, .25); border-color: rgba(239, 68, 68, .55); color: #fff; }
+.cb-blackout:hover { background: rgba(239, 68, 68, .25); border-color: rgba(239, 68, 68, .55); color: var(--text-hover); }
 .cb-blackout-dot {
   width: 10px; height: 10px;
   border-radius: 50%;
@@ -373,7 +439,7 @@ main {
   color: var(--muted);
   flex-shrink: 0;
 }
-.cb-master input[type=range] { flex: 1; }
+.cb-master input[type=range] { flex: 1; min-width: 0; width: 100%; }
 .cb-master-val {
   font-size: 13px;
   font-weight: 700;
@@ -404,7 +470,7 @@ main {
   border-radius: var(--radius-sm);
   background: rgba(245, 158, 11, .1);
   border: 1px solid rgba(245, 158, 11, .3);
-  color: #fcd34d;
+  color: var(--text-amber);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.05em;
@@ -416,7 +482,7 @@ main {
 .cb-energy-btn:hover {
   border-color: var(--amber);
   background: rgba(245, 158, 11, .16);
-  color: #fff;
+  color: var(--text-hover);
 }
 .cb-energy-btn.active {
   background: var(--amber);
@@ -474,6 +540,42 @@ main {
   box-shadow: 0 0 0 2px rgba(16, 185, 129, .2);
   animation: gentle-pulse 1.4s ease-in-out infinite;
   margin-left: 2px;
+}
+
+/* This device's own switches: theme, stay awake, full screen. */
+.header-tools { display: flex; align-items: center; gap: 6px; }
+.header-theme {
+  min-height: 32px;
+  padding: 4px 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+.header-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.header-tool.active { border-color: var(--accent); color: var(--text); }
+.header-tool:focus-visible, .header-theme:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 900px) {
+  .header-tool-label { display: none; }
+}
+@media (max-width: 560px) {
+  /* The Perform view carries tempo and master: the header keeps what is alarming. */
+  .header-stats .stat-pill:not(.alert):not(.conn) { display: none; }
 }
 
 .mode-tab-key { display: none; }
@@ -915,7 +1017,7 @@ button { font-family: inherit; cursor: pointer; }
 .btn.danger {
   background: rgba(239, 68, 68, .12);
   border-color: rgba(239, 68, 68, .35);
-  color: #fca5a5;
+  color: var(--text-red);
 }
 .btn.danger:hover { background: rgba(239, 68, 68, .2); border-color: rgba(239, 68, 68, .55); color: #fff; }
 .btn.danger.active {
@@ -1205,7 +1307,7 @@ input[type=range]::-moz-range-thumb {
   color: #fff;
   animation: energy-pulse .8s ease-in-out infinite alternate;
 }
-.energy-btn .name { font-size: 12px; font-weight: 700; display: block; color: #fca5a5; letter-spacing: 0.02em; }
+.energy-btn .name { font-size: 12px; font-weight: 700; display: block; color: var(--text-red); letter-spacing: 0.02em; }
 .energy-btn .desc { font-size: 10px; color: var(--muted); display: block; margin-top: 4px; line-height: 1.3; }
 .energy-btn.active .name { color: #fff; }
 .energy-btn.active .desc { color: rgba(255, 255, 255, .85); }
@@ -1582,7 +1684,7 @@ input[type=range]::-moz-range-thumb {
   background: currentColor;
 }
 .auto-badge-idle        { background: var(--surface); color: var(--muted); }
-.auto-badge-downloading { background: rgba(59, 130, 246, .18); color: #60a5fa; animation: auto-pulse 1s ease-in-out infinite alternate; }
+.auto-badge-downloading { background: rgba(59, 130, 246, .18); color: var(--text-blue); animation: auto-pulse 1s ease-in-out infinite alternate; }
 .auto-badge-analyzing   { background: rgba(255, 165, 0, .18); color: #ffb86b; animation: auto-pulse 1s ease-in-out infinite alternate; }
 .auto-badge-ready       { background: rgba(16, 185, 129, .15); color: var(--green); }
 .auto-badge-playing     { background: rgba(59, 130, 246, .25); color: var(--accent); animation: auto-pulse 1s ease-in-out infinite alternate; }
@@ -2000,7 +2102,7 @@ input[type=range]::-moz-range-thumb {
   white-space: nowrap;
 }
 .warm-row.ready .warm-row-status,
-.warm-row.cached .warm-row-status { color: #4ade80; }
+.warm-row.cached .warm-row-status { color: var(--text-green); }
 .warm-row.warming .warm-row-status { color: var(--accent); }
 .warm-row.error .warm-row-status { color: var(--accent-4); }
 
@@ -2053,7 +2155,7 @@ input[type=range]::-moz-range-thumb {
 .toast-success { border-color: rgba(34, 197, 94, .5); }
 
 .toast-message { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.toast-error .toast-message { color: #fca5a5; }
+.toast-error .toast-message { color: var(--text-red); }
 .toast-success .toast-message { color: #86efac; }
 
 .toast-action {
@@ -2119,7 +2221,7 @@ input[type=range]::-moz-range-thumb {
 .transport-btn.running {
   background: rgba(239, 68, 68, .18);
   border-color: rgba(239, 68, 68, .6);
-  color: #fca5a5;
+  color: var(--text-red);
 }
 .transport-glyph { font-size: 12px; line-height: 1; }
 .transport-cancel { min-height: 36px; }
@@ -2513,7 +2615,7 @@ input[type=range]::-moz-range-thumb {
   white-space: nowrap;
   flex-shrink: 0;
 }
-.queue-ready .queue-status { color: #4ade80; border-color: rgba(34, 197, 94, .45); }
+.queue-ready .queue-status { color: var(--text-green); border-color: rgba(34, 197, 94, .45); }
 .queue-prefetching .queue-status { color: var(--accent); border-color: rgba(59, 130, 246, .45); }
 .queue-error .queue-status { color: #f87171; border-color: rgba(239, 68, 68, .45); }
 
@@ -2584,7 +2686,7 @@ input[type=range]::-moz-range-thumb {
   font-size: 14px;
   font-weight: 800;
   letter-spacing: 0.04em;
-  color: #fca5a5;
+  color: var(--text-red);
   margin-bottom: 8px;
 }
 .offline-body { margin: 0; font-size: 12px; line-height: 1.6; color: var(--text); }

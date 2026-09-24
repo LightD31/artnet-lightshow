@@ -134,9 +134,24 @@ export default [
     },
   },
 
+  // ── The service worker: a worker, not a page ─────────────────────────────
+  {
+    files: ['public/sw.js'],
+    languageOptions: {
+      ecmaVersion: 2023,
+      sourceType: 'script',
+      globals: {
+        self: 'readonly', caches: 'readonly', fetch: 'readonly', Response: 'readonly',
+        URL: 'readonly', Promise: 'readonly', console: 'readonly',
+      },
+    },
+    rules: { ...js.configs.recommended.rules, ...COMMON_RULES },
+  },
+
   // ── Plain browser scripts served as-is ────────────────────────────────────
   {
     files: ['public/*.js'],
+    ignores: ['public/sw.js'],
     languageOptions: {
       ecmaVersion: 2023,
       sourceType: 'script',

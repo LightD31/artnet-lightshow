@@ -1,6 +1,7 @@
 import { render } from 'preact';
 import { useState, useEffect } from 'preact/hooks';
 import { field } from './state.js';
+import { setUpDevice } from './device.js';
 
 import { Header } from './components/Header.jsx';
 import { CommandBar } from './components/CommandBar.jsx';
@@ -152,4 +153,5 @@ function Root() {
   );
 }
 
+setUpDevice();
 render(<Root />, document.getElementById('app'));
