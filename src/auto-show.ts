@@ -12,6 +12,8 @@ import { SYNC_OFFSET_LIMIT_MS } from './server/presets.ts';
 import { ShowDirector, measureBuildup } from './show/director.ts';
 import { renderIntents } from './show/render.ts';
 import { pulseTrack } from './show/pulse.ts';
+import { SetMemory } from './show/set-memory.ts';
+import type { SetArc, TrackMemory } from './show/set-memory.ts';
 import { guarded } from './server/guard.ts';
 import { resolveIsrc, splitQuery } from './isrc.ts';
 import { gridFromAnalysis } from './shared/beat-clock.ts';
@@ -131,6 +133,9 @@ class AutoShow {
   declare _grid: BeatGrid | null;
   declare _pixels: boolean;
   declare _pulse: PulseTrack | null;
+  declare _memory: SetMemory;
+  declare _planMemory: Omit<TrackMemory, 'key' | 'at'> | null;
+  declare _arc: SetArc | null;
   declare analysisKey: string | null;
   declare _frameDriven: boolean;
   declare _anchorIndex: { timeline: TimelineEvent[]; length: number; times: number[] } | undefined;
@@ -204,6 +209,11 @@ class AutoShow {
     this._pixels = false;
     // The track's pulse, read every frame for the pixel patterns (show/pulse.ts).
     this._pulse = null;
+    // The night so far (show/set-memory.ts): each track as it started
+    // playing, and what the current plan would add to it.
+    this._memory = new SetMemory();
+    this._planMemory = null;
+    this._arc = null;
     // The cache key the loaded analysis was read or written under, so the
     // pattern clock can reuse the grid already in memory for that track.
     this.analysisKey = null;
@@ -894,6 +904,7 @@ class AutoShow {
       intensity: this.intensity,
       blackoutIndex: this._blackoutIdx,
       pixels: this._pixels,
+      history: settings.group('auto').setMemory === false ? null : this._memory.history(this._memoryKey()),
     });
 
     this._grid = gridFromAnalysis(this.analysis);
@@ -905,6 +916,8 @@ class AutoShow {
     // 'auto', and it is what the client shows — an operator looking at the rig
     // needs to know it is on three colours, not that something chose three.
     this.resolvedPaletteSize = plan.paletteSize;
+    this._planMemory = plan.memory;
+    this._arc = plan.context.arc;
     this.intents = plan.intents;
     this.timeline = renderIntents(plan.intents, { blackoutIndex: this._blackoutIdx });
     this.timelineRevision = randomUUID();
@@ -933,6 +946,8 @@ class AutoShow {
     this._lastEventIdx = -1;
     this._lastPositionMs = undefined;
     this._status = 'playing';
+    // The track is part of the night now: the next one plans against it.
+    if (this._planMemory) this._memory.record({ key: this._memoryKey(), ...this._planMemory });
     // Start from the current source position. Historical patches establish
     // the look; energy events are deliberately represented as cleared state.
     this._reseek();
@@ -1089,6 +1104,12 @@ class AutoShow {
     if (this.analysis) this.buildTimeline();
   }
 
+  /** What names the loaded track in the set memory. */
+  _memoryKey(): string {
+    const t = this.track;
+    return this.analysisKey || (t ? `${t.artist}|${t.name}` : 'track');
+  }
+
   /** See src/show/director.js — measured build-up acceleration. */
   _buildupAccel(build: { start: number; end: number }, a: Analysis, baseBpm: number): ReturnType<typeof measureBuildup> {
     return measureBuildup(build, a, baseBpm);
@@ -1161,6 +1182,12 @@ class AutoShow {
       autoSyncMs: Math.round(this.autoSyncMs),
       // Planned for a rig with LED bars: its looks may draw across cells.
       pixels: this._pixels,
+      // The night so far, and where this track sits in it (set-memory.ts).
+      set: {
+        memory: settings.group('auto').setMemory !== false,
+        tracks: this._memory.size,
+        arc: this._arc ? this._arc.reason : null,
+      },
       analysis: this.analysis ? {
         models: describeModelUsage(this.analysis),
         duration: this.analysis.duration,

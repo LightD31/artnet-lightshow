@@ -164,6 +164,11 @@ const DEFAULTS: Settings = {
     // position API, Art-Net over the network, fixture latency, the throw from
     // the PA — and so it holds from one night to the next.
     syncOffsetMs: 0,
+    // Remember the night: each track avoids the last one's palette and looks,
+    // keeps some of its colours when the keys mix, and paces its big moments
+    // against the tracks before it (src/show/set-memory.ts). Off plans every
+    // track on its own, as if it were the first of the night.
+    setMemory: true,
   },
   engine: {
     // Where frames are rendered. 'worker' gives the engine a thread of its
@@ -318,6 +323,7 @@ const schema = z.object({
   }).strict(),
   auto: z.object({
     syncOffsetMs: z.number().int().min(-SYNC_OFFSET_LIMIT_MS).max(SYNC_OFFSET_LIMIT_MS),
+    setMemory: z.boolean(),
   }).strict(),
   engine: z.object({
     thread: z.enum(['worker', 'main']),

@@ -306,13 +306,17 @@ function tierOf(drive: number): Tier {
  * genre a night of one palette.
  */
 function buildPalette({ key, scale, mood = {}, score = null, paletteSize = 4,
-  colorPresets = null }: {
+  colorPresets = null, avoid = null, continueFrom = null }: {
   key?: string | null;
   scale?: string | null;
   mood?: Partial<Mood>;
   score?: Score | null;
   paletteSize?: number;
   colorPresets?: readonly unknown[] | null;
+  /** A bank not to use: the one the last track played in (see set-memory.ts). */
+  avoid?: string | null;
+  /** The last track's colours, to keep some of when its key mixes into this one. */
+  continueFrom?: readonly number[] | null;
 }): { palette: number[]; name: string } {
   const bank: Record<string, number[]> = paletteBankForSize(paletteSize);
   const scores = new Map<string, number>();
@@ -386,6 +390,23 @@ function buildPalette({ key, scale, mood = {}, score = null, paletteSize = 4,
   quadrant.forEach((name, i) => add(name,
     (i === keyIndex % quadrant.length ? 0.5 : 0.18) * unexplained));
 
+  // The night so far. A track that mixes harmonically out of the last one
+  // keeps some of its colours: each bank scores for the share of its colours
+  // the last track's palette had. That decides between banks the music
+  // already likes without overruling it — a genre's own vote is worth up to
+  // three — and over the fixture tracks it changes the pick for about half
+  // the pairs of tracks, keeping 45 colours across twenty mixes where a
+  // clash keeps 26. And never the same bank twice in a row: two tracks back
+  // to back in one look read as one long track, or as the rig having stopped
+  // listening.
+  if (continueFrom && continueFrom.length) {
+    for (const name of scores.keys()) {
+      const shared = bank[name].filter((i) => continueFrom.includes(i)).length;
+      if (shared) scores.set(name, (scores.get(name) || 0) + shared / bank[name].length);
+    }
+  }
+  if (avoid) scores.delete(avoid);
+
   const ranked = [...scores.entries()].sort((a, b) => b[1] - a[1]
     || a[0].localeCompare(b[0]));
 
@@ -400,7 +421,8 @@ function buildPalette({ key, scale, mood = {}, score = null, paletteSize = 4,
   //
   // A style table pointing at a renamed bank would otherwise reach `undefined`
   // and take the show down on the next line.
-  const name = ranked.length ? ranked[0][0] : Object.keys(bank)[0];
+  const name = ranked.length ? ranked[0][0]
+    : Object.keys(bank).find((n) => n !== avoid) || Object.keys(bank)[0];
 
   const maxIndex = Array.isArray(colorPresets) && colorPresets.length
     ? colorPresets.length - 1 : Infinity;
@@ -487,7 +509,7 @@ function goldenStep(index: number, length: number): number {
  * and ignores the colour slots, which would break the track's locked palette.
  */
 function pickPattern({ character, available, score = null, seed = 0, drive = 0.5,
-  dance = 0.5, pixels = false }: {
+  dance = 0.5, pixels = false, avoid = null }: {
   character?: Character | null;
   available: ReadonlySet<string>;
   score?: Score | null;
@@ -495,6 +517,9 @@ function pickPattern({ character, available, score = null, seed = 0, drive = 0.5
   drive?: number;
   dance?: number;
   pixels?: boolean;
+  /** Patterns not to pick while the passage's pool has others: what the
+   *  last track opened the same passage on (see show/set-memory.ts). */
+  avoid?: ReadonlySet<string> | null;
 }): string {
   const c: Character = character || {};
   const low = unit(c.kick) * 0.6 + unit(c.bassline) * 0.4;
@@ -526,6 +551,16 @@ function pickPattern({ character, available, score = null, seed = 0, drive = 0.5
     } else if (dance <= 0.3) {
       const flowy = filtered.filter((p) => !RHYTHMIC.has(p));
       if (flowy.length) filtered = flowy;
+    }
+    // Something other than last track's look, from the preferences above
+    // when they leave one, else from the passage's whole pool: the genre and
+    // the groove can agree on a single pattern, and then a night of that
+    // genre opens every chorus on it.
+    if (avoid && avoid.size) {
+      const fresh = filtered.filter((p) => !avoid.has(p));
+      const wide = (pixels ? [...pool, ...pixelPool] : pool).filter((p) => available.has(p) && !avoid.has(p));
+      if (fresh.length) filtered = fresh;
+      else if (wide.length) filtered = wide;
     }
     if (!filtered.length) {
       return available.has('ribbon') ? 'ribbon'

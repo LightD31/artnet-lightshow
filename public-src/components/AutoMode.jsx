@@ -17,6 +17,14 @@ import { StagePreview } from './StagePreview.jsx';
  * sources you were not using.
  */
 
+// Where the current track sits in the night (src/show/set-memory.ts).
+const ARC_TEXT = {
+  'warm-up': 'warming up',
+  peak: 'a peak: the big moments are spent here',
+  breather: 'a breather after the tracks before',
+  level: 'holding the level of the night',
+};
+
 const STATUS_TEXT = {
   idle: 'Idle',
   downloading: 'Downloading audio',
@@ -272,6 +280,12 @@ export function AutoMode() {
             <p class="look-note">
               How hard the generated show pushes — accent density, drops and strobe bursts.
             </p>
+            {as.set && as.set.memory && as.set.tracks > 0 && (
+              <p class="look-note" title="Each track avoids the last one's palette and looks, keeps shared colours when the keys mix, and paces its big moments against the night so far.">
+                Night so far: {as.set.tracks} {as.set.tracks === 1 ? 'track' : 'tracks'}
+                {as.set.arc && ARC_TEXT[as.set.arc] ? ` · ${ARC_TEXT[as.set.arc]}` : ''}
+              </p>
+            )}
 
             <div class="look-row">
               <label class="look-label" for="auto-sync">Sync</label>

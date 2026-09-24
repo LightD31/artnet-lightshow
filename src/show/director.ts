@@ -69,6 +69,8 @@ import type { AccentIntent, Intent, SceneIntent } from './intents.ts';
 import type { ShowEvent } from './musical-events.ts';
 import type { Analysis, Segment } from './score.ts';
 import type { Drop, Genre, Mood, Section } from '../types/analysis.ts';
+import { arcFor, keysMix } from './set-memory.ts';
+import type { SetHistory, TrackMemory } from './set-memory.ts';
 
 /** The analysis with its two shapes folded into one (see normalise). */
 export type DirectorAnalysis = Analysis & {
@@ -97,6 +99,8 @@ export interface DirectorOptions {
   intensity?: number;
   blackoutIndex?: number;
   pixels?: boolean;
+  /** The night before this track (show/set-memory.ts), or nothing. */
+  history?: SetHistory | null;
 }
 
 /** A section as the director plans it: what plays in it, and which idea it is. */
@@ -112,6 +116,8 @@ export interface Plan {
   paletteName: string;
   paletteSize: number;
   context: PlanContext;
+  /** What the set memory keeps of this plan once the track plays. */
+  memory: Omit<TrackMemory, 'key' | 'at'>;
 }
 
 /** A measured build-up (see measureBuildup). */
@@ -261,6 +267,7 @@ class ShowDirector {
   declare intensity: number;
   declare blackoutIndex: number;
   declare pixels: boolean;
+  declare history: SetHistory | null;
 
   /**
    * @param {object} options
@@ -272,7 +279,7 @@ class ShowDirector {
    * @param {number} options.blackoutIndex colour index that means "off"
    */
   constructor({ patterns = [], colorPresets = null, paletteSize = 4,
-    intensity = 50, blackoutIndex = 0, pixels = false }: DirectorOptions = {}) {
+    intensity = 50, blackoutIndex = 0, pixels = false, history = null }: DirectorOptions = {}) {
     this.patterns = patterns;
     this.colorPresets = colorPresets;
     this.paletteSize = paletteSize;
@@ -282,6 +289,7 @@ class ShowDirector {
     // for the pictures drawn across cells, and say how to lay them over the
     // bars; a rig of pars plans exactly as it always has.
     this.pixels = !!pixels;
+    this.history = history;
   }
 
   /**
@@ -317,12 +325,26 @@ class ShowDirector {
 
     if (context.pixels) this._mapPixels(intents, context);
 
+    const looks: Record<string, string> = {};
+    for (const i of intents) {
+      if (i.kind === INTENT.SCENE && i.pattern && i.role && String(i.source).startsWith('section:') && !(i.role in looks)) {
+        looks[i.role] = i.pattern;
+      }
+    }
     return {
       intents: this._dedupeTempo(intents),
       palette: context.palette,
       paletteName: context.paletteName,
       paletteSize: context.paletteSize,
       context,
+      memory: {
+        paletteName: context.paletteName,
+        palette: context.palette,
+        looks,
+        drive: context.drive,
+        musicalKey: context.musicalKey,
+        blinder: intents.some((i) => i.kind === INTENT.ACCENT && i.burst === BURST.BLINDER),
+      },
     };
   }
 
@@ -465,10 +487,19 @@ class ShowDirector {
     const paletteSize: number = this.paletteSize === 'auto'
       ? look.paletteSizeFor({ score, identities, mood })
       : this.paletteSize;
+    // The night so far (show/set-memory.ts): never the last track's palette,
+    // and some of its colours when its key mixes into this one; the looks its
+    // sections opened on; what this track may spend against the ones before.
+    const previous = this.history?.previous ?? null;
+    const musicalKey = analysis.key ? [analysis.key, analysis.scale].filter(Boolean).join(' ') : null;
+    const mixes = !!previous && keysMix(previous.musicalKey, musicalKey);
     const { palette, name: paletteName } = look.buildPalette({
       key: analysis.key, scale: analysis.scale, mood, score,
       paletteSize, colorPresets: this.colorPresets,
+      avoid: previous ? previous.paletteName : null,
+      continueFrom: mixes ? previous.palette : null,
     });
+    const arc = arcFor(this.history, drive);
 
     const meter = analysis.meter || 4;
     const downbeats = list(analysis.downbeats);
@@ -486,6 +517,8 @@ class ShowDirector {
     return {
       analysis, events, grouped, mood, score, drive, tier, factor, effective,
       isCalm, isLight, palette, paletteName, paletteSize, meter, downbeats,
+      arc, musicalKey, keyMixes: mixes,
+      previousLooks: previous ? previous.looks : {},
       barSec, baseBpm, duration, sections, identities,
       trackSeed: trackSeedOf(analysis),
       // The last time each recurring passage comes round — the track's arc.
@@ -736,7 +769,18 @@ class ShowDirector {
     // pattern, so the rule that outros rest was quietly overridden. A resting
     // choice is also kept out of the cache, so an intro sharing a chorus's
     // cluster does not hand the chorus its resting look either.
-    const resting = restingPattern(restingLooks(section.profile.prefer, context), available, trackSeed + section.identity);
+    // The look this role opened on in the last track is not used again
+    // straight after, where the pool has anything else: the seed walks on
+    // until it finds something. A passage that comes back in another role
+    // comes back on the same look, so it avoids what every role it plays
+    // opened on last time.
+    const avoid = new Set<string>();
+    for (const s of context.sections) {
+      const last = s.identity === section.identity ? context.previousLooks[s.role] : undefined;
+      if (last) avoid.add(last);
+    }
+    const lastOwn = context.previousLooks[section.role];
+    const resting = firstOther(new Set(lastOwn ? [lastOwn] : []), (k) => restingPattern(restingLooks(section.profile.prefer, context), available, trackSeed + section.identity + k));
     if (resting) return resting;
 
     const known = patternByIdentity.get(section.identity);
@@ -744,7 +788,7 @@ class ShowDirector {
     const pattern = look.pickPattern({
       character: section.character, available, score,
       seed: section.identity + trackSeed, drive: section.drive,
-      dance: unit(mood.danceability, 0.5), pixels: context.pixels,
+      dance: unit(mood.danceability, 0.5), pixels: context.pixels, avoid,
     });
     patternByIdentity.set(section.identity, pattern);
     return pattern;
@@ -1123,8 +1167,13 @@ class ShowDirector {
         strobeFunction: 'standard', beatDivision: meter === 3 ? 1 : 4,
       }, { source: 'drop:anchor', priority: PRIORITY.DROP }));
 
+      // A blinder the night cannot afford (see set-memory.ts) becomes the
+      // white strobe: still the top of the drop's vocabulary, not the one
+      // gesture that uses the whole rig at full.
+      const ration = (b: ReturnType<typeof look.burstFor>) => (b === BURST.BLINDER && context.arc?.blinder === false ? BURST.WHITE_STROBE : b);
+
       if (kind !== 'proper') {
-        const burst = look.burstFor({ moment: 'drop', character, score, drive: drive * 0.8 });
+        const burst = ration(look.burstFor({ moment: 'drop', character, score, drive: drive * 0.8 }));
         const burstMs = Math.round((400 + confidence * 300) * Math.min(1.5, factor));
         intents.push(accent(timeMs + 1, burst, Math.max(MIN_BURST_MS, burstMs), {
           source: 'drop:hype', priority: PRIORITY.DROP, confidence,
@@ -1153,7 +1202,7 @@ class ShowDirector {
       const moveDivision = meter === 3 ? 1 : (drive >= 0.75 ? 4 : 2);
 
       if (variant === 'slam') {
-        const burst = look.burstFor({ moment: 'drop', character, score, drive });
+        const burst = ration(look.burstFor({ moment: 'drop', character, score, drive }));
         // The blinder is the one gesture that uses the whole rig at full, so it
         // is spent only where the music has both the confidence and the hole to
         // justify it.
@@ -1178,7 +1227,7 @@ class ShowDirector {
         }, { source: 'drop:slam', priority: PRIORITY.DROP }));
 
       } else if (variant === 'color-burst') {
-        const burst = look.burstFor({ moment: 'drop', character, score, drive: drive * 0.9 });
+        const burst = ration(look.burstFor({ moment: 'drop', character, score, drive: drive * 0.9 }));
         const strobeMs = Math.round((600 + confidence * 400) * Math.min(1.5, factor));
         intents.push(accent(timeMs + 1, burst, Math.max(MIN_BURST_MS, strobeMs),
           { source: 'drop:color-burst', priority: PRIORITY.DROP, confidence }));
@@ -1397,7 +1446,7 @@ class ShowDirector {
         const section = context.sectionAt(bar.t);
         index++;
         if (!section) continue;
-        let every = strideFor(section.drive, context.factor, dance);
+        let every = strideFor(section.drive, context.factor * (context.arc?.budget ?? 1), dance);
         // The last chorus is punctuated twice as often: the arc's other lever,
         // for the choruses already running as fast a subdivision as the rig
         // can step.
@@ -1425,7 +1474,7 @@ class ShowDirector {
         if (!beat || beat.intensity < 0.6) continue;
         const section = context.sectionAt(beat.t);
         if (!section) continue;
-        const every = strideFor(section.drive, context.factor, dance);
+        const every = strideFor(section.drive, context.factor * (context.arc?.budget ?? 1), dance);
         if (!every) continue;
         // Four beats to the bar, so the same stride means the same density
         // whichever grid it came off.
@@ -1503,9 +1552,12 @@ class ShowDirector {
     // Scaled by where the drive sits inside its tier, so two dance tracks at
     // opposite ends of the tier do not get identical accent density. Never
     // above the tier's own ceiling.
+    // And by where the track sits in the night (show/set-memory.ts): a peak
+    // spends more, a breather or the warm-up less.
     const budgetPerMinute = Math.round(base
       * Math.min(2, Math.max(0, factor))
-      * (0.55 + unit(effective) * 0.45));
+      * (0.55 + unit(effective) * 0.45)
+      * (context.arc?.budget ?? 1));
 
     const dropTimes = drops.map((d) => d.t * 1000);
     const guardMs = 1000 * (barSec
@@ -1811,6 +1863,20 @@ const PAR_WASHES: readonly (readonly string[])[] = [
   ['ensemble', 'split', 'color-cycle', 'wave'],
   ['hit', 'sections', 'color-cycle', 'split'],
 ];
+
+/**
+ * The first of `pick(0)`, `pick(1)`, … not in `avoid`, a few tries deep;
+ * `pick(0)` when every try is avoided, or when there is nothing to avoid.
+ */
+function firstOther<T>(avoid: ReadonlySet<T>, pick: (k: number) => T): T {
+  const first = pick(0);
+  if (!avoid.size || !avoid.has(first)) return first;
+  for (let k = 1; k < 8; k++) {
+    const next = pick(k);
+    if (!avoid.has(next)) return next;
+  }
+  return first;
+}
 
 /** The first of `looks` the rig has, or null for the whole rig on one pattern. */
 function barLook(looks: readonly string[], available: ReadonlySet<string>): string | null {
