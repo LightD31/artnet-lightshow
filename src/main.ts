@@ -119,10 +119,11 @@ autoShow.useFrameClock();
 setFrameHook(() => autoShow.tick());
 setPulseSource(() => autoShow.pulse());
 // A model downloaded while the server runs is used from the next worker on:
-// restart it, so it loads (and warms) what just arrived.
+// restart it, so it loads (and warms) what just arrived — once the track it
+// may be analysing is done, not by starting that one over.
 modelManager.onFinished((job) => {
   if (Object.values(job.models).some((m) => m.state === 'done') && autoShow.restartWorker) {
-    autoShow.restartWorker('analysis models downloaded');
+    autoShow.restartWorker('analysis models downloaded', { whenIdle: true });
   }
 });
 conductor.setAutoSource(() => autoShow.beatSource());

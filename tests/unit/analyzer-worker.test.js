@@ -229,6 +229,24 @@ test('the worker is started with the structure model the settings page chose', a
   }
 });
 
+// New model weights only add to what the next track gets: the track being
+// analysed finishes on the old process, and the one after goes to a new one.
+test('a restart when idle lets the running analysis finish first', async () => {
+  const w = worker('hangslow');
+  try {
+    const running = w.analyze('/tmp/late.wav', null);
+    await new Promise((r) => setTimeout(r, 50));
+    const before = w._proc.pid;
+    w.restart('analysis models downloaded', { whenIdle: true });
+    assert.strictEqual(w._proc.pid, before, 'not killed mid-analysis');
+    const first = await running;
+    assert.strictEqual(first.pid, before, 'answered by the process it started on');
+    const second = await w.analyze('/tmp/next.wav', null);
+    assert.notStrictEqual(w._proc.pid, before, 'and replaced before the next one');
+    assert.deepStrictEqual(second, { bpm: 128, source: '/tmp/next.wav' });
+  } finally { w.shutdown(); }
+});
+
 // Changing the separator (or the interpreter) restarts the worker. Work that
 // was running must go to the new process, not sit on the killed one until the
 // timeout.

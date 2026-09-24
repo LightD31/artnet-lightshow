@@ -1221,11 +1221,12 @@ function modelsSpecExtra(form) {
   const panel = el('div', 'models-panel');
   panel.id = 'models-panel';
   form.appendChild(panel);
-  fillModelsPanel();
+  // Filled here, before the section reaches the document: looked up by id it
+  // would not be found yet, and the list that already arrived never shown.
+  fillModelsPanel(panel);
 }
 
-function fillModelsPanel() {
-  const panel = document.getElementById('models-panel');
+function fillModelsPanel(panel = document.getElementById('models-panel')) {
   if (!panel) return;
   panel.replaceChildren();
   if (!modelsInfo) {
@@ -1745,7 +1746,7 @@ const SETTINGS_SPEC = [
           { value: 'off', label: 'Self-similarity only' },
         ],
         help: 'Names each section: intro, verse, pre-chorus, chorus, bridge, outro. SongFormer '
-          + 'was trained on thousands of annotated songs; it needs its 2.7 GB of weights '
+          + 'was trained on thousands of annotated songs; it needs its 2.9 GB of weights '
           + '(Analysis models, below) and takes a few seconds a track on a GPU, but most of the '
           + 'track\'s length and 8-10 GB of memory on a CPU. Without it the sections come from '
           + 'where the music repeats, with arrangement rules for the names. Changing it '

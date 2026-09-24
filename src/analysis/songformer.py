@@ -10,7 +10,7 @@ annotated songs to answer the second question directly: intro, verse,
 pre-chorus, chorus, bridge, instrumental, outro, silence.
 
 It is optional, and heavy. The published checkpoint carries both of its
-self-supervised backbones (MuQ and MusicFM, 690 M parameters, 2.7 GB), and it
+self-supervised backbones (MuQ and MusicFM, 690 M parameters, 2.9 GB), and it
 reads the whole track in one 420-second window, so its attention grows with the
 square of the track's length. On a four-core laptop CPU it runs at about three
 quarters of real time with 8-10 GB of RAM in use; on a GPU it is a few seconds.

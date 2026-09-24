@@ -4,7 +4,7 @@ fetching the ones that are not.
 
     python scripts/download-models.py                  the required and recommended ones
     python scripts/download-models.py --only songformer,panns
-    python scripts/download-models.py --all            everything, SongFormer's 2.8 GB included
+    python scripts/download-models.py --all            everything, SongFormer's 2.9 GB included
     python scripts/download-models.py --list           what is here and what is not
     python scripts/download-models.py --list --json    the same, for the server
     python scripts/download-models.py --json --only …  progress as JSON lines on stdout
@@ -156,8 +156,11 @@ def _hf_total(repo: str, allow=None, ignore=None) -> int | None:
     return total or None
 
 
-def hf_model(id, name, purpose, tier, size, license, repo, weights, allow=None, ignore=None, note=""):
-    target = ROOT / id
+def hf_model(id, name, purpose, tier, size, license, repo, weights, allow=None, ignore=None, note="",
+             variable=None):
+    # The same override the analysis reads (model_adapters, songformer): a
+    # model kept somewhere else is found there, and fetched there.
+    target = Path(os.environ[variable]) if variable and os.environ.get(variable) else ROOT / id
 
     def present():
         return (target / READY).is_file() or any((target / w).is_file() for w in weights)
@@ -261,19 +264,23 @@ MODELS = [
           "required", 84_000_000, "MIT", _demucs_present, _demucs_fetch),
     hf_model("muq", "MuQ", "Timbre embeddings, for which sections are the same music.",
              "recommended", 1_270_000_000, "CC BY-NC 4.0", "OpenMuQ/MuQ-large-msd-iter",
-             ["model.safetensors", "pytorch_model.bin"], allow=["*.json", "*.bin", "*.safetensors", "*.pt"]),
+             ["model.safetensors", "pytorch_model.bin"], allow=["*.json", "*.bin", "*.safetensors", "*.pt"],
+             variable="ARTNET_MUQ_MODEL"),
     hf_model("muq_mulan", "MuQ-MuLan", "Genre and mood, answered from the audio.",
              "recommended", 2_560_000_000, "CC BY-NC 4.0", "OpenMuQ/MuQ-MuLan-large",
-             ["model.safetensors", "pytorch_model.bin"], allow=["*.json", "*.bin", "*.safetensors", "*.pt"]),
+             ["model.safetensors", "pytorch_model.bin"], allow=["*.json", "*.bin", "*.safetensors", "*.pt"],
+             variable="ARTNET_MUQ_MULAN_MODEL"),
     hf_model("xlm-roberta-base", "XLM-RoBERTa", "MuQ-MuLan's text half: it reads the genre and mood words.",
              "recommended", 1_120_000_000, "MIT", "FacebookAI/xlm-roberta-base",
-             ["model.safetensors"], allow=["*.json", "model.safetensors", "*.model"]),
+             ["model.safetensors"], allow=["*.json", "model.safetensors", "*.model"],
+             variable="ARTNET_MUQ_TEXT_MODEL"),
     Model("panns", "PANNs Cnn14", "AudioSet tags: instrument priors, and the genre when MuQ-MuLan is absent.",
           "optional", 327_428_481, "MIT", _panns_present, _panns_fetch),
     hf_model("songformer", "SongFormer", "Names the sections: intro, verse, pre-chorus, chorus, bridge, outro.",
              "optional", 2_860_000_000, "CC BY 4.0 (its MuQ backbone CC BY-NC 4.0)", "ASLP-lab/SongFormer",
              ["model.safetensors"], ignore=["*.pt", "musicfm/figs/*"],
-             note="Runs by default only on a GPU: on a CPU it takes most of the track's length and 8-10 GB of memory."),
+             note="Runs by default only on a GPU: on a CPU it takes most of the track's length and 8-10 GB of memory.",
+             variable="ARTNET_SONGFORMER_MODEL"),
     Model("bs_roformer", "BS-RoFormer SW", "The slower, more careful separator (Settings → Separator).",
           "optional", 700_000_000, "MIT", _bs_roformer_present, _bs_roformer_fetch,
           note="About seven times as slow as Demucs."),

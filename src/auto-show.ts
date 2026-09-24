@@ -471,8 +471,8 @@ class AutoShow {
    * Safe to call multiple times.
    */
   /** Recycle the analyzer process — used when the interpreter changes. */
-  restartWorker(reason: string): void {
-    if (this._worker) this._worker.restart(reason);
+  restartWorker(reason: string, opts: { whenIdle?: boolean } = {}): void {
+    if (this._worker) this._worker.restart(reason, opts);
   }
 
   /**
