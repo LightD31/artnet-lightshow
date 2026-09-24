@@ -75,7 +75,7 @@ function applyPatch(rawData: unknown): Patch {
   // A new look fades if it asks to and cuts if it does not — and a cut
   // cancels a fade still running, so a drop lands hard even mid-breakdown-fade.
   const changesLook = data.pattern !== undefined || data.palette !== undefined
-    || data.split !== undefined || data.pixelMap !== undefined
+    || data.split !== undefined || data.pixelMap !== undefined || data.pixelPattern !== undefined
     || COLOR_SLOTS.some((slot) => data[slot] !== undefined);
   if (data.fadeMs !== undefined || changesLook) beginFade(data.fadeMs || 0);
 
@@ -100,9 +100,11 @@ function applyPatch(rawData: unknown): Patch {
   // fired a frame late and a scene restored by a seek land on the same step.
   // Re-sending the pattern already running (a button pressed twice) is not a
   // change and does not restart it.
-  const patternChanges = data.pattern !== undefined && data.pattern !== state.pattern;
+  const patternChanges = (data.pattern !== undefined && data.pattern !== state.pattern)
+    || (data.pixelPattern !== undefined && data.pixelPattern !== state.pixelPattern);
   const divisionChanges = data.beatDivision !== undefined && data.beatDivision !== state.beatDivision;
-  const scheduled = data.anchorMs !== undefined && (data.pattern !== undefined || data.beatDivision !== undefined);
+  const scheduled = data.anchorMs !== undefined
+    && (data.pattern !== undefined || data.pixelPattern !== undefined || data.beatDivision !== undefined);
   if (data.beatDivision !== undefined) state.beatDivision = data.beatDivision;
   if (data.pattern !== undefined) state.pattern = data.pattern;
   if (patternChanges || divisionChanges || scheduled) anchorPattern(data.anchorMs);
@@ -141,6 +143,17 @@ function applyPatch(rawData: unknown): Patch {
   }
   if (data.split !== undefined) state.split = data.split;
   if (data.pixelMap !== undefined) state.pixelMap = data.pixelMap;
+  if (data.pixelPattern !== undefined) state.pixelPattern = data.pixelPattern;
+  // A pattern picked by hand runs on the whole rig, and from its start: the
+  // bars' own picture and a build-up's span belong to the show that planned
+  // them.
+  else if (data.pattern !== undefined && data.anchorMs === undefined) {
+    state.pixelPattern = null;
+    state.pixelSpan = null;
+    state.pixelFrom = null;
+  }
+  if (data.pixelSpan !== undefined) state.pixelSpan = data.pixelSpan;
+  if (data.pixelFrom !== undefined) state.pixelFrom = data.pixelFrom;
   if (data.showDynamics !== undefined) {
     state.showDynamics = data.showDynamics === null ? null : { ...state.showDynamics, ...data.showDynamics };
   }

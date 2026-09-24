@@ -140,6 +140,12 @@ export interface Pulse {
   encoding: "u8-base64";
   /** Whether the lanes came from the separated drum stem or the percussive half of the mix. */
   source?: "stems" | "mix";
+  /**
+   * Which rules found the drum hits: 2 for the ones measured on real drumming
+   * (scripts/eval-drums.py). Absent for the first, tuned on a synthetic kit, which a show trusts
+   * less.
+   */
+  detector?: number;
   /** mix, and drums, bass, vocals and other when the track was separated. */
   envelopes: Record<string, string>;
   /** kick, snare and hats. */

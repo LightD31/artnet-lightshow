@@ -12,6 +12,9 @@ import { SYNC_OFFSET_LIMIT_MS } from './server/presets.ts';
 import { ShowDirector, measureBuildup } from './show/director.ts';
 import { renderIntents } from './show/render.ts';
 import { pulseTrack } from './show/pulse.ts';
+import { SetMemory } from './show/set-memory.ts';
+import type { SetArc, TrackMemory } from './show/set-memory.ts';
+import type { ShowOverlay } from './show/overlay.ts';
 import { guarded } from './server/guard.ts';
 import { resolveIsrc, splitQuery } from './isrc.ts';
 import { gridFromAnalysis } from './shared/beat-clock.ts';
@@ -130,7 +133,12 @@ class AutoShow {
   declare _currentJob: symbol | null;
   declare _grid: BeatGrid | null;
   declare _pixels: boolean;
+  declare _lamps: number | null;
   declare _pulse: PulseTrack | null;
+  declare _memory: SetMemory;
+  declare _planMemory: Omit<TrackMemory, 'key' | 'at'> | null;
+  declare _arc: SetArc | null;
+  declare _overlay: { key: string | null; overlay: ShowOverlay | null } | null;
   declare analysisKey: string | null;
   declare _frameDriven: boolean;
   declare _anchorIndex: { timeline: TimelineEvent[]; length: number; times: number[] } | undefined;
@@ -202,8 +210,17 @@ class AutoShow {
     // Whether the rig has LED bars. The director reaches for the pictures drawn
     // across cells only when it does (see setRig).
     this._pixels = false;
+    this._lamps = null;
     // The track's pulse, read every frame for the pixel patterns (show/pulse.ts).
     this._pulse = null;
+    // The night so far (show/set-memory.ts): each track as it started
+    // playing, and what the current plan would add to it.
+    this._memory = new SetMemory();
+    this._planMemory = null;
+    this._arc = null;
+    // The operator's edits to the loaded track (show/overlay.ts), read from
+    // the cache beside its analysis the first time it is planned.
+    this._overlay = null;
     // The cache key the loaded analysis was read or written under, so the
     // pattern clock can reuse the grid already in memory for that track.
     this.analysisKey = null;
@@ -263,7 +280,8 @@ class AutoShow {
       const times: number[] = [];
       for (const ev of this.timeline) {
         if (ev.action === 'patch' && ev.data
-          && (ev.data.pattern !== undefined || ev.data.beatDivision !== undefined)) times.push(ev.timeMs);
+          && (ev.data.pattern !== undefined || ev.data.pixelPattern !== undefined
+            || ev.data.beatDivision !== undefined)) times.push(ev.timeMs);
       }
       index = { timeline: this.timeline, length: this.timeline.length, times };
       this._anchorIndex = index;
@@ -893,6 +911,9 @@ class AutoShow {
       intensity: this.intensity,
       blackoutIndex: this._blackoutIdx,
       pixels: this._pixels,
+      lamps: this._lamps,
+      history: settings.group('auto').setMemory === false ? null : this._memory.history(this._memoryKey()),
+      overlay: this.overlay(),
     });
 
     this._grid = gridFromAnalysis(this.analysis);
@@ -904,6 +925,8 @@ class AutoShow {
     // 'auto', and it is what the client shows — an operator looking at the rig
     // needs to know it is on three colours, not that something chose three.
     this.resolvedPaletteSize = plan.paletteSize;
+    this._planMemory = plan.memory;
+    this._arc = plan.context.arc;
     this.intents = plan.intents;
     this.timeline = renderIntents(plan.intents, { blackoutIndex: this._blackoutIdx });
     this.timelineRevision = randomUUID();
@@ -932,6 +955,8 @@ class AutoShow {
     this._lastEventIdx = -1;
     this._lastPositionMs = undefined;
     this._status = 'playing';
+    // The track is part of the night now: the next one plans against it.
+    if (this._planMemory) this._memory.record({ key: this._memoryKey(), ...this._planMemory });
     // Start from the current source position. Historical patches establish
     // the look; energy events are deliberately represented as cleared state.
     this._reseek();
@@ -945,8 +970,10 @@ class AutoShow {
     this._status = this.analysis ? 'ready' : 'idle';
     if (this._loopTimer) { clearInterval(this._loopTimer); this._loopTimer = null; }
     this._cancelEnergyTimer();
-    // Clear any lingering energy override so we don't leave the rig stuck
-    this._applyPatch({ energyOverride: null, showDynamics: null, split: null });
+    // Clear any lingering energy override so we don't leave the rig stuck,
+    // and the show's own layout of the look: the bars' picture, a split, a
+    // chorus laid mirrored.
+    this._applyPatch({ energyOverride: null, showDynamics: null, split: null, pixelPattern: null, pixelMap: 'stage' });
   }
 
   reset(): void {
@@ -1079,13 +1106,47 @@ class AutoShow {
   /**
    * Tell the show what the rig is. A patch that gains or loses its LED bars
    * replans the track, as a palette or intensity change does, so the looks
-   * that draw across cells come and go with the bars.
+   * that draw across cells come and go with the bars; so does a rig of pars
+   * crossing three lamps, which is what the kit needs to be drawn on it.
    */
-  setRig({ hasPixels = false }: { hasPixels?: boolean } = {}): void {
+  setRig({ hasPixels = false, lamps = null }: { hasPixels?: boolean; lamps?: number | null } = {}): void {
     const pixels = !!hasPixels;
-    if (pixels === this._pixels) return;
+    const count = Number.isFinite(lamps) ? lamps : null;
+    const kit = (n: number | null) => n === null || n >= 3;
+    if (pixels === this._pixels && kit(count) === kit(this._lamps)) {
+      this._lamps = count;
+      return;
+    }
     this._pixels = pixels;
+    this._lamps = count;
     if (this.analysis) this.buildTimeline();
+  }
+
+  /** The operator's edits to the loaded track, or null. */
+  overlay(): ShowOverlay | null {
+    const key = this.analysisKey;
+    if (!this._overlay || this._overlay.key !== key) {
+      this._overlay = { key, overlay: key && this._cache ? this._cache.overlay(key) : null };
+    }
+    return this._overlay.overlay;
+  }
+
+  /**
+   * Replace the loaded track's edits and replan with them. Stored beside
+   * its analysis, so they come back whenever the track does; a track with
+   * no cache key keeps them only while it is loaded.
+   */
+  setOverlay(overlay: ShowOverlay | null): void {
+    const key = this.analysisKey;
+    if (key && this._cache) this._cache.setOverlay(key, overlay);
+    this._overlay = { key, overlay };
+    if (this.analysis) this.buildTimeline();
+  }
+
+  /** What names the loaded track in the set memory. */
+  _memoryKey(): string {
+    const t = this.track;
+    return this.analysisKey || (t ? `${t.artist}|${t.name}` : 'track');
   }
 
   /** See src/show/director.js — measured build-up acceleration. */
@@ -1110,6 +1171,7 @@ class AutoShow {
       action: ev.action,
       id: data && data.id,
       pattern: data && data.pattern,
+      pixelPattern: data && data.pixelPattern,
       colorA: data && data.colorA,
       durationMs: data && data.durationMs,
       source: ev.source,
@@ -1159,6 +1221,15 @@ class AutoShow {
       autoSyncMs: Math.round(this.autoSyncMs),
       // Planned for a rig with LED bars: its looks may draw across cells.
       pixels: this._pixels,
+      // The operator's edits to this track (show/overlay.ts), and what names it.
+      analysisKey: this.analysisKey,
+      overlay: this.analysis ? this.overlay() : null,
+      // The night so far, and where this track sits in it (set-memory.ts).
+      set: {
+        memory: settings.group('auto').setMemory !== false,
+        tracks: this._memory.size,
+        arc: this._arc ? this._arc.reason : null,
+      },
       analysis: this.analysis ? {
         models: describeModelUsage(this.analysis),
         duration: this.analysis.duration,

@@ -80,6 +80,10 @@ const PRIORITY = Object.freeze({
   SILENCE: 50,
   ROTATION: 40,
   MELODY: 30,
+  // A drum fill into a new section: rarer than a bar line and more telling,
+  // so it wins the moment over the downbeat after it, which the section's
+  // own scene change already marks.
+  FILL_ACCENT: 25,
   BAR_ACCENT: 20,
   BEAT_ACCENT: 10,
 });
@@ -117,6 +121,11 @@ export interface ScenePayload {
   fadeMs?: number;
   split?: number;
   pixelMap?: string;
+  /** The bars' own picture on a rig with LED bars, null for one pattern on
+   *  the whole rig; its span in beats and where in it the scene starts. */
+  pixelPattern?: string | null;
+  pixelSpan?: number | null;
+  pixelFrom?: number | null;
 }
 
 export interface SceneIntent extends IntentBase, ScenePayload {

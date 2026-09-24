@@ -461,10 +461,40 @@ what it can show that a par cannot is the music moving *inside* the beat. The
 * **lanes**: every kick, snare and hat, read off the drum stem by band-limited
   spectral flux. The bands are below 150 Hz, 1-5 kHz and above 7 kHz, and each
   lane claims only the hits that are its own. A kick's beater click also rises
-  in the snare band, and a snare's noise reaches the hats'; linear magnitudes,
-  not log, keep a band that holds almost none of a hit's energy from claiming
-  it. On a synthetic kit every hit is found and nothing else. Without separation
-  the lanes come from the percussive half of the mix, and `source` says so.
+  in the snare band, a snare's body below 150 Hz and its wires into the hats'.
+  Each band is scaled by its own loud rise, and a frame belongs to the lane it
+  rose most in on that scale. A kick played with the snare, four to the floor
+  under a clap on two and four, is a full-sized rise of its own and keeps its
+  hit. Linear magnitudes, not log, keep a band that holds almost none of a
+  hit's energy from claiming it. Without separation the lanes come from the
+  percussive half of the mix, and `source` says so.
+
+### How well the lanes work
+
+`scripts/eval-drums.py` scores the lanes against real drumming: MDB Drums, 23
+recordings from jazz and reggae to punk and metal, each hit marked by hand. The
+rules were tuned on MIREX 2017's training half. These are F-measures within
+50 ms on the other eleven recordings:
+
+|                    | kick | snare | hats |
+|--------------------|------|-------|------|
+| drum stem (Demucs) | 0.88 | 0.71  | 0.50 |
+| no separation      | 0.77 | 0.49  | 0.35 |
+
+The snare is scored without its ghost notes, and the hats without the pedal.
+Both are played quiet on purpose, and a light should not mark them. They make
+up a third of the snare strokes in these recordings.
+
+* **Kick:** the lane to trust. On the stem, its hits of strength 0.7 and up are
+  right nine times in ten.
+* **Snare:** those same strong hits are right four times in five.
+* **Hats:** texture. A ride or a crash also fires the hat lane.
+
+The first rules were tuned on a synthetic kit and scored 0.78, 0.59 and 0.47 on
+the stem. The gap was almost all false hits. The kick had no rule against a
+snare's body, and on a real kit that rises below 150 Hz. The synthetic kit's
+tests still hold every rule to four to the floor with a clap on two and four,
+a dance beat these acoustic recordings rarely play.
 
 The server samples it at the playback position every frame
 (`src/show/pulse.ts`). Stem levels are interpolated between the 20 ms points.

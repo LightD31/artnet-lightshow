@@ -47,7 +47,12 @@ export interface UnitRange {
 /** The order the patterns travel in, for fixtures and for units (see layoutOf). */
 export interface Layout {
   wash: Set<number>;
-  fixtures: { members: number[]; order: number[]; xs: number[] | null };
+  /**
+   * `folded`, when the look is mirrored: the slots a stepped pattern travels
+   * through, each one or two fixtures standing symmetrically about the
+   * centre of the stage, from the middle out (members indices).
+   */
+  fixtures: { members: number[]; order: number[]; xs: number[] | null; folded?: number[][] };
   units: { list: number[]; xs: number[] | null; ys: number[] | null };
 }
 
@@ -62,8 +67,17 @@ export interface Rig<F extends StageFixture = StageFixture> {
   localY: number[];
   grids: (Grid | null)[];
   hasPixels: boolean;
-  layout(split?: number | null, pixelMap?: PixelMap | string | null): Layout;
+  /** Does the rig have fixtures that are one light, beside any bars. */
+  hasPars: boolean;
+  layout(split?: number | null, pixelMap?: PixelMap | string | null, only?: LayerPart | null): Layout;
 }
+
+/**
+ * Which fixtures a layout covers: every one, only those that are one light
+ * (the pars), or only those with cells (the bars). A look that gives the bars
+ * a picture of their own draws the two parts apart (shared/layer.ts).
+ */
+export type LayerPart = 'pars' | 'cells';
 
 /** The profile a fixture runs, or nothing when it has none. */
 export type ProfileLookup<F> = (fixture: F) => Pick<Profile, 'cells' | 'grid'> | null | undefined;
@@ -145,12 +159,14 @@ function buildRig<F extends StageFixture>(fixtures: readonly F[], profileOf: Pro
   const localY: number[] = [];
   const grids: (Grid | null)[] = [];
   let hasPixels = false;
+  let hasPars = false;
 
   fixtures.forEach((fixture, i) => {
     const start = units.length;
     const profile = profileOf(fixture);
     const cells = cellsOf(profile);
     if (!cells) {
+      hasPars = true;
       units.push({ fixture: i, cell: 0 });
       points.push(centres[i]);
       local.push(0.5);
@@ -200,13 +216,13 @@ function buildRig<F extends StageFixture>(fixtures: readonly F[], profileOf: Pro
 
   const layouts = new Map<string, Layout>();
   return {
-    fixtures, units, ranges, cellMaps, points, local, localY, grids, hasPixels,
-    /** The travel order for a look, cached per split and pixel map. */
-    layout(split = null, pixelMap = 'stage') {
-      const key = `${split}|${hasPixels ? pixelMap : ''}`;
+    fixtures, units, ranges, cellMaps, points, local, localY, grids, hasPixels, hasPars,
+    /** The travel order for a look, cached per split, pixel map and part. */
+    layout(split = null, pixelMap = 'stage', only = null) {
+      const key = `${split}|${pixelMap}|${only || ''}`;
       let layout = layouts.get(key);
       if (!layout) {
-        layout = layoutOf(this, split, pixelMap);
+        layout = layoutOf(this, split, pixelMap, only);
         layouts.set(key, layout);
       }
       return layout;
@@ -245,15 +261,37 @@ function rigSignature(fixtures: readonly StageFixture[], revision: number | stri
  * With no bars in the rig, units are the fixtures and xs is the fixtures' own:
  * byte for byte what the patterns got before.
  */
-function layoutOf(rig: Rig, split: number | null | undefined, pixelMap: string | null | undefined): Layout {
+function layoutOf(rig: Rig, split: number | null | undefined, pixelMap: string | null | undefined,
+  only: LayerPart | null = null): Layout {
   const { fixtures, ranges, points, local, localY } = rig;
   const wash = washFixtures(fixtures, split);
-  const members = fixtures.map((_, i) => i).filter((i) => !wash.has(i));
+  const part = (i: number) => !only || (only === 'cells') === !!rig.cellMaps[i];
+  const members = fixtures.map((_, i) => i).filter((i) => !wash.has(i) && part(i));
   const { order, xs } = spatialLayout(members.map((i) => fixtures[i]));
-  const layoutFixtures = { members, order, xs };
+  const layoutFixtures: Layout['fixtures'] = { members, order, xs };
+  if (pixelMap === 'mirror' && members.length >= 3) {
+    // Folded about the centre: the two lamps either side of the middle are
+    // one slot, the next pair out the next, so a chase runs from the middle
+    // to both ends at once and a stack builds out from the centre. With an
+    // odd count the middle lamp is a slot of its own.
+    const n = order.length;
+    const folded: number[][] = [];
+    for (let k = 0; k < Math.ceil(n / 2); k++) {
+      const left = Math.floor((n - 1) / 2) - k;
+      const right = Math.ceil((n - 1) / 2) + k;
+      folded.push(left === right ? [order[left]] : [order[left], order[right]]);
+    }
+    layoutFixtures.folded = folded;
+  }
 
   if (!rig.hasPixels) {
-    return { wash, fixtures: layoutFixtures, units: { list: order.map((k) => ranges[members[k]].start), xs, ys: null } };
+    const list = order.map((k) => ranges[members[k]].start);
+    // A picture laid mirrored on a rig of pars is drawn out from the centre,
+    // as it is across bars.
+    const unitXs = pixelMap === 'mirror' && list.length >= 3
+      ? (xs || list.map((_, k) => k / (list.length - 1))).map((x) => Math.abs(2 * x - 1))
+      : xs;
+    return { wash, fixtures: layoutFixtures, units: { list, xs: unitXs, ys: null } };
   }
 
   const list: number[] = [];

@@ -25,6 +25,7 @@ import { cellPlace, channelPlace, stripOf } from '../shared/placement.ts';
 // Shared with the browser's rehearsal preview so the two cannot drift.
 import { EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture, cellDrive } from '../shared/look-math.ts';
 import { anchorStep, stepAt, motionAdvance } from '../shared/beat-clock.ts';
+import { createFlashLimiter, lightLuminance, strobeCap } from './flash-limit.ts';
 import type { EnergyLook, UnitLight } from '../shared/look-math.ts';
 import type { Rig } from '../shared/rig.ts';
 import type { MusicalTime } from './conductor.ts';
@@ -68,11 +69,17 @@ export interface RenderInput {
   colorD: number;
   split: number | null;
   pixelMap: PixelMap;
+  /** The bars' own picture while the pars run `pattern`, or null. */
+  pixelPattern?: string | null;
+  pixelSpan?: number | null;
+  pixelFrom?: number | null;
   beatDivision: number;
   strobeSpeed: number;
   strobeFunction: string;
   masterDimmer: number;
   masterBlackout: boolean;
+  /** Hold the rig to three large-area flashes a second (flash-limit.ts). */
+  flashLimit?: boolean;
   /** An energy effect's id, or null. */
   energy: string | null;
   showDynamics: ShowDynamics | null;
@@ -138,6 +145,12 @@ const SOFT_FLASH_MAX_MS = 50;
 function softStrobeHz(raw: number): number {
   return SOFT_STROBE_MIN_HZ + (Math.min(255, raw) / 255) * (SOFT_STROBE_MAX_HZ - SOFT_STROBE_MIN_HZ);
 }
+
+// The fastest strobe the flash limit allows, on the same scale: three a
+// second. A fixture's own strobe channel is taken to run the same range
+// (1–20 Hz, as most LED pars' standard strobe does), since what it actually
+// runs at is the fixture's secret.
+const FLASH_LIMIT_STROBE = strobeCap(softStrobeHz);
 
 /**
  * Is a software-strobed fixture lit on the frame at `now`? Periodic, on the
@@ -205,6 +218,8 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
   // bar another (see shared/rig.js). On a rig of pars, entry i is fixture i.
   const unitColors = Array.from({ length: 4 }, blankUnit);
   const twinkle = new Array(4).fill(0);
+  // The bars' own dice, when they run a picture apart from the pars'.
+  const pixelTwinkle = new Array(4).fill(0);
 
   // ── Crossfades ─────────────────────────────────────────────────────────────
   // The show asks for a fade where the music does — long into a breakdown,
@@ -230,9 +245,11 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
   let anchor: PatternAnchor | null = null;
   let givenAnchor: PatternAnchor | null = null;
   let lastRandomKey: string | null = null;
+  let lastPixelRandomKey: string | null = null;
 
   let rig: Rig<RenderFixture> | null = null;
   let rigKey = '';
+  const limiter = createFlashLimiter();
 
   /** The rig as lights, rebuilt only when what it depends on changes. */
   function rigFor(fixtures: RenderFixture[]): Rig<RenderFixture> {
@@ -250,6 +267,8 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     if (unitColors.length > count) unitColors.length = count;
     while (twinkle.length < count) twinkle.push(0);
     twinkle.length = count;
+    while (pixelTwinkle.length < count) pixelTwinkle.push(0);
+    pixelTwinkle.length = count;
   }
 
   function setUnitColor(u: number, color: Colour, dim: number, strobe: number): void {
@@ -317,27 +336,41 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
    */
   function renderPattern(input: RenderInput, rigNow: Rig<RenderFixture>, reading: MusicalTime): void {
     if (!input.running) return;
+    const pixelPattern = rigNow.hasPixels && input.pixelPattern ? input.pixelPattern : null;
     const known = !!PATTERN_FUNCS[input.pattern];
+    const knownPixel = !!pixelPattern && !!PATTERN_FUNCS[pixelPattern];
     const look = {
       pattern: input.pattern,
       colors: [input.colorA, input.colorB, input.colorC, input.colorD].map((i) => COLOR_PRESETS[i]),
       split: input.split,
       pixelMap: input.pixelMap,
+      pixelPattern,
+      pixelSpan: input.pixelSpan ?? null,
+      pixelFrom: input.pixelFrom ?? null,
     };
-    if (!known) {
+    if (!known && !knownPixel) {
       // Nothing to draw, but a split look's wash still holds.
-      renderLayer(rigNow, look, null, setUnitColor, { skipPattern: true });
+      renderLayer(rigNow, look, null, setUnitColor, { skipPattern: true, skipPixelPattern: true });
       return;
     }
 
     const fixtureCount = input.fixtures.length;
     const { step, anchor: from, division } = patternStep(input, reading);
-    let skipPattern = false;
-    if (RANDOM_PATTERNS.has(input.pattern)) {
-      const pixels = rigNow.hasPixels ? `|${rigNow.units.length}|${input.pixelMap}` : '';
-      const key = `${input.pattern}|${step}|${input.colorA},${input.colorB},${input.colorC},${input.colorD}|${input.split}|${fixtureCount}${pixels}`;
+    // A random pattern re-rolls when its step or its look moves, and holds
+    // what it rolled in between; the pars and the bars keep their own dice.
+    const lookKey = `${step}|${input.colorA},${input.colorB},${input.colorC},${input.colorD}|${input.split}|${fixtureCount}`;
+    const pixels = `|${rigNow.hasPixels ? rigNow.units.length : ''}|${input.pixelMap}`;
+    let skipPattern = !known;
+    if (known && RANDOM_PATTERNS.has(input.pattern)) {
+      const key = `${input.pattern}|${lookKey}${pixels}|${pixelPattern}`;
       skipPattern = key === lastRandomKey;
       lastRandomKey = key;
+    }
+    let skipPixelPattern = !knownPixel;
+    if (knownPixel && RANDOM_PATTERNS.has(pixelPattern)) {
+      const key = `${pixelPattern}|${lookKey}${pixels}|${input.pattern}`;
+      skipPixelPattern = key === lastPixelRandomKey;
+      lastPixelRandomKey = key;
     }
 
     renderLayer(rigNow, look, {
@@ -351,7 +384,8 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       pulse: input.pulse ?? null,
       fixtureCount,
       twinkle,
-    }, setUnitColor, { skipPattern });
+      pixelTwinkle,
+    }, setUnitColor, { skipPattern, skipPixelPattern });
   }
 
   function syncTestEnergy(now: number): EnergyLook | null {
@@ -424,8 +458,9 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
   function strobeRequest(input: RenderInput, energy: EnergyLook | null, strobe: number): StrobeRequest | null {
     // Energy overrides force 'standard' strobe so a colour-strobe burst never
     // inherits a slow ramp/break function from the prior segment.
-    const raw = energy ? strobe : (input.pattern === 'strobe' ? input.strobeSpeed : strobe);
+    let raw = energy ? strobe : (input.pattern === 'strobe' ? input.strobeSpeed : strobe);
     if (!(raw > 0)) return null;
+    if (input.flashLimit) raw = Math.min(raw, FLASH_LIMIT_STROBE);
     return { raw, fnId: energy ? 'standard' : input.strobeFunction };
   }
 
@@ -567,21 +602,58 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     }
 
     // With the buffers already cleared, a blackout is simply empty universes.
-    if (!input.masterBlackout) {
-      const { fixtures } = input;
-      for (let i = 0; i < fixtures.length; i++) {
-        const fix = fixtures[i];
-        const { start, count } = rigNow.ranges[i];
-        const cells = rigNow.cellMaps[i];
-        // Each light: its source (a burst, a pinned fixture, or the pattern
-        // layer partway through any fade), then the music's level on top.
-        const lights: LightValue[] = [];
-        for (let u = start; u < start + count; u++) lights.push(lightOf(u, fix, energy, fadeT, target));
-        if (cells) writeBar(input, store, fix, cells, lights, energy, now);
-        else writePar(input, store, fix, lights[0], energy, now);
-      }
+    if (input.masterBlackout) {
+      if (input.flashLimit) limiter.commit(0, now);
+      return rigNow;
+    }
+    const { fixtures } = input;
+    // Each light: its source (a burst, a pinned fixture, or the pattern layer
+    // partway through any fade), then the music's level on top.
+    const all: LightValue[][] = [];
+    for (let i = 0; i < fixtures.length; i++) {
+      const { start, count } = rigNow.ranges[i];
+      const lights: LightValue[] = [];
+      for (let u = start; u < start + count; u++) lights.push(lightOf(u, fixtures[i], energy, fadeT, target));
+      all.push(lights);
+    }
+    if (input.flashLimit) limitFlashes(input, all, now);
+    else limiter.reset();
+    for (let i = 0; i < fixtures.length; i++) {
+      const cells = rigNow.cellMaps[i];
+      if (cells) writeBar(input, store, fixtures[i], cells, all[i], energy, now);
+      else writePar(input, store, fixtures[i], all[i][0], energy, now);
     }
     return rigNow;
+  }
+
+  /** How bright the rig is as a whole: every fixture's mean light, after the masters. */
+  function rigLuminance(input: RenderInput, all: LightValue[][]): number {
+    if (!all.length) return 0;
+    let sum = 0;
+    for (let i = 0; i < all.length; i++) {
+      const lights = all[i];
+      let fixture = 0;
+      for (const { col, dim } of lights) fixture += lightLuminance(col, dim);
+      sum += (fixture / Math.max(1, lights.length)) * mastersOf(input, input.fixtures[i]);
+    }
+    return sum / all.length;
+  }
+
+  /**
+   * Hold this frame inside the flash limit (flash-limit.ts): scale every
+   * light towards the brightness the limiter allows, then tell it what went
+   * out.
+   */
+  function limitFlashes(input: RenderInput, all: LightValue[][], now: number): void {
+    const luminance = rigLuminance(input, all);
+    const allowed = limiter.target(luminance, now);
+    if (luminance > 1e-6 && Math.abs(allowed - luminance) > 1e-4) {
+      const scale = allowed / luminance;
+      for (const lights of all) for (const light of lights) light.dim = Math.min(255, light.dim * scale);
+      limiter.commit(rigLuminance(input, all), now);
+    } else {
+      limiter.commit(luminance, now);
+    }
   }
 
   return {

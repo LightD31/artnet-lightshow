@@ -93,6 +93,24 @@ function hitBrightness(phase: number): number {
   return Math.round(35 + Math.pow(1 - p, 1.8) * 220);
 }
 
+// How much of the step's own decay stays under the drums when `hit` follows
+// them: enough that the division still reads, well short of a hit.
+const GRID_UNDER_GROOVE = 0.5;
+
+/**
+ * `hit` following the drums (show/pulse.ts `groove`): the step's decay
+ * (`hitBrightness`) still pulses underneath at half its height, and a drum as
+ * it was hit takes the lamps to full and falls back the way the drum does. On
+ * four to the floor the kick and the step land together, and what changes is
+ * that each hit is as hard as the kick was; on a breakbeat, a half-time groove
+ * or a live drummer the rig flashes where the drums do, and the grid alone
+ * never would.
+ */
+function grooveBrightness(clock: number, groove: number): number {
+  const underneath = 35 + (clock - 35) * GRID_UNDER_GROOVE;
+  return Math.round(Math.max(underneath, 35 + 220 * Math.max(0, Math.min(1, groove))));
+}
+
 /**
  * One step of the expression channel towards what the show last asked for.
  *
@@ -204,6 +222,7 @@ export {
   resolveEnergyOverride,
   fadeBrightness,
   hitBrightness,
+  grooveBrightness,
   blendExpression,
   emitterValues,
   cellDrive,

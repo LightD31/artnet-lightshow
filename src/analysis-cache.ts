@@ -4,6 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { messageOf } from './errors.ts';
 import type { Analysis } from './show/score.ts';
+import type { ShowOverlay } from './show/overlay.ts';
 
 /** What else is stored with an analysis: the track as the player named it. */
 export type CacheMeta = Record<string, unknown>;
@@ -83,10 +84,12 @@ function isCompatible(analysis: { schemaVersion?: unknown } | null | undefined, 
 const DEFAULT_MAX_BYTES = 4 * 1024 * 1024 * 1024;
 
 const SUMMARY_SUFFIX = '.summary.json';
+// The operator's edits to a track's show (show/overlay.ts), beside its entry.
+const OVERLAY_SUFFIX = '.overlay.json';
 
-/** A main entry file, as opposed to its summary or a write in progress. */
+/** A main entry file, as opposed to its summary, its edits or a write in progress. */
 function isEntryFile(name: string): boolean {
-  return name.endsWith('.json') && !name.endsWith(SUMMARY_SUFFIX);
+  return name.endsWith('.json') && !name.endsWith(SUMMARY_SUFFIX) && !name.endsWith(OVERLAY_SUFFIX);
 }
 
 /** The few fields the cache list shows, taken from a full entry. */
@@ -153,6 +156,42 @@ class AnalysisCache {
 
   _summaryPathFor(key: string): string {
     return this._pathFor(key).replace(/\.json$/, SUMMARY_SUFFIX);
+  }
+
+  _overlayPathFor(key: string): string {
+    return this._pathFor(key).replace(/\.json$/, OVERLAY_SUFFIX);
+  }
+
+  /**
+   * The operator's edits to this track's show, or null. A few hundred bytes,
+   * so read synchronously: the show reads it when it plans.
+   *
+   * Kept apart from the analysis on purpose. Analysing the track again —
+   * a newer analyser, a better source for the same song — rewrites the
+   * entry and leaves the edits, and so does evicting it: only clearing the
+   * whole cache takes them.
+   */
+  overlay(key: string | null | undefined): ShowOverlay | null {
+    if (!key) return null;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(this._overlayPathFor(key), 'utf8'));
+      return parsed && typeof parsed === 'object' ? parsed.overlay ?? null : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /** Store the edits (null or an empty overlay removes them). */
+  setOverlay(key: string | null | undefined, overlay: ShowOverlay | null): void {
+    if (!key) return;
+    const p = this._overlayPathFor(key);
+    const empty = !overlay || (!overlay.palette && !overlay.sections?.length
+      && !overlay.accents?.add?.length && !overlay.accents?.remove?.length);
+    if (empty) {
+      try { fs.rmSync(p, { force: true }); } catch (_) { /* not there */ }
+      return;
+    }
+    writeAtomicSync(p, JSON.stringify({ key, updatedAt: new Date().toISOString(), overlay }));
   }
 
   /** Validate a parsed entry; drop it from disk when it is too old to replay. */

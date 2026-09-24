@@ -100,6 +100,34 @@ class Lanes(AudioTestCase):
         snares = set(round(t, 2) for t in truth['snare'])
         self.assertFalse(any(round(t, 2) in snares for t in lanes['hats']['t']))
 
+    def test_a_snare_s_body_is_not_a_kick(self):
+        """A real snare rings below 150 Hz as well; on MDB Drums that low end
+        was most of the kick lane's false hits. A rock beat — kick on one
+        and three, a snare with a body on two and four — has kicks on one and
+        three only."""
+        import numpy as np
+        from analysis import pulse
+        sr = 22050
+        snare = synth.snare(sr)
+        t = np.arange(snare.size) / sr
+        snare = snare + 0.6 * np.sin(2 * np.pi * 120 * t) * np.exp(-t / 0.04)
+        buf = np.zeros(int(sr * (32 * BEAT + 1)))
+        kicks, snares = [], []
+        for b in range(32):
+            at = 0.25 + b * BEAT
+            if b % 2 == 0:
+                synth._place(buf, synth.kick(sr), at, sr, gain=0.8)
+                kicks.append(at)
+            else:
+                synth._place(buf, snare, at, sr, gain=0.6)
+                snares.append(at)
+        lanes = pulse.lanes(buf.astype(np.float32), sr)
+        recall, precision = _score(lanes['kick']['t'], kicks)
+        self.assertGreaterEqual(recall, 0.95)
+        self.assertGreaterEqual(precision, 0.95, 'the body of a snare is not a kick')
+        recall, _ = _score(lanes['snare']['t'], snares)
+        self.assertGreaterEqual(recall, 0.95)
+
     def test_without_stems_the_percussive_half_of_the_mix_still_works(self):
         from analysis import preprocess, pulse
         track = synth.four_on_the_floor(bpm=BPM, bars=16)
@@ -147,7 +175,8 @@ class InTheDocument(AudioTestCase):
         points = pulse.decode(block['envelopes']['mix']).size
         self.assertAlmostEqual(points / pulse.RATE, doc['duration'], delta=0.1)
         self.assertEqual(schema.errors(doc), [])
-        self.assertEqual(doc['schemaVersion'], '2.1')
+        self.assertEqual(block['detector'], pulse.DETECTOR)
+        self.assertEqual(doc['schemaVersion'], '2.2')
 
 
 if __name__ == '__main__':

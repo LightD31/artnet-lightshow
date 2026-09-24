@@ -20,7 +20,7 @@ import { parseOfl } from './ofl.ts';
 import { createOflLibrary } from './ofl-library.ts';
 import { wledClient, wledProfile } from './wled.ts';
 import { midiMap, ACTIONS, defaultTypeFor, mapSchema, learnSchema, bindingWriteSchema } from './midi-map.ts';
-import { profileSchema, deezerStateSchema, fixtureRestoreSchema, dmxUniverse, huePairSchema, wledAddSchema, validate } from './validation.ts';
+import { profileSchema, deezerStateSchema, fixtureRestoreSchema, dmxUniverse, huePairSchema, wledAddSchema, overlaySchema, validate } from './validation.ts';
 import * as output from './output.ts';
 import { discoverNodes } from './artnet.ts';
 import { interfaces } from './artnet-nodes.ts';
@@ -1106,6 +1106,24 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
     autoShow.reset();
     integrations.broadcast();
     res.json({ ok: true });
+  });
+
+  // The operator's edits to the loaded track's show: a palette locked, a
+  // section's look swapped, accents added or taken away (show/overlay.ts).
+  // Stored beside the track's analysis and put back on every plan of it.
+  app.get('/api/auto/overlay', (_req, res) => {
+    if (!autoShow.analysis) return res.status(404).json({ ok: false, error: 'No track loaded.' });
+    res.json({ ok: true, key: autoShow.analysisKey, overlay: autoShow.overlay() || {} });
+  });
+
+  app.put('/api/auto/overlay', (req, res) => {
+    if (!autoShow.analysis) return res.status(404).json({ ok: false, error: 'No track loaded.' });
+    try {
+      const overlay = validate(overlaySchema, req.body || {}, 'overlay');
+      autoShow.setOverlay(overlay);
+      integrations.broadcast();
+      res.json({ ok: true, key: autoShow.analysisKey, overlay: autoShow.overlay() || {}, revision: autoShow.timelineRevision });
+    } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
   // The energy slider, on its own endpoint so a Stream Deck button or a script

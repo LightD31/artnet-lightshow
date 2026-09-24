@@ -53,7 +53,22 @@ via **Bitfocus Companion**, and a REST API.
   outro), and describes seven frequency bands by what they are *doing* rather
   than how loud they are — see [Audio analysis](docs/audio-analysis.md)
 - **Paces itself** — an accent budget per minute, quiet before and after a drop,
-  and sections that deliberately rest, so the big moments stay big
+  and sections that deliberately rest, so the big moments stay big; and across
+  the night, too — no palette or look twice in a row, colours carried over
+  when the keys mix, the blinder saved for the tracks that peak — see
+  [Remembering the night](#remembering-the-night)
+- **Pars and bars as two layers** — with LED bars in the patch the pars carry
+  the colour and the bars the movement: a gradient through a verse, a fill
+  rising through a build, a mirrored chase on the chorus, a burst sparking on
+  every kick at the drop
+- **Accents on the drums as played** — on the kick or snare that marks the bar,
+  none on a bar nothing was hit on, one on the last hit of a fill
+- **Track edits that stick** — lock a track's palette, swap a section's look,
+  add or take away an accent; kept with the track and put back every time it
+  plays — see [Track edits](#track-edits)
+- **Flash limit** — a switch that holds the whole rig to three large-area
+  flashes a second, the photosensitivity threshold — see
+  [Flash limit](#flash-limit)
 - **Reads the buildup** — measures how far the snare roll subdivides and whether
   the tempo genuinely ramps into the drop, and drives the beat division and the
   beat clock from that rather than a fixed escalation
@@ -63,8 +78,9 @@ via **Bitfocus Companion**, and a REST API.
 - **CDJs, properly** — follows the deck the room hears (on air, not just the
   tempo master), to the millisecond on a CDJ-3000; analyses the exact file off
   the USB stick rather than searching for it; takes rekordbox's beat grid and
-  phrases (intro, up, down, chorus…) as the show's; and crossfades the lights
-  through a DJ's mix from one deck to the other — see [PRO DJ LINK](#pro-dj-link)
+  phrases (intro, up, down, chorus…) as the show's; and follows a DJ's mix
+  from one deck to the other, blending onto the incoming drop or the incoming
+  track's next phrase — see [PRO DJ LINK](#pro-dj-link)
 - **Live input** — hears the music as it plays (what this PC plays, or a line-in
   off the booth), lines a known track's show up with what the room hears, and
   plays music nothing has analysed **by ear** — see [Live input](#live-input)
@@ -884,7 +900,9 @@ steps the whole rig through the look's colours, so it has joined the pool.
 
 **Pixel effects** — pictures drawn across every cell of the rig's LED bars.
 They run on pars too, as a handful of samples of the same picture, but they are
-made for bars:
+made for bars. The auto show uses four of them on a rig of pars as well —
+Gradient, Plasma, Comet and Burst read on a row of lamps — and Drums when the
+track's drum lanes can be trusted (below):
 
 | | |
 |---|---|
@@ -899,14 +917,24 @@ made for bars:
 **Drums** and **Stems** play the analysis's *pulse*. That is every kick, snare
 and hat read off the separated drum stem, and each stem's level fifty times a
 second, sampled at the playback position every frame. The auto show uses them
-on a rig with bars, for tracks analysed since they arrived. Chosen by hand
-without an analysed track, they fall back to the clock: a kick on every step,
-a snare on every other.
+on a rig with bars, for tracks analysed since they arrived, and Drums on a rig
+of three or more pars too — the kick in the middle lamps, the snare at the
+ends — when the lanes were found by the rules measured on real drumming.
+Chosen by hand without an analysed track, they fall back to the clock: a kick
+on every step, a snare on every other.
 
-With bars in the patch, the pattern card also offers how a picture lies over
-them: **Across stage** (one picture over every bar, as they stand on the plot),
-**Per bar** (each bar draws the whole picture along itself) or **Mirrored**
-(the picture mirrored about the centre of the stage). Cues remember the choice.
+**Hit** follows the drums the same way. With those lanes it flashes the rig on
+each kick (and, on the separated drum stem, each snare) as hard as it was hit,
+with the step's own pulse still there underneath at half height — so a
+breakbeat, a half-time groove or a live drummer flashes where the drums do and
+not only on the grid. Without them, it pulses on every step as it always has.
+
+With three or more fixtures in the patch, the pattern card also offers how the
+look lies over the rig: **Across stage** (as the lamps stand on the plot) or
+**Mirrored** (about the centre of the stage: a chase runs from the middle out
+to both ends at once, a stack builds out from the centre). With bars there is
+also **Per bar** (each bar draws the whole picture along itself). Cues remember
+the choice.
 
 ### The palettes
 
@@ -1233,8 +1261,18 @@ working.
   intro/verse/bridge/chorus/outro — so the looks change where the DJ's rekordbox
   says the chorus starts, and a returning chorus gets the same look.
 - **Through a mix.** When the show moves to the incoming deck, the outgoing
-  track's show plays on, on its own deck, until the incoming track is ready, then
-  the lights crossfade over two bars. After a cut, they cut.
+  track's show plays on, on its own deck, until the incoming track is ready.
+  Then the lights blend into it as an operator watching the mix would:
+  - after a cut, they cut;
+  - with a drop in the incoming track within ten seconds, they blend until
+    the drop and let it land as a cut;
+  - otherwise the blend ends on the incoming track's next phrase — its next
+    section or its next eight bars, at least two bars on;
+  - brought in already in a chorus or a drop, a bar's blend;
+  - with nothing within reach, two bars.
+
+  Times follow the deck's own tempo, so a track pitched up gets there sooner.
+  The server log says which it chose.
 
 ### Spotify + OS clock (the hybrid source)
 
@@ -1355,12 +1393,48 @@ Both are live: changing either rebuilds the timeline from the analysis already
 in hand, so the new setting takes effect on the next tick without re-analysing
 the track. Neither touches the master dimmer — that slider stays yours.
 
-With LED bars in the patch, the show plans for them too: resting passages may
-settle on a gradient or plasma field, driving ones reach for the comet and the
-burst, and every scene says how its picture lies over the bars — resting looks
-across the stage, drops mirrored about the centre, the rest chosen per passage
-so a returning chorus comes back laid out as it was. Adding or removing the
-last bar replans the track. A rig of pars plans exactly as it always has.
+With LED bars in the patch, the look comes apart in two. The pars carry the
+colour and the wash, and the bars carry the movement: the pars no longer chase
+underneath bars that are chasing too. The bars' picture follows what the music
+is doing:
+
+| Where | The bars | Laid out |
+|---|---|---|
+| verse, intro | a slow gradient | across the stage |
+| pre-chorus, build-up | **Rise**: a fill that climbs through it, full as the drop lands | mirrored, from the middle out |
+| chorus | a comet: a mirrored chase | mirrored |
+| drop | **Impact**: a ring thrown out from the centre on every step, sparks on every kick | across the stage |
+| breakdown, outro | low plasma | across the stage |
+| bridge, a solo | the kit as it is played, when the analysis has the drum hits | per bar |
+
+- **The pars.** A wash by how hard the passage drives: held colour, a
+  split, a pulse on every step, a colour cycle.
+- **A drop's first instant** is the one whole-rig moment: every fixture on
+  the hot colour at once.
+- **The group split** is left off on such a rig: the pars and the bars are
+  the two layers now.
+- **The Patterns panel** says what each is on ("Pars on Hit, bars on
+  Impact"). A pattern picked by hand runs on the whole rig again, and so
+  does a cue saved before this.
+- **Replanning.** Adding or removing the last bar replans the track.
+
+On a rig of pars there are no bars to carry the movement, so the pars carry
+all of it, and the show gives them shape:
+
+| Where | The pars | Laid out |
+|---|---|---|
+| chorus, drop | the passage's travelling look — a chase, pairs, a runner, a stack | mirrored, from the middle out to both ends at once |
+| a drop's first bars | the movement it lands into | mirrored |
+| build-up | a stack that builds out from the middle on every step, the steps quickening to the peak | mirrored |
+| verse, intro, breakdown, outro | as chosen for the passage; resting on a ribbon, a fade, a wave, a rolling gradient or a slow plasma | across the stage |
+
+- **A long passage comes round.** Inside a chorus the look turns every two to
+  eight bars, through three others and back to the passage's own, so the look
+  the chorus opened on returns at the top of every phrase — where it used to
+  swap between the same two for as long as the chorus lasted.
+- **Every scene says how it is laid out**, so the verse after a mirrored
+  chorus crosses the stage again, and stopping the show puts the rig back
+  across the stage.
 
 Past 70, intensity also lifts a calm or rock track out of its tier *for drops
 only*. A fader that did nothing on a ballad is a fader you stop trusting; it
@@ -1397,6 +1471,19 @@ everything is one.
   and rotations inside a section blend over a beat. The rehearsal preview shows
   the same fades, and steps its chases on the same analysed beats as the rig.
 
+Accents land on the drums as they were played, where the analysis has them:
+
+- **Bar accents** go on the kick or snare that marks the bar, not on the
+  grid's idea of it. A bar line nothing was hit on gets none.
+- **A drum fill into a new section** is marked on its last hit.
+
+Only strong hits count, and only from lanes found by the rules measured on
+real drumming ([How well the lanes work](docs/audio-analysis.md#how-well-the-lanes-work)).
+On the separated drum stem those kicks are right nine times in ten and those
+snares four in five. Without separation only the kick is trusted. A track
+analysed before these rules keeps its accents on the grid until it is analysed
+again.
+
 The show also *reads the track continuously*, not only at section boundaries.
 Twice a second it takes the separated stems' levels — how much low end, whether
 a voice is present, how much air is on top, how fast the music is moving — and
@@ -1404,6 +1491,70 @@ the rig follows them underneath whatever pattern is running. A chase through a
 breakdown and the same chase through the chorus after it are the same pattern in
 the same colours, and they do not look remotely the same. None of it touches the
 master dimmer.
+
+### Remembering the night
+
+Every track is planned on its own, and on its own each plan is a good one.
+Played back to back they could be the same plan twice: two house records an
+hour apart in one palette, the same chase on every chorus, a blinder at every
+drop from the first track to the last. The show now remembers the tracks it
+has played tonight:
+
+- **No repeats.** The palette the last track played in is never used straight
+  after, and no section opens on the look the same section opened on last
+  track.
+- **Keys that mix keep colours.** When a track mixes harmonically out of the
+  last one — the same number on the Camelot wheel, or a step round it — the
+  palette leans towards banks that share its colours. A key change that did
+  not blend is free to change them all. Over the test tracks this changes the
+  pick for about half the pairs.
+- **An arc across the night.** A track that drives harder than the last few is
+  a peak: more accents, and the blinder. A breather after them spends less,
+  and the first twenty minutes warm up. After a blinder, the next track that
+  is no peak trades its blinders for the white strobe.
+
+The *Look* panel says how many tracks the night has had and where this one
+sits. A track starting more than an hour after the last one started begins a
+new night. **Settings → Show → Remember the Night** turns it off.
+
+### Track edits
+
+The show replans a track whenever anything it reads changes: the intensity,
+the palette size, the rig, the tracks before it. **Track edits**, under the
+timeline, are the changes of yours that survive that:
+
+- **Lock** the palette the track is playing in.
+- **Add** an accent at the playhead (blinder, white or colour strobe, UV wash,
+  kill or glow), or **remove** the one nearest it. An added accent fires
+  whatever the budget says.
+- **Swap a section's look**: for the whole rig, or for the pars and the bars
+  apart. The section holds it, and its rotation stops too. Each row shows the
+  show's own choice beside yours.
+
+They are kept beside the track's analysis in the cache, and put back every
+time the track plays. Analysing the track again keeps them: sections match
+within two seconds and accents within 150 ms. Clearing the cache takes them.
+`GET` and `PUT /api/auto/overlay` read and replace them from a script.
+
+### Flash limit
+
+**Settings → Show → Flash Limit** holds the whole rig to three large-area
+flashes a second. That is the photosensitivity threshold broadcast and web
+guidance share (WCAG 2.3.1, ITU-R BT.1702). A flash is a pair of opposing
+changes of a tenth of full brightness or more, the darker side under 80 %.
+It is measured over the rig as a whole: every fixture's mean light, after the
+masters.
+
+- **A look that flashes faster** — a Hit at sixteenths, a run of kills — is
+  held, once the second has had its three, to a flicker of under a tenth
+  around where the light last turned. It is dimmed, never blacked out.
+- **Strobe channels and the software strobe** are capped at three flashes a
+  second.
+
+It applies to every output (Art-Net, sACN, WLED, Hue) and to manual looks,
+cues and overrides as much as to the auto show. The header shows **Flash ≤ 3/s**
+while it is on. It is off by default: most of what a party rig does is above
+this line.
 
 ### Seeing what the analyser heard
 

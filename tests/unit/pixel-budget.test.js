@@ -70,6 +70,7 @@ test('a thousand cells render well inside a frame', () => {
     run('gradient', { pattern: 'gradient', pixelMap: 'stage' });
     run('plasma', { pattern: 'plasma', pixelMap: 'mirror' });
     run('comet', { pattern: 'comet', pixelMap: 'bar' });
+    run('two-part', { pattern: 'hit', pixelPattern: 'impact', pixelMap: 'stage' });
     run('crossfade', { pattern: 'wave', colorA: 6, fadeMs: 5000 });
 
     delete timings['warm-up'];

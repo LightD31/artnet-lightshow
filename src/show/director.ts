@@ -65,10 +65,14 @@ import { EVENT, deriveEvents, byType } from './musical-events.ts';
 import * as look from './look.ts';
 import { makeScore, hasScore, cosine, unit, list, finite } from './score.ts';
 import { INTENT, BURST, PRIORITY, scene, expression, color, accent, tempo, dark } from './intents.ts';
-import type { AccentIntent, Intent } from './intents.ts';
+import type { AccentIntent, Intent, SceneIntent } from './intents.ts';
 import type { ShowEvent } from './musical-events.ts';
 import type { Analysis, Segment } from './score.ts';
 import type { Drop, Genre, Mood, Section } from '../types/analysis.ts';
+import { arcFor, keysMix } from './set-memory.ts';
+import { applyOverlay } from './overlay.ts';
+import type { ShowOverlay } from './overlay.ts';
+import type { SetHistory, TrackMemory } from './set-memory.ts';
 
 /** The analysis with its two shapes folded into one (see normalise). */
 export type DirectorAnalysis = Analysis & {
@@ -97,6 +101,12 @@ export interface DirectorOptions {
   intensity?: number;
   blackoutIndex?: number;
   pixels?: boolean;
+  /** How many fixtures the rig has, or nothing when it is not known. */
+  lamps?: number | null;
+  /** The night before this track (show/set-memory.ts), or nothing. */
+  history?: SetHistory | null;
+  /** The operator's edits to this track (show/overlay.ts), or nothing. */
+  overlay?: ShowOverlay | null;
 }
 
 /** A section as the director plans it: what plays in it, and which idea it is. */
@@ -112,6 +122,8 @@ export interface Plan {
   paletteName: string;
   paletteSize: number;
   context: PlanContext;
+  /** What the set memory keeps of this plan once the track plays. */
+  memory: Omit<TrackMemory, 'key' | 'at'>;
 }
 
 /** A measured build-up (see measureBuildup). */
@@ -234,6 +246,20 @@ const MIN_BURST_MS = 300;
 // rate, so this is a sampling rate and not a step size.
 const EXPRESSION_STEP_SEC = 0.5;
 
+// The drum hits an accent may land on (see drumHitsOf). Only lanes found by
+// the rules measured on real drumming (`pulse.detector`, scripts/eval-drums.py)
+// and only their strong hits: on the separated drum stem a kick of 0.7 and up
+// is right nine times in ten and a snare four in five. Without separation the
+// snare is right less than half the time, so there only the kick counts.
+const DRUM_DETECTOR = 2;
+const STRONG_HIT = 0.7;
+// How far a bar line may sit from the hit that marks it. The tracker's
+// downbeat and the kick's onset agree to a frame or two; further than this
+// and the bar line had nothing on it.
+const HIT_SNAP_SEC = 0.08;
+// A drum fill: this many snare hits in the bar before a section starts.
+const FILL_HITS = 3;
+
 // Two passages count as the same idea past this timbre similarity. Set high on
 // purpose: MuQ vectors for any two passages of one track are already close, and
 // the mistake that matters is calling a verse a chorus.
@@ -247,6 +273,9 @@ class ShowDirector {
   declare intensity: number;
   declare blackoutIndex: number;
   declare pixels: boolean;
+  declare lamps: number | null;
+  declare history: SetHistory | null;
+  declare overlay: ShowOverlay | null;
 
   /**
    * @param {object} options
@@ -258,7 +287,7 @@ class ShowDirector {
    * @param {number} options.blackoutIndex colour index that means "off"
    */
   constructor({ patterns = [], colorPresets = null, paletteSize = 4,
-    intensity = 50, blackoutIndex = 0, pixels = false }: DirectorOptions = {}) {
+    intensity = 50, blackoutIndex = 0, pixels = false, lamps = null, history = null, overlay = null }: DirectorOptions = {}) {
     this.patterns = patterns;
     this.colorPresets = colorPresets;
     this.paletteSize = paletteSize;
@@ -266,8 +295,11 @@ class ShowDirector {
     this.blackoutIndex = blackoutIndex;
     // Does the rig have LED bars to draw on? Only then does the show reach
     // for the pictures drawn across cells, and say how to lay them over the
-    // bars; a rig of pars plans exactly as it always has.
+    // bars; a rig of pars gets its own layout (_mapPars).
     this.pixels = !!pixels;
+    this.lamps = Number.isFinite(lamps) ? lamps : null;
+    this.history = history;
+    this.overlay = overlay;
   }
 
   /**
@@ -302,36 +334,172 @@ class ShowDirector {
     intents.sort((a, b) => a.timeMs - b.timeMs || a.priority - b.priority);
 
     if (context.pixels) this._mapPixels(intents, context);
+    // The operator's edits go on last, over everything the passes chose —
+    // before a rig of pars is laid out, so a look the operator picked for a
+    // chorus is mirrored only if it is one that travels.
+    const edited = this.overlay ? applyOverlay(intents, this.overlay, context.sections) : intents;
+    if (!context.pixels) this._mapPars(edited, context);
 
+    const looks: Record<string, string> = {};
+    for (const i of edited) {
+      if (i.kind === INTENT.SCENE && i.pattern && i.role && String(i.source).startsWith('section:') && !(i.role in looks)) {
+        looks[i.role] = i.pattern;
+      }
+    }
     return {
-      intents: this._dedupeTempo(intents),
+      intents: this._dedupeTempo(edited),
       palette: context.palette,
       paletteName: context.paletteName,
       paletteSize: context.paletteSize,
       context,
+      memory: {
+        paletteName: context.paletteName,
+        palette: context.palette,
+        looks,
+        drive: context.drive,
+        musicalKey: context.musicalKey,
+        blinder: edited.some((i) => i.kind === INTENT.ACCENT && i.burst === BURST.BLINDER),
+      },
     };
   }
 
   /**
-   * On a rig with LED bars, every scene says how its picture lies over them.
-   * A resting passage spreads it across the stage, where it reads as one
-   * slow field; a drop mirrors it about the centre, so it hits both sides at
-   * once; everything else is chosen per passage, so a returning chorus comes
-   * back laid out the way it was.
+   * On a rig with LED bars the look comes apart in two: the pars carry the
+   * colour and the wash, and the bars carry the movement and the detail.
+   *
+   * Every scene says what the bars draw (`pixelPattern`) and how the picture
+   * lies over them (`pixelMap`), from what the music is doing there — the
+   * role of the section, or the build-up or drop the scene belongs to (see
+   * PIXEL_ROLE_LOOKS). The pars keep what the passes above chose where that
+   * is already a wash — a resting look, a build-up's narrowing, a drop's
+   * anchor — and are otherwise given one, so they no longer chase across the
+   * stage underneath bars that are chasing too. A drop's anchor is the one
+   * whole-rig moment: every fixture on the hot colour at once.
+   *
+   * The group split is left off here. It exists to give a rig of pars two
+   * layers, and the pars and the bars are those two layers now; a group
+   * holding a wash across bars would stop them moving.
    */
   _mapPixels(intents: Intent[], context: PlanContext): void {
-    const resting = new Set([...RESTING_LOOKS, 'solid', ...PIXEL_RESTING_LOOKS]);
+    const { available } = context;
+    const ordinal = new Map<string, number>();
+    const next = (key: string) => {
+      const n = ordinal.get(key) || 0;
+      ordinal.set(key, n + 1);
+      return n;
+    };
     for (const intent of intents) {
       if (intent.kind !== INTENT.SCENE || !intent.pattern) continue;
-      const section = context.sectionAt(intent.timeMs / 1000);
-      if (resting.has(intent.pattern) || (section && section.profile && section.profile.prefer)) {
+      const t = intent.timeMs / 1000;
+      const source = String(intent.source);
+      const section = this._sectionOf(intent, context);
+      delete intent.split;
+
+      if (source === 'drop:anchor') {
+        intent.pixelPattern = null;
         intent.pixelMap = 'stage';
-      } else if (String(intent.source).startsWith('drop:')) {
-        intent.pixelMap = 'mirror';
-      } else {
-        const identity = section ? section.identity : 0;
-        intent.pixelMap = PIXEL_MAPS[Math.abs(identity * 5 + context.trackSeed) % PIXEL_MAPS.length];
+        continue;
       }
+      const build = source.startsWith('buildup:')
+        ? context.buildups.find((b) => t >= b.t - 0.25 && t <= endOf(b) + 0.25) : undefined;
+      if (build) {
+        // The fill runs the length of the build, across its scenes: each
+        // says how far in it starts, so the tension, the rise and the peak
+        // are one fill and not three.
+        const look = barLook(['rise', 'comet'], available);
+        this._placeBars(intent, look, 'mirror', context, build.t, endOf(build));
+        // The rise escalates on the pars too, but in their own terms: a pulse
+        // on every step of the quickening division, not a chase.
+        if (source === 'buildup:rise' && available.has('hit')) intent.pattern = 'hit';
+        continue;
+      }
+      if (source.startsWith('drop:')) {
+        this._placeBars(intent, barLook(['impact', 'burst', 'comet'], available), 'stage', context);
+        intent.pattern = parWash(1, next(`drop:${source}`) + context.trackSeed, available) || intent.pattern;
+        continue;
+      }
+      if (source === 'break') {
+        this._placeBars(intent, barLook(['plasma', 'gradient'], available), 'stage', context);
+        continue;
+      }
+
+      const role = section ? section.role : 'unknown';
+      const table = PIXEL_ROLE_LOOKS[role];
+      if (table) {
+        const look = barLook(table.map((l) => l.pattern), available);
+        const map = (table.find((l) => l.pattern === look) || table[0]).map;
+        this._placeBars(intent, look, map, context,
+          ...(look === 'rise' && section ? [section.start, section.end] as const : []));
+      } else {
+        // A passage with no role: the picture the passes chose when it is one
+        // drawn across cells, else one that travels, laid out as the passage
+        // was the first time round.
+        const identity = section ? section.identity : 0;
+        const look = CELL_LOOKS.has(intent.pattern) && available.has(intent.pattern)
+          ? intent.pattern : barLook(['comet', 'gradient'], available);
+        this._placeBars(intent, look, PIXEL_MAPS[Math.abs(identity * 5 + context.trackSeed) % PIXEL_MAPS.length], context);
+      }
+      if (section && !section.resting && !RESTING_LOOKS.includes(intent.pattern)) {
+        const turn = next(`section:${section.index}`);
+        intent.pattern = parWash(section.drive, section.identity + turn * 7 + context.trackSeed, available) || intent.pattern;
+      }
+    }
+  }
+
+  /**
+   * On a rig of pars there are no bars to carry the movement, so the pars
+   * carry all of it, and what is theirs to add is shape: the same few lamps
+   * read as another look laid out symmetrically than laid across. So
+   *
+   *   chorus, drop  the travelling looks run mirrored, from the middle out to
+   *                 both ends at once — the passages the song is built around
+   *                 are the ones laid about the stage's centre — and so does
+   *                 the movement a drop lands into
+   *   build-up      the rise stacks out from the middle, a pair more on every
+   *                 step as the steps quicken, where it used to run the same
+   *                 chase across the stage a verse does
+   *   the rest      across the stage, as the lamps stand
+   *
+   * Every scene says which, so the verse after a chorus crosses the stage
+   * again. A look that is already about the centre (a ring thrown out from
+   * it, the kit, the voice held in the middle) or has no shape (the whole
+   * rig at once) is left across.
+   */
+  _mapPars(intents: Intent[], context: PlanContext): void {
+    const { available } = context;
+    for (const intent of intents) {
+      if (intent.kind !== INTENT.SCENE || !intent.pattern) continue;
+      const source = String(intent.source);
+      if (source === 'buildup:rise' && available.has('stack-up')) intent.pattern = 'stack-up';
+      const section = this._sectionOf(intent, context);
+      const symmetric = source === 'buildup:rise'
+        || (source.startsWith('drop:') && source !== 'drop:anchor')
+        || (!source.startsWith('buildup:') && source !== 'break' && !!section && MIRRORED_ROLES.has(section.role));
+      intent.pixelMap = symmetric && MIRRORED_LOOKS.has(intent.pattern) ? 'mirror' : 'stage';
+    }
+  }
+
+  /**
+   * The section a scene belongs to. A section's own scene was snapped to the
+   * downbeat, which can sit a moment before the section starts; it belongs to
+   * the section it opens.
+   */
+  _sectionOf(intent: SceneIntent, context: PlanContext): PlannedSection | null {
+    const source = String(intent.source);
+    return (source.startsWith('section:')
+      && context.sections.find((s) => Math.abs(context.snapToDownbeatMs(s.start) - intent.timeMs) < 1))
+      || context.sectionAt(intent.timeMs / 1000);
+  }
+
+  /** Put `look` on the bars; a picture that plays once gets the window it spans. */
+  _placeBars(intent: SceneIntent, look: string | null, map: string, context: PlanContext,
+    from?: number, to?: number): void {
+    intent.pixelPattern = look;
+    intent.pixelMap = map;
+    if (look === 'rise' && from !== undefined && to !== undefined && to > from) {
+      const t = intent.timeMs / 1000;
+      intent.pixelSpan = Math.max(1, beatsBetween(context, from, to));
+      intent.pixelFrom = unit((t - from) / (to - from));
     }
   }
 
@@ -375,10 +543,20 @@ class ShowDirector {
     const paletteSize: number = this.paletteSize === 'auto'
       ? look.paletteSizeFor({ score, identities, mood })
       : this.paletteSize;
+    // The night so far (show/set-memory.ts): never the last track's palette,
+    // and some of its colours when its key mixes into this one; the looks its
+    // sections opened on; what this track may spend against the ones before.
+    const previous = this.history?.previous ?? null;
+    const musicalKey = analysis.key ? [analysis.key, analysis.scale].filter(Boolean).join(' ') : null;
+    const mixes = !!previous && keysMix(previous.musicalKey, musicalKey);
     const { palette, name: paletteName } = look.buildPalette({
       key: analysis.key, scale: analysis.scale, mood, score,
       paletteSize, colorPresets: this.colorPresets,
+      avoid: previous ? previous.paletteName : null,
+      continueFrom: mixes ? previous.palette : null,
+      lock: this.overlay?.palette ?? null,
     });
+    const arc = arcFor(this.history, drive);
 
     const meter = analysis.meter || 4;
     const downbeats = list(analysis.downbeats);
@@ -396,6 +574,8 @@ class ShowDirector {
     return {
       analysis, events, grouped, mood, score, drive, tier, factor, effective,
       isCalm, isLight, palette, paletteName, paletteSize, meter, downbeats,
+      arc, musicalKey, keyMixes: mixes,
+      previousLooks: previous ? previous.looks : {},
       barSec, baseBpm, duration, sections, identities,
       trackSeed: trackSeedOf(analysis),
       // The last time each recurring passage comes round — the track's arc.
@@ -406,6 +586,12 @@ class ShowDirector {
       continuous: hasScore(analysis),
       available: look.availableFor(this.patterns, analysis),
       pixels: this.pixels,
+      // On a rig of pars, the pictures drawn for bars that still read on a
+      // handful of lamps — the kit among them only on drum lanes a light may
+      // follow (see drumHitsOf), and with a lamp in the middle for the kick
+      // and one at each end for the snare.
+      pictures: this.pixels ? null
+        : drumHitsOf(analysis) && (this.lamps === null || this.lamps >= 3) ? look.PAR_PICTURES_WITH_DRUMS : look.PAR_PICTURES,
       drops: grouped.get(EVENT.DROP) || [],
       buildups: grouped.get(EVENT.BUILDUP) || [],
       bars: grouped.get(EVENT.BAR) || [],
@@ -416,6 +602,7 @@ class ShowDirector {
       melodies: grouped.get(EVENT.MELODY_CHANGE) || [],
       spikes: grouped.get(EVENT.ENERGY_SPIKE) || [],
       bassHits: grouped.get(EVENT.BASS_HIT) || [],
+      drums: drumHitsOf(analysis),
       snapToDownbeatMs: this._snapper(downbeats, barSec),
       barsAfterMs: barWalker(downbeats, barSec),
       // A fade of this many bars, in ms. Two seconds stands in for a bar the
@@ -620,7 +807,7 @@ class ShowDirector {
         // Four real bars on, so the change lands on a bar line.
         const followUpMs = context.barsAfterMs(timeMs, 4);
         if (followUpMs != null && followUpMs + 500 < section.end * 1000) {
-          const followUp = restingPattern(restingLooks(RESTING_LOOKS, context), available, context.trackSeed + section.identity);
+          const followUp = restingPattern(restingLooks(RESTING_LOOKS), available, context.trackSeed + section.identity);
           if (followUp) {
             intents.push(scene(followUpMs, {
               pattern: followUp, colors: colours, beatDivision,
@@ -645,7 +832,18 @@ class ShowDirector {
     // pattern, so the rule that outros rest was quietly overridden. A resting
     // choice is also kept out of the cache, so an intro sharing a chorus's
     // cluster does not hand the chorus its resting look either.
-    const resting = restingPattern(restingLooks(section.profile.prefer, context), available, trackSeed + section.identity);
+    // The look this role opened on in the last track is not used again
+    // straight after, where the pool has anything else: the seed walks on
+    // until it finds something. A passage that comes back in another role
+    // comes back on the same look, so it avoids what every role it plays
+    // opened on last time.
+    const avoid = new Set<string>();
+    for (const s of context.sections) {
+      const last = s.identity === section.identity ? context.previousLooks[s.role] : undefined;
+      if (last) avoid.add(last);
+    }
+    const lastOwn = context.previousLooks[section.role];
+    const resting = firstOther(new Set(lastOwn ? [lastOwn] : []), (k) => restingPattern(restingLooks(section.profile.prefer), available, trackSeed + section.identity + k));
     if (resting) return resting;
 
     const known = patternByIdentity.get(section.identity);
@@ -653,7 +851,7 @@ class ShowDirector {
     const pattern = look.pickPattern({
       character: section.character, available, score,
       seed: section.identity + trackSeed, drive: section.drive,
-      dance: unit(mood.danceability, 0.5), pixels: context.pixels,
+      dance: unit(mood.danceability, 0.5), pixels: context.pixels, pictures: context.pictures, avoid,
     });
     patternByIdentity.set(section.identity, pattern);
     return pattern;
@@ -750,15 +948,16 @@ class ShowDirector {
     const secondCycle = at(2);
     if (secondCycle == null || secondCycle > endMs) return [];
 
-    // Walk seeds with a coprime stride until two *distinct* alternates turn up.
-    // Fixed offsets collide whenever both land on the same slot of a short pool.
+    // Walk seeds with a coprime stride until three *distinct* alternates turn
+    // up. Fixed offsets collide whenever both land on the same slot of a
+    // short pool.
     const alternates: string[] = [];
     const seen = new Set([current.pattern]);
-    for (let step = 1; step < 24 && alternates.length < 2; step++) {
+    for (let step = 1; step < 24 && alternates.length < 3; step++) {
       const candidate = look.pickPattern({
         character: section.character, available, score,
         seed: section.identity * 7 + step * 13 + context.trackSeed, drive: section.drive,
-        dance: unit(mood.danceability, 0.5), pixels: context.pixels,
+        dance: unit(mood.danceability, 0.5), pixels: context.pixels, pictures: context.pictures,
       });
       if (!seen.has(candidate)) {
         alternates.push(candidate);
@@ -766,6 +965,13 @@ class ShowDirector {
       }
     }
     if (!alternates.length) return [];
+    // Four looks a cycle, the passage's own the fourth: it comes back on every
+    // fourth turn, which at two or four bars a turn is the top of every eight-
+    // or sixteen-bar phrase — where the music itself goes round again. Two
+    // alternates took turns for as long as the passage lasted, and the look
+    // the passage opened on never came back: a ninety-second chorus was the
+    // same two looks swapped twenty-four times.
+    const cycle = [alternates[0], alternates[1] ?? current.pattern, alternates[2] ?? alternates[0], current.pattern];
 
     const intents: Intent[] = [];
     // A beat's blend between rotations, except where the section wants its
@@ -777,9 +983,10 @@ class ShowDirector {
       const inBuildup = buildups.some((b) => when >= b.t * 1000 - 200
         && when <= endOf(b) * 1000 + 200);
       if (!inDrop && !inBuildup) {
-        const split = splitFor(section, alternates[i % alternates.length], context);
+        const pattern = cycle[i % cycle.length];
+        const split = splitFor(section, pattern, context);
         intents.push(scene(when, {
-          pattern: alternates[i % alternates.length],
+          pattern,
           colors: current.colours,
           beatDivision: current.beatDivision,
           strobeSpeed: 0,
@@ -921,7 +1128,7 @@ class ShowDirector {
       const peakDivision = triple ? 1 : (measured && measured.peakDivision) || 4;
 
       if (!short) {
-        const tensionPattern = restingPattern(restingLooks(RESTING_LOOKS, context), available, context.trackSeed + buildupIndex) || 'fade';
+        const tensionPattern = restingPattern(restingLooks(RESTING_LOOKS), available, context.trackSeed + buildupIndex) || 'fade';
         intents.push(scene(startMs, {
           pattern: tensionPattern,
           colors: [palette[0], palette[0], palette[0], palette[0]],  // deliberate narrowing
@@ -1032,8 +1239,13 @@ class ShowDirector {
         strobeFunction: 'standard', beatDivision: meter === 3 ? 1 : 4,
       }, { source: 'drop:anchor', priority: PRIORITY.DROP }));
 
+      // A blinder the night cannot afford (see set-memory.ts) becomes the
+      // white strobe: still the top of the drop's vocabulary, not the one
+      // gesture that uses the whole rig at full.
+      const ration = (b: ReturnType<typeof look.burstFor>) => (b === BURST.BLINDER && context.arc?.blinder === false ? BURST.WHITE_STROBE : b);
+
       if (kind !== 'proper') {
-        const burst = look.burstFor({ moment: 'drop', character, score, drive: drive * 0.8 });
+        const burst = ration(look.burstFor({ moment: 'drop', character, score, drive: drive * 0.8 }));
         const burstMs = Math.round((400 + confidence * 300) * Math.min(1.5, factor));
         intents.push(accent(timeMs + 1, burst, Math.max(MIN_BURST_MS, burstMs), {
           source: 'drop:hype', priority: PRIORITY.DROP, confidence,
@@ -1062,7 +1274,7 @@ class ShowDirector {
       const moveDivision = meter === 3 ? 1 : (drive >= 0.75 ? 4 : 2);
 
       if (variant === 'slam') {
-        const burst = look.burstFor({ moment: 'drop', character, score, drive });
+        const burst = ration(look.burstFor({ moment: 'drop', character, score, drive }));
         // The blinder is the one gesture that uses the whole rig at full, so it
         // is spent only where the music has both the confidence and the hole to
         // justify it.
@@ -1087,7 +1299,7 @@ class ShowDirector {
         }, { source: 'drop:slam', priority: PRIORITY.DROP }));
 
       } else if (variant === 'color-burst') {
-        const burst = look.burstFor({ moment: 'drop', character, score, drive: drive * 0.9 });
+        const burst = ration(look.burstFor({ moment: 'drop', character, score, drive: drive * 0.9 }));
         const strobeMs = Math.round((600 + confidence * 400) * Math.min(1.5, factor));
         intents.push(accent(timeMs + 1, burst, Math.max(MIN_BURST_MS, strobeMs),
           { source: 'drop:color-burst', priority: PRIORITY.DROP, confidence }));
@@ -1144,7 +1356,7 @@ class ShowDirector {
 
     if (!isCalm) {
       for (const [breakIndex, event] of breaks.entries()) {
-        const pattern = restingPattern(restingLooks([...RESTING_LOOKS, 'solid'], context), available, context.trackSeed + breakIndex);
+        const pattern = restingPattern(restingLooks([...RESTING_LOOKS, 'solid']), available, context.trackSeed + breakIndex);
         if (!pattern) continue;
         intents.push(scene(Math.round(event.t * 1000), {
           pattern,
@@ -1306,14 +1518,23 @@ class ShowDirector {
         const section = context.sectionAt(bar.t);
         index++;
         if (!section) continue;
-        let every = strideFor(section.drive, context.factor, dance);
+        let every = strideFor(section.drive, context.factor * (context.arc?.budget ?? 1), dance);
         // The last chorus is punctuated twice as often: the arc's other lever,
         // for the choruses already running as fast a subdivision as the rig
         // can step.
         if (every && context.finalReturns.has(section)) every = Math.max(1, Math.round(every / 2));
         if (!every || index % every !== 0) continue;
-        propose(bar.t, bar.confidence == null ? 0.5 : bar.confidence,
-          'bar', PRIORITY.BAR_ACCENT);
+        const confidence = bar.confidence == null ? 0.5 : bar.confidence;
+        // Where the drums are playing, the accent lands on the hit that marks
+        // the bar, not on the grid's idea of it — and a bar line nothing was
+        // hit on gets none. Where they are not, the bar line is all there is.
+        if (context.drums && drumsPlay(context.drums, section, context.barSec)) {
+          const hit = nearestHit(context.drums.marks, bar.t, HIT_SNAP_SEC);
+          if (!hit) continue;
+          propose(hit.t, Math.max(confidence, hit.s * 0.9), 'bar', PRIORITY.BAR_ACCENT, hit.s);
+          continue;
+        }
+        propose(bar.t, confidence, 'bar', PRIORITY.BAR_ACCENT);
       }
     } else {
       let lastT = -Infinity;
@@ -1325,7 +1546,7 @@ class ShowDirector {
         if (!beat || beat.intensity < 0.6) continue;
         const section = context.sectionAt(beat.t);
         if (!section) continue;
-        const every = strideFor(section.drive, context.factor, dance);
+        const every = strideFor(section.drive, context.factor * (context.arc?.budget ?? 1), dance);
         if (!every) continue;
         // Four beats to the bar, so the same stride means the same density
         // whichever grid it came off.
@@ -1341,7 +1562,21 @@ class ShowDirector {
     // The analyser gives every spike the same confidence and says how big it
     // was in `intensity`, so that is what separates one from the next.
     for (const event of spikes) {
-      propose(event.t, event.confidence, 'spike', PRIORITY.BAR_ACCENT, event.intensity);
+      const hit = context.drums ? nearestHit(context.drums.marks, event.t, HIT_SNAP_SEC) : null;
+      propose(hit ? hit.t : event.t, event.confidence, 'spike', PRIORITY.BAR_ACCENT, event.intensity);
+    }
+    // A drum fill into a new section: the accent goes on its last hit, the
+    // one that throws the band into the section. Not into a drop, which the
+    // contrast pass keeps quiet for the build-up's own arc.
+    if (context.drums && context.barSec) {
+      for (const section of context.sections.slice(1)) {
+        const fill = context.drums.fillHits.filter((h) => h.t >= section.start - context.barSec!
+          && h.t < section.start - 0.05);
+        if (fill.length < FILL_HITS) continue;
+        const last = fill[fill.length - 1];
+        const strength = fill.reduce((sum, h) => sum + h.s, 0) / fill.length;
+        propose(last.t, strength, 'fill', PRIORITY.FILL_ACCENT, Math.min(1, strength + 0.2));
+      }
     }
     for (const event of bassHits) {
       if (event.confidence < 0.7) continue;
@@ -1389,9 +1624,12 @@ class ShowDirector {
     // Scaled by where the drive sits inside its tier, so two dance tracks at
     // opposite ends of the tier do not get identical accent density. Never
     // above the tier's own ceiling.
+    // And by where the track sits in the night (show/set-memory.ts): a peak
+    // spends more, a breather or the warm-up less.
     const budgetPerMinute = Math.round(base
       * Math.min(2, Math.max(0, factor))
-      * (0.55 + unit(effective) * 0.45));
+      * (0.55 + unit(effective) * 0.45)
+      * (context.arc?.budget ?? 1));
 
     const dropTimes = drops.map((d) => d.t * 1000);
     const guardMs = 1000 * (barSec
@@ -1493,6 +1731,64 @@ function normalise(analysis: Analysis | null | undefined): DirectorAnalysis {
   };
 }
 
+/** A drum hit: when, and how hard, 0..1. */
+interface Hit { t: number; s: number }
+
+/** The drum hits the show may lean on (see DRUM_DETECTOR). */
+export interface DrumHits {
+  /** The strong kicks and snares, sorted: what an accent lands on. */
+  marks: Hit[];
+  /** Every snare hit of a fair strength, for finding fills. */
+  fillHits: Hit[];
+  /** Every hit of any lane, for knowing where the drums play at all. */
+  played: number[];
+}
+
+/**
+ * The drum hits an analysis carries that the show may put accents on, or
+ * null: none, or found by the first lane rules, which were not measured on
+ * real drumming and fire on a snare's body as a kick.
+ */
+function drumHitsOf(analysis: DirectorAnalysis): DrumHits | null {
+  const pulse = analysis.pulse;
+  if (!pulse || !pulse.lanes || !(finite(pulse.detector, 0) >= DRUM_DETECTOR)) return null;
+  const hitsOf = (name: string): Hit[] => {
+    const lane = pulse.lanes[name];
+    if (!lane || !Array.isArray(lane.t)) return [];
+    return lane.t.map((t, i) => ({ t: finite(t), s: unit(lane.s?.[i]) }));
+  };
+  const stems = pulse.source === 'stems';
+  const kicks = hitsOf('kick');
+  const snares = stems ? hitsOf('snare') : [];
+  const marks = [...kicks, ...snares].filter((h) => h.s >= STRONG_HIT).sort((a, b) => a.t - b.t);
+  const played = [...kicks, ...snares, ...hitsOf('hats')].map((h) => h.t).sort((a, b) => a - b);
+  if (!marks.length) return null;
+  return { marks, fillHits: snares.filter((h) => h.s >= 0.5), played };
+}
+
+/** The hit nearest `t` within `window` seconds, or null. */
+function nearestHit(hits: readonly Hit[], t: number, window: number): Hit | null {
+  let lo = 0;
+  let hi = hits.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (hits[mid].t < t) lo = mid + 1; else hi = mid;
+  }
+  let best: Hit | null = null;
+  for (const h of [hits[lo - 1], hits[lo]]) {
+    if (h && Math.abs(h.t - t) <= window && (!best || Math.abs(h.t - t) < Math.abs(best.t - t))) best = h;
+  }
+  return best;
+}
+
+/** Are the drums playing through this section — a hit a bar at least? */
+function drumsPlay(drums: DrumHits, section: { start: number; end: number }, barSec: number | null): boolean {
+  const bars = Math.max(1, (section.end - section.start) / (barSec || 2));
+  let n = 0;
+  for (const t of drums.played) if (t >= section.start && t < section.end) n++;
+  return n >= bars;
+}
+
 /** The end of a span event, however the document spelled it. */
 function endOf(event: ShowEvent): number {
   const end = event && event.data ? event.data.end : undefined;
@@ -1585,17 +1881,98 @@ function splitRestingAtDrops(raw: readonly Segment[], drops: readonly Drop[]): r
 // The looks a passage rests on: none of them travels on the beat.
 const RESTING_LOOKS = ['ribbon', 'fade', 'wave'];
 
-// And the resting pictures drawn across LED bars, offered beside them when the
-// rig has bars. After them, never instead: a resting choice is picked by index.
+// And the resting pictures drawn for LED bars, offered beside them — on a rig
+// of pars too, where a gradient rolling across the lamps and a slow plasma are
+// colour that moves without anything hitting, which is what a rest is.
 const PIXEL_RESTING_LOOKS = ['gradient', 'plasma'];
 
-function restingLooks(prefer: string[] | null, context: { pixels: boolean }): string[] | null {
-  return prefer && context.pixels ? [...prefer, ...PIXEL_RESTING_LOOKS] : prefer;
+function restingLooks(prefer: string[] | null): string[] | null {
+  return prefer ? [...prefer, ...PIXEL_RESTING_LOOKS] : prefer;
 }
 
 // How a scene lays a picture over the bars: across the stage, mirrored about
 // its centre, or along every bar on its own.
 const PIXEL_MAPS = ['stage', 'mirror', 'bar'];
+
+// On a rig of pars (see _mapPars): the passages laid out mirrored, and the
+// looks that change for it — the ones that travel, or light lamps apart.
+const MIRRORED_ROLES = new Set(['chorus', 'drop']);
+const MIRRORED_LOOKS = new Set(['chase', 'chase-rev', 'runner', 'pairs', 'ping-pong', 'stack-up',
+  'sections', 'split', 'random-flash', 'wave', 'comet', 'gradient']);
+
+/**
+ * What the LED bars draw in each part of a song. The bars are where the
+ * movement is, so this is the table that decides what the room sees move:
+ *
+ *   verse         a slow gradient — colour going somewhere, nothing hitting
+ *   pre-chorus    a rising fill, full as the chorus lands
+ *   chorus        a mirrored chase, out from the middle to both ends at once
+ *   drop          a ring thrown out from the centre, sparks on every kick
+ *   breakdown     low plasma
+ *   bridge, a solo  the kit as it is played, when the analysis has the drum
+ *                 hits; a comet crossing each bar when it does not
+ *
+ * Each row is tried in order, so a rig or an analysis without the first
+ * picture falls to the next. A build-up is not a role: it is the rising
+ * fill wherever it happens (see _mapPixels).
+ */
+const PIXEL_ROLE_LOOKS: Record<string, readonly { pattern: string; map: string }[]> = {
+  intro:        [{ pattern: 'gradient', map: 'stage' }],
+  verse:        [{ pattern: 'gradient', map: 'stage' }],
+  prechorus:    [{ pattern: 'rise', map: 'mirror' }, { pattern: 'comet', map: 'mirror' }],
+  chorus:       [{ pattern: 'comet', map: 'mirror' }],
+  drop:         [{ pattern: 'impact', map: 'stage' }, { pattern: 'burst', map: 'stage' }],
+  breakdown:    [{ pattern: 'plasma', map: 'stage' }, { pattern: 'gradient', map: 'stage' }],
+  bridge:       [{ pattern: 'drums', map: 'bar' }, { pattern: 'comet', map: 'bar' }],
+  instrumental: [{ pattern: 'drums', map: 'mirror' }, { pattern: 'burst', map: 'stage' }],
+  outro:        [{ pattern: 'plasma', map: 'stage' }, { pattern: 'gradient', map: 'stage' }],
+};
+
+// The pictures drawn across cells, which a passage with no role may already
+// have been given.
+const CELL_LOOKS = new Set(['gradient', 'comet', 'burst', 'plasma', 'drums', 'stems', 'rise', 'impact', 'ensemble', 'ribbon', 'wave', 'rainbow', 'twinkle', 'sparkle']);
+
+/**
+ * What the pars do while the bars move: colour, held or breathing or turning
+ * on the beat, by how hard the passage drives. None of these travel across
+ * the stage — that is the bars' job now.
+ */
+const PAR_WASHES: readonly (readonly string[])[] = [
+  ['ensemble', 'wave', 'fade'],
+  ['ensemble', 'split', 'color-cycle', 'wave'],
+  ['hit', 'sections', 'color-cycle', 'split'],
+];
+
+/**
+ * The first of `pick(0)`, `pick(1)`, … not in `avoid`, a few tries deep;
+ * `pick(0)` when every try is avoided, or when there is nothing to avoid.
+ */
+function firstOther<T>(avoid: ReadonlySet<T>, pick: (k: number) => T): T {
+  const first = pick(0);
+  if (!avoid.size || !avoid.has(first)) return first;
+  for (let k = 1; k < 8; k++) {
+    const next = pick(k);
+    if (!avoid.has(next)) return next;
+  }
+  return first;
+}
+
+/** The first of `looks` the rig has, or null for the whole rig on one pattern. */
+function barLook(looks: readonly string[], available: ReadonlySet<string>): string | null {
+  return looks.find((p) => available.has(p)) ?? null;
+}
+
+/** A wash for the pars at this drive, turned by `seed`; null when the rig has none. */
+function parWash(drive: number, seed: number, available: ReadonlySet<string>): string | null {
+  const pool = PAR_WASHES[drive >= 0.72 ? 2 : drive >= 0.45 ? 1 : 0].filter((p) => available.has(p));
+  return pool.length ? pool[Math.abs(Math.round(seed)) % pool.length] : null;
+}
+
+/** Beats the tracker found between two times, or the tempo's count without them. */
+function beatsBetween(context: { beats: readonly ShowEvent[]; baseBpm: number }, from: number, to: number): number {
+  const counted = context.beats.filter((b) => b.t >= from && b.t < to).length;
+  return counted >= 2 ? counted : Math.round(((to - from) * context.baseBpm) / 60);
+}
 
 /**
  * One of a resting role's preferred looks, rotated by `seed`; null for a role

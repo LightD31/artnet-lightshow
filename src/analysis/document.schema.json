@@ -126,6 +126,7 @@
         "rate": { "type": "number", "description": "Envelope points per second." },
         "encoding": { "enum": ["u8-base64"], "description": "Each envelope is base64 of one byte per point, 0..255 for 0..1." },
         "source": { "enum": ["stems", "mix"], "description": "Whether the lanes came from the separated drum stem or the percussive half of the mix." },
+        "detector": { "type": "integer", "description": "Which rules found the drum hits: 2 for the ones measured on real drumming (scripts/eval-drums.py). Absent for the first, tuned on a synthetic kit, which a show trusts less." },
         "envelopes": { "type": "object", "additionalProperties": { "type": "string" }, "description": "mix, and drums, bass, vocals and other when the track was separated." },
         "lanes": {
           "type": "object",

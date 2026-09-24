@@ -1,3 +1,4 @@
+import { transitionFor } from '../show/transition.ts';
 import { state, getLiveState, getDmxSnapshot, setExtrasProvider } from './state.ts';
 import { setHooks, applyPatch } from './patch.ts';
 import { conductor } from './conductor.ts';
@@ -25,7 +26,7 @@ import type MidiController from '../midi.ts';
 import type NowPlayingSource from '../nowplaying-source.ts';
 import type ProLink from '../prolink.ts';
 import type LiveInput from '../live-input.ts';
-import type { ProlinkTrack, TrackChange } from '../prolink.ts';
+import type { ProlinkTrack } from '../prolink.ts';
 import type { AnalysisPriority } from '../analyzer-worker.ts';
 import type SpotifyClient from '../spotify.ts';
 import type { BeatGrid } from '../shared/beat-clock.ts';
@@ -165,7 +166,10 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   function broadcast(): void {
     // Every edit to the patch ends in a broadcast, which makes this the one
     // place the show hears whether the rig has LED bars to draw on.
-    if (typeof autoShow.setRig === 'function') autoShow.setRig({ hasPixels: currentRig().hasPixels });
+    if (typeof autoShow.setRig === 'function') {
+      const rig = currentRig();
+      autoShow.setRig({ hasPixels: rig.hasPixels, lamps: rig.fixtures.length });
+    }
     const live = getLiveState();
     const json = JSON.stringify(live);
     if (json !== lastLiveJson) {
@@ -477,17 +481,6 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     return out;
   }
 
-  /**
-   * How long the lights take to follow a mix from one deck to the next: two
-   * bars of the incoming track after a blend, and a cut after a cut — a DJ who
-   * slams the fader across wants the room to change at once.
-   */
-  function handoffFadeMs(change: TrackChange, bpm: number): number {
-    if (!change.handoff) return 0;
-    const beatMs = bpm > 0 ? 60000 / bpm : 500;
-    if (change.overlapMs < 4 * beatMs) return 0;
-    return Math.min(10000, Math.round(8 * beatMs));
-  }
 
   const cdjQuery = (track: ProlinkTrack) => (track.title && track.artist ? `${track.artist} - ${track.title}` : `CDJ track ${track.trackId}`);
   const cdjDurationSec = (track: ProlinkTrack) => (track.durationMs ? track.durationMs / 1000 : null);
@@ -553,7 +546,6 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     const generation = ++cdjGeneration;
     const isCurrent = () => generation === cdjGeneration;
     const toPlayer = change?.toPlayer ?? prolink.getFollowed()?.deviceId ?? null;
-    const fadeMs = change ? handoffFadeMs(change, prolink.getTempo()) : 0;
     const setTrack = () => {
       autoShow.track = {
         name: track.title || `Track ${track.trackId}`,
@@ -579,8 +571,14 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       await analyseCdjTrack(track);
       if (!isCurrent()) return;
       showDeck = toPlayer;
+      // How the lights follow the mix: a cut after a cut, else a blend timed
+      // to the incoming track — onto its drop, or its next phrase
+      // (show/transition.ts).
+      const { fadeMs, reason } = transitionFor({
+        analysis: autoShow.analysis, positionMs: getProlinkPositionMs(), bpm: prolink.getTempo(), change,
+      });
       autoShow.start(getProlinkPositionMs, { fadeMs });
-      console.log(`Auto show restarted for new CDJ track${fadeMs ? `, crossfading over ${(fadeMs / 1000).toFixed(1)} s` : ''}`);
+      console.log(`Auto show restarted for new CDJ track${fadeMs ? `, crossfading over ${(fadeMs / 1000).toFixed(1)} s (${reason})` : ` (${reason})`}`);
     } catch (err) {
       if ((err as { superseded?: boolean }).superseded) return;
       reportAnalysisError('PRO DJ LINK auto analysis failed', err);

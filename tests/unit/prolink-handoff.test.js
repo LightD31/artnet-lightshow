@@ -166,3 +166,16 @@ test('a change that arrives while the last is still being analysed takes over', 
   assert.deepStrictEqual(r.log.filter((e) => e[0] === 'analyse').map((e) => e[1]), ['DJ - First', 'DJ - Second']);
   assert.deepStrictEqual(r.log.filter((e) => e[0] === 'start'), [['start', 0], ['start', 0]], 'the second track\'s show runs');
 });
+
+test('a mix lined up on the incoming drop blends until the drop, and lets it land', async () => {
+  const r = rig();
+  r.integrations.startAutoShow();
+  // The incoming track, as its analysis will say once it is loaded: a drop
+  // four seconds past where CDJ-2 is now.
+  r.autoShow.analysis = { bpm: r.prolink.tempo, drops: [{ t: 34, confidence: 0.9 }], downbeats: [], segments: [] };
+  r.prolink.followed = 2;
+  const done = r.prolink.trackChanged(r.track(2, 'Next'), { handoff: true, fromPlayer: 1, toPlayer: 2, overlapMs: 30000 });
+  await r.release('prolink:dj - next:300');
+  await done;
+  assert.deepStrictEqual(r.log[r.log.length - 1], ['start', 4000]);
+});

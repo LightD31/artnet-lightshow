@@ -15,6 +15,8 @@ import type { Colour, Expression, PulseReading } from '../types/rig.ts';
 //   ctx.twinkle       : per-slot stochastic memory (mutated for 'twinkle')
 //   ctx.xs, ctx.ys    : each slot's place across the rig, 0..1 (xs may be null:
 //                       even spacing); ys on the same scale, or null
+//   ctx.progress      : how far through its span a picture that plays once
+//                       (a build-up's fill) has got, 0..1, or null
 //   ctx.write(i, color, dim, strobe) — sets slot i's render colour
 //
 // 'fade' and 'hit' are whole-rig envelopes: the engine and the preview set
@@ -37,6 +39,9 @@ export interface PatternContext {
   /** The music at pixel rate (show/pulse.ts), or null: every pattern has to
    *  look right without it — the preview, a manual look, an older analysis. */
   pulse?: Readonly<PulseReading> | null;
+  /** How far through its span a picture that plays once has got, 0..1, or
+   *  null when the scene gave it none (see shared/layer.ts). */
+  progress?: number | null;
   write(i: number, colour: Colour, dim: number, strobe: number): void;
 }
 
@@ -121,6 +126,7 @@ function paletteOf(ctx: Pick<PatternContext, 'colors'>): Colour[] {
 const CELL_PATTERNS = new Set([
   'ensemble', 'ribbon', 'wave', 'rainbow', 'twinkle', 'sparkle',
   'gradient', 'comet', 'burst', 'plasma', 'meter', 'drums', 'stems',
+  'rise', 'impact',
 ]);
 
 /** Where slot i sits across the rig, 0..1: its placed position, or even spacing. */
@@ -373,13 +379,18 @@ const PATTERN_FUNCS: Record<string, PatternFn> = {
     }
   },
 
+  // One more lamp on every step until the rig is full, then back to one. It
+  // used to count an empty step as well — N + 1 steps a stack — so four lamps
+  // stacked over five steps and drifted a step against the bar every time
+  // round, with the downbeat, of all steps, the dark one. N steps a stack puts
+  // a full rig on the bar's last step and the first lamp on the next downbeat.
   'stack-up'(ctx) {
     const pal = paletteOf(ctx);
     const bed = bedOf(ctx);
     const N = ctx.fixtureCount;
-    const pos = ctx.step % (N + 1);
+    const pos = ctx.step % Math.max(1, N);
     for (let i = 0; i < N; i++) {
-      const lit = i < pos;
+      const lit = i <= pos;
       // The stack builds in the look's colours rather than one flat wash, so a
       // four-lamp rig fills with four different colours.
       ctx.write(i, lit ? pal[i % pal.length] : pal[pal.length - 1], lit ? 255 : bed, 0);
@@ -591,6 +602,53 @@ Object.assign(PATTERN_FUNCS, {
       const zone = Math.floor(fromMiddle * 4);
       const v = levels[zone];
       ctx.write(i, pal[zone % pal.length], Math.round(floor + (255 - floor) * Math.pow(v, 1.4)), 0);
+    }
+  },
+
+  // A build-up, drawn: the rig fills from where the picture starts — the
+  // middle, laid out mirrored — as the build goes on, and is full on the
+  // drop. With a span (the build's length) the fill follows it exactly;
+  // without one it fills once every sixteen steps. The edge of the fill is
+  // the brightest cell, and in the last quarter the whole fill stutters on
+  // every step, the way the snare roll under it does.
+  rise(ctx) {
+    const pal = paletteOf(ctx);
+    const bed = Math.round(bedOf(ctx) * 0.4);
+    const progress = ctx.progress ?? frac((ctx.stepPos ?? ctx.step) / 16);
+    const fill = 0.04 + 0.96 * progress;
+    const stutter = progress > 0.75 ? 0.55 + 0.45 * Math.pow(1 - (ctx.stepPhase ?? 0), 2) : 1;
+    const level = (0.35 + 0.65 * progress) * stutter;
+    for (let i = 0; i < ctx.fixtureCount; i++) {
+      const x = xOf(ctx, i);
+      if (x > fill) { ctx.write(i, pal[pal.length - 1], bed, 0); continue; }
+      const edge = fill - x < 0.06;
+      ctx.write(i, edge ? pal[1 % pal.length] : pal[0], Math.round(255 * (edge ? Math.max(level, 0.85 * stutter) : level)), 0);
+    }
+  },
+
+  // A drop, drawn: a ring thrown out from the middle of the stage on every
+  // step, and sparks scattered over the whole rig on every kick — the kick as
+  // it was hit when the analysis has the pulse, one on every step when not.
+  // The sparks take the look's lift (its last colour), so they read against
+  // the ring rather than as more of it.
+  impact(ctx) {
+    const pal = paletteOf(ctx);
+    const bed = bedOf(ctx);
+    const radius = (ctx.stepPhase ?? 0) * 1.15;
+    const width = 0.1 + 0.1 * dyn(ctx, 'decay', 0.25);
+    const ringColour = pal[ctx.step % pal.length];
+    const kick = ctx.pulse ? ctx.pulse.kick : Math.exp(-(ctx.stepPhase ?? 0) * 5);
+    const sparkSeed = Math.floor((ctx.stepPos ?? ctx.step) * 4);
+    const density = 0.06 + 0.22 * kick;
+    for (let i = 0; i < ctx.fixtureCount; i++) {
+      const dist = Math.hypot(xOf(ctx, i) - 0.5, yOf(ctx, i) - 0.5) / 0.5;
+      const ring = Math.exp(-(((dist - radius) / width) ** 2)) * (1 - 0.45 * Math.min(1, radius));
+      const spark = scatter(i, sparkSeed) < density ? kick : 0;
+      if (spark > ring && spark > 0.05) {
+        ctx.write(i, pal[pal.length - 1], Math.round(bed + (255 - bed) * spark), 0);
+      } else {
+        ctx.write(i, ring > 0.2 ? ringColour : pal[pal.length - 1], Math.round(bed + (255 - bed) * ring), 0);
+      }
     }
   },
 } satisfies Record<string, PatternFn>);

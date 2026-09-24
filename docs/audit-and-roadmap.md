@@ -390,6 +390,51 @@ Every phase is its own PR, keeps `npm run check` and the Python suite green, and
   - per-stage timings in `bench-analyze.py`.
 
 ### Phase 5 — Director v2 (smarter show)
+
+> **Status.**
+> - **Drum lanes, measured first.** `scripts/eval-drums.py` scores the kick, snare and hat lanes against MDB Drums:
+>   23 real recordings, hits marked by hand. The phase 4 rules, tuned on a synthetic kit, scored F 0.78 / 0.59 / 0.47
+>   on the Demucs stem. Retuned on MIREX 2017's training half, they score 0.88 / 0.71 / 0.50 on the other half.
+>   `pulse.detector` (schema 2.2) says which rules found a track's hits.
+> - **Pars and bars.** A scene can give the bars a `pixelPattern` of their own while the pars run `pattern`.
+>   On a rig with bars the pars carry a wash and the bars the role's picture:
+>   - verse: gradient
+>   - pre-chorus and build-up: the new `rise`, one fill across the build's scenes
+>   - chorus: comet, mirrored
+>   - drop: the new `impact`, with sparks on the kick
+>   - breakdown: plasma
+>   - bridge: drums
+>
+>   A rig of pars at first was byte for byte unchanged; then it got its own improvements:
+>   - chorus and drop looks mirrored about the centre (a chase runs from the middle out to both ends);
+>   - build-ups that stack out from the middle;
+>   - a long passage's look returning at the top of every phrase, where two looks used to alternate for the whole
+>     section;
+>   - `hit` flashing on the trusted kick (and stem snare) instead of the grid alone;
+>   - gradient, plasma, comet, burst — and drums, on trusted lanes — in its pools;
+>   - `stack-up` filling in N steps, on the bar, rather than N + 1.
+>
+>   The pars golden hashes were updated on purpose for it, with the reasons in `pars-golden.test.js`.
+> - **Accents on real drum hits:** snapped to the strong kick or snare within 80 ms, none on an empty bar line, one
+>   on a fill's last hit. Only lanes found by the new rules count, and snares only from the stem.
+> - **Set memory:**
+>   - no palette bank or section look twice in a row;
+>   - on a Camelot mix, shared colours carry over;
+>   - a peak, a breather or the warm-up scales the accent budget and the stride;
+>   - blinders rationed.
+> - **DJ transitions:** a CDJ blend runs to the incoming drop, or to its next phrase within 10 s. A cut is a cut,
+>   and a track brought in hot gets one bar.
+> - **Flash limit:** 3 large-area flashes a second (WCAG 2.3.1), measured over the whole rig in the renderer. Strobes
+>   are capped at 3 Hz. Off by default.
+> - **Track edits:** a locked palette, section looks and accents added or removed. Stored beside the cache entry,
+>   applied last on every plan, edited from the auto mode panel or `PUT /api/auto/overlay`.
+> - **Not done:**
+>   - The SeqLight/Skip-BART research track.
+>   - The flash limit's rehearsal-preview counterpart: the preview does not simulate strobes at all.
+>   - Four of the five fixture analyses are older ones with uncertain downbeats (confidence 0.05–0.25). The contrast
+>     pass spends no bar accents on them, before this phase and after. Tracks analysed with the drum lanes get
+>     their accents from the hits instead.
+
 - **Pixel-aware looks by role.** Pars carry the colour and wash; strips carry motion and detail.
   - verse: slow gradient
   - pre-chorus/buildup: rising fill

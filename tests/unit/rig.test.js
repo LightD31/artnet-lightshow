@@ -16,11 +16,28 @@ test('a rig of pars is one light per fixture, in the order it always was', () =>
   assert.strictEqual(rig.hasPixels, false);
   assert.deepStrictEqual(rig.units.map((u) => u.fixture), [0, 1, 2]);
   const { order, xs } = spatialLayout(fixtures);
-  const layout = rig.layout(null, 'mirror');
+  const layout = rig.layout(null, 'stage');
   assert.deepStrictEqual(layout.units.list, order, 'units travel exactly as fixtures did');
   assert.deepStrictEqual(layout.units.xs, xs);
   assert.strictEqual(layout.units.ys, null);
-  assert.deepStrictEqual(rig.layout(null, 'bar'), layout, 'a pixel map means nothing without pixels');
+  assert.strictEqual(layout.fixtures.folded, undefined);
+  assert.deepStrictEqual(rig.layout(null, 'bar'), layout, 'along each bar means nothing without bars');
+});
+
+test('mirrored, a rig of pars travels from the middle out to both sides at once', () => {
+  // Four pars across the stage, patched out of order.
+  const fixtures = [70, 10, 90, 35].map((x) => ({ position: { x, y: 40 } }));
+  const rig = buildRig(fixtures, () => null);
+  const layout = rig.layout(null, 'mirror');
+  const byX = (i) => fixtures[layout.fixtures.members[i]].position.x;
+  assert.deepStrictEqual(layout.fixtures.folded.map((slot) => slot.map(byX)), [[35, 70], [10, 90]],
+    'the middle pair first, then the outer pair');
+  assert.deepStrictEqual(layout.units.list, rig.layout(null, 'stage').units.list, 'pictures keep every lamp');
+  assert.deepStrictEqual(layout.units.xs.map((x) => +x.toFixed(2)), [1, 0.38, 0.5, 1], 'drawn out from the centre');
+
+  const five = buildRig([10, 30, 50, 70, 90].map((x) => ({ position: { x, y: 40 } })), () => null);
+  assert.deepStrictEqual(five.layout(null, 'mirror').fixtures.folded.map((slot) => slot.length), [1, 2, 2],
+    'an odd lamp in the middle is a slot of its own');
 });
 
 test('a bar is its cells, spread along its line, in profile order', () => {

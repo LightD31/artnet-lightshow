@@ -180,3 +180,17 @@ test('a cell\'s dimmer and colour multiply to what a par puts out', () => {
   }
   assert.deepStrictEqual(cellDrive(0, 0, 1, true, true), { cellDim: 0, scale: 0 }, 'dark');
 });
+
+test('with a picture of their own, the bars run it and the pars keep the look', () => {
+  rig(fixture(0, 1, PAR.profileId), fixture(1, 13, BAR.id), fixture(2, 40, PAR.profileId));
+  const dmx = show({ pattern: 'solid', pixelPattern: 'rise', pixelSpan: 16, pixelFrom: 0.5, anchorMs: 0 }, 0);
+  const par = [dmx[3], dmx[4], dmx[5]];
+  assert.ok(par.some((v) => v > 0), 'the pars hold the wash');
+  assert.deepStrictEqual([dmx[39 + 3], dmx[39 + 4], dmx[39 + 5]], par, 'both pars alike');
+  const cells = Array.from({ length: 8 }, (_, c) => cellRGB(dmx, 12, c).reduce((a, b) => a + b, 0));
+  const lit = cells.filter((v) => v > 0.4 * Math.max(...cells)).length;
+  assert.ok(lit >= 3 && lit <= 6, `the bar is half full halfway through its rise (${cells})`);
+  applyPatch({ pattern: 'solid' });
+  assert.strictEqual(state.pixelPattern, null, 'a pattern picked by hand runs on the whole rig again');
+});
+
