@@ -20,12 +20,30 @@ base64: a four-minute track is 12 000 points, 16 KB per stem, where the same
 numbers as JSON floats were five times that.
 
 The lanes come from band-limited spectral flux of the drum stem: the kick is
-what rises below 150 Hz, the snare what rises in 1-5 kHz without the low end
-rising with it, the hats what rises above 7 kHz without the snare band rising
-too. On the drum stem alone those three rules hold well, because the bass
-guitar and the synths that would break them are in the other stems. Without
-separation the lanes are read off the percussive half of the mix, and the
-document says so.
+what rises below 150 Hz more than 1-5 kHz does, the snare what rises in 1-5
+kHz more than the low end and much more than the top, the hats what rises
+above 7 kHz more than the snare band does — each band on its own scale, so
+"more" means a bigger hit for that band than for the other. On the drum stem
+those rules hold, because the bass guitar and the synths that would break them
+are in the other stems. Without separation the lanes are read off the
+percussive half of the mix, and the document says so.
+
+Measured on real drumming (scripts/eval-drums.py: MDB Drums, 23 recordings
+from jazz to metal, hits marked by hand), on the eleven its rules were not
+tuned on, F-measure within 50 ms:
+
+                         kick   snare   hats
+    drum stem (Demucs)   0.88   0.71    0.50
+    no separation        0.77   0.49    0.35
+
+counting the snare without its ghost notes and the hats without the pedal —
+the strokes played quiet on purpose, which a light should not mark. The kick
+is the lane to trust: its strong hits (0.7 and up) are right nine times in
+ten on the stem. The snare's are right four times in five; the hats are
+texture. The rules before these, tuned on synthetic drums, scored 0.78, 0.59
+and 0.47 on the stem, almost all of the gap in false hits: a snare's body and
+the hats both rise below 150 Hz on a real kit, and the kick had no rule
+against them.
 """
 
 import base64
@@ -35,6 +53,9 @@ import numpy as np
 from . import dsp
 
 RATE = 50                 # envelope points per second
+# Which lane rules these are, so a show can tell hits found by the rules
+# measured on real drumming from the first ones, which were not.
+DETECTOR = 2
 DB_RANGE = 36.0           # what 0..1 spans, below the stem's own loud level
 SILENT_DB = -60.0         # a stem never louder than this is empty
 
@@ -47,8 +68,14 @@ LANE_BANDS = {
     'snare': (1000.0, 5000.0),
     'hats': (7000.0, 11000.0),
 }
-# How close together two hits of one lane can be, seconds.
-_MIN_GAP = {'kick': 0.09, 'snare': 0.09, 'hats': 0.05}
+# How close together two hits of one lane can be, seconds. A snare rings and
+# rattles for longer than a kick thuds.
+_MIN_GAP = {'kick': 0.09, 'snare': 0.13, 'hats': 0.05}
+# A hit is no hit below this share of the band's own loud rise.
+_FLOOR = 0.25
+# A low rise under a bigger snare is the snare's body below this share, and a
+# kick played with the snare above it.
+_KICK_UNDER_SNARE = 0.8
 
 
 def envelope(signal, sample_rate):
@@ -117,17 +144,22 @@ def lanes(drums, sample_rate):
             for name, (lo, hi) in LANE_BANDS.items()}
 
     # Each lane's hits must not be another lane's: a kick's beater click rises
-    # in the snare band too, and a snare's noise reaches up into the hats'.
-    # A frame belongs to the lane whose rise it is, measured a frame either
-    # side because the bands do not peak on exactly the same one.
+    # in the snare band too, a snare's body below 150 Hz, and its wires up
+    # into the hats'. A frame belongs to the lane whose rise it most is,
+    # measured a frame either side because the bands do not peak on exactly
+    # the same one.
     def local(values):
         return np.maximum(values, np.maximum(np.roll(values, 1), np.roll(values, -1)))
 
     near = {name: local(values) for name, values in flux.items()}
+    snare = np.where(near['kick'] > flux['snare'] * 1.2, 0.0, flux['snare'])
     claims = {
-        'kick': flux['kick'],
-        'snare': np.where(near['kick'] > flux['snare'] * 1.2, 0.0, flux['snare']),
-        'hats': np.where(near['snare'] > flux['hats'] * 0.6, 0.0, flux['hats']),
+        # Only a weak low rise under a bigger snare is the snare's body: a
+        # kick played with the snare — four to the floor with a clap on two
+        # and four — is a full-sized rise of its own.
+        'kick': np.where((near['snare'] > flux['kick']) & (flux['kick'] < _KICK_UNDER_SNARE), 0.0, flux['kick']),
+        'snare': np.where(near['hats'] > snare * 1.5, 0.0, snare),
+        'hats': np.where(near['snare'] > flux['hats'] * 0.8, 0.0, flux['hats']),
     }
 
     out = {}
@@ -135,7 +167,7 @@ def lanes(drums, sample_rate):
         wait = max(1, int(_MIN_GAP[name] * frame_rate))
         peaks = dsp.adaptive_peaks(strength, pre=int(frame_rate * 0.5), post=int(frame_rate * 0.5),
                                    delta=0.25, wait=wait)
-        peaks = [int(p) for p in peaks if strength[p] >= 0.18]
+        peaks = [int(p) for p in peaks if strength[p] >= _FLOOR]
         out[name] = {
             't': [round(float(p * _HOP / sample_rate), 3) for p in peaks],
             's': [round(float(min(1.0, strength[p])), 2) for p in peaks],
@@ -156,6 +188,7 @@ def analyse(audio, stems=None):
         'rate': RATE,
         'encoding': 'u8-base64',
         'source': source,
+        'detector': DETECTOR,
         'envelopes': envelopes,
         'lanes': lanes(drums, rate),
     }
