@@ -170,6 +170,12 @@ const DEFAULTS: Settings = {
     // track on its own, as if it were the first of the night.
     setMemory: true,
   },
+  safety: {
+    // Hold the rig to three large-area flashes a second, the photosensitivity
+    // threshold broadcast and web guidance share (src/server/flash-limit.ts).
+    // Off by default: most of what a party rig is for is above it.
+    flashLimit: false,
+  },
   engine: {
     // Where frames are rendered. 'worker' gives the engine a thread of its
     // own, so the rig keeps its timing while the main thread plans a track,
@@ -324,6 +330,9 @@ const schema = z.object({
   auto: z.object({
     syncOffsetMs: z.number().int().min(-SYNC_OFFSET_LIMIT_MS).max(SYNC_OFFSET_LIMIT_MS),
     setMemory: z.boolean(),
+  }).strict(),
+  safety: z.object({
+    flashLimit: z.boolean(),
   }).strict(),
   engine: z.object({
     thread: z.enum(['worker', 'main']),

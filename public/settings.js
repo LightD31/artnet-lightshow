@@ -1677,6 +1677,12 @@ const SETTINGS_SPEC = [
           + 'colours when the two keys mix, and paces its biggest moments against the tracks before '
           + 'it: a track hotter than the last few is a peak and gets the blinder, the first twenty '
           + 'minutes warm up. Off plans every track as if it were the first of the night.' },
+      { path: 'safety.flashLimit', label: 'Flash Limit', type: 'toggle',
+        help: 'Photosensitivity: at most three large-area flashes a second, the threshold broadcast '
+          + 'and web guidance use (WCAG 2.3.1, ITU-R BT.1702). Strobes are capped at three a second, '
+          + 'and a look that would flash the whole rig faster is held to a flicker under a tenth '
+          + 'of full brightness until the second has passed. Covers every output, manual looks '
+          + 'included. Off by default: most of what a party rig does is above this line.' },
     ],
   },
   {

@@ -52,6 +52,12 @@ export function Header() {
             <span>{energy.replace(/-/g, ' ')}</span>
           </div>
         )}
+        {s.flashLimit && (
+          <div class="stat-pill" title="Flash limit: at most three large-area flashes a second (Settings → Show)">
+            <span class="label">Flash</span>
+            <span>≤ 3/s</span>
+          </div>
+        )}
         {auto && auto !== 'idle' && (
           <div class="stat-pill" title="Auto show status">
             <span class="label">Auto</span>

@@ -25,6 +25,7 @@ import { cellPlace, channelPlace, stripOf } from '../shared/placement.ts';
 // Shared with the browser's rehearsal preview so the two cannot drift.
 import { EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture, cellDrive } from '../shared/look-math.ts';
 import { anchorStep, stepAt, motionAdvance } from '../shared/beat-clock.ts';
+import { createFlashLimiter, lightLuminance, strobeCap } from './flash-limit.ts';
 import type { EnergyLook, UnitLight } from '../shared/look-math.ts';
 import type { Rig } from '../shared/rig.ts';
 import type { MusicalTime } from './conductor.ts';
@@ -77,6 +78,8 @@ export interface RenderInput {
   strobeFunction: string;
   masterDimmer: number;
   masterBlackout: boolean;
+  /** Hold the rig to three large-area flashes a second (flash-limit.ts). */
+  flashLimit?: boolean;
   /** An energy effect's id, or null. */
   energy: string | null;
   showDynamics: ShowDynamics | null;
@@ -142,6 +145,12 @@ const SOFT_FLASH_MAX_MS = 50;
 function softStrobeHz(raw: number): number {
   return SOFT_STROBE_MIN_HZ + (Math.min(255, raw) / 255) * (SOFT_STROBE_MAX_HZ - SOFT_STROBE_MIN_HZ);
 }
+
+// The fastest strobe the flash limit allows, on the same scale: three a
+// second. A fixture's own strobe channel is taken to run the same range
+// (1–20 Hz, as most LED pars' standard strobe does), since what it actually
+// runs at is the fixture's secret.
+const FLASH_LIMIT_STROBE = strobeCap(softStrobeHz);
 
 /**
  * Is a software-strobed fixture lit on the frame at `now`? Periodic, on the
@@ -240,6 +249,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
 
   let rig: Rig<RenderFixture> | null = null;
   let rigKey = '';
+  const limiter = createFlashLimiter();
 
   /** The rig as lights, rebuilt only when what it depends on changes. */
   function rigFor(fixtures: RenderFixture[]): Rig<RenderFixture> {
@@ -448,8 +458,9 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
   function strobeRequest(input: RenderInput, energy: EnergyLook | null, strobe: number): StrobeRequest | null {
     // Energy overrides force 'standard' strobe so a colour-strobe burst never
     // inherits a slow ramp/break function from the prior segment.
-    const raw = energy ? strobe : (input.pattern === 'strobe' ? input.strobeSpeed : strobe);
+    let raw = energy ? strobe : (input.pattern === 'strobe' ? input.strobeSpeed : strobe);
     if (!(raw > 0)) return null;
+    if (input.flashLimit) raw = Math.min(raw, FLASH_LIMIT_STROBE);
     return { raw, fnId: energy ? 'standard' : input.strobeFunction };
   }
 
@@ -591,21 +602,58 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     }
 
     // With the buffers already cleared, a blackout is simply empty universes.
-    if (!input.masterBlackout) {
-      const { fixtures } = input;
-      for (let i = 0; i < fixtures.length; i++) {
-        const fix = fixtures[i];
-        const { start, count } = rigNow.ranges[i];
-        const cells = rigNow.cellMaps[i];
-        // Each light: its source (a burst, a pinned fixture, or the pattern
-        // layer partway through any fade), then the music's level on top.
-        const lights: LightValue[] = [];
-        for (let u = start; u < start + count; u++) lights.push(lightOf(u, fix, energy, fadeT, target));
-        if (cells) writeBar(input, store, fix, cells, lights, energy, now);
-        else writePar(input, store, fix, lights[0], energy, now);
-      }
+    if (input.masterBlackout) {
+      if (input.flashLimit) limiter.commit(0, now);
+      return rigNow;
+    }
+    const { fixtures } = input;
+    // Each light: its source (a burst, a pinned fixture, or the pattern layer
+    // partway through any fade), then the music's level on top.
+    const all: LightValue[][] = [];
+    for (let i = 0; i < fixtures.length; i++) {
+      const { start, count } = rigNow.ranges[i];
+      const lights: LightValue[] = [];
+      for (let u = start; u < start + count; u++) lights.push(lightOf(u, fixtures[i], energy, fadeT, target));
+      all.push(lights);
+    }
+    if (input.flashLimit) limitFlashes(input, all, now);
+    else limiter.reset();
+    for (let i = 0; i < fixtures.length; i++) {
+      const cells = rigNow.cellMaps[i];
+      if (cells) writeBar(input, store, fixtures[i], cells, all[i], energy, now);
+      else writePar(input, store, fixtures[i], all[i][0], energy, now);
     }
     return rigNow;
+  }
+
+  /** How bright the rig is as a whole: every fixture's mean light, after the masters. */
+  function rigLuminance(input: RenderInput, all: LightValue[][]): number {
+    if (!all.length) return 0;
+    let sum = 0;
+    for (let i = 0; i < all.length; i++) {
+      const lights = all[i];
+      let fixture = 0;
+      for (const { col, dim } of lights) fixture += lightLuminance(col, dim);
+      sum += (fixture / Math.max(1, lights.length)) * mastersOf(input, input.fixtures[i]);
+    }
+    return sum / all.length;
+  }
+
+  /**
+   * Hold this frame inside the flash limit (flash-limit.ts): scale every
+   * light towards the brightness the limiter allows, then tell it what went
+   * out.
+   */
+  function limitFlashes(input: RenderInput, all: LightValue[][], now: number): void {
+    const luminance = rigLuminance(input, all);
+    const allowed = limiter.target(luminance, now);
+    if (luminance > 1e-6 && Math.abs(allowed - luminance) > 1e-4) {
+      const scale = allowed / luminance;
+      for (const lights of all) for (const light of lights) light.dim = Math.min(255, light.dim * scale);
+      limiter.commit(rigLuminance(input, all), now);
+    } else {
+      limiter.commit(luminance, now);
+    }
   }
 
   return {

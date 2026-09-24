@@ -205,6 +205,10 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
     });
   }
 
+  function applySafety() {
+    state.flashLimit = !!settings.get('safety.flashLimit');
+  }
+
   // changed key prefix → what to re-apply. Grouped so one save touching three
   // Spotify fields reconfigures the client once.
   const HANDLERS: { match: (key: string) => boolean; run: () => unknown }[] = [
@@ -224,6 +228,7 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
     { match: (k) => k === 'analysis.pythonPath', run: applyPython },
     { match: (k) => k === 'analysis.separator', run: applySeparator },
     { match: (k) => k === 'analysis.structureModel', run: applyStructureModel },
+    { match: (k) => k === 'safety.flashLimit', run: applySafety },
   ];
 
   return {
@@ -239,6 +244,7 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
       applySmtc();
       applyLive();
       applyDeezer();
+      applySafety();
       if (settings.get('sources.prolink')) applyProlink();
     },
 

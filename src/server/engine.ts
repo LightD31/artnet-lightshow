@@ -108,6 +108,7 @@ function renderInput(): RenderInput {
     pixelPattern: state.pixelPattern,
     pixelSpan: state.pixelSpan,
     pixelFrom: state.pixelFrom,
+    flashLimit: state.flashLimit,
     beatDivision: state.beatDivision,
     strobeSpeed: state.strobeSpeed,
     strobeFunction: state.strobeFunction,

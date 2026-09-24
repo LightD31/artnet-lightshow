@@ -29,6 +29,8 @@ export interface ShowState {
   colorD: number;
   masterDimmer: number;
   masterBlackout: boolean;
+  /** Three large-area flashes a second at most (settings `safety.flashLimit`). */
+  flashLimit: boolean;
   strobeSpeed: number;
   strobeFunction: string;
   /** An energy effect's id, or null. */
@@ -75,6 +77,7 @@ const state: ShowState = {
   colorD: 8,
   masterDimmer: 255,
   masterBlackout: false,
+  flashLimit: settings.group('safety').flashLimit,
   strobeSpeed: 0,
   strobeFunction: 'standard',
   energyOverride: null,
@@ -267,6 +270,7 @@ function getLiveState() {
     colorD: state.colorD,
     masterDimmer: state.masterDimmer,
     masterBlackout: state.masterBlackout,
+    flashLimit: state.flashLimit,
     strobeSpeed: state.strobeSpeed,
     strobeFunction: state.strobeFunction,
     pixelMap: state.pixelMap,
