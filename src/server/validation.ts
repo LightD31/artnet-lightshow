@@ -388,6 +388,27 @@ const huePairSchema = z.object({
   host: z.string().min(1).max(253),
 }).strict();
 
+// PUT /api/auto/overlay: the operator's edits to the loaded track's show
+// (src/show/overlay.ts). Times are track times in ms; a pattern the rig does
+// not know is ignored by the engine as any patch's is.
+const trackMs = z.number().finite().min(0).max(24 * 3600 * 1000);
+const overlaySchema = z.object({
+  palette: z.string().regex(/^[A-Za-z0-9-]{1,64}$/).nullable().optional(),
+  sections: z.array(z.object({
+    atMs: trackMs,
+    pattern: z.string().min(1).max(64).optional(),
+    pixelPattern: z.string().min(1).max(64).nullable().optional(),
+  }).strict()).max(256).optional(),
+  accents: z.object({
+    add: z.array(z.object({
+      atMs: trackMs,
+      burst: z.enum(['blinder', 'white-strobe', 'color-strobe', 'uv-wash', 'kill', 'glow']),
+      durationMs: z.number().int().min(120).max(2000).optional(),
+    }).strict()).max(512).optional(),
+    remove: z.array(trackMs).max(512).optional(),
+  }).strict().optional(),
+}).strict();
+
 function validate<S extends z.ZodTypeAny>(schema: S, value: unknown, label: string): z.output<S> {
   const result = schema.safeParse(value);
   if (!result.success) {
@@ -422,5 +443,6 @@ export {
   midiConnectSchema,
   huePairSchema,
   wledAddSchema,
+  overlaySchema,
   validate,
 };

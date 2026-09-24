@@ -5,6 +5,7 @@ import { AnalysisStats } from './AnalysisStats.jsx';
 import { AutoTimeline } from './AutoTimeline.jsx';
 import { Queue } from './Queue.jsx';
 import { StagePreview } from './StagePreview.jsx';
+import { TrackEdits } from './TrackEdits.jsx';
 
 /**
  * The auto-show surface.
@@ -350,6 +351,7 @@ export function AutoMode() {
               <section class="panel timeline-panel">
                 <AutoTimeline />
               </section>
+              <TrackEdits />
             </>
           ) : (
             <section class="panel">

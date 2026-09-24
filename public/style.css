@@ -739,6 +739,7 @@ button { font-family: inherit; cursor: pointer; }
 }
 
 .btn.sm   { padding: 4px 9px;  font-size: 11px; border-radius: 6px; }
+.btn.xs   { padding: 0 6px;    font-size: 11px; border-radius: 5px; line-height: 1.5; }
 .btn.icon { padding: 5px 10px; font-size: 13px; }
 .btn.block { width: 100%; justify-content: center; }
 
@@ -2575,3 +2576,13 @@ input[type=range]::-moz-range-thumb {
   }
   .color-swatch:hover { transform: none; }
 }
+
+/* Track edits (TrackEdits.jsx): the operator's changes to one track's show. */
+.track-edits .panel-head { display: flex; justify-content: space-between; align-items: center; }
+.track-edits .edit-list { list-style: none; margin: 4px 0 8px; padding: 0; font-size: 12px; color: var(--muted); }
+.track-edits .edit-list li { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+.track-edits .edit-sections { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+.track-edits .edit-sections th { text-align: left; font-weight: 600; color: var(--muted); padding: 2px 4px; }
+.track-edits .edit-sections td { padding: 2px 4px; }
+.track-edits .edit-sections select { width: 100%; }
+

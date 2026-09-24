@@ -70,6 +70,8 @@ import type { ShowEvent } from './musical-events.ts';
 import type { Analysis, Segment } from './score.ts';
 import type { Drop, Genre, Mood, Section } from '../types/analysis.ts';
 import { arcFor, keysMix } from './set-memory.ts';
+import { applyOverlay } from './overlay.ts';
+import type { ShowOverlay } from './overlay.ts';
 import type { SetHistory, TrackMemory } from './set-memory.ts';
 
 /** The analysis with its two shapes folded into one (see normalise). */
@@ -101,6 +103,8 @@ export interface DirectorOptions {
   pixels?: boolean;
   /** The night before this track (show/set-memory.ts), or nothing. */
   history?: SetHistory | null;
+  /** The operator's edits to this track (show/overlay.ts), or nothing. */
+  overlay?: ShowOverlay | null;
 }
 
 /** A section as the director plans it: what plays in it, and which idea it is. */
@@ -268,6 +272,7 @@ class ShowDirector {
   declare blackoutIndex: number;
   declare pixels: boolean;
   declare history: SetHistory | null;
+  declare overlay: ShowOverlay | null;
 
   /**
    * @param {object} options
@@ -279,7 +284,7 @@ class ShowDirector {
    * @param {number} options.blackoutIndex colour index that means "off"
    */
   constructor({ patterns = [], colorPresets = null, paletteSize = 4,
-    intensity = 50, blackoutIndex = 0, pixels = false, history = null }: DirectorOptions = {}) {
+    intensity = 50, blackoutIndex = 0, pixels = false, history = null, overlay = null }: DirectorOptions = {}) {
     this.patterns = patterns;
     this.colorPresets = colorPresets;
     this.paletteSize = paletteSize;
@@ -290,6 +295,7 @@ class ShowDirector {
     // bars; a rig of pars plans exactly as it always has.
     this.pixels = !!pixels;
     this.history = history;
+    this.overlay = overlay;
   }
 
   /**
@@ -324,15 +330,17 @@ class ShowDirector {
     intents.sort((a, b) => a.timeMs - b.timeMs || a.priority - b.priority);
 
     if (context.pixels) this._mapPixels(intents, context);
+    // The operator's edits go on last, over everything the passes chose.
+    const edited = this.overlay ? applyOverlay(intents, this.overlay, context.sections) : intents;
 
     const looks: Record<string, string> = {};
-    for (const i of intents) {
+    for (const i of edited) {
       if (i.kind === INTENT.SCENE && i.pattern && i.role && String(i.source).startsWith('section:') && !(i.role in looks)) {
         looks[i.role] = i.pattern;
       }
     }
     return {
-      intents: this._dedupeTempo(intents),
+      intents: this._dedupeTempo(edited),
       palette: context.palette,
       paletteName: context.paletteName,
       paletteSize: context.paletteSize,
@@ -343,7 +351,7 @@ class ShowDirector {
         looks,
         drive: context.drive,
         musicalKey: context.musicalKey,
-        blinder: intents.some((i) => i.kind === INTENT.ACCENT && i.burst === BURST.BLINDER),
+        blinder: edited.some((i) => i.kind === INTENT.ACCENT && i.burst === BURST.BLINDER),
       },
     };
   }
@@ -498,6 +506,7 @@ class ShowDirector {
       paletteSize, colorPresets: this.colorPresets,
       avoid: previous ? previous.paletteName : null,
       continueFrom: mixes ? previous.palette : null,
+      lock: this.overlay?.palette ?? null,
     });
     const arc = arcFor(this.history, drive);
 

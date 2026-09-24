@@ -14,6 +14,7 @@ import { renderIntents } from './show/render.ts';
 import { pulseTrack } from './show/pulse.ts';
 import { SetMemory } from './show/set-memory.ts';
 import type { SetArc, TrackMemory } from './show/set-memory.ts';
+import type { ShowOverlay } from './show/overlay.ts';
 import { guarded } from './server/guard.ts';
 import { resolveIsrc, splitQuery } from './isrc.ts';
 import { gridFromAnalysis } from './shared/beat-clock.ts';
@@ -136,6 +137,7 @@ class AutoShow {
   declare _memory: SetMemory;
   declare _planMemory: Omit<TrackMemory, 'key' | 'at'> | null;
   declare _arc: SetArc | null;
+  declare _overlay: { key: string | null; overlay: ShowOverlay | null } | null;
   declare analysisKey: string | null;
   declare _frameDriven: boolean;
   declare _anchorIndex: { timeline: TimelineEvent[]; length: number; times: number[] } | undefined;
@@ -214,6 +216,9 @@ class AutoShow {
     this._memory = new SetMemory();
     this._planMemory = null;
     this._arc = null;
+    // The operator's edits to the loaded track (show/overlay.ts), read from
+    // the cache beside its analysis the first time it is planned.
+    this._overlay = null;
     // The cache key the loaded analysis was read or written under, so the
     // pattern clock can reuse the grid already in memory for that track.
     this.analysisKey = null;
@@ -905,6 +910,7 @@ class AutoShow {
       blackoutIndex: this._blackoutIdx,
       pixels: this._pixels,
       history: settings.group('auto').setMemory === false ? null : this._memory.history(this._memoryKey()),
+      overlay: this.overlay(),
     });
 
     this._grid = gridFromAnalysis(this.analysis);
@@ -1104,6 +1110,27 @@ class AutoShow {
     if (this.analysis) this.buildTimeline();
   }
 
+  /** The operator's edits to the loaded track, or null. */
+  overlay(): ShowOverlay | null {
+    const key = this.analysisKey;
+    if (!this._overlay || this._overlay.key !== key) {
+      this._overlay = { key, overlay: key && this._cache ? this._cache.overlay(key) : null };
+    }
+    return this._overlay.overlay;
+  }
+
+  /**
+   * Replace the loaded track's edits and replan with them. Stored beside
+   * its analysis, so they come back whenever the track does; a track with
+   * no cache key keeps them only while it is loaded.
+   */
+  setOverlay(overlay: ShowOverlay | null): void {
+    const key = this.analysisKey;
+    if (key && this._cache) this._cache.setOverlay(key, overlay);
+    this._overlay = { key, overlay };
+    if (this.analysis) this.buildTimeline();
+  }
+
   /** What names the loaded track in the set memory. */
   _memoryKey(): string {
     const t = this.track;
@@ -1182,6 +1209,9 @@ class AutoShow {
       autoSyncMs: Math.round(this.autoSyncMs),
       // Planned for a rig with LED bars: its looks may draw across cells.
       pixels: this._pixels,
+      // The operator's edits to this track (show/overlay.ts), and what names it.
+      analysisKey: this.analysisKey,
+      overlay: this.analysis ? this.overlay() : null,
       // The night so far, and where this track sits in it (set-memory.ts).
       set: {
         memory: settings.group('auto').setMemory !== false,

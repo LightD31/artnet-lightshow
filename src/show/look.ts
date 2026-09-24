@@ -306,7 +306,7 @@ function tierOf(drive: number): Tier {
  * genre a night of one palette.
  */
 function buildPalette({ key, scale, mood = {}, score = null, paletteSize = 4,
-  colorPresets = null, avoid = null, continueFrom = null }: {
+  colorPresets = null, avoid = null, continueFrom = null, lock = null }: {
   key?: string | null;
   scale?: string | null;
   mood?: Partial<Mood>;
@@ -317,6 +317,8 @@ function buildPalette({ key, scale, mood = {}, score = null, paletteSize = 4,
   avoid?: string | null;
   /** The last track's colours, to keep some of when its key mixes into this one. */
   continueFrom?: readonly number[] | null;
+  /** A bank the operator locked this track to (see show/overlay.ts). */
+  lock?: string | null;
 }): { palette: number[]; name: string } {
   const bank: Record<string, number[]> = paletteBankForSize(paletteSize);
   const scores = new Map<string, number>();
@@ -421,8 +423,9 @@ function buildPalette({ key, scale, mood = {}, score = null, paletteSize = 4,
   //
   // A style table pointing at a renamed bank would otherwise reach `undefined`
   // and take the show down on the next line.
-  const name = ranked.length ? ranked[0][0]
-    : Object.keys(bank).find((n) => n !== avoid) || Object.keys(bank)[0];
+  const name = lock && bank[lock] ? lock
+    : ranked.length ? ranked[0][0]
+      : Object.keys(bank).find((n) => n !== avoid) || Object.keys(bank)[0];
 
   const maxIndex = Array.isArray(colorPresets) && colorPresets.length
     ? colorPresets.length - 1 : Infinity;
