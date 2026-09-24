@@ -30,6 +30,19 @@ export function codeOf(err: unknown): string | undefined {
   return typeof code === 'string' ? code : undefined;
 }
 
+/**
+ * The error a piece of work the operator called off ends with: `cancelled`
+ * set, so a caller can tell it from a failure and say nothing about it.
+ */
+export function cancelledError(what = 'analysis'): Error & { cancelled: true } {
+  return Object.assign(new Error(`${what} cancelled`), { cancelled: true as const });
+}
+
+/** Whether an error is one of those. */
+export function isCancelled(err: unknown): boolean {
+  return !!err && typeof err === 'object' && (err as { cancelled?: unknown }).cancelled === true;
+}
+
 /** The HTTP status an error asks to be answered with, if it names one. */
 export function statusOf(err: unknown): number | undefined {
   const status = err && typeof err === 'object' ? (err as { status?: unknown }).status : undefined;

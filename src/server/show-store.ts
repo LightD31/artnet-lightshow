@@ -11,6 +11,7 @@ import { showSchema, validate } from './validation.ts';
 import { HttpError, codeOf, messageOf } from '../errors.ts';
 import type { ShowFile } from './validation.ts';
 import type { Fixture, Profile } from '../types/rig.ts';
+import { configFile } from './config-dir.ts';
 
 /**
  * The patch, saved for you.
@@ -281,7 +282,7 @@ class ShowStore {
 
 // Fixed location, for the same reason settings.json and cues.json are: it is
 // how you *find* the patch, not itself a setting. Tests build their own store.
-const SHOW_FILE = path.join(import.meta.dirname, '..', '..', 'config', 'show.json');
+const SHOW_FILE = configFile('show.json');
 const showStore = new ShowStore(SHOW_FILE);
 
 export {

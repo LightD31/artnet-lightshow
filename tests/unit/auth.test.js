@@ -156,3 +156,18 @@ test('socket handshake refuses other origins and unknown hosts, token or not', a
     assert.strictEqual((await allow({ host: 'evil.example:3000', origin: 'http://evil.example:3000' })).ok, false);
   }
 });
+
+test('source maps are served to this machine only', async () => {
+  const { sourceMapsForLoopback } = await import('../../src/server/auth.ts');
+  const run = (path, remoteAddress) => {
+    let status = null;
+    let passed = false;
+    sourceMapsForLoopback({ path, socket: { remoteAddress } },
+      { status: (code) => { status = code; return { end() {} }; } }, () => { passed = true; });
+    return passed ? 'served' : status;
+  };
+  assert.strictEqual(run('/app.bundle.js.map', '127.0.0.1'), 'served');
+  assert.strictEqual(run('/app.bundle.js.map', '::ffff:127.0.0.1'), 'served');
+  assert.strictEqual(run('/app.bundle.js.map', '192.168.1.40'), 404, 'a phone on the venue network');
+  assert.strictEqual(run('/app.bundle.js', '192.168.1.40'), 'served', 'the bundle itself is for everyone');
+});

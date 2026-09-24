@@ -1,7 +1,9 @@
-import { stateSig, send } from '../state.js';
+import { send, pick } from '../state.js';
+import { useDraft } from '../draft.js';
 
 export function Strobe() {
-  const s = stateSig.value;
+  const s = pick(['pattern', 'strobeFunction', 'strobeFunctions', 'strobeSpeed']);
+  const [speed, onSpeed, commitSpeed] = useDraft(s.strobeSpeed ?? 0, (v) => send({ strobeSpeed: v }));
   if (s.pattern !== 'strobe') return null;
 
   return (
@@ -25,10 +27,12 @@ export function Strobe() {
         <label>Speed</label>
         <input
           type="range" min="0" max="255"
-          value={s.strobeSpeed ?? 0}
-          onInput={(e) => send({ strobeSpeed: parseInt(e.target.value, 10) })}
+          aria-label="Strobe speed"
+          value={speed}
+          onInput={(e) => onSpeed(parseInt(e.target.value, 10))}
+          onChange={(e) => commitSpeed(parseInt(e.target.value, 10))}
         />
-        <span class="val">{s.strobeSpeed ?? 0}</span>
+        <span class="val">{speed}</span>
       </div>
     </div>
   );

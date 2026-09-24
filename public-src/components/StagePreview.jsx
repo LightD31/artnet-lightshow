@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { stateSig, dmxSig, autoTimelineSig, connectedSig, emitFixture, stagePreviewSig } from '../state.js';
 import { colorToCss, fixtureOutputColor, fixtureCellColors, meanLight, fmtTime } from '../utils.js';
 import { timelineKey } from '../timeline-state.js';
+import { useDmxFeed } from '../use-dmx.js';
 import { createPreviewSampler } from '../../src/shared/preview.ts';
 import { stagePositions } from '../../src/shared/stage.ts';
 import { buildRig, lineOf } from '../../src/shared/rig.ts';
@@ -73,14 +74,24 @@ export function StagePreview() {
   // rehearsing this panel is driven by its own scrub position and has no reason
   // to wake — and re-sample the whole timeline — on every live DMX frame.
   const dmx = rehearsal ? null : dmxSig.value;
+  // Live, the plot draws the DMX feed; rehearsing, it draws the timeline.
+  useDmxFeed(!rehearsal);
 
   // Follows the *track*, not the timeline. A replan — an intensity nudge, a
   // palette change — re-mints timelineRevision and hands us a new `data` for the
   // same music; resetting on that ejected the operator from rehearsal and rewound
   // to 0:00 at exactly the moment they were rehearsing for.
+  //
+  // And only when the track *changes*: the panel is unmounted by a view
+  // switch, and an effect that ran on every mount reset the rehearsal each
+  // time the operator looked at another view and came back (A7.26). The
+  // track it was rehearsing is kept beside the rest of its state.
   const t = s.autoShow?.track;
   const trackId = t ? `${t.id ?? ''}|${t.name ?? ''}|${t.artist ?? ''}` : null;
-  useEffect(() => { setUi({ playing: false, position: 0, rehearsal: false }); }, [trackId]);
+  useEffect(() => {
+    if (stagePreviewSig.value.trackId === trackId) return;
+    setUi({ playing: false, position: 0, rehearsal: false, trackId });
+  }, [trackId]);
 
   useEffect(() => { if (!connected) { drag.current = null; setDraft(null); setUi({ edit: false }); } }, [connected]);
   useEffect(() => {
@@ -145,7 +156,7 @@ export function StagePreview() {
 
   return <section class="panel stage-panel">
     <header class="panel-head">
-      <h3 class="panel-title">Stage preview</h3>
+      <h2 class="panel-title">Stage preview</h2>
       <span class="panel-tag">{rehearsal ? 'Rehearsal' : connected ? 'Live output' : 'Offline'}</span>
       <button class={`btn sm ${edit ? 'active' : ''}`} disabled={!connected} aria-pressed={edit}
         onClick={() => { setUi({ edit: !edit }); drag.current = null; setDraft(null); }}> {edit ? 'Done positioning' : 'Position fixtures'}</button>

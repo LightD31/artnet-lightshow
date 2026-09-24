@@ -1,5 +1,7 @@
 import { transitionFor } from '../show/transition.ts';
-import { state, getLiveState, getDmxSnapshot, setExtrasProvider } from './state.ts';
+import { state, getLiveState, getDmxSnapshot, getDmxUniverses, setExtrasProvider } from './state.ts';
+import { createPublisher, ROOM } from './protocol.ts';
+import { encodeDmxFrame } from '../shared/dmx-frame.ts';
 import { setHooks, applyPatch } from './patch.ts';
 import { conductor } from './conductor.ts';
 import { currentRig } from './rig.ts';
@@ -159,9 +161,10 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   // clamp stays for a state object that did not come through validation.
   const prefetchDepth = () => Math.max(1, Math.min(5, state.autoPrefetchDepth || 1));
 
-  // Last live payload we sent, as JSON. Used to skip re-sending an identical
-  // snapshot.
-  let lastLiveJson = '';
+  // Each protocol's form of every change (protocol.ts): the whole live state
+  // for the settings page and Companion, the keys that changed for the live
+  // page.
+  const publisher = createPublisher(io);
 
   function broadcast(): void {
     // Every edit to the patch ends in a broadcast, which makes this the one
@@ -170,12 +173,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       const rig = currentRig();
       autoShow.setRig({ hasPixels: rig.hasPixels, lamps: rig.fixtures.length });
     }
-    const live = getLiveState();
-    const json = JSON.stringify(live);
-    if (json !== lastLiveJson) {
-      lastLiveJson = json;
-      io.emit('state', live);
-    }
+    publisher.publishState(getLiveState());
     midi.sendFeedback();
   }
 
@@ -895,16 +893,26 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   // DMX values on their own high-rate channel. This is the only field that
   // genuinely changes every frame; sending it alone keeps the 10 Hz payload at
   // ~100 bytes instead of ~7 KB, and lets the client re-render just the DMX
-  // views instead of the whole tree.
+  // views instead of the whole tree. Only for protocol 1 pages, and only
+  // built while one is connected.
   let lastDmxJson = '';
   const dmxTimer = setInterval(guarded('dmx-broadcast', () => {
+    if (!publisher.wants(ROOM.v1)) { lastDmxJson = ''; return; }
     const snapshot = getDmxSnapshot();
     const json = JSON.stringify(snapshot);
     if (json === lastDmxJson) return;      // blackout / idle rig: nothing to send
     lastDmxJson = json;
-    io.emit('dmx', snapshot);
+    io.to(ROOM.v1).emit('dmx', snapshot);
   }), 100);
   if (dmxTimer.unref) dmxTimer.unref();
+
+  // And as bytes, thirty times a second, to the protocol 2 pages that have
+  // asked for it — the monitor open, a preview showing live output.
+  const dmxFrameTimer = setInterval(guarded('dmx-frame', () => {
+    if (!publisher.wants(ROOM.dmx)) { publisher.resetDmx(); return; }
+    publisher.sendDmxFrame(encodeDmxFrame(getDmxUniverses()));
+  }), 1000 / 30);
+  if (dmxFrameTimer.unref) dmxFrameTimer.unref();
 
   // Some status fields drift without any explicit event — `authenticated` on
   // the now-playing and Deezer sources expires on a staleness timer, and
@@ -916,6 +924,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
 
   return {
     broadcast,
+    publisher,
     warmer,
     hybrid,
     prefetchNextFromQueue,

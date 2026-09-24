@@ -1,4 +1,4 @@
-import { stateSig, send } from '../state.js';
+import { send, pick } from '../state.js';
 
 /**
  * What the auto-show will play next, and how far ahead to analyse.
@@ -31,7 +31,7 @@ const STATUS_LABEL = {
  * Prefer whichever list has entries; fall back to a connected source so the
  * panel can still explain itself when nothing is queued yet.
  */
-function activeQueue(s) {
+export function activeQueue(s) {
   const spotify = Array.isArray(s.spotifyPrefetch) ? s.spotifyPrefetch : [];
   const deezer = Array.isArray(s.deezerPrefetch) ? s.deezerPrefetch : [];
 
@@ -60,7 +60,7 @@ function Row({ slot, position }) {
 }
 
 export function Queue() {
-  const s = stateSig.value;
+  const s = pick(['autoPrefetchDepth', 'deezer', 'deezerPrefetch', 'spotify', 'spotifyPrefetch']);
   const queue = activeQueue(s);
   if (!queue) return null;
 
@@ -73,7 +73,7 @@ export function Queue() {
   return (
     <section class="panel queue-panel">
       <header class="panel-head">
-        <h3 class="panel-title">Up next</h3>
+        <h2 class="panel-title">Up next</h2>
         <span class="panel-tag">{queue.source}</span>
         <div class="queue-depth">
           <span class="queue-depth-label" id="queue-depth-label">Analyse ahead</span>

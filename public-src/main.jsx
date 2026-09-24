@@ -1,6 +1,7 @@
 import { render } from 'preact';
 import { useState, useEffect } from 'preact/hooks';
-import { stateSig } from './state.js';
+import { field } from './state.js';
+import { setUpDevice } from './device.js';
 
 import { Header } from './components/Header.jsx';
 import { CommandBar } from './components/CommandBar.jsx';
@@ -14,36 +15,69 @@ import { StagePreview } from './components/StagePreview.jsx';
 import { BottomDrawer } from './components/BottomDrawer.jsx';
 import { ConnectionVeil } from './components/ConnectionVeil.jsx';
 import { ShortcutsOverlay } from './components/Shortcuts.jsx';
+import { Perform } from './components/Perform.jsx';
+
+// The views, in the order the tabs show them. The keys are the digit that
+// jumps to each, and the hash that opens the page on it — a tablet at front of
+// house bookmarks /#perform.
+const VIEWS = [
+  { id: 'manual', key: '1', icon: '◧', label: 'Manual', hint: 'Patterns · Colours · Fixtures' },
+  { id: 'auto', key: '2', icon: '✦', label: 'Auto Show', hint: 'Spotify · Now Playing · PRO DJ LINK' },
+  { id: 'perform', key: '3', icon: '◉', label: 'Perform', hint: 'Pads · Palettes · Faders' },
+];
+const VIEW_IDS = VIEWS.map((v) => v.id);
+
+function initialView() {
+  const hash = window.location.hash.replace('#', '');
+  if (VIEW_IDS.includes(hash)) return hash;
+  try {
+    const saved = localStorage.getItem('lightshow.mode');
+    return VIEW_IDS.includes(saved) ? saved : 'manual';
+  } catch {
+    return 'manual';
+  }
+}
 
 function ModeTabs({ mode, setMode }) {
   // Subscribes here rather than in Root, so an auto-show status change re-renders
   // this tab strip alone instead of the whole tree.
-  const s = stateSig.value;
-  const autoActive = !!(s.autoShow && s.autoShow.status && s.autoShow.status !== 'idle');
+  const autoShow = field('autoShow').value;
+  const autoActive = !!(autoShow && autoShow.status && autoShow.status !== 'idle');
+
+  // A tab strip is one stop in the tab order: the arrow keys, Home and End
+  // move between its tabs (the ARIA tabs pattern).
+  const onKeyDown = (e) => {
+    const at = VIEW_IDS.indexOf(mode);
+    const to = e.key === 'ArrowRight' ? (at + 1) % VIEWS.length
+      : e.key === 'ArrowLeft' ? (at - 1 + VIEWS.length) % VIEWS.length
+        : e.key === 'Home' ? 0 : e.key === 'End' ? VIEWS.length - 1 : -1;
+    if (to < 0) return;
+    e.preventDefault();
+    setMode(VIEW_IDS[to]);
+    document.getElementById(`tab-${VIEW_IDS[to]}`)?.focus();
+  };
 
   return (
-    <div class="mode-tabs" role="tablist">
-      <button
-        role="tab"
-        aria-selected={mode === 'manual'}
-        class={`mode-tab ${mode === 'manual' ? 'active' : ''}`}
-        onClick={() => setMode('manual')}
-      >
-        <span class="mode-tab-icon">◧</span>
-        <span class="mode-tab-label">Manual</span>
-        <span class="mode-tab-hint">Patterns · Colours · Fixtures</span>
-      </button>
-      <button
-        role="tab"
-        aria-selected={mode === 'auto'}
-        class={`mode-tab ${mode === 'auto' ? 'active' : ''}`}
-        onClick={() => setMode('auto')}
-      >
-        <span class="mode-tab-icon">✦</span>
-        <span class="mode-tab-label">Auto Show</span>
-        <span class="mode-tab-hint">{autoActive ? 'Running' : 'Spotify · Now Playing · PRO DJ LINK'}</span>
-        {autoActive && <span class="mode-tab-dot" />}
-      </button>
+    <div class={`mode-tabs in-${mode}`} role="tablist" aria-label="Views" onKeyDown={onKeyDown}>
+      {VIEWS.map((v) => (
+        <button
+          key={v.id}
+          id={`tab-${v.id}`}
+          role="tab"
+          type="button"
+          aria-selected={mode === v.id}
+          aria-controls={`panel-${v.id}`}
+          tabIndex={mode === v.id ? 0 : -1}
+          class={`mode-tab ${mode === v.id ? 'active' : ''}`}
+          onClick={() => setMode(v.id)}
+        >
+          <span class="mode-tab-icon" aria-hidden="true">{v.icon}</span>
+          <span class="mode-tab-label">{v.label}</span>
+          <span class="mode-tab-hint">{v.id === 'auto' && autoActive ? 'Running' : v.hint}</span>
+          {v.id === 'auto' && autoActive && <span class="mode-tab-dot" aria-hidden="true" />}
+          <kbd class="mode-tab-key" aria-hidden="true">{v.key}</kbd>
+        </button>
+      ))}
     </div>
   );
 }
@@ -71,20 +105,29 @@ function Root() {
   // Deliberately reads no signals. Subscribing the root made every component in
   // the tree re-render on every push; each component now subscribes to what it
   // actually needs.
-  const [mode, setMode] = useState(() => {
-    const saved = localStorage.getItem('lightshow.mode');
-    return saved === 'auto' ? 'auto' : 'manual';
-  });
+  const [mode, setMode] = useState(initialView);
 
-  useEffect(() => { localStorage.setItem('lightshow.mode', mode); }, [mode]);
+  useEffect(() => {
+    try { localStorage.setItem('lightshow.mode', mode); } catch { /* private mode */ }
+    if (window.location.hash.replace('#', '') !== mode) window.history.replaceState(null, '', `#${mode}`);
+  }, [mode]);
 
-  // Keyboard shortcuts: 1 → Manual, 2 → Auto
+  useEffect(() => {
+    const onHash = () => {
+      const hash = window.location.hash.replace('#', '');
+      if (VIEW_IDS.includes(hash)) setMode(hash);
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+
+  // Keyboard shortcuts: 1 → Manual, 2 → Auto, 3 → Perform
   useEffect(() => {
     const onKey = (e) => {
       if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) || e.target.isContentEditable) return;
-      if (e.key === '1') setMode('manual');
-      else if (e.key === '2') setMode('auto');
+      const view = VIEWS.find((v) => v.key === e.key);
+      if (view) setMode(view.id);
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -92,17 +135,29 @@ function Root() {
 
   return (
     <>
+      {/* Focuses the view without touching the hash, which names the view. */}
+      <a class="skip-link" href="#main" onClick={(e) => {
+        e.preventDefault();
+        document.getElementById(`panel-${mode}`)?.focus();
+      }}>Skip to the controls</a>
       <Header />
-      <CommandBar />
-      <ModeTabs mode={mode} setMode={setMode} />
-      <main class={`mode-${mode}`}>
-        {mode === 'manual' ? <ManualView /> : <AutoView />}
+      {mode !== 'perform' && <CommandBar />}
+      <nav class="mode-nav" aria-label="Views">
+        <ModeTabs mode={mode} setMode={setMode} />
+      </nav>
+      <main id="main" class={`mode-${mode}`}>
+        <div id={`panel-${mode}`} class="view-panel" role="tabpanel" aria-labelledby={`tab-${mode}`} tabIndex={-1}>
+          {mode === 'manual' ? <ManualView /> : mode === 'auto' ? <AutoView /> : <Perform />}
+        </div>
       </main>
-      <BottomDrawer />
-      <ShortcutsOverlay />
+      <footer class="app-footer">
+        {mode !== 'perform' && <BottomDrawer />}
+        <ShortcutsOverlay />
+      </footer>
       <ConnectionVeil />
     </>
   );
 }
 
+setUpDevice();
 render(<Root />, document.getElementById('app'));

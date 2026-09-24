@@ -29,3 +29,7 @@ public/app.bundle.js.map
 
 # The environment `uv sync` makes for the analysis (see pyproject.toml).
 .venv/
+
+# Playwright output (npm run test:e2e)
+test-results/
+playwright-report/

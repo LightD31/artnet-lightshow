@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import { stateSig, api, toast } from '../state.js';
+import { api, toast, pick } from '../state.js';
 
 // Progress rides the state broadcast, so this component only ever posts.
 // Failures surface as toasts via api().
@@ -107,7 +107,7 @@ function SpotifyPlaylist({ ready, canReadPrivate, running, onWarm }) {
 }
 
 export function Warm() {
-  const s = stateSig.value;
+  const s = pick(['warm', 'spotify']);
   const warm = s.warm || { running: false, total: 0, done: 0, ready: 0, failed: 0, tracks: [] };
   const [text, setText] = useState('');
   const [open, setOpen] = useState(false);

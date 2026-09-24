@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'preact/hooks';
-import { stateSig, send } from '../state.js';
+import { send, pick } from '../state.js';
 import { colorToCss } from '../utils.js';
 
 const SLOTS = [
@@ -96,7 +96,7 @@ function pairedSlot(slot) {
 }
 
 export function Colors() {
-  const s = stateSig.value;
+  const s = pick(['colorA', 'colorB', 'colorC', 'colorD', 'colorPresets', 'palette', 'palettes']);
   const presets = s.colorPresets || [];
   const [activeSlot, setActiveSlot] = useState('colorA');
   // Roving tabindex: the grid is one stop in the tab order and the arrow keys

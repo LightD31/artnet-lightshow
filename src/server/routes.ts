@@ -13,7 +13,7 @@ import { BUILTIN_PROFILE_ID, isBuiltinProfile, MAX_FIXTURES, UNIVERSE_SIZE, endC
 import { MAX_UNIVERSES } from './universes.ts';
 import { footprintOf, universeCount } from '../shared/placement.ts';
 import { ddpConflict } from './ddp-routes.ts';
-import { cues, cueWriteSchema, cueRestoreSchema, reorderSchema } from './cues.ts';
+import { cues as defaultCues, cueWriteSchema, cueRestoreSchema, reorderSchema } from './cues.ts';
 import { showStore, snapshotShow, applyShow } from './show-store.ts';
 import { barProfile } from './bar-profile.ts';
 import { parseOfl } from './ofl.ts';
@@ -35,9 +35,10 @@ import * as pythonEnv from '../python-env.ts';
 import {
   keyForSpotify, keyForYouTube, keyForQuery, keyForLocalFile, keyForBuffer,
 } from '../analysis-cache.ts';
-import { HttpError, messageOf, statusOf } from '../errors.ts';
+import { HttpError, messageOf, statusOf, isCancelled } from '../errors.ts';
 import type { Express, NextFunction, Request, RequestHandler, Response } from 'express';
 import type AutoShow from '../auto-show.ts';
+import type { CueStore } from './cues.ts';
 import type { AnalysisCache } from '../analysis-cache.ts';
 import type DeezerSource from '../deezer-source.ts';
 import type MidiController from '../midi.ts';
@@ -69,6 +70,8 @@ export interface RouteDeps {
   oflLibrary?: OflLibrary;
   /** Finding and asking WLEDs; the real network unless a test stands in. */
   wled?: WledClient;
+  /** The cue stack; the one saved in config/cues.json unless a test stands in. */
+  cues?: CueStore;
 }
 
 /** What the operator typed into "Analyse", classified (see classifyAnalyzeSource). */
@@ -148,6 +151,7 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
   const { midi, autoShow, spotify, nowPlaying, deezerSource, prolink, analysisCache, integrations, applier } = deps;
   const oflLibrary = deps.oflLibrary || createOflLibrary();
   const wled = deps.wled || wledClient;
+  const cues = deps.cues || defaultCues;
 
   // ─── State ────────────────────────────────────────────────────────────────
   app.get('/api/state', (_req, res) => res.json(getClientState()));
@@ -778,13 +782,17 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
     } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
+  // A recapture answers with the look it replaced too, so the page can offer
+  // an undo: overwriting a cue with the wrong look was one click from gone.
   app.put('/api/cues/:id', (req, res) => {
     try {
       const body = validate(cueWriteSchema, req.body || {}, 'cue');
+      const existing = cues.get(req.params.id);
+      const previous = body.recapture && existing ? JSON.parse(JSON.stringify(existing.look)) : undefined;
       const cue = cues.update(req.params.id, body);
       if (!cue) return res.status(404).json({ ok: false, error: 'No such cue' });
       integrations.broadcast();
-      res.json({ ok: true, cue });
+      res.json({ ok: true, cue, ...(previous ? { previous } : {}) });
     } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
@@ -937,10 +945,50 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
 
   // ─── Auto-show ────────────────────────────────────────────────────────────
 
+  /**
+   * `start: true` on an analyse request: start the show once the analysis is
+   * in. Held on the server, so it happens whether or not the page that asked
+   * is still open or on the same tab — it used to wait in the page, and a
+   * tab switch mid-analysis lost it. A stop or a cancel in between calls it
+   * off, and so does a newer request.
+   */
+  function wantStart(req: Request): symbol | null {
+    const start = req.body && (req.body.start === true || req.body.start === 'true');
+    if (!start) return null;
+    const token = Symbol('start');
+    autoShow.startPending = token;
+    integrations.broadcast();
+    return token;
+  }
+
+  /** Start the show if the start that `token` asked for still stands. */
+  function startIfWanted(token: symbol | null): boolean {
+    if (!token || autoShow.startPending !== token) return false;
+    autoShow.startPending = null;
+    integrations.startAutoShow();
+    return true;
+  }
+
+  /**
+   * An analysis that did not finish. One the operator called off, or a
+   * newer track overtook, is not an error to show them.
+   */
+  function analysisFailed(res: Response, err: unknown, token: symbol | null): void {
+    if (token && autoShow.startPending === token) autoShow.startPending = null;
+    integrations.broadcast();
+    const overtaken = !!err && typeof err === 'object' && (err as { superseded?: unknown }).superseded === true;
+    if (isCancelled(err) || overtaken) {
+      res.status(409).json({ ok: false, cancelled: true, error: messageOf(err) });
+      return;
+    }
+    res.status(statusOf(err) || 500).json({ ok: false, error: messageOf(err) });
+  }
+
   app.post('/api/auto/analyze', asyncHandler(async (req, res) => {
     const { source } = req.body || {};
     if (!source) return res.status(400).json({ ok: false, error: 'Provide a source (file path, URL, or YouTube search)' });
 
+    const start = wantStart(req);
     try {
       const input = classifyAnalyzeSource(source);
       if (input.kind === 'local') {
@@ -956,10 +1004,11 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
         const cacheKey = keyForYouTube(input.source) || keyForQuery(input.source);
         await autoShow.downloadAndAnalyze(input.source, null, cacheKey);
       }
+      const started = startIfWanted(start);
       integrations.broadcast();
-      res.json({ ok: true, analysis: autoShow.getClientState().analysis });
+      res.json({ ok: true, started, analysis: autoShow.getClientState().analysis });
     } catch (err) {
-      res.status(statusOf(err) || 500).json({ ok: false, error: messageOf(err) });
+      analysisFailed(res, err, start);
     }
   }));
 
@@ -978,8 +1027,9 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
     keyFor?: (playing: NowPlaying) => string | null;
     after?: () => unknown;
   }): RequestHandler {
-    return asyncHandler(async (_req, res) => {
+    return asyncHandler(async (req, res) => {
       if (!source.authenticated) return res.status(400).json({ ok: false, error: notConnected });
+      const start = wantStart(req);
       try {
         const playing = await source.getCurrentlyPlaying();
         if (!playing) return res.status(400).json({ ok: false, error: nothingPlaying });
@@ -994,11 +1044,12 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
         const cacheKey = keyFor(playing) || keyForQuery(query);
         await autoShow.downloadAndAnalyze(query, playing.durationMs / 1000, cacheKey, playing.isrc);
 
+        const started = startIfWanted(start);
         integrations.broadcast();
-        res.json({ ok: true, track: autoShow.track, analysis: autoShow.getClientState().analysis });
+        res.json({ ok: true, started, track: autoShow.track, analysis: autoShow.getClientState().analysis });
         if (after) after();
       } catch (err) {
-        res.status(500).json({ ok: false, error: messageOf(err) });
+        analysisFailed(res, err, start);
       }
     });
   }
@@ -1026,15 +1077,17 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
   app.post('/api/auto/download-analyze', asyncHandler(async (req, res) => {
     const { query } = req.body || {};
     if (!query) return res.status(400).json({ ok: false, error: 'Provide a query (YouTube URL or search terms)' });
+    const start = wantStart(req);
     try {
       autoShow.track = { name: query, artist: '', album: '', albumArt: null };
       integrations.broadcast();
       const cacheKey = keyForYouTube(query) || keyForQuery(query);
       await autoShow.downloadAndAnalyze(query, null, cacheKey);
+      const started = startIfWanted(start);
       integrations.broadcast();
-      res.json({ ok: true, analysis: autoShow.getClientState().analysis });
+      res.json({ ok: true, started, analysis: autoShow.getClientState().analysis });
     } catch (err) {
-      res.status(500).json({ ok: false, error: messageOf(err) });
+      analysisFailed(res, err, start);
     }
   }));
 
@@ -1048,6 +1101,7 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
       return res.status(400).json({ ok: false, error: `Not an audio file (${AUDIO_EXTENSIONS.join(', ')})` });
     }
     const tmpPath = path.join(os.tmpdir(), `auto-analyze-${crypto.randomUUID()}${ext}`);
+    const start = wantStart(req);
     try {
       // Async on purpose: this buffer can be 50 MB, and a synchronous write of
       // that size stalls the event loop — which here means the 44 Hz Art-Net
@@ -1056,20 +1110,22 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
       autoShow.track = { name: req.file.originalname, artist: 'Local file', album: '', albumArt: null };
       const cacheKey = keyForBuffer(req.file.buffer);
       await autoShow.analyze(tmpPath, cacheKey);
+      const started = startIfWanted(start);
       integrations.broadcast();
-      res.json({ ok: true, track: autoShow.track, analysis: autoShow.getClientState().analysis });
+      res.json({ ok: true, started, track: autoShow.track, analysis: autoShow.getClientState().analysis });
     } catch (err) {
-      res.status(500).json({ ok: false, error: messageOf(err) });
+      analysisFailed(res, err, start);
     } finally {
       await fsp.unlink(tmpPath).catch(() => { /* already gone */ });
     }
   }));
 
-  app.post('/api/auto/analyze-prolink', asyncHandler(async (_req, res) => {
+  app.post('/api/auto/analyze-prolink', asyncHandler(async (req, res) => {
     if (!prolink.connected) return res.status(400).json({ ok: false, error: 'PRO DJ LINK not connected' });
     const track = prolink.getTrack();
     if (!track) return res.status(400).json({ ok: false, error: 'No track on the deck the show follows' });
 
+    const start = wantStart(req);
     try {
       autoShow.track = {
         name: track.title || `Track ${track.trackId}`, artist: track.artist || 'PRO DJ LINK', album: track.album || '',
@@ -1079,10 +1135,11 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
 
       await integrations.analyseCdjTrack(track);
 
+      const started = startIfWanted(start);
       integrations.broadcast();
-      res.json({ ok: true, track: autoShow.track, analysis: autoShow.getClientState().analysis });
+      res.json({ ok: true, started, track: autoShow.track, analysis: autoShow.getClientState().analysis });
     } catch (err) {
-      res.status(500).json({ ok: false, error: messageOf(err) });
+      analysisFailed(res, err, start);
     }
   }));
 
@@ -1096,7 +1153,15 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
     res.json({ ok: true, source });
   });
 
+  // Call off the analysis the page is waiting on (AutoShow.cancelAnalysis).
+  app.post('/api/auto/cancel', (_req, res) => {
+    const cancelled = autoShow.cancelAnalysis();
+    integrations.broadcast();
+    res.json({ ok: true, cancelled });
+  });
+
   app.post('/api/auto/stop', (_req, res) => {
+    autoShow.startPending = null;
     integrations.stopAutoShow();
     integrations.broadcast();
     res.json({ ok: true });

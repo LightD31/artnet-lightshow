@@ -33,6 +33,38 @@ jobs:
       - name: Build client
         run: npm run build:client
 
+  # The page in a real browser against a real server: the views, protocol v2,
+  # the Perform pads, the A7.26 fixes, and axe-core on every view and theme.
+  # The server runs on its own port with a throwaway config and no output
+  # (tests/e2e/serve.js). Traces are kept when something fails.
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: End-to-end tests
+        run: npm run test:e2e
+        env:
+          CI: '1'
+
+      - name: Keep the traces of what failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7
+
   # The analysis pipeline is Python, and its correctness is not something the
   # Node tests can reach: a beat grid 40 ms out produces a perfectly valid
   # timeline full of cues that land late. So CI installs the scientific stack

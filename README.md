@@ -42,8 +42,27 @@ via **Bitfocus Companion**, and a REST API.
 - **Energy overrides** — one-touch panic effects that trump everything except
   master blackout
 - **Master controls** — global dimmer, master blackout, play/stop
-- **Cue stack** — save the look on stage under a name and recall it in one press
+- **Cue stack** — save the look on stage under a name and recall it in one
+  press; deleting or overwriting one can be undone
 - **Live DMX monitor** — real-time channel values
+
+**Running it from a tablet**
+
+- **Perform view** — the live controls laid out for a thumb: now and next,
+  sync health, big pads for blackout and every energy effect (held, or
+  latched), tap tempo, one-tap palettes, and the master and show-intensity
+  faders. Open it at `/#perform`, or press **3**
+- **Installable** — a web app manifest and icons, and a service worker that
+  keeps the app shell so a tablet reloading while the server restarts gets the
+  page back rather than a browser error (on HTTPS or localhost, where browsers
+  allow one)
+- **Keep awake and full screen** — from the header: the screen stays on through
+  the set, over plain HTTP too
+- **Themes** — dark, light, and a red night mode that draws the whole page in
+  red alone, for a dark room; or follow the system
+- **Accessible** — keyboard throughout, labelled controls, 4.5:1 text contrast
+  in every theme, 44 px targets on a touch screen, reduced motion honoured;
+  checked with axe-core on every view in CI
 
 **Automatic show**
 
@@ -1944,10 +1963,24 @@ saved through `PUT /api/settings` under `hue.channels`.
 ### Socket.IO
 
 The UI uses Socket.IO rather than polling. Clients send `set`, `override`,
-`fixture`, `tap` and `midi-connect`; the server emits `state` (full snapshot on
-connect, changed fields thereafter), `dmx` (live channel values, keyed by
-universe), `auto-position`, `midi-status`, `midi-map`, `midi-learn` and
-`error-msg`.
+`fixture`, `tap`, `energy-hold` and `midi-connect`; the server emits
+`auto-position`, `midi-status`, `midi-map`, `midi-learn` and `error-msg`, and
+the state in one of two forms, chosen when the client connects:
+
+- **Protocol 2** — asked for with `auth: { protocol: 2 }`; what the live page
+  uses. A `snapshot` on connect (`{ protocol, versions, state }`), then
+  `patch` events carrying only the keys that changed, grouped by domain (`look`,
+  `rig`, `show`, `sources`, `catalogs`, `system`) and numbered per domain:
+  `{ d, v, set, del? }`. A client that sees a gap in a domain's numbers sends
+  `sync` (with an ack) for a new snapshot. DMX goes out as `dmx-frame`, binary
+  (`src/shared/dmx-frame.ts`: per universe its number, its length and its
+  bytes), thirty times a second while it changes — volatile, and only to
+  clients that sent `subscribe: ['dmx']` (and until `unsubscribe`).
+- **Protocol 1** — anything that does not ask, such as the settings page and
+  the Bitfocus Companion module: `state` (the full snapshot on connect, the
+  whole live state again whenever any of it changes) and `dmx` (channel values
+  as JSON, keyed by universe, ten times a second — built only while such a
+  client is connected).
 
 The `fixture` message carries
 `{ id, address?, universe?, label?, profileId?, maxBrightness?, position?, group?, geometry?, output? }`.
@@ -2062,8 +2095,9 @@ Press **?** in the app for this list.
 
 | Key | Action |
 |-----|--------|
-| **Space** | Tap tempo (not while a control has focus) |
-| **1** / **2** | Manual / Auto Show tab |
+| **Space** | Tap tempo — also right after clicking a button; a control reached with Tab keeps Space for itself |
+| **1** / **2** / **3** | Manual / Auto Show / Perform view |
+| **←** **→**, **Home** / **End** on the view tabs | Next / previous / first / last view |
 | **←** **→** **↑** **↓**, **Home** / **End** | Move within the colour grid |
 | **Enter** / **Shift+Enter** | Write the focused swatch into the active slot / the paired slot (A↔B, C↔D) |
 | **Shift+click** or **right-click** | Write a swatch into the paired slot |
@@ -2078,8 +2112,9 @@ Press **?** in the app for this list.
 ```bash
 npm run lint         # ESLint
 npm run typecheck    # tsc, strict
-npm test             # node:test unit suite
+npm test             # node:test unit suite (components included)
 npm run check        # all three
+npm run test:e2e     # Playwright: the page in Chromium against a real server
 npm run preflight    # pre-show check (exits 1 if something will not work)
 npm run watch:client # rebuild the client bundle on change
 npm run dev          # server with --watch
@@ -2101,10 +2136,30 @@ Python tests validate real analyser output against it, and
 test fails when the generated file is out of date.
 
 `public/app.bundle.js` is generated from `public-src/` by esbuild and is not
-committed; `npm start` builds it automatically via `prestart`.
+committed; `npm start` builds it automatically via `prestart`. On the page, the
+state is one signal per key (`public-src/store.js`), so a component re-renders
+only for the keys it reads (`pick([...])`), and faders keep a local draft while
+they move (`public-src/draft.js`).
 
-CI runs lint, the typecheck, tests, a client build, the Python analysis tests
-and `npm audit --omit=dev` on every push and pull request.
+**Tests.** The unit suite includes the page's components, bundled by esbuild
+and rendered in Node from a state snapshot (`tests/unit/components.test.js`).
+`npm run test:e2e` runs the real server — on port 3999, with a throwaway config
+directory and no DMX output (`tests/e2e/serve.js`) — and drives the page in
+Chromium: the views, protocol 2, the Perform pads on a desktop and a touch
+tablet, the fixes, the PWA, and axe-core on every view in every theme. It uses
+the Playwright pinned in `package.json`; `npx playwright install chromium`
+fetches its browser where there is none.
+
+`LIGHTSHOW_CONFIG_DIR` points the server at another directory for
+`settings.json`, `show.json`, `cues.json` and `midi-map.json` (default:
+`config/`).
+
+The app icons (`public/icons/`) are drawn by `node scripts/make-icons.js`,
+which needs no dependencies; run it after changing the design.
+
+CI runs lint, the typecheck, tests, a client build, the end-to-end suite, the
+Python analysis tests and `npm audit --omit=dev` on every push and pull
+request.
 
 ---
 

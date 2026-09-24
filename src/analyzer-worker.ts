@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 // Generous by design: a cold start plus a long track is well
 // under this, so hitting it means something is genuinely stuck.
 import { settings } from './server/settings.ts';
-import { messageOf } from './errors.ts';
+import { messageOf, cancelledError } from './errors.ts';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { Analysis } from './show/score.ts';
 
@@ -229,6 +229,35 @@ class AnalyzerWorker {
     entry.priority = priority;
     this._insertByPriority(entry);
     this._preempt();
+  }
+
+  /**
+   * Drop the work tagged `tag`: out of the queue if it is waiting, and the
+   * process recycled if it is running — the operator has given up on that
+   * track, and minutes of CPU spent on it would only hold up the next one.
+   * Its caller is rejected with `cancelled` set (errors.ts). True if there
+   * was any.
+   */
+  cancel(tag: string | null | undefined): boolean {
+    if (!tag) return false;
+    let found = false;
+    this._queue = this._queue.filter((entry) => {
+      if (entry.tag !== tag) return true;
+      entry.reject(cancelledError());
+      found = true;
+      return false;
+    });
+    if (this._pending && this._pending.tag === tag) {
+      const running = this._pending;
+      this._pending = null;
+      this._clearTimeout();
+      console.log(`[analyzer] request ${running.id} cancelled`);
+      running.reject(cancelledError());
+      this._recycleProcess();
+      this._tick();
+      found = true;
+    }
+    return found;
   }
 
   /**

@@ -1,5 +1,5 @@
 import { useState } from 'preact/hooks';
-import { stateSig, api, toast } from '../state.js';
+import { api, toast, pick } from '../state.js';
 import { colorToCss, formatBpm } from '../utils.js';
 
 // The cue list rides the state broadcast as summaries — id, name, and enough to
@@ -37,6 +37,20 @@ function CueRow({ cue, presets, editing, setEditing }) {
           method: 'POST',
           body: JSON.stringify({ cue: res.cue, index: res.index }),
         }),
+      },
+    });
+  };
+
+  // Overwriting is as final as deleting, so it gets the same undo: the look
+  // the cue had goes back into it (A7.26).
+  const overwrite = async () => {
+    const res = await cueApi(`/${cue.id}`, { method: 'PUT', body: JSON.stringify({ recapture: true }) });
+    if (!res.ok || !res.previous) return;
+    toast.push({
+      message: `Overwrote "${cue.name}" with the look on stage`,
+      action: {
+        label: 'Undo',
+        onClick: () => cueApi(`/${cue.id}`, { method: 'PUT', body: JSON.stringify({ look: res.previous }) }),
       },
     });
   };
@@ -80,16 +94,19 @@ function CueRow({ cue, presets, editing, setEditing }) {
       <button
         class="btn icon sm"
         title="Rename"
+        aria-label={`Rename "${cue.name}"`}
         onClick={() => { setDraft(cue.name); setEditing(cue.id); }}
       >✎</button>
       <button
         class="btn icon sm"
         title="Overwrite this cue with what's on stage now"
-        onClick={() => cueApi(`/${cue.id}`, { method: 'PUT', body: JSON.stringify({ recapture: true }) })}
+        aria-label={`Overwrite "${cue.name}" with what's on stage now`}
+        onClick={overwrite}
       >⟳</button>
       <button
         class="btn icon sm danger"
         title="Delete"
+        aria-label={`Delete "${cue.name}"`}
         onClick={remove}
       >×</button>
     </div>
@@ -97,7 +114,7 @@ function CueRow({ cue, presets, editing, setEditing }) {
 }
 
 export function Cues() {
-  const s = stateSig.value;
+  const s = pick(['cues', 'colorPresets']);
   const cues = s.cues || [];
   const presets = s.colorPresets || [];
   const [editing, setEditing] = useState(null);

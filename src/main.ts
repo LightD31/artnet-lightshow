@@ -2,6 +2,7 @@ import 'dotenv/config';
 import path from 'node:path';
 import http from 'node:http';
 import express from 'express';
+import compression from 'compression';
 import { Server } from 'socket.io';
 
 import MidiController, { openMidiOutput } from './midi.ts';
@@ -25,7 +26,7 @@ import { COLOR_PRESETS, PATTERNS } from './server/presets.ts';
 import { setupIntegrations } from './server/integrations.ts';
 import { attachRoutes } from './server/routes.ts';
 import { attachSockets } from './server/sockets.ts';
-import { createAuth, configError, hostOfUrl, isLoopbackHost } from './server/auth.ts';
+import { createAuth, configError, hostOfUrl, isLoopbackHost, sourceMapsForLoopback } from './server/auth.ts';
 import { settings, CONFIG_FILE, warnAboutLegacyEnv } from './server/settings.ts';
 import { createApplier } from './server/apply.ts';
 import { midiMap } from './server/midi-map.ts';
@@ -75,6 +76,14 @@ const io = new Server(server, { allowRequest: auth.allowSocketRequest });
 // Before anything else, static files included: a page reached through a name
 // this machine is not known by is a DNS-rebinding page, and it gets nothing.
 app.use(auth.hostMiddleware);
+
+// Compressed: the bundle and the timeline documents are text, and a tablet on
+// venue Wi-Fi fetches both (A7.26). Socket.IO compresses its own messages.
+app.use(compression());
+
+// The bundle's source map is for whoever is debugging at this machine, not for
+// every phone on the venue network (A7.26).
+app.use(sourceMapsForLoopback);
 
 // Static assets stay open: they carry no secrets, and the page needs to load
 // before it can present a token. Everything that reads or changes show state

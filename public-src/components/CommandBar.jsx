@@ -1,12 +1,70 @@
-import { useEffect, useRef } from 'preact/hooks';
-import { stateSig, send, emitTap, energyHold } from '../state.js';
+import { useEffect, useState } from 'preact/hooks';
+import { send, emitTap, pick } from '../state.js';
 import { formatBpm, clockSource } from '../utils.js';
+import { useDraft } from '../draft.js';
+import { useEnergyPads } from '../energy-pad.js';
+import { focusedByPointer } from '../focus-origin.js';
 
-const DIVISIONS = [1, 2, 4, 8];
+// Steps per beat. 1/16 was in the README and on MIDI, and missing here (A7.26).
+const DIVISIONS = [1, 2, 4, 8, 16];
+
+/**
+ * Whether Space on this element taps the tempo.
+ *
+ * Space belongs to whatever is focused, and only falls through to tap tempo
+ * when that is nothing — tested on focusability rather than on a list of tag
+ * names, since the timeline canvas is a tabIndex="0" element that no list
+ * would have named, and pressing Space on it changed the BPM mid-set.
+ *
+ * With one exception: a button or fader the pointer last touched. A click
+ * leaves focus on the button, so after pressing Blackout, Space pressed
+ * Blackout again instead of tapping — the tap key stopped working after the
+ * first click of the night (A7.26). Such a control keeps Space when the
+ * keyboard brought focus to it, and hands it to the tempo when the pointer
+ * did (focus-origin.js).
+ */
+function spaceIsTap(target) {
+  if (!target || target === document.body || target === document.documentElement) return true;
+  if (target.isContentEditable) return false;
+  if (target.tagName === 'BUTTON') return focusedByPointer(target);
+  if (target.tagName === 'INPUT' && target.type === 'range') return focusedByPointer(target);
+  return !(target.tabIndex >= 0 || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
+}
+
+/**
+ * The tempo, and a way to type one (A7.26: the README promised it). Press the
+ * number and it becomes a field — to a tenth, 20 to 300 — Enter or leaving
+ * the field sets it, Escape leaves the tempo as it was.
+ */
+function BpmEntry({ bpm }) {
+  const [typing, setTyping] = useState(null);
+  if (typing === null) {
+    return (
+      <button type="button" class="cb-bpm-num" aria-label={`Tempo ${formatBpm(bpm)} BPM. Press to type a tempo.`}
+        title="Type a tempo" onClick={() => setTyping(formatBpm(bpm))}>{formatBpm(bpm)}</button>
+    );
+  }
+  const commit = () => {
+    const value = Math.round(parseFloat(typing) * 10) / 10;
+    setTyping(null);
+    if (Number.isFinite(value) && value >= 20 && value <= 300 && value !== bpm) send({ bpm: value });
+  };
+  return (
+    <input class="cb-bpm-input" type="number" inputMode="decimal" min="20" max="300" step="0.1"
+      aria-label="Tempo, BPM" value={typing} autoFocus
+      onFocus={(e) => e.currentTarget.select()}
+      onInput={(e) => setTyping(e.currentTarget.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        else if (e.key === 'Escape') { e.preventDefault(); setTyping(null); }
+      }}
+      onBlur={commit} />
+  );
+}
 
 export function CommandBar() {
-  const pressRef = useRef(null);
-  const s = stateSig.value;
+  const [, padProps] = useEnergyPads();
+  const s = pick(['bpm', 'beatDivision', 'clock', 'running', 'masterDimmer', 'masterBlackout', 'energyEffects', 'energyOverride']);
   const bpm = s.bpm || 120;
   const division = s.beatDivision || 1;
   const periodMs = (60_000 / bpm) / division;
@@ -19,13 +77,8 @@ export function CommandBar() {
   useEffect(() => {
     const onKey = (e) => {
       if (e.code !== 'Space') return;
-      if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
-      // Space belongs to whatever is focused, and only falls through to tap
-      // tempo when that is nothing. Tested on focusability rather than on a list
-      // of tag names: the timeline canvas is a tabIndex="0" element that no list
-      // would have named, and pressing Space on it changed the BPM mid-set.
-      if (e.target !== document.body && e.target.tabIndex >= 0) return;
-      if (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(e.target.tagName) || e.target.isContentEditable) return;
+      if (e.repeat || e.ctrlKey || e.altKey || e.metaKey || e.defaultPrevented) return;
+      if (!spaceIsTap(e.target)) return;
       e.preventDefault();
       emitTap();
     };
@@ -33,57 +86,19 @@ export function CommandBar() {
     return () => document.removeEventListener('keydown', onKey);
   }, []);
 
-  const dim = s.masterDimmer ?? 255;
+  const [dim, onMaster, commitMaster] = useDraft(s.masterDimmer ?? 255, (v) => send({ masterDimmer: v }));
   const masterPct = Math.round((dim / 255) * 100);
   const effects = s.energyEffects || [];
 
-  const release = () => {
-    pressRef.current = null;
-    energyHold.release();
-  };
-  useEffect(() => {
-    const hidden = () => { if (document.hidden) release(); };
-    window.addEventListener('blur', release);
-    document.addEventListener('visibilitychange', hidden);
-    return () => {
-      release();
-      window.removeEventListener('blur', release);
-      document.removeEventListener('visibilitychange', hidden);
-    };
-  }, []);
-
-  const activate = (id) => (e) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    if (energyHold.press(id)) {
-      pressRef.current = { id, pointer: e.pointerId };
-      e.currentTarget.setPointerCapture(e.pointerId);
-    }
-  };
-  const deactivate = (id) => (e) => {
-    if (pressRef.current?.id === id && pressRef.current.pointer === e.pointerId) release();
-  };
-  const keyDown = (id) => (e) => {
-    if (![' ', 'Enter'].includes(e.key)) return;
-    e.preventDefault();
-    if (!e.repeat && energyHold.press(id)) pressRef.current = { id, key: e.key };
-  };
-  const keyUp = (id) => (e) => {
-    if (pressRef.current?.id === id && pressRef.current.key === e.key) {
-      e.preventDefault();
-      release();
-    }
-  };
-
   return (
-    <div class="command-bar">
+    <section class="command-bar" aria-label="Live controls">
       {/* Tempo block */}
       <div class="cb-block cb-tempo">
         <div
           class={`cb-bpm ${pulse ? 'pulse' : ''}`}
           style={{ '--bpm-period': `${periodMs.toFixed(0)}ms` }}
         >
-          <span class="cb-bpm-num">{formatBpm(s.bpm)}</span>
+          <BpmEntry bpm={s.bpm} />
           <span class="cb-bpm-label">BPM</span>
           <span class={`cb-bpm-source ${clock.locked ? 'locked' : ''}`} title={clock.title}>{clock.label}</span>
         </div>
@@ -131,8 +146,11 @@ export function CommandBar() {
           <span class="cb-master-label">MASTER</span>
           <input
             type="range" min="0" max="255"
+            aria-label="Master dimmer"
+            aria-valuetext={`${masterPct} percent`}
             value={dim}
-            onInput={(e) => send({ masterDimmer: parseInt(e.target.value, 10) })}
+            onInput={(e) => onMaster(parseInt(e.target.value, 10))}
+            onChange={(e) => commitMaster(parseInt(e.target.value, 10))}
           />
           <span class="cb-master-val">{masterPct}%</span>
         </div>
@@ -148,14 +166,7 @@ export function CommandBar() {
             <button
               key={eff.id}
               class={`cb-energy-btn ${s.energyOverride === eff.id ? 'active' : ''}`}
-              onPointerDown={activate(eff.id)}
-              onPointerUp={deactivate(eff.id)}
-              onPointerCancel={deactivate(eff.id)}
-              onLostPointerCapture={deactivate(eff.id)}
-              onKeyDown={keyDown(eff.id)}
-              onKeyUp={keyUp(eff.id)}
-              onBlur={() => { if (pressRef.current?.id === eff.id) release(); }}
-              style={{ touchAction: 'none' }}
+              {...padProps(eff.id)}
               title={`${eff.name} — ${eff.desc} (hold)`}
             >
               <span class="cb-energy-name">{eff.name}</span>
@@ -163,6 +174,6 @@ export function CommandBar() {
           ))}
         </div>
       </div>
-    </div>
+    </section>
   );
 }

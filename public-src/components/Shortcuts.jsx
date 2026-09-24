@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
+import { useFocusTrap } from '../focus-trap.js';
 
 /**
  * Every keyboard shortcut the surface has, in one place.
@@ -17,9 +18,11 @@ export const SHORTCUTS = [
   {
     group: 'Transport',
     items: [
-      { keys: ['Space'], what: 'Tap tempo — tap along to set the BPM' },
+      { keys: ['Space'], what: 'Tap tempo — tap along to set the BPM (also after clicking a button)' },
       { keys: ['1'], what: 'Manual view' },
       { keys: ['2'], what: 'Auto Show view' },
+      { keys: ['3'], what: 'Perform view' },
+      { keys: ['←', '→'], either: true, what: 'Next or previous view, on the view tabs' },
     ],
   },
   {
@@ -36,7 +39,7 @@ export const SHORTCUTS = [
   {
     group: 'Energy effects',
     items: [
-      { keys: ['Space'], what: 'Hold a focused energy button — releases when you let go' },
+      { keys: ['Space'], what: 'Hold an energy button reached with Tab — releases when you let go' },
       { keys: ['Enter'], what: 'Hold a focused energy button' },
     ],
   },
@@ -63,6 +66,8 @@ function isTyping(target) {
 
 export function ShortcutsOverlay() {
   const [open, setOpen] = useState(false);
+  const panelRef = useRef(null);
+  useFocusTrap(panelRef, open, () => setOpen(false));
 
   useEffect(() => {
     const onKey = (e) => {
@@ -77,54 +82,62 @@ export function ShortcutsOverlay() {
     return () => document.removeEventListener('keydown', onKey);
   }, [open]);
 
-  if (!open) {
-    return (
-      <button
-        type="button"
-        class="shortcuts-tab"
-        aria-label="Keyboard shortcuts"
-        title="Keyboard shortcuts (?)"
-        onClick={() => setOpen(true)}
-      >?</button>
-    );
-  }
+  // The opener stays on the page while the dialog is up, so closing it can
+  // hand focus back to it.
+  const opener = (
+    <button
+      type="button"
+      class="shortcuts-tab"
+      aria-label="Keyboard shortcuts"
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      title="Keyboard shortcuts (?)"
+      onClick={() => setOpen(true)}
+    >?</button>
+  );
+  if (!open) return opener;
 
   return (
-    <div class="shortcuts-veil" onClick={() => setOpen(false)}>
-      <div
-        class="shortcuts-panel"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Keyboard shortcuts"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div class="shortcuts-head">
-          <h2>Keyboard shortcuts</h2>
-          <button type="button" class="btn sm" onClick={() => setOpen(false)}>Close</button>
-        </div>
-        <div class="shortcuts-groups">
-          {SHORTCUTS.map((group) => (
-            <section key={group.group}>
-              <h3>{group.group}</h3>
-              <dl>
-                {group.items.map((item) => (
-                  <div key={item.what} class="shortcuts-row">
-                    <dt>
-                      {item.keys.map((key, i) => (
-                        <span key={key}>
-                          {i > 0 && <span class="shortcuts-plus">{item.either ? '/' : '+'}</span>}
-                          <kbd>{key}</kbd>
-                        </span>
-                      ))}
-                    </dt>
-                    <dd>{item.what}</dd>
-                  </div>
-                ))}
-              </dl>
-            </section>
-          ))}
+    <>
+      {opener}
+      <div class="shortcuts-veil" onClick={() => setOpen(false)}>
+        <div
+          ref={panelRef}
+          tabIndex={-1}
+          class="shortcuts-panel"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Keyboard shortcuts"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div class="shortcuts-head">
+            <h2>Keyboard shortcuts</h2>
+            <button type="button" class="btn sm" onClick={() => setOpen(false)}>Close</button>
+          </div>
+          <div class="shortcuts-groups">
+            {SHORTCUTS.map((group) => (
+              <section key={group.group}>
+                <h3>{group.group}</h3>
+                <dl>
+                  {group.items.map((item) => (
+                    <div key={item.what} class="shortcuts-row">
+                      <dt>
+                        {item.keys.map((key, i) => (
+                          <span key={key}>
+                            {i > 0 && <span class="shortcuts-plus">{item.either ? '/' : '+'}</span>}
+                            <kbd>{key}</kbd>
+                          </span>
+                        ))}
+                      </dt>
+                      <dd>{item.what}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+            ))}
+          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }
