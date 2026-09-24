@@ -66,13 +66,19 @@ export default [
 
   // ── Node server (ES modules) ──────────────────────────────────────────────
   {
-    files: ['server.js', 'eslint.config.js', 'src/**/*.js', 'scripts/**/*.js', 'tests/**/*.js'],
+    files: ['server.js', 'eslint.config.js', 'playwright.config.js', 'src/**/*.js', 'scripts/**/*.js', 'tests/**/*.js'],
     languageOptions: {
       ecmaVersion: 2024,
       sourceType: 'module',
       globals: NODE_GLOBALS,
     },
     rules: { ...js.configs.recommended.rules, ...COMMON_RULES },
+  },
+
+  // ── End-to-end specs: Node, and the page code they hand to the browser ────
+  {
+    files: ['tests/e2e/**/*.js'],
+    languageOptions: { globals: { ...NODE_GLOBALS, ...BROWSER_GLOBALS } },
   },
 
   // ── Node server, TypeScript ───────────────────────────────────────────────

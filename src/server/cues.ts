@@ -11,6 +11,7 @@ import { COLOR_PRESETS } from './presets.ts';
 import { PIXEL_MAPS } from '../shared/rig.ts';
 import { HttpError, codeOf, messageOf } from '../errors.ts';
 import type { OverrideInput } from './validation.ts';
+import { configFile } from './config-dir.ts';
 
 /**
  * Named looks, saved and recalled.
@@ -354,7 +355,7 @@ class CueStore {
 
 // Fixed location for the same reason settings.json is: it is how you *find* the
 // cues, not itself a setting. Tests construct their own CueStore.
-const CUES_FILE = path.join(import.meta.dirname, '..', '..', 'config', 'cues.json');
+const CUES_FILE = configFile('cues.json');
 const cues = new CueStore(CUES_FILE).load();
 
 export {

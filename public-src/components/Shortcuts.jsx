@@ -82,56 +82,62 @@ export function ShortcutsOverlay() {
     return () => document.removeEventListener('keydown', onKey);
   }, [open]);
 
-  if (!open) {
-    return (
-      <button
-        type="button"
-        class="shortcuts-tab"
-        aria-label="Keyboard shortcuts"
-        title="Keyboard shortcuts (?)"
-        onClick={() => setOpen(true)}
-      >?</button>
-    );
-  }
+  // The opener stays on the page while the dialog is up, so closing it can
+  // hand focus back to it.
+  const opener = (
+    <button
+      type="button"
+      class="shortcuts-tab"
+      aria-label="Keyboard shortcuts"
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      title="Keyboard shortcuts (?)"
+      onClick={() => setOpen(true)}
+    >?</button>
+  );
+  if (!open) return opener;
 
   return (
-    <div class="shortcuts-veil" onClick={() => setOpen(false)}>
-      <div
-        ref={panelRef}
-        tabIndex={-1}
-        class="shortcuts-panel"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Keyboard shortcuts"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div class="shortcuts-head">
-          <h2>Keyboard shortcuts</h2>
-          <button type="button" class="btn sm" onClick={() => setOpen(false)}>Close</button>
-        </div>
-        <div class="shortcuts-groups">
-          {SHORTCUTS.map((group) => (
-            <section key={group.group}>
-              <h3>{group.group}</h3>
-              <dl>
-                {group.items.map((item) => (
-                  <div key={item.what} class="shortcuts-row">
-                    <dt>
-                      {item.keys.map((key, i) => (
-                        <span key={key}>
-                          {i > 0 && <span class="shortcuts-plus">{item.either ? '/' : '+'}</span>}
-                          <kbd>{key}</kbd>
-                        </span>
-                      ))}
-                    </dt>
-                    <dd>{item.what}</dd>
-                  </div>
-                ))}
-              </dl>
-            </section>
-          ))}
+    <>
+      {opener}
+      <div class="shortcuts-veil" onClick={() => setOpen(false)}>
+        <div
+          ref={panelRef}
+          tabIndex={-1}
+          class="shortcuts-panel"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Keyboard shortcuts"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div class="shortcuts-head">
+            <h2>Keyboard shortcuts</h2>
+            <button type="button" class="btn sm" onClick={() => setOpen(false)}>Close</button>
+          </div>
+          <div class="shortcuts-groups">
+            {SHORTCUTS.map((group) => (
+              <section key={group.group}>
+                <h3>{group.group}</h3>
+                <dl>
+                  {group.items.map((item) => (
+                    <div key={item.what} class="shortcuts-row">
+                      <dt>
+                        {item.keys.map((key, i) => (
+                          <span key={key}>
+                            {i > 0 && <span class="shortcuts-plus">{item.either ? '/' : '+'}</span>}
+                            <kbd>{key}</kbd>
+                          </span>
+                        ))}
+                      </dt>
+                      <dd>{item.what}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+            ))}
+          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }

@@ -3,6 +3,7 @@ import { send, emitTap, pick } from '../state.js';
 import { formatBpm, clockSource } from '../utils.js';
 import { useDraft } from '../draft.js';
 import { useEnergyPads } from '../energy-pad.js';
+import { focusedByPointer } from '../focus-origin.js';
 
 // Steps per beat. 1/16 was in the README and on MIDI, and missing here (A7.26).
 const DIVISIONS = [1, 2, 4, 8, 16];
@@ -19,15 +20,14 @@ const DIVISIONS = [1, 2, 4, 8, 16];
  * leaves focus on the button, so after pressing Blackout, Space pressed
  * Blackout again instead of tapping — the tap key stopped working after the
  * first click of the night (A7.26). Such a control keeps Space when the
- * keyboard brought focus to it (:focus-visible), and hands it to the tempo
- * when the pointer did.
+ * keyboard brought focus to it, and hands it to the tempo when the pointer
+ * did (focus-origin.js).
  */
 function spaceIsTap(target) {
   if (!target || target === document.body || target === document.documentElement) return true;
   if (target.isContentEditable) return false;
-  const pointerFocused = typeof target.matches === 'function' && !target.matches(':focus-visible');
-  if (target.tagName === 'BUTTON') return pointerFocused;
-  if (target.tagName === 'INPUT' && target.type === 'range') return pointerFocused;
+  if (target.tagName === 'BUTTON') return focusedByPointer(target);
+  if (target.tagName === 'INPUT' && target.type === 'range') return focusedByPointer(target);
   return !(target.tabIndex >= 0 || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
 }
 

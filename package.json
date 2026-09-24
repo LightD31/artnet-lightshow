@@ -16,7 +16,8 @@
     "typecheck": "tsc -p tsconfig.json",
     "gen:analysis-types": "node scripts/gen-analysis-types.ts",
     "test": "node --test",
-    "check": "npm run lint && npm run typecheck && npm test"
+    "check": "npm run lint && npm run typecheck && npm test",
+    "test:e2e": "npm run build:client && playwright test"
   },
   "engines": {
     "node": ">=22.18"
@@ -42,12 +43,15 @@
     "alphatheta-connect": "0.27.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.56.1",
     "@types/compression": "^1.8.1",
     "@types/express": "^5.0.6",
     "@types/multer": "^2.2.0",
     "@types/node": "^22.20.4",
+    "axe-core": "^4.11.0",
     "esbuild": "^0.25.12",
     "eslint": "^9.39.5",
+    "preact-render-to-string": "^6.7.0",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.70.1"
   },

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { SYNC_OFFSET_LIMIT_MS } from './presets.ts';
 import { HttpError, codeOf, messageOf } from '../errors.ts';
+import { configFile } from './config-dir.ts';
 
 /**
  * Persisted configuration, owned by the settings page.
@@ -619,7 +620,7 @@ function warnAboutLegacyEnv(env: NodeJS.ProcessEnv = process.env,
 // The file location is fixed on purpose: it is how you *find* the settings, not
 // itself a setting, and leaving it env-configurable would reintroduce the split
 // brain this change removes. Tests construct their own SettingsStore instead.
-const CONFIG_FILE = path.join(import.meta.dirname, '..', '..', 'config', 'settings.json');
+const CONFIG_FILE = configFile('settings.json');
 //
 // Loaded on construction so require order cannot matter: state.js reads
 // settings.group('artnet') at module scope, and it must see the stored values

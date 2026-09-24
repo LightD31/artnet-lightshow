@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { energyHold } from './state.js';
+import { focusedByPointer } from './focus-origin.js';
 
 /**
  * Energy effects on buttons: the command bar's strip and the Perform view's
@@ -70,7 +71,7 @@ export function useEnergyPads({ latch = false } = {}) {
       if (![' ', 'Enter'].includes(e.key)) return;
       // Space on a pad the pointer last touched is the tap-tempo key
       // (CommandBar spaceIsTap), not a press.
-      if (e.key === ' ' && !e.currentTarget.matches(':focus-visible')) return;
+      if (e.key === ' ' && focusedByPointer(e.currentTarget)) return;
       e.preventDefault();
       if (!e.repeat) press(id, { key: e.key });
     },
