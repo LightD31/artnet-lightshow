@@ -896,7 +896,7 @@ function renderPatchTable() {
   const conflicts = detectConflicts(state.fixtures);
 
   tbody.innerHTML = '';
-  state.fixtures.forEach((fix) => {
+  state.fixtures.forEach((fix, index) => {
     const profile = profiles[fix.profileId] || {};
     const chCount = profile.channelCount || 12;
     const parts = footprint(fix, profile);
@@ -907,7 +907,10 @@ function renderPatchTable() {
 
     const tr = document.createElement('tr');
 
-    const idCell = el('td', null, fix.id + 1);
+    // The fixture's place in the patch, as the stage plot numbers it. Its id
+    // (what cues and MIDI refer to it by) never changes, so after a delete
+    // numbering by id left gaps and disagreed with the live page (A7.26).
+    const idCell = el('td', null, index + 1);
     idCell.style.color = 'var(--muted)';
     idCell.style.fontFamily = 'monospace';
     tr.appendChild(idCell);
@@ -1099,6 +1102,14 @@ document.getElementById('load-show-file').addEventListener('change', async (e) =
   if (!file) return;
 
   const statusEl = document.getElementById('show-status');
+  // Loading replaces the patch, the profiles and the look on stage, and there
+  // is no undo for it — so it asks first (A7.26). Save the show first to keep it.
+  const replace = window.confirm(`Load "${file.name}"?\n\nIt replaces the patch, the fixture profiles `
+    + 'and the look on stage now. Save the current show first if you want to keep it.');
+  if (!replace) {
+    e.target.value = '';
+    return;
+  }
   try {
     const text = await file.text();
     const showData = JSON.parse(text);

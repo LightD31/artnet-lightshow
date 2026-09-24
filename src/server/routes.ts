@@ -13,7 +13,7 @@ import { BUILTIN_PROFILE_ID, isBuiltinProfile, MAX_FIXTURES, UNIVERSE_SIZE, endC
 import { MAX_UNIVERSES } from './universes.ts';
 import { footprintOf, universeCount } from '../shared/placement.ts';
 import { ddpConflict } from './ddp-routes.ts';
-import { cues, cueWriteSchema, cueRestoreSchema, reorderSchema } from './cues.ts';
+import { cues as defaultCues, cueWriteSchema, cueRestoreSchema, reorderSchema } from './cues.ts';
 import { showStore, snapshotShow, applyShow } from './show-store.ts';
 import { barProfile } from './bar-profile.ts';
 import { parseOfl } from './ofl.ts';
@@ -38,6 +38,7 @@ import {
 import { HttpError, messageOf, statusOf, isCancelled } from '../errors.ts';
 import type { Express, NextFunction, Request, RequestHandler, Response } from 'express';
 import type AutoShow from '../auto-show.ts';
+import type { CueStore } from './cues.ts';
 import type { AnalysisCache } from '../analysis-cache.ts';
 import type DeezerSource from '../deezer-source.ts';
 import type MidiController from '../midi.ts';
@@ -69,6 +70,8 @@ export interface RouteDeps {
   oflLibrary?: OflLibrary;
   /** Finding and asking WLEDs; the real network unless a test stands in. */
   wled?: WledClient;
+  /** The cue stack; the one saved in config/cues.json unless a test stands in. */
+  cues?: CueStore;
 }
 
 /** What the operator typed into "Analyse", classified (see classifyAnalyzeSource). */
@@ -148,6 +151,7 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
   const { midi, autoShow, spotify, nowPlaying, deezerSource, prolink, analysisCache, integrations, applier } = deps;
   const oflLibrary = deps.oflLibrary || createOflLibrary();
   const wled = deps.wled || wledClient;
+  const cues = deps.cues || defaultCues;
 
   // ─── State ────────────────────────────────────────────────────────────────
   app.get('/api/state', (_req, res) => res.json(getClientState()));
@@ -778,13 +782,17 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
     } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
+  // A recapture answers with the look it replaced too, so the page can offer
+  // an undo: overwriting a cue with the wrong look was one click from gone.
   app.put('/api/cues/:id', (req, res) => {
     try {
       const body = validate(cueWriteSchema, req.body || {}, 'cue');
+      const existing = cues.get(req.params.id);
+      const previous = body.recapture && existing ? JSON.parse(JSON.stringify(existing.look)) : undefined;
       const cue = cues.update(req.params.id, body);
       if (!cue) return res.status(404).json({ ok: false, error: 'No such cue' });
       integrations.broadcast();
-      res.json({ ok: true, cue });
+      res.json({ ok: true, cue, ...(previous ? { previous } : {}) });
     } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 

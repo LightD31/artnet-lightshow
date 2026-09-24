@@ -270,3 +270,33 @@ test('while the clock follows a song, recall keeps the song\'s tempo', () => {
     conductor.clearTrack();
   }
 });
+
+test('overwriting a cue answers with the look it replaced, and putting it back is an undo', async () => {
+  const { default: express } = await import('express');
+  const { attachRoutes } = await import('../../src/server/routes.ts');
+  const s = store();
+  applyPatch({ pattern: 'chase', colorA: 1 });
+  const cue = s.create({ name: 'Verse' });
+  const before = JSON.parse(JSON.stringify(s.get(cue.id).look));
+  applyPatch({ pattern: 'strobe', colorA: 3 });
+
+  const app = express();
+  app.use(express.json());
+  attachRoutes(app, { integrations: { broadcast() {} }, cues: s });
+  const server = await new Promise((r) => { const srv = app.listen(0, '127.0.0.1', () => r(srv)); });
+  const put = (body) => fetch(`http://127.0.0.1:${server.address().port}/api/cues/${cue.id}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }).then((res) => res.json());
+  try {
+    const over = await put({ recapture: true });
+    assert.strictEqual(over.ok, true);
+    assert.deepStrictEqual(over.previous, before, 'the look it had');
+    assert.strictEqual(s.get(cue.id).look.pattern, 'strobe');
+    const undo = await put({ look: over.previous });
+    assert.strictEqual(undo.ok, true);
+    assert.deepStrictEqual(s.get(cue.id).look, before, 'back as it was');
+    assert.strictEqual((await put({ name: 'Chorus' })).previous, undefined, 'a rename replaces no look');
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});

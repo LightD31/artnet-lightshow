@@ -81,9 +81,17 @@ export function StagePreview() {
   // palette change — re-mints timelineRevision and hands us a new `data` for the
   // same music; resetting on that ejected the operator from rehearsal and rewound
   // to 0:00 at exactly the moment they were rehearsing for.
+  //
+  // And only when the track *changes*: the panel is unmounted by a view
+  // switch, and an effect that ran on every mount reset the rehearsal each
+  // time the operator looked at another view and came back (A7.26). The
+  // track it was rehearsing is kept beside the rest of its state.
   const t = s.autoShow?.track;
   const trackId = t ? `${t.id ?? ''}|${t.name ?? ''}|${t.artist ?? ''}` : null;
-  useEffect(() => { setUi({ playing: false, position: 0, rehearsal: false }); }, [trackId]);
+  useEffect(() => {
+    if (stagePreviewSig.value.trackId === trackId) return;
+    setUi({ playing: false, position: 0, rehearsal: false, trackId });
+  }, [trackId]);
 
   useEffect(() => { if (!connected) { drag.current = null; setDraft(null); setUi({ edit: false }); } }, [connected]);
   useEffect(() => {

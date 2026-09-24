@@ -1,10 +1,11 @@
-import { useEffect } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { send, emitTap, pick } from '../state.js';
 import { formatBpm, clockSource } from '../utils.js';
 import { useDraft } from '../draft.js';
 import { useEnergyPads } from '../energy-pad.js';
 
-const DIVISIONS = [1, 2, 4, 8];
+// Steps per beat. 1/16 was in the README and on MIDI, and missing here (A7.26).
+const DIVISIONS = [1, 2, 4, 8, 16];
 
 /**
  * Whether Space on this element taps the tempo.
@@ -28,6 +29,37 @@ function spaceIsTap(target) {
   if (target.tagName === 'BUTTON') return pointerFocused;
   if (target.tagName === 'INPUT' && target.type === 'range') return pointerFocused;
   return !(target.tabIndex >= 0 || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
+}
+
+/**
+ * The tempo, and a way to type one (A7.26: the README promised it). Press the
+ * number and it becomes a field — to a tenth, 20 to 300 — Enter or leaving
+ * the field sets it, Escape leaves the tempo as it was.
+ */
+function BpmEntry({ bpm }) {
+  const [typing, setTyping] = useState(null);
+  if (typing === null) {
+    return (
+      <button type="button" class="cb-bpm-num" aria-label={`Tempo ${formatBpm(bpm)} BPM. Press to type a tempo.`}
+        title="Type a tempo" onClick={() => setTyping(formatBpm(bpm))}>{formatBpm(bpm)}</button>
+    );
+  }
+  const commit = () => {
+    const value = Math.round(parseFloat(typing) * 10) / 10;
+    setTyping(null);
+    if (Number.isFinite(value) && value >= 20 && value <= 300 && value !== bpm) send({ bpm: value });
+  };
+  return (
+    <input class="cb-bpm-input" type="number" inputMode="decimal" min="20" max="300" step="0.1"
+      aria-label="Tempo, BPM" value={typing} autoFocus
+      onFocus={(e) => e.currentTarget.select()}
+      onInput={(e) => setTyping(e.currentTarget.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        else if (e.key === 'Escape') { e.preventDefault(); setTyping(null); }
+      }}
+      onBlur={commit} />
+  );
 }
 
 export function CommandBar() {
@@ -66,7 +98,7 @@ export function CommandBar() {
           class={`cb-bpm ${pulse ? 'pulse' : ''}`}
           style={{ '--bpm-period': `${periodMs.toFixed(0)}ms` }}
         >
-          <span class="cb-bpm-num">{formatBpm(s.bpm)}</span>
+          <BpmEntry bpm={s.bpm} />
           <span class="cb-bpm-label">BPM</span>
           <span class={`cb-bpm-source ${clock.locked ? 'locked' : ''}`} title={clock.title}>{clock.label}</span>
         </div>

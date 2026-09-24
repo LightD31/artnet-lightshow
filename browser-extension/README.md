@@ -45,9 +45,10 @@ to set:
 - **Lightshow server** — host and port, if you don't run it on
   `localhost:3000`. Pointing it at a non-loopback address asks for an extra host
   permission at save time; the manifest only grants loopback by default.
-- **Access token** — needed only when the server runs with `LIGHTSHOW_TOKEN`
-  set, which is mandatory whenever it is bound to anything but localhost. Must
-  match the server's token.
+- **Access token** — needed only when the server has one, which it must
+  whenever it is bound to anything but localhost. Copy it from the server's
+  settings page, *Server → Access token* (the `LIGHTSHOW_TOKEN` environment
+  variable of older versions still sets it too).
 
 Both are stored in `browser.storage.local`. No editing of source files needed.
 

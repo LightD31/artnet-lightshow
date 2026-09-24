@@ -70,6 +70,9 @@ export const autoTimelineSig = signal({ data: null, key: null, status: 'idle', e
 // go on driving a lamp in the other.
 export const stagePreviewSig = signal({
   edit: false, rehearsal: false, playing: false, position: 0,
+  // The track the rehearsal belongs to (StagePreview), so a view switch that
+  // remounts the panel does not mistake itself for a new track.
+  trackId: undefined,
 });
 
 // Token comes from public/auth.js, which runs before this bundle. Guarded so the

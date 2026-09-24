@@ -282,6 +282,20 @@ function createAuth({ token = '', allowedHosts = () => [] }: {
   return { enabled, hostMiddleware, allowSocketRequest, httpMiddleware, socketMiddleware };
 }
 
+/**
+ * Source maps only to this machine. The bundle's map is the client's whole
+ * source, 700 KB of it, and the one person who needs it is debugging at the
+ * machine running the show; every phone on the venue network does not.
+ */
+function sourceMapsForLoopback(req: { path: string; socket: { remoteAddress?: string } },
+  res: { status(code: number): { end(): void } }, next: () => void): void {
+  if (req.path.endsWith('.map') && !isLoopbackHost(req.socket.remoteAddress)) {
+    res.status(404).end();
+    return;
+  }
+  next();
+}
+
 export {
   createAuth,
   configError,
@@ -290,6 +304,7 @@ export {
   hostnameOf,
   hostOfUrl,
   isLoopbackHost,
+  sourceMapsForLoopback,
   originAllowed,
   safeEqual,
 };
