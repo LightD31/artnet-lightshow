@@ -52,6 +52,10 @@ via **Bitfocus Companion**, and a REST API.
   sync health, big pads for blackout and every energy effect (held, or
   latched), tap tempo, one-tap palettes, and the master and show-intensity
   faders. Open it at `/#perform`, or press **3**
+- **Stage view** — the rig in 3D, in a hazy room: beams from the pars, every
+  cell of every bar, the Hue lamps around the room, from the audience, from
+  above or from the side. Live, it shows what is going out; rehearsing, the
+  planned show at any moment of the track — see [The Stage view](#the-stage-view)
 - **Installable** — a web app manifest and icons, and a service worker that
   keeps the app shell so a tablet reloading while the server restarts gets the
   page back rather than a browser error (on HTTPS or localhost, where browsers
@@ -82,6 +86,10 @@ via **Bitfocus Companion**, and a REST API.
   every kick at the drop
 - **Accents on the drums as played** — on the kick or snare that marks the bar,
   none on a bar nothing was hit on, one on the last hit of a fill
+- **Timeline view** — the loaded track laid out wide: its sections, curves,
+  drops and the planned looks and accents, to zoom into and scrub. Press on it
+  to rehearse from there, on the stage preview and the 3D stage — see
+  [The Timeline view](#the-timeline-view)
 - **Track edits that stick** — lock a track's palette, swap a section's look,
   add or take away an accent; kept with the track and put back every time it
   plays — see [Track edits](#track-edits)
@@ -233,15 +241,16 @@ address as the **Public URL** in *Server & access*.
 
 ## Setting up the rig
 
-The app has seven views. The first three run a show — **Manual**, **Auto Show**
-and **Perform** — and the other four set one up:
+The app has nine views. The first five run a show — **Manual**, **Auto Show**,
+**Perform**, **Timeline** (**4**, [below](#the-timeline-view)) and **Stage**
+(**5**, [below](#the-stage-view)) — and the other four set one up:
 
 | View | Key | What is there |
 |------|-----|---------------|
-| **Rig** | 4 | *Plan & patch*: the plan, the patch table and the selected fixture. *Profiles*: the fixture library. *Outputs*: Art-Net, sACN, WLED, Hue, and the universes |
-| **Sources** | 5 | The players the show may follow, Spotify, Deezer, the live input, and the analysis and its models |
-| **Settings** | 6 | How the show behaves over a night, the MIDI controller and its mapping, MIDI clock, the engine, the server and access token, and the setup again |
-| **Preflight** | 7 | The [pre-show check](#pre-show-check) |
+| **Rig** | 6 | *Plan & patch*: the plan, the patch table and the selected fixture. *Profiles*: the fixture library. *Outputs*: Art-Net, sACN, WLED, Hue, and the universes |
+| **Sources** | 7 | The players the show may follow, Spotify, Deezer, the live input, and the analysis and its models |
+| **Settings** | 8 | How the show behaves over a night, the MIDI controller and its mapping, MIDI clock, the engine, the server and access token, and the setup again |
+| **Preflight** | 9 | The [pre-show check](#pre-show-check) |
 
 A view with tabs of its own names them in the address: `/#rig/outputs` opens the
 Rig view on its outputs. The old `/settings.html` and its tabs (`#music`,
@@ -1662,13 +1671,13 @@ new night. **Settings → Show → Remember the Night** turns it off.
 ### Track edits
 
 The show replans a track whenever anything it reads changes: the intensity,
-the palette size, the rig, the tracks before it. **Track edits**, under the
-timeline, are the changes of yours that survive that:
+the palette size, the rig, the tracks before it. **Track edits**, on the
+[Timeline view](#the-timeline-view), are the changes of yours that survive that:
 
 - **Lock** the palette the track is playing in.
-- **Add** an accent at the playhead (blinder, white or colour strobe, UV wash,
-  kill or glow), or **remove** the one nearest it. An added accent fires
-  whatever the budget says.
+- **Add** an accent at the playhead — or, rehearsing, at the rehearsal mark
+  (blinder, white or colour strobe, UV wash, kill or glow) — or **remove** the
+  one nearest it. An added accent fires whatever the budget says.
 - **Swap a section's look**: for the whole rig, or for the pars and the bars
   apart. The section holds it, and its rotation stops too. Each row shows the
   show's own choice beside yours.
@@ -1677,6 +1686,48 @@ They are kept beside the track's analysis in the cache, and put back every
 time the track plays. Analysing the track again keeps them: sections match
 within two seconds and accents within 150 ms. Clearing the cache takes them.
 `GET` and `PUT /api/auto/overlay` read and replace them from a script.
+
+### The Timeline view
+
+**Timeline** (**4**, `/#timeline`) is the loaded track's show laid out to be
+read and rehearsed: the analysis (sections, the energy and band curves, beats,
+drops and build-ups) with the planned looks and accents under it, the analysis
+in numbers, the stage preview and the [track edits](#track-edits).
+
+- **Zoom** to 2×, 4× or 8× and the timeline scrolls; it keeps the mark in view
+  as it moves, and leaves it where you scrolled it otherwise.
+- **Press or drag** on it, or use **←** **→** on it (**Shift** for ten
+  seconds, **Home** / **End** for the ends), to rehearse from there. The
+  section buttons under it jump to a section's start.
+- **Rehearsing** plays the planned show on the stage preview and the
+  [Stage view](#the-stage-view) — nothing goes out to the rig — from the same
+  position on both. **Back to live** returns them to the output. The white
+  line is where the music is now; the amber one is the rehearsal.
+
+### The Stage view
+
+**Stage** (**5**, `/#stage`) draws the rig in 3D, in a hazy room, from where
+the audience stands, from above or from the side. Drag to look around, scroll
+or pinch to move closer; with the stage focused, the arrow keys turn and tilt
+and **+** / **−** move closer. **Haze** thickens the beams and the fog.
+
+Fixtures hang where the plan puts them, by their group: *front*, *back* and
+ungrouped ones on the truss, aimed down at the stage and a little towards the
+audience; *floor* ones on the deck, aimed up; *room* ones as lamps at head
+height around the room. A Philips Hue lamp is a bulb wherever it is. A bar's
+cells hang in a line where the plan draws it, and a panel stands upright.
+
+- **Live**, it shows what is going out: the DMX feed read through each
+  fixture's profile, every light of every bar, after the masters, overrides
+  and identify.
+- **Rehearse track** plays the loaded track's planned show at any moment of it
+  — scrub to the drop and see it — sampled by the same shared code the engine
+  renders with (`src/shared/preview.ts`), at the display's frame rate.
+
+three.js is fetched the first time the view opens, not with the page, and kept
+by the service worker with the rest of the app. A browser with WebGL turned
+off is told so; the plan in the Manual and Rig views shows the same rig from
+above.
 
 ### Flash limit
 
@@ -2230,7 +2281,8 @@ Press **?** in the app for this list.
 |-----|--------|
 | **Space** | Tap tempo — also right after clicking a button; a control reached with Tab keeps Space for itself |
 | **1** / **2** / **3** | Manual / Auto Show / Perform view |
-| **4** / **5** / **6** / **7** | Rig / Sources / Settings / Preflight view |
+| **4** / **5** | Timeline / Stage view |
+| **6** / **7** / **8** / **9** | Rig / Sources / Settings / Preflight view |
 | **←** **→**, **Home** / **End** on the view tabs | Next / previous / first / last view |
 | **←** **→** **↑** **↓**, **Home** / **End** | Move within the colour grid |
 | **Enter** / **Shift+Enter** | Write the focused swatch into the active slot / the paired slot (A↔B, C↔D) |
@@ -2239,6 +2291,8 @@ Press **?** in the app for this list.
 | **←** **→** **↑** **↓** (**Shift** for bigger steps) | Nudge the focused fixture on the stage plot (on the Rig view's plan, the whole selection) |
 | **[** **]**, **-** **=**, **0** on a bar | Turn it, change its length, back to its default line |
 | **Esc** on the plan | Stop drawing bars; else clear the selection |
+| **←** **→** (**Shift** for 10 s), **Home** / **End** on the timeline | Rehearse from a second later / earlier, the start / the end |
+| **←** **→** **↑** **↓**, **+** / **−** on the 3D stage | Turn and tilt the view, move closer / further |
 | **?** / **Esc** | Show / close the shortcuts overlay |
 
 ---
@@ -2272,7 +2326,10 @@ Python tests validate real analyser output against it, and
 test fails when the generated file is out of date.
 
 `public/app.bundle.js` is generated from `public-src/` by esbuild and is not
-committed; `npm start` builds it automatically via `prestart`. On the page, the
+committed; `npm start` builds it automatically via `prestart`. It is an ES
+module, split: the Stage view's three.js is a chunk of its own in
+`public/chunks/`, loaded when the view first opens, and the build lists the
+chunks in `public/chunks/index.json` for the service worker to keep. On the page, the
 state is one signal per key (`public-src/store.js`), so a component re-renders
 only for the keys it reads (`pick([...])`), and faders keep a local draft while
 they move (`public-src/draft.js`).
@@ -2280,15 +2337,18 @@ they move (`public-src/draft.js`).
 **Tests.** The unit suite includes the page's components, bundled by esbuild
 and rendered in Node from a state snapshot (`tests/unit/components.test.js`).
 `npm run test:e2e` runs the real server — on port 3999, with a throwaway config
-directory and no DMX output (`tests/e2e/serve.js`) — and drives the page in
-Chromium: the views, protocol 2, the Perform pads on a desktop and a touch
-tablet, the fixes, the PWA, and axe-core on every view in every theme. It uses
+directory and analysis cache and no DMX output (`tests/e2e/serve.js`) — and
+drives the page in Chromium: the views, protocol 2, the Perform pads on a
+desktop and a touch tablet, the Timeline and the 3D stage (on an analysed
+track the server seeds its cache with, so no test needs Python), the fixes,
+the PWA, and axe-core on every view in every theme. It uses
 the Playwright pinned in `package.json`; `npx playwright install chromium`
 fetches its browser where there is none.
 
 `LIGHTSHOW_CONFIG_DIR` points the server at another directory for
 `settings.json`, `show.json`, `cues.json` and `midi-map.json` (default:
-`config/`).
+`config/`), and `LIGHTSHOW_CACHE_DIR` at another for the analysis cache
+(default: `cache/`).
 
 The app icons (`public/icons/`) are drawn by `node scripts/make-icons.js`,
 which needs no dependencies; run it after changing the design.

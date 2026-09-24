@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { stateSig, dmxSig, autoTimelineSig, connectedSig, emitFixture, stagePreviewSig } from '../state.js';
+import { stateSig, dmxSig, connectedSig, emitFixture, stagePreviewSig } from '../state.js';
 import { colorToCss, fixtureOutputColor, fixtureCellColors, meanLight, fmtTime } from '../utils.js';
-import { timelineKey } from '../timeline-state.js';
 import { useDmxFeed } from '../use-dmx.js';
+import { useRehearsalTrack } from '../rehearsal.js';
+import { useTimeline } from '../use-timeline.js';
 import { createPreviewSampler } from '../../src/shared/preview.ts';
 import { stagePositions } from '../../src/shared/stage.ts';
 import { buildRig, lineOf } from '../../src/shared/rig.ts';
@@ -12,8 +13,7 @@ export function StagePreview() {
   const s = stateSig.value;
   const fixtures = s.fixtures || [];
   const connected = connectedSig.value;
-  const stored = autoTimelineSig.value;
-  const data = stored.key === timelineKey(s) ? stored.data : null;
+  const { data } = useTimeline();
   const { edit, playing, position } = stagePreviewSig.value;
   const setUi = (patch) => { stagePreviewSig.value = { ...stagePreviewSig.value, ...patch }; };
   const [draft, setDraft] = useState(null);
@@ -55,12 +55,7 @@ export function StagePreview() {
   // switch, and an effect that ran on every mount reset the rehearsal each
   // time the operator looked at another view and came back (A7.26). The
   // track it was rehearsing is kept beside the rest of its state.
-  const t = s.autoShow?.track;
-  const trackId = t ? `${t.id ?? ''}|${t.name ?? ''}|${t.artist ?? ''}` : null;
-  useEffect(() => {
-    if (stagePreviewSig.value.trackId === trackId) return;
-    setUi({ playing: false, position: 0, rehearsal: false, trackId });
-  }, [trackId]);
+  useRehearsalTrack(s.autoShow);
 
   useEffect(() => { if (!connected) { drag.current = null; setDraft(null); setUi({ edit: false }); } }, [connected]);
   useEffect(() => {

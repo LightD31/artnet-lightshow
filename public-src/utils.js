@@ -143,6 +143,22 @@ export function meanLight(lights) {
   return sum;
 }
 
+/**
+ * What a fixture that is one light is showing, as emitter values (after its
+ * dimmer and the masters), or null for a bar or a fixture with no profile.
+ */
+export function fixtureLight(fix, state, dmxSnapshot) {
+  if (!fix) return null;
+  if (state.masterBlackout) return BLACK;
+  if (fix.override && fix.override.enabled) return fix.override.blackout ? BLACK : overrideLight(fix, state);
+  const profile = state.profiles && state.profiles[fix.profileId];
+  if (!profile || !profile.channelMap || cellsOfProfile(profile)) return null;
+  // Read DMX snapshot through the fixture's profile channel map. The snapshot
+  // is keyed by universe, so pick out the one this fixture lives on.
+  const at = fixtureReader(fix, profile, dmxSnapshot || state.dmxSnapshot || {});
+  return readLight(at, profile.channelMap, 1);
+}
+
 export function fixtureOutputColor(fix, state, dmxSnapshot) {
   if (!fix) return '#000';
   if (state.masterBlackout) return '#000';
@@ -156,10 +172,24 @@ export function fixtureOutputColor(fix, state, dmxSnapshot) {
   const cells = fixtureCellLights(fix, state, dmxSnapshot);
   if (cells) return colorToCss(meanLight(cells));
 
-  // Read DMX snapshot through the fixture's profile channel map. The snapshot
-  // is keyed by universe, so pick out the one this fixture lives on.
-  const profile = state.profiles && state.profiles[fix.profileId];
-  if (!profile || !profile.channelMap) return '#111';
-  const at = fixtureReader(fix, profile, dmxSnapshot || state.dmxSnapshot || {});
-  return colorToCss(readLight(at, profile.channelMap, 1));
+  const light = fixtureLight(fix, state, dmxSnapshot);
+  return light ? colorToCss(light) : '#111';
+}
+
+/**
+ * Every light of the rig as it is now, from the DMX feed: one emitter set per
+ * unit of `rig` (shared/rig.ts) — a par's, or each cell of a bar.
+ */
+export function rigLights(fixtures, state, dmxSnapshot, rig) {
+  const out = new Array(rig.units.length).fill(BLACK);
+  fixtures.forEach((fix, i) => {
+    const { start, count } = rig.ranges[i];
+    if (rig.cellMaps[i]) {
+      const cells = fixtureCellLights(fix, state, dmxSnapshot) || [];
+      for (let c = 0; c < count; c++) out[start + c] = cells[c] || BLACK;
+    } else {
+      out[start] = fixtureLight(fix, state, dmxSnapshot) || BLACK;
+    }
+  });
+  return out;
 }

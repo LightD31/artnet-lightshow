@@ -32,6 +32,7 @@ const BROWSER_GLOBALS = {
   setTimeout: 'readonly', clearTimeout: 'readonly',
   setInterval: 'readonly', clearInterval: 'readonly',
   requestAnimationFrame: 'readonly', cancelAnimationFrame: 'readonly',
+  ResizeObserver: 'readonly',
   Toast: 'readonly',         // public/toast.js, loaded via <script> before the bundle
   browser: 'readonly',       // WebExtension API
 };
@@ -57,6 +58,7 @@ export default [
       'node_modules/**',
       'companion-module/node_modules/**',
       'public/app.bundle.js',      // generated
+      'public/chunks/**',          // generated
       'cache/**',
       'tests/fixtures/**',
       '.venv/**',
@@ -77,7 +79,7 @@ export default [
   // ── End-to-end specs: Node, and the page code they hand to the browser ────
   {
     files: ['tests/e2e/**/*.js'],
-    languageOptions: { globals: { ...NODE_GLOBALS, ...BROWSER_GLOBALS } },
+    languageOptions: { globals: { ...NODE_GLOBALS, ...BROWSER_GLOBALS, caches: 'readonly', HTMLCanvasElement: 'readonly' } },
   },
 
   // ── Node server, TypeScript ───────────────────────────────────────────────

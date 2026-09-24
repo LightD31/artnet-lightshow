@@ -16,13 +16,15 @@ import { BottomDrawer } from './components/BottomDrawer.jsx';
 import { ConnectionVeil } from './components/ConnectionVeil.jsx';
 import { ShortcutsOverlay } from './components/Shortcuts.jsx';
 import { Perform } from './components/Perform.jsx';
+import { TimelineView } from './components/TimelineView.jsx';
+import { StageView } from './components/StageView.jsx';
 import { RigView } from './components/setup/RigView.jsx';
 import { SourcesView } from './components/setup/SourcesView.jsx';
 import { SettingsView } from './components/setup/SettingsView.jsx';
 import { PreflightView } from './components/setup/PreflightView.jsx';
 import { Wizard, useFirstRun } from './components/setup/Wizard.jsx';
 
-// The views, in the order the tabs show them: the three for running a show,
+// The views, in the order the tabs show them: the five for running a show,
 // then the four for setting one up. The keys are the digit that jumps to
 // each, and the hash that opens the page on it — a tablet at front of house
 // bookmarks /#perform; /#rig/outputs opens the Rig view on its outputs.
@@ -30,10 +32,12 @@ const VIEWS = [
   { id: 'manual', key: '1', icon: '◧', label: 'Manual', hint: 'Patterns · Colours · Fixtures', group: 'live' },
   { id: 'auto', key: '2', icon: '✦', label: 'Auto Show', hint: 'Spotify · Now Playing · PRO DJ LINK', group: 'live' },
   { id: 'perform', key: '3', icon: '◉', label: 'Perform', hint: 'Pads · Palettes · Faders', group: 'live' },
-  { id: 'rig', key: '4', icon: '▦', label: 'Rig', hint: 'Plan · Patch · Outputs', group: 'setup' },
-  { id: 'sources', key: '5', icon: '♫', label: 'Sources', hint: 'Players · Spotify · Live input', group: 'setup' },
-  { id: 'settings', key: '6', icon: '⚙', label: 'Settings', hint: 'Show · MIDI · Server', group: 'setup' },
-  { id: 'preflight', key: '7', icon: '✓', label: 'Preflight', hint: 'Pre-show check', group: 'setup' },
+  { id: 'timeline', key: '4', icon: '≋', label: 'Timeline', hint: 'Sections · Rehearse · Edits', group: 'live' },
+  { id: 'stage', key: '5', icon: '◭', label: 'Stage', hint: 'The rig in 3D', group: 'live' },
+  { id: 'rig', key: '6', icon: '▦', label: 'Rig', hint: 'Plan · Patch · Outputs', group: 'setup' },
+  { id: 'sources', key: '7', icon: '♫', label: 'Sources', hint: 'Players · Spotify · Live input', group: 'setup' },
+  { id: 'settings', key: '8', icon: '⚙', label: 'Settings', hint: 'Show · MIDI · Server', group: 'setup' },
+  { id: 'preflight', key: '9', icon: '✓', label: 'Preflight', hint: 'Pre-show check', group: 'setup' },
 ];
 const VIEW_IDS = VIEWS.map((v) => v.id);
 
@@ -119,6 +123,8 @@ const PANELS = {
   manual: ManualView,
   auto: AutoView,
   perform: Perform,
+  timeline: TimelineView,
+  stage: StageView,
   rig: RigView,
   sources: SourcesView,
   settings: SettingsView,
@@ -148,7 +154,7 @@ function Root() {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  // Keyboard shortcuts: 1 → Manual, 2 → Auto, 3 → Perform, 4–7 → the setup views
+  // Keyboard shortcuts: 1–5 → the show views, 6–9 → the setup views
   useEffect(() => {
     const onKey = (e) => {
       if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;

@@ -28,6 +28,7 @@ import { attachRoutes } from './server/routes.ts';
 import { attachSockets } from './server/sockets.ts';
 import { createAuth, configError, hostOfUrl, isLoopbackHost, sourceMapsForLoopback } from './server/auth.ts';
 import { settings, CONFIG_FILE, warnAboutLegacyEnv } from './server/settings.ts';
+import { cacheDir } from './server/config-dir.ts';
 import { createApplier } from './server/apply.ts';
 import { midiMap } from './server/midi-map.ts';
 import { cues } from './server/cues.ts';
@@ -114,7 +115,7 @@ const spotify = new SpotifyClient();
 const nowPlaying = new NowPlayingSource();
 const deezerSource = new DeezerSource();
 
-const analysisCache = new AnalysisCache(path.join(import.meta.dirname, '..', 'cache', 'analysis'));
+const analysisCache = new AnalysisCache(path.join(cacheDir(), 'analysis'));
 const autoShow = new AutoShow(applyPatch, COLOR_PRESETS, PATTERNS, analysisCache);
 
 const integrations = setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolink, autoShow, analysisCache, liveInput });

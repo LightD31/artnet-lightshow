@@ -5,7 +5,6 @@ import { AnalysisStats } from './AnalysisStats.jsx';
 import { AutoTimeline } from './AutoTimeline.jsx';
 import { Queue } from './Queue.jsx';
 import { StagePreview } from './StagePreview.jsx';
-import { TrackEdits } from './TrackEdits.jsx';
 
 /**
  * The auto-show surface.
@@ -354,7 +353,12 @@ export function AutoMode() {
               <section class="panel timeline-panel">
                 <AutoTimeline />
               </section>
-              <TrackEdits />
+              <section class="panel">
+                <p class="panel-empty">
+                  The <a href="#timeline">Timeline view</a> has this track&rsquo;s show at full width, to rehearse any moment
+                  of it and keep edits with the track; the <a href="#stage">Stage view</a> shows it in 3D.
+                </p>
+              </section>
             </>
           ) : (
             <section class="panel">
