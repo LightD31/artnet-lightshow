@@ -452,6 +452,27 @@ Every phase is its own PR, keeps `npm run check` and the Python suite green, and
 - **Research track, optional.** A/B the SeqLight/Skip-BART learned hue/intensity prior against the rule director. Adopt it only if it wins a blind test.
 
 ### Phase 6 — UI v2
+
+> **Status.** Delivered in three parts. **6a — the live surface — done:**
+> - **Protocol v2:**
+>   - an opt-in handshake gives the live page a snapshot, then per-domain versioned key diffs, resynced on a gap;
+>   - binary DMX frames go out at 30 Hz, volatile, only to subscribed sockets;
+>   - the page holds one signal per key, and faders keep drafts sent once per animation frame;
+>   - protocol 1 is unchanged for the settings page and Companion.
+> - **Perform view:** pads for blackout and the six energy effects (held or latched), tap, palettes, master and intensity
+>   faders, now/next and sync-health chips; `/#perform` bookmarks it.
+> - **PWA:** a manifest, icons and a network-first app-shell service worker; wake lock via nosleep.js (the Wake Lock API
+>   where it is allowed, a muted video on plain HTTP); fullscreen.
+> - **Accessibility:**
+>   - an ARIA tab strip with tabpanels, landmarks, labels, a skip link and dialog focus traps;
+>   - 44 px touch targets and whole-page reduced motion;
+>   - dark, light and red-night themes;
+>   - axe-core reports no violations on any view in any theme.
+> - **A7.26:** every item fixed or confirmed (previews already honoured energy effects).
+> - **Tests:** Playwright e2e in CI (desktop and touch tablet), component tests rendered in Node.
+>
+> **Next — 6b:** settings moved into the SPA as Rig, Sources, Settings and Preflight views, pixel mapping, discovery
+> with an identify flash, and the onboarding wizard. **Then 6c:** the three.js Stage view and the Show view.
 - **One SPA.** Settings move into `public-src`, and `public/settings.js` and its duplicate API/auth/socket code are deleted.
 - **Protocol v2:**
   - domain-scoped signals with versioned diffs;
