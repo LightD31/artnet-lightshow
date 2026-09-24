@@ -1,6 +1,8 @@
-import { useState, useEffect } from 'preact/hooks';
-import { stateSig, dmxSig, emitOverride, emitFixture } from '../state.js';
+import { useState, useEffect, useMemo, useRef } from 'preact/hooks';
+import { dmxSig, emitOverride, emitFixture, pick } from '../state.js';
 import { fixtureOutputColor, fixtureCellColors } from '../utils.js';
+import { useDmxFeed } from '../use-dmx.js';
+import { useDraft, createFrameThrottle, SETTLE_MS } from '../draft.js';
 import { FIXTURE_GROUPS } from '../../src/shared/stage.ts';
 
 const GROUP_LABELS = { front: 'Front', back: 'Back', room: 'Room', floor: 'Floor' };
@@ -12,9 +14,9 @@ const DEFAULT_OVERRIDE = { enabled: false, r: 255, g: 0, b: 0, w: 0, a: 0, uv: 0
 /**
  * The lit swatch, and the only part of a card that follows the DMX stream.
  *
- * It reads dmxSig itself so the 10 Hz broadcast wakes one `<div>` per fixture
+ * It reads dmxSig itself so the DMX feed wakes one `<div>` per fixture
  * instead of every card — with the read in Fixtures() the whole grid, its
- * address inputs and its override sliders re-rendered ten times a second.
+ * address inputs and its override sliders re-rendered on every frame.
  */
 function FixturePreview({ fix, state }) {
   // An LED bar shows every cell, left to right, in hard steps rather than a
@@ -34,9 +36,15 @@ function FixtureCard({ fix, state }) {
 
   // Dragged locally so the slider doesn't stutter against the 10 Hz broadcast,
   // then handed back to the server value once the two agree again.
-  const serverMax = fix.maxBrightness ?? 255;
-  const [maxDraft, setMaxDraft] = useState(serverMax);
-  useEffect(() => { setMaxDraft(serverMax); }, [serverMax]);
+  const [maxDraft, onMax, commitMax] = useDraft(fix.maxBrightness ?? 255, (v) => emitFixture({ id: fix.id, maxBrightness: v }));
+
+  // The override's channels are drafts too: sent once a frame at most while a
+  // slider moves, and the server's echo of an older value ignored until the
+  // hand has been still for a moment (draft.js).
+  const overrideThrottle = useMemo(() => createFrameThrottle((next) => {
+    emitOverride(fix.id, next);
+  }), [fix.id]);
+  const movingUntil = useRef(0);
 
   // A value the effect can compare, built from the fields the override actually
   // has. JSON.stringify would do, but its key order is whatever the sender used
@@ -45,12 +53,15 @@ function FixtureCard({ fix, state }) {
     ? `${!!fix.override.enabled}|${!!fix.override.blackout}|${CHANNELS.map((c) => fix.override[c] ?? 0).join(',')}`
     : 'none';
   useEffect(() => {
+    if (performance.now() < movingUntil.current) return;
     setDraft((d) => ({ ...d, ...(fix.override || { enabled: false, blackout: false }) }));
   }, [ovKey]);
 
-  const sendOverride = (next) => {
+  const sendOverride = (next, { final = false } = {}) => {
     setDraft(next);
-    emitOverride(fix.id, { ...next, enabled: ov ? true : next.enabled, blackout: false });
+    movingUntil.current = performance.now() + SETTLE_MS;
+    overrideThrottle.push({ ...next, enabled: ov ? true : next.enabled, blackout: false });
+    if (final) overrideThrottle.flush();
   };
 
   const toggleOverride = () => {
@@ -126,11 +137,8 @@ function FixtureCard({ fix, state }) {
           type="range" min="0" max="255"
           value={maxDraft}
           title="Scales this fixture's output — the pattern, any override, and energy overrides — under the grand master"
-          onInput={(e) => {
-            const value = parseInt(e.target.value, 10);
-            setMaxDraft(value);
-            emitFixture({ id: fix.id, maxBrightness: value });
-          }}
+          onInput={(e) => onMax(parseInt(e.target.value, 10))}
+          onChange={(e) => commitMax(parseInt(e.target.value, 10))}
         />
         <span class="val">{Math.round((maxDraft / 255) * 100)}%</span>
       </div>
@@ -170,14 +178,13 @@ function FixtureCard({ fix, state }) {
           <div class="override-controls">
             {CHANNELS.map((ch) => (
               <div class="override-row" key={ch}>
-                <label>{CHANNEL_LABELS[ch]}</label>
+                <label for={`fix-${fix.id}-${ch}`}>{CHANNEL_LABELS[ch]}</label>
                 <input
+                  id={`fix-${fix.id}-${ch}`}
                   type="range" min="0" max="255"
                   value={draft[ch] ?? 0}
-                  onInput={(e) => {
-                    const value = parseInt(e.target.value, 10);
-                    sendOverride({ ...draft, [ch]: value });
-                  }}
+                  onInput={(e) => sendOverride({ ...draft, [ch]: parseInt(e.target.value, 10) })}
+                  onChange={(e) => sendOverride({ ...draft, [ch]: parseInt(e.target.value, 10) }, { final: true })}
                 />
                 <span class="val">{draft[ch] ?? 0}</span>
               </div>
@@ -190,7 +197,8 @@ function FixtureCard({ fix, state }) {
 }
 
 export function Fixtures() {
-  const s = stateSig.value;
+  useDmxFeed();
+  const s = pick(['fixtures', 'profiles', 'masterDimmer', 'masterBlackout']);
   const fixtures = s.fixtures || [];
   return (
     <div class="card">

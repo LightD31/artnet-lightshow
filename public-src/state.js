@@ -2,10 +2,26 @@ import { computed, signal } from '@preact/signals';
 import { io } from 'socket.io-client';
 import { createHoldControl } from './hold-control.js';
 import { timelinePosition } from './timeline-state.js';
+import { createStore } from './store.js';
+import { decodeDmxFrame } from '../src/shared/dmx-frame.ts';
 
-// Single source of truth on the client. Mirrors the server's getClientState()
-// snapshot; components read from it via the signal.
-export const stateSig = signal({});
+// Single source of truth on the client: the server's state, one signal per key
+// (store.js, protocol v2 — src/server/protocol.ts). `field('masterDimmer')`
+// re-renders only on that key; `stateSig` is everything at once, for the
+// components that want it.
+export const store = createStore();
+export const field = store.field;
+export const stateSig = store.all;
+
+/**
+ * The named keys of the state, read so that the calling component re-renders
+ * when one of them changes and not for anything else.
+ */
+export function pick(keys) {
+  const out = {};
+  for (const key of keys) out[key] = field(key).value;
+  return out;
+}
 export const connectedSig = signal(false);
 
 // Why the surface is barred, not just that it is. Socket.IO retries a dropped
@@ -18,9 +34,11 @@ export const connectedSig = signal(false);
 //   unauthorized  — handshake refused; public/auth.js is asking for the token
 export const connectionSig = signal({ status: 'connecting' });
 
-// Live DMX values, on their own signal so the 10 Hz stream only re-renders the
-// views that show DMX output (the monitor and the fixture previews) instead of
-// waking every control panel in the tree.
+// Live DMX values by universe, on their own signal so the stream only
+// re-renders the views that show DMX output (the monitor and the fixture
+// previews) instead of waking every control panel in the tree. Thirty binary
+// frames a second, and only while one of those views is on screen and has
+// subscribed (useDmxFeed).
 export const dmxSig = signal({});
 
 // The *shape* of that stream — which universes are live and how many channels
@@ -62,7 +80,7 @@ const auth = (typeof window !== 'undefined' && window.LightshowAuth) || {
 
 export const socket = io({
   transports: ['websocket', 'polling'],
-  auth: { token: auth.token || '' },
+  auth: { token: auth.token || '', protocol: 2 },
 });
 
 // Created before socket listeners are registered so a very fast disconnect
@@ -104,23 +122,54 @@ socket.on('connect_error', () => {
 
 // Retry with whatever the operator typed into that prompt.
 auth.onToken((token) => {
-  socket.auth = { token };
+  socket.auth = { token, protocol: 2 };
   connectionSig.value = { status: 'connecting' };
   socket.connect();
 });
 
-// MERGE, don't replace. The first push on connect is the full snapshot
-// including the static catalogues (colour presets, patterns, strobe functions);
-// every later push carries only the fields that change. Replacing would drop
-// the catalogues on the first update after connect.
-socket.on('state', (s) => {
-  if (!s) return;
-  if (s.dmxSnapshot) dmxSig.value = s.dmxSnapshot;   // full snapshot on connect
-  stateSig.value = { ...stateSig.value, ...s };
-  if (s.autoShow && !s.autoShow.running) freezePosition();
+// The whole state on connect, and again whenever a patch shows one was missed.
+socket.on('snapshot', (snapshot) => {
+  if (!snapshot || !snapshot.state) return;
+  store.applySnapshot(snapshot);
+  if (snapshot.state.autoShow && !snapshot.state.autoShow.running) freezePosition();
 });
 
-socket.on('dmx', (snapshot) => { dmxSig.value = snapshot || {}; });
+// Then only what changed. A patch that is not the next for its domain means
+// one went missing: ask for the whole state rather than drift.
+let resyncing = false;
+socket.on('patch', (patch) => {
+  if (!patch) return;
+  const result = store.applyPatch(patch);
+  if (result === 'gap' && !resyncing) {
+    resyncing = true;
+    socket.emit('sync', (snapshot) => {
+      resyncing = false;
+      if (snapshot && snapshot.state) store.applySnapshot(snapshot);
+    });
+    return;
+  }
+  if (result === 'ok' && patch.set && patch.set.autoShow && !patch.set.autoShow.running) freezePosition();
+});
+
+// DMX as bytes (src/shared/dmx-frame.ts), while subscribed.
+socket.on('dmx-frame', (message) => {
+  const frame = decodeDmxFrame(message);
+  if (frame) dmxSig.value = frame;
+});
+
+// How many views on screen want the DMX feed. The first subscribes, the last
+// unsubscribes, and a reconnect subscribes again for whoever is still there.
+let dmxWanted = 0;
+export function wantDmx() {
+  if (dmxWanted++ === 0 && socket.connected) socket.emit('subscribe', ['dmx']);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    if (--dmxWanted === 0 && socket.connected) socket.emit('unsubscribe', ['dmx']);
+  };
+}
+socket.on('connect', () => { if (dmxWanted > 0) socket.emit('subscribe', ['dmx']); });
 socket.on('auto-position', ({ positionMs, running, advancing, revision }) => {
   if (!Number.isFinite(positionMs)) return;
   const currentRevision = stateSig.value.autoShow?.timelineRevision;
@@ -161,7 +210,8 @@ export async function api(path, init) {
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok || body.ok === false) {
-      toast.error(body.error || `${init && init.method ? init.method : 'GET'} ${path} failed (${res.status})`);
+      // Work the operator called off, or a newer track overtook, is not a failure.
+      if (!body.cancelled) toast.error(body.error || `${init && init.method ? init.method : 'GET'} ${path} failed (${res.status})`);
       return { ok: false, error: body.error || `HTTP ${res.status}`, ...body };
     }
     return { ok: true, ...body };

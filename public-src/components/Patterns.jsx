@@ -1,4 +1,4 @@
-import { stateSig, send } from '../state.js';
+import { send, pick } from '../state.js';
 
 // Map pattern ids to a unicode glyph. Falls back to a dot.
 const PATTERN_ICONS = {
@@ -79,7 +79,7 @@ function PatternButton({ p, active, onBars }) {
 }
 
 export function Patterns() {
-  const s = stateSig.value;
+  const s = pick(['pattern', 'patterns', 'pixelMap', 'pixelPattern', 'fixtures', 'profiles']);
   const patterns = s.patterns || [];
   const bars = hasBars(s);
   // The pixel effects are drawn for LED bars; on a rig of pars they still run,

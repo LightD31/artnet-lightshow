@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from 'preact/hooks';
 import { stateSig, dmxSig, dmxShapeSig } from '../state.js';
+import { useDmxFeed } from '../use-dmx.js';
 import { channelPlace, stripOf } from '../../src/shared/placement.ts';
 
 function buildChannelLabels(s, universe) {
@@ -85,6 +86,8 @@ function UniverseGrid({ s, universe, count }) {
 }
 
 export function DmxMonitor() {
+  // Open, the monitor keeps the DMX feed coming; closed, nothing asks for it.
+  useDmxFeed();
   const s = stateSig.value;
   // The shape, not the values — see dmxShapeSig. "0:512,1:512".
   const shape = dmxShapeSig.value;

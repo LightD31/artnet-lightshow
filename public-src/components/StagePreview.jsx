@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { stateSig, dmxSig, autoTimelineSig, connectedSig, emitFixture, stagePreviewSig } from '../state.js';
 import { colorToCss, fixtureOutputColor, fixtureCellColors, meanLight, fmtTime } from '../utils.js';
 import { timelineKey } from '../timeline-state.js';
+import { useDmxFeed } from '../use-dmx.js';
 import { createPreviewSampler } from '../../src/shared/preview.ts';
 import { stagePositions } from '../../src/shared/stage.ts';
 import { buildRig, lineOf } from '../../src/shared/rig.ts';
@@ -73,6 +74,8 @@ export function StagePreview() {
   // rehearsing this panel is driven by its own scrub position and has no reason
   // to wake — and re-sample the whole timeline — on every live DMX frame.
   const dmx = rehearsal ? null : dmxSig.value;
+  // Live, the plot draws the DMX feed; rehearsing, it draws the timeline.
+  useDmxFeed(!rehearsal);
 
   // Follows the *track*, not the timeline. A replan — an intensity nudge, a
   // palette change — re-mints timelineRevision and hands us a new `data` for the

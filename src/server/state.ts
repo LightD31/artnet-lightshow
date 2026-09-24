@@ -311,6 +311,15 @@ function getDmxSnapshot(): Record<number, number[]> {
   return out;
 }
 
+/**
+ * The same values as bytes, for the binary DMX feed (shared/dmx-frame.ts):
+ * each active universe as a view onto the engine's buffer, up to its last
+ * patched channel.
+ */
+function getDmxUniverses(): [number, Uint8Array][] {
+  return activeUniverses().map((universe) => [universe, universes.getBuffer(universe).subarray(0, getDmxSnapshotSize(universe))]);
+}
+
 // Full snapshot: GET /api/state and the initial push on socket connect. It is
 // exactly the three parts the incremental channels carry, reassembled — spelling
 // the fields out a second time only created two lists to keep in sync, and they
@@ -338,5 +347,6 @@ export {
   getLiveState,
   getCatalogs,
   getDmxSnapshot,
+  getDmxUniverses,
   setExtrasProvider,
 };

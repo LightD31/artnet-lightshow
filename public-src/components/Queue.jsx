@@ -1,4 +1,4 @@
-import { stateSig, send } from '../state.js';
+import { send, pick } from '../state.js';
 
 /**
  * What the auto-show will play next, and how far ahead to analyse.
@@ -60,7 +60,7 @@ function Row({ slot, position }) {
 }
 
 export function Queue() {
-  const s = stateSig.value;
+  const s = pick(['autoPrefetchDepth', 'deezer', 'deezerPrefetch', 'spotify', 'spotifyPrefetch']);
   const queue = activeQueue(s);
   if (!queue) return null;
 

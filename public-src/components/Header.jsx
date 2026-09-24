@@ -1,4 +1,4 @@
-import { connectedSig, stateSig } from '../state.js';
+import { connectedSig, pick } from '../state.js';
 import { formatBpm, clockSource } from '../utils.js';
 
 function MasterPill({ master, blackout }) {
@@ -24,7 +24,7 @@ function BpmPill({ bpm, running, source }) {
 
 export function Header() {
   const connected = connectedSig.value;
-  const s = stateSig.value;
+  const s = pick(['bpm', 'clock', 'running', 'masterDimmer', 'masterBlackout', 'energyOverride', 'flashLimit', 'autoShow']);
   const blackout = !!s.masterBlackout;
   const energy = s.energyOverride;
   const auto = s.autoShow && s.autoShow.status;

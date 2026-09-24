@@ -1,5 +1,5 @@
 import { useState } from 'preact/hooks';
-import { stateSig, api, toast } from '../state.js';
+import { api, toast, pick } from '../state.js';
 import { colorToCss, formatBpm } from '../utils.js';
 
 // The cue list rides the state broadcast as summaries — id, name, and enough to
@@ -97,7 +97,7 @@ function CueRow({ cue, presets, editing, setEditing }) {
 }
 
 export function Cues() {
-  const s = stateSig.value;
+  const s = pick(['cues', 'colorPresets']);
   const cues = s.cues || [];
   const presets = s.colorPresets || [];
   const [editing, setEditing] = useState(null);

@@ -10,8 +10,10 @@ import { EnergyHold } from './energy-hold.ts';
 import { ENERGY_EFFECTS } from './presets.ts';
 import { ddpConflict } from './ddp-routes.ts';
 import { messageOf } from '../errors.ts';
-import type { Server } from 'socket.io';
+import { PROTOCOL, ROOM, TOPICS } from './protocol.ts';
+import type { Server, Socket } from 'socket.io';
 import type { MidiPorts } from './midi-connect.ts';
+import type { Publisher, Snapshot } from './protocol.ts';
 
 /** A browser holding an energy effect down. */
 interface EnergyHoldMessage {
@@ -20,10 +22,24 @@ interface EnergyHoldMessage {
   effect?: unknown;
 }
 
+/** What a page asked for when it connected: protocol 2, or the original. */
+function protocolOf(socket: Socket): number {
+  const auth = socket.handshake.auth as { protocol?: unknown } | undefined;
+  return auth && auth.protocol === PROTOCOL ? PROTOCOL : 1;
+}
+
+/** The feeds named in a subscribe message that exist, as their rooms. */
+function topicRooms(payload: unknown): string[] {
+  const names = Array.isArray(payload) ? payload : [payload];
+  return names.filter((t): t is keyof typeof TOPICS => typeof t === 'string' && Object.hasOwn(TOPICS, t))
+    .map((t) => TOPICS[t]);
+}
+
 function attachSockets(io: Server, { midi, integrations }: {
   midi: MidiPorts & { onLearn(fn: (event: unknown) => void): void };
-  integrations: { broadcast(): void };
+  integrations: { broadcast(): void; publisher: Publisher };
 }): void {
+  const { publisher } = integrations;
   const holds = new EnergyHold((effect) => {
     state.heldEnergy = effect;
     integrations.broadcast();
@@ -36,7 +52,31 @@ function attachSockets(io: Server, { midi, integrations }: {
 
   io.on('connection', (socket) => {
     console.log('Client connected:', socket.id);
-    socket.emit('state', getClientState());
+    if (protocolOf(socket) === PROTOCOL) {
+      socket.join(ROOM.v2);
+      socket.emit('snapshot', publisher.snapshot(getClientState()));
+      // A page that finds a gap in a domain's versions asks for the whole
+      // state again rather than drifting.
+      socket.on('sync', (ack?: (snapshot: Snapshot) => void) => {
+        const snapshot = publisher.snapshot(getClientState());
+        if (typeof ack === 'function') ack(snapshot);
+        else socket.emit('snapshot', snapshot);
+      });
+      socket.on('subscribe', (payload) => {
+        for (const room of topicRooms(payload)) {
+          socket.join(room);
+          // The frame the others already have: the feed only sends a change.
+          const frame = room === ROOM.dmx ? publisher.lastDmxFrame() : null;
+          if (frame) socket.emit('dmx-frame', frame);
+        }
+      });
+      socket.on('unsubscribe', (payload) => {
+        for (const room of topicRooms(payload)) socket.leave(room);
+      });
+    } else {
+      socket.join(ROOM.v1);
+      socket.emit('state', getClientState());
+    }
 
     socket.on('set', (payload) => {
       try { applyPatch(payload); }

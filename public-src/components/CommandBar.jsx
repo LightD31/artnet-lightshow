@@ -1,12 +1,13 @@
 import { useEffect, useRef } from 'preact/hooks';
-import { stateSig, send, emitTap, energyHold } from '../state.js';
+import { send, emitTap, energyHold, pick } from '../state.js';
 import { formatBpm, clockSource } from '../utils.js';
+import { useDraft } from '../draft.js';
 
 const DIVISIONS = [1, 2, 4, 8];
 
 export function CommandBar() {
   const pressRef = useRef(null);
-  const s = stateSig.value;
+  const s = pick(['bpm', 'beatDivision', 'clock', 'running', 'masterDimmer', 'masterBlackout', 'energyEffects', 'energyOverride']);
   const bpm = s.bpm || 120;
   const division = s.beatDivision || 1;
   const periodMs = (60_000 / bpm) / division;
@@ -33,7 +34,7 @@ export function CommandBar() {
     return () => document.removeEventListener('keydown', onKey);
   }, []);
 
-  const dim = s.masterDimmer ?? 255;
+  const [dim, onMaster, commitMaster] = useDraft(s.masterDimmer ?? 255, (v) => send({ masterDimmer: v }));
   const masterPct = Math.round((dim / 255) * 100);
   const effects = s.energyEffects || [];
 
@@ -131,8 +132,11 @@ export function CommandBar() {
           <span class="cb-master-label">MASTER</span>
           <input
             type="range" min="0" max="255"
+            aria-label="Master dimmer"
+            aria-valuetext={`${masterPct} percent`}
             value={dim}
-            onInput={(e) => send({ masterDimmer: parseInt(e.target.value, 10) })}
+            onInput={(e) => onMaster(parseInt(e.target.value, 10))}
+            onChange={(e) => commitMaster(parseInt(e.target.value, 10))}
           />
           <span class="cb-master-val">{masterPct}%</span>
         </div>
