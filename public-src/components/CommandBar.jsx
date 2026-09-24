@@ -59,7 +59,7 @@ export function CommandBar() {
   const effects = s.energyEffects || [];
 
   return (
-    <div class="command-bar">
+    <section class="command-bar" aria-label="Live controls">
       {/* Tempo block */}
       <div class="cb-block cb-tempo">
         <div
@@ -142,6 +142,6 @@ export function CommandBar() {
           ))}
         </div>
       </div>
-    </div>
+    </section>
   );
 }

@@ -38,6 +38,9 @@
   /* accent — a single sober blue, plus semantic tones */
   --accent:      #3b82f6;   /* blue-500  — oklch(.62 .19 263) */
   --accent-hover:#2563eb;   /* blue-600 */
+  /* The accent as a ground under white text: blue-500 gives white 3.7:1,
+     blue-600 gives it 5.2:1. */
+  --accent-fill: #2563eb;
   --accent-2:    #10b981;   /* emerald-500 (slot B / success) */
   --accent-3:    #f59e0b;   /* amber-500   (slot C / warning) */
   --accent-4:    #ef4444;   /* red-500     (slot D / danger)  */
@@ -85,7 +88,7 @@
   --bg: #f4f4f5; --surface: #ffffff; --surface-2: #f4f4f5; --card: #ffffff; --card-hi: #f4f4f5;
   --border: #e4e4e7; --border-hi: #a1a1aa;
   --text: #09090b; --text-2: #27272a; --muted: #52525b; --dim: #3f3f46;
-  --accent: #2563eb; --accent-hover: #1d4ed8; --accent-2: #047857; --accent-3: #b45309; --accent-4: #dc2626;
+  --accent: #2563eb; --accent-hover: #1d4ed8; --accent-fill: #2563eb; --accent-2: #047857; --accent-3: #b45309; --accent-4: #dc2626;
   --red: #dc2626; --green: #047857; --amber: #b45309;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, .08); --shadow: 0 1px 3px rgba(0, 0, 0, .1); --shadow-lg: 0 4px 16px rgba(0, 0, 0, .12);
   --glow: 0 0 0 2px rgba(37, 99, 235, .45);
@@ -98,7 +101,7 @@
     --bg: #f4f4f5; --surface: #ffffff; --surface-2: #f4f4f5; --card: #ffffff; --card-hi: #f4f4f5;
     --border: #e4e4e7; --border-hi: #a1a1aa;
     --text: #09090b; --text-2: #27272a; --muted: #52525b; --dim: #3f3f46;
-    --accent: #2563eb; --accent-hover: #1d4ed8; --accent-2: #047857; --accent-3: #b45309; --accent-4: #dc2626;
+    --accent: #2563eb; --accent-hover: #1d4ed8; --accent-fill: #2563eb; --accent-2: #047857; --accent-3: #b45309; --accent-4: #dc2626;
     --red: #dc2626; --green: #047857; --amber: #b45309;
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, .08); --shadow: 0 1px 3px rgba(0, 0, 0, .1); --shadow-lg: 0 4px 16px rgba(0, 0, 0, .12);
     --glow: 0 0 0 2px rgba(37, 99, 235, .45);
@@ -117,7 +120,7 @@
   --bg: #000000; --surface: #0a0a0a; --surface-2: #121212; --card: #0c0c0c; --card-hi: #1a1a1a;
   --border: #2e2e2e; --border-hi: #4a4a4a;
   --text: #ffffff; --text-2: #e4e4e4; --muted: #bdbdbd; --dim: #e4e4e4;
-  --accent: #6e6e6e; --accent-hover: #858585;
+  --accent: #a8a8a8; --accent-hover: #bdbdbd; --accent-fill: #5e5e5e;
   --glow: 0 0 0 2px rgba(255, 255, 255, .5);
   --shadow-sm: none; --shadow: none; --shadow-lg: none;
 }
@@ -179,7 +182,7 @@ header h1::before {
   content: '';
   width: 20px; height: 20px;
   border-radius: 5px;
-  background: var(--accent);
+  background: var(--accent-fill);
 }
 header h1 span { color: var(--accent); }
 
@@ -195,7 +198,7 @@ header h1 span { color: var(--accent); }
 }
 .nav-link:hover { background: var(--card-hi); color: var(--text); }
 .nav-link.active {
-  background: var(--accent);
+  background: var(--accent-fill);
   color: #fff;
 }
 
@@ -347,7 +350,7 @@ main {
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.16em;
-  background: var(--accent);
+  background: var(--accent-fill);
   color: #fff;
   border: none;
   border-radius: var(--radius-sm);
@@ -527,7 +530,7 @@ main {
 }
 .mode-tab:hover { color: var(--text); }
 .mode-tab.active {
-  background: var(--accent);
+  background: var(--accent-fill);
   color: #fff;
 }
 .mode-tab-icon { font-size: 14px; }
@@ -596,9 +599,9 @@ main {
   left: -9999px;
   top: 8px;
   z-index: 1000;
-  padding: 10px 14px;
+  padding: 12px 16px;
   border-radius: var(--radius-sm);
-  background: var(--accent);
+  background: var(--accent-fill);
   color: #fff;
   font-weight: 700;
   text-decoration: none;
@@ -641,7 +644,7 @@ main {
   border-radius: var(--radius-sm);
   overflow: hidden;
 }
-.perform-progress-fill { position: absolute; inset: 0 auto 0 0; background: var(--accent); opacity: .4; }
+.perform-progress-fill { position: absolute; inset: 0 auto 0 0; background: var(--accent-fill); opacity: .4; }
 .perform-progress-time { position: relative; padding: 0 8px; font: 600 13px/24px var(--mono); }
 
 .perform-sync { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -691,7 +694,7 @@ main {
 .perform-pad-name { font-size: 20px; font-weight: 800; letter-spacing: .03em; text-transform: uppercase; text-align: center; }
 .perform-pad-hint { font-size: 12px; color: var(--muted); }
 .perform-pad:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
-.perform-pad.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.perform-pad.active { background: var(--accent-fill); border-color: var(--accent); color: #fff; }
 .perform-pad.active .perform-pad-hint { color: rgba(255, 255, 255, .9); }
 .pad-blackout { border-color: var(--red); }
 .pad-blackout.active { background: var(--red); border-color: var(--red); }
@@ -883,7 +886,7 @@ main {
   content: '';
   width: 3px;
   height: 12px;
-  background: var(--accent);
+  background: var(--accent-fill);
   border-radius: 2px;
 }
 
@@ -956,7 +959,7 @@ main {
   font-size: 16px;
   font-weight: 700;
   letter-spacing: 0.18em;
-  background: var(--accent);
+  background: var(--accent-fill);
   color: #fff;
   border: none;
   border-radius: var(--radius);
@@ -1008,7 +1011,7 @@ button { font-family: inherit; cursor: pointer; }
 .btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(59, 130, 246, .35); }
 
 .btn.active {
-  background: var(--accent);
+  background: var(--accent-fill);
   border-color: transparent;
   color: #fff;
 }
@@ -1080,7 +1083,7 @@ input[type=range]::-webkit-slider-thumb {
   appearance: none;
   width: 14px; height: 14px;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--accent-fill);
   cursor: grab;
   box-shadow: 0 0 0 1px var(--border);
   transition: transform var(--t-fast);
@@ -1090,7 +1093,7 @@ input[type=range]::-webkit-slider-thumb:active { cursor: grabbing; transform: sc
 input[type=range]::-moz-range-thumb {
   width: 14px; height: 14px;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--accent-fill);
   cursor: grab;
   border: none;
 }
@@ -1379,7 +1382,7 @@ input[type=range]::-moz-range-thumb {
   flex-shrink: 0;
 }
 .pattern-btn.active .icon {
-  background: var(--accent);
+  background: var(--accent-fill);
   border-color: var(--accent);
   color: #fff;
 }
@@ -2017,7 +2020,7 @@ input[type=range]::-moz-range-thumb {
 }
 .warm-bar-fill {
   height: 100%;
-  background: var(--accent);
+  background: var(--accent-fill);
   transition: width .3s ease;
 }
 .warm-counts {
@@ -2208,7 +2211,7 @@ input[type=range]::-moz-range-thumb {
   padding: 9px 18px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--accent);
-  background: var(--accent);
+  background: var(--accent-fill);
   color: #fff;
   font: inherit;
   font-size: 13px;
@@ -2301,7 +2304,7 @@ input[type=range]::-moz-range-thumb {
 }
 .segmented-btn + .segmented-btn { border-left: 1px solid var(--border); }
 .segmented-btn:hover { background: var(--card-hi); color: var(--text); }
-.segmented-btn.active { background: var(--accent); color: #fff; }
+.segmented-btn.active { background: var(--accent-fill); color: #fff; }
 
 /* — now playing — */
 .now-panel { display: flex; gap: 10px; align-items: center; }
@@ -2323,7 +2326,7 @@ input[type=range]::-moz-range-thumb {
 }
 .now-progress { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .now-bar { flex: 1; height: 3px; border-radius: 2px; background: var(--surface); overflow: hidden; }
-.now-bar-fill { height: 100%; background: var(--accent); }
+.now-bar-fill { height: 100%; background: var(--accent-fill); }
 .now-time { font-size: 10px; font-family: var(--mono); color: var(--dim); white-space: nowrap; }
 
 /* — look (palette + intensity) — */
@@ -2715,7 +2718,7 @@ input[type=range]::-moz-range-thumb {
   padding: 8px 16px;
   border: none;
   border-radius: var(--radius-sm);
-  background: var(--accent);
+  background: var(--accent-fill);
   color: #fff;
   font-family: inherit;
   font-size: 12px;
@@ -2891,3 +2894,39 @@ input[type=range]::-moz-range-thumb {
 .track-edits .edit-sections td { padding: 2px 4px; }
 .track-edits .edit-sections select { width: 100%; }
 
+/* =============================================================
+   TOUCH — a finger, not a cursor: every target at least 44 px
+   ============================================================= */
+@media (pointer: coarse) {
+  .btn, .btn.sm, .btn.icon, .segmented-btn, .bd-tab, .bd-toggle, .mode-tab, .nav-link,
+  .header-tool, .header-theme, .cb-energy-btn, .cb-tap, .cb-play, .cb-blackout,
+  .palette-btn, .pattern-btn, .color-slot-tab, .cue-recall, .cue-capture, .sync-nudge,
+  .transport-btn, .warm-toggle, .auto-select, .warm-playlist-select, .shortcuts-tab,
+  select, input[type=number], input[type=text], input[type=search], textarea {
+    min-height: 44px;
+  }
+  .btn.icon, .sync-nudge, .shortcuts-tab, .bd-toggle { min-width: 44px; }
+  /* Above the drawer's toggle, which sits in the same corner. */
+  .shortcuts-tab { width: 44px; height: 44px; bottom: 76px; }
+  .cb-divs .btn, .cb-bpm-nudge .btn { min-width: 44px; }
+  input[type=checkbox], input[type=radio] { width: 24px; height: 24px; }
+  /* A fader's thumb is what the finger has to land on. */
+  input[type=range] { height: 10px; }
+  input[type=range]::-webkit-slider-thumb { width: 28px; height: 28px; }
+  input[type=range]::-moz-range-thumb { width: 28px; height: 28px; }
+  .mode-tab-hint { display: none; }
+}
+
+/* =============================================================
+   REDUCED MOTION — the whole page, not a list of animations
+   ============================================================= */
+@media (prefers-reduced-motion: reduce) {
+  /* Everything that moves for decoration stops. What changes still changes —
+     a pad lights, a fader moves — it just does not animate getting there. */
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
+import { useFocusTrap } from '../focus-trap.js';
 
 /**
  * Every keyboard shortcut the surface has, in one place.
@@ -17,9 +18,11 @@ export const SHORTCUTS = [
   {
     group: 'Transport',
     items: [
-      { keys: ['Space'], what: 'Tap tempo — tap along to set the BPM' },
+      { keys: ['Space'], what: 'Tap tempo — tap along to set the BPM (also after clicking a button)' },
       { keys: ['1'], what: 'Manual view' },
       { keys: ['2'], what: 'Auto Show view' },
+      { keys: ['3'], what: 'Perform view' },
+      { keys: ['←', '→'], either: true, what: 'Next or previous view, on the view tabs' },
     ],
   },
   {
@@ -36,7 +39,7 @@ export const SHORTCUTS = [
   {
     group: 'Energy effects',
     items: [
-      { keys: ['Space'], what: 'Hold a focused energy button — releases when you let go' },
+      { keys: ['Space'], what: 'Hold an energy button reached with Tab — releases when you let go' },
       { keys: ['Enter'], what: 'Hold a focused energy button' },
     ],
   },
@@ -63,6 +66,8 @@ function isTyping(target) {
 
 export function ShortcutsOverlay() {
   const [open, setOpen] = useState(false);
+  const panelRef = useRef(null);
+  useFocusTrap(panelRef, open, () => setOpen(false));
 
   useEffect(() => {
     const onKey = (e) => {
@@ -92,6 +97,8 @@ export function ShortcutsOverlay() {
   return (
     <div class="shortcuts-veil" onClick={() => setOpen(false)}>
       <div
+        ref={panelRef}
+        tabIndex={-1}
         class="shortcuts-panel"
         role="dialog"
         aria-modal="true"

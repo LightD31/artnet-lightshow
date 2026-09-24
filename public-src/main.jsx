@@ -136,18 +136,24 @@ function Root() {
   return (
     <>
       {/* Focuses the view without touching the hash, which names the view. */}
-      <a class="skip-link" href={`#${mode}`} onClick={(e) => {
+      <a class="skip-link" href="#main" onClick={(e) => {
         e.preventDefault();
         document.getElementById(`panel-${mode}`)?.focus();
       }}>Skip to the controls</a>
       <Header />
       {mode !== 'perform' && <CommandBar />}
-      <ModeTabs mode={mode} setMode={setMode} />
-      <main id={`panel-${mode}`} class={`mode-${mode}`} role="tabpanel" aria-labelledby={`tab-${mode}`} tabIndex={-1}>
-        {mode === 'manual' ? <ManualView /> : mode === 'auto' ? <AutoView /> : <Perform />}
+      <nav class="mode-nav" aria-label="Views">
+        <ModeTabs mode={mode} setMode={setMode} />
+      </nav>
+      <main id="main" class={`mode-${mode}`}>
+        <div id={`panel-${mode}`} class="view-panel" role="tabpanel" aria-labelledby={`tab-${mode}`} tabIndex={-1}>
+          {mode === 'manual' ? <ManualView /> : mode === 'auto' ? <AutoView /> : <Perform />}
+        </div>
       </main>
-      {mode !== 'perform' && <BottomDrawer />}
-      <ShortcutsOverlay />
+      <footer class="app-footer">
+        {mode !== 'perform' && <BottomDrawer />}
+        <ShortcutsOverlay />
+      </footer>
       <ConnectionVeil />
     </>
   );

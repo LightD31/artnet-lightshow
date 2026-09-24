@@ -110,6 +110,7 @@ function FixtureCard({ fix, state }) {
         <span class="fixture-addr" title="Universe / DMX address">
           <input
             class="fixture-universe"
+            aria-label={`${fix.label}: universe`}
             type="number" min="0" max="32767"
             value={fix.universe ?? 0}
             onChange={(e) => emitFixture({
@@ -120,6 +121,7 @@ function FixtureCard({ fix, state }) {
           />
           <span class="fixture-addr-sep">/</span>
           <input
+            aria-label={`${fix.label}: DMX address`}
             type="number" min="1" max="512"
             value={fix.address}
             onChange={(e) => emitFixture({ id: fix.id, address: parseInt(e.target.value, 10) || fix.address })}

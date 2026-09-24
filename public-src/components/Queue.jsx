@@ -73,7 +73,7 @@ export function Queue() {
   return (
     <section class="panel queue-panel">
       <header class="panel-head">
-        <h3 class="panel-title">Up next</h3>
+        <h2 class="panel-title">Up next</h2>
         <span class="panel-tag">{queue.source}</span>
         <div class="queue-depth">
           <span class="queue-depth-label" id="queue-depth-label">Analyse ahead</span>

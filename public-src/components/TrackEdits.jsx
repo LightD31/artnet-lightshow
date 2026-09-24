@@ -92,7 +92,7 @@ export function TrackEdits() {
   return (
     <section class="panel track-edits">
       <header class="panel-head">
-        <h3 class="panel-title">Track edits</h3>
+        <h2 class="panel-title">Track edits</h2>
         {any ? <button type="button" class="btn sm" onClick={() => save({})}>Clear all</button> : null}
       </header>
       <p class="look-note">

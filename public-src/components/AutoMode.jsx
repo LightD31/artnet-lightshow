@@ -241,7 +241,7 @@ export function AutoMode() {
           {/* The two controls that shape the generated show, together. The
               intensity slider used to sit in the transport row as "INT". */}
           <section class="panel look-panel">
-            <header class="panel-head"><h3 class="panel-title">Look</h3></header>
+            <header class="panel-head"><h2 class="panel-title">Look</h2></header>
 
             <div class="look-row">
               <span class="look-label" id="palette-label">Palette</span>
@@ -348,7 +348,7 @@ export function AutoMode() {
           {as.analysis ? (
             <>
               <section class="panel">
-                <header class="panel-head"><h3 class="panel-title">Analysis</h3></header>
+                <header class="panel-head"><h2 class="panel-title">Analysis</h2></header>
                 <AnalysisStats as={as} colorPresets={s.colorPresets} />
               </section>
               <section class="panel timeline-panel">
