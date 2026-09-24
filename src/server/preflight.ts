@@ -23,6 +23,8 @@ import * as pythonEnv from '../python-env.ts';
 import * as ytdlp from '../ytdlp.ts';
 import { codeOf, messageOf } from '../errors.ts';
 import { listLiveDevices } from '../live-input.ts';
+import { modelManager } from './model-manager.ts';
+import type { ModelManager, ModelRow } from './model-manager.ts';
 import type { LiveDevices } from '../live-input.ts';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { EngineStatus } from './engine.ts';
@@ -64,12 +66,6 @@ export interface PreflightSubjects {
   standalone?: boolean;
 }
 
-interface ModelDownload {
-  startedAt: number;
-  done: boolean;
-  error: string | null;
-  promise: Promise<ModelDownload> | null;
-}
 
 /**
  * The check you run before doors open.
@@ -493,6 +489,40 @@ function checkPython(): Check {
   };
 }
 
+/**
+ * The model stack, imported for real: torch, its audio and vision halves, the
+ * beat model and the separator. `checkPython` only finds the packages; this is
+ * what catches a torchvision built for a different torch, which installs
+ * cleanly and then fails every model.
+ */
+async function checkModelStack(verify = pythonEnv.verify): Promise<Check> {
+  const id = 'model-stack';
+  const label = 'Model stack';
+  const info = pythonEnv.resolve();
+  if (!info.ok || info.missing.length) {
+    return { id, label, status: INFO, detail: 'Not checked until the Python check above passes.' };
+  }
+  const report = await verify(info.executable || info.exe);
+  const failures = Object.entries(report.errors);
+  if (failures.length) {
+    const torchPair = failures.some(([mod]) => mod.startsWith('torch'));
+    return {
+      id, label, status: FAIL,
+      detail: failures.map(([mod, message]) => `${mod}: ${message}`).join('; '),
+      fix: torchPair
+        ? 'torch, torchaudio and torchvision have to come from the same build: reinstall the three together from one index '
+          + '(uv sync --extra cpu, or see requirements.txt for CUDA and ROCm).'
+        : `"${info.executable || info.exe}" -m pip install -r requirements.txt`,
+    };
+  }
+  const where = report.accelerator === 'cpu' || !report.accelerator
+    ? 'on the CPU'
+    : `on ${report.device || 'the GPU'} (${report.accelerator === 'rocm' ? 'ROCm' : 'CUDA'})`;
+  const versions = ([['torch', report.torch], ['torchaudio', report.torchaudio], ['torchvision', report.torchvision]] as const)
+    .filter(([, version]) => version).map(([mod, version]) => `${mod} ${version}`).join(', ');
+  return { id, label, status: OK, detail: `${versions}; the models load and run ${where}.` };
+}
+
 async function checkFfmpeg(): Promise<Check> {
   const r = await probeCommand('ffmpeg', ['-version']);
   if (!r.ok) {
@@ -553,8 +583,8 @@ function checkPanns(): Check {
       id: 'panns', label: 'PANNs tagger', status: WARN,
       detail: 'Not downloaded. Genre comes from MuQ-MuLan either way — see Analysis models — so '
         + 'this only costs the instrument-role priors and the genre fallback behind MuQ-MuLan.',
-      fix: 'python scripts/setup-panns.py   (~310 MB, one time). It is also fetched automatically '
-        + 'on the first track you analyse — which is a poor moment to discover a slow connection.',
+      fix: 'Download it under Settings → Analysis models, or run python scripts/setup-panns.py '
+        + '(~310 MB, one time). The analysis never fetches it itself.',
     };
   }
   if (checkpoint !== PANNS_CHECKPOINT_SIZE) {
@@ -716,88 +746,64 @@ function checkCues(): Check {
   };
 }
 
-// Model weights run to gigabytes. The server's pre-show check used to fetch
-// them with spawnSync, which froze the process — Art-Net output included — for
-// as long as the download took, and started over on every run that found them
-// missing. It now starts one download in the background, reports on it, and
-// never starts a second while one is running or after one has succeeded.
-const MODEL_DOWNLOAD_TIMEOUT_MS = 60 * 60 * 1000;
-let modelDownload: ModelDownload | null = null;
-
-function startModelDownload(): ModelDownload {
-  if (modelDownload && (!modelDownload.done || !modelDownload.error)) return modelDownload;
-  const py = process.env.ARTNET_PYTHON || pythonEnv.resolve().executable || 'python';
-  const script = path.join(import.meta.dirname, '..', '..', 'scripts', 'download-models.py');
-  const job: ModelDownload = { startedAt: Date.now(), done: false, error: null, promise: null };
-  job.promise = new Promise((resolve) => {
-    let stderr = '';
-    const finish = (error: string | null) => {
-      if (job.done) return;
-      clearTimeout(timer);
-      job.done = true;
-      job.error = error;
-      if (error) console.warn(`[preflight] model download failed: ${error}`);
-      else console.log('[preflight] model download finished');
-      resolve(job);
-    };
-    let child;
-    try {
-      child = spawn(py, [script], { env: process.env, windowsHide: true });
-    } catch (err) {
-      finish(messageOf(err));
-      return;
-    }
-    const timer = setTimeout(() => {
-      try { child.kill(); } catch (_) { /* already gone */ }
-      finish(`timed out after ${MODEL_DOWNLOAD_TIMEOUT_MS / 60000} minutes`);
-    }, MODEL_DOWNLOAD_TIMEOUT_MS);
-    if (timer.unref) timer.unref();
-    child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-2000); });
-    child.on('error', (err) => finish(err.message));
-    child.on('close', (code) => finish(code === 0 ? null : (stderr.trim() || `exit code ${code}`)));
-  });
-  modelDownload = job;
-  console.log('[preflight] downloading analysis model weights in the background');
-  return job;
+// Model weights run to gigabytes. The check never downloads in the
+// foreground: asked to fetch what is missing, it starts one background job in
+// the model manager (Settings → Analysis models shows its progress) and
+// reports on it; a second run while it goes, or after it has succeeded, does
+// not start another.
+/** What the show would download unprompted: the models it needs and the ones the settings ask for. */
+function modelsWanted(rows: ModelRow[]): string[] {
+  const wanted = new Set(rows.filter((m) => m.tier === 'required' || m.tier === 'recommended').map((m) => m.id));
+  if (settings.get('analysis.separator') === 'bs-roformer') wanted.add('bs_roformer');
+  if (settings.get('analysis.structureModel') === 'songformer') wanted.add('songformer');
+  return rows.filter((m) => wanted.has(m.id)).map((m) => m.id);
 }
 
-function checkAnalysisModels({ download = false } = {}): Check {
-  const root = process.env.ARTNET_MODEL_DIR
-    || path.join(os.homedir(), '.cache', 'artnet-lightshow', 'models');
-  const bs = path.join(root, 'BS-Roformer-SW.ckpt');
-  const bsReady = path.join(root, 'BS-Roformer-SW.ready');
-  const muq = path.join(root, 'muq');
-  const mulan = path.join(root, 'muq_mulan');
-  const text = process.env.ARTNET_MUQ_TEXT_MODEL || path.join(root, 'xlm-roberta-base');
-  const skey = path.join(root, 'skey');
-  const beat = path.join(root, 'beat_this.ready');
-  const bsEnabled = settings.get('analysis.separator') === 'bs-roformer';
-  const ready = (!bsEnabled || (fs.existsSync(bs) && fs.existsSync(bsReady))) && fs.existsSync(muq) && fs.existsSync(mulan)
-    && fs.existsSync(text) && fs.existsSync(skey) && fs.existsSync(beat);
-
-  if (!ready && download) {
-    const job = startModelDownload();
-    if (!job.done) {
-      const minutes = Math.floor((Date.now() - job.startedAt) / 60000);
-      return { id: 'models', label: 'Analysis models', status: WARN,
-        detail: `Downloading the model weights in the background (started ${minutes ? `${minutes} min ago` : 'just now'}). `
-          + 'The show keeps running meanwhile.',
-        fix: 'Run the check again when it has finished.' };
-    }
-    if (job.error) {
-      return { id: 'models', label: 'Analysis models', status: WARN,
-        detail: `Model download failed: ${job.error}.`,
-        fix: 'Install huggingface_hub and run the check again, or run npm run preflight.' };
-    }
+async function checkAnalysisModels({ download = false, manager = modelManager }:
+  { download?: boolean; manager?: ModelManager } = {}): Promise<Check> {
+  const id = 'models';
+  const label = 'Analysis models';
+  let listing;
+  try {
+    listing = await manager.list({ refresh: true });
+  } catch (err) {
+    return { id, label, status: WARN, detail: messageOf(err),
+      fix: 'Check the Python check above; the model list comes from scripts/download-models.py.' };
   }
+  const rows = listing.models;
+  const wanted = modelsWanted(rows);
+  const missing = rows.filter((m) => wanted.includes(m.id) && !m.present);
+  const names = (list: ModelRow[]) => list.map((m) => m.name).join(', ');
 
-  return { id: 'models', label: 'Analysis models', status: ready ? OK : WARN,
-    detail: ready
-      ? (bsEnabled
-        ? 'BS-RoFormer, Beat This!, S-KEY, MuQ and MuQ-MuLan weights are ready.'
-        : 'Beat This!, S-KEY, MuQ and MuQ-MuLan are ready; Demucs is active for stems.')
-      : 'Pretrained weights are not available; deterministic analysis fallback remains active.',
-    fix: ready ? null : 'Run the preflight again after installing huggingface_hub.' };
+  let job = manager.job();
+  if (missing.length && download && (!job || job.ok !== null)
+    && !(job && job.ok === true && missing.every((m) => job?.ids.includes(m.id)))) {
+    job = manager.download(missing.map((m) => m.id));
+  }
+  if (job && job.ok === null) {
+    const minutes = Math.floor((Date.now() - job.startedAt) / 60000);
+    const bytes = Object.values(job.models).reduce((sum, m) => sum + m.bytes, 0);
+    const total = Object.values(job.models).reduce((sum, m) => sum + (m.total ?? 0), 0);
+    const progress = total ? ` — ${Math.round(bytes / 1e6)} of ${Math.round(total / 1e6)} MB` : '';
+    return { id, label, status: WARN,
+      detail: `Downloading ${job.ids.join(', ')} in the background (started ${minutes ? `${minutes} min ago` : 'just now'})${progress}. `
+        + 'The show keeps running meanwhile.',
+      fix: 'Settings → Analysis models shows its progress.' };
+  }
+  if (missing.length) {
+    const required = missing.filter((m) => m.tier === 'required');
+    const failed = job && job.ok === false ? ` The last download failed: ${job.error || 'see the log'}.` : '';
+    return { id, label, status: WARN,
+      detail: (required.length
+        ? `${names(required)} ${required.length === 1 ? 'is' : 'are'} not downloaded: the first track will fetch ${required.length === 1 ? 'it' : 'them'}.`
+        : `${names(missing)} ${missing.length === 1 ? 'is' : 'are'} not downloaded; the analysis falls back without ${missing.length === 1 ? 'it' : 'them'}.`)
+        + failed,
+      fix: 'Download them under Settings → Analysis models, or run python scripts/download-models.py.' };
+  }
+  const extras = rows.filter((m) => m.present && !wanted.includes(m.id));
+  return { id, label, status: OK,
+    detail: `${names(rows.filter((m) => wanted.includes(m.id)))} ready`
+      + (extras.length ? `; also ${names(extras)}.` : '.') };
 }
 
 /**
@@ -812,13 +818,15 @@ async function runPreflight({ midi, spotify, prolink, analysisCache, downloadMod
   // The external-tool probes are independent and each costs a process spawn;
   // run them together rather than serially in front of an operator waiting on
   // the report.
-  const [artnet, hue, wled, ffmpeg, ytDlp, live] = await Promise.all([
+  const [artnet, hue, wled, ffmpeg, ytDlp, live, stack, models] = await Promise.all([
     checkArtnet(),
     checkHue(),
     checkWled(),
     checkFfmpeg(),
     checkYtDlp(),
     checkLiveInput(),
+    checkModelStack(),
+    checkAnalysisModels({ download: downloadModels }),
   ]);
 
   const checks: Check[] = [
@@ -831,6 +839,7 @@ async function runPreflight({ midi, spotify, prolink, analysisCache, downloadMod
     checkAccess(),
     checkMidi(midi),
     checkPython(),
+    stack,
     ffmpeg,
     ytDlp,
     checkPanns(),
@@ -838,7 +847,7 @@ async function runPreflight({ midi, spotify, prolink, analysisCache, downloadMod
     checkPlaybackSources({ spotify, prolink }),
     live,
     checkCues(),
-    checkAnalysisModels({ download: downloadModels }),
+    models,
   ];
 
   const counts: Record<CheckStatus, number> = { ok: 0, warn: 0, fail: 0, info: 0 };
@@ -847,7 +856,6 @@ async function runPreflight({ midi, spotify, prolink, analysisCache, downloadMod
   return { ok: counts.fail === 0, counts, checks, at: new Date().toISOString() };
 }
 
-export const _modelDownload = () => modelDownload;
 export const STATUSES = { OK, WARN, FAIL, INFO };
 
 export {
@@ -864,6 +872,7 @@ export {
   checkWled,
   checkPanns,
   checkAnalysisModels,
+  checkModelStack,
   checkAccess,
   checkMidi,
 };

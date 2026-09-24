@@ -303,6 +303,7 @@
         "separated": { "type": "boolean" },
         "modelUsage": { "type": "object", "additionalProperties": { "type": ["string", "boolean"] } },
         "elapsedSec": { "type": "number" },
+        "timings": { "type": "object", "additionalProperties": { "type": "number" }, "description": "Seconds per stage; `wait.*` is what the main thread spent waiting on a model's thread." },
         "processingRatio": { "type": "number" },
         "withinRealtimeBudget": { "type": "boolean" }
       }

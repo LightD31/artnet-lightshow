@@ -288,6 +288,8 @@ export interface Meta {
   separated?: boolean;
   modelUsage?: Record<string, string | boolean>;
   elapsedSec?: number;
+  /** Seconds per stage; `wait.*` is what the main thread spent waiting on a model's thread. */
+  timings?: Record<string, number>;
   processingRatio?: number;
   withinRealtimeBudget?: boolean;
 }

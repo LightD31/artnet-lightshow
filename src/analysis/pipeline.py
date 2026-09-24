@@ -32,6 +32,8 @@ import os
 import sys
 import time
 import hashlib
+import contextlib
+import functools
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -58,6 +60,31 @@ SEMANTIC_VOCABULARY = (
 
 def _log(message):
     print(f'[pipeline] {message}', file=sys.stderr)
+
+
+class Timings(dict):
+    """
+    Seconds per stage, for `meta.timings` and scripts/bench-analyze.py.
+
+    The stages on their own threads are timed on those threads, so a model's
+    time is its own and not the time the main thread spent waiting for it —
+    which is recorded too, as `wait.*`, because that is what the track pays.
+    """
+
+    @contextlib.contextmanager
+    def stage(self, name):
+        started = time.perf_counter()
+        try:
+            yield
+        finally:
+            self[name] = round(self.get(name, 0.0) + time.perf_counter() - started, 3)
+
+    def timed(self, name, fn):
+        @functools.wraps(fn)
+        def run(*args, **kwargs):
+            with self.stage(name):
+                return fn(*args, **kwargs)
+        return run
 
 
 def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
@@ -90,8 +117,10 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
     import torch  # noqa: F401
     models.device()
 
+    timings = Timings()
     try:
-        audio = preprocess_stage.prepare(path, config.preprocess, target_duration_sec)
+        with timings.stage('preprocess'):
+            audio = preprocess_stage.prepare(path, config.preprocess, target_duration_sec)
 
         # The beat model first, on its own thread and first in line for the
         # card. Everything from the rhythm stage on waits for the grid, and it
@@ -100,7 +129,7 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
         # next, queue behind it instead of in front of it.
         beat_turn = models.reserve_first_turn()
         beat_pool = ThreadPoolExecutor(max_workers=1)
-        beat_future = beat_pool.submit(_beat_pass, audio, config.rhythm, beat_turn)
+        beat_future = beat_pool.submit(timings.timed('beats', _beat_pass), audio, config.rhythm, beat_turn)
 
         # The tagger used to read the file itself, which let it start before
         # preprocessing — at the price of decoding and resampling the whole
@@ -111,7 +140,7 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
         # stage after this one.
         if tagging:
             tag_pool = ThreadPoolExecutor(max_workers=1)
-            tag_future = tag_pool.submit(_safe_tag, path, audio)
+            tag_future = tag_pool.submit(timings.timed('tagger', _safe_tag), path, audio)
 
         # Separation is the most expensive stage and needs nothing but the
         # waveform, so it starts here and is collected as late as possible. On
@@ -119,7 +148,7 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
         # queues behind it, which is no worse than running it in sequence.
         if config.separate_sources:
             stem_pool = ThreadPoolExecutor(max_workers=1)
-            stem_future = stem_pool.submit(_safe_separate, audio)
+            stem_future = stem_pool.submit(timings.timed('separation', _safe_separate), audio)
 
         # MuQ-MuLan answers the genre question, so it has to be collected
         # before perception rather than tacked on after the document is built.
@@ -130,69 +159,83 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
         # at the end takes the slowest optional model off the critical path.
         if config.enable_semantics:
             mulan_pool = ThreadPoolExecutor(max_workers=1)
-            mulan_future = mulan_pool.submit(_safe_muq, audio)
+            mulan_future = mulan_pool.submit(timings.timed('muq', _safe_muq), audio)
 
         # SongFormer names the sections (see songformer.py). The slowest model
         # here, and needed only by the structure stage, so it starts now and
         # is collected last.
         if songformer.wanted(config.structure_model):
             form_pool = ThreadPoolExecutor(max_workers=1)
-            form_future = form_pool.submit(_safe_songformer, audio)
+            form_future = form_pool.submit(timings.timed('songformer', _safe_songformer), audio)
 
         # The key model reads the decoded file rather than decoding it again,
         # and nothing but the document waits for it.
         if model_adapters.skey_available():
             key_pool = ThreadPoolExecutor(max_workers=1)
-            key_future = key_pool.submit(_safe_skey, audio)
+            key_future = key_pool.submit(timings.timed('skey', _safe_skey), audio)
 
-        frames = features_stage.extract(audio, config.preprocess)
+        with timings.stage('features'):
+            frames = features_stage.extract(audio, config.preprocess)
 
-        rhythm = rhythm_stage.analyse(audio, frames, config.rhythm,
-                                      model_result=beat_future.result)
-        band_map = bands_stage.analyse(frames, rhythm.beats)
+        with timings.stage('wait.beats'):
+            beat_future.exception()
+        with timings.stage('rhythm'):
+            rhythm = rhythm_stage.analyse(audio, frames, config.rhythm,
+                                          model_result=beat_future.result)
+        with timings.stage('bands'):
+            band_map = bands_stage.analyse(frames, rhythm.beats)
 
-        tags = _collect(tag_future)
-        stems = _collect(stem_future)
-        muq = _collect(mulan_future) or {}
+        with timings.stage('wait.models'):
+            tags = _collect(tag_future)
+            stems = _collect(stem_future)
+            muq = _collect(mulan_future) or {}
         mulan = muq.get('scores') or {}
         embeddings = muq.get('embeddings') or []
-        roles = bands_stage.infer_roles(frames, band_map, stems, tags)
+        with timings.stage('roles'):
+            roles = bands_stage.infer_roles(frames, band_map, stems, tags)
 
-        dynamics = dynamics_stage.analyse(frames, band_map, rhythm, config.dynamics)
-        model_sections = _collect(form_future) or None
+        with timings.stage('dynamics'):
+            dynamics = dynamics_stage.analyse(frames, band_map, rhythm, config.dynamics)
+        with timings.stage('wait.songformer'):
+            model_sections = _collect(form_future) or None
 
         # Structure and perception are independent of each other and are the
         # two slowest remaining stages, so they run side by side.
         if config.parallel:
             with ThreadPoolExecutor(max_workers=2) as pool:
                 sections_future = pool.submit(
-                    structure_stage.analyse, frames, rhythm, roles,
+                    timings.timed('structure', structure_stage.analyse), frames, rhythm, roles,
                     [d.to_dict() for d in dynamics.drops], config.structure,
                     model_sections)
                 perception_future = pool.submit(
-                    perception_stage.analyse, frames, band_map, rhythm, roles,
+                    timings.timed('perception', perception_stage.analyse), frames, band_map, rhythm, roles,
                     tags, mulan.get('genre'))
                 sections = sections_future.result()
                 perception = perception_future.result()
         else:
-            sections = structure_stage.analyse(
-                frames, rhythm, roles, [d.to_dict() for d in dynamics.drops],
-                config.structure, model_sections)
-            perception = perception_stage.analyse(
-                frames, band_map, rhythm, roles, tags, mulan.get('genre'))
+            with timings.stage('structure'):
+                sections = structure_stage.analyse(
+                    frames, rhythm, roles, [d.to_dict() for d in dynamics.drops],
+                    config.structure, model_sections)
+            with timings.stage('perception'):
+                perception = perception_stage.analyse(
+                    frames, band_map, rhythm, roles, tags, mulan.get('genre'))
 
-        stream = events_stage.generate(frames, band_map, roles, rhythm, sections,
-                                       dynamics, config.events)
+        with timings.stage('events'):
+            stream = events_stage.generate(frames, band_map, roles, rhythm, sections,
+                                           dynamics, config.events)
 
-        try:
-            pulse = pulse_stage.analyse(audio, stems)
-        except Exception as exc:
-            _log(f'pixel envelopes unavailable ({exc})')
-            pulse = None
+        with timings.stage('pulse'):
+            try:
+                pulse = pulse_stage.analyse(audio, stems)
+            except Exception as exc:
+                _log(f'pixel envelopes unavailable ({exc})')
+                pulse = None
 
-        document = json_safe(build_document(
-            audio, frames, rhythm, band_map, roles, sections, dynamics,
-            perception, stream, stems, pulse))
+        with timings.stage('document'):
+            document = json_safe(build_document(
+                audio, frames, rhythm, band_map, roles, sections, dynamics,
+                perception, stream, stems, pulse))
         document['track']['hash'] = _file_hash(path)
         named_by_model = any(s.function for s in sections)
         document['sectionSource'] = 'songformer' if named_by_model else 'analysis'
@@ -216,13 +259,15 @@ def analyze(path, target_duration_sec=None, config: AnalysisConfig = None):
             'muq': bool(document['embeddings']),
             'muqMulan': bool(document['semantic_scores']),
         }
-        skey = _collect(key_future)
+        with timings.stage('wait.skey'):
+            skey = _collect(key_future)
         if skey:
             document['key'] = skey['value']
             document['track']['key'] = skey['value']
             document['meta']['modelUsage']['key'] = 's-key'
             document['meta']['modelUsage']['skey'] = True
         document['meta']['elapsedSec'] = round(time.time() - started, 2)
+        document['meta']['timings'] = dict(timings)
         document['meta']['processingRatio'] = round(
             document['meta']['elapsedSec'] / max(0.001, audio.duration), 4)
         document['meta']['withinRealtimeBudget'] = (

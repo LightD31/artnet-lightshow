@@ -31,6 +31,7 @@ import { createApplier } from './server/apply.ts';
 import { midiMap } from './server/midi-map.ts';
 import { cues } from './server/cues.ts';
 import { showStore, SHOW_FILE } from './server/show-store.ts';
+import { modelManager } from './server/model-manager.ts';
 import * as pythonEnv from './python-env.ts';
 import { installProcessSafetyNet } from './server/guard.ts';
 import { messageOf } from './errors.ts';
@@ -117,6 +118,13 @@ const integrations = setupIntegrations({ io, midi, spotify, nowPlaying, deezerSo
 autoShow.useFrameClock();
 setFrameHook(() => autoShow.tick());
 setPulseSource(() => autoShow.pulse());
+// A model downloaded while the server runs is used from the next worker on:
+// restart it, so it loads (and warms) what just arrived.
+modelManager.onFinished((job) => {
+  if (Object.values(job.models).some((m) => m.state === 'done') && autoShow.restartWorker) {
+    autoShow.restartWorker('analysis models downloaded');
+  }
+});
 conductor.setAutoSource(() => autoShow.beatSource());
 conductor.setProlinkSource(() => (state.prolinkEnabled && !autoShow.running ? prolink.getBeatReading() : null));
 conductor.setLiveSource(() => liveInput.getBeatReading());

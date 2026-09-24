@@ -131,6 +131,8 @@ test('detection walks past a working-but-empty interpreter to a usable one',
 
     const savedPath = process.env.PATH;
     process.env.PATH = `${bin}${path.delimiter}${savedPath}`;
+    // PATH alone: a project .venv from `uv sync` would win before the walk.
+    pythonEnv._setProjectVenv(null);
     try {
       pythonEnv._reset();
       const info = pythonEnv.resolve();
@@ -142,6 +144,35 @@ test('detection walks past a working-but-empty interpreter to a usable one',
       assert.ok(names.includes('python3'), 'the empty one was considered and rejected');
     } finally {
       process.env.PATH = savedPath;
+      pythonEnv._setProjectVenv(pythonEnv.PROJECT_VENV);
+      pythonEnv._reset();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+// `uv sync` makes .venv in the repository from the lockfile: nothing else on
+// the machine was built for this project, so it is tried first.
+test('the project environment uv made is tried before anything on PATH',
+  { skip: process.platform === 'win32' ? 'uses POSIX shell shims' : (PY ? false : 'no python interpreter available') },
+  () => {
+    const real = execFileSync(PY, ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' }).trim();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'py-venv-'));
+    const stubs = path.join(dir, 'stubs');
+    fs.mkdirSync(stubs);
+    for (const mod of pythonEnv.REQUIRED_MODULES) fs.writeFileSync(path.join(stubs, `${mod}.py`), '# stub\n');
+    const venv = path.join(dir, 'python');
+    fs.writeFileSync(venv, `#!/bin/sh\nPYTHONPATH=${stubs} exec ${real} "$@"\n`, { mode: 0o755 });
+    pythonEnv._setProjectVenv(venv);
+    try {
+      pythonEnv._reset();
+      const info = pythonEnv.resolve();
+      assert.strictEqual(info.exe, venv);
+      assert.deepStrictEqual(info.missing, []);
+      pythonEnv._setProjectVenv(path.join(dir, 'not-made-yet'));
+      pythonEnv._reset();
+      assert.notStrictEqual(pythonEnv.resolve().exe, venv, 'and only when it exists');
+    } finally {
+      pythonEnv._setProjectVenv(pythonEnv.PROJECT_VENV);
       pythonEnv._reset();
       fs.rmSync(dir, { recursive: true, force: true });
     }
