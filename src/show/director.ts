@@ -234,6 +234,20 @@ const MIN_BURST_MS = 300;
 // rate, so this is a sampling rate and not a step size.
 const EXPRESSION_STEP_SEC = 0.5;
 
+// The drum hits an accent may land on (see drumHitsOf). Only lanes found by
+// the rules measured on real drumming (`pulse.detector`, scripts/eval-drums.py)
+// and only their strong hits: on the separated drum stem a kick of 0.7 and up
+// is right nine times in ten and a snare four in five. Without separation the
+// snare is right less than half the time, so there only the kick counts.
+const DRUM_DETECTOR = 2;
+const STRONG_HIT = 0.7;
+// How far a bar line may sit from the hit that marks it. The tracker's
+// downbeat and the kick's onset agree to a frame or two; further than this
+// and the bar line had nothing on it.
+const HIT_SNAP_SEC = 0.08;
+// A drum fill: this many snare hits in the bar before a section starts.
+const FILL_HITS = 3;
+
 // Two passages count as the same idea past this timbre similarity. Set high on
 // purpose: MuQ vectors for any two passages of one track are already close, and
 // the mistake that matters is calling a verse a chorus.
@@ -492,6 +506,7 @@ class ShowDirector {
       melodies: grouped.get(EVENT.MELODY_CHANGE) || [],
       spikes: grouped.get(EVENT.ENERGY_SPIKE) || [],
       bassHits: grouped.get(EVENT.BASS_HIT) || [],
+      drums: drumHitsOf(analysis),
       snapToDownbeatMs: this._snapper(downbeats, barSec),
       barsAfterMs: barWalker(downbeats, barSec),
       // A fade of this many bars, in ms. Two seconds stands in for a bar the
@@ -1388,8 +1403,17 @@ class ShowDirector {
         // can step.
         if (every && context.finalReturns.has(section)) every = Math.max(1, Math.round(every / 2));
         if (!every || index % every !== 0) continue;
-        propose(bar.t, bar.confidence == null ? 0.5 : bar.confidence,
-          'bar', PRIORITY.BAR_ACCENT);
+        const confidence = bar.confidence == null ? 0.5 : bar.confidence;
+        // Where the drums are playing, the accent lands on the hit that marks
+        // the bar, not on the grid's idea of it — and a bar line nothing was
+        // hit on gets none. Where they are not, the bar line is all there is.
+        if (context.drums && drumsPlay(context.drums, section, context.barSec)) {
+          const hit = nearestHit(context.drums.marks, bar.t, HIT_SNAP_SEC);
+          if (!hit) continue;
+          propose(hit.t, Math.max(confidence, hit.s * 0.9), 'bar', PRIORITY.BAR_ACCENT, hit.s);
+          continue;
+        }
+        propose(bar.t, confidence, 'bar', PRIORITY.BAR_ACCENT);
       }
     } else {
       let lastT = -Infinity;
@@ -1417,7 +1441,21 @@ class ShowDirector {
     // The analyser gives every spike the same confidence and says how big it
     // was in `intensity`, so that is what separates one from the next.
     for (const event of spikes) {
-      propose(event.t, event.confidence, 'spike', PRIORITY.BAR_ACCENT, event.intensity);
+      const hit = context.drums ? nearestHit(context.drums.marks, event.t, HIT_SNAP_SEC) : null;
+      propose(hit ? hit.t : event.t, event.confidence, 'spike', PRIORITY.BAR_ACCENT, event.intensity);
+    }
+    // A drum fill into a new section: the accent goes on its last hit, the
+    // one that throws the band into the section. Not into a drop, which the
+    // contrast pass keeps quiet for the build-up's own arc.
+    if (context.drums && context.barSec) {
+      for (const section of context.sections.slice(1)) {
+        const fill = context.drums.fillHits.filter((h) => h.t >= section.start - context.barSec!
+          && h.t < section.start - 0.05);
+        if (fill.length < FILL_HITS) continue;
+        const last = fill[fill.length - 1];
+        const strength = fill.reduce((sum, h) => sum + h.s, 0) / fill.length;
+        propose(last.t, strength, 'fill', PRIORITY.FILL_ACCENT, Math.min(1, strength + 0.2));
+      }
     }
     for (const event of bassHits) {
       if (event.confidence < 0.7) continue;
@@ -1567,6 +1605,64 @@ function normalise(analysis: Analysis | null | undefined): DirectorAnalysis {
     key: a.key || a.perception?.key || a.track?.key,
     scale: a.scale || a.perception?.scale || a.track?.mode,
   };
+}
+
+/** A drum hit: when, and how hard, 0..1. */
+interface Hit { t: number; s: number }
+
+/** The drum hits the show may lean on (see DRUM_DETECTOR). */
+export interface DrumHits {
+  /** The strong kicks and snares, sorted: what an accent lands on. */
+  marks: Hit[];
+  /** Every snare hit of a fair strength, for finding fills. */
+  fillHits: Hit[];
+  /** Every hit of any lane, for knowing where the drums play at all. */
+  played: number[];
+}
+
+/**
+ * The drum hits an analysis carries that the show may put accents on, or
+ * null: none, or found by the first lane rules, which were not measured on
+ * real drumming and fire on a snare's body as a kick.
+ */
+function drumHitsOf(analysis: DirectorAnalysis): DrumHits | null {
+  const pulse = analysis.pulse;
+  if (!pulse || !pulse.lanes || !(finite(pulse.detector, 0) >= DRUM_DETECTOR)) return null;
+  const hitsOf = (name: string): Hit[] => {
+    const lane = pulse.lanes[name];
+    if (!lane || !Array.isArray(lane.t)) return [];
+    return lane.t.map((t, i) => ({ t: finite(t), s: unit(lane.s?.[i]) }));
+  };
+  const stems = pulse.source === 'stems';
+  const kicks = hitsOf('kick');
+  const snares = stems ? hitsOf('snare') : [];
+  const marks = [...kicks, ...snares].filter((h) => h.s >= STRONG_HIT).sort((a, b) => a.t - b.t);
+  const played = [...kicks, ...snares, ...hitsOf('hats')].map((h) => h.t).sort((a, b) => a - b);
+  if (!marks.length) return null;
+  return { marks, fillHits: snares.filter((h) => h.s >= 0.5), played };
+}
+
+/** The hit nearest `t` within `window` seconds, or null. */
+function nearestHit(hits: readonly Hit[], t: number, window: number): Hit | null {
+  let lo = 0;
+  let hi = hits.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (hits[mid].t < t) lo = mid + 1; else hi = mid;
+  }
+  let best: Hit | null = null;
+  for (const h of [hits[lo - 1], hits[lo]]) {
+    if (h && Math.abs(h.t - t) <= window && (!best || Math.abs(h.t - t) < Math.abs(best.t - t))) best = h;
+  }
+  return best;
+}
+
+/** Are the drums playing through this section — a hit a bar at least? */
+function drumsPlay(drums: DrumHits, section: { start: number; end: number }, barSec: number | null): boolean {
+  const bars = Math.max(1, (section.end - section.start) / (barSec || 2));
+  let n = 0;
+  for (const t of drums.played) if (t >= section.start && t < section.end) n++;
+  return n >= bars;
 }
 
 /** The end of a span event, however the document spelled it. */

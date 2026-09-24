@@ -80,6 +80,10 @@ const PRIORITY = Object.freeze({
   SILENCE: 50,
   ROTATION: 40,
   MELODY: 30,
+  // A drum fill into a new section: rarer than a bar line and more telling,
+  // so it wins the moment over the downbeat after it, which the section's
+  // own scene change already marks.
+  FILL_ACCENT: 25,
   BAR_ACCENT: 20,
   BEAT_ACCENT: 10,
 });
