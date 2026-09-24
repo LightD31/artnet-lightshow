@@ -107,7 +107,7 @@
         "start": { "type": "number" },
         "end": { "type": "number" },
         "label": { "type": "string" },
-        "role": { "type": "string", "description": "intro, verse, prechorus, chorus, drop, bridge, breakdown or outro." },
+        "role": { "type": "string", "description": "intro, verse, prechorus, chorus, drop, bridge, instrumental, breakdown or outro." },
         "energy": { "type": "number" },
         "brightness": { "type": "number" },
         "bass": { "type": "number" },

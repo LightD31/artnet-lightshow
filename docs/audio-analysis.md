@@ -383,19 +383,40 @@ answer:
 * **boundaries** are the model's, moved to the bar line beside them. The model
   places them on a tenth-of-a-second grid, and a look that changes a tenth of a
   second off the downbeat reads as late;
-* **roles** are its functions: pre-chorus becomes the new `prechorus` role. An
-  instrumental is a breakdown when it is quiet, a chorus when it is loud, and an
-  intro or outro at the ends. Silence is a breakdown in the middle;
-* **a drop is a drop whatever the model called it.** A section that starts on a
-  proper drop becomes a `drop`, unless the model named it an intro, outro,
-  silence or pre-chorus. SongFormer has no drop label, so which of its eight a
-  drop section gets is not something to rely on; the drop detector decides, as
-  it already does over the labeller's clusters;
+* **roles** are its functions: pre-chorus becomes the new `prechorus` role and
+  an instrumental the new `instrumental` role (a solo, a break: the band is the
+  show). A quiet instrumental is a breakdown, and one at either end of the
+  track the intro or outro. Silence is a breakdown in the middle;
+* **a detected drop turns a chorus or an instrumental into a `drop`.**
+  SongFormer has no drop label, and a drop section is loud and usually
+  instrumental, so it comes back as one of those two. The detector does not
+  overrule a verse, bridge or pre-chorus: tried on real music, it fires on live
+  rock too, and turned correctly named verses into drops;
 * **which sections are the same music** still comes from the self-similarity
   clusters: each section's `label` is the cluster most of its beats fall in, so
   a returning chorus gets its look back;
 * the model's own name is kept on the section as `function`, and the document
   says `sectionSource: "songformer"`.
+
+**How well it works** was measured on real music, not only on synthetic
+tracks, which prove the plumbing and nothing more. `scripts/eval-structure.py`
+scores it against human annotations of SALAMI's freely licensed live recordings
+(fetched at run time, never redistributed). On ten of them, with two annotators
+each (17 track-annotator pairs):
+
+| | Boundaries ±3 s (F) | ±0.5 s (F) | Section names |
+|---|---|---|---|
+| self-similarity labeller | 0.56 | 0.15 | 33 % |
+| SongFormer, as it answers | 0.71 | 0.58 | 69 % |
+| **the show's sections** (fused) | **0.71** | **0.55** | **68 %** |
+| "verse" everywhere | | | 30 % |
+
+The first run of this found the fusion throwing much of that away: 53 % where
+SongFormer had 68 %. The drop detector was overruling correctly named verses,
+and loud instrumentals were folded into the chorus. Both are fixed as described
+above. These are live bands, not studio pop or club tracks, and whether
+SongFormer was trained on SALAMI is not known; run the script on your own
+kind of music before relying on it for that.
 
 It is heavy. The checkpoint carries both of its backbones (MuQ and MusicFM,
 690 M parameters, 2.9 GB, about 3.6 GB in memory). It reads a track in windows

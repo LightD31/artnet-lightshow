@@ -41,10 +41,13 @@ labels include no drop. The fusion in `structure.from_model` makes a section
 that starts on a detected drop a `drop`, which is the distinction EDMFormer
 would have drawn.
 
-What it has been checked on: synthetic tracks, which prove the plumbing (it
-loads, runs, and its answer is fused and validated) and nothing about how well
-it labels real music. The published SongFormBench results are the evidence for
-that.
+How well it works was measured on real music, not only on synthetic tracks
+(which prove the plumbing and nothing more): scripts/eval-structure.py scores
+it against human annotations of ten SALAMI live recordings, two annotators
+each. Boundaries within 3 s: 0.71 F against the labeller's 0.56; within 0.5 s
+0.58 against 0.15. Section names match over 69 % of the track, against 33 %
+for the labeller and 30 % for "verse" everywhere. Live bands, not studio pop or
+club tracks, and whether SALAMI was in its training data is not known.
 """
 
 import contextlib

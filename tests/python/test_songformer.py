@@ -199,22 +199,35 @@ class Fusion(AudioTestCase):
         for section in self.sections:
             self.assertIn(section.role, structure.ROLES)
 
-    def test_a_drop_is_a_drop_whatever_the_model_called_it(self):
-        """SongFormer has no drop label, so a drop section can come back as
-        any of its eight (on this synthetic track, run for real, it came back
-        as a verse). The detected drop decides."""
+    def test_a_detected_drop_makes_a_chorus_or_an_instrumental_a_drop_not_a_verse(self):
+        """SongFormer has no drop label: a drop section comes back as a chorus
+        or an instrumental, and the detector names it. It does not overrule a
+        verse — on ten human-annotated live recordings (SALAMI) the detector
+        fired on rock, and letting it turned correctly named verses into drops."""
         from analysis import structure
         on_drop = any(abs(d['t'] - 30.0) < 2.0 and d.get('kind', 'proper') == 'proper'
                       for d in self.drops)
         if not on_drop:
             self.skipTest('the dynamics stage found no proper drop at 30 s on this run')
+        for label, role in (('chorus', 'drop'), ('inst', 'drop'), ('verse', 'verse')):
+            rows = [dict(r) for r in MODEL_ROWS]
+            rows[3]['label'] = label
+            sections = structure.analyse(self.frames, self.rhythm, self.roles, self.drops,
+                                         model_sections=rows)
+            self.assertEqual(sections[3].role, role, label)
+            self.assertEqual(sections[3].function, label)
+            self.assertEqual(sections[2].role, 'prechorus', 'the build into it is not the drop')
+
+    def test_a_loud_instrumental_keeps_its_own_role(self):
+        """Folded into the chorus or the verse by how loud it was, SongFormer's
+        instrumental lost what it got right about the music."""
+        from analysis import structure
         rows = [dict(r) for r in MODEL_ROWS]
-        rows[3]['label'] = 'verse'
-        sections = structure.analyse(self.frames, self.rhythm, self.roles, self.drops,
-                                     model_sections=rows)
-        self.assertEqual(sections[3].role, 'drop')
-        self.assertEqual(sections[3].function, 'verse')
-        self.assertEqual(sections[2].role, 'prechorus', 'the build into it is not the drop')
+        rows[3]['label'] = 'inst'
+        sections = structure.analyse(self.frames, self.rhythm, self.roles, [], model_sections=rows)
+        self.assertEqual(sections[3].role, 'instrumental')
+        self.assertEqual(sections[4].role, 'breakdown', 'a quiet one is still a breakdown')
+        self.assertIn('instrumental', structure.ROLES)
 
     def test_the_model_s_names_are_kept(self):
         self.assertEqual([s.function for s in self.sections],

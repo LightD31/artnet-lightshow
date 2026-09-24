@@ -39,7 +39,8 @@ from . import dsp
 from .config import StructureConfig
 
 
-ROLES = ('intro', 'verse', 'prechorus', 'chorus', 'drop', 'bridge', 'breakdown', 'outro')
+ROLES = ('intro', 'verse', 'prechorus', 'chorus', 'drop', 'bridge', 'instrumental',
+         'breakdown', 'outro')
 
 
 @dataclass
@@ -668,18 +669,19 @@ def _snap(t, beats, downbeats, beat_period, bar_period):
     return float(t)
 
 
-#: Functions a detected drop does not override: where a track starts and
-#: ends, a gap, and the build that leads into the drop rather than the drop.
-NOT_A_DROP = {'intro', 'outro', 'silence', 'pre-chorus', 'prechorus'}
+#: The functions a detected drop can turn into a `drop`. SongFormer has no
+#: drop label — its eight are intro, verse, pre-chorus, chorus, bridge, inst,
+#: outro and silence — and a drop section is loud and usually instrumental,
+#: so it comes back as a chorus or an instrumental. Letting the detector
+#: override anything else was tried, and on real music (ten SALAMI live
+#: recordings, human-annotated) it turned correctly named verses into drops:
+#: the detector fires on live rock too. A verse stays a verse.
+DROP_FUNCTIONS = {'chorus', 'inst'}
 
 
 def _model_role(section, index, count, drops, median_energy):
     function = (section.function or '').lower()
-    # SongFormer has no label for a drop — its eight are intro, verse,
-    # pre-chorus, chorus, bridge, inst, outro and silence — so which of them
-    # a drop section gets is not something to rely on. The drop detector
-    # decides, as it does over the labeller's clusters (`assign_roles`).
-    if function not in NOT_A_DROP and _starts_on_a_drop(section, drops, median_energy):
+    if function in DROP_FUNCTIONS and _starts_on_a_drop(section, drops, median_energy):
         return 'drop'
     role = FUNCTION_ROLES.get(function)
     if role:
@@ -688,13 +690,15 @@ def _model_role(section, index, count, drops, median_energy):
     if function == 'silence':
         return 'intro' if first else 'outro' if last else 'breakdown'
     if function == 'inst':
+        # An instrumental passage is its own thing — a solo, a break, a
+        # theme — and folding it into the chorus or the verse by how loud it
+        # is threw away what the model got right. At the ends of the track it
+        # is the intro or the outro; quiet, it is a breakdown.
         if first and (section.energy <= median_energy or section.duration < 20.0):
             return 'intro'
         if last and section.energy <= median_energy:
             return 'outro'
-        if section.level == 'low':
-            return 'breakdown'
-        return 'chorus' if section.level == 'high' else 'verse'
+        return 'breakdown' if section.level == 'low' else 'instrumental'
     return 'verse'
 
 
@@ -711,9 +715,14 @@ def from_model(model_sections, features, rhythm, roles=None, drops=(), config=No
       same music      fall in is its `label`, so a chorus that comes back
                       gets the same look, as it does from the labeller
 
-    A section that starts on a detected drop is a `drop` whatever the model
-    called it (bar an intro, an outro, a silence or a pre-chorus), and the
-    sections sharing its function and its cluster agree on it.
+    A chorus or an instrumental that starts on a detected drop is a `drop`
+    (see DROP_FUNCTIONS), and the sections sharing its function and its
+    cluster agree on it.
+
+    Scored against human annotations of real music (scripts/eval-structure.py:
+    ten SALAMI live recordings, two annotators each), these sections match
+    the annotated names over 68 % of the track and SongFormer's own 69 %;
+    the self-similarity labeller's match 33 %, and "verse" everywhere 30 %.
     """
     config = config or StructureConfig()
     duration = float(features.times[-1]) if features.times.size else 0.0
@@ -770,7 +779,7 @@ def from_model(model_sections, features, rhythm, roles=None, drops=(), config=No
     # a drop, as the labeller's sections do.
     groups = {}
     for s in sections:
-        if (s.function or '').lower() not in NOT_A_DROP and s.role not in ('intro', 'outro'):
+        if (s.function or '').lower() in DROP_FUNCTIONS and s.role not in ('intro', 'outro'):
             groups.setdefault((s.function, s.label), []).append(s)
     for group in groups.values():
         drop = sum(s.role == 'drop' for s in group) * 2 >= len(group)

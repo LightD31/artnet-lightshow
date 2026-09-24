@@ -116,7 +116,7 @@ export interface Section {
   start: number;
   end: number;
   label: string;
-  /** intro, verse, prechorus, chorus, drop, bridge, breakdown or outro. */
+  /** intro, verse, prechorus, chorus, drop, bridge, instrumental, breakdown or outro. */
   role: string;
   energy: number;
   brightness?: number;

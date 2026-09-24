@@ -1125,8 +1125,11 @@ takes most of the track's length, so there it is only used when set to
 **SongFormer**. Its memory grows with the square of how much of the track it
 reads at once, so it reads in windows sized to the memory that is free: a long
 track in a machine with little to spare is read in shorter windows, and one
-that has not enough for even a minute falls back to the arrangement rules. Try
-it on the show machine first:
+that has not enough for even a minute falls back to the arrangement rules.
+Scored against human annotations of ten live recordings, the sections it
+produces match the annotated names over 68 % of the track, where the
+arrangement rules manage 33 % (`scripts/eval-structure.py` runs that check).
+Try it on the show machine first:
 `python scripts/bench-analyze.py track.wav --structure songformer`.
 
 **Separator.** Settings → Analysis → **Separator** picks the model that splits

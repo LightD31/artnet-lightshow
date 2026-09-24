@@ -164,6 +164,8 @@ const ROLE_PROFILE: Record<string, RoleProfile> = {
   verse:     { levelBias: 0,     accents: true,  maxDivision: 2, prefer: null },
   // The lift into a chorus: a little more than the verse, held back from it.
   prechorus: { levelBias: 0.06,  accents: true,  maxDivision: 2, prefer: null },
+  // A solo, a break, a theme with no one singing: the band is the show.
+  instrumental: { levelBias: 0.06, accents: true, maxDivision: 4, prefer: null },
   chorus:    { levelBias: 0.12,  accents: true,  maxDivision: 4, prefer: null },
   drop:      { levelBias: 0.15,  accents: true,  maxDivision: 4, prefer: null },
   bridge:    { levelBias: 0,     accents: true,  maxDivision: 2, prefer: null },
@@ -204,7 +206,7 @@ const BAR_JITTER = 0.05;
 // into a chorus or a drop the change *is* the moment, and fading it would
 // blunt exactly what the section boundary is for. Anything unlisted gets the
 // verse's half bar.
-const SECTION_FADE_BARS: Record<string, number> = { breakdown: 2, outro: 2, intro: 1, verse: 0.5, prechorus: 0.5, bridge: 0.5, chorus: 0, drop: 0 };
+const SECTION_FADE_BARS: Record<string, number> = { breakdown: 2, outro: 2, intro: 1, verse: 0.5, prechorus: 0.5, instrumental: 0.5, bridge: 0.5, chorus: 0, drop: 0 };
 // Roles where even a rotation inside the section is a cut on the downbeat.
 const CUT_ROLES = new Set(['chorus', 'drop']);
 // Patterns that travel on colour A, and so gain a second layer when one group

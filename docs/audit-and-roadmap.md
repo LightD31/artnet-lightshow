@@ -327,8 +327,12 @@ Every phase is its own PR, keeps `npm run check` and the Python suite green, and
 >   - SongFormer names the sections: its functions become the roles, with a new `prechorus` role, and its boundaries
 >     are snapped to the bar line.
 >   - The self-similarity clusters still decide which sections are the same music.
->   - A section that starts on a detected drop is a `drop` whatever SongFormer called it: SongFormer has no drop
->     label, so the drop detector decides, as it already does over the labeller's clusters.
+>   - A detected drop turns a chorus or an instrumental into a `drop`: SongFormer has no drop label. It does not
+>     overrule a verse; on real music that turned correctly named verses into drops. Instrumentals keep a new
+>     `instrumental` role.
+>   - Scored against human annotations of ten SALAMI live recordings (`scripts/eval-structure.py`): section names
+>     match over 68 % of the track (SongFormer alone 69 %, the labeller 33 %, "verse" everywhere 30 %), and
+>     boundaries within 3 s at 0.71 F against the labeller's 0.56.
 >   - The Laplacian labeller is the fallback. Its sections now reach the ends of the track.
 > - **SongFormer's cost:**
 >   - Measured on a 4-core CPU: 0.75× the track's length.
@@ -338,8 +342,8 @@ Every phase is its own PR, keeps `npm run check` and the Python suite green, and
 >   - `bench-analyze.py --structure songformer` is the 890M benchmark still to run.
 > - **Not done:**
 >   - EDMFormer has no released weights.
->   - The fixture tracks carry no audio, so SongFormer is scored on synthetic tracks, and on the real ones only once
->     someone runs it there.
+>   - The five fixture tracks carry no audio, so the real-music score comes from SALAMI's live recordings instead:
+>     not studio pop, and not club tracks.
 > - **A6:** all fixed.
 >   - One decode per track.
 >   - Beat This! is warmed first at worker start and runs first on the GPU.
