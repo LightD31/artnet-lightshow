@@ -405,7 +405,16 @@ Every phase is its own PR, keeps `npm run check` and the Python suite green, and
 >   - breakdown: plasma
 >   - bridge: drums
 >
->   A rig of pars is byte for byte unchanged.
+>   A rig of pars at first was byte for byte unchanged; then it got its own improvements:
+>   - chorus and drop looks mirrored about the centre (a chase runs from the middle out to both ends);
+>   - build-ups that stack out from the middle;
+>   - a long passage's look returning at the top of every phrase, where two looks used to alternate for the whole
+>     section;
+>   - `hit` flashing on the trusted kick (and stem snare) instead of the grid alone;
+>   - gradient, plasma, comet, burst — and drums, on trusted lanes — in its pools;
+>   - `stack-up` filling in N steps, on the bar, rather than N + 1.
+>
+>   The pars golden hashes were updated on purpose for it, with the reasons in `pars-golden.test.js`.
 > - **Accents on real drum hits:** snapped to the strong kick or snare within 80 ms, none on an empty bar line, one
 >   on a fill's last hit. Only lanes found by the new rules count, and snares only from the stem.
 > - **Set memory:**

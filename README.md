@@ -900,7 +900,9 @@ steps the whole rig through the look's colours, so it has joined the pool.
 
 **Pixel effects** — pictures drawn across every cell of the rig's LED bars.
 They run on pars too, as a handful of samples of the same picture, but they are
-made for bars:
+made for bars. The auto show uses four of them on a rig of pars as well —
+Gradient, Plasma, Comet and Burst read on a row of lamps — and Drums when the
+track's drum lanes can be trusted (below):
 
 | | |
 |---|---|
@@ -915,14 +917,24 @@ made for bars:
 **Drums** and **Stems** play the analysis's *pulse*. That is every kick, snare
 and hat read off the separated drum stem, and each stem's level fifty times a
 second, sampled at the playback position every frame. The auto show uses them
-on a rig with bars, for tracks analysed since they arrived. Chosen by hand
-without an analysed track, they fall back to the clock: a kick on every step,
-a snare on every other.
+on a rig with bars, for tracks analysed since they arrived, and Drums on a rig
+of three or more pars too — the kick in the middle lamps, the snare at the
+ends — when the lanes were found by the rules measured on real drumming.
+Chosen by hand without an analysed track, they fall back to the clock: a kick
+on every step, a snare on every other.
 
-With bars in the patch, the pattern card also offers how a picture lies over
-them: **Across stage** (one picture over every bar, as they stand on the plot),
-**Per bar** (each bar draws the whole picture along itself) or **Mirrored**
-(the picture mirrored about the centre of the stage). Cues remember the choice.
+**Hit** follows the drums the same way. With those lanes it flashes the rig on
+each kick (and, on the separated drum stem, each snare) as hard as it was hit,
+with the step's own pulse still there underneath at half height — so a
+breakbeat, a half-time groove or a live drummer flashes where the drums do and
+not only on the grid. Without them, it pulses on every step as it always has.
+
+With three or more fixtures in the patch, the pattern card also offers how the
+look lies over the rig: **Across stage** (as the lamps stand on the plot) or
+**Mirrored** (about the centre of the stage: a chase runs from the middle out
+to both ends at once, a stack builds out from the centre). With bars there is
+also **Per bar** (each bar draws the whole picture along itself). Cues remember
+the choice.
 
 ### The palettes
 
@@ -1404,8 +1416,25 @@ is doing:
 - **The Patterns panel** says what each is on ("Pars on Hit, bars on
   Impact"). A pattern picked by hand runs on the whole rig again, and so
   does a cue saved before this.
-- **Replanning.** Adding or removing the last bar replans the track. A rig
-  of pars plans exactly as it always has.
+- **Replanning.** Adding or removing the last bar replans the track.
+
+On a rig of pars there are no bars to carry the movement, so the pars carry
+all of it, and the show gives them shape:
+
+| Where | The pars | Laid out |
+|---|---|---|
+| chorus, drop | the passage's travelling look — a chase, pairs, a runner, a stack | mirrored, from the middle out to both ends at once |
+| a drop's first bars | the movement it lands into | mirrored |
+| build-up | a stack that builds out from the middle on every step, the steps quickening to the peak | mirrored |
+| verse, intro, breakdown, outro | as chosen for the passage; resting on a ribbon, a fade, a wave, a rolling gradient or a slow plasma | across the stage |
+
+- **A long passage comes round.** Inside a chorus the look turns every two to
+  eight bars, through three others and back to the passage's own, so the look
+  the chorus opened on returns at the top of every phrase — where it used to
+  swap between the same two for as long as the chorus lasted.
+- **Every scene says how it is laid out**, so the verse after a mirrored
+  chorus crosses the stage again, and stopping the show puts the rig back
+  across the stage.
 
 Past 70, intensity also lifts a calm or rock track out of its tier *for drops
 only*. A fader that did nothing on a ballad is a fader you stop trusting; it
