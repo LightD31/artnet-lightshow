@@ -321,6 +321,45 @@ Every phase is its own PR, keeps `npm run check` and the Python suite green, and
 - **Optional:** Ableton Link (`@ktamas77/abletonlink`) in and out, and MIDI clock out.
 
 ### Phase 4 — Analysis v2
+
+> **Status.**
+> - **Structure:**
+>   - SongFormer names the sections: its functions become the roles, with a new `prechorus` role, and its boundaries
+>     are snapped to the bar line.
+>   - The self-similarity clusters still decide which sections are the same music.
+>   - A section that starts on a detected drop is a `drop` whatever SongFormer called it: the model was trained on
+>     songs, and on a club track it calls the drop a verse.
+>   - The Laplacian labeller is the fallback. Its sections now reach the ends of the track.
+> - **SongFormer's cost:**
+>   - Measured on a 4-core CPU: 0.75× the track's length and 8-10 GB of RAM, because its attention is quadratic in
+>     the track length.
+>   - So `auto` runs it only on a GPU, and Settings → Structure can force it on or off.
+>   - `bench-analyze.py --structure songformer` is the 890M benchmark still to run.
+> - **Not done:**
+>   - EDMFormer has no released weights.
+>   - The fixture tracks carry no audio, so SongFormer is scored on synthetic tracks, and on the real ones only once
+>     someone runs it there.
+> - **A6:** all fixed.
+>   - One decode per track.
+>   - Beat This! is warmed first at worker start and runs first on the GPU.
+>   - MuLan and the embeddings fail independently.
+>   - Every pool is shut down in `finally`.
+>   - The device override gets the same set-up as auto-detection.
+>   - The BS-RoFormer path is honoured.
+>   - The analysis never downloads the tagger.
+>   - Embeddings are rounded to four places.
+>   - `--live` reads a hop at a time.
+> - **Pixels:**
+>   - A `pulse` block holds the stem envelopes at 50 Hz and the kick, snare and hat lanes from the drum stem.
+>   - The engine samples it every frame for the `drums` and `stems` bar patterns, and `meter`.
+> - **Environment:**
+>   - `pyproject.toml` and `uv.lock` pin torch, torchaudio and torchvision to one index per build (cpu, cu128,
+>     rocm7.2), and the server prefers the `.venv` this makes.
+>   - A registry-driven `download-models.py` feeds Settings → Analysis models, with progress.
+>   - The preflight imports the torch stack for real.
+>   - Schema 2.1.
+>   - Per-stage timings in `meta.timings` and `bench-analyze.py`.
+
 - **Structure models:**
   - **SongFormer** for pop/rock (intro/verse/pre-chorus/chorus/bridge/inst/outro/silence);
   - **EDMFormer** for EDM (intro/buildup/drop/breakdown/outro/silence);

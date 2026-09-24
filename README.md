@@ -764,9 +764,11 @@ cache, and which playback sources are connected.
 
 The same report is in the settings page under **Pre-show Check** — run there,
 it also sees the *live* MIDI and playback-source connections rather than only
-what is configured. If analysis model weights are missing it starts
-downloading them in the background and says so; the show keeps running, and
-running the check again reports when they are ready.
+what is configured. If a model the show needs is missing, it starts downloading
+it in the background and says so; the show keeps running, and the progress is
+under Settings → Analysis Models. **Model stack** imports torch, torchaudio,
+torchvision and the models for real, which catches a torch build mismatch that a
+plain "is it installed" check cannot see, and names the device they run on.
 
 A node that never answers an ArtPoll is a warning, not a failure: plenty of
 them do not implement it, and a broadcast rig works fine without ever replying.
@@ -891,6 +893,15 @@ made for bars:
 | **Burst** | A ring thrown out from the centre of the stage on every step |
 | **Plasma** | Three slow interfering waves in the look's colours |
 | **Meter** | A level meter filled by the low end and kicked on every step |
+| **Drums** | The kit as it is hit: the kick fills each bar from its middle, the snare cracks at its ends, the hats scatter along it |
+| **Stems** | Voice, band, drums and bass in zones out from the centre, each as loud as it is playing |
+
+**Drums** and **Stems** play the analysis's *pulse*. That is every kick, snare
+and hat read off the separated drum stem, and each stem's level fifty times a
+second, sampled at the playback position every frame. The auto show uses them
+on a rig with bars, for tracks analysed since they arrived. Chosen by hand
+without an analysed track, they fall back to the clock: a kick on every step,
+a snare on every other.
 
 With bars in the patch, the pattern card also offers how a picture lies over
 them: **Across stage** (one picture over every bar, as they stand on the plot),
@@ -1052,18 +1063,36 @@ The analyser is Python. Manual control does not need any of this.
 [docs/audio-analysis.md](docs/audio-analysis.md) covers what it does, which
 numbers you can turn and where to extend it.
 
+With [uv](https://docs.astral.sh/uv/), one command builds the environment from the lockfile. Pick the
+torch build for the machine:
+
 ```bash
-pip install -r requirements.txt
-
-# Fetch the model weights now rather than at load-in on venue wifi (~400 MB)
-python -c "import sys; sys.path.insert(0, 'src'); from analysis import models; models.warm_up()"
-
-python scripts/setup-panns.py          # optional, ~310 MB instrument tagger
-python scripts/setup-panns.py --check  # verify without downloading
+uv sync --extra cpu        # no GPU
+uv sync --extra cu128      # an NVIDIA card
+uv sync --extra rocm       # an AMD card on Linux
 ```
 
-**ffmpeg** and **yt-dlp** must be on `PATH`. `pip install -r requirements.txt`
-covers yt-dlp; install ffmpeg with your package manager.
+The server finds the `.venv` this makes by itself. The lock keeps torch,
+torchaudio and torchvision on one build. A torchvision from another build
+installs without complaint and then fails every model with
+`operator torchvision::nms does not exist`. Without uv,
+`pip install -r requirements.txt` into a Python of your own still works: install
+torch, torchaudio and torchvision together from one index first.
+
+**The model weights** come next, before the show and not at load-in on venue
+wifi. The analysis never downloads them itself. Settings → **Analysis Models**
+lists each one: what it is for, whether it is here, its size and licence. It
+fetches the missing ones with a progress bar, and restarts the analyser to use
+them. From a terminal:
+
+```bash
+python scripts/download-models.py --list   # what is here
+python scripts/download-models.py          # what the show needs (~4 GB with MuQ)
+python scripts/download-models.py --only songformer,panns
+```
+
+**ffmpeg** and **yt-dlp** must be on `PATH`. The Python environment covers
+yt-dlp; install ffmpeg with your package manager.
 
 yt-dlp needs to be **2025.11.12 or newer**: YouTube now requires a JavaScript
 runtime to download at all. You do not need to install one — the server hands
@@ -1083,6 +1112,18 @@ forces threads, which is worth setting on a one-machine rig whose GPU is already
 driving a visualiser. On CPU expect roughly 0.6× realtime, most of it separation
 — set `separate_sources=False` in `src/analysis/config.py` to trade the
 stem-derived instrument roles for a 4× faster analysis.
+`python scripts/bench-analyze.py track.wav` shows where a machine spends its
+time, stage by stage.
+
+**Structure.** Settings → Analysis → **Structure** decides who names the
+sections. [SongFormer](https://huggingface.co/ASLP-lab/SongFormer) was trained
+on thousands of annotated songs. It knows a pre-chorus, a chorus that is not the
+loudest part, and an instrumental break. Without it, the sections come from where
+the music repeats, and arrangement rules supply the names. **Auto** uses SongFormer
+when the analyser has a GPU and its weights (2.9 GB) are downloaded. On a CPU it
+takes most of the track's length and 8-10 GB of memory, so there it is only used
+when set to **SongFormer**. Try it on the show machine first:
+`python scripts/bench-analyze.py track.wav --structure songformer`.
 
 **Separator.** Settings → Analysis → **Separator** picks the model that splits
 each track into stems. **Demucs** is the default and keeps up with a live set.
@@ -1098,23 +1139,19 @@ the Windows nightlies cannot compile its BatchNorm kernel. It also handles a
 known ROCm fault: when a GPU FFT fails mid-track, that track finishes on the
 CPU and the analyzer restarts itself before the next one.
 
-`panns_inference` is the one part that stays optional. Genre no longer depends
-on it — that is MuQ-MuLan, scored zero-shot against the subgenres by name, and
-it comes down with the rest of the weights above. What PANNs still supplies is
-the instrument-role priors and a genre fallback for a rig that has it installed
-but no MuQ-MuLan checkpoint. Without either, palette selection falls back to a
-mood-based path, so run `--check` if shows look off.
-
-You do not have to run the setup script by hand: the analyser fetches whatever
-is missing on its first analysis. `panns_inference` would otherwise try to
-download its own files with `wget`, at *import* time — which fails on Windows,
-and takes the import down with it — so the files are always fetched first, over
-HTTPS with verified digests. The one-time ~310 MB checkpoint download happens on
-the first track you analyse, not at startup.
+PANNs (the AudioSet tagger) stays optional. Genre no longer depends on it:
+genre comes from MuQ-MuLan, scored zero-shot against the subgenres by name. What
+PANNs still supplies is the instrument-role priors, and a genre fallback for a
+rig that has it but no MuQ-MuLan checkpoint. Without either, palette selection
+falls back to a mood-based path. Fetch it under Analysis Models or with
+`python scripts/setup-panns.py` (~310 MB, over HTTPS with verified digests). A
+track never waits for it: without its weights the analysis simply goes untagged.
 
 ### Which Python?
 
-Having *a* Python is not the same as having the right one. `py` (the Windows
+The environment `uv sync` made (`.venv` in the project folder) comes first when
+it exists: it was built for this project from its lockfile. Otherwise, having
+*a* Python is not the same as having the right one. `py` (the Windows
 launcher) and `python` (whatever is first on `PATH`, often a conda env) are
 routinely two different installations, and `pip install -r requirements.txt`
 only ever populates one of them.

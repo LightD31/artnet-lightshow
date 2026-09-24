@@ -52,17 +52,40 @@ file in the show layer that knows what a patch field is called.
 
 ## Running it
 
-Before a show, run `npm run preflight`. It downloads the configured pretrained
-weights into the local Art-Net model cache from Hugging Face. Set
-`ARTNET_MODEL_DIR` to move that cache, or `ARTNET_PYTHON` to select the Python
-environment. The RoFormer four-stem checkpoint is published by the community
-registry and its redistribution terms must be checked before commercial use.
-MuQ and MuQ-MuLan weights are CC-BY-NC 4.0; they are suitable for evaluation
-and non-commercial use unless you obtain separate permission.
+**The environment.** `uv sync --extra cpu` (or `--extra cu128` for an NVIDIA
+card, `--extra rocm` for an AMD one on Linux) builds `.venv` in the repository
+from `uv.lock`, and the server uses it without being told. The lock is what
+keeps torch, torchaudio and torchvision on one build. A torchvision from another
+build installs cleanly and then fails every model with
+`operator torchvision::nms does not exist`. `pip install -r requirements.txt`
+still works for a Python of your own; install torch, torchaudio and torchvision
+together from one index first. A Radeon 780M/890M on Windows takes that route,
+from AMD's index (see requirements.txt).
 
-Set `ARTNET_MUQ_MODEL` and `ARTNET_MUQ_MULAN_MODEL` to the downloaded model
-directories to enable those passes. Without these variables the deterministic
-analysis path continues to run and playback is never held for model loading.
+**The weights** are fetched before the show and never by the analysis itself.
+Gigabytes on venue wifi while a track waits is the worst time to find the
+connection slow. Settings → Analysis models lists each model: what it is for,
+whether it is here, its size and licence. It downloads the missing ones with
+progress and restarts the analyser to use them. The same list from a terminal:
+
+```bash
+python scripts/download-models.py --list      # what is here
+python scripts/download-models.py             # the required and recommended ones
+python scripts/download-models.py --only songformer,panns
+```
+
+The pre-show check (`npm run preflight`, or the button in the UI) runs the same
+download in the background when something the show needs is missing. It also
+imports the torch stack for real, which is what catches a mismatched build.
+Set `ARTNET_MODEL_DIR` to move the model directory, or `ARTNET_PYTHON` to choose
+the interpreter.
+
+Licences: MuQ and MuQ-MuLan weights are CC BY-NC 4.0, fine for evaluation and
+non-commercial use unless you obtain separate permission. SongFormer is CC BY 4.0
+but carries a MuQ backbone, so the same applies. Check the BS-RoFormer
+checkpoint's redistribution terms (it comes from the community registry) before
+commercial use. A model that is not there is skipped, and the analysis runs
+without it; playback is never held for one.
 
 ```bash
 # One track to stdout, plus an interactive debug page
@@ -343,6 +366,81 @@ resembles the chorus. Everything else — `drop` included — has to agree acros
 cluster, because the show engine biases a section's energy tier by its role, so
 two appearances of one cluster that disagree get different beat divisions for
 identical music.
+
+Sections are built on the beat grid, so the first starts at 0 and the last runs
+to the end of the track. A beatless intro or a reverb tail belongs to the
+section beside it.
+
+### SongFormer (`songformer.py`)
+
+The rules above have no pre-chorus, and a song whose chorus is not its loudest
+part gets its roles backwards. [SongFormer](https://huggingface.co/ASLP-lab/SongFormer)
+(Hao et al., 2025) was trained on thousands of annotated songs to name the
+sections directly: intro, verse, pre-chorus, chorus, bridge, instrumental, outro
+and silence. When it runs, `structure.from_model` builds the sections from its
+answer:
+
+* **boundaries** are the model's, moved to the bar line beside them. The model
+  places them on a tenth-of-a-second grid, and a look that changes a tenth of a
+  second off the downbeat reads as late;
+* **roles** are its functions: pre-chorus becomes the new `prechorus` role. An
+  instrumental is a breakdown when it is quiet, a chorus when it is loud, and an
+  intro or outro at the ends. Silence is a breakdown in the middle;
+* **a drop is a drop whatever the model called it.** A section that starts on a
+  proper drop becomes a `drop`, unless the model named it an intro, outro,
+  silence or pre-chorus. The model was trained on songs, and run on a club
+  track it calls the drop a verse;
+* **which sections are the same music** still comes from the self-similarity
+  clusters: each section's `label` is the cluster most of its beats fall in, so
+  a returning chorus gets its look back;
+* the model's own name is kept on the section as `function`, and the document
+  says `sectionSource: "songformer"`.
+
+It is heavy. The checkpoint carries both of its backbones (MuQ and MusicFM,
+690 M parameters, 2.9 GB) and reads the whole track in one 420-second window,
+so its attention grows with the square of the track's length. On a four-core
+laptop CPU a three-minute track takes 134 s and 8-10 GB of RAM; on a GPU it is
+seconds. So Settings → Structure (`ARTNET_STRUCTURE_MODEL`) is:
+
+| | |
+|---|---|
+| `auto` (default) | SongFormer when the analyser has a GPU and the weights are here |
+| `songformer` | also on a CPU |
+| `off` | the labeller always |
+
+Measure before switching it on: `python scripts/bench-analyze.py track.wav
+--structure songformer` on the show machine prints SongFormer's own time among
+the stages. The EDM companion model the paper describes (EDMFormer) has no
+released weights. The code ships with the checkpoint and is loaded from the
+model directory. `msaf`, which that code imports for evaluation only, is stubbed:
+it pins `enum34`, which breaks the standard library on Python 3.
+
+## Pixel rate (`pulse.py`)
+
+Everything else in the document is shaped for a show that changes its look a
+few times a minute. An LED bar has sixteen cells and forty frames a second, and
+what it can show that a par cannot is the music moving *inside* the beat. The
+`pulse` block holds what that needs:
+
+* **envelopes**: each separated stem's level every 20 ms, plus the mix's. The
+  scale is perceptual: 36 dB below the stem's own loud level up to that level.
+  Each is quantised to a byte and base64-encoded, 16 KB a stem for four minutes;
+* **lanes**: every kick, snare and hat, read off the drum stem by band-limited
+  spectral flux. The bands are below 150 Hz, 1-5 kHz and above 7 kHz, and each
+  lane claims only the hits that are its own. A kick's beater click also rises
+  in the snare band, and a snare's noise reaches the hats'; linear magnitudes,
+  not log, keep a band that holds almost none of a hit's energy from claiming
+  it. On a synthetic kit every hit is found and nothing else. Without separation
+  the lanes come from the percussive half of the mix, and `source` says so.
+
+The server samples it at the playback position every frame
+(`src/show/pulse.ts`). Stem levels are interpolated between the 20 ms points.
+Each drum is its strength on the hit, decaying after it, a kick slower than a
+hat. The result goes to the pattern layer as `ctx.pulse`. `drums` fills a bar
+from the middle on the kick, cracks its ends on the snare and scatters the hats.
+`stems` lays voice, band, drums and bass out from the centre. `meter` fills from
+the bass stem. The auto show offers the two new patterns only on a rig with bars,
+and only for a track whose analysis has a pulse.
 
 ## Stage 6 — dynamics (`dynamics.py`)
 
@@ -696,7 +794,21 @@ stdout is the protocol.
 
 ## Performance
 
-Measured on a three-minute track, three CPU threads, no GPU:
+Every document carries `meta.timings`, seconds per stage. A model on its own
+thread is timed there, and `wait.*` is what the main thread spent waiting for
+one, which is what the track actually paid. `scripts/bench-analyze.py` runs a
+track a few times and prints the medians stage by stage:
+
+```bash
+python scripts/bench-analyze.py track.wav --runs 3
+python scripts/bench-analyze.py track.wav --structure songformer --json
+```
+
+On the four-core CPU this was built on, a 90-second synthetic track without
+separation took 49 s. MuQ's embeddings accounted for 43 s of it, on its own
+thread. The main thread spent 37 s waiting for them.
+
+Measured earlier on a three-minute track, three CPU threads, no GPU:
 
 | | Wall clock | Relative to realtime |
 |---|---|---|
@@ -717,8 +829,21 @@ Separation is three quarters of the cost on its own:
 otherwise threads, leaving one core free so an analysis cannot starve the
 Art-Net render loop. `ARTNET_ANALYSIS_DEVICE=cpu` forces threads — worth setting
 on a one-machine rig whose GPU is busy driving a visualiser, where competing for
-it costs more than it buys. A GPU turns the separation row from a minute into a
-few seconds, which is most of why the numbers above are the pessimistic case.
+it costs more than it buys. A forced device gets the same set-up as a detected
+one: a core left free on the CPU, and MIOpen off on ROCm. A value this torch
+cannot use (a typo, or `cuda` on a CPU build) is named in the log and ignored.
+A GPU turns the separation row from a minute into a few seconds, which is most
+of why the numbers above are the pessimistic case.
+
+**The beat model goes first.** It runs on its own thread from the moment the
+audio is decoded, beside the feature extraction. On a GPU it holds a reserved
+turn, so the separator and MuQ, started just after, queue behind it instead of
+in front of it. Everything from the rhythm stage on waits for the grid, and
+nothing waits for the separator until later.
+
+**The file is decoded once**, at its own rate. The analysis signal, the wideband
+pass, the separator's stereo and S-KEY's input are all resampled from that one
+decode. There used to be four decodes per track.
 
 **Separation runs in its own thread** alongside preprocessing and features. On a
 GPU that genuinely overlaps. On CPU it buys almost nothing, because Demucs is
@@ -730,18 +855,14 @@ the rest. Structure and perception run side by side.
 
 **Weights are cached, and the cache is checked before the network.** Loading a
 checkpoint by short name sends the resolver to the network even when the file is
-already on disk, and a hung request there is a show that does not start — which
-is not hypothetical, it hung repeatedly while this was being built. Warm the
-cache before leaving for the venue:
+already on disk. A hung request there is a show that does not start, and it hung
+repeatedly while this was being built. Fetch everything before leaving for the
+venue (Settings → Analysis models, or `scripts/download-models.py`).
 
-```bash
-python -c "from analysis import models; models.warm_up()"
-```
-
-The worker keeps librosa's imports, numba's JIT caches and both models resident
-between tracks, so only the first analysis of a server's lifetime pays the cold
-start; `src/analyzer-worker.js` prewarms it during startup so even that lands
-while the operator is still opening the UI.
+The worker loads the beat model, then the separator, then the optional models
+from disk when it starts. It keeps them, with librosa's imports and numba's JIT
+caches, resident between tracks. The server starts it at boot, so that cost
+lands while the operator is still opening the UI and not on the first track.
 
 Curves are decimated to one point every half second before they enter the
 document. Undecimated, eleven curves on a four-minute track is tens of megabytes
@@ -772,11 +893,10 @@ Around 6 KB each, small enough to read in a diff.
 
 ### MuQ and MuQ-MuLan runtime
 
-Install dependencies with `project_venv/bin/python -m pip install -r requirements.txt`.
 The Transformers version is pinned because MuQ calls the Conformer encoder's
 v4 hidden-state API directly; Transformers 5 is incompatible with this path.
-Run `project_venv/bin/python scripts/download-models.py` before playback to
-provision MuQ, MuQ-MuLan, and its XLM-RoBERTa text encoder/tokenizer.
+Fetch MuQ, MuQ-MuLan and its XLM-RoBERTa text encoder before playback (Settings
+→ Analysis models, or `scripts/download-models.py`).
 
 The adapters reuse models between tracks and follow `ARTNET_ANALYSIS_DEVICE`
 (or automatic CUDA selection). They read `ARTNET_MODEL_DIR`; individual local
@@ -786,7 +906,8 @@ as the upstream loader uses it to select the architecture).
 MuQ-MuLan supports the published `pytorch_model.bin` checkpoint as well as
 safetensors. Its text encoder must be provisioned locally before analysis.
 
-The analysis document exposes `embeddings` and `semantic_scores` with separate
+The analysis document exposes `embeddings` (rounded to four places, which
+halves the document) and `semantic_scores` with separate
 `meta.modelUsage.muq` and `meta.modelUsage.muqMulan` flags. A failure in either
 optional pass leaves the other result intact. These outputs feed the show director: semantic similarities choose the palette
 and temper movement/accents, while embeddings detect recurring passages and
