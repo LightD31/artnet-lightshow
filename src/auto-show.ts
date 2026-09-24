@@ -19,7 +19,7 @@ import { guarded } from './server/guard.ts';
 import { resolveIsrc, splitQuery } from './isrc.ts';
 import { gridFromAnalysis } from './shared/beat-clock.ts';
 import * as ytdlp from './ytdlp.ts';
-import { messageOf } from './errors.ts';
+import { messageOf, cancelledError, isCancelled } from './errors.ts';
 import type { AnalysisCache, CacheMeta } from './analysis-cache.ts';
 import type { AnalysisPriority } from './analyzer-worker.ts';
 import type { BeatGrid } from './shared/beat-clock.ts';
@@ -131,6 +131,10 @@ class AutoShow {
   declare _inFlight: Map<string, Promise<Analysis>>;
   declare _exactAudio: Map<string, ExactAudio>;
   declare _currentJob: symbol | null;
+  declare _currentKey: string | null;
+  declare _cancelledKeys: Set<string>;
+  declare _lastError: { message: string; at: number } | null;
+  declare startPending: symbol | null;
   declare _grid: BeatGrid | null;
   declare _pixels: boolean;
   declare _lamps: number | null;
@@ -204,6 +208,17 @@ class AutoShow {
     // late is for a song that has already been left behind and must not touch
     // the running show.
     this._currentJob = null;
+    // And the cache key it is making, so the operator can call it off
+    // (cancelAnalysis); keys called off before their download finished.
+    this._currentKey = null;
+    this._cancelledKeys = new Set();
+    // Why the last current-track analysis failed, for the page: a failure
+    // used to leave the badge back at idle with nothing to say what happened.
+    this._lastError = null;
+    // The operator asked for the show to start once the analysis is in —
+    // held here rather than in the page, which may be closed or on another
+    // tab by the time it is (see routes.ts `start`).
+    this.startPending = null;
     // The analysed beat grid of the loaded track, which the pattern clock
     // locks to while the show runs (see server/conductor.js).
     this._grid = null;
@@ -515,7 +530,7 @@ class AutoShow {
    */
   async analyze(source: string, cacheKey: string | null = null): Promise<Analysis | null> {
     const token = Symbol(cacheKey || source);
-    this._currentJob = token;
+    this._beginJob(token, cacheKey);
     const isCurrent = () => this._currentJob === token;
 
     if (await this._loadFromCache(cacheKey, isCurrent)) return this.analysis;
@@ -533,7 +548,7 @@ class AutoShow {
       }
       return result;
     } catch (err) {
-      if (isCurrent()) this._status = 'idle';
+      this._jobFailed(isCurrent, err);
       throw err;
     }
   }
@@ -578,6 +593,8 @@ class AutoShow {
       } else {
         audioPath = await this._downloadAudio(query, targetDurationSec, isrc);
       }
+      // Called off while it downloaded: nothing to analyse it for.
+      if (cacheKey && this._cancelledKeys.delete(cacheKey)) throw cancelledError();
       if (onPhase) onPhase('analyzing');
       // Always pass the target duration to the analyzer when we have one —
       // it will no-op when the downloaded length is already within the ±2s
@@ -623,10 +640,12 @@ class AutoShow {
       if (priority !== 'normal' && this._worker) this._worker.promote(cacheKey, priority);
       return this._inFlight.get(cacheKey) as Promise<Analysis>;
     }
+    // A new job for a key called off earlier is wanted again.
+    if (cacheKey) this._cancelledKeys.delete(cacheKey);
     const promise = this._fetchAnalysis(query, targetDurationSec, cacheKey, meta, isrc, onPhase, priority, queuePos);
     if (cacheKey) {
       this._inFlight.set(cacheKey, promise);
-      const cleanup = () => this._inFlight.delete(cacheKey);
+      const cleanup = () => { this._inFlight.delete(cacheKey); this._cancelledKeys.delete(cacheKey); };
       promise.then(cleanup, cleanup);
     }
     return promise;
@@ -686,7 +705,7 @@ class AutoShow {
   async downloadAndAnalyze(query: string, targetDurationSec: number | null = null, cacheKey: string | null = null,
     isrc: string | null = null): Promise<{ analysis: Analysis | null; cached: boolean }> {
     const token = Symbol(cacheKey || query);
-    this._currentJob = token;
+    this._beginJob(token, cacheKey);
     const isCurrent = () => this._currentJob === token;
 
     // Cache hit → skip the download entirely.
@@ -718,9 +737,47 @@ class AutoShow {
       this._status = 'ready';
       return { analysis, cached: joining };
     } catch (err) {
-      if (isCurrent()) this._status = 'idle';
+      this._jobFailed(isCurrent, err);
       throw err;
     }
+  }
+
+  /** A current-track job starts: it is the one a cancel calls off. */
+  _beginJob(token: symbol, cacheKey: string | null): void {
+    this._currentJob = token;
+    this._currentKey = cacheKey;
+    this._lastError = null;
+  }
+
+  /** A current-track job ended in an error: say why, unless it was called off or overtaken. */
+  _jobFailed(isCurrent: () => boolean, err: unknown): void {
+    if (!isCurrent()) return;
+    this._status = 'idle';
+    this._currentKey = null;
+    this.startPending = null;
+    if (!isCancelled(err) && !(err && typeof err === 'object' && (err as { superseded?: unknown }).superseded)) {
+      this._lastError = { message: messageOf(err), at: Date.now() };
+    }
+  }
+
+  /**
+   * Call off the analysis the page is waiting on. The analyser drops it —
+   * out of its queue, or its process recycled if it is running — a download
+   * still in progress finishes but is not analysed, and the show goes back to
+   * what it had loaded. False when nothing was being analysed.
+   */
+  cancelAnalysis(): boolean {
+    if (this._status !== 'analyzing' && this._status !== 'downloading') return false;
+    const key = this._currentKey;
+    this._currentJob = null;
+    this._currentKey = null;
+    this.startPending = null;
+    this._status = this.analysis ? 'ready' : 'idle';
+    if (key) {
+      this._cancelledKeys.add(key);
+      if (this._worker) this._worker.cancel(key);
+    }
+    return true;
   }
 
   /**
@@ -1211,6 +1268,9 @@ class AutoShow {
     return {
       status: this._status,
       running: this.running,
+      // Why the last analysis failed, and whether a start is waiting on one.
+      error: this._lastError,
+      startPending: !!this.startPending,
       track: this.track,
       palette: this.palette,
       paletteName: this.paletteName,

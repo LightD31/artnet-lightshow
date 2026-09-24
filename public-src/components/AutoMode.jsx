@@ -1,5 +1,5 @@
-import { useEffect, useRef } from 'preact/hooks';
 import { stateSig, autoPositionSig, send, api } from '../state.js';
+import { useDraft } from '../draft.js';
 import { fmtTime } from '../utils.js';
 import { AnalysisStats } from './AnalysisStats.jsx';
 import { AutoTimeline } from './AutoTimeline.jsx';
@@ -145,13 +145,11 @@ export function AutoMode() {
   const sp = s.spotify;
   const as = s.autoShow;
 
-  const pendingStartRef = useRef(false);
-  useEffect(() => {
-    if (pendingStartRef.current && as && as.status === 'ready') {
-      pendingStartRef.current = false;
-      api('/api/auto/start', { method: 'POST' });
-    }
-  }, [as && as.status]);
+  // Drafts, so the faders do not snap back under the hand (draft.js). Before
+  // the early return: hooks run on every render or not at all.
+  const [intensity, onIntensity, commitIntensity] = useDraft(as ? as.intensity ?? 50 : 50, (v) => send({ autoIntensity: v }));
+  const syncLimit = s.syncOffsetLimitMs ?? 2000;
+  const [syncOffset, onSync, commitSync] = useDraft(s.autoSyncOffsetMs ?? 0, (v) => send({ autoSyncOffsetMs: v }));
 
   if (!sp || !as) return null;
 
@@ -173,11 +171,11 @@ export function AutoMode() {
     // endpoint so an unavailable source produces its useful error message.
     const source = requestedSource === 'auto' ? (s.activeSource || 'timer') : requestedSource;
 
-    // A failed analyse must clear the pending flag, or the next status change
-    // fires a start for a track that never analysed. api() reports the reason.
+    // The server starts the show once the analysis is in (`start`), so it
+    // still happens if this tab is switched away or the page is closed
+    // meanwhile. api() reports a failure; a cancel is not one.
     const triggerAnalyze = (endpoint) => {
-      pendingStartRef.current = true;
-      api(endpoint, { method: 'POST' }).then((d) => { if (!d.ok) pendingStartRef.current = false; });
+      api(endpoint, { method: 'POST', body: JSON.stringify({ start: true }) });
     };
 
     if (source === 'spotify' || source === 'hybrid') triggerAnalyze('/api/auto/analyze-spotify');
@@ -187,19 +185,12 @@ export function AutoMode() {
     else api('/api/auto/start', { method: 'POST' });
   };
 
-  const stop = () => {
-    pendingStartRef.current = false;
-    api('/api/auto/stop', { method: 'POST' });
-  };
+  const stop = () => api('/api/auto/stop', { method: 'POST' });
+  const cancel = () => api('/api/auto/cancel', { method: 'POST' });
 
-  const intensity = as.intensity ?? 50;
-  const syncLimit = s.syncOffsetLimitMs ?? 2000;
-  const syncOffset = s.autoSyncOffsetMs ?? 0;
   // Signed, because which way it is pointing is the whole question.
   const syncLabel = `${syncOffset > 0 ? '+' : syncOffset < 0 ? '\u2212' : ''}${Math.abs(syncOffset)} ms`;
-  const nudgeSync = (by) => send({
-    autoSyncOffsetMs: Math.max(-syncLimit, Math.min(syncLimit, syncOffset + by)),
-  });
+  const nudgeSync = (by) => commitSync(Math.max(-syncLimit, Math.min(syncLimit, syncOffset + by)));
 
   return (
     <div class="auto-layout">
@@ -211,9 +202,13 @@ export function AutoMode() {
           disabled={busy}
           onClick={running ? stop : analyzeAndStart}
         >
-          <span class="transport-glyph">{busy ? '⟳' : running ? '■' : '▶'}</span>
-          <span>{busy ? 'Analysing…' : running ? 'Stop show' : 'Start show'}</span>
+          <span class="transport-glyph" aria-hidden="true">{busy ? '⟳' : running ? '■' : '▶'}</span>
+          <span>{busy ? (as.startPending ? 'Analysing, then starting…' : 'Analysing…') : running ? 'Stop show' : 'Start show'}</span>
         </button>
+        {busy && (
+          <button type="button" class="btn transport-cancel" onClick={cancel}
+            title="Stop analysing this track. The show goes back to what it had loaded.">Cancel</button>
+        )}
 
         {byEar
           ? <span class="auto-badge auto-badge-playing" title="No analysed track to play: answering what the live input hears">By ear</span>
@@ -232,6 +227,12 @@ export function AutoMode() {
           </select>
         </label>
       </div>
+
+      {as.error && !busy && (
+        <div class="auto-error" role="alert">
+          <strong>The analysis failed:</strong> {as.error.message}
+        </div>
+      )}
 
       <div class="auto-columns">
         <div class="auto-col">
@@ -274,7 +275,8 @@ export function AutoMode() {
                 type="range" min="0" max="100"
                 value={intensity}
                 aria-valuetext={`${intensity} percent`}
-                onInput={(e) => send({ autoIntensity: Number(e.target.value) })}
+                onInput={(e) => onIntensity(Number(e.target.value))}
+                onChange={(e) => commitIntensity(Number(e.target.value))}
               />
               <span class="look-value">{intensity}</span>
             </div>
@@ -304,7 +306,8 @@ export function AutoMode() {
                 min={-syncLimit} max={syncLimit} step={SYNC_NUDGE_MS}
                 value={syncOffset}
                 aria-valuetext={syncLabel}
-                onInput={(e) => send({ autoSyncOffsetMs: Number(e.target.value) })}
+                onInput={(e) => onSync(Number(e.target.value))}
+                onChange={(e) => commitSync(Number(e.target.value))}
               />
               <button
                 type="button"
@@ -318,7 +321,7 @@ export function AutoMode() {
                 class="look-value sync-value"
                 title="Back to zero"
                 aria-label={`Sync offset ${syncLabel}. Reset to zero.`}
-                onClick={() => send({ autoSyncOffsetMs: 0 })}
+                onClick={() => commitSync(0)}
               >{syncLabel}</button>
             </div>
             <p class="look-note">

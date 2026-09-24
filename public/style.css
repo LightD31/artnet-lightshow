@@ -1931,6 +1931,18 @@ input[type=range]::-moz-range-thumb {
   color: #fca5a5;
 }
 .transport-glyph { font-size: 12px; line-height: 1; }
+.transport-cancel { min-height: 36px; }
+
+/* Why the last analysis failed: said once, where the transport is. */
+.auto-error {
+  padding: 10px 12px;
+  border: 1px solid rgba(239, 68, 68, .45);
+  border-radius: var(--radius);
+  background: rgba(239, 68, 68, .1);
+  color: var(--text);
+  font-size: 13px;
+}
+.auto-error strong { color: var(--red); margin-right: 4px; }
 
 .transport-spacer { flex: 1; }
 .transport-source { display: inline-flex; align-items: center; gap: 8px; }
