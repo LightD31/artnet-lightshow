@@ -166,7 +166,10 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   function broadcast(): void {
     // Every edit to the patch ends in a broadcast, which makes this the one
     // place the show hears whether the rig has LED bars to draw on.
-    if (typeof autoShow.setRig === 'function') autoShow.setRig({ hasPixels: currentRig().hasPixels });
+    if (typeof autoShow.setRig === 'function') {
+      const rig = currentRig();
+      autoShow.setRig({ hasPixels: rig.hasPixels, lamps: rig.fixtures.length });
+    }
     const live = getLiveState();
     const json = JSON.stringify(live);
     if (json !== lastLiveJson) {

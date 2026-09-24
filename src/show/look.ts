@@ -89,9 +89,10 @@ const SUBGENRE_PALETTES: Record<string, string[]> = {
 // measured character below decides *what kind* of pattern the passage wants,
 // and this decides which of those the genre would reach for.
 //
-// The pixel effects at the end of each list are only ever in a pool on a rig
-// with LED bars (see pickPattern's `pixels`); listing them here is what keeps
-// the genre bias from filtering them straight back out when they are.
+// The pixel effects at the end of each list are in a pool on a rig with LED
+// bars, and the ones that read on a handful of lamps on a rig of pars (see
+// pickPattern's `pixels` and `pictures`); listing them here is what keeps the
+// genre bias from filtering them straight back out when they are.
 const SUBGENRE_PATTERNS: Record<string, string[]> = {
   edm:       ['pairs', 'runner', 'ensemble', 'split', 'stack-up', 'random-flash', 'hit', 'sections', 'comet', 'burst', 'drums'],
   dubstep:   ['random-flash', 'stack-up', 'split', 'pairs', 'ensemble', 'hit', 'sections', 'burst', 'drums'],
@@ -512,7 +513,7 @@ function goldenStep(index: number, length: number): number {
  * and ignores the colour slots, which would break the track's locked palette.
  */
 function pickPattern({ character, available, score = null, seed = 0, drive = 0.5,
-  dance = 0.5, pixels = false, avoid = null }: {
+  dance = 0.5, pixels = false, pictures = null, avoid = null }: {
   character?: Character | null;
   available: ReadonlySet<string>;
   score?: Score | null;
@@ -520,6 +521,8 @@ function pickPattern({ character, available, score = null, seed = 0, drive = 0.5
   drive?: number;
   dance?: number;
   pixels?: boolean;
+  /** On a rig without bars, the pictures its pools may still take (PAR_PICTURES). */
+  pictures?: ReadonlySet<string> | null;
   /** Patterns not to pick while the passage's pool has others: what the
    *  last track opened the same passage on (see show/set-memory.ts). */
   avoid?: ReadonlySet<string> | null;
@@ -535,10 +538,11 @@ function pickPattern({ character, available, score = null, seed = 0, drive = 0.5
   const trust = unit(score && score.genreTrust);
 
   // On a rig with LED bars each branch's pool also takes the pictures drawn
-  // across the cells that suit it. Appended, and only then: a pool is picked
-  // from by index, so a rig of pars must see exactly the pools it always has.
+  // across the cells that suit it; on a rig of pars, the ones of those that
+  // still read on a handful of lamps. Appended after the lamp patterns.
+  const pictured = (pixelPool: string[]) => (pixels ? pixelPool : pictures ? pixelPool.filter((p) => pictures.has(p)) : []);
   const pickFrom = (pool: string[], pixelPool: string[] = []): string => {
-    let filtered = (pixels ? [...pool, ...pixelPool] : pool).filter((p) => available.has(p));
+    let filtered = [...pool, ...pictured(pixelPool)].filter((p) => available.has(p));
     // The genre bias is a preference, not a filter: it only applies when the
     // classifier earned some trust and when it leaves something to pick from.
     if (trust >= 0.25 && genrePool.size) {
@@ -561,7 +565,7 @@ function pickPattern({ character, available, score = null, seed = 0, drive = 0.5
     // genre opens every chorus on it.
     if (avoid && avoid.size) {
       const fresh = filtered.filter((p) => !avoid.has(p));
-      const wide = (pixels ? [...pool, ...pixelPool] : pool).filter((p) => available.has(p) && !avoid.has(p));
+      const wide = [...pool, ...pictured(pixelPool)].filter((p) => available.has(p) && !avoid.has(p));
       if (fresh.length) filtered = fresh;
       else if (wide.length) filtered = wide;
     }
@@ -617,6 +621,17 @@ function pickPattern({ character, available, score = null, seed = 0, drive = 0.5
   // longer say. It goes back beside the patterns it used to keep company with.
   return pickFrom(['chase', 'runner', 'ping-pong', 'pairs', 'ensemble', 'ribbon', 'wave', 'color-cycle'], ['comet', 'gradient', 'stems']);
 }
+
+/**
+ * The pictures drawn for LED bars that a rig of pars takes too, as a few
+ * samples of the picture: a colour gradient rolling across the lamps, a slow
+ * plasma, a comet with a tail, a ring thrown out from the middle — and, when
+ * the track's drum lanes are ones a light may follow, the kit (the kick in
+ * the middle lamps, the snare at the ends). `stems` is not among them: four
+ * zones need more lamps than a row of pars has.
+ */
+const PAR_PICTURES: ReadonlySet<string> = new Set(['gradient', 'plasma', 'comet', 'burst']);
+const PAR_PICTURES_WITH_DRUMS: ReadonlySet<string> = new Set([...PAR_PICTURES, 'drums']);
 
 /**
  * The patterns the show may use for one track: the rig's, less the pictures of
@@ -766,6 +781,8 @@ export {
   EXPRESSIVE,
   PULSE_PATTERNS,
   availableFor,
+  PAR_PICTURES,
+  PAR_PICTURES_WITH_DRUMS,
   driveFor,
   tierOf,
   buildPalette,

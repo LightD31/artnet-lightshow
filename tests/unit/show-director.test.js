@@ -160,7 +160,8 @@ test('an intro opens on a slow look rather than giving away the chorus', () => {
   // `ribbon` joined the slow looks when the expression channel did: it is a
   // continuous blend across the rig driven by what the music is doing, which is
   // exactly what an intro wants and is the opposite of giving the chorus away.
-  assert.ok(['ribbon', 'fade', 'wave', 'solid'].includes(intro.pattern),
+  // A gradient rolling across the lamps and a slow plasma joined them later.
+  assert.ok(['ribbon', 'fade', 'wave', 'solid', 'gradient', 'plasma'].includes(intro.pattern),
     `intro opened on ${intro.pattern}`);
   assert.strictEqual(intro.beatDivision, 1);
 });

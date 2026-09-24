@@ -4,7 +4,8 @@
 // the director around cells. A rig with no multi-cell fixture must not notice:
 // every frame the engine sends, every colour the preview draws and every scene
 // the director plans stays exactly what it was. These hashes were taken before
-// that work started; a change to any of them is a change to every existing show.
+// that work started; a change to any of them is a change to every existing show
+// — so one only ever changes on purpose, with the reason written down here.
 //
 // Everything that would make a frame depend on when it ran is pinned: the
 // monotonic clock, the musical clock (a fake master deck), and the dice the
@@ -18,23 +19,42 @@ import path from 'node:path';
 
 import { state } from '../../src/server/state.ts';
 import * as universes from '../../src/server/universes.ts';
-import { renderFrame, resizeFixtureBuffers } from '../../src/server/engine.ts';
+import { renderFrame, resizeFixtureBuffers, setPulseSource } from '../../src/server/engine.ts';
 import { conductor } from '../../src/server/conductor.ts';
 import { applyPatch, applyOverride, setFixtureMaxBrightness } from '../../src/server/patch.ts';
 import { PATTERNS, COLOR_PRESETS } from '../../src/server/presets.ts';
 import { createPreviewSampler } from '../../src/shared/preview.ts';
 import AutoShow from '../../src/auto-show.ts';
 
-// The engine hash changed once, on purpose: the built-in par's dimmer is
-// 16-bit, and its fine channel used to be written 0. It now carries the low
-// byte of the level (renderer.js writeDimmer), and the coarse byte is that
-// level's high byte rather than its rounding. With the fine write taken back
-// out, every frame matches the hash taken before the pixel work
-// (e2498330…1dad) — nothing else about a rig of pars moved.
+// The hashes have changed twice, both times on purpose.
+//
+// 1. The engine: the built-in par's dimmer is 16-bit, and its fine channel
+//    used to be written 0. It now carries the low byte of the level
+//    (renderer.js writeDimmer), and the coarse byte is that level's high byte
+//    rather than its rounding. With the fine write taken back out, every frame
+//    matched the hash taken before the pixel work (e2498330…1dad).
+//
+// 2. All three, when the show for a rig of pars was improved rather than kept
+//    (engine 1e425b3f…9c97, preview d6cfb977…ed2a, director 439b3a25…c419
+//    before it):
+//      - `stack-up` fills in N steps rather than N + 1, so a stack of four
+//        lamps is a bar of quarters instead of drifting a step against the
+//        bar every time round with the downbeat dark. That alone is what
+//        changed in the frames and colours the hashes already covered: with
+//        the old stack put back (and the engine's new scenes below left out),
+//        both match their hashes before it.
+//      - the director lays the chorus and the drop mirrored about the centre
+//        of the stage, stacks a build-up out from the middle, says on every
+//        scene how it is laid out, brings a long passage back to its own look
+//        at the top of every phrase, offers the pictures drawn for bars that
+//        read on a handful of lamps, and rests on a gradient or a plasma as
+//        well as a ribbon, a fade or a wave (show-pars.test.js).
+//    The engine hash also now covers what that added: looks laid mirrored,
+//    and `hit` following the drums.
 const GOLDEN = {
-  engine: '1e425b3fafbb63d4b6f79f0e5c0664473c97516dff137a907eb0704683019c97',
-  preview: 'd6cfb97766c9ebcb5e646d0749f496c5c6c7213a1f33a07bcb009fa81b70ed2a',
-  director: '439b3a2570f5d4ebd40ab199541b9ee5d07a8d71fef8f6f6f97359f0535ec419',
+  engine: 'b825f49a6d0c219d16d2f921722d4a8f86d500eac246b750a424e2a2e3910c1d',
+  preview: '65bd25548046cbe773dba9b0fee279aa99c3fc922498d7cfb965724057119178',
+  director: '880194d8ce893b0f2684b10da7e54fdbc30c78b5feff6bfd8e8c59032c67b17c',
 };
 
 /** A seeded stand-in for Math.random, so twinkle rolls the same dice every run. */
@@ -146,9 +166,30 @@ function engineHash() {
       applyPatch({ colorA: 5, fadeMs: 400 });
       frames(24);
       scene({ ...base, pattern: 'solid', showDynamics: { ...DYNAMICS, level: 0 } }, 8);
+
+      // Laid mirrored about the centre of the stage, on the unplaced rig and
+      // the placed one.
+      for (const placed of [false, true]) {
+        state.fixtures = rig({ placed });
+        resizeFixtureBuffers();
+        for (const pattern of ['chase', 'stack-up', 'pairs', 'ping-pong', 'wave', 'comet']) {
+          scene({ ...base, pattern, pixelMap: 'mirror' }, 32);
+        }
+      }
+      applyPatch({ pixelMap: 'stage' });
+      // `hit` on the drums as they are hit: a kick on every beat and one
+      // between the second and third, with drum lanes a light may follow.
+      setPulseSource(() => {
+        const since = Math.min(beat % 1, Math.abs(beat % 4 - 1.5));
+        const kick = since < 0.3 ? 1 - since / 0.3 : 0;
+        return { mix: 0.6, kick, snare: 0, hats: 0, groove: kick };
+      });
+      scene({ ...base, pattern: 'hit' }, 64);
+      setPulseSource(null);
     });
   } finally {
     conductor.setProlinkSource(null);
+    setPulseSource(null);
   }
   return hash.digest('hex');
 }

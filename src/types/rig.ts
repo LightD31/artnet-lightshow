@@ -194,6 +194,13 @@ export interface PulseReading {
   kick: number;
   snare: number;
   hats: number;
+  /**
+   * How hard the drums are hitting now by the lanes a light may follow, 0..1:
+   * the kick, and the snare too when it was read off the drum stem. Only for
+   * lanes found by the rules measured on real drumming (`pulse.detector` 2);
+   * absent for the first ones, which fire on a snare's body as a kick.
+   */
+  groove?: number;
 }
 
 /** How a pixel effect is laid over the cells of LED bars. */

@@ -8,6 +8,14 @@
  * between its 20 ms points — and how recently each drum was hit: its strength
  * on the hit, decaying after it the way the sound does, a kick slower than a
  * hat. The pixel patterns read the answer every frame (shared/patterns.ts).
+ *
+ * The lanes are only worth following as far as they were measured to be
+ * right (src/analysis/pulse.py). A document from the rules measured on real
+ * drumming also says how hard the drums are hitting as a light should take
+ * it — `groove`: the kick, right nine times in ten on its strong hits, and on
+ * the drum stem the snare, right four in five. `hit` pulses the whole rig on
+ * it (shared/layer.ts), so a rig of pars flashes with the drummer rather
+ * than with the grid.
  */
 
 import type { Pulse } from '../types/analysis.ts';
@@ -16,10 +24,16 @@ import type { PulseReading } from '../types/rig.ts';
 /** How fast each hit fades, ms to about a third: a kick rings, a hat ticks. */
 const DECAY_MS: Record<'kick' | 'snare' | 'hats', number> = { kick: 110, snare: 90, hats: 45 };
 const STEMS = ['drums', 'bass', 'vocals', 'other'] as const;
+/** The lane rules measured on real drumming (analysis/pulse.py DETECTOR). */
+const TRUSTED_DETECTOR = 2;
+/** A snare counts for a little less than a kick in the groove: it is right less often. */
+const SNARE_IN_GROOVE = 0.85;
 
 export interface PulseTrack {
   /** Whether the track was separated, so the stem levels are there. */
   readonly stems: boolean;
+  /** Whether the drum lanes are the ones measured on real drumming, so `groove` is read. */
+  readonly trusted: boolean;
   at(positionMs: number): PulseReading;
 }
 
@@ -92,8 +106,11 @@ function pulseTrack(block: Pulse | null | undefined): PulseTrack | null {
   const hats = hits(lanes.hats);
   const rate = block.rate;
   const stems = STEMS.every((name) => envelopes[name]);
+  const trusted = Number(block.detector) >= TRUSTED_DETECTOR;
+  const snareCounts = trusted && block.source === 'stems';
   return {
     stems,
+    trusted,
     at(positionMs: number): PulseReading {
       const ms = Number.isFinite(positionMs) ? positionMs : 0;
       const out: PulseReading = {
@@ -103,9 +120,10 @@ function pulseTrack(block: Pulse | null | undefined): PulseTrack | null {
         hats: hitLevel(hats, ms, DECAY_MS.hats),
       };
       if (stems) for (const name of STEMS) out[name] = level(envelopes[name], rate, ms);
+      if (trusted) out.groove = Math.max(out.kick, snareCounts ? out.snare * SNARE_IN_GROOVE : 0);
       return out;
     },
   };
 }
 
-export { pulseTrack, DECAY_MS };
+export { pulseTrack, DECAY_MS, TRUSTED_DETECTOR };

@@ -15,7 +15,7 @@
  */
 
 import { PATTERN_FUNCS, CELL_PATTERNS } from './patterns.ts';
-import { fadeBrightness, hitBrightness } from './look-math.ts';
+import { fadeBrightness, grooveBrightness, hitBrightness } from './look-math.ts';
 import { fadePhase, hitPhase } from './beat-clock.ts';
 import type { PatternContext } from './patterns.ts';
 import type { Layout, Rig } from './rig.ts';
@@ -35,7 +35,10 @@ export interface LayerLook {
    * `pattern` on the whole rig, as every look did before.
    */
   pixelPattern?: string | null;
-  /** How many beats `pixelPattern` takes to play once (a build-up's fill), or nothing. */
+  /**
+   * How many beats a picture that plays once (a build-up's fill) takes, or
+   * nothing: `pixelPattern`'s, or `pattern`'s when the whole rig runs it.
+   */
   pixelSpan?: number | null;
   /** How far through that span it already is when the scene starts, 0..1. */
   pixelFrom?: number | null;
@@ -84,10 +87,12 @@ function renderLayer(rig: Rig, look: LayerLook, clock: LayerClock | null, set: L
     if (!skipPattern) paint(rig, rig.layout(look.split, 'stage', 'pars'), look.pattern, look, clock, clock?.twinkle, null, set, false);
     if (!skipPixelPattern) {
       paint(rig, rig.layout(look.split, look.pixelMap, 'cells'), look.pixelPattern, look, clock,
-        clock?.pixelTwinkle ?? clock?.twinkle, look.pixelSpan ? { beats: look.pixelSpan, from: look.pixelFrom ?? 0 } : null, set, false);
+        clock?.pixelTwinkle ?? clock?.twinkle, spanOf(look), set, false);
     }
   } else if (!skipPattern) {
-    paint(rig, whole, look.pattern, look, clock, clock?.twinkle, null, set, true);
+    // One pattern on the whole rig: a picture that plays once (a build-up's
+    // fill on a rig of pars) plays over its span here too.
+    paint(rig, whole, look.pattern, look, clock, clock?.twinkle, spanOf(look), set, true);
   }
 
   // The split look's wash group holds colour B, at full, under the music —
@@ -96,6 +101,10 @@ function renderLayer(rig: Rig, look: LayerLook, clock: LayerClock | null, set: L
     const { start, count } = rig.ranges[i];
     for (let u = start; u < start + count; u++) set(u, look.colors[1], 255, 0);
   }
+}
+
+function spanOf(look: LayerLook): Span | null {
+  return look.pixelSpan ? { beats: look.pixelSpan, from: look.pixelFrom ?? 0 } : null;
 }
 
 /**
@@ -109,10 +118,13 @@ function paint(rig: Rig, layout: Layout, pattern: string, look: LayerLook, clock
   const { colors } = look;
   if (pattern === 'fade' || pattern === 'hit') {
     // The two whole-rig envelopes: an eight-beat breath from the scene's
-    // anchor, and a decay across every step.
+    // anchor, and a decay across every step — on the drums as they are hit,
+    // when the track's drum lanes are ones a light may follow.
+    const groove = clock.pulse?.groove;
     const bright = pattern === 'fade'
       ? fadeBrightness(fadePhase(clock.beatPos, clock.anchor, clock.division))
-      : hitBrightness(hitPhase(clock.beatPos, clock.division));
+      : groove === undefined ? hitBrightness(hitPhase(clock.beatPos, clock.division))
+        : grooveBrightness(hitBrightness(hitPhase(clock.beatPos, clock.division)), groove);
     if (everyUnit) for (let u = 0; u < rig.units.length; u++) set(u, colors[0], bright, 0);
     else for (const u of layout.units.list) set(u, colors[0], bright, 0);
     return;
@@ -155,7 +167,23 @@ function patternContext(rig: Rig, layout: Layout, pattern: string, colors: reado
       write: (k, colour, dim, strobe) => set(list[k], colour, dim, strobe),
     };
   }
-  const { members, order, xs } = layout.fixtures;
+  const { members, order, xs, folded } = layout.fixtures;
+  if (folded) {
+    // Mirrored: each slot is a pair standing either side of the centre, the
+    // middle first, and both lamps of a pair take the slot's value.
+    return {
+      ...common,
+      fixtureCount: folded.length,
+      xs: folded.length > 1 ? folded.map((_, k) => k / (folded.length - 1)) : null,
+      ys: null,
+      write: (k, colour, dim, strobe) => {
+        for (const slot of folded[k]) {
+          const { start, count } = rig.ranges[members[slot]];
+          for (let u = start; u < start + count; u++) set(u, colour, dim, strobe);
+        }
+      },
+    };
+  }
   return {
     ...common,
     fixtureCount: members.length,

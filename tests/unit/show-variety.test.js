@@ -20,7 +20,7 @@ const plan = (doc, intensity = 50) => new ShowDirector({
   patterns: PATTERNS, colorPresets: COLOR_PRESETS, paletteSize: 4, intensity,
 }).plan(doc);
 
-const RESTING_LOOKS = new Set(['ribbon', 'fade', 'wave', 'solid']);
+const RESTING_LOOKS = new Set(['ribbon', 'fade', 'wave', 'solid', 'gradient', 'plasma']);
 const RESTING_SOURCES = new Set(['section:intro', 'section:outro', 'section:breakdown', 'buildup:tension']);
 
 test('a track\'s show is exactly the same every time it is planned', () => {

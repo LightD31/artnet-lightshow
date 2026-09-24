@@ -359,7 +359,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     // A random pattern re-rolls when its step or its look moves, and holds
     // what it rolled in between; the pars and the bars keep their own dice.
     const lookKey = `${step}|${input.colorA},${input.colorB},${input.colorC},${input.colorD}|${input.split}|${fixtureCount}`;
-    const pixels = rigNow.hasPixels ? `|${rigNow.units.length}|${input.pixelMap}` : '';
+    const pixels = `|${rigNow.hasPixels ? rigNow.units.length : ''}|${input.pixelMap}`;
     let skipPattern = !known;
     if (known && RANDOM_PATTERNS.has(input.pattern)) {
       const key = `${input.pattern}|${lookKey}${pixels}|${pixelPattern}`;

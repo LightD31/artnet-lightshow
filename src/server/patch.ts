@@ -144,9 +144,14 @@ function applyPatch(rawData: unknown): Patch {
   if (data.split !== undefined) state.split = data.split;
   if (data.pixelMap !== undefined) state.pixelMap = data.pixelMap;
   if (data.pixelPattern !== undefined) state.pixelPattern = data.pixelPattern;
-  // A pattern picked by hand runs on the whole rig: the bars' own picture
-  // belongs to the show that planned it.
-  else if (data.pattern !== undefined && data.anchorMs === undefined) state.pixelPattern = null;
+  // A pattern picked by hand runs on the whole rig, and from its start: the
+  // bars' own picture and a build-up's span belong to the show that planned
+  // them.
+  else if (data.pattern !== undefined && data.anchorMs === undefined) {
+    state.pixelPattern = null;
+    state.pixelSpan = null;
+    state.pixelFrom = null;
+  }
   if (data.pixelSpan !== undefined) state.pixelSpan = data.pixelSpan;
   if (data.pixelFrom !== undefined) state.pixelFrom = data.pixelFrom;
   if (data.showDynamics !== undefined) {

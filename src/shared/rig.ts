@@ -47,7 +47,12 @@ export interface UnitRange {
 /** The order the patterns travel in, for fixtures and for units (see layoutOf). */
 export interface Layout {
   wash: Set<number>;
-  fixtures: { members: number[]; order: number[]; xs: number[] | null };
+  /**
+   * `folded`, when the look is mirrored: the slots a stepped pattern travels
+   * through, each one or two fixtures standing symmetrically about the
+   * centre of the stage, from the middle out (members indices).
+   */
+  fixtures: { members: number[]; order: number[]; xs: number[] | null; folded?: number[][] };
   units: { list: number[]; xs: number[] | null; ys: number[] | null };
 }
 
@@ -214,7 +219,7 @@ function buildRig<F extends StageFixture>(fixtures: readonly F[], profileOf: Pro
     fixtures, units, ranges, cellMaps, points, local, localY, grids, hasPixels, hasPars,
     /** The travel order for a look, cached per split, pixel map and part. */
     layout(split = null, pixelMap = 'stage', only = null) {
-      const key = `${split}|${hasPixels ? pixelMap : ''}|${only || ''}`;
+      const key = `${split}|${pixelMap}|${only || ''}`;
       let layout = layouts.get(key);
       if (!layout) {
         layout = layoutOf(this, split, pixelMap, only);
@@ -263,10 +268,30 @@ function layoutOf(rig: Rig, split: number | null | undefined, pixelMap: string |
   const part = (i: number) => !only || (only === 'cells') === !!rig.cellMaps[i];
   const members = fixtures.map((_, i) => i).filter((i) => !wash.has(i) && part(i));
   const { order, xs } = spatialLayout(members.map((i) => fixtures[i]));
-  const layoutFixtures = { members, order, xs };
+  const layoutFixtures: Layout['fixtures'] = { members, order, xs };
+  if (pixelMap === 'mirror' && members.length >= 3) {
+    // Folded about the centre: the two lamps either side of the middle are
+    // one slot, the next pair out the next, so a chase runs from the middle
+    // to both ends at once and a stack builds out from the centre. With an
+    // odd count the middle lamp is a slot of its own.
+    const n = order.length;
+    const folded: number[][] = [];
+    for (let k = 0; k < Math.ceil(n / 2); k++) {
+      const left = Math.floor((n - 1) / 2) - k;
+      const right = Math.ceil((n - 1) / 2) + k;
+      folded.push(left === right ? [order[left]] : [order[left], order[right]]);
+    }
+    layoutFixtures.folded = folded;
+  }
 
   if (!rig.hasPixels) {
-    return { wash, fixtures: layoutFixtures, units: { list: order.map((k) => ranges[members[k]].start), xs, ys: null } };
+    const list = order.map((k) => ranges[members[k]].start);
+    // A picture laid mirrored on a rig of pars is drawn out from the centre,
+    // as it is across bars.
+    const unitXs = pixelMap === 'mirror' && list.length >= 3
+      ? (xs || list.map((_, k) => k / (list.length - 1))).map((x) => Math.abs(2 * x - 1))
+      : xs;
+    return { wash, fixtures: layoutFixtures, units: { list, xs: unitXs, ys: null } };
   }
 
   const list: number[] = [];

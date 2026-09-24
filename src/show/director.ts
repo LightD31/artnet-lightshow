@@ -101,6 +101,8 @@ export interface DirectorOptions {
   intensity?: number;
   blackoutIndex?: number;
   pixels?: boolean;
+  /** How many fixtures the rig has, or nothing when it is not known. */
+  lamps?: number | null;
   /** The night before this track (show/set-memory.ts), or nothing. */
   history?: SetHistory | null;
   /** The operator's edits to this track (show/overlay.ts), or nothing. */
@@ -271,6 +273,7 @@ class ShowDirector {
   declare intensity: number;
   declare blackoutIndex: number;
   declare pixels: boolean;
+  declare lamps: number | null;
   declare history: SetHistory | null;
   declare overlay: ShowOverlay | null;
 
@@ -284,7 +287,7 @@ class ShowDirector {
    * @param {number} options.blackoutIndex colour index that means "off"
    */
   constructor({ patterns = [], colorPresets = null, paletteSize = 4,
-    intensity = 50, blackoutIndex = 0, pixels = false, history = null, overlay = null }: DirectorOptions = {}) {
+    intensity = 50, blackoutIndex = 0, pixels = false, lamps = null, history = null, overlay = null }: DirectorOptions = {}) {
     this.patterns = patterns;
     this.colorPresets = colorPresets;
     this.paletteSize = paletteSize;
@@ -292,8 +295,9 @@ class ShowDirector {
     this.blackoutIndex = blackoutIndex;
     // Does the rig have LED bars to draw on? Only then does the show reach
     // for the pictures drawn across cells, and say how to lay them over the
-    // bars; a rig of pars plans exactly as it always has.
+    // bars; a rig of pars gets its own layout (_mapPars).
     this.pixels = !!pixels;
+    this.lamps = Number.isFinite(lamps) ? lamps : null;
     this.history = history;
     this.overlay = overlay;
   }
@@ -330,8 +334,11 @@ class ShowDirector {
     intents.sort((a, b) => a.timeMs - b.timeMs || a.priority - b.priority);
 
     if (context.pixels) this._mapPixels(intents, context);
-    // The operator's edits go on last, over everything the passes chose.
+    // The operator's edits go on last, over everything the passes chose —
+    // before a rig of pars is laid out, so a look the operator picked for a
+    // chorus is mirrored only if it is one that travels.
     const edited = this.overlay ? applyOverlay(intents, this.overlay, context.sections) : intents;
+    if (!context.pixels) this._mapPars(edited, context);
 
     const looks: Record<string, string> = {};
     for (const i of edited) {
@@ -385,11 +392,7 @@ class ShowDirector {
       if (intent.kind !== INTENT.SCENE || !intent.pattern) continue;
       const t = intent.timeMs / 1000;
       const source = String(intent.source);
-      // A section's own scene was snapped to the downbeat, which can sit a
-      // moment before the section starts; it belongs to the section it opens.
-      const section = (source.startsWith('section:')
-        && context.sections.find((s) => Math.abs(context.snapToDownbeatMs(s.start) - intent.timeMs) < 1))
-        || context.sectionAt(t);
+      const section = this._sectionOf(intent, context);
       delete intent.split;
 
       if (source === 'drop:anchor') {
@@ -441,6 +444,51 @@ class ShowDirector {
         intent.pattern = parWash(section.drive, section.identity + turn * 7 + context.trackSeed, available) || intent.pattern;
       }
     }
+  }
+
+  /**
+   * On a rig of pars there are no bars to carry the movement, so the pars
+   * carry all of it, and what is theirs to add is shape: the same few lamps
+   * read as another look laid out symmetrically than laid across. So
+   *
+   *   chorus, drop  the travelling looks run mirrored, from the middle out to
+   *                 both ends at once — the passages the song is built around
+   *                 are the ones laid about the stage's centre — and so does
+   *                 the movement a drop lands into
+   *   build-up      the rise stacks out from the middle, a pair more on every
+   *                 step as the steps quicken, where it used to run the same
+   *                 chase across the stage a verse does
+   *   the rest      across the stage, as the lamps stand
+   *
+   * Every scene says which, so the verse after a chorus crosses the stage
+   * again. A look that is already about the centre (a ring thrown out from
+   * it, the kit, the voice held in the middle) or has no shape (the whole
+   * rig at once) is left across.
+   */
+  _mapPars(intents: Intent[], context: PlanContext): void {
+    const { available } = context;
+    for (const intent of intents) {
+      if (intent.kind !== INTENT.SCENE || !intent.pattern) continue;
+      const source = String(intent.source);
+      if (source === 'buildup:rise' && available.has('stack-up')) intent.pattern = 'stack-up';
+      const section = this._sectionOf(intent, context);
+      const symmetric = source === 'buildup:rise'
+        || (source.startsWith('drop:') && source !== 'drop:anchor')
+        || (!source.startsWith('buildup:') && source !== 'break' && !!section && MIRRORED_ROLES.has(section.role));
+      intent.pixelMap = symmetric && MIRRORED_LOOKS.has(intent.pattern) ? 'mirror' : 'stage';
+    }
+  }
+
+  /**
+   * The section a scene belongs to. A section's own scene was snapped to the
+   * downbeat, which can sit a moment before the section starts; it belongs to
+   * the section it opens.
+   */
+  _sectionOf(intent: SceneIntent, context: PlanContext): PlannedSection | null {
+    const source = String(intent.source);
+    return (source.startsWith('section:')
+      && context.sections.find((s) => Math.abs(context.snapToDownbeatMs(s.start) - intent.timeMs) < 1))
+      || context.sectionAt(intent.timeMs / 1000);
   }
 
   /** Put `look` on the bars; a picture that plays once gets the window it spans. */
@@ -538,6 +586,12 @@ class ShowDirector {
       continuous: hasScore(analysis),
       available: look.availableFor(this.patterns, analysis),
       pixels: this.pixels,
+      // On a rig of pars, the pictures drawn for bars that still read on a
+      // handful of lamps — the kit among them only on drum lanes a light may
+      // follow (see drumHitsOf), and with a lamp in the middle for the kick
+      // and one at each end for the snare.
+      pictures: this.pixels ? null
+        : drumHitsOf(analysis) && (this.lamps === null || this.lamps >= 3) ? look.PAR_PICTURES_WITH_DRUMS : look.PAR_PICTURES,
       drops: grouped.get(EVENT.DROP) || [],
       buildups: grouped.get(EVENT.BUILDUP) || [],
       bars: grouped.get(EVENT.BAR) || [],
@@ -753,7 +807,7 @@ class ShowDirector {
         // Four real bars on, so the change lands on a bar line.
         const followUpMs = context.barsAfterMs(timeMs, 4);
         if (followUpMs != null && followUpMs + 500 < section.end * 1000) {
-          const followUp = restingPattern(restingLooks(RESTING_LOOKS, context), available, context.trackSeed + section.identity);
+          const followUp = restingPattern(restingLooks(RESTING_LOOKS), available, context.trackSeed + section.identity);
           if (followUp) {
             intents.push(scene(followUpMs, {
               pattern: followUp, colors: colours, beatDivision,
@@ -789,7 +843,7 @@ class ShowDirector {
       if (last) avoid.add(last);
     }
     const lastOwn = context.previousLooks[section.role];
-    const resting = firstOther(new Set(lastOwn ? [lastOwn] : []), (k) => restingPattern(restingLooks(section.profile.prefer, context), available, trackSeed + section.identity + k));
+    const resting = firstOther(new Set(lastOwn ? [lastOwn] : []), (k) => restingPattern(restingLooks(section.profile.prefer), available, trackSeed + section.identity + k));
     if (resting) return resting;
 
     const known = patternByIdentity.get(section.identity);
@@ -797,7 +851,7 @@ class ShowDirector {
     const pattern = look.pickPattern({
       character: section.character, available, score,
       seed: section.identity + trackSeed, drive: section.drive,
-      dance: unit(mood.danceability, 0.5), pixels: context.pixels, avoid,
+      dance: unit(mood.danceability, 0.5), pixels: context.pixels, pictures: context.pictures, avoid,
     });
     patternByIdentity.set(section.identity, pattern);
     return pattern;
@@ -894,15 +948,16 @@ class ShowDirector {
     const secondCycle = at(2);
     if (secondCycle == null || secondCycle > endMs) return [];
 
-    // Walk seeds with a coprime stride until two *distinct* alternates turn up.
-    // Fixed offsets collide whenever both land on the same slot of a short pool.
+    // Walk seeds with a coprime stride until three *distinct* alternates turn
+    // up. Fixed offsets collide whenever both land on the same slot of a
+    // short pool.
     const alternates: string[] = [];
     const seen = new Set([current.pattern]);
-    for (let step = 1; step < 24 && alternates.length < 2; step++) {
+    for (let step = 1; step < 24 && alternates.length < 3; step++) {
       const candidate = look.pickPattern({
         character: section.character, available, score,
         seed: section.identity * 7 + step * 13 + context.trackSeed, drive: section.drive,
-        dance: unit(mood.danceability, 0.5), pixels: context.pixels,
+        dance: unit(mood.danceability, 0.5), pixels: context.pixels, pictures: context.pictures,
       });
       if (!seen.has(candidate)) {
         alternates.push(candidate);
@@ -910,6 +965,13 @@ class ShowDirector {
       }
     }
     if (!alternates.length) return [];
+    // Four looks a cycle, the passage's own the fourth: it comes back on every
+    // fourth turn, which at two or four bars a turn is the top of every eight-
+    // or sixteen-bar phrase — where the music itself goes round again. Two
+    // alternates took turns for as long as the passage lasted, and the look
+    // the passage opened on never came back: a ninety-second chorus was the
+    // same two looks swapped twenty-four times.
+    const cycle = [alternates[0], alternates[1] ?? current.pattern, alternates[2] ?? alternates[0], current.pattern];
 
     const intents: Intent[] = [];
     // A beat's blend between rotations, except where the section wants its
@@ -921,9 +983,10 @@ class ShowDirector {
       const inBuildup = buildups.some((b) => when >= b.t * 1000 - 200
         && when <= endOf(b) * 1000 + 200);
       if (!inDrop && !inBuildup) {
-        const split = splitFor(section, alternates[i % alternates.length], context);
+        const pattern = cycle[i % cycle.length];
+        const split = splitFor(section, pattern, context);
         intents.push(scene(when, {
-          pattern: alternates[i % alternates.length],
+          pattern,
           colors: current.colours,
           beatDivision: current.beatDivision,
           strobeSpeed: 0,
@@ -1065,7 +1128,7 @@ class ShowDirector {
       const peakDivision = triple ? 1 : (measured && measured.peakDivision) || 4;
 
       if (!short) {
-        const tensionPattern = restingPattern(restingLooks(RESTING_LOOKS, context), available, context.trackSeed + buildupIndex) || 'fade';
+        const tensionPattern = restingPattern(restingLooks(RESTING_LOOKS), available, context.trackSeed + buildupIndex) || 'fade';
         intents.push(scene(startMs, {
           pattern: tensionPattern,
           colors: [palette[0], palette[0], palette[0], palette[0]],  // deliberate narrowing
@@ -1293,7 +1356,7 @@ class ShowDirector {
 
     if (!isCalm) {
       for (const [breakIndex, event] of breaks.entries()) {
-        const pattern = restingPattern(restingLooks([...RESTING_LOOKS, 'solid'], context), available, context.trackSeed + breakIndex);
+        const pattern = restingPattern(restingLooks([...RESTING_LOOKS, 'solid']), available, context.trackSeed + breakIndex);
         if (!pattern) continue;
         intents.push(scene(Math.round(event.t * 1000), {
           pattern,
@@ -1818,17 +1881,24 @@ function splitRestingAtDrops(raw: readonly Segment[], drops: readonly Drop[]): r
 // The looks a passage rests on: none of them travels on the beat.
 const RESTING_LOOKS = ['ribbon', 'fade', 'wave'];
 
-// And the resting pictures drawn across LED bars, offered beside them when the
-// rig has bars. After them, never instead: a resting choice is picked by index.
+// And the resting pictures drawn for LED bars, offered beside them — on a rig
+// of pars too, where a gradient rolling across the lamps and a slow plasma are
+// colour that moves without anything hitting, which is what a rest is.
 const PIXEL_RESTING_LOOKS = ['gradient', 'plasma'];
 
-function restingLooks(prefer: string[] | null, context: { pixels: boolean }): string[] | null {
-  return prefer && context.pixels ? [...prefer, ...PIXEL_RESTING_LOOKS] : prefer;
+function restingLooks(prefer: string[] | null): string[] | null {
+  return prefer ? [...prefer, ...PIXEL_RESTING_LOOKS] : prefer;
 }
 
 // How a scene lays a picture over the bars: across the stage, mirrored about
 // its centre, or along every bar on its own.
 const PIXEL_MAPS = ['stage', 'mirror', 'bar'];
+
+// On a rig of pars (see _mapPars): the passages laid out mirrored, and the
+// looks that change for it — the ones that travel, or light lamps apart.
+const MIRRORED_ROLES = new Set(['chorus', 'drop']);
+const MIRRORED_LOOKS = new Set(['chase', 'chase-rev', 'runner', 'pairs', 'ping-pong', 'stack-up',
+  'sections', 'split', 'random-flash', 'wave', 'comet', 'gradient']);
 
 /**
  * What the LED bars draw in each part of a song. The bars are where the

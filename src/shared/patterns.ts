@@ -379,13 +379,18 @@ const PATTERN_FUNCS: Record<string, PatternFn> = {
     }
   },
 
+  // One more lamp on every step until the rig is full, then back to one. It
+  // used to count an empty step as well — N + 1 steps a stack — so four lamps
+  // stacked over five steps and drifted a step against the bar every time
+  // round, with the downbeat, of all steps, the dark one. N steps a stack puts
+  // a full rig on the bar's last step and the first lamp on the next downbeat.
   'stack-up'(ctx) {
     const pal = paletteOf(ctx);
     const bed = bedOf(ctx);
     const N = ctx.fixtureCount;
-    const pos = ctx.step % (N + 1);
+    const pos = ctx.step % Math.max(1, N);
     for (let i = 0; i < N; i++) {
-      const lit = i < pos;
+      const lit = i <= pos;
       // The stack builds in the look's colours rather than one flat wash, so a
       // four-lamp rig fills with four different colours.
       ctx.write(i, lit ? pal[i % pal.length] : pal[pal.length - 1], lit ? 255 : bed, 0);

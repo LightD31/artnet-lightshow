@@ -41,11 +41,12 @@ const PATTERN_ICONS = {
   impact:        '✺',
 };
 
-// How a pixel effect is laid over the cells of the rig's LED bars.
+// How a pattern is laid over the rig. Per bar needs bars; the other two
+// order a rig of pars as well.
 const PIXEL_MAPS = [
-  { id: 'stage', name: 'Across stage', desc: 'One picture across every bar, as they stand on the stage plot' },
-  { id: 'bar', name: 'Per bar', desc: 'Every bar draws the whole picture along itself' },
-  { id: 'mirror', name: 'Mirrored', desc: 'The picture mirrored about the centre of the stage' },
+  { id: 'stage', name: 'Across stage', desc: 'One picture across the rig, as it stands on the stage plot' },
+  { id: 'bar', name: 'Per bar', desc: 'Every bar draws the whole picture along itself', bars: true },
+  { id: 'mirror', name: 'Mirrored', desc: 'Mirrored about the centre of the stage: a chase runs from the middle out to both ends at once' },
 ];
 
 /** Does the patch have a fixture that is more than one light? */
@@ -90,6 +91,8 @@ export function Patterns() {
   // runs on the whole rig again.
   const onBars = bars && s.pixelPattern ? s.pixelPattern : null;
   const barsLabel = onBars && (patterns.find((p) => p.id === onBars)?.name || onBars);
+  // Along each bar is across the stage on a rig without bars.
+  const map = !bars && s.pixelMap === 'bar' ? 'stage' : (s.pixelMap || 'stage');
   return (
     <div class="card">
       <div class="card-title">Pattern</div>
@@ -107,11 +110,11 @@ export function Patterns() {
           {pixel.map((p) => <PatternButton key={p.id} p={p} active={s.pattern === p.id} onBars={onBars === p.id} />)}
         </div>
       </>}
-      {bars && (
-        <div class="pixel-map" role="group" aria-label="How pictures are laid over the bars">
-          {PIXEL_MAPS.map((m) => (
-            <button key={m.id} class={`btn sm ${(s.pixelMap || 'stage') === m.id ? 'active' : ''}`}
-              aria-pressed={(s.pixelMap || 'stage') === m.id} title={m.desc}
+      {(s.fixtures || []).length >= 3 && (
+        <div class="pixel-map" role="group" aria-label="How the pattern is laid over the rig">
+          {PIXEL_MAPS.filter((m) => bars || !m.bars).map((m) => (
+            <button key={m.id} class={`btn sm ${map === m.id ? 'active' : ''}`}
+              aria-pressed={map === m.id} title={m.desc}
               onClick={() => send({ pixelMap: m.id })}>{m.name}</button>
           ))}
         </div>

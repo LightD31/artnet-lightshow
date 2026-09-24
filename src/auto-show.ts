@@ -133,6 +133,7 @@ class AutoShow {
   declare _currentJob: symbol | null;
   declare _grid: BeatGrid | null;
   declare _pixels: boolean;
+  declare _lamps: number | null;
   declare _pulse: PulseTrack | null;
   declare _memory: SetMemory;
   declare _planMemory: Omit<TrackMemory, 'key' | 'at'> | null;
@@ -209,6 +210,7 @@ class AutoShow {
     // Whether the rig has LED bars. The director reaches for the pictures drawn
     // across cells only when it does (see setRig).
     this._pixels = false;
+    this._lamps = null;
     // The track's pulse, read every frame for the pixel patterns (show/pulse.ts).
     this._pulse = null;
     // The night so far (show/set-memory.ts): each track as it started
@@ -909,6 +911,7 @@ class AutoShow {
       intensity: this.intensity,
       blackoutIndex: this._blackoutIdx,
       pixels: this._pixels,
+      lamps: this._lamps,
       history: settings.group('auto').setMemory === false ? null : this._memory.history(this._memoryKey()),
       overlay: this.overlay(),
     });
@@ -967,8 +970,10 @@ class AutoShow {
     this._status = this.analysis ? 'ready' : 'idle';
     if (this._loopTimer) { clearInterval(this._loopTimer); this._loopTimer = null; }
     this._cancelEnergyTimer();
-    // Clear any lingering energy override so we don't leave the rig stuck
-    this._applyPatch({ energyOverride: null, showDynamics: null, split: null, pixelPattern: null });
+    // Clear any lingering energy override so we don't leave the rig stuck,
+    // and the show's own layout of the look: the bars' picture, a split, a
+    // chorus laid mirrored.
+    this._applyPatch({ energyOverride: null, showDynamics: null, split: null, pixelPattern: null, pixelMap: 'stage' });
   }
 
   reset(): void {
@@ -1101,12 +1106,19 @@ class AutoShow {
   /**
    * Tell the show what the rig is. A patch that gains or loses its LED bars
    * replans the track, as a palette or intensity change does, so the looks
-   * that draw across cells come and go with the bars.
+   * that draw across cells come and go with the bars; so does a rig of pars
+   * crossing three lamps, which is what the kit needs to be drawn on it.
    */
-  setRig({ hasPixels = false }: { hasPixels?: boolean } = {}): void {
+  setRig({ hasPixels = false, lamps = null }: { hasPixels?: boolean; lamps?: number | null } = {}): void {
     const pixels = !!hasPixels;
-    if (pixels === this._pixels) return;
+    const count = Number.isFinite(lamps) ? lamps : null;
+    const kit = (n: number | null) => n === null || n >= 3;
+    if (pixels === this._pixels && kit(count) === kit(this._lamps)) {
+      this._lamps = count;
+      return;
+    }
     this._pixels = pixels;
+    this._lamps = count;
     if (this.analysis) this.buildTimeline();
   }
 

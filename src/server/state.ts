@@ -104,13 +104,15 @@ const state: ShowState = {
   // A split look from the auto show: which fixture group holds a wash while
   // the rest run the pattern. Null is the whole rig on the pattern.
   split: null,
-  // How a pixel effect is laid over the cells of LED bars: across the stage,
-  // along each bar, or mirrored about the centre. Ignored on a rig of pars.
+  // How a pattern is laid over the rig: across the stage, along each bar, or
+  // mirrored about the centre (a chase runs from the middle out to both ends
+  // at once, bars or pars). Along each bar means nothing on a rig of pars.
   pixelMap: 'stage',
   // The picture the LED bars draw while the pars run `pattern` — the auto
   // show gives the pars the colour and the bars the movement — and how many
   // beats it takes to play once when it plays once (a build-up's fill). Null
-  // runs `pattern` on the whole rig.
+  // runs `pattern` on the whole rig, and the span is then `pattern`'s: a rig
+  // of pars fills over a build-up too.
   pixelPattern: null,
   pixelSpan: null,
   // How far through its span that picture already is when the scene starts:

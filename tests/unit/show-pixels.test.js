@@ -1,8 +1,10 @@
 // The auto show on a rig with LED bars: it reaches for the pictures drawn
 // across cells, and says how each scene lays them over the bars. On a rig of
-// pars it plans exactly as before (pars-golden.test.js pins that byte for
-// byte); these pin what changes when there are bars. What each layer does —
-// the pars' colour, the bars' movement — is show-layers.test.js.
+// pars it takes only the few of those pictures that read on a handful of
+// lamps, and lays its looks across the stage or mirrored (show-pars.test.js;
+// pars-golden.test.js pins it byte for byte); these pin what changes when
+// there are bars. What each layer does — the pars' colour, the bars'
+// movement — is show-layers.test.js.
 
 import test from 'node:test';
 import assert from 'node:assert';
@@ -13,6 +15,7 @@ import AutoShow from '../../src/auto-show.ts';
 import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.ts';
 import { patchSchema } from '../../src/server/validation.ts';
 import { PIXEL_MAPS } from '../../src/shared/rig.ts';
+import { PAR_PICTURES_WITH_DRUMS } from '../../src/show/look.ts';
 
 const PIXEL_IDS = new Set(PATTERNS.filter((p) => p.pixel).map((p) => p.id));
 const RESTING = new Set(['ribbon', 'fade', 'wave', 'solid', 'gradient', 'plasma']);
@@ -73,11 +76,12 @@ test('the passages that rest still rest, bars or not', () => {
   }
 });
 
-test('a rig of pars never hears about cells', () => {
+test('a rig of pars never hears about bars', () => {
   for (const file of files) {
     for (const s of scenes(plan(file, { pixels: false }))) {
-      assert.strictEqual(s.pixelMap, undefined);
-      assert.ok(!PIXEL_IDS.has(s.pattern), `${file}: ${s.pattern}`);
+      assert.strictEqual(s.pixelPattern, undefined, 'no picture of its own for bars it does not have');
+      assert.ok(['stage', 'mirror'].includes(s.pixelMap), `${file}: laid out ${s.pixelMap}`);
+      assert.ok(!PIXEL_IDS.has(s.pattern) || PAR_PICTURES_WITH_DRUMS.has(s.pattern), `${file}: ${s.pattern}`);
     }
   }
 });
