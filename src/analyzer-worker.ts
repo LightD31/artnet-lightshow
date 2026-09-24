@@ -49,7 +49,7 @@ function storedTimeoutMs(): number {
 
 /**
  * The worker's environment: this process's, plus the separator and the
- * structure model the settings page chose. Read at spawn, so a change applies
+ * structure model the operator chose. Read at spawn, so a change applies
  * to the next worker — and changing either restarts the worker (see apply.ts).
  */
 function workerEnv(): NodeJS.ProcessEnv {
@@ -138,11 +138,11 @@ class AnalyzerWorker {
 
   /**
    * `pythonExe` may be a string or a function returning one. As a function it
-   * is called at spawn time, so changing the interpreter in the settings page
+   * is called at spawn time, so changing the interpreter in the settings
    * takes effect on the next worker rather than needing a server restart.
    *
    * `timeoutMs` overrides the configured analysis timeout — a number, or a
-   * function returning one. Left unset it follows the settings page, read per
+   * function returning one. Left unset it follows the settings, read per
    * request so a change applies to the next analysis without a restart.
    */
   constructor(pythonExe: string | (() => string), scriptPath: string,

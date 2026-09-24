@@ -22,6 +22,7 @@ export const SHORTCUTS = [
       { keys: ['1'], what: 'Manual view' },
       { keys: ['2'], what: 'Auto Show view' },
       { keys: ['3'], what: 'Perform view' },
+      { keys: ['4', '5', '6', '7'], either: true, what: 'Rig, Sources, Settings, Preflight view' },
       { keys: ['←', '→'], either: true, what: 'Next or previous view, on the view tabs' },
     ],
   },

@@ -453,12 +453,12 @@ Every phase is its own PR, keeps `npm run check` and the Python suite green, and
 
 ### Phase 6 — UI v2
 
-> **Status.** Delivered in three parts. **6a — the live surface — done:**
+> **Status.** Delivered in three parts; 6a and 6b are done, 6c is next. **6a — the live surface — done:**
 > - **Protocol v2:**
 >   - an opt-in handshake gives the live page a snapshot, then per-domain versioned key diffs, resynced on a gap;
 >   - binary DMX frames go out at 30 Hz, volatile, only to subscribed sockets;
 >   - the page holds one signal per key, and faders keep drafts sent once per animation frame;
->   - protocol 1 is unchanged for the settings page and Companion.
+>   - protocol 1 is unchanged for Companion (and, until 6b, the settings page).
 > - **Perform view:** pads for blackout and the six energy effects (held or latched), tap, palettes, master and intensity
 >   faders, now/next and sync-health chips; `/#perform` bookmarks it.
 > - **PWA:** a manifest, icons and a network-first app-shell service worker; wake lock via nosleep.js (the Wake Lock API
@@ -471,8 +471,24 @@ Every phase is its own PR, keeps `npm run check` and the Python suite green, and
 > - **A7.26:** every item fixed or confirmed (previews already honoured energy effects).
 > - **Tests:** Playwright e2e in CI (desktop and touch tablet), component tests rendered in Node.
 >
-> **Next — 6b:** settings moved into the SPA as Rig, Sources, Settings and Preflight views, pixel mapping, discovery
-> with an identify flash, and the onboarding wizard. **Then 6c:** the three.js Stage view and the Show view.
+> **6b — setting up — done:**
+> - **One SPA:** the settings page is gone (`public/settings.js`, `settings.css`); `/settings.html` redirects its old
+>   tabs to the **Rig** (plan & patch, profiles, outputs), **Sources**, **Settings** and **Preflight** views, keys 4–7,
+>   one spec-driven section per group of stored settings.
+> - **Pixel mapping:** the Rig view's plan — select, marquee, drag, snap, row and end-to-end arranging, an inspector —
+>   and *Draw bar*: the bar lights on the rig (first cell green, last red, a dot between) and is drawn from end to
+>   end on the plan, then the next bar is lit.
+> - **Identify:** fixtures and universes flash through the renderer (over the look, through the master and a
+>   blackout); Art-Net nodes get ArtAddress *locate*; an unpatched WLED is streamed the picture over DDP; a Hue
+>   channel through its fixture or the bridge's identify.
+> - **Discovery:** Art-Net nodes, other sACN sources (universe discovery) and universes they share with the rig,
+>   WLEDs, Hue bridges; `POST /api/fixtures` adds a run of one profile.
+> - **Onboarding wizard:** outputs, fixtures, placement, music, pre-show check; offered on a fresh install
+>   (`setup.completed`), again from Settings.
+> - **Tests:** e2e for the views, the plan, identify, settings and secrets, the wizard; axe on every new view and
+>   wizard step in every theme.
+>
+> **Next — 6c:** the three.js Stage view and the Show view.
 - **One SPA.** Settings move into `public-src`, and `public/settings.js` and its duplicate API/auth/socket code are deleted.
 - **Protocol v2:**
   - domain-scoped signals with versioned diffs;

@@ -21,8 +21,8 @@
  *              take is dropped rather than queued behind the next
  *
  * Version 1 is kept, unchanged, for whatever connects without asking — the
- * settings page and the Bitfocus Companion module — and its JSON DMX stream is
- * only built while such a page is connected.
+ * Bitfocus Companion module, a page from before protocol 2 — and its JSON DMX
+ * stream is only built while one is connected.
  */
 
 import type { Server } from 'socket.io';

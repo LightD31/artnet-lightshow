@@ -21,7 +21,7 @@ export interface MidiAction {
  * editing source, which is a strange thing to ask of the person holding the
  * controller. The X-Touch layout is still the default, but it is now just the
  * starting point: bindings are stored in config/midi-map.json and can be
- * relearned from the settings page by pressing the control you want.
+ * relearned from the Settings view by pressing the control you want.
  *
  * Shape:
  *   {
@@ -41,7 +41,7 @@ export interface MidiAction {
  */
 
 // ── Action catalogue ────────────────────────────────────────────────────────
-// What a binding may do, with enough metadata for the settings page to render
+// What a binding may do, with enough metadata for the Settings view to render
 // a picker: which kind of control suits it, and what (if anything) it needs to
 // be told. `param.kind` tells the UI which list to offer.
 

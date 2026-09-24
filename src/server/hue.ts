@@ -32,7 +32,7 @@ export interface HueStatus {
   error: string | null;
 }
 
-/** An entertainment area, as the settings page lists it. */
+/** An entertainment area, as the Rig view lists it. */
 export interface EntertainmentArea {
   id: string;
   name: string;
@@ -139,12 +139,12 @@ const CIPHER_SUITE = 'TLS_PSK_WITH_AES_128_GCM_SHA256' as const;
 
 // A bridge on the LAN answers in milliseconds. This is long enough to cover a
 // busy bridge and short enough that a wrong IP fails while the operator is
-// still looking at the settings page.
+// still looking at the Hue section.
 const REST_TIMEOUT_MS = 5000;
 const HANDSHAKE_TIMEOUT_MS = 5000;
 
 // Philips' cloud index of bridges that have phoned home from this public IP.
-// Used only as a convenience in the settings page; a bridge can always be
+// Used only as a convenience in the Rig view; a bridge can always be
 // typed in by hand, and a rig on an isolated show network will have to be.
 const DISCOVERY_URL = 'https://discovery.meethue.com/';
 

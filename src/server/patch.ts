@@ -40,9 +40,9 @@ const hooks: PatchHooks = {
 
 function setHooks(partial: Partial<PatchHooks>): void { Object.assign(hooks, partial); }
 
-// Art-Net and PRO DJ LINK are reachable from the main page as well as the
-// settings page. Without this, changing them there would work until the next
-// restart and then silently revert to whatever the settings page holds.
+// Art-Net and PRO DJ LINK are changed over the socket as well as through
+// PUT /api/settings. Without this, changing them there would work until the
+// next restart and then silently revert to whatever settings.json holds.
 let persist: (partial: SettingsPatch) => void = () => {};
 function setPersist(fn: (partial: SettingsPatch) => void): void { persist = fn; }
 

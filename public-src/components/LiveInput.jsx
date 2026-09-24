@@ -19,7 +19,7 @@ export function LiveInput() {
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
         <div class={`status-dot ${live.listening ? 'connected' : ''}`} />
         <span style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 600 }}>{statusText(live)}</span>
-        <a class="btn sm" style={{ marginLeft: 'auto' }} href="/settings.html#music">Settings</a>
+        <a class="btn sm" style={{ marginLeft: 'auto' }} href="#sources">Settings</a>
       </div>
       <div class="prolink-info">
         <div>

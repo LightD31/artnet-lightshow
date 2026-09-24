@@ -4,7 +4,7 @@
  * The mapping — which message does what — lives in src/server/midi-map.js and
  * is stored in config/midi-map.json. It defaults to a Behringer X-Touch Compact
  * in Standard mode (Layer A), which is what this was built against, but every
- * binding can be relearned from the settings page by pressing the control you
+ * binding can be relearned from the Settings view by pressing the control you
  * want, so any controller works.
  *
  * X-Touch Compact Standard mode, Layer A, for reference:
@@ -71,7 +71,7 @@ export interface LearnCapture {
   binding: MidiBinding;
 }
 
-/** A learn-mode transition, for every open settings page. */
+/** A learn-mode transition, for every open page. */
 export type LearnEvent = { status: string; binding: MidiBinding } & Partial<LearnCapture>;
 
 type RelMode = 'twos' | 'offset';
@@ -261,7 +261,7 @@ class MidiController {
     const outName = findPort(outputs, outputName);
 
     if (!inName) {
-      console.warn('[MIDI] No input port found. Pick one in the settings page.');
+      console.warn('[MIDI] No input port found. Pick one under Settings → MIDI controller.');
       return false;
     }
 

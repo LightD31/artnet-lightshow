@@ -907,7 +907,7 @@ class AutoShow {
           discardPartials();
           return reject(new Error(
             `yt-dlp timed out after ${Math.round(downloadTimeoutMs() / 1000)}s `
-            + '(raise the download timeout in the settings page)'
+            + '(raise the download timeout under Sources → Analysis)'
           ));
         }
         // yt-dlp exits 101 when --max-downloads is reached — that's the normal

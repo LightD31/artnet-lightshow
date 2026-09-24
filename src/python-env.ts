@@ -97,7 +97,7 @@ let cached: PythonInfo | null = null;
 /**
  * Resolve the interpreter to use, with the reasoning behind the choice.
  *
- * An explicit path from the settings page always wins — it is the operator
+ * An explicit path from the settings always wins — it is the operator
  * saying "use this one", and second-guessing it would just hide their mistake.
  */
 function resolve({ refresh = false } = {}): PythonInfo {
@@ -175,7 +175,7 @@ function warnIfUnusable(log: (line: string) => void = console.warn): PythonInfo 
   lines.push('[python]   uv sync --extra cpu      (or --extra cu128 for NVIDIA, --extra rocm for AMD on Linux)');
   lines.push(`[python] or install into this interpreter with`);
   lines.push(`[python]   "${info.executable || info.exe}" -m pip install -r requirements.txt`);
-  lines.push('[python] or set a specific interpreter in the settings page under Analysis.');
+  lines.push('[python] or set a specific interpreter in the app under Sources → Analysis.');
 
   for (const line of lines) log(line);
   return info;

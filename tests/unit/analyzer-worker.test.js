@@ -195,9 +195,9 @@ test('a worker that asks to be recycled is replaced before the next request', as
   } finally { w.shutdown(); }
 });
 
-// The settings page's Separator reaches Python as ARTNET_USE_BS_ROFORMER,
+// The Separator setting reaches Python as ARTNET_USE_BS_ROFORMER,
 // read when the worker starts.
-test('the worker is started with the separator the settings page chose', async () => {
+test('the worker is started with the separator the settings chose', async () => {
   const original = settings._values.analysis.separator;
   try {
     for (const [separator, flag] of [['demucs', '0'], ['bs-roformer', '1']]) {

@@ -23,10 +23,13 @@ test('the tab strip is one stop, and the arrow keys move along it', async ({ pag
   await page.keyboard.press('ArrowRight');
   await expect(page.getByRole('tab', { name: /Auto Show/ })).toBeFocused();
   await expect(page.locator('#panel-auto')).toBeVisible();
+  // The live views, then the setup views: End is the last of them all.
   await page.keyboard.press('End');
-  await expect(page.getByRole('tab', { name: /Perform/ })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'tab-perform');
+  await expect(page.getByRole('tab', { name: /Preflight/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'tab-preflight');
   await expect(page.getByRole('tab', { name: /Manual/ })).toHaveAttribute('tabindex', '-1');
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('tab', { name: /Manual/ })).toBeFocused();
 });
 
 test('the digit keys jump between views, and not while typing', async ({ page }) => {

@@ -45,7 +45,7 @@ function attachSockets(io: Server, { midi, integrations }: {
     integrations.broadcast();
   });
   // Learn is a whole-server mode, not a per-socket one: whoever armed it needs
-  // to see the capture, and every other open settings page needs to stop
+  // to see the capture, and every other open page needs to stop
   // showing a stale map. Both go to everyone.
   midi.onLearn((event) => io.emit('midi-learn', event));
   midiMap.onChange(() => io.emit('midi-map', midiMap.snapshot()));

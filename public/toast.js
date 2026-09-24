@@ -2,9 +2,8 @@
  * Toasts — the app's one way of saying something went wrong, or offering to
  * take it back.
  *
- * Loaded before both bundles on both pages, because the live page (Preact) and
- * the settings page (plain DOM) both need this and there is no reason for the
- * operator to meet two different notification styles in one app.
+ * A plain script loaded before the app's bundle, so anything on the page — the
+ * app, the token prompt — says things the same way.
  *
  * The server rejects input on six socket paths and every REST route answers
  * `{ ok: false, error }`, and until this existed none of it reached the

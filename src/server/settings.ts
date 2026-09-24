@@ -7,13 +7,13 @@ import { HttpError, codeOf, messageOf } from '../errors.ts';
 import { configFile } from './config-dir.ts';
 
 /**
- * Persisted configuration, owned by the settings page.
+ * Persisted configuration, edited in the app's Rig, Sources and Settings views.
  *
  * Everything the operator can configure lives here and is edited in the UI, not
  * in the environment. `process.env` is deliberately NOT consulted: a value is
  * either stored in settings.json or it is the default below. That means one
- * place to look when a setting isn't doing what you expect, and a settings page
- * that always shows the truth rather than whatever a shell happened to export.
+ * place to look when a setting isn't doing what you expect, and an app that
+ * always shows the truth rather than whatever a shell happened to export.
  *
  * (Legacy env vars are detected at startup only to warn that they are ignored —
  * see warnAboutLegacyEnv(). Nothing reads them for their value.)
@@ -84,7 +84,7 @@ const DEFAULTS: Settings = {
   // to a rig fixture and shows that fixture's colour.
   hue: {
     enabled: false,
-    // The bridge's address. Found for you in the settings page, or typed in
+    // The bridge's address. Found for you in the Rig view, or typed in
     // when the show network has no route to Philips' discovery service.
     host: '',
     // Both issued by the bridge during pairing, never typed by anyone: the
@@ -542,7 +542,7 @@ class SettingsStore {
     const parsedPatch = patchSchema.parse(patch || {});
     const next = schema.parse(merge(this._values, parsedPatch));
 
-    // Refuse to save the one combination that bricks the settings page: a
+    // Refuse to save the one combination that locks the app out: a
     // non-loopback bind with no token makes the server refuse to start, and
     // then there is no UI left to undo it from. The startup guard still exists
     // as a backstop for a hand-edited file; this stops the UI walking into it.
@@ -624,7 +624,7 @@ function warnAboutLegacyEnv(env: NodeJS.ProcessEnv = process.env,
   const present = LEGACY_ENV.filter((name) => env[name] !== undefined && env[name] !== '');
   if (!present.length) return present;
   log(`\n[settings] These environment variables are no longer read: ${present.join(', ')}`);
-  log('[settings] Settings now live in the settings page (⚙ → Settings) and are stored');
+  log('[settings] Settings now live in the app (its Rig, Sources and Settings views) and are stored');
   log(`[settings] in config/settings.json. Set them there; you can delete them from .env.\n`);
   return present;
 }

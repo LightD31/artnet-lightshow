@@ -24,7 +24,7 @@ import { configFile } from './config-dir.ts';
  * boot: it is a description of the building.
  *
  * So every change to the patch writes config/show.json, and the server loads it
- * at boot. The file is exactly the show file the settings page exports, so the
+ * at boot. The file is exactly the show file the Rig view saves, so the
  * two are interchangeable: a saved show can be hand-edited, copied to another
  * machine, or dropped in as show.json.
  *
