@@ -13,7 +13,8 @@ export interface MidiPorts {
 /**
  * Open the named MIDI ports and remember them for the next start.
  *
- * The settings page connects over REST and the main UI over the socket. The
+ * The REST route and the socket both connect ports (Companion uses one, the app
+ * the other). The
  * two used to be separate implementations, and had already drifted once — one
  * validated its input and the other did not — so both now come here.
  *

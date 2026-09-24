@@ -16,19 +16,32 @@ import { BottomDrawer } from './components/BottomDrawer.jsx';
 import { ConnectionVeil } from './components/ConnectionVeil.jsx';
 import { ShortcutsOverlay } from './components/Shortcuts.jsx';
 import { Perform } from './components/Perform.jsx';
+import { RigView } from './components/setup/RigView.jsx';
+import { SourcesView } from './components/setup/SourcesView.jsx';
+import { SettingsView } from './components/setup/SettingsView.jsx';
+import { PreflightView } from './components/setup/PreflightView.jsx';
+import { Wizard, useFirstRun } from './components/setup/Wizard.jsx';
 
-// The views, in the order the tabs show them. The keys are the digit that
-// jumps to each, and the hash that opens the page on it — a tablet at front of
-// house bookmarks /#perform.
+// The views, in the order the tabs show them: the three for running a show,
+// then the four for setting one up. The keys are the digit that jumps to
+// each, and the hash that opens the page on it — a tablet at front of house
+// bookmarks /#perform; /#rig/outputs opens the Rig view on its outputs.
 const VIEWS = [
-  { id: 'manual', key: '1', icon: '◧', label: 'Manual', hint: 'Patterns · Colours · Fixtures' },
-  { id: 'auto', key: '2', icon: '✦', label: 'Auto Show', hint: 'Spotify · Now Playing · PRO DJ LINK' },
-  { id: 'perform', key: '3', icon: '◉', label: 'Perform', hint: 'Pads · Palettes · Faders' },
+  { id: 'manual', key: '1', icon: '◧', label: 'Manual', hint: 'Patterns · Colours · Fixtures', group: 'live' },
+  { id: 'auto', key: '2', icon: '✦', label: 'Auto Show', hint: 'Spotify · Now Playing · PRO DJ LINK', group: 'live' },
+  { id: 'perform', key: '3', icon: '◉', label: 'Perform', hint: 'Pads · Palettes · Faders', group: 'live' },
+  { id: 'rig', key: '4', icon: '▦', label: 'Rig', hint: 'Plan · Patch · Outputs', group: 'setup' },
+  { id: 'sources', key: '5', icon: '♫', label: 'Sources', hint: 'Players · Spotify · Live input', group: 'setup' },
+  { id: 'settings', key: '6', icon: '⚙', label: 'Settings', hint: 'Show · MIDI · Server', group: 'setup' },
+  { id: 'preflight', key: '7', icon: '✓', label: 'Preflight', hint: 'Pre-show check', group: 'setup' },
 ];
 const VIEW_IDS = VIEWS.map((v) => v.id);
 
+/** The view a hash names: its first part, so /#rig/outputs is the Rig view. */
+const viewOfHash = () => window.location.hash.replace('#', '').split('/')[0];
+
 function initialView() {
-  const hash = window.location.hash.replace('#', '');
+  const hash = viewOfHash();
   if (VIEW_IDS.includes(hash)) return hash;
   try {
     const saved = localStorage.getItem('lightshow.mode');
@@ -59,7 +72,8 @@ function ModeTabs({ mode, setMode }) {
 
   return (
     <div class={`mode-tabs in-${mode}`} role="tablist" aria-label="Views" onKeyDown={onKeyDown}>
-      {VIEWS.map((v) => (
+      {VIEWS.map((v, i) => [
+        i > 0 && VIEWS[i - 1].group !== v.group && <span key={`sep-${v.id}`} class="mode-tab-sep" role="presentation" />,
         <button
           key={v.id}
           id={`tab-${v.id}`}
@@ -76,8 +90,8 @@ function ModeTabs({ mode, setMode }) {
           <span class="mode-tab-hint">{v.id === 'auto' && autoActive ? 'Running' : v.hint}</span>
           {v.id === 'auto' && autoActive && <span class="mode-tab-dot" aria-hidden="true" />}
           <kbd class="mode-tab-key" aria-hidden="true">{v.key}</kbd>
-        </button>
-      ))}
+        </button>,
+      ])}
     </div>
   );
 }
@@ -101,27 +115,40 @@ function AutoView() {
   );
 }
 
+const PANELS = {
+  manual: ManualView,
+  auto: AutoView,
+  perform: Perform,
+  rig: RigView,
+  sources: SourcesView,
+  settings: SettingsView,
+  preflight: PreflightView,
+};
+
 function Root() {
   // Deliberately reads no signals. Subscribing the root made every component in
   // the tree re-render on every push; each component now subscribes to what it
   // actually needs.
   const [mode, setMode] = useState(initialView);
+  const Panel = PANELS[mode];
+  useFirstRun();
 
   useEffect(() => {
     try { localStorage.setItem('lightshow.mode', mode); } catch { /* private mode */ }
-    if (window.location.hash.replace('#', '') !== mode) window.history.replaceState(null, '', `#${mode}`);
+    // A view with tabs of its own keeps its part of the hash (/#rig/outputs).
+    if (viewOfHash() !== mode) window.history.replaceState(null, '', `#${mode}`);
   }, [mode]);
 
   useEffect(() => {
     const onHash = () => {
-      const hash = window.location.hash.replace('#', '');
+      const hash = viewOfHash();
       if (VIEW_IDS.includes(hash)) setMode(hash);
     };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  // Keyboard shortcuts: 1 → Manual, 2 → Auto, 3 → Perform
+  // Keyboard shortcuts: 1 → Manual, 2 → Auto, 3 → Perform, 4–7 → the setup views
   useEffect(() => {
     const onKey = (e) => {
       if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
@@ -147,13 +174,14 @@ function Root() {
       </nav>
       <main id="main" class={`mode-${mode}`}>
         <div id={`panel-${mode}`} class="view-panel" role="tabpanel" aria-labelledby={`tab-${mode}`} tabIndex={-1}>
-          {mode === 'manual' ? <ManualView /> : mode === 'auto' ? <AutoView /> : <Perform />}
+          <Panel />
         </div>
       </main>
       <footer class="app-footer">
         {mode !== 'perform' && <BottomDrawer />}
         <ShortcutsOverlay />
       </footer>
+      <Wizard />
       <ConnectionVeil />
     </>
   );

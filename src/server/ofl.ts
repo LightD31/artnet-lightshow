@@ -7,7 +7,7 @@
  * template ("Red $pixelKey") repeated for each pixel or group of pixels.
  *
  * This reads such a file into the shape parseGDTF gives — a name, a maker and
- * a profile per mode — so the settings page offers both the same way. The file
+ * a profile per mode — so the Rig view offers both the same way. The file
  * is anyone's: it is read through a schema that bounds everything this reads,
  * and every mode is checked as the profile it will become.
  *

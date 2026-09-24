@@ -21,8 +21,8 @@
  *              take is dropped rather than queued behind the next
  *
  * Version 1 is kept, unchanged, for whatever connects without asking — the
- * settings page and the Bitfocus Companion module — and its JSON DMX stream is
- * only built while such a page is connected.
+ * Bitfocus Companion module, a page from before protocol 2 — and its JSON DMX
+ * stream is only built while one is connected.
  */
 
 import type { Server } from 'socket.io';
@@ -50,7 +50,7 @@ const DOMAIN_OF: Readonly<Record<string, Domain>> = {
   masterDimmer: 'look', masterBlackout: 'look', flashLimit: 'look',
   strobeSpeed: 'look', strobeFunction: 'look', pixelMap: 'look', pixelPattern: 'look', energyOverride: 'look',
 
-  artnet: 'rig', universes: 'rig', fixtures: 'rig', profiles: 'rig',
+  artnet: 'rig', universes: 'rig', fixtures: 'rig', profiles: 'rig', identify: 'rig',
 
   autoIntensity: 'show', autoSyncOffsetMs: 'show', autoSource: 'show', autoPrefetchDepth: 'show',
   autoShow: 'show', activeSource: 'show', showOn: 'show', cues: 'show', warm: 'show',

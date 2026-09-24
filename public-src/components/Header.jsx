@@ -84,10 +84,6 @@ export function Header() {
   return (
     <header>
       <h1>ArtNet <span>Lightshow</span></h1>
-      <nav class="header-nav">
-        <a href="/" class="nav-link active">Live</a>
-        <a href="/settings.html" class="nav-link">Settings</a>
-      </nav>
 
       <div class="header-stats">
         {s.bpm != null && <BpmPill bpm={s.bpm} running={!!s.running} source={s.clock && s.clock.source} />}

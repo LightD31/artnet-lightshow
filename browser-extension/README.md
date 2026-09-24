@@ -47,8 +47,7 @@ to set:
   permission at save time; the manifest only grants loopback by default.
 - **Access token** — needed only when the server has one, which it must
   whenever it is bound to anything but localhost. Copy it from the server's
-  settings page, *Server → Access token* (the `LIGHTSHOW_TOKEN` environment
-  variable of older versions still sets it too).
+  app, *Settings → Server & access → Access Token*.
 
 Both are stored in `browser.storage.local`. No editing of source files needed.
 

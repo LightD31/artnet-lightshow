@@ -491,9 +491,9 @@ def bs_roformer_enabled():
     """
     Is BS-RoFormer the configured separator? One reader, several callers.
 
-    The server sets ARTNET_USE_BS_ROFORMER from the settings page's Separator
+    The server sets ARTNET_USE_BS_ROFORMER from the Separator setting
     field when it starts the worker. Unset — a one-shot run from the command
-    line — it is Demucs, the same default as the settings page.
+    line — it is Demucs, the same default as the settings.
     """
     return os.environ.get('ARTNET_USE_BS_ROFORMER', '0').lower() not in ('0', 'false', 'no', '')
 

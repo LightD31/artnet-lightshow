@@ -234,3 +234,21 @@ test('live input settings: off by default, a source it knows, a latency in range
   assert.throws(() => s.update({ live: { latencyMs: 2000 } }));
   assert.strictEqual(s.get('live.source'), 'input', 'a refused update changes nothing');
 });
+
+// The first-run wizard is offered on a fresh install and not to a rig set up
+// before it existed.
+test('a fresh install has not been set up; a file from before the wizard has', () => {
+  const fresh = store().load();
+  assert.strictEqual(fresh.get('setup.completed'), false);
+  fresh.update({ artnet: { host: '10.0.0.5' } });
+  assert.strictEqual(new SettingsStore(fresh.file).load().get('setup.completed'), false, 'still offered after a save');
+
+  const old = store();
+  fs.writeFileSync(old.file, JSON.stringify({ artnet: { host: '10.0.0.9' } }));
+  old.load();
+  assert.strictEqual(old.get('setup.completed'), true);
+  assert.strictEqual(old.get('artnet.host'), '10.0.0.9');
+
+  fresh.update({ setup: { completed: true } });
+  assert.strictEqual(new SettingsStore(fresh.file).load().get('setup.completed'), true);
+});

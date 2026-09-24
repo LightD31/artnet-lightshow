@@ -142,7 +142,7 @@ const SCOPES = [
 /**
  * Spotify Web API client with OAuth2 Authorization Code flow.
  *
- * Requires a client ID and secret, set in the settings page under Spotify.
+ * Requires a client ID and secret, set in the app under Sources → Spotify.
  *
  * Spotify no longer allows plain HTTP redirect URIs, so OAuth goes through
  * an HTTPS proxy (api.drndvs.fr) which handles the Spotify callback and then
@@ -151,7 +151,7 @@ const SCOPES = [
  * Register this URL in your Spotify app dashboard as the allowed redirect URI:
  *   https://api.drndvs.fr/api/v1/spotify/proxy/callback
  *
- * Change the proxy in the settings page (Spotify → OAuth proxy) to use another.
+ * Change the proxy in the app (Sources → Spotify → OAuth Proxy) to use another.
  */
 
 // How long an issued OAuth state nonce stays valid. Long enough to log in and
@@ -299,13 +299,13 @@ class SpotifyClient {
 
   /**
    * Apply credentials from the settings store. Called at boot and again
-   * whenever the settings page saves, so editing the client id or the proxy
+   * whenever the settings are saved, so editing the client id or the proxy
    * takes effect without a restart. Only keys actually present are changed.
    */
   configure({ clientId, clientSecret, proxyBase }: SpotifyConfig = {}): this {
     if (clientId !== undefined) this.clientId = clientId || '';
     if (clientSecret !== undefined) this.clientSecret = clientSecret || '';
-    // Assigned even when blank, so clearing the proxy in the settings page
+    // Assigned even when blank, so clearing the proxy in the settings
     // actually turns it off rather than leaving the last value in place.
     if (proxyBase !== undefined) this.proxyBase = (proxyBase || '').replace(/\/+$/, '');
     this._refreshRedirectUri();

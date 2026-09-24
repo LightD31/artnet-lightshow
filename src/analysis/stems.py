@@ -78,7 +78,7 @@ def separate(mono, sample_rate, overlap=0.10, segment_seconds=None, stereo_loade
     import librosa
     from demucs.apply import apply_model
 
-    # BS-RoFormer when the settings page asks for it (see
+    # BS-RoFormer when the settings ask for it (see
     # models.bs_roformer_enabled), with Demucs as the fallback if it cannot
     # load or run. Demucs is the default: BS-RoFormer takes about seven times
     # as long, which on an integrated GPU is longer than the track plays.

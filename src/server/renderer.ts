@@ -26,6 +26,8 @@ import { cellPlace, channelPlace, stripOf } from '../shared/placement.ts';
 import { EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture, cellDrive } from '../shared/look-math.ts';
 import { anchorStep, stepAt, motionAdvance } from '../shared/beat-clock.ts';
 import { createFlashLimiter, lightLuminance, strobeCap } from './flash-limit.ts';
+import { identifyLights } from './identify.ts';
+import type { IdentifyRequest } from './identify.ts';
 import type { EnergyLook, UnitLight } from '../shared/look-math.ts';
 import type { Rig } from '../shared/rig.ts';
 import type { MusicalTime } from './conductor.ts';
@@ -88,6 +90,8 @@ export interface RenderInput {
   patternAnchor: PatternAnchor | null;
   fade: FadeRequest | null;
   syncTest: SyncTestRequest | null;
+  /** Fixtures showing themselves on the rig (identify.ts), or null. */
+  identify?: IdentifyRequest | null;
   universes: number[];
   fixtures: RenderFixture[];
 }
@@ -230,7 +234,8 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
   const shown: UnitLight[] = [];     // the pattern layer as it went out last frame, per light
   let fade: { start: number; ms: number; from: UnitLight[] } | null = null;
   let syncTest: { start: number; until: number } | null = null;
-  const adopted = { fade: 0, syncTest: 0 };
+  let identify: { ids: Set<number>; start: number; until: number } | null = null;
+  const adopted = { fade: 0, syncTest: 0, identify: 0 };
 
   // The continuous expression channel, smoothed towards whatever the show last
   // asked for, and how far the expressive patterns have travelled.
@@ -296,6 +301,30 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       adopted.syncTest = s.seq;
       syncTest = { start: s.at, until: s.at + s.seconds * 1000 };
     }
+    const id = input.identify;
+    if (id && id.seq !== adopted.identify) {
+      adopted.identify = id.seq;
+      identify = id.ids.length && id.ms > 0 ? { ids: new Set(id.ids), start: id.at, until: id.at + id.ms } : null;
+    }
+  }
+
+  /** The fixtures identifying themselves this frame, or null. */
+  function identifying(now: number): { ids: Set<number>; start: number } | null {
+    if (identify && now >= identify.until) identify = null;
+    return identify;
+  }
+
+  /**
+   * A fixture showing itself (identify.ts): its own picture, over the look
+   * and through the master and a blackout, at its trim. No strobe, no burst,
+   * no flash limit — the picture is slower than any of them would allow.
+   */
+  function writeIdentified(input: RenderInput, store: FrameStore, fix: RenderFixture, cells: ChannelMap[] | null,
+    elapsed: number, now: number): void {
+    const plain: RenderInput = { ...input, masterDimmer: 255, pattern: '', flashLimit: false };
+    const lights = identifyLights(cells ? cells.length : 1, elapsed).map(({ col, dim }) => ({ col, dim, strobe: 0 }));
+    if (cells) writeBar(plain, store, fix, cells, lights, null, now);
+    else writePar(plain, store, fix, lights[0], null, now);
   }
 
   /**
@@ -601,12 +630,20 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       if (fadeT >= 1) fade = null;
     }
 
-    // With the buffers already cleared, a blackout is simply empty universes.
+    const { fixtures } = input;
+    const ident = identifying(now);
+
+    // With the buffers already cleared, a blackout is simply empty universes —
+    // but for a fixture asked to identify itself.
     if (input.masterBlackout) {
       if (input.flashLimit) limiter.commit(0, now);
+      if (ident) {
+        for (let i = 0; i < fixtures.length; i++) {
+          if (ident.ids.has(fixtures[i].id)) writeIdentified(input, store, fixtures[i], rigNow.cellMaps[i], now - ident.start, now);
+        }
+      }
       return rigNow;
     }
-    const { fixtures } = input;
     // Each light: its source (a burst, a pinned fixture, or the pattern layer
     // partway through any fade), then the music's level on top.
     const all: LightValue[][] = [];
@@ -620,7 +657,8 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     else limiter.reset();
     for (let i = 0; i < fixtures.length; i++) {
       const cells = rigNow.cellMaps[i];
-      if (cells) writeBar(input, store, fixtures[i], cells, all[i], energy, now);
+      if (ident && ident.ids.has(fixtures[i].id)) writeIdentified(input, store, fixtures[i], cells, now - ident.start, now);
+      else if (cells) writeBar(input, store, fixtures[i], cells, all[i], energy, now);
       else writePar(input, store, fixtures[i], all[i][0], energy, now);
     }
     return rigNow;

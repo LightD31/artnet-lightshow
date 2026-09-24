@@ -112,7 +112,7 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
    *
    * No connecting happens here: the module brings the session up from the first
    * rendered frame and retries on its own schedule. Saving settings with a
-   * bridge that is switched off should not block the settings page.
+   * bridge that is switched off should not block the page that saved them.
    */
   function applyHue() {
     const config = settings.group('hue');

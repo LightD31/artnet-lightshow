@@ -24,7 +24,7 @@ On a four-core laptop CPU it runs at about three quarters of real time; on a
 GPU it is a few seconds. So the default, `auto`, runs it only when the analyser
 has a GPU and the weights are on disk, and the self-similarity labeller answers
 otherwise.
-`ARTNET_STRUCTURE_MODEL` (the settings page's Structure field) chooses:
+`ARTNET_STRUCTURE_MODEL` (the Structure setting, under Sources → Analysis) chooses:
 
     auto        SongFormer on a GPU, the labeller on a CPU
     songformer  SongFormer whenever the weights are here, CPU included

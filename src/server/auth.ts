@@ -73,7 +73,7 @@ function configError({ host, token, configFile = 'config/settings.json' }: {
   configFile?: string;
 }): string | null {
   if (isLoopbackHost(host) || token) return null;
-  // The settings page normally refuses to save this combination, so reaching
+  // The Settings view normally refuses to save this combination, so reaching
   // here means the file was hand-edited — and with the server refusing to
   // start there is no UI to fix it from. Give file-level instructions.
   return [
@@ -89,7 +89,7 @@ function configError({ host, token, configFile = 'config/settings.json' }: {
     'With a token set, open the UI once at:',
     '  http://<this-machine>:<port>/?token=<the token>',
     'The page stores it and sends it on every request afterwards. After that,',
-    'both settings are editable in the settings page under Server & Access.',
+    'both settings are editable in the app under Settings → Server & access.',
   ].join('\n');
 }
 

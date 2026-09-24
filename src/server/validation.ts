@@ -151,6 +151,16 @@ const overrideMessageSchema = z.object({
 
 const dmxUniverse = z.number().int().min(0).max(32767);
 
+// POST /api/fixtures: how many of which profile, from where. Everything is
+// optional — no body adds one generic par behind the rig's default universe.
+const fixtureAddSchema = z.object({
+  universe: dmxUniverse.optional(),
+  profileId: z.string().min(1).max(128).optional(),
+  count: z.number().int().min(1).max(64).optional(),
+  address: z.number().int().min(1).max(512).optional(),
+  label: z.string().trim().min(1).max(56).optional(),
+}).strict();
+
 const fixtureMessageSchema = z.object({
   id: fixtureId,
   position: fixturePosition.nullable().optional(),
@@ -443,6 +453,7 @@ export {
   midiConnectSchema,
   huePairSchema,
   wledAddSchema,
+  fixtureAddSchema,
   overlaySchema,
   validate,
 };

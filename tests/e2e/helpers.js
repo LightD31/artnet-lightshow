@@ -26,7 +26,8 @@ export async function open(page, view = 'manual', { theme = 'dark' } = {}) {
   }, theme);
   await page.goto(`/#${view}`);
   await page.locator('.offline-veil').waitFor({ state: 'detached' });
-  await page.locator(`#panel-${view}`).waitFor();
+  // A view with tabs of its own is named with them: rig/outputs.
+  await page.locator(`#panel-${view.split('/')[0]}`).waitFor();
 }
 
 /** Poll the server until `check(state)` holds, or fail with the last state. */

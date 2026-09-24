@@ -50,7 +50,7 @@ warnAboutLegacyEnv();
 // ─── Bind address & access control ──────────────────────────────────────────
 // Loopback by default: exposing the rig to the whole network should be a
 // deliberate act, and once it is, a token is mandatory. These three are read
-// before anything is listening, so changing them in the settings page takes
+// before anything is listening, so changing them in the settings takes
 // effect on the next start.
 const HOST = settings.get('server.host');
 const LIGHTSHOW_TOKEN = settings.get('server.token');
@@ -64,7 +64,7 @@ if (fatal) {
 const auth = createAuth({
   token: LIGHTSHOW_TOKEN,
   // Names beyond the ones every machine has (IP literals, localhost, its own
-  // host name). Read per request so a public URL saved in the settings page
+  // host name). Read per request so a public URL saved in the settings
   // applies without a restart.
   allowedHosts: () => [HOST, hostOfUrl(settings.get('server.publicUrl'))],
 });
@@ -154,7 +154,7 @@ smtc.onUpdate((payload) => nowPlaying.updatePlayback(payload));
 const patchRestored = showStore.restore();
 
 // Everything configurable is pushed into the subsystems from one place, both
-// here at boot and again whenever the settings page saves.
+// here at boot and again whenever the settings are saved.
 const applier = createApplier({
   midi, spotify, smtc, live: liveInput, midiClock, deezer, autoShow, applyPatch,
   broadcast: () => integrations.broadcast(),
@@ -162,7 +162,7 @@ const applier = createApplier({
 applier.applyAll();
 
 // Art-Net, PRO DJ LINK and MIDI are also reachable from the main page and the
-// patch panel. Persist those edits so the settings page keeps showing the
+// patch panel. Persist those edits so the Rig view keeps showing the
 // truth and the choice survives a restart.
 setPersist((patch) => {
   try { settings.update(patch); }
@@ -248,7 +248,7 @@ server.on('error', (err: NodeJS.ErrnoException) => {
 server.listen(PORT, HOST, () => {
   // Where the OAuth proxy sends the operator's browser back to. Must be an
   // address that browser can actually reach: "localhost" is only right when the
-  // browser is on this machine. The settings page's "public URL" overrides for
+  // browser is on this machine. The "public URL" setting overrides for
   // anything unusual (reverse proxy, hostname, https).
   applier.refreshCallbackUrl();
 
@@ -270,16 +270,16 @@ server.listen(PORT, HOST, () => {
   console.log(`  ArtNet            →  ${state.artnet.host}:${state.artnet.port} universe ${state.artnet.universe}`);
   console.log(`  Fixtures          →  ${state.fixtures.length}x at DMX ${state.fixtures.map((f) => f.address).join(', ')}`
     + `  [${patchRestored ? `saved patch, ${SHOW_FILE}` : 'default patch — saved as you change it'}]`);
-  console.log(`  MIDI              →  ${midi.enabled ? 'connected' : 'not connected (pick a port in the settings page)'}`
+  console.log(`  MIDI              →  ${midi.enabled ? 'connected' : 'not connected (pick a port under Settings → MIDI controller)'}`
     + `  [${midiMap.snapshot().customised ? 'custom map' : 'default X-Touch map'}]`);
-  console.log(`  PRO DJ LINK       →  ${state.prolinkEnabled ? 'enabled' : 'disabled (enable it in the settings page)'}`);
-  console.log(`  Spotify           →  ${spotify.configured ? 'configured (visit /auth/spotify to connect)' : 'not configured (add a client ID & secret in the settings page)'}`);
+  console.log(`  PRO DJ LINK       →  ${state.prolinkEnabled ? 'enabled' : 'disabled (enable it under Sources)'}`);
+  console.log(`  Spotify           →  ${spotify.configured ? 'configured (visit /auth/spotify to connect)' : 'not configured (add a client ID & secret under Sources)'}`);
   if (spotify.configured) {
     console.log(`  Spotify auth      →  ${spotify.usingProxy ? `via proxy ${spotify.proxyBase}` : 'direct (no proxy)'}`);
     console.log(`  Spotify redirect  →  register this URL in your Spotify dashboard:`);
     console.log(`                       ${spotify.redirectUri}`);
   }
-  console.log(`  Deezer            →  ${settings.get('deezer.arl') ? 'configured (ISRC-based downloads)' : 'not configured (add an ARL in the settings page — falls back to yt-dlp)'}`);
+  console.log(`  Deezer            →  ${settings.get('deezer.arl') ? 'configured (ISRC-based downloads)' : 'not configured (add an ARL under Sources — falls back to yt-dlp)'}`);
   const npStatus = process.platform !== 'win32'
     ? 'unavailable (Windows-only)'
     : smtcEnabled ? 'reading OS media session (SMTC)' : 'disabled in settings';

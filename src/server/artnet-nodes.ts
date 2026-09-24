@@ -19,7 +19,7 @@ export type SeenNode = ArtNode & { from: string; seenAt: number };
 /** Universe → the addresses of the nodes that output it. */
 export type ArtRoutes = Record<number, string[]>;
 
-/** What the discovery reports to the settings page and the pre-show check. */
+/** What the discovery reports to the Rig view and the pre-show check. */
 export interface DiscoveryStatus {
   active: boolean;
   listening: boolean;

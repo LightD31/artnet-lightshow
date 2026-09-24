@@ -1,6 +1,6 @@
 // Protocol v2: the live page is sent the keys that changed, grouped by domain
 // and versioned, and DMX as bytes, only while it asks for it. Whatever
-// connects without asking — the settings page, the Companion module — still
+// connects without asking — the Companion module, an older page — still
 // gets the whole state as before.
 
 import test from 'node:test';

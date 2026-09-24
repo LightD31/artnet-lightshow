@@ -6,38 +6,7 @@ import { useDmxFeed } from '../use-dmx.js';
 import { createPreviewSampler } from '../../src/shared/preview.ts';
 import { stagePositions } from '../../src/shared/stage.ts';
 import { buildRig, lineOf } from '../../src/shared/rig.ts';
-
-const clamp = (n) => Math.max(0, Math.min(100, n));
-const round1 = (n) => Math.round(n * 10) / 10;
-
-/** A bar's line, turned and stretched, kept inside what the server accepts. */
-function geometryOf(length, angle) {
-  let a = angle;
-  while (a > 180) a -= 360;
-  while (a < -180) a += 360;
-  return { length: round1(Math.max(1, Math.min(100, length))), angle: round1(a) };
-}
-
-// The lamp's footprint, and the strips kept clear at the top and bottom for the
-// two edge labels. A stored position is a percentage of the *travel* rather
-// than of the surface, so a lamp at 0 or 100 sits fully inside the box instead
-// of half outside it — which is why every offset below is expressed as an inset
-// from an edge and the span subtracts both.
-//
-// style.css needs the same footprint to size the lamp, and placing a lamp and
-// hit-testing a drag on it have to agree or a fixture jumps under the pointer.
-// So this is the only copy: the surface publishes LAMP_W/LAMP_H as custom
-// properties for the stylesheet, and `move()` below is the exact inverse of the
-// `left`/`top` expressions.
-const LAMP_W = 56;
-const LAMP_H = 72;
-const HEAD = 14;   // "BACK OF STAGE"
-const FOOT = 14;   // "AUDIENCE"
-
-const INSET_X = LAMP_W / 2;
-const INSET_Y = HEAD + LAMP_H / 2;
-const SPAN_X = LAMP_W;
-const SPAN_Y = LAMP_H + HEAD + FOOT;
+import { clamp, geometryOf, placeAt, pointIn, surfaceStyle } from '../stage-geometry.js';
 
 export function StagePreview() {
   const s = stateSig.value;
@@ -111,14 +80,7 @@ export function StagePreview() {
   useEffect(() => { if (duration && position >= duration) setUi({ playing: false }); }, [position, duration]);
 
   /** Where the pointer is on the plot, in the percent space positions use. */
-  const pointOf = (event) => {
-    const rect = event.currentTarget.parentElement.getBoundingClientRect();
-    if (!rect.width || !rect.height) return null;
-    return {
-      x: (event.clientX - rect.left - INSET_X) / Math.max(1, rect.width - SPAN_X) * 100,
-      y: (event.clientY - rect.top - INSET_Y) / Math.max(1, rect.height - SPAN_Y) * 100,
-    };
-  };
+  const pointOf = (event) => pointIn(event.currentTarget.parentElement.getBoundingClientRect(), event.clientX, event.clientY);
   const move = (event) => {
     const active = drag.current;
     if (!active || active.pointerId !== event.pointerId) return;
@@ -148,11 +110,6 @@ export function StagePreview() {
     drag.current = { id, pointerId: event.pointerId, ...extra };
     event.currentTarget.setPointerCapture(event.pointerId);
   };
-  // A point on the plot as a centre: `move()` above is the exact inverse.
-  const placeAt = (point) => ({
-    left: `calc(${INSET_X}px + (100% - ${SPAN_X}px) * ${point.x / 100})`,
-    top: `calc(${INSET_Y}px + (100% - ${SPAN_Y}px) * ${point.y / 100})`,
-  });
 
   return <section class="panel stage-panel">
     <header class="panel-head">
@@ -163,7 +120,7 @@ export function StagePreview() {
     </header>
     <div class={`stage-surface ${edit ? 'editing' : ''}`} role="group"
       aria-label="Stage layout, viewed from the audience"
-      style={{ '--stage-lamp-w': `${LAMP_W}px`, '--stage-lamp-h': `${LAMP_H}px` }}>
+      style={surfaceStyle}>
       <span class="stage-back">BACK OF STAGE</span>
       {/* A bar's cells first, so its number and every lamp sit on top. */}
       {drawn.map((fix, i) => {
@@ -237,7 +194,7 @@ export function StagePreview() {
           onPointerMove={move} onPointerUp={(event) => finish(event, true)}
           onPointerCancel={(event) => finish(event, false)} onLostPointerCapture={(event) => finish(event, false)} />;
       })}
-      {!fixtures.length && <p class="panel-empty">Add fixtures in Settings to build your stage.</p>}
+      {!fixtures.length && <p class="panel-empty">Add fixtures in the Rig view to build your stage.</p>}
       <span class="stage-audience">AUDIENCE</span>
     </div>
     <p class="look-note">{edit

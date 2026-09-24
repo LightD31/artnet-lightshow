@@ -121,10 +121,26 @@ via **Bitfocus Companion**, and a REST API.
 - **Set-list warming** — analyse the whole night up front, from a pasted list or
   a Spotify playlist, rather than relying on the live queue lookahead
 
+**Setting up**
+
+- **A first-run setup** — a fresh install walks through where the DMX goes,
+  what is hung, where it hangs and what the lights follow, and ends on the
+  pre-show check; it can be run again from Settings
+- **The plan** — the Rig view's pixel map: drag fixtures to where they hang, and
+  map an LED bar by drawing it on the plan from its first cell to its last while
+  it lights up on the rig to show which end is which
+- **Identify** — any fixture, universe, Art-Net node, WLED or Hue lamp shows
+  itself on the rig: a par blinks, a bar lights its first cell green and its
+  last red with a dot running between them
+- **Finding the rig** — Art-Net nodes (and their locate LEDs), other sACN
+  sources and the universes they share with you, WLEDs and Hue bridges
+- **Rig, Sources, Settings and Preflight views** — every setting in the same app
+  as the controls, a tab away (keys **4**–**7**)
+
 **Fixtures**
 
 - **GDTF and Open Fixture Library import** — drop in a `.gdtf` file or an OFL
-  `.json`, or search the Open Fixture Library from the settings page; pick a
+  `.json`, or search the Open Fixture Library from the Rig view; pick a
   DMX mode, patch it
 - **Multiple universes** — every fixture names the universe it lives on, so a
   rig is no longer capped at one node's 512 channels; a pixel strip longer than
@@ -157,7 +173,10 @@ npm install
 npm start
 ```
 
-Open **http://localhost:3000**. Fixture patching lives at **/settings.html**.
+Open **http://localhost:3000**. A fresh install opens the setup, which walks
+through the outputs, the fixtures, where they hang and the music — see
+[Setting up the rig](#setting-up-the-rig). Everything it touches lives in the
+**Rig**, **Sources** and **Settings** views afterwards.
 
 Before a show, run `npm run preflight` — see [Pre-show check](#pre-show-check).
 
@@ -172,7 +191,7 @@ By default the server binds **127.0.0.1** and is reachable only from the machine
 it runs on. Nothing more is needed for a normal single-machine setup.
 
 To reach the UI from a phone or another machine, bind wider **and set a token**.
-Both live in the settings page under **Server & Access**:
+Both live under **Settings → Server & access**:
 
 1. Press **Generate** next to *Access Token*, then **Apply**.
 2. Set *Bind Address* to `0.0.0.0` and **Apply**.
@@ -208,7 +227,111 @@ The server also only answers to names it knows: any IP address, `localhost`, and
 this machine's own host name (bare or with `.local`). That stops a web page from
 pointing its own domain at your machine to get around the origin check. If you
 reach the rig by some other name — `lights.lan`, a reverse proxy — set that
-address as the **Public URL** in *Server & Access*.
+address as the **Public URL** in *Server & access*.
+
+---
+
+## Setting up the rig
+
+The app has seven views. The first three run a show — **Manual**, **Auto Show**
+and **Perform** — and the other four set one up:
+
+| View | Key | What is there |
+|------|-----|---------------|
+| **Rig** | 4 | *Plan & patch*: the plan, the patch table and the selected fixture. *Profiles*: the fixture library. *Outputs*: Art-Net, sACN, WLED, Hue, and the universes |
+| **Sources** | 5 | The players the show may follow, Spotify, Deezer, the live input, and the analysis and its models |
+| **Settings** | 6 | How the show behaves over a night, the MIDI controller and its mapping, MIDI clock, the engine, the server and access token, and the setup again |
+| **Preflight** | 7 | The [pre-show check](#pre-show-check) |
+
+A view with tabs of its own names them in the address: `/#rig/outputs` opens the
+Rig view on its outputs. The old `/settings.html` and its tabs (`#music`,
+`#output`…) land on the view that holds them now.
+
+### The first-run setup
+
+A fresh install — no `config/settings.json` yet — opens the setup over the app:
+
+1. **Outputs** — Art-Net to a broadcast address (the ones this machine is on are
+   offered) or to one node found on the network, sACN on or off, and any WLEDs
+   found, added to the patch in a click.
+2. **Fixtures** — each kind of fixture: its profile, how many, and where the
+   first is addressed; the rest follow on, into the next universe when one
+   fills. Each can be identified from the list.
+3. **Placement** — the plan, to drag each fixture to where it hangs (see below).
+4. **Music** — PRO DJ LINK, this computer's player, the live input, Spotify's
+   client ID and secret.
+5. **Check** — the pre-show check, run there and then.
+
+It changes nothing it does not ask about, and leaving part way keeps what was
+done. **Settings → Setup → Run the setup again** brings it back. A rig set up
+before the setup existed is not offered it.
+
+### The plan — placing the rig and mapping pixels
+
+**Rig → Plan & patch** is the rig from above, the audience at the bottom. Where
+each fixture is drawn is where the patterns find it: a chase travels across the
+rig as it is placed here, and an LED bar's cells are where its line puts them.
+
+- **Select** a fixture by clicking it, or its row in the patch table below
+  (Shift or Ctrl adds). Drag across empty floor to pick several. The inspector
+  beside the plan shows the one selected — label, universe, address, where it
+  stands, a bar's length and angle, its trim — and changes any of it.
+- **Move** by dragging (the selection moves together) or with the arrow keys
+  (Shift for bigger steps). **Snap** keeps positions to a 2.5% grid and angles
+  to 15°.
+- **Turn and stretch** a selected bar by dragging the handle at its far end, or
+  with `[` `]` and `-` `=`; `0` puts it back to its default line.
+- **Draw bar** maps a bar in one gesture: select it and press *Draw bar*. It
+  lights up on the rig — first cell green, last cell red, a white dot running
+  from one to the other — and you drag on the plan from where its green end
+  hangs to its red end. A bar hung backwards is drawn backwards, and runs that
+  way. The next bar in the patch is then picked and lit, so a truss of bars is
+  mapped one drag at a time; Esc stops.
+- **Row** lines the selection up evenly; **End to end** puts the selected bars
+  in one long line, in patch order; **Reset** forgets where they stand.
+
+The patch table below the plan patches each fixture (label, profile, universe,
+address), marks any two that share a channel, and adds a run of one profile in
+one go: *how many*, *universe* and *from address*.
+
+### Identify
+
+Every fixture in the patch, every universe, every Art-Net node, WLED and Hue
+channel has an **Identify** button. What it does on the rig, for eight seconds:
+
+- **a par** blinks white, slowly;
+- **a bar or panel** lights its first cell green and its last red, with a white
+  dot running from the first to the last in wiring order — so a strip hung the
+  other way round, or a panel wired in a snake, shows itself.
+
+It goes over whatever the look is doing and through the master and a blackout
+(it is asked for on purpose, and a lamp that stays dark answers nothing), at
+the fixture's own trim. A Hue lamp that follows the fixture flashes with it.
+Identify is shown on the plan and in the patch table on every open page.
+
+- **An Art-Net node** is sent ArtAddress *locate*, which flashes its own
+  indicators if it implements it, and everything patched on the universes it
+  outputs flashes too.
+- **A universe** (Rig → Outputs → Universes) flashes everything on it — the way
+  to find an sACN receiver, which never announces itself.
+- **A WLED** in the patch flashes through it; one not in the patch yet is sent
+  the same picture directly over DDP and goes back to what it was doing when
+  it stops.
+- **A Hue channel** flashes with the fixture it follows; one that follows none
+  is asked to identify itself by the bridge.
+
+### Finding what is on the network
+
+**Rig → Outputs** lists what answers:
+
+- **Art-Net nodes** — who answered a poll, their universes, *Identify*, and
+  *Send only here* to stop broadcasting and talk to that node alone.
+- **Other sACN sources** — *Listen for other sources* listens for twelve seconds
+  to the universe discovery every source sends and to the rig's own universes,
+  and lists any console or server there with its priority. A universe this rig
+  sends that another source sends too is called out: the higher priority wins.
+- **WLEDs** — found over mDNS, identified, added in a click.
+- **Hue bridges** — found, paired, and each channel bound to a fixture.
 
 ---
 
@@ -590,7 +713,7 @@ blackout already applied. Black out the rig and the Hue lamps go out with it.
    A third value, the **application id**, is fetched at the same time. It is the
    identity the encrypted stream authenticates with, and it is what the Hue app
    shows as the holder of an entertainment area. It is not a secret, so it stays
-   readable in the settings page. A pairing made before this was stored resolves
+   readable in the settings. A pairing made before this was stored resolves
    it on the first connection and saves it then.
 4. Pick the **entertainment area**. A bridge streams one area at a time.
 5. Bind each Hue channel to a fixture in the **Channels** table, then **Apply**.
@@ -733,8 +856,8 @@ name, the same way a pasted line is.
 Private and collaborative playlists need the `playlist-read-private` and
 `playlist-read-collaborative` scopes, which are requested at login. A Spotify
 connection made before this feature existed does not carry them — Spotify then
-reports your own playlist as simply not found — so reconnect Spotify in the
-settings page. Public playlists work either way.
+reports your own playlist as simply not found — so reconnect Spotify under
+Sources. Public playlists work either way.
 
 Progress is live — each track shows *queued*, *analysing*, *cached* or *failed*.
 Tracks already on disk are skipped without touching the analyser, so re-running
@@ -797,11 +920,11 @@ MIDI controller, the Python interpreter and the analyser's imports, ffmpeg,
 yt-dlp, the analysis model weights, the optional PANNs checkpoint, the analysis
 cache, and which playback sources are connected.
 
-The same report is in the settings page under **Pre-show Check** — run there,
+The same report is the **Preflight** view (key **7**) — run there,
 it also sees the *live* MIDI and playback-source connections rather than only
 what is configured. If a model the show needs is missing, it starts downloading
 it in the background and says so; the show keeps running, and the progress is
-under Settings → Analysis Models. **Model stack** imports torch, torchaudio,
+under Sources → Analysis models. **Model stack** imports torch, torchaudio,
 torchvision and the models for real, which catches a torch build mismatch that a
 plain "is it installed" check cannot see, and names the device they run on.
 
@@ -1231,8 +1354,8 @@ as a `ModuleNotFoundError` after a track has already downloaded:
 [python]   "C:\Python312\python.exe" -m pip install -r requirements.txt
 ```
 
-To force a specific interpreter, set its full path in the settings page under
-**Analysis → Python**. The page shows which one is live and what it is missing.
+To force a specific interpreter, set its full path under **Sources → Analysis →
+Python**. The page shows which one is live and what it is missing.
 Changing it recycles the analyzer process; no restart needed.
 
 ### Playback sources
@@ -1240,14 +1363,14 @@ Changing it recycles the analyzer process; no restart needed.
 | Source | What it needs |
 |--------|---------------|
 | **Spotify + OS clock** | Both of the two below. The best option when you play Spotify on this machine — see [Spotify + OS clock](#spotify--os-clock-the-hybrid-source). |
-| **Spotify** | A client ID and secret in the settings page, then visit `/auth/spotify`. Register the redirect URI the server prints at startup — see [Spotify authorisation](#spotify-authorisation). |
-| **PRO DJ LINK** | CDJs on the same network. Toggle it in the settings page or on the main page. See [PRO DJ LINK](#pro-dj-link). |
+| **Spotify** | A client ID and secret under Sources → Spotify, then *Connect Spotify*. Register the redirect URI the server prints at startup — see [Spotify authorisation](#spotify-authorisation). |
+| **PRO DJ LINK** | CDJs on the same network. Toggle it under Sources → Playback sources, or on the main page. See [PRO DJ LINK](#pro-dj-link). |
 | **Now playing (Windows)** | Nothing — reads the OS media session, so any player that reports to it works. Toggle it under *Playback Sources*. |
 | **Deezer** | The extension in `browser-extension/` (see its README). Carries ISRC and the upcoming queue, so it prefetches. |
 | **Live input (by ear)** | The [live input](#live-input) on. Needs no analysis: the show answers what it hears. *Auto-detect* falls back to it before the timer. |
 | **Timer** | Fallback: plays the analysed timeline against a wall clock. |
 
-The Deezer ARL cookie (settings page → *Deezer*) is optional but recommended:
+The Deezer ARL cookie (Sources → *Deezer*) is optional but recommended:
 with it, audio is fetched by ISRC for an exact match instead of a yt-dlp search.
 
 ### PRO DJ LINK
@@ -1380,7 +1503,7 @@ refresh; that is stored too, so the saved session cannot quietly go stale.
 
 It is a credential — anyone holding it can read the connected account until it
 is revoked — so it is treated like the client secret and the Deezer cookie:
-`settings.json` is written `0600`, and the settings page is only ever told
+`settings.json` is written `0600`, and the app is only ever told
 *whether* one is set, never its value. There is no field for it; it is written
 by the server, not typed.
 
@@ -1718,7 +1841,7 @@ for a line-in that arrives after the room has heard it.
 
 ## MIDI
 
-Any MIDI controller works. Pick its ports in the settings page (the choice is
+Any MIDI controller works. Pick its ports under Settings → MIDI controller (the choice is
 remembered), then map it — either keep the built-in layout, or relearn the
 bindings you want onto the controls you have.
 
@@ -1867,7 +1990,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/fixture/:id/override` | Set a fixture override (JSON body) |
 | POST | `/api/fixture/:id/blackout/toggle` · `/api/fixture/:id/clear` | Per-fixture blackout / clear |
 | POST | `/api/fixture/:id/max/:value` | Fixture maximum brightness (0–255) — scales the fixture's output; not an override |
-| POST | `/api/fixtures` · DELETE `/api/fixtures/:id` | Add / remove a fixture (`{ universe }` optional on add; DELETE answers with the fixture and its index) |
+| POST | `/api/fixtures` · DELETE `/api/fixtures/:id` | Add / remove fixtures. With no body, one generic par behind whatever is on the default universe; with `{ profileId?, count?, universe?, address?, label? }`, `count` (up to 64) of that profile one after another, on into the next universe when one fills (a strip on universes of its own); answers `{ fixtures: [ids], placed: [{ universe, address }] }`. DELETE answers with the fixture and its index |
 | POST | `/api/fixtures/restore` | Put a deleted fixture back (`{ index, fixture }`) |
 | POST | `/api/gdtf/parse` | Parse an uploaded `.gdtf` (multipart `gdtf`) |
 | POST | `/api/ofl/parse` | Parse an uploaded Open Fixture Library `.json` (multipart `ofl`, optional `manufacturer`) |
@@ -1884,7 +2007,18 @@ All endpoints return JSON. When a token is configured, send it as an
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/artnet/nodes` | The Art-Net nodes that answered, with the universes each outputs, and whether frames are being routed by them; `?scan=1` asks the network now |
-| GET | `/api/network/interfaces` | This machine's IPv4 addresses, for sACN's network |
+| GET | `/api/network/interfaces` | This machine's IPv4 addresses and their broadcast addresses, for sACN's network and the Art-Net target |
+| POST | `/api/artnet/identify` | `{ address, universes?, seconds? }`: send the node ArtAddress *locate* (and *normal* after), and identify the fixtures on the universes it outputs |
+| GET | `/api/sacn/sources` | The other sACN sources heard, and `conflicts`: universes this rig sends that one of them sends too; `?listen=1&seconds=` listens (again) |
+
+### Identify
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/identify` | `{ fixtures?: [ids], universes?: [n], seconds? }` — those fixtures, and everything on those universes, show themselves for `seconds` (default 8, up to 60; 0 stops). Answers `{ ids, remainingMs }`; the live state carries it as `identify` |
+| POST | `/api/identify/stop` | Stop identifying, a streamed WLED included |
+| POST | `/api/wled/identify` | `{ host, seconds? }`: through the patch when the WLED is in it (`via: 'patch'`), else its picture streamed over DDP (`via: 'device'`) |
+| POST | `/api/hue/identify` | `{ channel, seconds? }`: the fixture the channel follows (`via: 'fixture'`), else the bridge's own identify (`via: 'bridge'`) |
 
 ### Cues
 
@@ -1976,8 +2110,8 @@ the state in one of two forms, chosen when the client connects:
   (`src/shared/dmx-frame.ts`: per universe its number, its length and its
   bytes), thirty times a second while it changes — volatile, and only to
   clients that sent `subscribe: ['dmx']` (and until `unsubscribe`).
-- **Protocol 1** — anything that does not ask, such as the settings page and
-  the Bitfocus Companion module: `state` (the full snapshot on connect, the
+- **Protocol 1** — anything that does not ask, such as the Bitfocus Companion
+  module: `state` (the full snapshot on connect, the
   whole live state again whenever any of it changes) and `dmx` (channel values
   as JSON, keyed by universe, ten times a second — built only while such a
   client is connected).
@@ -2021,34 +2155,33 @@ one that never resolves on its own.
 
 ## Configuration
 
-Everything is configured in the **settings page** (the *Settings* link in the
-header, or `/settings.html`). There are no environment variables to set: the
-server stores your choices in `config/settings.json` and reads them from there.
+Everything is configured in the app, in its **Rig**, **Sources** and
+**Settings** views (keys **4**, **5**, **6**). There are no environment
+variables to set: the server stores your choices in `config/settings.json` and
+reads them from there.
 
-The page is grouped into tabs by when you reach for each thing — **Pre-show**,
-**Rig**, **Output**, **Control**, **Music**, **Server** — and remembers which one
-you were on.
+Change what you need in a section and press its **Apply**; a section says when
+it has edits not applied yet. Most settings take effect immediately.
 
-Open the page, change what you need, press **Apply**. Most settings take effect
-immediately.
+| Where | Section | Settings |
+|-------|---------|----------|
+| Rig → Outputs | **Art-Net** | Enabled, node IP, port, default universe, finding nodes, ArtSync |
+| Rig → Outputs | **sACN (E1.31)** | Enabled, node IP, priority, source name, universe offset, network, component ID |
+| Rig → Outputs | **Philips Hue** | Enabled, bridge address, pairing, entertainment area, pars delay, channel-to-fixture bindings |
+| Sources | **Playback sources** | PRO DJ LINK, Windows now-playing (SMTC) |
+| Sources | **Spotify** | Client ID, client secret, optional OAuth proxy, unverified-state escape hatch, and the saved session (server-written, never shown) |
+| Sources | **Deezer** | ARL cookie — exact ISRC-matched audio instead of a yt-dlp search |
+| Sources | **Live input** | Enabled, what to listen to, device, auto-sync, play by ear, room latency |
+| Sources | **Analysis** | Separator, structure model, analyser and download timeouts, library folder, Python interpreter |
+| Settings | **Show** | Remember the night, flash limit |
+| Settings | **MIDI controller** | Input and output port, motorised fader feedback |
+| Settings | **MIDI clock out** | The port the clock goes to, or off |
+| Settings | **Engine** | Its own thread or the main thread |
+| Settings | **Server & access** | Bind address, port, access token, public URL |
 
-| Section | Settings |
-|---------|----------|
-| **ArtNet Output** | Enabled, node IP, port, default universe |
-| **sACN (E1.31)** | Enabled, node IP, priority, source name, universe offset, component ID |
-| **Philips Hue** | Enabled, bridge address, pairing, entertainment area, channel-to-fixture bindings |
-| **MIDI** | Input and output port, motorised fader feedback |
-| **Playback Sources** | PRO DJ LINK, Windows now-playing (SMTC) |
-| **Live Input** | Enabled, what to listen to, device, auto-sync, play by ear, room latency |
-| **MIDI Clock Out** | The port the clock goes to, or off |
-| **Spotify** | Client ID, client secret, optional OAuth proxy, unverified-state escape hatch, and the saved session (server-written, never shown) |
-| **Deezer** | ARL cookie — exact ISRC-matched audio instead of a yt-dlp search |
-| **Analysis** | Analyzer and download timeouts, library folder, Python interpreter |
-| **Server & Access** | Bind address, port, access token, public URL |
-
-The four **Server & Access** settings are read before the server starts
-listening, so they are marked `restart` in the page and applied on the next
-start. Everything else applies as soon as you press Apply.
+The **Server & access** settings and the engine thread are read before the
+server starts, so they are marked `restart` and applied on the next start.
+Everything else applies as soon as you press Apply.
 
 ### The config file
 
@@ -2057,8 +2190,8 @@ ARL, the access token, the Hue application and client keys — so it is written
 `0600` and is gitignored. Nothing else
 needs to be in it: any key you have not set uses the built-in default.
 
-The settings page never shows a stored secret. It reports only whether one is
-set, and lets you replace or clear it.
+The app never shows a stored secret. It reports only whether one is set, and
+lets you replace or clear it.
 
 If the file is corrupt or fails validation at startup, it is moved aside as
 `settings.json.invalid-<timestamp>` and the server starts on defaults rather
@@ -2071,16 +2204,16 @@ earlier version, the server names the variables it is ignoring at startup:
 
 ```
 [settings] These environment variables are no longer read: ARTNET_HOST, DEEZER_ARL
-[settings] Settings now live in the settings page (⚙ → Settings) and are stored
+[settings] Settings now live in the app (its Rig, Sources and Settings views) and are stored
 [settings] in config/settings.json. Set them there; you can delete them from .env.
 ```
 
-Set those values once in the settings page and delete the file. (`DEBUG_MIDI=1`
+Set those values once in the app and delete the file. (`DEBUG_MIDI=1`
 is the one exception — it is a developer log toggle, not a setting, and is still
 read from the environment.)
 
-Art-Net target and universe are also editable from the main page's ArtNet
-panel; changes there are persisted to the same file.
+Art-Net changes made over the socket (a page, Companion) are persisted to the
+same file.
 
 > **Why `--openssl-legacy-provider`?** The `start` and `dev` scripts pass it
 > because Deezer track decryption uses Blowfish (`bf-cbc`), which OpenSSL 3
@@ -2097,12 +2230,15 @@ Press **?** in the app for this list.
 |-----|--------|
 | **Space** | Tap tempo — also right after clicking a button; a control reached with Tab keeps Space for itself |
 | **1** / **2** / **3** | Manual / Auto Show / Perform view |
+| **4** / **5** / **6** / **7** | Rig / Sources / Settings / Preflight view |
 | **←** **→**, **Home** / **End** on the view tabs | Next / previous / first / last view |
 | **←** **→** **↑** **↓**, **Home** / **End** | Move within the colour grid |
 | **Enter** / **Shift+Enter** | Write the focused swatch into the active slot / the paired slot (A↔B, C↔D) |
 | **Shift+click** or **right-click** | Write a swatch into the paired slot |
 | **Space** or **Enter** on an energy button | Hold the effect until released |
-| **←** **→** **↑** **↓** (**Shift** for bigger steps) | Nudge the focused fixture on the stage plot |
+| **←** **→** **↑** **↓** (**Shift** for bigger steps) | Nudge the focused fixture on the stage plot (on the Rig view's plan, the whole selection) |
+| **[** **]**, **-** **=**, **0** on a bar | Turn it, change its length, back to its default line |
+| **Esc** on the plan | Stop drawing bars; else clear the selection |
 | **?** / **Esc** | Show / close the shortcuts overlay |
 
 ---

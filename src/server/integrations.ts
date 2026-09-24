@@ -20,6 +20,7 @@ import { AutoSync } from '../auto-sync.ts';
 import LiveDirector from '../show/live-director.ts';
 import { PATTERNS } from './presets.ts';
 import { settings } from './settings.ts';
+import { identify } from './engine.ts';
 import type { Server } from 'socket.io';
 import type AutoShow from '../auto-show.ts';
 import type { AnalysisCache } from '../analysis-cache.ts';
@@ -162,8 +163,8 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   const prefetchDepth = () => Math.max(1, Math.min(5, state.autoPrefetchDepth || 1));
 
   // Each protocol's form of every change (protocol.ts): the whole live state
-  // for the settings page and Companion, the keys that changed for the live
-  // page.
+  // for Companion and anything else that connects without asking, the keys
+  // that changed for the app.
   const publisher = createPublisher(io);
 
   function broadcast(): void {
@@ -215,6 +216,8 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       cues: cues.summaries(),
       warm: warmer.status(),
       midi: { enabled: midi.enabled, ports: midi.listPorts() },
+      // The fixtures showing themselves on the rig, marked on the stage plot.
+      identify: identify.status(),
     };
   }
   setExtrasProvider(extras);

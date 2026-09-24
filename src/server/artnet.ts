@@ -316,6 +316,67 @@ function discoverNodes({ host, hosts = null, port = ARTNET_PORT, timeoutMs = 150
   });
 }
 
+// ── Locating a node (ArtAddress) ────────────────────────────────────────────
+// Art-Net 4's identify: ArtAddress carries a command, and three of them set
+// the node's front-panel indicators — normal, off, or flashing to be found
+// ("locate"). A node that does not implement it ignores the packet, which is
+// why identify also flashes the fixtures patched on the node's universes.
+
+const OP_ADDRESS = 0x6000;
+const ADDRESS_SIZE = 107;
+const NO_CHANGE = 0x7f;
+const AC_LED_NORMAL = 0x02;
+const AC_LED_MUTE = 0x03;
+const AC_LED_LOCATE = 0x04;
+
+/**
+ * An ArtAddress that changes nothing about the node but `command`:
+ *
+ *   0 ID, 8 OpCode, 10 protocol version, 12 NetSwitch, 13 BindIndex,
+ *   14 PortName[18], 32 LongName[64], 96 SwIn[4], 100 SwOut[4],
+ *   104 SubSwitch, 105 AcnPriority, 106 Command
+ *
+ * Names left blank, switches at 0x7f and the sACN priority at 255 are each
+ * the spec's "no change".
+ */
+function buildArtAddress(command: number, bindIndex = 1): Buffer {
+  const packet = Buffer.alloc(ADDRESS_SIZE);
+  packet.write('Art-Net\0', 0, 'ascii');
+  packet.writeUInt16LE(OP_ADDRESS, 8);
+  packet.writeUInt16BE(14, 10);
+  packet[12] = NO_CHANGE;
+  packet[13] = Math.max(0, Math.min(255, bindIndex | 0));
+  packet.fill(NO_CHANGE, 96, 104);
+  packet[104] = NO_CHANGE;
+  packet[105] = 255;
+  packet[106] = command & 0xff;
+  return packet;
+}
+
+/** Send one ArtAddress to a node, and say whether it left. */
+function sendArtAddress({ host, port = ARTNET_PORT, command, bindIndex = 1 }: {
+  host: string; port?: number; command: number; bindIndex?: number;
+}, timeoutMs = 2000): Promise<{ ok: boolean; error: string | null }> {
+  return new Promise((resolve) => {
+    const socket = dgram.createSocket('udp4');
+    let settled = false;
+    const finish = (error: string | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { socket.close(); } catch (_) { /* already closing */ }
+      resolve({ ok: !error, error });
+    };
+    const timer = setTimeout(() => finish('timed out'), timeoutMs);
+    timer.unref();
+    socket.on('error', (err) => finish(err.message));
+    socket.bind(() => {
+      const packet = buildArtAddress(command, bindIndex);
+      socket.send(packet, 0, packet.length, port, host, (err) => finish(err ? err.message : null));
+    });
+  });
+}
+
 /**
  * Try one send to the configured target and report what the OS said.
  *
@@ -351,6 +412,12 @@ function probeSend({ host, port, universe = 0 }: { host: string; port: number; u
 
 export {
   ARTNET_PORT,
+  OP_ADDRESS,
+  AC_LED_NORMAL,
+  AC_LED_MUTE,
+  AC_LED_LOCATE,
+  buildArtAddress,
+  sendArtAddress,
   OP_POLL,
   OP_POLL_REPLY,
   OP_SYNC,

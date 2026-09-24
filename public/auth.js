@@ -12,7 +12,7 @@
  *      the Socket.IO handshake carries it as auth.token.
  *
  * The prompt matters because the lockout is easy to walk into: set a token in
- * the settings page, restart, and the very browser that set it has nothing
+ * Settings, restart, and the very browser that set it has nothing
  * stored. Before, that browser showed a veil promising it was reconnecting —
  * while Socket.IO, which does not retry a handshake the server rejected, sat
  * there doing nothing. Now it asks for the token and reconnects on the spot.
@@ -43,7 +43,7 @@
     token = '';
   }
 
-  // Read by state.js / settings.js when opening the socket.
+  // Read by state.js when opening the socket.
   window.LIGHTSHOW_TOKEN = token;
 
   // Attach the header centrally rather than at ~13 call sites, so a new fetch
@@ -70,9 +70,9 @@
   };
 
   // ── The prompt ─────────────────────────────────────────────────────────────
-  // Plain DOM on purpose: both the Preact control surface and the vanilla
-  // settings page raise it, and the token is this module's business. It reuses
-  // the .offline-veil / .offline-card styles both pages already load.
+  // Plain DOM on purpose: it has to work before the app has rendered, and the
+  // token is this module's business. It reuses the .offline-veil /
+  // .offline-card styles the page already loads.
 
   let veil = null;
   let field = null;
@@ -131,9 +131,9 @@
   }
 
   // Where the token lives, said once rather than left to memory: the operator
-  // reading this is locked out of the settings page too.
-  const WHERE = 'Find it in config/settings.json under "server.token", or in the '
-    + 'settings page on a browser that is still connected.';
+  // reading this is locked out of the Settings view too.
+  const WHERE = 'Find it in config/settings.json under "server.token", or under '
+    + 'Settings → Server & access on a browser that is still connected.';
 
   /**
    * Ask for the token. Safe to call repeatedly: a second call while the prompt

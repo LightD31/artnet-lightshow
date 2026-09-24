@@ -216,7 +216,7 @@ class AnalysisConfig:
     parallel: bool = True
     #: Where the sections come from: 'auto', 'songformer' or 'off' (see
     #: songformer.py). None reads ARTNET_STRUCTURE_MODEL, which the server sets
-    #: from the settings page.
+    #: from the app's settings.
     structure_model: str = None
 
     def tuned(self, **overrides) -> 'AnalysisConfig':

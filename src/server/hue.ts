@@ -32,12 +32,13 @@ export interface HueStatus {
   error: string | null;
 }
 
-/** An entertainment area, as the settings page lists it. */
+/** An entertainment area, as the Rig view lists it. */
 export interface EntertainmentArea {
   id: string;
   name: string;
   status: string;
-  channels: { id: number; name: string; position: unknown }[];
+  /** `devices`: the Hue devices that render each channel, to identify them. */
+  channels: { id: number; name: string; position: unknown; devices: string[] }[];
 }
 
 export type PairResult =
@@ -90,6 +91,8 @@ type PairReply = {
 interface Lamp {
   name: string;
   product: string;
+  /** The device's id, which is what identify is sent to. */
+  device: string;
 }
 
 /**
@@ -136,12 +139,12 @@ const CIPHER_SUITE = 'TLS_PSK_WITH_AES_128_GCM_SHA256' as const;
 
 // A bridge on the LAN answers in milliseconds. This is long enough to cover a
 // busy bridge and short enough that a wrong IP fails while the operator is
-// still looking at the settings page.
+// still looking at the Hue section.
 const REST_TIMEOUT_MS = 5000;
 const HANDSHAKE_TIMEOUT_MS = 5000;
 
 // Philips' cloud index of bridges that have phoned home from this public IP.
-// Used only as a convenience in the settings page; a bridge can always be
+// Used only as a convenience in the Rig view; a bridge can always be
 // typed in by hand, and a rig on an isolated show network will have to be.
 const DISCOVERY_URL = 'https://discovery.meethue.com/';
 
@@ -370,6 +373,7 @@ async function fetchLampNames(host: string, key: string): Promise<Map<string, La
       deviceById.set(device.id, {
         name: (device.metadata && device.metadata.name) || '',
         product: (device.product_data && device.product_data.product_name) || '',
+        device: device.id,
       });
     }
 
@@ -448,9 +452,33 @@ async function listEntertainmentConfigs(host: string, key: string): Promise<Ente
         id: ch.channel_id,
         name: nameChannel(ch, names, segmentCounts, seen),
         position: ch.position || null,
+        devices: [...new Set((ch.members || [])
+          .map((m) => names.get((m.service && m.service.rid) || '')?.device)
+          .filter((d): d is string => !!d))],
       })),
     };
   });
+}
+
+/**
+ * Ask Hue devices to show themselves: the bridge has each lamp breathe once
+ * (CLIP v2 `identify`). A lamp in an area that is streaming follows the
+ * stream instead, so a lamp bound to a fixture is identified through the
+ * fixture (identify.ts) rather than through this.
+ */
+async function identifyDevices(host: string, key: string, devices: readonly string[]): Promise<number> {
+  let sent = 0;
+  for (const id of devices) {
+    if (!/^[0-9a-fA-F-]{36}$/.test(id)) continue;
+    await bridgeRequest(host, {
+      method: 'PUT',
+      path: `/clip/v2/resource/device/${encodeURIComponent(id)}`,
+      key,
+      body: { identify: { action: 'identify' } },
+    });
+    sent++;
+  }
+  return sent;
 }
 
 /** Open or close the bridge's streaming session for an area. */
@@ -830,6 +858,7 @@ export {
   CONFIG_ID_BYTES,
   CHANNEL_BYTES,
   discoverBridges,
+  identifyDevices,
   pair,
   fetchApplicationId,
   setApplicationIdSink,

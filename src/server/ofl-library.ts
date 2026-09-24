@@ -4,7 +4,7 @@
  * It only ever talks to open-fixture-library.org, with fixture keys checked
  * to be what OFL keys are, so the routes in front of it cannot be turned into
  * a way of fetching any URL from the server. Every answer is bounded in time
- * and size: the library is someone else's server. Offline, the settings page
+ * and size: the library is someone else's server. Offline, the Rig view
  * still imports a downloaded OFL file (ofl.ts) without any of this.
  */
 

@@ -20,7 +20,7 @@ import { parseOfl } from './ofl.ts';
 import { createOflLibrary } from './ofl-library.ts';
 import { wledClient, wledProfile } from './wled.ts';
 import { midiMap, ACTIONS, defaultTypeFor, mapSchema, learnSchema, bindingWriteSchema } from './midi-map.ts';
-import { profileSchema, deezerStateSchema, fixtureRestoreSchema, dmxUniverse, huePairSchema, wledAddSchema, overlaySchema, validate } from './validation.ts';
+import { profileSchema, deezerStateSchema, fixtureRestoreSchema, fixtureAddSchema, huePairSchema, wledAddSchema, overlaySchema, validate } from './validation.ts';
 import * as output from './output.ts';
 import { discoverNodes } from './artnet.ts';
 import { interfaces } from './artnet-nodes.ts';
@@ -29,6 +29,7 @@ import { settings, RESTART_PATHS, CONFIG_FILE } from './settings.ts';
 import { connectMidi } from './midi-connect.ts';
 import { generateToken } from './auth.ts';
 import { runPreflight } from './preflight.ts';
+import { attachRigRoutes } from './rig-routes.ts';
 import { modelManager, modelDownloadSchema } from './model-manager.ts';
 import { warmRequestSchema, warmPlaylistSchema, parseSetList, fromSpotifyTracks, MAX_TRACKS as MAX_WARM_TRACKS } from './warm.ts';
 import * as pythonEnv from '../python-env.ts';
@@ -90,7 +91,7 @@ const uploadGdtf = multer({ storage: multer.memoryStorage(), limits: { fileSize:
 const uploadOfl = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 8 } });
 
 // Local-file analysis reads a path off the filesystem. When a library folder is
-// set in the settings page it is confined to that subtree; blank keeps the old
+// set (Sources → Analysis) it is confined to that subtree; blank keeps the old
 // behaviour of any absolute path. Read per request so a change applies without
 // a restart.
 //
@@ -319,7 +320,7 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
     res.json({
       ok: true,
       ...midiMap.snapshot(),
-      // The catalogue the settings page renders its picker from, so the list of
+      // The catalogue the Settings view renders its picker from, so the list of
       // bindable actions lives in one place rather than two.
       actions: ACTIONS,
       learning: midi.learning,
@@ -584,71 +585,107 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
     res.json({ ok: true });
   });
 
+  /**
+   * Add fixtures: one generic par behind whatever is on the rig's default
+   * universe, as the patch table's "+" always has — or, with a body, `count`
+   * of one profile from an address on a universe, one after another. A
+   * universe that fills goes on to the next, and a strip longer than a
+   * universe starts at channel 1 of universes of its own, so "sixteen bars
+   * from address 1" is one request rather than sixteen and some arithmetic.
+   */
   app.post('/api/fixtures', (req, res) => {
-    if (state.fixtures.length >= MAX_FIXTURES) {
+    let body;
+    try {
+      body = validate(fixtureAddSchema, req.body || {}, 'fixtures');
+    } catch (err) {
+      return res.status(400).json({ ok: false, error: messageOf(err) });
+    }
+    const count = body.count ?? 1;
+    if (state.fixtures.length + count > MAX_FIXTURES) {
       return res.status(400).json({ ok: false, error: `Patch is full (${MAX_FIXTURES} fixtures)` });
     }
-    // New fixtures land on the rig's default universe unless the caller names
-    // another one, and auto-address behind whatever is already on *that*
-    // universe — addressing behind the whole patch would leave a hole at the
-    // front of every universe but the first.
-    let universe = state.artnet.universe;
-    if (req.body && req.body.universe !== undefined) {
-      const parsed = dmxUniverse.safeParse(req.body.universe);
-      if (!parsed.success) {
-        return res.status(400).json({ ok: false, error: 'universe must be an integer from 0 to 32767' });
+    const profiles = listProfiles();
+    const profileId = body.profileId ?? BUILTIN_PROFILE_ID;
+    const profile = profiles[profileId];
+    if (!profile) return res.status(400).json({ ok: false, error: `No profile "${profileId}"` });
+
+    // What is taken, per universe: the last channel used on it, a strip
+    // running on into it included, and new fixtures as they are placed.
+    const lastUsed = new Map<number, number>();
+    const take = (universe: number, address: number) => {
+      for (const part of footprintOf(universe, address, profile)) {
+        lastUsed.set(part.universe, Math.max(lastUsed.get(part.universe) || 0, part.last));
       }
-      universe = parsed.data;
+    };
+    for (const fix of state.fixtures) {
+      for (const part of footprintOf(universeOf(fix), fix.address, profiles[fix.profileId] || profiles[BUILTIN_PROFILE_ID])) {
+        lastUsed.set(part.universe, Math.max(lastUsed.get(part.universe) || 0, part.last));
+      }
+    }
+    const span = universeCount(profile);
+    const placed: { universe: number; address: number }[] = [];
+    let universe = body.universe ?? state.artnet.universe;
+    let address = body.address ?? (lastUsed.get(universe) || 0) + 1;
+    for (let k = 0; k < count; k++) {
+      if (span > 1) {
+        // A strip: channel 1 of as many empty universes as it runs over.
+        const free = (u: number) => [...Array(span).keys()].every((j) => !lastUsed.has(u + j));
+        if (address !== 1 || !free(universe)) {
+          while (universe <= 32767 && !free(universe)) universe++;
+          address = 1;
+        }
+      } else if (!fitsInUniverse(address, profile.channelCount)) {
+        if (k === 0 && body.address !== undefined) {
+          return res.status(400).json({
+            ok: false,
+            error: `A ${profile.channelCount}-channel fixture at ${address} would end at `
+              + `${endChannel(address, profile.channelCount)}, past the ${UNIVERSE_SIZE}-channel universe`,
+          });
+        }
+        // Full: behind whatever is on the next universe that has room.
+        do {
+          universe++;
+          address = (lastUsed.get(universe) || 0) + 1;
+        } while (universe <= 32767 && !fitsInUniverse(address, profile.channelCount));
+      }
+      if (universe > 32767) return res.status(400).json({ ok: false, error: 'No room left on any universe' });
+      placed.push({ universe, address });
+      take(universe, address);
+      if (span > 1) { universe += span; address = 1; } else address += profile.channelCount;
     }
 
-    // Behind everything on that universe, a strip running on into it included.
-    let maxEnd = 0;
-    const profiles = listProfiles();
-    for (const fix of state.fixtures) {
-      const profile = profiles[fix.profileId] || profiles[BUILTIN_PROFILE_ID];
-      for (const part of footprintOf(universeOf(fix), fix.address, profile)) {
-        if (part.universe === universe && part.last + 1 > maxEnd) maxEnd = part.last + 1;
-      }
-    }
-    const chCount = profiles[BUILTIN_PROFILE_ID].channelCount;
-    // Auto-address after the last patched fixture. Clamping to a fixed 501 used
-    // to hand out an address the new fixture does not actually fit at, so the
-    // tail of a full universe silently produced dead channels.
-    const address = Math.max(1, maxEnd);
-    if (!fitsInUniverse(address, chCount)) {
-      return res.status(400).json({
-        ok: false,
-        error: `No room left in universe ${universe}: a ${chCount}-channel fixture at ${address} `
-          + `would end at ${endChannel(address, chCount)}, past the ${UNIVERSE_SIZE}-channel universe`,
-      });
-    }
-    const next = [...state.fixtures, { universe, profileId: BUILTIN_PROFILE_ID }];
+    const labelOf = (id: number, k: number) => (body.label ? (count > 1 ? `${body.label} ${k + 1}` : body.label) : `Fixture ${id + 1}`);
+    const draft = placed.map((p, k) => ({ id: -1 - k, label: labelOf(state.fixtures.length + k, k), ...p, profileId }));
+    const next = [...state.fixtures, ...draft];
     const tooMany = unitCapOverflow(next);
     if (tooMany) return res.status(400).json({ ok: false, error: tooMany });
-    const wled = ddpConflict([...state.fixtures, { id: -1, label: `Fixture ${state.fixtures.length + 1}`, address, universe, profileId: BUILTIN_PROFILE_ID }],
-      getProfile, universeOf);
+    const wled = ddpConflict(next, getProfile, universeOf);
     if (wled) return res.status(400).json({ ok: false, error: wled });
     if (countUniverses(next) > MAX_UNIVERSES) {
       return res.status(400).json({
         ok: false,
-        error: `Universe ${universe} would put the patch on more than the ${MAX_UNIVERSES} `
+        error: `${count > 1 ? 'These fixtures' : `Universe ${placed[0].universe}`} would put the patch on more than the ${MAX_UNIVERSES} `
           + 'universes this server transmits',
       });
     }
-    const newId = allocateFixtureId();
-    state.fixtures.push({
-      id: newId,
-      label: `Fixture ${newId + 1}`,
-      address,
-      universe,
-      profileId: BUILTIN_PROFILE_ID,
-      maxBrightness: 255,
-      override: null,
+    const ids: number[] = [];
+    placed.forEach((p, k) => {
+      const id = allocateFixtureId();
+      ids.push(id);
+      state.fixtures.push({
+        id,
+        label: labelOf(id, k),
+        address: p.address,
+        universe: p.universe,
+        profileId,
+        maxBrightness: 255,
+        override: null,
+      });
     });
     resizeFixtureBuffers();
     showStore.scheduleSave();
     integrations.broadcast();
-    res.json({ ok: true });
+    res.json({ ok: true, fixtures: ids, placed });
   });
 
   // Answers with the fixture that was removed and its position, so the client
@@ -833,7 +870,7 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
       // pointing the operator at one would send them somewhere that cannot work.
       return res.status(400).json({
         ok: false,
-        error: 'Add a Spotify client ID and secret in the settings page first',
+        error: 'Add a Spotify client ID and secret under Sources → Spotify first',
       });
     }
     res.redirect(spotify.getAuthorizeUrl());
@@ -860,8 +897,8 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
           + (spotify.usingProxy
             ? ' If your OAuth proxy does not forward the state parameter, either clear '
               + 'the proxy (Spotify accepts a 127.0.0.1 redirect directly, and the state '
-              + 'then round-trips intact) or enable "accept unverified state" in the '
-              + 'settings page — the latter disables OAuth CSRF protection.'
+              + 'then round-trips intact) or enable "Allow Unverified State" under '
+              + 'Sources → Spotify — the latter disables OAuth CSRF protection.'
             : '')
         );
       }
@@ -1202,7 +1239,7 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
 
   // Nudging this mid-set is normal — an operator hears the lights lagging and
   // corrects — so it gets its own endpoint alongside intensity rather than
-  // living only in the settings page.
+  // living only in the stored settings.
   app.post('/api/auto/sync-offset/:value', (req, res) => {
     try {
       applyPatch({ autoSyncOffsetMs: parseInt(req.params.value, 10) });
@@ -1381,7 +1418,7 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
   // ─── Philips Hue ──────────────────────────────────────────────────────────
   // Pairing and area selection cannot be plain settings fields: the bridge
   // issues the credentials itself, and the list of areas only exists on the
-  // bridge. These are the calls the settings page drives that with.
+  // bridge. These are the calls the Rig view drives that with.
 
   app.get('/api/hue/status', (_req, res) => {
     const config = output.getHueConfig();
@@ -1445,7 +1482,7 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
   // This machine's IPv4 addresses, for choosing which network sACN multicast
   // leaves on.
   app.get('/api/network/interfaces', (_req, res) => {
-    res.json({ ok: true, interfaces: interfaces().map(({ name, address, netmask }) => ({ name, address, netmask })) });
+    res.json({ ok: true, interfaces: interfaces().map(({ name, address, netmask, broadcast }) => ({ name, address, netmask, broadcast })) });
   });
 
   // The audio devices the live input can hear: outputs for loopback, inputs
@@ -1592,6 +1629,9 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
   app.post('/api/settings/token/suggest', (_req, res) => {
     res.json({ ok: true, token: generateToken() });
   });
+
+  // Identify and discovery: finding the rig and making it show itself.
+  attachRigRoutes(app, { wled, broadcast: () => integrations.broadcast() });
 
   // ─── Error handler ────────────────────────────────────────────────────────
   // Must be registered last. Without it, anything that reaches next(err) — an
