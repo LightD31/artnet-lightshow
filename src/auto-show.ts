@@ -263,7 +263,8 @@ class AutoShow {
       const times: number[] = [];
       for (const ev of this.timeline) {
         if (ev.action === 'patch' && ev.data
-          && (ev.data.pattern !== undefined || ev.data.beatDivision !== undefined)) times.push(ev.timeMs);
+          && (ev.data.pattern !== undefined || ev.data.pixelPattern !== undefined
+            || ev.data.beatDivision !== undefined)) times.push(ev.timeMs);
       }
       index = { timeline: this.timeline, length: this.timeline.length, times };
       this._anchorIndex = index;
@@ -946,7 +947,7 @@ class AutoShow {
     if (this._loopTimer) { clearInterval(this._loopTimer); this._loopTimer = null; }
     this._cancelEnergyTimer();
     // Clear any lingering energy override so we don't leave the rig stuck
-    this._applyPatch({ energyOverride: null, showDynamics: null, split: null });
+    this._applyPatch({ energyOverride: null, showDynamics: null, split: null, pixelPattern: null });
   }
 
   reset(): void {
@@ -1110,6 +1111,7 @@ class AutoShow {
       action: ev.action,
       id: data && data.id,
       pattern: data && data.pattern,
+      pixelPattern: data && data.pixelPattern,
       colorA: data && data.colorA,
       durationMs: data && data.durationMs,
       source: ev.source,

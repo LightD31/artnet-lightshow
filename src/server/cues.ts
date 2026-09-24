@@ -51,6 +51,10 @@ const lookSchema = z.object({
   // Absent in cues saved before LED bars: those recall with the pixel map
   // that is already on stage.
   pixelMap: z.enum(PIXEL_MAPS).optional(),
+  // The bars' own picture. Absent in cues saved before the pars and the bars
+  // could run apart: those recall as one pattern on the whole rig, as they
+  // were captured.
+  pixelPattern: z.string().min(1).max(64).nullable().optional(),
   // New cues carry ids beside their overrides so deleting a fixture cannot
   // make a cue's look land on a different light. Old cues without this field
   // use the original ids (0, 1, ...) if they predate this field.
@@ -124,6 +128,7 @@ function captureLook() {
     strobeFunction: state.strobeFunction,
     energyOverride: state.energyOverride,
     pixelMap: state.pixelMap,
+    pixelPattern: state.pixelPattern,
     fixtureIds: state.fixtures.map((f) => f.id),
     overrides: state.fixtures.map((f) => (f.override ? { ...f.override } : null)),
   };
@@ -139,7 +144,7 @@ function captureLook() {
  */
 function recallLook(look: Look): void {
   const { fixtureIds, overrides, bpm, ...rest } = look;
-  const patch: typeof rest & { bpm?: number } = rest;
+  const patch: typeof rest & { bpm?: number } = { ...rest, pixelPattern: rest.pixelPattern ?? null };
   // The saved tempo is for a set with no music to follow. While the clock is
   // locked to the song playing, the song's tempo stands: a cue is a look, and
   // recalling one is not the operator taking the tempo back by hand.

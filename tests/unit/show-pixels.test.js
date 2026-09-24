@@ -1,7 +1,8 @@
 // The auto show on a rig with LED bars: it reaches for the pictures drawn
 // across cells, and says how each scene lays them over the bars. On a rig of
 // pars it plans exactly as before (pars-golden.test.js pins that byte for
-// byte); these pin what changes when there are bars.
+// byte); these pin what changes when there are bars. What each layer does —
+// the pars' colour, the bars' movement — is show-layers.test.js.
 
 import test from 'node:test';
 import assert from 'node:assert';
@@ -35,7 +36,9 @@ test('with bars on the rig, the show draws across them', () => {
   const used = new Set();
   for (const file of files) {
     for (const intensity of [30, 60, 90]) {
-      for (const s of scenes(plan(file, { pixels: true, intensity }))) if (PIXEL_IDS.has(s.pattern)) used.add(s.pattern);
+      for (const s of scenes(plan(file, { pixels: true, intensity }))) {
+        for (const p of [s.pattern, s.pixelPattern]) if (PIXEL_IDS.has(p)) used.add(p);
+      }
     }
   }
   assert.ok(used.size >= 3, `pixel effects the show reached for: ${[...used]}`);
@@ -47,13 +50,15 @@ test('every scene on a rig with bars says how its picture lies over them', () =>
     const show = plan(file, { pixels: true });
     for (const s of scenes(show)) {
       assert.ok(PIXEL_MAPS.includes(s.pixelMap), `${file} ${s.source} at ${s.timeMs}: ${s.pixelMap}`);
-      if (RESTING.has(s.pattern)) assert.strictEqual(s.pixelMap, 'stage', `${file}: a resting look spreads across the stage`);
+      if (RESTING.has(s.pixelPattern)) assert.strictEqual(s.pixelMap, 'stage', `${file}: a resting picture spreads across the stage`);
     }
     for (const ev of show.timeline.filter((e) => e.action === 'patch')) {
       const parsed = patchSchema.safeParse(ev.data);
       assert.ok(parsed.success, `${file}: ${JSON.stringify(ev.data)} → ${parsed.error && parsed.error.message}`);
     }
-    assert.ok(new Set(scenes(show).map((s) => s.pixelMap)).size >= 2, `${file}: more than one way of laying it out`);
+    // The variety is in what the bars draw: the layout follows the picture
+    // (a verse's gradient and a drop's burst both span the stage).
+    assert.ok(new Set(scenes(show).map((s) => s.pixelPattern)).size >= 3, `${file}: more than a picture or two`);
   }
 });
 

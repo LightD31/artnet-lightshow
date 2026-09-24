@@ -126,6 +126,10 @@ function scenes(fixtures) {
   for (const pattern of patterns) run({ pattern, strobeSpeed: pattern === 'strobe' ? 200 : 0 });
   for (const pattern of ['wave', 'twinkle', 'ribbon']) run({ pattern, showDynamics: DYNAMICS });
   for (const pixelMap of ['bar', 'mirror']) run({ pattern: 'comet', pixelMap });
+  // The pars and the bars on a look each, random dice on both sides included.
+  run({ pattern: 'hit', pixelPattern: 'impact' });
+  run({ pattern: 'sections', pixelPattern: 'rise', pixelSpan: 16, pixelFrom: 0.25, pixelMap: 'mirror' });
+  run({ pattern: 'twinkle', pixelPattern: 'sparkle' });
   run({ pattern: 'chase', split: 0 });
   run({ pattern: 'chase', energy: 'color-strobe' }, 8);
   run({ pattern: 'wave', fade: { seq: 1, ms: 300, at: now }, colorA: 5 });

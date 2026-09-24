@@ -117,6 +117,11 @@ export interface ScenePayload {
   fadeMs?: number;
   split?: number;
   pixelMap?: string;
+  /** The bars' own picture on a rig with LED bars, null for one pattern on
+   *  the whole rig; its span in beats and where in it the scene starts. */
+  pixelPattern?: string | null;
+  pixelSpan?: number | null;
+  pixelFrom?: number | null;
 }
 
 export interface SceneIntent extends IntentBase, ScenePayload {

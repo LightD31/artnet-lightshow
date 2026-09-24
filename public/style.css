@@ -1089,6 +1089,12 @@ input[type=range]::-moz-range-thumb {
   border-color: var(--accent);
   color: #fff;
 }
+/* The picture the bars run while the pars hold the look's pattern. */
+.pattern-btn.on-bars {
+  border-color: var(--accent);
+  border-style: dashed;
+}
+.pattern-btn .layer-tag { font-weight: 500; color: var(--muted); }
 .pattern-btn .body { flex: 1; min-width: 0; }
 .pattern-btn .name { font-size: 11px; font-weight: 700; display: block; color: var(--text); line-height: 1.2; }
 .pattern-btn .desc { display: none; }

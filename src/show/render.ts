@@ -32,6 +32,9 @@ export interface PatchData {
   fadeMs?: number;
   split?: number | null;
   pixelMap?: string;
+  pixelPattern?: string | null;
+  pixelSpan?: number | null;
+  pixelFrom?: number | null;
   beatDivision?: number;
   strobeSpeed?: number;
   strobeFunction?: string;
@@ -180,6 +183,14 @@ function sceneData(intent: SceneIntent): PatchData {
   data.split = Number.isInteger(intent.split) ? intent.split as number : null;
   // How the picture lies over the rig's LED bars; only planned when it has any.
   if (intent.pixelMap) data.pixelMap = String(intent.pixelMap);
+  // The bars' own picture, planned only on a rig that has bars. A scene that
+  // plans one says so every time, null included, so a whole-rig moment after
+  // a two-part look is whole-rig; a picture that plays once says how long.
+  if (intent.pixelPattern !== undefined) {
+    data.pixelPattern = intent.pixelPattern ? String(intent.pixelPattern) : null;
+    data.pixelSpan = intent.pixelSpan && intent.pixelSpan > 0 ? Math.min(4096, intent.pixelSpan) : null;
+    data.pixelFrom = intent.pixelFrom && intent.pixelFrom > 0 ? Math.min(1, intent.pixelFrom) : null;
+  }
   if (intent.beatDivision != null) data.beatDivision = division(intent.beatDivision);
   if (intent.strobeSpeed != null) data.strobeSpeed = u8(intent.strobeSpeed);
   if (intent.strobeFunction) data.strobeFunction = String(intent.strobeFunction);

@@ -65,7 +65,7 @@ import { EVENT, deriveEvents, byType } from './musical-events.ts';
 import * as look from './look.ts';
 import { makeScore, hasScore, cosine, unit, list, finite } from './score.ts';
 import { INTENT, BURST, PRIORITY, scene, expression, color, accent, tempo, dark } from './intents.ts';
-import type { AccentIntent, Intent } from './intents.ts';
+import type { AccentIntent, Intent, SceneIntent } from './intents.ts';
 import type { ShowEvent } from './musical-events.ts';
 import type { Analysis, Segment } from './score.ts';
 import type { Drop, Genre, Mood, Section } from '../types/analysis.ts';
@@ -313,25 +313,101 @@ class ShowDirector {
   }
 
   /**
-   * On a rig with LED bars, every scene says how its picture lies over them.
-   * A resting passage spreads it across the stage, where it reads as one
-   * slow field; a drop mirrors it about the centre, so it hits both sides at
-   * once; everything else is chosen per passage, so a returning chorus comes
-   * back laid out the way it was.
+   * On a rig with LED bars the look comes apart in two: the pars carry the
+   * colour and the wash, and the bars carry the movement and the detail.
+   *
+   * Every scene says what the bars draw (`pixelPattern`) and how the picture
+   * lies over them (`pixelMap`), from what the music is doing there — the
+   * role of the section, or the build-up or drop the scene belongs to (see
+   * PIXEL_ROLE_LOOKS). The pars keep what the passes above chose where that
+   * is already a wash — a resting look, a build-up's narrowing, a drop's
+   * anchor — and are otherwise given one, so they no longer chase across the
+   * stage underneath bars that are chasing too. A drop's anchor is the one
+   * whole-rig moment: every fixture on the hot colour at once.
+   *
+   * The group split is left off here. It exists to give a rig of pars two
+   * layers, and the pars and the bars are those two layers now; a group
+   * holding a wash across bars would stop them moving.
    */
   _mapPixels(intents: Intent[], context: PlanContext): void {
-    const resting = new Set([...RESTING_LOOKS, 'solid', ...PIXEL_RESTING_LOOKS]);
+    const { available } = context;
+    const ordinal = new Map<string, number>();
+    const next = (key: string) => {
+      const n = ordinal.get(key) || 0;
+      ordinal.set(key, n + 1);
+      return n;
+    };
     for (const intent of intents) {
       if (intent.kind !== INTENT.SCENE || !intent.pattern) continue;
-      const section = context.sectionAt(intent.timeMs / 1000);
-      if (resting.has(intent.pattern) || (section && section.profile && section.profile.prefer)) {
+      const t = intent.timeMs / 1000;
+      const source = String(intent.source);
+      // A section's own scene was snapped to the downbeat, which can sit a
+      // moment before the section starts; it belongs to the section it opens.
+      const section = (source.startsWith('section:')
+        && context.sections.find((s) => Math.abs(context.snapToDownbeatMs(s.start) - intent.timeMs) < 1))
+        || context.sectionAt(t);
+      delete intent.split;
+
+      if (source === 'drop:anchor') {
+        intent.pixelPattern = null;
         intent.pixelMap = 'stage';
-      } else if (String(intent.source).startsWith('drop:')) {
-        intent.pixelMap = 'mirror';
-      } else {
-        const identity = section ? section.identity : 0;
-        intent.pixelMap = PIXEL_MAPS[Math.abs(identity * 5 + context.trackSeed) % PIXEL_MAPS.length];
+        continue;
       }
+      const build = source.startsWith('buildup:')
+        ? context.buildups.find((b) => t >= b.t - 0.25 && t <= endOf(b) + 0.25) : undefined;
+      if (build) {
+        // The fill runs the length of the build, across its scenes: each
+        // says how far in it starts, so the tension, the rise and the peak
+        // are one fill and not three.
+        const look = barLook(['rise', 'comet'], available);
+        this._placeBars(intent, look, 'mirror', context, build.t, endOf(build));
+        // The rise escalates on the pars too, but in their own terms: a pulse
+        // on every step of the quickening division, not a chase.
+        if (source === 'buildup:rise' && available.has('hit')) intent.pattern = 'hit';
+        continue;
+      }
+      if (source.startsWith('drop:')) {
+        this._placeBars(intent, barLook(['impact', 'burst', 'comet'], available), 'stage', context);
+        intent.pattern = parWash(1, next(`drop:${source}`) + context.trackSeed, available) || intent.pattern;
+        continue;
+      }
+      if (source === 'break') {
+        this._placeBars(intent, barLook(['plasma', 'gradient'], available), 'stage', context);
+        continue;
+      }
+
+      const role = section ? section.role : 'unknown';
+      const table = PIXEL_ROLE_LOOKS[role];
+      if (table) {
+        const look = barLook(table.map((l) => l.pattern), available);
+        const map = (table.find((l) => l.pattern === look) || table[0]).map;
+        this._placeBars(intent, look, map, context,
+          ...(look === 'rise' && section ? [section.start, section.end] as const : []));
+      } else {
+        // A passage with no role: the picture the passes chose when it is one
+        // drawn across cells, else one that travels, laid out as the passage
+        // was the first time round.
+        const identity = section ? section.identity : 0;
+        const look = CELL_LOOKS.has(intent.pattern) && available.has(intent.pattern)
+          ? intent.pattern : barLook(['comet', 'gradient'], available);
+        this._placeBars(intent, look, PIXEL_MAPS[Math.abs(identity * 5 + context.trackSeed) % PIXEL_MAPS.length], context);
+      }
+      if (section && !section.resting && !RESTING_LOOKS.includes(intent.pattern)) {
+        const turn = next(`section:${section.index}`);
+        intent.pattern = parWash(section.drive, section.identity + turn * 7 + context.trackSeed, available) || intent.pattern;
+      }
+    }
+  }
+
+  /** Put `look` on the bars; a picture that plays once gets the window it spans. */
+  _placeBars(intent: SceneIntent, look: string | null, map: string, context: PlanContext,
+    from?: number, to?: number): void {
+    intent.pixelPattern = look;
+    intent.pixelMap = map;
+    if (look === 'rise' && from !== undefined && to !== undefined && to > from) {
+      const t = intent.timeMs / 1000;
+      intent.pixelSpan = Math.max(1, beatsBetween(context, from, to));
+      intent.pixelFrom = unit((t - from) / (to - from));
     }
   }
 
@@ -1596,6 +1672,66 @@ function restingLooks(prefer: string[] | null, context: { pixels: boolean }): st
 // How a scene lays a picture over the bars: across the stage, mirrored about
 // its centre, or along every bar on its own.
 const PIXEL_MAPS = ['stage', 'mirror', 'bar'];
+
+/**
+ * What the LED bars draw in each part of a song. The bars are where the
+ * movement is, so this is the table that decides what the room sees move:
+ *
+ *   verse         a slow gradient — colour going somewhere, nothing hitting
+ *   pre-chorus    a rising fill, full as the chorus lands
+ *   chorus        a mirrored chase, out from the middle to both ends at once
+ *   drop          a ring thrown out from the centre, sparks on every kick
+ *   breakdown     low plasma
+ *   bridge, a solo  the kit as it is played, when the analysis has the drum
+ *                 hits; a comet crossing each bar when it does not
+ *
+ * Each row is tried in order, so a rig or an analysis without the first
+ * picture falls to the next. A build-up is not a role: it is the rising
+ * fill wherever it happens (see _mapPixels).
+ */
+const PIXEL_ROLE_LOOKS: Record<string, readonly { pattern: string; map: string }[]> = {
+  intro:        [{ pattern: 'gradient', map: 'stage' }],
+  verse:        [{ pattern: 'gradient', map: 'stage' }],
+  prechorus:    [{ pattern: 'rise', map: 'mirror' }, { pattern: 'comet', map: 'mirror' }],
+  chorus:       [{ pattern: 'comet', map: 'mirror' }],
+  drop:         [{ pattern: 'impact', map: 'stage' }, { pattern: 'burst', map: 'stage' }],
+  breakdown:    [{ pattern: 'plasma', map: 'stage' }, { pattern: 'gradient', map: 'stage' }],
+  bridge:       [{ pattern: 'drums', map: 'bar' }, { pattern: 'comet', map: 'bar' }],
+  instrumental: [{ pattern: 'drums', map: 'mirror' }, { pattern: 'burst', map: 'stage' }],
+  outro:        [{ pattern: 'plasma', map: 'stage' }, { pattern: 'gradient', map: 'stage' }],
+};
+
+// The pictures drawn across cells, which a passage with no role may already
+// have been given.
+const CELL_LOOKS = new Set(['gradient', 'comet', 'burst', 'plasma', 'drums', 'stems', 'rise', 'impact', 'ensemble', 'ribbon', 'wave', 'rainbow', 'twinkle', 'sparkle']);
+
+/**
+ * What the pars do while the bars move: colour, held or breathing or turning
+ * on the beat, by how hard the passage drives. None of these travel across
+ * the stage — that is the bars' job now.
+ */
+const PAR_WASHES: readonly (readonly string[])[] = [
+  ['ensemble', 'wave', 'fade'],
+  ['ensemble', 'split', 'color-cycle', 'wave'],
+  ['hit', 'sections', 'color-cycle', 'split'],
+];
+
+/** The first of `looks` the rig has, or null for the whole rig on one pattern. */
+function barLook(looks: readonly string[], available: ReadonlySet<string>): string | null {
+  return looks.find((p) => available.has(p)) ?? null;
+}
+
+/** A wash for the pars at this drive, turned by `seed`; null when the rig has none. */
+function parWash(drive: number, seed: number, available: ReadonlySet<string>): string | null {
+  const pool = PAR_WASHES[drive >= 0.72 ? 2 : drive >= 0.45 ? 1 : 0].filter((p) => available.has(p));
+  return pool.length ? pool[Math.abs(Math.round(seed)) % pool.length] : null;
+}
+
+/** Beats the tracker found between two times, or the tempo's count without them. */
+function beatsBetween(context: { beats: readonly ShowEvent[]; baseBpm: number }, from: number, to: number): number {
+  const counted = context.beats.filter((b) => b.t >= from && b.t < to).length;
+  return counted >= 2 ? counted : Math.round(((to - from) * context.baseBpm) / 60);
+}
 
 /**
  * One of a resting role's preferred looks, rotated by `seed`; null for a role

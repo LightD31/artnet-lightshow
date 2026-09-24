@@ -68,6 +68,10 @@ export interface RenderInput {
   colorD: number;
   split: number | null;
   pixelMap: PixelMap;
+  /** The bars' own picture while the pars run `pattern`, or null. */
+  pixelPattern?: string | null;
+  pixelSpan?: number | null;
+  pixelFrom?: number | null;
   beatDivision: number;
   strobeSpeed: number;
   strobeFunction: string;
@@ -205,6 +209,8 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
   // bar another (see shared/rig.js). On a rig of pars, entry i is fixture i.
   const unitColors = Array.from({ length: 4 }, blankUnit);
   const twinkle = new Array(4).fill(0);
+  // The bars' own dice, when they run a picture apart from the pars'.
+  const pixelTwinkle = new Array(4).fill(0);
 
   // ── Crossfades ─────────────────────────────────────────────────────────────
   // The show asks for a fade where the music does — long into a breakdown,
@@ -230,6 +236,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
   let anchor: PatternAnchor | null = null;
   let givenAnchor: PatternAnchor | null = null;
   let lastRandomKey: string | null = null;
+  let lastPixelRandomKey: string | null = null;
 
   let rig: Rig<RenderFixture> | null = null;
   let rigKey = '';
@@ -250,6 +257,8 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     if (unitColors.length > count) unitColors.length = count;
     while (twinkle.length < count) twinkle.push(0);
     twinkle.length = count;
+    while (pixelTwinkle.length < count) pixelTwinkle.push(0);
+    pixelTwinkle.length = count;
   }
 
   function setUnitColor(u: number, color: Colour, dim: number, strobe: number): void {
@@ -317,27 +326,41 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
    */
   function renderPattern(input: RenderInput, rigNow: Rig<RenderFixture>, reading: MusicalTime): void {
     if (!input.running) return;
+    const pixelPattern = rigNow.hasPixels && input.pixelPattern ? input.pixelPattern : null;
     const known = !!PATTERN_FUNCS[input.pattern];
+    const knownPixel = !!pixelPattern && !!PATTERN_FUNCS[pixelPattern];
     const look = {
       pattern: input.pattern,
       colors: [input.colorA, input.colorB, input.colorC, input.colorD].map((i) => COLOR_PRESETS[i]),
       split: input.split,
       pixelMap: input.pixelMap,
+      pixelPattern,
+      pixelSpan: input.pixelSpan ?? null,
+      pixelFrom: input.pixelFrom ?? null,
     };
-    if (!known) {
+    if (!known && !knownPixel) {
       // Nothing to draw, but a split look's wash still holds.
-      renderLayer(rigNow, look, null, setUnitColor, { skipPattern: true });
+      renderLayer(rigNow, look, null, setUnitColor, { skipPattern: true, skipPixelPattern: true });
       return;
     }
 
     const fixtureCount = input.fixtures.length;
     const { step, anchor: from, division } = patternStep(input, reading);
-    let skipPattern = false;
-    if (RANDOM_PATTERNS.has(input.pattern)) {
-      const pixels = rigNow.hasPixels ? `|${rigNow.units.length}|${input.pixelMap}` : '';
-      const key = `${input.pattern}|${step}|${input.colorA},${input.colorB},${input.colorC},${input.colorD}|${input.split}|${fixtureCount}${pixels}`;
+    // A random pattern re-rolls when its step or its look moves, and holds
+    // what it rolled in between; the pars and the bars keep their own dice.
+    const lookKey = `${step}|${input.colorA},${input.colorB},${input.colorC},${input.colorD}|${input.split}|${fixtureCount}`;
+    const pixels = rigNow.hasPixels ? `|${rigNow.units.length}|${input.pixelMap}` : '';
+    let skipPattern = !known;
+    if (known && RANDOM_PATTERNS.has(input.pattern)) {
+      const key = `${input.pattern}|${lookKey}${pixels}|${pixelPattern}`;
       skipPattern = key === lastRandomKey;
       lastRandomKey = key;
+    }
+    let skipPixelPattern = !knownPixel;
+    if (knownPixel && RANDOM_PATTERNS.has(pixelPattern)) {
+      const key = `${pixelPattern}|${lookKey}${pixels}|${input.pattern}`;
+      skipPixelPattern = key === lastPixelRandomKey;
+      lastPixelRandomKey = key;
     }
 
     renderLayer(rigNow, look, {
@@ -351,7 +374,8 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       pulse: input.pulse ?? null,
       fixtureCount,
       twinkle,
-    }, setUnitColor, { skipPattern });
+      pixelTwinkle,
+    }, setUnitColor, { skipPattern, skipPixelPattern });
   }
 
   function syncTestEnergy(now: number): EnergyLook | null {

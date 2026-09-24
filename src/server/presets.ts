@@ -129,6 +129,8 @@ const PATTERNS = [
   { id: 'meter',    name: 'Meter',    desc: 'A level meter filled by the low end, kicked on every step', pixel: true },
   { id: 'drums',    name: 'Drums',    desc: 'The kit as it is hit: kick from the middle, snare at the ends, hats scattered', pixel: true },
   { id: 'stems',    name: 'Stems',    desc: 'Voice, band, drums and bass in zones out from the centre, each as loud as it plays', pixel: true },
+  { id: 'rise',     name: 'Rise',     desc: 'The rig filling up through a build-up, full on the drop', pixel: true },
+  { id: 'impact',   name: 'Impact',   desc: 'A ring thrown out from the centre on every step, with sparks on every kick', pixel: true },
 ];
 
 const PATTERN_IDS = PATTERNS.map((p) => p.id);

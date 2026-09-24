@@ -87,6 +87,11 @@ const patchSchema = z.object({
   split: z.number().int().min(0).max(1e9).nullable().optional(),
   // How a pixel effect is laid over the cells of LED bars. See shared/rig.js.
   pixelMap: z.enum(PIXEL_MAPS).optional(),
+  // The bars' own picture while the pars run `pattern`; null for one pattern
+  // on the whole rig. And how many beats it takes to play once, if it does.
+  pixelPattern: z.string().min(1).max(64).nullable().optional(),
+  pixelSpan: z.number().min(0).max(4096).nullable().optional(),
+  pixelFrom: z.number().min(0).max(1).nullable().optional(),
   colorA: colorIdx.optional(),
   colorB: colorIdx.optional(),
   colorC: colorIdx.optional(),

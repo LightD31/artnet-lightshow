@@ -110,6 +110,21 @@ test('recall puts the whole look back, including per-fixture overrides', () => {
   applyOverride(0, null);
 });
 
+test('a look with the bars on a picture of their own comes back that way', () => {
+  applyPatch({ pattern: 'hit', pixelPattern: 'impact', anchorMs: 0 });
+  const saved = captureLook();
+  assert.strictEqual(saved.pixelPattern, 'impact');
+  applyPatch({ pattern: 'chase' });
+  recallLook(saved);
+  assert.deepStrictEqual([state.pattern, state.pixelPattern], ['hit', 'impact']);
+
+  // A cue saved before the pars and the bars could run apart was one pattern
+  // on the whole rig, and recalls as one.
+  const { pixelPattern: _, ...older } = saved;
+  recallLook(older);
+  assert.deepStrictEqual([state.pattern, state.pixelPattern], ['hit', null]);
+});
+
 test('recall reports an unknown id instead of blacking the rig out', () => {
   const s = store();
   assert.strictEqual(s.recall('nope'), false);

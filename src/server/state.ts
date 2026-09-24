@@ -45,6 +45,9 @@ export interface ShowState {
   showDynamics: ShowDynamics | null;
   split: number | null;
   pixelMap: PixelMap;
+  pixelPattern: string | null;
+  pixelSpan: number | null;
+  pixelFrom: number | null;
   patternAnchor: PatternAnchor | null;
 }
 
@@ -101,6 +104,15 @@ const state: ShowState = {
   // How a pixel effect is laid over the cells of LED bars: across the stage,
   // along each bar, or mirrored about the centre. Ignored on a rig of pars.
   pixelMap: 'stage',
+  // The picture the LED bars draw while the pars run `pattern` — the auto
+  // show gives the pars the colour and the bars the movement — and how many
+  // beats it takes to play once when it plays once (a build-up's fill). Null
+  // runs `pattern` on the whole rig.
+  pixelPattern: null,
+  pixelSpan: null,
+  // How far through its span that picture already is when the scene starts:
+  // a build-up's fill carries on across the scenes inside the build.
+  pixelFrom: null,
   // Where the running pattern counts its steps from, on the step grid of the
   // musical clock, and which of the clock's epochs that grid belongs to. Set
   // when a scene changes the pattern or the division (patch.js); the engine
@@ -258,6 +270,7 @@ function getLiveState() {
     strobeSpeed: state.strobeSpeed,
     strobeFunction: state.strobeFunction,
     pixelMap: state.pixelMap,
+    pixelPattern: state.pixelPattern,
     energyOverride: state.heldEnergy ?? state.energyOverride,
     palette: state.palette,
     autoIntensity: state.autoIntensity,
