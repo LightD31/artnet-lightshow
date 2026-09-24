@@ -24,7 +24,7 @@ export function AnalysisStats({ as, colorPresets }) {
       <div class="auto-analysis-row tier-row">
         <span
           class="tier-badge"
-          style={{ background: `${color}22`, color, borderColor: `${color}55` }}
+          style={{ background: `${color}22`, borderColor: color }}
           title={`PANNs AudioSet genre classifier (${label}${conf})`}
         >{label.toUpperCase()}{conf}</span>
         {tags.length > 0 && (
@@ -112,7 +112,7 @@ export function AnalysisStats({ as, colorPresets }) {
 
   blocks.push(
     <section class="analysis-models" aria-label="Models used for this track">
-      <h4>Models used for this track</h4>
+      <h3>Models used for this track</h3>
       {a.models?.length ? (
         <dl class="analysis-model-list">
           {a.models.map(({ role, model, status }) => (

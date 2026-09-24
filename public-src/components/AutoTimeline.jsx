@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { autoPositionSig, autoTimelineSig, connectedSig, stateSig } from '../state.js';
 import { fmtTime } from '../utils.js';
-import { loadTimeline, timelineDetails, timelineKey, timelinePosition } from '../timeline-state.js';
+import { timelineDetails, timelineKey, timelinePosition } from '../timeline-state.js';
+import { useTimeline } from '../use-timeline.js';
 
 import { createTimelineRenderer } from '../timeline-renderer.js';
 
@@ -113,31 +114,12 @@ function TimelineSurface({ data, durMs }) {
 
 export function AutoTimeline() {
   const s = stateSig.value;
-  const [retryAttempt, setRetryAttempt] = useState(0);
-  const key = timelineKey(s);
   const connected = connectedSig.value;
-
-  // Fetch the heavy timeline payload when the analysis identity changes.
-  useEffect(() => {
-    if (!key) {
-      autoTimelineSig.value = { data: null, key: null, status: 'idle', error: null };
-      return;
-    }
-    if (!connected) {
-      autoTimelineSig.value = { key, data: null, status: 'offline', error: null };
-      return;
-    }
-    const request = loadTimeline(key, (next) => {
-      if (next.status !== 'loading' && autoTimelineSig.value.key !== key) return;
-      autoTimelineSig.value = next;
-    });
-    return () => request.cancel();
-  }, [key, connected, retryAttempt]);
+  const timeline = useTimeline();
 
   if (!s.autoShow || !s.autoShow.analysis) return null;
 
-  const timelineState = autoTimelineSig.value;
-  const data = timelineState.key === key ? timelineState.data : null;
+  const { data } = timeline;
   const durMs = data && data.duration ? data.duration * 1000 : 0;
 
   return (
@@ -145,11 +127,9 @@ export function AutoTimeline() {
       <div class="auto-timeline-header">
         <span class="auto-timeline-title">Timeline</span>
         <PlaybackStatus connected={connected} running={s.autoShow.running} />
-        {timelineState.status === 'loading' && <span class="auto-timeline-status">Loading…</span>}
-        {timelineState.status === 'offline' && <span class="auto-timeline-status">Waiting for connection…</span>}
-        {timelineState.error && <button class="auto-timeline-status error" type="button" onClick={() => {
-          setRetryAttempt((attempt) => attempt + 1);
-        }}>{timelineState.error} Retry</button>}
+        {timeline.status === 'loading' && <span class="auto-timeline-status">Loading…</span>}
+        {timeline.status === 'offline' && <span class="auto-timeline-status">Waiting for connection…</span>}
+        {timeline.error && <button class="auto-timeline-status error" type="button" onClick={timeline.retry}>{timeline.error} Retry</button>}
         <Elapsed durMs={durMs} />
       </div>
       <TimelineSurface data={data} durMs={durMs} />

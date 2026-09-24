@@ -8,7 +8,8 @@
 // next load. Nothing under /api or /socket.io is ever cached — that is live
 // state, and a stale answer from it would be worse than none.
 
-const CACHE = 'lightshow-shell-v1';
+// v2: the page is an ES module now, and part of it is in /chunks/.
+const CACHE = 'lightshow-shell-v2';
 const SHELL = [
   '/',
   '/style.css',
@@ -22,9 +23,20 @@ const SHELL = [
   '/icons/icon-192.png',
 ];
 
+// The page's chunks, named by their content: the build lists them (every
+// load after this one caches whatever a newer build has, as it fetches them).
+async function chunks() {
+  const res = await fetch('/chunks/index.json', { cache: 'no-store' });
+  const list = res.ok ? await res.json() : [];
+  return Array.isArray(list) ? list.filter((p) => typeof p === 'string' && p.startsWith('/chunks/')) : [];
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE)
-    .then((cache) => cache.addAll(SHELL))
+    .then(async (cache) => {
+      await cache.addAll(SHELL);
+      await cache.addAll(await chunks());
+    })
     .catch(() => { /* a missing file must not stop the worker installing */ })
     .then(() => self.skipWaiting()));
 });

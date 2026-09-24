@@ -1721,10 +1721,10 @@ input[type=range]::-moz-range-thumb {
 .auto-analysis-row.tier-row { margin-bottom: 2px; }
 .auto-analysis-row.dim { font-size: 10px; opacity: 0.75; }
 .auto-analysis-stats strong { color: var(--text); font-weight: 700; }
-.auto-analysis-stats .dim { color: var(--muted); font-weight: normal; opacity: 0.7; }
+.auto-analysis-stats .dim { color: var(--muted); font-weight: normal; }
 
 .analysis-models { border-top: 1px solid var(--border); margin-top: 6px; padding-top: 12px; }
-.analysis-models h4 { margin: 0 0 10px; font-size: 11px; color: var(--muted); font-weight: 600; }
+.analysis-models h3 { margin: 0 0 10px; font-size: 11px; color: var(--muted); font-weight: 600; }
 .analysis-model-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px 16px; margin: 0; }
 .analysis-model dt { font-size: 10px; color: var(--muted); margin-bottom: 3px; }
 .analysis-model dd { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; margin: 0; }
@@ -1734,6 +1734,9 @@ input[type=range]::-moz-range-thumb {
   padding: 4px 12px;
   border-radius: 999px;
   border: 1px solid;
+  /* The genre's colour is its border and tint; the words stay readable on
+     every theme, and a neon genre colour on a light page is not. */
+  color: var(--text);
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.08em;
@@ -2873,6 +2876,8 @@ input[type=range]::-moz-range-thumb {
 
 /* Track edits (TrackEdits.jsx): the operator's changes to one track's show. */
 .track-edits .panel-head { display: flex; justify-content: space-between; align-items: center; }
+/* The accent row: a picker and two buttons, which wrap on a phone rather than run off it. */
+.track-edits .look-row { flex-wrap: wrap; row-gap: 6px; }
 .track-edits .edit-list { list-style: none; margin: 4px 0 8px; padding: 0; font-size: 12px; color: var(--muted); }
 .track-edits .edit-list li { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
 .track-edits .edit-sections { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
@@ -2889,7 +2894,7 @@ input[type=range]::-moz-range-thumb {
   margin: 4px 4px;
   background: var(--border-hi);
 }
-/* Seven tabs: on a narrow screen the strip scrolls rather than squashing them. */
+/* Nine tabs: on a narrow screen the strip scrolls rather than squashing them. */
 .mode-tabs { max-width: calc(100% - 24px); overflow-x: auto; scrollbar-width: thin; }
 .mode-tab { flex-shrink: 0; white-space: nowrap; }
 
@@ -3261,6 +3266,125 @@ input[type=range]::-moz-range-thumb {
   .wizard-field, .mode-field { flex-direction: column; align-items: stretch; }
   .wizard-field > span, .mode-key { width: auto; }
 }
+/* =============================================================
+   STAGE — the rig in 3D
+   ============================================================= */
+.stage3d-view { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.stage3d-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 8px 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.stage3d-haze { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; color: var(--muted); }
+.stage3d-haze input { width: 110px; accent-color: var(--accent); }
+.stage3d-sep { width: 1px; align-self: stretch; background: var(--border); }
+.stage3d-scrub { flex: 1 1 160px; min-width: 120px; accent-color: var(--accent); }
+.stage3d-time { font-family: var(--mono); font-size: 11px; color: var(--text-2); white-space: nowrap; }
+.stage3d-wrap {
+  position: relative;
+  /* The stage is wider than it is deep: fill the width, and as much of the
+     height as leaves the toolbar and a line of help in view. */
+  height: clamp(280px, calc(100vh - 260px), 900px);
+  background: #030306;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.stage3d-canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+.stage3d-canvas:active { cursor: grabbing; }
+.stage3d-canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.stage3d-note {
+  position: absolute;
+  inset: auto 12px 12px 12px;
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #e4e4e7;
+  background: rgba(9, 9, 11, .85);
+  border: 1px solid #3f3f46;
+  border-radius: var(--radius-sm);
+}
+@media (max-width: 560px) {
+  .stage3d-sep { display: none; }
+  .stage3d-wrap { height: clamp(240px, 60vh, 520px); }
+}
+
+/* =============================================================
+   TIMELINE — the show, to read and rehearse
+   ============================================================= */
+.timeline-view { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.timeline-main { min-width: 0; }
+.timeline-track {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+}
+.timeline-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+.timeline-time { font-family: var(--mono); font-size: 11px; color: var(--text-2); }
+.timeline-gap { flex: 1; }
+.timeline-scroll {
+  overflow-x: auto;
+  scrollbar-width: thin;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #0a0a0f;
+}
+.timeline-canvas-wrap { position: relative; min-width: 100%; }
+.timeline-canvas { display: block; width: 100%; height: 180px; cursor: crosshair; touch-action: pan-y; }
+.timeline-canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* Where the rehearsal is: the live playhead is drawn white on the canvas. */
+.timeline-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--accent-3);
+  box-shadow: 0 0 6px var(--accent-3);
+  pointer-events: none;
+}
+.timeline-sections { display: flex; gap: 2px; margin-top: 6px; min-width: 0; }
+.timeline-section {
+  --role: #52525b;
+  appearance: none;
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 4px 4px 3px;
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--role);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  cursor: pointer;
+}
+.timeline-section span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.timeline-section:hover { background: var(--card-hi); color: var(--text); }
+.timeline-section.current { background: var(--card-hi); color: var(--text); border-color: var(--role); }
+.timeline-section:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* The renderer's colours for each role, so a button matches its band. */
+.timeline-section.role-intro     { --role: #3d5a80; }
+.timeline-section.role-verse     { --role: #4f7cac; }
+.timeline-section.role-chorus    { --role: #e07a5f; }
+.timeline-section.role-drop      { --role: #d62839; }
+.timeline-section.role-bridge    { --role: #8367c7; }
+.timeline-section.role-breakdown { --role: #2a9d8f; }
+.timeline-section.role-outro     { --role: #5c677d; }
+
 
 /* =============================================================
    TOUCH — a finger, not a cursor: every target at least 44 px
@@ -3270,7 +3394,7 @@ input[type=range]::-moz-range-thumb {
   .header-tool, .header-theme, .cb-energy-btn, .cb-tap, .cb-play, .cb-blackout,
   .palette-btn, .pattern-btn, .color-slot-tab, .cue-recall, .cue-capture, .sync-nudge,
   .transport-btn, .warm-toggle, .auto-select, .warm-playlist-select, .shortcuts-tab,
-  .sub-tab, .remove-btn, .wizard-step-btn, .ofl-hit, .file-upload-btn,
+  .sub-tab, .remove-btn, .wizard-step-btn, .ofl-hit, .file-upload-btn, .timeline-section,
   select, input[type=number], input[type=text], input[type=search], input[type=password], textarea {
     min-height: 44px;
   }

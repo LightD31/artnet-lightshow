@@ -453,7 +453,7 @@ Every phase is its own PR, keeps `npm run check` and the Python suite green, and
 
 ### Phase 6 — UI v2
 
-> **Status.** Delivered in three parts; 6a and 6b are done, 6c is next. **6a — the live surface — done:**
+> **Status.** Done, delivered in three parts: 6a, 6b and 6c. **6a — the live surface — done:**
 > - **Protocol v2:**
 >   - an opt-in handshake gives the live page a snapshot, then per-domain versioned key diffs, resynced on a gap;
 >   - binary DMX frames go out at 30 Hz, volatile, only to subscribed sockets;
@@ -473,8 +473,8 @@ Every phase is its own PR, keeps `npm run check` and the Python suite green, and
 >
 > **6b — setting up — done:**
 > - **One SPA:** the settings page is gone (`public/settings.js`, `settings.css`); `/settings.html` redirects its old
->   tabs to the **Rig** (plan & patch, profiles, outputs), **Sources**, **Settings** and **Preflight** views, keys 4–7,
->   one spec-driven section per group of stored settings.
+>   tabs to the **Rig** (plan & patch, profiles, outputs), **Sources**, **Settings** and **Preflight** views (keys
+>   4–7 then, 6–9 since 6c), one spec-driven section per group of stored settings.
 > - **Pixel mapping:** the Rig view's plan — select, marquee, drag, snap, row and end-to-end arranging, an inspector —
 >   and *Draw bar*: the bar lights on the rig (first cell green, last red, a dot between) and is drawn from end to
 >   end on the plan, then the next bar is lit.
@@ -488,7 +488,19 @@ Every phase is its own PR, keeps `npm run check` and the Python suite green, and
 > - **Tests:** e2e for the views, the plan, identify, settings and secrets, the wizard; axe on every new view and
 >   wizard step in every theme.
 >
-> **Next — 6c:** the three.js Stage view and the Show view.
+> **6c — the show and the stage — done:**
+> - **Timeline view** (the planned *Show* view, key 4): the loaded track's timeline, zoomable to 8× and a scrubber —
+>   press, drag or arrow keys to rehearse from any moment, section buttons to jump — with the stage preview, the
+>   analysis and the track edits (an accent goes in at the rehearsal mark while rehearsing).
+> - **Stage view** (key 5): three.js, instanced — par heads with haze cones and floor pools, bar and panel cells,
+>   Hue bulbs, trusses where the rig hangs — from the audience, above or the side, with a haze setting and orbit,
+>   touch and keyboard controls. Live from the DMX feed through each profile; rehearsing, the planned show sampled
+>   by `shared/preview.ts` every frame, one rehearsal position shared with the Timeline view.
+> - **Build:** the bundle is an ES module split by esbuild; three.js is a lazy chunk, listed for the service worker
+>   to keep. A browser without WebGL is told so.
+> - **Tests:** the room layout and light colours (unit); scrubbing, rehearsal, blackout, viewpoints, no-WebGL and
+>   the kept chunks (e2e, on an analysed track the e2e server seeds its throwaway cache with, `LIGHTSHOW_CACHE_DIR`);
+>   axe on both views in every theme.
 - **One SPA.** Settings move into `public-src`, and `public/settings.js` and its duplicate API/auth/socket code are deleted.
 - **Protocol v2:**
   - domain-scoped signals with versioned diffs;

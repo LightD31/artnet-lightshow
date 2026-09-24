@@ -22,6 +22,18 @@ test('on a secure page the service worker takes over, and keeps out of the API',
   expect(text).toContain("url.pathname.startsWith('/api/')");
 });
 
+test('the shell the service worker keeps has the page\'s chunks, three.js with them', async ({ page, request }) => {
+  await open(page, 'manual');
+  await page.evaluate(async () => { await navigator.serviceWorker.ready; });
+  const listed = await (await request.get('/chunks/index.json')).json();
+  expect(listed.some((p) => /^\/chunks\/scene-/.test(p))).toBe(true);
+  await expect.poll(() => page.evaluate(async () => {
+    const name = (await caches.keys()).find((k) => k.startsWith('lightshow-shell'));
+    const cache = name ? await caches.open(name) : null;
+    return cache ? (await cache.keys()).map((r) => new URL(r.url).pathname) : [];
+  })).toEqual(expect.arrayContaining(['/app.bundle.js', ...listed]));
+});
+
 test('a theme picked is the theme after a reload, set before the page draws', async ({ page }) => {
   await page.goto('/#manual');
   await page.getByLabel('Theme').selectOption('light');

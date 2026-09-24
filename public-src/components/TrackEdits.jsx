@@ -42,7 +42,11 @@ function plannedLook(data, startMs) {
   return scene ? { pattern: scene.pattern, pixelPattern: scene.pixelPattern } : null;
 }
 
-export function TrackEdits() {
+/**
+ * `at` says where "the playhead" is for adding and removing accents — the
+ * show's live position unless a view that rehearses gives its own mark.
+ */
+export function TrackEdits({ at = null, atLabel = 'playhead' } = {}) {
   const s = stateSig.value;
   const as = s.autoShow || {};
   const [burst, setBurst] = useState('color-strobe');
@@ -70,15 +74,15 @@ export function TrackEdits() {
   };
 
   const addAccent = () => {
-    const atMs = Math.round(playheadMs(s));
+    const atMs = Math.round(at ? at() : playheadMs(s));
     save({ ...overlay, accents: { add: [...added, { atMs, burst }].sort((a, b) => a.atMs - b.atMs), remove: removed } });
   };
 
   const removeAccent = () => {
-    const at = playheadMs(s);
-    const near = (data?.timeline || []).filter((ev) => ev.action === 'energy' && Math.abs(ev.timeMs - at) <= NEAR_ACCENT_MS)
-      .sort((a, b) => Math.abs(a.timeMs - at) - Math.abs(b.timeMs - at))[0];
-    if (!near) { toast.error('No accent within a second of the playhead'); return; }
+    const mark = at ? at() : playheadMs(s);
+    const near = (data?.timeline || []).filter((ev) => ev.action === 'energy' && Math.abs(ev.timeMs - mark) <= NEAR_ACCENT_MS)
+      .sort((a, b) => Math.abs(a.timeMs - mark) - Math.abs(b.timeMs - mark))[0];
+    if (!near) { toast.error(`No accent within a second of the ${atLabel}`); return; }
     if (near.source === 'operator') {
       save({ ...overlay, accents: { add: added.filter((a) => Math.abs(a.atMs - near.timeMs) > 150), remove: removed } });
     } else {
@@ -113,8 +117,8 @@ export function TrackEdits() {
         <select class="auto-select" value={burst} onChange={(e) => setBurst(e.target.value)} aria-label="Accent to add">
           {BURSTS.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
         </select>
-        <button type="button" class="btn sm" onClick={addAccent} title="Add this burst at the playhead">Add at playhead</button>
-        <button type="button" class="btn sm" onClick={removeAccent} title="Take away the accent nearest the playhead">Remove nearest</button>
+        <button type="button" class="btn sm" onClick={addAccent} title={`Add this burst at the ${atLabel}`}>Add at {atLabel}</button>
+        <button type="button" class="btn sm" onClick={removeAccent} title={`Take away the accent nearest the ${atLabel}`}>Remove nearest</button>
       </div>
       {(added.length > 0 || removed.length > 0) && (
         <ul class="edit-list">
