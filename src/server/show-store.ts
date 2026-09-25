@@ -1,5 +1,3 @@
-import fs from 'node:fs';
-import path from 'node:path';
 
 import { state, universeOf, maxBrightnessOf, setDefaultUniverse } from './state.ts';
 import { resizeFixtureBuffers } from './engine.ts';
@@ -8,7 +6,8 @@ import { MAX_UNIVERSES } from './universes.ts';
 import { universesOf } from '../shared/placement.ts';
 import { ddpConflict } from './ddp-routes.ts';
 import { showSchema, validate } from './validation.ts';
-import { HttpError, codeOf, messageOf } from '../errors.ts';
+import { HttpError, messageOf } from '../errors.ts';
+import { JsonStore } from './json-store.ts';
 import type { ShowFile } from './validation.ts';
 import type { Fixture, Profile } from '../types/rig.ts';
 import { configFile } from './config-dir.ts';
@@ -160,14 +159,13 @@ function applyShow(rawShow: unknown): ShowFile {
   return show;
 }
 
-class ShowStore {
-  declare file: string;
+class ShowStore extends JsonStore {
   declare _debounceMs: number;
   declare _timer: ReturnType<typeof setTimeout> | null;
   declare _saved: string | null;
 
   constructor(file: string, { debounceMs = SAVE_DEBOUNCE_MS } = {}) {
-    this.file = file;
+    super(file, { tag: 'show', fallback: 'starting on the default patch' });
     this._debounceMs = debounceMs;
     this._timer = null;
     // What the file holds, as written. Lets a burst of changes that cancel out
@@ -176,26 +174,13 @@ class ShowStore {
   }
 
   /**
-   * Read show.json. A missing file is normal: a rig that has never been patched
-   * runs the default four pars. A corrupt one is moved aside rather than
-   * deleted, so a hand-edit that went wrong is recoverable, and the show still
-   * starts on the defaults.
+   * Read show.json, or null. No file is normal: a rig that has never been
+   * patched runs the default four pars. A corrupt one is moved aside
+   * (JsonStore), so a hand-edit that went wrong is recoverable, and the show
+   * still starts on the defaults.
    */
   load(): unknown {
-    let raw;
-    try {
-      raw = fs.readFileSync(this.file, 'utf8');
-    } catch (err) {
-      if (codeOf(err) !== 'ENOENT') {
-        console.warn(`[show] cannot read ${this.file}: ${messageOf(err)} — starting on the default patch`);
-      }
-      return null;
-    }
-    try {
-      return JSON.parse(raw);
-    } catch (err) {
-      return this._quarantine(`invalid JSON (${messageOf(err)})`);
-    }
+    return this.readJson() ?? null;
   }
 
   /**
@@ -215,24 +200,12 @@ class ShowStore {
     try {
       applyShow(show);
     } catch (err) {
-      this._quarantine(`does not fit this rig (${messageOf(err)})`);
+      this.quarantine(`does not fit this rig (${messageOf(err)})`);
       return false;
     }
     // In sync with the file now, so no change-driven write repeats it.
     this._saved = this._serialise();
     return true;
-  }
-
-  _quarantine(reason: string): null {
-    const backup = `${this.file}.invalid-${Date.now()}`;
-    try {
-      fs.renameSync(this.file, backup);
-      console.warn(`[show] ${this.file}: ${reason}`);
-      console.warn(`[show] moved it to ${backup} and started on the default patch`);
-    } catch (err) {
-      console.warn(`[show] ${this.file}: ${reason} (could not move aside: ${messageOf(err)})`);
-    }
-    return null;
   }
 
   _serialise(): string {
@@ -267,10 +240,7 @@ class ShowStore {
     const body = this._serialise();
     if (body === this._saved) return false;
     try {
-      fs.mkdirSync(path.dirname(this.file), { recursive: true });
-      const tmp = `${this.file}.tmp`;
-      fs.writeFileSync(tmp, body);
-      fs.renameSync(tmp, this.file);
+      this.write(body);
       this._saved = body;
       return true;
     } catch (err) {

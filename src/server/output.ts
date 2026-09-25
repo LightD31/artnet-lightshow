@@ -4,7 +4,8 @@ import { cellsOf, EMITTERS } from '../shared/rig.ts';
 import { channelReader } from '../shared/placement.ts';
 import * as universes from './universes.ts';
 import { createTransmitter, sacnUniverseFor as mapSacnUniverse } from './transmit.ts';
-import { createDiscovery, interfaces, isBroadcastTarget, isLoopbackTarget } from './artnet-nodes.ts';
+import { createDiscovery, interfaces, isBroadcastTarget } from './artnet-nodes.ts';
+import { isLoopback } from './loopback.ts';
 import * as hue from './hue.ts';
 import type { HueChannelColour } from './hue.ts';
 import { ddpRoutes } from './ddp-routes.ts';
@@ -90,7 +91,7 @@ const transmitter = createTransmitter();
  */
 function artnetDiscoveryWanted(): boolean {
   const a = state.artnet;
-  return a.enabled !== false && a.discovery !== false && isBroadcastTarget(a.host) && !isLoopbackTarget(a.host);
+  return a.enabled !== false && a.discovery !== false && isBroadcastTarget(a.host) && !isLoopback(a.host);
 }
 
 const artnetDiscovery = createDiscovery({

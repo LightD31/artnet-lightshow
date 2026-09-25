@@ -1,5 +1,3 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import crypto from 'node:crypto';
 import { z } from 'zod';
 
@@ -9,7 +7,8 @@ import { conductor } from './conductor.ts';
 import { overrideSchema, fixtureId } from './validation.ts';
 import { COLOR_PRESETS } from './presets.ts';
 import { PIXEL_MAPS } from '../shared/rig.ts';
-import { HttpError, codeOf, messageOf } from '../errors.ts';
+import { HttpError, messageOf } from '../errors.ts';
+import { JsonStore } from './json-store.ts';
 import type { OverrideInput } from './validation.ts';
 import { configFile } from './config-dir.ts';
 
@@ -157,67 +156,31 @@ function recallLook(look: Look): void {
   for (const fixture of state.fixtures) applyOverride(fixture.id, byId.get(fixture.id) || null);
 }
 
-class CueStore {
-  declare file: string;
+class CueStore extends JsonStore {
   declare _cues: Cue[];
 
-  constructor(file: string) {
-    this.file = file;
-    this._cues = [];
-  }
-
   /**
-   * Read cues.json. A missing file is normal (no cues saved yet). A corrupt one
-   * is moved aside rather than deleted, so a hand-edit that went wrong is
-   * recoverable and the show still starts.
+   * cues.json. No file is normal (no cues saved yet); a corrupt one is moved
+   * aside (JsonStore), so a hand-edit that went wrong is recoverable and the
+   * show still starts.
    */
+  constructor(file: string) {
+    super(file, { tag: 'cues', fallback: 'starting with no cues' });
+    this._cues = [];
+  }
+
   load(): this {
-    let raw;
-    try {
-      raw = fs.readFileSync(this.file, 'utf8');
-    } catch (err) {
-      if (codeOf(err) !== 'ENOENT') {
-        console.warn(`[cues] cannot read ${this.file}: ${messageOf(err)} — starting with no cues`);
-      }
-      return this;
-    }
-
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (err) {
-      return this._quarantine(`invalid JSON (${messageOf(err)})`);
-    }
-
-    const result = fileSchema.safeParse(parsed);
-    if (!result.success) {
-      const detail = result.error.issues.map((i) => `${i.path.join('.')} ${i.message}`).join('; ');
-      return this._quarantine(detail);
-    }
-
-    this._cues = result.data.cues;
+    const saved = this.readValid(fileSchema);
+    if (saved) this._cues = saved.cues;
     return this;
   }
 
-  _quarantine(reason: string): this {
-    const backup = `${this.file}.invalid-${Date.now()}`;
-    try {
-      fs.renameSync(this.file, backup);
-      console.warn(`[cues] ${this.file}: ${reason}`);
-      console.warn(`[cues] moved it to ${backup} and started with no cues`);
-    } catch (err) {
-      console.warn(`[cues] ${this.file}: ${reason} (could not move aside: ${messageOf(err)})`);
-    }
+  useDefaults(): void {
     this._cues = [];
-    return this;
   }
 
   save(): void {
-    const dir = path.dirname(this.file);
-    fs.mkdirSync(dir, { recursive: true });
-    const tmp = `${this.file}.tmp`;
-    fs.writeFileSync(tmp, `${JSON.stringify({ cues: this._cues }, null, 2)}\n`);
-    fs.renameSync(tmp, this.file);
+    this.writeJson({ cues: this._cues });
   }
 
   /** Every cue, in show order, with its full look. */

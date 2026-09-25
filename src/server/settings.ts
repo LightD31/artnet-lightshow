@@ -1,10 +1,10 @@
-import fs from 'node:fs';
 import net from 'node:net';
-import path from 'node:path';
 import { z } from 'zod';
 import { SYNC_OFFSET_LIMIT_MS } from './presets.ts';
-import { HttpError, codeOf, messageOf } from '../errors.ts';
+import { HttpError, messageOf } from '../errors.ts';
 import { configFile } from './config-dir.ts';
+import { isLoopback } from './loopback.ts';
+import { JsonStore } from './json-store.ts';
 
 /**
  * Persisted configuration, edited in the app's Rig, Sources and Settings views.
@@ -372,11 +372,6 @@ const patchSchema = z.object(
   ),
 ).strict();
 
-const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '::ffff:127.0.0.1']);
-function isLoopback(host: unknown): boolean {
-  return LOOPBACK_HOSTS.has(String(host || '').trim().toLowerCase());
-}
-
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
 }
@@ -431,76 +426,45 @@ function clearNewlyInvalidFields(parsed: unknown): string[] {
   return cleared;
 }
 
-class SettingsStore {
-  declare file: string;
+class SettingsStore extends JsonStore {
   declare _values: Settings;
   declare _listeners: SettingsListener[];
 
+  /**
+   * settings.json, written 0600: it holds secrets. No file is normal (first
+   * run); a corrupt or schema-invalid one is moved aside (JsonStore), so a
+   * hand-edit that went wrong is recoverable, and the show still starts on
+   * defaults.
+   */
   constructor(file: string) {
-    this.file = file;
+    super(file, { tag: 'settings', fallback: 'using the defaults', mode: 0o600 });
     this._values = clone(DEFAULTS);
     this._listeners = [];
   }
 
-  /**
-   * Read settings.json. A missing file is normal (first run). A corrupt or
-   * schema-invalid one is moved aside rather than deleted, so a hand-edit that
-   * went wrong is recoverable, and the show still starts on defaults.
-   */
   load(): this {
-    let raw;
-    try {
-      raw = fs.readFileSync(this.file, 'utf8');
-    } catch (err) {
-      if (codeOf(err) !== 'ENOENT') {
-        console.warn(`[settings] cannot read ${this.file}: ${messageOf(err)} — using defaults`);
+    const saved = this.readValid(schema, (parsed) => {
+      // Written before the setup wizard existed: this rig was set up without
+      // it, and offering it now would walk the operator through a rig they
+      // already built.
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && !('setup' in parsed)) {
+        (parsed as Record<string, unknown>).setup = { completed: true };
       }
-      return this;
-    }
-
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (err) {
-      return this._quarantine(`invalid JSON (${messageOf(err)})`);
-    }
-
-    // Written before the setup wizard existed: this rig was set up without
-    // it, and offering it now would walk the operator through a rig they
-    // already built.
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && !('setup' in parsed)) {
-      (parsed as Record<string, unknown>).setup = { completed: true };
-    }
-
-    // A rule added after the file was written must not throw away the whole
-    // file — Spotify credentials, the token, the Hue pairing — for the sake of
-    // one field. Such fields are cleared here, loudly, and the rest loads.
-    clearNewlyInvalidFields(parsed);
-
-    // Merge onto defaults first so a file written by an older build, missing
-    // keys added since, still loads instead of failing validation wholesale.
-    const result = schema.safeParse(merge(DEFAULTS, parsed));
-    if (!result.success) {
-      const detail = result.error.issues
-        .map((i) => `${i.path.join('.')} ${i.message}`).join('; ');
-      return this._quarantine(detail);
-    }
-
-    this._values = result.data;
+      // A rule added after the file was written must not throw away the whole
+      // file — Spotify credentials, the token, the Hue pairing — for the sake
+      // of one field. Such fields are cleared here, loudly, and the rest loads.
+      clearNewlyInvalidFields(parsed);
+      // Merged onto the defaults first, so a file written by an older build,
+      // missing keys added since, still loads instead of failing validation
+      // wholesale.
+      return merge(DEFAULTS, parsed);
+    });
+    if (saved) this._values = saved;
     return this;
   }
 
-  _quarantine(reason: string): this {
-    const backup = `${this.file}.invalid-${Date.now()}`;
-    try {
-      fs.renameSync(this.file, backup);
-      console.warn(`[settings] ${this.file}: ${reason}`);
-      console.warn(`[settings] moved it to ${backup} and started on defaults`);
-    } catch (err) {
-      console.warn(`[settings] ${this.file}: ${reason} (could not move aside: ${messageOf(err)})`);
-    }
+  useDefaults(): void {
     this._values = clone(DEFAULTS);
-    return this;
   }
 
   /** Full effective settings, secrets included. Server-side callers only. */
@@ -580,12 +544,7 @@ class SettingsStore {
 
   /** Write atomically and 0600 — this file holds secrets. */
   save(): void {
-    const dir = path.dirname(this.file);
-    fs.mkdirSync(dir, { recursive: true });
-    const tmp = `${this.file}.tmp`;
-    fs.writeFileSync(tmp, `${JSON.stringify(this._values, null, 2)}\n`, { mode: 0o600 });
-    fs.renameSync(tmp, this.file);
-    try { fs.chmodSync(this.file, 0o600); } catch (_) { /* best effort on Windows */ }
+    this.writeJson(this._values);
   }
 
   /** Called with (changedKeys, settings) after every successful update. */

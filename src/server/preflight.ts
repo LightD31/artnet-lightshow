@@ -28,6 +28,7 @@ import type { ModelManager, ModelRow } from './model-manager.ts';
 import type { LiveDevices } from '../live-input.ts';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { EngineStatus } from './engine.ts';
+import { isLoopback } from './loopback.ts';
 
 export type CheckStatus = 'ok' | 'warn' | 'fail' | 'info';
 
@@ -715,7 +716,7 @@ async function checkLiveInput(): Promise<Check> {
 function checkAccess(): Check {
   const host = settings.get('server.host');
   const hasToken = !!settings.get('server.token');
-  const loopback = ['127.0.0.1', 'localhost', '::1'].includes(String(host).toLowerCase());
+  const loopback = isLoopback(host);
 
   if (loopback) {
     return {

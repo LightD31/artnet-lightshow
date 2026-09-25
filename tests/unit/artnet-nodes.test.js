@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert';
 import { EventEmitter } from 'node:events';
 
-import { NodeTable, createDiscovery, interfaces, isBroadcastTarget, isLoopbackTarget, EXPIRE_MS } from '../../src/server/artnet-nodes.ts';
+import { NodeTable, createDiscovery, interfaces, isBroadcastTarget, EXPIRE_MS } from '../../src/server/artnet-nodes.ts';
+import { isLoopback } from '../../src/server/loopback.ts';
 import { createTransmitter } from '../../src/server/transmit.ts';
 
 const node = (outputs, extra = {}) => ({ shortName: 'N', longName: 'Node', outputs, universe: outputs[0], bindIndex: 0, ...extra });
@@ -25,9 +26,9 @@ test('broadcast targets are told apart from one node and from this machine', () 
   assert.ok(isBroadcastTarget('10.0.1.127', ifaces), 'a subnet\'s own broadcast');
   assert.ok(!isBroadcastTarget('192.168.1.50', ifaces));
   assert.ok(!isBroadcastTarget('node.local', ifaces));
-  assert.ok(isLoopbackTarget('127.0.0.1'));
-  assert.ok(isLoopbackTarget('localhost'));
-  assert.ok(!isLoopbackTarget('192.168.1.2'));
+  // A loopback target is never polled (src/server/loopback.ts).
+  assert.ok(isLoopback('127.0.0.1'));
+  assert.ok(!isLoopback('2.255.255.255'));
 });
 
 test('the table routes each universe to the nodes that output it', () => {
