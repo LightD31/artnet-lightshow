@@ -14,6 +14,7 @@ class ModelLoading(unittest.TestCase):
         module = MagicMock()
         with patch.object(adapters, '_optional', return_value=module), \
              patch.object(models, 'device', return_value='cuda'), \
+             patch.object(models, '_OFFLOAD', False), \
              patch.dict(models._CACHE, {}, clear=True):
             first = adapters._load_muq('MuQ', '/tmp/test-muq')
             self.assertIs(first, adapters._load_muq('MuQ', '/tmp/test-muq'))

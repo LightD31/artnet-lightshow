@@ -342,6 +342,8 @@ class PipelineThreads(AudioTestCase):
              patch.object(models, 'on_gpu', return_value=True), \
              patch.object(models, 'release_memory'), \
              patch.object(pipeline, '_safe_separate', return_value=None), \
+             patch.object(pipeline.songformer, 'wanted', return_value=False), \
+             patch.object(pipeline.model_adapters, 'skey_available', return_value=False), \
              patch.object(pipeline.rhythm_stage, 'model_beats', return_value=grid), \
              patch.object(pipeline.features_stage, 'extract', side_effect=RuntimeError('boom')):
             with self.assertRaisesRegex(RuntimeError, 'boom'):

@@ -107,10 +107,17 @@ def preload():
 
 #: Windows pushed through MuQ in one forward pass. The windows overlap four to
 #: one, so a track is hundreds of them and one-at-a-time leaves the card idle
-#: between kernel launches while Python walks the loop. Eight is chosen to keep
-#: the activation working set small enough that batching never becomes the
-#: thing that runs the card out of memory.
-_MUQ_BATCH = max(1, int(os.environ.get("ARTNET_MUQ_BATCH", "8")))
+#: between kernel launches while Python walks the loop.
+#:
+#: Four, not eight. The activations grow in step with the batch (0.15 GB a
+#: window), but MuQ's first convolution does not: from six windows up, cuDNN
+#: picks an algorithm for it with a 4 GB workspace, and on an RTX 2070 SUPER
+#: eight windows peaked at 4.3 GB where four peak at 0.6 GB. The pass then
+#: holds nearly all of an 8 GB card — the "expandable_segments: memory mapping
+#: failed" warnings in the log — and the desktop, the browser and whatever
+#: else is on the card have nothing left. Measured per window, four is as fast
+#: as eight (44 ms either way); two is about 5 % slower.
+_MUQ_BATCH = max(1, int(os.environ.get("ARTNET_MUQ_BATCH", "4")))
 
 #: Decimal places an embedding keeps. A track is about a hundred and twenty
 #: 1024-wide vectors, and at full float precision they were most of a
