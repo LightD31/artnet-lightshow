@@ -15,4 +15,18 @@ if (!process.features?.typescript) {
   process.exit(1);
 }
 
-await import('./src/main.ts');
+// Under a supervisor that starts it again if it crashes or hangs
+// (src/supervisor.ts) — unless this is the supervised server itself, or the
+// supervisor is turned off: --no-supervisor, LIGHTSHOW_SUPERVISOR=0, or
+// `node --watch`, which restarts on its own terms.
+const direct = process.env.LIGHTSHOW_SUPERVISED === '1'
+  || process.env.LIGHTSHOW_SUPERVISOR === '0'
+  || process.argv.includes('--no-supervisor')
+  || 'WATCH_REPORT_DEPENDENCIES' in process.env;
+
+if (direct) {
+  await import('./src/main.ts');
+} else {
+  const { runSupervisor } = await import('./src/supervisor.ts');
+  await runSupervisor(import.meta.filename);
+}

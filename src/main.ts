@@ -39,6 +39,7 @@ import { modelManager } from './server/model-manager.ts';
 import * as pythonEnv from './python-env.ts';
 import { installProcessSafetyNet } from './server/guard.ts';
 import { startHealthMonitor } from './server/health.ts';
+import { supervision, startHeartbeat, EXIT_CONFIG, EXIT_RESTART } from './server/supervised.ts';
 import { messageOf } from './errors.ts';
 
 // Before anything else can fail: a fault the code did not expect is reported
@@ -46,6 +47,11 @@ import { messageOf } from './errors.ts';
 // fixture latched on its last frame. See server/guard.ts.
 installProcessSafetyNet();
 startHealthMonitor();
+
+const supervised = supervision();
+if (supervised.restarts) {
+  console.warn(`[supervisor] restart ${supervised.restarts}: the last run ${supervised.lastExit ? supervised.lastExit.reason : 'ended'}`);
+}
 
 // A .env from before settings moved into the UI would otherwise go quiet: the
 // rig would come up on defaults with no clue why. Say which variables are now
@@ -63,7 +69,9 @@ const LIGHTSHOW_TOKEN = settings.get('server.token');
 const fatal = configError({ host: HOST, token: LIGHTSHOW_TOKEN, configFile: CONFIG_FILE });
 if (fatal) {
   console.error(`\n${fatal}\n`);
-  process.exit(1);
+  // Not 1: starting again would only refuse again, and the supervisor knows
+  // this code as "do not restart".
+  process.exit(EXIT_CONFIG);
 }
 
 const auth = createAuth({
@@ -189,7 +197,7 @@ spotify.onTokens((refreshToken) => {
   catch (err) { console.warn(`[spotify] could not save the session: ${messageOf(err)}`); }
 });
 
-attachRoutes(app, { midi, autoShow, spotify, nowPlaying, deezerSource, prolink, analysisCache, integrations, applier });
+attachRoutes(app, { midi, autoShow, spotify, nowPlaying, deezerSource, prolink, analysisCache, integrations, applier, restart: restartServer });
 attachSockets(io, { midi, integrations });
 
 // On a thread of its own unless the settings say otherwise (engine.thread).
@@ -247,10 +255,14 @@ server.on('error', (err: NodeJS.ErrnoException) => {
   }
   let engineDown = Promise.resolve();
   try { engineDown = stopEngine(); } catch (_) { /* on the way out regardless */ }
-  Promise.resolve(engineDown).catch(() => {}).finally(() => process.exit(1));
+  // Another program has the port, or the address is not this machine's:
+  // starting again would fail the same way, so the supervisor is told not to.
+  Promise.resolve(engineDown).catch(() => {}).finally(() => process.exit(EXIT_CONFIG));
 });
 
 server.listen(PORT, HOST, () => {
+  // Under the supervisor: say the server is up, and keep saying so.
+  startHeartbeat();
   // Where the OAuth proxy sends the operator's browser back to. Must be an
   // address that browser can actually reach: "localhost" is only right when the
   // browser is on this machine. The "public URL" setting overrides for
@@ -306,7 +318,7 @@ server.listen(PORT, HOST, () => {
 // frame so the fixtures don't hold the last look after the server is gone.
 let shuttingDown = false;
 
-function shutdown(signal: string): void {
+function shutdown(signal: string, exitCode = 0): void {
   if (shuttingDown) return;             // a second Ctrl-C shouldn't re-enter this
   shuttingDown = true;
   console.log(`\n${signal} — blacking out and shutting down…`);
@@ -337,9 +349,22 @@ function shutdown(signal: string): void {
     try { fn(); } catch (err) { console.warn(`[shutdown] ${what}: ${messageOf(err)}`); }
   }
 
-  Promise.resolve(engineDown).catch(() => {}).finally(() => server.close(() => process.exit(0)));
+  Promise.resolve(engineDown).catch(() => {}).finally(() => server.close(() => process.exit(exitCode)));
   // Don't hang on a lingering keep-alive socket or an in-flight analysis.
-  setTimeout(() => process.exit(0), 2000).unref();
+  setTimeout(() => process.exit(exitCode), 2000).unref();
+}
+
+/**
+ * Stop, to be started again by the supervisor straight away — for a setting
+ * that only applies on a restart. False when there is no supervisor to do the
+ * starting (the server was run with --no-supervisor, or under `node --watch`).
+ */
+function restartServer(reason: string): boolean {
+  if (!supervised.supervised || !process.send) return false;
+  process.send({ type: 'restart', reason });
+  // A moment for the answer to reach the page that asked.
+  setTimeout(() => shutdown('Restart', EXIT_RESTART), 200);
+  return true;
 }
 
 process.on('SIGINT',  () => shutdown('SIGINT'));

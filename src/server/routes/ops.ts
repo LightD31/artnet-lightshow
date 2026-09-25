@@ -23,6 +23,19 @@ export function attachOpsRoutes(app: Express, ctx: RouteContext): void {
   // How the server is doing, in full (health.ts).
   app.get('/api/health', (_req, res) => res.json(health({ autoShow: ctx.autoShow })));
 
+  // Start again — for a setting that only applies on a restart. Only the
+  // supervisor can start the server again, so without one this says so rather
+  // than stopping a show nobody will start.
+  app.post('/api/server/restart', (_req, res) => {
+    if (!ctx.restart || !ctx.restart('from the app')) {
+      return res.status(409).json({
+        ok: false,
+        error: 'This server is not running under the supervisor (npm start runs it under one) — restart it yourself.',
+      });
+    }
+    res.json({ ok: true, restarting: true });
+  });
+
   // The log: the last entries (after `after`, at `level` and above), and the
   // seq to ask for more after. The log view polls this while it is open.
   app.get('/api/logs', (req, res) => {
