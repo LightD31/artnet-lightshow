@@ -283,7 +283,7 @@ const PORT = settings.get('server.port');
 server.on('error', (err: NodeJS.ErrnoException) => {
   if (err.code === 'EADDRINUSE') {
     console.error(`\nPort ${PORT} is already in use — is another copy of the lightshow running? `
-      + 'Stop it, or change the port in config/settings.json (server.port).\n');
+      + `Stop it, or change the port in ${CONFIG_FILE} (server.port).\n`);
   } else {
     console.error(`\nCould not listen on ${HOST}:${PORT}: ${err.message}\n`);
   }

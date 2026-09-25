@@ -584,7 +584,7 @@ function warnAboutLegacyEnv(env: NodeJS.ProcessEnv = process.env,
   if (!present.length) return present;
   log(`\n[settings] These environment variables are no longer read: ${present.join(', ')}`);
   log('[settings] Settings now live in the app (its Rig, Sources and Settings views) and are stored');
-  log(`[settings] in config/settings.json. Set them there; you can delete them from .env.\n`);
+  log(`[settings] in ${configFile('settings.json')}. Set them there; you can delete them from .env.\n`);
   return present;
 }
 
