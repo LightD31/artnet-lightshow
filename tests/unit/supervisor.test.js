@@ -7,7 +7,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { supervise, deezerArlSet, describeExit } from '../../src/supervisor.ts';
+import { EXIT_CONFIG } from '../../src/server/supervised.ts';
 
 const FAKE = path.join(import.meta.dirname, '..', 'helpers', 'fake-server.mjs');
 
@@ -99,4 +101,43 @@ test('why a run ended, in words', () => {
   assert.equal(describeExit(null, 'SIGSEGV'), 'killed by SIGSEGV');
   assert.equal(describeExit(null, 'SIGKILL', { hungMs: 16_400 }), 'stopped responding for 16 s');
   assert.equal(describeExit(75, null, { requested: 'a setting' }), 'restarted on request (a setting)');
+});
+
+// `node server.js` as npm start runs it, from a folder with a .env: a server
+// the configuration will not let start (a network address, no token) exits
+// with EXIT_CONFIG, under the supervisor or not.
+async function startFrom(t, env) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'server-env-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(dir, 'config'));
+  fs.writeFileSync(path.join(dir, 'config', 'settings.json'), JSON.stringify({ server: { host: '0.0.0.0', token: '' } }));
+  fs.writeFileSync(path.join(dir, '.env'), Object.entries({
+    LIGHTSHOW_CONFIG_DIR: path.join(dir, 'config'),
+    LIGHTSHOW_CACHE_DIR: path.join(dir, 'cache'),
+    LIGHTSHOW_LOG_DIR: path.join(dir, 'logs'),
+    ...env,
+  }).map(([k, v]) => `${k}=${v}`).join('\n'));
+  const clean = { ...process.env };
+  for (const k of ['LIGHTSHOW_CONFIG_DIR', 'LIGHTSHOW_CACHE_DIR', 'LIGHTSHOW_LOG_DIR', 'LIGHTSHOW_SUPERVISOR',
+    'LIGHTSHOW_SUPERVISED', 'WATCH_REPORT_DEPENDENCIES', 'NODE_TEST_CONTEXT']) delete clean[k];
+  const server = spawn(process.execPath, [path.join(import.meta.dirname, '..', '..', 'server.js')], {
+    cwd: dir, env: clean, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let said = '';
+  server.stdout.on('data', (d) => { said += d; });
+  server.stderr.on('data', (d) => { said += d; });
+  const code = await new Promise((resolve) => server.on('exit', resolve));
+  return { code, said };
+}
+
+test('the .env in the folder it starts from is read before the supervisor starts', async (t) => {
+  const supervised = await startFrom(t, {});
+  assert.equal(supervised.code, EXIT_CONFIG);
+  assert.match(supervised.said, /Refusing to start/, 'the config directory named in .env, not the checkout\'s');
+  assert.match(supervised.said, /\[supervisor\] the server cannot start with this configuration/);
+
+  const direct = await startFrom(t, { LIGHTSHOW_SUPERVISOR: '0' });
+  assert.equal(direct.code, EXIT_CONFIG);
+  assert.match(direct.said, /Refusing to start/);
+  assert.doesNotMatch(direct.said, /\[supervisor\]/, 'LIGHTSHOW_SUPERVISOR=0 in .env is heeded');
 });

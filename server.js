@@ -15,6 +15,10 @@ if (!process.features?.typescript) {
   process.exit(1);
 }
 
+// The .env in the folder it starts from, first: it can say where the config
+// is (whose Deezer ARL the supervisor looks for) and turn the supervisor off.
+await import('./src/load-env.ts');
+
 // Under a supervisor that starts it again if it crashes or hangs
 // (src/supervisor.ts) — unless this is the supervised server itself, or the
 // supervisor is turned off: --no-supervisor, LIGHTSHOW_SUPERVISOR=0, or

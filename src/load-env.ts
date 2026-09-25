@@ -6,8 +6,9 @@ import { codeOf, messageOf } from './errors.ts';
  * variable already set in the environment wins, and no file is normal: almost
  * nothing is configured this way any more (see .env.example).
  *
- * A module of its own, imported first, so the variables are in place before
- * any other module is evaluated.
+ * A module of its own, imported first — by server.js before it decides
+ * whether to start the supervisor, and by main.ts — so the variables are in
+ * place before any other module is evaluated.
  */
 export function loadEnv(file = '.env'): boolean {
   try {
