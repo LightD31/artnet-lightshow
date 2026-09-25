@@ -86,7 +86,7 @@ function reportAnalysisError(label: string, err: unknown): void {
 
 // Wires the auxiliary subsystems (MIDI feedback, Spotify, now-playing, PRO DJ
 // LINK, auto-show) into the engine + state. Returns the integration handle that
-// routes.js / sockets.js call back into.
+// routes (src/server/routes/) and sockets.ts call back into.
 function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolink, autoShow, analysisCache = null,
   liveInput = null }: IntegrationDeps) {
   // Slot statuses, one per upcoming track up to state.autoPrefetchDepth.

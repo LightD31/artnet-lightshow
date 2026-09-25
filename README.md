@@ -173,8 +173,9 @@ via **Bitfocus Companion**, and a REST API.
 
 ## Quick start
 
-Needs **Node.js 22.18 or newer**: the server is TypeScript, and Node runs it as
-it is. `npm start` says so plainly on an older Node.
+Needs **Node.js 24 LTS** (22.18 or newer still works): the server is
+TypeScript, and Node runs it as it is. `npm start` says so plainly on an older
+Node.
 
 ```bash
 npm install
@@ -2259,9 +2260,12 @@ earlier version, the server names the variables it is ignoring at startup:
 [settings] in config/settings.json. Set them there; you can delete them from .env.
 ```
 
-Set those values once in the app and delete the file. (`DEBUG_MIDI=1`
-is the one exception — it is a developer log toggle, not a setting, and is still
-read from the environment.)
+Set those values once in the app and delete them. A `.env` in the folder the
+server starts from is still read, by Node's own loader (a variable already set
+in the environment wins), for the few things that are not settings:
+`DEBUG_MIDI=1` to log every MIDI message, `ARTNET_PYTHON` for the Python that
+runs the analysis, and `LIGHTSHOW_CONFIG_DIR` / `LIGHTSHOW_CACHE_DIR` —
+see `.env.example`.
 
 Art-Net changes made over the socket (a page, Companion) are persisted to the
 same file.
@@ -2312,12 +2316,25 @@ npm run gen:analysis-types  # after changing the analysis document schema
 ```
 
 **TypeScript, run as it is.** Everything in `src/` is strict TypeScript that
-Node 22.18+ runs directly by stripping the types: nothing is compiled, and
+Node runs directly by stripping the types (24 LTS, which `.nvmrc` names, and
+22.18+ — CI checks both): nothing is compiled, and
 `tsc` only checks. So the code sticks to syntax Node can strip (no enums,
 namespaces or parameter properties), type-only imports say `import type`, and
 imports name the `.ts` file. `server.js` is a small bootstrap that checks the
 Node version and loads `src/main.ts`. The tests are ES-module JavaScript that
 import the `.ts` modules.
+
+**The server's layout.** The HTTP routes are a module per domain in
+`src/server/routes/` (look, MIDI, sources, fixtures, cues, auto show,
+warming, setup, outputs, identify), composed by `routes.ts`, with what they
+share — the subsystems, the async wrapper, upload limits, the JSON error
+handler — in `routes/common.ts`. The files in the config directory
+(settings, show, cues, MIDI map) are each a `JsonStore`
+(`src/server/json-store.ts`): no file is normal, a bad one is moved aside as
+`<file>.invalid-<time>` rather than lost, and every write is atomic. Whether a
+host is this machine only is `src/server/loopback.ts`, the one answer the
+access check, the settings, the pre-show check and Art-Net discovery all
+use.
 
 **The analysis document** — what the Python analyser writes and the show is
 built from — is described once, in `src/analysis/document.schema.json`. The

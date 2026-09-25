@@ -524,6 +524,16 @@ Every phase is its own PR, keeps `npm run check` and the Python suite green, and
 - **Tests:** Playwright e2e smoke tests (Chromium is preinstalled) and component tests.
 
 ### Phase 7 — Platform & ops (interleaved)
+
+> **Status.** In three parts: **7a** (upgrades and refactors) is done; **7b** (logging, the health endpoint, the
+> crash supervisor, Deezer as an optional plugin) and **7c** (packaging) are next. **7a — done:**
+> - **Upgrades:** Node 24 LTS in CI and `.nvmrc` (the unit job also runs on 22.18, the oldest Node that works);
+>   zod 4, @preact/signals 2, eslint 10 (with `@eslint/js`), esbuild 0.28; dotenv replaced by Node's own
+>   `process.loadEnvFile` (`src/load-env.ts`). The director's golden now hashes the plan to ten digits: V8's
+>   `Math.pow` moved by one ulp between Node 22 and 24, and the plan itself did not change.
+> - **Refactors:** `routes.ts` (101 routes) and `rig-routes.ts` are a module per domain in `src/server/routes/`, the 107 routes
+>   registering as before; settings, show, cues and the MIDI map share `JsonStore` (read, validate, move a bad
+>   file aside, write atomically); one `isLoopback` (`src/server/loopback.ts`) replaces four.
 - **Upgrades:** Node 24 LTS, zod 4, @preact/signals 2, eslint 10, esbuild 0.28; drop dotenv.
 - **Refactors:**
   - split `routes.js` (87 routes) into domain routers;

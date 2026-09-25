@@ -258,7 +258,7 @@ server.listen(PORT, HOST, () => {
   const smtcEnabled = settings.get('sources.smtc');
 
   console.log(`\n  ArtNet Lightshow  →  http://${shownHost}:${PORT}`);
-  console.log(`  Settings          →  http://${shownHost}:${PORT}/settings.html  (everything is configured there)`);
+  console.log(`  Setup             →  http://${shownHost}:${PORT}/#rig  (the Rig, Sources and Settings views)`);
   console.log(`  Config file       →  ${CONFIG_FILE}`);
   // Deliberately not the token itself: this banner is the first thing anyone
   // pastes into a bug report or a chat window.
