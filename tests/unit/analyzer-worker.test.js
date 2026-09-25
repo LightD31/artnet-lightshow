@@ -229,6 +229,23 @@ test('the worker is started with the structure model the settings page chose', a
   }
 });
 
+// And its GPU memory field as ARTNET_GPU_MEMORY: whether the models wait in
+// RAM between passes, which an 8 GB card needs.
+test('the worker is started with where the settings page keeps the models on a GPU', async () => {
+  const original = settings._values.analysis.gpuMemory;
+  try {
+    for (const mode of ['auto', 'offload', 'resident']) {
+      settings._values.analysis.gpuMemory = mode;
+      const w = worker('env');
+      try {
+        assert.strictEqual((await w.analyze('/tmp/a.wav', null)).gpuMemory, mode);
+      } finally { w.shutdown(); }
+    }
+  } finally {
+    settings._values.analysis.gpuMemory = original;
+  }
+});
+
 // New model weights only add to what the next track gets: the track being
 // analysed finishes on the old process, and the one after goes to a new one.
 test('a restart when idle lets the running analysis finish first', async () => {

@@ -197,6 +197,11 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
     if (autoShow && autoShow.restartWorker) autoShow.restartWorker('structure model changed');
   }
 
+  function applyGpuMemory() {
+    console.log(`[analysis] GPU memory is now ${settings.get('analysis.gpuMemory')}`);
+    if (autoShow && autoShow.restartWorker) autoShow.restartWorker('GPU memory changed');
+  }
+
   function applyDeezer() {
     const arl = settings.get('deezer.arl');
     if (!arl) return;
@@ -228,6 +233,7 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
     { match: (k) => k === 'analysis.pythonPath', run: applyPython },
     { match: (k) => k === 'analysis.separator', run: applySeparator },
     { match: (k) => k === 'analysis.structureModel', run: applyStructureModel },
+    { match: (k) => k === 'analysis.gpuMemory', run: applyGpuMemory },
     { match: (k) => k === 'safety.flashLimit', run: applySafety },
   ];
 

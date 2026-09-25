@@ -48,9 +48,10 @@ function storedTimeoutMs(): number {
 }
 
 /**
- * The worker's environment: this process's, plus the separator and the
- * structure model the operator chose. Read at spawn, so a change applies
- * to the next worker — and changing either restarts the worker (see apply.ts).
+ * The worker's environment: this process's, plus the separator, the
+ * structure model and where the models live on a GPU, as the operator chose.
+ * Read at spawn, so a change applies to the next worker — and changing any of
+ * them restarts the worker (see apply.ts).
  */
 function workerEnv(): NodeJS.ProcessEnv {
   const bsRoformer = settings.get('analysis.separator') === 'bs-roformer';
@@ -58,6 +59,7 @@ function workerEnv(): NodeJS.ProcessEnv {
     ...process.env,
     ARTNET_USE_BS_ROFORMER: bsRoformer ? '1' : '0',
     ARTNET_STRUCTURE_MODEL: settings.get('analysis.structureModel') || 'auto',
+    ARTNET_GPU_MEMORY: settings.get('analysis.gpuMemory') || 'auto',
   };
 }
 

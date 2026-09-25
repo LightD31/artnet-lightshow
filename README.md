@@ -1379,6 +1379,22 @@ stem-derived instrument roles for a 4× faster analysis.
 `python scripts/bench-analyze.py track.wav` shows where a machine spends its
 time, stage by stage.
 
+**GPU memory.** The separator, MuQ, MuQ-MuLan and SongFormer are several
+gigabytes of weights between them, which an 8 GB card cannot hold at once with
+room left for a pass: kept on the card, whichever ran last failed with *CUDA out
+of memory*, on some tracks and not others. So on a card under 12 GB the models
+wait in RAM, and each goes onto the card for its own pass only. The weights are
+pinned (page-locked) in RAM, so each copy runs at the bus's full speed. A
+gigabyte takes a fraction of a second, where reloading it from its checkpoint
+took seconds. After the pass the card's copy is dropped rather than copied back,
+since the weights do not change. At most a quarter of the RAM is pinned
+(`ARTNET_PINNED_GB` changes it), and anything past that waits in ordinary
+memory. A pass that still runs the card out of memory is run again on the CPU.
+That is slower, but the track gets its answer, and a card that was keeping
+models resident keeps them in RAM from then on. **Settings → Analysis → GPU
+memory** chooses: *Auto*, *In RAM* (always) or *On the card* (never; for a card
+with room to spare). The analyser's log says which it is using.
+
 **Structure.** Settings → Analysis → **Structure** decides who names the
 sections. [SongFormer](https://huggingface.co/ASLP-lab/SongFormer) was trained
 on thousands of annotated songs. It knows a pre-chorus, a chorus that is not the
@@ -2420,7 +2436,7 @@ it has edits not applied yet. Most settings take effect immediately.
 | Sources | **Spotify** | Client ID, client secret, optional OAuth proxy, unverified-state escape hatch, and the saved session (server-written, never shown) |
 | Sources | **Deezer** | ARL cookie — exact ISRC-matched audio instead of a yt-dlp search |
 | Sources | **Live input** | Enabled, what to listen to, device, auto-sync, play by ear, room latency |
-| Sources | **Analysis** | Separator, structure model, analyser and download timeouts, library folder, Python interpreter |
+| Sources | **Analysis** | Separator, structure model, GPU memory, analyser and download timeouts, library folder, Python interpreter |
 | Settings | **Show** | Remember the night, flash limit |
 | Settings | **MIDI controller** | Input and output port, motorised fader feedback |
 | Settings | **MIDI clock out** | The port the clock goes to, or off |

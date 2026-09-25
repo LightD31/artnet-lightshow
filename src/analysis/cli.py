@@ -188,7 +188,8 @@ def _warm_up():
         _log(f'warm-up skipped: {exc}')
     try:
         loaded = models.warm_up()
-        _log(f'models ready: {", ".join(loaded) or "none"} on {models.device()}')
+        _log(f'models ready: {", ".join(loaded) or "none"} on {models.device()}'
+             f'{", in RAM between passes" if models.offloading() else ""}')
     except Exception as exc:
         _log(f'model warm-up skipped: {exc}')
     if DEFAULT.enable_semantics:

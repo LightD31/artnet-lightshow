@@ -198,6 +198,14 @@ test('SongFormer runs by default only where it keeps up, and the field takes onl
   assert.ok(!mode(''));
 });
 
+test('the models wait in RAM on a small card by default, and the field takes only its three', () => {
+  assert.strictEqual(DEFAULTS.analysis.gpuMemory, 'auto');
+  const mode = (gpuMemory) => schema.safeParse({ ...DEFAULTS, analysis: { ...DEFAULTS.analysis, gpuMemory } }).success;
+  for (const ok of ['auto', 'offload', 'resident']) assert.ok(mode(ok), ok);
+  assert.ok(!mode('vram'));
+  assert.ok(!mode(''));
+});
+
 // Whatever pythonPath names is executed, so it has to be named like a Python.
 test('pythonPath only accepts a Python interpreter', () => {
   const ok = (v) => patchSchema.safeParse({ analysis: { pythonPath: v } }).success;

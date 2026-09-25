@@ -204,6 +204,16 @@ export const ANALYSIS = {
       help: 'Names each section: intro, verse, chorus, bridge, outro. SongFormer needs its 2.9 GB of weights (Analysis '
         + 'models, below) and takes a few seconds a track on a GPU but most of the track\'s length on a CPU. Without it '
         + 'the sections come from where the music repeats. Changing it restarts the analyser.' },
+    { path: 'analysis.gpuMemory', label: 'GPU memory', type: 'select',
+      options: () => [
+        { value: 'auto', label: 'Auto (in RAM on a card under 12 GB)' },
+        { value: 'offload', label: 'In RAM, on the card for each pass' },
+        { value: 'resident', label: 'On the card all the time' },
+      ],
+      help: 'Where the analysis models wait between passes on an NVIDIA card. An 8 GB card cannot hold them all at once: '
+        + 'kept in RAM, each goes onto the card for its own pass — a fraction of a second, not a reload from disk — and '
+        + 'the card has room for it. A pass that still runs out of memory is run again on the CPU. Changing it restarts '
+        + 'the analyser.' },
     { path: 'analysis.analyzerTimeoutMs', label: 'Analysis Timeout', type: 'number', unit: 'ms', min: 60000, max: 3600000,
       help: 'How long one track may analyse before the worker is considered wedged and recycled.' },
     { path: 'analysis.downloadTimeoutMs', label: 'Download Timeout', type: 'number', unit: 'ms', min: 10000, max: 3600000,
