@@ -2163,8 +2163,24 @@ Companion **v4.3+** (the module uses the v2 connection API).
    the server uses one
 4. Drag presets onto buttons
 
-Presets cover patterns, colours A–D, transport, per-fixture blackout and energy
-effects, with feedback highlighting the active state.
+It is made for busking. The **Busk** preset page has:
+- every palette on the server;
+- energy effects and a blackout that last only while their button is held
+  (sent as `energy-hold`, which the server lets go of on its own if Companion
+  stops renewing it, so a crash with a button down never latches a strobe);
+- tap tempo, ×2 and ÷2;
+- the auto show's on/off, intensity and sync nudge;
+- the master level;
+- a button for every saved cue.
+
+Other presets cover every pattern and pixel effect (the bars' own picture and
+the pixel map too), colours A–D, transport, a blackout per fixture and latched
+energy effects, with feedback lighting the active state. The patterns,
+palettes, fixtures and cues it offers are read from the server when it
+connects, so ones added there appear without a new module. It follows the
+server over protocol 2, so a large rig costs it nothing between changes. See
+[its help](companion-module/companion/HELP.md) for every action, feedback and
+variable.
 
 ---
 
@@ -2329,8 +2345,8 @@ the state in one of two forms, chosen when the client connects:
   (`src/shared/dmx-frame.ts`: per universe its number, its length and its
   bytes), thirty times a second while it changes — volatile, and only to
   clients that sent `subscribe: ['dmx']` (and until `unsubscribe`).
-- **Protocol 1** — anything that does not ask, such as the Bitfocus Companion
-  module: `state` (the full snapshot on connect, the
+- **Protocol 1** — anything that does not ask, such as the Companion module
+  before 2.1: `state` (the full snapshot on connect, the
   whole live state again whenever any of it changes) and `dmx` (channel values
   as JSON, keyed by universe, ten times a second — built only while such a
   client is connected).
