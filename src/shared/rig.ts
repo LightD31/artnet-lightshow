@@ -23,12 +23,14 @@ const EMITTERS = ['red', 'green', 'blue', 'white', 'amber', 'uv', 'warmWhite', '
 // bar on its own, or mirrored about the centre of the stage.
 const PIXEL_MAPS = ['stage', 'bar', 'mirror'] as const;
 
-// The most cells one fixture has: a 1,024-pixel strip, or a 32 × 32 panel. A
+// The most cells one fixture has: a 4,096-pixel strip, or a 64 × 64 panel. A
 // strip longer than a universe runs on into the next (shared/placement.ts).
-const MAX_CELLS_PER_FIXTURE = 1024;
+// The patch as a whole still renders at most MAX_UNITS (server/profiles.ts),
+// so a 64 × 32 WLED matrix leaves half of that for the rest of the rig.
+const MAX_CELLS_PER_FIXTURE = 4096;
 
-// The longest profile: 1,024 RGBW pixels, eight universes.
-const MAX_PROFILE_CHANNELS = 4096;
+// The longest profile: 4,096 RGBW pixels, 32 universes.
+const MAX_PROFILE_CHANNELS = 16384;
 
 /** One light: a par, or one cell of a bar. */
 export interface Unit {

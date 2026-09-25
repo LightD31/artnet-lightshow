@@ -3,6 +3,20 @@ import { stateSig, dmxSig, dmxShapeSig } from '../state.js';
 import { useDmxFeed } from '../use-dmx.js';
 import { channelPlace, stripOf, isInternalUniverse } from '../../src/shared/placement.ts';
 
+/**
+ * A profile's channels, for labelling: its channel list, or — for one that has
+ * none, like a WLED's — each cell's colours, which say the same.
+ */
+function channelsOf(profile) {
+  if (Array.isArray(profile.channelList) && profile.channelList.length) return profile.channelList;
+  const out = [];
+  (profile.cells || []).forEach((cell, c) => {
+    for (const [attribute, offset] of Object.entries(cell.channelMap || {})) out.push({ offset, attribute, cell: c });
+  });
+  for (const [attribute, offset] of Object.entries(profile.channelMap || {})) out.push({ offset, attribute });
+  return out;
+}
+
 function buildChannelLabels(s, universe) {
   const labels = {};
   if (!s.fixtures || !s.profiles) return labels;
@@ -14,7 +28,7 @@ function buildChannelLabels(s, universe) {
     const strip = stripOf(profile);
     const home = fix.universe ?? 0;
     if (!strip && home !== universe) continue;
-    for (const ch of (profile.channelList || [])) {
+    for (const ch of channelsOf(profile)) {
       const place = channelPlace(strip, fix.address, ch.offset);
       if (home + place.universe !== universe) continue;
       // A bar's cell channels read as their colour and cell: R12 is cell

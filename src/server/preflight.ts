@@ -15,8 +15,10 @@ import { engineStatus } from './engine.ts';
 import { MIN_UNIVERSE, MAX_UNIVERSE } from './sacn.ts';
 import { listEntertainmentConfigs } from './hue.ts';
 import { wledClient } from './wled.ts';
+import { runsOf, pixelWidth } from './ddp-routes.ts';
 import { unitCount } from '../shared/rig.ts';
 import type { WledClient } from './wled.ts';
+import type { DdpOutput } from '../types/rig.ts';
 import { cues } from './cues.ts';
 import { midiMap } from './midi-map.ts';
 import * as pythonEnv from '../python-env.ts';
@@ -290,17 +292,23 @@ async function checkWled(client: Pick<WledClient, 'info'> = wledClient): Promise
     return { id: 'wled', label: 'WLED', status: INFO, detail: 'None in the patch. Add one under Settings → Output → WLED.' };
   }
   const answers = await Promise.all(wleds.map(async (fix) => {
-    const host = (fix.output as { host: string }).host;
-    const patched = unitCount(getProfile(fix));
+    const output = fix.output as DdpOutput;
+    const host = output.host;
+    const profile = getProfile(fix);
+    // A segment has to fit in the WLED; all of it has to be all of it.
+    const segment = output.at !== undefined;
+    const patched = segment
+      ? Math.max(...runsOf(output, profile, pixelWidth(profile) || profile.channelCount).map((run) => run.at + run.count))
+      : unitCount(profile);
     try {
       const info = await client.info(host);
-      return { fix, host, patched, leds: info.leds, error: null };
+      return { fix, host, patched, segment, leds: info.leds, error: null };
     } catch (err) {
-      return { fix, host, patched, leds: 0, error: err instanceof Error ? err.message : String(err) };
+      return { fix, host, patched, segment, leds: 0, error: err instanceof Error ? err.message : String(err) };
     }
   }));
   const silent = answers.filter((a) => a.error);
-  const resized = answers.filter((a) => !a.error && a.leds !== a.patched);
+  const resized = answers.filter((a) => !a.error && (a.segment ? a.leds < a.patched : a.leds !== a.patched));
   if (silent.length) {
     return {
       id: 'wled', label: 'WLED', status: FAIL,
@@ -311,7 +319,9 @@ async function checkWled(client: Pick<WledClient, 'info'> = wledClient): Promise
   if (resized.length) {
     return {
       id: 'wled', label: 'WLED', status: WARN,
-      detail: resized.map((a) => `"${a.fix.label}" reports ${a.leds} LEDs but is patched as ${a.patched}`).join('; '),
+      detail: resized.map((a) => (a.segment
+        ? `"${a.fix.label}" reaches LED ${a.patched}, but its WLED reports ${a.leds}`
+        : `"${a.fix.label}" reports ${a.leds} LEDs but is patched as ${a.patched}`)).join('; '),
       fix: 'Remove it from the patch and add it again under Settings → Output → WLED.',
     };
   }

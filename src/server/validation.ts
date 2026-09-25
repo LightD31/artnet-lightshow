@@ -50,6 +50,10 @@ const fixtureOutput = z.discriminatedUnion('protocol', [
     protocol: z.literal('ddp'),
     host: z.string().regex(HOSTNAME_RE, 'is not a hostname or an IPv4 address'),
     port: z.number().int().min(1).max(65535).optional(),
+    // One segment of the WLED: its first LED, and a panel's width when the
+    // segment is a rectangle narrower than the panel.
+    at: z.number().int().min(0).max(65535).optional(),
+    rowStride: z.number().int().min(1).max(4096).optional(),
   }).strict(),
   hueOutput,
 ]);
@@ -400,6 +404,8 @@ const midiConnectSchema = z.object({
 const wledAddSchema = z.object({
   host: z.string().regex(HOSTNAME_RE, 'is not a hostname or an IPv4 address'),
   label: z.string().trim().min(1).max(64).optional(),
+  // One fixture for each of its segments, rather than one for all its LEDs.
+  segments: z.boolean().optional(),
 }).strict();
 
 const huePairSchema = z.object({

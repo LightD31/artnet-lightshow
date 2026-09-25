@@ -28,8 +28,9 @@ via **Bitfocus Companion**, and a REST API.
   its colour count from the palette rather than needing a variant per size
 - **LED bars** — every cell of a bar is a light of its own: import one from
   GDTF or build its profile from the manual, lay it on the stage plot, and the
-  wave, ribbon, rainbow and five pixel effects (gradient, comet, burst, plasma,
-  meter) draw across its cells
+  wave, ribbon, rainbow and the pixel effects (gradient, comet, burst, plasma,
+  meter, and on a panel the LedFx-style bars, fire and rain) draw across its
+  cells
 - **15 colour presets** — a nine-hue wheel with nothing closer than 30° on it,
   plus two whites, two pale washes and UV — and four colour slots (A–D) that
   patterns draw from
@@ -598,7 +599,7 @@ the stage. That line is where the cells are for every pattern, so draw it where
 the bar hangs.
 
 **How patterns use the cells.** The pictures — Wave, Ribbon, Ensemble, Rainbow,
-Twinkle, Sparkle and the five pixel effects — are drawn across every cell. The
+Twinkle, Sparkle and the pixel effects — are drawn across every cell. The
 stepped patterns — the chases, Split, Sections and the like — travel through
 *fixtures*, and a bar takes its step's colour on every cell, so a chase across
 four pars and two bars has six stops, not thirty-six.
@@ -630,8 +631,9 @@ and everything that reads the rig — the monitor, the previews, the Hue lamps,
 the overlap checks — follows each pixel to its universe. The bar maker builds
 one when it is plain pixels from channel 1.
 
-**How much.** The engine renders up to 4,096 cells, up to 1,024 to a fixture
-(a 1,024-pixel strip, or a 32 × 32 panel). Measured on the engine's thread,
+**How much.** The engine renders up to 4,096 cells, all of them to one fixture
+if it has that many (a 4,096-pixel strip, or a 64 × 64 panel; a 64 × 32 WLED
+matrix leaves half for the rest of the rig). Measured on the engine's thread,
 4,096 cells cost 0.5–2 ms a frame for most patterns and 6–7 ms for the heaviest
 (Plasma, Gradient), out of the 22.7 ms each frame has.
 
@@ -659,8 +661,20 @@ monitor.
   Interfaces in WLED), so set a preset of "off" there if it should stay dark.
 - The pre-show check asks every WLED in the patch: one that does not answer
   fails, and one whose LED count has changed since it was added warns.
-- A WLED with more than 1,024 LEDs is more than one fixture takes: split it into
-  segments in WLED and give each its own address, or drive it over Art-Net.
+- A WLED panel of up to 4,096 LEDs is one fixture: a 64 × 32 matrix is added as
+  a 64 × 32 panel, over thirteen universes of its own.
+
+**Segments.** **Add each segment** makes each segment set up in WLED a fixture
+of its own. The front of a DJ booth and its two sides, all on one strip, become
+three fixtures to place on the plan where they stand. A panel split into halves
+becomes two panels. Over DDP a WLED takes its LEDs in their own order (a
+panel's row by row, its wiring worked out by WLED itself). So a segment is sent
+the stretch of that order it covers, from its first LED, and a rectangle of a
+panel is sent a row at a time. All of one WLED's segments go in one frame,
+shown once, so no segment is a frame behind another. They may not share an LED,
+and the pre-show check warns about one that reaches past the WLED's end. In
+realtime mode a WLED shows only what it is sent, so LEDs in no patched segment
+stay as they are.
 
 ### Output protocols
 
@@ -1130,6 +1144,18 @@ track's drum lanes can be trusted (below):
 | **Meter** | A level meter filled by the low end and kicked on every step |
 | **Drums** | The kit as it is hit: the kick fills each bar from its middle, the snare cracks at its ends, the hats scatter along it |
 | **Stems** | Voice, band, drums and bass in zones out from the centre, each as loud as it is playing |
+| **Bars** | A spectrum analyser, after LedFx: the kick, bass, drums, snare, the rest of the band, the voice and the hats as columns, each as high as it plays, filled from the bottom |
+| **Fire** | Flames licking up from the bottom, taller with the bass and flaring on every kick, from the look's first colour at the root to its last at the tips |
+| **Rain** | Drops falling down every column in time, a lap every four steps, each column at its own speed; the hats shake loose more |
+
+**Bars**, **Fire** and **Rain** are made for panels — a WLED matrix, or an Open
+Fixture Library matrix — where they stand up: the bars rise from the panel's
+bottom row, the flames lick up it and the rain falls down it. Laid out **Per
+bar**, each panel draws its own; **Across stage**, a panel's rows are its
+height. On a strip, which has no height, the strip is laid along it instead:
+the bars become zones, the fire rises from its start, three drops run along it.
+They play the pulse like Drums and Stems, and the clock without it. The auto
+show leaves them to you.
 
 **Drums** and **Stems** play the analysis's *pulse*. That is every kick, snare
 and hat read off the separated drum stem, and each stem's level fifty times a
@@ -2181,8 +2207,8 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/profiles` · DELETE `/api/profiles/:id` | Register / remove a fixture profile (`cells` makes it an LED bar, `grid` a panel; `defaults: [{ offset, value }]` holds undriven channels off 0) |
 | POST | `/api/profiles/bar` | Build and register an LED bar profile from `{ id, name, cells, firstChannel, order, stride?, dimmer?, strobe? }`; `?dryRun=1` answers with it without registering |
 | GET · POST | `/api/show` | Export / import the patch |
-| GET | `/api/wled/discover` | Ask the network for WLEDs (mDNS): `{ devices: [{ host, name, leds, rgbw, matrix, version, patched }] }` |
-| POST | `/api/wled/add` | Add a WLED to the patch from `{ host, label? }`: its profile from `/json/info`, on free universes, sent DDP |
+| GET | `/api/wled/discover` | Ask the network for WLEDs (mDNS): `{ devices: [{ host, name, leds, rgbw, matrix, version, segments, patched }] }` |
+| POST | `/api/wled/add` | Add a WLED to the patch from `{ host, label?, segments? }`: its profile from `/json/info`, on free universes, sent DDP. With `segments: true`, a fixture for each segment in its `/json/state` not patched yet: `{ fixtures, profiles, info, segments }` |
 
 ### Outputs
 
@@ -2315,8 +2341,10 @@ The `fixture` message carries
 of `front`, `back`, `room`, `floor`, or `null`; `geometry` is an LED bar's line
 (a panel's top edge), `{ length, angle }` (length 1–100 in stage percent, angle
 −180–180 degrees clockwise on the plot), or `null` for the default; `output` is
-`{ protocol: 'ddp', host, port? }` to send the fixture's universes to a WLED, or
-`null` for Art-Net and sACN.
+`{ protocol: 'ddp', host, port?, at?, rowStride? }` to send the fixture's
+universes to a WLED — from its LED `at` for a segment, a row every `rowStride`
+LEDs for a rectangle of a panel — `{ protocol: 'hue' }` for a Hue lamp with no
+DMX address, or `null` for Art-Net and sACN.
 
 ---
 

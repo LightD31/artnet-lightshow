@@ -32,25 +32,44 @@ const TYPE_RGB = 0x0b;
 const TYPE_RGBW = 0x1b;
 const DISPLAY = 0x01;
 
-/** The packets for one frame of a device's pixels: `data` from byte 0 of its run. */
-function buildDdpPackets(data: Uint8Array, { sequence, rgbw = false }: { sequence: number; rgbw?: boolean }): Buffer[] {
+/**
+ * Where a stretch of the frame's data goes in the device's pixels: `bytes`
+ * bytes from `from` in the data, to byte `at` of the device's run.
+ */
+export interface DdpRun {
+  at: number;
+  from: number;
+  bytes: number;
+}
+
+/**
+ * The packets for one frame of a device's pixels: `data` from byte 0 of its
+ * run, or — for fixtures that are parts of one WLED, its segments — each of
+ * `runs` at its own place in it. Only the frame's last packet says "show it",
+ * so the device never shows one segment new and the next still old.
+ */
+function buildDdpPackets(data: Uint8Array, { sequence, rgbw = false, runs }: { sequence: number; rgbw?: boolean; runs?: DdpRun[] }): Buffer[] {
   const packets: Buffer[] = [];
   const seq = ((sequence - 1) % 15 + 15) % 15 + 1;
-  // At least one packet, so even an empty frame says "show it".
-  const count = Math.max(1, Math.ceil(data.length / MAX_DATA));
-  for (let k = 0; k < count; k++) {
-    const offset = k * MAX_DATA;
-    const length = Math.min(MAX_DATA, data.length - offset);
-    const packet = Buffer.alloc(HEADER + length);
-    packet[0] = VERSION_1 | (k === count - 1 ? PUSH : 0);
-    packet[1] = seq;
-    packet[2] = rgbw ? TYPE_RGBW : TYPE_RGB;
-    packet[3] = DISPLAY;
-    packet.writeUInt32BE(offset, 4);
-    packet.writeUInt16BE(length, 8);
-    packet.set(data.subarray(offset, offset + length), HEADER);
-    packets.push(packet);
+  const spans = runs && runs.length ? runs : [{ at: 0, from: 0, bytes: data.length }];
+  for (const span of spans) {
+    // At least one packet, so even an empty frame says "show it".
+    const count = Math.max(1, Math.ceil(span.bytes / MAX_DATA));
+    for (let k = 0; k < count; k++) {
+      const offset = k * MAX_DATA;
+      const length = Math.max(0, Math.min(MAX_DATA, span.bytes - offset));
+      const packet = Buffer.alloc(HEADER + length);
+      packet[0] = VERSION_1;
+      packet[1] = seq;
+      packet[2] = rgbw ? TYPE_RGBW : TYPE_RGB;
+      packet[3] = DISPLAY;
+      packet.writeUInt32BE(span.at + offset, 4);
+      packet.writeUInt16BE(length, 8);
+      packet.set(data.subarray(span.from + offset, span.from + offset + length), HEADER);
+      packets.push(packet);
+    }
   }
+  packets[packets.length - 1][0] |= PUSH;
   return packets;
 }
 
@@ -125,12 +144,12 @@ function resolveHost(host: string): string | null {
 }
 
 /** Send one frame of a device's pixels. False when its host has not resolved yet. */
-function sendDdp({ host, port = DDP_PORT, sequence, rgbw = false }: { host: string; port?: number; sequence: number; rgbw?: boolean },
+function sendDdp({ host, port = DDP_PORT, sequence, rgbw = false, runs }: { host: string; port?: number; sequence: number; rgbw?: boolean; runs?: DdpRun[] },
   data: Uint8Array): boolean {
   const address = resolveHost(host);
   if (!address) return false;
   const s = sendSocket();
-  for (const packet of buildDdpPackets(data, { sequence, rgbw })) s.send(packet, port, address);
+  for (const packet of buildDdpPackets(data, { sequence, rgbw, runs })) s.send(packet, port, address);
   return true;
 }
 

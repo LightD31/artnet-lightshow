@@ -243,13 +243,17 @@ function Wled() {
     setStatus(data.devices.length ? `${plural(data.devices.length, 'WLED')} answered.`
       : 'No WLED answered. mDNS does not cross routers or VLANs: add one by its address below.');
   };
-  const add = async (address) => {
+  const add = async (address, segments = false) => {
     setStatus(`Asking ${address}…`);
-    const res = await post('/api/wled/add', { host: address });
+    const res = await post('/api/wled/add', segments ? { host: address, segments: true } : { host: address });
     if (!res.ok) { setStatus(res.error); return; }
-    setStatus(`Added "${res.fixture.label}": ${res.profile.modeName}, from universe ${res.fixture.universe}.`);
-    setDevices((list) => (list || []).map((d) => (d.host === address ? { ...d, patched: res.fixture.label } : d)));
-    toast.info(`Added ${res.fixture.label} to the patch`);
+    const added = segments ? res.fixtures : [res.fixture];
+    const labels = added.map((f) => f.label).join(', ');
+    setStatus(segments
+      ? `Added ${plural(added.length, 'segment')} of ${res.info.name}, each a fixture of its own: ${labels}. Place them on the plan.`
+      : `Added "${res.fixture.label}": ${res.profile.modeName}, from universe ${res.fixture.universe}.`);
+    setDevices((list) => (list || []).map((d) => (d.host === address ? { ...d, patched: labels } : d)));
+    toast.info(segments ? `Added ${plural(added.length, 'segment')} of ${res.info.name} to the patch` : `Added ${res.fixture.label} to the patch`);
   };
   const flash = async (address) => {
     const res = await post('/api/wled/identify', { host: address });
@@ -259,7 +263,9 @@ function Wled() {
     <section class="panel" aria-labelledby="wled-title">
       <header class="panel-head"><h2 class="panel-title" id="wled-title">WLED</h2></header>
       <p class="section-desc">WLED strips and panels, sent their pixels over DDP rather than Art-Net. Adding one reads its LED
-        count (and its grid, set up as a panel) from the device and patches it on universes of its own.</p>
+        count (and its grid, set up as a panel) from the device and patches it on universes of its own. <em>Add each
+        segment</em> makes every segment set up in WLED a fixture of its own — the front of the booth and its sides, or a
+        panel's halves — to be placed on the plan one by one.</p>
       <div class="discovery">
         <div class="discovery-head">
           <button type="button" class="btn sm" onClick={find}>Find WLEDs</button>
@@ -278,7 +284,11 @@ function Wled() {
                     <td class="patch-actions-cell">
                       {!d.error && <button type="button" class="btn sm" aria-label={`Identify ${d.name}`} onClick={() => flash(d.host)}>Identify</button>}
                       {d.patched ? <span class="setting-help">In the patch as "{d.patched}"</span>
-                        : !d.error && <button type="button" class="btn sm active" onClick={() => add(d.host)}>Add to patch</button>}
+                        : !d.error && <>
+                          <button type="button" class="btn sm active" onClick={() => add(d.host)}>Add to patch</button>
+                          {d.segments > 1 && <button type="button" class="btn sm" aria-label={`Add each of ${d.name}'s ${d.segments} segments`}
+                            onClick={() => add(d.host, true)}>Add each segment ({d.segments})</button>}
+                        </>}
                     </td>
                   </tr>
                 ))}
@@ -292,6 +302,7 @@ function Wled() {
             onInput={(e) => setHost(e.target.value)} />
           <button type="button" class="btn sm" disabled={!host.trim()} onClick={() => flash(host.trim())}>Identify</button>
           <button type="submit" class="btn sm active" disabled={!host.trim()}>Add</button>
+          <button type="button" class="btn sm" disabled={!host.trim()} onClick={() => add(host.trim(), true)}>Add each segment</button>
         </form>
       </div>
     </section>

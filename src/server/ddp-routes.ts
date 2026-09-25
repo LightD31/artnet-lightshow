@@ -1,6 +1,6 @@
 import { footprintOf, stripOf } from '../shared/placement.ts';
 import { DDP_PORT } from './ddp.ts';
-import type { Fixture, Profile } from '../types/rig.ts';
+import type { DdpOutput, Fixture, Profile } from '../types/rig.ts';
 
 /**
  * Which universes go to a WLED over DDP rather than out on Art-Net and sACN.
@@ -14,12 +14,19 @@ import type { Fixture, Profile } from '../types/rig.ts';
  * handed to the transmitter with every frame.
  */
 
-/** One WLED: where it is, and which bytes of which universes are its pixels, in order. */
+/**
+ * One fixture on a WLED: where the WLED is, which bytes of which universes
+ * are the fixture's pixels, in order, and where those pixels go among the
+ * WLED's LEDs — from 0 for a whole WLED, from its first LED for a segment, a
+ * row at a time for a rectangle of a panel.
+ */
 export interface DdpRoute {
   host: string;
   port: number;
   rgbw: boolean;
   parts: { universe: number; from: number; bytes: number }[];
+  /** Runs of the fixture's pixels, in order: `count` of them from LED `at`. */
+  runs: { at: number; count: number }[];
 }
 
 type ProfileOf = (fixture: Pick<Fixture, 'profileId'>) => Profile;
@@ -34,9 +41,21 @@ function ddpRoutes(fixtures: readonly Fixture[], profileOf: ProfileOf, universeO
     const profile = profileOf(fix);
     const parts = footprintOf(universeOf(fix), fix.address, profile)
       .map((part) => ({ universe: part.universe, from: part.first - 1, bytes: part.last - part.first + 1 }));
-    routes.push({ host: output.host, port: output.port ?? DDP_PORT, rgbw: pixelWidth(profile) === 4, parts });
+    const width = pixelWidth(profile) || profile.channelCount;
+    routes.push({ host: output.host, port: output.port ?? DDP_PORT, rgbw: width === 4, parts, runs: runsOf(output, profile, width) });
   }
   return routes;
+}
+
+/** Where a fixture's pixels go among its WLED's LEDs (see DdpRoute.runs). */
+function runsOf(output: DdpOutput, profile: Profile, width: number): { at: number; count: number }[] {
+  const at = output.at ?? 0;
+  const pixels = Math.max(1, Math.round(profile.channelCount / Math.max(1, width)));
+  const grid = profile.grid;
+  if (output.rowStride && grid && grid.columns * grid.rows === pixels && output.rowStride > grid.columns) {
+    return Array.from({ length: grid.rows }, (_, r) => ({ at: at + r * (output.rowStride as number), count: grid.columns }));
+  }
+  return [{ at, count: pixels }];
 }
 
 /** Channels to a pixel, when the profile is one pixel after another; 0 otherwise. */
@@ -55,6 +74,24 @@ function pixelWidth(profile: Profile): number {
  * sACN — a par patched there would silently never light.
  */
 function ddpConflict(fixtures: readonly Fixture[], profileOf: ProfileOf, universeOf: UniverseOf): string | null {
+  // Two fixtures on one WLED are two of its segments, and may not share a LED.
+  const leds = new Map<string, { fixture: Fixture; from: number; to: number }[]>();
+  for (const fix of fixtures) {
+    const output = fix.output;
+    if (!output || output.protocol !== 'ddp') continue;
+    const profile = profileOf(fix);
+    const key = `${output.host.toLowerCase()}:${output.port ?? DDP_PORT}`;
+    const taken = leds.get(key) || [];
+    for (const run of runsOf(output, profile, pixelWidth(profile) || profile.channelCount)) {
+      const clash = taken.find((t) => t.fixture !== fix && run.at <= t.to && t.from <= run.at + run.count - 1);
+      if (clash) {
+        return `"${fix.label}" and "${clash.fixture.label}" both drive LEDs ${Math.max(run.at, clash.from) + 1}–`
+          + `${Math.min(run.at + run.count - 1, clash.to) + 1} of the WLED at ${output.host}; give each a segment of its own`;
+      }
+      taken.push({ fixture: fix, from: run.at, to: run.at + run.count - 1 });
+    }
+    leds.set(key, taken);
+  }
   const owner = new Map<number, Fixture>();
   for (const fix of fixtures) {
     if (!fix.output || fix.output.protocol !== 'ddp') continue;
@@ -80,4 +117,6 @@ function ddpConflict(fixtures: readonly Fixture[], profileOf: ProfileOf, univers
 export {
   ddpRoutes,
   ddpConflict,
+  runsOf,
+  pixelWidth,
 };

@@ -1930,7 +1930,8 @@ const PIXEL_ROLE_LOOKS: Record<string, readonly { pattern: string; map: string }
 
 // The pictures drawn across cells, which a passage with no role may already
 // have been given.
-const CELL_LOOKS = new Set(['gradient', 'comet', 'burst', 'plasma', 'drums', 'stems', 'rise', 'impact', 'ensemble', 'ribbon', 'wave', 'rainbow', 'twinkle', 'sparkle']);
+const CELL_LOOKS = new Set(['gradient', 'comet', 'burst', 'plasma', 'drums', 'stems', 'rise', 'impact', 'ensemble', 'ribbon', 'wave', 'rainbow',
+  'twinkle', 'sparkle', 'bars', 'fire', 'rain']);
 
 /**
  * What the pars do while the bars move: colour, held or breathing or turning

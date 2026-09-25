@@ -126,7 +126,7 @@ function paletteOf(ctx: Pick<PatternContext, 'colors'>): Colour[] {
 const CELL_PATTERNS = new Set([
   'ensemble', 'ribbon', 'wave', 'rainbow', 'twinkle', 'sparkle',
   'gradient', 'comet', 'burst', 'plasma', 'meter', 'drums', 'stems',
-  'rise', 'impact',
+  'rise', 'impact', 'bars', 'fire', 'rain',
 ]);
 
 /** Where slot i sits across the rig, 0..1: its placed position, or even spacing. */
@@ -652,6 +652,150 @@ Object.assign(PATTERN_FUNCS, {
     }
   },
 } satisfies Record<string, PatternFn>);
+
+// ── Panels ──────────────────────────────────────────────────────────────────
+// Pictures after LedFx's and WLED's matrix effects. On a panel — cells with a
+// height, as a WLED matrix has — they stand up: bars rise, flames lick and
+// rain falls from its top to its bottom. On a strip, which has no height, the
+// strip is laid along that height instead, so each still reads.
+
+Object.assign(PATTERN_FUNCS, {
+  // A spectrum analyser, after LedFx's bars: the band as it plays, a column
+  // each for the kick, the bass, the drums, the snare, the rest of the band,
+  // the voice and the hats, left to right, each filled from the bottom as high
+  // as it is loud, the colour running up the look's gradient, its top cell the
+  // brightest. On a strip each band lights its stretch as bright as it plays.
+  bars(ctx) {
+    const pal = paletteOf(ctx);
+    const bed = Math.round(bedOf(ctx) * 0.3);
+    const levels = bandLevels(ctx);
+    const rows = heightsOf(ctx);
+    for (let i = 0; i < ctx.fixtureCount; i++) {
+      const band = Math.min(levels.length - 1, Math.floor(xOf(ctx, i) * levels.length));
+      const level = levels[band];
+      if (!rows) {
+        ctx.write(i, pal[band % pal.length], Math.round(bed + (255 - bed) * Math.pow(level, 1.2)), 0);
+        continue;
+      }
+      const height = rows(i);
+      if (height > level) { ctx.write(i, pal[pal.length - 1], bed, 0); continue; }
+      const top = level - height < 0.07;
+      ctx.write(i, gradientAt(pal, height * (pal.length - 1) / pal.length), top ? 255 : Math.round(170 + 60 * height), 0);
+    }
+  },
+
+  // Fire, after WLED's and LedFx's: flames licking up from the bottom, taller
+  // as the bass pushes and flaring on every kick, hottest at the root in the
+  // look's first colour and cooling to its last at the tips. Noise on the
+  // clock rather than a simulation, so every frame is the same for the same
+  // moment: the preview and the rig burn alike.
+  fire(ctx) {
+    const pal = paletteOf(ctx);
+    const p = ctx.pulse;
+    const low = p ? (p.bass ?? p.mix) : dyn(ctx, 'bass', 0.5);
+    const kick = p ? p.kick : Math.exp(-(ctx.stepPhase ?? 0) * 4) * 0.6;
+    const heat = 0.3 + 0.45 * low + 0.3 * kick;
+    const t = (ctx.stepPos ?? ctx.step) * 0.6;
+    const rows = heightsOf(ctx);
+    const far = pal.length > 1 ? (pal.length - 1) / pal.length : 0;
+    for (let i = 0; i < ctx.fixtureCount; i++) {
+      const x = xOf(ctx, i);
+      const height = rows ? rows(i) : x;
+      const across = rows ? x : 0.5;
+      const flame = heat * (0.55 + 0.9 * noise2(across * 7, t * 0.8, 11));
+      const lick = 0.75 + 0.25 * noise2(across * 13, height * 6 - t * 3, 29);
+      const v = clamp01((flame - height) / Math.max(0.05, flame)) * lick;
+      ctx.write(i, gradientAt(pal, (1 - v) * far), Math.round(255 * Math.pow(v, 0.9)), 0);
+    }
+  },
+
+  // Rain, after the digital rain every matrix plays: drops falling down each
+  // column in time, a lap every four steps, each column at its own speed and
+  // offset, with a trail that is long in slow music and short in driving
+  // music; the head is the look's lift, the trail its first colour, and the
+  // hats shake loose a scatter of extra drops. On a strip, three drops run
+  // along it.
+  rain(ctx) {
+    const pal = paletteOf(ctx);
+    const bed = Math.round(bedOf(ctx) * 0.25);
+    const t = (ctx.stepPos ?? ctx.step) / 4;
+    const trail = 0.2 + 0.35 * (1 - dyn(ctx, 'motion', 0.4));
+    const hats = ctx.pulse ? ctx.pulse.hats : kitFromTheClock(ctx).hats;
+    const sparkSeed = Math.floor((ctx.stepPos ?? ctx.step) * 4);
+    const rows = heightsOf(ctx);
+    for (let i = 0; i < ctx.fixtureCount; i++) {
+      const x = xOf(ctx, i);
+      const depth = rows ? rows(i) : x;
+      // From the top: a panel's rows count down from it, a strip from its start.
+      const fall = rows ? 1 - depth : depth;
+      const column = rows ? Math.round(x * 997) : 0;
+      let level = 0;
+      let head = false;
+      for (let k = 0; k < (rows ? 1 : 3); k++) {
+        const speed = 0.7 + 0.6 * scatter(column, 3 + k);
+        const at = frac(t * speed + scatter(column, 17 + k)) * (1 + trail);
+        const behind = at - fall;
+        if (behind >= 0 && behind < trail) {
+          const here = Math.pow(1 - behind / trail, 2);
+          if (here > level) { level = here; head = behind < 0.05; }
+        }
+      }
+      const spark = scatter(i, sparkSeed) < 0.04 * hats ? hats : 0;
+      if (spark > level) ctx.write(i, pal[pal.length - 1], Math.round(bed + (255 - bed) * spark), 0);
+      else if (level > 0) ctx.write(i, head ? pal[pal.length - 1] : pal[0], Math.round(bed + (255 - bed) * level), 0);
+      else ctx.write(i, pal[0], bed, 0);
+    }
+  },
+} satisfies Record<string, PatternFn>);
+
+/**
+ * How high each slot is, 0 at the bottom and 1 at the top, when the cells have
+ * a height — a panel's rows, from their place front to back on the plot or
+ * down the panel laid out per bar — or null for a line of lights.
+ */
+function heightsOf(ctx: PatternContext): ((i: number) => number) | null {
+  const ys = ctx.ys;
+  if (!ys || !ys.length) return null;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let i = 0; i < ctx.fixtureCount; i++) {
+    const y = ys[i];
+    if (y < lo) lo = y;
+    if (y > hi) hi = y;
+  }
+  if (!(hi - lo > 0.02)) return null;
+  // Down the plot, and down a panel, is towards its bottom row.
+  return (i) => (hi - ys[i]) / (hi - lo);
+}
+
+/**
+ * The band, as bars: kick, bass, drums, snare, the rest, voice, hats, each
+ * 0..1. The pulse where the track was analysed; the expression channel and a
+ * kit played by the clock where it was not.
+ */
+function bandLevels(ctx: PatternContext): number[] {
+  const p = ctx.pulse;
+  if (p) {
+    return [p.kick, p.bass ?? p.mix, p.drums ?? p.mix, p.snare, p.other ?? p.mix * 0.6, p.vocals ?? 0, p.hats].map(clamp01);
+  }
+  const kit = kitFromTheClock(ctx);
+  return [kit.kick, dyn(ctx, 'bass', 0.5), dyn(ctx, 'level', 0.6) * 0.8, kit.snare, dyn(ctx, 'air', 0.3),
+    dyn(ctx, 'vocal', 0.4), kit.hats].map(clamp01);
+}
+
+/** Smooth value noise, 0..1: `scatter` on a lattice, eased between its points. */
+function noise2(x: number, y: number, seed: number): number {
+  const xi = Math.floor(x);
+  const yi = Math.floor(y);
+  const u = x - xi;
+  const v = y - yi;
+  const at = (a: number, b: number) => scatter(Math.imul(a, 73856093) ^ Math.imul(b, 19349663), seed);
+  const su = u * u * (3 - 2 * u);
+  const sv = v * v * (3 - 2 * v);
+  const top = at(xi, yi) + (at(xi + 1, yi) - at(xi, yi)) * su;
+  const bottom = at(xi, yi + 1) + (at(xi + 1, yi + 1) - at(xi, yi + 1)) * su;
+  return top + (bottom - top) * sv;
+}
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 

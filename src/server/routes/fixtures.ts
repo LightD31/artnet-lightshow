@@ -80,11 +80,15 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
     try {
       const found = await wled.discover();
       const devices = await Promise.all(found.map(async (device) => {
-        const patched = state.fixtures.find((f) => f.output?.protocol === 'ddp' && f.output.host === device.host);
-        const base = { ...device, patched: patched ? patched.label : null };
+        const patched = state.fixtures.filter((f) => f.output?.protocol === 'ddp' && f.output.host === device.host);
+        const base = { ...device, patched: patched.length ? patched.map((f) => f.label).join(', ') : null };
         try {
           const info = await wled.info(device.host);
-          return { ...base, name: info.name, leds: info.leds, rgbw: info.rgbw, matrix: info.matrix, version: info.version };
+          let segments: number | null = null;
+          try {
+            segments = wled.segments ? (await wled.segments(device.host, info)).length : null;
+          } catch (_) { /* an older WLED: added whole */ }
+          return { ...base, name: info.name, leds: info.leds, rgbw: info.rgbw, matrix: info.matrix, version: info.version, segments };
         } catch (err) {
           return { ...base, error: messageOf(err) };
         }
@@ -97,10 +101,11 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
 
   app.post('/api/wled/add', asyncHandler(async (req, res) => {
     try {
-      const { host, label } = validate(wledAddSchema, req.body || {}, 'wled');
+      const { host, label, segments: bySegment } = validate(wledAddSchema, req.body || {}, 'wled');
       if (state.fixtures.length >= MAX_FIXTURES) {
         return res.status(400).json({ ok: false, error: `Patch is full (${MAX_FIXTURES} fixtures)` });
       }
+      if (bySegment) return await addSegments(res, host, label);
       const sameHost = state.fixtures.find((f) => f.output?.protocol === 'ddp' && f.output.host.toLowerCase() === host.toLowerCase());
       if (sameHost) return res.status(409).json({ ok: false, error: `${host} is patched already, as "${sameHost.label}"` });
 
@@ -138,11 +143,61 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
   }));
 
   /**
+   * A WLED patched segment by segment: a fixture for each of its segments not
+   * patched yet, each on universes of its own and sent to its own LEDs, so the
+   * stage plot can put the booth's front and its sides where they are.
+   */
+  async function addSegments(res: Response, host: string, label: string | undefined) {
+    if (!wled.segments) return res.status(501).json({ ok: false, error: 'This server cannot read WLED segments' });
+    const info = await wled.info(host);
+    const segments = await wled.segments(host, info);
+    if (!segments.length) return res.status(400).json({ ok: false, error: `${info.name} has no segments with LEDs in them` });
+    const built = segments.map((segment) => ({ segment, profile: wledProfile(info, host, segment) }));
+    const patchedIds = new Set(state.fixtures.map((f) => f.profileId));
+    const fresh = built.filter(({ profile }) => !patchedIds.has(profile.id));
+    if (!fresh.length) return res.status(409).json({ ok: false, error: `Every segment of ${info.name} is patched already` });
+    if (state.fixtures.length + fresh.length > MAX_FIXTURES) {
+      return res.status(400).json({ ok: false, error: `${fresh.length} segments would take the patch past ${MAX_FIXTURES} fixtures` });
+    }
+    const taken = new Set<number>();
+    const draft: Fixture[] = [];
+    for (const { segment, profile } of fresh) {
+      const universe = freeUniverses(universeCount(profile), taken);
+      if (universe === null) return res.status(400).json({ ok: false, error: 'No free universes left for it' });
+      for (let k = 0; k < universeCount(profile); k++) taken.add(universe + k);
+      draft.push({
+        id: -1 - draft.length, label: `${label || info.name} · ${segment.name}`.slice(0, 64), address: 1, universe,
+        profileId: profile.id, maxBrightness: 255, override: null, position: null, group: null, geometry: null,
+        output: { protocol: 'ddp', host, at: segment.at, ...(segment.rowStride ? { rowStride: segment.rowStride } : {}) },
+      });
+    }
+    const byId = new Map(fresh.map(({ profile }) => [profile.id, profile as Profile]));
+    const profileOf = (f: Pick<Fixture, 'profileId'>) => byId.get(f.profileId) || getProfile(f);
+    const next = [...state.fixtures, ...draft];
+    const problem = unitCapOverflow(next, profileOf) || ddpConflict(next, profileOf, universeOf)
+      || (countUniverses(next, profileOf) > MAX_UNIVERSES
+        ? `${info.name}'s segments would put the patch on more than the ${MAX_UNIVERSES} universes this server transmits` : null);
+    if (problem) return res.status(400).json({ ok: false, error: problem });
+    for (const { profile } of fresh) {
+      if (!registerProfile(profile)) return res.status(400).json({ ok: false, error: 'Invalid profile' });
+    }
+    for (const fixture of draft) {
+      fixture.id = allocateFixtureId();
+      state.fixtures.push(fixture);
+    }
+    resizeFixtureBuffers();
+    showStore.scheduleSave();
+    integrations.broadcast();
+    return res.json({ ok: true, fixtures: draft, profiles: fresh.map(({ profile }) => profile), info, segments: fresh.length });
+  }
+
+  /**
    * The first run of `count` universes nothing is patched on, from 1: the
    * rig's default universe stays clear, since new fixtures land on it.
+   * `taken` adds universes about to be used.
    */
-  function freeUniverses(count: number): number | null {
-    const used = new Set<number>([state.artnet.universe]);
+  function freeUniverses(count: number, taken: ReadonlySet<number> = new Set()): number | null {
+    const used = new Set<number>([state.artnet.universe, ...taken]);
     for (const f of state.fixtures) for (const part of footprintOf(universeOf(f), f.address, getProfile(f))) used.add(part.universe);
     for (let u = 1; u + count - 1 <= 32767; u++) {
       let free = true;

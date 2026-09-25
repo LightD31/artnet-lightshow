@@ -178,10 +178,11 @@ function attachIdentifyRoutes(app: Express, deps: IdentifyRouteDeps): void {
       const body = validate(wledIdentifySchema, req.body || {}, 'WLED identify');
       const secs = identifySeconds(body.seconds);
       const host = body.host.toLowerCase();
-      const patched = state.fixtures.find((f) => f.output?.protocol === 'ddp' && f.output.host.toLowerCase() === host);
-      if (patched) {
+      // Every fixture it is: all of it, or each of its segments.
+      const patched = state.fixtures.filter((f) => f.output?.protocol === 'ddp' && f.output.host.toLowerCase() === host);
+      if (patched.length) {
         pixels.stop(body.host);
-        return res.json({ ok: true, via: 'patch', ...start([patched.id], secs) });
+        return res.json({ ok: true, via: 'patch', ...start(patched.map((f) => f.id), secs) });
       }
       const info = await deps.wled.info(body.host);
       pixels.start(body.host, info, secs);

@@ -131,6 +131,11 @@ const PATTERNS = [
   { id: 'stems',    name: 'Stems',    desc: 'Voice, band, drums and bass in zones out from the centre, each as loud as it plays', pixel: true },
   { id: 'rise',     name: 'Rise',     desc: 'The rig filling up through a build-up, full on the drop', pixel: true },
   { id: 'impact',   name: 'Impact',   desc: 'A ring thrown out from the centre on every step, with sparks on every kick', pixel: true },
+  // After LedFx's and WLED's matrix effects: they stand up on a panel, and
+  // lie along a strip.
+  { id: 'bars',     name: 'Bars',     desc: 'A spectrum analyser: kick, bass, drums, snare, band, voice and hats as columns, as high as each plays', pixel: true },
+  { id: 'fire',     name: 'Fire',     desc: 'Flames licking up a panel, taller with the bass, flaring on the kick', pixel: true },
+  { id: 'rain',     name: 'Rain',     desc: 'Drops falling down every column in time, the hats shaking loose more', pixel: true },
 ];
 
 const PATTERN_IDS = PATTERNS.map((p) => p.id);

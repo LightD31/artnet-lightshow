@@ -39,6 +39,9 @@ const PATTERN_ICONS = {
   stems:         '☰',
   rise:          '▲',
   impact:        '✺',
+  bars:          '▁▅▃',
+  fire:          '♨',
+  rain:          '⁞',
 };
 
 // How a pattern is laid over the rig. Per bar needs bars; the other two

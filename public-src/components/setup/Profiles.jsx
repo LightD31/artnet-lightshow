@@ -146,7 +146,7 @@ function BarMaker() {
         each cell's channels (R G B W A U, and D for a cell's own dimmer).</p>
       <div class="mode-picker">
         {field('name', 'Name', { type: 'text', maxLength: 128, placeholder: 'LED Bar 16' })}
-        {field('cells', 'Cells', { type: 'number', min: 2, max: 1024 })}
+        {field('cells', 'Cells', { type: 'number', min: 2, max: 4096 })}
         {field('first', 'First cell at', { type: 'number', min: 1, max: 512 })}
         {field('order', 'Cell channels', { type: 'text', maxLength: 8 })}
         {field('stride', 'Cell spacing', { type: 'number', min: 1, max: 64, placeholder: 'same as channels' })}

@@ -161,11 +161,17 @@ export interface Fixture extends StageFixture {
 /** A fixture sent to a device of its own rather than on the rig's universes. */
 export type FixtureOutput = DdpOutput | HueOutput;
 
-/** A WLED, sent its pixels over DDP. */
+/**
+ * A WLED, sent its pixels over DDP: all of them, or — for a fixture that is
+ * one of its segments — from its LED `at`. A segment of a panel is a
+ * rectangle: its rows lie `rowStride` LEDs apart (the panel's width).
+ */
 export interface DdpOutput {
   protocol: 'ddp';
   host: string;
   port?: number;
+  at?: number;
+  rowStride?: number;
 }
 
 /**
