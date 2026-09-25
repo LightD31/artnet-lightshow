@@ -173,7 +173,9 @@ test('with a worker, frames land in memory the main thread reads', async () => {
   applyPatch({ pattern: 'solid', running: true, masterDimmer: 255, masterBlackout: false, colorA: 1 });
   startEngine({ thread: 'worker' });
   try {
-    await wait(250);
+    // The worker compiles its modules before its first frame: seconds on a slow runner.
+    const until = Date.now() + 5000;
+    while (!lit() && Date.now() < until) await wait(20);
     assert.strictEqual(engineStatus().thread, 'worker');
     assert.ok(lit(), 'the rendered look is visible from the main thread');
   } finally {
