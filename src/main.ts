@@ -31,7 +31,8 @@ import { attachSockets } from './server/sockets.ts';
 import { createAuth, configError, hostOfUrl, sourceMapsForLoopback } from './server/auth.ts';
 import { isLoopback } from './server/loopback.ts';
 import { settings, CONFIG_FILE, warnAboutLegacyEnv } from './server/settings.ts';
-import { cacheDir } from './server/config-dir.ts';
+import { cacheDir, dataDir } from './server/config-dir.ts';
+import { openBrowser, shouldOpenBrowser } from './server/open-browser.ts';
 import { createApplier } from './server/apply.ts';
 import { midiMap } from './server/midi-map.ts';
 import { cues } from './server/cues.ts';
@@ -327,6 +328,7 @@ server.listen(PORT, HOST, () => {
   console.log(`\n  ArtNet Lightshow  →  http://${shownHost}:${PORT}`);
   console.log(`  Setup             →  http://${shownHost}:${PORT}/#rig  (the Rig, Sources and Settings views)`);
   console.log(`  Config file       →  ${CONFIG_FILE}`);
+  if (process.env.LIGHTSHOW_DATA_DIR) console.log(`  Data folder       →  ${dataDir()}`);
   // Deliberately not the token itself: this banner is the first thing anyone
   // pastes into a bug report or a chat window.
   console.log(`  Access            →  ${auth.enabled
@@ -355,6 +357,8 @@ server.listen(PORT, HOST, () => {
   console.log(`  Now Playing       →  ${npStatus}`);
   console.log(`  Python            →  ${pythonEnv.describe()}`);
   console.log(`  Auto Show         →  Essentia + Spotify integration\n`);
+
+  if (shouldOpenBrowser({ restarts: supervised.restarts })) openBrowser(`http://${shownHost}:${PORT}/`);
 
   restoreSpotifySession();
 

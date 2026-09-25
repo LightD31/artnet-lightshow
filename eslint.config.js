@@ -62,6 +62,7 @@ export default [
       'cache/**',
       'tests/fixtures/**',
       '.venv/**',
+      'dist/**',                   // the packaged build (npm run package)
     ],
   },
 
@@ -72,6 +73,18 @@ export default [
       ecmaVersion: 2024,
       sourceType: 'module',
       globals: NODE_GLOBALS,
+    },
+    rules: { ...js.configs.recommended.rules, ...COMMON_RULES },
+  },
+
+  // ── The packaged build's launcher: CommonJS, as a single executable's
+  //    main script has to be (scripts/sea-main.cjs) ─────────────────────────
+  {
+    files: ['scripts/**/*.cjs'],
+    languageOptions: {
+      ecmaVersion: 2024,
+      sourceType: 'commonjs',
+      globals: { ...NODE_GLOBALS, require: 'readonly', module: 'writable', __dirname: 'readonly', __filename: 'readonly' },
     },
     rules: { ...js.configs.recommended.rules, ...COMMON_RULES },
   },

@@ -255,5 +255,12 @@ export async function runSupervisor(script: string): Promise<never> {
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
     process.on(signal, () => supervisor.stop(signal === 'SIGHUP' ? 'SIGTERM' : signal));
   }
-  process.exit(await supervisor.done);
+  const code = await supervisor.done;
+  // The packaged build is started with a double-click: a console that closes
+  // the moment it fails takes the reason with it.
+  if (code !== 0 && process.env.LIGHTSHOW_PACKAGED === '1' && process.stdin.isTTY) {
+    process.stderr.write('\nThe lightshow has stopped. Press Enter to close this window.\n');
+    await new Promise((resolve) => process.stdin.once('data', resolve));
+  }
+  process.exit(code);
 }

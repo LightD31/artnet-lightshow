@@ -12,6 +12,7 @@
     "dev": "node --watch server.js --no-supervisor",
     "preflight": "node scripts/preflight.js --download-models",
     "setup:python": "node scripts/setup-python.js",
+    "package": "node scripts/package.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc -p tsconfig.json",
@@ -54,7 +55,9 @@
     "axe-core": "^4.11.0",
     "esbuild": "^0.28.2",
     "eslint": "^10.11.0",
+    "postject": "^1.0.0-alpha.6",
     "preact-render-to-string": "^6.7.0",
+    "resedit": "^3.1.0",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.70.1"
   },

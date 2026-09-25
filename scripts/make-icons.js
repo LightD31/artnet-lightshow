@@ -5,7 +5,9 @@
 //   node scripts/make-icons.js
 //
 // The SVG (public/icon.svg) is the same picture, for the tab and the browsers
-// that take a vector icon.
+// that take a vector icon. public/favicon.ico holds it at the sizes Windows
+// wants — for the browsers that ask for /favicon.ico, and as the packaged
+// build's executable icon (scripts/package.js).
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -98,6 +100,26 @@ function draw(size, opts) {
   return png(size, rgba);
 }
 
+/** An .ico of PNG images, which Windows reads from Vista on. */
+function ico(images) {
+  const header = Buffer.alloc(6);
+  header.writeUInt16LE(1, 2);             // an icon
+  header.writeUInt16LE(images.length, 4);
+  const entries = Buffer.alloc(16 * images.length);
+  let offset = header.length + entries.length;
+  images.forEach(({ size, data }, i) => {
+    const at = i * 16;
+    entries[at] = size >= 256 ? 0 : size;     // 0 means 256
+    entries[at + 1] = size >= 256 ? 0 : size;
+    entries.writeUInt16LE(1, at + 4);         // colour planes
+    entries.writeUInt16LE(32, at + 6);        // bits per pixel
+    entries.writeUInt32LE(data.length, at + 8);
+    entries.writeUInt32LE(offset, at + 12);
+    offset += data.length;
+  });
+  return Buffer.concat([header, entries, ...images.map((image) => image.data)]);
+}
+
 fs.mkdirSync(OUT, { recursive: true });
 for (const [name, size, opts] of [
   ['icon-192.png', 192, { maskable: false }],
@@ -108,3 +130,6 @@ for (const [name, size, opts] of [
   fs.writeFileSync(path.join(OUT, name), draw(size, opts));
   console.log(`wrote public/icons/${name}`);
 }
+fs.writeFileSync(path.join(OUT, '..', 'favicon.ico'),
+  ico([16, 32, 48, 256].map((size) => ({ size, data: draw(size, { maskable: false }) }))));
+console.log('wrote public/favicon.ico');
