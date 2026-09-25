@@ -20,7 +20,7 @@ export interface ApplierDeps {
   smtc: { start(): void; stop(): void };
   live?: { start(options: { source: 'loopback' | 'input'; device?: string; latencyMs?: number }): void; stop(): void } | null;
   midiClock?: { setPort(port: string): void } | null;
-  deezer: { init(arl: string): Promise<unknown> };
+  deezer: { init(arl: string): Promise<unknown>; canDecrypt?(): boolean };
   autoShow?: { restartWorker?(reason: string): void } | null;
   applyPatch(patch: unknown): unknown;
   broadcast(): void;
@@ -258,8 +258,16 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
       broadcast();
     },
 
-    /** Restart-only keys whose stored value differs from the running one. */
-    pendingRestart() { return settings.pendingRestart(bootValues); },
+    /**
+     * Restart-only keys whose stored value differs from the running one — and
+     * a Deezer ARL this server cannot use until it is started with OpenSSL's
+     * legacy provider, which the supervisor does when there is one (deezer.ts).
+     */
+    pendingRestart() {
+      const pending = settings.pendingRestart(bootValues);
+      if (settings.get('deezer.arl') && deezer.canDecrypt && !deezer.canDecrypt()) pending.push('deezer.arl');
+      return pending;
+    },
 
     bootValues,
     refreshCallbackUrl,

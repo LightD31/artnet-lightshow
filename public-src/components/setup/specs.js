@@ -175,7 +175,10 @@ export const SPOTIFY = {
 export const DEEZER = {
   id: 'deezer',
   title: 'Deezer',
-  desc: 'An ARL cookie enables exact ISRC-matched audio. Without one, analysis falls back to a yt-dlp search.',
+  desc: 'An ARL cookie enables exact ISRC-matched audio. Without one, analysis falls back to a yt-dlp search. '
+    + 'The first ARL takes a restart: decrypting Deezer\'s audio needs an OpenSSL module the server only loads when '
+    + 'there is one. Downloading from Deezer this way is against its terms of use — the ARL is from your own account, '
+    + 'and the choice is yours.',
   fields: [{ path: 'deezer.arl', label: 'ARL Cookie', type: 'secret' }],
 };
 

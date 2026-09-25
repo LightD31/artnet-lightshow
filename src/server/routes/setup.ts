@@ -57,12 +57,14 @@ export function attachSetupRoutes(app: Express, ctx: RouteContext): void {
 
   app.get('/api/settings', (_req, res) => {
     const { settings: values, secrets } = settings.redacted();
+    const pendingRestart = applier.pendingRestart();
     res.json({
       ok: true,
       settings: values,
       secrets,
-      restartKeys: RESTART_PATHS,
-      pendingRestart: applier.pendingRestart(),
+      // The Deezer ARL only needs a restart the first time one is set.
+      restartKeys: pendingRestart.includes('deezer.arl') ? [...RESTART_PATHS, 'deezer.arl'] : RESTART_PATHS,
+      pendingRestart,
       // Which interpreter the analyzer actually resolved to, and whether it can
       // import what it needs. Shown under the Python field, because "I ran pip
       // install" and "the analyzer can import librosa" are different claims.
