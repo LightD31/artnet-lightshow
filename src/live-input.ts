@@ -151,6 +151,9 @@ class LiveInput {
 
   get running(): boolean { return !this._stopped; }
 
+  /** What it was last started with, to start it the same way again. */
+  get options(): LiveOptions | null { return this._options ? { ...this._options } : null; }
+
   /** Start listening, or listen differently. */
   start(options: LiveOptions): void {
     const same = this._options && !this._stopped

@@ -11,6 +11,7 @@
     "start": "node server.js",
     "dev": "node --watch server.js --no-supervisor",
     "preflight": "node scripts/preflight.js --download-models",
+    "setup:python": "node scripts/setup-python.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc -p tsconfig.json",

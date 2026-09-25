@@ -517,6 +517,15 @@ class AutoShow {
    * Tear down the persistent analyzer subprocess. Called on server shutdown.
    * Safe to call multiple times.
    */
+  /** Hold the analysis while its environment is replaced (python-setup.ts); resumeAnalysis() lets it go. */
+  pauseAnalysis(reason: string): void {
+    if (this._worker) this._worker.pause(reason);
+  }
+
+  resumeAnalysis(): void {
+    if (this._worker) this._worker.resume();
+  }
+
   /** Recycle the analyzer process — used when the interpreter changes. */
   restartWorker(reason: string, opts: { whenIdle?: boolean } = {}): void {
     if (this._worker) this._worker.restart(reason, opts);

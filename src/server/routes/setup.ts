@@ -4,6 +4,7 @@ import { settings, RESTART_PATHS, CONFIG_FILE } from '../settings.ts';
 import { generateToken } from '../auth.ts';
 import { runPreflight } from '../preflight.ts';
 import { modelManager, modelDownloadSchema } from '../model-manager.ts';
+import { pythonSetup, pythonSetupSchema } from '../python-setup.ts';
 import * as pythonEnv from '../../python-env.ts';
 import { HttpError, messageOf } from '../../errors.ts';
 import type { Express } from 'express';
@@ -52,6 +53,27 @@ export function attachSetupRoutes(app: Express, ctx: RouteContext): void {
     const unknown = ids.filter((id) => !known.has(id));
     if (unknown.length) throw new HttpError(400, `unknown model: ${unknown.join(', ')}`);
     res.json({ ok: true, job: modelManager.download(ids) });
+  }));
+
+  // ─── The analysis environment ─────────────────────────────────────────────
+  // Setting Python up from the app (python-setup.ts): what is there, the
+  // torch build that suits this machine, and `uv sync` with its progress. The
+  // page polls the status while a setup runs.
+  app.get('/api/python/setup', asyncHandler(async (_req, res) => {
+    res.json({ ok: true, ...(await pythonSetup.status()) });
+  }));
+
+  app.post('/api/python/setup', asyncHandler(async (req, res) => {
+    const { build } = validate(pythonSetupSchema, req.body || {}, 'python setup');
+    const running = pythonSetup.job();
+    if (running && running.ok === null) throw new HttpError(409, 'The analysis environment is already being set up.');
+    const job = pythonSetup.start(build);
+    if (job.ok === false) throw new HttpError(409, job.error || 'The setup could not start.');
+    res.json({ ok: true, job });
+  }));
+
+  app.post('/api/python/setup/cancel', asyncHandler(async (_req, res) => {
+    res.json({ ok: pythonSetup.cancel() });
   }));
 
   // ─── Settings ─────────────────────────────────────────────────────────────

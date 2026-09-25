@@ -135,6 +135,7 @@ class AnalyzerWorker {
   declare _shuttingDown: boolean;
   declare _timeoutTimer: ReturnType<typeof setTimeout> | null;
   declare _recycleWhenIdle: string | null;
+  declare _paused: string | null;
 
   /**
    * `pythonExe` may be a string or a function returning one. As a function it
@@ -160,6 +161,7 @@ class AnalyzerWorker {
     this._shuttingDown = false;
     this._timeoutTimer = null;
     this._recycleWhenIdle = null;
+    this._paused = null;
   }
 
   /**
@@ -168,7 +170,32 @@ class AnalyzerWorker {
    * analyze() call. Safe to call multiple times — no-ops if already spawned.
    */
   prewarm(): void {
-    if (!this._proc && !this._shuttingDown) this._spawn();
+    if (!this._proc && !this._shuttingDown && !this._paused) this._spawn();
+  }
+
+  /**
+   * Stop the worker and hold every request until resume(): the environment
+   * it runs in is being replaced (python-setup.ts), and on Windows a running
+   * Python keeps the files uv needs to replace locked. The analysis in
+   * flight starts again, first, on the worker that resume() starts.
+   */
+  pause(reason: string): void {
+    if (this._paused || this._shuttingDown) return;
+    this._paused = reason;
+    console.log(`[analyzer] paused: ${reason}`);
+    const running = this._pending;
+    this._pending = null;
+    this._clearTimeout();
+    if (running) this._insertByPriority(running, { front: true });
+    this._recycleWhenIdle = null;
+    this._recycleProcess();
+  }
+
+  resume(): void {
+    if (!this._paused) return;
+    this._paused = null;
+    console.log('[analyzer] resumed');
+    this._tick();
   }
 
   /**
@@ -555,7 +582,7 @@ class AnalyzerWorker {
   }
 
   _tick(): void {
-    if (this._pending || !this._queue.length) return;
+    if (this._paused || this._pending || !this._queue.length) return;
     if (!this._proc) this._spawn();
     const next = this._queue.shift() as Request;
     this._pending = next;

@@ -9,6 +9,7 @@ import { Server } from 'socket.io';
 import MidiController, { openMidiOutput } from './midi.ts';
 import ProLink from './prolink.ts';
 import LiveInput from './live-input.ts';
+import type { LiveOptions } from './live-input.ts';
 import MidiClock from './midi-clock.ts';
 import SpotifyClient from './spotify.ts';
 import NowPlayingSource from './nowplaying-source.ts';
@@ -36,6 +37,7 @@ import { midiMap } from './server/midi-map.ts';
 import { cues } from './server/cues.ts';
 import { showStore, SHOW_FILE } from './server/show-store.ts';
 import { modelManager } from './server/model-manager.ts';
+import { pythonSetup } from './server/python-setup.ts';
 import * as pythonEnv from './python-env.ts';
 import { installProcessSafetyNet } from './server/guard.ts';
 import { startHealthMonitor } from './server/health.ts';
@@ -149,6 +151,22 @@ modelManager.onFinished((job) => {
   if (Object.values(job.models).some((m) => m.state === 'done') && autoShow.restartWorker) {
     autoShow.restartWorker('analysis models downloaded', { whenIdle: true });
   }
+});
+// Setting the analysis environment up replaces the Python the analyser and
+// the live input run from — which, on Windows, a running Python keeps locked.
+// Both stand aside while uv works, and come back on what it made.
+let liveBeforeSetup: LiveOptions | null = null;
+pythonSetup.onHooks({
+  before: (reason) => {
+    autoShow.pauseAnalysis(reason);
+    liveBeforeSetup = liveInput.running ? liveInput.options : null;
+    liveInput.stop();
+  },
+  after: () => {
+    autoShow.resumeAnalysis();
+    if (liveBeforeSetup) liveInput.start(liveBeforeSetup);
+    liveBeforeSetup = null;
+  },
 });
 conductor.setAutoSource(() => autoShow.beatSource());
 conductor.setProlinkSource(() => (state.prolinkEnabled && !autoShow.running ? prolink.getBeatReading() : null));
