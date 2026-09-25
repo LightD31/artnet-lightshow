@@ -4,6 +4,7 @@ import os from 'node:os';
 import type { IncomingHttpHeaders, IncomingMessage } from 'node:http';
 import type { NextFunction, Request, Response } from 'express';
 import type { Socket } from 'socket.io';
+import { isLoopback } from './loopback.ts';
 
 /** Socket.IO's answer to a handshake: an error, or whether to let it in. */
 type AllowCallback = (err: string | null | undefined, success: boolean) => void;
@@ -39,13 +40,6 @@ export interface Auth {
  * hardened auth system: one shared secret, no users, no revocation.
  */
 
-const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '::ffff:127.0.0.1']);
-
-/** True when `host` only accepts connections from this machine. */
-function isLoopbackHost(host: unknown): boolean {
-  return LOOPBACK_HOSTS.has(String(host || '').trim().toLowerCase());
-}
-
 /** Constant-time string compare that tolerates differing lengths. */
 function safeEqual(a: unknown, b: unknown): boolean {
   const bufA = Buffer.from(String(a || ''), 'utf8');
@@ -72,7 +66,7 @@ function configError({ host, token, configFile = 'config/settings.json' }: {
   token: string;
   configFile?: string;
 }): string | null {
-  if (isLoopbackHost(host) || token) return null;
+  if (isLoopback(host) || token) return null;
   // The Settings view normally refuses to save this combination, so reaching
   // here means the file was hand-edited — and with the server refusing to
   // start there is no UI to fix it from. Give file-level instructions.
@@ -289,7 +283,7 @@ function createAuth({ token = '', allowedHosts = () => [] }: {
  */
 function sourceMapsForLoopback(req: { path: string; socket: { remoteAddress?: string } },
   res: { status(code: number): { end(): void } }, next: () => void): void {
-  if (req.path.endsWith('.map') && !isLoopbackHost(req.socket.remoteAddress)) {
+  if (req.path.endsWith('.map') && !isLoopback(req.socket.remoteAddress)) {
     res.status(404).end();
     return;
   }
@@ -303,7 +297,6 @@ export {
   hostAllowed,
   hostnameOf,
   hostOfUrl,
-  isLoopbackHost,
   sourceMapsForLoopback,
   originAllowed,
   safeEqual,

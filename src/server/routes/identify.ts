@@ -1,22 +1,23 @@
 import net from 'node:net';
 import { z } from 'zod';
 
-import { state, universeOf, activeUniverses } from './state.ts';
-import { getProfile } from './profiles.ts';
-import { identify as engineIdentify } from './engine.ts';
-import { fixturesOnUniverses, identifySeconds, createPixelIdentify } from './identify.ts';
-import { createSacnWatch } from './sacn-watch.ts';
-import { sendArtAddress, AC_LED_LOCATE, AC_LED_NORMAL } from './artnet.ts';
-import { resolveCid } from './sacn.ts';
-import { sendDdp } from './ddp.ts';
-import { identifyDevices, listEntertainmentConfigs } from './hue.ts';
-import * as output from './output.ts';
-import { validate } from './validation.ts';
-import { messageOf, statusOf } from '../errors.ts';
-import type { Express, NextFunction, Request, RequestHandler, Response } from 'express';
-import type { Identify, PixelSend } from './identify.ts';
-import type { SacnWatch } from './sacn-watch.ts';
-import type { WledClient } from './wled.ts';
+import { state, universeOf, activeUniverses } from '../state.ts';
+import { getProfile } from '../profiles.ts';
+import { identify as engineIdentify } from '../engine.ts';
+import { fixturesOnUniverses, identifySeconds, createPixelIdentify } from '../identify.ts';
+import { createSacnWatch } from '../sacn-watch.ts';
+import { sendArtAddress, AC_LED_LOCATE, AC_LED_NORMAL } from '../artnet.ts';
+import { resolveCid } from '../sacn.ts';
+import { sendDdp } from '../ddp.ts';
+import { identifyDevices, listEntertainmentConfigs } from '../hue.ts';
+import * as output from '../output.ts';
+import { validate } from '../validation.ts';
+import { messageOf, statusOf } from '../../errors.ts';
+import type { Express, Response } from 'express';
+import { asyncHandler } from './common.ts';
+import type { Identify, PixelSend } from '../identify.ts';
+import type { SacnWatch } from '../sacn-watch.ts';
+import type { WledClient } from '../wled.ts';
 
 /**
  * Finding the rig on the network and making it show itself.
@@ -34,7 +35,7 @@ import type { WledClient } from './wled.ts';
  *                                 follows, else the bridge's own identify
  */
 
-export interface RigRouteDeps {
+export interface IdentifyRouteDeps {
   wled: WledClient;
   /** Tell the pages: the patch or what identifies changed. */
   broadcast: () => void;
@@ -74,10 +75,6 @@ const hueIdentifySchema = z.object({
   seconds,
 }).strict();
 
-function asyncHandler(fn: (req: Request, res: Response, next: NextFunction) => unknown): RequestHandler {
-  return (req, res, next) => { Promise.resolve(fn(req, res, next)).catch(next); };
-}
-
 /** What a failed request answers: its own status when it has one. */
 function fail(res: Response, err: unknown, fallback = 400): void {
   res.status(statusOf(err) || fallback).json({ ok: false, error: messageOf(err) });
@@ -85,7 +82,7 @@ function fail(res: Response, err: unknown, fallback = 400): void {
 
 const profileOf = (f: { profileId: string }) => getProfile(f);
 
-function attachRigRoutes(app: Express, deps: RigRouteDeps): void {
+function attachIdentifyRoutes(app: Express, deps: IdentifyRouteDeps): void {
   const identify = deps.identify || engineIdentify;
   const watch = deps.sacnWatch || createSacnWatch();
   const pixels = createPixelIdentify({ send: deps.sendPixels || ((target, data) => sendDdp(target, data)) });
@@ -219,4 +216,4 @@ function attachRigRoutes(app: Express, deps: RigRouteDeps): void {
   identify.onChange(() => deps.broadcast());
 }
 
-export { attachRigRoutes };
+export { attachIdentifyRoutes };

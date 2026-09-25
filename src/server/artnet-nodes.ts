@@ -94,10 +94,6 @@ function isBroadcastTarget(host: string, ifaces: readonly NetInterface[] = inter
   return ifaces.some((i) => i.broadcast === host);
 }
 
-function isLoopbackTarget(host: string): boolean {
-  return host === 'localhost' || (net.isIPv4(host) && host.startsWith('127.'));
-}
-
 /**
  * Who has answered, keyed by address and bind index (a node with more than
  * four ports answers once per four). Pure: time comes in as an argument.
@@ -269,5 +265,4 @@ export {
   createDiscovery,
   interfaces,
   isBroadcastTarget,
-  isLoopbackTarget,
 };

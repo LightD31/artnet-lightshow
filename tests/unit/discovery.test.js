@@ -10,7 +10,7 @@ import express from 'express';
 import { buildArtAddress, OP_ADDRESS, AC_LED_LOCATE, AC_LED_NORMAL } from '../../src/server/artnet.ts';
 import { buildE131Packet, buildDiscoveryPackets, cidFromUuid } from '../../src/server/sacn.ts';
 import { parseSacn, createSacnWatch } from '../../src/server/sacn-watch.ts';
-import { attachRigRoutes } from '../../src/server/rig-routes.ts';
+import { attachIdentifyRoutes } from '../../src/server/routes/identify.ts';
 import { createIdentify } from '../../src/server/identify.ts';
 import { state } from '../../src/server/state.ts';
 import * as output from '../../src/server/output.ts';
@@ -107,7 +107,7 @@ async function withRoutes(fn, { fixtures = [], hue = null } = {}) {
   const identify = createIdentify({ setTimer: () => ({}), clearTimer: () => {} });
   const app = express();
   app.use(express.json());
-  attachRigRoutes(app, {
+  attachIdentifyRoutes(app, {
     wled: {
       discover: async () => [],
       info: async (host) => { calls.info.push(host); return { name: 'Porch', version: '0.15', leds: 60, rgbw: false, matrix: null, mac: null }; },

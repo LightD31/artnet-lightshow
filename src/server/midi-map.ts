@@ -1,8 +1,8 @@
 import fs from 'node:fs';
-import path from 'node:path';
 import { z } from 'zod';
 import { HttpError, codeOf, messageOf } from '../errors.ts';
 import { configFile } from './config-dir.ts';
+import { JsonStore } from './json-store.ts';
 
 /** Something a MIDI control can be bound to. */
 export interface MidiAction {
@@ -97,7 +97,7 @@ function defaultTypeFor(actionId: string): 'relative' | 'absolute' {
 const bindingSchema = z.object({
   // A custom message because the default lists all twenty-two ids, which is
   // unreadable in the toast this reaches the operator through.
-  action: z.enum(ACTION_IDS as [string, ...string[]], { errorMap: () => ({ message: 'is not a known action' }) }),
+  action: z.enum(ACTION_IDS as [string, ...string[]], { error: 'is not a known action' }),
   type: z.enum(['relative', 'absolute']).optional(),
   scale: z.number().min(0.01).max(64).optional(),
   // Loose on purpose: a value is a pattern id, a colour index, a cue id or a
@@ -205,74 +205,40 @@ function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
 }
 
-class MidiMapStore {
-  declare file: string;
+class MidiMapStore extends JsonStore {
   declare _map: MidiMap;
   declare _customised: boolean;
   declare _listeners: MidiListener[];
 
+  /**
+   * midi-map.json. No file is normal — it only exists once the operator has
+   * changed something, and until then the X-Touch default stands. A corrupt
+   * one is moved aside (JsonStore) and the default used, so a bad hand-edit
+   * costs you your mapping and not your show.
+   */
   constructor(file: string) {
-    this.file = file;
+    super(file, { tag: 'midi', fallback: 'using the default map' });
     this._map = clone(DEFAULT_MAP);
     this._customised = false;
     this._listeners = [];
   }
 
-  /**
-   * Read midi-map.json. A missing file is normal — it only exists once the
-   * operator has changed something, and until then the X-Touch default stands.
-   * A corrupt one is moved aside rather than deleted, and the default is used,
-   * so a bad hand-edit costs you your mapping and not your show.
-   */
   load(): this {
-    let raw;
-    try {
-      raw = fs.readFileSync(this.file, 'utf8');
-    } catch (err) {
-      if (codeOf(err) !== 'ENOENT') {
-        console.warn(`[midi] cannot read ${this.file}: ${messageOf(err)} — using the default map`);
-      }
-      return this;
+    const saved = this.readValid(mapSchema);
+    if (saved) {
+      this._map = saved;
+      this._customised = true;
     }
-
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (err) {
-      return this._quarantine(`invalid JSON (${messageOf(err)})`);
-    }
-
-    const result = mapSchema.safeParse(parsed);
-    if (!result.success) {
-      const detail = result.error.issues.map((i) => `${i.path.join('.')} ${i.message}`).join('; ');
-      return this._quarantine(detail);
-    }
-
-    this._map = result.data;
-    this._customised = true;
     return this;
   }
 
-  _quarantine(reason: string): this {
-    const backup = `${this.file}.invalid-${Date.now()}`;
-    try {
-      fs.renameSync(this.file, backup);
-      console.warn(`[midi] ${this.file}: ${reason}`);
-      console.warn(`[midi] moved it to ${backup} and fell back to the default map`);
-    } catch (err) {
-      console.warn(`[midi] ${this.file}: ${reason} (could not move aside: ${messageOf(err)})`);
-    }
+  useDefaults(): void {
     this._map = clone(DEFAULT_MAP);
     this._customised = false;
-    return this;
   }
 
   save(): void {
-    const dir = path.dirname(this.file);
-    fs.mkdirSync(dir, { recursive: true });
-    const tmp = `${this.file}.tmp`;
-    fs.writeFileSync(tmp, `${JSON.stringify(this._map, null, 2)}\n`);
-    fs.renameSync(tmp, this.file);
+    this.writeJson(this._map);
     this._customised = true;
   }
 

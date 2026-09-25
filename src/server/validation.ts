@@ -112,7 +112,7 @@ const patchSchema = z.object({
   // The custom message because the default union error is a bare "Invalid
   // input", which reaches the operator as a toast that says nothing.
   palette: z.union([z.enum(PALETTE_IDS as [string, ...string[]]), z.null()], {
-    errorMap: () => ({ message: `is not a known palette (${PALETTE_IDS.join(', ')})` }),
+    error: `is not a known palette (${PALETTE_IDS.join(', ')})`,
   }).optional(),
   // Which bank the palette resolves against. Only meaningful alongside
   // `palette`; a smaller palette wraps to fill all four slots.
@@ -218,7 +218,7 @@ const profileSchema = z.object({
   modeName: z.string().max(128).optional(),
   // Up to a universe for any fixture; a strip may run on over several.
   channelCount: z.number().int().min(1).max(MAX_PROFILE_CHANNELS),
-  channelMap: z.record(z.number().int().min(0).max(MAX_PROFILE_CHANNELS - 1)),
+  channelMap: z.record(z.string(), z.number().int().min(0).max(MAX_PROFILE_CHANNELS - 1)),
   channelList: z.array(z.object({
     offset: z.number().int().min(0).max(MAX_PROFILE_CHANNELS - 1),
     name: z.string().min(1),
@@ -231,7 +231,7 @@ const profileSchema = z.object({
   // fixture's footprint; the fixture-level channelMap keeps what they share.
   cells: z.array(z.object({
     name: z.string().max(64).optional(),
-    channelMap: z.record(z.number().int().min(0).max(MAX_PROFILE_CHANNELS - 1)),
+    channelMap: z.record(z.string(), z.number().int().min(0).max(MAX_PROFILE_CHANNELS - 1)),
     // Where the cell is in the grid below, column and row from 0.
     at: z.object({ x: gridIndex, y: gridIndex }).strict().optional(),
   }).strict()).min(2).max(MAX_CELLS_PER_FIXTURE).optional(),
@@ -259,7 +259,7 @@ const profileSchema = z.object({
     }
     if (over.length) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['channelMap'],
         message: `maps channels outside the profile's ${profile.channelCount}-channel footprint: ${over.join(', ')}`,
       });
@@ -267,7 +267,7 @@ const profileSchema = z.object({
     const outside = (profile.defaults || []).filter((d) => d.offset >= profile.channelCount);
     if (outside.length) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['defaults'],
         message: `holds channels outside the profile's ${profile.channelCount}-channel footprint: ${outside.map((d) => d.offset).join(', ')}`,
       });
@@ -276,7 +276,7 @@ const profileSchema = z.object({
     checkGrid(profile, ctx);
     // Longer than a universe: only a strip can run on into the next one.
     const long = stripIssue(profile);
-    if (long) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['channelCount'], message: long });
+    if (long) ctx.addIssue({ code: 'custom', path: ['channelCount'], message: long });
   });
 
 /** A panel's grid holds every cell, each in a place of its own. */
@@ -284,12 +284,12 @@ function checkGrid(profile: { grid?: { columns: number; rows: number }; cells?: 
   const { grid, cells } = profile;
   if (!grid) {
     if (cells && cells.some((cell) => cell.at)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['cells'], message: 'places cells in a grid but has no grid' });
+      ctx.addIssue({ code: 'custom', path: ['cells'], message: 'places cells in a grid but has no grid' });
     }
     return;
   }
   if (!cells) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['grid'], message: 'is a grid of cells, but the profile has none' });
+    ctx.addIssue({ code: 'custom', path: ['grid'], message: 'is a grid of cells, but the profile has none' });
     return;
   }
   const taken = new Map<string, number>();
@@ -297,9 +297,9 @@ function checkGrid(profile: { grid?: { columns: number; rows: number }; cells?: 
     const at = cell.at || { x: c % grid.columns, y: Math.floor(c / grid.columns) };
     const where = `${at.x},${at.y}`;
     if (at.x >= grid.columns || at.y >= grid.rows) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['cells', c], message: `sits at column ${at.x + 1}, row ${at.y + 1}, outside the ${grid.columns} × ${grid.rows} grid` });
+      ctx.addIssue({ code: 'custom', path: ['cells', c], message: `sits at column ${at.x + 1}, row ${at.y + 1}, outside the ${grid.columns} × ${grid.rows} grid` });
     } else if (taken.has(where)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['cells', c], message: `sits where cell ${(taken.get(where) as number) + 1} does` });
+      ctx.addIssue({ code: 'custom', path: ['cells', c], message: `sits where cell ${(taken.get(where) as number) + 1} does` });
     } else {
       taken.set(where, c);
     }
@@ -326,7 +326,7 @@ function checkCells(profile: CellCheck, ctx: z.RefinementCtx): void {
     if (!EMITTERS.some((attr) => cell.channelMap[attr] !== undefined)) problems.push('drives no light');
     if (problems.length) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['cells', index],
         message: `${label}: ${problems.join('; ')}`,
       });

@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import './load-env.ts';
 import path from 'node:path';
 import http from 'node:http';
 import express from 'express';
@@ -26,7 +26,8 @@ import { COLOR_PRESETS, PATTERNS } from './server/presets.ts';
 import { setupIntegrations } from './server/integrations.ts';
 import { attachRoutes } from './server/routes.ts';
 import { attachSockets } from './server/sockets.ts';
-import { createAuth, configError, hostOfUrl, isLoopbackHost, sourceMapsForLoopback } from './server/auth.ts';
+import { createAuth, configError, hostOfUrl, sourceMapsForLoopback } from './server/auth.ts';
+import { isLoopback } from './server/loopback.ts';
 import { settings, CONFIG_FILE, warnAboutLegacyEnv } from './server/settings.ts';
 import { cacheDir } from './server/config-dir.ts';
 import { createApplier } from './server/apply.ts';
@@ -253,11 +254,11 @@ server.listen(PORT, HOST, () => {
   // anything unusual (reverse proxy, hostname, https).
   applier.refreshCallbackUrl();
 
-  const shownHost = isLoopbackHost(HOST) ? 'localhost' : HOST;
+  const shownHost = isLoopback(HOST) ? 'localhost' : HOST;
   const smtcEnabled = settings.get('sources.smtc');
 
   console.log(`\n  ArtNet Lightshow  →  http://${shownHost}:${PORT}`);
-  console.log(`  Settings          →  http://${shownHost}:${PORT}/settings.html  (everything is configured there)`);
+  console.log(`  Setup             →  http://${shownHost}:${PORT}/#rig  (the Rig, Sources and Settings views)`);
   console.log(`  Config file       →  ${CONFIG_FILE}`);
   // Deliberately not the token itself: this banner is the first thing anyone
   // pastes into a bug report or a chat window.
