@@ -39,7 +39,7 @@ import { modelManager } from './server/model-manager.ts';
 import * as pythonEnv from './python-env.ts';
 import { installProcessSafetyNet } from './server/guard.ts';
 import { startHealthMonitor } from './server/health.ts';
-import { supervision, startHeartbeat, EXIT_CONFIG, EXIT_RESTART } from './server/supervised.ts';
+import { supervision, startHeartbeat, listenToSupervisor, EXIT_CONFIG, EXIT_RESTART } from './server/supervised.ts';
 import { LookStore, currentLook, putBack, resumeAt } from './server/look-store.ts';
 import { configFile } from './server/config-dir.ts';
 import { messageOf } from './errors.ts';
@@ -403,3 +403,10 @@ function restartServer(reason: string): boolean {
 
 process.on('SIGINT',  () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
+// A terminal hung up — on Windows, the console window closed, with a few
+// seconds before Windows ends the process: enough to black out.
+process.on('SIGHUP',  () => shutdown('SIGHUP'));
+listenToSupervisor({
+  stop: (signal) => shutdown(signal),
+  gone: () => shutdown('The supervisor has gone'),
+});
