@@ -1,7 +1,8 @@
-import { state, getClientState, getFixture, countUniverses, universeOf } from './state.ts';
+import { state, getClientState, getFixture, countUniverses, universeOf, placeAddresslessFixtures } from './state.ts';
 import { applyPatch, applyOverride, processTap } from './patch.ts';
 import { overrideMessageSchema, fixtureMessageSchema, validate } from './validation.ts';
-import { listProfiles, getProfile, universeOverflow, unitCapOverflow } from './profiles.ts';
+import { listProfiles, getProfile, universeOverflow, unitCapOverflow, HUE_PROFILE_IDS } from './profiles.ts';
+import { INTERNAL_UNIVERSE, footprintOf, freeSpot, hasNoAddress } from '../shared/placement.ts';
 import { showStore } from './show-store.ts';
 import { MAX_UNIVERSES } from './universes.ts';
 import { connectMidi } from './midi-connect.ts';
@@ -101,14 +102,38 @@ function attachSockets(io: Server, { midi, integrations }: {
         const profiles = listProfiles();
         const nextProfileId = (profileId !== undefined && profiles[profileId])
           ? profileId : fixture.profileId;
-        const nextAddress = address !== undefined ? address : fixture.address;
-        const nextUniverse = universe !== undefined ? universe : universeOf(fixture);
+        const nextProfile = getProfile({ profileId: nextProfileId });
+        let nextOutput = output !== undefined ? output : fixture.output ?? null;
+        // A fixture turned into a Hue lamp has no DMX address to take up, unless
+        // it is being sent somewhere as well.
+        if (output === undefined && !nextOutput && nextProfileId !== fixture.profileId && HUE_PROFILE_IDS.has(nextProfileId)) {
+          nextOutput = { protocol: 'hue' };
+        }
+        const addressless = hasNoAddress({ output: nextOutput });
+        let nextAddress = address !== undefined ? address : fixture.address;
+        let nextUniverse = universe !== undefined ? universe : universeOf(fixture);
+        if (!addressless && hasNoAddress(fixture) && (address === undefined || universe === undefined)) {
+          // Back onto DMX from the server's own universes: behind whatever is
+          // patched on the rig's universe, or the next with room.
+          const taken = state.fixtures.filter((f) => f.id !== id && !hasNoAddress(f))
+            .flatMap((f) => footprintOf(universeOf(f), f.address, getProfile(f)));
+          const spot = freeSpot(taken, nextProfile, universe ?? state.artnet.universe);
+          if (!spot) {
+            socket.emit('error-msg', { source: 'fixture', message: 'No room left on any universe' });
+            return;
+          }
+          nextUniverse = universe ?? spot.universe;
+          nextAddress = address ?? spot.address;
+        }
 
         // A fixture has to fit inside its universe. Past channel 512 the writes
         // land outside the DMX buffer and Node drops them silently, leaving the
         // fixture half-controllable with no error. A strip longer than a
-        // universe runs on into the next, from channel 1.
-        const overflow = universeOverflow(label ?? fixture.label, nextAddress, getProfile({ profileId: nextProfileId }), nextUniverse);
+        // universe runs on into the next, from channel 1. One with no DMX
+        // address is placed by the server, which only needs it to be patchable.
+        const overflow = addressless
+          ? universeOverflow(label ?? fixture.label, 1, nextProfile, INTERNAL_UNIVERSE)
+          : universeOverflow(label ?? fixture.label, nextAddress, nextProfile, nextUniverse);
         if (overflow) {
           socket.emit('error-msg', { source: 'fixture', message: overflow });
           return;
@@ -116,9 +141,11 @@ function attachSockets(io: Server, { midi, integrations }: {
 
         // Each universe is another stream going out at the render rate, so the
         // patch may not spread across more of them than the engine transmits.
-        const nextOutput = output !== undefined ? output : fixture.output ?? null;
+        // Copies throughout: placing the Hue lamps must not touch the live patch
+        // until the change is known to be good.
         const proposed = state.fixtures.map((f) => (f.id === id
-          ? { ...f, address: nextAddress, universe: nextUniverse, profileId: nextProfileId, output: nextOutput } : f));
+          ? { ...f, address: nextAddress, universe: nextUniverse, profileId: nextProfileId, output: nextOutput } : { ...f }));
+        placeAddresslessFixtures(proposed);
         // A universe that goes to a WLED over DDP goes nowhere else, so nothing
         // else may be patched on it.
         const wled = ddpConflict(proposed, getProfile, universeOf);
@@ -145,6 +172,8 @@ function attachSockets(io: Server, { midi, integrations }: {
         fixture.address = nextAddress;
         fixture.universe = nextUniverse;
         fixture.profileId = nextProfileId;
+        fixture.output = nextOutput;
+        placeAddresslessFixtures();
         if (label !== undefined) fixture.label = label;
         // A trim, not part of the patch: it needs none of the universe or
         // address checks above, but it rides the same message so dragging the
@@ -153,7 +182,6 @@ function attachSockets(io: Server, { midi, integrations }: {
         if (position !== undefined) fixture.position = position;
         if (group !== undefined) fixture.group = group;
         if (geometry !== undefined) fixture.geometry = geometry;
-        if (output !== undefined) fixture.output = output;
         showStore.scheduleSave();
         integrations.broadcast();
       } catch (err) {

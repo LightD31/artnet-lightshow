@@ -1,6 +1,7 @@
 import { sendArtDmx, sendArtSync } from './artnet.ts';
 import { sendSacn, sendSacnDiscovery, MIN_UNIVERSE, MAX_UNIVERSE, DISCOVERY_INTERVAL_MS } from './sacn.ts';
 import { sendDdp } from './ddp.ts';
+import { isInternalUniverse } from '../shared/placement.ts';
 import type { DdpRoute } from './ddp-routes.ts';
 import type { ArtDmxTarget } from './artnet.ts';
 import type { ArtRoutes } from './artnet-nodes.ts';
@@ -180,6 +181,9 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
   function send(universe: number, frame: Buffer, config: TransmitConfig,
     { immediate = false, terminate = false }: SendOptions = {}): Wire[] {
     const sent: Wire[] = [];
+    // The server's own universes (fixtures with no DMX address, read back by
+    // the Hue lamps) are rendered and never sent.
+    if (isInternalUniverse(universe)) return sent;
     if (!immediate && config.delayMs > 0) {
       const ready = delayedFrame(universe, frame, config.delayMs);
       if (!ready) return sent;

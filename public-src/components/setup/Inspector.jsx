@@ -4,6 +4,7 @@ import { buildRig, lineOf } from '../../../src/shared/rig.ts';
 import { clamp, geometryOf, round1 } from '../../stage-geometry.js';
 import { rigSelectionSig, identifyFixtures } from '../../rig-ui.js';
 import { FieldInput } from './FieldInput.jsx';
+import { hasNoAddress } from '../../../src/shared/placement.ts';
 
 /**
  * The selected fixture, every property of it in one place: what it is, where
@@ -53,6 +54,8 @@ export function Inspector() {
   const send = (patch) => emitFixture({ id: fix.id, ...patch });
   const place = (patch) => send({ position: { x: clamp(round1(patch.x ?? point.x)), y: clamp(round1(patch.y ?? point.y)) } });
   const trimPct = Math.round(((fix.maxBrightness ?? 255) / 255) * 100);
+  const hueOnly = hasNoAddress(fix);
+  const wled = !!(fix.output && fix.output.protocol === 'ddp');
 
   return (
     <aside class="panel inspector" aria-labelledby="inspector-title">
@@ -66,10 +69,20 @@ export function Inspector() {
         <span class="inspector-key">Profile</span>
         <span class="inspector-value">{profile ? `${profile.name}${profile.modeName ? ` — ${profile.modeName}` : ''}` : fix.profileId}
           {profile && <small> · {profile.channelCount} ch{bar ? `, ${grid ? `${grid.columns} × ${grid.rows}` : rig.ranges[index].count} cells` : ''}</small>}</span>
-        <label for="insp-universe">Universe</label>
-        <FieldInput id="insp-universe" type="number" min="0" max="32767" value={fix.universe ?? 0} onCommit={(v) => send({ universe: v })} />
-        <label for="insp-address">Address</label>
-        <FieldInput id="insp-address" type="number" min="1" max="512" value={fix.address} onCommit={(v) => send({ address: v })} />
+        <label for="insp-output">Output</label>
+        {wled ? <span class="inspector-value">WLED at {fix.output.host}, over DDP</span> : (
+          <select id="insp-output" value={hueOnly ? 'hue' : 'dmx'} disabled={!connected} aria-describedby={hueOnly ? 'insp-output-help' : undefined}
+            onChange={(e) => send({ output: e.target.value === 'hue' ? { protocol: 'hue' } : null })}>
+            <option value="dmx">DMX — Art-Net and sACN</option>
+            <option value="hue">Hue lamp — no DMX address</option>
+          </select>
+        )}
+        {!hueOnly && <>
+          <label for="insp-universe">Universe</label>
+          <FieldInput id="insp-universe" type="number" min="0" max="32767" value={fix.universe ?? 0} onCommit={(v) => send({ universe: v })} />
+          <label for="insp-address">Address</label>
+          <FieldInput id="insp-address" type="number" min="1" max="512" value={fix.address} onCommit={(v) => send({ address: v })} />
+        </>}
         <label for="insp-x">Across</label>
         <FieldInput id="insp-x" type="number" min="0" max="100" step="0.5" value={round1(point.x)} onCommit={(x) => place({ x })} />
         <label for="insp-y">Depth</label>
@@ -89,6 +102,8 @@ export function Inspector() {
           <span>{trimPct}%</span>
         </span>
       </div>
+      {hueOnly && <p class="setting-help" id="insp-output-help">The Hue bridge drives it: it takes no DMX channels, and shows
+        this fixture's colour through the Hue channel that follows it (Outputs → Philips Hue).</p>}
       <p class="setting-help">{fix.position ? '' : 'Not placed yet: drawn at its default spot. '}
         {bar ? 'At angle 0 its first cell is on the left and its last on the right; 180 is the other way round, and 90 runs from the back of the stage towards the audience.' : ''}</p>
       <div class="inspector-actions">

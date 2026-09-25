@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'preact/hooks';
 import { stateSig, dmxSig, dmxShapeSig } from '../state.js';
 import { useDmxFeed } from '../use-dmx.js';
-import { channelPlace, stripOf } from '../../src/shared/placement.ts';
+import { channelPlace, stripOf, isInternalUniverse } from '../../src/shared/placement.ts';
 
 function buildChannelLabels(s, universe) {
   const labels = {};
@@ -68,7 +68,8 @@ function UniverseGrid({ s, universe, count }) {
 
   return (
     <div class="dmx-universe">
-      <div class="dmx-universe-label">Universe {universe}</div>
+      <div class="dmx-universe-label">{isInternalUniverse(universe)
+        ? 'Hue lamps — no DMX address, never sent' : `Universe ${universe}`}</div>
       {count === 0
         ? <div class="dmx-universe-empty">No fixtures patched — sending an empty frame.</div>
         : (

@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import { getClientState, getLiveState, getCatalogs, getDmxSnapshot, universeOf, state } from '../../src/server/state.ts';
 
 const STATIC = ['colorPresets', 'patterns', 'energyEffects', 'strobeFunctions', 'palettes',
-  'syncOffsetLimitMs', 'builtinProfileIds'];
+  'syncOffsetLimitMs', 'builtinProfileIds', 'hueProfileIds'];
 
 // The static catalogues were 63% of a 7 KB payload and went out
 // ten times a second unchanged.

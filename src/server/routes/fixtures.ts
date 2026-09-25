@@ -1,9 +1,9 @@
-import { state, allocateFixtureId, universeOf, maxBrightnessOf, countUniverses } from '../state.ts';
+import { state, allocateFixtureId, universeOf, maxBrightnessOf, countUniverses, placeAddresslessFixtures } from '../state.ts';
 import { resizeFixtureBuffers } from '../engine.ts';
 import { parseGDTF } from '../../gdtf.ts';
-import { BUILTIN_PROFILE_ID, isBuiltinProfile, MAX_FIXTURES, UNIVERSE_SIZE, endChannel, fitsInUniverse, universeOverflow, registerProfile, unregisterProfile, listProfiles, getProfile, unitCapOverflow } from '../profiles.ts';
+import { BUILTIN_PROFILE_ID, HUE_PROFILE_IDS, isBuiltinProfile, MAX_FIXTURES, UNIVERSE_SIZE, endChannel, fitsInUniverse, universeOverflow, registerProfile, unregisterProfile, listProfiles, getProfile, unitCapOverflow } from '../profiles.ts';
 import { MAX_UNIVERSES } from '../universes.ts';
-import { footprintOf, universeCount } from '../../shared/placement.ts';
+import { INTERNAL_UNIVERSE, footprintOf, hasNoAddress, universeCount } from '../../shared/placement.ts';
 import { ddpConflict } from '../ddp-routes.ts';
 import { showStore, snapshotShow, applyShow } from '../show-store.ts';
 import { barProfile } from '../bar-profile.ts';
@@ -11,7 +11,7 @@ import { parseOfl } from '../ofl.ts';
 import { wledProfile } from '../wled.ts';
 import { profileSchema, fixtureRestoreSchema, fixtureAddSchema, wledAddSchema, validate } from '../validation.ts';
 import { messageOf, statusOf } from '../../errors.ts';
-import type { Express } from 'express';
+import type { Express, Response } from 'express';
 import type { Fixture, Profile } from '../../types/rig.ts';
 import { asyncHandler, uploadGdtf, uploadOfl } from './common.ts';
 import type { RouteContext } from './common.ts';
@@ -161,6 +161,7 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
       const blocked = profileChangeBlocked(profile);
       if (blocked) return res.status(400).json({ ok: false, error: blocked });
       if (!registerProfile(profile)) return res.status(400).json({ ok: false, error: 'Invalid profile' });
+      placeAddresslessFixtures();
       showStore.scheduleSave();
       integrations.broadcast();
       res.json({ ok: true });
@@ -177,6 +178,7 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
       const blocked = profileChangeBlocked(profile);
       if (blocked) return res.status(400).json({ ok: false, error: blocked });
       if (!registerProfile(profile)) return res.status(400).json({ ok: false, error: 'Invalid profile' });
+      placeAddresslessFixtures();
       showStore.scheduleSave();
       integrations.broadcast();
       res.json({ ok: true, profile });
@@ -187,7 +189,10 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
   function profileChangeBlocked(profile: Profile): string | null {
     const users = state.fixtures.filter((f) => f.profileId === profile.id);
     for (const fixture of users) {
-      const overflow = universeOverflow(fixture.label, fixture.address, profile, universeOf(fixture));
+      // One with no DMX address is placed again wherever the new length fits.
+      const overflow = hasNoAddress(fixture)
+        ? universeOverflow(fixture.label, 1, profile, INTERNAL_UNIVERSE)
+        : universeOverflow(fixture.label, fixture.address, profile, universeOf(fixture));
       if (overflow) return overflow;
     }
     if (!users.length) return null;
@@ -231,6 +236,10 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
     const profileId = body.profileId ?? BUILTIN_PROFILE_ID;
     const profile = profiles[profileId];
     if (!profile) return res.status(400).json({ ok: false, error: `No profile "${profileId}"` });
+    // A Hue lamp has no DMX address: the server places it on universes of its
+    // own that are never sent, and its Hue channel reads its colour from there.
+    const addressless = body.output !== undefined ? !!body.output : HUE_PROFILE_IDS.has(profileId);
+    if (addressless) return addAddressless(res, body, profileId, count);
 
     // What is taken, per universe: the last channel used on it, a strip
     // running on into it included, and new fixtures as they are placed.
@@ -311,6 +320,38 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
     res.json({ ok: true, fixtures: ids, placed });
   });
 
+  /** POST /api/fixtures for fixtures with no DMX address: `count` Hue lamps. */
+  function addAddressless(res: Response, body: { label?: string }, profileId: string, count: number) {
+    const labelOf = (id: number, k: number) => (body.label ? (count > 1 ? `${body.label} ${k + 1}` : body.label) : `Hue lamp ${id + 1}`);
+    const draft: Fixture[] = Array.from({ length: count }, (_, k) => ({
+      id: -1 - k, label: labelOf(state.fixtures.length + k, k), address: 1, universe: INTERNAL_UNIVERSE, profileId,
+      output: { protocol: 'hue' },
+    }));
+    const overflow = universeOverflow(draft[0].label, 1, getProfile({ profileId }), INTERNAL_UNIVERSE);
+    if (overflow) return res.status(400).json({ ok: false, error: overflow });
+    const next = [...state.fixtures.map((f) => ({ ...f })), ...draft];
+    placeAddresslessFixtures(next);
+    const tooMany = unitCapOverflow(next);
+    if (tooMany) return res.status(400).json({ ok: false, error: tooMany });
+    if (countUniverses(next) > MAX_UNIVERSES) {
+      return res.status(400).json({ ok: false, error: `These would put the patch on more than the ${MAX_UNIVERSES} universes this server renders` });
+    }
+    const ids: number[] = [];
+    for (let k = 0; k < count; k++) {
+      const id = allocateFixtureId();
+      ids.push(id);
+      state.fixtures.push({
+        id, label: labelOf(id, k), address: 1, universe: INTERNAL_UNIVERSE, profileId, maxBrightness: 255, override: null,
+        output: { protocol: 'hue' },
+      });
+    }
+    placeAddresslessFixtures();
+    resizeFixtureBuffers();
+    showStore.scheduleSave();
+    integrations.broadcast();
+    return res.json({ ok: true, fixtures: ids, placed: [], addressless: true });
+  }
+
   // Answers with the fixture that was removed and its position, so the client
   // can offer an undo. The id is stable because external bindings refer to it.
   app.delete('/api/fixtures/:id', (req, res) => {
@@ -320,17 +361,20 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
     if (index < 0) return res.status(404).json({ ok: false, error: 'No such fixture' });
 
     const [removed] = state.fixtures.splice(index, 1);
+    placeAddresslessFixtures();
     resizeFixtureBuffers();
     showStore.scheduleSave();
     integrations.broadcast();
+    // A Hue lamp's place is the server's own, and goes back wherever it fits.
+    const addressless = hasNoAddress(removed);
     res.json({
       ok: true,
       index,
       fixture: {
         id: removed.id,
         label: removed.label,
-        address: removed.address,
-        universe: universeOf(removed),
+        address: addressless ? undefined : removed.address,
+        universe: addressless ? undefined : universeOf(removed),
         profileId: removed.profileId,
         maxBrightness: maxBrightnessOf(removed),
         position: removed.position || null,
@@ -358,14 +402,20 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
 
       const profiles = listProfiles();
       const profileId = profiles[fixture.profileId] ? fixture.profileId : BUILTIN_PROFILE_ID;
-      const overflow = universeOverflow(fixture.label, fixture.address, profiles[profileId], fixture.universe ?? state.artnet.universe);
+      const addressless = hasNoAddress(fixture);
+      if (!addressless && fixture.address === undefined) {
+        return res.status(400).json({ ok: false, error: 'fixture-restore: fixture.address is required for a fixture on DMX' });
+      }
+      const overflow = addressless
+        ? universeOverflow(fixture.label, 1, profiles[profileId], INTERNAL_UNIVERSE)
+        : universeOverflow(fixture.label, fixture.address as number, profiles[profileId], fixture.universe ?? state.artnet.universe);
       if (overflow) return res.status(400).json({ ok: false, error: overflow });
 
       const restored = {
         id: fixture.id,
         label: fixture.label,
-        address: fixture.address,
-        universe: fixture.universe !== undefined ? fixture.universe : state.artnet.universe,
+        address: addressless ? 1 : fixture.address as number,
+        universe: addressless ? INTERNAL_UNIVERSE : fixture.universe !== undefined ? fixture.universe : state.artnet.universe,
         profileId,
         maxBrightness: fixture.maxBrightness !== undefined ? fixture.maxBrightness : 255,
         position: fixture.position || null,
@@ -379,12 +429,16 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
         return res.status(409).json({ ok: false, error: 'That fixture id is already in use' });
       }
 
-      const tooMany = unitCapOverflow([...state.fixtures, restored]);
+      const at = Math.max(0, Math.min(state.fixtures.length, index));
+      const proposed = state.fixtures.map((f) => ({ ...f }));
+      proposed.splice(at, 0, { ...restored } as Fixture);
+      placeAddresslessFixtures(proposed);
+      const tooMany = unitCapOverflow(proposed);
       if (tooMany) return res.status(400).json({ ok: false, error: tooMany });
-      const wled = ddpConflict([...state.fixtures, restored as Fixture], getProfile, universeOf);
+      const wled = ddpConflict(proposed, getProfile, universeOf);
       if (wled) return res.status(400).json({ ok: false, error: wled });
 
-      if (countUniverses([...state.fixtures, restored]) > MAX_UNIVERSES) {
+      if (countUniverses(proposed) > MAX_UNIVERSES) {
         return res.status(400).json({
           ok: false,
           error: `Universe ${restored.universe} would put the patch on more than the ${MAX_UNIVERSES} `
@@ -392,10 +446,10 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
         });
       }
 
-      const at = Math.max(0, Math.min(state.fixtures.length, index));
       if (restored.id === undefined) restored.id = allocateFixtureId();
       state.nextFixtureId = Math.max(state.nextFixtureId, restored.id + 1);
       state.fixtures.splice(at, 0, restored as typeof restored & { id: number });
+      placeAddresslessFixtures();
       resizeFixtureBuffers();
       showStore.scheduleSave();
       integrations.broadcast();

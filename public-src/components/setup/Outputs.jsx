@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { pick, send, connectedSig, toast } from '../../state.js';
 import { settingsSig, loadSettings, saveSettings, networkInterfaces, post, at } from '../../setup-state.js';
-import { footprintOf } from '../../../src/shared/placement.ts';
+import { footprintOf, hasNoAddress } from '../../../src/shared/placement.ts';
 import { identify } from '../../rig-ui.js';
 import { SettingsSection } from './Section.jsx';
 import { ARTNET, SACN, HUE } from './specs.js';
@@ -181,7 +181,7 @@ function Universes({ nodes }) {
   const on = new Map();
   for (const fix of fixtures) {
     const profile = profiles[fix.profileId];
-    if (!profile) continue;
+    if (!profile || hasNoAddress(fix)) continue;
     for (const part of footprintOf(fix.universe ?? 0, fix.address, profile)) {
       const entry = on.get(part.universe) || { fixtures: [], ddp: null, last: 0 };
       entry.fixtures.push(fix.label);
@@ -300,6 +300,9 @@ function Wled() {
 
 // ── Philips Hue ──────────────────────────────────────────────────────────────
 
+/** The built-in Hue colour lamp (server/profiles.ts). */
+const HUE_LAMP_PROFILE = 'generic-hue-lamp-7ch';
+
 function Hue() {
   const s = pick(['fixtures']);
   const data = settingsSig.value;
@@ -369,6 +372,14 @@ function Hue() {
     setBindings(next);
   };
   const fixtures = s.fixtures || [];
+  // A lamp with nothing on the rig to follow gets a fixture of its own: a Hue
+  // colour lamp with no DMX address, which the looks light like any other.
+  const patchLamp = async (ch) => {
+    const res = await post('/api/fixtures', { profileId: HUE_LAMP_PROFILE, label: (ch.name || `Hue ${ch.id}`).slice(0, 56) });
+    if (!res.ok) return;
+    bind(ch.id, String(res.fixtures[0]));
+    toast.info(`Patched "${ch.name || `Hue ${ch.id}`}" with no DMX address — apply to keep channel ${ch.id} on it`);
+  };
   const collect = () => (bindings ? { 'hue.channels': [...bindings].map(([channel, fixture]) => ({ channel, fixture })) } : {});
   const onApply = async (patch) => {
     const res = await saveSettings(patch);
@@ -404,7 +415,9 @@ function Hue() {
         {area && (
           <>
             <p class="section-desc">Each Hue channel shows the colour of the fixture it follows, after the dimmer, trim, master
-              and blackout. Lamp names come from the Hue app. Leave a channel unused to let the bridge hold its own colour.</p>
+              and blackout. Lamp names come from the Hue app. Leave a channel unused to let the bridge hold its own colour.
+              A lamp with no fixture of its own to follow can have one: <em>Patch a lamp</em> adds a Hue lamp with no DMX
+              address.</p>
             <div class="table-scroll">
               <table class="patch-table">
                 <thead><tr><th scope="col">Channel</th><th scope="col">Lamp</th><th scope="col">Follows fixture</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
@@ -417,10 +430,14 @@ function Hue() {
                         <select aria-label={`Fixture Hue channel ${ch.id} follows`} value={current.has(ch.id) ? String(current.get(ch.id)) : ''}
                           onChange={(e) => bind(ch.id, e.target.value)}>
                           <option value="">not used</option>
-                          {fixtures.map((f) => <option key={f.id} value={String(f.id)}>{f.label}</option>)}
+                          {fixtures.map((f) => <option key={f.id} value={String(f.id)}>{f.label}{hasNoAddress(f) ? ' (Hue lamp)' : ''}</option>)}
                         </select>
                       </td>
                       <td class="patch-actions-cell">
+                        {!current.has(ch.id) && <button type="button" class="btn sm" disabled={!connectedSig.value}
+                          aria-label={`Patch a lamp for Hue channel ${ch.id}`}
+                          title="Add a Hue lamp to the patch, with no DMX address, and have this channel follow it"
+                          onClick={() => patchLamp(ch)}>Patch a lamp</button>}
                         <button type="button" class="btn sm" aria-label={`Identify Hue channel ${ch.id}`} onClick={() => flash(ch.id)}>Identify</button>
                       </td>
                     </tr>

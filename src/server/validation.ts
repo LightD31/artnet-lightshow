@@ -42,12 +42,17 @@ const unitValue = z.number().min(0).max(1).optional();
 const HOSTNAME_RE = /^(?=.{1,253}$)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
 
 // A fixture sent to a device of its own: a WLED over DDP, by its hostname or
-// address. Its universes then go there and nowhere else (ddp-routes.ts).
-const fixtureOutput = z.object({
-  protocol: z.literal('ddp'),
-  host: z.string().regex(HOSTNAME_RE, 'is not a hostname or an IPv4 address'),
-  port: z.number().int().min(1).max(65535).optional(),
-}).strict();
+// address — its universes then go there and nowhere else (ddp-routes.ts) — or
+// a Hue lamp, which has no DMX address at all (shared/placement.ts).
+const hueOutput = z.object({ protocol: z.literal('hue') }).strict();
+const fixtureOutput = z.discriminatedUnion('protocol', [
+  z.object({
+    protocol: z.literal('ddp'),
+    host: z.string().regex(HOSTNAME_RE, 'is not a hostname or an IPv4 address'),
+    port: z.number().int().min(1).max(65535).optional(),
+  }).strict(),
+  hueOutput,
+]);
 
 // A string of dotted numeric labels is someone typing an IP, so hold it to
 // IPv4 rules rather than letting "2.255.255.256" through as a hostname (which
@@ -159,6 +164,8 @@ const fixtureAddSchema = z.object({
   count: z.number().int().min(1).max(64).optional(),
   address: z.number().int().min(1).max(512).optional(),
   label: z.string().trim().min(1).max(56).optional(),
+  // Hue lamps with no DMX address. A Hue lamp profile is one by default.
+  output: hueOutput.nullable().optional(),
 }).strict();
 
 const fixtureMessageSchema = z.object({
@@ -191,7 +198,8 @@ const fixtureRestoreSchema = z.object({
     geometry: fixtureGeometry.nullable().optional(),
     output: fixtureOutput.nullable().optional(),
     label: z.string().max(64),
-    address: z.number().int().min(1).max(512),
+    // Absent for a fixture with no DMX address, which the server places.
+    address: z.number().int().min(1).max(512).optional(),
     universe: dmxUniverse.optional(),
     profileId: z.string().min(1).max(128),
     maxBrightness: u8.optional(),

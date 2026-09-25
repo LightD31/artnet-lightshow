@@ -1,7 +1,7 @@
 import net from 'node:net';
 import { z } from 'zod';
 
-import { state, universeOf, activeUniverses } from '../state.ts';
+import { state, universeOf, wireUniverses } from '../state.ts';
 import { getProfile } from '../profiles.ts';
 import { identify as engineIdentify } from '../engine.ts';
 import { fixturesOnUniverses, identifySeconds, createPixelIdentify } from '../identify.ts';
@@ -149,7 +149,7 @@ function attachIdentifyRoutes(app: Express, deps: IdentifyRouteDeps): void {
     // The universes this rig puts out as sACN, whether sACN is on or not:
     // the question is also "would turning it on clash with a console".
     const ours = new Map<number, number>();
-    for (const universe of activeUniverses()) {
+    for (const universe of wireUniverses()) {
       const mapped = output.sacnUniverseFor(universe, config.universeOffset);
       if (mapped !== null) ours.set(mapped, universe);
     }

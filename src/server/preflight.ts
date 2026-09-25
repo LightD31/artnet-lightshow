@@ -3,9 +3,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 
-import { state, universeOf, activeUniverses } from './state.ts';
+import { state, universeOf, wireUniverses, countUniverses } from './state.ts';
 import { getProfile } from './profiles.ts';
-import { fitIssue, footprintOf, overlaps } from '../shared/placement.ts';
+import { fitIssue, footprintOf, overlaps, hasNoAddress } from '../shared/placement.ts';
 import { MAX_UNIVERSES } from './universes.ts';
 import { settings } from './settings.ts';
 import { discoverNodes, probeSend } from './artnet.ts';
@@ -249,7 +249,7 @@ function checkSacn(): Check {
     };
   }
 
-  const mapped = activeUniverses().map((u) => [u, output.sacnUniverseFor(u)]);
+  const mapped = wireUniverses().map((u) => [u, output.sacnUniverseFor(u)]);
   const unmappable = mapped.filter(([, to]) => to === null).map(([from]) => from);
   if (unmappable.length) {
     return {
@@ -448,9 +448,11 @@ function checkPatch(): Check {
     }
   }
 
-  const universes = activeUniverses();
-  if (universes.length > MAX_UNIVERSES) {
-    problems.push(`the patch spans ${universes.length} universes, more than the ${MAX_UNIVERSES} transmitted`);
+  const universes = wireUniverses();
+  const hueOnly = state.fixtures.filter(hasNoAddress).length;
+  const spanned = countUniverses(state.fixtures);
+  if (spanned > MAX_UNIVERSES) {
+    problems.push(`the patch spans ${spanned} universes, more than the ${MAX_UNIVERSES} rendered`);
   }
 
   if (problems.length) {
@@ -463,8 +465,9 @@ function checkPatch(): Check {
 
   return {
     id: 'patch', label: 'Fixture patch', status: OK,
-    detail: `${state.fixtures.length} fixture${state.fixtures.length === 1 ? '' : 's'} `
-      + `on universe${universes.length === 1 ? '' : 's'} ${universes.join(', ')}, no overlaps.`,
+    detail: `${state.fixtures.length - hueOnly} fixture${state.fixtures.length - hueOnly === 1 ? '' : 's'} `
+      + `on universe${universes.length === 1 ? '' : 's'} ${universes.join(', ')}, no overlaps`
+      + `${hueOnly ? `, and ${hueOnly} Hue lamp${hueOnly === 1 ? '' : 's'} with no DMX address` : ''}.`,
   };
 }
 

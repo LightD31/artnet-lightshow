@@ -1,9 +1,9 @@
 
-import { state, universeOf, maxBrightnessOf, setDefaultUniverse } from './state.ts';
+import { state, universeOf, maxBrightnessOf, setDefaultUniverse, placeAddresslessFixtures } from './state.ts';
 import { resizeFixtureBuffers } from './engine.ts';
-import { BUILTIN_PROFILE_ID, BUILTIN_PROFILE_IDS, isBuiltinProfile, MAX_FIXTURES, universeOverflow, unitCapOverflow, registerProfile, clearNonBuiltinProfiles, listProfiles } from './profiles.ts';
+import { BUILTIN_PROFILE_ID, BUILTIN_PROFILE_IDS, HUE_PROFILE_IDS, isBuiltinProfile, MAX_FIXTURES, universeOverflow, unitCapOverflow, registerProfile, clearNonBuiltinProfiles, listProfiles } from './profiles.ts';
 import { MAX_UNIVERSES } from './universes.ts';
-import { universesOf } from '../shared/placement.ts';
+import { INTERNAL_UNIVERSE, hasNoAddress, universesOf } from '../shared/placement.ts';
 import { ddpConflict } from './ddp-routes.ts';
 import { showSchema, validate } from './validation.ts';
 import { HttpError, messageOf } from '../errors.ts';
@@ -51,11 +51,12 @@ function snapshotShow() {
     // already, so shipping them in the file would mean a show loaded onto a
     // newer build quietly reinstating an older copy of them.
     profiles: Object.values(profiles).filter((p) => !isBuiltinProfile(p.id)),
+    // A Hue lamp has no DMX address: where the server rendered it is its own
+    // business, and is worked out again when the show is loaded.
     fixtures: state.fixtures.map((f) => ({
       id: f.id,
       label: f.label,
-      address: f.address,
-      universe: universeOf(f),
+      ...(hasNoAddress(f) ? {} : { address: f.address, universe: universeOf(f) }),
       profileId: f.profileId,
       maxBrightness: maxBrightnessOf(f),
       position: f.position ? { ...f.position } : null,
@@ -119,8 +120,20 @@ function applyShow(rawShow: unknown): ShowFile {
       output: f.output ? { ...f.output } : null,
       override: null,
     }));
+    // A Hue lamp on DMX was a stand-in from before Hue lamps could go without
+    // an address: its channels went out to nothing, and took up room a
+    // fixture could use. It comes off DMX, and its Hue channel still follows it.
+    const moved = next.filter((f) => !f.output && HUE_PROFILE_IDS.has(f.profileId));
+    for (const fix of moved) fix.output = { protocol: 'hue' };
+    if (moved.length) {
+      console.log(`[show] ${moved.map((f) => `"${f.label}"`).join(', ')} ${moved.length === 1 ? 'is a Hue lamp and has' : 'are Hue lamps and have'} `
+        + 'no DMX address any more: DMX channels freed');
+    }
+    placeAddresslessFixtures(next, (fix) => incoming[fix.profileId]);
     for (const fix of next) {
-      const overflow = universeOverflow(fix.label, fix.address, incoming[fix.profileId], fix.universe);
+      const overflow = hasNoAddress(fix)
+        ? universeOverflow(fix.label, 1, incoming[fix.profileId], INTERNAL_UNIVERSE)
+        : universeOverflow(fix.label, fix.address, incoming[fix.profileId], fix.universe);
       if (overflow) throw badShow(overflow);
     }
     const tooMany = unitCapOverflow(next, (fix) => incoming[fix.profileId]);

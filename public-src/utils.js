@@ -1,4 +1,4 @@
-import { channelReader } from '../src/shared/placement.ts';
+import { channelReader, hasNoAddress } from '../src/shared/placement.ts';
 
 // Approximate the visual mix on a screen for the rig's RGBWAUV channels.
 // Amber adds warm orange (R + 0.5 G); UV reads as blue-violet (R 0.2 + B 0.9).
@@ -83,6 +83,11 @@ function overrideLight(fix, state) {
     a:  Math.round((ov.a  || 0) * dim * mDim),
     uv: Math.round((ov.uv || 0) * dim * mDim),
   };
+}
+
+/** Where a fixture is patched, in words: "Universe 0 / 13", or that it has no DMX address. */
+export function patchedAt(fix) {
+  return hasNoAddress(fix) ? 'Hue lamp, no DMX address' : `Universe ${fix.universe ?? 0} / ${fix.address}`;
 }
 
 /**

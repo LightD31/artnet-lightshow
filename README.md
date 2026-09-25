@@ -427,12 +427,11 @@ Set each fixture to **12-channel mode** and give it the start address above.
 
 ### Generic Hue Lamp profiles
 
-Two profiles ship for Philips Hue lamps. A Hue channel follows a rig *fixture*
+Three profiles ship for Philips Hue lamps. A Hue channel follows a rig *fixture*
 (see [Philips Hue](#philips-hue)), so a Hue-only lamp still needs one in the
 patch — these exist so that fixture describes a light bulb instead of standing
-in as a twelve-channel par. The patch then reads as what the rig really is, and
-the DMX monitor shows four channels moving rather than twelve with eight of them
-permanently dark.
+in as a twelve-channel par. A fixture on one has **no DMX address**: the bridge
+drives the lamp, so there is nothing on DMX to address.
 
 | Profile | Channels | For |
 |---------|----------|-----|
@@ -455,9 +454,18 @@ meaning: **warm white** from the warm (amber) content, **cool white** from the
 neutral white content. Every existing preset, palette and pattern therefore
 drives a Hue lamp correctly with no changes.
 
-Patch one fixture per Hue channel, then bind them in **Settings → Philips Hue**.
-The address hardly matters for a Hue-only lamp — nothing receives that universe
-— but it still has to be unique, and the patch table flags overlaps as usual.
+Patch one fixture per Hue channel, then bind them in **Rig → Outputs → Philips
+Hue** — or press **Patch a lamp** on a channel there, which does both. The patch
+does not ask for a universe or an address: the server renders Hue lamps on
+universes of its own (from 60000) that are never sent on Art-Net, sACN or DDP,
+and their Hue channels read their colour from there. They take up no DMX
+channels, never overlap a fixture, and move up when one before them is removed.
+
+Any fixture can go without an address — **Output** in the fixture inspector
+switches between *DMX* and *Hue lamp* — and a Hue lamp profile is one by
+default. *Put on DMX* in the patch table gives it an address again, behind the
+last fixture on the rig's universe. A show saved before this had its Hue lamps
+on DMX: loading it takes them off, frees their channels, and says so in the log.
 
 **UV yes, strobe no.** Two channels on the colour lamp are not emitters the bulb
 has, and the difference between them is the rule. UV is carried because it
@@ -795,9 +803,9 @@ lamps out of normal Hue control — worth doing only once something is actually
 driving them.
 
 **Fixtures for Hue-only lamps.** A Hue channel follows a fixture, so lamps with
-no DMX equivalent still need one to follow. Patch one for each — on a spare
-universe if you like, since nothing has to receive it — and the show drives it
-exactly as it drives a par. Two built-in
+no DMX equivalent still need one to follow. **Patch a lamp** on the channel's
+row adds one with no DMX address and binds the channel to it, and the show
+drives it exactly as it drives a par. The built-in
 [Generic Hue Lamp profiles](#generic-hue-lamp-profiles) are there for this, so
 the fixture describes a bulb rather than standing in as a twelve-channel par.
 
@@ -2136,7 +2144,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/fixture/:id/override` | Set a fixture override (JSON body) |
 | POST | `/api/fixture/:id/blackout/toggle` · `/api/fixture/:id/clear` | Per-fixture blackout / clear |
 | POST | `/api/fixture/:id/max/:value` | Fixture maximum brightness (0–255) — scales the fixture's output; not an override |
-| POST | `/api/fixtures` · DELETE `/api/fixtures/:id` | Add / remove fixtures. With no body, one generic par behind whatever is on the default universe; with `{ profileId?, count?, universe?, address?, label? }`, `count` (up to 64) of that profile one after another, on into the next universe when one fills (a strip on universes of its own); answers `{ fixtures: [ids], placed: [{ universe, address }] }`. DELETE answers with the fixture and its index |
+| POST | `/api/fixtures` · DELETE `/api/fixtures/:id` | Add / remove fixtures. With no body, one generic par behind whatever is on the default universe; with `{ profileId?, count?, universe?, address?, label?, output? }`, `count` (up to 64) of that profile one after another, on into the next universe when one fills (a strip on universes of its own); answers `{ fixtures: [ids], placed: [{ universe, address }] }`. Hue lamps — a Hue lamp profile, or `output: { protocol: 'hue' }` — take no address and answer `placed: []`, `addressless: true`. DELETE answers with the fixture and its index |
 | POST | `/api/fixtures/restore` | Put a deleted fixture back (`{ index, fixture }`) |
 | POST | `/api/gdtf/parse` | Parse an uploaded `.gdtf` (multipart `gdtf`) |
 | POST | `/api/ofl/parse` | Parse an uploaded Open Fixture Library `.json` (multipart `ofl`, optional `manufacturer`) |

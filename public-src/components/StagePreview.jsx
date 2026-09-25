@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { stateSig, dmxSig, connectedSig, emitFixture, stagePreviewSig } from '../state.js';
-import { colorToCss, fixtureOutputColor, fixtureCellColors, meanLight, fmtTime } from '../utils.js';
+import { colorToCss, fixtureOutputColor, fixtureCellColors, meanLight, fmtTime, patchedAt } from '../utils.js';
 import { useDmxFeed } from '../use-dmx.js';
 import { useRehearsalTrack } from '../rehearsal.js';
 import { useTimeline } from '../use-timeline.js';
@@ -145,7 +145,7 @@ export function StagePreview() {
         return <button key={fix.id} type="button" class={`stage-fixture ${bar ? 'bar' : ''}`}
           style={{ ...placeAt(point), '--light': color }}
           aria-label={`${fix.label}${bar ? `, ${shape}` : ''}, position ${Math.round(point.x)}, ${Math.round(point.y)}${edit ? `. Arrow keys move, Shift moves faster.${turnHelp}` : ''}`}
-          title={`${fix.label} · Universe ${fix.universe ?? 0} / ${fix.address}${bar ? ` · ${grid ? `${grid.columns} × ${grid.rows}` : count} cells` : ''}`}
+          title={`${fix.label} · ${patchedAt(fix)}${bar ? ` · ${grid ? `${grid.columns} × ${grid.rows}` : count} cells` : ''}`}
           onPointerDown={(event) => grab(event, fix.id)}
           onPointerMove={move} onPointerUp={(event) => finish(event, true)}
           onPointerCancel={(event) => finish(event, false)} onLostPointerCapture={(event) => finish(event, false)}

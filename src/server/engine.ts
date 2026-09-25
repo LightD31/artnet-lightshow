@@ -12,6 +12,7 @@ import { createRenderer } from './renderer.ts';
 import { createTicker, hrtimeMs, FRAME_MS } from './frame-clock.ts';
 import { messageOf } from '../errors.ts';
 import { createIdentify } from './identify.ts';
+import { hasNoAddress } from '../shared/placement.ts';
 import type { FromWorker, ToWorker } from './engine-messages.ts';
 import type { FrameSummary, Ticker } from './frame-clock.ts';
 import type { FadeRequest, RenderInput, SyncTestRequest } from './renderer.ts';
@@ -99,7 +100,8 @@ const identify = createIdentify({ clock: () => clock() });
  */
 function renderInput(): RenderInput {
   // A fixture a Hue lamp follows is never strobed in software: the lamp would
-  // flash with it, and a Hue bridge is no strobe (see renderer.js).
+  // flash with it, and a Hue bridge is no strobe (see renderer.js). Nor is one
+  // with no DMX address, which only a Hue lamp shows.
   const followed = output.hueFollowedFixtures ? output.hueFollowedFixtures() : null;
   return {
     running: state.running,
@@ -137,7 +139,7 @@ function renderInput(): RenderInput {
       position: f.position || null,
       group: f.group || null,
       geometry: f.geometry || null,
-      hue: !!(followed && followed.has(f.id)),
+      hue: !!(followed && followed.has(f.id)) || hasNoAddress(f),
     })),
   };
 }
