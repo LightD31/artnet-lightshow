@@ -25,6 +25,27 @@ const UNIVERSE_SIZE = 512;
 /** The highest universe Art-Net can address (15 bits). */
 const LAST_UNIVERSE = 32767;
 
+/**
+ * The first of the server's own universes. A fixture with no DMX address — a
+ * Philips Hue lamp, which the bridge drives — still has to be rendered
+ * somewhere for its Hue channel to read its colour back, so the server puts it
+ * on universes from here. They are rendered like any other and never sent: a
+ * fixture's universe is an Art-Net one, 32767 at most. Still under 65536, so
+ * the page's DMX frames (dmx-frame.ts), which carry a universe in 16 bits,
+ * can show them.
+ */
+const INTERNAL_UNIVERSE = 60000;
+
+/** Whether a universe is one of the server's own, never put on the wire. */
+function isInternalUniverse(universe: number): boolean {
+  return universe >= INTERNAL_UNIVERSE;
+}
+
+/** A fixture with no DMX address: shown on a Hue lamp and nowhere else. */
+function hasNoAddress(fixture: { output?: { protocol: string } | null }): boolean {
+  return !!fixture.output && fixture.output.protocol === 'hue';
+}
+
 /** How a strip longer than a universe is laid out. */
 export interface Strip {
   /** Channels per cell. */
@@ -119,7 +140,7 @@ function fitIssue(label: string, address: number, profile: Placeable, universe?:
     return `"${label}" is a strip of ${count} channels, longer than a universe, so it starts at channel 1 and runs on into the next`;
   }
   const last = universe === undefined ? null : universe + universeCount(profile) - 1;
-  if (last !== null && last > LAST_UNIVERSE) {
+  if (last !== null && !isInternalUniverse(universe as number) && last > LAST_UNIVERSE) {
     return `"${label}" runs over ${universeCount(profile)} universes from ${universe}, past universe ${LAST_UNIVERSE}, the last there is`;
   }
   return null;
@@ -153,6 +174,72 @@ function overlaps(a: ReturnType<typeof footprintOf>, b: ReturnType<typeof footpr
   return a.some((x) => b.some((y) => x.universe === y.universe && x.first <= y.last && y.first <= x.last));
 }
 
+interface Placed {
+  address: number;
+  universe?: number;
+  profileId: string;
+  output?: { protocol: string } | null;
+}
+
+/**
+ * Give every fixture with no DMX address its place on the internal universes:
+ * one after another in patch order, each on a universe it fits, a strip from
+ * channel 1 of universes of its own. Changes `fixtures` in place, and says
+ * whether anything moved. Placement is the server's, so it is simply redone
+ * whenever the patch changes; nothing outside refers to these addresses.
+ */
+function placeAddressless<F extends Placed>(fixtures: readonly F[], profileOf: (fixture: F) => Placeable): boolean {
+  let moved = false;
+  let universe = INTERNAL_UNIVERSE;
+  let next = 1;
+  for (const fix of fixtures) {
+    if (!hasNoAddress(fix)) continue;
+    const profile = profileOf(fix);
+    const span = universeCount(profile);
+    let address = next;
+    if (span > 1 || address + profile.channelCount - 1 > UNIVERSE_SIZE) {
+      if (address > 1) universe += 1;
+      address = 1;
+    }
+    if (fix.universe !== universe || fix.address !== address) {
+      fix.universe = universe;
+      fix.address = address;
+      moved = true;
+    }
+    if (span > 1) {
+      universe += span;
+      next = 1;
+    } else {
+      next = address + profile.channelCount;
+    }
+  }
+  return moved;
+}
+
+/**
+ * The first place from `universe` on where a fixture on this profile fits
+ * behind what is already patched (`taken`, footprints): after the last channel
+ * used on a universe, or from channel 1 of empty universes for a strip. Null
+ * when no universe up to the last has room.
+ */
+function freeSpot(taken: Iterable<{ universe: number; last: number }>, profile: Placeable,
+  universe: number): { universe: number; address: number } | null {
+  const lastUsed = new Map<number, number>();
+  for (const part of taken) lastUsed.set(part.universe, Math.max(lastUsed.get(part.universe) || 0, part.last));
+  const span = universeCount(profile);
+  for (let u = universe; u + span - 1 <= LAST_UNIVERSE; u++) {
+    if (span > 1) {
+      let empty = true;
+      for (let k = 0; k < span && empty; k++) empty = !lastUsed.has(u + k);
+      if (empty) return { universe: u, address: 1 };
+    } else {
+      const address = (lastUsed.get(u) || 0) + 1;
+      if (address + profile.channelCount - 1 <= UNIVERSE_SIZE) return { universe: u, address };
+    }
+  }
+  return null;
+}
+
 /**
  * A reader for a fixture's channels in rendered universes: `frames(universe)`
  * gives a universe's bytes (a buffer or a plain array; missing reads as 0).
@@ -175,6 +262,11 @@ function channelReader(universe: number, address: number, profile: Placeable,
 
 export {
   UNIVERSE_SIZE,
+  INTERNAL_UNIVERSE,
+  isInternalUniverse,
+  hasNoAddress,
+  placeAddressless,
+  freeSpot,
   stripOf,
   stripIssue,
   universeCount,

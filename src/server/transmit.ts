@@ -1,6 +1,8 @@
 import { sendArtDmx, sendArtSync } from './artnet.ts';
 import { sendSacn, sendSacnDiscovery, MIN_UNIVERSE, MAX_UNIVERSE, DISCOVERY_INTERVAL_MS } from './sacn.ts';
 import { sendDdp } from './ddp.ts';
+import type { DdpRun } from './ddp.ts';
+import { isInternalUniverse } from '../shared/placement.ts';
 import type { DdpRoute } from './ddp-routes.ts';
 import type { ArtDmxTarget } from './artnet.ts';
 import type { ArtRoutes } from './artnet-nodes.ts';
@@ -27,12 +29,17 @@ export interface TransmitConfig {
   ddp?: DdpRoute[];
 }
 
-/** One frame of a WLED's pixels, as the wire takes it. */
+/**
+ * One frame of a WLED's pixels, as the wire takes it: from its first LED, or
+ * each of `runs` (in bytes) where it goes when the WLED is patched segment by
+ * segment.
+ */
 export interface DdpTarget {
   host: string;
   port: number;
   sequence: number;
   rgbw: boolean;
+  runs?: DdpRun[];
 }
 
 /** The packets themselves; swapped for fakes in tests. */
@@ -106,6 +113,8 @@ function ddpUniverses(routes: DdpRoute[] | undefined): Set<number> | null {
 
 /** What makes one WLED another: where its frames go. */
 const ddpKey = (route: Pick<DdpRoute, 'host' | 'port'>) => `${route.host}:${route.port}`;
+/** And one fixture on it another: where its pixels start. */
+const routeKey = (route: DdpRoute) => `${ddpKey(route)}@${route.runs[0]?.at ?? 0}`;
 
 /** What makes one sACN stream another: a change here ends the old one. */
 function sacnStreamKey(sacn: SacnOutput | null | undefined): string | null {
@@ -180,6 +189,9 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
   function send(universe: number, frame: Buffer, config: TransmitConfig,
     { immediate = false, terminate = false }: SendOptions = {}): Wire[] {
     const sent: Wire[] = [];
+    // The server's own universes (fixtures with no DMX address, read back by
+    // the Hue lamps) are rendered and never sent.
+    if (isInternalUniverse(universe)) return sent;
     if (!immediate && config.delayMs > 0) {
       const ready = delayedFrame(universe, frame, config.delayMs);
       if (!ready) return sent;
@@ -286,29 +298,58 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
    */
   function endDdpFrame(routes: DdpRoute[] | null | undefined): void {
     const now = new Map<string, { route: DdpRoute; bytes: number }>();
+    // A WLED patched segment by segment is several fixtures: its frame is all
+    // of them, sent together and shown once.
+    const byWled = new Map<string, DdpRoute[]>();
     for (const route of routes || []) {
-      const bytes = route.parts.reduce((sum, part) => sum + part.bytes, 0);
-      now.set(ddpKey(route), { route, bytes });
-      if (!route.parts.every((part) => ddpFrames.has(part.universe))) continue;
-      const data = new Uint8Array(bytes);
-      let at = 0;
-      for (const part of route.parts) {
-        const frame = ddpFrames.get(part.universe) as Buffer;
-        data.set(frame.subarray(part.from, part.from + part.bytes), at);
-        at += part.bytes;
-      }
-      sendToWled(route, data);
+      now.set(routeKey(route), { route, bytes: route.parts.reduce((sum, part) => sum + part.bytes, 0) });
+      const list = byWled.get(ddpKey(route)) || [];
+      list.push(route);
+      byWled.set(ddpKey(route), list);
     }
-    for (const [key, gone] of ddpSent) if (!now.has(key)) sendToWled(gone.route, new Uint8Array(gone.bytes));
+    for (const group of byWled.values()) {
+      if (!group.every((route) => route.parts.every((part) => ddpFrames.has(part.universe)))) continue;
+      const total = group.reduce((sum, route) => sum + route.parts.reduce((n, part) => n + part.bytes, 0), 0);
+      const data = new Uint8Array(total);
+      const runs: DdpRun[] = [];
+      let at = 0;
+      for (const route of group) {
+        const start = at;
+        for (const part of route.parts) {
+          const frame = ddpFrames.get(part.universe) as Buffer;
+          data.set(frame.subarray(part.from, part.from + part.bytes), at);
+          at += part.bytes;
+        }
+        runs.push(...byteRuns(route, start));
+      }
+      sendToWled(group[0], data, runs);
+    }
+    for (const [key, gone] of ddpSent) {
+      if (!now.has(key)) sendToWled(gone.route, new Uint8Array(gone.bytes), byteRuns(gone.route, 0));
+    }
     ddpSent = now;
     ddpFrames.clear();
   }
 
-  function sendToWled(route: DdpRoute, data: Uint8Array): void {
+  /** A fixture's pixel runs as bytes, its data starting at `from` in the frame. */
+  function byteRuns(route: DdpRoute, from: number): DdpRun[] {
+    const width = route.rgbw ? 4 : 3;
+    const out: DdpRun[] = [];
+    let cursor = from;
+    for (const run of route.runs) {
+      out.push({ at: run.at * width, from: cursor, bytes: run.count * width });
+      cursor += run.count * width;
+    }
+    return out;
+  }
+
+  function sendToWled(route: DdpRoute, data: Uint8Array, runs: DdpRun[]): void {
     const key = ddpKey(route);
     const sequence = (ddpSequence.get(key) || 0) % 15 + 1;
     ddpSequence.set(key, sequence);
-    wires.ddp({ host: route.host, port: route.port, sequence, rgbw: route.rgbw }, data);
+    // One run from the WLED's first LED is the whole WLED, as it always was.
+    const whole = runs.length === 1 && runs[0].at === 0 && runs[0].from === 0 && runs[0].bytes === data.length;
+    wires.ddp({ host: route.host, port: route.port, sequence, rgbw: route.rgbw, ...(whole ? {} : { runs }) }, data);
   }
 
   return { send, endFrame };

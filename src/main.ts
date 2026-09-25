@@ -13,7 +13,7 @@ import type { LiveOptions } from './live-input.ts';
 import MidiClock from './midi-clock.ts';
 import SpotifyClient from './spotify.ts';
 import NowPlayingSource from './nowplaying-source.ts';
-import SmtcReader from './smtc-source.ts';
+import { createOsNowPlaying, osNowPlayingKind } from './os-now-playing.ts';
 import DeezerSource from './deezer-source.ts';
 import * as deezer from './deezer.ts';
 import AutoShow from './auto-show.ts';
@@ -122,6 +122,9 @@ midi.setFixtureMax = setFixtureMaxBrightness;
 // inside midi.js, which has no business knowing about the cue store.
 midi.setMap(midiMap.get());
 midiMap.onChange((map) => midi.setMap(map));
+// A fader learned on its touch sensor is moved to its movement once both have
+// been seen (midi.ts), and kept that way.
+midi.onRebind = (_from, to, binding) => midiMap.setBinding('cc', to, binding);
 midi.recallCue = (id) => {
   if (!cues.recall(id)) console.warn(`[MIDI] recallCue: no cue ${id} — it may have been deleted`);
 };
@@ -176,10 +179,11 @@ conductor.setLiveSource(() => liveInput.getBeatReading());
 const midiClock = new MidiClock({ open: openMidiOutput, beatPos: () => conductor.peek().beatPos });
 conductor.onTempo((bpm) => { state.bpm = bpm; });
 
-// Windows "now playing" (SMTC) feeds the generic now-playing source: we read
-// the OS media session, so any player that reports to it (Deezer, Tidal,
-// YouTube, a browser tab, a desktop app…) drives the auto-show.
-const smtc = new SmtcReader();
+// The OS's "now playing" feeds the generic now-playing source: the Windows
+// media session (SMTC), or the MPRIS players on Linux's session bus. Any
+// player that reports to it (Deezer, Tidal, Spotify, YouTube, a browser tab,
+// a desktop app…) drives the auto-show.
+const smtc = createOsNowPlaying();
 smtc.onUpdate((payload) => nowPlaying.updatePlayback(payload));
 
 // The patch the operator left behind, put back before anything reads the
@@ -351,9 +355,11 @@ server.listen(PORT, HOST, () => {
     console.log(`                       ${spotify.redirectUri}`);
   }
   console.log(`  Deezer            →  ${settings.get('deezer.arl') ? 'configured (ISRC-based downloads)' : 'not configured (add an ARL under Sources — falls back to yt-dlp)'}`);
-  const npStatus = process.platform !== 'win32'
-    ? 'unavailable (Windows-only)'
-    : smtcEnabled ? 'reading OS media session (SMTC)' : 'disabled in settings';
+  const npKind = osNowPlayingKind();
+  const npStatus = !npKind
+    ? 'unavailable (Windows and Linux only)'
+    : !smtcEnabled ? 'disabled in settings'
+      : npKind === 'SMTC' ? 'reading OS media session (SMTC)' : 'reading MPRIS players on the session bus';
   console.log(`  Now Playing       →  ${npStatus}`);
   console.log(`  Python            →  ${pythonEnv.describe()}`);
   console.log(`  Auto Show         →  Essentia + Spotify integration\n`);

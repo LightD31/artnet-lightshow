@@ -97,7 +97,6 @@ def separate(mono, sample_rate, overlap=0.10, segment_seconds=None, stereo_loade
             models.unload('bs-roformer-4stem')
 
     model = models.separator()
-    device = 'cpu' if models.gpu_fault() else models.device()
 
     # Demucs wants stereo at its own rate. Given the real stereo at that rate it
     # gets it; otherwise the mono analysis signal goes up to its rate and is
@@ -111,20 +110,18 @@ def separate(mono, sample_rate, overlap=0.10, segment_seconds=None, stereo_loade
         pair = np.vstack([resampled, resampled])
     tensor = torch.tensor(pair, dtype=torch.float32)[None]
 
-    kwargs = dict(device=device, split=True, overlap=overlap, progress=False)
+    kwargs = dict(split=True, overlap=overlap, progress=False)
     if segment_seconds:
         kwargs['segment'] = segment_seconds
-    try:
-        with models.inference('demucs'), torch.no_grad():
-            separated = apply_model(model, tensor, **kwargs)[0].cpu()
-    except Exception as exc:
-        # A GPU that faulted mid-track stays faulted; Demucs on the CPU is
-        # slower but still an answer (see models.gpu_fault).
-        if device == 'cpu' or not models.gpu_fault(exc):
-            raise
-        kwargs['device'] = 'cpu'
+
+    def run(device):
         with torch.no_grad():
-            separated = apply_model(model, tensor, **kwargs)[0].cpu()
+            return apply_model(model, tensor, device=device, **kwargs)[0].cpu()
+
+    # On the card, with its weights brought from RAM when they are kept there.
+    # A card that faulted, or that the pass ran out of memory, and it is Demucs
+    # on the CPU: slower, but still an answer (see models.run_pass).
+    separated = models.run_pass('demucs', run, modules=[model])
 
     out = {}
     for name, source in zip(model.sources, separated):
@@ -190,7 +187,7 @@ def separate_bs_roformer(mono, sample_rate, stereo_loader=None):
             try:
                 for target in targets:
                     target.output_dir = tmp
-                with models.inference('bs-roformer'):
+                with models.inference('bs-roformer', modules=[models.bs_roformer_module(separator)]):
                     paths = separator.separate(source)
             finally:
                 for target, previous in zip(targets, previous_dirs):

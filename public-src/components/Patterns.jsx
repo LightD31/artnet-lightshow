@@ -39,6 +39,9 @@ const PATTERN_ICONS = {
   stems:         '☰',
   rise:          '▲',
   impact:        '✺',
+  bars:          '▁▅▃',
+  fire:          '♨',
+  rain:          '⁞',
 };
 
 // How a pattern is laid over the rig. Per bar needs bars; the other two
@@ -58,20 +61,30 @@ function hasBars(s) {
   });
 }
 
+/** Does the patch have a panel: a fixture whose cells stand in rows? */
+function hasPanels(s) {
+  const profiles = s.profiles || {};
+  return (s.fixtures || []).some((f) => {
+    const p = profiles[f.profileId];
+    return !!(p && p.grid && Array.isArray(p.cells) && p.cells.length >= 2);
+  });
+}
+
 function iconFor(id) {
   return PATTERN_ICONS[id] || '·';
 }
 
-function PatternButton({ p, active, onBars }) {
+function PatternButton({ p, active, onBars, onPanels = false }) {
+  const where = [onBars && 'the bars', onPanels && 'the panels'].filter(Boolean).join(' and ');
   return (
     <button
-      class={`pattern-btn ${active ? 'active' : ''} ${onBars ? 'on-bars' : ''}`}
+      class={`pattern-btn ${active ? 'active' : ''} ${where ? 'on-bars' : ''}`}
       onClick={() => send({ pattern: p.id })}
       title={p.desc || p.name}
     >
       <span class="icon">{iconFor(p.id)}</span>
       <span class="body">
-        <span class="name">{p.name}{onBars && <span class="layer-tag"> · on the bars</span>}</span>
+        <span class="name">{p.name}{where && <span class="layer-tag"> · on {where}</span>}</span>
         <span class="desc">{p.desc}</span>
       </span>
     </button>
@@ -79,7 +92,7 @@ function PatternButton({ p, active, onBars }) {
 }
 
 export function Patterns() {
-  const s = pick(['pattern', 'patterns', 'pixelMap', 'pixelPattern', 'fixtures', 'profiles']);
+  const s = pick(['pattern', 'patterns', 'pixelMap', 'pixelPattern', 'panelPattern', 'fixtures', 'profiles']);
   const patterns = s.patterns || [];
   const bars = hasBars(s);
   // The pixel effects are drawn for LED bars; on a rig of pars they still run,
@@ -90,15 +103,21 @@ export function Patterns() {
   // colour, the bars the movement. Both are marked; a pattern picked here
   // runs on the whole rig again.
   const onBars = bars && s.pixelPattern ? s.pixelPattern : null;
-  const barsLabel = onBars && (patterns.find((p) => p.id === onBars)?.name || onBars);
+  const nameOf = (id) => patterns.find((p) => p.id === id)?.name || id;
+  const barsLabel = onBars && nameOf(onBars);
+  // And the panels theirs: the auto show hands a screen fire, rain or the
+  // band's levels; picked here, it stays until a pattern is.
+  const panels = hasPanels(s);
+  const onPanels = panels && s.panelPattern ? s.panelPattern : null;
   // Along each bar is across the stage on a rig without bars.
   const map = !bars && s.pixelMap === 'bar' ? 'stage' : (s.pixelMap || 'stage');
   return (
     <div class="card">
       <div class="card-title">Pattern</div>
-      {onBars && (
+      {(onBars || onPanels) && (
         <div class="card-subtitle" role="status">
-          Pars on {patterns.find((p) => p.id === s.pattern)?.name || s.pattern}, bars on {barsLabel}
+          {onBars ? `Pars on ${nameOf(s.pattern)}, bars on ${barsLabel}` : `Rig on ${nameOf(s.pattern)}`}
+          {onPanels ? `, panels on ${nameOf(onPanels)}` : ''}
         </div>
       )}
       <div class="pattern-grid">
@@ -107,9 +126,21 @@ export function Patterns() {
       {pixel.length > 0 && <>
         <div class="card-subtitle">{bars ? 'Pixel effects' : 'Pixel effects — drawn for LED bars'}</div>
         <div class="pattern-grid">
-          {pixel.map((p) => <PatternButton key={p.id} p={p} active={s.pattern === p.id} onBars={onBars === p.id} />)}
+          {pixel.map((p) => (
+            <PatternButton key={p.id} p={p} active={s.pattern === p.id} onBars={onBars === p.id} onPanels={onPanels === p.id} />
+          ))}
         </div>
       </>}
+      {panels && pixel.length > 0 && (
+        <label class="panel-pattern">
+          <span>Panels</span>
+          <select class="auto-select" value={onPanels || ''} aria-label="The panels' own picture"
+            onChange={(e) => send({ panelPattern: e.target.value || null })}>
+            <option value="">Same as the bars</option>
+            {pixel.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </label>
+      )}
       {(s.fixtures || []).length >= 3 && (
         <div class="pixel-map" role="group" aria-label="How the pattern is laid over the rig">
           {PIXEL_MAPS.filter((m) => bars || !m.bars).map((m) => (

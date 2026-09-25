@@ -1,7 +1,7 @@
 import { useState } from 'preact/hooks';
 import { pick, connectedSig, emitFixture, api, toast } from '../../state.js';
 import { post } from '../../setup-state.js';
-import { footprintOf, overlaps } from '../../../src/shared/placement.ts';
+import { footprintOf, overlaps, hasNoAddress } from '../../../src/shared/placement.ts';
 import { rigSelectionSig, selectOnly, toggleSelected, identifyFixtures } from '../../rig-ui.js';
 import { FieldInput } from './FieldInput.jsx';
 
@@ -14,8 +14,9 @@ import { FieldInput } from './FieldInput.jsx';
 const profileLabel = (p) => `${p.manufacturer ? `${p.manufacturer} ` : ''}${p.name}${p.modeName ? ` — ${p.modeName}` : ''}`;
 const cellCount = (p) => (p && Array.isArray(p.cells) && p.cells.length >= 2 ? p.cells.length : 0);
 
-/** The fixtures that share a channel with another, by id. */
+/** The fixtures that share a channel with another, by id. Hue lamps have no channels to share. */
 export function conflictsOf(fixtures, profiles) {
+  fixtures = fixtures.filter((f) => !hasNoAddress(f));
   const parts = fixtures.map((f) => footprintOf(f.universe ?? 0, f.address, profiles[f.profileId] || { channelCount: 1, channelMap: {} }));
   const out = new Set();
   for (let i = 0; i < fixtures.length; i++) {
@@ -45,9 +46,12 @@ async function removeFixture(fix) {
   });
 }
 
-/** Add fixtures: one of a profile, or a run of them from an address. */
+/**
+ * Add fixtures: one of a profile, or a run of them from an address. A Hue lamp
+ * has no DMX address, so on a Hue lamp profile there is none to ask for.
+ */
 export function AddFixtures({ onAdded }) {
-  const s = pick(['profiles', 'artnet', 'builtinProfileIds']);
+  const s = pick(['profiles', 'artnet', 'builtinProfileIds', 'hueProfileIds']);
   const profiles = Object.values(s.profiles || {});
   const [profileId, setProfileId] = useState('');
   const [count, setCount] = useState('1');
@@ -56,18 +60,20 @@ export function AddFixtures({ onAdded }) {
   const [label, setLabel] = useState('');
   const [busy, setBusy] = useState(false);
   const chosen = profileId || (profiles[0] && profiles[0].id) || '';
+  const hue = (s.hueProfileIds || []).includes(chosen);
   const add = async (e) => {
     e.preventDefault();
     setBusy(true);
     const body = { profileId: chosen, count: Math.max(1, Math.min(64, parseInt(count, 10) || 1)) };
-    if (universe !== '') body.universe = parseInt(universe, 10);
-    if (address !== '') body.address = parseInt(address, 10);
+    if (!hue && universe !== '') body.universe = parseInt(universe, 10);
+    if (!hue && address !== '') body.address = parseInt(address, 10);
     if (label.trim()) body.label = label.trim();
     const res = await post('/api/fixtures', body);
     setBusy(false);
     if (!res.ok) return;
-    const where = res.placed[0];
-    toast.info(`Added ${res.fixtures.length} fixture${res.fixtures.length === 1 ? '' : 's'}, from universe ${where.universe} / ${where.address}`);
+    const n = res.fixtures.length;
+    if (res.addressless) toast.info(`Added ${n} Hue lamp${n === 1 ? '' : 's'}, with no DMX address — pick ${n === 1 ? 'its' : 'their'} Hue channel${n === 1 ? '' : 's'} in Outputs`);
+    else toast.info(`Added ${n} fixture${n === 1 ? '' : 's'}, from universe ${res.placed[0].universe} / ${res.placed[0].address}`);
     rigSelectionSig.value = res.fixtures;
     if (onAdded) onAdded(res);
   };
@@ -81,11 +87,16 @@ export function AddFixtures({ onAdded }) {
       </label>
       <label class="add-field"><span>How many</span>
         <input type="number" min="1" max="64" value={count} onInput={(e) => setCount(e.target.value)} /></label>
-      <label class="add-field"><span>Universe</span>
-        <input type="number" min="0" max="32767" placeholder={String((s.artnet && s.artnet.universe) ?? 0)} value={universe}
-          onInput={(e) => setUniverse(e.target.value)} /></label>
-      <label class="add-field"><span>From address</span>
-        <input type="number" min="1" max="512" placeholder="next free" value={address} onInput={(e) => setAddress(e.target.value)} /></label>
+      {hue ? (
+        <p class="add-field add-note setting-help">No DMX address: a Hue lamp is driven by the bridge, and shows the colour
+          of this fixture through the Hue channel that follows it.</p>
+      ) : <>
+        <label class="add-field"><span>Universe</span>
+          <input type="number" min="0" max="32767" placeholder={String((s.artnet && s.artnet.universe) ?? 0)} value={universe}
+            onInput={(e) => setUniverse(e.target.value)} /></label>
+        <label class="add-field"><span>From address</span>
+          <input type="number" min="1" max="512" placeholder="next free" value={address} onInput={(e) => setAddress(e.target.value)} /></label>
+      </>}
       <label class="add-field"><span>Name</span>
         <input type="text" maxLength={56} placeholder="Fixture" value={label} onInput={(e) => setLabel(e.target.value)} /></label>
       <button type="submit" class="btn active" disabled={busy || !chosen || !connectedSig.value}>Add</button>
@@ -113,7 +124,8 @@ export function PatchTable() {
         <h2 class="panel-title" id="patch-title">Patch</h2>
         {conflicts.size > 0 && <span class="panel-tag warn">{conflicts.size} overlapping</span>}
       </header>
-      <p class="section-desc">Each fixture's profile, universe and first DMX address. Addresses only collide within the same universe.</p>
+      <p class="section-desc">Each fixture's profile, universe and first DMX address. Addresses only collide within the same
+        universe. A Hue lamp has none: the bridge drives it.</p>
       <div class="table-scroll">
         <table class="patch-table">
           <thead>
@@ -153,6 +165,15 @@ export function PatchTable() {
                       {allProfiles.map((p) => <option key={p.id} value={p.id}>{profileLabel(p)}</option>)}
                     </select>
                   </td>
+                  {hasNoAddress(fix) ? (
+                    <td colSpan={2}>
+                      <span class="patch-hue" title="Driven by the Hue bridge: shown through the Hue channel that follows it, never on DMX">
+                        Hue lamp · no DMX address</span>
+                      <button type="button" class="btn sm" disabled={!connected} aria-label={`Put ${fix.label} on DMX`}
+                        title="Give it a DMX address after the last fixture on the rig's universe"
+                        onClick={() => send({ id: fix.id, output: null })}>Put on DMX</button>
+                    </td>
+                  ) : <>
                   <td>
                     <FieldInput type="number" min="0" max="32767" class={clash ? 'addr-conflict' : ''} value={fix.universe ?? 0}
                       aria-label={`Universe of ${fix.label}`}
@@ -173,6 +194,7 @@ export function PatchTable() {
                     <span class="addr-range">{rangeOf(fix, profile)}</span>
                     {clash && <span class="conflict-warning">Overlaps another fixture</span>}
                   </td>
+                  </>}
                   <td class="ch-count">{profile ? profile.channelCount : '?'}{cells ? ` (${cells} cells)` : ''}</td>
                   <td class="patch-actions-cell">
                     <button type="button" class={`btn sm ${identifying.has(fix.id) ? 'active' : ''}`} disabled={!connected}

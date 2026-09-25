@@ -35,6 +35,7 @@ export interface PatchData {
   pixelPattern?: string | null;
   pixelSpan?: number | null;
   pixelFrom?: number | null;
+  panelPattern?: string | null;
   beatDivision?: number;
   strobeSpeed?: number;
   strobeFunction?: string;
@@ -191,6 +192,9 @@ function sceneData(intent: SceneIntent): PatchData {
     data.pixelSpan = intent.pixelSpan && intent.pixelSpan > 0 ? Math.min(4096, intent.pixelSpan) : null;
     data.pixelFrom = intent.pixelFrom && intent.pixelFrom > 0 ? Math.min(1, intent.pixelFrom) : null;
   }
+  // The panels' own picture, planned only on a rig that has panels, and said
+  // every time for the same reason.
+  if (intent.panelPattern !== undefined) data.panelPattern = intent.panelPattern ? String(intent.panelPattern) : null;
   if (intent.beatDivision != null) data.beatDivision = division(intent.beatDivision);
   if (intent.strobeSpeed != null) data.strobeSpeed = u8(intent.strobeSpeed);
   if (intent.strobeFunction) data.strobeFunction = String(intent.strobeFunction);

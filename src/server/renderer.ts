@@ -75,6 +75,8 @@ export interface RenderInput {
   pixelPattern?: string | null;
   pixelSpan?: number | null;
   pixelFrom?: number | null;
+  /** The panels' own picture while the bars run `pixelPattern`, or null. */
+  panelPattern?: string | null;
   beatDivision: number;
   strobeSpeed: number;
   strobeFunction: string;
@@ -222,8 +224,10 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
   // bar another (see shared/rig.js). On a rig of pars, entry i is fixture i.
   const unitColors = Array.from({ length: 4 }, blankUnit);
   const twinkle = new Array(4).fill(0);
-  // The bars' own dice, when they run a picture apart from the pars'.
+  // The bars' own dice, when they run a picture apart from the pars', and
+  // the panels'.
   const pixelTwinkle = new Array(4).fill(0);
+  const panelTwinkle = new Array(4).fill(0);
 
   // ── Crossfades ─────────────────────────────────────────────────────────────
   // The show asks for a fade where the music does — long into a breakdown,
@@ -251,6 +255,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
   let givenAnchor: PatternAnchor | null = null;
   let lastRandomKey: string | null = null;
   let lastPixelRandomKey: string | null = null;
+  let lastPanelRandomKey: string | null = null;
 
   let rig: Rig<RenderFixture> | null = null;
   let rigKey = '';
@@ -274,6 +279,8 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     twinkle.length = count;
     while (pixelTwinkle.length < count) pixelTwinkle.push(0);
     pixelTwinkle.length = count;
+    while (panelTwinkle.length < count) panelTwinkle.push(0);
+    panelTwinkle.length = count;
   }
 
   function setUnitColor(u: number, color: Colour, dim: number, strobe: number): void {
@@ -366,6 +373,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
   function renderPattern(input: RenderInput, rigNow: Rig<RenderFixture>, reading: MusicalTime): void {
     if (!input.running) return;
     const pixelPattern = rigNow.hasPixels && input.pixelPattern ? input.pixelPattern : null;
+    const panelPattern = rigNow.hasPanels && input.panelPattern && PATTERN_FUNCS[input.panelPattern] ? input.panelPattern : null;
     const known = !!PATTERN_FUNCS[input.pattern];
     const knownPixel = !!pixelPattern && !!PATTERN_FUNCS[pixelPattern];
     const look = {
@@ -376,19 +384,21 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       pixelPattern,
       pixelSpan: input.pixelSpan ?? null,
       pixelFrom: input.pixelFrom ?? null,
+      panelPattern,
     };
-    if (!known && !knownPixel) {
+    if (!known && !knownPixel && !panelPattern) {
       // Nothing to draw, but a split look's wash still holds.
-      renderLayer(rigNow, look, null, setUnitColor, { skipPattern: true, skipPixelPattern: true });
+      renderLayer(rigNow, look, null, setUnitColor, { skipPattern: true, skipPixelPattern: true, skipPanelPattern: true });
       return;
     }
 
     const fixtureCount = input.fixtures.length;
     const { step, anchor: from, division } = patternStep(input, reading);
     // A random pattern re-rolls when its step or its look moves, and holds
-    // what it rolled in between; the pars and the bars keep their own dice.
+    // what it rolled in between; the pars, the bars and the panels keep their
+    // own dice. Which lights each part covers is in every key.
     const lookKey = `${step}|${input.colorA},${input.colorB},${input.colorC},${input.colorD}|${input.split}|${fixtureCount}`;
-    const pixels = `|${rigNow.hasPixels ? rigNow.units.length : ''}|${input.pixelMap}`;
+    const pixels = `|${rigNow.hasPixels ? rigNow.units.length : ''}|${input.pixelMap}|${panelPattern}`;
     let skipPattern = !known;
     if (known && RANDOM_PATTERNS.has(input.pattern)) {
       const key = `${input.pattern}|${lookKey}${pixels}|${pixelPattern}`;
@@ -400,6 +410,12 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       const key = `${pixelPattern}|${lookKey}${pixels}|${input.pattern}`;
       skipPixelPattern = key === lastPixelRandomKey;
       lastPixelRandomKey = key;
+    }
+    let skipPanelPattern = !panelPattern;
+    if (panelPattern && RANDOM_PATTERNS.has(panelPattern)) {
+      const key = `${lookKey}${pixels}|${input.pattern}|${pixelPattern}`;
+      skipPanelPattern = key === lastPanelRandomKey;
+      lastPanelRandomKey = key;
     }
 
     renderLayer(rigNow, look, {
@@ -414,7 +430,8 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       fixtureCount,
       twinkle,
       pixelTwinkle,
-    }, setUnitColor, { skipPattern, skipPixelPattern });
+      panelTwinkle,
+    }, setUnitColor, { skipPattern, skipPixelPattern, skipPanelPattern });
   }
 
   function syncTestEnergy(now: number): EnergyLook | null {

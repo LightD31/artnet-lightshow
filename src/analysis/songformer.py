@@ -141,11 +141,14 @@ def _stub_msaf():
 
 
 def load():
-    """The model, built once per process on the analysis device."""
+    """
+    The model, built once per process: on the analysis device, or in RAM when
+    models are kept there between passes (models.offloading).
+    """
     directory = model_dir()
-    target = 'cpu' if models.gpu_fault() else models.device()
 
     def build():
+        target = models.home()
         gaps = missing()
         if gaps:
             raise RuntimeError(f'SongFormer is not installed: missing {", ".join(gaps)}')
@@ -166,9 +169,12 @@ def load():
             state = load_file(str(directory / 'model.safetensors'))
             model.load_state_dict(state, strict=True)
             del state
-        return model.float().to(target).eval()
+        model = model.float().to(target).eval()
+        if models.offloading():
+            models.park(model)
+        return model
 
-    return models.cached(f'songformer:{directory}:{target}', build)
+    return models.cached(f'songformer:{directory}', build)
 
 
 def available_gb(device):
@@ -249,17 +255,19 @@ def sections(samples, sample_rate):
     if audio.size < RATE * 5:
         return []
     model = load()
-    device = next(model.parameters()).device
-    with models.inference('songformer'), torch.inference_mode(), \
-            contextlib.redirect_stdout(sys.stderr):
-        # Measured once the card is ours: the models before this one have
-        # handed back what they held.
-        window = window_for(audio.size / RATE, available_gb(device))
-        if window < WINDOW_SEC:
-            _log(f'reading in {window} s windows ({audio.size / RATE:.0f} s track)')
-        audio = _fit_windows(audio, window)
-        model.config.win_size = model.config.hop_size = window
-        rows = model(audio)
+
+    def run(device):
+        with torch.inference_mode(), contextlib.redirect_stdout(sys.stderr):
+            # Measured once the card is ours, with the weights on it: the
+            # models before this one have handed back what they held.
+            window = window_for(audio.size / RATE, available_gb(device))
+            if window < WINDOW_SEC:
+                _log(f'reading in {window} s windows ({audio.size / RATE:.0f} s track)')
+            fitted = _fit_windows(audio, window)
+            model.config.win_size = model.config.hop_size = window
+            return fitted, model(fitted)
+
+    audio, rows = models.run_pass('songformer', run, modules=[model])
     duration = audio.size / RATE
     out = []
     for row in rows or []:

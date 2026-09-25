@@ -5,7 +5,7 @@ import assert from 'node:assert';
 import http from 'node:http';
 import express from 'express';
 
-import { buildQuery, parseResponse, readInfo, wledInfo, wledProfile } from '../../src/server/wled.ts';
+import { buildQuery, parseResponse, readInfo, readSegments, wledInfo, wledProfile } from '../../src/server/wled.ts';
 import { attachRoutes } from '../../src/server/routes.ts';
 import { state } from '../../src/server/state.ts';
 import { showStore } from '../../src/server/show-store.ts';
@@ -96,10 +96,84 @@ test('its profile: a strip of its LEDs, a panel when it is one', () => {
   const one = wledProfile(readInfo({ ...INFO, leds: { count: 1, lc: 1 } }, 'x'), 'x');
   assert.deepStrictEqual([one.cells, one.channelMap], [undefined, { red: 0, green: 1, blue: 2 }], 'one LED is one light');
 
-  assert.throws(() => wledProfile(readInfo({ ...INFO, leds: { count: 2000, lc: 1 } }, 'x'), 'x'),
-    (err) => err.status === 400 && /2000 LEDs; a fixture takes up to 1024/.test(err.message));
+  const matrix = wledProfile(readInfo({ ...INFO, leds: { count: 2048, lc: 1, matrix: { w: 64, h: 32 } } }, 'x'), 'x');
+  assert.deepStrictEqual([matrix.grid, matrix.channelCount, stripOf(matrix).universes], [{ columns: 64, rows: 32 }, 6144, 13],
+    'a 64 × 32 matrix, over thirteen universes');
+  assert.throws(() => wledProfile(readInfo({ ...INFO, leds: { count: 5000, lc: 1 } }, 'x'), 'x'),
+    (err) => err.status === 400 && /5000 LEDs; a fixture takes up to 4096/.test(err.message));
   const noMac = wledProfile({ ...readInfo(INFO, 'x'), mac: null }, 'WLED-Porch.local');
   assert.strictEqual(noMac.id, 'wled-wled-porch-local');
+});
+
+// Trimmed from a WLED 0.15 /json/state: a booth front and two sides on one
+// strip, and a 64 × 32 panel split into a left half and a right half.
+const STRIP_STATE = {
+  on: true, bri: 128,
+  seg: [
+    { id: 0, start: 0, stop: 120, len: 120, n: 'Front', on: true },
+    { id: 1, start: 120, stop: 180, len: 60, on: true },
+    { id: 2, start: 180, stop: 240, len: 60, n: 'Right side', on: true },
+    { id: 3, start: 240, stop: 240, len: 0 },                     // empty: left out
+    { id: 4, start: 230, stop: 400, len: 170 },                   // past the end: left out
+  ],
+};
+const PANEL_INFO = { ...INFO, name: 'Wall', mac: '00112233aabb', leds: { count: 2048, lc: 1, matrix: { w: 64, h: 32 } } };
+const PANEL_STATE = {
+  seg: [
+    { id: 0, start: 0, stop: 32, startY: 0, stopY: 32, n: 'Left' },
+    { id: 1, start: 32, stop: 64, startY: 0, stopY: 32, n: 'Right' },
+  ],
+};
+
+test('a WLED\'s segments: the stretch of its LEDs each covers, or on a panel the rectangle', () => {
+  const strip = readSegments(STRIP_STATE, readInfo({ ...INFO, leds: { count: 240, lc: 1 } }, 'x'), 'x');
+  assert.deepStrictEqual(strip.map((g) => [g.id, g.name, g.at, g.count, g.grid, g.rowStride]), [
+    [0, 'Front', 0, 120, null, null],
+    [1, 'Segment 2', 120, 60, null, null],
+    [2, 'Right side', 180, 60, null, null],
+  ]);
+  const panel = readSegments(PANEL_STATE, readInfo(PANEL_INFO, 'x'), 'x');
+  assert.deepStrictEqual(panel.map((g) => [g.name, g.at, g.count, g.grid, g.rowStride]), [
+    ['Left', 0, 1024, { columns: 32, rows: 32 }, 64],
+    ['Right', 32, 1024, { columns: 32, rows: 32 }, 64],
+  ], 'each half\'s rows lie a panel\'s width apart');
+  assert.throws(() => readSegments({ on: true }, readInfo(INFO, 'x'), '10.0.0.9'), /10.0.0.9 is not a WLED: its state lists no segments/);
+
+  const right = wledProfile(readInfo(PANEL_INFO, 'x'), 'x', panel[1]);
+  assert.deepStrictEqual([right.id, right.name, right.modeName, right.grid, right.channelCount],
+    ['wled-00112233aabb-seg1', 'Wall · Right', '1024 pixels, RGB, 32 × 32, from LED 33', { columns: 32, rows: 32 }, 3072]);
+  assert.strictEqual(right.channelList, undefined, 'no channel list: the cells say it');
+});
+
+test('adding a WLED segment by segment: a fixture each, on its own LEDs and universes', async () => {
+  const infos = { '10.0.0.60': { ...INFO, name: 'Booth', leds: { count: 240, lc: 1 } }, '10.0.0.61': PANEL_INFO };
+  const states = { '10.0.0.60': STRIP_STATE, '10.0.0.61': PANEL_STATE };
+  const client = { ...fakeClient(infos), segments: async (host, info) => readSegments(states[host], info, host) };
+  await withApp(client, async (call) => {
+    const booth = await call('/api/wled/add', { host: '10.0.0.60', segments: true });
+    assert.strictEqual(booth.status, 200, JSON.stringify(booth.body));
+    assert.deepStrictEqual(booth.body.fixtures.map((f) => [f.label, f.universe, f.output]), [
+      ['Booth · Front', 1, { protocol: 'ddp', host: '10.0.0.60', at: 0 }],
+      ['Booth · Segment 2', 2, { protocol: 'ddp', host: '10.0.0.60', at: 120 }],
+      ['Booth · Right side', 3, { protocol: 'ddp', host: '10.0.0.60', at: 180 }],
+    ]);
+    const again = await call('/api/wled/add', { host: '10.0.0.60', segments: true });
+    assert.deepStrictEqual([again.status, again.body.error], [409, 'Every segment of Booth is patched already']);
+    const whole = await call('/api/wled/add', { host: '10.0.0.60' });
+    assert.strictEqual(whole.status, 409, 'all of it, on top of its segments');
+
+    const wall = await call('/api/wled/add', { host: '10.0.0.61', segments: true, label: 'Wall' });
+    assert.strictEqual(wall.status, 200, JSON.stringify(wall.body));
+    assert.deepStrictEqual(wall.body.fixtures.map((f) => f.output), [
+      { protocol: 'ddp', host: '10.0.0.61', at: 0, rowStride: 64 },
+      { protocol: 'ddp', host: '10.0.0.61', at: 32, rowStride: 64 },
+    ]);
+    const found = await call('/api/wled/discover');
+    assert.deepStrictEqual(found.body.devices.map((d) => [d.host, d.segments, d.patched]), [
+      ['10.0.0.60', 3, 'Booth · Front, Booth · Segment 2, Booth · Right side'],
+      ['10.0.0.61', 2, 'Wall · Left, Wall · Right'],
+    ]);
+  });
 });
 
 test('asking a WLED over HTTP, and what goes wrong', async () => {
@@ -211,6 +285,13 @@ test('the pre-show check asks every WLED in the patch', async () => {
     assert.deepStrictEqual([resized.status, /reports 50 LEDs but is patched as 60/.test(resized.detail)], ['warn', true]);
     const silent = await checkWled(fakeClient({}));
     assert.deepStrictEqual([silent.status, /"Porch" at 10.0.0.50 does not answer/.test(silent.detail)], ['fail', true]);
+
+    // A segment only has to fit: its 60 LEDs from LED 181 on a WLED of 240.
+    state.fixtures = [{ id: 6, label: 'Side', address: 1, universe: 1, profileId: 'wled-a1b2c3d4e5f6', output: { protocol: 'ddp', host: '10.0.0.50', at: 180 } }];
+    const fits = await checkWled(fakeClient({ '10.0.0.50': { ...INFO, leds: { count: 240, lc: 1 } } }));
+    assert.strictEqual(fits.status, 'ok', fits.detail);
+    const short = await checkWled(fakeClient({ '10.0.0.50': { ...INFO, leds: { count: 200, lc: 1 } } }));
+    assert.deepStrictEqual([short.status, short.detail], ['warn', '"Side" reaches LED 240, but its WLED reports 200']);
   } finally {
     state.fixtures = before;
   }

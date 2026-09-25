@@ -76,7 +76,7 @@ function applyPatch(rawData: unknown): Patch {
   // cancels a fade still running, so a drop lands hard even mid-breakdown-fade.
   const changesLook = data.pattern !== undefined || data.palette !== undefined
     || data.split !== undefined || data.pixelMap !== undefined || data.pixelPattern !== undefined
-    || COLOR_SLOTS.some((slot) => data[slot] !== undefined);
+    || data.panelPattern !== undefined || COLOR_SLOTS.some((slot) => data[slot] !== undefined);
   if (data.fadeMs !== undefined || changesLook) beginFade(data.fadeMs || 0);
 
   if (data.bpm !== undefined) {
@@ -101,10 +101,12 @@ function applyPatch(rawData: unknown): Patch {
   // Re-sending the pattern already running (a button pressed twice) is not a
   // change and does not restart it.
   const patternChanges = (data.pattern !== undefined && data.pattern !== state.pattern)
-    || (data.pixelPattern !== undefined && data.pixelPattern !== state.pixelPattern);
+    || (data.pixelPattern !== undefined && data.pixelPattern !== state.pixelPattern)
+    || (data.panelPattern !== undefined && data.panelPattern !== state.panelPattern);
   const divisionChanges = data.beatDivision !== undefined && data.beatDivision !== state.beatDivision;
   const scheduled = data.anchorMs !== undefined
-    && (data.pattern !== undefined || data.pixelPattern !== undefined || data.beatDivision !== undefined);
+    && (data.pattern !== undefined || data.pixelPattern !== undefined || data.panelPattern !== undefined
+      || data.beatDivision !== undefined);
   if (data.beatDivision !== undefined) state.beatDivision = data.beatDivision;
   if (data.pattern !== undefined) state.pattern = data.pattern;
   if (patternChanges || divisionChanges || scheduled) anchorPattern(data.anchorMs);
@@ -152,6 +154,9 @@ function applyPatch(rawData: unknown): Patch {
     state.pixelSpan = null;
     state.pixelFrom = null;
   }
+  // The panels' too; a picture picked for the bars alone leaves theirs.
+  if (data.panelPattern !== undefined) state.panelPattern = data.panelPattern;
+  else if (data.pattern !== undefined && data.anchorMs === undefined) state.panelPattern = null;
   if (data.pixelSpan !== undefined) state.pixelSpan = data.pixelSpan;
   if (data.pixelFrom !== undefined) state.pixelFrom = data.pixelFrom;
   if (data.showDynamics !== undefined) {

@@ -551,10 +551,11 @@ def model_beats(audio, config: RhythmConfig):
             with models.inference('beat_this', first=True):
                 beats, downbeats = tracker(signal, audio.sample_rate)
         except Exception as exc:
-            # A faulted GPU FFT stays broken for the process; the beat grid
-            # is the one answer the show cannot do without, so it gets a
-            # second go on the CPU rather than failing the track.
-            if not models.gpu_fault(exc):
+            # A faulted GPU FFT stays broken for the process, and a card with
+            # no room left is no use either; the beat grid is the one answer
+            # the show cannot do without, so it gets a second go on the CPU
+            # rather than failing the track.
+            if not (models.gpu_fault(exc) or models.out_of_memory(exc, 'the beat model')):
                 raise
             beats, downbeats = models.beat_tracker(on='cpu')(signal, audio.sample_rate)
     except Exception as exc:

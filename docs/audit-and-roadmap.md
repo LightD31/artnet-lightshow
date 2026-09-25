@@ -585,6 +585,43 @@ Every phase is its own PR, keeps `npm run check` and the Python suite green, and
 - **Deezer (d-fi-core):** lazy-loaded as an optional plugin, only when an ARL is set. Terms-of-service risk is noted, and `--openssl-legacy-provider` is removed from the default start.
 - **Packaging:** a Windows portable/installer build (Node SEA) plus a uv bootstrap.
 
+### Phase 8 — From the operator's list
+
+> **8 — done:** six things met at a real rig.
+> - **MIDI faders that jump to 0 or 100 %.** A motorised fader's touch sensor sends a CC of its own, 127 on
+>   touch and 0 on release, and learn took it for the fader.
+>   - Learning a fader now waits for a value between the ends.
+>   - A fader bound to a control that only ever sends 0 and 127 is ignored, with one warning.
+>   - A map that bound the sensor moves the binding to the fader's own CC the first time both are seen,
+>     and saves it.
+>   - The motor leaves a fader alone while it is touched.
+> - **Hue lamps with no DMX address.** A fixture can be `output: { protocol: 'hue' }`.
+>   - The server places it on universes of its own (from 60000) that are rendered and read back but never
+>     sent.
+>   - A Hue lamp profile is one by default. Shows saved with Hue lamps on DMX are taken off it on load.
+>   - "Patch a lamp" on a Hue channel adds one and binds it.
+> - **CUDA out of memory on an 8 GB card.** On a card under 12 GB the analysis models wait in pinned RAM
+>   and go onto the card for their own pass only. The card's copy is dropped after the pass, never copied
+>   back or reloaded from disk.
+>   - A pass that still runs out of memory is run again on the CPU. A card that kept models resident keeps
+>     them in RAM from then on.
+>   - Settings → Analysis → GPU memory overrides the choice.
+> - **Now playing on Linux.** The MPRIS players on the session bus are read through systemd's `busctl`,
+>   into the same snapshots as the Windows media session.
+> - **WLED.**
+>   - A fixture may have 4,096 cells, so a 64 × 32 matrix is one panel. WLED profiles are compact.
+>   - "Add each segment" makes each WLED segment a fixture, sent to its own LEDs over DDP (row by row for
+>     a rectangle of a panel), all of one WLED in one frame.
+>   - Three effects after LedFx's: Bars (a spectrum analyser), Fire and Rain. They stand up on a panel.
+>   - On a rig with panels the auto show gives them a layer of their own (`panelPattern`): the band's
+>     levels while it plays and builds, fire in a chorus or a drop, rain where it rests. The pars and
+>     the bars keep their looks.
+> - **Companion for busking.**
+>   - Protocol 2, and the server's own catalogues.
+>   - Palettes, the bars' pattern, momentary holds kept alive while pressed, cues, the auto show, tempo
+>     ×2/÷2.
+>   - A Busk preset page.
+
 ---
 
 ## Part D — Tools chosen (research)

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { pick, send, connectedSig, toast } from '../../state.js';
 import { settingsSig, loadSettings, saveSettings, networkInterfaces, post, at } from '../../setup-state.js';
-import { footprintOf } from '../../../src/shared/placement.ts';
+import { footprintOf, hasNoAddress } from '../../../src/shared/placement.ts';
 import { identify } from '../../rig-ui.js';
 import { SettingsSection } from './Section.jsx';
 import { ARTNET, SACN, HUE } from './specs.js';
@@ -181,7 +181,7 @@ function Universes({ nodes }) {
   const on = new Map();
   for (const fix of fixtures) {
     const profile = profiles[fix.profileId];
-    if (!profile) continue;
+    if (!profile || hasNoAddress(fix)) continue;
     for (const part of footprintOf(fix.universe ?? 0, fix.address, profile)) {
       const entry = on.get(part.universe) || { fixtures: [], ddp: null, last: 0 };
       entry.fixtures.push(fix.label);
@@ -243,13 +243,17 @@ function Wled() {
     setStatus(data.devices.length ? `${plural(data.devices.length, 'WLED')} answered.`
       : 'No WLED answered. mDNS does not cross routers or VLANs: add one by its address below.');
   };
-  const add = async (address) => {
+  const add = async (address, segments = false) => {
     setStatus(`Asking ${address}…`);
-    const res = await post('/api/wled/add', { host: address });
+    const res = await post('/api/wled/add', segments ? { host: address, segments: true } : { host: address });
     if (!res.ok) { setStatus(res.error); return; }
-    setStatus(`Added "${res.fixture.label}": ${res.profile.modeName}, from universe ${res.fixture.universe}.`);
-    setDevices((list) => (list || []).map((d) => (d.host === address ? { ...d, patched: res.fixture.label } : d)));
-    toast.info(`Added ${res.fixture.label} to the patch`);
+    const added = segments ? res.fixtures : [res.fixture];
+    const labels = added.map((f) => f.label).join(', ');
+    setStatus(segments
+      ? `Added ${plural(added.length, 'segment')} of ${res.info.name}, each a fixture of its own: ${labels}. Place them on the plan.`
+      : `Added "${res.fixture.label}": ${res.profile.modeName}, from universe ${res.fixture.universe}.`);
+    setDevices((list) => (list || []).map((d) => (d.host === address ? { ...d, patched: labels } : d)));
+    toast.info(segments ? `Added ${plural(added.length, 'segment')} of ${res.info.name} to the patch` : `Added ${res.fixture.label} to the patch`);
   };
   const flash = async (address) => {
     const res = await post('/api/wled/identify', { host: address });
@@ -259,7 +263,9 @@ function Wled() {
     <section class="panel" aria-labelledby="wled-title">
       <header class="panel-head"><h2 class="panel-title" id="wled-title">WLED</h2></header>
       <p class="section-desc">WLED strips and panels, sent their pixels over DDP rather than Art-Net. Adding one reads its LED
-        count (and its grid, set up as a panel) from the device and patches it on universes of its own.</p>
+        count (and its grid, set up as a panel) from the device and patches it on universes of its own. <em>Add each
+        segment</em> makes every segment set up in WLED a fixture of its own — the front of the booth and its sides, or a
+        panel's halves — to be placed on the plan one by one.</p>
       <div class="discovery">
         <div class="discovery-head">
           <button type="button" class="btn sm" onClick={find}>Find WLEDs</button>
@@ -278,7 +284,11 @@ function Wled() {
                     <td class="patch-actions-cell">
                       {!d.error && <button type="button" class="btn sm" aria-label={`Identify ${d.name}`} onClick={() => flash(d.host)}>Identify</button>}
                       {d.patched ? <span class="setting-help">In the patch as "{d.patched}"</span>
-                        : !d.error && <button type="button" class="btn sm active" onClick={() => add(d.host)}>Add to patch</button>}
+                        : !d.error && <>
+                          <button type="button" class="btn sm active" onClick={() => add(d.host)}>Add to patch</button>
+                          {d.segments > 1 && <button type="button" class="btn sm" aria-label={`Add each of ${d.name}'s ${d.segments} segments`}
+                            onClick={() => add(d.host, true)}>Add each segment ({d.segments})</button>}
+                        </>}
                     </td>
                   </tr>
                 ))}
@@ -292,6 +302,7 @@ function Wled() {
             onInput={(e) => setHost(e.target.value)} />
           <button type="button" class="btn sm" disabled={!host.trim()} onClick={() => flash(host.trim())}>Identify</button>
           <button type="submit" class="btn sm active" disabled={!host.trim()}>Add</button>
+          <button type="button" class="btn sm" disabled={!host.trim()} onClick={() => add(host.trim(), true)}>Add each segment</button>
         </form>
       </div>
     </section>
@@ -299,6 +310,9 @@ function Wled() {
 }
 
 // ── Philips Hue ──────────────────────────────────────────────────────────────
+
+/** The built-in Hue colour lamp (server/profiles.ts). */
+const HUE_LAMP_PROFILE = 'generic-hue-lamp-7ch';
 
 function Hue() {
   const s = pick(['fixtures']);
@@ -369,6 +383,14 @@ function Hue() {
     setBindings(next);
   };
   const fixtures = s.fixtures || [];
+  // A lamp with nothing on the rig to follow gets a fixture of its own: a Hue
+  // colour lamp with no DMX address, which the looks light like any other.
+  const patchLamp = async (ch) => {
+    const res = await post('/api/fixtures', { profileId: HUE_LAMP_PROFILE, label: (ch.name || `Hue ${ch.id}`).slice(0, 56) });
+    if (!res.ok) return;
+    bind(ch.id, String(res.fixtures[0]));
+    toast.info(`Patched "${ch.name || `Hue ${ch.id}`}" with no DMX address — apply to keep channel ${ch.id} on it`);
+  };
   const collect = () => (bindings ? { 'hue.channels': [...bindings].map(([channel, fixture]) => ({ channel, fixture })) } : {});
   const onApply = async (patch) => {
     const res = await saveSettings(patch);
@@ -404,7 +426,9 @@ function Hue() {
         {area && (
           <>
             <p class="section-desc">Each Hue channel shows the colour of the fixture it follows, after the dimmer, trim, master
-              and blackout. Lamp names come from the Hue app. Leave a channel unused to let the bridge hold its own colour.</p>
+              and blackout. Lamp names come from the Hue app. Leave a channel unused to let the bridge hold its own colour.
+              A lamp with no fixture of its own to follow can have one: <em>Patch a lamp</em> adds a Hue lamp with no DMX
+              address.</p>
             <div class="table-scroll">
               <table class="patch-table">
                 <thead><tr><th scope="col">Channel</th><th scope="col">Lamp</th><th scope="col">Follows fixture</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
@@ -417,10 +441,14 @@ function Hue() {
                         <select aria-label={`Fixture Hue channel ${ch.id} follows`} value={current.has(ch.id) ? String(current.get(ch.id)) : ''}
                           onChange={(e) => bind(ch.id, e.target.value)}>
                           <option value="">not used</option>
-                          {fixtures.map((f) => <option key={f.id} value={String(f.id)}>{f.label}</option>)}
+                          {fixtures.map((f) => <option key={f.id} value={String(f.id)}>{f.label}{hasNoAddress(f) ? ' (Hue lamp)' : ''}</option>)}
                         </select>
                       </td>
                       <td class="patch-actions-cell">
+                        {!current.has(ch.id) && <button type="button" class="btn sm" disabled={!connectedSig.value}
+                          aria-label={`Patch a lamp for Hue channel ${ch.id}`}
+                          title="Add a Hue lamp to the patch, with no DMX address, and have this channel follow it"
+                          onClick={() => patchLamp(ch)}>Patch a lamp</button>}
                         <button type="button" class="btn sm" aria-label={`Identify Hue channel ${ch.id}`} onClick={() => flash(ch.id)}>Identify</button>
                       </td>
                     </tr>

@@ -45,9 +45,11 @@ def _load_muq(kind, model_id):
     module = _optional("muq")
     if module is None:
         return None
-    device = models.device()
 
     def build():
+        # Built where it lives: in RAM when models are kept there between
+        # passes (models.offloading), on the device otherwise.
+        target = models.home()
         kwargs = {"local_files_only": True}
         if kind == "MuQMuLan":
             # MuLan's checkpoint also constructs a MuQ backbone. Use the
@@ -72,9 +74,12 @@ def _load_muq(kind, model_id):
                 model.load_state_dict(torch.load(binary, map_location="cpu", weights_only=True), strict=True)
             else:
                 model = cls.from_pretrained(model_id, **kwargs)
-        return model.float().to(device).eval()
+        model = model.float().to(target).eval()
+        if models.offloading():
+            models.park(model)
+        return model
 
-    return models.cached(f"{kind}:{model_id}:{device}", build)
+    return models.cached(f"{kind}:{model_id}", build)
 
 
 def preload():
@@ -150,7 +155,6 @@ def muq_embeddings(waveform, sample_rate: int, *, step_sec: float = 2.0):
     import torch
     from . import models
     model = _load_muq("MuQ", model_id)
-    device = next(model.parameters()).device
     audio = _to_24k(waveform, sample_rate)
     hop = max(1, int(step_sec * 24000)); window = 8 * 24000
 
@@ -161,21 +165,25 @@ def muq_embeddings(waveform, sample_rate: int, *, step_sec: float = 2.0):
     full = [s for s in starts if len(audio[s:s + window]) == window]
     tail = [s for s in starts if len(audio[s:s + window]) != window]
 
-    result = []
-    with models.inference("muq"), torch.no_grad():
-        for index in range(0, len(full), _MUQ_BATCH):
-            group = full[index:index + _MUQ_BATCH]
-            batch = np.stack([audio[s:s + window] for s in group])
-            output = model(torch.from_numpy(batch).to(device))
-            vectors = output.last_hidden_state.mean(dim=1).float().cpu().tolist()
-            for start, vector in zip(group, vectors):
+    def run(device):
+        result = []
+        with torch.no_grad():
+            for index in range(0, len(full), _MUQ_BATCH):
+                group = full[index:index + _MUQ_BATCH]
+                batch = np.stack([audio[s:s + window] for s in group])
+                output = model(torch.from_numpy(batch).to(device))
+                vectors = output.last_hidden_state.mean(dim=1).float().cpu().tolist()
+                for start, vector in zip(group, vectors):
+                    result.append({"time": round(start / 24000, 3), "vector": _rounded(vector),
+                                   "confidence": 1.0, "source": "muq"})
+            for start in tail:
+                output = model(torch.from_numpy(audio[start:start + window]).unsqueeze(0).to(device))
+                vector = output.last_hidden_state.mean(dim=1)[0].float().cpu().tolist()
                 result.append({"time": round(start / 24000, 3), "vector": _rounded(vector),
                                "confidence": 1.0, "source": "muq"})
-        for start in tail:
-            output = model(torch.from_numpy(audio[start:start + window]).unsqueeze(0).to(device))
-            vector = output.last_hidden_state.mean(dim=1)[0].float().cpu().tolist()
-            result.append({"time": round(start / 24000, 3), "vector": _rounded(vector),
-                           "confidence": 1.0, "source": "muq"})
+        return result
+
+    result = models.run_pass("muq", run, modules=[model])
     result.sort(key=lambda row: row["time"])
     return result
 
@@ -199,30 +207,34 @@ def mulan_scores(waveform, sample_rate: int, vocabularies):
     import torch
     from . import models
     model = _load_muq("MuQMuLan", model_id)
-    device = next(model.parameters()).device
     audio = _to_24k(waveform, sample_rate)
-    result = {}
-    with models.inference("muq-mulan"), torch.no_grad():
-        embedded = model(wavs=torch.from_numpy(audio).unsqueeze(0).to(device))
-        for name, vocabulary in vocabularies.items():
-            labels = tuple(vocabulary)
-            if not labels:
-                result[name] = []
-                continue
-            text = _text_latents(model, labels)
-            scores = model.calc_similarity(embedded, text)[0].float().cpu().tolist()
-            result[name] = [{"label": label, "score": float(score), "source": "muq-mulan"}
-                            for label, score in zip(labels, scores)]
-    return result
+
+    def run(device):
+        result = {}
+        with torch.no_grad():
+            embedded = model(wavs=torch.from_numpy(audio).unsqueeze(0).to(device))
+            for name, vocabulary in vocabularies.items():
+                labels = tuple(vocabulary)
+                if not labels:
+                    result[name] = []
+                    continue
+                text = _text_latents(model, labels, device)
+                scores = model.calc_similarity(embedded, text)[0].float().cpu().tolist()
+                result[name] = [{"label": label, "score": float(score), "source": "muq-mulan"}
+                                for label, score in zip(labels, scores)]
+        return result
+
+    return models.run_pass("muq-mulan", run, modules=[model])
 
 
-# Text latents, keyed by the model instance and the exact label tuple. The
-# model is held alongside its latents so a dead object's id cannot be reused
-# for a live one.
+# Text latents, keyed by the model instance, the exact label tuple and the
+# device they were computed on — a pass that falls back to the CPU cannot
+# compare against latents on the card. The model is held alongside its
+# latents so a dead object's id cannot be reused for a live one.
 _TEXT_LATENTS = {}
 
 
-def _text_latents(model, labels):
+def _text_latents(model, labels, device=None):
     """
     Encode a vocabulary once per process rather than once per track.
 
@@ -232,7 +244,7 @@ def _text_latents(model, labels):
     answer cannot change between tracks, so it is computed on the first track
     and read from memory after.
     """
-    key = (id(model), labels)
+    key = (id(model), labels, str(device))
     hit = _TEXT_LATENTS.get(key)
     if hit is not None:
         return hit[1]

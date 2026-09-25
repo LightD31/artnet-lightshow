@@ -78,6 +78,7 @@ test('a WLED\'s universes go to it as one run of pixels, and nowhere else', () =
   assert.deepStrictEqual(routes, [{
     host: '10.0.0.50', port: 4048, rgbw: false,
     parts: [{ universe: 3, from: 0, bytes: 510 }, { universe: 4, from: 0, bytes: 390 }],
+    runs: [{ at: 0, count: 300 }],
   }]);
 
   const { sent, wires } = fakeWires();
@@ -107,7 +108,7 @@ test('an RGBW WLED says so, and one held back for Hue waits for all its universe
   const profile = strip(128, 4);
   const routes = ddpRoutes([{ id: 1, label: 'W', address: 1, universe: 2, profileId: 'w', output: { protocol: 'ddp', host: 'wled.local', port: 4049 } }],
     () => profile, (f) => f.universe);
-  assert.deepStrictEqual(routes[0], { host: 'wled.local', port: 4049, rgbw: true, parts: [{ universe: 2, from: 0, bytes: 512 }] });
+  assert.deepStrictEqual(routes[0], { host: 'wled.local', port: 4049, rgbw: true, parts: [{ universe: 2, from: 0, bytes: 512 }], runs: [{ at: 0, count: 128 }] });
 
   let clock = 0;
   const { sent, wires } = fakeWires();
@@ -131,8 +132,46 @@ test('a universe that goes to a WLED is the WLED\'s alone', () => {
   assert.strictEqual(ddpConflict([wled, { id: 2, label: 'Par', address: 1, universe: 5, profileId: 'par' }], profileOf, universeOf), null);
   assert.match(ddpConflict([wled, { id: 2, label: 'Par', address: 400, universe: 4, profileId: 'par' }], profileOf, universeOf),
     /"Par" is on universe 4, which goes to "Porch"'s WLED over DDP and nowhere else/);
-  assert.match(ddpConflict([wled, { ...wled, id: 3, label: 'Garden', universe: 4 }], profileOf, universeOf),
+  assert.match(ddpConflict([wled, { ...wled, id: 3, label: 'Garden', universe: 4, output: { protocol: 'ddp', host: '10.0.0.51' } }], profileOf, universeOf),
     /"Garden" and "Porch" both send universe 4 to a WLED/);
+  assert.match(ddpConflict([wled, { ...wled, id: 3, label: 'Garden', universe: 10 }], profileOf, universeOf),
+    /"Garden" and "Porch" both drive LEDs 1–300 of the WLED at 10.0.0.50; give each a segment of its own/,
+    'one WLED twice over');
+});
+
+test('segments of one WLED go as one frame: each run where it belongs, shown once', () => {
+  const profiles = { front: strip(4), side: strip(2), half: { ...strip(4), grid: { columns: 2, rows: 2 } } };
+  const fixtures = [
+    { id: 1, label: 'Front', address: 1, universe: 1, profileId: 'front', output: { protocol: 'ddp', host: '10.0.0.60', at: 0 } },
+    { id: 2, label: 'Side', address: 1, universe: 2, profileId: 'side', output: { protocol: 'ddp', host: '10.0.0.60', at: 10 } },
+    { id: 3, label: 'Half', address: 1, universe: 3, profileId: 'half', output: { protocol: 'ddp', host: '10.0.0.61', at: 2, rowStride: 4 } },
+  ];
+  const routes = ddpRoutes(fixtures, (f) => profiles[f.profileId], (f) => f.universe);
+  assert.deepStrictEqual(routes.map((r) => r.runs), [[{ at: 0, count: 4 }], [{ at: 10, count: 2 }], [{ at: 2, count: 2 }, { at: 6, count: 2 }]],
+    'a rectangle of a panel is a run for each row');
+  assert.strictEqual(ddpConflict(fixtures, (f) => profiles[f.profileId], (f) => f.universe), null);
+  assert.match(ddpConflict([...fixtures, { ...fixtures[1], id: 4, label: 'Overlap', universe: 5, output: { protocol: 'ddp', host: '10.0.0.60', at: 3 } }],
+    (f) => profiles[f.profileId], (f) => f.universe), /"Overlap" and "Front" both drive LEDs 4–4 of the WLED at 10.0.0.60/);
+
+  const { sent, wires } = fakeWires();
+  const tx = createTransmitter({ wires });
+  const config = outputs(routes);
+  for (const u of [1, 2, 3]) tx.send(u, Buffer.alloc(512, u), config);
+  tx.endFrame(config);
+  assert.strictEqual(sent.ddp.length, 2, 'one frame to each WLED');
+  const booth = sent.ddp[0];
+  assert.deepStrictEqual(booth.runs, [{ at: 0, from: 0, bytes: 12 }, { at: 30, from: 12, bytes: 6 }]);
+  const packets = buildDdpPackets(booth.data, { sequence: 1, runs: booth.runs }).map(parseDdpPacket);
+  assert.deepStrictEqual(packets.map((p) => [p.offset, p.data.length, p.push, p.data[0]]), [[0, 12, false, 1], [30, 6, true, 2]],
+    'the second segment\'s pixels land at LED 11, and only the last packet says show it');
+  assert.deepStrictEqual(sent.ddp[1].runs, [{ at: 6, from: 0, bytes: 6 }, { at: 18, from: 6, bytes: 6 }]);
+
+  // One segment leaves the patch: its LEDs are sent dark, the rest go on.
+  const fewer = outputs(routes.slice(0, 1).concat(routes.slice(2)));
+  for (const u of [1, 3]) tx.send(u, Buffer.alloc(512, u), fewer);
+  tx.endFrame(fewer);
+  const dark = sent.ddp.find((d, k) => k >= 2 && d.runs && d.runs[0].at === 30);
+  assert.ok(dark && dark.data.every((v) => v === 0), 'the side that left goes dark');
 });
 
 test('frames reach a WLED over UDP', async () => {

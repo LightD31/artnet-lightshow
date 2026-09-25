@@ -145,21 +145,42 @@ export interface StageFixture {
 export interface Fixture extends StageFixture {
   id: number;
   label: string;
-  /** 1-based DMX address. */
+  /** 1-based DMX address; the server's own for a fixture with no DMX address. */
   address: number;
   universe?: number;
   profileId: string;
   maxBrightness?: number;
   override?: Override | null;
-  /** Where its universes go, when not Art-Net and sACN: a WLED over DDP. */
+  /**
+   * Where its universes go, when not Art-Net and sACN: a WLED over DDP, or
+   * nowhere at all for a Hue lamp, which has no DMX address.
+   */
   output?: FixtureOutput | null;
 }
 
 /** A fixture sent to a device of its own rather than on the rig's universes. */
-export interface FixtureOutput {
+export type FixtureOutput = DdpOutput | HueOutput;
+
+/**
+ * A WLED, sent its pixels over DDP: all of them, or — for a fixture that is
+ * one of its segments — from its LED `at`. A segment of a panel is a
+ * rectangle: its rows lie `rowStride` LEDs apart (the panel's width).
+ */
+export interface DdpOutput {
   protocol: 'ddp';
   host: string;
   port?: number;
+  at?: number;
+  rowStride?: number;
+}
+
+/**
+ * A Philips Hue lamp: no DMX address. The server places it on universes of
+ * its own that are never sent (shared/placement.ts), and a Hue channel that
+ * follows it shows its colour.
+ */
+export interface HueOutput {
+  protocol: 'hue';
 }
 
 /**

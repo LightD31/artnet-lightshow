@@ -21,7 +21,7 @@
  * feedback follows a relearned layout instead of pointing at the old buttons.
  */
 
-import { DEFAULT_MAP } from './server/midi-map.ts';
+import { DEFAULT_MAP, ACTIONS } from './server/midi-map.ts';
 import { createRequire } from 'node:module';
 
 import { ENERGY_EFFECT_IDS, STROBE_FUNCTION_IDS, SYNC_OFFSET_LIMIT_MS } from './server/presets.ts';
@@ -106,6 +106,26 @@ const LEARN_TIMEOUT_MS = 30000;
 // where the last frame said it was — the operator ends up fighting the motor.
 const ECHO_SUPPRESS_MS = 400;
 
+// ── Touch-sensitive faders ──────────────────────────────────────────────────
+//
+// A motorised fader with a touch sensor — the X-Touch Compact's nine — is two
+// controls on the wire: its position on one CC, and on another CC, 127 the
+// moment a finger lands on it and 0 when it lifts. Learn used to take the
+// first CC it saw, and touching a fader to move it sends the touch first: the
+// fader's binding went to its touch sensor, so touching it threw what it
+// controlled to 100% and letting go to 0%, and moving it did nothing.
+//
+// A fader is known by sending a value between the ends; a touch sensor (or a
+// switch) never does. So a fader action is only ever driven by a control that
+// has, learn skips the ones that have not, and a touch sensor is paired with
+// the fader that starts moving right after it goes to 127 — which also says
+// when the motor must leave that fader alone, and heals a map that bound the
+// sensor: the binding moves to the fader it belongs to.
+const TOUCH_PAIR_MS = 300;
+
+// The actions a fader drives, which only a fader should: from the catalogue.
+const FADER_ACTIONS = new Set(ACTIONS.filter((a) => a.input === 'fader').map((a) => a.id));
+
 // ── Relative encoders ───────────────────────────────────────────────────────
 //
 // An endless encoder sends "moved a bit, this way", and there are two ways to
@@ -169,6 +189,11 @@ class MidiController {
   declare controlFeedback: boolean;
   declare _cachedPorts: MidiPortList | null;
   declare _energyEffect: string | undefined;
+  declare _moved: Set<string>;
+  declare _touchDown: Map<string, number>;
+  declare _touchOf: Map<string, string>;
+  declare _warnedSwitch: Set<string>;
+  declare onRebind: ((from: number, to: number, binding: MidiBinding) => void) | null;
 
   constructor(stateRef: ShowState, applyFn: (patch: Record<string, unknown>) => unknown, tapFn: () => void) {
     this.state = stateRef;
@@ -195,6 +220,15 @@ class MidiController {
     // from the values it sends. See relEvidence.
     this._relModes = new Map();
     this.controlFeedback = true;
+    // Touch-sensitive faders (see TOUCH_PAIR_MS): the controls that have sent a
+    // value between the ends, the switch-like ones held at 127 and since when,
+    // and which fader each touch sensor belongs to. Keyed "channel:cc".
+    this._moved = new Set();
+    this._touchDown = new Map();
+    this._touchOf = new Map();
+    this._warnedSwitch = new Set();
+    // Set externally: persists a binding moved off a touch sensor.
+    this.onRebind = null;
   }
 
   /** Swap the control map. Takes effect on the next message; no reconnect. */
@@ -343,6 +377,12 @@ class MidiController {
 
     // CC → encoder (relative) or fader (absolute)
     input.on('cc', ({ controller, value, channel }) => {
+      const key = `${channel}:${controller}`;
+      const between = value > 0 && value < 127;
+      this._trackTouch(key, controller, channel, value, between);
+
+      // Learning a fader: its touch sensor speaks first, and is not the fader.
+      if (this._learn && !between && !this._moved.has(key) && this._learnWantsFader()) return;
       if (this._captureLearn('cc', controller, channel)) return;
 
       // Note the touch even when unmapped: a fader being moved is a fader we
@@ -351,6 +391,12 @@ class MidiController {
 
       const binding = this._bindingFor('cc', controller, channel);
       if (!binding) return;
+      // Only a control that has shown itself to be a fader drives a fader
+      // action: a touch sensor would throw it to the ends.
+      if (binding.type !== 'relative' && FADER_ACTIONS.has(binding.action) && !this._moved.has(key)) {
+        this._warnSwitch(key, controller, binding);
+        return;
+      }
       if (binding.type === 'relative') {
         // Remembered per control, because a surface can mix encoder types and
         // because the answer cannot change while the device is plugged in. A
@@ -369,6 +415,83 @@ class MidiController {
         this._safely(binding, () => this._dispatchAbsolute(binding, value));
       }
     });
+  }
+
+  /** Is the learn in progress for a fader action? */
+  _learnWantsFader(): boolean {
+    const binding = this._learn && this._learn.binding;
+    return !!binding && binding.type !== 'relative' && FADER_ACTIONS.has(binding.action);
+  }
+
+  /**
+   * Follow the touch sensors: a switch-like control going to 127 is a finger
+   * landing, possibly; the fader that starts moving within TOUCH_PAIR_MS is
+   * the one it belongs to. A pairing heals a map that bound the sensor, and
+   * a sensor let go hands its fader back to the motor at once.
+   */
+  _trackTouch(key: string, controller: number, channel: number, value: number, between: boolean): void {
+    const now = Date.now();
+    // An encoder is no touch sensor, whatever it sends: two's complement turns
+    // anticlockwise as 127, over and over, and never says 0.
+    const bound = this._bindingFor('cc', controller, channel);
+    if (bound && (bound.type === 'relative' || !FADER_ACTIONS.has(bound.action))) {
+      if (between) this._moved.add(key);
+      return;
+    }
+    if (between) {
+      this._moved.add(key);
+      for (const [touch, at] of this._touchDown) {
+        if (touch === key || this._touchOf.has(touch) || now - at > TOUCH_PAIR_MS) continue;
+        this._touchOf.set(touch, key);
+        this._heal(touch, key);
+      }
+      return;
+    }
+    if (this._moved.has(key)) return;
+    if (value === 127) {
+      this._touchDown.set(key, now);
+    } else {
+      this._touchDown.delete(key);
+      // Let go: the fader is the motor's again, to where the show now is.
+      const fader = this._touchOf.get(key);
+      if (fader) {
+        this._lastCcOut.delete(Number(fader.split(':')[1]));
+        this._sendControlFeedback();
+      }
+    }
+  }
+
+  /** A fader action bound to its fader's touch sensor moves to the fader, when the fader is free. */
+  _heal(touchKey: string, faderKey: string): void {
+    const touchCc = Number(touchKey.split(':')[1]);
+    const faderCc = Number(faderKey.split(':')[1]);
+    const binding = this.map.cc && this.map.cc[touchCc];
+    if (!binding || !FADER_ACTIONS.has(binding.action) || binding.type === 'relative') return;
+    if (this.map.cc[faderCc]) return;
+    console.warn(`[MIDI] CC ${touchCc} is the touch sensor of the fader on CC ${faderCc}: `
+      + `its binding (${binding.action}) moves to CC ${faderCc}`);
+    const cc: Record<string, MidiBinding> = { ...this.map.cc, [String(faderCc)]: binding };
+    delete cc[String(touchCc)];
+    this.map = { ...this.map, cc };
+    if (this.onRebind) {
+      try { this.onRebind(touchCc, faderCc, binding); } catch (err) { console.warn(`[MIDI] could not save the move: ${messageOf(err)}`); }
+    }
+  }
+
+  /** Say once why a fader action ignores a control that has only sent 0 and 127. */
+  _warnSwitch(key: string, controller: number, binding: MidiBinding): void {
+    if (this._warnedSwitch.has(key)) return;
+    this._warnedSwitch.add(key);
+    console.warn(`[MIDI] CC ${controller} is bound to ${binding.action} but has only sent 0 and 127, like a fader's `
+      + 'touch sensor or a button — ignored until it moves between the ends. Relearn the fader by moving it.');
+  }
+
+  /** Is this fader held by a finger, by what its touch sensor says? */
+  _touched(faderCc: number): boolean {
+    for (const [touch, fader] of this._touchOf) {
+      if (Number(fader.split(':')[1]) === faderCc && this._touchDown.has(touch)) return true;
+    }
+    return false;
   }
 
   /**
@@ -740,6 +863,8 @@ class MidiController {
       const number = Number(cc);
       const touchedAt = this._lastCcIn.get(number) || 0;
       if (now - touchedAt < ECHO_SUPPRESS_MS) continue;
+      // A finger on it, by its touch sensor: the motor must not fight it.
+      if (this._touched(number)) continue;
       if (this._lastCcOut.get(number) === value) continue;
 
       this._lastCcOut.set(number, value);
@@ -762,6 +887,7 @@ class MidiController {
     // the faders fly to where the show is rather than staying where they lay.
     this._lastCcOut.clear();
     this._lastCcIn.clear();
+    this._touchDown.clear();
     if (this.input)  { try { this.input.close();  } catch (_) {} }
     if (this.output) { try { this.output.close(); } catch (_) {} }
     this.enabled = false;

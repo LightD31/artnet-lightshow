@@ -1,26 +1,28 @@
 import { InstanceBase, InstanceStatus } from '@companion-module/base'
-import { io } from 'socket.io-client'
 
 import { GetConfigFields } from './config.js'
 import { UpdateActions } from './actions.js'
 import { UpdateFeedbacks } from './feedbacks.js'
 import { UpdatePresets } from './presets.js'
 import { UpdateVariableDefinitions, UpdateVariableValues } from './variables.js'
+import { LightshowConnection } from './connection.js'
+import { CATALOG_KEYS } from './catalog.js'
 
 export { UpgradeScripts } from './upgrades.js'
 
+const STATUS = {
+	connecting: InstanceStatus.Connecting,
+	ok: InstanceStatus.Ok,
+	disconnected: InstanceStatus.Disconnected,
+	error: InstanceStatus.ConnectionFailure,
+}
+
 export default class ArtnetLightshowInstance extends InstanceBase {
-	socket = null
-	liveState = {}
+	connection = null
 
 	async init(config) {
 		this.config = config
-
-		UpdateActions(this)
-		UpdateFeedbacks(this)
-		UpdateVariableDefinitions(this)
-		UpdatePresets(this)
-
+		this.#define()
 		this.#connect()
 	}
 
@@ -38,6 +40,11 @@ export default class ArtnetLightshowInstance extends InstanceBase {
 		return GetConfigFields()
 	}
 
+	/** The server's state as last heard; empty until connected. */
+	get liveState() {
+		return this.connection ? this.connection.state : {}
+	}
+
 	// ── Socket connection ──────────────────────────────────────────────────────
 
 	#connect() {
@@ -45,84 +52,80 @@ export default class ArtnetLightshowInstance extends InstanceBase {
 			this.updateStatus(InstanceStatus.BadConfig, 'No host configured')
 			return
 		}
-
-		const url = `http://${this.config.host}:${this.config.port || 3000}`
-		this.updateStatus(InstanceStatus.Connecting)
-		this.log('debug', `Connecting to ${url}`)
-
-		this.socket = io(url, {
-			reconnection: true,
-			reconnectionDelay: 2000,
-			auth: { token: this.config.token || '' },
+		this.connection = new LightshowConnection({
+			host: this.config.host,
+			port: this.config.port || 3000,
+			token: this.config.token || '',
+			log: (level, message) => this.log(level, message),
+			onStatus: (status, message) => {
+				if (status === 'unauthorized') {
+					this.updateStatus(InstanceStatus.BadConfig, 'Rejected: set the matching Access token in this connection\'s config')
+					this.log('error', 'Lightshow server rejected the token — check the Access token field')
+					return
+				}
+				if (status === 'ok') this.log('info', 'Connected to ArtNet Lightshow')
+				this.updateStatus(STATUS[status] ?? InstanceStatus.UnknownWarning, message)
+			},
+			onChange: (keys) => {
+				// Actions, feedbacks and presets list the server's patterns,
+				// palettes, fixtures and cues: rebuilt when those change, not
+				// on every tick of the BPM.
+				if (CATALOG_KEYS.some((key) => keys.has(key))) this.#define()
+				UpdateVariableValues(this)
+				this.checkAllFeedbacks()
+			},
 		})
-
-		this.socket.on('connect', () => {
-			this.updateStatus(InstanceStatus.Ok)
-			this.log('info', 'Connected to ArtNet Lightshow')
-		})
-
-		this.socket.on('disconnect', (reason) => {
-			this.updateStatus(InstanceStatus.Disconnected, reason)
-		})
-
-		this.socket.on('connect_error', (err) => {
-			// The server rejects the handshake with "unauthorized" when it runs
-			// with LIGHTSHOW_TOKEN set and this connection presented the wrong
-			// token (or none). Say so plainly — "connection failure" would send
-			// someone hunting a network problem that isn't there.
-			if (err.message === 'unauthorized') {
-				this.updateStatus(
-					InstanceStatus.BadConfig,
-					'Rejected: set the matching Access token in this connection\'s config',
-				)
-				this.log('error', 'Lightshow server rejected the token — check the Access token field')
-				return
-			}
-			this.updateStatus(InstanceStatus.ConnectionFailure, err.message)
-		})
-
-		this.socket.on('error-msg', ({ source, message } = {}) => {
-			this.log('warn', `Server rejected ${source || 'message'}: ${message}`)
-		})
-
-		this.socket.on('state', (state) => {
-			const previousFixtures = JSON.stringify(this.liveState.fixtures?.map(({ id, label }) => [id, label]))
-			this.liveState = state || {}
-			if (previousFixtures !== JSON.stringify(this.liveState.fixtures?.map(({ id, label }) => [id, label]))) {
-				UpdateActions(this)
-			}
-			UpdateVariableValues(this)
-			this.checkAllFeedbacks()
-		})
+		this.log('debug', `Connecting to ${this.connection.base}`)
+		this.connection.connect()
 	}
 
 	#disconnect() {
-		if (this.socket) {
-			this.socket.removeAllListeners()
-			this.socket.disconnect()
-			this.socket = null
+		if (this.connection) {
+			this.connection.disconnect()
+			this.connection = null
 		}
+	}
+
+	#define() {
+		UpdateActions(this)
+		UpdateFeedbacks(this)
+		UpdateVariableDefinitions(this)
+		UpdatePresets(this)
 	}
 
 	// ── Message helpers used by actions ────────────────────────────────────────
 
-	#emit(event, ...args) {
-		if (this.socket && this.socket.connected) {
-			this.socket.emit(event, ...args)
-		} else {
-			this.log('warn', 'Not connected — action ignored')
-		}
+	#connected() {
+		if (this.connection) return this.connection
+		this.log('warn', 'Not connected — action ignored')
+		return null
 	}
 
 	sendSet(patch) {
-		this.#emit('set', patch)
+		this.#connected()?.set(patch)
 	}
 
 	sendOverride(id, override) {
-		this.#emit('override', { id, override })
+		this.#connected()?.override(id, override)
 	}
 
 	sendTap() {
-		this.#emit('tap')
+		this.#connected()?.tap()
+	}
+
+	holdEnergy(effect) {
+		this.#connected()?.holdEnergy(effect)
+	}
+
+	releaseEnergy() {
+		this.connection?.releaseEnergy()
+	}
+
+	recallCue(id) {
+		return this.#connected()?.recallCue(id)
+	}
+
+	autoShow(mode) {
+		return this.#connected()?.autoShow(mode)
 	}
 }

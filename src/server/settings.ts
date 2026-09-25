@@ -209,6 +209,11 @@ const DEFAULTS: Settings = {
     // labeller otherwise: on a CPU SongFormer takes most of the track's length.
     // 'songformer' asks it on a CPU too; 'off' never.
     structureModel: 'auto',
+    // Where the analysis models' weights live between passes on a CUDA card.
+    // 'auto' keeps them in RAM on a card under 12 GB, which cannot hold them
+    // all at once, and brings each onto the card for its own pass; 'offload'
+    // always does, 'resident' never (see src/analysis/models.py).
+    gpuMemory: 'auto',
   },
 };
 
@@ -362,6 +367,7 @@ const schema = z.object({
     ),
     separator: z.enum(['demucs', 'bs-roformer']),
     structureModel: z.enum(['auto', 'songformer', 'off']),
+    gpuMemory: z.enum(['auto', 'offload', 'resident']),
   }).strict(),
 }).strict();
 

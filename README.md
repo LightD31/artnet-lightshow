@@ -9,9 +9,10 @@ Ships configured for **4× Cameo ROOT PAR 6**, but any fixture works — import 
 GDTF file, or find the fixture in the Open Fixture Library, and patch it in the
 UI.
 
-Control surfaces: the web UI, **any MIDI controller** (with MIDI learn; a
-Behringer X-Touch Compact is mapped out of the box), an **Elgato Stream Deck**
-via **Bitfocus Companion**, and a REST API.
+Control surfaces: the web UI, **any MIDI controller** (with MIDI learn, which
+knows a motorised fader's touch sensor from the fader; a Behringer X-Touch
+Compact is mapped out of the box), an **Elgato Stream Deck** via **Bitfocus
+Companion** (with a page of presets for busking), and a REST API.
 
 ---
 
@@ -28,8 +29,9 @@ via **Bitfocus Companion**, and a REST API.
   its colour count from the palette rather than needing a variant per size
 - **LED bars** — every cell of a bar is a light of its own: import one from
   GDTF or build its profile from the manual, lay it on the stage plot, and the
-  wave, ribbon, rainbow and five pixel effects (gradient, comet, burst, plasma,
-  meter) draw across its cells
+  wave, ribbon, rainbow and the pixel effects (gradient, comet, burst, plasma,
+  meter, and on a panel the LedFx-style bars, fire and rain) draw across its
+  cells
 - **15 colour presets** — a nine-hue wheel with nothing closer than 30° on it,
   plus two whites, two pale washes and UV — and four colour slots (A–D) that
   patterns draw from
@@ -99,9 +101,10 @@ via **Bitfocus Companion**, and a REST API.
 - **Reads the buildup** — measures how far the snare roll subdivides and whether
   the tempo genuinely ramps into the drop, and drives the beat division and the
   beat clock from that rather than a fixed escalation
-- Follows playback from **Spotify**, **PRO DJ LINK** (CDJs), the **Windows OS
-  media session** (any player that reports to it), or the **Deezer web player**
-  via the bundled browser extension
+- Follows playback from **Spotify**, **PRO DJ LINK** (CDJs), the **OS media
+  session** — Windows' own, or the MPRIS players on Linux (any player that
+  reports to it) — or the **Deezer web player** via the bundled browser
+  extension
 - **CDJs, properly** — follows the deck the room hears (on air, not just the
   tempo master), to the millisecond on a CDJ-3000; analyses the exact file off
   the USB stick rather than searching for it; takes rekordbox's beat grid and
@@ -153,10 +156,12 @@ via **Bitfocus Companion**, and a REST API.
 - **Multiple universes** — every fixture names the universe it lives on, so a
   rig is no longer capped at one node's 512 channels; a pixel strip longer than
   a universe runs on into the next ones, 170 RGB pixels to each
-- **WLED** — find WLED strips and panels on the network and add one in a click;
+- **WLED** — find WLED strips and panels on the network and add one in a click,
+  a 64 × 32 matrix included, or each of its segments as a fixture of its own;
   it is sent its pixels over DDP
 - **Panels** — an LED matrix is a grid of cells on the stage plot, and the pixel
-  effects draw across and down it
+  effects draw across and down it; Bars, Fire and Rain, after LedFx, stand up
+  on it
 - **Art-Net and sACN (E1.31)** — run either, or both at once while a venue is
   migrating from one to the other. Art-Net finds the nodes on the network and
   sends each its universes directly, with ArtSync if you want it; sACN ends its
@@ -166,7 +171,8 @@ via **Bitfocus Companion**, and a REST API.
 - **16-bit dimming** where the fixture has it, and a software strobe for
   fixtures that have no strobe channel
 - **Philips Hue** — Hue lamps follow rig fixtures through the Entertainment API,
-  so they respond to every pattern, palette and cue the pars do
+  so they respond to every pattern, palette and cue the pars do; a Hue lamp in
+  the patch takes no DMX address
 - Save and load the whole patch as a show file
 
 ---
@@ -427,12 +433,11 @@ Set each fixture to **12-channel mode** and give it the start address above.
 
 ### Generic Hue Lamp profiles
 
-Two profiles ship for Philips Hue lamps. A Hue channel follows a rig *fixture*
+Three profiles ship for Philips Hue lamps. A Hue channel follows a rig *fixture*
 (see [Philips Hue](#philips-hue)), so a Hue-only lamp still needs one in the
 patch — these exist so that fixture describes a light bulb instead of standing
-in as a twelve-channel par. The patch then reads as what the rig really is, and
-the DMX monitor shows four channels moving rather than twelve with eight of them
-permanently dark.
+in as a twelve-channel par. A fixture on one has **no DMX address**: the bridge
+drives the lamp, so there is nothing on DMX to address.
 
 | Profile | Channels | For |
 |---------|----------|-----|
@@ -455,9 +460,18 @@ meaning: **warm white** from the warm (amber) content, **cool white** from the
 neutral white content. Every existing preset, palette and pattern therefore
 drives a Hue lamp correctly with no changes.
 
-Patch one fixture per Hue channel, then bind them in **Settings → Philips Hue**.
-The address hardly matters for a Hue-only lamp — nothing receives that universe
-— but it still has to be unique, and the patch table flags overlaps as usual.
+Patch one fixture per Hue channel, then bind them in **Rig → Outputs → Philips
+Hue** — or press **Patch a lamp** on a channel there, which does both. The patch
+does not ask for a universe or an address: the server renders Hue lamps on
+universes of its own (from 60000) that are never sent on Art-Net, sACN or DDP,
+and their Hue channels read their colour from there. They take up no DMX
+channels, never overlap a fixture, and move up when one before them is removed.
+
+Any fixture can go without an address — **Output** in the fixture inspector
+switches between *DMX* and *Hue lamp* — and a Hue lamp profile is one by
+default. *Put on DMX* in the patch table gives it an address again, behind the
+last fixture on the rig's universe. A show saved before this had its Hue lamps
+on DMX: loading it takes them off, frees their channels, and says so in the log.
 
 **UV yes, strobe no.** Two channels on the colour lamp are not emitters the bulb
 has, and the difference between them is the rule. UV is carried because it
@@ -589,7 +603,7 @@ the stage. That line is where the cells are for every pattern, so draw it where
 the bar hangs.
 
 **How patterns use the cells.** The pictures — Wave, Ribbon, Ensemble, Rainbow,
-Twinkle, Sparkle and the five pixel effects — are drawn across every cell. The
+Twinkle, Sparkle and the pixel effects — are drawn across every cell. The
 stepped patterns — the chases, Split, Sections and the like — travel through
 *fixtures*, and a bar takes its step's colour on every cell, so a chase across
 four pars and two bars has six stops, not thirty-six.
@@ -621,8 +635,9 @@ and everything that reads the rig — the monitor, the previews, the Hue lamps,
 the overlap checks — follows each pixel to its universe. The bar maker builds
 one when it is plain pixels from channel 1.
 
-**How much.** The engine renders up to 4,096 cells, up to 1,024 to a fixture
-(a 1,024-pixel strip, or a 32 × 32 panel). Measured on the engine's thread,
+**How much.** The engine renders up to 4,096 cells, all of them to one fixture
+if it has that many (a 4,096-pixel strip, or a 64 × 64 panel; a 64 × 32 WLED
+matrix leaves half for the rest of the rig). Measured on the engine's thread,
 4,096 cells cost 0.5–2 ms a frame for most patterns and 6–7 ms for the heaviest
 (Plasma, Gradient), out of the 22.7 ms each frame has.
 
@@ -650,8 +665,20 @@ monitor.
   Interfaces in WLED), so set a preset of "off" there if it should stay dark.
 - The pre-show check asks every WLED in the patch: one that does not answer
   fails, and one whose LED count has changed since it was added warns.
-- A WLED with more than 1,024 LEDs is more than one fixture takes: split it into
-  segments in WLED and give each its own address, or drive it over Art-Net.
+- A WLED panel of up to 4,096 LEDs is one fixture: a 64 × 32 matrix is added as
+  a 64 × 32 panel, over thirteen universes of its own.
+
+**Segments.** **Add each segment** makes each segment set up in WLED a fixture
+of its own. The front of a DJ booth and its two sides, all on one strip, become
+three fixtures to place on the plan where they stand. A panel split into halves
+becomes two panels. Over DDP a WLED takes its LEDs in their own order (a
+panel's row by row, its wiring worked out by WLED itself). So a segment is sent
+the stretch of that order it covers, from its first LED, and a rectangle of a
+panel is sent a row at a time. All of one WLED's segments go in one frame,
+shown once, so no segment is a frame behind another. They may not share an LED,
+and the pre-show check warns about one that reaches past the WLED's end. In
+realtime mode a WLED shows only what it is sent, so LEDs in no patched segment
+stay as they are.
 
 ### Output protocols
 
@@ -795,9 +822,9 @@ lamps out of normal Hue control — worth doing only once something is actually
 driving them.
 
 **Fixtures for Hue-only lamps.** A Hue channel follows a fixture, so lamps with
-no DMX equivalent still need one to follow. Patch one for each — on a spare
-universe if you like, since nothing has to receive it — and the show drives it
-exactly as it drives a par. Two built-in
+no DMX equivalent still need one to follow. **Patch a lamp** on the channel's
+row adds one with no DMX address and binds the channel to it, and the show
+drives it exactly as it drives a par. The built-in
 [Generic Hue Lamp profiles](#generic-hue-lamp-profiles) are there for this, so
 the fixture describes a bulb rather than standing in as a twelve-channel par.
 
@@ -1121,6 +1148,21 @@ track's drum lanes can be trusted (below):
 | **Meter** | A level meter filled by the low end and kicked on every step |
 | **Drums** | The kit as it is hit: the kick fills each bar from its middle, the snare cracks at its ends, the hats scatter along it |
 | **Stems** | Voice, band, drums and bass in zones out from the centre, each as loud as it is playing |
+| **Bars** | A spectrum analyser, after LedFx: the kick, bass, drums, snare, the rest of the band, the voice and the hats as columns, each as high as it plays, filled from the bottom |
+| **Fire** | Flames licking up from the bottom, taller with the bass and flaring on every kick, from the look's first colour at the root to its last at the tips |
+| **Rain** | Drops falling down every column in time, a lap every four steps, each column at its own speed; the hats shake loose more |
+
+**Bars**, **Fire** and **Rain** are made for panels — a WLED matrix, or an Open
+Fixture Library matrix — where they stand up: the bars rise from the panel's
+bottom row, the flames lick up it and the rain falls down it. Laid out **Per
+bar**, each panel draws its own; **Across stage**, a panel's rows are its
+height. On a strip, which has no height, the strip is laid along it instead:
+the bars become zones, the fire rises from its start, three drops run along it.
+They play the pulse like Drums and Stems, and the clock without it. On a rig
+with panels the auto show gives the panels one of the three by section (see
+[Shaping the generated show](#shaping-the-generated-show)); the **Panels**
+menu under the patterns picks one by hand, and it holds until a pattern is
+picked.
 
 **Drums** and **Stems** play the analysis's *pulse*. That is every kick, snare
 and hat read off the separated drum stem, and each stem's level fifty times a
@@ -1371,6 +1413,22 @@ stem-derived instrument roles for a 4× faster analysis.
 `python scripts/bench-analyze.py track.wav` shows where a machine spends its
 time, stage by stage.
 
+**GPU memory.** The separator, MuQ, MuQ-MuLan and SongFormer are several
+gigabytes of weights between them, which an 8 GB card cannot hold at once with
+room left for a pass: kept on the card, whichever ran last failed with *CUDA out
+of memory*, on some tracks and not others. So on a card under 12 GB the models
+wait in RAM, and each goes onto the card for its own pass only. The weights are
+pinned (page-locked) in RAM, so each copy runs at the bus's full speed. A
+gigabyte takes a fraction of a second, where reloading it from its checkpoint
+took seconds. After the pass the card's copy is dropped rather than copied back,
+since the weights do not change. At most a quarter of the RAM is pinned
+(`ARTNET_PINNED_GB` changes it), and anything past that waits in ordinary
+memory. A pass that still runs the card out of memory is run again on the CPU.
+That is slower, but the track gets its answer, and a card that was keeping
+models resident keeps them in RAM from then on. **Settings → Analysis → GPU
+memory** chooses: *Auto*, *In RAM* (always) or *On the card* (never; for a card
+with room to spare). The analyser's log says which it is using.
+
 **Structure.** Settings → Analysis → **Structure** decides who names the
 sections. [SongFormer](https://huggingface.co/ASLP-lab/SongFormer) was trained
 on thousands of annotated songs. It knows a pre-chorus, a chorus that is not the
@@ -1454,7 +1512,7 @@ Changing it recycles the analyzer process; no restart needed.
 | **Spotify + OS clock** | Both of the two below. The best option when you play Spotify on this machine — see [Spotify + OS clock](#spotify--os-clock-the-hybrid-source). |
 | **Spotify** | A client ID and secret under Sources → Spotify, then *Connect Spotify*. Register the redirect URI the server prints at startup — see [Spotify authorisation](#spotify-authorisation). |
 | **PRO DJ LINK** | CDJs on the same network. Toggle it under Sources → Playback sources, or on the main page. See [PRO DJ LINK](#pro-dj-link). |
-| **Now playing (Windows)** | Nothing — reads the OS media session, so any player that reports to it works. Toggle it under *Playback Sources*. |
+| **Now playing (OS)** | Nothing — reads the OS media session, so any player that reports to it works: the Windows media session (SMTC), or on Linux the MPRIS players on the session bus, through systemd's `busctl`. Not on macOS. Toggle it under *Playback Sources*. |
 | **Deezer** | The extension in `browser-extension/` (see its README). Carries ISRC and the upcoming queue, so it prefetches. |
 | **Live input (by ear)** | The [live input](#live-input) on. Needs no analysis: the show answers what it hears. *Auto-detect* falls back to it before the timer. |
 | **Timer** | Fallback: plays the analysed timeline against a wall clock. |
@@ -1549,8 +1607,19 @@ while it is reporting the track Spotify says is playing — matched on title,
 artist and duration. When it is not (a different app took the media keys, the
 session went stale, you are playing on another device) the clock falls back to
 Spotify's own position, which is exactly what the Spotify source would have
-done. On a machine with no media session at all — anything but Windows today —
-hybrid still runs; it just runs on the Spotify clock.
+done. On a machine with no media session at all — a Mac, or a server started
+outside the desktop session — hybrid still runs; it just runs on the Spotify
+clock.
+
+**On Linux** the session is MPRIS. Spotify, Firefox and Chromium tabs, VLC, mpv,
+Rhythmbox and the other desktop players publish themselves on the session bus
+as `org.mpris.MediaPlayer2.*`, and the server reads them through `busctl`, which
+comes with systemd, twice a second. With several players it follows the one
+that started playing last and stays with it while it plays. With none playing,
+it reports the one that played last, paused. The server has to run inside the
+desktop session (as your user, with `DBUS_SESSION_BUS_ADDRESS` set) to see the
+players. Started from a system service it has no session bus, and it says so
+once in the log.
 
 The *Follow* selector's **Auto-detect** picks it whenever both halves are live.
 The source strip shows which clock is driving, with the current drift in its
@@ -1654,6 +1723,22 @@ is doing:
   Impact"). A pattern picked by hand runs on the whole rig again, and so
   does a cue saved before this.
 - **Replanning.** Adding or removing the last bar replans the track.
+
+With panels in the patch too — a WLED matrix, cells in rows — the panels get
+a picture of their own, one that stands up on a screen, while the pars and
+the bars keep theirs:
+
+| Where | The panels |
+|---|---|
+| verse, pre-chorus, build-up, bridge, a solo | **Bars**: the band's levels, a column for each part |
+| chorus, drop | **Fire**, taller with the bass and flaring on the kick |
+| intro, breakdown, outro | **Rain**, slow and long-trailed |
+
+A drop's first instant is still every fixture at once, the panels included.
+The panels are laid out as the bars are (across the stage, per bar, or
+mirrored), so a matrix added as two halves burns as one. Adding or removing
+the last panel replans the track; a cue saved before this recalls with the
+panels drawing what the bars do.
 
 On a rig of pars there are no bars to carry the movement, so the pars carry
 all of it, and the show gives them shape:
@@ -1764,9 +1849,9 @@ the palette size, the rig, the tracks before it. **Track edits**, on the
 - **Add** an accent at the playhead — or, rehearsing, at the rehearsal mark
   (blinder, white or colour strobe, UV wash, kill or glow) — or **remove** the
   one nearest it. An added accent fires whatever the budget says.
-- **Swap a section's look**: for the whole rig, or for the pars and the bars
-  apart. The section holds it, and its rotation stops too. Each row shows the
-  show's own choice beside yours.
+- **Swap a section's look**: for the whole rig, or for the pars, the bars and
+  the panels apart. The section holds it, and its rotation stops too. Each row
+  shows the show's own choice beside yours.
 
 They are kept beside the track's analysis in the cache, and put back every
 time the track plays. Analysing the track again keeps them: sections match
@@ -2017,6 +2102,15 @@ file does not exist and the default below is used.
 LED feedback follows the map: a button bound to the live pattern lights up
 wherever you put it, rather than wherever the X-Touch originally had it.
 
+**Touch-sensitive faders.** A motorised fader usually has a touch sensor that
+sends a CC of its own — 127 the moment a finger lands, 0 when it lifts. Learning
+a fader waits for a value between the ends, so it binds the fader's movement and
+not that sensor. A fader action on a control that has only ever sent 0 and 127
+is ignored (with one warning in the log), since obeying it would throw the
+master to full on touch and to black on release. A map that already bound the
+sensor heals itself: touch and move the fader once, and the binding moves to the
+fader's own CC and is saved. While a fader is touched the motor leaves it alone.
+
 ### Motorised faders and encoder rings
 
 The X-Touch Compact's nine faders are motorised and its eight encoders have LED
@@ -2092,8 +2186,24 @@ Companion **v4.3+** (the module uses the v2 connection API).
    the server uses one
 4. Drag presets onto buttons
 
-Presets cover patterns, colours A–D, transport, per-fixture blackout and energy
-effects, with feedback highlighting the active state.
+It is made for busking. The **Busk** preset page has:
+- every palette on the server;
+- energy effects and a blackout that last only while their button is held
+  (sent as `energy-hold`, which the server lets go of on its own if Companion
+  stops renewing it, so a crash with a button down never latches a strobe);
+- tap tempo, ×2 and ÷2;
+- the auto show's on/off, intensity and sync nudge;
+- the master level;
+- a button for every saved cue.
+
+Other presets cover every pattern and pixel effect (the bars' own picture and
+the pixel map too), colours A–D, transport, a blackout per fixture and latched
+energy effects, with feedback lighting the active state. The patterns,
+palettes, fixtures and cues it offers are read from the server when it
+connects, so ones added there appear without a new module. It follows the
+server over protocol 2, so a large rig costs it nothing between changes. See
+[its help](companion-module/companion/HELP.md) for every action, feedback and
+variable.
 
 ---
 
@@ -2127,7 +2237,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/fixture/:id/override` | Set a fixture override (JSON body) |
 | POST | `/api/fixture/:id/blackout/toggle` · `/api/fixture/:id/clear` | Per-fixture blackout / clear |
 | POST | `/api/fixture/:id/max/:value` | Fixture maximum brightness (0–255) — scales the fixture's output; not an override |
-| POST | `/api/fixtures` · DELETE `/api/fixtures/:id` | Add / remove fixtures. With no body, one generic par behind whatever is on the default universe; with `{ profileId?, count?, universe?, address?, label? }`, `count` (up to 64) of that profile one after another, on into the next universe when one fills (a strip on universes of its own); answers `{ fixtures: [ids], placed: [{ universe, address }] }`. DELETE answers with the fixture and its index |
+| POST | `/api/fixtures` · DELETE `/api/fixtures/:id` | Add / remove fixtures. With no body, one generic par behind whatever is on the default universe; with `{ profileId?, count?, universe?, address?, label?, output? }`, `count` (up to 64) of that profile one after another, on into the next universe when one fills (a strip on universes of its own); answers `{ fixtures: [ids], placed: [{ universe, address }] }`. Hue lamps — a Hue lamp profile, or `output: { protocol: 'hue' }` — take no address and answer `placed: []`, `addressless: true`. DELETE answers with the fixture and its index |
 | POST | `/api/fixtures/restore` | Put a deleted fixture back (`{ index, fixture }`) |
 | POST | `/api/gdtf/parse` | Parse an uploaded `.gdtf` (multipart `gdtf`) |
 | POST | `/api/ofl/parse` | Parse an uploaded Open Fixture Library `.json` (multipart `ofl`, optional `manufacturer`) |
@@ -2136,8 +2246,8 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/profiles` · DELETE `/api/profiles/:id` | Register / remove a fixture profile (`cells` makes it an LED bar, `grid` a panel; `defaults: [{ offset, value }]` holds undriven channels off 0) |
 | POST | `/api/profiles/bar` | Build and register an LED bar profile from `{ id, name, cells, firstChannel, order, stride?, dimmer?, strobe? }`; `?dryRun=1` answers with it without registering |
 | GET · POST | `/api/show` | Export / import the patch |
-| GET | `/api/wled/discover` | Ask the network for WLEDs (mDNS): `{ devices: [{ host, name, leds, rgbw, matrix, version, patched }] }` |
-| POST | `/api/wled/add` | Add a WLED to the patch from `{ host, label? }`: its profile from `/json/info`, on free universes, sent DDP |
+| GET | `/api/wled/discover` | Ask the network for WLEDs (mDNS): `{ devices: [{ host, name, leds, rgbw, matrix, version, segments, patched }] }` |
+| POST | `/api/wled/add` | Add a WLED to the patch from `{ host, label?, segments? }`: its profile from `/json/info`, on free universes, sent DDP. With `segments: true`, a fixture for each segment in its `/json/state` not patched yet: `{ fixtures, profiles, info, segments }` |
 
 ### Outputs
 
@@ -2258,8 +2368,8 @@ the state in one of two forms, chosen when the client connects:
   (`src/shared/dmx-frame.ts`: per universe its number, its length and its
   bytes), thirty times a second while it changes — volatile, and only to
   clients that sent `subscribe: ['dmx']` (and until `unsubscribe`).
-- **Protocol 1** — anything that does not ask, such as the Bitfocus Companion
-  module: `state` (the full snapshot on connect, the
+- **Protocol 1** — anything that does not ask, such as the Companion module
+  before 2.1: `state` (the full snapshot on connect, the
   whole live state again whenever any of it changes) and `dmx` (channel values
   as JSON, keyed by universe, ten times a second — built only while such a
   client is connected).
@@ -2270,8 +2380,10 @@ The `fixture` message carries
 of `front`, `back`, `room`, `floor`, or `null`; `geometry` is an LED bar's line
 (a panel's top edge), `{ length, angle }` (length 1–100 in stage percent, angle
 −180–180 degrees clockwise on the plot), or `null` for the default; `output` is
-`{ protocol: 'ddp', host, port? }` to send the fixture's universes to a WLED, or
-`null` for Art-Net and sACN.
+`{ protocol: 'ddp', host, port?, at?, rowStride? }` to send the fixture's
+universes to a WLED — from its LED `at` for a segment, a row every `rowStride`
+LEDs for a rectangle of a panel — `{ protocol: 'hue' }` for a Hue lamp with no
+DMX address, or `null` for Art-Net and sACN.
 
 ---
 
@@ -2399,11 +2511,11 @@ it has edits not applied yet. Most settings take effect immediately.
 | Rig → Outputs | **Art-Net** | Enabled, node IP, port, default universe, finding nodes, ArtSync |
 | Rig → Outputs | **sACN (E1.31)** | Enabled, node IP, priority, source name, universe offset, network, component ID |
 | Rig → Outputs | **Philips Hue** | Enabled, bridge address, pairing, entertainment area, pars delay, channel-to-fixture bindings |
-| Sources | **Playback sources** | PRO DJ LINK, Windows now-playing (SMTC) |
+| Sources | **Playback sources** | PRO DJ LINK, the OS now-playing (SMTC on Windows, MPRIS on Linux) |
 | Sources | **Spotify** | Client ID, client secret, optional OAuth proxy, unverified-state escape hatch, and the saved session (server-written, never shown) |
 | Sources | **Deezer** | ARL cookie — exact ISRC-matched audio instead of a yt-dlp search |
 | Sources | **Live input** | Enabled, what to listen to, device, auto-sync, play by ear, room latency |
-| Sources | **Analysis** | Separator, structure model, analyser and download timeouts, library folder, Python interpreter |
+| Sources | **Analysis** | Separator, structure model, GPU memory, analyser and download timeouts, library folder, Python interpreter |
 | Settings | **Show** | Remember the night, flash limit |
 | Settings | **MIDI controller** | Input and output port, motorised fader feedback |
 | Settings | **MIDI clock out** | The port the clock goes to, or off |

@@ -105,6 +105,8 @@ test('a relative encoder nudges and clamps', () => {
 test('an absolute fader scales 0-127 onto the control range', () => {
   const h = harness({ cc: { 9: { action: 'setMasterDimmer', type: 'absolute' } }, notes: {} });
 
+  // A fader passes through the values between the ends on its way to them.
+  h.input.emit('cc', { controller: 9, value: 100, channel: 0 });
   h.input.emit('cc', { controller: 9, value: 127, channel: 0 });
   assert.strictEqual(h.state.masterDimmer, 255);
 
@@ -115,6 +117,7 @@ test('an absolute fader scales 0-127 onto the control range', () => {
 test('a BPM fader spans the usable tempo range, not 0-255', () => {
   const h = harness({ cc: { 5: { action: 'setBpm', type: 'absolute' } }, notes: {} });
 
+  h.input.emit('cc', { controller: 5, value: 12, channel: 0 });
   h.input.emit('cc', { controller: 5, value: 0, channel: 0 });
   assert.strictEqual(h.state.bpm, 20);
 
@@ -514,6 +517,7 @@ test('a max-brightness control is driven to the trim it holds', () => {
 test('a fader bound to auto-show intensity sends 0-100, not 0-255', () => {
   const h = harness({ cc: { 8: { action: 'setAutoIntensity', type: 'absolute' } }, notes: {} });
 
+  h.input.emit('cc', { controller: 8, value: 120, channel: 0 });
   h.input.emit('cc', { controller: 8, value: 127, channel: 0 });
   assert.deepStrictEqual(h.patches.at(-1), { autoIntensity: 100 });
 
@@ -691,4 +695,114 @@ test('an ambiguous first value does not lock in the wrong encoding', () => {
 
   h.input.emit('cc', { controller: 10, value: 65, channel: 0 });
   assert.strictEqual(h.state.bpm, 121, 'settled on binary offset by the real detent');
+});
+
+// ── Touch-sensitive faders ──────────────────────────────────────────────────
+//
+// The X-Touch's faders are two controls each: the position, and a touch sensor
+// on another CC that sends 127 on a finger and 0 when it lifts. The sensor
+// speaks first, so learn used to bind the fader action to it — and touching the
+// fader then threw the level to 100% and letting go to 0%.
+
+test('learning a fader takes its movement, not the touch sensor that speaks first', async () => {
+  const h = harness({ cc: {}, notes: {} });
+  const pending = h.midi.startLearn({ action: 'setMasterDimmer', type: 'absolute' });
+  h.input.emit('cc', { controller: 109, value: 127, channel: 0 });   // the finger lands
+  assert.strictEqual(h.midi.learning, true, 'still listening');
+  h.input.emit('cc', { controller: 9, value: 70, channel: 0 });      // the fader moves
+  const captured = await pending;
+  assert.strictEqual(captured.number, 9);
+  assert.deepStrictEqual(h.patches, [], 'nothing dispatched while learning');
+});
+
+test('a button learned on a CC that only sends 127 is still a button', async () => {
+  const h = harness({ cc: {}, notes: {} });
+  const pending = h.midi.startLearn({ action: 'tap' });
+  h.input.emit('cc', { controller: 64, value: 127, channel: 0 });
+  assert.strictEqual((await pending).number, 64);
+});
+
+test('the reported symptom: a fader bound to its touch sensor no longer jumps to 100% and 0%', () => {
+  const h = harness({ cc: { 101: { action: 'setMasterDimmer', type: 'absolute' } }, notes: {} });
+  h.state.masterDimmer = 180;
+  const warn = console.warn;
+  const said = [];
+  console.warn = (m) => said.push(m);
+  try {
+    h.input.emit('cc', { controller: 101, value: 127, channel: 0 });   // touch
+    h.input.emit('cc', { controller: 101, value: 0, channel: 0 });     // release
+  } finally {
+    console.warn = warn;
+  }
+  assert.strictEqual(h.state.masterDimmer, 180, 'touching does not move the level');
+  assert.match(said.join('\n'), /CC 101 is bound to setMasterDimmer but has only sent 0 and 127/);
+});
+
+test('a map that bound the touch sensor heals: the binding moves to the fader it belongs to', () => {
+  const h = harness({ cc: { 101: { action: 'setMasterDimmer', type: 'absolute' } }, notes: {} });
+  const moved = [];
+  h.midi.onRebind = (from, to, binding) => moved.push([from, to, binding.action]);
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    h.input.emit('cc', { controller: 101, value: 127, channel: 0 });   // touch
+    h.input.emit('cc', { controller: 1, value: 90, channel: 0 });      // the fader moves at once
+    h.input.emit('cc', { controller: 1, value: 64, channel: 0 });
+    h.input.emit('cc', { controller: 101, value: 0, channel: 0 });     // release
+  } finally {
+    console.warn = warn;
+  }
+  assert.deepStrictEqual(moved, [[101, 1, 'setMasterDimmer']]);
+  assert.strictEqual(h.midi.map.cc[1].action, 'setMasterDimmer');
+  assert.strictEqual(h.midi.map.cc[101], undefined);
+  assert.strictEqual(h.state.masterDimmer, Math.round((64 / 127) * 255), 'the fader drives the level from its second message on');
+});
+
+test('a fader that is already bound elsewhere is not taken over', () => {
+  const h = harness({ cc: {
+    101: { action: 'setMasterDimmer', type: 'absolute' },
+    1: { action: 'setAutoIntensity', type: 'absolute' },
+  }, notes: {} });
+  const moved = [];
+  h.midi.onRebind = (...args) => moved.push(args);
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    h.input.emit('cc', { controller: 101, value: 127, channel: 0 });
+    h.input.emit('cc', { controller: 1, value: 90, channel: 0 });
+  } finally {
+    console.warn = warn;
+  }
+  assert.deepStrictEqual(moved, []);
+  assert.strictEqual(h.midi.map.cc[101].action, 'setMasterDimmer');
+});
+
+test('the motor leaves a touched fader alone, and puts it where the show is when let go', () => {
+  const h = harness({ cc: { 9: { action: 'setBpm', type: 'absolute' } }, notes: {} });
+  // Pair the sensor with its fader: touch, then movement right after.
+  h.input.emit('cc', { controller: 109, value: 127, channel: 0 });
+  h.input.emit('cc', { controller: 9, value: 40, channel: 0 });
+  h.midi._lastCcIn.clear();                    // long after the fader last moved
+  h.sent.length = 0;
+  // The tempo changes under the finger — a CDJ, the auto show.
+  h.state.bpm = 174;
+  h.midi.sendFeedback();
+  assert.deepStrictEqual(h.cc().filter((m) => m.controller === 9), [], 'held: no motor');
+  h.input.emit('cc', { controller: 109, value: 0, channel: 0 });   // let go
+  assert.deepStrictEqual(h.cc().filter((m) => m.controller === 9).map((m) => m.value),
+    [Math.round(((174 - 20) / 280) * 127)], 'released: straight to the live tempo');
+});
+
+test('an encoder turning anticlockwise is no touch sensor', () => {
+  const h = harness({ cc: {
+    16: { action: 'adjustStrobeSpeed', type: 'relative' },
+    9: { action: 'setMasterDimmer', type: 'absolute' },
+  }, notes: {} });
+  h.input.emit('cc', { controller: 16, value: 127, channel: 0 });  // one detent anticlockwise
+  h.input.emit('cc', { controller: 9, value: 60, channel: 0 });
+  h.midi._lastCcIn.clear();
+  h.sent.length = 0;
+  h.state.masterDimmer = 10;
+  h.midi.sendFeedback();
+  assert.ok(h.cc().some((m) => m.controller === 9), 'the fader is still driven');
 });

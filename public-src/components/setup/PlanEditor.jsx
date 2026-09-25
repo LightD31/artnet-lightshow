@@ -3,7 +3,7 @@ import { pick, connectedSig, dmxSig, emitFixture } from '../../state.js';
 import { useDmxFeed } from '../../use-dmx.js';
 import { stagePositions } from '../../../src/shared/stage.ts';
 import { buildRig, lineOf } from '../../../src/shared/rig.ts';
-import { fixtureOutputColor, fixtureCellColors } from '../../utils.js';
+import { fixtureOutputColor, fixtureCellColors, patchedAt } from '../../utils.js';
 import { clamp, geometryOf, lineFromEnds, placeAt, pointIn, pxOf, round1, snapTo, surfaceStyle } from '../../stage-geometry.js';
 import { rigSelectionSig, selectOnly, toggleSelected, identifyFixtures, stopIdentify } from '../../rig-ui.js';
 
@@ -347,7 +347,7 @@ export function PlanEditor() {
             aria-pressed={isSelected}
             aria-label={`${fix.label}${shape ? `, ${shape}` : ''}, position ${Math.round(point.x)}, ${Math.round(point.y)}. `
               + `Arrow keys move the selection${bar ? '; [ and ] turn it, minus and equals change its length, 0 resets both' : ''}.`}
-            title={`${fix.label} · Universe ${fix.universe ?? 0} / ${fix.address}`}
+            title={`${fix.label} · ${patchedAt(fix)}`}
             onClick={(e) => { if (e.detail === 0) { if (e.shiftKey) toggleSelected(fix.id); else selectOnly(fix.id); } }}
             onKeyDown={(e) => onKeyDown(e, fix, i)}>
             <i class="stage-glow" /><span class="stage-lamp">{i + 1}</span><span class="stage-label">{fix.label}</span>

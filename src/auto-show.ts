@@ -138,6 +138,7 @@ class AutoShow {
   declare startPending: symbol | null;
   declare _grid: BeatGrid | null;
   declare _pixels: boolean;
+  declare _panels: boolean;
   declare _lamps: number | null;
   declare _pulse: PulseTrack | null;
   declare _memory: SetMemory;
@@ -226,6 +227,8 @@ class AutoShow {
     // Whether the rig has LED bars. The director reaches for the pictures drawn
     // across cells only when it does (see setRig).
     this._pixels = false;
+    // And panels (a WLED matrix), which get a picture of their own.
+    this._panels = false;
     this._lamps = null;
     // The track's pulse, read every frame for the pixel patterns (show/pulse.ts).
     this._pulse = null;
@@ -297,7 +300,7 @@ class AutoShow {
       for (const ev of this.timeline) {
         if (ev.action === 'patch' && ev.data
           && (ev.data.pattern !== undefined || ev.data.pixelPattern !== undefined
-            || ev.data.beatDivision !== undefined)) times.push(ev.timeMs);
+            || ev.data.panelPattern !== undefined || ev.data.beatDivision !== undefined)) times.push(ev.timeMs);
       }
       index = { timeline: this.timeline, length: this.timeline.length, times };
       this._anchorIndex = index;
@@ -1003,6 +1006,7 @@ class AutoShow {
       intensity: this.intensity,
       blackoutIndex: this._blackoutIdx,
       pixels: this._pixels,
+      panels: this._panels,
       lamps: this._lamps,
       history: settings.group('auto').setMemory === false ? null : this._memory.history(this._memoryKey()),
       overlay: this.overlay(),
@@ -1065,7 +1069,9 @@ class AutoShow {
     // Clear any lingering energy override so we don't leave the rig stuck,
     // and the show's own layout of the look: the bars' picture, a split, a
     // chorus laid mirrored.
-    this._applyPatch({ energyOverride: null, showDynamics: null, split: null, pixelPattern: null, pixelMap: 'stage' });
+    this._applyPatch({
+      energyOverride: null, showDynamics: null, split: null, pixelPattern: null, panelPattern: null, pixelMap: 'stage',
+    });
   }
 
   reset(): void {
@@ -1198,18 +1204,22 @@ class AutoShow {
   /**
    * Tell the show what the rig is. A patch that gains or loses its LED bars
    * replans the track, as a palette or intensity change does, so the looks
-   * that draw across cells come and go with the bars; so does a rig of pars
-   * crossing three lamps, which is what the kit needs to be drawn on it.
+   * that draw across cells come and go with the bars; so does one that gains
+   * or loses its panels, and a rig of pars crossing three lamps, which is
+   * what the kit needs to be drawn on it.
    */
-  setRig({ hasPixels = false, lamps = null }: { hasPixels?: boolean; lamps?: number | null } = {}): void {
+  setRig({ hasPixels = false, hasPanels = false, lamps = null }:
+    { hasPixels?: boolean; hasPanels?: boolean; lamps?: number | null } = {}): void {
     const pixels = !!hasPixels;
+    const panels = pixels && !!hasPanels;
     const count = Number.isFinite(lamps) ? lamps : null;
     const kit = (n: number | null) => n === null || n >= 3;
-    if (pixels === this._pixels && kit(count) === kit(this._lamps)) {
+    if (pixels === this._pixels && panels === this._panels && kit(count) === kit(this._lamps)) {
       this._lamps = count;
       return;
     }
     this._pixels = pixels;
+    this._panels = panels;
     this._lamps = count;
     if (this.analysis) this.buildTimeline();
   }
@@ -1264,6 +1274,7 @@ class AutoShow {
       id: data && data.id,
       pattern: data && data.pattern,
       pixelPattern: data && data.pixelPattern,
+      panelPattern: data && data.panelPattern,
       colorA: data && data.colorA,
       durationMs: data && data.durationMs,
       source: ev.source,
@@ -1314,8 +1325,10 @@ class AutoShow {
       intensity: this.intensity,
       syncOffsetMs: this.syncOffsetMs,
       autoSyncMs: Math.round(this.autoSyncMs),
-      // Planned for a rig with LED bars: its looks may draw across cells.
+      // Planned for a rig with LED bars: its looks may draw across cells; and
+      // with panels, which have pictures of their own.
       pixels: this._pixels,
+      panels: this._panels,
       // The operator's edits to this track (show/overlay.ts), and what names it.
       analysisKey: this.analysisKey,
       overlay: this.analysis ? this.overlay() : null,

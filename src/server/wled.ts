@@ -31,9 +31,24 @@ export interface WledInfo {
   mac: string | null;
 }
 
+/**
+ * One of a WLED's segments: its LEDs from `at`, `count` of them, and — on a
+ * panel — the rectangle they make, whose rows lie `rowStride` LEDs apart.
+ */
+export interface WledSegment {
+  id: number;
+  name: string;
+  at: number;
+  count: number;
+  grid: { columns: number; rows: number } | null;
+  rowStride: number | null;
+}
+
 export interface WledClient {
   discover(timeoutMs?: number): Promise<FoundWled[]>;
   info(host: string): Promise<WledInfo>;
+  /** Its segments, as its /json/state lists them. */
+  segments?(host: string, info: WledInfo): Promise<WledSegment[]>;
 }
 
 // ── mDNS ────────────────────────────────────────────────────────────────────
@@ -163,9 +178,20 @@ const INFO_MAX_BYTES = 256 * 1024;
 
 /** GET http://<host>/json/info, bounded in time and size, and the fields a profile needs. */
 async function info(host: string, { fetchImpl = fetch, port }: { fetchImpl?: typeof fetch; port?: number } = {}): Promise<WledInfo> {
+  return readInfo(await getJson(host, '/json/info', { fetchImpl, port }), host);
+}
+
+/** GET http://<host>/json/state, bounded the same way: the segments it lists. */
+async function segments(host: string, wled: WledInfo,
+  { fetchImpl = fetch, port }: { fetchImpl?: typeof fetch; port?: number } = {}): Promise<WledSegment[]> {
+  return readSegments(await getJson(host, '/json/state', { fetchImpl, port }), wled, host);
+}
+
+/** One of a WLED's JSON documents, bounded in time and size. */
+async function getJson(host: string, path: string, { fetchImpl = fetch, port }: { fetchImpl?: typeof fetch; port?: number }): Promise<unknown> {
   let raw: unknown;
   try {
-    const res = await fetchImpl(`http://${host}${port ? `:${port}` : ''}/json/info`, {
+    const res = await fetchImpl(`http://${host}${port ? `:${port}` : ''}${path}`, {
       signal: AbortSignal.timeout(INFO_TIMEOUT_MS), redirect: 'error', headers: { accept: 'application/json' },
     });
     if (!res.ok) throw new HttpError(502, `${host} answered ${res.status}: is it a WLED?`);
@@ -175,11 +201,11 @@ async function info(host: string, { fetchImpl = fetch, port }: { fetchImpl?: typ
     if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
       throw new HttpError(504, `${host} did not answer within ${INFO_TIMEOUT_MS / 1000} s`);
     }
-    if (err instanceof SyntaxError) throw new HttpError(502, `${host} is not a WLED: its /json/info is not JSON`);
+    if (err instanceof SyntaxError) throw new HttpError(502, `${host} is not a WLED: its ${path} is not JSON`);
     const cause = err instanceof Error && err.cause ? `: ${messageOf(err.cause)}` : '';
     throw new HttpError(502, `Cannot reach ${host} (${messageOf(err)}${cause})`);
   }
-  return readInfo(raw, host);
+  return raw;
 }
 
 /** A response body as text, refused past INFO_MAX_BYTES however it is sent. */
@@ -225,49 +251,91 @@ function readInfo(raw: unknown, host: string): WledInfo {
 }
 
 /**
- * The profile for a WLED: its LEDs as cells of red, green and blue (and white),
- * in a grid when it is set up as a panel. Throws a 400 for one the engine
- * cannot take.
+ * A WLED's segments, from its /json/state: each one's first LED and length, or
+ * on a panel the rectangle it covers. Segments that cover nothing, or reach
+ * past the WLED's LEDs, are left out.
+ *
+ * Over DDP a WLED is sent its LEDs in their logical order (a panel's row by
+ * row, its own wiring worked out by WLED), not through its segments — so a
+ * segment is simply the stretch of that order it covers, or on a panel one
+ * stretch for each of its rows.
  */
-function wledProfile(wled: WledInfo, host: string): ProfileInput {
-  if (wled.leds < 1) throw new HttpError(400, `${wled.name} reports no LEDs`);
-  if (wled.leds > MAX_CELLS_PER_FIXTURE) {
-    throw new HttpError(400, `${wled.name} has ${wled.leds} LEDs; a fixture takes up to ${MAX_CELLS_PER_FIXTURE}. Split it into segments of its own in WLED`);
+function readSegments(raw: unknown, wled: WledInfo, host: string): WledSegment[] {
+  const body = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  if (!Array.isArray(body.seg)) throw new HttpError(502, `${host} is not a WLED: its state lists no segments`);
+  const width = wled.matrix ? wled.matrix.w : 0;
+  const out: WledSegment[] = [];
+  body.seg.forEach((entry: unknown, index: number) => {
+    const seg = (entry && typeof entry === 'object' ? entry : {}) as Record<string, unknown>;
+    const int = (v: unknown) => (Number.isInteger(v) ? v as number : null);
+    const start = int(seg.start);
+    const stop = int(seg.stop);
+    if (start === null || stop === null || stop <= start) return;
+    const id = int(seg.id) ?? index;
+    const named = typeof seg.n === 'string' && seg.n.trim() ? seg.n.trim().slice(0, 48) : `Segment ${id + 1}`;
+    const startY = int(seg.startY);
+    const stopY = int(seg.stopY);
+    if (width && startY !== null && stopY !== null && stopY > startY) {
+      const columns = stop - start;
+      const rows = stopY - startY;
+      const at = startY * width + start;
+      if (stop > width || at + (rows - 1) * width + columns > wled.leds) return;
+      out.push({ id, name: named, at, count: columns * rows, grid: { columns, rows }, rowStride: columns < width ? width : null });
+    } else {
+      if (stop > wled.leds) return;
+      out.push({ id, name: named, at: start, count: stop - start, grid: null, rowStride: null });
+    }
+  });
+  return out;
+}
+
+/**
+ * The profile for a WLED: its LEDs as cells of red, green and blue (and white),
+ * in a grid when it is set up as a panel — or, with `segment`, the profile for
+ * that one segment of it. Throws a 400 for one the engine cannot take.
+ */
+function wledProfile(wled: WledInfo, host: string, segment: WledSegment | null = null): ProfileInput {
+  const leds = segment ? segment.count : wled.leds;
+  if (leds < 1) throw new HttpError(400, `${wled.name} reports no LEDs`);
+  if (leds > MAX_CELLS_PER_FIXTURE) {
+    throw new HttpError(400, `${wled.name}${segment ? ` · ${segment.name}` : ''} has ${leds} LEDs; a fixture takes up to `
+      + `${MAX_CELLS_PER_FIXTURE}. Split it into segments of its own in WLED`);
   }
   const names = wled.rgbw ? ['red', 'green', 'blue', 'white'] : ['red', 'green', 'blue'];
   const width = names.length;
   const mapOf = (c: number): ChannelMap => Object.fromEntries(names.map((n, k) => [n, c * width + k]));
-  const grid = wled.matrix && wled.matrix.w * wled.matrix.h === wled.leds ? { columns: wled.matrix.w, rows: wled.matrix.h } : null;
-  const id = `wled-${wled.mac || host.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`.slice(0, 128);
+  const grid = segment ? segment.grid
+    : wled.matrix && wled.matrix.w * wled.matrix.h === wled.leds ? { columns: wled.matrix.w, rows: wled.matrix.h } : null;
+  const id = `wled-${wled.mac || host.toLowerCase().replace(/[^a-z0-9]+/g, '-')}${segment ? `-seg${segment.id}` : ''}`.slice(0, 128);
   const kind = wled.rgbw ? 'RGBW' : 'RGB';
   const profile = {
     id,
-    name: wled.name.slice(0, 128),
+    name: (segment ? `${wled.name} · ${segment.name}` : wled.name).slice(0, 128),
     manufacturer: 'WLED',
-    modeName: `${wled.leds} ${wled.leds === 1 ? 'pixel' : 'pixels'}, ${kind}${grid ? `, ${grid.columns} × ${grid.rows}` : ''}`,
-    channelCount: wled.leds * width,
-    // One LED is one light; more are its cells, one after another.
-    channelMap: wled.leds === 1 ? mapOf(0) : {},
-    channelList: Array.from({ length: wled.leds * width }, (_, o) => ({
-      offset: o,
-      name: `${wled.leds === 1 ? '' : `Pixel ${Math.floor(o / width) + 1} `}${names[o % width][0].toUpperCase()}${names[o % width].slice(1)}`,
-      attribute: names[o % width],
-      ...(wled.leds > 1 ? { cell: Math.floor(o / width) } : {}),
-    })),
-    ...(wled.leds > 1 ? { cells: Array.from({ length: wled.leds }, (_, c): ProfileCell => ({ name: `Pixel ${c + 1}`, channelMap: mapOf(c) })) } : {}),
+    modeName: `${leds} ${leds === 1 ? 'pixel' : 'pixels'}, ${kind}${grid ? `, ${grid.columns} × ${grid.rows}` : ''}`
+      + `${segment ? `, from LED ${segment.at + 1}` : ''}`,
+    channelCount: leds * width,
+    // One LED is one light; more are its cells, one after another. No channel
+    // list and no cell names: a 64 × 32 panel's were half a megabyte of
+    // "Pixel 1234 Green" in the show file and in every copy of the rig sent
+    // to a page, and the cells already say which channel is which colour.
+    channelMap: leds === 1 ? mapOf(0) : {},
+    ...(leds > 1 ? { cells: Array.from({ length: leds }, (_, c): ProfileCell => ({ channelMap: mapOf(c) })) } : {}),
     ...(grid ? { grid } : {}),
   };
   return validate(profileSchema, profile, 'WLED profile');
 }
 
-const wledClient: WledClient = { discover, info: (host) => info(host) };
+const wledClient: WledClient = { discover, info: (host) => info(host), segments: (host, wled) => segments(host, wled) };
 
 export {
   buildQuery,
   parseResponse,
   discover,
   info as wledInfo,
+  segments as wledSegments,
   readInfo,
+  readSegments,
   wledProfile,
   wledClient,
   MDNS_PORT,

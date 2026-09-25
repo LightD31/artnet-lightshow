@@ -18,7 +18,7 @@ import { PATTERN_FUNCS, CELL_PATTERNS } from './patterns.ts';
 import { fadeBrightness, grooveBrightness, hitBrightness } from './look-math.ts';
 import { fadePhase, hitPhase } from './beat-clock.ts';
 import type { PatternContext } from './patterns.ts';
-import type { Layout, Rig } from './rig.ts';
+import type { LayerPart, Layout, Rig } from './rig.ts';
 import type { Colour, Expression, PulseReading } from '../types/rig.ts';
 
 /** What the look asks the pattern layer for. */
@@ -42,6 +42,12 @@ export interface LayerLook {
   pixelSpan?: number | null;
   /** How far through that span it already is when the scene starts, 0..1. */
   pixelFrom?: number | null;
+  /**
+   * The panels' own picture (a WLED matrix: cells in rows), apart from the
+   * bars' and the pars': rain falling down a screen while a comet crosses
+   * the strips. Nothing, and the panels are bars like any other.
+   */
+  panelPattern?: string | null;
 }
 
 /** Where the music is, for the pattern layer. */
@@ -60,6 +66,8 @@ export interface LayerClock {
   twinkle: number[];
   /** The dice memory of the bars' own picture, apart from the pars'. */
   pixelTwinkle?: number[];
+  /** And of the panels' own picture. */
+  panelTwinkle?: number[];
 }
 
 /** A picture that plays once: over how many beats, and how far in it starts. */
@@ -71,18 +79,35 @@ export type LayerSet = (unit: number, colour: Colour, dim: number, strobe: numbe
 /**
  * @param rig    from shared/rig.js buildRig
  * @param look   { pattern, colors: [A, B, C, D], split, pixelMap, pixelPattern,
- *                 pixelSpan }
+ *                 pixelSpan, panelPattern }
  * @param clock  { beatPos, step, anchor, division, phase, expression,
- *                 dynamicsOn, fixtureCount, twinkle, pixelTwinkle }, or null to
+ *                 dynamicsOn, fixtureCount, twinkle, pixelTwinkle,
+ *                 panelTwinkle }, or null to
  *                 paint only the wash
  * @param set    (unit, colour, dim, strobe) => void
- * @param opts   skipPattern, skipPixelPattern: leave that part's units as they
- *               are (a random pattern between re-rolls) and paint the rest
+ * @param opts   skipPattern, skipPixelPattern, skipPanelPattern: leave that
+ *               part's units as they are (a random pattern between re-rolls)
+ *               and paint the rest
  */
 function renderLayer(rig: Rig, look: LayerLook, clock: LayerClock | null, set: LayerSet,
-  { skipPattern = false, skipPixelPattern = false } = {}): void {
+  { skipPattern = false, skipPixelPattern = false, skipPanelPattern = false } = {}): void {
   const whole = rig.layout(look.split, look.pixelMap);
-  if (look.pixelPattern && rig.hasPixels) {
+  if (look.panelPattern && rig.hasPanels) {
+    // The panels apart: their own picture, laid as the bars' is; the rest as
+    // the look would paint a rig without them.
+    const part = (only: LayerPart, map = look.pixelMap) => rig.layout(look.split, map, only);
+    if (!skipPanelPattern) {
+      paintPart(rig, part('panels'), look.panelPattern, look, clock, clock?.panelTwinkle ?? clock?.twinkle, null, set);
+    }
+    if (look.pixelPattern) {
+      if (!skipPattern) paintPart(rig, part('pars', 'stage'), look.pattern, look, clock, clock?.twinkle, null, set);
+      if (!skipPixelPattern) {
+        paintPart(rig, part('strips'), look.pixelPattern, look, clock, clock?.pixelTwinkle ?? clock?.twinkle, spanOf(look), set);
+      }
+    } else if (!skipPattern) {
+      paintPart(rig, part('unpanelled'), look.pattern, look, clock, clock?.twinkle, spanOf(look), set);
+    }
+  } else if (look.pixelPattern && rig.hasPixels) {
     // Two parts: the pars on the look's pattern, the bars on their picture.
     if (!skipPattern) paint(rig, rig.layout(look.split, 'stage', 'pars'), look.pattern, look, clock, clock?.twinkle, null, set, false);
     if (!skipPixelPattern) {
@@ -101,6 +126,12 @@ function renderLayer(rig: Rig, look: LayerLook, clock: LayerClock | null, set: L
     const { start, count } = rig.ranges[i];
     for (let u = start; u < start + count; u++) set(u, look.colors[1], 255, 0);
   }
+}
+
+/** One part's picture; a part the rig has no lights in is left alone. */
+function paintPart(rig: Rig, layout: Layout, pattern: string, look: LayerLook, clock: LayerClock | null,
+  twinkle: number[] | undefined, span: Span | null, set: LayerSet): void {
+  if (layout.units.list.length) paint(rig, layout, pattern, look, clock, twinkle, span, set, false);
 }
 
 function spanOf(look: LayerLook): Span | null {

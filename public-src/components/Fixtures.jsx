@@ -4,6 +4,7 @@ import { fixtureOutputColor, fixtureCellColors } from '../utils.js';
 import { useDmxFeed } from '../use-dmx.js';
 import { useDraft, createFrameThrottle, SETTLE_MS } from '../draft.js';
 import { FIXTURE_GROUPS } from '../../src/shared/stage.ts';
+import { hasNoAddress } from '../../src/shared/placement.ts';
 
 const GROUP_LABELS = { front: 'Front', back: 'Back', room: 'Room', floor: 'Floor' };
 
@@ -107,6 +108,7 @@ function FixtureCard({ fix, state }) {
           }}
           onBlur={(e) => emitFixture({ id: fix.id, label: e.target.textContent.trim() })}
         >{fix.label}</span>
+        {hasNoAddress(fix) ? <span class="fixture-addr fixture-hue" title="Driven by the Hue bridge, never on DMX">Hue</span> : (
         <span class="fixture-addr" title="Universe / DMX address">
           <input
             class="fixture-universe"
@@ -127,6 +129,7 @@ function FixtureCard({ fix, state }) {
             onChange={(e) => emitFixture({ id: fix.id, address: parseInt(e.target.value, 10) || fix.address })}
           />
         </span>
+        )}
       </div>
 
       {/* A trim, not a look: it scales everything the fixture puts out — the

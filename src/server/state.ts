@@ -1,11 +1,11 @@
-import { BUILTIN_PROFILE_ID, BUILTIN_PROFILE_IDS, getProfile, listProfiles } from './profiles.ts';
+import { BUILTIN_PROFILE_ID, BUILTIN_PROFILE_IDS, HUE_PROFILE_IDS, getProfile, listProfiles } from './profiles.ts';
 import { settings } from './settings.ts';
 import * as universes from './universes.ts';
 import { COLOR_PRESETS, PATTERNS, STROBE_FUNCTIONS, ENERGY_EFFECTS, SYNC_OFFSET_LIMIT_MS } from './presets.ts';
 import { PALETTES } from './palettes.ts';
 import { conductor } from './conductor.ts';
 import { HttpError } from '../errors.ts';
-import { footprintOf, universesOf } from '../shared/placement.ts';
+import { footprintOf, universesOf, isInternalUniverse, placeAddressless } from '../shared/placement.ts';
 import type { Settings } from './settings.ts';
 import type { Fixture, PixelMap, Profile, ShowDynamics } from '../types/rig.ts';
 
@@ -50,6 +50,7 @@ export interface ShowState {
   pixelPattern: string | null;
   pixelSpan: number | null;
   pixelFrom: number | null;
+  panelPattern: string | null;
   patternAnchor: PatternAnchor | null;
 }
 
@@ -118,6 +119,10 @@ const state: ShowState = {
   // How far through its span that picture already is when the scene starts:
   // a build-up's fill carries on across the scenes inside the build.
   pixelFrom: null,
+  // The panels' own picture (a WLED matrix) while the bars run theirs: the
+  // auto show hands a screen fire, rain or the band's levels by section.
+  // Null, and the panels are bars like any other.
+  panelPattern: null,
   // Where the running pattern counts its steps from, on the step grid of the
   // musical clock, and which of the clock's epochs that grid belongs to. Set
   // when a scene changes the pattern or the division (patch.js); the engine
@@ -158,6 +163,23 @@ function activeUniverses(): number[] {
   const active = new Set([state.artnet.universe]);
   for (const fix of state.fixtures) for (const u of universesOf(universeOf(fix), getProfile(fix))) active.add(u);
   return [...active].sort((a, b) => a - b);
+}
+
+/**
+ * The universes that go out on the wire: every active one but the server's
+ * own, which hold the fixtures with no DMX address (shared/placement.ts).
+ */
+function wireUniverses(): number[] {
+  return activeUniverses().filter((u) => !isInternalUniverse(u));
+}
+
+/**
+ * Put the fixtures with no DMX address (Hue lamps) on the internal universes.
+ * Called whenever the patch changes; cheap, and a no-op when nothing moved.
+ */
+function placeAddresslessFixtures(fixtures: Fixture[] = state.fixtures,
+  profileOf: (fixture: Pick<Fixture, 'profileId'>) => Profile = getProfile): boolean {
+  return placeAddressless(fixtures, profileOf);
 }
 
 /**
@@ -242,6 +264,9 @@ function getCatalogs() {
     // it had hardcoded, which stopped being the whole truth once the Hue lamp
     // profiles arrived and left them showing a Remove button the server refuses.
     builtinProfileIds: [...BUILTIN_PROFILE_IDS],
+    // The profiles that stand for a Hue lamp: a fixture on one has no DMX
+    // address by default, so the patch does not ask for one.
+    hueProfileIds: [...HUE_PROFILE_IDS],
     // So the sync control can size itself from the server's limit rather than
     // carrying a second copy of the number that silently drifts.
     syncOffsetLimitMs: SYNC_OFFSET_LIMIT_MS,
@@ -277,13 +302,14 @@ function getLiveState() {
     strobeFunction: state.strobeFunction,
     pixelMap: state.pixelMap,
     pixelPattern: state.pixelPattern,
+    panelPattern: state.panelPattern,
     energyOverride: state.heldEnergy ?? state.energyOverride,
     palette: state.palette,
     autoIntensity: state.autoIntensity,
     autoSyncOffsetMs: state.autoSyncOffsetMs,
     autoSource: state.autoSource,
     autoPrefetchDepth: state.autoPrefetchDepth,
-    universes: activeUniverses(),
+    universes: wireUniverses(),
     fixtures: state.fixtures.map((f) => ({
       ...f,
       universe: universeOf(f),
@@ -300,7 +326,9 @@ function getLiveState() {
  *
  * An object rather than the old flat array: with fixtures spread across
  * universes there is no single 512-channel picture to send, and the monitor
- * needs to know which universe a value belongs to.
+ * needs to know which universe a value belongs to. The server's own universes
+ * are in it too: the swatches and the stage show a Hue lamp's colour from
+ * them, though they are never sent.
  */
 function getDmxSnapshot(): Record<number, number[]> {
   const out: Record<number, number[]> = {};
@@ -337,6 +365,8 @@ export {
   universeOf,
   maxBrightnessOf,
   activeUniverses,
+  wireUniverses,
+  placeAddresslessFixtures,
   countUniverses,
   setDefaultUniverse,
   getFixtureCount,

@@ -53,7 +53,8 @@ test('only a strip of equal cells may be longer than a universe', () => {
 
   assert.strictEqual(validate(profileSchema, strip(300), 'profile').channelCount, 900);
   assert.throws(() => validate(profileSchema, withMaster, 'profile'), /channelCount .*only a strip of equal cells/);
-  assert.throws(() => validate(profileSchema, strip(1025), 'profile'), /cells/, 'no more than 1,024 cells');
+  assert.strictEqual(validate(profileSchema, strip(2048), 'profile').channelCount, 6144, 'a 64 × 32 panel\'s worth');
+  assert.throws(() => validate(profileSchema, strip(4097), 'profile'), /cells/, 'no more than 4,096 cells');
 });
 
 test('where a strip may be patched', () => {

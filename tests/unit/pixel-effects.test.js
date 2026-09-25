@@ -94,3 +94,76 @@ test('plasma moves and stays inside the look\'s colours', () => {
   const mono = draw('plasma', { stepPos: 1, colors: [BLUE, BLUE, BLUE, BLUE] });
   assert.ok(mono.every(([c]) => c === BLUE), 'one colour in, one colour out');
 });
+
+// ── Panels: after LedFx's and WLED's matrix effects ─────────────────────────
+
+/** A W × H panel laid out per bar: x across it, y down it (0 its top row). */
+function panel(id, w, h, ctx = {}) {
+  const n = w * h;
+  const xs = []; const ys = [];
+  for (let r = 0; r < h; r++) for (let c = 0; c < w; c++) { xs.push(c / (w - 1)); ys.push(r / (h - 1)); }
+  const out = draw(id, { n, xs, ys, ...ctx });
+  return { at: (c, r) => out[r * w + c], out };
+}
+
+const PULSE = { mix: 0.8, drums: 0.7, bass: 0.9, vocals: 0.2, other: 0.5, kick: 1, snare: 0, hats: 0 };
+
+test('bars: each band a column, filled from the bottom as high as it plays', () => {
+  const { at } = panel('bars', 7, 10, { pulse: PULSE });
+  const lit = (c) => [...Array(10).keys()].filter((r) => at(c, r)[1] >= 170).length;
+  assert.ok(lit(0) >= 9, `the kick, hit, fills its column: ${lit(0)}`);
+  assert.strictEqual(lit(3), 1, 'the snare, silent, only its bottom cell');
+  assert.ok(lit(1) > lit(5), 'the bass stands taller than the voice');
+  assert.ok(at(1, 9)[1] >= 170 && at(5, 0)[1] < 170, 'filled from the bottom, not the top');
+  // On a strip there is no height: each band lights its stretch as it plays.
+  const strip = dims(draw('bars', { n: 14, pulse: PULSE }));
+  assert.ok(strip[0] > strip[6], `kick bright, snare dim: ${strip}`);
+});
+
+test('fire: hottest at the root, taller with the bass, and the same flames for the same moment', () => {
+  const quiet = panel('fire', 8, 16, { stepPos: 3.2, pulse: { ...PULSE, bass: 0.1, kick: 0 } });
+  const loud = panel('fire', 8, 16, { stepPos: 3.2, pulse: { ...PULSE, bass: 1, kick: 1 } });
+  const row = (p, r) => [...Array(8).keys()].reduce((sum, c) => sum + p.at(c, r)[1], 0);
+  assert.ok(row(loud, 15) > row(loud, 2), 'the bottom row burns brighter than the top');
+  assert.ok(row(loud, 8) > row(quiet, 8), 'and the bass drives the flames higher');
+  assert.deepStrictEqual(panel('fire', 8, 16, { stepPos: 3.2, pulse: PULSE }).out, panel('fire', 8, 16, { stepPos: 3.2, pulse: PULSE }).out);
+});
+
+test('rain: drops falling down each column in time, the head in the lift colour', () => {
+  const heads = (pos) => {
+    const { at } = panel('rain', 1, 40, { stepPos: pos, colors: [RED, BLUE, RED, BLUE] });
+    let best = 0;
+    for (let r = 1; r < 40; r++) if (at(0, r)[1] > at(0, best)[1]) best = r;
+    return { row: best, colour: at(0, best)[0] };
+  };
+  const a = heads(0.4);
+  const b = heads(0.8);
+  assert.ok(b.row > a.row, `it falls: row ${a.row}, then ${b.row}`);
+  assert.strictEqual(a.colour, BLUE, 'the head in the look\'s lift');
+  const columns = panel('rain', 12, 20, { stepPos: 1.3 });
+  const headRows = [...Array(12).keys()].map((c) => {
+    let best = 0;
+    for (let r = 0; r < 20; r++) if (columns.at(c, r)[1] > columns.at(c, best)[1]) best = r;
+    return best;
+  });
+  assert.ok(new Set(headRows).size > 4, `each column its own drop: ${headRows}`);
+});
+
+test('the panel effects cost no more on a 64 × 32 WLED matrix than the pictures the engine already draws', () => {
+  // Against Plasma, the costliest of those (see "How much" in the README),
+  // timed alongside them: a machine busy with other tests slows both alike.
+  const cost = (id) => {
+    let best = Infinity;
+    for (let round = 0; round < 5; round++) {
+      const started = performance.now();
+      for (let k = 0; k < 6; k++) panel(id, 64, 32, { stepPos: k * 0.1, pulse: PULSE });
+      best = Math.min(best, (performance.now() - started) / 6);
+    }
+    return best;
+  };
+  const plasma = cost('plasma');
+  for (const id of ['bars', 'fire', 'rain']) {
+    const took = cost(id);
+    assert.ok(took < plasma * 2.5 + 0.5, `${id}: ${took.toFixed(2)} ms a frame, plasma ${plasma.toFixed(2)} ms`);
+  }
+});
