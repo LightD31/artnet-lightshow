@@ -1,6 +1,6 @@
 {
   "name": "artnet-lightshow",
-  "version": "1.0.0",
+  "version": "3.0.0",
   "description": "ArtNet light show controller for 4x Cameo ROOT PAR 6",
   "main": "server.js",
   "type": "module",
