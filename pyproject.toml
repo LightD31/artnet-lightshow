@@ -51,6 +51,9 @@ dependencies = [
     "onnxruntime>=1.17",
     # The AudioSet tagger (weights: scripts/download-models.py --only panns).
     "panns_inference>=0.1.1",
+    # Key detection (Deezer's S-KEY), weights included. Its own metadata pins
+    # torch 2.7 exactly; see dependency-metadata below for why that is ignored.
+    "skey @ git+https://github.com/deezer/skey.git@918b83d273568d5041569bb8068843d19a335726",
     # Live input.
     "soundcard>=0.4.6",
     "sounddevice>=0.5",
@@ -71,6 +74,16 @@ rocm = ["torch>=2.7", "torchaudio>=2.7", "torchvision>=0.22", "triton-rocm; sys_
 [tool.uv]
 package = false
 conflicts = [[{ extra = "cpu" }, { extra = "cu128" }, { extra = "rocm" }]]
+
+# S-KEY as it declares itself would hold torch and torchaudio at 2.7.x and numpy
+# at 2.2.x, and taking it at its word replaced a GPU torch with the 2.7 CPU wheel —
+# so it was left out, and every track's key fell back to the internal estimate.
+# Nothing in its code needs 2.7 (it finds keys on the locked torch 2.11); what
+# it needs, without the pins:
+[[tool.uv.dependency-metadata]]
+name = "skey"
+version = "0.1.0"
+requires-dist = ["numpy", "torch", "torchaudio", "tqdm", "einops>=0.8", "nnAudio>=0.3.3", "soundfile"]
 
 [tool.uv.sources]
 torch = [

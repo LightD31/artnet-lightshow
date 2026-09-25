@@ -85,7 +85,9 @@ onnxruntime>=1.17
 audioread>=3.0
 # S-KEY (key detection) is not listed here because it pins torch and
 # torchaudio to 2.7.x, and installing it replaces any other torch — a GPU build
-# included — with the 2.7 CPU wheel. Install it on its own, without its pins:
+# included — with the 2.7 CPU wheel. The uv environment (pyproject.toml)
+# includes it with those pins set aside; on this route, install it on its own,
+# without its pins:
 #
 #     pip install --no-deps git+https://github.com/deezer/skey.git
 
