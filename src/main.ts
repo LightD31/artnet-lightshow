@@ -40,6 +40,8 @@ import * as pythonEnv from './python-env.ts';
 import { installProcessSafetyNet } from './server/guard.ts';
 import { startHealthMonitor } from './server/health.ts';
 import { supervision, startHeartbeat, EXIT_CONFIG, EXIT_RESTART } from './server/supervised.ts';
+import { LookStore, currentLook, putBack, resumeAt } from './server/look-store.ts';
+import { configFile } from './server/config-dir.ts';
 import { messageOf } from './errors.ts';
 
 // Before anything else can fail: a fault the code did not expect is reported
@@ -187,6 +189,16 @@ setPersist((patch) => {
 // every one of them saves, so the rig comes back as it was left.
 setHooks({ showChanged: () => showStore.scheduleSave() });
 
+// Started again by the supervisor — after a crash, a hang, or a restart from
+// the app — the rig comes back as it was, not on the default look: put back
+// before the engine's first frame (look-store.ts).
+const lookStore = new LookStore(configFile('look.json'));
+const savedLook = supervised.recovering ? lookStore.load() : undefined;
+if (savedLook) {
+  putBack(savedLook);
+  console.log(`[look] put back the look from ${savedLook.savedAt}, before the restart`);
+}
+
 // Keep the Spotify session across restarts. Only the refresh token is stored —
 // access tokens last an hour, so one saved at shutdown would be stale by the
 // next show, while the refresh token mints a fresh one on demand. Spotify may
@@ -202,6 +214,28 @@ attachSockets(io, { midi, integrations });
 
 // On a thread of its own unless the settings say otherwise (engine.thread).
 startEngine({ thread: settings.get('engine.thread') });
+
+// The auto show, if it was running: its track's show from the cache, following
+// what it followed before. A player the server has to reconnect to (Spotify,
+// the decks) is given half a minute to come back first, so the show picks up
+// where the music is rather than from the top on a stopwatch.
+async function resumeAutoShow(auto: NonNullable<NonNullable<typeof savedLook>['auto']>): Promise<void> {
+  const saved = savedLook as NonNullable<typeof savedLook>;
+  if (!auto.key || !(await autoShow.resume(auto.key, auto.track as typeof autoShow.track))) {
+    console.warn('[look] the auto show was running, but its track is no longer in the analysis cache');
+    return;
+  }
+  for (let waited = 0; auto.source !== 'timer' && integrations.resolveAutoSource() !== auto.source && waited < 30_000; waited += 1000) {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  const source = integrations.startAutoShow({ fromMs: resumeAt(saved) ?? 0 });
+  integrations.broadcast();
+  console.log(`[look] took the auto show up again, following ${source}`);
+}
+if (savedLook?.auto?.running) resumeAutoShow(savedLook.auto).catch((err) => console.warn(`[look] could not resume the auto show: ${messageOf(err)}`));
+
+// Kept every two seconds when it has changed, for the next restart to put back.
+setInterval(() => lookStore.save(currentLook(autoShow, integrations.resolveAutoSource())), 2000).unref();
 // While Art-Net broadcasts, find the nodes and send each its universes.
 artnetDiscovery.start();
 

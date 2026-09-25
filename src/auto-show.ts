@@ -478,6 +478,19 @@ class AutoShow {
   }
 
   /**
+   * Take a track's show up again from the analysis cache, with no audio to
+   * hand — after a restart (look-store.ts). True when the cache still has it.
+   */
+  async resume(cacheKey: string, track: ShowTrack | null): Promise<boolean> {
+    this.track = track;
+    try {
+      return await this._loadFromCache(cacheKey);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /**
    * State-free runner: send the audio to the persistent analyzer worker and
    * return the parsed analysis JSON. Does not touch instance state (so it's
    * safe to call from prefetch while a show is already running).
