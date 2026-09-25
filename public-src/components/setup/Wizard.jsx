@@ -255,7 +255,7 @@ function Music({ register }) {
       <fieldset class="wizard-group">
         <legend>Players</legend>
         <label class="wizard-check"><input type="checkbox" checked={prolink} onChange={(e) => setProlink(e.target.checked)} /> Pioneer CDJs (PRO DJ LINK)</label>
-        <label class="wizard-check"><input type="checkbox" checked={smtc} onChange={(e) => setSmtc(e.target.checked)} /> Whatever plays on this computer (Windows media session)</label>
+        <label class="wizard-check"><input type="checkbox" checked={smtc} onChange={(e) => setSmtc(e.target.checked)} /> Whatever plays on this computer (its media session, on Windows or Linux)</label>
       </fieldset>
       <fieldset class="wizard-group">
         <legend>Listening</legend>

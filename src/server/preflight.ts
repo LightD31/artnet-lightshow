@@ -30,6 +30,7 @@ import type { LiveDevices } from '../live-input.ts';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { EngineStatus } from './engine.ts';
 import { isLoopback } from './loopback.ts';
+import { osNowPlayingKind } from '../os-now-playing.ts';
 
 export type CheckStatus = 'ok' | 'warn' | 'fail' | 'info';
 
@@ -680,7 +681,8 @@ function checkPlaybackSources({ spotify, prolink }: Pick<PreflightSubjects, 'spo
   else if (spotify && spotify.configured) configured.push('Spotify (configured, not connected — visit /auth/spotify)');
   if (prolink && prolink.connected) configured.push('PRO DJ LINK (connected)');
   else if (state.prolinkEnabled) configured.push('PRO DJ LINK (enabled, no CDJs seen yet)');
-  if (settings.get('sources.smtc') && process.platform === 'win32') configured.push('Now playing (SMTC)');
+  const osKind = osNowPlayingKind();
+  if (settings.get('sources.smtc') && osKind) configured.push(`Now playing (${osKind})`);
   if (settings.get('deezer.arl')) configured.push('Deezer ARL (exact ISRC audio)');
 
   if (!configured.length) {

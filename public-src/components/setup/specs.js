@@ -114,7 +114,8 @@ export const SOURCES = {
   fields: [
     { path: 'sources.prolink', label: 'PRO DJ LINK', type: 'toggle', help: 'Follow CDJs on the network for tempo and track changes.' },
     { path: 'sources.smtc', label: 'Now Playing', type: 'toggle',
-      help: 'Read the Windows media session, so any player drives the show. Windows only.' },
+      help: 'Read the computer\'s media session — the Windows one, or the MPRIS players on Linux — so any player '
+        + 'drives the show. Not on macOS.' },
   ],
 };
 

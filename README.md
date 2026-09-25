@@ -99,9 +99,10 @@ via **Bitfocus Companion**, and a REST API.
 - **Reads the buildup** — measures how far the snare roll subdivides and whether
   the tempo genuinely ramps into the drop, and drives the beat division and the
   beat clock from that rather than a fixed escalation
-- Follows playback from **Spotify**, **PRO DJ LINK** (CDJs), the **Windows OS
-  media session** (any player that reports to it), or the **Deezer web player**
-  via the bundled browser extension
+- Follows playback from **Spotify**, **PRO DJ LINK** (CDJs), the **OS media
+  session** — Windows' own, or the MPRIS players on Linux (any player that
+  reports to it) — or the **Deezer web player** via the bundled browser
+  extension
 - **CDJs, properly** — follows the deck the room hears (on air, not just the
   tempo master), to the millisecond on a CDJ-3000; analyses the exact file off
   the USB stick rather than searching for it; takes rekordbox's beat grid and
@@ -1478,7 +1479,7 @@ Changing it recycles the analyzer process; no restart needed.
 | **Spotify + OS clock** | Both of the two below. The best option when you play Spotify on this machine — see [Spotify + OS clock](#spotify--os-clock-the-hybrid-source). |
 | **Spotify** | A client ID and secret under Sources → Spotify, then *Connect Spotify*. Register the redirect URI the server prints at startup — see [Spotify authorisation](#spotify-authorisation). |
 | **PRO DJ LINK** | CDJs on the same network. Toggle it under Sources → Playback sources, or on the main page. See [PRO DJ LINK](#pro-dj-link). |
-| **Now playing (Windows)** | Nothing — reads the OS media session, so any player that reports to it works. Toggle it under *Playback Sources*. |
+| **Now playing (OS)** | Nothing — reads the OS media session, so any player that reports to it works: the Windows media session (SMTC), or on Linux the MPRIS players on the session bus, through systemd's `busctl`. Not on macOS. Toggle it under *Playback Sources*. |
 | **Deezer** | The extension in `browser-extension/` (see its README). Carries ISRC and the upcoming queue, so it prefetches. |
 | **Live input (by ear)** | The [live input](#live-input) on. Needs no analysis: the show answers what it hears. *Auto-detect* falls back to it before the timer. |
 | **Timer** | Fallback: plays the analysed timeline against a wall clock. |
@@ -1573,8 +1574,19 @@ while it is reporting the track Spotify says is playing — matched on title,
 artist and duration. When it is not (a different app took the media keys, the
 session went stale, you are playing on another device) the clock falls back to
 Spotify's own position, which is exactly what the Spotify source would have
-done. On a machine with no media session at all — anything but Windows today —
-hybrid still runs; it just runs on the Spotify clock.
+done. On a machine with no media session at all — a Mac, or a server started
+outside the desktop session — hybrid still runs; it just runs on the Spotify
+clock.
+
+**On Linux** the session is MPRIS. Spotify, Firefox and Chromium tabs, VLC, mpv,
+Rhythmbox and the other desktop players publish themselves on the session bus
+as `org.mpris.MediaPlayer2.*`, and the server reads them through `busctl`, which
+comes with systemd, twice a second. With several players it follows the one
+that started playing last and stays with it while it plays. With none playing,
+it reports the one that played last, paused. The server has to run inside the
+desktop session (as your user, with `DBUS_SESSION_BUS_ADDRESS` set) to see the
+players. Started from a system service it has no session bus, and it says so
+once in the log.
 
 The *Follow* selector's **Auto-detect** picks it whenever both halves are live.
 The source strip shows which clock is driving, with the current drift in its
@@ -2432,7 +2444,7 @@ it has edits not applied yet. Most settings take effect immediately.
 | Rig → Outputs | **Art-Net** | Enabled, node IP, port, default universe, finding nodes, ArtSync |
 | Rig → Outputs | **sACN (E1.31)** | Enabled, node IP, priority, source name, universe offset, network, component ID |
 | Rig → Outputs | **Philips Hue** | Enabled, bridge address, pairing, entertainment area, pars delay, channel-to-fixture bindings |
-| Sources | **Playback sources** | PRO DJ LINK, Windows now-playing (SMTC) |
+| Sources | **Playback sources** | PRO DJ LINK, the OS now-playing (SMTC on Windows, MPRIS on Linux) |
 | Sources | **Spotify** | Client ID, client secret, optional OAuth proxy, unverified-state escape hatch, and the saved session (server-written, never shown) |
 | Sources | **Deezer** | ARL cookie — exact ISRC-matched audio instead of a yt-dlp search |
 | Sources | **Live input** | Enabled, what to listen to, device, auto-sync, play by ear, room latency |
