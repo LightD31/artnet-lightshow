@@ -9,6 +9,7 @@ import { Server } from 'socket.io';
 import MidiController, { openMidiOutput } from './midi.ts';
 import ProLink from './prolink.ts';
 import LiveInput from './live-input.ts';
+import type { LiveOptions } from './live-input.ts';
 import MidiClock from './midi-clock.ts';
 import SpotifyClient from './spotify.ts';
 import NowPlayingSource from './nowplaying-source.ts';
@@ -30,16 +31,18 @@ import { attachSockets } from './server/sockets.ts';
 import { createAuth, configError, hostOfUrl, sourceMapsForLoopback } from './server/auth.ts';
 import { isLoopback } from './server/loopback.ts';
 import { settings, CONFIG_FILE, warnAboutLegacyEnv } from './server/settings.ts';
-import { cacheDir } from './server/config-dir.ts';
+import { cacheDir, dataDir } from './server/config-dir.ts';
+import { openBrowser, shouldOpenBrowser } from './server/open-browser.ts';
 import { createApplier } from './server/apply.ts';
 import { midiMap } from './server/midi-map.ts';
 import { cues } from './server/cues.ts';
 import { showStore, SHOW_FILE } from './server/show-store.ts';
 import { modelManager } from './server/model-manager.ts';
+import { pythonSetup } from './server/python-setup.ts';
 import * as pythonEnv from './python-env.ts';
 import { installProcessSafetyNet } from './server/guard.ts';
 import { startHealthMonitor } from './server/health.ts';
-import { supervision, startHeartbeat, EXIT_CONFIG, EXIT_RESTART } from './server/supervised.ts';
+import { supervision, startHeartbeat, listenToSupervisor, EXIT_CONFIG, EXIT_RESTART } from './server/supervised.ts';
 import { LookStore, currentLook, putBack, resumeAt } from './server/look-store.ts';
 import { configFile } from './server/config-dir.ts';
 import { messageOf } from './errors.ts';
@@ -149,6 +152,22 @@ modelManager.onFinished((job) => {
   if (Object.values(job.models).some((m) => m.state === 'done') && autoShow.restartWorker) {
     autoShow.restartWorker('analysis models downloaded', { whenIdle: true });
   }
+});
+// Setting the analysis environment up replaces the Python the analyser and
+// the live input run from — which, on Windows, a running Python keeps locked.
+// Both stand aside while uv works, and come back on what it made.
+let liveBeforeSetup: LiveOptions | null = null;
+pythonSetup.onHooks({
+  before: (reason) => {
+    autoShow.pauseAnalysis(reason);
+    liveBeforeSetup = liveInput.running ? liveInput.options : null;
+    liveInput.stop();
+  },
+  after: () => {
+    autoShow.resumeAnalysis();
+    if (liveBeforeSetup) liveInput.start(liveBeforeSetup);
+    liveBeforeSetup = null;
+  },
 });
 conductor.setAutoSource(() => autoShow.beatSource());
 conductor.setProlinkSource(() => (state.prolinkEnabled && !autoShow.running ? prolink.getBeatReading() : null));
@@ -283,7 +302,7 @@ const PORT = settings.get('server.port');
 server.on('error', (err: NodeJS.ErrnoException) => {
   if (err.code === 'EADDRINUSE') {
     console.error(`\nPort ${PORT} is already in use — is another copy of the lightshow running? `
-      + 'Stop it, or change the port in config/settings.json (server.port).\n');
+      + `Stop it, or change the port in ${CONFIG_FILE} (server.port).\n`);
   } else {
     console.error(`\nCould not listen on ${HOST}:${PORT}: ${err.message}\n`);
   }
@@ -309,6 +328,7 @@ server.listen(PORT, HOST, () => {
   console.log(`\n  ArtNet Lightshow  →  http://${shownHost}:${PORT}`);
   console.log(`  Setup             →  http://${shownHost}:${PORT}/#rig  (the Rig, Sources and Settings views)`);
   console.log(`  Config file       →  ${CONFIG_FILE}`);
+  if (process.env.LIGHTSHOW_DATA_DIR) console.log(`  Data folder       →  ${dataDir()}`);
   // Deliberately not the token itself: this banner is the first thing anyone
   // pastes into a bug report or a chat window.
   console.log(`  Access            →  ${auth.enabled
@@ -337,6 +357,8 @@ server.listen(PORT, HOST, () => {
   console.log(`  Now Playing       →  ${npStatus}`);
   console.log(`  Python            →  ${pythonEnv.describe()}`);
   console.log(`  Auto Show         →  Essentia + Spotify integration\n`);
+
+  if (shouldOpenBrowser({ restarts: supervised.restarts })) openBrowser(`http://${shownHost}:${PORT}/`);
 
   restoreSpotifySession();
 
@@ -403,3 +425,10 @@ function restartServer(reason: string): boolean {
 
 process.on('SIGINT',  () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
+// A terminal hung up — on Windows, the console window closed, with a few
+// seconds before Windows ends the process: enough to black out.
+process.on('SIGHUP',  () => shutdown('SIGHUP'));
+listenToSupervisor({
+  stop: (signal) => shutdown(signal),
+  gone: () => shutdown('The supervisor has gone'),
+});

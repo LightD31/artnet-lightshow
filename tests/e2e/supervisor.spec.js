@@ -1,7 +1,8 @@
 // The supervisor, for real: `node server.js` as `npm start` runs it, on a
 // port and a config directory of its own. The server is killed mid-look and
 // must come back with the look; a restart asked for from the app must too;
-// and stopping the supervisor stops everything, cleanly.
+// stopping the supervisor stops everything, cleanly; and a supervisor killed
+// outright takes the server with it.
 
 import { test, expect } from '@playwright/test';
 import { spawn } from 'node:child_process';
@@ -39,14 +40,7 @@ async function serverUp(notPid = null) {
   return last;
 }
 
-test.beforeAll(async () => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lightshow-supervised-'));
-  fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({
-    server: { host: '127.0.0.1', port: PORT, token: '' },
-    artnet: { enabled: false },
-    sacn: { enabled: false },
-    sources: { prolink: false, smtc: false },
-  }));
+function startSupervisor() {
   const env = {
     ...process.env,
     LIGHTSHOW_CONFIG_DIR: dir,
@@ -57,6 +51,17 @@ test.beforeAll(async () => {
   delete env.LIGHTSHOW_SUPERVISED;
   supervisor = spawn(process.execPath, ['server.js'], { cwd: ROOT, env, stdio: 'ignore' });
   exited = new Promise((resolve) => supervisor.on('exit', (code, signal) => resolve({ code, signal })));
+}
+
+test.beforeAll(async () => {
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lightshow-supervised-'));
+  fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({
+    server: { host: '127.0.0.1', port: PORT, token: '' },
+    artnet: { enabled: false },
+    sacn: { enabled: false },
+    sources: { prolink: false, smtc: false },
+  }));
+  startSupervisor();
 });
 
 test.afterAll(async () => {
@@ -105,4 +110,14 @@ test('stopping the supervisor stops the server with it, cleanly', async () => {
   supervisor.kill('SIGTERM');
   expect(await exited).toEqual({ code: 0, signal: null });
   expect(() => process.kill(pid, 0), 'the server is gone too').toThrow();
+});
+
+test('a supervisor killed outright takes the server with it, rather than leave it holding the port', async () => {
+  startSupervisor();
+  const { pid } = await serverUp();
+  supervisor.kill('SIGKILL');
+  expect(await exited).toEqual({ code: null, signal: 'SIGKILL' });
+  await expect.poll(() => { try { process.kill(pid, 0); return 'running'; } catch (_) { return 'gone'; } },
+    { timeout: 10_000 }).toBe('gone');
+  await expect(fetch(`${BASE}/healthz`), 'the port is free again').rejects.toThrow();
 });

@@ -3217,6 +3217,28 @@ input[type=range]::-moz-range-thumb {
 .models-status .warm-bar { align-self: stretch; }
 .models-here { color: var(--text-green); }
 
+/* The analysis environment: set up by uv, from the page. */
+.setting-note.ok { color: var(--text-green); }
+.python-progress { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+.python-where { margin-top: 10px; }
+.python-log-details { margin-top: 10px; }
+.python-log-details summary { cursor: pointer; font-size: 11px; color: var(--muted); }
+.python-log {
+  margin: 6px 0 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
 /* The first-run setup. */
 .wizard-backdrop {
   position: fixed; inset: 0; z-index: 400;

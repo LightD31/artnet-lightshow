@@ -525,8 +525,8 @@ Every phase is its own PR, keeps `npm run check` and the Python suite green, and
 
 ### Phase 7 — Platform & ops (interleaved)
 
-> **Status.** In three parts: **7a** (upgrades and refactors) and **7b** (logging, health, the supervisor,
-> Deezer as a plugin) are done; **7c** (packaging) is next. **7a — done:**
+> **Status: done**, in three parts — **7a** (upgrades and refactors), **7b** (logging, health, the supervisor,
+> Deezer as a plugin) and **7c** (packaging). **7a — done:**
 > - **Upgrades:** Node 24 LTS in CI and `.nvmrc` (the unit job also runs on 22.18, the oldest Node that works);
 >   zod 4, @preact/signals 2, eslint 10 (with `@eslint/js`), esbuild 0.28; dotenv replaced by Node's own
 >   `process.loadEnvFile` (`src/load-env.ts`). The director's golden now hashes the plan to ten digits: V8's
@@ -555,6 +555,26 @@ Every phase is its own PR, keeps `npm run check` and the Python suite green, and
 >   `--openssl-legacy-provider` is no longer on by default — the supervisor passes it only when an ARL is
 >   set, and a first ARL is reported as waiting on a restart. The terms-of-service risk is said where the
 >   ARL is entered and in the README.
+>
+> **7c — done:**
+> - **The packaged build** (`npm run package`): Node 24 as a single executable application whose script
+>   (`scripts/sea-main.cjs`) picks the data folder and imports the app beside it — not bundled: the `app`
+>   folder is the same files a checkout runs, type-stripped by Node, with the production `node_modules`.
+>   Checked first that `import()`, worker threads from `.ts` and fork with IPC all work inside a SEA. The
+>   Windows executable carries the app's icon and name (resedit, after postject). Portable zip (data beside
+>   it), Windows installer (Inno Setup, per user, data in `%LOCALAPPDATA%`), Linux archive. CI builds each on
+>   its own platform, smoke-tests it (`scripts/smoke-package.js`), and installs, runs and uninstalls the
+>   installer; a version tag drafts a release.
+> - **The uv bootstrap:** Sources → Analysis environment runs `uv sync --locked --extra <build> --python 3.12`
+>   with uv's own Python — nothing to install first — suggesting CUDA, ROCm or the CPU build from the machine,
+>   with progress, cancel, and the analyser paused (and the live input stopped) while it runs; the package
+>   carries uv. `npm run setup:python` from a terminal.
+> - **What made it possible:** everything the server writes hangs off one data directory
+>   (`LIGHTSHOW_DATA_DIR`); yt-dlp, Deno (yt-dlp[deno], the runtime a SEA needs, which cannot be the Node
+>   yt-dlp runs) and ffmpeg (imageio-ffmpeg) come with the environment and are found there when not on PATH;
+>   the supervisor stops the server over IPC (on Windows a signal is a kill, with no blackout), a server
+>   outlives no supervisor, SIGHUP (the console closed) is a clean stop, and under a SEA the legacy OpenSSL
+>   provider goes through NODE_OPTIONS.
 - **Upgrades:** Node 24 LTS, zod 4, @preact/signals 2, eslint 10, esbuild 0.28; drop dotenv.
 - **Refactors:**
   - split `routes.js` (87 routes) into domain routers;

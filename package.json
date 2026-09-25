@@ -11,6 +11,8 @@
     "start": "node server.js",
     "dev": "node --watch server.js --no-supervisor",
     "preflight": "node scripts/preflight.js --download-models",
+    "setup:python": "node scripts/setup-python.js",
+    "package": "node scripts/package.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc -p tsconfig.json",
@@ -23,7 +25,6 @@
     "node": ">=22.18"
   },
   "dependencies": {
-    "@preact/signals": "^2.11.2",
     "compression": "^1.8.2",
     "easymidi": "^3.2.0",
     "express": "^5.2.1",
@@ -31,12 +32,9 @@
     "jszip": "^3.10.1",
     "multer": "^2.1.1",
     "node-dtls-client": "^2.0.3",
-    "nosleep.js": "^0.12.0",
     "pino": "^10.3.1",
-    "preact": "^10.19.3",
     "socket.io": "^4.7.2",
     "socket.io-client": "^4.7.2",
-    "three": "^0.186.1",
     "zod": "^4.6.5"
   },
   "optionalDependencies": {
@@ -46,6 +44,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.56.1",
+    "@preact/signals": "^2.11.2",
     "@types/compression": "^1.8.1",
     "@types/express": "^5.0.6",
     "@types/multer": "^2.2.0",
@@ -53,7 +52,12 @@
     "axe-core": "^4.11.0",
     "esbuild": "^0.28.2",
     "eslint": "^10.11.0",
+    "nosleep.js": "^0.12.0",
+    "postject": "^1.0.0-alpha.6",
+    "preact": "^10.19.3",
     "preact-render-to-string": "^6.7.0",
+    "resedit": "^3.1.0",
+    "three": "^0.186.1",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.70.1"
   },

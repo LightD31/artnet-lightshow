@@ -36,3 +36,6 @@ public/chunks/
 # Playwright output (npm run test:e2e)
 test-results/
 playwright-report/
+
+# The packaged build (npm run package) and the downloads it caches.
+dist/

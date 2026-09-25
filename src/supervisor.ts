@@ -1,5 +1,6 @@
 import { fork as nodeFork } from 'node:child_process';
 import fs from 'node:fs';
+import { isSea } from 'node:sea';
 import type { ChildProcess, ForkOptions } from 'node:child_process';
 import { configFile } from './server/config-dir.ts';
 import { EXIT_CONFIG, EXIT_RESTART } from './server/supervised.ts';
@@ -28,6 +29,18 @@ import type { LastExit } from './server/supervised.ts';
  * Deezer's downloads need OpenSSL's legacy provider (Blowfish), which is
  * nothing anything else here should have: it is turned on for the server only
  * when a Deezer ARL is set (deezer.ts).
+ *
+ * Stopping asks the server over the IPC channel, where it blacks the rig out
+ * before it exits, rather than with a signal: on Windows a signal sent to
+ * another process is no signal at all but an immediate kill, and a DMX node
+ * left without its blackout holds the last frame it was sent. A server that
+ * has not gone after ten seconds is killed.
+ *
+ * In the packaged build the supervisor and the server are one executable
+ * (a Node single executable application, scripts/sea-main.cjs), which runs
+ * its own script whatever it is given and takes no Node flags on its command
+ * line: the server is forked as that executable again, and the legacy
+ * provider goes through NODE_OPTIONS instead.
  */
 
 export interface SupervisorOptions {
@@ -50,8 +63,13 @@ export interface SupervisorOptions {
   startupFailures?: number;
   /** How often the watchdog looks. */
   checkMs?: number;
-  /** Forward a stop signal to the server; on Windows the console has sent it already, and kill() is not a signal. */
+  /**
+   * Stop a server with no IPC channel left with a signal; on Windows the
+   * console has sent it already, and kill() is not a signal.
+   */
   forwardSignals?: boolean;
+  /** Running as a single executable application: Node flags go in NODE_OPTIONS. */
+  sea?: boolean;
 }
 
 export interface Supervisor {
@@ -101,6 +119,7 @@ export function supervise(options: SupervisorOptions): Supervisor {
     startupFailures = 3,
     checkMs = 1000,
     forwardSignals = process.platform !== 'win32',
+    sea = isSea(),
   } = options;
 
   let child: ChildProcess | null = null;
@@ -116,6 +135,10 @@ export function supervise(options: SupervisorOptions): Supervisor {
     if (stopping) return;
     const flags = [...execArgv.filter((f) => f !== '--openssl-legacy-provider')];
     if (legacyProvider()) flags.push('--openssl-legacy-provider');
+    // A single executable takes its flags from NODE_OPTIONS, not its command line.
+    const nodeOptions = sea
+      ? [...String(env.NODE_OPTIONS || '').split(/\s+/).filter((f) => f && f !== '--openssl-legacy-provider'), ...flags].join(' ')
+      : env.NODE_OPTIONS;
     const spawnedAt = now();
     let ready = false;
     let readyAt = 0;
@@ -124,10 +147,11 @@ export function supervise(options: SupervisorOptions): Supervisor {
     let requested: string | null = null;
 
     const c = fork(script, args, {
-      execArgv: flags,
+      execArgv: sea ? [] : flags,
       stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
       env: {
         ...env,
+        ...(nodeOptions ? { NODE_OPTIONS: nodeOptions } : {}),
         LIGHTSHOW_SUPERVISED: '1',
         LIGHTSHOW_RESTARTS: String(restarts),
         LIGHTSHOW_RECOVER: restarts > 0 ? '1' : '',
@@ -204,7 +228,13 @@ export function supervise(options: SupervisorOptions): Supervisor {
       stopping = true;
       const c = child;
       if (!c) { settle(0); return; }
-      if (forwardSignals) c.kill(signal);
+      // Asked, so it blacks out first (supervised.ts); a signal only when the
+      // channel is gone.
+      let asked = false;
+      if (c.connected) {
+        try { c.send({ type: 'stop', signal }); asked = true; } catch (_) { /* closed under us */ }
+      }
+      if (!asked && forwardSignals) c.kill(signal);
       // A server that will not stop in time is stopped.
       const timer = setTimeout(() => { if (child === c) c.kill('SIGKILL'); }, stopMs);
       timer.unref?.();
@@ -225,5 +255,12 @@ export async function runSupervisor(script: string): Promise<never> {
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
     process.on(signal, () => supervisor.stop(signal === 'SIGHUP' ? 'SIGTERM' : signal));
   }
-  process.exit(await supervisor.done);
+  const code = await supervisor.done;
+  // The packaged build is started with a double-click: a console that closes
+  // the moment it fails takes the reason with it.
+  if (code !== 0 && process.env.LIGHTSHOW_PACKAGED === '1' && process.stdin.isTTY) {
+    process.stderr.write('\nThe lightshow has stopped. Press Enter to close this window.\n');
+    await new Promise((resolve) => process.stdin.once('data', resolve));
+  }
+  process.exit(code);
 }

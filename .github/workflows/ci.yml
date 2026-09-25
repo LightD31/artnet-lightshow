@@ -73,6 +73,11 @@ jobs:
           path: test-results/
           retention-days: 7
 
+  # The packaged build, made, run and (on Windows) installed on the platform
+  # it is for — see package.yml.
+  package:
+    uses: ./.github/workflows/package.yml
+
   # The analysis pipeline is Python, and its correctness is not something the
   # Node tests can reach: a beat grid 40 ms out produces a perfectly valid
   # timeline full of cues that land late. So CI installs the scientific stack

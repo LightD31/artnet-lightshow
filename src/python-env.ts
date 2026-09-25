@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
-import path from 'node:path';
 import { settings } from './server/settings.ts';
+import { venvPython } from './server/config-dir.ts';
 
 /** What probing one interpreter found. */
 export interface PythonProbe {
@@ -40,12 +40,11 @@ export interface PythonInfo extends PythonProbe {
 // feed degrades gracefully without them.
 const REQUIRED_MODULES = ['librosa', 'numpy', 'soundfile', 'torch', 'beat_this'];
 
-// The environment `uv sync` makes in the repository comes first: it was built
-// for this project from its lockfile, which no other interpreter on the
-// machine can say.
-const PROJECT_VENV = process.platform === 'win32'
-  ? path.join(import.meta.dirname, '..', '.venv', 'Scripts', 'python.exe')
-  : path.join(import.meta.dirname, '..', '.venv', 'bin', 'python');
+// The environment `uv sync` makes from the lockfile comes first — in the
+// checkout, or in the data directory of a packaged build (config-dir.ts): it
+// was built for this project, which no other interpreter on the machine can
+// say.
+const PROJECT_VENV = venvPython();
 
 const CANDIDATES = process.platform === 'win32'
   ? ['py', 'python3', 'python']
@@ -171,8 +170,8 @@ function warnIfUnusable(log: (line: string) => void = console.warn): PythonInfo 
     }
   }
 
-  lines.push('[python] Fix: from the project folder, make its locked environment with');
-  lines.push('[python]   uv sync --extra cpu      (or --extra cu128 for NVIDIA, --extra rocm for AMD on Linux)');
+  lines.push('[python] Fix: set it up from the app — Sources → Analysis environment, one button — or from the');
+  lines.push('[python]   project folder with: npm run setup:python   (uv sync from the lockfile)');
   lines.push(`[python] or install into this interpreter with`);
   lines.push(`[python]   "${info.executable || info.exe}" -m pip install -r requirements.txt`);
   lines.push('[python] or set a specific interpreter in the app under Sources → Analysis.');

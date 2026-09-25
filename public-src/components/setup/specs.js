@@ -33,7 +33,7 @@ export function pythonNote(data) {
   const where = py.executable || py.exe;
   if (py.missing && py.missing.length) {
     return { ok: false, text: `Currently: ${where} (${py.version}) — missing ${py.missing.join(', ')}. `
-      + `Install with: "${where}" -m pip install -r requirements.txt` };
+      + `Set it up under Analysis environment, below, or install with: "${where}" -m pip install -r requirements.txt` };
   }
   return { ok: true, text: `Currently: ${where} (${py.version}) — all dependencies present.` };
 }
@@ -122,7 +122,7 @@ export const LIVE = {
   id: 'live',
   title: 'Live input',
   desc: 'Hear the music as it plays. Patterns keep the beat of any track, known or not, and a show made for a known '
-    + 'track lines itself up with what the room hears. Needs the Python packages in requirements.txt. Takes effect immediately.',
+    + 'track lines itself up with what the room hears. Needs the analysis environment (below). Takes effect immediately.',
   fields: [
     { path: 'live.enabled', label: 'Enabled', type: 'toggle' },
     { path: 'live.source', label: 'Listen To', type: 'select', resets: ['live.device'],

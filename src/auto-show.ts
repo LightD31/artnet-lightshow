@@ -19,6 +19,7 @@ import { guarded } from './server/guard.ts';
 import { resolveIsrc, splitQuery } from './isrc.ts';
 import { gridFromAnalysis } from './shared/beat-clock.ts';
 import * as ytdlp from './ytdlp.ts';
+import * as tools from './tools.ts';
 import { messageOf, cancelledError, isCancelled } from './errors.ts';
 import type { AnalysisCache, CacheMeta } from './analysis-cache.ts';
 import type { AnalysisPriority } from './analyzer-worker.ts';
@@ -516,6 +517,15 @@ class AutoShow {
    * Tear down the persistent analyzer subprocess. Called on server shutdown.
    * Safe to call multiple times.
    */
+  /** Hold the analysis while its environment is replaced (python-setup.ts); resumeAnalysis() lets it go. */
+  pauseAnalysis(reason: string): void {
+    if (this._worker) this._worker.pause(reason);
+  }
+
+  resumeAnalysis(): void {
+    if (this._worker) this._worker.resume();
+  }
+
   /** Recycle the analyzer process — used when the interpreter changes. */
   restartWorker(reason: string, opts: { whenIdle?: boolean } = {}): void {
     if (this._worker) this._worker.restart(reason, opts);
@@ -823,8 +833,18 @@ class AutoShow {
       }
     }
 
-    // Fallback: yt-dlp
-    const runtime = ytdlp.runtimeArgs(await ytdlp.version());
+    // Fallback: yt-dlp — found on PATH or in the analysis environment, with a
+    // JavaScript runtime, and the ffmpeg it extracts the audio with when that
+    // is not on PATH either (tools.ts).
+    const found = await ytdlp.find();
+    const ff = await tools.ffmpeg();
+    const runtime = {
+      command: found ? found.command : 'yt-dlp',
+      args: [
+        ...ytdlp.runtimeArgs(found ? found.version : null),
+        ...(ff && ff.from === 'environment' ? ['--ffmpeg-location', ff.command] : []),
+      ],
+    };
     const target = typeof targetDurationSec === 'number' && Number.isFinite(targetDurationSec) && targetDurationSec > 0
       ? targetDurationSec : null;
     if (target !== null && !isUrl) {
@@ -842,7 +862,8 @@ class AutoShow {
     return this._ytDlpExec(query, null, runtime);
   }
 
-  _ytDlpExec(query: string, targetDurationSec: number | null, runtimeArgs: string[] = []): Promise<string> {
+  _ytDlpExec(query: string, targetDurationSec: number | null,
+    runtime: { command: string; args: string[] } = { command: 'yt-dlp', args: [] }): Promise<string> {
     return new Promise((resolve, reject) => {
       // Random, not a timestamp: prefetches are started several to a tick,
       // and two downloads sharing a name overwrote each other — one track's
@@ -865,7 +886,7 @@ class AutoShow {
         '--audio-quality', '0',
         '--no-playlist',
         '--no-warnings',
-        ...runtimeArgs,
+        ...runtime.args,
       ];
 
       if (useFilter) {
@@ -880,7 +901,7 @@ class AutoShow {
       args.push('-o', outputTemplate, source);
 
       console.log(`[yt-dlp] Downloading: ${query}${useFilter ? ` (target ${Math.round(duration)}s ±5s)` : ''}`);
-      const proc = spawn('yt-dlp', args, {
+      const proc = spawn(runtime.command, args, {
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
@@ -900,7 +921,8 @@ class AutoShow {
       proc.on('error', (err) => {
         clearTimeout(timer);
         reject(new Error(
-          `yt-dlp not found. Install it: pip install yt-dlp  (or download from https://github.com/yt-dlp/yt-dlp)\n${err.message}`
+          'yt-dlp not found. Set up the analysis environment (Sources → Analysis), which installs it, or install it: '
+          + `pip install "yt-dlp[default]"  (or download from https://github.com/yt-dlp/yt-dlp)\n${err.message}`
         ));
       });
 

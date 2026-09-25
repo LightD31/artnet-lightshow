@@ -17,6 +17,8 @@ import '../src/load-env.ts';
 import path from 'node:path';
 import { runPreflight } from '../src/server/preflight.ts';
 import { AnalysisCache } from '../src/analysis-cache.ts';
+import { cacheDir } from '../src/server/config-dir.ts';
+import * as pythonEnv from '../src/python-env.ts';
 import { spawnSync } from 'node:child_process';
 
 // ANSI only when someone is actually looking at a terminal; piping this into a
@@ -50,14 +52,15 @@ function wrap(text, indent, width) {
 
 async function main() {
   if (process.argv.includes('--download-models')) {
-    const python = process.env.ARTNET_PYTHON || 'python';
+    // The interpreter the server would run the analysis in (python-env.ts).
+    const python = process.env.ARTNET_PYTHON || pythonEnv.pythonExe();
     console.log('  Downloading pretrained analysis weights from Hugging Face…');
     const result = spawnSync(python, [path.join(import.meta.dirname, 'download-models.py')], {
       stdio: 'inherit', env: process.env,
     });
     if (result.status !== 0) process.exit(result.status || 1);
   }
-  const analysisCache = new AnalysisCache(path.join(import.meta.dirname, '..', 'cache', 'analysis'));
+  const analysisCache = new AnalysisCache(path.join(cacheDir(), 'analysis'));
 
   console.log('\n  Pre-show preflight\n');
 

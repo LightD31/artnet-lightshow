@@ -54,8 +54,13 @@ dependencies = [
     # Live input.
     "soundcard>=0.4.6",
     "sounddevice>=0.5",
-    # Audio download fallback.
-    "yt-dlp[default]>=2025.11.12",
+    # Audio download fallback, with the JavaScript runtime YouTube's challenges
+    # need (Deno, installed beside it, where yt-dlp looks first) — nothing to
+    # install separately, and nothing the packaged build's executable can be.
+    "yt-dlp[default,deno]>=2025.11.12",
+    # An ffmpeg for yt-dlp and for converting downloads, used when there is
+    # none on PATH (the server asks imageio-ffmpeg where its binary is).
+    "imageio-ffmpeg>=0.5",
 ]
 
 [project.optional-dependencies]

@@ -14,6 +14,12 @@
  * supervisor restarts it — and exits with EXIT_RESTART when it wants starting
  * again (a setting that only applies on a restart), or EXIT_CONFIG when
  * starting again would only fail the same way.
+ *
+ * The supervisor stops it with a 'stop' message rather than a signal (on
+ * Windows a signal from another process is an immediate kill, with no
+ * blackout), and a server whose supervisor has gone — killed, crashed, ended
+ * from the task manager — stops too, rather than live on holding the port with
+ * nothing to start it again.
  */
 
 /** Exit to be started again straight away (EX_TEMPFAIL). */
@@ -64,4 +70,28 @@ export function startHeartbeat(send: Send | undefined = process.send?.bind(proce
   const timer = setInterval(beat, everyMs);
   timer.unref();
   return () => clearInterval(timer);
+}
+
+/** What the supervisor can say to the server, besides starting it. */
+export interface SupervisorHandlers {
+  /** Asked to stop: black out and exit. */
+  stop: (signal: string) => void;
+  /** The channel to the supervisor closed: it is gone. */
+  gone: () => void;
+}
+
+interface Channel {
+  on(event: 'message', fn: (message: unknown) => void): unknown;
+  on(event: 'disconnect', fn: () => void): unknown;
+}
+
+/** Listen to the supervisor. A no-op without one. */
+export function listenToSupervisor(handlers: SupervisorHandlers,
+  channel: Channel | null = process.send ? process as Channel : null): void {
+  if (!channel) return;
+  channel.on('message', (message) => {
+    const m = (message && typeof message === 'object' ? message : {}) as { type?: unknown; signal?: unknown };
+    if (m.type === 'stop') handlers.stop(typeof m.signal === 'string' && m.signal ? m.signal : 'SIGTERM');
+  });
+  channel.on('disconnect', () => handlers.gone());
 }

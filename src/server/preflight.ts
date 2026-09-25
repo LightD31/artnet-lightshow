@@ -21,6 +21,7 @@ import { cues } from './cues.ts';
 import { midiMap } from './midi-map.ts';
 import * as pythonEnv from '../python-env.ts';
 import * as ytdlp from '../ytdlp.ts';
+import * as tools from '../tools.ts';
 import { codeOf, messageOf } from '../errors.ts';
 import { listLiveDevices } from '../live-input.ts';
 import { modelManager } from './model-manager.ts';
@@ -473,7 +474,8 @@ function checkPython(): Check {
     return {
       id: 'python', label: 'Python', status: FAIL,
       detail: `"${info.exe}" cannot be run — audio analysis will fail.`,
-      fix: 'Install Python 3, or set its full path in Settings → Analysis → Python.',
+      fix: 'Set the analysis environment up under Sources → Analysis environment (it brings its own Python), '
+        + 'or set a Python\'s full path under Sources → Analysis → Python.',
     };
   }
   if (info.missing.length) {
@@ -481,7 +483,7 @@ function checkPython(): Check {
     return {
       id: 'python', label: 'Python', status: FAIL,
       detail: `${where} (${info.version}) is missing: ${info.missing.join(', ')}.`,
-      fix: `"${where}" -m pip install -r requirements.txt`,
+      fix: `Set the analysis environment up under Sources → Analysis environment, or "${where}" -m pip install -r requirements.txt`,
     };
   }
   return {
@@ -512,7 +514,7 @@ async function checkModelStack(verify = pythonEnv.verify): Promise<Check> {
       detail: failures.map(([mod, message]) => `${mod}: ${message}`).join('; '),
       fix: torchPair
         ? 'torch, torchaudio and torchvision have to come from the same build: reinstall the three together from one index '
-          + '(uv sync --extra cpu, or see requirements.txt for CUDA and ROCm).'
+          + '(Sources → Analysis environment → Update the environment, or see requirements.txt).'
         : `"${info.executable || info.exe}" -m pip install -r requirements.txt`,
     };
   }
@@ -525,19 +527,25 @@ async function checkModelStack(verify = pythonEnv.verify): Promise<Check> {
 }
 
 async function checkFfmpeg(): Promise<Check> {
-  const r = await probeCommand('ffmpeg', ['-version']);
+  // On PATH, else the one the analysis environment installs (tools.ts).
+  const found = await tools.ffmpeg();
+  const r = await probeCommand(found ? found.command : 'ffmpeg', ['-version']);
   if (!r.ok) {
     return {
       id: 'ffmpeg', label: 'ffmpeg', status: FAIL,
       detail: `Not usable — ${r.error}. Downloaded audio cannot be decoded, so no track will analyse.`,
-      fix: 'Install ffmpeg with your package manager and make sure it is on PATH.',
+      fix: 'Set up the analysis environment (Sources → Analysis), which includes one, or install ffmpeg with your '
+        + 'package manager and make sure it is on PATH.',
     };
   }
-  return { id: 'ffmpeg', label: 'ffmpeg', status: OK, detail: r.version ?? '' };
+  const where = found && found.from === 'environment' ? ' — from the analysis environment' : '';
+  return { id: 'ffmpeg', label: 'ffmpeg', status: OK, detail: `${r.version ?? ''}${where}` };
 }
 
 async function checkYtDlp(): Promise<Check> {
-  const r = await probeCommand('yt-dlp', ['--version']);
+  // On PATH, else the one the analysis environment installs (tools.ts).
+  const found = await ytdlp.find();
+  const r = await probeCommand(found ? found.command : 'yt-dlp', ['--version']);
   if (!r.ok) {
     const hasDeezer = !!settings.get('deezer.arl');
     return {
@@ -546,11 +554,12 @@ async function checkYtDlp(): Promise<Check> {
         + (hasDeezer
           ? 'Deezer is configured, so ISRC-matched tracks still download; anything Deezer cannot match will fail.'
           : 'Nothing can be downloaded for analysis.'),
-      fix: 'pip install -U "yt-dlp[default]"  (or download it from https://github.com/yt-dlp/yt-dlp)',
+      fix: 'Set up the analysis environment (Sources → Analysis), which installs it, or '
+        + 'pip install -U "yt-dlp[default]"  (or download it from https://github.com/yt-dlp/yt-dlp)',
     };
   }
   // Since 2025.11.12 YouTube needs a JavaScript runtime, which the server
-  // hands yt-dlp itself (see src/ytdlp.js) — but an older yt-dlp can neither
+  // hands yt-dlp itself (see src/ytdlp.ts) — but an older yt-dlp can neither
   // use one nor keep up with YouTube's current challenges.
   if (!ytdlp.needsJsRuntime(r.version ?? '')) {
     return {
@@ -559,9 +568,18 @@ async function checkYtDlp(): Promise<Check> {
       fix: 'pip install -U "yt-dlp[default]"  (or download the latest from https://github.com/yt-dlp/yt-dlp)',
     };
   }
+  const where = found && found.from === 'environment' ? ' from the analysis environment' : '';
+  const runtime = ytdlp.runtimeName();
+  if (!runtime) {
+    return {
+      id: 'yt-dlp', label: 'yt-dlp', status: WARN,
+      detail: `version ${r.version}${where}, but no JavaScript runtime: YouTube downloads are likely to fail.`,
+      fix: 'Set up the analysis environment (Sources → Analysis): it installs Deno beside yt-dlp.',
+    };
+  }
   return {
     id: 'yt-dlp', label: 'yt-dlp', status: OK,
-    detail: `version ${r.version}, JavaScript runtime: Node ${process.versions.node} (this server).`,
+    detail: `version ${r.version}${where}, JavaScript runtime: ${runtime}.`,
   };
 }
 

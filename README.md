@@ -173,9 +173,14 @@ via **Bitfocus Companion**, and a REST API.
 
 ## Quick start
 
-Needs **Node.js 24 LTS** (22.18 or newer still works): the server is
-TypeScript, and Node runs it as it is. `npm start` says so plainly on an older
-Node.
+**On Windows, with nothing installed:** download the installer (or the
+portable zip) from the [releases](https://github.com/LightD31/artnet-lightshow/releases),
+run it, and start **ArtNet Lightshow** from the Start menu. It opens in the
+browser. See [The packaged build](#the-packaged-build).
+
+**From the source**, you need **Node.js 24 LTS** (22.18 or newer still works):
+the server is TypeScript, and Node runs it as it is. `npm start` says so
+plainly on an older Node.
 
 ```bash
 npm install
@@ -193,8 +198,55 @@ Before a show, run `npm run preflight` — see [Pre-show check](#pre-show-check)
 crashes or hangs, with the look it had — see
 [Running the show server](#running-the-show-server).
 
-The auto-show needs Python and a few extras — see
+The auto-show needs Python and a few extras, which the app sets up itself
+under Sources → **Analysis environment** — see
 [Auto show setup](#auto-show-setup). Manual control works without them.
+
+---
+
+## The packaged build
+
+A Windows installer, a portable Windows zip and a Linux archive, from the
+[releases](https://github.com/LightD31/artnet-lightshow/releases). Each runs on a
+machine with nothing installed: no Node, no Python.
+
+| Download | What it does |
+|----------|--------------|
+| `ArtNet-Lightshow-<version>-win32-x64-setup.exe` | Installs for you alone (no administrator) in `%LOCALAPPDATA%\Programs\ArtNet Lightshow`, with a Start menu entry. The data goes in `%LOCALAPPDATA%\ArtNet Lightshow`; an update or uninstall leaves it there |
+| `ArtNet-Lightshow-<version>-win32-x64.zip` | Portable: unzip it anywhere, a USB stick included. The data stays in a `data` folder beside it, because of the file called `portable`. Delete that file to use `%LOCALAPPDATA%\ArtNet Lightshow` instead |
+| `ArtNet-Lightshow-<version>-linux-x64.tar.gz` | The same as the zip, for Linux: run `./artnet-lightshow`. Without `portable`, the data goes in `~/.local/share/artnet-lightshow` |
+
+"The data" is everything the app writes: the settings, the show, the cues, the
+analysis cache, the logs and the analysis environment.
+
+**Starting it.** Double-click **ArtNet Lightshow**. Its console window is the
+server, under [the supervisor](#the-supervisor). On its first start it opens
+the app in the browser (**http://localhost:3000**). Closing the window stops
+the show, and the rig blacks out first. The executable isn't code-signed, so
+Windows SmartScreen may say it "protected your PC" the first time: choose
+*More info* → *Run anyway*.
+
+**The automatic show** needs the analysis environment. Set it up with one button
+under Sources → **Analysis environment**: it downloads Python, torch and the
+models' code, a few gigabytes. Then fetch the models under Sources →
+**Analysis models**. The package carries its own
+[uv](https://docs.astral.sh/uv/) to do this. See [Auto show setup](#auto-show-setup).
+
+`browser-extension/` beside the executable is the Deezer extension. Load it in
+Chrome or Edge from the extensions page (*Developer mode* → *Load unpacked*).
+
+From a terminal, `"ArtNet Lightshow.exe" --version` gives the version. Pass
+`--no-browser` to not open the browser, and `--no-supervisor` to run without
+the supervisor. `LIGHTSHOW_DATA_DIR` puts the data elsewhere. A `.env` in the
+data folder is read at start (see [Moving from .env](#moving-from-env)).
+
+**How it is made.** The executable is Node 24 itself, made a
+[single executable application](https://nodejs.org/api/single-executable-applications.html)
+whose one job (`scripts/sea-main.cjs`) is to choose the data folder and start
+the app beside it. The app is not bundled. The `app` folder holds the same
+files a checkout runs (`server.js`, `src/`, the built page and the production
+`node_modules`), and Node strips their types as it does for `npm start`, so what
+the tests test is what ships. See [Development](#development) to build one.
 
 ---
 
@@ -1247,16 +1299,30 @@ The analyser is Python. Manual control does not need any of this.
 [docs/audio-analysis.md](docs/audio-analysis.md) covers what it does, which
 numbers you can turn and where to extend it.
 
-With [uv](https://docs.astral.sh/uv/), one command builds the environment from the lockfile. Pick the
-torch build for the machine:
+**The environment** is one button: Sources → **Analysis environment** →
+*Set up the analysis environment*. It runs [uv](https://docs.astral.sh/uv/)
+on the app's lockfile. uv downloads a Python of its own (3.12), so nothing
+has to be installed first. It suggests the torch build for the machine: CUDA
+when `nvidia-smi` names an NVIDIA card, ROCm where ROCm is installed on Linux,
+the CPU build otherwise. You can pick another. The page shows the downloads as
+they go and what uv said, and it can cancel. While it runs, the analyser waits
+and the live input stops (on Windows a running Python locks the files uv
+replaces). Both start again on the new environment. The packaged build carries
+its own uv; a checkout uses the one on `PATH`. From a terminal, the same:
 
 ```bash
-uv sync --extra cpu        # no GPU
-uv sync --extra cu128      # an NVIDIA card
-uv sync --extra rocm       # an AMD card on Linux
+npm run setup:python                   # the build the machine suits
+npm run setup:python -- --build cu128  # or: cpu, cu128, rocm
 ```
 
-The server finds the `.venv` this makes by itself. The lock keeps torch,
+which runs, with uv's own Python and into the analysis environment,
+
+```bash
+uv sync --locked --extra cpu --python 3.12   # or --extra cu128 (NVIDIA), --extra rocm (AMD, Linux)
+```
+
+The environment is the `.venv` in the project folder, or in the packaged
+build's data folder. The server finds it by itself. The lock keeps torch,
 torchaudio and torchvision on one build. A torchvision from another build
 installs without complaint and then fails every model with
 `operator torchvision::nms does not exist`. Without uv,
@@ -1275,13 +1341,19 @@ python scripts/download-models.py          # what the show needs (~4 GB with MuQ
 python scripts/download-models.py --only songformer,panns
 ```
 
-**ffmpeg** and **yt-dlp** must be on `PATH`. The Python environment covers
-yt-dlp; install ffmpeg with your package manager.
+**ffmpeg** and **yt-dlp** come with the environment: yt-dlp itself, and an
+ffmpeg binary (imageio-ffmpeg). The server looks on `PATH` first, so one you
+installed yourself wins, then in the analysis environment, whose scripts folder
+is on no `PATH` unless it was activated. The pre-show check says which it found
+and where.
 
 yt-dlp needs to be **2025.11.12 or newer**: YouTube now requires a JavaScript
-runtime to download at all. You do not need to install one — the server hands
-yt-dlp the Node it is itself running on. The pre-show check warns about an older
-yt-dlp; `pip install -U "yt-dlp[default]"` updates it.
+runtime to download at all. You do not need to install one. The server hands
+yt-dlp the Node it is itself running on. The environment also installs
+[Deno](https://deno.com/) beside yt-dlp, where yt-dlp looks first. That is the
+runtime the packaged build uses, because its executable is no Node yt-dlp can
+run. The pre-show check warns about an older yt-dlp;
+`pip install -U "yt-dlp[default,deno]"` updates it.
 
 **torch is required.** The beat grid, the metre and the instrument roles come
 from models — a beat-tracking transformer and a source separator — and there is
@@ -1340,8 +1412,9 @@ track never waits for it: without its weights the analysis simply goes untagged.
 
 ### Which Python?
 
-The environment `uv sync` made (`.venv` in the project folder) comes first when
-it exists: it was built for this project from its lockfile. Otherwise, having
+The environment `uv sync` made comes first when it exists: `.venv` in the
+project folder, or in the packaged build's data folder. It was built for this
+project from its lockfile. Otherwise, having
 *a* Python is not the same as having the right one. `py` (the Windows
 launcher) and `python` (whatever is first on `PATH`, often a conda env) are
 routinely two different installations, and `pip install -r requirements.txt`
@@ -1364,7 +1437,9 @@ as a `ModuleNotFoundError` after a track has already downloaded:
 [python] Interpreters found:
 [python]   py     → C:\Python312\python.exe (3.12.7) — missing librosa, numpy, soundfile
 [python]   python → C:\Users\you\miniconda3\python.exe (3.12.7) — has everything
-[python] Fix: install into this interpreter with
+[python] Fix: set it up from the app — Sources → Analysis environment, one button — or from the
+[python]   project folder with: npm run setup:python   (uv sync from the lockfile)
+[python] or install into this interpreter with
 [python]   "C:\Python312\python.exe" -m pip install -r requirements.txt
 ```
 
@@ -2136,6 +2211,8 @@ All endpoints return JSON. When a token is configured, send it as an
 | GET | `/api/live/devices` | The audio outputs and inputs the live input can hear, and its capture library |
 | GET | `/auth/spotify` · `/auth/spotify/callback` | Spotify OAuth |
 | POST | `/api/preflight` | Run the pre-show check against the live subsystems |
+| GET | `/api/python/setup` | The analysis environment: whether it is ready, uv, the torch build suggested for this machine, and the setup running |
+| POST | `/api/python/setup` · `/api/python/setup/cancel` | Set it up with `{ build }` (`cpu`, `cu128`, `rocm`), and cancel |
 | GET | `/api/spotify/now-playing` · POST `/api/spotify/disconnect` | Spotify |
 | GET | `/api/spotify/playlists` | The connected account's playlists, for the warming picker |
 | POST | `/api/nowplaying/disconnect` | Drop the OS media session source |
@@ -2228,8 +2305,8 @@ one that never resolves on its own.
 
 ### The supervisor
 
-`npm start` runs `node server.js`, which is two processes: a small supervisor,
-and the server as its child. The supervisor starts the server again when it
+`npm start` runs `node server.js` (and the packaged build its executable),
+which is two processes: a small supervisor, and the server as its child. The supervisor starts the server again when it
 dies — a native module that faulted, the memory running out — and when it
 stops answering: the server reports in every second, and one whose main
 thread has been silent for **15 seconds** (60 while it is starting) is killed
@@ -2247,7 +2324,17 @@ and started again.
   that dies three times before it has even started is not going to start: the
   supervisor gives up and says why.
 - **It stops when told to.** Ctrl-C or a service manager's stop (SIGINT,
-  SIGTERM) stops the server cleanly and then the supervisor. A server that
+  SIGTERM) stops the server cleanly and then the supervisor. The supervisor
+  asks over their IPC channel rather than with a signal, because on Windows a
+  signal to another process is an immediate kill. That would leave the rig
+  holding its last frame; asked, the server blacks it out first. It is killed
+  only if it has not gone after ten seconds. Closing the console window
+  (SIGHUP; on Windows there are seconds before the process is ended) is a
+  clean stop too.
+- **It does not outlive the supervisor.** A server whose supervisor has gone,
+  killed or ended from the task manager, shuts down too. Otherwise it would
+  hold the port with nothing to start it again.
+- **Some starts are not retried.** A server that
   cannot start because of its configuration (the port taken, the address not
   on this machine, a network address without a token) exits with code **78** and the supervisor stops with it,
   rather than trying again forever; one asking to be started again (the
@@ -2358,11 +2445,13 @@ earlier version, the server names the variables it is ignoring at startup:
 
 Set those values once in the app and delete them. A `.env` in the folder the
 server starts from is still read, by Node's own loader (a variable already set
-in the environment wins), for the few things that are not settings:
-`DEBUG_MIDI=1` to log every MIDI message, `ARTNET_PYTHON` for the Python that
-runs the analysis, `LIGHTSHOW_CONFIG_DIR` / `LIGHTSHOW_CACHE_DIR` /
-`LIGHTSHOW_LOG_DIR`, `LOG_LEVEL` / `LOG_FORMAT`, and `LIGHTSHOW_SUPERVISOR=0` —
-see `.env.example` and [Running the show server](#running-the-show-server).
+in the environment wins). For the packaged build, that folder is its data
+folder. It is for the few things that are not settings: `DEBUG_MIDI=1` to log
+every MIDI message, `ARTNET_PYTHON` for the Python that runs the analysis,
+`LIGHTSHOW_DATA_DIR` (everything the server writes) and
+`LIGHTSHOW_CONFIG_DIR` / `LIGHTSHOW_CACHE_DIR` / `LIGHTSHOW_LOG_DIR` (one part
+of it each), `LOG_LEVEL` / `LOG_FORMAT`, and `LIGHTSHOW_SUPERVISOR=0`. See
+`.env.example` and [Running the show server](#running-the-show-server).
 
 Art-Net changes made over the socket (a page, Companion) are persisted to the
 same file.
@@ -2414,6 +2503,8 @@ npm run preflight    # pre-show check (exits 1 if something will not work)
 npm run watch:client # rebuild the client bundle on change
 npm run dev          # server with --watch, without the supervisor
 npm run gen:analysis-types  # after changing the analysis document schema
+npm run setup:python # the analysis environment, from the lockfile (as Sources → Analysis environment does)
+npm run package      # the packaged build for this machine, in dist/
 ```
 
 **TypeScript, run as it is.** Everything in `src/` is strict TypeScript that
@@ -2463,11 +2554,18 @@ the PWA, the log and restart views, and axe-core on every view in every theme. I
 the Playwright pinned in `package.json`; `npx playwright install chromium`
 fetches its browser where there is none.
 
-`LIGHTSHOW_CONFIG_DIR` points the server at another directory for
-`settings.json`, `show.json`, `cues.json`, `midi-map.json` and `look.json`
-(default: `config/`), `LIGHTSHOW_CACHE_DIR` at another for the analysis cache
-(default: `cache/`), and `LIGHTSHOW_LOG_DIR` at another for the log files
-(default: `logs/`).
+**Where things are written** is one data directory
+(`src/server/config-dir.ts`): the checkout, unless `LIGHTSHOW_DATA_DIR` names
+another, as the packaged build's launcher does. It holds `config/` (the
+settings, `show.json`, `cues.json`, `midi-map.json` and `look.json`),
+`cache/` (the analysis cache), `logs/` and `.venv/` (the analysis
+environment). `LIGHTSHOW_CONFIG_DIR`, `LIGHTSHOW_CACHE_DIR` and
+`LIGHTSHOW_LOG_DIR` move one part each. The app's own files are read from where
+the code is, whatever the data directory. The programs the analysis needs
+besides Python (yt-dlp, its Deno, ffmpeg) are found on `PATH` and then in the
+environment (`src/tools.ts`). The in-app setup is
+`src/server/python-setup.ts`, tested with a stand-in uv
+(`tests/helpers/fake-uv.mjs`).
 
 **The supervisor** (`src/supervisor.ts`) forks `server.js` again with
 `LIGHTSHOW_SUPERVISED=1`, which runs `src/main.ts` directly; the two talk over
@@ -2475,15 +2573,38 @@ the fork's IPC channel (`src/server/supervised.ts`: the heartbeat, a restart
 asked for, the exit codes). Its unit tests drive it with a fake child
 (`tests/unit/supervisor.test.js`), and `tests/e2e/supervisor.spec.js` runs it
 for real: it kills the server mid-look with SIGKILL and checks the look comes
-back, restarts it from the API, and stops it. The e2e server itself runs
-without it.
+back, restarts it from the API, stops it, and kills the supervisor to check the
+server goes with it. The e2e server itself runs without it.
 
-The app icons (`public/icons/`) are drawn by `node scripts/make-icons.js`,
-which needs no dependencies; run it after changing the design.
+**The packaged build.** `npm run package` builds it for the machine it runs on,
+into `dist/`:
+
+1. It copies the app, runs `npm ci --omit=dev` in the copy, and takes uv from
+   its PyPI wheel, checked against PyPI's digest.
+2. It makes the executable. The Node running the build becomes a
+   [SEA](https://nodejs.org/api/single-executable-applications.html) whose
+   script is `scripts/sea-main.cjs`: the blob comes from
+   `--experimental-sea-config` and is injected with
+   [postject](https://github.com/nodejs/postject). On Windows the executable
+   also gets the app's icon and name ([resedit](https://github.com/jet2jet/resedit-js)).
+3. It archives the folder: a zip on Windows, a `.tar.gz` on Linux.
+
+Build it with Node 24, on the platform it is for, since `node_modules` holds
+native modules. `node scripts/smoke-package.js` then starts it, checks it and
+stops it. `packaging/windows/installer.iss` wraps the Windows package in an
+[Inno Setup](https://jrsoftware.org/isinfo.php) installer. CI
+(`.github/workflows/package.yml`) does all of this on Linux and Windows on every
+push, and installs, runs and uninstalls the installer. A version tag `v1.2.3`
+matching `package.json` builds the same and drafts a release with them
+(`release.yml`).
+
+The app icons (`public/icons/`, and `public/favicon.ico`, which is also the
+Windows executable's) are drawn by `node scripts/make-icons.js`, which needs no
+dependencies; run it after changing the design.
 
 CI runs lint, the typecheck, tests, a client build, the end-to-end suite, the
-Python analysis tests and `npm audit --omit=dev` on every push and pull
-request.
+Python analysis tests, the packages and `npm audit --omit=dev` on every push
+and pull request.
 
 ---
 

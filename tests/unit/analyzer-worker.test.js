@@ -302,3 +302,43 @@ test('a worker that dies at once rejects the request without crashing the server
     await assert.rejects(w.analyze('/tmp/a.wav', null), /exited|write|worker/);
   } finally { w.shutdown(); }
 });
+
+// Setting the analysis environment up replaces the Python the worker runs
+// from (python-setup.ts): it is stopped for the while, and nothing is lost.
+test('paused, the worker is stopped and requests wait; resumed, they are served on a new one', async () => {
+  const w = worker('ok');
+  try {
+    assert.deepStrictEqual(await w.analyze('/tmp/first.wav', null), { bpm: 128, source: '/tmp/first.wav' });
+    const before = w._proc.pid;
+    w.pause('the analysis environment is being set up');
+    assert.strictEqual(w._proc, null, 'no Python left running from the environment');
+    let answered = null;
+    const waiting = w.analyze('/tmp/while.wav', null).then((r) => { answered = r; });
+    w.prewarm();
+    await new Promise((r) => setTimeout(r, 300));
+    assert.strictEqual(answered, null, 'held, not served');
+    assert.strictEqual(w._proc, null, 'and nothing started, not even to warm up');
+    w.resume();
+    await waiting;
+    assert.deepStrictEqual(answered, { bpm: 128, source: '/tmp/while.wav' });
+    assert.notStrictEqual(w._proc.pid, before, 'on a new worker');
+  } finally { w.shutdown(); }
+});
+
+test('an analysis running when paused starts again, first, when resumed', async () => {
+  const w = worker('hangslow');
+  try {
+    const running = w.analyze('/tmp/late.wav', null);
+    await new Promise((r) => setTimeout(r, 100));
+    const first = w._proc.pid;
+    const queued = w.analyze('/tmp/other.wav', null);
+    w.pause('setup');
+    assert.strictEqual(w._pending, null);
+    assert.deepStrictEqual(w._queue.map((e) => e.source), ['/tmp/late.wav', '/tmp/other.wav']);
+    w.resume();
+    const late = await running;
+    assert.strictEqual(late.source, '/tmp/late.wav');
+    assert.notStrictEqual(late.pid, first, 'answered by the worker resume() started');
+    assert.deepStrictEqual(await queued, { bpm: 128, source: '/tmp/other.wav' });
+  } finally { w.shutdown(); }
+});

@@ -10,9 +10,10 @@
 #
 #     pip install -r requirements.txt
 #
-# ffmpeg must also be on PATH — src/deezer.js shells out to it to convert
-# downloaded audio to WAV. It is not installable from pip; use your package
-# manager (apt install ffmpeg / brew install ffmpeg / winget install ffmpeg).
+# ffmpeg converts downloaded audio to WAV (src/audio-file.ts) and extracts it
+# for yt-dlp. One on PATH is used first (apt install ffmpeg / brew install
+# ffmpeg / winget install ffmpeg); without one, the server uses the binary
+# imageio-ffmpeg (below) installs.
 #
 # Model weights are fetched before the show, never by the analysis itself:
 # Settings → Analysis models in the web UI, or
@@ -119,7 +120,10 @@ sounddevice>=0.5
 # Used when a track has no ISRC or Deezer is not configured.
 #
 # 2025.11.12 or newer: YouTube now needs an external JavaScript runtime to
-# solve its challenges. The server passes its own Node to yt-dlp, so nothing
-# else has to be installed — but the `default` extra is what brings the
-# challenge-solver scripts (yt-dlp-ejs) along with a pip install.
-yt-dlp[default]>=2025.11.12
+# solve its challenges. The server passes its own Node to yt-dlp; the `deno`
+# extra installs Deno beside yt-dlp too, where yt-dlp looks first — the
+# runtime the packaged build uses, whose executable is no Node yt-dlp can run.
+# The `default` extra brings the challenge-solver scripts (yt-dlp-ejs).
+yt-dlp[default,deno]>=2025.11.12
+# An ffmpeg binary, for when there is none on PATH (see ffmpeg, above).
+imageio-ffmpeg>=0.5
