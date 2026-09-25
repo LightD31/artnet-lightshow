@@ -4,6 +4,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { messageOf } from './errors.ts';
+import { ffmpegCommand } from './tools.ts';
 
 /**
  * Audio from elsewhere, made into what the analyser reads best: a WAV file in
@@ -16,10 +17,14 @@ import { messageOf } from './errors.ts';
 // is one of these, which ffmpeg then trusts over its own guess.
 const KNOWN_EXTENSIONS = new Set(['.mp3', '.wav', '.ogg', '.flac', '.m4a', '.mp4', '.aac', '.alac', '.aiff', '.aif', '.wma', '.opus']);
 
-/** Convert any audio file ffmpeg can read to a 44.1 kHz stereo WAV. */
-function toWav(inputPath: string, outputPath: string): Promise<string> {
+/**
+ * Convert any audio file ffmpeg can read to a 44.1 kHz stereo WAV — with the
+ * ffmpeg on PATH, or the analysis environment's (tools.ts).
+ */
+async function toWav(inputPath: string, outputPath: string): Promise<string> {
+  const ffmpeg = await ffmpegCommand();
   return new Promise((resolve, reject) => {
-    const proc = spawn('ffmpeg', [
+    const proc = spawn(ffmpeg, [
       '-y', '-hide_banner', '-loglevel', 'error', '-i', inputPath,
       '-vn', '-ar', '44100', '-ac', '2', '-f', 'wav',
       outputPath,
