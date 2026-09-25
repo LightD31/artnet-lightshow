@@ -38,12 +38,14 @@ import { showStore, SHOW_FILE } from './server/show-store.ts';
 import { modelManager } from './server/model-manager.ts';
 import * as pythonEnv from './python-env.ts';
 import { installProcessSafetyNet } from './server/guard.ts';
+import { startHealthMonitor } from './server/health.ts';
 import { messageOf } from './errors.ts';
 
 // Before anything else can fail: a fault the code did not expect is reported
 // and the rig keeps running, rather than the process exiting with every
 // fixture latched on its last frame. See server/guard.ts.
 installProcessSafetyNet();
+startHealthMonitor();
 
 // A .env from before settings moved into the UI would otherwise go quiet: the
 // rig would come up on defaults with no clue why. Say which variables are now

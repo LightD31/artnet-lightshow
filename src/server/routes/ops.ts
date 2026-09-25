@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { buffer, LEVELS } from '../log.ts';
 import type { LevelName } from '../log.ts';
 import { validate } from '../validation.ts';
+import { health } from '../health.ts';
 import type { Express } from 'express';
 import type { RouteContext } from './common.ts';
 
@@ -14,7 +15,14 @@ const logQuery = z.object({
 /**
  * Running the server: its log, its health, and restarting it.
  */
-export function attachOpsRoutes(app: Express, _ctx: RouteContext): void {
+export function attachOpsRoutes(app: Express, ctx: RouteContext): void {
+  // Liveness for a service manager: answers when the server does, says
+  // nothing, and needs no token (it is not under /api).
+  app.get('/healthz', (_req, res) => res.json({ ok: true }));
+
+  // How the server is doing, in full (health.ts).
+  app.get('/api/health', (_req, res) => res.json(health({ autoShow: ctx.autoShow })));
+
   // The log: the last entries (after `after`, at `level` and above), and the
   // seq to ask for more after. The log view polls this while it is open.
   app.get('/api/logs', (req, res) => {
