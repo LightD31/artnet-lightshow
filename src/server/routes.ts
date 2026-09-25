@@ -11,6 +11,7 @@ import { attachWarmRoutes } from './routes/warm.ts';
 import { attachSetupRoutes } from './routes/setup.ts';
 import { attachOutputRoutes } from './routes/outputs.ts';
 import { attachIdentifyRoutes } from './routes/identify.ts';
+import { attachOpsRoutes } from './routes/ops.ts';
 
 export type { RouteDeps, RouteContext } from './routes/common.ts';
 export type { AnalyzeSource } from './routes/auto.ts';
@@ -28,6 +29,7 @@ export type { AnalyzeSource } from './routes/auto.ts';
  *   setup      the pre-show check, the analysis models, the settings
  *   outputs    Philips Hue, Art-Net nodes, network interfaces
  *   identify   finding the rig and making it show itself
+ *   ops        the log, the server's health, restarting it
  *
  * and, last, the error handler every one of them falls through to.
  */
@@ -43,6 +45,7 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
   attachSetupRoutes(app, ctx);
   attachOutputRoutes(app, ctx);
   attachIdentifyRoutes(app, { wled: ctx.wled, broadcast: () => ctx.integrations.broadcast() });
+  attachOpsRoutes(app, ctx);
   // Must be registered last (see errorHandler).
   app.use(errorHandler);
 }

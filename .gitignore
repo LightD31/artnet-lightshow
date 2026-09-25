@@ -8,6 +8,8 @@ companion-module/node_modules/
 config/
 
 cache/
+# The server's own log, rotated (src/server/log.ts).
+logs/
 # Audio the real-track harness downloads. Large, and not ours to redistribute.
 # Written as a glob rather than `tests/fixtures/` because git cannot re-include
 # anything under an excluded *directory*, and the line below needs to.

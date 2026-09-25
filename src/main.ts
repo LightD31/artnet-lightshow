@@ -1,4 +1,5 @@
 import './load-env.ts';
+import './start-logging.ts';
 import path from 'node:path';
 import http from 'node:http';
 import express from 'express';

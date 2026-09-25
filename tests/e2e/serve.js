@@ -25,6 +25,7 @@ fs.writeFileSync(path.join(E2E_DIR, 'settings.json'), JSON.stringify({
 }, null, 2));
 process.env.LIGHTSHOW_CONFIG_DIR = E2E_DIR;
 process.env.LIGHTSHOW_CACHE_DIR = path.join(E2E_DIR, 'cache');
+process.env.LIGHTSHOW_LOG_DIR = path.join(E2E_DIR, 'logs');
 
 const document = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', 'fixtures', 'tracks', 'p-nk-try.json'), 'utf8'));
 fs.writeFileSync(E2E_TRACK, 'not audio: its analysis is cached');
