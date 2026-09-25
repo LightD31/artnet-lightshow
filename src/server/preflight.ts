@@ -474,7 +474,8 @@ function checkPython(): Check {
     return {
       id: 'python', label: 'Python', status: FAIL,
       detail: `"${info.exe}" cannot be run — audio analysis will fail.`,
-      fix: 'Install Python 3, or set its full path in Settings → Analysis → Python.',
+      fix: 'Set the analysis environment up under Sources → Analysis environment (it brings its own Python), '
+        + 'or set a Python\'s full path under Sources → Analysis → Python.',
     };
   }
   if (info.missing.length) {
@@ -482,7 +483,7 @@ function checkPython(): Check {
     return {
       id: 'python', label: 'Python', status: FAIL,
       detail: `${where} (${info.version}) is missing: ${info.missing.join(', ')}.`,
-      fix: `"${where}" -m pip install -r requirements.txt`,
+      fix: `Set the analysis environment up under Sources → Analysis environment, or "${where}" -m pip install -r requirements.txt`,
     };
   }
   return {
@@ -513,7 +514,7 @@ async function checkModelStack(verify = pythonEnv.verify): Promise<Check> {
       detail: failures.map(([mod, message]) => `${mod}: ${message}`).join('; '),
       fix: torchPair
         ? 'torch, torchaudio and torchvision have to come from the same build: reinstall the three together from one index '
-          + '(uv sync --extra cpu, or see requirements.txt for CUDA and ROCm).'
+          + '(Sources → Analysis environment → Update the environment, or see requirements.txt).'
         : `"${info.executable || info.exe}" -m pip install -r requirements.txt`,
     };
   }
