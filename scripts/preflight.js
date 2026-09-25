@@ -12,7 +12,7 @@
  * it can be run before the server is started, or alongside it.
  */
 
-import 'dotenv/config';
+import '../src/load-env.ts';
 
 import path from 'node:path';
 import { runPreflight } from '../src/server/preflight.ts';

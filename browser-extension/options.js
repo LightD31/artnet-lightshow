@@ -31,7 +31,7 @@ document.getElementById('save').addEventListener('click', async () => {
   // server elsewhere on the network needs an explicit opt-in from the user,
   // requested here under the click gesture rather than baked into the manifest.
   if (!isLoopback(server)) {
-    let granted = false;
+    let granted;
     try {
       granted = await browser.permissions.request({ origins: ['http://*/*'] });
     } catch (_) {

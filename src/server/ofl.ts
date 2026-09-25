@@ -58,7 +58,7 @@ const capabilitySchema = z.object({
   brightness: z.string().max(32).optional(),
   brightnessStart: z.string().max(32).optional(),
   brightnessEnd: z.string().max(32).optional(),
-  switchChannels: z.record(z.string().max(256).nullable()).refine((r) => Object.keys(r).length <= 64, 'switches too many channels').optional(),
+  switchChannels: z.record(z.string(), z.string().max(256).nullable()).refine((r) => Object.keys(r).length <= 64, 'switches too many channels').optional(),
 }).passthrough();
 
 const channelSchema = z.object({
@@ -81,13 +81,13 @@ const constraintSchema = z.object({
 const matrixSchema = z.object({
   pixelCount: z.tuple([axis, axis, axis]).optional(),
   pixelKeys: z.array(z.array(z.array(pixelKey.nullable()).max(MAX_PIXELS)).max(MAX_PIXELS)).max(MAX_PIXELS).optional(),
-  pixelGroups: z.record(z.union([z.literal('all'), z.array(pixelKey).max(MAX_PIXELS), constraintSchema]))
+  pixelGroups: z.record(z.string(), z.union([z.literal('all'), z.array(pixelKey).max(MAX_PIXELS), constraintSchema]))
     .refine(fewKeys('has too many pixel groups')).optional(),
 }).passthrough().superRefine((matrix, ctx) => {
   const count = matrix.pixelCount
     ? matrix.pixelCount[0] * matrix.pixelCount[1] * matrix.pixelCount[2]
     : (matrix.pixelKeys || []).flat(2).length;
-  if (count > MAX_PIXELS) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `has ${count} pixels, more than ${MAX_PIXELS}` });
+  if (count > MAX_PIXELS) ctx.addIssue({ code: 'custom', message: `has ${count} pixels, more than ${MAX_PIXELS}` });
 });
 
 const insertSchema = z.object({
@@ -104,8 +104,8 @@ const modeSchema = z.object({
 
 const oflSchema = z.object({
   name: text,
-  availableChannels: z.record(channelSchema).refine(fewKeys('has too many channels')).optional(),
-  templateChannels: z.record(channelSchema).refine(fewKeys('has too many template channels')).optional(),
+  availableChannels: z.record(z.string(), channelSchema).refine(fewKeys('has too many channels')).optional(),
+  templateChannels: z.record(z.string(), channelSchema).refine(fewKeys('has too many template channels')).optional(),
   matrix: matrixSchema.optional(),
   modes: z.array(modeSchema).min(1).max(128),
 }).passthrough();

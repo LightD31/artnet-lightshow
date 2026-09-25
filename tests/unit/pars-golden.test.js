@@ -26,7 +26,7 @@ import { PATTERNS, COLOR_PRESETS } from '../../src/server/presets.ts';
 import { createPreviewSampler } from '../../src/shared/preview.ts';
 import AutoShow from '../../src/auto-show.ts';
 
-// The hashes have changed twice, both times on purpose.
+// The hashes have changed three times, each time on purpose.
 //
 // 1. The engine: the built-in par's dimmer is 16-bit, and its fine channel
 //    used to be written 0. It now carries the low byte of the level
@@ -51,10 +51,16 @@ import AutoShow from '../../src/auto-show.ts';
 //        well as a ribbon, a fade or a wave (show-pars.test.js).
 //    The engine hash also now covers what that added: looks laid mirrored,
 //    and `hit` following the drums.
+//
+// 3. The director's, when it came to hash the plan's fractions to ten digits
+//    (toTenDigits, below) rather than to the last bit: on Node 24 one level
+//    in one track came out a unit in the last place away from Node 22's. The
+//    plan did not change — hashed to the bit on Node 22 it is still
+//    880194d8…b17c — and both Nodes now hash it the same.
 const GOLDEN = {
   engine: 'b825f49a6d0c219d16d2f921722d4a8f86d500eac246b750a424e2a2e3910c1d',
   preview: '65bd25548046cbe773dba9b0fee279aa99c3fc922498d7cfb965724057119178',
-  director: '880194d8ce893b0f2684b10da7e54fdbc30c78b5feff6bfd8e8c59032c67b17c',
+  director: '1c05f05e93b67859d56e850ddd4f178fdab4c366e8c7c22b1a0ba82f15e6b978',
 };
 
 /** A seeded stand-in for Math.random, so twinkle rolls the same dice every run. */
@@ -236,6 +242,16 @@ function previewHash() {
   return hash.digest('hex');
 }
 
+/**
+ * The plan's fractions to ten significant digits. What the director decides is
+ * the same to far more than that, but not to the last bit on every Node: V8's
+ * Math.pow moved by one unit in the last place between Node 22 and 24, and a
+ * hash of every bit was pinning the JavaScript engine rather than the show.
+ */
+function toTenDigits(_key, value) {
+  return typeof value === 'number' && !Number.isInteger(value) ? Number(value.toPrecision(10)) : value;
+}
+
 function directorHash() {
   const hash = crypto.createHash('sha256');
   const dir = path.join(import.meta.dirname, '..', 'fixtures', 'tracks');
@@ -249,8 +265,8 @@ function directorHash() {
         show.intensity = intensity;
         show.paletteSize = paletteSize;
         show.buildTimeline();
-        hash.update(JSON.stringify(show.intents));
-        hash.update(JSON.stringify(show.timeline));
+        hash.update(JSON.stringify(show.intents, toTenDigits));
+        hash.update(JSON.stringify(show.timeline, toTenDigits));
       }
     }
   }

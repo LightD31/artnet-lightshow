@@ -647,7 +647,7 @@ class MidiController {
     this._sendControlFeedback();
 
     for (const [note, binding] of Object.entries(this.map.notes || {})) {
-      let lit: boolean | null = null;
+      let lit: boolean | null;
       switch (binding.action) {
         case 'setPattern':       lit = binding.value === s.pattern; break;
         case 'setColorA':        lit = binding.value === s.colorA; break;
