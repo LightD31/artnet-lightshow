@@ -48,7 +48,8 @@ const DOMAIN_OF: Readonly<Record<string, Domain>> = {
   bpm: 'look', clock: 'look', beatDivision: 'look', running: 'look', pattern: 'look',
   colorA: 'look', colorB: 'look', colorC: 'look', colorD: 'look', palette: 'look',
   masterDimmer: 'look', masterBlackout: 'look', flashLimit: 'look',
-  strobeSpeed: 'look', strobeFunction: 'look', pixelMap: 'look', pixelPattern: 'look', energyOverride: 'look',
+  strobeSpeed: 'look', strobeFunction: 'look', pixelMap: 'look', pixelPattern: 'look', panelPattern: 'look',
+  energyOverride: 'look',
 
   artnet: 'rig', universes: 'rig', fixtures: 'rig', profiles: 'rig', identify: 'rig',
 

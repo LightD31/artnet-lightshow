@@ -52,6 +52,7 @@ export interface PreviewLook {
   pixelPattern?: string | null;
   pixelSpan?: number | null;
   pixelFrom?: number | null;
+  panelPattern?: string | null;
   showDynamics?: ShowDynamics | null;
   [key: string]: unknown;
 }
@@ -101,7 +102,7 @@ interface LayerEntry {
   dim: number;
 }
 
-const LOOK_KEYS = ['pattern', 'palette', 'split', 'pixelMap', 'pixelPattern', 'colorA', 'colorB', 'colorC', 'colorD'];
+const LOOK_KEYS = ['pattern', 'palette', 'split', 'pixelMap', 'pixelPattern', 'panelPattern', 'colorA', 'colorB', 'colorC', 'colorD'];
 const COLOUR_KEYS = ['colorA', 'colorB', 'colorC', 'colorD'] as const;
 
 const OPENING: PreviewLook = {
@@ -155,7 +156,8 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
       if (dynamics) look.showDynamics = dynamics;
       // As the rig anchors a scheduled scene (server/patch.js): on the step
       // grid, at the beat the scene was due.
-      if (patch.pattern !== undefined || patch.pixelPattern !== undefined || patch.beatDivision !== undefined) {
+      if (patch.pattern !== undefined || patch.pixelPattern !== undefined || patch.panelPattern !== undefined
+        || patch.beatDivision !== undefined) {
         anchor = anchorStep(beatPos, look.beatDivision || 1);
       }
       if ('energyOverride' in patch) burst = null;
@@ -203,6 +205,7 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
       pixelPattern: s.pixelPattern && PATTERN_FUNCS[s.pixelPattern] ? s.pixelPattern : null,
       pixelSpan: s.pixelSpan ?? null,
       pixelFrom: s.pixelFrom ?? null,
+      panelPattern: s.panelPattern && PATTERN_FUNCS[s.panelPattern] ? s.panelPattern : null,
     }, {
       beatPos,
       step,
@@ -214,6 +217,7 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
       fixtureCount: rig.fixtures.length,
       twinkle: rig.units.map(() => 0),
       pixelTwinkle: rig.units.map(() => 0),
+      panelTwinkle: rig.units.map(() => 0),
     }, (u, color, dim) => { layer[u] = { color, dim }; });
 
     // A crossfade starts from the look as it stood when the fade began, frozen

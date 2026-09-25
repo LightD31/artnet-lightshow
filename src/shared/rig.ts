@@ -71,15 +71,19 @@ export interface Rig<F extends StageFixture = StageFixture> {
   hasPixels: boolean;
   /** Does the rig have fixtures that are one light, beside any bars. */
   hasPars: boolean;
+  /** Does the rig have panels: fixtures whose cells stand in rows (a WLED matrix). */
+  hasPanels: boolean;
   layout(split?: number | null, pixelMap?: PixelMap | string | null, only?: LayerPart | null): Layout;
 }
 
 /**
  * Which fixtures a layout covers: every one, only those that are one light
  * (the pars), or only those with cells (the bars). A look that gives the bars
- * a picture of their own draws the two parts apart (shared/layer.ts).
+ * a picture of their own draws the two parts apart (shared/layer.ts), and one
+ * that gives the panels theirs too splits the cells into `strips` (a line of
+ * them) and `panels` (rows of them); `unpanelled` is everything but those.
  */
-export type LayerPart = 'pars' | 'cells';
+export type LayerPart = 'pars' | 'cells' | 'strips' | 'panels' | 'unpanelled';
 
 /** The profile a fixture runs, or nothing when it has none. */
 export type ProfileLookup<F> = (fixture: F) => Pick<Profile, 'cells' | 'grid'> | null | undefined;
@@ -162,6 +166,7 @@ function buildRig<F extends StageFixture>(fixtures: readonly F[], profileOf: Pro
   const grids: (Grid | null)[] = [];
   let hasPixels = false;
   let hasPars = false;
+  let hasPanels = false;
 
   fixtures.forEach((fixture, i) => {
     const start = units.length;
@@ -214,11 +219,12 @@ function buildRig<F extends StageFixture>(fixtures: readonly F[], profileOf: Pro
     ranges.push({ start, count: n });
     cellMaps.push(cells.map((cell) => cell.channelMap));
     grids.push(grid ? { columns: grid.columns, rows: grid.rows } : null);
+    if (grid) hasPanels = true;
   });
 
   const layouts = new Map<string, Layout>();
   return {
-    fixtures, units, ranges, cellMaps, points, local, localY, grids, hasPixels, hasPars,
+    fixtures, units, ranges, cellMaps, points, local, localY, grids, hasPixels, hasPars, hasPanels,
     /** The travel order for a look, cached per split, pixel map and part. */
     layout(split = null, pixelMap = 'stage', only = null) {
       const key = `${split}|${pixelMap}|${only || ''}`;
@@ -267,7 +273,16 @@ function layoutOf(rig: Rig, split: number | null | undefined, pixelMap: string |
   only: LayerPart | null = null): Layout {
   const { fixtures, ranges, points, local, localY } = rig;
   const wash = washFixtures(fixtures, split);
-  const part = (i: number) => !only || (only === 'cells') === !!rig.cellMaps[i];
+  const part = (i: number) => {
+    switch (only) {
+      case 'pars': return !rig.cellMaps[i];
+      case 'cells': return !!rig.cellMaps[i];
+      case 'strips': return !!rig.cellMaps[i] && !rig.grids[i];
+      case 'panels': return !!rig.grids[i];
+      case 'unpanelled': return !rig.grids[i];
+      default: return true;
+    }
+  };
   const members = fixtures.map((_, i) => i).filter((i) => !wash.has(i) && part(i));
   const { order, xs } = spatialLayout(members.map((i) => fixtures[i]));
   const layoutFixtures: Layout['fixtures'] = { members, order, xs };

@@ -101,6 +101,9 @@ const patchSchema = z.object({
   pixelPattern: z.string().min(1).max(64).nullable().optional(),
   pixelSpan: z.number().min(0).max(4096).nullable().optional(),
   pixelFrom: z.number().min(0).max(1).nullable().optional(),
+  // The panels' own picture while the bars run theirs; null for the panels
+  // to draw what the bars do.
+  panelPattern: z.string().min(1).max(64).nullable().optional(),
   colorA: colorIdx.optional(),
   colorB: colorIdx.optional(),
   colorC: colorIdx.optional(),
@@ -422,6 +425,7 @@ const overlaySchema = z.object({
     atMs: trackMs,
     pattern: z.string().min(1).max(64).optional(),
     pixelPattern: z.string().min(1).max(64).nullable().optional(),
+    panelPattern: z.string().min(1).max(64).nullable().optional(),
   }).strict()).max(256).optional(),
   accents: z.object({
     add: z.array(z.object({

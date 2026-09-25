@@ -25,6 +25,12 @@ const BARE = {
   cells: Array.from({ length: 4 }, (_, i) => ({ channelMap: { red: i * 3, green: i * 3 + 1, blue: i * 3 + 2 } })),
 };
 
+// A panel: four columns, two rows, RGB.
+const PANEL = {
+  id: 'test-panel-4x2', name: 'Test panel', channelCount: 24, channelMap: {}, grid: { columns: 4, rows: 2 },
+  cells: Array.from({ length: 8 }, (_, i) => ({ channelMap: { red: i * 3, green: i * 3 + 1, blue: i * 3 + 2 } })),
+};
+
 const PAR = { profileId: 'cameo-root-par-6-12ch' };   // dimmer 0, strobe 2, red 3, green 4, blue 5
 let beat = 0;
 let saved;
@@ -32,6 +38,7 @@ let saved;
 test.before(() => {
   registerProfile(BAR);
   registerProfile(BARE);
+  registerProfile(PANEL);
   saved = { fixtures: state.fixtures, artnet: state.artnet.enabled };
   state.artnet.enabled = false;
   conductor.setProlinkSource(() => ({ beatPos: beat, bpm: 120 }));
@@ -43,6 +50,7 @@ test.after(() => {
   resizeFixtureBuffers();
   unregisterProfile(BAR.id);
   unregisterProfile(BARE.id);
+  unregisterProfile(PANEL.id);
 });
 
 const fixture = (id, address, profileId, extra = {}) => ({
@@ -194,3 +202,18 @@ test('with a picture of their own, the bars run it and the pars keep the look', 
   assert.strictEqual(state.pixelPattern, null, 'a pattern picked by hand runs on the whole rig again');
 });
 
+
+test('with a picture of their own, the panels run it and the rest of the rig keeps its look', () => {
+  rig(fixture(0, 1, PAR.profileId), fixture(1, 13, BAR.id), fixture(2, 40, PANEL.id));
+  const panelOf = (dmx) => dmx.slice(39, 39 + 24);
+  const look = { pattern: 'solid', pixelPattern: 'comet', pixelMap: 'bar', anchorMs: 0 };
+  const plain = Array.from(show(look, 1.5));
+  const fire = Array.from(show({ ...look, panelPattern: 'fire' }, 1.5));
+  assert.deepStrictEqual(fire.slice(0, 12), plain.slice(0, 12), 'the par as it was');
+  assert.notDeepStrictEqual(panelOf(fire), panelOf(plain), 'the panel on fire instead of the comet');
+  assert.strictEqual(state.panelPattern, 'fire');
+  const bottom = [4, 5, 6, 7].map((c) => fire[39 + c * 3] + fire[40 + c * 3] + fire[41 + c * 3]);
+  assert.ok(bottom.some((v) => v > 0), `flames rise from the bottom row (${bottom})`);
+  applyPatch({ pattern: 'solid' });
+  assert.strictEqual(state.panelPattern, null, 'a pattern picked by hand runs on the whole rig again');
+});

@@ -101,6 +101,8 @@ export interface DirectorOptions {
   intensity?: number;
   blackoutIndex?: number;
   pixels?: boolean;
+  /** Does the rig have panels (a WLED matrix): they get a picture of their own. */
+  panels?: boolean;
   /** How many fixtures the rig has, or nothing when it is not known. */
   lamps?: number | null;
   /** The night before this track (show/set-memory.ts), or nothing. */
@@ -273,6 +275,7 @@ class ShowDirector {
   declare intensity: number;
   declare blackoutIndex: number;
   declare pixels: boolean;
+  declare panels: boolean;
   declare lamps: number | null;
   declare history: SetHistory | null;
   declare overlay: ShowOverlay | null;
@@ -287,7 +290,8 @@ class ShowDirector {
    * @param {number} options.blackoutIndex colour index that means "off"
    */
   constructor({ patterns = [], colorPresets = null, paletteSize = 4,
-    intensity = 50, blackoutIndex = 0, pixels = false, lamps = null, history = null, overlay = null }: DirectorOptions = {}) {
+    intensity = 50, blackoutIndex = 0, pixels = false, panels = false, lamps = null, history = null,
+    overlay = null }: DirectorOptions = {}) {
     this.patterns = patterns;
     this.colorPresets = colorPresets;
     this.paletteSize = paletteSize;
@@ -297,6 +301,9 @@ class ShowDirector {
     // for the pictures drawn across cells, and say how to lay them over the
     // bars; a rig of pars gets its own layout (_mapPars).
     this.pixels = !!pixels;
+    // Panels are cells too; with them the bars' picture stays on the strips
+    // and the panels are given their own (_mapPanels).
+    this.panels = !!panels;
     this.lamps = Number.isFinite(lamps) ? lamps : null;
     this.history = history;
     this.overlay = overlay;
@@ -334,6 +341,7 @@ class ShowDirector {
     intents.sort((a, b) => a.timeMs - b.timeMs || a.priority - b.priority);
 
     if (context.pixels) this._mapPixels(intents, context);
+    if (context.panels) this._mapPanels(intents, context);
     // The operator's edits go on last, over everything the passes chose —
     // before a rig of pars is laid out, so a look the operator picked for a
     // chorus is mirrored only if it is one that travels.
@@ -443,6 +451,41 @@ class ShowDirector {
         const turn = next(`section:${section.index}`);
         intent.pattern = parWash(section.drive, section.identity + turn * 7 + context.trackSeed, available) || intent.pattern;
       }
+    }
+  }
+
+  /**
+   * On a rig with panels — cells in rows, as a WLED matrix has — the panels
+   * are given a picture of their own, one that stands up on a screen where
+   * the bars' would only lie across it (PANEL_ROLE_LOOKS): the band's levels
+   * where it plays and builds, fire where the track burns hottest, rain
+   * where it rests. The pars and the bars keep what _mapPixels gave them. A
+   * drop's anchor is still the whole rig at once.
+   */
+  _mapPanels(intents: Intent[], context: PlanContext): void {
+    const { available } = context;
+    for (const intent of intents) {
+      if (intent.kind !== INTENT.SCENE || !intent.pattern) continue;
+      const source = String(intent.source);
+      if (source === 'drop:anchor') {
+        intent.panelPattern = null;
+        continue;
+      }
+      const section = this._sectionOf(intent, context);
+      const role = source.startsWith('buildup:') ? 'buildup'
+        : source.startsWith('drop:') ? 'drop'
+          : source === 'break' ? 'breakdown'
+            : section ? section.role : 'unknown';
+      const table = PANEL_ROLE_LOOKS[role];
+      if (table) {
+        intent.panelPattern = barLook(table, available);
+        continue;
+      }
+      // A passage with no role: one of the three, as the passage was the
+      // first time round.
+      const pool = PANEL_LOOKS.filter((p) => available.has(p));
+      intent.panelPattern = pool.length
+        ? pool[Math.abs((section ? section.identity : 0) + context.trackSeed) % pool.length] : null;
     }
   }
 
@@ -586,6 +629,7 @@ class ShowDirector {
       continuous: hasScore(analysis),
       available: look.availableFor(this.patterns, analysis),
       pixels: this.pixels,
+      panels: this.pixels && this.panels,
       // On a rig of pars, the pictures drawn for bars that still read on a
       // handful of lamps — the kit among them only on drum lanes a light may
       // follow (see drumHitsOf), and with a lamp in the middle for the kick
@@ -1927,6 +1971,34 @@ const PIXEL_ROLE_LOOKS: Record<string, readonly { pattern: string; map: string }
   instrumental: [{ pattern: 'drums', map: 'mirror' }, { pattern: 'burst', map: 'stage' }],
   outro:        [{ pattern: 'plasma', map: 'stage' }, { pattern: 'gradient', map: 'stage' }],
 };
+
+/**
+ * What a panel shows, by what the music is doing: the pictures that stand up
+ * on a screen (shared/patterns.ts, after LedFx's and WLED's matrix effects).
+ *
+ *   build-up, verse, pre-chorus, bridge, a solo
+ *                 the band's levels, a column for each part — the music
+ *                 driving the picture as it gathers
+ *   chorus, drop  fire, taller as the bass pushes and flaring on the kick
+ *   intro, breakdown, outro
+ *                 rain, slow and long-trailed where the music rests
+ *
+ * Each row is tried in order, so a rig without the first picture falls to
+ * the next, and to none — the panels drawing the bars' — without any.
+ */
+const PANEL_ROLE_LOOKS: Record<string, readonly string[]> = {
+  intro:        ['rain', 'bars'],
+  verse:        ['bars', 'rain'],
+  prechorus:    ['bars', 'fire'],
+  buildup:      ['bars', 'fire'],
+  chorus:       ['fire', 'bars'],
+  drop:         ['fire', 'bars'],
+  breakdown:    ['rain', 'bars'],
+  bridge:       ['bars', 'fire'],
+  instrumental: ['bars', 'fire'],
+  outro:        ['rain', 'bars'],
+};
+const PANEL_LOOKS = ['bars', 'fire', 'rain'];
 
 // The pictures drawn across cells, which a passage with no role may already
 // have been given.

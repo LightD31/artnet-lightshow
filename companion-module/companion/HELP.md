@@ -31,6 +31,7 @@ The **Busk** preset page has what a set played by hand needs:
 | --------------------------------- | ------------------------------------------------------------------------------------ |
 | Set Pattern                       | Switch the running pattern, optionally crossfading over some milliseconds            |
 | Set Bars Pattern                  | The LED bars' own picture (a pixel effect) while the pars run the pattern; or none   |
+| Set Panels Pattern                | The panels' own picture (a WLED matrix: bars, fire, rain…); or none, as the bars     |
 | Set Pixel Map                     | Lay pixel effects across the stage, along each bar, or mirrored                      |
 | Set Palette                       | A palette from the server, at 2, 3 or 4 colours                                      |
 | Set Colour A / B / C / D          | Change one colour slot (C/D feed 3/4-colour patterns)                                |
@@ -59,6 +60,7 @@ The **Busk** preset page has what a set played by hand needs:
 | ------------------------------ | ---------------------------------------------------------- |
 | Pattern is active              | Selected pattern is running                                |
 | Bars pattern is active         | The bars are running that picture (or none)                |
+| Panels pattern is active       | The panels are running that picture (or none)              |
 | Pixel map is active            | Pixel effects are laid out that way                        |
 | Palette is active              | That palette is the look's                                 |
 | Colour A/B/C/D selected        | That colour slot matches                                   |
@@ -71,8 +73,8 @@ The **Busk** preset page has what a set played by hand needs:
 
 ## Variables
 
-`bpm` (to a tenth), `clock_source` (Auto, CDJ, Track or Tap), `beat_division`, `playing`, `pattern`, `pattern_id`, `pixel_pattern`, `pixel_map`, `palette`, `color_a` … `color_d`, `master_dimmer`, `master_dimmer_pct`, `master_blackout`, `strobe_function`, `strobe_speed`, `energy_override`, `auto_show`, `auto_source`, `auto_intensity`, `sync_offset`, `track` (Artist — Title), `cue_count`
+`bpm` (to a tenth), `clock_source` (Auto, CDJ, Track or Tap), `beat_division`, `playing`, `pattern`, `pattern_id`, `pixel_pattern`, `panel_pattern`, `pixel_map`, `palette`, `color_a` … `color_d`, `master_dimmer`, `master_dimmer_pct`, `master_blackout`, `strobe_function`, `strobe_speed`, `energy_override`, `auto_show`, `auto_source`, `auto_intensity`, `sync_offset`, `track` (Artist — Title), `cue_count`
 
 ## Presets
 
-Besides **Busk**: every pattern (the whole-rig ones and the pixel effects apart), the bars' own picture and the pixel map; all four colour slots; transport (play/stop, blackout, tap tempo, BPM, beat divisions); a blackout for each fixture in the patch; and latched energy effects.
+Besides **Busk**: every pattern (the whole-rig ones and the pixel effects apart), the bars' and the panels' own pictures and the pixel map; all four colour slots; transport (play/stop, blackout, tap tempo, BPM, beat divisions); a blackout for each fixture in the patch; and latched energy effects.

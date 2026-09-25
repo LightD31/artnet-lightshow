@@ -39,7 +39,7 @@ function tidy(overlay) {
 function plannedLook(data, startMs) {
   const scene = (data?.timeline || []).find((ev) => ev.pattern && ev.timeMs >= startMs - SECTION_MATCH_MS
     && ev.timeMs < startMs + SECTION_MATCH_MS && String(ev.source || '').startsWith('section:'));
-  return scene ? { pattern: scene.pattern, pixelPattern: scene.pixelPattern } : null;
+  return scene ? { pattern: scene.pattern, pixelPattern: scene.pixelPattern, panelPattern: scene.panelPattern } : null;
 }
 
 /**
@@ -57,6 +57,7 @@ export function TrackEdits({ at = null, atLabel = 'playhead' } = {}) {
   const data = timeline.key === timelineKey(s) ? timeline.data : null;
   const patterns = s.patterns || [];
   const bars = !!as.pixels;
+  const panels = bars && !!as.panels;
   const edits = overlay.sections || [];
   const added = overlay.accents?.add || [];
   const removed = overlay.accents?.remove || [];
@@ -69,7 +70,7 @@ export function TrackEdits({ at = null, atLabel = 'playhead' } = {}) {
     const next = { ...current };
     if (value === '') delete next[field];
     else next[field] = value === 'whole' ? null : value;
-    const keep = next.pattern !== undefined || next.pixelPattern !== undefined;
+    const keep = next.pattern !== undefined || next.pixelPattern !== undefined || next.panelPattern !== undefined;
     save({ ...overlay, sections: keep ? [...others, next].sort((a, b) => a.atMs - b.atMs) : others });
   };
 
@@ -141,7 +142,7 @@ export function TrackEdits({ at = null, atLabel = 'playhead' } = {}) {
 
       {sections.length > 0 && (
         <table class="edit-sections">
-          <thead><tr><th>Section</th><th>{bars ? 'Pars' : 'Look'}</th>{bars && <th>Bars</th>}</tr></thead>
+          <thead><tr><th>Section</th><th>{bars ? 'Pars' : 'Look'}</th>{bars && <th>Bars</th>}{panels && <th>Panels</th>}</tr></thead>
           <tbody>
             {sections.map((sec) => {
               const startMs = sec.start * 1000;
@@ -164,6 +165,17 @@ export function TrackEdits({ at = null, atLabel = 'playhead' } = {}) {
                         onChange={(e) => setSection(startMs, 'pixelPattern', e.target.value)}>
                         <option value="">Show&rsquo;s choice{planned.pixelPattern ? ` (${planned.pixelPattern})` : ''}</option>
                         <option value="whole">Same as the pars</option>
+                        {patterns.filter((p) => p.pixel).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                    </td>
+                  )}
+                  {panels && (
+                    <td>
+                      <select class="auto-select" aria-label={`Panels for the ${sec.role || 'section'} at ${fmtTime(startMs)}`}
+                        value={edit.panelPattern === null ? 'whole' : edit.panelPattern || ''}
+                        onChange={(e) => setSection(startMs, 'panelPattern', e.target.value)}>
+                        <option value="">Show&rsquo;s choice{planned.panelPattern ? ` (${planned.panelPattern})` : ''}</option>
+                        <option value="whole">Same as the bars</option>
                         {patterns.filter((p) => p.pixel).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                       </select>
                     </td>

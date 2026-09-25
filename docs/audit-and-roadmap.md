@@ -613,6 +613,9 @@ Every phase is its own PR, keeps `npm run check` and the Python suite green, and
 >   - "Add each segment" makes each WLED segment a fixture, sent to its own LEDs over DDP (row by row for
 >     a rectangle of a panel), all of one WLED in one frame.
 >   - Three effects after LedFx's: Bars (a spectrum analyser), Fire and Rain. They stand up on a panel.
+>   - On a rig with panels the auto show gives them a layer of their own (`panelPattern`): the band's
+>     levels while it plays and builds, fire in a chorus or a drop, rain where it rests. The pars and
+>     the bars keep their looks.
 > - **Companion for busking.**
 >   - Protocol 2, and the server's own catalogues.
 >   - Palettes, the bars' pattern, momentary holds kept alive while pressed, cues, the auto show, tempo

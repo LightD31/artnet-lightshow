@@ -1158,8 +1158,11 @@ bottom row, the flames lick up it and the rain falls down it. Laid out **Per
 bar**, each panel draws its own; **Across stage**, a panel's rows are its
 height. On a strip, which has no height, the strip is laid along it instead:
 the bars become zones, the fire rises from its start, three drops run along it.
-They play the pulse like Drums and Stems, and the clock without it. The auto
-show leaves them to you.
+They play the pulse like Drums and Stems, and the clock without it. On a rig
+with panels the auto show gives the panels one of the three by section (see
+[Shaping the generated show](#shaping-the-generated-show)); the **Panels**
+menu under the patterns picks one by hand, and it holds until a pattern is
+picked.
 
 **Drums** and **Stems** play the analysis's *pulse*. That is every kick, snare
 and hat read off the separated drum stem, and each stem's level fifty times a
@@ -1721,6 +1724,22 @@ is doing:
   does a cue saved before this.
 - **Replanning.** Adding or removing the last bar replans the track.
 
+With panels in the patch too — a WLED matrix, cells in rows — the panels get
+a picture of their own, one that stands up on a screen, while the pars and
+the bars keep theirs:
+
+| Where | The panels |
+|---|---|
+| verse, pre-chorus, build-up, bridge, a solo | **Bars**: the band's levels, a column for each part |
+| chorus, drop | **Fire**, taller with the bass and flaring on the kick |
+| intro, breakdown, outro | **Rain**, slow and long-trailed |
+
+A drop's first instant is still every fixture at once, the panels included.
+The panels are laid out as the bars are (across the stage, per bar, or
+mirrored), so a matrix added as two halves burns as one. Adding or removing
+the last panel replans the track; a cue saved before this recalls with the
+panels drawing what the bars do.
+
 On a rig of pars there are no bars to carry the movement, so the pars carry
 all of it, and the show gives them shape:
 
@@ -1830,9 +1849,9 @@ the palette size, the rig, the tracks before it. **Track edits**, on the
 - **Add** an accent at the playhead — or, rehearsing, at the rehearsal mark
   (blinder, white or colour strobe, UV wash, kill or glow) — or **remove** the
   one nearest it. An added accent fires whatever the budget says.
-- **Swap a section's look**: for the whole rig, or for the pars and the bars
-  apart. The section holds it, and its rotation stops too. Each row shows the
-  show's own choice beside yours.
+- **Swap a section's look**: for the whole rig, or for the pars, the bars and
+  the panels apart. The section holds it, and its rotation stops too. Each row
+  shows the show's own choice beside yours.
 
 They are kept beside the track's analysis in the cache, and put back every
 time the track plays. Analysing the track again keeps them: sections match

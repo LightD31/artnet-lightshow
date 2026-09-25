@@ -50,6 +50,22 @@ export function UpdateFeedbacks(self) {
 			callback: ({ options }) => (self.liveState.pixelPattern ?? 'none') === options.pattern,
 		},
 
+		panel_pattern_active: {
+			type: 'boolean',
+			name: 'Panels pattern is active',
+			defaultStyle: { bgcolor: combineRgb(160, 60, 0), color: WHITE },
+			options: [
+				{
+					type: 'dropdown',
+					id: 'pattern',
+					label: 'Pixel effect',
+					default: 'none',
+					choices: [{ id: 'none', label: 'Same as the bars' }, ...choices(patternsOf(state).filter((p) => p.pixel))],
+				},
+			],
+			callback: ({ options }) => (self.liveState.panelPattern ?? 'none') === options.pattern,
+		},
+
 		pixel_map_active: {
 			type: 'boolean',
 			name: 'Pixel map is active',

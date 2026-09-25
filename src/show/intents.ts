@@ -126,6 +126,9 @@ export interface ScenePayload {
   pixelPattern?: string | null;
   pixelSpan?: number | null;
   pixelFrom?: number | null;
+  /** The panels' own picture on a rig with panels, null for the panels to
+   *  draw what the bars do. */
+  panelPattern?: string | null;
 }
 
 export interface SceneIntent extends IntentBase, ScenePayload {

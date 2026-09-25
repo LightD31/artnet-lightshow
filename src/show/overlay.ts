@@ -33,6 +33,8 @@ export interface OverlaySection {
   pattern?: string;
   /** The bars' picture, on a rig with bars; null for one pattern on the whole rig. */
   pixelPattern?: string | null;
+  /** The panels' picture, on a rig with panels; null for the panels to draw the bars'. */
+  panelPattern?: string | null;
 }
 
 export interface OverlayAccent {
@@ -121,6 +123,7 @@ function applyLook(scene: SceneIntent, edit: OverlaySection): void {
     delete scene.pixelSpan;
     delete scene.pixelFrom;
   }
+  if (edit.panelPattern !== undefined && 'panelPattern' in scene) scene.panelPattern = edit.panelPattern;
 }
 
 function nearestSection<S extends { start: number }>(sections: readonly S[], atMs: number): S | null {

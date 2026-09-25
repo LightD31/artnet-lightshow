@@ -61,6 +61,20 @@ export function UpdateActions(self) {
 			callback: ({ options }) => self.sendSet({ pixelPattern: options.pattern === 'none' ? null : options.pattern }),
 		},
 
+		set_panel_pattern: {
+			name: 'Set Panels Pattern (the panels\' own picture)',
+			options: [
+				{
+					type: 'dropdown',
+					id: 'pattern',
+					label: 'Pixel effect',
+					default: 'none',
+					choices: [{ id: 'none', label: 'None — the panels draw what the bars do' }, ...pixelChoices.slice(1)],
+				},
+			],
+			callback: ({ options }) => self.sendSet({ panelPattern: options.pattern === 'none' ? null : options.pattern }),
+		},
+
 		set_pixel_map: {
 			name: 'Set Pixel Map',
 			options: [

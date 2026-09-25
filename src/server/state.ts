@@ -50,6 +50,7 @@ export interface ShowState {
   pixelPattern: string | null;
   pixelSpan: number | null;
   pixelFrom: number | null;
+  panelPattern: string | null;
   patternAnchor: PatternAnchor | null;
 }
 
@@ -118,6 +119,10 @@ const state: ShowState = {
   // How far through its span that picture already is when the scene starts:
   // a build-up's fill carries on across the scenes inside the build.
   pixelFrom: null,
+  // The panels' own picture (a WLED matrix) while the bars run theirs: the
+  // auto show hands a screen fire, rain or the band's levels by section.
+  // Null, and the panels are bars like any other.
+  panelPattern: null,
   // Where the running pattern counts its steps from, on the step grid of the
   // musical clock, and which of the clock's epochs that grid belongs to. Set
   // when a scene changes the pattern or the division (patch.js); the engine
@@ -297,6 +302,7 @@ function getLiveState() {
     strobeFunction: state.strobeFunction,
     pixelMap: state.pixelMap,
     pixelPattern: state.pixelPattern,
+    panelPattern: state.panelPattern,
     energyOverride: state.heldEnergy ?? state.energyOverride,
     palette: state.palette,
     autoIntensity: state.autoIntensity,

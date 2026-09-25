@@ -172,7 +172,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     // place the show hears whether the rig has LED bars to draw on.
     if (typeof autoShow.setRig === 'function') {
       const rig = currentRig();
-      autoShow.setRig({ hasPixels: rig.hasPixels, lamps: rig.fixtures.length });
+      autoShow.setRig({ hasPixels: rig.hasPixels, hasPanels: rig.hasPanels, lamps: rig.fixtures.length });
     }
     publisher.publishState(getLiveState());
     midi.sendFeedback();

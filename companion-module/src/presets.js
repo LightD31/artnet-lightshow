@@ -148,6 +148,14 @@ export function UpdatePresets(self) {
 			{ feedbacks: [{ feedbackId: 'pixel_pattern_active', options: { pattern: p.id }, style: { bgcolor: combineRgb(0, 120, 200), color: WHITE } }] },
 		)
 	}
+	for (const p of [{ id: 'none', name: 'As the bars' }, ...pixels]) {
+		presets[`panels_${p.id}`] = button(
+			`Panels: ${p.name}`,
+			{ text: `PANELS\n${p.name}`, size: '14', color: combineRgb(255, 220, 190), bgcolor: combineRgb(50, 20, 0) },
+			[{ actionId: 'set_panel_pattern', options: { pattern: p.id } }],
+			{ feedbacks: [{ feedbackId: 'panel_pattern_active', options: { pattern: p.id }, style: { bgcolor: combineRgb(160, 60, 0), color: WHITE } }] },
+		)
+	}
 	for (const m of PIXEL_MAPS) {
 		presets[`map_${m.id}`] = button(
 			`Pixel map: ${m.name}`,
@@ -276,11 +284,12 @@ export function UpdatePresets(self) {
 		{
 			id: 'patterns',
 			name: 'Patterns',
-			description: 'Switch the running pattern; the active one lights up. The bars can run a picture of their own',
+			description: 'Switch the running pattern; the active one lights up. The bars and the panels can run a picture of their own',
 			definitions: [
 				group('patterns_rig', 'Whole rig', patterns.filter((p) => !p.pixel).map((p) => `pattern_${p.id}`)),
 				group('patterns_pixel', 'Pixel effects', pixels.map((p) => `pattern_${p.id}`)),
 				group('patterns_bars', 'The bars\' own picture', ['bars_none', ...pixels.map((p) => `bars_${p.id}`)]),
+				group('patterns_panels', 'The panels\' own picture', ['panels_none', ...pixels.map((p) => `panels_${p.id}`)]),
 				group('patterns_map', 'Pixel map', PIXEL_MAPS.map((m) => `map_${m.id}`)),
 			],
 		},

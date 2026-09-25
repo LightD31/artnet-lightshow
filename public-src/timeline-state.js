@@ -35,7 +35,8 @@ export function timelineDetails(data, positionMs, windowMs = 400) {
       timeMs: event.timeMs,
       label: event.action === 'energy'
         ? `${event.id || 'Energy'} burst`
-        : event.pattern ? `Pattern: ${event.pattern}${event.pixelPattern ? ` · bars: ${event.pixelPattern}` : ''}`
+        : event.pattern ? `Pattern: ${event.pattern}${event.pixelPattern ? ` · bars: ${event.pixelPattern}` : ''}${
+          event.panelPattern ? ` · panels: ${event.panelPattern}` : ''}`
           : event.colorA != null ? 'Colour change' : 'Look update',
     }));
   return {

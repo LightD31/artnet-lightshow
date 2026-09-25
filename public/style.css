@@ -1364,6 +1364,15 @@ input[type=range]::-moz-range-thumb {
   gap: 4px;
   margin-top: 8px;
 }
+.panel-pattern {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.panel-pattern select { flex: 1; min-width: 0; }
 
 .pattern-grid {
   display: grid;
