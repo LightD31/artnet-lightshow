@@ -296,7 +296,8 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   // change, while the show itself stops to load the next track's analysis.
   let showWanted = false;
 
-  function startAutoShow(): AutoSource {
+  /** Start the auto show; on its own clock, from `fromMs` into the track. */
+  function startAutoShow({ fromMs = 0 }: { fromMs?: number } = {}): AutoSource {
     const source = resolveAutoSource();
     showWanted = true;
     if (source === 'live') {
@@ -316,7 +317,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     } else if (source === 'deezer' || source === 'nowplaying') {
       autoShow.start(getAutoPositionMs);
     } else {
-      const startTime = Date.now();
+      const startTime = Date.now() - fromMs;
       autoShow.start(() => Date.now() - startTime);
     }
     syncLiveDirector();

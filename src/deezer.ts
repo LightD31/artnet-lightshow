@@ -3,9 +3,50 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { randomUUID } from 'node:crypto';
-import dfi from 'd-fi-core';
+import crypto, { randomUUID } from 'node:crypto';
 import { toWav } from './audio-file.ts';
+import { messageOf } from './errors.ts';
+
+/**
+ * Deezer, as an optional plugin: tracks by ISRC through d-fi-core, with an ARL
+ * from the operator's own account.
+ *
+ * Nothing of it is loaded until an ARL is set — d-fi-core is imported the
+ * first time it is needed, and is an optional dependency. Deezer's audio is
+ * encrypted with Blowfish, which OpenSSL 3 keeps in its legacy provider:
+ * rather than every run of the server carrying that, the supervisor turns it
+ * on only when an ARL is set (supervisor.ts). A server started without it —
+ * the ARL added since, or run without the supervisor — says Deezer needs a
+ * restart, and fetches tracks with yt-dlp meanwhile.
+ *
+ * Downloading from Deezer this way is against its terms of use; the ARL is
+ * the operator's, and so is the choice.
+ */
+
+type Dfi = typeof import('d-fi-core');
+let dfi: Dfi | null = null;
+
+/** d-fi-core, loaded the first time Deezer is used. */
+async function lib(): Promise<Dfi> {
+  if (!dfi) {
+    try {
+      dfi = await import('d-fi-core');
+    } catch (err) {
+      throw new Error(`Deezer support is not installed (d-fi-core: ${messageOf(err)}) — run npm install`, { cause: err });
+    }
+  }
+  return dfi;
+}
+
+/** Whether this server can decrypt Deezer's audio: Blowfish, from OpenSSL's legacy provider. */
+function canDecrypt(): boolean {
+  try {
+    crypto.createDecipheriv('bf-cbc', Buffer.alloc(16), Buffer.alloc(8));
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
 
 // Bounds on the audio download. Previously unbounded on all three counts: a
 // redirect loop recursed until it blew the stack, a stalled connection hung
@@ -22,17 +63,22 @@ let initialized = false;
  */
 async function init(arl: string): Promise<void> {
   if (initialized) return;
-  if (!arl) throw new Error('DEEZER_ARL not set');
-  await dfi.initDeezerApi(arl);
+  if (!arl) throw new Error('No Deezer ARL set');
+  await (await lib()).initDeezerApi(arl);
   initialized = true;
   console.log('[deezer] API initialized');
+  if (!canDecrypt()) {
+    console.warn('[deezer] this server was started without OpenSSL\'s legacy provider, which Deezer\'s downloads need: '
+      + 'restart it (Settings → Restart now) — until then, tracks come from yt-dlp');
+  }
 }
 
 /**
- * Check whether Deezer downloads are available (ARL configured + init'd).
+ * Whether Deezer downloads are available: an ARL, signed in, and the means to
+ * decrypt what comes down.
  */
 function isAvailable(): boolean {
-  return initialized;
+  return initialized && canDecrypt();
 }
 
 /**
@@ -45,6 +91,7 @@ function isAvailable(): boolean {
  */
 async function downloadByIsrc(trackName: string, isrc: string): Promise<string> {
   // 1. Resolve ISRC → Deezer track info
+  const dfi = await lib();
   console.log(`[deezer] Looking up ISRC ${isrc} for "${trackName}"`);
   const trackInfo = await dfi.isrc2deezer(trackName, isrc);
 
@@ -157,5 +204,6 @@ function _downloadUrl(url: string, redirectsLeft = MAX_REDIRECTS): Promise<Buffe
 export {
   init,
   isAvailable,
+  canDecrypt,
   downloadByIsrc,
 };

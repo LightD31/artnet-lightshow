@@ -26,3 +26,13 @@ export function cacheDir(): string {
   const dir = process.env.LIGHTSHOW_CACHE_DIR;
   return dir && dir.trim() ? path.resolve(dir) : path.join(import.meta.dirname, '..', '..', 'cache');
 }
+
+/**
+ * Where the server writes its log (lightshow.log, and the older ones it
+ * rotates out). `logs/` in the checkout, unless LIGHTSHOW_LOG_DIR names
+ * another.
+ */
+export function logDir(): string {
+  const dir = process.env.LIGHTSHOW_LOG_DIR;
+  return dir && dir.trim() ? path.resolve(dir) : path.join(import.meta.dirname, '..', '..', 'logs');
+}

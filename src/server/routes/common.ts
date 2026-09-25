@@ -40,6 +40,8 @@ export interface RouteDeps {
   wled?: WledClient;
   /** The cue stack; the one saved in config/cues.json unless a test stands in. */
   cues?: CueStore;
+  /** Stop to be started again by the supervisor; false when there is none. */
+  restart?: (reason: string) => boolean;
 }
 
 // Audio uploads genuinely need headroom; GDTF files do not. Separate limits so

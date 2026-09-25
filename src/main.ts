@@ -1,4 +1,5 @@
 import './load-env.ts';
+import './start-logging.ts';
 import path from 'node:path';
 import http from 'node:http';
 import express from 'express';
@@ -37,12 +38,22 @@ import { showStore, SHOW_FILE } from './server/show-store.ts';
 import { modelManager } from './server/model-manager.ts';
 import * as pythonEnv from './python-env.ts';
 import { installProcessSafetyNet } from './server/guard.ts';
+import { startHealthMonitor } from './server/health.ts';
+import { supervision, startHeartbeat, EXIT_CONFIG, EXIT_RESTART } from './server/supervised.ts';
+import { LookStore, currentLook, putBack, resumeAt } from './server/look-store.ts';
+import { configFile } from './server/config-dir.ts';
 import { messageOf } from './errors.ts';
 
 // Before anything else can fail: a fault the code did not expect is reported
 // and the rig keeps running, rather than the process exiting with every
 // fixture latched on its last frame. See server/guard.ts.
 installProcessSafetyNet();
+startHealthMonitor();
+
+const supervised = supervision();
+if (supervised.restarts) {
+  console.warn(`[supervisor] restart ${supervised.restarts}: the last run ${supervised.lastExit ? supervised.lastExit.reason : 'ended'}`);
+}
 
 // A .env from before settings moved into the UI would otherwise go quiet: the
 // rig would come up on defaults with no clue why. Say which variables are now
@@ -60,7 +71,9 @@ const LIGHTSHOW_TOKEN = settings.get('server.token');
 const fatal = configError({ host: HOST, token: LIGHTSHOW_TOKEN, configFile: CONFIG_FILE });
 if (fatal) {
   console.error(`\n${fatal}\n`);
-  process.exit(1);
+  // Not 1: starting again would only refuse again, and the supervisor knows
+  // this code as "do not restart".
+  process.exit(EXIT_CONFIG);
 }
 
 const auth = createAuth({
@@ -176,6 +189,16 @@ setPersist((patch) => {
 // every one of them saves, so the rig comes back as it was left.
 setHooks({ showChanged: () => showStore.scheduleSave() });
 
+// Started again by the supervisor — after a crash, a hang, or a restart from
+// the app — the rig comes back as it was, not on the default look: put back
+// before the engine's first frame (look-store.ts).
+const lookStore = new LookStore(configFile('look.json'));
+const savedLook = supervised.recovering ? lookStore.load() : undefined;
+if (savedLook) {
+  putBack(savedLook);
+  console.log(`[look] put back the look from ${savedLook.savedAt}, before the restart`);
+}
+
 // Keep the Spotify session across restarts. Only the refresh token is stored —
 // access tokens last an hour, so one saved at shutdown would be stale by the
 // next show, while the refresh token mints a fresh one on demand. Spotify may
@@ -186,11 +209,33 @@ spotify.onTokens((refreshToken) => {
   catch (err) { console.warn(`[spotify] could not save the session: ${messageOf(err)}`); }
 });
 
-attachRoutes(app, { midi, autoShow, spotify, nowPlaying, deezerSource, prolink, analysisCache, integrations, applier });
+attachRoutes(app, { midi, autoShow, spotify, nowPlaying, deezerSource, prolink, analysisCache, integrations, applier, restart: restartServer });
 attachSockets(io, { midi, integrations });
 
 // On a thread of its own unless the settings say otherwise (engine.thread).
 startEngine({ thread: settings.get('engine.thread') });
+
+// The auto show, if it was running: its track's show from the cache, following
+// what it followed before. A player the server has to reconnect to (Spotify,
+// the decks) is given half a minute to come back first, so the show picks up
+// where the music is rather than from the top on a stopwatch.
+async function resumeAutoShow(auto: NonNullable<NonNullable<typeof savedLook>['auto']>): Promise<void> {
+  const saved = savedLook as NonNullable<typeof savedLook>;
+  if (!auto.key || !(await autoShow.resume(auto.key, auto.track as typeof autoShow.track))) {
+    console.warn('[look] the auto show was running, but its track is no longer in the analysis cache');
+    return;
+  }
+  for (let waited = 0; auto.source !== 'timer' && integrations.resolveAutoSource() !== auto.source && waited < 30_000; waited += 1000) {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  const source = integrations.startAutoShow({ fromMs: resumeAt(saved) ?? 0 });
+  integrations.broadcast();
+  console.log(`[look] took the auto show up again, following ${source}`);
+}
+if (savedLook?.auto?.running) resumeAutoShow(savedLook.auto).catch((err) => console.warn(`[look] could not resume the auto show: ${messageOf(err)}`));
+
+// Kept every two seconds when it has changed, for the next restart to put back.
+setInterval(() => lookStore.save(currentLook(autoShow, integrations.resolveAutoSource())), 2000).unref();
 // While Art-Net broadcasts, find the nodes and send each its universes.
 artnetDiscovery.start();
 
@@ -244,10 +289,14 @@ server.on('error', (err: NodeJS.ErrnoException) => {
   }
   let engineDown = Promise.resolve();
   try { engineDown = stopEngine(); } catch (_) { /* on the way out regardless */ }
-  Promise.resolve(engineDown).catch(() => {}).finally(() => process.exit(1));
+  // Another program has the port, or the address is not this machine's:
+  // starting again would fail the same way, so the supervisor is told not to.
+  Promise.resolve(engineDown).catch(() => {}).finally(() => process.exit(EXIT_CONFIG));
 });
 
 server.listen(PORT, HOST, () => {
+  // Under the supervisor: say the server is up, and keep saying so.
+  startHeartbeat();
   // Where the OAuth proxy sends the operator's browser back to. Must be an
   // address that browser can actually reach: "localhost" is only right when the
   // browser is on this machine. The "public URL" setting overrides for
@@ -303,7 +352,7 @@ server.listen(PORT, HOST, () => {
 // frame so the fixtures don't hold the last look after the server is gone.
 let shuttingDown = false;
 
-function shutdown(signal: string): void {
+function shutdown(signal: string, exitCode = 0): void {
   if (shuttingDown) return;             // a second Ctrl-C shouldn't re-enter this
   shuttingDown = true;
   console.log(`\n${signal} — blacking out and shutting down…`);
@@ -334,9 +383,22 @@ function shutdown(signal: string): void {
     try { fn(); } catch (err) { console.warn(`[shutdown] ${what}: ${messageOf(err)}`); }
   }
 
-  Promise.resolve(engineDown).catch(() => {}).finally(() => server.close(() => process.exit(0)));
+  Promise.resolve(engineDown).catch(() => {}).finally(() => server.close(() => process.exit(exitCode)));
   // Don't hang on a lingering keep-alive socket or an in-flight analysis.
-  setTimeout(() => process.exit(0), 2000).unref();
+  setTimeout(() => process.exit(exitCode), 2000).unref();
+}
+
+/**
+ * Stop, to be started again by the supervisor straight away — for a setting
+ * that only applies on a restart. False when there is no supervisor to do the
+ * starting (the server was run with --no-supervisor, or under `node --watch`).
+ */
+function restartServer(reason: string): boolean {
+  if (!supervised.supervised || !process.send) return false;
+  process.send({ type: 'restart', reason });
+  // A moment for the answer to reach the page that asked.
+  setTimeout(() => shutdown('Restart', EXIT_RESTART), 200);
+  return true;
 }
 
 process.on('SIGINT',  () => shutdown('SIGINT'));
