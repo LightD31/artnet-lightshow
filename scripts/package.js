@@ -215,8 +215,10 @@ async function main() {
     step('Archiving');
     const file = path.join(DIST, `${name}${windows ? '.zip' : '.tar.gz'}`);
     fs.rmSync(file, { force: true });
-    // Windows 10 and later carry bsdtar, which writes a zip for a .zip name.
-    run('tar', windows ? ['-a', '-c', '-f', file, '-C', DIST, name] : ['-czf', file, '-C', DIST, name]);
+    // Windows 10 and later carry bsdtar, which writes a zip for a .zip name —
+    // named by its path, since the GNU tar that comes with Git cannot.
+    if (windows) run(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe'), ['-a', '-c', '-f', file, '-C', DIST, name]);
+    else run('tar', ['-czf', file, '-C', DIST, name]);
     console.log(`\n${file} (${Math.round(fs.statSync(file).size / 1e6)} MB)`);
   }
   console.log(`\nDone: ${OUT}`);

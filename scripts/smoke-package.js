@@ -3,7 +3,10 @@
  * Check a packaged build (scripts/package.js) starts and stops as it should,
  * on the machine it was built for — CI runs this on each package it makes.
  *
- *   node scripts/smoke-package.js dist/ArtNet-Lightshow-<version>-<platform>-<arch>
+ *   node scripts/smoke-package.js [<the package folder>]
+ *
+ * Without one, the folder `npm run package` made for this machine; an
+ * installed copy works too.
  *
  * The executable is started with a data folder of its own, on a port of its
  * own, with no DMX going out: it must say its version, come up supervised,
@@ -20,12 +23,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const dir = path.resolve(process.argv[2] || '');
+const ROOT = path.join(import.meta.dirname, '..');
+const { version } = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+const dir = path.resolve(process.argv[2] || path.join(ROOT, 'dist', `ArtNet-Lightshow-${version}-${process.platform}-${process.arch}`));
 const windows = process.platform === 'win32';
 const EXE = path.join(dir, windows ? 'ArtNet Lightshow.exe' : 'artnet-lightshow');
 const PORT = 3996;
 const BASE = `http://127.0.0.1:${PORT}`;
-const { version } = JSON.parse(fs.readFileSync(path.join(dir, 'app', 'package.json'), 'utf8'));
 
 let failures = 0;
 function check(what, ok, detail = '') {

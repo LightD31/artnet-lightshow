@@ -1,0 +1,87 @@
+name: Package
+
+# The packaged build (scripts/package.js): Node 24 as a single executable,
+# the app beside it, and uv for the analysis environment. Built on each
+# platform it is for — its node_modules hold native modules — then started,
+# checked and stopped (scripts/smoke-package.js). On Windows it is also
+# wrapped in an installer (packaging/windows/installer.iss), which is
+# installed, run and uninstalled.
+#
+# Called by CI on every push and pull request, and by the release workflow on
+# a version tag; what it made is kept as the run's artifacts.
+
+on:
+  workflow_call:
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    name: package (${{ matrix.os == 'windows-latest' && 'Windows' || 'Linux' }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build the package
+        run: npm run package
+
+      - name: Run it
+        run: node scripts/smoke-package.js
+
+      # What Sources → Analysis environment would install, with the uv the
+      # package carries, on this platform — without the gigabytes.
+      - name: The analysis environment would install here
+        shell: bash
+        run: |
+          dir="dist/ArtNet-Lightshow-$(node -p "require('./package.json').version")-$(node -p "process.platform + '-' + process.arch")"
+          UV_PROJECT_ENVIRONMENT="$RUNNER_TEMP/dry-venv" UV_PYTHON_PREFERENCE=only-managed \
+            "$dir/tools/uv" sync --locked --extra cpu --python 3.12 --project "$dir/app" --dry-run
+
+      - name: Build the installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /Qp "/DAppVersion=$version" `
+            "/DSourceDir=$PWD\dist\ArtNet-Lightshow-$version-win32-x64" "/DOutputDir=$PWD\dist" `
+            packaging\windows\installer.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Install it, run it, uninstall it
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $dir = Join-Path $env:RUNNER_TEMP 'ArtNet Lightshow'
+          $setup = Start-Process -Wait -PassThru -FilePath "dist\ArtNet-Lightshow-$version-win32-x64-setup.exe" `
+            -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER', "/DIR=`"$dir`""
+          if ($setup.ExitCode -ne 0) { throw "the installer exited with $($setup.ExitCode)" }
+          if (Test-Path (Join-Path $dir 'portable')) { throw 'an installed copy must not be portable' }
+          node scripts/smoke-package.js "$dir"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $uninstall = Start-Process -Wait -PassThru -FilePath (Join-Path $dir 'unins000.exe') `
+            -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+          if ($uninstall.ExitCode -ne 0) { throw "the uninstaller exited with $($uninstall.ExitCode)" }
+          # The uninstaller finishes from a copy of itself; give it a moment.
+          Start-Sleep -Seconds 5
+          if (Test-Path (Join-Path $dir 'ArtNet Lightshow.exe')) { throw 'the uninstaller left the app behind' }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ runner.os }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+            dist/*-setup.exe
+          if-no-files-found: error
+          retention-days: 7
