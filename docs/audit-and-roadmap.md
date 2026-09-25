@@ -525,8 +525,8 @@ Every phase is its own PR, keeps `npm run check` and the Python suite green, and
 
 ### Phase 7 — Platform & ops (interleaved)
 
-> **Status.** In three parts: **7a** (upgrades and refactors) is done; **7b** (logging, the health endpoint, the
-> crash supervisor, Deezer as an optional plugin) and **7c** (packaging) are next. **7a — done:**
+> **Status.** In three parts: **7a** (upgrades and refactors) and **7b** (logging, health, the supervisor,
+> Deezer as a plugin) are done; **7c** (packaging) is next. **7a — done:**
 > - **Upgrades:** Node 24 LTS in CI and `.nvmrc` (the unit job also runs on 22.18, the oldest Node that works);
 >   zod 4, @preact/signals 2, eslint 10 (with `@eslint/js`), esbuild 0.28; dotenv replaced by Node's own
 >   `process.loadEnvFile` (`src/load-env.ts`). The director's golden now hashes the plan to ten digits: V8's
@@ -534,6 +534,27 @@ Every phase is its own PR, keeps `npm run check` and the Python suite green, and
 > - **Refactors:** `routes.ts` (101 routes) and `rig-routes.ts` are a module per domain in `src/server/routes/`, the 107 routes
 >   registering as before; settings, show, cues and the MIDI map share `JsonStore` (read, validate, move a bad
 >   file aside, write atomically); one `isLoopback` (`src/server/loopback.ts`) replaces four.
+>
+> **7b — done:**
+> - **Logging:** pino (`src/server/log.ts`) — readable lines on a terminal, JSON otherwise, a rotating
+>   `logs/lightshow.log` (10 MB, three kept) and a ring buffer of the last thousand entries, which is where
+>   the tail of the run before a restart is read back into. The existing `[tag]` console lines are routed
+>   through it with the tag as the component, so nothing had to be rewritten to get levels and components.
+>   The drawer's **Log** tab polls `GET /api/logs`, filters by level and text, and marks the run before.
+> - **Health:** `GET /api/health` — `ok` / `degraded` / `failing`, with the problems in words (the engine
+>   down or fallen back, late frames, main-thread stalls from `monitorEventLoopDelay`, memory, recent
+>   errors, the auto show, restarts) — and `GET /healthz` for a service manager.
+> - **Supervision:** `npm start` runs the server as the child of a small supervisor
+>   (`src/supervisor.ts`) that starts it again after a crash or when its heartbeat stops for 15 s,
+>   backing off from half a second to ten, giving up on a server that never starts, and never restarting
+>   one whose configuration will not let it (exit 78). The look on stage is kept in `config/look.json`
+>   and put back before the new run's first frame, the auto show reloaded from the cache — never an
+>   energy effect. Settings waiting on a restart get a banner and a **Restart now** button (exit 75).
+>   Tested for real in `tests/e2e/supervisor.spec.js`: SIGKILL mid-look, the look comes back.
+> - **Deezer:** d-fi-core is an optional dependency imported the first time Deezer is used;
+>   `--openssl-legacy-provider` is no longer on by default — the supervisor passes it only when an ARL is
+>   set, and a first ARL is reported as waiting on a restart. The terms-of-service risk is said where the
+>   ARL is entered and in the README.
 - **Upgrades:** Node 24 LTS, zod 4, @preact/signals 2, eslint 10, esbuild 0.28; drop dotenv.
 - **Refactors:**
   - split `routes.js` (87 routes) into domain routers;

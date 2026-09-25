@@ -189,6 +189,10 @@ through the outputs, the fixtures, where they hang and the music — see
 
 Before a show, run `npm run preflight` — see [Pre-show check](#pre-show-check).
 
+`npm start` runs the server under a small supervisor that starts it again if it
+crashes or hangs, with the look it had — see
+[Running the show server](#running-the-show-server).
+
 The auto-show needs Python and a few extras — see
 [Auto show setup](#auto-show-setup). Manual control works without them.
 
@@ -1380,8 +1384,14 @@ Changing it recycles the analyzer process; no restart needed.
 | **Live input (by ear)** | The [live input](#live-input) on. Needs no analysis: the show answers what it hears. *Auto-detect* falls back to it before the timer. |
 | **Timer** | Fallback: plays the analysed timeline against a wall clock. |
 
-The Deezer ARL cookie (Sources → *Deezer*) is optional but recommended:
-with it, audio is fetched by ISRC for an exact match instead of a yt-dlp search.
+The Deezer ARL cookie (Sources → *Deezer*) is optional: with it, audio is
+fetched by ISRC for an exact match instead of a yt-dlp search. Downloading from
+Deezer this way is **against Deezer's terms of use** — the ARL comes from your
+own account, and the choice is yours. Nothing of it is loaded until an ARL is
+set ([d-fi-core](https://www.npmjs.com/package/d-fi-core) is an optional
+dependency, imported the first time Deezer is used), and the first ARL takes a
+restart: decrypting Deezer's audio needs an OpenSSL module that the server only
+turns on when there is one (see the note under [Configuration](#configuration)).
 
 ### PRO DJ LINK
 
@@ -2146,6 +2156,15 @@ Credentials are never returned by any of these — `/api/hue/status` reports onl
 whether a pairing exists. The channel bindings themselves are ordinary settings,
 saved through `PUT /api/settings` under `hue.channels`.
 
+### The server
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/healthz` | Liveness: `{ ok: true }`, no token needed |
+| GET | `/api/health` | Status (`ok` / `degraded` / `failing`), problems in words, uptime, engine, main-thread delay, memory, outputs, supervisor — see [Health](#health) |
+| GET | `/api/logs` | The last log entries: `?after=<seq>` for those after one, `?level=` (`trace`…`fatal`) and `?limit=` (up to 1000); answers `{ last, entries }` |
+| POST | `/api/server/restart` | Restart the server under the supervisor (the look comes back); 409 without one |
+
 ### Socket.IO
 
 The UI uses Socket.IO rather than polling. Clients send `set`, `override`,
@@ -2205,6 +2224,79 @@ one that never resolves on its own.
 
 ---
 
+## Running the show server
+
+### The supervisor
+
+`npm start` runs `node server.js`, which is two processes: a small supervisor,
+and the server as its child. The supervisor starts the server again when it
+dies — a native module that faulted, the memory running out — and when it
+stops answering: the server reports in every second, and one whose main
+thread has been silent for **15 seconds** (60 while it is starting) is killed
+and started again.
+
+- **The look comes back.** The look on stage is kept in `config/look.json`
+  every two seconds — the pattern, the colours, the masters, every override,
+  as a cue captures it — and a server the supervisor starts again puts it back
+  before its first frame. If the auto show was running it reloads that track's
+  show from the analysis cache and follows the music again. An energy effect
+  is never put back: a held blinder whose release was lost must not come back
+  stuck on. A normal start ignores the file.
+- **Restarts back off** — half a second, then 1, 2, 5 and 10 seconds while it
+  keeps dying, back to half a second once a run has lasted a minute. A server
+  that dies three times before it has even started is not going to start: the
+  supervisor gives up and says why.
+- **It stops when told to.** Ctrl-C or a service manager's stop (SIGINT,
+  SIGTERM) stops the server cleanly and then the supervisor. A server that
+  cannot start because of its configuration (the port taken, the address not
+  on this machine, a network address without a token) exits with code **78** and the supervisor stops with it,
+  rather than trying again forever; one asking to be started again (the
+  **Restart now** button, for the settings that only apply at start) exits
+  with **75** and is started again at once.
+
+To run the server without it — under a service manager that restarts it
+itself, or while developing — pass `--no-supervisor` (`node server.js
+--no-supervisor`) or set `LIGHTSHOW_SUPERVISOR=0`. `npm run dev` does: the
+watcher restarts it instead. Without the supervisor, nothing puts the look back
+after a crash, and **Restart now** says to restart the server yourself.
+
+### Logs
+
+The server logs in structured lines ([pino](https://getpino.io/)), each with a
+level and the part of the server it is from (`engine`, `prolink`, `auto-show`,
+`supervisor`, …):
+
+- **In the terminal**, one readable line each when it is a terminal, JSON
+  lines when it is not (a service manager, a pipe). `LOG_FORMAT=pretty` or
+  `LOG_FORMAT=json` picks one either way.
+- **In a file**, `logs/lightshow.log` as JSON lines, rotated at 10 MB to
+  `lightshow.1.log` and on, three kept. `LIGHTSHOW_LOG_DIR` puts them
+  elsewhere.
+- **In the app**, the bottom drawer's **Log** tab: the last thousand entries,
+  newest at the bottom, filtered by level and by text, with a pause to read.
+  After a restart the tail of the run before is read back from the file and
+  marked as such, so what led up to a crash is there to read.
+
+`LOG_LEVEL` (`trace`, `debug`, `info`, `warn`, `error`; default `info`) sets
+how much is written.
+
+### Health
+
+`GET /api/health` says how the server is doing: its status — `ok`,
+`degraded` (something to look at; the show is running) or `failing` (the engine
+is down: nothing is going out to the rig) — and what is wrong, in words: the
+engine not running or fallen back to the main thread, more than 5 % of frames
+late, the main thread stalling for over 100 ms, the memory over 1.5 GB, errors
+logged in the last ten minutes, the auto show in error, and how many times the
+supervisor has had to start it again and why. With them: the uptime, the
+engine's frame timing, the main thread's delay over the last 30 seconds, the
+memory, the outputs and the auto show. The Log tab shows it above the log.
+
+`GET /healthz` is the liveness probe for a service manager or a monitor: it
+answers `{ "ok": true }` when the server does, and needs no token.
+
+---
+
 ## Configuration
 
 Everything is configured in the app, in its **Rig**, **Sources** and
@@ -2232,8 +2324,12 @@ it has edits not applied yet. Most settings take effect immediately.
 | Settings | **Server & access** | Bind address, port, access token, public URL |
 
 The **Server & access** settings and the engine thread are read before the
-server starts, so they are marked `restart` and applied on the next start.
-Everything else applies as soon as you press Apply.
+server starts, so they are marked `restart` and applied on the next start, and
+so is the first Deezer ARL. While any are waiting, the Sources and Settings
+views say which, with a **Restart now** button: the rig blacks out for a few
+seconds and the supervisor brings the server back with the look it had (see
+[Running the show server](#running-the-show-server)). Everything else applies
+as soon as you press Apply.
 
 ### The config file
 
@@ -2264,16 +2360,21 @@ Set those values once in the app and delete them. A `.env` in the folder the
 server starts from is still read, by Node's own loader (a variable already set
 in the environment wins), for the few things that are not settings:
 `DEBUG_MIDI=1` to log every MIDI message, `ARTNET_PYTHON` for the Python that
-runs the analysis, and `LIGHTSHOW_CONFIG_DIR` / `LIGHTSHOW_CACHE_DIR` —
-see `.env.example`.
+runs the analysis, `LIGHTSHOW_CONFIG_DIR` / `LIGHTSHOW_CACHE_DIR` /
+`LIGHTSHOW_LOG_DIR`, `LOG_LEVEL` / `LOG_FORMAT`, and `LIGHTSHOW_SUPERVISOR=0` —
+see `.env.example` and [Running the show server](#running-the-show-server).
 
 Art-Net changes made over the socket (a page, Companion) are persisted to the
 same file.
 
-> **Why `--openssl-legacy-provider`?** The `start` and `dev` scripts pass it
-> because Deezer track decryption uses Blowfish (`bf-cbc`), which OpenSSL 3
-> moved to the legacy provider. Without the flag, Deezer downloads fail with
-> `ERR_OSSL_EVP_UNSUPPORTED`; everything else works.
+> **Why a restart for the first Deezer ARL?** Deezer track decryption uses
+> Blowfish (`bf-cbc`), which OpenSSL 3 moved to its legacy provider, and Node
+> only turns that on at start (`--openssl-legacy-provider`). Nothing else here
+> needs it, so it is no longer on by default: the supervisor passes it to the
+> server only when `config/settings.json` has an ARL. Until the restart the
+> Deezer section says it is waiting on one, and audio falls back to a yt-dlp
+> search. Run without the supervisor (`npm run dev`, a service manager), start
+> Node with `--openssl-legacy-provider` yourself if you use Deezer.
 
 ---
 
@@ -2311,7 +2412,7 @@ npm run check        # all three
 npm run test:e2e     # Playwright: the page in Chromium against a real server
 npm run preflight    # pre-show check (exits 1 if something will not work)
 npm run watch:client # rebuild the client bundle on change
-npm run dev          # server with --watch
+npm run dev          # server with --watch, without the supervisor
 npm run gen:analysis-types  # after changing the analysis document schema
 ```
 
@@ -2358,14 +2459,24 @@ directory and analysis cache and no DMX output (`tests/e2e/serve.js`) — and
 drives the page in Chromium: the views, protocol 2, the Perform pads on a
 desktop and a touch tablet, the Timeline and the 3D stage (on an analysed
 track the server seeds its cache with, so no test needs Python), the fixes,
-the PWA, and axe-core on every view in every theme. It uses
+the PWA, the log and restart views, and axe-core on every view in every theme. It uses
 the Playwright pinned in `package.json`; `npx playwright install chromium`
 fetches its browser where there is none.
 
 `LIGHTSHOW_CONFIG_DIR` points the server at another directory for
-`settings.json`, `show.json`, `cues.json` and `midi-map.json` (default:
-`config/`), and `LIGHTSHOW_CACHE_DIR` at another for the analysis cache
-(default: `cache/`).
+`settings.json`, `show.json`, `cues.json`, `midi-map.json` and `look.json`
+(default: `config/`), `LIGHTSHOW_CACHE_DIR` at another for the analysis cache
+(default: `cache/`), and `LIGHTSHOW_LOG_DIR` at another for the log files
+(default: `logs/`).
+
+**The supervisor** (`src/supervisor.ts`) forks `server.js` again with
+`LIGHTSHOW_SUPERVISED=1`, which runs `src/main.ts` directly; the two talk over
+the fork's IPC channel (`src/server/supervised.ts`: the heartbeat, a restart
+asked for, the exit codes). Its unit tests drive it with a fake child
+(`tests/unit/supervisor.test.js`), and `tests/e2e/supervisor.spec.js` runs it
+for real: it kills the server mid-look with SIGKILL and checks the look comes
+back, restarts it from the API, and stops it. The e2e server itself runs
+without it.
 
 The app icons (`public/icons/`) are drawn by `node scripts/make-icons.js`,
 which needs no dependencies; run it after changing the design.
