@@ -2017,6 +2017,15 @@ file does not exist and the default below is used.
 LED feedback follows the map: a button bound to the live pattern lights up
 wherever you put it, rather than wherever the X-Touch originally had it.
 
+**Touch-sensitive faders.** A motorised fader usually has a touch sensor that
+sends a CC of its own — 127 the moment a finger lands, 0 when it lifts. Learning
+a fader waits for a value between the ends, so it binds the fader's movement and
+not that sensor. A fader action on a control that has only ever sent 0 and 127
+is ignored (with one warning in the log), since obeying it would throw the
+master to full on touch and to black on release. A map that already bound the
+sensor heals itself: touch and move the fader once, and the binding moves to the
+fader's own CC and is saved. While a fader is touched the motor leaves it alone.
+
 ### Motorised faders and encoder rings
 
 The X-Touch Compact's nine faders are motorised and its eight encoders have LED

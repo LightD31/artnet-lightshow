@@ -122,6 +122,9 @@ midi.setFixtureMax = setFixtureMaxBrightness;
 // inside midi.js, which has no business knowing about the cue store.
 midi.setMap(midiMap.get());
 midiMap.onChange((map) => midi.setMap(map));
+// A fader learned on its touch sensor is moved to its movement once both have
+// been seen (midi.ts), and kept that way.
+midi.onRebind = (_from, to, binding) => midiMap.setBinding('cc', to, binding);
 midi.recallCue = (id) => {
   if (!cues.recall(id)) console.warn(`[MIDI] recallCue: no cue ${id} — it may have been deleted`);
 };
