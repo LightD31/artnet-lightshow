@@ -9,9 +9,10 @@ Ships configured for **4× Cameo ROOT PAR 6**, but any fixture works — import 
 GDTF file, or find the fixture in the Open Fixture Library, and patch it in the
 UI.
 
-Control surfaces: the web UI, **any MIDI controller** (with MIDI learn; a
-Behringer X-Touch Compact is mapped out of the box), an **Elgato Stream Deck**
-via **Bitfocus Companion**, and a REST API.
+Control surfaces: the web UI, **any MIDI controller** (with MIDI learn, which
+knows a motorised fader's touch sensor from the fader; a Behringer X-Touch
+Compact is mapped out of the box), an **Elgato Stream Deck** via **Bitfocus
+Companion** (with a page of presets for busking), and a REST API.
 
 ---
 
@@ -155,10 +156,12 @@ via **Bitfocus Companion**, and a REST API.
 - **Multiple universes** — every fixture names the universe it lives on, so a
   rig is no longer capped at one node's 512 channels; a pixel strip longer than
   a universe runs on into the next ones, 170 RGB pixels to each
-- **WLED** — find WLED strips and panels on the network and add one in a click;
+- **WLED** — find WLED strips and panels on the network and add one in a click,
+  a 64 × 32 matrix included, or each of its segments as a fixture of its own;
   it is sent its pixels over DDP
 - **Panels** — an LED matrix is a grid of cells on the stage plot, and the pixel
-  effects draw across and down it
+  effects draw across and down it; Bars, Fire and Rain, after LedFx, stand up
+  on it
 - **Art-Net and sACN (E1.31)** — run either, or both at once while a venue is
   migrating from one to the other. Art-Net finds the nodes on the network and
   sends each its universes directly, with ArtSync if you want it; sACN ends its
@@ -168,7 +171,8 @@ via **Bitfocus Companion**, and a REST API.
 - **16-bit dimming** where the fixture has it, and a software strobe for
   fixtures that have no strobe channel
 - **Philips Hue** — Hue lamps follow rig fixtures through the Entertainment API,
-  so they respond to every pattern, palette and cue the pars do
+  so they respond to every pattern, palette and cue the pars do; a Hue lamp in
+  the patch takes no DMX address
 - Save and load the whole patch as a show file
 
 ---

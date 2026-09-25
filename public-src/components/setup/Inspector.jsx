@@ -73,8 +73,8 @@ export function Inspector() {
         {wled ? <span class="inspector-value">WLED at {fix.output.host}, over DDP</span> : (
           <select id="insp-output" value={hueOnly ? 'hue' : 'dmx'} disabled={!connected} aria-describedby={hueOnly ? 'insp-output-help' : undefined}
             onChange={(e) => send({ output: e.target.value === 'hue' ? { protocol: 'hue' } : null })}>
-            <option value="dmx">DMX — Art-Net and sACN</option>
-            <option value="hue">Hue lamp — no DMX address</option>
+            <option value="dmx">DMX (Art-Net, sACN)</option>
+            <option value="hue">Hue lamp (no DMX)</option>
           </select>
         )}
         {!hueOnly && <>
