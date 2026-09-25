@@ -10,6 +10,10 @@ import type { Express } from 'express';
 import { asyncHandler } from './common.ts';
 import type { RouteContext } from './common.ts';
 
+/** The settings that apply only at start; the Deezer ARL only the first time one is set. */
+const restartKeysFor = (pending: string[]): string[] =>
+  (pending.includes('deezer.arl') ? [...RESTART_PATHS, 'deezer.arl'] : RESTART_PATHS);
+
 /**
  * Setting up: the pre-show check, the analysis models, and the settings.
  */
@@ -62,8 +66,7 @@ export function attachSetupRoutes(app: Express, ctx: RouteContext): void {
       ok: true,
       settings: values,
       secrets,
-      // The Deezer ARL only needs a restart the first time one is set.
-      restartKeys: pendingRestart.includes('deezer.arl') ? [...RESTART_PATHS, 'deezer.arl'] : RESTART_PATHS,
+      restartKeys: restartKeysFor(pendingRestart),
       pendingRestart,
       // Which interpreter the analyzer actually resolved to, and whether it can
       // import what it needs. Shown under the Python field, because "I ran pip
@@ -84,12 +87,14 @@ export function attachSetupRoutes(app: Express, ctx: RouteContext): void {
       const changed = settings.update(req.body || {});
       applier.applyChanged(changed);
       const { settings: values, secrets } = settings.redacted();
+      const pendingRestart = applier.pendingRestart();
       res.json({
         ok: true,
         changed,
         settings: values,
         secrets,
-        pendingRestart: applier.pendingRestart(),
+        restartKeys: restartKeysFor(pendingRestart),
+        pendingRestart,
       });
     } catch (err) {
       // Zod errors carry the offending path; surface it rather than a bare 500.

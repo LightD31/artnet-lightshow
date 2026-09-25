@@ -5,6 +5,7 @@ import { SettingsSection } from './Section.jsx';
 import { SHOW, ENGINE, MIDI_CLOCK, SERVER } from './specs.js';
 import { MidiMap } from './MidiMap.jsx';
 import { openWizard } from './Wizard.jsx';
+import { RestartBanner } from './RestartBanner.jsx';
 
 /**
  * Everything else: how the show behaves over a night, the MIDI controller
@@ -97,6 +98,7 @@ export function SettingsView() {
   const data = settingsSig.value;
   return (
     <div class="setup-view">
+      <RestartBanner />
       <div class="setup-columns">
         <div class="setup-col">
           <SettingsSection {...SHOW} />

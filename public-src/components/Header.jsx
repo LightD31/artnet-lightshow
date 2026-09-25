@@ -82,7 +82,7 @@ export function Header() {
   const auto = s.autoShow && s.autoShow.status;
 
   return (
-    <header>
+    <header class="app-header">
       <h1>ArtNet <span>Lightshow</span></h1>
 
       <div class="header-stats">

@@ -142,7 +142,11 @@ test('a setting is applied, and a secret is set and cleared without ever being s
   const arl = deezer.getByRole('textbox', { name: 'ARL Cookie' });
   await arl.fill('a-secret-cookie');
   await deezer.getByRole('button', { name: 'Apply' }).click();
-  await expect(deezer.getByRole('status')).toHaveText('Saved');
+  // The e2e server started without an ARL, so without the OpenSSL module
+  // decrypting Deezer's audio needs: the first one waits on a restart.
+  await expect(deezer.getByRole('status')).toHaveText('Saved — restart the server to apply');
+  const banner = page.getByRole('region', { name: 'Waiting on a restart' });
+  await expect(banner).toContainText('Deezer: ARL Cookie');
   const stored = await settings(request);
   expect(stored.secrets['deezer.arl']).toBe(true);
   expect(stored.settings.deezer.arl).toBe('');
@@ -150,6 +154,7 @@ test('a setting is applied, and a secret is set and cleared without ever being s
   await expect(arl).toHaveAttribute('placeholder', /leave blank to keep/);
   await deezer.getByRole('button', { name: 'Clear ARL Cookie' }).click();
   await expect.poll(async () => (await settings(request)).secrets['deezer.arl']).toBe(false);
+  await expect(banner, 'no ARL, nothing to wait for').toHaveCount(0);
 });
 
 test('the pre-show check runs and says what it found', async ({ page }) => {

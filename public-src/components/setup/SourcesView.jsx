@@ -3,6 +3,7 @@ import { useSettings, liveDevices } from '../../setup-state.js';
 import { SettingsSection } from './Section.jsx';
 import { SOURCES, LIVE, SPOTIFY, DEEZER, ANALYSIS } from './specs.js';
 import { Models } from './Models.jsx';
+import { RestartBanner } from './RestartBanner.jsx';
 
 /**
  * Where the music comes from, and how it is heard: the players the show may
@@ -41,6 +42,7 @@ export function SourcesView() {
   const devices = liveDevices.use();
   return (
     <div class="setup-view">
+      <RestartBanner />
       <div class="setup-columns">
         <div class="setup-col">
           <SettingsSection {...SOURCES} />
