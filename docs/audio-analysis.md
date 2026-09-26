@@ -535,6 +535,55 @@ So every detector measures both sides of a transition:
   from drops because it wants a completely different gesture; treating one as a
   drop means the show changes scene for a cymbal.
 
+### How well the drops and build-ups work
+
+`scripts/eval-dynamics.py` scores them against people who marked them, and
+counts them in music that has none:
+
+* **Raveform** (TISMIR, CC BY 4.0): EDM tracks from DJ mixes, each marked by
+  three people with its intro, buildup, breakdown, drop, cooldown and outro.
+  Sampled evenly across its genres, from techno and trance to mainstage and
+  drum & bass.
+* **The Harmonix Set** (Nieto et al., ISMIR 2019, MIT): pop, hip-hop, rock,
+  country, with its Dance/Electronic tracks left out. None of it has a drop.
+
+The annotations are fetched once and the audio comes from YouTube, into
+`~/.cache/artnet-lightshow/eval`, never redistributed. Every stage before
+dynamics is cached per track, so a change to `dynamics.py` or `DynamicsConfig`
+re-scores in about a minute:
+
+```bash
+python scripts/eval-dynamics.py --save before.json     # once, most of an hour
+python scripts/eval-dynamics.py --compare before.json  # after each change, the same tracks
+python scripts/eval-dynamics.py --split test           # the held-out tracks, at the end
+```
+
+The baseline, at commit `e8daecc`, on 50 tracks of each (the tuning split):
+
+| Raveform (EDM, drops marked) | |
+|---|---|
+| drop F within a beat (precision / recall) | 0.43 (0.32 / 0.64) |
+| drop F within a bar | 0.56 |
+| `proper` drops that are drops (precision) | 0.40 |
+| drops a minute, found / marked | 0.72 / 0.36 |
+| marked build-ups found, ending on their drop | 6 % (1 of 18) |
+| build-up length, median, found / marked | 1.8 s / 32.0 s |
+
+| Harmonix (no drops) | |
+|---|---|
+| drops a minute | 0.92 |
+| `proper` drops a minute | 0.59 |
+| tracks with at least one `proper` drop | 94 % |
+| drops on a chorus entry (22 tracks timed) | 33 %, against 5 % by chance |
+
+What that says: the drop detector finds most real drops but reports two for
+every one there is, and in music with no drops it fires about once a minute,
+mostly on chorus entries, where the verse-to-chorus lift passes the
+breakdown test. The build-up search finds the last second or two before a drop
+rather than the riser: in EDM the quietest moment before a drop is usually the
+pause just ahead of it, not the start of the build-up, and the search starts
+from the quietest moment.
+
 ## Stage 7 — perception (`perception.py`, `tagger.py`)
 
 * **Key** — Krumhansl-Schmuckler correlation against all 24 rotated profiles.
