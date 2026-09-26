@@ -30,6 +30,7 @@ import contextlib
 import os
 import sys
 import threading
+import warnings
 import weakref
 
 # Re-entrant: a model's build() calls device(), which locks too. A plain
@@ -120,6 +121,26 @@ _TURNS = _Turns()
 # load a model" turns out to mean here. An operator who has already set this
 # keeps their value.
 os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'expandable_segments:True')
+
+# Two deprecation warnings every worker printed at start, both from code this
+# project cannot change, and both about calls that still work on the torch the
+# lock installs. Each is silenced by its own message, and nothing else is.
+#
+# rotary-embedding-torch 0.6 decorates with `torch.cuda.amp.autocast`. Its 0.8
+# series uses `torch.amp.autocast` instead, but it is not ours to take:
+# audio-separator's BS-RoFormer reads the library's internal frequency cache,
+# which from 0.8 is a buffer of zeros it would mistake for cached angles, and
+# the separation would come out wrong without an error. audio-separator pins
+# the 0.6 series for that reason.
+#
+# MuQ builds its encoder with `torch.nn.utils.weight_norm`, which torch has
+# replaced with a parametrization. Nothing here calls it.
+warnings.filterwarnings(
+    'ignore', message=r'`torch\.cuda\.amp\.autocast\(args\.\.\.\)` is deprecated',
+    category=FutureWarning, module=r'rotary_embedding_torch')
+warnings.filterwarnings(
+    'ignore', message=r'`torch\.nn\.utils\.weight_norm` is deprecated',
+    category=FutureWarning)
 
 
 def _log(message):
