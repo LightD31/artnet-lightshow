@@ -180,7 +180,26 @@ const DISCOVERY_URL = 'https://discovery.meethue.com/';
 
 // What the bridge lists this integration as in the Hue app's "linked devices".
 // The part after # is meant to identify the installation, not the product.
+// The bridge refuses a devicetype past 40 characters, the application name
+// past 20 or the device name past 19, as "invalid value … for parameter,
+// devicetype" — see deviceType().
 const DEVICE_TYPE = 'artnet-lightshow';
+const DEVICE_NAME_MAX = 19;
+
+/**
+ * The devicetype to pair as: this application, and the machine it runs on
+ * (`label`, its hostname) as the bridge will take it — the first part of the
+ * name, in plain characters, at most 19 of them. A hostname that is only an
+ * address spelled out (a reverse-DNS name such as
+ * 2a02-842a-….rev.sfr.net, or 192-168-1-20.lan) says nothing in the Hue app,
+ * so it pairs as "lightshow" instead.
+ */
+function deviceType(label: string): string {
+  const first = String(label || '').split('.')[0];
+  const plain = first.replace(/[^A-Za-z0-9 _-]+/g, '').trim().slice(0, DEVICE_NAME_MAX).trim();
+  const address = /^[0-9a-f-]+$/i.test(first) && /\d/.test(first);
+  return `${DEVICE_TYPE}#${plain && !address ? plain : 'lightshow'}`;
+}
 
 // Hue asks for a continuous 50-60 Hz stream, repeating the last message if
 // nothing changed, because the transport is lossy UDP with no retries. The
@@ -309,7 +328,7 @@ async function pair(host: string, { label = 'lightshow' } = {}): Promise<PairRes
     parsed = await bridgeRequest(host, {
       method: 'POST',
       path: '/api',
-      body: { devicetype: `${DEVICE_TYPE}#${label}`.slice(0, 62), generateclientkey: true },
+      body: { devicetype: deviceType(label), generateclientkey: true },
     });
   } catch (err) {
     return { ok: false, error: messageOf(err), pressLink: false };
@@ -932,6 +951,7 @@ export {
   CHANNEL_BYTES,
   discoverBridges,
   identifyDevices,
+  deviceType,
   pair,
   fetchApplicationId,
   setApplicationIdSink,
