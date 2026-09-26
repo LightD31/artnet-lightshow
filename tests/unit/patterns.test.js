@@ -100,6 +100,9 @@ test('a mono look drives every pattern without collapsing to darkness', () => {
   for (const id of Object.keys(PATTERN_FUNCS)) {
     if (id === 'rainbow') continue; // generates its own hues by design
     const seen = coloursUsed(id, 1);
+    // The strobe core strikes in cold white whatever the look, as a hybrid
+    // strobe's white tubes do: that one colour, and the look's around it.
+    if (id === 'core') for (const c of seen) if (c.r === 255 && c.g === 255 && c.b === 255 && c.w === 255) seen.delete(c);
     assert.ok(seen.size <= 1, `${id} invented a colour the look does not hold`);
     assert.strictEqual(seen.size, 1, `${id} went fully dark on a mono look`);
   }

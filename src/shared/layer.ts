@@ -62,6 +62,8 @@ export interface LayerClock {
   dynamicsOn: boolean;
   /** The music at pixel rate, when a show with an analysed track runs. */
   pulse?: Readonly<PulseReading> | null;
+  /** The tempo, which times the strobe effects' flashes in milliseconds. */
+  bpm?: number | null;
   fixtureCount: number;
   twinkle: number[];
   /** The dice memory of the bars' own picture, apart from the pars'. */
@@ -186,6 +188,7 @@ function patternContext(rig: Rig, layout: Layout, pattern: string, colors: reado
     // How far through its span a picture that plays once has got: the beats
     // since the scene began, over the beats it was given.
     progress: span && span.beats > 0 ? Math.min(1, span.from + stepPos / division / span.beats) : null,
+    stepMs: clock.bpm && clock.bpm > 0 ? 60000 / clock.bpm / division : null,
   };
 
   if (CELL_PATTERNS.has(pattern)) {

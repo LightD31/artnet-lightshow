@@ -12,6 +12,8 @@ import { COLOR_PRESETS, PATTERNS } from '../../src/server/presets.ts';
 import { buildRig } from '../../src/shared/rig.ts';
 import { renderLayer } from '../../src/shared/layer.ts';
 import { PATTERN_FUNCS, CELL_PATTERNS } from '../../src/shared/patterns.ts';
+import { wledProfile, readInfo } from '../../src/server/wled.ts';
+import { createPreviewSampler } from '../../src/shared/preview.ts';
 
 const TRACKS = path.join(import.meta.dirname, '..', 'fixtures', 'tracks');
 const files = fs.readdirSync(TRACKS).sort();
@@ -52,11 +54,40 @@ test('the bars draw what the section is doing', () => {
     }
   }
   assert.deepStrictEqual([...seen.get('verse')], ['gradient/stage'], 'a verse is a slow gradient');
-  assert.deepStrictEqual([...seen.get('chorus')], ['comet/mirror'], 'a chorus is a mirrored chase');
+  // Or, driving as hard as a drop, one of the strobe programs, laid as it is.
+  for (const look of seen.get('chorus')) {
+    assert.ok(/^(comet\/mirror|flash-chase\/mirror|(flash-alternate|ramp|core)\/bar)$/.test(look), `a chorus is a mirrored chase: ${look}`);
+  }
+  assert.ok(seen.get('chorus').has('comet/mirror'), 'a chorus that is not driving that hard still chases');
   assert.deepStrictEqual([...seen.get('drop')], ['impact/stage'], 'a drop is a burst from the centre, sparking on the kick');
   for (const role of ['intro', 'outro']) {
     for (const look of seen.get(role) || []) assert.ok(/^(gradient|plasma)\/stage$/.test(look), `${role}: ${look}`);
   }
+});
+
+test('the drops and the hardest-driving passages play the bars as strobes, each laid as it runs', () => {
+  const MAPS = { impact: 'stage', 'flash-scatter': 'stage', 'flash-chase': 'mirror',
+    'flash-fill': 'bar', 'flash-alternate': 'bar', ramp: 'bar', core: 'bar' };
+  const dropPrograms = new Set();
+  let strobed = 0;
+  for (const file of files) {
+    const byDrop = new Map();
+    for (const s of scenes(plan(file))) {
+      if (!(s.pixelPattern in MAPS)) continue;
+      strobed++;
+      assert.strictEqual(s.pixelMap, MAPS[s.pixelPattern], `${file} ${s.source}: ${s.pixelPattern}`);
+      const source = String(s.source);
+      if (source.startsWith('drop:')) {
+        dropPrograms.add(s.pixelPattern);
+        // Every scene of one drop plays the same program.
+        const t = Math.round(s.timeMs / 4000);
+        if (byDrop.has(t)) assert.strictEqual(byDrop.get(t), s.pixelPattern, `${file}: one drop, one program`);
+        byDrop.set(t, s.pixelPattern);
+      }
+    }
+  }
+  assert.ok(strobed > 0);
+  assert.ok(dropPrograms.size >= 2, `the drops turn through their programs: ${[...dropPrograms]}`);
 });
 
 test('a build-up is one fill across its scenes, and full as the drop lands', () => {
@@ -150,4 +181,40 @@ test('the rise is empty at the start of its span and full at the end', () => {
   assert.strictEqual(lit(0), 1, 'the first cell only');
   assert.strictEqual(lit(1), 8, 'every cell on the drop');
   assert.ok(CELL_PATTERNS.has('rise') && CELL_PATTERNS.has('impact'));
+});
+
+// ── A strobe panel ──────────────────────────────────────────────────────────
+// A WLED matrix patched as a strobe panel (server/wled.ts): zones in rows, a
+// white line through the middle. It stands on the plot as a panel, but plays
+// the bars' programs — it is a strobe, not a screen.
+
+
+const STROBE_PANEL = wledProfile(readInfo({ name: 'Wall', mac: '00112233aabb', leds: { count: 2048, lc: 1, matrix: { w: 64, h: 32 } } }, 'x'),
+  'x', null, { mode: 'strobe' });
+
+test('a strobe panel is laid out in rows, but draws with the bars, not the screens', () => {
+  const rig = buildRig([{ profileId: 'sp' }, { profileId: 'bar8' }], (f) => (f.profileId === 'sp' ? STROBE_PANEL : PROFILES[f.profileId]));
+  assert.deepStrictEqual([rig.hasPanels, rig.zoned[0], rig.grids[0]], [false, true, { columns: 8, rows: 5 }]);
+  assert.strictEqual(rig.layout(null, 'bar', 'strips').units.list.length, 40 + 8, 'both are strips to the look');
+  assert.strictEqual(rig.layout(null, 'bar', 'panels').units.list.length, 0);
+
+  // A screen's picture goes nowhere; the bars' strobe core strikes its white line.
+  const out = paint(rig, { pattern: 'solid', pixelPattern: 'core', panelPattern: 'fire', pixelMap: 'bar' }, 0.01);
+  const whites = STROBE_PANEL.cells.flatMap((cell, c) => (cell.channelMap.red === undefined ? [c] : []));
+  assert.deepStrictEqual(whites, [16, 17, 18, 19, 20, 21, 22, 23]);
+  for (const c of whites) assert.ok(out[c].colour.w === 255 && out[c].dim === 255, `white zone ${c} strikes`);
+  for (const c of [0, 8, 24, 39]) assert.ok(out[c].colour === RED && out[c].dim > 100, `colour zone ${c} holds the wash`);
+});
+
+test('the rehearsal shows a strobe panel\'s white line as the rig lights it: dark under a colour, lit by a strobe', () => {
+  const fixtures = [{ profileId: 'sp', maxBrightness: 255 }];
+  const rig = buildRig(fixtures, () => STROBE_PANEL);
+  const sample = createPreviewSampler([
+    { timeMs: 0, action: 'patch', data: { pattern: 'solid', colorA: 0, bpm: 120, beatDivision: 1 } },
+    { timeMs: 1000, action: 'energy', data: { id: 'white-strobe', durationMs: 500 } },
+  ]);
+  const red = sample(500, fixtures, COLOR_PRESETS, rig);
+  assert.deepStrictEqual([red[0].r > 200, red[16].r, red[16].w], [true, 0, 0], 'a red look: the colour zones red, the white line dark');
+  const strobe = sample(1100, fixtures, COLOR_PRESETS, rig);
+  assert.deepStrictEqual([strobe[16].r, strobe[16].w], [0, 255], 'the white strobe lights it');
 });

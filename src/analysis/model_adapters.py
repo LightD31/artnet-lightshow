@@ -375,13 +375,15 @@ def skey_key(audio_path: str, samples=None, sample_rate=None):
     else:
         module.load_audio = _skey_load_audio
     try:
-        # S-KEY prints its answer, emoji included, to stdout. That is the
-        # worker's JSON protocol stream, and on a Windows console the emoji
-        # alone raises — which the except below turned into "no key", every
-        # track. Its chatter goes nowhere; the return value is the answer.
-        import io
-        with contextlib.redirect_stdout(io.StringIO()):
-            result = module.detect_key(audio_path, device=os.environ.get('ARTNET_ANALYSIS_DEVICE', 'cpu'))
+        # S-KEY prints its answer, emoji included, and on a Windows console
+        # the emoji alone raises — which the except below turned into "no
+        # key", every track. Its chatter goes nowhere; the return value is the
+        # answer. Silenced in its own module, not with redirect_stdout: that
+        # swaps sys.stdout for the whole process while other models run on
+        # other threads, and the two swaps put back each other's value (see
+        # cli._claim_stdout).
+        module.print = lambda *args, **kwargs: None
+        result = module.detect_key(audio_path, device=os.environ.get('ARTNET_ANALYSIS_DEVICE', 'cpu'))
         value = result[0] if isinstance(result, list) else result
         return {"value": str(value), "confidence": 1.0, "source": "s-key"}
     except Exception:

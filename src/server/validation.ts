@@ -54,6 +54,15 @@ const ddpOutput = z.object({
     // segment is a rectangle narrower than the panel.
     at: z.number().int().min(0).max(65535).optional(),
     rowStride: z.number().int().min(1).max(4096).optional(),
+    // A wash or zones: the LEDs its few cells are spread over (types/rig.ts).
+    leds: z.number().int().min(1).max(65535).optional(),
+    columns: z.number().int().min(1).max(4096).optional(),
+    // A strobe panel: each cell's rectangle of those LEDs — column, row,
+    // width, height — in rows `columns` wide.
+    areas: z.array(z.tuple([
+      z.number().int().min(0).max(4095), z.number().int().min(0).max(4095),
+      z.number().int().min(1).max(4096), z.number().int().min(1).max(4096),
+    ])).max(MAX_CELLS_PER_FIXTURE).optional(),
   }).strict();
 const fixtureOutput = z.discriminatedUnion('protocol', [ddpOutput, hueOutput]);
 
@@ -408,6 +417,10 @@ const wledAddSchema = z.object({
   label: z.string().trim().min(1).max(64).optional(),
   // One fixture for each of its segments, rather than one for all its LEDs.
   segments: z.boolean().optional(),
+  // One light (a wash), a few cells along it (zones, the default) or every
+  // LED its own (pixels) — as a DMX bar has a 3-channel mode and a pixel one.
+  mode: z.enum(['wash', 'zones', 'pixels', 'strobe']).optional(),
+  zones: z.number().int().min(2).max(64).optional(),
 }).strict();
 
 const huePairSchema = z.object({

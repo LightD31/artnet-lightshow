@@ -8,7 +8,8 @@ import { ddpConflict } from '../ddp-routes.ts';
 import { showStore, snapshotShow, applyShow } from '../show-store.ts';
 import { barProfile } from '../bar-profile.ts';
 import { parseOfl } from '../ofl.ts';
-import { wledProfile } from '../wled.ts';
+import { DEFAULT_WLED_MODE, wledProfile, wledSeat, wledSpan } from '../wled.ts';
+import type { WledLook } from '../wled.ts';
 import { profileSchema, fixtureRestoreSchema, fixtureAddSchema, wledAddSchema, hueAddSchema, validate } from '../validation.ts';
 import * as output from '../output.ts';
 import { messageOf, statusOf } from '../../errors.ts';
@@ -103,19 +104,22 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
 
   app.post('/api/wled/add', asyncHandler(async (req, res) => {
     try {
-      const { host, label, segments: bySegment } = validate(wledAddSchema, req.body || {}, 'wled');
+      const { host, label, segments: bySegment, mode = DEFAULT_WLED_MODE, zones } = validate(wledAddSchema, req.body || {}, 'wled');
+      const look: WledLook = { mode, zones };
       if (state.fixtures.length >= MAX_FIXTURES) {
         return res.status(400).json({ ok: false, error: `Patch is full (${MAX_FIXTURES} fixtures)` });
       }
-      if (bySegment) return await addSegments(res, host, label);
+      if (bySegment) return await addSegments(res, host, label, look);
       const sameHost = state.fixtures.find((f) => f.output?.protocol === 'ddp' && f.output.host.toLowerCase() === host.toLowerCase());
       if (sameHost) return res.status(409).json({ ok: false, error: `${host} is patched already, as "${sameHost.label}"` });
 
       const info = await wled.info(host);
-      const profile = wledProfile(info, host);
+      const profile = wledProfile(info, host, null, look);
       // The profile is named for the WLED's own address (its MAC), so the same
-      // device found at a new IP is the fixture that is already there.
-      const sameDevice = state.fixtures.find((f) => f.profileId === profile.id);
+      // device found at a new IP is the fixture that is already there, in
+      // whatever mode it was patched.
+      const seat = wledSeat(profile.id);
+      const sameDevice = state.fixtures.find((f) => wledSeat(f.profileId) === seat);
       if (sameDevice) {
         return res.status(409).json({ ok: false, error: `${info.name} is patched already, as "${sameDevice.label}"; change its address in the patch table` });
       }
@@ -123,7 +127,7 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
       if (universe === null) return res.status(400).json({ ok: false, error: 'No free universes left for it' });
       const fixture: Fixture = {
         id: -1, label: (label || info.name).slice(0, 64), address: 1, universe, profileId: profile.id, maxBrightness: 255,
-        override: null, position: null, group: null, geometry: null, output: { protocol: 'ddp', host },
+        override: null, position: null, group: null, geometry: null, output: { protocol: 'ddp', host, ...wledSpan(info, null, look) },
       };
       const next = [...state.fixtures, fixture];
       const profileOf = (f: Pick<Fixture, 'profileId'>) => (f.profileId === profile.id ? profile : getProfile(f));
@@ -149,14 +153,14 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
    * patched yet, each on universes of its own and sent to its own LEDs, so the
    * stage plot can put the booth's front and its sides where they are.
    */
-  async function addSegments(res: Response, host: string, label: string | undefined) {
+  async function addSegments(res: Response, host: string, label: string | undefined, look: WledLook) {
     if (!wled.segments) return res.status(501).json({ ok: false, error: 'This server cannot read WLED segments' });
     const info = await wled.info(host);
     const segments = await wled.segments(host, info);
     if (!segments.length) return res.status(400).json({ ok: false, error: `${info.name} has no segments with LEDs in them` });
-    const built = segments.map((segment) => ({ segment, profile: wledProfile(info, host, segment) }));
-    const patchedIds = new Set(state.fixtures.map((f) => f.profileId));
-    const fresh = built.filter(({ profile }) => !patchedIds.has(profile.id));
+    const built = segments.map((segment) => ({ segment, profile: wledProfile(info, host, segment, look) }));
+    const patchedSeats = new Set(state.fixtures.map((f) => wledSeat(f.profileId)));
+    const fresh = built.filter(({ profile }) => !patchedSeats.has(wledSeat(profile.id)));
     if (!fresh.length) return res.status(409).json({ ok: false, error: `Every segment of ${info.name} is patched already` });
     if (state.fixtures.length + fresh.length > MAX_FIXTURES) {
       return res.status(400).json({ ok: false, error: `${fresh.length} segments would take the patch past ${MAX_FIXTURES} fixtures` });
@@ -170,7 +174,9 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
       draft.push({
         id: -1 - draft.length, label: `${label || info.name} · ${segment.name}`.slice(0, 64), address: 1, universe,
         profileId: profile.id, maxBrightness: 255, override: null, position: null, group: null, geometry: null,
-        output: { protocol: 'ddp', host, at: segment.at, ...(segment.rowStride ? { rowStride: segment.rowStride } : {}) },
+        output: {
+          protocol: 'ddp', host, at: segment.at, ...(segment.rowStride ? { rowStride: segment.rowStride } : {}), ...wledSpan(info, segment, look),
+        },
       });
     }
     const byId = new Map(fresh.map(({ profile }) => [profile.id, profile as Profile]));

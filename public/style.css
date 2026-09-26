@@ -3024,6 +3024,9 @@ input[type=range]::-moz-range-thumb {
 .inline-form { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .inline-form > label, .inline-form > span { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 .inline-form input[type=text] { flex: 1 1 200px; }
+.wled-mode { margin-bottom: 10px; }
+.wled-mode input[type=number] { width: 64px; }
+.wled-mode .setting-help { flex: 1 1 240px; }
 .hue-tools { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
 .source-status { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; color: var(--text-2); }
 

@@ -68,10 +68,15 @@ export interface Rig<F extends StageFixture = StageFixture> {
   local: number[];
   localY: number[];
   grids: (Grid | null)[];
+  /**
+   * Is fixture i a panel of zones (a strobe panel) rather than a screen: laid
+   * out in its grid, but one of the bars when the look draws them apart.
+   */
+  zoned: boolean[];
   hasPixels: boolean;
   /** Does the rig have fixtures that are one light, beside any bars. */
   hasPars: boolean;
-  /** Does the rig have panels: fixtures whose cells stand in rows (a WLED matrix). */
+  /** Does the rig have panels: screens whose cells stand in rows (a WLED matrix). */
   hasPanels: boolean;
   layout(split?: number | null, pixelMap?: PixelMap | string | null, only?: LayerPart | null): Layout;
 }
@@ -86,7 +91,7 @@ export interface Rig<F extends StageFixture = StageFixture> {
 export type LayerPart = 'pars' | 'cells' | 'strips' | 'panels' | 'unpanelled';
 
 /** The profile a fixture runs, or nothing when it has none. */
-export type ProfileLookup<F> = (fixture: F) => Pick<Profile, 'cells' | 'grid'> | null | undefined;
+export type ProfileLookup<F> = (fixture: F) => Pick<Profile, 'cells' | 'grid' | 'zoned'> | null | undefined;
 
 /** The profile's cells, or null for a fixture that is one light. */
 function cellsOf(profile: Pick<Profile, 'cells'> | null | undefined): ProfileCell[] | null {
@@ -164,6 +169,7 @@ function buildRig<F extends StageFixture>(fixtures: readonly F[], profileOf: Pro
   const local: number[] = [];
   const localY: number[] = [];
   const grids: (Grid | null)[] = [];
+  const zoned: boolean[] = [];
   let hasPixels = false;
   let hasPars = false;
   let hasPanels = false;
@@ -181,6 +187,7 @@ function buildRig<F extends StageFixture>(fixtures: readonly F[], profileOf: Pro
       ranges.push({ start, count: 1 });
       cellMaps.push(null);
       grids.push(null);
+      zoned.push(false);
       return;
     }
     hasPixels = true;
@@ -219,12 +226,13 @@ function buildRig<F extends StageFixture>(fixtures: readonly F[], profileOf: Pro
     ranges.push({ start, count: n });
     cellMaps.push(cells.map((cell) => cell.channelMap));
     grids.push(grid ? { columns: grid.columns, rows: grid.rows } : null);
-    if (grid) hasPanels = true;
+    zoned.push(!!grid && !!(profile && profile.zoned));
+    if (grid && !(profile && profile.zoned)) hasPanels = true;
   });
 
   const layouts = new Map<string, Layout>();
   return {
-    fixtures, units, ranges, cellMaps, points, local, localY, grids, hasPixels, hasPars, hasPanels,
+    fixtures, units, ranges, cellMaps, points, local, localY, grids, zoned, hasPixels, hasPars, hasPanels,
     /** The travel order for a look, cached per split, pixel map and part. */
     layout(split = null, pixelMap = 'stage', only = null) {
       const key = `${split}|${pixelMap}|${only || ''}`;
@@ -277,9 +285,10 @@ function layoutOf(rig: Rig, split: number | null | undefined, pixelMap: string |
     switch (only) {
       case 'pars': return !rig.cellMaps[i];
       case 'cells': return !!rig.cellMaps[i];
-      case 'strips': return !!rig.cellMaps[i] && !rig.grids[i];
-      case 'panels': return !!rig.grids[i];
-      case 'unpanelled': return !rig.grids[i];
+      // A panel of zones draws with the bars: it is a strobe, not a screen.
+      case 'strips': return !!rig.cellMaps[i] && (!rig.grids[i] || rig.zoned[i]);
+      case 'panels': return !!rig.grids[i] && !rig.zoned[i];
+      case 'unpanelled': return !rig.grids[i] || rig.zoned[i];
       default: return true;
     }
   };

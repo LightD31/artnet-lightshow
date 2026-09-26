@@ -17,6 +17,8 @@ import type { Colour, Expression, PulseReading } from '../types/rig.ts';
 //                       even spacing); ys on the same scale, or null
 //   ctx.progress      : how far through its span a picture that plays once
 //                       (a build-up's fill) has got, 0..1, or null
+//   ctx.stepMs        : how long a step lasts at the tempo, in ms, or null —
+//                       what times the strobe effects' flashes
 //   ctx.write(i, color, dim, strobe) — sets slot i's render colour
 //
 // 'fade' and 'hit' are whole-rig envelopes: the engine and the preview set
@@ -42,6 +44,8 @@ export interface PatternContext {
   /** How far through its span a picture that plays once has got, 0..1, or
    *  null when the scene gave it none (see shared/layer.ts). */
   progress?: number | null;
+  /** How long one step lasts at the tempo, in ms, or null when it is not known. */
+  stepMs?: number | null;
   write(i: number, colour: Colour, dim: number, strobe: number): void;
 }
 
@@ -127,6 +131,7 @@ const CELL_PATTERNS = new Set([
   'ensemble', 'ribbon', 'wave', 'rainbow', 'twinkle', 'sparkle',
   'gradient', 'comet', 'burst', 'plasma', 'meter', 'drums', 'stems',
   'rise', 'impact', 'bars', 'fire', 'rain',
+  'flash-chase', 'flash-scatter', 'flash-fill', 'flash-alternate', 'ramp', 'core',
 ]);
 
 /** Where slot i sits across the rig, 0..1: its placed position, or even spacing. */
@@ -744,6 +749,190 @@ Object.assign(PATTERN_FUNCS, {
       if (spark > level) ctx.write(i, pal[pal.length - 1], Math.round(bed + (255 - bed) * spark), 0);
       else if (level > 0) ctx.write(i, head ? pal[pal.length - 1] : pal[0], Math.round(bed + (255 - bed) * level), 0);
       else ctx.write(i, pal[0], bed, 0);
+    }
+  },
+} satisfies Record<string, PatternFn>);
+
+// ── Strobe effects ──────────────────────────────────────────────────────────
+// After the built-in programs of the hybrid strobes — a Jolt Panel, a Super
+// Strobe ABL, a Color STRIKE, an Atomic Dot and the rest of that family: a
+// strobe split into zones, each flashing on its own. What makes them strobes
+// rather than pictures is that every one is hard flashes on black, timed in
+// milliseconds as a strobe's flash is, not a picture drifting across the
+// cells. Laid out per bar, every bar runs the program itself, as the
+// fixtures do; across the stage, the rig is one long strobe.
+
+// A flash: two frames at the engine's 44 a second, so none falls between two,
+// and not much longer, or it reads as a blink.
+const FLASH_MS = 45;
+const FLASH_MAX_MS = 80;
+// No zone flashes more than about eleven times a second.
+const MIN_SLOT_MS = 90;
+// Without a tempo, a step as long as a beat at 120 BPM.
+const DEFAULT_STEP_MS = 500;
+// The cold white a hybrid's strobe core is.
+const STROBE_WHITE: Colour = { r: 255, g: 255, b: 255, w: 255, a: 0, uv: 0 };
+
+/** How long a step lasts, in ms. */
+function stepMsOf(ctx: PatternContext): number {
+  return ctx.stepMs && ctx.stepMs > 0 ? ctx.stepMs : DEFAULT_STEP_MS;
+}
+
+/**
+ * The grid the flashes fall on: `want` a step, halved until each is at least
+ * MIN_SLOT_MS long — and past one a step, one every two steps, four, … — so
+ * a fast tempo or a fine division thins the flashes out rather than running
+ * them under a frame. Which flash it is, how far into it, and how long each
+ * is.
+ */
+function flashGrid(ctx: PatternContext, want: number): { slot: number; phase: number; slotMs: number } {
+  const stepMs = stepMsOf(ctx);
+  let perStep = want;
+  while (perStep > 1 / 16 && stepMs / perStep < MIN_SLOT_MS) perStep /= 2;
+  const pos = (ctx.stepPos ?? ctx.step) * perStep;
+  return { slot: Math.floor(pos), phase: frac(pos), slotMs: stepMs / perStep };
+}
+
+/** Is a flash lit `phase` (0..1) into a slot `slotMs` long. */
+function flashLit(phase: number, slotMs: number): boolean {
+  return phase * slotMs < Math.min(FLASH_MAX_MS, Math.max(FLASH_MS, 0.35 * slotMs));
+}
+
+/**
+ * Each slot's place among the distinct places across the rig, left to right,
+ * and how many there are: a zone's number along the strobe. Two cells at one
+ * place — both ends, laid out mirrored — share a number, so a chase runs out
+ * from the middle to both ends at once.
+ */
+const ranks = new WeakMap<readonly number[], { rank: number[]; count: number }>();
+function rankOf(ctx: PatternContext): { rank: (i: number) => number; count: number } {
+  const n = ctx.fixtureCount;
+  if (!ctx.xs) return { rank: (i) => i, count: n };
+  let known = ranks.get(ctx.xs);
+  if (!known || known.rank.length !== n) {
+    const places = [...new Set(ctx.xs.slice(0, n).map((x) => Math.round(x * 1e4)))].sort((a, b) => a - b);
+    const index = new Map(places.map((x, k) => [x, k]));
+    known = { rank: ctx.xs.slice(0, n).map((x) => index.get(Math.round(x * 1e4)) as number), count: places.length };
+    ranks.set(ctx.xs, known);
+  }
+  const { rank } = known;
+  return { rank: (i) => rank[i], count: known.count };
+}
+
+/** How far a slot is from the middle of the picture, 0 there and 1 at its edge. */
+function fromMiddle(ctx: PatternContext, i: number): number {
+  const x = xOf(ctx, i) - 0.5;
+  const y = ctx.ys ? yOf(ctx, i) - 0.5 : 0;
+  return Math.min(1, Math.hypot(x, y) / 0.5);
+}
+
+Object.assign(PATTERN_FUNCS, {
+  // A segment chase: one flash stepping zone to zone, a lap a step — or as
+  // many steps as it takes for every zone to get a flash of its own on a long
+  // rig — each lap in the look's next colour.
+  'flash-chase'(ctx) {
+    const pal = paletteOf(ctx);
+    const { rank, count } = rankOf(ctx);
+    const N = Math.max(1, count);
+    const stepMs = stepMsOf(ctx);
+    let steps = 1;
+    while (steps < 16 && (stepMs * steps) / N < FLASH_MS) steps *= 2;
+    const pos = (ctx.stepPos ?? ctx.step) / steps;
+    const lap = Math.floor(pos);
+    const along = frac(pos) * N;
+    const head = Math.min(N - 1, Math.floor(along));
+    const lit = flashLit(frac(along), (stepMs * steps) / N);
+    const colour = pal[lap % pal.length];
+    for (let i = 0; i < ctx.fixtureCount; i++) {
+      ctx.write(i, colour, lit && rank(i) === head ? 255 : 0, 0);
+    }
+  },
+
+  // A random segment strobe: on every flash a scatter of zones fires, each in
+  // one of the look's colours. How many follows the air in the track, and
+  // more on the off-beat, where the hats are. Which zones is settled where
+  // the flash starts — the hats as they were then — so a zone never drops out
+  // of a flash halfway through it.
+  'flash-scatter'(ctx) {
+    const pal = paletteOf(ctx);
+    const { slot, phase, slotMs } = flashGrid(ctx, 8);
+    const lit = flashLit(phase, slotMs);
+    const hats = kitFromTheClock({ ...ctx, stepPhase: frac((slot * slotMs) / stepMsOf(ctx)) }).hats;
+    const density = Math.min(0.7, 0.12 + 0.3 * dyn(ctx, 'air', 0.4) + 0.25 * hats);
+    for (let i = 0; i < ctx.fixtureCount; i++) {
+      const on = lit && scatter(i, slot) < density;
+      ctx.write(i, pal[Math.floor(scatter(i, slot + 7919) * pal.length) % pal.length], on ? 255 : 0, 0);
+    }
+  },
+
+  // A fill flash: on every step the light runs out from the middle to the
+  // edges in the first third of it, holds, and is cut to black before the
+  // next — the "grow" a strobe panel's program runs. It starts from the zones
+  // nearest the middle, which on an even number of them is two.
+  'flash-fill'(ctx) {
+    const pal = paletteOf(ctx);
+    const phase = ctx.stepPhase ?? 0;
+    const cut = phase >= 0.6;
+    const colour = pal[ctx.step % pal.length];
+    let nearest = 1;
+    for (let i = 0; i < ctx.fixtureCount; i++) nearest = Math.min(nearest, fromMiddle(ctx, i));
+    const reach = nearest + Math.min(1, phase / 0.3) * (1 - nearest);
+    for (let i = 0; i < ctx.fixtureCount; i++) {
+      ctx.write(i, colour, !cut && fromMiddle(ctx, i) <= reach + 1e-6 ? 255 : 0, 0);
+    }
+  },
+
+  // Odd and even: every other zone flashes on the step, the rest on the
+  // half-step between, each half in its own colour of the look — on steps
+  // too short to halve, a step each.
+  'flash-alternate'(ctx) {
+    const pal = paletteOf(ctx);
+    const { rank } = rankOf(ctx);
+    const { slot, phase, slotMs } = flashGrid(ctx, 2);
+    const half = slot % 2;
+    const lit = flashLit(phase, slotMs);
+    const colour = pal[half % pal.length];
+    for (let i = 0; i < ctx.fixtureCount; i++) {
+      ctx.write(i, colour, lit && rank(i) % 2 === half ? 255 : 0, 0);
+    }
+  },
+
+  // A ramp: every step swells from black to full — the middle first, the
+  // edges a moment behind — and is cut on the next, so the beat lands as the
+  // snap to black and the swell after it.
+  ramp(ctx) {
+    const pal = paletteOf(ctx);
+    // With no clock inside the step, the swell at its top.
+    const phase = ctx.stepPhase ?? 1;
+    const colour = pal[ctx.step % pal.length];
+    for (let i = 0; i < ctx.fixtureCount; i++) {
+      const lag = 0.35 * fromMiddle(ctx, i);
+      const level = clamp01((phase - lag) / (1 - lag));
+      ctx.write(i, colour, Math.round(255 * level * level), 0);
+    }
+  },
+
+  // The hybrid strobe's own look: its outer zones a wash in the look's
+  // colour, and a cold white core that strikes on every step — on the kick
+  // as it was hit, when the analysis has the pulse. On a line of lights the
+  // core is its middle third; on one in rows (a strobe panel), its middle
+  // row, the white line across it. Between strikes the core glows faintly in
+  // the wash's colour, as the ring around a strobe tube lights it.
+  core(ctx) {
+    const pal = paletteOf(ctx);
+    const level = dyn(ctx, 'level', 0.8);
+    const aura = Math.round(110 + 110 * level);
+    const grid = flashGrid(ctx, 1);
+    const strike = ctx.pulse ? ctx.pulse.kick > 0.6 : flashLit(grid.phase, grid.slotMs);
+    const rows = heightsOf(ctx);
+    const inCore = rows ? (i: number) => Math.abs(rows(i) - 0.5) < 0.17 : (i: number) => fromMiddle(ctx, i) < 0.34;
+    for (let i = 0; i < ctx.fixtureCount; i++) {
+      if (inCore(i)) {
+        if (strike) ctx.write(i, STROBE_WHITE, 255, 0);
+        else ctx.write(i, pal[0], Math.round(aura * 0.3), 0);
+      } else {
+        ctx.write(i, pal[0], aura, 0);
+      }
     }
   },
 } satisfies Record<string, PatternFn>);

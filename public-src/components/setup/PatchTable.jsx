@@ -178,7 +178,7 @@ export function PatchTable() {
                         <span class="addr-range">WLED</span>
                         <FieldInput value={fix.output.host} class="wled-host" aria-label={`WLED address of ${fix.label}`}
                           title="Sent to this WLED over DDP. Empty it to send on Art-Net and sACN instead."
-                          onCommit={(host) => send({ id: fix.id, output: host.trim() ? { protocol: 'ddp', host: host.trim() } : null })} />
+                          onCommit={(host) => send({ id: fix.id, output: host.trim() ? { ...fix.output, host: host.trim() } : null })} />
                       </span>
                     )}
                   </td>

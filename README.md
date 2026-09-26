@@ -158,7 +158,15 @@ Companion** (with a page of presets for busking), and a REST API.
   a universe runs on into the next ones, 170 RGB pixels to each
 - **WLED** — find WLED strips and panels on the network and add one in a click,
   a 64 × 32 matrix included, or each of its segments as a fixture of its own;
-  it is sent its pixels over DDP
+  it is sent its pixels over DDP. Like a DMX bar's channel modes, it is patched
+  as a **wash** (one light: it washes, chases, strobes and blinds with the
+  pars), in **zones** (a few cells along it, like an LED bar; the default), as
+  **pixels** (every LED its own, and a panel a picture) or, set up as a matrix,
+  as a **strobe panel** after an ADJ Jolt Panel: a line of white segments
+  across its middle that only strobes and blinders light, with rows of square
+  colour zones above and below — on a 64 × 32, eight white segments four LEDs
+  tall and 32 colour zones of 8 × 7. It plays the bars' programs, not a
+  screen's pictures
 - **Panels** — an LED matrix is a grid of cells on the stage plot, and the pixel
   effects draw across and down it; Bars, Fire and Rain, after LedFx, stand up
   on it
@@ -1153,6 +1161,28 @@ with panels the auto show gives the panels one of the three by section (see
 [Shaping the generated show](#shaping-the-generated-show)); the **Panels**
 menu under the patterns picks one by hand, and it holds until a pattern is
 picked.
+
+**Strobe effects** — the programs of the hybrid strobes (an ADJ Jolt Panel, a
+Eurolite Super Strobe ABL, a Chauvet Color STRIKE and the rest of that family),
+for a bar or a WLED patched in zones. Every one is hard flashes on black, each
+at least two frames long and no zone flashing more than about eleven times a
+second, however fast the music; Flash Limit still holds the whole rig to three
+large flashes a second:
+
+| | |
+|---|---|
+| **Flash Chase** | One flash stepping zone to zone, a lap a step (longer on a long rig); mirrored, out from the middle to both ends |
+| **Flash Scatter** | A random segment strobe: a scatter of zones on every flash, more with the air in the track and on the off-beat |
+| **Flash Fill** | Every step fills from the middle out, holds, and is cut to black before the next |
+| **Flash Alternate** | Odd zones flash on the step, even ones on the half-step between |
+| **Ramp** | Every step swells from black to full, the middle first, and is cut on the beat |
+| **Strobe Core** | The hybrid's own look: its outer zones a wash in the look's colour, a cold white core striking on every step, or on the kick with the pulse |
+
+The auto show turns through Impact, Flash Fill, Flash Scatter and Strobe Core
+from one drop to the next, and gives a chorus, a bridge or a solo that drives as
+hard as a drop one of Flash Alternate, Flash Chase, Ramp and Strobe Core, the
+same each time it comes round. The zone-by-zone ones run **Per bar**, so each
+fixture plays the program itself.
 
 **Drums** and **Stems** play the analysis's *pulse*. That is every kick, snare
 and hat read off the separated drum stem, and each stem's level fifty times a

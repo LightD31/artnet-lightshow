@@ -18,8 +18,9 @@ Three ways in:
         stdout as NDJSON, as they happen.
 
 stdout is reserved for machine-readable output in every mode. Everything human
-goes to stderr — a stray print on stdout corrupts the protocol, which is why
-the tagger's own progress chatter is redirected at its source.
+goes to stderr — a stray print on stdout corrupts the protocol. The worker and
+the one-shot analysis take it for themselves before anything else runs (see
+_claim_stdout), so nothing a library does to `sys.stdout` can reach it.
 """
 
 import json
@@ -64,6 +65,29 @@ def resolve(source):
 
 
 # ── Worker ──────────────────────────────────────────────────────────────────
+
+def _claim_stdout():
+    """
+    Take stdout for the answers alone, and send everything else to stderr.
+
+    Returns a stream on a copy of stdout's file descriptor; from then on
+    `sys.stdout`, and descriptor 1 itself, are stderr. A library's print, a
+    native library writing to descriptor 1, and a `contextlib.redirect_stdout`
+    all end up in the log, and none of them can reach the answers.
+
+    That last one is why this exists. `redirect_stdout` swaps `sys.stdout` for
+    the whole process, and the pipeline runs models on threads of their own:
+    S-KEY swapped it for a buffer while SongFormer, on another thread, swapped
+    it for stderr, and the two put back each other's value. `sys.stdout` was
+    left pointing at S-KEY's buffer, every reply after that was written into
+    it, and the server waited ten minutes for an analysis that had finished.
+    """
+    sys.stdout.flush()
+    channel = os.fdopen(os.dup(sys.stdout.fileno()), 'w', encoding='utf-8', newline='\n')
+    os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+    sys.stdout = sys.stderr
+    return channel
+
 
 def _encode_reply(response):
     """
@@ -122,9 +146,9 @@ def watch_parent():
     threading.Thread(target=watcher, daemon=True).start()
 
 
-def worker_loop():
+def worker_loop(out=None):
     """
-    Persistent NDJSON worker.
+    Persistent NDJSON worker, answering on `out` (stdout, claimed by main).
 
     Request:  {"id": <any>, "source": "<path>", "targetDurationSec": <num|null>}
     Response: {"id": <same>, "result": {...}} or {"id": <same>, "error": "..."}
@@ -133,6 +157,7 @@ def worker_loop():
     across BLAS and the thread pools inside it, so serving two at once would
     make both slower and neither would finish first.
     """
+    out = out or sys.stdout
     watch_parent()
     _warm_up()
     print('[analyzer] worker ready', file=sys.stderr, flush=True)
@@ -162,8 +187,8 @@ def worker_loop():
             # A faulted GPU FFT stays broken for the life of the process. The
             # track has its answer; ask for a fresh worker for the next one.
             response['recycle'] = True
-        sys.stdout.write(_encode_reply(response) + '\n')
-        sys.stdout.flush()
+        out.write(_encode_reply(response) + '\n')
+        out.flush()
 
 
 def _warm_up():
@@ -289,7 +314,7 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
 
     if '--worker' in argv:
-        worker_loop()
+        worker_loop(_claim_stdout())
         return 0
 
     if '--live' in argv:
@@ -328,10 +353,12 @@ def main(argv=None):
         json.dump({'error': USAGE}, sys.stdout)
         return 1
 
+    out = _claim_stdout()
     try:
         document = analyse_once(positional[0], target_duration, report_path)
     except Exception as exc:
-        json.dump({'error': str(exc)}, sys.stdout)
+        json.dump({'error': str(exc)}, out)
+        out.flush()
         return 1
 
     if out_path:
@@ -339,5 +366,6 @@ def main(argv=None):
             json.dump(document, handle)
         _log(f'analysis written to {out_path}')
     else:
-        json.dump(document, sys.stdout)
+        json.dump(document, out)
+    out.flush()
     return 0

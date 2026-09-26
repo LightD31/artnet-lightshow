@@ -25,8 +25,24 @@ export interface DdpRoute {
   port: number;
   rgbw: boolean;
   parts: { universe: number; from: number; bytes: number }[];
-  /** Runs of the fixture's pixels, in order: `count` of them from LED `at`. */
+  /** Runs of the fixture's LEDs, in order: `count` of them from LED `at`. */
   runs: { at: number; count: number }[];
+  /** A wash or zones: its few cells, spread over the LEDs of its runs. */
+  spread?: Spread;
+}
+
+/**
+ * `cells` pixels spread over `leds` LEDs: each an equal share of them in
+ * order, or with `columns`, of rows that many LEDs wide, a band of columns —
+ * or with `areas`, the rectangle of those rows each names. `white` cells are
+ * one byte, their white level, which an RGB WLED is sent on all three dies.
+ */
+export interface Spread {
+  cells: number;
+  leds: number;
+  columns: number | null;
+  areas?: [number, number, number, number][];
+  white?: number[];
 }
 
 type ProfileOf = (fixture: Pick<Fixture, 'profileId'>) => Profile;
@@ -42,20 +58,79 @@ function ddpRoutes(fixtures: readonly Fixture[], profileOf: ProfileOf, universeO
     const parts = footprintOf(universeOf(fix), fix.address, profile)
       .map((part) => ({ universe: part.universe, from: part.first - 1, bytes: part.last - part.first + 1 }));
     const width = pixelWidth(profile) || profile.channelCount;
-    routes.push({ host: output.host, port: output.port ?? DDP_PORT, rgbw: width === 4, parts, runs: runsOf(output, profile, width) });
+    const spread = spreadOf(output, profile, width);
+    routes.push({
+      host: output.host, port: output.port ?? DDP_PORT, rgbw: width === 4, parts, runs: runsOf(output, profile, width),
+      ...(spread ? { spread } : {}),
+    });
   }
   return routes;
 }
 
-/** Where a fixture's pixels go among its WLED's LEDs (see DdpRoute.runs). */
+/** How many pixels a profile's channels are. */
+function pixelsOf(profile: Profile, width: number): number {
+  return Math.max(1, Math.round(profile.channelCount / Math.max(1, width)));
+}
+
+/** Where a fixture's LEDs are among its WLED's (see DdpRoute.runs). */
 function runsOf(output: DdpOutput, profile: Profile, width: number): { at: number; count: number }[] {
   const at = output.at ?? 0;
-  const pixels = Math.max(1, Math.round(profile.channelCount / Math.max(1, width)));
-  const grid = profile.grid;
-  if (output.rowStride && grid && grid.columns * grid.rows === pixels && output.rowStride > grid.columns) {
-    return Array.from({ length: grid.rows }, (_, r) => ({ at: at + r * (output.rowStride as number), count: grid.columns }));
+  const pixels = pixelsOf(profile, width);
+  const leds = output.leds && output.leds > pixels ? output.leds : pixels;
+  // The rectangle its LEDs make: the output's rows, or the profile's grid.
+  const columns = leds !== pixels ? output.columns : profile.grid && profile.grid.columns * profile.grid.rows === pixels ? profile.grid.columns : undefined;
+  if (output.rowStride && columns && leds % columns === 0 && output.rowStride > columns) {
+    return Array.from({ length: leds / columns }, (_, r) => ({ at: at + r * (output.rowStride as number), count: columns }));
   }
-  return [{ at, count: pixels }];
+  return [{ at, count: leds }];
+}
+
+/** A fixture's cells spread over more LEDs than it has, or null. */
+function spreadOf(output: DdpOutput, profile: Profile, width: number): Spread | null {
+  const cells = pixelsOf(profile, width);
+  if (!output.leds || output.leds <= cells) return null;
+  const columns = output.columns && output.leds % output.columns === 0 ? output.columns : null;
+  const white = (profile.cells || []).flatMap((cell, c) => (cell.channelMap.white !== undefined && cell.channelMap.red === undefined ? [c] : []));
+  return {
+    cells, leds: output.leds, columns,
+    ...(columns && output.areas && output.areas.length === cells ? { areas: output.areas } : {}),
+    ...(white.length ? { white } : {}),
+  };
+}
+
+/**
+ * A fixture's cells, `width` bytes each, as the bytes of the LEDs they are
+ * spread over: LED i lights cell ⌊i·cells/leds⌋, or across rows ⌊x·cells/columns⌋
+ * for its column x.
+ */
+function spreadPixels(cells: Uint8Array, width: number, spread: Spread): Uint8Array {
+  const out = new Uint8Array(spread.leds * width);
+  const n = spread.cells;
+  const owner = spread.areas && spread.columns ? areaOwners(spread.areas, spread.columns, spread.leds) : null;
+  const white = spread.white && width === 3 ? new Set(spread.white) : null;
+  for (let i = 0; i < spread.leds; i++) {
+    const cell = owner ? owner[i]
+      : spread.columns ? Math.floor(((i % spread.columns) * n) / spread.columns)
+        : Math.floor((i * n) / spread.leds);
+    if (cell < 0) continue;
+    if (white && white.has(cell)) out.fill(cells[cell * width], i * width, i * width + width);
+    else out.set(cells.subarray(cell * width, cell * width + width), i * width);
+  }
+  return out;
+}
+
+/** Which cell each LED is lit by, from the cells' rectangles; -1 for none. */
+function areaOwners(areas: readonly [number, number, number, number][], columns: number, leds: number): Int32Array {
+  const owner = new Int32Array(leds).fill(-1);
+  areas.forEach(([x, y, w, h], c) => {
+    for (let r = y; r < y + h; r++) {
+      for (let k = x; k < Math.min(columns, x + w); k++) {
+        const i = r * columns + k;
+        if (i < leds) owner[i] = c;
+      }
+    }
+  });
+  return owner;
 }
 
 /** Channels to a pixel, when the profile is one pixel after another; 0 otherwise. */
@@ -118,5 +193,6 @@ export {
   ddpRoutes,
   ddpConflict,
   runsOf,
+  spreadPixels,
   pixelWidth,
 };

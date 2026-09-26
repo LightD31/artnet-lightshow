@@ -104,6 +104,11 @@ export interface Profile {
   grid?: Grid;
   /** Undriven channels that must not sit at 0, written under every frame. */
   defaults?: ChannelDefault[];
+  /**
+   * A fixture of a few zones in rows (a strobe panel), not a screen: laid out
+   * in its grid, but given the bars' programs rather than a panel's pictures.
+   */
+  zoned?: boolean;
   [key: string]: unknown;
 }
 
@@ -165,6 +170,12 @@ export type FixtureOutput = DdpOutput | HueOutput;
  * A WLED, sent its pixels over DDP: all of them, or — for a fixture that is
  * one of its segments — from its LED `at`. A segment of a panel is a
  * rectangle: its rows lie `rowStride` LEDs apart (the panel's width).
+ *
+ * A WLED patched as a wash or in zones has fewer cells than LEDs: `leds` is
+ * how many it lights, each cell an equal share of them in order — or, with
+ * `columns`, rows of that many LEDs, each cell a band of columns across them —
+ * or, with `areas`, each cell the rectangle of those rows it names (a strobe
+ * panel's zones: column, row, width, height).
  */
 export interface DdpOutput {
   protocol: 'ddp';
@@ -172,6 +183,9 @@ export interface DdpOutput {
   port?: number;
   at?: number;
   rowStride?: number;
+  leds?: number;
+  columns?: number;
+  areas?: [number, number, number, number][];
 }
 
 /**

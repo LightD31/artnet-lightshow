@@ -231,10 +231,21 @@ function Universes({ nodes }) {
 
 // ── WLED ─────────────────────────────────────────────────────────────────────
 
+// What a WLED is patched as (server/wled.ts), as a DMX bar has a 3-channel
+// mode and a pixel one.
+const WLED_MODES = [
+  { id: 'wash', label: 'Wash', help: 'One light, every LED the same colour: it washes, chases, strobes and blinds with the pars.' },
+  { id: 'zones', label: 'Zones', help: 'A few cells along it, like an LED bar: chases and stacks run across them.' },
+  { id: 'pixels', label: 'Pixels', help: 'Every LED its own cell, and a panel a picture: for a screen or a matrix.' },
+  { id: 'strobe', label: 'Strobe panel', help: 'A matrix as a strobe panel: a line of white segments across its middle, lit only by strobes and blinders, with square colour zones above and below.' },
+];
+
 function Wled() {
   const [devices, setDevices] = useState(null);
   const [status, setStatus] = useState('');
   const [host, setHost] = useState('');
+  const [mode, setMode] = useState('zones');
+  const [zones, setZones] = useState(8);
   const find = async () => {
     setStatus('Asking the network…');
     const data = await getJson('/api/wled/discover');
@@ -245,7 +256,8 @@ function Wled() {
   };
   const add = async (address, segments = false) => {
     setStatus(`Asking ${address}…`);
-    const res = await post('/api/wled/add', segments ? { host: address, segments: true } : { host: address });
+    const look = mode === 'zones' || mode === 'strobe' ? { mode, zones } : { mode };
+    const res = await post('/api/wled/add', { host: address, ...(segments ? { segments: true } : {}), ...look });
     if (!res.ok) { setStatus(res.error); return; }
     const added = segments ? res.fixtures : [res.fixture];
     const labels = added.map((f) => f.label).join(', ');
@@ -257,15 +269,27 @@ function Wled() {
   };
   const flash = async (address) => {
     const res = await post('/api/wled/identify', { host: address });
-    if (res.ok) toast.info(res.via === 'patch' ? 'It flashes through the patch: its first LED green, its last red' : `Its ${res.leds} LEDs flash: the first green, the last red`);
+    if (res.ok) toast.info(res.via === 'patch' ? 'It shows itself through the patch: a wash blinks white, zones and pixels light green to red' : `Its ${res.leds} LEDs flash: the first green, the last red`);
   };
   return (
     <section class="panel" aria-labelledby="wled-title">
       <header class="panel-head"><h2 class="panel-title" id="wled-title">WLED</h2></header>
       <p class="section-desc">WLED strips and panels, sent their pixels over DDP rather than Art-Net. Adding one reads its LED
-        count (and its grid, set up as a panel) from the device and patches it on universes of its own. <em>Add each
-        segment</em> makes every segment set up in WLED a fixture of its own — the front of the booth and its sides, or a
-        panel's halves — to be placed on the plan one by one.</p>
+        count (and its grid, set up as a panel) from the device and patches it on universes of its own, as a wash, in zones
+        or pixel by pixel. <em>Add each segment</em> makes every segment set up in WLED a fixture of its own — the front of
+        the booth and its sides, or a panel's halves — to be placed on the plan one by one.</p>
+      <div class="inline-form wled-mode">
+        <label for="wled-mode">Patch as</label>
+        <select id="wled-mode" value={mode} onChange={(e) => setMode(e.target.value)}>
+          {WLED_MODES.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+        </select>
+        {(mode === 'zones' || mode === 'strobe') && <>
+          <label for="wled-zones">{mode === 'strobe' ? 'Zones across' : 'Zones'}</label>
+          <input id="wled-zones" type="number" min="2" max="64" value={zones}
+            onChange={(e) => setZones(Math.max(2, Math.min(64, Math.round(Number(e.target.value)) || 8)))} />
+        </>}
+        <p class="setting-help">{WLED_MODES.find((m) => m.id === mode).help}</p>
+      </div>
       <div class="discovery">
         <div class="discovery-head">
           <button type="button" class="btn sm" onClick={find}>Find WLEDs</button>

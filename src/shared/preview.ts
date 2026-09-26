@@ -36,7 +36,7 @@ import { EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues,
 import { gridFromAnalysis, beatPositionAt, anchorStep, stepAt, motionAdvance } from './beat-clock.ts';
 import type { GridSource } from './beat-clock.ts';
 import type { Rig } from './rig.ts';
-import type { Colour, Expression, ShowDynamics, StageFixture } from '../types/rig.ts';
+import type { ChannelMap, Colour, Expression, ShowDynamics, StageFixture } from '../types/rig.ts';
 
 /** The look as a planned timeline builds it up, patch by patch. */
 export interface PreviewLook {
@@ -214,6 +214,7 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
       phase,
       expression: expr,
       dynamicsOn: !!dyn,
+      bpm: s.bpm,
       fixtureCount: rig.fixtures.length,
       twinkle: rig.units.map(() => 0),
       pixelTwinkle: rig.units.map(() => 0),
@@ -264,10 +265,31 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
         dim *= expr.level;
         if (dyn && dyn.level === 0) dim = 0;
       }
-      const fixture = fixtures[rig.units[u].fixture];
+      const { fixture: i, cell } = rig.units[u];
+      const fixture = fixtures[i];
       const scale = (dim / 255) * ((fixture.maxBrightness ?? 255) / 255);
-      return emitterValues(color, scale);
+      return onlyItsEmitters(emitterValues(color, scale), rig.cellMaps[i]?.[cell]);
     });
+  };
+}
+
+/**
+ * A cell's emitters as the rig drives them: only those its channel map has.
+ * A strobe panel's white zone shows a red chase as the rig does — dark — and
+ * lights for a white strobe.
+ */
+function onlyItsEmitters(v: ReturnType<typeof emitterValues>, map: ChannelMap | null | undefined): ReturnType<typeof emitterValues> {
+  if (!map) return v;
+  const has = (...names: string[]) => names.some((n) => map[n] !== undefined);
+  if (!has('red', 'green', 'blue', 'white', 'coolWhite', 'amber', 'warmWhite', 'uv')) return v;
+  return {
+    ...v,
+    r: has('red') ? v.r : 0,
+    g: has('green') ? v.g : 0,
+    b: has('blue') ? v.b : 0,
+    w: has('white', 'coolWhite') ? v.w : 0,
+    a: has('amber', 'warmWhite') ? v.a : 0,
+    uv: has('uv') ? v.uv : 0,
   };
 }
 

@@ -65,6 +65,12 @@ export const PATTERNS = [
 	{ id: 'bars', name: 'Bars', pixel: true },
 	{ id: 'fire', name: 'Fire', pixel: true },
 	{ id: 'rain', name: 'Rain', pixel: true },
+	{ id: 'flash-chase', name: 'Flash Chase', pixel: true },
+	{ id: 'flash-scatter', name: 'Flash Scatter', pixel: true },
+	{ id: 'flash-fill', name: 'Flash Fill', pixel: true },
+	{ id: 'flash-alternate', name: 'Flash Alternate', pixel: true },
+	{ id: 'ramp', name: 'Ramp', pixel: true },
+	{ id: 'core', name: 'Strobe Core', pixel: true },
 ]
 
 export const ENERGY_EFFECTS = [

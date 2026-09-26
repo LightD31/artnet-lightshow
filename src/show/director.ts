@@ -422,7 +422,12 @@ class ShowDirector {
         continue;
       }
       if (source.startsWith('drop:')) {
-        this._placeBars(intent, barLook(['impact', 'burst', 'comet'], available), 'stage', context);
+        // Each drop of a track takes the next of the drop's programs, so the
+        // third drop does not play the first one's again.
+        const drop = context.drops.filter((d) => d.t <= t + 0.25).length;
+        const strobe = strobeLook(DROP_STROBES, drop + context.trackSeed, available);
+        if (strobe) this._placeBars(intent, strobe, STROBE_MAPS[strobe], context);
+        else this._placeBars(intent, barLook(['impact', 'burst', 'comet'], available), 'stage', context);
         intent.pattern = parWash(1, next(`drop:${source}`) + context.trackSeed, available) || intent.pattern;
         continue;
       }
@@ -433,7 +438,13 @@ class ShowDirector {
 
       const role = section ? section.role : 'unknown';
       const table = PIXEL_ROLE_LOOKS[role];
-      if (table) {
+      // A passage driving as hard as a drop plays the bars as strobes: the
+      // same program every time the passage comes round.
+      const strobe = section && !section.resting && section.drive >= STROBE_DRIVE && STROBE_ROLES.has(role)
+        ? strobeLook(DRIVING_STROBES, section.identity + context.trackSeed, available) : null;
+      if (strobe) {
+        this._placeBars(intent, strobe, STROBE_MAPS[strobe], context);
+      } else if (table) {
         const look = barLook(table.map((l) => l.pattern), available);
         const map = (table.find((l) => l.pattern === look) || table[0]).map;
         this._placeBars(intent, look, map, context,
@@ -2000,10 +2011,32 @@ const PANEL_ROLE_LOOKS: Record<string, readonly string[]> = {
 };
 const PANEL_LOOKS = ['bars', 'fire', 'rain'];
 
+/**
+ * The strobe programs (shared/patterns.ts, after the hybrid strobes'), where
+ * the music drives hardest. A drop turns through its own, one drop to the
+ * next — the ring and sparks first, then a fill flashed on every step, a
+ * random segment strobe and the white core on the kick. A chorus or a solo
+ * driving as hard takes one of the others, the same every time it comes
+ * round.
+ */
+const DROP_STROBES = ['impact', 'flash-fill', 'flash-scatter', 'core'];
+const DRIVING_STROBES = ['flash-alternate', 'flash-chase', 'ramp', 'core'];
+const STROBE_DRIVE = 0.72;
+const STROBE_ROLES = new Set(['chorus', 'instrumental', 'bridge']);
+
+// How each lies over the bars: the zone-by-zone programs on every bar at
+// once, as each fixture runs its own; the chase out from the middle of the
+// stage to both ends, and the scatter and the ring across it.
+const STROBE_MAPS: Record<string, string> = {
+  impact: 'stage', 'flash-scatter': 'stage', 'flash-chase': 'mirror',
+  'flash-fill': 'bar', 'flash-alternate': 'bar', ramp: 'bar', core: 'bar',
+};
+
 // The pictures drawn across cells, which a passage with no role may already
 // have been given.
 const CELL_LOOKS = new Set(['gradient', 'comet', 'burst', 'plasma', 'drums', 'stems', 'rise', 'impact', 'ensemble', 'ribbon', 'wave', 'rainbow',
-  'twinkle', 'sparkle', 'bars', 'fire', 'rain']);
+  'twinkle', 'sparkle', 'bars', 'fire', 'rain',
+  'flash-chase', 'flash-scatter', 'flash-fill', 'flash-alternate', 'ramp', 'core']);
 
 /**
  * What the pars do while the bars move: colour, held or breathing or turning
@@ -2033,6 +2066,12 @@ function firstOther<T>(avoid: ReadonlySet<T>, pick: (k: number) => T): T {
 /** The first of `looks` the rig has, or null for the whole rig on one pattern. */
 function barLook(looks: readonly string[], available: ReadonlySet<string>): string | null {
   return looks.find((p) => available.has(p)) ?? null;
+}
+
+/** One of `looks` the rig has, turned by `seed`; null when it has none of them. */
+function strobeLook(looks: readonly string[], seed: number, available: ReadonlySet<string>): string | null {
+  const pool = looks.filter((p) => available.has(p));
+  return pool.length ? pool[Math.abs(Math.round(seed)) % pool.length] : null;
 }
 
 /** A wash for the pars at this drive, turned by `seed`; null when the rig has none. */

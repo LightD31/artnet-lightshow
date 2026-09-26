@@ -66,7 +66,8 @@ function hasPanels(s) {
   const profiles = s.profiles || {};
   return (s.fixtures || []).some((f) => {
     const p = profiles[f.profileId];
-    return !!(p && p.grid && Array.isArray(p.cells) && p.cells.length >= 2);
+    // A panel of zones (a strobe panel) plays the bars' programs, not a screen's.
+    return !!(p && p.grid && !p.zoned && Array.isArray(p.cells) && p.cells.length >= 2);
   });
 }
 

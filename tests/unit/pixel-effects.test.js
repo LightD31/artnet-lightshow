@@ -167,3 +167,90 @@ test('the panel effects cost no more on a 64 × 32 WLED matrix than the pictures
     assert.ok(took < plasma * 2.5 + 0.5, `${id}: ${took.toFixed(2)} ms a frame, plasma ${plasma.toFixed(2)} ms`);
   }
 });
+
+// ── Strobe effects ──────────────────────────────────────────────────────────
+// After the hybrid strobes' programs: hard flashes on black, zone by zone,
+// timed in milliseconds whatever the tempo.
+
+const STROBES = ['flash-chase', 'flash-scatter', 'flash-fill', 'flash-alternate', 'ramp', 'core'];
+const WHITE = (c) => c.r === 255 && c.g === 255 && c.b === 255 && c.w === 255;
+/** A moment `ms` into the music at `bpm`, `division` steps to the beat. */
+const at = (ms, bpm = 128, division = 1) => {
+  const stepMs = 60000 / bpm / division;
+  const stepPos = ms / stepMs;
+  return { step: Math.floor(stepPos), stepPos, stepPhase: stepPos - Math.floor(stepPos), stepMs };
+};
+
+test('the strobe effects run on every zone, say so in the picker, and draw the same moment the same way', () => {
+  for (const id of STROBES) {
+    assert.ok(CELL_PATTERNS.has(id), id);
+    assert.strictEqual(PATTERNS.find((p) => p.id === id).pixel, true, id);
+    assert.deepStrictEqual(draw(id, { n: 8, ...at(1234) }), draw(id, { n: 8, ...at(1234) }), id);
+  }
+});
+
+test('a flash is hard, on black, and never shorter than two frames, however fast the music', () => {
+  for (const id of ['flash-chase', 'flash-scatter', 'flash-alternate']) {
+    for (const [bpm, division] of [[90, 1], [128, 2], [174, 4]]) {
+      const runs = new Map();
+      const shortest = new Map();
+      for (let ms = 0; ms < 4000; ms++) {
+        draw(id, { n: 8, ...at(ms, bpm, division) }).forEach(([, d], i) => {
+          assert.ok(d === 0 || d === 255, `${id}: ${d} is neither a flash nor black`);
+          if (d) runs.set(i, (runs.get(i) || 0) + 1);
+          else if (runs.get(i)) {
+            shortest.set(i, Math.min(shortest.get(i) ?? Infinity, runs.get(i)));
+            runs.set(i, 0);
+          }
+        });
+      }
+      assert.ok(shortest.size, `${id} at ${bpm} BPM flashes`);
+      for (const [i, ms] of shortest) assert.ok(ms >= 45, `${id} at ${bpm} BPM / ${division}: zone ${i} lit only ${ms} ms`);
+    }
+  }
+});
+
+test('a flash chase lights one zone at a time, out from the middle when mirrored', () => {
+  const lit = (out) => out.flatMap(([, d], i) => (d ? [i] : []));
+  assert.deepStrictEqual(lit(draw('flash-chase', { n: 8, ...at(0) })), [0]);
+  assert.deepStrictEqual(lit(draw('flash-chase', { n: 8, ...at(469 * 3 / 8 + 1) })), [3], 'three eighths of the way round');
+  const mirrored = [0.5, 0.25, 0, 0.25, 0.5].map((x) => Math.abs(2 * x - 1));
+  assert.deepStrictEqual(lit(draw('flash-chase', { n: 5, xs: [1, 0.5, 0, 0.5, 1], ...at(0) })), [2], 'the middle first');
+  assert.deepStrictEqual(lit(draw('flash-chase', { n: 5, xs: [1, 0.5, 0, 0.5, 1], ...at(160) })), [1, 3], 'then both sides at once');
+  assert.strictEqual(mirrored.length, 5);
+});
+
+test('a fill flash grows from the middle, holds, and is cut to black before the next step', () => {
+  const lit = (phase) => draw('flash-fill', { n: 8, step: 0, stepPos: phase, stepPhase: phase }).map(([, d]) => (d ? 1 : 0)).join('');
+  assert.strictEqual(lit(0), '00011000', 'the two zones nearest the middle first');
+  assert.strictEqual(lit(0.15), '00111100');
+  assert.strictEqual(lit(0.4), '11111111');
+  assert.strictEqual(lit(0.7), '00000000');
+});
+
+test('odd and even zones take turns, the step and the half-step between', () => {
+  const lit = (ms) => draw('flash-alternate', { n: 6, ...at(ms) }).map(([, d]) => (d ? 1 : 0)).join('');
+  assert.strictEqual(lit(10), '101010');
+  assert.strictEqual(lit(100), '000000', 'dark between flashes');
+  assert.strictEqual(lit(469 / 2 + 10), '010101');
+});
+
+test('a ramp swells from the middle and is cut on the beat', () => {
+  const ramp = (phase) => dims(draw('ramp', { n: 9, step: 0, stepPos: phase, stepPhase: phase }));
+  assert.ok(ramp(0.01).every((d) => d < 5), 'black on the beat');
+  const mid = ramp(0.5);
+  assert.ok(mid[4] > mid[0] && mid[4] > mid[8], 'the middle ahead of the edges');
+  assert.ok(ramp(0.99).every((d) => d > 230), 'full just before the next beat');
+});
+
+test('the strobe core strikes white in the middle, over a wash in the look\'s colour', () => {
+  const struck = draw('core', { n: 9, ...at(10) });
+  assert.ok(WHITE(struck[4][0]) && struck[4][1] === 255, 'the core strikes');
+  assert.ok(struck[0][0] === RED && struck[0][1] > 100, 'the edges hold the wash');
+  const between = draw('core', { n: 9, ...at(250) });
+  assert.ok(!WHITE(between[4][0]) && between[4][1] < between[0][1], 'between strikes the core only glows');
+  // With the pulse, on the kick as it was hit, not on the grid.
+  const off = draw('core', { n: 9, ...at(10), pulse: { mix: 0.8, kick: 0.1, snare: 0, hats: 0 } });
+  const kick = draw('core', { n: 9, ...at(250), pulse: { mix: 0.8, kick: 0.95, snare: 0, hats: 0 } });
+  assert.deepStrictEqual([WHITE(off[4][0]), WHITE(kick[4][0])], [false, true]);
+});

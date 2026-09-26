@@ -295,11 +295,12 @@ async function checkWled(client: Pick<WledClient, 'info'> = wledClient): Promise
     const output = fix.output as DdpOutput;
     const host = output.host;
     const profile = getProfile(fix);
-    // A segment has to fit in the WLED; all of it has to be all of it.
+    // A segment has to fit in the WLED; all of it has to be all of it — its
+    // LEDs, which a wash or zones light a few cells across.
     const segment = output.at !== undefined;
     const patched = segment
       ? Math.max(...runsOf(output, profile, pixelWidth(profile) || profile.channelCount).map((run) => run.at + run.count))
-      : unitCount(profile);
+      : output.leds ?? unitCount(profile);
     try {
       const info = await client.info(host);
       return { fix, host, patched, segment, leds: info.leds, error: null };

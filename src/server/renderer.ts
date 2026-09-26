@@ -427,6 +427,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       expression,
       dynamicsOn: !!input.showDynamics,
       pulse: input.pulse ?? null,
+      bpm: reading.bpm,
       fixtureCount,
       twinkle,
       pixelTwinkle,

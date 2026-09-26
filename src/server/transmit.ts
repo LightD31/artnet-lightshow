@@ -3,6 +3,7 @@ import { sendSacn, sendSacnDiscovery, MIN_UNIVERSE, MAX_UNIVERSE, DISCOVERY_INTE
 import { sendDdp } from './ddp.ts';
 import type { DdpRun } from './ddp.ts';
 import { isInternalUniverse } from '../shared/placement.ts';
+import { spreadPixels } from './ddp-routes.ts';
 import type { DdpRoute } from './ddp-routes.ts';
 import type { ArtDmxTarget } from './artnet.ts';
 import type { ArtRoutes } from './artnet-nodes.ts';
@@ -302,25 +303,29 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
     // of them, sent together and shown once.
     const byWled = new Map<string, DdpRoute[]>();
     for (const route of routes || []) {
-      now.set(routeKey(route), { route, bytes: route.parts.reduce((sum, part) => sum + part.bytes, 0) });
+      now.set(routeKey(route), { route, bytes: ledBytes(route) });
       const list = byWled.get(ddpKey(route)) || [];
       list.push(route);
       byWled.set(ddpKey(route), list);
     }
     for (const group of byWled.values()) {
       if (!group.every((route) => route.parts.every((part) => ddpFrames.has(part.universe)))) continue;
-      const total = group.reduce((sum, route) => sum + route.parts.reduce((n, part) => n + part.bytes, 0), 0);
-      const data = new Uint8Array(total);
+      const data = new Uint8Array(group.reduce((sum, route) => sum + ledBytes(route), 0));
       const runs: DdpRun[] = [];
       let at = 0;
       for (const route of group) {
-        const start = at;
+        const own = new Uint8Array(route.parts.reduce((n, part) => n + part.bytes, 0));
+        let cursor = 0;
         for (const part of route.parts) {
           const frame = ddpFrames.get(part.universe) as Buffer;
-          data.set(frame.subarray(part.from, part.from + part.bytes), at);
-          at += part.bytes;
+          own.set(frame.subarray(part.from, part.from + part.bytes), cursor);
+          cursor += part.bytes;
         }
-        runs.push(...byteRuns(route, start));
+        // A wash or zones: its few cells, each lighting its share of the LEDs.
+        const leds = route.spread ? spreadPixels(own, route.rgbw ? 4 : 3, route.spread) : own;
+        data.set(leds, at);
+        runs.push(...byteRuns(route, at));
+        at += leds.length;
       }
       sendToWled(group[0], data, runs);
     }
@@ -329,6 +334,12 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
     }
     ddpSent = now;
     ddpFrames.clear();
+  }
+
+  /** How many bytes a fixture's LEDs are on the wire: its channels', unless spread. */
+  function ledBytes(route: DdpRoute): number {
+    if (route.spread) return route.spread.leds * (route.rgbw ? 4 : 3);
+    return route.parts.reduce((sum, part) => sum + part.bytes, 0);
   }
 
   /** A fixture's pixel runs as bytes, its data starting at `from` in the frame. */

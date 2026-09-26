@@ -174,6 +174,72 @@ test('segments of one WLED go as one frame: each run where it belongs, shown onc
   assert.ok(dark && dark.data.every((v) => v === 0), 'the side that left goes dark');
 });
 
+test('a wash or zones: each cell lights its share of the LEDs, on the wire', () => {
+  const wash = { id: 'wash', name: 'W', channelCount: 3, channelMap: { red: 0, green: 1, blue: 2 } };
+  const zones = strip(3);
+  const bands = strip(2);
+  const fixtures = [
+    { id: 1, label: 'Wash', address: 1, universe: 1, profileId: 'wash', output: { protocol: 'ddp', host: '10.0.0.50', leds: 5 } },
+    { id: 2, label: 'Zones', address: 1, universe: 2, profileId: 'zones', output: { protocol: 'ddp', host: '10.0.0.51', leds: 7 } },
+    // Half of a 4 × 2 panel, two columns wide, in two bands of one column.
+    { id: 3, label: 'Bands', address: 1, universe: 3, profileId: 'bands',
+      output: { protocol: 'ddp', host: '10.0.0.52', at: 2, rowStride: 4, leds: 4, columns: 2 } },
+  ];
+  const profiles = { wash, zones, bands };
+  const routes = ddpRoutes(fixtures, (f) => profiles[f.profileId], (f) => f.universe);
+  assert.deepStrictEqual(routes.map((r) => [r.runs, r.spread]), [
+    [[{ at: 0, count: 5 }], { cells: 1, leds: 5, columns: null }],
+    [[{ at: 0, count: 7 }], { cells: 3, leds: 7, columns: null }],
+    [[{ at: 2, count: 2 }, { at: 6, count: 2 }], { cells: 2, leds: 4, columns: 2 }],
+  ]);
+  assert.strictEqual(ddpConflict(fixtures, (f) => profiles[f.profileId], (f) => f.universe), null);
+  assert.match(ddpConflict([...fixtures, { id: 4, label: 'Pixels', address: 1, universe: 4, profileId: 'zones', output: { protocol: 'ddp', host: '10.0.0.50', at: 4 } }],
+    (f) => profiles[f.profileId], (f) => f.universe), /"Pixels" and "Wash" both drive LEDs 5–5/, 'a wash holds every LED it lights');
+
+  const { sent, wires } = fakeWires();
+  const tx = createTransmitter({ wires });
+  const config = outputs(routes);
+  const frame = (...pixels) => { const b = Buffer.alloc(512); pixels.forEach((v, k) => b.fill(v, k * 3, k * 3 + 3)); return b; };
+  tx.send(1, frame(9), config);
+  tx.send(2, frame(1, 2, 3), config);
+  tx.send(3, frame(1, 2), config);
+  tx.endFrame(config);
+  const leds = (d) => Array.from({ length: d.data.length / 3 }, (_, i) => d.data[i * 3]);
+  assert.deepStrictEqual(leds(sent.ddp[0]), [9, 9, 9, 9, 9], 'one colour on every LED');
+  assert.deepStrictEqual(leds(sent.ddp[1]), [1, 1, 1, 2, 2, 3, 3], 'three zones along seven LEDs');
+  assert.deepStrictEqual([leds(sent.ddp[2]), sent.ddp[2].runs], [[1, 2, 1, 2], [{ at: 6, from: 0, bytes: 6 }, { at: 18, from: 6, bytes: 6 }]],
+    'bands across each row of the rectangle');
+
+  // Gone from the patch: every LED it lit goes dark, not just its one cell.
+  tx.endFrame(outputs([]));
+  assert.ok(sent.ddp.slice(3).some((d) => d.host === '10.0.0.50' && d.data.length === 15 && d.data.every((v) => v === 0)));
+});
+
+test('a strobe panel: each zone lights its rectangle, and a white zone all three dies of an RGB WLED', () => {
+  // A 4 × 3 panel: a red zone over the top row, a white line in the middle, a
+  // blue zone under it.
+  const profile = {
+    id: 'sp', name: 'SP', channelCount: 9, channelMap: {}, grid: { columns: 1, rows: 3 }, zoned: true,
+    cells: [{ channelMap: { red: 0, green: 1, blue: 2 }, at: { x: 0, y: 0 } }, { channelMap: { white: 3 }, at: { x: 0, y: 1 } },
+      { channelMap: { red: 6, green: 7, blue: 8 }, at: { x: 0, y: 2 } }],
+  };
+  const output = { protocol: 'ddp', host: '10.0.0.61', leds: 12, columns: 4, areas: [[0, 0, 4, 1], [0, 1, 4, 1], [0, 2, 4, 1]] };
+  const routes = ddpRoutes([{ id: 1, label: 'SP', address: 1, universe: 1, profileId: 'sp', output }], () => profile, (f) => f.universe);
+  assert.deepStrictEqual(routes[0].spread, { cells: 3, leds: 12, columns: 4, areas: output.areas, white: [1] });
+  assert.deepStrictEqual(validate(fixtureMessageSchema, { id: 1, output }, 'fixture').output, output, 'saved with the show as it is');
+
+  const { sent, wires } = fakeWires();
+  const tx = createTransmitter({ wires });
+  const frame = Buffer.alloc(512);
+  frame.set([200, 0, 0, 90, 0, 0, 0, 0, 150]);
+  tx.send(1, frame, outputs(routes));
+  tx.endFrame(outputs(routes));
+  const leds = Array.from({ length: 12 }, (_, i) => [...sent.ddp[0].data.subarray(i * 3, i * 3 + 3)]);
+  assert.deepStrictEqual(leds.slice(0, 4), Array(4).fill([200, 0, 0]));
+  assert.deepStrictEqual(leds.slice(4, 8), Array(4).fill([90, 90, 90]), 'white, on every die');
+  assert.deepStrictEqual(leds.slice(8), Array(4).fill([0, 0, 150]));
+});
+
 test('frames reach a WLED over UDP', async () => {
   const receiver = dgram.createSocket('udp4');
   await new Promise((resolve) => receiver.bind(0, '127.0.0.1', resolve));

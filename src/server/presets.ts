@@ -136,6 +136,14 @@ const PATTERNS = [
   { id: 'bars',     name: 'Bars',     desc: 'A spectrum analyser: kick, bass, drums, snare, band, voice and hats as columns, as high as each plays', pixel: true },
   { id: 'fire',     name: 'Fire',     desc: 'Flames licking up a panel, taller with the bass, flaring on the kick', pixel: true },
   { id: 'rain',     name: 'Rain',     desc: 'Drops falling down every column in time, the hats shaking loose more', pixel: true },
+  // After the programs of the hybrid strobes (a Jolt Panel, a Super Strobe
+  // ABL): hard flashes on black, zone by zone.
+  { id: 'flash-chase',     name: 'Flash Chase',     desc: 'One flash stepping zone to zone, a lap a step', pixel: true },
+  { id: 'flash-scatter',   name: 'Flash Scatter',   desc: 'Random zones strobing, denser with the hats', pixel: true },
+  { id: 'flash-fill',      name: 'Flash Fill',      desc: 'Every step fills from the middle out, holds, and cuts to black', pixel: true },
+  { id: 'flash-alternate', name: 'Flash Alternate', desc: 'Odd zones flash on the step, even ones between', pixel: true },
+  { id: 'ramp',            name: 'Ramp',            desc: 'Every step swells from black to full from the middle, cut on the beat', pixel: true },
+  { id: 'core',            name: 'Strobe Core',     desc: 'A colour wash with a white core striking on every kick', pixel: true },
 ];
 
 const PATTERN_IDS = PATTERNS.map((p) => p.id);
