@@ -80,8 +80,8 @@ const DEFAULTS: Settings = {
   },
   // Philips Hue Entertainment. Off by default: it needs credentials the bridge
   // itself has to issue, so there is nothing sensible to default to. Unlike
-  // Art-Net and sACN this does not carry a universe — each Hue channel is bound
-  // to a rig fixture and shows that fixture's colour.
+  // Art-Net and sACN this does not carry a universe: each lamp of the area is a
+  // fixture in the patch, and its channel is sent the colour it is rendered.
   hue: {
     enabled: false,
     // The bridge's address. Found for you in the Rig view, or typed in
@@ -99,10 +99,6 @@ const DEFAULTS: Settings = {
     // Which entertainment area to drive. Areas are built in the Hue app, since
     // that is where the lamps have already been placed on a floor plan.
     entertainmentId: '',
-    // Which fixture each Hue channel follows: [{ channel, fixture }]. A channel
-    // with no binding is simply not sent, which leaves the bridge holding its
-    // last value for that lamp rather than forcing it black.
-    channels: [],
     // How far the Art-Net and sACN output is held back so the pars land with
     // the Hue lamps. The bridge and its Zigbee relay add a delay the DMX wire
     // does not have, so on a mixed rig every hit reaches the pars first. Tuned
@@ -296,14 +292,6 @@ const schema = z.object({
       (v) => v === '' || /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(v),
       { message: 'must be blank or an entertainment area id' },
     ),
-    // Hue channel ids are a byte. Twenty is the protocol's own limit — one
-    // stream message carries at most 20 channel slots, and an entertainment
-    // area cannot hold more lights than that — so a longer list could never be
-    // sent in full and is refused rather than silently truncated.
-    channels: z.array(z.object({
-      channel: z.number().int().min(0).max(255),
-      fixture: z.number().int().min(0),
-    }).strict()).max(20),
     // Half a second is far past any bridge; anything that long is a setting
     // typed in the wrong unit.
     latencyMs: z.number().int().min(0).max(500),
@@ -389,12 +377,11 @@ function getPath(obj: unknown, dotted: string): unknown {
 /**
  * Did a setting actually change?
  *
- * Identity is enough for the scalars that make up almost all of this tree, but
- * hue.channels is a list: validation rebuilds it on every save, so `!==` would
- * call it changed every time the page was saved and re-apply the Hue config for
- * nothing. These values are plain JSON by construction, so comparing their
- * serialisations is both correct and cheap at the once-per-save rate this runs
- * at.
+ * Identity is enough for the scalars that make up this tree. A list or an
+ * object, should one be added, is rebuilt by validation on every save, so `!==`
+ * would call it changed every time the page was saved. These values are plain
+ * JSON by construction, so comparing their serialisations is both correct and
+ * cheap at the once-per-save rate this runs at.
  */
 function sameValue(a: unknown, b: unknown): boolean {
   if (a === b) return true;

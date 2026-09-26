@@ -333,19 +333,27 @@ async function checkWled(client: Pick<WledClient, 'info'> = wledClient): Promise
 
 /**
  * Philips Hue: is the bridge there, does the area still exist, and is every
- * channel bound to a fixture that is still in the patch?
+ * Hue lamp in the patch one of its channels?
  *
- * The last question is the one worth asking before doors. A Hue binding names a
- * fixture id, and deleting that fixture from the patch leaves the binding
- * pointing at nothing — the lamp simply stops being sent, which on the night
- * looks like a dead lamp rather than a configuration mistake.
+ * The last question is the one worth asking before doors. A lamp is patched
+ * as a channel of the area, and an area rebuilt in the Hue app, or another one
+ * picked, can leave it naming a channel that is not there — the bridge takes
+ * the colour and ignores it, which on the night looks like a dead lamp rather
+ * than a configuration mistake.
  */
 async function checkHue(): Promise<Check> {
   const config = output.getHueConfig();
+  const lamps = state.fixtures.filter((f) => f.output?.protocol === 'hue');
+  const channelOf = (f: (typeof lamps)[number]) => (f.output?.protocol === 'hue' ? f.output.channel : -1);
   if (!config.enabled) {
-    return {
+    return lamps.length ? {
+      id: 'hue', label: 'Philips Hue', status: WARN,
+      detail: `${lamps.length} Hue lamp${lamps.length === 1 ? ' is' : 's are'} in the patch, but the Hue output is off, so `
+        + `${lamps.length === 1 ? 'it stays' : 'they stay'} dark.`,
+      fix: 'Turn it on in Rig → Outputs → Philips Hue, or remove the lamps from the patch.',
+    } : {
       id: 'hue', label: 'Philips Hue', status: INFO,
-      detail: 'Disabled. Turn it on in Settings → Philips Hue to drive Hue lamps from the show.',
+      detail: 'Disabled. Turn it on in Rig → Outputs → Philips Hue to drive Hue lamps from the show.',
     };
   }
 
@@ -357,28 +365,29 @@ async function checkHue(): Promise<Check> {
     return {
       id: 'hue', label: 'Philips Hue', status: FAIL,
       detail: `Output is on but the ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not set up.`,
-      fix: 'Open Settings → Philips Hue, find the bridge, press its link button to pair, then pick an area.',
+      fix: 'Open Rig → Outputs → Philips Hue, find the bridge, press its link button to pair, then pick an area.',
     };
   }
 
-  if (!config.channels.length) {
+  if (!lamps.length) {
     return {
       id: 'hue', label: 'Philips Hue', status: WARN,
-      detail: `Paired with ${config.host}, but no Hue channel is bound to a fixture, so nothing will light.`,
-      fix: 'Bind each channel to a fixture in Settings → Philips Hue.',
+      detail: `Paired with ${config.host}, but no Hue lamp is in the patch, so nothing will light.`,
+      fix: 'Add the area\'s lamps in Rig → Outputs → Philips Hue.',
     };
   }
 
-  const known = new Set(state.fixtures.map((f) => f.id));
-  const orphans = config.channels.filter((c) => !known.has(c.fixture));
-  if (orphans.length) {
-    return {
-      id: 'hue', label: 'Philips Hue', status: FAIL,
-      detail: `Channel ${orphans.map((c) => c.channel).join(', ')} `
-        + `${orphans.length === 1 ? 'is' : 'are'} bound to a fixture that is no longer in the patch, `
-        + `so ${orphans.length === 1 ? 'that lamp' : 'those lamps'} will never be sent a colour.`,
-      fix: 'Re-bind them in Settings → Philips Hue, or put the missing fixtures back.',
-    };
+  const seen = new Map<number, string>();
+  for (const lamp of lamps) {
+    const other = seen.get(channelOf(lamp));
+    if (other) {
+      return {
+        id: 'hue', label: 'Philips Hue', status: WARN,
+        detail: `"${lamp.label}" and "${other}" are both Hue channel ${channelOf(lamp)}; only "${other}" is shown.`,
+        fix: 'Remove one of them from the patch.',
+      };
+    }
+    seen.set(channelOf(lamp), lamp.label);
   }
 
   let areas;
@@ -397,21 +406,20 @@ async function checkHue(): Promise<Check> {
     return {
       id: 'hue', label: 'Philips Hue', status: FAIL,
       detail: `The bridge at ${config.host} has no entertainment area ${config.entertainmentId} any more.`,
-      fix: 'It was probably renamed or rebuilt in the Hue app. Pick the area again in Settings → Philips Hue.',
+      fix: 'It was probably renamed or rebuilt in the Hue app. Pick the area again in Rig → Outputs → Philips Hue.',
     };
   }
 
   // A channel the area does not define is accepted by the bridge and quietly
   // ignored, so it would never surface as an error at show time.
   const areaChannels = new Set(area.channels.map((c) => c.id));
-  const lampNames = new Map(area.channels.filter((c) => c.name).map((c) => [c.id, c.name]));
-  const unknown = config.channels.filter((c) => !areaChannels.has(c.channel)).map((c) => c.channel);
-  if (unknown.length) {
+  const stray = lamps.filter((f) => !areaChannels.has(channelOf(f)));
+  if (stray.length) {
     return {
       id: 'hue', label: 'Philips Hue', status: WARN,
-      detail: `"${area.name}" has no channel ${unknown.join(', ')}, so those bindings go nowhere. `
-        + `The area defines ${areaChannels.size} channel${areaChannels.size === 1 ? '' : 's'}.`,
-      fix: 'The area was probably changed in the Hue app. Re-bind the channels in Settings → Philips Hue.',
+      detail: `"${area.name}" has no channel for ${stray.map((f) => `"${f.label}" (#${channelOf(f)})`).join(', ')}, `
+        + `so ${stray.length === 1 ? 'it stays' : 'they stay'} dark.`,
+      fix: 'The area was probably changed in the Hue app. Remove those lamps and add them again from Rig → Outputs → Philips Hue.',
     };
   }
 
@@ -424,19 +432,11 @@ async function checkHue(): Promise<Check> {
     };
   }
 
-  // Name the lamps rather than the channel numbers: "Right follows PAR 1" is
-  // checkable against the room, "#0 → 0" is not.
-  const bound = config.channels
-    .map((c) => {
-      const fixture = state.fixtures.find((f) => f.id === c.fixture);
-      return `${lampNames.get(c.channel) || `#${c.channel}`} → ${fixture ? fixture.label : `fixture ${c.fixture}`}`;
-    })
-    .join(', ');
-
+  const left = area.channels.length - lamps.length;
   return {
     id: 'hue', label: 'Philips Hue', status: OK,
-    detail: `"${area.name}" on ${config.host}, `
-      + `${config.channels.length} of ${areaChannels.size} channel${areaChannels.size === 1 ? '' : 's'} bound: ${bound}.`,
+    detail: `"${area.name}" on ${config.host}: ${lamps.map((f) => f.label).join(', ')}`
+      + `${left > 0 ? `; ${left} of its channel${left === 1 ? ' is' : 's are'} not in the patch` : ''}.`,
   };
 }
 

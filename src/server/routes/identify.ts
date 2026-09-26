@@ -31,8 +31,8 @@ import type { WledClient } from '../wled.ts';
  *                                 any universe one of them shares with the rig
  *   POST /api/wled/identify       a WLED: through the patch when it is in it,
  *                                 else streamed its picture directly
- *   POST /api/hue/identify        a Hue channel: through the fixture it
- *                                 follows, else the bridge's own identify
+ *   POST /api/hue/identify        a Hue channel: through its lamp in the
+ *                                 patch, else the bridge's own identify
  */
 
 export interface IdentifyRouteDeps {
@@ -198,10 +198,8 @@ function attachIdentifyRoutes(app: Express, deps: IdentifyRouteDeps): void {
       const secs = identifySeconds(body.seconds);
       const config = output.getHueConfig();
       if (!config.host || !config.username) return res.status(409).json({ ok: false, error: 'Pair with a bridge first.' });
-      const binding = config.channels.find((c) => c.channel === body.channel);
-      if (binding && state.fixtures.some((f) => f.id === binding.fixture)) {
-        return res.json({ ok: true, via: 'fixture', ...start([binding.fixture], secs) });
-      }
+      const lamp = state.fixtures.find((f) => f.output?.protocol === 'hue' && f.output.channel === body.channel);
+      if (lamp) return res.json({ ok: true, via: 'fixture', ...start([lamp.id], secs) });
       const areas = await hueAreas(config.host, config.username);
       const area = areas.find((a) => a.id === config.entertainmentId) || null;
       const channel = area ? area.channels.find((c) => c.id === body.channel) : null;

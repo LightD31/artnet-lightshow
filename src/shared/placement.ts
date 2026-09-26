@@ -217,30 +217,6 @@ function placeAddressless<F extends Placed>(fixtures: readonly F[], profileOf: (
 }
 
 /**
- * The first place from `universe` on where a fixture on this profile fits
- * behind what is already patched (`taken`, footprints): after the last channel
- * used on a universe, or from channel 1 of empty universes for a strip. Null
- * when no universe up to the last has room.
- */
-function freeSpot(taken: Iterable<{ universe: number; last: number }>, profile: Placeable,
-  universe: number): { universe: number; address: number } | null {
-  const lastUsed = new Map<number, number>();
-  for (const part of taken) lastUsed.set(part.universe, Math.max(lastUsed.get(part.universe) || 0, part.last));
-  const span = universeCount(profile);
-  for (let u = universe; u + span - 1 <= LAST_UNIVERSE; u++) {
-    if (span > 1) {
-      let empty = true;
-      for (let k = 0; k < span && empty; k++) empty = !lastUsed.has(u + k);
-      if (empty) return { universe: u, address: 1 };
-    } else {
-      const address = (lastUsed.get(u) || 0) + 1;
-      if (address + profile.channelCount - 1 <= UNIVERSE_SIZE) return { universe: u, address };
-    }
-  }
-  return null;
-}
-
-/**
  * A reader for a fixture's channels in rendered universes: `frames(universe)`
  * gives a universe's bytes (a buffer or a plain array; missing reads as 0).
  */
@@ -266,7 +242,6 @@ export {
   isInternalUniverse,
   hasNoAddress,
   placeAddressless,
-  freeSpot,
   stripOf,
   stripIssue,
   universeCount,

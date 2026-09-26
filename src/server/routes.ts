@@ -44,7 +44,7 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
   attachWarmRoutes(app, ctx);
   attachSetupRoutes(app, ctx);
   attachOutputRoutes(app, ctx);
-  attachIdentifyRoutes(app, { wled: ctx.wled, broadcast: () => ctx.integrations.broadcast() });
+  attachIdentifyRoutes(app, { wled: ctx.wled, hueAreas: ctx.hueAreas, broadcast: () => ctx.integrations.broadcast() });
   attachOpsRoutes(app, ctx);
   // Must be registered last (see errorHandler).
   app.use(errorHandler);

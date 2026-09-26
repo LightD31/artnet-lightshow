@@ -99,10 +99,8 @@ const identify = createIdentify({ clock: () => clock() });
  * fade or sync test asked for.
  */
 function renderInput(): RenderInput {
-  // A fixture a Hue lamp follows is never strobed in software: the lamp would
-  // flash with it, and a Hue bridge is no strobe (see renderer.js). Nor is one
-  // with no DMX address, which only a Hue lamp shows.
-  const followed = output.hueFollowedFixtures ? output.hueFollowedFixtures() : null;
+  // A Hue lamp is never strobed in software: a Hue bridge is no strobe (see
+  // renderer.js).
   return {
     running: state.running,
     pattern: state.pattern,
@@ -140,7 +138,7 @@ function renderInput(): RenderInput {
       position: f.position || null,
       group: f.group || null,
       geometry: f.geometry || null,
-      hue: !!(followed && followed.has(f.id)) || hasNoAddress(f),
+      hue: hasNoAddress(f),
     })),
   };
 }

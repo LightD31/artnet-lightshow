@@ -120,14 +120,19 @@ function applyShow(rawShow: unknown): ShowFile {
       output: f.output ? { ...f.output } : null,
       override: null,
     }));
-    // A Hue lamp on DMX was a stand-in from before Hue lamps could go without
-    // an address: its channels went out to nothing, and took up room a
-    // fixture could use. It comes off DMX, and its Hue channel still follows it.
-    const moved = next.filter((f) => !f.output && HUE_PROFILE_IDS.has(f.profileId));
-    for (const fix of moved) fix.output = { protocol: 'hue' };
-    if (moved.length) {
-      console.log(`[show] ${moved.map((f) => `"${f.label}"`).join(', ')} ${moved.length === 1 ? 'is a Hue lamp and has' : 'are Hue lamps and have'} `
-        + 'no DMX address any more: DMX channels freed');
+    // A Hue lamp is a channel of the bridge's area, on a Hue profile, and
+    // nothing else is: a Hue profile on DMX, or a Hue output on a par, is not
+    // a rig this server can drive.
+    const mixed = next.find((f) => hasNoAddress(f) !== HUE_PROFILE_IDS.has(f.profileId));
+    if (mixed) {
+      throw badShow(`"${mixed.label}" ${hasNoAddress(mixed) ? 'is a Hue lamp on a profile that is not one' : 'is on a Hue lamp profile but not a Hue lamp'}`);
+    }
+    const channels = new Map<number, string>();
+    for (const fix of next) {
+      if (fix.output?.protocol !== 'hue') continue;
+      const other = channels.get(fix.output.channel);
+      if (other) throw badShow(`"${fix.label}" and "${other}" are both Hue channel ${fix.output.channel}`);
+      channels.set(fix.output.channel, fix.label);
     }
     placeAddresslessFixtures(next, (fix) => incoming[fix.profileId]);
     for (const fix of next) {

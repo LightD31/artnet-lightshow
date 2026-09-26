@@ -43,7 +43,7 @@ export interface RenderFixture extends StageFixture {
   profileId: string;
   maxBrightness: number;
   override: Override | null;
-  /** A Hue lamp follows it, so it is never strobed in software. */
+  /** A Hue lamp, so it is never strobed in software. */
   hue: boolean;
 }
 
@@ -520,7 +520,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
   /**
    * Handle the strobe for a fixture: its strobe channel when it has one,
    * else the software strobe. False when the fixture is dark this frame.
-   * Never for a Hue lamp or a fixture one follows: a bridge cannot flash.
+   * Never for a Hue lamp: a bridge cannot flash.
    */
   function strobe(dmx: Dmx, base: number, fix: RenderFixture, ch: ChannelMap, request: StrobeRequest | null,
     now: number): boolean {

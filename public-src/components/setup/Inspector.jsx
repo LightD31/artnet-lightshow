@@ -69,14 +69,9 @@ export function Inspector() {
         <span class="inspector-key">Profile</span>
         <span class="inspector-value">{profile ? `${profile.name}${profile.modeName ? ` — ${profile.modeName}` : ''}` : fix.profileId}
           {profile && <small> · {profile.channelCount} ch{bar ? `, ${grid ? `${grid.columns} × ${grid.rows}` : rig.ranges[index].count} cells` : ''}</small>}</span>
-        <label for="insp-output">Output</label>
-        {wled ? <span class="inspector-value">WLED at {fix.output.host}, over DDP</span> : (
-          <select id="insp-output" value={hueOnly ? 'hue' : 'dmx'} disabled={!connected} aria-describedby={hueOnly ? 'insp-output-help' : undefined}
-            onChange={(e) => send({ output: e.target.value === 'hue' ? { protocol: 'hue' } : null })}>
-            <option value="dmx">DMX (Art-Net, sACN)</option>
-            <option value="hue">Hue lamp (no DMX)</option>
-          </select>
-        )}
+        <span class="inspector-key">Output</span>
+        <span class="inspector-value">{wled ? `WLED at ${fix.output.host}, over DDP`
+          : hueOnly ? `Hue channel #${fix.output.channel}` : 'DMX (Art-Net, sACN)'}</span>
         {!hueOnly && <>
           <label for="insp-universe">Universe</label>
           <FieldInput id="insp-universe" type="number" min="0" max="32767" value={fix.universe ?? 0} onCommit={(v) => send({ universe: v })} />
@@ -102,8 +97,8 @@ export function Inspector() {
           <span>{trimPct}%</span>
         </span>
       </div>
-      {hueOnly && <p class="setting-help" id="insp-output-help">The Hue bridge drives it: it takes no DMX channels, and shows
-        this fixture's colour through the Hue channel that follows it (Outputs → Philips Hue).</p>}
+      {hueOnly && <p class="setting-help">A lamp of the Hue bridge's entertainment area, added from Rig → Outputs → Philips
+        Hue: it takes no DMX channels, and its channel is sent the colour it is rendered.</p>}
       <p class="setting-help">{fix.position ? '' : 'Not placed yet: drawn at its default spot. '}
         {bar ? 'At angle 0 its first cell is on the left and its last on the right; 180 is the other way round, and 90 runs from the back of the stage towards the audience.' : ''}</p>
       <div class="inspector-actions">

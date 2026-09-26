@@ -10,7 +10,6 @@ import { renderFrame, resizeFixtureBuffers } from '../../src/server/engine.ts';
 import { conductor } from '../../src/server/conductor.ts';
 import { applyPatch, applyOverride } from '../../src/server/patch.ts';
 import { registerProfile, unregisterProfile } from '../../src/server/profiles.ts';
-import { hueChannelColors, configureHue } from '../../src/server/output.ts';
 import { cellDrive } from '../../src/shared/look-math.ts';
 
 // Eight RGB cells behind a master dimmer and a strobe channel.
@@ -155,20 +154,6 @@ test('each pixel map lays a wave over the bars its own way', () => {
   assert.deepStrictEqual(perBar.slice(0, 4), perBar.slice(4), 'per bar: both bars the same');
   const stage = reds('stage');
   assert.notDeepStrictEqual(stage.slice(0, 4), stage.slice(4), 'across the stage: they differ');
-});
-
-test('a Hue lamp bound to a bar shows the bar\'s mean glow', () => {
-  rig(fixture(0, 1, BARE.id));
-  const dmx = universes.getBuffer(0);
-  dmx.fill(0);
-  dmx[0] = 200;          // cell 1 red
-  dmx[4] = 100;          // cell 2 green
-  configureHue({ channels: [{ channel: 3, fixture: 0 }] });
-  try {
-    assert.deepStrictEqual(hueChannelColors(), [{ id: 3, r: 50, g: 25, b: 0 }]);
-  } finally {
-    configureHue({ channels: [] });
-  }
 });
 
 // The arithmetic behind "a cell looks like a par would": the light out of a

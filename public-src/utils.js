@@ -87,7 +87,7 @@ function overrideLight(fix, state) {
 
 /** Where a fixture is patched, in words: "Universe 0 / 13", or that it has no DMX address. */
 export function patchedAt(fix) {
-  return hasNoAddress(fix) ? 'Hue lamp, no DMX address' : `Universe ${fix.universe ?? 0} / ${fix.address}`;
+  return hasNoAddress(fix) ? `Hue channel #${fix.output.channel}, no DMX address` : `Universe ${fix.universe ?? 0} / ${fix.address}`;
 }
 
 /**

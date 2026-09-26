@@ -311,20 +311,19 @@ function Wled() {
 
 // ── Philips Hue ──────────────────────────────────────────────────────────────
 
-/** The built-in Hue colour lamp (server/profiles.ts). */
-const HUE_LAMP_PROFILE = 'generic-hue-lamp-7ch';
+/** What a lamp can show, as the bridge reports it (server/hue.ts). */
+const LAMP_KIND = { color: 'Colour', ambiance: 'White ambiance', white: 'White' };
 
 function Hue() {
   const s = pick(['fixtures']);
   const data = settingsSig.value;
-  const saved = (data && data.settings && data.settings.hue && data.settings.hue.channels) || [];
   const [info, setInfo] = useState(null);           // /api/hue/status
   const [areas, setAreas] = useState([]);
   const [bridges, setBridges] = useState([]);
   const [notice, setNotice] = useState(null);       // { ok, text }
-  const [bindings, setBindings] = useState(null);   // Map channel → fixture id, while edited
-  const [areaId, setAreaId] = useState(null);
+  const [lamps, setLamps] = useState(null);         // /api/hue/lamps: { area, lamps } or { error }
   const paired = !!(info && info.paired);
+  const areaId = at(data && data.settings, 'hue.entertainmentId');
 
   const refresh = async () => {
     const status = await getJson('/api/hue/status');
@@ -336,6 +335,14 @@ function Hue() {
     }
   };
   useEffect(() => { refresh(); }, []);
+  // The lamps of the area being streamed to: read again when another is picked.
+  const loadLamps = async () => {
+    const res = await getJson('/api/hue/lamps');
+    setLamps(res.ok ? res : { error: res.error });
+  };
+  useEffect(() => {
+    if (paired && areaId) loadLamps(); else setLamps(null);
+  }, [paired, areaId]);
 
   const find = async () => {
     setNotice({ ok: true, text: 'Looking for bridges…' });
@@ -353,7 +360,7 @@ function Hue() {
     if (!res.ok) { setNotice({ ok: false, text: res.error }); return; }
     setAreas(res.areas || []);
     setNotice(res.areasError ? { ok: false, text: `Paired, but the areas could not be read — ${res.areasError}` }
-      : { ok: true, text: `Paired with ${res.host}. Pick an entertainment area.` });
+      : { ok: true, text: `Paired with ${res.host}. Pick an entertainment area and apply, then add its lamps.` });
     await loadSettings();
     await refresh();
   };
@@ -371,35 +378,32 @@ function Hue() {
   };
   const flash = async (channel) => {
     const res = await post('/api/hue/identify', { channel });
-    if (res.ok) toast.info(res.via === 'fixture' ? 'The lamp flashes with the fixture it follows' : `The bridge asks ${plural(res.lamps, 'lamp')} to breathe`);
+    if (res.ok) toast.info(res.via === 'fixture' ? 'The lamp flashes through the patch' : `The bridge asks ${plural(res.lamps, 'lamp')} to breathe`);
+  };
+  // A lamp is added as a WLED is: a fixture of its own, on the profile for
+  // what the bridge says it can show, with no DMX address.
+  const add = async (channels) => {
+    const res = await post('/api/hue/add', channels ? { channels } : {});
+    if (!res.ok) { setNotice({ ok: false, text: res.error }); return; }
+    const labels = res.fixtures.map((f) => f.label).join(', ');
+    setNotice({ ok: true, text: `Added ${labels}. Place ${res.fixtures.length === 1 ? 'it' : 'them'} on the plan.` });
+    toast.info(`Added ${plural(res.fixtures.length, 'Hue lamp')} to the patch`);
   };
 
-  const areaShown = areaId ?? at(data && data.settings, 'hue.entertainmentId');
-  const area = areas.find((a) => a.id === areaShown) || null;
-  const current = bindings || new Map(saved.map((c) => [c.channel, c.fixture]));
-  const bind = (channel, fixture) => {
-    const next = new Map(current);
-    if (fixture === '') next.delete(channel); else next.set(channel, Number(fixture));
-    setBindings(next);
-  };
-  const fixtures = s.fixtures || [];
-  // A lamp with nothing on the rig to follow gets a fixture of its own: a Hue
-  // colour lamp with no DMX address, which the looks light like any other.
-  const patchLamp = async (ch) => {
-    const res = await post('/api/fixtures', { profileId: HUE_LAMP_PROFILE, label: (ch.name || `Hue ${ch.id}`).slice(0, 56) });
-    if (!res.ok) return;
-    bind(ch.id, String(res.fixtures[0]));
-    toast.info(`Patched "${ch.name || `Hue ${ch.id}`}" with no DMX address — apply to keep channel ${ch.id} on it`);
-  };
-  const collect = () => (bindings ? { 'hue.channels': [...bindings].map(([channel, fixture]) => ({ channel, fixture })) } : {});
-  const onApply = async (patch) => {
-    const res = await saveSettings(patch);
-    if (res.ok) setBindings(null);
-    return res;
-  };
+  // Which fixture each channel is, from the live patch.
+  const patched = new Map();
+  for (const f of s.fixtures || []) {
+    if (f.output && f.output.protocol === 'hue' && !patched.has(f.output.channel)) patched.set(f.output.channel, f.label);
+  }
+  const list = lamps && lamps.lamps ? lamps.lamps : [];
+  const missing = list.filter((l) => !patched.has(l.id));
 
   return (
-    <SettingsSection {...HUE} ctx={{ hueAreas: areas }} collect={collect} dirtyExtra={!!bindings} onApply={onApply} childrenFirst>
+    <SettingsSection {...HUE} ctx={{ hueAreas: areas }} onApply={async (patch) => {
+      const res = await saveSettings(patch);
+      if (res.ok) await refresh();
+      return res;
+    }}>
       <div class="hue-tools">
         <div class="discovery-head">
           <button type="button" class="btn sm" onClick={find}>Find bridges</button>
@@ -414,42 +418,28 @@ function Hue() {
             Stream: {info.status.status}{info.status.error ? ` — ${info.status.error}` : ''}
           </p>
         )}
-        {paired && (
-          <label class="inline-form">
-            <span>Show channels of</span>
-            <select value={areaShown || ''} onChange={(e) => setAreaId(e.target.value)} aria-label="Entertainment area to bind">
-              <option value="">—</option>
-              {areas.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-            </select>
-          </label>
-        )}
-        {area && (
+        {lamps && lamps.error && <p class="setting-help setting-note warn">{lamps.error}</p>}
+        {lamps && lamps.area && (
           <>
-            <p class="section-desc">Each Hue channel shows the colour of the fixture it follows, after the dimmer, trim, master
-              and blackout. Lamp names come from the Hue app. Leave a channel unused to let the bridge hold its own colour.
-              A lamp with no fixture of its own to follow can have one: <em>Patch a lamp</em> adds a Hue lamp with no DMX
-              address.</p>
+            <div class="discovery-head">
+              <span class="setting-help">Lamps of "{lamps.area.name}", as the Hue app names them.</span>
+              {missing.length > 0 && <button type="button" class="btn sm active" disabled={!connectedSig.value}
+                onClick={() => add(null)}>Add {missing.length === list.length ? 'all' : `the other ${missing.length}`}</button>}
+            </div>
             <div class="table-scroll">
               <table class="patch-table">
-                <thead><tr><th scope="col">Channel</th><th scope="col">Lamp</th><th scope="col">Follows fixture</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+                <thead><tr><th scope="col">Channel</th><th scope="col">Lamp</th><th scope="col">Shows</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
                 <tbody>
-                  {area.channels.map((ch) => (
+                  {list.map((ch) => (
                     <tr key={ch.id}>
                       <td class="mono">#{ch.id}</td>
-                      <td>{ch.name || '—'}</td>
-                      <td>
-                        <select aria-label={`Fixture Hue channel ${ch.id} follows`} value={current.has(ch.id) ? String(current.get(ch.id)) : ''}
-                          onChange={(e) => bind(ch.id, e.target.value)}>
-                          <option value="">not used</option>
-                          {fixtures.map((f) => <option key={f.id} value={String(f.id)}>{f.label}{hasNoAddress(f) ? ' (Hue lamp)' : ''}</option>)}
-                        </select>
-                      </td>
+                      <td>{ch.name || '—'}{ch.product && <span class="setting-help"> · {ch.product}</span>}</td>
+                      <td>{ch.kind ? LAMP_KIND[ch.kind] : 'unknown'}</td>
                       <td class="patch-actions-cell">
-                        {!current.has(ch.id) && <button type="button" class="btn sm" disabled={!connectedSig.value}
-                          aria-label={`Patch a lamp for Hue channel ${ch.id}`}
-                          title="Add a Hue lamp to the patch, with no DMX address, and have this channel follow it"
-                          onClick={() => patchLamp(ch)}>Patch a lamp</button>}
                         <button type="button" class="btn sm" aria-label={`Identify Hue channel ${ch.id}`} onClick={() => flash(ch.id)}>Identify</button>
+                        {patched.has(ch.id) ? <span class="setting-help">In the patch as "{patched.get(ch.id)}"</span>
+                          : <button type="button" class="btn sm active" disabled={!connectedSig.value || !ch.kind}
+                            aria-label={`Add Hue channel ${ch.id} to the patch`} onClick={() => add([ch.id])}>Add to patch</button>}
                       </td>
                     </tr>
                   ))}

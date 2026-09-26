@@ -1,6 +1,6 @@
 import { state, universeOf } from './state.ts';
 import { getProfile } from './profiles.ts';
-import { cellsOf, EMITTERS } from '../shared/rig.ts';
+import { EMITTERS } from '../shared/rig.ts';
 import { channelReader } from '../shared/placement.ts';
 import * as universes from './universes.ts';
 import { createTransmitter, sacnUniverseFor as mapSacnUniverse } from './transmit.ts';
@@ -12,9 +12,6 @@ import { ddpRoutes } from './ddp-routes.ts';
 import type { SacnOutput, SendOptions, TransmitConfig, Wire } from './transmit.ts';
 import type { Settings } from './settings.ts';
 import type { ChannelMap } from '../types/rig.ts';
-
-/** A Hue entertainment channel, and the fixture whose colour it shows. */
-export type HueBinding = Settings['hue']['channels'][number];
 
 /** Reads one channel of a fixture's DMX; 0 for a channel it does not have. */
 type ChannelReader = (offset: number | undefined) => number;
@@ -28,9 +25,10 @@ type ChannelReader = (offset: number | undefined) => number;
  *
  * Philips Hue sits alongside them but is fed differently, and deliberately so.
  * The other two carry universes; a Hue bridge has no concept of one. Each Hue
- * channel is instead bound to a rig fixture and takes that fixture's colour, so
- * a Hue lamp is driven by exactly the same patterns, palettes and auto-show
- * cues as the pars — see hueChannelColors().
+ * lamp is a fixture of its own with no DMX address, rendered like any other,
+ * and its entertainment channel is sent the colour that came out — so it is
+ * driven by exactly the same patterns, palettes and auto-show cues as the
+ * pars. See hueChannelColors().
  *
  * The sACN settings are cached rather than read from the store per frame:
  * `settings.group()` deep-clones, and this runs 44 times a second per universe.
@@ -54,30 +52,19 @@ function configureSacn(config: Partial<SacnOutput> | null | undefined): SacnOutp
 
 function getSacnConfig(): SacnOutput { return { ...sacn }; }
 
-// Hue channel bindings, cached here for the same reason as the sACN settings:
-// this is read once per rendered frame and settings.group() deep-clones.
-let hueChannels: HueBinding[] = [];
+// The Hue delay, cached here for the same reason as the sACN settings: it is
+// read once per rendered frame and settings.group() deep-clones.
 let hueLatencyMs = 0;
 
 function configureHue(config: Partial<Settings['hue']> | null | undefined): Settings['hue'] {
-  const { channels, latencyMs, ...rest }: Partial<Settings['hue']> = config || {};
+  const { latencyMs, ...rest }: Partial<Settings['hue']> = config || {};
   if (typeof latencyMs === 'number' && Number.isFinite(latencyMs)) hueLatencyMs = Math.max(0, Math.min(500, Math.round(latencyMs)));
-  if (Array.isArray(channels)) {
-    hueChannels = channels
-      .filter((c) => c && Number.isInteger(c.channel) && Number.isInteger(c.fixture))
-      .map((c) => ({ channel: c.channel, fixture: c.fixture }));
-  }
   hue.configure(rest);
   return getHueConfig();
 }
 
-/** The fixture ids a Hue channel follows. */
-function hueFollowedFixtures(): Set<number> {
-  return new Set(hueChannels.map((c) => c.fixture));
-}
-
 function getHueConfig(): Settings['hue'] {
-  return { ...hue.getConfig(), channels: hueChannels.map((c) => ({ ...c })), latencyMs: hueLatencyMs };
+  return { ...hue.getConfig(), latencyMs: hueLatencyMs };
 }
 
 // The wires, for frames rendered on this thread: the engine when it runs here,
@@ -134,21 +121,15 @@ function sacnUniverseFor(universe: number, offset = sacn.universeOffset): number
 
 // ── Hue ─────────────────────────────────────────────────────────────────────
 
-// A white emitter is neutral, so it lifts all three primaries equally. Amber is
-// not: it sits around (255, 191, 0), and folding it in as if it were white
-// would turn a warm wash cold on the Hue lamps while the pars stayed amber.
-const AMBER_GREEN = 0.75;
-
 // A Hue bulb is RGBWW — red, green and blue dies plus a warm white and a cool
 // white one. The Entertainment stream has no white channel to carry those, so
 // they fold into the RGB that goes out and the lamp's firmware decides which
 // dies to light. Folding them at their real colour temperature rather than as
 // plain white is what keeps a warm wash warm.
 //
-// Warm white is roughly 2700K, which is (255, 169, 87) in sRGB. Note it is far
-// less saturated than the amber emitter above: a tungsten white still has real
-// blue in it, and dropping that would make every warm look on a Hue lamp read
-// as orange.
+// Warm white is roughly 2700K, which is (255, 169, 87) in sRGB: a tungsten
+// white still has real blue in it, and dropping that would make every warm
+// look on a Hue lamp read as orange.
 const WARM_WHITE_GREEN = 0.66;
 const WARM_WHITE_BLUE = 0.34;
 
@@ -167,16 +148,15 @@ const UV_BLUE = 0.85;
 /**
  * Bring a summed emitter mix back inside what one lamp can show.
  *
- * A par mixes light physically: red, green, blue, white and amber emitters all
- * lit together are genuinely brighter than any one of them. A Hue lamp has a
- * fixed maximum, so that sum has to come back down — and *how* it comes down
- * decides whether the colour survives.
+ * The show renders a Hue lamp's colour dies and its two whites separately, and
+ * a look can light them all at once — full red with the warm white on sums to
+ * (510, 168, 87). The lamp has a fixed maximum, so that sum has to come back
+ * down, and *how* it comes down decides whether the colour survives.
  *
- * Clamping each primary on its own does not work. "Amber" sums to (455, 318,
- * 87); clamped independently that is (255, 255, 87), which is yellow — green
- * was pushed to full while blue stayed put, so the hue moved. Scaling all three
- * by the same factor keeps the ratios and so keeps the colour: (255, 178, 49),
- * which is still amber.
+ * Clamping each primary on its own does not work: it pushes the weaker
+ * primaries up towards the strongest, so the hue moves. Scaling all three by
+ * the same factor keeps the ratios and so keeps the colour — (255, 84, 43),
+ * still a warm red.
  *
  * The cost is brightness: a mix that overflows comes back at less than full.
  * That is the right way round for a light show. A warm white that is actually
@@ -198,72 +178,61 @@ function clamp255(value: number): number {
 }
 
 /**
- * The colour a Hue channel should show, read back out of the rendered frame.
+ * The colour each Hue lamp in the patch should show, read back out of the
+ * rendered frame.
  *
- * Reading the DMX buffer rather than asking the engine for its intermediate
- * values is the whole point: by this stage the fixture's colour has already had
- * the dimmer, the per-fixture trim, the grand master, any override and master
- * blackout applied to it. Whatever a Hue channel shows is therefore exactly
- * what its bound fixture is doing, including going dark when the rig does.
+ * Reading the rendered universe rather than asking the engine for its
+ * intermediate values is the whole point: by this stage the lamp's colour has
+ * already had the dimmer, the per-fixture trim, the grand master, any override
+ * and master blackout applied to it. Whatever a lamp shows is therefore
+ * exactly what the show rendered for it, including going dark when the rig
+ * does.
  *
- * A fixture with no colour channels at all (a dimmer-only profile) falls back
- * to its dimmer as neutral white, so binding one to a Hue lamp still does the
- * obvious thing instead of nothing.
+ * A lamp with no colour channels at all (a plain white one) is read as
+ * neutral white at its dimmer level. Two lamps on one channel cannot both be
+ * shown; the first in the patch is.
  */
 function hueChannelColors(): HueChannelColour[] {
   const out: HueChannelColour[] = [];
-  if (!hueChannels.length) return out;
+  const sent = new Set<number>();
 
-  for (const binding of hueChannels) {
-    const fix = state.fixtures.find((f) => f.id === binding.fixture);
-    if (!fix) continue;
+  for (const fix of state.fixtures) {
+    const lamp = fix.output;
+    if (!lamp || lamp.protocol !== 'hue' || sent.has(lamp.channel)) continue;
+    sent.add(lamp.channel);
 
     const profile = getProfile(fix);
     const ch = profile.channelMap;
-    // Through the placement, so a strip running on over several universes reads right.
     const at: ChannelReader = channelReader(universeOf(fix), fix.address, profile, (u) => universes.getBuffer(u));
 
-    // A fixture with nothing that makes coloured light — a plain dimmer-only
-    // lamp — is read as neutral white at its level. Tested against every
-    // emitter rather than the primaries alone: a tunable-white lamp has warm
-    // and cool dies but no primaries, and falling back for it would add the
-    // dimmer on top of the whites and double the brightness.
-    const hasEmitter = cellsOf(profile) || EMITTERS.some((name) => ch[name] !== undefined);
-    if (!hasEmitter) {
+    // A lamp with nothing that makes coloured light — a plain white one — is
+    // read as neutral white at its level. Tested against every emitter rather
+    // than the primaries alone: a tunable-white lamp has warm and cool dies
+    // but no primaries, and falling back for it would add the dimmer on top of
+    // the whites and double the brightness.
+    if (!EMITTERS.some((name) => ch[name] !== undefined)) {
       const level = at(ch.dimmer);
-      out.push({ id: binding.channel, r: level, g: level, b: level });
+      out.push({ id: lamp.channel, r: level, g: level, b: level });
       continue;
     }
-
-    // An LED bar has no one colour: the lamp shows the bar's overall glow, the
-    // mean of its cells. A single cell would flicker with every comet passing
-    // it; the mean moves with the bar as a whole.
-    const cells = cellsOf(profile);
-    const maps = cells ? cells.map((cell) => cell.channelMap) : [ch];
-    let r = 0; let g = 0; let b = 0;
-    for (const map of maps) {
-      const [cr, cg, cb] = emitterMix(map, at);
-      r += cr; g += cg; b += cb;
-    }
-    out.push({ id: binding.channel, ...normalizeMix(r / maps.length, g / maps.length, b / maps.length) });
+    const [r, g, b] = emitterMix(ch, at);
+    out.push({ id: lamp.channel, ...normalizeMix(r, g, b) });
   }
   return out;
 }
 
-/** One light's emitters folded into red, green and blue, before normalising. */
+/** A lamp's emitters folded into red, green and blue, before normalising. */
 function emitterMix(ch: ChannelMap, at: ChannelReader): [number, number, number] {
   const r = at(ch.red);
   const g = at(ch.green);
   const b = at(ch.blue);
-  const w = at(ch.white);
-  const a = at(ch.amber);
   const uv = at(ch.uv);
   const ww = at(ch.warmWhite);
   const cw = at(ch.coolWhite);
   return [
-    r + w + a + ww + cw + uv * UV_RED,
-    g + w + a * AMBER_GREEN + ww * WARM_WHITE_GREEN + cw * COOL_WHITE_GREEN,
-    b + w + ww * WARM_WHITE_BLUE + cw * COOL_WHITE_BLUE + uv * UV_BLUE,
+    r + ww + cw + uv * UV_RED,
+    g + ww * WARM_WHITE_GREEN + cw * COOL_WHITE_GREEN,
+    b + ww * WARM_WHITE_BLUE + cw * COOL_WHITE_BLUE + uv * UV_BLUE,
   ];
 }
 
@@ -308,6 +277,5 @@ export {
   getHueConfig,
   onHueApplicationId,
   hueChannelColors,
-  hueFollowedFixtures,
   sendHue,
 };

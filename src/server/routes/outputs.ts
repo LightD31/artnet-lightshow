@@ -35,7 +35,6 @@ export function attachOutputRoutes(app: Express, ctx: RouteContext): void {
       paired: !!(config.username && config.clientKey),
       host: config.host,
       entertainmentId: config.entertainmentId,
-      channels: config.channels,
     });
   });
 
@@ -163,7 +162,7 @@ export function attachOutputRoutes(app: Express, ctx: RouteContext): void {
       const changed = settings.update({
         hue: {
           enabled: false, host: '', username: '', clientKey: '', applicationId: '',
-          entertainmentId: '', channels: [],
+          entertainmentId: '',
         },
       });
       applier.applyChanged(changed);

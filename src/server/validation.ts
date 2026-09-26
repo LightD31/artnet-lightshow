@@ -43,10 +43,10 @@ const HOSTNAME_RE = /^(?=.{1,253}$)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?
 
 // A fixture sent to a device of its own: a WLED over DDP, by its hostname or
 // address — its universes then go there and nowhere else (ddp-routes.ts) — or
-// a Hue lamp, which has no DMX address at all (shared/placement.ts).
-const hueOutput = z.object({ protocol: z.literal('hue') }).strict();
-const fixtureOutput = z.discriminatedUnion('protocol', [
-  z.object({
+// a Hue lamp, one channel of the entertainment area, which has no DMX address
+// at all (shared/placement.ts). Hue channel ids are a byte.
+const hueOutput = z.object({ protocol: z.literal('hue'), channel: z.number().int().min(0).max(255) }).strict();
+const ddpOutput = z.object({
     protocol: z.literal('ddp'),
     host: z.string().regex(HOSTNAME_RE, 'is not a hostname or an IPv4 address'),
     port: z.number().int().min(1).max(65535).optional(),
@@ -54,9 +54,8 @@ const fixtureOutput = z.discriminatedUnion('protocol', [
     // segment is a rectangle narrower than the panel.
     at: z.number().int().min(0).max(65535).optional(),
     rowStride: z.number().int().min(1).max(4096).optional(),
-  }).strict(),
-  hueOutput,
-]);
+  }).strict();
+const fixtureOutput = z.discriminatedUnion('protocol', [ddpOutput, hueOutput]);
 
 // A string of dotted numeric labels is someone typing an IP, so hold it to
 // IPv4 rules rather than letting "2.255.255.256" through as a hostname (which
@@ -171,8 +170,6 @@ const fixtureAddSchema = z.object({
   count: z.number().int().min(1).max(64).optional(),
   address: z.number().int().min(1).max(512).optional(),
   label: z.string().trim().min(1).max(56).optional(),
-  // Hue lamps with no DMX address. A Hue lamp profile is one by default.
-  output: hueOutput.nullable().optional(),
 }).strict();
 
 const fixtureMessageSchema = z.object({
@@ -187,7 +184,9 @@ const fixtureMessageSchema = z.object({
   // Not part of the override — it applies to an energy override too.
   maxBrightness: u8.optional(),
   geometry: fixtureGeometry.nullable().optional(),
-  output: fixtureOutput.nullable().optional(),
+  // A WLED's, or none. A Hue lamp's output is the bridge's to give: it is
+  // patched from the entertainment area (POST /api/hue/add), never made one.
+  output: ddpOutput.nullable().optional(),
 }).strict();
 
 /**
@@ -415,6 +414,12 @@ const huePairSchema = z.object({
   host: z.string().min(1).max(253),
 }).strict();
 
+// POST /api/hue/add: channels of the entertainment area to patch, each a lamp
+// of its own; every channel not patched yet when none are named.
+const hueAddSchema = z.object({
+  channels: z.array(z.number().int().min(0).max(255)).min(1).max(20).optional(),
+}).strict();
+
 // PUT /api/auto/overlay: the operator's edits to the loaded track's show
 // (src/show/overlay.ts). Times are track times in ms; a pattern the rig does
 // not know is ignored by the engine as any patch's is.
@@ -470,6 +475,7 @@ export {
   showSchema,
   midiConnectSchema,
   huePairSchema,
+  hueAddSchema,
   wledAddSchema,
   fixtureAddSchema,
   overlaySchema,

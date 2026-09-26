@@ -1,8 +1,8 @@
 import { state, getClientState, getFixture, countUniverses, universeOf, placeAddresslessFixtures } from './state.ts';
 import { applyPatch, applyOverride, processTap } from './patch.ts';
 import { overrideMessageSchema, fixtureMessageSchema, validate } from './validation.ts';
-import { listProfiles, getProfile, universeOverflow, unitCapOverflow, HUE_PROFILE_IDS } from './profiles.ts';
-import { INTERNAL_UNIVERSE, footprintOf, freeSpot, hasNoAddress } from '../shared/placement.ts';
+import { listProfiles, getProfile, universeOverflow, unitCapOverflow, HUE_PROFILE_IDS, HUE_BY_HAND } from './profiles.ts';
+import { INTERNAL_UNIVERSE, hasNoAddress } from '../shared/placement.ts';
 import { showStore } from './show-store.ts';
 import { MAX_UNIVERSES } from './universes.ts';
 import { connectMidi } from './midi-connect.ts';
@@ -103,28 +103,18 @@ function attachSockets(io: Server, { midi, integrations }: {
         const nextProfileId = (profileId !== undefined && profiles[profileId])
           ? profileId : fixture.profileId;
         const nextProfile = getProfile({ profileId: nextProfileId });
-        let nextOutput = output !== undefined ? output : fixture.output ?? null;
-        // A fixture turned into a Hue lamp has no DMX address to take up, unless
-        // it is being sent somewhere as well.
-        if (output === undefined && !nextOutput && nextProfileId !== fixture.profileId && HUE_PROFILE_IDS.has(nextProfileId)) {
-          nextOutput = { protocol: 'hue' };
+        // A Hue lamp is the bridge's: patched from its entertainment area on
+        // the profile for what the lamp can show, and it stays a Hue lamp. No
+        // other fixture becomes one, and its output (the channel) is not
+        // changed by hand. The schema already refuses a Hue output here.
+        const addressless = hasNoAddress(fixture);
+        if ((addressless && output !== undefined) || addressless !== HUE_PROFILE_IDS.has(nextProfileId)) {
+          socket.emit('error-msg', { source: 'fixture', message: HUE_BY_HAND });
+          return;
         }
-        const addressless = hasNoAddress({ output: nextOutput });
-        let nextAddress = address !== undefined ? address : fixture.address;
-        let nextUniverse = universe !== undefined ? universe : universeOf(fixture);
-        if (!addressless && hasNoAddress(fixture) && (address === undefined || universe === undefined)) {
-          // Back onto DMX from the server's own universes: behind whatever is
-          // patched on the rig's universe, or the next with room.
-          const taken = state.fixtures.filter((f) => f.id !== id && !hasNoAddress(f))
-            .flatMap((f) => footprintOf(universeOf(f), f.address, getProfile(f)));
-          const spot = freeSpot(taken, nextProfile, universe ?? state.artnet.universe);
-          if (!spot) {
-            socket.emit('error-msg', { source: 'fixture', message: 'No room left on any universe' });
-            return;
-          }
-          nextUniverse = universe ?? spot.universe;
-          nextAddress = address ?? spot.address;
-        }
+        const nextOutput = output !== undefined ? output : fixture.output ?? null;
+        const nextAddress = address !== undefined ? address : fixture.address;
+        const nextUniverse = universe !== undefined ? universe : universeOf(fixture);
 
         // A fixture has to fit inside its universe. Past channel 512 the writes
         // land outside the DMX buffer and Node drops them silently, leaving the

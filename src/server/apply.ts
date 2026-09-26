@@ -131,11 +131,10 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
     if (!config.enabled) return;
     if (!config.host || !config.username || !config.clientKey || !config.entertainmentId) {
       console.warn('[hue] output is on but the bridge is not fully set up yet — '
-        + 'pair with it and pick an entertainment area in Settings → Philips Hue.');
+        + 'pair with it and pick an entertainment area in Rig → Outputs → Philips Hue.');
       return;
     }
-    console.log(`[hue] output enabled → ${config.host}, area ${config.entertainmentId}, `
-      + `${config.channels.length} channel${config.channels.length === 1 ? '' : 's'} bound`);
+    console.log(`[hue] output enabled → ${config.host}, area ${config.entertainmentId}`);
   }
 
   function applyControlFeedback() {

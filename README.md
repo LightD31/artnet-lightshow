@@ -170,9 +170,9 @@ Companion** (with a page of presets for busking), and a REST API.
   second, so planning a track or serving the UI never holds up the rig
 - **16-bit dimming** where the fixture has it, and a software strobe for
   fixtures that have no strobe channel
-- **Philips Hue** — Hue lamps follow rig fixtures through the Entertainment API,
-  so they respond to every pattern, palette and cue the pars do; a Hue lamp in
-  the patch takes no DMX address
+- **Philips Hue** — each lamp of an entertainment area is a fixture of its own,
+  added from the bridge with what it can show, driven through the Entertainment
+  API by every pattern, palette and cue the pars get; it takes no DMX address
 - Save and load the whole patch as a show file
 
 ---
@@ -378,7 +378,7 @@ channel has an **Identify** button. What it does on the rig, for eight seconds:
 
 It goes over whatever the look is doing and through the master and a blackout
 (it is asked for on purpose, and a lamp that stays dark answers nothing), at
-the fixture's own trim. A Hue lamp that follows the fixture flashes with it.
+the fixture's own trim.
 Identify is shown on the plan and in the patch table on every open page.
 
 - **An Art-Net node** is sent ArtAddress *locate*, which flashes its own
@@ -389,8 +389,8 @@ Identify is shown on the plan and in the patch table on every open page.
 - **A WLED** in the patch flashes through it; one not in the patch yet is sent
   the same picture directly over DDP and goes back to what it was doing when
   it stops.
-- **A Hue channel** flashes with the fixture it follows; one that follows none
-  is asked to identify itself by the bridge.
+- **A Hue lamp** in the patch flashes through it; one not in the patch yet is
+  asked to identify itself by the bridge.
 
 ### Finding what is on the network
 
@@ -403,7 +403,7 @@ Identify is shown on the plan and in the patch table on every open page.
   and lists any console or server there with its priority. A universe this rig
   sends that another source sends too is called out: the higher priority wins.
 - **WLEDs** — found over mDNS, identified, added in a click.
-- **Hue bridges** — found, paired, and each channel bound to a fixture.
+- **Hue bridges** — found, paired, and the area's lamps added in a click.
 
 ---
 
@@ -433,17 +433,18 @@ Set each fixture to **12-channel mode** and give it the start address above.
 
 ### Generic Hue Lamp profiles
 
-Three profiles ship for Philips Hue lamps. A Hue channel follows a rig *fixture*
-(see [Philips Hue](#philips-hue)), so a Hue-only lamp still needs one in the
-patch — these exist so that fixture describes a light bulb instead of standing
-in as a twelve-channel par. A fixture on one has **no DMX address**: the bridge
-drives the lamp, so there is nothing on DMX to address.
+Three profiles ship for Philips Hue lamps, one for each thing a lamp can be.
+A lamp is not patched on one by hand: it is added from the bridge (see
+[Philips Hue](#philips-hue)), which says what it can show, and lands on the
+profile that fits. A Hue lamp has **no DMX address**: the bridge drives it, so
+there is nothing on DMX to address, and a Hue lamp profile is never put on
+DMX.
 
 | Profile | Channels | For |
 |---------|----------|-----|
-| **Philips Hue — Generic Lamp** | Dimmer, Red, Green, Blue, Warm White, Cool White, UV | White and Color Ambiance bulbs, light strips, Play bars |
-| **Philips Hue — Generic White Ambiance Lamp** | Dimmer, Warm White, Cool White | Tunable-white bulbs, no colour |
-| **Philips Hue — Generic White Lamp** | Dimmer | Plain white bulbs that only dim |
+| **Philips Hue — Generic Lamp** | Dimmer, Red, Green, Blue, Warm White, Cool White, UV | A light with a colour gamut: White and Color Ambiance bulbs, light strips, Play bars |
+| **Philips Hue — Generic White Ambiance Lamp** | Dimmer, Warm White, Cool White | A light with only a colour temperature: tunable-white bulbs |
+| **Philips Hue — Generic White Lamp** | Dimmer | A light with neither: plain white bulbs that only dim |
 
 **Why the colour lamp is RGBWW.** A Hue colour bulb is not RGB: it has red,
 green and blue dies *plus* a warm white and a cool white one, which is how the
@@ -460,18 +461,12 @@ meaning: **warm white** from the warm (amber) content, **cool white** from the
 neutral white content. Every existing preset, palette and pattern therefore
 drives a Hue lamp correctly with no changes.
 
-Patch one fixture per Hue channel, then bind them in **Rig → Outputs → Philips
-Hue** — or press **Patch a lamp** on a channel there, which does both. The patch
-does not ask for a universe or an address: the server renders Hue lamps on
-universes of its own (from 60000) that are never sent on Art-Net, sACN or DDP,
-and their Hue channels read their colour from there. They take up no DMX
-channels, never overlap a fixture, and move up when one before them is removed.
-
-Any fixture can go without an address — **Output** in the fixture inspector
-switches between *DMX* and *Hue lamp* — and a Hue lamp profile is one by
-default. *Put on DMX* in the patch table gives it an address again, behind the
-last fixture on the rig's universe. A show saved before this had its Hue lamps
-on DMX: loading it takes them off, frees their channels, and says so in the log.
+The server renders Hue lamps on universes of its own (from 60000) that are
+never sent on Art-Net, sACN or DDP, and their channels read their colour from
+there. They take up no DMX channels, never overlap a fixture, and move up when
+one before them is removed. A Hue lamp can be moved to another Hue lamp profile
+in the patch table, and nothing else: no fixture on DMX becomes a Hue lamp, and
+no Hue lamp goes on DMX.
 
 **UV yes, strobe no.** Two channels on the colour lamp are not emitters the bulb
 has, and the difference between them is the rule. UV is carried because it
@@ -494,14 +489,14 @@ This server streams RGB, which gives the widest range per bulb. The xy
 alternative is hardware-independent and would let brightness travel separately
 from hue, at the cost of being mapped into each bulb's own gamut.
 
-Where a mix sums past what one lamp can show, all three primaries are scaled
-together rather than clamped one by one. Clamping moves the hue — amber
-overflows on red and green but not blue, so it would arrive yellow. Scaling
-keeps the colour and gives up brightness instead, which is the right way round
-when there is a dimmer for brightness and nothing that can put a lost hue back.
+Where a mix sums past what one lamp can show — full red with the warm white on
+as well — all three primaries are scaled together rather than clamped one by
+one. Clamping moves the hue, pushing the weaker primaries up towards the
+strongest. Scaling keeps the colour and gives up brightness instead, which is
+the right way round when there is a dimmer for brightness and nothing that can
+put a lost hue back.
 
-The plain white profile needs no special handling anywhere: a fixture with no
-emitters at all is already read as neutral white at its dimmer level.
+The plain white profile is read as neutral white at its dimmer level.
 
 Both are **built in**, so they cannot be deleted and loading a show file never
 removes them.
@@ -613,8 +608,7 @@ channels would at the same level: the bar's dimmer follows its brightest cell,
 and each cell makes up the rest. A look that is the same on every cell drives a
 bar with exactly a par's values; a kill or a silence closes the bar's dimmer
 as well. A bar without a strobe channel is flashed in software (see
-[Strobe](#strobe-without-a-strobe-channel)). A Hue lamp bound to a bar shows the
-mean of its cells.
+[Strobe](#strobe-without-a-strobe-channel)).
 
 **Panels.** A profile can put its cells in rows and columns — an LED matrix —
 with `grid: { columns, rows }`, each cell's place in it given by `at: { x, y }`
@@ -773,29 +767,30 @@ A fixture with a strobe channel strobes itself. One without — plenty of LED ba
 and cheap pars — is flashed in software through the strobe pattern and every
 strobing burst: one to twenty flashes a second from the strobe speed, each a
 frame to 50 ms long, all such fixtures together (the random strobe functions
-flash each on its own). A Hue lamp, or a fixture a Hue channel follows, is never
-flashed: a bridge cannot keep up, and Hue's own guidance is to keep effects
-slower than that.
+flash each on its own). A Hue lamp is never flashed: a bridge cannot keep up,
+and Hue's own guidance is to keep effects slower than that.
 
 ### Philips Hue
 
 Hue lamps can run from the same show as the pars, through the **Hue
 Entertainment API**. Unlike Art-Net and sACN this is not a universe transport —
-a bridge has no idea what a universe is. Instead each channel of an
-entertainment area **follows one rig fixture** and shows whatever colour that
-fixture is showing, so every pattern, palette, cue and auto-show decision
-reaches the Hue lamps without anything being written twice.
+a bridge has no idea what a universe is. Instead each lamp of an entertainment
+area is **a fixture of its own**, added from the bridge as a WLED is: the bridge
+says what each lamp can show, and it is patched on the profile that fits. The
+show renders it like any other fixture, so every pattern, palette, cue and
+auto-show decision reaches it, and its channel is sent the colour that came
+out.
 
-The colour is read from the rendered DMX frame, which means it arrives with the
-fixture dimmer, the per-fixture trim, the grand master, any override and master
-blackout already applied. Black out the rig and the Hue lamps go out with it.
+That colour is read from the rendered frame, which means it arrives with the
+dimmer, the lamp's trim, the grand master, any override and master blackout
+already applied. Black out the rig and the Hue lamps go out with it.
 
 **Setting it up**
 
 1. Build an **entertainment area** in the Philips Hue app and put your lamps in
    it. Areas are made there because that is where the lamps are already placed
    on a room plan; this server only reads them.
-2. Open **Settings → Philips Hue** and press **Find Bridges**, or type the
+2. Open **Rig → Outputs → Philips Hue** and press **Find bridges**, or type the
    bridge IP in. Discovery uses Philips' cloud service, so a show network with
    no route to the internet will need the address typed in.
 3. Press the round button on the bridge, then press **Pair** within 30 seconds.
@@ -808,38 +803,32 @@ blackout already applied. Black out the rig and the Hue lamps go out with it.
    shows as the holder of an entertainment area. It is not a secret, so it stays
    readable in the settings. A pairing made before this was stored resolves
    it on the first connection and saves it then.
-4. Pick the **entertainment area**. A bridge streams one area at a time.
-5. Bind each Hue channel to a fixture in the **Channels** table, then **Apply**.
-   Each row names the lamp as you named it in the Hue app, so you bind *Right*
-   rather than counting round the room to work out which lamp channel 3 is. A
-   lamp that renders several channels, such as a gradient strip or a Play bar,
-   has them numbered in the order the area lists them. A channel left as *not
-   used* is never sent, so the bridge keeps its own colour for that lamp.
+4. Pick the **entertainment area** and **Apply**. A bridge streams one area at
+   a time.
+5. The area's lamps are listed below it: each channel, the lamp as you named it
+   in the Hue app, and what the bridge says it can show — *Colour*, *White
+   ambiance* or *White*. **Add to patch** makes one a fixture, on the
+   [profile](#generic-hue-lamp-profiles) for what it can show; **Add all** does
+   every lamp not in the patch yet. A lamp that renders several channels, such
+   as a gradient strip or a Play bar, has them numbered in the order the area
+   lists them, and each is a fixture of its own. Place them on the plan.
 
-Until at least one channel is bound, the server does not contact the bridge at
-all. Opening a stream puts the area into entertainment mode, which takes those
-lamps out of normal Hue control — worth doing only once something is actually
-driving them.
+Until at least one lamp is in the patch, the server does not contact the bridge
+at all. Opening a stream puts the area into entertainment mode, which takes
+those lamps out of normal Hue control — worth doing only once something is
+actually driving them. A channel with no lamp in the patch is never sent, so
+the bridge keeps its own colour for it.
 
-**Fixtures for Hue-only lamps.** A Hue channel follows a fixture, so lamps with
-no DMX equivalent still need one to follow. **Patch a lamp** on the channel's
-row adds one with no DMX address and binds the channel to it, and the show
-drives it exactly as it drives a par. The built-in
-[Generic Hue Lamp profiles](#generic-hue-lamp-profiles) are there for this, so
-the fixture describes a bulb rather than standing in as a twelve-channel par.
+**How the lamp's dies are translated.** The stream carries red, green and blue
+and nothing else, so the other dies are folded in rather than dropped:
 
-**How emitters are translated.** A Hue lamp has red, green and blue and nothing
-else, so the other emitters are folded in rather than dropped:
-
-| Fixture emitter | On the Hue lamp |
+| On the profile | Sent to the lamp |
 |---|---|
 | Red, green, blue | as-is |
-| White | lifts all three equally |
-| Warm white | tungsten, around 2700K — less saturated than amber, because a warm white still has real blue in it |
+| Warm white | tungsten, around 2700K — a warm white still has real blue in it |
 | Cool white | daylight, around 6500K — near neutral with a faint blue lean |
-| Amber | warm — full red, three-quarter green |
 | UV | deep violet, because Hue cannot emit UV and black would read as a dead lamp |
-| No emitters at all | the dimmer, as neutral white |
+| Dimmer alone (a white lamp) | the dimmer, as neutral white |
 
 A mix that sums past full is scaled as a whole so the hue survives; see
 [Generic Hue Lamp profiles](#generic-hue-lamp-profiles).
@@ -854,7 +843,7 @@ would band on a DMX par do not here.
   pre-show check reports it. The area's `active_streamer` field names whoever
   is holding it.
 - An area carries at most **20 channels**, which is also the most a single
-  stream message can address, so that is the cap on channel bindings.
+  stream message can address.
 - The stream is DTLS 1.2 with a pre-shared key on UDP 2100, and the bridge drops
   it after about ten seconds of silence. The show's own frames are the
   keepalive, going out at the render rate of 44 Hz against Hue's recommended
@@ -867,9 +856,10 @@ would band on a DMX par do not here.
   than on every frame, so nothing stalls the render loop. Turning the show off
   sends one black frame and closes the session, so the lamps do not sit holding
   the last look.
-- Deleting a fixture leaves any Hue channel bound to it pointing at nothing.
-  That lamp simply stops being sent, which on the night looks like a dead lamp —
-  the pre-show check catches it, so run it after editing the patch.
+- An area rebuilt in the Hue app, or another area picked, can leave a lamp in
+  the patch on a channel the area does not have. The bridge takes its colour
+  and ignores it, which on the night looks like a dead lamp — the pre-show check
+  catches it: remove the lamp and add it again.
 - **Forget** clears the credentials here but does not unregister this server on
   the bridge. Remove it in the Hue app under linked devices.
 
@@ -878,7 +868,7 @@ would band on a DMX par do not here.
 Art-Net reaches a node in about a millisecond; a Hue lamp hears the same frame
 through the bridge and a ZigBee hop, tens of milliseconds later. On a mixed rig
 every hit therefore lands on the pars first and the lamps after, which on a
-snare reads as two events. **Pars Delay (ms)** in Settings → Philips Hue holds
+snare reads as two events. **Pars Delay (ms)** in Rig → Outputs → Philips Hue holds
 the Art-Net and sACN output back by that much; Hue is sent each frame as soon
 as it is rendered. It defaults to 0 and only applies while Hue output is on.
 
@@ -988,7 +978,7 @@ answer, and exits non-zero if something will not work:
   [ok]   Engine             Rendering on its own thread. 44 frames a second; 0.8 ms to render a frame (p95), …
   [ok]   Art-Net output     2 nodes answered: DMX-1 at 192.168.1.50 (universe 0), …
   [--]   sACN output        Disabled. Turn it on in Settings → sACN (E1.31) …
-  [ok]   Philips Hue        "Living Room" on 192.168.1.40, 3 of 5 channels bound to fixtures.
+  [ok]   Philips Hue        "Living Room" on 192.168.1.40: Shelf, Desk, Hall; 2 of its channels are not in the patch.
   [ok]   Fixture patch      8 fixtures on universes 0, 1, no overlaps.
   [warn] MIDI               "X-TOUCH COMPACT" is not among the available inputs (none).
                             → Plug the controller in and reconnect it in Settings → MIDI.
@@ -2237,7 +2227,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/fixture/:id/override` | Set a fixture override (JSON body) |
 | POST | `/api/fixture/:id/blackout/toggle` · `/api/fixture/:id/clear` | Per-fixture blackout / clear |
 | POST | `/api/fixture/:id/max/:value` | Fixture maximum brightness (0–255) — scales the fixture's output; not an override |
-| POST | `/api/fixtures` · DELETE `/api/fixtures/:id` | Add / remove fixtures. With no body, one generic par behind whatever is on the default universe; with `{ profileId?, count?, universe?, address?, label?, output? }`, `count` (up to 64) of that profile one after another, on into the next universe when one fills (a strip on universes of its own); answers `{ fixtures: [ids], placed: [{ universe, address }] }`. Hue lamps — a Hue lamp profile, or `output: { protocol: 'hue' }` — take no address and answer `placed: []`, `addressless: true`. DELETE answers with the fixture and its index |
+| POST | `/api/fixtures` · DELETE `/api/fixtures/:id` | Add / remove fixtures. With no body, one generic par behind whatever is on the default universe; with `{ profileId?, count?, universe?, address?, label? }`, `count` (up to 64) of that profile one after another, on into the next universe when one fills (a strip on universes of its own); answers `{ fixtures: [ids], placed: [{ universe, address }] }`. A Hue lamp profile is refused: Hue lamps are added with `POST /api/hue/add`. DELETE answers with the fixture and its index |
 | POST | `/api/fixtures/restore` | Put a deleted fixture back (`{ index, fixture }`) |
 | POST | `/api/gdtf/parse` | Parse an uploaded `.gdtf` (multipart `gdtf`) |
 | POST | `/api/ofl/parse` | Parse an uploaded Open Fixture Library `.json` (multipart `ofl`, optional `manufacturer`) |
@@ -2265,7 +2255,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/identify` | `{ fixtures?: [ids], universes?: [n], seconds? }` — those fixtures, and everything on those universes, show themselves for `seconds` (default 8, up to 60; 0 stops). Answers `{ ids, remainingMs }`; the live state carries it as `identify` |
 | POST | `/api/identify/stop` | Stop identifying, a streamed WLED included |
 | POST | `/api/wled/identify` | `{ host, seconds? }`: through the patch when the WLED is in it (`via: 'patch'`), else its picture streamed over DDP (`via: 'device'`) |
-| POST | `/api/hue/identify` | `{ channel, seconds? }`: the fixture the channel follows (`via: 'fixture'`), else the bridge's own identify (`via: 'bridge'`) |
+| POST | `/api/hue/identify` | `{ channel, seconds? }`: the lamp on that channel through the patch (`via: 'fixture'`), else the bridge's own identify (`via: 'bridge'`) |
 
 ### Cues
 
@@ -2332,10 +2322,12 @@ All endpoints return JSON. When a token is configured, send it as an
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/hue/status` | Bridge address, whether it is paired, the bindings, and what the stream is doing |
+| GET | `/api/hue/status` | Bridge address, whether it is paired, the area, and what the stream is doing |
 | GET | `/api/hue/discover` | Bridges Philips' cloud service has seen on this network |
 | POST | `/api/hue/pair` | Pair with `{ host }` — the bridge link button must have been pressed in the last 30 seconds. Answers `409` with `pressLink: true` if it has not |
 | GET | `/api/hue/areas` | Entertainment areas on the paired bridge, with their channel ids and lamp names |
+| GET | `/api/hue/lamps` | The chosen area's channels: each lamp's name, product, devices and what it can show (`kind`: `color`, `ambiance`, `white`, or `null` when the bridge would not say) |
+| POST | `/api/hue/add` | `{ channels? }`: patch those channels of the area, or every one not in the patch yet, each a fixture on the profile for its `kind`, with `output: { protocol: 'hue', channel }` and no DMX address |
 | POST | `/api/hue/disconnect` | Forget the bridge and turn the output off |
 | POST | `/api/hue/sync-test` | Flash every fixture white once a second for 10 s, to tune `hue.latencyMs` |
 
@@ -2382,8 +2374,9 @@ of `front`, `back`, `room`, `floor`, or `null`; `geometry` is an LED bar's line
 −180–180 degrees clockwise on the plot), or `null` for the default; `output` is
 `{ protocol: 'ddp', host, port?, at?, rowStride? }` to send the fixture's
 universes to a WLED — from its LED `at` for a segment, a row every `rowStride`
-LEDs for a rectangle of a panel — `{ protocol: 'hue' }` for a Hue lamp with no
-DMX address, or `null` for Art-Net and sACN.
+LEDs for a rectangle of a panel — or `null` for Art-Net and sACN. A Hue lamp's
+`{ protocol: 'hue', channel }` is given by `POST /api/hue/add` and cannot be
+set or changed here.
 
 ---
 
@@ -2510,7 +2503,7 @@ it has edits not applied yet. Most settings take effect immediately.
 |-------|---------|----------|
 | Rig → Outputs | **Art-Net** | Enabled, node IP, port, default universe, finding nodes, ArtSync |
 | Rig → Outputs | **sACN (E1.31)** | Enabled, node IP, priority, source name, universe offset, network, component ID |
-| Rig → Outputs | **Philips Hue** | Enabled, bridge address, pairing, entertainment area, pars delay, channel-to-fixture bindings |
+| Rig → Outputs | **Philips Hue** | Enabled, bridge address, pairing, entertainment area, pars delay, adding the area's lamps to the patch |
 | Sources | **Playback sources** | PRO DJ LINK, the OS now-playing (SMTC on Windows, MPRIS on Linux) |
 | Sources | **Spotify** | Client ID, client secret, optional OAuth proxy, unverified-state escape hatch, and the saved session (server-written, never shown) |
 | Sources | **Deezer** | ARL cookie — exact ISRC-matched audio instead of a yt-dlp search |

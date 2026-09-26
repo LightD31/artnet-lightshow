@@ -175,12 +175,14 @@ export interface DdpOutput {
 }
 
 /**
- * A Philips Hue lamp: no DMX address. The server places it on universes of
- * its own that are never sent (shared/placement.ts), and a Hue channel that
- * follows it shows its colour.
+ * A Philips Hue lamp: channel `channel` of the bridge's entertainment area,
+ * patched from the bridge (never by hand) and with no DMX address. The server
+ * renders it on universes of its own that are never sent
+ * (shared/placement.ts), and its channel is sent the colour it was rendered.
  */
 export interface HueOutput {
   protocol: 'hue';
+  channel: number;
 }
 
 /**

@@ -90,8 +90,8 @@ export const SACN = {
 export const HUE = {
   id: 'hue',
   title: 'Philips Hue',
-  desc: 'Drive Hue lamps from the same show as the pars. Each channel of an entertainment area follows one rig '
-    + 'fixture. Build the area in the Hue app first, then pair here.',
+  desc: 'Drive Hue lamps from the same show as the pars. Each lamp of an entertainment area is a fixture of its own, '
+    + 'added below on a profile for what the bridge says it can show. Build the area in the Hue app first, then pair here.',
   fields: [
     { path: 'hue.enabled', label: 'Enabled', type: 'toggle' },
     { path: 'hue.host', label: 'Bridge Address', type: 'text',

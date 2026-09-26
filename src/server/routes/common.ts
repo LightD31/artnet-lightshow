@@ -4,6 +4,7 @@ import { messageOf, statusOf } from '../../errors.ts';
 import { cues as defaultCues } from '../cues.ts';
 import { createOflLibrary } from '../ofl-library.ts';
 import { wledClient } from '../wled.ts';
+import { listEntertainmentConfigs } from '../hue.ts';
 import type AutoShow from '../../auto-show.ts';
 import type { CueStore } from '../cues.ts';
 import type { AnalysisCache } from '../../analysis-cache.ts';
@@ -38,6 +39,8 @@ export interface RouteDeps {
   oflLibrary?: OflLibrary;
   /** Finding and asking WLEDs; the real network unless a test stands in. */
   wled?: WledClient;
+  /** The paired bridge's entertainment areas; the real bridge unless a test stands in. */
+  hueAreas?: typeof listEntertainmentConfigs;
   /** The cue stack; the one saved in config/cues.json unless a test stands in. */
   cues?: CueStore;
   /** Stop to be started again by the supervisor; false when there is none. */
@@ -54,13 +57,16 @@ export const uploadGdtf = multer({ storage: multer.memoryStorage(), limits: { fi
 export const uploadOfl = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 8 } });
 
 /** The subsystems, with the ones a test may stand in for filled in. */
-export type RouteContext = RouteDeps & { oflLibrary: OflLibrary; wled: WledClient; cues: CueStore };
+export type RouteContext = RouteDeps & {
+  oflLibrary: OflLibrary; wled: WledClient; hueAreas: typeof listEntertainmentConfigs; cues: CueStore;
+};
 
 export function routeContext(deps: RouteDeps): RouteContext {
   return {
     ...deps,
     oflLibrary: deps.oflLibrary || createOflLibrary(),
     wled: deps.wled || wledClient,
+    hueAreas: deps.hueAreas || listEntertainmentConfigs,
     cues: deps.cues || defaultCues,
   };
 }

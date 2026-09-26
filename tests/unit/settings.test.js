@@ -149,20 +149,6 @@ test('legacy env vars are named as ignored, not silently dropped', () => {
   assert.deepStrictEqual(warnAboutLegacyEnv({}, () => {}), [], 'silent when there is no .env');
 });
 
-// One Hue stream message carries at most 20 channel slots, so a longer list
-// could never be sent in full. Refused rather than silently truncated.
-test('more Hue bindings than the protocol can carry are refused', () => {
-  const s = store().load();
-  const channels = (n) => Array.from({ length: n }, (_, i) => ({ channel: i, fixture: 0 }));
-
-  assert.deepStrictEqual(
-    s.update({ hue: { channels: channels(20) } }),
-    ['hue.channels'],
-    'twenty is the limit, and is allowed',
-  );
-  assert.throws(() => s.update({ hue: { channels: channels(21) } }));
-});
-
 // The application id is the DTLS identity and is stored alongside the keys.
 // Unlike them it is not a secret, so it stays readable by the settings page.
 test('the Hue application id round-trips and is not redacted', () => {

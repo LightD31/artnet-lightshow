@@ -32,13 +32,31 @@ export interface HueStatus {
   error: string | null;
 }
 
+/**
+ * What a Hue lamp can show, from its light resource: colour (it has a gamut),
+ * ambiance (a white it can tune from warm to cool) or white (a dimmer).
+ */
+export type LampKind = 'color' | 'ambiance' | 'white';
+
+/** One channel of an entertainment area: a lamp, or one segment of a gradient lamp. */
+export interface AreaChannel {
+  id: number;
+  name: string;
+  position: unknown;
+  /** The Hue devices that render it, to identify them. */
+  devices: string[];
+  /** The product, as the bridge names it ("Hue color lamp"); '' when unknown. */
+  product: string;
+  /** What it can show; null when the bridge would not say. */
+  kind: LampKind | null;
+}
+
 /** An entertainment area, as the Rig view lists it. */
 export interface EntertainmentArea {
   id: string;
   name: string;
   status: string;
-  /** `devices`: the Hue devices that render each channel, to identify them. */
-  channels: { id: number; name: string; position: unknown; devices: string[] }[];
+  channels: AreaChannel[];
 }
 
 export type PairResult =
@@ -68,6 +86,15 @@ interface ClipDevice {
 interface ClipService {
   id: string;
   owner?: { rid?: string };
+  /** The light this entertainment service renders through. */
+  renderer_reference?: { rid?: string; rtype?: string };
+}
+
+interface ClipLight {
+  id: string;
+  owner?: { rid?: string };
+  color?: unknown;
+  color_temperature?: unknown;
 }
 
 interface ClipChannel {
@@ -93,6 +120,8 @@ interface Lamp {
   product: string;
   /** The device's id, which is what identify is sent to. */
   device: string;
+  /** What its light can show; null when the bridge did not list the light. */
+  kind: LampKind | null;
 }
 
 /**
@@ -123,9 +152,10 @@ interface Lamp {
  *     engine's frames are also the keepalive. Nothing extra to schedule, but it
  *     does mean a stalled render loop disconnects rather than freezing the look.
  *
- * Everything above the transport is unchanged: the show renders as it always
- * did, and each Hue channel simply reads the colour of the fixture it is bound
- * to. See output.js for that mapping.
+ * Everything above the transport is unchanged: each lamp of the area is a
+ * fixture of its own, patched from the bridge (routes/fixtures.ts) with no DMX
+ * address, and the show renders it as it renders any other. Its channel is
+ * sent the colour it was rendered (output.ts).
  */
 
 // The bridge's streaming port, fixed by the Entertainment API.
@@ -165,8 +195,8 @@ const MIN_FRAME_INTERVAL_MS = 20;
 
 // One message carries at most 20 channel slots, and that is the protocol's
 // limit rather than a suggestion: a longer message is malformed. An area cannot
-// hold more than 20 lights either, so this only bites if bindings name channels
-// the area does not have — which the pre-show check reports separately.
+// hold more than 20 lights either, so this only bites if lamps in the patch
+// name channels the area does not have — which the pre-show check reports.
 const MAX_CHANNELS = 20;
 
 // ── Bridge REST ─────────────────────────────────────────────────────────────
@@ -344,7 +374,8 @@ async function fetchApplicationId(host: string, key: string): Promise<string | n
 }
 
 /**
- * The name of every lamp that can appear in an entertainment area.
+ * The name and capabilities of every lamp that can appear in an entertainment
+ * area.
  *
  * A channel does not carry a name of its own — it names the *services* that
  * render it, and the name a person recognises ("Right", "Desk lamp") lives two
@@ -354,21 +385,27 @@ async function fetchApplicationId(host: string, key: string): Promise<string | n
  *            → owner (a `device` resource)
  *            → metadata.name
  *
- * Both hops are bulk reads, so this is two requests however many lamps there
- * are. Returns a map from entertainment service id to what to call it, and an
- * empty map on any failure: names make the binding table readable but the
- * channel ids are the truth, so a bridge that will not answer these should cost
- * a plainer UI rather than an error.
+ * What the lamp can show is on its `light` resource, which the entertainment
+ * service points at (`renderer_reference`): a `color` block means it mixes
+ * colour, a `color_temperature` block alone that it tunes white, neither that
+ * it only dims. That decides the lamp's profile when it is patched, as a
+ * WLED's LED count decides its own.
+ *
+ * All three are bulk reads, so this is three requests however many lamps
+ * there are. Returns a map from entertainment service id to the lamp, and an
+ * empty map on any failure: the channel ids are the truth, so a bridge that
+ * will not answer these should cost a plainer table rather than an error.
  */
 async function fetchLampNames(host: string, key: string): Promise<Map<string, Lamp>> {
   const names = new Map<string, Lamp>();
   try {
-    const [services, devices] = await Promise.all([
+    const [services, devices, lights] = await Promise.all([
       bridgeRequest(host, { path: '/clip/v2/resource/entertainment', key }) as Promise<ClipList<ClipService> | null>,
       bridgeRequest(host, { path: '/clip/v2/resource/device', key }) as Promise<ClipList<ClipDevice> | null>,
+      bridgeRequest(host, { path: '/clip/v2/resource/light', key }) as Promise<ClipList<ClipLight> | null>,
     ]);
 
-    const deviceById = new Map<string, Lamp>();
+    const deviceById = new Map<string, Omit<Lamp, 'kind'>>();
     for (const device of (devices && devices.data) || []) {
       deviceById.set(device.id, {
         name: (device.metadata && device.metadata.name) || '',
@@ -376,16 +413,49 @@ async function fetchLampNames(host: string, key: string): Promise<Map<string, La
         device: device.id,
       });
     }
+    const lightById = new Map<string, ClipLight>();
+    const lightByDevice = new Map<string, ClipLight>();
+    for (const light of (lights && lights.data) || []) {
+      lightById.set(light.id, light);
+      const owner = light.owner && light.owner.rid;
+      if (owner && !lightByDevice.has(owner)) lightByDevice.set(owner, light);
+    }
 
     for (const service of (services && services.data) || []) {
       const owner = service.owner && service.owner.rid;
       const device = owner ? deviceById.get(owner) : null;
-      if (device && device.name) names.set(service.id, device);
+      if (!device || !device.name) continue;
+      const ref = service.renderer_reference && service.renderer_reference.rid;
+      const light = (ref && lightById.get(ref)) || (owner && lightByDevice.get(owner)) || null;
+      names.set(service.id, { ...device, kind: light ? kindOf(light) : null });
     }
   } catch (_) {
     return new Map();
   }
   return names;
+}
+
+/** What a light resource can show. */
+function kindOf(light: Pick<ClipLight, 'color' | 'color_temperature'>): LampKind {
+  if (light.color && typeof light.color === 'object') return 'color';
+  if (light.color_temperature && typeof light.color_temperature === 'object') return 'ambiance';
+  return 'white';
+}
+
+const KIND_RANK: Record<LampKind, number> = { white: 0, ambiance: 1, color: 2 };
+
+/**
+ * What one channel can show: the most any of its lamps can. Two lamps on one
+ * channel are sent one colour, and the richer lamp is the one that shows it.
+ * Null when none of its lamps could be read.
+ */
+function kindOfChannel(channel: ClipChannel, lamps: Map<string, Lamp>): LampKind | null {
+  let best: LampKind | null = null;
+  for (const member of channel.members || []) {
+    const kind = lamps.get((member.service && member.service.rid) || '')?.kind;
+    if (kind && (best === null || KIND_RANK[kind] > KIND_RANK[best])) best = kind;
+  }
+  return best;
 }
 
 /**
@@ -448,14 +518,17 @@ async function listEntertainmentConfigs(host: string, key: string): Promise<Ente
       id: cfg.id,
       name: (cfg.metadata && cfg.metadata.name) || cfg.id,
       status: cfg.status || 'inactive',
-      channels: (cfg.channels || []).map((ch) => ({
-        id: ch.channel_id,
-        name: nameChannel(ch, names, segmentCounts, seen),
-        position: ch.position || null,
-        devices: [...new Set((ch.members || [])
-          .map((m) => names.get((m.service && m.service.rid) || '')?.device)
-          .filter((d): d is string => !!d))],
-      })),
+      channels: (cfg.channels || []).map((ch) => {
+        const lamps = (ch.members || []).map((m) => names.get((m.service && m.service.rid) || '')).filter((l): l is Lamp => !!l);
+        return {
+          id: ch.channel_id,
+          name: nameChannel(ch, names, segmentCounts, seen),
+          position: ch.position || null,
+          devices: [...new Set(lamps.map((l) => l.device))],
+          product: [...new Set(lamps.map((l) => l.product).filter(Boolean))].join(' + '),
+          kind: kindOfChannel(ch, names),
+        };
+      }),
     };
   });
 }
@@ -789,15 +862,15 @@ async function stop(): Promise<void> {
 function sendFrame(channels: readonly HueChannelColour[]): boolean {
   if (!config.enabled || !isConfigured()) return false;
 
-  // Nothing bound: stay off the bridge entirely. Opening a session puts the
-  // area into entertainment mode, which takes those lamps out of normal Hue
-  // control — the app and any schedules stop affecting them. Doing that and
-  // then sending no colours is the worst of both: the lamps are seized and
-  // nothing drives them. A session already open when the last binding goes away
-  // is closed for the same reason.
+  // No lamp in the patch: stay off the bridge entirely. Opening a session puts
+  // the area into entertainment mode, which takes those lamps out of normal
+  // Hue control — the app and any schedules stop affecting them. Doing that
+  // and then sending no colours is the worst of both: the lamps are seized and
+  // nothing drives them. A session already open when the last lamp leaves the
+  // patch is closed for the same reason.
   if (!channels.length) {
     if (status === STREAMING || status === CONNECTING) {
-      console.log('[hue] no channels bound — releasing the entertainment area');
+      console.log('[hue] no Hue lamp in the patch — releasing the entertainment area');
       stop();
     }
     return false;
@@ -865,6 +938,8 @@ export {
   listEntertainmentConfigs,
   fetchLampNames,
   nameChannel,
+  kindOf,
+  kindOfChannel,
   setStreaming,
   buildStreamMessage,
   to16,

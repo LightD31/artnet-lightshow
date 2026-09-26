@@ -216,3 +216,24 @@ test('lamp names from an unreachable bridge are empty rather than an error', asy
   const names = await hue.fetchLampNames('bridge.invalid', 'key');
   assert.strictEqual(names.size, 0);
 });
+
+// ── What a lamp can show ────────────────────────────────────────────────────
+// Read off its light resource, as a WLED's LED count is read off its info: it
+// decides the profile the lamp is patched on.
+
+test('a light with a gamut mixes colour, one with only a colour temperature tunes white, else it dims', () => {
+  assert.strictEqual(hue.kindOf({ color: { gamut_type: 'C' }, color_temperature: { mirek: 300 } }), 'color');
+  assert.strictEqual(hue.kindOf({ color_temperature: { mirek: 300 } }), 'ambiance');
+  assert.strictEqual(hue.kindOf({}), 'white');
+});
+
+test('a channel shows the most any of its lamps can, and nothing when none could be read', () => {
+  const lamps = new Map([
+    [LAMP_A, { name: 'Left', product: '', device: 'd1', kind: 'white' }],
+    [LAMP_B, { name: 'Right', product: '', device: 'd2', kind: 'color' }],
+  ]);
+  assert.strictEqual(hue.kindOfChannel(channelOf(LAMP_A), lamps), 'white');
+  assert.strictEqual(hue.kindOfChannel(channelOf(LAMP_A, LAMP_B), lamps), 'color');
+  assert.strictEqual(hue.kindOfChannel(channelOf('unknown'), lamps), null);
+});
+

@@ -5,12 +5,11 @@ import type { Fixture, Profile } from '../types/rig.ts';
 // knows about. One of several built-ins — see BUILTIN_PROFILE_IDS.
 const BUILTIN_PROFILE_ID = 'cameo-root-par-6-12ch';
 
-// Philips Hue lamps have no DMX address of their own: a Hue channel follows a
-// rig fixture and shows its colour (see hue.js), so a Hue-only lamp still needs
-// a fixture in the patch to follow. These exist so that fixture does not have
-// to be a twelve-channel par standing in for a light bulb — the patch then
-// reads as what the rig actually is, and the monitor shows four channels moving
-// instead of twelve with eight of them permanently dark.
+// Philips Hue lamps have no DMX address: each is patched from the bridge's
+// entertainment area as a fixture of its own (routes/fixtures.ts), on the one
+// of these that says what the bridge reports it can show — colour, tunable
+// white or plain white (hueProfileFor). The server renders it like any other
+// fixture, and its channel is sent the colour that came out (output.ts).
 const HUE_COLOR_PROFILE_ID = 'generic-hue-lamp-7ch';
 const HUE_WHITE_AMBIANCE_PROFILE_ID = 'generic-hue-white-ambiance-3ch';
 const HUE_WHITE_PROFILE_ID = 'generic-hue-white-lamp-1ch';
@@ -208,6 +207,16 @@ const BUILTIN_PROFILE_IDS = new Set([
 // The profiles that stand for a Hue lamp rather than a DMX fixture.
 const HUE_PROFILE_IDS = new Set([HUE_COLOR_PROFILE_ID, HUE_WHITE_AMBIANCE_PROFILE_ID, HUE_WHITE_PROFILE_ID]);
 
+/** Why a Hue lamp profile cannot be patched, or a fixture made a Hue lamp, by hand. */
+const HUE_BY_HAND = 'A Hue lamp is added from its bridge: Rig → Outputs → Philips Hue, Add to patch';
+
+/** The profile for a Hue lamp that can show `kind` (hue.ts). */
+function hueProfileFor(kind: 'color' | 'ambiance' | 'white'): string {
+  if (kind === 'ambiance') return HUE_WHITE_AMBIANCE_PROFILE_ID;
+  if (kind === 'white') return HUE_WHITE_PROFILE_ID;
+  return HUE_COLOR_PROFILE_ID;
+}
+
 /** Does this profile ship with the server, rather than being imported? */
 function isBuiltinProfile(id: string): boolean {
   return BUILTIN_PROFILE_IDS.has(id);
@@ -275,6 +284,8 @@ export {
   HUE_WHITE_AMBIANCE_PROFILE_ID,
   HUE_WHITE_PROFILE_ID,
   HUE_PROFILE_IDS,
+  hueProfileFor,
+  HUE_BY_HAND,
   isBuiltinProfile,
   UNIVERSE_SIZE,
   MAX_FIXTURES,

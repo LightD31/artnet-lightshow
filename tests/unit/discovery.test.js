@@ -14,7 +14,7 @@ import { attachIdentifyRoutes } from '../../src/server/routes/identify.ts';
 import { createIdentify } from '../../src/server/identify.ts';
 import { state } from '../../src/server/state.ts';
 import * as output from '../../src/server/output.ts';
-import { BUILTIN_PROFILE_ID } from '../../src/server/profiles.ts';
+import { BUILTIN_PROFILE_ID, HUE_COLOR_PROFILE_ID } from '../../src/server/profiles.ts';
 
 test('ArtAddress: locate or normal, and nothing else about the node changed', () => {
   const packet = buildArtAddress(AC_LED_LOCATE, 2);
@@ -193,8 +193,8 @@ test('a WLED: through the patch when it is in it, else streamed directly', async
   }, { fixtures: [{ ...par(5, 1, 4), output: { protocol: 'ddp', host: '10.0.0.50' } }] });
 });
 
-test('a Hue channel: its fixture when it follows one, else the bridge identifies the lamps', async () => {
-  const hue = { host: '10.0.0.60', username: 'app-key', entertainmentId: 'a1', channels: [{ channel: 0, fixture: 1 }] };
+test('a Hue channel: its lamp when it is in the patch, else the bridge identifies the lamps', async () => {
+  const hue = { host: '10.0.0.60', username: 'app-key', entertainmentId: 'a1' };
   await withRoutes(async ({ call, calls }) => {
     const bound = await call('POST', '/api/hue/identify', { channel: 0 });
     assert.deepStrictEqual([bound.body.via, bound.body.ids], ['fixture', [1]]);
@@ -203,7 +203,7 @@ test('a Hue channel: its fixture when it follows one, else the bridge identifies
     assert.deepStrictEqual(calls.hue, [['d2', 'd3']]);
     const missing = await call('POST', '/api/hue/identify', { channel: 7 });
     assert.strictEqual(missing.status, 404);
-  }, { fixtures: [par(1, 1)], hue });
+  }, { fixtures: [par(3, 1), { ...par(1, 1), profileId: HUE_COLOR_PROFILE_ID, output: { protocol: 'hue', channel: 0 } }], hue });
 });
 
 test('Hue identify before pairing says to pair', async () => {
