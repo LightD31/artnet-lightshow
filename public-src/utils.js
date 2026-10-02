@@ -85,9 +85,20 @@ function overrideLight(fix, state) {
   };
 }
 
-/** Where a fixture is patched, in words: "Universe 0 / 13", or that it has no DMX address. */
-export function patchedAt(fix) {
-  return hasNoAddress(fix) ? `Hue channel #${fix.output.channel}, no DMX address` : `Universe ${fix.universe ?? 0} / ${fix.address}`;
+/** What a Hue bridge is called, by its id in the rig's list (state.hueBridges); the id itself when the list does not know it. */
+export function hueBridgeLabel(bridges, id) {
+  const bridge = (bridges || []).find((b) => b.id === id);
+  return bridge ? (bridge.label || bridge.host || bridge.id) : (id || 'no bridge');
+}
+
+/**
+ * Where a fixture is patched, in words: "Universe 0 / 13", or that it has no
+ * DMX address — a Hue lamp's channel, and its bridge when the list is given.
+ */
+export function patchedAt(fix, bridges) {
+  if (!hasNoAddress(fix)) return `Universe ${fix.universe ?? 0} / ${fix.address}`;
+  const where = bridges ? ` of ${hueBridgeLabel(bridges, fix.output.bridge)}` : '';
+  return `Hue channel #${fix.output.channel}${where}, no DMX address`;
 }
 
 /**

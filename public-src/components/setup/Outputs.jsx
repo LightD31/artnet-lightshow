@@ -9,7 +9,7 @@ import { ARTNET, SACN, HUE } from './specs.js';
 /**
  * Where the rig's DMX goes, and what is out there to send it to: Art-Net
  * nodes that answer a poll, other sACN sources on the network, WLEDs that
- * announce themselves and the Hue bridge. Each can be made to show itself —
+ * announce themselves and the Hue bridges. Each can be made to show itself —
  * a node's locate LEDs and the fixtures on its universes, a WLED's pixels, a
  * Hue lamp — so a device on a list is a device on the truss.
  */
@@ -338,140 +338,232 @@ function Wled() {
 /** What a lamp can show, as the bridge reports it (server/hue.ts). */
 const LAMP_KIND = { color: 'Colour', ambiance: 'White ambiance', white: 'White' };
 
-function Hue() {
-  const s = pick(['fixtures']);
-  const data = settingsSig.value;
-  const [info, setInfo] = useState(null);           // /api/hue/status
-  const [areas, setAreas] = useState([]);
-  const [bridges, setBridges] = useState([]);
-  const [notice, setNotice] = useState(null);       // { ok, text }
-  const [lamps, setLamps] = useState(null);         // /api/hue/lamps: { area, lamps } or { error }
-  const paired = !!(info && info.paired);
-  const areaId = at(data && data.settings, 'hue.entertainmentId');
+/**
+ * Change one bridge's entry: the list is saved back through the settings as
+ * any setting is. The keys come to the page blank and go back blank, which
+ * the server reads as "keep them"; the list is read again first, so a bridge
+ * paired from another page is not dropped by this one's copy.
+ */
+async function saveBridge(id, patch) {
+  const data = await loadSettings();
+  const bridges = (at(data && data.settings, 'hue.bridges') || []).map((b) => (b.id === id ? { ...b, ...patch } : b));
+  return saveSettings({ hue: { bridges } });
+}
 
-  const refresh = async () => {
-    const status = await getJson('/api/hue/status');
-    if (!status.ok) return;
-    setInfo(status);
-    if (status.paired) {
-      const list = await getJson('/api/hue/areas');
-      if (list.ok) setAreas(list.areas || []);
-    }
-  };
-  useEffect(() => { refresh(); }, []);
-  // The lamps of the area being streamed to: read again when another is picked.
-  const loadLamps = async () => {
-    const res = await getJson('/api/hue/lamps');
-    setLamps(res.ok ? res : { error: res.error });
-  };
+/**
+ * One bridge: its name, whether it is on, the area it streams, and the
+ * area's lamps with Add and Identify. `patched` is channel → fixture label
+ * for the lamps of this bridge already in the patch.
+ */
+function HueBridge({ bridge, patched, onChanged, onPair, notify }) {
+  const [areas, setAreas] = useState(null);         // /api/hue/:bridge/areas: the list, or { error }
+  const [lamps, setLamps] = useState(null);         // /api/hue/:bridge/lamps: { area, lamps } or { error }
+  const [area, setArea] = useState(bridge.area);
+  const [label, setLabel] = useState(bridge.label);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setArea(bridge.area); }, [bridge.area]);
+  useEffect(() => { setLabel(bridge.label); }, [bridge.label]);
   useEffect(() => {
-    if (paired && areaId) loadLamps(); else setLamps(null);
-  }, [paired, areaId]);
+    if (!bridge.paired) { setAreas(null); return; }
+    getJson(`/api/hue/${bridge.id}/areas`).then((res) => setAreas(res.ok ? res.areas || [] : { error: res.error }));
+  }, [bridge.id, bridge.paired]);
+  // The lamps of the area being streamed to: read again when another is picked.
+  useEffect(() => {
+    if (!bridge.paired || !bridge.area) { setLamps(null); return; }
+    getJson(`/api/hue/${bridge.id}/lamps`).then((res) => setLamps(res.ok ? res : { error: res.error }));
+  }, [bridge.id, bridge.paired, bridge.area]);
 
-  const find = async () => {
-    setNotice({ ok: true, text: 'Looking for bridges…' });
-    const res = await getJson('/api/hue/discover');
-    if (!res.ok) { setNotice({ ok: false, text: res.error }); return; }
-    setBridges(res.bridges || []);
-    setNotice(res.bridges.length ? { ok: true, text: `Found ${plural(res.bridges.length, 'bridge')}: ${res.bridges.map((b) => b.host).join(', ')}` }
-      : { ok: false, text: res.error ? `No bridges found — ${res.error}. Type the bridge address in above.` : 'No bridges answered. Type the bridge address in above.' });
+  const save = async (patch) => {
+    setBusy(true);
+    const res = await saveBridge(bridge.id, patch);
+    setBusy(false);
+    if (res.ok) await onChanged();
+    return res;
   };
-  const pair = async () => {
-    const host = (document.getElementById('set-hue.host') || {}).value || (bridges[0] && bridges[0].host) || '';
-    if (!host.trim()) { setNotice({ ok: false, text: 'Enter the bridge address first, or press Find bridges.' }); return; }
-    setNotice({ ok: true, text: 'Press the round button on the bridge now…' });
-    const res = await post('/api/hue/pair', { host: host.trim() });
-    if (!res.ok) { setNotice({ ok: false, text: res.error }); return; }
-    setAreas(res.areas || []);
-    setNotice(res.areasError ? { ok: false, text: `Paired, but the areas could not be read — ${res.areasError}` }
-      : { ok: true, text: `Paired with ${res.host}. Pick an entertainment area and apply, then add its lamps.` });
-    await loadSettings();
-    await refresh();
-  };
+  const dirty = area !== bridge.area || label.trim() !== bridge.label;
   const forget = async () => {
-    const res = await post('/api/hue/disconnect', {});
+    const mine = [...patched.values()];
+    if (mine.length && !window.confirm(`Forget "${bridge.label}" and remove its ${plural(mine.length, 'lamp')} from the patch?\n\n${mine.join(', ')}`)) return;
+    const res = await post(`/api/hue/${bridge.id}/disconnect`, mine.length ? { removeFixtures: true } : {});
     if (!res.ok) return;
-    setAreas([]);
-    setNotice({ ok: true, text: 'Bridge forgotten. Remove this integration in the Hue app under linked devices.' });
-    await loadSettings();
-    await refresh();
-  };
-  const syncTest = async () => {
-    const res = await post('/api/hue/sync-test', {});
-    if (res.ok) setNotice({ ok: true, text: `Every fixture flashes once a second for ${res.seconds} s. Apply the delay first if you changed it.` });
+    notify({ ok: true, text: `"${bridge.label}" forgotten. Remove this integration in the Hue app under linked devices.` });
+    await onChanged();
   };
   const flash = async (channel) => {
-    const res = await post('/api/hue/identify', { channel });
+    const res = await post(`/api/hue/${bridge.id}/identify`, { channel });
     if (res.ok) toast.info(res.via === 'fixture' ? 'The lamp flashes through the patch' : `The bridge asks ${plural(res.lamps, 'lamp')} to breathe`);
   };
   // A lamp is added as a WLED is: a fixture of its own, on the profile for
   // what the bridge says it can show, with no DMX address.
   const add = async (channels) => {
-    const res = await post('/api/hue/add', channels ? { channels } : {});
-    if (!res.ok) { setNotice({ ok: false, text: res.error }); return; }
+    const res = await post(`/api/hue/${bridge.id}/add`, channels ? { channels } : {});
+    if (!res.ok) { notify({ ok: false, text: res.error }); return; }
     const labels = res.fixtures.map((f) => f.label).join(', ');
-    setNotice({ ok: true, text: `Added ${labels}. Place ${res.fixtures.length === 1 ? 'it' : 'them'} on the plan.` });
+    notify({ ok: true, text: `Added ${labels} from "${bridge.label}". Place ${res.fixtures.length === 1 ? 'it' : 'them'} on the plan.` });
     toast.info(`Added ${plural(res.fixtures.length, 'Hue lamp')} to the patch`);
   };
 
-  // Which fixture each channel is, from the live patch.
-  const patched = new Map();
-  for (const f of s.fixtures || []) {
-    if (f.output && f.output.protocol === 'hue' && !patched.has(f.output.channel)) patched.set(f.output.channel, f.label);
-  }
   const list = lamps && lamps.lamps ? lamps.lamps : [];
   const missing = list.filter((l) => !patched.has(l.id));
+  const options = Array.isArray(areas) ? areas : [];
+  const known = options.some((a) => a.id === area);
+  const areaId = `hue-area-${bridge.id}`;
+  return (
+    <div class="hue-bridge" data-bridge={bridge.id}>
+      <div class="discovery-head hue-bridge-head">
+        <input class="hue-bridge-label" type="text" maxLength={64} value={label} aria-label={`Name of the bridge at ${bridge.host}`}
+          onInput={(e) => setLabel(e.target.value)} />
+        <span class="mono">{bridge.host}</span>
+        <span class={`setting-help ${bridge.stream === 'failed' ? 'setting-note warn' : ''}`}>
+          {bridge.paired ? 'paired' : 'not paired'} · stream: {bridge.stream}{bridge.lastError ? ` — ${bridge.lastError}` : ''}
+        </span>
+        <label class="hue-bridge-enabled">
+          <input type="checkbox" checked={!!bridge.enabled} disabled={busy} onChange={(e) => save({ enabled: e.target.checked })} /> Enabled
+        </label>
+        <button type="button" class="btn sm" title="Press the round button on the bridge, then this" onClick={() => onPair(bridge.host)}>Pair again</button>
+        <button type="button" class="btn sm danger" onClick={forget}>Forget</button>
+      </div>
+      <div class="inline-form">
+        <label for={areaId}>Entertainment area</label>
+        <select id={areaId} value={area} disabled={!bridge.paired} onChange={(e) => setArea(e.target.value)}>
+          {(!options.length || !known) && (
+            <option value={area}>
+              {options.length ? `${area} (not on the bridge)` : area || (bridge.paired ? 'none picked' : 'pair with the bridge first')}
+            </option>
+          )}
+          {options.map((a) => <option key={a.id} value={a.id}>{a.name} ({a.channels.length} channels)</option>)}
+        </select>
+        <button type="button" class="btn sm active" disabled={busy || !dirty}
+          onClick={() => save({ label: label.trim() || bridge.host, entertainmentId: area })}>Apply</button>
+        {areas && areas.error && <span class="setting-help setting-note warn">{areas.error}</span>}
+      </div>
+      {lamps && lamps.error && <p class="setting-help setting-note warn">{lamps.error}</p>}
+      {lamps && lamps.area && (
+        <>
+          <div class="discovery-head">
+            <span class="setting-help">Lamps of "{lamps.area.name}", as the Hue app names them.</span>
+            {missing.length > 0 && <button type="button" class="btn sm active" disabled={!connectedSig.value}
+              onClick={() => add(null)}>Add {missing.length === list.length ? 'all' : `the other ${missing.length}`}</button>}
+          </div>
+          <div class="table-scroll">
+            <table class="patch-table">
+              <thead><tr><th scope="col">Channel</th><th scope="col">Lamp</th><th scope="col">Shows</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+              <tbody>
+                {list.map((ch) => (
+                  <tr key={ch.id}>
+                    <td class="mono">#{ch.id}</td>
+                    <td>{ch.name || '—'}{ch.product && <span class="setting-help"> · {ch.product}</span>}</td>
+                    <td>{ch.kind ? LAMP_KIND[ch.kind] : 'unknown'}</td>
+                    <td class="patch-actions-cell">
+                      <button type="button" class="btn sm" aria-label={`Identify channel ${ch.id} of ${bridge.label}`} onClick={() => flash(ch.id)}>Identify</button>
+                      {patched.has(ch.id) ? <span class="setting-help">In the patch as "{patched.get(ch.id)}"</span>
+                        : <button type="button" class="btn sm active" disabled={!connectedSig.value || !ch.kind}
+                          aria-label={`Add channel ${ch.id} of ${bridge.label} to the patch`} onClick={() => add([ch.id])}>Add to patch</button>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function Hue() {
+  const s = pick(['fixtures']);
+  const [info, setInfo] = useState(null);           // /api/hue/status
+  const [found, setFound] = useState([]);           // /api/hue/discover
+  const [host, setHost] = useState('');
+  const [label, setLabel] = useState('');
+  const [notice, setNotice] = useState(null);       // { ok, text }
+
+  const refresh = async () => {
+    const status = await getJson('/api/hue/status');
+    if (status.ok) setInfo(status);
+  };
+  useEffect(() => { refresh(); }, []);
+  const changed = async () => { await loadSettings(); await refresh(); };
+
+  const find = async () => {
+    setNotice({ ok: true, text: 'Looking for bridges…' });
+    const res = await getJson('/api/hue/discover');
+    if (!res.ok) { setNotice({ ok: false, text: res.error }); return; }
+    setFound(res.bridges || []);
+    setNotice(res.bridges.length ? { ok: true, text: `Found ${plural(res.bridges.length, 'bridge')}: ${res.bridges.map((b) => b.host).join(', ')}` }
+      : { ok: false, text: res.error ? `No bridges found — ${res.error}. Type the bridge address in.` : 'No bridges answered. Type the bridge address in.' });
+  };
+  // A bridge is paired by its address: a new one is added to the list, one
+  // already there gets fresh keys.
+  const pair = async (address) => {
+    const target = (address || host).trim();
+    if (!target) { setNotice({ ok: false, text: 'Enter the bridge address first, or press Find bridges.' }); return; }
+    setNotice({ ok: true, text: `Press the round button on the bridge at ${target} now…` });
+    const res = await post('/api/hue/pair', { host: target, ...(label.trim() ? { label: label.trim() } : {}) });
+    if (!res.ok) { setNotice({ ok: false, text: res.error }); return; }
+    setNotice(res.areasError ? { ok: false, text: `Paired "${res.bridge.label}", but its areas could not be read — ${res.areasError}` }
+      : { ok: true, text: `Paired "${res.bridge.label}". Pick its entertainment area and apply, then add its lamps.` });
+    setHost('');
+    setLabel('');
+    await changed();
+  };
+  const syncTest = async () => {
+    const res = await post('/api/hue/sync-test', {});
+    if (res.ok) setNotice({ ok: true, text: `Every fixture flashes once a second for ${res.seconds} s. Apply the delay first if you changed it.` });
+  };
+
+  const bridges = (info && info.bridges) || [];
+  // Which fixture each channel of each bridge is, from the live patch.
+  const patched = new Map();
+  for (const f of s.fixtures || []) {
+    if (!f.output || f.output.protocol !== 'hue') continue;
+    const mine = patched.get(f.output.bridge) || new Map();
+    if (!mine.has(f.output.channel)) mine.set(f.output.channel, f.label);
+    patched.set(f.output.bridge, mine);
+  }
 
   return (
-    <SettingsSection {...HUE} ctx={{ hueAreas: areas }} onApply={async (patch) => {
+    <SettingsSection {...HUE} onApply={async (patch) => {
       const res = await saveSettings(patch);
       if (res.ok) await refresh();
       return res;
     }}>
       <div class="hue-tools">
-        <div class="discovery-head">
+        <form class="inline-form" onSubmit={(e) => { e.preventDefault(); pair(); }}>
+          <label for="hue-host">Add bridge</label>
+          <input id="hue-host" type="text" maxLength={253} placeholder="192.168.1.40" value={host} onInput={(e) => setHost(e.target.value)} />
+          <input id="hue-label" type="text" maxLength={64} placeholder="Name (optional)" aria-label="Name for the bridge" value={label}
+            onInput={(e) => setLabel(e.target.value)} />
           <button type="button" class="btn sm" onClick={find}>Find bridges</button>
-          <button type="button" class="btn sm" title="Press the round button on the bridge, then this" onClick={pair}>{paired ? 'Pair again' : 'Pair'}</button>
-          {paired && <button type="button" class="btn sm" onClick={syncTest}
-            title="Every fixture flashes white once a second, pars and Hue lamps together">Sync test</button>}
-          {paired && <button type="button" class="btn sm danger" onClick={forget}>Forget bridge</button>}
-        </div>
+          <button type="submit" class="btn sm active" disabled={!host.trim()} title="Press the round button on the bridge, then this">Pair</button>
+          {bridges.length > 0 && <button type="button" class="btn sm" onClick={syncTest}
+            title="Every fixture flashes white once a second, pars and Hue lamps together">Flash for 10 s</button>}
+        </form>
         {notice && <p class={`setting-help setting-note ${notice.ok ? '' : 'warn'}`} role="status">{notice.text}</p>}
-        {info && info.status && (
-          <p class={`setting-help setting-note ${info.status.status === 'failed' ? 'warn' : ''}`}>
-            Stream: {info.status.status}{info.status.error ? ` — ${info.status.error}` : ''}
-          </p>
+        {found.length > 0 && (
+          <div class="table-scroll">
+            <table class="patch-table">
+              <thead><tr><th scope="col">Bridge</th><th scope="col">Address</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+              <tbody>
+                {found.map((b) => (
+                  <tr key={b.host}>
+                    <td class="mono">{b.id || '—'}</td>
+                    <td class="mono">{b.host}</td>
+                    <td class="patch-actions-cell">
+                      {bridges.some((x) => x.host === b.host) ? <span class="setting-help">Paired</span>
+                        : <button type="button" class="btn sm active" title="Press the round button on the bridge, then this" onClick={() => pair(b.host)}>Pair</button>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
-        {lamps && lamps.error && <p class="setting-help setting-note warn">{lamps.error}</p>}
-        {lamps && lamps.area && (
-          <>
-            <div class="discovery-head">
-              <span class="setting-help">Lamps of "{lamps.area.name}", as the Hue app names them.</span>
-              {missing.length > 0 && <button type="button" class="btn sm active" disabled={!connectedSig.value}
-                onClick={() => add(null)}>Add {missing.length === list.length ? 'all' : `the other ${missing.length}`}</button>}
-            </div>
-            <div class="table-scroll">
-              <table class="patch-table">
-                <thead><tr><th scope="col">Channel</th><th scope="col">Lamp</th><th scope="col">Shows</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
-                <tbody>
-                  {list.map((ch) => (
-                    <tr key={ch.id}>
-                      <td class="mono">#{ch.id}</td>
-                      <td>{ch.name || '—'}{ch.product && <span class="setting-help"> · {ch.product}</span>}</td>
-                      <td>{ch.kind ? LAMP_KIND[ch.kind] : 'unknown'}</td>
-                      <td class="patch-actions-cell">
-                        <button type="button" class="btn sm" aria-label={`Identify Hue channel ${ch.id}`} onClick={() => flash(ch.id)}>Identify</button>
-                        {patched.has(ch.id) ? <span class="setting-help">In the patch as "{patched.get(ch.id)}"</span>
-                          : <button type="button" class="btn sm active" disabled={!connectedSig.value || !ch.kind}
-                            aria-label={`Add Hue channel ${ch.id} to the patch`} onClick={() => add([ch.id])}>Add to patch</button>}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
+        {info && !bridges.length && <p class="setting-help">No bridge paired yet: find one or type its address, press its round button, then Pair.</p>}
+        {bridges.map((b) => (
+          <HueBridge key={b.id} bridge={b} patched={patched.get(b.id) || new Map()} onChanged={changed} onPair={pair} notify={setNotice} />
+        ))}
       </div>
     </SettingsSection>
   );

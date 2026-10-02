@@ -90,20 +90,14 @@ export const SACN = {
 export const HUE = {
   id: 'hue',
   title: 'Philips Hue',
-  desc: 'Drive Hue lamps from the same show as the pars. Each lamp of an entertainment area is a fixture of its own, '
-    + 'added below on a profile for what the bridge says it can show. Build the area in the Hue app first, then pair here.',
+  desc: 'Drive Hue lamps from the same show as the pars, from as many bridges as the house has. Each lamp of a '
+    + 'bridge\'s entertainment area is a fixture of its own, added below on a profile for what the bridge says it can '
+    + 'show. Build the area in the Hue app first, then pair the bridge here; each bridge streams one area at a time.',
   fields: [
-    { path: 'hue.enabled', label: 'Enabled', type: 'toggle' },
-    { path: 'hue.host', label: 'Bridge Address', type: 'text',
-      help: 'The bridge IP. Find Bridges looks it up; a show network with no route to the internet has to have it typed in.' },
-    { path: 'hue.entertainmentId', label: 'Entertainment Area', type: 'select', empty: 'pair with a bridge first',
-      options: (ctx) => (ctx.hueAreas || []).map((a) => ({ value: a.id, label: `${a.name} (${a.channels.length} channels)` })),
-      missing: (value) => (value ? `${value} (not on the bridge)` : 'none picked'),
-      help: 'Areas are built in the Hue app, where the lamps are already placed on a floor plan. A bridge streams one area at a time.' },
     { path: 'hue.latencyMs', label: 'Pars Delay', type: 'number', unit: 'ms', min: 0, max: 500,
       help: 'Hue lamps answer later than the pars, so every hit lands on the pars first. This holds the Art-Net and sACN '
-        + 'output back to match. Start around 50: run the sync test, film it in slow motion, and raise this until the '
-        + 'pars and lamps flash together.' },
+        + 'output back to match, for every bridge. Start around 50: run the sync test, film it in slow motion, and raise '
+        + 'this until the pars and lamps flash together.' },
   ],
 };
 
