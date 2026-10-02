@@ -815,6 +815,8 @@ class HueSession {
   // fetched at pairing time. Never persisted from here — the applier owns
   // settings — so a restart re-resolves it, which costs one request.
   private resolvedApplicationId: string | null = null;
+  // The channels the last frame lit, for the dark frame that ends a stream.
+  private lastChannels: number[] = [];
   private readonly sink: () => ApplicationIdSink | null;
 
   constructor(config: HueBridgeConfig, sink: () => ApplicationIdSink | null = () => null) {
@@ -1010,6 +1012,23 @@ class HueSession {
   }
 
   /**
+   * One dark frame, then stop: the lamps go out before the bridge hands them
+   * back, rather than holding the look until it does. The frame skips the
+   * rate limit — it is the last one, and it has to go. What the outputs'
+   * disarming does to every bridge (output.ts).
+   */
+  async close(): Promise<void> {
+    if (this.status === STREAMING && this.socket && this.lastChannels.length) {
+      this.sequence = (this.sequence + 1) & 0xff;
+      const dark = this.lastChannels.map((id) => ({ id, r: 0, g: 0, b: 0 }));
+      try {
+        this.socket.send(buildStreamMessage(this.config.entertainmentId, dark, this.sequence), () => { /* on the way out */ });
+      } catch (_) { /* the session closes regardless */ }
+    }
+    await this.stop();
+  }
+
+  /**
    * Put one frame of channel colours on the wire.
    *
    * Called from the render loop, so every path through it is cheap and none
@@ -1047,6 +1066,7 @@ class HueSession {
 
     this.sequence = (this.sequence + 1) & 0xff;
     const slots = channels.length > MAX_CHANNELS ? channels.slice(0, MAX_CHANNELS) : channels;
+    this.lastChannels = slots.map((c) => c.id);
     try {
       this.socket.send(buildStreamMessage(this.config.entertainmentId, slots, this.sequence), (err) => {
         // The callback fires per datagram at the frame rate, so a bridge that
@@ -1120,6 +1140,11 @@ async function stopAll(): Promise<void> {
   await Promise.all(listSessions().map((s) => s.stop()));
 }
 
+/** Every stream: one dark frame, then stopped — the bridges leave entertainment mode. */
+async function closeAll(): Promise<void> {
+  await Promise.all(listSessions().map((s) => s.close()));
+}
+
 /** Tests only — a running show has no reason to forget its sessions. */
 function _reset(): void {
   sessions.clear();
@@ -1163,5 +1188,6 @@ export {
   anyEnabled,
   sendFrames,
   stopAll,
+  closeAll,
   _reset,
 };

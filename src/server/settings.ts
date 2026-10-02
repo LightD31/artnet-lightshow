@@ -166,6 +166,13 @@ const DEFAULTS: Settings = {
     // Off by default: most of what a party rig is for is above it.
     flashLimit: false,
   },
+  // Whether anything leaves the machine (armed.ts). Stored so the Show
+  // section and the REST routes share one switch; never honoured at start —
+  // the applier puts it back to off, so a reboot cannot start a show in the
+  // room (apply.ts).
+  outputs: {
+    armed: false,
+  },
   // The first-run setup (the page's onboarding wizard): offered until it has
   // been finished or skipped once. A settings file from before the wizard
   // belongs to a rig that is set up already (see load()).
@@ -352,6 +359,9 @@ const schema = z.object({
   }).strict(),
   safety: z.object({
     flashLimit: z.boolean(),
+  }).strict(),
+  outputs: z.object({
+    armed: z.boolean(),
   }).strict(),
   setup: z.object({
     completed: z.boolean(),

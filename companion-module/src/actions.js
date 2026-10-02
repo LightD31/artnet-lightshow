@@ -200,6 +200,28 @@ export function UpdateActions(self) {
 			},
 		},
 
+		// Whether anything leaves the machine at all. The server starts
+		// disarmed; this is the button a party presses first.
+		outputs_armed: {
+			name: 'Outputs Armed / Disarmed',
+			options: [
+				{
+					type: 'dropdown',
+					id: 'mode',
+					label: 'Mode',
+					default: 'toggle',
+					choices: [
+						{ id: 'toggle', label: 'Toggle' },
+						{ id: 'arm', label: 'Arm' },
+						{ id: 'disarm', label: 'Disarm' },
+					],
+				},
+			],
+			callback: async ({ options }) => {
+				await self.armOutputs(options.mode)
+			},
+		},
+
 		beat_division: {
 			name: 'Set Beat Division',
 			options: [

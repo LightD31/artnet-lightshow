@@ -4,6 +4,7 @@ import * as universes from './universes.ts';
 import { COLOR_PRESETS, PATTERNS, STROBE_FUNCTIONS, ENERGY_EFFECTS, SYNC_OFFSET_LIMIT_MS } from './presets.ts';
 import { PALETTES } from './palettes.ts';
 import { conductor } from './conductor.ts';
+import { isArmed } from './armed.ts';
 import { HttpError } from '../errors.ts';
 import { footprintOf, universesOf, isInternalUniverse, placeAddressless } from '../shared/placement.ts';
 import type { Settings } from './settings.ts';
@@ -305,6 +306,9 @@ function getLiveState() {
     autoSource: state.autoSource,
     autoPrefetchDepth: state.autoPrefetchDepth,
     universes: wireUniverses(),
+    // Whether anything leaves the machine (armed.ts): the switch in Perform
+    // and the top bar, and what Companion lights its button by.
+    armed: isArmed(),
     fixtures: state.fixtures.map((f) => ({
       ...f,
       universe: universeOf(f),

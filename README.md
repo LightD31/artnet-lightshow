@@ -43,7 +43,18 @@ Companion** (with a page of presets for busking), and a REST API.
   the audience without taking it out of the show
 - **Energy overrides** — one-touch panic effects that trump everything except
   master blackout
-- **Master controls** — global dimmer, master blackout, play/stop
+- **Master controls** — global dimmer, master blackout, play/stop, and the
+  **outputs armed** switch: until a party arms the outputs nothing leaves the
+  machine — no Art-Net, sACN or DDP frame, no Hue stream — while the show
+  still renders for the preview and the stage view. Disarming ends every
+  stream cleanly (a black frame, the sACN terminate, one dark frame to each
+  WLED so its timeout hands the strip back, one dark frame and the session
+  closed on each Hue bridge), stops the patterns and clears any energy
+  override; arming resumes transmit and plays nothing by itself. The server
+  **always starts disarmed**, whatever was stored, so a reboot never starts a
+  show in the room. The switch is in Perform, in Settings → Show and on
+  Companion; the top bar shows which it is — see
+  [Running the show server](#running-the-show-server)
 - **Cue stack** — save the look on stage under a name and recall it in one
   press; deleting or overwriting one can be undone
 - **Live DMX monitor** — real-time channel values
@@ -690,6 +701,16 @@ and the pre-show check warns about one that reaches past the WLED's end. In
 realtime mode a WLED shows only what it is sent, so LEDs in no patched segment
 stay as they are.
 
+**Outside a show.** A WLED that is being sent frames is in realtime mode, and
+in realtime mode it is nobody else's: Home Assistant, its own presets and its
+app all wait. So while the outputs are disarmed ([Master
+controls](#features)) no DDP frame goes to any WLED — the moment they are
+disarmed each is sent one dark frame and then nothing, and its realtime
+timeout hands the strip back to its effects, as it does when a fixture leaves
+the patch. The server starts disarmed, so a reboot never seizes the house's
+strips. Identify is the one exception: asking a WLED to show itself still
+streams its picture to it, for the seconds asked for.
+
 ### Output protocols
 
 Frames go out over **Art-Net**, **sACN (E1.31)**, or both — each universe is
@@ -704,7 +725,7 @@ and a console on sACN at the same time.
 | Addressing | broadcast, or straight to the nodes it finds; or unicast to the node IP | multicast to `239.255.x.y` per universe, or unicast to a node IP |
 | Universe numbering | from 0 | from 1 |
 | Frame sync | ArtSync (optional) | — |
-| On stop | a black frame | a black frame, then stream-terminated packets |
+| On stop, and on disarm | a black frame | a black frame, then stream-terminated packets |
 
 **Finding Art-Net nodes.** While *Node IP* is a broadcast address — the default
 `2.255.255.255`, or anything ending in `.255` — and **Find Nodes** is on (the
@@ -727,9 +748,11 @@ nodes that don't support it.
 the server stops, gets one black frame; over sACN that is followed by three
 stream-terminated packets, so a receiver lets go at once instead of holding
 the last frame until it times out. Changing sACN's settings (another offset,
-another node, turning it off) ends the old streams the same way. Every ten
-seconds the server also lists the universes it is sending on sACN's discovery
-group, so a console can show this source without being told.
+another node, turning it off) ends the old streams the same way, and so does
+disarming the outputs ([Master controls](#features)) — after which nothing
+goes out until they are armed again. Every ten seconds the server also lists
+the universes it is sending on sACN's discovery group, so a console can show
+this source without being told.
 
 **Network.** On a machine that is on two networks — the show network and the
 house one — pick the show network under *sACN (E1.31) → Network*, so the
@@ -867,6 +890,14 @@ at all. Opening a stream puts the area into entertainment mode, which takes
 those lamps out of normal Hue control — worth doing only once something is
 actually driving them. A channel with no lamp in the patch is never sent, so
 the bridge keeps its own colour for it.
+
+**Outside a show.** For the same reason, the bridge is not contacted while the
+outputs are disarmed ([Master controls](#features)): disarming sends every
+streaming bridge one dark frame and closes its session, so the area leaves
+entertainment mode and the lamps answer the Hue app and the house again, and
+nothing opens a session until the outputs are armed — the first frame after
+that does. The server starts disarmed, whatever was stored, so a restart in
+the night never takes the lamps from the house.
 
 **How the lamp's dies are translated.** The stream carries red, green and blue
 and nothing else, so the other dies are folded in rather than dropped:
@@ -1045,8 +1076,9 @@ answer, and exits non-zero if something will not work:
 | `--` | Nothing to verify, just worth seeing. |
 
 What it checks: the engine (where it is rendering, and whether its frames have
-gone out on time), Art-Net reachability (it sends an ArtPoll and lists the nodes
-that answer), the sACN configuration, universe mapping and network, the Hue bridge (that
+gone out on time), whether the outputs are armed (a warning while they are
+not — nothing goes out until they are), Art-Net reachability (it sends an
+ArtPoll and lists the nodes that answer), the sACN configuration, universe mapping and network, the Hue bridge (that
 it answers, that the entertainment area still exists, and that every channel is
 bound to a fixture that is still patched), the fixture patch
 for overlaps and out-of-universe addresses, the bind address and token, the
@@ -2340,7 +2372,7 @@ All endpoints return JSON. When a token is configured, send it as an
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/state` | Full current state |
+| GET | `/api/state` | Full current state (`armed` says whether anything leaves the machine) |
 | POST | `/api/set` | Patch state fields (JSON body) |
 | POST | `/api/tap` | Tap tempo |
 | POST | `/api/play` · `/api/stop` | Start / stop the pattern engine |
@@ -2377,6 +2409,7 @@ All endpoints return JSON. When a token is configured, send it as an
 
 | Method | Path | Description |
 |--------|------|-------------|
+| POST | `/api/outputs/arm` · `/api/outputs/disarm` · `/api/outputs/toggle` | Whether anything leaves the machine (`{ armed }` back). Disarm ends every stream — a black frame, the sACN terminate, a dark frame to each WLED, a dark frame and the session closed on each Hue bridge — stops the patterns and clears the energy override; arm resumes transmit. Stored as `outputs.armed`, applied at once, always off at start |
 | GET | `/api/artnet/nodes` | The Art-Net nodes that answered, with the universes each outputs, and whether frames are being routed by them; `?scan=1` asks the network now |
 | GET | `/api/network/interfaces` | This machine's IPv4 addresses and their broadcast addresses, for sACN's network and the Art-Net target |
 | POST | `/api/artnet/identify` | `{ address, universes?, seconds? }`: send the node ArtAddress *locate* (and *normal* after), and identify the fixtures on the universes it outputs |
@@ -2551,6 +2584,18 @@ one that never resolves on its own.
 
 ## Running the show server
 
+**It starts disarmed.** Whenever the server starts — by hand, by a service
+manager, by the supervisor after a crash — its outputs are disarmed, whatever
+`outputs.armed` in the settings said: it logs `[outputs] disarmed at start`
+and nothing leaves the machine until someone arms the outputs (the switch in
+Perform or Settings → Show, Companion, or `POST /api/outputs/arm`). The show
+still renders, so the preview and the stage view work, and the look the
+supervisor puts back comes back as it was; only transmit waits. On a home
+server that runs all day beside Home Assistant that is the point: a reboot at
+six in the morning must not seize the WLEDs and the Hue lamps from the house.
+Disarming later ends every stream cleanly and stops the patterns; `GET
+/api/health` and the pre-show check both say which state it is in.
+
 ### The supervisor
 
 `npm start` runs `node server.js` (and the packaged build its executable),
@@ -2625,7 +2670,10 @@ late, the main thread stalling for over 100 ms, the memory over 1.5 GB, errors
 logged in the last ten minutes, the auto show in error, and how many times the
 supervisor has had to start it again and why. With them: the uptime, the
 engine's frame timing, the main thread's delay over the last 30 seconds, the
-memory, the outputs and the auto show. The Log tab shows it above the log.
+memory, the outputs — `outputs.armed` says whether anything leaves the
+machine, and while it is false a note among the problems says so, as
+information rather than a fault — and the auto show. The Log tab shows it
+above the log.
 
 `GET /healthz` is the liveness probe for a service manager or a monitor: it
 answers `{ "ok": true }` when the server does, and needs no token.

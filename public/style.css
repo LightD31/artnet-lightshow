@@ -673,6 +673,29 @@ button.cb-bpm-num:focus-visible { outline: 2px solid var(--accent); outline-offs
 .perform-progress-fill { position: absolute; inset: 0 auto 0 0; background: var(--accent-fill); opacity: .4; }
 .perform-progress-time { position: relative; padding: 0 8px; font: 600 13px/24px var(--mono); }
 
+.perform-arm { display: flex; }
+.perform-arm-switch {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 56px;
+  padding: 10px 16px;
+  background: var(--card);
+  border: 2px solid var(--border-hi);
+  border-radius: var(--radius-lg);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.perform-arm-switch.armed { border-color: var(--green); background: rgba(16, 185, 129, .14); }
+.perform-arm-state { font-size: 18px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.perform-arm-hint { font-size: 13px; color: var(--muted); text-align: right; }
+.perform-arm-switch.armed .perform-arm-hint { color: var(--text-2); }
+
 .perform-sync { display: flex; flex-wrap: wrap; gap: 8px; }
 .perform-chip {
   display: inline-flex;

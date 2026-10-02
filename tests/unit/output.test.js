@@ -279,6 +279,14 @@ test('a white ambiance lamp is not also given its dimmer as white', () => {
 
 // Until a hostname resolves, Art-Net frames are dropped. sendUniverse used to
 // report them as sent regardless.
+// ── On the wire ─────────────────────────────────────────────────────────────
+// What follows puts frames on the wire through the live config, which carries
+// whether the outputs are armed (armed.ts) — off, as the server starts, and
+// every frame below would be dropped. Armed for these, and put back after.
+
+test.before(() => output.setArmed(true));
+test.after(() => output.setArmed(false));
+
 test('an Art-Net frame is only reported sent once its host has an address', () => {
   const before = { ...state.artnet };
   const warn = console.warn;
