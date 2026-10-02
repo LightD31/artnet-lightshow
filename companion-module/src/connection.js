@@ -173,4 +173,10 @@ export class LightshowConnection {
 		const on = mode === 'toggle' ? !this.state.showOn : mode === 'start'
 		return this.post(on ? '/api/auto/start' : '/api/auto/stop')
 	}
+
+	/** Arm or disarm the outputs — whether anything leaves the machine; 'toggle' asks the state which. */
+	armOutputs(mode) {
+		const on = mode === 'toggle' ? !this.state.armed : mode === 'arm'
+		return this.post(on ? '/api/outputs/arm' : '/api/outputs/disarm')
+	}
 }

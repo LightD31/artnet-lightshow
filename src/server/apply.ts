@@ -218,6 +218,38 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
     state.flashLimit = !!settings.get('safety.flashLimit');
   }
 
+  /**
+   * Whether anything leaves the machine (armed.ts, output.setArmed).
+   *
+   * Never at start: a server that booted into a show — after a crash
+   * mid-party, or at six in the morning after a power cut — would seize the
+   * WLEDs and the Hue lamps from the house with nobody there. So a stored
+   * "armed" is put back to off and said so, and the look the supervisor
+   * restores comes back with its transmit off. Disarming also stops the
+   * patterns and clears any energy effect, so the next arming starts from a
+   * quiet look rather than mid-strobe; arming plays nothing by itself.
+   */
+  function applyOutputs({ boot = false } = {}) {
+    let wanted = !!settings.get('outputs.armed');
+    if (boot) {
+      if (wanted) {
+        try { settings.update({ outputs: { armed: false } }); }
+        catch (err) { console.warn(`[outputs] could not store the disarmed state: ${messageOf(err)}`); }
+        wanted = false;
+      }
+      console.log('[outputs] disarmed at start: nothing goes out to the rig until the outputs are armed '
+        + '(Perform, Settings → Show, or POST /api/outputs/arm)');
+    }
+    if (!output.setArmed(wanted)) return;
+    if (wanted) {
+      console.log('[outputs] armed: frames go out to the rig');
+      return;
+    }
+    console.log('[outputs] disarmed: the streams are being ended and the patterns stopped');
+    state.heldEnergy = null;
+    applyPatch({ running: false, energyOverride: null });
+  }
+
   // changed key prefix → what to re-apply. Grouped so one save touching three
   // Spotify fields reconfigures the client once.
   const HANDLERS: { match: (key: string) => boolean; run: () => unknown }[] = [
@@ -239,6 +271,7 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
     { match: (k) => k === 'analysis.structureModel', run: applyStructureModel },
     { match: (k) => k === 'analysis.gpuMemory', run: applyGpuMemory },
     { match: (k) => k === 'safety.flashLimit', run: applySafety },
+    { match: (k) => k === 'outputs.armed', run: applyOutputs },
   ];
 
   return {
@@ -255,6 +288,7 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
       applyLive();
       applyDeezer();
       applySafety();
+      applyOutputs({ boot: true });
       if (settings.get('sources.prolink')) applyProlink();
     },
 

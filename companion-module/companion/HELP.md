@@ -41,6 +41,7 @@ The **Busk** preset page has what a set played by hand needs:
 | Set / Adjust Master Dimmer        | 0-255, or by ± amount                                                                |
 | Master Blackout                   | On / Off / Toggle — On on a button's down and Off on its up makes a blackout hold    |
 | Play / Stop                       | On / Off / Toggle                                                                    |
+| Outputs Armed / Disarmed          | Arm / Disarm / Toggle whether anything leaves the machine: disarmed, no Art-Net, sACN or DDP frame goes out and the Hue bridges are handed back. The server starts disarmed; disarming stops the patterns |
 | Set Beat Division                 | 1/1, 1/2, 1/4, 1/8                                                                   |
 | Energy Hold                       | Press on a button's down, Release on its up: the effect lasts while it is held      |
 | Energy Override / Off             | Latch an energy effect on, or clear it                                               |
@@ -66,6 +67,7 @@ The **Busk** preset page has what a set played by hand needs:
 | Colour A/B/C/D selected        | That colour slot matches                                   |
 | Master blackout active         | Blackout is on                                             |
 | Show is playing                | Show is playing                                            |
+| Outputs are armed              | Frames are going out to the rig                            |
 | Auto show is running           | The auto show is on                                        |
 | Auto show follows this source  | The auto show is following that source now                 |
 | Energy override active         | An (or a specific) effect is on, latched or held           |
@@ -73,8 +75,8 @@ The **Busk** preset page has what a set played by hand needs:
 
 ## Variables
 
-`bpm` (to a tenth), `clock_source` (Auto, CDJ, Track or Tap), `beat_division`, `playing`, `pattern`, `pattern_id`, `pixel_pattern`, `panel_pattern`, `pixel_map`, `palette`, `color_a` … `color_d`, `master_dimmer`, `master_dimmer_pct`, `master_blackout`, `strobe_function`, `strobe_speed`, `energy_override`, `auto_show`, `auto_source`, `auto_intensity`, `sync_offset`, `track` (Artist — Title), `cue_count`
+`bpm` (to a tenth), `clock_source` (Auto, CDJ, Track or Tap), `beat_division`, `playing`, `outputs_armed`, `pattern`, `pattern_id`, `pixel_pattern`, `panel_pattern`, `pixel_map`, `palette`, `color_a` … `color_d`, `master_dimmer`, `master_dimmer_pct`, `master_blackout`, `strobe_function`, `strobe_speed`, `energy_override`, `auto_show`, `auto_source`, `auto_intensity`, `sync_offset`, `track` (Artist — Title), `cue_count`
 
 ## Presets
 
-Besides **Busk**: every pattern (the whole-rig ones and the pixel effects apart), the bars' and the panels' own pictures and the pixel map; all four colour slots; transport (play/stop, blackout, tap tempo, BPM, beat divisions); a blackout for each fixture in the patch; and latched energy effects.
+Besides **Busk**: every pattern (the whole-rig ones and the pixel effects apart), the bars' and the panels' own pictures and the pixel map; all four colour slots; transport (the outputs' arming switch, play/stop, blackout, tap tempo, BPM, beat divisions); a blackout for each fixture in the patch; and latched energy effects.

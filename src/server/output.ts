@@ -7,6 +7,7 @@ import { createTransmitter, sacnUniverseFor as mapSacnUniverse } from './transmi
 import { createDiscovery, interfaces, isBroadcastTarget } from './artnet-nodes.ts';
 import { isLoopback } from './loopback.ts';
 import * as hue from './hue.ts';
+import { isArmed, setArmedFlag } from './armed.ts';
 import { defaultHueBridgeId } from './settings.ts';
 import type { HueChannelColour } from './hue.ts';
 import { ddpRoutes } from './ddp-routes.ts';
@@ -110,7 +111,24 @@ function transmitConfig(): TransmitConfig {
     sacn: { ...sacn },
     delayMs: hueLatencyMs > 0 && hue.anyEnabled() ? hueLatencyMs : 0,
     ddp: ddpRoutes(state.fixtures, getProfile, universeOf),
+    armed: isArmed(),
   };
+}
+
+/**
+ * Arm or disarm the outputs (armed.ts). True when that was a change.
+ *
+ * Disarming closes every Hue session after one dark frame, so each bridge
+ * leaves entertainment mode and its lamps go back to the Hue app; the
+ * transmitter, told through the config every frame carries, ends the
+ * Art-Net, sACN and DDP streams the same way on its next frame
+ * (transmit.ts), on whichever thread renders. Arming lets frames through
+ * again; a Hue session reopens from the first frame it is sent.
+ */
+function setArmed(on: boolean): boolean {
+  if (!setArmedFlag(on)) return false;
+  if (!on) hue.closeAll().catch(() => { /* best effort, as every teardown is */ });
+  return true;
 }
 
 /** Let the applier persist an application id a bridge's session had to resolve itself. */
@@ -258,6 +276,8 @@ function emitterMix(ch: ChannelMap, at: ChannelReader): [number, number, number]
  * their fixtures happen to live on. Called once per rendered frame.
  */
 function sendHue(): boolean {
+  // Disarmed, a bridge is not even contacted: a frame is what opens a session.
+  if (!isArmed()) return false;
   return hue.sendFrames(hueChannelColors());
 }
 
@@ -288,6 +308,8 @@ export {
   sendUniverse,
   endFrame,
   transmitConfig,
+  setArmed,
+  isArmed,
   artnetDiscovery,
   configureHue,
   getHueConfig,

@@ -107,6 +107,14 @@ export function UpdateFeedbacks(self) {
 			callback: () => !!self.liveState.running,
 		},
 
+		outputs_armed: {
+			type: 'boolean',
+			name: 'Outputs are armed',
+			defaultStyle: { bgcolor: combineRgb(0, 140, 90), color: WHITE },
+			options: [],
+			callback: () => !!self.liveState.armed,
+		},
+
 		auto_show_on: {
 			type: 'boolean',
 			name: 'Auto show is running',
