@@ -220,6 +220,10 @@ const ENERGY_EFFECTS = [
   { id: 'uv-wash',      name: 'UV Wash',       desc: 'Blacklight — UV alone, no strobe' },
   { id: 'kill',         name: 'Kill',          desc: 'Everything out for as long as it is held' },
   { id: 'glow',         name: 'Glow',          desc: 'A soft lift in the current colour — the accent quiet music can take' },
+  // The hold-to-strobe pad of the Hue party apps (look-math.ts HOLD_STROBE):
+  // flashes in the look's colours on the beat grid, the running look showing
+  // through between them.
+  { id: 'palette-strobe', name: 'Palette Strobe', desc: 'Flashes in the look\'s colours on the beat over the running look, up to five a second' },
 ];
 
 const ENERGY_EFFECT_IDS = ENERGY_EFFECTS.map((e) => e.id);

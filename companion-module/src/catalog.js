@@ -101,6 +101,7 @@ export const ENERGY_EFFECTS = [
 	{ id: 'uv-wash', name: 'UV Wash' },
 	{ id: 'kill', name: 'Kill' },
 	{ id: 'glow', name: 'Glow' },
+	{ id: 'palette-strobe', name: 'Palette Strobe' },
 ]
 
 export const STROBE_FUNCTIONS = [

@@ -29,11 +29,11 @@
 // It draws the pattern layer through the same function the rig does
 // (shared/layer.js), so it answers per light: one entry per par, one per cell
 // of an LED bar, in the rig's order (shared/rig.js).
-import { PATTERN_FUNCS } from './patterns.ts';
+import { PATTERN_FUNCS, paletteOf } from './patterns.ts';
 import { renderLayer } from './layer.ts';
-import { buildRig } from './rig.ts';
-import { EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture } from './look-math.ts';
-import { gridFromAnalysis, beatPositionAt, anchorStep, stepAt, motionAdvance } from './beat-clock.ts';
+import { buildRig, isHue } from './rig.ts';
+import { EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture, HOLD_STROBE, holdStrobeFlash, holdStrobeLook } from './look-math.ts';
+import { gridFromAnalysis, beatPositionAt, localBpm, anchorStep, stepAt, motionAdvance } from './beat-clock.ts';
 import type { GridSource } from './beat-clock.ts';
 import type { Rig } from './rig.ts';
 import type { ChannelMap, Colour, Expression, ShowDynamics, StageFixture } from '../types/rig.ts';
@@ -253,20 +253,26 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
     if (!frame || !presets?.length) return rig.units.map(() => ({ r: 0, g: 0, b: 0 }));
 
     const { layer, colors, expr, dyn } = patternLayer(lo - 1, positionMs, rig, presets);
-    const energy = frame.burst && positionMs < frame.burst.end
-      ? resolveEnergyOverride(frame.burst.id, colors[0], expr.level)
+    const burstId = frame.burst && positionMs < frame.burst.end ? frame.burst.id : null;
+    const energy = burstId ? resolveEnergyOverride(burstId, colors[0], expr.level) : null;
+    // The hold strobe is a burst per light, as the rig renders it: a flash,
+    // a Hue lamp's pulse, or nothing between flashes.
+    const hold = !energy && burstId === HOLD_STROBE
+      ? holdStrobeFlash(beatAt(positionMs, frame), beatGrid ? localBpm(beatGrid, positionMs) : frame.look.bpm)
       : null;
+    const palette = hold ? paletteOf({ colors }) : null;
 
     return layer.map(({ color, dim }, u) => {
-      if (energy) {
-        color = energy.col;
-        dim = energy.dim;
+      const { fixture: i, cell } = rig.units[u];
+      const fixture = fixtures[i];
+      const burst = hold && palette ? holdStrobeLook(palette, hold, isHue(fixture)) : energy;
+      if (burst) {
+        color = burst.col;
+        dim = burst.dim;
       } else {
         dim *= expr.level;
         if (dyn && dyn.level === 0) dim = 0;
       }
-      const { fixture: i, cell } = rig.units[u];
-      const fixture = fixtures[i];
       const scale = (dim / 255) * ((fixture.maxBrightness ?? 255) / 255);
       return onlyItsEmitters(emitterValues(color, scale), rig.cellMaps[i]?.[cell]);
     });
