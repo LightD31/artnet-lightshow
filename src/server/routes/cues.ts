@@ -71,6 +71,15 @@ export function attachCueRoutes(app: Express, ctx: RouteContext): void {
     } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
+  // By name, for callers that hold the label rather than the generated id.
+  app.post('/api/cues/by-name/:name/recall', (req, res) => {
+    try {
+      const cue = cues.findByName(req.params.name);
+      if (!cue || !cues.recall(cue.id)) return res.status(404).json({ ok: false, error: 'No cue by that name' });
+      res.json({ ok: true, id: cue.id, state: getClientState() });
+    } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
+  });
+
   app.post('/api/cues/:id/recall', (req, res) => {
     try {
       if (!cues.recall(req.params.id)) return res.status(404).json({ ok: false, error: 'No such cue' });

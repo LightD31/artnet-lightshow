@@ -300,3 +300,11 @@ test('overwriting a cue answers with the look it replaced, and putting it back i
     await new Promise((r) => server.close(r));
   }
 });
+
+test('a cue is found by its name, case and surrounding space ignored', () => {
+  const store = new CueStore(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'cues-')), 'cues.json'));
+  const cue = store.create({ name: 'Party', look: captureLook() });
+  assert.equal(store.findByName(' party ')?.id, cue.id);
+  assert.equal(store.findByName('Rave'), null);
+  assert.equal(store.findByName(''), null);
+});
