@@ -2296,6 +2296,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | PUT | `/api/cues/:id` | Rename (`{ name }`), overwrite from the live look (`{ recapture: true }`), or replace outright (`{ look }`) |
 | DELETE | `/api/cues/:id` | Delete a cue |
 | POST | `/api/cues/:id/recall` | Put a cue on stage |
+| POST | `/api/cues/by-name/:name/recall` | Put the cue with that name on stage (case ignored); 404 when none carries it |
 | POST | `/api/cues/restore` | Put a deleted cue back (`{ cue, index }` — what DELETE answered with) |
 | POST | `/api/cues/reorder` | Reorder the stack (`{ ids }`); ids left out keep their relative order |
 

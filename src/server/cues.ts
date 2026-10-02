@@ -215,6 +215,14 @@ class CueStore extends JsonStore {
     return this._cues.find((c) => c.id === id) || null;
   }
 
+  /** The first cue carrying this name, case and surrounding space ignored — what a
+   *  controller that knows the look by its label (Home Assistant, a show file) asks for. */
+  findByName(name: string): Cue | null {
+    const wanted = String(name).trim().toLowerCase();
+    if (!wanted) return null;
+    return this._cues.find((c) => c.name.trim().toLowerCase() === wanted) || null;
+  }
+
   /** Save a new cue. `look` defaults to what is on stage now. */
   create({ name, look }: { name?: string; look?: unknown }): Cue {
     if (this._cues.length >= MAX_CUES) {
