@@ -93,15 +93,19 @@ function SetupAgain() {
 
 export function SettingsView() {
   useSettings();
-  const s = pick(['midi']);
+  const s = pick(['midi', 'armed']);
   const outputs = (s.midi && s.midi.ports && s.midi.ports.outputs) || [];
   const data = settingsSig.value;
+  // The armed switch shows the live state rather than the stored one: Perform,
+  // Companion and the REST routes flip it too, and the stored copy is only
+  // read again on a reconnect.
+  const showStored = (path) => (path === 'outputs.armed' ? !!s.armed : at(data && data.settings, path));
   return (
     <div class="setup-view">
       <RestartBanner />
       <div class="setup-columns">
         <div class="setup-col">
-          <SettingsSection {...SHOW} />
+          <SettingsSection {...SHOW} stored={showStored} />
           <MidiController />
           <MidiMap />
         </div>

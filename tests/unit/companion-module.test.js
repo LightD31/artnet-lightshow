@@ -111,8 +111,12 @@ test('it connects on protocol 2 and follows the state by its changes alone', asy
     const missing = await conn.recallCue('missing');
     assert.deepStrictEqual(missing, { ok: false, error: 'No such cue' });
     await conn.autoShow('toggle');
+    // The outputs' switch too: a toggle reads the state, which starts disarmed.
+    await conn.armOutputs('disarm');
+    await conn.armOutputs('toggle');
     assert.deepStrictEqual(s.rest.map((r) => [r.path, r.token]), [
       ['/api/cues/cue%207/recall', 'sesame'], ['/api/cues/missing/recall', 'sesame'], ['/api/auto/start', 'sesame'],
+      ['/api/outputs/disarm', 'sesame'], ['/api/outputs/arm', 'sesame'],
     ]);
   } finally {
     conn.disconnect();

@@ -28,6 +28,11 @@ export interface TransmitConfig {
   delayMs: number;
   /** The WLEDs, and the universes that are theirs (ddp-routes.ts). */
   ddp?: DdpRoute[];
+  /**
+   * Whether anything may leave the machine (armed.ts). Left out means it
+   * may; false drops every frame, after the streams have been ended.
+   */
+  armed?: boolean;
 }
 
 /**
@@ -146,6 +151,11 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
   const ddpFrames = new Map<number, Buffer>();
   let ddpSent = new Map<string, { route: DdpRoute; bytes: number }>();
   const ddpSequence = new Map<string, number>();
+  // Whether frames are leaving the machine (armed.ts, through the config),
+  // and where each universe's Art-Net last went, for the black frame that
+  // ends it when they stop.
+  let live = true;
+  const artnetSent = new Map<number, { hosts: string[]; port: number }>();
 
   // ── Hue latency compensation ──────────────────────────────────────────────
   // Art-Net reaches a node in about a millisecond; a Hue lamp hears about a
@@ -190,6 +200,9 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
   function send(universe: number, frame: Buffer, config: TransmitConfig,
     { immediate = false, terminate = false }: SendOptions = {}): Wire[] {
     const sent: Wire[] = [];
+    // Disarmed, nothing leaves — not even a blackout: there is nothing on the
+    // wire to black out, the streams having been ended on the way here.
+    if (!syncArmed(config)) return sent;
     // The server's own universes (fixtures with no DMX address, read back by
     // the Hue lamps) are rendered and never sent.
     if (isInternalUniverse(universe)) return sent;
@@ -218,6 +231,8 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
       if (wires.artnet({ hosts, port: artnet.port, universe }, frame)) {
         sent.push('artnet');
         if (artnet.sync) for (const host of hosts) syncTargets.add(host);
+        if (terminate) artnetSent.delete(universe);
+        else artnetSent.set(universe, { hosts, port: artnet.port });
       }
     }
 
@@ -277,10 +292,64 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
   }
 
   /**
+   * Whether the config says frames may leave; on the change to "no", every
+   * stream this transmitter had going is ended first (goDark). Checked with
+   * every frame, since a change arrives the way everything else does: in the
+   * config the next frame carries.
+   */
+  function syncArmed(config: TransmitConfig): boolean {
+    const armed = config.armed !== false;
+    if (armed === live) return armed;
+    live = armed;
+    if (!armed) goDark(config);
+    return armed;
+  }
+
+  /**
+   * End every stream, the way "Ending a stream" in the README has it: each
+   * universe's Art-Net gets a black frame where it was last sent (and the
+   * ArtSync that shows it, when nodes wait for one); each sACN universe a
+   * black frame and its stream-terminated packets, under the settings it was
+   * sent with; each WLED one dark frame, so its realtime timeout hands the
+   * strip back to its own effects. Frames held for the Hue delay are dropped:
+   * they are the look being ended.
+   */
+  function goDark(config: TransmitConfig): void {
+    delayLine.clear();
+    ddpFrames.clear();
+    const { artnet } = config;
+    for (const [universe, { hosts, port }] of artnetSent) {
+      if (wires.artnet({ hosts, port, universe }, ZERO_FRAME) && artnet && artnet.sync) {
+        for (const host of hosts) syncTargets.add(host);
+      }
+    }
+    artnetSent.clear();
+    if (artnet && artnet.sync) for (const host of syncTargets) wires.artnetSync({ host, port: artnet.port });
+    syncTargets.clear();
+    if (sacnStream) {
+      const old = sacnStream.config;
+      for (const mapped of [...sacnSent.keys()]) sendSacnUniverse(old, mapped, ZERO_FRAME, true);
+      sacnSent.clear();
+      // Announced again the moment the universes are back.
+      lastDiscovery = -Infinity;
+    }
+    for (const gone of ddpSent.values()) sendToWled(gone.route, new Uint8Array(gone.bytes), byteRuns(gone.route, 0));
+    ddpSent = new Map();
+  }
+
+  /**
    * Close the frame: with ArtSync on, tell every node this frame's Art-Net
    * went to that it can output it now.
    */
   function endFrame(config: TransmitConfig | null | undefined): void {
+    if (config && !syncArmed(config)) {
+      // Nothing went out this frame, and nothing is owed: a WLED that left
+      // the patch while disarmed was already sent its dark frame on the way
+      // here, or was never sent at all.
+      ddpFrames.clear();
+      syncTargets.clear();
+      return;
+    }
     endDdpFrame(config && config.ddp);
     const artnet = config && config.artnet;
     if (artnet && artnet.sync && artnet.enabled !== false) {

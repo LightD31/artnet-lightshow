@@ -128,4 +128,8 @@ export default class ArtnetLightshowInstance extends InstanceBase {
 	autoShow(mode) {
 		return this.#connected()?.autoShow(mode)
 	}
+
+	armOutputs(mode) {
+		return this.#connected()?.armOutputs(mode)
+	}
 }

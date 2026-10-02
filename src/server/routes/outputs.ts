@@ -2,6 +2,7 @@ import os from 'node:os';
 import { startSyncTest, resizeFixtureBuffers } from '../engine.ts';
 import { hueDisconnectSchema, huePairSchema, validate } from '../validation.ts';
 import * as output from '../output.ts';
+import { isArmed } from '../armed.ts';
 import { discoverNodes } from '../artnet.ts';
 import { interfaces } from '../artnet-nodes.ts';
 import { discoverBridges } from '../hue.ts';
@@ -9,7 +10,7 @@ import { settings } from '../settings.ts';
 import { state, placeAddresslessFixtures } from '../state.ts';
 import { showStore } from '../show-store.ts';
 import { messageOf } from '../../errors.ts';
-import type { Express } from 'express';
+import type { Express, Response } from 'express';
 import type { ArtNode } from '../artnet.ts';
 import type { EntertainmentArea } from '../hue.ts';
 import type { HueBridgeSettings } from '../settings.ts';
@@ -23,6 +24,19 @@ import type { RouteContext } from './common.ts';
  */
 export function attachOutputRoutes(app: Express, ctx: RouteContext): void {
   const { applier, integrations, hueAreas, huePair } = ctx;
+
+  // ─── Arming the outputs ───────────────────────────────────────────────────
+  // Whether anything leaves the machine (armed.ts): stored as outputs.armed
+  // and applied the moment it is saved, through the same applier the Show
+  // section's switch goes through. Never on at start. The live state and the
+  // health report carry it as `armed`.
+  const answerArmed = (res: Response, on: boolean) => {
+    applier.applyChanged(settings.update({ outputs: { armed: on } }));
+    res.json({ ok: true, armed: isArmed() });
+  };
+  app.post('/api/outputs/arm', (_req, res) => answerArmed(res, true));
+  app.post('/api/outputs/disarm', (_req, res) => answerArmed(res, false));
+  app.post('/api/outputs/toggle', (_req, res) => answerArmed(res, !isArmed()));
 
   // ─── Philips Hue ──────────────────────────────────────────────────────────
   // Pairing and area selection cannot be plain settings fields: the bridge

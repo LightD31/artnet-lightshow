@@ -12,6 +12,7 @@ import type { Settings } from './settings.ts';
 import { discoverNodes, probeSend } from './artnet.ts';
 import { interfaces } from './artnet-nodes.ts';
 import * as output from './output.ts';
+import { isArmed } from './armed.ts';
 import { engineStatus } from './engine.ts';
 import { MIN_UNIVERSE, MAX_UNIVERSE } from './sacn.ts';
 import { listEntertainmentConfigs } from './hue.ts';
@@ -242,6 +243,26 @@ function checkEngine(status: EngineStatus = engineStatus(), { standalone = false
   }
   const note = late ? ` ${late} frame${late === 1 ? '' : 's'} a little late in the last minute.` : '';
   return { id: 'engine', label, status: OK, detail: `Rendering ${where}.${timing}${note}` };
+}
+
+/**
+ * Whether anything leaves the machine (armed.ts). Disarmed is how the server
+ * spends its days, so it is a warning here rather than a failure: worth
+ * seeing before doors open, and one press to put right.
+ */
+function checkOutputsArmed(armed: boolean = isArmed(), { standalone = false } = {}): Check {
+  const label = 'Outputs armed';
+  if (standalone) {
+    return { id: 'armed', label, status: INFO, detail: 'Checked on its own — the running server says whether its outputs are armed.' };
+  }
+  if (!armed) {
+    return {
+      id: 'armed', label, status: WARN,
+      detail: 'Outputs disarmed: the show renders, but nothing goes out to the rig.',
+      fix: 'Arm the outputs before doors open — the switch in Perform or Settings → Show, or POST /api/outputs/arm.',
+    };
+  }
+  return { id: 'armed', label, status: OK, detail: 'Armed: frames go out to the rig.' };
 }
 
 function checkSacn(): Check {
@@ -903,6 +924,7 @@ async function runPreflight({ midi, spotify, prolink, analysisCache, downloadMod
 
   const checks: Check[] = [
     checkEngine(engineStatus(), { standalone }),
+    checkOutputsArmed(isArmed(), { standalone }),
     artnet,
     checkSacn(),
     ...hue,
@@ -939,6 +961,7 @@ export {
   PANNS_CHECKPOINT_SIZE,
   checkPatch,
   checkEngine,
+  checkOutputsArmed,
   checkSacn,
   checkHue,
   checkWled,

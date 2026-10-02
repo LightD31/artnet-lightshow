@@ -227,6 +227,11 @@ export const SHOW = {
   title: 'Show',
   desc: 'How the generated show behaves across a night.',
   fields: [
+    { path: 'outputs.armed', label: 'Outputs Armed', type: 'toggle',
+      help: 'Nothing leaves the machine until a party arms it: disarmed, the show renders for the preview and the '
+        + 'stage view, but no Art-Net, sACN or DDP frame goes out and every Hue bridge is handed back to its app, so '
+        + 'a server that runs all day beside the house\'s lights does not hold them. Always off at start; disarming '
+        + 'stops the patterns and clears any energy effect. The same switch is in Perform.' },
     { path: 'auto.setMemory', label: 'Remember the Night', type: 'toggle',
       help: 'Each track avoids the palette and the looks of the one before it, keeps some of its colours when the two '
         + 'keys mix, and paces its biggest moments against the tracks before it. Off plans every track as if it were '
