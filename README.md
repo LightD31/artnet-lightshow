@@ -776,7 +776,10 @@ and cheap pars — is flashed in software through the strobe pattern and every
 strobing burst: one to twenty flashes a second from the strobe speed, each a
 frame to 50 ms long, all such fixtures together (the random strobe functions
 flash each on its own). A Hue lamp is never flashed: a bridge cannot keep up,
-and Hue's own guidance is to keep effects slower than that.
+and Hue's own guidance is to keep effects slower than that. The party effects'
+strobes and the Palette Strobe know this too: on a Hue lamp each of their
+flashes is the colour at full falling to a floor over 200 ms (see
+[Party effects](#the-patterns)).
 
 ### Philips Hue
 
@@ -1183,6 +1186,53 @@ from one drop to the next, and gives a chorus, a bridge or a solo that drives as
 hard as a drop one of Flash Alternate, Flash Chase, Ramp and Strobe Core, the
 same each time it comes round. The zone-by-zone ones run **Per bar**, so each
 fixture plays the program itself.
+
+**Party effects** — after the party engines of the Hue apps: the Party
+families of Hue Dynamics (its position chase, radial pulse, spatial wash,
+bouncing scan, streak, twinkle, breathing fade, volume gate and frequency
+burst) and the room effects of Light DJ (its fills, halves and flips, waves,
+strobe cycles, fireworks, flashes and swirl). Both drive a handful of lamps
+placed round a room, and so do these: a lamp's place on the stage plot — its
+position, and its group where front and back matter — decides where a chase
+reaches it, which half of the room it is in and which corner it fills from,
+so the effects travel across the room rather than along the patch. A rig
+nobody has placed travels in stage order, and a rig in one row sweeps along
+the row whatever the heading. Every one steps on the musical clock, with
+nothing accumulating from frame to frame, so the rehearsal preview shows
+exactly what the rig will:
+
+| | |
+|---|---|
+| **Position Chase** | A domino running across the room by position, half a step a lamp, each in the look's next colour; the heading turns a quarter every run |
+| **Radial Pulse** | A ring from the middle of the room out to its farthest lamp once a bar, swelling and fading, as hard as the bass pushes |
+| **Spatial Wash** | A soft crest of the look's colours rolling across the room along a heading that turns a quarter every bar, never below the bed |
+| **Bouncing Scan** | A bright line sweeping across the room along a heading of 28° and back again every bar, the next colour on every pass |
+| **Streak** | A comet with a long tail across the room along a heading of 42°, on two events in three, in a direction each event draws |
+| **Starlight** | About a third of the lamps light on every step, each in a colour drawn for it, and fade out over the step |
+| **Breathe** | The whole room swells and falls as one over a bar, the colour drifting a little further round the look on every breath |
+| **Volume Gate** | A slow wash of the look's colours across the room that opens with how loud the music is and closes as it goes quiet |
+| **Confetti** | Three lamps in four pop in colours of their own on every step — no closer than 400 ms — and die away; with the pulse, on the kick as it was hit |
+| **Anchor Fill** | The room split round its anchors by position — the two sides, the four corners, or the corners and the middle on a bigger rig — and filled anchor by anchor on every step, the next colour over the last |
+| **Halves** | The front of the room against the back on one step, the left against the right on the next, in A and B, swapping every other time round; front and back come from the fixture groups when set |
+| **Flip** | The four corners of the room, one diagonal in A and the other in B, swapping on every step |
+| **Room Wave** | A wave of the look's colours crossing the room once a bar along a heading that turns by a seventh of a circle every lap |
+| **Ring Strobe** | One lamp at a time round the ring of the room — from the front, clockwise seen from above — a flash on every step, each lap in the look's next colour |
+| **Ring Backlit** | The same ring with the lit lamp in colour A and the rest of the room parked on colour B |
+| **Fireworks** | A burst on one lamp on every step, never the one before, spreading to its neighbours a little later and dimmer the farther they stand, dying away over a bar |
+| **Flashes** | About a third of the lamps, drawn afresh on every step, flash hard in colours of the look and are cut after a fifth of the step |
+| **Swirl** | The look's colours laid round the room by angle and turning, a full turn every eight steps |
+
+Headings are degrees on the plot, 0° towards the audience and 90° to the
+right. The strobes among them are gated by the beat and never random: Ring
+Strobe flashes one lamp a step — on the beat, its halves, quarters or eighths
+as the beat division says — and, where a step is too short for that, holds
+the ring for two, so no lamp flashes more than five times a second (the party
+apps' own cap); Flashes and Confetti space their events the same way. A Hue
+lamp is never flashed: it takes each flash as the colour at full falling to a
+floor of 40 over 200 ms and held there until its next, as the apps fade a hit
+lamp back, so a ring of Hue lamps pulses where a ring of pars flashes. Flash
+Limit still holds the whole rig to three large flashes a second. The auto
+show does not pick them: they are for the picker, cues and MIDI.
 
 **Drums** and **Stems** play the analysis's *pulse*. That is every kick, snare
 and hat read off the separated drum stem, and each stem's level fifty times a

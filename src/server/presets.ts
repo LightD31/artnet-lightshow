@@ -144,6 +144,27 @@ const PATTERNS = [
   { id: 'flash-alternate', name: 'Flash Alternate', desc: 'Odd zones flash on the step, even ones between', pixel: true },
   { id: 'ramp',            name: 'Ramp',            desc: 'Every step swells from black to full from the middle, cut on the beat', pixel: true },
   { id: 'core',            name: 'Strobe Core',     desc: 'A colour wash with a white core striking on every kick', pixel: true },
+  // After the party engines of the Hue apps (patterns.ts, "Party effects"):
+  // they travel the room by where the lamps stand on the stage plot, and in
+  // stage order on a rig nobody has placed. `party` groups them in the picker.
+  { id: 'position-chase', name: 'Position Chase', desc: 'A domino running across the room by position, turning a quarter every run', party: true },
+  { id: 'radial-pulse',   name: 'Radial Pulse',   desc: 'A ring from the middle of the room out to its edge once a bar, driven by the bass', party: true },
+  { id: 'spatial-wash',   name: 'Spatial Wash',   desc: 'A soft crest of the look\'s colours rolling across the room, turning a quarter every bar', party: true },
+  { id: 'bounce-scan',    name: 'Bouncing Scan',  desc: 'A bright line sweeping across the room and back every bar', party: true },
+  { id: 'streak',         name: 'Streak',         desc: 'A comet with a long tail across the room on two events in three, either way', party: true },
+  { id: 'starlight',      name: 'Starlight',      desc: 'A third of the lamps light on every step, each in its own colour, and fade', party: true },
+  { id: 'breathe',        name: 'Breathe',        desc: 'The whole room swells and falls as one over a bar, the colour drifting round the look', party: true },
+  { id: 'volume-gate',    name: 'Volume Gate',    desc: 'A slow wash across the room that opens with how loud the music is', party: true },
+  { id: 'confetti',       name: 'Confetti',       desc: 'Three lamps in four pop in their own colours on every step, or on the kick, and die away', party: true },
+  { id: 'anchor-fill',    name: 'Anchor Fill',    desc: 'The room filled corner by corner on every step, the next colour over the last', party: true },
+  { id: 'halves',         name: 'Halves',         desc: 'Front against back, then left against right, in A and B, swapping every other time', party: true },
+  { id: 'flip',           name: 'Flip',           desc: 'The four corners of the room, one diagonal in A and the other in B, swapping every step', party: true },
+  { id: 'room-wave',      name: 'Room Wave',      desc: 'A wave of the look\'s colours crossing the room once a bar, on a heading that turns every lap', party: true },
+  { id: 'ring-strobe',    name: 'Ring Strobe',    desc: 'One lamp at a time round the ring of the room, a flash on every step, never a lamp over five a second', party: true },
+  { id: 'ring-backlit',   name: 'Ring Backlit',   desc: 'The ring strobe with the rest of the room parked on colour B', party: true },
+  { id: 'fireworks',      name: 'Fireworks',      desc: 'A burst on one lamp on every step, spreading to its neighbours and dying away over a bar', party: true },
+  { id: 'flashes',        name: 'Flashes',        desc: 'A third of the lamps, drawn afresh on every step, flash hard and are cut', party: true },
+  { id: 'swirl',          name: 'Swirl',          desc: 'The look\'s colours laid round the room by angle and turning, a turn every eight steps', party: true },
 ];
 
 const PATTERN_IDS = PATTERNS.map((p) => p.id);
