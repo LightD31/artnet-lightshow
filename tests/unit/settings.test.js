@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { SettingsStore, DEFAULTS, warnAboutLegacyEnv } from '../../src/server/settings.ts';
+import { SettingsStore, DEFAULTS, LEGACY_HUE_BRIDGE_ID, migrateLegacyHue, warnAboutLegacyEnv } from '../../src/server/settings.ts';
 import { schema, patchSchema } from '../../src/server/settings.ts';
 
 let counter = 0;
@@ -45,27 +45,91 @@ test('secrets are never handed back to the client', () => {
     // written by the server rather than typed, but it leaks exactly as badly.
     spotify: { clientSecret: 'shh', refreshToken: 'a-live-session' },
     // Bridge-issued rather than typed, and together they are the DTLS identity
-    // and the pre-shared key — enough to drive the whole Hue system.
-    hue: { username: 'app-key', clientKey: 'abcdef01' },
+    // and the pre-shared key — enough to drive the whole Hue system. One pair
+    // per bridge, inside its entry.
+    hue: { bridges: [{ ...BRIDGE, username: 'app-key', clientKey: 'abcdef01' }] },
   });
 
   const { settings, secrets } = s.redacted();
   assert.strictEqual(settings.deezer.arl, '', 'redacted out');
   assert.strictEqual(settings.spotify.clientSecret, '');
   assert.strictEqual(settings.spotify.refreshToken, '');
-  assert.strictEqual(settings.hue.username, '');
-  assert.strictEqual(settings.hue.clientKey, '');
+  assert.deepStrictEqual(settings.hue.bridges, [{ ...BRIDGE, username: '', clientKey: '' }], 'the bridge is there, its keys are not');
   assert.deepStrictEqual(secrets, {
     'server.token': false,
     'spotify.clientSecret': true,
     'spotify.refreshToken': true,
     'deezer.arl': true,
-    'hue.username': true,
-    'hue.clientKey': true,
   });
+  assert.ok(!JSON.stringify(s.redacted()).includes('abcdef01'), 'nowhere in what a client gets');
   assert.strictEqual(s.get('deezer.arl'), 'cookie-value', 'still readable server-side');
   assert.strictEqual(s.get('spotify.refreshToken'), 'a-live-session');
-  assert.strictEqual(s.get('hue.clientKey'), 'abcdef01');
+  assert.strictEqual(s.get('hue.bridges')[0].clientKey, 'abcdef01');
+});
+
+const BRIDGE = { id: 'bridge-1', label: 'Lounge', enabled: true, host: '10.0.0.9', username: '', clientKey: '', applicationId: '', entertainmentId: '' };
+
+// The page gets the bridges with their keys blanked, and sends the list back
+// to change an area or a label: blank has to mean "keep", or every such save
+// would unpair the bridge.
+test('a bridge sent back with blank keys keeps the stored ones; a bridge dropped from the list is forgotten', () => {
+  const s = store().load();
+  s.update({ hue: { bridges: [{ ...BRIDGE, username: 'app-key', clientKey: 'abcdef01' }] } });
+  const changed = s.update({ hue: { bridges: [{ ...BRIDGE, enabled: false, username: '', clientKey: '' }] } });
+  assert.deepStrictEqual(changed, ['hue.bridges']);
+  assert.deepStrictEqual(s.get('hue.bridges'), [{ ...BRIDGE, enabled: false, username: 'app-key', clientKey: 'abcdef01' }]);
+  s.update({ hue: { bridges: [] } });
+  assert.deepStrictEqual(s.get('hue.bridges'), []);
+  assert.throws(() => s.update({ hue: { bridges: [BRIDGE, { ...BRIDGE, label: 'Twin' }] } }), /same id/);
+});
+
+// The settings file of a rig set up when there could be only one bridge
+// holds it as scalars under hue. It loads as the first of hue.bridges, keys
+// and all, so nothing has to be paired again.
+test('a settings file with one bridge in the old form loads it as bridge-1', () => {
+  const s = store();
+  fs.writeFileSync(s.file, JSON.stringify({
+    hue: {
+      enabled: true, host: '10.0.0.9', username: 'app-key', clientKey: 'abcdef01',
+      applicationId: 'a966c4cc-018d-4422-aad8-414843fc4fad', entertainmentId: '0123abcd-1234-5678-9abc-def012345678',
+      latencyMs: 60, channels: { 0: 1 },
+    },
+  }));
+  s.load();
+  assert.deepStrictEqual(s.group('hue'), {
+    bridges: [{
+      id: 'bridge-1', label: '10.0.0.9', enabled: true, host: '10.0.0.9', username: 'app-key', clientKey: 'abcdef01',
+      applicationId: 'a966c4cc-018d-4422-aad8-414843fc4fad', entertainmentId: '0123abcd-1234-5678-9abc-def012345678',
+    }],
+    latencyMs: 60,
+  });
+  s.update({ hue: { latencyMs: 70 } });
+  const written = JSON.parse(fs.readFileSync(s.file, 'utf8'));
+  assert.strictEqual(written.hue.host, undefined, 'the next save writes the new form');
+  assert.strictEqual(written.hue.bridges[0].clientKey, 'abcdef01');
+  assert.deepStrictEqual(new SettingsStore(s.file).load().group('hue').bridges.map((b) => b.id), ['bridge-1']);
+});
+
+test('an old-form file whose bridge was never paired loads with no bridge at all', () => {
+  const s = store();
+  fs.writeFileSync(s.file, JSON.stringify({ hue: { enabled: false, host: '', username: '', clientKey: '', applicationId: '', entertainmentId: '', latencyMs: 0 } }));
+  assert.deepStrictEqual(s.load().group('hue'), { bridges: [], latencyMs: 0 });
+});
+
+test('migrating the old form is a pure step on the parsed file', () => {
+  const parsed = { hue: { enabled: true, host: '10.0.0.9', username: 'k', clientKey: 'aabb', latencyMs: 5 }, artnet: { port: 6454 } };
+  assert.strictEqual(migrateLegacyHue(parsed), true);
+  assert.deepStrictEqual(Object.keys(parsed.hue).sort(), ['bridges', 'latencyMs']);
+  assert.strictEqual(parsed.hue.bridges[0].id, LEGACY_HUE_BRIDGE_ID);
+  assert.strictEqual(migrateLegacyHue({ hue: { bridges: [], latencyMs: 0 } }), false, 'the new form is left alone');
+  assert.strictEqual(migrateLegacyHue({ hue: { latencyMs: 0 } }), false);
+  assert.strictEqual(migrateLegacyHue(null), false);
+});
+
+test('a save in the old form is refused with a pointer to hue.bridges', () => {
+  const s = store().load();
+  assert.throws(() => s.update({ hue: { host: '10.0.0.9', enabled: true } }), /hue\.enabled, hue\.host.*hue\.bridges.*\/api\/hue\/pair/);
+  assert.deepStrictEqual(s.group('hue'), DEFAULTS.hue, 'nothing was saved');
 });
 
 // The settings page has no field for the refresh token, so its saves never
@@ -153,9 +217,9 @@ test('legacy env vars are named as ignored, not silently dropped', () => {
 // Unlike them it is not a secret, so it stays readable by the settings page.
 test('the Hue application id round-trips and is not redacted', () => {
   const s = store().load();
-  s.update({ hue: { applicationId: 'a966c4cc-018d-4422-aad8-414843fc4fad' } });
+  s.update({ hue: { bridges: [{ ...BRIDGE, applicationId: 'a966c4cc-018d-4422-aad8-414843fc4fad' }] } });
   assert.strictEqual(
-    s.redacted().settings.hue.applicationId,
+    s.redacted().settings.hue.bridges[0].applicationId,
     'a966c4cc-018d-4422-aad8-414843fc4fad',
   );
 });

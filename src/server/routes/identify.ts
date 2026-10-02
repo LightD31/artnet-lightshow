@@ -15,7 +15,7 @@ import * as output from '../output.ts';
 import { validate } from '../validation.ts';
 import { messageOf, statusOf } from '../../errors.ts';
 import type { Express, Response } from 'express';
-import { asyncHandler } from './common.ts';
+import { asyncHandler, resolveHueBridge } from './common.ts';
 import type { Identify, PixelSend } from '../identify.ts';
 import type { SacnWatch } from '../sacn-watch.ts';
 import type { WledClient } from '../wled.ts';
@@ -194,20 +194,24 @@ function attachIdentifyRoutes(app: Express, deps: IdentifyRouteDeps): void {
     }
   }));
 
-  app.post('/api/hue/identify', asyncHandler(async (req, res) => {
+  // A lamp of one bridge's area; the route from before several bridges
+  // were possible means the first one.
+  app.post(['/api/hue/identify', '/api/hue/:bridge/identify'], asyncHandler(async (req, res) => {
     try {
       const body = validate(hueIdentifySchema, req.body || {}, 'Hue identify');
       const secs = identifySeconds(body.seconds);
-      const config = output.getHueConfig();
-      if (!config.host || !config.username) return res.status(409).json({ ok: false, error: 'Pair with a bridge first.' });
+      const bridge = resolveHueBridge(req, res);
+      if (!bridge) return;
+      if (!bridge.host || !bridge.username) return res.status(409).json({ ok: false, error: `Pair with "${bridge.label || bridge.id}" first.` });
       // A lamp in the patch is streaming, so it shows itself through its fixture.
-      const patched = state.fixtures.find((f) => f.profileId === hueProfileId(body.lamp));
+      const patched = state.fixtures.find((f) => f.profileId === hueProfileId(body.lamp)
+        && f.output?.protocol === 'hue' && f.output.bridge === bridge.id);
       if (patched) return res.json({ ok: true, via: 'fixture', ...start([patched.id], secs) });
-      const areas = await hueAreas(config.host, config.username);
-      const area = areas.find((a) => a.id === config.entertainmentId) || null;
+      const areas = await hueAreas(bridge.host, bridge.username);
+      const area = areas.find((a) => a.id === bridge.entertainmentId) || null;
       const lamp = area ? area.lamps.find((l) => l.id === body.lamp) : null;
-      if (!lamp) return res.status(404).json({ ok: false, error: 'That lamp is not in the entertainment area' });
-      const lamps = secs > 0 ? await hueIdentify(config.host, config.username, lamp.devices || []) : 0;
+      if (!lamp) return res.status(404).json({ ok: false, error: `That lamp is not in the entertainment area of "${bridge.label || bridge.id}"` });
+      const lamps = secs > 0 ? await hueIdentify(bridge.host, bridge.username, lamp.devices || []) : 0;
       res.json({ ok: true, via: 'bridge', lamps });
     } catch (err) {
       fail(res, err, 502);
