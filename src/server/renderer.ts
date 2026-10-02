@@ -18,12 +18,12 @@
 import { COLOR_PRESETS, STROBE_FUNCTIONS } from './presets.ts';
 import { HUE_PROFILE_IDS } from './profiles.ts';
 import { FRAME_MS } from './frame-clock.ts';
-import { PATTERN_FUNCS } from '../shared/patterns.ts';
+import { PATTERN_FUNCS, paletteOf } from '../shared/patterns.ts';
 import { renderLayer } from '../shared/layer.ts';
 import { buildRig, rigSignature } from '../shared/rig.ts';
 import { cellPlace, channelPlace, stripOf } from '../shared/placement.ts';
 // Shared with the browser's rehearsal preview so the two cannot drift.
-import { EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture, cellDrive } from '../shared/look-math.ts';
+import { EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture, cellDrive, HOLD_STROBE, holdStrobeFlash, holdStrobeLook } from '../shared/look-math.ts';
 import { anchorStep, stepAt, motionAdvance } from '../shared/beat-clock.ts';
 import { createFlashLimiter, lightLuminance, strobeCap } from './flash-limit.ts';
 import { identifyLights } from './identify.ts';
@@ -450,6 +450,25 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
   }
 
   /**
+   * The burst on each fixture this frame: the one forced on every fixture,
+   * or — the hold strobe — a flash on every lamp and a Hue lamp's pulse on
+   * a Hue lamp, and nothing at all between flashes, when the running look
+   * shows through (look-math.ts holdStrobeLook).
+   */
+  function energyPerFixture(input: RenderInput, reading: MusicalTime, now: number): (EnergyLook | null)[] {
+    const energy = currentEnergy(input, now);
+    if (energy || input.energy !== HOLD_STROBE) return input.fixtures.map(() => energy);
+    const flash = holdStrobeFlash(reading.beatPos, reading.bpm);
+    const palette = paletteOf({ colors: [input.colorA, input.colorB, input.colorC, input.colorD].map((i) => COLOR_PRESETS[i]) });
+    return input.fixtures.map((fix) => holdStrobeLook(palette, flash, hueLamp(fix)));
+  }
+
+  /** A Hue lamp, or a light that follows one: a bridge cannot flash. */
+  function hueLamp(fix: RenderFixture): boolean {
+    return fix.hue || HUE_PROFILE_IDS.has(fix.profileId);
+  }
+
+  /**
    * What one light shows this frame before the masters: a burst over
    * everything, a pinned fixture over the look, else the pattern layer
    * (partway through a fade if one is running). The music scales the pattern
@@ -530,7 +549,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       if (value !== null) dmx[base + ch.strobe] = value;
       return true;
     }
-    if (!request || fix.hue || HUE_PROFILE_IDS.has(fix.profileId)) return true;
+    if (!request || hueLamp(fix)) return true;
     return softStrobeLit(request, now);
   }
 
@@ -624,7 +643,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     sizeUnitBuffers(rigNow.units.length);
     renderPattern(input, rigNow, reading);
 
-    const energy = currentEnergy(input, now);
+    const energies = energyPerFixture(input, reading, now);
 
     // Allocate a buffer for every universe the patch now spans and retire the
     // ones it left. Done every frame rather than on patch edits: a fixture
@@ -668,7 +687,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     for (let i = 0; i < fixtures.length; i++) {
       const { start, count } = rigNow.ranges[i];
       const lights: LightValue[] = [];
-      for (let u = start; u < start + count; u++) lights.push(lightOf(u, fixtures[i], energy, fadeT, target));
+      for (let u = start; u < start + count; u++) lights.push(lightOf(u, fixtures[i], energies[i], fadeT, target));
       all.push(lights);
     }
     if (input.flashLimit) limitFlashes(input, all, now);
@@ -676,8 +695,8 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     for (let i = 0; i < fixtures.length; i++) {
       const cells = rigNow.cellMaps[i];
       if (ident && ident.ids.has(fixtures[i].id)) writeIdentified(input, store, fixtures[i], cells, now - ident.start, now);
-      else if (cells) writeBar(input, store, fixtures[i], cells, all[i], energy, now);
-      else writePar(input, store, fixtures[i], all[i][0], energy, now);
+      else if (cells) writeBar(input, store, fixtures[i], cells, all[i], energies[i], now);
+      else writePar(input, store, fixtures[i], all[i][0], energies[i], now);
     }
     return rigNow;
   }

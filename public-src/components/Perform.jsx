@@ -27,10 +27,11 @@ const PAD_LABELS = {
   blinder: 'Blinder',
   'white-strobe': 'Strobe',
   'color-strobe': 'Colour strobe',
+  'palette-strobe': 'Palette strobe',
   'uv-wash': 'UV',
   glow: 'Glow',
 };
-const PAD_ORDER = ['kill', 'blinder', 'white-strobe', 'color-strobe', 'uv-wash', 'glow'];
+const PAD_ORDER = ['kill', 'blinder', 'white-strobe', 'color-strobe', 'palette-strobe', 'uv-wash', 'glow'];
 
 const SOURCE_LABELS = {
   prolink: 'PRO DJ LINK', hybrid: 'Spotify + OS clock', spotify: 'Spotify', deezer: 'Deezer',

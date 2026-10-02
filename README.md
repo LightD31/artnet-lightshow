@@ -1397,6 +1397,7 @@ still mean something at the moment you hit the blinder.
 | `blinder` | Blinder | Every emitter at full — the brightest the rig goes |
 | `uv-wash` | UV Wash | Blacklight — UV alone, no strobe |
 | `kill` | Kill | Everything out for as long as it is held |
+| `palette-strobe` | Palette Strobe | Flashes in the look's colours on the beat over the running look, up to five a second |
 
 Five effects covering four separate jobs, so no two buttons do the same thing: a
 strobe punch that is either cold or in the look's own colour, a held wall of
@@ -1410,6 +1411,16 @@ visible light, which is brighter than either was. `uv-strobe` gave way to
 
 `kill` is not master blackout. The master is a latching switch on the whole rig;
 this is momentary and auto-clears, which is what you want under a thumb on a drop.
+
+`palette-strobe` is the hold-to-strobe pad of the Hue party apps, and the one
+override that does not replace the look. While it is held, every lamp flashes
+a colour of the look — the slots' distinct colours in turn, one per flash — on
+the beat grid, at the finest division of the beat that stays under five
+flashes a second (half beats at 128 BPM, beats at 174): each flash 80 ms at
+full, then 80 ms of black, then the running pattern shows through until the
+next. A Hue lamp is never flashed: it takes each flash as the colour at full
+falling to a floor of 40 over 200 ms, held there until the next. Flash Limit
+still holds the rig as a whole to three large flashes a second.
 
 Trigger from the UI, MIDI (encoder push 8 — hold to activate, release to clear),
 REST, or Companion. Clear with `energyOverride: null`.
