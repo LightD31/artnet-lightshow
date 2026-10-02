@@ -120,21 +120,26 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
     // A pairing made before the application id was fetched at pair time has to
     // resolve it on the first connect. Store it when that happens so the next
     // start does not ask the bridge again.
-    output.onHueApplicationId((applicationId) => {
-      if (settings.get('hue.applicationId') === applicationId) return;
+    output.onHueApplicationId((bridgeId, applicationId) => {
+      const bridges = settings.group('hue').bridges;
+      const bridge = bridges.find((b) => b.id === bridgeId);
+      if (!bridge || bridge.applicationId === applicationId) return;
       try {
-        settings.update({ hue: { applicationId } });
+        settings.update({ hue: { bridges: bridges.map((b) => (b.id === bridgeId ? { ...b, applicationId } : b)) } });
       } catch (err) {
-        console.warn(`[hue] could not store the application id: ${messageOf(err)}`);
+        console.warn(`[hue] could not store the application id of ${bridge.label || bridgeId}: ${messageOf(err)}`);
       }
     });
-    if (!config.enabled) return;
-    if (!config.host || !config.username || !config.clientKey || !config.entertainmentId) {
-      console.warn('[hue] output is on but the bridge is not fully set up yet — '
-        + 'pair with it and pick an entertainment area in Rig → Outputs → Philips Hue.');
-      return;
+    for (const bridge of config.bridges) {
+      if (!bridge.enabled) continue;
+      const name = bridge.label || bridge.id;
+      if (!bridge.host || !bridge.username || !bridge.clientKey || !bridge.entertainmentId) {
+        console.warn(`[hue] ${name}: output is on but the bridge is not fully set up yet — `
+          + 'pair with it and pick an entertainment area in Rig → Outputs → Philips Hue.');
+        continue;
+      }
+      console.log(`[hue] ${name}: output enabled → ${bridge.host}, area ${bridge.entertainmentId}`);
     }
-    console.log(`[hue] output enabled → ${config.host}, area ${config.entertainmentId}`);
   }
 
   function applyControlFeedback() {

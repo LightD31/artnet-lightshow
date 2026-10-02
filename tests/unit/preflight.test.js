@@ -216,72 +216,94 @@ test('a working binary reports its first line of output', async () => {
 
 import { HUE_COLOR_PROFILE_ID } from '../../src/server/profiles.ts';
 
-const lamp = (id, channel) => ({
+const lamp = (id, channel, bridge = 'b1') => ({
   id, label: `Lamp ${id}`, address: 1, universe: 60000, profileId: HUE_COLOR_PROFILE_ID, maxBrightness: 255, override: null,
-  output: { protocol: 'hue', channel },
+  output: { protocol: 'hue', bridge, channel },
 });
+const OFF = { id: 'b1', label: 'Lounge', enabled: false, host: '', username: '', clientKey: '', applicationId: '', entertainmentId: '' };
 const PAIRED = {
-  enabled: true, host: '10.0.0.9', username: 'key', clientKey: 'aabb', entertainmentId: '0123abcd-1234-5678-9abc-def012345678',
+  ...OFF, enabled: true, host: '10.0.0.9', username: 'key', clientKey: 'aabb', entertainmentId: '0123abcd-1234-5678-9abc-def012345678',
 };
 
-/** Run a Hue check with a given config and these lamps in the patch, then put both back. */
-async function withHue(config, fn, lamps = []) {
+/** Run the Hue check with these bridges and these lamps in the patch, then put both back. */
+async function withHue(bridges, fn, lamps = []) {
   const before = output.getHueConfig();
   const fixtures = state.fixtures;
   try {
-    output.configureHue({ enabled: false, host: '', username: '', clientKey: '', entertainmentId: '', ...config });
+    output.configureHue({ bridges });
     state.fixtures = [...fixtures.filter((f) => !f.output), ...lamps];
     return await fn();
   } finally {
     state.fixtures = fixtures;
-    output.configureHue({ ...before });
+    output.configureHue({ bridges: before.bridges, latencyMs: before.latencyMs });
   }
 }
 
-test('Hue output that is off is information, not a warning', async () => {
-  const check = await withHue({ enabled: false }, () => checkHue());
+test('no bridge paired is information, not a warning', async () => {
+  const [check, ...rest] = await withHue([], () => checkHue());
   assert.strictEqual(check.status, STATUSES.INFO);
+  assert.strictEqual(rest.length, 0);
 });
 
-test('Hue lamps in the patch with the output off are a warning', async () => {
-  const check = await withHue({ enabled: false }, () => checkHue(), [lamp(90, 0)]);
+test('Hue lamps in the patch with no bridge paired are a warning', async () => {
+  const [check] = await withHue([], () => checkHue(), [lamp(90, 0)]);
+  assert.strictEqual(check.status, STATUSES.WARN);
+  assert.match(check.detail, /no bridge is paired/);
+});
+
+test('a bridge that is off is information; off with its lamps in the patch is a warning', async () => {
+  const [off] = await withHue([OFF], () => checkHue());
+  assert.strictEqual(off.status, STATUSES.INFO);
+  const [check] = await withHue([OFF], () => checkHue(), [lamp(90, 0)]);
   assert.strictEqual(check.status, STATUSES.WARN);
   assert.match(check.detail, /output is off/);
 });
 
-test('Hue output enabled with no pairing names what is missing', async () => {
-  const check = await withHue({ enabled: true, host: '10.0.0.9' }, () => checkHue());
+test('a bridge that is on with no pairing names what is missing, and which bridge', async () => {
+  const [check] = await withHue([{ ...OFF, enabled: true, host: '10.0.0.9' }], () => checkHue());
   assert.strictEqual(check.status, STATUSES.FAIL);
+  assert.strictEqual(check.id, 'hue:b1');
+  assert.match(check.label, /Lounge/);
   assert.match(check.detail, /pairing/);
   assert.match(check.detail, /entertainment area/);
   assert.ok(check.fix, 'a failure says what to do about it');
 });
 
 test('a paired bridge with no lamp in the patch warns rather than passing', async () => {
-  const check = await withHue(PAIRED, () => checkHue());
+  const [check] = await withHue([PAIRED], () => checkHue());
   assert.strictEqual(check.status, STATUSES.WARN);
-  assert.match(check.detail, /no Hue lamp is in the patch/);
+  assert.match(check.detail, /none of its lamps is in the patch/);
 });
 
 // Only one of them can be shown, and nothing else would say so.
-test('two lamps on one channel are a warning, before the bridge is contacted', async () => {
-  const check = await withHue({ ...PAIRED, host: 'bridge.invalid' }, () => checkHue(), [lamp(90, 3), lamp(91, 3)]);
+test('two lamps on one channel of one bridge are a warning, before the bridge is contacted', async () => {
+  const [check] = await withHue([{ ...PAIRED, host: 'bridge.invalid' }], () => checkHue(), [lamp(90, 3), lamp(91, 3)]);
   assert.strictEqual(check.status, STATUSES.WARN);
-  assert.match(check.detail, /both Hue channel 3/);
+  assert.match(check.detail, /both channel 3 of "Lounge"/);
 });
 
 // An unreachable bridge must be reported as such rather than throwing out of
-// the whole preflight run.
-test('a bridge that cannot be reached is a failure with the reason attached', async () => {
-  const check = await withHue({
+// the whole preflight run — and as a warning that names it: the rest of the
+// rig, and any other bridge, still runs.
+test('a bridge that cannot be reached is a warning naming it, with the reason attached', async () => {
+  const [check] = await withHue([{
     ...PAIRED,
     // .invalid is reserved by RFC 2606 and is guaranteed never to resolve, so
     // this fails on DNS immediately. An unroutable IP would test the same path
     // but spend the full REST timeout doing it, on every run of the suite.
     host: 'bridge.invalid',
-  }, () => checkHue(), [lamp(90, 0)]);
-  assert.strictEqual(check.status, STATUSES.FAIL);
-  assert.match(check.detail, /Cannot reach the bridge/);
+  }], () => checkHue(), [lamp(90, 0)]);
+  assert.strictEqual(check.status, STATUSES.WARN);
+  assert.match(check.detail, /Cannot reach "Lounge" at bridge\.invalid/);
+});
+
+test('every bridge is checked, each a row of its own, and a lamp of a bridge that is gone is called out', async () => {
+  const bridges = [{ ...PAIRED, host: 'bridge.invalid' }, { ...OFF, id: 'b2', label: 'Party' }];
+  const checks = await withHue(bridges, () => checkHue(), [lamp(90, 0), lamp(91, 0, 'b2'), lamp(92, 0, 'gone')]);
+  assert.deepStrictEqual(checks.map((c) => [c.id, c.status]), [['hue:b1', STATUSES.WARN], ['hue:b2', STATUSES.WARN], ['hue', STATUSES.WARN]]);
+  assert.match(checks[0].detail, /"Lounge"/);
+  assert.match(checks[1].detail, /output is off/);
+  assert.match(checks[2].detail, /"Lamp 92" \(bridge gone\)/);
 });
 
 // Model weights run to gigabytes: the check fetches what is missing in the

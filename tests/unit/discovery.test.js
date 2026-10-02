@@ -102,7 +102,7 @@ async function withRoutes(fn, { fixtures = [], hue = null } = {}) {
   const saved = state.fixtures;
   const savedHue = output.getHueConfig();
   state.fixtures = fixtures;
-  if (hue) output.configureHue(hue);
+  if (hue) output.configureHue({ bridges: hue });
   const calls = { broadcast: 0, locate: [], pixels: [], hue: [], info: [] };
   const identify = createIdentify({ setTimer: () => ({}), clearTimer: () => {} });
   const app = express();
@@ -193,22 +193,37 @@ test('a WLED: through the patch when it is in it, else streamed directly', async
   }, { fixtures: [{ ...par(5, 1, 4), output: { protocol: 'ddp', host: '10.0.0.50' } }] });
 });
 
+const BRIDGE = { id: 'b1', label: 'Lounge', enabled: true, host: '10.0.0.60', username: 'app-key', clientKey: 'aabb', applicationId: '', entertainmentId: 'a1' };
+
 test('a Hue channel: its lamp when it is in the patch, else the bridge identifies the lamps', async () => {
-  const hue = { host: '10.0.0.60', username: 'app-key', entertainmentId: 'a1' };
+  const hue = [BRIDGE, { ...BRIDGE, id: 'b2', label: 'Party', host: '10.0.0.61' }];
   await withRoutes(async ({ call, calls }) => {
-    const bound = await call('POST', '/api/hue/identify', { channel: 0 });
+    const bound = await call('POST', '/api/hue/b1/identify', { channel: 0 });
     assert.deepStrictEqual([bound.body.via, bound.body.ids], ['fixture', [1]]);
-    const loose = await call('POST', '/api/hue/identify', { channel: 1 });
+    const loose = await call('POST', '/api/hue/b1/identify', { channel: 1 });
     assert.deepStrictEqual([loose.body.via, loose.body.lamps], ['bridge', 2]);
     assert.deepStrictEqual(calls.hue, [['d2', 'd3']]);
-    const missing = await call('POST', '/api/hue/identify', { channel: 7 });
+    const missing = await call('POST', '/api/hue/b1/identify', { channel: 7 });
     assert.strictEqual(missing.status, 404);
-  }, { fixtures: [par(3, 1), { ...par(1, 1), profileId: HUE_COLOR_PROFILE_ID, output: { protocol: 'hue', channel: 0 } }], hue });
+    // Channel 0 of the other bridge is not the lamp in the patch: it is the
+    // other bridge's, which identifies it itself.
+    const other = await call('POST', '/api/hue/b2/identify', { channel: 0 });
+    assert.deepStrictEqual([other.body.via, other.body.lamps], ['bridge', 1]);
+    // The route from before several bridges means the first one.
+    const legacy = await call('POST', '/api/hue/identify', { channel: 0 });
+    assert.deepStrictEqual([legacy.body.via, legacy.body.ids], ['fixture', [1]]);
+    assert.strictEqual((await call('POST', '/api/hue/zz/identify', { channel: 0 })).status, 404);
+  }, { fixtures: [par(3, 1), { ...par(1, 1), profileId: HUE_COLOR_PROFILE_ID, output: { protocol: 'hue', bridge: 'b1', channel: 0 } }], hue });
 });
 
 test('Hue identify before pairing says to pair', async () => {
   await withRoutes(async ({ call }) => {
     const res = await call('POST', '/api/hue/identify', { channel: 0 });
     assert.strictEqual(res.status, 409);
-  }, { hue: { host: '', username: '' } });
+    const unknown = await call('POST', '/api/hue/b1/identify', { channel: 0 });
+    assert.strictEqual(unknown.status, 404, 'no such bridge');
+  }, { hue: [] });
+  await withRoutes(async ({ call }) => {
+    assert.strictEqual((await call('POST', '/api/hue/b1/identify', { channel: 0 })).status, 409);
+  }, { hue: [{ ...BRIDGE, host: '', username: '' }] });
 });

@@ -61,7 +61,7 @@ function withLamps(lamps, fn) {
     ? { id: 100 + i, label: `Par ${i}`, address: 1, universe: 0, profileId: BUILTIN_PROFILE_ID, maxBrightness: 255, override: null }
     : {
       id: 100 + i, label: `Lamp ${i}`, address: 1, universe: 0, profileId: lamp.profileId ?? HUE_COLOR_PROFILE_ID,
-      maxBrightness: 255, override: null, output: { protocol: 'hue', channel: lamp.channel },
+      maxBrightness: 255, override: null, output: { protocol: 'hue', bridge: lamp.bridge ?? 'b1', channel: lamp.channel },
     }));
   placeAddresslessFixtures();
   const clean = () => { for (const fix of state.fixtures) universes.getBuffer(universeOf(fix)).fill(0); };
@@ -79,10 +79,25 @@ function withLamps(lamps, fn) {
   }
 }
 
+/** The frame for bridge b1, which is where every lamp here is unless it says otherwise. */
+const colors = (bridge = 'b1') => output.hueChannelColors().get(bridge) ?? [];
+
+// Two bridges stream two areas: each is sent the colours of its own lamps,
+// and the same channel number on each is two different lamps.
+test('each bridge is collected its own frame, and only bridges with a lamp in the patch get one', () => {
+  withLamps([{ channel: 0 }, { channel: 0, bridge: 'b2' }, { channel: 4, bridge: 'b2' }], (set) => {
+    set(0, 'red', 10); set(1, 'red', 20); set(2, 'green', 30);
+    const frames = output.hueChannelColors();
+    assert.deepStrictEqual([...frames.keys()], ['b1', 'b2']);
+    assert.deepStrictEqual(frames.get('b1'), [{ id: 0, r: 10, g: 0, b: 0 }]);
+    assert.deepStrictEqual(frames.get('b2'), [{ id: 0, r: 20, g: 0, b: 0 }, { id: 4, r: 0, g: 30, b: 0 }]);
+  });
+});
+
 test('a lamp\'s channel takes the colour it was rendered', () => {
   withLamps([{ channel: 0 }], (set) => {
     set(0, 'red', 180); set(0, 'green', 90); set(0, 'blue', 20);
-    assert.deepStrictEqual(output.hueChannelColors(), [{ id: 0, r: 180, g: 90, b: 20 }]);
+    assert.deepStrictEqual(colors(), [{ id: 0, r: 180, g: 90, b: 20 }]);
   });
 });
 
@@ -90,7 +105,7 @@ test('each lamp is sent on its own channel, in patch order', () => {
   withLamps([{ channel: 5 }, { channel: 2 }], (set) => {
     set(0, 'red', 20);
     set(1, 'red', 10);
-    assert.deepStrictEqual(output.hueChannelColors().map((c) => [c.id, c.r]), [[5, 20], [2, 10]]);
+    assert.deepStrictEqual(colors().map((c) => [c.id, c.r]), [[5, 20], [2, 10]]);
   });
 });
 
@@ -99,20 +114,20 @@ test('each lamp is sent on its own channel, in patch order', () => {
 test('a par in the patch is never sent to the bridge', () => {
   withLamps([{ par: true }, { channel: 3 }], (set) => {
     set(0, 'red', 255);
-    assert.deepStrictEqual(output.hueChannelColors(), [{ id: 3, r: 0, g: 0, b: 0 }]);
+    assert.deepStrictEqual(colors(), [{ id: 3, r: 0, g: 0, b: 0 }]);
   });
 });
 
 test('two lamps on one channel: the first in the patch is shown', () => {
   withLamps([{ channel: 1 }, { channel: 1 }], (set) => {
     set(0, 'blue', 40); set(1, 'blue', 200);
-    assert.deepStrictEqual(output.hueChannelColors(), [{ id: 1, r: 0, g: 0, b: 40 }]);
+    assert.deepStrictEqual(colors(), [{ id: 1, r: 0, g: 0, b: 40 }]);
   });
 });
 
 test('no lamp in the patch means no Hue message at all', () => {
   withLamps([{ par: true }], () => {
-    assert.deepStrictEqual(output.hueChannelColors(), []);
+    assert.deepStrictEqual(colors(), []);
   });
 });
 
@@ -121,7 +136,7 @@ test('no lamp in the patch means no Hue message at all', () => {
 test('a UV wash shows as deep violet rather than black', () => {
   withLamps([{ channel: 0 }], (set) => {
     set(0, 'uv', 200);
-    const [color] = output.hueChannelColors();
+    const [color] = colors();
     assert.ok(color.b > color.r && color.r > 0, 'violet: blue-dominant but not pure blue');
     assert.strictEqual(color.g, 0);
   });
@@ -133,14 +148,14 @@ test('a UV wash shows as deep violet rather than black', () => {
 test('an over-full mix is scaled as a whole, keeping its hue', () => {
   withLamps([{ channel: 0 }], (set) => {
     set(0, 'red', 255); set(0, 'warmWhite', 255);
-    assert.deepStrictEqual(output.hueChannelColors(), [{ id: 0, r: 255, g: 84, b: 43 }], 'still a warm red');
+    assert.deepStrictEqual(colors(), [{ id: 0, r: 255, g: 84, b: 43 }], 'still a warm red');
   });
 });
 
 test('a mix that fits is left exactly as it is', () => {
   withLamps([{ channel: 0 }], (set) => {
     set(0, 'red', 100); set(0, 'green', 50); set(0, 'blue', 25);
-    assert.deepStrictEqual(output.hueChannelColors(), [{ id: 0, r: 100, g: 50, b: 25 }]);
+    assert.deepStrictEqual(colors(), [{ id: 0, r: 100, g: 50, b: 25 }]);
   });
 });
 
@@ -148,7 +163,7 @@ test('a mix that fits is left exactly as it is', () => {
 // written, so an all-zero buffer is the whole story.
 test('a blacked-out rig sends black to Hue', () => {
   withLamps([{ channel: 0 }], () => {
-    assert.deepStrictEqual(output.hueChannelColors(), [{ id: 0, r: 0, g: 0, b: 0 }]);
+    assert.deepStrictEqual(colors(), [{ id: 0, r: 0, g: 0, b: 0 }]);
   });
 });
 
@@ -158,13 +173,13 @@ test('a blacked-out rig sends black to Hue', () => {
 test('a white lamp lights at its dimmer level, in neutral white', () => {
   withLamps([{ channel: 0, profileId: HUE_WHITE_PROFILE_ID }], (set) => {
     set(0, 'dimmer', 140);
-    assert.deepStrictEqual(output.hueChannelColors(), [{ id: 0, r: 140, g: 140, b: 140 }]);
+    assert.deepStrictEqual(colors(), [{ id: 0, r: 140, g: 140, b: 140 }]);
   });
 });
 
 test('a white lamp at zero is black rather than stuck on', () => {
   withLamps([{ channel: 0, profileId: HUE_WHITE_PROFILE_ID }], () => {
-    assert.deepStrictEqual(output.hueChannelColors(), [{ id: 0, r: 0, g: 0, b: 0 }]);
+    assert.deepStrictEqual(colors(), [{ id: 0, r: 0, g: 0, b: 0 }]);
   });
 });
 
@@ -176,7 +191,7 @@ test('a white lamp at zero is black rather than stuck on', () => {
 test('the warm white die folds in warm, not neutral and not orange', () => {
   withLamps([{ channel: 0 }], (set) => {
     set(0, 'warmWhite', 255);
-    const [color] = output.hueChannelColors();
+    const [color] = colors();
     assert.strictEqual(color.r, 255);
     assert.ok(color.g < color.r, 'warmer than neutral white');
     assert.ok(color.b > 0, 'but still a white — a tungsten white has blue in it');
@@ -187,7 +202,7 @@ test('the warm white die folds in warm, not neutral and not orange', () => {
 test('the cool white die folds in near neutral', () => {
   withLamps([{ channel: 0 }], (set) => {
     set(0, 'coolWhite', 200);
-    const [color] = output.hueChannelColors();
+    const [color] = colors();
     for (const v of [color.r, color.g, color.b]) {
       assert.ok(Math.abs(v - 200) <= 6, `close to neutral at the same level (got ${v})`);
     }
@@ -197,7 +212,7 @@ test('the cool white die folds in near neutral', () => {
 test('warm reads warmer than cool at the same level', () => {
   const read = (attribute) => withLamps([{ channel: 0 }], (set) => {
     set(0, attribute, 255);
-    return output.hueChannelColors()[0];
+    return colors()[0];
   });
   const warm = read('warmWhite');
   const cool = read('coolWhite');
@@ -212,7 +227,7 @@ test('a white ambiance lamp is not also given its dimmer as white', () => {
   withLamps([{ channel: 0, profileId: HUE_WHITE_AMBIANCE_PROFILE_ID }], (set) => {
     set(0, 'dimmer', 255);
     set(0, 'coolWhite', 100);
-    const [color] = output.hueChannelColors();
+    const [color] = colors();
     assert.ok(Math.abs(color.r - 100) <= 4, `the white die alone decides it (got ${color.r})`);
   });
 });
@@ -253,18 +268,23 @@ async function artnetCapture(fn) {
     return got;
   } finally {
     Object.assign(state.artnet, before);
-    output.configureHue({ enabled: hueBefore.enabled, latencyMs: hueBefore.latencyMs });
+    output.configureHue({ bridges: hueBefore.bridges, latencyMs: hueBefore.latencyMs });
     socket.close();
   }
 }
 
+// A bridge that is on and fully set up; nothing here sends it a frame, so it is never contacted.
+const ON = {
+  id: 'b1', label: 'Lounge', enabled: true, host: '10.0.0.9', username: 'key', clientKey: 'aabb', applicationId: '',
+  entertainmentId: '0123abcd-1234-5678-9abc-def012345678',
+};
 const frameMarked = (marker) => { const f = Buffer.alloc(512); f[0] = marker; return f; };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 test('with Hue on, Art-Net frames go out the configured delay after they were rendered', async () => {
   let start = 0;
   const got = await artnetCapture(async () => {
-    output.configureHue({ enabled: true, latencyMs: 80 });
+    output.configureHue({ bridges: [ON], latencyMs: 80 });
     start = performance.now();
     // A frame every 20 ms for 200 ms, each one marked with its number.
     for (let i = 1; i <= 10; i++) { output.sendUniverse(0, frameMarked(i)); await wait(20); }
@@ -277,7 +297,7 @@ test('with Hue on, Art-Net frames go out the configured delay after they were re
 });
 
 test('without Hue, or at zero delay, frames go straight out', async () => {
-  for (const config of [{ enabled: false, latencyMs: 80 }, { enabled: true, latencyMs: 0 }]) {
+  for (const config of [{ bridges: [], latencyMs: 80 }, { bridges: [{ ...ON, enabled: false }], latencyMs: 80 }, { bridges: [ON], latencyMs: 0 }]) {
     const got = await artnetCapture(async () => {
       output.configureHue(config);
       output.sendUniverse(0, frameMarked(7));
@@ -290,7 +310,7 @@ test('a blackout sent immediately does not wait behind the look it replaces', as
   // Shutdown and a universe leaving the patch send one last black frame. Queued
   // behind the delay it would arrive after the process had gone, or not at all.
   const got = await artnetCapture(async () => {
-    output.configureHue({ enabled: true, latencyMs: 200 });
+    output.configureHue({ bridges: [ON], latencyMs: 200 });
     output.sendUniverse(0, frameMarked(5));
     output.sendUniverse(0, frameMarked(0), { immediate: true });
     await wait(250);

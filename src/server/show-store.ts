@@ -8,6 +8,7 @@ import { ddpConflict } from './ddp-routes.ts';
 import { showSchema, validate } from './validation.ts';
 import { HttpError, messageOf } from '../errors.ts';
 import { JsonStore } from './json-store.ts';
+import { settings, defaultHueBridgeId } from './settings.ts';
 import type { ShowFile } from './validation.ts';
 import type { Fixture, Profile } from '../types/rig.ts';
 import { configFile } from './config-dir.ts';
@@ -105,6 +106,9 @@ function applyShow(rawShow: unknown): ShowFile {
   if (hasFixtures) {
     const ids = fixtures.map((fixture, i) => fixture.id ?? i);
     if (new Set(ids).size !== ids.length) throw badShow('Show contains duplicate fixture ids');
+    // A lamp names the bridge whose area it is a channel of; one saved before
+    // there could be several bridges names none, and is the first bridge's.
+    const fallback = defaultHueBridgeId(settings.group('hue').bridges);
     next = fixtures.map((f, i): Fixture => ({
       id: ids[i],
       label: f.label || `Fixture ${i + 1}`,
@@ -117,7 +121,8 @@ function applyShow(rawShow: unknown): ShowFile {
       position: f.position ? { ...f.position } : null,
       group: f.group || null,
       geometry: f.geometry ? { ...f.geometry } : null,
-      output: f.output ? { ...f.output } : null,
+      output: !f.output ? null
+        : f.output.protocol === 'hue' ? { ...f.output, bridge: f.output.bridge || fallback } : { ...f.output },
       override: null,
     }));
     // A Hue lamp is a channel of the bridge's area, on a Hue profile, and
@@ -127,12 +132,13 @@ function applyShow(rawShow: unknown): ShowFile {
     if (mixed) {
       throw badShow(`"${mixed.label}" ${hasNoAddress(mixed) ? 'is a Hue lamp on a profile that is not one' : 'is on a Hue lamp profile but not a Hue lamp'}`);
     }
-    const channels = new Map<number, string>();
+    const channels = new Map<string, string>();
     for (const fix of next) {
       if (fix.output?.protocol !== 'hue') continue;
-      const other = channels.get(fix.output.channel);
-      if (other) throw badShow(`"${fix.label}" and "${other}" are both Hue channel ${fix.output.channel}`);
-      channels.set(fix.output.channel, fix.label);
+      const key = `${fix.output.bridge}:${fix.output.channel}`;
+      const other = channels.get(key);
+      if (other) throw badShow(`"${fix.label}" and "${other}" are both Hue channel ${fix.output.channel} of bridge ${fix.output.bridge}`);
+      channels.set(key, fix.label);
     }
     placeAddresslessFixtures(next, (fix) => incoming[fix.profileId]);
     for (const fix of next) {
