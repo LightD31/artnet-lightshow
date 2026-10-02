@@ -4,7 +4,7 @@ import { COLOR_PRESETS, AUTO_SOURCES, SYNC_OFFSET_LIMIT_MS } from './presets.ts'
 import { PALETTE_IDS } from './palettes.ts';
 import { FIXTURE_GROUPS } from '../shared/stage.ts';
 import { EMITTERS, PIXEL_MAPS, MAX_CELLS_PER_FIXTURE, MAX_PROFILE_CHANNELS } from '../shared/rig.ts';
-import { stripIssue } from '../shared/placement.ts';
+import { HUE_BRIDGE_ID_RE, stripIssue } from '../shared/placement.ts';
 import { HttpError } from '../errors.ts';
 
 /** Input that failed its schema: a 400, with zod's issues for the client. */
@@ -43,9 +43,15 @@ const HOSTNAME_RE = /^(?=.{1,253}$)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?
 
 // A fixture sent to a device of its own: a WLED over DDP, by its hostname or
 // address — its universes then go there and nowhere else (ddp-routes.ts) — or
-// a Hue lamp, one channel of the entertainment area, which has no DMX address
-// at all (shared/placement.ts). Hue channel ids are a byte.
-const hueOutput = z.object({ protocol: z.literal('hue'), channel: z.number().int().min(0).max(255) }).strict();
+// a Hue lamp, one channel of the area a bridge streams, which has no DMX
+// address at all (shared/placement.ts). Hue channel ids are a byte; the
+// bridge is one of the settings' hue.bridges by id, and a show saved before
+// there could be several names none (it loads as the first bridge's).
+const hueOutput = z.object({
+  protocol: z.literal('hue'),
+  bridge: z.string().regex(HUE_BRIDGE_ID_RE, 'is not a bridge id').optional(),
+  channel: z.number().int().min(0).max(255),
+}).strict();
 const ddpOutput = z.object({
     protocol: z.literal('ddp'),
     host: z.string().regex(HOSTNAME_RE, 'is not a hostname or an IPv4 address'),
@@ -425,12 +431,20 @@ const wledAddSchema = z.object({
 
 const huePairSchema = z.object({
   host: z.string().min(1).max(253),
+  // What to call the bridge in the Rig view and the patch; its address when blank.
+  label: z.string().trim().max(64).optional(),
 }).strict();
 
-// POST /api/hue/add: channels of the entertainment area to patch, each a lamp
-// of its own; every channel not patched yet when none are named.
+// POST /api/hue/:bridge/add: channels of the bridge's area to patch, each a
+// lamp of its own; every channel not patched yet when none are named.
 const hueAddSchema = z.object({
   channels: z.array(z.number().int().min(0).max(255)).min(1).max(20).optional(),
+}).strict();
+
+// POST /api/hue/:bridge/disconnect: a bridge with lamps in the patch is only
+// forgotten when asked to take them with it.
+const hueDisconnectSchema = z.object({
+  removeFixtures: z.boolean().optional(),
 }).strict();
 
 // PUT /api/auto/overlay: the operator's edits to the loaded track's show
@@ -489,6 +503,7 @@ export {
   midiConnectSchema,
   huePairSchema,
   hueAddSchema,
+  hueDisconnectSchema,
   wledAddSchema,
   fixtureAddSchema,
   overlaySchema,

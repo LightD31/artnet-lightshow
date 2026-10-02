@@ -46,6 +46,9 @@ function hasNoAddress(fixture: { output?: { protocol: string } | null }): boolea
   return !!fixture.output && fixture.output.protocol === 'hue';
 }
 
+/** What a Hue bridge's id looks like (settings' hue.bridges, a lamp's output): short, plain, usable in a route. */
+const HUE_BRIDGE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
 /** How a strip longer than a universe is laid out. */
 export interface Strip {
   /** Channels per cell. */
@@ -239,6 +242,7 @@ function channelReader(universe: number, address: number, profile: Placeable,
 export {
   UNIVERSE_SIZE,
   INTERNAL_UNIVERSE,
+  HUE_BRIDGE_ID_RE,
   isInternalUniverse,
   hasNoAddress,
   placeAddressless,

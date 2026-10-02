@@ -7,6 +7,7 @@ import { createTransmitter, sacnUniverseFor as mapSacnUniverse } from './transmi
 import { createDiscovery, interfaces, isBroadcastTarget } from './artnet-nodes.ts';
 import { isLoopback } from './loopback.ts';
 import * as hue from './hue.ts';
+import { defaultHueBridgeId } from './settings.ts';
 import type { HueChannelColour } from './hue.ts';
 import { ddpRoutes } from './ddp-routes.ts';
 import type { SacnOutput, SendOptions, TransmitConfig, Wire } from './transmit.ts';
@@ -56,15 +57,19 @@ function getSacnConfig(): SacnOutput { return { ...sacn }; }
 // read once per rendered frame and settings.group() deep-clones.
 let hueLatencyMs = 0;
 
+/**
+ * The Hue settings, pushed into the sessions: one per bridge (hue.ts keeps
+ * them by id), and the one delay they share. Either half may be left out.
+ */
 function configureHue(config: Partial<Settings['hue']> | null | undefined): Settings['hue'] {
-  const { latencyMs, ...rest }: Partial<Settings['hue']> = config || {};
+  const { latencyMs, bridges } = config || {};
   if (typeof latencyMs === 'number' && Number.isFinite(latencyMs)) hueLatencyMs = Math.max(0, Math.min(500, Math.round(latencyMs)));
-  hue.configure(rest);
+  if (bridges) hue.configureBridges(bridges);
   return getHueConfig();
 }
 
 function getHueConfig(): Settings['hue'] {
-  return { ...hue.getConfig(), latencyMs: hueLatencyMs };
+  return { bridges: hue.getConfigs(), latencyMs: hueLatencyMs };
 }
 
 // The wires, for frames rendered on this thread: the engine when it runs here,
@@ -103,13 +108,13 @@ function transmitConfig(): TransmitConfig {
       routes: artnetDiscovery.routes(),
     },
     sacn: { ...sacn },
-    delayMs: hueLatencyMs > 0 && hue.getConfig().enabled ? hueLatencyMs : 0,
+    delayMs: hueLatencyMs > 0 && hue.anyEnabled() ? hueLatencyMs : 0,
     ddp: ddpRoutes(state.fixtures, getProfile, universeOf),
   };
 }
 
-/** Let the applier persist an application id the module had to resolve itself. */
-function onHueApplicationId(fn: (id: string) => void): void { hue.setApplicationIdSink(fn); }
+/** Let the applier persist an application id a bridge's session had to resolve itself. */
+function onHueApplicationId(fn: (bridgeId: string, applicationId: string) => void): void { hue.setApplicationIdSink(fn); }
 
 /**
  * The sACN universe a rig universe maps to, or null outside what E1.31 allows
@@ -189,17 +194,26 @@ function clamp255(value: number): number {
  * does.
  *
  * A lamp with no colour channels at all (a plain white one) is read as
- * neutral white at its dimmer level. Two lamps on one channel cannot both be
- * shown; the first in the patch is.
+ * neutral white at its dimmer level. Two lamps on one channel of one bridge
+ * cannot both be shown; the first in the patch is. The frame comes back by
+ * bridge id, each bridge's channels its own list.
  */
-function hueChannelColors(): HueChannelColour[] {
-  const out: HueChannelColour[] = [];
-  const sent = new Set<number>();
+function hueChannelColors(): Map<string, HueChannelColour[]> {
+  const out = new Map<string, HueChannelColour[]>();
+  // A lamp saved before several bridges were possible names none: it is the
+  // first bridge's, as the show loader makes it (show-store.ts).
+  const fallback = defaultHueBridgeId(hue.getConfigs());
 
   for (const fix of state.fixtures) {
     const lamp = fix.output;
-    if (!lamp || lamp.protocol !== 'hue' || sent.has(lamp.channel)) continue;
-    sent.add(lamp.channel);
+    if (!lamp || lamp.protocol !== 'hue') continue;
+    const bridge = lamp.bridge || fallback;
+    let channels = out.get(bridge);
+    if (!channels) {
+      channels = [];
+      out.set(bridge, channels);
+    }
+    if (channels.some((c) => c.id === lamp.channel)) continue;
 
     const profile = getProfile(fix);
     const ch = profile.channelMap;
@@ -212,11 +226,11 @@ function hueChannelColors(): HueChannelColour[] {
     // the whites and double the brightness.
     if (!EMITTERS.some((name) => ch[name] !== undefined)) {
       const level = at(ch.dimmer);
-      out.push({ id: lamp.channel, r: level, g: level, b: level });
+      channels.push({ id: lamp.channel, r: level, g: level, b: level });
       continue;
     }
     const [r, g, b] = emitterMix(ch, at);
-    out.push({ id: lamp.channel, ...normalizeMix(r, g, b) });
+    channels.push({ id: lamp.channel, ...normalizeMix(r, g, b) });
   }
   return out;
 }
@@ -237,14 +251,14 @@ function emitterMix(ch: ChannelMap, at: ChannelReader): [number, number, number]
 }
 
 /**
- * Push the current frame to the Hue bridge.
+ * Push the current frame to the Hue bridges.
  *
- * Separate from sendUniverse() because it is not per-universe: one message
- * carries every channel in the entertainment area, whatever universes their
- * fixtures happen to live on. Called once per rendered frame.
+ * Separate from sendUniverse() because it is not per-universe: one message a
+ * bridge carries every channel of its entertainment area, whatever universes
+ * their fixtures happen to live on. Called once per rendered frame.
  */
 function sendHue(): boolean {
-  return hue.sendFrame(hueChannelColors());
+  return hue.sendFrames(hueChannelColors());
 }
 
 /**
@@ -262,8 +276,10 @@ function endFrame(): void {
   transmitter.endFrame(transmitConfig());
 }
 
-export const getHueStatus = () => hue.getStatus();
-export const stopHue = () => hue.stop();
+/** Every bridge's stream state, in the settings' order. */
+export const getHueStatus = () => hue.getStatusAll();
+/** Close every bridge's stream. */
+export const stopHue = () => hue.stopAll();
 
 export {
   configureSacn,

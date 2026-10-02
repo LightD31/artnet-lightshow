@@ -35,6 +35,7 @@ test('only the keys that changed go out, grouped by domain, each domain counting
   ], 'an edited fixture and a key that went away');
   assert.deepStrictEqual(differ.versions(), { look: 2, rig: 2, show: 0, sources: 2, catalogs: 0, system: 1 });
   assert.strictEqual(domainOf('autoShow'), 'show');
+  assert.strictEqual(domainOf('hueBridges'), 'rig', 'the patch table reads the bridges with the fixtures');
   assert.strictEqual(domainOf('toString'), 'system', 'only the keys it names');
 });
 

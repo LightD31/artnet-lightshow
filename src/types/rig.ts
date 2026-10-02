@@ -189,13 +189,16 @@ export interface DdpOutput {
 }
 
 /**
- * A Philips Hue lamp: channel `channel` of the bridge's entertainment area,
- * patched from the bridge (never by hand) and with no DMX address. The server
- * renders it on universes of its own that are never sent
- * (shared/placement.ts), and its channel is sent the colour it was rendered.
+ * A Philips Hue lamp: channel `channel` of the entertainment area that bridge
+ * `bridge` (an id in the settings' hue.bridges) streams, patched from the
+ * bridge (never by hand) and with no DMX address. The server renders it on
+ * universes of its own that are never sent (shared/placement.ts), and its
+ * channel is sent the colour it was rendered. A show saved before several
+ * bridges were possible names none; it loads as the first bridge's.
  */
 export interface HueOutput {
   protocol: 'hue';
+  bridge: string;
   channel: number;
 }
 
