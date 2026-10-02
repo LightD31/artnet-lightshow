@@ -42,6 +42,24 @@ const PATTERN_ICONS = {
   bars:          '▁▅▃',
   fire:          '♨',
   rain:          '⁞',
+  'position-chase': '⇶',
+  'radial-pulse': '◉',
+  'spatial-wash': '≈',
+  'bounce-scan': '↔',
+  streak:        '⟿',
+  starlight:     '✵',
+  breathe:       '◯',
+  'volume-gate': '◫',
+  confetti:      '❉',
+  'anchor-fill': '⊞',
+  halves:        '◧',
+  flip:          '◩',
+  'room-wave':   '〜',
+  'ring-strobe': '◌',
+  'ring-backlit': '◍',
+  fireworks:     '✸',
+  flashes:       '⚡',
+  swirl:         '↻',
 };
 
 // How a pattern is laid over the rig. Per bar needs bars; the other two
@@ -98,8 +116,10 @@ export function Patterns() {
   const bars = hasBars(s);
   // The pixel effects are drawn for LED bars; on a rig of pars they still run,
   // as a handful of samples of the picture, so they stay available below.
-  const lamp = patterns.filter((p) => !p.pixel);
+  const lamp = patterns.filter((p) => !p.pixel && !p.party);
   const pixel = patterns.filter((p) => p.pixel);
+  // The party effects travel the room by where the lamps stand on the plot.
+  const party = patterns.filter((p) => p.party);
   // The auto show gives the pars and the bars a look each: the pars the
   // colour, the bars the movement. Both are marked; a pattern picked here
   // runs on the whole rig again.
@@ -130,6 +150,12 @@ export function Patterns() {
           {pixel.map((p) => (
             <PatternButton key={p.id} p={p} active={s.pattern === p.id} onBars={onBars === p.id} onPanels={onPanels === p.id} />
           ))}
+        </div>
+      </>}
+      {party.length > 0 && <>
+        <div class="card-subtitle">Party effects — across the room, where the lamps stand</div>
+        <div class="pattern-grid">
+          {party.map((p) => <PatternButton key={p.id} p={p} active={s.pattern === p.id} onBars={onBars === p.id} onPanels={onPanels === p.id} />)}
         </div>
       </>}
       {panels && pixel.length > 0 && (

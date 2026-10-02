@@ -46,16 +46,32 @@ export interface UnitRange {
   count: number;
 }
 
+/**
+ * Where each slot of a layout stands on the stage plot, for the patterns that
+ * travel the room by position (the party effects): across it, 0 at the left
+ * edge of the plot and 1 at the right; down it, 0 at the back and 1 at the
+ * front; and the group the fixture hangs in. Only when the operator placed
+ * the rig — an unplaced rig has a plan of null, and those patterns travel in
+ * stage order instead.
+ */
+export interface StagePlan {
+  x: number[];
+  y: number[];
+  group: (string | null)[];
+}
+
 /** The order the patterns travel in, for fixtures and for units (see layoutOf). */
 export interface Layout {
   wash: Set<number>;
   /**
    * `folded`, when the look is mirrored: the slots a stepped pattern travels
    * through, each one or two fixtures standing symmetrically about the
-   * centre of the stage, from the middle out (members indices).
+   * centre of the stage, from the middle out (members indices). `noFlash`
+   * marks the slots that are Hue lamps (or lights that follow one), which
+   * are never flashed, or is null when there are none.
    */
-  fixtures: { members: number[]; order: number[]; xs: number[] | null; folded?: number[][] };
-  units: { list: number[]; xs: number[] | null; ys: number[] | null };
+  fixtures: { members: number[]; order: number[]; xs: number[] | null; folded?: number[][]; plan: StagePlan | null; noFlash: boolean[] | null };
+  units: { list: number[]; xs: number[] | null; ys: number[] | null; plan: StagePlan | null; noFlash: boolean[] | null };
 }
 
 /** The rig as lights (see buildRig). */
@@ -258,9 +274,19 @@ function rigSignature(fixtures: readonly StageFixture[], revision: number | stri
   for (const f of fixtures) {
     const p = f.position;
     const g = f.geometry;
-    key += `|${f.profileId};${p ? `${p.x},${p.y}` : ''};${f.group || ''};${g ? `${g.length},${g.angle}` : ''}`;
+    key += `|${f.profileId};${p ? `${p.x},${p.y}` : ''};${f.group || ''};${g ? `${g.length},${g.angle}` : ''};${isHue(f) ? 'h' : ''}`;
   }
   return key;
+}
+
+/** Is a fixture a Hue lamp, or a light that follows one: never flashed. */
+function isHue(fixture: StageFixture): boolean {
+  return !!fixture.hue || !!(fixture.output && fixture.output.protocol === 'hue');
+}
+
+/** The flags of the slots that are Hue lamps, or null when none is. */
+function hueFlags(flags: boolean[]): boolean[] | null {
+  return flags.some(Boolean) ? flags : null;
 }
 
 /**
@@ -294,7 +320,22 @@ function layoutOf(rig: Rig, split: number | null | undefined, pixelMap: string |
   };
   const members = fixtures.map((_, i) => i).filter((i) => !wash.has(i) && part(i));
   const { order, xs } = spatialLayout(members.map((i) => fixtures[i]));
-  const layoutFixtures: Layout['fixtures'] = { members, order, xs };
+  // The plan is the plot as the operator placed it, so it is only given
+  // across the stage: laid per bar each bar is its own picture, and mirrored
+  // the picture folds about the centre, which no plot position describes.
+  const perBar = pixelMap === 'bar' && rig.hasPixels;
+  const mirrored = pixelMap === 'mirror' && members.length >= 3;
+  const planned = !perBar && !mirrored && members.some((i) => isPlaced(fixtures[i].position));
+  const fixturePlan: StagePlan | null = planned ? {
+    // A fixture stands at the middle of its lights: the par itself, the
+    // centre of a bar's line or of a panel.
+    x: order.map((k) => centreOf(rig, members[k]).x / 100),
+    y: order.map((k) => centreOf(rig, members[k]).y / 100),
+    group: order.map((k) => fixtures[members[k]].group || null),
+  } : null;
+  const layoutFixtures: Layout['fixtures'] = {
+    members, order, xs, plan: fixturePlan, noFlash: hueFlags(order.map((k) => isHue(fixtures[members[k]]))),
+  };
   if (pixelMap === 'mirror' && members.length >= 3) {
     // Folded about the centre: the two lamps either side of the middle are
     // one slot, the next pair out the next, so a chase runs from the middle
@@ -317,7 +358,8 @@ function layoutOf(rig: Rig, split: number | null | undefined, pixelMap: string |
     const unitXs = pixelMap === 'mirror' && list.length >= 3
       ? (xs || list.map((_, k) => k / (list.length - 1))).map((x) => Math.abs(2 * x - 1))
       : xs;
-    return { wash, fixtures: layoutFixtures, units: { list, xs: unitXs, ys: null } };
+    // One unit per fixture, in the same order: the fixtures' plan is the units'.
+    return { wash, fixtures: layoutFixtures, units: { list, xs: unitXs, ys: null, plan: fixturePlan, noFlash: layoutFixtures.noFlash } };
   }
 
   const list: number[] = [];
@@ -357,7 +399,25 @@ function layoutOf(rig: Rig, split: number | null | undefined, pixelMap: string |
     const base = unitXs || list.map((_, k) => (n > 1 ? k / (n - 1) : 0.5));
     unitXs = base.map((x) => Math.abs(2 * x - 1));
   }
-  return { wash, fixtures: layoutFixtures, units: { list, xs: unitXs, ys: unitYs } };
+  const unitPlan: StagePlan | null = planned ? {
+    x: list.map((u) => points[u].x / 100),
+    y: list.map((u) => points[u].y / 100),
+    group: list.map((u) => fixtures[rig.units[u].fixture].group || null),
+  } : null;
+  const noFlash = hueFlags(list.map((u) => isHue(fixtures[rig.units[u].fixture])));
+  return { wash, fixtures: layoutFixtures, units: { list, xs: unitXs, ys: unitYs, plan: unitPlan, noFlash } };
+}
+
+/** Where fixture i stands on the plot: the middle of its lights, in stage percent. */
+function centreOf(rig: Rig, i: number): Point {
+  const { start, count } = rig.ranges[i];
+  let x = 0;
+  let y = 0;
+  for (let u = start; u < start + count; u++) {
+    x += rig.points[u].x;
+    y += rig.points[u].y;
+  }
+  return { x: x / Math.max(1, count), y: y / Math.max(1, count) };
 }
 
 export {
@@ -372,4 +432,5 @@ export {
   lineOf,
   buildRig,
   rigSignature,
+  isHue,
 };

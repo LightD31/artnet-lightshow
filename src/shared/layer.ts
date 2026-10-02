@@ -192,24 +192,30 @@ function patternContext(rig: Rig, layout: Layout, pattern: string, colors: reado
   };
 
   if (CELL_PATTERNS.has(pattern)) {
-    const { list, xs, ys } = layout.units;
+    const { list, xs, ys, plan, noFlash } = layout.units;
     return {
       ...common,
       fixtureCount: list.length,
       xs,
       ys,
+      plan,
+      noFlash,
       write: (k, colour, dim, strobe) => set(list[k], colour, dim, strobe),
     };
   }
-  const { members, order, xs, folded } = layout.fixtures;
+  const { members, order, xs, folded, plan, noFlash } = layout.fixtures;
   if (folded) {
     // Mirrored: each slot is a pair standing either side of the centre, the
-    // middle first, and both lamps of a pair take the slot's value.
+    // middle first, and both lamps of a pair take the slot's value. A pair
+    // has no one place on the plot, so the party patterns travel the fold.
+    const slotOf = (member: number) => order.indexOf(member);
     return {
       ...common,
       fixtureCount: folded.length,
       xs: folded.length > 1 ? folded.map((_, k) => k / (folded.length - 1)) : null,
       ys: null,
+      plan: null,
+      noFlash: noFlash && folded.map((pair) => pair.some((slot) => noFlash[slotOf(slot)])),
       write: (k, colour, dim, strobe) => {
         for (const slot of folded[k]) {
           const { start, count } = rig.ranges[members[slot]];
@@ -223,6 +229,8 @@ function patternContext(rig: Rig, layout: Layout, pattern: string, colors: reado
     fixtureCount: members.length,
     xs,
     ys: null,
+    plan,
+    noFlash,
     // A bar is one slot of a chase: every cell takes the slot's colour.
     write: (k, colour, dim, strobe) => {
       const { start, count } = rig.ranges[members[order[k]]];
