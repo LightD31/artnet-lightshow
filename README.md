@@ -180,7 +180,8 @@ Companion** (with a page of presets for busking), and a REST API.
   fixtures that have no strobe channel
 - **Philips Hue** — each lamp of an entertainment area is a fixture of its own,
   added from the bridge with what it can show, driven through the Entertainment
-  API by every pattern, palette and cue the pars get; it takes no DMX address
+  API by every pattern, palette and cue the pars get; it takes no DMX address.
+  As many bridges as the house has, each streaming an area of its own
 - Save and load the whole patch as a show file
 
 ---
@@ -411,7 +412,8 @@ Identify is shown on the plan and in the patch table on every open page.
   and lists any console or server there with its priority. A universe this rig
   sends that another source sends too is called out: the higher priority wins.
 - **WLEDs** — found over mDNS, identified, added in a click.
-- **Hue bridges** — found, paired, and the area's lamps added in a click.
+- **Hue bridges** — found, paired (as many as the house has), and each one's
+  area's lamps added in a click.
 
 ---
 
@@ -787,7 +789,9 @@ area is **a fixture of its own**, added from the bridge as a WLED is: the bridge
 says what each lamp can show, and it is patched on the profile that fits. The
 show renders it like any other fixture, so every pattern, palette, cue and
 auto-show decision reaches it, and its channel is sent the colour that came
-out.
+out. A house with more than one bridge pairs each of them: every bridge
+streams an area of its own, and a lamp in the patch names the bridge it
+belongs to.
 
 That colour is read from the rendered frame, which means it arrives with the
 dimmer, the lamp's trim, the grand master, any override and master blackout
@@ -799,12 +803,15 @@ already applied. Black out the rig and the Hue lamps go out with it.
    it. Areas are made there because that is where the lamps are already placed
    on a room plan; this server only reads them.
 2. Open **Rig → Outputs → Philips Hue** and press **Find bridges**, or type the
-   bridge IP in. Discovery uses Philips' cloud service, so a show network with
+   bridge IP in, with a name for it if you like ("Lounge"; its address when
+   left blank). Discovery uses Philips' cloud service, so a show network with
    no route to the internet will need the address typed in.
 3. Press the round button on the bridge, then press **Pair** within 30 seconds.
    The bridge issues an application key and a client key, which are stored as
    secrets in `config/settings.json` and never shown again. The client key is
-   only ever returned once, so a lost pairing has to be made again.
+   only ever returned once, so a lost pairing has to be made again — **Pair
+   again** on a bridge already listed replaces its keys rather than adding a
+   twin.
 
    A third value, the **application id**, is fetched at the same time. It is the
    identity the encrypted stream authenticates with, and it is what the Hue app
@@ -812,7 +819,9 @@ already applied. Black out the rig and the Hue lamps go out with it.
    readable in the settings. A pairing made before this was stored resolves
    it on the first connection and saves it then.
 4. Pick the **entertainment area** and **Apply**. A bridge streams one area at
-   a time.
+   a time; several bridges stream at once, each its own. Pair the next one the
+   same way and it is listed under the first, with an area, lamps and an
+   **Enabled** switch of its own.
 5. The area's lamps are listed below it: each channel, the lamp as you named it
    in the Hue app, and what the bridge says it can show — *Colour*, *White
    ambiance* or *White*. **Add to patch** makes one a fixture, on the
@@ -868,8 +877,9 @@ would band on a DMX par do not here.
   the patch on a channel the area does not have. The bridge takes its colour
   and ignores it, which on the night looks like a dead lamp — the pre-show check
   catches it: remove the lamp and add it again.
-- **Forget** clears the credentials here but does not unregister this server on
-  the bridge. Remove it in the Hue app under linked devices.
+- **Forget** removes a bridge here, keys and all — and its lamps from the
+  patch, after asking, when any are in it — but does not unregister this server
+  on the bridge. Remove it in the Hue app under linked devices.
 
 **Lining the pars up with the lamps**
 
@@ -878,9 +888,10 @@ through the bridge and a ZigBee hop, tens of milliseconds later. On a mixed rig
 every hit therefore lands on the pars first and the lamps after, which on a
 snare reads as two events. **Pars Delay (ms)** in Rig → Outputs → Philips Hue holds
 the Art-Net and sACN output back by that much; Hue is sent each frame as soon
-as it is rendered. It defaults to 0 and only applies while Hue output is on.
+as it is rendered. It defaults to 0, is one value for every bridge, and only
+applies while at least one bridge is on.
 
-To tune it, press **Flash for 10 s** under the stream status: every fixture
+To tune it, press **Flash for 10 s** beside the bridge list: every fixture
 flashes white once a second. Film a par and a lamp together in slow motion,
 raise the delay until the two flashes land on the same frame, and save. Start
 around 50 ms. The shutdown blackout skips the delay, so the rig still goes
@@ -2257,7 +2268,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/fixture/:id/override` | Set a fixture override (JSON body) |
 | POST | `/api/fixture/:id/blackout/toggle` · `/api/fixture/:id/clear` | Per-fixture blackout / clear |
 | POST | `/api/fixture/:id/max/:value` | Fixture maximum brightness (0–255) — scales the fixture's output; not an override |
-| POST | `/api/fixtures` · DELETE `/api/fixtures/:id` | Add / remove fixtures. With no body, one generic par behind whatever is on the default universe; with `{ profileId?, count?, universe?, address?, label? }`, `count` (up to 64) of that profile one after another, on into the next universe when one fills (a strip on universes of its own); answers `{ fixtures: [ids], placed: [{ universe, address }] }`. A Hue lamp profile is refused: Hue lamps are added with `POST /api/hue/add`. DELETE answers with the fixture and its index |
+| POST | `/api/fixtures` · DELETE `/api/fixtures/:id` | Add / remove fixtures. With no body, one generic par behind whatever is on the default universe; with `{ profileId?, count?, universe?, address?, label? }`, `count` (up to 64) of that profile one after another, on into the next universe when one fills (a strip on universes of its own); answers `{ fixtures: [ids], placed: [{ universe, address }] }`. A Hue lamp profile is refused: Hue lamps are added with `POST /api/hue/:bridge/add`. DELETE answers with the fixture and its index |
 | POST | `/api/fixtures/restore` | Put a deleted fixture back (`{ index, fixture }`) |
 | POST | `/api/gdtf/parse` | Parse an uploaded `.gdtf` (multipart `gdtf`) |
 | POST | `/api/ofl/parse` | Parse an uploaded Open Fixture Library `.json` (multipart `ofl`, optional `manufacturer`) |
@@ -2285,7 +2296,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/identify` | `{ fixtures?: [ids], universes?: [n], seconds? }` — those fixtures, and everything on those universes, show themselves for `seconds` (default 8, up to 60; 0 stops). Answers `{ ids, remainingMs }`; the live state carries it as `identify` |
 | POST | `/api/identify/stop` | Stop identifying, a streamed WLED included |
 | POST | `/api/wled/identify` | `{ host, seconds? }`: through the patch when the WLED is in it (`via: 'patch'`), else its picture streamed over DDP (`via: 'device'`) |
-| POST | `/api/hue/identify` | `{ channel, seconds? }`: the lamp on that channel through the patch (`via: 'fixture'`), else the bridge's own identify (`via: 'bridge'`) |
+| POST | `/api/hue/:bridge/identify` | `{ channel, seconds? }`: the lamp on that channel of the bridge's area through the patch (`via: 'fixture'`), else the bridge's own identify (`via: 'bridge'`) |
 
 ### Cues
 
@@ -2352,18 +2363,25 @@ All endpoints return JSON. When a token is configured, send it as an
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/hue/status` | Bridge address, whether it is paired, the area, and what the stream is doing |
+| GET | `/api/hue/status` | Every bridge: id, label, address, whether it is on and paired, its area, and what its stream is doing; plus `latencyMs` |
 | GET | `/api/hue/discover` | Bridges Philips' cloud service has seen on this network |
-| POST | `/api/hue/pair` | Pair with `{ host }` — the bridge link button must have been pressed in the last 30 seconds. Answers `409` with `pressLink: true` if it has not |
-| GET | `/api/hue/areas` | Entertainment areas on the paired bridge, with their channel ids and lamp names |
-| GET | `/api/hue/lamps` | The chosen area's channels: each lamp's name, product, devices and what it can show (`kind`: `color`, `ambiance`, `white`, or `null` when the bridge would not say) |
-| POST | `/api/hue/add` | `{ channels? }`: patch those channels of the area, or every one not in the patch yet, each a fixture on the profile for its `kind`, with `output: { protocol: 'hue', channel }` and no DMX address |
-| POST | `/api/hue/disconnect` | Forget the bridge and turn the output off |
+| POST | `/api/hue/pair` | Pair with `{ host, label? }` — the bridge link button must have been pressed in the last 30 seconds. Answers `409` with `pressLink: true` if it has not. A new address is added to `hue.bridges` (as `bridge-1`, `bridge-2`…, on, with no area yet); one already there gets fresh keys. Answers the bridge and its areas |
+| GET | `/api/hue/:bridge/areas` | Entertainment areas on that bridge, with their channel ids and lamp names |
+| GET | `/api/hue/:bridge/lamps` | Its chosen area's channels: each lamp's name, product, devices and what it can show (`kind`: `color`, `ambiance`, `white`, or `null` when the bridge would not say) |
+| POST | `/api/hue/:bridge/add` | `{ channels? }`: patch those channels of its area, or every one not in the patch yet, each a fixture on the profile for its `kind`, with `output: { protocol: 'hue', bridge, channel }` and no DMX address |
+| POST | `/api/hue/:bridge/disconnect` | Forget that bridge, keys and all. `409` while its lamps are in the patch unless `{ removeFixtures: true }` takes them along |
 | POST | `/api/hue/sync-test` | Flash every fixture white once a second for 10 s, to tune `hue.latencyMs` |
 
-Credentials are never returned by any of these — `/api/hue/status` reports only
-whether a pairing exists. The channel bindings themselves are ordinary settings,
-saved through `PUT /api/settings` under `hue.channels`.
+`:bridge` is an id from `/api/hue/status`. The routes from before there could
+be several bridges — `/api/hue/areas`, `/lamps`, `/add`, `/identify` — still
+answer, for the first bridge; `/api/hue/disconnect` does not, since it would
+have to guess which. Credentials are never returned by any of these —
+`/api/hue/status` reports only whether a pairing exists, and `GET /api/settings`
+lists the bridges with their keys blanked. The bridges themselves are ordinary
+settings under `hue.bridges`, saved through `PUT /api/settings`: an entry sent
+back with blank keys keeps the stored ones, an entry left out is forgotten, and
+a file from before several bridges were possible loads its one bridge as
+`bridge-1`.
 
 ### The server
 
@@ -2405,8 +2423,8 @@ of `front`, `back`, `room`, `floor`, or `null`; `geometry` is an LED bar's line
 `{ protocol: 'ddp', host, port?, at?, rowStride? }` to send the fixture's
 universes to a WLED — from its LED `at` for a segment, a row every `rowStride`
 LEDs for a rectangle of a panel — or `null` for Art-Net and sACN. A Hue lamp's
-`{ protocol: 'hue', channel }` is given by `POST /api/hue/add` and cannot be
-set or changed here.
+`{ protocol: 'hue', bridge, channel }` is given by `POST /api/hue/:bridge/add`
+and cannot be set or changed here.
 
 ---
 

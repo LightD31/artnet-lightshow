@@ -3028,6 +3028,9 @@ input[type=range]::-moz-range-thumb {
 .wled-mode input[type=number] { width: 64px; }
 .wled-mode .setting-help { flex: 1 1 240px; }
 .hue-tools { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.hue-bridge { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; }
+.hue-bridge-head .hue-bridge-label { flex: 0 1 180px; font-weight: 700; }
+.hue-bridge-head .hue-bridge-enabled { display: flex; align-items: center; gap: 4px; margin-left: auto; font-size: 12px; }
 .source-status { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; color: var(--text-2); }
 
 /* Tables: the patch, nodes, universes, bindings. */

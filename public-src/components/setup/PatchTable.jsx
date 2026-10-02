@@ -4,6 +4,7 @@ import { post } from '../../setup-state.js';
 import { footprintOf, overlaps, hasNoAddress } from '../../../src/shared/placement.ts';
 import { rigSelectionSig, selectOnly, toggleSelected, identifyFixtures } from '../../rig-ui.js';
 import { FieldInput } from './FieldInput.jsx';
+import { hueBridgeLabel } from '../../utils.js';
 
 /**
  * The patch as a table: each fixture's label, profile, universe and address,
@@ -100,7 +101,7 @@ export function AddFixtures({ onAdded }) {
 }
 
 export function PatchTable() {
-  const s = pick(['fixtures', 'profiles', 'identify', 'hueProfileIds']);
+  const s = pick(['fixtures', 'profiles', 'identify', 'hueProfileIds', 'hueBridges']);
   const connected = connectedSig.value;
   const fixtures = s.fixtures || [];
   const profiles = s.profiles || {};
@@ -165,8 +166,8 @@ export function PatchTable() {
                   </td>
                   {hasNoAddress(fix) ? (
                     <td colSpan={2}>
-                      <span class="patch-hue" title="A lamp of the Hue bridge's entertainment area: no DMX address">
-                        Hue lamp · channel #{fix.output.channel}</span>
+                      <span class="patch-hue" title={`A lamp of the entertainment area of the Hue bridge "${hueBridgeLabel(s.hueBridges, fix.output.bridge)}": no DMX address`}>
+                        Hue lamp · {hueBridgeLabel(s.hueBridges, fix.output.bridge)} #{fix.output.channel}</span>
                     </td>
                   ) : <>
                   <td>
