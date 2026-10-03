@@ -58,6 +58,7 @@ export function Inspector() {
   const trimPct = Math.round(((fix.maxBrightness ?? 255) / 255) * 100);
   const hueOnly = hasNoAddress(fix);
   const wled = !!(fix.output && fix.output.protocol === 'ddp');
+  const openrgb = !!(fix.output && fix.output.protocol === 'openrgb');
 
   return (
     <aside class="panel inspector" aria-labelledby="inspector-title">
@@ -73,7 +74,8 @@ export function Inspector() {
           {profile && <small> · {profile.channelCount} ch{bar ? `, ${grid ? `${grid.columns} × ${grid.rows}` : rig.ranges[index].count} cells` : ''}</small>}</span>
         <span class="inspector-key">Output</span>
         <span class="inspector-value">{wled ? `WLED at ${fix.output.host}, over DDP`
-          : hueOnly ? `Hue ${hueChannelsLabel(fix.output.channels)} of ${hueBridgeLabel(s.hueBridges, fix.output.bridge)}` : 'DMX (Art-Net, sACN)'}</span>
+          : openrgb ? `OpenRGB device #${fix.output.device}${profile ? ` (${profile.name})` : ''} at ${fix.output.host}${fix.output.port ? `:${fix.output.port}` : ''}, over the SDK`
+            : hueOnly ? `Hue ${hueChannelsLabel(fix.output.channels)} of ${hueBridgeLabel(s.hueBridges, fix.output.bridge)}` : 'DMX (Art-Net, sACN)'}</span>
         {!hueOnly && <>
           <label for="insp-universe">Universe</label>
           <FieldInput id="insp-universe" type="number" min="0" max="32767" value={fix.universe ?? 0} onCommit={(v) => send({ universe: v })} />

@@ -9,10 +9,13 @@ import { ARTNET, SACN, HUE } from './specs.js';
 /**
  * Where the rig's DMX goes, and what is out there to send it to: Art-Net
  * nodes that answer a poll, other sACN sources on the network, WLEDs that
- * announce themselves and the Hue bridges. Each can be made to show itself —
- * a node's locate LEDs and the fixtures on its universes, a WLED's pixels, a
- * Hue lamp — so a device on a list is a device on the truss.
+ * announce themselves, a PC's OpenRGB devices and the Hue bridges. Each can
+ * be made to show itself — a node's locate LEDs and the fixtures on its
+ * universes, a WLED's pixels, a PC's keyboard, a Hue lamp — so a device on a
+ * list is a device on the truss.
  */
+
+const OPENRGB_PORT = 6742;
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -183,10 +186,11 @@ function Universes({ nodes }) {
     const profile = profiles[fix.profileId];
     if (!profile || hasNoAddress(fix)) continue;
     for (const part of footprintOf(fix.universe ?? 0, fix.address, profile)) {
-      const entry = on.get(part.universe) || { fixtures: [], ddp: null, last: 0 };
+      const entry = on.get(part.universe) || { fixtures: [], ddp: null, openrgb: null, last: 0 };
       entry.fixtures.push(fix.label);
       entry.last = Math.max(entry.last, part.last);
       if (fix.output && fix.output.protocol === 'ddp') entry.ddp = fix.output.host;
+      if (fix.output && fix.output.protocol === 'openrgb') entry.openrgb = `${fix.output.host} #${fix.output.device}`;
       on.set(part.universe, entry);
     }
   }
@@ -206,6 +210,7 @@ function Universes({ nodes }) {
               const outputs = nodes.filter((n) => (n.outputs || []).includes(u)).map((n) => n.shortName || n.address);
               const routes = [];
               if (entry.ddp) routes.push(`WLED ${entry.ddp} (DDP)`);
+              else if (entry.openrgb) routes.push(`OpenRGB ${entry.openrgb}`);
               else {
                 if (s.artnet && s.artnet.enabled !== false) routes.push(outputs.length ? `Art-Net: ${outputs.join(', ')}` : `Art-Net: ${s.artnet.host}`);
                 if (sacn && sacn.enabled) routes.push(`sACN ${u + (sacn.universeOffset ?? 1)}${sacn.host ? ` to ${sacn.host}` : ''}`);
@@ -328,6 +333,97 @@ function Wled() {
           <button type="submit" class="btn sm active" disabled={!host.trim()}>Add</button>
           <button type="button" class="btn sm" disabled={!host.trim()} onClick={() => add(host.trim(), true)}>Add each segment</button>
         </form>
+      </div>
+    </section>
+  );
+}
+
+// ── OpenRGB ──────────────────────────────────────────────────────────────────
+
+/**
+ * A PC's RGB through OpenRGB's SDK server: its devices listed, each added as
+ * a fixture of its own (server/routes/openrgb.ts), and identified in place.
+ */
+function OpenRgb() {
+  const s = pick(['fixtures']);
+  const [host, setHost] = useState('');
+  const [port, setPort] = useState(OPENRGB_PORT);
+  const [found, setFound] = useState(null);     // { host, port, devices }
+  const [status, setStatus] = useState('');
+  const where = () => ({ host: host.trim(), ...(port !== OPENRGB_PORT ? { port } : {}) });
+  // Which fixture each device of the server shown is, from the live patch.
+  const patched = new Map();
+  for (const f of s.fixtures || []) {
+    if (!found || !f.output || f.output.protocol !== 'openrgb') continue;
+    if (f.output.host.toLowerCase() === found.host.toLowerCase() && (f.output.port || OPENRGB_PORT) === found.port) patched.set(f.output.device, f.label);
+  }
+  const find = async () => {
+    if (!host.trim()) return;
+    setStatus(`Asking ${host.trim()}…`);
+    const data = await getJson(`/api/openrgb/discover?host=${encodeURIComponent(host.trim())}&port=${port}`);
+    if (!data.ok) { setStatus(data.error); setFound(null); return; }
+    setFound(data);
+    const lit = data.devices.filter((d) => d.leds > 0).length;
+    setStatus(data.devices.length ? `${plural(data.devices.length, 'device')}, ${lit} with LEDs.` : 'OpenRGB answered, but lists no devices.');
+  };
+  const add = async (devices) => {
+    setStatus(devices ? `Adding device #${devices[0]}…` : 'Adding every device…');
+    const res = await post('/api/openrgb/add', { ...where(), ...(devices ? { devices } : {}) });
+    if (!res.ok) { setStatus(res.error); return; }
+    const labels = res.fixtures.map((f) => f.label).join(', ');
+    setStatus(`Added ${plural(res.fixtures.length, 'fixture')}: ${labels}. Place ${res.fixtures.length === 1 ? 'it' : 'them'} on the plan.`);
+    toast.info(`Added ${plural(res.fixtures.length, 'OpenRGB device')} to the patch`);
+  };
+  const flash = async (device) => {
+    const res = await post('/api/openrgb/identify', { ...where(), device });
+    if (!res.ok) { setStatus(res.error); return; }
+    toast.info(res.via === 'patch' ? 'It shows itself through the patch: a bar lights green to red, one LED blinks white'
+      : `Its ${res.leds} LEDs flash: the first green, the last red`);
+  };
+  const devices = found ? found.devices : [];
+  const lit = devices.filter((d) => d.leds > 0);
+  const missing = lit.filter((d) => !patched.has(d.index));
+  return (
+    <section class="panel" aria-labelledby="openrgb-title">
+      <header class="panel-head"><h2 class="panel-title" id="openrgb-title">OpenRGB</h2></header>
+      <p class="section-desc">A PC's RGB — its RAM, board, GPU, keyboard, mouse, monitors — through OpenRGB's SDK server (turn it on
+        in OpenRGB under <em>SDK Server</em>). Each device becomes a fixture of its own with a cell per LED, on universes of its
+        own, sent one packet a frame over one connection to the PC.</p>
+      <div class="discovery">
+        <form class="inline-form" onSubmit={(e) => { e.preventDefault(); find(); }}>
+          <label for="openrgb-host">Server</label>
+          <input id="openrgb-host" type="text" maxLength={253} placeholder="192.168.1.20" value={host} onInput={(e) => setHost(e.target.value)} />
+          <label for="openrgb-port">Port</label>
+          <input id="openrgb-port" type="number" min="1" max="65535" value={port}
+            onChange={(e) => setPort(Math.max(1, Math.min(65535, Math.round(Number(e.target.value)) || OPENRGB_PORT)))} />
+          <button type="submit" class="btn sm active" disabled={!host.trim()}>Discover</button>
+          {missing.length > 0 && <button type="button" class="btn sm" disabled={!connectedSig.value} onClick={() => add(null)}>
+            Add {missing.length === lit.length ? 'all' : `the other ${missing.length}`}</button>}
+        </form>
+        <span class="setting-help" role="status">{status}</span>
+        {devices.length > 0 && (
+          <div class="table-scroll">
+            <table class="patch-table">
+              <thead><tr><th scope="col">#</th><th scope="col">Device</th><th scope="col">Type</th><th scope="col">LEDs</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+              <tbody>
+                {devices.map((d) => (
+                  <tr key={d.index}>
+                    <td class="mono">{d.index}</td>
+                    <td>{d.name}</td>
+                    <td>{d.type}</td>
+                    <td>{d.leds}{d.leds > 0 && !d.direct && <span class="setting-help"> · no direct mode</span>}</td>
+                    <td class="patch-actions-cell">
+                      {d.leds > 0 && <button type="button" class="btn sm" aria-label={`Identify ${d.name}`} onClick={() => flash(d.index)}>Identify</button>}
+                      {patched.has(d.index) ? <span class="setting-help">In the patch as "{patched.get(d.index)}"</span>
+                        : d.leds > 0 && <button type="button" class="btn sm active" disabled={!connectedSig.value}
+                          aria-label={`Add ${d.name} to the patch`} onClick={() => add([d.index])}>Add to patch</button>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </section>
   );
@@ -631,6 +727,7 @@ export function Outputs() {
       <div class="setup-col">
         <Universes nodes={nodes} />
         <Wled />
+        <OpenRgb />
         <Hue />
       </div>
     </div>
