@@ -1,4 +1,4 @@
-import { state, allocateFixtureId, universeOf, maxBrightnessOf, countUniverses, placeAddresslessFixtures } from '../state.ts';
+import { state, allocateFixtureId, universeOf, maxBrightnessOf, countUniverses, freeUniverses, placeAddresslessFixtures } from '../state.ts';
 import { resizeFixtureBuffers } from '../engine.ts';
 import { parseGDTF } from '../../gdtf.ts';
 import { BUILTIN_PROFILE_ID, HUE_BY_HAND, isBuiltinProfile, MAX_FIXTURES, UNIVERSE_SIZE, endChannel, fitsInUniverse, universeOverflow, registerProfile, unregisterProfile, listProfiles, getProfile, unitCapOverflow } from '../profiles.ts';
@@ -26,7 +26,7 @@ import type { RouteContext } from './common.ts';
 /**
  * The patch: fixture profiles (GDTF, the Open Fixture Library, a bar built
  * from its manual), WLEDs, Hue lamps, the fixtures themselves, and the show
- * file.
+ * file. OpenRGB devices are routes/openrgb.ts.
  */
 export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
   const { integrations, oflLibrary, wled, hueAreas } = ctx;
@@ -202,22 +202,6 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
     showStore.scheduleSave();
     integrations.broadcast();
     return res.json({ ok: true, fixtures: draft, profiles: fresh.map(({ profile }) => profile), info, segments: fresh.length });
-  }
-
-  /**
-   * The first run of `count` universes nothing is patched on, from 1: the
-   * rig's default universe stays clear, since new fixtures land on it.
-   * `taken` adds universes about to be used.
-   */
-  function freeUniverses(count: number, taken: ReadonlySet<number> = new Set()): number | null {
-    const used = new Set<number>([state.artnet.universe, ...taken]);
-    for (const f of state.fixtures) for (const part of footprintOf(universeOf(f), f.address, getProfile(f))) used.add(part.universe);
-    for (let u = 1; u + count - 1 <= 32767; u++) {
-      let free = true;
-      for (let k = 0; k < count && free; k++) free = !used.has(u + k);
-      if (free) return u;
-    }
-    return null;
   }
 
   app.post('/api/profiles', (req, res) => {

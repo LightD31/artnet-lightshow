@@ -11,6 +11,9 @@ import { resolveCid } from '../sacn.ts';
 import { sendDdp } from '../ddp.ts';
 import { identifyDevices, listEntertainmentConfigs } from '../hue.ts';
 import { hueProfileId } from '../hue-profile.ts';
+import { OPENRGB_PORT } from '../openrgb.ts';
+import { createOpenRgbIdentify } from '../openrgb-devices.ts';
+import { openrgbOutputOf } from '../openrgb-routes.ts';
 import * as output from '../output.ts';
 import { validate } from '../validation.ts';
 import { messageOf, statusOf } from '../../errors.ts';
@@ -32,7 +35,8 @@ import type { WledClient } from '../wled.ts';
  *                                 any universe one of them shares with the rig
  *   POST /api/wled/identify       a WLED: through the patch when it is in it,
  *                                 else streamed its picture directly
- *   POST /api/hue/identify        a Hue channel: through its lamp in the
+ *   POST /api/openrgb/identify    an OpenRGB device: the same, over the SDK
+ *   POST /api/hue/identify        a Hue lamp: through its fixture in the
  *                                 patch, else the bridge's own identify
  */
 
@@ -44,6 +48,7 @@ export interface IdentifyRouteDeps {
   identify?: Identify;
   sacnWatch?: SacnWatch;
   sendPixels?: PixelSend;
+  openrgbIdentify?: ReturnType<typeof createOpenRgbIdentify>;
   locate?: typeof sendArtAddress;
   hueIdentify?: typeof identifyDevices;
   hueAreas?: typeof listEntertainmentConfigs;
@@ -71,6 +76,13 @@ const wledIdentifySchema = z.object({
   seconds,
 }).strict();
 
+const openrgbIdentifySchema = z.object({
+  host: z.string().regex(IPV4_OR_HOST, 'is not a hostname or an IPv4 address'),
+  port: z.number().int().min(1).max(65535).optional(),
+  device: z.number().int().min(0).max(4095),
+  seconds,
+}).strict();
+
 // A lamp of the entertainment area, by its entertainment service id.
 const hueIdentifySchema = z.object({
   lamp: z.string().min(1).max(64),
@@ -88,6 +100,7 @@ function attachIdentifyRoutes(app: Express, deps: IdentifyRouteDeps): void {
   const identify = deps.identify || engineIdentify;
   const watch = deps.sacnWatch || createSacnWatch();
   const pixels = createPixelIdentify({ send: deps.sendPixels || ((target, data) => sendDdp(target, data)) });
+  const openrgbPixels = deps.openrgbIdentify || createOpenRgbIdentify();
   const locate = deps.locate || sendArtAddress;
   const hueIdentify = deps.hueIdentify || identifyDevices;
   const hueAreas = deps.hueAreas || listEntertainmentConfigs;
@@ -118,6 +131,7 @@ function attachIdentifyRoutes(app: Express, deps: IdentifyRouteDeps): void {
   app.post('/api/identify/stop', (_req, res) => {
     identify.stop();
     pixels.stopAll();
+    openrgbPixels.stopAll();
     res.json({ ok: true });
   });
 
@@ -191,6 +205,27 @@ function attachIdentifyRoutes(app: Express, deps: IdentifyRouteDeps): void {
       res.json({ ok: true, via: 'device', leds: info.leds, ids: [], remainingMs: secs * 1000 });
     } catch (err) {
       fail(res, err);
+    }
+  }));
+
+  app.post('/api/openrgb/identify', asyncHandler(async (req, res) => {
+    try {
+      const body = validate(openrgbIdentifySchema, req.body || {}, 'OpenRGB identify');
+      const secs = identifySeconds(body.seconds);
+      const port = body.port ?? OPENRGB_PORT;
+      const host = body.host.toLowerCase();
+      const patched = state.fixtures.filter((f) => {
+        const output = openrgbOutputOf(f);
+        return output && output.host.toLowerCase() === host && (output.port ?? OPENRGB_PORT) === port && output.device === body.device;
+      });
+      if (patched.length) {
+        openrgbPixels.stop(body.host, port, body.device);
+        return res.json({ ok: true, via: 'patch', ...start(patched.map((f) => f.id), secs) });
+      }
+      const { leds, name } = await openrgbPixels.start(body.host, port, body.device, secs);
+      res.json({ ok: true, via: 'device', leds, name, ids: [], remainingMs: leds ? secs * 1000 : 0 });
+    } catch (err) {
+      fail(res, err, 502);
     }
   }));
 

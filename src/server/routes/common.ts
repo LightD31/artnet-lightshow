@@ -4,6 +4,7 @@ import { messageOf, statusOf } from '../../errors.ts';
 import { cues as defaultCues } from '../cues.ts';
 import { createOflLibrary } from '../ofl-library.ts';
 import { wledClient } from '../wled.ts';
+import { openrgbClient } from '../openrgb.ts';
 import { listEntertainmentConfigs, pair } from '../hue.ts';
 import * as output from '../output.ts';
 import type { HueBridgeSettings } from '../settings.ts';
@@ -19,6 +20,7 @@ import type { createApplier } from '../apply.ts';
 import type { setupIntegrations } from '../integrations.ts';
 import type { OflLibrary } from '../ofl-library.ts';
 import type { WledClient } from '../wled.ts';
+import type { OpenRgbClient } from '../openrgb.ts';
 
 /**
  * What every domain's routes share (src/server/routes/): the subsystems they
@@ -41,6 +43,8 @@ export interface RouteDeps {
   oflLibrary?: OflLibrary;
   /** Finding and asking WLEDs; the real network unless a test stands in. */
   wled?: WledClient;
+  /** Asking OpenRGB servers for their devices; the real network unless a test stands in. */
+  openrgb?: OpenRgbClient;
   /** A bridge's entertainment areas; the real bridge unless a test stands in. */
   hueAreas?: typeof listEntertainmentConfigs;
   /** Pairing with a bridge; the real one unless a test stands in. */
@@ -62,7 +66,7 @@ export const uploadOfl = multer({ storage: multer.memoryStorage(), limits: { fil
 
 /** The subsystems, with the ones a test may stand in for filled in. */
 export type RouteContext = RouteDeps & {
-  oflLibrary: OflLibrary; wled: WledClient; hueAreas: typeof listEntertainmentConfigs; huePair: typeof pair; cues: CueStore;
+  oflLibrary: OflLibrary; wled: WledClient; openrgb: OpenRgbClient; hueAreas: typeof listEntertainmentConfigs; huePair: typeof pair; cues: CueStore;
 };
 
 export function routeContext(deps: RouteDeps): RouteContext {
@@ -70,6 +74,7 @@ export function routeContext(deps: RouteDeps): RouteContext {
     ...deps,
     oflLibrary: deps.oflLibrary || createOflLibrary(),
     wled: deps.wled || wledClient,
+    openrgb: deps.openrgb || openrgbClient,
     hueAreas: deps.hueAreas || listEntertainmentConfigs,
     huePair: deps.huePair || pair,
     cues: deps.cues || defaultCues,
