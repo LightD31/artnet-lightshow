@@ -18,8 +18,11 @@ import { MIN_UNIVERSE, MAX_UNIVERSE } from './sacn.ts';
 import { listEntertainmentConfigs } from './hue.ts';
 import { wledClient } from './wled.ts';
 import { runsOf, pixelWidth } from './ddp-routes.ts';
+import { OPENRGB_PORT, openrgbClient } from './openrgb.ts';
+import { openrgbOutputOf } from './openrgb-routes.ts';
 import { unitCount } from '../shared/rig.ts';
 import type { WledClient } from './wled.ts';
+import type { OpenRgbClient } from './openrgb.ts';
 import type { DdpOutput } from '../types/rig.ts';
 import { cues } from './cues.ts';
 import { midiMap } from './midi-map.ts';
@@ -352,6 +355,62 @@ async function checkWled(client: Pick<WledClient, 'info'> = wledClient): Promise
     id: 'wled', label: 'WLED', status: OK,
     detail: answers.map((a) => `"${a.fix.label}" at ${a.host}, ${a.leds} LEDs`).join('; ') + ', sent over DDP.',
   };
+}
+
+/**
+ * The OpenRGB devices in the patch: does each server answer, does it still
+ * list each device, and is the device still the length it was patched as? A
+ * PC that is off is a warning, not a failure: the rest of the show goes on
+ * without its RGB.
+ */
+async function checkOpenRgb(client: Pick<OpenRgbClient, 'discover'> = openrgbClient): Promise<Check> {
+  const fixtures = state.fixtures.filter((f) => openrgbOutputOf(f));
+  if (!fixtures.length) {
+    return { id: 'openrgb', label: 'OpenRGB', status: INFO, detail: 'None in the patch. Add a PC\'s devices under Rig → Outputs → OpenRGB.' };
+  }
+  const servers = new Map<string, { host: string; port: number; fixtures: typeof fixtures }>();
+  for (const fix of fixtures) {
+    const output = openrgbOutputOf(fix) as NonNullable<ReturnType<typeof openrgbOutputOf>>;
+    const port = output.port ?? OPENRGB_PORT;
+    const key = `${output.host.toLowerCase()}:${port}`;
+    const entry = servers.get(key) || { host: output.host, port, fixtures: [] };
+    entry.fixtures.push(fix);
+    servers.set(key, entry);
+  }
+  const where = (s: { host: string; port: number }) => (s.port === OPENRGB_PORT ? s.host : `${s.host}:${s.port}`);
+  const silent: string[] = [];
+  const wrong: string[] = [];
+  const fine: string[] = [];
+  await Promise.all([...servers.values()].map(async (server) => {
+    const names = server.fixtures.map((f) => `"${f.label}"`).join(', ');
+    let devices;
+    try {
+      devices = await client.discover(server.host, server.port);
+    } catch (err) {
+      silent.push(`OpenRGB at ${where(server)} does not answer (${messageOf(err)}); on it: ${names}`);
+      return;
+    }
+    for (const fix of server.fixtures) {
+      const output = openrgbOutputOf(fix) as NonNullable<ReturnType<typeof openrgbOutputOf>>;
+      const device = devices.find((d) => d.index === output.device);
+      if (!device) wrong.push(`"${fix.label}" is device #${output.device} at ${where(server)}, which lists only ${devices.length}`);
+      else if (device.leds !== output.leds) wrong.push(`"${fix.label}" (${device.name}) reports ${device.leds} LEDs but is patched as ${output.leds}`);
+      else fine.push(`"${fix.label}" at ${where(server)} #${output.device} ${device.name}, ${device.leds} LEDs`);
+    }
+  }));
+  if (silent.length) {
+    return {
+      id: 'openrgb', label: 'OpenRGB', status: WARN, detail: silent.join('; '),
+      fix: 'Start OpenRGB on that PC with its SDK server on, check the address in the patch, or remove its fixtures from the patch.',
+    };
+  }
+  if (wrong.length) {
+    return {
+      id: 'openrgb', label: 'OpenRGB', status: WARN, detail: wrong.join('; '),
+      fix: 'OpenRGB numbers its devices in the order it finds them. Remove the fixture and add the device again under Rig → Outputs → OpenRGB.',
+    };
+  }
+  return { id: 'openrgb', label: 'OpenRGB', status: OK, detail: `${fine.join('; ')}, sent over the OpenRGB SDK.` };
 }
 
 /**
@@ -911,10 +970,11 @@ async function runPreflight({ midi, spotify, prolink, analysisCache, downloadMod
   // The external-tool probes are independent and each costs a process spawn;
   // run them together rather than serially in front of an operator waiting on
   // the report.
-  const [artnet, hue, wled, ffmpeg, ytDlp, live, stack, models] = await Promise.all([
+  const [artnet, hue, wled, openrgb, ffmpeg, ytDlp, live, stack, models] = await Promise.all([
     checkArtnet(),
     checkHue(),
     checkWled(),
+    checkOpenRgb(),
     checkFfmpeg(),
     checkYtDlp(),
     checkLiveInput(),
@@ -929,6 +989,7 @@ async function runPreflight({ midi, spotify, prolink, analysisCache, downloadMod
     checkSacn(),
     ...hue,
     wled,
+    openrgb,
     checkPatch(),
     checkAccess(),
     checkMidi(midi),
@@ -965,6 +1026,7 @@ export {
   checkSacn,
   checkHue,
   checkWled,
+  checkOpenRgb,
   checkPanns,
   checkAnalysisModels,
   checkModelStack,

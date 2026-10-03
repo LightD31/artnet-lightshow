@@ -11,6 +11,7 @@ import { attachWarmRoutes } from './routes/warm.ts';
 import { attachSetupRoutes } from './routes/setup.ts';
 import { attachOutputRoutes } from './routes/outputs.ts';
 import { attachIdentifyRoutes } from './routes/identify.ts';
+import { attachOpenRgbRoutes } from './routes/openrgb.ts';
 import { attachOpsRoutes } from './routes/ops.ts';
 
 export type { RouteDeps, RouteContext } from './routes/common.ts';
@@ -23,6 +24,7 @@ export type { AnalyzeSource } from './routes/auto.ts';
  *   midi       the controller's ports, mapping and learn
  *   sources    PRO DJ LINK, Spotify, the OS media session, Deezer, live input devices
  *   fixtures   profiles (GDTF, OFL, bars), WLEDs, the patch, the show file
+ *   openrgb    the devices of an OpenRGB SDK server, added to the patch
  *   cues       the cue stack
  *   auto       analysing, running and editing the auto show; the analysis cache
  *   warm       set-list warming
@@ -39,6 +41,7 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
   attachMidiRoutes(app, ctx);
   attachSourceRoutes(app, ctx);
   attachFixtureRoutes(app, ctx);
+  attachOpenRgbRoutes(app, ctx);
   attachCueRoutes(app, ctx);
   attachAutoRoutes(app, ctx);
   attachWarmRoutes(app, ctx);
