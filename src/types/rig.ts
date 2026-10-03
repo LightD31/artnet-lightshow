@@ -210,15 +210,18 @@ export interface DdpOutput {
 
 /**
  * One device of an OpenRGB SDK server (server/openrgb.ts): device `device`
- * in the order the server lists them, `leds` LEDs long when it was added,
- * each a cell of the fixture, sent as one UPDATELEDS packet a frame over one
- * TCP connection to `host`. Its universes are its own, as a WLED's are.
+ * in the order the server listed them when it was added — and `name`, what
+ * the server called it then, by which it is found again when the server has
+ * renumbered its devices — `leds` LEDs long, each a cell of the fixture,
+ * sent as one UPDATELEDS packet a frame over one TCP connection to `host`.
+ * Its universes are its own, as a WLED's are.
  */
 export interface OpenRgbOutput {
   protocol: 'openrgb';
   host: string;
   port?: number;
   device: number;
+  name?: string;
   leds: number;
 }
 

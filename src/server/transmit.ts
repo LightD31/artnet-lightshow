@@ -488,7 +488,7 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
   }
 
   function openrgbTarget(route: OpenRgbRoute): OpenRgbTarget {
-    return { host: route.host, port: route.port, device: route.device, leds: route.leds };
+    return { host: route.host, port: route.port, device: route.device, ...(route.name ? { name: route.name } : {}), leds: route.leds };
   }
 
   /** Close the connection to every server that had devices in `before` and has none in `after`. */

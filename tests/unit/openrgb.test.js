@@ -209,16 +209,18 @@ test('a device\'s profile: its LEDs as cells of red, green and blue; one light w
 
 // ── The output shape ────────────────────────────────────────────────────────
 
-test('the output: protocol, host, device and LED count, and a port when not the default', () => {
+test('the output: protocol, host, device and LED count, a port when not the default, and the device\'s name when kept', () => {
   const ok = (output) => validate(fixtureMessageSchema, { id: 1, output }, 'fixture').output;
   assert.deepStrictEqual(ok({ protocol: 'openrgb', host: '10.0.0.80', device: 3, leds: 8 }), { protocol: 'openrgb', host: '10.0.0.80', device: 3, leds: 8 });
   assert.strictEqual(ok({ protocol: 'openrgb', host: 'gamer-pc.lan', port: 6743, device: 0, leds: 1 }).port, 6743);
+  assert.strictEqual(ok({ protocol: 'openrgb', host: '10.0.0.80', device: 3, leds: 8, name: ' Trident Z A ' }).name, 'Trident Z A');
   assert.strictEqual(ok(null), null);
   for (const bad of [
     { protocol: 'openrgb', host: '10.0.0.80', device: 3 },
     { protocol: 'openrgb', host: '10.0.0.80', device: -1, leds: 8 },
     { protocol: 'openrgb', host: '10.0.0.80', device: 3, leds: 0 },
-    { protocol: 'openrgb', host: '10.0.0.80', device: 3, leds: 8, name: 'x' },
+    { protocol: 'openrgb', host: '10.0.0.80', device: 3, leds: 8, name: '' },
+    { protocol: 'openrgb', host: '10.0.0.80', device: 3, leds: 8, model: 'x' },
     { protocol: 'openrgb', host: 'http://x', device: 3, leds: 8 },
     { protocol: 'hue', bridge: 'b1', channel: 0 },
   ]) assert.throws(() => ok(bad), `${JSON.stringify(bad)} is refused`);
@@ -258,6 +260,9 @@ test('a device\'s route: its universes\' bytes, how wide a cell is and where its
 test('a device is one fixture\'s, and its universes are its alone', () => {
   assert.strictEqual(openrgbConflict([ram(1, 3, 0), ram(2, 4, 1)]), null);
   assert.match(openrgbConflict([ram(1, 3, 0), ram(2, 4, 0)]), /"RAM 2" and "RAM 1" are both OpenRGB device #0 at 10.0.0.80/);
+  const named = (id, device, name) => ({ ...ram(id, id + 2, device), output: { ...ram(id, id + 2, device).output, name } });
+  assert.strictEqual(openrgbConflict([named(1, 6, 'Keyboard'), named(2, 6, 'Monitor')]), null, 'two devices patched at one number on different days, under their names');
+  assert.match(openrgbConflict([named(1, 6, 'Monitor'), named(2, 6, 'Monitor')]), /"RAM 2" and "RAM 1" are both OpenRGB device #6 Monitor at 10.0.0.80/);
   assert.match(ddpConflict([ram(1, 3, 0), { ...ram(2, 4, 0), output: { ...ram(2, 4, 0).output, port: 6742 } }], profileOf, universeOf), /both OpenRGB device #0/);
   assert.match(ddpConflict([ram(1, 3, 0), { id: 2, label: 'Par', address: 100, universe: 3, profileId: 'par' }], profileOf, universeOf),
     /"Par" is on universe 3, which goes to "RAM 1"'s OpenRGB device and nowhere else/);
@@ -418,6 +423,38 @@ test('the wire: frames reach the server in its Direct mode; disarming sends blac
   }
 });
 
+/** The PC on another day: the mouse asleep, so the keyboard comes last, and the two monitors under one name. */
+const renumbered = () => [
+  ...rig().slice(0, 6),
+  { name: 'Monitor', type: 11, leds: 48 }, { name: 'Monitor', type: 11, leds: 48 },
+  { name: 'Fan hub', type: 3, leds: 0 },
+  { name: 'Keyboard', type: 5, leds: 117, matrix: true },
+];
+
+test('the wire: a device OpenRGB has renumbered is found by its name, identical ones in their order; one gone is left alone', async () => {
+  const server = await fakeServer(renumbered());
+  // Patched when the keyboard was #6, the monitors #7 and #8, the mouse #10.
+  const route = (device, name, leds, universe) => ({ host: '127.0.0.1', port: server.port, device, name, leds, parts: [{ universe, from: 0, bytes: leds * 3 }], width: 3, rgb: [0, 1, 2] });
+  const routes = [route(0, 'Trident Z A', 8, 1), route(6, 'Keyboard', 117, 2), route(7, 'Monitor', 48, 3), route(8, 'Monitor', 48, 4), route(10, 'Mouse', 2, 5)];
+  const config = { ...noDmx, openrgb: routes, armed: true };
+  const tx = createTransmitter();
+  const paint = () => {
+    for (const r of routes) tx.send(r.parts[0].universe, Buffer.alloc(512, r.parts[0].universe * 10), config);
+    tx.endFrame(config);
+  };
+  try {
+    const got = (device) => server.log.leds.find((p) => p.device === device);
+    await until(() => [0, 9, 6, 7].every((d) => got(d)), { each: paint, what: 'frames at the devices under their numbers today' });
+    assert.deepStrictEqual([0, 9, 6, 7].map((d) => [got(d).count, got(d).rgb[0]]), [[8, 10], [117, 20], [48, 30], [48, 40]],
+      'the RAM where it was, the keyboard at #9, the monitors in their order at #6 and #7');
+    assert.ok(!server.log.leds.some((p) => p.device === 8 || p.device === 10), 'nothing to the fan hub\'s number, nor the absent mouse\'s');
+    assert.strictEqual(server.log.connections, 1, 'one connection served the lot');
+  } finally {
+    closeOpenRgb({ host: '127.0.0.1', port: server.port });
+    await server.close();
+  }
+});
+
 test('the wire: a server that never says its version is spoken to at protocol 0', { timeout: 10_000 }, async () => {
   const server = await fakeServer(rig(), { answerVersion: false });
   const route = { host: '127.0.0.1', port: server.port, device: 0, leds: 8, parts: [{ universe: 11, from: 0, bytes: 24 }], width: 3, rgb: [0, 1, 2] };
@@ -471,9 +508,9 @@ test('discover lists the server\'s devices; add patches each on universes of its
       const two = await call('/api/openrgb/add', { host: '127.0.0.1', port: server.port, devices: [0, 5] });
       assert.strictEqual(two.status, 200, JSON.stringify(two.body));
       assert.deepStrictEqual(two.body.fixtures.map((f) => [f.label, f.universe, f.address, f.profileId, f.output]), [
-        ['Trident Z A', 1, 1, `openrgb-127-0-0-1-${server.port}-0`, { protocol: 'openrgb', host: '127.0.0.1', port: server.port, device: 0, leds: 8 }],
-        ['B650 Board', 2, 1, `openrgb-127-0-0-1-${server.port}-5`, { protocol: 'openrgb', host: '127.0.0.1', port: server.port, device: 5, leds: 85 }],
-      ], 'from universe 1: the rig\'s default universe 0 stays clear');
+        ['Trident Z A', 1, 1, `openrgb-127-0-0-1-${server.port}-0`, { protocol: 'openrgb', host: '127.0.0.1', port: server.port, device: 0, name: 'Trident Z A', leds: 8 }],
+        ['B650 Board', 2, 1, `openrgb-127-0-0-1-${server.port}-5`, { protocol: 'openrgb', host: '127.0.0.1', port: server.port, device: 5, name: 'B650 Board', leds: 85 }],
+      ], 'from universe 1: the rig\'s default universe 0 stays clear; each under its name, to be found again when OpenRGB renumbers');
       assert.deepStrictEqual(two.body.profiles.map((p) => [p.name, p.modeName]), [['Trident Z A', '8 LEDs, RGB, DRAM'], ['B650 Board', '85 LEDs, RGB, Motherboard']]);
       assert.strictEqual(state.fixtures.length, 3);
 
@@ -494,6 +531,17 @@ test('discover lists the server\'s devices; add patches each on universes of its
 
       const listed = await call(`/api/openrgb/discover?host=127.0.0.1&port=${server.port}`);
       assert.deepStrictEqual(listed.body.devices.map((d) => d.patched).slice(0, 3), ['Trident Z A', 'PC · Trident Z B', 'PC · Trident Z C']);
+
+      // Another day: the mouse asleep, the keyboard found last. Each device is still known as patched, under its name.
+      server.devices.splice(0, server.devices.length, ...rig().filter((d) => d.name !== 'Mouse' && d.name !== 'Keyboard'), { name: 'Keyboard', type: 5, leds: 117, matrix: true });
+      const today = await call(`/api/openrgb/discover?host=127.0.0.1&port=${server.port}`);
+      assert.deepStrictEqual(today.body.devices.map((d) => [d.index, d.patched]), [
+        [0, 'Trident Z A'], [1, 'PC · Trident Z B'], [2, 'PC · Trident Z C'], [3, 'PC · Trident Z D'], [4, 'PC · RTX 4080'], [5, 'B650 Board'],
+        [6, 'PC · Monitor L'], [7, 'PC · Monitor R'], [8, null], [9, 'PC · Keyboard'],
+      ]);
+      const none = await call('/api/openrgb/add', { host: '127.0.0.1', port: server.port });
+      assert.deepStrictEqual([none.status, none.body.error], [409, 'Every device of OpenRGB at 127.0.0.1 is patched already'], 'nothing new, whatever the numbers');
+      assert.match((await call('/api/openrgb/add', { host: '127.0.0.1', port: server.port, devices: [9] })).body.error, /Keyboard \(#9\) is patched already, as "PC · Keyboard"/);
 
       assert.strictEqual((await call('/api/openrgb/add', { host: 'http://x' })).status, 400);
       const nobody = await call('/api/openrgb/discover?host=127.0.0.1&port=1');
@@ -564,6 +612,22 @@ test('pre-show check: a server that does not answer is a warning naming its fixt
     assert.strictEqual(silent.status, 'warn');
     assert.match(silent.detail, /^OpenRGB at 127.0.0.1:1 does not answer \(.*\); on it: "Elsewhere"$/);
     assert.match(silent.fix, /SDK server/);
+
+    // Patched under names on a day the PC listed the keyboard at #6 and the monitors at #7 and #8.
+    const today = await fakeServer(renumbered());
+    const named = (id, label, device, name, leds) => ({ ...on(id, label, device, leds, today.port), output: { ...on(id, label, device, leds, today.port).output, name } });
+    try {
+      state.fixtures = [named(1, 'Keys', 6, 'Keyboard', 117), named(2, 'Left', 7, 'Monitor', 48), named(3, 'Right', 8, 'Monitor', 48)];
+      const found = await checkOpenRgb();
+      assert.strictEqual(found.status, 'ok', found.detail);
+      assert.strictEqual(found.detail, `"Keys" at 127.0.0.1:${today.port} #9 (was #6) Keyboard, 117 LEDs; "Left" at 127.0.0.1:${today.port} #6 (was #7) Monitor, 48 LEDs; "Right" at 127.0.0.1:${today.port} #7 (was #8) Monitor, 48 LEDs, sent over the OpenRGB SDK.`);
+      state.fixtures = [named(1, 'Mouse', 10, 'Mouse', 2)];
+      const gone = await checkOpenRgb();
+      assert.strictEqual(gone.status, 'warn');
+      assert.strictEqual(gone.detail, `"Mouse" (Mouse, #10) is not among the 10 devices at 127.0.0.1:${today.port}`);
+    } finally {
+      await today.close();
+    }
   } finally {
     state.fixtures = saved;
     await server.close();

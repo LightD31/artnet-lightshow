@@ -745,9 +745,13 @@ is a par.
   number and name. Change the address when the PC moves; empty it to send the
   fixture on Art-Net and sACN instead.
 - OpenRGB numbers its devices in the order it finds them, so hardware added
-  to or taken out of the PC can shift the others. The pre-show check reads
-  the server again: a device that is gone, or whose LED count has changed,
-  warns.
+  to or taken out of the PC — a monitor off, a wireless mouse asleep at
+  boot — can shift the others. A device is patched under its name as well
+  as its number, and the show finds it by name whatever its number today
+  (the k-th of that name on the server for the k-th in the patch, so
+  identical RAM sticks keep their order). The pre-show check reads the
+  server again and says where a device has moved; one that is gone, or
+  whose LED count has changed, warns.
 - A device in a hardware effect (a rainbow the board runs itself) is put into
   its *Direct* mode the first time it is sent a frame, as OpenRGB's own
   clients do; one with no mode that takes a colour a LED cannot be lit by the
@@ -2614,11 +2618,12 @@ of `front`, `back`, `room`, `floor`, or `null`; `geometry` is an LED bar's line
 `{ protocol: 'ddp', host, port?, at?, rowStride? }` to send the fixture's
 universes to a WLED — from its LED `at` for a segment, a row every `rowStride`
 LEDs for a rectangle of a panel — `{ protocol: 'openrgb', host, port?, device,
-leds }` to send them to device `device` of the OpenRGB SDK server at `host`,
-`leds` LEDs long (as `POST /api/openrgb/add` patches it) — or `null` for
-Art-Net and sACN. A Hue lamp's `{ protocol: 'hue', bridge, channels }` is
-given by `POST /api/hue/:bridge/add` and cannot be set or changed here, nor
-can its profile.
+name?, leds }` to send them to device `device` of the OpenRGB SDK server at
+`host` (found by `name` when the server has renumbered it), `leds` LEDs long
+(as `POST /api/openrgb/add` patches it) — or `null` for Art-Net and sACN. A
+Hue lamp's `{ protocol: 'hue', bridge, channels }` is given by
+`POST /api/hue/:bridge/add` and cannot be set or changed here, nor can its
+profile.
 
 ---
 

@@ -68,7 +68,7 @@ function createOpenRgbIdentify({ connect = (host: string, port: number) => new O
       let data: ControllerData;
       try {
         await connection.open();
-        data = await connection.prepare(device);
+        data = await connection.prepare({ device });
       } catch (err) {
         connection.end();
         throw openrgbHttpError(err, connection.where());
@@ -83,13 +83,13 @@ function createOpenRgbIdentify({ connect = (host: string, port: number) => new O
         if (handle !== null) stopEvery(handle as never);
         handle = null;
         if (running.get(key) === stop) running.delete(key);
-        connection.restore(device);
+        connection.restore({ device });
         connection.end();
       };
       const tick = () => {
         const elapsed = clock() - started;
         if (elapsed >= seconds * 1000) { stop(); return; }
-        connection.send(device, identifyPixels(data.leds, false, elapsed), data.leds);
+        connection.send({ device }, identifyPixels(data.leds, false, elapsed), data.leds);
       };
       running.set(key, stop);
       tick();
