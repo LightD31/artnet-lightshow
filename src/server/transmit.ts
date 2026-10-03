@@ -5,6 +5,9 @@ import type { DdpRun } from './ddp.ts';
 import { isInternalUniverse } from '../shared/placement.ts';
 import { spreadPixels } from './ddp-routes.ts';
 import type { DdpRoute } from './ddp-routes.ts';
+import type { OpenRgbTarget } from './openrgb.ts';
+import { openrgbKey, openrgbHostKey, openrgbPixels } from './openrgb-routes.ts';
+import type { OpenRgbRoute } from './openrgb-routes.ts';
 import type { ArtDmxTarget } from './artnet.ts';
 import type { ArtRoutes } from './artnet-nodes.ts';
 import type { SacnTarget } from './sacn.ts';
@@ -28,6 +31,8 @@ export interface TransmitConfig {
   delayMs: number;
   /** The WLEDs, and the universes that are theirs (ddp-routes.ts). */
   ddp?: DdpRoute[];
+  /** The OpenRGB devices, and the universes that are theirs (openrgb-routes.ts). */
+  openrgb?: OpenRgbRoute[];
   /**
    * Whether anything may leave the machine (armed.ts). Left out means it
    * may; false drops every frame, after the streams have been ended.
@@ -55,6 +60,10 @@ export interface Wires {
   sacn(target: SacnTarget, frame: Buffer): boolean;
   sacnDiscovery(packet: { cid: string; sourceName: string; universes: number[]; iface: string }): unknown;
   ddp(target: DdpTarget, data: Uint8Array): boolean;
+  /** One frame of an OpenRGB device's LEDs, three bytes each. */
+  openrgb(target: OpenRgbTarget, rgb: Uint8Array): boolean;
+  /** Hang up on an OpenRGB server, once what was written has gone. */
+  openrgbClose(target: { host: string; port: number }): unknown;
 }
 
 export interface SendOptions {
@@ -62,7 +71,7 @@ export interface SendOptions {
   terminate?: boolean;
 }
 
-export type Wire = 'artnet' | 'sacn' | 'ddp';
+export type Wire = 'artnet' | 'sacn' | 'ddp' | 'openrgb';
 
 export interface Transmitter {
   send(universe: number, frame: Buffer, config: TransmitConfig, options?: SendOptions): Wire[];
@@ -101,8 +110,28 @@ function sacnUniverseFor(universe: number, offset: number): number | null {
   return mapped;
 }
 
+// The OpenRGB wire is loaded by the first frame that goes to a device, so a
+// rig with no PC in it never loads it: the engine's worker starts with the
+// same modules it always had. Frames are dropped until it is in, as they are
+// while the connection opens.
+let openrgbWire: Pick<Wires, 'openrgb' | 'openrgbClose'> | null = null;
+let openrgbLoading: Promise<void> | null = null;
+function loadOpenRgbWire(): void {
+  if (openrgbLoading) return;
+  openrgbLoading = import('./openrgb.ts').then((m) => { openrgbWire = { openrgb: m.sendOpenRgb, openrgbClose: m.closeOpenRgb }; }, (err) => {
+    console.warn(`[openrgb] cannot load the wire: ${err instanceof Error ? err.message : String(err)}`);
+    openrgbLoading = null;
+  });
+}
+
 const DEFAULT_WIRES: Wires = {
   artnet: sendArtDmx, artnetSync: sendArtSync, sacn: sendSacn, sacnDiscovery: sendSacnDiscovery, ddp: sendDdp,
+  openrgb: (target, rgb) => {
+    if (openrgbWire) return openrgbWire.openrgb(target, rgb);
+    loadOpenRgbWire();
+    return false;
+  },
+  openrgbClose: (target) => openrgbWire?.openrgbClose(target),
 };
 
 /** The universes a config sends to WLEDs, worked out once per config. */
@@ -113,6 +142,18 @@ function ddpUniverses(routes: DdpRoute[] | undefined): Set<number> | null {
   if (!set) {
     set = new Set(routes.flatMap((route) => route.parts.map((part) => part.universe)));
     ddpUniversesOf.set(routes, set);
+  }
+  return set;
+}
+
+/** The universes a config sends to OpenRGB devices, worked out once per config. */
+const openrgbUniversesOf = new WeakMap<OpenRgbRoute[], Set<number>>();
+function openrgbUniverses(routes: OpenRgbRoute[] | undefined): Set<number> | null {
+  if (!routes || !routes.length) return null;
+  let set = openrgbUniversesOf.get(routes);
+  if (!set) {
+    set = new Set(routes.flatMap((route) => route.parts.map((part) => part.universe)));
+    openrgbUniversesOf.set(routes, set);
   }
   return set;
 }
@@ -151,6 +192,11 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
   const ddpFrames = new Map<number, Buffer>();
   let ddpSent = new Map<string, { route: DdpRoute; bytes: number }>();
   const ddpSequence = new Map<string, number>();
+  // The same for the OpenRGB devices: this frame's universes, and the
+  // devices sent to last frame, so one that leaves the patch is sent a dark
+  // frame and a server with no device left on it is hung up on.
+  const openrgbFrames = new Map<number, Buffer>();
+  let openrgbSent = new Map<string, OpenRgbRoute>();
   // Whether frames are leaving the machine (armed.ts, through the config),
   // and where each universe's Art-Net last went, for the black frame that
   // ends it when they stop.
@@ -220,6 +266,13 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
     if (toWled && toWled.has(universe)) {
       ddpFrames.set(universe, frame);
       sent.push('ddp');
+      return sent;
+    }
+    // And an OpenRGB device's: one UPDATELEDS packet a device at the frame's end.
+    const toOpenRgb = openrgbUniverses(config.openrgb);
+    if (toOpenRgb && toOpenRgb.has(universe)) {
+      openrgbFrames.set(universe, frame);
+      sent.push('openrgb');
       return sent;
     }
 
@@ -311,12 +364,14 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
    * ArtSync that shows it, when nodes wait for one); each sACN universe a
    * black frame and its stream-terminated packets, under the settings it was
    * sent with; each WLED one dark frame, so its realtime timeout hands the
-   * strip back to its own effects. Frames held for the Hue delay are dropped:
-   * they are the look being ended.
+   * strip back to its own effects; each OpenRGB device one dark frame, and
+   * the connection to its server closed. Frames held for the Hue delay are
+   * dropped: they are the look being ended.
    */
   function goDark(config: TransmitConfig): void {
     delayLine.clear();
     ddpFrames.clear();
+    openrgbFrames.clear();
     const { artnet } = config;
     for (const [universe, { hosts, port }] of artnetSent) {
       if (wires.artnet({ hosts, port, universe }, ZERO_FRAME) && artnet && artnet.sync) {
@@ -335,6 +390,9 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
     }
     for (const gone of ddpSent.values()) sendToWled(gone.route, new Uint8Array(gone.bytes), byteRuns(gone.route, 0));
     ddpSent = new Map();
+    for (const gone of openrgbSent.values()) wires.openrgb(openrgbTarget(gone), new Uint8Array(gone.leds * 3));
+    hangUpOpenRgb(openrgbSent, new Map());
+    openrgbSent = new Map();
   }
 
   /**
@@ -347,10 +405,12 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
       // the patch while disarmed was already sent its dark frame on the way
       // here, or was never sent at all.
       ddpFrames.clear();
+      openrgbFrames.clear();
       syncTargets.clear();
       return;
     }
     endDdpFrame(config && config.ddp);
+    endOpenRgbFrame(config && config.openrgb);
     const artnet = config && config.artnet;
     if (artnet && artnet.sync && artnet.enabled !== false) {
       for (const host of syncTargets) wires.artnetSync({ host, port: artnet.port });
@@ -403,6 +463,44 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
     }
     ddpSent = now;
     ddpFrames.clear();
+  }
+
+  /**
+   * Send every OpenRGB device its LEDs: its universes' bytes, in order, as
+   * one packet. A device whose universes did not all arrive this frame
+   * (held in the Hue delay line) waits for the next. One that has left the
+   * patch is sent a dark frame, and a server with no device left on it is
+   * hung up on: OpenRGB keeps the last colours it was sent.
+   */
+  function endOpenRgbFrame(routes: OpenRgbRoute[] | null | undefined): void {
+    const current = new Map<string, OpenRgbRoute>();
+    for (const route of routes || []) {
+      current.set(openrgbKey(route), route);
+      if (!route.parts.every((part) => openrgbFrames.has(part.universe))) continue;
+      wires.openrgb(openrgbTarget(route), openrgbPixels(route, (universe) => openrgbFrames.get(universe) as Buffer));
+    }
+    for (const [key, gone] of openrgbSent) {
+      if (!current.has(key)) wires.openrgb(openrgbTarget(gone), new Uint8Array(gone.leds * 3));
+    }
+    hangUpOpenRgb(openrgbSent, current);
+    openrgbSent = current;
+    openrgbFrames.clear();
+  }
+
+  function openrgbTarget(route: OpenRgbRoute): OpenRgbTarget {
+    return { host: route.host, port: route.port, device: route.device, leds: route.leds };
+  }
+
+  /** Close the connection to every server that had devices in `before` and has none in `after`. */
+  function hangUpOpenRgb(before: Map<string, OpenRgbRoute>, after: Map<string, OpenRgbRoute>): void {
+    const kept = new Set([...after.values()].map(openrgbHostKey));
+    const closed = new Set<string>();
+    for (const route of before.values()) {
+      const host = openrgbHostKey(route);
+      if (kept.has(host) || closed.has(host)) continue;
+      closed.add(host);
+      wires.openrgbClose({ host: route.host, port: route.port });
+    }
   }
 
   /** How many bytes a fixture's LEDs are on the wire: its channels', unless spread. */

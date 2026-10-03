@@ -161,14 +161,15 @@ export interface Fixture extends StageFixture {
   maxBrightness?: number;
   override?: Override | null;
   /**
-   * Where its universes go, when not Art-Net and sACN: a WLED over DDP, or
-   * nowhere at all for a Hue lamp, which has no DMX address.
+   * Where its universes go, when not Art-Net and sACN: a WLED over DDP, an
+   * OpenRGB device over the SDK, or nowhere at all for a Hue lamp, which has
+   * no DMX address.
    */
   output?: FixtureOutput | null;
 }
 
 /** A fixture sent to a device of its own rather than on the rig's universes. */
-export type FixtureOutput = DdpOutput | HueOutput;
+export type FixtureOutput = DdpOutput | OpenRgbOutput | HueOutput;
 
 /**
  * A WLED, sent its pixels over DDP: all of them, or — for a fixture that is
@@ -190,6 +191,20 @@ export interface DdpOutput {
   leds?: number;
   columns?: number;
   areas?: [number, number, number, number][];
+}
+
+/**
+ * One device of an OpenRGB SDK server (server/openrgb.ts): device `device`
+ * in the order the server lists them, `leds` LEDs long when it was added,
+ * each a cell of the fixture, sent as one UPDATELEDS packet a frame over one
+ * TCP connection to `host`. Its universes are its own, as a WLED's are.
+ */
+export interface OpenRgbOutput {
+  protocol: 'openrgb';
+  host: string;
+  port?: number;
+  device: number;
+  leds: number;
 }
 
 /**
