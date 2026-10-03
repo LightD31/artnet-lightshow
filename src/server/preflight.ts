@@ -423,7 +423,8 @@ async function checkOpenRgb(client: Pick<OpenRgbClient, 'discover'> = openrgbCli
   if (wrong.length) {
     return {
       id: 'openrgb', label: 'OpenRGB', status: WARN, detail: wrong.join('; '),
-      fix: 'OpenRGB numbers its devices in the order it finds them. Remove the fixture and add the device again under Rig → Outputs → OpenRGB.',
+      fix: 'A device patched under its name is found again by it once OpenRGB lists it (a monitor asleep, a mouse off). '
+        + 'One gone for good, or patched by number alone and renumbered: remove the fixture and add the device again under Rig → Outputs → OpenRGB.',
     };
   }
   return { id: 'openrgb', label: 'OpenRGB', status: OK, detail: `${fine.join('; ')}, sent over the OpenRGB SDK.` };
