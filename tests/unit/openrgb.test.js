@@ -477,9 +477,9 @@ async function withApp(fn) {
   app.use(express.json());
   attachRoutes(app, { integrations: { broadcast() {} } });
   const listener = await new Promise((r) => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
-  const call = async (path, body) => {
+  const call = async (path, body, method = body ? 'POST' : 'GET') => {
     const res = await fetch(`http://127.0.0.1:${listener.address().port}${path}`,
-      body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : undefined);
+      { method, headers: { 'content-type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
     return { status: res.status, body: await res.json() };
   };
   const before = { fixtures: state.fixtures, next: state.nextFixtureId };
@@ -542,6 +542,17 @@ test('discover lists the server\'s devices; add patches each on universes of its
       const none = await call('/api/openrgb/add', { host: '127.0.0.1', port: server.port });
       assert.deepStrictEqual([none.status, none.body.error], [409, 'Every device of OpenRGB at 127.0.0.1 is patched already'], 'nothing new, whatever the numbers');
       assert.match((await call('/api/openrgb/add', { host: '127.0.0.1', port: server.port, devices: [9] })).body.error, /Keyboard \(#9\) is patched already, as "PC · Keyboard"/);
+
+      // Deleted and undone, a device comes back with its output, name and all.
+      const keyboard = state.fixtures.find((f) => f.label === 'PC · Keyboard');
+      const deleted = await call(`/api/fixtures/${keyboard.id}`, undefined, 'DELETE');
+      assert.strictEqual(deleted.status, 200, JSON.stringify(deleted.body));
+      assert.deepStrictEqual(deleted.body.fixture.output, { protocol: 'openrgb', host: '127.0.0.1', port: server.port, device: 6, name: 'Keyboard', leds: 117 });
+      assert.strictEqual((await call(`/api/openrgb/discover?host=127.0.0.1&port=${server.port}`)).body.devices[9].patched, null, 'gone from the patch');
+      const undone = await call('/api/fixtures/restore', { index: deleted.body.index, fixture: deleted.body.fixture });
+      assert.strictEqual(undone.status, 200, JSON.stringify(undone.body));
+      assert.deepStrictEqual(state.fixtures.find((f) => f.id === keyboard.id).output, deleted.body.fixture.output);
+      assert.strictEqual((await call(`/api/openrgb/discover?host=127.0.0.1&port=${server.port}`)).body.devices[9].patched, 'PC · Keyboard', 'back, and found by name');
 
       assert.strictEqual((await call('/api/openrgb/add', { host: 'http://x' })).status, 400);
       const nobody = await call('/api/openrgb/discover?host=127.0.0.1&port=1');
