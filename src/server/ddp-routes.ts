@@ -1,5 +1,6 @@
 import { footprintOf, stripOf } from '../shared/placement.ts';
 import { DDP_PORT } from './ddp.ts';
+import { openrgbConflict } from './openrgb-routes.ts';
 import type { DdpOutput, Fixture, Profile } from '../types/rig.ts';
 
 /**
@@ -143,12 +144,19 @@ function pixelWidth(profile: Profile): number {
   return Number.isInteger(width) ? width : 0;
 }
 
+/** Is a fixture sent to a device of its own: a WLED over DDP, or an OpenRGB device. */
+const toDevice = (fix: Fixture) => !!fix.output && (fix.output.protocol === 'ddp' || fix.output.protocol === 'openrgb');
+const deviceName = (fix: Fixture) => (fix.output?.protocol === 'openrgb' ? 'an OpenRGB device' : 'a WLED');
+
 /**
  * Why a patch cannot go out as it is, or null: a universe that carries a WLED
- * over DDP is that WLED's alone, since nothing on it goes out on Art-Net or
- * sACN — a par patched there would silently never light.
+ * over DDP, or an OpenRGB device, is that device's alone, since nothing on it
+ * goes out on Art-Net or sACN — a par patched there would silently never
+ * light. Two fixtures on one OpenRGB device would fight over it.
  */
 function ddpConflict(fixtures: readonly Fixture[], profileOf: ProfileOf, universeOf: UniverseOf): string | null {
+  const twice = openrgbConflict(fixtures);
+  if (twice) return twice;
   // Two fixtures on one WLED are two of its segments, and may not share a LED.
   const leds = new Map<string, { fixture: Fixture; from: number; to: number }[]>();
   for (const fix of fixtures) {
@@ -169,19 +177,20 @@ function ddpConflict(fixtures: readonly Fixture[], profileOf: ProfileOf, univers
   }
   const owner = new Map<number, Fixture>();
   for (const fix of fixtures) {
-    if (!fix.output || fix.output.protocol !== 'ddp') continue;
+    if (!toDevice(fix)) continue;
     for (const part of footprintOf(universeOf(fix), fix.address, profileOf(fix))) {
       const other = owner.get(part.universe);
-      if (other) return `"${fix.label}" and "${other.label}" both send universe ${part.universe} to a WLED; give each universes of its own`;
+      if (other) return `"${fix.label}" and "${other.label}" both send universe ${part.universe} to ${deviceName(fix)}; give each universes of its own`;
       owner.set(part.universe, fix);
     }
   }
   for (const fix of fixtures) {
-    if (fix.output && fix.output.protocol === 'ddp') continue;
+    if (toDevice(fix)) continue;
     for (const part of footprintOf(universeOf(fix), fix.address, profileOf(fix))) {
-      const wled = owner.get(part.universe);
-      if (wled) {
-        return `"${fix.label}" is on universe ${part.universe}, which goes to "${wled.label}"'s WLED over DDP and nowhere else; `
+      const device = owner.get(part.universe);
+      if (device) {
+        const where = device.output?.protocol === 'openrgb' ? 'OpenRGB device' : 'WLED over DDP';
+        return `"${fix.label}" is on universe ${part.universe}, which goes to "${device.label}"'s ${where} and nowhere else; `
           + 'patch it on another universe';
       }
     }

@@ -70,7 +70,18 @@ const ddpOutput = z.object({
       z.number().int().min(1).max(4096), z.number().int().min(1).max(4096),
     ])).max(MAX_CELLS_PER_FIXTURE).optional(),
   }).strict();
-const fixtureOutput = z.discriminatedUnion('protocol', [ddpOutput, hueOutput]);
+// One device of an OpenRGB SDK server (types/rig.ts OpenRgbOutput): which,
+// by index, and how many LEDs it had when it was added.
+const openrgbOutput = z.object({
+  protocol: z.literal('openrgb'),
+  host: z.string().regex(HOSTNAME_RE, 'is not a hostname or an IPv4 address'),
+  port: z.number().int().min(1).max(65535).optional(),
+  device: z.number().int().min(0).max(4095),
+  leds: z.number().int().min(1).max(MAX_CELLS_PER_FIXTURE),
+}).strict();
+/** The outputs a fixture can be given by hand: a device of its own, by address. */
+const deviceOutput = z.discriminatedUnion('protocol', [ddpOutput, openrgbOutput]);
+const fixtureOutput = z.discriminatedUnion('protocol', [ddpOutput, openrgbOutput, hueOutput]);
 
 // A string of dotted numeric labels is someone typing an IP, so hold it to
 // IPv4 rules rather than letting "2.255.255.256" through as a hostname (which
@@ -199,9 +210,10 @@ const fixtureMessageSchema = z.object({
   // Not part of the override — it applies to an energy override too.
   maxBrightness: u8.optional(),
   geometry: fixtureGeometry.nullable().optional(),
-  // A WLED's, or none. A Hue lamp's output is the bridge's to give: it is
-  // patched from the entertainment area (POST /api/hue/add), never made one.
-  output: ddpOutput.nullable().optional(),
+  // A WLED's or an OpenRGB device's, or none. A Hue lamp's output is the
+  // bridge's to give: it is patched from the entertainment area (POST
+  // /api/hue/add), never made one.
+  output: deviceOutput.nullable().optional(),
 }).strict();
 
 /**
@@ -429,6 +441,18 @@ const wledAddSchema = z.object({
   zones: z.number().int().min(2).max(64).optional(),
 }).strict();
 
+// GET /api/openrgb/discover and POST /api/openrgb/add: an OpenRGB SDK server
+// by its address, which of its devices (every one not patched yet when none
+// are named), and what to call them.
+const openrgbHostSchema = z.object({
+  host: z.string().regex(HOSTNAME_RE, 'is not a hostname or an IPv4 address'),
+  port: z.coerce.number().int().min(1).max(65535).optional(),
+}).strict();
+const openrgbAddSchema = openrgbHostSchema.extend({
+  devices: z.array(z.number().int().min(0).max(4095)).min(1).max(64).optional(),
+  label: z.string().trim().min(1).max(64).optional(),
+}).strict();
+
 const huePairSchema = z.object({
   host: z.string().min(1).max(253),
   // What to call the bridge in the Rig view and the patch; its address when blank.
@@ -501,6 +525,8 @@ export {
   profileSchema,
   showSchema,
   midiConnectSchema,
+  openrgbHostSchema,
+  openrgbAddSchema,
   huePairSchema,
   hueAddSchema,
   hueDisconnectSchema,
