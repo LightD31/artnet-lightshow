@@ -45,11 +45,12 @@ Companion** (with a page of presets for busking), and a REST API.
   master blackout
 - **Master controls** — global dimmer, master blackout, play/stop, and the
   **outputs armed** switch: until a party arms the outputs nothing leaves the
-  machine — no Art-Net, sACN or DDP frame, no Hue stream — while the show
-  still renders for the preview and the stage view. Disarming ends every
-  stream cleanly (a black frame, the sACN terminate, one dark frame to each
-  WLED so its timeout hands the strip back, one dark frame and the session
-  closed on each Hue bridge), stops the patterns and clears any energy
+  machine — no Art-Net, sACN or DDP frame, no OpenRGB packet, no Hue stream —
+  while the show still renders for the preview and the stage view. Disarming
+  ends every stream cleanly (a black frame, the sACN terminate, one dark frame
+  to each WLED so its timeout hands the strip back, one dark frame to each
+  OpenRGB device and the connection to its PC closed, one dark frame and the
+  session closed on each Hue bridge), stops the patterns and clears any energy
   override; arming resumes transmit and plays nothing by itself. The server
   **always starts disarmed**, whatever was stored, so a reboot never starts a
   show in the room. The switch is in Perform, in Settings → Show and on
@@ -151,11 +152,12 @@ Companion** (with a page of presets for busking), and a REST API.
 - **The plan** — the Rig view's pixel map: drag fixtures to where they hang, and
   map an LED bar by drawing it on the plan from its first cell to its last while
   it lights up on the rig to show which end is which
-- **Identify** — any fixture, universe, Art-Net node, WLED or Hue lamp shows
-  itself on the rig: a par blinks, a bar lights its first cell green and its
+- **Identify** — any fixture, universe, Art-Net node, WLED, OpenRGB device or
+  Hue lamp shows itself on the rig: a par blinks, a bar lights its first cell green and its
   last red with a dot running between them
 - **Finding the rig** — Art-Net nodes (and their locate LEDs), other sACN
-  sources and the universes they share with you, WLEDs and Hue bridges
+  sources and the universes they share with you, WLEDs, OpenRGB servers and
+  Hue bridges
 - **Rig, Sources, Settings and Preflight views** — every setting in the same app
   as the controls, a tab away (keys **4**–**7**)
 
@@ -178,6 +180,10 @@ Companion** (with a page of presets for busking), and a REST API.
   colour zones above and below — on a 64 × 32, eight white segments four LEDs
   tall and 32 colour zones of 8 × 7. It plays the bars' programs, not a
   screen's pictures
+- **OpenRGB** — the RGB inside a gaming PC (its RAM, board, GPU, keyboard,
+  mouse, the light bars on its monitors) through OpenRGB's SDK server: its
+  devices found, each added as a fixture with a cell per LED, and sent one
+  packet a frame over one TCP connection to the PC
 - **Panels** — an LED matrix is a grid of cells on the stage plot, and the pixel
   effects draw across and down it; Bars, Fire and Rain, after LedFx, stand up
   on it
@@ -330,7 +336,7 @@ The app has nine views. The first five run a show — **Manual**, **Auto Show**,
 
 | View | Key | What is there |
 |------|-----|---------------|
-| **Rig** | 6 | *Plan & patch*: the plan, the patch table and the selected fixture. *Profiles*: the fixture library. *Outputs*: Art-Net, sACN, WLED, Hue, and the universes |
+| **Rig** | 6 | *Plan & patch*: the plan, the patch table and the selected fixture. *Profiles*: the fixture library. *Outputs*: Art-Net, sACN, WLED, OpenRGB, Hue, and the universes |
 | **Sources** | 7 | The players the show may follow, Spotify, Deezer, the live input, and the analysis and its models |
 | **Settings** | 8 | How the show behaves over a night, the MIDI controller and its mapping, MIDI clock, the engine, the server and access token, and the setup again |
 | **Preflight** | 9 | The [pre-show check](#pre-show-check) |
@@ -409,6 +415,9 @@ Identify is shown on the plan and in the patch table on every open page.
 - **A WLED** in the patch flashes through it; one not in the patch yet is sent
   the same picture directly over DDP and goes back to what it was doing when
   it stops.
+- **An OpenRGB device** in the patch flashes through it; one not in the patch
+  yet is streamed the same picture over the SDK, and is put back to the
+  colours and the mode it was showing when it stops.
 - **A Hue lamp** in the patch flashes through it; one not in the patch yet is
   asked to identify itself by the bridge.
 
@@ -423,6 +432,8 @@ Identify is shown on the plan and in the patch table on every open page.
   and lists any console or server there with its priority. A universe this rig
   sends that another source sends too is called out: the higher priority wins.
 - **WLEDs** — found over mDNS, identified, added in a click.
+- **OpenRGB** — a PC's SDK server asked for its devices, each identified and
+  added in a click.
 - **Hue bridges** — found, paired (as many as the house has), and each one's
   area's lamps added in a click.
 
@@ -705,11 +716,60 @@ the patch. The server starts disarmed, so a reboot never seizes the house's
 strips. Identify is the one exception: asking a WLED to show itself still
 streams its picture to it, for the seconds asked for.
 
+### OpenRGB
+
+A gaming PC's RGB — its RAM, its board, its GPU, its keyboard and mouse, the
+light bars on its monitors — is driven through [OpenRGB](https://openrgb.org)'s
+SDK server: one TCP connection to the PC (port 6742), and every frame one
+packet a device with a colour for each of its LEDs. Turn the server on in
+OpenRGB under *SDK Server*, and let it through the PC's firewall.
+
+**Rig → Outputs → OpenRGB → Discover** asks the server at an address for its
+devices and lists each with its type and LED count; **Add to patch** adds one,
+**Add all** every one with LEDs. A device is a fixture of its own, its LEDs
+cells of red, green and blue, its profile named as OpenRGB names the device,
+patched on the first free universes from 1, from channel 1 — a WLED added as
+pixels, to the show: on the stage plot, in the patterns, in the monitor. The
+85 LEDs of a board are a bar; a two-LED mouse is a short one; a one-LED fan
+is a par.
+
+- Its universes go to it and nowhere else, so nothing else may be patched on
+  them; the patch says so if you try, as it does for a WLED.
+- Its row in the patch table shows the server's address and the device's
+  number and name. Change the address when the PC moves; empty it to send the
+  fixture on Art-Net and sACN instead.
+- OpenRGB numbers its devices in the order it finds them, so hardware added
+  to or taken out of the PC can shift the others. The pre-show check reads
+  the server again: a device that is gone, or whose LED count has changed,
+  warns.
+- A device in a hardware effect (a rainbow the board runs itself) is put into
+  its *Direct* mode the first time it is sent a frame, as OpenRGB's own
+  clients do; one with no mode that takes a colour a LED cannot be lit by the
+  show, and the list says so.
+- Removed from the patch, it is sent one dark frame. OpenRGB has no realtime
+  timeout: the device stays as it was last sent until OpenRGB, or a profile
+  loaded in it, says otherwise.
+- The PC being off is not a failure: the pre-show check warns, naming the
+  fixtures on it, and the rest of the show goes on. The connection is kept
+  open while frames go to it and dialled again, after a pause that grows to
+  thirty seconds, when it drops; a device that cannot keep up is sent fewer
+  frames rather than late ones, and the engine never waits on it.
+
+**Outside a show.** While the outputs are disarmed ([Master
+controls](#features)) no packet goes to any OpenRGB device: the moment they
+are disarmed each is sent one dark frame and the connection to the PC is
+closed, and nothing is sent until they are armed again, when the first frame
+dials it. The server starts disarmed, so a reboot never paints the PC.
+Identify is the exception, as it is for a WLED: a device not in the patch is
+streamed its picture for the seconds asked for, and then put back to the
+colours and the mode it was showing.
+
 ### Output protocols
 
 Frames go out over **Art-Net**, **sACN (E1.31)**, or both — each universe is
 sent on every protocol that is enabled, so a rig can run one node on Art-Net
-and a console on sACN at the same time.
+and a console on sACN at the same time. A WLED's or an OpenRGB device's
+universes go to it alone, as above.
 
 | | Art-Net | sACN (E1.31) |
 |---|---|---|
@@ -2039,7 +2099,7 @@ masters.
 - **Strobe channels and the software strobe** are capped at three flashes a
   second.
 
-It applies to every output (Art-Net, sACN, WLED, Hue) and to manual looks,
+It applies to every output (Art-Net, sACN, WLED, OpenRGB, Hue) and to manual looks,
 cues and overrides as much as to the auto show. The header shows **Flash ≤ 3/s**
 while it is on. It is off by default: most of what a party rig does is above
 this line.
@@ -2372,12 +2432,14 @@ All endpoints return JSON. When a token is configured, send it as an
 | GET · POST | `/api/show` | Export / import the patch |
 | GET | `/api/wled/discover` | Ask the network for WLEDs (mDNS): `{ devices: [{ host, name, leds, rgbw, matrix, version, segments, patched }] }` |
 | POST | `/api/wled/add` | Add a WLED to the patch from `{ host, label?, segments? }`: its profile from `/json/info`, on free universes, sent DDP. With `segments: true`, a fixture for each segment in its `/json/state` not patched yet: `{ fixtures, profiles, info, segments }` |
+| GET | `/api/openrgb/discover?host=&port=` | Ask an OpenRGB SDK server for its devices: `{ host, port, devices: [{ index, name, type, leds, direct, patched }] }` |
+| POST | `/api/openrgb/add` | Add devices of an OpenRGB server to the patch from `{ host, port?, devices?: [index], label? }` — those named, or every one with LEDs not patched yet — each a fixture with a cell per LED, on free universes, sent over the SDK: `{ fixtures, profiles, devices }` |
 
 ### Outputs
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/outputs/arm` · `/api/outputs/disarm` · `/api/outputs/toggle` | Whether anything leaves the machine (`{ armed }` back). Disarm ends every stream — a black frame, the sACN terminate, a dark frame to each WLED, a dark frame and the session closed on each Hue bridge — stops the patterns and clears the energy override; arm resumes transmit. Stored as `outputs.armed`, applied at once, always off at start |
+| POST | `/api/outputs/arm` · `/api/outputs/disarm` · `/api/outputs/toggle` | Whether anything leaves the machine (`{ armed }` back). Disarm ends every stream — a black frame, the sACN terminate, a dark frame to each WLED, a dark frame to each OpenRGB device and its connection closed, a dark frame and the session closed on each Hue bridge — stops the patterns and clears the energy override; arm resumes transmit. Stored as `outputs.armed`, applied at once, always off at start |
 | GET | `/api/artnet/nodes` | The Art-Net nodes that answered, with the universes each outputs, and whether frames are being routed by them; `?scan=1` asks the network now |
 | GET | `/api/network/interfaces` | This machine's IPv4 addresses and their broadcast addresses, for sACN's network and the Art-Net target |
 | POST | `/api/artnet/identify` | `{ address, universes?, seconds? }`: send the node ArtAddress *locate* (and *normal* after), and identify the fixtures on the universes it outputs |
@@ -2388,8 +2450,9 @@ All endpoints return JSON. When a token is configured, send it as an
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/identify` | `{ fixtures?: [ids], universes?: [n], seconds? }` — those fixtures, and everything on those universes, show themselves for `seconds` (default 8, up to 60; 0 stops). Answers `{ ids, remainingMs }`; the live state carries it as `identify` |
-| POST | `/api/identify/stop` | Stop identifying, a streamed WLED included |
+| POST | `/api/identify/stop` | Stop identifying, a streamed WLED or OpenRGB device included |
 | POST | `/api/wled/identify` | `{ host, seconds? }`: through the patch when the WLED is in it (`via: 'patch'`), else its picture streamed over DDP (`via: 'device'`) |
+| POST | `/api/openrgb/identify` | `{ host, port?, device, seconds? }`: through the patch when the device is in it (`via: 'patch'`), else its picture streamed over the SDK (`via: 'device'`, with `leds` and `name`) and the device put back after |
 | POST | `/api/hue/:bridge/identify` | `{ channel, seconds? }`: the lamp on that channel of the bridge's area through the patch (`via: 'fixture'`), else the bridge's own identify (`via: 'bridge'`) |
 
 ### Cues
@@ -2517,7 +2580,10 @@ of `front`, `back`, `room`, `floor`, or `null`; `geometry` is an LED bar's line
 −180–180 degrees clockwise on the plot), or `null` for the default; `output` is
 `{ protocol: 'ddp', host, port?, at?, rowStride? }` to send the fixture's
 universes to a WLED — from its LED `at` for a segment, a row every `rowStride`
-LEDs for a rectangle of a panel — or `null` for Art-Net and sACN. A Hue lamp's
+LEDs for a rectangle of a panel — `{ protocol: 'openrgb', host, port?, device,
+leds }` to send them to device `device` of the OpenRGB SDK server at `host`,
+`leds` LEDs long (as `POST /api/openrgb/add` patches it) — or `null` for
+Art-Net and sACN. A Hue lamp's
 `{ protocol: 'hue', bridge, channel }` is given by `POST /api/hue/:bridge/add`
 and cannot be set or changed here.
 
@@ -2559,7 +2625,8 @@ Perform or Settings → Show, Companion, or `POST /api/outputs/arm`). The show
 still renders, so the preview and the stage view work, and the look the
 supervisor puts back comes back as it was; only transmit waits. On a home
 server that runs all day beside Home Assistant that is the point: a reboot at
-six in the morning must not seize the WLEDs and the Hue lamps from the house.
+six in the morning must not seize the WLEDs, the Hue lamps and the PC's RGB
+from the house.
 Disarming later ends every stream cleanly and stops the patterns; `GET
 /api/health` and the pre-show check both say which state it is in.
 
