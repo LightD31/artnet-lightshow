@@ -544,7 +544,8 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
       // the first bridge's, as the show loader makes it.
       const hueOut = fixture.output?.protocol === 'hue'
         ? { ...fixture.output, bridge: fixture.output.bridge || defaultHueBridgeId(output.getHueConfig().bridges) } : null;
-      const ddpOut = fixture.output && fixture.output.protocol === 'ddp' ? fixture.output : null;
+      // A WLED's or an OpenRGB device's output comes back with it; Hue is settled above.
+      const deviceOut = fixture.output && (fixture.output.protocol === 'ddp' || fixture.output.protocol === 'openrgb') ? fixture.output : null;
       const channels = hueOut ? hueOut.channels : [];
       if (addressless && channels.length !== hueSections(profiles[profileId])) {
         return res.status(400).json({ ok: false, error: `"${fixture.label}" no longer matches its lamp's sections; add it again from the bridge` });
@@ -574,7 +575,7 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
         position: fixture.position || null,
         group: fixture.group || null,
         geometry: fixture.geometry || null,
-        output: hueOut || ddpOut,
+        output: hueOut || deviceOut,
         override: fixture.override || null,
       };
 
