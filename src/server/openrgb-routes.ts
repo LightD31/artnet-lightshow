@@ -8,7 +8,7 @@ import type { Fixture, OpenRgbOutput, Profile } from '../types/rig.ts';
  *
  * A device is patched as a fixture like any other — its LEDs as cells, on
  * universes of its own, from channel 1 — with `output: { protocol:
- * 'openrgb', host, device, leds }`. The engine renders it into those
+ * 'openrgb', host, device, name, leds }`. The engine renders it into those
  * universes as it renders any strip, and the transmitter sends them to the
  * device as one UPDATELEDS packet a frame (transmit.ts, openrgb.ts). Built
  * on the main thread from the patch, and handed to the transmitter with
@@ -20,14 +20,17 @@ import type { Fixture, OpenRgbOutput, Profile } from '../types/rig.ts';
 export const OPENRGB_PORT = 6742;
 
 /**
- * One fixture on an OpenRGB device: which server and device, how many LEDs,
- * which bytes of which universes are its cells in order, how many channels
- * each cell is, and where red, green and blue sit in a cell (-1 for none).
+ * One fixture on an OpenRGB device: which server and device (its number when
+ * added, and its name then, to find it again when OpenRGB has renumbered),
+ * how many LEDs, which bytes of which universes are its cells in order, how
+ * many channels each cell is, and where red, green and blue sit in a cell
+ * (-1 for none).
  */
 export interface OpenRgbRoute {
   host: string;
   port: number;
   device: number;
+  name?: string;
   leds: number;
   parts: { universe: number; from: number; bytes: number }[];
   width: number;
@@ -50,7 +53,7 @@ function openrgbRoutes(fixtures: readonly Fixture[], profileOf: ProfileOf, unive
     // hand (a par's) still lights the first LED its colour.
     const map = profile.cells && profile.cells.length ? profile.cells[0].channelMap : profile.channelMap;
     routes.push({
-      host: output.host, port: output.port ?? OPENRGB_PORT, device: output.device, leds: output.leds, parts,
+      host: output.host, port: output.port ?? OPENRGB_PORT, device: output.device, ...(output.name ? { name: output.name } : {}), leds: output.leds, parts,
       width: pixelWidth(profile) || profile.channelCount,
       rgb: [map.red ?? -1, map.green ?? -1, map.blue ?? -1],
     });
@@ -58,8 +61,8 @@ function openrgbRoutes(fixtures: readonly Fixture[], profileOf: ProfileOf, unive
   return routes;
 }
 
-/** What makes one device another, and one server another. */
-const openrgbKey = (route: Pick<OpenRgbRoute, 'host' | 'port' | 'device'>) => `${route.host.toLowerCase()}:${route.port}#${route.device}`;
+/** What makes one device another (its number, and its name when patched under one), and one server another. */
+const openrgbKey = (route: Pick<OpenRgbRoute, 'host' | 'port' | 'device' | 'name'>) => `${route.host.toLowerCase()}:${route.port}#${route.device}${route.name ? ` ${route.name}` : ''}`;
 const openrgbHostKey = (route: Pick<OpenRgbRoute, 'host' | 'port'>) => `${route.host.toLowerCase()}:${route.port}`;
 
 /**
@@ -92,9 +95,9 @@ function openrgbConflict(fixtures: readonly Fixture[]): string | null {
   for (const fix of fixtures) {
     const output = fix.output;
     if (!output || output.protocol !== 'openrgb') continue;
-    const key = openrgbKey({ host: output.host, port: output.port ?? OPENRGB_PORT, device: output.device });
+    const key = openrgbKey({ host: output.host, port: output.port ?? OPENRGB_PORT, device: output.device, ...(output.name ? { name: output.name } : {}) });
     const other = taken.get(key);
-    if (other) return `"${fix.label}" and "${other.label}" are both OpenRGB device #${output.device} at ${output.host}; remove one`;
+    if (other) return `"${fix.label}" and "${other.label}" are both OpenRGB device #${output.device}${output.name ? ` ${output.name}` : ''} at ${output.host}; remove one`;
     taken.set(key, fix);
   }
   return null;

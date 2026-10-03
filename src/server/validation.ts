@@ -71,12 +71,13 @@ const ddpOutput = z.object({
     ])).max(MAX_CELLS_PER_FIXTURE).optional(),
   }).strict();
 // One device of an OpenRGB SDK server (types/rig.ts OpenRgbOutput): which,
-// by index, and how many LEDs it had when it was added.
+// by index and by the name it had when it was added, and how many LEDs.
 const openrgbOutput = z.object({
   protocol: z.literal('openrgb'),
   host: z.string().regex(HOSTNAME_RE, 'is not a hostname or an IPv4 address'),
   port: z.number().int().min(1).max(65535).optional(),
   device: z.number().int().min(0).max(4095),
+  name: z.string().trim().min(1).max(128).optional(),
   leds: z.number().int().min(1).max(MAX_CELLS_PER_FIXTURE),
 }).strict();
 /** The outputs a fixture can be given by hand: a device of its own, by address. */

@@ -243,6 +243,12 @@ function directMode(data: ControllerData): OpenRgbMode | null {
 
 // ── The connection ──────────────────────────────────────────────────────────
 
+/** A device as the patch refers to it: the server's number for it when it was added, and its name then, when kept. */
+export interface OpenRgbDeviceRef {
+  device: number;
+  name?: string;
+}
+
 interface Pending {
   device: number;
   id: number;
@@ -293,11 +299,16 @@ export class OpenRgbConnection {
   opening: Promise<void> | null = null;
   settleOpen: { resolve: () => void; reject: (err: Error) => void } | null = null;
   count: number | null = null;
+  /** Every device read so far, by the server's number. */
+  described = new Map<number, ControllerData>();
+  /** The devices in their Direct mode, ready for frames, by the server's number. */
   devices = new Map<number, ControllerData>();
+  /** The server's number today for each device the patch refers to, by the patch's number. */
+  live = new Map<number, number>();
   preparing = new Map<number, Promise<ControllerData>>();
   /** The mode a device was in before it was put in Direct, to go back to. */
   wasIn = new Map<number, OpenRgbMode>();
-  wanted = new Set<number>();
+  wanted = new Map<number, OpenRgbDeviceRef>();
   backoff = 0;
   retry: ReturnType<typeof setTimeout> | null = null;
 
@@ -358,7 +369,7 @@ export class OpenRgbConnection {
     this.settleOpen = null;
     this.opening = null;
     settle?.resolve();
-    for (const device of this.wanted) this.prepare(device).catch(() => { /* reported by whoever sends */ });
+    for (const ref of this.wanted.values()) this.prepare(ref).catch(() => { /* logged by prepare */ });
   }
 
   /** The connection is gone: fail what waited on it and, unless ended, allow a retry after the back-off. */
@@ -368,7 +379,9 @@ export class OpenRgbConnection {
     this.socket = null;
     this.ready = false;
     this.count = null;
+    this.described.clear();
     this.devices.clear();
+    this.live.clear();
     this.preparing.clear();
     this.wasIn.clear();
     this.buffer = Buffer.alloc(0);
@@ -445,11 +458,14 @@ export class OpenRgbConnection {
 
   onPacket(header: { device: number; id: number }, data: Buffer): void {
     if (header.id === PACKET.DEVICE_LIST_UPDATED) {
-      // The PC's devices came or went: read them again before the next frame.
+      // The PC's devices came or went: read them again, and find each of
+      // ours again, before the next frame.
       this.count = null;
+      this.described.clear();
       this.devices.clear();
+      this.live.clear();
       this.wasIn.clear();
-      for (const device of this.wanted) this.prepare(device).catch(() => {});
+      for (const ref of this.wanted.values()) this.prepare(ref).catch(() => {});
       return;
     }
     const head = this.pending[0];
@@ -476,18 +492,60 @@ export class OpenRgbConnection {
     return parseControllerData(await this.request(index, PACKET.REQUEST_CONTROLLER_DATA, version), this.version);
   }
 
+  /** What device `index` is, read once per connection and device list. */
+  async describe(index: number): Promise<ControllerData> {
+    const known = this.described.get(index);
+    if (known) return known;
+    const data = await this.controllerData(index);
+    this.described.set(index, data);
+    return data;
+  }
+
   /**
-   * Read device `index` and put it in its Direct mode when it is in another,
-   * as openrgb-python's set_mode does; kept until the connection drops.
+   * Which of the server's devices `ref` is today. OpenRGB numbers its devices
+   * in the order it finds them, so a stick pulled, a monitor off or a
+   * wireless mouse asleep at boot shifts the others: a device patched under
+   * its name is looked for by name, whatever its number today — the k-th of
+   * that name on the server for the k-th of that name in the patch, so four
+   * identical RAM sticks keep their order. One patched by number alone is
+   * that number.
    */
-  prepare(index: number): Promise<ControllerData> {
-    const known = this.devices.get(index);
+  async resolve(ref: OpenRgbDeviceRef): Promise<number> {
+    const known = this.live.get(ref.device);
+    if (known !== undefined) return known;
+    const count = Math.min(MAX_DEVICES, await this.controllerCount());
+    let index = ref.device;
+    if (ref.name) {
+      const named: number[] = [];
+      for (let i = 0; i < count; i++) if ((await this.describe(i)).name === ref.name) named.push(i);
+      const siblings = [...this.wanted.values()].filter((w) => w.name === ref.name).map((w) => w.device).sort((a, b) => a - b);
+      const found = named[Math.max(0, siblings.indexOf(ref.device))];
+      if (found === undefined) throw new HttpError(404, `${this.where()} has no device named "${ref.name}" (it was #${ref.device})`);
+      index = found;
+    } else if (index >= count) {
+      throw new HttpError(404, `${this.where()} has no device #${index}: it lists ${count}`);
+    }
+    this.live.set(ref.device, index);
+    return index;
+  }
+
+  /**
+   * Find device `ref` (resolve), read it, and put it in its Direct mode when
+   * it is in another, as openrgb-python's set_mode does; kept until the
+   * connection drops.
+   */
+  prepare(ref: OpenRgbDeviceRef): Promise<ControllerData> {
+    const live = this.live.get(ref.device);
+    const known = live === undefined ? undefined : this.devices.get(live);
     if (known) return Promise.resolve(known);
-    const inflight = this.preparing.get(index);
+    const inflight = this.preparing.get(ref.device);
     if (inflight) return inflight;
     const run = (async () => {
       await this.open();
-      const data = await this.controllerData(index);
+      const index = await this.resolve(ref);
+      const ready = this.devices.get(index);
+      if (ready) return ready;
+      const data = await this.describe(index);
       const direct = directMode(data);
       if (direct && data.activeMode !== direct.index) {
         const before = data.modes[data.activeMode];
@@ -498,27 +556,29 @@ export class OpenRgbConnection {
       this.devices.set(index, data);
       return data;
     })();
-    this.preparing.set(index, run);
-    run.catch(() => {}).finally(() => { if (this.preparing.get(index) === run) this.preparing.delete(index); });
+    this.preparing.set(ref.device, run);
+    run.catch((err) => { if (this.reconnect) logFailure(`${this.where()}: ${messageOf(err)}`); })
+      .finally(() => { if (this.preparing.get(ref.device) === run) this.preparing.delete(ref.device); });
     return run;
   }
 
   /**
-   * One frame of device `index`'s LEDs. False when nothing went: still
+   * One frame of device `ref`'s LEDs. False when nothing went: still
    * connecting (started here, when not already under way or waiting out a
-   * back-off), the device not read yet, or the socket too far behind.
+   * back-off), the device not found or read yet, or the socket too far behind.
    */
-  send(index: number, rgb: Uint8Array, leds: number): boolean {
-    this.wanted.add(index);
+  send(ref: OpenRgbDeviceRef, rgb: Uint8Array, leds: number): boolean {
+    this.wanted.set(ref.device, ref);
     if (this.ended) return false;
     const socket = this.socket;
     if (!socket || !this.ready) {
       if (!socket && !this.retry) this.open().catch(() => {});
       return false;
     }
-    const device = this.devices.get(index);
-    if (!device) {
-      this.prepare(index).catch(() => {});
+    const index = this.live.get(ref.device);
+    const device = index === undefined ? undefined : this.devices.get(index);
+    if (index === undefined || !device) {
+      this.prepare(ref).catch(() => {});
       return false;
     }
     if (socket.writableLength > HIGH_WATER_BYTES) {
@@ -529,10 +589,11 @@ export class OpenRgbConnection {
     return true;
   }
 
-  /** Put device `index` back as it was found: its colours, and the mode it was in. */
-  restore(index: number): void {
-    const device = this.devices.get(index);
-    if (!device || !this.socket || !this.ready) return;
+  /** Put device `ref` back as it was found: its colours, and the mode it was in. */
+  restore(ref: OpenRgbDeviceRef): void {
+    const index = this.live.get(ref.device);
+    const device = index === undefined ? undefined : this.devices.get(index);
+    if (index === undefined || !device || !this.socket || !this.ready) return;
     this.socket.write(buildUpdateLeds(index, device.colors, device.leds));
     const before = this.wasIn.get(index);
     if (before) this.socket.write(buildUpdateMode(index, before));
@@ -544,10 +605,9 @@ export class OpenRgbConnection {
 // engine renders in a worker, and the main thread has nothing to send.
 
 /** Where one frame of a device's LEDs goes. */
-export interface OpenRgbTarget {
+export interface OpenRgbTarget extends OpenRgbDeviceRef {
   host: string;
   port: number;
-  device: number;
   leds: number;
 }
 
@@ -562,7 +622,7 @@ function sendOpenRgb(target: OpenRgbTarget, rgb: Uint8Array): boolean {
     connection = new OpenRgbConnection({ host: target.host, port: target.port });
     connections.set(key, connection);
   }
-  return connection.send(target.device, rgb, target.leds);
+  return connection.send(target, rgb, target.leds);
 }
 
 /** Close the connection to a server, once what was written has gone. */

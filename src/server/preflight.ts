@@ -390,12 +390,28 @@ async function checkOpenRgb(client: Pick<OpenRgbClient, 'discover'> = openrgbCli
       silent.push(`OpenRGB at ${where(server)} does not answer (${messageOf(err)}); on it: ${names}`);
       return;
     }
-    for (const fix of server.fixtures) {
-      const output = openrgbOutputOf(fix) as NonNullable<ReturnType<typeof openrgbOutputOf>>;
-      const device = devices.find((d) => d.index === output.device);
-      if (!device) wrong.push(`"${fix.label}" is device #${output.device} at ${where(server)}, which lists only ${devices.length}`);
-      else if (device.leds !== output.leds) wrong.push(`"${fix.label}" (${device.name}) reports ${device.leds} LEDs but is patched as ${output.leds}`);
-      else fine.push(`"${fix.label}" at ${where(server)} #${output.device} ${device.name}, ${device.leds} LEDs`);
+    const outputs = server.fixtures.map((fix) => ({ fix, output: openrgbOutputOf(fix) as NonNullable<ReturnType<typeof openrgbOutputOf>> }));
+    for (const { fix, output } of outputs) {
+      // A device patched under a name is the one of its name, in order, as
+      // the transmitter finds it (openrgb.ts resolve); one patched by number
+      // alone is that number.
+      let device = output.name ? undefined : devices.find((d) => d.index === output.device);
+      let moved = '';
+      if (output.name) {
+        const named = devices.filter((d) => d.name === output.name);
+        const siblings = outputs.filter((o) => o.output.name === output.name).map((o) => o.output.device).sort((a, b) => a - b);
+        device = named[Math.max(0, siblings.indexOf(output.device))];
+        if (!device) {
+          wrong.push(`"${fix.label}" (${output.name}, #${output.device}) is not among the ${devices.length} devices at ${where(server)}`);
+          continue;
+        }
+        if (device.index !== output.device) moved = ` (was #${output.device})`;
+      } else if (!device) {
+        wrong.push(`"${fix.label}" is device #${output.device} at ${where(server)}, which lists only ${devices.length}`);
+        continue;
+      }
+      if (device.leds !== output.leds) wrong.push(`"${fix.label}" (${device.name}) reports ${device.leds} LEDs but is patched as ${output.leds}`);
+      else fine.push(`"${fix.label}" at ${where(server)} #${device.index}${moved} ${device.name}, ${device.leds} LEDs`);
     }
   }));
   if (silent.length) {
