@@ -12,6 +12,7 @@ import { isArmed, setArmedFlag } from './armed.ts';
 import { defaultHueBridgeId } from './settings.ts';
 import type { HueChannelColour } from './hue.ts';
 import { ddpRoutes } from './ddp-routes.ts';
+import { openrgbRoutes } from './openrgb-routes.ts';
 import type { SacnOutput, SendOptions, TransmitConfig, Wire } from './transmit.ts';
 import type { Settings } from './settings.ts';
 import type { ChannelMap, HueLampTraits } from '../types/rig.ts';
@@ -112,6 +113,7 @@ function transmitConfig(): TransmitConfig {
     sacn: { ...sacn },
     delayMs: hueLatencyMs > 0 && hue.anyEnabled() ? hueLatencyMs : 0,
     ddp: ddpRoutes(state.fixtures, getProfile, universeOf),
+    openrgb: openrgbRoutes(state.fixtures, getProfile, universeOf),
     armed: isArmed(),
   };
 }
@@ -122,7 +124,7 @@ function transmitConfig(): TransmitConfig {
  * Disarming closes every Hue session after one dark frame, so each bridge
  * leaves entertainment mode and its lamps go back to the Hue app; the
  * transmitter, told through the config every frame carries, ends the
- * Art-Net, sACN and DDP streams the same way on its next frame
+ * Art-Net, sACN, DDP and OpenRGB streams the same way on its next frame
  * (transmit.ts), on whichever thread renders. Arming lets frames through
  * again; a Hue session reopens from the first frame it is sent.
  */
