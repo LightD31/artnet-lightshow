@@ -124,7 +124,8 @@ export function PatchTable() {
         {conflicts.size > 0 && <span class="panel-tag warn">{conflicts.size} overlapping</span>}
       </header>
       <p class="section-desc">Each fixture's profile, universe and first DMX address. Addresses only collide within the same
-        universe. A Hue lamp has none: it is a channel of the Hue bridge, added from Rig → Outputs.</p>
+        universe. A WLED or an OpenRGB device shows the address it is sent to. A Hue lamp has none: it is a channel of the
+        Hue bridge, added from Rig → Outputs.</p>
       <div class="table-scroll">
         <table class="patch-table">
           <thead>
@@ -180,6 +181,15 @@ export function PatchTable() {
                         <FieldInput value={fix.output.host} class="wled-host" aria-label={`WLED address of ${fix.label}`}
                           title="Sent to this WLED over DDP. Empty it to send on Art-Net and sACN instead."
                           onCommit={(host) => send({ id: fix.id, output: host.trim() ? { ...fix.output, host: host.trim() } : null })} />
+                      </span>
+                    )}
+                    {fix.output && fix.output.protocol === 'openrgb' && (
+                      <span class="patch-wled">
+                        <span class="addr-range">OpenRGB</span>
+                        <FieldInput value={fix.output.host} class="wled-host" aria-label={`OpenRGB server of ${fix.label}`}
+                          title={`Device #${fix.output.device}${profile ? ` (${profile.name})` : ''} of the OpenRGB server at this address. Empty it to send on Art-Net and sACN instead.`}
+                          onCommit={(host) => send({ id: fix.id, output: host.trim() ? { ...fix.output, host: host.trim() } : null })} />
+                        <span class="addr-range">#{fix.output.device}{profile ? ` ${profile.name}` : ''}</span>
                       </span>
                     )}
                   </td>
