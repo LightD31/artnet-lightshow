@@ -143,6 +143,15 @@ export interface PaletteAccess {
   frameColour(paletteIndex: number, lamp: number, wholeFrame: number): Colour;
 }
 
+export interface PaletteBinding { index: number; key: number }
+const PALETTE_BINDING = Symbol('paletteBinding');
+
+/** Runtime colour metadata is copied into plain lamp data, never serialized as colour bytes. */
+export function paletteBinding(colour: Colour): PaletteBinding | undefined {
+  const binding = (colour as Colour & { [PALETTE_BINDING]?: PaletteBinding })[PALETTE_BINDING];
+  return binding && { ...binding };
+}
+
 /** Per-render methods over plain instance data; queued changes become visible next render. */
 export function createPaletteAccess(spec: EffectSpec, override: Colour[] | null, look: readonly Colour[], seed: Seed,
   roll: number, state: PreparedPalette): PaletteAccess {
@@ -170,9 +179,11 @@ export function createPaletteAccess(spec: EffectSpec, override: Colour[] | null,
     const wrapped = wrap(index);
     const entry = entries[wrapped], key = cacheKey ?? wrapped;
     checkKey(key);
-    if (!isRandom(entry)) return entry;
-    if (state.hues[key] == null) refresh(key);
-    return hsbToColour(LDJ_RANDOM_HUES[state.hues[key]!] / 360, 1, 1);
+    if (isRandom(entry) && state.hues[key] == null) refresh(key);
+    const colour = isRandom(entry) ? hsbToColour(LDJ_RANDOM_HUES[state.hues[key]!] / 360, 1, 1) : { ...entry };
+    // A normal spread deliberately captures just the six colour channels;
+    // live lamp bindings are obtained explicitly before copying those bytes.
+    return Object.defineProperty(colour, PALETTE_BINDING, { value: { index, key } });
   };
   return {
     palette: entries.map((_, index) => colourAt(index)), colour: colourAt,

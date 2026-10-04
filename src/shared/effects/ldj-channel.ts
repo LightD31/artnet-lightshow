@@ -64,7 +64,7 @@ export const LDJ_CHANNEL_ROWS: Record<string, LdjRow> = {
     if (mod(ctx.iter, 2) === 0) ctx.refresh(0);
   } },
   FadeCycle: { cadence: 1, step(ctx) {
-    selected(ctx, mod(ctx.iter, 4), primary(ctx), { kind: 'fade', beats: 1 }); refreshCount(ctx, 4);
+    selected(ctx, mod(ctx.iter, 4), at(ctx, 1, 1), { kind: 'fade', beats: 1 }); refreshCount(ctx, 4);
   } },
   SoftStrobe: { cadence: 2, step(ctx) {
     each(ctx, (slot, channel) => ctx.lamps.set(slot, at(ctx, 1, channel), 1, channel === mod(ctx.iter, 4) ? { kind: 'fade', beats: 2 } : INSTANT));

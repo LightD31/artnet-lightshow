@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { LDJ_CHANNEL_ROWS } from '../../src/shared/effects/ldj-channel.ts';
 import { ldjChannels } from '../../src/shared/effects/ldj-engine.ts';
 import { seedFrom } from '../../src/shared/effects/hash.ts';
-import { parseHex, toHex } from '../../src/shared/effects/palette.ts';
+import { createPaletteAccess, parseHex, toHex } from '../../src/shared/effects/palette.ts';
 import { harness, row, square, RED, CYAN } from '../helpers/ldj-harness.js';
 
 // A score probe records which independent colours a row reads and queues.
@@ -38,6 +38,7 @@ test('channel scores queue exact selective keys and preserve ordered refresh cou
 test('channel cache identity is independent of primary and secondary palette roles', () => {
   assert.deepEqual(score('StrobeCycle', 0).reads.slice(0, 2), [[1, 0], [0, 1]]);
   assert.deepEqual(score('DoSiDo', 0).reads.slice(0, 2), [[0, 0], [1, 1]]);
+  assert.deepEqual(score('FadeCycle', 0).reads, [[1, 1]]);
   assert.deepEqual(score('Blur', 0).reads, [[0, 0], [1, 1], [0, 2], [1, 3]]);
   assert.deepEqual(score('SoftStrobe', 0).reads.map((r) => r[1]).sort(), [0, 1, 2, 3]);
   for (const name of ['Cauldron', 'SceneMakerFirework']) {
@@ -67,4 +68,17 @@ test('four random Blur wells and selective CrossFade endpoints survive pending-s
   cross.draw({ nowMs: 2100, beatPos: 4.2, paletteOverride: [fixed] });
   cross.draw({ nowMs: 4000, beatPos: 8, paletteOverride: [fixed] });
   assert.deepEqual(cross.state().scratch.crossTarget, fixed);
+});
+
+test('Fade Cycle reads its second cache well before and after the ordered four-key refresh', () => {
+  const h = harness('ldj.FadeCycle', square(), { spec: { palette: [{ random: true }, { random: true }] } });
+  const first = h.draw(0), slot = first.findIndex((s) => s.level === 1);
+  const prepared = h.stepper.palette(h.inst.id, h.inst.spec, 0);
+  const before = structuredClone(prepared); before.pending = [];
+  const a = createPaletteAccess(h.inst.spec, null, [], h.inst.seed, 0, before);
+  assert.deepEqual(first[slot].colour, a.colour(1, 1));
+  assert.notDeepEqual(first[slot].colour, a.colour(1, 0));
+  const next = h.draw(.1);
+  const b = createPaletteAccess(h.inst.spec, null, [], h.inst.seed, 0, structuredClone(prepared));
+  assert.deepEqual(next[slot].colour, b.colour(1, 1));
 });

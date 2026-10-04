@@ -4,7 +4,7 @@
 import './index.ts';
 import type { Colour } from '../../types/rig.ts';
 import type { Room } from '../room.ts';
-import { kindOf } from './registry.ts';
+import { kindOf, requiresAcknowledgement } from './registry.ts';
 import { createPaletteAccess, resolvePalette } from './palette.ts';
 import type { EffectInstance, EffectStepper } from './stepper.ts';
 import type { EffectFrame, EffectSlot, FrameBase } from './types.ts';
@@ -13,7 +13,7 @@ const BLACK: Colour = { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 };
 
 export function renderEffect(inst: EffectInstance, frame: FrameBase & { roll?: number }, room: Room, stepper: EffectStepper, out: EffectSlot[]): void {
   const def = kindOf(inst.spec.kind);
-  if (!def || ((def.rapidFlash || inst.spec.rapidFlash) && !frame.acknowledged)) return;
+  if (!def || (requiresAcknowledgement(inst.spec) && !frame.acknowledged)) return;
   const prepared = stepper.palette(inst.id, inst.spec, frame.nowMs);
   const initialRoll = frame.roll ?? 0;
   const f: EffectFrame = { ...frame, spec: inst.spec, seed: inst.seed, anchorBeat: inst.anchorBeat, startedAtMs: inst.startedAtMs, palette: [], roll: initialRoll };

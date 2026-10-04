@@ -81,6 +81,8 @@ export interface EffectKindDef<P = unknown, S = unknown> {
   defaults: { params: P; palette?: PaletteEntry[] | null; brightness?: number; rapidFlash?: boolean; minFlashIntervalMs?: number; scope?: 'singleBeat' | 'measure' };
   capabilities?: Partial<Record<HdCapability, boolean>> | null;
   rapidFlash?: boolean; stateful?: boolean; rideLevel?: boolean;
+  /** Additional parameter-dependent acknowledgement shared by rendering and admission. */
+  rapidFlashWhen?(params: P): boolean;
   /** Whole-palette rerolls remain available alongside selective refreshes; the renderer reads this after state initialization. */
   rollOf?(state: S): number;
   init(params: P, room: Room, frame: EffectFrame): S;

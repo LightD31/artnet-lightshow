@@ -6,6 +6,8 @@ import type { Colour } from '../../types/rig.ts';
 import type { Room } from '../room.ts';
 import type { AudioFrame } from './audio-frame.ts';
 import type { EffectKindDef, Seed } from './types.ts';
+import { paletteBinding } from './palette.ts';
+import type { PaletteAccess, PaletteBinding } from './palette.ts';
 
 export const LDJ_FRAME_MS = 1000 / 22;
 export type LdjEnvelope = { kind: 'instant' } | { kind: 'fade'; beats: number; baseline?: number }
@@ -33,6 +35,8 @@ interface LampTransition {
   tick: number;
   seconds: number | null;
   reverse: boolean;
+  binding?: PaletteBinding;
+  peakBinding?: PaletteBinding;
 }
 interface PendingLamp { slot: number; delay: number; transition: LampTransition }
 
@@ -92,6 +96,8 @@ export class LdjLamps {
       bri: env.kind === 'instant' || env.kind === 'blend' ? to : from,
       from, to, env: env.kind === 'matrix' && env.peakColour ? { ...env, peakColour: { ...env.peakColour } } : { ...env },
       tick: 0, seconds: null, reverse: env.kind === 'twoWay',
+      binding: env.kind === 'blend' ? undefined : paletteBinding(colour),
+      peakBinding: env.kind === 'matrix' && env.peakColour ? paletteBinding(env.peakColour) : undefined,
     };
     if (env.kind === 'blend') state.colour = state.fromColour = { ...(this.lamps[i]?.colour ?? BLACK) };
     const delay = Number.isFinite(delayFrames) ? Math.max(0, Math.floor(delayFrames)) : 0;
@@ -119,6 +125,22 @@ export class LdjLamps {
     if (i < 0 || i >= this.lamps.length) return;
     this.lamps[i] = null;
     this.pending = this.pending.filter((request) => request.slot !== i);
+  }
+
+  /** Resolve the next render's cache before advancing; real blends retain their launch endpoints. */
+  resolveColours(access: PaletteAccess): void {
+    const resolve = (state: LampTransition | null) => {
+      if (!state) return;
+      if (state.binding) state.fromColour = state.toColour = { ...access.colour(state.binding.index, state.binding.key) };
+      const env = state.env;
+      if (env.kind === 'matrix') {
+        if (state.peakBinding) env.peakColour = { ...access.colour(state.peakBinding.index, state.peakBinding.key) };
+        const rise = frameCount(env.fadeIn), hold = Math.max(1, frameCount(env.peak));
+        state.colour = state.tick >= rise && state.tick < rise + hold ? env.peakColour ?? state.fromColour : state.fromColour;
+      } else if (state.binding) state.colour = state.fromColour;
+    };
+    this.lamps.forEach(resolve);
+    for (const request of this.pending) resolve(request.transition);
   }
 
   advance(dtMs: number, bpm: number): number {
@@ -252,9 +274,11 @@ export function makeLdjKind(name: string, row: LdjRow): EffectKindDef<LdjParams,
     kind: `ldj.${name}`, app: 'ldj', schema: paramsSchema,
     defaults: { params: { cadence: typeof row.cadence === 'number' ? row.cadence : 1, beats: row.beats ?? 32 } },
     rapidFlash: row.rapidFlash, stateful: true, rollOf: (state) => state.roll,
+    rapidFlashWhen: (params) => row.cadence === 'wall:50' || (!row.nextDelayMs && params.cadence <= .25),
     init: (_params, room) => ({ lamps: new LdjLamps(room.n), lastIter: null, lastPick: null, recent: [], perm: null, roll: 0, scratch: {} }),
     render(params, state, room, frame, out) {
       if (!Number.isFinite(frame.nowMs)) throw new RangeError('Light DJ clock time must be finite');
+      if (frame.paletteAccess) state.lamps.resolveColours(frame.paletteAccess);
       if (state.lastIter !== null) clockIteration(state.lastIter);
       const first = !state.timing;
       const originMs = frame.startedAtMs ?? state.timing?.originMs ?? frame.nowMs;

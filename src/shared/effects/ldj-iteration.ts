@@ -12,7 +12,7 @@ const BLACK: Colour = { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 };
 const mod = (i: number, n: number) => ((i % n) + n) % n;
 // Uncached colours follow whole lamp frames, so two 44 Hz samples of the same
 // frame agree. The pure draw leaves cached backgrounds and pending rolls alone.
-const frameColour = (ctx: LdjCtx, index: number, slot: number) => ctx.frameColour(index, slot, Math.max(0, Math.floor(ctx.elapsedMs / LDJ_FRAME_MS)));
+const frameColour = (ctx: LdjCtx, index: number, slot: number) => ctx.frameColour(index, slot, Math.max(0, Math.floor((ctx.elapsedMs + 1e-8) / LDJ_FRAME_MS)));
 const paletteIndex = (ctx: LdjCtx, i: number) => mod(i, ctx.pal.length);
 const all = (ctx: LdjCtx, colour: Colour, env: LdjEnvelope = INSTANT) => {
   for (let slot = 0; slot < ctx.n; slot++) ctx.lamps.set(slot, colour, 1, env);

@@ -116,3 +116,53 @@ test('frame colours draw independently without changing cached hues or refresh r
   const blue = parseHex('#00F'), override = access(preparePalette(spec), [blue]);
   assert.deepEqual(override.frameColour(0, 3, 17), blue);
 });
+
+test('queued keyed refreshes recolour active lamps next render without another row event', async () => {
+  const { harness, row, square } = await import('../helpers/ldj-harness.js');
+  const { toHex } = await import('../../src/shared/effects/palette.ts');
+  for (const name of ['BLStrobeCycle', 'ScatterFill', 'PaletteDrip', 'StrobeCycle']) {
+    const h = harness(`ldj.${name}`, name === 'StrobeCycle' ? square() : row(5), {
+      spec: { palette: [{ random: true }, { random: true }] },
+    });
+    const before = h.draw(0), clone = h.stepper.clone();
+    const after = h.draw(.1);
+    assert.notDeepEqual(after.map((s) => toHex(s.colour)), before.map((s) => toHex(s.colour)), name);
+    assert.deepEqual(h.draw(.1, clone), after, `${name} clone`);
+    const pending = h.stepper.palette(h.inst.id, h.inst.spec, 50).pending;
+    assert.deepEqual(pending, [], 'a colour refresh does not schedule another row callback');
+    const repeated = h.draw(.1);
+    assert.deepEqual(repeated, after, `${name} consumed once`);
+    const blue = parseHex('#00F');
+    const overridden = h.draw({ nowMs: 50, beatPos: .1, paletteOverride: [blue] });
+    for (let i = 0; i < before.length; i++) if (before[i].level > 0) assert.deepEqual(overridden[i].colour, blue, name);
+  }
+});
+
+test('matrix bindings include queued peaks while real RGB blends retain captured endpoints', async () => {
+  const { LdjLamps, LDJ_FRAME_MS } = await import('../../src/shared/effects/ldj-engine.ts');
+  const state = preparePalette(spec), a = access(state), lamps = new LdjLamps(2);
+  lamps.set(0, a.colour(0, 0), 1, { kind: 'matrix', fadeIn: 44, peak: 88, fadeOut: 44, peakColour: a.colour(0, 1) }, 1);
+  lamps.set(1, a.colour(0, 0), 1, { kind: 'instant' });
+  const from = { ...lamps.read(1).colour }, to = { ...a.colour(0, 1) };
+  lamps.set(1, a.colour(0, 1), 1, { kind: 'blend', beats: 1 });
+  a.refresh(0); a.refresh(1);
+  const b = access(state);
+  lamps.resolveColours(b);
+  lamps.advance(4 * LDJ_FRAME_MS, 120);
+  assert.deepEqual(lamps.read(0).colour, b.colour(0, 1), 'pending peak resolves its own key');
+  const expected = Object.fromEntries(Object.keys(from).map((key) => [key, Math.round(from[key] * (1 - 4 / 11) + to[key] * 4 / 11)]));
+  assert.deepEqual(lamps.read(1).colour, expected, 'RGB endpoints remain captured');
+  lamps.advance(4 * LDJ_FRAME_MS, 120);
+  assert.deepEqual(lamps.read(0).colour, b.colour(0, 0), 'release restores its separately refreshed key');
+
+  const { harness, row } = await import('../helpers/ldj-harness.js');
+  const h = harness('ldj.SMStudioN5PulseMulti', row(5), { spec: { palette: [{ random: true }] } });
+  const initial = h.draw(0), slot = initial.findIndex((s) => s.level === 1);
+  const settled = h.draw(.1)[slot];
+  assert.notDeepEqual(settled.colour, initial[slot].colour, 'notes resolve the refreshed key on the next render');
+  h.draw(1);
+  const next = h.draw(1.1);
+  assert.notDeepEqual(next[slot].colour, settled.colour, 'an older note shares the new note cache refresh');
+  assert.ok(next[slot].level > .05);
+  assert.deepEqual(next.filter((s) => s.level > .05).map((s) => s.colour), [next[slot].colour, next[slot].colour]);
+});

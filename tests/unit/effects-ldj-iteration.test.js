@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { LDJ_ITERATION_ROWS, GENRE_SCORES } from '../../src/shared/effects/ldj-iteration.ts';
 import { kindOf, validateSpec } from '../../src/shared/effects/registry.ts';
 import { LDJ_FRAME_MS } from '../../src/shared/effects/ldj-engine.ts';
-import { parseHex, toHex } from '../../src/shared/effects/palette.ts';
+import { createPaletteAccess, preparePalette, parseHex, toHex } from '../../src/shared/effects/palette.ts';
 import { permutation } from '../../src/shared/effects/hash.ts';
 import { harness, row, square, RED, CYAN } from '../helpers/ldj-harness.js';
 
@@ -329,13 +329,40 @@ test('uncached random rows change per lamp frame while faster samples and cached
     const h = harness(`ldj.${name}`, row(8), { spec, startedAtMs: 1000 });
     const first = sample(h, 0), selected = first.findIndex((s) => s.level === .5);
     assert.ok(selected >= 0, name);
-    assert.deepEqual(sample(h, LDJ_FRAME_MS / 2), first);
+    const settled = sample(h, LDJ_FRAME_MS / 2);
+    assert.deepEqual(settled[selected], first[selected], 'uncached draw holds within the lamp frame');
+    // The initial cached backlight refresh is consumed once on this render.
+    assert.deepEqual(sample(h, LDJ_FRAME_MS / 2), settled);
     const colours = [hex(first[selected])];
     for (let frame = 1; frame <= 4; frame++) {
       const out = sample(h, frame * LDJ_FRAME_MS + .01);
       colours.push(hex(out[selected]));
-      for (let slot = 0; slot < 8; slot++) if (slot !== selected) assert.deepEqual(out[slot], first[slot]);
+      for (let slot = 0; slot < 8; slot++) if (slot !== selected) assert.deepEqual(out[slot], settled[slot]);
     }
     assert.ok(new Set(colours).size > 1, name);
+  }
+});
+
+test('uncached colours advance exactly at whole lamp frames after a nonzero launch time', () => {
+  const h = harness('ldj.PaletteSplit', row(8), { spec: { palette: [{ random: true }] }, startedAtMs: 1000 });
+  const access = createPaletteAccess(h.inst.spec, null, [], h.inst.seed, 0, preparePalette(h.inst.spec));
+  for (let tick = 0; tick <= 12; tick++) {
+    const elapsed = tick * LDJ_FRAME_MS;
+    const out = h.draw({ nowMs: 1000 + elapsed, beatPos: elapsed / 500 });
+    assert.deepEqual(out.map((s) => s.colour), out.map((_, slot) => access.frameColour(0, slot, tick)), `frame ${tick}`);
+  }
+});
+
+test('accelerating an ordinary row to a rapid cadence requires acknowledgement', async () => {
+  const { requiresAcknowledgement } = await import('../../src/shared/effects/registry.ts');
+  const ordinary = harness('ldj.PaletteSplit', row(3), { acknowledged: false });
+  assert.ok(ordinary.draw(0).every((s) => s.strength === 1));
+  assert.equal(requiresAcknowledgement(ordinary.inst.spec), false);
+  for (const cadence of [.25, .125]) {
+    const blocked = harness('ldj.PaletteSplit', row(3), { acknowledged: false, spec: { params: { cadence }, rapidFlash: false } });
+    assert.equal(requiresAcknowledgement(blocked.inst.spec), true);
+    assert.ok(blocked.draw(0).every((s) => s.strength === 0));
+    const allowed = harness('ldj.PaletteSplit', row(3), { spec: { params: { cadence } } });
+    assert.ok(allowed.draw(0).every((s) => s.strength === 1));
   }
 });

@@ -14,6 +14,11 @@ export function kindOf(kind: string): EffectKindDef | null {
   return KINDS.get(kind) ?? null;
 }
 
+export function requiresAcknowledgement(spec: EffectSpec): boolean {
+  const def = kindOf(spec.kind);
+  return Boolean(spec.rapidFlash || def?.rapidFlash || def?.rapidFlashWhen?.(spec.params));
+}
+
 const paramsSchema = z.record(z.string(), z.unknown());
 const specSchema = z.object({
   kind: z.string().refine((kind) => KINDS.has(kind), 'unknown effect kind'),
