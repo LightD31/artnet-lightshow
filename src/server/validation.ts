@@ -24,6 +24,8 @@ const fixtureId = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1
 const fixturePosition = z.object({
   x: z.number().finite().min(0).max(100),
   y: z.number().finite().min(0).max(100),
+  // Floor to ceiling, for the party effects that read the room's height.
+  height: z.number().min(0).max(100).optional(),
 }).strict();
 const fixtureGroup = z.enum(FIXTURE_GROUPS);
 // A bar's line on the stage plot, centred on its position: how long it is in

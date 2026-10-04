@@ -49,14 +49,17 @@ export interface UnitRange {
 /**
  * Where each slot of a layout stands on the stage plot, for the patterns that
  * travel the room by position (the party effects): across it, 0 at the left
- * edge of the plot and 1 at the right; down it, 0 at the back and 1 at the
- * front; and the group the fixture hangs in. Only when the operator placed
- * the rig — an unplaced rig has a plan of null, and those patterns travel in
- * stage order instead.
+ * edge of the plot and 1 at the right; down it, 0 at the top (the stage or
+ * the TV, the room's front) and 1 at the bottom (the audience); how high, 0
+ * at the floor and 1 at the ceiling; and the group the fixture hangs in. Only
+ * when the operator placed the rig — an unplaced rig has a plan of null, and
+ * those patterns travel in stage order instead.
  */
 export interface StagePlan {
   x: number[];
   y: number[];
+  /** Absent from a plan built by hand: the room takes such slots as mid-room. */
+  z?: number[];
   group: (string | null)[];
 }
 
@@ -274,7 +277,7 @@ function rigSignature(fixtures: readonly StageFixture[], revision: number | stri
   for (const f of fixtures) {
     const p = f.position;
     const g = f.geometry;
-    key += `|${f.profileId};${p ? `${p.x},${p.y}` : ''};${f.group || ''};${g ? `${g.length},${g.angle}` : ''};${isHue(f) ? 'h' : ''}`;
+    key += `|${f.profileId};${p ? `${p.x},${p.y},${p.height ?? ''}` : ''};${f.group || ''};${g ? `${g.length},${g.angle}` : ''};${isHue(f) ? 'h' : ''}`;
   }
   return key;
 }
@@ -331,6 +334,7 @@ function layoutOf(rig: Rig, split: number | null | undefined, pixelMap: string |
     // centre of a bar's line or of a panel.
     x: order.map((k) => centreOf(rig, members[k]).x / 100),
     y: order.map((k) => centreOf(rig, members[k]).y / 100),
+    z: order.map((k) => heightOf(fixtures[members[k]])),
     group: order.map((k) => fixtures[members[k]].group || null),
   } : null;
   const layoutFixtures: Layout['fixtures'] = {
@@ -402,10 +406,17 @@ function layoutOf(rig: Rig, split: number | null | undefined, pixelMap: string |
   const unitPlan: StagePlan | null = planned ? {
     x: list.map((u) => points[u].x / 100),
     y: list.map((u) => points[u].y / 100),
+    // A bar's cells hang at its height.
+    z: list.map((u) => heightOf(fixtures[rig.units[u].fixture])),
     group: list.map((u) => fixtures[rig.units[u].fixture].group || null),
   } : null;
   const noFlash = hueFlags(list.map((u) => isHue(fixtures[rig.units[u].fixture])));
   return { wash, fixtures: layoutFixtures, units: { list, xs: unitXs, ys: unitYs, plan: unitPlan, noFlash } };
+}
+
+/** How high a fixture hangs, 0 (the floor) to 1 (the ceiling): mid-room when nobody said. */
+function heightOf(fixture: StageFixture): number {
+  return (fixture.position?.height ?? 50) / 100;
 }
 
 /** Where fixture i stands on the plot: the middle of its lights, in stage percent. */

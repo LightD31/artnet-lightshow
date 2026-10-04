@@ -1,5 +1,6 @@
 import { colourMixer } from './color.ts';
 import { HUE_PULSE_MS, HUE_PULSE_FLOOR, huePulseLevel } from './look-math.ts';
+import { roomOf, xOf, yOf } from './room.ts';
 import type { StagePlan } from './rig.ts';
 import type { Colour, Expression, PulseReading } from '../types/rig.ts';
 
@@ -147,17 +148,6 @@ const CELL_PATTERNS = new Set([
   'breathe', 'volume-gate', 'confetti',
   'anchor-fill', 'halves', 'flip', 'room-wave', 'ring-strobe', 'ring-backlit', 'fireworks', 'flashes', 'swirl',
 ]);
-
-/** Where slot i sits across the rig, 0..1: its placed position, or even spacing. */
-function xOf(ctx: PatternContext, i: number): number {
-  if (ctx.xs) return ctx.xs[i];
-  return ctx.fixtureCount > 1 ? i / (ctx.fixtureCount - 1) : 0.5;
-}
-
-/** And front to back, on the same scale; the middle when nothing says. */
-function yOf(ctx: PatternContext, i: number): number {
-  return ctx.ys ? ctx.ys[i] : 0.5;
-}
 
 const frac = (v: number): number => v - Math.floor(v);
 
@@ -1034,7 +1024,9 @@ function kitFromTheClock(ctx: PatternContext): { kick: number; snare: number; ha
 // reaches it, which half of the room it is in and which corner it fills
 // from, so the effects travel across the room rather than along the patch. A
 // rig nobody has placed travels in stage order instead, and a rig in one row
-// sweeps along the row for any heading.
+// sweeps along the row for any heading. The room (shared/room.ts) is in Hue's
+// entertainment frame, as the apps' are: the front is the top of the plot,
+// the stage or the TV, and the audience side at its bottom is the back.
 //
 // Every one steps on the musical clock: an event is a whole number of steps,
 // and what a lamp shows is a function of where in the event the music is —
@@ -1047,234 +1039,6 @@ function kitFromTheClock(ctx: PatternContext): { kick: number; snare: number; ha
 const MAX_LAMP_FLASH_HZ = 5;
 /** What the lamps a backlit effect is not on are parked at, in colour B. */
 const BACKLIGHT = 120;
-
-/** Where each slot is in the room, and everything the party effects read off that. */
-interface Room {
-  n: number;
-  /** Centred on the rig and scaled so the farthest lamp is at 1: across, and towards the front. */
-  x: number[];
-  y: number[];
-  /** Across and down the rig's own extent, -1..1 each (0 where it has none). */
-  u: number[];
-  v: number[];
-  /** How far from the middle, 0..1. */
-  dist: number[];
-  /** Round the room from the front, clockwise seen from above, in turns 0..1. */
-  turn: number[];
-  /** Each slot's place round the ring, 0..n-1 — along the row, on a rig with no depth. */
-  ring: number[];
-  group: readonly (string | null)[] | null;
-  /** Does the rig stand in two dimensions. */
-  spread: boolean;
-  along: Map<number, number[]>;
-  ranks: Map<number, number[]>;
-  halves: Map<string, number[]>;
-  channels: Map<number, number[]>;
-  xs: readonly number[] | null;
-  ys: readonly number[] | null;
-}
-
-const rooms = new WeakMap<object, Room>();
-const evenRooms = new Map<number, Room>();
-
-/** The room of a frame's slots: from the plan, else from the slots' places across the rig. */
-function roomOf(ctx: PatternContext): Room {
-  const n = Math.max(1, ctx.fixtureCount);
-  const plan = ctx.plan;
-  if (plan && plan.x.length >= n && plan.y.length >= n) {
-    let room = rooms.get(plan);
-    if (!room || room.n !== n) {
-      room = buildRoom(n, (i) => plan.x[i], (i) => plan.y[i], plan.group);
-      rooms.set(plan, room);
-    }
-    return room;
-  }
-  const key = ctx.xs ?? ctx.ys;
-  if (key) {
-    let room = rooms.get(key);
-    if (!room || room.n !== n || room.xs !== ctx.xs || room.ys !== ctx.ys) {
-      room = buildRoom(n, (i) => xOf(ctx, i), (i) => yOf(ctx, i), null);
-      room.xs = ctx.xs;
-      room.ys = ctx.ys;
-      rooms.set(key, room);
-    }
-    return room;
-  }
-  let room = evenRooms.get(n);
-  if (!room) {
-    if (evenRooms.size > 64) evenRooms.clear();
-    room = buildRoom(n, (i) => xOf(ctx, i), () => 0.5, null);
-    evenRooms.set(n, room);
-  }
-  return room;
-}
-
-function buildRoom(n: number, xAt: (i: number) => number, yAt: (i: number) => number,
-  group: readonly (string | null)[] | null): Room {
-  let lo = Infinity; let hi = -Infinity; let top = Infinity; let bottom = -Infinity;
-  for (let i = 0; i < n; i++) {
-    lo = Math.min(lo, xAt(i)); hi = Math.max(hi, xAt(i));
-    top = Math.min(top, yAt(i)); bottom = Math.max(bottom, yAt(i));
-  }
-  const cx = (lo + hi) / 2;
-  const cy = (top + bottom) / 2;
-  const spanX = hi - lo;
-  const spanY = bottom - top;
-  let far = 0;
-  for (let i = 0; i < n; i++) far = Math.max(far, Math.hypot(xAt(i) - cx, yAt(i) - cy));
-  if (far < 1e-9) far = 1;
-  const x: number[] = []; const y: number[] = []; const u: number[] = []; const v: number[] = [];
-  const dist: number[] = []; const turn: number[] = [];
-  for (let i = 0; i < n; i++) {
-    const dx = xAt(i) - cx;
-    const dy = yAt(i) - cy;
-    x.push(dx / far);
-    y.push(dy / far);
-    u.push(spanX > 1e-9 ? dx / (spanX / 2) : 0);
-    v.push(spanY > 1e-9 ? dy / (spanY / 2) : 0);
-    dist.push(Math.hypot(dx, dy) / far);
-    // From the front (down the plot is towards the audience), clockwise.
-    turn.push(frac(Math.atan2(-dx, dy) / (Math.PI * 2)));
-  }
-  const spread = spanX > 0.02 && spanY > 0.02;
-  // Round the ring by angle; a rig in a row has no ring, so along the row.
-  const ring = ranksOf(spread ? turn : (spanX >= spanY ? x : y));
-  if (!spread) for (let i = 0; i < n; i++) turn[i] = ring[i] / n;
-  return { n, x, y, u, v, dist, turn, ring, group, spread, along: new Map(), ranks: new Map(), halves: new Map(), channels: new Map(), xs: null, ys: null };
-}
-
-/** Each entry's rank in ascending order, ties in index order. */
-function ranksOf(values: readonly number[]): number[] {
-  const order = values.map((_, i) => i).sort((a, b) => values[a] - values[b] || a - b);
-  const rank = new Array<number>(values.length);
-  order.forEach((i, r) => { rank[i] = r; });
-  return rank;
-}
-
-/**
- * How far along a heading each slot lies, 0..1 — 0 degrees towards the
- * front, 90 towards the right. A rig with no extent along the heading (one
- * row, swept front to back) is swept along the row instead, the way the
- * heading points.
- */
-function alongOf(room: Room, heading: number): number[] {
-  let along = room.along.get(heading);
-  if (along) return along;
-  const sin = Math.sin((heading * Math.PI) / 180);
-  const cos = Math.cos((heading * Math.PI) / 180);
-  let p = room.x.map((x, i) => x * sin + room.y[i] * cos);
-  let lo = Math.min(...p);
-  let hi = Math.max(...p);
-  if (hi - lo < 0.1) {
-    const wide = Math.max(...room.x) - Math.min(...room.x) >= Math.max(...room.y) - Math.min(...room.y);
-    const axis = wide ? room.x : room.y;
-    const towards = wide ? sin : cos;
-    const other = wide ? cos : sin;
-    const reverse = towards < -1e-9 || (Math.abs(towards) <= 1e-9 && other < 0);
-    p = axis.map((a) => (reverse ? -a : a));
-    lo = Math.min(...p);
-    hi = Math.max(...p);
-  }
-  along = hi - lo > 1e-9 ? p.map((a) => (a - lo) / (hi - lo)) : p.map(() => 0.5);
-  room.along.set(heading, along);
-  return along;
-}
-
-/** Each slot's rank along a heading, 0..n-1. */
-function rankAlong(room: Room, heading: number): number[] {
-  let rank = room.ranks.get(heading);
-  if (!rank) {
-    rank = ranksOf(alongOf(room, heading));
-    room.ranks.set(heading, rank);
-  }
-  return rank;
-}
-
-/**
- * Which half of the room each slot is in: 0 the front or the left, 1 the
- * back or the right, as many each side as can be. A fixture grouped front or
- * back is in that half whatever the plot says.
- */
-function halfOf(room: Room, axis: 'depth' | 'width'): number[] {
-  let half = room.halves.get(axis);
-  if (half) return half;
-  const n = room.n;
-  if (axis === 'depth') {
-    const rank = rankAlong(room, 0);
-    half = rank.map((r, i) => {
-      const g = room.group ? room.group[i] : null;
-      if (g === 'front') return 0;
-      if (g === 'back') return 1;
-      return r >= Math.floor(n / 2) ? 0 : 1;
-    });
-  } else {
-    const rank = rankAlong(room, 90);
-    half = rank.map((r) => (r < Math.ceil(n / 2) ? 0 : 1));
-  }
-  room.halves.set(axis, half);
-  return half;
-}
-
-// Where the anchors stand, across and down the rig's extent: two are the
-// left and the right, three add the front, four are the corners from the
-// front left round to the back left, five add the middle.
-const ANCHORS: Record<number, [number, number][]> = {
-  2: [[-1, 0], [1, 0]],
-  3: [[-1, 0], [0, 1], [1, 0]],
-  4: [[-1, 1], [1, 1], [1, -1], [-1, -1]],
-  5: [[-1, 1], [1, 1], [1, -1], [-1, -1], [0, 0]],
-};
-
-/**
- * Each slot's channel among `count` anchors: every anchor takes the nearest
- * free lamp in turn, no anchor more than its share, so a room with all its
- * lamps on one side still fills every channel.
- */
-function channelsOf(room: Room, count: number): number[] {
-  let channel = room.channels.get(count);
-  if (channel) return channel;
-  const n = room.n;
-  const anchors = ANCHORS[count] || ANCHORS[4];
-  const c = anchors.length;
-  channel = new Array<number>(n).fill(-1);
-  const size = new Array<number>(c).fill(0);
-  const share = Math.floor(n / c);
-  let spare = n % c;
-  let remaining = n;
-  while (remaining > 0) {
-    let progressed = false;
-    for (let k = 0; k < c && remaining > 0; k++) {
-      if (size[k] > share) continue;
-      if (size[k] === share) {
-        if (spare <= 0) continue;
-        spare--;
-      }
-      let pick = -1;
-      let best = Infinity;
-      for (let i = 0; i < n; i++) {
-        if (channel[i] >= 0) continue;
-        const d = Math.hypot(room.u[i] - anchors[k][0], room.v[i] - anchors[k][1]);
-        if (d < best - 1e-12) { best = d; pick = i; }
-      }
-      if (pick < 0) break;
-      channel[pick] = k;
-      size[k]++;
-      remaining--;
-      progressed = true;
-    }
-    if (!progressed) {
-      for (let i = 0; i < n; i++) if (channel[i] < 0) channel[i] = i % c;
-      break;
-    }
-  }
-  room.channels.set(count, channel);
-  return channel;
-}
-
-/** How many anchors a rig of n lamps fills from: the sides, the corners, or the corners and the middle. */
-function anchorCount(n: number): number {
-  return n <= 3 ? 2 : n <= 7 ? 4 : 5;
-}
 
 /** Where the music is, in steps, continuous. */
 function posOf(ctx: PatternContext): number {
@@ -1403,7 +1167,7 @@ const PARTY_PATTERNS = {
     const length = Math.max(1, Math.ceil((room.n - 1) * STAGGER + ATTACK + HOLD + RELEASE));
     const { event: run, progress } = eventAt(posOf(ctx), length);
     const into = progress * length;
-    const rank = rankAlong(room, (run * 90) % 360);
+    const rank = room.rankAlong((run * 90) % 360);
     for (let i = 0; i < ctx.fixtureCount; i++) {
       const level = envelope(into - rank[i] * STAGGER, ATTACK, HOLD, RELEASE, 'out');
       const colour = pal[(rank[i] + run) % pal.length];
@@ -1440,7 +1204,7 @@ const PARTY_PATTERNS = {
     const { event, progress } = eventAt(posOf(ctx), 4);
     const wash = (e: number, p: number): [number[], number[]] => {
       const env = envelope(p, 0.375, 0.25, 0.5, 'inout');
-      const along = alongOf(room, ((e * 90) % 360 + 360) % 360);
+      const along = room.along(((e * 90) % 360 + 360) % 360);
       const phases: number[] = []; const levels: number[] = [];
       for (let i = 0; i < ctx.fixtureCount; i++) {
         const phase = along[i] - p + 0.11 * e;
@@ -1465,7 +1229,7 @@ const PARTY_PATTERNS = {
     const bed = bedOf(ctx);
     const room = roomOf(ctx);
     const { event, progress } = eventAt(posOf(ctx), 4);
-    const along = alongOf(room, 28);
+    const along = room.along(28);
     const head = 1 - Math.abs(progress * 2 - 1);
     const pass = event * 2 + (progress >= 0.5 ? 1 : 0);
     const colour = pal[pass % pal.length];
@@ -1489,7 +1253,7 @@ const PARTY_PATTERNS = {
       return;
     }
     const reverse = scatter(event, 77) >= 0.5;
-    const along = alongOf(room, 42);
+    const along = room.along(42);
     const TRAIL = 0.25;
     const head = progress * (1 + 2 * TRAIL);
     const colour = pal[event % pal.length];
@@ -1533,7 +1297,7 @@ const PARTY_PATTERNS = {
     const loud = ctx.pulse ? ctx.pulse.mix : dyn(ctx, 'level', 0.8);
     const gate = clamp01((loud - 0.25) / 0.75);
     const open = 0.2 + 0.8 * gate;
-    const along = alongOf(room, 90);
+    const along = room.along(90);
     for (let i = 0; i < ctx.fixtureCount; i++) {
       const phase = along[i] - progress + 0.11 * event;
       ctx.write(i, gradientAt(pal, phase), Math.round(255 * (0.72 + 0.28 * crest(phase)) * open), 0);
@@ -1564,8 +1328,8 @@ const PARTY_PATTERNS = {
   'anchor-fill'(ctx: PatternContext) {
     const pal = paletteOf(ctx);
     const room = roomOf(ctx);
-    const count = anchorCount(room.n);
-    const channel = channelsOf(room, count);
+    const count = room.anchorCount();
+    const channel = room.channels(count);
     const step = Math.max(0, Math.floor(posOf(ctx)));
     const k = step % count;
     const lap = Math.floor(step / count);
@@ -1577,14 +1341,21 @@ const PARTY_PATTERNS = {
   // Rotating Halves: the front of the room against the back on one step, the
   // left against the right on the next, in colours A and B that swap every
   // other time round — front and back from the fixture groups when they are
-  // set, from the plot otherwise.
+  // set, from the plot otherwise. The room numbers its halves in Light DJ's
+  // order, the back first; the front is turned to 0 here so it keeps colour
+  // A, and the left keeps A as it always has. The front is Hue's: the top of
+  // the stage plot, where it was the audience side before.
   halves(ctx: PatternContext) {
     const pal = paletteOf(ctx);
     const room = roomOf(ctx);
     const step = Math.max(0, Math.floor(posOf(ctx)));
-    const half = halfOf(room, step % 2 ? 'width' : 'depth');
+    const depth = step % 2 === 0;
+    const half = room.halves(depth ? 'depth' : 'width');
     const swap = step % 4 >= 2 ? 1 : 0;
-    for (let i = 0; i < ctx.fixtureCount; i++) ctx.write(i, pal[(half[i] ^ swap) % pal.length], 255, 0);
+    for (let i = 0; i < ctx.fixtureCount; i++) {
+      const side = depth ? 1 - half[i] : half[i];
+      ctx.write(i, pal[(side ^ swap) % pal.length], 255, 0);
+    }
   },
 
   // Flip: the room's four corners by position, one diagonal in colour A and
@@ -1592,7 +1363,7 @@ const PARTY_PATTERNS = {
   flip(ctx: PatternContext) {
     const pal = paletteOf(ctx);
     const room = roomOf(ctx);
-    const channel = channelsOf(room, 4);
+    const channel = room.channels(4);
     const step = Math.max(0, Math.floor(posOf(ctx)));
     for (let i = 0; i < ctx.fixtureCount; i++) ctx.write(i, pal[((channel[i] % 2) + step) % 2 % pal.length], 255, 0);
   },
@@ -1606,7 +1377,7 @@ const PARTY_PATTERNS = {
     const bed = bedOf(ctx);
     const room = roomOf(ctx);
     const { event: lap, progress } = eventAt(posOf(ctx), 4);
-    const along = alongOf(room, Math.round(25.7 + 51.4 * (((lap % 7) + 7) % 7)) % 360);
+    const along = room.along(Math.round(25.7 + 51.4 * (((lap % 7) + 7) % 7)) % 360);
     for (let i = 0; i < ctx.fixtureCount; i++) {
       const travel = along[i] - progress;
       ctx.write(i, gradientAt(pal, travel), lift(bed, Math.pow(crest(travel / 2), 1.3)), 0);
