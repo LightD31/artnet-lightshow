@@ -482,7 +482,7 @@ function kindOfChannel(channel: ClipChannel, lamps: Map<string, Lamp>): LampKind
  *
  * Usually one lamp, so usually just its name. A gradient strip or Play bar
  * spreads several channels across one device, which would otherwise give three
- * rows all called "Strip" and no way to tell which end of it you are binding —
+ * rows all called "Strip" and no way to tell which end of it you are patching —
  * so a device appearing more than once in the area has its channels numbered in
  * the order the area lists them.
  */
@@ -555,8 +555,8 @@ async function listEntertainmentConfigs(host: string, key: string): Promise<Ente
 /**
  * Ask Hue devices to show themselves: the bridge has each lamp breathe once
  * (CLIP v2 `identify`). A lamp in an area that is streaming follows the
- * stream instead, so a lamp bound to a fixture is identified through the
- * fixture (identify.ts) rather than through this.
+ * stream instead, so a lamp in the patch is identified through its fixture
+ * (identify.ts) rather than through this.
  */
 async function identifyDevices(host: string, key: string, devices: readonly string[]): Promise<number> {
   let sent = 0;

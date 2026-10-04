@@ -2362,8 +2362,8 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/hue/sync-test` | Flash every fixture white once a second for 10 s, to tune `hue.latencyMs` |
 
 Credentials are never returned by any of these — `/api/hue/status` reports only
-whether a pairing exists. The channel bindings themselves are ordinary settings,
-saved through `PUT /api/settings` under `hue.channels`.
+whether a pairing exists. Each patched lamp is a fixture like any other, saved
+with the show; the channel it drives is its `output`.
 
 ### The server
 

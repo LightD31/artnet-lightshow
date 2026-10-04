@@ -43,8 +43,6 @@ export interface RenderFixture extends StageFixture {
   profileId: string;
   maxBrightness: number;
   override: Override | null;
-  /** A Hue lamp, so it is never strobed in software. */
-  hue: boolean;
 }
 
 /** A crossfade asked for: from what is on stage at `at`, over `ms`. */
@@ -530,7 +528,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       if (value !== null) dmx[base + ch.strobe] = value;
       return true;
     }
-    if (!request || fix.hue || HUE_PROFILE_IDS.has(fix.profileId)) return true;
+    if (!request || HUE_PROFILE_IDS.has(fix.profileId)) return true;
     return softStrobeLit(request, now);
   }
 

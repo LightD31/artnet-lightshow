@@ -38,9 +38,8 @@ test('a __proto__ id cannot hijack the registry', () => {
 });
 
 // ── Built-in Hue lamp profiles ──────────────────────────────────────────────
-// A Hue channel follows a rig fixture, so a Hue-only lamp still needs one in
-// the patch. These exist so that fixture describes a light bulb rather than
-// standing in as a twelve-channel par.
+// A Hue lamp is a fixture of its own, added from the bridge. These exist so
+// that fixture describes a light bulb rather than a twelve-channel par.
 
 test('the Hue lamp profiles ship with the server and are built in', () => {
   assert.strictEqual(isBuiltinProfile(HUE_COLOR_PROFILE_ID), true);

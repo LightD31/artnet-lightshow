@@ -101,11 +101,7 @@ test('a fixture with its own strobe channel is left to it', () => {
   assert.ok(lit.every(Boolean), 'lit every frame; its strobe channel does the flashing');
 });
 
-test('a Hue lamp, or a fixture one follows, is never flashed', () => {
-  const [lamp, followed] = run([
-    fixture(0, 1, HUE_COLOR_PROFILE_ID),
-    fixture(1, 20, BAR.id, { hue: true }),
-  ], { strobeSpeed: 255 }, 1);
-  assert.ok(lamp.every(Boolean), 'the Hue lamp profile');
-  assert.ok(followed.every(Boolean), 'a bar a Hue channel follows');
+test('a Hue lamp is never flashed', () => {
+  const [lamp] = run([fixture(0, 1, HUE_COLOR_PROFILE_ID)], { strobeSpeed: 255 }, 1);
+  assert.ok(lamp.every(Boolean));
 });
