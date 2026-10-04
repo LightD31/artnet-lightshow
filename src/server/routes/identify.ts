@@ -10,6 +10,7 @@ import { sendArtAddress, AC_LED_LOCATE, AC_LED_NORMAL } from '../artnet.ts';
 import { resolveCid } from '../sacn.ts';
 import { sendDdp } from '../ddp.ts';
 import { identifyDevices, listEntertainmentConfigs } from '../hue.ts';
+import { hueProfileId } from '../hue-profile.ts';
 import * as output from '../output.ts';
 import { validate } from '../validation.ts';
 import { messageOf, statusOf } from '../../errors.ts';
@@ -70,8 +71,9 @@ const wledIdentifySchema = z.object({
   seconds,
 }).strict();
 
+// A lamp of the entertainment area, by its entertainment service id.
 const hueIdentifySchema = z.object({
-  channel: z.number().int().min(0).max(255),
+  lamp: z.string().min(1).max(64),
   seconds,
 }).strict();
 
@@ -198,13 +200,14 @@ function attachIdentifyRoutes(app: Express, deps: IdentifyRouteDeps): void {
       const secs = identifySeconds(body.seconds);
       const config = output.getHueConfig();
       if (!config.host || !config.username) return res.status(409).json({ ok: false, error: 'Pair with a bridge first.' });
-      const lamp = state.fixtures.find((f) => f.output?.protocol === 'hue' && f.output.channel === body.channel);
-      if (lamp) return res.json({ ok: true, via: 'fixture', ...start([lamp.id], secs) });
+      // A lamp in the patch is streaming, so it shows itself through its fixture.
+      const patched = state.fixtures.find((f) => f.profileId === hueProfileId(body.lamp));
+      if (patched) return res.json({ ok: true, via: 'fixture', ...start([patched.id], secs) });
       const areas = await hueAreas(config.host, config.username);
       const area = areas.find((a) => a.id === config.entertainmentId) || null;
-      const channel = area ? area.channels.find((c) => c.id === body.channel) : null;
-      if (!channel) return res.status(404).json({ ok: false, error: `Channel ${body.channel} is not in the entertainment area` });
-      const lamps = secs > 0 ? await hueIdentify(config.host, config.username, channel.devices || []) : 0;
+      const lamp = area ? area.lamps.find((l) => l.id === body.lamp) : null;
+      if (!lamp) return res.status(404).json({ ok: false, error: 'That lamp is not in the entertainment area' });
+      const lamps = secs > 0 ? await hueIdentify(config.host, config.username, lamp.devices || []) : 0;
       res.json({ ok: true, via: 'bridge', lamps });
     } catch (err) {
       fail(res, err, 502);

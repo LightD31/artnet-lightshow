@@ -118,9 +118,9 @@ test('a fresh session reports itself idle and unconfigured', () => {
 });
 
 // Opening a session puts the area into entertainment mode, which takes those
-// lamps out of normal Hue control. Doing that with nothing bound seizes them
-// and then sends no colours, so the lamps are held hostage for no benefit.
-test('a fully paired session with no bindings never contacts the bridge', () => {
+// lamps out of normal Hue control. Doing that with no lamp in the patch seizes
+// them and then sends no colours, so the lamps are held hostage for no benefit.
+test('a fully paired session with no lamps in the patch never contacts the bridge', () => {
   try {
     hue.configure({
       enabled: true, host: '10.0.0.2', username: 'user', clientKey: 'aabb',
@@ -161,7 +161,7 @@ test('an unreachable bridge yields no application id rather than an error', asyn
 // ── Lamp names ──────────────────────────────────────────────────────────────
 // A channel carries no name of its own, only the services that render it. The
 // name a person recognises lives on the device that owns the service, so
-// binding by channel number alone meant counting round the room to work out
+// patching by channel number alone meant counting round the room to work out
 // which lamp "#3" was.
 
 const LAMP_A = 'aaaaaaaa-0000-0000-0000-000000000001';
@@ -178,7 +178,7 @@ test('a channel takes the name of the lamp that renders it', () => {
 });
 
 // A gradient strip or Play bar spreads several channels over one device. Three
-// rows all called "Strip" give no way to tell which end you are binding.
+// rows all called "Strip" give no way to tell which end you are patching.
 test('a lamp rendering several channels has them numbered in order', () => {
   const names = new Map([[LAMP_A, { name: 'Strip', product: 'Hue gradient strip' }]]);
   const counts = new Map([[LAMP_A, 3]]);

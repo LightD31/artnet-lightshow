@@ -37,37 +37,44 @@ test('configureSacn merges over the defaults and reads back', () => {
 });
 
 // ── Hue lamps ───────────────────────────────────────────────────────────────
-// A Hue lamp is a fixture of its own with no DMX address, patched as one
-// channel of the entertainment area. It is rendered like any other fixture,
-// and its channel takes its colour from the rendered universe rather than from
-// the engine's intermediate values. That is what makes a Hue lamp obey the
+// A Hue lamp is a fixture of its own with no DMX address, patched as the
+// channels of the entertainment area it renders, one a section. It is rendered
+// like any other fixture, and each channel takes its section's colour from the
+// rendered universe rather than from the engine's intermediate values. That is what makes a Hue lamp obey the
 // dimmer, the trim, the master and blackout for free — so these tests read
 // the buffer the same way the real path does.
 
 import * as universes from '../../src/server/universes.ts';
 import { state, universeOf, placeAddresslessFixtures } from '../../src/server/state.ts';
-import { BUILTIN_PROFILE_ID, HUE_COLOR_PROFILE_ID, HUE_WHITE_PROFILE_ID, HUE_WHITE_AMBIANCE_PROFILE_ID, getProfile } from '../../src/server/profiles.ts';
+import { BUILTIN_PROFILE_ID, getProfile, registerProfile, unregisterProfile } from '../../src/server/profiles.ts';
+import { hueProfile } from '../../src/server/hue-profile.ts';
+import { areaLamp, HUE_COLOR, HUE_AMBIANCE, HUE_WHITE, HUE_GRADIENT } from './hue-test-lamps.js';
 import dgram from 'node:dgram';
 
 /**
- * Run `fn` on a patch of these lamps — `{ channel, profileId }`, or `{ par }`
- * for a DMX par among them — each rendered into a clean frame. `fn` gets
- * `set(index, attribute, value)`, which writes one channel of a fixture the
- * way the engine would.
+ * Run `fn` on a patch of these lamps — `{ channel, profile }` or
+ * `{ channels, profile }` (a colour bulb by default), or `{ par }` for a DMX
+ * par among them — each rendered into a clean frame. `fn` gets
+ * `set(index, attribute, value, section)`, which writes one channel of a
+ * fixture (of one section of it) the way the engine would.
  */
 function withLamps(lamps, fn) {
   const saved = { fixtures: state.fixtures, next: state.nextFixtureId };
+  const profiles = [...new Set(lamps.filter((l) => !l.par).map((l) => l.profile ?? HUE_COLOR))];
+  for (const profile of profiles) registerProfile(profile);
   state.fixtures = lamps.map((lamp, i) => (lamp.par
     ? { id: 100 + i, label: `Par ${i}`, address: 1, universe: 0, profileId: BUILTIN_PROFILE_ID, maxBrightness: 255, override: null }
     : {
-      id: 100 + i, label: `Lamp ${i}`, address: 1, universe: 0, profileId: lamp.profileId ?? HUE_COLOR_PROFILE_ID,
-      maxBrightness: 255, override: null, output: { protocol: 'hue', channel: lamp.channel },
+      id: 100 + i, label: `Lamp ${i}`, address: 1, universe: 0, profileId: (lamp.profile ?? HUE_COLOR).id,
+      maxBrightness: 255, override: null, output: { protocol: 'hue', channels: lamp.channels ?? [lamp.channel] },
     }));
   placeAddresslessFixtures();
   const clean = () => { for (const fix of state.fixtures) universes.getBuffer(universeOf(fix)).fill(0); };
-  const set = (index, attribute, value) => {
+  const set = (index, attribute, value, section) => {
     const fix = state.fixtures[index];
-    universes.getBuffer(universeOf(fix))[fix.address - 1 + getProfile(fix).channelMap[attribute]] = value;
+    const profile = getProfile(fix);
+    const map = section === undefined ? profile.channelMap : profile.cells[section].channelMap;
+    universes.getBuffer(universeOf(fix))[fix.address - 1 + map[attribute]] = value;
   };
   clean();
   try {
@@ -76,6 +83,7 @@ function withLamps(lamps, fn) {
     clean();
     state.fixtures = saved.fixtures;
     state.nextFixtureId = saved.next;
+    for (const profile of profiles) unregisterProfile(profile.id);
   }
 }
 
@@ -83,6 +91,21 @@ test('a lamp\'s channel takes the colour it was rendered', () => {
   withLamps([{ channel: 0 }], (set) => {
     set(0, 'red', 180); set(0, 'green', 90); set(0, 'blue', 20);
     assert.deepStrictEqual(output.hueChannelColors(), [{ id: 0, r: 180, g: 90, b: 20 }]);
+  });
+});
+
+test('each section of a gradient lamp is sent on its own channel, in order along it', () => {
+  withLamps([{ channels: [3, 4, 5, 6, 7], profile: HUE_GRADIENT }], (set) => {
+    set(0, 'red', 200, 0);
+    set(0, 'green', 150, 2);
+    set(0, 'blue', 100, 4);
+    assert.deepStrictEqual(output.hueChannelColors(), [
+      { id: 3, r: 200, g: 0, b: 0 },
+      { id: 4, r: 0, g: 0, b: 0 },
+      { id: 5, r: 0, g: 150, b: 0 },
+      { id: 6, r: 0, g: 0, b: 0 },
+      { id: 7, r: 0, g: 0, b: 100 },
+    ]);
   });
 });
 
@@ -131,9 +154,10 @@ test('a UV wash shows as deep violet rather than black', () => {
 // show. Clamping each primary on its own would move the hue; scaling all three
 // together keeps the colour and gives up brightness instead.
 test('an over-full mix is scaled as a whole, keeping its hue', () => {
-  withLamps([{ channel: 0 }], (set) => {
+  const tungsten = hueProfile(areaLamp({ id: 'tungsten', whites: { warm: 2700, cool: 6500 } }));
+  withLamps([{ channel: 0, profile: tungsten }], (set) => {
     set(0, 'red', 255); set(0, 'warmWhite', 255);
-    assert.deepStrictEqual(output.hueChannelColors(), [{ id: 0, r: 255, g: 84, b: 43 }], 'still a warm red');
+    assert.deepStrictEqual(output.hueChannelColors(), [{ id: 0, r: 255, g: 83, b: 44 }], 'still a warm red');
   });
 });
 
@@ -155,23 +179,34 @@ test('a blacked-out rig sends black to Hue', () => {
 // The one that would be easy to get wrong: a white bulb has no colour channels
 // at all, so without the fallback it would read as black and the lamp would
 // never light.
-test('a white lamp lights at its dimmer level, in neutral white', () => {
-  withLamps([{ channel: 0, profileId: HUE_WHITE_PROFILE_ID }], (set) => {
+test('a white lamp lights at its dimmer level, at the white the bridge says it is', () => {
+  withLamps([{ channel: 0, profile: HUE_WHITE }], (set) => {
+    set(0, 'dimmer', 140);
+    const [color] = output.hueChannelColors();
+    assert.strictEqual(color.r, 140);
+    assert.ok(color.b < color.g && color.g < color.r, `a 2700 K white (got ${JSON.stringify(color)})`);
+  });
+});
+
+test('a white lamp that does not say which white is shown neutral', () => {
+  const unsaid = hueProfile(areaLamp({ id: 'unsaid', gamut: null, whites: null }));
+  withLamps([{ channel: 0, profile: unsaid }], (set) => {
     set(0, 'dimmer', 140);
     assert.deepStrictEqual(output.hueChannelColors(), [{ id: 0, r: 140, g: 140, b: 140 }]);
   });
 });
 
 test('a white lamp at zero is black rather than stuck on', () => {
-  withLamps([{ channel: 0, profileId: HUE_WHITE_PROFILE_ID }], () => {
+  withLamps([{ channel: 0, profile: HUE_WHITE }], () => {
     assert.deepStrictEqual(output.hueChannelColors(), [{ id: 0, r: 0, g: 0, b: 0 }]);
   });
 });
 
 // ── The two white dies ──────────────────────────────────────────────────────
-// A Hue colour bulb is RGBWW. The Entertainment stream has no white channel, so
-// the warm and cool dies fold into the RGB that goes out — at their real colour
-// temperature, which is what keeps a warm wash warm.
+// A Hue lamp that tunes white has a warm and a cool die. The Entertainment
+// stream has no white channel, so they fold into the RGB that goes out — at
+// the temperatures the bridge says the lamp's whites are, which is what keeps
+// a warm wash warm.
 
 test('the warm white die folds in warm, not neutral and not orange', () => {
   withLamps([{ channel: 0 }], (set) => {
@@ -194,6 +229,16 @@ test('the cool white die folds in near neutral', () => {
   });
 });
 
+test('the whites fold at the lamp\'s own temperatures', () => {
+  const read = (whites) => withLamps([{ channel: 0, profile: hueProfile(areaLamp({ id: `w${whites.warm}`, whites })) }], (set) => {
+    set(0, 'warmWhite', 255);
+    return output.hueChannelColors()[0];
+  });
+  const candle = read({ warm: 2000, cool: 6500 });
+  const tungsten = read({ warm: 2700, cool: 6500 });
+  assert.ok(candle.b < tungsten.b && candle.g < tungsten.g, 'a lamp that goes down to 2000 K shows a warmer warm white');
+});
+
 test('warm reads warmer than cool at the same level', () => {
   const read = (attribute) => withLamps([{ channel: 0 }], (set) => {
     set(0, attribute, 255);
@@ -209,7 +254,7 @@ test('warm reads warmer than cool at the same level', () => {
 // fallback keys off having no emitters at all, not off having no primaries —
 // otherwise it would add the dimmer on top of the whites and double up.
 test('a white ambiance lamp is not also given its dimmer as white', () => {
-  withLamps([{ channel: 0, profileId: HUE_WHITE_AMBIANCE_PROFILE_ID }], (set) => {
+  withLamps([{ channel: 0, profile: HUE_AMBIANCE }], (set) => {
     set(0, 'dimmer', 255);
     set(0, 'coolWhite', 100);
     const [color] = output.hueChannelColors();

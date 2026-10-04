@@ -187,8 +187,8 @@ const smtc = createOsNowPlaying();
 smtc.onUpdate((payload) => nowPlaying.updatePlayback(payload));
 
 // The patch the operator left behind, put back before anything reads the
-// fixture list: the applier binds Hue channels to fixtures, the engine sizes
-// its buffers to them, and the banner below prints them.
+// fixture list: the applier moves the fixtures on the default universe with
+// it, the engine sizes its buffers to them, and the banner below prints them.
 const patchRestored = showStore.restore();
 
 // Everything configurable is pushed into the subsystems from one place, both

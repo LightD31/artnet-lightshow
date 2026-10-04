@@ -5,6 +5,7 @@ import { clamp, geometryOf, round1 } from '../../stage-geometry.js';
 import { rigSelectionSig, identifyFixtures } from '../../rig-ui.js';
 import { FieldInput } from './FieldInput.jsx';
 import { hasNoAddress } from '../../../src/shared/placement.ts';
+import { hueChannelsLabel } from '../../../src/shared/hue-lamp.ts';
 
 /**
  * The selected fixture, every property of it in one place: what it is, where
@@ -71,7 +72,7 @@ export function Inspector() {
           {profile && <small> · {profile.channelCount} ch{bar ? `, ${grid ? `${grid.columns} × ${grid.rows}` : rig.ranges[index].count} cells` : ''}</small>}</span>
         <span class="inspector-key">Output</span>
         <span class="inspector-value">{wled ? `WLED at ${fix.output.host}, over DDP`
-          : hueOnly ? `Hue channel #${fix.output.channel}` : 'DMX (Art-Net, sACN)'}</span>
+          : hueOnly ? `Hue ${hueChannelsLabel(fix.output.channels)}` : 'DMX (Art-Net, sACN)'}</span>
         {!hueOnly && <>
           <label for="insp-universe">Universe</label>
           <FieldInput id="insp-universe" type="number" min="0" max="32767" value={fix.universe ?? 0} onCommit={(v) => send({ universe: v })} />
@@ -98,7 +99,8 @@ export function Inspector() {
         </span>
       </div>
       {hueOnly && <p class="setting-help">A lamp of the Hue bridge's entertainment area, added from Rig → Outputs → Philips
-        Hue: it takes no DMX channels, and its channel is sent the colour it is rendered.</p>}
+        Hue on a profile built from what the bridge says it can show: it takes no DMX channels, and each of its
+        sections is sent the colour it is rendered.</p>}
       <p class="setting-help">{fix.position ? '' : 'Not placed yet: drawn at its default spot. '}
         {bar ? 'At angle 0 its first cell is on the left and its last on the right; 180 is the other way round, and 90 runs from the back of the stage towards the audience.' : ''}</p>
       <div class="inspector-actions">

@@ -6,7 +6,8 @@ import assert from 'node:assert';
 
 import { createRenderer, softStrobeHz, SOFT_STROBE_MAX_HZ } from '../../src/server/renderer.ts';
 import * as universes from '../../src/server/universes.ts';
-import { getProfile, profilesRevision, registerProfile, unregisterProfile, BUILTIN_PROFILE_ID, HUE_COLOR_PROFILE_ID } from '../../src/server/profiles.ts';
+import { getProfile, profilesRevision, registerProfile, unregisterProfile, BUILTIN_PROFILE_ID } from '../../src/server/profiles.ts';
+import { HUE_COLOR } from './hue-test-lamps.js';
 import { barProfile } from '../../src/server/bar-profile.ts';
 import { FRAME_MS } from '../../src/server/frame-clock.ts';
 
@@ -101,11 +102,12 @@ test('a fixture with its own strobe channel is left to it', () => {
   assert.ok(lit.every(Boolean), 'lit every frame; its strobe channel does the flashing');
 });
 
-test('a Hue lamp, or a fixture one follows, is never flashed', () => {
-  const [lamp, followed] = run([
-    fixture(0, 1, HUE_COLOR_PROFILE_ID),
-    fixture(1, 20, BAR.id, { hue: true }),
-  ], { strobeSpeed: 255 }, 1);
-  assert.ok(lamp.every(Boolean), 'the Hue lamp profile');
-  assert.ok(followed.every(Boolean), 'a bar a Hue channel follows');
+test('a Hue lamp is never flashed', () => {
+  registerProfile(HUE_COLOR);
+  try {
+    const [lamp] = run([fixture(0, 1, HUE_COLOR.id)], { strobeSpeed: 255 }, 1);
+    assert.ok(lamp.every(Boolean));
+  } finally {
+    unregisterProfile(HUE_COLOR.id);
+  }
 });

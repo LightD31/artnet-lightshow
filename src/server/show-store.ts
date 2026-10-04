@@ -1,9 +1,10 @@
 
 import { state, universeOf, maxBrightnessOf, setDefaultUniverse, placeAddresslessFixtures } from './state.ts';
 import { resizeFixtureBuffers } from './engine.ts';
-import { BUILTIN_PROFILE_ID, BUILTIN_PROFILE_IDS, HUE_PROFILE_IDS, isBuiltinProfile, MAX_FIXTURES, universeOverflow, unitCapOverflow, registerProfile, clearNonBuiltinProfiles, listProfiles } from './profiles.ts';
+import { BUILTIN_PROFILE_ID, BUILTIN_PROFILE_IDS, LEGACY_HUE_PROFILE_IDS, isBuiltinProfile, MAX_FIXTURES, universeOverflow, unitCapOverflow, registerProfile, clearNonBuiltinProfiles, listProfiles } from './profiles.ts';
 import { MAX_UNIVERSES } from './universes.ts';
 import { INTERNAL_UNIVERSE, hasNoAddress, universesOf } from '../shared/placement.ts';
+import { isHueProfile, hueSections } from '../shared/hue-lamp.ts';
 import { ddpConflict } from './ddp-routes.ts';
 import { showSchema, validate } from './validation.ts';
 import { HttpError, messageOf } from '../errors.ts';
@@ -68,6 +69,30 @@ function snapshotShow() {
 }
 
 /**
+ * A show with the Hue lamps saved before each lamp's profile came from its
+ * bridge left out: those sat on one of three generic profiles, a channel
+ * each, and nothing in the file says what the lamp can show or which other
+ * channels are its sections. Rather than refuse the whole show for them, the
+ * rest loads and they are added again from Rig → Outputs → Philips Hue.
+ */
+function withoutLegacyHueLamps(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object' || !Array.isArray((raw as { fixtures?: unknown }).fixtures)) return raw;
+  const fixtures = (raw as { fixtures: unknown[] }).fixtures;
+  const legacy = (f: unknown): boolean => {
+    if (!f || typeof f !== 'object') return false;
+    const { profileId, output } = f as { profileId?: unknown; output?: { protocol?: unknown; channels?: unknown } | null };
+    return LEGACY_HUE_PROFILE_IDS.has(profileId as string)
+      || (!!output && output.protocol === 'hue' && !Array.isArray(output.channels));
+  };
+  const dropped = fixtures.filter(legacy);
+  if (!dropped.length) return raw;
+  const labels = dropped.map((f) => `"${(f as { label?: unknown }).label ?? '?'}"`).join(', ');
+  console.warn(`[show] left out ${dropped.length} Hue lamp${dropped.length === 1 ? '' : 's'} saved on the old generic `
+    + `profiles (${labels}): add ${dropped.length === 1 ? 'it' : 'them'} again from Rig → Outputs → Philips Hue`);
+  return { ...raw, fixtures: fixtures.filter((f) => !legacy(f)) };
+}
+
+/**
  * Put a show on the rig: its imported profiles, its Art-Net defaults, its
  * patch. Throws an Error carrying `status` when the show does not fit, having
  * changed nothing.
@@ -80,7 +105,7 @@ function snapshotShow() {
  * dropping the overhanging channels.
  */
 function applyShow(rawShow: unknown): ShowFile {
-  const show = validate(showSchema, rawShow, 'show');
+  const show = validate(showSchema, withoutLegacyHueLamps(rawShow), 'show');
   const fixtures = Array.isArray(show.fixtures) ? show.fixtures : [];
   const hasFixtures = fixtures.length > 0;
   if (hasFixtures && fixtures.length > MAX_FIXTURES) {
@@ -88,9 +113,7 @@ function applyShow(rawShow: unknown): ShowFile {
   }
 
   const incoming: Record<string, Profile> = Object.create(null);
-  // Every built-in, not just the fallback: a show whose fixtures sit on the
-  // Hue lamp profiles carries no copy of them, so resolving against the
-  // fallback alone would silently land those fixtures on a 12-channel par.
+  // Every built-in, not just the fallback: a show carries no copy of them.
   for (const id of BUILTIN_PROFILE_IDS) incoming[id] = listProfiles()[id];
   if (Array.isArray(show.profiles)) {
     for (const p of show.profiles) if (p && p.id) incoming[p.id] = p;
@@ -120,19 +143,25 @@ function applyShow(rawShow: unknown): ShowFile {
       output: f.output ? { ...f.output } : null,
       override: null,
     }));
-    // A Hue lamp is a channel of the bridge's area, on a Hue profile, and
-    // nothing else is: a Hue profile on DMX, or a Hue output on a par, is not
-    // a rig this server can drive.
-    const mixed = next.find((f) => hasNoAddress(f) !== HUE_PROFILE_IDS.has(f.profileId));
+    // A Hue lamp is channels of the bridge's area, one for each section of its
+    // own profile, and nothing else is: a Hue profile on DMX, or a Hue output
+    // on a par, is not a rig this server can drive.
+    const mixed = next.find((f) => hasNoAddress(f) !== isHueProfile(incoming[f.profileId]));
     if (mixed) {
-      throw badShow(`"${mixed.label}" ${hasNoAddress(mixed) ? 'is a Hue lamp on a profile that is not one' : 'is on a Hue lamp profile but not a Hue lamp'}`);
+      throw badShow(`"${mixed.label}" ${hasNoAddress(mixed) ? 'is a Hue lamp on a profile that is not one' : 'is on a Hue lamp\'s profile but not a Hue lamp'}`);
     }
     const channels = new Map<number, string>();
     for (const fix of next) {
       if (fix.output?.protocol !== 'hue') continue;
-      const other = channels.get(fix.output.channel);
-      if (other) throw badShow(`"${fix.label}" and "${other}" are both Hue channel ${fix.output.channel}`);
-      channels.set(fix.output.channel, fix.label);
+      const sections = hueSections(incoming[fix.profileId]);
+      if (fix.output.channels.length !== sections) {
+        throw badShow(`"${fix.label}" has ${sections} section${sections === 1 ? '' : 's'} but ${fix.output.channels.length} Hue channel${fix.output.channels.length === 1 ? '' : 's'}`);
+      }
+      for (const channel of fix.output.channels) {
+        const other = channels.get(channel);
+        if (other) throw badShow(`"${fix.label}" and "${other}" are both on Hue channel ${channel}`);
+        channels.set(channel, fix.label);
+      }
     }
     placeAddresslessFixtures(next, (fix) => incoming[fix.profileId]);
     for (const fix of next) {

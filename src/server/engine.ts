@@ -12,7 +12,6 @@ import { createRenderer } from './renderer.ts';
 import { createTicker, hrtimeMs, FRAME_MS } from './frame-clock.ts';
 import { messageOf } from '../errors.ts';
 import { createIdentify } from './identify.ts';
-import { hasNoAddress } from '../shared/placement.ts';
 import type { FromWorker, ToWorker } from './engine-messages.ts';
 import type { FrameSummary, Ticker } from './frame-clock.ts';
 import type { FadeRequest, RenderInput, SyncTestRequest } from './renderer.ts';
@@ -99,8 +98,6 @@ const identify = createIdentify({ clock: () => clock() });
  * fade or sync test asked for.
  */
 function renderInput(): RenderInput {
-  // A Hue lamp is never strobed in software: a Hue bridge is no strobe (see
-  // renderer.js).
   return {
     running: state.running,
     pattern: state.pattern,
@@ -138,7 +135,6 @@ function renderInput(): RenderInput {
       position: f.position || null,
       group: f.group || null,
       geometry: f.geometry || null,
-      hue: hasNoAddress(f),
     })),
   };
 }

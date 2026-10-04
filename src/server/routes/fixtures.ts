@@ -1,9 +1,12 @@
 import { state, allocateFixtureId, universeOf, maxBrightnessOf, countUniverses, placeAddresslessFixtures } from '../state.ts';
 import { resizeFixtureBuffers } from '../engine.ts';
 import { parseGDTF } from '../../gdtf.ts';
-import { BUILTIN_PROFILE_ID, HUE_PROFILE_IDS, HUE_BY_HAND, hueProfileFor, isBuiltinProfile, MAX_FIXTURES, UNIVERSE_SIZE, endChannel, fitsInUniverse, universeOverflow, registerProfile, unregisterProfile, listProfiles, getProfile, unitCapOverflow } from '../profiles.ts';
+import { BUILTIN_PROFILE_ID, HUE_BY_HAND, isBuiltinProfile, MAX_FIXTURES, UNIVERSE_SIZE, endChannel, fitsInUniverse, universeOverflow, registerProfile, unregisterProfile, listProfiles, getProfile, unitCapOverflow } from '../profiles.ts';
 import { MAX_UNIVERSES } from '../universes.ts';
 import { INTERNAL_UNIVERSE, footprintOf, hasNoAddress, universeCount } from '../../shared/placement.ts';
+import { isHueProfile, hueSections } from '../../shared/hue-lamp.ts';
+import { hueProfile, hueProfileId } from '../hue-profile.ts';
+import type { AreaLamp, EntertainmentArea } from '../hue.ts';
 import { ddpConflict } from '../ddp-routes.ts';
 import { showStore, snapshotShow, applyShow } from '../show-store.ts';
 import { barProfile } from '../bar-profile.ts';
@@ -218,6 +221,8 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
   app.post('/api/profiles', (req, res) => {
     try {
       const profile = validate(profileSchema, req.body, 'profile');
+      const hue = hueProfileBlocked(profile);
+      if (hue) return res.status(400).json({ ok: false, error: hue });
       // Re-importing a profile that is already patched changes every fixture
       // on it at once — a GDTF that now counts its fine channels is a channel
       // longer — so those fixtures are held to the same rules as patching them.
@@ -238,6 +243,8 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
       const profile = barProfile(req.body || {});
       if (req.query.dryRun === '1') return res.json({ ok: true, profile });
       if (isBuiltinProfile(profile.id)) return res.status(400).json({ ok: false, error: 'That id is a built-in profile' });
+      const hue = hueProfileBlocked(profile);
+      if (hue) return res.status(400).json({ ok: false, error: hue });
       const blocked = profileChangeBlocked(profile);
       if (blocked) return res.status(400).json({ ok: false, error: blocked });
       if (!registerProfile(profile)) return res.status(400).json({ ok: false, error: 'Invalid profile' });
@@ -247,6 +254,14 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
       res.json({ ok: true, profile });
     } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
+
+  /**
+   * Why `profile` cannot be imported as a Hue lamp's, or over one: a Hue
+   * lamp's profile is built from its bridge and nowhere else. Null when it can.
+   */
+  function hueProfileBlocked(profile: Profile): string | null {
+    return isHueProfile(profile) || isHueProfile(listProfiles()[profile.id]) ? HUE_BY_HAND : null;
+  }
 
   /** Why replacing a profile with `profile` would break the patch, or null. */
   function profileChangeBlocked(profile: Profile): string | null {
@@ -299,7 +314,7 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
     const profileId = body.profileId ?? BUILTIN_PROFILE_ID;
     const profile = profiles[profileId];
     if (!profile) return res.status(400).json({ ok: false, error: `No profile "${profileId}"` });
-    if (HUE_PROFILE_IDS.has(profileId)) return res.status(400).json({ ok: false, error: HUE_BY_HAND });
+    if (isHueProfile(profile)) return res.status(400).json({ ok: false, error: HUE_BY_HAND });
 
     // What is taken, per universe: the last channel used on it, a strip
     // running on into it included, and new fixtures as they are placed.
@@ -381,27 +396,48 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
   });
 
   // ─── Philips Hue ──────────────────────────────────────────────────────────
-  // A Hue lamp is patched from the bridge, as a WLED is: each channel of the
-  // entertainment area a fixture of its own, on the profile for what the
-  // bridge says the lamp can show, with no DMX address — the server renders
-  // it on universes of its own that are never sent, and its channel is sent
-  // the colour that comes out (output.ts).
+  // A Hue lamp is patched from the bridge, as a WLED is: each lamp of the
+  // entertainment area a fixture of its own, on a profile built from what the
+  // bridge says it can show (hue-profile.ts) — a section for each channel it
+  // renders — with no DMX address. The server renders it on universes of its
+  // own that are never sent, and each channel is sent the colour its section
+  // comes out (output.ts).
 
-  /** The channels of the area being streamed to, and what each lamp can show. */
-  app.get('/api/hue/lamps', asyncHandler(async (_req, res) => {
+  /** The area being streamed to, or the answer that says why there is none. */
+  async function hueArea(res: Response): Promise<EntertainmentArea | null> {
     const config = output.getHueConfig();
-    if (!config.host || !config.username) return res.status(409).json({ ok: false, error: 'Pair with a bridge first.' });
-    if (!config.entertainmentId) return res.status(409).json({ ok: false, error: 'Pick an entertainment area first.' });
+    if (!config.host || !config.username) { res.status(409).json({ ok: false, error: 'Pair with a bridge first.' }); return null; }
+    if (!config.entertainmentId) { res.status(409).json({ ok: false, error: 'Pick an entertainment area first.' }); return null; }
+    let area;
     try {
-      const area = (await hueAreas(config.host, config.username)).find((a) => a.id === config.entertainmentId);
-      if (!area) return res.status(404).json({ ok: false, error: 'The bridge has no such entertainment area any more; pick one again.' });
-      res.json({ ok: true, area: { id: area.id, name: area.name }, lamps: area.channels });
+      area = (await hueAreas(config.host, config.username)).find((a) => a.id === config.entertainmentId);
     } catch (err) {
       res.status(502).json({ ok: false, error: messageOf(err) });
+      return null;
     }
+    if (!area) res.status(404).json({ ok: false, error: 'The bridge has no such entertainment area any more; pick one again.' });
+    return area || null;
+  }
+
+  /** The fixture a lamp of the area is patched as already: on its profile, or on one of its channels. */
+  function patchedAs(lamp: AreaLamp): Fixture | null {
+    const profileId = hueProfileId(lamp.id);
+    return state.fixtures.find((f) => f.profileId === profileId
+      || (f.output?.protocol === 'hue' && f.output.channels.some((ch) => lamp.channels.includes(ch)))) || null;
+  }
+
+  /** The lamps of the area being streamed to, their sections, and what each can show. */
+  app.get('/api/hue/lamps', asyncHandler(async (_req, res) => {
+    const area = await hueArea(res);
+    if (!area) return;
+    res.json({
+      ok: true,
+      area: { id: area.id, name: area.name },
+      lamps: area.lamps.map((lamp) => ({ ...lamp, shows: hueProfile(lamp)?.modeName ?? null })),
+    });
   }));
 
-  /** Patch channels of the area: those named, or every one not patched yet. */
+  /** Patch lamps of the area: those named, or every one not patched yet. */
   app.post('/api/hue/add', asyncHandler(async (req, res) => {
     let body;
     try {
@@ -409,49 +445,46 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
     } catch (err) {
       return res.status(400).json({ ok: false, error: messageOf(err) });
     }
-    const config = output.getHueConfig();
-    if (!config.host || !config.username) return res.status(409).json({ ok: false, error: 'Pair with a bridge first.' });
-    if (!config.entertainmentId) return res.status(409).json({ ok: false, error: 'Pick an entertainment area first.' });
-    let area;
-    try {
-      area = (await hueAreas(config.host, config.username)).find((a) => a.id === config.entertainmentId);
-    } catch (err) {
-      return res.status(502).json({ ok: false, error: messageOf(err) });
-    }
-    if (!area) return res.status(404).json({ ok: false, error: 'The bridge has no such entertainment area any more; pick one again.' });
+    const area = await hueArea(res);
+    if (!area) return;
 
-    const patched = hueLampsByChannel();
-    const wanted = body.channels ? new Set(body.channels) : null;
-    for (const channel of wanted || []) {
-      if (!area.channels.some((ch) => ch.id === channel)) {
-        return res.status(404).json({ ok: false, error: `"${area.name}" has no channel ${channel}` });
-      }
-      const already = patched.get(channel);
-      if (already) return res.status(409).json({ ok: false, error: `Channel ${channel} is patched already, as "${already.label}"` });
+    const wanted = body.lamps ? new Set(body.lamps) : null;
+    for (const id of wanted || []) {
+      const lamp = area.lamps.find((l) => l.id === id);
+      if (!lamp) return res.status(404).json({ ok: false, error: `"${area.name}" has no lamp ${id}` });
+      const already = patchedAs(lamp);
+      if (already) return res.status(409).json({ ok: false, error: `${lamp.name || 'That lamp'} is patched already, as "${already.label}"` });
     }
-    const fresh = area.channels.filter((ch) => (wanted ? wanted.has(ch.id) : !patched.has(ch.id)));
+    const fresh = area.lamps.filter((lamp) => (wanted ? wanted.has(lamp.id) : !patchedAs(lamp)));
     if (!fresh.length) return res.status(409).json({ ok: false, error: `Every lamp of "${area.name}" is patched already` });
-    const unread = fresh.find((ch) => !ch.kind);
+    const built = fresh.map((lamp) => ({ lamp, profile: hueProfile(lamp) }));
+    const unread = built.find((b) => !b.profile);
     if (unread) {
+      const { lamp } = unread;
       return res.status(502).json({
-        ok: false, error: `The bridge would not say what channel ${unread.id}${unread.name ? ` ("${unread.name}")` : ''} can show; try again`,
+        ok: false, error: `The bridge would not say what ${lamp.name ? `"${lamp.name}"` : `channel ${lamp.channels[0]}`} can show; try again`,
       });
     }
     if (state.fixtures.length + fresh.length > MAX_FIXTURES) {
       return res.status(400).json({ ok: false, error: `${fresh.length} lamps would take the patch past ${MAX_FIXTURES} fixtures` });
     }
 
-    const draft: Fixture[] = fresh.map((ch, k) => ({
-      id: -1 - k, label: (ch.name || `Hue ${ch.id}`).slice(0, 64), address: 1, universe: INTERNAL_UNIVERSE,
-      profileId: hueProfileFor(ch.kind as 'color' | 'ambiance' | 'white'), maxBrightness: 255, override: null,
-      output: { protocol: 'hue', channel: ch.id },
+    const byId = new Map(built.map(({ profile }) => [(profile as Profile).id, profile as Profile]));
+    const profileOf = (f: Pick<Fixture, 'profileId'>) => byId.get(f.profileId) || getProfile(f);
+    const draft: Fixture[] = built.map(({ lamp, profile }, k) => ({
+      id: -1 - k, label: (lamp.name || `Hue ${lamp.channels[0]}`).slice(0, 64), address: 1, universe: INTERNAL_UNIVERSE,
+      profileId: (profile as Profile).id, maxBrightness: 255, override: null,
+      output: { protocol: 'hue', channels: [...lamp.channels] },
     }));
     const next = [...state.fixtures.map((f) => ({ ...f })), ...draft];
-    placeAddresslessFixtures(next);
-    const problem = unitCapOverflow(next) || (countUniverses(next) > MAX_UNIVERSES
+    placeAddresslessFixtures(next, profileOf);
+    const problem = unitCapOverflow(next, profileOf) || (countUniverses(next, profileOf) > MAX_UNIVERSES
       ? `These lamps would put the patch on more than the ${MAX_UNIVERSES} universes this server renders` : null);
     if (problem) return res.status(400).json({ ok: false, error: problem });
 
+    for (const profile of byId.values()) {
+      if (!registerProfile(profile)) return res.status(400).json({ ok: false, error: 'Invalid profile' });
+    }
     const fixtures = draft.map((fix) => {
       const added = { ...fix, id: allocateFixtureId() };
       state.fixtures.push(added);
@@ -461,17 +494,8 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
     resizeFixtureBuffers();
     showStore.scheduleSave();
     integrations.broadcast();
-    res.json({ ok: true, fixtures, area: { id: area.id, name: area.name } });
+    res.json({ ok: true, fixtures, profiles: [...byId.values()], area: { id: area.id, name: area.name } });
   }));
-
-  /** The Hue lamps in the patch, by their channel. */
-  function hueLampsByChannel(): Map<number, Fixture> {
-    const out = new Map<number, Fixture>();
-    for (const fix of state.fixtures) {
-      if (fix.output?.protocol === 'hue' && !out.has(fix.output.channel)) out.set(fix.output.channel, fix);
-    }
-    return out;
-  }
 
   // Answers with the fixture that was removed and its position, so the client
   // can offer an undo. The id is stable because external bindings refer to it.
@@ -524,12 +548,15 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
       const profiles = listProfiles();
       const profileId = profiles[fixture.profileId] ? fixture.profileId : BUILTIN_PROFILE_ID;
       const addressless = hasNoAddress(fixture);
-      if (addressless !== HUE_PROFILE_IDS.has(profileId)) return res.status(400).json({ ok: false, error: HUE_BY_HAND });
-      const channel = fixture.output?.protocol === 'hue' ? fixture.output.channel : null;
-      const sameChannel = channel === null ? null
-        : state.fixtures.find((f) => f.output?.protocol === 'hue' && f.output.channel === channel);
-      if (sameChannel) {
-        return res.status(409).json({ ok: false, error: `Hue channel ${channel} is patched already, as "${sameChannel.label}"` });
+      if (addressless !== isHueProfile(profiles[profileId])) return res.status(400).json({ ok: false, error: HUE_BY_HAND });
+      const channels = fixture.output?.protocol === 'hue' ? fixture.output.channels : [];
+      if (addressless && channels.length !== hueSections(profiles[profileId])) {
+        return res.status(400).json({ ok: false, error: `"${fixture.label}" no longer matches its lamp's sections; add it again from the bridge` });
+      }
+      const taken = channels.find((ch) => state.fixtures.some((f) => f.output?.protocol === 'hue' && f.output.channels.includes(ch)));
+      if (taken !== undefined) {
+        const other = state.fixtures.find((f) => f.output?.protocol === 'hue' && f.output.channels.includes(taken)) as Fixture;
+        return res.status(409).json({ ok: false, error: `Hue channel ${taken} is patched already, as "${other.label}"` });
       }
       if (!addressless && fixture.address === undefined) {
         return res.status(400).json({ ok: false, error: 'fixture-restore: fixture.address is required for a fixture on DMX' });

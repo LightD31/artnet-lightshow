@@ -25,6 +25,13 @@ import { applyPatch, applyOverride, setFixtureMaxBrightness } from '../../src/se
 import { PATTERNS, COLOR_PRESETS } from '../../src/server/presets.ts';
 import { createPreviewSampler } from '../../src/shared/preview.ts';
 import AutoShow from '../../src/auto-show.ts';
+import { registerProfile } from '../../src/server/profiles.ts';
+import { HUE_COLOR, HUE_AMBIANCE } from './hue-test-lamps.js';
+
+// Hue lamps' profiles come from their bridge; these are laid out as the two
+// generic ones the hashes were taken with were.
+registerProfile(HUE_COLOR);
+registerProfile(HUE_AMBIANCE);
 
 // The hashes have changed three times, each time on purpose.
 //
@@ -98,8 +105,8 @@ const par = (id, address, extra = {}) => ({
 function rig({ placed }) {
   const fixtures = [
     par(0, 1), par(1, 13), par(2, 25), par(3, 37),
-    { ...par(4, 49), profileId: 'generic-hue-lamp-7ch' },
-    { ...par(5, 56), profileId: 'generic-hue-white-ambiance-3ch' },
+    { ...par(4, 49), profileId: HUE_COLOR.id },
+    { ...par(5, 56), profileId: HUE_AMBIANCE.id },
   ];
   if (placed) {
     const spots = [[80, 20], [10, 60], [50, 30], [50, 80], [30, 10], [65, 55]];

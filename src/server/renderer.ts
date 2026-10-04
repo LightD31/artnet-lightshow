@@ -16,7 +16,7 @@
  */
 
 import { COLOR_PRESETS, STROBE_FUNCTIONS } from './presets.ts';
-import { HUE_PROFILE_IDS } from './profiles.ts';
+import { isHueProfile } from '../shared/hue-lamp.ts';
 import { FRAME_MS } from './frame-clock.ts';
 import { PATTERN_FUNCS } from '../shared/patterns.ts';
 import { renderLayer } from '../shared/layer.ts';
@@ -43,8 +43,6 @@ export interface RenderFixture extends StageFixture {
   profileId: string;
   maxBrightness: number;
   override: Override | null;
-  /** A Hue lamp, so it is never strobed in software. */
-  hue: boolean;
 }
 
 /** A crossfade asked for: from what is on stage at `at`, over `ms`. */
@@ -530,7 +528,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       if (value !== null) dmx[base + ch.strobe] = value;
       return true;
     }
-    if (!request || fix.hue || HUE_PROFILE_IDS.has(fix.profileId)) return true;
+    if (!request || isHueProfile(profileOf(fix))) return true;
     return softStrobeLit(request, now);
   }
 

@@ -2,6 +2,7 @@ import { state, universeOf } from './state.ts';
 import { getProfile } from './profiles.ts';
 import { EMITTERS } from '../shared/rig.ts';
 import { channelReader } from '../shared/placement.ts';
+import { isHueProfile, kelvinColour } from '../shared/hue-lamp.ts';
 import * as universes from './universes.ts';
 import { createTransmitter, sacnUniverseFor as mapSacnUniverse } from './transmit.ts';
 import { createDiscovery, interfaces, isBroadcastTarget } from './artnet-nodes.ts';
@@ -11,7 +12,7 @@ import type { HueChannelColour } from './hue.ts';
 import { ddpRoutes } from './ddp-routes.ts';
 import type { SacnOutput, SendOptions, TransmitConfig, Wire } from './transmit.ts';
 import type { Settings } from './settings.ts';
-import type { ChannelMap } from '../types/rig.ts';
+import type { ChannelMap, HueLampTraits } from '../types/rig.ts';
 
 /** Reads one channel of a fixture's DMX; 0 for a channel it does not have. */
 type ChannelReader = (offset: number | undefined) => number;
@@ -26,9 +27,9 @@ type ChannelReader = (offset: number | undefined) => number;
  * Philips Hue sits alongside them but is fed differently, and deliberately so.
  * The other two carry universes; a Hue bridge has no concept of one. Each Hue
  * lamp is a fixture of its own with no DMX address, rendered like any other,
- * and its entertainment channel is sent the colour that came out — so it is
- * driven by exactly the same patterns, palettes and auto-show cues as the
- * pars. See hueChannelColors().
+ * and each of its entertainment channels is sent the colour its section came
+ * out — so it is driven by exactly the same patterns, palettes and auto-show
+ * cues as the pars. See hueChannelColors().
  *
  * The sACN settings are cached rather than read from the store per frame:
  * `settings.group()` deep-clones, and this runs 44 times a second per universe.
@@ -121,22 +122,20 @@ function sacnUniverseFor(universe: number, offset = sacn.universeOffset): number
 
 // ── Hue ─────────────────────────────────────────────────────────────────────
 
-// A Hue bulb is RGBWW — red, green and blue dies plus a warm white and a cool
-// white one. The Entertainment stream has no white channel to carry those, so
-// they fold into the RGB that goes out and the lamp's firmware decides which
-// dies to light. Folding them at their real colour temperature rather than as
-// plain white is what keeps a warm wash warm.
+// A Hue lamp that tunes white has a warm white and a cool white die beside
+// its colour ones. The Entertainment stream has no white channel to carry
+// those, so they fold into the RGB that goes out and the lamp's firmware
+// decides which dies to light. They fold at the temperatures the bridge says
+// the lamp's whites are (its profile's `hue.whites`), which is what keeps a
+// warm wash warm: a tungsten white still has real blue in it, and dropping
+// that would make every warm look on a Hue lamp read as orange. A lamp that
+// only dims is shown at its own white, when the bridge says which.
 //
-// Warm white is roughly 2700K, which is (255, 169, 87) in sRGB: a tungsten
-// white still has real blue in it, and dropping that would make every warm
-// look on a Hue lamp read as orange.
-const WARM_WHITE_GREEN = 0.66;
-const WARM_WHITE_BLUE = 0.34;
-
-// Cool white is roughly 6500K — near enough neutral, with the faint blue lean
-// that tells daylight apart from flat white.
-const COOL_WHITE_GREEN = 0.98;
-const COOL_WHITE_BLUE = 0.99;
+// A profile that names white dies but no temperatures — none built from a
+// bridge does — folds them at a 2700K warm white and a 6500K cool one.
+const DEFAULT_WARM = { r: 1, g: 0.66, b: 0.34 };
+const DEFAULT_COOL = { r: 1, g: 0.98, b: 0.99 };
+const NEUTRAL = { r: 1, g: 1, b: 1 };
 
 // Hue lamps cannot emit UV, so a UV look has nothing to reproduce. Dropping it
 // would leave them black through an entire UV wash while the pars glowed, which
@@ -178,8 +177,9 @@ function clamp255(value: number): number {
 }
 
 /**
- * The colour each Hue lamp in the patch should show, read back out of the
- * rendered frame.
+ * The colour each channel of the Hue lamps in the patch should show, read
+ * back out of the rendered frame: one for each section, in the order the
+ * lamp's output names its channels.
  *
  * Reading the rendered universe rather than asking the engine for its
  * intermediate values is the whole point: by this stage the lamp's colour has
@@ -188,9 +188,9 @@ function clamp255(value: number): number {
  * exactly what the show rendered for it, including going dark when the rig
  * does.
  *
- * A lamp with no colour channels at all (a plain white one) is read as
- * neutral white at its dimmer level. Two lamps on one channel cannot both be
- * shown; the first in the patch is.
+ * A lamp with no colour channels at all (a plain white one) is read as its
+ * white at its dimmer level. Two lamps on one channel cannot both be shown;
+ * the first in the patch is.
  */
 function hueChannelColors(): HueChannelColour[] {
   const out: HueChannelColour[] = [];
@@ -198,31 +198,42 @@ function hueChannelColors(): HueChannelColour[] {
 
   for (const fix of state.fixtures) {
     const lamp = fix.output;
-    if (!lamp || lamp.protocol !== 'hue' || sent.has(lamp.channel)) continue;
-    sent.add(lamp.channel);
-
+    if (!lamp || lamp.protocol !== 'hue') continue;
     const profile = getProfile(fix);
-    const ch = profile.channelMap;
+    const traits = isHueProfile(profile) ? profile.hue : null;
+    const sections = profile.cells ? profile.cells.map((cell) => cell.channelMap) : [profile.channelMap];
     const at: ChannelReader = channelReader(universeOf(fix), fix.address, profile, (u) => universes.getBuffer(u));
-
-    // A lamp with nothing that makes coloured light — a plain white one — is
-    // read as neutral white at its level. Tested against every emitter rather
-    // than the primaries alone: a tunable-white lamp has warm and cool dies
-    // but no primaries, and falling back for it would add the dimmer on top of
-    // the whites and double the brightness.
-    if (!EMITTERS.some((name) => ch[name] !== undefined)) {
-      const level = at(ch.dimmer);
-      out.push({ id: lamp.channel, r: level, g: level, b: level });
-      continue;
-    }
-    const [r, g, b] = emitterMix(ch, at);
-    out.push({ id: lamp.channel, ...normalizeMix(r, g, b) });
+    sections.forEach((ch, c) => {
+      const id = lamp.channels[c];
+      if (id === undefined || sent.has(id)) return;
+      sent.add(id);
+      out.push({ id, ...sectionColour(ch, at, traits) });
+    });
   }
   return out;
 }
 
+/** What one section of a lamp shows, from its channels. */
+function sectionColour(ch: ChannelMap, at: ChannelReader, traits: HueLampTraits | null): { r: number; g: number; b: number } {
+  // A lamp with nothing that makes coloured light — a plain white one — is
+  // read as its white at its level. Tested against every emitter rather than
+  // the primaries alone: a tunable-white lamp has warm and cool dies but no
+  // primaries, and falling back for it would add the dimmer on top of the
+  // whites and double the brightness.
+  if (!EMITTERS.some((name) => ch[name] !== undefined)) {
+    const level = at(ch.dimmer);
+    const white = traits && traits.whites ? kelvinColour(traits.whites.warm) : NEUTRAL;
+    return normalizeMix(level * white.r, level * white.g, level * white.b);
+  }
+  const [r, g, b] = emitterMix(ch, at, traits);
+  return normalizeMix(r, g, b);
+}
+
 /** A lamp's emitters folded into red, green and blue, before normalising. */
-function emitterMix(ch: ChannelMap, at: ChannelReader): [number, number, number] {
+function emitterMix(ch: ChannelMap, at: ChannelReader, traits: HueLampTraits | null): [number, number, number] {
+  const whites = traits && traits.whites;
+  const warm = whites ? kelvinColour(whites.warm) : DEFAULT_WARM;
+  const cool = whites ? kelvinColour(whites.cool) : DEFAULT_COOL;
   const r = at(ch.red);
   const g = at(ch.green);
   const b = at(ch.blue);
@@ -230,9 +241,9 @@ function emitterMix(ch: ChannelMap, at: ChannelReader): [number, number, number]
   const ww = at(ch.warmWhite);
   const cw = at(ch.coolWhite);
   return [
-    r + ww + cw + uv * UV_RED,
-    g + ww * WARM_WHITE_GREEN + cw * COOL_WHITE_GREEN,
-    b + ww * WARM_WHITE_BLUE + cw * COOL_WHITE_BLUE + uv * UV_BLUE,
+    r + ww * warm.r + cw * cool.r + uv * UV_RED,
+    g + ww * warm.g + cw * cool.g,
+    b + ww * warm.b + cw * cool.b + uv * UV_BLUE,
   ];
 }
 

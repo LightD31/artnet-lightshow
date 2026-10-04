@@ -210,16 +210,30 @@ test('a working binary reports its first line of output', async () => {
 
 // ── Philips Hue ─────────────────────────────────────────────────────────────
 // The checks that matter here are the ones that fail silently at show time: a
-// lamp patched on a channel the area no longer has, two lamps on one channel,
-// or lamps in the patch with the output off. None reaches the bridge as an
-// error — the lamp just never lights.
+// lamp patched on a channel the area no longer has, a gradient lamp whose
+// sections were changed, two lamps on one channel, or lamps in the patch with
+// the output off. None reaches the bridge as an error — the lamp just never
+// lights, or lights wrong.
 
-import { HUE_COLOR_PROFILE_ID } from '../../src/server/profiles.ts';
+import { registerProfile } from '../../src/server/profiles.ts';
+import { HUE_COLOR, HUE_GRADIENT } from './hue-test-lamps.js';
 
-const lamp = (id, channel) => ({
-  id, label: `Lamp ${id}`, address: 1, universe: 60000, profileId: HUE_COLOR_PROFILE_ID, maxBrightness: 255, override: null,
-  output: { protocol: 'hue', channel },
+registerProfile(HUE_COLOR);
+registerProfile(HUE_GRADIENT);
+
+const lamp = (id, channels, profile = HUE_COLOR) => ({
+  id, label: `Lamp ${id}`, address: 1, universe: 60000, profileId: profile.id, maxBrightness: 255, override: null,
+  output: { protocol: 'hue', channels: Array.isArray(channels) ? channels : [channels] },
 });
+/** The paired bridge's area, as hue.ts lists it: a bulb on 0 and a strip on 3–7. */
+const AREA_LAMPS = [
+  { id: 'bulb', name: 'Shelf', product: 'Hue color lamp', devices: ['d0'], channels: [0], kind: 'color', capabilities: null },
+  { id: 'strip', name: 'TV', product: 'Hue gradient lightstrip', devices: ['d1'], channels: [3, 4, 5, 6, 7], kind: 'color', capabilities: null },
+];
+const bridge = (lamps = AREA_LAMPS) => async () => [{
+  id: '0123abcd-1234-5678-9abc-def012345678', name: 'Living room', status: 'inactive',
+  channels: lamps.flatMap((l) => l.channels.map((id) => ({ id }))), lamps,
+}];
 const PAIRED = {
   enabled: true, host: '10.0.0.9', username: 'key', clientKey: 'aabb', entertainmentId: '0123abcd-1234-5678-9abc-def012345678',
 };
@@ -265,9 +279,30 @@ test('a paired bridge with no lamp in the patch warns rather than passing', asyn
 
 // Only one of them can be shown, and nothing else would say so.
 test('two lamps on one channel are a warning, before the bridge is contacted', async () => {
-  const check = await withHue({ ...PAIRED, host: 'bridge.invalid' }, () => checkHue(), [lamp(90, 3), lamp(91, 3)]);
+  const check = await withHue({ ...PAIRED, host: 'bridge.invalid' }, () => checkHue(), [lamp(90, [3, 4, 5, 6, 7], HUE_GRADIENT), lamp(91, 5)]);
   assert.strictEqual(check.status, STATUSES.WARN);
-  assert.match(check.detail, /both Hue channel 3/);
+  assert.match(check.detail, /both on Hue channel 5/);
+});
+
+test('every lamp on the area\'s channels, sections and all, passes', async () => {
+  const check = await withHue(PAIRED, () => checkHue(bridge()), [lamp(90, 0), lamp(91, [3, 4, 5, 6, 7], HUE_GRADIENT)]);
+  assert.strictEqual(check.status, STATUSES.OK, check.detail);
+  assert.match(check.detail, /Lamp 90, Lamp 91/);
+});
+
+test('a lamp on a channel the area does not have is a warning naming it', async () => {
+  const check = await withHue(PAIRED, () => checkHue(bridge()), [lamp(90, 9)]);
+  assert.strictEqual(check.status, STATUSES.WARN);
+  assert.match(check.detail, /no channel #9 for "Lamp 90"/);
+});
+
+// The Hue app can split a gradient lamp into other sections: the patch still
+// sends the old channels, so some of the lamp shows the wrong part of the show.
+test('a gradient lamp whose sections changed in the Hue app is a warning', async () => {
+  const resplit = [AREA_LAMPS[0], { ...AREA_LAMPS[1], channels: [3, 4, 5, 6, 7, 8] }];
+  const check = await withHue(PAIRED, () => checkHue(bridge(resplit)), [lamp(91, [3, 4, 5, 6, 7], HUE_GRADIENT)]);
+  assert.strictEqual(check.status, STATUSES.WARN);
+  assert.match(check.detail, /"Lamp 91" has different sections/);
 });
 
 // An unreachable bridge must be reported as such rather than throwing out of

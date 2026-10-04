@@ -133,7 +133,7 @@ test('a device not in the patch is streamed its picture, then left alone', () =>
 // ── In the renderer ──────────────────────────────────────────────────────────
 
 const fixture = (id, address, profileId) => ({
-  id, address, universe: 0, profileId, maxBrightness: 255, override: null, position: null, group: null, geometry: null, hue: false,
+  id, address, universe: 0, profileId, maxBrightness: 255, override: null, position: null, group: null, geometry: null,
 });
 
 const input = (fixtures, patch = {}) => ({
