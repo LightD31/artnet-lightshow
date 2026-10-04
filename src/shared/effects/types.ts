@@ -69,8 +69,8 @@ export type FrameBase = Omit<EffectFrame, 'spec' | 'palette' | 'roll'>;
 
 export interface EffectKindDef<P = unknown, S = unknown> {
   kind: string; app: 'hd' | 'ldj' | 'own'; schema: ZodType<P>;
-  /** Defaults as a spec fragment, so a family's recommended brightness / rapidFlash / minFlashIntervalMs / scope travel with its params. */
-  defaults: { params: P; brightness?: number; rapidFlash?: boolean; minFlashIntervalMs?: number; scope?: 'singleBeat' | 'measure' };
+  /** Defaults as a spec fragment, so the recommended palette and output settings travel with the parameters. */
+  defaults: { params: P; palette?: PaletteEntry[] | null; brightness?: number; rapidFlash?: boolean; minFlashIntervalMs?: number; scope?: 'singleBeat' | 'measure' };
   capabilities?: Partial<Record<keyof HdParams, boolean>> | null;
   rapidFlash?: boolean; stateful?: boolean; rideLevel?: boolean;
   /** A kind that re-rolls its palette's random entries (Light DJ's MatrixCycle per colour) reports the roll from its state; renderEffect reads it after stepper.get and before resolvePalette. */
