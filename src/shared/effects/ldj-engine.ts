@@ -232,12 +232,17 @@ export interface LdjCtx {
   room: Room; lamps: LdjLamps; pal: Colour[]; p: Colour; s: Colour; n: number; seed: Seed; state: LdjState;
   channelOf: number[]; ringOrder: number[]; bpm: number; audio: AudioFrame | null; iter: number;
   params: LdjParams; nowMs: number; elapsedMs: number; reroll(): void;
+  colour(paletteIndex: number, cacheKey?: number): Colour;
+  refresh(cacheKey: number): void;
+  frameColour(paletteIndex: number, lamp: number, wholeFrame: number): Colour;
 }
 export interface LdjRow {
   cadence: number | 'wall:50'; channels?: LdjChannels; rapidFlash?: boolean; beats?: number;
   step(ctx: LdjCtx): void;
   /** A variable wall schedule starts at launch and adds each delay to its last deadline. */
   nextDelayMs?(ctx: LdjCtx): number;
+  /** Sample an uncached colour after transitions advance, without changing their state. */
+  outputColour?(ctx: LdjCtx, slot: number, lamp: { colour: Colour; bri: number }): Colour;
 }
 
 const paramsSchema = z.object({ cadence: z.number().min(MIN_CADENCE), beats: z.number().positive().optional(), speed: z.number().positive().optional() });
@@ -274,6 +279,9 @@ export function makeLdjKind(name: string, row: LdjRow): EffectKindDef<LdjParams,
         ringOrder: Array.from({ length: room.n }, (_, i) => i).sort((a, b) => room.ring[a] - room.ring[b]),
         bpm: frame.bpm, audio: frame.audio, iter: clock.iter, params, nowMs: frame.nowMs, elapsedMs: frame.nowMs - originMs,
         reroll: () => { state.roll++; },
+        colour: (index, key) => frame.paletteAccess?.colour(index, key) ?? roles(pal).at(index),
+        refresh: (key) => { frame.paletteAccess?.refresh(key); },
+        frameColour: (index, lamp, tick) => frame.paletteAccess?.frameColour(index, lamp, tick) ?? roles(pal).at(index),
       };
       const emit = (iter: number, nowMs: number) => {
         clockIteration(iter);
@@ -309,9 +317,10 @@ export function makeLdjKind(name: string, row: LdjRow): EffectKindDef<LdjParams,
       advanceTo(frame.nowMs);
       timing.lastMs = frame.nowMs;
       timing.lastBeat = frame.beatPos;
+      ctx.nowMs = frame.nowMs; ctx.elapsedMs = frame.nowMs - originMs;
       for (let i = 0; i < room.n; i++) {
         const lamp = state.lamps.read(i);
-        out[i] = { colour: lamp.colour, level: lamp.bri, strength: 1 };
+        out[i] = { colour: row.outputColour?.(ctx, i, lamp) ?? lamp.colour, level: lamp.bri, strength: 1 };
       }
     },
   };

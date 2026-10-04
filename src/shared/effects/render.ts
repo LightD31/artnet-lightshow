@@ -5,7 +5,7 @@ import './index.ts';
 import type { Colour } from '../../types/rig.ts';
 import type { Room } from '../room.ts';
 import { kindOf } from './registry.ts';
-import { resolvePalette } from './palette.ts';
+import { createPaletteAccess, resolvePalette } from './palette.ts';
 import type { EffectInstance, EffectStepper } from './stepper.ts';
 import type { EffectFrame, EffectSlot, FrameBase } from './types.ts';
 
@@ -25,7 +25,8 @@ export function renderEffect(inst: EffectInstance, frame: FrameBase & { roll?: n
     return def.init(inst.spec.params, room, f);
   }, frame.nowMs);
   f.roll = def.rollOf?.(state) ?? initialRoll;
-  f.palette = paletteAt(f.roll);
+  f.paletteAccess = createPaletteAccess(inst.spec, frame.paletteOverride, frame.lookPalette, inst.seed, f.roll, prepared);
+  f.palette = f.paletteAccess.palette;
   // A fresh transparent buffer prevents partial writes from dimming old slots
   // again, and keeps non-target slots entirely owned by the layer below.
   const slots: EffectSlot[] = Array.from({ length: room.n }, () => ({ colour: { ...BLACK }, level: 0, strength: 0 }));

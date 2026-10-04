@@ -87,12 +87,14 @@ export interface PreparedPalette {
   hues: (number | null)[];
   roll: number;
   seed: Seed | null;
+  counters: number[];
+  pending: number[];
 }
 
 /** Prepare again when an instance's spec changes; fixed colours are parsed outside the frame loop. */
 export function preparePalette(spec: EffectSpec): PreparedPalette {
   const entries = spec.palette?.map((entry) => typeof entry === 'string' ? parseHex(entry) : { random: true } as const) ?? null;
-  return { entries, hues: new Array<number | null>(entries?.length ?? 0).fill(null), roll: -1, seed: null };
+  return { entries, hues: new Array<number | null>(entries?.length ?? 0).fill(null), roll: -1, seed: null, counters: [], pending: [] };
 }
 
 /**
@@ -112,6 +114,8 @@ export function resolvePalette(spec: EffectSpec, override: Colour[] | null, look
     const target = Number.isSafeInteger(roll) && roll >= 0 ? roll : 0;
     if (!state.seed || state.seed.some((word, index) => word !== seed[index]) || target < state.roll) {
       state.hues.fill(null);
+      state.counters = [];
+      state.pending = [];
       state.roll = -1;
       state.seed = [...seed];
     }
@@ -122,9 +126,64 @@ export function resolvePalette(spec: EffectSpec, override: Colour[] | null, look
         excluded.add(state.hues[index]);
         const candidates = LDJ_RANDOM_HUES.map((_, hue) => hue).filter((hue) => !excluded.has(hue));
         state.hues[index] = candidates[Math.floor(hash01(seed, 11 + index, next) * candidates.length)];
+        state.counters[index] = Math.max(state.counters[index] ?? 0, next + 1);
       }
       state.roll = next;
     }
   }
   return own.map((entry, index) => isRandom(entry) ? hsbToColour(LDJ_RANDOM_HUES[state.hues[index]!] / 360, 1, 1) : entry);
+}
+
+export interface PaletteAccess {
+  palette: Colour[];
+  /** The default key is the wrapped palette index; explicit keys identify independent lamps or stages. */
+  colour(paletteIndex: number, cacheKey?: number): Colour;
+  refresh(cacheKey: number): void;
+  /** Uncached lamp-frame colour: repeats are allowed and prepared state is untouched. */
+  frameColour(paletteIndex: number, lamp: number, wholeFrame: number): Colour;
+}
+
+/** Per-render methods over plain instance data; queued changes become visible next render. */
+export function createPaletteAccess(spec: EffectSpec, override: Colour[] | null, look: readonly Colour[], seed: Seed,
+  roll: number, state: PreparedPalette): PaletteAccess {
+  // Whole-roll callers retain their original sequence. Hidden colours advance
+  // too, so an override can be removed without losing pending ordered work.
+  resolvePalette(spec, null, look, seed, roll, state);
+  const checkKey = (key: number) => {
+    if (!Number.isSafeInteger(key) || key < 0) throw new RangeError('Palette cache key must be a nonnegative safe integer');
+  };
+  const refresh = (key: number) => {
+    const excluded = new Set(state.hues.slice(0, 4));
+    excluded.add(state.hues[key]);
+    const candidates = LDJ_RANDOM_HUES.map((_, hue) => hue).filter((hue) => !excluded.has(hue));
+    const counter = state.counters[key] ?? 0;
+    state.hues[key] = candidates[Math.floor(hash01(seed, 11 + key, counter) * candidates.length)];
+    state.counters[key] = counter + 1;
+  };
+  // Splicing before consumption gives every request one lifetime, including
+  // repeated keys. It also prevents an ever-growing history in checkpoints.
+  for (const key of state.pending.splice(0)) refresh(key);
+  const entries: readonly ParsedPaletteEntry[] = override?.length ? override
+    : state.entries?.length ? state.entries : look.length ? look : [WHITE];
+  const wrap = (index: number) => ((Math.trunc(index) % entries.length) + entries.length) % entries.length;
+  const colourAt = (index: number, cacheKey?: number): Colour => {
+    const wrapped = wrap(index);
+    const entry = entries[wrapped], key = cacheKey ?? wrapped;
+    checkKey(key);
+    if (!isRandom(entry)) return entry;
+    if (state.hues[key] == null) refresh(key);
+    return hsbToColour(LDJ_RANDOM_HUES[state.hues[key]!] / 360, 1, 1);
+  };
+  return {
+    palette: entries.map((_, index) => colourAt(index)), colour: colourAt,
+    refresh(key) { checkKey(key); state.pending.push(key); },
+    frameColour(index, lamp, wholeFrame) {
+      checkKey(lamp); checkKey(wholeFrame);
+      const entry = entries[wrap(index)];
+      if (!isRandom(entry)) return entry;
+      // This separate stream draws from all hues, without the cache's exclusions.
+      const hue = Math.floor(hash01(seed, 71 + lamp, wholeFrame) * LDJ_RANDOM_HUES.length);
+      return hsbToColour(LDJ_RANDOM_HUES[hue] / 360, 1, 1);
+    },
+  };
 }

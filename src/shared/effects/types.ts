@@ -6,6 +6,7 @@ import type { ZodType } from 'zod';
 import type { Colour } from '../../types/rig.ts';
 import type { Room } from '../room.ts';
 import type { AudioFrame } from './audio-frame.ts';
+import type { PaletteAccess } from './palette.ts';
 
 export type Curve = 'linear' | 'easeIn' | 'easeOut' | 'easeInOut' | 'cut';
 export type Direction = 'forward' | 'reverse' | 'alternate' | 'random';
@@ -67,6 +68,8 @@ export interface EffectFrame {
   spec: EffectSpec;
   /** Resolved for this instance by renderEffect: paletteOverride → spec.palette (random entries rolled with `roll`) → lookPalette. */
   palette: Colour[]; lookPalette: Colour[]; paletteOverride: Colour[] | null; roll: number;
+  /** Runtime-only access; ordered colour refreshes become visible on the next render. */
+  paletteAccess?: PaletteAccess;
   audio: AudioFrame | null; audioMode: AudioMode; master: HdMaster; seed: Seed; acknowledged: boolean; hueStrobe: 'flash' | 'pulse';
 }
 /** What callers hand renderEffect; it fills in the rest per instance. */
@@ -78,7 +81,7 @@ export interface EffectKindDef<P = unknown, S = unknown> {
   defaults: { params: P; palette?: PaletteEntry[] | null; brightness?: number; rapidFlash?: boolean; minFlashIntervalMs?: number; scope?: 'singleBeat' | 'measure' };
   capabilities?: Partial<Record<HdCapability, boolean>> | null;
   rapidFlash?: boolean; stateful?: boolean; rideLevel?: boolean;
-  /** A kind that re-rolls its palette's random entries (Light DJ's MatrixCycle per colour) reports the roll from its state; renderEffect reads it after stepper.get and before resolvePalette. */
+  /** Whole-palette rerolls remain available alongside selective refreshes; the renderer reads this after state initialization. */
   rollOf?(state: S): number;
   init(params: P, room: Room, frame: EffectFrame): S;
   render(params: P, state: S, room: Room, frame: EffectFrame, out: EffectSlot[]): void;
