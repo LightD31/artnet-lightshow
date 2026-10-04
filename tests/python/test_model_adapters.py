@@ -1,5 +1,6 @@
 """Adapter regressions without checkpoint downloads or large model allocations."""
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -151,14 +152,21 @@ class SKey(unittest.TestCase):
         import soundfile as sf
         seen = {}
 
+        stdout = sys.stdout
+
         def detect_key(path, device='cpu'):
-            import sys
             seen['waveform'] = module.load_audio(path, 22050)
-            # S-KEY prints its answer with an emoji. On the real stdout that
-            # is the worker's protocol stream, and on Windows it raises.
-            if sys.stdout is sys.__stdout__:
-                raise UnicodeEncodeError('charmap', '✅', 0, 1, 'printed to the protocol stream')
-            print('✅ Predicted key: A minor')
+            # The other models run on threads of their own, so sys.stdout is
+            # not the adapter's to swap (see cli._claim_stdout).
+            if sys.stdout is not stdout:
+                raise AssertionError('sys.stdout was swapped while S-KEY ran')
+            # S-KEY prints its answer with an emoji, and on a Windows console
+            # that raises. Its `print` is looked up in its own module first,
+            # as a function in the real one would.
+            say = vars(module).get('print')
+            if say is None:
+                raise UnicodeEncodeError('charmap', '✅', 0, 1, 'printed to the console')
+            say('✅ Predicted key: A minor')
             return ['A minor']
 
         module = types.SimpleNamespace(detect_key=detect_key,
