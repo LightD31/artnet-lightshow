@@ -61,6 +61,8 @@ export type Seed = [number, number, number, number];
 
 export interface EffectFrame {
   beatPos: number; bpm: number; nowMs: number; dtMs: number; anchorBeat: number;
+  /** Instance launch time for wall-clock effects; optional for hand-built frames. */
+  startedAtMs?: number;
   /** The spec being rendered (scope, brightness, rapidFlash, minFlashIntervalMs live here, not in params). */
   spec: EffectSpec;
   /** Resolved for this instance by renderEffect: paletteOverride → spec.palette (random entries rolled with `roll`) → lookPalette. */

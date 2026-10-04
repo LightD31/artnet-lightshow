@@ -135,12 +135,14 @@ test('instance seed and anchor reach initialization and rendering; state roll wi
   const spec = validateSpec({ kind: 'test.frame', palette: [{ random: true }] });
   const inst = { id: 'frame', spec, seed: seedFrom('instance'), anchorBeat: 12, startedAtMs: 99, targets: null };
   const room = buildRoom(1, () => 0.5, () => 0.5, () => 0.5, null), stepper = new EffectStepper(), out = blank(1);
-  const input = frame({ roll: 5, anchorBeat: 88 });
+  const input = frame({ roll: 5, anchorBeat: 88, startedAtMs: 700 });
   renderEffect(inst, input, room, stepper, out);
   assert.deepStrictEqual(initialized.seed, inst.seed);
   assert.strictEqual(initialized.anchorBeat, 12);
+  assert.strictEqual(initialized.startedAtMs, 99);
   assert.deepStrictEqual(rendered.seed, inst.seed);
   assert.strictEqual(rendered.anchorBeat, 12);
+  assert.strictEqual(rendered.startedAtMs, 99);
   assert.strictEqual(rendered.spec, spec);
   assert.strictEqual(rendered.roll, 2);
   assert.deepStrictEqual(out[0].colour, resolvePalette(spec, null, [], inst.seed, 2)[0]);
