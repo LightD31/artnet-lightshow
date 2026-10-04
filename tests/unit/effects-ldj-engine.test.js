@@ -90,6 +90,25 @@ test('wallClock: 100 ms period', () => {
   assert.strictEqual(wallClock(250, 100, null).iter, 2);
 });
 
+test('musical clocks reject unsupported cadences and unsafe iterations before replay', () => {
+  registerKind(makeLdjKind('ClockBounds', { cadence: 1, step() { throw new Error('invalid clocks must not emit'); } }));
+  for (const cadence of [Number.MIN_VALUE, 0.124, 0, -1, NaN, Infinity]) {
+    assert.throws(() => validateSpec({ kind: 'ldj.ClockBounds', params: { cadence } }));
+    assert.throws(() => stepClock(1, cadence, 120, 0), /cadence/i);
+  }
+  assert.strictEqual(validateSpec({ kind: 'ldj.ClockBounds', params: { cadence: 0.125 } }).params.cadence, 0.125);
+  for (const pos of [NaN, Infinity, -Infinity, Number.MAX_VALUE, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => stepClock(pos, 1, 120, null), /iteration/i);
+    assert.throws(() => wallClock(pos, 1, null), /iteration/i);
+  }
+  for (const period of [0, -1, NaN, Infinity]) assert.throws(() => wallClock(0, period, null), /period/i);
+  const room = roomAt([[0.5, 0.5]]);
+  assert.throws(() => draw(instance('ldj.ClockBounds'), frame({ beatPos: Number.MAX_VALUE }), room, new EffectStepper()), /iteration/i);
+  const raw = instance('ldj.ClockBounds');
+  raw.spec.params.cadence = Number.MIN_VALUE;
+  assert.throws(() => draw(raw, frame({ beatPos: 1 }), room, new EffectStepper()), /cadence/i);
+});
+
 test('roles: p is the second colour, s the first; one colour serves both', () => {
   assert.deepStrictEqual(roles([RED, BLUE]).p, BLUE);
   assert.deepStrictEqual(roles([RED, BLUE]).s, RED);
@@ -130,6 +149,27 @@ test('a delayed single-frame matrix peak is visible on frame six, then gone on s
   assert.strictEqual(l.read(0).bri, 1);
   l.advance(LDJ_FRAME_MS, 120);
   assert.strictEqual(l.read(0).bri, 0);
+});
+
+test('a matrix request between frames waits for the next boundary and keeps a full visible peak', () => {
+  const stepper = new EffectStepper(), l = stepper.get('fractional-peak', () => new LdjLamps(2), 0);
+  l.set(0, BLUE, 0.5, { kind: 'instant' });
+  l.set(1, RED, 1, { kind: 'fade', beats: 1 });
+  l.advance(LDJ_FRAME_MS / 2, 120);
+  l.set(0, RED, 1, { kind: 'matrix', fadeIn: 0, peak: 10, fadeOut: 0 });
+  assert.deepStrictEqual(l.read(0), { colour: BLUE, bri: 0.5 }, 'keep the previous output until a whole frame');
+  const clone = stepper.clone().get('fractional-peak', () => null, 0);
+  for (const lamps of [l, clone]) {
+    lamps.advance(LDJ_FRAME_MS / 2, 120);
+    assert.deepStrictEqual(lamps.read(0), { colour: RED, bri: 1 }, 'activation exposes frame zero');
+    assert.strictEqual(lamps.read(1).bri, Math.fround(1 - Math.fround(1 / 11)), 'other lamps retain their frame timing');
+    lamps.advance(LDJ_FRAME_MS / 2, 120);
+    assert.strictEqual(lamps.read(0).bri, 1, 'the peak lasts a full frame from activation');
+    lamps.advance(LDJ_FRAME_MS / 2, 120);
+    assert.strictEqual(lamps.read(0).bri, 0);
+    assert.ok(lamps.read(1).bri < 0.82 && lamps.read(1).bri > 0.81);
+  }
+  assert.deepStrictEqual(clone.read(0), l.read(0));
 });
 
 test('matrix fade-in and fade-out use literal integer frame counts and a baseline', () => {

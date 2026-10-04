@@ -17,8 +17,10 @@ const WHITE: Colour = { ...BLACK, r: 255, g: 255, b: 255 };
 const f32 = Math.fround;
 const level = (n: number) => f32(Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0);
 const tempo = (bpm: number) => Number.isFinite(bpm) && bpm > 0 ? bpm : 120;
-const positive = (n: number, fallback: number) => Number.isFinite(n) && n > 0 ? n : fallback;
 const frameCount = (n: number) => Number.isFinite(n) ? Math.max(0, Math.floor(n / 22)) : 0;
+// The fastest supported musical row is an eighth of a beat. Smaller wire
+// values can turn a normal render gap into an unbounded replay loop.
+const MIN_CADENCE = 1 / 8;
 
 interface LampTransition {
   colour: Colour;
@@ -93,7 +95,9 @@ export class LdjLamps {
     };
     if (env.kind === 'blend') state.colour = state.fromColour = { ...(this.lamps[i]?.colour ?? BLACK) };
     const delay = Number.isFinite(delayFrames) ? Math.max(0, Math.floor(delayFrames)) : 0;
-    if (delay) this.pending.push({ slot: i, delay, transition: state });
+    // Matrix peaks occupy complete lamp frames. A request between boundaries
+    // waits for the next one, without resetting the other lamps' accumulator.
+    if (delay || (env.kind === 'matrix' && this.remainderMs > 1e-8)) this.pending.push({ slot: i, delay, transition: state });
     else this.install(i, state);
   }
 
@@ -153,16 +157,24 @@ export class LdjLamps {
 
 export interface StepClock { iter: number; phase: number; stepBeats: number; stepMs: number; changed: boolean }
 
-export function stepClock(pos: number, cadenceBeats: number, bpm: number, lastIter: number | null): StepClock {
-  const stepBeats = positive(cadenceBeats, 1), steps = (Number.isFinite(pos) ? pos : 0) / stepBeats;
+function clockIteration(steps: number): number {
   const iter = Math.floor(steps);
-  return { iter, phase: steps - iter, stepBeats, stepMs: stepBeats * 60000 / tempo(bpm), changed: iter !== lastIter };
+  if (!Number.isSafeInteger(iter)) throw new RangeError('Light DJ clock iteration must be a finite safe integer');
+  return iter;
+}
+
+export function stepClock(pos: number, cadenceBeats: number, bpm: number, lastIter: number | null): StepClock {
+  if (!Number.isFinite(cadenceBeats) || cadenceBeats < MIN_CADENCE) throw new RangeError('Light DJ cadence must be at least one eighth of a beat');
+  const steps = pos / cadenceBeats, iter = clockIteration(steps);
+  const stepMs = cadenceBeats * 60000 / tempo(bpm);
+  if (!Number.isFinite(stepMs)) throw new RangeError('Light DJ clock period must be finite');
+  return { iter, phase: steps - iter, stepBeats: cadenceBeats, stepMs, changed: iter !== lastIter };
 }
 
 export function wallClock(nowMs: number, periodMs: number, lastIter: number | null): StepClock {
-  const stepMs = positive(periodMs, 50), steps = (Number.isFinite(nowMs) ? nowMs : 0) / stepMs;
-  const iter = Math.floor(steps);
-  return { iter, phase: steps - iter, stepBeats: 0, stepMs, changed: iter !== lastIter };
+  if (!Number.isFinite(periodMs) || periodMs <= 0) throw new RangeError('Light DJ wall period must be finite and positive');
+  const steps = nowMs / periodMs, iter = clockIteration(steps);
+  return { iter, phase: steps - iter, stepBeats: 0, stepMs: periodMs, changed: iter !== lastIter };
 }
 
 export function roles(palette: Colour[]): { p: Colour; s: Colour; at(i: number): Colour } {
@@ -228,7 +240,7 @@ export interface LdjRow {
   nextDelayMs?(ctx: LdjCtx): number;
 }
 
-const paramsSchema = z.object({ cadence: z.number().positive(), beats: z.number().positive().optional(), speed: z.number().positive().optional() });
+const paramsSchema = z.object({ cadence: z.number().min(MIN_CADENCE), beats: z.number().positive().optional(), speed: z.number().positive().optional() });
 
 export function makeLdjKind(name: string, row: LdjRow): EffectKindDef<LdjParams, LdjState> {
   return {
@@ -237,6 +249,8 @@ export function makeLdjKind(name: string, row: LdjRow): EffectKindDef<LdjParams,
     rapidFlash: row.rapidFlash, stateful: true, rollOf: (state) => state.roll,
     init: (_params, room) => ({ lamps: new LdjLamps(room.n), lastIter: null, lastPick: null, recent: [], perm: null, roll: 0, scratch: {} }),
     render(params, state, room, frame, out) {
+      if (!Number.isFinite(frame.nowMs)) throw new RangeError('Light DJ clock time must be finite');
+      if (state.lastIter !== null) clockIteration(state.lastIter);
       const first = !state.timing;
       const originMs = frame.startedAtMs ?? state.timing?.originMs ?? frame.nowMs;
       const clock = row.cadence === 'wall:50'
@@ -262,6 +276,7 @@ export function makeLdjKind(name: string, row: LdjRow): EffectKindDef<LdjParams,
         reroll: () => { state.roll++; },
       };
       const emit = (iter: number, nowMs: number) => {
+        clockIteration(iter);
         advanceTo(nowMs);
         ctx.iter = iter; ctx.nowMs = nowMs; ctx.elapsedMs = nowMs - originMs;
         row.step(ctx);
