@@ -342,10 +342,10 @@ async function checkWled(client: Pick<WledClient, 'info'> = wledClient): Promise
  * the colour and ignores it, which on the night looks like a dead lamp rather
  * than a configuration mistake.
  */
-async function checkHue(): Promise<Check> {
+async function checkHue(listAreas = listEntertainmentConfigs): Promise<Check> {
   const config = output.getHueConfig();
   const lamps = state.fixtures.filter((f) => f.output?.protocol === 'hue');
-  const channelOf = (f: (typeof lamps)[number]) => (f.output?.protocol === 'hue' ? f.output.channel : -1);
+  const channelsOf = (f: (typeof lamps)[number]) => (f.output?.protocol === 'hue' ? f.output.channels : []);
   if (!config.enabled) {
     return lamps.length ? {
       id: 'hue', label: 'Philips Hue', status: WARN,
@@ -380,20 +380,22 @@ async function checkHue(): Promise<Check> {
 
   const seen = new Map<number, string>();
   for (const lamp of lamps) {
-    const other = seen.get(channelOf(lamp));
-    if (other) {
-      return {
-        id: 'hue', label: 'Philips Hue', status: WARN,
-        detail: `"${lamp.label}" and "${other}" are both Hue channel ${channelOf(lamp)}; only "${other}" is shown.`,
-        fix: 'Remove one of them from the patch.',
-      };
+    for (const channel of channelsOf(lamp)) {
+      const other = seen.get(channel);
+      if (other) {
+        return {
+          id: 'hue', label: 'Philips Hue', status: WARN,
+          detail: `"${lamp.label}" and "${other}" are both on Hue channel ${channel}; only "${other}" is shown there.`,
+          fix: 'Remove one of them from the patch.',
+        };
+      }
+      seen.set(channel, lamp.label);
     }
-    seen.set(channelOf(lamp), lamp.label);
   }
 
   let areas;
   try {
-    areas = await listEntertainmentConfigs(config.host, config.username);
+    areas = await listAreas(config.host, config.username);
   } catch (err) {
     return {
       id: 'hue', label: 'Philips Hue', status: FAIL,
@@ -414,13 +416,30 @@ async function checkHue(): Promise<Check> {
   // A channel the area does not define is accepted by the bridge and quietly
   // ignored, so it would never surface as an error at show time.
   const areaChannels = new Set(area.channels.map((c) => c.id));
-  const stray = lamps.filter((f) => !areaChannels.has(channelOf(f)));
+  const stray = lamps.filter((f) => channelsOf(f).some((ch) => !areaChannels.has(ch)));
   if (stray.length) {
+    const missing = (f: (typeof lamps)[number]) => channelsOf(f).filter((ch) => !areaChannels.has(ch)).map((ch) => `#${ch}`).join(', ');
     return {
       id: 'hue', label: 'Philips Hue', status: WARN,
-      detail: `"${area.name}" has no channel for ${stray.map((f) => `"${f.label}" (#${channelOf(f)})`).join(', ')}, `
-        + `so ${stray.length === 1 ? 'it stays' : 'they stay'} dark.`,
+      detail: `"${area.name}" has no channel ${stray.map((f) => `${missing(f)} for "${f.label}"`).join('; ')}, `
+        + `so ${stray.length === 1 ? 'that stays' : 'those stay'} dark.`,
       fix: 'The area was probably changed in the Hue app. Remove those lamps and add them again from Rig → Outputs → Philips Hue.',
+    };
+  }
+
+  // A gradient lamp whose sections were changed in the Hue app renders other
+  // channels now; the patch still sends the old ones, so part of it is wrong.
+  const resectioned = lamps.filter((f) => {
+    const channels = channelsOf(f);
+    const lamp = area.lamps.find((l) => l.channels.includes(channels[0]));
+    return lamp && (lamp.channels.length !== channels.length || lamp.channels.some((ch, k) => ch !== channels[k]));
+  });
+  if (resectioned.length) {
+    return {
+      id: 'hue', label: 'Philips Hue', status: WARN,
+      detail: `${resectioned.map((f) => `"${f.label}"`).join(', ')} ${resectioned.length === 1 ? 'has' : 'have'} different sections `
+        + `in "${area.name}" now than when ${resectioned.length === 1 ? 'it was' : 'they were'} patched.`,
+      fix: 'Remove those lamps and add them again from Rig → Outputs → Philips Hue.',
     };
   }
 
@@ -433,11 +452,11 @@ async function checkHue(): Promise<Check> {
     };
   }
 
-  const left = area.channels.length - lamps.length;
+  const left = area.lamps.filter((l) => !l.channels.some((ch) => seen.has(ch))).length;
   return {
     id: 'hue', label: 'Philips Hue', status: OK,
     detail: `"${area.name}" on ${config.host}: ${lamps.map((f) => f.label).join(', ')}`
-      + `${left > 0 ? `; ${left} of its channel${left === 1 ? ' is' : 's are'} not in the patch` : ''}.`,
+      + `${left > 0 ? `; ${left} of its lamp${left === 1 ? ' is' : 's are'} not in the patch` : ''}.`,
   };
 }
 

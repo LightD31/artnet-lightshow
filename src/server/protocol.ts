@@ -61,7 +61,7 @@ const DOMAIN_OF: Readonly<Record<string, Domain>> = {
   midi: 'sources',
 
   colorPresets: 'catalogs', patterns: 'catalogs', energyEffects: 'catalogs', strobeFunctions: 'catalogs',
-  palettes: 'catalogs', builtinProfileIds: 'catalogs', hueProfileIds: 'catalogs', syncOffsetLimitMs: 'catalogs',
+  palettes: 'catalogs', builtinProfileIds: 'catalogs', syncOffsetLimitMs: 'catalogs',
 };
 
 export function domainOf(key: string): Domain {

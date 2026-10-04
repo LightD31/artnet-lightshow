@@ -335,8 +335,6 @@ function Wled() {
 
 // ── Philips Hue ──────────────────────────────────────────────────────────────
 
-/** What a lamp can show, as the bridge reports it (server/hue.ts). */
-const LAMP_KIND = { color: 'Colour', ambiance: 'White ambiance', white: 'White' };
 
 function Hue() {
   const s = pick(['fixtures']);
@@ -400,27 +398,28 @@ function Hue() {
     const res = await post('/api/hue/sync-test', {});
     if (res.ok) setNotice({ ok: true, text: `Every fixture flashes once a second for ${res.seconds} s. Apply the delay first if you changed it.` });
   };
-  const flash = async (channel) => {
-    const res = await post('/api/hue/identify', { channel });
+  const flash = async (lamp) => {
+    const res = await post('/api/hue/identify', { lamp });
     if (res.ok) toast.info(res.via === 'fixture' ? 'The lamp flashes through the patch' : `The bridge asks ${plural(res.lamps, 'lamp')} to breathe`);
   };
-  // A lamp is added as a WLED is: a fixture of its own, on the profile for
-  // what the bridge says it can show, with no DMX address.
-  const add = async (channels) => {
-    const res = await post('/api/hue/add', channels ? { channels } : {});
+  // A lamp is added as a WLED is: a fixture of its own, on a profile built
+  // from what the bridge says it can show — a section for each of its
+  // channels — with no DMX address.
+  const add = async (ids) => {
+    const res = await post('/api/hue/add', ids ? { lamps: ids } : {});
     if (!res.ok) { setNotice({ ok: false, text: res.error }); return; }
     const labels = res.fixtures.map((f) => f.label).join(', ');
     setNotice({ ok: true, text: `Added ${labels}. Place ${res.fixtures.length === 1 ? 'it' : 'them'} on the plan.` });
     toast.info(`Added ${plural(res.fixtures.length, 'Hue lamp')} to the patch`);
   };
 
-  // Which fixture each channel is, from the live patch.
-  const patched = new Map();
-  for (const f of s.fixtures || []) {
-    if (f.output && f.output.protocol === 'hue' && !patched.has(f.output.channel)) patched.set(f.output.channel, f.label);
-  }
+  // Which fixture each lamp is, from the live patch: the one on its profile,
+  // or on one of its channels.
+  const fixtures = s.fixtures || [];
+  const patchedAs = (lamp) => fixtures.find((f) => f.profileId === `hue-${lamp.id}`
+    || (f.output && f.output.protocol === 'hue' && f.output.channels.some((ch) => lamp.channels.includes(ch))));
   const list = lamps && lamps.lamps ? lamps.lamps : [];
-  const missing = list.filter((l) => !patched.has(l.id));
+  const missing = list.filter((l) => !patchedAs(l));
 
   return (
     <SettingsSection {...HUE} ctx={{ hueAreas: areas }} onApply={async (patch) => {
@@ -452,21 +451,25 @@ function Hue() {
             </div>
             <div class="table-scroll">
               <table class="patch-table">
-                <thead><tr><th scope="col">Channel</th><th scope="col">Lamp</th><th scope="col">Shows</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+                <thead><tr><th scope="col">Lamp</th><th scope="col">Channels</th><th scope="col">Shows</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
                 <tbody>
-                  {list.map((ch) => (
-                    <tr key={ch.id}>
-                      <td class="mono">#{ch.id}</td>
-                      <td>{ch.name || '—'}{ch.product && <span class="setting-help"> · {ch.product}</span>}</td>
-                      <td>{ch.kind ? LAMP_KIND[ch.kind] : 'unknown'}</td>
-                      <td class="patch-actions-cell">
-                        <button type="button" class="btn sm" aria-label={`Identify Hue channel ${ch.id}`} onClick={() => flash(ch.id)}>Identify</button>
-                        {patched.has(ch.id) ? <span class="setting-help">In the patch as "{patched.get(ch.id)}"</span>
-                          : <button type="button" class="btn sm active" disabled={!connectedSig.value || !ch.kind}
-                            aria-label={`Add Hue channel ${ch.id} to the patch`} onClick={() => add([ch.id])}>Add to patch</button>}
-                      </td>
-                    </tr>
-                  ))}
+                  {list.map((lamp) => {
+                    const fixture = patchedAs(lamp);
+                    const name = lamp.name || `Channel ${lamp.channels[0]}`;
+                    return (
+                      <tr key={lamp.id}>
+                        <td>{name}{lamp.product && <span class="setting-help"> · {lamp.product}</span>}</td>
+                        <td class="mono">{lamp.channels.map((ch) => `#${ch}`).join(' ')}</td>
+                        <td>{lamp.shows || 'unknown'}</td>
+                        <td class="patch-actions-cell">
+                          <button type="button" class="btn sm" aria-label={`Identify ${name}`} onClick={() => flash(lamp.id)}>Identify</button>
+                          {fixture ? <span class="setting-help">In the patch as "{fixture.label}"</span>
+                            : <button type="button" class="btn sm active" disabled={!connectedSig.value || !lamp.shows}
+                              aria-label={`Add ${name} to the patch`} onClick={() => add([lamp.id])}>Add to patch</button>}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

@@ -1,8 +1,9 @@
 import { state, getClientState, getFixture, countUniverses, universeOf, placeAddresslessFixtures } from './state.ts';
 import { applyPatch, applyOverride, processTap } from './patch.ts';
 import { overrideMessageSchema, fixtureMessageSchema, validate } from './validation.ts';
-import { listProfiles, getProfile, universeOverflow, unitCapOverflow, HUE_PROFILE_IDS, HUE_BY_HAND } from './profiles.ts';
+import { listProfiles, getProfile, universeOverflow, unitCapOverflow, HUE_BY_HAND } from './profiles.ts';
 import { INTERNAL_UNIVERSE, hasNoAddress } from '../shared/placement.ts';
+import { isHueProfile } from '../shared/hue-lamp.ts';
 import { showStore } from './show-store.ts';
 import { MAX_UNIVERSES } from './universes.ts';
 import { connectMidi } from './midi-connect.ts';
@@ -103,12 +104,13 @@ function attachSockets(io: Server, { midi, integrations }: {
         const nextProfileId = (profileId !== undefined && profiles[profileId])
           ? profileId : fixture.profileId;
         const nextProfile = getProfile({ profileId: nextProfileId });
-        // A Hue lamp is the bridge's: patched from its entertainment area on
-        // the profile for what the lamp can show, and it stays a Hue lamp. No
-        // other fixture becomes one, and its output (the channel) is not
-        // changed by hand. The schema already refuses a Hue output here.
+        // A Hue lamp is the bridge's: patched from its entertainment area on a
+        // profile built from what the lamp can show, and it keeps both. No
+        // other fixture goes on a Hue lamp's profile, and its output (its
+        // channels) is not changed by hand. The schema already refuses a Hue
+        // output here.
         const addressless = hasNoAddress(fixture);
-        if ((addressless && output !== undefined) || addressless !== HUE_PROFILE_IDS.has(nextProfileId)) {
+        if (addressless ? (output !== undefined || nextProfileId !== fixture.profileId) : isHueProfile(nextProfile)) {
           socket.emit('error-msg', { source: 'fixture', message: HUE_BY_HAND });
           return;
         }

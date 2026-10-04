@@ -1,4 +1,4 @@
-import { BUILTIN_PROFILE_ID, BUILTIN_PROFILE_IDS, HUE_PROFILE_IDS, getProfile, listProfiles } from './profiles.ts';
+import { BUILTIN_PROFILE_ID, BUILTIN_PROFILE_IDS, getProfile, listProfiles } from './profiles.ts';
 import { settings } from './settings.ts';
 import * as universes from './universes.ts';
 import { COLOR_PRESETS, PATTERNS, STROBE_FUNCTIONS, ENERGY_EFFECTS, SYNC_OFFSET_LIMIT_MS } from './presets.ts';
@@ -260,13 +260,8 @@ function getCatalogs() {
     strobeFunctions: STROBE_FUNCTIONS,
     palettes: PALETTES,
     // Which profiles ship with the server. The UI needs this to know which ones
-    // it must not offer to delete — it used to test against the one built-in id
-    // it had hardcoded, which stopped being the whole truth once the Hue lamp
-    // profiles arrived and left them showing a Remove button the server refuses.
+    // it must not offer to delete rather than hardcoding the ids, which drift.
     builtinProfileIds: [...BUILTIN_PROFILE_IDS],
-    // The profiles that stand for a Hue lamp: a fixture on one has no DMX
-    // address by default, so the patch does not ask for one.
-    hueProfileIds: [...HUE_PROFILE_IDS],
     // So the sync control can size itself from the server's limit rather than
     // carrying a second copy of the number that silently drifts.
     syncOffsetLimitMs: SYNC_OFFSET_LIMIT_MS,

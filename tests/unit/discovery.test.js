@@ -14,7 +14,8 @@ import { attachIdentifyRoutes } from '../../src/server/routes/identify.ts';
 import { createIdentify } from '../../src/server/identify.ts';
 import { state } from '../../src/server/state.ts';
 import * as output from '../../src/server/output.ts';
-import { BUILTIN_PROFILE_ID, HUE_COLOR_PROFILE_ID } from '../../src/server/profiles.ts';
+import { BUILTIN_PROFILE_ID } from '../../src/server/profiles.ts';
+import { hueProfileId } from '../../src/server/hue-profile.ts';
 
 test('ArtAddress: locate or normal, and nothing else about the node changed', () => {
   const packet = buildArtAddress(AC_LED_LOCATE, 2);
@@ -118,7 +119,14 @@ async function withRoutes(fn, { fixtures = [], hue = null } = {}) {
     sendPixels: (target, data) => calls.pixels.push({ ...target, bytes: data.length }),
     locate: async (opts) => { calls.locate.push(opts); return { ok: true, error: null }; },
     hueIdentify: async (_host, _key, devices) => { calls.hue.push(devices); return devices.length; },
-    hueAreas: async () => [{ id: 'a1', name: 'Room', status: 'inactive', channels: [{ id: 0, name: 'Lamp', position: null, devices: ['d1'] }, { id: 1, name: 'Strip', position: null, devices: ['d2', 'd3'] }] }],
+    hueAreas: async () => [{
+      id: 'a1', name: 'Room', status: 'inactive',
+      channels: [{ id: 0, name: 'Lamp', position: null, devices: ['d1'] }, { id: 1, name: 'Strip', position: null, devices: ['d2', 'd3'] }],
+      lamps: [
+        { id: 'lamp', name: 'Lamp', product: '', devices: ['d1'], channels: [0], kind: 'color', capabilities: null },
+        { id: 'strip', name: 'Strip', product: '', devices: ['d2', 'd3'], channels: [1], kind: 'color', capabilities: null },
+      ],
+    }],
   });
   const server = await new Promise((r) => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -193,22 +201,22 @@ test('a WLED: through the patch when it is in it, else streamed directly', async
   }, { fixtures: [{ ...par(5, 1, 4), output: { protocol: 'ddp', host: '10.0.0.50' } }] });
 });
 
-test('a Hue channel: its lamp when it is in the patch, else the bridge identifies the lamps', async () => {
+test('a Hue lamp: its fixture when it is in the patch, else the bridge identifies its devices', async () => {
   const hue = { host: '10.0.0.60', username: 'app-key', entertainmentId: 'a1' };
   await withRoutes(async ({ call, calls }) => {
-    const bound = await call('POST', '/api/hue/identify', { channel: 0 });
+    const bound = await call('POST', '/api/hue/identify', { lamp: 'lamp' });
     assert.deepStrictEqual([bound.body.via, bound.body.ids], ['fixture', [1]]);
-    const loose = await call('POST', '/api/hue/identify', { channel: 1 });
+    const loose = await call('POST', '/api/hue/identify', { lamp: 'strip' });
     assert.deepStrictEqual([loose.body.via, loose.body.lamps], ['bridge', 2]);
     assert.deepStrictEqual(calls.hue, [['d2', 'd3']]);
-    const missing = await call('POST', '/api/hue/identify', { channel: 7 });
+    const missing = await call('POST', '/api/hue/identify', { lamp: 'nowhere' });
     assert.strictEqual(missing.status, 404);
-  }, { fixtures: [par(3, 1), { ...par(1, 1), profileId: HUE_COLOR_PROFILE_ID, output: { protocol: 'hue', channel: 0 } }], hue });
+  }, { fixtures: [par(3, 1), { ...par(1, 1), profileId: hueProfileId('lamp'), output: { protocol: 'hue', channels: [0] } }], hue });
 });
 
 test('Hue identify before pairing says to pair', async () => {
   await withRoutes(async ({ call }) => {
-    const res = await call('POST', '/api/hue/identify', { channel: 0 });
+    const res = await call('POST', '/api/hue/identify', { lamp: 'lamp' });
     assert.strictEqual(res.status, 409);
   }, { hue: { host: '', username: '' } });
 });

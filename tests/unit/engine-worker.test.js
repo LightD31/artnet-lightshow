@@ -15,6 +15,7 @@ import { startEngine, stopEngine, engineStatus } from '../../src/server/engine.t
 import { applyPatch } from '../../src/server/patch.ts';
 import { getProfile, profilesRevision, registerProfile, unregisterProfile } from '../../src/server/profiles.ts';
 import { barProfile } from '../../src/server/bar-profile.ts';
+import { HUE_COLOR, HUE_AMBIANCE } from './hue-test-lamps.js';
 import { FRAME_MS } from '../../src/server/frame-clock.ts';
 
 const WORKER = path.join(import.meta.dirname, '..', '..', 'src', 'server', 'engine-worker.ts');
@@ -87,8 +88,8 @@ const RIGS = {
     fixture(1, 13, { position: { x: 10, y: 60 }, group: 'back' }),
     fixture(2, 25, { maxBrightness: 120 }),
     fixture(3, 37),
-    fixture(4, 49, { profileId: 'generic-hue-lamp-7ch' }),
-    fixture(5, 56, { profileId: 'generic-hue-white-ambiance-3ch' }),
+    fixture(4, 49, { profileId: HUE_COLOR.id }),
+    fixture(5, 56, { profileId: HUE_AMBIANCE.id }),
   ],
   bars: [
     fixture(0, 1, { profileId: BAR.id, position: { x: 30, y: 30 }, geometry: { length: 20, angle: 0 } }),
@@ -141,12 +142,12 @@ function scenes(fixtures) {
 
 for (const [name, fixtures] of Object.entries(RIGS)) {
   test(`the worker renders a rig of ${name} byte for byte as the main thread does`, async () => {
-    registerProfile(BAR);
+    for (const profile of [BAR, HUE_COLOR, HUE_AMBIANCE]) registerProfile(profile);
     const seed = 99;
     const startNow = 0;
     const worker = await captureWorker({ seed, startNow });
     try {
-      worker.profiles([BAR]);
+      worker.profiles([BAR, HUE_COLOR, HUE_AMBIANCE]);
       const local = localRenderer({ seed, startNow });
       let frame = 0;
       for (const [input, reading, now] of scenes(fixtures)) {
@@ -158,7 +159,7 @@ for (const [name, fixtures] of Object.entries(RIGS)) {
       assert.ok(frame > 300);
     } finally {
       await worker.close();
-      unregisterProfile(BAR.id);
+      for (const profile of [BAR, HUE_COLOR, HUE_AMBIANCE]) unregisterProfile(profile.id);
     }
   });
 }

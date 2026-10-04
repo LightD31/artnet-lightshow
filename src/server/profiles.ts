@@ -2,17 +2,13 @@ import { UNIVERSE_SIZE, fitIssue } from '../shared/placement.ts';
 import type { Fixture, Profile } from '../types/rig.ts';
 
 // The profile a new fixture gets, and the fallback for a profile id nothing
-// knows about. One of several built-ins — see BUILTIN_PROFILE_IDS.
+// knows about. The one profile built in — see BUILTIN_PROFILE_IDS.
 const BUILTIN_PROFILE_ID = 'cameo-root-par-6-12ch';
 
-// Philips Hue lamps have no DMX address: each is patched from the bridge's
-// entertainment area as a fixture of its own (routes/fixtures.ts), on the one
-// of these that says what the bridge reports it can show — colour, tunable
-// white or plain white (hueProfileFor). The server renders it like any other
-// fixture, and its channel is sent the colour that came out (output.ts).
-const HUE_COLOR_PROFILE_ID = 'generic-hue-lamp-7ch';
-const HUE_WHITE_AMBIANCE_PROFILE_ID = 'generic-hue-white-ambiance-3ch';
-const HUE_WHITE_PROFILE_ID = 'generic-hue-white-lamp-1ch';
+// The profiles that ship with the server are DMX fixtures. A Philips Hue
+// lamp's profile is built from what its bridge says the lamp can show when it
+// is patched (hue-profile.ts), and travels with the show like an imported one.
+const LEGACY_HUE_PROFILE_IDS = new Set(['generic-hue-lamp-7ch', 'generic-hue-white-ambiance-3ch', 'generic-hue-white-lamp-1ch']);
 
 // One DMX universe (UNIVERSE_SIZE, from shared/placement.ts). A fixture
 // patched past it has its writes silently dropped by the 512-byte buffer,
@@ -97,100 +93,6 @@ const fixtureProfiles: Record<string, Profile> = Object.assign(Object.create(nul
       { offset: 11, name: 'DMX Delay',   attribute: 'delay' },
     ],
   },
-
-  // White and Color Ambiance bulbs, light strips and Play bars — the lamps most
-  // people mean by "a Hue light". The hardware is RGBWW: red, green and blue
-  // dies plus a warm white and a cool white one, which is how the same bulb can
-  // do saturated colour *and* tunable white from 2000K to 6500K.
-  //
-  // Modelling only RGB would throw away real show content rather than merely
-  // being imprecise. The colour presets carry most of their white in the white
-  // and amber components — "Cool White" is r0 g30 b80 with white at full — so a
-  // profile with no white channels rendered it as a dim dark blue. The white
-  // dies have to be in the patch for that content to survive.
-  //
-  // What the bridge receives is still RGB: the Entertainment stream has no
-  // white channel, so these fold into the colour that goes out (see
-  // hueChannelColors) and the lamp's own firmware decides which dies to light.
-  // The profile describes the lamp; the transport is a separate question.
-  //
-  // Two channels here are not emitters the lamp has, and the difference between
-  // them is the whole rule:
-  //
-  //   UV is carried because it produces something. A Hue lamp cannot emit UV,
-  //   but the deep violet a UV wash looks like is a real approximation of it.
-  //   Without the channel the show's UV content has nowhere to land, and every
-  //   Hue lamp goes black for the length of a UV look while the pars glow —
-  //   which reads as a dead lamp, not as an effect.
-  //
-  //   Strobe is left out because it produces nothing. The bridge interpolates
-  //   between the frames it is sent, so a strobe value is discarded on arrival.
-  //   A channel that cannot do anything is worse than no channel: it reads as a
-  //   feature that is broken rather than one the hardware does not have.
-  //
-  // There is no separate amber channel either, and none is needed: the show's
-  // warm content already drives the warm white die (see engine.js).
-  [HUE_COLOR_PROFILE_ID]: {
-    id: HUE_COLOR_PROFILE_ID,
-    name: 'Generic Lamp',
-    manufacturer: 'Philips Hue',
-    modeName: '7-channel (dimmer + RGBWW + UV)',
-    channelCount: 7,
-    channelMap: {
-      dimmer: 0,
-      red: 1, green: 2, blue: 3,
-      warmWhite: 4, coolWhite: 5,
-      uv: 6,
-    },
-    channelList: [
-      { offset: 0, name: 'Dimmer',     attribute: 'dimmer' },
-      { offset: 1, name: 'Red',        attribute: 'red' },
-      { offset: 2, name: 'Green',      attribute: 'green' },
-      { offset: 3, name: 'Blue',       attribute: 'blue' },
-      { offset: 4, name: 'Warm White', attribute: 'warmWhite' },
-      { offset: 5, name: 'Cool White', attribute: 'coolWhite' },
-      { offset: 6, name: 'UV (shown as violet)', attribute: 'uv' },
-    ],
-  },
-
-  // White Ambiance bulbs: tunable white, no colour dies at all. Balancing the
-  // two whites is the whole of what they do, so they get both channels and no
-  // primaries.
-  [HUE_WHITE_AMBIANCE_PROFILE_ID]: {
-    id: HUE_WHITE_AMBIANCE_PROFILE_ID,
-    name: 'Generic White Ambiance Lamp',
-    manufacturer: 'Philips Hue',
-    modeName: '3-channel (dimmer + tunable white)',
-    channelCount: 3,
-    channelMap: {
-      dimmer: 0,
-      warmWhite: 1, coolWhite: 2,
-    },
-    channelList: [
-      { offset: 0, name: 'Dimmer',     attribute: 'dimmer' },
-      { offset: 1, name: 'Warm White', attribute: 'warmWhite' },
-      { offset: 2, name: 'Cool White', attribute: 'coolWhite' },
-    ],
-  },
-
-  // Plain Hue White bulbs: one fixed warm white die that dims, and nothing
-  // else. One channel is the honest description, and the Hue output already
-  // treats a fixture with no colour channels as neutral white at its dimmer
-  // level — so this needs no special case anywhere, it simply says what the
-  // lamp is.
-  [HUE_WHITE_PROFILE_ID]: {
-    id: HUE_WHITE_PROFILE_ID,
-    name: 'Generic White Lamp',
-    manufacturer: 'Philips Hue',
-    modeName: '1-channel (dimmer)',
-    channelCount: 1,
-    channelMap: {
-      dimmer: 0,
-    },
-    channelList: [
-      { offset: 0, name: 'Dimmer', attribute: 'dimmer' },
-    ],
-  },
 });
 
 // Every profile that ships with the server. None of them may be deleted, and
@@ -199,23 +101,10 @@ const fixtureProfiles: Record<string, Profile> = Object.assign(Object.create(nul
 // referencing one would land on the fallback instead.
 const BUILTIN_PROFILE_IDS = new Set([
   BUILTIN_PROFILE_ID,
-  HUE_COLOR_PROFILE_ID,
-  HUE_WHITE_AMBIANCE_PROFILE_ID,
-  HUE_WHITE_PROFILE_ID,
 ]);
-
-// The profiles that stand for a Hue lamp rather than a DMX fixture.
-const HUE_PROFILE_IDS = new Set([HUE_COLOR_PROFILE_ID, HUE_WHITE_AMBIANCE_PROFILE_ID, HUE_WHITE_PROFILE_ID]);
 
 /** Why a Hue lamp profile cannot be patched, or a fixture made a Hue lamp, by hand. */
 const HUE_BY_HAND = 'A Hue lamp is added from its bridge: Rig → Outputs → Philips Hue, Add to patch';
-
-/** The profile for a Hue lamp that can show `kind` (hue.ts). */
-function hueProfileFor(kind: 'color' | 'ambiance' | 'white'): string {
-  if (kind === 'ambiance') return HUE_WHITE_AMBIANCE_PROFILE_ID;
-  if (kind === 'white') return HUE_WHITE_PROFILE_ID;
-  return HUE_COLOR_PROFILE_ID;
-}
 
 /** Does this profile ship with the server, rather than being imported? */
 function isBuiltinProfile(id: string): boolean {
@@ -280,11 +169,7 @@ function unitCapOverflow<F extends Pick<Fixture, 'profileId'>>(fixtures: Iterabl
 export {
   BUILTIN_PROFILE_ID,
   BUILTIN_PROFILE_IDS,
-  HUE_COLOR_PROFILE_ID,
-  HUE_WHITE_AMBIANCE_PROFILE_ID,
-  HUE_WHITE_PROFILE_ID,
-  HUE_PROFILE_IDS,
-  hueProfileFor,
+  LEGACY_HUE_PROFILE_IDS,
   HUE_BY_HAND,
   isBuiltinProfile,
   UNIVERSE_SIZE,

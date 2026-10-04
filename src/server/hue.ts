@@ -38,6 +38,42 @@ export interface HueStatus {
  */
 export type LampKind = 'color' | 'ambiance' | 'white';
 
+/** The gamut a colour lamp mixes in, as the bridge names it. */
+export type HueGamut = 'A' | 'B' | 'C' | 'other';
+
+/**
+ * What a Hue lamp can show, read off its light resource: the profile it is
+ * patched on is built from this (hue-profile.ts).
+ */
+export interface LampCapabilities {
+  /** Its colour gamut, when it mixes colour. */
+  gamut: HueGamut | null;
+  /** The whites it tunes between, in kelvin, when it tunes white. */
+  whites: { warm: number; cool: number } | null;
+  /** The one white it shows, in kelvin, when it only dims and the bridge says which. */
+  fixedWhite: number | null;
+}
+
+/**
+ * One lamp of an entertainment area: an entertainment service, and the
+ * channels it renders. A bulb is one channel; a gradient strip or a Play
+ * gradient is one per section, in order along it.
+ */
+export interface AreaLamp {
+  /** Its entertainment service's id: what the lamp is patched under. */
+  id: string;
+  name: string;
+  /** The product, as the bridge names it ("Hue gradient lightstrip"); '' when unknown. */
+  product: string;
+  /** The Hue devices that render it, to identify them. */
+  devices: string[];
+  /** The area's channels it renders, one a section, in order along the lamp. */
+  channels: number[];
+  /** What it can show; null when the bridge would not say. */
+  kind: LampKind | null;
+  capabilities: LampCapabilities | null;
+}
+
 /** One channel of an entertainment area: a lamp, or one segment of a gradient lamp. */
 export interface AreaChannel {
   id: number;
@@ -57,6 +93,8 @@ export interface EntertainmentArea {
   name: string;
   status: string;
   channels: AreaChannel[];
+  /** The same channels, as the lamps that render them. */
+  lamps: AreaLamp[];
 }
 
 export type PairResult =
@@ -93,14 +131,19 @@ interface ClipService {
 interface ClipLight {
   id: string;
   owner?: { rid?: string };
-  color?: unknown;
-  color_temperature?: unknown;
+  /** Present when it mixes colour; `gamut_type` is A, B, C or other. */
+  color?: { gamut_type?: unknown } | null;
+  /** Present when it tunes white, between these mireds. */
+  color_temperature?: { mirek_schema?: { mirek_minimum?: unknown; mirek_maximum?: unknown } } | null;
+  /** A white-only lamp may say which white it is. */
+  metadata?: { fixed_mired?: unknown };
 }
 
 interface ClipChannel {
   channel_id: number;
   position?: unknown;
-  members?: { service?: { rid?: string } }[];
+  /** `index` is which segment of that service the channel is. */
+  members?: { service?: { rid?: string }; index?: unknown }[];
 }
 
 interface ClipEntertainmentConfig {
@@ -122,6 +165,7 @@ interface Lamp {
   device: string;
   /** What its light can show; null when the bridge did not list the light. */
   kind: LampKind | null;
+  capabilities: LampCapabilities | null;
 }
 
 /**
@@ -406,9 +450,10 @@ async function fetchApplicationId(host: string, key: string): Promise<string | n
  *
  * What the lamp can show is on its `light` resource, which the entertainment
  * service points at (`renderer_reference`): a `color` block means it mixes
- * colour, a `color_temperature` block alone that it tunes white, neither that
- * it only dims. That decides the lamp's profile when it is patched, as a
- * WLED's LED count decides its own.
+ * colour (in the gamut it names), a `color_temperature` block that it tunes
+ * white (between the mireds it names), neither that it only dims (perhaps
+ * saying at which white, `metadata.fixed_mired`). That decides the lamp's
+ * profile when it is patched, as a WLED's LED count decides its own.
  *
  * All three are bulk reads, so this is three requests however many lamps
  * there are. Returns a map from entertainment service id to the lamp, and an
@@ -424,7 +469,7 @@ async function fetchLampNames(host: string, key: string): Promise<Map<string, La
       bridgeRequest(host, { path: '/clip/v2/resource/light', key }) as Promise<ClipList<ClipLight> | null>,
     ]);
 
-    const deviceById = new Map<string, Omit<Lamp, 'kind'>>();
+    const deviceById = new Map<string, Omit<Lamp, 'kind' | 'capabilities'>>();
     for (const device of (devices && devices.data) || []) {
       deviceById.set(device.id, {
         name: (device.metadata && device.metadata.name) || '',
@@ -446,7 +491,7 @@ async function fetchLampNames(host: string, key: string): Promise<Map<string, La
       if (!device || !device.name) continue;
       const ref = service.renderer_reference && service.renderer_reference.rid;
       const light = (ref && lightById.get(ref)) || (owner && lightByDevice.get(owner)) || null;
-      names.set(service.id, { ...device, kind: light ? kindOf(light) : null });
+      names.set(service.id, { ...device, kind: light ? kindOf(light) : null, capabilities: light ? capabilitiesOf(light) : null });
     }
   } catch (_) {
     return new Map();
@@ -459,6 +504,34 @@ function kindOf(light: Pick<ClipLight, 'color' | 'color_temperature'>): LampKind
   if (light.color && typeof light.color === 'object') return 'color';
   if (light.color_temperature && typeof light.color_temperature === 'object') return 'ambiance';
   return 'white';
+}
+
+const GAMUTS: readonly HueGamut[] = ['A', 'B', 'C', 'other'];
+
+/** A colour temperature in mireds, as kelvin; null when it is not one. */
+function kelvinOf(mirek: unknown): number | null {
+  const m = Number(mirek);
+  if (!Number.isFinite(m) || m < 50 || m > 1000) return null;
+  return Math.round(1e6 / m);
+}
+
+/**
+ * What a light resource can show, in the bridge's own terms: the gamut it
+ * mixes colour in, the range of whites it tunes over (mireds, warmest the
+ * highest), and for a lamp that only dims, the white it is if it says.
+ */
+function capabilitiesOf(light: Pick<ClipLight, 'color' | 'color_temperature' | 'metadata'>): LampCapabilities {
+  const color = light.color && typeof light.color === 'object' ? light.color : null;
+  const gamut = color ? (GAMUTS.find((g) => g === color.gamut_type) || 'other') : null;
+  const schema = light.color_temperature && typeof light.color_temperature === 'object'
+    ? light.color_temperature.mirek_schema : undefined;
+  const warm = kelvinOf(schema && schema.mirek_maximum);
+  const cool = kelvinOf(schema && schema.mirek_minimum);
+  return {
+    gamut,
+    whites: warm !== null && cool !== null && warm <= cool ? { warm, cool } : null,
+    fixedWhite: color || schema ? null : kelvinOf(light.metadata && light.metadata.fixed_mired),
+  };
 }
 
 const KIND_RANK: Record<LampKind, number> = { white: 0, ambiance: 1, color: 2 };
@@ -507,6 +580,42 @@ function nameChannel(channel: ClipChannel, names: Map<string, Lamp>, segmentCoun
 }
 
 /**
+ * The lamps of an area: each entertainment service, and the channels it
+ * renders in the order of its segments, so a gradient strip is one lamp of
+ * several sections rather than several lamps. A channel belongs to the lamp it
+ * names first; one naming none is a lamp of its own.
+ */
+function lampsOf(channels: readonly ClipChannel[], names: Map<string, Lamp>): AreaLamp[] {
+  const groups = new Map<string, { channels: { id: number; index: number; order: number }[]; services: Set<string> }>();
+  channels.forEach((ch, order) => {
+    const members = (ch.members || []).filter((m) => m.service && m.service.rid);
+    const lead = members[0];
+    const key = lead ? lead.service!.rid! : `channel-${ch.channel_id}`;
+    let group = groups.get(key);
+    if (!group) groups.set(key, group = { channels: [], services: new Set() });
+    const index = lead && Number.isInteger(lead.index) ? lead.index as number : order;
+    group.channels.push({ id: ch.channel_id, index, order });
+    for (const m of members) group.services.add(m.service!.rid!);
+  });
+  return [...groups].map(([key, group]) => {
+    group.channels.sort((a, b) => a.index - b.index || a.order - b.order);
+    const lead = names.get(key);
+    const lamps = [...group.services].map((rid) => names.get(rid)).filter((l): l is Lamp => !!l);
+    return {
+      id: key,
+      // Distinct names only: two members of one channel are two halves of one
+      // fitting, and "Strip + Strip" says nothing.
+      name: [...new Set(lamps.map((l) => l.name).filter(Boolean))].join(' + '),
+      product: lead ? lead.product : '',
+      devices: [...new Set(lamps.map((l) => l.device))],
+      channels: group.channels.map((c) => c.id),
+      kind: lead ? lead.kind : null,
+      capabilities: lead ? lead.capabilities : null,
+    };
+  });
+}
+
+/**
  * The entertainment areas configured in the Hue app, with their channels.
  *
  * Areas are built in the Hue app, not here — this only reads them, because the
@@ -548,6 +657,7 @@ async function listEntertainmentConfigs(host: string, key: string): Promise<Ente
           kind: kindOfChannel(ch, names),
         };
       }),
+      lamps: lampsOf(cfg.channels || [], names),
     };
   });
 }
@@ -960,6 +1070,8 @@ export {
   nameChannel,
   kindOf,
   kindOfChannel,
+  capabilitiesOf,
+  lampsOf,
   setStreaming,
   buildStreamMessage,
   to16,

@@ -43,9 +43,14 @@ const HOSTNAME_RE = /^(?=.{1,253}$)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?
 
 // A fixture sent to a device of its own: a WLED over DDP, by its hostname or
 // address — its universes then go there and nowhere else (ddp-routes.ts) — or
-// a Hue lamp, one channel of the entertainment area, which has no DMX address
-// at all (shared/placement.ts). Hue channel ids are a byte.
-const hueOutput = z.object({ protocol: z.literal('hue'), channel: z.number().int().min(0).max(255) }).strict();
+// a Hue lamp, which has no DMX address at all (shared/placement.ts): the
+// entertainment channels it renders, one a section in order along it. Hue
+// channel ids are a byte, and an area has at most 20 of them.
+const hueOutput = z.object({
+  protocol: z.literal('hue'),
+  channels: z.array(z.number().int().min(0).max(255)).min(1).max(20)
+    .refine((channels) => new Set(channels).size === channels.length, { message: 'names a channel twice' }),
+}).strict();
 const ddpOutput = z.object({
     protocol: z.literal('ddp'),
     host: z.string().regex(HOSTNAME_RE, 'is not a hostname or an IPv4 address'),
@@ -233,6 +238,9 @@ interface CellCheck {
   cells: { name?: string; channelMap: Record<string, number> }[];
 }
 
+// A colour temperature, as a Hue lamp reports its whites.
+const kelvin = z.number().int().min(1000).max(20000);
+
 const profileSchema = z.object({
   id: z.string().min(1).max(128)
     .refine((v) => !RESERVED_PROFILE_IDS.includes(v), { message: 'is a reserved id' }),
@@ -268,6 +276,12 @@ const profileSchema = z.object({
     offset: z.number().int().min(0).max(MAX_PROFILE_CHANNELS - 1),
     value: u8,
   }).strict()).max(MAX_PROFILE_CHANNELS).optional(),
+  // A Philips Hue lamp's: what its bridge says it can show (hue-profile.ts).
+  hue: z.object({
+    gamut: z.enum(['A', 'B', 'C', 'other']).nullable(),
+    whites: z.object({ warm: kelvin, cool: kelvin }).strict()
+      .refine((w) => w.warm <= w.cool, { message: 'has its warm white cooler than its cool one' }).nullable(),
+  }).strict().optional(),
 }).passthrough()
   // channelCount is the fixture's DMX footprint: it decides where the *next*
   // fixture can be patched and what the universe-bounds check reserves. An
@@ -427,10 +441,10 @@ const huePairSchema = z.object({
   host: z.string().min(1).max(253),
 }).strict();
 
-// POST /api/hue/add: channels of the entertainment area to patch, each a lamp
-// of its own; every channel not patched yet when none are named.
+// POST /api/hue/add: lamps of the entertainment area to patch, by their
+// entertainment service id; every lamp not patched yet when none are named.
 const hueAddSchema = z.object({
-  channels: z.array(z.number().int().min(0).max(255)).min(1).max(20).optional(),
+  lamps: z.array(z.string().min(1).max(64)).min(1).max(20).optional(),
 }).strict();
 
 // PUT /api/auto/overlay: the operator's edits to the loaded track's show

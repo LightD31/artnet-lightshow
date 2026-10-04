@@ -2,6 +2,7 @@ import { useState } from 'preact/hooks';
 import { pick, connectedSig, emitFixture, api, toast } from '../../state.js';
 import { post } from '../../setup-state.js';
 import { footprintOf, overlaps, hasNoAddress } from '../../../src/shared/placement.ts';
+import { isHueProfile, hueChannelsLabel } from '../../../src/shared/hue-lamp.ts';
 import { rigSelectionSig, selectOnly, toggleSelected, identifyFixtures } from '../../rig-ui.js';
 import { FieldInput } from './FieldInput.jsx';
 
@@ -52,9 +53,8 @@ async function removeFixture(fix) {
  * their profiles are not offered.
  */
 export function AddFixtures({ onAdded }) {
-  const s = pick(['profiles', 'artnet', 'builtinProfileIds', 'hueProfileIds']);
-  const hueIds = new Set(s.hueProfileIds || []);
-  const profiles = Object.values(s.profiles || {}).filter((p) => !hueIds.has(p.id));
+  const s = pick(['profiles', 'artnet', 'builtinProfileIds']);
+  const profiles = Object.values(s.profiles || {}).filter((p) => !isHueProfile(p));
   const [profileId, setProfileId] = useState('');
   const [count, setCount] = useState('1');
   const [universe, setUniverse] = useState('');
@@ -100,17 +100,15 @@ export function AddFixtures({ onAdded }) {
 }
 
 export function PatchTable() {
-  const s = pick(['fixtures', 'profiles', 'identify', 'hueProfileIds']);
+  const s = pick(['fixtures', 'profiles', 'identify']);
   const connected = connectedSig.value;
   const fixtures = s.fixtures || [];
   const profiles = s.profiles || {};
   const selected = rigSelectionSig.value;
   const identifying = new Set((s.identify && s.identify.ids) || []);
   const conflicts = conflictsOf(fixtures, profiles);
-  // A Hue lamp stays on a Hue lamp profile, and nothing else goes on one.
-  const hueIds = new Set(s.hueProfileIds || []);
-  const hueProfiles = Object.values(profiles).filter((p) => hueIds.has(p.id));
-  const dmxProfiles = Object.values(profiles).filter((p) => !hueIds.has(p.id));
+  // A Hue lamp keeps the profile its bridge gave it, and nothing else goes on one.
+  const dmxProfiles = Object.values(profiles).filter((p) => !isHueProfile(p));
   const send = (payload) => {
     if (!connected) { toast.error('Disconnected — reconnect before editing the patch.'); return; }
     emitFixture(payload);
@@ -123,7 +121,7 @@ export function PatchTable() {
         {conflicts.size > 0 && <span class="panel-tag warn">{conflicts.size} overlapping</span>}
       </header>
       <p class="section-desc">Each fixture's profile, universe and first DMX address. Addresses only collide within the same
-        universe. A Hue lamp has none: it is a channel of the Hue bridge, added from Rig → Outputs.</p>
+        universe. A Hue lamp has none: it is a lamp of the Hue bridge, added from Rig → Outputs.</p>
       <div class="table-scroll">
         <table class="patch-table">
           <thead>
@@ -158,15 +156,17 @@ export function PatchTable() {
                   <td><FieldInput value={fix.label} maxLength={64} aria-label={`Label of fixture ${index + 1}`}
                     onCommit={(label) => send({ id: fix.id, label })} /></td>
                   <td>
-                    <select value={fix.profileId} aria-label={`Profile of ${fix.label}`} onChange={(e) => send({ id: fix.id, profileId: e.target.value })}>
-                      {!profile && <option value={fix.profileId}>{fix.profileId} (missing)</option>}
-                      {(hasNoAddress(fix) ? hueProfiles : dmxProfiles).map((p) => <option key={p.id} value={p.id}>{profileLabel(p)}</option>)}
-                    </select>
+                    {hasNoAddress(fix) ? <span title="Built from what the Hue bridge says this lamp can show">{profile ? profileLabel(profile) : fix.profileId}</span> : (
+                      <select value={fix.profileId} aria-label={`Profile of ${fix.label}`} onChange={(e) => send({ id: fix.id, profileId: e.target.value })}>
+                        {!profile && <option value={fix.profileId}>{fix.profileId} (missing)</option>}
+                        {dmxProfiles.map((p) => <option key={p.id} value={p.id}>{profileLabel(p)}</option>)}
+                      </select>
+                    )}
                   </td>
                   {hasNoAddress(fix) ? (
                     <td colSpan={2}>
                       <span class="patch-hue" title="A lamp of the Hue bridge's entertainment area: no DMX address">
-                        Hue lamp · channel #{fix.output.channel}</span>
+                        Hue lamp · {hueChannelsLabel(fix.output.channels)}</span>
                     </td>
                   ) : <>
                   <td>

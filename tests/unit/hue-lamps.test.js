@@ -1,5 +1,6 @@
 // Hue lamps: patched from the bridge's entertainment area, one fixture per
-// channel on the profile for what the lamp can show, with no DMX address. The
+// lamp on a profile built from what the bridge says it can show — a section
+// for each channel it renders — with no DMX address. The
 // server places them on universes of its own, renders them there so their
 // channels can read their colour back, and never sends those universes
 // anywhere — nor asks the operator for an address, nor lets them take up DMX
@@ -21,7 +22,9 @@ import { attachSockets } from '../../src/server/sockets.ts';
 import { state, getLiveState, getCatalogs, getDmxSnapshot, wireUniverses, activeUniverses, placeAddresslessFixtures } from '../../src/server/state.ts';
 import { createPublisher } from '../../src/server/protocol.ts';
 import { showStore, snapshotShow, applyShow } from '../../src/server/show-store.ts';
-import { BUILTIN_PROFILE_ID, HUE_COLOR_PROFILE_ID, HUE_WHITE_PROFILE_ID, HUE_WHITE_AMBIANCE_PROFILE_ID, getProfile } from '../../src/server/profiles.ts';
+import { BUILTIN_PROFILE_ID, getProfile, registerProfile, listProfiles } from '../../src/server/profiles.ts';
+import { hueProfileId } from '../../src/server/hue-profile.ts';
+import { areaLamp, HUE_COLOR, HUE_WHITE, HUE_GRADIENT } from './hue-test-lamps.js';
 import { barProfile } from '../../src/server/bar-profile.ts';
 import { fixtureAddSchema, fixtureMessageSchema, fixtureRestoreSchema, validate } from '../../src/server/validation.ts';
 import * as output from '../../src/server/output.ts';
@@ -32,14 +35,16 @@ import { applyPatch } from '../../src/server/patch.ts';
 showStore.scheduleSave = () => {};   // never the real show file
 state.artnet.enabled = false;
 
-const HUE = { protocol: 'hue', channel: 0 };
+const HUE = { protocol: 'hue', channels: [0] };
 const par = (id, address, universe = 0) => ({ id, label: `Par ${id}`, address, universe, profileId: BUILTIN_PROFILE_ID, maxBrightness: 255, override: null });
-const lamp = (id, channel = id, profileId = HUE_COLOR_PROFILE_ID) => ({
-  id, label: `Lamp ${id}`, address: 1, universe: 0, profileId, maxBrightness: 255, override: null, output: { protocol: 'hue', channel },
+const lamp = (id, channels = [id], profile = HUE_COLOR) => ({
+  id, label: `Lamp ${id}`, address: 1, universe: 0, profileId: profile.id, maxBrightness: 255, override: null, output: { protocol: 'hue', channels },
 });
+const registerLamps = () => { for (const profile of [HUE_COLOR, HUE_WHITE, HUE_GRADIENT]) registerProfile(profile); };
 
 /** Run `fn` on this patch, and put the rig back after. */
 async function withPatch(fixtures, fn) {
+  registerLamps();
   const saved = { fixtures: state.fixtures, next: state.nextFixtureId };
   state.fixtures = fixtures.map((f) => ({ ...f }));
   state.nextFixtureId = Math.max(0, ...state.fixtures.map((f) => f.id + 1));
@@ -125,17 +130,17 @@ test('the rig lists only the universes on the wire; the DMX feed carries the lam
     assert.deepStrictEqual(wireUniverses(), [state.artnet.universe]);
     assert.deepStrictEqual(getLiveState().universes, [state.artnet.universe]);
     assert.ok(Object.keys(getDmxSnapshot()).map(Number).includes(INTERNAL_UNIVERSE));
-    assert.ok(getCatalogs().hueProfileIds.includes(HUE_COLOR_PROFILE_ID));
+    assert.ok(!('hueProfileIds' in getCatalogs()), 'a profile says itself whether it is a Hue lamp\'s');
   });
 });
 
 test('a lamp with no address is rendered, and read back by its Hue channel', async () => {
-  await withPatch([par(0, 1), lamp(1, 5)], async () => {
+  await withPatch([par(0, 1), lamp(1, [5])], async () => {
     applyPatch({ pattern: 'solid', running: true, masterDimmer: 255, colorA: 1, masterBlackout: false });
     startEngine();
     try {
       await new Promise((r) => setTimeout(r, 120));
-      const at = getProfile({ profileId: HUE_COLOR_PROFILE_ID }).channelMap;
+      const at = getProfile({ profileId: HUE_COLOR.id }).channelMap;
       const frame = universes.getBuffer(INTERNAL_UNIVERSE);
       const lit = [at.red, at.green, at.blue].some((offset) => frame[offset] > 0);
       assert.ok(lit, 'rendered on the internal universe like any other fixture');
@@ -151,16 +156,20 @@ test('a lamp with no address is rendered, and read back by its Hue channel', asy
 // ── Adding, removing, saving ─────────────────────────────────────────────────
 
 const AREA = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
-/** The bridge's area, as hue.ts reads it: a colour lamp, an ambiance one, a white one. */
-const areas = async () => [{
-  id: AREA, name: 'Living room', status: 'inactive', channels: [
-    { id: 0, name: 'Shelf', position: null, devices: ['d0'], product: 'Hue color lamp', kind: 'color' },
-    { id: 1, name: 'Desk', position: null, devices: ['d1'], product: 'Hue white ambiance', kind: 'ambiance' },
-    { id: 2, name: 'Hall', position: null, devices: ['d2'], product: 'Hue white lamp', kind: 'white' },
-  ],
+/** The bridge's lamps, as hue.ts reads them: a colour bulb, a tunable white, a plain white and a gradient strip. */
+const LAMPS = [
+  areaLamp({ id: 'shelf', name: 'Shelf', channels: [0] }),
+  areaLamp({ id: 'desk', name: 'Desk', product: 'Hue white ambiance', channels: [1], gamut: null, whites: { warm: 2203, cool: 6536 } }),
+  areaLamp({ id: 'hall', name: 'Hall', product: 'Hue white lamp', channels: [2], gamut: null, whites: null, fixedWhite: 2732 }),
+  areaLamp({ id: 'tv', name: 'TV strip', product: 'Hue gradient lightstrip', channels: [3, 4, 5] }),
+];
+const areaOf = (lamps) => async () => [{
+  id: AREA, name: 'Living room', status: 'inactive',
+  channels: lamps.flatMap((l) => l.channels.map((id) => ({ id, name: l.name, position: null, devices: l.devices, product: l.product, kind: l.kind }))),
+  lamps,
 }];
 
-async function withApp(fixtures, fn) {
+async function withApp(fixtures, fn, areas = areaOf(LAMPS)) {
   await withPatch(fixtures, async () => {
     const hueBefore = output.getHueConfig();
     output.configureHue({ host: 'bridge.test', username: 'app-key', entertainmentId: AREA });
@@ -180,39 +189,66 @@ async function withApp(fixtures, fn) {
   });
 }
 
-test('a lamp is added from the bridge, on the profile for what it can show, with no address', async () => {
+test('a lamp is added from the bridge, on a profile of its own built from what it can show, with no address', async () => {
   await withApp([par(0, 1)], async (call) => {
     const listed = await call('GET', '/api/hue/lamps');
     assert.strictEqual(listed.body.ok, true, listed.body.error);
-    assert.deepStrictEqual(listed.body.lamps.map((l) => [l.id, l.kind]), [[0, 'color'], [1, 'ambiance'], [2, 'white']]);
+    assert.deepStrictEqual(listed.body.lamps.map((l) => [l.id, l.channels, l.shows]), [
+      ['shelf', [0], 'colour (gamut C), white 2000 K–6500 K'],
+      ['desk', [1], 'white 2200 K–6500 K'],
+      ['hall', [2], 'white 2700 K'],
+      ['tv', [3, 4, 5], '3 sections, colour (gamut C), white 2000 K–6500 K'],
+    ]);
 
-    const one = await call('POST', '/api/hue/add', { channels: [1] });
+    const one = await call('POST', '/api/hue/add', { lamps: ['desk'] });
     assert.strictEqual(one.body.ok, true, one.body.error);
     assert.deepStrictEqual(one.body.fixtures.map((f) => [f.label, f.profileId, f.output]), [
-      ['Desk', HUE_WHITE_AMBIANCE_PROFILE_ID, { protocol: 'hue', channel: 1 }],
+      ['Desk', hueProfileId('desk'), { protocol: 'hue', channels: [1] }],
     ]);
-    const again = await call('POST', '/api/hue/add', { channels: [1] });
-    assert.strictEqual(again.status, 409, 'a channel is patched once');
+    const profile = listProfiles()[hueProfileId('desk')];
+    assert.deepStrictEqual([profile.name, profile.channelMap, profile.hue],
+      ['Hue white ambiance', { dimmer: 0, warmWhite: 1, coolWhite: 2 }, { gamut: null, whites: { warm: 2203, cool: 6536 } }]);
+    const again = await call('POST', '/api/hue/add', { lamps: ['desk'] });
+    assert.strictEqual(again.status, 409, 'a lamp is patched once');
 
     const rest = await call('POST', '/api/hue/add', {});
-    assert.deepStrictEqual(rest.body.fixtures.map((f) => [f.label, f.profileId, f.output.channel]), [
-      ['Shelf', HUE_COLOR_PROFILE_ID, 0], ['Hall', HUE_WHITE_PROFILE_ID, 2],
+    assert.deepStrictEqual(rest.body.fixtures.map((f) => [f.label, f.profileId, f.output.channels]), [
+      ['Shelf', hueProfileId('shelf'), [0]], ['Hall', hueProfileId('hall'), [2]], ['TV strip', hueProfileId('tv'), [3, 4, 5]],
     ], 'every lamp not patched yet');
+    const strip = getProfile({ profileId: hueProfileId('tv') });
+    assert.strictEqual(strip.cells.length, 3, 'a gradient strip is one fixture of three sections');
     const lamps = state.fixtures.filter(hasNoAddress);
-    assert.deepStrictEqual(lamps.map((f) => [f.universe, f.address]), [[INTERNAL_UNIVERSE, 1], [INTERNAL_UNIVERSE, 4], [INTERNAL_UNIVERSE, 11]]);
+    assert.deepStrictEqual(lamps.map((f) => [f.universe, f.address]),
+      [[INTERNAL_UNIVERSE, 1], [INTERNAL_UNIVERSE, 4], [INTERNAL_UNIVERSE, 11], [INTERNAL_UNIVERSE, 12]]);
     assert.strictEqual((await call('POST', '/api/hue/add', {})).status, 409, 'nothing left to add');
-    assert.strictEqual((await call('POST', '/api/hue/add', { channels: [7] })).status, 404, 'no such channel');
+    assert.strictEqual((await call('POST', '/api/hue/add', { lamps: ['attic'] })).status, 404, 'no such lamp');
 
     const next = await call('POST', '/api/fixtures', {});
     assert.deepStrictEqual(next.body.placed, [{ universe: state.artnet.universe, address: 13 }], 'the next par goes right behind the first');
   });
 });
 
-test('a Hue lamp profile is not patched by hand', async () => {
+test('a lamp the bridge will not describe is not added', async () => {
+  const unread = { ...areaLamp({ id: 'mystery', name: 'Mystery', channels: [9] }), kind: null, capabilities: null };
   await withApp([par(0, 1)], async (call) => {
-    const res = await call('POST', '/api/fixtures', { profileId: HUE_COLOR_PROFILE_ID });
+    const listed = await call('GET', '/api/hue/lamps');
+    assert.strictEqual(listed.body.lamps[0].shows, null);
+    const res = await call('POST', '/api/hue/add', {});
+    assert.strictEqual(res.status, 502);
+    assert.match(res.body.error, /would not say what "Mystery" can show/);
+  }, areaOf([unread]));
+});
+
+test('a Hue lamp\'s profile is neither patched nor imported by hand', async () => {
+  await withApp([par(0, 1)], async (call) => {
+    const res = await call('POST', '/api/fixtures', { profileId: HUE_COLOR.id });
     assert.strictEqual(res.status, 400);
     assert.match(res.body.error, /added from its bridge/);
+    const imported = await call('POST', '/api/profiles', { ...HUE_COLOR, id: 'my-own-hue' });
+    assert.strictEqual(imported.status, 400, 'a profile claiming to be a Hue lamp\'s');
+    const over = await call('POST', '/api/profiles', { id: HUE_COLOR.id, name: 'Par', channelCount: 3, channelMap: { red: 0, green: 1, blue: 2 } });
+    assert.strictEqual(over.status, 400, 'or one replacing a lamp\'s');
+    assert.ok(listProfiles()[HUE_COLOR.id].hue, 'which is left as it was');
   });
 });
 
@@ -235,52 +271,92 @@ test('a lamp removed and put back comes back with no address, and the others clo
     const twice = await call('POST', '/api/fixtures/restore', { index: 0, fixture: { ...removed.body.fixture, id: 9 } });
     assert.strictEqual(twice.status, 409, 'nor is a channel patched twice by an undo');
     const onDmx = await call('POST', '/api/fixtures/restore', {
-      index: 0, fixture: { label: 'Stand-in', address: 100, universe: 0, profileId: HUE_COLOR_PROFILE_ID },
+      index: 0, fixture: { label: 'Stand-in', address: 100, universe: 0, profileId: HUE_COLOR.id },
     });
-    assert.strictEqual(onDmx.status, 400, 'nor a Hue lamp profile put on DMX');
+    assert.strictEqual(onDmx.status, 400, 'nor a Hue lamp\'s profile put on DMX');
+    const short = await call('POST', '/api/fixtures/restore', {
+      index: 0, fixture: { label: 'Strip', profileId: HUE_GRADIENT.id, output: { protocol: 'hue', channels: [7, 8] } },
+    });
+    assert.strictEqual(short.status, 400, 'nor a lamp with fewer channels than sections');
   });
 });
 
-test('a show keeps its lamps without addresses, and a Hue profile off the bridge is refused', () => {
+test('a show keeps its lamps and their profiles, without addresses, and holds them to their sections', () => {
   const saved = { fixtures: state.fixtures, next: state.nextFixtureId };
   try {
     applyShow({
+      profiles: [HUE_COLOR, HUE_WHITE, HUE_GRADIENT],
       fixtures: [
         { id: 0, label: 'Par', address: 1, universe: 0, profileId: BUILTIN_PROFILE_ID },
-        { id: 1, label: 'Shelf', profileId: HUE_COLOR_PROFILE_ID, output: { protocol: 'hue', channel: 0 } },
-        { id: 2, label: 'Desk', profileId: HUE_WHITE_PROFILE_ID, output: { protocol: 'hue', channel: 3 } },
+        { id: 1, label: 'Shelf', profileId: HUE_COLOR.id, output: { protocol: 'hue', channels: [0] } },
+        { id: 2, label: 'Desk', profileId: HUE_WHITE.id, output: { protocol: 'hue', channels: [3] } },
+        { id: 3, label: 'TV', profileId: HUE_GRADIENT.id, output: { protocol: 'hue', channels: [4, 5, 6, 7, 8] } },
       ],
     });
     assert.deepStrictEqual(state.fixtures.map((f) => [f.label, f.output, f.universe, f.address]), [
       ['Par', null, 0, 1],
-      ['Shelf', { protocol: 'hue', channel: 0 }, INTERNAL_UNIVERSE, 1],
-      ['Desk', { protocol: 'hue', channel: 3 }, INTERNAL_UNIVERSE, 8],
+      ['Shelf', { protocol: 'hue', channels: [0] }, INTERNAL_UNIVERSE, 1],
+      ['Desk', { protocol: 'hue', channels: [3] }, INTERNAL_UNIVERSE, 8],
+      ['TV', { protocol: 'hue', channels: [4, 5, 6, 7, 8] }, INTERNAL_UNIVERSE, 9],
     ]);
     const show = snapshotShow();
-    assert.deepStrictEqual(show.fixtures.map((f) => [f.label, f.address, f.universe]), [['Par', 1, 0], ['Shelf', undefined, undefined], ['Desk', undefined, undefined]]);
+    assert.deepStrictEqual(show.fixtures.map((f) => [f.label, f.address, f.universe]),
+      [['Par', 1, 0], ['Shelf', undefined, undefined], ['Desk', undefined, undefined], ['TV', undefined, undefined]]);
+    assert.deepStrictEqual(show.profiles.map((p) => p.id).sort(), [HUE_COLOR.id, HUE_GRADIENT.id, HUE_WHITE.id].sort(),
+      'each lamp\'s profile travels with the show');
     applyShow(JSON.parse(JSON.stringify(show)));
-    assert.deepStrictEqual(state.fixtures.map((f) => [f.universe, f.address]), [[0, 1], [INTERNAL_UNIVERSE, 1], [INTERNAL_UNIVERSE, 8]],
+    assert.deepStrictEqual(state.fixtures.map((f) => [f.universe, f.address]), [[0, 1], [INTERNAL_UNIVERSE, 1], [INTERNAL_UNIVERSE, 8], [INTERNAL_UNIVERSE, 9]],
       'and loads back the same');
+    assert.deepStrictEqual(getProfile({ profileId: HUE_GRADIENT.id }).hue, HUE_GRADIENT.hue);
 
-    assert.throws(() => applyShow({ fixtures: [{ id: 0, label: 'Shelf', address: 13, universe: 0, profileId: HUE_COLOR_PROFILE_ID }] }),
-      /on a Hue lamp profile but not a Hue lamp/);
-    assert.throws(() => applyShow({ fixtures: [{ id: 0, label: 'Par', profileId: BUILTIN_PROFILE_ID, output: { protocol: 'hue', channel: 0 } }] }),
+    const profiles = [HUE_COLOR, HUE_GRADIENT];
+    assert.throws(() => applyShow({ profiles, fixtures: [{ id: 0, label: 'Shelf', address: 13, universe: 0, profileId: HUE_COLOR.id }] }),
+      /on a Hue lamp's profile but not a Hue lamp/);
+    assert.throws(() => applyShow({ profiles, fixtures: [{ id: 0, label: 'Par', profileId: BUILTIN_PROFILE_ID, output: { protocol: 'hue', channels: [0] } }] }),
       /is a Hue lamp on a profile that is not one/);
-    assert.throws(() => applyShow({ fixtures: [lamp(0, 4), lamp(1, 4)] }), /both Hue channel 4/);
-    assert.throws(() => applyShow({ fixtures: [{ id: 0, label: 'Old', profileId: HUE_COLOR_PROFILE_ID, output: { protocol: 'hue' } }] }),
-      /channel/, 'a Hue lamp names its channel');
+    assert.throws(() => applyShow({ profiles, fixtures: [lamp(0, [4]), lamp(1, [2, 3, 4, 5, 6], HUE_GRADIENT)] }), /both on Hue channel 4/);
+    assert.throws(() => applyShow({ profiles, fixtures: [lamp(0, [4, 5], HUE_GRADIENT)] }), /has 5 sections but 2 Hue channels/);
   } finally {
+    state.fixtures = saved.fixtures;
+    state.nextFixtureId = saved.next;
+    registerLamps();
+  }
+});
+
+// Lamps saved on the three generic profiles, a channel each, say nothing of
+// what they can show or which channels are their sections. The rest of the
+// show is not refused for them.
+test('a show\'s lamps from before profiles came from the bridge are left out, and the rest loads', () => {
+  const saved = { fixtures: state.fixtures, next: state.nextFixtureId };
+  const warn = console.warn;
+  const warnings = [];
+  console.warn = (message) => warnings.push(message);
+  try {
+    applyShow({
+      fixtures: [
+        { id: 0, label: 'Par', address: 1, universe: 0, profileId: BUILTIN_PROFILE_ID },
+        { id: 1, label: 'Shelf', profileId: 'generic-hue-lamp-7ch', output: { protocol: 'hue', channel: 0 } },
+        { id: 2, label: 'Desk', profileId: 'generic-hue-white-lamp-1ch', output: { protocol: 'hue', channel: 3 } },
+      ],
+    });
+    assert.deepStrictEqual(state.fixtures.map((f) => f.label), ['Par']);
+    assert.strictEqual(warnings.length, 1);
+    assert.match(warnings[0], /left out 2 Hue lamps .*"Shelf", "Desk".*add them again from Rig → Outputs → Philips Hue/);
+  } finally {
+    console.warn = warn;
     state.fixtures = saved.fixtures;
     state.nextFixtureId = saved.next;
   }
 });
 
 test('the schemas take a Hue output only where the bridge or the patch hands one back', () => {
-  validate(fixtureRestoreSchema, { index: 0, fixture: { label: 'Lamp', profileId: HUE_COLOR_PROFILE_ID, output: HUE } }, 'restore');
+  validate(fixtureRestoreSchema, { index: 0, fixture: { label: 'Lamp', profileId: HUE_COLOR.id, output: HUE } }, 'restore');
   assert.throws(() => validate(fixtureMessageSchema, { id: 1, output: HUE }, 'fixture'), 'never set on a fixture by hand');
-  assert.throws(() => validate(fixtureAddSchema, { profileId: HUE_COLOR_PROFILE_ID, output: HUE }, 'fixtures'));
+  assert.throws(() => validate(fixtureAddSchema, { profileId: HUE_COLOR.id, output: HUE }, 'fixtures'));
   assert.throws(() => validate(fixtureRestoreSchema, { index: 0, fixture: { label: 'Lamp', profileId: 'x', output: { protocol: 'hue' } } }, 'restore'),
-    'and a Hue output names its channel');
+    'and a Hue output names its channels');
+  assert.throws(() => validate(fixtureRestoreSchema, { index: 0, fixture: { label: 'Lamp', profileId: 'x', output: { protocol: 'hue', channels: [2, 2] } } }, 'restore'),
+    'each once');
   validate(fixtureMessageSchema, { id: 1, output: { protocol: 'ddp', host: 'wled.local' } }, 'fixture');
 });
 
@@ -297,13 +373,13 @@ test('over a socket, a Hue lamp stays a Hue lamp and a par stays off the bridge'
   socket.on('error-msg', (e) => errors.push(e.message));
   const settle = () => new Promise((r) => setTimeout(r, 80));
   try {
-    await withPatch([par(0, 1), lamp(1, 2), par(2, 13)], async () => {
+    await withPatch([par(0, 1), lamp(1, [2]), par(2, 13)], async () => {
       await new Promise((r) => socket.once('connect', r));
       const [first, hue, second] = state.fixtures;
 
       socket.emit('fixture', { id: 1, output: null });
       await settle();
-      assert.deepStrictEqual([hue.output, hue.universe], [{ protocol: 'hue', channel: 2 }, INTERNAL_UNIVERSE], 'not put on DMX');
+      assert.deepStrictEqual([hue.output, hue.universe], [{ protocol: 'hue', channels: [2] }, INTERNAL_UNIVERSE], 'not put on DMX');
 
       socket.emit('fixture', { id: 1, address: 300 });
       await settle();
@@ -311,16 +387,16 @@ test('over a socket, a Hue lamp stays a Hue lamp and a par stays off the bridge'
 
       socket.emit('fixture', { id: 1, profileId: BUILTIN_PROFILE_ID });
       await settle();
-      assert.strictEqual(hue.profileId, HUE_COLOR_PROFILE_ID, 'nor put on a par\'s profile');
-      socket.emit('fixture', { id: 1, profileId: HUE_WHITE_PROFILE_ID });
+      assert.strictEqual(hue.profileId, HUE_COLOR.id, 'nor put on a par\'s profile');
+      socket.emit('fixture', { id: 1, profileId: HUE_WHITE.id });
       await settle();
-      assert.strictEqual(hue.profileId, HUE_WHITE_PROFILE_ID, 'but another Hue lamp profile is fine');
+      assert.strictEqual(hue.profileId, HUE_COLOR.id, 'nor another lamp\'s: its profile is its bridge\'s');
 
-      socket.emit('fixture', { id: 2, profileId: HUE_COLOR_PROFILE_ID });
-      socket.emit('fixture', { id: 0, output: { protocol: 'hue', channel: 0 } });
+      socket.emit('fixture', { id: 2, profileId: HUE_COLOR.id });
+      socket.emit('fixture', { id: 0, output: { protocol: 'hue', channels: [0] } });
       await settle();
       assert.deepStrictEqual([second.profileId, first.output ?? null], [BUILTIN_PROFILE_ID, null], 'a par does not become a Hue lamp');
-      assert.strictEqual(errors.length, 4, errors.join('\n'));
+      assert.strictEqual(errors.length, 5, errors.join('\n'));
       assert.ok(state.fixtures.filter((f) => !isInternalUniverse(f.universe)).length === 2);
     });
   } finally {

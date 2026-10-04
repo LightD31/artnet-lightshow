@@ -109,7 +109,24 @@ export interface Profile {
    * in its grid, but given the bars' programs rather than a panel's pictures.
    */
   zoned?: boolean;
+  /** A Philips Hue lamp's, and no other profile's: what its bridge says it can show. */
+  hue?: HueLampTraits;
   [key: string]: unknown;
+}
+
+/**
+ * What a Philips Hue lamp can show, as its bridge reported it when the lamp
+ * was patched (server/hue-profile.ts builds the profile from it).
+ */
+export interface HueLampTraits {
+  /** The gamut it mixes colour in; null for a lamp that shows only white. */
+  gamut: 'A' | 'B' | 'C' | 'other' | null;
+  /**
+   * Its warmest and coolest white, in kelvin: the range a tunable lamp covers,
+   * or the one white a lamp that only dims is (both the same). Null when the
+   * bridge did not say.
+   */
+  whites: { warm: number; cool: number } | null;
 }
 
 /** A position on the stage plot, in percent of its width and depth. */
@@ -189,14 +206,16 @@ export interface DdpOutput {
 }
 
 /**
- * A Philips Hue lamp: channel `channel` of the bridge's entertainment area,
- * patched from the bridge (never by hand) and with no DMX address. The server
- * renders it on universes of its own that are never sent
- * (shared/placement.ts), and its channel is sent the colour it was rendered.
+ * A Philips Hue lamp: the channels of the bridge's entertainment area it
+ * renders, one for each section in the order its profile's cells run (one,
+ * for a bulb). Patched from the bridge (never by hand) and with no DMX
+ * address: the server renders it on universes of its own that are never sent
+ * (shared/placement.ts), and each channel is sent the colour its section was
+ * rendered.
  */
 export interface HueOutput {
   protocol: 'hue';
-  channel: number;
+  channels: number[];
 }
 
 /**

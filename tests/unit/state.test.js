@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import { getClientState, getLiveState, getCatalogs, getDmxSnapshot, universeOf, state } from '../../src/server/state.ts';
 
 const STATIC = ['colorPresets', 'patterns', 'energyEffects', 'strobeFunctions', 'palettes',
-  'syncOffsetLimitMs', 'builtinProfileIds', 'hueProfileIds'];
+  'syncOffsetLimitMs', 'builtinProfileIds'];
 
 // The static catalogues were 63% of a 7 KB payload and went out
 // ten times a second unchanged.
@@ -36,7 +36,7 @@ test('catalogues are the static half and the DMX snapshot is bytes keyed by univ
   // The UI decides which profiles may be deleted from this rather than from a
   // hardcoded id, so it has to name every profile that ships with the server.
   assert.ok(cat.builtinProfileIds.includes('cameo-root-par-6-12ch'));
-  assert.ok(cat.builtinProfileIds.includes('generic-hue-lamp-7ch'));
+  assert.ok(!cat.builtinProfileIds.some((id) => id.startsWith('generic-hue')), 'a Hue lamp\'s profile comes from its bridge');
 
   const snap = getDmxSnapshot();
   assert.ok(!Array.isArray(snap) && typeof snap === 'object');
