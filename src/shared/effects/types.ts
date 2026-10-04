@@ -16,8 +16,8 @@ export type AudioMode = 'off' | 'tempo' | 'reactive';
 
 export interface Spatial { x: number; y: number; z: number; radius: number; angle: number }
 export interface Trigger { mode: TriggerMode; band: Band; beatInterval: number; threshold: number; reactiveDepth: number }
-/** Times are fractions of the loop; sustain is a level, 0..1. */
-export interface Ahdsr { attack: number; hold: number; decay: number; sustain: number; release: number }
+/** Times are fractions of the loop; sustain and peak are levels, 0..1. Missing peak means full. */
+export interface Ahdsr { attack: number; hold: number; decay: number; sustain: number; release: number; peak?: number }
 export interface RgbEnvelope { colourMode: 'all' | 'singleColour'; singleColour: string; r: Ahdsr; g: Ahdsr; b: Ahdsr; brightness: Ahdsr }
 
 /** Hue Dynamics Party's settings, shared by all ten of its families. */
@@ -26,6 +26,9 @@ export interface HdParams {
   probability: number; repetitions: number; trail: number; spatial: Spatial; trigger: Trigger; loopLength: number | null;
   rgbEnvelope?: RgbEnvelope | null;
 }
+
+/** Nested controls have separate applicability: a family can use an angle without a radius. */
+export type HdCapability = keyof HdParams | `spatial.${keyof Spatial}` | `trigger.${keyof Trigger}`;
 
 /** Specs keep hex colours on the wire; a `random` entry stays a sentinel until an instance rolls it. */
 export type PaletteEntry = string | { random: true };
@@ -71,7 +74,7 @@ export interface EffectKindDef<P = unknown, S = unknown> {
   kind: string; app: 'hd' | 'ldj' | 'own'; schema: ZodType<P>;
   /** Defaults as a spec fragment, so the recommended palette and output settings travel with the parameters. */
   defaults: { params: P; palette?: PaletteEntry[] | null; brightness?: number; rapidFlash?: boolean; minFlashIntervalMs?: number; scope?: 'singleBeat' | 'measure' };
-  capabilities?: Partial<Record<keyof HdParams, boolean>> | null;
+  capabilities?: Partial<Record<HdCapability, boolean>> | null;
   rapidFlash?: boolean; stateful?: boolean; rideLevel?: boolean;
   /** A kind that re-rolls its palette's random entries (Light DJ's MatrixCycle per colour) reports the roll from its state; renderEffect reads it after stepper.get and before resolvePalette. */
   rollOf?(state: S): number;
