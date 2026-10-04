@@ -777,12 +777,35 @@ dimmed with sixteen bits, so a slow fade to black glides where it used to step.
 
 #### Strobe without a strobe channel
 
-A fixture with a strobe channel strobes itself. One without — plenty of LED bars
-and cheap pars — is flashed in software through the strobe pattern and every
-strobing burst: one to twenty flashes a second from the strobe speed, each a
-frame to 50 ms long, all such fixtures together (the random strobe functions
-flash each on its own). A Hue lamp is never flashed: a bridge cannot keep up,
-and Hue's own guidance is to keep effects slower than that.
+On the standard strobe, a fixture with a strobe channel strobes itself. One
+without — plenty of LED bars and cheap pars — is flashed in software through the
+strobe pattern and every strobing burst: one to twenty flashes a second from the
+strobe speed, each a frame to 50 ms long, all such fixtures together. A Hue lamp
+is never flashed: a bridge cannot keep up, and Hue's own guidance is to keep
+effects slower than that.
+
+#### Strobe functions
+
+The strobe pattern's other functions are after the programs of a Cameo ROOT PAR
+6's multifunction strobe channel, but the show draws them itself, on every
+fixture's dimmer: no fixture is asked for them, so a ROOT PAR, a bar with no
+strobe channel and a fixture whose own strobe channel knows nothing of ramps
+all look the same, and the fixture's strobe channel stays open. They are locked
+to the beat: the speed picks how many beats each takes rather than a rate in
+hertz.
+
+| | Slowest → fastest |
+|---|---|
+| **Ramp Up/Down** | Swells up and back down, peaking on the beat: 4 beats → ¼ beat |
+| **Ramp Up** | Swells up from black and is cut on the beat: 4 beats → ¼ beat |
+| **Ramp Down** | Hits full on the beat and dies away: 4 beats → ¼ beat |
+| **… Rnd** | The same swells at random moments, every par and every cell of a bar on its own |
+| **Random** | Random flashes, every light on its own: one chance a beat → one a sixteenth |
+| **Burst** | A burst of flashes from the beat, then a break: every 2 bars → every beat |
+
+A swell too short to see at the tempo, or a flash faster than about eleven a
+second, slows to the next rung. Flash Limit holds them to the slowest. A Hue
+lamp is left out of them, as of the standard strobe.
 
 ### Philips Hue
 
@@ -1183,11 +1206,14 @@ large flashes a second:
 | **Flash Alternate** | Odd zones flash on the step, even ones on the half-step between |
 | **Ramp** | Every step swells from black to full, the middle first, and is cut on the beat |
 | **Strobe Core** | The hybrid's own look: its outer zones a wash in the look's colour, a cold white core striking on every step, or on the kick with the pulse |
+| **Random Ramps** | After a par's random ramp: every zone swells up and is cut at a moment of its own, about once a step, each in one of the look's colours |
+| **Random Hits** | The other way round: every zone hit at full at a moment of its own, dying away |
+| **Flash Burst** | After a par's burst: two steps of flashes as fast as a zone may flash, odd and even zones in turn, then two dark, each burst in the next colour |
 
-The auto show turns through Impact, Flash Fill, Flash Scatter and Strobe Core
-from one drop to the next, and gives a chorus, a bridge or a solo that drives as
-hard as a drop one of Flash Alternate, Flash Chase, Ramp and Strobe Core, the
-same each time it comes round. The zone-by-zone ones run **Per bar**, so each
+The auto show turns through Impact, Flash Fill, Flash Scatter, Strobe Core and
+Flash Burst from one drop to the next, and gives a chorus, a bridge or a solo
+that drives as hard as a drop one of Flash Alternate, Flash Chase, Ramp, Strobe
+Core, Random Ramps and Random Hits, the same each time it comes round. The zone-by-zone ones run **Per bar**, so each
 fixture plays the program itself.
 
 **Drums** and **Stems** play the analysis's *pulse*. That is every kick, snare

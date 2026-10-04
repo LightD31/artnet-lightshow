@@ -1,4 +1,5 @@
 import { colourMixer } from './color.ts';
+import { FLASH_MS, MIN_SLOT_MS, flashLit, scatter, rampUp, rampDown, randomSwell, swellsIn } from './strobe-fx.ts';
 import type { Colour, Expression, PulseReading } from '../types/rig.ts';
 
 // Pure pattern functions. Each takes (ctx) where:
@@ -132,6 +133,7 @@ const CELL_PATTERNS = new Set([
   'gradient', 'comet', 'burst', 'plasma', 'meter', 'drums', 'stems',
   'rise', 'impact', 'bars', 'fire', 'rain',
   'flash-chase', 'flash-scatter', 'flash-fill', 'flash-alternate', 'ramp', 'core',
+  'ramp-scatter', 'decay-scatter', 'flash-burst',
 ]);
 
 /** Where slot i sits across the rig, 0..1: its placed position, or even spacing. */
@@ -762,12 +764,9 @@ Object.assign(PATTERN_FUNCS, {
 // cells. Laid out per bar, every bar runs the program itself, as the
 // fixtures do; across the stage, the rig is one long strobe.
 
-// A flash: two frames at the engine's 44 a second, so none falls between two,
-// and not much longer, or it reads as a blink.
-const FLASH_MS = 45;
-const FLASH_MAX_MS = 80;
-// No zone flashes more than about eleven times a second.
-const MIN_SLOT_MS = 90;
+// The flash timings — how long a flash lasts, how often a zone may flash — are
+// the strobe functions' (shared/strobe-fx.ts), so a program and a function
+// flash alike.
 // Without a tempo, a step as long as a beat at 120 BPM.
 const DEFAULT_STEP_MS = 500;
 // The cold white a hybrid's strobe core is.
@@ -791,11 +790,6 @@ function flashGrid(ctx: PatternContext, want: number): { slot: number; phase: nu
   while (perStep > 1 / 16 && stepMs / perStep < MIN_SLOT_MS) perStep /= 2;
   const pos = (ctx.stepPos ?? ctx.step) * perStep;
   return { slot: Math.floor(pos), phase: frac(pos), slotMs: stepMs / perStep };
-}
-
-/** Is a flash lit `phase` (0..1) into a slot `slotMs` long. */
-function flashLit(phase: number, slotMs: number): boolean {
-  return phase * slotMs < Math.min(FLASH_MAX_MS, Math.max(FLASH_MS, 0.35 * slotMs));
 }
 
 /**
@@ -935,7 +929,75 @@ Object.assign(PATTERN_FUNCS, {
       }
     }
   },
+
+  // The random ramps of a par's strobe channel, zone by zone: every zone
+  // swells up from black at a moment of its own and is cut, about one swell a
+  // step, each in one of the look's colours — a rig of fixtures each in its
+  // random ramp mode.
+  'ramp-scatter'(ctx) {
+    scatterSwells(ctx, rampUp, 0);
+  },
+
+  // The other way round: every zone hit at full at a moment of its own, dying
+  // away to black after it.
+  'decay-scatter'(ctx) {
+    scatterSwells(ctx, rampDown, 5381);
+  },
+
+  // A burst with a break: from the top of every four steps, a run of flashes
+  // as fast as a zone may flash, odd zones and even ones taking turns, for
+  // two steps — then black until the next, each burst in the look's next
+  // colour.
+  'flash-burst'(ctx) {
+    const pal = paletteOf(ctx);
+    const { rank } = rankOf(ctx);
+    const stepMs = stepMsOf(ctx);
+    const pos = (ctx.stepPos ?? ctx.step) / BURST_STEPS;
+    const cycle = Math.floor(pos);
+    const into = frac(pos) * BURST_STEPS;
+    const colour = pal[cycle % pal.length];
+    let lit = false;
+    let half = 0;
+    if (into < BURST_ON_STEPS) {
+      const lengthMs = BURST_ON_STEPS * stepMs;
+      const flashes = Math.max(2, Math.floor(lengthMs / MIN_SLOT_MS));
+      const flash = (into / BURST_ON_STEPS) * flashes;
+      lit = flashLit(frac(flash), lengthMs / flashes);
+      half = Math.floor(flash) % 2;
+    }
+    for (let i = 0; i < ctx.fixtureCount; i++) {
+      ctx.write(i, colour, lit && rank(i) % 2 === half ? 255 : 0, 0);
+    }
+  },
 } satisfies Record<string, PatternFn>);
+
+// A burst: four steps from one to the next, flashing through the first two.
+const BURST_STEPS = 4;
+const BURST_ON_STEPS = 2;
+// No swell shorter than this: any quicker and it reads as a flicker.
+const SWELL_MIN_MS = 160;
+
+/**
+ * Every zone on its own random swell (strobe-fx.ts randomSwell), one a step —
+ * or a step every two, four, … when a step is too short to swell in — each
+ * swell in a colour of the look the zone rolled for it. With no clock inside
+ * the step, every zone that swells in it at the top of its swell.
+ */
+function scatterSwells(ctx: PatternContext, shape: (q: number) => number, seed: number): void {
+  const pal = paletteOf(ctx);
+  const stepMs = stepMsOf(ctx);
+  let steps = 1;
+  while (steps < 16 && stepMs * steps < SWELL_MIN_MS) steps *= 2;
+  const clocked = ctx.stepPos != null;
+  const t = (ctx.stepPos ?? ctx.step) / steps;
+  const cycle = Math.floor(t);
+  for (let i = 0; i < ctx.fixtureCount; i++) {
+    const light = i + seed;
+    const level = clocked ? randomSwell(shape, t, light) : swellsIn(cycle, light) ? 1 : 0;
+    const colour = pal[Math.floor(scatter(light, cycle + 7919) * pal.length) % pal.length];
+    ctx.write(i, colour, Math.round(255 * level), 0);
+  }
+}
 
 /**
  * How high each slot is, 0 at the bottom and 1 at the top, when the cells have
@@ -987,14 +1049,6 @@ function noise2(x: number, y: number, seed: number): number {
 }
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
-
-/** A stable pseudo-random 0..1 per cell and seed: the same scatter on every frame of a hit. */
-function scatter(i: number, seed: number): number {
-  let h = Math.imul(i + 1, 0x9E3779B1) ^ Math.imul(seed + 7, 0x85EBCA77);
-  h = Math.imul(h ^ (h >>> 15), 0x2C1B3C6D);
-  h ^= h >>> 13;
-  return (h >>> 0) / 4294967296;
-}
 
 /** A kit played by the clock, for when there is no pulse: kick every step,
  *  snare every other, a hat on each off-step. */

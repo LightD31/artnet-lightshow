@@ -644,7 +644,9 @@ function availableFor(patterns: readonly { id: string }[], analysis: { pulse?: u
 }
 
 /**
- * Which of the fixture's six strobe curves suits a passage.
+ * Which of the strobe functions suits a passage (server/presets.ts; the show
+ * draws all but the standard one itself, locked to the beat — see
+ * shared/strobe-fx.ts).
  *
  * Texture, not intensity: the same strobe speed reads completely differently as
  * a stutter, a ramp or a random, and picking by what the low end is *doing*

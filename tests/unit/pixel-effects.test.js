@@ -172,7 +172,8 @@ test('the panel effects cost no more on a 64 × 32 WLED matrix than the pictures
 // After the hybrid strobes' programs: hard flashes on black, zone by zone,
 // timed in milliseconds whatever the tempo.
 
-const STROBES = ['flash-chase', 'flash-scatter', 'flash-fill', 'flash-alternate', 'ramp', 'core'];
+const STROBES = ['flash-chase', 'flash-scatter', 'flash-fill', 'flash-alternate', 'ramp', 'core',
+  'ramp-scatter', 'decay-scatter', 'flash-burst'];
 const WHITE = (c) => c.r === 255 && c.g === 255 && c.b === 255 && c.w === 255;
 /** A moment `ms` into the music at `bpm`, `division` steps to the beat. */
 const at = (ms, bpm = 128, division = 1) => {
@@ -190,7 +191,7 @@ test('the strobe effects run on every zone, say so in the picker, and draw the s
 });
 
 test('a flash is hard, on black, and never shorter than two frames, however fast the music', () => {
-  for (const id of ['flash-chase', 'flash-scatter', 'flash-alternate']) {
+  for (const id of ['flash-chase', 'flash-scatter', 'flash-alternate', 'flash-burst']) {
     for (const [bpm, division] of [[90, 1], [128, 2], [174, 4]]) {
       const runs = new Map();
       const shortest = new Map();
@@ -253,4 +254,43 @@ test('the strobe core strikes white in the middle, over a wash in the look\'s co
   const off = draw('core', { n: 9, ...at(10), pulse: { mix: 0.8, kick: 0.1, snare: 0, hats: 0 } });
   const kick = draw('core', { n: 9, ...at(250), pulse: { mix: 0.8, kick: 0.95, snare: 0, hats: 0 } });
   assert.deepStrictEqual([WHITE(off[4][0]), WHITE(kick[4][0])], [false, true]);
+});
+
+test('the random ramps swell every zone at a moment of its own, and are cut', () => {
+  const frames = [];
+  for (let ms = 0; ms < 469 * 8; ms += 10) frames.push(dims(draw('ramp-scatter', { n: 8, ...at(ms) })));
+  const zone = (z) => frames.map((f) => f[z]);
+  assert.notDeepStrictEqual(zone(0), zone(1), 'not in lockstep');
+  for (let z = 0; z < 8; z++) {
+    const levels = zone(z);
+    assert.ok(levels.some((d) => d > 200) && levels.some((d) => d > 30 && d < 200), `zone ${z} swells`);
+    // Up, then cut: never a fall from bright that is not to black.
+    for (let k = 1; k < levels.length; k++) {
+      if (levels[k] < levels[k - 1]) assert.ok(levels[k] === 0 || levels[k - 1] - levels[k] < 5 || levels[k] < 30, `zone ${z} fell to ${levels[k]}`);
+    }
+  }
+  assert.ok(frames.filter((f) => f.some((d) => d > 0)).length > frames.length * 0.8, 'something swelling most of the time');
+});
+
+test('the random hits strike every zone at a moment of its own and die away', () => {
+  const frames = [];
+  for (let ms = 0; ms < 469 * 8; ms += 10) frames.push(dims(draw('decay-scatter', { n: 8, ...at(ms) })));
+  const zone = (z) => frames.map((f) => f[z]);
+  assert.notDeepStrictEqual(zone(2), zone(3));
+  for (let z = 0; z < 8; z++) {
+    const levels = zone(z);
+    // A hit: from black, or nearly, straight to bright.
+    assert.ok(levels.some((d, k) => k && d > 200 && levels[k - 1] < 60), `zone ${z} is hit`);
+  }
+});
+
+test('a flash burst strobes odd and even zones in turn for two steps, then breaks for two', () => {
+  const lit = (ms) => draw('flash-burst', { n: 6, ...at(ms) }).map(([, d]) => (d ? 1 : 0)).join('');
+  assert.strictEqual(lit(5), '101010', 'the odd zones on the beat');
+  const seen = new Set();
+  for (let ms = 0; ms < 469 * 2; ms += 5) seen.add(lit(ms));
+  assert.deepStrictEqual([...seen].sort(), ['000000', '010101', '101010']);
+  for (let ms = 469 * 2 + 5; ms < 469 * 4 - 5; ms += 5) assert.strictEqual(lit(ms), '000000', `a break at ${ms} ms`);
+  const colour = (ms) => draw('flash-burst', { n: 6, ...at(ms) })[0][0];
+  assert.notStrictEqual(colour(5), colour(469 * 4 + 5), 'the next burst in the next colour');
 });
