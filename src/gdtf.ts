@@ -1,7 +1,7 @@
 import JSZip from 'jszip';
 import { XMLParser } from 'fast-xml-parser';
 import { EMITTERS, MAX_CELLS_PER_FIXTURE } from './shared/rig.ts';
-import { STROBE_FUNCTIONS } from './server/presets.ts';
+import { STANDARD_STROBE } from './server/presets.ts';
 import type { ChannelDefault, ChannelListEntry, ChannelMap, ImportedFixture, ImportedMode } from './types/rig.ts';
 
 // The parts of description.xml this reads. It comes from a file anyone can
@@ -313,7 +313,6 @@ function describeChannel(ch: XmlDmxChannel, fallbackName: string): { attrName: s
 // the show does not drive is held at its default, a closed shutter held open
 // and a dimmer at full (the same rules as the OFL import, src/server/ofl.ts).
 
-const STANDARD_STROBE = STROBE_FUNCTIONS.find((f) => f.id === 'standard') || STROBE_FUNCTIONS[0];
 
 /**
  * A GDTF DMXValue ("128/1", "32768/2", "255/1s" byte-mirrored, or a bare

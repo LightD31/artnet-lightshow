@@ -15,7 +15,7 @@
  * one when the main thread is busy. Either way a frame is the same bytes.
  */
 
-import { COLOR_PRESETS, STROBE_FUNCTIONS } from './presets.ts';
+import { COLOR_PRESETS, STANDARD_STROBE } from './presets.ts';
 import { isHueProfile } from '../shared/hue-lamp.ts';
 import { FRAME_MS } from './frame-clock.ts';
 import { PATTERN_FUNCS } from '../shared/patterns.ts';
@@ -25,6 +25,7 @@ import { cellPlace, channelPlace, stripOf } from '../shared/placement.ts';
 // Shared with the browser's rehearsal preview so the two cannot drift.
 import { EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture, cellDrive } from '../shared/look-math.ts';
 import { anchorStep, stepAt, motionAdvance } from '../shared/beat-clock.ts';
+import { drawnByTheShow, strobeLevel } from '../shared/strobe-fx.ts';
 import { createFlashLimiter, lightLuminance, strobeCap } from './flash-limit.ts';
 import { identifyLights } from './identify.ts';
 import type { IdentifyRequest } from './identify.ts';
@@ -131,16 +132,20 @@ const SYNC_FLASH_MS = 100;
 const blankUnit = (): UnitLight => ({ r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 255, strobe: 0 });
 
 // ── Software strobe ──────────────────────────────────────────────────────────
-// A fixture with a strobe channel flashes itself: the strobe value goes to
-// that channel and the lamp's own electronics do the rest. A fixture without
-// one — plenty of LED bars and cheap pars — used to sit there steady through
-// the strobe pattern and every strobing burst. It is now flashed here instead,
-// by leaving it dark on the frames between flashes.
+// The standard strobe: a fixture with a strobe channel flashes itself — the
+// strobe value goes to that channel and the lamp's own electronics do the
+// rest. A fixture without one — plenty of LED bars and cheap pars — used to
+// sit there steady through the strobe pattern and every strobing burst. It is
+// now flashed here instead, by leaving it dark on the frames between flashes.
 //
 // 1 to 20 flashes a second, as the fixtures' own standard strobe runs, and no
 // faster than every other frame. Each flash lasts at least one frame (so none
 // falls between two), a third of the period at most, and never more than 50 ms:
 // a strobe is a flash, not a blink.
+//
+// Every other strobe function (the ramps, the random strobe, the burst) is
+// drawn here on every fixture, strobe channel or not: a level on the clock
+// that the light's brightness is multiplied by (shared/strobe-fx.ts).
 const SOFT_STROBE_MIN_HZ = 1;
 const SOFT_STROBE_MAX_HZ = Math.min(20, 1000 / (2 * FRAME_MS));
 const SOFT_FLASH_MAX_MS = 50;
@@ -157,13 +162,11 @@ function softStrobeHz(raw: number): number {
 const FLASH_LIMIT_STROBE = strobeCap(softStrobeHz);
 
 /**
- * Is a software-strobed fixture lit on the frame at `now`? Periodic, on the
- * clock, so every such fixture flashes together; the random strobe functions
- * flash each fixture on its own, at the same average rate.
+ * Is a fixture on the standard software strobe lit on the frame at `now`?
+ * Periodic, on the clock, so every such fixture flashes together.
  */
-function softStrobeLit({ raw, fnId }: StrobeRequest, now: number): boolean {
+function softStrobeLit({ raw }: StrobeRequest, now: number): boolean {
   const hz = softStrobeHz(raw);
-  if (/random|rnd/.test(fnId)) return Math.random() < (hz * FRAME_MS) / 1000;
   const period = 1000 / hz;
   const flash = Math.min(SOFT_FLASH_MAX_MS, Math.max(FRAME_MS, 0.3 * period));
   return ((now % period) + period) % period < flash;
@@ -509,20 +512,22 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     return { raw, fnId: energy ? 'standard' : input.strobeFunction };
   }
 
-  /** The strobe channel's value, or null to leave it closed. */
+  /** The strobe channel's value for the standard strobe, or null to leave it at rest. */
   function strobeValue(request: StrobeRequest | null): number | null {
     if (!request) return null;
-    const fn = STROBE_FUNCTIONS.find((f) => f.id === request.fnId) || STROBE_FUNCTIONS[0];
-    return fn.lo + Math.round((request.raw / 255) * (fn.hi - fn.lo));
+    return STANDARD_STROBE.lo + Math.round((request.raw / 255) * (STANDARD_STROBE.hi - STANDARD_STROBE.lo));
   }
 
   /**
-   * Handle the strobe for a fixture: its strobe channel when it has one,
-   * else the software strobe. False when the fixture is dark this frame.
-   * Never for a Hue lamp: a bridge cannot flash.
+   * Handle the standard strobe for a fixture: its strobe channel when it has
+   * one, else the software strobe. False when the fixture is dark this frame.
+   * Any other function was drawn on its lights already (drawStrobes), and
+   * leaves the strobe channel at rest. Never for a Hue lamp: a bridge cannot
+   * flash.
    */
   function strobe(dmx: Dmx, base: number, fix: RenderFixture, ch: ChannelMap, request: StrobeRequest | null,
     now: number): boolean {
+    if (request && drawnByTheShow(request.fnId)) return true;
     if (ch.strobe !== undefined) {
       const value = strobeValue(request);
       if (value !== null) dmx[base + ch.strobe] = value;
@@ -530,6 +535,27 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     }
     if (!request || isHueProfile(profileOf(fix))) return true;
     return softStrobeLit(request, now);
+  }
+
+  /**
+   * Draw the strobe functions the show draws itself (shared/strobe-fx.ts) on
+   * every light asked for one: its brightness times the function's level at
+   * this point in the music, each light — a par, a cell of a bar — rolling
+   * its own dice for the random ones. Not on a Hue lamp, which cannot follow.
+   */
+  function drawStrobes(input: RenderInput, rigNow: Rig<RenderFixture>, all: LightValue[][], energy: EnergyLook | null,
+    reading: MusicalTime): void {
+    for (let i = 0; i < all.length; i++) {
+      const lights = all[i];
+      let hue: boolean | null = null;
+      for (let k = 0; k < lights.length; k++) {
+        const request = strobeRequest(input, energy, lights[k].strobe);
+        if (!request || !drawnByTheShow(request.fnId)) continue;
+        if (hue === null) hue = isHueProfile(profileOf(input.fixtures[i]));
+        if (hue) break;
+        lights[k].dim *= strobeLevel(request.fnId, request.raw, reading.beatPos, reading.bpm, rigNow.ranges[i].start + k);
+      }
+    }
   }
 
   /** A fixture that is one light. */
@@ -669,6 +695,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       for (let u = start; u < start + count; u++) lights.push(lightOf(u, fixtures[i], energy, fadeT, target));
       all.push(lights);
     }
+    drawStrobes(input, rigNow, all, energy, reading);
     if (input.flashLimit) limitFlashes(input, all, now);
     else limiter.reset();
     for (let i = 0; i < fixtures.length; i++) {

@@ -2012,31 +2012,34 @@ const PANEL_ROLE_LOOKS: Record<string, readonly string[]> = {
 const PANEL_LOOKS = ['bars', 'fire', 'rain'];
 
 /**
- * The strobe programs (shared/patterns.ts, after the hybrid strobes'), where
- * the music drives hardest. A drop turns through its own, one drop to the
- * next — the ring and sparks first, then a fill flashed on every step, a
- * random segment strobe and the white core on the kick. A chorus or a solo
- * driving as hard takes one of the others, the same every time it comes
- * round.
+ * The strobe programs (shared/patterns.ts, after the hybrid strobes' and a
+ * par's strobe channel), where the music drives hardest. A drop turns through
+ * its own, one drop to the next — the ring and sparks first, then a fill
+ * flashed on every step, a random segment strobe, the white core on the kick
+ * and a burst with a break. A chorus or a solo driving as hard takes one of
+ * the others, the same every time it comes round: among them every zone
+ * swelling, or hit and dying away, at a moment of its own.
  */
-const DROP_STROBES = ['impact', 'flash-fill', 'flash-scatter', 'core'];
-const DRIVING_STROBES = ['flash-alternate', 'flash-chase', 'ramp', 'core'];
+const DROP_STROBES = ['impact', 'flash-fill', 'flash-scatter', 'core', 'flash-burst'];
+const DRIVING_STROBES = ['flash-alternate', 'flash-chase', 'ramp', 'core', 'ramp-scatter', 'decay-scatter'];
 const STROBE_DRIVE = 0.72;
 const STROBE_ROLES = new Set(['chorus', 'instrumental', 'bridge']);
 
 // How each lies over the bars: the zone-by-zone programs on every bar at
 // once, as each fixture runs its own; the chase out from the middle of the
-// stage to both ends, and the scatter and the ring across it.
+// stage to both ends, and the scatters and the ring across it.
 const STROBE_MAPS: Record<string, string> = {
   impact: 'stage', 'flash-scatter': 'stage', 'flash-chase': 'mirror',
   'flash-fill': 'bar', 'flash-alternate': 'bar', ramp: 'bar', core: 'bar',
+  'ramp-scatter': 'stage', 'decay-scatter': 'stage', 'flash-burst': 'bar',
 };
 
 // The pictures drawn across cells, which a passage with no role may already
 // have been given.
 const CELL_LOOKS = new Set(['gradient', 'comet', 'burst', 'plasma', 'drums', 'stems', 'rise', 'impact', 'ensemble', 'ribbon', 'wave', 'rainbow',
   'twinkle', 'sparkle', 'bars', 'fire', 'rain',
-  'flash-chase', 'flash-scatter', 'flash-fill', 'flash-alternate', 'ramp', 'core']);
+  'flash-chase', 'flash-scatter', 'flash-fill', 'flash-alternate', 'ramp', 'core',
+  'ramp-scatter', 'decay-scatter', 'flash-burst']);
 
 /**
  * What the pars do while the bars move: colour, held or breathing or turning

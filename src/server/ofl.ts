@@ -28,7 +28,7 @@
 import { z } from 'zod';
 import { EMITTERS, MAX_CELLS_PER_FIXTURE } from '../shared/rig.ts';
 import { HttpError, messageOf } from '../errors.ts';
-import { STROBE_FUNCTIONS } from './presets.ts';
+import { STANDARD_STROBE } from './presets.ts';
 import { profileSchema, validate } from './validation.ts';
 import type { ChannelDefault, ChannelListEntry, ChannelMap, ImportedFixture, ImportedMode, ProfileCell } from '../types/rig.ts';
 
@@ -469,7 +469,6 @@ function findRest(def: OflChannel): Rest {
   return { value, why: null };
 }
 
-const STANDARD_STROBE = STROBE_FUNCTIONS.find((f) => f.id === 'standard') || STROBE_FUNCTIONS[0];
 const FLASHING = new Set(['Strobe', 'Pulse']);
 
 /**

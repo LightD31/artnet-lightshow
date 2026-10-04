@@ -71,6 +71,9 @@ export const PATTERNS = [
 	{ id: 'flash-alternate', name: 'Flash Alternate', pixel: true },
 	{ id: 'ramp', name: 'Ramp', pixel: true },
 	{ id: 'core', name: 'Strobe Core', pixel: true },
+	{ id: 'ramp-scatter', name: 'Random Ramps', pixel: true },
+	{ id: 'decay-scatter', name: 'Random Hits', pixel: true },
+	{ id: 'flash-burst', name: 'Flash Burst', pixel: true },
 ]
 
 export const ENERGY_EFFECTS = [
@@ -91,7 +94,7 @@ export const STROBE_FUNCTIONS = [
 	{ id: 'ramp-down', name: 'Ramp Down' },
 	{ id: 'ramp-down-rnd', name: 'Ramp Down Rnd' },
 	{ id: 'random', name: 'Random' },
-	{ id: 'break', name: 'Break' },
+	{ id: 'break', name: 'Burst' },
 ]
 
 /** What the auto show can follow (src/server/presets.ts AUTO_SOURCES). */
