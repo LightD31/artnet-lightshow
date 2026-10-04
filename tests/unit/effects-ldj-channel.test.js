@@ -156,6 +156,18 @@ test('Beat Pulse durations use their fixed matrix literals and gate rapid rows',
   }
 });
 
+test('every matrix pulse requires acknowledgement even when the spec clears its rapid flag', () => {
+  for (const name of ['TriPulse', 'BeatPulse1', 'BeatPulse4', 'Cauldron', 'QuickFlash', 'SceneMakerFirework']) {
+    assert.equal(kindOf(`ldj.${name}`).rapidFlash, true, name);
+    const positions = [0, .5, 1, 1.9, 4];
+    const options = { spec: { rapidFlash: false } };
+    const blocked = run(`ldj.${name}`, square(), positions, { ...options, acknowledged: false });
+    assert.ok(blocked.flat().every((s) => s.strength === 0 && s.level === 0), name);
+    const allowed = run(`ldj.${name}`, square(), positions, { ...options, acknowledged: true });
+    assert.ok(allowed.flat().some((s) => s.strength === 1 && s.level > 0), name);
+  }
+});
+
 test('Cauldron picks different lamps, uses primary and keeps older tails', () => {
   const h = harness('ldj.Cauldron', square()); const picks = [];
   for (const b of [0, .5, 1, 1.5]) { h.draw(b); picks.push(h.state().lastPick); }

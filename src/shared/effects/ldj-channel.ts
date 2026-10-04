@@ -153,7 +153,7 @@ export const LDJ_CHANNEL_ROWS: Record<string, LdjRow> = {
   Drip: { cadence: 2, channels: 1, step(ctx) {
     all(ctx, at(ctx, mod(ctx.iter, 2)), { kind: 'fade', beats: 2 }); ctx.reroll();
   } },
-  TriPulse: { cadence: .5, channels: 1, step(ctx) {
+  TriPulse: { cadence: .5, channels: 1, rapidFlash: true, step(ctx) {
     if (mod(ctx.iter, 6) < 3) {
       all(ctx, ctx.p, { kind: 'matrix', fadeIn: 10, peak: 30000 / ctx.bpm - 20, fadeOut: 10, baseline: .1 });
       ctx.reroll();
@@ -175,7 +175,7 @@ export const LDJ_CHANNEL_ROWS: Record<string, LdjRow> = {
   BeatPulse4: { cadence: .25, channels: 1, rapidFlash: true, step(ctx) {
     all(ctx, ctx.p, { kind: 'matrix', fadeIn: 10, peak: 120000 / ctx.bpm - 20, fadeOut: 10 }); ctx.reroll();
   } },
-  Cauldron: { cadence: .5, channels: 'lights', step(ctx) {
+  Cauldron: { cadence: .5, channels: 'lights', rapidFlash: true, step(ctx) {
     const pick = randomLamp(ctx);
     if (pick !== null) ctx.lamps.set(pick, ctx.p, 1, { kind: 'matrix', fadeIn: 10, peak: 500, fadeOut: 3000 });
     ctx.reroll();
@@ -193,12 +193,12 @@ export const LDJ_CHANNEL_ROWS: Record<string, LdjRow> = {
   MatrixSolid: { cadence: 1, channels: 'colours', step(ctx) {
     each(ctx, (slot, channel) => ctx.lamps.set(slot, at(ctx, channel), 1, INSTANT));
   } },
-  QuickFlash: { cadence: 4, step(ctx) {
+  QuickFlash: { cadence: 4, rapidFlash: true, step(ctx) {
     const beatMs = 60000 / ctx.bpm;
     all(ctx, ctx.s, { kind: 'matrix', fadeIn: .9 * beatMs, peak: .2 * beatMs, fadeOut: .9 * beatMs, peakColour: ctx.p });
     ctx.reroll();
   } },
-  SceneMakerFirework: { cadence: 1, channels: 'lights', step(ctx) {
+  SceneMakerFirework: { cadence: 1, channels: 'lights', rapidFlash: true, step(ctx) {
     const pick = randomLamp(ctx);
     if (pick !== null) {
       const colour = hash01(ctx.seed, 37, ctx.iter) < .5 ? ctx.p : ctx.s;
