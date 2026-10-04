@@ -27,8 +27,10 @@ export interface HdParams {
   rgbEnvelope?: RgbEnvelope | null;
 }
 
-/** A `random` entry stays a sentinel until an instance rolls it, as Light DJ re-rolls its random colours. */
-export type PaletteEntry = Colour | { random: true };
+/** Specs keep hex colours on the wire; a `random` entry stays a sentinel until an instance rolls it. */
+export type PaletteEntry = string | { random: true };
+/** Fixed colours are parsed once when preparing an instance, never written back into its spec. */
+export type ParsedPaletteEntry = Colour | { random: true };
 
 export interface EffectSpec {
   kind: string;

@@ -4,7 +4,7 @@
 
 import type { Colour } from '../../types/rig.ts';
 import { hash01 } from './hash.ts';
-import type { EffectSpec, PaletteEntry, Seed } from './types.ts';
+import type { EffectSpec, ParsedPaletteEntry, Seed } from './types.ts';
 
 /** Light DJ's eight random hues in degrees: red, orange, yellow, green, cyan, blue, purple, pink. */
 export const LDJ_RANDOM_HUES = [0, 36, 60, 120, 195, 250, 280, 325];
@@ -79,30 +79,52 @@ export function samplePalette(pal: readonly Colour[], position: number): Colour 
   return { r: mix(A.r, B.r), g: mix(A.g, B.g), b: mix(A.b, B.b), w: mix(A.w, B.w), a: mix(A.a, B.a), uv: mix(A.uv, B.uv) };
 }
 
-const isRandom = (e: PaletteEntry): e is { random: true } => 'random' in e && e.random === true;
+const isRandom = (e: ParsedPaletteEntry): e is { random: true } => 'random' in e && e.random === true;
+
+/** Plain instance state so the preview can clone a palette together with its effect state. */
+export interface PreparedPalette {
+  entries: ParsedPaletteEntry[] | null;
+  hues: (number | null)[];
+  roll: number;
+  seed: Seed | null;
+}
+
+/** Prepare again when an instance's spec changes; fixed colours are parsed outside the frame loop. */
+export function preparePalette(spec: EffectSpec): PreparedPalette {
+  const entries = spec.palette?.map((entry) => typeof entry === 'string' ? parseHex(entry) : { random: true } as const) ?? null;
+  return { entries, hues: new Array<number | null>(entries?.length ?? 0).fill(null), roll: -1, seed: null };
+}
 
 /**
  * The palette an instance plays: the override (Light DJ's active palette) beats the
  * effect's own, which beats the look's slots. Each `random` entry becomes one of
- * Light DJ's eight hues for this roll; after the first, a random entry never repeats
- * the previous random entry's hue, as the app re-rolls away from the colour it holds.
+ * Light DJ's eight hues for this roll. Re-rolls avoid the cached hues in the first
+ * four slots and the slot's own previous hue, keeping colour changes distinct.
+ * Renderers keep prepared state per instance; direct callers replay from roll zero.
  */
-export function resolvePalette(spec: EffectSpec, override: Colour[] | null, lookSlots: readonly Colour[], seed: Seed, roll: number): Colour[] {
+export function resolvePalette(spec: EffectSpec, override: Colour[] | null, lookSlots: readonly Colour[], seed: Seed, roll: number, prepared?: PreparedPalette): Colour[] {
   if (override && override.length) return [...override];
-  const own = spec.palette;
+  const state = prepared ?? preparePalette(spec);
+  const own = state.entries;
   if (!own || !own.length) return [...lookSlots];
-  const count = LDJ_RANDOM_HUES.length;
-  let last: number | null = null;
-  return own.map((entry, index) => {
-    if (!isRandom(entry)) return entry;
-    const h = hash01(seed, 11 + index, roll);
-    let k: number;
-    if (last === null) k = Math.floor(h * count) % count;
-    else {
-      k = Math.floor(h * (count - 1)) % (count - 1);
-      if (k >= last) k += 1;
+  const randomIndices = own.flatMap((entry, index) => isRandom(entry) ? [index] : []);
+  if (randomIndices.length) {
+    const target = Number.isSafeInteger(roll) && roll >= 0 ? roll : 0;
+    if (!state.seed || state.seed.some((word, index) => word !== seed[index]) || target < state.roll) {
+      state.hues.fill(null);
+      state.roll = -1;
+      state.seed = [...seed];
     }
-    last = k;
-    return hsbToColour(LDJ_RANDOM_HUES[k] / 360, 1, 1);
-  });
+    // Skipped rolls must update the cache in order too, so a seek matches forward playback.
+    for (let next = state.roll + 1; next <= target; next++) {
+      for (const index of randomIndices) {
+        const excluded = new Set(state.hues.slice(0, 4));
+        excluded.add(state.hues[index]);
+        const candidates = LDJ_RANDOM_HUES.map((_, hue) => hue).filter((hue) => !excluded.has(hue));
+        state.hues[index] = candidates[Math.floor(hash01(seed, 11 + index, next) * candidates.length)];
+      }
+      state.roll = next;
+    }
+  }
+  return own.map((entry, index) => isRandom(entry) ? hsbToColour(LDJ_RANDOM_HUES[state.hues[index]!] / 360, 1, 1) : entry);
 }
