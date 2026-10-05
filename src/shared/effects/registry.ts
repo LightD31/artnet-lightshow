@@ -51,8 +51,16 @@ export function validateSpec(raw: unknown): EffectSpec {
   // Only absence inherits a recommendation: false, zero and null remain explicit.
   const present = Object.fromEntries(Object.entries(supplied).filter(([, value]) => value !== undefined));
   const merged = specSchema.parse({ ...def.defaults, ...present, brightness: supplied.brightness ?? def.defaults.brightness ?? 1 });
-  const params = paramsSchema.parse(def.schema.parse(fillDefaults(def.defaults.params, supplied.params)));
+  const params = paramsSchema.parse(parseParams(def, fillDefaults(def.defaults.params, supplied.params)));
   return { ...merged, params };
+}
+
+// A kind's schema sees the params alone; its issues are moved under `params`,
+// so an error names `params.cadence` rather than a spec field `cadence`.
+function parseParams(def: EffectKindDef, params: unknown): unknown {
+  const result = def.schema.safeParse(params);
+  if (result.success) return result.data;
+  throw new z.ZodError(result.error.issues.map((issue) => ({ ...issue, path: ['params', ...issue.path] })));
 }
 
 export function specWithDefaults<P = Record<string, unknown>>(kind: string, params?: Partial<P>): EffectSpec {

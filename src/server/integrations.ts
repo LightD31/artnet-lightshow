@@ -13,7 +13,7 @@ import { keyForSpotify, keyForQuery, keyForProlinkTrack } from '../analysis-cach
 import HybridSource from '../hybrid-source.ts';
 import { sampleAutoPosition } from './auto-position.ts';
 import { gridFromAnalysis } from '../shared/beat-clock.ts';
-import { messageOf } from '../errors.ts';
+import { HttpError, messageOf } from '../errors.ts';
 import { audioToTempWav } from '../audio-file.ts';
 import { applyRekordbox } from '../rekordbox-analysis.ts';
 import { AutoSync } from '../auto-sync.ts';
@@ -23,6 +23,10 @@ import { settings } from './settings.ts';
 import { baseEffect, identify, setAudioSource } from './engine.ts';
 import { AudioFeatures, feedOf, resolveDetectors } from './audio-features.ts';
 import { BIN_HZ } from '../shared/spectrum-bands.ts';
+import { requiresAcknowledgement } from '../shared/effects/registry.ts';
+import { EffectLibrary } from './effect-library.ts';
+import { PaletteStore } from './palette-store.ts';
+import { configFile } from './config-dir.ts';
 import type { Server } from 'socket.io';
 import type AutoShow from '../auto-show.ts';
 import type { AnalysisCache } from '../analysis-cache.ts';
@@ -41,6 +45,7 @@ import type { DeezerState } from './validation.ts';
 import type { NowPlaying } from '../types/playback.ts';
 import type { AudioFrame } from '../shared/effects/audio-frame.ts';
 import type { Detectors } from './audio-features.ts';
+import type { EffectSpec } from '../shared/effects/types.ts';
 
 /** Everything the integrations wire together. */
 export interface IntegrationDeps {
@@ -53,6 +58,9 @@ export interface IntegrationDeps {
   autoShow: AutoShow;
   analysisCache?: AnalysisCache | null;
   liveInput?: LiveInput | null;
+  /** The effect library and the effect palettes; the ones in config/ unless a test stands in. */
+  effectLibrary?: EffectLibrary | null;
+  paletteStore?: PaletteStore | null;
 }
 
 /** Which source the auto show follows. */
@@ -93,7 +101,7 @@ function reportAnalysisError(label: string, err: unknown): void {
 // LINK, auto-show) into the engine + state. Returns the integration handle that
 // routes (src/server/routes/) and sockets.ts call back into.
 function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolink, autoShow, analysisCache = null,
-  liveInput = null }: IntegrationDeps) {
+  liveInput = null, effectLibrary = null, paletteStore = null }: IntegrationDeps) {
   // Slot statuses, one per upcoming track up to state.autoPrefetchDepth.
   // slots[0] is the immediate next track (back-compat with the old
   // spotifyNext shape — that field still mirrors slots[0]).
@@ -1023,12 +1031,27 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   const statusTimer = setInterval(guarded('status-broadcast', broadcast), 1000);
   if (statusTimer.unref) statusTimer.unref();
 
+  // ─── The effect library ─────────────────────────────────────────────────
+  // The presets and palettes saved on this server. A new spec saved over the
+  // preset on stage replaces what the rig plays at once, so it is admitted as
+  // starting it would be; a preset not playing is only being edited.
+  const library = {
+    effects: effectLibrary ?? new EffectLibrary(configFile('effects.json')).load(),
+    palettes: paletteStore ?? new PaletteStore(configFile('palettes.json')).load(),
+  };
+  library.effects.setAdmission((id: string, spec: EffectSpec) => {
+    if (id === state.pattern && requiresAcknowledgement(spec) && !settings.get('safety.photosensitivityAcknowledged')) {
+      throw new HttpError(409, 'photosensitivity acknowledgement required');
+    }
+  });
+
   return {
     broadcast,
     publisher,
     warmer,
     // The audio features and their summary, for the audio route.
     audio: { features: audioFeatures, summary: audioSummary, detectors },
+    library,
     hybrid,
     prefetchNextFromQueue,
     clearSpotifyNext: () => {

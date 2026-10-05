@@ -44,7 +44,8 @@ export interface CatalogueFamily {
   kinds: { kind: string; defaults: EffectKindDef['defaults']; capabilities: EffectKindDef['capabilities'] }[];
 }
 
-function deepFreeze<T>(value: T): T {
+/** Freeze a value and everything in it: tables nobody may change at run time. */
+export function deepFreeze<T>(value: T): T {
   if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
     Object.freeze(value);
     for (const child of Object.values(value)) deepFreeze(child);
