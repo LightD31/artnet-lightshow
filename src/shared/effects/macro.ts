@@ -9,7 +9,7 @@ import type { Colour } from '../../types/rig.ts';
 import type { Room } from '../room.ts';
 import { seedFrom } from './hash.ts';
 import { registerKind, requiresAcknowledgement, validateSpec } from './registry.ts';
-import { renderEffect } from './render.ts';
+import { renderEffect } from './render-instance.ts';
 import { EffectStepper } from './stepper.ts';
 import type { EffectFrame, EffectSlot, EffectSpec, PaletteEntry, Seed } from './types.ts';
 
