@@ -116,6 +116,8 @@ export interface Profile {
 export interface Point {
   x: number;
   y: number;
+  /** How high in the room, 0 (the floor) to 100 (the ceiling); mid-room when unset. */
+  height?: number;
 }
 
 /** A bar's line on the stage plot: its length, and its angle in degrees. */

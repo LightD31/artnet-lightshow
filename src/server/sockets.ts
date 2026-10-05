@@ -169,7 +169,12 @@ function attachSockets(io: Server, { midi, integrations }: {
         // address checks above, but it rides the same message so dragging the
         // slider does not need a second channel.
         if (maxBrightness !== undefined) fixture.maxBrightness = maxBrightness;
-        if (position !== undefined) fixture.position = position;
+        if (position !== undefined) {
+          // Plot moves only send x/y; retain the fixture's height until it is
+          // changed explicitly or the operator resets the whole position.
+          fixture.position = position && position.height === undefined && fixture.position?.height !== undefined
+            ? { ...position, height: fixture.position.height } : position;
+        }
         if (group !== undefined) fixture.group = group;
         if (geometry !== undefined) fixture.geometry = geometry;
         showStore.scheduleSave();
