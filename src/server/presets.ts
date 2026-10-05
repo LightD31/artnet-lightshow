@@ -1,3 +1,7 @@
+import { CATALOGUE, presetById } from '../shared/effects/index.ts';
+import { ENERGY_KIND_BY_ID } from '../shared/effects/energy.ts';
+import { requiresAcknowledgement } from '../shared/effects/registry.ts';
+
 // Each entry defines a DMX range on channel 3. Speed-based functions map
 // the 0-255 strobeSpeed value into the [lo..hi] range (slow → fast).
 const STROBE_FUNCTIONS = [
@@ -147,27 +151,20 @@ const PATTERNS = [
   // After the party engines of the Hue apps (patterns.ts, "Party effects"):
   // they travel the room by where the lamps stand on the stage plot, and in
   // stage order on a rig nobody has placed. `party` groups them in the picker.
-  { id: 'position-chase', name: 'Position Chase', desc: 'A domino running across the room by position, turning a quarter every run', party: true },
-  { id: 'radial-pulse',   name: 'Radial Pulse',   desc: 'A ring from the middle of the room out to its edge once a bar, driven by the bass', party: true },
-  { id: 'spatial-wash',   name: 'Spatial Wash',   desc: 'A soft crest of the look\'s colours rolling across the room, turning a quarter every bar', party: true },
-  { id: 'bounce-scan',    name: 'Bouncing Scan',  desc: 'A bright line sweeping across the room and back every bar', party: true },
-  { id: 'streak',         name: 'Streak',         desc: 'A comet with a long tail across the room on two events in three, either way', party: true },
-  { id: 'starlight',      name: 'Starlight',      desc: 'A third of the lamps light on every step, each in its own colour, and fade', party: true },
-  { id: 'breathe',        name: 'Breathe',        desc: 'The whole room swells and falls as one over a bar, the colour drifting round the look', party: true },
-  { id: 'volume-gate',    name: 'Volume Gate',    desc: 'A slow wash across the room that opens with how loud the music is', party: true },
-  { id: 'confetti',       name: 'Confetti',       desc: 'Three lamps in four pop in their own colours on every step, or on the kick, and die away', party: true },
-  { id: 'anchor-fill',    name: 'Anchor Fill',    desc: 'The room filled corner by corner on every step, the next colour over the last', party: true },
-  { id: 'halves',         name: 'Halves',         desc: 'Front against back, then left against right, in A and B, swapping every other time', party: true },
-  { id: 'flip',           name: 'Flip',           desc: 'The four corners of the room, one diagonal in A and the other in B, swapping every step', party: true },
-  { id: 'room-wave',      name: 'Room Wave',      desc: 'A wave of the look\'s colours crossing the room once a bar, on a heading that turns every lap', party: true },
-  { id: 'ring-strobe',    name: 'Ring Strobe',    desc: 'One lamp at a time round the ring of the room, a flash on every step, never a lamp over five a second', party: true },
-  { id: 'ring-backlit',   name: 'Ring Backlit',   desc: 'The ring strobe with the rest of the room parked on colour B', party: true },
-  { id: 'fireworks',      name: 'Fireworks',      desc: 'A burst on one lamp on every step, spreading to its neighbours and dying away over a bar', party: true },
-  { id: 'flashes',        name: 'Flashes',        desc: 'A third of the lamps, drawn afresh on every step, flash hard and are cut', party: true },
-  { id: 'swirl',          name: 'Swirl',          desc: 'The look\'s colours laid round the room by angle and turning, a turn every eight steps', party: true },
+  // Named and described in the effect catalogue, which keeps them as its
+  // legacy rows beside the presets they were modelled on.
+  ...CATALOGUE.filter((p) => p.legacy).map(({ id, name, desc, party }) => ({ id, name, desc, party })),
 ];
 
 const PATTERN_IDS = PATTERNS.map((p) => p.id);
+
+// Every other built-in preset, as the pickers list it after the patterns.
+// `rapidFlash` is the effective requirement, parameters and macro steps
+// included, so a picker marks what the renderer will refuse unacknowledged.
+const PRESET_ROWS = CATALOGUE.flatMap((p) => p.legacy ? [] : [{
+  id: p.id, name: p.name, desc: p.desc, ...(p.party ? { party: true } : {}), ...(p.pixel ? { pixel: true } : {}),
+  app: p.app, family: p.family, rapidFlash: requiresAcknowledgement(p.spec), scope: p.spec.scope ?? null,
+}]);
 
 // ── Energy overrides ────────────────────────────────────────────────────────
 //
@@ -189,18 +186,14 @@ const PATTERN_IDS = PATTERNS.map((p) => p.id);
 // `kill` is not master blackout: the master is a latching switch on the whole
 // rig, this is momentary and auto-clears, which is what you want under a thumb
 // on a drop.
-const ENERGY_EFFECTS = [
-  { id: 'white-strobe', name: 'White Strobe',  desc: 'Cold white, fastest strobe' },
-  { id: 'color-strobe', name: 'Colour Strobe', desc: 'Colour A, fastest strobe' },
-  { id: 'blinder',      name: 'Blinder',       desc: 'Every emitter at full — the brightest the rig goes' },
-  { id: 'uv-wash',      name: 'UV Wash',       desc: 'Blacklight — UV alone, no strobe' },
-  { id: 'kill',         name: 'Kill',          desc: 'Everything out for as long as it is held' },
-  { id: 'glow',         name: 'Glow',          desc: 'A soft lift in the current colour — the accent quiet music can take' },
-  // The hold-to-strobe pad of the Hue party apps (look-math.ts HOLD_STROBE):
-  // flashes in the look's colours on the beat grid, the running look showing
-  // through between them.
-  { id: 'palette-strobe', name: 'Palette Strobe', desc: 'Flashes in the look\'s colours on the beat over the running look, up to five a second' },
-];
+// The six energy kinds under their old ids, then the hold-to-strobe pad of the
+// Hue party apps (look-math.ts HOLD_STROBE): flashes in the look's colours on
+// the beat grid, the running look showing through between them. Labels and
+// descriptions are the catalogue's control presets'.
+const ENERGY_EFFECTS = [...Object.keys(ENERGY_KIND_BY_ID), 'palette-strobe'].map((id) => {
+  const { name, desc } = presetById(id)!;
+  return { id, name, desc };
+});
 
 const ENERGY_EFFECT_IDS = ENERGY_EFFECTS.map((e) => e.id);
 
@@ -213,7 +206,8 @@ const ENERGY_EFFECT_IDS = ENERGY_EFFECTS.map((e) => e.id);
 //
 // Lives here, with the other domain tables, because the settings store, the
 // patch validator, the MIDI surface and the auto show all need it, and this is
-// the only module among them that requires nothing itself.
+// the only module among them that requires none of the others (only the
+// shared effect catalogue).
 const SYNC_OFFSET_LIMIT_MS = 2000;
 
 // 'hybrid' takes its content from Spotify (track identity, ISRC, duration and
@@ -235,6 +229,7 @@ export {
   COLOR_PRESETS,
   PATTERNS,
   PATTERN_IDS,
+  PRESET_ROWS,
   ENERGY_EFFECTS,
   ENERGY_EFFECT_IDS,
   AUTO_SOURCES,

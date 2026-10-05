@@ -72,10 +72,11 @@ test('every Light DJ preset in the catalogue validates', () => {
 test('the catalogue builds whichever effect module a host loads first', () => {
   // The macro kind renders its steps; loading the whole registry from inside it
   // once built the catalogue before the macro kind existed.
-  for (const first of ['macro.ts', 'render.ts', 'catalogue.ts', 'ldj-ids.ts', 'ldj-channel.ts', 'registry.ts']) {
+  // The catalogue also reads the Hue Dynamics, Disco and energy modules' own tables.
+  for (const first of ['macro.ts', 'render.ts', 'catalogue.ts', 'ldj-ids.ts', 'ldj-channel.ts', 'registry.ts', 'hd.ts', 'disco.ts', 'energy.ts']) {
     const dir = new URL('../../src/shared/effects/', import.meta.url).href;
     const script = `await import('${dir}${first}'); const m = await import('${dir}index.ts'); console.log(m.CATALOGUE.length);`;
-    assert.strictEqual(execFileSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' }).trim(), '162', first);
+    assert.strictEqual(execFileSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' }).trim(), '214', first);
   }
 });
 
@@ -322,7 +323,8 @@ test('the 28 built-in palettes: Light DJ\'s 26 seeds in its order with their exa
 });
 
 test('families group every Light DJ row and kind, as plain data', () => {
-  const ids = FAMILIES.map((f) => f.id);
+  const ldjFamilies = FAMILIES.filter((f) => f.app === 'ldj');
+  const ids = ldjFamilies.map((f) => f.id);
   assert.deepStrictEqual(ids, ['ldj.channel', 'ldj.iteration', 'ldj.rotation', 'ldj.wave', 'ldj.matrix', 'ldj.studio', 'ldj.visualizer', 'ldj.bitmap', 'ldj.macro']);
   for (const p of ldjRows()) {
     const family = FAMILIES.find((f) => f.id === p.family);
@@ -331,7 +333,7 @@ test('families group every Light DJ row and kind, as plain data', () => {
   // Every registered Light DJ kind belongs to exactly one engine family; the
   // Scene Maker family holds the macro kind and the renderer Fireworks plays.
   const ldjKinds = [...KINDS.values()].filter((def) => def.app === 'ldj').map((def) => def.kind).sort();
-  const listed = FAMILIES.filter((f) => f.id !== 'ldj.macro').flatMap((f) => f.kinds.map((k) => k.kind)).sort();
+  const listed = ldjFamilies.filter((f) => f.id !== 'ldj.macro').flatMap((f) => f.kinds.map((k) => k.kind)).sort();
   assert.deepStrictEqual(listed, ldjKinds);
   assert.deepStrictEqual(FAMILIES.find((f) => f.id === 'ldj.macro').kinds.map((k) => k.kind).sort(), ['ldj.SceneMakerFirework', 'macro']);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(FAMILIES)), FAMILIES, 'no functions or schemas');

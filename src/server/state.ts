@@ -1,7 +1,7 @@
 import { BUILTIN_PROFILE_ID, BUILTIN_PROFILE_IDS, HUE_PROFILE_IDS, getProfile, listProfiles } from './profiles.ts';
 import { settings } from './settings.ts';
 import * as universes from './universes.ts';
-import { COLOR_PRESETS, PATTERNS, STROBE_FUNCTIONS, ENERGY_EFFECTS, SYNC_OFFSET_LIMIT_MS } from './presets.ts';
+import { COLOR_PRESETS, PATTERNS, PRESET_ROWS, STROBE_FUNCTIONS, ENERGY_EFFECTS, SYNC_OFFSET_LIMIT_MS } from './presets.ts';
 import { PALETTES } from './palettes.ts';
 import { conductor } from './conductor.ts';
 import { isArmed } from './armed.ts';
@@ -286,13 +286,17 @@ let extrasProvider: () => Record<string, unknown> = () => ({});
 
 function setExtrasProvider(fn: () => Record<string, unknown>): void { extrasProvider = fn; }
 
+// The legacy patterns, then every built-in effect preset: one id space, as
+// `pattern` may name either.
+const PATTERN_CATALOG = [...PATTERNS, ...PRESET_ROWS];
+
 // The static half of the snapshot: fixed at boot and identical on every
 // broadcast. It was 63% of a 7 KB payload going out 10 times a second, so it is
 // now sent once per connection instead.
 function getCatalogs() {
   return {
     colorPresets: COLOR_PRESETS,
-    patterns: PATTERNS,
+    patterns: PATTERN_CATALOG,
     energyEffects: ENERGY_EFFECTS,
     strobeFunctions: STROBE_FUNCTIONS,
     palettes: PALETTES,
