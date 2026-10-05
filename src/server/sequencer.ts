@@ -400,8 +400,12 @@ export interface SequencerOptions {
   palette?: (id: string) => string[] | null;
   /** Put on what the sequence changes: the main thread's patch, from the sequence (never as a hand on a control). */
   apply?: (patch: SequencePatch) => void;
-  /** The master and tempo on the rig now, which an automation starts from. */
-  current?: () => { masterDimmer: number; bpm: number };
+  /**
+   * The master and tempo on the rig now, which an automation starts from,
+   * and the palette override on it (hex, null for none) when the rig can say:
+   * the random palette on loop picks another one.
+   */
+  current?: () => { masterDimmer: number; bpm: number; paletteOverride?: readonly string[] | null };
   /** Set the audio mode a sequence asks for when it starts. */
   musicMode?: (mode: AudioMode) => void;
   /** Throws (409) for an effect that may not play yet: the photosensitivity gate. */
@@ -423,7 +427,7 @@ export class Sequencer {
   declare _resolve: EffectResolver;
   declare _paletteOf: (id: string) => string[] | null;
   declare _apply: (patch: SequencePatch) => void;
-  declare _current: () => { masterDimmer: number; bpm: number };
+  declare _current: () => { masterDimmer: number; bpm: number; paletteOverride?: readonly string[] | null };
   declare _musicMode: (mode: AudioMode) => void;
   declare _admit: (spec: EffectSpec) => void;
   declare _now: () => number;
@@ -1075,10 +1079,14 @@ export class Sequencer {
     }
   }
 
-  // Light DJ's random palette on loop: another built-in palette, never the one on.
+  // Light DJ's random palette on loop: another built-in palette, never the
+  // one on: the override on the rig (a hand may have changed it since), else
+  // the one the sequence last put on.
   _randomPalette(): void {
     const ids = BUILTIN_PALETTES.map((p) => p.id);
-    const now = this._palette === null ? null : ids.indexOf(this._palette);
+    const live = this._current().paletteOverride;
+    const on = live === undefined ? this._palette : live === null ? null : ids.find((id) => samePalette(this._paletteOf(id), live)) ?? null;
+    const now = on === null ? null : ids.indexOf(on);
     const id = ids[pickNotLast(this._rng.seed, this._rng.iter++, ids.length, now, PALETTE_KEY)];
     const colours = this._paletteOf(id);
     if (!colours) return;
@@ -1200,6 +1208,11 @@ const PALETTE_KEY = 37;
 function freshSeed(): Seed {
   const bytes = crypto.randomBytes(16);
   return [bytes.readUInt32LE(0), bytes.readUInt32LE(4), bytes.readUInt32LE(8), bytes.readUInt32LE(12)];
+}
+
+/** The same colours in the same order, however the hex is cased. */
+function samePalette(a: readonly string[] | null, b: readonly string[]): boolean {
+  return !!a && a.length === b.length && a.every((hex, i) => hex.toUpperCase() === b[i].toUpperCase());
 }
 
 function newAutomation(a: Automation | null): AutomationRun | null {

@@ -272,6 +272,11 @@ test('a hand on the master or the tempo ends the sequence\'s automation of it; i
   processTap();
   processTap();
   assert.equal(automation().tempo, null);
+  // The palette override a hand puts on is what the random palette on loop picks against.
+  applyPatch({ paletteOverride: ['#FF0000', '#00BFFF'] });
+  assert.deepEqual(s.integrations.sequence.sequencer._current().paletteOverride, ['#FF0000', '#00BFFF']);
+  applyPatch({ paletteOverride: null });
+  assert.equal(s.integrations.sequence.sequencer._current().paletteOverride, null);
 });
 
 test('a sequence\'s audio mode that the settings file will not take leaves the mode, and the sequence plays', async (t) => {

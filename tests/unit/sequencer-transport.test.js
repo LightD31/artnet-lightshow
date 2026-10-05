@@ -58,7 +58,7 @@ const PALETTE_HEX = Object.fromEntries(BUILTIN_PALETTES.map((p) => [p.id, p.colo
  * live master and tempo; the clock in milliseconds is the test's.
  */
 function rig({ master = 255, bpm = 120, seed = [1, 2, 3, 4], admit = () => {}, musicMode = null } = {}) {
-  const live = { master, bpm, ms: 0 };
+  const live = { master, bpm, paletteOverride: null, ms: 0 };
   const applied = [];
   const modes = [];
   const s = new Sequencer({
@@ -68,8 +68,9 @@ function rig({ master = 255, bpm = 120, seed = [1, 2, 3, 4], admit = () => {}, m
       applied.push(patch);
       if (patch.masterDimmer !== undefined) live.master = patch.masterDimmer;
       if (patch.bpm !== undefined) live.bpm = patch.bpm;
+      if (patch.paletteOverride !== undefined) live.paletteOverride = patch.paletteOverride;
     },
-    current: () => ({ masterDimmer: live.master, bpm: live.bpm }),
+    current: () => ({ masterDimmer: live.master, bpm: live.bpm, paletteOverride: live.paletteOverride }),
     musicMode: musicMode ?? ((mode) => modes.push(mode)),
     admit,
     now: () => live.ms,
@@ -263,6 +264,22 @@ test('initialPalette sets the override on play; randomPaletteOnLoop changes it a
   const count = r.applied.length;
   r.at(beat += 6);
   assert.equal(r.applied.length, count + 1);
+  // A hand put another palette on since: the next wrap picks neither that one, whichever seed.
+  const idOf = (hex) => Object.keys(PALETTE_HEX).find((p) => JSON.stringify(PALETTE_HEX[p].map((c) => c.toUpperCase())) === JSON.stringify(hex.map((c) => c.toUpperCase())));
+  for (let seed = 1; seed <= 60; seed++) {
+    const h = rig({ seed: [seed, 2, 3, 4] });
+    h.s.load(sequence({ clips: [clip('A', 'a', 0, 2)], loop: { on: true, startBeat: 0, endBeat: 2 }, options: { initialPalette: 'greenPink', randomPaletteOnLoop: true } }));
+    h.s.play();
+    h.at(0);
+    h.live.paletteOverride = PALETTE_HEX.redCyan.map((c) => c.toLowerCase());
+    h.at(2.5);
+    assert.equal(h.applied.length, 2, `seed ${seed}`);
+    assert.notEqual(idOf(h.applied[1].paletteOverride), 'redCyan', `seed ${seed}: the one on`);
+    // Cleared by hand: any built-in palette may go on.
+    h.live.paletteOverride = null;
+    h.at(4.5);
+    assert.equal(h.applied.length, 3, `seed ${seed}: a palette each wrap`);
+  }
   // Play again, pause and resume: no real start, so nothing goes on again.
   const before = r.applied.length;
   r.s.play();

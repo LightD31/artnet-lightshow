@@ -141,7 +141,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
         }
         broadcastSoon();
       },
-      current: () => ({ masterDimmer: state.masterDimmer, bpm: state.bpm }),
+      current: () => ({ masterDimmer: state.masterDimmer, bpm: state.bpm, paletteOverride: state.paletteOverride ? state.paletteOverride.map(toHex) : null }),
       musicMode: (mode) => {
         // The settings file refusing the write leaves the mode as it was; the sequence still plays.
         try {
