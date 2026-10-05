@@ -52,7 +52,7 @@ import { EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues,
 import { gridFromAnalysis, beatPositionAt, localBpm, anchorStep, stepAt, motionAdvance } from './beat-clock.ts';
 import { canonical, effectContentKey, hdGuarded, relaunchEffect, renderEffectLayer, renderVoices, voiceAnchor, voiceLaunchKey, voiceLayout } from './effects/layer.ts';
 import { energyEffectSpec } from './effects/catalogue.ts';
-import { requiresAcknowledgement, validateSpec } from './effects/registry.ts';
+import { requiresAcknowledgement, ridesLevel, validateSpec } from './effects/registry.ts';
 import { EffectStepper } from './effects/stepper.ts';
 import { HdFlashGuard } from './effects/flash-guard.ts';
 import { seedFrom } from './effects/hash.ts';
@@ -853,7 +853,9 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
         dims[u] = 255 * voice.level;
       } else {
         cols[u] = below;
-        dims[u] = target?.level === 0 ? 0 : below.dim * w.expression.level;
+        // Glow rides the level on its own curve (renderer.ts lightOf): not multiplied again.
+        const rides = ridesLevel(clip ? clipKind[u] : baseKind[u]);
+        dims[u] = target?.level === 0 ? 0 : below.dim * (rides ? 1 : w.expression.level);
       }
       tops[u] = voice ? voice.kind ?? null : clip ? clipKind[u] : baseKind[u];
       if (hdGuarded(tops[u])) guarded = true;

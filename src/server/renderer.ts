@@ -31,7 +31,7 @@ import { HD_MASTER_DEFAULTS } from '../shared/effects/types.ts';
 import { canonical, effectContentKey, hdGuarded, relaunchEffect, renderEffectLayer, renderVoices, voiceAnchor, voiceLaunchKey, voiceLayout } from '../shared/effects/layer.ts';
 import { energyEffectSpec } from '../shared/effects/catalogue.ts';
 import { endSequence, newSequenceRun, renderSequenceLayer, retable } from '../shared/effects/sequence.ts';
-import { kindOf } from '../shared/effects/registry.ts';
+import { kindOf, ridesLevel } from '../shared/effects/registry.ts';
 import { EffectStepper } from '../shared/effects/stepper.ts';
 import { HdFlashGuard } from '../shared/effects/flash-guard.ts';
 import { seedFrom } from '../shared/effects/hash.ts';
@@ -948,7 +948,8 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     }
 
     const pinned = fix.override && fix.override.enabled;
-    if (!energy && !pinned) dim *= expression.level;
+    // Glow rides the level on its own curve, as the base or a clip as it does as a voice: not multiplied again.
+    if (!energy && !pinned && !ridesLevel(clip ? seqKind[u] : baseKind[u])) dim *= expression.level;
     if (target?.level === 0 && !energy && !pinned) dim = 0;
     return { col, dim, strobe };
   }

@@ -573,3 +573,51 @@ test('the preview renders the same clips', () => {
   assert.ok(keys(0) > 3, 'the fade cycle moves');
   assert.ok(keys(3) >= 2, 'the track\'s clip comes and goes');
 });
+
+test('glow rides the expression level on its own curve as the base and as a clip, as it does as a voice: never multiplied by it again', () => {
+  const GLOW = presetById('energy.glow').spec;
+  const WHITE = paint('#FFFFFF');
+  const half = { showDynamics: { level: 0.5 } };
+  const settled = (spec, patch) => {
+    const r = rig();
+    const t = table(1, [lane('a')], [tclip('c', 'a', 0, 1e6, spec, { fixtureIds: [10] })]);
+    r.renderer.setSequence(t);
+    let out;
+    for (let k = 0; k < 400; k++) out = r.at(k * FRAME_MS, { ...half, ...(patch === 'clip' ? playing(t) : patch) });
+    return out[10].dim;
+  };
+  const voice = { id: 'v', spec: GLOW, targets: [10], tier: 'voice', launchSeq: 1, startedAtMs: 0, untilMs: null, anchorBeat: 0, seed: seedFrom('v') };
+  assert.equal(settled(GLOW, { voices: [voice] }), 203, 'as a voice: 150 + 105 × 0.5');
+  assert.equal(settled(GLOW, { effect: GLOW }), 203, 'as the base');
+  assert.equal(settled(GLOW, 'clip'), 203, 'as a clip');
+  // Any other kind follows the level as a base layer always has.
+  assert.equal(settled(WHITE, 'clip'), 128);
+  assert.equal(settled(WHITE, { effect: WHITE }), 128);
+});
+
+test('the preview plays glow\'s own curve too, as the base and as a clip', () => {
+  const GLOW = presetById('energy.glow').spec;
+  const BEATS = Array.from({ length: 41 }, (_, i) => i * 0.5);
+  const half = { showDynamics: { level: 0.5, bass: 0.5, vocal: 0.5, air: 0.3, width: 0.5, motion: 0.3, decay: 0.25 } };
+  const t = table(1, [lane('a')], [tclip('g', 'a', 0, 1e6, GLOW, { fixtureIds: [10] })]);
+  const transport = { startBeat: 0, loop: null, generation: 0 };
+  const times = Array.from({ length: Math.floor(4000 / FRAME_MS) + 1 }, (_, k) => k * FRAME_MS);
+  const rigOf = buildRig(PARS, getProfile);
+  for (const [label, look, options] of [['base', { pattern: 'energy.glow' }, {}], ['clip', {}, { sequence: { table: t, transport } }]]) {
+    const store = universes.createUniverseStore(universes.allocateShared());
+    const renderer = createRenderer({ profileOf: getProfile, profilesRevision, now: 0 });
+    renderer.setSequence(t);
+    const grid = makeGrid(BEATS);
+    const sample = createPreviewSampler([{ timeMs: 0, action: 'patch', data: { ...LOOK, ...look, ...half, bpm: 120 } }], { beats: BEATS },
+      { ...options, resolveEffect: (id) => (id === 'energy.glow' ? GLOW : null) });
+    for (const ms of times) {
+      const reading = { beatPos: beatPositionAt(grid, ms), bpm: localBpm(grid, ms), epoch: 0 };
+      const given = input({ ...look, ...half, ...(label === 'base' ? { effect: GLOW } : { sequenceRevision: t.revision, sequenceTransport: transport }) });
+      renderer.frame(given, reading, ms, store, 0);
+      const lights = sample(ms, PARS, COLOR_PRESETS, rigOf);
+      rigLights(store, PARS).forEach((light, u) => {
+        assert.deepEqual(Object.fromEntries(Object.keys(light).map((k) => [k, lights[u][k]])), light, `${label}: light ${u} at ${ms.toFixed(3)} ms`);
+      });
+    }
+  }
+});
