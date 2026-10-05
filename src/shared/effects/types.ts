@@ -74,6 +74,10 @@ export interface EffectFrame {
   /** Runtime-only access; ordered colour refreshes become visible on the next render. */
   paletteAccess?: PaletteAccess;
   audio: AudioFrame | null; audioMode: AudioMode; master: HdMaster; seed: Seed; acknowledged: boolean; hueStrobe: 'flash' | 'pulse';
+  /** Fixture id per room slot, repeated on each cell of one fixture; Disco's manual bands are keyed by it. Absent: the slot index. */
+  fixtureIds?: readonly (number | string)[];
+  /** A manual strobe (hold, burst or latch) runs: Disco's automatic strobe stands down. Absent: false. */
+  manualStrobeActive?: boolean;
 }
 /** What callers hand renderEffect; it fills in the rest per instance. */
 export type FrameBase = Omit<EffectFrame, 'spec' | 'palette' | 'roll'>;

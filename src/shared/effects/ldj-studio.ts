@@ -223,8 +223,11 @@ function tick(state: StudioState): void {
   state.pendingColour = null;
 }
 
-/** Advance the supplied state only; no timers, room handles or providers live inside it. */
-export function advanceStudio(state: StudioState, nowMs: number, bpm: number, access?: PaletteAccess): void {
+/**
+ * Advance the supplied state only; no timers, room handles or providers live inside it.
+ * `onFrame` runs after each lamp frame: the Visualizer steps its spikes on the bed's own clock.
+ */
+export function advanceStudio(state: StudioState, nowMs: number, bpm: number, access?: PaletteAccess, onFrame?: () => void): void {
   if (!Number.isFinite(nowMs)) throw new RangeError('Studio time must be finite');
   resolveColours(state, access);
   state.lastBpm = tempo(bpm);
@@ -232,7 +235,7 @@ export function advanceStudio(state: StudioState, nowMs: number, bpm: number, ac
   const frames = Math.floor((state.remainderMs + 1e-8) / LDJ_FRAME_MS);
   if (!Number.isSafeInteger(frames) || !Number.isSafeInteger(state.frame + frames)) throw new RangeError('Studio frame count exceeds the safe integer range');
   state.remainderMs = Math.max(0, state.remainderMs - frames * LDJ_FRAME_MS);
-  for (let i = 0; i < frames; i++) tick(state);
+  for (let i = 0; i < frames; i++) { tick(state); onFrame?.(); }
 }
 
 export function readStudio(state: StudioState, slot: number): { colour: Colour; bri: number } {
