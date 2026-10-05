@@ -1,5 +1,6 @@
 // These looks sample a fixed 22 Hz phase. Their noise field belongs to the
-// instance, so a cloned rehearsal resumes the same colours and motion.
+// instance, so a cloned rehearsal resumes the same colours and motion; it is
+// a constant table, which a clone shares rather than copies.
 
 import { z } from 'zod';
 import type { Colour } from '../../types/rig.ts';
@@ -7,6 +8,7 @@ import { hash01 } from './hash.ts';
 import { LDJ_FRAME_MS } from './ldj-engine.ts';
 import { hsbToColour, LDJ_RANDOM_HUES } from './palette.ts';
 import { registerKind } from './registry.ts';
+import { ConstantTable } from './stepper.ts';
 import type { EffectFrame, Seed } from './types.ts';
 
 const f32 = Math.fround;
@@ -38,8 +40,8 @@ export function mixColours(a: Colour, b: Colour, weightA: number): Colour {
   return { r: mix('r'), g: mix('g'), b: mix('b'), w: mix('w'), a: mix('a'), uv: mix('uv') };
 }
 
-/** A repeatable gradient field, with both edges of the requested 300-unit extent included. */
-export function createNoiseField(seed: Seed): number[][] {
+/** A repeatable gradient field, with both edges of the requested 300-unit extent included: rows are x, columns y. */
+export function createNoiseField(seed: Seed): ConstantTable {
   let random = (BigInt(Math.floor(hash01(seed, 61, 0) * 2 ** 32)) << 16n) | 0x330en;
   const lattice = Array.from({ length: 512 }, () => {
     random = (random * 25214903917n + 11n) & ((1n << 48n) - 1n);
@@ -58,12 +60,12 @@ export function createNoiseField(seed: Seed): number[][] {
     const high = lerp(gradient(lattice[left + 1], dx, f32(dy - 1)), gradient(lattice[right + 1], f32(dx - 1), f32(dy - 1)), fx);
     return f32(f32(lerp(low, high, fy) + 1) / 2);
   };
-  return Array.from({ length: 301 }, (_, x) => Array.from({ length: 301 }, (_, y) => noise(f32(x / 30), f32(y / 30))));
+  return new ConstantTable(301, 301, (x, y) => noise(f32(x / 30), f32(y / 30)));
 }
 
 interface RotationState {
   originMs: number; frame: number; angle: number; gradient: number;
-  nextAngle: number; nextGradient: number; noise: number[][] | null;
+  nextAngle: number; nextGradient: number; noise: ConstantTable | null;
 }
 
 for (const name of ['Swirl', 'Rotation', 'Beacon', 'Perlin', 'NorthernLights']) {
@@ -94,10 +96,10 @@ for (const name of ['Swirl', 'Rotation', 'Beacon', 'Perlin', 'NorthernLights']) 
           else { colour = palette[1 % palette.length]; level = f32(Math.sin(phase * Math.PI / 180) / 2 + .5); }
         } else if (noisy) {
           const multiplier = name === 'Perlin' ? 3 : 4, radius = name === 'Perlin' ? 60 : 40;
-          const centre = state.noise!.length / 2 - multiplier, cosine = Math.cos(state.angle);
+          const centre = state.noise!.rows / 2 - multiplier, cosine = Math.cos(state.angle);
           const x = Math.floor(radius * Math.abs(cosine) + centre + room.u[slot] * multiplier);
           const y = Math.floor(radius * cosine * Math.sin(state.angle) + centre + room.v[slot] * multiplier);
-          const value = Math.min(f32(.9999999), Math.max(0, state.noise![x][y]));
+          const value = Math.min(f32(.9999999), Math.max(0, state.noise!.at(x, y)!));
           if (name === 'Perlin') colour = padded[Math.trunc(f32(value * padded.length))];
           else {
             const position = f32(value * (padded.length - 1)), lo = Math.floor(position), hi = Math.ceil(position);

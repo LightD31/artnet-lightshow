@@ -4,7 +4,7 @@ import assert from 'node:assert';
 import { z } from 'zod';
 import { registerKind, validateSpec, kindOf, KINDS, specWithDefaults } from '../../src/shared/effects/registry.ts';
 import { renderEffect, compositeVoices, slotToWrite } from '../../src/shared/effects/render.ts';
-import { EffectStepper } from '../../src/shared/effects/stepper.ts';
+import { ConstantTable, EffectStepper } from '../../src/shared/effects/stepper.ts';
 import { EventAdmission } from '../../src/shared/effects/envelope.ts';
 import { parseHex, preparePalette, resolvePalette } from '../../src/shared/effects/palette.ts';
 import { HD_MASTER_DEFAULTS } from '../../src/shared/effects/types.ts';
@@ -240,6 +240,70 @@ test('a cloned stepper retains class methods and deep independent Map state', ()
   assert.strictEqual(original.nested[0].n, 1);
   copy.admission.reset();
   assert.strictEqual(original.admission.admit(1, 200), false);
+});
+
+test('a clone copies plain arrays and objects quickly and everything else property by property, keeping every alias', () => {
+  class Lamp { constructor() { this.level = 0.5; this.colour = { r: 1 }; } brighter() { return this.level * 2; } }
+  const shared = { r: 9 };
+  const tagged = { r: 3 };
+  Object.defineProperty(tagged, Symbol('binding'), { value: { index: 2 } });
+  const hidden = { visible: 1 };
+  Object.defineProperty(hidden, 'secret', { value: [1, 2], enumerable: false, writable: true, configurable: true });
+  const holey = [1, , 3]; // eslint-disable-line no-sparse-arrays
+  const extra = [1, 2]; extra.label = 'kept';
+  const frozen = Object.freeze([{ n: 1 }]);
+  const withGetter = { get now() { return 7; } };
+  const named = { constructor: 'not a function', ['__proto__']: null, plain: 1 };
+  const cyclic = { list: [] }; cyclic.list.push(cyclic);
+  const state = { lamps: [new Lamp(), new Lamp()], a: shared, b: shared, tagged, hidden, holey, extra, frozen, withGetter, named, cyclic,
+    numbers: Array.from({ length: 1000 }, (_, i) => i / 3) };
+  const s = new EffectStepper();
+  s.get('x', () => state, 0);
+  const copy = s.clone().get('x', () => null, 1);
+
+  assert.notStrictEqual(copy, state);
+  assert.ok(copy.lamps[0] instanceof Lamp && copy.lamps[0].brighter() === 1, 'class and methods');
+  assert.notStrictEqual(copy.lamps[0].colour, state.lamps[0].colour);
+  assert.strictEqual(copy.a, copy.b, 'one object reached twice is one copy');
+  assert.notStrictEqual(copy.a, shared);
+  assert.deepStrictEqual(Object.getOwnPropertySymbols(copy.tagged).map((k) => copy.tagged[k]), [{ index: 2 }], 'a symbol property kept');
+  assert.deepStrictEqual(copy.hidden.secret, [1, 2]);
+  assert.strictEqual(Object.getOwnPropertyDescriptor(copy.hidden, 'secret').enumerable, false, 'a hidden property stays hidden');
+  assert.strictEqual(copy.holey.length, 3);
+  assert.ok(!(1 in copy.holey), 'a hole stays a hole');
+  assert.strictEqual(copy.extra.label, 'kept');
+  assert.ok(Object.isFrozen(copy.frozen) && copy.frozen !== frozen, 'a frozen array is copied, frozen');
+  assert.notStrictEqual(copy.frozen[0], frozen[0], 'shallow-frozen is not immutable: its items are copied too');
+  assert.strictEqual(typeof Object.getOwnPropertyDescriptor(copy.withGetter, 'now').get, 'function', 'a getter stays a getter');
+  assert.strictEqual(copy.named.constructor, 'not a function');
+  assert.ok(Object.hasOwn(copy.named, '__proto__') && copy.named.__proto__ === null && Object.getPrototypeOf(copy.named) === Object.prototype,
+    'an own __proto__ is a property, not the prototype');
+  assert.strictEqual(copy.cyclic.list[0], copy.cyclic, 'a cycle closes on the copy');
+  assert.deepStrictEqual(copy.numbers, state.numbers);
+  copy.numbers[5] = -1; copy.lamps[1].level = 0;
+  assert.strictEqual(state.numbers[5], 5 / 3);
+  assert.strictEqual(state.lamps[1].level, 0.5);
+});
+
+test('a constant table is shared by a clone, and nothing can change it', () => {
+  const table = new ConstantTable(3, 2, (row, column) => row * 10 + column);
+  assert.deepStrictEqual([table.rows, table.columns, table.at(2, 1), table.at(3, 0), table.at(0, 2), table.at(-1, 0), table.at(0.5, 0)], [3, 2, 21, undefined, undefined, undefined, undefined]);
+  assert.ok(Object.isFrozen(table));
+  assert.throws(() => { table.rows = 1; }, TypeError);
+  assert.throws(() => { table.values = []; }, TypeError);
+  assert.deepStrictEqual(Object.keys(table).sort(), ['columns', 'rows'], 'its values are not reachable');
+  assert.throws(() => new ConstantTable(1.5, 1, () => 0), RangeError);
+  const s = new EffectStepper();
+  const state = s.get('x', () => ({ table, frozenRows: Object.freeze([Object.freeze([1, 2])]) }), 0);
+  const copy = s.clone().get('x', () => null, 1);
+  assert.strictEqual(copy.table, table, 'shared');
+  assert.notStrictEqual(copy, state);
+  assert.notStrictEqual(copy.frozenRows, state.frozenRows, 'a frozen array of its own is still copied');
+  // A subclass may carry state of its own: it is copied, never shared.
+  class Counting extends ConstantTable {}
+  const sub = new Counting(1, 1, () => 4);
+  s.get('y', () => ({ sub }), 0);
+  assert.notStrictEqual(s.clone().get('y', () => null, 1).sub, sub);
 });
 
 test('palette preparation shares expiry and clone lifetime without occupying another instance id', () => {
