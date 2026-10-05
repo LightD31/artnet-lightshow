@@ -146,7 +146,49 @@ test('a bass hit lights up to three random bass lamps at full in a hue from the 
   // Bass hues 0..10000 are 0..54 degrees: red through orange to yellow.
   const { r, b } = out[on[0]].colour;
   assert.ok(r === 255 && b === 0 && hueOf(out[on[0]].colour) <= 55, JSON.stringify(out[on[0]].colour));
-  assert.ok(out.every((s) => s.strength === 1), 'Disco owns every lamp, dark ones too');
+  out.forEach((s, i) => assert.equal(s.strength, on.includes(i) ? 1 : 0, `slot ${i}: the hit lamps are owned, the rest show the layer below`));
+});
+
+test('a lamp is owned from its first command; before that the layer below shows, and a lamp in no band is owned dark', () => {
+  const BLACK = { colour: C(0, 0, 0), level: 0, strength: 1 }, CLEAR = { colour: C(0, 0, 0), level: 0, strength: 0 };
+  // Slot 1 is pinned to treble, slot 3 to the disabled voice band; 0 and 2 balance into bass.
+  const h = disco(row(4), { assign: { 1: 'treble', 3: 'voice' }, channels: channels({ 1: { enabled: false } }) });
+  assert.deepEqual(h.draw(quiet(0)), [CLEAR, CLEAR, CLEAR, BLACK]);
+  let out = h.draw(live(100, hop(1, { hit: BASS })));
+  assert.deepEqual(out.map((s) => [s.level, s.strength]), [[1, 1], [0, 0], [1, 1], [0, 1]]);
+  // The release floor is still the Disco's: a commanded lamp never hands back.
+  out = h.draw(quiet(1000));
+  close(out[0].level, L(40)); assert.equal(out[0].strength, 1);
+  assert.deepEqual([out[1], out[3]], [CLEAR, BLACK]);
+  // Treble's idle at 2000 starts from dark and takes the lamp over at once.
+  out = h.draw(quiet(2000));
+  assert.deepEqual([out[1].level, out[1].strength], [0, 1]);
+  close(h.draw(quiet(3000))[1].level, 0.5);
+  // Switching treble off leaves its pinned lamp in no band: dark and owned. Switching it back on
+  // hands the lamp, untouched since, to the layer below until the Disco next commands it.
+  h.inst.spec.params.channels[2].enabled = false;
+  assert.deepEqual(h.draw(quiet(3100))[1], BLACK);
+  h.inst.spec.params.channels[2].enabled = true;
+  assert.deepEqual(h.draw(quiet(3200))[1], CLEAR);
+  // Bass idled at 3000 (its idle is due 2 s after the hit, dispatched at the next render): slot 0 rises to full over 2000 ms.
+  const rise = (t) => L(40) + (1 - L(40)) * (t - 3000) / 2000;
+  const before = h.draw(quiet(3250))[0];
+  close(before.level, rise(3250));
+  // A lamp moving between enabled bands keeps the fade it is in: it matches a twin that never moved.
+  h.inst.spec.params.assign = { 0: 'treble', 1: 'treble', 3: 'voice' };
+  const moved = h.draw(quiet(3300))[0];
+  close(moved.level, rise(3300)); assert.equal(moved.strength, 1);
+  const twin = disco(row(4), { assign: { 1: 'treble', 3: 'voice' }, channels: channels({ 1: { enabled: false } }) });
+  for (const frame of [quiet(0), live(100, hop(1, { hit: BASS })), quiet(1000), quiet(2000), quiet(3000), quiet(3250)]) twin.draw(frame);
+  assert.deepEqual(moved, twin.draw(quiet(3300))[0]);
+});
+
+test('neural with channel 4 off renders owned dark and never idles', () => {
+  const h = disco(row(2), { style: 'neural', channels: channels({ 4: { enabled: false } }) });
+  const dark = Array.from({ length: 2 }, () => ({ colour: C(0, 0, 0), level: 0, strength: 1 }));
+  assert.deepEqual(h.draw(quiet(0)), dark);
+  assert.deepEqual(h.draw(live(100, hop(1, { mainFrequency: 0.5, amplitude: 1 }))), dark, 'a reading means nothing to a disabled channel');
+  assert.deepEqual(h.draw(quiet(3000)), dark, 'nor does the idle run');
 });
 
 test('the batch is the per-hit cap shared by the enabled bands, empty ones included, at least one lamp', () => {

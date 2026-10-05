@@ -63,8 +63,10 @@ const FLOOR_PER_THRESHOLD = 1 / 200000;
 const DRAW_KEY = 0xd15c0;
 const STROBE_STREAM = 5;
 
+// Neural reproduces the app's single-precision products, which move some hues a degree.
 const f32 = Math.fround;
 const clamp = (x: number, low: number, high: number) => Math.max(low, Math.min(high, x));
+// Audio features arrive as JSON; anything but a finite number reads as silence.
 const unit = (x: unknown) => typeof x === 'number' && Number.isFinite(x) ? clamp(x, 0, 1) : 0;
 const rgb = (r: number, g: number, b: number): Colour => ({ r, g, b, w: 0, a: 0, uv: 0 });
 const solid = (c: Colour): Colour => ({ r: c.r, g: c.g, b: c.b, w: c.w ?? 0, a: c.a ?? 0, uv: c.uv ?? 0 });
@@ -79,6 +81,7 @@ function hsvDegrees(degrees: number, saturation: number): Colour {
   const byte = (x: number) => Math.trunc(Math.max(x * 255, 0));
   return rgb(byte(r), byte(g), byte(b));
 }
+// Hue units clamp to 65534 as the app's converter does: 65535 is the same red.
 const toDegrees = (hue: number) => Math.trunc(clamp(Math.trunc(Number.isFinite(hue) ? hue : 0), 0, 65534) / HUE_PER_DEGREE);
 const hdColour = (degrees: number, saturation: number) =>
   hsvDegrees(degrees, clamp(Math.trunc(Number.isFinite(saturation) ? saturation : 0), 0, 254) / 254);
@@ -124,6 +127,7 @@ export function assignDiscoBands(ids: readonly string[], assign: Readonly<Record
   return out;
 }
 
+// The settings every channel starts from; each lists only what differs.
 function channel(over: Partial<DiscoChannel>): DiscoChannel {
   return { enabled: true, fade: true, allowPulse: false, minHue: 0, maxHue: 60000, fadeBrightness: 40, fadeSaturation: 255, idleFadeBrightness: 254,
     sequenceLength: 8, useAmbience: false, palette: null, strobeOn: false, linkLights: false, modulateSaturation: false, ...over };
@@ -161,6 +165,7 @@ interface Recipe {
   id: string; name: string; decay: number; sensitivity: number; smoothness: number; relaxed: boolean; sequence: number; autoStrobe: boolean;
   rate: number; strobe: [hue: number, saturation: number][]; bands: [BandRecipe, BandRecipe, BandRecipe];
 }
+// The app's white: no saturation, so the hue does not matter.
 const WHITE_HSB: [number, number] = [49000, 0];
 // The app's eleven genre presets. Dance, Drum and Bass, Trance and Ambient
 // reach 12–14 kHz there; this service hears up to 11 025 Hz, so their treble
@@ -212,6 +217,7 @@ export const DISCO_PRESETS: { id: string; name: string; params: DiscoParams }[] 
 
 // Hues, levels and saturations are the app's integer units. Unknown keys are
 // refused: a misspelt floor or band must not be dropped without a word.
+// Colours stay hex on the wire, as in every other kind's spec.
 const hex = z.string().regex(/^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i, 'expected a hex colour');
 const hue = z.number().int().min(0).max(65535);
 const brightness = z.number().int().min(0).max(FULL);
@@ -243,13 +249,18 @@ export const discoSchema: ZodType<DiscoParams> = z.object({
 
 // A lamp is a linear fade of colour and level between two times. Plain data
 // throughout, so preview checkpoints clone it with the pending commands.
-interface Lamp { from: Colour; fromLevel: number; to: Colour; toLevel: number; start: number; end: number }
+// `commanded` marks a lamp the Disco has set at least once: the app starts
+// its stream from what the lamps already show, so until a hit, flash or idle
+// reaches a lamp the layer below stays visible through it.
+interface Lamp { from: Colour; fromLevel: number; to: Colour; toLevel: number; start: number; end: number; commanded: boolean }
 interface Command { due: number; slots: number[]; colour: Colour; level: number; duration: number }
 interface ChannelState { lastHit: number; lastIdle: number; sequence: number; pulse: boolean; draws: number }
 interface Layout {
   groupsKey: string; coloursKey: string;
   /** Slots per channel, and how many of them one Spectrum hit or idle takes. */
   groups: number[][]; caps: number[];
+  /** Whether a slot belongs to any channel; the Disco keeps the others dark. */
+  grouped: boolean[];
   /** Ambience hues in degrees, per channel; null plays the channel's hue range. */
   ambience: (number[] | null)[];
   strobe: Colour[];
@@ -263,9 +274,10 @@ interface DiscoState {
 }
 interface Context { p: DiscoParams; s: DiscoState; f: EffectFrame; now: number; literal: Colour[] | null }
 
-const dark = (at: number): Lamp => ({ from: rgb(0, 0, 0), fromLevel: 0, to: rgb(0, 0, 0), toLevel: 0, start: at, end: at });
+const dark = (at: number): Lamp => ({ from: rgb(0, 0, 0), fromLevel: 0, to: rgb(0, 0, 0), toLevel: 0, start: at, end: at, commanded: false });
 
 // Colour and level blend linearly together, as the stream fades both at once.
+// Past its end a lamp holds its target; before its start, its origin.
 function sample(lamp: Lamp, t: number): { colour: Colour; level: number } {
   if (!(t < lamp.end)) return { colour: { ...lamp.to }, level: lamp.toLevel };
   const k = t <= lamp.start ? 0 : (t - lamp.start) / (lamp.end - lamp.start);
@@ -285,6 +297,7 @@ function setLamp(lamp: Lamp, colour: Colour, level: number, at: number, duration
   lamp.toLevel = level;
   lamp.start = at;
   lamp.end = at + Math.max(0, duration);
+  lamp.commanded = true;
 }
 
 // Releases wait in deadline order; equal deadlines keep the order they were queued in.
@@ -302,10 +315,13 @@ function drain(s: DiscoState, now: number): void {
   }
 }
 
+// Without fixture ids (hand-built frames, the preview) each slot is its own fixture.
 function slotIds(n: number, fixtureIds: EffectFrame['fixtureIds']): string[] {
   return Array.from({ length: n }, (_, i) => fixtureIds?.[i] != null ? String(fixtureIds[i]) : String(i));
 }
 
+// Spectrum balances the slots across its enabled bands; Peak and Neural take
+// every slot on their one channel.
 function buildLayout(p: DiscoParams, ids: string[], groupsKey: string, coloursKey: string): Layout {
   const groups: number[][] = [[], [], [], [], []];
   if (p.style === 'spectrum') {
@@ -317,8 +333,10 @@ function buildLayout(p: DiscoParams, ids: string[], groupsKey: string, coloursKe
   // Enabled bands share the batch even when they have no lamps.
   const enabledBands = p.channels.slice(0, 3).filter((c) => c.enabled).length;
   const share = Math.max(Math.floor(p.maxLightsPerBatch / Math.max(enabledBands, 1)), 1);
+  const grouped = ids.map(() => false);
+  for (const group of groups) for (const slot of group) grouped[slot] = true;
   return {
-    groupsKey, coloursKey, groups, caps: groups.map((g, ch) => ch < 3 ? Math.min(share, g.length) : g.length),
+    groupsKey, coloursKey, groups, caps: groups.map((g, ch) => ch < 3 ? Math.min(share, g.length) : g.length), grouped,
     ambience: p.channels.map((c) => c.useAmbience && c.palette?.length ? c.palette.map((h) => hueDegrees(parseHex(h))) : null),
     strobe: p.strobe.palette.map(parseHex),
   };
@@ -331,12 +349,17 @@ function refreshLayout(p: DiscoParams, s: DiscoState, room: Room, f: EffectFrame
   const groupsKey = JSON.stringify([p.style, p.assign, p.channels.map((c) => c.enabled), p.maxLightsPerBatch, ids]);
   const coloursKey = JSON.stringify([p.channels.map((c) => [c.useAmbience, c.palette]), p.strobe.palette]);
   if (s.layout.groupsKey === groupsKey && s.layout.coloursKey === coloursKey) return;
-  if (s.layout.groupsKey !== groupsKey) s.pending = [];
+  const remapped = s.layout.groupsKey !== groupsKey;
+  if (remapped) s.pending = [];
   s.layout = buildLayout(p, ids, groupsKey, coloursKey);
   while (s.lamps.length < room.n) s.lamps.push(dark(s.now));
   s.lamps.length = room.n;
+  // A lamp that leaves every channel goes dark; one that moves between
+  // channels keeps the fade it is in, as the app's lamps do on reassignment.
+  if (remapped) s.layout.grouped.forEach((inGroup, i) => { if (!inGroup) s.lamps[i] = dark(s.now); });
 }
 
+// Each channel draws from its own stream, so one channel's hits never shift another's colours.
 const roll = (c: Context, stream: number) =>
   hash01(c.f.seed, DRAW_KEY + stream, stream === STROBE_STREAM ? c.s.strobeDraws++ : c.s.channels[stream].draws++);
 
@@ -365,7 +388,7 @@ function hitColours(c: Context, ch: number, releaseSaturation: number): { hit: C
 }
 
 function flashLamp(lamp: Lamp, colour: Colour, at: number): void {
-  Object.assign(lamp, { from: solid(colour), fromLevel: 1, to: solid(colour), toLevel: FLASH_FLOOR / FULL, start: at, end: at + FLASH_FALL_MS });
+  Object.assign(lamp, { from: solid(colour), fromLevel: 1, to: solid(colour), toLevel: FLASH_FLOOR / FULL, start: at, end: at + FLASH_FALL_MS, commanded: true });
 }
 
 function idleIfDue(c: Context, ch: number): void {
@@ -386,6 +409,7 @@ function hitSpectrum(c: Context, ch: number, flash: Colour | null, interval: num
   const batch = pickBatch(c, ch, c.s.layout.groups[ch], c.s.layout.caps[ch]);
   if (flash) { for (const i of batch) flashLamp(c.s.lamps[i], flash, c.now); return; }
   const { hit, release } = hitColours(c, ch, cfg.fadeSaturation);
+  // The hit is instant; the release follows 32 ms later as the app's delayed command does.
   for (const i of batch) setLamp(c.s.lamps[i], hit, 1, c.now, 0);
   // Without Fade the batch holds until a later hit or idle takes it.
   if (!cfg.fade) return;
@@ -401,6 +425,7 @@ function hitPeak(c: Context, flash: Colour | null): void {
   const targets = cfg.linkLights ? group : one();
   const { hit, release } = hitColours(c, 3, cfg.fadeSaturation);
   for (const i of targets) setLamp(c.s.lamps[i], hit, 1, c.now, 0);
+  // Peak holds its lamp a full 100 ms before releasing; Fade off holds it outright.
   if (!cfg.fade) return;
   const duration = Math.max((cfg.allowPulse && cs.pulse ? PULSE_MS : PEAK_FADE_MS) + c.p.smoothness - 500, 0);
   schedule(c.s, c.now + PEAK_HOLD_MS, targets, release, cfg.fadeBrightness / FULL, duration);
@@ -425,6 +450,9 @@ function process(c: Context, ch: number, trigger: boolean, flash: Colour | null)
   return false;
 }
 
+// The automatic strobe needs the photosensitivity acknowledgement and stands
+// down under a manual strobe; its rate is the lamp flash limit, whatever the
+// manual rate stored beside it.
 const autoStrobeAllowed = (c: Context) => c.f.acknowledged && !c.f.manualStrobeActive;
 const canFlash = (c: Context) => hdAutoStrobeFlash(c.now, c.s.lastFlash ?? -Infinity, MAX_LAMP_FLASH_HZ);
 // An override or the effect's own palette stands in for the strobe palette too.
@@ -494,7 +522,7 @@ function initDisco(p: DiscoParams, room: Room, f: EffectFrame): DiscoState {
   // Channel timers start at launch: the first hit is taken 100 ms in, the first idle 2 s in.
   const launch = [f.startedAtMs, f.nowMs].find((t): t is number => Number.isFinite(t)) ?? 0;
   const s: DiscoState = {
-    layout: { groupsKey: '', coloursKey: '', groups: [], caps: [], ambience: [], strobe: [] },
+    layout: { groupsKey: '', coloursKey: '', groups: [], caps: [], grouped: [], ambience: [], strobe: [] },
     channels: Array.from({ length: 5 }, () => ({ lastHit: launch, lastIdle: launch, sequence: 0, pulse: false, draws: 0 })),
     lamps: [], pending: [], lastFlash: null, strobeDraws: 0, heard: null, now: launch,
   };
@@ -517,10 +545,16 @@ function renderDisco(p: DiscoParams, s: DiscoState, room: Room, f: EffectFrame, 
     else if (p.style === 'peak') peak(c, heard);
     else neural(c, heard);
   }
-  // Disco owns every lamp, dark ones included.
-  for (let i = 0; i < room.n; i++) out[i] = { ...sample(s.lamps[i], s.now), strength: 1 };
+  // Ownership follows the stream: a lamp the Disco has set, or one outside
+  // every channel, is its own, dark or not; one it has not reached yet is
+  // left to the layer below, as a voice's untouched lamps always are.
+  for (let i = 0; i < room.n; i++) {
+    out[i] = { ...sample(s.lamps[i], s.now), strength: s.lamps[i].commanded || !s.layout.grouped[i] ? 1 : 0 };
+  }
 }
 
+// Not a rapidFlash kind: only its automatic strobe needs the acknowledgement,
+// and that is gated where the flash is decided, so the music plays regardless.
 registerKind<DiscoParams, DiscoState>({
   kind: 'hd.disco', app: 'hd', schema: discoSchema, defaults: { params: DISCO_DEFAULTS, brightness: 1 }, stateful: true,
   init: initDisco, render: renderDisco,
