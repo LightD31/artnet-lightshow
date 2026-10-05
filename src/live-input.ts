@@ -38,14 +38,14 @@ export interface LiveOptions {
   /** For `file`: the audio file, played at its own speed. */
   file?: string;
   latencyMs?: number;
-  /** Bands to report the power of, `[lo, hi]` Hz: at most 12, 0 ≤ lo < hi ≤ `BAND_HZ_MAX`. */
+  /** Bands to report the power of, `[lo, hi]` Hz: at most `MAX_BANDS`, 0 ≤ lo < hi ≤ `BAND_HZ_MAX`. */
   bands?: [number, number][];
 }
 
 /** The highest band edge: Nyquist at the service's 22 050 Hz. */
 export const BAND_HZ_MAX = 11025;
-// As many as the service will sum per hop.
-const MAX_BANDS = 12;
+/** As many bands as the service will sum per hop. */
+export const MAX_BANDS = 12;
 
 /**
  * One frame's power on Hue Dynamics' scale: `|X|²` per bin of a
@@ -55,7 +55,10 @@ export interface LiveSpectrum {
   /** Σx² of the frame's samples: a different scale from the bins'. */
   power: number;
   rms: number;
-  /** The centre of the strongest bin up to 2 kHz; null in silence. */
+  /**
+   * The centre of the strongest bin above DC, up to 2 kHz; null when none of
+   * those bins carries power. Never 0: an offset is no pitch.
+   */
   dominantHz: number | null;
   /** Σ|X|² over each requested band's bins (two at least), in the order asked for. */
   bands: number[];

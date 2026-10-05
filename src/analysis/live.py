@@ -30,6 +30,9 @@ a Hamming-windowed 1024-point FFT of the float samples, unnormalised:
     "spectrum": {"power": Σx², "rms": ..., "dominantHz": ... | null,
                  "bands": [Σ|X|² per band, ...], "fftPower": Σ|X|² over every bin}
 
+`dominantHz` is the centre of the strongest bin above DC up to 2 kHz, and null
+when none of those bins carries any power.
+
 Capture uses the `soundcard` package, which does loopback on Windows and Linux
 alike; `sounddevice` is the fallback for a line-in when `soundcard` is not
 installed. Neither is needed for a file, which is what the tests use.
@@ -119,6 +122,18 @@ def _bands_arg(text):
         raise argparse.ArgumentTypeError(str(err)) from None
 
 
+def dominant_hz(power, bin_hz, top_hz=DOMINANT_MAX_HZ):
+    """
+    The centre of the strongest bin from the first above DC up to `top_hz`,
+    ties to the lower; None when none of them carries power. DC is left out:
+    an offset on a line-in is no pitch, and 0 Hz would read as one.
+    """
+    above_dc = power[1:math.floor(top_hz / bin_hz) + 1]
+    if not above_dc.size or not above_dc.max() > 0:
+        return None
+    return (int(np.argmax(above_dc)) + 1) * bin_hz
+
+
 def band_bins(bands, sample_rate, n_fft=N_FFT):
     """
     The inclusive FFT bins each band sums. Never fewer than two: a band that
@@ -203,14 +218,10 @@ class LiveService:
         if power is None:
             return None
         n_fft = self.analyzer.n_fft
-        bin_hz = self.sample_rate / float(n_fft)
-        low = power[:min(power.size, math.floor(DOMINANT_MAX_HZ / bin_hz) + 1)]
-        strongest = int(np.argmax(low))
         return {
             'power': energy,
             'rms': math.sqrt(energy / n_fft),
-            # All-zero bins have no strongest one; argmax alone would say DC.
-            'dominantHz': strongest * bin_hz if low[strongest] > 0 else None,
+            'dominantHz': dominant_hz(power, self.sample_rate / float(n_fft)),
             'bands': [float(power[lower:upper + 1].sum()) for lower, upper in self.band_bins],
             'fftPower': float(power.sum()),
         }

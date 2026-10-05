@@ -6,9 +6,10 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
 import { PassThrough } from 'node:stream';
 
-import LiveInput, { BAND_HZ_MAX, listLiveDevices } from '../../src/live-input.ts';
+import LiveInput, { BAND_HZ_MAX, MAX_BANDS, listLiveDevices } from '../../src/live-input.ts';
 import { Conductor } from '../../src/server/conductor.ts';
 import { makeGrid } from '../../src/shared/beat-clock.ts';
 
@@ -189,13 +190,22 @@ test('a band list the service would refuse throws, and the running process is le
   const live = new LiveInput({ spawner: () => { const p = fakeProcess(); procs.push(p); return p; }, now: () => 0 });
   live.start({ source: 'loopback', bands: [[0, 160]] });
   const bad = [[[0, BAND_HZ_MAX + 1]], [[160, 0]], [[100, 100]], [[-1, 100]], [[0, NaN]], [[0, Infinity]], [[0]], [['0', 160]], 'x',
-    Array.from({ length: 13 }, () => [0, 100])];
+    Array.from({ length: MAX_BANDS + 1 }, () => [0, 100])];
   for (const bands of bad) assert.throws(() => live.start({ source: 'loopback', bands }), RangeError, JSON.stringify(bands));
   assert.strictEqual(procs.length, 1);
   assert.strictEqual(procs[0].killed, false);
   assert.deepStrictEqual(live.options.bands, [[0, 160]]);
-  live.start({ source: 'loopback', bands: Array.from({ length: 12 }, () => [0, BAND_HZ_MAX]) });
+  live.start({ source: 'loopback', bands: Array.from({ length: MAX_BANDS }, () => [0, BAND_HZ_MAX]) });
   assert.strictEqual(procs.length, 2, 'a dozen, up to 11 025 Hz, is fine');
+});
+
+test('the band limits are the service\'s own, for a settings validator to share', () => {
+  // The service refuses past these with a usage error and an exit, so a
+  // validator that drifted from them would keep the process failing.
+  const py = fs.readFileSync(new URL('../../src/analysis/live.py', import.meta.url), 'utf8');
+  assert.strictEqual(MAX_BANDS, Number(/^MAX_BANDS = (\d+)$/m.exec(py)[1]));
+  assert.strictEqual(BAND_HZ_MAX, Number(/^SAMPLE_RATE = (\d+)$/m.exec(py)[1]) / 2);
+  assert.match(py, /^BAND_HZ_MAX = SAMPLE_RATE \/ 2\.0$/m);
 });
 
 test('a reading says which process it came from, and a replaced process is not heard', (t) => {

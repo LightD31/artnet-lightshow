@@ -194,11 +194,11 @@ def expected_spectrum(frame, bins):
     # One-sided: every bin but DC and Nyquist stands for two.
     nyquist = float(np.sum(xw * (-1.0) ** n))
     total = (x.size * float(np.sum(xw ** 2)) + float(np.sum(xw)) ** 2 + nyquist ** 2) / 2.0
-    low = power[:93]
+    above_dc = power[1:93]
     return {
         'power': float(np.sum(x ** 2)),
         'rms': float(np.sqrt(np.mean(x ** 2))),
-        'dominantHz': float(np.argmax(low)) * 22050 / 1024 if low.max() > 0 else None,
+        'dominantHz': float(np.argmax(above_dc) + 1) * 22050 / 1024 if above_dc.max() > 0 else None,
         'bands': [float(power[a:b + 1].sum()) for a, b in bins],
         'fftPower': total,
     }
@@ -283,6 +283,34 @@ class BandsTest(unittest.TestCase):
         lines = run_service(synth.silence(seconds=0.5), bands=[(0, 160)])
         s = [m for m in lines if m['type'] == 'state'][-1]['spectrum']
         self.assertEqual(s, {'power': 0.0, 'rms': 0.0, 'dominantHz': None, 'bands': [0.0], 'fftPower': 0.0})
+
+    def test_dc_names_no_frequency(self):
+        # An offset under a tone: DC is the frame's strongest bin, but 0 Hz is
+        # no pitch for the effects to follow, so the tone dominates.
+        import numpy as np
+        hz = 46 * 22050 / 1024
+        n = np.arange(4096)
+        samples = (0.3 + 0.4 * np.sin(2 * np.pi * hz * n / 22050)).astype(np.float32)
+        track = synth.Track(samples, 22050, 0.0, [], [], [])
+        s = [m for m in run_service(track, bands=[(0, 160)]) if m['type'] == 'state'][-1]['spectrum']
+        newest = samples[-1024:].astype(np.float64)
+        power = np.abs(np.fft.rfft(newest * np.hamming(1024))) ** 2
+        self.assertEqual(int(np.argmax(power[:93])), 0, 'DC is the strongest bin')
+        self.assertAlmostEqual(s['dominantHz'], hz, places=6)
+
+    def test_nothing_above_dc_is_no_dominant_frequency(self):
+        import numpy as np
+        from analysis.live import dominant_hz
+        bin_hz = 22050 / 1024
+        only_dc = np.zeros(513)
+        only_dc[0] = 4.0
+        self.assertIsNone(dominant_hz(only_dc, bin_hz))
+        # Above 2 kHz is not looked at: bin 93 is 2002.6 Hz.
+        high = only_dc.copy()
+        high[93] = 9.0
+        self.assertIsNone(dominant_hz(high, bin_hz))
+        # Ties go to the lower bin.
+        self.assertEqual(dominant_hz(np.array([4.0, 1.0, 3.0, 3.0]), 10.0), 20.0)
 
     def test_without_bands_the_lines_are_as_they_were(self):
         # The band powers are a second window beside the analyser's own, not a
