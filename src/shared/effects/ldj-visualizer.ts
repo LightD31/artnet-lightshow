@@ -5,6 +5,7 @@
 
 import { z } from 'zod';
 import type { Colour } from '../../types/rig.ts';
+import { HUE_PULSE_MS, huePulseLevel } from '../look-math.ts';
 import type { Room } from '../room.ts';
 import type { AudioFrame } from './audio-frame.ts';
 import { hash01, pickNotLast } from './hash.ts';
@@ -28,6 +29,7 @@ type Section = 'loud' | 'soft' | 'quiet';
 const f32 = Math.fround, BASELINE = f32(.05);
 const BLACK: Colour = { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 };
 const EMITTERS = ['r', 'g', 'b', 'w', 'a', 'uv'] as const;
+// A missing or zero tempo plays at 120 BPM, as in the other Light DJ kinds.
 const tempo = (bpm: number) => Number.isFinite(bpm) && bpm > 0 ? bpm : 120;
 // A finished spike gives its lamp back over one second of 22 Hz frames.
 const HANDOFF_FRAMES = 22;
@@ -35,7 +37,9 @@ const QUIET_BEATS = 16, SOFT_BEATS = 20;
 const MIN_CHANGE_MS = 7500, FORCE_CHANGE_MS = 20000;
 // One hash stream per random choice, so lamp, colour, type and length stay independent.
 const COLOUR_STREAM = 73, HOLD_STREAM = 79, MIX_STREAM = 83, BED_STREAM = 89, LOUD_STREAM = 97, SOFT_STREAM = 101, ENTRY_STREAM = 103;
+// Loud sections only take palettes of more than two colours.
 const LOUD_ROWS = LDJ_PALETTES.flatMap((palette, i) => palette.colours.length > 2 ? [i] : []);
+// Wave is re-sent every eight beats and the others every beat, as the app schedules them.
 const period = (mellow: VisualizerMellow) => mellow === 'wave' ? 8 : 1;
 
 export const VISUALIZER_DEFAULTS: VisualizerParams = { active: 'firework', mellow: 'swirl', trigger: .3, autoColours: false };
@@ -73,12 +77,17 @@ const renderByte = (value: number | undefined, level: number) =>
 export function blendRendered(a: Colour, aLevel: number, b: Colour, bLevel: number): Colour {
   const x = EMITTERS.map((key) => renderByte(a[key], aLevel)), y = EMITTERS.map((key) => renderByte(b[key], bLevel));
   const wx = f32(Math.max(...x) / 255), wy = f32(Math.max(...y) / 255), sum = f32(wx + wy);
-  // Nothing lit on either side: the app's 0/0 truncates to black.
-  const mean = (i: number) => sum > 0 ? Math.trunc(f32(f32(f32(x[i] * wx) + f32(y[i] * wy)) / sum)) : 0;
+  // A dark side weighs nothing, so the other passes through as it is: the
+  // float quotient c·w/w alone can truncate a dimmer channel one byte low.
+  // Both dark is black, never 0/0.
+  const lone = wx === 0 ? y : wy === 0 ? x : null;
+  const mean = (i: number) => lone ? lone[i] : Math.trunc(f32(f32(f32(x[i] * wx) + f32(y[i] * wy)) / sum));
   return { r: mean(0), g: mean(1), b: mean(2), w: mean(3), a: mean(4), uv: mean(5) };
 }
 
 interface Handoff { from: Colour; to: Colour; tick: number }
+/** A Pulse spike's last lit colour after its plateau, and the lamp frames since. */
+interface HueTail { colour: Colour; tick: number }
 interface QueuedSpike { slot: number; index: number; mode: SpikeMode; env: LdjEnvelope }
 interface MellowState {
   /** The background loop runs: it is reasserted on its beats until a section stops it. */
@@ -96,6 +105,11 @@ export interface VisualizerState {
   bed: StudioState; lamps: LdjLamps;
   /** The spike layer per lamp: a live envelope, or the second that hands the lamp back. Untouched lamps have neither. */
   spikes: ({ mode: SpikeMode } | null)[]; handoffs: (Handoff | null)[]; queue: QueuedSpike[];
+  /**
+   * Hue lamps: a Pulse spike's hard cut softened as the strobe's Hue pulse.
+   * Kept in flash mode too, so switching modes shows an existing tail and never starts one.
+   */
+  hueTails: (HueTail | null)[];
   events: number; lastRank: number | null;
   heard: { generation: number; t: number } | null;
   /** The detector's section as last heard, apart from the controller's own, which a quiet start promotes to soft. */
@@ -106,6 +120,7 @@ export interface VisualizerState {
 
 interface Ctx { s: VisualizerState; p: VisualizerParams; room: Room; f: EffectFrame; bpm: number; access: PaletteAccess }
 
+// Hand-built frames carry no palette access: the resolved palette, uncached.
 function fallbackAccess(palette: Colour[]): PaletteAccess {
   const { at } = roles(palette);
   return { palette: palette.length ? palette : [at(0)], colour: (index) => at(index), refresh: () => {}, frameColour: (index) => at(index) };
@@ -135,6 +150,7 @@ function install(c: Ctx, q: QueuedSpike): void {
   s.lamps.set(q.slot, c.access.colour(q.index, q.slot), 1, q.env);
   s.spikes[q.slot] = { mode: q.mode };
   s.handoffs[q.slot] = null;
+  s.hueTails[q.slot] = null;
 }
 
 // A spike at its baseline gives the lamp back. Pulse goes at once; the others
@@ -142,9 +158,13 @@ function install(c: Ctx, q: QueuedSpike): void {
 // bed takes nothing back, and Mellow none is a black bed.
 function endpoint(c: Ctx, slot: number, mode: SpikeMode): void {
   const { s } = c;
+  // The colour as last lit, resolved this render, copied without its binding.
   const from = { ...BLACK, ...s.lamps.read(slot).colour };
   s.spikes[slot] = null;
   s.lamps.off(slot);
+  // Pulse's plateau ends in a hard cut. A Hue lamp may take it as a 200 ms
+  // pulse instead; the tail belongs to the spike, so a stopped bed keeps it.
+  if (mode === 'pulse' && c.room.hue[slot]) s.hueTails[slot] = { colour: from, tick: 0 };
   if (mode === 'pulse' || s.bed.mode === 'stop') return;
   const to = s.bed.mode === 'none' ? { ...BLACK } : { ...BLACK, ...readStudio(s.bed, slot).colour };
   s.handoffs[slot] = { from, to, tick: 0 };
@@ -155,6 +175,7 @@ function endpoint(c: Ctx, slot: number, mode: SpikeMode): void {
 function spikeFrame(c: Ctx): void {
   const { s } = c;
   s.handoffs.forEach((handoff, slot) => { if (handoff && ++handoff.tick >= HANDOFF_FRAMES) s.handoffs[slot] = null; });
+  s.hueTails.forEach((tail, slot) => { if (tail && ++tail.tick * LDJ_FRAME_MS >= HUE_PULSE_MS) s.hueTails[slot] = null; });
   s.lamps.advance(LDJ_FRAME_MS, c.bpm);
   // Every envelope rises at once and falls (or snaps) exactly onto the baseline, so reaching it is the end.
   s.spikes.forEach((spike, slot) => { if (spike && s.lamps.read(slot).bri === BASELINE) endpoint(c, slot, spike.mode); });
@@ -169,6 +190,7 @@ function advanceTo(c: Ctx, t: number): void {
 
 function spike(c: Ctx): void {
   const { s, p, f, room } = c;
+  // An empty room has no lamp to pick, and draws nothing.
   if (!room.n) return;
   const event = s.events++;
   const rank = pickNotLast(f.seed, event, room.n, s.lastRank);
@@ -291,6 +313,16 @@ function handoffSample(handoff: Handoff): { colour: Colour; bri: number } {
   return { colour: { r: mix('r'), g: mix('g'), b: mix('b'), w: mix('w'), a: mix('a'), uv: mix('uv') }, bri: BASELINE };
 }
 
+// The tail's wall time is whole lamp frames plus the bed's remainder. Rounded
+// to a nanosecond so float steps never tip a level across its rounding edge.
+function hueTailSample(s: VisualizerState, slot: number): { colour: Colour; bri: number } | null {
+  const tail = s.hueTails[slot];
+  if (!tail) return null;
+  const sinceMs = Math.round((tail.tick * LDJ_FRAME_MS + s.bed.remainderMs) * 1e6) / 1e6;
+  if (sinceMs >= HUE_PULSE_MS) { s.hueTails[slot] = null; return null; }
+  return { colour: tail.colour, bri: huePulseLevel(sinceMs) / 255 };
+}
+
 // Strict, like the other Light DJ kinds: an unknown field is an error, not silently dropped.
 const paramsSchema = z.object({
   active: z.enum(['splotch', 'firework', 'pulse', 'flash', 'mix']),
@@ -315,6 +347,7 @@ registerKind<VisualizerParams, VisualizerState>({
     for (const lamp of bed.lamps) lamp.bri = 0;
     return {
       bed, lamps: new LdjLamps(room.n), spikes: Array(room.n).fill(null), handoffs: Array(room.n).fill(null), queue: [],
+      hueTails: Array(room.n).fill(null),
       // The app starts its controller in a soft section, with both colour timers armed at launch.
       events: 0, lastRank: null, heard: null, observed: null, section: 'soft', quiet: 0, soft: 0,
       mellow: { running: false, nextBeat: null, cache: null, draws: 0 },
@@ -370,21 +403,32 @@ registerKind<VisualizerParams, VisualizerState>({
       }
     }
     advanceTo(c, now);
+    // An edited background takes over now and starts its own period, rather
+    // than waiting out the old one's schedule (up to eight beats of Wave).
+    if (m.running && m.cache && m.cache.mode !== params.mellow) startBed(c, beat);
     const heard = hear(s, f);
     if (!live) {
-      // No live music: the background plays alone, started once, and the
-      // section heard next counts as new.
-      s.observed = null;
-      if (!m.running) startBed(c, beat);
+      // No live music: the background plays alone, started once. Only a bed
+      // that a loud section had stopped forgets that section, so the same
+      // loud section heard on return stops it again. Any other section heard
+      // again is no news: a quiet passage keeps its bed and its count.
+      if (!m.running) {
+        if (s.observed === 'loud') s.observed = null;
+        startBed(c, beat);
+      }
     } else if (heard) {
       // The section changes before the beat of the same event, as the app sends them.
       const section = isSection(heard.spl?.section) ? heard.spl.section : null;
       if (section !== s.observed) { s.observed = section; if (section) applySection(c, section, now); }
       if (isSection(heard.spl?.beat)) applyBeat(c, heard.spl.beat, now, beat);
     }
+    const hueTails = f.hueStrobe === 'pulse';
     for (let i = 0; i < room.n; i++) {
       const bed = readStudio(s.bed, i), handoff = s.handoffs[i];
-      const top = s.spikes[i] ? s.lamps.read(i) : handoff ? handoffSample(handoff) : null;
+      // At most one layer is on top: a new spike clears its lamp's handoff and
+      // tail, and a Pulse spike ends with no handoff.
+      const top = s.spikes[i] ? s.lamps.read(i) : handoff ? handoffSample(handoff)
+        : hueTails && room.hue[i] ? hueTailSample(s, i) : null;
       // The blend is in rendered bytes, so its level is already inside the colour.
       out[i] = top ? { colour: blendRendered(bed.colour, bed.bri, top.colour, top.bri), level: 1, strength: 1 }
         : { colour: { ...BLACK, ...bed.colour }, level: bed.bri, strength: 1 };

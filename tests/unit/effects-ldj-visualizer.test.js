@@ -7,6 +7,7 @@ import { VISUALIZER_PRESETS, blendRendered, mixSpike } from '../../src/shared/ef
 import { LDJ_PALETTES } from '../../src/shared/effects/ldj-palettes.ts';
 import { hash01, pickNotLast, seedFrom } from '../../src/shared/effects/hash.ts';
 import { parseHex } from '../../src/shared/effects/palette.ts';
+import { buildRoom } from '../../src/shared/room.ts';
 import { harness, row, RED, CYAN } from '../helpers/ldj-harness.js';
 
 const f32 = Math.fround, FLOOR = f32(.05), F = LDJ_FRAME_MS;
@@ -32,7 +33,9 @@ const bytes = (c, level) => Object.fromEntries(KEYS.map((key) => [key, Math.min(
 function expectedBlend(a, aLevel, b, bLevel) {
   const x = bytes(a, aLevel), y = bytes(b, bLevel);
   const wx = f32(Math.max(...KEYS.map((k) => x[k])) / 255), wy = f32(Math.max(...KEYS.map((k) => y[k])) / 255), sum = f32(wx + wy);
-  return Object.fromEntries(KEYS.map((k) => [k, sum > 0 ? Math.trunc(f32(f32(f32(x[k] * wx) + f32(y[k] * wy)) / sum)) : 0]));
+  if (wx === 0) return y;
+  if (wy === 0) return x;
+  return Object.fromEntries(KEYS.map((k) => [k, Math.trunc(f32(f32(f32(x[k] * wx) + f32(y[k] * wy)) / sum))]));
 }
 
 // Live audio after a launch without it: the bed starts at once and a held soft section never stops it.
@@ -89,7 +92,6 @@ test('a loud beat fires one spike on a lamp ≠ last with a matrix envelope', ()
     const s = h.state(), slot = slotOf(h);
     picks.push(s.lastRank);
     assert.equal(s.lamps.read(slot).bri, 1, 'one fresh spike at its peak');
-    assert.equal(s.lamps.read(slot).bri, 1);
     assert.equal(out.filter((lamp, i) => s.lamps.read(i).bri === 1).length, 1);
     if (k > 1) assert.notEqual(picks[k - 1], picks[k - 2], 'never the last lamp');
   }
@@ -165,6 +167,14 @@ test('the weighted blend uses rendered bytes, 32-bit weights and truncation, on 
   const white = parseHex('#000000FF');
   assert.deepEqual(blendRendered(white, 1, BLACK, 0), { ...BLACK, w: 255 }, 'a white-only colour keeps its weight');
   assert.deepEqual(blendRendered(white, 1, RED, 1), { ...BLACK, r: 127, w: 127 });
+  // A dark side passes the other through byte for byte, whatever the float quotient would truncate to.
+  for (let top = 1; top <= 255; top++) {
+    for (let low = 0; low <= top; low++) {
+      const lit = { ...BLACK, r: top, g: low, uv: low };
+      assert.deepEqual(blendRendered(BLACK, 1, lit, 1), lit, `${top}/${low}`);
+      assert.deepEqual(blendRendered(lit, 1, RED, 0), lit, `${top}/${low} first`);
+    }
+  }
 });
 
 test('the mellow swirl runs under the spikes and blends by brightness', () => {
@@ -244,6 +254,19 @@ test('wave is re-sent every eight beats and resets its index; swirl keeps its ph
   swirl.draw(ms(500));
   assert.equal(swirl.state().mellow.nextBeat, 2);
   assert.ok(swirl.state().bed.swirl >= phase, 'reasserting swirl keeps its phase');
+});
+
+test('an edited background takes over at once, on its own period', () => {
+  const h = runningBed(row(4), { mellow: 'wave' });
+  const s = h.state();
+  h.draw(ms(500));
+  assert.equal(s.mellow.nextBeat, 8);
+  h.inst.spec = validateSpec({ ...h.inst.spec, params: { ...h.inst.spec.params, mellow: 'swirl' } });
+  h.draw(ms(600));
+  assert.equal(s.bed.mode, 'visualizerSwirl', 'not only after the wave\'s eighth beat');
+  close(s.mellow.nextBeat, 1.2 + 1);
+  h.draw(ms(1100));
+  close(s.mellow.nextBeat, 3.2, 'then every beat');
 });
 
 test('a loud section stops the mellow loop', () => {
@@ -384,6 +407,59 @@ test('a spike hands its lamp back to the bed: pulse at once, the others over 22 
   assert.equal(stopped.state().handoffs[last], null, 'a stopped bed releases at the endpoint');
 });
 
+test('Hue lamps in pulse mode soften a Pulse spike\'s cut over 200 ms, then give the lamp to the bed', () => {
+  const hueRow = (n) => buildRoom(n, (i) => n > 1 ? i / (n - 1) : .5, () => .5, () => .5, null, Array(n).fill(true));
+  const launch = (hueStrobe, room = hueRow(4)) => {
+    const h = vis(room, { active: 'pulse' }, { hueStrobe });
+    hear(h, ms(0), audio(1, 'loud', null));
+    return h;
+  };
+  const draw = (h, nowMs, over = {}) => hear(h, ms(nowMs), audio(1, 'loud', null), over);
+  const h = launch('pulse'), s = h.state(), slot = slotOf(h), colour = { ...s.lamps.read(slot).colour };
+  const spike = (out, level) => assert.deepEqual(out[slot], { colour: expectedBlend(readStudio(s.bed, slot).colour, readStudio(s.bed, slot).bri, colour, level), level: 1, strength: 1 });
+  spike(draw(h, 999), 1);
+  // The plateau ends at 1000 ms, as the matrix envelope says; from there the cut is the strobe's Hue pulse.
+  spike(draw(h, 1000), 1);
+  assert.equal(s.spikes[slot], null);
+  spike(draw(h, 1100), 148 / 255);
+  const copy = h.stepper.clone(), mid = [1150, 1199, 1200, 1300];
+  const original = mid.map((t) => draw(h, t)[slot]);
+  assert.deepEqual(mid.map((t) => h.draw({ ...ms(t), audio: audio(1, 'loud', null), audioMode: 'reactive' }, copy)[slot]), original, 'a clone mid-tail continues alike');
+  assert.deepEqual(original[1], { colour: expectedBlend(BLACK, 0, colour, 41 / 255), level: 1, strength: 1 });
+  assert.deepEqual(original[2], bedOnly(s, slot), 'no floor is left behind');
+  assert.equal(s.hueTails[slot], null);
+
+  // Under a running bed the softened spike is blended, once, before the output.
+  const bed = runningBed(hueRow(4), { active: 'pulse' });
+  for (let frame = 1; frame <= 22; frame++) hear(bed, at(frame), audio(0, 'soft', 'soft'));
+  hear(bed, at(22), audio(1, 'loud', 'soft'));
+  const lit = slotOf(bed), shown = { ...bed.state().lamps.read(lit).colour };
+  const soft = hear(bed, ms(22 * F + 1100), audio(1, 'loud', 'soft'));
+  const under = readStudio(bed.state().bed, lit);
+  assert.ok(under.bri > FLOOR, 'the bed is up');
+  assert.deepEqual(soft[lit], { colour: expectedBlend(under.colour, under.bri, shown, 148 / 255), level: 1, strength: 1 });
+
+  // Flash mode keeps the hard cut but remembers the event, so switching modes shows its tail, never a new one.
+  const flash = launch('flash'), flashSlot = slotOf(flash), flashColour = { ...flash.state().lamps.read(flashSlot).colour };
+  assert.deepEqual(draw(flash, 1000)[flashSlot], bedOnly(flash.state(), flashSlot), 'flash mode cuts at the endpoint');
+  assert.deepEqual(draw(flash, 1100)[flashSlot], bedOnly(flash.state(), flashSlot));
+  assert.deepEqual(draw(flash, 1150, { hueStrobe: 'pulse' })[flashSlot], { colour: expectedBlend(BLACK, 0, flashColour, 94 / 255), level: 1, strength: 1 },
+    'switched to pulse 150 ms into the tail');
+  // Lamps that are not Hue lamps are not touched.
+  const plain = launch('pulse', row(4)), plainSlot = slotOf(plain);
+  assert.deepEqual(draw(plain, 1000)[plainSlot], bedOnly(plain.state(), plainSlot));
+  assert.ok(plain.state().hueTails.every((tail) => tail === null));
+  // A new spike on the lamp replaces its tail.
+  const one = launch('pulse', hueRow(1));
+  draw(one, 1000);
+  assert.ok(one.state().hueTails[0]);
+  hear(one, ms(1050), audio(2, 'loud', null));
+  const again = hear(one, ms(1100), audio(2, 'loud', null));
+  assert.equal(one.state().hueTails[0], null);
+  assert.equal(one.state().lamps.read(0).bri, 1);
+  assert.deepEqual(again[0], { colour: expectedBlend(BLACK, 0, one.state().lamps.read(0).colour, 1), level: 1, strength: 1 });
+});
+
 test('a random spike colour follows its lamp cache until the endpoint, then stays captured', () => {
   const h = runningBed(row(4), { active: 'flash' }, { spec: { palette: [{ random: true }] } });
   hear(h, at(1), audio(0, 'soft', 'soft'));
@@ -392,10 +468,14 @@ test('a random spike colour follows its lamp cache until the endpoint, then stay
   hear(h, at(3), audio(1, 'loud', 'soft'));
   assert.notDeepEqual({ ...s.lamps.read(slot).colour }, launched, 'the queued refresh shows on the next render');
   hear(h, at(6), audio(1, 'loud', 'soft'));
-  const from = { ...s.handoffs[slot].from };
-  hear(h, at(7), audio(2, 'loud', 'soft'));
+  const from = { ...s.handoffs[slot].from }, to = { ...s.handoffs[slot].to };
+  // An override would turn every live binding blue; a handoff's colours are plain copies.
+  hear(h, at(7), audio(1, 'loud', 'soft'), { paletteOverride: [BLUE] });
+  assert.equal(s.handoffs[slot].tick, 1);
+  assert.deepEqual(s.handoffs[slot].from, from, 'a handoff keeps plain colours');
+  assert.deepEqual(s.handoffs[slot].to, to);
+  assert.notDeepEqual(from, BLUE);
   hear(h, at(8), audio(2, 'loud', 'soft'));
-  assert.deepEqual(s.handoffs[slot]?.from ?? from, from, 'a handoff keeps plain colours');
   // Spikes redraw their own lamp's colour, never the background's: it keeps its draw on every lamp they hit.
   const bed = { ...s.bed.backgroundColour }, hit = new Set();
   for (let k = 3; k <= 40; k++) {
@@ -464,6 +544,28 @@ test('no audio frame: the mellow background alone', () => {
   assert.equal(h.state().mellow.running, true, 'the same event is not heard twice');
   hear(h, at(5), audio(2, 'soft', 'loud'));
   assert.equal(h.state().mellow.running, false);
+});
+
+test('a section heard again after the audio was gone is no news: a quiet bed keeps running', () => {
+  const h = vis(row(4), { mellow: 'swirl' });
+  hear(h, at(0), audio(0, null, 'quiet'));
+  for (let k = 1; k <= 16; k++) hear(h, at(2 * k), audio(k, 'quiet', 'quiet'));
+  for (let frame = 33; frame <= 60; frame++) hear(h, at(frame), audio(16, 'quiet', 'quiet'));
+  const s = h.state();
+  assert.equal(s.mellow.running, true);
+  // One frame without live music (a mode toggle, a dropped input), then the same quiet passage.
+  h.draw({ ...at(61), audio: audio(16, 'quiet', 'quiet'), audioMode: 'tempo' });
+  hear(h, at(62), audio(17, 'quiet', 'quiet'));
+  assert.equal(s.mellow.running, true, 'the held quiet section does not stop the bed');
+  assert.equal(s.quiet, 16, 'nor restart its count');
+  let out;
+  for (let frame = 63; frame <= 66; frame++) out = hear(h, at(frame), audio(17, 'quiet', 'quiet'));
+  assert.equal(s.bed.mode, 'visualizerSwirl');
+  assert.ok(out.every((slot) => slot.level > FLOOR), 'the bed stays lit');
+  // A different section on return is a change as usual.
+  h.draw({ ...at(67), audioMode: 'tempo' });
+  hear(h, at(68), audio(18, 'loud', 'loud'));
+  assert.equal(s.mellow.running, false);
 });
 
 test('automatic colours: 7.5 s apart, forced every 20 s, loud from many colours and soft as one', () => {
