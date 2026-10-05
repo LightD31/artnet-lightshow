@@ -12,6 +12,7 @@ import { Conductor, conductor } from '../../src/server/conductor.ts';
 import { makeGrid } from '../../src/shared/beat-clock.ts';
 import { createAuth } from '../../src/server/auth.ts';
 import { createApplier } from '../../src/server/apply.ts';
+import { setupIntegrations } from '../../src/server/integrations.ts';
 import { attachRoutes } from '../../src/server/routes.ts';
 import { applyPatch, setPersist } from '../../src/server/patch.ts';
 import { settings } from '../../src/server/settings.ts';
@@ -343,6 +344,87 @@ test('a tap over a locked track holds until the next track, the live input under
   assert.deepStrictEqual([f.run().source, f.readOut], ['track', 128]);
 });
 
+// The deck that went quiet may never come back — the DJ's set is over and
+// another player takes the room. Its hand gives way when a source it holds
+// off moves on: a new track, a new lock. While it still answers, or while
+// nothing new answers, the hand holds.
+test('a tempo taken from a deck that went quiet gives way when the music moves on below it', () => {
+  for (const below of ['track', 'live']) {
+    const r = rig({ bpm: 90 });
+    const deck = music(r, { bpm: 126, from: 40, key: '1/track-a' });
+    const live = music(r, { bpm: 131, from: 7, key: 1 });
+    live.on = below === 'track';
+    r.c.setProlinkSource(deck.read);
+    r.c.setLiveSource(live.read);
+    let pos = 60000 * 16 / 128;
+    const f = frames(r);
+    f.run(3);
+    r.c.setBpm(127);
+    f.run(3);
+    assert.strictEqual(f.seen.at(-1).source, 'tap', below);
+
+    deck.on = false;
+    pos += 23;
+    assert.deepStrictEqual([f.run(4).source, f.readOut], ['tap', 127], `${below}: a quiet deck alone ends nothing`);
+    if (below === 'track') {
+      r.c.setTrack({ key: 'song', grid: grid128(), positionMs: () => pos });
+      for (let i = 0; i < 2; i++) { pos += 23; f.run(); }
+      assert.deepStrictEqual([f.seen.at(-1).source, f.readOut], ['track', 128], 'the next song is followed');
+    } else {
+      live.moveOn(2, 3);
+      assert.deepStrictEqual([f.run().source, f.readOut], ['live', 131], 'a new lock is followed');
+    }
+  }
+
+  // The deck still playing: a new lock under it is not its next track.
+  const r = rig({ bpm: 90 });
+  const deck = music(r, { bpm: 126, from: 40, key: '1/track-a' });
+  const live = music(r, { bpm: 126, from: 7, key: 1 });
+  r.c.setProlinkSource(deck.read);
+  r.c.setLiveSource(live.read);
+  const f = frames(r);
+  f.run(2);
+  r.c.tap();
+  live.moveOn(2, 3);
+  assert.strictEqual(f.run(3).source, 'tap');
+});
+
+// A tempo a source reports (the deck's pitch, setBpm with manual: false) is
+// the free clock's for when that source stops answering. It never replaces a
+// tempo the operator holds, and is not the read-out's while the clock runs on
+// another source.
+test('a tempo a source reports leaves the operator\'s alone, and says whether the clock took it', () => {
+  const held = rig({ bpm: 100 });
+  held.c.setTempoMode('manual');
+  held.c.now();
+  assert.strictEqual(held.c.setBpm(128.3, { manual: false }), false, 'in manual');
+  held.advance(23);
+  assert.deepStrictEqual([held.c.now().source, held.c.now().bpm], ['tap', 100]);
+
+  const r = rig({ bpm: 90 });
+  const deck = music(r, { bpm: 126, from: 40, key: '1/track-a' });
+  r.c.setProlinkSource(deck.read);
+  const f = frames(r);
+  f.run(2);
+  assert.strictEqual(r.c.setBpm(126.5, { manual: false }), true, 'the deck the clock follows');
+  r.c.setBpm(127);
+  f.run();
+  assert.strictEqual(r.c.setBpm(126.5, { manual: false }), false, 'a tempo held by hand');
+  assert.deepStrictEqual([f.run(2).source, f.seen.at(-1).bpm, f.readOut], ['tap', 127, 127]);
+
+  const quiet = rig({ bpm: 90 });
+  const lock = music(quiet, { bpm: 131 });
+  quiet.c.setLiveSource(lock.read);
+  quiet.c.now();
+  assert.strictEqual(quiet.c.setBpm(124, { manual: false }), false, 'the live input leads');
+  lock.on = false;
+  quiet.advance(23);
+  assert.strictEqual(quiet.c.now().bpm, 131, 'stopped, it hands over at its own tempo');
+  assert.strictEqual(quiet.c.setBpm(124, { manual: false }), true, 'the free clock leads');
+  quiet.advance(23);
+  assert.deepStrictEqual([quiet.c.now().source, quiet.c.now().bpm], ['tap', 124]);
+});
+
 test('switching to \'manual\' and back ends a tempo held by hand', () => {
   const r = rig();
   const live = music(r);
@@ -497,6 +579,64 @@ test('the read-out and the clock agree through a nudge, a typed tempo and a new 
     conductor.setLiveSource(null);
     conductor.onTempo(null);
     applyPatch({ bpm });
+  }
+});
+
+// The deck reports its pitched tempo whenever it moves (integrations.ts). In
+// 'manual', or under a tempo taken by hand, that is not the rig's tempo, and
+// the read-out does not show it either.
+test('a deck\'s tempo report moves neither the clock nor the read-out while the operator holds the tempo', () => {
+  const idle = { onPlaybackUpdate() {}, onTrackChange() {}, getStatus: () => ({}), authenticated: false };
+  let reportTempo = null;
+  const prolink = {
+    connected: true, stale: false, lastError: null,
+    getNumPeers: () => 1, getTrack: () => null, getLoadedTracks: () => [], getFollowed: () => ({ deviceId: 1 }),
+    getTempo: () => 126, getPositionMs: () => 0, getDeckPositionMs: () => 0,
+    onTempoChange(fn) { reportTempo = fn; }, onPeersChange() {}, onFollowChange() {}, onLoadedTracksChange() {},
+    onAnyTrackLoaded() {}, onTrackChange() {}, canFetchAudio: () => false,
+  };
+  const autoShow = {
+    running: false, syncOffsetMs: 0, getClientState: () => ({}), getPositionMs: () => 0, isCached: () => false,
+    gridFor: () => null, isPrefetching: () => false, applyQueueOrder() {}, setPaletteSize() {}, setIntensity() {},
+    setSyncOffsetMs() {}, setExactAudio() {},
+  };
+  setupIntegrations({
+    io: { emit() {} }, midi: { enabled: false, sendFeedback() {}, listPorts: () => [] },
+    spotify: { ...idle, startPolling() {}, async getQueue() { return []; } }, nowPlaying: idle,
+    deezerSource: { ...idle, getQueue: () => [], updatePlayback() {}, updateQueue() {}, disconnect() {} },
+    prolink, autoShow,
+  });
+  const was = { bpm: state.bpm, prolinkEnabled: state.prolinkEnabled };
+  const started = performance.now();
+  let playing = true;
+  conductor.setProlinkSource(() => (playing ? { beatPos: 40 + ((performance.now() - started) / 60000) * 126, bpm: 126, key: '1/a' } : null));
+  conductor.onTempo((bpm) => { state.bpm = bpm; });
+  state.prolinkEnabled = true;
+  try {
+    applyPatch({ tempoMode: 'manual', bpm: 100 });
+    reportTempo(128.3);
+    assert.deepStrictEqual([state.bpm, conductor.now().source, conductor.now().bpm], [100, 'tap', 100], 'in manual');
+
+    applyPatch({ tempoMode: 'auto' });
+    assert.strictEqual(conductor.now().source, 'cdj');
+    applyPatch({ bpm: 127 });
+    conductor.now();
+    reportTempo(126.5);
+    assert.deepStrictEqual([state.bpm, conductor.now().source, conductor.now().bpm], [127, 'tap', 127], 'held by hand');
+
+    // Nobody holds it, and the deck has stopped: the free clock keeps the
+    // tempo it reports, and the read-out shows it, as it always has.
+    applyPatch({ tempoMode: 'manual' });
+    applyPatch({ tempoMode: 'auto' });
+    playing = false;
+    conductor.now();
+    reportTempo(124);
+    assert.deepStrictEqual([state.bpm, conductor.now().source, conductor.now().bpm], [124, 'tap', 124]);
+  } finally {
+    conductor.setProlinkSource(null);
+    conductor.onTempo(null);
+    state.prolinkEnabled = was.prolinkEnabled;
+    applyPatch({ tempoMode: 'auto', bpm: was.bpm });
   }
 });
 

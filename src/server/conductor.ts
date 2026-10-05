@@ -27,7 +27,10 @@ import type { BeatGrid } from '../shared/beat-clock.ts';
  * those below it until the music it was taken from moves on — the next
  * track; the master deck loading a new track, or another deck becoming the
  * master; the live input losing its beat and finding a new one — and then
- * the clock follows again. The auto show's grid is never taken by hand.
+ * the clock follows again. A source that has gone quiet (the DJ's set is
+ * over) cannot move on, so while it is quiet its hand also gives way when a
+ * source it holds off does: the next track, or a new lock of the live input.
+ * The auto show's grid is never taken by hand.
  *
  * That is the `auto` tempo mode, automatic tempo match. In `manual` the
  * operator keeps the tempo: the deck, the track and the live input are not
@@ -103,10 +106,12 @@ type Followed = typeof FOLLOWED[number];
 
 const isFollowed = (source: ClockSource): source is Followed => (FOLLOWED as readonly string[]).includes(source);
 
-/** A tempo the operator took by hand: from which source, and what it was following then. */
+/** A tempo the operator took by hand: from which source, and what each source was following then. */
 interface Hand {
   source: Followed;
   key: string | number | null | undefined;
+  /** The track and the live input's lock at the time, for the sources it holds off. */
+  below: { track: string | null; live: string | number | null };
 }
 
 interface TrackLock {
@@ -243,14 +248,21 @@ class Conductor {
    * The operator's tempo. Keeps the phase: the free clock is re-anchored at
    * where it is now, so a nudge speeds the pattern up from this beat rather
    * than jumping it. `manual` (the default) means a person set it, which takes
-   * the tempo by hand from a deck, a track or the live input; the auto show's
-   * own tempo marks do not.
+   * the tempo by hand from a deck, a track or the live input.
+   *
+   * `manual: false` is a tempo a source reports — a deck's pitch, the auto
+   * show's tempo marks — for the free clock to keep should that source stop
+   * answering. It never replaces a tempo the operator holds ('manual', or by
+   * hand), and is not the clock's while the track or the live input leads.
+   * Returns whether the clock took the tempo, so the read-out shows it only
+   * then.
    */
-  setBpm(bpm: unknown, { manual = true } = {}): void {
+  setBpm(bpm: unknown, { manual = true } = {}): boolean {
     const value = Number(bpm);
-    if (!Number.isFinite(value)) return;
+    if (!Number.isFinite(value)) return false;
     const t = this._now();
-    const current = this._current(t);
+    const current = this._settle(t);
+    if (!manual && (this._holdsTempo() || current.source === 'track' || current.source === 'live')) return false;
     const takesOver = manual && isFollowed(current.source);
     // Taking over starts from the beat the music is on, not from wherever the
     // idle free clock had wandered to.
@@ -262,12 +274,22 @@ class Conductor {
     // has already shown it: say the grid's tempo again, so the read-out does
     // not keep a tempo the rig is not running at.
     else if (manual && current.source === 'auto') this._reportedBpm = null;
+    return true;
+  }
+
+  /** Whether the operator holds the tempo: in 'manual', or by hand in 'auto'. */
+  _holdsTempo(): boolean {
+    return this._tempoMode === 'manual' || this._handFrom() < FOLLOWED.length;
   }
 
   /** Take the tempo by hand from `source`, remembering what it was following. */
   _takeHand(source: Followed): void {
     const reading = source === 'cdj' ? this._prolinkSource() : source === 'live' ? this._liveSource() : null;
-    this._hand = { source, key: source === 'track' ? this._track?.key : reading?.key };
+    this._hand = {
+      source,
+      key: source === 'track' ? this._track?.key : reading?.key,
+      below: { track: this._track?.key ?? null, live: this._liveSource()?.key ?? null },
+    };
     this._tookOver = true;
   }
 
@@ -279,7 +301,7 @@ class Conductor {
    */
   tap(): void {
     const t = this._now();
-    const current = this._current(t);
+    const current = this._settle(t);
     const takesOver = isFollowed(current.source);
     this._free = {
       ...this._free,
@@ -294,6 +316,7 @@ class Conductor {
   /** Stopping the patterns freezes the free clock where it is. */
   setRunning(running: unknown): void {
     const t = this._now();
+    this._settle(t);
     this._free = { ...this._free, at: t, beatPos: this._freeBeatAt(t), running: !!running };
   }
 
@@ -356,19 +379,39 @@ class Conductor {
    * past its end when none is. A deck or the live input that answers for
    * something else now — a new track or deck, a new lock — has moved on, and
    * the hand gives way to it; a track's hand ends with the next track
-   * (_nextTrack).
+   * (_nextTrack). A source that has gone quiet cannot move on: its hand gives
+   * way when a source it holds off answers for something new instead.
    */
   _handFrom(): number {
     const hand = this._hand;
     if (!hand) return FOLLOWED.length;
-    if (hand.source !== 'track') {
-      const reading = hand.source === 'cdj' ? this._prolinkSource() : this._liveSource();
-      if (reading && Number.isFinite(reading.beatPos) && reading.key !== hand.key) {
-        this._hand = null;
-        return FOLLOWED.length;
-      }
+    const from = FOLLOWED.indexOf(hand.source);
+    const own = hand.source === 'cdj' ? this._prolinkSource() : hand.source === 'live' ? this._liveSource() : null;
+    const answers = hand.source === 'track' ? !!this._track : !!own && Number.isFinite(own.beatPos);
+    let movedOn = !!own && answers && own.key !== hand.key;
+    if (!answers) {
+      const live = from < 2 ? this._liveSource() : null;
+      movedOn = (from < 1 && !!this._track && (this._track.key ?? null) !== hand.below.track)
+        || (!!live && Number.isFinite(live.beatPos) && (live.key ?? null) !== hand.below.live);
     }
-    return FOLLOWED.indexOf(hand.source);
+    if (!movedOn) return from;
+    this._hand = null;
+    return FOLLOWED.length;
+  }
+
+  /**
+   * The reading at `t`, with a hand-over that is due made now: a tempo, a tap
+   * or a stop that comes in the frame after a source stopped answering starts
+   * from where the clock carries on, and the engine's next reading does not
+   * hand over again on top of it.
+   */
+  _settle(t: number): ClockReading {
+    const { reading, handOver } = this._next(t);
+    if (handOver) {
+      this._free = handOver;
+      this._last = { ...reading, t };
+    }
+    return reading;
   }
 
   /**
@@ -436,19 +479,20 @@ class Conductor {
   }
 
   /**
-   * Where the music is now, without moving anything: no epoch, no hand-over
-   * to the free clock, no tempo report. For readers other than the engine —
-   * the MIDI clock — which must not change what the engine will read next.
+   * Where the music is now, as the engine's next reading will find it, without
+   * moving anything: no epoch, no hand-over to the free clock, no tempo
+   * report. For readers other than the engine — the MIDI clock — which must
+   * not change what the engine will read next, nor jump to the idle free clock
+   * in the frame a source stops answering.
    */
   peek(): ClockReading {
-    return this._current(this._now());
+    return this._next(this._now()).reading;
   }
 
   /**
    * Where the beat is now and the epoch it belongs to, exactly as the engine's
    * next reading will find them, for screens that keep their own beat in
-   * phase with the rig's. Moves nothing, like peek(); unlike it, a source that
-   * has just stopped answering is carried on from, as now() is about to.
+   * phase with the rig's. Moves nothing, like peek().
    */
   phase(): { beatPos: number; epoch: number } {
     const { reading, epoch } = this._next(this._now());

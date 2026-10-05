@@ -90,11 +90,11 @@ function applyPatch(rawData: unknown): Patch {
     // To a hundredth: finer than any source measures, and 123.7 + 1 from a
     // nudge lands on 124.7 rather than on float noise.
     data.bpm = Math.round(data.bpm * 100) / 100;
-    state.bpm = data.bpm;
     // The free clock's tempo, from the beat it is on now. A tempo typed or
     // nudged by hand also takes the clock back from a locked track; the auto
-    // show's own tempo marks do not need to, since its grid outranks it.
-    conductor.setBpm(data.bpm, { manual: data.anchorMs === undefined });
+    // show's own tempo marks do not need to, since its grid outranks it, and
+    // the read-out shows a mark only when the clock took it (conductor.ts).
+    if (conductor.setBpm(data.bpm, { manual: data.anchorMs === undefined })) state.bpm = data.bpm;
   }
   if (data.running !== undefined) {
     state.running = data.running;
