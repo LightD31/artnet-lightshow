@@ -196,11 +196,14 @@ class SKeyFailures(unittest.TestCase):
 
         module = types.SimpleNamespace(detect_key=detect_key)
         with patch.object(adapters, '_optional', return_value=module), \
+             patch('sys.stdout', new=io.StringIO()) as stdout, \
              patch('sys.stderr', new=io.StringIO()) as stderr:
             result = adapters.skey_key('track.wav')
         self.assertIsNone(result)
         self.assertIn('S-KEY', stderr.getvalue())
         self.assertIn('RuntimeError: torchcodec is not installed', stderr.getvalue())
+        self.assertNotIn('track.wav', stderr.getvalue())
+        self.assertEqual(stdout.getvalue(), '')
 
 
 class Miopen(unittest.TestCase):
