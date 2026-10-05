@@ -176,10 +176,12 @@ class SKey(unittest.TestCase):
             path = str(Path(directory) / 'tone.wav')
             t = np.arange(44100) / 44100
             sf.write(path, np.stack([0.2 * np.sin(2 * np.pi * 440 * t), 0.1 * np.sin(2 * np.pi * 440 * t)], axis=1), 44100)
+            console = Console()
             with patch.object(adapters, '_optional', return_value=module), \
-                 patch('sys.stdout', new=Console()):
+                 patch('sys.stdout', new=console):
                 result = adapters.skey_key(path)
         self.assertEqual(result, {'value': 'A minor', 'confidence': 1.0, 'source': 's-key'})
+        self.assertEqual(console.getvalue(), '')
         waveform = seen['waveform']
         self.assertEqual(tuple(waveform.shape[:1]), (1,))
         self.assertAlmostEqual(waveform.shape[1], 22050, delta=2)
@@ -198,11 +200,14 @@ class SKeyFailures(unittest.TestCase):
 
         module = types.SimpleNamespace(detect_key=detect_key)
         with patch.object(adapters, '_optional', return_value=module), \
+             patch('sys.stdout', new=io.StringIO()) as stdout, \
              patch('sys.stderr', new=io.StringIO()) as stderr:
             result = adapters.skey_key('track.wav')
         self.assertIsNone(result)
         self.assertIn('S-KEY', stderr.getvalue())
         self.assertIn('RuntimeError: torchcodec is not installed', stderr.getvalue())
+        self.assertNotIn('track.wav', stderr.getvalue())
+        self.assertEqual(stdout.getvalue(), '')
 
 
 class Miopen(unittest.TestCase):
