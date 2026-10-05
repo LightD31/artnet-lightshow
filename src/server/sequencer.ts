@@ -575,9 +575,13 @@ export class Sequencer {
     if (done.length) c.done = new Set([...(c.done ?? []), ...done]);
     c.next = this._firstFrom(c.pos, true);
     if (this._anchor) this._ops.push({ type: 'loop' });
+    // An automation edited while the transport runs starts afresh from the
+    // value on the rig, or ends (edited to none); one it stops on waits for
+    // the next real start as before.
     const seq = this._loaded!;
+    const runs = this._run === 'playing' || this._run === 'paused';
     for (const which of ['brightness', 'tempo'] as const) {
-      if (canonical(seq.automation[which]) !== canonical(before.automation[which]) && this._automation[which]) {
+      if (runs && canonical(seq.automation[which]) !== canonical(before.automation[which])) {
         this._automation[which] = newAutomation(seq.automation[which]);
       }
     }

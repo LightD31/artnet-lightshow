@@ -509,6 +509,26 @@ test('touching the master cancels the brightness automation', () => {
   r.live.ms = 7000;
   r.at(118);
   assert.equal(r.live.bpm, 123);
+  // An automation the edit of a playing sequence adds starts from the value on
+  // the rig; edited again it starts afresh; edited to none it ends where it is.
+  const e = rig({ master: 25 });
+  const edit = (brightness) => e.s.load(sequence({ clips: [clip('A', 'a', 0, 64)], automation: { brightness, tempo: null } }));
+  edit(null);
+  e.s.play();
+  e.at(100);
+  e.at(101);
+  assert.equal(e.live.master, 25);
+  edit({ mode: 'triangle', period: 8, min: 0, max: 100, growing: true });
+  e.at(102);
+  e.at(106);
+  assert.equal(e.live.master, 75, 'four beats of a triangle from 25');
+  edit({ mode: 'triangle', period: 8, min: 0, max: 100, growing: false });
+  e.at(107);
+  e.at(109);
+  assert.equal(e.live.master, 50, 'afresh from 75, falling');
+  edit({ mode: 'none', period: 8, min: 0, max: 100, growing: true });
+  e.at(113);
+  assert.equal(e.live.master, 50, 'ended where it was');
   // A command for the master replaces its automation as well.
   const c = rig({ master: 25 });
   c.s.load(sequence({
