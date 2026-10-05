@@ -184,6 +184,25 @@ class SKey(unittest.TestCase):
         self.assertAlmostEqual(float(waveform.abs().max()), 1.0, places=5)
 
 
+class SKeyFailures(unittest.TestCase):
+    def test_a_failure_that_loses_the_key_is_logged(self):
+        # The pipeline falls back to its own key estimate, so a failed S-KEY
+        # pass changes nothing visible; the log is the only place it shows.
+        import io
+        import types
+
+        def detect_key(path, device='cpu'):
+            raise RuntimeError('torchcodec is not installed')
+
+        module = types.SimpleNamespace(detect_key=detect_key)
+        with patch.object(adapters, '_optional', return_value=module), \
+             patch('sys.stderr', new=io.StringIO()) as stderr:
+            result = adapters.skey_key('track.wav')
+        self.assertIsNone(result)
+        self.assertIn('S-KEY', stderr.getvalue())
+        self.assertIn('RuntimeError: torchcodec is not installed', stderr.getvalue())
+
+
 class Miopen(unittest.TestCase):
     # AMD's Windows ROCm wheels cannot compile MIOpen's BatchNorm kernel, so
     # every model with a BatchNorm layer failed on the GPU until it was off.
