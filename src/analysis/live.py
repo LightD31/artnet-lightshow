@@ -25,13 +25,15 @@ analyser's continuous beat position at stream time `t`.
 
 With `--bands lo-hi,...` (Hz) each state also carries the newest frame's
 `spectrum` for the party effects, on Hue Dynamics' scale — `|X|²` per bin of
-a Hamming-windowed 1024-point FFT of the float samples, unnormalised:
+a Hamming-windowed 1024-point FFT of the float samples less their mean (a DC
+offset is not sound), unnormalised:
 
     "spectrum": {"power": Σx², "rms": ..., "dominantHz": ... | null,
                  "bands": [Σ|X|² per band, ...], "fftPower": Σ|X|² over every bin}
 
-`dominantHz` is the centre of the strongest bin above DC up to 2 kHz, and null
-when none of those bins carries any power.
+`power` and `rms` are the raw frame's, offset included. `dominantHz` is the
+centre of the strongest bin above DC up to 2 kHz, and null when none of those
+bins carries any power: a frame of nothing but an offset has none.
 
 Capture uses the `soundcard` package, which does loopback on Windows and Linux
 alike; `sounddevice` is the fallback for a line-in when `soundcard` is not

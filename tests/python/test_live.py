@@ -179,16 +179,19 @@ class Sources(unittest.TestCase):
         self.assertEqual(listed['backend'], None)
 
 
-def expected_spectrum(frame, bins):
+def expected_spectrum(frame, bins, without_dc=True):
     """
     What the service should say about one 1024-sample frame, worked out apart
-    from it: the Hamming window from its formula, the requested bins written
-    out by hand, the total by Parseval in the time domain.
+    from it: the frame's mean taken off, the Hamming window from its formula,
+    the requested bins written out by hand, the total by Parseval in the time
+    domain. `without_dc=False` keeps the mean in, as the spectrum was first
+    worked out.
     """
     import numpy as np
     x = np.asarray(frame, dtype=np.float64)
     n = np.arange(x.size)
-    xw = x * (0.54 - 0.46 * np.cos(2 * np.pi * n / (x.size - 1)))
+    x0 = x - x.mean() if without_dc else x
+    xw = x0 * (0.54 - 0.46 * np.cos(2 * np.pi * n / (x.size - 1)))
     spectrum = np.fft.rfft(xw)
     power = spectrum.real ** 2 + spectrum.imag ** 2
     # One-sided: every bin but DC and Nyquist stands for two.
@@ -296,6 +299,47 @@ class BandsTest(unittest.TestCase):
         newest = samples[-1024:].astype(np.float64)
         power = np.abs(np.fft.rfft(newest * np.hamming(1024))) ** 2
         self.assertEqual(int(np.argmax(power[:93])), 0, 'DC is the strongest bin')
+        self.assertAlmostEqual(s['dominantHz'], hz, places=6)
+
+    def test_a_frame_of_nothing_but_an_offset_has_no_dominant_frequency(self):
+        # The window would spread the offset into the bins above DC; the
+        # frame's mean is taken off first, so nothing is left in them.
+        import numpy as np
+        for offset in (0.3, -0.02, 1e-4):
+            with self.subTest(offset=offset):
+                track = synth.Track(np.full(4096, offset, dtype=np.float32), 22050, 0.0, [], [], [])
+                s = [m for m in run_service(track, bands=[(0, 160), (750, 2000)]) if m['type'] == 'state'][-1]['spectrum']
+                self.assertIsNone(s['dominantHz'])
+                self.assertEqual(s['bands'], [0.0, 0.0])
+                self.assertEqual(s['fftPower'], 0.0)
+                self.assertAlmostEqual(s['power'], 1024 * float(np.float32(offset)) ** 2, delta=1e-9 * max(1.0, s['power']))
+
+    def test_an_offset_under_a_quiet_tone_leaves_the_tone_dominant(self):
+        # An offset ten times the tone: its window skirt in the first bins
+        # would outweigh the tone, were the mean not taken off.
+        import numpy as np
+        n = np.arange(8192)
+        samples = (0.5 + 0.05 * np.sin(2 * np.pi * 440 * n / 22050)).astype(np.float32)
+        s = [m for m in run_service(synth.Track(samples, 22050, 0.0, [], [], []), bands=[(0, 160)])
+             if m['type'] == 'state'][-1]['spectrum']
+        self.assertLessEqual(abs(s['dominantHz'] - 440), 22050 / 1024)
+
+    def test_a_tone_with_no_offset_has_the_band_powers_it_always_had(self):
+        # Sixteen samples a period, a whole number of periods in every frame:
+        # its mean is nil, and taking it off changes nothing.
+        import numpy as np
+        period = np.sin(2 * np.pi * np.arange(16) / 16).astype(np.float32)
+        samples = np.tile(period, 22050 // 16)
+        hz = 22050 / 16
+        bands = [(0, 160), (hz - 10, hz + 30), (3000, 9000)]
+        s = [m for m in run_service(synth.Track(samples, 22050, 0.0, [], [], []), bands=bands)
+             if m['type'] == 'state'][-1]['spectrum']
+        frames = (samples.size - 1024) // 256 + 1
+        newest = samples[(frames - 1) * 256:(frames - 1) * 256 + 1024]
+        was = expected_spectrum(newest, [(0, 7), (63, 65), (139, 417)], without_dc=False)
+        for got, want in zip(s['bands'], was['bands']):
+            self.assertAlmostEqual(got / want, 1.0, delta=1e-9)
+        self.assertAlmostEqual(s['fftPower'] / was['fftPower'], 1.0, delta=1e-9)
         self.assertAlmostEqual(s['dominantHz'], hz, places=6)
 
     def test_nothing_above_dc_is_no_dominant_frequency(self):

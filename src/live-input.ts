@@ -49,15 +49,16 @@ export const MAX_BANDS = 12;
 
 /**
  * One frame's power on Hue Dynamics' scale: `|X|²` per bin of a
- * Hamming-windowed 1024-point FFT of the float samples, unnormalised.
+ * Hamming-windowed 1024-point FFT of the float samples less their mean (a DC
+ * offset is not sound), unnormalised.
  */
 export interface LiveSpectrum {
-  /** Σx² of the frame's samples: a different scale from the bins'. */
+  /** Σx² of the frame's samples, offset included: a different scale from the bins'. */
   power: number;
   rms: number;
   /**
    * The centre of the strongest bin above DC, up to 2 kHz; null when none of
-   * those bins carries power. Never 0: an offset is no pitch.
+   * those bins carries power, as in a frame of nothing but an offset. Never 0.
    */
   dominantHz: number | null;
   /** Σ|X|² over each requested band's bins (two at least), in the order asked for. */

@@ -169,6 +169,10 @@ class StreamingAnalyzer:
         bin of a Hamming-windowed rFFT with no normalisation, and the frame's
         raw Σx². `(None, 0.0)` before the first whole frame.
 
+        The frame's mean comes off before the window: a DC offset is not
+        sound, and windowed it would spread into the bins above DC, where it
+        reads as a 21.5 Hz tone. Σx² keeps it, being the frame's raw energy.
+
         A transform of its own beside the analyser's Hann one, which the beat
         tracking is tuned on and stays as it is; worked out on request, so a
         caller that never asks pays nothing per hop.
@@ -176,7 +180,7 @@ class StreamingAnalyzer:
         if self._newest is None:
             return None, 0.0
         x = self._newest.astype(np.float64)
-        spectrum = np.fft.rfft(x * self._power_window)
+        spectrum = np.fft.rfft((x - x.mean()) * self._power_window)
         return spectrum.real ** 2 + spectrum.imag ** 2, float(np.dot(x, x))
 
     def push(self, samples):
