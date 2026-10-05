@@ -20,6 +20,7 @@ import { attachSockets } from '../../src/server/sockets.ts';
 import { createApplier } from '../../src/server/apply.ts';
 import { EffectLibrary } from '../../src/server/effect-library.ts';
 import { PaletteStore } from '../../src/server/palette-store.ts';
+import { PadStore } from '../../src/server/pads.ts';
 import { startEngine, stopEngine, renderInput, renderFrame, engineStatus } from '../../src/server/engine.ts';
 import { applyPatch } from '../../src/server/patch.ts';
 import { captureLook } from '../../src/server/cues.ts';
@@ -61,6 +62,7 @@ async function serve(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voices-routes-'));
   const effectLibrary = new EffectLibrary(path.join(dir, 'effects.json')).load();
   const paletteStore = new PaletteStore(path.join(dir, 'palettes.json')).load();
+  const padStore = new PadStore(path.join(dir, 'pads.json')).load();
   const idle = { onPlaybackUpdate() {}, onTrackChange() {}, getStatus: () => ({}), authenticated: false };
   const autoShow = {
     running: false, track: null, syncOffsetMs: 0, autoSyncMs: 0, analysis: null,
@@ -87,7 +89,7 @@ async function serve(t) {
     spotify: { ...idle, startPolling() {}, async getQueue() { return []; } },
     nowPlaying: idle,
     deezerSource: { ...idle, getQueue: () => [], updatePlayback() {}, updateQueue() {}, disconnect() {} },
-    prolink, autoShow, effectLibrary, paletteStore,
+    prolink, autoShow, effectLibrary, paletteStore, padStore,
   });
   const applier = createApplier({
     midi, spotify: { localCallbackUrl: '', setLoopbackPort() {}, configure() {} }, smtc: { start() {}, stop() {} },
@@ -298,7 +300,7 @@ test('voice-hold: a page holds any effect down, renews it, lets it go; only its 
   a.socket.emit('voice-hold', { action: 'release', token: 'h1' });
   await until(() => !ids().length, 'the release');
 
-  // A preset by id; then one the acknowledgement keeps back, a pad and a bad effect, each told.
+  // A preset by id; then one the acknowledgement keeps back, a pad (the default 0/0, the white strobe, keeps back too) and a bad effect, each told.
   a.socket.emit('voice-hold', { action: 'press', token: 'h2', effect: { preset: 'glow' } });
   await until(() => voices.list()[0]?.kind === 'energy.glow', 'the preset held');
   a.socket.emit('voice-hold', { action: 'press', token: 'h3', effect: { preset: 'white-strobe' } });
@@ -308,7 +310,7 @@ test('voice-hold: a page holds any effect down, renews it, lets it go; only its 
   await until(() => a.heard.errors.length === 4, 'four refusals');
   assert.deepEqual(a.heard.errors.map((e) => e.source), ['voice-hold', 'voice-hold', 'voice-hold', 'voice-hold']);
   assert.match(a.heard.errors[0].message, /photosensitivity acknowledgement required/);
-  assert.match(a.heard.errors[1].message, /pads/);
+  assert.match(a.heard.errors[1].message, /photosensitivity acknowledgement required/);
   assert.deepEqual(voices.list().map((v) => v.kind), ['energy.glow'], 'nothing else launched');
 
   // Left unrenewed, it dies within the lease, and the page that held it going takes the rest.
