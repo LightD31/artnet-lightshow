@@ -195,37 +195,54 @@ test('every key of the live state names its domain, the tempo mode the look\'s',
 test('a beat that moves as it should adds nothing to the broadcasts', async () => {
   const s = await serve();
   const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+  // What is sent arrives in order on each socket, but a busy runner may take a
+  // while: wait for it by deadline, and pause only to show nothing more came.
+  const until = async (done, what) => {
+    const end = Date.now() + 10000;
+    while (!done()) {
+      assert.ok(Date.now() < end, `still waiting for ${what}`);
+      await pause(5);
+    }
+  };
   try {
     const v2 = s.client({ protocol: 2 });
     const v1 = s.client();
     await Promise.all([next(v2, 'snapshot'), next(v1, 'state')]);
-    s.integrations.broadcast();
-    await pause(50);
     const patches = [];
     const states = [];
     v2.on('patch', (p) => patches.push(p));
     v1.on('state', (w) => states.push(w));
+    // Once both have this fader, everything sent before it has arrived too.
+    applyPatch({ masterDimmer: 76 });
+    s.integrations.broadcast();
+    await until(() => patches.some((p) => p.set.masterDimmer === 76) && states.some((w) => w.masterDimmer === 76), 'the first broadcast');
+    patches.length = 0;
+    states.length = 0;
 
     for (let i = 0; i < 20; i++) { s.integrations.broadcast(); await pause(10); }
     await pause(50);
     assert.deepStrictEqual([patches.length, states.length], [0, 0], 'twenty sweeps of a running clock: nothing to send');
 
+    const sentAfter = Date.now();
     applyPatch({ masterDimmer: 77 });
     s.integrations.broadcast();
+    await until(() => patches.length && states.length, 'the fader');
     await pause(50);
     assert.deepStrictEqual(patches.map((p) => p.set), [{ masterDimmer: 77 }], 'the fader, without the clock');
     assert.strictEqual(states.length, 1);
-    assert.ok(Math.abs(states[0].clock.at - Date.now()) < 100, 'protocol 1 gets the whole state, the clock read with it');
+    assert.ok(states[0].clock.at >= sentAfter, 'protocol 1 gets the whole state, the clock read with it');
 
     // The clock stopping is news once, and standing still is not.
     conductor.setRunning(false);
     for (let i = 0; i < 10; i++) { s.integrations.broadcast(); await pause(10); }
+    await until(() => patches.length >= 2, 'the stop');
     await pause(50);
     assert.deepStrictEqual(patches.slice(1).map((p) => Object.keys(p.set)), [['clock']]);
     const stopped = patches[1].set.clock;
     conductor.setRunning(true);
     await pause(30);
     s.integrations.broadcast();
+    await until(() => patches.length >= 3 && states.length >= 3, 'moving again');
     await pause(50);
     assert.strictEqual(patches.length, 3, 'moving again is news');
     assert.ok(patches[2].set.clock.beatPos >= stopped.beatPos && patches[2].set.clock.epoch === stopped.epoch);

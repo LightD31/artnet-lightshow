@@ -96,7 +96,7 @@ test('callers cannot mutate engine state through the snapshot', () => {
 
 // The visuals keep their own beat: the clock says where its beat is and when
 // that was read, so a screen carries it on as beatPos + (now - at) / 60000 * bpm.
-test('the clock carries its beat position, its epoch and when it was read', () => {
+test('the clock carries its beat position, its epoch and when it was read', async () => {
   const before = Date.now();
   const { clock } = getLiveState();
   const after = Date.now();
@@ -105,11 +105,19 @@ test('the clock carries its beat position, its epoch and when it was read', () =
   assert.ok(before <= clock.at && clock.at <= after, `read at ${clock.at}, between ${before} and ${after}`);
   assert.deepStrictEqual({ source: clock.source, bpm: clock.bpm }, conductor.status());
 
-  // Carried on to a later read, it lands where the clock is then.
+  // Carried on to a later read, it lands where the clock is then. Wall ms are
+  // whole and a busy runner may pause between any two reads, so the time
+  // between the two beats is bounded by the wall clocks read around them: no
+  // less than from the first's `at` to the second, no more than from before
+  // the first to after the second. Read a few frames on, so a beat that ran
+  // at any other tempo would land outside that.
+  await new Promise((r) => setTimeout(r, 40));
+  const from = Date.now();
   const later = conductor.phase();
-  const readAt = Date.now();
-  const carried = clock.beatPos + ((readAt - clock.at) / 60000) * clock.bpm;
-  assert.ok(Math.abs(later.beatPos - carried) < (3 / 60000) * clock.bpm, `${carried} vs ${later.beatPos}`);
+  const to = Date.now();
+  const carried = (ms) => clock.beatPos + (ms / 60000) * clock.bpm;
+  assert.ok(later.beatPos >= carried(from - clock.at - 1) && later.beatPos <= carried(to - before + 1),
+    `${later.beatPos}, carried on: ${carried(from - clock.at - 1)}..${carried(to - before + 1)}`);
   assert.strictEqual(later.epoch, clock.epoch);
   assert.deepStrictEqual(getClientState().clock.source, clock.source, 'GET /api/state carries it too');
 });
