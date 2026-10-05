@@ -257,7 +257,10 @@ function createAuth({ token = '', allowedHosts = () => [] }: {
 
   function socketMiddleware(socket: Socket, next: (err?: Error) => void) {
     if (!enabled) return next();
-    const presented = (socket.handshake.auth && socket.handshake.auth.token)
+    // Match HTTP: an authenticated reverse proxy can supply the credential
+    // without exposing it to browser storage. Prefer it over stale client tokens.
+    const presented = socket.handshake.headers?.['x-lightshow-token']
+      || (socket.handshake.auth && socket.handshake.auth.token)
       || socket.handshake.query.token
       || '';
     if (safeEqual(presented, token)) return next();
