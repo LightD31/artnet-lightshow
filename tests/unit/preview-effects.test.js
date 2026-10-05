@@ -363,7 +363,7 @@ test('off-grid samples render on a copy: the frames after them are the ones a sa
   const times = [...frames(0, 350), 350];
   const late = createPreviewSampler(events, GRID, { resolveEffect })(350, RIG, COLOR_PRESETS, r);
   const rig = rigRun(RIG, times, (t) => ({
-    pattern: t >= 333 ? 'wave-once' : 'ldj.FadeCycle', effect: t >= 333 ? OWN['wave-once'] : FADE, effectRevision: t >= 333 ? 1 : 0,
+    pattern: t >= 333 ? 'wave-once' : 'ldj.FadeCycle', effect: t >= 333 ? OWN['wave-once'] : FADE,
     patternAnchor: t >= 333 ? { step: anchorStep(beat(333)), epoch: 0 } : { step: 0, epoch: 0 },
     fade: t >= 333 ? { seq: 1, ms: 250, at: 333 } : null,
     voices: t >= 90 ? [voice('pad:x', preset('ldj.CrossFade'), { targets: [PARS[0].id, LAMP.id], startedAtMs: 90, anchorBeat: beat(90) })] : [],
@@ -412,7 +412,7 @@ test('a base effect starts on the first frame that plays it, whatever was asked 
   // The rig's base begins on the same frame.
   const times = frames(0, 9 * FRAME_MS);
   const rig = rigRun(PARS, times, (t) => ({
-    ...(t < 101 ? { pattern: 'solid', colorA: 5 } : { pattern: 'probe', effect: OWN.probe, colorA: 5, effectRevision: 1, patternAnchor: { step: anchorStep(beat(101)), epoch: 0 } }),
+    ...(t < 101 ? { pattern: 'solid', colorA: 5 } : { pattern: 'probe', effect: OWN.probe, colorA: 5, patternAnchor: { step: anchorStep(beat(101)), epoch: 0 } }),
     voices: t >= 30 ? [voice('count', OWN.probe, { targets: [PARS[3].id], startedAtMs: 30, anchorBeat: beat(30) })] : [],
   }));
   assertSame(rig.slice(-1), [later], times.slice(-1));
@@ -431,12 +431,12 @@ test('scenes between two frames render once, as the last of them, and a voice ke
   const skipped = previewRun(createPreviewSampler(events.filter((e) => e.timeMs !== 101), GRID, { resolveEffect }), RIG, times);
   assert.deepStrictEqual(preview, skipped, 'the scene no frame fell in never renders');
   const rig = rigRun(RIG, times, (t) => (t < 107 ? { pattern: 'ldj.FadeCycle', effect: FADE } : {
-    pattern: 'ldj.CrossFade', effect: preset('ldj.CrossFade'), effectRevision: 1, patternAnchor: { step: anchorStep(beat(107)), epoch: 0 },
+    pattern: 'ldj.CrossFade', effect: preset('ldj.CrossFade'), patternAnchor: { step: anchorStep(beat(107)), epoch: 0 },
   }));
   // The rig without the voice, then the voice's own lamps checked apart.
   const rigWithVoice = rigRun(RIG, times, (t) => ({
     ...(t < 107 ? { pattern: 'ldj.FadeCycle', effect: FADE } : {
-      pattern: 'ldj.CrossFade', effect: preset('ldj.CrossFade'), effectRevision: 1, patternAnchor: { step: anchorStep(beat(107)), epoch: 0 } }),
+      pattern: 'ldj.CrossFade', effect: preset('ldj.CrossFade'), patternAnchor: { step: anchorStep(beat(107)), epoch: 0 } }),
     voices: [voice('pad:w', FADE, { targets: [PARS[0].id, PARS[1].id] })],
   }));
   assertSame(rigWithVoice, preview, times);
@@ -446,15 +446,23 @@ test('scenes between two frames render once, as the last of them, and a voice ke
   assert.deepStrictEqual(preview.map((o) => o.slice(0, 2)), still.map((o) => o.slice(0, 2)));
 });
 
-test('a scene starts its effect again even on the same id and step; a colour patch does not', () => {
+test('a scene sending its pattern again on the same step plays on, as the rig does; on another step it starts again; a colour patch carries on', () => {
   const times = frames(0, 1200);
   const base = { timeMs: 0, action: 'patch', data: { pattern: 'ldj.FadeCycle', ...LOOK } };
-  // 200 ms is 0.4 of a beat: the step rounds to 0, so the id is the same.
-  const relaunched = previewRun(createPreviewSampler([base, { timeMs: 200, action: 'patch', data: { pattern: 'ldj.FadeCycle' } }], GRID, { resolveEffect }), RIG, times);
-  const rig = rigRun(RIG, times, (t) => ({ pattern: 'ldj.FadeCycle', effect: FADE, effectRevision: t >= 200 ? 1 : 0, patternAnchor: { step: 0, epoch: 0 } }));
-  assertSame(rig, relaunched, times);
   const plain = previewRun(createPreviewSampler([base], GRID, { resolveEffect }), RIG, times);
-  assert.ok(times.some((t, i) => key(plain[i][0]) !== key(relaunched[i][0])), 'the relaunch shows');
+  // What patch.ts hands the renderer for a scheduled scene: the step of the beat
+  // it was due on and the clock's epoch, and no effect revision.
+  const anchorOf = (ms) => ({ step: anchorStep(beat(ms)), epoch: 0 });
+  // 200 ms is 0.4 of a beat: the step of the scene at 0, so the same launch on both.
+  assert.deepStrictEqual(anchorOf(200), anchorOf(0));
+  const same = previewRun(createPreviewSampler([base, { timeMs: 200, action: 'patch', data: { pattern: 'ldj.FadeCycle' } }], GRID, { resolveEffect }), RIG, times);
+  assertSame(rigRun(RIG, times, (t) => ({ pattern: 'ldj.FadeCycle', effect: FADE, patternAnchor: anchorOf(t >= 200 ? 200 : 0) })), same, times);
+  assert.deepStrictEqual(same, plain, 'nothing starts again');
+  // 700 ms is on a later step: a new id, so a new launch on both.
+  assert.notDeepStrictEqual(anchorOf(700), anchorOf(0));
+  const next = previewRun(createPreviewSampler([base, { timeMs: 700, action: 'patch', data: { pattern: 'ldj.FadeCycle' } }], GRID, { resolveEffect }), RIG, times);
+  assertSame(rigRun(RIG, times, (t) => ({ pattern: 'ldj.FadeCycle', effect: FADE, patternAnchor: anchorOf(t >= 700 ? 700 : 0) })), next, times);
+  assert.ok(times.some((t, i) => key(plain[i][0]) !== key(next[i][0])), 'the relaunch shows');
   const recoloured = previewRun(createPreviewSampler([base, { timeMs: 200, action: 'patch', data: { colorA: 7, colorB: 2 } }], GRID, { resolveEffect }), RIG, times);
   assert.deepStrictEqual(recoloured, plain, 'its own colours, carried on');
 });
@@ -475,7 +483,7 @@ test('a crossfade starts from what the base showed on the frame before, without 
     const scene = t >= 505 ? 2 : t >= 310 ? 1 : 0;
     return {
       pattern: ['ldj.FadeCycle', 'ldj.StrobeCycle', 'chase'][scene],
-      effect: [FADE, preset('ldj.StrobeCycle'), null][scene], effectRevision: scene,
+      effect: [FADE, preset('ldj.StrobeCycle'), null][scene],
       patternAnchor: { step: [0, anchorStep(beat(310)), anchorStep(beat(505))][scene], epoch: 0 },
       fade: scene === 2 ? { seq: 2, ms: 300, at: 505 } : scene === 1 ? { seq: 1, ms: 400, at: 310 } : null,
       voices: t < 1300 ? [voice('pad:b', BLINDER, { targets: [PARS[0].id] })] : [],

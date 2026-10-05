@@ -167,8 +167,6 @@ interface Frame {
   anchor: number;
   /** The beat the scene the pattern counts from was scheduled on, or null before any. */
   anchorBeat: number | null;
-  /** How many scenes (patches naming a pattern) so far: each launches the base again. */
-  scene: number;
   burst: { id: string | undefined; end: number } | null;
   expression: Expression;
   motionPhase: number;
@@ -395,7 +393,6 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
   let look: PreviewLook = { ...OPENING };
   let anchor = 0;
   let anchorBeat: number | null = null;
-  let scene = 0;
   let burst: Frame['burst'] = null;
   // Carried across the walk so each frame records where the continuous channels
   // had got to by the time it fired. The blend below is a first-order lag, and
@@ -441,8 +438,6 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
         anchor = anchorStep(beatPos, look.beatDivision || 1);
         anchorBeat = beatPos;
       }
-      // Every scene that names its pattern launches it again, the same one included.
-      if (patch.pattern !== undefined) scene++;
       if ('energyOverride' in patch) burst = null;
       // As the engine: a fade asked for starts one, and a new look or a fade of 0 cuts any in progress.
       if (patch.fadeMs && patch.fadeMs > 0) fade = { from: frames.length - 1, start: event.timeMs, ms: patch.fadeMs };
@@ -459,15 +454,18 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
     } else if (event.action === 'seek') {
       op = { kind: 'seek' };
     }
-    frames.push({ timeMs: event.timeMs, beatPos, look, anchor, anchorBeat, scene, burst, expression, motionPhase, fade });
+    frames.push({ timeMs: event.timeMs, beatPos, look, anchor, anchorBeat, burst, expression, motionPhase, fade });
     ops.push(op);
   }
 
   // A voice event anywhere means the timeline owns its voices, as a renderer input with `voices` does.
   const explicitVoices = timeline.some((e) => e.action === 'voice' || e.action === 'voice-end');
   const patterns = [...new Set(frames.map((f) => f.look.pattern))];
-  // An event that launches the base again: where a backward sample starts over.
-  const keyframe = timeline.map((e, i) => ops[i]?.kind === 'seek' || (e.action === 'patch' && frames[i].scene !== (frames[i - 1]?.scene ?? 0)));
+  // An event that launches the base again (a seek, or a new pattern or anchor step: the base's id): a copy is kept before it.
+  const keyframe = timeline.map((e, i) => {
+    const before = frames[i - 1] ?? { look: OPENING, anchor: 0 };
+    return ops[i]?.kind === 'seek' || (e.action === 'patch' && (frames[i].look.pattern !== before.look.pattern || frames[i].anchor !== before.anchor));
+  });
 
   /** The look's four colours, resolved against the colour table. */
   const coloursOf = (s: PreviewLook, presets: readonly Colour[]): Colour[] => COLOUR_KEYS.map((key) => presets[s[key]] || presets[0]);
@@ -804,8 +802,9 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
       const cells = cellsOf(e, `${split}|${pixelMap}`, () => rig.layout(split, pixelMap));
       const division = Math.max(1, s.beatDivision || 1);
       const id = `base:${s.pattern}:${f.anchor}`;
-      // Every scene and every seek is a new launch, even on the same id.
-      const key = canonical([id, f.scene, effectContentKey(spec), cells.key, w.epoch]);
+      // Keyed as the renderer keys it: a new id (pattern or anchor step), content, layout or seek
+      // launches it again; a scene sending the same pattern on the same step does not.
+      const key = canonical([id, effectContentKey(spec), cells.key, w.epoch]);
       if (!w.base || w.base.key !== key) {
         if (w.base && w.base.kind === 'strobe' && spec.kind === 'strobe') w.stepper.move(w.base.id, id);
         else {
