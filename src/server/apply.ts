@@ -162,6 +162,8 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
   function applyLive() {
     if (!live) return;
     const config = settings.group('live');
+    // No bands here: the live input asks its band source (the audio features)
+    // on every start, so a latency or device change keeps them.
     if (config.enabled) live.start({ source: config.source, device: config.device, latencyMs: config.latencyMs });
     else live.stop();
     broadcast();

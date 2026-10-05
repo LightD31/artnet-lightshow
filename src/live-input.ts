@@ -15,7 +15,9 @@
  *     clock reads a beat position for "now", not for the last hop.
  *
  * Started with `bands`, the service also reports the power in each of them
- * every hop, for the party effects' ears (`LiveReading.spectrum`).
+ * every hop, for the party effects' ears (`LiveReading.spectrum`). With a band
+ * source (`useBands`), that source names the bands of every start, whoever
+ * starts it: the settings, the return from the Python setup, a band edit.
  *
  * `latencyMs` is the distance between capture and the room: positive when the
  * room hears the audio later than it is captured (loopback, before the PA),
@@ -85,6 +87,8 @@ export interface LiveReading {
   spectrum?: LiveSpectrum;
   /** Which spawned process the line came from, counting from 1; stamped here, not by the service. */
   generation?: number;
+  /** The bands that process sums, as `bandsArg` writes them; stamped here too. */
+  layout?: string;
 }
 
 /** One hop's onset strength and level, in stream time. */
@@ -152,7 +156,7 @@ function copyBands(bands: unknown): [number, number][] | undefined {
 }
 
 /** `--bands` as the service reads it, and '' for none; equal strings, equal lists. */
-function bandsArg(bands: [number, number][] | undefined): string {
+export function bandsArg(bands: readonly (readonly [number, number])[] | undefined): string {
   return (bands || []).map(([lo, hi]) => `${lo}-${hi}`).join(',');
 }
 
@@ -180,6 +184,7 @@ class LiveInput {
   declare _onEvent: ((event: LiveEvent) => void) | null;
   declare _onReading: ((reading: LiveReading) => void) | null;
   declare _onStatus: ((status: LiveStatus) => void) | null;
+  declare _bandSource: (() => [number, number][]) | null;
 
   constructor({ spawner, now, scriptPath }: { spawner?: Spawner; now?: () => number; scriptPath?: string } = {}) {
     this._now = now || (() => performance.now());
@@ -203,11 +208,24 @@ class LiveInput {
     this._onEvent = null;
     this._onReading = null;
     this._onStatus = null;
+    this._bandSource = null;
   }
 
   onEvent(fn: LiveInput['_onEvent']): void { this._onEvent = fn; }
   onReading(fn: LiveInput['_onReading']): void { this._onReading = fn; }
   onStatus(fn: LiveInput['_onStatus']): void { this._onStatus = fn; }
+
+  /**
+   * What every start asks for its bands from now on, so no caller can start
+   * the service without the list its readers decode. Null goes back to each
+   * start's own `bands`.
+   */
+  useBands(source: (() => [number, number][]) | null): void { this._bandSource = source; }
+
+  /** The band source names other bands now: listen again with them, if listening. */
+  refreshBands(): void {
+    if (this._options && !this._stopped) this.start(this._options);
+  }
 
   get running(): boolean { return !this._stopped; }
 
@@ -223,7 +241,7 @@ class LiveInput {
   start(options: LiveOptions): void {
     // Copied before the comparison: a caller editing its array in place and
     // passing it again must still read as a change.
-    const bands = copyBands(options.bands);
+    const bands = copyBands(this._bandSource ? this._bandSource() : options.bands);
     const same = this._options && !this._stopped
       && this._options.source === options.source && (this._options.device || '') === (options.device || '')
       && (this._options.file || '') === (options.file || '')
@@ -359,6 +377,8 @@ class LiveInput {
     const now = this._now();
     const wasListening = this._isFresh(now);
     r.generation = this._generation;
+    // The options change only with the process (start), so theirs are the bands this line was summed over.
+    r.layout = bandsArg(this._options?.bands);
     this._reading = r;
     this._readingAt = now;
     if (r.locked) {

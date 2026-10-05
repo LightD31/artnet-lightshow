@@ -228,6 +228,47 @@ test('a band list the service would refuse throws, and the running process is le
   assert.strictEqual(procs.length, 2, 'a dozen, up to 11 025 Hz, is fine');
 });
 
+test('with a band source, every start asks it, whatever the start brought, and a refresh restarts only on a change', () => {
+  const spawned = [];
+  const live = new LiveInput({ spawner: (exe, args) => { spawned.push(args); return fakeProcess(); }, now: () => 0 });
+  let bands = [[20, 250], [0, 160]];
+  live.useBands(() => bands);
+  live.start({ source: 'loopback' });
+  assert.deepStrictEqual(spawned[0].slice(-2), ['--bands', '20-250,0-160']);
+  // A start from the settings brings no bands, one from before a setup the old ones.
+  live.start({ source: 'loopback', latencyMs: 40 });
+  live.start({ source: 'loopback', latencyMs: 40, bands: [[1, 2]] });
+  assert.strictEqual(spawned.length, 1, 'the source\'s bands, still: nothing restarts');
+  assert.deepStrictEqual(live.options.bands, [[20, 250], [0, 160]]);
+  live.refreshBands();
+  assert.strictEqual(spawned.length, 1, 'the same list');
+  bands = [[20, 250], [0, 120]];
+  live.refreshBands();
+  assert.deepStrictEqual(spawned[1].slice(-2), ['--bands', '20-250,0-120']);
+  assert.strictEqual(live.options.latencyMs, 40, 'the rest of the options as they were');
+  live.stop();
+  bands = [[20, 250]];
+  live.refreshBands();
+  assert.strictEqual(spawned.length, 2, 'stopped: a refresh starts nothing');
+  live.start(live.options);
+  assert.deepStrictEqual(spawned[2].slice(-2), ['--bands', '20-250'], 'started again with the bands of now');
+  live.useBands(null);
+  live.start({ source: 'loopback', bands: [[0, 160]] });
+  assert.deepStrictEqual(spawned[3].slice(-2), ['--bands', '0-160'], 'without a source, a start\'s own bands');
+  live.stop();
+});
+
+test('a reading says which bands it was summed over', () => {
+  const live = new LiveInput({ spawner: () => fakeProcess(), now: () => 1000 });
+  live.start({ source: 'loopback', bands: [[0, 160], [750, 2000]] });
+  live.handleLine(state({ spectrum: { power: 1, rms: 0.03, dominantHz: null, bands: [1, 2], fftPower: 9 } }));
+  assert.strictEqual(live.getReading().layout, '0-160,750-2000');
+  live.start({ source: 'loopback' });
+  live.handleLine(state());
+  assert.strictEqual(live.getReading().layout, '', 'none');
+  live.stop();
+});
+
 test('the band limits are the service\'s own, for a settings validator to share', () => {
   // The service refuses past these with a usage error and an exit, so a
   // validator that drifted from them would keep the process failing.

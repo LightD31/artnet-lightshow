@@ -20,7 +20,9 @@ import { AutoSync } from '../auto-sync.ts';
 import LiveDirector from '../show/live-director.ts';
 import { PATTERNS } from './presets.ts';
 import { settings } from './settings.ts';
-import { identify } from './engine.ts';
+import { identify, setAudioSource } from './engine.ts';
+import { AudioFeatures, feedOf, resolveDetectors } from './audio-features.ts';
+import { BIN_HZ } from '../shared/spectrum-bands.ts';
 import type { Server } from 'socket.io';
 import type AutoShow from '../auto-show.ts';
 import type { AnalysisCache } from '../analysis-cache.ts';
@@ -29,6 +31,7 @@ import type MidiController from '../midi.ts';
 import type NowPlayingSource from '../nowplaying-source.ts';
 import type ProLink from '../prolink.ts';
 import type LiveInput from '../live-input.ts';
+import type { LiveReading } from '../live-input.ts';
 import type { ProlinkTrack } from '../prolink.ts';
 import type { AnalysisPriority } from '../analyzer-worker.ts';
 import type SpotifyClient from '../spotify.ts';
@@ -36,6 +39,8 @@ import type { BeatGrid } from '../shared/beat-clock.ts';
 import type { AutoPosition } from './auto-position.ts';
 import type { DeezerState } from './validation.ts';
 import type { NowPlaying } from '../types/playback.ts';
+import type { AudioFrame } from '../shared/effects/audio-frame.ts';
+import type { Detectors } from './audio-features.ts';
 
 /** Everything the integrations wire together. */
 export interface IntegrationDeps {
@@ -210,6 +215,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
         lastError: prolink.lastError,
       },
       live: liveInput ? { ...liveInput.status(), director: liveDirector ? liveDirector.status() : null } : null,
+      audio: liveAudio(),
       autoShow: autoShow.getClientState(),
       // Summaries, not the stored looks: a hundred full cues would ride every
       // broadcast, and the buttons only need a name and a swatch.
@@ -340,16 +346,92 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     patterns: PATTERNS,
     pixels: () => currentRig().hasPixels,
   }) : null;
-  if (liveInput && liveDirector) {
-    liveInput.onReading((r) => liveDirector.onReading(r));
-    liveInput.onEvent((e) => liveDirector.onEvent(e));
-  }
+  if (liveInput && liveDirector) liveInput.onEvent((e) => liveDirector.onEvent(e));
 
   function syncLiveDirector(): void {
     if (!liveDirector) return;
     const drive = showWanted && !autoShow.running && liveListening() && settings.get('live.director');
     if (drive && !liveDirector.active) liveDirector.start();
     else if (!drive && liveDirector.active) liveDirector.stop();
+  }
+
+  // ─── What the party effects hear ────────────────────────────────────────
+  // One set of detectors for every effect (audio-features.ts), on the
+  // settings of the Disco or Visualizer playing, else on the settings here.
+  // No look is an effect yet and no voices play, so for now the settings and
+  // Disco's defaults run them; the renderer's base effect and its voices are
+  // what `resolveDetectors` takes when they exist.
+  function detectors(): Detectors {
+    return resolveDetectors({
+      base: null, voices: [], nowMs: performance.now(),
+      fixtureIds: state.fixtures.map((f) => f.id), ldjTrigger: settings.get('audio.ldjTrigger'),
+    });
+  }
+  const audioFeatures = new AudioFeatures({
+    master: () => settings.get('audio.master'),
+    disco: () => detectors().disco,
+    ldjTrigger: () => detectors().spl.trigger,
+    binHz: BIN_HZ,
+    // Asked from inside a reading: restart once that line has been handled.
+    onBands: () => queueMicrotask(guarded('audio bands', () => { if (liveInput) liveInput.refreshBands(); })),
+  });
+  if (liveInput) {
+    // Every start of the live input, whoever starts it, asks for these bands.
+    liveInput.useBands(() => audioFeatures.bandList());
+    // One listener for both: the live input keeps only one. Each is guarded,
+    // so a fault in one does not starve the other.
+    const directorHears = liveDirector ? guarded('live director', (r: LiveReading) => liveDirector.onReading(r)) : null;
+    const featuresHear = guarded('audio features', (r: LiveReading) => audioFeatures.onReading(r));
+    liveInput.onReading((r) => {
+      if (directorHears) directorHears(r);
+      featuresHear(r);
+    });
+  }
+
+  /** The hop for what the room hears now: the stream time the live input places, latency included. */
+  function heard(): AudioFrame | null {
+    const streamNowMs = liveInput ? liveInput.streamNowMs() : null;
+    return audioFeatures.frame(streamNowMs === null ? undefined : streamNowMs / 1000);
+  }
+  setAudioSource(heard);
+
+  /** What is heard, for a meter that reads a few times a second at most. */
+  function heardSummary() {
+    const frame = heard();
+    return {
+      listening: !!frame,
+      levels: frame ? { ...frame.party } : null,
+      spl: frame ? { db: frame.spl.db, level: frame.spl.level, beat: frame.spl.beat, section: frame.spl.section } : null,
+    };
+  }
+
+  /**
+   * The audio settings, what is heard, and whose settings the detectors run
+   * on — which a playing Disco or Visualizer takes over from the settings.
+   */
+  function audioSummary(heardNow = heardSummary()) {
+    const d = detectors();
+    return {
+      ...settings.group('audio'),
+      ...heardNow,
+      detectors: {
+        spl: d.spl,
+        disco: { owner: d.disco.owner, bands: d.disco.bands, globals: d.disco.globals },
+      },
+    };
+  }
+
+  // The live state's copy of what is heard moves with the once-a-second
+  // sweep: a broadcast in between (a fader being dragged) carries the same
+  // levels, so they cost one patch a second, not one per broadcast. The
+  // settings and owners in it are always current.
+  const HEARD_EVERY_MS = 900;
+  let heardAt = -Infinity;
+  let heardThen = heardSummary();
+  function liveAudio() {
+    const now = Date.now();
+    if (now - heardAt >= HEARD_EVERY_MS) { heardAt = now; heardThen = heardSummary(); }
+    return audioSummary(heardThen);
   }
 
   // ─── The pattern clock's track lock ─────────────────────────────────────
@@ -921,6 +1003,14 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   }), 1000 / 30);
   if (dmxFrameTimer.unref) dmxFrameTimer.unref();
 
+  // What the party effects hear, at the same rate, to the pages showing its
+  // meters; the hop the rig renders, not one the live state carries.
+  const audioTimer = setInterval(guarded('audio-feed', () => {
+    if (!publisher.wants(ROOM.audio)) { publisher.resetAudio(); return; }
+    publisher.sendAudio(feedOf(heard()));
+  }), 1000 / 30);
+  if (audioTimer.unref) audioTimer.unref();
+
   // Some status fields drift without any explicit event — `authenticated` on
   // the now-playing and Deezer sources expires on a staleness timer, and
   // Spotify's poll updates status without calling broadcast(). A low-rate
@@ -933,6 +1023,8 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     broadcast,
     publisher,
     warmer,
+    // The audio features and their summary, for the audio route.
+    audio: { features: audioFeatures, summary: audioSummary, detectors },
     hybrid,
     prefetchNextFromQueue,
     clearSpotifyNext: () => {

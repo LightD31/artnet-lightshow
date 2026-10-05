@@ -33,6 +33,8 @@ import type { Rig } from '../shared/rig.ts';
 import type { MusicalTime } from './conductor.ts';
 import type { PatternAnchor } from './state.ts';
 import type { UniverseStore } from './universes.ts';
+import type { AudioFrame } from '../shared/effects/audio-frame.ts';
+import type { AudioMode, HdMaster } from '../shared/effects/types.ts';
 import type { ChannelDefault, ChannelMap, Colour, Expression, Override, PixelMap, Profile, PulseReading, ShowDynamics, StageFixture } from '../types/rig.ts';
 
 /** A fixture as a frame needs it: its universe and trim resolved. */
@@ -96,6 +98,10 @@ export interface RenderInput {
   identify?: IdentifyRequest | null;
   universes: number[];
   fixtures: RenderFixture[];
+  /** What the party effects hear this frame (audio-features.ts), the audio mode and Hue Dynamics' master; absent in hand-built inputs. */
+  audio?: AudioFrame | null;
+  audioMode?: AudioMode;
+  master?: HdMaster;
 }
 
 /** The universe buffers a frame writes. */
