@@ -7,3 +7,4 @@ import './ldj-rotation.ts';
 import './ldj-wave.ts';
 import './ldj-matrix.ts';
 import './ldj-studio.ts';
+import './ldj-bitmap.ts';
