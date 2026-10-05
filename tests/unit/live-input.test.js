@@ -71,6 +71,35 @@ test('no beat without a lock, and none once the lines stop', () => {
   assert.strictEqual(c.live.status().listening, false);
 });
 
+// A tempo taken by hand from the live beat holds until the tracker finds a
+// new one (conductor.ts): the reading says which lock it belongs to.
+test('a lock found after the last one lapsed is a new one', () => {
+  const c = clocked();
+  c.live.handleLine(state());
+  const first = c.live.getBeatReading().key;
+  c.advance(2000);
+  c.live.handleLine(state({ locked: false }));
+  c.advance(1000);
+  c.live.handleLine(state());
+  assert.strictEqual(c.live.getBeatReading().key, first, 'a moment\'s doubt is the same lock');
+  c.advance(300);
+  c.live.handleLine(state());
+  assert.strictEqual(c.live.getBeatReading().key, first, 'and so are the lines after it');
+
+  c.advance(4100);
+  c.live.handleLine(state({ locked: false }));
+  assert.strictEqual(c.live.getBeatReading(), null, 'lost');
+  c.advance(100);
+  c.live.handleLine(state());
+  const second = c.live.getBeatReading().key;
+  assert.notStrictEqual(second, first, 'found again: a new lock');
+
+  // A process that dies takes its lock with it.
+  c.live._forgetStream();
+  c.live.handleLine(state());
+  assert.notStrictEqual(c.live.getBeatReading().key, second);
+});
+
 test('events, status and the envelope for lining a track up', () => {
   const c = clocked();
   const events = [];

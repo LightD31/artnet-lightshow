@@ -1189,11 +1189,16 @@ What the clock follows, best first — the badge under the BPM says which:
 | **Tap** | None of those: a free-running clock at the BPM you tap, type, nudge or send over MIDI. |
 
 The BPM read-out follows the clock, to a tenth: a 123.7 BPM song shows 123.7,
-and ± nudges from there. **Tapping or setting a BPM takes the tempo back from a
-locked song** until the next song, which locks again; the take-over starts from
-the beat the music is on, and a single tap keeps the song's tempo until a second
-tap measures a new one. Recalling a cue while the clock follows a song brings
-back the look and leaves the song's tempo in charge.
+and ± nudges from there. **Tapping, typing or nudging a BPM takes the tempo by
+hand** from a CDJ, a locked song or the live input: the badge reads Tap and the
+read-out is the tempo the rig runs at. The take-over starts from the beat the
+music is on, and a single tap keeps the music's tempo until a second tap
+measures a new one. The hand holds until the music moves on, and then the clock
+follows again: the next song; on the CDJs, the master deck loading a new track
+or another deck becoming the master; on the live input, the beat lost and found
+again. The auto show's grid is not taken by hand: a tempo typed under it leaves
+the read-out on the show's tempo. Recalling a cue while the clock follows the
+music brings back the look and leaves the music's tempo in charge.
 
 When a song pauses, the clock carries on at its tempo rather than freezing the
 rig on one step, and locks again when the music resumes. Stopping the auto show
