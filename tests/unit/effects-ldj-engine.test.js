@@ -472,3 +472,54 @@ test('iterations are a positive safe integer', () => {
   raw.spec.params.iterations = 0.5;
   assert.throws(() => draw(raw, frame(), roomAt([[0.5, 0.5]]), new EffectStepper()), /iterations/i);
 });
+
+// The channel assignment as first written: every pick scans every lamp for the
+// nearest free one. The renderer's is kept per room and sorted per anchor; it
+// must pick exactly the same lamps, ties included, on any rig.
+function scanChannels(room, selector, paletteCount = 1) {
+  const ANCHORS = { 1: [[0, 0]], 2: [[-1, 0], [1, 0]], 3: [[-1, 0], [0, 1], [1, 0]], 4: [[-1, 1], [-1, -1], [1, 1], [1, -1]], 5: [[-1, 1], [-1, -1], [1, 1], [1, -1], [0, 0]] };
+  const n = room.n;
+  if (n === 0) return [];
+  if (selector === 'lights') return Array.from({ length: n }, (_, i) => i);
+  const count = selector === 'depth' || selector === 'width' ? 2 : Math.min(n, selector === 'colours' ? Math.max(1, paletteCount) : selector);
+  if (selector === 'colours' && count === n) return Array.from({ length: n }, (_, i) => i);
+  const capacity = Array.from({ length: count }, (_, i) => Math.floor(n / count) + Number(i < n % count));
+  if (count > 5) return capacity.flatMap((size, channel) => Array(size).fill(channel));
+  const anchors = selector === 'depth' ? [[0, -1], [0, 1]] : ANCHORS[count];
+  const assigned = Array(n).fill(-1), sizes = Array(count).fill(0);
+  let remaining = n;
+  while (remaining) {
+    for (let channel = 0; channel < count; channel++) {
+      if (sizes[channel] >= capacity[channel]) continue;
+      let best = Infinity, pick = -1;
+      for (let i = 0; i < n; i++) {
+        if (assigned[i] !== -1) continue;
+        const d = Math.hypot(room.u[i] - anchors[channel][0], room.v[i] - anchors[channel][1]);
+        if (d < best) { best = d; pick = i; }
+      }
+      assigned[pick] = channel; sizes[channel]++; remaining--;
+    }
+  }
+  return assigned;
+}
+
+test('the channel assignment is the nearest-free scan exactly, kept per room and never handed out to be changed', () => {
+  let seed = 3;
+  const rand = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  for (let trial = 0; trial < 60; trial++) {
+    const n = 1 + Math.floor(rand() * 40);
+    // Some rigs on a coarse grid, so equal distances (ties) are common.
+    const coarse = trial % 2 === 0;
+    const xs = Array.from({ length: n }, () => (coarse ? Math.floor(rand() * 4) / 3 : rand()));
+    const ys = Array.from({ length: n }, () => (coarse ? Math.floor(rand() * 3) / 2 : rand()));
+    const room = buildRoom(n, (i) => xs[i] * 100, (i) => ys[i] * 100, () => 0.5, null);
+    for (const selector of [1, 2, 3, 4, 5, 'lights', 'colours', 'depth', 'width']) {
+      for (const colours of selector === 'colours' ? [1, 2, 3, 5, 6, 8] : [1]) {
+        assert.deepStrictEqual(ldjChannels(room, selector, colours), scanChannels(room, selector, colours), `trial ${trial}, n ${n}, ${selector}/${colours}`);
+      }
+    }
+  }
+  const room = buildRoom(6, (i) => i * 10, () => 50, () => 0.5, null);
+  assert.strictEqual(ldjChannels(room, 4), ldjChannels(room, 4), 'kept with the room');
+  assert.throws(() => { ldjChannels(room, 4)[0] = 3; }, TypeError, 'frozen');
+});

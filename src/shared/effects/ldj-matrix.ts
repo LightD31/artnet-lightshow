@@ -42,7 +42,8 @@ for (const [name, mode] of Object.entries({ PartyStrobe: 'pulse', MatrixPulse: '
         : mode === 'flash' ? { kind: 'matrix', fadeIn: 0, peak: 10, fadeOut: 0 }
           : mode === 'splotch' ? { kind: 'matrix', fadeIn: 10, peak: 200, fadeOut: 1500 }
             : { kind: 'matrix', fadeIn: 50, peak: 150 + Math.floor(hash01(ctx.seed, 79, ctx.iter) * 101), fadeOut: 2000 };
-      ctx.lamps.set(slot, ctx.colour(index, slot), 1, envelope);
+      // Pulse and flash are hard flashes on a dark room; firework and splotch fade as authored.
+      ctx.lamps.set(slot, ctx.colour(index, slot), 1, envelope, 0, mode === 'pulse' || mode === 'flash' ? 'flash' : undefined);
       ctx.refresh(slot);
     },
   });

@@ -2,6 +2,7 @@
 // latest output; fractional frame time and pending changes belong to the instance.
 
 import { z } from 'zod';
+import { huePulseLevel } from '../look-math.ts';
 import type { Colour } from '../../types/rig.ts';
 import type { Room } from '../room.ts';
 import type { AudioFrame } from './audio-frame.ts';
@@ -37,8 +38,38 @@ interface LampTransition {
   reverse: boolean;
   binding?: PaletteBinding;
   peakBinding?: PaletteBinding;
+  /** A hard flash a Hue lamp may take as a pulse, or a rest that cuts one (see FlashHint). */
+  mark?: LampMark;
 }
 interface PendingLamp { slot: number; delay: number; transition: LampTransition }
+
+/**
+ * What a row says about a lamp it sets, for Hue lamps in pulse mode: 'flash'
+ * is one of its hard flashes (on at full, cut to off), 'rest' its explicit
+ * rest level, which cuts a held flash short. Nothing else is marked: a fade,
+ * a blend or a background is drawn as authored on every lamp.
+ */
+export type LampMark = 'flash' | 'rest';
+
+/**
+ * A lamp's last hard flash, kept for a Hue lamp to take as the strobe's pulse
+ * (full falling to 40/255 over 200 ms). Plain data on the lamps' own clock,
+ * so a clone or a replay keeps it. An off step leaves it, so the tail plays
+ * on; any unmarked set on the lamp clears it.
+ */
+interface FlashHint {
+  /** When the flash became visible: its set, or the 22 Hz boundary a matrix request waited for. */
+  at: number;
+  peak: number;
+  /** The flash's colour as last drawn while lit; it holds through the tail. */
+  colour: Colour;
+  /** The lamp's own rest under the flash; the pulse never falls below it. */
+  floor: number;
+  /** A held matrix peak keeps its plateau to here and softens only the cut; null pulses from `at`. */
+  holdUntil: number | null;
+  /** An explicit rest that cut the plateau first: the release starts there, once. */
+  cutAt: number | null;
+}
 
 function toward(state: LampTransition, target: number, amount: number): void {
   // Float comparisons and updates both round, as the lamp engine does.
@@ -84,10 +115,16 @@ export class LdjLamps {
   private lamps: (LampTransition | null)[];
   private pending: PendingLamp[] = [];
   private remainderMs = 0;
+  // The lamps' own clock, ms since the first advance: what flash hints are timed on.
+  private clockMs = 0;
+  private hints: (FlashHint | null)[];
 
-  constructor(n: number) { this.lamps = Array.from({ length: Math.max(0, Math.floor(n)) }, () => null); }
+  constructor(n: number) {
+    this.lamps = Array.from({ length: Math.max(0, Math.floor(n)) }, () => null);
+    this.hints = this.lamps.map(() => null);
+  }
 
-  set(i: number, colour: Colour, bri: number, env: LdjEnvelope, delayFrames = 0): void {
+  set(i: number, colour: Colour, bri: number, env: LdjEnvelope, delayFrames = 0, mark?: LampMark): void {
     if (!Number.isInteger(i) || i < 0 || i >= this.lamps.length) return;
     const from = env.kind === 'fade' ? level(bri) : env.kind === 'matrix' ? level(env.baseline ?? 0) : 0;
     const to = env.kind === 'fade' ? level(env.baseline ?? 0) : level(bri);
@@ -98,16 +135,38 @@ export class LdjLamps {
       tick: 0, seconds: null, reverse: env.kind === 'twoWay',
       binding: env.kind === 'blend' ? undefined : paletteBinding(colour),
       peakBinding: env.kind === 'matrix' && env.peakColour ? paletteBinding(env.peakColour) : undefined,
+      ...(mark ? { mark } : {}),
     };
     if (env.kind === 'blend') state.colour = state.fromColour = { ...(this.lamps[i]?.colour ?? BLACK) };
     const delay = Number.isFinite(delayFrames) ? Math.max(0, Math.floor(delayFrames)) : 0;
     // Matrix peaks occupy complete lamp frames. A request between boundaries
     // waits for the next one, without resetting the other lamps' accumulator.
     if (delay || (env.kind === 'matrix' && this.remainderMs > 1e-8)) this.pending.push({ slot: i, delay, transition: state });
-    else this.install(i, state);
+    else this.install(i, state, this.clockMs);
   }
 
-  private install(i: number, state: LampTransition): boolean {
+  /** The hint a lamp's new transition leaves: a flash's own, a rest's cut, or none. */
+  private hint(i: number, state: LampTransition, atMs: number): void {
+    if (state.mark === 'flash') {
+      const env = state.env;
+      const hold = env.kind === 'matrix' ? Math.max(1, frameCount(env.peak)) : 0;
+      // A one-frame matrix flash is an instant flash; a longer peak is a plateau to keep.
+      const holdUntil = env.kind === 'matrix' && hold > 1 ? atMs + (frameCount(env.fadeIn) + hold) * LDJ_FRAME_MS : null;
+      const peak = env.kind === 'matrix' ? state.to : state.bri;
+      this.hints[i] = { at: atMs, peak, colour: { ...state.colour }, floor: env.kind === 'matrix' ? state.from : 0, holdUntil, cutAt: null };
+      return;
+    }
+    const hint = this.hints[i];
+    if (state.mark === 'rest' && hint) {
+      // The first rest inside a plateau starts its release; later rests change nothing.
+      if (hint.holdUntil !== null && hint.cutAt === null && atMs < hint.holdUntil) hint.cutAt = atMs;
+      hint.floor = Math.max(hint.floor, state.to);
+      return;
+    }
+    if (!state.mark) this.hints[i] = null;
+  }
+
+  private install(i: number, state: LampTransition, atMs: number): boolean {
     this.lamps[i] = state;
     // Matrix activation exposes frame zero once, whether it starts at the
     // baseline or immediately at its peak. A queued activation does the same.
@@ -116,8 +175,10 @@ export class LdjLamps {
         state.bri = state.to;
         state.colour = state.env.peakColour ?? state.fromColour;
       }
+      this.hint(i, state, atMs);
       return true;
     }
+    this.hint(i, state, atMs);
     return false;
   }
 
@@ -151,15 +212,20 @@ export class LdjLamps {
     };
     this.lamps.forEach(bind);
     for (const request of this.pending) bind(request.transition);
-    this.remainderMs += Number.isFinite(dtMs) ? Math.max(0, dtMs) : 0;
+    const step = Number.isFinite(dtMs) ? Math.max(0, dtMs) : 0;
+    // The last boundary passed, on the lamps' clock: each frame below starts one frame on.
+    const boundary = this.clockMs - this.remainderMs;
+    this.remainderMs += step;
+    this.clockMs += step;
     const frames = Math.floor((this.remainderMs + 1e-8) / LDJ_FRAME_MS);
     this.remainderMs = Math.max(0, this.remainderMs - frames * LDJ_FRAME_MS);
     for (let frame = 0; frame < frames; frame++) {
       const exposed = new Set<number>();
       const waiting: PendingLamp[] = [];
+      const atMs = boundary + (frame + 1) * LDJ_FRAME_MS;
       for (const request of this.pending) {
         if (request.delay > 0) { request.delay--; waiting.push(request); }
-        else if (this.install(request.slot, request.transition)) exposed.add(request.slot);
+        else if (this.install(request.slot, request.transition, atMs)) exposed.add(request.slot);
         else exposed.delete(request.slot);
       }
       this.pending = waiting;
@@ -174,6 +240,32 @@ export class LdjLamps {
   read(i: number): { colour: Colour; bri: number } {
     const state = this.lamps[i];
     return state ? { colour: state.colour, bri: state.bri } : { colour: { ...BLACK }, bri: 0 };
+  }
+
+  /**
+   * The colour a lamp was drawn this frame: while its marked flash is still
+   * lit, the flash's tail takes it (a live palette refresh, a per-frame
+   * colour), and once it is out the tail keeps the last. No colour is drawn here.
+   */
+  observe(i: number, colour: Colour): void {
+    const state = this.lamps[i], hint = this.hints[i];
+    if (hint && state?.mark === 'flash' && state.bri > hint.floor) hint.colour = { ...colour };
+  }
+
+  /**
+   * A Hue lamp's take on its last marked flash, as the strobe pulses it: full
+   * from the flash (or through a held peak, to its end or an earlier rest),
+   * falling to 40/255 of the peak over 200 ms and held there, never below the
+   * lamp's own rest. Null for a lamp with no flash to soften.
+   */
+  pulse(i: number): { colour: Colour; bri: number } | null {
+    const hint = this.hints[i];
+    if (!hint) return null;
+    const release = hint.holdUntil === null ? hint.at : Math.min(hint.holdUntil, hint.cutAt ?? Infinity);
+    // Read to the microsecond, so float steps never tip a level across its rounding edge.
+    const since = Math.round((this.clockMs - release) * 1000) / 1000;
+    const bri = since < 0 ? hint.peak : Math.max(hint.floor, hint.peak * huePulseLevel(since) / 255);
+    return { colour: hint.colour, bri };
   }
 }
 
@@ -212,8 +304,30 @@ const ANCHORS: Record<number, [number, number][]> = {
   5: [[-1, 1], [-1, -1], [1, 1], [1, -1], [0, 0]],
 };
 
+// A room's assignments, kept with the room: finding the nearest lamps for
+// every anchor is quadratic in the lamps, too dear to repeat on every frame
+// of a thousand-cell rig. The arrays are frozen, so no caller can alter one.
+const channelMemo = new WeakMap<Room, Map<string, readonly number[]>>();
+const ringMemo = new WeakMap<Room, readonly number[]>();
+
 /** LDJ keeps its own corner indices; the legacy looks retain their established geometry. */
 export function ldjChannels(room: Room, selector: LdjChannels, paletteCount = 1): number[] {
+  let memo = channelMemo.get(room);
+  if (!memo) { memo = new Map(); channelMemo.set(room, memo); }
+  const key = selector === 'colours' ? `colours:${paletteCount}` : String(selector);
+  let assigned = memo.get(key);
+  if (!assigned) { assigned = Object.freeze(assignChannels(room, selector, paletteCount)); memo.set(key, assigned); }
+  return assigned as number[];
+}
+
+/** The room's slots in ring order, the radial selectors' ranks. */
+export function ldjRingOrder(room: Room): number[] {
+  let order = ringMemo.get(room);
+  if (!order) { order = Object.freeze(Array.from({ length: room.n }, (_, i) => i).sort((a, b) => room.ring[a] - room.ring[b])); ringMemo.set(room, order); }
+  return order as number[];
+}
+
+function assignChannels(room: Room, selector: LdjChannels, paletteCount: number): number[] {
   const n = room.n;
   if (n === 0) return [];
   if (selector === 'lights') return Array.from({ length: n }, (_, i) => i);
@@ -225,18 +339,22 @@ export function ldjChannels(room: Room, selector: LdjChannels, paletteCount = 1)
   // Contiguous balanced groups preserve every colour in this larger case.
   if (count > 5) return capacity.flatMap((size, channel) => Array(size).fill(channel));
   const anchors: [number, number][] = selector === 'depth' ? [[0, -1], [0, 1]] : ANCHORS[count];
+  // Each anchor's lamps nearest first, ties by index: its next pick is the
+  // first of them still free, exactly the scan of every lamp for the nearest
+  // free one, at n log n rather than n² (a thousand-cell rig in one frame).
+  const nearest = anchors.map(([au, av]) => {
+    const distance = Array.from({ length: n }, (_, i) => Math.hypot(room.u[i] - au, room.v[i] - av));
+    return Array.from({ length: n }, (_, i) => i).sort((a, b) => distance[a] - distance[b] || a - b);
+  });
+  const cursor = Array<number>(count).fill(0);
   const assigned = Array<number>(n).fill(-1), sizes = Array<number>(count).fill(0);
   let remaining = n;
   while (remaining) {
     for (let channel = 0; channel < count; channel++) {
       if (sizes[channel] >= capacity[channel]) continue;
-      let best = Infinity, pick = -1;
-      for (let i = 0; i < n; i++) {
-        if (assigned[i] !== -1) continue;
-        const distance = Math.hypot(room.u[i] - anchors[channel][0], room.v[i] - anchors[channel][1]);
-        if (distance < best) { best = distance; pick = i; }
-      }
-      assigned[pick] = channel;
+      const order = nearest[channel];
+      while (assigned[order[cursor[channel]]] !== -1) cursor[channel]++;
+      assigned[order[cursor[channel]]] = channel;
       sizes[channel]++;
       remaining--;
     }
@@ -312,7 +430,7 @@ export function makeLdjKind(name: string, row: LdjRow): EffectKindDef<LdjParams,
       const ctx: LdjCtx = {
         room, lamps: state.lamps, pal, p, s, n: room.n, seed: frame.seed, state,
         channelOf: ldjChannels(room, row.channels ?? 4, pal.length),
-        ringOrder: Array.from({ length: room.n }, (_, i) => i).sort((a, b) => room.ring[a] - room.ring[b]),
+        ringOrder: ldjRingOrder(room),
         bpm: frame.bpm, audio: frame.audio, iter: clock.iter, params, nowMs: frame.nowMs, elapsedMs: frame.nowMs - originMs,
         reroll: () => { state.roll++; },
         colour: (index, key) => frame.paletteAccess?.colour(index, key) ?? roles(pal).at(index),
@@ -359,9 +477,15 @@ export function makeLdjKind(name: string, row: LdjRow): EffectKindDef<LdjParams,
       timing.lastMs = frame.nowMs;
       timing.lastBeat = frame.beatPos;
       ctx.nowMs = frame.nowMs; ctx.elapsedMs = frame.nowMs - originMs;
+      // A Hue lamp in pulse mode takes a row's marked hard flashes as the
+      // strobe's pulse; everything else, and every other lamp, as drawn.
+      const pulse = frame.hueStrobe === 'pulse';
       for (let i = 0; i < room.n; i++) {
         const lamp = state.lamps.read(i);
-        out[i] = { colour: row.outputColour?.(ctx, i, lamp) ?? lamp.colour, level: lamp.bri, strength: 1 };
+        const colour = row.outputColour?.(ctx, i, lamp) ?? lamp.colour;
+        state.lamps.observe(i, colour);
+        const tail = pulse && room.hue[i] ? state.lamps.pulse(i) : null;
+        out[i] = tail ? { colour: { ...tail.colour }, level: tail.bri, strength: 1 } : { colour, level: lamp.bri, strength: 1 };
       }
     },
   };

@@ -206,6 +206,22 @@ test('a Hue slot is flashed black with hueStrobe flash, and falls to 40/255 over
   assert.deepStrictEqual(flip(160, { hueStrobe: 'pulse' }).map(bytes), [0, 40]);
 });
 
+// The hold strobe has always read a Hue lamp at 60 and 100 ms in as 191 and
+// 148: levels on a rounding edge, which the grid's float slack must not tip.
+test('a flash observed on a level\'s rounding edge reads as the hold strobe always did', () => {
+  for (const [ms, dim] of [[60, 191], [100, 148], [170, 72]]) {
+    // A cold render, as a renderer sampled once; and on a running instance.
+    const cold = draw(strobe({ palette: null, params: { flashesPerSecond: 5, clock: 'beat', continueBetween: true } }),
+      frame({ nowMs: ms, beatPos: ms / 500, hueStrobe: 'pulse' }), MIXED, new EffectStepper());
+    assert.strictEqual(bytes(cold[1]), dim, `cold at ${ms} ms`);
+    assert.strictEqual(huePulseLevel(ms), dim);
+  }
+  const at = sampler(strobe({ palette: null, params: { flashesPerSecond: 5, clock: 'beat', continueBetween: true } }), MIXED, { hueStrobe: 'pulse' });
+  at(0);
+  assert.strictEqual(bytes(at(60)[1]), 191);
+  assert.strictEqual(bytes(at(100)[1]), 148);
+});
+
 test('a tempo change never lets a flash through early, and a denied flash is never replayed', () => {
   const inst = strobe({ params: { clock: 'beat', flashesPerSecond: 5 }, palette: ['#FF0000', '#0000FF'] });
   for (const [room, hueStrobe] of [[PAR, 'flash'], [MIXED, 'pulse']]) {

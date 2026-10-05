@@ -135,7 +135,9 @@ function renderStrobe(p: StrobeParams, s: StrobeState, room: Room, frame: Effect
   // A refused flash never cuts the admitted one short; before the first, the
   // ceiling keeps a missed flash's bright part dark.
   const flash = s.shown ?? candidate;
-  const age = frame.nowMs - flash.startMs;
+  // Read to the microsecond: the grid's float slack must never tip a level
+  // across its rounding edge (60 ms in is 191 of 255, 100 ms is 148).
+  const age = Math.round((frame.nowMs - flash.startMs) * 1000) / 1000;
   if (s.ceiling.length > room.n) s.ceiling.length = room.n;
   for (let i = 0; i < room.n; i++) {
     const hue = pulse && room.hue[i];

@@ -7,7 +7,7 @@ import { hash01, pickNotLast } from './hash.ts';
 import { hsbToColour } from './palette.ts';
 import { registerKind } from './registry.ts';
 import { ldjChannels, makeLdjKind } from './ldj-engine.ts';
-import type { LdjCtx, LdjEnvelope, LdjRow } from './ldj-engine.ts';
+import type { LampMark, LdjCtx, LdjEnvelope, LdjRow } from './ldj-engine.ts';
 
 const INSTANT: LdjEnvelope = { kind: 'instant' };
 const mod = (i: number, n: number) => ((i % n) + n) % n;
@@ -17,8 +17,8 @@ const refreshCount = (ctx: LdjCtx, count: number) => { for (let key = 0; key < c
 const each = (ctx: LdjCtx, action: (slot: number, channel: number) => void) => {
   for (let slot = 0; slot < ctx.n; slot++) action(slot, ctx.channelOf[slot]);
 };
-const all = (ctx: LdjCtx, colour: Colour, env: LdjEnvelope = INSTANT, bri = 1) => {
-  each(ctx, (slot) => ctx.lamps.set(slot, colour, bri, env));
+const all = (ctx: LdjCtx, colour: Colour, env: LdjEnvelope = INSTANT, bri = 1, mark?: LampMark) => {
+  each(ctx, (slot) => ctx.lamps.set(slot, colour, bri, env, 0, mark));
 };
 const selected = (ctx: LdjCtx, channel: number, colour: Colour, env: LdjEnvelope, bri = 1) => {
   each(ctx, (slot, ch) => {
@@ -36,8 +36,11 @@ export const FRONT_BACK_SCORE = [0, 0, 0, 0, 1, 3, 2, 0, 0, 0, 0, 0, 2, 3, 1, 0]
 
 function strobeCycle(ctx: LdjCtx, swapped = false): void {
   const p = at(ctx, swapped ? 0 : 1, 0), s = at(ctx, swapped ? 1 : 0, 1);
+  // With one colour the step's lamps flash hard over dark ones; with two the
+  // rest hold the background, a change of colour rather than a flash.
+  const mark: LampMark | undefined = ctx.pal.length > 1 ? undefined : 'flash';
   each(ctx, (slot, channel) => {
-    if (channel === mod(ctx.iter, 4)) ctx.lamps.set(slot, p, 1, INSTANT);
+    if (channel === mod(ctx.iter, 4)) ctx.lamps.set(slot, p, 1, INSTANT, 0, mark);
     else if (ctx.pal.length > 1) ctx.lamps.set(slot, s, 1, INSTANT);
     else ctx.lamps.off(slot);
   });
@@ -109,7 +112,7 @@ export const LDJ_CHANNEL_ROWS: Record<string, LdjRow> = {
   DoubleFill: { cadence: .5, channels: 2, step(ctx) {
     const phase = mod(ctx.iter, 4), colour = at(ctx, Math.floor(mod(ctx.iter, 8) / 4));
     each(ctx, (slot, channel) => {
-      if (phase === 1 || phase === (channel === 0 ? 0 : 2)) ctx.lamps.set(slot, colour, 1, INSTANT);
+      if (phase === 1 || phase === (channel === 0 ? 0 : 2)) ctx.lamps.set(slot, colour, 1, INSTANT, 0, 'flash');
       else ctx.lamps.off(slot);
     });
     if (phase === 0) ctx.refresh(Math.floor(mod(ctx.iter, 8) / 4));
@@ -117,7 +120,7 @@ export const LDJ_CHANNEL_ROWS: Record<string, LdjRow> = {
   FrontBack: { cadence: .5, channels: 'depth', step(ctx) {
     const phase = mod(ctx.iter, 16), mask = FRONT_BACK_SCORE[phase];
     each(ctx, (slot, channel) => {
-      if (mask & (1 << channel)) ctx.lamps.set(slot, phase < 8 ? primary(ctx) : at(ctx, 0, 1), 1, INSTANT);
+      if (mask & (1 << channel)) ctx.lamps.set(slot, phase < 8 ? primary(ctx) : at(ctx, 0, 1), 1, INSTANT, 0, 'flash');
       else ctx.lamps.off(slot);
     });
     if (phase === 4 || phase === 12) ctx.refresh(phase === 4 ? 0 : 1);
@@ -155,9 +158,9 @@ export const LDJ_CHANNEL_ROWS: Record<string, LdjRow> = {
   } },
   TriPulse: { cadence: .5, channels: 1, rapidFlash: true, step(ctx) {
     if (mod(ctx.iter, 6) < 3) {
-      all(ctx, primary(ctx), { kind: 'matrix', fadeIn: 10, peak: 30000 / ctx.bpm - 20, fadeOut: 10, baseline: .1 });
+      all(ctx, primary(ctx), { kind: 'matrix', fadeIn: 10, peak: 30000 / ctx.bpm - 20, fadeOut: 10, baseline: .1 }, 1, 'flash');
       refreshCount(ctx, 4);
-    } else all(ctx, primary(ctx), INSTANT, .1);
+    } else all(ctx, primary(ctx), INSTANT, .1, 'rest');
   } },
   Sketch: { cadence: .25, rapidFlash: true, step(ctx) {
     selected(ctx, Math.floor(mod(ctx.iter, 16) / 4), primary(ctx), INSTANT, mod(ctx.iter, 4) * .25);
@@ -170,10 +173,10 @@ export const LDJ_CHANNEL_ROWS: Record<string, LdjRow> = {
     all(ctx, at(ctx, mod(Math.floor(ctx.iter / slow), 2), 0)); refreshCount(ctx, 4);
   } },
   BeatPulse1: { cadence: .25, channels: 1, rapidFlash: true, step(ctx) {
-    all(ctx, primary(ctx), { kind: 'matrix', fadeIn: 10, peak: 15000 / ctx.bpm - 20, fadeOut: 10 }); ctx.refresh(0);
+    all(ctx, primary(ctx), { kind: 'matrix', fadeIn: 10, peak: 15000 / ctx.bpm - 20, fadeOut: 10 }, 1, 'flash'); ctx.refresh(0);
   } },
   BeatPulse4: { cadence: .25, channels: 1, rapidFlash: true, step(ctx) {
-    all(ctx, primary(ctx), { kind: 'matrix', fadeIn: 10, peak: 120000 / ctx.bpm - 20, fadeOut: 10 }); ctx.refresh(0);
+    all(ctx, primary(ctx), { kind: 'matrix', fadeIn: 10, peak: 120000 / ctx.bpm - 20, fadeOut: 10 }, 1, 'flash'); ctx.refresh(0);
   } },
   Cauldron: { cadence: .5, channels: 'lights', rapidFlash: true, step(ctx) {
     const pick = randomLamp(ctx);
