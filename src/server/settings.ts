@@ -198,8 +198,9 @@ const DEFAULTS: Settings = {
     // A latched strobe is cut after this long, whoever latched it.
     strobeMaxLatchSec: 60,
   },
-  // The manual strobe: Hue Dynamics' (two flashes a second on the beat, the
-  // look between them) in white. A cue keeps these, never whether it is on.
+  // The manual strobe: two flashes a second on the beat clock (Hue Dynamics
+  // keeps the wall clock), the look between them, 100 ms on and 100 ms black
+  // as Hue Dynamics flashes, in white. A cue keeps these, never whether it is on.
   strobe: {
     ...STROBE_DEFAULTS,
     palette: ['#FFFFFF'],

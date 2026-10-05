@@ -363,11 +363,11 @@ test('the effect safety and Hue strobe settings have their defaults, their bound
   assert.ok(patchSchema.safeParse({ safety: { hdFlashIntervalMs: 1200.5 }, hue: { strobe: 'pulse' } }).success, 'a partial patch of the new keys');
 });
 
-// The manual strobe's settings, which a cue keeps beside its look: Hue
-// Dynamics' manual strobe (two flashes a second on the beat, the look between
-// them, 100 ms on and 100 ms black) in white. Its colours are a palette of
+// The manual strobe's settings, which a cue keeps beside its look: two
+// flashes a second on the beat clock, the look between them, 100 ms on and
+// 100 ms black as Hue Dynamics flashes, in white. Its colours are a palette of
 // their own, never a parameter of the kind.
-test('the strobe\'s settings: Hue Dynamics\' defaults in white, one to five flashes a second, one to six colours', () => {
+test('the strobe\'s settings: its defaults in white, one to five flashes a second, one to six colours', () => {
   assert.deepStrictEqual(DEFAULTS.strobe, {
     flashesPerSecond: 2, continueBetween: true, clock: 'beat', brightness: 1, onMs: 100, blackMs: 100, palette: ['#FFFFFF'],
   });
