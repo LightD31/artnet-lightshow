@@ -269,6 +269,65 @@ test('a reading says which bands it was summed over', () => {
   live.stop();
 });
 
+test('a reading says why its process was started: a band edit, another input, or a start', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const procs = [];
+  const live = new LiveInput({ spawner: () => { const p = fakeProcess(); procs.push(p); return p; }, now: () => 1000 });
+  const causeNow = () => { live.handleLine(state()); return live.getReading().cause; };
+  live.start({ source: 'loopback', bands: [[0, 160]] });
+  assert.strictEqual(causeNow(), 'start');
+  live.start({ source: 'loopback', bands: [[0, 120]] });
+  assert.strictEqual(causeNow(), 'bands', 'only the bands changed, on a running input');
+  live.start({ source: 'input', device: 'Line In', bands: [[0, 100]] });
+  assert.strictEqual(causeNow(), 'input', 'another source, the bands with it');
+  live.start({ source: 'input', device: 'Mic', bands: [[0, 100]] });
+  assert.strictEqual(causeNow(), 'input', 'another device');
+  live.start({ source: 'file', file: '/music/a.wav', bands: [[0, 100]] });
+  live.start({ source: 'file', file: '/music/b.wav', bands: [[0, 100]] });
+  assert.strictEqual(causeNow(), 'input', 'another file');
+
+  // A process replaced before it wrote a line hands its cause on.
+  live.start({ source: 'loopback', bands: [[0, 100]] });
+  live.start({ source: 'loopback', bands: [[0, 80]] });
+  assert.strictEqual(causeNow(), 'input');
+  live.start({ source: 'loopback', bands: [[0, 70]] });
+  assert.strictEqual(causeNow(), 'bands', 'heard in between: its own again');
+
+  // Died: the restart, and a band edit while it waits for one, are new streams.
+  procs[procs.length - 1].emit('close', 1);
+  t.mock.timers.tick(2000);
+  assert.strictEqual(causeNow(), 'start');
+  procs[procs.length - 1].emit('close', 1);
+  live.start({ source: 'loopback', bands: [[0, 60]] });
+  assert.strictEqual(causeNow(), 'start');
+  live.stop();
+  live.start({ source: 'loopback', bands: [[0, 60]] });
+  assert.strictEqual(causeNow(), 'start', 'stopped and started again');
+  live.stop();
+});
+
+test('a restart after the process died asks the band source too', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const spawned = [];
+  const procs = [];
+  const live = new LiveInput({ spawner: (exe, args) => { spawned.push(args); const p = fakeProcess(); procs.push(p); return p; }, now: () => 0 });
+  let bands = [[20, 250], [0, 160]];
+  live.useBands(() => bands);
+  live.start({ source: 'loopback' });
+  bands = [[20, 250], [0, 120]];
+  procs[0].emit('close', 1);
+  t.mock.timers.tick(2000);
+  assert.deepStrictEqual(spawned[1].slice(-2), ['--bands', '20-250,0-120'], 'the bands of now, not of the last start');
+  assert.deepStrictEqual(live.options.bands, bands);
+  // A source that has gone bad does not stop the restart: the bands it had.
+  live.useBands(() => [[0, 99999]]);
+  procs[1].emit('close', 1);
+  t.mock.timers.tick(4000);
+  assert.strictEqual(spawned.length, 3);
+  assert.deepStrictEqual(spawned[2].slice(-2), ['--bands', '20-250,0-120']);
+  live.stop();
+});
+
 test('the band limits are the service\'s own, for a settings validator to share', () => {
   // The service refuses past these with a usage error and an exit, so a
   // validator that drifted from them would keep the process failing.

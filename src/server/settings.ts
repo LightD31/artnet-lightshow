@@ -254,8 +254,9 @@ const LEGACY_HUE_KEYS = ['enabled', 'host', 'username', 'clientKey', 'applicatio
 // Hue Dynamics' music modes, as `audio.mode` takes them.
 const AUDIO_MODES = ['off', 'tempo', 'reactive'] as const;
 const fraction = z.number().min(0).max(1);
-// Two seconds is Hue Dynamics' own limit on its attack and release.
-const easeMs = z.number().int().min(0).max(2000);
+// Hue Dynamics' own limits: two seconds of attack, five of release.
+const attackMs = z.number().int().min(0).max(2000);
+const releaseMs = z.number().int().min(0).max(5000);
 
 
 // Read once at boot, before anything is listening. Changing these persists
@@ -387,7 +388,7 @@ const schema = z.object({
   audio: z.object({
     mode: z.enum(AUDIO_MODES),
     master: z.object({
-      sensitivity: fraction, smoothing: fraction, attackMs: easeMs, releaseMs: easeMs,
+      sensitivity: fraction, smoothing: fraction, attackMs, releaseMs,
       threshold: fraction, reactiveDepth: fraction, brightness: fraction,
     }).strict(),
     ldjTrigger: fraction,

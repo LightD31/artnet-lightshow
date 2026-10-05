@@ -22,6 +22,9 @@ import { state, getLiveState } from '../../src/server/state.ts';
 import { showStore } from '../../src/server/show-store.ts';
 import { domainOf } from '../../src/server/protocol.ts';
 import { HD_MASTER_DEFAULTS } from '../../src/shared/effects/types.ts';
+import { createRenderer, withInputDefaults } from '../../src/server/renderer.ts';
+import * as universes from '../../src/server/universes.ts';
+import { getProfile, profilesRevision, BUILTIN_PROFILE_ID } from '../../src/server/profiles.ts';
 import LiveInput from '../../src/live-input.ts';
 
 showStore.scheduleSave = () => {};   // never the real show file
@@ -155,10 +158,12 @@ test('PUT /api/audio { mode: "reactive" } persists to settings and the engine in
     assert.strictEqual(settings.get('audio.mode'), 'reactive');
     assert.strictEqual(renderInput().audioMode, 'reactive');
 
-    // The master by field: the rest of it stays.
+    // The master by field: the rest of it stays. Hue Dynamics' release runs to five seconds.
     await s.call('PUT', '/api/audio', { master: { threshold: 0.2 }, ldjTrigger: 0.1 });
     assert.deepStrictEqual(settings.get('audio.master'), { ...HD_MASTER_DEFAULTS, threshold: 0.2 });
     assert.deepStrictEqual(renderInput().master, { ...HD_MASTER_DEFAULTS, threshold: 0.2 });
+    assert.strictEqual((await s.call('PUT', '/api/audio', { master: { releaseMs: 5000, attackMs: 2000 } })).status, 200);
+    assert.deepStrictEqual(renderInput().master, { ...HD_MASTER_DEFAULTS, threshold: 0.2, releaseMs: 5000, attackMs: 2000 });
     assert.strictEqual(settings.get('audio.ldjTrigger'), 0.1);
 
     // And what is heard rides along with them.
@@ -177,7 +182,8 @@ test('PUT /api/audio { mode: "reactive" } persists to settings and the engine in
 test('PUT /api/audio with threshold 2 is 400', async () => {
   const s = await serve();
   try {
-    for (const body of [{ master: { threshold: 2 } }, { mode: 'loud' }, { ldjTrigger: -0.1 }, { master: { attackMs: 2001 } }, { volume: 1 }]) {
+    for (const body of [{ master: { threshold: 2 } }, { mode: 'loud' }, { ldjTrigger: -0.1 }, { master: { attackMs: 2001 } },
+      { master: { releaseMs: 5001 } }, { master: { releaseMs: 10.5 } }, { volume: 1 }]) {
       const res = await s.call('PUT', '/api/audio', body);
       assert.strictEqual(res.status, 400, JSON.stringify(body));
       assert.strictEqual(res.body.ok, false);
@@ -273,6 +279,52 @@ test('the engine reads the hop the room hears now: the live input\'s latency, on
   } finally {
     await s.close();
   }
+});
+
+test('a latency raised while listening holds the hop the rig has until the room catches up: none is handed out twice', async () => {
+  let liveNow = 10000;
+  const s = await serve({ now: () => liveNow });
+  try {
+    s.live.start({ source: 'loopback', latencyMs: 0 });
+    const seen = [];
+    const hop = (i) => { s.live.handleLine(line(1 + i * 0.0116)); seen.push(renderInput().audio.t); liveNow += 11.6; };
+    for (let i = 0; i < 40; i++) hop(i);
+    const before = seen[seen.length - 1];
+    s.applier.applyChanged(settings.update({ live: { enabled: true, latencyMs: 300 } }));
+    assert.strictEqual(s.spawned.length, 1, 'a latency is no restart');
+    for (let i = 40; i < 80; i++) hop(i);
+    for (let i = 1; i < seen.length; i++) assert.ok(seen[i] >= seen[i - 1], `hop ${i}: ${seen[i]} after ${seen[i - 1]}`);
+    assert.strictEqual(seen[41], before, 'held');
+    assert.ok(seen[seen.length - 1] > before, 'and on again once the room hears past it');
+    assert.ok(Math.abs(seen[seen.length - 1] - (1 + (79 - 23) * 0.0116)) < 1e-9, '300 ms behind, as before the raise');
+  } finally {
+    await s.close();
+  }
+});
+
+test('a hand-built render input reads as no audio, tempo and the master\'s defaults; what the engine passes stands', () => {
+  const PAR = { id: 0, address: 1, universe: 0, profileId: BUILTIN_PROFILE_ID, maxBrightness: 255, override: null,
+    position: null, group: null, geometry: null, hue: false };
+  const hand = {
+    running: true, pattern: 'solid', colorA: 0, colorB: 5, colorC: 0, colorD: 5, beatDivision: 1, split: null, pixelMap: 'stage',
+    strobeSpeed: 0, strobeFunction: 'standard', masterDimmer: 255, masterBlackout: false, energy: null, showDynamics: null,
+    patternAnchor: null, fade: null, syncTest: null, universes: [0], fixtures: [PAR],
+  };
+  const filled = withInputDefaults(hand);
+  assert.deepStrictEqual([filled.audio, filled.audioMode, filled.master], [null, 'tempo', HD_MASTER_DEFAULTS]);
+  assert.notStrictEqual(filled.master, HD_MASTER_DEFAULTS, 'a copy: nothing downstream can edit the defaults');
+  assert.strictEqual(filled.fixtures, hand.fixtures);
+  assert.ok(!('audio' in hand) && !('audioMode' in hand) && !('master' in hand), 'the caller\'s input is left as it was');
+  const audio = { t: 1 };
+  const master = { ...HD_MASTER_DEFAULTS, threshold: 0.4 };
+  const given = withInputDefaults({ ...hand, audio, audioMode: 'reactive', master });
+  assert.deepStrictEqual([given.audio, given.audioMode, given.master], [audio, 'reactive', master]);
+  assert.strictEqual(given.master, master);
+  // And the renderer takes the hand-built input as it always did.
+  const store = universes.createUniverseStore(universes.allocateShared());
+  createRenderer({ profileOf: getProfile, profilesRevision, now: 0 }).frame(hand, { beatPos: 0, bpm: 120, epoch: 0 }, 0, store);
+  const ch = getProfile(PAR).channelMap;
+  assert.deepStrictEqual([store.getBuffer(0)[ch.dimmer], store.getBuffer(0)[ch.red]], [255, 255], 'solid red, as before');
 });
 
 test('the live director and the audio features both hear every reading', async () => {

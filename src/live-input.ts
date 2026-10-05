@@ -30,6 +30,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import * as pythonEnv from './python-env.ts';
 import { messageOf } from './errors.ts';
+import { BAND_HZ_MAX, validBand } from './shared/spectrum-bands.ts';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 
 export type LiveSource = 'loopback' | 'input' | 'file';
@@ -44,8 +45,9 @@ export interface LiveOptions {
   bands?: [number, number][];
 }
 
-/** The highest band edge: Nyquist at the service's 22 050 Hz. */
-export const BAND_HZ_MAX = 11025;
+// The highest band edge, Nyquist at the service's 22 050 Hz: one constant
+// with the Disco's band settings, so the two cannot drift.
+export { BAND_HZ_MAX };
 /** As many bands as the service will sum per hop. */
 export const MAX_BANDS = 12;
 
@@ -69,6 +71,18 @@ export interface LiveSpectrum {
   fftPower?: number;
 }
 
+/**
+ * Why the process a line came from was started, counted from the last
+ * process that wrote a line: 'bands' when only the bands changed on an input
+ * that was running, 'input' when its source, device or file changed (the
+ * bands perhaps with them), 'start' when it started from stopped or again
+ * after its process ended. The worst of them wins when a process wrote
+ * nothing before the next replaced it.
+ */
+export type LiveCause = 'start' | 'input' | 'bands';
+const CAUSE_RANK: Record<LiveCause, number> = { bands: 0, input: 1, start: 2 };
+const worse = (a: LiveCause | null, b: LiveCause): LiveCause => (a !== null && CAUSE_RANK[a] > CAUSE_RANK[b] ? a : b);
+
 /** One hop, as the service reports it. */
 export interface LiveReading {
   t: number;
@@ -89,6 +103,8 @@ export interface LiveReading {
   generation?: number;
   /** The bands that process sums, as `bandsArg` writes them; stamped here too. */
   layout?: string;
+  /** Why that process was started (LiveCause); stamped here too. */
+  cause?: LiveCause;
 }
 
 /** One hop's onset strength and level, in stream time. */
@@ -147,8 +163,7 @@ function copyBands(bands: unknown): [number, number][] | undefined {
   if (!Array.isArray(bands) || bands.length > MAX_BANDS) throw new RangeError(`live input: bands is a list of at most ${MAX_BANDS}`);
   return bands.map((band): [number, number] => {
     const [lo, hi] = Array.isArray(band) && band.length === 2 ? band : [];
-    if (typeof lo !== 'number' || typeof hi !== 'number' || !Number.isFinite(lo) || !Number.isFinite(hi)
-      || !(lo >= 0 && lo < hi && hi <= BAND_HZ_MAX)) {
+    if (typeof lo !== 'number' || typeof hi !== 'number' || !validBand(lo, hi)) {
       throw new RangeError(`live input: band ${JSON.stringify(band)} is not [lo, hi] Hz with 0 ≤ lo < hi ≤ ${BAND_HZ_MAX}`);
     }
     return [lo, hi];
@@ -185,6 +200,8 @@ class LiveInput {
   declare _onReading: ((reading: LiveReading) => void) | null;
   declare _onStatus: ((status: LiveStatus) => void) | null;
   declare _bandSource: (() => [number, number][]) | null;
+  declare _cause: LiveCause;
+  declare _carried: LiveCause | null;
 
   constructor({ spawner, now, scriptPath }: { spawner?: Spawner; now?: () => number; scriptPath?: string } = {}) {
     this._now = now || (() => performance.now());
@@ -209,6 +226,10 @@ class LiveInput {
     this._onReading = null;
     this._onStatus = null;
     this._bandSource = null;
+    // The current process's cause, and what the next launch inherits until
+    // a line is read: a stream is only continued by a process that was heard.
+    this._cause = 'start';
+    this._carried = null;
   }
 
   onEvent(fn: LiveInput['_onEvent']): void { this._onEvent = fn; }
@@ -242,10 +263,10 @@ class LiveInput {
     // Copied before the comparison: a caller editing its array in place and
     // passing it again must still read as a change.
     const bands = copyBands(this._bandSource ? this._bandSource() : options.bands);
-    const same = this._options && !this._stopped
-      && this._options.source === options.source && (this._options.device || '') === (options.device || '')
-      && (this._options.file || '') === (options.file || '')
-      && bandsArg(this._options.bands) === bandsArg(bands);
+    const running = !!this._options && !this._stopped;
+    const sameInput = running && this._options!.source === options.source
+      && (this._options!.device || '') === (options.device || '') && (this._options!.file || '') === (options.file || '');
+    const same = sameInput && bandsArg(this._options!.bands) === bandsArg(bands);
     this._options = { ...options };
     if (bands?.length) this._options.bands = bands;
     else delete this._options.bands;
@@ -253,7 +274,7 @@ class LiveInput {
     this.stop();
     this._stopped = false;
     this._restartMs = RESTART_MS;
-    this._launch();
+    this._launch(!running ? 'start' : sameInput ? 'bands' : 'input');
   }
 
   stop(): void {
@@ -280,8 +301,10 @@ class LiveInput {
     this._envelope = [];
   }
 
-  _launch(): void {
+  _launch(cause: LiveCause): void {
     if (this._stopped || !this._options) return;
+    this._carried = worse(this._carried, cause);
+    this._cause = this._carried;
     const o = this._options;
     const args = [this._scriptPath];
     if (o.source === 'file') args.push('--file', o.file || '', '--realtime');
@@ -311,6 +334,7 @@ class LiveInput {
       this._forgetStream();
       if (this._stopped) return;
       const tail = stderr.trim().split('\n').slice(-2).join(' | ');
+      this._carried = 'start';
       if (!this._error) this._error = `live input exited (code ${code})${tail ? `: ${tail}` : ''}`;
       console.warn(`[live] ${this._error} — restarting in ${this._restartMs / 1000}s`);
       this._scheduleRestart();
@@ -319,6 +343,7 @@ class LiveInput {
   }
 
   _fail(message: string): void {
+    this._carried = 'start';
     this._error = message;
     console.warn(`[live] ${message}`);
     this._emitStatus();
@@ -329,7 +354,18 @@ class LiveInput {
     if (this._stopped || this._restartTimer) return;
     this._restartTimer = setTimeout(() => {
       this._restartTimer = null;
-      this._launch();
+      // A restart asks the band source too: a band edit made while the
+      // process was down is not summed over the old list.
+      if (this._bandSource && this._options) {
+        try {
+          const bands = copyBands(this._bandSource());
+          if (bands?.length) this._options.bands = bands;
+          else delete this._options.bands;
+        } catch (err) {
+          console.warn(`[live] ${messageOf(err)}; restarting on the bands it had`);
+        }
+      }
+      this._launch('start');
     }, this._restartMs);
     this._restartMs = Math.min(RESTART_MAX_MS, this._restartMs * 2);
   }
@@ -379,6 +415,8 @@ class LiveInput {
     r.generation = this._generation;
     // The options change only with the process (start), so theirs are the bands this line was summed over.
     r.layout = bandsArg(this._options?.bands);
+    r.cause = this._cause;
+    this._carried = null;
     this._reading = r;
     this._readingAt = now;
     if (r.locked) {

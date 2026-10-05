@@ -84,12 +84,13 @@ const f32 = Math.fround;
 const LIST = [[20, 250], [250, 3000], [3000, 9000], [0, 160], [750, 2000]];
 const KEY = (list) => list.map(([lo, hi]) => `${lo}-${hi}`).join(',');
 
-function hop({ t, bands = [0, 0, 0, 0, 0], rms = 0.1, power = 1, fftPower, dominantHz = 1000, generation, layout }) {
+function hop({ t, bands = [0, 0, 0, 0, 0], rms = 0.1, power = 1, fftPower, dominantHz = 1000, generation, layout, cause }) {
   const spectrum = { power, rms, dominantHz, bands };
   if (fftPower !== undefined) spectrum.fftPower = fftPower;
   const r = { t, captured: t, beat: 0, bpm: 120, phase: 0, locked: true, energy: rms, onset: 0, flux: 0, rms, tension: 0, bands: {}, spectrum };
   if (generation !== undefined) r.generation = generation;
   if (layout !== undefined) r.layout = layout;
+  if (cause !== undefined) r.cause = cause;
   return r;
 }
 
@@ -99,10 +100,10 @@ function features(over = {}) {
 
 test('the party bands share the FFT total, not the raw frame power, which stands in only when the total is absent', () => {
   const master = { ...HD_MASTER_DEFAULTS, smoothing: 0, attackMs: 30 };
-  const run = (spectrum) => {
+  const run = (spectrum, bands = [25, 4, 0, 0, 0]) => {
     const a = features({ master: () => master });
     // full = rms × (2 + 18 × 0.5) = 0.2; the first hop anchors, the second is 30 ms on.
-    for (const t of [0, 0.03]) a.onReading(hop({ t, rms: 0.2 / 11, bands: [25, 4, 0, 0, 0], ...spectrum }));
+    for (const t of [0, 0.03]) a.onReading(hop({ t, rms: 0.2 / 11, bands, ...spectrum }));
     return a.frame().party;
   };
   const k = 1 - Math.exp(-1);
@@ -119,6 +120,9 @@ test('the party bands share the FFT total, not the raw frame power, which stands
   p = run({ power: 100, fftPower: 0 });
   assert.deepStrictEqual([p.bass, p.mid, p.high], [0, 0, 0], 'a silent FFT is silent, not a reason to read the raw power');
   near(p.full, 0.2 * k);
+  p = run({ power: 1, fftPower: 1e-300 }, [2.5e-301, 4e-302, 0, 0, 0]);
+  near(p.bass, 0.18 * k);                                                    // a tiny total still has its shares
+  near(p.mid, 0.072 * k);
 });
 
 test('party smoothing runs on stream time with the master\'s attack and release, and polls cannot move it', () => {
@@ -231,7 +235,7 @@ test('a band edit drops the hops summed over the old bands and asks the input fo
 
   // The new process: the edited bass starts from its first power, the voice
   // keeps its quiet past, the sections so far stand, and no old class is held.
-  a.onReading(hop({ t: 0.0116, generation: 2, layout: after, rms: level(29), bands: [0, 0, 0, 10, 10] }));
+  a.onReading(hop({ t: 0.0116, generation: 2, layout: after, cause: 'bands', rms: level(29), bands: [0, 0, 0, 10, 10] }));
   const f = a.frame();
   assert.ok(f.generation > old.generation, 'a new epoch: the stream starts from zero again');
   assert.deepStrictEqual(f.disco.hit.slice(0, 2), [false, true]);
@@ -546,11 +550,129 @@ test('a band edit starts the input again on the new list; a floor or a globals e
   live.stop();
 });
 
+/**
+ * A real live input feeding the features, its process a stand-in: the bands
+ * come from the features, a band edit asks for a restart, as integrations.ts
+ * wires them.
+ */
+function listening() {
+  const spawned = [];
+  const live = new LiveInput({
+    now: () => 0,
+    spawner: (exe, args) => {
+      spawned.push(args);
+      const proc = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() });
+      proc.kill = () => proc.emit('close', null);
+      return proc;
+    },
+  });
+  const rig = { d: disco(), spawned, live };
+  rig.a = features({ disco: () => rig.d, onBands: () => { Promise.resolve().then(() => live.refreshBands()); } });
+  live.useBands(() => rig.a.bandList());
+  live.onReading((r) => rig.a.onReading(r));
+  rig.line = (t, { power = 1e-3, rms = rmsFor(29) } = {}) => live.handleLine(JSON.stringify({
+    type: 'state', t, captured: t, beat: 0, bpm: 120, phase: 0, locked: true, energy: rms, onset: 0, flux: 0, rms, tension: 0, bands: {},
+    spectrum: { power, rms, dominantHz: null, bands: [1, 1, 1, 1, 1], fftPower: 5 },
+  }));
+  // Ninety hops 25 ms apart: a quiet Peak history and a soft section.
+  rig.history = () => { for (let i = 0; i < 90; i++) rig.line(i * 0.025); };
+  return rig;
+}
+const settle = () => new Promise((r) => setImmediate(r));
+
+test('a restart on another source, device or file starts every history again, even with the bands changed in it', async () => {
+  // A power of 0.01 is a Peak hit against a quiet history of 0.001, not
+  // against the ones it starts from; the soft section is kept or forgotten.
+  const after = (rig) => { rig.line(0.0116, { power: 0.01 }); const f = rig.a.frame(); return [f.disco.peakHit, f.spl.section]; };
+
+  let rig = listening();
+  rig.live.start({ source: 'loopback' });
+  rig.history();
+  assert.deepStrictEqual([rig.a.frame().disco.peakHit, rig.a.frame().spl.section], [false, 'soft']);
+  rig.d = { ...rig.d, bands: { ...rig.d.bands, bass: [0, 120] } };
+  rig.line(2.3);
+  await settle();
+  assert.strictEqual(rig.spawned.length, 2, 'a band edit alone restarts it');
+  assert.deepStrictEqual(after(rig), [true, 'soft'], 'and keeps the histories the edit left');
+  rig.live.stop();
+
+  for (const other of [{ source: 'input', device: 'Line In' }, { source: 'file', file: '/music/a.wav' }]) {
+    rig = listening();
+    rig.live.start({ source: 'input', device: 'Mic' });
+    rig.history();
+    rig.d = { ...rig.d, bands: { ...rig.d.bands, bass: [0, 120] } };
+    rig.live.start(other);
+    assert.strictEqual(rig.spawned.length, 2);
+    assert.ok(rig.spawned[1].join(' ').includes('--bands 20-250,250-3000,3000-9000,0-120,750-2000'), 'on the new bands');
+    assert.deepStrictEqual(after(rig), [false, null], `${JSON.stringify(other)}: another stream of audio`);
+    rig.live.stop();
+  }
+});
+
+test('a process started for more than a band edit resets the histories even when only a later band edit is heard', () => {
+  const old = KEY(LIST);
+  const edited = KEY([[20, 250], [250, 3000], [3000, 9000], [0, 120], [750, 2000]]);
+  const run = (between) => {
+    let bands = DISCO_DEFAULTS.bands;
+    const a = features({ disco: () => ({ bands, globals: DISCO_DEFAULTS.globals }), onBands: () => {} });
+    for (let i = 0; i < 90; i++) a.onReading(hop({ t: i * 0.025, generation: 1, layout: old, cause: 'start', power: 1e-3, rms: rmsFor(29) }));
+    bands = { ...DISCO_DEFAULTS.bands, bass: [0, 120] };
+    // Lines of a process on another device, summed over the bands before the edit: not heard.
+    for (const r of between) a.onReading(r);
+    a.onReading(hop({ t: 0.0116, generation: 3, layout: edited, cause: 'bands', power: 0.01, rms: rmsFor(29) }));
+    return [a.frame().disco.peakHit, a.frame().spl.section];
+  };
+  assert.deepStrictEqual(run([]), [true, 'soft'], 'band edits on the same input');
+  assert.deepStrictEqual(run([hop({ t: 0.0116, generation: 2, layout: old, cause: 'input' })]), [false, null]);
+  assert.deepStrictEqual(run([hop({ t: 0.0116, generation: 2, layout: old, cause: 'start' })]), [false, null], 'a restart after it died');
+});
+
+test('the hops handed to the effects never step back within an epoch, while the selector still answers any time', () => {
+  let now = 0;
+  const a = features({ now: () => now });
+  for (const t of [1.0, 1.1, 1.2]) a.onReading(hop({ t, generation: 1, layout: KEY(LIST), cause: 'start' }));
+  assert.strictEqual(a.heard(1.15).t, 1.1);
+  // The latency raised, or the clock's least-delayed arrival gone: the
+  // aligned time moves back, and the hop already handed out is held.
+  assert.strictEqual(a.heard(0.95).t, 1.1, 'not 1.0, and not nothing');
+  assert.strictEqual(a.heard(1.05).t, 1.1);
+  assert.strictEqual(a.frame(1.05).t, 1.0, 'frame() is the plain selector');
+  assert.strictEqual(a.heard(1.2).t, 1.2);
+  a.onReading(hop({ t: 1.3, generation: 1, layout: KEY(LIST), cause: 'start' }));
+  assert.strictEqual(a.heard(1.25).t, 1.2);
+  assert.strictEqual(a.heard().t, 1.3, 'no time: the newest');
+  assert.strictEqual(a.heard(1.25).t, 1.3);
+  // A new stream counts from its own start: nothing of the old one holds it.
+  a.onReading(hop({ t: 0.0116, generation: 2, layout: KEY(LIST), cause: 'start' }));
+  a.onReading(hop({ t: 0.0232, generation: 2, layout: KEY(LIST), cause: 'start' }));
+  assert.strictEqual(a.heard(0.0116).t, 0.0116);
+  assert.strictEqual(a.heard(0.001), a.frame(0.0116), 'held in the new epoch');
+  now = 600;
+  assert.strictEqual(a.heard(0.0232), null, 'and stale is stale');
+});
+
+test('Neural\'s smoothers longer than the history count their unwritten zeros, without storing them', () => {
+  const at = (smoothnessAnalyser, hops = 1) => {
+    const a = features({ disco: () => ({ bands: DISCO_DEFAULTS.bands, globals: { ...DISCO_DEFAULTS.globals, smoothnessAnalyser } }) });
+    for (let i = 0; i < hops; i++) a.onReading(hop({ t: i * HOP, rms: 0.1, dominantHz: 46 * BIN_HZ }));
+    return a.frame().disco.neural;
+  };
+  // The first hop's ratio is 52.83 (the three-hop oracle above); a hundred
+  // slots average it over a hundred, though only eighty are ever written.
+  assert.strictEqual(at(100).amplitude, f32(f32(52.830204010009766) / 100));
+  // Three hundred frequency slots, eighty of them 0.5: the lower median is a zero.
+  assert.strictEqual(at(100, 80).mainFrequency, 0);
+  assert.strictEqual(at(26, 80).mainFrequency, 0.5, '78 slots, all written');
+  // A length no rig could hold is still a finite reading, at once.
+  const huge = at(1e12, 2);
+  assert.ok(Number.isFinite(huge.amplitude) && huge.amplitude >= 0 && huge.mainFrequency === 0, JSON.stringify(huge));
+});
+
 // ── Whose settings the detectors run on ──────────────────────────────────────
 
 const visualizer = (trigger) => ({ kind: 'ldj.visualizer', params: { ...VISUALIZER_DEFAULTS, trigger } });
 const voice = (id, spec, over = {}) => ({ id, spec, targets: null, tier: 'voice', launchSeq: 1, startedAtMs: 0, untilMs: null, ...over });
-const resolve = (over) => resolveDetectors({ base: null, voices: [], nowMs: 1000, fixtureIds: [1, 2], ldjTrigger: 0.3, ...over });
+const resolve = (over) => resolveDetectors({ base: null, voices: [], nowMs: 1000, fixtureIds: [1, 2], ldjTrigger: 0.3, acknowledged: true, ...over });
 
 test('with no Disco or Visualizer playing, the detectors run on the settings and Disco\'s defaults', () => {
   const d = resolve({ voices: [voice('pad', { kind: 'hd.twinkle', params: {} })] });
@@ -591,6 +713,20 @@ test('the highest relevant voice owns a detector, else the base look, each detec
   assert.strictEqual(d.spl.owner.id, 'late');
   d = resolve({ voices: [voice('first', visualizer(0.1)), voice('second', visualizer(0.2))] });
   assert.strictEqual(d.spl.owner.id, 'first');
+});
+
+test('a Visualizer that cannot play without the acknowledgement owns nothing until it is given; the Disco needs none', () => {
+  const pop = DISCO_PRESETS.find((p) => p.id === 'hd.disco.pop').params;
+  const voices = [voice('pad', visualizer(0.1), { launchSeq: 2 }), voice('disco', { kind: 'hd.disco', params: pop })];
+  const base = { id: 'ldj.visualizer.firework', spec: visualizer(0.2) };
+  let d = resolve({ base, voices, acknowledged: false });
+  assert.deepStrictEqual(d.spl, { owner: { from: 'fallback', id: null, kind: null }, trigger: 0.3 }, 'neither the voice nor the base plays');
+  assert.deepStrictEqual(d.disco.owner, { from: 'voice', id: 'disco', kind: 'hd.disco' });
+  // A Disco marked to flash fast needs it too.
+  d = resolve({ voices: [voice('fast', { kind: 'hd.disco', params: pop, rapidFlash: true })], acknowledged: false });
+  assert.strictEqual(d.disco.owner.from, 'fallback');
+  d = resolve({ base, voices, acknowledged: true });
+  assert.deepStrictEqual([d.spl.owner.id, d.spl.trigger], ['pad', 0.1]);
 });
 
 test('a Visualizer that owns the classes decides them with its trigger', () => {
