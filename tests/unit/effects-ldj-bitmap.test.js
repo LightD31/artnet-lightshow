@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BITMAP_PATTERNS, bitmapBlend, buildBitmap, sampleBitmap } from '../../src/shared/effects/ldj-bitmap.ts';
+import { BITMAP_PATTERNS, bitmapBlend, bitmapScroll, buildBitmap, sampleBitmap } from '../../src/shared/effects/ldj-bitmap.ts';
 import { kindOf, requiresAcknowledgement, validateSpec } from '../../src/shared/effects/registry.ts';
 import { LDJ_FRAME_MS } from '../../src/shared/effects/ldj-engine.ts';
 import { parseHex } from '../../src/shared/effects/palette.ts';
@@ -173,30 +173,41 @@ test('sampling uses height for both axes, exact orientation, floor and positive 
 
 test('the picture scrolls BPM/50.7 px per LDJ frame', () => {
   const h = harness('ldj.bitmap', row(1), { params: { pattern: 'SmoothLoop' }, ...redBlue });
+  const image = buildBitmap('SmoothLoop', [RED, BLUE]);
+  // The centre lamp reads column 20 of the picture, moved by whole pixels; these columns all differ.
+  assert.equal(new Set([0, 2, 4, 7, 52, 55].map((scroll) => image.rows[20][20 + scroll])).size, 6);
   [0, 1, 2, 3, 22].forEach((frame, i) => {
-    const slot = h.draw(at(frame))[0], scroll = [0, 2, 4, 7, 52][i];
-    // The centre lamp reads column 20 of the picture, moved by whole pixels.
-    assert.equal(h.state().scroll, scroll); assert.equal(pack(slot.colour), h.state().image.rows[20][20 + scroll]);
+    const scroll = [0, 2, 4, 7, 52][i];
+    assert.equal(bitmapScroll(frame * LDJ_FRAME_MS, 0, 120, 1, 'SmoothLoop'), scroll, `frame ${frame}`);
+    assert.equal(pack(h.draw(at(frame))[0].colour), image.rows[20][20 + scroll], `frame ${frame}`);
   });
   // Current tempo times the whole frame count, as Light DJ does: a tap to 128 jumps at once.
-  h.draw(at(22, 128)); assert.equal(h.state().scroll, 55);
+  assert.equal(bitmapScroll(22 * LDJ_FRAME_MS, 0, 128, 1, 'SmoothLoop'), 55);
+  assert.equal(pack(h.draw(at(22, 128))[0].colour), image.rows[20][75]);
 });
 
 test('VertLines scrolls at half speed', () => {
   const h = harness('ldj.bitmap', row(1), { params: { pattern: 'VertLines' }, ...redBlue });
-  [0, 1, 2, 3, 22].forEach((frame, i) => {
-    const slot = h.draw(at(frame))[0], scroll = [0, 1, 2, 3, 26][i];
-    assert.equal(h.state().scroll, scroll); assert.equal(pack(slot.colour), h.state().image.rows[20][(20 + scroll) % 80]);
-  });
-  h.draw(at(22, 128)); assert.equal(h.state().scroll, 27);
+  [0, 1, 2, 3, 22].forEach((frame, i) => assert.equal(bitmapScroll(frame * LDJ_FRAME_MS, 0, 120, 1, 'VertLines'), [0, 1, 2, 3, 26][i], `frame ${frame}`));
+  assert.equal(bitmapScroll(22 * LDJ_FRAME_MS, 0, 128, 1, 'VertLines'), 27);
+  // Column 20 plus the scroll crosses from blue's lit columns (40..55) into its black ones at frame 31: 35 px, then 36.
+  assert.deepEqual([bitmapScroll(30 * LDJ_FRAME_MS, 0, 120, 1, 'VertLines'), bitmapScroll(31 * LDJ_FRAME_MS, 0, 120, 1, 'VertLines')], [35, 36]);
+  assert.deepEqual(h.draw(at(30))[0].colour, BLUE);
+  assert.deepEqual(h.draw(at(31))[0].colour, BLACK);
+  assert.deepEqual(h.draw(at(22))[0].colour, BLUE, 'column 46');
 });
 
 test('speed scales the rate before flooring, zero freezes, and a late first render keeps its launch', () => {
-  const h = harness('ldj.bitmap', row(1), { params: { pattern: 'SmoothLoop', speed: .5 }, startedAtMs: 250 });
-  h.draw(at(3, 120, 250)); assert.deepEqual([h.state().frame, h.state().scroll], [3, 3]);
-  h.inst.spec.params.speed = 0; h.draw(at(100, 120, 250)); assert.deepEqual([h.state().frame, h.state().scroll], [100, 0]);
-  const late = harness('ldj.bitmap', row(1), { params: { pattern: 'SmoothLoop' }, startedAtMs: 1000 });
-  late.draw(at(22.5, 120, 1000)); assert.deepEqual([late.state().frame, late.state().scroll], [22, 52]);
+  const image = buildBitmap('SmoothLoop', [RED, BLUE]);
+  const h = harness('ldj.bitmap', row(1), { params: { pattern: 'SmoothLoop', speed: .5 }, startedAtMs: 250, ...redBlue });
+  assert.equal(bitmapScroll(250 + 3 * LDJ_FRAME_MS, 250, 120, .5, 'SmoothLoop'), 3);
+  assert.equal(pack(h.draw(at(3, 120, 250))[0].colour), image.rows[20][23]);
+  h.inst.spec.params.speed = 0;
+  assert.equal(bitmapScroll(250 + 100 * LDJ_FRAME_MS, 250, 120, 0, 'SmoothLoop'), 0);
+  assert.equal(pack(h.draw(at(100, 120, 250))[0].colour), image.rows[20][20], 'frozen on column 20');
+  const late = harness('ldj.bitmap', row(1), { params: { pattern: 'SmoothLoop' }, startedAtMs: 1000, ...redBlue });
+  assert.equal(bitmapScroll(1000 + 22.5 * LDJ_FRAME_MS, 1000, 120, 1, 'SmoothLoop'), 52, 'frame 22 of 22.5');
+  assert.equal(pack(late.draw(at(22.5, 120, 1000))[0].colour), image.rows[20][72]);
 });
 
 test('subframes hold and repeated or backward samples reproduce their exact bitmap pixels', () => {
@@ -212,12 +223,14 @@ test('content cache survives cloned input arrays, tempo and geometry changes but
   const room = row(2), h = harness('ldj.bitmap', room, { params: { pattern: 'SmoothLoop' }, ...redBlue });
   h.draw(at(0)); const image = h.state().image;
   room.u[0] = .5; h.draw(at(1)); assert.strictEqual(h.state().image, image);
-  h.inst.spec.palette = ['#FF0000', '#0000FF']; h.draw(at(22, 128));
-  assert.strictEqual(h.state().image, image); assert.equal(h.state().scroll, 55);
+  h.inst.spec.palette = ['#FF0000', '#0000FF'];
+  // Slot 0 was moved to u = .5, column 30; the tempo change still moves the picture 55 px.
+  assert.equal(pack(h.draw(at(22, 128))[0].colour), image.rows[20][85]);
+  assert.strictEqual(h.state().image, image);
   h.inst.spec.params.pattern = 'ThinPaletteLoop'; h.draw(at(23));
-  assert.notStrictEqual(h.state().image, image); assert.equal(h.state().frame, 23);
+  assert.notStrictEqual(h.state().image, image);
   const changed = h.state().image; h.inst.spec.palette = ['#00FF00']; h.draw(at(24));
-  assert.notStrictEqual(h.state().image, changed); assert.equal(h.state().frame, 24);
+  assert.notStrictEqual(h.state().image, changed);
 });
 
 test('any effective random entry uses one fixed rainbow while fixed overrides suppress it', () => {
@@ -249,7 +262,10 @@ test('hand-built frames retain their first-time origin and the outer renderer ap
   const frame = { nowMs: 123, bpm: 120, palette: [RED, BLUE], paletteOverride: null, spec };
   const state = def.init(spec.params, room, frame), out = [];
   def.render(spec.params, state, room, { ...frame, nowMs: 123 + 3 * LDJ_FRAME_MS }, out);
-  assert.equal(state.scroll, 7); assert.equal(state.originMs, 123);
+  assert.equal(state.originMs, 123);
+  assert.equal(bitmapScroll(123 + 3 * LDJ_FRAME_MS, 123, 120, 1, 'SmoothLoop'), 7);
+  assert.equal(pack(out[0].colour), state.image.rows[20][27], 'three frames from the first render, not from zero');
+  assert.deepEqual(Object.keys(state).sort(), ['image', 'key', 'originMs'], 'no per-render scratch is kept in the state');
   const h = harness('ldj.bitmap', room, { params: { pattern: 'SolidTest' }, palette: [RED], spec: { brightness: .4 } });
   assert.deepEqual(h.draw(at(0))[0], { colour: RED, level: .4, strength: 1 });
 });
@@ -272,7 +288,9 @@ test('nonfinite clocks and unsafe offsets throw; an invalid tempo reads as 120 l
   const h = harness('ldj.bitmap', row(1));
   for (const input of [{ nowMs: Infinity, bpm: 120 }, { nowMs: -Infinity, bpm: 120 }, { nowMs: NaN, bpm: 120 },
     { nowMs: 1e30, bpm: 120 }, { nowMs: LDJ_FRAME_MS, bpm: 1e30 }]) assert.throws(() => h.draw({ ...input, beatPos: 0 }), RangeError, JSON.stringify(input));
+  const reference = harness('ldj.bitmap', row(1), redBlue).draw(at(3));
   for (const bpm of [NaN, Infinity, 0, -128]) {
-    const t = harness('ldj.bitmap', row(1)); t.draw(at(3, bpm)); assert.equal(t.state().scroll, 7, String(bpm));
+    assert.equal(bitmapScroll(3 * LDJ_FRAME_MS, 0, bpm, 1, 'SmoothLoop'), 7, String(bpm));
+    assert.deepEqual(harness('ldj.bitmap', row(1), redBlue).draw(at(3, bpm)), reference, String(bpm));
   }
 });

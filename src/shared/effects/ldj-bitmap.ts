@@ -184,12 +184,24 @@ export function sampleBitmap(image: BitmapImage, pattern: BitmapPattern, u: numb
   return unpack(image.rows[row][column]);
 }
 
+/**
+ * Pixels the picture has scrolled by `nowMs`: the whole launch-relative lamp
+ * frame times BPM·speed/50.7, half of that for VertLines, floored. A pure
+ * function of the clock and the current tempo, so a late first render or a
+ * seek samples directly and a tap to a new tempo moves the picture at once.
+ */
+export function bitmapScroll(nowMs: number, originMs: number, bpm: number, speed: number, pattern: BitmapPattern): number {
+  const rate = tempo(bpm) * speed / 50.7 / (pattern === 'VertLines' ? 2 : 1);
+  const scroll = Math.floor(ldjFrameAt(nowMs, originMs) * rate);
+  if (!Number.isSafeInteger(scroll)) throw new RangeError('Bitmap scroll exceeds the safe integer range');
+  return scroll;
+}
+
+// Only what a later render cannot recompute: the launch and the cached picture.
 interface BitmapState {
   /** Launch time; a palette or pattern edit keeps it, so the scroll does not restart. */
   originMs: number;
   key: string; image: BitmapImage | null;
-  /** The last sampled whole lamp frame and its pixel offset. */
-  frame: number; scroll: number;
 }
 
 const schema = z.object({ pattern: z.enum(BITMAP_PATTERNS), speed: z.number().nonnegative().default(1) }).strict();
@@ -197,15 +209,9 @@ const schema = z.object({ pattern: z.enum(BITMAP_PATTERNS), speed: z.number().no
 registerKind<z.infer<typeof schema>, BitmapState>({
   kind: 'ldj.bitmap', app: 'ldj', schema, defaults: { params: { pattern: 'SmoothLoop', speed: 1 } }, stateful: true,
   rapidFlashWhen: (params) => params.speed > RAPID_SPEED,
-  init: (_params, _room, frame) => ({ originMs: frame.startedAtMs ?? frame.nowMs, key: '', image: null, frame: 0, scroll: 0 }),
+  init: (_params, _room, frame) => ({ originMs: frame.startedAtMs ?? frame.nowMs, key: '', image: null }),
   render(params, state, room, frame, out) {
-    // The offset is a pure function of the whole launch-relative frame and the
-    // current tempo, so a late first render or a seek samples directly.
-    const tick = ldjFrameAt(frame.nowMs, state.originMs);
-    const rate = tempo(frame.bpm) * params.speed / 50.7 / (params.pattern === 'VertLines' ? 2 : 1);
-    const scroll = Math.floor(tick * rate);
-    if (!Number.isSafeInteger(scroll)) throw new RangeError('Bitmap scroll exceeds the safe integer range');
-    state.frame = tick; state.scroll = scroll;
+    const scroll = bitmapScroll(frame.nowMs, state.originMs, frame.bpm, params.speed, params.pattern);
     // An override replaces the spec palette, random entries included.
     const random = !frame.paletteOverride?.length && Boolean(frame.spec.palette?.some((entry) => typeof entry === 'object' && entry.random));
     const palette = picturePalette(params.pattern, frame.palette, random);
