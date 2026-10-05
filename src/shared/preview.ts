@@ -41,6 +41,10 @@
 // what the rehearsal shows. Asked for an earlier moment, it starts again from
 // the nearest copy of the walk at or before it: one kept at each scene and
 // seek, and the most recently used of those kept every second.
+//
+// A sequence (a clip table and its transport, as the rig's renderer is
+// handed them) plays its clips over the look the same way, through the same
+// selection and laps (shared/effects/sequence.ts).
 import { PATTERN_FUNCS, paletteOf } from './patterns.ts';
 import { renderLayer } from './layer.ts';
 import { buildRig, isHueLamp, rigSignature } from './rig.ts';
@@ -54,11 +58,13 @@ import { HdFlashGuard } from './effects/flash-guard.ts';
 import { seedFrom } from './effects/hash.ts';
 import { STROBE_FRAME_MS } from './effects/strobe.ts';
 import { HD_MASTER_DEFAULTS } from './effects/types.ts';
+import { copySequenceRun, newSequenceRun, renderSequenceLayer } from './effects/sequence.ts';
 import type { GridSource } from './beat-clock.ts';
 import type { Layout, Rig } from './rig.ts';
 import type { UnitLight } from './look-math.ts';
 import type { VoiceFrame, VoiceRecord } from './effects/layer.ts';
 import type { EffectInstance } from './effects/stepper.ts';
+import type { SequenceRun, SequenceTable, SequenceTransport } from './effects/sequence.ts';
 import type { EffectSlot, EffectSpec, FrameBase, Seed } from './effects/types.ts';
 import type { ChannelMap, Colour, Expression, ShowDynamics, StageFixture } from '../types/rig.ts';
 
@@ -157,6 +163,12 @@ export interface PreviewOptions {
    * always had, as on a renderer input without safety.
    */
   safety?: Partial<PreviewSafety> | null;
+  /**
+   * A sequence playing through the rehearsal: its clip table and its
+   * transport, the transport's beats on the timeline's beat count. Its clips
+   * are the base of the fixtures they cover, as on the rig.
+   */
+  sequence?: { table: SequenceTable; transport: SequenceTransport } | null;
 }
 
 interface Frame {
@@ -325,6 +337,8 @@ interface Walk {
   shown: UnitLight[];
   /** The last frame's lights. */
   output: Colour[] | null;
+  /** The sequence's laps playing and the last moment it played. */
+  seq: SequenceRun;
 }
 
 /** A checkpoint's own copy: nothing in it is shared with the walk it came from but what is never changed. */
@@ -341,6 +355,7 @@ function copyWalk(w: Walk): Walk {
     compat: w.compat && { ...w.compat },
     fade: w.fade && { ...w.fade },
     shown: [...w.shown],
+    seq: copySequenceRun(w.seq),
   };
 }
 
@@ -350,7 +365,7 @@ interface Checkpoint { walk: Walk; periodic: boolean; used: number }
 const emptyWalk = (k: number, intervalMs: number): Walk => ({
   k, cursor: 0, stepper: new EffectStepper(), guard: new HdFlashGuard(intervalMs), expression: { ...EXPRESSION_REST }, phase: 0,
   lastBeat: null, lastEpoch: 0, lastNow: null, lastSweep: -Infinity, epoch: 0, base: null, voices: new Map(), records: new Map(),
-  compat: null, fadeOf: null, fade: null, shown: [], output: null,
+  compat: null, fadeOf: null, fade: null, shown: [], output: null, seq: newSequenceRun(),
 });
 
 /** A light of the layer, as the renderer keeps one (its setUnitColor). */
@@ -371,6 +386,7 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
   const givenInterval = options.safety?.hdFlashIntervalMs;
   const intervalMs = typeof givenInterval === 'number' && Number.isFinite(givenInterval) && givenInterval >= 0 ? givenInterval : 350;
   const acknowledged = options.safety?.acknowledged === true;
+  const sequence = sequenceOf(options.sequence);
 
   // In time order, ties in the order given, on a copy: an event with no time is ignored.
   const timeline = events.filter((e) => Number.isFinite(e.timeMs)).sort((a, b) => a.timeMs - b.timeMs);
@@ -611,7 +627,7 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
       if (spec) anyEffect = true;
       effectsKey += `${JSON.stringify(id)}=${key};`;
     }
-    if (!(explicitVoices || anyEffect)) {
+    if (!(explicitVoices || anyEffect || sequence)) {
       // Nothing steps: answered straight from the timeline, nothing kept.
       if (env) { env = null; forgetHistory(); }
       return { key: '', stepped: false, fixtures, presets, rig, specs, hue: fixtures.map(isHueLamp), cells: new Map() };
@@ -753,7 +769,7 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
     const baseKind: (string | null)[] = new Array<string | null>(n).fill(null);
     let fb: FrameBase | null = null;
     let voiceCells: Cells | null = null;
-    if (spec || voices.length) {
+    if (spec || voices.length || sequence) {
       voiceCells = cellsOf(e, 'voices', () => voiceLayout(rig));
       const ids = voiceCells.ids;
       // Disco's automatic strobe stands down for any manual strobe playing.
@@ -794,6 +810,16 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
       for (let u = 0; u < n; u++) units[u] = unitLight(layer[u].color, layer[u].dim);
     }
 
+    // The sequence's clip on top of each light it covers, over the look, as renderer.ts renderSequence.
+    let clips: (UnitLight | null)[] | null = null;
+    const clipKind: (string | null)[] = new Array<string | null>(n).fill(null);
+    if (sequence && fb && voiceCells) {
+      const lights = new Array<UnitLight | null>(n).fill(null);
+      const covered = renderSequenceLayer(rig, voiceCells.layout, { ...fb, fixtureIds: voiceCells.ids }, sequence.table, sequence.transport, w.seq, w.stepper,
+        (u, colour, dim, strobe, kind) => { lights[u] = unitLight(colour, dim, strobe); clipKind[u] = kind; });
+      if (covered) clips = lights;
+    }
+
     // The voice on top of each light, or null where the base shows.
     let voiceTop: (EffectSlot | null)[] | null = null;
     if (voices.length && fb && voiceCells) {
@@ -817,16 +843,19 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
       // The base as it goes out, partway through any fade: what the next fade starts from.
       const layer = w.fade && w.fade.from[u] ? blendFixture(w.fade.from[u], units[u], fadeT) : units[u];
       shown[u] = layer;
+      // A clip stands in for the look on its fixture; a fade of the look goes on under it.
+      const clip = clips ? clips[u] : null;
+      const below = clip ?? layer;
       const voice = voiceTop ? voiceTop[u] : null;
       if (voice) {
         // A voice stands where the energy burst always stood, at its own level.
         cols[u] = voice.colour;
         dims[u] = 255 * voice.level;
       } else {
-        cols[u] = layer;
-        dims[u] = target?.level === 0 ? 0 : layer.dim * w.expression.level;
+        cols[u] = below;
+        dims[u] = target?.level === 0 ? 0 : below.dim * w.expression.level;
       }
-      tops[u] = voice ? voice.kind ?? null : baseKind[u];
+      tops[u] = voice ? voice.kind ?? null : clip ? clipKind[u] : baseKind[u];
       if (hdGuarded(tops[u])) guarded = true;
     }
     w.shown = shown;
@@ -944,6 +973,21 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
     if (!e.stepped) return sampleLegacy(positionMs, e);
     return sampleStepped(positionMs, e);
   };
+}
+
+// What a clip whose effect does not validate plays: no kind, so where it wins it is black, as an unknown kind is on the rig.
+const NO_EFFECT: EffectSpec = Object.freeze({ kind: '', params: {} });
+
+/**
+ * The sequence a sampler plays, its clips' effects checked once as any
+ * effect is. Null for none, or for something that is not a table and a transport.
+ */
+function sequenceOf(given: PreviewOptions['sequence']): { table: SequenceTable; transport: SequenceTransport } | null {
+  const table = given?.table;
+  const transport = given?.transport;
+  if (!table || !Array.isArray(table.lanes) || !Array.isArray(table.clips) || !transport || !Number.isFinite(transport.startBeat)) return null;
+  const clips = table.clips.map((c) => (c && typeof c === 'object' ? { ...c, spec: checkedSpec(c.spec).spec ?? NO_EFFECT } : c));
+  return { table: { ...table, clips }, transport: { startBeat: transport.startBeat, loop: transport.loop ?? null, generation: transport.generation ?? 0 } };
 }
 
 /** Every light dark, before the timeline begins. */

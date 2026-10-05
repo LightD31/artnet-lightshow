@@ -197,7 +197,11 @@ port.on('message', guarded('engine-worker', (msg: ToWorker | null) => {
       snapshot = { input: msg.input, outputs: msg.outputs };
       follow.push(msg.reading, msg.at);
       break;
+    case 'sequence':
+      renderer.setSequence(msg.table ?? null);
+      break;
     case 'render': {
+      if (msg.table !== undefined) renderer.setSequence(msg.table);
       const frames = renderOnce(msg);
       const commands = renderer.takeCommandResults();
       post({ type: 'rendered', id: msg.id, frames, ...(commands.length ? { commands } : {}) });

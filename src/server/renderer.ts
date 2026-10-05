@@ -30,6 +30,7 @@ import { identifyLights } from './identify.ts';
 import { HD_MASTER_DEFAULTS } from '../shared/effects/types.ts';
 import { canonical, effectContentKey, hdGuarded, relaunchEffect, renderEffectLayer, renderVoices, voiceAnchor, voiceLaunchKey, voiceLayout } from '../shared/effects/layer.ts';
 import { energyEffectSpec } from '../shared/effects/catalogue.ts';
+import { endSequence, newSequenceRun, renderSequenceLayer, retable } from '../shared/effects/sequence.ts';
 import { kindOf } from '../shared/effects/registry.ts';
 import { EffectStepper } from '../shared/effects/stepper.ts';
 import { HdFlashGuard } from '../shared/effects/flash-guard.ts';
@@ -43,6 +44,7 @@ import type { UniverseStore } from './universes.ts';
 import type { AudioFrame } from '../shared/effects/audio-frame.ts';
 import type { VoiceFrame, VoiceRecord } from '../shared/effects/layer.ts';
 import type { EffectInstance } from '../shared/effects/stepper.ts';
+import type { SequenceTable, SequenceTransport } from '../shared/effects/sequence.ts';
 import type { AudioMode, EffectCommand, EffectSlot, EffectSpec, FrameBase, HdMaster, Seed } from '../shared/effects/types.ts';
 import type { ChannelDefault, ChannelMap, Colour, Expression, Override, PixelMap, Profile, PulseReading, ShowDynamics, StageFixture } from '../types/rig.ts';
 
@@ -141,8 +143,14 @@ export interface RenderInput {
   safety?: RenderSafety;
   /** How Hue lamps take a flash: 'flash' hard, 'pulse' falling to a floor. Absent is 'pulse', as before the setting. */
   hueStrobe?: 'flash' | 'pulse';
-  /** The loaded sequence's revision; nothing reads it yet. */
-  sequenceRevision?: number;
+  /**
+   * The sequence playing: the revision of the clip table it plays (handed
+   * over apart, by setSequence) and where it is. The table plays only while
+   * both are given and the revision is the table's own; absent or null, the
+   * look plays alone.
+   */
+  sequenceRevision?: number | null;
+  sequenceTransport?: SequenceTransport | null;
 }
 
 export interface RenderSafety {
@@ -155,7 +163,7 @@ export const RENDER_SAFETY_DEFAULTS: Readonly<RenderSafety> = Object.freeze({ hd
 
 /** A RenderInput with every optional field the effects read filled in, as frame() sees it. */
 export type FrameInput = RenderInput & Required<Pick<RenderInput,
-  'audio' | 'audioMode' | 'master' | 'effect' | 'voices' | 'paletteOverride' | 'safety' | 'hueStrobe'>>;
+  'audio' | 'audioMode' | 'master' | 'effect' | 'voices' | 'paletteOverride' | 'safety' | 'hueStrobe' | 'sequenceRevision' | 'sequenceTransport'>>;
 
 /** The input with its defaults; the caller's object is left as it was. */
 export function withInputDefaults(input: RenderInput): FrameInput {
@@ -169,6 +177,8 @@ export function withInputDefaults(input: RenderInput): FrameInput {
     paletteOverride: input.paletteOverride ?? null,
     safety: input.safety ?? { ...RENDER_SAFETY_DEFAULTS },
     hueStrobe: input.hueStrobe ?? 'pulse',
+    sequenceRevision: input.sequenceRevision ?? null,
+    sequenceTransport: input.sequenceTransport ?? null,
   };
 }
 
@@ -247,6 +257,12 @@ export interface Renderer {
   rejectCommands(status: CommandStatus): void;
   /** The highest sequence decided (applied or not) and the highest applied. */
   commandStatus(): { processed: number; applied: number };
+  /**
+   * The loaded sequence's clip table, or null. Kept until replaced: a frame
+   * plays it while its input names this table's revision and a transport.
+   * A clip that did not change plays on through a new table.
+   */
+  setSequence(table: SequenceTable | null): void;
 }
 
 // Patterns that roll dice. They re-roll when the step moves or the look
@@ -420,6 +436,15 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
   let voiceCells: { key: string; layout: Layout; ids: number[] } | null = null;
   let identityKey = '';
 
+  // The sequence's clip table, and what playing it remembers. Per unit, the
+  // clip on top this frame (over the look's layer, under overrides and
+  // voices) and the kind that drew it; `seqUnits` says whether any is set.
+  let sequence: SequenceTable | null = null;
+  const seqRun = newSequenceRun();
+  const seqLight: (UnitLight | null)[] = [];
+  const seqKind: (string | null)[] = [];
+  let seqUnits = false;
+
   // Commands for the base effect: decided at the next frame, in order, once.
   const commandQueue: { seq: number; cmd: string; arg?: unknown; intent: BaseIntent | null }[] = [];
   let commandResults: CommandResult[] = [];
@@ -437,6 +462,8 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     base = null;
     if (!clock) return;
     voiceRecords.clear();
+    // A clip's wall origin was on the old clock: its laps start again.
+    endSequence(seqRun, stepper);
     lastEffectNow = null;
   }
 
@@ -638,6 +665,10 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     panelTwinkle.length = count;
     while (baseKind.length < count) baseKind.push(null);
     baseKind.length = count;
+    while (seqLight.length < count) seqLight.push(null);
+    seqLight.length = count;
+    while (seqKind.length < count) seqKind.push(null);
+    seqKind.length = count;
   }
 
   function setUnitColor(u: number, color: Colour, dim: number, strobe: number): void {
@@ -843,6 +874,32 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     }
   }
 
+  /** Does this frame play the sequence: a table, a transport, and the input naming that table. */
+  function sequencePlays(input: FrameInput): boolean {
+    return !!sequence && !!input.sequenceTransport && input.sequenceRevision === sequence.revision;
+  }
+
+  /**
+   * The sequence's clips over the look, on the voices' cells (every fixture,
+   * the whole stage): on each fixture a clip covers, the clip on top is its
+   * base, black where that clip leaves it dark; elsewhere the look shows.
+   * Kept apart from the look's layer, so a stopped or random look underneath
+   * still holds its own picture for when the clip ends.
+   */
+  function renderSequence(input: FrameInput, rigNow: Rig<RenderFixture>, fb: FrameBase | null): void {
+    if (seqUnits) { seqLight.fill(null); seqKind.fill(null); seqUnits = false; }
+    if (!fb || !sequencePlays(input)) {
+      if (seqRun.activations.size || seqRun.last) endSequence(seqRun, stepper);
+      return;
+    }
+    const cells = voiceCells!;
+    seqUnits = renderSequenceLayer(rigNow, cells.layout, { ...fb, fixtureIds: cells.ids }, sequence!, input.sequenceTransport!, seqRun, stepper,
+      (u, colour, dim, strobe, kind) => {
+        seqLight[u] = { r: colour.r, g: colour.g, b: colour.b, w: colour.w || 0, a: colour.a || 0, uv: colour.uv || 0, dim, strobe };
+        seqKind[u] = kind;
+      });
+  }
+
   function syncTestEnergy(now: number): EnergyLook | null {
     if (!syncTest) return null;
     if (now >= syncTest.until) { syncTest = null; return null; }
@@ -869,6 +926,9 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     // a burst starts from the look and not from the burst.
     const layer = fade && fade.from[u] ? blendFixture(fade.from[u], unitColors[u], fadeT) : unitColors[u];
     shown[u] = layer;
+    // A clip of the sequence stands in for the look on its fixture; a fade of the look goes on under it.
+    const clip = seqUnits ? seqLight[u] : null;
+    const below = clip ?? layer;
 
     let col: Colour; let dim: number; let strobe: number;
     if (energy) {
@@ -883,8 +943,8 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
         strobe = ov.strobe !== undefined ? ov.strobe : 0;
       }
     } else {
-      col = { r: layer.r, g: layer.g, b: layer.b, w: layer.w, a: layer.a || 0, uv: layer.uv || 0 };
-      dim = layer.dim; strobe = layer.strobe;
+      col = { r: below.r, g: below.g, b: below.b, w: below.w, a: below.a || 0, uv: below.uv || 0 };
+      dim = below.dim; strobe = below.strobe;
     }
 
     const pinned = fix.override && fix.override.enabled;
@@ -907,14 +967,19 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     return (input.masterDimmer / 255) * (fix.maxBrightness / 255);
   }
 
-  /** The strobe asked for — `{ raw, fnId }` — or null for none. */
-  function strobeRequest(input: RenderInput, energy: EnergyLook | null, strobe: number): StrobeRequest | null {
+  /**
+   * The strobe asked for — `{ raw, fnId }` — or null for none. `clip`: a
+   * clip of the sequence is the fixture's base, so the look's strobe is not
+   * its to run.
+   */
+  function strobeRequest(input: RenderInput, energy: EnergyLook | null, strobe: number, clip = false): StrobeRequest | null {
     // Energy overrides force 'standard' strobe so a colour-strobe burst never
-    // inherits a slow ramp/break function from the prior segment.
-    let raw = energy ? strobe : (input.pattern === 'strobe' ? input.strobeSpeed : strobe);
+    // inherits a slow ramp/break function from the prior segment; a clip likewise.
+    const own = !!energy || clip;
+    let raw = own ? strobe : (input.pattern === 'strobe' ? input.strobeSpeed : strobe);
     if (!(raw > 0)) return null;
     if (input.flashLimit) raw = Math.min(raw, FLASH_LIMIT_STROBE);
-    return { raw, fnId: energy ? 'standard' : input.strobeFunction };
+    return { raw, fnId: own ? 'standard' : input.strobeFunction };
   }
 
   /** The strobe channel's value, or null to leave it closed. */
@@ -942,7 +1007,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
 
   /** A fixture that is one light. */
   function writePar(input: RenderInput, store: FrameStore, fix: RenderFixture, { col, dim, strobe: flash }: LightValue,
-    energy: EnergyLook | null, now: number): void {
+    energy: EnergyLook | null, now: number, clip = false): void {
     const dmx = store.getBuffer(fix.universe);
     const base = fix.address - 1;
     const profile = profileOf(fix);
@@ -950,7 +1015,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     const ms = mastersOf(input, fix);
 
     writeDefaults(dmx, base, profile.defaults);
-    if (!strobe(dmx, base, fix, ch, strobeRequest(input, energy, flash), now)) return;
+    if (!strobe(dmx, base, fix, ch, strobeRequest(input, energy, flash, clip), now)) return;
     writeDimmer(dmx, base, ch, dim * ms);
     writeEmitters(dmx, base, ch, col, ms * (dim / 255));
   }
@@ -962,7 +1027,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
    * exactly as it drives a par, and kill or silence closes the bar's dimmer.
    */
   function writeBar(input: RenderInput, store: FrameStore, fix: RenderFixture, cells: ChannelMap[], lights: LightValue[],
-    energy: EnergyLook | null, now: number): void {
+    energy: EnergyLook | null, now: number, clip = false): void {
     const dmx = store.getBuffer(fix.universe);
     const base = fix.address - 1;
     const profile = profileOf(fix);
@@ -980,7 +1045,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       if (light.dim > top) top = light.dim;
       if (light.strobe > flash) flash = light.strobe;
     }
-    if (!strobe(dmx, base, fix, ch, strobeRequest(input, energy, flash), now)) return;
+    if (!strobe(dmx, base, fix, ch, strobeRequest(input, energy, flash, clip), now)) return;
     const fixtureDimmer = ch.dimmer !== undefined;
     writeDimmer(dmx, base, ch, top * ms);
 
@@ -1046,7 +1111,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     guard.setInterval(Number.isFinite(interval) && interval >= 0 ? interval : RENDER_SAFETY_DEFAULTS.hdFlashIntervalMs);
 
     const { voices, admitted } = playingVoices(given, input, reading, now, gridPhase!);
-    const effects = !!input.effect || voices.length > 0;
+    const effects = !!input.effect || voices.length > 0 || sequencePlays(input);
     let fb: FrameBase | null = null;
     if (effects) {
       cellsFor(input, rigNow);
@@ -1061,6 +1126,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       commands.decide(false);
       renderPattern(input, rigNow, reading);
     }
+    renderSequence(input, rigNow, fb);
 
     // The voices' cells, by unit: the voice on top of each, or null for the base.
     let voiceTop: (EffectSlot | null)[] | null = null;
@@ -1118,8 +1184,10 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     // fixture and a fixture's blackout alike, at its own level.
     const all: LightValue[][] = [];
     const owned: (EnergyLook | null)[] = [];
+    // Fixtures whose base is a clip of the sequence (a bar when any of its cells is), as a voice owns one.
+    const clipped: boolean[] = [];
     // Which kind is on top of each unit matters only while an effect plays.
-    const watch = !!voiceTop || baseKinds;
+    const watch = !!voiceTop || baseKinds || seqUnits;
     let guarded = false;
     for (let i = 0; i < fixtures.length; i++) {
       const fix = fixtures[i];
@@ -1127,17 +1195,20 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       const overridden = !!fix.override && (fix.override.enabled || fix.override.blackout);
       const lights: LightValue[] = [];
       let first: EnergyLook | null = sync;
+      let clip = false;
       for (let u = start; u < start + count; u++) {
+        if (seqUnits && seqLight[u] && !overridden) clip = true;
         const voice = sync || !voiceTop ? null : voiceTop[u];
         const top = sync ?? (voice ? { col: voice.colour, dim: 255 * voice.level, strobe: voice.strobe ?? 0 } : null);
         if (top && !first) first = top;
         lights.push(lightOf(u, fix, top, fadeT, target));
         if (!watch) continue;
-        const kind = top ? (voice ? voice.kind ?? null : null) : overridden ? null : baseKind[u];
+        const kind = top ? (voice ? voice.kind ?? null : null) : overridden ? null : seqUnits && seqLight[u] ? seqKind[u] : baseKind[u];
         topKind[u] = kind;
         if (hdGuarded(kind)) guarded = true;
       }
       owned.push(first);
+      clipped.push(clip);
       all.push(lights);
     }
     // Only while a lamp of Hue Dynamics' plays or is still held bright: nothing to do for a pattern.
@@ -1148,8 +1219,8 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     for (let i = 0; i < fixtures.length; i++) {
       const cells = rigNow.cellMaps[i];
       if (ident && ident.ids.has(fixtures[i].id)) writeIdentified(input, store, fixtures[i], cells, now - ident.start, now);
-      else if (cells) writeBar(input, store, fixtures[i], cells, all[i], owned[i], now);
-      else writePar(input, store, fixtures[i], all[i][0], owned[i], now);
+      else if (cells) writeBar(input, store, fixtures[i], cells, all[i], owned[i], now, clipped[i]);
+      else writePar(input, store, fixtures[i], all[i][0], owned[i], now, clipped[i]);
     }
     return rigNow;
   }
@@ -1224,6 +1295,12 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       }
     },
     commandStatus() { return { processed: processedSeq, applied: appliedSeq }; },
+    setSequence(table) {
+      // From another thread or a test: anything that is not a table is none.
+      const ok = !!table && typeof table === 'object' && Number.isFinite(table.revision) && Array.isArray(table.lanes) && Array.isArray(table.clips);
+      sequence = ok ? table : null;
+      retable(seqRun, sequence, stepper);
+    },
   };
 }
 

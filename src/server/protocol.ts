@@ -37,8 +37,8 @@ export const ROOM = { v1: 'protocol:1', v2: 'protocol:2', dmx: 'feed:dmx', audio
 /** What a page may subscribe to. */
 export const TOPICS = { dmx: ROOM.dmx, audio: ROOM.audio } as const;
 
-export type Domain = 'look' | 'rig' | 'show' | 'sources' | 'audio' | 'catalogs' | 'system';
-export const DOMAINS: readonly Domain[] = ['look', 'rig', 'show', 'sources', 'audio', 'catalogs', 'system'];
+export type Domain = 'look' | 'rig' | 'show' | 'sources' | 'audio' | 'sequence' | 'catalogs' | 'system';
+export const DOMAINS: readonly Domain[] = ['look', 'rig', 'show', 'sources', 'audio', 'sequence', 'catalogs', 'system'];
 
 /**
  * Which domain each key of the live state belongs to. Grouped by what changes
@@ -64,6 +64,9 @@ const DOMAIN_OF: Readonly<Record<string, Domain>> = {
 
   // The audio summary: its levels move every sweep, and only the meters watch them.
   audio: 'audio',
+
+  // The sequencer: the sequence loaded, and (from the transport) where it plays.
+  sequence: 'sequence',
 
   colorPresets: 'catalogs', patterns: 'catalogs', energyEffects: 'catalogs', strobeFunctions: 'catalogs',
   palettes: 'catalogs', builtinProfileIds: 'catalogs', hueProfileIds: 'catalogs', syncOffsetLimitMs: 'catalogs',
