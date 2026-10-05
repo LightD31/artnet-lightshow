@@ -45,8 +45,11 @@ function sampler(inst, room, base = {}) {
 const state = (slot) => !slot || slot.strength === 0 ? 'clear' : slot.level === 0 ? 'black' : 'lit';
 const bytes = (slot) => slotToWrite(slot).dim;
 
-// The permit's guarantees, in milliseconds.
-const GAP_MS = 1000 / MAX_LAMP_FLASH_HZ - 1000 / 44;
+// The permit's guarantees hold on the engine's frame grid: a rise's frame is round(t / FRAME_MS).
+const F = (k) => k * FRAME_MS;
+const frameOf = (t) => Math.round(t / FRAME_MS);
+const GAP_FRAMES = Math.ceil((1000 / MAX_LAMP_FLASH_HZ - FRAME_MS) / FRAME_MS);
+const WINDOW_FRAMES = Math.round(1000 / FRAME_MS);
 const FLOOR = 40 / 255;
 const levelOf = (slot) => slot && slot.strength > 0 ? slot.level : 0;
 /**
@@ -63,11 +66,13 @@ function risesOf(frames, outs) {
   }));
   return rises;
 }
-/** (a) and (b) over one lamp's rises; (b) to the nanosecond of float rounding the permit allows. */
+/** (a) and (b) over one lamp's rises, in engine frames. */
 function assertCapped(label, times) {
-  for (let k = 1; k < times.length; k++) assert.ok(times[k] - times[k - 1] >= GAP_MS, `${label}: rises ${times[k] - times[k - 1]} ms apart`);
-  for (let k = MAX_LAMP_FLASH_HZ; k < times.length; k++) {
-    assert.ok(times[k] - times[k - MAX_LAMP_FLASH_HZ] >= 1000 - 1e-6, `${label}: ${MAX_LAMP_FLASH_HZ + 1} rises within ${times[k] - times[k - MAX_LAMP_FLASH_HZ]} ms`);
+  const frames = times.map(frameOf);
+  for (let k = 1; k < frames.length; k++) assert.ok(frames[k] - frames[k - 1] >= GAP_FRAMES, `${label}: rises in frames ${frames[k - 1]} and ${frames[k]}`);
+  for (let k = MAX_LAMP_FLASH_HZ; k < frames.length; k++) {
+    const first = frames[k - MAX_LAMP_FLASH_HZ];
+    assert.ok(frames[k] - first >= WINDOW_FRAMES, `${label}: ${MAX_LAMP_FLASH_HZ + 1} rises in frames ${first}..${frames[k]}`);
   }
 }
 
@@ -75,12 +80,14 @@ test('wall clock at 2/s: full for 100 ms, black for 100 ms, transparent until 50
   const inst = strobe({ params: { clock: 'wall', flashesPerSecond: 2 }, palette: ['#FF0000', '#00FF00', '#0000FF'] }, { startedAtMs: 1000 });
   const colourOf = (index) => [RED, GREEN, BLUE][Math.floor(hash01(SEED, 0, index) * 3)];
   const at = sampler(inst, PAR);
-  const expect = [[0, 'lit'], [99, 'lit'], [100, 'black'], [199, 'black'], [200, 'clear'], [499, 'clear'], [500, 'lit'], [599, 'lit'], [600, 'black']];
-  for (const [t, want] of expect) {
+  // 499 ms is the 500 ms frame: a render within half a frame of a flash falling due is that flash's frame.
+  const expect = [[0, 'lit', 0], [99, 'lit', 0], [100, 'black'], [199, 'black'], [200, 'clear'], [480, 'clear'], [499, 'lit', 1], [500, 'lit', 1],
+    [599, 'lit', 1], [600, 'black']];
+  for (const [t, want, flash] of expect) {
     const slot = at(1000 + t)[0];
     assert.strictEqual(state(slot), want, `${t} ms`);
     if (want === 'lit') {
-      assert.deepStrictEqual(slot.colour, colourOf(Math.floor(t / 500)), `the seeded colour at ${t} ms`);
+      assert.deepStrictEqual(slot.colour, colourOf(flash), `the seeded colour at ${t} ms`);
       assert.strictEqual(slot.level, 1);
     }
     if (want === 'black') assert.deepStrictEqual(slot.colour, BLACK, 'black owns the slot');
@@ -107,7 +114,8 @@ test('beat clock at 128 BPM flashes on half beats in the palette\'s order', () =
   const at = sampler(inst, PAR, { bpm: 128 });
   for (let k = 0; k < 9; k++) {
     const t = k * half;
-    for (const [dt, want] of [[0, 'lit'], [50, 'lit'], [150, 'black'], [210, 'clear']]) {
+    // The first frame at or after each half beat shows it.
+    for (const [dt, want] of [[F(Math.ceil(t / FRAME_MS - 1e-9)) - t, 'lit'], [50, 'lit'], [150, 'black'], [210, 'clear']]) {
       const slot = at(t + dt)[0];
       assert.strictEqual(state(slot), want, `flash ${k} + ${dt} ms`);
       if (want === 'lit') assert.deepStrictEqual(slot.colour, [RED, GREEN, BLUE][k % 3], `flash ${k} in turn`);
@@ -133,13 +141,13 @@ test('beat clock at 128 BPM flashes on half beats in the palette\'s order', () =
   assert.strictEqual(holdStrobeFlash(0, 128).periodMs, half, 'five a second by default');
   assert.strictEqual(holdStrobeFlash(0, 300, 10).periodMs, 200, 'and never more than five');
   const slow = sampler(strobe({ params: { clock: 'beat', flashesPerSecond: 2 } }), PAR, { bpm: 128 });
-  assert.deepStrictEqual([0, half, 2 * half, 3 * half, 900, 937.5].map((t) => state(slow(t)[0])), ['lit', 'clear', 'clear', 'clear', 'clear', 'lit'],
+  assert.deepStrictEqual([0, half, 2 * half, 3 * half, 900, F(42)].map((t) => state(slow(t)[0])), ['lit', 'clear', 'clear', 'clear', 'clear', 'lit'],
     'flashes on every second beat, none between');
 });
 
 test('continueBetween false holds black between flashes', () => {
   const wall = sampler(strobe({ params: { clock: 'wall', flashesPerSecond: 2, continueBetween: false } }), PAR);
-  assert.deepStrictEqual([0, 150, 200, 499, 500].map((t) => state(wall(t)[0])), ['lit', 'black', 'black', 'black', 'lit']);
+  assert.deepStrictEqual([0, 150, 200, 480, 500].map((t) => state(wall(t)[0])), ['lit', 'black', 'black', 'black', 'lit']);
   assert.deepStrictEqual(wall(700)[0], { colour: BLACK, level: 0, strength: 1 });
   const beat = sampler(strobe({ params: { clock: 'beat', flashesPerSecond: 5, continueBetween: false } }), PAR);
   assert.deepStrictEqual([0, 220, 250].map((t) => state(beat(t)[0])), ['lit', 'black', 'lit']);
@@ -223,14 +231,15 @@ test('a tempo change never lets a flash through early, and a denied flash is nev
   // Below the cap the configured rate holds on the grid: two a second, and a beat nudged ahead brings the next flash 300 ms after the last was due.
   const two = sampler(strobe({ params: { clock: 'beat', flashesPerSecond: 2 } }), PAR);
   assert.strictEqual(state(two(0)[0]), 'lit');
-  assert.strictEqual(state(two(300, { beatPos: 1 })[0]), 'clear', 'too soon for two a second, though past the cap\'s gap');
-  assert.strictEqual(state(two(800, { beatPos: 2 })[0]), 'lit');
+  assert.strictEqual(state(two(F(13), { beatPos: 1 })[0]), 'clear', 'too soon for two a second, though past the cap\'s gap');
+  assert.strictEqual(state(two(F(36), { beatPos: 2 })[0]), 'lit');
 });
 
 test('never faster than five a second at any setting', () => {
   assert.strictEqual(MAX_LAMP_FLASH_HZ, HOLD_STROBE_MAX_HZ, 'one cap');
   assert.strictEqual(hdAutoStrobeFlash, discoPermit, 'the Disco\'s permit, re-exported');
-  assert.strictEqual(STROBE_FRAME_MS, FRAME_MS, 'the grace is one engine frame');
+  assert.strictEqual(STROBE_FRAME_MS, FRAME_MS, 'the permit counts engine frames');
+  assert.deepStrictEqual([GAP_FRAMES, WINDOW_FRAMES], [8, 44]);
   const check = (label, inst, room, frames) => {
     const stepper = new EffectStepper();
     const rises = risesOf(frames, frames.map((f) => draw(inst(f), frame(f), room, stepper)));
@@ -298,30 +307,29 @@ test('on an ideal 44 Hz clock a grid at the rate shows every flash: 50 of 50 at 
         // Each rises on the first frame at or after it was due.
         times.forEach((t, k) => assert.ok(t >= k * periodMs - 1e-9 && t < k * periodMs + 1000 / 44, `${label} ${hueStrobe}: flash ${k} at ${t} ms`));
         assertCapped(`${label} ${hueStrobe}`, times);
-        // On the frame grid itself: rises at least eight frames apart, never six in 44 frames.
-        const frameOf = times.map((t) => Math.round(t * 44 / 1000));
-        for (let k = 1; k < frameOf.length; k++) assert.ok(frameOf[k] - frameOf[k - 1] >= 8, `${label}: frames ${frameOf[k - 1]}, ${frameOf[k]}`);
-        for (let k = 5; k < frameOf.length; k++) assert.ok(frameOf[k] - frameOf[k - 5] >= 44, `${label}: six rises in frames ${frameOf[k - 5]}..${frameOf[k]}`);
       }
     }
   }
+  // Launched on frame 5, where float rounding puts a second's frames a hair under 1000 ms apart: still every flash, on its frame.
+  const inst = strobe({ params: { clock: 'wall', flashesPerSecond: 5 } }, { startedAtMs: F(5) });
+  const stepper = new EffectStepper();
+  const frames = Array.from({ length: 440 }, (_, j) => ({ nowMs: F(5 + j), beatPos: 0, bpm: 120, hueStrobe: 'flash' }));
+  const [times] = risesOf(frames, frames.map((f) => draw(inst, frame(f), PAR, stepper)));
+  assert.deepStrictEqual(times.map(frameOf), Array.from({ length: 50 }, (_, k) => 5 + Math.ceil(k * 200 / FRAME_MS - 1e-9)));
 });
 
-test('±2 ms of frame jitter keeps (a) and (b); at exactly five a second it costs at most 8 of 50 flashes, none below it', () => {
-  for (let seed = 1; seed <= 20; seed++) {
-    for (const [label, params, bpm, periodMs, flashes] of [...AT_RATE,
-      ['four a second, wall', { clock: 'wall', flashesPerSecond: 4 }, 120, 250, 40], ['five a second, 128 BPM', { clock: 'beat', flashesPerSecond: 5 }, 128, 60000 / 256, 43]]) {
+test('±2 ms of frame jitter keeps (a) and (b) on the frame grid and loses no flash, five a second included', () => {
+  const grids = [...AT_RATE, ['four a second, wall', { clock: 'wall', flashesPerSecond: 4 }, 120, 250, 40],
+    ['five a second, 128 BPM', { clock: 'beat', flashesPerSecond: 5 }, 128, 60000 / 256, 43]];
+  for (const [label, params, bpm, periodMs, flashes] of grids) {
+    // Two hundred clocks at the cap itself, twenty for the rest.
+    for (let seed = 1; seed <= (periodMs === 200 ? 200 : 20); seed++) {
       const frames = tenSeconds(bpm, 'flash', 2, seed);
       const [times] = runOf(params, frames, PAR);
       assertCapped(`${label} seed ${seed}`, times);
-      const lost = flashes - times.length;
-      if (periodMs > 200) assert.strictEqual(lost, 0, `${label} seed ${seed}: below the cap nothing is lost`);
-      else {
-        assert.ok(lost <= 8, `${label} seed ${seed}: ${lost} lost`);
-        // The cost is (b)'s own: showing every flash on this clock would have put six in under a second.
-        const all = Array.from({ length: flashes }, (_, k) => frames.find((f) => f.nowMs >= k * periodMs).nowMs);
-        assert.ok(all.some((t, k) => k >= 5 && t - all[k - 5] < 1000), `${label} seed ${seed}: every flash would break (b)`);
-      }
+      assert.strictEqual(times.length, flashes, `${label} seed ${seed}: every flash shows`);
+      // Each on its ideal frame, whatever the jitter moved its render by.
+      times.forEach((t, k) => assert.strictEqual(frameOf(t), Math.max(0, Math.ceil(k * periodMs / FRAME_MS - 1e-9)), `${label} seed ${seed}: flash ${k}`));
     }
   }
 });
@@ -360,17 +368,18 @@ test('a burst of relaunches, renders and hostile edits never breaks (a) or (b)',
 test('a relaunch on the same instance starts a new grid under the same permit', () => {
   for (const clock of ['wall', 'beat']) {
     const stepper = new EffectStepper();
-    const at = (nowMs, launchMs) => draw(strobe({ params: { clock, flashesPerSecond: 2 } }, { startedAtMs: launchMs, anchorBeat: launchMs / 500 }),
-      frame({ nowMs, beatPos: nowMs / 500 }), PAR, stepper)[0];
+    // Renders and launches on engine frames, 120 BPM.
+    const at = (k, launch) => draw(strobe({ params: { clock, flashesPerSecond: 2 } }, { startedAtMs: F(launch), anchorBeat: F(launch) / 500 }),
+      frame({ nowMs: F(k), beatPos: F(k) / 500 }), PAR, stepper)[0];
     assert.strictEqual(state(at(0, 0)), 'lit');
-    assert.strictEqual(state(at(50, 0)), 'lit');
+    assert.strictEqual(state(at(2, 0)), 'lit');
     // Its first flash shows, though the last grid was also at its first.
-    assert.strictEqual(state(at(1000, 1000)), 'lit', `${clock}: relaunched`);
-    // Launched again 50 ms on: too soon, and the flash showing runs its course.
-    assert.strictEqual(state(at(1050, 1050)), 'lit', `${clock}: the earlier flash`);
-    assert.strictEqual(state(at(1150, 1050)), 'black');
-    assert.strictEqual(state(at(1300, 1050)), 'clear', `${clock}: the refused one is not shown late`);
-    assert.strictEqual(state(at(1550, 1050)), 'lit', `${clock}: the next on the new grid`);
+    assert.strictEqual(state(at(44, 44)), 'lit', `${clock}: relaunched`);
+    // Launched again two frames on: too soon, and the flash showing runs its course.
+    assert.strictEqual(state(at(46, 46)), 'lit', `${clock}: the earlier flash`);
+    assert.strictEqual(state(at(51, 46)), 'black');
+    assert.strictEqual(state(at(57, 46)), 'clear', `${clock}: the refused one is not shown late`);
+    assert.strictEqual(state(at(69, 46)), 'lit', `${clock}: the next on the new grid`);
   }
 });
 
