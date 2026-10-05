@@ -168,11 +168,17 @@ function runSequenceSource(reading: MusicalTime): void {
   }
 }
 
-/** Register what plays the sequence (the sequencer's frame()). */
+/**
+ * Register what plays the sequence (the sequencer's frame()). A revision
+ * counts within one source, so another source's table is handed over again
+ * whatever revision it carries.
+ */
 function setSequenceSource(fn: ((reading: MusicalTime) => SequenceFrame | null) | null | undefined): void {
   sequenceSource = typeof fn === 'function' ? fn : null;
   sequenceFailed = false;
   sequenceNow = NO_SEQUENCE;
+  mainSequence = undefined;
+  postedSequence = undefined;
 }
 
 /** The table's revision, as a snapshot names it: null for no table. */

@@ -40,6 +40,7 @@ import type { MusicalTime } from './conductor.ts';
 import type { EngineWorkerData, FromWorker, RenderedFrames, ToWorker } from './engine-messages.ts';
 import type { Ticker } from './frame-clock.ts';
 import type { RenderInput } from './renderer.ts';
+import type { SequenceTable } from '../shared/effects/sequence.ts';
 import type { TransmitConfig } from './transmit.ts';
 import type { Profile } from '../types/rig.ts';
 
@@ -105,6 +106,18 @@ function warmUp(): void {
 }
 
 let snapshot: { input: RenderInput; outputs: TransmitConfig } | null = null;   // from the main thread
+// A new clip table waits here for the snapshot posted right behind it. Taken
+// up at once, a frame rendered between the two messages would meet the new
+// table under the old snapshot's revision, play no clip and end every lap.
+let pendingSequence: { table: SequenceTable | null } | null = null;
+
+/** Hand the renderer the table that came before this snapshot or request, if one did. */
+function takeSequence(): void {
+  if (!pendingSequence) return;
+  renderer.setSequence(pendingSequence.table);
+  pendingSequence = null;
+}
+
 let lastStatsAt = -Infinity;
 
 /** The imported profiles, replaced wholesale. The built-ins are already here. */
@@ -194,13 +207,15 @@ port.on('message', guarded('engine-worker', (msg: ToWorker | null) => {
       setProfiles(msg.profiles);
       break;
     case 'snapshot':
+      takeSequence();
       snapshot = { input: msg.input, outputs: msg.outputs };
       follow.push(msg.reading, msg.at);
       break;
     case 'sequence':
-      renderer.setSequence(msg.table ?? null);
+      pendingSequence = { table: msg.table ?? null };
       break;
     case 'render': {
+      takeSequence();
       if (msg.table !== undefined) renderer.setSequence(msg.table);
       const frames = renderOnce(msg);
       const commands = renderer.takeCommandResults();

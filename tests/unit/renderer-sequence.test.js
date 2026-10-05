@@ -15,7 +15,8 @@ import { createRenderer } from '../../src/server/renderer.ts';
 import * as universes from '../../src/server/universes.ts';
 import { getProfile, profilesRevision, BUILTIN_PROFILE_ID } from '../../src/server/profiles.ts';
 import { COLOR_PRESETS } from '../../src/server/presets.ts';
-import { FRAME_MS } from '../../src/server/frame-clock.ts';
+import { FRAME_MS, hrtimeMs } from '../../src/server/frame-clock.ts';
+import { transmitConfig } from '../../src/server/output.ts';
 import { state } from '../../src/server/state.ts';
 import { applyPatch } from '../../src/server/patch.ts';
 import { startEngine, stopEngine, engineStatus, renderInput, setSequenceSource } from '../../src/server/engine.ts';
@@ -436,6 +437,11 @@ test('the table is posted once per revision, not per frame', async () => {
     feed = { table: catalogueTable(7), transport: null };
     assert.ok(await until(() => engineStatus().thread === 'worker' && stats().frames === 1 && stats().lateMs.p50 === 7 && stats().skippedFrames >= 3));
     assert.equal(stats().lateFrames, 0);
+    // Another source (a sequencer of its own) whose table carries the same revision: it is sent all the same.
+    const other = { table: catalogueTable(7), transport: null };
+    setSequenceSource(() => other);
+    assert.ok(await until(() => stats().frames === 2), 'a new source\'s table goes over');
+    assert.equal(stats().lateFrames, 0);
   } finally {
     delete process.env.COUNTING_WORKER_CRASH;
     await stopEngine();
@@ -464,9 +470,55 @@ test('on the main thread the engine plays the sequencer\'s table straight from i
     transport = { startBeat: -1, loop: null, generation: 0 };
     assert.ok(await until(green, 1000), 'playing: the clip is the rig\'s base');
     assert.equal(renderInput().sequenceRevision, sequencer.table().revision);
+    // Another source, a sequencer of its own at the same revision: its table plays, not the last one's.
+    const other = new Sequencer({ resolve: () => null });
+    other.load({ id: 's', name: 'S', lanes: [lane('a')], clips: [{ id: 'c', laneId: 'a', startBeat: 0, lengthBeats: 1e6, effect: { kind: 'test.seqPaint', palette: ['#0000FF'] } }] });
+    assert.equal(other.table().revision, sequencer.table().revision);
+    setSequenceSource((reading) => ({ ...other.frame(reading), transport }));
+    const blue = () => {
+      const ch = getProfile(first).channelMap;
+      const dmx = universes.getBuffer(first.universe ?? state.artnet.universe);
+      return dmx[first.address - 1 + ch.blue] === 255 && dmx[first.address - 1 + ch.green] === 0;
+    };
+    assert.ok(await until(blue, 1000), 'the new source\'s clip');
   } finally {
     await stopEngine();
     setSequenceSource(null);
+  }
+});
+
+test('a worker takes a new table up with the snapshot that names it: no frame between the two plays the look', async () => {
+  state.artnet.enabled = false;
+  const shared = universes.allocateShared();
+  const w = new Worker(WORKER, { workerData: { shared, epochMs: hrtimeMs(), periodMs: FRAME_MS } });
+  let frames = 0;
+  await new Promise((resolve, reject) => {
+    w.on('message', (m) => { if (m.type === 'ready') resolve(); if (m.type === 'frame') frames++; });
+    w.once('error', reject);
+  });
+  const out = universes.createUniverseStore(shared, { readOnly: true });
+  const dimmer = (fix) => out.getBuffer(fix.universe)[fix.address - 1 + getProfile(fix).channelMap.dimmer];
+  const after = (n) => { const k = frames + n; return until(() => frames >= k); };
+  // A clip that darkens fixture 10 plays on through both tables; only the clip on 11 moves.
+  const kill = validateSpec({ kind: 'energy.kill' });
+  const t1 = table(1, [lane('a')], [tclip('dark', 'a', 0, 1e6, kill, { fixtureIds: [10] }), tclip('moved', 'a', 0, 1e6, kill, { fixtureIds: [11] })]);
+  const t2 = table(2, [lane('a')], [t1.clips[0], { ...t1.clips[1], startBeat: 0.5 }]);
+  const outputs = { ...transmitConfig(), armed: false };
+  const snapshot = (t) => w.postMessage({ type: 'snapshot', at: hrtimeMs(), input: input(playing(t)), reading: { beatPos: 1, bpm: 120, epoch: 0, moving: true }, outputs });
+  try {
+    w.postMessage({ type: 'sequence', table: t1 });
+    snapshot(t1);
+    assert.ok(await after(3));
+    assert.deepEqual([dimmer(PARS[0]), dimmer(PARS[2])], [0, 255], 'the clip on 10, the look on 12');
+    // The next table arrives and its snapshot is late: the frames meanwhile play the last pair.
+    w.postMessage({ type: 'sequence', table: t2 });
+    assert.ok(await after(3));
+    assert.equal(dimmer(PARS[0]), 0, 'still the clip, not a frame of the look');
+    snapshot(t2);
+    assert.ok(await after(3));
+    assert.deepEqual([dimmer(PARS[0]), dimmer(PARS[2])], [0, 255]);
+  } finally {
+    await w.terminate();
   }
 });
 

@@ -36,7 +36,11 @@ export type ToWorker =
    * ticker's are; `table`, when given, is the sequence's clip table from this frame on.
    */
   | { type: 'render'; id: number; input: RenderInput; reading: MusicalTime; now: number; gridOriginMs?: number; table?: SequenceTable | null }
-  /** The loaded sequence's clip table, sent when its revision changes and to every new worker; null for none. */
+  /**
+   * The loaded sequence's clip table, sent when its revision changes and to
+   * every new worker; null for none. Always followed by the snapshot naming
+   * it, and taken up with that snapshot.
+   */
   | { type: 'sequence'; table: SequenceTable | null }
   /** A command for the base effect, decided at the next frame (renderer.ts Renderer.command). */
   | { type: 'command'; seq: number; cmd: string; arg?: unknown; intent?: BaseIntent | null }
