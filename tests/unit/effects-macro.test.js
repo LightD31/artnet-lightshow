@@ -4,6 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert';
 import { z } from 'zod';
 import '../../src/shared/effects/macro.ts';
+import { DISCO_PRESETS } from '../../src/shared/effects/disco.ts';
 import { registerKind, requiresAcknowledgement, validateSpec } from '../../src/shared/effects/registry.ts';
 import { renderEffect } from '../../src/shared/effects/render.ts';
 import { EffectStepper } from '../../src/shared/effects/stepper.ts';
@@ -274,6 +275,25 @@ test('a macro may not hold the strobe, which would restart its five-a-second per
   const raw = { kind: 'macro', params: { steps: [{ effect: validateSpec(strobe), beats: 0.25 }], loopBeats: 0.25 }, palette: null, brightness: 1 };
   const at = sampler(instance(raw));
   for (let ms = 0; ms < 1000; ms += 1000 / 44) assert.strictEqual(at(ms / 500).out[0].strength, 0, `${ms} ms`);
+});
+
+test('nor Disco with its automatic strobe on, whose five-a-second limit each step would start again', () => {
+  const disco = (id, over = {}) => ({ kind: 'hd.disco', params: { ...DISCO_PRESETS.find((p) => p.id === id).params, ...over } });
+  assert.throws(() => macro([step(disco('hd.disco.drumAndBass'), 0.75)], 0.75),
+    (err) => err.issues.some((i) => i.path.join('.') === 'params.steps.0.effect.params' && i.message === 'a macro may not hold an automatic strobe'));
+  const peak = DISCO_PRESETS.find((p) => p.id === 'hd.disco.pop').params;
+  assert.throws(() => macro([step(disco('hd.disco.pop', { style: 'peak', channels: peak.channels.map((c, i) => (i === 3 ? { ...c, strobeOn: true } : c)) }), 1)], 1),
+    /a macro may not hold an automatic strobe/);
+  // Without it, Disco is a step like any other.
+  assert.strictEqual(macro([step(disco('hd.disco.pop'), 1)], 1).params.steps[0].effect.kind, 'hd.disco');
+  // A hand-built spec that skipped validation renders that step dark, where Disco without the strobe lights on a hit.
+  const raw = (id) => ({ kind: 'macro', params: { steps: [{ effect: validateSpec(disco(id)), beats: 1 }], loopBeats: 1 }, palette: null, brightness: 1 });
+  const hits = { t: 0.25, rms: 1, power: 1, dominantHz: 100, party: { full: 1, bass: 1, mid: 1, high: 1 },
+    disco: { hit: [true, true, true], gate: [0, 0, 0], level: [1, 1, 1], peakHit: true, neural: { mainFrequency: 0.5, amplitude: 1 } },
+    spl: { db: 0, level: 0, beat: null, section: null } };
+  const heard = (id) => sampler(instance(raw(id)))(0.5, { audio: hits, audioMode: 'reactive' }).out[0].strength;
+  assert.strictEqual(heard('hd.disco.pop'), 1);
+  assert.strictEqual(heard('hd.disco.drumAndBass'), 0);
 });
 
 test('a macro\'s slots name the step kind that drew them, through nested macros, so a guard for one family still finds it', () => {

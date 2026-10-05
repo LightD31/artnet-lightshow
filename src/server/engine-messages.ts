@@ -11,6 +11,7 @@ import type { BaseIntent, CommandResult, RenderInput } from './renderer.ts';
 import type { TransmitConfig } from './transmit.ts';
 import type { SharedUniverses } from './universes.ts';
 import type { Profile } from '../types/rig.ts';
+import type { SequenceTable } from '../shared/effects/sequence.ts';
 
 /** Handed to the worker when it starts. */
 export interface EngineWorkerData {
@@ -30,8 +31,17 @@ export type RenderedFrames = Record<number, number[] | null>;
 export type ToWorker =
   | { type: 'profiles'; profiles: Profile[] }
   | { type: 'snapshot'; at: number; input: RenderInput; reading: PostedReading; outputs: TransmitConfig }
-  /** Tests: `gridOriginMs` places the capture's frames on a grid, as the live ticker's are. */
-  | { type: 'render'; id: number; input: RenderInput; reading: MusicalTime; now: number; gridOriginMs?: number }
+  /**
+   * Tests: `gridOriginMs` places the capture's frames on a grid, as the live
+   * ticker's are; `table`, when given, is the sequence's clip table from this frame on.
+   */
+  | { type: 'render'; id: number; input: RenderInput; reading: MusicalTime; now: number; gridOriginMs?: number; table?: SequenceTable | null }
+  /**
+   * The loaded sequence's clip table, sent when its revision changes and to
+   * every new worker; null for none. Always followed by the snapshot naming
+   * it, and taken up with that snapshot.
+   */
+  | { type: 'sequence'; table: SequenceTable | null }
   /** A command for the base effect, decided at the next frame (renderer.ts Renderer.command). */
   | { type: 'command'; seq: number; cmd: string; arg?: unknown; intent?: BaseIntent | null }
   | { type: 'stop' };

@@ -19,6 +19,16 @@ export function requiresAcknowledgement(spec: EffectSpec): boolean {
   return Boolean(spec.rapidFlash || def?.rapidFlash || def?.rapidFlashWhen?.(spec.params));
 }
 
+/** Does a kind ride the expression level on a curve of its own (glow), so a layer's level is not multiplied by it again. */
+export function ridesLevel(kind: string | null | undefined): boolean {
+  return !!kind && !!kindOf(kind)?.rideLevel;
+}
+
+/** Does a spec hold its flash limit in its own state (EffectKindDef.pacesOwnFlashes); false for an unknown kind. */
+export function pacesOwnFlashes(spec: EffectSpec): boolean {
+  return Boolean(kindOf(spec.kind)?.pacesOwnFlashes?.(spec.params ?? {}));
+}
+
 const paramsSchema = z.record(z.string(), z.unknown());
 const specSchema = z.object({
   kind: z.string().refine((kind) => KINDS.has(kind), 'unknown effect kind'),

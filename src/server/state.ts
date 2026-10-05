@@ -363,6 +363,14 @@ let extrasProvider: () => Record<string, unknown> = () => ({});
 
 function setExtrasProvider(fn: () => Record<string, unknown>): void { extrasProvider = fn; }
 
+// The sequencer's status (sequencer.ts) as the live state carries it under
+// `sequence`; null while no sequencer is registered.
+let sequenceProvider: () => unknown = () => null;
+
+function setSequenceProvider(fn: (() => unknown) | null | undefined): void {
+  sequenceProvider = typeof fn === 'function' ? fn : () => null;
+}
+
 // The legacy patterns, then every built-in effect preset: one id space, as
 // `pattern` may name either.
 const PATTERN_CATALOG = [...PATTERNS, ...PRESET_ROWS];
@@ -454,6 +462,7 @@ function getLiveState() {
     // The bridges a Hue lamp's output can name, for the patch table and the
     // inspector to show the lamp's bridge by its label. Never the keys.
     hueBridges: settings.group('hue').bridges.map(({ id, label, host, enabled }) => ({ id, label, host, enabled })),
+    sequence: sequenceProvider(),
     ...extrasProvider(),
   };
 }
@@ -524,4 +533,5 @@ export {
   getDmxSnapshot,
   getDmxUniverses,
   setExtrasProvider,
+  setSequenceProvider,
 };

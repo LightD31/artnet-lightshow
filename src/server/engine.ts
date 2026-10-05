@@ -20,6 +20,8 @@ import type { CommandResult, FadeRequest, RenderInput, SyncTestRequest, VoiceFra
 import type { Profile, PulseReading } from '../types/rig.ts';
 import type { AudioFrame } from '../shared/effects/audio-frame.ts';
 import type { EffectSpec } from '../shared/effects/types.ts';
+import type { MusicalTime } from './conductor.ts';
+import type { SequenceFrame } from './sequencer.ts';
 import { validateSpec } from '../shared/effects/registry.ts';
 import { effectContentKey } from '../shared/effects/layer.ts';
 
@@ -192,6 +194,41 @@ function baseEffect(): { id: string; spec: EffectSpec } | null {
   return { id: `base:${state.pattern}`, spec: validatedEffect.spec };
 }
 
+// What the sequencer hands over each frame (sequencer.ts frame()): its clip
+// table and, while it plays, where it is. Read once a frame, before the
+// input is built; nothing plays until a sequencer registers.
+const NO_SEQUENCE: SequenceFrame = Object.freeze({ table: null, transport: null });
+let sequenceSource: ((reading: MusicalTime) => SequenceFrame | null) | null = null;
+let sequenceFailed = false;
+let sequenceNow: SequenceFrame = NO_SEQUENCE;
+
+function runSequenceSource(reading: MusicalTime): void {
+  if (!sequenceSource) { sequenceNow = NO_SEQUENCE; return; }
+  try {
+    sequenceNow = sequenceSource(reading) ?? NO_SEQUENCE;
+  } catch (err) {
+    if (!sequenceFailed) console.warn(`[engine] sequence source failed: ${messageOf(err)}`);
+    sequenceFailed = true;
+    sequenceNow = NO_SEQUENCE;
+  }
+}
+
+/**
+ * Register what plays the sequence (the sequencer's frame()). A revision
+ * counts within one source, so another source's table is handed over again
+ * whatever revision it carries.
+ */
+function setSequenceSource(fn: ((reading: MusicalTime) => SequenceFrame | null) | null | undefined): void {
+  sequenceSource = typeof fn === 'function' ? fn : null;
+  sequenceFailed = false;
+  sequenceNow = NO_SEQUENCE;
+  mainSequence = undefined;
+  postedSequence = undefined;
+}
+
+/** The table's revision, as a snapshot names it: null for no table. */
+const revisionOf = (frame: SequenceFrame): number | null => frame.table?.revision ?? null;
+
 /**
  * The voices playing now, on the clock this frame renders by. The worker
  * renders a moment after the control tick posts, and perhaps again on the
@@ -258,6 +295,9 @@ function renderInput(): RenderInput {
     effectRevision,
     voices: voiceFrames(),
     paletteOverride: state.paletteOverride,
+    // The table itself goes over apart, once per revision (setSequence); the snapshot names it.
+    sequenceRevision: revisionOf(sequenceNow),
+    sequenceTransport: sequenceNow.transport,
     fixtures: state.fixtures.map((f) => ({
       id: f.id,
       address: f.address,
@@ -353,11 +393,19 @@ function transmitFrame(): void {
 // Where the main thread's frame grid starts, on its own clock: the effects
 // count their frames from it. Unset when no driver runs (a test's frames).
 let mainGridOrigin: number | undefined;
+// The table revision this thread's renderer was last handed; undefined hands it again.
+let mainSequence: number | null | undefined;
 
 function renderDmx(): void {
   const now = clock();
   runFrameHook();
-  renderer.frame(renderInput(), conductor.now(), now, universes, mainGridOrigin);
+  const reading = conductor.now();
+  runSequenceSource(reading);
+  if (revisionOf(sequenceNow) !== mainSequence) {
+    renderer.setSequence(sequenceNow.table);
+    mainSequence = revisionOf(sequenceNow);
+  }
+  renderer.frame(renderInput(), reading, now, universes, mainGridOrigin);
   settleCommands(renderer.takeCommandResults(), renderer.commandStatus());
   transmitFrame();
   // Hue is fed once per frame rather than once per universe: one message
@@ -379,6 +427,8 @@ let workerStats: FrameSummary | null = null;    // the worker's last timing repo
 let fellBack: string | null = null;             // why the engine is here and not in its worker
 let crashes: number[] = [];
 let postedRevision = -1;
+// The table revision the running worker was last sent; undefined until it has been sent one.
+let postedSequence: number | null | undefined;
 let stopping: (() => void) | null = null;       // resolves when the worker has blacked out
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
 let workerFile = path.join(import.meta.dirname, 'engine-worker.ts');
@@ -433,7 +483,10 @@ function effectCommand(cmd: string, arg?: unknown): Promise<CommandResult> {
       if (!worker) { failPendingCommands(); return; }
       // The look the command is meant for goes first, so it is what the
       // command meets at the worker's next frame.
-      if (lastPosted) post(worker, { type: 'snapshot', at: lastPosted.at, input, reading: { ...lastPosted.reading, moving: freeClockRuns() }, outputs: output.transmitConfig() });
+      if (lastPosted) {
+        postSequence(worker);
+        post(worker, { type: 'snapshot', at: lastPosted.at, input, reading: { ...lastPosted.reading, moving: freeClockRuns() }, outputs: output.transmitConfig() });
+      }
       post(worker, { type: 'command', seq, cmd, arg, intent });
     } else {
       renderer.command(seq, cmd, arg, intent);
@@ -446,6 +499,18 @@ function post(w: Worker, msg: ToWorker): void {
   w.postMessage(msg);
 }
 
+/**
+ * Send the worker the sequence's table when it has not got this revision:
+ * a new one, none (null), or a new worker that has never had one. Always
+ * before the snapshot that names it, which the worker renders it by.
+ */
+function postSequence(w: Worker): void {
+  const revision = revisionOf(sequenceNow);
+  if (revision === postedSequence) return;
+  post(w, { type: 'sequence', table: sequenceNow.table });
+  postedSequence = revision;
+}
+
 function startMainDriver(): void {
   thread = 'main';
   clock = () => performance.now();
@@ -454,6 +519,7 @@ function startMainDriver(): void {
   // its own, so the grid's origin is noted on both at once.
   const epochMs = hrtimeMs();
   mainGridOrigin = clock();
+  mainSequence = undefined;
   ticker = createTicker({ onTick: safeRender, periodMs: FRAME_MS, epochMs });
   ticker.start();
 }
@@ -472,6 +538,7 @@ function controlTick(): void {
   if (!worker) return;
   runFrameHook();
   const reading = conductor.now();
+  runSequenceSource(reading);
   const at = hrtimeMs();
   lastPosted = { at, reading };
   const revision = profilesRevision();
@@ -479,6 +546,7 @@ function controlTick(): void {
     post(worker, { type: 'profiles', profiles: importedProfiles() });
     postedRevision = revision;
   }
+  postSequence(worker);
   post(worker, {
     type: 'snapshot',
     at,
@@ -519,6 +587,8 @@ function spawnWorker(epochMs: number): void {
   });
   worker = w;
   postedRevision = -1;
+  // A new worker has no table, whatever revision the last one had.
+  postedSequence = undefined;
   w.on('message', (msg: FromWorker | null) => {
     if (msg && msg.type === 'ready') ready = true;
     // A retired worker's word on a command is no answer: its commands were failed when it went.
@@ -691,6 +761,7 @@ export {
   setEffectSource,
   resolveEffect,
   effectChanged,
+  setSequenceSource,
   resizeFixtureBuffers,
   startSyncTest,
   identify,

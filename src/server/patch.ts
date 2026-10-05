@@ -20,6 +20,8 @@ export interface PatchHooks {
   autoPrefetchDepth(value: number): void;
   broadcast(): void;
   showChanged(): void;
+  /** A hand on the master or the tempo (not the sequence's own change): the sequencer ends that automation. */
+  handEdit(edit: { masterDimmer: boolean; bpm: boolean }): void;
 }
 
 const COLOR_SLOTS = ['colorA', 'colorB', 'colorC', 'colorD'] as const;
@@ -38,6 +40,7 @@ const hooks: PatchHooks = {
   // here, because the show store reads this module's state and requiring it
   // back would be a cycle.
   showChanged: () => {},
+  handEdit: () => {},
 };
 
 function setHooks(partial: Partial<PatchHooks>): void { Object.assign(hooks, partial); }
@@ -78,6 +81,12 @@ export interface PatchOptions {
    * that fails leaves the look as it was.
    */
   beforeCommit?: () => void;
+  /**
+   * 'sequence': the sequencer's own command or automation sample. It is no
+   * hand on the master or the tempo, so it ends no automation; and the
+   * sequencer, changing them a frame at a time, broadcasts on its own.
+   */
+  origin?: 'hand' | 'sequence';
 }
 
 /**
@@ -87,7 +96,7 @@ export interface PatchOptions {
  * acknowledgement refuses the whole patch (409), its tempo, master and fade
  * included. A pattern id nothing knows is still taken, and plays nothing.
  */
-function applyPatch(rawData: unknown, { beforeCommit }: PatchOptions = {}): Patch {
+function applyPatch(rawData: unknown, { beforeCommit, origin = 'hand' }: PatchOptions = {}): Patch {
   // Validate at the boundary. Throws on invalid input.
   const data = validate(patchSchema, rawData || {}, 'patch');
   // Naming the pattern is starting it, even the one already on stage; a
@@ -258,6 +267,11 @@ function applyPatch(rawData: unknown, { beforeCommit }: PatchOptions = {}): Patc
     hooks.autoPrefetchDepth(data.autoPrefetchDepth);
   }
 
+  if (origin === 'sequence') return data;
+  // A tempo the auto show schedules (anchorMs) is the music's, not a hand's.
+  const masterDimmer = data.masterDimmer !== undefined;
+  const bpm = data.bpm !== undefined && data.anchorMs === undefined;
+  if (masterDimmer || bpm) hooks.handEdit({ masterDimmer, bpm });
   hooks.broadcast();
   return data;
 }
@@ -316,6 +330,7 @@ function processTap(): void {
     // A tenth of a BPM: finer than a hand can tap, coarse enough to read.
     state.bpm = Math.max(20, Math.min(300, Math.round(600000 / avg) / 10));
     conductor.setBpm(state.bpm);
+    hooks.handEdit({ masterDimmer: false, bpm: true });
   }
   // A tap *is* a beat: the clock jumps to the next whole beat, so the step
   // lands on the tap, and a track the clock was locked to hands the tempo over.

@@ -159,6 +159,8 @@ function renderStrobe(p: StrobeParams, s: StrobeState, room: Room, frame: Effect
 registerKind<StrobeParams, StrobeState>({
   kind: 'strobe', app: 'own', schema, defaults: { params: STROBE_DEFAULTS, palette: ['#FFFFFF'], brightness: 1 },
   rapidFlash: true, stateful: true,
+  // Its five-a-second permit is the instance's own.
+  pacesOwnFlashes: () => true,
   // The wall clock counts from the instance's launch; a frame without one counts from the first render.
   init: (_params, _room, frame) => ({ originMs: Number.isFinite(frame.nowMs) ? frame.nowMs : 0, rises: [], seen: null, shown: null, ceiling: [] }),
   render: renderStrobe,

@@ -16,6 +16,7 @@ import { attachOpsRoutes } from './routes/ops.ts';
 import { attachAudioRoutes } from './routes/audio.ts';
 import { attachEffectRoutes } from './routes/effects.ts';
 import { attachVoiceRoutes } from './routes/voices.ts';
+import { attachSequenceRoutes } from './routes/sequence.ts';
 
 export type { RouteDeps, RouteContext } from './routes/common.ts';
 export type { AnalyzeSource } from './routes/auto.ts';
@@ -37,6 +38,7 @@ export type { AnalyzeSource } from './routes/auto.ts';
  *   audio      the party effects' audio mode and master, and what they hear
  *   effects    the effect library: presets and palettes, commands to the effect on stage
  *   voices     the effects launched over the look: what plays, a launch, a stop
+ *   sequence   the sequence loaded, the shelf of saved ones, and the transport
  *   ops        the log, the server's health, restarting it
  *
  * and, last, the error handler every one of them falls through to.
@@ -57,6 +59,7 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
   attachAudioRoutes(app, ctx);
   attachEffectRoutes(app, ctx);
   attachVoiceRoutes(app, ctx);
+  attachSequenceRoutes(app, ctx);
   attachOpsRoutes(app, ctx);
   // Must be registered last (see errorHandler).
   app.use(errorHandler);
