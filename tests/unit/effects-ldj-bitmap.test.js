@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BITMAP_PATTERNS, bitmapBlend, buildBitmap, sampleBitmap } from '../../src/shared/effects/ldj-bitmap.ts';
-import { kindOf, validateSpec } from '../../src/shared/effects/registry.ts';
+import { kindOf, requiresAcknowledgement, validateSpec } from '../../src/shared/effects/registry.ts';
 import { LDJ_FRAME_MS } from '../../src/shared/effects/ldj-engine.ts';
 import { parseHex } from '../../src/shared/effects/palette.ts';
 import { harness, row, square, RED, CYAN } from '../helpers/ldj-harness.js';
@@ -29,6 +29,31 @@ test('the bitmap kind exposes exactly the twenty-two patterns and strict finite 
     assert.throws(() => validateSpec({ kind: 'ldj.bitmap', params }), JSON.stringify(params));
   }
   assert.equal(validateSpec({ kind: 'ldj.bitmap', params: { speed: 0 } }).params.speed, 0);
+});
+
+test('fast scrolling needs the photosensitivity acknowledgement, the native rate does not', () => {
+  const needs = (params) => requiresAcknowledgement(validateSpec({ kind: 'ldj.bitmap', params }));
+  for (const pattern of BITMAP_PATTERNS) assert.equal(needs({ pattern }), false, pattern);
+  assert.equal(needs({ pattern: 'ThinPaletteLoop', speed: 1.8 }), false);
+  assert.equal(needs({ pattern: 'ThinPaletteLoop', speed: 1.85 }), true);
+  // Thin blocks of one colour and its black padding alternate fastest. One
+  // lamp's rises over ten seconds at the conductor's 300 BPM ceiling must
+  // stay within five per second below the threshold and exceed it above.
+  const rises = (speed) => {
+    const h = harness('ldj.bitmap', row(1), { params: { pattern: 'ThinPaletteLoop', speed }, palette: [RED], bpm: 300 });
+    let lit = false, count = 0;
+    for (let frame = 0; frame < 220; frame++) {
+      const on = h.draw(at(frame, 300))[0].colour.r > 0;
+      if (on && !lit) count++;
+      lit = on;
+    }
+    return count;
+  };
+  assert.ok(rises(1.7) <= 50, `rises below the threshold: ${rises(1.7)}`);
+  assert.ok(rises(2.2) > 50, `rises above the threshold: ${rises(2.2)}`);
+  const blocked = harness('ldj.bitmap', row(1), { params: { pattern: 'ThinPaletteLoop', speed: 2.2 }, acknowledged: false });
+  assert.deepEqual(blocked.draw(at(0))[0], { colour: RED, level: 0, strength: 0 });
+  assert.equal(harness('ldj.bitmap', row(1), { params: { pattern: 'ThinPaletteLoop', speed: 2.2 } }).draw(at(0))[0].strength, 1);
 });
 
 test('native bitmap blends preserve endpoints and their integer hue quantization', () => {

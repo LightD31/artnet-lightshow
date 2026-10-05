@@ -3,6 +3,7 @@
 
 import { z } from 'zod';
 import type { Colour } from '../../types/rig.ts';
+import { MAX_LAMP_FLASH_HZ } from '../patterns.ts';
 import { ldjFrameAt } from './ldj-rotation.ts';
 import { hsbToColour, LDJ_RANDOM_HUES } from './palette.ts';
 import { registerKind } from './registry.ts';
@@ -25,6 +26,10 @@ const RAINBOW = LDJ_RANDOM_HUES.map((hue) => pack(hsbToColour(hue / 360, 1, 1)))
 // Generators step t by repeated addition up to this bound, as Light DJ does.
 // Replacing the sums with x / 200 moves single pixels at quarter turns.
 const LAST_T = .99999999, SMOOTH_STEP = .005;
+// The thinnest blocks are 24 px, so a colour and its black padding can
+// alternate every 48 px. Scrolling faster than this at the conductor's
+// 300 BPM ceiling exceeds the lamp flash limit and needs the acknowledgement.
+const RAPID_SPEED = MAX_LAMP_FLASH_HZ * 50.7 * 48 / (22 * 300);
 
 /**
  * One gradient pixel, `t` weighting `b`. Light DJ mixes with float weights,
@@ -191,6 +196,7 @@ const schema = z.object({ pattern: z.enum(BITMAP_PATTERNS), speed: z.number().no
 
 registerKind<z.infer<typeof schema>, BitmapState>({
   kind: 'ldj.bitmap', app: 'ldj', schema, defaults: { params: { pattern: 'SmoothLoop', speed: 1 } }, stateful: true,
+  rapidFlashWhen: (params) => params.speed > RAPID_SPEED,
   init: (_params, _room, frame) => ({ originMs: frame.startedAtMs ?? frame.nowMs, key: '', image: null, frame: 0, scroll: 0 }),
   render(params, state, room, frame, out) {
     // The offset is a pure function of the whole launch-relative frame and the
