@@ -5,6 +5,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 
 import { VoiceManager, HOLD_TIMEOUT_MS, lengthBeatsOf, launchOf, targetsOf, builtinPresets } from '../../src/server/voices.ts';
 import { EnergyHold } from '../../src/server/energy-hold.ts';
@@ -150,6 +151,8 @@ test('a quantised hold let go before its grid line never plays', (t) => {
   const { m, c, advance, ids } = rig(t, { beat: 10.1, running: true });
   const v = m.start(hold({ quantise: 8 }));
   near(v.startedAtMs, 3950, 'start on beat 16');
+  // Its lease runs from the press: the frame a renderer is handed ends there, ahead of its start.
+  assert.equal(m.frames(c.now, 5000)[0].untilMs, c.now + HOLD_TIMEOUT_MS);
   advance(1100);
   assert.equal(m.size, 1, 'waiting');
   advance(100);
@@ -228,6 +231,19 @@ test('a wait longer than a Node timer takes is chained, not cut short', (t) => {
   assert.equal(m.get(v.id), null);
 });
 
+test('no voice keeps the process alive: an hour\'s latch, an hour\'s once and a hold, all pending, and it still exits', () => {
+  const url = new URL('../../src/server/voices.ts', import.meta.url).href;
+  const script = `const { VoiceManager } = await import('${url}');
+    const m = new VoiceManager({ now: () => performance.now(), onChange() {}, acknowledged: () => true });
+    const base = { spec: { kind: 'energy.glow' }, targets: 'shared', tier: 'voice', source: 'api' };
+    m.start({ ...base, mode: 'latched', maxLatchMs: 3600000 });
+    m.start({ ...base, mode: 'once', lengthMs: 3600000 });
+    m.start({ ...base, mode: 'hold', owner: 'page', token: 't' });
+    console.log(m.size);`;
+  const run = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 30_000 });
+  assert.deepEqual([run.status, run.stdout.trim()], [0, '3'], run.stderr);
+});
+
 // ── Launch timing ───────────────────────────────────────────────────────────
 
 test('nothing running → a quantised launch starts now; something running → it snaps up to the next grid line and frames() omits it before then', (t) => {
@@ -261,6 +277,20 @@ test('nothing running → a quantised launch starts now; something running → i
   assert.equal(m.start(once({ quantise: 0, lengthMs: 100, spec: { kind: 'energy.kill' } })).startedAtMs, 1000);
 });
 
+test('a voice past its end, its timer not fired yet, leaves nothing running: the next quantised launch starts now', (t) => {
+  const { m, c } = rig(t, { beat: 10.1, bpm: 120 });
+  m.start(once({ lengthMs: 100 }));
+  m.start(hold({ token: 'gone' }));
+  c.now += HOLD_TIMEOUT_MS;   // both are over, neither timer has run
+  c.beat += 2.4;
+  const v = m.start(once({ quantise: 1, lengthMs: 100, spec: BLINDER }));
+  assert.equal(v.startedAtMs, c.now, 'primed');
+  near(v.anchorBeat, 12.5, 'from the beat it was pressed on');
+  // Something still playing keeps the grid.
+  const w = m.start(once({ quantise: 1, lengthMs: 100, spec: { kind: 'energy.glow' } }));
+  near(w.startedAtMs, c.now + 0.5 * 500, 'the next whole beat');
+});
+
 test('frames() carries tier, launchSeq, ms times and resolves targets to fixture ids; a conductor epoch bump leaves a running voice running', (t) => {
   const { m, c, ids } = rig(t, { beat: 3 });
   const a = m.start(once({ lengthBeats: 8, targets: [2, 0, 2] }));
@@ -274,6 +304,7 @@ test('frames() carries tier, launchSeq, ms times and resolves targets to fixture
   ]);
   assert.equal(frames[0].spec.kind, 'ldj.FadeCycle');
   assert.equal(frames[0].seed.length, 4);
+  assert.ok(frames.every((f) => !('holdsGrid' in f)), 'a voice re-anchors when the music jumps unless it says otherwise');
   assert.deepEqual(m.list()[0].targets, [2, 0], 'the wire form: ids');
   assert.equal(m.list()[1].targets, 'shared');
 
@@ -381,7 +412,8 @@ test('a request names an effect or a preset, never both; targets are "shared" or
 /** The shim over a manager of the test's own, with what it shows. */
 function energy(t) {
   let shim = null;
-  const r = rig(t, { onChange: () => shim.sync() });
+  // Partway through a bar, so the global grid's beat 0 is not the launch's.
+  const r = rig(t, { beat: 5.3, onChange: () => shim.sync() });
   const told = [];
   shim = new EnergyHold((effect) => told.push(effect), r.m);
   const visible = () => r.m.frames(r.c.now).map((f) => f.id);
@@ -394,6 +426,8 @@ test('the energy effects as voices: a hold plays over the latch, the latch comes
   const latch = m.get('energy:blinder');
   assert.deepEqual([latch.mode, latch.tier, latch.source, latch.anchorBeat, latch.targets], ['latched', 'voice', 'energy', 0, null]);
   assert.deepEqual(visible(), ['energy:blinder']);
+  // On the global beat grid, and the renderer told to keep it there when the music jumps.
+  assert.equal(m.frames(1000)[0].holdsGrid, true);
   shim.latch('blinder');
   assert.equal(m.get('energy:blinder').launchSeq, latch.launchSeq, 'the same effect again is no new launch');
 
@@ -462,7 +496,7 @@ test('a strobe energy is taken unacknowledged, as the endpoints always answered:
 // ── Disarm ──────────────────────────────────────────────────────────────────
 
 test('disarm (apply.ts) stops every voice', (t) => {
-  const { m } = rig(t);
+  const { m, c } = rig(t, { beat: 0.5 });
   const saved = settings.all();
   settings.save = () => {};
   settings.useDefaults();
@@ -483,7 +517,7 @@ test('disarm (apply.ts) stops every voice', (t) => {
   });
   applier.applyChanged(settings.update({ outputs: { armed: true } }));
   m.start(hold());
-  m.start(once({ quantise: 4, lengthMs: 100 }));
+  assert.ok(m.start(once({ quantise: 4, lengthMs: 100 })).startedAtMs > c.now, 'waiting for beat 4');
   m.start(latched({ spec: BLINDER }));
   m.setHidden(m.start(latched({ spec: { kind: 'energy.glow' } })).id, true);
   applier.applyChanged(settings.update({ outputs: { armed: false } }));

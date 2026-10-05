@@ -106,10 +106,11 @@ class EnergyHold {
     const spec = ENERGY_OF_VOICE.has(`energy:${effect}`) ? energyEffectSpec(effect) : null;
     if (!spec) return null;
     const label = ENERGY_EFFECTS.find((e) => e.id === effect)?.name ?? effect;
-    // Anchored on the global beat grid, as the hold strobe always flashed; the
-    // strobe tier for it, as the renderer's own compatibility voice had.
+    // On the global beat grid, a jump in the music included, as the hold
+    // strobe always flashed; the strobe tier for it, as the renderer's own
+    // compatibility voice had.
     return { spec, targets: 'shared' as const, tier: effect === HOLD_STROBE ? 'strobe' as const : 'voice' as const,
-      source: 'energy' as const, label, anchorBeat: 0, admission: 'render' as const };
+      source: 'energy' as const, label, holdsGrid: true, admission: 'render' as const };
   }
 }
 

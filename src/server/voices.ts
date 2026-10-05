@@ -65,6 +65,8 @@ export interface StartVoice {
   id?: string;
   /** The beat it plays from; the launch's beat when left out. */
   anchorBeat?: number;
+  /** Plays from beat 0 on the global beat grid and stays there when the music jumps, as the energy burst always did. */
+  holdsGrid?: boolean;
   /**
    * When the photosensitivity gate is asked: at launch (a 409), or only at
    * render time, where the renderer holds it dark — the energy endpoints'
@@ -94,6 +96,7 @@ export interface Voice {
   owner: string | null;
   key: string | null;
   hidden: boolean;
+  holdsGrid: boolean;
 }
 
 /** A voice as the live state and GET /api/voices carry it: times on the wall clock, targets in the wire's form. */
@@ -303,7 +306,8 @@ export class VoiceManager {
       throw bad('voice: a hold needs its owner and token');
     }
     if (v.anchorBeat !== undefined && !Number.isFinite(v.anchorBeat)) throw bad('voice: anchorBeat must be a number');
-    const launch = canonical({ spec, targets, tier: v.tier, source: v.source, label: v.label ?? null, key: v.key ?? null, id: v.id ?? null });
+    const launch = canonical({ spec, targets, tier: v.tier, source: v.source, label: v.label ?? null, key: v.key ?? null, id: v.id ?? null,
+      holdsGrid: !!v.holdsGrid });
 
     const now = this._now();
     const held = v.mode === 'hold' ? this._holdOf(owner!, v.token) : null;
@@ -320,14 +324,16 @@ export class VoiceManager {
     let startedAtMs = now;
     let anchorBeat = Number.isFinite(beatPos) ? beatPos : 0;
     // Primed (nothing playing), a launch starts at once, as Hue Dynamics' pads do.
-    const primed = this._records.size === 0 && !this._anyRunning();
+    // A voice already past its end is not playing, whether or not its timer has run.
+    const primed = !this._liveAt(now) && !this._anyRunning();
     if (!primed && quantise > 0 && Number.isFinite(beatPos)) {
       // Up to the next grid line; a launch exactly on one starts there.
       const grid = Math.ceil(beatPos / quantise - 1e-9) * quantise;
       startedAtMs = now + ((grid - beatPos) * 60000) / bpm;
       anchorBeat = grid;
     }
-    if (v.anchorBeat !== undefined) anchorBeat = v.anchorBeat;
+    if (v.holdsGrid) anchorBeat = 0;
+    else if (v.anchorBeat !== undefined) anchorBeat = v.anchorBeat;
 
     let untilMs: number | null = null;
     if (v.mode === 'once') {
@@ -350,7 +356,7 @@ export class VoiceManager {
     const record: VoiceRecord = {
       voice: {
         id, spec, targets, mode: v.mode, tier: v.tier, source: v.source, label: v.label ?? spec.kind, launchSeq,
-        startedAtMs, untilMs, anchorBeat, seed: seedFrom(id), owner, key: v.key ?? null, hidden: !!v.hidden,
+        startedAtMs, untilMs, anchorBeat, seed: seedFrom(id), owner, key: v.key ?? null, hidden: !!v.hidden, holdsGrid: !!v.holdsGrid,
       },
       token: v.token, launch, leaseUntil: null, lease: 0, leaseWait: null, endWait: null, wall: this._wallNow() - now,
     };
@@ -449,17 +455,28 @@ export class VoiceManager {
     let ended = false;
     for (const record of [...this._records.values()]) {
       const v = record.voice;
-      const end = Math.min(v.untilMs ?? Infinity, record.leaseUntil ?? Infinity);
+      const end = this._endOf(record);
       if (!(nowMs < end)) {
         ended = this._end(record) || ended;
         continue;
       }
       if (v.hidden || v.startedAtMs > nowMs + aheadMs) continue;
       out.push({ id: v.id, spec: v.spec, targets: v.targets, tier: v.tier, launchSeq: v.launchSeq, startedAtMs: v.startedAtMs,
-        untilMs: Number.isFinite(end) ? end : null, anchorBeat: v.anchorBeat, seed: [...v.seed] as Seed });
+        untilMs: Number.isFinite(end) ? end : null, anchorBeat: v.anchorBeat, seed: [...v.seed] as Seed, ...(v.holdsGrid ? { holdsGrid: true } : {}) });
     }
     if (ended) this._changed();
     return out;
+  }
+
+  /** Whether any voice is still on at `now`: waiting for its start, hidden or playing, short of its end and its lease. */
+  _liveAt(now: number): boolean {
+    for (const record of this._records.values()) if (now < this._endOf(record)) return true;
+    return false;
+  }
+
+  /** Where a voice ends: its own end or its lease's, whichever comes first; Infinity for neither. */
+  _endOf(record: VoiceRecord): number {
+    return Math.min(record.voice.untilMs ?? Infinity, record.leaseUntil ?? Infinity);
   }
 
   _holdOf(owner: string, token: unknown): VoiceRecord | null {

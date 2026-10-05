@@ -724,7 +724,8 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
       }
       if (seen.has(v.id)) continue;
       seen.add(v.id);
-      const played: VoiceFrame = { ...v, anchorBeat: voiceAnchor(w.records, w.stepper, v, launchOf(v), w.epoch, f.anchorBeat ?? beatPos, v === compat) };
+      const holdsGrid = v === compat || v.holdsGrid === true;
+      const played: VoiceFrame = { ...v, anchorBeat: voiceAnchor(w.records, w.stepper, v, launchOf(v), w.epoch, f.anchorBeat ?? beatPos, holdsGrid) };
       if (v === compat && !safetyGiven) admitted.add(played);
       voices.push(played);
     }

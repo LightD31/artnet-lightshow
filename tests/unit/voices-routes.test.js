@@ -31,7 +31,8 @@ import * as output from '../../src/server/output.ts';
 import * as universes from '../../src/server/universes.ts';
 import { showStore } from '../../src/server/show-store.ts';
 import { HOLD_TIMEOUT_MS } from '../../src/server/voices.ts';
-import { getProfile } from '../../src/server/profiles.ts';
+import { getProfile, profilesRevision } from '../../src/server/profiles.ts';
+import { createRenderer } from '../../src/server/renderer.ts';
 
 showStore.scheduleSave = () => {};   // never the real show file
 
@@ -196,11 +197,11 @@ test('socket energy-hold press/release still works through the shim', async (t) 
   assert.deepEqual(playing(), ['energy:blinder'], 'the latch comes back');
   await until(() => heard.patches.some((p) => p.d === 'look' && p.set.energyOverride === 'blinder'), 'the latch heard again');
 
-  // A page that goes takes its hold with it.
+  // A page that goes takes its hold with it, at once, not when its lease runs out.
   socket.emit('energy-hold', { action: 'press', token: 'two', effect: 'glow' });
   await until(() => state.heldEnergy === 'glow', 'the second hold');
   socket.close();
-  await until(() => state.heldEnergy === null, 'the hold gone with its page');
+  await until(() => state.heldEnergy === null, 'the hold gone with its page', HOLD_TIMEOUT_MS / 2);
   assert.deepEqual(ids(), ['energy:blinder']);
 });
 
@@ -227,6 +228,10 @@ test('POST /api/voices: a once with no length plays the preset\'s; latched plays
   let res = await s.call('POST', '/api/voices', { preset: 'ldj.FadeCycle' });
   const fade = voices.get(res.body.id);
   assert.ok(Math.abs(fade.untilMs - fade.startedAtMs - 32 * 60000 / bpm) < 1, 'Light DJ\'s 32 beats');
+  // A Studio row's kind counts no beats of its own (a bar); the catalogue's row says 32.
+  res = await s.call('POST', '/api/voices', { preset: 'ldj.StudioN1' });
+  const studio = voices.get(res.body.id);
+  assert.ok(Math.abs(studio.untilMs - studio.startedAtMs - 32 * 60000 / bpm) < 1, 'the preset\'s length, not its kind\'s');
   res = await s.call('POST', '/api/voices', { effect: FADE, beats: 2, targets: [] });
   const two = voices.get(res.body.id);
   assert.deepEqual(two.targets, [], 'an empty list stays empty');
@@ -237,7 +242,7 @@ test('POST /api/voices: a once with no length plays the preset\'s; latched plays
 
   assert.deepEqual(await s.call('DELETE', `/api/voices/${encodeURIComponent(latched)}`), { status: 200, body: { ok: true } });
   assert.deepEqual(await s.call('DELETE', `/api/voices/${encodeURIComponent(latched)}`), { status: 404, body: { ok: false, error: 'No such voice' } });
-  assert.deepEqual(await s.call('DELETE', '/api/voices'), { status: 200, body: { ok: true, stopped: 2 } });
+  assert.deepEqual(await s.call('DELETE', '/api/voices'), { status: 200, body: { ok: true, stopped: 3 } });
   assert.deepEqual(ids(), []);
 });
 
@@ -280,13 +285,16 @@ test('voice-hold: a page holds any effect down, renews it, lets it go; only its 
   await until(() => ids().length === 1, 'the held voice');
   const [held] = voices.list();
   assert.deepEqual([held.source, held.mode, held.tier, held.kind, held.targets], ['api', 'hold', 'voice', 'ldj.FadeCycle', [state.fixtures[1].id]]);
-  // The other page's release, with the same token, is not this hold's.
-  b.socket.emit('voice-hold', { action: 'release', token: 'h1' });
+  // The other page's press and release, with the same token and this page's id named as owner, are not this hold's.
+  b.socket.emit('voice-hold', { action: 'press', token: 'h1', owner: a.socket.id, effect: { kind: 'energy.glow' } });
+  await until(() => ids().length === 2, 'the other page\'s own hold');
+  b.socket.emit('voice-hold', { action: 'release', token: 'h1', owner: a.socket.id });
+  await until(() => ids().length === 1, 'the other page\'s release');
   for (let i = 0; i < 5; i++) {
     await wait(300);
     a.socket.emit('voice-hold', { action: 'renew', token: 'h1' });
   }
-  assert.deepEqual(ids(), [held.id], 'renewed past the lease, and not the other page\'s to release');
+  assert.deepEqual(ids(), [held.id], 'renewed past the lease, and not the other page\'s to replace or release');
   a.socket.emit('voice-hold', { action: 'release', token: 'h1' });
   await until(() => !ids().length, 'the release');
 
@@ -305,10 +313,79 @@ test('voice-hold: a page holds any effect down, renews it, lets it go; only its 
 
   // Left unrenewed, it dies within the lease, and the page that held it going takes the rest.
   await until(() => !ids().length, 'the lease running out', HOLD_TIMEOUT_MS + 1000);
+  // One token names one hold, whichever event pressed it: the energy hold takes the voice hold's place, and either event lets it go.
+  a.socket.emit('voice-hold', { action: 'press', token: 'both', effect: FADE });
+  await until(() => voices.list()[0]?.kind === 'ldj.FadeCycle', 'the voice hold');
+  a.socket.emit('energy-hold', { action: 'press', token: 'both', effect: 'kill' });
+  await until(() => state.heldEnergy === 'kill', 'the energy hold');
+  assert.deepEqual(ids(), ['energy:kill:hold'], 'the one hold, replaced');
+  a.socket.emit('voice-hold', { action: 'release', token: 'both' });
+  await until(() => state.heldEnergy === null && !ids().length, 'released by the other event');
   a.socket.emit('voice-hold', { action: 'press', token: 'h7', effect: FADE });
   await until(() => ids().length === 1, 'another hold');
   a.socket.close();
-  await until(() => !ids().length, 'the hold gone with its page');
+  await until(() => !ids().length, 'the hold gone with its page, before its lease could end', HOLD_TIMEOUT_MS / 2);
+});
+
+test('a page whose Wi-Fi drops: its hold ends at its 1.2 s lease, by the frame or by its own timer, the look comes back, and a renewal after that keeps nothing alive', async (t) => {
+  const s = await serve(t);
+  applyPatch({ pattern: 'solid', colorA: 0, running: false, masterDimmer: 255, masterBlackout: false });
+  renderFrame();
+  assert.equal(blue(), 0, 'the look: red, no blue');
+  // The engine's clock moved on by hand, so a lease can run out before its timer fires; the timers keep real time.
+  const real = performance.now.bind(performance);
+  let ahead = 0;
+  t.mock.method(performance, 'now', () => real() + ahead);
+  const skipTo = (ms) => { ahead += Math.max(0, ms - performance.now()); };
+  const press = async (socket, event, token, effect) => {
+    socket.emit(event, { action: 'press', token, effect });
+    await until(() => ids().length === 1, `${event}: the hold`);
+    const [held] = renderInput().voices;
+    assert.ok(held.untilMs > performance.now() && held.untilMs - performance.now() <= HOLD_TIMEOUT_MS, 'its lease: 1.2 s from the press');
+    return held;
+  };
+  for (const [event, effect] of [['voice-hold', { kind: 'energy.blinder' }], ['energy-hold', 'blinder']]) {
+    const { socket, heard } = await s.page();
+
+    // The page goes quiet, the socket still open: at its lease the frame drops it, its timer still to come.
+    const held = await press(socket, event, 'tab', effect);
+    const pressed = Date.now();
+    renderFrame();
+    assert.ok(blue() > 0, `${event}: held, the blinder on the rig`);
+    skipTo(held.untilMs - 1);
+    assert.deepEqual(playing(), [held.id], 'a millisecond before its lease ends it still plays');
+    skipTo(held.untilMs);
+    assert.deepEqual(playing(), [], 'gone from the frame at its lease');
+    renderFrame();
+    assert.equal(blue(), 0, 'and the look is back');
+    assert.deepEqual(ids(), [], 'ended');
+    assert.ok(Date.now() - pressed < HOLD_TIMEOUT_MS, 'before its timer could have');
+    assert.equal(state.heldEnergy, null);
+    await until(() => heard.patches.some((p) => p.d === 'voices' && Array.isArray(p.set.voices) && !p.set.voices.length), 'every page told');
+    // The Wi-Fi back: its renewal finds nothing to keep alive.
+    socket.emit(event, { action: 'renew', token: 'tab' });
+    await wait(50);
+    assert.deepEqual(ids(), [], 'a renewal brings nothing back');
+
+    // A renewal that arrives just after the lease ran out, before its timer: it ends the hold rather than keeping it.
+    const late = await press(socket, event, 'tab2', effect);
+    const pressedLate = Date.now();
+    skipTo(late.untilMs + 5);
+    socket.emit(event, { action: 'renew', token: 'tab2' });
+    await until(() => !ids().length, 'the late renewal ending it');
+    assert.ok(Date.now() - pressedLate < HOLD_TIMEOUT_MS, 'not its timer');
+    renderFrame();
+    assert.equal(blue(), 0);
+
+    // No frame at all: its own timer ends it at its lease, and every page hears.
+    const alone = await press(socket, event, 'tab3', effect);
+    const told = heard.patches.length;
+    await until(() => !ids().length, 'the lease running out by itself', HOLD_TIMEOUT_MS + 1000);
+    const overdue = performance.now() - alone.untilMs;
+    assert.ok(overdue >= 0 && overdue < 250, `ended by its timer at its lease (${overdue.toFixed(1)} ms after)`);
+    await until(() => heard.patches.slice(told).some((p) => p.d === 'voices' && !p.set.voices?.length), 'the end heard');
+    socket.close();
+  }
 });
 
 // ── A disarm ────────────────────────────────────────────────────────────────
@@ -366,6 +443,38 @@ test('a voice plays with the patterns stopped, and runs the free clock while it 
   assert.equal(conductor.phase().beatPos, end);
 });
 
+/**
+ * The first 48 channels of universe 0, frame by frame, on a renderer of its
+ * own from the engine's clock now: a second at beat 0 on, then the music
+ * jumps (a new epoch) to beat 37.3 for another second.
+ */
+function renderAcrossJump(input) {
+  const t0 = performance.now();
+  const renderer = createRenderer({ profileOf: getProfile, profilesRevision, now: t0 });
+  const store = universes.createUniverseStore(universes.allocateShared());
+  const out = [];
+  for (let ms = 0; ms < 2000; ms += 1000 / 44) {
+    const reading = ms < 1000 ? { beatPos: ms / 500, bpm: 120, epoch: 0 } : { beatPos: 37.3 + (ms - 1000) / 500, bpm: 120, epoch: 1 };
+    renderer.frame(input, reading, t0 + ms, store, t0);
+    out.push(Array.from(store.getBuffer(0).subarray(0, 48)).join(','));
+  }
+  return out;
+}
+
+test('the energy endpoints\' palette strobe keeps the global beat grid when the music jumps, as the renderer\'s own burst did', async (t) => {
+  const s = await serve(t);
+  await s.call('POST', '/api/safety/acknowledge');
+  applyPatch({ pattern: 'solid', colorA: 0, colorB: 3, colorC: 5, colorD: 7, running: true, masterDimmer: 255, masterBlackout: false });
+  await s.call('POST', '/api/energy/palette-strobe');
+  const managed = renderInput();
+  assert.deepEqual(managed.voices.map((v) => v.id), ['energy:palette-strobe']);
+  // The same input without its voices: the renderer plays the burst by itself, as before voices.
+  const { voices: _, ...legacy } = managed;
+  const played = renderAcrossJump(managed);
+  assert.ok(new Set(played.slice(44)).size > 2, 'it flashes in several colours after the jump');
+  assert.deepEqual(played, renderAcrossJump(legacy));
+});
+
 test('a Disco voice runs the audio detectors on its own bands', async (t) => {
   const s = await serve(t);
   await s.call('POST', '/api/safety/acknowledge');
@@ -377,8 +486,8 @@ test('a Disco voice runs the audio detectors on its own bands', async (t) => {
   assert.equal(s.integrations.audio.detectors().disco.owner.from, 'fallback', 'hidden, it hears nothing');
 });
 
-test('on the worker thread a voice plays on the worker\'s clock, from its start to its end', async (t) => {
-  await serve(t);
+test('on the worker thread a voice plays on the worker\'s clock, from its start to its end, and on through a busy main thread', async (t) => {
+  const s = await serve(t);
   state.artnet.enabled = false;
   applyPatch({ pattern: 'solid', colorA: 0, running: false, masterDimmer: 255, masterBlackout: false });
   const lit = () => blue() > 0;
@@ -394,4 +503,28 @@ test('on the worker thread a voice plays on the worker\'s clock, from its start 
   await until(lit, 'the voice on the rig', 3000);
   await until(() => !lit(), 'its end on the rig', 4000);
   assert.deepEqual(ids(), []);
+
+  // A blue strobe on the beat over the stopped look. The main thread then busy for most of a
+  // second, no snapshot posted: the worker carries the beat on, as the voice runs the free clock.
+  await s.call('POST', '/api/safety/acknowledge');
+  const strobe = voices.start({ spec: { kind: 'strobe', palette: ['#0000FF'], params: { clock: 'beat', flashesPerSecond: 5 } },
+    targets: 'shared', mode: 'latched', tier: 'strobe', source: 'api' });
+  await until(lit, 'the strobe flashing', 3000);
+  let rises = 0;
+  let was = lit();
+  for (const stall = performance.now() + 900; performance.now() < stall;) {
+    const now = lit();
+    if (now && !was) rises++;
+    was = now;
+  }
+  assert.ok(rises >= 2, `${rises} flashes while the main thread was busy`);
+
+  // A launch due on a grid line before the worker's next frame rides in this snapshot, so it starts on time.
+  let soon = null;
+  while (!soon || !(soon.startedAtMs > performance.now())) {
+    if (soon) voices.stop(soon.id);
+    soon = voices.start({ spec: { kind: 'energy.glow' }, targets: 'shared', mode: 'once', tier: 'voice', source: 'api', quantise: 0.01, lengthMs: 500 });
+  }
+  assert.ok(renderInput().voices.some((v) => v.id === soon.id), 'carried ahead of its start');
+  voices.stop(strobe.id);
 });

@@ -556,8 +556,10 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       if (v.untilMs != null && !(now < v.untilMs)) continue;
       if (seen.has(v.id)) continue;
       seen.add(v.id);
-      // The hold strobe keeps the global beat grid it has always flashed on.
-      const anchorBeat = voiceAnchor(voiceRecords, stepper, v, voiceLaunchKey(v), reading.epoch, beatNow, legacy && v === compat?.voice);
+      // The hold strobe keeps the global beat grid it has always flashed on,
+      // played by the renderer itself or as the energy endpoints' voice.
+      const holdsGrid = (legacy && v === compat?.voice) || v.holdsGrid === true;
+      const anchorBeat = voiceAnchor(voiceRecords, stepper, v, voiceLaunchKey(v), reading.epoch, beatNow, holdsGrid);
       const played: VoiceFrame = { ...v, startedAtMs: v.startedAtMs - phase, untilMs: v.untilMs == null ? null : v.untilMs - phase, anchorBeat };
       // Only the renderer's own burst, for an input that says nothing of safety, keeps the old admission.
       if (legacy && given.safety === undefined && v === compat?.voice) admitted.add(played);

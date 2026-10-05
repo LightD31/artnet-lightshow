@@ -25,6 +25,12 @@ export interface VoiceFrame {
   untilMs: number | null;
   anchorBeat: number;
   seed: Seed;
+  /**
+   * Stays on the global beat grid when the music jumps (a new epoch), where
+   * any other voice moves its anchor to the beat it is in: the energy
+   * endpoints' voices, played as the energy burst always was.
+   */
+  holdsGrid?: boolean;
 }
 
 /** A value's canonical text: objects with their keys sorted, so a rebuilt snapshot compares equal. */
