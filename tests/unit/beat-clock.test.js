@@ -66,6 +66,20 @@ test('the local tempo is read off the neighbouring beats', () => {
   assert.ok(Math.abs(localBpm(makeGrid(beats), (beats[16]) * 1000) - 128) < 1);
 });
 
+test('a usable grid always reads a finite positive tempo, never zero', () => {
+  // Doubled beats are dropped when the grid is made, so no gap is ever zero.
+  for (const beats of [[0, 0, 0.5, 0.5, 1], [0, 0.02], [0, 0.019, 0.5], [3, 2, 1, 0], steady(20, 4), steady(300, 4)]) {
+    const grid = makeGrid(beats);
+    if (!grid) { assert.deepStrictEqual(beats, [3, 2, 1, 0], 'only a grid that runs backwards is refused'); continue; }
+    for (const ms of [-1000, 0, 10, 600, 1e6]) {
+      const bpm = localBpm(grid, ms);
+      assert.ok(Number.isFinite(bpm) && bpm > 0, `${JSON.stringify(beats)} at ${ms} ms: ${bpm}`);
+    }
+  }
+  assert.strictEqual(localBpm(makeGrid([0, 0.02]), 0), 3000, 'the floor of the 20 ms beat spacing');
+  assert.strictEqual(localBpm(null, 0), null, 'no grid, no tempo: the caller falls back');
+});
+
 // A scene is placed on a downbeat and fires a frame after it: it must start on
 // step 0 of that beat, not wait a whole step for the next one.
 test('a pattern anchored a little late still starts on step 0 of its beat', () => {
