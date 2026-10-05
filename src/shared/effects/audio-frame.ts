@@ -2,6 +2,8 @@
 
 export interface AudioFrame {
   t: number;
+  /** Output epoch of the feature stream; a hop is identified by (generation, t). Absent: 0. */
+  generation?: number;
   rms: number;
   power: number;
   dominantHz: number | null;
