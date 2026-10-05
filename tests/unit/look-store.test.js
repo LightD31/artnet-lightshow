@@ -104,22 +104,40 @@ test('a show on its own clock resumes where the music has got to', () => {
   assert.equal(resumeAt(saved({ positionMs: 5000 }), 9000), 5000, 'a clock that went backwards adds nothing');
 });
 
-// A restart must come up whatever it finds: a look whose effect waits for the
-// photosensitivity acknowledgement (taken back after it was saved) is left
-// out, and the server starts on the look it has.
-test('put back never stops a restart: a look the safety gate refuses is left out', (t) => {
+// A restart must come up whatever it finds. An effect that waits for the
+// photosensitivity acknowledgement (taken back after the look was saved)
+// stays off, as an energy effect does, and the rest of the look comes back:
+// its colours, its masters and its overrides.
+test('put back never stops a restart: an effect the safety gate refuses stays off, the rest of the look comes back', (t) => {
   const values = settings._values;
   settings._values = { ...values, safety: { ...values.safety, photosensitivityAcknowledged: false } };
   setEffectSource((id) => presetById(id)?.spec ?? null);
-  t.after(() => { settings._values = values; setEffectSource(null); });
+  const id = state.fixtures[0].id;
+  t.after(() => {
+    settings._values = values;
+    setEffectSource(null);
+    applyOverride(id, null);
+    applyPatch({ masterBlackout: false });
+  });
   const warn = t.mock.method(console, 'warn', () => {});
-  applyPatch({ pattern: 'chase', colorB: 2 });
+  applyPatch({ pattern: 'chase', colorB: 2, masterBlackout: false });
+  applyOverride(id, null);
   const saved = { savedAt: new Date().toISOString(), ...currentLook(null) };
-  saved.look = { ...saved.look, pattern: 'ldj.visualizer.flash', colorB: 6 };
+  const blackedOut = { enabled: true, r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 0, strobe: 0, blackout: true };
+  saved.look = {
+    ...saved.look, pattern: 'ldj.visualizer.flash', colorB: 6, masterBlackout: true,
+    overrides: saved.look.overrides.map((o, i) => (i === 0 ? blackedOut : o)),
+  };
 
-  assert.equal(putBack(saved), false);
-  assert.equal(state.pattern, 'chase');
-  assert.equal(state.colorB, 2);
-  assert.match(warn.mock.calls[0].arguments.join(' '), /photosensitivity acknowledgement required/);
-  assert.equal(putBack({ savedAt: saved.savedAt, ...currentLook(null) }), true);
+  assert.equal(putBack(saved), true);
+  assert.equal(state.pattern, 'chase', 'the pattern it started on');
+  assert.deepEqual([state.colorB, state.masterBlackout], [6, true], 'the colours and the masters');
+  assert.equal(state.fixtures.find((f) => f.id === id).override.blackout, true, 'and the overrides');
+  assert.match(warn.mock.calls[0].arguments.join(' '), /without ldj\.visualizer\.flash: photosensitivity acknowledgement required/);
+
+  // A look that cannot be put back at all is left out whole, and the server still starts.
+  applyPatch({ colorB: 2, masterBlackout: false });
+  assert.equal(putBack({ ...saved, look: { ...saved.look, pattern: '' } }), false);
+  assert.deepEqual([state.pattern, state.colorB, state.masterBlackout], ['chase', 2, false]);
+  assert.match(warn.mock.calls.at(-1).arguments.join(' '), /could not put back/);
 });
