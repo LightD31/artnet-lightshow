@@ -1,4 +1,4 @@
-import { state, getClientState, getFixture, maxBrightnessOf, clockState } from '../state.ts';
+import { state, getClientState, getLiveState, getFixture, maxBrightnessOf, clockState } from '../state.ts';
 import { applyPatch, applyOverride, setFixtureMaxBrightness, processTap } from '../patch.ts';
 import { PALETTES } from '../palettes.ts';
 import { messageOf, statusOf } from '../../errors.ts';
@@ -14,10 +14,12 @@ export function attachLookRoutes(app: Express, _ctx: RouteContext): void {
   // ─── State ────────────────────────────────────────────────────────────────
   app.get('/api/state', (_req, res) => res.json(getClientState()));
 
+  // Answers with the live state: the catalogues (about 75 KB of built-ins)
+  // are GET /api/state's and the socket's first snapshot's, not every patch's.
   app.post('/api/set', (req, res) => {
     try {
       applyPatch(req.body);
-      res.json({ ok: true, state: getClientState() });
+      res.json({ ok: true, state: getLiveState() });
     } catch (err) {
       res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) });
     }

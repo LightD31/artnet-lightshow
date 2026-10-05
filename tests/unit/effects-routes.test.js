@@ -21,8 +21,8 @@ import { PaletteStore } from '../../src/server/palette-store.ts';
 import { attachSockets } from '../../src/server/sockets.ts';
 import { startEngine, stopEngine, setEffectSource, effectChanged, renderInput } from '../../src/server/engine.ts';
 import { applyPatch } from '../../src/server/patch.ts';
-import { captureLook, recallLook } from '../../src/server/cues.ts';
-import { state, getLiveState } from '../../src/server/state.ts';
+import { CueStore, captureLook, recallLook } from '../../src/server/cues.ts';
+import { state, getCatalogs, getLiveState } from '../../src/server/state.ts';
 import { PALETTES } from '../../src/server/palettes.ts';
 import { settings } from '../../src/server/settings.ts';
 import { showStore } from '../../src/server/show-store.ts';
@@ -45,7 +45,7 @@ test.after(() => stopEngine());
  * The routes on stand-in sources, with a library and palettes of their own
  * in a throwaway directory: never the operator's config/.
  */
-async function serve(t) {
+async function serve(t, { cues } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'effects-routes-'));
   const effectLibrary = new EffectLibrary(path.join(dir, 'effects.json')).load();
   // Every random colour an activation rolls comes from this seed, so a test knows the colours.
@@ -74,7 +74,7 @@ async function serve(t) {
     deezerSource: { ...idle, getQueue: () => [], updatePlayback() {}, updateQueue() {}, disconnect() {} },
     prolink, autoShow, effectLibrary, paletteStore,
   });
-  attachRoutes(app, { integrations, applier: { applyChanged() {} } });
+  attachRoutes(app, { integrations, applier: { applyChanged() {} }, ...(cues ? { cues } : {}) });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${server.address().port}`;
   const pattern = state.pattern;
@@ -464,6 +464,36 @@ test('PUT /api/palette-override with hex colours and with a palette id; DELETE c
   assert.deepEqual([res.status, res.body], [200, { ok: true, paletteOverride: null }]);
   assert.equal(state.paletteOverride, null);
   assert.equal(renderInput().paletteOverride, null);
+});
+
+// The built-ins (about 75 KB) go out once per connection and in GET
+// /api/state; a patch or a cue recall answers with the live state alone, which
+// is all any caller reads from it.
+test('POST /api/set and a cue recall answer with the live state, without the catalogues; GET /api/state keeps them', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'effects-routes-cues-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const cues = new CueStore(path.join(dir, 'cues.json')).load();
+  const s = await serve(t, { cues });
+  const catalogues = Object.keys(getCatalogs());
+  const full = (await s.call('GET', '/api/state')).body;
+  for (const key of [...catalogues, ...Object.keys(getLiveState()), 'dmxSnapshot']) assert.ok(key in full, `GET /api/state has ${key}`);
+  assert.deepEqual(full.families, JSON.parse(JSON.stringify(FAMILIES)));
+
+  let res = await s.call('POST', '/api/set', { pattern: 'chase', paletteOverride: ['#FF0000'] });
+  assert.equal(res.status, 200);
+  assert.deepEqual(Object.keys(res.body.state).sort(), Object.keys(getLiveState()).sort(), 'every live key');
+  assert.deepEqual([res.body.state.pattern, res.body.state.paletteOverride], ['chase', ['#FF0000']]);
+  for (const key of catalogues) assert.equal(key in res.body.state, false, `no ${key}`);
+
+  const cue = cues.create({ name: 'Red chase' });
+  applyPatch({ pattern: 'rainbow', paletteOverride: null });
+  for (const route of [`/api/cues/${cue.id}/recall`, '/api/cues/by-name/red%20chase/recall']) {
+    res = await s.call('POST', route);
+    assert.equal(res.status, 200, route);
+    assert.deepEqual([res.body.state.pattern, res.body.state.paletteOverride], ['chase', ['#FF0000']], route);
+    for (const key of catalogues) assert.equal(key in res.body.state, false, `${route}: no ${key}`);
+    applyPatch({ pattern: 'rainbow', paletteOverride: null });
+  }
 });
 
 // ─── The live state ───────────────────────────────────────────────────────
