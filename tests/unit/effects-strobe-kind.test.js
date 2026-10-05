@@ -7,7 +7,7 @@ import { hdAutoStrobeFlash as discoPermit } from '../../src/shared/effects/disco
 import { FRAME_MS } from '../../src/server/frame-clock.ts';
 import { ENERGY_KIND_BY_ID } from '../../src/shared/effects/energy.ts';
 import { kindOf, requiresAcknowledgement, validateSpec } from '../../src/shared/effects/registry.ts';
-import { renderEffect, slotToWrite } from '../../src/shared/effects/render.ts';
+import { renderEffect } from '../../src/shared/effects/render.ts';
 import { EffectStepper } from '../../src/shared/effects/stepper.ts';
 import { parseHex } from '../../src/shared/effects/palette.ts';
 import { HD_MASTER_DEFAULTS } from '../../src/shared/effects/types.ts';
@@ -15,6 +15,7 @@ import { hash01, seedFrom } from '../../src/shared/effects/hash.ts';
 import { buildRoom } from '../../src/shared/room.ts';
 import { HOLD_STROBE_MAX_HZ, holdStrobeFlash, huePulseLevel, resolveEnergyOverride } from '../../src/shared/look-math.ts';
 import { MAX_LAMP_FLASH_HZ } from '../../src/shared/patterns.ts';
+import { slotToWrite } from '../helpers/slots.js';
 
 const RED = parseHex('#FF0000'), GREEN = parseHex('#00FF00'), BLUE = parseHex('#0000FF'), WHITE = parseHex('#FFFFFF');
 const BLACK = { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 };

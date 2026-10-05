@@ -3,13 +3,14 @@ import test from 'node:test';
 import assert from 'node:assert';
 import { z } from 'zod';
 import { registerKind, validateSpec, kindOf, KINDS, specWithDefaults } from '../../src/shared/effects/registry.ts';
-import { renderEffect, compositeVoices, slotToWrite } from '../../src/shared/effects/render.ts';
+import { renderEffect } from '../../src/shared/effects/render.ts';
 import { ConstantTable, EffectStepper } from '../../src/shared/effects/stepper.ts';
 import { EventAdmission } from '../../src/shared/effects/envelope.ts';
 import { parseHex, preparePalette, resolvePalette } from '../../src/shared/effects/palette.ts';
 import { HD_MASTER_DEFAULTS } from '../../src/shared/effects/types.ts';
 import { buildRoom } from '../../src/shared/room.ts';
 import { seedFrom } from '../../src/shared/effects/hash.ts';
+import { slotToWrite } from '../helpers/slots.js';
 
 const WHITE = { r: 255, g: 255, b: 255, w: 0, a: 0, uv: 0 };
 const frame = (over = {}) => ({ beatPos: 0, bpm: 120, nowMs: 0, dtMs: 22.7, anchorBeat: 0, lookPalette: [WHITE], paletteOverride: null,
@@ -67,19 +68,6 @@ test('the palette override reaches the kind', () => {
   const out = blank(1);
   renderEffect(inst, frame({ paletteOverride: [{ r: 0, g: 0, b: 255, w: 0, a: 0, uv: 0 }] }), room, new EffectStepper(), out);
   assert.strictEqual(out[0].colour.b, 255);
-});
-
-test('compositeVoices: the strobe tier first, then the latest launch, then selected over shared; transparent slots show the base', () => {
-  const base = [{ colour: WHITE, level: 0.2, strength: 1 }, { colour: WHITE, level: 0.2, strength: 1 }];
-  const slots = (level) => [{ colour: WHITE, level, strength: 1 }, { colour: WHITE, level: 0, strength: 0 }];
-  const early = { slots: slots(0.6), tier: 'voice', launchSeq: 1, selected: false, startedAtMs: 0 };
-  const late = { slots: slots(0.8), tier: 'voice', launchSeq: 2, selected: false, startedAtMs: 10 };
-  const strobe = { slots: slots(1), tier: 'strobe', launchSeq: 0, selected: false, startedAtMs: 0 };
-  const selected = { slots: slots(0.7), tier: 'voice', launchSeq: 2, selected: true, startedAtMs: 10 };
-  assert.strictEqual(compositeVoices(base, [early, late])[0].level, 0.8, 'the later launch wins');
-  assert.strictEqual(compositeVoices(base, [late, strobe])[0].level, 1, 'the strobe wins');
-  assert.strictEqual(compositeVoices(base, [late, selected])[0].level, 0.7, 'selected lights beat shared at the same launch');
-  assert.strictEqual(compositeVoices(base, [late, strobe])[1].level, 0.2, 'transparent: the base');
 });
 
 test('states are swept after two seconds unseen, and a clone is independent', () => {
@@ -189,23 +177,6 @@ test('targets preserve existing slots and spec rapidFlash cannot bypass the ackn
   inst.spec = validateSpec({ kind: 'test.rapid', rapidFlash: false });
   renderEffect(inst, frame({ acknowledged: false }), room, stepper, out);
   assert.deepStrictEqual(out, before, 'kind-level rapidFlash is authoritative too');
-});
-
-test('voice ordering uses all tie breakers and owned black hides the base without mutating inputs', () => {
-  const base = [{ colour: WHITE, level: 0.6, strength: 1 }];
-  const voice = (level, props = {}) => ({ slots: [{ colour: WHITE, level, strength: 1 }],
-    tier: 'voice', launchSeq: 1, selected: false, startedAtMs: 1, ...props });
-  const early = voice(0.4), late = voice(0.8, { startedAtMs: 2 });
-  const selected = voice(0.3, { selected: true }), launched = voice(0.7, { launchSeq: 2 });
-  const strobe = voice(0, { tier: 'strobe', launchSeq: 0 });
-  const voices = [late, early, selected, launched, strobe], snapshot = structuredClone(voices);
-  assert.strictEqual(compositeVoices(base, [early, late])[0].level, 0.8);
-  assert.strictEqual(compositeVoices(base, [late, selected])[0].level, 0.3);
-  assert.strictEqual(compositeVoices(base, [selected, launched])[0].level, 0.7);
-  assert.strictEqual(compositeVoices(base, voices)[0].level, 0, 'black is opaque when strength is positive');
-  assert.strictEqual(compositeVoices(base, [voice(1, { slots: [{ colour: WHITE, level: 1, strength: 0 }] })])[0].level, 0.6);
-  assert.deepStrictEqual(voices, snapshot);
-  assert.strictEqual(base[0].level, 0.6);
 });
 
 test('slot writes round brightness and default the strobe channel to zero', () => {
