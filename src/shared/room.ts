@@ -69,7 +69,11 @@ interface Remembered {
   hue: readonly boolean[] | null;
 }
 
-const rooms = new WeakMap<object, Remembered>();
+// A few rooms per key: the renderer's effect layers and a party look read
+// one plan with Hue flags of their own, and one room per key would be built
+// afresh for each of them on every frame.
+const rooms = new WeakMap<object, Remembered[]>();
+const ROOMS_PER_KEY = 4;
 const evenRooms = new Map<number, Room>();
 
 /** The room of a frame's slots: from the plan, else from the slots' places across the rig. */
@@ -99,10 +103,13 @@ export function roomOf(ctx: Pick<PatternContext, 'fixtureCount' | 'plan' | 'xs' 
 /** The room built for `key` before, if it was built from the same slots; else a fresh one. */
 function remember(key: object, n: number, xs: Remembered['xs'], ys: Remembered['ys'], hue: Remembered['hue'],
   build: () => Room): Room {
-  const seen = rooms.get(key);
-  if (seen && seen.room.n === n && seen.xs === xs && seen.ys === ys && seen.hue === hue) return seen.room;
+  let seen = rooms.get(key);
+  if (!seen) { seen = []; rooms.set(key, seen); }
+  const hit = seen.find((r) => r.room.n === n && r.xs === xs && r.ys === ys && r.hue === hue);
+  if (hit) return hit.room;
   const room = build();
-  rooms.set(key, { room, xs, ys, hue });
+  seen.push({ room, xs, ys, hue });
+  if (seen.length > ROOMS_PER_KEY) seen.shift();
   return room;
 }
 

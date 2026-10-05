@@ -260,6 +260,14 @@ registerKind({
 });
 const probe = (tag = '', extra = {}) => spec({ kind: 'test.last', params: { tag }, ...extra });
 
+// A kind that notes the room each render is handed, by its tag.
+const roomsSeen = [];
+registerKind({
+  kind: 'test.rooms', app: 'own', schema: z.object({ tag: z.string() }).strict(), defaults: { params: { tag: '' } },
+  init: () => null,
+  render(params, state, room, frame, out) { roomsSeen.push([params.tag, room]); for (let i = 0; i < room.n; i++) out[i] = { colour: WHITE, level: 1, strength: 1 }; },
+});
+
 // ── Identity, resets and clocks ─────────────────────────────────────────────
 
 test('the base keeps its state frame to frame, and starts again on a new launch, revision, content or layout; a palette edit keeps it', () => {
@@ -296,6 +304,20 @@ test('address, universe and trim edits do not restart an effect; another fixture
   assert.notStrictEqual(captureState(r, probe(), 50, { fixtures: renamed }), first, 'a different fixture id is a different patch');
 });
 
+test('a changed patch starts a voice again once, on the frame it changes, and the next frame is handed the real time since', () => {
+  const r = rig(PARS);
+  const v = voice('pad', probe('v'));
+  r.at(0, { voices: [v] });
+  const first = lastState;
+  const renamed = PARS.map((f, i) => (i === 2 ? { ...f, id: 77 } : f));
+  r.at(25, { voices: [v], fixtures: renamed });
+  const fresh = lastState;
+  assert.notStrictEqual(fresh, first, 'another fixture: the voice starts again');
+  r.at(50, { voices: [v], fixtures: renamed });
+  assert.strictEqual(lastState, fresh, 'and plays on from there, not started a second time');
+  assert.strictEqual(fresh.frames.at(-1).frame.dtMs, 25);
+});
+
 test('a jump in the music starts the base again; a voice keeps its launch, deadline and state and moves its beat anchor', () => {
   const r = rig(PARS);
   const v = voice('pad:1', probe('v'), { startedAtMs: 0, untilMs: 5000, anchorBeat: 0.5 });
@@ -319,6 +341,21 @@ test('a jump in the music starts the base again; a voice keeps its launch, deadl
   late.at(4990, { voices: [voice('pad:1', preset('energy.blinder'), { untilMs: 5000 })] }, { epoch: 1 });
   assert.strictEqual(late.at(4999, { voices: [voice('pad:1', preset('energy.blinder'), { untilMs: 5000 })] }, { epoch: 7 })[0].w, 255);
   assert.strictEqual(late.at(5000, { voices: [voice('pad:1', preset('energy.blinder'), { untilMs: 5000 })] }, { epoch: 7 })[0].w, 0, 'half-open: off at its deadline');
+});
+
+test('a macro voice takes a jump in the music down to its step: the step plays on from the new beat, its state kept', () => {
+  const r = rig(PARS);
+  const macro = spec({ kind: 'macro', params: { steps: [{ effect: probe('step 0'), beats: 4 }, { effect: probe('step 1'), beats: 4 }], loopBeats: 8 } });
+  const v = voice('pad:1', macro, { startedAtMs: 0, anchorBeat: 0 });
+  r.at(0, { voices: [v] }, { beatPos: 0.5, epoch: 1 });
+  const stepState = lastState;
+  r.at(25, { voices: [v] }, { beatPos: 0.55, epoch: 1 });
+  // A seek to beat 40.3: the voice anchors at 40, and its macro is in the same step, 0.3 beats in.
+  r.at(50, { voices: [v] }, { beatPos: 40.3, epoch: 2 });
+  assert.strictEqual(lastState, stepState, 'the step\'s state, not a new one');
+  const after = stepState.frames.at(-1).frame;
+  assert.strictEqual(after.anchorBeat, 40, 'counted from the new beat, not 40 beats on from the old one');
+  assert.strictEqual(after.startedAtMs, stepState.frames[0].frame.startedAtMs, 'its wall start stays');
 });
 
 test('a jump in the music starts the base again, even back onto the step it was on', () => {
@@ -451,6 +488,29 @@ test('a frame carries each cell\'s fixture id, the room\'s Hue lamps (profile-on
   } finally {
     unregisterProfile(BAR.id);
   }
+});
+
+test('on a placed rig with a Hue lamp each layer keeps its room frame after frame, under a base effect and under a party look', () => {
+  // The look, the base effect and the voices all read the plan; a room built
+  // afresh each frame would lose what is kept with it (Light DJ's channels).
+  const placed = [...PARS, { ...LAMP, address: 60 }].map((f, i) => ({ ...f, position: { x: 10 + 20 * i, y: 30 + 10 * i } }));
+  const roomsOf = (patch) => {
+    const r = rig(placed);
+    const seen = { base: [], voice: [] };
+    for (let k = 0; k < 3; k++) {
+      roomsSeen.length = 0;
+      r.at(k * 25, { voices: [voice('pad', spec({ kind: 'test.rooms', params: { tag: 'voice' } }))], ...patch });
+      for (const [tag, room] of roomsSeen) seen[tag].push(room);
+    }
+    return seen;
+  };
+  const same = (rooms) => rooms.length === 3 && rooms.every((room) => room === rooms[0]);
+  const underBase = roomsOf({ pattern: 'look', effect: spec({ kind: 'test.rooms', params: { tag: 'base' } }) });
+  assert.ok(same(underBase.voice), 'the voices\' room under a base effect');
+  assert.ok(same(underBase.base), 'the base effect\'s room');
+  assert.ok(underBase.voice[0].hue.some(Boolean), 'the lamp is the room\'s Hue lamp');
+  const underLook = roomsOf({ pattern: 'ring-strobe' });
+  assert.ok(same(underLook.voice), 'the voices\' room under a party look that reads the plan too');
 });
 
 test('a hand-built input without audio, mode or master renders an effect as the explicit defaults do', () => {

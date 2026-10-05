@@ -439,11 +439,16 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
   let processedSeq = 0;
   let appliedSeq = 0;
 
-  /** Every effect starts again: the state, the flash histories, the launches. */
-  function resetEffects(): void {
+  /**
+   * Every effect starts again: the state and the flash histories. A new grid
+   * also forgets the launches and the clock; a new patch, found partway
+   * through a frame, keeps this frame's, so its voices start again only once.
+   */
+  function resetEffects(clock = true): void {
     stepper.reset();
     guard.reset();
     base = null;
+    if (!clock) return;
     voiceRecords.clear();
     lastEffectNow = null;
   }
@@ -480,7 +485,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     const ids = input.fixtures.map((f) => f.id).join(',');
     const identity = `${rigKey}|${ids}`;
     if (identity !== identityKey) {
-      if (identityKey) resetEffects();
+      if (identityKey) resetEffects(false);
       identityKey = identity;
       baseCells = null;
       voiceCells = null;

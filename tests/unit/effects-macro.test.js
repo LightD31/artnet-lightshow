@@ -89,6 +89,24 @@ test('a step starts at its boundary in wall time: the known launch, a back-proje
   assert.deepStrictEqual([landed.child.id, landed.child.anchorBeat, landed.child.startedAtMs], ['m:0', 4, 2000]);
 });
 
+test('a macro re-anchored onto the step it plays (a voice after a jump in the music) moves the step\'s anchor and keeps its state', () => {
+  // The renderer moves a playing voice's anchor to the beat the music jumped to; its wall times stay.
+  const stepper = new EffectStepper();
+  const inst = instance(TWO_STEPS(), { startedAtMs: 0 });
+  const at = (anchorBeat, beatPos, nowMs) => { log.length = 0; const out = draw({ ...inst, anchorBeat }, frame({ beatPos, nowMs }), room(), stepper); return { out, child: log.at(-1) }; };
+  at(0, 0.5, 250);
+  const before = at(0, 0.6, 300).child;
+  // A seek to beat 40.3: anchored on 40, the macro is 0.3 beats into lap 0's first step again.
+  const after = at(40, 40.3, 325);
+  assert.deepStrictEqual({ id: after.child.id, anchorBeat: after.child.anchorBeat, startedAtMs: after.child.startedAtMs, renders: after.child.renders, seed: after.child.seed },
+    { id: before.id, anchorBeat: 40, startedAtMs: before.startedAtMs, renders: before.renders + 1, seed: before.seed },
+    'the same step plays on from the new anchor: its state, wall start and seed kept, as a kind takes a position that went back');
+  assert.deepStrictEqual(after.out[0].colour, RED);
+  // Landing on another step is that step's activation, as playing through would have made it.
+  const later = at(40, 42.5, 1425).child;
+  assert.deepStrictEqual([later.id, later.anchorBeat, later.renders], ['m:1', 42, 1]);
+});
+
 test('each lap and step plays with fresh state and its own seed, and two macros never share a child', () => {
   const at = sampler(instance(TWO_STEPS()));
   const seeds = [0, 2, 4, 6].map((beat) => at(beat).child);

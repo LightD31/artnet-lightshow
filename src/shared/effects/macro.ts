@@ -139,10 +139,15 @@ function renderMacro(p: MacroParams, s: MacroState, room: Room, frame: EffectFra
   if (!Number.isFinite(rel) || !Number.isFinite(frame.nowMs)) return;
   const { lap, step: k, start } = locate(p, rel);
   const step = p.steps[k];
+  const anchorBeat = frame.anchorBeat + lap * p.loopBeats + start;
   let active = s.active;
-  if (!active || active.lap !== lap || active.step !== k || active.kind !== step.effect.kind) {
+  if (active && active.lap === lap && active.step === k && active.kind === step.effect.kind) {
+    // Re-anchored onto the step it plays (a voice after a jump in the music):
+    // the step plays on from the new anchor, its state and wall start kept,
+    // and takes the move as it takes a position that went back.
+    active.anchorBeat = anchorBeat;
+  } else {
     // A new activation forgets the last one entirely: state, palette cache and all.
-    const anchorBeat = frame.anchorBeat + lap * p.loopBeats + start;
     s.children.reset();
     active = s.active = {
       lap, step: k, kind: step.effect.kind, id: `${frame.instanceId ?? ''}:${k}`,
