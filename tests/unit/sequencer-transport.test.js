@@ -771,6 +771,53 @@ test('an edit of the sequence playing plays on; another sequence loaded stops th
   assert.equal(r.s.status().loaded.id, 'set-2');
 });
 
+test('an edit while the sequence stands on a command\'s beat runs nothing of that beat again: paused on it, or stopped on it by the budget', () => {
+  // Paused right on beat 4 after a seek: its two commands ran with the seek.
+  const r = rig({ master: 255 });
+  const at4 = [{ id: 'pal', atBeat: 4, type: 'palette', value: 'redCyan' }, { id: 'dim', atBeat: 4, type: 'brightness', value: 7 }];
+  const seq = (name, extra = {}) => sequence({ name, clips: [clip('A', 'a', 0, 16)], commands: at4, ...extra });
+  r.s.load(seq('one'));
+  r.s.play();
+  r.at(100);
+  r.s.seek(4);
+  r.s.pause();
+  r.at(100.5);
+  assert.deepEqual(r.applied, [{ paletteOverride: PALETTE_HEX.redCyan, masterDimmer: 7 }]);
+  r.s.load(seq('two'));
+  r.live.master = 99;
+  r.s.play();
+  r.at(101);
+  assert.equal(r.applied.length, 1, 'resumed on beat 4: nothing of it again');
+  // A command the edit adds on that beat is still due; the next time round the loop runs all three.
+  r.s.load(seq('three', { commands: [...at4, { id: 'tempo', atBeat: 4, type: 'tempo', value: 128 }], loop: { on: true, startBeat: 4, endBeat: 5 } }));
+  r.at(101.25);
+  assert.deepEqual(r.applied.slice(1), [{ bpm: 128 }], 'the new one, not the two done');
+  r.live.master = 99;
+  r.live.bpm = 100;
+  r.at(102.5);
+  assert.deepEqual(r.applied.slice(2), [{ paletteOverride: PALETTE_HEX.redCyan, masterDimmer: 7, bpm: 128 }]);
+
+  // Stopped by the budget on a loop's wrap, its start's three commands run this time round.
+  const h = rig({ master: 255, bpm: 120 });
+  const at0 = [{ id: 'pal', atBeat: 0, type: 'palette', value: 'redCyan' }, { id: 'dim', atBeat: 0, type: 'brightness', value: 7 }, { id: 'tempo', atBeat: 0, type: 'tempo', value: 128 }];
+  const tiny = (name) => sequence({ name, clips: [clip('A', 'a', 0, 16)], loop: { on: true, startBeat: 0, endBeat: 1e-6 }, commands: at0 });
+  h.s.load(tiny('one'));
+  h.s.play();
+  h.at(100);
+  h.at(100.5);
+  assert.equal(h.s.status().error.code, 'traversal-limit');
+  assert.equal(h.s.status().beat, 0);
+  h.s.load(tiny('two'));
+  const n = h.applied.length;
+  h.live.master = 99;
+  h.live.bpm = 100;
+  h.s.play();
+  h.at(100.5);
+  assert.deepEqual(h.applied.slice(n), [], 'on from the wrap: none of the three again');
+  h.at(100.5 + 2e-6);
+  assert.deepEqual(h.applied.slice(n), [{ paletteOverride: PALETTE_HEX.redCyan, masterDimmer: 7, bpm: 128 }], 'the next time round, all three');
+});
+
 test('the status: what is loaded, playing or paused, the beat and bar, the loop and the clip on each lane', () => {
   const r = rig();
   assert.deepEqual(r.s.status(), {

@@ -374,7 +374,8 @@ type RunMode = 'idle' | 'playing' | 'paused' | 'stopped';
 // Where the sequence stands in its own beats: the position, the traversal
 // (times its loop came round), and the next command to run (sorted order),
 // which tells a command on this very beat already run from one still due.
-interface Cursor { pos: number; traversal: number; next: number }
+// An edit sorts the commands afresh: `done` then names those run on this beat.
+interface Cursor { pos: number; traversal: number; next: number; done?: Set<string> | null }
 
 // The music's beat the sequence stood at `startPosition` on, the loop in
 // force from there (the playlist row repeating, or the sequence's own), and
@@ -502,9 +503,10 @@ export class Sequencer {
     this._loaded = deepFreeze(seq);
     this._key = key;
     this._table = deepFreeze({ ...table, revision: this._revision });
+    const commands = this._commands;
     this._commands = sortCommands(seq.commands);
     if (!same) this._release();
-    else this._edited(before!);
+    else this._edited(before!, commands);
     return structuredClone(this._loaded!);
   }
 
@@ -564,9 +566,14 @@ export class Sequencer {
 
   // The sequence playing was edited: its commands may sit elsewhere now, a
   // playlist row may repeat or not, an automation may be new.
-  _edited(before: Sequence): void {
-    // What is behind the position has run; what is ahead may have moved.
-    this._cursor.next = this._firstFrom(this._cursor.pos, this._run !== 'playing');
+  _edited(before: Sequence, commands: readonly Sorted[]): void {
+    // What is behind the position has run, and so has what `done` names on
+    // the position's own beat (a pause or a stop may stand right on one);
+    // what is ahead may have moved.
+    const c = this._cursor;
+    const done = commands.slice(0, c.next).filter((cmd) => cmd.atBeat >= c.pos - EPS).map((cmd) => cmd.id);
+    if (done.length) c.done = new Set([...(c.done ?? []), ...done]);
+    c.next = this._firstFrom(c.pos, true);
     if (this._anchor) this._ops.push({ type: 'loop' });
     const seq = this._loaded!;
     for (const which of ['brightness', 'tempo'] as const) {
@@ -988,7 +995,7 @@ export class Sequencer {
       const cmds = this._commands;
       while (c.next < cmds.length && (exclusive ? cmds[c.next].atBeat < end - EPS : cmds[c.next].atBeat <= end + EPS)) {
         const cmd = cmds[c.next];
-        if (cmd.atBeat < c.pos - EPS) { c.next++; continue; }
+        if (cmd.atBeat < c.pos - EPS || (c.done?.has(cmd.id) && cmd.atBeat <= c.pos + EPS)) { c.next++; continue; }
         const at = a.walked + (cmd.atBeat - c.pos);
         const left = target - at;
         // Back at a goto already taken with no beat gone by: a loop with no way out.
@@ -1017,6 +1024,8 @@ export class Sequencer {
       // Stopped short of a wrap or a row's end, the walk meets it again from here.
       if (event !== null && !this._spend()) return false;
       a.walked += end - c.pos;
+      // Off this beat, what was done on it is behind.
+      if (end !== c.pos) c.done = null;
       c.pos = end;
       if (event === null) {
         // A clock that stepped back a hair moves nothing back: the walk waits for it.
@@ -1027,6 +1036,7 @@ export class Sequencer {
         c.pos = loop!.startBeat;
         c.traversal++;
         c.next = this._firstFrom(c.pos, true);
+        c.done = null;
         if (!a.rowLoop && seq.options.randomPaletteOnLoop) this._randomPalette();
       } else if (event === 'shuffle') {
         // With no other row to go to, the row plays again.
