@@ -46,9 +46,8 @@ import { renderLayer } from './layer.ts';
 import { buildRig, isHueLamp, rigSignature } from './rig.ts';
 import { EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture, HOLD_STROBE, holdStrobeFlash, holdStrobeLook } from './look-math.ts';
 import { gridFromAnalysis, beatPositionAt, localBpm, anchorStep, stepAt, motionAdvance } from './beat-clock.ts';
-import { canonical, effectContentKey, hdGuarded, renderEffectLayer, renderVoices, voiceLayout } from './effects/layer.ts';
-import { presetById } from './effects/catalogue.ts';
-import { ENERGY_KIND_BY_ID } from './effects/energy.ts';
+import { canonical, effectContentKey, hdGuarded, relaunchEffect, renderEffectLayer, renderVoices, voiceAnchor, voiceLaunchKey, voiceLayout } from './effects/layer.ts';
+import { energyEffectSpec } from './effects/catalogue.ts';
 import { requiresAcknowledgement, validateSpec } from './effects/registry.ts';
 import { EffectStepper } from './effects/stepper.ts';
 import { HdFlashGuard } from './effects/flash-guard.ts';
@@ -58,7 +57,7 @@ import { HD_MASTER_DEFAULTS } from './effects/types.ts';
 import type { GridSource } from './beat-clock.ts';
 import type { Layout, Rig } from './rig.ts';
 import type { UnitLight } from './look-math.ts';
-import type { VoiceFrame } from './effects/layer.ts';
+import type { VoiceFrame, VoiceRecord } from './effects/layer.ts';
 import type { EffectInstance } from './effects/stepper.ts';
 import type { EffectSlot, EffectSpec, FrameBase, Seed } from './effects/types.ts';
 import type { ChannelMap, Colour, Expression, ShowDynamics, StageFixture } from '../types/rig.ts';
@@ -231,17 +230,6 @@ function voiceOf(event: PreviewEvent, beatPos: number): VoiceFrame | null {
     untilMs, anchorBeat: beatPos, seed });
 }
 
-/**
- * The effect the renderer plays an energy burst as: the six energies' own
- * kinds and the hold strobe's catalogue row (renderer.ts compatVoice).
- */
-function energySpec(energy: string): EffectSpec | null {
-  const id = energy === HOLD_STROBE ? HOLD_STROBE
-    : Object.hasOwn(ENERGY_KIND_BY_ID, energy) ? ENERGY_KIND_BY_ID[energy as keyof typeof ENERGY_KIND_BY_ID] : null;
-  const row = id ? presetById(id) : null;
-  return row && !row.legacy ? row.spec : null;
-}
-
 // ── What a sample is handed, as content ─────────────────────────────────────
 // The rig, the patch, the colour table and the effects belong to the whole
 // rehearsed timeline: one that changes rebuilds the stepped history (equal to
@@ -307,9 +295,6 @@ interface Env {
 }
 
 // ── The stepped history ─────────────────────────────────────────────────────
-
-/** A voice's launch as the renderer keeps it: a new launch under an id starts its state again. */
-interface VoiceRecord { launch: string; kind: string; wireAnchor: number; anchor: number; epoch: number }
 
 /** Everything a frame of the grid leaves for the next: a checkpoint is a copy of one. */
 interface Walk {
@@ -575,7 +560,7 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
     const { layer, colors, expr, dyn } = patternLayer(index, positionMs, rig, presets);
     let burstId = frame.burst && positionMs < frame.burst.end ? frame.burst.id : null;
     if (burstId && safetyGiven && !acknowledged) {
-      const spec = energySpec(burstId);
+      const spec = energyEffectSpec(burstId);
       if (spec && requiresAcknowledgement(spec)) burstId = null;
     }
     const energy = burstId ? resolveEnergyOverride(burstId, colors[0], expr.level) : null;
@@ -678,12 +663,12 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
     }
   }
 
+  // The timeline's voice frames never change, so each one's launch key is read once.
   const launchKeys = new WeakMap<VoiceFrame, string>();
-  /** What makes a launch new, as renderer.ts playingVoices reads it. */
   function launchOf(v: VoiceFrame): string {
     let launch = launchKeys.get(v);
     if (launch === undefined) {
-      launch = v.spec.kind === 'strobe' ? 'strobe' : canonical([v.launchSeq, v.startedAtMs, v.seed, effectContentKey(v.spec)]);
+      launch = voiceLaunchKey(v);
       launchKeys.set(v, launch);
     }
     return launch;
@@ -701,7 +686,7 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
     const energy = f.burst && t < f.burst.end ? f.burst.id ?? null : null;
     if (!energy) w.compat = null;
     else if (!w.compat || w.compat.energy !== energy) {
-      const spec = energySpec(energy);
+      const spec = energyEffectSpec(energy);
       const id = `energy:${energy}`;
       // The hold strobe stays on the global beat grid (anchor 0), as it always flashed.
       w.compat = spec ? { energy, voice: Object.freeze({ id, spec, targets: null, tier: energy === HOLD_STROBE ? 'strobe' : 'voice',
@@ -721,21 +706,7 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
       }
       if (seen.has(v.id)) continue;
       seen.add(v.id);
-      const kind = v.spec.kind;
-      const launch = launchOf(v);
-      let rec = w.records.get(v.id);
-      if (!rec || rec.launch !== launch || rec.kind !== kind) {
-        if (!(kind === 'strobe' && (!rec || rec.kind === 'strobe'))) w.stepper.forget(v.id);
-        rec = { launch, kind, wireAnchor: v.anchorBeat, anchor: v.anchorBeat, epoch: w.epoch };
-        w.records.set(v.id, rec);
-      } else if (rec.wireAnchor !== v.anchorBeat) {
-        rec.wireAnchor = rec.anchor = v.anchorBeat;
-        rec.epoch = w.epoch;
-      } else if (rec.epoch !== w.epoch) {
-        if (v !== compat) rec.anchor = Math.floor((f.anchorBeat ?? beatPos) + 1e-9);
-        rec.epoch = w.epoch;
-      }
-      const played: VoiceFrame = { ...v, anchorBeat: rec.anchor };
+      const played: VoiceFrame = { ...v, anchorBeat: voiceAnchor(w.records, w.stepper, v, launchOf(v), w.epoch, f.anchorBeat ?? beatPos, v === compat) };
       if (v === compat && !safetyGiven) admitted.add(played);
       voices.push(played);
     }
@@ -806,11 +777,7 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
       // launches it again; a scene sending the same pattern on the same step does not.
       const key = canonical([id, effectContentKey(spec), cells.key, w.epoch]);
       if (!w.base || w.base.key !== key) {
-        if (w.base && w.base.kind === 'strobe' && spec.kind === 'strobe') w.stepper.move(w.base.id, id);
-        else {
-          if (w.base) w.stepper.forget(w.base.id);
-          w.stepper.forget(id);
-        }
+        relaunchEffect(w.stepper, w.base, id, spec.kind);
         w.base = { key, id, kind: spec.kind, seed: seedFrom(id), startedAtMs: t };
       }
       const instance: EffectInstance = { id, spec, seed: w.base.seed, anchorBeat: f.anchor / division, startedAtMs: w.base.startedAtMs, targets: null };

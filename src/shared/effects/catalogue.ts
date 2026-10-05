@@ -5,6 +5,7 @@
 
 // Every kind registers before the rows below validate against it.
 import './index.ts';
+import { HOLD_STROBE } from '../look-math.ts';
 import { PATTERN_FUNCS } from '../patterns.ts';
 import { kindOf, validateSpec } from './registry.ts';
 import { DISCO_PRESETS } from './disco.ts';
@@ -330,6 +331,18 @@ const INDEX = presetIndex(CATALOGUE);
 /** A built-in preset by id or alias. */
 export function presetById(id: string): CataloguePreset | null {
   return INDEX.get(id) ?? null;
+}
+
+/**
+ * The effect an energy burst plays as, in the renderer and the preview alike:
+ * the six energies' own kinds and the hold strobe's control row. Null for
+ * any other id.
+ */
+export function energyEffectSpec(energy: string): EffectSpec | null {
+  const id = energy === HOLD_STROBE ? HOLD_STROBE
+    : Object.hasOwn(ENERGY_KIND_BY_ID, energy) ? ENERGY_KIND_BY_ID[energy as keyof typeof ENERGY_KIND_BY_ID] : null;
+  const row = id ? presetById(id) : null;
+  return row && !row.legacy ? row.spec : null;
 }
 
 /** A family lists the kinds its rows play, plus any extra; a legacy row plays none. */

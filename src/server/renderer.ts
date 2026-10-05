@@ -28,9 +28,8 @@ import { anchorStep, stepAt, motionAdvance } from '../shared/beat-clock.ts';
 import { createFlashLimiter, lightLuminance, strobeCap } from './flash-limit.ts';
 import { identifyLights } from './identify.ts';
 import { HD_MASTER_DEFAULTS } from '../shared/effects/types.ts';
-import { canonical, effectContentKey, hdGuarded, renderEffectLayer, renderVoices, voiceLayout } from '../shared/effects/layer.ts';
-import { ENERGY_KIND_BY_ID } from '../shared/effects/energy.ts';
-import { presetById } from '../shared/effects/catalogue.ts';
+import { canonical, effectContentKey, hdGuarded, relaunchEffect, renderEffectLayer, renderVoices, voiceAnchor, voiceLaunchKey, voiceLayout } from '../shared/effects/layer.ts';
+import { energyEffectSpec } from '../shared/effects/catalogue.ts';
 import { kindOf } from '../shared/effects/registry.ts';
 import { EffectStepper } from '../shared/effects/stepper.ts';
 import { HdFlashGuard } from '../shared/effects/flash-guard.ts';
@@ -42,7 +41,7 @@ import type { MusicalTime } from './conductor.ts';
 import type { PatternAnchor } from './state.ts';
 import type { UniverseStore } from './universes.ts';
 import type { AudioFrame } from '../shared/effects/audio-frame.ts';
-import type { VoiceFrame } from '../shared/effects/layer.ts';
+import type { VoiceFrame, VoiceRecord } from '../shared/effects/layer.ts';
 import type { EffectInstance } from '../shared/effects/stepper.ts';
 import type { AudioMode, EffectCommand, EffectSlot, EffectSpec, FrameBase, HdMaster, Seed } from '../shared/effects/types.ts';
 import type { ChannelDefault, ChannelMap, Colour, Expression, Override, PixelMap, Profile, PulseReading, ShowDynamics, StageFixture } from '../types/rig.ts';
@@ -412,7 +411,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
   } | null = null;
   // Each voice id's launch, so a relaunch under the same id starts afresh, and
   // its musical anchor, which moves when the music jumps while its wall times stay.
-  const voiceRecords = new Map<string, { launch: string; kind: string; wireAnchor: number; anchor: number; epoch: number }>();
+  const voiceRecords = new Map<string, VoiceRecord>();
   // The energy burst played as a voice for an input that names no voices.
   let compat: { energy: string; voice: VoiceFrame } | null = null;
   // The layouts the effects play on, with each cell's fixture id and Hue flag
@@ -509,11 +508,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     // The music jumping re-anchors the look: a new generation even on the step it had.
     const key = canonical([id, revision, content, baseCells!.key, anchor?.epoch ?? null]);
     if (!base || base.key !== key) {
-      if (base && base.kind === 'strobe' && spec.kind === 'strobe') stepper.move(base.id, id);
-      else {
-        if (base) stepper.forget(base.id);
-        stepper.forget(id);
-      }
+      relaunchEffect(stepper, base, id, spec.kind);
       base = { key, id, kind: spec.kind, pattern: input.pattern, revision, content, seed: seedFrom(id), startedAtMs: nowMs };
     }
     return { id, spec, seed: base.seed, anchorBeat: anchorStepNow / division, startedAtMs: base.startedAtMs, targets: null };
@@ -524,14 +519,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     const energy = input.energy;
     if (!energy) { compat = null; return null; }
     if (compat && compat.energy === energy) return compat.voice;
-    let spec: EffectSpec | null = null;
-    if (energy === HOLD_STROBE) {
-      const row = presetById(HOLD_STROBE);
-      spec = row && !row.legacy ? row.spec : null;
-    } else if (Object.hasOwn(ENERGY_KIND_BY_ID, energy)) {
-      const row = presetById(ENERGY_KIND_BY_ID[energy as keyof typeof ENERGY_KIND_BY_ID]);
-      spec = row && !row.legacy ? row.spec : null;
-    }
+    const spec = energyEffectSpec(energy);
     if (!spec) { compat = null; return null; }
     const id = `energy:${energy}`;
     // The hold strobe stays on the global beat grid (anchor 0), as it always flashed.
@@ -559,6 +547,8 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     const source = legacy ? (synthesized ? [synthesized] : []) : input.voices;
     const seen = new Set<string>();
     const voices: VoiceFrame[] = [];
+    // After a jump in the music, the beat a voice re-anchors on: its scene's when the auto show says which, else where the music is.
+    const beatNow = reading.anchorBeat !== undefined && Number.isFinite(reading.anchorBeat) ? reading.anchorBeat : reading.beatPos;
     for (const v of source) {
       if (!v || typeof v.id !== 'string' || !v.spec || typeof v.spec.kind !== 'string') continue;
       if (!(Number.isFinite(v.startedAtMs) && now >= v.startedAtMs)) continue;
@@ -566,24 +556,9 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       if (v.untilMs != null && !(now < v.untilMs)) continue;
       if (seen.has(v.id)) continue;
       seen.add(v.id);
-      const kind = v.spec.kind;
-      const launch = kind === 'strobe' ? 'strobe' : canonical([v.launchSeq, v.startedAtMs, v.seed, effectContentKey(v.spec)]);
-      let rec = voiceRecords.get(v.id);
-      if (!rec || rec.launch !== launch || rec.kind !== kind) {
-        // A strobe keeps its permit through a relaunch under its id; anything else starts again.
-        if (!(kind === 'strobe' && (!rec || rec.kind === 'strobe'))) stepper.forget(v.id);
-        rec = { launch, kind, wireAnchor: v.anchorBeat, anchor: v.anchorBeat, epoch: reading.epoch };
-        voiceRecords.set(v.id, rec);
-      } else if (rec.wireAnchor !== v.anchorBeat) {
-        rec.wireAnchor = rec.anchor = v.anchorBeat;
-        rec.epoch = reading.epoch;
-      } else if (rec.epoch !== reading.epoch) {
-        const from = reading.anchorBeat !== undefined && Number.isFinite(reading.anchorBeat) ? reading.anchorBeat : reading.beatPos;
-        // The hold strobe keeps the global beat grid it has always flashed on.
-        if (!(legacy && v === compat?.voice)) rec.anchor = Math.floor(from + 1e-9);
-        rec.epoch = reading.epoch;
-      }
-      const played: VoiceFrame = { ...v, startedAtMs: v.startedAtMs - phase, untilMs: v.untilMs == null ? null : v.untilMs - phase, anchorBeat: rec.anchor };
+      // The hold strobe keeps the global beat grid it has always flashed on.
+      const anchorBeat = voiceAnchor(voiceRecords, stepper, v, voiceLaunchKey(v), reading.epoch, beatNow, legacy && v === compat?.voice);
+      const played: VoiceFrame = { ...v, startedAtMs: v.startedAtMs - phase, untilMs: v.untilMs == null ? null : v.untilMs - phase, anchorBeat };
       // Only the renderer's own burst, for an input that says nothing of safety, keeps the old admission.
       if (legacy && given.safety === undefined && v === compat?.voice) admitted.add(played);
       voices.push(played);

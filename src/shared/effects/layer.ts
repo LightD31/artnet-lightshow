@@ -41,6 +41,53 @@ export function effectContentKey(spec: EffectSpec): string {
     minFlashIntervalMs: spec.minFlashIntervalMs ?? null, rapidFlash: spec.rapidFlash ?? null });
 }
 
+/** What makes a launch new under a voice's id: its launch fields and content. The strobe's never is, so its permit carries on. */
+export function voiceLaunchKey(v: VoiceFrame): string {
+  return v.spec.kind === 'strobe' ? 'strobe' : canonical([v.launchSeq, v.startedAtMs, v.seed, effectContentKey(v.spec)]);
+}
+
+/** A voice id's launch as the renderer and the preview keep it, and the musical anchor it plays from. */
+export interface VoiceRecord { launch: string; kind: string; wireAnchor: number; anchor: number; epoch: number }
+
+/**
+ * The anchor a voice plays from this frame, keeping its record: a new launch
+ * under its id starts its state again (a strobe keeps its permit), a changed
+ * wire anchor takes it, and a new clock epoch (the music jumped) moves it to
+ * the start of the beat the music is now in, `beatNow`, unless `holdsGrid`:
+ * the hold strobe keeps the global beat grid it has always flashed on.
+ */
+export function voiceAnchor(records: Map<string, VoiceRecord>, stepper: EffectStepper, v: VoiceFrame, launch: string, epoch: number,
+  beatNow: number, holdsGrid: boolean): number {
+  const kind = v.spec.kind;
+  let rec = records.get(v.id);
+  if (!rec || rec.launch !== launch || rec.kind !== kind) {
+    if (!(kind === 'strobe' && (!rec || rec.kind === 'strobe'))) stepper.forget(v.id);
+    rec = { launch, kind, wireAnchor: v.anchorBeat, anchor: v.anchorBeat, epoch };
+    records.set(v.id, rec);
+  } else if (rec.wireAnchor !== v.anchorBeat) {
+    rec.wireAnchor = rec.anchor = v.anchorBeat;
+    rec.epoch = epoch;
+  } else if (rec.epoch !== epoch) {
+    if (!holdsGrid) rec.anchor = Math.floor(beatNow + 1e-9);
+    rec.epoch = epoch;
+  }
+  return rec.anchor;
+}
+
+/**
+ * The base effect launched again under a new key: the strobe hands its state
+ * on to the new id, so its per-lamp permit carries through a relaunch or an
+ * edit (or relaunching a strobe look would outrun its cap); anything else
+ * starts afresh, with nothing of the old id's left.
+ */
+export function relaunchEffect(stepper: EffectStepper, previous: { id: string; kind: string } | null, id: string, kind: string): void {
+  if (previous && previous.kind === 'strobe' && kind === 'strobe') stepper.move(previous.id, id);
+  else {
+    if (previous) stepper.forget(previous.id);
+    stepper.forget(id);
+  }
+}
+
 /** What a voice's priority reads. */
 export type VoiceRank = Pick<VoiceFrame, 'tier' | 'launchSeq' | 'startedAtMs'> & { targets: readonly unknown[] | null };
 
