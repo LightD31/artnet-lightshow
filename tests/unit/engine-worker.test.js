@@ -230,7 +230,10 @@ test('frames keep coming while the main thread is busy', async () => {
   applyPatch({ pattern: 'chase', running: true, masterDimmer: 255, masterBlackout: false, colorA: 1 });
   startEngine({ thread: 'worker' });
   try {
-    await wait(200);
+    // Stall only once the worker renders: its module compile can outlast a fixed wait.
+    const ready = Date.now() + 5000;
+    while (!lit() && Date.now() < ready) await wait(20);
+    assert.ok(lit(), 'the worker rendered a first frame');
     const until = Date.now() + 250;
     while (Date.now() < until) { /* hold the main thread, as a big track plan would */ }
     // The worker reports its timing once a second.
