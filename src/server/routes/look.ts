@@ -1,6 +1,5 @@
-import { state, getClientState, getFixture, maxBrightnessOf } from '../state.ts';
+import { state, getClientState, getFixture, maxBrightnessOf, clockState } from '../state.ts';
 import { applyPatch, applyOverride, setFixtureMaxBrightness, processTap } from '../patch.ts';
-import { conductor } from '../conductor.ts';
 import { PALETTES } from '../palettes.ts';
 import { messageOf, statusOf } from '../../errors.ts';
 import type { Express } from 'express';
@@ -45,7 +44,7 @@ export function attachLookRoutes(app: Express, _ctx: RouteContext): void {
   app.post('/api/tempo/:mode', (req, res) => {
     try {
       applyPatch({ tempoMode: req.params.mode });
-      res.json({ ok: true, tempoMode: state.tempoMode, clock: conductor.status() });
+      res.json({ ok: true, tempoMode: state.tempoMode, clock: clockState() });
     } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
