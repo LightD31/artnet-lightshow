@@ -21,7 +21,7 @@ import type { Profile, PulseReading } from '../types/rig.ts';
 import type { AudioFrame } from '../shared/effects/audio-frame.ts';
 import type { EffectSpec } from '../shared/effects/types.ts';
 import { validateSpec } from '../shared/effects/registry.ts';
-import { canonical } from '../shared/effects/layer.ts';
+import { effectContentKey } from '../shared/effects/layer.ts';
 
 /** Where frames are rendered: a thread of their own, or this one. */
 export type EngineThread = 'worker' | 'main';
@@ -135,10 +135,13 @@ function setEffectSource(fn: ((pattern: string) => EffectSpec | null) | null | u
 }
 
 // The base effect's revision: moved once whenever the effect the renderer was
-// last handed for this pattern changes by value, goes away or comes back, so
-// it starts again. The renderer's own key leaves colours and brightness out,
-// and keeps its state when an effect goes and returns; a rename, an edit to
-// another preset or an equal copy moves nothing.
+// last handed for this pattern changes its kind or settings (the renderer's
+// content key), goes away or comes back, so it starts again. The renderer
+// keeps its state when an effect goes and returns, so that is counted here.
+// A colour or brightness edit is the same effect playing on: the renderer
+// takes the new colours and level on its next frame, and a command sent
+// before the edit still lands. A rename, an edit to another preset or an
+// equal copy moves nothing.
 let effectRevision = 0;
 let handed: { pattern: string; spec: EffectSpec | null; key: string | null } | null = null;
 
@@ -146,13 +149,13 @@ function noteEffect(pattern: string, spec: EffectSpec | null): void {
   if (handed && handed.pattern === pattern) {
     // The library hands out the same frozen spec until it changes.
     if (handed.spec === spec) return;
-    const key = spec ? canonical(spec) : null;
+    const key = spec ? effectContentKey(spec) : null;
     if (key !== handed.key) effectRevision++;
     handed = { pattern, spec, key };
     return;
   }
   // Another pattern is another base (its own id): nothing to start again.
-  handed = { pattern, spec, key: spec ? canonical(spec) : null };
+  handed = { pattern, spec, key: spec ? effectContentKey(spec) : null };
 }
 
 /**

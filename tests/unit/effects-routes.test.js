@@ -26,7 +26,7 @@ import { state, getLiveState } from '../../src/server/state.ts';
 import { PALETTES } from '../../src/server/palettes.ts';
 import { settings } from '../../src/server/settings.ts';
 import { showStore } from '../../src/server/show-store.ts';
-import { createRenderer } from '../../src/server/renderer.ts';
+import { baseIntentOf, createRenderer } from '../../src/server/renderer.ts';
 import * as universes from '../../src/server/universes.ts';
 import { getProfile, profilesRevision } from '../../src/server/profiles.ts';
 import { BUILTIN_PALETTES, CATALOGUE, FAMILIES, presetById } from '../../src/shared/effects/index.ts';
@@ -519,7 +519,16 @@ test('a user preset saved by one client appears in the live state (domain librar
   assert.notEqual(state.masterDimmer, 12);
 });
 
-test('the effect on stage starts again when its spec changes by value, goes or comes back, and only then', async (t) => {
+/** Each lamp's red, green, blue and dimmer channels as the renderer left them. */
+function lampsOf(store, input) {
+  return input.fixtures.map((f) => {
+    const { channelMap: ch } = getProfile(f.profileId);
+    const dmx = store.getBuffer(f.universe);
+    return ['red', 'green', 'blue', 'dimmer'].map((name) => dmx[f.address - 1 + ch[name]]);
+  });
+}
+
+test('the effect on stage starts again when its kind or settings change, goes or comes back, and only then', async (t) => {
   const s = await serve(t);
   const mine = s.effectLibrary.create({ name: 'Mine', spec: FADE });
   applyPatch({ pattern: mine.id });
@@ -529,23 +538,26 @@ test('the effect on stage starts again when its spec changes by value, goes or c
   // A rename, edits to another preset and the same spec written in another order: the same effect playing on.
   await s.call('PUT', `/api/effects/${mine.id}`, { name: 'Renamed' });
   const other = (await s.call('POST', '/api/effects', { name: 'Other', spec: FADE })).body.preset;
-  await s.call('PUT', `/api/effects/${other.id}`, { spec: { ...FADE, palette: ['#FF0000'] } });
+  await s.call('PUT', `/api/effects/${other.id}`, { spec: { ...FADE, params: { cadence: 1 } } });
   await s.call('DELETE', `/api/effects/${other.id}`);
   await s.call('PUT', `/api/effects/${mine.id}`, { spec: { params: { cadence: 2 }, kind: 'ldj.FadeCycle' } });
   assert.equal(renderInput().effectRevision, r0);
 
-  // A colour or brightness edit, which the renderer's content key leaves out, starts it again, once.
-  await s.call('PUT', `/api/effects/${mine.id}`, { spec: { ...FADE, palette: ['#FF0000'] } });
+  // Its colours and brightness are played live (the next test): no new start.
+  await s.call('PUT', `/api/effects/${mine.id}`, { spec: { ...FADE, palette: ['#FF0000'], brightness: 0.5 } });
+  assert.equal(renderInput().effect.brightness, 0.5, 'the rig is handed the new spec');
+  assert.equal(renderInput().effectRevision, r0);
+
+  // A new setting starts it again, once.
+  await s.call('PUT', `/api/effects/${mine.id}`, { spec: { ...FADE, params: { cadence: 1 }, palette: ['#FF0000'], brightness: 0.5 } });
   assert.equal(renderInput().effectRevision, r0 + 1);
   assert.equal(renderInput().effectRevision, r0 + 1, 'once');
-  await s.call('PUT', `/api/effects/${mine.id}`, { spec: { ...FADE, palette: ['#FF0000'], brightness: 0.5 } });
-  assert.equal(renderInput().effectRevision, r0 + 2);
 
   // Deleted while on stage: the id stays, the effect goes.
   await s.call('DELETE', `/api/effects/${mine.id}`);
   assert.equal(state.pattern, mine.id);
   assert.equal(renderInput().effect, null);
-  assert.equal(renderInput().effectRevision, r0 + 3);
+  assert.equal(renderInput().effectRevision, r0 + 2);
 
   // An effect that goes and comes back between two frames still starts again: each change is counted as it happens.
   let spec = validateSpec(FADE);
@@ -557,11 +569,64 @@ test('the effect on stage starts again when its spec changes by value, goes or c
   spec = validateSpec(FADE);
   effectChanged();
   assert.equal(renderInput().effectRevision, r1 + 2);
-  // A rebuilt but equal spec is the same effect.
+  // A rebuilt but equal spec is the same effect, and so is one in other colours.
   spec = validateSpec(FADE);
+  effectChanged();
+  spec = validateSpec({ ...FADE, palette: ['#00FF00'] });
   effectChanged();
   assert.equal(renderInput().effectRevision, r1 + 2);
   setEffectSource((id) => s.effectLibrary.resolve(id));
+});
+
+// A palette or brightness edit to the preset on stage is the same effect
+// playing on, as the renderer keys it: its run, its state and a command sent
+// before the edit carry on, and the new colours and level show on the next
+// frame. A new setting or kind is a new effect.
+test('a colour or brightness edit to the preset on stage shows on the next frame and the effect plays on; a new setting starts it again', async (t) => {
+  const s = await serve(t);
+  const running = state.running;
+  t.after(() => applyPatch({ running }));
+  applyPatch({ running: true, masterDimmer: 255, masterBlackout: false });
+  const store = universes.createUniverseStore(universes.allocateShared());
+  const renderer = createRenderer({ profileOf: getProfile, profilesRevision, now: 0 });
+  let ms = 0;
+  // The engine's input for the look on stage, a frame at a time on one renderer, as the rig plays it.
+  const play = (frames) => Array.from({ length: frames }, () => {
+    ms += 1000 / 44;
+    const input = renderInput();
+    renderer.frame(input, { beatPos: ms / 500, bpm: 120, epoch: 0 }, ms, store);
+    return lampsOf(store, input);
+  });
+
+  const fade = s.effectLibrary.create({ name: 'Fade', spec: { ...FADE, palette: ['#00FF00', '#0000FF'] } });
+  applyPatch({ pattern: fade.id });
+  const revision = renderInput().effectRevision;
+  assert.ok(play(40).flat().some(([, g, b]) => g + b > 0), 'it plays in its own colours');
+
+  await s.call('PUT', `/api/effects/${fade.id}`, { spec: { ...FADE, palette: ['#FF0000'] } });
+  assert.equal(renderInput().effectRevision, revision, 'not started again');
+  const red = play(20).flat();
+  assert.ok(red.every(([, g, b]) => g === 0 && b === 0), 'the next frame on is in the new colour');
+  assert.ok(red.some(([r]) => r > 0), 'and lit');
+  await s.call('PUT', `/api/effects/${fade.id}`, { spec: { ...FADE, palette: ['#FF0000'], brightness: 0 } });
+  assert.equal(renderInput().effectRevision, revision);
+  assert.ok(play(20).flat().every((lamp) => lamp.every((v) => v === 0)), 'at brightness 0 it shows nothing from the next frame');
+
+  // A command meant for the effect before its colours changed still reaches it; one meant for it before it became another does not.
+  const studio = s.effectLibrary.create({ name: 'Swirl', spec: { kind: 'ldj.StudioSwirl', params: {}, palette: ['#00FF00'] } });
+  applyPatch({ pattern: studio.id });
+  play(5);
+  const before = baseIntentOf(renderInput());
+  await s.call('PUT', `/api/effects/${studio.id}`, { spec: { kind: 'ldj.StudioSwirl', params: {}, palette: ['#FF0000'], brightness: 0.5 } });
+  renderer.command(1, 'toggleDirection', undefined, before);
+  play(1);
+  assert.deepEqual(renderer.takeCommandResults(), [{ seq: 1, status: 'applied' }]);
+  const recoloured = baseIntentOf(renderInput());
+  await s.call('PUT', `/api/effects/${studio.id}`, { spec: { kind: 'ldj.StudioWave', params: {}, palette: ['#FF0000'] } });
+  assert.equal(renderInput().effectRevision, recoloured.revision + 1, 'another kind starts it again');
+  renderer.command(2, 'toggleDirection', undefined, recoloured);
+  play(1);
+  assert.deepEqual(renderer.takeCommandResults(), [{ seq: 2, status: 'stale' }]);
 });
 
 test('a Disco preset on stage runs the audio detectors on its own bands', async (t) => {

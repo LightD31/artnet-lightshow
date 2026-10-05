@@ -1052,8 +1052,9 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   library.effects.setAdmission((id: string, spec: EffectSpec) => {
     if (id === state.pattern) safety.requireAcknowledged(spec);
   });
-  // Every saved change: the effect on stage starts again if its own spec
-  // changed, and every page hears of it.
+  // Every saved change: the effect on stage starts again if its kind or
+  // settings changed (new colours or brightness play on), and every page
+  // hears of it.
   library.effects.onChange(() => {
     effectChanged();
     broadcast();
