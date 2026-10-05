@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { z } from 'zod';
 
 // The entry point registers every kind, so a stored spec validates against it.
-import { CATALOGUE, presetById } from '../shared/effects/index.ts';
+import { CATALOGUE, deepFreeze, presetById } from '../shared/effects/index.ts';
 import { validateSpec } from '../shared/effects/registry.ts';
 import { canonical } from '../shared/effects/layer.ts';
 import { PATTERN_FUNCS } from '../shared/patterns.ts';
@@ -52,14 +52,6 @@ function reserved(id: string): boolean {
 /** The id of a new record: a namespace no built-in uses, and 64 random bits. */
 export function newUserId(): string {
   return `user.${crypto.randomBytes(8).toString('hex')}`;
-}
-
-export function deepFreeze<T>(value: T): T {
-  if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
-    Object.freeze(value);
-    for (const child of Object.values(value)) deepFreeze(child);
-  }
-  return value;
 }
 
 /** The caller's own copy of a record: changing it changes nothing here. */

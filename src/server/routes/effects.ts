@@ -77,6 +77,13 @@ export function attachEffectRoutes(app: Express, ctx: RouteContext): void {
     res.json({ ok: true });
   });
 
+  // The list is GET /api/effects; GET /api/palettes stays the look palettes'.
+  app.get('/api/palettes/:id', (req, res) => {
+    const entry = palettes().get(req.params.id);
+    if (!entry) return res.status(404).json({ ok: false, error: 'No such palette' });
+    res.json({ ok: true, ...entry });
+  });
+
   app.post('/api/palettes', (req, res) => {
     res.status(201).json({ ok: true, palette: palettes().create(req.body ?? {}) });
   });

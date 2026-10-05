@@ -163,6 +163,12 @@ test('POST/PUT/DELETE round trip', async (t) => {
   assert.equal(res.status, 201);
   const { palette } = res.body;
   assert.deepEqual(palette.colours, ['#FF8800', { random: true }]);
+  res = await s.call('GET', `/api/palettes/${palette.id}`);
+  assert.deepEqual([res.status, res.body], [200, { ok: true, source: 'user', palette }]);
+  res = await s.call('GET', '/api/palettes/redCyan');
+  assert.deepEqual([res.status, res.body.source, res.body.palette], [200, 'builtin', json(BUILTIN_PALETTES.find((p) => p.id === 'redCyan'))]);
+  res = await s.call('GET', '/api/palettes/no-such-palette');
+  assert.deepEqual([res.status, res.body.ok], [404, false]);
   res = await s.call('PUT', `/api/palettes/${palette.id}`, { colours: ['#000000', '#FFFFFF'] });
   assert.deepEqual([res.status, res.body.palette.colours], [200, ['#000000', '#FFFFFF']]);
   res = await s.call('PUT', `/api/palettes/${palette.id}`, { colours: Array(9).fill('#FFFFFF') });
@@ -174,8 +180,27 @@ test('POST/PUT/DELETE round trip', async (t) => {
   res = await s.call('DELETE', `/api/palettes/${palette.id}`);
   assert.deepEqual([res.status, res.body], [200, { ok: true }]);
   assert.deepEqual(s.paletteStore.list(), []);
+  res = await s.call('GET', `/api/palettes/${palette.id}`);
+  assert.equal(res.status, 404);
   res = await s.call('POST', `/api/palette/${PALETTES[0].id}`);
   assert.equal(res.status, 200);
+});
+
+test('two edits sent at once both land, one after the other: the file holds the last, nothing is lost', async (t) => {
+  const s = await serve(t);
+  const preset = s.effectLibrary.create({ name: 'Fade', spec: FADE });
+  const before = s.effectLibrary.revision();
+  const answers = await Promise.all([
+    s.call('PUT', `/api/effects/${preset.id}`, { name: 'First', spec: { ...FADE, params: { cadence: 4 } } }),
+    s.call('PUT', `/api/effects/${preset.id}`, { name: 'Second', spec: { ...FADE, params: { cadence: 8 } } }),
+  ]);
+  assert.deepEqual(answers.map((a) => a.status), [200, 200]);
+  assert.equal(s.effectLibrary.revision(), before + 2);
+  const [saved] = s.effectLibrary.list().user;
+  assert.ok(['First', 'Second'].includes(saved.name));
+  assert.equal(saved.spec.params.cadence, saved.name === 'First' ? 4 : 8, 'one edit whole, never half of each');
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(s.dir, 'effects.json'), 'utf8')), { presets: [saved] });
+  assert.deepEqual(fs.readdirSync(s.dir).filter((f) => f.endsWith('.tmp')), []);
 });
 
 test('a full library is a 400; a disk that will not take the write is a 500, not the client\'s fault', async (t) => {

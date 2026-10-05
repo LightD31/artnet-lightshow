@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { PaletteStore, MAX_PALETTES } from '../../src/server/palette-store.ts';
+import { BUILTIN_PALETTES } from '../../src/shared/effects/index.ts';
 
 function place(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'palette-store-'));
@@ -82,6 +83,24 @@ test('create/update/remove; 9 colours refused; "random" entries kept', (t) => {
   assert.equal(heard, 5);
 });
 
+test('one palette by id, built-in or saved, as a copy', (t) => {
+  const { file } = place(t);
+  const store = new PaletteStore(file).load();
+  const saved = store.create({ name: 'Mine', colours: ['#FF0000', 'random'] });
+  assert.deepEqual(store.get(saved.id), { source: 'user', palette: saved });
+  const builtin = BUILTIN_PALETTES.find((p) => p.id === 'redCyan');
+  assert.deepEqual(store.get('redCyan'), { source: 'builtin', palette: JSON.parse(JSON.stringify(builtin)) });
+  assert.equal(store.get('no-such-palette'), null);
+
+  // Changing what came back changes nothing here, nor the built-in.
+  store.get(saved.id).palette.colours.push('#FFFFFF');
+  store.get('redCyan').palette.colours.push('#FFFFFF');
+  assert.deepEqual(store.get(saved.id).palette, saved);
+  assert.deepEqual(builtin.colours, ['#FF0000', '#00BFFF']);
+  store.remove(saved.id);
+  assert.equal(store.get(saved.id), null);
+});
+
 test('the 129th palette is refused', (t) => {
   const { file } = place(t);
   const store = new PaletteStore(file).load();
@@ -123,10 +142,12 @@ test('a file with a bad colour, a duplicate or built-in id, or too many palettes
     ['an unknown field', [{ ...good, createdAt: 'yesterday' }]],
   ];
   for (const [what, palettes] of cases) {
-    fs.writeFileSync(file, JSON.stringify({ palettes }));
+    const bytes = JSON.stringify({ palettes });
+    fs.writeFileSync(file, bytes);
     const store = new PaletteStore(file).load();
     assert.deepEqual(store.list(), [], what);
     assert.equal(invalidIn(dir).length, 1, what);
+    assert.equal(fs.readFileSync(path.join(dir, invalidIn(dir)[0]), 'utf8'), bytes, `${what}: recoverable`);
     for (const f of invalidIn(dir)) fs.rmSync(path.join(dir, f));
   }
 

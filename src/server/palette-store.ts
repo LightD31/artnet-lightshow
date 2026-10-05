@@ -1,12 +1,13 @@
 import { z } from 'zod';
 
-import { BUILTIN_PALETTES } from '../shared/effects/index.ts';
+import { BUILTIN_PALETTES, deepFreeze } from '../shared/effects/index.ts';
 import { parseHex, toHex } from '../shared/effects/palette.ts';
 import { canonical } from '../shared/effects/layer.ts';
-import { deepFreeze, newUserId, snapshot } from './effect-library.ts';
+import { newUserId, snapshot } from './effect-library.ts';
 import { validate } from './validation.ts';
 import { HttpError, messageOf } from '../errors.ts';
 import { JsonStore } from './json-store.ts';
+import type { BuiltinPalette } from '../shared/effects/ldj-palettes.ts';
 import type { PaletteEntry } from '../shared/effects/types.ts';
 
 /**
@@ -25,6 +26,9 @@ export const MAX_PALETTES = 128;
 const MAX_COLOURS = 8;
 
 export interface UserPalette { id: string; name: string; colours: PaletteEntry[] }
+
+/** One palette by id, and where it comes from. */
+export type PaletteLookup = { source: 'builtin'; palette: BuiltinPalette } | { source: 'user'; palette: UserPalette };
 
 const BUILTIN_IDS = new Set(BUILTIN_PALETTES.map((p) => p.id));
 
@@ -78,6 +82,14 @@ export class PaletteStore extends JsonStore {
   /** Every saved palette, as copies. */
   list(): UserPalette[] {
     return this._palettes.map(snapshot);
+  }
+
+  /** One palette as a copy: a built-in, else a saved one. */
+  get(id: string): PaletteLookup | null {
+    const builtin = BUILTIN_PALETTES.find((p) => p.id === id);
+    if (builtin) return { source: 'builtin', palette: snapshot(builtin) };
+    const saved = this._palettes.find((p) => p.id === id);
+    return saved ? { source: 'user', palette: snapshot(saved) } : null;
   }
 
   /** Called after every saved change; never for a refused, failed or empty one. */
