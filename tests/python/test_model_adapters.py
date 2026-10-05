@@ -146,34 +146,68 @@ class SKey(unittest.TestCase):
         # torchaudio 2.9+ routes `load` through torchcodec, which the ROCm
         # wheels do not ship; S-KEY's own loader then fails and every track
         # silently loses its key. The adapter reads the file itself.
+        #
+        # The fake is a module of its own, as S-KEY's key_detection is: its
+        # detect_key looks up `load_audio` and `print` in its module, which is
+        # where the adapter replaces both.
+        import io
         import types
         import numpy as np
         import soundfile as sf
         seen = {}
+        module = types.ModuleType('key_detection')
+        module.seen = seen
+        module.load_audio = MagicMock(side_effect=RuntimeError('torchcodec'))
+        exec(
+            "def detect_key(path, device='cpu'):\n"
+            "    seen['waveform'] = load_audio(path, 22050)\n"
+            "    print('\\n✅ Predicted key: A minor\\n')\n"
+            "    return ['A minor']\n",
+            module.__dict__)
 
-        def detect_key(path, device='cpu'):
-            import sys
-            seen['waveform'] = module.load_audio(path, 22050)
-            # S-KEY prints its answer with an emoji. On the real stdout that
-            # is the worker's protocol stream, and on Windows it raises.
-            if sys.stdout is sys.__stdout__:
-                raise UnicodeEncodeError('charmap', '✅', 0, 1, 'printed to the protocol stream')
-            print('✅ Predicted key: A minor')
-            return ['A minor']
+        class Console(io.StringIO):
+            # S-KEY's answer carries an emoji, and a Windows console's code
+            # page has none: printed there, it raises.
+            def write(self, text):
+                text.encode('cp1252')
+                return super().write(text)
 
-        module = types.SimpleNamespace(detect_key=detect_key,
-                                       load_audio=MagicMock(side_effect=RuntimeError('torchcodec')))
         with tempfile.TemporaryDirectory() as directory:
             path = str(Path(directory) / 'tone.wav')
             t = np.arange(44100) / 44100
             sf.write(path, np.stack([0.2 * np.sin(2 * np.pi * 440 * t), 0.1 * np.sin(2 * np.pi * 440 * t)], axis=1), 44100)
-            with patch.object(adapters, '_optional', return_value=module):
+            console = Console()
+            with patch.object(adapters, '_optional', return_value=module), \
+                 patch('sys.stdout', new=console):
                 result = adapters.skey_key(path)
         self.assertEqual(result, {'value': 'A minor', 'confidence': 1.0, 'source': 's-key'})
+        self.assertEqual(console.getvalue(), '')
         waveform = seen['waveform']
         self.assertEqual(tuple(waveform.shape[:1]), (1,))
         self.assertAlmostEqual(waveform.shape[1], 22050, delta=2)
         self.assertAlmostEqual(float(waveform.abs().max()), 1.0, places=5)
+
+
+class SKeyFailures(unittest.TestCase):
+    def test_a_failure_that_loses_the_key_is_logged(self):
+        # The pipeline falls back to its own key estimate, so a failed S-KEY
+        # pass changes nothing visible; the log is the only place it shows.
+        import io
+        import types
+
+        def detect_key(path, device='cpu'):
+            raise RuntimeError('torchcodec is not installed')
+
+        module = types.SimpleNamespace(detect_key=detect_key)
+        with patch.object(adapters, '_optional', return_value=module), \
+             patch('sys.stdout', new=io.StringIO()) as stdout, \
+             patch('sys.stderr', new=io.StringIO()) as stderr:
+            result = adapters.skey_key('track.wav')
+        self.assertIsNone(result)
+        self.assertIn('S-KEY', stderr.getvalue())
+        self.assertIn('RuntimeError: torchcodec is not installed', stderr.getvalue())
+        self.assertNotIn('track.wav', stderr.getvalue())
+        self.assertEqual(stdout.getvalue(), '')
 
 
 class Miopen(unittest.TestCase):

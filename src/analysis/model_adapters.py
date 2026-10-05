@@ -386,5 +386,9 @@ def skey_key(audio_path: str, samples=None, sample_rate=None):
         result = module.detect_key(audio_path, device=os.environ.get('ARTNET_ANALYSIS_DEVICE', 'cpu'))
         value = result[0] if isinstance(result, list) else result
         return {"value": str(value), "confidence": 1.0, "source": "s-key"}
-    except Exception:
+    except Exception as exc:
+        # Returning None keeps the internal key estimate, so without this line
+        # a broken S-KEY looks exactly like a working one.
+        print(f"[models] S-KEY unavailable ({type(exc).__name__}: {exc}); "
+              "keeping the internal key estimate", file=sys.stderr)
         return None
