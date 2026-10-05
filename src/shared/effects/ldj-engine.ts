@@ -244,7 +244,8 @@ export function ldjChannels(room: Room, selector: LdjChannels, paletteCount = 1)
   return assigned;
 }
 
-export interface LdjParams { cadence: number; beats?: number; speed?: number }
+/** `iterations` makes a row finite (a macro's single pulse, Flip's four updates): callbacks 0..iterations−1, then only its lamps' tails. */
+export interface LdjParams { cadence: number; beats?: number; speed?: number; iterations?: number }
 interface RowTiming { originMs: number; lastMs: number; lastBeat: number; nextDueMs: number; nextIter: number }
 export interface LdjState {
   lamps: LdjLamps; lastIter: number | null; lastPick: number | null; recent: number[]; perm: number[] | null; roll: number;
@@ -267,7 +268,10 @@ export interface LdjRow {
   outputColour?(ctx: LdjCtx, slot: number, lamp: { colour: Colour; bri: number }): Colour;
 }
 
-const paramsSchema = z.object({ cadence: z.number().min(MIN_CADENCE), beats: z.number().positive().optional(), speed: z.number().positive().optional() });
+/** Positive safe integers only; omitted, a row calls back for as long as it runs. */
+export const ldjIterationsSchema = z.number().int().positive().optional();
+const paramsSchema = z.object({ cadence: z.number().min(MIN_CADENCE), beats: z.number().positive().optional(), speed: z.number().positive().optional(),
+  iterations: ldjIterationsSchema });
 
 export function makeLdjKind(name: string, row: LdjRow): EffectKindDef<LdjParams, LdjState> {
   return {
@@ -280,13 +284,21 @@ export function makeLdjKind(name: string, row: LdjRow): EffectKindDef<LdjParams,
       if (!Number.isFinite(frame.nowMs)) throw new RangeError('Light DJ clock time must be finite');
       if (frame.paletteAccess) state.lamps.resolveColours(frame.paletteAccess);
       if (state.lastIter !== null) clockIteration(state.lastIter);
+      if (params.iterations !== undefined && !(Number.isSafeInteger(params.iterations) && params.iterations > 0)) {
+        throw new RangeError('Light DJ iterations must be a positive safe integer');
+      }
+      const limit = params.iterations ?? Infinity, finite = limit !== Infinity;
       const first = !state.timing;
       const originMs = frame.startedAtMs ?? state.timing?.originMs ?? frame.nowMs;
       const clock = row.cadence === 'wall:50'
         ? wallClock(frame.nowMs - originMs, 50, state.lastIter)
         : stepClock(frame.beatPos - frame.anchorBeat, params.cadence, frame.bpm, state.lastIter);
+      // Where a callback falls on a cold render, at the current tempo for musical rows.
+      const dueOf = (iter: number) => row.cadence === 'wall:50' ? originMs + iter * 50
+        : frame.nowMs - (frame.beatPos - frame.anchorBeat - iter * params.cadence) * 60000 / tempo(frame.bpm);
       if (!state.timing) {
-        const lastMs = row.nextDelayMs ? originMs : frame.nowMs - clock.phase * clock.stepMs;
+        // A cold finite row starts its lamps at its first callback, to replay them all.
+        const lastMs = row.nextDelayMs ? originMs : finite && clock.iter >= 0 ? dueOf(0) : frame.nowMs - clock.phase * clock.stepMs;
         state.timing = { originMs, lastMs, lastBeat: frame.beatPos, nextDueMs: originMs, nextIter: 0 };
       }
       const timing = state.timing;
@@ -318,7 +330,7 @@ export function makeLdjKind(name: string, row: LdjRow): EffectKindDef<LdjParams,
         state.lastIter = iter;
       };
       if (row.nextDelayMs) {
-        while (timing.nextDueMs <= frame.nowMs) {
+        while (timing.nextIter < limit && timing.nextDueMs <= frame.nowMs) {
           emit(timing.nextIter, timing.nextDueMs);
           const delay = row.nextDelayMs(ctx);
           if (!Number.isFinite(delay) || delay <= 0) throw new RangeError('Light DJ row delay must be finite and positive');
@@ -327,17 +339,22 @@ export function makeLdjKind(name: string, row: LdjRow): EffectKindDef<LdjParams,
           timing.nextDueMs = next;
           timing.nextIter++;
         }
-      } else if (first) emit(clock.iter, cursorMs);
-      else if (clock.iter > (state.lastIter ?? clock.iter)) {
+      } else if (first && !finite) emit(clock.iter, cursorMs);
+      else if (first) {
+        // Every callback so far, in order, so a late first render shows the
+        // same tail as rendering every frame would have.
+        for (let iter = 0; iter <= Math.min(clock.iter, limit - 1); iter++) emit(iter, Math.max(cursorMs, dueOf(iter)));
+      } else if (clock.iter > (state.lastIter ?? (finite ? -1 : clock.iter))) {
         // Beat boundaries interpolate the conductor's consecutive samples;
         // a tap does not move an existing lamp fade or its integer iteration.
-        for (let iter = state.lastIter! + 1; iter <= clock.iter; iter++) {
+        // A finite row that has not started yet starts at callback 0.
+        for (let iter = (state.lastIter ?? -1) + 1; iter <= Math.min(clock.iter, limit - 1); iter++) {
           const fraction = (frame.anchorBeat + iter * params.cadence - timing.lastBeat) / (frame.beatPos - timing.lastBeat);
           const due = row.cadence === 'wall:50' ? originMs + iter * 50
             : timing.lastMs + Math.max(0, Math.min(1, fraction)) * (frame.nowMs - timing.lastMs);
           emit(iter, Math.max(cursorMs, Math.min(frame.nowMs, due)));
         }
-      } else if (clock.changed) emit(clock.iter, frame.nowMs);
+      } else if (clock.changed && (!finite || (clock.iter >= 0 && clock.iter < limit))) emit(clock.iter, frame.nowMs);
       advanceTo(frame.nowMs);
       timing.lastMs = frame.nowMs;
       timing.lastBeat = frame.beatPos;

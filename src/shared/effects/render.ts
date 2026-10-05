@@ -16,7 +16,8 @@ export function renderEffect(inst: EffectInstance, frame: FrameBase & { roll?: n
   if (!def || (requiresAcknowledgement(inst.spec) && !frame.acknowledged)) return;
   const prepared = stepper.palette(inst.id, inst.spec, frame.nowMs);
   const initialRoll = frame.roll ?? 0;
-  const f: EffectFrame = { ...frame, spec: inst.spec, seed: inst.seed, anchorBeat: inst.anchorBeat, startedAtMs: inst.startedAtMs, palette: [], roll: initialRoll };
+  const f: EffectFrame = { ...frame, spec: inst.spec, seed: inst.seed, anchorBeat: inst.anchorBeat, startedAtMs: inst.startedAtMs, instanceId: inst.id,
+    palette: [], roll: initialRoll };
   const paletteAt = (roll: number) => resolvePalette(inst.spec, frame.paletteOverride, frame.lookPalette, inst.seed, roll, prepared);
   const state = stepper.get(inst.id, () => {
     // Initialization can read the palette; a kind's own roll becomes available

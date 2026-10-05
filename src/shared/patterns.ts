@@ -1,5 +1,5 @@
 import { colourMixer } from './color.ts';
-import { HUE_PULSE_MS, HUE_PULSE_FLOOR, huePulseLevel } from './look-math.ts';
+import { HOLD_STROBE_MAX_HZ, HUE_PULSE_MS, HUE_PULSE_FLOOR, huePulseLevel } from './look-math.ts';
 import { roomOf, xOf, yOf } from './room.ts';
 import type { StagePlan } from './rig.ts';
 import type { Colour, Expression, PulseReading } from '../types/rig.ts';
@@ -1035,8 +1035,8 @@ function kitFromTheClock(ctx: PatternContext): { kick: number; snare: number; ha
 // lamp is flashed more than five times a second; a Hue lamp is never flashed
 // at all, but takes each flash as the colour at full falling to a floor.
 
-/** No lamp flashes faster than this, whatever the division (the party apps' cap). */
-const MAX_LAMP_FLASH_HZ = 5;
+/** No lamp flashes faster than this, whatever the division (the party apps' cap); the hold strobe's cap, one constant. */
+const MAX_LAMP_FLASH_HZ = HOLD_STROBE_MAX_HZ;
 /** What the lamps a backlit effect is not on are parked at, in colour B. */
 const BACKLIGHT = 120;
 

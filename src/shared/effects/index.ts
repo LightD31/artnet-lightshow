@@ -10,3 +10,6 @@ import './ldj-matrix.ts';
 import './ldj-studio.ts';
 import './ldj-bitmap.ts';
 import './ldj-visualizer.ts';
+import './energy.ts';
+import './strobe.ts';
+import './macro.ts';

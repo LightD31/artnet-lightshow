@@ -78,6 +78,10 @@ export interface EffectFrame {
   fixtureIds?: readonly (number | string)[];
   /** A manual strobe (hold, burst or latch) runs: Disco's automatic strobe stands down. Absent: false. */
   manualStrobeActive?: boolean;
+  /** The look's smoothed expression level, 0..1, which energy.glow rides on its own curve. Absent: 1. */
+  expressionLevel?: number;
+  /** The rendering instance's id, filled by renderEffect; a macro names its steps' states after it. */
+  instanceId?: string;
 }
 /** What callers hand renderEffect; it fills in the rest per instance. */
 export type FrameBase = Omit<EffectFrame, 'spec' | 'palette' | 'roll'>;
