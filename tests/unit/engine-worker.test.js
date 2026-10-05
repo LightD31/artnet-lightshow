@@ -20,6 +20,7 @@ import { applyPatch } from '../../src/server/patch.ts';
 import { getProfile, profilesRevision, registerProfile, unregisterProfile } from '../../src/server/profiles.ts';
 import { barProfile } from '../../src/server/bar-profile.ts';
 import { FRAME_MS } from '../../src/server/frame-clock.ts';
+import { acknowledgeFlashes } from '../helpers/acknowledged.js';
 
 const WORKER = path.join(import.meta.dirname, '..', '..', 'src', 'server', 'engine-worker.ts');
 
@@ -317,6 +318,34 @@ test('a command a driver took with it is reported unavailable, never sent on, an
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const lit = () => Array.from(universes.getBuffer(state.artnet.universe)).some((v) => v > 0);
+
+test('a command the main thread had not rendered when the engine stopped is reported unavailable and never applied later', async () => {
+  state.artnet.enabled = false;
+  const restore = acknowledgeFlashes();
+  const studio = { kind: 'ldj.StudioSwirl', params: {} };
+  setEffectSource((pattern) => (pattern === 'studio' ? studio : null));
+  applyPatch({ pattern: 'studio', running: true, masterDimmer: 255, masterBlackout: false });
+  try {
+    startEngine({ thread: 'main' });
+    await wait(100);
+    const before = engineStatus().commands;
+    // Sent and stopped before the next frame: the stop decides it, no frame does.
+    const pending = effectCommand('toggleDirection');
+    const stopped = stopEngine();
+    assert.deepStrictEqual(await pending, { seq: before.submitted + 1, status: 'unavailable' });
+    await stopped;
+    // The next driver on this thread starts its effects afresh, and the command stays undone.
+    startEngine({ thread: 'main' });
+    await wait(150);
+    assert.strictEqual(engineStatus().commands.applied, before.applied, 'a command reported unavailable is never applied afterwards');
+    // A command sent now is the new driver's, and lands.
+    assert.deepStrictEqual(await effectCommand('toggleDirection'), { seq: before.submitted + 2, status: 'applied' });
+  } finally {
+    await stopEngine();
+    setEffectSource(null);
+    restore();
+  }
+});
 
 test('with a worker, frames land in memory the main thread reads', async () => {
   state.artnet.enabled = false;

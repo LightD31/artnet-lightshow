@@ -27,11 +27,12 @@
 import { parentPort, workerData } from 'node:worker_threads';
 
 import { createRenderer } from './renderer.ts';
-import { createUniverseStore } from './universes.ts';
+import { allocateShared, createUniverseStore } from './universes.ts';
 import { createTransmitter } from './transmit.ts';
 import { createTicker, hrtimeMs, FRAME_MS } from './frame-clock.ts';
 import { createClockFollower } from './clock-follow.ts';
-import { getProfile, profilesRevision, registerProfile, clearNonBuiltinProfiles } from './profiles.ts';
+import { getProfile, profilesRevision, registerProfile, clearNonBuiltinProfiles, BUILTIN_PROFILE_ID, HUE_COLOR_PROFILE_ID } from './profiles.ts';
+import { HOLD_STROBE } from '../shared/look-math.ts';
 import { guarded } from './guard.ts';
 import type { MusicalTime } from './conductor.ts';
 import type { EngineWorkerData, FromWorker, RenderedFrames, ToWorker } from './engine-messages.ts';
@@ -71,6 +72,34 @@ const renderer = createRenderer({
   now: typeof startNow === 'number' && Number.isFinite(startNow) ? startNow : hrtimeMs(),
 });
 const follow = createClockFollower();
+
+/**
+ * A few frames of the energy burst and the hold strobe on a small rig of its
+ * own, before the first deadline: the first frame to play one otherwise
+ * compiles the effects' code on the clock, which on a large rig ran past a
+ * whole frame. Its own renderer and buffers; nothing is sent or posted.
+ */
+function warmUp(): void {
+  const scratch = createUniverseStore(allocateShared());
+  const warm = createRenderer({ profileOf: getProfile, profilesRevision, now: 0 });
+  const par = (id: number) => ({ id, address: 1 + 12 * id, universe: 0, profileId: BUILTIN_PROFILE_ID, maxBrightness: 255, override: null,
+    position: { x: 20 + 20 * id, y: 40 }, group: null, geometry: null, hue: false });
+  const fixtures = [par(0), par(1), par(2), { ...par(3), profileId: HUE_COLOR_PROFILE_ID, hue: true }];
+  const look: RenderInput = {
+    running: true, pattern: 'chase', colorA: 0, colorB: 5, colorC: 3, colorD: 8, split: null, pixelMap: 'stage', beatDivision: 1,
+    strobeSpeed: 0, strobeFunction: 'standard', masterDimmer: 255, masterBlackout: false, energy: null, showDynamics: null,
+    patternAnchor: null, fade: null, syncTest: null, universes: [0], fixtures, safety: { hdFlashIntervalMs: 350, acknowledged: true },
+  };
+  let now = 0;
+  for (const energy of [null, 'blinder', HOLD_STROBE, 'white-strobe']) {
+    for (const hueStrobe of ['flash', 'pulse'] as const) {
+      for (let k = 0; k < 2; k++) {
+        warm.frame({ ...look, energy, hueStrobe }, { beatPos: now / 500, bpm: 120, source: 'tap', epoch: 0 }, now, scratch, 0);
+        now += FRAME_MS;
+      }
+    }
+  }
+}
 
 let snapshot: { input: RenderInput; outputs: TransmitConfig } | null = null;   // from the main thread
 let lastStatsAt = -Infinity;
@@ -175,6 +204,8 @@ port.on('message', guarded('engine-worker', (msg: ToWorker | null) => {
 }));
 
 if (!capture) {
+  // A failed warm-up costs only a cold first frame.
+  try { warmUp(); } catch { /* nothing to undo: it touched only its own renderer */ }
   ticker = createTicker({ onTick: guarded('render', renderTick), periodMs, epochMs });
   ticker.start();
 }

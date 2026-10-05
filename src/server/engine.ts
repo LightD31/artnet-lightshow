@@ -570,6 +570,10 @@ function stopEngine(): Promise<void> {
   lastPosted = null;
   mainGridOrigin = undefined;
   failPendingCommands();
+  // What this thread's renderer still holds was just reported unavailable:
+  // decided so here, so the next driver's first frame never applies it.
+  renderer.rejectCommands('unavailable');
+  renderer.takeCommandResults();
   clock = () => performance.now();
 
   if (!w) {

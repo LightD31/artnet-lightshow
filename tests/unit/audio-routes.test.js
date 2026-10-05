@@ -331,6 +331,24 @@ test('the detectors take the base look\'s effect, validated, when the photosensi
   }
 });
 
+// What the operator sets to see the strobes and to keep Hue lamps pulsing:
+// the engine reads both from the settings on every frame.
+test('the engine takes the acknowledgement and the Hue strobe from the settings, as PUT /api/settings sets them', async () => {
+  const s = await serve();
+  try {
+    const flashLimit = settings.get('safety.flashLimit');
+    assert.deepStrictEqual([renderInput().safety, renderInput().hueStrobe], [{ hdFlashIntervalMs: 350, acknowledged: false }, 'flash'], 'the defaults');
+    const res = await s.call('PUT', '/api/settings', { safety: { photosensitivityAcknowledged: true }, hue: { strobe: 'pulse' } });
+    assert.strictEqual(res.status, 200, res.body.error);
+    assert.deepStrictEqual(res.body.changed.sort(), ['hue.strobe', 'safety.photosensitivityAcknowledged']);
+    assert.ok(!res.body.pendingRestart.some((key) => key.startsWith('safety.') || key.startsWith('hue.')), 'no restart: the next frame reads them');
+    assert.deepStrictEqual([renderInput().safety, renderInput().hueStrobe], [{ hdFlashIntervalMs: 350, acknowledged: true }, 'pulse']);
+    assert.strictEqual(settings.get('safety.flashLimit'), flashLimit, 'the rest of the group stays');
+  } finally {
+    await s.close();
+  }
+});
+
 test('a hand-built render input reads as no audio, tempo and the master\'s defaults; what the engine passes stands', () => {
   const PAR = { id: 0, address: 1, universe: 0, profileId: BUILTIN_PROFILE_ID, maxBrightness: 255, override: null,
     position: null, group: null, geometry: null, hue: false };
