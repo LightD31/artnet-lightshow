@@ -39,7 +39,8 @@
 // a moment between two frames is rendered on a copy of the frame before it,
 // which is then thrown away, so how often the browser asks never changes
 // what the rehearsal shows. Asked for an earlier moment, it starts again from
-// the scene (or seek) before it.
+// the nearest copy of the walk at or before it: one kept at each scene and
+// seek, and the most recently used of those kept every second.
 import { PATTERN_FUNCS, paletteOf } from './patterns.ts';
 import { renderLayer } from './layer.ts';
 import { buildRig, isHueLamp, rigSignature } from './rig.ts';
@@ -193,6 +194,14 @@ const SLACK_MS = 1e-6;
 const gridTime = (k: number): number => k * FRAME_MS;
 /** The last frame of the grid at or before `ms`. */
 const frameAt = (ms: number): number => Math.floor((ms + SLACK_MS) / FRAME_MS);
+// A copy of the walk every second of frames, so going back replays at most a
+// second. A copy holds every kind's state (about 0.6 MB on 1024 cells for the
+// heaviest), so only the most recently used are kept, and a long walk keeps
+// only those near its end.
+const CHECKPOINT_FRAMES = 44;
+const CHECKPOINTS = 16;
+// A copy costs about five frames' stepping: a walk moves to one ahead of it only when that saves more.
+const COPY_FRAMES = 8;
 
 /** What a stepped frame does with an event once it is due. */
 type EventOp = { kind: 'voice'; voice: VoiceFrame } | { kind: 'end'; id: string } | { kind: 'seek' } | null;
@@ -351,6 +360,9 @@ function copyWalk(w: Walk): Walk {
     shown: [...w.shown],
   };
 }
+
+/** A copy of the walk to start from again: a scene's or a seek's for good, a periodic one while it is used. */
+interface Checkpoint { walk: Walk; periodic: boolean; used: number }
 
 const emptyWalk = (k: number, intervalMs: number): Walk => ({
   k, cursor: 0, stepper: new EffectStepper(), guard: new HdFlashGuard(intervalMs), expression: { ...EXPRESSION_REST }, phase: 0,
@@ -596,10 +608,12 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
 
   let env: Env | null = null;
   // The canonical frames: the walk as far as it has gone, the copies taken
-  // at each scene and seek it passed (never changed), and the last moment
-  // between two frames asked for.
+  // on the way (never changed; in frame order), and the last moment between
+  // two frames asked for.
   let walk: Walk | null = null;
-  let keyframes: Walk[] = [];
+  let checkpoints: Checkpoint[] = [];
+  let periodicCount = 0;
+  let uses = 0;
   let tail: { positionMs: number; output: Colour[] } | null = null;
   const firstFrame = timeline.length ? Math.ceil((timeline[0].timeMs - SLACK_MS) / FRAME_MS) : 0;
 
@@ -616,7 +630,7 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
     }
     if (!(explicitVoices || anyEffect)) {
       // Nothing steps: answered straight from the timeline, nothing kept.
-      if (env) { env = null; walk = null; keyframes = []; tail = null; }
+      if (env) { env = null; forgetHistory(); }
       return { key: '', stepped: false, fixtures, presets, rig, specs, hue: fixtures.map(isHueLamp), cells: new Map() };
     }
     const key = `${effectsKey}\n${fixturesContent(fixtures)}\n${rigContent(rig)}\n${presets.map(contentOf).join(',')}`;
@@ -626,10 +640,15 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
       return env;
     }
     env = { key, stepped: true, fixtures, presets, rig, specs, hue: fixtures.map(isHueLamp), cells: new Map() };
-    walk = null;
-    keyframes = [];
-    tail = null;
+    forgetHistory();
     return env;
+  }
+
+  function forgetHistory(): void {
+    walk = null;
+    checkpoints = [];
+    periodicCount = 0;
+    tail = null;
   }
 
   /** A layout's cells with their current fixture ids and Hue flags, as renderer.ts effectCells. */
@@ -864,37 +883,71 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
     return out;
   }
 
-  /** The keyframe to start from for frame `k`: the last one at or before it. */
-  function keyframeBefore(k: number): Walk {
-    let lo = 0, hi = keyframes.length;
+  /** Where the checkpoint of frame `k` is, or would go: the first index past every one at or before it. */
+  function checkpointIndex(k: number): number {
+    let lo = 0, hi = checkpoints.length;
     while (lo < hi) {
       const mid = (lo + hi) >>> 1;
-      if (keyframes[mid].k <= k) lo = mid + 1; else hi = mid;
+      if (checkpoints[mid].walk.k <= k) lo = mid + 1; else hi = mid;
     }
-    return keyframes[lo - 1];
+    return lo;
+  }
+
+  /**
+   * The checkpoint to start from for frame `k`: the last one at or before
+   * it, and before it when its lights are asked for and that copy has none.
+   */
+  function checkpointBefore(k: number, lights: boolean): Checkpoint {
+    let i = checkpointIndex(k) - 1;
+    const c = checkpoints[i];
+    if (c.walk.k === k && lights && !c.walk.output) i--;
+    return checkpoints[i];
+  }
+
+  /** Keep a copy of the walk as it stands, unless one of its frame is kept already (which counts as used). */
+  function keep(w: Walk, periodic: boolean): void {
+    const at = checkpointIndex(w.k);
+    const kept = checkpoints[at - 1];
+    if (kept?.walk.k === w.k) { kept.used = ++uses; return; }
+    checkpoints.splice(at, 0, { walk: copyWalk(w), periodic, used: ++uses });
+    if (!periodic || ++periodicCount <= CHECKPOINTS) return;
+    // Too many kept every second: the one used longest ago goes.
+    let oldest = -1;
+    for (let i = 0; i < checkpoints.length; i++) {
+      if (checkpoints[i].periodic && (oldest < 0 || checkpoints[i].used < checkpoints[oldest].used)) oldest = i;
+    }
+    checkpoints.splice(oldest, 1);
+    periodicCount--;
   }
 
   /**
    * The canonical walk at frame `k` (not before the one before the
-   * timeline's first frame), with that frame's lights when `lights` asks.
+   * timeline's first frame). The walk renders the lights of the frame it
+   * stops on; a copy it starts from may have none, and `lights` asks for them.
    */
   function walkTo(k: number, e: Env, lights: boolean): Walk {
-    if (!keyframes.length) keyframes.push(emptyWalk(firstFrame - 1, intervalMs));
+    if (!checkpoints.length) checkpoints.push({ walk: emptyWalk(firstFrame - 1, intervalMs), periodic: false, used: 0 });
     if (walk && walk.k === k && (walk.output || !lights)) return walk;
-    // A copy is the state after its frame: to see frame k, start before it.
-    const from = keyframeBefore(lights ? k - 1 : k);
-    // Back in time, or a scene's copy nearer than the walk: start from the copy.
-    if (!walk || walk.k > k || (walk.k === k && lights) || from.k > walk.k) walk = copyWalk(from);
+    // A copy is the state after its frame: to see a frame it has no lights for, start before it.
+    const from = checkpointBefore(k, lights);
+    // Back in time, or a copy far enough ahead of the walk: start from the copy.
+    if (!walk || walk.k > k || (walk.k === k && lights) || from.walk.k > walk.k + COPY_FRAMES) {
+      walk = copyWalk(from.walk);
+      from.used = ++uses;
+    }
     while (walk.k < k) {
       const next = walk.k + 1;
       const t = gridTime(next);
       // Before a frame that launches the base again, keep a copy to come back to.
-      let launches = false;
-      for (let i = walk.cursor; i < timeline.length && timeline[i].timeMs <= t + SLACK_MS; i++) if (keyframe[i]) { launches = true; break; }
-      if (launches && keyframes[keyframes.length - 1].k < walk.k) keyframes.push(copyWalk(walk));
+      for (let i = walk.cursor; i < timeline.length && timeline[i].timeMs <= t + SLACK_MS; i++) {
+        if (keyframe[i]) { keep(walk, false); break; }
+      }
       advance(walk, t);
-      walk.output = render(walk, t, e, lights && next === k);
+      // A second's frame is kept with its lights, so that frame can be shown from it.
+      const periodic = next % CHECKPOINT_FRAMES === 0 && k - next < CHECKPOINTS * CHECKPOINT_FRAMES;
+      walk.output = render(walk, t, e, next === k || periodic);
       walk.k = next;
+      if (periodic) keep(walk, true);
     }
     return walk;
   }
@@ -902,7 +955,8 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
   /** The stepped timeline at `positionMs`. */
   function sampleStepped(positionMs: number, e: Env): Colour[] {
     const k = frameAt(positionMs);
-    if (Math.abs(positionMs - gridTime(k)) <= SLACK_MS) return copyOut(walkTo(k, e, true).output!);
+    // A frame of the grid, from the first on; anything else renders on a copy.
+    if (k >= firstFrame && Math.abs(positionMs - gridTime(k)) <= SLACK_MS) return copyOut(walkTo(k, e, true).output!);
     if (tail && tail.positionMs === positionMs) return copyOut(tail.output);
     // Between two frames: the frame before, then this moment on a copy that is thrown away.
     const copy = copyWalk(walkTo(Math.max(k, firstFrame - 1), e, false));

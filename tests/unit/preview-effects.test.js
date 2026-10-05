@@ -42,11 +42,14 @@ const BLINDER = preset('energy.blinder');
 // The catalogue as the browser resolves a pattern id, and a few looks of the tests' own.
 // A kind that counts its frames: its red is how many renders its state has
 // seen, its green the launch time it was handed (whole ms, mod 256).
+// probeRenders counts every render of it, kept or thrown away.
 let probeInits = 0;
+let probeRenders = 0;
 registerKind({
   kind: 'test.previewProbe', app: 'own', schema: z.object({}).strict(), defaults: { params: {} }, stateful: true,
   init: () => { probeInits++; return { renders: 0 }; },
   render(_params, state, room, frame, out) {
+    probeRenders++;
     state.renders++;
     const g = Math.round(frame.startedAtMs ?? 0) % 256;
     for (let i = 0; i < room.n; i++) out[i] = { colour: { r: state.renders % 256, g, b: 0, w: 0, a: 0, uv: 0 }, level: 1, strength: 1 };
@@ -206,6 +209,111 @@ test('a seek keyframe resets the instance states', () => {
   assert.deepStrictEqual(times.map((t, i) => i).filter((i) => times[i] < 500).map((i) => preview[i]),
     times.map((t, i) => i).filter((i) => times[i] < 500).map((i) => unseeked[i]), 'nothing changes before the seek');
   assert.ok(after.some((i) => key(preview[i][1]) !== key(unseeked[i][1])), 'the base starts again at the seek');
+});
+
+test('a seek after a scene part way into the track puts a voice on the scene\'s beat, as the rig does', () => {
+  // Beats from 200 ms, so the scene at 2300 ms is on beat 4.2 and the voice launched on 4.622.
+  const beats = Array.from({ length: 40 }, (_, i) => 0.2 + i * 0.5);
+  const grid = makeGrid(beats);
+  const wave = preset('ldj.BigRoomWave');
+  const targets = [PARS[0].id, PARS[3].id];
+  const events = [
+    { timeMs: 0, action: 'patch', data: { pattern: 'solid', ...LOOK } },
+    { timeMs: 2300, action: 'patch', data: { pattern: 'ldj.FadeCycle', beatDivision: 2 } },
+    { timeMs: 2511, action: 'voice', data: { id: 'pad:w', effect: wave, targets, tier: 'voice', launchSeq: 1 } },
+    { timeMs: 3700, action: 'seek' },
+  ];
+  const sceneBeat = beatPositionAt(grid, 2300);
+  const times = frames(0, 6000);
+  const rig = rigRun(RIG, times, (t) => ({
+    ...(t < 2300 ? { pattern: 'solid', patternAnchor: { step: anchorStep(beatPositionAt(grid, 0)), epoch: 0 } } : {
+      pattern: 'ldj.FadeCycle', effect: FADE, beatDivision: 2, patternAnchor: { step: anchorStep(sceneBeat, 2), epoch: 0 } }),
+    voices: t >= 2511 ? [voice('pad:w', wave, { targets, startedAtMs: 2511, anchorBeat: beatPositionAt(grid, 2511) })] : [],
+    // After the jump the rig counts from the beat the running scene was scheduled on.
+    reading: { beatPos: beatPositionAt(grid, t), bpm: localBpm(grid, t), epoch: t >= 3700 - 1e-6 ? 1 : 0,
+      anchorBeat: t >= 2300 ? sceneBeat : beatPositionAt(grid, 0) },
+  }));
+  const preview = previewRun(createPreviewSampler(events, { beats }, { resolveEffect }), RIG, times);
+  assertSame(rig, preview, times);
+  const unseeked = previewRun(createPreviewSampler(events.slice(0, 3), { beats }, { resolveEffect }), RIG, times);
+  assert.ok(times.some((t, i) => t >= 3700 && key(preview[i][0]) !== key(unseeked[i][0])), 'the voice re-anchors at the seek');
+});
+
+// ── Going back ──────────────────────────────────────────────────────────────
+
+// Free clock at the timeline's 120 BPM: these timelines run longer than GRID.
+const LONG = [
+  { timeMs: 0, action: 'patch', data: { pattern: 'ldj.FadeCycle', ...LOOK } },
+  { timeMs: 0, action: 'voice', data: { id: 'count', effect: OWN.probe, targets: [PARS[3].id], tier: 'voice', launchSeq: 1 } },
+  { timeMs: 3000, action: 'voice', data: { id: 'pad:t', effect: OWN.twinkle8, targets: [PARS[0].id, LAMP.id], tier: 'voice', launchSeq: 2, durationMs: 9000 } },
+  { timeMs: 6100, action: 'patch', data: { colorA: 3, fadeMs: 2000 } },
+  { timeMs: 9000, action: 'seek' },
+  { timeMs: 40000, action: 'patch', data: { pattern: 'ldj.StrobeCycle' } },
+];
+
+test('going back within the last 16 s walked replays at most a second of frames, from a copy kept on the way, and shows what a fresh sampler shows', () => {
+  const r = buildRig(RIG, getProfile);
+  const options = { resolveEffect, safety: ACK };
+  const sample = createPreviewSampler(LONG, null, options);
+  const fresh = (t) => createPreviewSampler(LONG, null, options)(t, RIG, COLOR_PRESETS, r);
+  sample(16000, RIG, COLOR_PRESETS, r);
+  // A second back at a time, on the grid and between frames, across the fade, the seek and the twinkle's flash limit.
+  for (let t = 15500; t >= 500; t -= 1000 + 1 / 3) {
+    const before = probeRenders;
+    const out = sample(t, RIG, COLOR_PRESETS, r);
+    // The probe voice renders once a frame: a second's frames, and one for a moment between two.
+    assert.ok(probeRenders - before <= 46, `${probeRenders - before} renders to go back to ${t}`);
+    assert.deepStrictEqual(out, fresh(t), `at ${t}`);
+  }
+  // A whole second's frame is kept with its lights: shown from its copy, nothing rendered.
+  const before = probeRenders;
+  const second = sample(10000, RIG, COLOR_PRESETS, r);
+  assert.strictEqual(probeRenders - before, 0);
+  assert.deepStrictEqual(second, fresh(10000));
+});
+
+test('the copies kept every second are the 16 most recently used, and a sampler that jumps about still shows what a fresh one shows', () => {
+  const r = buildRig(RIG, getProfile);
+  const options = { resolveEffect, safety: ACK };
+  const renders = (sample, t) => { const before = probeRenders; sample(t, RIG, COLOR_PRESETS, r); return probeRenders - before; };
+  // A walk to 70 s keeps the seconds from 55 s on, and going back to 55.5 s uses the copy at 55 s.
+  // The walk to 3 s keeps 0–3 s: the four copies used longest ago, 56–59 s, give way.
+  const bounded = createPreviewSampler(LONG, null, options);
+  bounded(70000, RIG, COLOR_PRESETS, r);
+  assert.ok(renders(bounded, 55500) <= 23, 'from the copy at 55 s');
+  bounded(3000, RIG, COLOR_PRESETS, r);
+  assert.ok(renders(bounded, 60500) <= 23, 'from the copy at 60 s');
+  assert.ok(renders(bounded, 55600) <= 28, 'the copy at 55 s was used lately: kept');
+  assert.ok(renders(bounded, 59500) > 100, 'the copies at 56–59 s are gone: from the one at 55 s');
+  // Far enough apart that copies keep giving way to newer ones.
+  const sample = createPreviewSampler(LONG, null, options);
+  const fresh = (t) => createPreviewSampler(LONG, null, options)(t, RIG, COLOR_PRESETS, r);
+  for (const t of [70000, 3000, 65000, 20000.5, 50000, 33333, 69000, 1000, 45454.5, 39990, 40010, 12]) {
+    assert.deepStrictEqual(sample(t, RIG, COLOR_PRESETS, r), fresh(t), `at ${t}`);
+  }
+});
+
+test('a moment just before the first frame, within the grid\'s rounding, renders on a copy rather than failing', () => {
+  // The scene lands 1.5 ns after the fifth frame; the moment asked for is 0.6 ns after it.
+  const at = 5 * FRAME_MS;
+  const events = [{ timeMs: at + 1.5e-6, action: 'patch', data: { pattern: 'ldj.FadeCycle', ...LOOK } }];
+  const sample = createPreviewSampler(events, GRID, { resolveEffect });
+  const out = sample(at + 0.6e-6, PARS, COLOR_PRESETS);
+  assert.strictEqual(out.length, PARS.length);
+  assert.deepStrictEqual(sample(6 * FRAME_MS, PARS, COLOR_PRESETS), createPreviewSampler(events, GRID, { resolveEffect })(6 * FRAME_MS, PARS, COLOR_PRESETS));
+});
+
+test('a frame asked for after a moment inside it is rendered from where the walk stands, not replayed', () => {
+  const events = [
+    { timeMs: 0, action: 'patch', data: { pattern: 'solid', ...LOOK } },
+    { timeMs: 0, action: 'voice', data: { id: 'count', effect: OWN.probe, targets: [PARS[0].id], tier: 'voice', launchSeq: 1 } },
+  ];
+  const sample = createPreviewSampler(events, null, { resolveEffect });
+  sample(300 * FRAME_MS + 9, PARS, COLOR_PRESETS);
+  const before = probeRenders;
+  const out = sample(300 * FRAME_MS, PARS, COLOR_PRESETS);
+  assert.strictEqual(probeRenders - before, 0, 'frame 300 was the walk\'s last');
+  assert.strictEqual(out[0].r, 301 % 256);
 });
 
 // ── The canonical grid ──────────────────────────────────────────────────────
