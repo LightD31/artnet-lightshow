@@ -48,11 +48,14 @@ export function attachLookRoutes(app: Express, _ctx: RouteContext): void {
     } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
+  // A legacy pattern or an effect preset by id or alias; an id nothing knows
+  // is taken and plays nothing, as it always has. An effect that waits for
+  // the photosensitivity acknowledgement is a 409, and the look stays.
   app.post('/api/pattern/:id', (req, res) => {
     try {
       applyPatch({ pattern: req.params.id });
       res.json({ ok: true, pattern: state.pattern });
-    } catch (err) { res.status(400).json({ ok: false, error: messageOf(err) }); }
+    } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
   app.post('/api/color/:slot/:index', (req, res) => {

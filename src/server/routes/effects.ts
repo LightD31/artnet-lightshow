@@ -1,13 +1,23 @@
 import { z } from 'zod';
 import { BUILTIN_PALETTES, FAMILIES } from '../../shared/effects/index.ts';
+import { toHex } from '../../shared/effects/palette.ts';
 import { effectCommand } from '../engine.ts';
-import { validate } from '../validation.ts';
+import { applyPatch } from '../patch.ts';
+import { safety } from '../safety.ts';
+import { state } from '../state.ts';
+import { paletteOverride, validate } from '../validation.ts';
 import { asyncHandler } from './common.ts';
 import type { Express } from 'express';
 import type { CommandStatus } from '../renderer.ts';
 import type { RouteContext } from './common.ts';
 
 const commandSchema = z.object({ cmd: z.string().min(1).max(64), arg: z.unknown().optional() }).strict();
+
+// Colours, or a palette by id: one or the other, never both.
+const overrideSchema = z.union([
+  z.object({ colours: paletteOverride.unwrap() }).strict(),
+  z.object({ paletteId: z.string().min(1).max(64) }).strict(),
+], { error: 'expected { colours: hex[] } (1 to 8) or { paletteId }' });
 
 // What the renderer decided, as the HTTP answer. A base look that is no
 // effect, or one that takes no commands, conflicts with what is on stage
@@ -23,7 +33,8 @@ const REFUSALS: Record<Exclude<CommandStatus, 'applied'>, [number, string]> = {
 
 /**
  * The effect library: the built-in catalogue, the presets and palettes saved
- * on this server, and commands to the effect playing as the base look.
+ * on this server, commands to the effect playing as the base look, the
+ * palette played over every effect, and the photosensitivity gate.
  *
  * Errors fall through to the error handler: a refusal answers with its own
  * status, and a disk that will not take a write is a 500, not the client's
@@ -97,5 +108,40 @@ export function attachEffectRoutes(app: Express, ctx: RouteContext): void {
   app.delete('/api/palettes/:id', (req, res) => {
     if (!palettes().remove(req.params.id)) return res.status(404).json({ ok: false, error: 'No such palette of your own' });
     res.json({ ok: true });
+  });
+
+  // ─── The palette override ─────────────────────────────────────────────────
+  // Light DJ's active palette: every effect plays these colours instead of its
+  // own. A palette by id goes on as the colours it has now, its random ones
+  // rolled once; a later edit to the palette leaves what is on stage.
+  const overrideNow = () => (state.paletteOverride ? state.paletteOverride.map(toHex) : null);
+
+  app.put('/api/palette-override', (req, res) => {
+    const body = validate(overrideSchema, req.body ?? {}, 'palette-override');
+    let colours: string[];
+    if ('paletteId' in body) {
+      const fixed = palettes().materialize(body.paletteId);
+      if (!fixed) return res.status(404).json({ ok: false, error: 'No such palette' });
+      colours = fixed.map(toHex);
+    } else {
+      colours = body.colours;
+    }
+    applyPatch({ paletteOverride: colours });
+    res.json({ ok: true, paletteOverride: overrideNow() });
+  });
+
+  app.delete('/api/palette-override', (_req, res) => {
+    applyPatch({ paletteOverride: null });
+    res.json({ ok: true, paletteOverride: null });
+  });
+
+  // ─── Safety ───────────────────────────────────────────────────────────────
+  app.get('/api/safety', (_req, res) => res.json({ ok: true, ...safety.status() }));
+
+  // Given once, and saved: from then on the strobes and the fast effects play.
+  app.post('/api/safety/acknowledge', (_req, res) => {
+    safety.acknowledge();
+    ctx.integrations.broadcast();
+    res.json({ ok: true, ...safety.status() });
   });
 }

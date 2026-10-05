@@ -362,3 +362,27 @@ test('the effect safety and Hue strobe settings have their defaults, their bound
   assert.strictEqual(s.get('safety.strobeMaxLatchSec'), 0.5, 'a refused update changes nothing');
   assert.ok(patchSchema.safeParse({ safety: { hdFlashIntervalMs: 1200.5 }, hue: { strobe: 'pulse' } }).success, 'a partial patch of the new keys');
 });
+
+// The manual strobe's settings, which a cue keeps beside its look: Hue
+// Dynamics' manual strobe (two flashes a second on the beat, the look between
+// them, 100 ms on and 100 ms black) in white. Its colours are a palette of
+// their own, never a parameter of the kind.
+test('the strobe\'s settings: Hue Dynamics\' defaults in white, one to five flashes a second, one to six colours', () => {
+  assert.deepStrictEqual(DEFAULTS.strobe, {
+    flashesPerSecond: 2, continueBetween: true, clock: 'beat', brightness: 1, onMs: 100, blackMs: 100, palette: ['#FFFFFF'],
+  });
+  const older = store();
+  fs.writeFileSync(older.file, JSON.stringify({ artnet: { host: '10.0.0.9' } }));
+  assert.deepStrictEqual(older.load().group('strobe'), DEFAULTS.strobe, 'a file from before them gains the defaults');
+
+  const s = store().load();
+  assert.deepStrictEqual(s.update({ strobe: { flashesPerSecond: 5, clock: 'wall', palette: ['#FF0000', '#0000FF80'] } }).sort(),
+    ['strobe.clock', 'strobe.flashesPerSecond', 'strobe.palette']);
+  assert.deepStrictEqual(new SettingsStore(s.file).load().get('strobe.palette'), ['#FF0000', '#0000FF80']);
+  for (const bad of [{ strobe: { flashesPerSecond: 6 } }, { strobe: { flashesPerSecond: 0 } }, { strobe: { flashesPerSecond: 2.5 } },
+    { strobe: { brightness: 1.5 } }, { strobe: { onMs: 50 } }, { strobe: { clock: 'bar' } },
+    { strobe: { palette: [] } }, { strobe: { palette: Array(7).fill('#FFFFFF') } }, { strobe: { palette: ['random'] } }, { strobe: { colour: '#FFFFFF' } }]) {
+    assert.throws(() => s.update(bad), JSON.stringify(bad));
+  }
+  assert.strictEqual(s.get('strobe.flashesPerSecond'), 5, 'a refused update changes nothing');
+});

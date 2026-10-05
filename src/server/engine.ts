@@ -21,6 +21,7 @@ import type { Profile, PulseReading } from '../types/rig.ts';
 import type { AudioFrame } from '../shared/effects/audio-frame.ts';
 import type { EffectSpec } from '../shared/effects/types.ts';
 import { validateSpec } from '../shared/effects/registry.ts';
+import { canonical } from '../shared/effects/layer.ts';
 
 /** Where frames are rendered: a thread of their own, or this one. */
 export type EngineThread = 'worker' | 'main';
@@ -109,11 +110,11 @@ const identify = createIdentify({ clock: () => clock() });
 let effectSource: ((pattern: string) => EffectSpec | null) | null = null;
 let effectFailed = false;
 
-/** The base look's effect, or null for a pattern. */
-function currentEffect(): EffectSpec | null {
+/** What a pattern id plays as an effect, or null: a pattern, an id nothing knows, or no library yet. */
+function resolveEffect(pattern: string): EffectSpec | null {
   if (!effectSource) return null;
   try {
-    return effectSource(state.pattern) ?? null;
+    return effectSource(pattern) ?? null;
   } catch (err) {
     if (!effectFailed) console.warn(`[engine] effect source failed: ${messageOf(err)}`);
     effectFailed = true;
@@ -121,11 +122,47 @@ function currentEffect(): EffectSpec | null {
   }
 }
 
+/** The base look's effect, or null for a pattern. */
+function currentEffect(): EffectSpec | null {
+  return resolveEffect(state.pattern);
+}
+
 /** Register what a pattern id plays as an effect (the effect library). */
 function setEffectSource(fn: ((pattern: string) => EffectSpec | null) | null | undefined): void {
   effectSource = typeof fn === 'function' ? fn : null;
   effectFailed = false;
   validatedEffect = null;
+}
+
+// The base effect's revision: moved once whenever the effect the renderer was
+// last handed for this pattern changes by value, goes away or comes back, so
+// it starts again. The renderer's own key leaves colours and brightness out,
+// and keeps its state when an effect goes and returns; a rename, an edit to
+// another preset or an equal copy moves nothing.
+let effectRevision = 0;
+let handed: { pattern: string; spec: EffectSpec | null; key: string | null } | null = null;
+
+function noteEffect(pattern: string, spec: EffectSpec | null): void {
+  if (handed && handed.pattern === pattern) {
+    // The library hands out the same frozen spec until it changes.
+    if (handed.spec === spec) return;
+    const key = spec ? canonical(spec) : null;
+    if (key !== handed.key) effectRevision++;
+    handed = { pattern, spec, key };
+    return;
+  }
+  // Another pattern is another base (its own id): nothing to start again.
+  handed = { pattern, spec, key: spec ? canonical(spec) : null };
+}
+
+/**
+ * The library changed: look again now rather than at the next frame, so an
+ * effect deleted and saved again between two frames still starts again. Only
+ * for the pattern the renderer was last handed; one picked since, and not
+ * rendered yet, is new to it anyway.
+ */
+function effectChanged(): void {
+  if (handed && handed.pattern === state.pattern) noteEffect(state.pattern, currentEffect());
 }
 
 let validatedEffect: { raw: EffectSpec; spec: EffectSpec } | null = null;
@@ -153,6 +190,8 @@ function baseEffect(): { id: string; spec: EffectSpec } | null {
  * fade or sync test asked for.
  */
 function renderInput(): RenderInput {
+  const effect = currentEffect();
+  noteEffect(state.pattern, effect);
   // A Hue lamp is never strobed in software: a Hue bridge is no strobe (see
   // renderer.js).
   return {
@@ -192,7 +231,9 @@ function renderInput(): RenderInput {
       acknowledged: settings.get('safety.photosensitivityAcknowledged'),
     },
     hueStrobe: settings.get('hue.strobe'),
-    effect: currentEffect(),
+    effect,
+    effectRevision,
+    paletteOverride: state.paletteOverride,
     fixtures: state.fixtures.map((f) => ({
       id: f.id,
       address: f.address,
@@ -623,6 +664,8 @@ export {
   setPulseSource,
   setAudioSource,
   setEffectSource,
+  resolveEffect,
+  effectChanged,
   resizeFixtureBuffers,
   startSyncTest,
   identify,

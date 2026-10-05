@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 // The entry point registers every kind, so a stored spec validates against it.
 import { CATALOGUE, deepFreeze, presetById } from '../shared/effects/index.ts';
-import { validateSpec } from '../shared/effects/registry.ts';
+import { requiresAcknowledgement, validateSpec } from '../shared/effects/registry.ts';
 import { canonical } from '../shared/effects/layer.ts';
 import { PATTERN_FUNCS } from '../shared/patterns.ts';
 import { PATTERN_IDS } from './presets.ts';
@@ -34,6 +34,15 @@ export type LibraryEntry = { source: 'builtin'; preset: CataloguePreset } | { so
 
 /** Asked before a preset takes a new spec; a throw refuses the change. */
 export type Admission = (id: string, spec: EffectSpec) => void;
+
+/**
+ * A saved preset as the pickers list it, beside the built-ins' rows: what it
+ * is and whether it waits for the photosensitivity acknowledgement. The spec
+ * itself is GET /api/effects/:id's.
+ */
+export interface PresetSummary {
+  id: string; name: string; kind: string; rapidFlash: boolean; scope: EffectSpec['scope'] | null; updatedAt: string;
+}
 
 export interface EffectLibraryOptions {
   /** The clock the records are stamped by. */
@@ -113,6 +122,7 @@ export class EffectLibrary extends JsonStore {
   declare _listeners: (() => void)[];
   declare _admit: Admission | null;
   declare _now: () => Date;
+  declare _summaries: readonly PresetSummary[] | null;
 
   /**
    * effects.json. No file is normal (nothing saved yet); one that does not
@@ -143,6 +153,7 @@ export class EffectLibrary extends JsonStore {
   _install(presets: readonly UserPreset[]): void {
     this._presets = deepFreeze([...presets]);
     this._byId = new Map(presets.map((p) => [p.id, p]));
+    this._summaries = null;
   }
 
   /**
@@ -172,6 +183,14 @@ export class EffectLibrary extends JsonStore {
     if (row) return { source: 'builtin', preset: snapshot(row) };
     const preset = this._byId.get(id);
     return preset ? { source: 'user', preset: snapshot(preset) } : null;
+  }
+
+  /** The saved presets for the live state, worked out once per change: it rides every broadcast. Frozen. */
+  summaries(): readonly PresetSummary[] {
+    this._summaries ??= deepFreeze(this._presets.map(({ id, name, spec, updatedAt }) => ({
+      id, name, kind: spec.kind, rapidFlash: requiresAcknowledgement(spec), scope: spec.scope ?? null, updatedAt,
+    })));
+    return this._summaries;
   }
 
   /** Counts every saved change, a rename included. */

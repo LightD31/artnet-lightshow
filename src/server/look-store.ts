@@ -86,9 +86,23 @@ export function currentLook(autoShow: ResumableShow | null, source = 'timer'): U
   return { look: lookSchema.parse(captureLook()), auto };
 }
 
-/** Put a saved look back on stage — without its energy effect. */
-export function putBack(saved: SavedLook): void {
-  recallLook({ ...saved.look, energyOverride: null });
+/**
+ * Put a saved look back on stage — without its energy effect, and without
+ * the settings a cue carries (audio mode, strobe): settings.json holds those
+ * as they were last saved, and a look up to two seconds older must not undo
+ * a change made just before the restart. False, and the look left as it is,
+ * when it is refused: an effect that waits for a photosensitivity
+ * acknowledgement taken back since. A restart comes up either way.
+ */
+export function putBack(saved: SavedLook): boolean {
+  const { audioMode: _audioMode, strobe: _strobe, ...look } = saved.look;
+  try {
+    recallLook({ ...look, energyOverride: null });
+    return true;
+  } catch (err) {
+    console.warn(`[look] could not put back the look from ${saved.savedAt}: ${messageOf(err)}`);
+    return false;
+  }
 }
 
 /**

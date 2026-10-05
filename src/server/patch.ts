@@ -1,7 +1,9 @@
 import { state, getFixture, setDefaultUniverse } from './state.ts';
-import { beginFade } from './engine.ts';
+import { beginFade, resolveEffect } from './engine.ts';
 import { conductor } from './conductor.ts';
+import { safety } from './safety.ts';
 import { anchorStep } from '../shared/beat-clock.ts';
+import { parseHex } from '../shared/effects/palette.ts';
 import { patchSchema, overrideSchema, validate } from './validation.ts';
 import { STROBE_FUNCTIONS, ENERGY_EFFECTS } from './presets.ts';
 import { paletteSlots } from './palettes.ts';
@@ -68,15 +70,40 @@ function flushPendingPersist(): void {
   persist({ auto: { syncOffsetMs: state.autoSyncOffsetMs } });
 }
 
-function applyPatch(rawData: unknown): Patch {
+/** What applyPatch does between deciding a patch may go ahead and applying it. */
+export interface PatchOptions {
+  /**
+   * Run once the patch is validated and admitted, before anything changes: a
+   * throw refuses the whole patch. A cue saves its settings here, so a write
+   * that fails leaves the look as it was.
+   */
+  beforeCommit?: () => void;
+}
+
+/**
+ * One entry for every look change — REST, the socket, cues, the auto show,
+ * MIDI. The patch is validated and, when it asks for an effect, admitted
+ * before anything moves: an effect that waits for the photosensitivity
+ * acknowledgement refuses the whole patch (409), its tempo, master and fade
+ * included. A pattern id nothing knows is still taken, and plays nothing.
+ */
+function applyPatch(rawData: unknown, { beforeCommit }: PatchOptions = {}): Patch {
   // Validate at the boundary. Throws on invalid input.
   const data = validate(patchSchema, rawData || {}, 'patch');
+  // Naming the pattern is starting it, even the one already on stage; a
+  // fader moved under it is not.
+  if (data.pattern !== undefined) {
+    const effect = resolveEffect(data.pattern);
+    if (effect) safety.requireAcknowledged(effect);
+  }
+  if (beforeCommit) beforeCommit();
 
   // A new look fades if it asks to and cuts if it does not — and a cut
   // cancels a fade still running, so a drop lands hard even mid-breakdown-fade.
   const changesLook = data.pattern !== undefined || data.palette !== undefined
     || data.split !== undefined || data.pixelMap !== undefined || data.pixelPattern !== undefined
-    || data.panelPattern !== undefined || COLOR_SLOTS.some((slot) => data[slot] !== undefined);
+    || data.panelPattern !== undefined || data.paletteOverride !== undefined
+    || COLOR_SLOTS.some((slot) => data[slot] !== undefined);
   if (data.fadeMs !== undefined || changesLook) beginFade(data.fadeMs || 0);
 
   // Before the tempo: switching to 'manual' hands the free clock the tempo the
@@ -149,6 +176,10 @@ function applyPatch(rawData: unknown): Patch {
     if (value === undefined) continue;
     if (!paletteApplied && value !== state[slot]) state.palette = null;
     state[slot] = value;
+  }
+  // Parsed once here: the renderer takes colours, the wire and cues hex.
+  if (data.paletteOverride !== undefined) {
+    state.paletteOverride = data.paletteOverride === null ? null : data.paletteOverride.map(parseHex);
   }
   if (data.split !== undefined) state.split = data.split;
   if (data.pixelMap !== undefined) state.pixelMap = data.pixelMap;

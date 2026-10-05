@@ -1,14 +1,16 @@
+import crypto from 'node:crypto';
 import { z } from 'zod';
 
 import { BUILTIN_PALETTES, deepFreeze } from '../shared/effects/index.ts';
-import { parseHex, toHex } from '../shared/effects/palette.ts';
+import { parseHex, resolvePalette, toHex } from '../shared/effects/palette.ts';
 import { canonical } from '../shared/effects/layer.ts';
 import { newUserId, snapshot } from './effect-library.ts';
 import { validate } from './validation.ts';
 import { HttpError, messageOf } from '../errors.ts';
 import { JsonStore } from './json-store.ts';
 import type { BuiltinPalette } from '../shared/effects/ldj-palettes.ts';
-import type { PaletteEntry } from '../shared/effects/types.ts';
+import type { PaletteEntry, Seed } from '../shared/effects/types.ts';
+import type { Colour } from '../types/rig.ts';
 
 /**
  * The effect palettes saved on this server, beside the built-in ones, in
@@ -26,6 +28,17 @@ export const MAX_PALETTES = 128;
 const MAX_COLOURS = 8;
 
 export interface UserPalette { id: string; name: string; colours: PaletteEntry[] }
+
+export interface PaletteStoreOptions {
+  /** Where a palette put on as the override draws its random colours (128 bits); a test passes a fixed one. */
+  seed?: () => Seed;
+}
+
+/** 128 fresh bits: each time a palette goes on, its random colours are rolled anew. */
+function freshSeed(): Seed {
+  const bytes = crypto.randomBytes(16);
+  return [bytes.readUInt32LE(0), bytes.readUInt32LE(4), bytes.readUInt32LE(8), bytes.readUInt32LE(12)];
+}
 
 /** One palette by id, and where it comes from. */
 export type PaletteLookup = { source: 'builtin'; palette: BuiltinPalette } | { source: 'user'; palette: UserPalette };
@@ -61,12 +74,14 @@ const fileSchema = z.object({
 export class PaletteStore extends JsonStore {
   declare _palettes: readonly UserPalette[];
   declare _listeners: (() => void)[];
+  declare _seed: () => Seed;
 
   /** palettes.json. No file is normal; one that does not validate is moved aside whole (JsonStore). */
-  constructor(file: string) {
+  constructor(file: string, { seed = freshSeed }: PaletteStoreOptions = {}) {
     super(file, { tag: 'palettes', fallback: 'starting with the built-in palettes only' });
     this._palettes = [];
     this._listeners = [];
+    this._seed = seed;
   }
 
   load(): this {
@@ -90,6 +105,19 @@ export class PaletteStore extends JsonStore {
     if (builtin) return { source: 'builtin', palette: snapshot(builtin) };
     const saved = this._palettes.find((p) => p.id === id);
     return saved ? { source: 'user', palette: snapshot(saved) } : null;
+  }
+
+  /**
+   * A palette by id as fixed colours, for the palette override; null for an
+   * id that is none. Each random entry is rolled once, now, with Light DJ's
+   * rule (a hue unlike the first four's and its own last), so the override
+   * holds colours: nothing re-rolls them later, and editing or deleting the
+   * palette afterwards leaves what is on stage.
+   */
+  materialize(id: string): Colour[] | null {
+    const entry = this.get(id);
+    if (!entry) return null;
+    return resolvePalette({ palette: [...entry.palette.colours] }, null, [], this._seed(), 0);
   }
 
   /** Called after every saved change; never for a refused, failed or empty one. */

@@ -37,8 +37,8 @@ export const ROOM = { v1: 'protocol:1', v2: 'protocol:2', dmx: 'feed:dmx', audio
 /** What a page may subscribe to. */
 export const TOPICS = { dmx: ROOM.dmx, audio: ROOM.audio } as const;
 
-export type Domain = 'look' | 'rig' | 'show' | 'sources' | 'audio' | 'catalogs' | 'system';
-export const DOMAINS: readonly Domain[] = ['look', 'rig', 'show', 'sources', 'audio', 'catalogs', 'system'];
+export type Domain = 'look' | 'rig' | 'show' | 'sources' | 'audio' | 'catalogs' | 'library' | 'system';
+export const DOMAINS: readonly Domain[] = ['look', 'rig', 'show', 'sources', 'audio', 'catalogs', 'library', 'system'];
 
 /**
  * Which domain each key of the live state belongs to. Grouped by what changes
@@ -51,7 +51,7 @@ const DOMAIN_OF: Readonly<Record<string, Domain>> = {
   colorA: 'look', colorB: 'look', colorC: 'look', colorD: 'look', palette: 'look',
   masterDimmer: 'look', masterBlackout: 'look', flashLimit: 'look',
   strobeSpeed: 'look', strobeFunction: 'look', pixelMap: 'look', pixelPattern: 'look', panelPattern: 'look',
-  energyOverride: 'look',
+  energyOverride: 'look', paletteOverride: 'look', safety: 'look',
 
   artnet: 'rig', universes: 'rig', fixtures: 'rig', profiles: 'rig', identify: 'rig', hueBridges: 'rig', armed: 'rig',
 
@@ -67,6 +67,11 @@ const DOMAIN_OF: Readonly<Record<string, Domain>> = {
 
   colorPresets: 'catalogs', patterns: 'catalogs', energyEffects: 'catalogs', strobeFunctions: 'catalogs',
   palettes: 'catalogs', builtinProfileIds: 'catalogs', hueProfileIds: 'catalogs', syncOffsetLimitMs: 'catalogs',
+  families: 'catalogs', builtinPalettes: 'catalogs',
+
+  // The presets and palettes saved on this server: one saved mid-show reaches
+  // every open page, and only the pickers watch them.
+  effects: 'library', userPalettes: 'library',
 };
 
 export function domainOf(key: string): Domain {

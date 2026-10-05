@@ -13,17 +13,17 @@ import { keyForSpotify, keyForQuery, keyForProlinkTrack } from '../analysis-cach
 import HybridSource from '../hybrid-source.ts';
 import { sampleAutoPosition } from './auto-position.ts';
 import { gridFromAnalysis } from '../shared/beat-clock.ts';
-import { HttpError, messageOf } from '../errors.ts';
+import { messageOf } from '../errors.ts';
 import { audioToTempWav } from '../audio-file.ts';
 import { applyRekordbox } from '../rekordbox-analysis.ts';
 import { AutoSync } from '../auto-sync.ts';
 import LiveDirector from '../show/live-director.ts';
 import { PATTERNS } from './presets.ts';
 import { settings } from './settings.ts';
-import { baseEffect, identify, setAudioSource } from './engine.ts';
+import { baseEffect, effectChanged, identify, setAudioSource, setEffectSource } from './engine.ts';
 import { AudioFeatures, feedOf, resolveDetectors } from './audio-features.ts';
 import { BIN_HZ } from '../shared/spectrum-bands.ts';
-import { requiresAcknowledgement } from '../shared/effects/registry.ts';
+import { safety } from './safety.ts';
 import { EffectLibrary } from './effect-library.ts';
 import { PaletteStore } from './palette-store.ts';
 import { configFile } from './config-dir.ts';
@@ -102,6 +102,13 @@ function reportAnalysisError(label: string, err: unknown): void {
 // routes (src/server/routes/) and sockets.ts call back into.
 function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolink, autoShow, analysisCache = null,
   liveInput = null, effectLibrary = null, paletteStore = null }: IntegrationDeps) {
+  // ─── The effect library ─────────────────────────────────────────────────
+  // The presets and palettes saved on this server, first: the live state
+  // reads them from the first broadcast on.
+  const library = {
+    effects: effectLibrary ?? new EffectLibrary(configFile('effects.json')).load(),
+    palettes: paletteStore ?? new PaletteStore(configFile('palettes.json')).load(),
+  };
   // Slot statuses, one per upcoming track up to state.autoPrefetchDepth.
   // slots[0] is the immediate next track (back-compat with the old
   // spotifyNext shape — that field still mirrors slots[0]).
@@ -228,6 +235,10 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       // Summaries, not the stored looks: a hundred full cues would ride every
       // broadcast, and the buttons only need a name and a swatch.
       cues: cues.summaries(),
+      // The presets and palettes saved here, so one saved mid-show reaches
+      // every open page; a preset's spec is GET /api/effects/:id's.
+      effects: library.effects.summaries(),
+      userPalettes: library.palettes.list(),
       warm: warmer.status(),
       midi: { enabled: midi.enabled, ports: midi.listPorts() },
       // The fixtures showing themselves on the rig, marked on the stage plot.
@@ -1031,19 +1042,23 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   const statusTimer = setInterval(guarded('status-broadcast', broadcast), 1000);
   if (statusTimer.unref) statusTimer.unref();
 
-  // ─── The effect library ─────────────────────────────────────────────────
-  // The presets and palettes saved on this server. A new spec saved over the
-  // preset on stage replaces what the rig plays at once, so it is admitted as
-  // starting it would be; a preset not playing is only being edited.
-  const library = {
-    effects: effectLibrary ?? new EffectLibrary(configFile('effects.json')).load(),
-    palettes: paletteStore ?? new PaletteStore(configFile('palettes.json')).load(),
-  };
+  // A look's pattern id plays the library's effect: a built-in preset by id
+  // or alias, else one saved here; a legacy look or an id nothing knows
+  // plays its pattern function, or nothing, as before.
+  setEffectSource((pattern) => library.effects.resolve(pattern));
+  // A new spec saved over the preset on stage replaces what the rig plays at
+  // once, so it passes the gate starting it would; a preset not playing is
+  // only being edited.
   library.effects.setAdmission((id: string, spec: EffectSpec) => {
-    if (id === state.pattern && requiresAcknowledgement(spec) && !settings.get('safety.photosensitivityAcknowledged')) {
-      throw new HttpError(409, 'photosensitivity acknowledgement required');
-    }
+    if (id === state.pattern) safety.requireAcknowledged(spec);
   });
+  // Every saved change: the effect on stage starts again if its own spec
+  // changed, and every page hears of it.
+  library.effects.onChange(() => {
+    effectChanged();
+    broadcast();
+  });
+  library.palettes.onChange(() => broadcast());
 
   return {
     broadcast,

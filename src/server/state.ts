@@ -5,11 +5,14 @@ import { COLOR_PRESETS, PATTERNS, PRESET_ROWS, STROBE_FUNCTIONS, ENERGY_EFFECTS,
 import { PALETTES } from './palettes.ts';
 import { conductor } from './conductor.ts';
 import { isArmed } from './armed.ts';
+import { safety } from './safety.ts';
 import { HttpError } from '../errors.ts';
 import { footprintOf, universesOf, isInternalUniverse, placeAddressless } from '../shared/placement.ts';
+import { BUILTIN_PALETTES, FAMILIES } from '../shared/effects/index.ts';
+import { toHex } from '../shared/effects/palette.ts';
 import type { Settings } from './settings.ts';
 import type { ClockSource, TempoMode } from './conductor.ts';
-import type { Fixture, PixelMap, Profile, ShowDynamics } from '../types/rig.ts';
+import type { Colour, Fixture, PixelMap, Profile, ShowDynamics } from '../types/rig.ts';
 
 /** Where a running pattern counts its steps from (see patch.ts). */
 export interface PatternAnchor {
@@ -41,6 +44,8 @@ export interface ShowState {
   energyOverride: string | null;
   heldEnergy: string | null;
   palette: string | null;
+  /** Colours every effect plays instead of its own and the slots (Light DJ's active palette), or null. */
+  paletteOverride: Colour[] | null;
   autoIntensity: number;
   autoSyncOffsetMs: number;
   prolinkEnabled: boolean;
@@ -93,6 +98,9 @@ const state: ShowState = {
   // The named look the four colour slots came from, or null once any slot has
   // been written by hand. Only a label — the slots are the truth.
   palette: null,
+  // Fixed colours, even when a palette with random entries put them there:
+  // rolled once as it went on, so nothing re-rolls them frame to frame.
+  paletteOverride: null,
   // Mirrors the auto show's energy slider. The generated show owns the value;
   // this copy is what the MIDI surface reads to light an encoder ring and what
   // a client sees without asking the auto-show module.
@@ -300,6 +308,11 @@ function getCatalogs() {
     energyEffects: ENERGY_EFFECTS,
     strobeFunctions: STROBE_FUNCTIONS,
     palettes: PALETTES,
+    // The effect library's built-ins beside the presets `patterns` lists: the
+    // kinds by family with their defaults, and the effect palettes. JSON
+    // only; the presets and palettes saved here are live (domain `library`).
+    families: FAMILIES,
+    builtinPalettes: BUILTIN_PALETTES,
     // Which profiles ship with the server. The UI needs this to know which ones
     // it must not offer to delete — it used to test against the one built-in id
     // it had hardcoded, which stopped being the whole truth once the Hue lamp
@@ -348,6 +361,10 @@ function getLiveState() {
     panelPattern: state.panelPattern,
     energyOverride: state.heldEnergy ?? state.energyOverride,
     palette: state.palette,
+    // Hex on the wire, as a palette is written everywhere else.
+    paletteOverride: state.paletteOverride ? state.paletteOverride.map(toHex) : null,
+    // Whether the room may see the fast flashes, and the limits beside it.
+    safety: safety.status(),
     autoIntensity: state.autoIntensity,
     autoSyncOffsetMs: state.autoSyncOffsetMs,
     autoSource: state.autoSource,

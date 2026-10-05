@@ -254,7 +254,7 @@ function changeColours(c: Ctx, kind: 'loud' | 'soft', t: number): void {
   }
   // Copies, so instance state never holds the frozen seed objects.
   a.palette = entries.map((entry) => typeof entry === 'string' ? entry : { random: true as const });
-  a.prepared = preparePalette({ kind: 'ldj.visualizer', params: {}, palette: a.palette });
+  a.prepared = preparePalette({ palette: a.palette });
   a.allowAtMs = t + MIN_CHANGE_MS;
   a.forceAtMs = t + FORCE_CHANGE_MS;
   c.access = effectiveAccess(s, f);
