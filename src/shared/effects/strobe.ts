@@ -39,7 +39,8 @@ const GAP_FRAMES = Math.ceil((1000 / HOLD_STROBE_MAX_HZ - STROBE_FRAME_MS) / STR
 /** (b): a second of frames, round(1000 / FRAME_MS) = 44, holds at most MAX_LAMP_FLASH_HZ rises. */
 const WINDOW_FRAMES = Math.round(1000 / STROBE_FRAME_MS);
 
-const schema: ZodType<StrobeParams> = z.object({
+/** The kind's parameters; the server's strobe settings are these plus their own palette. */
+export const STROBE_PARAMS_SCHEMA = z.object({
   flashesPerSecond: z.number().int().min(1).max(HOLD_STROBE_MAX_HZ),
   continueBetween: z.boolean(),
   clock: z.enum(['wall', 'beat']),
@@ -47,6 +48,7 @@ const schema: ZodType<StrobeParams> = z.object({
   onMs: z.literal(HOLD_FLASH_MS),
   blackMs: z.literal(HOLD_BLACK_MS),
 }).strict();
+const schema: ZodType<StrobeParams> = STROBE_PARAMS_SCHEMA;
 
 const BLACK: Colour = { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 };
 const WHITE: Colour = { ...BLACK, r: 255, g: 255, b: 255 };

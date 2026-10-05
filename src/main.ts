@@ -217,8 +217,7 @@ setHooks({ showChanged: () => showStore.scheduleSave() });
 // before the engine's first frame (look-store.ts).
 const lookStore = new LookStore(configFile('look.json'));
 const savedLook = supervised.recovering ? lookStore.load() : undefined;
-if (savedLook) {
-  putBack(savedLook);
+if (savedLook && putBack(savedLook)) {
   console.log(`[look] put back the look from ${savedLook.savedAt}, before the restart`);
 }
 

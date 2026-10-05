@@ -7,6 +7,8 @@ import { isLoopback } from './loopback.ts';
 import { JsonStore } from './json-store.ts';
 import { HUE_BRIDGE_ID_RE } from '../shared/placement.ts';
 import { HD_MASTER_DEFAULTS } from '../shared/effects/types.ts';
+import { STROBE_DEFAULTS, STROBE_PARAMS_SCHEMA } from '../shared/effects/strobe.ts';
+import { hexColour } from './validation.ts';
 
 /**
  * Persisted configuration, edited in the app's Rig, Sources and Settings views.
@@ -195,6 +197,13 @@ const DEFAULTS: Settings = {
     photosensitivityAcknowledged: false,
     // A latched strobe is cut after this long, whoever latched it.
     strobeMaxLatchSec: 60,
+  },
+  // The manual strobe: two flashes a second on the beat clock (Hue Dynamics
+  // keeps the wall clock), the look between them, 100 ms on and 100 ms black
+  // as Hue Dynamics flashes, in white. A cue keeps these, never whether it is on.
+  strobe: {
+    ...STROBE_DEFAULTS,
+    palette: ['#FFFFFF'],
   },
   // Whether anything leaves the machine (armed.ts). Stored so the Show
   // section and the REST routes share one switch; never honoured at start —
@@ -412,6 +421,11 @@ const schema = z.object({
     hdFlashIntervalMs: z.number().finite().min(0),
     photosensitivityAcknowledged: z.boolean(),
     strobeMaxLatchSec: z.number().finite().positive(),
+  }).strict(),
+  // The kind's own parameters, and its colours beside them: a palette of the
+  // strobe's, which the voice plays as its effect's palette.
+  strobe: STROBE_PARAMS_SCHEMA.extend({
+    palette: z.array(hexColour).min(1).max(6),
   }).strict(),
   outputs: z.object({
     armed: z.boolean(),

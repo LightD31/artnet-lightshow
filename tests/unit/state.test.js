@@ -5,7 +5,7 @@ import { conductor } from '../../src/server/conductor.ts';
 import { applyPatch } from '../../src/server/patch.ts';
 
 const STATIC = ['colorPresets', 'patterns', 'energyEffects', 'strobeFunctions', 'palettes',
-  'syncOffsetLimitMs', 'builtinProfileIds', 'hueProfileIds'];
+  'syncOffsetLimitMs', 'builtinProfileIds', 'hueProfileIds', 'families', 'builtinPalettes'];
 
 // The static catalogues were 63% of a 7 KB payload and went out
 // ten times a second unchanged.

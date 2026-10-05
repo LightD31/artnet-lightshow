@@ -59,6 +59,7 @@ import { seedFrom } from './effects/hash.ts';
 import { STROBE_FRAME_MS } from './effects/strobe.ts';
 import { HD_MASTER_DEFAULTS } from './effects/types.ts';
 import { copySequenceRun, newSequenceRun, renderSequenceLayer } from './effects/sequence.ts';
+import { parseHex } from './effects/palette.ts';
 import type { GridSource } from './beat-clock.ts';
 import type { Layout, Rig } from './rig.ts';
 import type { UnitLight } from './look-math.ts';
@@ -169,6 +170,22 @@ export interface PreviewOptions {
    * are the base of the fixtures they cover, as on the rig.
    */
   sequence?: { table: SequenceTable; transport: SequenceTransport } | null;
+  /**
+   * The colours played over every effect, as the live state carries them
+   * (hex, `paletteOverride`). Absent, null, or not a list of colours, the
+   * effects play their own.
+   */
+  paletteOverride?: readonly string[] | null;
+}
+
+/** The override's colours, parsed once; anything that is not a list of hex colours is none. */
+function overrideOf(hex: PreviewOptions['paletteOverride']): Colour[] | null {
+  if (!Array.isArray(hex) || !hex.length) return null;
+  try {
+    return hex.map((entry) => parseHex(entry));
+  } catch {
+    return null;
+  }
 }
 
 interface Frame {
@@ -387,6 +404,7 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
   const intervalMs = typeof givenInterval === 'number' && Number.isFinite(givenInterval) && givenInterval >= 0 ? givenInterval : 350;
   const acknowledged = options.safety?.acknowledged === true;
   const sequence = sequenceOf(options.sequence);
+  const paletteOverride = overrideOf(options.paletteOverride);
 
   // In time order, ties in the order given, on a copy: an event with no time is ignored.
   const timeline = events.filter((e) => Number.isFinite(e.timeMs)).sort((a, b) => a.timeMs - b.timeMs);
@@ -775,7 +793,7 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
       // Disco's automatic strobe stands down for any manual strobe playing.
       const manualStrobeActive = voices.some((v) => v.spec.kind === 'strobe' && (v.targets === null || v.targets.some((id) => ids.includes(id))));
       fb = {
-        beatPos, bpm, nowMs: t, dtMs: dt, anchorBeat: 0, lookPalette: paletteOf({ colors }), paletteOverride: null,
+        beatPos, bpm, nowMs: t, dtMs: dt, anchorBeat: 0, lookPalette: paletteOf({ colors }), paletteOverride,
         audio: null, audioMode: 'tempo', master: { ...HD_MASTER_DEFAULTS }, seed: [0, 0, 0, 0], acknowledged, hueStrobe,
         manualStrobeActive, expressionLevel: w.expression.level,
       };

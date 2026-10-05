@@ -34,7 +34,7 @@ test('only the keys that changed go out, grouped by domain, each domain counting
     { d: 'rig', v: 2, set: { fixtures: [{ id: 0, label: 'Left' }] } },
     { d: 'sources', v: 2, set: {}, del: ['spotify'] },
   ], 'an edited fixture and a key that went away');
-  assert.deepStrictEqual(differ.versions(), { look: 2, rig: 2, show: 0, sources: 2, audio: 0, sequence: 0, catalogs: 0, system: 1 });
+  assert.deepStrictEqual(differ.versions(), { look: 2, rig: 2, show: 0, sources: 2, audio: 0, sequence: 0, catalogs: 0, library: 0, system: 1 });
   assert.strictEqual(domainOf('autoShow'), 'show');
   assert.strictEqual(domainOf('hueBridges'), 'rig', 'the patch table reads the bridges with the fixtures');
   assert.strictEqual(domainOf('toString'), 'system', 'only the keys it names');
@@ -180,6 +180,17 @@ test('the frame the feed sends is the engine\'s universes as they are patched', 
   assert.ok(universes.length >= 1);
   const last = Math.max(...state.fixtures.filter((f) => (f.universe ?? 0) === universes[0]).map((f) => f.address));
   assert.ok(frame[universes[0]].length >= last, 'up to the last patched channel at least');
+});
+
+// The library a client edits mid-show is a domain of its own; the built-ins
+// beside it are catalogues, sent once; the colours over the effects and the
+// gate on the fast ones are the look's.
+test('the library domain: saved presets and palettes; the built-ins stay catalogues', () => {
+  assert.strictEqual(domainOf('effects'), 'library');
+  assert.strictEqual(domainOf('userPalettes'), 'library');
+  for (const key of ['palettes', 'families', 'builtinPalettes', 'patterns']) assert.strictEqual(domainOf(key), 'catalogs', key);
+  assert.strictEqual(domainOf('paletteOverride'), 'look');
+  assert.strictEqual(domainOf('safety'), 'look');
 });
 
 // A key no domain names goes out as `system`, which no view watches.

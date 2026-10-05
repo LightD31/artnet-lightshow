@@ -104,3 +104,50 @@ test('every built-in preset rehearses as the rig plays it, as the base and as a 
   });
   assert.deepStrictEqual(failures, []);
 });
+
+// The palette over every effect (PUT /api/palette-override) is the live
+// state's, as the Hue strobe mode and the safety are: a rehearsal under it
+// plays every preset in those colours, as the rig does.
+test('every built-in preset rehearses under the palette override as the rig plays it, as the base and as a voice', () => {
+  const r = buildRig(RIG, getProfile);
+  const times = frames(600);
+  const hex = ['#FF0000', '#00FF0080'];
+  const paletteOverride = [{ r: 255, g: 0, b: 0, w: 0, a: 0, uv: 0 }, { r: 0, g: 255, b: 0, w: 128, a: 0, uv: 0 }];
+  const failures = [];
+  let differsFromOwn = 0;
+  ROWS.forEach((row, n) => {
+    const hueStrobe = n % 2 ? 'pulse' : 'flash';
+    const options = { resolveEffect, hueStrobe, safety: ACK, paletteOverride: hex };
+    const sample = createPreviewSampler([{ timeMs: 0, action: 'patch', data: { pattern: row.id, ...LOOK } }], GRID, options);
+    const rig = rigRun(times, () => ({ pattern: row.id, effect: row.spec, hueStrobe, paletteOverride }));
+    const base = differs(rig, times.map((t) => sample(t, RIG, COLOR_PRESETS, r)), times);
+    if (base) failures.push(`${row.id} base: ${base}`);
+    if (differs(rig, rigRun(times, () => ({ pattern: row.id, effect: row.spec, hueStrobe })), times)) differsFromOwn++;
+    const pad = { id: 'pad:x', effect: row.spec, targets: [PARS[1].id, LAMP.id], tier: 'voice', launchSeq: 1 };
+    const voiced = createPreviewSampler([
+      { timeMs: 0, action: 'patch', data: { pattern: 'solid', ...LOOK } },
+      { timeMs: 130, action: 'voice', data: pad },
+    ], GRID, options);
+    const voice = differs(rigRun(times, (t) => ({ hueStrobe, paletteOverride, voices: t >= 130 ? [{ id: 'pad:x', spec: row.spec, targets: pad.targets,
+      tier: 'voice', launchSeq: 1, startedAtMs: 130, untilMs: null, anchorBeat: beat(130), seed: seedFrom('pad:x') }] : [] })),
+    times.map((t) => voiced(t, RIG, COLOR_PRESETS, r)), times);
+    if (voice) failures.push(`${row.id} voice: ${voice}`);
+  });
+  assert.deepStrictEqual(failures, []);
+  assert.ok(differsFromOwn > ROWS.length / 2, `the override recolours most presets (${differsFromOwn} of ${ROWS.length})`);
+});
+
+test('an override that is not a list of hex colours is none: the effects rehearse in their own', () => {
+  const r = buildRig(RIG, getProfile);
+  const row = ROWS.find((p) => p.id === 'ldj.FadeCycle');
+  const events = [{ timeMs: 0, action: 'patch', data: { pattern: row.id, ...LOOK } }];
+  const own = createPreviewSampler(events, GRID, { resolveEffect, safety: ACK });
+  const times = frames(600);
+  const expected = times.map((t) => own(t, RIG, COLOR_PRESETS, r));
+  for (const paletteOverride of [null, [], ['red'], [{ random: true }], '#FF0000']) {
+    const sample = createPreviewSampler(events, GRID, { resolveEffect, safety: ACK, paletteOverride });
+    assert.deepStrictEqual(times.map((t) => sample(t, RIG, COLOR_PRESETS, r)), expected, JSON.stringify(paletteOverride));
+  }
+  const red = createPreviewSampler(events, GRID, { resolveEffect, safety: ACK, paletteOverride: ['#FF0000'] });
+  assert.notDeepStrictEqual(times.map((t) => red(t, RIG, COLOR_PRESETS, r)), expected, 'a real one recolours it');
+});

@@ -23,6 +23,7 @@ import type { EffectSpec } from '../shared/effects/types.ts';
 import type { MusicalTime } from './conductor.ts';
 import type { SequenceFrame } from './sequencer.ts';
 import { validateSpec } from '../shared/effects/registry.ts';
+import { effectContentKey } from '../shared/effects/layer.ts';
 
 /** Where frames are rendered: a thread of their own, or this one. */
 export type EngineThread = 'worker' | 'main';
@@ -111,11 +112,11 @@ const identify = createIdentify({ clock: () => clock() });
 let effectSource: ((pattern: string) => EffectSpec | null) | null = null;
 let effectFailed = false;
 
-/** The base look's effect, or null for a pattern. */
-function currentEffect(): EffectSpec | null {
+/** What a pattern id plays as an effect, or null: a pattern, an id nothing knows, or no library yet. */
+function resolveEffect(pattern: string): EffectSpec | null {
   if (!effectSource) return null;
   try {
-    return effectSource(state.pattern) ?? null;
+    return effectSource(pattern) ?? null;
   } catch (err) {
     if (!effectFailed) console.warn(`[engine] effect source failed: ${messageOf(err)}`);
     effectFailed = true;
@@ -123,11 +124,50 @@ function currentEffect(): EffectSpec | null {
   }
 }
 
+/** The base look's effect, or null for a pattern. */
+function currentEffect(): EffectSpec | null {
+  return resolveEffect(state.pattern);
+}
+
 /** Register what a pattern id plays as an effect (the effect library). */
 function setEffectSource(fn: ((pattern: string) => EffectSpec | null) | null | undefined): void {
   effectSource = typeof fn === 'function' ? fn : null;
   effectFailed = false;
   validatedEffect = null;
+}
+
+// The base effect's revision: moved once whenever the effect the renderer was
+// last handed for this pattern changes its kind or settings (the renderer's
+// content key), goes away or comes back, so it starts again. The renderer
+// keeps its state when an effect goes and returns, so that is counted here.
+// A colour or brightness edit is the same effect playing on: the renderer
+// takes the new colours and level on its next frame, and a command sent
+// before the edit still lands. A rename, an edit to another preset or an
+// equal copy moves nothing.
+let effectRevision = 0;
+let handed: { pattern: string; spec: EffectSpec | null; key: string | null } | null = null;
+
+function noteEffect(pattern: string, spec: EffectSpec | null): void {
+  if (handed && handed.pattern === pattern) {
+    // The library hands out the same frozen spec until it changes.
+    if (handed.spec === spec) return;
+    const key = spec ? effectContentKey(spec) : null;
+    if (key !== handed.key) effectRevision++;
+    handed = { pattern, spec, key };
+    return;
+  }
+  // Another pattern is another base (its own id): nothing to start again.
+  handed = { pattern, spec, key: spec ? effectContentKey(spec) : null };
+}
+
+/**
+ * The library changed: look again now rather than at the next frame, so an
+ * effect deleted and saved again between two frames still starts again. Only
+ * for the pattern the renderer was last handed; one picked since, and not
+ * rendered yet, is new to it anyway.
+ */
+function effectChanged(): void {
+  if (handed && handed.pattern === state.pattern) noteEffect(state.pattern, currentEffect());
 }
 
 let validatedEffect: { raw: EffectSpec; spec: EffectSpec } | null = null;
@@ -190,6 +230,8 @@ const revisionOf = (frame: SequenceFrame): number | null => frame.table?.revisio
  * fade or sync test asked for.
  */
 function renderInput(): RenderInput {
+  const effect = currentEffect();
+  noteEffect(state.pattern, effect);
   // A Hue lamp is never strobed in software: a Hue bridge is no strobe (see
   // renderer.js).
   return {
@@ -229,7 +271,9 @@ function renderInput(): RenderInput {
       acknowledged: settings.get('safety.photosensitivityAcknowledged'),
     },
     hueStrobe: settings.get('hue.strobe'),
-    effect: currentEffect(),
+    effect,
+    effectRevision,
+    paletteOverride: state.paletteOverride,
     // The table itself goes over apart, once per revision (setSequence); the snapshot names it.
     sequenceRevision: revisionOf(sequenceNow),
     sequenceTransport: sequenceNow.transport,
@@ -693,6 +737,8 @@ export {
   setPulseSource,
   setAudioSource,
   setEffectSource,
+  resolveEffect,
+  effectChanged,
   setSequenceSource,
   resizeFixtureBuffers,
   startSyncTest,
