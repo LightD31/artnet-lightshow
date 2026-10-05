@@ -74,6 +74,11 @@ export interface Sequence {
   clips: Clip[];
   commands: Command[];
   automation: { tempo: Automation | null; brightness: Automation | null };
+  /**
+   * Light DJ's playlist options. `autoplay` moves a playing playlist on to
+   * the next row at a row's end (off, the row loops until next), on by
+   * default as in the app; it never starts a sequence, which only play does.
+   */
   options: { autoplay: boolean; shuffle: boolean; randomPaletteOnLoop: boolean; initialPalette: string | null };
 }
 

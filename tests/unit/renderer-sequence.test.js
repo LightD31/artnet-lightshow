@@ -621,3 +621,50 @@ test('the preview plays glow\'s own curve too, as the base and as a clip', () =>
     }
   }
 });
+
+test('one lamp: lanes, tracks and explicit fixture ids that miss it, a muted lane, the look\'s strobe and a voice', () => {
+  const ONE = [fixture(10, 1)];
+  const r = rig(ONE);
+  const sequencer = new Sequencer({ resolve: () => null });
+  const c = (id, laneId, startBeat, lengthBeats, hex, extra = {}) => ({ id, laneId, startBeat, lengthBeats, effect: { kind: 'test.seqPaint', palette: [hex] }, ...extra });
+  const raw = {
+    id: 's', name: 'S', lanes: [lane('a'), lane('b'), track('t10', 10), track('t11', 11)],
+    clips: [
+      c('wide', 'a', 0, 8, '#00FF00'),
+      // Fixture ids the rig does not have: nothing here.
+      c('elsewhere', 'b', 0, 8, '#0000FF', { targets: [11, 12] }),
+      c('absent', 't11', 0, 8, '#FFFFFF'),
+      // On the lamp's track, explicit ids keep only the lamp's own.
+      c('own', 't10', 2, 2, '#FF8000', { targets: [10, 11] }),
+      c('missed', 't10', 4, 2, '#FFFFFF', { targets: [11] }),
+    ],
+  };
+  sequencer.load(raw);
+  const t = sequencer.table();
+  r.renderer.setSequence(t);
+  const at = (beat, patch = {}) => colour(r.at(beat * 500, { ...playing(t), ...patch })[10]);
+  assert.equal(at(1), '0,255,0,0', 'the shared lane; the later lane\'s clip names other fixtures');
+  assert.equal(at(3), '255,128,0,0', 'the track');
+  assert.equal(at(5), '0,255,0,0', 'a track clip whose ids miss the lamp covers nothing');
+  assert.equal(at(9), RED, 'nothing plays: the look');
+  // The shared lane muted: the look shows through, the track still plays.
+  sequencer.load({ ...raw, lanes: [lane('a', { mute: true }), ...raw.lanes.slice(1)] });
+  const muted = sequencer.table();
+  r.renderer.setSequence(muted);
+  assert.equal(colour(r.at(500, playing(muted))[10]), RED);
+  assert.equal(colour(r.at(1500, playing(muted))[10]), '255,128,0,0');
+  r.renderer.setSequence(t);
+  // The look's strobe stays off the lamp while a clip plays on it.
+  const strobeCh = getProfile(ONE[0]).channelMap.strobe;
+  const strobing = { pattern: 'strobe', strobeSpeed: 200, strobeFunction: 'standard' };
+  r.at(500, { ...playing(t), ...strobing });
+  const covered = r.dmx(ONE[0])[strobeCh];
+  const plain = rig(ONE);
+  plain.at(500);
+  assert.equal(covered, plain.dmx(ONE[0])[strobeCh], 'the clip\'s own (no) strobe, as under a look that does not strobe');
+  r.at(4500, { ...playing(t), ...strobing });
+  assert.notEqual(r.dmx(ONE[0])[strobeCh], covered, 'the look strobes the lamp once no clip plays');
+  // A voice stays above the clip.
+  const pad = { id: 'pad:1', spec: paint('#0000FF'), targets: [10], tier: 'voice', launchSeq: 1, startedAtMs: 0, untilMs: null, anchorBeat: 0, seed: seedFrom('pad:1') };
+  assert.equal(colour(r.at(1500, { ...playing(t), voices: [pad] })[10]), '0,0,255,0');
+});

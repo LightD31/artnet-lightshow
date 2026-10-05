@@ -348,6 +348,10 @@ test('the table resolves every clip\'s effect, keeps explicit fixture ids and ma
   // Nothing plays until the transport starts it: loading launches nothing.
   sequencer.load(raw);
   assert.deepEqual(sequencer.frame({ beatPos: 0, bpm: 120, epoch: 0 }), { table: sequencer.table(), transport: null });
+  // Autoplay moves a playing playlist on from row to row; it starts nothing. Loaded with it on, a playlist stays still.
+  const playlist = new Sequencer({ resolve });
+  assert.equal(playlist.load(sequence({ mode: 'playlist', lanes: [lane('a')], clips: [clip('r1', 'a', 0, 8)] })).options.autoplay, true);
+  assert.equal(playlist.frame({ beatPos: 0, bpm: 120, epoch: 0 }).transport, null);
 });
 
 test('the live state carries the sequencer\'s status in a domain of its own', () => {
