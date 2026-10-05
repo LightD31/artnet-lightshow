@@ -238,11 +238,22 @@ class LiveInput {
     if (this._restartTimer) { clearTimeout(this._restartTimer); this._restartTimer = null; }
     if (this._rl) { try { this._rl.close(); } catch { /* closed */ } this._rl = null; }
     if (this._proc) { try { this._proc.kill(); } catch { /* gone */ } this._proc = null; }
-    this._reading = null;
-    this._offsets = [];
-    this._envelope = [];
+    this._forgetStream();
     this._ready = null;
     if (wasRunning) this._emitStatus();
+  }
+
+  /**
+   * A stream ends with its process, and the next one counts from zero: the
+   * old arrivals would place it 600 s off after ten minutes of listening, its
+   * lock says nothing about a grid it never heard, and its levels would sit
+   * in the envelope untrimmed until the new stream time passed them.
+   */
+  _forgetStream(): void {
+    this._reading = null;
+    this._lockedAt = -Infinity;
+    this._offsets = [];
+    this._envelope = [];
   }
 
   _launch(): void {
@@ -264,8 +275,8 @@ class LiveInput {
     proc.stdout.setEncoding('utf8');
     const rl = readline.createInterface({ input: proc.stdout });
     this._rl = rl;
-    // A replaced process can still deliver what its reader had buffered; its
-    // band powers were summed over the old list, so only the current one is heard.
+    // Nothing from a replaced process counts: a line of its was summed over the
+    // old band list, and a late error from it would restart the new one.
     rl.on('line', (line) => { if (this._proc === proc) this.handleLine(line); });
     let stderr = '';
     proc.stderr.on('data', (d: Buffer) => { if (stderr.length < 4096) stderr += d.toString(); });
@@ -273,7 +284,7 @@ class LiveInput {
     proc.on('close', (code) => {
       if (this._proc !== proc) return;
       this._proc = null;
-      this._reading = null;
+      this._forgetStream();
       if (this._stopped) return;
       const tail = stderr.trim().split('\n').slice(-2).join(' | ');
       if (!this._error) this._error = `live input exited (code ${code})${tail ? `: ${tail}` : ''}`;

@@ -209,8 +209,9 @@ test('a reading says which process it came from, and a replaced process is not h
   assert.strictEqual(live.getReading().generation, 1);
   assert.deepStrictEqual(live.getReading().spectrum, spectrum, 'raw Σx² and the FFT total both arrive as written');
 
-  // A new band list is a new process. Closing the old one's reader does not
-  // stop lines it already holds, and those were summed over the old bands.
+  // A new band list is a new process. Nothing from the old one counts any
+  // more: its lines were summed over the old bands, and a late error from it
+  // must not restart the new one.
   live.start({ source: 'loopback', bands: [[20, 250]] });
   firstLines.emit('line', state({ t: 2, spectrum: { power: 1, rms: 0.03, dominantHz: null, bands: [5], fftPower: 9 } }));
   assert.strictEqual(live.getReading(), null);
@@ -224,6 +225,36 @@ test('a reading says which process it came from, and a replaced process is not h
   t.mock.timers.tick(2000);
   live._rl.emit('line', state({ t: 0.5 }));
   assert.deepStrictEqual([procs.length, live.getReading().generation], [3, 3]);
+  live.stop();
+});
+
+test('a process that dies takes its stream clock, lock and envelope with it', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let now = 50000;
+  const procs = [];
+  const live = new LiveInput({ spawner: () => { const p = fakeProcess(); procs.push(p); return p; }, now: () => now });
+  live.start({ source: 'loopback' });
+  // Ten minutes in and locked: stream time 600.01 s arrives at 50 000 ms.
+  live._rl.emit('line', state({ t: 600, captured: 600.01, beat: 1200, locked: true }));
+  assert.ok(Math.abs(live.streamNowMs() - 600010) < 1e-6);
+  assert.deepStrictEqual(live.recentEnvelope().map((e) => e.t), [600]);
+
+  procs[0].emit('close', 1);
+  now += 2000;
+  t.mock.timers.tick(2000);
+  assert.strictEqual(procs.length, 2, 'started again');
+
+  // The new process counts its stream from zero. The dead one's lock does not
+  // vouch for a grid it never heard, its arrivals do not place the new stream
+  // on the clock, and its levels are not the new stream's envelope.
+  now += 500;
+  live._rl.emit('line', state({ t: 0.5, captured: 0.512, beat: 1.0, locked: false }));
+  assert.strictEqual(live.getBeatReading(), null, 'unlocked, and the old lock is gone');
+  now += 100;
+  live._rl.emit('line', state({ t: 0.6, captured: 0.612, beat: 1.2, locked: true }));
+  assert.ok(Math.abs(live.streamNowMs() - 612) < 1e-6, `stream now ${live.streamNowMs()}`);
+  assert.ok(Math.abs(live.getBeatReading().beatPos - (1.2 + 0.012 * 2)) < 1e-9, `beat ${live.getBeatReading().beatPos}`);
+  assert.deepStrictEqual(live.recentEnvelope().map((e) => e.t), [0.5, 0.6]);
   live.stop();
 });
 
