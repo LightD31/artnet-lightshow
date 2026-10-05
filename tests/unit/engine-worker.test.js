@@ -220,7 +220,11 @@ test('a worker that will not start leaves the engine rendering on the main threa
   applyPatch({ pattern: 'solid', running: true, masterDimmer: 255, masterBlackout: false, colorA: 1 });
   try {
     startEngine({ thread: 'worker', file: broken });
-    await wait(400);
+    // The broken script fails when its thread loads it, and under a full
+    // suite's load that exit and the first main-thread frame can take far
+    // longer than any fixed wait: poll for the fallback, then judge it.
+    const until = Date.now() + 5000;
+    while (!(engineStatus().thread === 'main' && lit()) && Date.now() < until) await wait(20);
     const status = engineStatus();
     assert.strictEqual(status.thread, 'main');
     assert.match(status.fellBack, /could not start/);
