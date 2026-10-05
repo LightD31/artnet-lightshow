@@ -73,7 +73,7 @@ test('the catalogue builds whichever effect module a host loads first', () => {
   // The macro kind renders its steps; loading the whole registry from inside it
   // once built the catalogue before the macro kind existed.
   // The catalogue also reads the Hue Dynamics, Disco and energy modules' own tables.
-  for (const first of ['macro.ts', 'render.ts', 'catalogue.ts', 'ldj-ids.ts', 'ldj-channel.ts', 'registry.ts', 'hd.ts', 'disco.ts', 'energy.ts']) {
+  for (const first of ['macro.ts', 'render.ts', 'catalogue.ts', 'ldj-ids.ts', 'ldj-channel.ts', 'registry.ts', 'hd.ts', 'disco.ts', 'energy.ts', 'layer.ts']) {
     const dir = new URL('../../src/shared/effects/', import.meta.url).href;
     const script = `await import('${dir}${first}'); const m = await import('${dir}index.ts'); console.log(m.CATALOGUE.length);`;
     assert.strictEqual(execFileSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' }).trim(), '214', first);
@@ -82,8 +82,9 @@ test('the catalogue builds whichever effect module a host loads first', () => {
 
 test('no effect module but the entry points loads the registry, so none can build the catalogue before its own kind registers', () => {
   // Whoever imports index.ts, render.ts or the catalogue may build the catalogue
-  // first; only these do, and type imports load nothing.
-  const allowed = { 'index.ts': ['catalogue.ts', 'render.ts'], 'render.ts': [], 'catalogue.ts': ['index.ts'] };
+  // first; only these do, and type imports load nothing. layer.ts is the
+  // renderer's and the preview's way in, an entry point like render.ts itself.
+  const allowed = { 'index.ts': ['catalogue.ts', 'render.ts'], 'render.ts': ['layer.ts'], 'catalogue.ts': ['index.ts'] };
   const dir = new URL('../../src/shared/effects/', import.meta.url);
   const found = Object.fromEntries(Object.keys(allowed).map((target) => [target, []]));
   for (const file of readdirSync(dir).filter((f) => f.endsWith('.ts')).sort()) {

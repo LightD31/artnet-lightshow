@@ -9,16 +9,18 @@ import * as universes from './universes.ts';
 import { guarded, report } from './guard.ts';
 import { conductor } from './conductor.ts';
 import { invalidateRig } from './rig.ts';
-import { createRenderer } from './renderer.ts';
+import { baseIntentOf, createRenderer } from './renderer.ts';
 import { createTicker, hrtimeMs, FRAME_MS } from './frame-clock.ts';
 import { messageOf } from '../errors.ts';
 import { createIdentify } from './identify.ts';
 import { hasNoAddress } from '../shared/placement.ts';
 import type { FromWorker, ToWorker } from './engine-messages.ts';
 import type { FrameSummary, Ticker } from './frame-clock.ts';
-import type { FadeRequest, RenderInput, SyncTestRequest } from './renderer.ts';
+import type { CommandResult, FadeRequest, RenderInput, SyncTestRequest } from './renderer.ts';
 import type { Profile, PulseReading } from '../types/rig.ts';
 import type { AudioFrame } from '../shared/effects/audio-frame.ts';
+import type { EffectSpec } from '../shared/effects/types.ts';
+import { validateSpec } from '../shared/effects/registry.ts';
 
 /** Where frames are rendered: a thread of their own, or this one. */
 export type EngineThread = 'worker' | 'main';
@@ -29,6 +31,12 @@ export type EngineStatus = {
   running: boolean;
   rate: number;
   fellBack: string | null;
+  /**
+   * The base effect's commands: the last one submitted, the last one the
+   * renderer decided (applied or refused) and the last it applied. A driver
+   * that starts afresh keeps these as history; its effect state is new.
+   */
+  commands: { submitted: number; processed: number; applied: number };
 } & Partial<FrameSummary>;
 
 /**
@@ -95,6 +103,50 @@ function startSyncTest(seconds = 10): number {
 // same clock as the fades so the worker times them as it times those.
 const identify = createIdentify({ clock: () => clock() });
 
+// What the look's pattern id plays as an effect (the effect library answers):
+// null plays the pattern, as every look did before effects. Nothing answers
+// until a library is registered, so until then every look is a pattern.
+let effectSource: ((pattern: string) => EffectSpec | null) | null = null;
+let effectFailed = false;
+
+/** The base look's effect, or null for a pattern. */
+function currentEffect(): EffectSpec | null {
+  if (!effectSource) return null;
+  try {
+    return effectSource(state.pattern) ?? null;
+  } catch (err) {
+    if (!effectFailed) console.warn(`[engine] effect source failed: ${messageOf(err)}`);
+    effectFailed = true;
+    return null;
+  }
+}
+
+/** Register what a pattern id plays as an effect (the effect library). */
+function setEffectSource(fn: ((pattern: string) => EffectSpec | null) | null | undefined): void {
+  effectSource = typeof fn === 'function' ? fn : null;
+  effectFailed = false;
+  validatedEffect = null;
+}
+
+let validatedEffect: { raw: EffectSpec; spec: EffectSpec } | null = null;
+
+/**
+ * The base look's effect as the audio detectors see it, validated (an
+ * effect that does not validate owns no detector), or null for a pattern.
+ */
+function baseEffect(): { id: string; spec: EffectSpec } | null {
+  const raw = currentEffect();
+  if (!raw) return null;
+  if (!validatedEffect || validatedEffect.raw !== raw) {
+    try {
+      validatedEffect = { raw, spec: validateSpec(raw) };
+    } catch {
+      return null;
+    }
+  }
+  return { id: `base:${state.pattern}`, spec: validatedEffect.spec };
+}
+
 /**
  * Everything a frame depends on, read off the live state: the look, the
  * masters, the patch (each fixture's universe and trim resolved), and any
@@ -133,6 +185,14 @@ function renderInput(): RenderInput {
     audio: runAudioSource(),
     audioMode: settings.get('audio.mode'),
     master: { ...settings.get('audio.master') },
+    // Explicit, always: an input without safety would keep the old energy
+    // burst's admission, which the live rig must never fall back to.
+    safety: {
+      hdFlashIntervalMs: settings.get('safety.hdFlashIntervalMs'),
+      acknowledged: settings.get('safety.photosensitivityAcknowledged'),
+    },
+    hueStrobe: settings.get('hue.strobe'),
+    effect: currentEffect(),
     fixtures: state.fixtures.map((f) => ({
       id: f.id,
       address: f.address,
@@ -225,10 +285,15 @@ function transmitFrame(): void {
   output.endFrame();
 }
 
+// Where the main thread's frame grid starts, on its own clock: the effects
+// count their frames from it. Unset when no driver runs (a test's frames).
+let mainGridOrigin: number | undefined;
+
 function renderDmx(): void {
   const now = clock();
   runFrameHook();
-  renderer.frame(renderInput(), conductor.now(), now, universes);
+  renderer.frame(renderInput(), conductor.now(), now, universes, mainGridOrigin);
+  settleCommands(renderer.takeCommandResults(), renderer.commandStatus());
   transmitFrame();
   // Hue is fed once per frame rather than once per universe: one message
   // covers the whole entertainment area, and it reads the colours back out of
@@ -252,6 +317,64 @@ let postedRevision = -1;
 let stopping: (() => void) | null = null;       // resolves when the worker has blacked out
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
 let workerFile = path.join(import.meta.dirname, 'engine-worker.ts');
+// The control tick's last reading, for a snapshot posted ahead of a command.
+let lastPosted: { at: number; reading: ReturnType<typeof conductor.now> } | null = null;
+
+// ── Commands for the base effect ────────────────────────────────────────────
+// Studio's and the visualizer's commands are data the renderer applies to
+// the base effect's own state, wherever it renders: numbered here, decided
+// there once each, in order, and acknowledged as they were actually decided.
+let commandSeq = 0;
+let commandsProcessed = 0;
+let commandsApplied = 0;
+const pendingCommands = new Map<number, (result: CommandResult) => void>();
+
+function settleCommands(results: readonly CommandResult[], status?: { processed: number; applied: number }): void {
+  for (const result of results) {
+    const resolve = pendingCommands.get(result.seq);
+    pendingCommands.delete(result.seq);
+    if (resolve) resolve(result);
+  }
+  if (status) {
+    commandsProcessed = Math.max(commandsProcessed, status.processed);
+    commandsApplied = Math.max(commandsApplied, status.applied);
+  }
+}
+
+/**
+ * A driver went away with commands it may or may not have applied: they are
+ * reported unavailable, never sent again to the next one, which starts its
+ * effects afresh (a toggle replayed there would toggle a different state).
+ */
+function failPendingCommands(): void {
+  for (const [seq, resolve] of pendingCommands) resolve({ seq, status: 'unavailable' });
+  pendingCommands.clear();
+}
+
+/**
+ * Send the base effect a command (stop, comboBreak, toggleDirection,
+ * fadeToBaseline, setPulserBaselineColor). Resolves with what the renderer
+ * did with it: applied, or why not (another effect plays now, the effect
+ * takes no commands, it cannot play yet, the engine is not running).
+ */
+function effectCommand(cmd: string, arg?: unknown): Promise<CommandResult> {
+  const seq = ++commandSeq;
+  if (!thread) return Promise.resolve({ seq, status: 'unavailable' });
+  const input = renderInput();
+  const intent = baseIntentOf(input);
+  return new Promise((resolve) => {
+    pendingCommands.set(seq, resolve);
+    if (thread === 'worker') {
+      if (!worker) { failPendingCommands(); return; }
+      // The look the command is meant for goes first, so it is what the
+      // command meets at the worker's next frame.
+      if (lastPosted) post(worker, { type: 'snapshot', at: lastPosted.at, input, reading: { ...lastPosted.reading, moving: !!state.running }, outputs: output.transmitConfig() });
+      post(worker, { type: 'command', seq, cmd, arg, intent });
+    } else {
+      renderer.command(seq, cmd, arg, intent);
+    }
+  });
+}
 
 /** Tell the worker something. */
 function post(w: Worker, msg: ToWorker): void {
@@ -262,7 +385,11 @@ function startMainDriver(): void {
   thread = 'main';
   clock = () => performance.now();
   universes.setWritable(true);
-  ticker = createTicker({ onTick: safeRender, periodMs: FRAME_MS });
+  // The ticker keeps its grid on the process clock; this thread renders on
+  // its own, so the grid's origin is noted on both at once.
+  const epochMs = hrtimeMs();
+  mainGridOrigin = clock();
+  ticker = createTicker({ onTick: safeRender, periodMs: FRAME_MS, epochMs });
   ticker.start();
 }
 
@@ -281,6 +408,7 @@ function controlTick(): void {
   runFrameHook();
   const reading = conductor.now();
   const at = hrtimeMs();
+  lastPosted = { at, reading };
   const revision = profilesRevision();
   if (revision !== postedRevision) {
     post(worker, { type: 'profiles', profiles: importedProfiles() });
@@ -307,6 +435,9 @@ function onWorkerMessage(msg: FromWorker | null): void {
     case 'stats':
       workerStats = msg.stats;
       break;
+    case 'commands':
+      settleCommands(msg.results, { processed: msg.processed, applied: msg.applied });
+      break;
     case 'stopped':
       if (stopping) stopping();
       break;
@@ -324,12 +455,15 @@ function spawnWorker(epochMs: number): void {
   postedRevision = -1;
   w.on('message', (msg: FromWorker | null) => {
     if (msg && msg.type === 'ready') ready = true;
+    // A retired worker's word on a command is no answer: its commands were failed when it went.
+    if (msg && msg.type === 'commands' && worker !== w) return;
     guarded('engine', onWorkerMessage)(msg);
   });
   w.on('error', (err) => report('engine worker', err));
   w.on('exit', (code) => {
     if (worker !== w) return;           // a worker already replaced or stopped
     worker = null;
+    failPendingCommands();
     if (thread !== 'worker') return;
     const now = Date.now();
     crashes = crashes.filter((at) => now - at < CRASH_WINDOW_MS).concat(now);
@@ -433,6 +567,9 @@ function stopEngine(): Promise<void> {
   thread = null;
   worker = null;
   workerStats = null;
+  lastPosted = null;
+  mainGridOrigin = undefined;
+  failPendingCommands();
   clock = () => performance.now();
 
   if (!w) {
@@ -469,6 +606,7 @@ function engineStatus(): EngineStatus {
     running: !!thread,
     rate: Math.round(1000 / FRAME_MS),
     fellBack,
+    commands: { submitted: commandSeq, processed: commandsProcessed, applied: commandsApplied },
     ...(stats || {}),
   };
 }
@@ -480,10 +618,13 @@ export {
   setFrameHook,
   setPulseSource,
   setAudioSource,
+  setEffectSource,
   resizeFixtureBuffers,
   startSyncTest,
   identify,
   beginFade,
+  baseEffect,
+  effectCommand,
   renderInput,
   CONTROL_LEAD_MS,
   renderDmx as renderFrame,

@@ -12,7 +12,13 @@ import type { EffectFrame, EffectSlot, FrameBase } from './types.ts';
 
 const BLACK: Colour = { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 };
 
-export function renderEffect(inst: EffectInstance, frame: FrameBase & { roll?: number }, room: Room, stepper: EffectStepper, out: EffectSlot[]): void {
+/**
+ * `prepare`, when given, runs on the instance's state after its legitimate
+ * initialization and before this frame's sample: the renderer applies queued
+ * commands there. It does not run when the kind is unknown or not admitted.
+ */
+export function renderEffect(inst: EffectInstance, frame: FrameBase & { roll?: number }, room: Room, stepper: EffectStepper, out: EffectSlot[],
+  prepare?: (state: unknown) => void): void {
   const def = kindOf(inst.spec.kind);
   if (!def || (requiresAcknowledgement(inst.spec) && !frame.acknowledged)) return;
   const prepared = stepper.palette(inst.id, inst.spec, frame.nowMs);
@@ -26,6 +32,7 @@ export function renderEffect(inst: EffectInstance, frame: FrameBase & { roll?: n
     f.palette = paletteAt(initialRoll);
     return def.init(inst.spec.params, room, f);
   }, frame.nowMs);
+  prepare?.(state);
   f.roll = def.rollOf?.(state) ?? initialRoll;
   f.paletteAccess = createPaletteAccess(inst.spec, frame.paletteOverride, frame.lookPalette, inst.seed, f.roll, prepared);
   f.palette = f.paletteAccess.palette;

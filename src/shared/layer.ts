@@ -64,6 +64,8 @@ export interface LayerClock {
   pulse?: Readonly<PulseReading> | null;
   /** The tempo, which times the strobe effects' flashes in milliseconds. */
   bpm?: number | null;
+  /** How Hue lamps take the flash looks' flashes (patterns.ts PatternContext.hueStrobe); absent is 'pulse'. */
+  hueStrobe?: 'flash' | 'pulse';
   fixtureCount: number;
   twinkle: number[];
   /** The dice memory of the bars' own picture, apart from the pars'. */
@@ -189,6 +191,7 @@ function patternContext(rig: Rig, layout: Layout, pattern: string, colors: reado
     // since the scene began, over the beats it was given.
     progress: span && span.beats > 0 ? Math.min(1, span.from + stepPos / division / span.beats) : null,
     stepMs: clock.bpm && clock.bpm > 0 ? 60000 / clock.bpm / division : null,
+    hueStrobe: clock.hueStrobe,
   };
 
   if (CELL_PATTERNS.has(pattern)) {

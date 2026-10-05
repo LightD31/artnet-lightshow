@@ -91,11 +91,25 @@ function transmit(outputs: TransmitConfig): void {
 
 let ticker: Ticker | null = null;
 
+/** Tell the main thread what became of its commands, when anything did. */
+function postCommands(): void {
+  const results = renderer.takeCommandResults();
+  if (!results.length) return;
+  const { processed, applied } = renderer.commandStatus();
+  post({ type: 'commands', results, processed, applied });
+}
+
 function renderTick(due: number, now: number): void {
-  if (!snapshot) return;
-  const reading = follow.at(now);
-  if (!reading) return;
-  renderer.frame(snapshot.input, reading, now, store);
+  const reading = snapshot ? follow.at(now) : null;
+  if (!snapshot || !reading) {
+    // Nothing to render yet: a command waiting would wait for nothing.
+    renderer.rejectCommands('unavailable');
+    postCommands();
+    return;
+  }
+  // The effects count their frames from the ticker's grid (epochMs, phase 0).
+  renderer.frame(snapshot.input, reading, now, store, epochMs);
+  postCommands();
   transmit(snapshot.outputs);
   post({ type: 'frame' });
   if (now - lastStatsAt >= 1000) {
@@ -123,8 +137,8 @@ function blackout(): void {
 }
 
 /** One frame on request, for tests: the universes' bytes come back. */
-function renderOnce({ input, reading, now }: { input: RenderInput; reading: MusicalTime; now: number }): RenderedFrames {
-  renderer.frame(input, reading, now, store);
+function renderOnce({ input, reading, now, gridOriginMs }: { input: RenderInput; reading: MusicalTime; now: number; gridOriginMs?: number }): RenderedFrames {
+  renderer.frame(input, reading, now, store, gridOriginMs);
   const frames: RenderedFrames = {};
   for (const universe of store.list()) frames[universe] = Array.from(store.getBuffer(universe));
   for (const [universe] of store.drainRetired()) frames[universe] = null;
@@ -141,8 +155,14 @@ port.on('message', guarded('engine-worker', (msg: ToWorker | null) => {
       snapshot = { input: msg.input, outputs: msg.outputs };
       follow.push(msg.reading, msg.at);
       break;
-    case 'render':
-      post({ type: 'rendered', id: msg.id, frames: renderOnce(msg) });
+    case 'render': {
+      const frames = renderOnce(msg);
+      const commands = renderer.takeCommandResults();
+      post({ type: 'rendered', id: msg.id, frames, ...(commands.length ? { commands } : {}) });
+      break;
+    }
+    case 'command':
+      renderer.command(msg.seq, msg.cmd, msg.arg, msg.intent ?? null);
       break;
     case 'stop':
       if (ticker) ticker.stop();

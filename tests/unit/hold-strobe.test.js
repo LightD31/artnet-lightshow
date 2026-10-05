@@ -11,7 +11,7 @@ import { getProfile, profilesRevision, BUILTIN_PROFILE_ID, HUE_COLOR_PROFILE_ID 
 import { COLOR_PRESETS, ENERGY_EFFECTS } from '../../src/server/presets.ts';
 import { createPreviewSampler } from '../../src/shared/preview.ts';
 import { buildRig } from '../../src/shared/rig.ts';
-import { HOLD_STROBE, HOLD_FLASH_MS, HOLD_BLACK_MS, HUE_PULSE_MS, HUE_PULSE_FLOOR, holdStrobeFlash, holdStrobeLook, resolveEnergyOverride } from '../../src/shared/look-math.ts';
+import { HOLD_STROBE, HOLD_FLASH_MS, HOLD_BLACK_MS, HUE_PULSE_MS, HUE_PULSE_FLOOR, holdStrobeFlash, holdStrobeLook, huePulseLevel as huePulseLevelOf, resolveEnergyOverride } from '../../src/shared/look-math.ts';
 
 const RED = COLOR_PRESETS[0];
 const BLUE = COLOR_PRESETS[5];
@@ -64,6 +64,13 @@ test('a Hue lamp takes each flash at full and falls to the floor, never black', 
   assert.deepStrictEqual(rigAt(240)[1], { dim: 40, r: 40, g: 0, b: 0 }, 'held');
   assert.deepStrictEqual(rigAt(250)[1], { dim: 255, r: 0, g: 85, b: 255 }, 'then colour B');
   for (let ms = 0; ms < 2000; ms += 25) assert.ok(rigAt(ms)[1].dim >= 40, `${rigAt(ms)[1].dim} at ${ms} ms`);
+});
+
+test('with hueStrobe flash the lamp goes black after the flash', () => {
+  assert.deepStrictEqual(rigAt(0, { hueStrobe: 'flash' })[1], { dim: 255, r: 255, g: 0, b: 0 }, 'flashed at full');
+  assert.strictEqual(rigAt(150, { hueStrobe: 'flash' })[1].dim, 0, 'black, as a par');
+  assert.deepStrictEqual(rigAt(150, { hueStrobe: 'flash' })[1], rigAt(150, { hueStrobe: 'flash' })[0], 'exactly as the par');
+  assert.strictEqual(rigAt(150, { hueStrobe: 'pulse' })[1].dim, huePulseLevelOf(150), 'pulsed when asked');
 });
 
 test('the flash limit still holds the rig to its three large flashes a second', () => {

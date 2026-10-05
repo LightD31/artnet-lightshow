@@ -294,6 +294,33 @@ test('on a Hue lamp a flash is the colour at full falling to a floor, never blac
   assert.strictEqual(draw('flashes', { n: 8, noFlash: all, ...at(250) })[i][1], HUE_PULSE_FLOOR);
 });
 
+// The Hue strobe setting reaches the fork's own flash looks: 'flash' takes a
+// Hue lamp as any other between flashes, 'pulse' (and a context that says
+// nothing, as every call above) keeps its falling pulse.
+test('ring strobe: with hueStrobe flash the Hue lamp is black between flashes; pulse or nothing keeps its 148', () => {
+  const noFlash = [true, false, false, false];
+  assert.strictEqual(draw('ring-strobe', { noFlash, hueStrobe: 'flash', ...at(100) })[0][1], 0, 'black between flashes');
+  assert.strictEqual(draw('ring-strobe', { noFlash, hueStrobe: 'flash', ...at(0) })[0][1], 255, 'and flashed hard on its step');
+  assert.strictEqual(draw('ring-strobe', { noFlash, hueStrobe: 'pulse', ...at(100) })[0][1], 148);
+  assert.strictEqual(draw('ring-strobe', { noFlash, ...at(100) })[0][1], 148, 'absent means pulse');
+  // Backlit, the Hue lamp parks on colour B like the pars rather than going black.
+  const backlit = draw('ring-backlit', { noFlash, hueStrobe: 'flash', ...at(100) });
+  assert.deepStrictEqual(backlit[0], [BLUE, BACKLIGHT]);
+  assert.deepStrictEqual(backlit[0], draw('ring-backlit', { noFlash: null, ...at(100) })[0], 'exactly a par\'s backlight');
+});
+
+test('flashes: with hueStrobe flash a Hue lamp is cut to the look\'s bed like a par; pulse or nothing keeps its fall', () => {
+  const all = new Array(8).fill(true);
+  const lit = brightest(draw('flashes', { n: 8, noFlash: all, ...at(0) }));
+  for (const ms of [0, 60, 125, 250]) {
+    assert.deepStrictEqual(draw('flashes', { n: 8, noFlash: all, hueStrobe: 'flash', ...at(ms) }), draw('flashes', { n: 8, ...at(ms) }),
+      `the same as pars at ${ms} ms`);
+  }
+  assert.strictEqual(draw('flashes', { n: 8, noFlash: all, hueStrobe: 'flash', ...at(125) })[lit][1], 14, 'cut to the bed');
+  assert.strictEqual(draw('flashes', { n: 8, noFlash: all, hueStrobe: 'pulse', ...at(125) })[lit][1], 121);
+  assert.strictEqual(draw('flashes', { n: 8, noFlash: all, ...at(125) })[lit][1], 121, 'absent means pulse');
+});
+
 test('ring backlit: the lit lamp in colour A, the rest parked on B', () => {
   const out = draw('ring-backlit', { plan: CORNERS, ...at(500) });
   // The second step lights the back right, the second round from the front (the plot top).

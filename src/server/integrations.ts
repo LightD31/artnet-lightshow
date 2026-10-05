@@ -20,7 +20,7 @@ import { AutoSync } from '../auto-sync.ts';
 import LiveDirector from '../show/live-director.ts';
 import { PATTERNS } from './presets.ts';
 import { settings } from './settings.ts';
-import { identify, setAudioSource } from './engine.ts';
+import { baseEffect, identify, setAudioSource } from './engine.ts';
 import { AudioFeatures, feedOf, resolveDetectors } from './audio-features.ts';
 import { BIN_HZ } from '../shared/spectrum-bands.ts';
 import type { Server } from 'socket.io';
@@ -357,15 +357,15 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
 
   // ─── What the party effects hear ────────────────────────────────────────
   // One set of detectors for every effect (audio-features.ts), on the
-  // settings of the Disco or Visualizer playing, else on the settings here.
-  // No look is an effect yet and no voices play, so for now the settings and
-  // Disco's defaults run them; the renderer's base effect and its voices are
-  // what `resolveDetectors` takes when they exist, with the photosensitivity
-  // acknowledgement that admits a Visualizer among them (none is kept yet).
+  // settings of the Disco or Visualizer playing, else on the settings here:
+  // the base look's effect, validated, and the voices over it (none are
+  // launched from here yet), with the photosensitivity acknowledgement that
+  // admits a Visualizer among them.
   function detectors(): Detectors {
     return resolveDetectors({
-      base: null, voices: [], nowMs: performance.now(),
-      fixtureIds: state.fixtures.map((f) => f.id), ldjTrigger: settings.get('audio.ldjTrigger'), acknowledged: false,
+      base: baseEffect(), voices: [], nowMs: performance.now(),
+      fixtureIds: state.fixtures.map((f) => f.id), ldjTrigger: settings.get('audio.ldjTrigger'),
+      acknowledged: settings.get('safety.photosensitivityAcknowledged'),
     });
   }
   const audioFeatures = new AudioFeatures({

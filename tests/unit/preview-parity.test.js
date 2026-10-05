@@ -20,6 +20,7 @@ import { conductor } from '../../src/server/conductor.ts';
 import { applyPatch } from '../../src/server/patch.ts';
 import { COLOR_PRESETS } from '../../src/server/presets.ts';
 import { createPreviewSampler } from '../../src/shared/preview.ts';
+import { acknowledgeFlashes } from '../helpers/acknowledged.js';
 
 const FRAME_MS = 25;
 const frames = (n = 3) => new Promise((r) => setTimeout(r, FRAME_MS * n + 20));
@@ -62,7 +63,11 @@ const comparable = (rig, preview) => {
   return picked;
 };
 
+// The strobe bursts play only with the photosensitivity acknowledgement.
+let restoreSettings = () => {};
+
 test.before(() => {
+  restoreSettings = acknowledgeFlashes();
   state.artnet.enabled = false;
   state.masterBlackout = false;
   // Master at full, so the one thing the preview deliberately ignores cannot
@@ -74,7 +79,10 @@ test.before(() => {
   startEngine();
 });
 
-test.after(() => stopEngine());
+test.after(async () => {
+  await stopEngine();
+  restoreSettings();
+});
 
 // Every burst the director can reach for. `color-strobe` and `glow` derive from
 // the look's slot A, so they are the ones that catch a preview reading the wrong

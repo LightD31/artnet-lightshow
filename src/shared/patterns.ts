@@ -26,6 +26,7 @@ import type { Colour, Expression, PulseReading } from '../types/rig.ts';
 //                       group, when the rig is placed (shared/rig.ts) — what
 //                       the party effects travel the room by; null otherwise
 //   ctx.noFlash       : which slots are Hue lamps, never flashed, or null
+//   ctx.hueStrobe     : 'flash' flashes those as well; 'pulse' or absent pulses them
 //   ctx.write(i, color, dim, strobe) — sets slot i's render colour
 //
 // 'fade' and 'hit' are whole-rig envelopes: the engine and the preview set
@@ -57,6 +58,11 @@ export interface PatternContext {
   plan?: StagePlan | null;
   /** The slots that are Hue lamps (or follow one) and so are never flashed, or null. */
   noFlash?: readonly boolean[] | null;
+  /**
+   * How those lamps take a flash: 'pulse' falls to a floor (huePulseLevel),
+   * 'flash' flashes them as any lamp. Absent is 'pulse', as before the setting.
+   */
+  hueStrobe?: 'flash' | 'pulse';
   write(i: number, colour: Colour, dim: number, strobe: number): void;
 }
 
@@ -1094,8 +1100,8 @@ function lift(bed: number, level: number): number {
 // bridge can follow.
 const huePulse = huePulseLevel;
 
-/** Is slot i a Hue lamp, never flashed. */
-const isHueSlot = (ctx: PatternContext, i: number): boolean => !!ctx.noFlash && !!ctx.noFlash[i];
+/** Is slot i a Hue lamp the flash looks pulse; under 'flash' it is flashed as any other. */
+const isHueSlot = (ctx: PatternContext, i: number): boolean => ctx.hueStrobe !== 'flash' && !!ctx.noFlash && !!ctx.noFlash[i];
 
 /**
  * The steps a flash grid has to space its flashes by so that no lamp flashes

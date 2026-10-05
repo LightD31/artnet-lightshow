@@ -27,6 +27,7 @@ import { bandBins } from '../shared/spectrum-bands.ts';
 import { DISCO_DEFAULTS } from '../shared/effects/disco.ts';
 import { VISUALIZER_DEFAULTS } from '../shared/effects/ldj-visualizer.ts';
 import { requiresAcknowledgement } from '../shared/effects/registry.ts';
+import { voiceOrder } from '../shared/effects/layer.ts';
 import { bandsArg } from '../live-input.ts';
 import type { AudioFrame } from '../shared/effects/audio-frame.ts';
 import type { DiscoGlobals, DiscoParams } from '../shared/effects/disco.ts';
@@ -604,8 +605,8 @@ export function resolveDetectors({ base, voices, nowMs, fixtureIds, ldjTrigger, 
     .map((v, index) => ({ v, index }))
     .filter(({ v }) => v.startedAtMs <= nowMs && (v.untilMs === null || nowMs < v.untilMs)
       && (v.targets === null || v.targets.some((id) => fixtureIds.includes(id))))
-    .sort((a, b) => (Number(b.v.tier === 'strobe') - Number(a.v.tier === 'strobe')) || (b.v.launchSeq - a.v.launchSeq)
-      || (Number(b.v.targets !== null) - Number(a.v.targets !== null)) || (b.v.startedAtMs - a.v.startedAtMs) || (a.index - b.index))
+    // The renderer's own order (shared/effects/layer.ts), so a tie resolves as the lamps show it.
+    .sort((a, b) => voiceOrder(a.v, b.v) || (a.index - b.index))
     .map(({ v }) => v);
   const plays = (spec: EffectSpec, kind: string) => spec.kind === kind && (acknowledged || !requiresAcknowledgement(spec));
   const ownerOf = (kind: string): { owner: DetectorOwner; params: Record<string, unknown> } | null => {

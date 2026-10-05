@@ -16,7 +16,8 @@ import { attachRoutes } from '../../src/server/routes.ts';
 import { attachSockets } from '../../src/server/sockets.ts';
 import { setupIntegrations } from '../../src/server/integrations.ts';
 import { createApplier } from '../../src/server/apply.ts';
-import { renderInput } from '../../src/server/engine.ts';
+import { renderInput, setEffectSource } from '../../src/server/engine.ts';
+import { validateSpec } from '../../src/shared/effects/registry.ts';
 import { settings, DEFAULTS } from '../../src/server/settings.ts';
 import { state, getLiveState } from '../../src/server/state.ts';
 import { showStore } from '../../src/server/show-store.ts';
@@ -298,6 +299,34 @@ test('a latency raised while listening holds the hop the rig has until the room 
     assert.ok(seen[seen.length - 1] > before, 'and on again once the room hears past it');
     assert.ok(Math.abs(seen[seen.length - 1] - (1 + (79 - 23) * 0.0116)) < 1e-9, '300 ms behind, as before the raise');
   } finally {
+    await s.close();
+  }
+});
+
+// The detectors run on the settings of the Visualizer or Disco that plays: the
+// base look's own effect counts, once the room may see what the Visualizer flashes.
+test('the detectors take the base look\'s effect, validated, when the photosensitivity acknowledgement admits it', async () => {
+  const s = await serve();
+  const pattern = state.pattern;
+  try {
+    const visualizer = { kind: 'ldj.visualizer', params: { trigger: 0.1 } };
+    setEffectSource((id) => (id === 'vis' ? visualizer : id === 'broken' ? { kind: 'ldj.visualizer', params: { trigger: 7 } } : null));
+    state.pattern = 'vis';
+    assert.deepStrictEqual(renderInput().effect, visualizer, 'the engine plays it as the base');
+    assert.deepStrictEqual(renderInput().safety, { hdFlashIntervalMs: 350, acknowledged: false }, 'with the settings\' safety, always');
+    let res = await s.call('GET', '/api/audio');
+    assert.strictEqual(res.body.detectors.spl.owner.from, 'fallback', 'a Visualizer nobody may see owns nothing');
+    settings._values = { ...settings._values, safety: { ...settings._values.safety, photosensitivityAcknowledged: true } };
+    res = await s.call('GET', '/api/audio');
+    assert.deepStrictEqual(res.body.detectors.spl.owner, { from: 'base', id: 'base:vis', kind: 'ldj.visualizer' });
+    assert.strictEqual(res.body.detectors.spl.trigger, 0.1, 'its trigger, as validated');
+    state.pattern = 'broken';
+    res = await s.call('GET', '/api/audio');
+    assert.strictEqual(res.body.detectors.spl.owner.from, 'fallback', 'an effect that does not validate owns no detector');
+    assert.throws(() => validateSpec({ kind: 'ldj.visualizer', params: { trigger: 7 } }));
+  } finally {
+    setEffectSource(null);
+    state.pattern = pattern;
     await s.close();
   }
 });

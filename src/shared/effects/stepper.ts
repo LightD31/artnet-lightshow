@@ -77,6 +77,31 @@ export class EffectStepper {
     return entry.palette.prepared;
   }
 
+  /** The state an instance already has, without creating one; null before its first initialization. */
+  peek<S>(id: string): { value: S } | null {
+    const entry = this.states.get(id);
+    return entry?.initialized ? { value: entry.value as S } : null;
+  }
+
+  /** Mark an instance seen without rendering it (a held base look), so a sweep keeps it. */
+  keep(id: string, nowMs: number): void {
+    const entry = this.states.get(id);
+    if (entry) entry.lastSeen = nowMs;
+  }
+
+  /** One instance starts again: its kind state and palette cache, and nothing else. */
+  forget(id: string): void { this.states.delete(id); }
+
+  /** Hand one instance's state on to another id (the strobe's permit outliving a relaunch). */
+  move(from: string, to: string): void {
+    if (from === to) return;
+    const entry = this.states.get(from);
+    this.states.delete(to);
+    if (!entry) return;
+    this.states.delete(from);
+    this.states.set(to, entry);
+  }
+
   sweep(nowMs: number, keepMs = 2000): void {
     for (const [id, entry] of this.states) if (nowMs - entry.lastSeen > keepMs) this.states.delete(id);
   }
