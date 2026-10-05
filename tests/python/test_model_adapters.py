@@ -146,28 +146,38 @@ class SKey(unittest.TestCase):
         # torchaudio 2.9+ routes `load` through torchcodec, which the ROCm
         # wheels do not ship; S-KEY's own loader then fails and every track
         # silently loses its key. The adapter reads the file itself.
+        #
+        # The fake is a module of its own, as S-KEY's key_detection is: its
+        # detect_key looks up `load_audio` and `print` in its module, which is
+        # where the adapter replaces both.
+        import io
         import types
         import numpy as np
         import soundfile as sf
         seen = {}
+        module = types.ModuleType('key_detection')
+        module.seen = seen
+        module.load_audio = MagicMock(side_effect=RuntimeError('torchcodec'))
+        exec(
+            "def detect_key(path, device='cpu'):\n"
+            "    seen['waveform'] = load_audio(path, 22050)\n"
+            "    print('\\n✅ Predicted key: A minor\\n')\n"
+            "    return ['A minor']\n",
+            module.__dict__)
 
-        def detect_key(path, device='cpu'):
-            import sys
-            seen['waveform'] = module.load_audio(path, 22050)
-            # S-KEY prints its answer with an emoji. On the real stdout that
-            # is the worker's protocol stream, and on Windows it raises.
-            if sys.stdout is sys.__stdout__:
-                raise UnicodeEncodeError('charmap', '✅', 0, 1, 'printed to the protocol stream')
-            print('✅ Predicted key: A minor')
-            return ['A minor']
+        class Console(io.StringIO):
+            # S-KEY's answer carries an emoji, and a Windows console's code
+            # page has none: printed there, it raises.
+            def write(self, text):
+                text.encode('cp1252')
+                return super().write(text)
 
-        module = types.SimpleNamespace(detect_key=detect_key,
-                                       load_audio=MagicMock(side_effect=RuntimeError('torchcodec')))
         with tempfile.TemporaryDirectory() as directory:
             path = str(Path(directory) / 'tone.wav')
             t = np.arange(44100) / 44100
             sf.write(path, np.stack([0.2 * np.sin(2 * np.pi * 440 * t), 0.1 * np.sin(2 * np.pi * 440 * t)], axis=1), 44100)
-            with patch.object(adapters, '_optional', return_value=module):
+            with patch.object(adapters, '_optional', return_value=module), \
+                 patch('sys.stdout', new=Console()):
                 result = adapters.skey_key(path)
         self.assertEqual(result, {'value': 'A minor', 'confidence': 1.0, 'source': 's-key'})
         waveform = seen['waveform']
