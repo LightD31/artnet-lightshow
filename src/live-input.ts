@@ -171,6 +171,7 @@ class LiveInput {
   declare _reading: LiveReading | null;
   declare _readingAt: number;
   declare _lockedAt: number;
+  declare _lock: number;
   declare _offsets: { at: number; offset: number }[];
   declare _envelope: LiveEnvelopePoint[];
   declare _ready: { backend: string | null; device: string | null } | null;
@@ -193,6 +194,7 @@ class LiveInput {
     this._reading = null;
     this._readingAt = 0;
     this._lockedAt = -Infinity;
+    this._lock = 0;
     this._offsets = [];
     this._envelope = [];
     this._ready = null;
@@ -358,7 +360,12 @@ class LiveInput {
     r.generation = this._generation;
     this._reading = r;
     this._readingAt = now;
-    if (r.locked) this._lockedAt = now;
+    if (r.locked) {
+      // Found again after it lapsed (or in a new stream): a new lock, which
+      // ends a tempo the operator took by hand from the old one (conductor.ts).
+      if (now - this._lockedAt > LOCK_HOLD_MS) this._lock += 1;
+      this._lockedAt = now;
+    }
     // The least-delayed arrival of the last few seconds: pipes and the event
     // loop only ever add delay, so the smallest offset is the truest.
     const offset = now - r.captured * 1000;
@@ -386,16 +393,17 @@ class LiveInput {
   }
 
   /**
-   * Where the music is, in beats, now: `{ beatPos, bpm }` for the pattern
-   * clock, or null unless the service is listening and has a grid.
+   * Where the music is, in beats, now: `{ beatPos, bpm, key }` for the pattern
+   * clock, or null unless the service is listening and has a grid. `key`
+   * counts the locks: it moves on when the beat is found again after it lapsed.
    */
-  getBeatReading(): { beatPos: number; bpm: number } | null {
+  getBeatReading(): { beatPos: number; bpm: number; key: number } | null {
     const r = this._reading;
     const streamNow = this.streamNowMs();
     if (!r || streamNow === null || r.beat == null || !(r.bpm > 0)) return null;
     if (!r.locked && this._now() - this._lockedAt > LOCK_HOLD_MS) return null;
     const beatPos = r.beat + ((streamNow / 1000 - r.t) * r.bpm) / 60;
-    return Number.isFinite(beatPos) ? { beatPos, bpm: r.bpm } : null;
+    return Number.isFinite(beatPos) ? { beatPos, bpm: r.bpm, key: this._lock } : null;
   }
 
   /** The newest reading, while it is fresh. */

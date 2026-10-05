@@ -15,12 +15,19 @@ import type { BeatGrid } from '../shared/beat-clock.ts';
  *   cdj    PRO DJ LINK is on and the master deck is playing: the deck's own
  *          beat position, through rekordbox's grid.
  *   track  the auto show is off, but the track playing has a cached analysis:
- *          manual patterns lock to its grid too. A tap or a typed BPM takes
- *          the tempo back by hand until the next track.
+ *          manual patterns lock to its grid too.
  *   live   the live input hears the music and has found its beat: the grid
  *          it keeps (see live-input.ts), for a track nothing else knows.
  *   tap    none of those: a free-running clock at the operator's BPM, set by
  *          tap tempo, BPM entry or MIDI.
+ *
+ * A tap, a typed BPM or a nudge while a deck, a track or the live input leads
+ * takes the tempo by hand: the clock reads `tap` at that tempo, so the BPM
+ * read-out is the tempo the rig runs at. The hand holds off that source and
+ * those below it until the music it was taken from moves on — the next
+ * track; the master deck loading a new track, or another deck becoming the
+ * master; the live input losing its beat and finding a new one — and then
+ * the clock follows again. The auto show's grid is never taken by hand.
  *
  * That is the `auto` tempo mode, automatic tempo match. In `manual` the
  * operator keeps the tempo: the deck, the track and the live input are not
@@ -82,6 +89,24 @@ export interface AutoClock {
 export interface DeckClock {
   beatPos: number;
   bpm?: number | null;
+  /**
+   * What is followed: the deck and its track, or the live input's lock. A
+   * tempo taken by hand from the source holds until this changes.
+   */
+  key?: string | number | null;
+}
+
+// The sources the clock follows of its own accord, best first. A tempo taken
+// by hand from one holds off it and every one after it.
+const FOLLOWED = ['cdj', 'track', 'live'] as const;
+type Followed = typeof FOLLOWED[number];
+
+const isFollowed = (source: ClockSource): source is Followed => (FOLLOWED as readonly string[]).includes(source);
+
+/** A tempo the operator took by hand: from which source, and what it was following then. */
+interface Hand {
+  source: Followed;
+  key: string | number | null | undefined;
 }
 
 interface TrackLock {
@@ -112,6 +137,7 @@ class Conductor {
   declare _still: Record<string, { positionMs: number; since: number }>;
   declare _tookOver: boolean;
   declare _tempoMode: TempoMode;
+  declare _hand: Hand | null;
 
   constructor({ now = () => performance.now(), bpm = 120 }: { now?: () => number; bpm?: number } = {}) {
     this._now = now;
@@ -128,6 +154,7 @@ class Conductor {
     this._still = {};                   // per grid source: { positionMs, since }
     this._tookOver = false;             // the operator just took the tempo from a track
     this._tempoMode = 'auto';
+    this._hand = null;                  // the tempo taken by hand from a followed source
   }
 
   /**
@@ -152,14 +179,20 @@ class Conductor {
     positionMs?: () => number;
   } = {}): void {
     if (!grid || typeof positionMs !== 'function') return this.clearTrack({ key });
-    if (!this._track || this._track.key !== key) this._override = false;
+    if (!this._track || this._track.key !== key) this._nextTrack();
     this._track = { key, grid, positionMs };
   }
 
   /** No lockable track is playing. `key` names the track that is, if any. */
   clearTrack({ key = null }: { key?: string | null } = {}): void {
-    if (!this._track || this._track.key !== key) this._override = false;
+    if (!this._track || this._track.key !== key) this._nextTrack();
     this._track = null;
+  }
+
+  /** The next track: the operator's override on the last one, and a tempo taken by hand from it, end. */
+  _nextTrack(): void {
+    this._override = false;
+    if (this._hand?.source === 'track') this._hand = null;
   }
 
   get trackKey(): string | null | undefined { return this._track ? this._track.key : null; }
@@ -181,8 +214,11 @@ class Conductor {
     if (!TEMPO_MODES.includes(mode as TempoMode) || mode === this._tempoMode) return;
     this._tempoMode = mode as TempoMode;
     // Following again means following: a tap that took the tempo from this
-    // track, in either mode, no longer holds it off.
-    if (mode === 'auto') this._override = false;
+    // track or any other source, in either mode, no longer holds it off.
+    if (mode === 'auto') {
+      this._override = false;
+      this._hand = null;
+    }
     // Said again even if unchanged: a BPM typed while the music led moved the
     // read-out but not the clock, and the nudges start from the read-out.
     this._reportedBpm = null;
@@ -207,31 +243,44 @@ class Conductor {
    * The operator's tempo. Keeps the phase: the free clock is re-anchored at
    * where it is now, so a nudge speeds the pattern up from this beat rather
    * than jumping it. `manual` (the default) means a person set it, which takes
-   * the tempo back from a locked track; a tempo reported by a CDJ does not.
+   * the tempo by hand from a deck, a track or the live input; the auto show's
+   * own tempo marks do not.
    */
   setBpm(bpm: unknown, { manual = true } = {}): void {
     const value = Number(bpm);
     if (!Number.isFinite(value)) return;
     const t = this._now();
     const current = this._current(t);
-    const takesOver = manual && current.source === 'track';
-    // Taking over from a locked track starts from the beat the music is on,
-    // not from wherever the idle free clock had wandered to.
+    const takesOver = manual && isFollowed(current.source);
+    // Taking over starts from the beat the music is on, not from wherever the
+    // idle free clock had wandered to.
     const beatPos = takesOver ? current.beatPos : this._freeBeatAt(t);
     this._free = { ...this._free, at: t, beatPos, bpm: clampBpm(value) };
     if (manual && this._track) this._override = true;
-    if (takesOver) this._tookOver = true;
+    if (takesOver) this._takeHand(current.source as Followed);
+    // Under the auto show's grid a typed tempo moves nothing, but the server
+    // has already shown it: say the grid's tempo again, so the read-out does
+    // not keep a tempo the rig is not running at.
+    else if (manual && current.source === 'auto') this._reportedBpm = null;
+  }
+
+  /** Take the tempo by hand from `source`, remembering what it was following. */
+  _takeHand(source: Followed): void {
+    const reading = source === 'cdj' ? this._prolinkSource() : source === 'live' ? this._liveSource() : null;
+    this._hand = { source, key: source === 'track' ? this._track?.key : reading?.key };
+    this._tookOver = true;
   }
 
   /**
    * A tap is a beat. The free clock jumps to the next whole beat, so the step
-   * lands on the tap as it always has, and a locked track hands the tempo over
-   * — at the song's tempo, until a second tap says otherwise.
+   * lands on the tap as it always has, and a deck, a track or the live input
+   * hands the tempo over by hand — at the music's tempo, until a second tap
+   * says otherwise.
    */
   tap(): void {
     const t = this._now();
     const current = this._current(t);
-    const takesOver = current.source === 'track';
+    const takesOver = isFollowed(current.source);
     this._free = {
       ...this._free,
       at: t,
@@ -239,7 +288,7 @@ class Conductor {
       bpm: takesOver ? clampBpm(current.bpm) : this._free.bpm,
     };
     if (this._track) this._override = true;
-    if (takesOver) this._tookOver = true;
+    if (takesOver) this._takeHand(current.source as Followed);
   }
 
   /** Stopping the patterns freezes the free clock where it is. */
@@ -285,19 +334,41 @@ class Conductor {
     if (fromAuto) return fromAuto;
     // Held by hand: only the auto show's grid, above, leads the operator's tempo.
     if (this._tempoMode === 'manual') return { beatPos: this._freeBeatAt(t), bpm: this._free.bpm, source: 'tap' };
+    // The followed sources from this one on are held off by a tempo taken by hand.
+    const held = this._handFrom();
     const cdj = this._prolinkSource();
-    if (cdj && Number.isFinite(cdj.beatPos)) {
+    if (held > 0 && cdj && Number.isFinite(cdj.beatPos)) {
       const bpm = typeof cdj.bpm === 'number' && Number.isFinite(cdj.bpm) && cdj.bpm > 0 ? cdj.bpm : this._free.bpm;
       return { beatPos: cdj.beatPos, bpm, source: 'cdj' };
     }
-    const track = this._track && !this._override ? this._track : null;
+    const track = held > 1 && this._track && !this._override ? this._track : null;
     const fromTrack = this._gridReading('track', track && track.grid, track ? track.positionMs() : NaN, t);
     if (fromTrack) return fromTrack;
-    const live = this._liveSource();
+    const live = held > 2 ? this._liveSource() : null;
     if (live && Number.isFinite(live.beatPos) && typeof live.bpm === 'number' && live.bpm > 0) {
       return { beatPos: live.beatPos, bpm: live.bpm, source: 'live' };
     }
     return { beatPos: this._freeBeatAt(t), bpm: this._free.bpm, source: 'tap' };
+  }
+
+  /**
+   * Where in FOLLOWED a tempo taken by hand starts holding sources off, or
+   * past its end when none is. A deck or the live input that answers for
+   * something else now — a new track or deck, a new lock — has moved on, and
+   * the hand gives way to it; a track's hand ends with the next track
+   * (_nextTrack).
+   */
+  _handFrom(): number {
+    const hand = this._hand;
+    if (!hand) return FOLLOWED.length;
+    if (hand.source !== 'track') {
+      const reading = hand.source === 'cdj' ? this._prolinkSource() : this._liveSource();
+      if (reading && Number.isFinite(reading.beatPos) && reading.key !== hand.key) {
+        this._hand = null;
+        return FOLLOWED.length;
+      }
+    }
+    return FOLLOWED.indexOf(hand.source);
   }
 
   /**
@@ -384,9 +455,13 @@ class Conductor {
     return { beatPos: reading.beatPos, epoch };
   }
 
-  /** What the rig is locked to, for the UI: `{ source, bpm }`. */
+  /**
+   * What the rig is locked to, for the UI: `{ source, bpm }`, as the engine's
+   * next reading will find it — so a tap, a typed tempo or a switch shows at
+   * once, not a frame later.
+   */
   status(): { source: ClockSource; bpm: number } {
-    const reading = this._last || this._current(this._now());
+    const { reading } = this._next(this._now());
     return { source: reading.source, bpm: Math.round(reading.bpm * 10) / 10 };
   }
 }

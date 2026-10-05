@@ -289,7 +289,10 @@ test('rig and preview agree on every cell of a bar', () => {
       const look = { pattern, colorA: 1, colorB: 5, colorC: 3, colorD: 8, bpm: 120, beatDivision: 2, split: null };
       const sample = createPreviewSampler([{ timeMs: 0, action: 'patch', data: look }]);
       beat = 0;
-      applyPatch({ ...look, running: true, masterDimmer: 255, masterBlackout: false, energyOverride: null, showDynamics: null });
+      // The stand-in deck keeps the beat, at the look's 120 BPM. Typed into
+      // the patch, the BPM would take the tempo from the deck by hand.
+      const { bpm: _tempo, ...onDeck } = look;
+      applyPatch({ ...onDeck, running: true, masterDimmer: 255, masterBlackout: false, energyOverride: null, showDynamics: null });
       for (beat = 0.1; beat < 6; beat += 0.25) {
         renderFrame();
         const preview = sample(beat * 500, state.fixtures, COLOR_PRESETS, rig);
