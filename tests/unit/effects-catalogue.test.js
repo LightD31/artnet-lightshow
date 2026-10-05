@@ -334,10 +334,18 @@ test('Hue Dynamics\' families carry their recommendation and capabilities as pla
   assert.deepStrictEqual(FAMILIES.find((f) => f.id === 'own.party').kinds, []);
   assert.deepStrictEqual(FAMILIES.find((f) => f.id === 'own.energy').kinds.map((k) => k.kind),
     ['energy.whiteStrobe', 'energy.colorStrobe', 'energy.blinder', 'energy.uvWash', 'energy.kill', 'energy.glow', 'strobe']);
-  // The Scene Maker family also lists the firework renderer its Fireworks row
-  // plays; that kind's engine family is Light DJ's channel family.
-  const listed = FAMILIES.filter((f) => f.id !== 'ldj.macro').flatMap((f) => f.kinds.map((k) => k.kind));
-  assert.deepStrictEqual([...listed, 'macro'].sort(), [...KINDS.keys()].sort(), 'every registered kind, each once');
+  // The whole list, in picker order: no family the pickers would show twice or
+  // without a test of its own.
+  assert.deepStrictEqual(FAMILIES.map((f) => [f.id, f.app]), [
+    ...['channel', 'iteration', 'rotation', 'wave', 'matrix', 'studio', 'visualizer', 'bitmap', 'macro'].map((e) => [`ldj.${e}`, 'ldj']),
+    ...hd.map((f) => [f.id, 'hd']), ['own.party', 'own'], ['own.energy', 'own'],
+  ]);
+  assert.deepStrictEqual(FAMILIES.filter((f) => f.app === 'own').map((f) => f.name), ['Party Looks', 'Energy']);
+  // Every registered kind is listed once, but for the firework renderer: its
+  // own row's channel family lists it, and the Scene Maker family again for
+  // the Fireworks row that plays it.
+  const listed = FAMILIES.flatMap((f) => f.kinds.map((k) => k.kind)).sort();
+  assert.deepStrictEqual(listed, [...KINDS.keys(), 'ldj.SceneMakerFirework'].sort(), 'every registered kind once, the firework renderer twice');
   for (const p of CATALOGUE) assert.ok(FAMILIES.some((f) => f.id === p.family), `${p.id}: family ${p.family}`);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(FAMILIES)), FAMILIES, 'no functions or schemas');
 });
