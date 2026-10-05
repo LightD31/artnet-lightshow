@@ -1180,6 +1180,14 @@ auto show still leads, because its scenes are scheduled on its track's beats.
 `POST /api/tempo/auto` follows the music again, from whatever source is best
 then; the choice is stored and survives a restart, and a tap never changes it.
 
+Other screens can keep the rig's beat: the live state's `clock` (`GET
+/api/state`, or the `look` domain over the socket) is `{ source, bpm, beatPos,
+epoch, at }`, the beat position read at `at` (wall-clock ms). Carry it on as
+`beatPos + (now − at) / 60000 × bpm`; a new `epoch` means the music jumped. It
+rides the broadcasts the state already makes, and is sent again only when
+carrying it on would be more than a 60 Hz frame out — after a tap, a seek, a
+stop or a tempo change — never just because the beat moved on.
+
 A scene from the auto show counts its steps from the beat it was scheduled on,
 not from the frame that fired it, and cues fire from the render loop itself, so
 each lands in the frame it is due. Walked against the analysed beats of the

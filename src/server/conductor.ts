@@ -301,6 +301,28 @@ class Conductor {
   }
 
   /**
+   * What now() reads at `t`, without doing it: the reading, its epoch, and the
+   * free clock a source that has stopped answering hands over to.
+   */
+  _next(t: number): { reading: ClockReading; epoch: number; handOver: FreeClock | null } {
+    const reading = this._current(t);
+    const last = this._last;
+    if (last && reading.source === 'tap' && last.source !== 'tap' && !this._tookOver) {
+      // A locked source stopped answering: carry on from where it was.
+      const beatPos = last.beatPos + ((t - last.t) / 60000) * last.bpm;
+      const handOver = { ...this._free, at: t, beatPos, bpm: clampBpm(last.bpm) };
+      return { reading: { beatPos, bpm: handOver.bpm, source: 'tap' }, epoch: this._epoch, handOver };
+    }
+    let epoch = this._epoch;
+    if (last) {
+      const expected = ((t - last.t) / 60000) * Math.max(last.bpm, reading.bpm);
+      const moved = reading.beatPos - last.beatPos;
+      if (moved < -BACKWARD_JUMP_BEATS || moved > expected + FORWARD_JUMP_BEATS) epoch++;
+    }
+    return { reading, epoch, handOver: null };
+  }
+
+  /**
    * Where the music is now: `{ beatPos, bpm, source, epoch, anchorBeat? }`,
    * `anchorBeat` being the beat the running scene was scheduled on when the
    * source knows it.
@@ -314,19 +336,9 @@ class Conductor {
    */
   now(): MusicalTime {
     const t = this._now();
-    let reading = this._current(t);
-    const last = this._last;
-
-    if (last && reading.source === 'tap' && last.source !== 'tap' && !this._tookOver) {
-      // A locked source stopped answering: carry on from where it was.
-      const beatPos = last.beatPos + ((t - last.t) / 60000) * last.bpm;
-      this._free = { ...this._free, at: t, beatPos, bpm: clampBpm(last.bpm) };
-      reading = this._current(t);
-    } else if (last) {
-      const expected = ((t - last.t) / 60000) * Math.max(last.bpm, reading.bpm);
-      const moved = reading.beatPos - last.beatPos;
-      if (moved < -BACKWARD_JUMP_BEATS || moved > expected + FORWARD_JUMP_BEATS) this._epoch++;
-    }
+    const { reading, epoch, handOver } = this._next(t);
+    if (handOver) this._free = handOver;
+    this._epoch = epoch;
     this._tookOver = false;
 
     const tempo = Math.round(reading.bpm * 100) / 100;
@@ -359,6 +371,17 @@ class Conductor {
    */
   peek(): ClockReading {
     return this._current(this._now());
+  }
+
+  /**
+   * Where the beat is now and the epoch it belongs to, exactly as the engine's
+   * next reading will find them, for screens that keep their own beat in
+   * phase with the rig's. Moves nothing, like peek(); unlike it, a source that
+   * has just stopped answering is carried on from, as now() is about to.
+   */
+  phase(): { beatPos: number; epoch: number } {
+    const { reading, epoch } = this._next(this._now());
+    return { beatPos: reading.beatPos, epoch };
   }
 
   /** What the rig is locked to, for the UI: `{ source, bpm }`. */

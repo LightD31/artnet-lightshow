@@ -236,8 +236,11 @@ async function withApp({ token = '' } = {}, fn) {
 test('POST /api/tempo/:mode switches, answers with the clock, and is stored', () => withApp({}, async ({ call }) => {
   const manual = await call('POST', '/api/tempo/manual');
   assert.strictEqual(manual.status, 200);
-  assert.deepStrictEqual(manual.body, { ok: true, tempoMode: 'manual', clock: conductor.status() });
-  assert.strictEqual(manual.body.clock.source, 'tap');
+  const { clock, ...rest } = manual.body;
+  assert.deepStrictEqual(rest, { ok: true, tempoMode: 'manual' });
+  assert.deepStrictEqual({ source: clock.source, bpm: clock.bpm }, conductor.status(), 'the clock as the live state has it');
+  assert.strictEqual(clock.source, 'tap');
+  assert.ok([clock.beatPos, clock.epoch, clock.at].every(Number.isFinite));
   assert.strictEqual(state.tempoMode, 'manual');
   assert.strictEqual(conductor.tempoMode, 'manual');
   assert.strictEqual(settings.get('clock.tempoMode'), 'manual', 'survives a restart');

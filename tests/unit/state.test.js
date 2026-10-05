@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { getClientState, getLiveState, getCatalogs, getDmxSnapshot, universeOf, state } from '../../src/server/state.ts';
+import { conductor } from '../../src/server/conductor.ts';
+import { applyPatch } from '../../src/server/patch.ts';
 
 const STATIC = ['colorPresets', 'patterns', 'energyEffects', 'strobeFunctions', 'palettes',
   'syncOffsetLimitMs', 'builtinProfileIds', 'hueProfileIds'];
@@ -90,4 +92,44 @@ test('callers cannot mutate engine state through the snapshot', () => {
 
   assert.strictEqual(state.artnet.host, originalHost, 'artnet is copied');
   assert.strictEqual(state.fixtures[0].label, originalLabel, 'fixtures are copied');
+});
+
+// The visuals keep their own beat: the clock says where its beat is and when
+// that was read, so a screen carries it on as beatPos + (now - at) / 60000 * bpm.
+test('the clock carries its beat position, its epoch and when it was read', () => {
+  const before = Date.now();
+  const { clock } = getLiveState();
+  const after = Date.now();
+  assert.deepStrictEqual(Object.keys(clock).sort(), ['at', 'beatPos', 'bpm', 'epoch', 'source']);
+  for (const key of ['at', 'beatPos', 'bpm', 'epoch']) assert.ok(Number.isFinite(clock[key]), `${key}: ${clock[key]}`);
+  assert.ok(before <= clock.at && clock.at <= after, `read at ${clock.at}, between ${before} and ${after}`);
+  assert.deepStrictEqual({ source: clock.source, bpm: clock.bpm }, conductor.status());
+
+  // Carried on to a later read, it lands where the clock is then.
+  const later = conductor.phase();
+  const readAt = Date.now();
+  const carried = clock.beatPos + ((readAt - clock.at) / 60000) * clock.bpm;
+  assert.ok(Math.abs(later.beatPos - carried) < (3 / 60000) * clock.bpm, `${carried} vs ${later.beatPos}`);
+  assert.strictEqual(later.epoch, clock.epoch);
+  assert.deepStrictEqual(getClientState().clock.source, clock.source, 'GET /api/state carries it too');
+});
+
+test('a tempo change keeps the clock\'s beat moving forward, in its epoch', async () => {
+  const bpm = state.bpm;
+  const seen = [getLiveState().clock];
+  try {
+    for (const tempo of [60, 174, 90, 128]) {
+      await new Promise((r) => setTimeout(r, 15));
+      seen.push(getLiveState().clock);
+      applyPatch({ bpm: tempo });
+      seen.push(getLiveState().clock);
+    }
+  } finally {
+    applyPatch({ bpm });
+  }
+  for (let i = 1; i < seen.length; i++) {
+    assert.ok(seen[i].beatPos >= seen[i - 1].beatPos, `read ${i}: ${seen[i - 1].beatPos} → ${seen[i].beatPos}`);
+    assert.strictEqual(seen[i].epoch, seen[0].epoch);
+    assert.ok(seen[i].at >= seen[i - 1].at);
+  }
 });
