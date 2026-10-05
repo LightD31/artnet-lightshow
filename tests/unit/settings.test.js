@@ -102,6 +102,8 @@ test('a settings file with one bridge in the old form loads it as bridge-1', () 
       applicationId: 'a966c4cc-018d-4422-aad8-414843fc4fad', entertainmentId: '0123abcd-1234-5678-9abc-def012345678',
     }],
     latencyMs: 60,
+    // Older than the setting: the default.
+    strobe: 'flash',
   });
   s.update({ hue: { latencyMs: 70 } });
   const written = JSON.parse(fs.readFileSync(s.file, 'utf8'));
@@ -113,7 +115,7 @@ test('a settings file with one bridge in the old form loads it as bridge-1', () 
 test('an old-form file whose bridge was never paired loads with no bridge at all', () => {
   const s = store();
   fs.writeFileSync(s.file, JSON.stringify({ hue: { enabled: false, host: '', username: '', clientKey: '', applicationId: '', entertainmentId: '', latencyMs: 0 } }));
-  assert.deepStrictEqual(s.load().group('hue'), { bridges: [], latencyMs: 0 });
+  assert.deepStrictEqual(s.load().group('hue'), { bridges: [], latencyMs: 0, strobe: 'flash' });
 });
 
 test('migrating the old form is a pure step on the parsed file', () => {
@@ -325,4 +327,38 @@ test('the tempo mode follows the music by default, takes only its two, and survi
   fs.mkdirSync(path.dirname(older.file), { recursive: true });
   fs.writeFileSync(older.file, JSON.stringify({ artnet: { host: '10.0.0.9' } }));
   assert.strictEqual(older.load().get('clock.tempoMode'), 'auto', 'a file from before the switch follows the music');
+});
+
+// The party effects' safety and Hue settings: Hue Dynamics' 350 ms limit, the
+// photosensitivity acknowledgement nobody has given yet, the latched strobe's
+// minute, and Hue lamps flashed rather than pulsed.
+test('the effect safety and Hue strobe settings have their defaults, their bounds and survive a reload', () => {
+  assert.deepStrictEqual(DEFAULTS.safety, { flashLimit: false, hdFlashIntervalMs: 350, photosensitivityAcknowledged: false, strobeMaxLatchSec: 60 });
+  assert.strictEqual(DEFAULTS.hue.strobe, 'flash');
+
+  const older = store();
+  fs.writeFileSync(older.file, JSON.stringify({ safety: { flashLimit: true }, hue: { bridges: [], latencyMs: 20 } }));
+  older.load();
+  assert.deepStrictEqual(older.group('safety'), { flashLimit: true, hdFlashIntervalMs: 350, photosensitivityAcknowledged: false, strobeMaxLatchSec: 60 },
+    'a file from before the settings keeps its own and gains the defaults');
+  assert.strictEqual(older.get('hue.strobe'), 'flash');
+
+  const s = store().load();
+  assert.deepStrictEqual(s.update({ safety: { hdFlashIntervalMs: 0, photosensitivityAcknowledged: true, strobeMaxLatchSec: 0.5 }, hue: { strobe: 'pulse' } }).sort(),
+    ['hue.strobe', 'safety.hdFlashIntervalMs', 'safety.photosensitivityAcknowledged', 'safety.strobeMaxLatchSec']);
+  const reloaded = new SettingsStore(s.file).load();
+  assert.strictEqual(reloaded.get('hue.strobe'), 'pulse');
+  assert.strictEqual(reloaded.get('safety.hdFlashIntervalMs'), 0, 'zero turns the limit off');
+  assert.strictEqual(reloaded.get('safety.photosensitivityAcknowledged'), true);
+  s.update({ hue: { strobe: 'flash' } });
+  assert.strictEqual(new SettingsStore(s.file).load().get('hue.strobe'), 'flash', 'both modes persist');
+
+  for (const bad of [{ safety: { hdFlashIntervalMs: -1 } }, { safety: { hdFlashIntervalMs: Infinity } }, { safety: { hdFlashIntervalMs: NaN } },
+    { safety: { hdFlashIntervalMs: '350' } }, { safety: { strobeMaxLatchSec: 0 } }, { safety: { strobeMaxLatchSec: -5 } },
+    { safety: { strobeMaxLatchSec: Infinity } }, { safety: { photosensitivityAcknowledged: 'yes' } }, { hue: { strobe: 'blink' } }]) {
+    assert.throws(() => s.update(bad), JSON.stringify(bad));
+    assert.strictEqual(patchSchema.safeParse(bad).success, false, `the patch schema refuses ${JSON.stringify(bad)}`);
+  }
+  assert.strictEqual(s.get('safety.strobeMaxLatchSec'), 0.5, 'a refused update changes nothing');
+  assert.ok(patchSchema.safeParse({ safety: { hdFlashIntervalMs: 1200.5 }, hue: { strobe: 'pulse' } }).success, 'a partial patch of the new keys');
 });

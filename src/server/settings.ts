@@ -98,6 +98,10 @@ const DEFAULTS: Settings = {
     // by eye against the sync test; 0 sends everything the moment it renders.
     // One delay for every bridge: they all sit behind the same kind of hop.
     latencyMs: 0,
+    // How a Hue lamp takes a flash: 'flash' hard on and off as far as the
+    // bridge follows, 'pulse' at full falling to a floor over 200 ms, as the
+    // party apps fade a hit lamp back.
+    strobe: 'flash',
   },
   midi: {
     input: '',
@@ -183,6 +187,14 @@ const DEFAULTS: Settings = {
     // threshold broadcast and web guidance share (src/server/flash-limit.ts).
     // Off by default: most of what a party rig is for is above it.
     flashLimit: false,
+    // Hue Dynamics' limit on each lamp's bright rises inside its own effects:
+    // a second one within this many ms stays dark. 0 turns it off.
+    hdFlashIntervalMs: 350,
+    // The strobe and every effect that flashes faster than the photosensitivity
+    // threshold render nothing until the operator says the room may see them.
+    photosensitivityAcknowledged: false,
+    // A latched strobe is cut after this long, whoever latched it.
+    strobeMaxLatchSec: 60,
   },
   // Whether anything leaves the machine (armed.ts). Stored so the Show
   // section and the REST routes share one switch; never honoured at start —
@@ -346,6 +358,7 @@ const schema = z.object({
     // Half a second is far past any bridge; anything that long is a setting
     // typed in the wrong unit.
     latencyMs: z.number().int().min(0).max(500),
+    strobe: z.enum(['flash', 'pulse']),
   }).strict(),
   midi: z.object({
     input: z.string().max(256),
@@ -395,6 +408,10 @@ const schema = z.object({
   }).strict(),
   safety: z.object({
     flashLimit: z.boolean(),
+    // No upper bounds of their own: the apps state none.
+    hdFlashIntervalMs: z.number().finite().min(0),
+    photosensitivityAcknowledged: z.boolean(),
+    strobeMaxLatchSec: z.number().finite().positive(),
   }).strict(),
   outputs: z.object({
     armed: z.boolean(),
