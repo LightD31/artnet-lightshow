@@ -18,7 +18,8 @@
     "typecheck": "tsc -p tsconfig.json",
     "gen:analysis-types": "node scripts/gen-analysis-types.ts",
     "test": "node --test",
-    "check": "npm run lint && npm run typecheck && npm test",
+    "test:budget": "node --test tests/budget/pixel-budget.js",
+    "check": "npm run lint && npm run typecheck && npm test && npm run test:budget",
     "test:e2e": "npm run build:client && playwright test"
   },
   "engines": {
