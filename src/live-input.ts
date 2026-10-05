@@ -14,6 +14,9 @@
  *   - between lines the beat position runs on at the tempo, so the pattern
  *     clock reads a beat position for "now", not for the last hop.
  *
+ * Started with `bands`, the service also reports the power in each of them
+ * every hop, for the party effects' ears (`LiveReading.spectrum`).
+ *
  * `latencyMs` is the distance between capture and the room: positive when the
  * room hears the audio later than it is captured (loopback, before the PA),
  * negative when it is captured later than it is heard (a line-in off the
@@ -35,6 +38,29 @@ export interface LiveOptions {
   /** For `file`: the audio file, played at its own speed. */
   file?: string;
   latencyMs?: number;
+  /** Bands to report the power of, `[lo, hi]` Hz: at most 12, 0 ≤ lo < hi ≤ `BAND_HZ_MAX`. */
+  bands?: [number, number][];
+}
+
+/** The highest band edge: Nyquist at the service's 22 050 Hz. */
+export const BAND_HZ_MAX = 11025;
+// As many as the service will sum per hop.
+const MAX_BANDS = 12;
+
+/**
+ * One frame's power on Hue Dynamics' scale: `|X|²` per bin of a
+ * Hamming-windowed 1024-point FFT of the float samples, unnormalised.
+ */
+export interface LiveSpectrum {
+  /** Σx² of the frame's samples: a different scale from the bins'. */
+  power: number;
+  rms: number;
+  /** The centre of the strongest bin up to 2 kHz; null in silence. */
+  dominantHz: number | null;
+  /** Σ|X|² over each requested band's bins (two at least), in the order asked for. */
+  bands: number[];
+  /** Σ|X|² over every bin of the same FFT. */
+  fftPower?: number;
 }
 
 /** One hop, as the service reports it. */
@@ -51,6 +77,10 @@ export interface LiveReading {
   rms: number | null;
   tension: number | null;
   bands: Record<string, number | null>;
+  /** Present when the service was started with `bands`. */
+  spectrum?: LiveSpectrum;
+  /** Which spawned process the line came from, counting from 1; stamped here, not by the service. */
+  generation?: number;
 }
 
 /** One hop's onset strength and level, in stream time. */
@@ -100,6 +130,28 @@ const ENVELOPE_SEC = 30;
 // the beat is still trusted this long after the last locked line.
 const LOCK_HOLD_MS = 4000;
 
+/**
+ * A copy of `bands`, or a RangeError for a list the service would refuse with a
+ * usage error: better at the caller than as a process that keeps exiting.
+ */
+function copyBands(bands: unknown): [number, number][] | undefined {
+  if (bands == null) return undefined;
+  if (!Array.isArray(bands) || bands.length > MAX_BANDS) throw new RangeError(`live input: bands is a list of at most ${MAX_BANDS}`);
+  return bands.map((band): [number, number] => {
+    const [lo, hi] = Array.isArray(band) && band.length === 2 ? band : [];
+    if (typeof lo !== 'number' || typeof hi !== 'number' || !Number.isFinite(lo) || !Number.isFinite(hi)
+      || !(lo >= 0 && lo < hi && hi <= BAND_HZ_MAX)) {
+      throw new RangeError(`live input: band ${JSON.stringify(band)} is not [lo, hi] Hz with 0 ≤ lo < hi ≤ ${BAND_HZ_MAX}`);
+    }
+    return [lo, hi];
+  });
+}
+
+/** `--bands` as the service reads it, and '' for none; equal strings, equal lists. */
+function bandsArg(bands: [number, number][] | undefined): string {
+  return (bands || []).map(([lo, hi]) => `${lo}-${hi}`).join(',');
+}
+
 type Spawner = (exe: string, args: string[]) => ChildProcessWithoutNullStreams;
 
 class LiveInput {
@@ -108,6 +160,7 @@ class LiveInput {
   declare _scriptPath: string;
   declare _options: LiveOptions | null;
   declare _proc: ChildProcessWithoutNullStreams | null;
+  declare _generation: number;
   declare _rl: readline.Interface | null;
   declare _restartTimer: ReturnType<typeof setTimeout> | null;
   declare _restartMs: number;
@@ -129,6 +182,7 @@ class LiveInput {
     this._scriptPath = scriptPath || path.join(import.meta.dirname, 'live_input.py');
     this._options = null;
     this._proc = null;
+    this._generation = 0;
     this._rl = null;
     this._restartTimer = null;
     this._restartMs = RESTART_MS;
@@ -152,14 +206,25 @@ class LiveInput {
   get running(): boolean { return !this._stopped; }
 
   /** What it was last started with, to start it the same way again. */
-  get options(): LiveOptions | null { return this._options ? { ...this._options } : null; }
+  get options(): LiveOptions | null {
+    if (!this._options) return null;
+    const options = { ...this._options };
+    if (options.bands) options.bands = copyBands(options.bands);
+    return options;
+  }
 
-  /** Start listening, or listen differently. */
+  /** Start listening, or listen differently. Throws a RangeError for bands the service would refuse. */
   start(options: LiveOptions): void {
+    // Copied before the comparison: a caller editing its array in place and
+    // passing it again must still read as a change.
+    const bands = copyBands(options.bands);
     const same = this._options && !this._stopped
       && this._options.source === options.source && (this._options.device || '') === (options.device || '')
-      && (this._options.file || '') === (options.file || '');
+      && (this._options.file || '') === (options.file || '')
+      && bandsArg(this._options.bands) === bandsArg(bands);
     this._options = { ...options };
+    if (bands?.length) this._options.bands = bands;
+    else delete this._options.bands;
     if (same) return;
     this.stop();
     this._stopped = false;
@@ -186,6 +251,7 @@ class LiveInput {
     const args = [this._scriptPath];
     if (o.source === 'file') args.push('--file', o.file || '', '--realtime');
     else args.push('--source', o.source, ...(o.device ? ['--device', o.device] : []));
+    if (o.bands?.length) args.push('--bands', bandsArg(o.bands));
     let proc: ChildProcessWithoutNullStreams;
     try {
       proc = this._spawn(pythonEnv.pythonExe(), args);
@@ -194,13 +260,16 @@ class LiveInput {
       return;
     }
     this._proc = proc;
+    this._generation += 1;
     proc.stdout.setEncoding('utf8');
     const rl = readline.createInterface({ input: proc.stdout });
     this._rl = rl;
-    rl.on('line', (line) => this.handleLine(line));
+    // A replaced process can still deliver what its reader had buffered; its
+    // band powers were summed over the old list, so only the current one is heard.
+    rl.on('line', (line) => { if (this._proc === proc) this.handleLine(line); });
     let stderr = '';
     proc.stderr.on('data', (d: Buffer) => { if (stderr.length < 4096) stderr += d.toString(); });
-    proc.on('error', (err) => this._fail(`live input: ${err.message}`));
+    proc.on('error', (err) => { if (this._proc === proc) this._fail(`live input: ${err.message}`); });
     proc.on('close', (code) => {
       if (this._proc !== proc) return;
       this._proc = null;
@@ -272,6 +341,7 @@ class LiveInput {
     if (!Number.isFinite(r.t) || !Number.isFinite(r.captured)) return;
     const now = this._now();
     const wasListening = this._isFresh(now);
+    r.generation = this._generation;
     this._reading = r;
     this._readingAt = now;
     if (r.locked) this._lockedAt = now;

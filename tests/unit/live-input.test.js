@@ -8,7 +8,7 @@ import assert from 'node:assert';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 
-import LiveInput, { listLiveDevices } from '../../src/live-input.ts';
+import LiveInput, { BAND_HZ_MAX, listLiveDevices } from '../../src/live-input.ts';
 import { Conductor } from '../../src/server/conductor.ts';
 import { makeGrid } from '../../src/shared/beat-clock.ts';
 
@@ -137,6 +137,94 @@ test('the process is started with the source asked for, and again when it dies',
   assert.ok(spawned[2].p.killed);
   t.mock.timers.tick(60000);
   assert.strictEqual(spawned.length, 3, 'and stays stopped');
+});
+
+// ── Band powers ───────────────────────────────────────────────────────────────
+
+test('bands are passed to the service and a changed list restarts it', () => {
+  const spawned = [];
+  const live = new LiveInput({ spawner: (exe, args) => { spawned.push(args); return fakeProcess(); }, now: () => 0 });
+  live.start({ source: 'loopback', bands: [[0, 160], [750, 2000]] });
+  assert.ok(spawned[0].join(' ').includes('--bands 0-160,750-2000'));
+  live.start({ source: 'loopback', bands: [[0, 160], [750, 2000]] });
+  assert.strictEqual(spawned.length, 1, 'same bands: no restart');
+  live.start({ source: 'loopback', bands: [[20, 250]] });
+  assert.strictEqual(spawned.length, 2);
+});
+
+test('the spectrum rides on the reading', () => {
+  const live = new LiveInput({ spawner: () => fakeProcess(), now: () => 1000 });
+  live.start({ source: 'loopback' });
+  live.handleLine(JSON.stringify({ type: 'state', t: 1, captured: 1, beat: 0, bpm: 120, phase: 0, locked: true, energy: 0.1, onset: 0, flux: 0, rms: 0.1, tension: 0, bands: {}, spectrum: { power: 2, rms: 0.1, dominantHz: 1000, bands: [1, 2, 3] } }));
+  assert.deepStrictEqual(live.getReading().spectrum.bands, [1, 2, 3]);
+});
+
+test('the band list is copied in and out, and no list is the same as an empty one', () => {
+  const spawned = [];
+  const live = new LiveInput({ scriptPath: '/srv/live_input.py', spawner: (exe, args) => { spawned.push(args); return fakeProcess(); }, now: () => 0 });
+  live.start({ source: 'loopback' });
+  live.start({ source: 'loopback', bands: [] });
+  assert.strictEqual(spawned.length, 1);
+  assert.deepStrictEqual(spawned[0], ['/srv/live_input.py', '--source', 'loopback'], 'no --bands without bands');
+  assert.deepStrictEqual(live.options, { source: 'loopback' });
+
+  // Edited in place and passed again: a different list, which the copy kept at the start can tell.
+  const bands = [[0, 160], [750, 2000]];
+  live.start({ source: 'loopback', bands });
+  bands[1][1] = 2500;
+  live.start({ source: 'loopback', bands });
+  assert.strictEqual(spawned.length, 3);
+  assert.deepStrictEqual(spawned[2].slice(-2), ['--bands', '0-160,750-2500']);
+
+  // A file is heard with bands too, and what `options` hands out is a copy.
+  const given = live.options;
+  given.bands[0][0] = 20;
+  assert.deepStrictEqual(live.options.bands, [[0, 160], [750, 2500]]);
+  live.start({ source: 'file', file: '/music/a.wav', bands: live.options.bands });
+  assert.deepStrictEqual(spawned[3], ['/srv/live_input.py', '--file', '/music/a.wav', '--realtime', '--bands', '0-160,750-2500']);
+});
+
+test('a band list the service would refuse throws, and the running process is left alone', () => {
+  const procs = [];
+  const live = new LiveInput({ spawner: () => { const p = fakeProcess(); procs.push(p); return p; }, now: () => 0 });
+  live.start({ source: 'loopback', bands: [[0, 160]] });
+  const bad = [[[0, BAND_HZ_MAX + 1]], [[160, 0]], [[100, 100]], [[-1, 100]], [[0, NaN]], [[0, Infinity]], [[0]], [['0', 160]], 'x',
+    Array.from({ length: 13 }, () => [0, 100])];
+  for (const bands of bad) assert.throws(() => live.start({ source: 'loopback', bands }), RangeError, JSON.stringify(bands));
+  assert.strictEqual(procs.length, 1);
+  assert.strictEqual(procs[0].killed, false);
+  assert.deepStrictEqual(live.options.bands, [[0, 160]]);
+  live.start({ source: 'loopback', bands: Array.from({ length: 12 }, () => [0, BAND_HZ_MAX]) });
+  assert.strictEqual(procs.length, 2, 'a dozen, up to 11 025 Hz, is fine');
+});
+
+test('a reading says which process it came from, and a replaced process is not heard', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const procs = [];
+  const live = new LiveInput({ spawner: () => { const p = fakeProcess(); procs.push(p); return p; }, now: () => 1000 });
+  live.start({ source: 'loopback', bands: [[0, 160]] });
+  const firstLines = live._rl;
+  const spectrum = { power: 0.5, rms: 0.022, dominantHz: 990.52734375, bands: [3.5e-6], fftPower: 120 };
+  firstLines.emit('line', state({ t: 1, spectrum }));
+  assert.strictEqual(live.getReading().generation, 1);
+  assert.deepStrictEqual(live.getReading().spectrum, spectrum, 'raw Σx² and the FFT total both arrive as written');
+
+  // A new band list is a new process. Closing the old one's reader does not
+  // stop lines it already holds, and those were summed over the old bands.
+  live.start({ source: 'loopback', bands: [[20, 250]] });
+  firstLines.emit('line', state({ t: 2, spectrum: { power: 1, rms: 0.03, dominantHz: null, bands: [5], fftPower: 9 } }));
+  assert.strictEqual(live.getReading(), null);
+  procs[0].emit('error', new Error('late'));
+  assert.strictEqual(live.status().error, null);
+  live._rl.emit('line', state({ t: 3 }));
+  assert.deepStrictEqual([live.getReading().t, live.getReading().generation], [3, 2]);
+
+  // One that dies and is started again is a new process too.
+  procs[1].emit('close', 1);
+  t.mock.timers.tick(2000);
+  live._rl.emit('line', state({ t: 0.5 }));
+  assert.deepStrictEqual([procs.length, live.getReading().generation], [3, 3]);
+  live.stop();
 });
 
 test('the devices come from the service, and a failure says why', async () => {
