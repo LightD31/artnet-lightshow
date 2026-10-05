@@ -23,6 +23,7 @@ export interface MacroParams { steps: MacroStep[]; loopBeats: number }
 
 /** Macros inside macros stop here, long before validation or rendering could exhaust the stack. */
 export const MAX_MACRO_DEPTH = 32;
+const STROBE = 'strobe';
 
 const shapeSchema = z.object({ steps: z.array(z.unknown()).min(1), loopBeats: z.number().positive() }).strict();
 const stepSchema = z.object({
@@ -56,7 +57,12 @@ const schema: ZodType<MacroParams> = z.unknown().transform((input, ctx): MacroPa
     shape.data.steps.forEach((item, k) => {
       const step = stepSchema.safeParse(item);
       if (!step.success) { forward(ctx, step.error, ['steps', k]); return; }
-      try { steps.push({ ...step.data, effect: validateSpec(step.data.effect) }); } catch (error) { forward(ctx, error, ['steps', k, 'effect']); }
+      let effect: EffectSpec;
+      try { effect = validateSpec(step.data.effect); } catch (error) { forward(ctx, error, ['steps', k, 'effect']); return; }
+      // Every step is a fresh instance, so a strobe there would restart its
+      // five-a-second permit each lap; the strobe plays as a voice of its own.
+      if (effect.kind === STROBE) { ctx.addIssue({ code: 'custom', message: 'a macro may not hold the strobe', path: ['steps', k, 'effect', 'kind'] }); return; }
+      steps.push({ ...step.data, effect });
     });
   } finally {
     open.pop();
@@ -144,12 +150,17 @@ function renderMacro(p: MacroParams, s: MacroState, room: Room, frame: EffectFra
       startedAtMs: stepStart(s, frame, anchorBeat, lap === 0 && k === 0),
     };
   }
+  s.last = { beat: frame.beatPos, ms: frame.nowMs };
+  // An unvalidated spec gets no further than validation would have let it.
+  if (step.effect.kind === STROBE) return;
   const { spec, override, look } = stepColours(step, frame);
   // The child applies its own brightness and acknowledgement; the macro's
   // brightness and targets are applied once, by its caller, after this.
   renderEffect({ id: active.id, spec, seed: active.seed, anchorBeat: active.anchorBeat, startedAtMs: active.startedAtMs, targets: null },
     { ...frame, paletteOverride: override, lookPalette: look }, room, s.children, out);
-  s.last = { beat: frame.beatPos, ms: frame.nowMs };
+  // Each slot names the step kind that drew it (the innermost, through
+  // nested macros), so guards kept for one family still find its kinds here.
+  for (let i = 0; i < room.n; i++) if (out[i]?.strength > 0) out[i].kind ??= step.effect.kind;
 }
 
 // A macro with a rapid step is itself rapid, so admission and rendering refuse

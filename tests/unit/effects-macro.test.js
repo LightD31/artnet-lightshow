@@ -247,3 +247,27 @@ test('finite Light DJ children: a single pulse never retriggers, and Flip\'s fou
   assert.deepStrictEqual(flip(16).out.map((slot) => slot.colour), [RED, RED, RED, RED]);
   assert.deepStrictEqual(sampler(instance(bigRoom), square())(16 + 15.5).out, cold);
 });
+
+test('a macro may not hold the strobe, which would restart its five-a-second permit at every step', () => {
+  const strobe = { kind: 'strobe', params: { clock: 'wall', flashesPerSecond: 5 } };
+  assert.throws(() => macro([step(strobe, 0.25)], 0.25), /strobe/);
+  assert.throws(() => macro([step({ kind: 'test.probe' }, 1), step({ kind: 'macro', params: { steps: [step(strobe, 1)], loopBeats: 1 } }, 1)], 2), /strobe/, 'nested');
+  // A hand-built spec that skipped validation renders the step dark: no quarter-beat laps of fresh strobes.
+  const raw = { kind: 'macro', params: { steps: [{ effect: validateSpec(strobe), beats: 0.25 }], loopBeats: 0.25 }, palette: null, brightness: 1 };
+  const at = sampler(instance(raw));
+  for (let ms = 0; ms < 1000; ms += 1000 / 44) assert.strictEqual(at(ms / 500).out[0].strength, 0, `${ms} ms`);
+});
+
+test('a macro\'s slots name the step kind that drew them, through nested macros, so a guard for one family still finds it', () => {
+  const hd = macro([step({ kind: 'hd.simpleAdsr' }, 2), step({ kind: 'test.probe' }, 2)], 4);
+  const at = sampler(instance(hd), room(2));
+  assert.deepStrictEqual(at(0.5).out.map((slot) => [slot.strength, slot.kind]), [[1, 'hd.simpleAdsr'], [1, 'hd.simpleAdsr']]);
+  assert.deepStrictEqual(at(2.5).out.map((slot) => slot.kind), ['test.probe', 'test.probe']);
+  const nested = macro([step(hd, 4)], 4);
+  assert.deepStrictEqual(sampler(instance(nested), room(2))(0.5).out.map((slot) => slot.kind), ['hd.simpleAdsr', 'hd.simpleAdsr'], 'the innermost kind');
+  // A transparent slot names nobody, and an instance's own kind is never written on its slots.
+  const clear = macro([step({ kind: 'test.probe', params: { clear: true } }, 4)], 4);
+  assert.strictEqual(sampler(instance(clear))(0).out[0].kind, undefined);
+  const own = draw(instance(validateSpec({ kind: 'test.probe' })), frame(), room(), new EffectStepper());
+  assert.ok(!('kind' in own[0]));
+});

@@ -46,8 +46,12 @@ export interface EffectSpec {
   scope?: 'singleBeat' | 'measure';
 }
 
-/** One slot's output. level 0..1 before brightness; strength 0 = transparent; strobe = a fixture strobe-channel value (energy kinds). */
-export interface EffectSlot { colour: Colour; level: number; strength: number; strobe?: number }
+/**
+ * One slot's output. level 0..1 before brightness; strength 0 = transparent; strobe = a fixture strobe-channel value (energy kinds).
+ * kind: the kind that drew the slot where that is not the rendered instance's own. A macro's slots name their step's kind, so
+ * Hue Dynamics' flash guard, which covers its own kinds only, still finds an hd.* step inside a macro. Absent: the instance's kind.
+ */
+export interface EffectSlot { colour: Colour; level: number; strength: number; strobe?: number; kind?: string }
 
 export interface HdMaster {
   sensitivity: number; smoothing: number; attackMs: number; releaseMs: number;
