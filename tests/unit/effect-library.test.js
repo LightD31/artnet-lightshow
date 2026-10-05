@@ -152,6 +152,13 @@ test('an invalid spec is rejected', (t) => {
   refused(() => library.update(kept.id, { spec: { kind: 'no.such.kind' } }), /spec.*unknown effect kind/);
   refused(() => library.update(kept.id, { name: 'Nope', createdAt: 'yesterday' }), /Unrecognized key.*"createdAt"/);
 
+  // A setting's issue names it where it sits in the record, a macro step's too.
+  assert.throws(() => library.create({ name: 'Nope', spec: { kind: 'ldj.FadeCycle', params: { cadence: 'fast' } } }),
+    (err) => /^preset: spec\.params\.cadence /.test(err.message) && err.issues[0].path.join('.') === 'params.cadence');
+  const step = (effect) => ({ effect, beats: 4 });
+  assert.throws(() => library.create({ name: 'Nope', spec: { kind: 'macro', params: { steps: [step(FADE), step({ kind: 'ldj.FadeCycle', params: { cadence: 'fast' } })], loopBeats: 8 } } }),
+    (err) => /spec\.params\.steps\.1\.effect\.params\.cadence /.test(err.message));
+
   const sentinel = library.create({ name: 'Random', spec: { ...FADE, palette: [{ random: true }, '#abc'] } });
   assert.deepEqual(sentinel.spec.palette, [{ random: true }, '#abc'], 'a spec\'s palette stays as the inspector sent it');
   assert.deepEqual(library.list().user.map((p) => p.name), ['Kept', 'Random']);
@@ -257,12 +264,15 @@ test('a file with a bad spec, a duplicate or built-in id, or too many presets is
     ['an unknown field', [{ ...good, effect: FADE }]],
   ];
   for (const [what, presets] of cases) {
-    fs.writeFileSync(file, JSON.stringify({ presets }));
+    const bytes = JSON.stringify({ presets });
+    fs.writeFileSync(file, bytes);
     const library = new EffectLibrary(file).load();
     assert.deepEqual(library.list().user, [], what);
     assert.equal(library.resolve(good.id), null, what);
     assert.equal(fs.existsSync(file), false, `${what}: moved aside`);
     assert.equal(invalidIn(dir).length, 1, what);
+    // Every preset in it, the good ones too, can be had back from the copy.
+    assert.equal(fs.readFileSync(path.join(dir, invalidIn(dir)[0]), 'utf8'), bytes, `${what}: recoverable`);
     for (const f of invalidIn(dir)) fs.rmSync(path.join(dir, f));
   }
   assert.ok(warn.mock.callCount() >= cases.length);
