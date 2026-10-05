@@ -5,3 +5,5 @@ import './ldj-channel.ts';
 import './ldj-iteration.ts';
 import './ldj-rotation.ts';
 import './ldj-wave.ts';
+import './ldj-matrix.ts';
+import './ldj-studio.ts';

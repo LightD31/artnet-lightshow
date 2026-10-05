@@ -60,6 +60,9 @@ export const HD_MASTER_DEFAULTS: HdMaster = { sensitivity: 0.5, smoothing: 0.35,
 /** 128 bits as four unsigned 32-bit words. */
 export type Seed = [number, number, number, number];
 
+/** Pure operations on an initialized Studio or visualizer instance. */
+export type EffectCommand = 'stop' | 'comboBreak' | 'toggleDirection' | 'fadeToBaseline' | 'setPulserBaselineColor';
+
 export interface EffectFrame {
   beatPos: number; bpm: number; nowMs: number; dtMs: number; anchorBeat: number;
   /** Instance launch time for wall-clock effects; optional for hand-built frames. */
@@ -83,6 +86,7 @@ export interface EffectKindDef<P = unknown, S = unknown> {
   rapidFlash?: boolean; stateful?: boolean; rideLevel?: boolean;
   /** Additional parameter-dependent acknowledgement shared by rendering and admission. */
   rapidFlashWhen?(params: P): boolean;
+  command?(state: S, cmd: EffectCommand, arg?: Colour): void;
   /** Whole-palette rerolls remain available alongside selective refreshes; the renderer reads this after state initialization. */
   rollOf?(state: S): number;
   init(params: P, room: Room, frame: EffectFrame): S;
