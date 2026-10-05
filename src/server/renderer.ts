@@ -889,7 +889,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
   function renderSequence(input: FrameInput, rigNow: Rig<RenderFixture>, fb: FrameBase | null): void {
     if (seqUnits) { seqLight.fill(null); seqKind.fill(null); seqUnits = false; }
     if (!fb || !sequencePlays(input)) {
-      if (seqRun.activations.size || seqRun.last) endSequence(seqRun, stepper);
+      if (seqRun.activations.size || seqRun.last || seqRun.shown) endSequence(seqRun, stepper);
       return;
     }
     const cells = voiceCells!;

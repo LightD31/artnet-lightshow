@@ -1,5 +1,5 @@
 import { transitionFor } from '../show/transition.ts';
-import { state, getLiveState, getDmxSnapshot, getDmxUniverses, setExtrasProvider } from './state.ts';
+import { state, getLiveState, getDmxSnapshot, getDmxUniverses, setExtrasProvider, setSequenceProvider } from './state.ts';
 import { createPublisher, ROOM } from './protocol.ts';
 import { encodeDmxFrame } from '../shared/dmx-frame.ts';
 import { setHooks, applyPatch } from './patch.ts';
@@ -20,12 +20,15 @@ import { AutoSync } from '../auto-sync.ts';
 import LiveDirector from '../show/live-director.ts';
 import { PATTERNS } from './presets.ts';
 import { settings } from './settings.ts';
-import { baseEffect, effectChanged, identify, setAudioSource, setEffectSource } from './engine.ts';
+import { baseEffect, effectChanged, identify, setAudioSource, setEffectSource, setSequenceSource } from './engine.ts';
 import { AudioFeatures, feedOf, resolveDetectors } from './audio-features.ts';
 import { BIN_HZ } from '../shared/spectrum-bands.ts';
 import { safety } from './safety.ts';
 import { EffectLibrary } from './effect-library.ts';
 import { PaletteStore } from './palette-store.ts';
+import { Sequencer } from './sequencer.ts';
+import { SequenceStore } from './sequence-store.ts';
+import { toHex } from '../shared/effects/palette.ts';
 import { configFile } from './config-dir.ts';
 import type { Server } from 'socket.io';
 import type AutoShow from '../auto-show.ts';
@@ -61,6 +64,8 @@ export interface IntegrationDeps {
   /** The effect library and the effect palettes; the ones in config/ unless a test stands in. */
   effectLibrary?: EffectLibrary | null;
   paletteStore?: PaletteStore | null;
+  /** The saved sequences; the ones in config/ unless a test stands in. */
+  sequenceStore?: SequenceStore | null;
 }
 
 /** Which source the auto show follows. */
@@ -101,7 +106,7 @@ function reportAnalysisError(label: string, err: unknown): void {
 // LINK, auto-show) into the engine + state. Returns the integration handle that
 // routes (src/server/routes/) and sockets.ts call back into.
 function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolink, autoShow, analysisCache = null,
-  liveInput = null, effectLibrary = null, paletteStore = null }: IntegrationDeps) {
+  liveInput = null, effectLibrary = null, paletteStore = null, sequenceStore = null }: IntegrationDeps) {
   // ─── The effect library ─────────────────────────────────────────────────
   // The presets and palettes saved on this server, first: the live state
   // reads them from the first broadcast on.
@@ -109,6 +114,48 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     effects: effectLibrary ?? new EffectLibrary(configFile('effects.json')).load(),
     palettes: paletteStore ?? new PaletteStore(configFile('palettes.json')).load(),
   };
+
+  // ─── The sequencer ──────────────────────────────────────────────────────
+  // The shelf of saved sequences and the transport playing the loaded one.
+  // Its commands and automation change the master, the tempo and the palette
+  // override from inside the engine's tick, through the patch like any
+  // change but as the sequence's own (no hand on a control); the pages hear
+  // of them at most ten times a second, after the tick.
+  let sequenceNews: ReturnType<typeof setTimeout> | null = null;
+  function broadcastSoon(): void {
+    if (sequenceNews) return;
+    sequenceNews = setTimeout(guarded('sequence-broadcast', () => { sequenceNews = null; broadcast(); }), 100);
+    if (sequenceNews.unref) sequenceNews.unref();
+  }
+  const sequence = {
+    store: sequenceStore ?? new SequenceStore(configFile('sequences.json')).load(),
+    sequencer: new Sequencer({
+      resolve: (id) => library.effects.resolve(id),
+      palette: (id) => library.palettes.materialize(id)?.map(toHex) ?? null,
+      apply: (patch) => {
+        // A refusal here must not cost the frame its sequence.
+        try {
+          applyPatch(patch, { origin: 'sequence' });
+        } catch (err) {
+          console.warn(`[sequence] could not apply ${Object.keys(patch).join(', ')}: ${messageOf(err)}`);
+        }
+        broadcastSoon();
+      },
+      current: () => ({ masterDimmer: state.masterDimmer, bpm: state.bpm }),
+      musicMode: (mode) => {
+        // The settings file refusing the write leaves the mode as it was; the sequence still plays.
+        try {
+          settings.update({ audio: { mode } });
+        } catch (err) {
+          console.warn(`[sequence] could not set the audio mode to ${mode}: ${messageOf(err)}`);
+        }
+      },
+      admit: (spec) => safety.requireAcknowledged(spec),
+    }),
+  };
+  // Read once a frame by the engine; its status rides the live state.
+  setSequenceSource((reading) => sequence.sequencer.frame(reading));
+  setSequenceProvider(() => sequence.sequencer.status());
   // Slot statuses, one per upcoming track up to state.autoPrefetchDepth.
   // slots[0] is the immediate next track (back-compat with the old
   // spotifyNext shape — that field still mirrors slots[0]).
@@ -250,6 +297,8 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   // Hook the patch module so it can react to higher-level concerns.
   setHooks({
     broadcast,
+    // A hand on the master or the tempo ends the sequence's automation of it.
+    handEdit: (edit) => sequence.sequencer.handEdit(edit),
     prolinkEnable: () => {
       prolink.enable().catch((err) => {
         console.error('PRO DJ LINK enable failed:', messageOf(err));
@@ -377,13 +426,14 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   // ─── What the party effects hear ────────────────────────────────────────
   // One set of detectors for every effect (audio-features.ts), on the
   // settings of the Disco or Visualizer playing, else on the settings here:
-  // the base look's effect, validated, and the voices over it (none are
-  // launched from here yet), with the photosensitivity acknowledgement that
-  // admits a Visualizer among them.
+  // the voices (none are launched from here yet), the sequence's clips on
+  // top of the patch, the base look's effect, validated, with the
+  // photosensitivity acknowledgement that admits a Visualizer among them.
   function detectors(): Detectors {
+    const fixtureIds = state.fixtures.map((f) => f.id);
     return resolveDetectors({
-      base: baseEffect(), voices: [], nowMs: performance.now(),
-      fixtureIds: state.fixtures.map((f) => f.id), ldjTrigger: settings.get('audio.ldjTrigger'),
+      base: baseEffect(), clips: sequence.sequencer.playing(fixtureIds), voices: [], nowMs: performance.now(),
+      fixtureIds, ldjTrigger: settings.get('audio.ldjTrigger'),
       acknowledged: settings.get('safety.photosensitivityAcknowledged'),
     });
   }
@@ -1068,6 +1118,8 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     // The audio features and their summary, for the audio route.
     audio: { features: audioFeatures, summary: audioSummary, detectors },
     library,
+    // The shelf and the transport, for the sequence routes.
+    sequence,
     hybrid,
     prefetchNextFromQueue,
     clearSpotifyNext: () => {

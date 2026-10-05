@@ -58,7 +58,7 @@ import { HdFlashGuard } from './effects/flash-guard.ts';
 import { seedFrom } from './effects/hash.ts';
 import { STROBE_FRAME_MS } from './effects/strobe.ts';
 import { HD_MASTER_DEFAULTS } from './effects/types.ts';
-import { copySequenceRun, newSequenceRun, renderSequenceLayer } from './effects/sequence.ts';
+import { copySequenceRun, newSequenceRun, renderSequenceLayer, transportOf } from './effects/sequence.ts';
 import { parseHex } from './effects/palette.ts';
 import type { GridSource } from './beat-clock.ts';
 import type { Layout, Rig } from './rig.ts';
@@ -1007,7 +1007,7 @@ function sequenceOf(given: PreviewOptions['sequence']): { table: SequenceTable; 
   const transport = given?.transport;
   if (!table || !Array.isArray(table.lanes) || !Array.isArray(table.clips) || !transport || !Number.isFinite(transport.startBeat)) return null;
   const clips = table.clips.map((c) => (c && typeof c === 'object' ? { ...c, spec: checkedSpec(c.spec).spec ?? NO_EFFECT } : c));
-  return { table: { ...table, clips }, transport: { startBeat: transport.startBeat, loop: transport.loop ?? null, generation: transport.generation ?? 0 } };
+  return { table: { ...table, clips }, transport: transportOf(transport) };
 }
 
 /** Every light dark, before the timeline begins. */

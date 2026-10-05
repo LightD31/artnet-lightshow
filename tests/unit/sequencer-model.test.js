@@ -340,11 +340,13 @@ test('the table resolves every clip\'s effect, keeps explicit fixture ids and ma
   // The loaded sequence as a copy; unloading clears the table.
   sequencer.current().clips.length = 0;
   assert.equal(sequencer.current().clips.length, raw.clips.length);
-  assert.deepEqual(sequencer.status(), { loaded: { id: 'set-1', name: 'Set one' }, revision: 2, mode: 'arrangement' });
+  // What is loaded, of the status (the transport's fields: sequencer-transport.test.js).
+  const loaded = ({ loaded: l, revision, mode }) => ({ loaded: l, revision, mode });
+  assert.deepEqual(loaded(sequencer.status()), { loaded: { id: 'set-1', name: 'Set one' }, revision: 2, mode: 'arrangement' });
   sequencer.unload();
   assert.equal(sequencer.table(), null);
   assert.equal(sequencer.current(), null);
-  assert.deepEqual(sequencer.status(), { loaded: null, revision: 3, mode: null });
+  assert.deepEqual(loaded(sequencer.status()), { loaded: null, revision: 3, mode: null });
   // Nothing plays until the transport starts it: loading launches nothing.
   sequencer.load(raw);
   assert.deepEqual(sequencer.frame({ beatPos: 0, bpm: 120, epoch: 0 }), { table: sequencer.table(), transport: null });
@@ -359,9 +361,10 @@ test('the live state carries the sequencer\'s status in a domain of its own', ()
   const sequencer = new Sequencer({ resolve });
   try {
     setSequenceProvider(() => sequencer.status());
-    assert.deepEqual(getLiveState().sequence, { loaded: null, revision: 0, mode: null });
+    const idle = { playing: false, paused: false, stopped: null, beat: 0, bar: 1, loop: null, error: null };
+    assert.deepEqual(getLiveState().sequence, { loaded: null, revision: 0, mode: null, ...idle, lanes: [] });
     sequencer.load(sequence({ mode: 'playlist', lanes: [lane('a')] }));
-    assert.deepEqual(getLiveState().sequence, { loaded: { id: 'set-1', name: 'Set one' }, revision: 1, mode: 'playlist' });
+    assert.deepEqual(getLiveState().sequence, { loaded: { id: 'set-1', name: 'Set one' }, revision: 1, mode: 'playlist', ...idle, lanes: [{ id: 'a', clip: null }] });
   } finally {
     setSequenceProvider(null);
   }

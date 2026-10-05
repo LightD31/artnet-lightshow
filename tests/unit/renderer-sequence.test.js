@@ -574,6 +574,54 @@ test('the preview renders the same clips', () => {
   assert.ok(keys(3) >= 2, 'the track\'s clip comes and goes');
 });
 
+test('the preview pauses and stops as the rig does: a held selection playing on, a held picture, black', () => {
+  const BEATS = Array.from({ length: 41 }, (_, i) => i * 0.5);
+  const grid = makeGrid(BEATS);
+  const t = table(4, [lane('a'), lane('b')], [
+    tclip('fade', 'a', 0, 4, presetById('ldj.FadeCycle').spec, { loopBeats: 2 }),
+    tclip('probe', 'b', 1, 2, probe('held'), { fixtureIds: [11, 12], loopBeats: 1 }),
+    tclip('later', 'a', 4, 8, paint('#FF8000')),
+  ]);
+  const times = Array.from({ length: Math.floor(6000 / FRAME_MS) + 1 }, (_, k) => k * FRAME_MS);
+  const rigOf = buildRig(PARS, getProfile);
+  const transports = {
+    // Paused at beat 2.5 of the sequence: fade and probe stay on top past their ends, lapping on.
+    paused: { startBeat: 0, loop: null, generation: 2, hold: { position: 2.5, traversal: 0, beat: 0.5 } },
+    held: { startBeat: 0, loop: null, generation: 2, stop: { mode: 'hold', position: 1.5, traversal: 0 } },
+    black: { startBeat: 0, loop: null, generation: 2, stop: { mode: 'black', position: 1.5, traversal: 0 } },
+  };
+  for (const [name, transport] of Object.entries(transports)) {
+    const store = universes.createUniverseStore(universes.allocateShared());
+    const renderer = createRenderer({ profileOf: getProfile, profilesRevision, now: 0 });
+    renderer.setSequence(t);
+    const rigFrames = times.map((ms) => {
+      const reading = { beatPos: beatPositionAt(grid, ms), bpm: localBpm(grid, ms), epoch: 0 };
+      renderer.frame(input({ colorB: 5, sequenceRevision: t.revision, sequenceTransport: transport }), reading, ms, store, 0);
+      return rigLights(store, PARS);
+    });
+    const sample = createPreviewSampler([{ timeMs: 0, action: 'patch', data: { ...LOOK, colorB: 5, bpm: 120 } }],
+      { beats: BEATS }, { sequence: { table: t, transport } });
+    const same = (i, label) => {
+      const lights = sample(times[i], PARS, COLOR_PRESETS, rigOf);
+      rigFrames[i].forEach((light, u) => {
+        const seen = Object.fromEntries(Object.keys(light).map((k) => [k, lights[u][k]]));
+        assert.deepEqual(seen, light, `${name}, ${label}: light ${u} at ${times[i].toFixed(3)} ms`);
+      });
+    };
+    times.forEach((_, i) => same(i, 'forward'));
+    for (let i = times.length - 1; i >= 0; i -= 5) same(i, 'backward');
+    const keys = (u) => new Set(rigFrames.map((f) => JSON.stringify(f[u]))).size;
+    if (name === 'paused') {
+      assert.ok(keys(0) > 3, 'the paused fade moves on');
+      assert.ok(rigFrames.every((f) => f[0].r !== 255 || f[0].g !== 128), 'and the later clip never takes over');
+    } else {
+      assert.equal(keys(0), 1, `${name}: one picture`);
+      assert.equal(keys(2), 1);
+    }
+    if (name === 'black') assert.ok(rigFrames.every((f) => f.every((l) => Object.values(l).every((v) => v === 0))), 'black everywhere');
+  }
+});
+
 test('glow rides the expression level on its own curve as the base and as a clip, as it does as a voice: never multiplied by it again', () => {
   const GLOW = presetById('energy.glow').spec;
   const WHITE = paint('#FFFFFF');

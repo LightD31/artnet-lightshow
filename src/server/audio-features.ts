@@ -573,7 +573,7 @@ export interface DetectorVoice {
   untilMs: number | null;
 }
 
-export interface DetectorOwner { from: 'voice' | 'base' | 'fallback'; id: string | null; kind: string | null }
+export interface DetectorOwner { from: 'voice' | 'clip' | 'base' | 'fallback'; id: string | null; kind: string | null }
 
 export interface Detectors {
   disco: DiscoDetector & { owner: DetectorOwner };
@@ -586,14 +586,17 @@ const FALLBACK: DetectorOwner = { from: 'fallback', id: null, kind: null };
  * One detector of each kind serves every instance, so one effect's settings
  * run it: the highest playing voice of that kind, in the renderer's order
  * (the strobe tier, the later launch, a targeted voice over the whole rig,
- * the later start, the first listed), else the base look if it is that
- * kind, else the settings. A voice that has not started, has ended, or
+ * the later start, the first listed), else the highest clip of the sequence
+ * playing on top of a patched fixture (`clips`, highest first), else the
+ * base look if it is that kind, else the settings. A voice that has not started, has ended, or
  * targets nothing patched does not count; nor does any other kind of effect,
  * nor one that flashes too fast to play without the photosensitivity
  * acknowledgement while it is not given (the Visualizer).
  */
-export function resolveDetectors({ base, voices, nowMs, fixtureIds, ldjTrigger, acknowledged }: {
+export function resolveDetectors({ base, clips = [], voices, nowMs, fixtureIds, ldjTrigger, acknowledged }: {
   base: { id: string; spec: EffectSpec } | null;
+  /** The sequence's clip activations on top of the patch, highest first (shared/effects/sequence.ts playingClips). */
+  clips?: readonly { id: string; spec: EffectSpec }[];
   voices: readonly DetectorVoice[];
   nowMs: number;
   fixtureIds: readonly number[];
@@ -612,6 +615,8 @@ export function resolveDetectors({ base, voices, nowMs, fixtureIds, ldjTrigger, 
   const ownerOf = (kind: string): { owner: DetectorOwner; params: Record<string, unknown> } | null => {
     const v = playing.find((x) => plays(x.spec, kind));
     if (v) return { owner: { from: 'voice', id: v.id, kind }, params: v.spec.params || {} };
+    const clip = clips.find((c) => plays(c.spec, kind));
+    if (clip) return { owner: { from: 'clip', id: clip.id, kind }, params: clip.spec.params || {} };
     if (base && plays(base.spec, kind)) return { owner: { from: 'base', id: base.id, kind }, params: base.spec.params || {} };
     return null;
   };
