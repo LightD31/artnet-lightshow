@@ -160,7 +160,9 @@ test('one setup at a time, and one can be cancelled', async (t) => {
   const { s, events, finished } = setup(t, { plan: 'slow' });
   const job = s.start('cpu');
   assert.equal(s.start('cu128'), job, 'a second press is the same setup');
-  await new Promise((r) => setTimeout(r, 300));
+  // Starting the stand-in takes a Node start-up: well over 300 ms on a busy machine.
+  const until = Date.now() + 5000;
+  while (job.phase !== 'Downloading torch' && Date.now() < until) await new Promise((r) => setTimeout(r, 20));
   assert.equal(job.phase, 'Downloading torch');
   assert.equal(s.cancel(), true);
   await finished(job);
