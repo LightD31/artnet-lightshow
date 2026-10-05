@@ -50,4 +50,12 @@ export class HdFlashGuard {
   }
 
   reset(): void { this.units.clear(); this.bright = 0; }
+
+  /** An independent copy with the same interval and histories: a preview checkpoint carries its guard. */
+  clone(): HdFlashGuard {
+    const copy = new HdFlashGuard(this.intervalMs);
+    for (const [unit, state] of this.units) copy.units.set(unit, { ...state });
+    copy.bright = this.bright;
+    return copy;
+  }
 }

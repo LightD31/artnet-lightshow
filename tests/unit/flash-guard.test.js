@@ -84,3 +84,20 @@ test('the guard counts the lamps it holds bright, so a caller can tell when ther
   g.reset();
   assert.strictEqual(g.brightCount, 0);
 });
+
+test('a clone keeps the interval and every lamp\'s history, and goes its own way after', () => {
+  const g = new HdFlashGuard(350);
+  g.apply(0, 1, 0);
+  g.apply(1, 1, 100);
+  g.apply(1, 0, 150);
+  const c = g.clone();
+  assert.strictEqual(c.brightCount, 1);
+  assert.strictEqual(c.size, 2);
+  assert.strictEqual(c.apply(1, 1, 300), 0, 'lamp 1 rose at 100: still inside the interval');
+  assert.strictEqual(c.apply(1, 1, 460), 1);
+  c.clear(0);
+  assert.strictEqual(g.brightCount, 1, 'the original keeps its lamp 0 held');
+  assert.strictEqual(g.apply(1, 1, 300), 0);
+  g.setInterval(100);
+  assert.strictEqual(c.apply(0, 1, 340), 0, 'the clone keeps its own interval');
+});

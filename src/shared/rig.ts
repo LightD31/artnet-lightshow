@@ -287,6 +287,23 @@ function isHue(fixture: StageFixture): boolean {
   return !!fixture.hue || !!(fixture.output && fixture.output.protocol === 'hue');
 }
 
+// The built-in profiles that stand for a Hue lamp rather than a DMX fixture
+// (server/profiles.ts defines them from these ids). Here so the browser's
+// preview reads a Hue lamp as the renderer's effects do.
+const HUE_COLOR_PROFILE_ID = 'generic-hue-lamp-7ch';
+const HUE_WHITE_AMBIANCE_PROFILE_ID = 'generic-hue-white-ambiance-3ch';
+const HUE_WHITE_PROFILE_ID = 'generic-hue-white-lamp-1ch';
+const HUE_PROFILE_IDS: ReadonlySet<string> = new Set([HUE_COLOR_PROFILE_ID, HUE_WHITE_AMBIANCE_PROFILE_ID, HUE_WHITE_PROFILE_ID]);
+
+/**
+ * A Hue lamp as the party effects read one: flagged, sent to a bridge, or
+ * patched on a Hue lamp's profile alone. The pattern layer's own layouts keep
+ * isHue, as the rig plays them.
+ */
+function isHueLamp(fixture: StageFixture): boolean {
+  return isHue(fixture) || (fixture.profileId !== undefined && HUE_PROFILE_IDS.has(fixture.profileId));
+}
+
 /** The flags of the slots that are Hue lamps, or null when none is. */
 function hueFlags(flags: boolean[]): boolean[] | null {
   return flags.some(Boolean) ? flags : null;
@@ -444,4 +461,9 @@ export {
   buildRig,
   rigSignature,
   isHue,
+  isHueLamp,
+  HUE_COLOR_PROFILE_ID,
+  HUE_WHITE_AMBIANCE_PROFILE_ID,
+  HUE_WHITE_PROFILE_ID,
+  HUE_PROFILE_IDS,
 };

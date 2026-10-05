@@ -28,7 +28,7 @@ import { anchorStep, stepAt, motionAdvance } from '../shared/beat-clock.ts';
 import { createFlashLimiter, lightLuminance, strobeCap } from './flash-limit.ts';
 import { identifyLights } from './identify.ts';
 import { HD_MASTER_DEFAULTS } from '../shared/effects/types.ts';
-import { hdGuarded, renderEffectLayer, renderVoices, voiceLayout } from '../shared/effects/layer.ts';
+import { canonical, effectContentKey, hdGuarded, renderEffectLayer, renderVoices, voiceLayout } from '../shared/effects/layer.ts';
 import { ENERGY_KIND_BY_ID } from '../shared/effects/energy.ts';
 import { presetById } from '../shared/effects/catalogue.ts';
 import { kindOf } from '../shared/effects/registry.ts';
@@ -48,6 +48,8 @@ import type { AudioMode, EffectCommand, EffectSlot, EffectSpec, FrameBase, HdMas
 import type { ChannelDefault, ChannelMap, Colour, Expression, Override, PixelMap, Profile, PulseReading, ShowDynamics, StageFixture } from '../types/rig.ts';
 
 export type { VoiceFrame } from '../shared/effects/layer.ts';
+// The preview keys its effects the same way; both read it from the shared layer.
+export { effectContentKey };
 
 /** A fixture as a frame needs it: its universe and trim resolved. */
 export interface RenderFixture extends StageFixture {
@@ -184,20 +186,6 @@ export type CommandStatus = 'applied' | 'stale' | 'unavailable' | 'unsupported' 
 export interface CommandResult { seq: number; status: CommandStatus }
 
 const COMMANDS: readonly EffectCommand[] = ['stop', 'comboBreak', 'toggleDirection', 'fadeToBaseline', 'setPulserBaselineColor'];
-
-/** A value's canonical text: objects with their keys sorted, so a rebuilt snapshot compares equal. */
-function canonical(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'undefined';
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonical(record[key])}`).join(',')}}`;
-}
-
-/** What makes an effect the same effect: its kind and every setting but its colours and brightness. */
-export function effectContentKey(spec: EffectSpec): string {
-  return canonical({ kind: spec.kind, params: spec.params ?? null, scope: spec.scope ?? null,
-    minFlashIntervalMs: spec.minFlashIntervalMs ?? null, rapidFlash: spec.rapidFlash ?? null });
-}
 
 /** The base effect an input plays, as a command names it; null for a pattern. */
 export function baseIntentOf(input: Pick<RenderInput, 'pattern' | 'effect' | 'effectRevision'>): BaseIntent | null {

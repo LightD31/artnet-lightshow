@@ -27,6 +27,20 @@ export interface VoiceFrame {
   seed: Seed;
 }
 
+/** A value's canonical text: objects with their keys sorted, so a rebuilt snapshot compares equal. */
+export function canonical(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'undefined';
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonical(record[key])}`).join(',')}}`;
+}
+
+/** What makes an effect the same effect: its kind and every setting but its colours and brightness. */
+export function effectContentKey(spec: EffectSpec): string {
+  return canonical({ kind: spec.kind, params: spec.params ?? null, scope: spec.scope ?? null,
+    minFlashIntervalMs: spec.minFlashIntervalMs ?? null, rapidFlash: spec.rapidFlash ?? null });
+}
+
 /** What a voice's priority reads. */
 export type VoiceRank = Pick<VoiceFrame, 'tier' | 'launchSeq' | 'startedAtMs'> & { targets: readonly unknown[] | null };
 
