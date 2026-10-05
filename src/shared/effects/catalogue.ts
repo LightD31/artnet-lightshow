@@ -106,25 +106,29 @@ const scoreSteps = (hits: Hit[]): MacroStep[] => hits.map(([pulse, role, beats])
   effect: { kind: `ldj.BeatPulse${pulse}`, params: { cadence: .25, iterations: 1 } } as EffectSpec, beats, paletteIndices: [role],
 }));
 
-const MACROS: Record<string, { params: { steps: MacroStep[]; loopBeats: number }; palette?: readonly PaletteEntry[]; desc: string }> = {
-  // One firework step for the whole row: a shorter loop would restart its wall-clock schedule.
-  Fireworks: { desc: 'fireworks on random lamps at random moments',
-    params: { steps: [{ effect: { kind: 'ldj.SceneMakerFirework' } as EffectSpec, beats: 32 }], loopBeats: 32 }, palette: RANDOM_RANDOM },
+const macro = (steps: MacroStep[], loopBeats: number, palette?: readonly PaletteEntry[]) =>
+  ({ kind: 'macro', params: { steps, loopBeats }, ...(palette ? { palette } : {}) });
+
+// The Scene Maker rows, as the specs they play.
+const SCENE_ROWS: Record<string, { spec: object; desc: string }> = {
+  // The firework renderer keeps the row's random wall-clock schedule itself.
+  // Light DJ re-runs a held row on the renderer still running, so its fades
+  // carry into the next lap; a macro would relaunch it and cut them.
+  Fireworks: { desc: 'fireworks on random lamps at random moments', spec: { kind: 'ldj.SceneMakerFirework', palette: RANDOM_RANDOM } },
   // Dark by brightness, not by a black palette an override could replace.
   Blackout: { desc: 'every lamp dark, whatever the palette',
-    params: { steps: [{ effect: { kind: 'ldj.MatrixSolid', palette: ['#000000'], brightness: 0 } as EffectSpec, beats: 32 }], loopBeats: 32 } },
+    spec: macro([{ effect: { kind: 'ldj.MatrixSolid', palette: ['#000000'], brightness: 0 } as EffectSpec, beats: 32 }], 32) },
   // The app's row ends after its fourth Flip, at 14.8 beats; the last Flip
   // holds to the end of the sixteen-beat loop rather than adding a fifth.
-  BigRoomMix: { desc: 'a quick flash, two big-room waves and four flips in reversed colours, every sixteen beats', palette: RANDOM_RANDOM, params: {
-    steps: [
-      { effect: { kind: 'ldj.QuickFlash', params: { cadence: 4, iterations: 1 } } as EffectSpec, beats: 4 },
-      { effect: { kind: 'ldj.BigRoomWave', params: { once: true, phase: 0 } } as EffectSpec, beats: 3.6 },
-      { effect: { kind: 'ldj.BigRoomWave', params: { once: true, phase: 1 } } as EffectSpec, beats: 3.6 },
-      // Flip plays the two roles the other way round.
-      { effect: { kind: 'ldj.Flip', params: { cadence: .9, iterations: 4 } } as EffectSpec, beats: 4.8, paletteIndices: [P, S] },
-    ], loopBeats: 16 } },
+  BigRoomMix: { desc: 'a quick flash, two big-room waves and four flips in reversed colours, every sixteen beats', spec: macro([
+    { effect: { kind: 'ldj.QuickFlash', params: { cadence: 4, iterations: 1 } } as EffectSpec, beats: 4 },
+    { effect: { kind: 'ldj.BigRoomWave', params: { once: true, phase: 0 } } as EffectSpec, beats: 3.6 },
+    { effect: { kind: 'ldj.BigRoomWave', params: { once: true, phase: 1 } } as EffectSpec, beats: 3.6 },
+    // Flip plays the two roles the other way round.
+    { effect: { kind: 'ldj.Flip', params: { cadence: .9, iterations: 4 } } as EffectSpec, beats: 4.8, paletteIndices: [P, S] },
+  ], 16, RANDOM_RANDOM) },
   ...Object.fromEntries(Object.entries(SCORES).map(([name, score]) =>
-    [name, { desc: score.desc, params: { steps: scoreSteps(score.hits), loopBeats: 4 }, palette: RANDOM_RANDOM }])),
+    [name, { desc: score.desc, spec: macro(scoreSteps(score.hits), 4, RANDOM_RANDOM) }])),
 };
 
 function ldjRow(id: string, name: string, family: LdjEngine | 'macro', raw: object, desc = FAMILY[family].desc): CataloguePreset {
@@ -135,9 +139,8 @@ function ldjPresets(): CataloguePreset[] {
   const rows: CataloguePreset[] = [];
   for (const row of Object.values(LDJ_IDS)) {
     if (row.kind === 'macro') {
-      const m = MACROS[row.name];
-      rows.push(ldjRow(row.id, ldjName(row.name), 'macro', { kind: 'macro', params: m.params, ...(m.palette ? { palette: m.palette } : {}) },
-        `${FAMILY.macro.desc}: ${m.desc}`));
+      const scene = SCENE_ROWS[row.name];
+      rows.push(ldjRow(row.id, ldjName(row.name), 'macro', scene.spec, `${FAMILY.macro.desc}: ${scene.desc}`));
     } else if (row.kind === 'preset' && row.engine === 'visualizer') {
       const visualizer = VISUALIZER_PRESETS.find((p) => p.id === row.id)!;
       rows.push(ldjRow(row.id, visualizer.name, 'visualizer', { kind: 'ldj.visualizer', params: visualizer.params, palette: RANDOM_RANDOM }));
@@ -184,6 +187,7 @@ function ldjFamily(engine: LdjEngine | 'macro', extra: string[] = []): Catalogue
 }
 
 // The touch board renders through the matrix family's kinds and has no preset of its own.
+// The Scene Maker family lists the macro kind and the firework renderer its Fireworks row plays.
 export const FAMILIES: readonly CatalogueFamily[] = deepFreeze([
   ldjFamily('channel'), ldjFamily('iteration'), ldjFamily('rotation'), ldjFamily('wave'), ldjFamily('matrix', ['ldj.matrixBoard']),
   ldjFamily('studio'), ldjFamily('visualizer'), ldjFamily('bitmap'), ldjFamily('macro'),

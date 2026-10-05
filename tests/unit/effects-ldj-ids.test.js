@@ -3,6 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { execFileSync } from 'node:child_process';
+import { readdirSync, readFileSync } from 'node:fs';
 import { LDJ_IDS, CATALOGUE, BUILTIN_PALETTES, FAMILIES, LDJ_PRESETS, presetById, presetIndex } from '../../src/shared/effects/index.ts';
 import { KINDS, kindOf, requiresAcknowledgement, validateSpec } from '../../src/shared/effects/registry.ts';
 import { LDJ_CHANNEL_ROWS } from '../../src/shared/effects/ldj-channel.ts';
@@ -76,6 +77,20 @@ test('the catalogue builds whichever effect module a host loads first', () => {
     const script = `await import('${dir}${first}'); const m = await import('${dir}index.ts'); console.log(m.CATALOGUE.length);`;
     assert.strictEqual(execFileSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' }).trim(), '162', first);
   }
+});
+
+test('no effect module but the entry points loads the registry, so none can build the catalogue before its own kind registers', () => {
+  // Whoever imports index.ts, render.ts or the catalogue may build the catalogue
+  // first; only these do, and type imports load nothing.
+  const allowed = { 'index.ts': ['catalogue.ts', 'render.ts'], 'render.ts': [], 'catalogue.ts': ['index.ts'] };
+  const dir = new URL('../../src/shared/effects/', import.meta.url);
+  const found = Object.fromEntries(Object.keys(allowed).map((target) => [target, []]));
+  for (const file of readdirSync(dir).filter((f) => f.endsWith('.ts')).sort()) {
+    for (const [, specifier] of readFileSync(new URL(file, dir), 'utf8').matchAll(/^(?:import|export)(?! type)[^'"]*['"]\.\/([\w-]+\.ts)['"]/gm)) {
+      if (specifier in found) found[specifier].push(file);
+    }
+  }
+  assert.deepStrictEqual(found, allowed);
 });
 
 // The effect names by ordinal, independent of the table under test; null where
@@ -163,7 +178,12 @@ test('162 Light DJ rows: one per preset or macro ordinal and one per bitmap patt
     assert.strictEqual(preset.spec.kind, row.id, 'the kind is the effect');
     assert.strictEqual(preset.family, `ldj.${row.engine}`);
   }
-  for (const ordinal of CLASSES.macro) assert.strictEqual(presetById(LDJ_IDS[ordinal].id).spec.kind, 'macro');
+  // Every Scene Maker row is in its family; all but Fireworks change renderer within the row and play as macros.
+  for (const ordinal of CLASSES.macro) {
+    const preset = presetById(LDJ_IDS[ordinal].id);
+    assert.strictEqual(preset.family, 'ldj.macro', preset.id);
+    assert.strictEqual(preset.spec.kind, LDJ_IDS[ordinal].name === 'Fireworks' ? 'ldj.SceneMakerFirework' : 'macro', preset.id);
+  }
 });
 
 test('the seven visualizer ordinals pair each spike type with the swirl, and each background with fireworks', () => {
@@ -207,7 +227,9 @@ test('lifetime is catalogue metadata: 32 beats on every row, while kernels and s
   for (const id of ['ldj.StudioN5', 'ldj.bitmap.SmoothLoop', 'ldj.visualizer.pulse']) assert.ok(!('beats' in presetById(id).spec.params), id);
   assert.deepStrictEqual(presetById('ldj.StudioN5').spec.params, {});
   const loops = Object.fromEntries(CLASSES.macro.map((o) => [LDJ_IDS[o].name, presetById(LDJ_IDS[o].id).spec.params.loopBeats]));
-  assert.deepStrictEqual(loops, { Fireworks: 32, BigRoomMix: 16, House: 4, Electro: 4, Techno: 4, Dubstep: 4, DrumAndBass: 4, Blackout: 32 });
+  assert.deepStrictEqual(loops, { Fireworks: undefined, BigRoomMix: 16, House: 4, Electro: 4, Techno: 4, Dubstep: 4, DrumAndBass: 4, Blackout: 32 });
+  // Fireworks has no loop to restart; the 32 sits in its renderer's own beats parameter.
+  assert.strictEqual(presetById('ldj.Fireworks').spec.params.beats, 32);
 });
 
 const RANDOM_RANDOM = [{ random: true }, { random: true }];
@@ -306,10 +328,12 @@ test('families group every Light DJ row and kind, as plain data', () => {
     const family = FAMILIES.find((f) => f.id === p.family);
     assert.ok(family?.kinds.some((k) => k.kind === p.spec.kind), p.id);
   }
-  // Every registered Light DJ kind belongs to exactly one family.
+  // Every registered Light DJ kind belongs to exactly one engine family; the
+  // Scene Maker family holds the macro kind and the renderer Fireworks plays.
   const ldjKinds = [...KINDS.values()].filter((def) => def.app === 'ldj').map((def) => def.kind).sort();
-  const listed = FAMILIES.flatMap((f) => f.kinds.filter((k) => k.kind !== 'macro').map((k) => k.kind)).sort();
+  const listed = FAMILIES.filter((f) => f.id !== 'ldj.macro').flatMap((f) => f.kinds.map((k) => k.kind)).sort();
   assert.deepStrictEqual(listed, ldjKinds);
+  assert.deepStrictEqual(FAMILIES.find((f) => f.id === 'ldj.macro').kinds.map((k) => k.kind).sort(), ['ldj.SceneMakerFirework', 'macro']);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(FAMILIES)), FAMILIES, 'no functions or schemas');
   const flip = FAMILIES.find((f) => f.id === 'ldj.channel').kinds.find((k) => k.kind === 'ldj.Flip');
   assert.deepStrictEqual(flip.defaults.params, { cadence: 2, beats: 32 });
@@ -333,9 +357,11 @@ test('the macro scores: Beat Pulse hits once each, in the primary or secondary r
   assert.strictEqual(big[0].effect.params.iterations, 1);
   assert.deepStrictEqual([big[1].effect.params.once, big[1].effect.params.phase, big[2].effect.params.once, big[2].effect.params.phase], [true, 0, true, 1]);
   assert.deepStrictEqual([big[3].effect.params.cadence, big[3].effect.params.iterations], [0.9, 4]);
+  // Fireworks is the firework renderer itself, in Random, Random.
   const fireworks = presetById('ldj.Fireworks').spec;
-  assert.deepStrictEqual(fireworks.params.steps.map((s) => [s.effect.kind, s.beats, s.paletteIndices]), [['ldj.SceneMakerFirework', 32, undefined]]);
-  // Pulses and fireworks flash fast, so their macros need the acknowledgement; Blackout does not.
+  assert.deepStrictEqual([fireworks.kind, fireworks.palette], ['ldj.SceneMakerFirework', RANDOM_RANDOM]);
+  assert.deepStrictEqual(fireworks, presetById('ldj.SceneMakerFirework').spec);
+  // Pulses and fireworks flash fast, so their rows need the acknowledgement; Blackout does not.
   for (const name of ['House', 'Electro', 'Techno', 'Dubstep', 'DrumAndBass', 'BigRoomMix', 'Fireworks']) {
     assert.strictEqual(requiresAcknowledgement(presetById(`ldj.${name}`).spec), true, name);
   }
@@ -370,6 +396,18 @@ function hits(frames) {
 }
 const withPalette = (id, palette) => ({ ...presetById(id).spec, palette });
 
+test('one lamp, one colour, no audio: every row renders finite light, and only Blackout stays dark', () => {
+  for (const p of ldjRows()) {
+    let brightest = 0;
+    for (const f of play(withPalette(p.id, ['#00FF00']), 4)) {
+      const slot = f.out[0];
+      assert.ok([slot.level, slot.strength, ...Object.values(slot.colour)].every(Number.isFinite), `${p.id} at beat ${f.beat}`);
+      brightest = Math.max(brightest, slot.level * slot.strength);
+    }
+    assert.strictEqual(brightest > 0.01, p.id !== 'ldj.Blackout', p.id);
+  }
+});
+
 test('rendered, each genre score lights its hits on time in its roles, with no retrigger in the rests', () => {
   const expected = {
     House: [[0, 'p'], [1, 's'], [2, 'p'], [3, 's'], [3.5, 's']],
@@ -399,10 +437,29 @@ test('a one-colour palette serves both roles, and a global override is mapped ro
   assert.deepStrictEqual(hits(play(presetById('ldj.Techno').spec, 3.9, { override: [WHITE] })).map(([, c]) => c), [WHITE, WHITE, WHITE, WHITE]);
 });
 
-test('Blackout holds every lamp dark at full strength, even under a white override', () => {
-  for (const f of play(presetById('ldj.Blackout').spec, 3, { r: square(), override: [WHITE] })) {
+test('Blackout holds every lamp dark at full strength, even under a white override, through its 32-beat loop', () => {
+  for (const f of play(presetById('ldj.Blackout').spec, 33, { r: square(), override: [WHITE] })) {
     for (const slot of f.out) assert.deepStrictEqual([slot.level, slot.strength], [0, 1], `beat ${f.beat}`);
   }
+});
+
+test('a held Fireworks keeps its fades past beat 32: a lamp goes dark mid-fade only when a new firework relights it', () => {
+  // Light DJ re-runs the row on the firework renderer that is still running,
+  // so the fireworks of one lap fade out into the next.
+  const frames = play(presetById('ldj.Fireworks').spec, 34, { r: square() });
+  let fading = 0;
+  frames.forEach((f, i) => {
+    // The last frames have no next frames to show a relight in.
+    if (i === 0 || i + 5 > frames.length) return;
+    f.out.forEach((slot, lamp) => {
+      const before = frames[i - 1].out[lamp].level;
+      if (before > 0.2 && before < 0.95 && f.beat > 31 && f.beat < 33) fading++;
+      if (!(before > 0.2 && slot.level === 0)) return;
+      const relit = frames.slice(i + 1, i + 5).some((g) => g.out[lamp].level > 0.5);
+      assert.ok(relit, `lamp ${lamp} cut from ${before.toFixed(2)} at beat ${f.beat.toFixed(3)}`);
+    });
+  });
+  assert.ok(fading > 0, 'some fireworks are fading across beat 32');
 });
 
 test('Big Room Mix: a quick flash, two single waves, four flips that hold to beat 16, then the flash again', () => {
