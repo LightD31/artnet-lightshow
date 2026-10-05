@@ -2,7 +2,7 @@
 // latest output; fractional frame time and pending changes belong to the instance.
 
 import { z } from 'zod';
-import { huePulseLevel } from '../look-math.ts';
+import { huePulseLevel, tempoOf } from '../look-math.ts';
 import type { Colour } from '../../types/rig.ts';
 import type { Room } from '../room.ts';
 import type { AudioFrame } from './audio-frame.ts';
@@ -19,7 +19,6 @@ const BLACK: Colour = { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 };
 const WHITE: Colour = { ...BLACK, r: 255, g: 255, b: 255 };
 const f32 = Math.fround;
 const level = (n: number) => f32(Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0);
-const tempo = (bpm: number) => Number.isFinite(bpm) && bpm > 0 ? bpm : 120;
 const frameCount = (n: number) => Number.isFinite(n) ? Math.max(0, Math.floor(n / 22)) : 0;
 // The fastest supported musical row is an eighth of a beat. Smaller wire
 // values can turn a normal render gap into an unbounded replay loop.
@@ -208,7 +207,7 @@ export class LdjLamps {
     // Capture fresh requests before their delay starts, even on a zero-time
     // call. A later tap changes new notes, never an already scheduled fade.
     const bind = (state: LampTransition | null) => {
-      if (state && state.seconds === null) state.seconds = 'beats' in state.env ? state.env.beats * 60 / tempo(bpm) : 0;
+      if (state && state.seconds === null) state.seconds = 'beats' in state.env ? state.env.beats * 60 / tempoOf(bpm) : 0;
     };
     this.lamps.forEach(bind);
     for (const request of this.pending) bind(request.transition);
@@ -280,7 +279,7 @@ function clockIteration(steps: number): number {
 export function stepClock(pos: number, cadenceBeats: number, bpm: number, lastIter: number | null): StepClock {
   if (!Number.isFinite(cadenceBeats) || cadenceBeats < MIN_CADENCE) throw new RangeError('Light DJ cadence must be at least one eighth of a beat');
   const steps = pos / cadenceBeats, iter = clockIteration(steps);
-  const stepMs = cadenceBeats * 60000 / tempo(bpm);
+  const stepMs = cadenceBeats * 60000 / tempoOf(bpm);
   if (!Number.isFinite(stepMs)) throw new RangeError('Light DJ clock period must be finite');
   return { iter, phase: steps - iter, stepBeats: cadenceBeats, stepMs, changed: iter !== lastIter };
 }
@@ -413,7 +412,7 @@ export function makeLdjKind(name: string, row: LdjRow): EffectKindDef<LdjParams,
         : stepClock(frame.beatPos - frame.anchorBeat, params.cadence, frame.bpm, state.lastIter);
       // Where a callback falls on a cold render, at the current tempo for musical rows.
       const dueOf = (iter: number) => row.cadence === 'wall:50' ? originMs + iter * 50
-        : frame.nowMs - (frame.beatPos - frame.anchorBeat - iter * params.cadence) * 60000 / tempo(frame.bpm);
+        : frame.nowMs - (frame.beatPos - frame.anchorBeat - iter * params.cadence) * 60000 / tempoOf(frame.bpm);
       if (!state.timing) {
         // A cold finite row starts its lamps at its first callback, to replay them all.
         const lastMs = row.nextDelayMs ? originMs : finite && clock.iter >= 0 ? dueOf(0) : frame.nowMs - clock.phase * clock.stepMs;

@@ -5,7 +5,7 @@
 
 import { z } from 'zod';
 import type { Colour } from '../../types/rig.ts';
-import { HUE_PULSE_MS, huePulseLevel } from '../look-math.ts';
+import { HUE_PULSE_MS, huePulseLevel, tempoOf } from '../look-math.ts';
 import type { Room } from '../room.ts';
 import type { AudioFrame } from './audio-frame.ts';
 import { hash01, pickNotLast } from './hash.ts';
@@ -30,7 +30,6 @@ const f32 = Math.fround, BASELINE = f32(.05);
 const BLACK: Colour = { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 };
 const EMITTERS = ['r', 'g', 'b', 'w', 'a', 'uv'] as const;
 // A missing or zero tempo plays at 120 BPM, as in the other Light DJ kinds.
-const tempo = (bpm: number) => Number.isFinite(bpm) && bpm > 0 ? bpm : 120;
 // A finished spike gives its lamp back over one second of 22 Hz frames.
 const HANDOFF_FRAMES = 22;
 const QUIET_BEATS = 16, SOFT_BEATS = 20;
@@ -359,7 +358,7 @@ registerKind<VisualizerParams, VisualizerState>({
   render(params, s, room, f, out: EffectSlot[]) {
     if (!Number.isFinite(f.nowMs)) throw new RangeError('Light DJ clock time must be finite');
     if (!Number.isFinite(f.beatPos)) throw new RangeError('Light DJ beat position must be finite');
-    const now = f.nowMs, beat = f.beatPos, bpm = tempo(f.bpm), a = s.auto, m = s.mellow;
+    const now = f.nowMs, beat = f.beatPos, bpm = tempoOf(f.bpm), a = s.auto, m = s.mellow;
     const first = s.cursorMs === null;
     // A late first render still starts the clocks at launch, back-projecting its beat at the current tempo.
     if (first) { s.cursorMs = s.bed.lastMs; s.cursorBeat = beat - Math.max(0, now - s.bed.lastMs) * bpm / 60000; }

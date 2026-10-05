@@ -6,6 +6,7 @@
 import { z, ZodError } from 'zod';
 import type { RefinementCtx, ZodType } from 'zod';
 import type { Colour } from '../../types/rig.ts';
+import { tempoOf } from '../look-math.ts';
 import type { Room } from '../room.ts';
 import { seedFrom } from './hash.ts';
 import { registerKind, requiresAcknowledgement, validateSpec } from './registry.ts';
@@ -82,7 +83,6 @@ interface Activation { lap: number; step: number; kind: string; id: string; seed
 /** The children live in the macro's own stepper, so they are cloned, swept and reset with it. */
 interface MacroState { children: EffectStepper; active: Activation | null; last: { beat: number; ms: number } | null }
 
-const tempo = (bpm: number) => Number.isFinite(bpm) && bpm > 0 ? bpm : 120;
 
 /** The step playing `rel` beats after the macro's anchor: its lap, its index and where it starts in the loop. */
 function locate(p: MacroParams, rel: number): { lap: number; step: number; start: number } {
@@ -107,7 +107,7 @@ function stepStart(s: MacroState, frame: EffectFrame, anchorBeat: number, first:
   const launch = Number.isFinite(frame.startedAtMs) ? frame.startedAtMs! : null;
   if (!s.last) {
     if (first && launch !== null) return launch;
-    const back = frame.nowMs - (frame.beatPos - anchorBeat) * 60000 / tempo(frame.bpm);
+    const back = frame.nowMs - (frame.beatPos - anchorBeat) * 60000 / tempoOf(frame.bpm);
     return launch !== null ? Math.max(launch, back) : back;
   }
   const span = frame.beatPos - s.last.beat, gone = anchorBeat - s.last.beat;

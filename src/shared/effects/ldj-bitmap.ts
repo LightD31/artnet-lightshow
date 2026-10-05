@@ -3,6 +3,7 @@
 
 import { z } from 'zod';
 import type { Colour } from '../../types/rig.ts';
+import { tempoOf } from '../look-math.ts';
 import { MAX_LAMP_FLASH_HZ } from '../patterns.ts';
 import { ldjFrameAt } from './ldj-rotation.ts';
 import { hsbToColour, LDJ_RANDOM_HUES } from './palette.ts';
@@ -18,7 +19,6 @@ export type BitmapPattern = typeof BITMAP_PATTERNS[number];
 export interface BitmapImage { width: number; height: number; rows: number[][] }
 
 const f32 = Math.fround;
-const tempo = (bpm: number) => Number.isFinite(bpm) && bpm > 0 ? bpm : 120;
 const pack = (colour: Colour): number => (colour.r << 16) | (colour.g << 8) | colour.b;
 const unpack = (pixel: number): Colour => ({ r: (pixel >>> 16) & 255, g: (pixel >>> 8) & 255, b: pixel & 255, w: 0, a: 0, uv: 0 });
 const mod = (value: number, length: number): number => ((value % length) + length) % length;
@@ -191,7 +191,7 @@ export function sampleBitmap(image: BitmapImage, pattern: BitmapPattern, u: numb
  * seek samples directly and a tap to a new tempo moves the picture at once.
  */
 export function bitmapScroll(nowMs: number, originMs: number, bpm: number, speed: number, pattern: BitmapPattern): number {
-  const rate = tempo(bpm) * speed / 50.7 / (pattern === 'VertLines' ? 2 : 1);
+  const rate = tempoOf(bpm) * speed / 50.7 / (pattern === 'VertLines' ? 2 : 1);
   const scroll = Math.floor(ldjFrameAt(nowMs, originMs) * rate);
   if (!Number.isSafeInteger(scroll)) throw new RangeError('Bitmap scroll exceeds the safe integer range');
   return scroll;

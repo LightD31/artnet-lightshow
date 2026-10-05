@@ -3,6 +3,7 @@
 
 import { z } from 'zod';
 import type { Colour } from '../../types/rig.ts';
+import { tempoOf } from '../look-math.ts';
 import type { Room } from '../room.ts';
 import { pickExcluding } from './hash.ts';
 import { LDJ_FRAME_MS } from './ldj-engine.ts';
@@ -15,7 +16,6 @@ const f32 = Math.fround, BASELINE = f32(.05);
 const BLACK: Colour = { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 };
 const colourCopy = (colour: Colour): Colour => ({ ...colour });
 const sameColour = (a: Colour, b: Colour) => (['r', 'g', 'b', 'w', 'a', 'uv'] as const).every((key) => (a[key] ?? 0) === (b[key] ?? 0));
-const tempo = (bpm: number) => Number.isFinite(bpm) && bpm > 0 ? bpm : 120;
 type StudioMode = 'note' | 'swirl' | 'wave' | 'fireworks' | 'flashes' | 'stop' | 'fade'
   | 'visualizerSolid' | 'visualizerSwirl' | 'visualizerWave' | 'none';
 export type StudioBackground = 'solid' | 'swirl' | 'wave' | 'none';
@@ -74,7 +74,7 @@ export function triggerStudioNote(state: StudioState, type: 'N' | 'C' | '5x', be
     if (rank === null) { rank = pickExcluding(state.seed, event, n, state.recent); remember(state, rank); state.lastChosen = rank; }
     ranks = [rank];
   }
-  const seconds = beats * 60 / tempo(bpm);
+  const seconds = beats * 60 / tempoOf(bpm);
   ranks.forEach((rank, ordinal) => {
     const pending = { slot: state.ring[rank], delay: ordinal * 10, colour: colourCopy(colour), binding: source && { ...source }, seconds };
     if (pending.delay) state.pending.push(pending);
@@ -154,7 +154,7 @@ export function studioCommand(state: StudioState, cmd: EffectCommand, arg?: Colo
       }
       // Continuous lamps have no note duration. A captured one-beat fallback
       // makes this command finish instead of leaving a zero-step fade stuck.
-      for (const lamp of state.lamps) if (!(lamp.seconds > 0)) lamp.seconds = 60 / tempo(state.lastBpm);
+      for (const lamp of state.lamps) if (!(lamp.seconds > 0)) lamp.seconds = 60 / tempoOf(state.lastBpm);
       return;
   }
 }
@@ -230,7 +230,7 @@ function tick(state: StudioState): void {
 export function advanceStudio(state: StudioState, nowMs: number, bpm: number, access?: PaletteAccess, onFrame?: () => void): void {
   if (!Number.isFinite(nowMs)) throw new RangeError('Studio time must be finite');
   resolveColours(state, access);
-  state.lastBpm = tempo(bpm);
+  state.lastBpm = tempoOf(bpm);
   state.remainderMs += Math.max(0, nowMs - state.lastMs); state.lastMs = nowMs;
   const frames = Math.floor((state.remainderMs + 1e-8) / LDJ_FRAME_MS);
   if (!Number.isSafeInteger(frames) || !Number.isSafeInteger(state.frame + frames)) throw new RangeError('Studio frame count exceeds the safe integer range');
@@ -254,7 +254,7 @@ for (const name of names) registerKind({
   init(_params, room, frame) {
     const colour = frame.palette[0] ?? BLACK, binding = { index: 0, key: 0 };
     const state = initStudio(room, frame.seed, colour, frame.startedAtMs ?? frame.nowMs, binding);
-    state.lastBpm = tempo(frame.bpm);
+    state.lastBpm = tempoOf(frame.bpm);
     const note = /^Studio(N|C|5x)([1-5])$/.exec(name);
     if (note) triggerStudioNote(state, note[1] as 'N' | 'C' | '5x', durations[Number(note[2]) - 1], colour, frame.bpm, binding);
     else if (name === 'StudioSwirl') state.mode = 'swirl';

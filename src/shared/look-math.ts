@@ -111,8 +111,13 @@ export interface HoldFlash {
  * no faster than `maxHz`, itself never above HOLD_STROBE_MAX_HZ. Without a
  * tempo, 120 BPM.
  */
+/** A tempo the arithmetic can use: `bpm` when finite and positive, else the party apps' 120. */
+function tempoOf(bpm: number | null | undefined): number {
+  return typeof bpm === 'number' && Number.isFinite(bpm) && bpm > 0 ? bpm : 120;
+}
+
 function holdStrobeDivision(bpm: number | null | undefined, maxHz: number = HOLD_STROBE_MAX_HZ): number {
-  const tempo = bpm && bpm > 0 ? bpm : 120;
+  const tempo = tempoOf(bpm);
   const cap = Number.isFinite(maxHz) && maxHz > 0 ? Math.min(maxHz, HOLD_STROBE_MAX_HZ) : HOLD_STROBE_MAX_HZ;
   const rate = (perBeat: number) => (tempo / 60) * perBeat;
   let perBeat = 1;
@@ -127,7 +132,7 @@ function holdStrobeDivision(bpm: number | null | undefined, maxHz: number = HOLD
  * hold strobe keeps five a second.
  */
 function holdStrobeFlash(beatPos: number, bpm: number | null | undefined, maxHz: number = HOLD_STROBE_MAX_HZ): HoldFlash {
-  const tempo = bpm && bpm > 0 ? bpm : 120;
+  const tempo = tempoOf(bpm);
   const perBeat = holdStrobeDivision(tempo, maxHz);
   const periodMs = 60000 / tempo / perBeat;
   const pos = beatPos * perBeat;
@@ -310,6 +315,7 @@ export {
   holdStrobeFlash,
   holdStrobeLook,
   huePulseLevel,
+  tempoOf,
   fadeBrightness,
   hitBrightness,
   grooveBrightness,
