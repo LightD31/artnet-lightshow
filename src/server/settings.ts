@@ -1,6 +1,6 @@
 import net from 'node:net';
 import { z } from 'zod';
-import { SYNC_OFFSET_LIMIT_MS } from './presets.ts';
+import { SYNC_OFFSET_LIMIT_MS, TEMPO_MODES } from './presets.ts';
 import { HttpError, messageOf } from '../errors.ts';
 import { configFile } from './config-dir.ts';
 import { isLoopback } from './loopback.ts';
@@ -159,6 +159,13 @@ const DEFAULTS: Settings = {
     // against the tracks before it (src/show/set-memory.ts). Off plans every
     // track on its own, as if it were the first of the night.
     setMemory: true,
+  },
+  clock: {
+    // Automatic tempo match: 'auto' follows the music (the auto show, a deck,
+    // the track, the live input); 'manual' keeps the tempo the operator taps
+    // or types, bar the running auto show's grid (conductor.ts). Kept so the
+    // choice survives a restart.
+    tempoMode: 'auto',
   },
   safety: {
     // Hold the rig to three large-area flashes a second, the photosensitivity
@@ -356,6 +363,9 @@ const schema = z.object({
   auto: z.object({
     syncOffsetMs: z.number().int().min(-SYNC_OFFSET_LIMIT_MS).max(SYNC_OFFSET_LIMIT_MS),
     setMemory: z.boolean(),
+  }).strict(),
+  clock: z.object({
+    tempoMode: z.enum(TEMPO_MODES),
   }).strict(),
   safety: z.object({
     flashLimit: z.boolean(),

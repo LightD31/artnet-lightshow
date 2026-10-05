@@ -1199,6 +1199,16 @@ When a song pauses, the clock carries on at its tempo rather than freezing the
 rig on one step, and locks again when the music resumes. Stopping the auto show
 hands over to the song or the free clock mid-beat, without restarting the chase.
 
+**Automatic tempo match** is on by default: the clock follows the best source
+above. Switch it off (`POST /api/tempo/manual`, `tempoMode: 'manual'` through
+`/api/set`, or a MIDI button bound to *Automatic tempo match on / off*) and the
+tempo is yours: CDJ, Track and Live are not followed, the badge reads Tap, and
+the clock runs at the BPM you tap, type, nudge or send over MIDI. It takes over
+at the beat and tempo the music had reached, so nothing lurches. The running
+auto show still leads, because its scenes are scheduled on its track's beats.
+`POST /api/tempo/auto` follows the music again, from whatever source is best
+then; the choice is stored and survives a restart, and a tap never changes it.
+
 A scene from the auto show counts its steps from the beat it was scheduled on,
 not from the frame that fired it, and cues fire from the render loop itself, so
 each lands in the frame it is due. Walked against the analysed beats of the
@@ -2386,7 +2396,7 @@ the first port matching `/x.?touch/i`.
 
 | Control | Actions |
 |---------|---------|
-| **Buttons** | Tap tempo · Play/stop · Master blackout · Select pattern · Set colour slot A–D · Select palette · Set beat division · Energy override (hold) · Cycle the held energy effect · Cycle strobe function · Fixture blackout · Recall cue |
+| **Buttons** | Tap tempo · Automatic tempo match on/off · Play/stop · Master blackout · Select pattern · Set colour slot A–D · Select palette · Set beat division · Energy override (hold) · Cycle the held energy effect · Cycle strobe function · Fixture blackout · Recall cue |
 | **Encoders** (relative) | Nudge BPM · Nudge master dimmer · Nudge strobe speed · Nudge fixture dimmer · Nudge fixture max brightness · Nudge auto-show intensity · Nudge light/music sync |
 
 An endless encoder sends "moved a bit, this way", and there are two ways to
@@ -2448,6 +2458,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/play` · `/api/stop` | Start / stop the pattern engine |
 | POST | `/api/bpm/:value` | Set BPM (20–300, fractions allowed) |
 | POST | `/api/bpm/adjust/:delta` | Nudge BPM |
+| POST | `/api/tempo/auto` · `/api/tempo/manual` | Automatic tempo match on (follow the music) or off (keep the tapped or typed BPM); answers `{ ok, tempoMode, clock }`, stored across restarts |
 | POST | `/api/master/:value` | Master dimmer (0–255) |
 | POST | `/api/blackout/toggle` · `/api/blackout/on` · `/api/blackout/off` | Master blackout |
 | POST | `/api/pattern/:id` | Set pattern (e.g. `chase`, `rainbow`) |

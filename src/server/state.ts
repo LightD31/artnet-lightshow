@@ -8,6 +8,7 @@ import { isArmed } from './armed.ts';
 import { HttpError } from '../errors.ts';
 import { footprintOf, universesOf, isInternalUniverse, placeAddressless } from '../shared/placement.ts';
 import type { Settings } from './settings.ts';
+import type { TempoMode } from './conductor.ts';
 import type { Fixture, PixelMap, Profile, ShowDynamics } from '../types/rig.ts';
 
 /** Where a running pattern counts its steps from (see patch.ts). */
@@ -21,6 +22,8 @@ export interface PatternAnchor {
 export interface ShowState {
   artnet: Settings['artnet'];
   bpm: number;
+  /** Whether the clock follows the music or holds `bpm` (settings `clock.tempoMode`). */
+  tempoMode: TempoMode;
   beatDivision: number;
   running: boolean;
   pattern: string;
@@ -70,6 +73,9 @@ const state: ShowState = {
   // A fixture moved somewhere else stays where it was put.
   artnet: settings.group('artnet'),
   bpm: 120,
+  // The clock's own default, not the stored value: the applier puts that back
+  // at start through applyPatch, which tells the clock as well (apply.ts).
+  tempoMode: 'auto',
   beatDivision: 1,
   running: true,
   pattern: 'chase',
@@ -284,6 +290,8 @@ function getLiveState() {
     // CDJ, the playing track, or the operator's own tempo — and the tempo it
     // is keeping. See conductor.js.
     clock: conductor.status(),
+    // Whether that is the music's tempo or the operator's held one.
+    tempoMode: state.tempoMode,
     beatDivision: state.beatDivision,
     running: state.running,
     pattern: state.pattern,

@@ -45,7 +45,7 @@ export const DOMAINS: readonly Domain[] = ['look', 'rig', 'show', 'sources', 'ca
  * their own clocks. A key not named here is `system`.
  */
 const DOMAIN_OF: Readonly<Record<string, Domain>> = {
-  bpm: 'look', clock: 'look', beatDivision: 'look', running: 'look', pattern: 'look',
+  bpm: 'look', clock: 'look', tempoMode: 'look', beatDivision: 'look', running: 'look', pattern: 'look',
   colorA: 'look', colorB: 'look', colorC: 'look', colorD: 'look', palette: 'look',
   masterDimmer: 'look', masterBlackout: 'look', flashLimit: 'look',
   strobeSpeed: 'look', strobeFunction: 'look', pixelMap: 'look', pixelPattern: 'look', panelPattern: 'look',

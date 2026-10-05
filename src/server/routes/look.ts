@@ -1,5 +1,6 @@
 import { state, getClientState, getFixture, maxBrightnessOf } from '../state.ts';
 import { applyPatch, applyOverride, setFixtureMaxBrightness, processTap } from '../patch.ts';
+import { conductor } from '../conductor.ts';
 import { PALETTES } from '../palettes.ts';
 import { messageOf, statusOf } from '../../errors.ts';
 import type { Express } from 'express';
@@ -37,6 +38,15 @@ export function attachLookRoutes(app: Express, _ctx: RouteContext): void {
   app.post('/api/blackout/:onoff', (req, res) => {
     applyPatch({ masterBlackout: req.params.onoff !== 'off' });
     res.json({ ok: true, masterBlackout: state.masterBlackout });
+  });
+
+  // Automatic tempo match: 'auto' follows the music, 'manual' keeps the tempo
+  // tapped or typed here. Answers with what the clock now follows.
+  app.post('/api/tempo/:mode', (req, res) => {
+    try {
+      applyPatch({ tempoMode: req.params.mode });
+      res.json({ ok: true, tempoMode: state.tempoMode, clock: conductor.status() });
+    } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
   app.post('/api/pattern/:id', (req, res) => {
