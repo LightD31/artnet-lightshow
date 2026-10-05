@@ -578,6 +578,9 @@ class MidiController {
       case 'toggleBlackout':
         this.apply({ masterBlackout: !s.masterBlackout });
         break;
+      case 'toggleTempoMode':
+        this.apply({ tempoMode: s.tempoMode === 'manual' ? 'auto' : 'manual' });
+        break;
       case 'togglePlay':
         this.apply({ running: !s.running });
         break;
@@ -780,6 +783,8 @@ class MidiController {
         case 'setBeatDivision':  lit = Number(binding.value) === s.beatDivision; break;
         case 'setPalette':       lit = binding.value === s.palette; break;
         case 'toggleBlackout':   lit = !!s.masterBlackout; break;
+        // Lit while the clock follows the music, as Play is while it runs.
+        case 'toggleTempoMode':  lit = s.tempoMode !== 'manual'; break;
         case 'togglePlay':       lit = !!s.running; break;
         case 'energyHold':       lit = !!s.energyOverride; break;
         case 'toggleFixBlackout': {

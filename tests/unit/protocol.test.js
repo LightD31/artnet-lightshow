@@ -156,3 +156,10 @@ test('the frame the feed sends is the engine\'s universes as they are patched', 
   const last = Math.max(...state.fixtures.filter((f) => (f.universe ?? 0) === universes[0]).map((f) => f.address));
   assert.ok(frame[universes[0]].length >= last, 'up to the last patched channel at least');
 });
+
+// A key no domain names goes out as `system`, which no view watches.
+test('every key of the live state names its domain, the tempo mode the look\'s', () => {
+  assert.strictEqual(domainOf('tempoMode'), 'look');
+  const unnamed = Object.keys(getLiveState()).filter((key) => domainOf(key) === 'system');
+  assert.deepStrictEqual(unnamed, []);
+});

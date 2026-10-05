@@ -1,4 +1,5 @@
 import { beatPositionAt, localBpm } from '../shared/beat-clock.ts';
+import { TEMPO_MODES } from './presets.ts';
 import type { BeatGrid } from '../shared/beat-clock.ts';
 
 /**
@@ -20,6 +21,12 @@ import type { BeatGrid } from '../shared/beat-clock.ts';
  *          it keeps (see live-input.ts), for a track nothing else knows.
  *   tap    none of those: a free-running clock at the operator's BPM, set by
  *          tap tempo, BPM entry or MIDI.
+ *
+ * That is the `auto` tempo mode, automatic tempo match. In `manual` the
+ * operator keeps the tempo: the deck, the track and the live input are not
+ * listened to, and the free clock runs at the tapped or typed BPM. The auto
+ * show's grid still leads while the show runs, because its scenes are
+ * scheduled on that grid; held off it, they would land between the beats.
  *
  * A source that stops answering hands over to the free clock at the beat
  * position and tempo it had reached, so stopping the auto show mid-song does
@@ -45,6 +52,9 @@ const clampBpm = (bpm: number): number => Math.max(20, Math.min(300, bpm));
 
 /** What the clock is locked to. */
 export type ClockSource = 'auto' | 'cdj' | 'track' | 'live' | 'tap';
+
+/** Whether the clock follows the music (`auto`) or the operator's tempo (`manual`). */
+export type TempoMode = typeof TEMPO_MODES[number];
 
 /** Where the music is, in beats, and at what tempo. */
 export interface ClockReading {
@@ -101,6 +111,7 @@ class Conductor {
   declare _reportedBpm: number | null;
   declare _still: Record<string, { positionMs: number; since: number }>;
   declare _tookOver: boolean;
+  declare _tempoMode: TempoMode;
 
   constructor({ now = () => performance.now(), bpm = 120 }: { now?: () => number; bpm?: number } = {}) {
     this._now = now;
@@ -116,6 +127,7 @@ class Conductor {
     this._reportedBpm = null;
     this._still = {};                   // per grid source: { positionMs, since }
     this._tookOver = false;             // the operator just took the tempo from a track
+    this._tempoMode = 'auto';
   }
 
   /**
@@ -151,6 +163,31 @@ class Conductor {
   }
 
   get trackKey(): string | null | undefined { return this._track ? this._track.key : null; }
+
+  get tempoMode(): TempoMode { return this._tempoMode; }
+
+  /**
+   * Follow the music, or keep the operator's tempo. Only this switch decides;
+   * a tap or a typed BPM never flips it.
+   *
+   * To `manual`, the source being followed stops answering, and the free
+   * clock takes over the way it does when any source stops: at the beat and
+   * tempo the clock had reached. Back to `auto`, the best source answering
+   * takes over, with a new epoch only if its count is not the free clock's.
+   * Either way the reading is taken at once, so the hand-over is done before
+   * a BPM sent straight after the switch, and `status()` tells the truth.
+   */
+  setTempoMode(mode: unknown): void {
+    if (!TEMPO_MODES.includes(mode as TempoMode) || mode === this._tempoMode) return;
+    this._tempoMode = mode as TempoMode;
+    // Following again means following: a tap that took the tempo from this
+    // track, in either mode, no longer holds it off.
+    if (mode === 'auto') this._override = false;
+    // Said again even if unchanged: a BPM typed while the music led moved the
+    // read-out but not the clock, and the nudges start from the read-out.
+    this._reportedBpm = null;
+    this.now();
+  }
 
   /**
    * Called with the clock's tempo, to a hundredth, whenever it moves by a
@@ -246,6 +283,8 @@ class Conductor {
     const auto: Partial<AutoClock> = this._autoSource() || {};
     const fromAuto = this._gridReading('auto', auto.grid, auto.positionMs, t, auto.anchorMs);
     if (fromAuto) return fromAuto;
+    // Held by hand: only the auto show's grid, above, leads the operator's tempo.
+    if (this._tempoMode === 'manual') return { beatPos: this._freeBeatAt(t), bpm: this._free.bpm, source: 'tap' };
     const cdj = this._prolinkSource();
     if (cdj && Number.isFinite(cdj.beatPos)) {
       const bpm = typeof cdj.bpm === 'number' && Number.isFinite(cdj.bpm) && cdj.bpm > 0 ? cdj.bpm : this._free.bpm;

@@ -806,3 +806,23 @@ test('an encoder turning anticlockwise is no touch sensor', () => {
   h.midi.sendFeedback();
   assert.ok(h.cc().some((m) => m.controller === 9), 'the fader is still driven');
 });
+
+// Automatic tempo match on a button: it switches between following the music
+// and holding the operator's tempo, and is lit while the clock follows.
+test('a tempo-match button switches the mode and is lit while the clock follows the music', () => {
+  const h = harness({ cc: {}, notes: { 40: { action: 'toggleTempoMode' } } });
+  h.state.tempoMode = 'auto';
+
+  h.leds.length = 0;
+  h.midi.sendFeedback();
+  assert.deepStrictEqual(h.leds.map((m) => [m.note, m.velocity]), [[40, 127]]);
+
+  h.input.emit('noteon', { note: 40, velocity: 127, channel: 0 });
+  h.input.emit('noteon', { note: 40, velocity: 127, channel: 0 });
+  assert.deepStrictEqual(h.patches, [{ tempoMode: 'manual' }, { tempoMode: 'auto' }]);
+
+  h.state.tempoMode = 'manual';
+  h.leds.length = 0;
+  h.midi.sendFeedback();
+  assert.deepStrictEqual(h.leds.map((m) => [m.note, m.velocity]), [[40, 0]]);
+});
