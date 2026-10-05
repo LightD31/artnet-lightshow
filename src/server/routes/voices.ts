@@ -1,8 +1,10 @@
 import { z } from 'zod';
 import { state, voices } from '../state.ts';
 import { builtinPresets, launchOf, targetsOf } from '../voices.ts';
+import { padIndex, restOwner, REST_TOKEN } from '../pads.ts';
 import { validate } from '../validation.ts';
-import type { Express } from 'express';
+import { HttpError } from '../../errors.ts';
+import type { Express, Request } from 'express';
 import type { EffectLibrary } from '../effect-library.ts';
 import type { PresetLookup } from '../voices.ts';
 import type { RouteContext } from './common.ts';
@@ -48,6 +50,32 @@ const startSchema = z.object({
   }
 });
 
+// A REST hold's token: the caller's own, as a socket's is, or REST_TOKEN.
+const holdSchema = z.object({ token: z.string().min(1).max(64).optional() }).strict();
+const layoutBody = z.object({ pads: z.unknown() }).strict();
+
+/** The pad a route names, from its URL; a 400 naming the bank or the slot that is none. */
+function padAt(req: Request): { bank: number; slot: number; index: number } {
+  const bank = Number(req.params.bank);
+  const slot = Number(req.params.slot);
+  return { bank, slot, index: padIndex(bank, slot) };
+}
+
+/** The token a REST press or release names, in its body or `?token=`; REST_TOKEN when none. */
+function tokenOf(req: Request): string {
+  const body = validate(holdSchema, req.body ?? {}, 'pad');
+  const query = typeof req.query.token === 'string' ? req.query.token : undefined;
+  return validate(holdSchema, { token: body.token ?? query }, 'pad').token ?? REST_TOKEN;
+}
+
+/** A once's `?ms=`: a positive number of milliseconds, or none. */
+function msOf(req: Request): number | undefined {
+  if (req.query.ms === undefined) return undefined;
+  const ms = typeof req.query.ms === 'string' && req.query.ms.trim() ? Number(req.query.ms) : NaN;
+  if (!(Number.isFinite(ms) && ms > 0)) throw new HttpError(400, 'pad: ms must be a positive number of milliseconds');
+  return ms;
+}
+
 /**
  * The voices over the look: what plays, an effect launched once or latched
  * (always the voice tier: nothing launched from here outranks the strobe),
@@ -82,5 +110,62 @@ export function attachVoiceRoutes(app: Express, ctx: RouteContext): void {
 
   app.delete('/api/voices', (_req, res) => {
     res.json({ ok: true, stopped: voices.stopAll() });
+  });
+
+  // ── Pads ──────────────────────────────────────────────────────────────────
+  // The layout, one pad or all sixteen at once, and the pads played from
+  // outside: HA presses once or toggles (it cannot hold), Companion and the
+  // pages hold over the socket. An empty pad answers 204 and plays nothing.
+  // A REST hold is leased to the pad's REST owner under the caller's token,
+  // or REST_TOKEN: pressing again within the lease renews it, and a bare
+  // release lets go of only the bare press's hold.
+  const pads = () => {
+    // Read when a request comes, as the library is: a stand-in may have none.
+    if (!ctx.integrations.pads) throw new HttpError(409, 'No pads on this server');
+    return ctx.integrations.pads;
+  };
+
+  app.get('/api/pads', (_req, res) => {
+    res.json({ ok: true, ...pads().view() });
+  });
+
+  app.put('/api/pads', (req, res) => {
+    const body = validate(layoutBody, req.body ?? {}, 'pads');
+    res.json({ ok: true, layout: pads().store.replace(body.pads) });
+  });
+
+  app.put('/api/pads/:bank/:slot', (req, res) => {
+    const { bank, slot } = padAt(req);
+    res.json({ ok: true, pad: pads().store.set(bank, slot, req.body ?? {}) });
+  });
+
+  app.post('/api/pads/:bank/:slot/press', (req, res) => {
+    const { bank, slot } = padAt(req);
+    const token = tokenOf(req);
+    if (!pads().entry(bank, slot).content) return res.status(204).end();
+    const voice = pads().press(bank, slot, restOwner(bank, slot), token);
+    res.json({ ok: true, id: voice?.id ?? null, token });
+  });
+
+  // The hold this pad's press launched goes, whatever the pad holds now.
+  app.post('/api/pads/:bank/:slot/release', (req, res) => {
+    const { bank, slot } = padAt(req);
+    const released = pads().release(bank, slot, restOwner(bank, slot), tokenOf(req));
+    if (!released && !pads().entry(bank, slot).content) return res.status(204).end();
+    res.json({ ok: true, released });
+  });
+
+  // `id` is the loop started, or null when it stopped what the pad played.
+  app.post('/api/pads/:bank/:slot/toggle', (req, res) => {
+    const { bank, slot, index } = padAt(req);
+    if (!pads().entry(bank, slot).content && !pads().lit()[index]) return res.status(204).end();
+    res.json({ ok: true, id: pads().toggle(bank, slot)?.id ?? null });
+  });
+
+  app.post('/api/pads/:bank/:slot/once', (req, res) => {
+    const { bank, slot } = padAt(req);
+    const ms = msOf(req);
+    if (!pads().entry(bank, slot).content) return res.status(204).end();
+    res.json({ ok: true, id: pads().once(bank, slot, ms)?.id ?? null });
   });
 }

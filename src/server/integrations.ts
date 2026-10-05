@@ -26,6 +26,8 @@ import { BIN_HZ } from '../shared/spectrum-bands.ts';
 import { safety } from './safety.ts';
 import { EffectLibrary } from './effect-library.ts';
 import { PaletteStore } from './palette-store.ts';
+import { PadStore, Pads } from './pads.ts';
+import { presetLookup } from './routes/voices.ts';
 import { configFile } from './config-dir.ts';
 import type { Server } from 'socket.io';
 import type AutoShow from '../auto-show.ts';
@@ -61,6 +63,8 @@ export interface IntegrationDeps {
   /** The effect library and the effect palettes; the ones in config/ unless a test stands in. */
   effectLibrary?: EffectLibrary | null;
   paletteStore?: PaletteStore | null;
+  /** The pads' layout; config/pads.json's unless a test stands in. */
+  padStore?: PadStore | null;
 }
 
 /** Which source the auto show follows. */
@@ -101,7 +105,7 @@ function reportAnalysisError(label: string, err: unknown): void {
 // LINK, auto-show) into the engine + state. Returns the integration handle that
 // routes (src/server/routes/) and sockets.ts call back into.
 function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolink, autoShow, analysisCache = null,
-  liveInput = null, effectLibrary = null, paletteStore = null }: IntegrationDeps) {
+  liveInput = null, effectLibrary = null, paletteStore = null, padStore = null }: IntegrationDeps) {
   // ─── The effect library ─────────────────────────────────────────────────
   // The presets and palettes saved on this server, first: the live state
   // reads them from the first broadcast on.
@@ -109,6 +113,11 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     effects: effectLibrary ?? new EffectLibrary(configFile('effects.json')).load(),
     palettes: paletteStore ?? new PaletteStore(configFile('palettes.json')).load(),
   };
+  // The pads play the library's presets, saved ones included, as they are at each press.
+  const pads = new Pads({
+    voices, store: padStore ?? new PadStore(configFile('pads.json')).load(), lookup: () => presetLookup(library),
+    fixtureIds: () => state.fixtures.map((f) => f.id), beat: () => conductor.peek().beatPos,
+  });
   // Slot statuses, one per upcoming track up to state.autoPrefetchDepth.
   // slots[0] is the immediate next track (back-compat with the old
   // spotifyNext shape — that field still mirrors slots[0]).
@@ -239,6 +248,8 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       // every open page; a preset's spec is GET /api/effects/:id's.
       effects: library.effects.summaries(),
       userPalettes: library.palettes.list(),
+      // The layout and which pads are lit; a voice starting or ending is a broadcast already.
+      pads: pads.view(),
       warm: warmer.status(),
       midi: { enabled: midi.enabled, ports: midi.listPorts() },
       // The fixtures showing themselves on the rig, marked on the stage plot.
@@ -1061,6 +1072,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     broadcast();
   });
   library.palettes.onChange(() => broadcast());
+  pads.store.onChange(() => broadcast());
 
   return {
     broadcast,
@@ -1069,6 +1081,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     // The audio features and their summary, for the audio route.
     audio: { features: audioFeatures, summary: audioSummary, detectors },
     library,
+    pads,
     hybrid,
     prefetchNextFromQueue,
     clearSpotifyNext: () => {

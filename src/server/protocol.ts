@@ -37,8 +37,8 @@ export const ROOM = { v1: 'protocol:1', v2: 'protocol:2', dmx: 'feed:dmx', audio
 /** What a page may subscribe to. */
 export const TOPICS = { dmx: ROOM.dmx, audio: ROOM.audio } as const;
 
-export type Domain = 'look' | 'rig' | 'show' | 'sources' | 'audio' | 'catalogs' | 'library' | 'voices' | 'system';
-export const DOMAINS: readonly Domain[] = ['look', 'rig', 'show', 'sources', 'audio', 'catalogs', 'library', 'voices', 'system'];
+export type Domain = 'look' | 'rig' | 'show' | 'sources' | 'audio' | 'catalogs' | 'library' | 'voices' | 'pads' | 'system';
+export const DOMAINS: readonly Domain[] = ['look', 'rig', 'show', 'sources', 'audio', 'catalogs', 'library', 'voices', 'pads', 'system'];
 
 /**
  * Which domain each key of the live state belongs to. Grouped by what changes
@@ -75,6 +75,9 @@ const DOMAIN_OF: Readonly<Record<string, Domain>> = {
 
   // The effects launched over the look: a pad pressed moves only this, and only the pads watch it.
   voices: 'voices',
+
+  // The pads' layout and which of them are lit: the deck and the pad grid watch it, nothing else.
+  pads: 'pads',
 };
 
 export function domainOf(key: string): Domain {

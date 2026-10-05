@@ -54,6 +54,7 @@ async function until(found, what, ms = 5000) {
 const preset = (id) => ({ kind: 'preset', id });
 /** A pad as PUT takes it: held, on a quarter-beat grid, on the whole rig, unless `extra` says otherwise. */
 const pad = (content, extra = {}) => ({ label: 'Pad', accent: '#A855F7', content, launch: 'hold', quantise: 0.25, targets: 'shared', ...extra });
+const near = (a, b, what) => assert.ok(Math.abs(a - b) < 1e-6, `${what}: ${a} ≠ ${b}`);
 const refusedWith = (status, pattern) => (err) => err.status === status && pattern.test(err.message);
 /** The layout a store starts with: one that has read no file. */
 const defaults = () => new PadStore(path.join(os.tmpdir(), 'pads-none', 'pads.json')).layout();
@@ -71,14 +72,14 @@ function place(t) {
  */
 function rig(t, { now = 1000, beat = 0, bpm = 120, running = false, acknowledged = false } = {}) {
   t.mock.timers.enable({ apis: ['setTimeout'] });
-  const c = { now, beat, bpm, running, acknowledged };
+  const c = { now, beat, bpm, running, acknowledged, fixtures: [0, 1, 2, 3] };
   const manager = new VoiceManager({
     now: () => c.now, beatPos: () => c.beat, bpm: () => c.bpm,
     acknowledged: () => c.acknowledged, anyRunning: () => c.running, onChange: () => {},
   });
   const { file, dir } = place(t);
   const store = new PadStore(file).load();
-  const pads = new Pads({ voices: manager, store, lookup: () => builtinPresets, fixtureIds: () => [0, 1, 2, 3], beat: () => c.beat });
+  const pads = new Pads({ voices: manager, store, lookup: () => builtinPresets, fixtureIds: () => c.fixtures, beat: () => c.beat });
   const advance = (ms) => {
     c.now += ms;
     c.beat += (ms / 60000) * c.bpm;
@@ -133,7 +134,7 @@ test('pads.json: a restart reads the layout back; a file that does not validate 
   store.set(1, 2, pad(preset('ldj.Swirl'), { launch: 'loop', targets: [] }));
   const saved = store.layout();
   assert.deepEqual(new PadStore(file).load().layout(), saved);
-  t.mock.method(console, 'warn', () => {});
+  const warn = t.mock.method(console, 'warn', () => {});
   // Fifteen pads, or one twice: not a layout. The whole file goes aside, the defaults stand.
   const write = (pads) => fs.writeFileSync(file, JSON.stringify({ pads }));
   for (const bad of [saved.slice(1), [...saved.slice(0, 15), saved[0]], saved.map((p, i) => (i === 3 ? { ...p, quantise: -1 } : p))]) {
@@ -142,7 +143,9 @@ test('pads.json: a restart reads the layout back; a file that does not validate 
     assert.deepEqual(loaded.layout(), defaults());
     assert.equal(fs.existsSync(file), false);
   }
-  assert.equal(fs.readdirSync(dir).filter((f) => f.includes('.invalid-')).length, 3);
+  // Three moved aside (within a millisecond, they share a name: counted by what was said).
+  assert.equal(warn.mock.calls.filter((call) => /moved it to .*\.invalid-/.test(call.arguments[0])).length, 3);
+  assert.ok(fs.readdirSync(dir).some((f) => f.startsWith('pads.json.invalid-')));
   // A preset nothing knows any more is the pad's still: refused at launch, not at load.
   write(saved.map((p, i) => (i === 9 ? { ...p, content: preset('user.0123456789abcdef') } : p)));
   const kept = new PadStore(file).load();
@@ -158,12 +161,12 @@ test('press on a hold pad starts a hold voice with the pad\'s quantise and targe
   assert.deepEqual([v.mode, v.source, v.tier, v.label, v.owner, v.key], ['hold', 'pad', 'voice', 'Fade', 'tablet', 'pad:0:2']);
   assert.deepEqual(v.targets, [2, 1], 'its fixtures, once each');
   // 10.1 snaps up to 10.25: 0.15 beats at 120 BPM is 75 ms.
-  assert.equal(v.startedAtMs, 1075);
+  near(v.startedAtMs, 1075, 'the grid line');
   assert.equal(v.anchorBeat, 10.25);
   assert.equal(pads.lit()[2], v.id);
   assert.deepEqual(m.frames(c.now), [], 'waiting for its grid line');
-  advance(75);
-  assert.deepEqual(m.frames(c.now).map((f) => f.id), [v.id]);
+  advance(76);
+  assert.deepEqual(m.frames(c.now).map((f) => f.id), [v.id], 'and playing once past it');
 
   // Pressed again with its lease running: renewed, the same launch.
   advance(500);
@@ -177,6 +180,12 @@ test('press on a hold pad starts a hold voice with the pad\'s quantise and targe
   pads.release(0, 2, 'tablet', 't1');
   assert.equal(m.get(v.id), null);
   assert.equal(pads.lit()[2], null);
+
+  // A fixture removed since the pad was set is left out, never another's.
+  c.fixtures = [0, 2, 3];
+  assert.deepEqual(pads.press(0, 2, 'tablet', 'gone').targets, [2]);
+  pads.release(0, 2, 'tablet', 'gone');
+  c.fixtures = [0, 1, 2, 3];
 
   // A grid of 0 is now, whatever plays.
   put(0, 5, pad(preset('energy.blinder'), { quantise: 0 }));
@@ -238,7 +247,7 @@ test('once ends after the preset\'s scoped loop length', async (t) => {
   await s.call('PUT', '/api/pads/1/0', pad(preset('hd.auroraDrift'), { launch: 'once', quantise: 0 }));
   let res = await s.call('POST', '/api/pads/1/0/once?ms=150');
   let launched = voices.get(res.body.id);
-  assert.equal(launched.untilMs - launched.startedAtMs, 150);
+  near(launched.untilMs - launched.startedAtMs, 150, 'its own length');
   res = await s.call('POST', '/api/pads/1/0/once');
   launched = voices.get(res.body.id);
   assert.ok(Math.abs(launched.untilMs - launched.startedAtMs - 5 * 60000 / conductor.status().bpm) < 1);
@@ -304,7 +313,7 @@ test('a sequencePattern pad is 409 while no `insertPattern` hook is installed', 
   assert.throws(() => pads.once(1, 4), refusedWith(409, /pattern/));
   assert.throws(() => pads.toggle(1, 4), refusedWith(409, /pattern/));
   assert.equal(m.size, 0);
-  // Installed (Task 19c's), a press inserts at the pad's next grid line and launches no voice.
+  // Installed (the sequencer's), a press inserts at the pad's next grid line and launches no voice.
   const inserted = [];
   pads.insertPattern = (id, atBeat) => inserted.push([id, atBeat]);
   assert.equal(pads.press(1, 4, 'tablet', 't'), null);
@@ -320,7 +329,7 @@ test('a pattern pad is 409 while no pattern voice is installed, then plays as on
   assert.throws(() => pads.press(1, 5, 'tablet', 't'), refusedWith(409, /pattern/));
   assert.throws(() => pads.toggle(1, 5), refusedWith(409, /pattern/));
   assert.equal(m.size, 0);
-  // Task 19c's hook: the pad's targets, mode, grid and key, and no length, so the pattern's own plays.
+  // The sequencer's hook: the pad's targets, mode, grid and key, and no length, so the pattern's own plays.
   const asked = [];
   pads.patternVoice = (id, launch) => {
     asked.push([id, launch]);
@@ -353,7 +362,7 @@ test('a strobe pad takes the strobe hook when installed and otherwise the Task 1
   assert.throws(() => pads.once(0, 6), refusedWith(409, /held/));
   assert.throws(() => pads.toggle(0, 6), refusedWith(409, /held/));
 
-  // Installed (Task 18's), the hook holds and releases with the pad's owner and token.
+  // Installed (the strobe's), the hook holds and releases with the pad's owner and token.
   const calls = [];
   pads.strobe = {
     hold(owner, token) {
@@ -580,7 +589,10 @@ test('voice-hold with pad goes through Pads.press and release through the socket
   assert.equal(heard.snapshot.versions.pads, 0);
   assert.equal(heard.snapshot.state.pads.layout.length, 16);
   const target = state.fixtures[1].id;
+  // An edit is published as it is saved, not on the next once-a-second sweep.
+  const published = t.mock.method(s.integrations.publisher, 'publishState');
   await s.call('PUT', '/api/pads/0/2', pad(FADE, { label: 'Fade', quantise: 0, targets: [target] }));
+  assert.ok(published.mock.calls.some((call) => call.arguments[0].pads.layout[2].label === 'Fade'), 'published with the save');
   await until(() => toldPads(heard)?.layout[2].label === 'Fade', 'the page told of the edit');
 
   socket.emit('voice-hold', { action: 'press', token: 'p1', pad: { bank: 0, slot: 2 } });
@@ -655,6 +667,15 @@ test('a REST press and a socket press of the same pad do not share a lease', asy
     assert.equal(r.status, 400, JSON.stringify(token));
     assert.match(r.body.error, /token/);
   }
+
+  // Each pad has a REST owner of its own: a bare press on one is no other pad's lease.
+  await s.call('PUT', '/api/pads/0/4', pad(FADE, { quantise: 0 }));
+  const three = (await s.call('POST', '/api/pads/0/3/press')).body.id;
+  const four = (await s.call('POST', '/api/pads/0/4/press')).body.id;
+  assert.deepEqual(ids().sort(), [three, four].sort());
+  assert.equal((await s.call('POST', '/api/pads/0/3/release')).body.released, true);
+  assert.deepEqual(ids(), [four]);
+  await s.call('POST', '/api/pads/0/4/release');
 
   // A REST hold is renewed only by pressing again: left alone, it dies with its lease.
   res = await s.call('POST', '/api/pads/0/3/press');

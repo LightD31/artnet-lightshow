@@ -9,6 +9,7 @@ import { connectMidi } from './midi-connect.ts';
 import { midiMap } from './midi-map.ts';
 import { ENERGY_EFFECTS } from './presets.ts';
 import { launchOf, targetsOf } from './voices.ts';
+import { padIndex, STROBE_ID } from './pads.ts';
 import { presetLookup } from './routes/voices.ts';
 import { ddpConflict } from './ddp-routes.ts';
 import { HttpError, messageOf } from '../errors.ts';
@@ -16,6 +17,7 @@ import { PROTOCOL, ROOM, TOPICS } from './protocol.ts';
 import type { Server, Socket } from 'socket.io';
 import type { MidiPorts } from './midi-connect.ts';
 import type { Publisher, Snapshot } from './protocol.ts';
+import type { Pads } from './pads.ts';
 
 /** A browser holding an energy effect down. */
 interface EnergyHoldMessage {
@@ -33,19 +35,46 @@ interface VoiceHoldMessage extends EnergyHoldMessage {
 /** A hold's token: a short string of the page's own, as the energy hold has always taken. */
 const validToken = (token: unknown): token is string => typeof token === 'string' && token.length > 0 && token.length <= 64;
 
+/** The pad a voice-hold message names, `{ bank, slot }`; a 400 for one that is none. */
+function padOf(raw: unknown): { bank: number; slot: number } {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new HttpError(400, 'voice-hold: pad is { bank, slot }');
+  const { bank, slot } = raw as { bank?: unknown; slot?: unknown };
+  padIndex(bank, slot);
+  return { bank: bank as number, slot: slot as number };
+}
+
 /**
  * What a voice-hold press launches: its effect, given or by preset, for as
  * long as the page renews it. The voice tier, as every effect a client
- * launches: nothing it holds outranks the strobe. Pads come with the pads.
+ * launches: nothing it holds outranks the strobe. A pad plays as its launch
+ * says (pads.ts), and the strobe goes through the pads' strobe hook, as the
+ * strobe pad does.
  */
-function pressVoice(owner: string, token: string, payload: VoiceHoldMessage, lookup: ReturnType<typeof presetLookup>): void {
-  if (payload.pad !== undefined) throw new HttpError(409, 'No pads on this server yet');
+function pressVoice(owner: string, token: string, payload: VoiceHoldMessage, lookup: ReturnType<typeof presetLookup>, pads?: Pads): void {
+  if (payload.pad !== undefined) {
+    if (!pads) throw new HttpError(409, 'No pads on this server');
+    const { bank, slot } = padOf(payload.pad);
+    pads.press(bank, slot, owner, token);
+    return;
+  }
   const effect = payload.effect;
   const byPreset = !!effect && typeof effect === 'object' && !Array.isArray(effect) && Object.hasOwn(effect, 'preset');
   if (byPreset && Object.keys(effect as object).length !== 1) throw new HttpError(400, 'voice-hold: effect is a spec or { preset }');
+  if (byPreset && pads && (effect as { preset: unknown }).preset === STROBE_ID) {
+    pads.holdStrobe(owner, token, payload.targets);
+    return;
+  }
   const launch = launchOf(byPreset ? { preset: (effect as { preset: unknown }).preset } : { effect }, lookup);
   const targets = targetsOf(payload.targets, state.fixtures.map((f) => f.id));
   voices.start({ spec: launch.spec, targets, mode: 'hold', tier: 'voice', source: 'api', label: launch.label, owner, token });
+}
+
+/** A voice-hold release: the hold its token names, through the pad it names, if any. */
+function releaseVoice(owner: string, token: string, payload: VoiceHoldMessage, pads?: Pads): void {
+  if (!pads) return voices.release(owner, token);
+  if (payload.pad === undefined) return pads.releaseHold(owner, token);
+  const { bank, slot } = padOf(payload.pad);
+  pads.release(bank, slot, owner, token);
 }
 
 /** What a page asked for when it connected: protocol 2, or the original. */
@@ -63,7 +92,7 @@ function topicRooms(payload: unknown): string[] {
 
 function attachSockets(io: Server, { midi, integrations }: {
   midi: MidiPorts & { onLearn(fn: (event: unknown) => void): void };
-  integrations: { broadcast(): void; publisher: Publisher; library?: Parameters<typeof presetLookup>[0] };
+  integrations: { broadcast(): void; publisher: Publisher; library?: Parameters<typeof presetLookup>[0]; pads?: Pads };
 }): void {
   const { publisher } = integrations;
   // Every page hears a voice start and end: a press, a release, a lease run
@@ -233,15 +262,18 @@ function attachSockets(io: Server, { midi, integrations }: {
       else if (action === 'release') legacyEnergy.release(socket.id, token);
     });
 
-    // Any effect held down: renewed by this page, gone with it. The owner is
-    // this socket, never anything the message says.
+    // Any effect or pad held down: renewed by this page, gone with it. The
+    // owner is this socket, never anything the message says. A release goes
+    // the way its press went (pads.ts): a pad's to its pad, the strobe's to
+    // the strobe.
     socket.on('voice-hold', (payload: VoiceHoldMessage | null) => {
       if (!payload || !validToken(payload.token)) return;
       const { action, token } = payload;
+      const { pads } = integrations;
       try {
-        if (action === 'press') pressVoice(socket.id, token, payload, presetLookup(integrations.library));
+        if (action === 'press') pressVoice(socket.id, token, payload, presetLookup(integrations.library), pads);
         else if (action === 'renew') voices.renew(socket.id, token);
-        else if (action === 'release') voices.release(socket.id, token);
+        else if (action === 'release') releaseVoice(socket.id, token, payload, pads);
       } catch (err) {
         socket.emit('error-msg', { source: 'voice-hold', message: messageOf(err) });
       }
