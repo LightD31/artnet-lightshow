@@ -1167,9 +1167,11 @@ music is on, and a single tap keeps the music's tempo until a second tap
 measures a new one. The hand holds until the music moves on, and then the clock
 follows again: the next song; on the CDJs, the master deck loading a new track
 or another deck becoming the master; on the live input, the beat lost and found
-again. The auto show's grid is not taken by hand: a tempo typed under it leaves
-the read-out on the show's tempo. Recalling a cue while the clock follows the
-music brings back the look and leaves the music's tempo in charge.
+again. A tempo taken from decks that have since gone quiet also gives way to the
+next song or a new live beat. A deck's own tempo report never replaces a tempo
+held by hand. The auto show's grid is not taken by hand: a tempo typed under it
+leaves the read-out on the show's tempo. Recalling a cue while the clock follows
+the music brings back the look and leaves the music's tempo in charge.
 
 When a song pauses, the clock carries on at its tempo rather than freezing the
 rig on one step, and locks again when the music resumes. Stopping the auto show
@@ -1178,20 +1180,24 @@ hands over to the song or the free clock mid-beat, without restarting the chase.
 **Automatic tempo match** is on by default: the clock follows the best source
 above. Switch it off (`POST /api/tempo/manual`, `tempoMode: 'manual'` through
 `/api/set`, or a MIDI button bound to *Automatic tempo match on / off*) and the
-tempo is yours: CDJ, Track and Live are not followed, the badge reads Tap, and
-the clock runs at the BPM you tap, type, nudge or send over MIDI. It takes over
-at the beat and tempo the music had reached, so nothing lurches. The running
-auto show still leads, because its scenes are scheduled on its track's beats.
+tempo is yours: CDJ, Track and Live are not followed (a deck's pitch does not
+move it either), the badge reads Tap, and the clock runs at the BPM you tap,
+type, nudge or send over MIDI. It takes over at the beat and tempo the music
+had reached, so nothing lurches. The running auto show still leads, because
+its scenes are scheduled on its track's beats.
 `POST /api/tempo/auto` follows the music again, from whatever source is best
 then; the choice is stored and survives a restart, and a tap never changes it.
 
 Other screens can keep the rig's beat: the live state's `clock` (`GET
 /api/state`, or the `look` domain over the socket) is `{ source, bpm, beatPos,
 epoch, at }`, the beat position read at `at` (wall-clock ms). Carry it on as
-`beatPos + (now − at) / 60000 × bpm`; a new `epoch` means the music jumped. It
-rides the broadcasts the state already makes, and is sent again only when
-carrying it on would be more than a 60 Hz frame out — after a tap, a seek, a
-stop or a tempo change — never just because the beat moved on.
+`beatPos + (now − at) / 60000 × bpm`; a new `epoch` means the music jumped.
+While the patterns are stopped on the free clock (`running` false, source
+`tap`) the beat stands still: hold it there rather than carry it on. It rides
+the broadcasts the state already makes, and is sent again only when carrying
+it on would be more than a 60 Hz frame out — after a tap, a seek, a stop or a
+tempo change — never just because the beat moved on, nor again while it stands
+still.
 
 A scene from the auto show counts its steps from the beat it was scheduled on,
 not from the frame that fired it, and cues fire from the render loop itself, so

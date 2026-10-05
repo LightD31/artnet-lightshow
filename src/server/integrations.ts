@@ -438,11 +438,14 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     // Kept to a hundredth, not rounded: a deck pitched to 127.6 BPM is not at
     // 128, and a whole-number clock ran off its beat within a phrase. While
     // the deck is playing the clock follows its beats directly (conductor.js);
-    // this is the tempo it keeps if the deck stops reporting.
+    // this is the tempo it keeps if the deck stops reporting. The clock says
+    // whether it took it: not over a tempo the operator holds, nor while it
+    // follows the track or the live input, and then the read-out keeps the
+    // tempo the rig runs at.
     const tempo = Math.round(bpm * 100) / 100;
-    if (tempo >= 20 && tempo <= 300 && Math.abs(tempo - state.bpm) >= 0.05) {
+    if (tempo >= 20 && tempo <= 300 && Math.abs(tempo - state.bpm) >= 0.05
+      && conductor.setBpm(tempo, { manual: false })) {
       state.bpm = tempo;
-      conductor.setBpm(tempo, { manual: false });
       broadcast();
     }
   });
