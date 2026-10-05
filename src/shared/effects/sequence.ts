@@ -7,6 +7,7 @@
 // layer.ts is the way in that loads every kind; one instance is rendered as the macro renders its steps.
 import { canonical, effectContentKey, effectRoom } from './layer.ts';
 import { renderEffect } from './render-instance.ts';
+import { pacesOwnFlashes } from './registry.ts';
 import { seedFrom } from './hash.ts';
 import { tempoOf } from '../look-math.ts';
 import type { Colour } from '../../types/rig.ts';
@@ -98,15 +99,14 @@ export function lapSeed(seed: Seed, traversal: number, lap: number): Seed {
 }
 
 /**
- * The strobe kind, which no clip may play: each lap is a fresh instance, and
- * would start its five-a-second permit afresh. The sequencer refuses it; a
- * table that holds one anyway never selects it.
+ * Can a clip be played at all: the renderer trusts a table no further than
+ * this. An effect that keeps its own flash limit (the strobe, Disco's
+ * automatic strobe) never plays: each lap is a fresh instance and would start
+ * that limit afresh. The sequencer refuses one; a table holding one anyway
+ * never selects it.
  */
-export const STROBE_KIND = 'strobe';
-
-/** Can a clip be played at all: the renderer trusts a table no further than this. */
 function playable(c: TableClip | null | undefined): c is TableClip {
-  return !!c && typeof c.id === 'string' && typeof c.laneId === 'string' && !!c.spec && typeof c.spec.kind === 'string' && c.spec.kind !== STROBE_KIND
+  return !!c && typeof c.id === 'string' && typeof c.laneId === 'string' && !!c.spec && typeof c.spec.kind === 'string' && !pacesOwnFlashes(c.spec)
     && Number.isFinite(c.startBeat) && c.lengthBeats > 0 && c.loopBeats > 0 && Number.isFinite(c.startBeat + c.lengthBeats)
     && Array.isArray(c.seed) && (c.fixtureIds === null || Array.isArray(c.fixtureIds));
 }

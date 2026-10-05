@@ -557,5 +557,7 @@ function renderDisco(p: DiscoParams, s: DiscoState, room: Room, f: EffectFrame, 
 // and that is gated where the flash is decided, so the music plays regardless.
 registerKind<DiscoParams, DiscoState>({
   kind: 'hd.disco', app: 'hd', schema: discoSchema, defaults: { params: DISCO_DEFAULTS, brightness: 1 }, stateful: true,
+  // The automatic strobe's five-a-second limit is the instance's own (lastFlash), where the style can flash at all.
+  pacesOwnFlashes: (p) => (p.style === 'spectrum' && !!p.allowStrobe) || (p.style === 'peak' && !!p.channels?.[3]?.strobeOn),
   init: initDisco, render: renderDisco,
 });

@@ -19,6 +19,11 @@ export function requiresAcknowledgement(spec: EffectSpec): boolean {
   return Boolean(spec.rapidFlash || def?.rapidFlash || def?.rapidFlashWhen?.(spec.params));
 }
 
+/** Does a spec hold its flash limit in its own state (EffectKindDef.pacesOwnFlashes); false for an unknown kind. */
+export function pacesOwnFlashes(spec: EffectSpec): boolean {
+  return Boolean(kindOf(spec.kind)?.pacesOwnFlashes?.(spec.params ?? {}));
+}
+
 const paramsSchema = z.record(z.string(), z.unknown());
 const specSchema = z.object({
   kind: z.string().refine((kind) => KINDS.has(kind), 'unknown effect kind'),

@@ -22,7 +22,14 @@ import { getLiveState, setSequenceProvider } from '../../src/server/state.ts';
 const FADE = presetById('ldj.FadeCycle').spec;
 const GLOW = validateSpec({ kind: 'energy.glow', params: {} });
 const STROBE = presetById('palette-strobe').spec;
-const resolve = (id) => ({ 'ldj.FadeCycle': FADE, 'palette-strobe': STROBE })[id] ?? null;
+// Hue Dynamics' Disco with its automatic strobe on (Drum and Bass), and Disco set by hand.
+const DISCO_STROBING = presetById('hd.disco.drumAndBass').spec;
+function discoWith({ style, allowStrobe, strobeOnPeak }) {
+  const params = structuredClone(presetById('hd.disco.pop').spec.params);
+  params.channels[3].strobeOn = strobeOnPeak;
+  return validateSpec({ kind: 'hd.disco', params: { ...params, style, allowStrobe } });
+}
+const resolve = (id) => ({ 'ldj.FadeCycle': FADE, 'palette-strobe': STROBE, 'hd.disco.trance': presetById('hd.disco.trance').spec })[id] ?? null;
 
 const lane = (id, extra = {}) => ({ id, kind: 'shared', name: id, mute: false, solo: false, ...extra });
 const track = (id, fixtureId, extra = {}) => ({ id, kind: 'track', fixtureId, name: id, mute: false, solo: false, ...extra });
@@ -191,6 +198,13 @@ test('a sequence validates: one effect per clip, known lanes, unique ids, finite
   refused(() => validateSequence({ ...ok, clips: [clip('c', 'a', 0, 4, { spec: GLOW, effect: undefined })] }), /Unrecognized key.*"spec"/);
   // Each lap is a fresh instance: the strobe's five-a-second permit would start again every lap.
   refused(() => validateSequence({ ...ok, clips: [clip('c', 'a', 0, 4, { effect: STROBE })] }), /clips\.0\.effect\.kind a clip may not hold the strobe/);
+  // Disco's automatic strobe keeps its limit in its own state too; Disco without it plays.
+  refused(() => validateSequence({ ...ok, clips: [clip('c', 'a', 0, 4, { effect: DISCO_STROBING })] }),
+    /clips\.0\.effect\.params a clip may not hold an automatic strobe/);
+  refused(() => validateSequence({ ...ok, clips: [clip('c', 'a', 0, 4, { effect: discoWith({ style: 'peak', allowStrobe: false, strobeOnPeak: true }) })] }),
+    /clips\.0\.effect\.params a clip may not hold an automatic strobe/);
+  validateSequence({ ...ok, clips: [clip('c', 'a', 0, 4, { effect: presetById('hd.disco.pop').spec })] });
+  validateSequence({ ...ok, clips: [clip('c', 'a', 0, 4, { effect: discoWith({ style: 'neural', allowStrobe: true, strobeOnPeak: true }) })] });
 
   // Three shared lanes at most, and one track per fixture; a track names its fixture and a shared lane none.
   const fourShared = [lane('a'), lane('b'), lane('c'), lane('d')];
@@ -316,9 +330,12 @@ test('the table resolves every clip\'s effect, keeps explicit fixture ids and ma
   refused(() => sequencer.load({ ...raw, clips: [{ ...clip('x', 'a', 0, 4), effect: undefined, presetId: 'chase' }] }), /no effect chase/);
   refused(() => sequencer.load({ ...raw, clips: [{ ...clip('x', 'a', 0, 4), effect: undefined, presetId: 'palette-strobe' }] }),
     /clips\.0\.presetId a clip may not hold the strobe/);
+  refused(() => sequencer.load({ ...raw, clips: [{ ...clip('x', 'a', 0, 4), effect: undefined, presetId: 'hd.disco.trance' }] }),
+    /clips\.0\.presetId a clip may not hold an automatic strobe/);
   // A table that holds one anyway (it came from somewhere else) never plays it.
   const forged = { revision: 9, lanes: [lane('a')], clips: [{ id: 's', laneId: 'a', fixtureIds: null, startBeat: 0, lengthBeats: 4, loopBeats: 1, spec: STROBE, seed: [1, 2, 3, 4], mute: false }] };
   assert.deepEqual(winners(forged, 1, [10]), { 10: null });
+  assert.deepEqual(winners({ ...forged, clips: [{ ...forged.clips[0], spec: DISCO_STROBING }] }, 1, [10]), { 10: null });
 
   // The loaded sequence as a copy; unloading clears the table.
   sequencer.current().clips.length = 0;

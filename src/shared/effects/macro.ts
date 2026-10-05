@@ -9,7 +9,7 @@ import type { Colour } from '../../types/rig.ts';
 import { tempoOf } from '../look-math.ts';
 import type { Room } from '../room.ts';
 import { seedFrom } from './hash.ts';
-import { registerKind, requiresAcknowledgement, validateSpec } from './registry.ts';
+import { pacesOwnFlashes, registerKind, requiresAcknowledgement, validateSpec } from './registry.ts';
 import { renderEffect } from './render-instance.ts';
 import { EffectStepper } from './stepper.ts';
 import type { EffectFrame, EffectSlot, EffectSpec, PaletteEntry, Seed } from './types.ts';
@@ -61,8 +61,13 @@ const schema: ZodType<MacroParams> = z.unknown().transform((input, ctx): MacroPa
       let effect: EffectSpec;
       try { effect = validateSpec(step.data.effect); } catch (error) { forward(ctx, error, ['steps', k, 'effect']); return; }
       // Every step is a fresh instance, so a strobe there would restart its
-      // five-a-second permit each lap; the strobe plays as a voice of its own.
-      if (effect.kind === STROBE) { ctx.addIssue({ code: 'custom', message: 'a macro may not hold the strobe', path: ['steps', k, 'effect', 'kind'] }); return; }
+      // five-a-second permit each lap, as Disco's automatic strobe would its
+      // limit; the strobe plays as a voice of its own.
+      if (pacesOwnFlashes(effect)) {
+        const strobe = effect.kind === STROBE;
+        ctx.addIssue({ code: 'custom', message: `a macro may not hold ${strobe ? 'the strobe' : 'an automatic strobe'}`, path: ['steps', k, 'effect', strobe ? 'kind' : 'params'] });
+        return;
+      }
       steps.push({ ...step.data, effect });
     });
   } finally {
@@ -157,7 +162,7 @@ function renderMacro(p: MacroParams, s: MacroState, room: Room, frame: EffectFra
   }
   s.last = { beat: frame.beatPos, ms: frame.nowMs };
   // An unvalidated spec gets no further than validation would have let it.
-  if (step.effect.kind === STROBE) return;
+  if (pacesOwnFlashes(step.effect)) return;
   const { spec, override, look } = stepColours(step, frame);
   // The child applies its own brightness and acknowledgement; the macro's
   // brightness and targets are applied once, by its caller, after this.

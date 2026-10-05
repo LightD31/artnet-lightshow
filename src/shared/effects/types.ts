@@ -98,6 +98,13 @@ export interface EffectKindDef<P = unknown, S = unknown> {
   rapidFlash?: boolean; stateful?: boolean; rideLevel?: boolean;
   /** Additional parameter-dependent acknowledgement shared by rendering and admission. */
   rapidFlashWhen?(params: P): boolean;
+  /**
+   * Whether the spec keeps its flash rate under its limit by state of its own
+   * (the strobe's permit, Disco's automatic strobe). A fresh instance starts
+   * that limit again, so such a spec never plays where each lap or step is a
+   * fresh instance: a macro's steps, a sequence's clips.
+   */
+  pacesOwnFlashes?(params: P): boolean;
   command?(state: S, cmd: EffectCommand, arg?: Colour): void;
   /** Whole-palette rerolls remain available alongside selective refreshes; the renderer reads this after state initialization. */
   rollOf?(state: S): number;

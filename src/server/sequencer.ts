@@ -2,10 +2,9 @@ import { z, ZodError } from 'zod';
 
 // The entry point registers every kind, so a clip's effect validates against it.
 import { deepFreeze } from '../shared/effects/index.ts';
-import { validateSpec } from '../shared/effects/registry.ts';
+import { pacesOwnFlashes, validateSpec } from '../shared/effects/registry.ts';
 import { canonical } from '../shared/effects/layer.ts';
 import { seedFrom } from '../shared/effects/hash.ts';
-import { STROBE_KIND } from '../shared/effects/sequence.ts';
 import { validate, ValidationError } from './validation.ts';
 import type { RefinementCtx } from 'zod';
 import type { MusicalTime } from './conductor.ts';
@@ -93,8 +92,14 @@ export interface SequenceStatus {
 export const MAX_SHARED_LANES = 3;
 
 // Every lap is a fresh instance, so the strobe in a clip would restart its
-// five-a-second permit each lap, as in a macro's step; it plays as a voice.
-const NO_STROBE = 'a clip may not hold the strobe: it plays as a voice of its own';
+// five-a-second permit each lap, as in a macro's step, and Disco's automatic
+// strobe its limit likewise. Null for an effect a clip may hold.
+function noOwnFlashes(spec: EffectSpec): { message: string; field: 'kind' | 'params' } | null {
+  if (!pacesOwnFlashes(spec)) return null;
+  return spec.kind === 'strobe'
+    ? { message: 'a clip may not hold the strobe: it plays as a voice of its own', field: 'kind' }
+    : { message: 'a clip may not hold an automatic strobe: each lap would start its five-a-second limit again', field: 'params' };
+}
 
 const idSchema = z.string().min(1).max(64);
 const beatSchema = z.number().min(0);
@@ -139,7 +144,8 @@ const clipSchema = z.object({
   if ((clip.effect === undefined) === (clip.presetId === undefined)) {
     ctx.addIssue({ code: 'custom', path: [], message: 'a clip plays exactly one of effect or presetId' });
   }
-  if (clip.effect?.kind === STROBE_KIND) ctx.addIssue({ code: 'custom', path: ['effect', 'kind'], message: NO_STROBE });
+  const own = clip.effect && noOwnFlashes(clip.effect);
+  if (own) ctx.addIssue({ code: 'custom', path: ['effect', own.field], message: own.message });
   if (!Number.isFinite(clip.startBeat + clip.lengthBeats)) ctx.addIssue({ code: 'custom', path: [], message: 'ends past the last beat a sequence can count' });
   // Its laps are counted in whole numbers: a loop so short they cannot be is refused before it plays.
   if (clip.lengthBeats / (clip.loopBeats ?? clip.lengthBeats) > Number.MAX_SAFE_INTEGER) {
@@ -268,8 +274,9 @@ export function buildTable(seq: Sequence, resolve: EffectResolver, revision: num
   const issues: z.ZodIssue[] = [];
   const clips = seq.clips.map((c, i): TableClip => {
     const spec = c.effect ?? resolve(c.presetId!);
+    const own = spec && noOwnFlashes(spec);
     if (!spec) issues.push({ code: 'custom', path: ['clips', i, 'presetId'], message: `no effect ${c.presetId}`, input: c.presetId });
-    else if (spec.kind === STROBE_KIND) issues.push({ code: 'custom', path: ['clips', i, 'presetId'], message: NO_STROBE, input: c.presetId });
+    else if (own) issues.push({ code: 'custom', path: ['clips', i, 'presetId'], message: own.message, input: c.presetId });
     const lane = lanes.get(c.laneId)!;
     let fixtureIds: number[] | null;
     if (lane.kind === 'track') fixtureIds = c.targets === 'lane' ? [lane.fixtureId!] : c.targets.filter((id) => id === lane.fixtureId);
