@@ -4,10 +4,10 @@
 // assertion is deliberately loose so a slow CI runner does not fail it, and
 // the numbers are printed so a regression shows up long before it would.
 //
-// It is judged on the CPU time the process spent rendering, not the wall
-// clock: the test files run side by side, and on a small CI runner another
-// file's work preempting this one made a 2.7 ms frame read as 17 ms of wall
-// time. The wall-clock figures are printed alongside.
+// It runs on its own (npm run test:budget), outside `npm test`: the unit
+// files run side by side, and their load made a 3 ms frame read as 13 ms even
+// in CPU time. It is still judged on CPU time; the wall-clock figures are
+// printed alongside.
 
 import test from 'node:test';
 import assert from 'node:assert';

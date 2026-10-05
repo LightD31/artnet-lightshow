@@ -65,6 +65,20 @@ test('token middleware accepts header or query, rejects wrong and missing', () =
   assert.strictEqual(opened, true);
 });
 
+test('socket handshake accepts the proxy header and rejects forged credentials', () => {
+  const auth = createAuth({ token: 'sesame' });
+  const attempt = (headers, token) => {
+    let result;
+    auth.socketMiddleware({ handshake: { headers, auth: { token }, query: {} } }, (err) => { result = err; });
+    return result;
+  };
+  assert.strictEqual(attempt({ 'x-lightshow-token': 'sesame' }), undefined);
+  assert.strictEqual(attempt({ 'x-lightshow-token': 'sesame' }, 'stale'), undefined);
+  assert.ok(attempt({ 'x-lightshow-token': 'wrong' }));
+  assert.ok(attempt({ 'x-auth-request-user': 'admin' }));
+  assert.ok(attempt({}));
+});
+
 test('socket handshake requires the token', () => {
   const auth = createAuth({ token: 'sesame' });
   const attempt = (token) => new Promise((resolve) => {

@@ -37,6 +37,10 @@ jobs:
       - name: Test
         run: npm test
 
+      # A CPU-time budget, so it runs alone rather than beside the unit files.
+      - name: Render budget
+        run: npm run test:budget
+
       # The client bundle is generated, not committed — make sure it still builds.
       - name: Build client
         run: npm run build:client
