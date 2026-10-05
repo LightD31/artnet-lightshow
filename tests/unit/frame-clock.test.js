@@ -94,11 +94,24 @@ test('stats keep a fixed window', () => {
 test('a real ticker keeps time against the wall', async () => {
   const ticks = [];
   const ticker = createTicker({ onTick: (due, now) => ticks.push(now - due) });
+  const t0 = performance.now();
   ticker.start();
   await new Promise((r) => setTimeout(r, 300));
   ticker.stop();
-  // 300 ms at 44 Hz is about thirteen frames; a slow runner may lose one or two.
-  assert.ok(ticks.length >= 10 && ticks.length <= 15, `${ticks.length} frames in 300 ms`);
+  const elapsed = performance.now() - t0;
+  // About thirteen frames in 300 ms at 44 Hz. A busy machine can hold this
+  // process for longer than a frame, and then the ticker skips the frames it
+  // missed rather than firing them late, and counts them. So it is fired plus
+  // skipped that has to cover the wall time — the time measured, since the
+  // 300 ms sleep itself stretches on that machine — and fired alone must never
+  // run ahead of it.
+  const fired = ticks.length;
+  const { skippedFrames: skipped } = ticker.stats.summary();
+  const expected = elapsed / ticker.periodMs;
+  assert.ok(Math.abs(fired + skipped - expected) <= 2,
+    `${fired} fired and ${skipped} skipped in ${elapsed.toFixed(0)} ms, which is ${expected.toFixed(1)} frames`);
+  assert.ok(fired <= expected + 1, `${fired} fired in ${elapsed.toFixed(0)} ms: faster than the period`);
+  assert.ok(fired >= 1, 'it fired at all');
   const count = ticks.length;
   await new Promise((r) => setTimeout(r, 60));
   assert.strictEqual(ticks.length, count, 'stop means stop');
