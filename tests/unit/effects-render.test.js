@@ -11,6 +11,7 @@ import { HD_MASTER_DEFAULTS } from '../../src/shared/effects/types.ts';
 import { buildRoom } from '../../src/shared/room.ts';
 import { seedFrom } from '../../src/shared/effects/hash.ts';
 import { slotToWrite } from '../helpers/slots.js';
+import { CATALOGUE } from '../../src/shared/effects/index.ts';
 
 const WHITE = { r: 255, g: 255, b: 255, w: 0, a: 0, uv: 0 };
 const frame = (over = {}) => ({ beatPos: 0, bpm: 120, nowMs: 0, dtMs: 22.7, anchorBeat: 0, lookPalette: [WHITE], paletteOverride: null,
@@ -295,4 +296,39 @@ test('palette preparation shares expiry and clone lifetime without occupying ano
   assert.notStrictEqual(s.palette('a', spec, 2002), prepared, 'sweep drops the prepared palette too');
   clone.reset();
   assert.notStrictEqual(clone.palette('a', spec, 2), cloned, 'reset drops the prepared palette too');
+});
+
+// A colour or brightness edit to the preset on stage reaches the running
+// instance without starting it again (the engine moves no revision for it),
+// so every kind must take a palette that changes size under it: eight colours
+// with a random one, then one, then two, its brightness down, and the
+// override coming and going between.
+test('every built-in preset takes its colours and brightness edited mid-run: every slot stays a colour and a level', () => {
+  const room = buildRoom(6, (i) => i / 5, (i) => (i < 3 ? 0 : 1), () => 0.5, null);
+  const eight = ['#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF', '#FFFFFF', { random: true }];
+  const look = ['#FF0000', '#00FF00', '#0000FF', '#FFFFFF'].map(parseHex);
+  const failures = [];
+  const silent = [];
+  for (const row of CATALOGUE.filter((p) => !p.legacy)) {
+    let drew = false;
+    const edits = [{ ...row.spec, palette: eight }, { ...row.spec, palette: ['#FF8800'] },
+      { ...row.spec, palette: eight, brightness: 0.3 }, { ...row.spec, palette: ['#123456', '#654321'] }];
+    const stepper = new EffectStepper();
+    try {
+      for (let k = 0; k < 240 && failures.length < 5; k++) {
+        const nowMs = (k + 1) * 1000 / 44;
+        const out = new Array(room.n);
+        renderEffect({ id: 'base:x:0', spec: edits[Math.floor(k / 60)], seed: seedFrom(row.id), anchorBeat: 0, startedAtMs: 0, targets: null },
+          frame({ beatPos: nowMs / 500, nowMs, lookPalette: look, paletteOverride: k % 90 > 70 ? [parseHex('#00FF00')] : null }), room, stepper, out);
+        const broken = out.find((slot) => slot && ![slot.level, slot.strength, slot.colour.r, slot.colour.g, slot.colour.b, slot.colour.w ?? 0].every(Number.isFinite));
+        if (broken) { failures.push(`${row.id} at frame ${k}: ${JSON.stringify(broken)}`); break; }
+        drew ||= out.some((slot) => slot && slot.strength > 0);
+      }
+    } catch (err) {
+      failures.push(`${row.id}: ${err.message}`);
+    }
+    if (!drew) silent.push(row.id);
+  }
+  assert.deepStrictEqual(failures, []);
+  assert.deepStrictEqual(silent, [], 'every preset drew through the edits');
 });
