@@ -461,7 +461,8 @@ export function renderSequenceLayer(rig: Rig, layout: Layout, frame: FrameBase, 
       endActivations(run, stepper);
       run.last = null;
     }
-    return replay(run.shown!, list, set);
+    // A beat the moment cannot be placed on (not a number) left no picture: nothing covered until one can.
+    return run.shown ? replay(run.shown, list, set) : false;
   }
   const placed = placeSequence(table, transport, frame.beatPos, ids);
   if (!placed) { endSequence(run, stepper); return false; }

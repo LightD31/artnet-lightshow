@@ -622,6 +622,17 @@ test('the preview pauses and stops as the rig does: a held selection playing on,
   }
 });
 
+test('a beat that is not a number covers nothing, stopped as when playing; the next beat that is one shows the sequence', () => {
+  const t = table(4, [lane('a')], [tclip('A', 'a', 0, 8, paint('#00FF00'))]);
+  const held = { startBeat: 0, loop: null, generation: 1, stop: { mode: 'hold', position: 1, traversal: 0 } };
+  for (const sequenceTransport of [{ startBeat: 0, loop: null, generation: 1 }, held]) {
+    const r = rig();
+    r.renderer.setSequence(t);
+    assert.equal(shown(r.at(0, { sequenceRevision: t.revision, sequenceTransport }, { beatPos: NaN }))[10], RED, 'the look');
+    assert.equal(shown(r.at(FRAME_MS, { sequenceRevision: t.revision, sequenceTransport }))[10], '0,255,0,0', 'the clip');
+  }
+});
+
 test('glow rides the expression level on its own curve as the base and as a clip, as it does as a voice: never multiplied by it again', () => {
   const GLOW = presetById('energy.glow').spec;
   const WHITE = paint('#FFFFFF');
