@@ -79,15 +79,22 @@ function applyPatch(rawData: unknown): Patch {
     || data.panelPattern !== undefined || COLOR_SLOTS.some((slot) => data[slot] !== undefined);
   if (data.fadeMs !== undefined || changesLook) beginFade(data.fadeMs || 0);
 
+  // Before the tempo: switching to 'manual' hands the free clock the tempo the
+  // music had, and a BPM in the same patch is meant to replace that one.
+  if (data.tempoMode !== undefined && data.tempoMode !== state.tempoMode) {
+    state.tempoMode = data.tempoMode;
+    conductor.setTempoMode(data.tempoMode);
+    persist({ clock: { tempoMode: data.tempoMode } });
+  }
   if (data.bpm !== undefined) {
     // To a hundredth: finer than any source measures, and 123.7 + 1 from a
     // nudge lands on 124.7 rather than on float noise.
     data.bpm = Math.round(data.bpm * 100) / 100;
-    state.bpm = data.bpm;
     // The free clock's tempo, from the beat it is on now. A tempo typed or
     // nudged by hand also takes the clock back from a locked track; the auto
-    // show's own tempo marks do not need to, since its grid outranks it.
-    conductor.setBpm(data.bpm, { manual: data.anchorMs === undefined });
+    // show's own tempo marks do not need to, since its grid outranks it, and
+    // the read-out shows a mark only when the clock took it (conductor.ts).
+    if (conductor.setBpm(data.bpm, { manual: data.anchorMs === undefined })) state.bpm = data.bpm;
   }
   if (data.running !== undefined) {
     state.running = data.running;

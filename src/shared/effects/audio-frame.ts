@@ -9,7 +9,11 @@ export interface AudioFrame {
   dominantHz: number | null;
   /** Hue Dynamics Party: 0..1 band levels for its triggers and reactive strength. */
   party: { full: number; bass: number; mid: number; high: number };
-  /** Hue Dynamics Disco: per-band hit, gate and level (bass, voice, treble), the Peak hit and the Neural reading. */
+  /**
+   * Hue Dynamics Disco: per-band hit, gate and level (bass, voice, treble), the Peak hit and the Neural reading.
+   * `level` is the band's power this hop and `gate` the power it would have needed to hit, both raw Σ|X|² on the
+   * live service's FFT scale, so a meter compares them directly.
+   */
   disco: { hit: boolean[]; gate: number[]; level: number[]; peakHit: boolean; neural: { mainFrequency: number; amplitude: number } };
   /**
    * Light DJ's sound-reactive classes: the beat's loudness class and the running section.

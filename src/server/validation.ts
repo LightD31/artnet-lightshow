@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import net from 'node:net';
-import { COLOR_PRESETS, AUTO_SOURCES, SYNC_OFFSET_LIMIT_MS } from './presets.ts';
+import { COLOR_PRESETS, AUTO_SOURCES, TEMPO_MODES, SYNC_OFFSET_LIMIT_MS } from './presets.ts';
 import { PALETTE_IDS } from './palettes.ts';
 import { FIXTURE_GROUPS } from '../shared/stage.ts';
 import { EMITTERS, PIXEL_MAPS, MAX_CELLS_PER_FIXTURE, MAX_PROFILE_CHANNELS } from '../shared/rig.ts';
@@ -111,6 +111,8 @@ const patchSchema = z.object({
   // Not rounded: a track at 123.7 BPM run at 124 drifts a beat off the music
   // in under a minute.
   bpm: z.number().min(20).max(300).optional(),
+  // Follow the music, or keep the tempo set here (conductor.ts). Stored.
+  tempoMode: z.enum(TEMPO_MODES).optional(),
   // The timeline time a scene was scheduled for, so its pattern counts from
   // that beat however late the frame that fired it was. Set by the auto show.
   anchorMs: z.number().finite().optional(),

@@ -1,11 +1,12 @@
 import net from 'node:net';
 import { z } from 'zod';
-import { SYNC_OFFSET_LIMIT_MS } from './presets.ts';
+import { SYNC_OFFSET_LIMIT_MS, TEMPO_MODES } from './presets.ts';
 import { HttpError, messageOf } from '../errors.ts';
 import { configFile } from './config-dir.ts';
 import { isLoopback } from './loopback.ts';
 import { JsonStore } from './json-store.ts';
 import { HUE_BRIDGE_ID_RE } from '../shared/placement.ts';
+import { HD_MASTER_DEFAULTS } from '../shared/effects/types.ts';
 
 /**
  * Persisted configuration, edited in the app's Rig, Sources and Settings views.
@@ -160,6 +161,23 @@ const DEFAULTS: Settings = {
     // track on its own, as if it were the first of the night.
     setMemory: true,
   },
+  clock: {
+    // Automatic tempo match: 'auto' follows the music (the auto show, a deck,
+    // the track, the live input); 'manual' keeps the tempo the operator taps
+    // or types, bar the running auto show's grid (conductor.ts). Kept so the
+    // choice survives a restart.
+    tempoMode: 'auto',
+  },
+  // How the party effects take the music (audio-features.ts). 'off' runs
+  // them on their loops, 'tempo' on the beat alone, 'reactive' lets what the
+  // live input hears drive them. Hue Dynamics' master shapes its Party levels
+  // and gates; Light DJ's trigger places its loud and soft beats while no
+  // playing Visualizer sets its own.
+  audio: {
+    mode: 'tempo',
+    master: { ...HD_MASTER_DEFAULTS },
+    ldjTrigger: 0.3,
+  },
   safety: {
     // Hold the rig to three large-area flashes a second, the photosensitivity
     // threshold broadcast and web guidance share (src/server/flash-limit.ts).
@@ -232,6 +250,13 @@ const LEGACY_HUE_BRIDGE_ID = 'bridge-1';
 // The scalar form hue took before hue.bridges: one bridge, its fields at the
 // top of the group. Migrated on load; refused on PUT, with a pointer.
 const LEGACY_HUE_KEYS = ['enabled', 'host', 'username', 'clientKey', 'applicationId', 'entertainmentId'] as const;
+
+// Hue Dynamics' music modes, as `audio.mode` takes them.
+const AUDIO_MODES = ['off', 'tempo', 'reactive'] as const;
+const fraction = z.number().min(0).max(1);
+// Hue Dynamics' own limits: two seconds of attack, five of release.
+const attackMs = z.number().int().min(0).max(2000);
+const releaseMs = z.number().int().min(0).max(5000);
 
 
 // Read once at boot, before anything is listening. Changing these persists
@@ -356,6 +381,17 @@ const schema = z.object({
   auto: z.object({
     syncOffsetMs: z.number().int().min(-SYNC_OFFSET_LIMIT_MS).max(SYNC_OFFSET_LIMIT_MS),
     setMemory: z.boolean(),
+  }).strict(),
+  clock: z.object({
+    tempoMode: z.enum(TEMPO_MODES),
+  }).strict(),
+  audio: z.object({
+    mode: z.enum(AUDIO_MODES),
+    master: z.object({
+      sensitivity: fraction, smoothing: fraction, attackMs, releaseMs,
+      threshold: fraction, reactiveDepth: fraction, brightness: fraction,
+    }).strict(),
+    ldjTrigger: fraction,
   }).strict(),
   safety: z.object({
     flashLimit: z.boolean(),

@@ -66,9 +66,11 @@ function attachSockets(io: Server, { midi, integrations }: {
       socket.on('subscribe', (payload) => {
         for (const room of topicRooms(payload)) {
           socket.join(room);
-          // The frame the others already have: the feed only sends a change.
+          // What the others already have: the feeds only send a change.
           const frame = room === ROOM.dmx ? publisher.lastDmxFrame() : null;
           if (frame) socket.emit('dmx-frame', frame);
+          const audio = room === ROOM.audio ? publisher.lastAudio() : undefined;
+          if (audio !== undefined) socket.emit('audio', audio);
         }
       });
       socket.on('unsubscribe', (payload) => {

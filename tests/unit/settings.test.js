@@ -310,3 +310,19 @@ test('a fresh install has not been set up; a file from before the wizard has', (
   fresh.update({ setup: { completed: true } });
   assert.strictEqual(new SettingsStore(fresh.file).load().get('setup.completed'), true);
 });
+
+// Automatic tempo match is on unless the operator switched it off, and stays
+// how it was left across a restart.
+test('the tempo mode follows the music by default, takes only its two, and survives a reload', () => {
+  assert.deepStrictEqual(DEFAULTS.clock, { tempoMode: 'auto' });
+  const s = store().load();
+  assert.deepStrictEqual(s.update({ clock: { tempoMode: 'manual' } }), ['clock.tempoMode']);
+  assert.strictEqual(new SettingsStore(s.file).load().get('clock.tempoMode'), 'manual');
+  assert.throws(() => s.update({ clock: { tempoMode: 'sometimes' } }));
+  assert.strictEqual(s.get('clock.tempoMode'), 'manual', 'a refused update changes nothing');
+
+  const older = store();
+  fs.mkdirSync(path.dirname(older.file), { recursive: true });
+  fs.writeFileSync(older.file, JSON.stringify({ artnet: { host: '10.0.0.9' } }));
+  assert.strictEqual(older.load().get('clock.tempoMode'), 'auto', 'a file from before the switch follows the music');
+});

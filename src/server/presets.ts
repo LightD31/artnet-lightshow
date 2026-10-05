@@ -224,6 +224,11 @@ const SYNC_OFFSET_LIMIT_MS = 2000;
 // answers it (see src/show/live-director.ts), for music nothing has analysed.
 const AUTO_SOURCES = ['auto', 'hybrid', 'spotify', 'deezer', 'nowplaying', 'prolink', 'live', 'timer'] as const;
 
+// Whether the musical clock follows the music ('auto') or keeps the operator's
+// tempo ('manual'); see conductor.ts. Here for the settings store, the patch
+// validator and the clock alike.
+const TEMPO_MODES = ['auto', 'manual'] as const;
+
 export {
   STROBE_FUNCTIONS,
   STROBE_FUNCTION_IDS,
@@ -233,5 +238,6 @@ export {
   ENERGY_EFFECTS,
   ENERGY_EFFECT_IDS,
   AUTO_SOURCES,
+  TEMPO_MODES,
   SYNC_OFFSET_LIMIT_MS,
 };

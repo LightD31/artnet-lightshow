@@ -162,6 +162,8 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
   function applyLive() {
     if (!live) return;
     const config = settings.group('live');
+    // No bands here: the live input asks its band source (the audio features)
+    // on every start, so a latency or device change keeps them.
     if (config.enabled) live.start({ source: config.source, device: config.device, latencyMs: config.latencyMs });
     else live.stop();
     broadcast();
@@ -169,6 +171,15 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
 
   function applyMidiClock() {
     if (midiClock) midiClock.setPort(settings.get('midi.clockOutput'));
+  }
+
+  /**
+   * The stored tempo mode, through applyPatch so the clock hears it too. The
+   * clock starts in 'auto', so a default file needs nothing.
+   */
+  function applyClock() {
+    const tempoMode = settings.get('clock.tempoMode');
+    if (tempoMode !== state.tempoMode) applyPatch({ tempoMode });
   }
 
   function applyProlink() {
@@ -271,6 +282,7 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
     { match: (k) => k === 'analysis.structureModel', run: applyStructureModel },
     { match: (k) => k === 'analysis.gpuMemory', run: applyGpuMemory },
     { match: (k) => k === 'safety.flashLimit', run: applySafety },
+    { match: (k) => k === 'clock.tempoMode', run: applyClock },
     { match: (k) => k === 'outputs.armed', run: applyOutputs },
   ];
 
@@ -288,6 +300,7 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
       applyLive();
       applyDeezer();
       applySafety();
+      applyClock();
       applyOutputs({ boot: true });
       if (settings.get('sources.prolink')) applyProlink();
     },

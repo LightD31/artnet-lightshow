@@ -13,6 +13,7 @@ import { attachOutputRoutes } from './routes/outputs.ts';
 import { attachIdentifyRoutes } from './routes/identify.ts';
 import { attachOpenRgbRoutes } from './routes/openrgb.ts';
 import { attachOpsRoutes } from './routes/ops.ts';
+import { attachAudioRoutes } from './routes/audio.ts';
 
 export type { RouteDeps, RouteContext } from './routes/common.ts';
 export type { AnalyzeSource } from './routes/auto.ts';
@@ -31,6 +32,7 @@ export type { AnalyzeSource } from './routes/auto.ts';
  *   setup      the pre-show check, the analysis models, the settings
  *   outputs    Philips Hue, Art-Net nodes, network interfaces
  *   identify   finding the rig and making it show itself
+ *   audio      the party effects' audio mode and master, and what they hear
  *   ops        the log, the server's health, restarting it
  *
  * and, last, the error handler every one of them falls through to.
@@ -48,6 +50,7 @@ function attachRoutes(app: Express, deps: RouteDeps): void {
   attachSetupRoutes(app, ctx);
   attachOutputRoutes(app, ctx);
   attachIdentifyRoutes(app, { wled: ctx.wled, hueAreas: ctx.hueAreas, broadcast: () => ctx.integrations.broadcast() });
+  attachAudioRoutes(app, ctx);
   attachOpsRoutes(app, ctx);
   // Must be registered last (see errorHandler).
   app.use(errorHandler);

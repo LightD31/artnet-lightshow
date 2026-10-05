@@ -2,6 +2,7 @@ import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 
 import { state, universeOf, maxBrightnessOf, activeUniverses } from './state.ts';
+import { settings } from './settings.ts';
 import { getProfile, profilesRevision, listProfiles, isBuiltinProfile } from './profiles.ts';
 import * as output from './output.ts';
 import * as universes from './universes.ts';
@@ -17,6 +18,7 @@ import type { FromWorker, ToWorker } from './engine-messages.ts';
 import type { FrameSummary, Ticker } from './frame-clock.ts';
 import type { FadeRequest, RenderInput, SyncTestRequest } from './renderer.ts';
 import type { Profile, PulseReading } from '../types/rig.ts';
+import type { AudioFrame } from '../shared/effects/audio-frame.ts';
 
 /** Where frames are rendered: a thread of their own, or this one. */
 export type EngineThread = 'worker' | 'main';
@@ -128,6 +130,9 @@ function renderInput(): RenderInput {
     identify: identify.request(),
     universes: activeUniverses(),
     pulse: runPulseSource(),
+    audio: runAudioSource(),
+    audioMode: settings.get('audio.mode'),
+    master: { ...settings.get('audio.master') },
     fixtures: state.fixtures.map((f) => ({
       id: f.id,
       address: f.address,
@@ -174,6 +179,28 @@ function runPulseSource(): PulseReading | null {
 function setPulseSource(fn: (() => PulseReading | null) | null | undefined): void {
   pulseSource = typeof fn === 'function' ? fn : null;
   pulseFailed = false;
+}
+
+// What the party effects hear this frame (audio-features.ts): the hop for the
+// stream time the room hears now. Plain JSON, like the pulse, so it rides in
+// the snapshot too.
+let audioSource: (() => AudioFrame | null) | null = null;
+let audioFailed = false;
+function runAudioSource(): AudioFrame | null {
+  if (!audioSource) return null;
+  try {
+    return audioSource();
+  } catch (err) {
+    if (!audioFailed) console.warn(`[engine] audio source failed: ${messageOf(err)}`);
+    audioFailed = true;
+    return null;
+  }
+}
+
+/** Register what the party effects hear (the live input's audio features). */
+function setAudioSource(fn: (() => AudioFrame | null) | null | undefined): void {
+  audioSource = typeof fn === 'function' ? fn : null;
+  audioFailed = false;
 }
 
 /**
@@ -452,6 +479,7 @@ export {
   engineStatus,
   setFrameHook,
   setPulseSource,
+  setAudioSource,
   resizeFixtureBuffers,
   startSyncTest,
   identify,

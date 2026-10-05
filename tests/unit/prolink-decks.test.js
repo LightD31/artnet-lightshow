@@ -233,6 +233,29 @@ test('an ejected deck hands over at once, and every track is announced once for 
   assert.deepStrictEqual(loaded.sort(), [41, 42]);
 });
 
+// A tempo taken by hand from the decks holds until the master loads a new
+// track or another deck becomes the master (conductor.ts): the reading names
+// both.
+test('the beat reading names the deck it follows and that deck\'s track', () => {
+  const l = link();
+  run(l, 1000, () => ({ master: true }), () => ({}));
+  const first = l.p.getBeatReading().key;
+  run(l, 400, () => ({ master: true }), () => ({}));
+  assert.strictEqual(l.p.getBeatReading().key, first, 'the same track playing on');
+  run(l, 200, () => ({ master: true, playState: PAUSED }), () => ({}));
+  run(l, 200, () => ({ master: true }), () => ({}));
+  assert.strictEqual(l.p.getBeatReading().key, first, 'paused and playing on');
+
+  run(l, 400, () => ({ master: true, trackId: 77 }), () => ({}));
+  const loaded = l.p.getBeatReading().key;
+  assert.notStrictEqual(loaded, first, 'a new track on the deck');
+
+  run(l, 1200, () => ({ master: true, trackId: 77, playState: PAUSED }), () => ({}));
+  assert.strictEqual(l.p.getFollowed().deviceId, 2);
+  const other = l.p.getBeatReading().key;
+  assert.ok(other && other !== loaded && other !== first, `another deck: ${other}`);
+});
+
 test('the tempo reported is the followed deck\'s, pitched', () => {
   const l = link();
   const tempos = [];

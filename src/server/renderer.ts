@@ -27,12 +27,15 @@ import { EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues,
 import { anchorStep, stepAt, motionAdvance } from '../shared/beat-clock.ts';
 import { createFlashLimiter, lightLuminance, strobeCap } from './flash-limit.ts';
 import { identifyLights } from './identify.ts';
+import { HD_MASTER_DEFAULTS } from '../shared/effects/types.ts';
 import type { IdentifyRequest } from './identify.ts';
 import type { EnergyLook, UnitLight } from '../shared/look-math.ts';
 import type { Rig } from '../shared/rig.ts';
 import type { MusicalTime } from './conductor.ts';
 import type { PatternAnchor } from './state.ts';
 import type { UniverseStore } from './universes.ts';
+import type { AudioFrame } from '../shared/effects/audio-frame.ts';
+import type { AudioMode, HdMaster } from '../shared/effects/types.ts';
 import type { ChannelDefault, ChannelMap, Colour, Expression, Override, PixelMap, Profile, PulseReading, ShowDynamics, StageFixture } from '../types/rig.ts';
 
 /** A fixture as a frame needs it: its universe and trim resolved. */
@@ -96,6 +99,27 @@ export interface RenderInput {
   identify?: IdentifyRequest | null;
   universes: number[];
   fixtures: RenderFixture[];
+  /**
+   * What the party effects hear this frame (audio-features.ts), the audio
+   * mode and Hue Dynamics' master. A hand-built input may leave them out:
+   * frame() reads them as no audio, 'tempo' and the master's defaults.
+   */
+  audio?: AudioFrame | null;
+  audioMode?: AudioMode;
+  master?: HdMaster;
+}
+
+/** A RenderInput with every optional field the effects read filled in, as frame() sees it. */
+export type FrameInput = RenderInput & Required<Pick<RenderInput, 'audio' | 'audioMode' | 'master'>>;
+
+/** The input with its defaults; the caller's object is left as it was. */
+export function withInputDefaults(input: RenderInput): FrameInput {
+  return {
+    ...input,
+    audio: input.audio ?? null,
+    audioMode: input.audioMode ?? 'tempo',
+    master: input.master ?? { ...HD_MASTER_DEFAULTS },
+  };
 }
 
 /** The universe buffers a frame writes. */
@@ -616,12 +640,15 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
   /**
    * Render one frame into `store` (the universes module's API).
    *
-   * @param input    renderInput(): the look, masters, patch and requests
+   * @param given    renderInput(): the look, masters, patch and requests
    * @param reading  the Conductor's `{ beatPos, bpm, epoch, anchorBeat? }`
-   * @param now      this frame's time, on the clock `input`'s request times use
+   * @param now      this frame's time, on the clock `given`'s request times use
    * @param store    the universe buffers to write
    */
-  function frame(input: RenderInput, reading: MusicalTime, now: number, store: FrameStore): Rig<RenderFixture> {
+  function frame(given: RenderInput, reading: MusicalTime, now: number, store: FrameStore): Rig<RenderFixture> {
+    // Fields a hand-built input leaves out get their defaults here, once, so
+    // everything below reads one complete input.
+    const input = withInputDefaults(given);
     const dt = Math.max(0, Math.min(0.25, (now - lastNow) / 1000));
     lastNow = now;
     adoptRequests(input);
