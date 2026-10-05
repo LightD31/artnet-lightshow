@@ -111,7 +111,9 @@ export function attachSequenceRoutes(app: Express, ctx: RouteContext): void {
     answer(res);
   });
   app.post('/api/sequence/seek/:beat', (req, res) => {
-    sequencer().seek(Number(req.params.beat));
+    // A blank is no beat (Number() would read it as 0).
+    const raw = req.params.beat.trim();
+    sequencer().seek(raw === '' ? NaN : Number(raw));
     answer(res);
   });
   app.post('/api/sequence/jump/:clipId', (req, res) => {

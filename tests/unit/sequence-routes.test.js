@@ -162,6 +162,7 @@ test('routes: CRUD + transport + status', async (t) => {
   res = await s.call('GET', '/api/sequence/status');
   assert.ok(res.body.status.beat >= 2 && res.body.status.beat < 2.5, `beat ${res.body.status.beat}`);
   assert.equal((await s.call('POST', '/api/sequence/seek/abc')).status, 400);
+  assert.equal((await s.call('POST', '/api/sequence/seek/%20')).status, 400, 'a blank is no beat');
   assert.equal((await s.call('POST', '/api/sequence/resync/phrase')).status, 400);
   assert.equal((await s.call('POST', '/api/sequence/resync/bar')).status, 200);
   s.frame();
