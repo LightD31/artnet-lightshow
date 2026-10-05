@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 
-import { state, universeOf, maxBrightnessOf, activeUniverses } from './state.ts';
+import { state, universeOf, maxBrightnessOf, activeUniverses, voices, freeClockRuns } from './state.ts';
 import { settings } from './settings.ts';
 import { getProfile, profilesRevision, listProfiles, isBuiltinProfile } from './profiles.ts';
 import * as output from './output.ts';
@@ -16,7 +16,7 @@ import { createIdentify } from './identify.ts';
 import { hasNoAddress } from '../shared/placement.ts';
 import type { FromWorker, ToWorker } from './engine-messages.ts';
 import type { FrameSummary, Ticker } from './frame-clock.ts';
-import type { CommandResult, FadeRequest, RenderInput, SyncTestRequest } from './renderer.ts';
+import type { CommandResult, FadeRequest, RenderInput, SyncTestRequest, VoiceFrame } from './renderer.ts';
 import type { Profile, PulseReading } from '../types/rig.ts';
 import type { AudioFrame } from '../shared/effects/audio-frame.ts';
 import type { EffectSpec } from '../shared/effects/types.ts';
@@ -82,6 +82,11 @@ const STOP_TIMEOUT_MS = 300;
 let clock = () => performance.now();
 
 const renderer = createRenderer({ profileOf: getProfile, profilesRevision, now: clock() });
+
+// The voices are timed on performance.now() (state.ts), the worker renders by
+// the process-wide clock: both count the same nanoseconds from different
+// origins, so one difference, read once, moves the one onto the other.
+const WORKER_CLOCK_SHIFT = hrtimeMs() - performance.now();
 
 // Requests the renderer picks up at the start of its next frame. Numbered, so
 // the same request is never adopted twice and a new one always is.
@@ -188,9 +193,24 @@ function baseEffect(): { id: string; spec: EffectSpec } | null {
 }
 
 /**
+ * The voices playing now, on the clock this frame renders by. The worker
+ * renders a moment after the control tick posts, and perhaps again on the
+ * same snapshot: a voice that starts before then rides along, and the
+ * renderer holds it until its start. Always a list, even an empty one: the
+ * renderer then plays nothing of its own for the energy field (R4).
+ */
+function voiceFrames(): VoiceFrame[] {
+  const worker = thread === 'worker';
+  const frames = voices.frames(performance.now(), worker ? CONTROL_LEAD_MS + FRAME_MS : 0);
+  if (!worker) return frames;
+  return frames.map((v) => ({ ...v, startedAtMs: v.startedAtMs + WORKER_CLOCK_SHIFT,
+    untilMs: v.untilMs === null ? null : v.untilMs + WORKER_CLOCK_SHIFT }));
+}
+
+/**
  * Everything a frame depends on, read off the live state: the look, the
- * masters, the patch (each fixture's universe and trim resolved), and any
- * fade or sync test asked for.
+ * masters, the patch (each fixture's universe and trim resolved), the voices
+ * over it, and any fade or sync test asked for.
  */
 function renderInput(): RenderInput {
   const effect = currentEffect();
@@ -236,6 +256,7 @@ function renderInput(): RenderInput {
     hueStrobe: settings.get('hue.strobe'),
     effect,
     effectRevision,
+    voices: voiceFrames(),
     paletteOverride: state.paletteOverride,
     fixtures: state.fixtures.map((f) => ({
       id: f.id,
@@ -412,7 +433,7 @@ function effectCommand(cmd: string, arg?: unknown): Promise<CommandResult> {
       if (!worker) { failPendingCommands(); return; }
       // The look the command is meant for goes first, so it is what the
       // command meets at the worker's next frame.
-      if (lastPosted) post(worker, { type: 'snapshot', at: lastPosted.at, input, reading: { ...lastPosted.reading, moving: !!state.running }, outputs: output.transmitConfig() });
+      if (lastPosted) post(worker, { type: 'snapshot', at: lastPosted.at, input, reading: { ...lastPosted.reading, moving: freeClockRuns() }, outputs: output.transmitConfig() });
       post(worker, { type: 'command', seq, cmd, arg, intent });
     } else {
       renderer.command(seq, cmd, arg, intent);
@@ -462,9 +483,10 @@ function controlTick(): void {
     type: 'snapshot',
     at,
     input: renderInput(),
-    // The free clock stands still while the patterns are stopped; carried
-    // forward it must too.
-    reading: { ...reading, moving: !!state.running },
+    // The free clock stands still while the patterns are stopped and no voice
+    // plays; carried forward it must too. Read after the input, whose voices
+    // may have just ended.
+    reading: { ...reading, moving: freeClockRuns() },
     outputs: output.transmitConfig(),
   });
 }

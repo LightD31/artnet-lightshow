@@ -1,11 +1,11 @@
-import { state, getFixture, setDefaultUniverse } from './state.ts';
+import { state, getFixture, setDefaultUniverse, latchEnergy, reconcileFreeClock } from './state.ts';
 import { beginFade, resolveEffect } from './engine.ts';
 import { conductor } from './conductor.ts';
 import { safety } from './safety.ts';
 import { anchorStep } from '../shared/beat-clock.ts';
 import { parseHex } from '../shared/effects/palette.ts';
 import { patchSchema, overrideSchema, validate } from './validation.ts';
-import { STROBE_FUNCTIONS, ENERGY_EFFECTS } from './presets.ts';
+import { STROBE_FUNCTIONS } from './presets.ts';
 import { paletteSlots } from './palettes.ts';
 import type { Patch } from './validation.ts';
 import type { SettingsPatch } from './settings.ts';
@@ -125,7 +125,8 @@ function applyPatch(rawData: unknown, { beforeCommit }: PatchOptions = {}): Patc
   }
   if (data.running !== undefined) {
     state.running = data.running;
-    conductor.setRunning(data.running);
+    // Stopped, the free clock stands still — unless a voice still plays on it.
+    reconcileFreeClock(true);
   }
 
   // A new pattern or division counts its steps from here — from fixture one on
@@ -207,10 +208,9 @@ function applyPatch(rawData: unknown, { beforeCommit }: PatchOptions = {}): Patc
     state.strobeFunction = STROBE_FUNCTIONS.some((f) => f.id === data.strobeFunction)
       ? data.strobeFunction : 'standard';
   }
-  if (data.energyOverride !== undefined) {
-    state.energyOverride = data.energyOverride && ENERGY_EFFECTS.some((e) => e.id === data.energyOverride)
-      ? data.energyOverride : null;
-  }
+  // A voice now (state.ts): latched over the look until a patch takes it off.
+  // An id that is no energy effect takes the latched one off, as it always has.
+  if (data.energyOverride !== undefined) latchEnergy(data.energyOverride);
   if (data.artnet !== undefined) {
     // The universe field goes through setDefaultUniverse so fixtures sitting on
     // the rig's default universe move with it, as they did when there was only

@@ -331,13 +331,19 @@ test('POST /api/effects/command with a non-studio base is 409', async (t) => {
 
 // ─── Presets as patterns ──────────────────────────────────────────────────
 
-/** The engine's input for the look on stage, rendered on a renderer of its own: universe 0's first 48 channels, frame by frame. */
+/**
+ * The engine's input for the look on stage, rendered on a renderer of its
+ * own: universe 0's first 48 channels, frame by frame. From now, on the
+ * engine's clock, which the voices in the input are timed by, on a frame
+ * grid that starts there.
+ */
 function renderStage(times = [0, 250, 500, 1000]) {
-  const renderer = createRenderer({ profileOf: getProfile, profilesRevision, now: 0 });
+  const t0 = performance.now();
+  const renderer = createRenderer({ profileOf: getProfile, profilesRevision, now: t0 });
   const store = universes.createUniverseStore(universes.allocateShared());
   const input = renderInput();
   return times.map((ms) => {
-    renderer.frame(input, { beatPos: ms / 500, bpm: 120, epoch: 0 }, ms, store);
+    renderer.frame(input, { beatPos: ms / 500, bpm: 120, epoch: 0 }, t0 + ms, store, t0);
     return Array.from(store.getBuffer(0).subarray(0, 48));
   });
 }

@@ -1,4 +1,4 @@
-import { state, getClientState, getFixture, countUniverses, universeOf, placeAddresslessFixtures } from './state.ts';
+import { state, getClientState, getFixture, countUniverses, universeOf, placeAddresslessFixtures, voices, legacyEnergy, onVoicesChange } from './state.ts';
 import { applyPatch, applyOverride, processTap } from './patch.ts';
 import { overrideMessageSchema, fixtureMessageSchema, validate } from './validation.ts';
 import { listProfiles, getProfile, universeOverflow, unitCapOverflow, HUE_PROFILE_IDS, HUE_BY_HAND } from './profiles.ts';
@@ -7,10 +7,11 @@ import { showStore } from './show-store.ts';
 import { MAX_UNIVERSES } from './universes.ts';
 import { connectMidi } from './midi-connect.ts';
 import { midiMap } from './midi-map.ts';
-import { EnergyHold } from './energy-hold.ts';
 import { ENERGY_EFFECTS } from './presets.ts';
+import { launchOf, targetsOf } from './voices.ts';
+import { presetLookup } from './routes/voices.ts';
 import { ddpConflict } from './ddp-routes.ts';
-import { messageOf } from '../errors.ts';
+import { HttpError, messageOf } from '../errors.ts';
 import { PROTOCOL, ROOM, TOPICS } from './protocol.ts';
 import type { Server, Socket } from 'socket.io';
 import type { MidiPorts } from './midi-connect.ts';
@@ -21,6 +22,30 @@ interface EnergyHoldMessage {
   action?: unknown;
   token?: unknown;
   effect?: unknown;
+}
+
+/** A browser holding a voice down: an effect, a preset (`effect: { preset }`) or a pad, on the rig or some fixtures. */
+interface VoiceHoldMessage extends EnergyHoldMessage {
+  pad?: unknown;
+  targets?: unknown;
+}
+
+/** A hold's token: a short string of the page's own, as the energy hold has always taken. */
+const validToken = (token: unknown): token is string => typeof token === 'string' && token.length > 0 && token.length <= 64;
+
+/**
+ * What a voice-hold press launches: its effect, given or by preset, for as
+ * long as the page renews it. The voice tier, as every effect a client
+ * launches: nothing it holds outranks the strobe. Pads come with the pads.
+ */
+function pressVoice(owner: string, token: string, payload: VoiceHoldMessage, lookup: ReturnType<typeof presetLookup>): void {
+  if (payload.pad !== undefined) throw new HttpError(409, 'No pads on this server yet');
+  const effect = payload.effect;
+  const byPreset = !!effect && typeof effect === 'object' && !Array.isArray(effect) && Object.hasOwn(effect, 'preset');
+  if (byPreset && Object.keys(effect as object).length !== 1) throw new HttpError(400, 'voice-hold: effect is a spec or { preset }');
+  const launch = launchOf(byPreset ? { preset: (effect as { preset: unknown }).preset } : { effect }, lookup);
+  const targets = targetsOf(payload.targets, state.fixtures.map((f) => f.id));
+  voices.start({ spec: launch.spec, targets, mode: 'hold', tier: 'voice', source: 'api', label: launch.label, owner, token });
 }
 
 /** What a page asked for when it connected: protocol 2, or the original. */
@@ -38,12 +63,20 @@ function topicRooms(payload: unknown): string[] {
 
 function attachSockets(io: Server, { midi, integrations }: {
   midi: MidiPorts & { onLearn(fn: (event: unknown) => void): void };
-  integrations: { broadcast(): void; publisher: Publisher };
+  integrations: { broadcast(): void; publisher: Publisher; library?: Parameters<typeof presetLookup>[0] };
 }): void {
   const { publisher } = integrations;
-  const holds = new EnergyHold((effect) => {
-    state.heldEnergy = effect;
-    integrations.broadcast();
+  // Every page hears a voice start and end: a press, a release, a lease run
+  // out, a stop from REST. Once the change is done, so a launch inside a
+  // patch or a frame is not broadcast halfway through it.
+  let queued = false;
+  onVoicesChange(() => {
+    if (queued) return;
+    queued = true;
+    queueMicrotask(() => {
+      queued = false;
+      integrations.broadcast();
+    });
   });
   // Learn is a whole-server mode, not a per-socket one: whoever armed it needs
   // to see the capture, and every other open page needs to stop
@@ -188,13 +221,30 @@ function attachSockets(io: Server, { midi, integrations }: {
 
     socket.on('tap', processTap);
 
+    // The energy effects' hold, as Companion and the pages before voices send
+    // it: a voice under its energy's id, over the latched one (state.ts). Its
+    // lease is the voices': one token names one hold, whichever event pressed it.
     socket.on('energy-hold', (payload: EnergyHoldMessage | null) => {
-      if (!payload || typeof payload.token !== 'string' || !payload.token.length || payload.token.length > 64) return;
+      if (!payload || !validToken(payload.token)) return;
       const { action, token, effect } = payload;
       if (action === 'press' && ENERGY_EFFECTS.some((e) => e.id === effect)) {
-        holds.press(socket.id, token, effect as string);
-      } else if (action === 'renew') holds.renew(socket.id, token);
-      else if (action === 'release') holds.release(socket.id, token);
+        legacyEnergy.press(socket.id, token, effect as string);
+      } else if (action === 'renew') legacyEnergy.renew(socket.id, token);
+      else if (action === 'release') legacyEnergy.release(socket.id, token);
+    });
+
+    // Any effect held down: renewed by this page, gone with it. The owner is
+    // this socket, never anything the message says.
+    socket.on('voice-hold', (payload: VoiceHoldMessage | null) => {
+      if (!payload || !validToken(payload.token)) return;
+      const { action, token } = payload;
+      try {
+        if (action === 'press') pressVoice(socket.id, token, payload, presetLookup(integrations.library));
+        else if (action === 'renew') voices.renew(socket.id, token);
+        else if (action === 'release') voices.release(socket.id, token);
+      } catch (err) {
+        socket.emit('error-msg', { source: 'voice-hold', message: messageOf(err) });
+      }
     });
 
     socket.on('midi-connect', (payload) => {
@@ -206,7 +256,7 @@ function attachSockets(io: Server, { midi, integrations }: {
     });
 
     socket.on('disconnect', () => {
-      holds.disconnect(socket.id);
+      voices.disconnect(socket.id);
       console.log('Client disconnected:', socket.id);
     });
   });

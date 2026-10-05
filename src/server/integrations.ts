@@ -1,5 +1,5 @@
 import { transitionFor } from '../show/transition.ts';
-import { state, getLiveState, getDmxSnapshot, getDmxUniverses, setExtrasProvider } from './state.ts';
+import { state, getLiveState, getDmxSnapshot, getDmxUniverses, setExtrasProvider, voices } from './state.ts';
 import { createPublisher, ROOM } from './protocol.ts';
 import { encodeDmxFrame } from '../shared/dmx-frame.ts';
 import { setHooks, applyPatch } from './patch.ts';
@@ -377,12 +377,13 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   // ─── What the party effects hear ────────────────────────────────────────
   // One set of detectors for every effect (audio-features.ts), on the
   // settings of the Disco or Visualizer playing, else on the settings here:
-  // the base look's effect, validated, and the voices over it (none are
-  // launched from here yet), with the photosensitivity acknowledgement that
-  // admits a Visualizer among them.
+  // the base look's effect, validated, and the voices playing over it (on
+  // the voices' own clock; one hidden or not started yet owns nothing), with
+  // the photosensitivity acknowledgement that admits a Visualizer among them.
   function detectors(): Detectors {
+    const nowMs = performance.now();
     return resolveDetectors({
-      base: baseEffect(), voices: [], nowMs: performance.now(),
+      base: baseEffect(), voices: voices.frames(nowMs), nowMs,
       fixtureIds: state.fixtures.map((f) => f.id), ldjTrigger: settings.get('audio.ldjTrigger'),
       acknowledged: settings.get('safety.photosensitivityAcknowledged'),
     });

@@ -10,6 +10,8 @@ import { HttpError } from '../errors.ts';
 import { footprintOf, universesOf, isInternalUniverse, placeAddressless } from '../shared/placement.ts';
 import { BUILTIN_PALETTES, FAMILIES } from '../shared/effects/index.ts';
 import { toHex } from '../shared/effects/palette.ts';
+import { VoiceManager } from './voices.ts';
+import { EnergyHold } from './energy-hold.ts';
 import type { Settings } from './settings.ts';
 import type { ClockSource, TempoMode } from './conductor.ts';
 import type { Colour, Fixture, PixelMap, Profile, ShowDynamics } from '../types/rig.ts';
@@ -40,8 +42,9 @@ export interface ShowState {
   flashLimit: boolean;
   strobeSpeed: number;
   strobeFunction: string;
-  /** An energy effect's id, or null. */
+  /** The latched energy effect's id, or null; read off its voice (latchEnergy), held over or not. */
   energyOverride: string | null;
+  /** The energy effect held from a socket, or null; read off its voice too. */
   heldEnergy: string | null;
   palette: string | null;
   /** Colours every effect plays instead of its own and the slots (Light DJ's active palette), or null. */
@@ -156,6 +159,72 @@ state.fixtures = Array.from({ length: 4 }, (_, i) => ({
   maxBrightness: 255,
   override: null,
 }));
+
+// ── Voices ──────────────────────────────────────────────────────────────────
+// Every effect launched over the base look (voices.ts): pads, the energy
+// effects, the strobe, the API. One manager, timed on this process's
+// monotonic clock; the engine hands the renderer its voices on the clock it
+// renders by.
+const voiceListeners = new Set<() => void>();
+
+const voices = new VoiceManager({
+  now: () => performance.now(),
+  // The beat the engine reads next, the grid line and the tempo from one reading.
+  reading: () => conductor.peek(),
+  acknowledged: () => safety.acknowledged(),
+  anyRunning: () => state.running,
+  onChange: voicesChanged,
+});
+
+// The energy effects' latch and hold (energy-hold.ts), as voices of that manager.
+const legacyEnergy = new EnergyHold(() => {}, voices);
+
+function voicesChanged(): void {
+  legacyEnergy.sync();
+  mirrorEnergy();
+  reconcileFreeClock();
+  for (const fn of [...voiceListeners]) {
+    try { fn(); } catch (err) { console.warn(`[voices] listener: ${err instanceof Error ? err.message : String(err)}`); }
+  }
+}
+
+/** The state's energy fields, from their voices. */
+function mirrorEnergy(): void {
+  state.heldEnergy = legacyEnergy.held();
+  state.energyOverride = legacyEnergy.latched();
+}
+
+/** Latch an energy effect (`energyOverride`), or none: null, or an id that is no energy effect. */
+function latchEnergy(effect: string | null): void {
+  legacyEnergy.latch(effect);
+  mirrorEnergy();
+}
+
+/** Hear every change to the voices, after the state's own fields have followed. Returns the way to stop. */
+function onVoicesChange(fn: () => void): () => void {
+  voiceListeners.add(fn);
+  return () => { voiceListeners.delete(fn); };
+}
+
+// What the free clock was last told. It starts running, as the patterns do.
+let freeClockRunning = true;
+
+/**
+ * Whether the free tap clock runs: while the patterns run, and while any
+ * voice is launched (one waiting for its grid line too), so a pad pressed
+ * with the patterns stopped still counts its beats — and starts nothing else.
+ */
+function freeClockRuns(): boolean {
+  return state.running || voices.size > 0;
+}
+
+/** Tell the free clock whether it runs; `force` tells it even when that has not changed. */
+function reconcileFreeClock(force = false): void {
+  const want = freeClockRuns();
+  if (!force && want === freeClockRunning) return;
+  freeClockRunning = want;
+  conductor.setRunning(want);
+}
 
 /** A fixture's brightness trim, tolerating a show saved before there was one. */
 function maxBrightnessOf(fixture: Pick<Fixture, 'maxBrightness'>): number {
@@ -360,6 +429,8 @@ function getLiveState() {
     pixelPattern: state.pixelPattern,
     panelPattern: state.panelPattern,
     energyOverride: state.heldEnergy ?? state.energyOverride,
+    // The voices over the look (voices.ts), the hidden latch under a hold too.
+    voices: voices.list(),
     palette: state.palette,
     // Hex on the wire, as a palette is written everywhere else.
     paletteOverride: state.paletteOverride ? state.paletteOverride.map(toHex) : null,
@@ -428,6 +499,12 @@ function getClientState() {
 
 export {
   state,
+  voices,
+  legacyEnergy,
+  latchEnergy,
+  onVoicesChange,
+  freeClockRuns,
+  reconcileFreeClock,
   universeOf,
   maxBrightnessOf,
   activeUniverses,
