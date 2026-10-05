@@ -15,8 +15,10 @@
  * clock carried forward (clock-follow.js), so a stall on the main thread no
  * longer shows on stage.
  *
- * Frames are written into memory the main thread shares (universes.js), which
- * is how the DMX monitor and the Hue lamps read them without a copy. After
+ * Frames are rendered into this thread's own buffers, then copied whole into
+ * memory the main thread shares (universes.js), which is how the DMX monitor
+ * and the Hue lamps read them. Rendering clears every universe first, so
+ * rendering in the shared memory let a read catch a frame half black. After
  * each frame a one-word message tells the main thread to feed Hue.
  *
  * `capture` mode is for tests: no timer, no sockets — each `render` message
@@ -64,7 +66,8 @@ function seeded(value: number): () => number {
 }
 if (capture && Number.isInteger(seed)) Math.random = seeded(seed as number);
 
-const store = createUniverseStore(shared);
+const store = createUniverseStore();               // rendered into, this thread only
+const published = createUniverseStore(shared);     // what the main thread reads
 const transmitter = createTransmitter();
 const renderer = createRenderer({
   profileOf: getProfile,
@@ -110,6 +113,14 @@ function setProfiles(profiles: Profile[] | null | undefined): void {
   for (const profile of profiles || []) registerProfile(profile);
 }
 
+/** Copy the finished frame into the shared memory, universe by universe. */
+function publish(): void {
+  const live = store.list();
+  published.sync(live);
+  for (const universe of live) published.getBuffer(universe).set(store.getBuffer(universe));
+  published.drainRetired();
+}
+
 function transmit(outputs: TransmitConfig): void {
   for (const universe of store.list()) transmitter.send(universe, store.getBuffer(universe), outputs);
   for (const [universe, frame] of store.drainRetired()) {
@@ -140,6 +151,7 @@ function renderTick(due: number, now: number): void {
   renderer.frame(snapshot.input, reading, now, store, epochMs);
   postCommands();
   transmit(snapshot.outputs);
+  publish();
   post({ type: 'frame' });
   if (now - lastStatsAt >= 1000) {
     lastStatsAt = now;
@@ -163,6 +175,7 @@ function blackout(): void {
   } else {
     store.clearAll();
   }
+  publish();
 }
 
 /** One frame on request, for tests: the universes' bytes come back. */

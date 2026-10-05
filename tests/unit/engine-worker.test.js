@@ -364,6 +364,45 @@ test('with a worker, frames land in memory the main thread reads', async () => {
   assert.strictEqual(engineStatus().thread, null);
 });
 
+test('the main thread never reads a frame the worker is part way through', async () => {
+  // Hue and the DMX monitor read the shared buffers from this thread at any moment.
+  // A static look renders the same bytes every frame, so every read must match.
+  const bar = barProfile({ id: 'worker-tear-bar', name: 'Tear Bar', cells: 16, firstChannel: 3, order: 'RGBW', dimmer: 1, strobe: 2 });
+  registerProfile(bar);
+  const before = { fixtures: state.fixtures, artnet: state.artnet.enabled };
+  const perUniverse = Math.floor(512 / bar.channelCount);
+  state.fixtures = Array.from({ length: 64 }, (_, i) => ({
+    id: 9000 + i, label: `Bar ${i + 1}`, profileId: bar.id, maxBrightness: 255, override: null,
+    universe: Math.floor(i / perUniverse), address: 1 + (i % perUniverse) * bar.channelCount,
+    position: { x: 5 + (i % 16) * 6, y: 20 + Math.floor(i / 16) * 20 },
+  }));
+  state.artnet.enabled = false;
+  applyPatch({ pattern: 'solid', running: true, masterDimmer: 255, masterBlackout: false, colorA: 1 });
+  const read = () => Buffer.concat(universes.list().map((u) => Buffer.from(universes.getBuffer(u))));
+  startEngine({ thread: 'worker' });
+  try {
+    const ready = Date.now() + 5000;
+    while (read().filter((v) => v > 0).length < 64 && Date.now() < ready) await wait(20);
+    await wait(200);
+    const steady = read();
+    assert.ok(steady.filter((v) => v > 0).length >= 64, 'the rig is lit');
+    // Read as fast as this thread can for a second: every phase of ~44 frames.
+    let reads = 0;
+    let torn = 0;
+    const until = performance.now() + 1000;
+    while (performance.now() < until) {
+      reads++;
+      if (!read().equals(steady)) torn++;
+    }
+    assert.strictEqual(torn, 0, `${torn} of ${reads} reads caught a frame part way through`);
+  } finally {
+    await stopEngine();
+    state.fixtures = before.fixtures;
+    state.artnet.enabled = before.artnet;
+    unregisterProfile(bar.id);
+  }
+});
+
 test('frames keep coming while the main thread is busy', async () => {
   state.artnet.enabled = false;
   // The eight-beat breath moves the first par's 16-bit dimmer on every frame, so each frame the worker renders shows.

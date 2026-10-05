@@ -141,7 +141,10 @@ const par = (id, address, universe = 0) => ({ id, label: `Par ${id}`, address, u
 test('identify a fixture, or everything on a universe; then stop', async () => {
   await withRoutes(async ({ call, calls, identify }) => {
     const one = await call('POST', '/api/identify', { fixtures: [2], seconds: 5 });
-    assert.deepStrictEqual(one.body, { ok: true, ids: [2], remainingMs: 5000 });
+    const { remainingMs, ...started } = one.body;
+    assert.deepStrictEqual(started, { ok: true, ids: [2] });
+    // Counted from the clock as the reply is made, so a busy machine has already spent a millisecond or two.
+    assert.ok(remainingMs > 4900 && remainingMs <= 5000, `${remainingMs} ms left of the 5 s asked for`);
     assert.strictEqual(calls.broadcast, 1, 'the pages are told');
 
     const byUniverse = await call('POST', '/api/identify', { universes: [1] });
