@@ -48,6 +48,12 @@ export function attachSequenceRoutes(app: Express, ctx: RouteContext): void {
     res.json({ ok: true, sequence, status: sequencer().status() });
   });
 
+  // Nothing loaded: a stopped sequence holds its picture, and this is how the look comes back.
+  app.delete('/api/sequence', (_req, res) => {
+    sequencer().unload();
+    answer(res);
+  });
+
   app.get('/api/sequence/status', (_req, res) => res.json({ ok: true, status: sequencer().status() }));
 
   // ─── The shelf ────────────────────────────────────────────────────────────

@@ -338,6 +338,8 @@ test('the transport shows the sequence, its position, the clips and the controls
   assert.match(html, /Front[\s\S]*Intro/);
   given({ sequence: { ...STATUS, playing: false, paused: true } });
   assert.match(ui.html(ui.h(ui.Transport, { initial: { sequences: [], sequence: SEQ } })), /aria-label="Play"/);
+  // With one loaded, the picker's first entry gives the rig back to the look.
+  assert.match(ui.html(ui.h(ui.Transport, { initial: { sequences: [], sequence: SEQ } })), /<option value(="")?[^>]*>No sequence \(back to the look\)</);
 });
 
 test('with nothing loaded the transport offers the picker and no position', () => {

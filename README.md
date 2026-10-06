@@ -1712,7 +1712,9 @@ silences the others; a muted one plays nothing.
 The transport plays, pauses (the current clip keeps looping), stops (holding
 the last frame, or black with `?blackout=1`), steps to the next or previous
 clip, shuffles, seeks to a beat, jumps to a clip, re-syncs on the next beat or
-bar and loops a range. Clips with fast-flashing effects need the
+bar and loops a range. A stopped sequence keeps the rig: unloading it
+(`DELETE /api/sequence`, or the first entry of the deck's sequence picker)
+gives the base back to the look. Clips with fast-flashing effects need the
 acknowledgement.
 
 **Patterns** are reusable bundles of lanes and clips. Saved ones can be
@@ -2732,6 +2734,7 @@ Transport routes answer `{ ok, status }`; with no sequence loaded they answer
 |--------|------|-------------|
 | GET | `/api/sequence` · `/api/sequence/status` | The loaded sequence, its clip table as the engine plays it (`table`) and its status · the status alone |
 | PUT | `/api/sequence` | Load a whole sequence, or `{ id }` of a saved one |
+| DELETE | `/api/sequence` | Unload it: nothing is loaded, a running take is dropped, and the look is the rig's base again |
 | GET · POST | `/api/sequences` | The saved sequences · save one (201; 409 if the id is taken) |
 | GET · PUT · DELETE | `/api/sequences/:id` | One saved sequence |
 | POST | `/api/sequence/play` · `pause` · `stop` · `next` · `prev` · `shuffle` | Transport; `stop?blackout=1` (or `{ blackout: true }`) goes black |

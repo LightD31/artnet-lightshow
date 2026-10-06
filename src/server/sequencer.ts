@@ -694,9 +694,10 @@ export class Sequencer {
     return structuredClone(this._loaded!);
   }
 
-  /** Nothing loaded: the table goes, under a new revision, and the transport with it. */
+  /** Nothing loaded: the table goes, under a new revision, and the transport and any take with it. */
   unload(): void {
     if (!this._loaded) return;
+    this._record = null;
     this._loaded = null;
     this._key = null;
     this._table = null;

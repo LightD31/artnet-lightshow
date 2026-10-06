@@ -56,13 +56,14 @@ export function Transport({ initial } = {}) {
   const loop = loopBody(status);
   const perBar = beatsPerBar(sequence && sequence.timeSignature);
   const lanes = laneRows(status, sequence);
-  const pick_ = (id) => { if (id) api('/api/sequence', { method: 'PUT', body: JSON.stringify({ id }) }); };
+  // The first entry unloads: a stopped sequence holds its picture, and this gives the rig back to the look.
+  const pick_ = (id) => (id ? api('/api/sequence', { method: 'PUT', body: JSON.stringify({ id }) }) : api('/api/sequence', { method: 'DELETE' }));
 
   return (
     <section class="perform-transport" aria-label="Transport">
       <div class="transport-row">
         <select class="transport-picker" aria-label="Sequence" value={loadedId} onChange={(e) => pick_(e.target.value)}>
-          <option value="" selected={!loadedId}>Pick a sequence</option>
+          <option value="" selected={!loadedId}>{loadedId ? 'No sequence (back to the look)' : 'Pick a sequence'}</option>
           {sequences.map((q) => <option key={q.id} value={q.id} selected={q.id === loadedId}>{q.name || q.id}</option>)}
         </select>
         <span class="transport-position" aria-label="Position, bars and beats">{loaded ? positionText(status, perBar) : '–'}</span>

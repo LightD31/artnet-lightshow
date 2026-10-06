@@ -211,6 +211,37 @@ test('the engine plays the loaded sequence from the sequencer the server registe
   assert.ok(renderInput().sequenceTransport, 'the engine hands the renderer a transport');
   assert.equal(renderInput().sequenceRevision, s.integrations.sequence.sequencer.revision());
   assert.equal(getLiveState().sequence.playing, true);
+
+  // Stopped, the sequence holds its picture: the look stays under it until the sequence is unloaded.
+  const red = () => {
+    const ch = getProfile(first).channelMap;
+    const dmx = universes.getBuffer(first.universe ?? state.artnet.universe);
+    return dmx[first.address - 1 + ch.red] === 255 && dmx[first.address - 1 + ch.green] === 0;
+  };
+  await s.call('POST', '/api/sequence/stop');
+  await wait(100);
+  assert.equal(red(), false, 'stopped: not the look yet');
+  const revision = s.integrations.sequence.sequencer.revision();
+  let res = await s.call('DELETE', '/api/sequence');
+  assert.deepEqual([res.status, res.body.ok, res.body.status.loaded, res.body.status.playing], [200, true, null, false]);
+  assert.ok(res.body.status.revision > revision, 'a new revision: the pages and the engine drop the table');
+  assert.ok(await until(red, 1000), 'unloaded: the look is back on the rig');
+  assert.equal((await s.call('GET', '/api/sequence')).body.sequence, null);
+  assert.equal(getLiveState().sequence.loaded, null);
+  // Nothing loaded: unloading again is no error, and the transport answers as it does with none.
+  res = await s.call('DELETE', '/api/sequence');
+  assert.deepEqual([res.status, res.body.status.loaded], [200, null]);
+  assert.equal((await s.call('POST', '/api/sequence/play')).status, 409);
+});
+
+test('unloading the sequence drops a take that was running', async (t) => {
+  const s = await serve(t);
+  await s.call('PUT', '/api/sequence', SET);
+  assert.equal((await s.call('POST', '/api/sequence/record', { mode: 'overdub' })).status, 200);
+  assert.ok(getLiveState().sequence.recording);
+  const res = await s.call('DELETE', '/api/sequence');
+  assert.deepEqual([res.status, res.body.status.loaded, res.body.status.recording], [200, null, undefined]);
+  assert.equal((await s.call('POST', '/api/sequence/record/stop', { keep: true })).status, 409, 'nothing is recording any more');
 });
 
 test('the audio detectors run on the settings of a Disco playing as a clip', async (t) => {

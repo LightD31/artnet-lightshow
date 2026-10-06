@@ -29,7 +29,8 @@ test.beforeEach(async ({ request }) => {
 });
 
 test.afterEach(async ({ request }) => {
-  await request.post('/api/sequence/stop', { data: {} });
+  // Unloaded, not only stopped: a stopped sequence holds its picture over the look.
+  expect((await request.delete('/api/sequence')).ok()).toBe(true);
   const { bank: _b, slot: _s, ...pad } = before.pad;
   const put = await request.put('/api/pads/0/0', { data: pad });
   expect(put.ok(), await put.text()).toBe(true);
