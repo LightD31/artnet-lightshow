@@ -283,6 +283,9 @@ export function placeSequence(table: SequenceTable, transport: SequenceTransport
   return { winners, activations, elapsed: place.elapsed, anchor, position: place.position, traversal: place.traversal };
 }
 
+/** A clip activation playing, with the beat its lap is anchored on and the position it was placed at, for a container clip's own step. */
+export interface PlayingClip { id: string; spec: EffectSpec; anchorBeat: number; beatPos: number }
+
 /**
  * The clip activations on top of at least one of `fixtureIds` at the music's
  * `beatPos`, highest first in selectClips' order: the sequence's base as the
@@ -290,8 +293,8 @@ export function placeSequence(table: SequenceTable, transport: SequenceTransport
  * touched, no dice rolled. A stopped sequence plays no effect: its base is a
  * held picture or black.
  */
-export function playingClips(table: SequenceTable, transport: SequenceTransport, beatPos: number, fixtureIds: readonly number[]):
-  { id: string; spec: EffectSpec }[] {
+export function playingClips(table: SequenceTable, transport: SequenceTransport, beatPos: number, fixtureIds: readonly (number | string)[]):
+  PlayingClip[] {
   const placed = placeSequence(table, transport, beatPos, fixtureIds);
   if (!placed) return [];
   const won = new Set(placed.winners.filter((i) => i >= 0));
@@ -303,7 +306,7 @@ export function playingClips(table: SequenceTable, transport: SequenceTransport,
   };
   return placed.activations.filter((a) => won.has(a.index))
     .sort((a, b) => compareRank(rank(b.index), rank(a.index)))
-    .map((a) => ({ id: a.id, spec: table.clips[a.index].spec }));
+    .map((a) => ({ id: a.id, spec: table.clips[a.index].spec, anchorBeat: a.anchorBeat, beatPos }));
 }
 
 // ── Musical boundaries ──────────────────────────────────────────────────────

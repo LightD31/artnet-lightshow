@@ -9,7 +9,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { BUNDLE_KIND, bundleSpec } from '../../src/shared/effects/bundle.ts';
 import { CATALOGUE, presetById } from '../../src/shared/effects/index.ts';
-import { MAX_NEST_DEPTH } from '../../src/shared/effects/nesting.ts';
+import { MAX_NEST_DEPTH, playingLeaves } from '../../src/shared/effects/nesting.ts';
 import { registerKind, requiresAcknowledgement, validateSpec } from '../../src/shared/effects/registry.ts';
 import { renderEffect } from '../../src/shared/effects/render.ts';
 import { EffectStepper } from '../../src/shared/effects/stepper.ts';
@@ -120,12 +120,32 @@ test('macros and bundles share one nesting limit and one cycle check', () => {
   assert.equal(requiresAcknowledgement(cyclic), true);
 });
 
-test('the detector owner is looked up the same way for a bundle as for a macro: neither container seizes it for a child', () => {
+test('the detector owner is looked up the same way for a bundle as for a macro: the container owns it while its child plays', () => {
   const disco = validateSpec({ kind: 'hd.disco' });
   const table = { revision: 0, lanes: [lane('shared:0')], clips: [{ ...clip('0:0', 'shared:0', paintSpec(1), 0, 4), spec: disco }] };
   const macro = validateSpec({ kind: 'macro', params: { steps: [{ effect: disco, beats: 4 }], loopBeats: 4 } });
-  const owner = (spec) => resolveDetectors({ base: { id: 'look', spec: disco }, voices: [{ id: 'pad:1', spec, targets: null, tier: 'voice', launchSeq: 1, startedAtMs: 0, untilMs: null }],
-    nowMs: 10, fixtureIds: IDS, ldjTrigger: 0.5, acknowledged: true }).disco.owner;
+  const owner = (spec) => resolveDetectors({ base: { id: 'look', spec: disco }, voices: [{ id: 'pad:1', spec, targets: null, tier: 'voice', launchSeq: 1, startedAtMs: 0, untilMs: null, anchorBeat: 0 }],
+    nowMs: 10, beatPos: 1, fixtureIds: IDS, ldjTrigger: 0.5, acknowledged: true }).disco.owner;
   assert.deepEqual(owner(voiceSpec(bundle(false, table))), owner(macro));
-  assert.deepEqual(owner(macro), { from: 'base', id: 'look', kind: 'hd.disco' });
+  assert.deepEqual(owner(macro), { from: 'voice', id: 'pad:1', kind: 'hd.disco' });
+});
+
+test('the playing leaves change on the frame the bundle\'s rendered clip changes, highest lane first, a macro clip to its step', () => {
+  const inner = validateSpec({ kind: 'macro', params: { steps: [{ effect: paintSpec(7), beats: 0.3 }, { effect: paintSpec(9), beats: 0.4 }], loopBeats: 0.7 } });
+  const table = { revision: 0, lanes: [lane('shared:0'), lane('shared:1')],
+    clips: [clip('a', 'shared:0', paintSpec(255), 0, 4), clip('b', 'shared:1', paintSpec(128), 1.5, 1, [11]), clip('c', 'shared:1', inner, 2.5, 1.1)] };
+  const spec = bundle(false, table);
+  const beats = [0, 1.5 - 1e-12, 1.5, 2.5 - 1e-12, 2.5, 2.8, 3.1, 3.6 - 1e-12, 3.6, 4, 5.5, 6.8, 40.1];
+  draw(spec, beats).forEach((out, k) => {
+    const leaves = playingLeaves(spec, beats[k], 0, IDS);
+    // Fixture 11 shows the highest clip covering anything.
+    assert.deepEqual(leaves[0].params.r, reds(out)[1], `beat ${beats[k]}`);
+    assert.deepEqual(leaves.map((s) => s.kind), Array(leaves.length).fill('test.bundle.paint'));
+  });
+  assert.deepEqual(playingLeaves(spec, 2, 0, IDS).map((s) => s.params.r), [128, 255], 'every clip showing on a lamp, the highest lane first');
+  assert.deepEqual(playingLeaves(bundle(true, table), 4, 0, IDS), [], 'once stops at the length');
+  // Too deep to render is too deep to own: past the limit nothing plays.
+  let deep = paintSpec(1);
+  for (let i = 0; i <= MAX_NEST_DEPTH; i++) deep = { kind: 'macro', params: { steps: [{ effect: deep, beats: 1 }], loopBeats: 1 } };
+  assert.deepEqual(playingLeaves(deep, 0.5, 0, IDS), []);
 });

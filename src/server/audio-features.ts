@@ -27,6 +27,7 @@ import { bandBins } from '../shared/spectrum-bands.ts';
 import { DISCO_DEFAULTS } from '../shared/effects/disco.ts';
 import { VISUALIZER_DEFAULTS } from '../shared/effects/ldj-visualizer.ts';
 import { requiresAcknowledgement } from '../shared/effects/registry.ts';
+import { playingLeaves } from '../shared/effects/nesting.ts';
 import { voiceOrder } from '../shared/effects/layer.ts';
 import { bandsArg } from '../live-input.ts';
 import type { AudioFrame } from '../shared/effects/audio-frame.ts';
@@ -571,6 +572,8 @@ export interface DetectorVoice {
   launchSeq: number;
   startedAtMs: number;
   untilMs: number | null;
+  /** The beat a container's steps count from; without it a container plays no child. */
+  anchorBeat?: number;
 }
 
 export interface DetectorOwner { from: 'voice' | 'clip' | 'base' | 'fallback'; id: string | null; kind: string | null }
@@ -588,17 +591,21 @@ const FALLBACK: DetectorOwner = { from: 'fallback', id: null, kind: null };
  * (the strobe tier, the later launch, a targeted voice over the whole rig,
  * the later start, the first listed), else the highest clip of the sequence
  * playing on top of a patched fixture (`clips`, highest first), else the
- * base look if it is that kind, else the settings. A voice that has not started, has ended, or
+ * base look if it is that kind, else the settings. A container (a macro, a
+ * pattern bundle) counts as the kind of the child it plays at `beatPos`, and
+ * that child's settings run the detector (nesting.ts playingLeaves). A voice that has not started, has ended, or
  * targets nothing patched does not count; nor does any other kind of effect,
  * nor one that flashes too fast to play without the photosensitivity
  * acknowledgement while it is not given (the Visualizer).
  */
-export function resolveDetectors({ base, clips = [], voices, nowMs, fixtureIds, ldjTrigger, acknowledged }: {
-  base: { id: string; spec: EffectSpec } | null;
+export function resolveDetectors({ base, clips = [], voices, nowMs, beatPos = NaN, fixtureIds, ldjTrigger, acknowledged }: {
+  base: { id: string; spec: EffectSpec; anchorBeat?: number } | null;
   /** The sequence's clip activations on top of the patch, highest first (shared/effects/sequence.ts playingClips). */
-  clips?: readonly { id: string; spec: EffectSpec }[];
+  clips?: readonly { id: string; spec: EffectSpec; anchorBeat?: number; beatPos?: number }[];
   voices: readonly DetectorVoice[];
   nowMs: number;
+  /** The music's beat now, where the containers' children are looked up. */
+  beatPos?: number;
   fixtureIds: readonly number[];
   ldjTrigger: number;
   /** The photosensitivity acknowledgement, which admits the effects that need it. */
@@ -611,14 +618,24 @@ export function resolveDetectors({ base, clips = [], voices, nowMs, fixtureIds, 
     // The renderer's own order (shared/effects/layer.ts), so a tie resolves as the lamps show it.
     .sort((a, b) => voiceOrder(a.v, b.v) || (a.index - b.index))
     .map(({ v }) => v);
-  const plays = (spec: EffectSpec, kind: string) => spec.kind === kind && (acknowledged || !requiresAcknowledgement(spec));
+  const admitted = (spec: EffectSpec) => acknowledged || !requiresAcknowledgement(spec);
+  // The leaf of `kind` an admitted effect plays now: itself, or a container's child.
+  const leafOf = (spec: EffectSpec, kind: string, at: number, anchorBeat: number | undefined, ids: readonly number[]): EffectSpec | null => {
+    if (!admitted(spec)) return null;
+    const leaf = spec.kind === kind ? spec : playingLeaves(spec, at, anchorBeat ?? NaN, ids).find((l) => l.kind === kind);
+    return leaf && admitted(leaf) ? leaf : null;
+  };
   const ownerOf = (kind: string): { owner: DetectorOwner; params: Record<string, unknown> } | null => {
-    const v = playing.find((x) => plays(x.spec, kind));
-    if (v) return { owner: { from: 'voice', id: v.id, kind }, params: v.spec.params || {} };
-    const clip = clips.find((c) => plays(c.spec, kind));
-    if (clip) return { owner: { from: 'clip', id: clip.id, kind }, params: clip.spec.params || {} };
-    if (base && plays(base.spec, kind)) return { owner: { from: 'base', id: base.id, kind }, params: base.spec.params || {} };
-    return null;
+    for (const v of playing) {
+      const leaf = leafOf(v.spec, kind, beatPos, v.anchorBeat, v.targets === null ? fixtureIds : v.targets.filter((id) => fixtureIds.includes(id)));
+      if (leaf) return { owner: { from: 'voice', id: v.id, kind }, params: leaf.params || {} };
+    }
+    for (const c of clips) {
+      const leaf = leafOf(c.spec, kind, c.beatPos ?? beatPos, c.anchorBeat, fixtureIds);
+      if (leaf) return { owner: { from: 'clip', id: c.id, kind }, params: leaf.params || {} };
+    }
+    const leaf = base && leafOf(base.spec, kind, beatPos, base.anchorBeat, fixtureIds);
+    return base && leaf ? { owner: { from: 'base', id: base.id, kind }, params: leaf.params || {} } : null;
   };
   const disco = ownerOf('hd.disco');
   const discoParams = (disco?.params || {}) as Partial<DiscoParams>;

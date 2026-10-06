@@ -35,3 +35,28 @@ export function anyChildSpec(children: readonly unknown[], test: (spec: EffectSp
     asking--;
   }
 }
+
+/** A container's child playing now and the beat it is anchored on. */
+export interface PlayingChild { spec: EffectSpec; anchorBeat: number }
+/** The children a container plays at `beatPos` when anchored on `anchorBeat`, highest first, over `fixtureIds`. */
+export type ChildrenAt = (params: unknown, beatPos: number, anchorBeat: number, fixtureIds: readonly (number | string)[]) => PlayingChild[];
+
+const childrenAt = new Map<string, ChildrenAt>();
+
+/** Each container kind answers with the same phase functions it renders with. */
+export function registerChildren(kind: string, fn: ChildrenAt): void {
+  childrenAt.set(kind, fn);
+}
+
+/**
+ * The effects playing inside `spec` at `beatPos`, containers resolved to
+ * their leaves, highest first; a plain effect is its own leaf. Pure: no
+ * state, no dice. Past the nesting limit nothing plays, as validation allows none.
+ */
+export function playingLeaves(spec: EffectSpec, beatPos: number, anchorBeat: number, fixtureIds: readonly (number | string)[], depth = 0): EffectSpec[] {
+  const children = childrenAt.get(spec.kind);
+  if (!children) return [spec];
+  if (depth >= MAX_NEST_DEPTH) return [];
+  return children(spec.params, beatPos, anchorBeat, fixtureIds)
+    .flatMap((c) => playingLeaves(c.spec, beatPos, c.anchorBeat, fixtureIds, depth + 1));
+}

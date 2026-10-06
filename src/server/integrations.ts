@@ -475,12 +475,15 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   // the base look's effect, validated, the voices playing over it (on the
   // voices' own clock; one hidden or not started yet owns nothing) and the
   // sequence's clips on top of the patch, with the photosensitivity
-  // acknowledgement that admits a Visualizer among them.
+  // acknowledgement that admits a Visualizer among them. A macro or pattern
+  // pad counts as the child it plays at the music's beat now.
   function detectors(): Detectors {
     const nowMs = performance.now();
     const fixtureIds = state.fixtures.map((f) => f.id);
     return resolveDetectors({
       base: baseEffect(), clips: sequence.sequencer.playing(fixtureIds), voices: voices.frames(nowMs), nowMs,
+      // The reading both render paths handed the last frame (engine.ts runSequenceSource).
+      beatPos: sequence.sequencer.lastBeat(),
       fixtureIds, ldjTrigger: settings.get('audio.ldjTrigger'),
       acknowledged: settings.get('safety.photosensitivityAcknowledged'),
     });

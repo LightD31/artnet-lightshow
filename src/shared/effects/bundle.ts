@@ -4,9 +4,9 @@
 
 import { z, ZodError } from 'zod';
 import type { RefinementCtx, ZodType } from 'zod';
-import { MAX_NEST_DEPTH, anyChildSpec, nestRefusal, withinNest } from './nesting.ts';
+import { MAX_NEST_DEPTH, anyChildSpec, nestRefusal, registerChildren, withinNest } from './nesting.ts';
 import { pacesOwnFlashes, registerKind, requiresAcknowledgement, validateSpec } from './registry.ts';
-import { newSequenceRun, renderPlaced } from './sequence.ts';
+import { newSequenceRun, playingClips, renderPlaced } from './sequence.ts';
 import type { SequenceRun, SequenceTable, SequenceTransport, TableClip } from './sequence.ts';
 import { EffectStepper } from './stepper.ts';
 import type { EffectSpec } from './types.ts';
@@ -63,6 +63,24 @@ const schema: ZodType<BundleParams> = z.unknown().transform((input, ctx): Bundle
   return { ...shape.data, table: { ...shape.data.table, clips } };
 });
 
+/**
+ * The table's transport for a voice anchored on `anchorBeat`, null where
+ * nothing plays at `beatPos`: the launch is the table's beat 0, and hold and
+ * loop wrap at the length, each lap a traversal of its own.
+ */
+function transportAt(p: BundleParams, beatPos: number, anchorBeat: number): SequenceTransport | null {
+  const rel = beatPos - anchorBeat;
+  if (!Number.isFinite(rel) || (p.once && rel >= p.lengthBeats)) return null;
+  return { startBeat: anchorBeat, loop: p.once ? null : { on: true, startBeat: 0, endBeat: p.lengthBeats }, generation: 0 };
+}
+
+// The detectors' owner lookup sees the clips the lamps show, highest lane first.
+registerChildren(BUNDLE_KIND, (params, beatPos, anchorBeat, fixtureIds) => {
+  const p = params as BundleParams;
+  const transport = transportAt(p, beatPos, anchorBeat);
+  return transport ? playingClips(p.table, transport, beatPos, fixtureIds) : [];
+});
+
 /** The children play in the bundle's own stepper and run, so they are cloned, swept and reset with it. */
 interface BundleState { children: EffectStepper; run: SequenceRun }
 
@@ -77,10 +95,8 @@ registerKind<BundleParams, BundleState>({
   },
   init: () => ({ children: new EffectStepper(), run: newSequenceRun() }),
   render: (p, s, room, frame, out) => {
-    const rel = frame.beatPos - frame.anchorBeat;
-    if (!Number.isFinite(rel) || !Number.isFinite(frame.nowMs) || (p.once && rel >= p.lengthBeats)) return;
-    // The voice's launch is the table's beat 0; hold and loop wrap at the length, each lap a traversal of its own.
-    const transport: SequenceTransport = { startBeat: frame.anchorBeat, loop: p.once ? null : { on: true, startBeat: 0, endBeat: p.lengthBeats }, generation: 0 };
+    const transport = transportAt(p, frame.beatPos, frame.anchorBeat);
+    if (!transport || !Number.isFinite(frame.nowMs)) return;
     const ids = frame.fixtureIds ?? Array.from({ length: room.n }, (_, i) => i);
     // Children see the frame a sequence clip sees; the voice's brightness and targets apply after this.
     const { spec: _spec, palette: _palette, roll: _roll, ...base } = frame;

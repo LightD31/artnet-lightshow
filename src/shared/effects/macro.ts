@@ -9,7 +9,7 @@ import type { Colour } from '../../types/rig.ts';
 import { tempoOf } from '../look-math.ts';
 import type { Room } from '../room.ts';
 import { seedFrom } from './hash.ts';
-import { MAX_NEST_DEPTH, anyChildSpec, nestRefusal, withinNest } from './nesting.ts';
+import { MAX_NEST_DEPTH, anyChildSpec, nestRefusal, registerChildren, withinNest } from './nesting.ts';
 import { pacesOwnFlashes, registerKind, requiresAcknowledgement, validateSpec } from './registry.ts';
 import { renderEffect } from './render-instance.ts';
 import { EffectStepper } from './stepper.ts';
@@ -96,6 +96,14 @@ function locate(p: MacroParams, rel: number): { lap: number; step: number; start
   return { lap, step: p.steps.length - 1, start };
 }
 
+/** The step playing at `beatPos` for a macro anchored on `anchorBeat`, and the beat that step is anchored on; null off the clock. */
+function stepAt(p: MacroParams, beatPos: number, anchorBeat: number): { lap: number; step: number; anchorBeat: number } | null {
+  const rel = beatPos - anchorBeat;
+  if (!Number.isFinite(rel)) return null;
+  const { lap, step, start } = locate(p, rel);
+  return { lap, step, anchorBeat: anchorBeat + lap * p.loopBeats + start };
+}
+
 /**
  * When a step began in wall time, for its wall-clock children. Known at the
  * launch for the very first step; otherwise between the two samples around
@@ -134,11 +142,10 @@ function stepColours(step: MacroStep, frame: EffectFrame): { spec: EffectSpec; o
 }
 
 function renderMacro(p: MacroParams, s: MacroState, room: Room, frame: EffectFrame, out: EffectSlot[]): void {
-  const rel = frame.beatPos - frame.anchorBeat;
-  if (!Number.isFinite(rel) || !Number.isFinite(frame.nowMs)) return;
-  const { lap, step: k, start } = locate(p, rel);
+  const at = stepAt(p, frame.beatPos, frame.anchorBeat);
+  if (!at || !Number.isFinite(frame.nowMs)) return;
+  const { lap, step: k, anchorBeat } = at;
   const step = p.steps[k];
-  const anchorBeat = frame.anchorBeat + lap * p.loopBeats + start;
   let active = s.active;
   if (active && active.lap === lap && active.step === k && active.kind === step.effect.kind) {
     // Re-anchored onto the step it plays (a voice after a jump in the music):
@@ -172,6 +179,14 @@ function anyStepRapid(params: MacroParams): boolean {
   const steps: unknown = (params as Partial<MacroParams> | null)?.steps;
   return Array.isArray(steps) && anyChildSpec(steps.map((item) => (item as Partial<MacroStep> | null)?.effect), requiresAcknowledgement);
 }
+
+// The detectors' owner lookup sees the step the lamps show.
+registerChildren('macro', (params, beatPos, anchorBeat) => {
+  const p = params as MacroParams;
+  const at = stepAt(p, beatPos, anchorBeat);
+  const effect = at && p.steps[at.step].effect;
+  return effect && !pacesOwnFlashes(effect) ? [{ spec: effect, anchorBeat: at.anchorBeat }] : [];
+});
 
 registerKind<MacroParams, MacroState>({
   kind: 'macro', app: 'own', schema, stateful: true,

@@ -16,7 +16,7 @@ import { HttpError } from '../errors.ts';
 import type { RefinementCtx } from 'zod';
 import type { MusicalTime } from './conductor.ts';
 import type { AudioMode, EffectSpec, Seed } from '../shared/effects/types.ts';
-import type { SequenceLane, SequenceLoop, SequenceTable, SequenceTransport, TableClip } from '../shared/effects/sequence.ts';
+import type { PlayingClip, SequenceLane, SequenceLoop, SequenceTable, SequenceTransport, TableClip } from '../shared/effects/sequence.ts';
 
 /**
  * The sequencer: lanes of effect clips on a beat timeline, as Hue Dynamics
@@ -1303,12 +1303,17 @@ export class Sequencer {
 
   // ── What the rest of the server reads ─────────────────────────────────────
 
+  /** The beat the last frame was handed (NaN before the first): the voices' containers are looked up there too. */
+  lastBeat(): number {
+    return this._last ? this._last.beatPos : NaN;
+  }
+
   /**
    * The clips playing on top of `fixtureIds` at the last frame, highest
    * first, for the audio detectors: pure, from the transport that frame
    * handed out.
    */
-  playing(fixtureIds: readonly number[]): { id: string; spec: EffectSpec }[] {
+  playing(fixtureIds: readonly number[]): PlayingClip[] {
     if (!this._table || !this._transport || !this._last) return [];
     return playingClips(this._table, this._transport, this._last.beatPos, fixtureIds);
   }

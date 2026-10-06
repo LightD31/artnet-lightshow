@@ -10,6 +10,10 @@ import { AudioFeatures, resolveDetectors } from '../../src/server/audio-features
 import { HD_MASTER_DEFAULTS } from '../../src/shared/effects/types.ts';
 import { DISCO_DEFAULTS, DISCO_PRESETS } from '../../src/shared/effects/disco.ts';
 import { VISUALIZER_DEFAULTS } from '../../src/shared/effects/ldj-visualizer.ts';
+import '../../src/shared/effects/index.ts';
+import { bundleSpec } from '../../src/shared/effects/bundle.ts';
+import { seedFrom } from '../../src/shared/effects/hash.ts';
+import { validateSpec } from '../../src/shared/effects/registry.ts';
 import { BIN_HZ } from '../../src/shared/spectrum-bands.ts';
 import LiveInput from '../../src/live-input.ts';
 
@@ -741,4 +745,76 @@ test('a Visualizer that owns the classes decides them with its trigger', () => {
   voices = [voice('pad', visualizer(0.1), { untilMs: 500 })];
   classes(a, [29], t, { anchor: false });
   assert.strictEqual(a.frame().spl.beat, 'soft', 'back to the fallback once it has ended');
+});
+
+// ── Containers: the child playing now decides ───────────────────────────────
+
+const pop = () => DISCO_PRESETS.find((p) => p.id === 'hd.disco.pop').params;
+const twinkle = { kind: 'hd.twinkle', params: {} };
+const macroOf = (steps, loopBeats) => validateSpec({ kind: 'macro', params: { steps: steps.map(([effect, beats]) => ({ effect, beats })), loopBeats } });
+const tableOf = (lanes, clips) => ({
+  revision: 0, lanes: lanes.map((id) => ({ id, kind: 'shared', name: id, mute: false, solo: false })),
+  clips: clips.map(([id, laneId, spec, startBeat, lengthBeats]) => ({ id, laneId, fixtureIds: null, startBeat, lengthBeats, loopBeats: lengthBeats,
+    spec: validateSpec(spec), seed: seedFrom(id), mute: false })),
+});
+const bundleOf = (table, lengthBeats = 8, once = false) => bundleSpec({ patternId: 'p', lengthBeats, table }, once);
+// A voice as the voices hand it out, anchored on its launch beat.
+const pad = (id, spec, over = {}) => voice(id, spec, { anchorBeat: 0, ...over });
+
+test('a macro owns Disco\'s detector only while its Disco step plays, with that step\'s bands', () => {
+  const m = macroOf([[twinkle, 4], [{ kind: 'hd.disco', params: pop() }, 4]], 8);
+  const at = (beatPos, anchorBeat = 0) => resolve({ beatPos, voices: [pad('pad', m, { anchorBeat })] }).disco;
+  assert.deepStrictEqual(at(2).owner, { from: 'fallback', id: null, kind: null });
+  assert.deepStrictEqual(at(2).bands, DISCO_DEFAULTS.bands);
+  assert.deepStrictEqual(at(5).owner, { from: 'voice', id: 'pad', kind: 'hd.disco' });
+  assert.deepStrictEqual([at(5).bands, at(5).globals], [pop().bands, pop().globals]);
+  assert.strictEqual(at(9).owner.from, 'fallback', 'the next lap starts on the first step');
+  assert.strictEqual(at(4.5, 1).owner.from, 'fallback', 'counted from the voice\'s own anchor');
+  assert.strictEqual(at(5, 1).owner.from, 'voice');
+  // Without a position no step is known, so the macro owns nothing.
+  assert.strictEqual(resolve({ voices: [pad('pad', m)] }).disco.owner.from, 'fallback');
+});
+
+test('a pattern bundle owns the Visualizer\'s trigger while a Visualizer clip covers the position, highest lane first', () => {
+  const b = bundleOf(tableOf(['shared:0', 'shared:1'], [['a', 'shared:0', visualizer(0.2), 0, 4], ['b', 'shared:1', visualizer(0.7), 2, 1]]));
+  const at = (beatPos) => resolve({ beatPos, voices: [pad('pad:1', b)] }).spl;
+  assert.deepStrictEqual(at(1), { owner: { from: 'voice', id: 'pad:1', kind: 'ldj.visualizer' }, trigger: 0.2 });
+  assert.strictEqual(at(2.5).trigger, 0.7);
+  assert.deepStrictEqual(at(5), { owner: { from: 'fallback', id: null, kind: null }, trigger: 0.3 });
+  assert.strictEqual(at(9).trigger, 0.2, 'held, the pattern laps');
+  const once = bundleOf(tableOf(['shared:0'], [['a', 'shared:0', visualizer(0.2), 0, 8]]), 8, true);
+  assert.strictEqual(resolve({ beatPos: 9, voices: [pad('pad:1', once)] }).spl.owner.from, 'fallback', 'once stops at its length');
+});
+
+test('a container\'s child takes the normal voice priority: a higher plain voice of the kind still wins', () => {
+  const m = macroOf([[{ kind: 'hd.disco', params: pop() }, 4]], 4);
+  const plain = voice('plain', { kind: 'hd.disco', params: {} }, { launchSeq: 5 });
+  let d = resolve({ beatPos: 1, voices: [pad('macro', m, { launchSeq: 3 }), plain] }).disco;
+  assert.deepStrictEqual([d.owner.id, d.bands], ['plain', DISCO_DEFAULTS.bands]);
+  d = resolve({ beatPos: 1, voices: [pad('macro', m, { launchSeq: 9 }), plain] }).disco;
+  assert.deepStrictEqual([d.owner.id, d.bands], ['macro', pop().bands]);
+  // A container whose child is another kind does not seize the detector from a lower voice.
+  d = resolve({ beatPos: 1, voices: [pad('macro', macroOf([[twinkle, 4]], 4), { launchSeq: 9 }), plain] }).disco;
+  assert.strictEqual(d.owner.id, 'plain');
+});
+
+test('a child that needs the photosensitivity acknowledgement owns nothing while it is not given', () => {
+  const m = macroOf([[visualizer(0.6), 4]], 4);
+  const b = bundleOf(tableOf(['shared:0'], [['a', 'shared:0', visualizer(0.6), 0, 8]]));
+  for (const spec of [m, b]) {
+    assert.strictEqual(resolve({ beatPos: 1, acknowledged: false, voices: [pad('pad', spec)] }).spl.owner.from, 'fallback', spec.kind);
+    assert.strictEqual(resolve({ beatPos: 1, acknowledged: true, voices: [pad('pad', spec)] }).spl.trigger, 0.6, spec.kind);
+  }
+});
+
+test('nested containers resolve to the leaf playing now, for a voice, a sequence clip and the base alike', () => {
+  const m = macroOf([[twinkle, 2], [{ kind: 'hd.disco', params: pop() }, 2]], 4);
+  const b = bundleOf(tableOf(['shared:0'], [['m', 'shared:0', m, 0, 8]]));
+  const at = (beatPos) => resolve({ beatPos, voices: [pad('pad:1', b)] }).disco.owner.from;
+  assert.deepStrictEqual([1, 3, 5, 7].map(at), ['fallback', 'voice', 'fallback', 'voice']);
+  // A sequence clip carries the position it was placed at and its lap's anchor.
+  const clip = (beatPos) => resolve({ clips: [{ id: 'c', spec: m, anchorBeat: 8, beatPos }] }).disco.owner;
+  assert.deepStrictEqual([clip(9).from, clip(11)], ['fallback', { from: 'clip', id: 'c', kind: 'hd.disco' }]);
+  const base = (beatPos) => resolve({ beatPos, base: { id: 'look', spec: m, anchorBeat: 0 } }).disco.owner.from;
+  assert.deepStrictEqual([base(1), base(3)], ['fallback', 'base']);
 });
