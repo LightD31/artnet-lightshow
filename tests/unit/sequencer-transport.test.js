@@ -870,7 +870,7 @@ test('the status: what is loaded, playing or paused, the beat and bar, the loop 
   r.at(102.5);
   assert.deepEqual(r.s.status(), {
     loaded: { id: 'set-1', name: 'Set one' }, revision: 1, mode: 'arrangement', playing: true, paused: false, stopped: null,
-    beat: 2.5, bar: 1, beatsPerBar: 4, loop: null, lanes: [{ id: 'a', clip: 'A2' }, { id: 'b', clip: null }, { id: 't', clip: null }], error: null,
+    beat: 2.5, bar: 1, beatsPerBar: 3, loop: null, lanes: [{ id: 'a', clip: 'A2' }, { id: 'b', clip: null }, { id: 't', clip: null }], error: null,
   });
   r.at(104.5);
   assert.deepEqual(r.s.status().lanes, [{ id: 'a', clip: 'A' }, { id: 'b', clip: null }, { id: 't', clip: 'T' }]);
