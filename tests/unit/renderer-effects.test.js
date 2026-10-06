@@ -793,6 +793,37 @@ test('two strobe voices on one lamp never interleave: the higher one covers it, 
   for (let i = 1; i < rises.length; i++) assert.ok(rises[i] - rises[i - 1] >= 8);
 });
 
+test('a lamp keeps one strobe permit whoever draws it: a strobe ending over another, a strobe look showing again from under a strobe voice', () => {
+  const frames = Array.from({ length: 100 }, (_, k) => k * FRAME_MS);
+  const legal = (rises, label) => {
+    for (let i = 1; i < rises.length; i++) assert.ok(rises[i] - rises[i - 1] >= 8, `(a) ${label}: ${rises}`);
+    for (let i = 5; i < rises.length; i++) assert.ok(rises[i] - rises[i - 5] >= 44, `(b) ${label}: ${rises}`);
+  };
+  // Two strobe voices on the lamp, each on its own grid; the upper one ends at every phase of the lower one's.
+  for (const start of [3, 4, 5, 6, 7]) {
+    for (const ends of [10, 11, 12, 13, 14, 15, 16, 17]) {
+      const rises = strobeRises(frames, (ms, k) => ({
+        voices: [...(k < ends ? [voice('strobe', WALL_STROBE, { tier: 'strobe', launchSeq: 5, startedAtMs: 0 })] : []),
+          ...(k >= start ? [voice('pad:x', WALL_STROBE, { tier: 'voice', launchSeq: 1, startedAtMs: frames[start] })] : [])], ...SAFETY() }), 0);
+      legal(rises, `upper ends on frame ${ends}, lower from ${start}`);
+      assert.ok(rises.length >= 8, `the lower strobe plays on afterwards: ${rises}`);
+    }
+  }
+  // A strobe look under a strobe voice: the voice ends and the look's own grid shows.
+  for (const ends of [10, 12, 14, 16]) {
+    const rises = strobeRises(frames, (ms, k) => ({
+      pattern: 'strobe-look', effect: WALL_STROBE, patternAnchor: { step: 0, epoch: 0, seq: 1 },
+      voices: k >= 2 && k < ends ? [voice('strobe', WALL_STROBE, { tier: 'strobe', launchSeq: 5, startedAtMs: frames[2] })] : [], ...SAFETY() }), 0);
+    legal(rises, `a look under a voice ending on frame ${ends}`);
+    assert.ok(rises.length >= 8, `the look strobes on: ${rises}`);
+  }
+  // One strobe alone loses nothing to the lamp's permit: every flash of five a second, at 0, 0.2 … 10 s.
+  const alone = strobeRises(Array.from({ length: 441 }, (_, k) => k * FRAME_MS),
+    () => ({ voices: [voice('strobe', WALL_STROBE, { tier: 'strobe' })], ...SAFETY() }), 0);
+  assert.strictEqual(alone.length, 51);
+  legal(alone, 'one strobe');
+});
+
 // ── Commands for the base effect ────────────────────────────────────────────
 
 test('commands reach the base\'s state once each, in order, after it starts and before it first draws', () => {

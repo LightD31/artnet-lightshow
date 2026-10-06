@@ -33,7 +33,8 @@ import { energyEffectSpec } from '../shared/effects/catalogue.ts';
 import { endSequence, newSequenceRun, renderSequenceLayer, retable } from '../shared/effects/sequence.ts';
 import { kindOf, ridesLevel } from '../shared/effects/registry.ts';
 import { EffectStepper } from '../shared/effects/stepper.ts';
-import { HdFlashGuard } from '../shared/effects/flash-guard.ts';
+import { HdFlashGuard, StrobeLampGuard } from '../shared/effects/flash-guard.ts';
+import { strobeFrameOf } from '../shared/effects/strobe.ts';
 import { seedFrom } from '../shared/effects/hash.ts';
 import type { IdentifyRequest } from './identify.ts';
 import type { EnergyLook, UnitLight } from '../shared/look-math.ts';
@@ -410,6 +411,8 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
   // preview checkpoint, an expiry and a reset all see the same lifetimes.
   const stepper = new EffectStepper();
   const guard = new HdFlashGuard(RENDER_SAFETY_DEFAULTS.hdFlashIntervalMs);
+  // The strobe's permit per lamp, whichever strobe draws it (flash-guard.ts).
+  const strobeGuard = new StrobeLampGuard();
   let lastSweep = -Infinity;
   // The effects count time from the frame grid's phase, so a frame a few ms
   // early or late is still its own frame (strobe.ts counts in frames).
@@ -461,6 +464,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
   function resetEffects(clock = true): void {
     stepper.reset();
     guard.reset();
+    strobeGuard.reset();
     base = null;
     if (!clock) return;
     voiceRecords.clear();
@@ -1178,6 +1182,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       if (input.flashLimit) limiter.commit(0, now);
       // Dark is no rise: a lamp coming back bright afterwards is a new one.
       if (guard.brightCount) for (let u = 0; u < rigNow.units.length; u++) guard.clear(u);
+      if (strobeGuard.liveCount) for (let u = 0; u < rigNow.units.length; u++) strobeGuard.clear(u);
       if (ident) {
         for (let i = 0; i < fixtures.length; i++) {
           if (ident.ids.has(fixtures[i].id)) writeIdentified(input, store, fixtures[i], rigNow.cellMaps[i], now - ident.start, now);
@@ -1196,6 +1201,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     // Which kind is on top of each unit matters only while an effect plays.
     const watch = !!voiceTop || baseKinds || seqUnits;
     let guarded = false;
+    let strobed = false;
     for (let i = 0; i < fixtures.length; i++) {
       const fix = fixtures[i];
       const { start, count } = rigNow.ranges[i];
@@ -1213,6 +1219,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
         const kind = top ? (voice ? voice.kind ?? null : null) : overridden ? null : seqUnits && seqLight[u] ? seqKind[u] : baseKind[u];
         topKind[u] = kind;
         if (hdGuarded(kind)) guarded = true;
+        if (kind === 'strobe') strobed = true;
       }
       owned.push(first);
       clipped.push(clip);
@@ -1221,6 +1228,9 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     // Only while a lamp of Hue Dynamics' plays or is still held bright: nothing to do for a pattern.
     if (guarded) limitHdRises(input, rigNow, all, effNow);
     else if (guard.brightCount) for (let u = 0; u < rigNow.units.length; u++) guard.clear(u);
+    // Only while a strobe is on top of a lamp, or one it drew is still counted as lit.
+    if (strobed) limitStrobeRises(rigNow, all, effNow);
+    else if (strobeGuard.liveCount) for (let u = 0; u < rigNow.units.length; u++) strobeGuard.clear(u);
     if (input.flashLimit) limitFlashes(input, all, now);
     else limiter.reset();
     for (let i = 0; i < fixtures.length; i++) {
@@ -1248,6 +1258,29 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
         if (!hdGuarded(topKind[u])) { guard.clear(u); continue; }
         const light = lights[c];
         if (guard.apply(u, (light.dim / 255) * masters, nowMs) === 0) light.dim = 0;
+      }
+    }
+  }
+
+  /**
+   * The strobe's permit on each lamp, across every strobe that draws it: one
+   * ending over another, or a strobe look showing again from under a strobe
+   * voice, cannot raise a lamp sooner than one strobe alone could. It reads
+   * the level the strobe asks for, before the masters: a fader moved is not
+   * a flash.
+   */
+  function limitStrobeRises(rigNow: Rig<RenderFixture>, all: LightValue[][], nowMs: number): void {
+    const frameIndex = strobeFrameOf(nowMs);
+    for (let i = 0; i < all.length; i++) {
+      const { start } = rigNow.ranges[i];
+      const lights = all[i];
+      for (let c = 0; c < lights.length; c++) {
+        const u = start + c;
+        if (topKind[u] !== 'strobe') { strobeGuard.clear(u); continue; }
+        const light = lights[c];
+        const level = light.dim / 255;
+        const allowed = strobeGuard.apply(u, level, frameIndex);
+        if (allowed < level) light.dim = 255 * allowed;
       }
     }
   }

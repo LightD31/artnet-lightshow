@@ -607,6 +607,33 @@ test('one strobe voice taking over from another carries the permit in the previe
   }
 });
 
+test('a lamp keeps one strobe permit whoever draws it, in the preview as on the rig: a strobe voice ending over another strobe', () => {
+  const strobe = validateSpec({ kind: 'strobe', palette: ['#FFFFFF'], params: { flashesPerSecond: 5, clock: 'wall', continueBetween: false } });
+  const times = frames(0, 1800);
+  for (const [from, ends] of [[3, 10], [5, 12], [7, 15]]) {
+    const start = times[from], end = times[ends];
+    const events = [
+      { timeMs: 0, action: 'patch', data: { pattern: 'ldj.FadeCycle', ...LOOK } },
+      { timeMs: 0, action: 'voice', data: { id: 'strobe', effect: strobe, targets: 'shared', tier: 'strobe', launchSeq: 5 } },
+      { timeMs: start, action: 'voice', data: { id: 'pad:x', effect: strobe, targets: 'shared', tier: 'voice', launchSeq: 1 } },
+      { timeMs: end, action: 'voice-end', data: { id: 'strobe' } },
+    ];
+    const rig = rigRun(RIG, times, (t) => ({
+      pattern: 'ldj.FadeCycle', effect: FADE, safety: ACK,
+      voices: [...(t < end ? [voice('strobe', strobe, { tier: 'strobe', launchSeq: 5 })] : []),
+        ...(t >= start ? [voice('pad:x', strobe, { launchSeq: 1, startedAtMs: start, anchorBeat: beat(start) })] : [])],
+    }));
+    const preview = previewRun(createPreviewSampler(events, GRID, { resolveEffect, safety: ACK }), RIG, times);
+    const label = `the lower from frame ${from}, the upper ending on ${ends}`;
+    assertSame(rig, preview, times, label);
+    const white = preview.map((o) => o[0].r === 255 && o[0].g === 255 && o[0].b === 255);
+    const rises = white.flatMap((on, k) => (on && !white[k - 1] ? [k] : []));
+    for (let i = 1; i < rises.length; i++) assert.ok(rises[i] - rises[i - 1] >= 8, `(a) ${label}: ${rises}`);
+    for (let i = 5; i < rises.length; i++) assert.ok(rises[i] - rises[i - 5] >= 44, `(b) ${label}: ${rises}`);
+    assert.ok(rises.length >= 6, `${label}: ${rises}`);
+  }
+});
+
 test('a mixed timeline plays its energy bursts as tracked voices: replaced, expired and cancelled as the old lane', () => {
   const events = [
     { timeMs: 0, action: 'patch', data: { pattern: 'ldj.FadeCycle', ...LOOK } },

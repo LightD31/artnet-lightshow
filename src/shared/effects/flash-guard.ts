@@ -1,3 +1,6 @@
+import { HOLD_STROBE_MAX_HZ } from '../look-math.ts';
+import { GAP_FRAMES, WINDOW_FRAMES } from './strobe.ts';
+
 // Hue Dynamics limits each lamp's bright rises, not the frames of a held light.
 // The caller supplies predicted post-master output and applies this only to HD.
 
@@ -56,6 +59,65 @@ export class HdFlashGuard {
     const copy = new HdFlashGuard(this.intervalMs);
     for (const [unit, state] of this.units) copy.units.set(unit, { ...state });
     copy.bright = this.bright;
+    return copy;
+  }
+}
+
+/**
+ * The strobe's permit, held per lamp across every strobe that draws it. Each
+ * strobe paces its own flashes, but two can meet on one lamp: one ends and
+ * the one under it shows, or a strobe look comes back from under a strobe
+ * voice. Here a lamp's rises count whoever drew them: at least GAP_FRAMES
+ * engine frames apart and no more than five in any second of frames. A rise
+ * refused stays down: the lamp only dims until one is admitted.
+ */
+export class StrobeLampGuard {
+  private units = new Map<number, { raw: number; out: number; rises: number[]; blocked: boolean }>();
+  private live = 0;
+
+  /** Lamps a strobe is drawing or holding down: a caller with none, and no strobe on top, can skip the guard. */
+  get liveCount(): number { return this.live; }
+
+  /** The level a strobe may show on this lamp on this frame, given the level it asks for (0..1). */
+  apply(unit: number, level01: number, frameIndex: number): number {
+    let s = this.units.get(unit);
+    if (!s) { s = { raw: 0, out: 0, rises: [], blocked: false }; this.units.set(unit, s); }
+    const was = s.raw > 0 || s.blocked;
+    const level = level01 > 0 ? level01 : 0;
+    if (level > s.raw + 1e-9) {
+      const last = s.rises[s.rises.length - 1];
+      const fifth = s.rises.length >= HOLD_STROBE_MAX_HZ ? s.rises[s.rises.length - HOLD_STROBE_MAX_HZ] : undefined;
+      // The same frame drawn again is the rise it already was.
+      if (last === frameIndex) s.blocked = false;
+      else if ((last === undefined || frameIndex - last >= GAP_FRAMES) && (fifth === undefined || frameIndex - fifth >= WINDOW_FRAMES)) {
+        s.rises = [...s.rises.slice(1 - HOLD_STROBE_MAX_HZ), frameIndex];
+        s.blocked = false;
+      } else s.blocked = true;
+    }
+    const out = s.blocked ? Math.min(level, s.out) : level;
+    s.raw = level;
+    s.out = out;
+    if (level <= 0) s.blocked = false;
+    const is = s.raw > 0 || s.blocked;
+    if (is !== was) this.live += is ? 1 : -1;
+    return out;
+  }
+
+  /** Something else drew the lamp, or it is dark: the strobe's level there is none, its rises still count. */
+  clear(unit: number): void {
+    const s = this.units.get(unit);
+    if (!s) return;
+    if (s.raw > 0 || s.blocked) this.live--;
+    s.raw = 0; s.out = 0; s.blocked = false;
+  }
+
+  reset(): void { this.units.clear(); this.live = 0; }
+
+  /** An independent copy: a preview checkpoint carries its guard. */
+  clone(): StrobeLampGuard {
+    const copy = new StrobeLampGuard();
+    for (const [unit, s] of this.units) copy.units.set(unit, { ...s, rises: [...s.rises] });
+    copy.live = this.live;
     return copy;
   }
 }

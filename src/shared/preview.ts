@@ -54,9 +54,9 @@ import { canonical, effectContentKey, handOverStrobes, hdGuarded, relaunchEffect
 import { energyEffectSpec } from './effects/catalogue.ts';
 import { requiresAcknowledgement, ridesLevel, validateSpec } from './effects/registry.ts';
 import { EffectStepper } from './effects/stepper.ts';
-import { HdFlashGuard } from './effects/flash-guard.ts';
+import { HdFlashGuard, StrobeLampGuard } from './effects/flash-guard.ts';
 import { seedFrom } from './effects/hash.ts';
-import { STROBE_FRAME_MS } from './effects/strobe.ts';
+import { STROBE_FRAME_MS, strobeFrameOf } from './effects/strobe.ts';
 import { HD_MASTER_DEFAULTS } from './effects/types.ts';
 import { copySequenceRun, newSequenceRun, renderSequenceLayer, transportOf } from './effects/sequence.ts';
 import { parseHex } from './effects/palette.ts';
@@ -334,6 +334,8 @@ interface Walk {
   cursor: number;
   stepper: EffectStepper;
   guard: HdFlashGuard;
+  /** The strobe's permit per lamp, as the renderer keeps it. */
+  strobeGuard: StrobeLampGuard;
   expression: Expression;
   phase: number;
   lastBeat: number | null;
@@ -367,6 +369,7 @@ function copyWalk(w: Walk): Walk {
     ...w,
     stepper: w.stepper.clone(),
     guard: w.guard.clone(),
+    strobeGuard: w.strobeGuard.clone(),
     expression: { ...w.expression },
     base: w.base && { ...w.base },
     // Voice frames, fade sources, shown lights and outputs are made afresh and never changed.
@@ -384,7 +387,7 @@ function copyWalk(w: Walk): Walk {
 interface Checkpoint { walk: Walk; periodic: boolean; used: number }
 
 const emptyWalk = (k: number, intervalMs: number): Walk => ({
-  k, cursor: 0, stepper: new EffectStepper(), guard: new HdFlashGuard(intervalMs), expression: { ...EXPRESSION_REST }, phase: 0,
+  k, cursor: 0, stepper: new EffectStepper(), guard: new HdFlashGuard(intervalMs), strobeGuard: new StrobeLampGuard(), expression: { ...EXPRESSION_REST }, phase: 0,
   lastBeat: null, lastEpoch: 0, lastNow: null, lastSweep: -Infinity, epoch: 0, base: null, voices: new Map(), records: new Map(), strobes: new Set(),
   compat: null, fadeOf: null, fade: null, shown: [], output: null, seq: newSequenceRun(),
 });
@@ -863,6 +866,7 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
     const dims: number[] = new Array<number>(n);
     const tops: (string | null)[] = new Array<string | null>(n);
     let guarded = false;
+    let strobed = false;
     for (let u = 0; u < n; u++) {
       // The base as it goes out, partway through any fade: what the next fade starts from.
       const layer = w.fade && w.fade.from[u] ? blendFixture(w.fade.from[u], units[u], fadeT) : units[u];
@@ -883,6 +887,7 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
       }
       tops[u] = voice ? voice.kind ?? null : clip ? clipKind[u] : baseKind[u];
       if (hdGuarded(tops[u])) guarded = true;
+      if (tops[u] === 'strobe') strobed = true;
     }
     w.shown = shown;
     // Hue Dynamics' limit on its own kinds, on what each lamp puts out at its trim (the preview's master is full).
@@ -893,6 +898,16 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
         if (w.guard.apply(u, (dims[u] / 255) * trim, t) === 0) dims[u] = 0;
       }
     } else if (w.guard.brightCount) for (let u = 0; u < n; u++) w.guard.clear(u);
+    // The strobe's permit per lamp, across every strobe that draws it (renderer.ts limitStrobeRises).
+    if (strobed) {
+      const frameIndex = strobeFrameOf(t);
+      for (let u = 0; u < n; u++) {
+        if (tops[u] !== 'strobe') { w.strobeGuard.clear(u); continue; }
+        const level = dims[u] / 255;
+        const allowed = w.strobeGuard.apply(u, level, frameIndex);
+        if (allowed < level) dims[u] = 255 * allowed;
+      }
+    } else if (w.strobeGuard.liveCount) for (let u = 0; u < n; u++) w.strobeGuard.clear(u);
 
     if (!lights) return null;
     const out = new Array<Colour>(n);

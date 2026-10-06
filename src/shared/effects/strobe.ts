@@ -35,9 +35,12 @@ export const STROBE_FRAME_MS = 1000 / 44;
 // Float rounding of grid times; far below anything a lamp shows.
 const CLOCK_SLACK_MS = 1e-6;
 /** (a): frames between two rises, ceil((1000/MAX_LAMP_FLASH_HZ − FRAME_MS) / FRAME_MS) = 8 at 44 Hz. */
-const GAP_FRAMES = Math.ceil((1000 / HOLD_STROBE_MAX_HZ - STROBE_FRAME_MS) / STROBE_FRAME_MS);
+export const GAP_FRAMES = Math.ceil((1000 / HOLD_STROBE_MAX_HZ - STROBE_FRAME_MS) / STROBE_FRAME_MS);
 /** (b): a second of frames, round(1000 / FRAME_MS) = 44, holds at most MAX_LAMP_FLASH_HZ rises. */
-const WINDOW_FRAMES = Math.round(1000 / STROBE_FRAME_MS);
+export const WINDOW_FRAMES = Math.round(1000 / STROBE_FRAME_MS);
+
+/** The engine frame a moment falls on: the unit the permit counts in. */
+export const strobeFrameOf = (nowMs: number): number => Math.round(nowMs / STROBE_FRAME_MS);
 
 /** The kind's parameters; the server's strobe settings are these plus their own palette. */
 export const STROBE_PARAMS_SCHEMA = z.object({
@@ -118,7 +121,7 @@ function renderStrobe(p: StrobeParams, s: StrobeState, room: Room, frame: Effect
   const pulse = frame.hueStrobe === 'pulse';
   // The engine frame this render is, and that frame's time on the grid;
   // the flash's own 100 ms profile still plays in real time.
-  const frameIndex = Math.round(frame.nowMs / STROBE_FRAME_MS), atMs = frameIndex * STROBE_FRAME_MS;
+  const frameIndex = strobeFrameOf(frame.nowMs), atMs = frameIndex * STROBE_FRAME_MS;
   const candidate = gridFlash(p, s, frame, fps, atMs);
   if (!candidate) return;
   let rose = false;
