@@ -933,6 +933,8 @@ class MidiController {
     const maxMs = strobeMs !== undefined && Number.isFinite(strobeMs) && strobeMs > 0 ? strobeMs : MIDI_HOLD_MAX_MS;
     let ticks = 0;
     held.renew = setInterval(() => this._safely(binding, () => {
+      // Let go already: a tick still in flight renews nothing.
+      if (this._heldPads.get(key) !== held) return;
       ticks++;
       const renewed = ticks * PAD_RENEW_MS < maxMs && !this._portGone() && !!this.pads?.renew(pad.bank, pad.slot, pad.owner, pad.token);
       if (!renewed) this._releasePad(channel, note);

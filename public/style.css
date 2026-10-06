@@ -3993,7 +3993,7 @@ input[type=range]::-moz-range-thumb {
   display: grid; place-items: center; font-size: 12px; font-weight: 700; color: var(--accent);
   border: 2px dashed var(--accent); pointer-events: none;
 }
-.plan-proposal, .plan-selected { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 8px;
+.plan-proposal, .plan-selected { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0 0;
   padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); }
 .plan-selected-name { font-size: 14px; }
 .plan-height-edit { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

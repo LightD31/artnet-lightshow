@@ -388,32 +388,6 @@ export function PlanEditor() {
         {canUndo && <button type="button" class="btn sm" disabled={!connected} onClick={undoAutoPlace}>Undo auto-place</button>}
         <span class="plan-count">{chosen.length ? `${chosen.length} selected` : 'Nothing selected'}</span>
       </div>
-      {proposal && (
-        <div class="plan-proposal" role="status">
-          <span>{proposal.list.length ? `Proposed places for ${proposal.list.length} lamp${proposal.list.length === 1 ? '' : 's'}, dashed on the plot.` : 'Nothing to place.'}</span>
-          <button type="button" class="btn active plan-apply" disabled={!connected || !proposal.list.length} onClick={applyProposal}>Apply</button>
-          {waiting.length > 0 && <label class="plan-snap"><input type="checkbox" checked={proposal.all} onChange={(e) => propose(e.target.checked)} /> Move placed lamps too</label>}
-          <button type="button" class="btn" onClick={() => setProposal(null)}>Cancel</button>
-        </div>
-      )}
-      {one && (() => {
-        const h = oneHeight ?? 50;
-        return <section class="plan-selected" aria-label={`${one.label} on the plot`}>
-          <strong class="plan-selected-name">{indexOf.get(one.id) + 1} · {one.label}</strong>
-          <div class="plan-height-edit" role="group" aria-label="Height">
-            <span class="plan-height-label">Height</span>
-            <button type="button" class="btn plan-step" aria-label={`Lower ${one.label}`} disabled={!connected || !one.position || h <= 0}
-              onClick={() => setHeight(stepHeight(oneHeight ?? undefined, -1))}>−</button>
-            <input type="range" class="plan-height-range" min="0" max="100" step={HEIGHT_STEP} aria-label={`Height of ${one.label}`}
-              value={h} disabled={!connected || !one.position} onChange={(e) => setHeight(Number(e.currentTarget.value))} />
-            <button type="button" class="btn plan-step" aria-label={`Raise ${one.label}`} disabled={!connected || !one.position || h >= 100}
-              onClick={() => setHeight(stepHeight(oneHeight ?? undefined, 1))}>+</button>
-            <output class="plan-height-value">{h} %</output>
-            <span class="plan-height-scale">{oneHeight === null ? 'not set: mid-room · ' : ''}0 floor, 100 ceiling</span>
-            {!one.position && <span class="plan-height-hint">Place it first: a height belongs to a place on the plot.</span>}
-          </div>
-        </section>;
-      })()}
       {tool === 'draw' && drawTarget !== null && (
         <p class="plan-hint" role="status">
           <strong>{drawLabel}</strong> is lit on the rig: its first cell green, its last red. Drag on the plan from where
@@ -511,6 +485,33 @@ export function PlanEditor() {
         {armed !== null && <p class="plan-hint" role="status">Tap the plot where it hangs. Alt places it off the grid.</p>}
       </div>
       </div>
+      {/* Under the plot, so it does not move when a lamp is picked up or a proposal shows. */}
+      {proposal && (
+        <div class="plan-proposal" role="status">
+          <span>{proposal.list.length ? `Proposed places for ${proposal.list.length} lamp${proposal.list.length === 1 ? '' : 's'}, dashed on the plot.` : 'Nothing to place.'}</span>
+          <button type="button" class="btn active plan-apply" disabled={!connected || !proposal.list.length} onClick={applyProposal}>Apply</button>
+          {waiting.length > 0 && <label class="plan-snap"><input type="checkbox" checked={proposal.all} onChange={(e) => propose(e.target.checked)} /> Move placed lamps too</label>}
+          <button type="button" class="btn" onClick={() => setProposal(null)}>Cancel</button>
+        </div>
+      )}
+      {one && (() => {
+        const h = oneHeight ?? 50;
+        return <section class="plan-selected" aria-label={`${one.label} on the plot`}>
+          <strong class="plan-selected-name">{indexOf.get(one.id) + 1} · {one.label}</strong>
+          <div class="plan-height-edit" role="group" aria-label="Height">
+            <span class="plan-height-label">Height</span>
+            <button type="button" class="btn plan-step" aria-label={`Lower ${one.label}`} disabled={!connected || !one.position || h <= 0}
+              onClick={() => setHeight(stepHeight(oneHeight ?? undefined, -1))}>−</button>
+            <input type="range" class="plan-height-range" min="0" max="100" step={HEIGHT_STEP} aria-label={`Height of ${one.label}`}
+              value={h} disabled={!connected || !one.position} onChange={(e) => setHeight(Number(e.currentTarget.value))} />
+            <button type="button" class="btn plan-step" aria-label={`Raise ${one.label}`} disabled={!connected || !one.position || h >= 100}
+              onClick={() => setHeight(stepHeight(oneHeight ?? undefined, 1))}>+</button>
+            <output class="plan-height-value">{h} %</output>
+            <span class="plan-height-scale">{oneHeight === null ? 'not set: mid-room · ' : ''}0 floor, 100 ceiling</span>
+            {!one.position && <span class="plan-height-hint">Place it first: a height belongs to a place on the plot.</span>}
+          </div>
+        </section>;
+      })()}
       <p class="look-note">
         Numbers are patch order; a bar's first cell is outlined. Patterns travel across the rig as it is placed here.
         {rig.hasPixels ? ' Select a bar and Draw it to map which way it runs.' : ''}
