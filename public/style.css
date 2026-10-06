@@ -4020,3 +4020,8 @@ input[type=range]::-moz-range-thumb {
   .plan-chip, .plan-step { min-height: 44px; min-width: 44px; }
   .plan-height-range { min-height: 44px; }
 }
+
+/* ── Stage preview: now playing ── */
+.stage-now { margin: 6px 0; font-size: 1.05rem; line-height: 1.4; }
+.stage-now strong { margin-right: 6px; text-transform: uppercase; font-size: .8rem; letter-spacing: .06em; opacity: .75; }
+.seq-beyond { margin: 6px 0; padding: 8px 10px; border: 1px solid currentColor; border-radius: 6px; }

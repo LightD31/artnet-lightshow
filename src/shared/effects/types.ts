@@ -98,6 +98,8 @@ export interface EffectKindDef<P = unknown, S = unknown> {
   rapidFlash?: boolean; stateful?: boolean; rideLevel?: boolean;
   /** Steps on the wall clock: `params.cadence` changes nothing, and an editor leaves it out. */
   wallClock?: boolean;
+  /** Built by the server only (a pattern bundle): no catalogue row, and public validation does not know it. */
+  internal?: boolean;
   /** Additional parameter-dependent acknowledgement shared by rendering and admission. */
   rapidFlashWhen?(params: P): boolean;
   /**

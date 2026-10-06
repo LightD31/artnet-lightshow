@@ -45,3 +45,16 @@ test('a rapid clip, nested in a macro too, makes the bundle wait for the acknowl
   const missing = { ...PATTERN, lanes: [{ kind: 'shared', slot: 0, clips: [{ startBeat: 0, lengthBeats: 4, presetId: 'gone', targets: 'lane', mute: false }] }] };
   assert.throws(() => resolveBundle(missing, 'shared', [1], resolve), (e) => e.status === 409);
 });
+
+test('the strobe is never a clip: a pattern holding it is refused at resolve, as a sequence refuses it; a resolved bundle validates as a voice', async () => {
+  const { validateSequence } = await import('../../src/server/sequencer.ts');
+  const { bundleSpec } = await import('../../src/shared/effects/bundle.ts');
+  const { voiceSpec } = await import('../../src/server/voices.ts');
+  const strobe = { kind: 'strobe', params: { clock: 'beat', flashesPerSecond: 5 } };
+  const holding = { ...PATTERN, lanes: [{ kind: 'shared', slot: 0, clips: [at(0, 4, { effect: strobe })] }] };
+  assert.throws(() => resolveBundle(holding, 'shared', [1], resolve), (e) => e.status === 409 && /strobe/.test(e.message));
+  assert.throws(() => validateSequence({ id: 's', name: 's', lanes: [{ id: 'l', kind: 'shared', name: 'l', mute: false, solo: false }],
+    clips: [{ id: 'c', laneId: 'l', startBeat: 0, lengthBeats: 4, effect: strobe, targets: 'lane', mute: false }] }), /sequence: clips\.0\.effect\.kind a clip may not hold the strobe/);
+  const spec = voiceSpec(bundleSpec(resolveBundle(PATTERN, 'shared', [1, 2, 3], resolve), true));
+  assert.deepEqual([spec.kind, spec.params.lengthBeats, spec.params.once, spec.params.table.clips.length], ['pattern.bundle', 8, true, 3]);
+});

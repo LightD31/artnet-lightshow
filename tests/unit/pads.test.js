@@ -13,7 +13,8 @@ import express from 'express';
 import { Server } from 'socket.io';
 import { io as connect } from 'socket.io-client';
 
-import { Pads, PadStore, PAD_COUNT, REST_TOKEN } from '../../src/server/pads.ts';
+import { Pads, PadStore, PAD_COUNT, REST_TOKEN, patternPlayer } from '../../src/server/pads.ts';
+import { SequenceStore } from '../../src/server/sequence-store.ts';
 import { VoiceManager, HOLD_TIMEOUT_MS, builtinPresets, launchOf } from '../../src/server/voices.ts';
 import { presetById } from '../../src/shared/effects/index.ts';
 import { requiresAcknowledgement } from '../../src/shared/effects/registry.ts';
@@ -24,7 +25,9 @@ import { attachSockets } from '../../src/server/sockets.ts';
 import { createApplier } from '../../src/server/apply.ts';
 import { EffectLibrary } from '../../src/server/effect-library.ts';
 import { PaletteStore } from '../../src/server/palette-store.ts';
-import { stopEngine } from '../../src/server/engine.ts';
+import { stopEngine, renderFrame, renderInput } from '../../src/server/engine.ts';
+import * as universes from '../../src/server/universes.ts';
+import { getProfile } from '../../src/server/profiles.ts';
 import { applyPatch } from '../../src/server/patch.ts';
 import { state, voices } from '../../src/server/state.ts';
 import { conductor } from '../../src/server/conductor.ts';
@@ -68,18 +71,21 @@ function place(t) {
 /**
  * Pads over a manager on a clock of the test's own (`now` in ms, the beat
  * moving at `bpm` with it, setTimeout mocked to match), a layout in a
- * throwaway file, and a rig of fixtures 0..3.
+ * throwaway file, a rig of fixtures 0..3 and a shelf of patterns (`c.patterns`).
  */
 function rig(t, { now = 1000, beat = 0, bpm = 120, running = false, acknowledged = false } = {}) {
   t.mock.timers.enable({ apis: ['setTimeout'] });
-  const c = { now, beat, bpm, running, acknowledged, fixtures: [0, 1, 2, 3] };
+  const c = { now, beat, bpm, running, acknowledged, fixtures: [0, 1, 2, 3], patterns: {} };
   const manager = new VoiceManager({
     now: () => c.now, beatPos: () => c.beat, bpm: () => c.bpm,
     acknowledged: () => c.acknowledged, anyRunning: () => c.running, onChange: () => {},
   });
   const { file, dir } = place(t);
   const store = new PadStore(file).load();
-  const pads = new Pads({ voices: manager, store, lookup: () => builtinPresets, fixtureIds: () => c.fixtures, beat: () => c.beat });
+  const patternVoice = patternPlayer({
+    voices: manager, pattern: (id) => c.patterns[id] ?? null, fixtureIds: () => c.fixtures, resolve: (id) => presetById(id)?.spec ?? null,
+  });
+  const pads = new Pads({ voices: manager, store, lookup: () => builtinPresets, fixtureIds: () => c.fixtures, beat: () => c.beat, patternVoice });
   const advance = (ms) => {
     c.now += ms;
     c.beat += (ms / 60000) * c.bpm;
@@ -323,11 +329,13 @@ test('a sequencePattern pad is 409 while no `insertPattern` hook is installed', 
   assert.equal(m.size, 0);
 });
 
-test('a pattern pad is 409 while no pattern voice is installed, then plays as one voice with the pad\'s launch', (t) => {
-  const { voices: m, pads, put } = rig(t);
+test('a pattern pad plays as one voice with the pad\'s launch; no Pads is built without a pattern player', (t) => {
+  const { c, voices: m, pads, put, store } = rig(t);
   put(1, 5, pad({ kind: 'pattern', id: 'groove' }, { launch: 'once', quantise: 0.5, targets: [1] }));
-  assert.throws(() => pads.press(1, 5, 'tablet', 't'), refusedWith(409, /pattern/));
-  assert.throws(() => pads.toggle(1, 5), refusedWith(409, /pattern/));
+  assert.throws(() => new Pads({ voices: m, store, lookup: () => builtinPresets, fixtureIds: () => c.fixtures }), /pattern player/);
+  // A pattern not on the shelf is 404, and nothing plays.
+  assert.throws(() => pads.press(1, 5, 'tablet', 't'), refusedWith(404, /groove/));
+  assert.throws(() => pads.toggle(1, 5), refusedWith(404, /groove/));
   assert.equal(m.size, 0);
   // The sequencer's hook: the pad's targets, mode, grid and key, and no length, so the pattern's own plays.
   const asked = [];
@@ -345,6 +353,59 @@ test('a pattern pad is 409 while no pattern voice is installed, then plays as on
   assert.deepEqual([asked[2][1].mode, asked[2][1].owner, asked[2][1].token], ['hold', 'tablet', 'h']);
   pads.release(1, 5, 'tablet', 'h');
   assert.equal(pads.lit()[13], null, 'its release is the hold\'s, as any pad\'s');
+});
+
+const GLOW = { kind: 'energy.glow', params: {} };
+/** Six beats: a shared lane over the pad's fixtures and track slot 1 on the second of them. */
+const GROOVE = {
+  id: 'groove', name: 'Groove', lengthBeats: 6,
+  lanes: [
+    { kind: 'shared', slot: 0, clips: [{ startBeat: 0, lengthBeats: 4, presetId: 'ldj.FadeCycle', targets: 'lane', mute: false }] },
+    { kind: 'track', slot: 1, clips: [{ startBeat: 2, lengthBeats: 4, effect: GLOW, targets: 'lane', mute: false }] },
+  ],
+};
+
+test('the pattern player: one bundle voice over the pad\'s fixtures, a once lasting the bundle\'s length unless given one', (t) => {
+  const { c, voices: m, pads, put, advance } = rig(t, { bpm: 120 });
+  c.patterns.groove = GROOVE;
+  put(1, 5, pad({ kind: 'pattern', id: 'groove' }, { launch: 'once', quantise: 0, targets: [1, 2] }));
+  const v = pads.press(1, 5, 'tablet', 't');
+  assert.deepEqual([v.spec.kind, v.spec.params.patternId, v.spec.params.once], ['pattern.bundle', 'groove', true]);
+  assert.deepEqual(v.spec.params.table.clips.map((x) => [x.laneId, x.fixtureIds]), [['shared:0', [1, 2]], ['track:1', [2]]]);
+  assert.deepEqual(v.targets, [1, 2]);
+  assert.equal(v.untilMs - v.startedAtMs, 3000, 'six beats at 120 BPM');
+  advance(2999);
+  assert.equal(pads.lit()[13], v.id);
+  advance(1);
+  assert.equal(m.get(v.id), null);
+  assert.equal(pads.lit()[13], null);
+  const short = pads.once(1, 5, 300);
+  assert.equal(short.untilMs - short.startedAtMs, 300, 'a length given wins');
+
+  // Held, it plays its bundle round until released.
+  put(1, 5, pad({ kind: 'pattern', id: 'groove' }, { quantise: 0 }));
+  const held = pads.press(1, 5, 'tablet', 'h');
+  assert.deepEqual([held.mode, held.untilMs, held.spec.params.once], ['hold', null, false]);
+  pads.release(1, 5, 'tablet', 'h');
+  assert.equal(pads.lit()[13], null);
+  // A loop pad toggles it on and off.
+  put(1, 5, pad({ kind: 'pattern', id: 'groove' }, { launch: 'loop', quantise: 0 }));
+  const looped = pads.toggle(1, 5);
+  assert.deepEqual([looped.mode, looped.spec.params.once], ['latched', false]);
+  pads.toggle(1, 5);
+  assert.equal(m.get(looped.id), null);
+
+  // A rapid clip makes the voice wait for the acknowledgement (409), then it plays.
+  c.patterns.rapid = { ...GROOVE, id: 'rapid', lanes: [{ kind: 'shared', slot: 0, clips: [{ startBeat: 0, lengthBeats: 4, effect: { kind: 'energy.whiteStrobe', params: {} }, targets: 'lane', mute: false }] }] };
+  put(1, 6, pad({ kind: 'pattern', id: 'rapid' }, { quantise: 0 }));
+  assert.throws(() => pads.press(1, 6, 'tablet', 'r'), refusedWith(409, /acknowledgement/));
+  assert.equal(pads.lit()[14], null);
+  c.acknowledged = true;
+  assert.equal(pads.press(1, 6, 'tablet', 'r').spec.kind, 'pattern.bundle');
+  // A strobe clip is refused as the sequence refuses it.
+  c.patterns.strobe = { ...GROOVE, id: 'strobe', lanes: [{ kind: 'shared', slot: 0, clips: [{ startBeat: 0, lengthBeats: 4, effect: { kind: 'strobe', params: {} }, targets: 'lane', mute: false }] }] };
+  put(1, 7, pad({ kind: 'pattern', id: 'strobe' }, { quantise: 0 }));
+  assert.throws(() => pads.press(1, 7, 'tablet', 's'), refusedWith(409, /strobe/));
 });
 
 test('a strobe pad takes the strobe hook when installed and otherwise the Task 16 path', async (t) => {
@@ -430,6 +491,7 @@ async function serve(t) {
   const effectLibrary = new EffectLibrary(path.join(dir, 'effects.json')).load();
   const paletteStore = new PaletteStore(path.join(dir, 'palettes.json')).load();
   const padStore = new PadStore(padFile).load();
+  const sequenceStore = new SequenceStore(path.join(dir, 'sequences.json')).load();
   const idle = { onPlaybackUpdate() {}, onTrackChange() {}, getStatus: () => ({}), authenticated: false };
   const autoShow = {
     running: false, track: null, syncOffsetMs: 0, autoSyncMs: 0, analysis: null,
@@ -456,7 +518,7 @@ async function serve(t) {
     spotify: { ...idle, startPolling() {}, async getQueue() { return []; } },
     nowPlaying: idle,
     deezerSource: { ...idle, getQueue: () => [], updatePlayback() {}, updateQueue() {}, disconnect() {} },
-    prolink, autoShow, effectLibrary, paletteStore, padStore,
+    prolink, autoShow, effectLibrary, paletteStore, padStore, sequenceStore,
   });
   const applier = createApplier({
     midi, spotify: { localCallbackUrl: '', setLoopbackPort() {}, configure() {} }, smtc: { start() {}, stop() {} },
@@ -502,6 +564,49 @@ const FADE = preset('ldj.FadeCycle');
 const ids = () => voices.list().map((v) => v.id);
 /** The last `pads` the page was told, or undefined. */
 const toldPads = (heard) => heard.patches.filter((p) => p.d === 'pads' && p.set.pads).at(-1)?.set.pads;
+
+/** A fixture's colour channels and dimmer on the rig (null for one it lacks). */
+const lamp = (fixture) => {
+  const dmx = universes.getBuffer(fixture.universe ?? state.artnet.universe);
+  const { channelMap: ch } = getProfile(fixture);
+  return [ch.red, ch.green, ch.blue, ch.dimmer].map((k) => (k === undefined ? null : dmx[fixture.address - 1 + k]));
+};
+const onlyClip = (id, play) => ({ ...GROOVE, id, lanes: [{ kind: 'shared', slot: 0, clips: [{ startBeat: 0, lengthBeats: 6, ...play, targets: 'lane', mute: false }] }] });
+
+test('a pattern pad over REST plays its saved pattern on the pad\'s fixtures (200); release stops it; unknown 404; rapid 409 until acknowledged', async (t) => {
+  const s = await serve(t);
+  const [a, b] = state.fixtures;
+  applyPatch({ pattern: 'solid', colorA: 0, running: true, masterDimmer: 255, masterBlackout: false, paletteOverride: null });
+  renderFrame();
+  const look = [lamp(a), lamp(b)];
+  const saved = await s.call('POST', '/api/sequence/patterns', onlyClip('fade', { presetId: 'ldj.FadeCycle' }));
+  assert.ok(saved.status < 300, JSON.stringify(saved.body));
+  await s.call('PUT', '/api/pads/1/5', pad({ kind: 'pattern', id: 'fade' }, { quantise: 0, targets: [a.id] }));
+  assert.equal((await s.call('POST', '/api/pads/1/5/press')).status, 200);
+  const id = s.integrations.pads.lit()[13];
+  assert.deepEqual(renderInput().voices.filter((v) => v.id === id).map((v) => v.spec.kind), ['pattern.bundle'], 'one bundle voice');
+  renderFrame();
+  assert.notDeepEqual(lamp(a), look[0], 'its fixture lights');
+  assert.deepEqual(lamp(b), look[1], 'the other keeps the look');
+  assert.equal((await s.call('POST', '/api/pads/1/5/release')).status, 200);
+  assert.equal(s.integrations.pads.lit()[13], null);
+  assert.ok(!ids().includes(id));
+
+  // A pattern deleted from the shelf since: 404.
+  await s.call('DELETE', '/api/sequence/patterns/fade');
+  const gone = await s.call('POST', '/api/pads/1/5/press');
+  assert.deepEqual([gone.status, gone.body.error], [404, 'No such pattern: fade']);
+
+  // A rapid clip: 409 before the acknowledgement, 200 after.
+  await s.call('POST', '/api/sequence/patterns', onlyClip('rapid', { effect: { kind: 'energy.whiteStrobe', params: {} } }));
+  await s.call('PUT', '/api/pads/1/6', pad({ kind: 'pattern', id: 'rapid' }, { quantise: 0 }));
+  assert.equal((await s.call('POST', '/api/pads/1/6/press')).status, 409);
+  assert.equal(s.integrations.pads.lit()[14], null);
+  await s.call('POST', '/api/safety/acknowledge');
+  assert.equal((await s.call('POST', '/api/pads/1/6/press')).status, 200);
+  assert.ok(s.integrations.pads.lit()[14]);
+  await s.call('POST', '/api/pads/1/6/release');
+});
 
 test('PUT a pad entry persists and validates (unknown preset → 400)', async (t) => {
   const s = await serve(t);

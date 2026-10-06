@@ -944,3 +944,15 @@ test('the worker plays a pause and a stop from the snapshot, and takes a new tab
     await w.terminate();
   }
 });
+
+test('the beat the last frame was handed is what the detectors look a container\'s child up at, loaded or not', () => {
+  const { s } = rig();
+  assert.ok(Number.isNaN(s.lastBeat()), 'no frame yet, no beat');
+  const first = reading(7.25);
+  s.frame(first);
+  assert.strictEqual(s.lastBeat(), first.beatPos, 'with no sequence loaded');
+  s.load(sequence({ mode: 'playlist', lanes: [lane('rows')], clips: [clip('A', 'rows', 0, 4)] }));
+  const next = reading(9.5);
+  s.frame(next);
+  assert.strictEqual(s.lastBeat(), next.beatPos);
+});

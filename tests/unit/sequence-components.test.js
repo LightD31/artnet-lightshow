@@ -19,7 +19,7 @@ async function load() {
         export { render as html } from 'preact-render-to-string';
         export { h } from 'preact';
         export { store, librarySig } from './public-src/state.js';
-        export { Sequence, laneStack, moveClip, resizeClip, putSequence, automationStart, newClip, commandAs, createTextDraft, parseNumber } from './public-src/components/Sequence.jsx';
+        export { Sequence, laneStack, moveClip, resizeClip, putSequence, automationStart, newClip, commandAs, createTextDraft, parseNumber, beyondRangeNotice } from './public-src/components/Sequence.jsx';
         export { Matrix, MATRIX_MODES, createMatrixHolds } from './public-src/components/Matrix.jsx';
         export { drawRuler, drawClips } from './public-src/timeline-renderer.js';
       `,
@@ -361,4 +361,16 @@ test('matrix holds: each finger presses with its own token, renews, and releases
   holds.releaseAll();
   assert.deepStrictEqual(posted.at(-1)[0], 'release');
   assert.strictEqual(posted.at(-1)[1].colour, '#0000ff');
+});
+
+test('a kept take names the removed clips that reached beyond it', async () => {
+  const ui = await load();
+  const lanes = [{ id: 'a', name: 'Wash' }, { id: 'b', name: 'Bars' }];
+  assert.strictEqual(ui.beyondRangeNotice(undefined, lanes, 4), null);
+  assert.strictEqual(ui.beyondRangeNotice([], lanes, 4), null);
+  const text = ui.beyondRangeNotice([
+    { id: 'c1', laneId: 'a', startBeat: 6, lengthBeats: 8, beforeBeats: 2, afterBeats: 0 },
+    { id: 'c2', laneId: 'b', startBeat: 16, lengthBeats: 8, beforeBeats: 0, afterBeats: 3 },
+  ], lanes, 4);
+  assert.strictEqual(text, 'Replaced 2 clips that reached beyond the take: Wash from 2.3, 2 beats before; Bars from 5.1, 3 beats after');
 });

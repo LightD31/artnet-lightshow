@@ -32,7 +32,7 @@ export function attachSequenceRoutes(app: Express, ctx: RouteContext): void {
   };
 
   app.get('/api/sequence', (_req, res) => {
-    res.json({ ok: true, sequence: sequencer().current(), status: sequencer().status() });
+    res.json({ ok: true, sequence: sequencer().current(), table: sequencer().table(), status: sequencer().status() });
   });
 
   app.put('/api/sequence', (req, res) => {
@@ -189,8 +189,9 @@ export function attachSequenceRoutes(app: Express, ctx: RouteContext): void {
   // { keep }: kept, the take lands in the loaded sequence; otherwise it goes.
   app.post('/api/sequence/record/stop', (req, res) => {
     const keep = (req.body as { keep?: unknown } | undefined)?.keep === true;
-    const { added, removed } = sequencer().stopRecording(keep);
+    // A kept take also names the removed clips that reached outside its range.
+    const { added, removed, range, beyondRange } = sequencer().stopRecording(keep);
     ctx.integrations.broadcast();
-    res.json({ ok: true, added, removed, status: sequencer().status() });
+    res.json({ ok: true, added, removed, ...(range ? { range, beyondRange } : {}), status: sequencer().status() });
   });
 }

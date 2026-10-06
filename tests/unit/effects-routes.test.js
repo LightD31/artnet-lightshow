@@ -681,3 +681,12 @@ test('a Disco preset on stage runs the audio detectors on its own bands', async 
   const list = s.integrations.audio.features.bandList();
   for (const [lo, hi] of edges) assert.ok(list.some(([l, h]) => l === lo && h === hi), `${lo}-${hi}`);
 });
+
+test('the internal pattern bundle kind is in no family and no list, and a preset of it is refused with a 400', async (t) => {
+  const s = await serve(t);
+  const listed = (await s.call('GET', '/api/effects')).body;
+  assert.ok(!JSON.stringify(listed).includes('pattern.bundle'));
+  const params = { patternId: 'p', lengthBeats: 4, once: false, table: { revision: 0, lanes: [], clips: [] } };
+  const res = await s.call('POST', '/api/effects', { name: 'Bundle', spec: { kind: 'pattern.bundle', params } });
+  assert.equal(res.status, 400);
+});

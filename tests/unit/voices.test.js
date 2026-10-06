@@ -14,6 +14,8 @@ import { settings } from '../../src/server/settings.ts';
 import * as output from '../../src/server/output.ts';
 import { validateSpec } from '../../src/shared/effects/registry.ts';
 import { scopedLoopLength } from '../../src/shared/effects/hd.ts';
+import { bundleSpec } from '../../src/shared/effects/bundle.ts';
+import { seedFrom } from '../../src/shared/effects/hash.ts';
 
 const FADE = { kind: 'ldj.FadeCycle', params: { cadence: 2 } };
 const BLINDER = { kind: 'energy.blinder' };
@@ -530,4 +532,16 @@ test('disarm (apply.ts) stops every voice', (t) => {
   assert.equal(m.size, 1, 'a save that changed nothing does nothing');
   assert.equal(applier.disarmed(), 1);
   assert.equal(m.size, 0);
+});
+
+test('a pattern bundle voice: a rapid child holds it at 409 until acknowledged, a once launch plays the bundle length', (t) => {
+  const { m, c } = rig(t, { acknowledged: false });
+  const clip = (spec) => ({ id: '0:0', laneId: 'shared:0', fixtureIds: null, startBeat: 0, lengthBeats: 2, loopBeats: 2, spec: validateSpec(spec), seed: seedFrom('c'), mute: false });
+  const table = (spec) => ({ revision: 0, lanes: [{ id: 'shared:0', kind: 'shared', name: 'shared:0', mute: false, solo: false }], clips: [clip(spec)] });
+  const rapid = bundleSpec({ patternId: 'p', lengthBeats: 6, table: table({ ...FADE, rapidFlash: true }) }, true);
+  assert.throws(() => m.start(once({ spec: rapid })), (err) => err.status === 409 && /photosensitivity acknowledgement required/.test(err.message));
+  c.acknowledged = true;
+  const voice = m.start(once({ spec: rapid }));
+  assert.equal(voice.untilMs - voice.startedAtMs, 6 * 500);
+  assert.equal(lengthBeatsOf(bundleSpec({ patternId: 'p', lengthBeats: 3, table: table(FADE) }, true)), 3);
 });
