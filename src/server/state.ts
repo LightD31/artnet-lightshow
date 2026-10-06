@@ -192,6 +192,8 @@ function voicesChanged(): void {
   legacyEnergy.sync();
   // A latch kept under a strobe hold comes back when the hold ends.
   strobe.sync();
+  // The matrix board's voice stopped from outside takes its cells with it.
+  matrix.sync();
   mirrorEnergy();
   reconcileFreeClock();
   for (const fn of [...voiceListeners]) {

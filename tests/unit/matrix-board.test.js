@@ -155,3 +155,74 @@ test('released-token tombstones stay bounded and expire', (t) => {
   board.press('x', RED);
   assert.equal(board._released.size, 0, 'expired tombstones are cleared');
 });
+
+/** As `bench`, with the manager telling the board of every change, as the server wires it. */
+function wired(t, options) {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const c = { now: 1000, acknowledged: true, ...options };
+  let board = null;
+  const voices = new VoiceManager({
+    now: () => c.now, beatPos: () => 0, bpm: () => 120, acknowledged: () => c.acknowledged, anyRunning: () => false,
+    onChange: () => board?.sync(),
+  });
+  board = new MatrixBoard({ voices, now: () => c.now, acknowledged: () => c.acknowledged });
+  const advance = (ms) => { c.now += ms; t.mock.timers.tick(ms); };
+  const playing = () => voices.list().filter((v) => v.source === 'matrix');
+  return { c, voices, board, advance, playing };
+}
+
+test('letting go is never refused: with the acknowledgement taken back, held rapid cells stop playing, lapse and release as always', (t) => {
+  const { c, board, advance, playing } = wired(t);
+  board.setMode('pulses');
+  board.press('a', RED);
+  advance(600);
+  board.press('b', GREEN);
+  assert.equal(playing().length, 1);
+  c.acknowledged = false;
+  // The first lease runs out: no throw inside the timer, nothing rapid plays on, the other cell is still held.
+  advance(MATRIX_LEASE_MS - 600);
+  assert.deepStrictEqual(board.status(), { mode: 'pulses', colours: [GREEN], voice: null });
+  assert.equal(playing().length, 0);
+  // A renewal is a press, and a rapid press is refused; a release is not.
+  assert.throws(() => board.press('b', GREEN), (err) => err.status === 409);
+  assert.deepStrictEqual(board.release('b'), { mode: 'pulses', colours: [], voice: null });
+  // And a cell left alone lapses by itself.
+  c.acknowledged = true;
+  board.press('c', BLUE);
+  c.acknowledged = false;
+  advance(MATRIX_LEASE_MS);
+  assert.deepStrictEqual(board.status().colours, []);
+  // A mode that needs no acknowledgement plays on without it.
+  board.setMode('cycle');
+  board.press('d', RED);
+  assert.equal(playing().length, 1);
+  board.release('d');
+});
+
+test('the board\'s voice stopped from outside takes the cells with it, and a finger still down does not start it again', (t) => {
+  const { voices, board, advance, playing } = wired(t);
+  board.setMode('cycle');
+  board.press('a', RED);
+  board.press('b', GREEN);
+  assert.equal(playing().length, 1);
+  voices.stopAll();
+  assert.deepStrictEqual(board.status(), { mode: 'cycle', colours: [], voice: null }, 'stop-all, a disarm: the board is empty');
+  // The fingers are still down and renewing: ignored for as long as they keep at it.
+  for (let i = 0; i < 6; i++) {
+    advance(400);
+    assert.deepStrictEqual(board.press('a', RED).colours, []);
+  }
+  assert.equal(playing().length, 0);
+  // Lifted and pressed again: a new press plays.
+  board.release('a');
+  advance(MATRIX_LEASE_MS);
+  assert.deepStrictEqual(board.press('a', RED).colours, [RED]);
+  assert.equal(playing().length, 1);
+  // A finger that only went quiet for a lease may press again too.
+  advance(MATRIX_LEASE_MS);
+  assert.deepStrictEqual(board.press('b', GREEN).colours, [GREEN]);
+  // The board changing its own voice (a third colour restarts it) is not a stop from outside.
+  board.press('c', BLUE);
+  assert.deepStrictEqual(board.status().colours, [GREEN, BLUE]);
+  assert.equal(playing().length, 1);
+});

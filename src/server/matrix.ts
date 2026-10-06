@@ -53,6 +53,10 @@ export class MatrixBoard {
   declare _onChange: () => void;
   _cells: Cell[] = [];
   _released = new Map<string, number>();
+  /** Cells whose voice was stopped from outside: their presses are ignored until let go, or silent for a lease. */
+  _revoked = new Map<string, number>();
+  /** The board is changing its own voice: not a stop from outside. */
+  _busy = false;
   _mode: MatrixMode = 'pulses';
   _voiceId: string | null = null;
   _appliedKey: string | null = null;
@@ -75,6 +79,11 @@ export class MatrixBoard {
     const at = this._cells.findIndex((c) => c.token === token);
     this._pruneReleased();
     if (at < 0 && this._released.has(token)) return this.status();
+    // Stopped from outside (stop-all, a disarm): the finger still down does not start it again.
+    if (this._revoked.has(token)) {
+      this._revoked.set(token, until);
+      return this.status();
+    }
     if (at < 0 && this._cells.length >= MATRIX_MAX_CELLS) {
       throw new HttpError(400, `matrix: at most ${MATRIX_MAX_CELLS} cells at once`);
     }
@@ -89,7 +98,8 @@ export class MatrixBoard {
     this._released.delete(token);
     this._released.set(token, this._now() + MATRIX_LEASE_MS);
     if (this._released.size > MATRIX_TOMBSTONES) this._released.delete(this._released.keys().next().value as string);
-    return this._commit(this._cells.filter((c) => c.token !== token), this._mode);
+    this._revoked.delete(token);
+    return this._commit(this._cells.filter((c) => c.token !== token), this._mode, false);
   }
 
   setMode(mode: unknown): MatrixStatus {
@@ -99,7 +109,22 @@ export class MatrixBoard {
 
   /** Let every cell go at once (a disarm, a blackout). */
   clear(): MatrixStatus {
-    return this._commit([], this._mode);
+    return this._commit([], this._mode, false);
+  }
+
+  /**
+   * After any change to the voices: the board's voice stopped by something
+   * else (stop-all, a disarm) takes the cells with it, and the fingers still
+   * down are ignored until they lift.
+   */
+  sync(): void {
+    if (this._busy || !this._voiceId || this._voices.get(this._voiceId)) return;
+    const until = this._now() + MATRIX_LEASE_MS;
+    for (const { token } of this._cells) this._revoked.set(token, until);
+    this._voiceId = null;
+    this._appliedKey = null;
+    this._appliedMode = null;
+    this._commit([], this._mode, false);
   }
 
   _pruneReleased(): void {
@@ -108,20 +133,25 @@ export class MatrixBoard {
       if (until > now) break;
       this._released.delete(token);
     }
+    for (const [token, until] of this._revoked) if (until <= now) this._revoked.delete(token);
   }
 
   status(): MatrixStatus {
-    return { mode: this._mode, colours: this._cells.map((c) => c.colour), voice: this._voiceId };
+    return { mode: this._mode, colours: this._cells.map((c) => c.colour), voice: this._voiceId && this._voices.get(this._voiceId) ? this._voiceId : null };
   }
 
-  // A rapid mode before the acknowledgement is refused before anything changes.
-  _commit(cells: Cell[], mode: MatrixMode): MatrixStatus {
-    if (cells.length && !this._acknowledged() && requiresAcknowledgement(this._spec(cells, mode))) {
+  // A rapid mode before the acknowledgement is refused before anything
+  // changes. Letting go is never refused (`admit` false: a release, a lapsed
+  // lease, a clear): whatever happened to the acknowledgement since, a cell
+  // must be able to end.
+  _commit(cells: Cell[], mode: MatrixMode, admit = true): MatrixStatus {
+    if (admit && cells.length && !this._acknowledged() && requiresAcknowledgement(this._spec(cells, mode))) {
       throw new HttpError(409, ACKNOWLEDGEMENT_REQUIRED);
     }
     this._cells = cells;
     this._mode = mode;
-    this._apply();
+    this._busy = true;
+    try { this._apply(); } finally { this._busy = false; }
     this._schedule();
     this._onChange();
     return this.status();
@@ -142,13 +172,23 @@ export class MatrixBoard {
       return;
     }
     const spec = this._spec(this._cells, this._mode);
+    // The acknowledgement taken back with cells still held: nothing rapid plays on; the cells end with their fingers.
+    if (!this._acknowledged() && requiresAcknowledgement(spec)) {
+      this._cancelSolid();
+      if (this._voiceId) this._voices.stop(this._voiceId);
+      this._voiceId = null;
+      this._appliedKey = null;
+      this._appliedMode = null;
+      return;
+    }
     const key = canonical(spec.params);
     if (key === this._appliedKey && this._voiceId && this._voices.get(this._voiceId)) return;
     const now = this._now();
     if (this._mode === 'solid' && this._appliedMode === 'solid' && now - this._acceptedAt < SOLID_GUARD_MS) {
       this._solidWait ??= setTimeout(() => {
         this._solidWait = null;
-        this._apply();
+        this._busy = true;
+        try { this._apply(); } finally { this._busy = false; }
         this._onChange();
       }, this._acceptedAt + SOLID_GUARD_MS - now);
       return;
@@ -178,7 +218,7 @@ export class MatrixBoard {
     this._leaseWait = setTimeout(() => {
       this._leaseWait = null;
       const now = this._now();
-      this._commit(this._cells.filter((c) => c.until > now), this._mode);
+      this._commit(this._cells.filter((c) => c.until > now), this._mode, false);
     }, Math.max(0, first - this._now()));
   }
 }

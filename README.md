@@ -1614,7 +1614,9 @@ colour; touching cells (up to eight at once) builds one colour list, and the
 board plays it in one mode: `fireworks`, `flashes`, `pulses`, `cycle` or
 `solid`. Every change starts the board's one voice again with the new list;
 letting go of the last cell ends it. Its cells are held like a hold voice,
-and the fast modes need the acknowledgement.
+and the fast modes need the acknowledgement; letting go is never refused.
+Stopping every voice, or disarming, empties the board, and a finger still
+down starts nothing until it lifts and presses again.
 
 ---
 
