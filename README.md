@@ -1738,7 +1738,7 @@ removed clip that reached outside them with how far before and after. An
 empty take changes nothing.
 
 The live state's `sequence` carries what is loaded, its revision, the
-transport, the beat and bar, the clip on each lane, the loop and, while a
+transport, the beat and bar (and the bar's length in beats), the clip on each lane, the loop and, while a
 take runs, the take.
 
 ---

@@ -361,7 +361,7 @@ test('the live state carries the sequencer\'s status in a domain of its own', ()
   const sequencer = new Sequencer({ resolve });
   try {
     setSequenceProvider(() => sequencer.status());
-    const idle = { playing: false, paused: false, stopped: null, beat: 0, bar: 1, loop: null, error: null };
+    const idle = { playing: false, paused: false, stopped: null, beat: 0, bar: 1, beatsPerBar: 4, loop: null, error: null };
     assert.deepEqual(getLiveState().sequence, { loaded: null, revision: 0, mode: null, ...idle, lanes: [] });
     sequencer.load(sequence({ mode: 'playlist', lanes: [lane('a')] }));
     assert.deepEqual(getLiveState().sequence, { loaded: { id: 'set-1', name: 'Set one' }, revision: 1, mode: 'playlist', ...idle, lanes: [{ id: 'a', clip: null }] });

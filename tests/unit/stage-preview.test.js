@@ -75,6 +75,9 @@ test('now playing counts the beat within the bar from the sequence\'s own bar le
   const waltz = { pattern: 'solid', sequence: { loaded: { id: 's', name: 'Waltz' }, playing: true, bar: 2, beat: 5.5, loop: null } };
   assert.strictEqual(nowPlaying(waltz, 3), 'solid · Waltz bar 2 beat 3');
   assert.strictEqual(nowPlaying(waltz, 3), `solid · Waltz bar ${positionText(waltz.sequence, 3).replace('.', ' beat ')}`);
+  // As the stage calls it: the bar's length comes with the sequence's status.
+  assert.strictEqual(nowPlaying({ ...waltz, sequence: { ...waltz.sequence, beatsPerBar: 3 } }), 'solid · Waltz bar 2 beat 3');
+  assert.strictEqual(nowPlaying(waltz), 'solid · Waltz bar 2 beat 2', 'a status without one counts in four');
 });
 
 test('a held pad plays over the rehearsed timeline', () => {

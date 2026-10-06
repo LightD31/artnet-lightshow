@@ -54,9 +54,10 @@ export function liveVoiceEvents(voices) {
 
 /**
  * One line: the look, the pads, the strobe, the matrix, where the sequence is,
- * the override. `perBar` is the loaded sequence's bar length in beats.
+ * the override. The bar's length in beats comes with the sequence's status;
+ * `perBar` stands in for a server that does not send it.
  */
-export function nowPlaying(s, perBar = 4) {
+export function nowPlaying(s, perBar = (s.sequence && s.sequence.beatsPerBar) || 4) {
   const voices = (Array.isArray(s.voices) ? s.voices : []).filter((v) => !v.hidden);
   const pads = voices.filter((v) => v.tier !== 'strobe' && v.source !== 'matrix').map((v) => v.label);
   const parts = [s.pattern || 'No look'];

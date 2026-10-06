@@ -107,6 +107,8 @@ export interface SequenceStatus {
   stopped: 'hold' | 'black' | null;
   beat: number;
   bar: number;
+  /** The loaded sequence's bar, in beats (4 with none loaded): what `bar` counts in. */
+  beatsPerBar: number;
   loop: Sequence['loop'];
   lanes: { id: string; clip: string | null }[];
   error: SequenceError | null;
@@ -1623,6 +1625,7 @@ export class Sequencer {
       stopped: this._mode === 'stopped' ? this._asked : null,
       beat,
       bar,
+      beatsPerBar: seq ? barBeats(seq.timeSignature) : 4,
       loop: seq?.loop ? { ...seq.loop } : null,
       lanes: seq ? seq.lanes.map((l) => ({ id: l.id, clip: tops.get(l.id) ?? null })) : [],
       error: this._error ? { ...this._error } : null,
