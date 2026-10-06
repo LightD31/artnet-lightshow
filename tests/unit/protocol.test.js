@@ -9,7 +9,7 @@ import http from 'node:http';
 import { Server } from 'socket.io';
 import { io as connect } from 'socket.io-client';
 
-import { StateDiffer, createPublisher, domainOf, clockMoved, ROOM } from '../../src/server/protocol.ts';
+import { StateDiffer, createPublisher, domainOf, hasDomain, clockMoved, ROOM } from '../../src/server/protocol.ts';
 import { encodeDmxFrame, decodeDmxFrame } from '../../src/shared/dmx-frame.ts';
 import { attachSockets } from '../../src/server/sockets.ts';
 import { state, getLiveState, getDmxUniverses } from '../../src/server/state.ts';
@@ -263,4 +263,15 @@ test('a beat that moves as it should adds nothing to the broadcasts', async () =
     applyPatch({ masterDimmer: 255 });
     await s.close();
   }
+});
+
+test('every live-state key is in DOMAIN_OF', () => {
+  const missing = Object.keys(getLiveState()).filter((key) => !hasDomain(key));
+  assert.deepStrictEqual(missing, []);
+  // The integrations' keys and the deck's, which need a running server to appear.
+  const named = ['strobe', 'pads', 'sequence', 'voices', 'matrix', 'audio', 'paletteOverride', 'safety', 'effects', 'userPalettes',
+    'spotify', 'nowPlaying', 'prolink', 'live', 'cues', 'warm', 'midi', 'autoShow', 'activeSource', 'showOn'];
+  assert.deepStrictEqual(named.filter((key) => !hasDomain(key)), []);
+  assert.equal(domainOf('matrix'), 'look');
+  assert.equal(domainOf('strobe'), 'look');
 });

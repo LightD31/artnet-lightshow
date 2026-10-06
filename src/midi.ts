@@ -95,6 +95,14 @@ try {
 // surface cycling an effect the server no longer accepts — silently, since the
 // patch validator just drops an unknown id.
 const ENERGY_IDS = ENERGY_EFFECT_IDS;
+// Well inside the pads' 1200 ms hold lease.
+const PAD_RENEW_MS = 400;
+
+interface MidiPads {
+  press(bank: number, slot: number, owner: string, token: string): unknown;
+  release(bank: number, slot: number, owner: string, token: string): unknown;
+}
+interface HeldPad { bank: number; slot: number; owner: string; token: string; renew: ReturnType<typeof setInterval> }
 const STROBE_FN_IDS = STROBE_FUNCTION_IDS;
 
 // An armed learn that nobody completes would sit swallowing the next press for
@@ -194,11 +202,16 @@ class MidiController {
   declare _touchOf: Map<string, string>;
   declare _warnedSwitch: Set<string>;
   declare onRebind: ((from: number, to: number, binding: MidiBinding) => void) | null;
+  /** The deck's pads, for padPress (integrations sets it); null leaves those notes silent. */
+  declare pads: MidiPads | null;
+  declare _heldPads: Map<string, HeldPad>;
 
   constructor(stateRef: ShowState, applyFn: (patch: Record<string, unknown>) => unknown, tapFn: () => void) {
     this.state = stateRef;
     this.apply = applyFn;    // fn(patch) — same as socket 'set' event
     this.tap   = tapFn;       // fn() — trigger tap tempo
+    this.pads = null;
+    this._heldPads = new Map();
 
     this.input  = null;
     this.output = null;
@@ -356,8 +369,13 @@ class MidiController {
       // which control they mean, not asking for it to fire.
       if (velocity > 0 && this._captureLearn('notes', note, channel)) return;
 
+      if (velocity === 0 && this._releasePad(channel, note)) return;
       const binding = this._bindingFor('notes', note, channel);
       if (!binding) return;
+      if (binding.action === 'padPress') {
+        if (velocity > 0) this._safely(binding, () => this._pressPad(channel, note, binding));
+        return;
+      }
       if (velocity === 0) {
         // Note-off: release momentary actions
         if (binding.action === 'energyHold') this.apply({ energyOverride: null });
@@ -368,6 +386,7 @@ class MidiController {
 
     // Explicit Note Off for controllers that send it separately
     input.on('noteoff', ({ note, channel }) => {
+      if (this._releasePad(channel, note)) return;
       const binding = this._bindingFor('notes', note, channel);
       if (binding && binding.action === 'energyHold') {
         this.apply({ energyOverride: null });
@@ -886,7 +905,35 @@ class MidiController {
     } catch (_) { /* the port can vanish mid-show; feedback is not worth dying for */ }
   }
 
+  // The pad is captured at note-on, so the note-off releases that pad even
+  // after the map changed; a held note's repeat never presses it again.
+  _pressPad(channel: number, note: number, binding: MidiBinding): void {
+    const key = `${channel}:${note}`;
+    if (!this.pads || this._heldPads.has(key) || binding.bank === undefined || binding.slot === undefined) return;
+    const pad = { bank: binding.bank, slot: binding.slot, owner: `midi:pad:${key}`, token: `midi:${key}` };
+    const press = () => this.pads?.press(pad.bank, pad.slot, pad.owner, pad.token);
+    press();
+    // The pad's lease runs out unless renewed; a press of the same hold renews it.
+    const renew = setInterval(() => this._safely(binding, press), PAD_RENEW_MS);
+    renew.unref?.();
+    this._heldPads.set(key, { ...pad, renew });
+  }
+
+  _releasePad(channel: number, note: number): boolean {
+    const key = `${channel}:${note}`;
+    const held = this._heldPads.get(key);
+    if (!held) return false;
+    clearInterval(held.renew);
+    this._heldPads.delete(key);
+    this.pads?.release(held.bank, held.slot, held.owner, held.token);
+    return true;
+  }
+
   close(): void {
+    for (const key of [...this._heldPads.keys()]) {
+      const [channel, note] = key.split(':').map(Number);
+      this._releasePad(channel, note);
+    }
     this.cancelLearn('disconnected');
     // Forget what we sent: the next connection has to push the full state so
     // the faders fly to where the show is rather than staying where they lay.

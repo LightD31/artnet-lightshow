@@ -124,6 +124,11 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     voices, store: padStore ?? new PadStore(configFile('pads.json')).load(), lookup: () => presetLookup(library),
     fixtureIds: () => state.fixtures.map((f) => f.id), beat: () => conductor.peek().beatPos, strobe,
   });
+  // MIDI padPress notes hold the deck's pads under their own owner and token.
+  midi.pads = {
+    press: (bank, slot, owner, token) => pads.press(bank, slot, owner, token),
+    release: (bank, slot, owner, token) => pads.release(bank, slot, owner, token),
+  };
 
   // ─── The sequencer ──────────────────────────────────────────────────────
   // The shelf of saved sequences and the transport playing the loaded one.

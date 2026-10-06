@@ -14,6 +14,7 @@ import { HOLD_STROBE } from '../shared/look-math.ts';
 import { VoiceManager } from './voices.ts';
 import { EnergyHold } from './energy-hold.ts';
 import { Strobe, STROBE_VOICE_ID } from './strobe.ts';
+import { MatrixBoard } from './matrix.ts';
 import type { Settings } from './settings.ts';
 import type { ClockSource, TempoMode } from './conductor.ts';
 import type { Colour, Fixture, PixelMap, Profile, ShowDynamics } from '../types/rig.ts';
@@ -184,6 +185,8 @@ const voices = new VoiceManager({
 const legacyEnergy = new EnergyHold(() => {}, voices);
 // The manual strobe (strobe.ts): held, latched or burst, over the same manager.
 const strobe = new Strobe(voices, settings, safety);
+// The matrix board (matrix.ts): one voice from the held cells, over the same manager.
+const matrix = new MatrixBoard({ voices, acknowledged: () => safety.acknowledged() });
 
 function voicesChanged(): void {
   legacyEnergy.sync();
@@ -380,6 +383,11 @@ function setExtrasProvider(fn: () => Record<string, unknown>): void { extrasProv
 // `sequence`; null while no sequencer is registered.
 let sequenceProvider: () => unknown = () => null;
 
+/** The sequencer's status alone, for health. */
+function getSequenceStatus(): unknown {
+  return sequenceProvider();
+}
+
 function setSequenceProvider(fn: (() => unknown) | null | undefined): void {
   sequenceProvider = typeof fn === 'function' ? fn : () => null;
 }
@@ -459,6 +467,8 @@ function getLiveState() {
     safety: safety.status(),
     // The manual strobe: what plays as it, how, and its settings (strobe.ts).
     strobe: strobe.status(),
+    // The matrix board: its mode, the held colours, the voice playing them.
+    matrix: matrix.status(),
     autoIntensity: state.autoIntensity,
     autoSyncOffsetMs: state.autoSyncOffsetMs,
     autoSource: state.autoSource,
@@ -526,6 +536,7 @@ export {
   voices,
   legacyEnergy,
   strobe,
+  matrix,
   latchEnergy,
   onVoicesChange,
   freeClockRuns,
@@ -550,4 +561,5 @@ export {
   getDmxUniverses,
   setExtrasProvider,
   setSequenceProvider,
+  getSequenceStatus,
 };
