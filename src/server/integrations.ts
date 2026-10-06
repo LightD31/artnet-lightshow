@@ -28,7 +28,7 @@ import { EffectLibrary } from './effect-library.ts';
 import { PaletteStore } from './palette-store.ts';
 import { PadStore, Pads } from './pads.ts';
 import { presetLookup } from './routes/voices.ts';
-import { Sequencer } from './sequencer.ts';
+import { padTakeOf, sequenceBeatAhead, Sequencer } from './sequencer.ts';
 import { SequenceStore } from './sequence-store.ts';
 import { toHex } from '../shared/effects/palette.ts';
 import { configFile } from './config-dir.ts';
@@ -168,25 +168,28 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       admit: (spec) => safety.requireAcknowledged(spec),
       fixtureIds: () => state.fixtures.map((f) => f.id),
       pattern: (id): ReturnType<SequenceStore['getPattern']> => sequence.store.getPattern(id),
-      // A preset pad records as its preset on the pad's fixtures; other content does not record.
-      pad: (bank, slot) => {
-        const entry = pads.store.get(bank, slot);
-        if (entry.content?.kind !== 'preset') return null;
-        const found = presetLookup(library)(entry.content.id);
-        return found ? { presetId: entry.content.id, targets: entry.targets, lengthBeats: found.lengthBeats ?? 4 } : null;
-      },
+      // A preset pad records as its preset, a pattern pad as its bundle; the strobe and drops do not (padTakeOf).
+      pad: (bank, slot) => padTakeOf(pads.store.get(bank, slot), presetLookup(library)),
     }),
   };
   // The pads count in the conductor's beats, the sequence in its own: the
   // same distance from now on both.
-  const toSequenceBeat = (beat: number) => Math.max(0, sequence.sequencer.status().beat + beat - conductor.peek().beatPos);
+  const toSequenceBeat = (beat: number) => {
+    const at = sequence.sequencer.status();
+    return sequenceBeatAhead(at.beat, beat - conductor.peek().beatPos, at.loop);
+  };
+  // During a take the drop is staged with it (dropPattern).
   pads.insertPattern = (id, atBeat) => {
-    sequence.sequencer.insertPattern(id, toSequenceBeat(atBeat));
+    sequence.sequencer.dropPattern(id, toSequenceBeat(atBeat));
     broadcast();
   };
-  pads.onHit = ({ bank, slot, startBeat, endBeat }) => {
+  pads.onHit = ({ bank, slot, startBeat, endBeat, lengthMs }) => {
     if (!sequence.sequencer.recording()) return;
-    sequence.sequencer.onPadHit({ bank, slot, startBeat: toSequenceBeat(startBeat), endBeat: endBeat === undefined ? undefined : toSequenceBeat(endBeat) });
+    // An explicit length in ms counts in beats at the tempo now.
+    const lengthBeats = lengthMs === undefined ? undefined : (lengthMs * conductor.peek().bpm) / 60000;
+    sequence.sequencer.onPadHit({
+      bank, slot, startBeat: toSequenceBeat(startBeat), ...(endBeat === undefined ? {} : { endBeat: toSequenceBeat(endBeat) }), ...(lengthBeats === undefined ? {} : { lengthBeats }),
+    });
     broadcast();
   };
   // Read once a frame by the engine; its status rides the live state.

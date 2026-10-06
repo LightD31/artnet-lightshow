@@ -66,7 +66,7 @@ export type PatternVoiceHook = (id: string, launch: PadVoiceLaunch) => Voice;
 /** Drops a pattern into the loaded sequence at a beat; the sequencer installs it. */
 export type InsertPatternHook = (id: string, atBeat: number) => void;
 /** A pad launched (its grid beat) or a held one released (with its end), for the sequencer's punch recording. */
-export type PadHitHook = (hit: { bank: number; slot: number; startBeat: number; endBeat?: number }) => void;
+export type PadHitHook = (hit: { bank: number; slot: number; startBeat: number; endBeat?: number; lengthMs?: number }) => void;
 /** The manual strobe's hold, which the strobe installs: the strobe pad and voice-hold's `{ preset: 'strobe' }` both go through it. */
 export interface StrobeHook {
   hold(owner: string, token: string): Voice;
@@ -303,6 +303,8 @@ export class Pads {
   declare insertPattern: InsertPatternHook | undefined;
   declare onHit: PadHitHook | undefined;
   declare _holds: Map<string, number>;
+  // A latched loop's start, for the end its toggle-off records.
+  declare _latched: Map<number, number>;
   declare patternVoice: PatternVoiceHook | undefined;
   declare strobe: StrobeHook | undefined;
   declare _voices: VoiceManager;
@@ -322,6 +324,7 @@ export class Pads {
     this._beat = beat ?? (() => 0);
     this._records = [];
     this._holds = new Map();
+    this._latched = new Map();
     store.setAdmission((entry, before) => this._admit(entry, before));
   }
 
@@ -375,7 +378,7 @@ export class Pads {
     if (!content) return null;
     if (content.kind === 'sequencePattern') return this._insert(entry);
     if (content.kind === 'strobe') throw new HttpError(409, HELD_ONLY);
-    return this._hit(bank, slot, entry, this._launch(index, entry, 'once', null, ms));
+    return this._hit(bank, slot, entry, this._launch(index, entry, 'once', null, ms), ms);
   }
 
   /** Stop what the pad plays, or start it as a loop, whatever its launch. Null when it stopped. */
@@ -432,11 +435,16 @@ export class Pads {
     const current = this._alive().filter((r) => r.index === index).at(-1);
     if (current) {
       this._stop(current);
+      const startBeat = this._latched.get(index);
+      this._latched.delete(index);
+      if (startBeat !== undefined) this.onHit?.({ bank: Math.floor(index / PAD_SLOTS), slot: index % PAD_SLOTS, startBeat, endBeat: this._beat() });
       return null;
     }
     if (!entry.content) return null;
     if (entry.content.kind === 'sequencePattern') return this._insert(entry);
-    return this._launch(index, entry, 'latched');
+    const voice = this._launch(index, entry, 'latched');
+    if (this.onHit) this._latched.set(index, this._gridBeat(entry));
+    return voice;
   }
 
   _launch(index: number, entry: PadEntry, mode: VoiceMode, lease: { owner: string; token: string } | null = null, ms?: number): Voice {
@@ -492,8 +500,8 @@ export class Pads {
   }
 
   /** Tell the recording of a launch; a loop toggled off launched nothing. */
-  _hit(bank: number, slot: number, entry: PadEntry, voice: Voice | null): Voice | null {
-    if (voice && this.onHit) this.onHit({ bank, slot, startBeat: this._gridBeat(entry) });
+  _hit(bank: number, slot: number, entry: PadEntry, voice: Voice | null, ms?: number): Voice | null {
+    if (voice && this.onHit) this.onHit({ bank, slot, startBeat: this._gridBeat(entry), ...(ms !== undefined ? { lengthMs: ms } : {}) });
     return voice;
   }
 

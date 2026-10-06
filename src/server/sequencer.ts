@@ -3,13 +3,14 @@ import { z, ZodError } from 'zod';
 
 // The entry point registers every kind, so a clip's effect validates against it.
 import { BUILTIN_PALETTES, deepFreeze } from '../shared/effects/index.ts';
-import { pacesOwnFlashes, validateSpec } from '../shared/effects/registry.ts';
+import { pacesOwnFlashes, requiresAcknowledgement, validateSpec } from '../shared/effects/registry.ts';
 import { canonical } from '../shared/effects/layer.ts';
 import { hash01, pickNotLast, seedFrom } from '../shared/effects/hash.ts';
 import { resolvePalette, toHex } from '../shared/effects/palette.ts';
 import { barBeats, playingClips, resyncPosition, selectClips } from '../shared/effects/sequence.ts';
 import { validate, ValidationError } from './validation.ts';
 import { safety } from './safety.ts';
+import { lengthBeatsOf } from './voices.ts';
 import { HttpError } from '../errors.ts';
 import type { RefinementCtx } from 'zod';
 import type { MusicalTime } from './conductor.ts';
@@ -338,13 +339,78 @@ const recordSchema = z.object({
   quantise: z.number().min(0).max(64).default(0),
 }).strict();
 
-/** A pad launch while recording, in beats of the sequence; no end plays the pad's length. */
-export interface PadHit { bank: number; slot: number; startBeat: number; endBeat?: number }
-/** What a pad plays, as a clip can: a preset on the pad's fixtures. */
-export interface PadTake { presetId: string; targets: 'shared' | number[]; lengthBeats: number }
+/** A pad launch while recording, in beats of the sequence; no end plays an explicit length, else the pad's. */
+export interface PadHit { bank: number; slot: number; startBeat: number; endBeat?: number; lengthBeats?: number }
+/** What a pad plays, as a clip can: a preset on the pad's fixtures, or a pattern bundle on them. */
+export type PadTake = { presetId: string; targets: 'shared' | number[]; lengthBeats: number } | { patternId: string; targets: 'shared' | number[] };
 export interface RecordingStatus { mode: RecordOptions['mode']; fromBeat: number; quantise: number; hits: number }
-interface StagedHit { bank: number; slot: number; start: number; length: number; presetId: string; targets: 'shared' | number[]; open: boolean }
-interface Recording { mode: RecordOptions['mode']; fromBeat: number; quantise: number; sequenceId: string; take: StagedHit[] }
+// A pattern hit keeps its id; `drop` is a sequencePattern pad, which maps as insertion does.
+interface StagedHit {
+  bank: number; slot: number; start: number; length: number; targets: 'shared' | number[]; open: boolean;
+  presetId?: string; patternId?: string; pattern?: SequencePattern; drop?: boolean;
+}
+interface Recording { mode: RecordOptions['mode']; fromBeat: number; quantise: number; sequenceId: string; revision: number; take: StagedHit[] }
+
+/**
+ * What a pad records: a preset with its length by the voice-duration
+ * order, a pattern pad's bundle, or null (strobe, drops, empty pads).
+ */
+export function padTakeOf(
+  entry: { content: { kind: string; id: string } | null; targets: 'shared' | number[] },
+  lookup: (id: string) => { spec: EffectSpec; lengthBeats?: number | null } | null,
+): PadTake | null {
+  const content = entry.content;
+  if (content?.kind === 'pattern') return { patternId: content.id, targets: structuredClone(entry.targets) };
+  if (content?.kind !== 'preset') return null;
+  const found = lookup(content.id);
+  return found ? { presetId: content.id, targets: structuredClone(entry.targets), lengthBeats: lengthBeatsOf(found.spec, found.lengthBeats) } : null;
+}
+
+/** The sequence beat `ahead` beats from `beat`, wrapped by a loop the transport is inside. */
+export function sequenceBeatAhead(beat: number, ahead: number, loop: SequenceLoop | null | undefined): number {
+  const pos = Math.max(0, beat + ahead);
+  if (!loop?.on || beat < loop.startBeat - EPS || beat >= loop.endBeat - EPS || pos < loop.endBeat - EPS) return pos;
+  const span = loop.endBeat - loop.startBeat;
+  return Math.round((loop.startBeat + ((pos - loop.startBeat) % span)) * 1e9) / 1e9;
+}
+
+/** A pattern resolved for one pad voice: immutable lanes and clips over the voice's fixtures, its length, whether it waits for the acknowledgement. */
+export interface ResolvedBundle { patternId: string; lengthBeats: number; table: SequenceTable; rapid: boolean }
+
+/**
+ * A pattern as a pad voice plays it: shared lanes cover the pad's fixtures,
+ * track slot k is the k-th of them in patch order (a missing one is
+ * skipped), explicit clip fixtures intersect that coverage. A clip with no
+ * effect or one that paces its own flashes refuses (409).
+ */
+export function resolveBundle(pattern: SequencePattern, targets: 'shared' | readonly number[], fixtures: readonly number[], resolve: EffectResolver): ResolvedBundle {
+  const selected = targets === 'shared' ? [...fixtures] : fixtures.filter((id) => targets.includes(id));
+  const lanes: SequenceLane[] = [];
+  const clips: TableClip[] = [];
+  pattern.lanes.forEach((lane, li) => {
+    const fixtureId = lane.kind === 'track' ? selected[lane.slot] : undefined;
+    if (lane.kind === 'track' && fixtureId === undefined) return;
+    const laneId = `${lane.kind}:${lane.slot}`;
+    lanes.push({ id: laneId, kind: lane.kind, ...(fixtureId !== undefined ? { fixtureId } : {}), name: laneId, mute: false, solo: false });
+    lane.clips.forEach((c, ci) => {
+      let fixtureIds: number[] | null;
+      if (fixtureId !== undefined) fixtureIds = c.targets === 'lane' ? [fixtureId] : c.targets.filter((id) => id === fixtureId);
+      else if (targets === 'shared') fixtureIds = c.targets === 'lane' ? null : [...c.targets];
+      else fixtureIds = c.targets === 'lane' ? [...selected] : c.targets.filter((id) => selected.includes(id));
+      if (fixtureIds?.length === 0) return;
+      const spec = c.effect ?? resolve(c.presetId!);
+      if (!spec) throw new HttpError(409, `Pattern ${pattern.id}: no effect ${c.presetId}`);
+      const own = noOwnFlashes(spec);
+      if (own) throw new HttpError(409, `Pattern ${pattern.id}: ${own.message}`);
+      clips.push({
+        id: `${li}:${ci}`, laneId, fixtureIds, startBeat: c.startBeat, lengthBeats: c.lengthBeats, loopBeats: c.loopBeats ?? c.lengthBeats,
+        spec, seed: seedFrom(`bundle:${pattern.id}:${li}:${ci}`), mute: c.mute,
+      });
+    });
+  });
+  const rapid = clips.some((c) => requiresAcknowledgement(c.spec));
+  return deepFreeze({ patternId: pattern.id, lengthBeats: pattern.lengthBeats, table: { revision: 0, lanes, clips }, rapid });
+}
 
 /** What a clip's preset id plays: a validated spec, or null for none (or a pattern, which no clip can play). */
 export type EffectResolver = (presetId: string) => EffectSpec | null;
@@ -1307,7 +1373,7 @@ export class Sequencer {
     const opts = validate(recordSchema, raw, 'recording') as RecordOptions;
     if (!this._loaded) throw new HttpError(409, 'No sequence is loaded');
     if (this._record) throw new HttpError(409, 'A recording runs already');
-    this._record = { mode: opts.mode, quantise: opts.quantise, fromBeat: this.status().beat + opts.countInBeats, sequenceId: this._loaded.id, take: [] };
+    this._record = { mode: opts.mode, quantise: opts.quantise, fromBeat: this.status().beat + opts.countInBeats, sequenceId: this._loaded.id, revision: this._revision, take: [] };
     return this.recording()!;
   }
 
@@ -1323,7 +1389,7 @@ export class Sequencer {
    * long. An end for a pad whose last hit has none yet is its release. Null for
    * a hit in the count-in or a pad no clip can play.
    */
-  onPadHit({ bank, slot, startBeat, endBeat }: PadHit): StagedHit | null {
+  onPadHit({ bank, slot, startBeat, endBeat, lengthBeats }: PadHit): StagedHit | null {
     const rec = this._record;
     if (!rec) throw new HttpError(409, 'Nothing is recording');
     if (!Number.isFinite(startBeat) || startBeat < rec.fromBeat - EPS) return null;
@@ -1340,17 +1406,40 @@ export class Sequencer {
     }
     const content = this._pad(bank, slot);
     if (!content) return null;
-    const length = endBeat !== undefined && Number.isFinite(endBeat) ? lengthTo(endBeat, content.lengthBeats) : content.lengthBeats;
-    const hit = { bank, slot, start, length, presetId: content.presetId, targets: structuredClone(content.targets), open: endBeat === undefined };
+    // Explicit end or length first, then the pad's (a pattern's own length).
+    // A pattern is resolved now, as launched: a later edit or delete leaves the take as played.
+    const pattern = 'patternId' in content ? this._pattern(content.patternId) : null;
+    if ('patternId' in content && !pattern) return null;
+    const padLength = pattern ? pattern.lengthBeats : (content as { lengthBeats: number }).lengthBeats;
+    const length = endBeat !== undefined && Number.isFinite(endBeat) ? lengthTo(endBeat, padLength)
+      : lengthBeats !== undefined && lengthBeats > 0 && Number.isFinite(lengthBeats) ? lengthTo(startBeat + lengthBeats, padLength) : padLength;
+    const what = pattern ? { patternId: pattern.id, pattern: structuredClone(pattern) } : { presetId: (content as { presetId: string }).presetId };
+    const hit: StagedHit = { bank, slot, start, length, ...what, targets: structuredClone(content.targets), open: endBeat === undefined && lengthBeats === undefined };
     rec.take.push(hit);
     return { ...hit };
   }
 
   /**
+   * A sequencePattern pad: staged on a running take (at the grid line, as
+   * it falls), else inserted now. The clips added; none while staged.
+   */
+  dropPattern(id: string, atBeat: number): Clip[] {
+    const rec = this._record;
+    if (!rec || !Number.isFinite(atBeat) || atBeat < rec.fromBeat - EPS) return this.insertPattern(id, atBeat);
+    const pattern = this._pattern(id);
+    if (!pattern) throw new HttpError(404, `No such pattern: ${id}`);
+    const q = rec.quantise;
+    rec.take.push({ bank: -1, slot: -1, start: q > 0 ? Math.round(atBeat / q) * q : atBeat, length: 0, patternId: id, pattern: structuredClone(pattern), targets: 'shared', open: false, drop: true });
+    return [];
+  }
+
+  /**
    * End the take. Kept, it lands as one revision: a shared pad on the first
    * shared lane, fixtures on their tracks (the rest on the first shared
-   * lane); replace first removes the whole clips it lands on. Discarded, or
-   * empty, nothing changes. A refused keep leaves the take running.
+   * lane), pattern hits expanded in the same batch; replace first removes
+   * the whole clips it lands on. Discarded, or empty, nothing changes. A
+   * refused keep (another sequence or revision loaded, a pattern that no
+   * longer maps) leaves the take running.
    */
   stopRecording(keep: boolean): { added: Clip[]; removed: string[] } {
     const rec = this._record;
@@ -1360,13 +1449,19 @@ export class Sequencer {
       return { added: [], removed: [] };
     }
     if (this._loaded?.id !== rec.sequenceId) throw new HttpError(409, 'Another sequence was loaded during the take: stop it without keeping');
+    if (this._revision !== rec.revision) throw new HttpError(409, 'The sequence was edited during the take: stop it without keeping');
     const seq = this._editable();
     const taken = takenIds(seq);
+    const fixtures = this._fixtureIds();
     const added: Clip[] = [];
     const put = (h: StagedHit, laneId: string, targets: Clip['targets']) => added.push({
-      id: freshId(taken, 'c'), laneId, startBeat: h.start, lengthBeats: h.length, loopBeats: h.length, presetId: h.presetId, targets, mute: false,
+      id: freshId(taken, 'c'), laneId, startBeat: h.start, lengthBeats: h.length, loopBeats: h.length, presetId: h.presetId!, targets, mute: false,
     });
     for (const h of rec.take) {
+      if (h.patternId !== undefined) {
+        this._expand(seq, h, fixtures, taken, added);
+        continue;
+      }
       if (h.targets === 'shared') {
         put(h, sharedLane(seq, 0, taken), 'lane');
         continue;
@@ -1384,6 +1479,39 @@ export class Sequencer {
     this.load(seq);
     this._record = null;
     return structuredClone({ added, removed });
+  }
+
+  /**
+   * A staged pattern hit as clips: a drop maps as insertion (a missing slot
+   * refuses), a pad's bundle as its voice (track ordinals over the pad's
+   * fixtures in patch order, a missing one skipped; explicit clip fixtures
+   * intersect them). Released, the bundle repeats up to the release.
+   */
+  _expand(seq: Sequence, h: StagedHit, fixtures: readonly number[], taken: Set<string>, added: Clip[]): void {
+    const pattern = h.pattern!;
+    const copies = h.drop || h.open ? 1 : Math.max(1, Math.ceil(h.length / pattern.lengthBeats - EPS));
+    const selected = h.targets === 'shared' ? [...fixtures] : fixtures.filter((id) => (h.targets as number[]).includes(id));
+    for (let k = 0; k < copies; k++) {
+      const at = h.start + k * pattern.lengthBeats;
+      for (const lane of pattern.lanes) {
+        let laneId: string;
+        if (lane.kind === 'shared') laneId = sharedLane(seq, lane.slot, taken);
+        else if (h.drop) laneId = trackLane(seq, fixtures, lane.slot, taken);
+        else {
+          const fixture = selected[lane.slot];
+          if (fixture === undefined) continue;
+          laneId = trackLane(seq, fixtures, fixtures.indexOf(fixture), taken);
+        }
+        for (const c of lane.clips) {
+          let targets: Clip['targets'] = structuredClone(c.targets);
+          if (!h.drop && h.targets !== 'shared' && lane.kind === 'shared') {
+            targets = c.targets === 'lane' ? [...selected] : c.targets.filter((id) => selected.includes(id));
+            if (targets.length === 0) continue;
+          }
+          added.push({ ...structuredClone(c), id: freshId(taken, 'c'), laneId, startBeat: c.startBeat + at, targets });
+        }
+      }
+    }
   }
 
   /** A copy of the loaded sequence to edit, or 409 with none. */
