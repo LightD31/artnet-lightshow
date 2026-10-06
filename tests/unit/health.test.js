@@ -80,4 +80,8 @@ test('the health routes: the full answer under /api, a bare one for a service ma
   for (const key of ['version', 'node', 'pid', 'uptimeS', 'engine', 'memory', 'outputs', 'supervisor', 'log']) assert.ok(key in h, key);
   assert.deepEqual(h.auto, { status: 'idle', running: false, error: null });
   assert.equal(typeof health().uptimeS, 'number');
+  assert.equal(typeof h.counts.effects, 'number');
+  assert.ok(h.counts.effects > 0);
+  assert.equal(h.counts.voices, 0);
+  assert.deepEqual(h.counts.sequence, { loaded: 0, playing: 0 });
 });

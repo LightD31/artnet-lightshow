@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { state, voices, strobe } from '../state.ts';
+import { state, voices, strobe, matrix } from '../state.ts';
+import { matrixPressSchema, matrixReleaseSchema } from '../matrix.ts';
 import { builtinPresets, launchOf, targetsOf } from '../voices.ts';
 import { padIndex, restOwner, REST_TOKEN } from '../pads.ts';
 import { validate } from '../validation.ts';
@@ -193,6 +194,36 @@ export function attachVoiceRoutes(app: Express, ctx: RouteContext): void {
     const ms = /^\d+$/.test(req.params.ms) ? Number(req.params.ms) : NaN;
     strobe.burst(ms);
     res.json(strobeStatus());
+  });
+
+  // ── The matrix board ──────────────────────────────────────────────────────
+  // A cell is a token (the colour itself when none is given) under a lease
+  // that a repeated press renews; REST tokens live apart from the sockets'.
+  // Every change is told to the pages at once, a mode set with no cell held
+  // included: that one starts no voice to carry the news.
+  const restCell = (token: string) => `rest:${token}`;
+  const matrixAnswer = (status: ReturnType<typeof matrix.status>) => {
+    ctx.integrations.broadcast();
+    return { ok: true, ...status };
+  };
+
+  app.get('/api/matrix', (_req, res) => {
+    res.json({ ok: true, ...matrix.status() });
+  });
+
+  app.post('/api/matrix/press', (req, res) => {
+    const body = validate(matrixPressSchema, req.body ?? {}, 'matrix');
+    res.json(matrixAnswer(matrix.press(restCell(body.token ?? body.colour.toUpperCase()), body.colour)));
+  });
+
+  app.post('/api/matrix/release', (req, res) => {
+    const body = validate(matrixReleaseSchema, req.body ?? {}, 'matrix');
+    res.json(matrixAnswer(matrix.release(restCell(body.token ?? body.colour!.toUpperCase()))));
+  });
+
+  app.put('/api/matrix', (req, res) => {
+    const body = (req.body ?? {}) as { mode?: unknown };
+    res.json(matrixAnswer(matrix.setMode(body.mode)));
   });
 
   // Saved first; a running strobe takes them at once, and every page hears.

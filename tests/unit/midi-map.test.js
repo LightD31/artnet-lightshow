@@ -3,8 +3,10 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { EventEmitter } from 'node:events';
 
 import { MidiMapStore, DEFAULT_MAP, ACTIONS, defaultTypeFor, sameControl, mapSchema } from '../../src/server/midi-map.ts';
+import MidiController from '../../src/midi.ts';
 
 let dir;
 let file;
@@ -155,4 +157,43 @@ test('a snapshot cannot be used to mutate the live map', () => {
   snap.map.notes['99'] = { action: 'tap' };
 
   assert.strictEqual(s.get().notes['99'], undefined);
+});
+
+test('a padPress binding names its pad, and the pad is part of which control it is', () => {
+  assert.ok(ACTIONS.some((a) => a.id === 'padPress'));
+  assert.ok(ACTIONS.some((a) => a.id === 'energyHold') && ACTIONS.some((a) => a.id === 'cycleEnergyEffect'));
+  assert.ok(mapSchema.safeParse({ cc: {}, notes: { 40: { action: 'padPress', bank: 1, slot: 7 } } }).success);
+  assert.ok(!mapSchema.safeParse({ cc: {}, notes: { 40: { action: 'padPress', bank: 2, slot: 0 } } }).success);
+  assert.ok(!mapSchema.safeParse({ cc: {}, notes: { 40: { action: 'padPress' } } }).success, 'no pad, no binding');
+  assert.ok(!sameControl({ action: 'padPress', bank: 0, slot: 1 }, { action: 'padPress', bank: 0, slot: 2 }));
+  assert.ok(sameControl({ action: 'padPress', bank: 0, slot: 1 }, { action: 'padPress', bank: 0, slot: 1 }));
+});
+
+test('MIDI padPress maps a note to a pad press/release', () => {
+  const midi = new MidiController({ fixtures: [] }, () => {}, () => {});
+  const calls = [];
+  midi.pads = {
+    press: (bank, slot, owner, token) => calls.push(['press', bank, slot, owner, token]),
+    release: (bank, slot, owner, token) => calls.push(['release', bank, slot, owner, token]),
+  };
+  const input = new EventEmitter();
+  midi.input = input;
+  midi.setMap({ cc: {}, notes: { 40: { action: 'padPress', bank: 1, slot: 2 }, 41: { action: 'padPress', bank: 0, slot: 0 } } });
+  midi._bindInput();
+
+  input.emit('noteon', { note: 40, velocity: 100, channel: 0 });
+  input.emit('noteon', { note: 40, velocity: 100, channel: 0 });
+  assert.equal(calls.filter((c) => c[0] === 'press').length, 1, 'a repeated note-on never presses again');
+  const [, bank, slot, owner, token] = calls[0];
+  assert.deepStrictEqual([bank, slot], [1, 2]);
+
+  input.emit('noteon', { note: 41, velocity: 100, channel: 0 });
+  // The map changes under the held note: its release still finds the pad it pressed.
+  midi.setMap({ cc: {}, notes: {} });
+  input.emit('noteoff', { note: 40, channel: 0 });
+  assert.deepStrictEqual(calls.at(-1), ['release', 1, 2, owner, token]);
+  input.emit('noteon', { note: 41, velocity: 0, channel: 0 });
+  assert.deepStrictEqual(calls.at(-1).slice(0, 3), ['release', 0, 0]);
+  assert.equal(calls.length, 4);
+  midi.close();
 });
