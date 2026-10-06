@@ -65,6 +65,8 @@ export interface PadVoiceLaunch {
 export type PatternVoiceHook = (id: string, launch: PadVoiceLaunch) => Voice;
 /** Drops a pattern into the loaded sequence at a beat; the sequencer installs it. */
 export type InsertPatternHook = (id: string, atBeat: number) => void;
+/** A pad launched (its grid beat) or a held one released (with its end), for the sequencer's punch recording. */
+export type PadHitHook = (hit: { bank: number; slot: number; startBeat: number; endBeat?: number }) => void;
 /** The manual strobe's hold, which the strobe installs: the strobe pad and voice-hold's `{ preset: 'strobe' }` both go through it. */
 export interface StrobeHook {
   hold(owner: string, token: string): Voice;
@@ -299,6 +301,8 @@ export class Pads {
   declare store: PadStore;
   // The hooks later tasks install; until then their pads answer 409.
   declare insertPattern: InsertPatternHook | undefined;
+  declare onHit: PadHitHook | undefined;
+  declare _holds: Map<string, number>;
   declare patternVoice: PatternVoiceHook | undefined;
   declare strobe: StrobeHook | undefined;
   declare _voices: VoiceManager;
@@ -317,6 +321,7 @@ export class Pads {
     this._fixtureIds = fixtureIds;
     this._beat = beat ?? (() => 0);
     this._records = [];
+    this._holds = new Map();
     store.setAdmission((entry, before) => this._admit(entry, before));
   }
 
@@ -338,9 +343,11 @@ export class Pads {
     if (!content) return null;
     if (content.kind === 'sequencePattern') return this._insert(entry);
     if (content.kind === 'strobe') return this._holdStrobe(index, owner, token, this._targets(entry));
-    if (entry.launch === 'loop') return this._toggle(index, entry);
-    if (entry.launch === 'once') return this._launch(index, entry, 'once');
-    return this._launch(index, entry, 'hold', { owner, token });
+    if (entry.launch === 'loop') return this._hit(bank, slot, entry, this._toggle(index, entry));
+    if (entry.launch === 'once') return this._hit(bank, slot, entry, this._launch(index, entry, 'once'));
+    const voice = this._hit(bank, slot, entry, this._launch(index, entry, 'hold', { owner, token }));
+    if (voice && this.onHit) this._holds.set(`${index}|${owner}|${token}`, this._gridBeat(entry));
+    return voice;
   }
 
   /**
@@ -353,6 +360,10 @@ export class Pads {
     const record = this._alive().find((r) => r.index === index && r.owner === owner && r.token === token);
     if (!record) return false;
     this._stop(record);
+    const key = `${index}|${owner}|${token}`;
+    const startBeat = this._holds.get(key);
+    this._holds.delete(key);
+    if (startBeat !== undefined) this.onHit?.({ bank, slot, startBeat, endBeat: this._beat() });
     return true;
   }
 
@@ -364,7 +375,7 @@ export class Pads {
     if (!content) return null;
     if (content.kind === 'sequencePattern') return this._insert(entry);
     if (content.kind === 'strobe') throw new HttpError(409, HELD_ONLY);
-    return this._launch(index, entry, 'once', null, ms);
+    return this._hit(bank, slot, entry, this._launch(index, entry, 'once', null, ms));
   }
 
   /** Stop what the pad plays, or start it as a loop, whatever its launch. Null when it stopped. */
@@ -372,7 +383,7 @@ export class Pads {
     const index = padIndex(bank, slot);
     const entry = this.store.get(bank, slot);
     if (entry.content?.kind === 'strobe') throw new HttpError(409, HELD_ONLY);
-    return this._toggle(index, entry);
+    return this._hit(bank, slot, entry, this._toggle(index, entry));
   }
 
   /** Stop every voice a pad launched, the strobe pad's hold included; the others play on. How many. */
@@ -469,11 +480,21 @@ export class Pads {
   /** Drop the pad's pattern into the sequence at its next grid line (now, for a grid of 0). */
   _insert(entry: PadEntry): null {
     if (!this.insertPattern) throw new HttpError(409, 'No sequence to drop a pattern into on this server yet');
+    this.insertPattern(entry.content!.id, this._gridBeat(entry));
+    return null;
+  }
+
+  /** The pad's next grid line from now (now, for a grid of 0). */
+  _gridBeat(entry: PadEntry): number {
     const beat = this._beat();
     const q = entry.quantise;
-    const atBeat = q > 0 && Number.isFinite(beat) ? Math.ceil(beat / q - 1e-9) * q : beat;
-    this.insertPattern(entry.content!.id, atBeat);
-    return null;
+    return q > 0 && Number.isFinite(beat) ? Math.ceil(beat / q - 1e-9) * q : beat;
+  }
+
+  /** Tell the recording of a launch; a loop toggled off launched nothing. */
+  _hit(bank: number, slot: number, entry: PadEntry, voice: Voice | null): Voice | null {
+    if (voice && this.onHit) this.onHit({ bank, slot, startBeat: this._gridBeat(entry) });
+    return voice;
   }
 
   /** The pad's fixtures that are still patched: a fixture removed since is gone, never another's id. */

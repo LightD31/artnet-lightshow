@@ -161,7 +161,28 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
         }
       },
       admit: (spec) => safety.requireAcknowledged(spec),
+      fixtureIds: () => state.fixtures.map((f) => f.id),
+      pattern: (id): ReturnType<SequenceStore['getPattern']> => sequence.store.getPattern(id),
+      // A preset pad records as its preset on the pad's fixtures; other content does not record.
+      pad: (bank, slot) => {
+        const entry = pads.store.get(bank, slot);
+        if (entry.content?.kind !== 'preset') return null;
+        const found = presetLookup(library)(entry.content.id);
+        return found ? { presetId: entry.content.id, targets: entry.targets, lengthBeats: found.lengthBeats ?? 4 } : null;
+      },
     }),
+  };
+  // The pads count in the conductor's beats, the sequence in its own: the
+  // same distance from now on both.
+  const toSequenceBeat = (beat: number) => Math.max(0, sequence.sequencer.status().beat + beat - conductor.peek().beatPos);
+  pads.insertPattern = (id, atBeat) => {
+    sequence.sequencer.insertPattern(id, toSequenceBeat(atBeat));
+    broadcast();
+  };
+  pads.onHit = ({ bank, slot, startBeat, endBeat }) => {
+    if (!sequence.sequencer.recording()) return;
+    sequence.sequencer.onPadHit({ bank, slot, startBeat: toSequenceBeat(startBeat), endBeat: endBeat === undefined ? undefined : toSequenceBeat(endBeat) });
+    broadcast();
   };
   // Read once a frame by the engine; its status rides the live state.
   setSequenceSource((reading) => sequence.sequencer.frame(reading));

@@ -12,6 +12,10 @@ import type { RouteContext } from './common.ts';
  * loads a whole sequence, or `{ id }` of one on the shelf, and saving it
  * back is a PUT to /api/sequences/:id. Nothing here arms the outputs.
  *
+ * Hue Dynamics' patterns are kept on the shelf beside the sequences
+ * (/api/sequence/patterns), dropped into the loaded sequence at a beat and
+ * captured from it; a punch recording writes pad hits into it as clips.
+ *
  * Errors fall through to the error handler: 400 for a sequence or a value
  * that does not validate, 404 for an id nothing has, 409 for a control with
  * nothing loaded, a clip that waits for the photosensitivity
@@ -124,5 +128,69 @@ export function attachSequenceRoutes(app: Express, ctx: RouteContext): void {
   app.post('/api/sequence/loop', (req, res) => {
     sequencer().setLoop(req.body ?? null);
     answer(res);
+  });
+
+  // ─── Patterns ─────────────────────────────────────────────────────────────
+  app.get('/api/sequence/patterns', (_req, res) => res.json({ ok: true, patterns: shelf().listPatterns() }));
+
+  app.get('/api/sequence/patterns/:id', (req, res) => {
+    const pattern = shelf().getPattern(req.params.id);
+    if (!pattern) return res.status(404).json({ ok: false, error: 'No such pattern' });
+    res.json({ ok: true, pattern });
+  });
+
+  app.post('/api/sequence/patterns', (req, res) => {
+    const body = { ...((req.body ?? {}) as Record<string, unknown>) };
+    if (body.id === undefined) {
+      let id = newUserId();
+      while (shelf().getPattern(id)) id = newUserId();
+      body.id = id;
+    } else if (typeof body.id === 'string' && shelf().getPattern(body.id)) {
+      throw new HttpError(409, 'A pattern with that id is saved already: PUT /api/sequence/patterns/:id replaces it');
+    }
+    res.status(201).json({ ok: true, pattern: shelf().savePattern(body) });
+  });
+
+  app.put('/api/sequence/patterns/:id', (req, res) => {
+    if (!shelf().getPattern(req.params.id)) return res.status(404).json({ ok: false, error: 'No such pattern' });
+    res.json({ ok: true, pattern: shelf().savePattern({ ...((req.body ?? {}) as Record<string, unknown>), id: req.params.id }) });
+  });
+
+  app.delete('/api/sequence/patterns/:id', (req, res) => {
+    if (!shelf().removePattern(req.params.id)) return res.status(404).json({ ok: false, error: 'No such pattern' });
+    res.json({ ok: true });
+  });
+
+  // { id, atBeat }: the clips it added.
+  app.post('/api/sequence/insert-pattern', (req, res) => {
+    const { id, atBeat } = (req.body ?? {}) as { id?: unknown; atBeat?: unknown };
+    if (typeof id !== 'string') throw new HttpError(400, 'id names a saved pattern');
+    const clips = sequencer().insertPattern(id, atBeat as number);
+    ctx.integrations.broadcast();
+    res.json({ ok: true, clips, status: sequencer().status() });
+  });
+
+  // { fromBeat, toBeat, laneIds, name }: saved as a new pattern, with the range it took.
+  app.post('/api/sequence/capture-pattern', (req, res) => {
+    const { fromBeat, toBeat, laneIds, name } = (req.body ?? {}) as Record<string, unknown>;
+    if (name !== undefined && typeof name !== 'string') throw new HttpError(400, 'name is text');
+    const taken = sequencer().captureWithBounds(fromBeat as number, toBeat as number, laneIds as string[], name ?? '');
+    let { pattern } = taken;
+    while (shelf().getPattern(pattern.id)) pattern = { ...pattern, id: newUserId() };
+    res.status(201).json({ ok: true, pattern: shelf().savePattern(pattern), fromBeat: taken.fromBeat, toBeat: taken.toBeat });
+  });
+
+  // ─── Punch recording ──────────────────────────────────────────────────────
+  app.post('/api/sequence/record', (req, res) => {
+    sequencer().startRecording(req.body ?? {});
+    answer(res);
+  });
+
+  // { keep }: kept, the take lands in the loaded sequence; otherwise it goes.
+  app.post('/api/sequence/record/stop', (req, res) => {
+    const keep = (req.body as { keep?: unknown } | undefined)?.keep === true;
+    const { added, removed } = sequencer().stopRecording(keep);
+    ctx.integrations.broadcast();
+    res.json({ ok: true, added, removed, status: sequencer().status() });
   });
 }
