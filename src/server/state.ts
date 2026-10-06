@@ -486,6 +486,7 @@ function getLiveState() {
     profiles: { ...listProfiles() },
     // The bridges a Hue lamp's output can name, for the patch table and the
     // inspector to show the lamp's bridge by its label. Never the keys.
+    hueStrobe: settings.group('hue').strobe ?? 'flash',
     hueBridges: settings.group('hue').bridges.map(({ id, label, host, enabled }) => ({ id, label, host, enabled })),
     sequence: sequenceProvider(),
     ...extrasProvider(),

@@ -108,6 +108,8 @@ export interface VoiceSummary {
   mode: VoiceMode;
   tier: VoiceTier;
   kind: string;
+  /** The effect it plays, so the stage preview rehearses it as the rig plays it. */
+  spec: EffectSpec;
   targets: 'shared' | number[];
   launchSeq: number;
   /** Epoch milliseconds: when it starts (perhaps still ahead, on a grid line) and ends; null runs until stopped or released. */
@@ -486,7 +488,7 @@ export class VoiceManager {
   /** Every voice, in launch order, for the live state and GET /api/voices. Changes nothing. */
   list(): VoiceSummary[] {
     return [...this._records.values()].map(({ voice: v, wall }) => ({
-      id: v.id, source: v.source, label: v.label, mode: v.mode, tier: v.tier, kind: v.spec.kind,
+      id: v.id, source: v.source, label: v.label, mode: v.mode, tier: v.tier, kind: v.spec.kind, spec: v.spec,
       targets: v.targets ? [...v.targets] : 'shared', launchSeq: v.launchSeq,
       startedAt: Math.round(v.startedAtMs + wall), until: v.untilMs === null ? null : Math.round(v.untilMs + wall), hidden: v.hidden,
     }));

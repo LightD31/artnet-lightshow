@@ -47,12 +47,22 @@ test('a pattern from the library inserts in one tap', async ({ page, request }) 
 });
 
 test('a pad hit while recording is kept as a clip', async ({ page, request }) => {
+  // Pad 0/0 is the white strobe by default, and a strobe never becomes a clip: give it a
+  // preset a clip can play. The hit is refused (409) before the acknowledgement, so give that too.
+  expect((await request.post('/api/safety/acknowledge', { data: {} })).ok()).toBe(true);
+  const library = await (await request.get('/api/effects')).json();
+  const preset = library.builtin.find((p) => !p.legacy && !p.rapidFlash && !/strobe/i.test(`${p.id} ${p.kind || ''} ${(p.spec && p.spec.kind) || ''}`));
+  const { layout } = await (await request.get('/api/pads')).json();
+  const { bank: _b, slot: _s, ...pad } = layout.find((p) => p.bank === 0 && p.slot === 0);
+  const put = await request.put('/api/pads/0/0', { data: { ...pad, content: { kind: 'preset', id: preset.id }, launch: 'once' } });
+  expect(put.ok(), await put.text()).toBe(true);
   await open(page, 'sequence');
   await page.getByLabel('Count-in beats').selectOption('0');
   await page.getByRole('button', { name: 'Play' }).click();
   await page.getByRole('button', { name: 'Record' }).click();
   await expect(page.getByRole('button', { name: 'Keep take' })).toBeVisible();
-  await request.post('/api/pads/0/0/once', { data: {} });
+  const hit = await request.post('/api/pads/0/0/once', { data: {} });
+  expect(hit.ok(), await hit.text()).toBe(true);
   await page.waitForTimeout(600);
   await page.getByRole('button', { name: 'Keep take' }).click();
   await expect(page.locator('.seq-block')).not.toHaveCount(0);
