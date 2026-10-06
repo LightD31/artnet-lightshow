@@ -97,12 +97,20 @@ try {
 const ENERGY_IDS = ENERGY_EFFECT_IDS;
 // Well inside the pads' 1200 ms hold lease.
 const PAD_RENEW_MS = 400;
+// The longest a MIDI hold lasts without its note-off (a controller unplugged
+// mid-hold); a held strobe pad stops at safety.strobeMaxLatchSec instead.
+export const MIDI_HOLD_MAX_MS = 5 * 60 * 1000;
 
 interface MidiPads {
-  press(bank: number, slot: number, owner: string, token: string): unknown;
+  /** What the press launched: a hold is renewed, anything else is left alone. */
+  press(bank: number, slot: number, owner: string, token: string): { mode?: string; spec?: { kind?: string } } | null | undefined;
+  /** Extend a live hold's lease, never launch; whether one was renewed. */
+  renew(bank: number, slot: number, owner: string, token: string): boolean;
   release(bank: number, slot: number, owner: string, token: string): unknown;
+  /** The strobe's latch cap in ms. */
+  strobeMaxMs?(): number;
 }
-interface HeldPad { bank: number; slot: number; owner: string; token: string; renew: ReturnType<typeof setInterval> }
+interface HeldPad { bank: number; slot: number; owner: string; token: string; renew: ReturnType<typeof setInterval> | null }
 const STROBE_FN_IDS = STROBE_FUNCTION_IDS;
 
 // An armed learn that nobody completes would sit swallowing the next press for
@@ -205,6 +213,7 @@ class MidiController {
   /** The deck's pads, for padPress (integrations sets it); null leaves those notes silent. */
   declare pads: MidiPads | null;
   declare _heldPads: Map<string, HeldPad>;
+  declare _inputName: string | null;
 
   constructor(stateRef: ShowState, applyFn: (patch: Record<string, unknown>) => unknown, tapFn: () => void) {
     this.state = stateRef;
@@ -212,6 +221,7 @@ class MidiController {
     this.tap   = tapFn;       // fn() — trigger tap tempo
     this.pads = null;
     this._heldPads = new Map();
+    this._inputName = null;
 
     this.input  = null;
     this.output = null;
@@ -314,6 +324,7 @@ class MidiController {
 
     try {
       this.input = new easymidi.Input(inName);
+      this._inputName = inName;
       console.log(`[MIDI] Input:  ${inName}`);
 
       if (outName) {
@@ -906,24 +917,44 @@ class MidiController {
   }
 
   // The pad is captured at note-on, so the note-off releases that pad even
-  // after the map changed; a held note's repeat never presses it again.
+  // after the map changed; a held note's repeat never presses it again. A
+  // once fires and a loop toggles on the note-on alone; only a hold is kept,
+  // by a renewal that never relaunches, until the note-off, the ceiling, the
+  // hold ending (an off, a stop-all) or the input port going away.
   _pressPad(channel: number, note: number, binding: MidiBinding): void {
     const key = `${channel}:${note}`;
     if (!this.pads || this._heldPads.has(key) || binding.bank === undefined || binding.slot === undefined) return;
     const pad = { bank: binding.bank, slot: binding.slot, owner: `midi:pad:${key}`, token: `midi:${key}` };
-    const press = () => this.pads?.press(pad.bank, pad.slot, pad.owner, pad.token);
-    press();
-    // The pad's lease runs out unless renewed; a press of the same hold renews it.
-    const renew = setInterval(() => this._safely(binding, press), PAD_RENEW_MS);
-    renew.unref?.();
-    this._heldPads.set(key, { ...pad, renew });
+    const voice = this.pads.press(pad.bank, pad.slot, pad.owner, pad.token);
+    const held: HeldPad = { ...pad, renew: null };
+    this._heldPads.set(key, held);
+    if (!voice || voice.mode !== 'hold') return;
+    const strobeMs = voice.spec?.kind === 'strobe' ? this.pads.strobeMaxMs?.() : undefined;
+    const maxMs = strobeMs !== undefined && Number.isFinite(strobeMs) && strobeMs > 0 ? strobeMs : MIDI_HOLD_MAX_MS;
+    let ticks = 0;
+    held.renew = setInterval(() => this._safely(binding, () => {
+      ticks++;
+      const renewed = ticks * PAD_RENEW_MS < maxMs && !this._portGone() && !!this.pads?.renew(pad.bank, pad.slot, pad.owner, pad.token);
+      if (!renewed) this._releasePad(channel, note);
+    }), PAD_RENEW_MS);
+    held.renew.unref?.();
+  }
+
+  /** Whether the open input port has left the port list (a controller unplugged), read fresh. */
+  _portGone(): boolean {
+    if (!easymidi || !this._inputName) return false;
+    try {
+      return !easymidi.getInputs().includes(this._inputName);
+    } catch (_) {
+      return true;
+    }
   }
 
   _releasePad(channel: number, note: number): boolean {
     const key = `${channel}:${note}`;
     const held = this._heldPads.get(key);
     if (!held) return false;
-    clearInterval(held.renew);
+    if (held.renew) clearInterval(held.renew);
     this._heldPads.delete(key);
     this.pads?.release(held.bank, held.slot, held.owner, held.token);
     return true;
@@ -943,6 +974,7 @@ class MidiController {
     if (this.input)  { try { this.input.close();  } catch (_) {} }
     if (this.output) { try { this.output.close(); } catch (_) {} }
     this.enabled = false;
+    this._inputName = null;
     this._cachedPorts = null;
   }
 }

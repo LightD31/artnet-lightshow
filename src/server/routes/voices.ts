@@ -118,8 +118,10 @@ export function attachVoiceRoutes(app: Express, ctx: RouteContext): void {
   // outside: HA presses once or toggles (it cannot hold), Companion and the
   // pages hold over the socket. An empty pad answers 204 and plays nothing.
   // A REST hold is leased to the pad's REST owner under the caller's token,
-  // or REST_TOKEN: pressing again within the lease renews it, and a bare
-  // release lets go of only the bare press's hold.
+  // or REST_TOKEN: renew keeps it (as the socket's renew: it extends a live
+  // lease and never launches, so a once or a loop is not fired again), and a
+  // bare release lets go of only the bare press's hold. A press always
+  // launches as the pad says; pressed again within the lease, a hold renews.
   const pads = () => {
     // Read when a request comes, as the library is: a stand-in may have none.
     if (!ctx.integrations.pads) throw new HttpError(409, 'No pads on this server');
@@ -148,10 +150,20 @@ export function attachVoiceRoutes(app: Express, ctx: RouteContext): void {
     res.json({ ok: true, id: voice?.id ?? null, token });
   });
 
+  // A live hold this pad's press launched under the token gets another lease; false for none (a once, a loop, a hold ended).
+  app.post('/api/pads/:bank/:slot/renew', (req, res) => {
+    const { bank, slot } = padAt(req);
+    pads();
+    res.json({ ok: true, renewed: voices.renew(restOwner(bank, slot), tokenOf(req)) });
+  });
+
   // The hold this pad's press launched goes, whatever the pad holds now.
   app.post('/api/pads/:bank/:slot/release', (req, res) => {
     const { bank, slot } = padAt(req);
-    const released = pads().release(bank, slot, restOwner(bank, slot), tokenOf(req));
+    const token = tokenOf(req);
+    const released = pads().release(bank, slot, restOwner(bank, slot), token);
+    // A hold a stop ended: its token is fresh again (voices.ts).
+    voices.release(restOwner(bank, slot), token);
     if (!released && !pads().entry(bank, slot).content) return res.status(204).end();
     res.json({ ok: true, released });
   });

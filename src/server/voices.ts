@@ -170,6 +170,7 @@ function wait(ms: number, fire: () => void): Wait {
 }
 
 const bad = (message: string) => new HttpError(400, message);
+const revokedKey = (owner: string, token: unknown): string => JSON.stringify([owner, token]);
 const positive = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0;
 
 /** What makes a press of the same hold the same launch: everything a launch is, the lease aside. */
@@ -271,6 +272,8 @@ export class VoiceManager {
   declare _strobeLatchMs: () => number | undefined;
   declare _records: Map<string, VoiceRecord>;
   declare _seq: number;
+  /** Holds a stop ended, by owner and token: the lease end a holder still renewing keeps pushing on. */
+  declare _revoked: Map<string, number>;
 
   constructor({ now, beatPos, bpm, reading, onChange, acknowledged, anyRunning, wallNow, strobeLatchMs }: VoiceManagerOptions) {
     this._now = now;
@@ -282,6 +285,7 @@ export class VoiceManager {
     this._strobeLatchMs = strobeLatchMs ?? (() => undefined);
     this._records = new Map();
     this._seq = 0;
+    this._revoked = new Map();
   }
 
   /** How many voices there are, the ones still waiting for their grid line and the hidden ones included. */
@@ -328,6 +332,8 @@ export class VoiceManager {
     const launch = launchKey(spec, targets, v.tier, v.source, label, v.key ?? null, v.id ?? null, !!v.holdsGrid);
 
     const now = this._now();
+    // A stopped hold pressed again under its old token is its holder renewing: refused until let go, or a lease's silence.
+    if (v.mode === 'hold' && this._isRevoked(owner!, v.token, now)) throw new HttpError(409, 'voice: that hold was stopped; let go and press again');
     const held = v.mode === 'hold' ? this._holdOf(owner!, v.token) : null;
     // The same press again renews it; a lease already run out is no longer there to renew.
     if (held && held.launch === launch && held.leaseUntil !== null && now < held.leaseUntil) {
@@ -385,20 +391,29 @@ export class VoiceManager {
     return this._view(record);
   }
 
-  /** Keep a hold alive for another HOLD_TIMEOUT_MS. Only its owner and token renew it; a lease run out is gone. */
-  renew(owner: string, token: unknown): void {
-    const record = this._holdOf(owner, token);
-    if (!record) return;
+  /**
+   * Keep a live hold alive for another HOLD_TIMEOUT_MS; never launches.
+   * Only its owner and token renew it; a lease run out or a hold stopped is
+   * gone. Whether one was renewed.
+   */
+  renew(owner: string, token: unknown): boolean {
     const now = this._now();
+    const record = this._holdOf(owner, token);
+    if (!record) {
+      this._isRevoked(owner, token, now);
+      return false;
+    }
     if (record.leaseUntil !== null && now >= record.leaseUntil) {
       if (this._end(record)) this._changed();
-      return;
+      return false;
     }
     this._renewRecord(record, now);
+    return true;
   }
 
   /** Let a hold go. Another owner's or token's release does nothing. */
   release(owner: string, token: unknown): void {
+    this._revoked.delete(revokedKey(owner, token));
     const record = this._holdOf(owner, token);
     if (record && this._end(record)) this._changed();
   }
@@ -412,6 +427,7 @@ export class VoiceManager {
   stop(id: string): boolean {
     const record = this._records.get(id);
     if (!record || !this._end(record)) return false;
+    this._revoke(record);
     this._changed();
     return true;
   }
@@ -424,7 +440,12 @@ export class VoiceManager {
   /** Stop the voices `pred` picks; how many. */
   stopWhere(pred: (v: Voice) => boolean): number {
     let n = 0;
-    for (const record of [...this._records.values()]) if (pred(this._view(record)) && this._end(record)) n++;
+    for (const record of [...this._records.values()]) {
+      if (pred(this._view(record)) && this._end(record)) {
+        this._revoke(record);
+        n++;
+      }
+    }
     if (n) this._changed();
     return n;
   }
@@ -529,6 +550,22 @@ export class VoiceManager {
   /** Where a voice ends: its own end or its lease's, whichever comes first; Infinity for neither. */
   _endOf(record: VoiceRecord): number {
     return Math.min(record.voice.untilMs ?? Infinity, record.leaseUntil ?? Infinity);
+  }
+
+  /** A live hold a stop ended: its holder's renewals and presses under that token are refused for now. */
+  _revoke(record: VoiceRecord): void {
+    if (record.voice.mode !== 'hold' || record.voice.owner === null || record.leaseUntil === null) return;
+    const now = this._now();
+    if (now < record.leaseUntil) this._revoked.set(revokedKey(record.voice.owner, record.token), now + HOLD_TIMEOUT_MS);
+  }
+
+  /** Whether owner and token name a stopped hold still being renewed; each attempt extends it by a lease. */
+  _isRevoked(owner: string, token: unknown, now: number): boolean {
+    for (const [key, until] of this._revoked) if (now >= until) this._revoked.delete(key);
+    const key = revokedKey(owner, token);
+    if (!this._revoked.has(key)) return false;
+    this._revoked.set(key, now + HOLD_TIMEOUT_MS);
+    return true;
   }
 
   _holdOf(owner: string, token: unknown): VoiceRecord | null {

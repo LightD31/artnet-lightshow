@@ -132,7 +132,9 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   // MIDI padPress notes hold the deck's pads under their own owner and token.
   midi.pads = {
     press: (bank, slot, owner, token) => pads.press(bank, slot, owner, token),
-    release: (bank, slot, owner, token) => pads.release(bank, slot, owner, token),
+    renew: (_bank, _slot, owner, token) => voices.renew(owner, token),
+    release: (bank, slot, owner, token) => { pads.release(bank, slot, owner, token); voices.release(owner, token); },
+    strobeMaxMs: () => settings.get('safety.strobeMaxLatchSec') * 1000,
   };
 
   // ─── The sequencer ──────────────────────────────────────────────────────

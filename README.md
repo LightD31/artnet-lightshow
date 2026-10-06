@@ -1598,9 +1598,16 @@ list of fixture ids. What a pad plays depends on its content:
 
 A pad is pressed and released (hold), toggled (loop) or fired once, from
 REST, the `voice-hold` socket event, MIDI (the `padPress` action with a
-bank and a slot, held while the note is down) and Companion (pad buttons that
-hold while pressed, and a strobe burst of 100–30,000 ms). An empty pad answers
-204.
+bank and a slot) and Companion (pad buttons, and a strobe burst of
+100–30,000 ms). MIDI and Companion press a pad once and, for a `hold` pad
+only, renew it until the note-off or the button's release; a `loop` pad
+toggles on the press and a `once` pad fires on it, and neither hears the
+release. A renewal only extends a live hold, never launches: a hold ended by
+`POST /api/strobe/off` or `DELETE /api/voices` stays ended, and a press under
+its old token answers 409 until it is let go or 1.2 s pass without a word
+from its holder. A MIDI hold with no note-off stops when the controller's
+input port leaves the port list, at `safety.strobeMaxLatchSec` for the
+strobe pad, and after 5 minutes for any other pad. An empty pad answers 204.
 
 **The matrix board** — after Light DJ's matrix strobe maker. Each cell is a
 colour; touching cells (up to eight at once) builds one colour list, and the
@@ -1665,10 +1672,13 @@ times a second, whatever asks for it, and Flash Limit, when on, still holds
 the rig as a whole to three large flashes a second. Ways to run it:
 
 - **Hold** — the strobe pad, or `voice-hold` with `{ preset: 'strobe' }`:
-  as long as it is held and renewed.
+  as long as it is held and renewed. Over a latch, the latch stays
+  underneath, hidden, and comes back when the hold is let go or its lease
+  runs out, still ending at its own cap.
 - **Burst** — `POST /api/strobe/burst/:ms`, 100 to 30,000 ms, once.
 - **Latch** — `POST /api/strobe/on`. A latch ends on `POST /api/strobe/off`,
-  on `POST /api/energy/off`, or at the cap, `safety.strobeMaxLatchSec`
+  on `POST /api/energy/off`, on a burst, on `DELETE /api/voices`, or at the
+  cap, `safety.strobeMaxLatchSec`
   (60 s by default; lowering it cuts a latch already running). A scene, cue,
   MIDI note or the auto show clearing the energy does not end it. A latched
   voice of kind `strobe` started any other way (`POST /api/voices`) carries
@@ -2700,7 +2710,7 @@ A refused effect for want of the acknowledgement answers
 | DELETE | `/api/voices/:id` · `/api/voices` | Stop one (404 `No such voice`) · all (`{ ok, stopped }`) |
 | GET · PUT | `/api/pads` | The layout and the lit pads (`{ layout, lit }`) · a whole layout (`{ pads }`) |
 | PUT | `/api/pads/:bank/:slot` | One pad's fields (bank 0–1, slot 0–7) |
-| POST | `/api/pads/:bank/:slot/press` · `/release` | Hold a pad from REST (`{ token? }` or `?token=`, default `rest`) and let it go; the same press within 1.2 s renews the hold |
+| POST | `/api/pads/:bank/:slot/press` · `/renew` · `/release` | Press a pad from REST (`{ token? }` or `?token=`, default `rest`), keep its hold, let it go. `renew` within 1.2 s extends a live hold and never launches (`{ renewed }`, false for a `once`, a `loop` or a hold ended); the same press within 1.2 s also renews a hold |
 | POST | `/api/pads/:bank/:slot/toggle` | Start or stop a pad as a loop |
 | POST | `/api/pads/:bank/:slot/once` | Fire it once (`?ms=` for a length) |
 | GET | `/api/strobe` | `{ active, mode, settings }`, as every strobe route answers |
