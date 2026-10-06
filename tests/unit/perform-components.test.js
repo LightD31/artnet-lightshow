@@ -215,6 +215,21 @@ test('a press the server refused unlights and stops renewing; the pad held befor
   t.p.dispose();
 });
 
+test('a refusal that names its press clears that one, whichever came later; an older press of the same pad clears nothing', () => {
+  const t = presses();
+  t.p.press(ui.padKey(0, 0), target(0, 0), { pointer: 1 });
+  const first = t.sent.findLast((m) => m.action === 'press').token;
+  t.p.press(ui.padKey(0, 2), target(0, 2), { pointer: 2 });
+  // The refusal of the first press arrives after the second is down.
+  t.holds.refuse(first);
+  assert.deepStrictEqual(t.holds.held(), ['p0-2'], 'the newer press stays');
+  // Pressed again, then the old refusal arrives a second time: the new press of that pad is not it.
+  t.p.press(ui.padKey(0, 0), target(0, 0), { pointer: 3 });
+  t.holds.refuse(first);
+  assert.deepStrictEqual(t.holds.held().sort(), ['p0-0', 'p0-2']);
+  t.p.dispose();
+});
+
 const CATALOGUE_ROWS = [
   { id: 'energy.whiteStrobe', rapidFlash: true }, { id: 'energy.glow', rapidFlash: false }, { id: 'upFlash', rapidFlash: true }, { id: 'upCalm' },
 ];

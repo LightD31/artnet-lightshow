@@ -55,14 +55,24 @@ export function createVoiceHolds(emit) {
       const id = ++sequence;
       const control = createHoldControl((payload) => emit({ action: payload.action, token: `${id}:${payload.token}`, ...target }));
       if (!control.press()) return false;
-      holds.set(key, { control });
+      holds.set(key, { control, id });
       newest = key;
       return true;
     },
     release,
     releaseAll() { for (const key of [...holds.keys()]) release(key); },
-    // The server's refusal carries no token; it answers the newest press.
-    refuse() { if (newest !== null) release(newest); newest = null; },
+    // The server's refusal names the press it refused by its token; a newer
+    // press on that pad, or on another, stays. One without a token (an older
+    // server) answers the newest press.
+    refuse(token) {
+      if (typeof token === 'string') {
+        const id = Number(token.split(':')[0]);
+        for (const [key, hold] of holds) if (hold.id === id) { release(key); break; }
+        return;
+      }
+      if (newest !== null) release(newest);
+      newest = null;
+    },
     held() { return [...holds.keys()]; },
     onEnd(listener) { ended.add(listener); return () => ended.delete(listener); },
   };

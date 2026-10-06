@@ -279,7 +279,8 @@ function attachSockets(io: Server, { midi, integrations }: {
         else if (action === 'renew') voices.renew(socket.id, token);
         else if (action === 'release') releaseVoice(socket.id, token, payload, pads);
       } catch (err) {
-        socket.emit('error-msg', { source: 'voice-hold', message: messageOf(err) });
+        // The token says which press was refused: a page may have a newer one down already.
+        socket.emit('error-msg', { source: 'voice-hold', token, message: messageOf(err) });
       }
     });
 

@@ -217,9 +217,9 @@ export { toast };
 //
 // The messages are written for a person (they name the fixture and say what the
 // limit is), so they go out as-is.
-socket.on('error-msg', ({ source, message }) => {
+socket.on('error-msg', ({ source, message, token }) => {
   // A refused hold must not stay lit and renewing.
-  if (source === 'voice-hold') voiceHolds.refuse();
+  if (source === 'voice-hold') voiceHolds.refuse(token);
   if (message) toast.error(message);
 });
 

@@ -649,6 +649,7 @@ test('the strobe pad and voice-hold { preset: "strobe" } go through the Strobe: 
   socket.emit('voice-hold', { action: 'press', token: 'q', effect: { preset: 'strobe' } });
   await until(() => heard.errors.length === 2, 'both refused');
   assert.deepEqual(heard.errors.map((e) => e.message), [ACKNOWLEDGEMENT_REQUIRED, ACKNOWLEDGEMENT_REQUIRED]);
+  assert.deepEqual(heard.errors.map((e) => [e.source, e.token]).sort(), [['voice-hold', 'p'], ['voice-hold', 'q']], 'each refusal names its press');
   assert.deepEqual(ids(), []);
 
   await s.call('POST', '/api/safety/acknowledge');
