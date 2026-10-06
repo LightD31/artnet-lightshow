@@ -20,7 +20,7 @@ import { settings } from '../../src/server/settings.ts';
 import * as universes from '../../src/server/universes.ts';
 import { getProfile, BUILTIN_PROFILE_ID } from '../../src/server/profiles.ts';
 import { Sequencer } from '../../src/server/sequencer.ts';
-import { Pads, PadStore } from '../../src/server/pads.ts';
+import { Pads, PadStore, patternPlayer } from '../../src/server/pads.ts';
 import { builtinPresets } from '../../src/server/voices.ts';
 import { STROBE_VOICE_ID } from '../../src/server/strobe.ts';
 import { STROBE_DEFAULTS } from '../../src/shared/effects/strobe.ts';
@@ -92,6 +92,10 @@ test('a party frame on forty placed fixtures renders inside 5 ms', () => {
     const pads = new Pads({
       voices, store: new PadStore(path.join(os.tmpdir(), 'perf-party-none', 'pads.json')),
       lookup: () => builtinPresets, fixtureIds: () => state.fixtures.map((f) => f.id), beat: () => beat,
+      // No pattern is on the shelf here: the pads under test are preset loops.
+      patternVoice: patternPlayer({
+        voices, pattern: () => null, fixtureIds: () => state.fixtures.map((f) => f.id), resolve: (id) => presetById(id)?.spec ?? null,
+      }),
     });
     const padVoices = [pads.toggle(1, 0), pads.toggle(1, 4)];
     assert.ok(padVoices.every(Boolean), 'both pads launched');
