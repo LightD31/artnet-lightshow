@@ -175,6 +175,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       pattern: (id): ReturnType<SequenceStore['getPattern']> => sequence.store.getPattern(id),
       // A preset pad records as its preset, a pattern pad as its bundle; the strobe and drops do not (padTakeOf).
       pad: (bank, slot) => padTakeOf(pads.store.get(bank, slot), presetLookup(library)),
+      beat: () => conductor.peek().beatPos,
     }),
   };
   // The pads count in the conductor's beats, the sequence in its own: the
@@ -185,20 +186,25 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   };
   // During a take the drop is staged with it (dropPattern).
   pads.insertPattern = (id, atBeat) => {
-    sequence.sequencer.dropPattern(id, toSequenceBeat(atBeat));
+    sequence.sequencer.dropPattern(id, toSequenceBeat(atBeat), atBeat);
     broadcast();
   };
-  pads.onHit = ({ bank, slot, startBeat, endBeat, lengthMs }) => {
+  pads.onHit = ({ bank, slot, startBeat, endBeat, lengthMs, once }) => {
     if (!sequence.sequencer.recording()) return;
-    // An explicit length in ms counts in beats at the tempo now.
+    // An explicit length in ms counts in beats at the tempo now; a release is how long it was held, on the conductor's clock.
     const lengthBeats = lengthMs === undefined ? undefined : (lengthMs * conductor.peek().bpm) / 60000;
     sequence.sequencer.onPadHit({
-      bank, slot, startBeat: toSequenceBeat(startBeat), ...(endBeat === undefined ? {} : { endBeat: toSequenceBeat(endBeat) }), ...(lengthBeats === undefined ? {} : { lengthBeats }),
+      bank, slot, startBeat: toSequenceBeat(startBeat), clockBeat: startBeat,
+      ...(endBeat === undefined ? {} : { heldBeats: endBeat - startBeat }), ...(lengthBeats === undefined ? {} : { lengthBeats }), ...(once ? { once } : {}),
     });
     broadcast();
   };
-  // Read once a frame by the engine; its status rides the live state.
-  setSequenceSource((reading) => sequence.sequencer.frame(reading));
+  // Read once a frame by the engine; its status rides the live state. Holds
+  // whose voice ended by itself close first.
+  setSequenceSource((reading) => {
+    pads.sweep();
+    return sequence.sequencer.frame(reading);
+  });
   setSequenceProvider(() => sequence.sequencer.status());
   // Slot statuses, one per upcoming track up to state.autoPrefetchDepth.
   // slots[0] is the immediate next track (back-compat with the old

@@ -95,7 +95,7 @@ export function patternPlayer({ voices, pattern, fixtureIds, resolve }: PatternP
 /** Drops a pattern into the loaded sequence at a beat; the sequencer installs it. */
 export type InsertPatternHook = (id: string, atBeat: number) => void;
 /** A pad launched (its grid beat) or a held one released (with its end), for the sequencer's punch recording. */
-export type PadHitHook = (hit: { bank: number; slot: number; startBeat: number; endBeat?: number; lengthMs?: number }) => void;
+export type PadHitHook = (hit: { bank: number; slot: number; startBeat: number; endBeat?: number; lengthMs?: number; once?: boolean }) => void;
 /** The manual strobe's hold, which the strobe installs: the strobe pad and voice-hold's `{ preset: 'strobe' }` both go through it. */
 export interface StrobeHook {
   hold(owner: string, token: string): Voice;
@@ -392,13 +392,37 @@ export class Pads {
   release(bank: number, slot: number, owner: string, token: string): boolean {
     const index = padIndex(bank, slot);
     const record = this._alive().find((r) => r.index === index && r.owner === owner && r.token === token);
-    if (!record) return false;
-    this._stop(record);
+    if (record) this._stop(record);
+    // An ended voice's hold is closed too: the key never outlives its voice.
     const key = `${index}|${owner}|${token}`;
     const startBeat = this._holds.get(key);
     this._holds.delete(key);
     if (startBeat !== undefined) this.onHit?.({ bank, slot, startBeat, endBeat: this._beat() });
-    return true;
+    return record !== undefined;
+  }
+
+  /**
+   * Close the holds and loops whose voice ended by itself (its owner gone,
+   * stop-all, a cap, a lease): the recording hears the end now. Once a frame.
+   */
+  sweep(): void {
+    if (this._holds.size === 0 && this._latched.size === 0) return;
+    const alive = this._alive();
+    const held = new Set(alive.filter((r) => r.owner !== null).map((r) => `${r.index}|${r.owner}|${r.token}`));
+    const lit = new Set(alive.filter((r) => r.owner === null).map((r) => r.index));
+    const ended: [number, number][] = [];
+    for (const [key, startBeat] of this._holds) {
+      if (held.has(key)) continue;
+      this._holds.delete(key);
+      ended.push([Number(key.slice(0, key.indexOf('|'))), startBeat]);
+    }
+    for (const [index, startBeat] of this._latched) {
+      if (lit.has(index)) continue;
+      this._latched.delete(index);
+      ended.push([index, startBeat]);
+    }
+    const endBeat = this._beat();
+    for (const [index, startBeat] of ended) this.onHit?.({ bank: Math.floor(index / PAD_SLOTS), slot: index % PAD_SLOTS, startBeat, endBeat });
   }
 
   /** Play the pad once, whatever its launch: `ms` long, else its preset's or its pattern's length. */
@@ -531,7 +555,7 @@ export class Pads {
 
   /** Tell the recording of a launch; a loop toggled off launched nothing. */
   _hit(bank: number, slot: number, entry: PadEntry, voice: Voice | null, ms?: number): Voice | null {
-    if (voice && this.onHit) this.onHit({ bank, slot, startBeat: this._gridBeat(entry), ...(ms !== undefined ? { lengthMs: ms } : {}) });
+    if (voice && this.onHit) this.onHit({ bank, slot, startBeat: this._gridBeat(entry), ...(ms !== undefined ? { lengthMs: ms } : {}), ...(voice.mode === 'once' ? { once: true } : {}) });
     return voice;
   }
 
