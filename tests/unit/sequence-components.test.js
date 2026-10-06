@@ -19,8 +19,8 @@ async function load() {
         export { render as html } from 'preact-render-to-string';
         export { h } from 'preact';
         export { store, librarySig } from './public-src/state.js';
-        export { Sequence, laneStack, moveClip, resizeClip, putSequence, automationStart, newClip, commandAs, createTextDraft, parseNumber, beyondRangeNotice } from './public-src/components/Sequence.jsx';
-        export { Matrix, MATRIX_MODES, createMatrixHolds } from './public-src/components/Matrix.jsx';
+        export { Sequence, laneStack, moveClip, resizeClip, putSequence, automationStart, newClip, commandAs, createTextDraft, parseNumber, beyondRangeNotice, clipKeySelects, loopRegion, barBeatText } from './public-src/components/Sequence.jsx';
+        export { Matrix, MATRIX_MODES, createMatrixHolds, matrixCellKeys } from './public-src/components/Matrix.jsx';
         export { drawRuler, drawClips } from './public-src/timeline-renderer.js';
       `,
       resolveDir: ROOT,
@@ -361,6 +361,72 @@ test('matrix holds: each finger presses with its own token, renews, and releases
   holds.releaseAll();
   assert.deepStrictEqual(posted.at(-1)[0], 'release');
   assert.strictEqual(posted.at(-1)[1].colour, '#0000ff');
+});
+
+test('matrix holds: a finger\'s requests go out in order, the release after the press in flight and no renewal after it', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const posted = [];
+  let answer;
+  const holds = ui.createMatrixHolds((verb, body, action) => {
+    posted.push(action);
+    return action === 'press' ? new Promise((resolve) => { answer = resolve; }) : Promise.resolve({ ok: true });
+  });
+  holds.press(1, '#ff0000');
+  t.mock.timers.tick(300);
+  holds.release(1);
+  assert.deepStrictEqual(posted, ['press'], 'nothing overtakes the press in flight');
+  answer({ ok: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  t.mock.timers.tick(900);
+  assert.deepStrictEqual(posted, ['press', 'release']);
+});
+
+test('keyboard: Space or Enter down holds a matrix cell and up releases it; auto-repeat is ignored', () => {
+  const calls = [];
+  const keys = ui.matrixCellKeys('#ff0000', (id, colour) => calls.push(['hold', id, colour]), (id) => calls.push(['release', id]));
+  const ev = (key, repeat = false) => ({ key, repeat, prevented: false, preventDefault() { this.prevented = true; } });
+  const down = ev(' ');
+  keys.onKeyDown(down);
+  keys.onKeyDown(ev(' ', true));
+  keys.onKeyUp(ev(' '));
+  keys.onKeyDown(ev('Enter'));
+  keys.onKeyUp(ev('Enter'));
+  keys.onKeyDown(ev('a'));
+  keys.onKeyUp(ev('a'));
+  assert.ok(down.prevented, 'Space does not scroll the page');
+  const id = calls[0][1];
+  assert.deepStrictEqual(calls, [['hold', id, '#ff0000'], ['release', id], ['hold', id, '#ff0000'], ['release', id]]);
+});
+
+test('keyboard: Enter or Space selects a clip block in edit mode only', () => {
+  const picked = [];
+  const ev = (key) => ({ key, preventDefault() {} });
+  ui.clipKeySelects(ev('Enter'), true, () => picked.push('enter'));
+  ui.clipKeySelects(ev(' '), true, () => picked.push('space'));
+  ui.clipKeySelects(ev('x'), true, () => picked.push('x'));
+  ui.clipKeySelects(ev('Enter'), false, () => picked.push('not editing'));
+  assert.deepStrictEqual(picked, ['enter', 'space']);
+});
+
+test('loop region: bars.beats in, the loop the server takes out, validated against the sequence', () => {
+  const seq = { ...SEQ, clips: [{ id: 'c', laneId: 'a', startBeat: 0, lengthBeats: 16 }] };
+  assert.deepStrictEqual(ui.loopRegion(seq, { on: true, start: '2.1', end: '4.1' }), { loop: { on: true, startBeat: 4, endBeat: 12 } });
+  assert.deepStrictEqual(ui.loopRegion(seq, { on: false, start: '1', end: '5' }), { loop: { on: false, startBeat: 0, endBeat: 16 } });
+  assert.match(ui.loopRegion(seq, { on: true, start: '3.1', end: '2.1' }).error, /after/);
+  assert.match(ui.loopRegion(seq, { on: true, start: '1.1', end: '6.1' }).error, /inside/);
+  assert.match(ui.loopRegion(seq, { on: true, start: '1.5', end: '2.1' }).error, /bars\.beats/);
+  assert.match(ui.loopRegion(seq, { on: true, start: 'x', end: '2.1' }).error, /bars\.beats/);
+  const waltz = { ...seq, timeSignature: { beats: 3, unit: 4 } };
+  assert.deepStrictEqual(ui.loopRegion(waltz, { on: true, start: '2.1', end: '3.1' }), { loop: { on: true, startBeat: 3, endBeat: 6 } });
+  assert.strictEqual(ui.barBeatText(6, 3), '3.1');
+});
+
+test('the editor shows the loop region control with the sequence\'s loop', () => {
+  const seq = { ...SEQ, loop: { on: true, startBeat: 4, endBeat: 12 } };
+  const html = ui.html(ui.h(ui.Sequence, { initial: { sequence: seq, editing: true } }));
+  assert.match(html, /role="group" aria-label="Loop region"/);
+  assert.match(html, /aria-label="Loop start, bars\.beats"[^>]*value="2\.1"|value="2\.1"[^>]*aria-label="Loop start, bars\.beats"/);
+  assert.match(html, /aria-label="Loop end, bars\.beats"[^>]*value="4\.1"|value="4\.1"[^>]*aria-label="Loop end, bars\.beats"/);
 });
 
 test('a kept take names the removed clips that reached beyond it', async () => {

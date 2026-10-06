@@ -11,15 +11,33 @@ export function resolverOf(saved = []) {
   return (id) => mine.get(id) || presetById(id)?.spec || null;
 }
 
-/** The sampler's options for a live state; `table` is the loaded sequence's clip table. */
-export function previewOptions(s, { table = null, saved = [] } = {}) {
+/** Beats in a bar, in quarter notes: 6/8 is three. */
+export function beatsPerBar(ts) {
+  if (!ts || !(ts.beats > 0) || !(ts.unit > 0)) return 4;
+  return (ts.beats * 4) / ts.unit;
+}
+
+/** "bar.beat", both counted from 1. The server's `bar` is already 1-based. */
+export function positionText(status, perBar) {
+  if (!status || !Number.isFinite(status.beat)) return '–';
+  const bar = status.bar || Math.floor(status.beat / perBar) + 1;
+  const inBar = Math.floor(status.beat - (bar - 1) * perBar + 1e-6) + 1;
+  return `${bar}.${Math.min(Math.max(inBar, 1), Math.ceil(perBar))}`;
+}
+
+/**
+ * The sampler's options for a live state; `table` is the loaded sequence's
+ * clip table, `library` what GET /api/effects answered (its `user` presets
+ * carry their specs; the live state's `effects` are summaries without).
+ */
+export function previewOptions(s, { table = null, library = null } = {}) {
   const seq = s.sequence;
   const override = Array.isArray(s.paletteOverride) && s.paletteOverride.length ? s.paletteOverride : null;
   return {
-    resolveEffect: resolverOf(saved),
+    resolveEffect: resolverOf(library && library.user),
     // The rig's default; the sampler's own 'pulse' is for hand-built inputs only.
     hueStrobe: s.hueStrobe === 'pulse' ? 'pulse' : 'flash',
-    safety: s.safety ? { acknowledged: !!s.safety.acknowledged, hdFlashIntervalMs: s.safety.hdFlashIntervalMs ?? 350 } : null,
+    safety: s.safety ? { acknowledged: !!s.safety.photosensitivityAcknowledged, hdFlashIntervalMs: s.safety.hdFlashIntervalMs ?? 350 } : null,
     paletteOverride: override,
     // A playing sequence rehearses from the track's first beat.
     sequence: table && seq && seq.playing ? { table, transport: { startBeat: 0, loop: seq.loop ?? null, generation: 0 } } : null,
@@ -34,8 +52,11 @@ export function liveVoiceEvents(voices) {
   }));
 }
 
-/** One line: the look, the pads, the strobe, the matrix, where the sequence is, the override. */
-export function nowPlaying(s) {
+/**
+ * One line: the look, the pads, the strobe, the matrix, where the sequence is,
+ * the override. `perBar` is the loaded sequence's bar length in beats.
+ */
+export function nowPlaying(s, perBar = 4) {
   const voices = (Array.isArray(s.voices) ? s.voices : []).filter((v) => !v.hidden);
   const pads = voices.filter((v) => v.tier !== 'strobe' && v.source !== 'matrix').map((v) => v.label);
   const parts = [s.pattern || 'No look'];
@@ -44,7 +65,7 @@ export function nowPlaying(s) {
   const colours = s.matrix && Array.isArray(s.matrix.colours) ? s.matrix.colours.length : 0;
   if (colours) parts.push(`Matrix: ${colours} colour${colours > 1 ? 's' : ''} as ${s.matrix.mode}`);
   const seq = s.sequence;
-  if (seq && seq.playing && seq.loaded) parts.push(`${seq.loaded.name} bar ${seq.bar} beat ${Math.floor(seq.beat % 4) + 1}`);
+  if (seq && seq.playing && seq.loaded) parts.push(`${seq.loaded.name} bar ${positionText(seq, perBar).replace('.', ' beat ')}`);
   if (Array.isArray(s.paletteOverride) && s.paletteOverride.length) parts.push('Palette override');
   return parts.join(' · ');
 }

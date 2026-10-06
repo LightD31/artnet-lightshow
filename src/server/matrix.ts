@@ -22,6 +22,8 @@ import type { EffectSpec } from '../shared/effects/types.ts';
 export const MATRIX_KEY = 'matrix';
 export const MATRIX_MAX_CELLS = 8;
 export const MATRIX_LEASE_MS = HOLD_TIMEOUT_MS;
+// Released tokens remembered for one lease, so a late renewal cannot re-add a colour.
+const MATRIX_TOMBSTONES = 256;
 export const SOLID_GUARD_MS = 20;
 export const MATRIX_MODES = ['fireworks', 'flashes', 'pulses', 'cycle', 'solid'] as const;
 export type MatrixMode = typeof MATRIX_MODES[number];
@@ -50,6 +52,7 @@ export class MatrixBoard {
   declare _now: () => number;
   declare _onChange: () => void;
   _cells: Cell[] = [];
+  _released = new Map<string, number>();
   _mode: MatrixMode = 'pulses';
   _voiceId: string | null = null;
   _appliedKey: string | null = null;
@@ -70,6 +73,8 @@ export class MatrixBoard {
     const hex = validate(colourSchema, colour, 'matrix').toUpperCase();
     const until = this._now() + MATRIX_LEASE_MS;
     const at = this._cells.findIndex((c) => c.token === token);
+    this._pruneReleased();
+    if (at < 0 && this._released.has(token)) return this.status();
     if (at < 0 && this._cells.length >= MATRIX_MAX_CELLS) {
       throw new HttpError(400, `matrix: at most ${MATRIX_MAX_CELLS} cells at once`);
     }
@@ -80,6 +85,10 @@ export class MatrixBoard {
   }
 
   release(token: string): MatrixStatus {
+    this._pruneReleased();
+    this._released.delete(token);
+    this._released.set(token, this._now() + MATRIX_LEASE_MS);
+    if (this._released.size > MATRIX_TOMBSTONES) this._released.delete(this._released.keys().next().value as string);
     return this._commit(this._cells.filter((c) => c.token !== token), this._mode);
   }
 
@@ -91,6 +100,14 @@ export class MatrixBoard {
   /** Let every cell go at once (a disarm, a blackout). */
   clear(): MatrixStatus {
     return this._commit([], this._mode);
+  }
+
+  _pruneReleased(): void {
+    const now = this._now();
+    for (const [token, until] of this._released) {
+      if (until > now) break;
+      this._released.delete(token);
+    }
   }
 
   status(): MatrixStatus {

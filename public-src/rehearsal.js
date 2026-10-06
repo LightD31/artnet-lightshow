@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
-import { stagePreviewSig, stateSig, api } from './state.js';
+import { stagePreviewSig, stateSig, librarySig, api } from './state.js';
 import { createPreviewSampler } from '../src/shared/preview.ts';
 import { liveVoiceEvents, previewOptions } from './preview-inputs.js';
 
@@ -28,8 +28,13 @@ export function useRehearsalSampler(data) {
   const revision = s.sequence ? s.sequence.revision : null;
   const [table, setTable] = useState(null);
   // The clip table rides GET /api/sequence; refetched when its revision moves.
-  useEffect(() => { api('/api/sequence').then((r) => setTable((r && r.ok && r.table) || null)); }, [revision]);
-  const options = previewOptions(s, { table, saved: s.effects });
-  const key = JSON.stringify([s.voices, options.hueStrobe, options.paletteOverride, options.safety, options.sequence && options.sequence.table.revision]);
+  // Only the latest of overlapping loads lands.
+  useEffect(() => {
+    let live = true;
+    api('/api/sequence').then((r) => { if (live) setTable((r && r.ok && r.table) || null); });
+    return () => { live = false; };
+  }, [revision]);
+  const options = previewOptions(s, { table, library: librarySig.value });
+  const key = JSON.stringify([s.voices, options.hueStrobe, options.paletteOverride, options.safety, options.sequence && options.sequence.table.revision, librarySig.value.user]);
   return useMemo(() => createPreviewSampler([...(data?.timeline || []), ...liveVoiceEvents(s.voices)], data, options), [data, key]);
 }

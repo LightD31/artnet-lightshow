@@ -224,8 +224,9 @@ test('the audio panel: the mode select, the meters, the gates, the SPL chip and 
   assert.match(html, /<option value="reactive" selected/);
   assert.strictEqual((html.match(/role="meter"/g) || []).length, 4);
   assert.match(html, /aria-label="bass"[^>]*aria-valuenow="50"/);
-  assert.strictEqual((html.match(/class="gate open"/g) || []).length, 2);
-  assert.strictEqual((html.match(/class="gate"/g) || []).length, 1);
+  // A band is open while it is hit, not whenever it has a threshold.
+  assert.strictEqual((html.match(/class="gate open"/g) || []).length, 1);
+  assert.strictEqual((html.match(/class="gate"/g) || []).length, 2);
   assert.match(html, /class="spl-chip loud"/);
   assert.match(html, /\+40 ms/);
 });

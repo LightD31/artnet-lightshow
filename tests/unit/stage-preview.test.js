@@ -1,10 +1,11 @@
 // What the stage preview's sampler is handed for a live state, and its "now playing" line.
 import test from 'node:test';
 import assert from 'node:assert';
-import { previewOptions, liveVoiceEvents, nowPlaying, matrixAsks, resolverOf } from '../../public-src/preview-inputs.js';
+import { previewOptions, liveVoiceEvents, nowPlaying, matrixAsks, resolverOf, positionText } from '../../public-src/preview-inputs.js';
 import { createPreviewSampler } from '../../src/shared/preview.ts';
 import { buildRig } from '../../src/shared/rig.ts';
 import { presetById } from '../../src/shared/effects/catalogue.ts';
+import { safety } from '../../src/server/safety.ts';
 
 const WASH = { kind: 'solid', params: {} };
 const STROBE = { kind: 'strobe', params: {} };
@@ -12,7 +13,8 @@ const TABLE = { revision: 3, lanes: [{ id: 'l', kind: 'shared', slot: 0 }], clip
 const STATE = {
   pattern: 'solid',
   paletteOverride: ['#ff0000', '#0000ff'],
-  safety: { acknowledged: true, hdFlashIntervalMs: 350 },
+  // The live state carries safety.status() as the server builds it.
+  safety: { ...safety.status(), photosensitivityAcknowledged: true, hdFlashIntervalMs: 350 },
   voices: [
     { id: 'v1', label: 'Blinder', tier: 'voice', kind: 'solid', targets: 'shared', launchSeq: 2, hidden: false, spec: WASH },
     { id: 'v2', label: 'Strobe', tier: 'strobe', kind: 'strobe', targets: [1, 2], launchSeq: 3, hidden: false, spec: STROBE },
@@ -55,6 +57,24 @@ test('saved presets resolve before the catalogue', () => {
   assert.deepStrictEqual(resolve('mine'), WASH);
   if (builtin) assert.deepStrictEqual(resolve(builtin), presetById(builtin).spec);
   assert.strictEqual(resolve('no-such'), null);
+});
+
+test('an unacknowledged server gives the preview acknowledged: false', () => {
+  const o = previewOptions({ ...STATE, safety: { ...STATE.safety, photosensitivityAcknowledged: false } });
+  assert.strictEqual(o.safety.acknowledged, false);
+});
+
+test('presets saved on this server resolve from the library GET /api/effects loads, not the live summaries', () => {
+  const library = { status: 'ready', families: [], builtin: [], user: [{ id: 'mine', name: 'Mine', spec: WASH }], palettes: { builtin: [], user: [] } };
+  const o = previewOptions({ ...STATE, effects: [{ id: 'mine', name: 'Mine' }] }, { library });
+  assert.deepStrictEqual(o.resolveEffect('mine'), WASH);
+  assert.strictEqual(previewOptions(STATE).resolveEffect('mine'), null, 'nothing loaded yet: no saved preset');
+});
+
+test('now playing counts the beat within the bar from the sequence\'s own bar length', () => {
+  const waltz = { pattern: 'solid', sequence: { loaded: { id: 's', name: 'Waltz' }, playing: true, bar: 2, beat: 5.5, loop: null } };
+  assert.strictEqual(nowPlaying(waltz, 3), 'solid · Waltz bar 2 beat 3');
+  assert.strictEqual(nowPlaying(waltz, 3), `solid · Waltz bar ${positionText(waltz.sequence, 3).replace('.', ' beat ')}`);
 });
 
 test('a held pad plays over the rehearsed timeline', () => {

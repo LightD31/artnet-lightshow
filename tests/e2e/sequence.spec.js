@@ -11,10 +11,35 @@ const BASE = {
   clips: [], commands: [],
 };
 
+// What the tests change, put back after each so later specs start the same.
+let before = null;
+
 test.beforeEach(async ({ request }) => {
+  const { settings } = await (await request.get('/api/settings')).json();
+  const { layout } = await (await request.get('/api/pads')).json();
+  const { patterns } = await (await request.get('/api/sequence/patterns')).json();
+  before = {
+    acknowledged: !!settings.safety.photosensitivityAcknowledged,
+    pad: layout.find((p) => p.bank === 0 && p.slot === 0),
+    patterns: new Set(patterns.map((p) => p.id)),
+  };
   await reset(request);
   await request.post('/api/sequence/stop', { data: {} });
   expect((await request.put('/api/sequence', { data: BASE })).ok()).toBe(true);
+});
+
+test.afterEach(async ({ request }) => {
+  await request.post('/api/sequence/stop', { data: {} });
+  const { bank: _b, slot: _s, ...pad } = before.pad;
+  const put = await request.put('/api/pads/0/0', { data: pad });
+  expect(put.ok(), await put.text()).toBe(true);
+  // The pad first: a strobe pad may need the acknowledgement it is restored under.
+  const ack = await request.put('/api/settings', { data: { safety: { photosensitivityAcknowledged: before.acknowledged } } });
+  expect(ack.ok(), await ack.text()).toBe(true);
+  const { patterns } = await (await request.get('/api/sequence/patterns')).json();
+  for (const p of patterns.filter((x) => !before.patterns.has(x.id))) {
+    expect((await request.delete(`/api/sequence/patterns/${encodeURIComponent(p.id)}`)).ok()).toBe(true);
+  }
 });
 
 const cursorLeft = (page) => page.locator('.seq-cursor').first().evaluate((el) => parseFloat(el.style.left));

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { api, pick } from '../state.js';
+import { beatsPerBar, positionText } from '../preview-inputs.js';
 
 /**
  * The sequence transport: pick a saved sequence, then play, pause, stop,
@@ -8,19 +9,7 @@ import { api, pick } from '../state.js';
  * the shelf and the loaded sequence (for names and the bar length) from REST.
  */
 
-/** Beats in a bar, in quarter notes: 6/8 is three. */
-export function beatsPerBar(ts) {
-  if (!ts || !(ts.beats > 0) || !(ts.unit > 0)) return 4;
-  return (ts.beats * 4) / ts.unit;
-}
-
-/** "bar.beat", both counted from 1. The server's `bar` is already 1-based. */
-export function positionText(status, perBar) {
-  if (!status || !Number.isFinite(status.beat)) return '–';
-  const bar = status.bar || Math.floor(status.beat / perBar) + 1;
-  const inBar = Math.floor(status.beat - (bar - 1) * perBar + 1e-6) + 1;
-  return `${bar}.${Math.min(Math.max(inBar, 1), Math.ceil(perBar))}`;
-}
+export { beatsPerBar, positionText };
 
 /** The loaded region with `on` flipped; null when the sequence has none to flip. */
 export function loopBody(status) {
@@ -56,7 +45,10 @@ export function Transport({ initial } = {}) {
   useEffect(() => {
     if (initial) return;
     if (!loadedId) { setSequence(null); return; }
-    api('/api/sequence').then((res) => { if (res.ok) setSequence(res.sequence || null); });
+    // Only the latest of overlapping loads lands.
+    let live = true;
+    api('/api/sequence').then((res) => { if (live && res.ok) setSequence(res.sequence || null); });
+    return () => { live = false; };
   }, [loadedId, revision]);
 
   const loaded = !!loadedId;
@@ -83,7 +75,7 @@ export function Transport({ initial } = {}) {
         <button type="button" class="transport-btn" aria-label="Next" disabled={!loaded} onClick={() => post('/api/sequence/next')}>⏭</button>
         <button type="button" class="transport-btn" aria-label="Shuffle" disabled={!loaded} onClick={() => post('/api/sequence/shuffle')}>⤮</button>
         <button type="button" class="transport-btn" aria-label="Loop" aria-pressed={!!(status && status.loop && status.loop.on)}
-          disabled={!loop} title={loop ? 'Loop the region' : 'Set a loop region in the Sequence view'}
+          disabled={!loop} title={loop ? 'Loop the region' : 'Set a loop region in the Sequence editor'}
           onClick={() => post('/api/sequence/loop', loop)}>↻</button>
       </div>
       {lanes.length > 0 && (
