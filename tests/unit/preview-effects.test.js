@@ -141,7 +141,7 @@ function assertSame(rigFrames, previewFrames, times, label = '') {
 const key = (c) => `${c.r},${c.g},${c.b},${c.w},${c.a},${c.uv}`;
 const distinct = (outputs, u) => new Set(outputs.map((o) => key(o[u]))).size;
 
-// ── The brief's cases ───────────────────────────────────────────────────────
+// ── Preview and rig, frame by frame ─────────────────────────────────────────
 
 test('the preview drives the same bytes as the rig for a base effect and a voice, stepped through the same frames', () => {
   const times = frames(0, 1000);

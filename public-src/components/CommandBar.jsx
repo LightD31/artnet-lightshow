@@ -2,7 +2,8 @@ import { useEffect, useState } from 'preact/hooks';
 import { send, emitTap, pick } from '../state.js';
 import { formatBpm, clockSource } from '../utils.js';
 import { useDraft } from '../draft.js';
-import { useVoicePads, holdsWhilePressed, padKey } from '../voice-pad.js';
+import { useVoicePads, holdsWhilePressed, padKey, rapidPad } from '../voice-pad.js';
+import { useSafetyGate } from './Photosensitivity.jsx';
 import { focusedByPointer } from '../focus-origin.js';
 
 // Steps per beat. 1/16 was in the README and on MIDI, and missing here (A7.26).
@@ -63,8 +64,9 @@ function BpmEntry({ bpm }) {
 }
 
 export function CommandBar() {
-  const { held, padProps } = useVoicePads();
-  const s = pick(['bpm', 'beatDivision', 'clock', 'running', 'masterDimmer', 'masterBlackout', 'pads']);
+  const { held, gatedPadProps } = useVoicePads();
+  const gate = useSafetyGate();
+  const s = pick(['bpm', 'beatDivision', 'clock', 'running', 'masterDimmer', 'masterBlackout', 'pads', 'patterns', 'effects']);
   const bpm = s.bpm || 120;
   const division = s.beatDivision || 1;
   const periodMs = (60_000 / bpm) / division;
@@ -166,22 +168,24 @@ export function CommandBar() {
         <div class="cb-energy-grid">
           {strip.map((p) => {
             const on = !!lit[p.slot] || held.has(padKey(0, p.slot));
+            const name = p.label || p.content.id;
             return (
               <button
                 key={p.slot}
                 type="button"
                 class={`cb-energy-btn ${on ? 'active' : ''}`}
                 aria-pressed={on}
-                {...padProps(p)}
+                {...gatedPadProps(p, gate, rapidPad(p, s.patterns, s.effects), name)}
                 style={{ '--pad-accent': p.accent, touchAction: 'none' }}
-                title={`${p.label} (${holdsWhilePressed(p) ? 'hold' : p.launch === 'loop' ? 'tap to loop' : 'tap'})`}
+                title={`${name} (${holdsWhilePressed(p) ? 'hold' : p.launch === 'loop' ? 'tap to loop' : 'tap'})`}
               >
-                <span class="cb-energy-name">{p.label}</span>
+                <span class="cb-energy-name">{name}</span>
               </button>
             );
           })}
         </div>
       </div>
+      {gate.dialog}
     </section>
   );
 }

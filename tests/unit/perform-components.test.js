@@ -1,6 +1,7 @@
-// Task 23b's Perform parts, rendered in Node as components.test.js does:
-// the photosensitivity dialog, the palette override strip, the transport,
-// the audio meters, and the audio feed's subscription in state.js.
+// The Perform parts, rendered in Node as components.test.js does: the
+// photosensitivity dialog, the pads' holds and safety asks, the palette
+// override strip, the transport, the audio meters, and the audio feed's
+// subscription in state.js.
 
 import test from 'node:test';
 import assert from 'node:assert';
@@ -22,6 +23,9 @@ async function load() {
         export { PhotosensitivityConfirm } from './public-src/components/Effects.jsx';
         export { StrobePad } from './public-src/components/StrobePad.jsx';
         export { Pads } from './public-src/components/Pads.jsx';
+        export { CommandBar } from './public-src/components/CommandBar.jsx';
+        export { createPadPresses, rapidPad, padKey } from './public-src/voice-pad.js';
+        export { createVoiceHolds } from './public-src/hold-control.js';
         export { PaletteOverride, overrideBody, activeOverride } from './public-src/components/Perform.jsx';
         export { Transport, positionText, beatsPerBar, loopBody, laneRows } from './public-src/components/Transport.jsx';
         export { AudioMeters, meterRows, splClass, latencyText } from './public-src/components/AudioMeters.jsx';
@@ -124,6 +128,136 @@ test('a strobe pad in the bank asks first too, and a look pad never does', () =>
   given({ safety: { photosensitivityAcknowledged: true }, pads: { layout, lit: [] } });
   html = ui.html(ui.h(ui.Pads, { initialBank: 0 }));
   assert.doesNotMatch(html, /data-safety="ask"/);
+});
+
+/** The holds' messages, a window to dispatch on, and the presses under test. */
+function presses() {
+  const sent = [];
+  const holds = ui.createVoiceHolds((p) => { sent.push(p); return true; });
+  const win = new globalThis.EventTarget();
+  const lit = [];
+  const p = ui.createPadPresses(holds, win, (keys) => lit.push([...keys]));
+  const up = (type, fields) => win.dispatchEvent(Object.assign(new globalThis.Event(type), fields));
+  const released = () => sent.filter((m) => m.action === 'release').map((m) => `${m.pad.bank}-${m.pad.slot}`);
+  return { holds, win, p, up, sent, lit, released };
+}
+const target = (bank, slot) => ({ pad: { bank, slot } });
+
+test('a held pad lets go on its pointer\'s up anywhere, after a bank switch under a second finger', () => {
+  const t = presses();
+  t.p.press(ui.padKey(0, 0), target(0, 0), { pointer: 1 });
+  // The second finger taps bank B: A1 is no longer rendered at all.
+  t.p.press(ui.padKey(1, 0), target(1, 0), { pointer: 2 });
+  t.up('pointerup', { pointerId: 2 });
+  assert.deepStrictEqual(t.released(), ['1-0']);
+  t.up('pointerup', { pointerId: 1 });
+  assert.deepStrictEqual(t.released(), ['1-0', '0-0']);
+  assert.deepStrictEqual(t.lit.at(-1), []);
+  t.p.dispose();
+});
+
+test('a held pad lets go on pointercancel and on its key\'s up anywhere', () => {
+  const t = presses();
+  t.p.press(ui.padKey(0, 1), target(0, 1), { pointer: 5 });
+  t.p.press(ui.padKey(0, 2), target(0, 2), { key: 'Enter' });
+  t.up('keyup', { key: ' ' });
+  t.up('pointerup', { pointerId: 9 });
+  assert.deepStrictEqual(t.released(), []);
+  t.up('pointercancel', { pointerId: 5 });
+  t.up('keyup', { key: 'Enter' });
+  assert.deepStrictEqual(t.released(), ['0-1', '0-2']);
+  t.p.dispose();
+});
+
+test('a held pad no longer rendered as a hold pad lets go: bank switch, Edit pads, a layout change', () => {
+  for (const shown of [new Set(), new Set([ui.padKey(1, 0)])]) {
+    const t = presses();
+    t.p.press(ui.padKey(0, 3), target(0, 3), { pointer: 1 });
+    t.p.keep(new Set([ui.padKey(0, 3), ...shown]));
+    assert.deepStrictEqual(t.released(), []);
+    // Edit pads (nothing rendered as a hold), bank B shown, or the pad turned into a tap pad.
+    t.p.keep(shown);
+    assert.deepStrictEqual(t.released(), ['0-3']);
+    assert.deepStrictEqual(t.lit.at(-1), []);
+    t.up('pointerup', { pointerId: 1 });
+    assert.deepStrictEqual(t.released(), ['0-3']);
+    t.p.dispose();
+  }
+});
+
+test('unmounting lets go, and a later up anywhere sends nothing more', () => {
+  const t = presses();
+  t.p.press(ui.padKey(0, 4), target(0, 4), { pointer: 1 });
+  t.p.dispose();
+  assert.deepStrictEqual(t.released(), ['0-4']);
+  t.up('pointerup', { pointerId: 1 });
+  assert.strictEqual(t.sent.length, 2);
+});
+
+test('a disconnect clears the held pads and nothing presses again by itself', () => {
+  const t = presses();
+  t.p.press(ui.padKey(0, 5), target(0, 5), { pointer: 1 });
+  assert.deepStrictEqual(t.lit.at(-1), ['p0-5']);
+  t.holds.releaseAll();
+  assert.deepStrictEqual(t.lit.at(-1), []);
+  assert.strictEqual(t.p.mine(ui.padKey(0, 5), 'pointer', 1), false);
+  assert.strictEqual(t.sent.filter((m) => m.action === 'press').length, 1);
+  t.p.dispose();
+});
+
+test('a press the server refused unlights and stops renewing; the pad held before it stays', () => {
+  const t = presses();
+  t.p.press(ui.padKey(0, 2), target(0, 2), { pointer: 1 });
+  t.p.press(ui.padKey(0, 0), target(0, 0), { pointer: 2 });
+  t.holds.refuse();
+  assert.deepStrictEqual(t.holds.held(), ['p0-2']);
+  assert.deepStrictEqual(t.lit.at(-1), ['p0-2']);
+  t.p.dispose();
+});
+
+const CATALOGUE_ROWS = [
+  { id: 'energy.whiteStrobe', rapidFlash: true }, { id: 'energy.glow', rapidFlash: false }, { id: 'upFlash', rapidFlash: true }, { id: 'upCalm' },
+];
+const pad = (slot, label, content, launch = 'hold') => ({ bank: 0, slot, label, accent: '#FFFFFF', content, launch, quantise: 0, targets: 'shared' });
+
+test('a pad needs the acknowledgement for the strobe and for what the catalogue or library calls rapid', () => {
+  const mine = [{ id: 'u1', rapidFlash: true }, { id: 'u2', rapidFlash: false }];
+  const rapid = (content) => ui.rapidPad({ content }, CATALOGUE_ROWS, mine);
+  assert.strictEqual(rapid({ kind: 'strobe', id: 'strobe' }), true);
+  assert.strictEqual(rapid({ kind: 'preset', id: 'energy.whiteStrobe' }), true);
+  assert.strictEqual(rapid({ kind: 'preset', id: 'energy.glow' }), false);
+  assert.strictEqual(rapid({ kind: 'preset', id: 'u1' }), true);
+  assert.strictEqual(rapid({ kind: 'preset', id: 'u2' }), false);
+  assert.strictEqual(rapid({ kind: 'pattern', id: 'upFlash' }), true);
+  assert.strictEqual(rapid({ kind: 'pattern', id: 'upCalm' }), false);
+  assert.strictEqual(rapid({ kind: 'pattern', id: 'unknown' }), false);
+  assert.strictEqual(ui.rapidPad({ content: null }, CATALOGUE_ROWS, mine), false);
+});
+
+test('rapid pads ask before the acknowledgement on the deck and on the command bar strip, and play after it', () => {
+  const layout = [
+    pad(0, 'White', { kind: 'preset', id: 'energy.whiteStrobe' }),
+    pad(1, 'Glow', { kind: 'preset', id: 'energy.glow' }),
+    pad(2, 'Flash', { kind: 'pattern', id: 'upFlash' }, 'once'),
+    pad(3, 'Strobe', { kind: 'strobe', id: 'strobe' }),
+  ];
+  given({ safety: { photosensitivityAcknowledged: false }, pads: { layout, lit: [] }, patterns: CATALOGUE_ROWS, effects: [] });
+  const deck = ui.html(ui.h(ui.Pads, { initialBank: 0 }));
+  const strip = ui.html(ui.h(ui.CommandBar, {}));
+  for (const html of [deck, strip]) {
+    const asking = [...html.matchAll(/<button[^>]*data-safety="ask"[^>]*>/g)].length;
+    assert.strictEqual(asking, 3, html);
+    assert.doesNotMatch(html, /title="Glow[^"]*"[^>]*data-safety="ask"/);
+  }
+  given({ safety: { photosensitivityAcknowledged: true }, pads: { layout, lit: [] }, patterns: CATALOGUE_ROWS, effects: [] });
+  assert.doesNotMatch(ui.html(ui.h(ui.Pads, { initialBank: 0 })), /data-safety="ask"/);
+  assert.doesNotMatch(ui.html(ui.h(ui.CommandBar, {})), /data-safety="ask"/);
+});
+
+test('a strip pad with no label is named by its content, as on the deck', () => {
+  given({ safety: { photosensitivityAcknowledged: true }, pads: { layout: [pad(1, '', { kind: 'preset', id: 'energy.glow' })], lit: [] } });
+  const html = ui.html(ui.h(ui.CommandBar, {}));
+  assert.match(html, /class="cb-energy-name">energy\.glow</);
 });
 
 const BUILTIN = [{ id: 'ldjFire', app: 'ldj', colours: ['#FF0000', '#FF8800'] }, { id: 'hdDefault', app: 'hd', colours: ['#00FF00', { random: true }] }];
