@@ -36,6 +36,61 @@ test('a hold pad runs while held, and lets go when the window loses focus', asyn
   await page.mouse.up();
 });
 
+test('a hold pad lets go when the bank switches under it, and the finger\'s up starts nothing', async ({ page, request }) => {
+  await open(page, 'perform');
+  const blinder = await padOf(request, 'energy.blinder');
+  const button = cell(page, blinder);
+  await button.scrollIntoViewIfNeeded();
+  await hold(page, button);
+  await until(request, (s) => !!s.pads.lit[blinder.index]);
+  // A second finger on bank B, as a programmatic click: the held button unmounts.
+  await page.evaluate(() => window.document.querySelectorAll('.pad-bank')[1].click());
+  await expect(cell(page, { bank: 1, slot: 0 })).toBeVisible();
+  await until(request, (s) => !s.pads.lit[blinder.index]);
+  await page.mouse.up();
+  // The B pad under the finger stays dark.
+  const under = cell(page, { bank: 1, slot: blinder.slot });
+  await page.waitForTimeout(300);
+  expect((await state(request)).pads.lit[8 + blinder.slot]).toBeFalsy();
+  await expect(under).toHaveAttribute('aria-pressed', 'false');
+});
+
+test('a rapid preset pad asks before the acknowledgement on the deck and on the command bar strip', async ({ page, request }) => {
+  await request.put('/api/settings', { data: { safety: { photosensitivityAcknowledged: false } } });
+  // A1 as a fresh install has it: another spec may have changed it.
+  const { bank: _b, slot: _s, ...before } = (await state(request)).pads.layout.find((p) => p.bank === 0 && p.slot === 0);
+  await request.put('/api/pads/0/0', { data: { ...before, content: { kind: 'preset', id: 'energy.whiteStrobe' }, launch: 'hold' } });
+  try {
+    await open(page, 'perform');
+    const white = await padOf(request, 'energy.whiteStrobe');
+    // A voice another spec left on A1 may light it; the press must change nothing.
+    const litBefore = !!(await state(request)).pads.lit[white.index];
+    const pad = cell(page, white);
+    await expect(pad).toHaveAttribute('data-safety', 'ask');
+    await expect(cell(page, await padOf(request, 'energy.blinder'))).not.toHaveAttribute('data-safety', 'ask');
+    await pad.click();
+    const dialog = page.getByRole('alertdialog', { name: 'Rapid flashing' });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(pad).toHaveAttribute('aria-pressed', String(litBefore));
+    // The command bar's strip, on every view but Perform.
+    await open(page, 'manual');
+    const strip = (await state(request)).pads.layout.filter((p) => p.bank === 0 && p.content).sort((a, b) => a.slot - b.slot);
+    const onStrip = page.locator('.cb-energy-btn').nth(strip.findIndex((p) => p.slot === white.slot));
+    await expect(onStrip).toHaveAttribute('data-safety', 'ask');
+    await onStrip.click();
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    const s = await state(request);
+    expect(!!s.pads.lit[white.index]).toBe(litBefore);
+    expect(s.safety.photosensitivityAcknowledged).toBe(false);
+  } finally {
+    await request.put('/api/pads/0/0', { data: before });
+    await request.put('/api/settings', { data: { safety: { photosensitivityAcknowledged: false } } });
+  }
+});
+
 test('the bank tabs switch the eight pads shown', async ({ page, request }) => {
   await open(page, 'perform');
   const { pads } = await state(request);

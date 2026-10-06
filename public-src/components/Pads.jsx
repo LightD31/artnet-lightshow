@@ -1,7 +1,7 @@
 import { useRef, useState } from 'preact/hooks';
 import { api, pick } from '../state.js';
 import { useFocusTrap } from '../focus-trap.js';
-import { useVoicePads, holdsWhilePressed, padKey } from '../voice-pad.js';
+import { useVoicePads, holdsWhilePressed, padKey, rapidPad } from '../voice-pad.js';
 import { quickDeck, readFavourites } from './Effects.jsx';
 import { useSafetyGate } from './Photosensitivity.jsx';
 
@@ -51,11 +51,11 @@ export function padBody(draft) {
 }
 
 export function Pads({ initialBank }) {
-  const s = pick(['pads']);
+  const s = pick(['pads', 'patterns', 'effects']);
   const [bank, setBank] = useState(() => initialBank ?? readBank());
   const [editing, setEditing] = useState(false);
   const [open, setOpen] = useState(null);
-  const { held, padProps } = useVoicePads({ onLongPress: setOpen });
+  const { held, gatedPadProps } = useVoicePads({ onLongPress: setOpen });
   const gate = useSafetyGate();
   const layout = s.pads?.layout || [];
   const lit = s.pads?.lit || [];
@@ -83,10 +83,9 @@ export function Pads({ initialBank }) {
           const index = entry.bank * SLOTS + entry.slot;
           const on = !!lit[index] || held.has(padKey(entry.bank, entry.slot));
           const name = entry.label || (entry.content ? entry.content.id : 'Empty');
-          // A strobe pad asks before the acknowledgement, as the strobe button does.
-          const asks = !editing && entry.content?.kind === 'strobe' && !gate.acknowledged;
+          // A rapid pad asks before the acknowledgement, as the strobe button does.
           const handlers = editing ? { onClick: () => setOpen(entry) }
-            : asks ? { onClick: () => gate.guard(name, () => {}), 'data-safety': 'ask' } : padProps(entry);
+            : gatedPadProps(entry, gate, rapidPad(entry, s.patterns, s.effects), name);
           delete handlers.style;
           return (
             <button key={index} type="button"

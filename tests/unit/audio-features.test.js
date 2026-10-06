@@ -81,7 +81,7 @@ test('no reading for half a second: frame() is null', () => {
   assert.strictEqual(a.frame(), null);
 });
 
-// ── Beyond the brief: the reviewed arithmetic ─────────────────────────────────
+// ── The reviewed arithmetic ───────────────────────────────────────────────────
 
 const f32 = Math.fround;
 // The defaults' band list and the key the live input stamps a reading with.

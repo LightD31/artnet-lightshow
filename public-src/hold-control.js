@@ -32,17 +32,21 @@ export function createHoldControl(emit) {
 /**
  * Several holds at once, one per key (a pad, the strobe), each with its own
  * token so the server can tell them apart. `target` ({ pad } or { effect })
- * rides every message of that hold, the release included.
+ * rides every message of that hold, the release included. `onEnd`
+ * listeners hear of every hold that ends, however it ended.
  */
 export function createVoiceHolds(emit) {
   const holds = new Map();
+  const ended = new Set();
   let sequence = 0;
+  let newest = null;
 
   const release = (key) => {
     const hold = holds.get(key);
     if (!hold) return;
     holds.delete(key);
     hold.control.release();
+    for (const listener of [...ended]) listener(key);
   };
 
   return {
@@ -52,10 +56,14 @@ export function createVoiceHolds(emit) {
       const control = createHoldControl((payload) => emit({ action: payload.action, token: `${id}:${payload.token}`, ...target }));
       if (!control.press()) return false;
       holds.set(key, { control });
+      newest = key;
       return true;
     },
     release,
     releaseAll() { for (const key of [...holds.keys()]) release(key); },
+    // The server's refusal carries no token; it answers the newest press.
+    refuse() { if (newest !== null) release(newest); newest = null; },
     held() { return [...holds.keys()]; },
+    onEnd(listener) { ended.add(listener); return () => ended.delete(listener); },
   };
 }

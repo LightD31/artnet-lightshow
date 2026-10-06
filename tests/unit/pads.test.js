@@ -408,7 +408,7 @@ test('the pattern player: one bundle voice over the pad\'s fixtures, a once last
   assert.throws(() => pads.press(1, 7, 'tablet', 's'), refusedWith(409, /strobe/));
 });
 
-test('a strobe pad takes the strobe hook when installed and otherwise the Task 16 path', async (t) => {
+test('a strobe pad takes the strobe hook when installed and otherwise the voice-hold preset path', async (t) => {
   const { voices: m, pads, store } = rig(t, { acknowledged: true });
   assert.deepEqual(store.get(0, 6).content, { kind: 'strobe', id: 'strobe' });
   // What voice-hold made of `{ preset: 'strobe' }` before the strobe: `strobe` is the upstream pattern's id, no preset.
