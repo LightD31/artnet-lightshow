@@ -24,6 +24,9 @@ const INSET_Y = HEAD + LAMP_H / 2;
 const SPAN_X = LAMP_W;
 const SPAN_Y = LAMP_H + HEAD + FOOT;
 
+// The plan's edges as the effects read the room (room.ts: v = +1, the top, is the front).
+export const STAGE_EDGES = { top: 'Stage · TV wall — front', bottom: 'Audience — back', left: 'Left', right: 'Right' };
+
 export const clamp = (n) => Math.max(0, Math.min(100, n));
 export const round1 = (n) => Math.round(n * 10) / 10;
 
@@ -101,11 +104,26 @@ export function autoPlace(fixtures, { all = false } = {}) {
   const rowOf = (f) => (AUTO_ROWS.includes(f.group) ? f.group : null);
   const rows = AUTO_ROWS.filter((g) => todo.some((f) => rowOf(f) === g));
   const out = [];
+  // Placed lamps (and earlier proposals) keep a grid step clear around them.
+  const taken = all ? [] : fixtures.filter((f) => f.position).map((f) => f.position);
+  const free = (x, y) => !taken.some((t) => Math.abs(t.x - x) <= PLAN_SNAP && Math.abs(t.y - y) <= PLAN_SNAP);
+  const spot = (x0, y0) => {
+    for (let dy = 0; dy <= 80; dy += 2 * PLAN_SNAP) {
+      for (const y of dy ? [y0 + dy, y0 - dy] : [y0]) {
+        if (y < 5 || y > 95) continue;
+        for (let dx = 0; dx <= 90; dx += PLAN_SNAP) {
+          for (const x of dx ? [x0 + dx, x0 - dx] : [x0]) if (x >= 5 && x <= 95 && free(x, y)) return { x, y };
+        }
+      }
+    }
+    return { x: x0, y: y0 };
+  };
   rows.forEach((g, r) => {
     const members = todo.filter((f) => rowOf(f) === g);
     const y = snapTo(15 + (70 * (r + 0.5)) / rows.length, PLAN_SNAP);
     members.forEach((f, k) => {
-      const position = { x: snapTo(10 + (80 * (k + 0.5)) / members.length, PLAN_SNAP), y };
+      const position = spot(snapTo(10 + (80 * (k + 0.5)) / members.length, PLAN_SNAP), y);
+      taken.push(position);
       if (f.position && Number.isFinite(f.position.height)) position.height = f.position.height;
       out.push({ id: f.id, position });
     });

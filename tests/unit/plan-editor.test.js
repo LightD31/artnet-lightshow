@@ -20,6 +20,7 @@ async function load() {
         export { rigSelectionSig } from './public-src/rig-ui.js';
         export { pointIn, autoPlace, PLAN_SNAP } from './public-src/stage-geometry.js';
         export { PlanEditor, stepHeight } from './public-src/components/setup/PlanEditor.jsx';
+        export { StagePreview } from './public-src/components/StagePreview.jsx';
         export { buildRig } from './src/shared/rig.ts';
         export { roomOf } from './src/shared/room.ts';
       `,
@@ -61,6 +62,16 @@ test('the plot names its edges the way the effects read the room', () => {
   assert.match(out, /class="[^"]*plan-edge-right[^"]*"[^>]*>Right</);
   assert.match(out, /aria-label="Plan of the rig from above: the stage and TV wall \(the front\) at the top, the audience \(the back\) at the bottom, left and right as the audience sees them"/);
   assert.doesNotMatch(out, /BACK OF STAGE/, 'the top edge is the front in the room the effects play over');
+});
+
+test('the stage preview names its top and bottom edges as the plot does', () => {
+  const plot = render([fixture(1)]);
+  const preview = ui.html(ui.h(ui.StagePreview, {}));
+  const top = plot.match(/plan-edge-top[^"]*"[^>]*>([^<]+)</)[1];
+  const bottom = plot.match(/plan-edge-bottom[^"]*"[^>]*>([^<]+)</)[1];
+  assert.match(preview, new RegExp(`class="stage-back"[^>]*>${top}<`));
+  assert.match(preview, new RegExp(`class="stage-audience"[^>]*>${bottom}<`));
+  assert.doesNotMatch(preview, /BACK OF STAGE|>AUDIENCE</);
 });
 
 test('a lamp placed at the plot\'s top-left is front-left and high in the room the effects receive', () => {
@@ -164,4 +175,23 @@ test('auto-place "all" re-spreads every lamp, keeping each one\'s height', () =>
   assert.equal(proposal[0].position.height, 70);
   assert.equal('height' in proposal[1].position, false);
   assert.deepEqual(ui.autoPlace([fixture(1, { position: { x: 1, y: 1 } })]), [], 'nothing unplaced, nothing proposed');
+});
+
+test('auto-place keeps a grid step clear of placed lamps and of its own proposals, opening another row when one is full', () => {
+  const near = (a, b) => Math.abs(a.x - b.x) <= ui.PLAN_SNAP && Math.abs(a.y - b.y) <= ui.PLAN_SNAP;
+  const one = ui.autoPlace([fixture(1, { position: { x: 50, y: 50 } }), fixture(2)]);
+  assert.equal(one.length, 1);
+  assert.ok(!near(one[0].position, { x: 50, y: 50 }), 'not on the placed lamp');
+  assert.equal(one[0].position.y, 50, 'shifted along its row');
+  const row = Array.from({ length: 37 }, (_, k) => fixture(k + 1, { position: { x: 5 + 2.5 * k, y: 50 } }));
+  const full = ui.autoPlace([...row, fixture(40), fixture(41)]);
+  for (const p of full) for (const q of [...row.map((f) => ({ position: f.position })), ...full.filter((o) => o !== p)]) assert.ok(!near(p.position, q.position));
+  assert.notEqual(full[0].position.y, 50, 'a full row opens the next');
+});
+
+test('the height of a lamp with no place waits for it to be placed', () => {
+  const out = render([fixture(1)], [1]);
+  assert.match(out, /Place it first: a height belongs to a place on the plot\./);
+  const placed = render([fixture(1, { position: { x: 20, y: 30 } })], [1]);
+  assert.doesNotMatch(placed, /Place it first/);
 });

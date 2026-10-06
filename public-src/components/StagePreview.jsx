@@ -7,7 +7,7 @@ import { nowPlaying } from '../preview-inputs.js';
 import { useTimeline } from '../use-timeline.js';
 import { stagePositions } from '../../src/shared/stage.ts';
 import { buildRig, lineOf } from '../../src/shared/rig.ts';
-import { clamp, geometryOf, placeAt, pointIn, surfaceStyle } from '../stage-geometry.js';
+import { STAGE_EDGES, clamp, geometryOf, placeAt, pointIn, surfaceStyle } from '../stage-geometry.js';
 
 export function StagePreview() {
   const s = stateSig.value;
@@ -116,7 +116,7 @@ export function StagePreview() {
     <div class={`stage-surface ${edit ? 'editing' : ''}`} role="group"
       aria-label="Stage layout, viewed from the audience"
       style={surfaceStyle}>
-      <span class="stage-back">BACK OF STAGE</span>
+      <span class="stage-back">{STAGE_EDGES.top}</span>
       {/* A bar's cells first, so its number and every lamp sit on top. */}
       {drawn.map((fix, i) => {
         if (!rig.cellMaps[i]) return null;
@@ -190,7 +190,7 @@ export function StagePreview() {
           onPointerCancel={(event) => finish(event, false)} onLostPointerCapture={(event) => finish(event, false)} />;
       })}
       {!fixtures.length && <p class="panel-empty">Add fixtures in the Rig view to build your stage.</p>}
-      <span class="stage-audience">AUDIENCE</span>
+      <span class="stage-audience">{STAGE_EDGES.bottom}</span>
     </div>
     <p class="look-note">{edit
       ? `Drag fixtures or use arrow keys.${rig.hasPixels ? ' Drag a bar\'s end handle to turn or stretch it.' : ''} Positions are saved with the show.`

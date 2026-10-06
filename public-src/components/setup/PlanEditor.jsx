@@ -5,7 +5,7 @@ import { stagePositions } from '../../../src/shared/stage.ts';
 import { buildRig, lineOf } from '../../../src/shared/rig.ts';
 import { fixtureOutputColor, fixtureCellColors, patchedAt } from '../../utils.js';
 import {
-  PLAN_SNAP, autoPlace, clamp, geometryOf, lineFromEnds, placeAt, plotBox, pointIn, pxOf, round1, snapTo, surfaceStyle,
+  PLAN_SNAP, STAGE_EDGES, autoPlace, clamp, geometryOf, lineFromEnds, placeAt, plotBox, pointIn, pxOf, round1, snapTo, surfaceStyle,
 } from '../../stage-geometry.js';
 import { rigSelectionSig, selectOnly, toggleSelected, identifyFixtures, stopIdentify } from '../../rig-ui.js';
 
@@ -129,11 +129,13 @@ export function PlanEditor() {
     identifyFixtures([drawTarget], DRAW_IDENTIFY_SECONDS);
   };
 
+  // Any edit of the operator's own ends the offer to undo an auto-place.
+  const edit = (payload) => { setUndo(null); emitFixture(payload); };
   const pointOf = (e) => pointIn(surface.current && surface.current.getBoundingClientRect(), e.clientX, e.clientY);
 
   const placeChip = (id, p, e) => {
     const at = snap && !e.altKey ? { x: snapTo(p.x, SNAP_STEP), y: snapTo(p.y, SNAP_STEP) } : p;
-    emitFixture({ id, position: { x: clamp(round1(at.x)), y: clamp(round1(at.y)) } });
+    edit({ id, position: { x: clamp(round1(at.x)), y: clamp(round1(at.y)) } });
     selectOnly(id);
     setArmed(null);
   };
@@ -240,7 +242,7 @@ export function PlanEditor() {
     drag.current = null;
     if (surface.current && surface.current.hasPointerCapture(e.pointerId)) surface.current.releasePointerCapture(e.pointerId);
     if (save && (d.kind === 'move' || d.kind === 'turn') && d.patch) {
-      for (const [id, patch] of d.patch) emitFixture({ id, ...patch });
+      for (const [id, patch] of d.patch) edit({ id, ...patch });
     }
     if (d.kind === 'band') {
       const b = band;
@@ -264,7 +266,7 @@ export function PlanEditor() {
       if (save && Math.hypot(to.x - d.from.x, to.y - d.from.y) >= 1) {
         const i = indexOf.get(d.id);
         const placed = lineFromEnds(d.from, to, lineCells(rig, i));
-        emitFixture({ id: d.id, ...placed });
+        edit({ id: d.id, ...placed });
         // On to the next bar in the patch, lit so it can be found.
         const next = fixtures.slice(i + 1).find((f) => isBar(f.id));
         if (next) {
@@ -291,7 +293,7 @@ export function PlanEditor() {
       const dy = e.key === 'ArrowDown' ? step : e.key === 'ArrowUp' ? -step : 0;
       for (const id of moving) {
         const at = positions[indexOf.get(id)];
-        if (at) emitFixture({ id, position: { x: clamp(round1(at.x + dx)), y: clamp(round1(at.y + dy)) } });
+        if (at) edit({ id, position: { x: clamp(round1(at.x + dx)), y: clamp(round1(at.y + dy)) } });
       }
       return;
     }
@@ -307,7 +309,7 @@ export function PlanEditor() {
     else if (e.key === '0') geometry = null;
     else return;
     e.preventDefault();
-    emitFixture({ id: fix.id, geometry });
+    edit({ id: fix.id, geometry });
   };
 
   // ── Arranging the selection ──
@@ -315,34 +317,39 @@ export function PlanEditor() {
   const chosenBars = fixtures.filter((f) => chosen.includes(f.id) && isBar(f.id));
   const arrangeRow = () => {
     const points = chosen.map((id) => positions[indexOf.get(id)]);
-    rowPositions(points).forEach((position, k) => emitFixture({ id: chosen[k], position }));
+    rowPositions(points).forEach((position, k) => edit({ id: chosen[k], position }));
   };
   const arrangeEndToEnd = () => {
     const bars = chosenBars.map((f) => {
       const i = indexOf.get(f.id);
       return { id: f.id, length: lineAt(i).length, centre: positions[i] };
     });
-    endToEnd(bars).forEach((placed, k) => emitFixture({ id: bars[k].id, ...placed }));
+    endToEnd(bars).forEach((placed, k) => edit({ id: bars[k].id, ...placed }));
   };
-  const resetPlace = () => { for (const id of chosen) emitFixture({ id, position: null, geometry: null }); };
+  const resetPlace = () => { for (const id of chosen) edit({ id, position: null, geometry: null }); };
 
   // ── Height, and auto-place ──
   const one = chosen.length === 1 ? fixtures[indexOf.get(chosen[0])] : null;
   const oneHeight = one && one.position && Number.isFinite(one.position.height) ? one.position.height : null;
   const setHeight = (height) => {
     const at = positions[indexOf.get(one.id)];
-    emitFixture({ id: one.id, position: { x: round1(at.x), y: round1(at.y), height } });
+    edit({ id: one.id, position: { x: round1(at.x), y: round1(at.y), height } });
   };
   const waiting = fixtures.filter((f) => !f.position);
   const propose = (all) => setProposal({ all, list: autoPlace(fixtures, { all }) });
   const applyProposal = () => {
     // A lamp removed since the proposal was made is skipped.
     const list = proposal.list.filter(({ id }) => indexOf.has(id));
-    setUndo(list.map(({ id }) => ({ id, position: fixtures[indexOf.get(id)].position || null })));
+    setUndo(list.map(({ id, position }) => ({ id, position: fixtures[indexOf.get(id)].position || null, after: position })));
     for (const { id, position } of list) emitFixture({ id, position });
     setProposal(null);
     setArmed(null);
   };
+  // Offered only while every applied lamp still stands where the apply put it.
+  const canUndo = !!undo && undo.every(({ id, after }) => {
+    const at = indexOf.has(id) && fixtures[indexOf.get(id)].position;
+    return !!at && at.x === after.x && at.y === after.y;
+  });
   const undoAutoPlace = () => {
     for (const { id, position } of undo) if (indexOf.has(id)) emitFixture({ id, position });
     setUndo(null);
@@ -378,7 +385,7 @@ export function PlanEditor() {
         <button type="button" class="btn sm plan-auto" disabled={!fixtures.length || !connected} onClick={() => propose(!waiting.length)}
           title="Propose places for the lamps not placed yet, one row per group, in patch order">
           {waiting.length ? `Auto-place ${waiting.length}` : 'Auto-place all'}</button>
-        {undo && <button type="button" class="btn sm" disabled={!connected} onClick={undoAutoPlace}>Undo auto-place</button>}
+        {canUndo && <button type="button" class="btn sm" disabled={!connected} onClick={undoAutoPlace}>Undo auto-place</button>}
         <span class="plan-count">{chosen.length ? `${chosen.length} selected` : 'Nothing selected'}</span>
       </div>
       {proposal && (
@@ -395,14 +402,15 @@ export function PlanEditor() {
           <strong class="plan-selected-name">{indexOf.get(one.id) + 1} · {one.label}</strong>
           <div class="plan-height-edit" role="group" aria-label="Height">
             <span class="plan-height-label">Height</span>
-            <button type="button" class="btn plan-step" aria-label={`Lower ${one.label}`} disabled={!connected || h <= 0}
+            <button type="button" class="btn plan-step" aria-label={`Lower ${one.label}`} disabled={!connected || !one.position || h <= 0}
               onClick={() => setHeight(stepHeight(oneHeight ?? undefined, -1))}>−</button>
             <input type="range" class="plan-height-range" min="0" max="100" step={HEIGHT_STEP} aria-label={`Height of ${one.label}`}
-              value={h} disabled={!connected} onChange={(e) => setHeight(Number(e.currentTarget.value))} />
-            <button type="button" class="btn plan-step" aria-label={`Raise ${one.label}`} disabled={!connected || h >= 100}
+              value={h} disabled={!connected || !one.position} onChange={(e) => setHeight(Number(e.currentTarget.value))} />
+            <button type="button" class="btn plan-step" aria-label={`Raise ${one.label}`} disabled={!connected || !one.position || h >= 100}
               onClick={() => setHeight(stepHeight(oneHeight ?? undefined, 1))}>+</button>
             <output class="plan-height-value">{h} %</output>
             <span class="plan-height-scale">{oneHeight === null ? 'not set: mid-room · ' : ''}0 floor, 100 ceiling</span>
+            {!one.position && <span class="plan-height-hint">Place it first: a height belongs to a place on the plot.</span>}
           </div>
         </section>;
       })()}
@@ -419,9 +427,9 @@ export function PlanEditor() {
         onPointerDown={onPointerDown} onPointerMove={onPointerMove}
         onPointerUp={(e) => finish(e, true)} onPointerCancel={(e) => finish(e, false)}>
         <span class="plan-grid" aria-hidden="true" style={plotBox} />
-        <span class="stage-back plan-edge-top" aria-hidden="true">Stage · TV wall — front</span>
-        <span class="plan-edge plan-edge-left" aria-hidden="true">Left</span>
-        <span class="plan-edge plan-edge-right" aria-hidden="true">Right</span>
+        <span class="stage-back plan-edge-top" aria-hidden="true">{STAGE_EDGES.top}</span>
+        <span class="plan-edge plan-edge-left" aria-hidden="true">{STAGE_EDGES.left}</span>
+        <span class="plan-edge plan-edge-right" aria-hidden="true">{STAGE_EDGES.right}</span>
         {drawnFixtures.map((fix, i) => {
           if (!rig.cellMaps[i]) return null;
           const { start, count } = rig.ranges[i];
@@ -488,7 +496,7 @@ export function PlanEditor() {
           </>;
         })()}
         {!fixtures.length && <p class="panel-empty">Nothing is patched yet. Add fixtures below.</p>}
-        <span class="stage-audience plan-edge-bottom" aria-hidden="true">Audience — back</span>
+        <span class="stage-audience plan-edge-bottom" aria-hidden="true">{STAGE_EDGES.bottom}</span>
       </div>
       <div class="plan-unplaced" role="group" aria-label={`Not placed yet: ${waiting.length} lamp${waiting.length === 1 ? '' : 's'}`}>
         <h3 class="plan-unplaced-title">Not placed yet</h3>
