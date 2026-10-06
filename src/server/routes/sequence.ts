@@ -32,7 +32,7 @@ export function attachSequenceRoutes(app: Express, ctx: RouteContext): void {
   };
 
   app.get('/api/sequence', (_req, res) => {
-    res.json({ ok: true, sequence: sequencer().current(), status: sequencer().status() });
+    res.json({ ok: true, sequence: sequencer().current(), table: sequencer().table(), status: sequencer().status() });
   });
 
   app.put('/api/sequence', (req, res) => {

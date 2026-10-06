@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { field, api } from '../state.js';
 import { createHoldControl } from '../hold-control.js';
+import { useSafetyGate } from './Photosensitivity.jsx';
+import { matrixAsks } from '../preview-inputs.js';
 
 // Light DJ's Matrix Strobe Maker: every colour held down joins one list that
 // the board plays in its mode; letting go of the last one stops it. The
@@ -98,8 +100,11 @@ export function Matrix() {
     return () => { window.removeEventListener('blur', letGo); holds.releaseAll(); };
   }, [holds]);
 
+  const gate = useSafetyGate();
   const press = (e, colour) => {
     e.preventDefault();
+    // A rapid mode asks first, as the strobe pad does; the next press holds.
+    if (matrixAsks(mode, gate.acknowledged)) { gate.guard(`Matrix ${mode}`, () => {}); return; }
     e.currentTarget.setPointerCapture?.(e.pointerId);
     holds.press(e.pointerId, colour);
     setDown((d) => ({ ...d, [e.pointerId]: colour }));
@@ -127,6 +132,7 @@ export function Matrix() {
           >{m.label}</button>
         ))}
       </div>
+      {gate.dialog}
       <div class="matrix-grid" style={{ touchAction: 'none' }}>
         {MATRIX_COLOURS.map((colour) => (
           <button

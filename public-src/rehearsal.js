@@ -1,5 +1,7 @@
-import { useEffect } from 'preact/hooks';
-import { stagePreviewSig } from './state.js';
+import { useEffect, useMemo, useState } from 'preact/hooks';
+import { stagePreviewSig, stateSig, api } from './state.js';
+import { createPreviewSampler } from '../src/shared/preview.ts';
+import { liveVoiceEvents, previewOptions } from './preview-inputs.js';
 
 /**
  * Rehearsal belongs to a track. When the loaded track changes, whatever was
@@ -15,4 +17,19 @@ export function useRehearsalTrack(autoShow) {
     if (stagePreviewSig.value.trackId === trackId) return;
     stagePreviewSig.value = { ...stagePreviewSig.value, playing: false, position: 0, rehearsal: false, trackId };
   }, [trackId]);
+}
+
+/**
+ * The rehearsal's sampler: the timeline with what the rig plays over it now
+ * (voices, the playing sequence, the override, the live Hue strobe setting).
+ */
+export function useRehearsalSampler(data) {
+  const s = stateSig.value;
+  const revision = s.sequence ? s.sequence.revision : null;
+  const [table, setTable] = useState(null);
+  // The clip table rides GET /api/sequence; refetched when its revision moves.
+  useEffect(() => { api('/api/sequence').then((r) => setTable((r && r.ok && r.table) || null)); }, [revision]);
+  const options = previewOptions(s, { table, saved: s.effects });
+  const key = JSON.stringify([s.voices, options.hueStrobe, options.paletteOverride, options.safety, options.sequence && options.sequence.table.revision]);
+  return useMemo(() => createPreviewSampler([...(data?.timeline || []), ...liveVoiceEvents(s.voices)], data, options), [data, key]);
 }

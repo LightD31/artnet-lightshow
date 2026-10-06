@@ -70,6 +70,18 @@ export function resizeClip(clip, deltaBeats, snap) {
   return { ...clip, lengthBeats: Math.max(snap || 0.25, toGrid(clip.lengthBeats + deltaBeats, snap)) };
 }
 
+/** After a kept take: the removed clips that reached outside it, or null when there are none. */
+export function beyondRangeNotice(beyond, lanes, beatsPerBar) {
+  if (!Array.isArray(beyond) || !beyond.length) return null;
+  const at = (b) => `${Math.floor(b / beatsPerBar) + 1}.${Math.floor(b % beatsPerBar) + 1}`;
+  const parts = beyond.map((c) => {
+    const lane = (lanes.find((l) => l.id === c.laneId) || {}).name || c.laneId;
+    const sides = [c.beforeBeats > 0 && `${c.beforeBeats} beats before`, c.afterBeats > 0 && `${c.afterBeats} beats after`].filter(Boolean).join(' / ');
+    return `${lane} from ${at(c.startBeat)}, ${sides}`;
+  });
+  return `Replaced ${beyond.length} clip${beyond.length > 1 ? 's' : ''} that reached beyond the take: ${parts.join('; ')}`;
+}
+
 function stateText(status) {
   if (!status || !status.loaded) return 'Nothing loaded';
   if (status.error) return `Stopped: ${status.error.message}`;
@@ -310,7 +322,9 @@ export function Sequence({ initial = {} }) {
   };
   const remove = () => api(`/api/sequences/${encodeURIComponent(seq.id)}`, json('DELETE', {})).then(refreshShelf);
   const startRecord = () => api('/api/sequence/record', json('POST', rec));
-  const stopRecord = (keep) => api('/api/sequence/record/stop', json('POST', { keep }));
+  const [beyond, setBeyond] = useState(null);
+  const stopRecord = (keep) => api('/api/sequence/record/stop', json('POST', { keep }))
+    .then((r) => setBeyond(r && r.ok ? beyondRangeNotice(r.beyondRange, seq.lanes, beatsPerBar) : null));
 
   return (
     <section class="sequence-view" aria-label="Sequence">
@@ -329,6 +343,7 @@ export function Sequence({ initial = {} }) {
       </div>
       {shelfList}
 
+      {beyond && <p class="seq-beyond" role="status">{beyond} <button type="button" class="btn sm" onClick={() => setBeyond(null)}>Dismiss</button></p>}
       <div class="seq-record" role="group" aria-label="Record">
         <select aria-label="Count-in beats" value={rec.countInBeats} onChange={(e) => setRec({ ...rec, countInBeats: Number(e.currentTarget.value) })}>
           {[0, 1, 2, 4, 8].map((n) => <option key={n} value={n}>{n ? `${n} beat count-in` : 'No count-in'}</option>)}
