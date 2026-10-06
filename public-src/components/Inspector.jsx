@@ -146,14 +146,18 @@ function Field({ label, path, unit, children }) {
 
 /** A number the schema bounds; an emptied field is null where the schema allows it, else left alone. */
 function NumberField({ label, path, value, onChange, step = 1, min, max, unit, nullable = false, placeholder }) {
+  // The typed text stays while the field is edited; the stored, clamped value shows on blur.
+  const [text, setText] = useState(null);
   const onInput = (e) => {
+    setText(e.target.value);
     if (e.target.value === '') { if (nullable) onChange(null); return; }
     const n = Number(e.target.value);
     if (Number.isFinite(n)) onChange(n);
   };
   return (
     <Field label={label} path={path} unit={unit}>
-      <input id={fid(path)} type="number" value={value ?? ''} step={step} min={min} max={max} placeholder={placeholder} onInput={onInput} />
+      <input id={fid(path)} type="number" value={text ?? value ?? ''} step={step} min={min} max={max} placeholder={placeholder}
+        onInput={onInput} onBlur={() => setText(null)} onKeyDown={(e) => { if (e.key === 'Enter') setText(null); }} />
     </Field>
   );
 }
@@ -278,13 +282,21 @@ function RgbEnvelope({ env, setParam }) {
   </>;
 }
 
+/**
+ * A row on a wall-clock step ignores params.cadence; the catalogue marks
+ * such a kind `wallClock: true`.
+ */
+export function showsCadence(spec, families) {
+  return kindDef(spec.kind, families)?.wallClock !== true;
+}
+
 /** A Light DJ row: its step, its length, and Backlit where the row has a backlit twin. */
 function LdjControls({ spec, families, setParam, setKind }) {
   const p = spec.params || {};
   const twin = backlitTwin(spec.kind, families);
   return (
     <div class="insp-grid">
-      <NumberField label="Cadence" path="cadence" value={p.cadence} step={0.125} min={0.125} unit="beats a step" onChange={(v) => setParam('cadence', Math.max(0.125, v))} />
+      {showsCadence(spec, families) && <NumberField label="Cadence" path="cadence" value={p.cadence} step={0.125} min={0.125} unit="beats a step" onChange={(v) => setParam('cadence', Math.max(0.125, v))} />}
       <NumberField label="Beats" path="beats" value={p.beats} step={1} min={1} unit="row length" onChange={(v) => setParam('beats', Math.max(1, v))} />
       {twin && <CheckField label="Backlit" path="backlit" value={twin.on} onChange={(on) => setKind(on ? twin.backlit : twin.plain)} />}
     </div>
@@ -414,6 +426,9 @@ export function Inspector({ id, onSelect, onPlay, onClose }) {
   const [ask, setAsk] = useState(null);
   const [remember, setRemember] = useState(false);
   const [preference, setPreference] = useState(readRecommendedPreference);
+  const [paletteInvalid, setPaletteInvalid] = useState(false);
+  // Bumped by Revert, Apply recommended and a family change: the palette editor starts afresh.
+  const [paletteEpoch, setPaletteEpoch] = useState(0);
   const draft = edits.key === key && edits.draft ? edits.draft : base;
   const dirty = !!draft && JSON.stringify(draft) !== JSON.stringify(base);
   const update = (fn) => setEdits({ key, draft: fn(draft) });
@@ -457,10 +472,12 @@ export function Inspector({ id, onSelect, onPlay, onClose }) {
   const setSpec = (field, value) => update((d) => ({ ...d, spec: { ...d.spec, [field]: value } }));
   const setParam = (path, value) => update((d) => ({ ...d, spec: { ...d.spec, params: setPath(d.spec.params || {}, path, value) } }));
   const setKind = (kind) => setSpec('kind', kind);
-  const applyRecommended = (target = def) => { if (target) update((d) => ({ ...d, spec: withRecommended(d.spec, target) })); };
+  const freshPalette = () => setPaletteEpoch((n) => n + 1);
+  const applyRecommended = (target = def) => { if (target) { freshPalette(); update((d) => ({ ...d, spec: withRecommended(d.spec, target) })); } };
 
   const switchTo = (fam, how) => {
     const next = fam.kinds[0];
+    freshPalette();
     if (how === 'apply') applyRecommended(next); else setKind(next.kind);
     setAsk(null);
   };
@@ -479,12 +496,13 @@ export function Inspector({ id, onSelect, onPlay, onClose }) {
   };
 
   const saveInPlace = async () => {
+    if (paletteInvalid) return;
     const res = await savePreset(preset, draft);
     if (res.ok) setEdits({ key: null, draft: null });
   };
   const saveCopy = async () => {
     const name = copyName.trim();
-    if (!name) return;
+    if (!name || paletteInvalid) return;
     const res = await savePreset({ source: 'builtin' }, { name, spec: draft.spec });
     if (!res.ok) return;
     setNaming(false);
@@ -550,14 +568,14 @@ export function Inspector({ id, onSelect, onPlay, onClose }) {
         <span>The look's own colours</span>
       </label>
       {spec.palette != null && (
-        <PaletteEditor colours={spec.palette} onChange={(colours) => setSpec('palette', colours)} builtin={palettes.builtin} user={palettes.user} />
+        <PaletteEditor key={paletteEpoch} colours={spec.palette} onChange={(colours) => setSpec('palette', colours)} onInvalid={setPaletteInvalid} builtin={palettes.builtin} user={palettes.user} />
       )}
 
       <div class="insp-actions">
         {onPlay && !playing && <button type="button" class="btn sm" onClick={() => onPlay(preset.id)}>Play</button>}
-        {preset.source === 'user' && <button type="button" class="btn sm" disabled={!dirty} onClick={saveInPlace}>Save</button>}
+        {preset.source === 'user' && <button type="button" class="btn sm" disabled={!dirty || paletteInvalid} onClick={saveInPlace}>Save</button>}
         {!naming && <button type="button" class="btn sm" onClick={() => { setNaming(true); setCopyName(`${draft.name} copy`); }}>Save as…</button>}
-        {dirty && <button type="button" class="btn sm" onClick={() => setEdits({ key: null, draft: null })}>Revert</button>}
+        {dirty && <button type="button" class="btn sm" onClick={() => { freshPalette(); setEdits({ key: null, draft: null }); }}>Revert</button>}
         {def && def.defaults && <button type="button" class="btn sm" title="The family's recommended settings, as the app ships them" onClick={() => applyRecommended()}>Apply recommended</button>}
         {preset.source === 'user' && <button type="button" class="btn sm danger" onClick={remove}>Delete</button>}
       </div>
@@ -566,7 +584,7 @@ export function Inspector({ id, onSelect, onPlay, onClose }) {
           <input class="cue-name-input" aria-label="Preset name" placeholder="Preset name" value={copyName} autoFocus maxLength={80}
             onInput={(e) => setCopyName(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') saveCopy(); if (e.key === 'Escape') { e.stopPropagation(); setNaming(false); } }} />
-          <button type="button" class="btn sm" onClick={saveCopy} disabled={!copyName.trim()}>Save copy</button>
+          <button type="button" class="btn sm" onClick={saveCopy} disabled={!copyName.trim() || paletteInvalid}>Save copy</button>
           <button type="button" class="btn sm" onClick={() => setNaming(false)}>Cancel</button>
         </div>
       )}

@@ -151,18 +151,30 @@ function matches(row, q, families) {
 // The warning before the first rapid flash, shared with the strobe pad and the matrix.
 export { PhotosensitivityConfirm };
 
-/** A tap target that also takes a long press: the press opens the editor, and the click that follows it is not a tap. */
-function usePress(onTap, onLongPress) {
-  const timer = useRef(null);
-  const pressed = useRef(false);
-  const stop = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null; } };
-  return {
-    onPointerDown: () => { pressed.current = false; stop(); timer.current = setTimeout(() => { pressed.current = true; onLongPress(); }, LONG_PRESS_MS); },
+/** The press logic behind usePress; `stop` cancels a pending long press. */
+export function createPress(callbacks) {
+  let timer = null;
+  let pressed = false;
+  const stop = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  const handlers = {
+    onPointerDown: () => { pressed = false; stop(); timer = setTimeout(() => { timer = null; pressed = true; callbacks.onLongPress(); }, LONG_PRESS_MS); },
     onPointerUp: stop, onPointerLeave: stop, onPointerCancel: stop,
-    onClick: () => { if (pressed.current) { pressed.current = false; return; } onTap(); },
+    onClick: () => { if (pressed) { pressed = false; return; } callbacks.onTap(); },
     // A long press on a touch screen is the editor's, not the browser menu's.
     onContextMenu: (e) => e.preventDefault(),
   };
+  return { handlers, stop };
+}
+
+/** A tap target that also takes a long press: the press opens the editor, and the click that follows it is not a tap. */
+export function usePress(onTap, onLongPress) {
+  const latest = useRef(null);
+  latest.current = { onTap, onLongPress };
+  const press = useRef(null);
+  if (!press.current) press.current = createPress({ onTap: () => latest.current.onTap(), onLongPress: () => latest.current.onLongPress() });
+  // A row removed mid-press must not open the sheet on it.
+  useEffect(() => press.current.stop, []);
+  return press.current.handlers;
 }
 
 /** Where the search sticks: under whichever of the page's bars are stuck at this width. */

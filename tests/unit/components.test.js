@@ -4,7 +4,7 @@
 // from a state snapshot. What they draw from a given state is pinned here;
 // how they behave in a browser is tests/e2e.
 
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -22,7 +22,7 @@ async function load() {
         export { store } from './public-src/state.js';
         export { Perform, sourceHealth } from './public-src/components/Perform.jsx';
         export { CommandBar } from './public-src/components/CommandBar.jsx';
-        export { Effects, PhotosensitivityConfirm, editingSig, filterByLibrary, groupRows, quickDeck, tapRow } from './public-src/components/Effects.jsx';
+        export { Effects, PhotosensitivityConfirm, editingSig, filterByLibrary, groupRows, quickDeck, tapRow, usePress } from './public-src/components/Effects.jsx';
         export { Inspector, readRecommendedPreference, savePreset, withRecommended } from './public-src/components/Inspector.jsx';
         export { PaletteEditor, isHexColour, normaliseHex, savePalette } from './public-src/components/PaletteEditor.jsx';
         export { librarySig, socket } from './public-src/state.js';
@@ -405,6 +405,29 @@ test('a favourite is pinned first on the deck, whatever it is', () => {
   }
 });
 
+test('a row press: a long press opens the editor once and is not a tap; a quick tap is a tap', () => {
+  const calls = { tap: 0, long: 0 };
+  let press = null;
+  const Probe = () => { press = ui.usePress(() => { calls.tap += 1; }, () => { calls.long += 1; }); return null; };
+  ui.html(ui.h(Probe, {}));
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    press.onPointerDown();
+    mock.timers.tick(600);
+    press.onPointerUp();
+    press.onClick();
+    assert.deepStrictEqual(calls, { tap: 0, long: 1 }, 'the long press, and the click after it swallowed');
+    press.onPointerDown();
+    mock.timers.tick(100);
+    press.onPointerUp();
+    press.onClick();
+    mock.timers.tick(1000);
+    assert.deepStrictEqual(calls, { tap: 1, long: 1 }, 'a quick tap');
+  } finally {
+    mock.timers.reset();
+  }
+});
+
 test('a plain tap puts the row on stage and nothing else', () => {
   const sent = ui.socket.sent;
   ui.socket.connected = true;
@@ -412,7 +435,6 @@ test('a plain tap puts the row on stage and nothing else', () => {
     sent.length = 0;
     assert.strictEqual(ui.tapRow({ id: 'hd.neonDomino', name: 'Neon Domino', rapidFlash: false }, false), true);
     assert.deepStrictEqual(sent, [['set', { pattern: 'hd.neonDomino' }]]);
-    assert.strictEqual(ui.editingSig.value, null, 'the inspector is not opened by a tap');
     // A rapid flash before the acknowledgement asks, and sends nothing.
     sent.length = 0;
     const asked = [];

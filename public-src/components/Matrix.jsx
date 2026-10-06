@@ -30,9 +30,11 @@ function hslHex(h) {
 /**
  * One hold per finger. A hold renews by pressing its colour again under the
  * same token, so a tablet that drops off the Wi-Fi lets the colour go when
- * the server's lease runs out.
+ * the server's lease runs out. A first press the server refuses (409 before
+ * the photosensitivity acknowledgement, 400 past eight cells) stops renewing
+ * and lets the finger go without a release; `onRefused` hears of it.
  */
-export function createMatrixHolds(post) {
+export function createMatrixHolds(post, onRefused = () => {}) {
   const page = Math.random().toString(36).slice(2, 8);
   const fingers = new Map();
   const release = (pointerId) => {
@@ -41,36 +43,55 @@ export function createMatrixHolds(post) {
     fingers.delete(pointerId);
     finger.control.release();
   };
+  const refuse = (pointerId, finger) => {
+    finger.refused = true;
+    finger.control.release();
+    if (fingers.get(pointerId) !== finger) return;
+    fingers.delete(pointerId);
+    onRefused(pointerId);
+  };
   return {
     press(pointerId, colour) {
       release(pointerId);
-      const control = createHoldControl(({ action, token }) =>
-        post(action === 'release' ? 'release' : 'press', { colour, token: `${page}-${pointerId}-${token}` }, action));
-      fingers.set(pointerId, { control, colour });
-      control.press();
+      const finger = { colour, refused: false };
+      finger.control = createHoldControl(({ action, token }) => {
+        if (finger.refused) return false;
+        const sent = post(action === 'release' ? 'release' : 'press', { colour, token: `${page}-${pointerId}-${token}` }, action);
+        if (action === 'press') Promise.resolve(sent).then((r) => { if (r && r.ok === false) refuse(pointerId, finger); });
+        return sent !== false;
+      });
+      fingers.set(pointerId, finger);
+      finger.control.press();
     },
     release,
     releaseAll() { for (const id of [...fingers.keys()]) release(id); },
   };
 }
 
-// A renewal that fails says nothing: the lease ending is the fallback.
+// A renewal that fails says nothing: the lease ending is the fallback. A
+// press or release goes through api(), which shows the server's error.
 function postMatrix(verb, body, action) {
   const init = { method: 'POST', body: JSON.stringify(body) };
   if (action === 'renew') {
     fetch(`/api/matrix/${verb}`, { ...init, headers: { 'Content-Type': 'application/json' } }).catch(() => {});
-  } else {
-    api(`/api/matrix/${verb}`, init);
+    return true;
   }
-  return true;
+  return api(`/api/matrix/${verb}`, init);
 }
 
 export function Matrix() {
   const board = field('matrix').value || {};
-  const mode = board.mode || 'flashes';
-  const playing = Array.isArray(board.colours) ? board.colours : [];
-  const holds = useMemo(() => createMatrixHolds(postMatrix), []);
+  // No fallback: until the server says, no mode is chosen.
+  const mode = board.mode || null;
+  // The server keeps colours in upper case; the cells are lower case.
+  const playing = Array.isArray(board.colours) ? board.colours.map((c) => String(c).toLowerCase()) : [];
   const [down, setDown] = useState({});
+  const lift = (pointerId) => setDown((d) => {
+    const next = { ...d };
+    delete next[pointerId];
+    return next;
+  });
+  const holds = useMemo(() => createMatrixHolds(postMatrix, lift), []);
   useEffect(() => {
     const letGo = () => { holds.releaseAll(); setDown({}); };
     window.addEventListener('blur', letGo);
@@ -85,11 +106,7 @@ export function Matrix() {
   };
   const release = (e) => {
     holds.release(e.pointerId);
-    setDown((d) => {
-      const next = { ...d };
-      delete next[e.pointerId];
-      return next;
-    });
+    lift(e.pointerId);
   };
   const held = new Set([...playing, ...Object.values(down)]);
 

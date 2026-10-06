@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { api, patchLibrary } from '../state.js';
 
 // Palettes travel as hex: #RGB, #RRGGBB or #RRGGBBWW, as the server's palette
@@ -25,6 +25,12 @@ export function pickerValue(entry) {
   return isHexColour(entry) ? normaliseHex(entry).slice(0, 7).toLowerCase() : '#000000';
 }
 
+/** Two palettes with the same entries, whatever the hex spelling. */
+export function sameColours(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+  return a.every((c, i) => (isRandom(c) || isRandom(b[i]) ? isRandom(c) && isRandom(b[i]) : normaliseHex(c) === normaliseHex(b[i])));
+}
+
 // The built-in palettes have ids, not names; the id reads as words.
 const PALETTE_NAMES = { hdDefault: 'Hue Dynamics default', hdStrobe: 'Hue Dynamics strobe', randomRandom: 'Random, Random' };
 export function paletteName(palette) {
@@ -49,34 +55,50 @@ export async function savePalette(name, colours) {
  * hex field, or Light DJ's Random; a whole palette picked from the built-ins
  * and the ones saved here; the lot saved as a palette of your own.
  */
-export function PaletteEditor({ colours, onChange, builtin = [], user = [], label = 'Palette' }) {
-  // What is being typed into a hex field, by index, until it is a colour.
-  const [texts, setTexts] = useState({});
+export function PaletteEditor({ colours, onChange, onInvalid, builtin = [], user = [], label = 'Palette' }) {
+  // What is typed into a hex field, by index, kept while it is edited; the
+  // stored colour is written back on blur or Enter.
+  const texts = useRef({});
+  const [, redraw] = useState(0);
   const [naming, setNaming] = useState(false);
   const [name, setName] = useState('');
   const list = Array.isArray(colours) ? colours : [];
-
-  const setAt = (i, entry) => onChange(list.map((c, j) => (j === i ? entry : c)));
+  // Colours changed from outside (revert, recommended, another family) drop what was typed.
+  const own = useRef(list);
+  if (!sameColours(list, own.current)) { own.current = list; texts.current = {}; }
+  const setTexts = (next) => { texts.current = next; redraw((n) => n + 1); };
+  const emit = (next) => { own.current = next; onChange(next); };
+  const setAt = (i, entry) => emit(list.map((c, j) => (j === i ? entry : c)));
   const typed = (i, text) => {
-    if (isHexColour(text)) {
-      setTexts((t) => ({ ...t, [i]: undefined }));
-      setAt(i, normaliseHex(text));
-    } else {
-      setTexts((t) => ({ ...t, [i]: text }));
-    }
+    setTexts({ ...texts.current, [i]: text });
+    if (isHexColour(text)) setAt(i, normaliseHex(text));
   };
-  const remove = (i) => { setTexts({}); onChange(list.filter((_, j) => j !== i)); };
-  const add = (entry) => onChange([...list, entry]);
+  const settle = (i) => {
+    if (texts.current[i] === undefined || !isHexColour(texts.current[i])) return;
+    const { [i]: _done, ...rest } = texts.current;
+    setTexts(rest);
+  };
+  const picked = (i, value) => {
+    const { [i]: _done, ...rest } = texts.current;
+    setTexts(rest);
+    setAt(i, normaliseHex(value));
+  };
+  const remove = (i) => { setTexts({}); emit(list.filter((_, j) => j !== i)); };
+  const add = (entry) => emit([...list, entry]);
   const pickPalette = (e) => {
     const palette = [...builtin, ...user].find((p) => p.id === e.target.value);
     e.target.value = '';
     if (!palette) return;
     setTexts({});
-    onChange([...palette.colours]);
+    emit([...palette.colours]);
   };
+  const textAt = (entry, i) => (texts.current[i] !== undefined ? texts.current[i] : (isRandom(entry) ? '' : entry));
+  const anyInvalid = list.some((entry, i) => !isRandom(entry) && !isHexColour(textAt(entry, i)));
+  useEffect(() => { if (onInvalid) onInvalid(anyInvalid); }, [anyInvalid]);
+  useEffect(() => () => { if (onInvalid) onInvalid(false); }, []);
   const save = async () => {
     const trimmed = name.trim();
-    if (!trimmed || !list.length) return;
+    if (!trimmed || !list.length || anyInvalid) return;
     const res = await savePalette(trimmed, list);
     if (res.ok) { setNaming(false); setName(''); }
   };
@@ -88,16 +110,17 @@ export function PaletteEditor({ colours, onChange, builtin = [], user = [], labe
       <div class="palette-swatches">
         {list.map((entry, i) => {
           const random = isRandom(entry);
-          const text = texts[i] !== undefined ? texts[i] : (random ? '' : entry);
+          const text = textAt(entry, i);
           const invalid = !random && !isHexColour(text);
           return (
             <div key={i} class={`palette-entry ${invalid ? 'invalid' : ''}`}>
               {random ? <span class="palette-random" title={randomTitle}>Random</span> : <>
                 <span class="palette-swatch" style={{ background: pickerValue(entry) }}>
-                  <input type="color" aria-label={`Colour ${i + 1} picker`} value={pickerValue(entry)} onInput={(e) => typed(i, e.target.value)} />
+                  <input type="color" aria-label={`Colour ${i + 1} picker`} value={pickerValue(entry)} onInput={(e) => picked(i, e.target.value)} />
                 </span>
                 <input type="text" class="palette-hex" aria-label={`Colour ${i + 1}`} value={text} maxLength={9} spellcheck={false}
-                  aria-invalid={invalid ? 'true' : undefined} onInput={(e) => typed(i, e.target.value)} />
+                  aria-invalid={invalid ? 'true' : undefined} onInput={(e) => typed(i, e.target.value)}
+                  onBlur={() => settle(i)} onKeyDown={(e) => { if (e.key === 'Enter') settle(i); }} />
               </>}
               <button type="button" class="btn xs" aria-label={`Remove colour ${i + 1}`} disabled={list.length <= 1} onClick={() => remove(i)}>×</button>
             </div>
@@ -130,7 +153,7 @@ export function PaletteEditor({ colours, onChange, builtin = [], user = [], labe
           <input class="cue-name-input" aria-label="Palette name" placeholder="Palette name" value={name} autoFocus
             onInput={(e) => setName(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') { e.stopPropagation(); setNaming(false); } }} />
-          <button type="button" class="btn sm" onClick={save} disabled={!name.trim()}>Save palette</button>
+          <button type="button" class="btn sm" onClick={save} disabled={!name.trim() || anyInvalid}>Save palette</button>
           <button type="button" class="btn sm" onClick={() => setNaming(false)}>Cancel</button>
         </div>
       )}
