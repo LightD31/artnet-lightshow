@@ -78,7 +78,7 @@ export interface PatternPlayerOptions {
 /**
  * The pattern player: the pattern resolved over the pad's fixtures, started
  * as one bundle voice with the pad's launch. A once lasts the bundle's own
- * length unless the launch gives one (R-voice-duration-clock).
+ * length unless the launch gives one.
  */
 export function patternPlayer({ voices, pattern, fixtureIds, resolve }: PatternPlayerOptions): PatternVoiceHook {
   return (id, launch) => {
