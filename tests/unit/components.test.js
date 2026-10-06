@@ -22,6 +22,12 @@ async function load() {
         export { store } from './public-src/state.js';
         export { Perform, sourceHealth } from './public-src/components/Perform.jsx';
         export { CommandBar } from './public-src/components/CommandBar.jsx';
+        export { Effects, PhotosensitivityConfirm, editingSig, filterByLibrary, groupRows, quickDeck, tapRow } from './public-src/components/Effects.jsx';
+        export { Inspector, readRecommendedPreference, savePreset, withRecommended } from './public-src/components/Inspector.jsx';
+        export { PaletteEditor, isHexColour, normaliseHex, savePalette } from './public-src/components/PaletteEditor.jsx';
+        export { librarySig, socket } from './public-src/state.js';
+        export { BUILTIN_PALETTES, CATALOGUE, FAMILIES } from './src/shared/effects/index.ts';
+        export { requiresAcknowledgement } from './src/shared/effects/registry.ts';
       `,
       resolveDir: ROOT,
       loader: 'js',
@@ -114,4 +120,325 @@ test('the command bar offers every division to 1/16, a tempo to type, and a name
   assert.match(html, /aria-label="Tempo 124.5 BPM. Press to type a tempo."/);
   assert.match(html, /aria-label="Master dimmer" aria-valuetext="50 percent"/);
   assert.match(html, /<section class="command-bar" aria-label="Live controls">/);
+});
+
+// ── The Effects view, its inspector and the palette editor ─────────────────
+
+// The catalogue rows as the server lists them in `patterns` (src/server/presets.ts).
+const PRESET_ROWS = ui.CATALOGUE.filter((p) => !p.legacy).map((p) => ({
+  id: p.id, name: p.name, desc: p.desc, ...(p.party ? { party: true } : {}), ...(p.pixel ? { pixel: true } : {}),
+  app: p.app, family: p.family, rapidFlash: ui.requiresAcknowledgement(p.spec), scope: p.spec.scope ?? null,
+}));
+const LEGACY_ROWS = ui.CATALOGUE.filter((p) => p.legacy).map(({ id, name, desc, party }) => ({ id, name, desc, party }));
+const UPSTREAM_ROWS = [
+  { id: 'chase', name: 'Chase →', desc: 'One fixture at a time, forward' },
+  { id: 'gradient', name: 'Gradient', desc: 'The look\'s colours as a gradient scrolling across the rig', pixel: true },
+];
+const PATTERN_ROWS = [...UPSTREAM_ROWS, ...LEGACY_ROWS, ...PRESET_ROWS];
+const domino = ui.CATALOGUE.find((p) => p.id === 'hd.neonDomino');
+const USER_PRESET = {
+  id: 'u1', name: 'My Domino', spec: { ...domino.spec, params: { ...domino.spec.params, attack: 0.5 } },
+  createdAt: '2026-10-06T00:00:00.000Z', updatedAt: '2026-10-06T00:00:00.000Z',
+};
+const USER_PALETTE = { id: 'p1', name: 'Mine', colours: ['#112233', '#445566'] };
+
+function givenLibrary(state) {
+  ui.librarySig.value = {
+    status: 'ready', families: ui.FAMILIES, builtin: ui.CATALOGUE, user: [USER_PRESET],
+    palettes: { builtin: ui.BUILTIN_PALETTES, user: [USER_PALETTE] },
+  };
+  given({
+    pattern: 'hd.neonDomino', patterns: PATTERN_ROWS, families: ui.FAMILIES, builtinPalettes: ui.BUILTIN_PALETTES,
+    effects: [{ id: 'u1', name: 'My Domino', kind: 'hd.positionChase', rapidFlash: false, scope: 'measure', updatedAt: USER_PRESET.updatedAt }],
+    userPalettes: [USER_PALETTE], safety: { photosensitivityAcknowledged: false, hdFlashIntervalMs: 350, strobeMaxLatchSec: 60 },
+    fixtures: [{ id: 1, name: 'Par 1' }, { id: 2, name: 'Par 2' }], profiles: {},
+    ...state,
+  });
+}
+
+/** The button for one row of the list, as rendered. */
+const rowOf = (html, id) => {
+  const m = new RegExp(`<button[^>]*data-id="${id.replace(/\./g, '\\.')}"[^>]*>(?:(?!</button>).)*</button>`, 's').exec(html);
+  return m ? m[0] : null;
+};
+
+test('the Effects view lists Hue Dynamics and Light DJ by family, then the fork\'s own and the upstream patterns', () => {
+  givenLibrary({});
+  const html = ui.html(ui.h(ui.Effects, {}));
+  const groups = [...html.matchAll(/class="effects-group-title">([^<]+)</g)].map((m) => m[1]);
+  assert.deepStrictEqual(groups, ['Hue Dynamics', 'Light DJ', 'Own', 'Upstream patterns']);
+  // A family heads its presets.
+  assert.match(html, /Position Chase<\/[^>]+>(?:(?!effects-family-title).)*data-id="hd\.neonDomino"/s);
+  assert.match(html, /effects-family-title">Disco<\/[^>]+>(?:(?!effects-family-title).)*data-id="hd\.disco\.pop"/s);
+  assert.match(html, /effects-family-title">Channel<\/[^>]+>(?:(?!effects-family-title).)*data-id="ldj\.StrobeCycle"/s);
+  // The fork's own: the presets saved here, the party looks, the energy controls.
+  assert.match(html, /effects-family-title">Your presets<\/[^>]+>(?:(?!effects-family-title).)*data-id="u1"/s);
+  assert.match(html, /effects-family-title">Party Looks<\/[^>]+>(?:(?!effects-family-title).)*data-id="position-chase"/s);
+  assert.match(html, /effects-family-title">Energy<\/[^>]+>(?:(?!effects-family-title).)*data-id="energy\.blinder"/s);
+  assert.ok(rowOf(html, 'chase') && rowOf(html, 'gradient'), 'the upstream patterns are listed');
+  // The one playing is pressed, and only it.
+  assert.strictEqual(count(html, 'aria-pressed="true"'), 1 + 1, 'the row on stage, and the Library chip All');
+  assert.match(rowOf(html, 'hd.neonDomino'), /class="pattern-btn active/);
+  // Every group is folded until opened; a search opens them.
+  assert.strictEqual(count(html, '<details class="effects-group" open'), 0);
+  assert.strictEqual(count(html, '<details class="effects-group"'), 4);
+  // A rapid flash carries its warning; a slow one does not.
+  assert.match(rowOf(html, 'hd.voltageConfetti'), /badge-rapid/);
+  assert.match(rowOf(html, 'ldj.TrueStrobe'), /badge-rapid/);
+  assert.doesNotMatch(rowOf(html, 'hd.neonDomino'), /badge-rapid/);
+  assert.match(html, /type="search"[^>]*aria-label="Search effects"/);
+});
+
+test('the Library filter: Single is the one-beat presets, Multi the measure ones, Custom the saved ones, All everything', () => {
+  const rows = [
+    { id: 'a', scope: 'singleBeat' }, { id: 'b', scope: 'measure' }, { id: 'u', scope: 'measure', user: true }, { id: 'c' },
+  ];
+  const ids = (mode) => ui.filterByLibrary(rows, mode).map((r) => r.id);
+  assert.deepStrictEqual(ids('single'), ['a']);
+  assert.deepStrictEqual(ids('multi'), ['b', 'u']);
+  assert.deepStrictEqual(ids('custom'), ['u']);
+  assert.deepStrictEqual(ids('all'), ['a', 'b', 'u', 'c']);
+  givenLibrary({});
+  const html = ui.html(ui.h(ui.Effects, {}));
+  const labels = [...html.matchAll(/class="effects-chip library[^"]*"[^>]*aria-pressed="(true|false)"[^>]*>([^<]+)</g)].map((m) => `${m[2]}:${m[1]}`);
+  assert.deepStrictEqual(labels, ['Single:false', 'Multi:false', 'Custom:false', 'All:true']);
+  const chips = [...html.matchAll(/class="effects-chip ?[^"]*"[^>]*aria-pressed="false"[^>]*>([^<]+)</g)].map((m) => m[1]);
+  assert.deepStrictEqual(chips.slice(0, 3), ['Party', 'Pixel', 'Rapid flash'], 'the filters are chips');
+  // Grouping keeps the server's family order and puts the saved presets first among the fork's own.
+  const grouped = ui.groupRows([{ id: 'u1', name: 'Mine', user: true, scope: 'measure' }, ...PATTERN_ROWS], ui.FAMILIES);
+  assert.deepStrictEqual(grouped.map((g) => g.app), ['hd', 'ldj', 'own', 'upstream']);
+  assert.deepStrictEqual(grouped[2].families.map((f) => f.name), ['Your presets', 'Party Looks', 'Energy']);
+  assert.deepStrictEqual(grouped[3].families.map((f) => f.name), ['Patterns', 'Pixel effects']);
+});
+
+test('the inspector offers only what the family can use, with beats read out in ticks', () => {
+  givenLibrary({});
+  // Position Chase: staggered, ordered, on an angle — no trail, probability or origin.
+  let html = ui.html(ui.h(ui.Inspector, { id: 'hd.neonDomino' }));
+  assert.match(html, /Neon Domino/);
+  for (const label of ['Curve', 'Attack', 'Hold', 'Release', 'Stagger', 'Direction', 'Order', 'Angle', 'Repetitions', 'Loop length', 'Trigger']) {
+    assert.match(html, new RegExp(`>${label}<`), `${label} is offered`);
+  }
+  for (const label of ['Trail', 'Probability', 'Radius', 'Origin x']) {
+    assert.doesNotMatch(html, new RegExp(`>${label}<`), `${label} is not`);
+  }
+  assert.match(html, /80 ticks/, 'the attack, 80/960 of a beat');
+  assert.match(html, /default 4 beats/, 'a measure preset loops over the bar unless told otherwise');
+  assert.match(html, /Save as…/);
+  assert.doesNotMatch(html, />Delete</, 'a built-in cannot be deleted');
+  // Radial Pulse: an origin and a radius, no angle, stagger or order.
+  html = ui.html(ui.h(ui.Inspector, { id: 'hd.bassBloom' }));
+  for (const label of ['Origin x', 'Origin y', 'Origin z', 'Radius', 'Direction']) assert.match(html, new RegExp(`>${label}<`), label);
+  for (const label of ['Angle', 'Stagger', 'Order', 'Trail']) assert.doesNotMatch(html, new RegExp(`>${label}<`), label);
+  // Simple ADSR: the per-channel envelope instead of the attack, hold and release.
+  html = ui.html(ui.h(ui.Inspector, { id: 'hd.iceStrike' }));
+  assert.match(html, />Envelope</);
+  assert.doesNotMatch(html, />Attack</);
+  assert.match(html, /default 1 beat</, 'a single-beat preset loops once a beat');
+  // A Light DJ row: its cadence and length, and Backlit where the row has a backlit twin.
+  html = ui.html(ui.h(ui.Inspector, { id: 'ldj.StrobeCycle' }));
+  assert.match(html, />Cadence</);
+  assert.match(html, />Beats</);
+  assert.match(html, />Backlit</);
+  html = ui.html(ui.h(ui.Inspector, { id: 'ldj.Swirl' }));
+  assert.doesNotMatch(html, />Backlit</);
+  // The Visualizer and the Disco.
+  html = ui.html(ui.h(ui.Inspector, { id: 'ldj.visualizer.firework' }));
+  for (const label of ['Active', 'Mellow', 'Auto colours']) assert.match(html, new RegExp(`>${label}<`), label);
+  html = ui.html(ui.h(ui.Inspector, { id: 'hd.disco.pop' }));
+  for (const label of ['Style', 'Channels', 'Bands', 'Globals', 'Par 1', 'Par 2']) assert.match(html, new RegExp(`>${label}<`), label);
+  // A preset of your own saves in place and can go.
+  html = ui.html(ui.h(ui.Inspector, { id: 'u1' }));
+  assert.match(html, /My Domino/);
+  assert.match(html, /480 ticks/, 'its own attack');
+  assert.match(html, />Save</);
+  assert.match(html, />Delete</);
+});
+
+test('the palette editor takes hex colours and Light DJ\'s Random, and flags what is neither', () => {
+  assert.ok(ui.isHexColour('#abc') && ui.isHexColour('#AABBCC') && ui.isHexColour('#aabbccdd'));
+  assert.ok(!ui.isHexColour('AABBCC') && !ui.isHexColour('#GGGGGG') && !ui.isHexColour('#AABBCCD') && !ui.isHexColour(''));
+  assert.strictEqual(ui.normaliseHex('#abc'), '#AABBCC');
+  assert.strictEqual(ui.normaliseHex('#aabbccdd'), '#AABBCCDD');
+  const html = ui.html(ui.h(ui.PaletteEditor, {
+    colours: ['#FF0000', 'nope', { random: true }], onChange: () => {}, builtin: ui.BUILTIN_PALETTES, user: [USER_PALETTE],
+  }));
+  assert.match(html, /aria-label="Colour 1"[^>]*value="#FF0000"/);
+  assert.doesNotMatch(html, /aria-label="Colour 1"[^>]*aria-invalid/);
+  assert.match(html, /aria-label="Colour 2"[^>]*aria-invalid="true"/);
+  assert.match(html, /class="palette-random"[^>]*>Random</);
+  assert.match(html, /<optgroup label="Light DJ">(?:(?!<\/optgroup>).)*>Red Cyan</s);
+  assert.match(html, /<optgroup label="Your palettes">(?:(?!<\/optgroup>).)*>Mine</s);
+  assert.match(html, /Save as palette…/);
+  // Eight is the most; a full palette offers no ninth.
+  const full = ui.html(ui.h(ui.PaletteEditor, { colours: Array(8).fill('#FFFFFF'), onChange: () => {} }));
+  assert.doesNotMatch(full, />\+ Colour</);
+});
+
+test('saving a built-in posts a copy; saving a preset of your own puts it in place', async () => {
+  givenLibrary({});
+  const calls = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (path, init) => {
+    calls.push({ path, init });
+    const body = JSON.parse(init.body);
+    const preset = { id: path === '/api/effects' ? 'u2' : path.split('/').pop(), name: body.name, spec: body.spec, createdAt: 'now', updatedAt: 'now' };
+    const palette = { id: 'p2', name: body.name, colours: body.colours };
+    return { ok: true, status: 201, json: async () => ({ ok: true, ...(body.spec ? { preset } : { palette }) }) };
+  };
+  try {
+    const draft = { name: 'Slow Domino', spec: { ...domino.spec, params: { ...domino.spec.params, attack: 0.5 } } };
+    const copy = await ui.savePreset({ source: 'builtin', id: 'hd.neonDomino' }, draft);
+    assert.strictEqual(copy.ok, true);
+    assert.strictEqual(copy.preset.id, 'u2');
+    assert.deepStrictEqual([calls[0].path, calls[0].init.method], ['/api/effects', 'POST']);
+    assert.deepStrictEqual(JSON.parse(calls[0].init.body), draft);
+    assert.ok(ui.librarySig.value.user.some((p) => p.id === 'u2'), 'the copy is in the library at once');
+
+    await ui.savePreset({ source: 'user', id: 'u1' }, { name: 'My Domino', spec: USER_PRESET.spec });
+    assert.deepStrictEqual([calls[1].path, calls[1].init.method], ['/api/effects/u1', 'PUT']);
+
+    const saved = await ui.savePalette('Sunset', ['#FF8800', { random: true }]);
+    assert.strictEqual(saved.palette.id, 'p2');
+    assert.deepStrictEqual([calls[2].path, calls[2].init.method], ['/api/palettes', 'POST']);
+    assert.deepStrictEqual(JSON.parse(calls[2].init.body), { name: 'Sunset', colours: ['#FF8800', { random: true }] });
+    assert.ok(ui.librarySig.value.palettes.user.some((p) => p.id === 'p2'));
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('the photosensitivity confirm names the risk and asks before a rapid flash plays', () => {
+  const row = PRESET_ROWS.find((r) => r.id === 'hd.voltageConfetti');
+  const html = ui.html(ui.h(ui.PhotosensitivityConfirm, { preset: row, onConfirm: () => {}, onCancel: () => {} }));
+  assert.match(html, /role="alertdialog"/);
+  assert.match(html, /aria-labelledby="photosensitivity-title"/);
+  assert.match(html, /Voltage Confetti/);
+  assert.match(html, /photosensitive epilepsy/i);
+  assert.match(html, />I understand — play it</);
+  assert.match(html, />Cancel</);
+});
+
+/** The deck's pads, in order, as rendered. */
+const deckOf = (html) => {
+  const deck = /<div class="effects-deck"[^>]*>(.*?)<div class="effects-catalogue">/s.exec(html);
+  return deck ? [...deck[1].matchAll(/<div class="effect-pad ?[^"]*" data-id="([^"]+)"/g)].map((m) => m[1]) : null;
+};
+
+test('the deck comes first: the presets saved here and the party looks as big pads, the app on each, the one on stage marked', () => {
+  givenLibrary({ pattern: 'position-chase' });
+  const html = ui.html(ui.h(ui.Effects, {}));
+  assert.ok(html.indexOf('class="effects-deck"') < html.indexOf('class="effects-catalogue"'), 'the deck is above the catalogue');
+  const deck = deckOf(html);
+  assert.deepStrictEqual(deck.slice(0, 2), ['u1', 'position-chase'], 'the saved preset, then the party looks in catalogue order');
+  assert.ok(deck.includes('swirl') && !deck.includes('hd.neonDomino') && !deck.includes('chase'), 'party looks only, no built-in or upstream row');
+  // The badge names the app; a preset saved here carries its kind's app and says it is yours.
+  assert.match(html, /data-id="u1">(?:(?!<\/div>).)*effect-pad-app">Hue Dynamics<span class="effect-pad-yours"> · Yours</s);
+  assert.match(html, /data-id="position-chase">(?:(?!<\/div>).)*effect-pad-app">Own</s);
+  assert.match(html, /<div class="effect-pad active" data-id="position-chase">(?:(?!<\/div>).)*effect-pad-now">Now playing</s);
+  assert.strictEqual(count(html, 'effect-pad-now">Now playing<'), 1);
+  // Every pad and row has its pencil; the pencil is not the pad.
+  assert.match(html, /<button type="button" class="effect-edit" aria-label="Edit My Domino"/);
+  assert.match(html, /<button type="button" class="effect-edit" aria-label="Edit Neon Domino"/);
+});
+
+test('what is playing stays in sight above the search, even when its group is folded', () => {
+  givenLibrary({});
+  const html = ui.html(ui.h(ui.Effects, {}));
+  const bar = /<div class="effects-now" role="status"[^>]*>(.*?)<\/div>/s.exec(html);
+  assert.ok(bar, 'the now-playing bar is there');
+  assert.match(bar[1], /effects-now-name">Neon Domino</);
+  assert.match(bar[1], /effects-now-app">Hue Dynamics</);
+  assert.match(bar[1], /aria-label="Edit Neon Domino"/, 'its own pencil');
+  assert.ok(html.indexOf('class="effects-now"') < html.indexOf('class="effects-search"'), 'above the search');
+  assert.ok(html.indexOf('class="effects-tools"') < html.indexOf('class="effects-now"'), 'inside the sticky tools');
+  assert.strictEqual(count(html, '<details class="effects-group" open'), 0, 'while every group is folded');
+  givenLibrary({ pattern: null });
+  assert.doesNotMatch(ui.html(ui.h(ui.Effects, {})), /class="effects-now"/, 'nothing playing, no bar');
+});
+
+test('a favourite is pinned first on the deck, whatever it is', () => {
+  const rows = [{ id: 'a', party: true }, { id: 'u', user: true }, { id: 'x', app: 'ldj' }, { id: 'b', party: true }];
+  assert.deepStrictEqual(ui.quickDeck(rows, []).map((r) => r.id), ['u', 'a', 'b']);
+  assert.deepStrictEqual(ui.quickDeck(rows, ['x', 'b']).map((r) => r.id), ['x', 'b', 'u', 'a']);
+  assert.deepStrictEqual(ui.quickDeck(rows, ['gone']).map((r) => r.id), ['u', 'a', 'b'], 'a favourite that no longer exists is skipped');
+  givenLibrary({});
+  globalThis.localStorage = { getItem: (key) => (key === 'lightshow.effects.favourites' ? JSON.stringify(['ldj.Swirl', 'u1']) : null), setItem() {}, removeItem() {} };
+  try {
+    const html = ui.html(ui.h(ui.Effects, {}));
+    assert.deepStrictEqual(deckOf(html).slice(0, 3), ['ldj.Swirl', 'u1', 'position-chase']);
+    assert.match(html, /class="effect-star on" aria-pressed="true" aria-label="Favourite Swirl"/);
+    assert.match(html, /class="effect-star " aria-pressed="false" aria-label="Favourite Neon Domino"/);
+  } finally {
+    delete globalThis.localStorage;
+  }
+});
+
+test('a plain tap puts the row on stage and nothing else', () => {
+  const sent = ui.socket.sent;
+  ui.socket.connected = true;
+  try {
+    sent.length = 0;
+    assert.strictEqual(ui.tapRow({ id: 'hd.neonDomino', name: 'Neon Domino', rapidFlash: false }, false), true);
+    assert.deepStrictEqual(sent, [['set', { pattern: 'hd.neonDomino' }]]);
+    assert.strictEqual(ui.editingSig.value, null, 'the inspector is not opened by a tap');
+    // A rapid flash before the acknowledgement asks, and sends nothing.
+    sent.length = 0;
+    const asked = [];
+    assert.strictEqual(ui.tapRow({ id: 'hd.voltageConfetti', rapidFlash: true }, false, (row) => asked.push(row.id)), false);
+    assert.deepStrictEqual([sent, asked], [[], ['hd.voltageConfetti']]);
+    // Acknowledged, it plays like any other.
+    assert.strictEqual(ui.tapRow({ id: 'hd.voltageConfetti', rapidFlash: true }, true), true);
+    assert.deepStrictEqual(sent, [['set', { pattern: 'hd.voltageConfetti' }]]);
+  } finally {
+    ui.socket.connected = false;
+    sent.length = 0;
+  }
+});
+
+test('the inspector stays hidden until Edit is chosen, and closes again', () => {
+  givenLibrary({});
+  ui.editingSig.value = null;
+  let html = ui.html(ui.h(ui.Effects, {}));
+  assert.strictEqual(count(html, 'class="card effect-inspector"'), 0);
+  assert.strictEqual(count(html, 'role="dialog"'), 0);
+  ui.editingSig.value = 'hd.neonDomino';
+  try {
+    html = ui.html(ui.h(ui.Effects, {}));
+    assert.strictEqual(count(html, 'class="card effect-inspector"'), 1);
+    assert.match(html, /class="effect-sheet" role="dialog" aria-modal="true"[^>]*><div class="card effect-inspector">/, 'in a sheet over the page');
+    assert.match(html, /class="card effect-inspector">(?:(?!<\/strong>).)*<strong>Neon Domino</s);
+    assert.match(html, /aria-label="Close the inspector"/);
+  } finally {
+    ui.editingSig.value = null;
+  }
+});
+
+test('a family change asks, applies or keeps, as chosen once and kept in this browser', () => {
+  givenLibrary({});
+  const stored = {};
+  globalThis.localStorage = { getItem: (key) => stored[key] ?? null, setItem: (key, v) => { stored[key] = v; }, removeItem() {} };
+  try {
+    assert.strictEqual(ui.readRecommendedPreference(), 'ask', 'asks until told otherwise');
+    let html = ui.html(ui.h(ui.Inspector, { id: 'hd.neonDomino' }));
+    assert.match(html, />On a family change</);
+    assert.match(html, /<option selected value="ask">Ask</);
+    stored['lightshow.effects.recommended'] = 'keep';
+    assert.strictEqual(ui.readRecommendedPreference(), 'keep');
+    html = ui.html(ui.h(ui.Inspector, { id: 'hd.neonDomino' }));
+    assert.match(html, /<option selected value="keep">Keep mine</, 'the kept answer can be changed back');
+    stored['lightshow.effects.recommended'] = 'bogus';
+    assert.strictEqual(ui.readRecommendedPreference(), 'ask', 'anything else is Ask');
+  } finally {
+    delete globalThis.localStorage;
+  }
+  // Apply recommended: the family's params and the output settings that travel with them, the name untouched.
+  const def = ui.FAMILIES.flatMap((f) => f.kinds).find((k) => k.defaults && k.defaults.params);
+  const before = { name: 'x', kind: 'hd.other', params: { stale: 1 }, brightness: 0.1 };
+  const after = ui.withRecommended(before, def);
+  assert.strictEqual(after.kind, def.kind);
+  assert.deepStrictEqual(after.params, def.defaults.params);
+  assert.strictEqual(after.name, 'x');
+  assert.strictEqual(after.brightness, def.defaults.brightness ?? 0.1);
+  assert.notStrictEqual(after.params, def.defaults.params, 'a copy, so editing it leaves the catalogue alone');
 });

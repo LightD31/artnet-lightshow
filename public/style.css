@@ -1455,6 +1455,262 @@ input[type=range]::-moz-range-thumb {
 .pattern-btn .desc { display: none; }
 
 /* =============================================================
+   EFFECTS — the deck, the folded catalogue, the inspector
+   ============================================================= */
+/* The search and the chips stay in reach while the catalogue scrolls by. */
+.effects-tools {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0 8px;
+  background: var(--card);
+}
+/* What is on stage, always in sight above the search. */
+.effects-now {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 6px 4px 6px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: rgba(59, 130, 246, .12);
+}
+.effects-now-label { font-size: 9px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--text-blue); }
+.effects-now-name { flex: 1; min-width: 0; font-size: 14px; font-weight: 800; color: var(--text); overflow-wrap: anywhere; }
+.effects-now-app { font-size: 9px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.effects-now-layers { flex-basis: 100%; font-size: 11px; color: var(--muted); }
+.effects-search {
+  width: 100%;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 13px;
+}
+.effects-search:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59, 130, 246, .2); }
+.effects-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.effects-chip {
+  appearance: none;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background var(--t), border-color var(--t), color var(--t);
+}
+.effects-chip:hover { border-color: var(--border-hi); color: var(--text); }
+.effects-chip.active { background: var(--accent-fill); border-color: transparent; color: #fff; }
+.effects-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.effects-chip-sep { width: 1px; height: 16px; margin: 0 4px; background: var(--border-hi); }
+
+/* The deck: what a hand reaches for mid-set, as pads. */
+.effects-deck {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.effect-pad { position: relative; display: flex; flex-direction: column; }
+.effect-pad-tap {
+  flex: 1;
+  min-height: 72px;
+  padding: 10px 10px 8px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  transition: background var(--t), border-color var(--t), box-shadow var(--t);
+}
+.effect-pad-tap:hover { background: var(--card-hi); border-color: var(--border-hi); }
+.effect-pad-tap:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.effect-pad.active .effect-pad-tap { background: rgba(59, 130, 246, .14); border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.effect-pad-name { font-size: 14px; font-weight: 800; line-height: 1.15; overflow-wrap: anywhere; }
+.effect-pad-app { font-size: 9px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.effect-pad-yours { color: var(--text-amber); }
+.effect-pad-now { font-size: 9px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--text-blue); }
+.effect-pad .badge-rapid { position: absolute; right: 8px; bottom: 8px; }
+/* The star and the pencil ride the pad's top corner; the pad itself is the tap. */
+.effect-pad-tools { position: absolute; top: 4px; right: 4px; display: flex; gap: 2px; }
+.effect-star, .effect-edit {
+  appearance: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.effect-star:hover, .effect-edit:hover { color: var(--text); border-color: var(--border-hi); background: var(--card-hi); }
+.effect-star:focus-visible, .effect-edit:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.effect-star.on { color: var(--text-amber); }
+
+/* The catalogue: every group folded, a search opens them. */
+.effects-group { border-top: 1px solid var(--border); }
+.effects-group-title {
+  cursor: pointer;
+  padding: 8px 0;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  list-style: none;
+}
+.effects-group-title::-webkit-details-marker { display: none; }
+.effects-group-title::before { content: '▸'; display: inline-block; width: 14px; transition: transform var(--t); }
+.effects-group[open] > .effects-group-title::before { transform: rotate(90deg); }
+.effects-family { margin-bottom: 8px; }
+.effects-family-title { margin: 4px 0; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.effect-row { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.effect-row .pattern-btn { flex: 1; min-width: 0; }
+.effects-empty { margin: 8px 0; font-size: 12px; color: var(--muted); }
+/* The warning on a rapid flash: amber, where the eye lands last. */
+.pattern-btn .badge-rapid { flex-shrink: 0; font-size: 11px; color: var(--text-amber); }
+.badge-rapid { color: var(--text-amber); font-size: 11px; }
+
+/* The inspector: the settings a family can take, nothing else, in a sheet
+   over the page (the Rig view's .inspector is another panel). */
+.effect-sheet-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 880;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(8, 8, 12, .6);
+}
+.effect-sheet {
+  width: min(560px, 100%);
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px;
+  background: var(--bg);
+  border-left: 1px solid var(--border-hi);
+  box-shadow: -16px 0 48px rgba(0, 0, 0, .5);
+}
+.effect-sheet:focus { outline: none; }
+.effect-inspector .card-title { justify-content: space-between; }
+.effect-inspector-title { flex: 1; }
+.effect-inspector-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; font-size: 13px; }
+.effect-inspector-desc { margin: 0 0 8px; font-size: 11px; color: var(--muted); line-height: 1.45; }
+.insp-section-title { margin: 12px 0 6px; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.insp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 10px; align-items: end; }
+.insp-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.insp-field > label { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.insp-field input[type=text], .insp-field input[type=number], .insp-field select {
+  min-width: 0;
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 12px;
+}
+.insp-field input[type=number], .insp-field input[type=text] { font-family: var(--mono); }
+.insp-field input:focus-visible, .insp-field select:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59, 130, 246, .25); }
+.insp-field input[type=range] { width: 100%; }
+.insp-field input[type=color] { width: 44px; height: 30px; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
+.insp-pair { display: flex; gap: 4px; }
+.insp-unit { font-size: 10px; color: var(--dim); font-family: var(--mono); }
+.insp-check { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-2); min-height: 30px; }
+.insp-check input { width: 18px; height: 18px; accent-color: var(--accent); margin: 0; cursor: pointer; }
+.insp-table-wrap { overflow-x: auto; }
+.insp-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.insp-table th { text-align: left; font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 2px 4px; white-space: nowrap; }
+.insp-table td { padding: 2px 4px; }
+.insp-table input[type=number] {
+  width: 60px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 3px 4px;
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.insp-table input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); margin: 0; }
+.insp-raw { margin: 0; padding: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 10px; font-family: var(--mono); max-height: 180px; overflow: auto; }
+.insp-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; }
+.insp-ask { margin-top: 8px; padding: 8px; border: 1px solid var(--amber); border-radius: var(--radius-sm); font-size: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.insp-dirty { font-size: 10px; color: var(--text-amber); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+
+/* The palette editor: a swatch opens the native picker, the hex beside it. */
+.palette-editor { display: flex; flex-direction: column; gap: 6px; }
+.palette-swatches { display: flex; flex-wrap: wrap; gap: 6px; }
+.palette-entry { display: flex; align-items: center; gap: 4px; }
+.palette-swatch { position: relative; width: 30px; height: 30px; border-radius: 6px; border: 1px solid var(--border); overflow: hidden; flex-shrink: 0; }
+.palette-swatch input[type=color] { position: absolute; inset: -6px; width: 44px; height: 44px; opacity: 0; cursor: pointer; }
+.palette-hex {
+  width: 88px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 5px 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.palette-hex:focus-visible { outline: none; border-color: var(--accent); }
+.palette-hex[aria-invalid=true] { border-color: var(--red); }
+.palette-random { padding: 5px 8px; border: 1px dashed var(--border-hi); border-radius: 6px; font-size: 11px; color: var(--muted); }
+.palette-add, .palette-tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
+/* A confirm over the page: the photosensitivity warning. */
+.confirm-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 890;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(8, 8, 12, .78);
+  backdrop-filter: blur(2px);
+}
+.confirm-panel {
+  width: min(460px, 100%);
+  padding: 18px 20px;
+  border: 1px solid var(--amber);
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, .6);
+}
+.confirm-panel h2 { margin: 0 0 8px; font-size: 13px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--text-amber); }
+.confirm-panel p { margin: 0 0 14px; font-size: 13px; line-height: 1.5; color: var(--text-2); }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+/* A phone: two pads a row, and the inspector takes the whole screen. */
+@media (max-width: 640px) {
+  .effects-deck { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .effect-sheet { width: 100%; padding: 6px; border-left: 0; }
+}
+
+/* =============================================================
    FIXTURES
    ============================================================= */
 .fixtures-grid {
@@ -3531,9 +3787,12 @@ input[type=range]::-moz-range-thumb {
   .palette-btn, .pattern-btn, .color-slot-tab, .cue-recall, .cue-capture, .sync-nudge,
   .transport-btn, .warm-toggle, .auto-select, .warm-playlist-select, .shortcuts-tab,
   .sub-tab, .remove-btn, .wizard-step-btn, .ofl-hit, .file-upload-btn, .timeline-section,
+  .effects-chip, .effects-group-title, .effect-star, .effect-edit, .palette-random, .insp-check,
   select, input[type=number], input[type=text], input[type=search], input[type=password], textarea {
     min-height: 44px;
   }
+  .effect-star, .effect-edit { min-width: 44px; }
+  .effect-pad-tap { min-height: 88px; }
   .btn.icon, .sync-nudge, .shortcuts-tab, .bd-toggle { min-width: 44px; }
   /* Above the drawer's toggle, which sits in the same corner. */
   .shortcuts-tab { width: 44px; height: 44px; bottom: 76px; }

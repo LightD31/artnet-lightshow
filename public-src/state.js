@@ -100,6 +100,7 @@ socket.on('connect', () => {
   connectedSig.value = true;
   connectionSig.value = { status: 'online' };
   auth.connected();                       // clears the token prompt, if it was up
+  loadLibrary();
 });
 
 socket.on('disconnect', () => {
@@ -148,10 +149,13 @@ socket.on('patch', (patch) => {
     socket.emit('sync', (snapshot) => {
       resyncing = false;
       if (snapshot && snapshot.state) store.applySnapshot(snapshot);
+      // A library change may be among what was missed.
+      loadLibrary();
     });
     return;
   }
   if (result === 'ok' && patch.set && patch.set.autoShow && !patch.set.autoShow.running) freezePosition();
+  if (result === 'ok' && patch.d === 'library') loadLibrary();
 });
 
 // DMX as bytes (src/shared/dmx-frame.ts), while subscribed.
@@ -224,6 +228,31 @@ export async function api(path, init) {
     toast.error(`Could not reach the server: ${err.message}`);
     return { ok: false, error: err.message };
   }
+}
+
+// The effect library: the built-in presets with their specs, the presets and
+// palettes saved on this server, and each family's recommended settings. The
+// live state carries only summaries of the saved ones (`effects` and
+// `userPalettes`, domain `library`), so the specs come from GET /api/effects:
+// on connect, and again whenever that domain changes.
+export const librarySig = signal({ status: 'idle', families: [], builtin: [], user: [], palettes: { builtin: [], user: [] } });
+
+let libraryLoads = 0;
+export async function loadLibrary() {
+  const load = ++libraryLoads;
+  const res = await api('/api/effects');
+  // Two loads in flight answer in either order; only the latest may land.
+  if (load !== libraryLoads) return res;
+  librarySig.value = res.ok
+    ? { status: 'ready', families: res.families || [], builtin: res.builtin || [], user: res.user || [],
+      palettes: { builtin: [], user: [], ...(res.palettes || {}) } }
+    : { ...librarySig.value, status: 'error' };
+  return res;
+}
+
+/** Change the library on this page the moment a save answers, ahead of the broadcast. */
+export function patchLibrary(fn) {
+  librarySig.value = fn(librarySig.value);
 }
 
 // Live actions must never queue up for replay after reconnecting.
