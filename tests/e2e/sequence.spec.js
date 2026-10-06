@@ -91,4 +91,7 @@ test('a pad hit while recording is kept as a clip', async ({ page, request }) =>
   await page.waitForTimeout(600);
   await page.getByRole('button', { name: 'Keep take' }).click();
   await expect(page.locator('.seq-block')).not.toHaveCount(0);
+  // The transport and the pad back as found, for the specs after this one.
+  await request.post('/api/sequence/stop', { data: {} });
+  await request.put('/api/pads/0/0', { data: pad });
 });

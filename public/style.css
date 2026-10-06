@@ -3968,6 +3968,59 @@ input[type=range]::-moz-range-thumb {
 @media (prefers-reduced-motion: reduce) { .audio-meter-fill { transition: none; } }
 @media (max-width: 520px) { .transport-position { font-size: 20px; } .override-pad { min-width: 72px; } }
 
+/* ── Rig: placing fixtures on the plot ── */
+.plan-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, 210px); gap: 10px; align-items: start; }
+/* The 0…100 area lamp centres can take; the surface draws the grid itself. */
+.plan-surface .plan-grid { position: absolute; pointer-events: none; border: 1px dashed var(--border-hi); opacity: .6; }
+.plan-surface .plan-edge-top,
+.plan-surface .plan-edge-bottom,
+.plan-surface .plan-edge { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; color: var(--text-2); }
+.plan-surface .plan-edge { position: absolute; top: 2px; font-weight: 700; line-height: 1; pointer-events: none; user-select: none; }
+.plan-surface .plan-edge-left { left: 6px; }
+.plan-surface .plan-edge-left::before { content: "◀ "; }
+.plan-surface .plan-edge-right { right: 6px; }
+.plan-surface .plan-edge-right::after { content: " ▶"; }
+.plan-surface .stage-label { font-size: 11px; color: var(--text-2); }
+.plan-surface.placing { cursor: copy; outline: 2px dashed var(--accent); outline-offset: -2px; }
+.plan-height {
+  position: absolute; top: 2px; right: 2px; padding: 0 3px; border-radius: 3px;
+  font-size: 10px; font-weight: 700; line-height: 14px; color: var(--text-2); pointer-events: none;
+  background: linear-gradient(to top, color-mix(in srgb, var(--accent) 55%, transparent) calc(var(--h, .5) * 100%), var(--surface-2) 0);
+}
+.plan-height.unset { opacity: .55; font-weight: 400; }
+.plan-ghost {
+  position: absolute; transform: translate(-50%, -50%); width: 34px; height: 34px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 12px; font-weight: 700; color: var(--accent);
+  border: 2px dashed var(--accent); pointer-events: none;
+}
+.plan-proposal, .plan-selected { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 8px;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); }
+.plan-selected-name { font-size: 14px; }
+.plan-height-edit { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.plan-height-label, .plan-height-scale, .plan-height-hint { font-size: 12px; color: var(--muted); }
+.plan-step { min-width: 36px; font-size: 18px; line-height: 1; }
+.plan-height-range { width: 160px; }
+.plan-height-value { min-width: 4ch; font-variant-numeric: tabular-nums; font-weight: 700; }
+.plan-unplaced { display: flex; flex-direction: column; gap: 6px; }
+.plan-unplaced-title { margin: 0; font-size: 12px; font-weight: 600; color: var(--muted); }
+.plan-unplaced-none { margin: 0; font-size: 12px; color: var(--muted); }
+.plan-chip {
+  display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 4px 10px; text-align: left;
+  border: 1px solid var(--border); border-radius: 18px; background: var(--surface-2); color: var(--text-2);
+  font: inherit; font-size: 13px; cursor: grab; touch-action: none;
+}
+.plan-chip.armed { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.plan-chip:disabled { opacity: .5; cursor: default; }
+.plan-chip-n { min-width: 2ch; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
+@media (max-width: 720px) {
+  .plan-body { grid-template-columns: 1fr; }
+  .plan-unplaced { flex-direction: row; flex-wrap: wrap; }
+}
+@media (pointer: coarse) {
+  .plan-chip, .plan-step { min-height: 44px; min-width: 44px; }
+  .plan-height-range { min-height: 44px; }
+}
+
 /* ── Stage preview: now playing ── */
 .stage-now { margin: 6px 0; font-size: 1.05rem; line-height: 1.4; }
 .stage-now strong { margin-right: 6px; text-transform: uppercase; font-size: .8rem; letter-spacing: .06em; opacity: .75; }
