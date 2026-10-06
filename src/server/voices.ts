@@ -130,6 +130,8 @@ export interface VoiceManagerOptions {
   anyRunning?: () => boolean;
   /** The wall clock the summaries' times are given on. */
   wallNow?: () => number;
+  /** The cap on a latched strobe-kind voice that names none (safety.strobeMaxLatchSec), whoever latches it; undefined is none. */
+  strobeLatchMs?: () => number | undefined;
 }
 
 interface Wait { cancel(): void }
@@ -166,6 +168,10 @@ function wait(ms: number, fire: () => void): Wait {
 
 const bad = (message: string) => new HttpError(400, message);
 const positive = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0;
+
+/** What makes a press of the same hold the same launch: everything a launch is, the lease aside. */
+const launchKey = (spec: EffectSpec, targets: number[] | null, tier: VoiceTier, source: VoiceSource, label: string, key: string | null,
+  id: string | null, holdsGrid: boolean): string => canonical({ spec, targets, tier, source, label, key, id, holdsGrid });
 
 /**
  * A spec as the effects play it, or a 400 saying what is wrong with it. A
@@ -258,16 +264,18 @@ export class VoiceManager {
   declare _acknowledged: () => boolean;
   declare _anyRunning: () => boolean;
   declare _wallNow: () => number;
+  declare _strobeLatchMs: () => number | undefined;
   declare _records: Map<string, VoiceRecord>;
   declare _seq: number;
 
-  constructor({ now, beatPos, bpm, reading, onChange, acknowledged, anyRunning, wallNow }: VoiceManagerOptions) {
+  constructor({ now, beatPos, bpm, reading, onChange, acknowledged, anyRunning, wallNow, strobeLatchMs }: VoiceManagerOptions) {
     this._now = now;
     this._read = reading ?? (() => ({ beatPos: beatPos ? beatPos() : 0, bpm: bpm ? bpm() : 120 }));
     this._onChange = onChange;
     this._acknowledged = acknowledged;
     this._anyRunning = anyRunning ?? (() => false);
     this._wallNow = wallNow ?? (() => Date.now());
+    this._strobeLatchMs = strobeLatchMs ?? (() => undefined);
     this._records = new Map();
     this._seq = 0;
   }
@@ -306,8 +314,14 @@ export class VoiceManager {
       throw bad('voice: a hold needs its owner and token');
     }
     if (v.anchorBeat !== undefined && !Number.isFinite(v.anchorBeat)) throw bad('voice: anchorBeat must be a number');
-    const launch = canonical({ spec, targets, tier: v.tier, source: v.source, label: v.label ?? null, key: v.key ?? null, id: v.id ?? null,
-      holdsGrid: !!v.holdsGrid });
+    // A strobe latched with no cap of its own takes the configured one, whoever latches it.
+    let maxLatchMs = v.maxLatchMs;
+    if (v.mode === 'latched' && maxLatchMs === undefined && spec.kind === 'strobe') {
+      const cap = this._strobeLatchMs();
+      if (positive(cap)) maxLatchMs = cap;
+    }
+    const label = v.label ?? spec.kind;
+    const launch = launchKey(spec, targets, v.tier, v.source, label, v.key ?? null, v.id ?? null, !!v.holdsGrid);
 
     const now = this._now();
     const held = v.mode === 'hold' ? this._holdOf(owner!, v.token) : null;
@@ -339,8 +353,8 @@ export class VoiceManager {
     if (v.mode === 'once') {
       const ms = v.lengthMs ?? ((v.lengthBeats ?? lengthBeatsOf(spec)) * 60000) / bpm;
       untilMs = startedAtMs + ms;
-    } else if (v.mode === 'latched' && v.maxLatchMs !== undefined) {
-      untilMs = startedAtMs + v.maxLatchMs;
+    } else if (v.mode === 'latched' && maxLatchMs !== undefined) {
+      untilMs = startedAtMs + maxLatchMs;
     }
     if (!Number.isFinite(startedAtMs) || (untilMs !== null && !Number.isFinite(untilMs))) throw bad('voice: too long to time');
 
@@ -355,7 +369,7 @@ export class VoiceManager {
     const id = v.id ?? `voice:${launchSeq}`;
     const record: VoiceRecord = {
       voice: {
-        id, spec, targets, mode: v.mode, tier: v.tier, source: v.source, label: v.label ?? spec.kind, launchSeq,
+        id, spec, targets, mode: v.mode, tier: v.tier, source: v.source, label, launchSeq,
         startedAtMs, untilMs, anchorBeat, seed: seedFrom(id), owner, key: v.key ?? null, hidden: !!v.hidden, holdsGrid: !!v.holdsGrid,
       },
       token: v.token, launch, leaseUntil: null, lease: 0, leaseWait: null, endWait: null, wall: this._wallNow() - now,
@@ -419,6 +433,40 @@ export class VoiceManager {
   setHidden(id: string, hidden: boolean): void {
     const record = this._records.get(id);
     if (record) record.voice.hidden = hidden;
+  }
+
+  /**
+   * A new spec of the same kind for a running voice (the strobe's settings
+   * edited live). Launch, start, seed, lease and end stay, so the renderer
+   * keeps its state and the strobe its permit. Null for no such voice.
+   */
+  update(id: string, raw: unknown): Voice | null {
+    const record = this._records.get(id);
+    if (!record) return null;
+    const spec = voiceSpec(raw);
+    const v = record.voice;
+    if (spec.kind !== v.spec.kind) throw bad('voice: an update keeps the kind');
+    v.spec = spec;
+    record.launch = launchKey(spec, v.targets, v.tier, v.source, v.label, v.key, v.id, v.holdsGrid);
+    this._changed();
+    return this._view(record);
+  }
+
+  /** End a voice by `untilMs` at the latest (a cap lowered): never later than it was, and now if that is past. */
+  endBy(id: string, untilMs: number): void {
+    const record = this._records.get(id);
+    if (!record || !Number.isFinite(untilMs)) return;
+    const v = record.voice;
+    if (v.untilMs !== null && v.untilMs <= untilMs) return;
+    v.untilMs = untilMs;
+    record.endWait?.cancel();
+    const now = this._now();
+    if (!(now < untilMs)) {
+      if (this._end(record)) this._changed();
+      return;
+    }
+    record.endWait = wait(untilMs - now, () => { if (this._end(record)) this._changed(); });
+    this._changed();
   }
 
   /** One voice, as a copy; null for none. */

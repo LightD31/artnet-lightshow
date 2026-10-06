@@ -10,8 +10,10 @@ import { HttpError } from '../errors.ts';
 import { footprintOf, universesOf, isInternalUniverse, placeAddressless } from '../shared/placement.ts';
 import { BUILTIN_PALETTES, FAMILIES } from '../shared/effects/index.ts';
 import { toHex } from '../shared/effects/palette.ts';
+import { HOLD_STROBE } from '../shared/look-math.ts';
 import { VoiceManager } from './voices.ts';
 import { EnergyHold } from './energy-hold.ts';
+import { Strobe, STROBE_VOICE_ID } from './strobe.ts';
 import type { Settings } from './settings.ts';
 import type { ClockSource, TempoMode } from './conductor.ts';
 import type { Colour, Fixture, PixelMap, Profile, ShowDynamics } from '../types/rig.ts';
@@ -174,10 +176,14 @@ const voices = new VoiceManager({
   acknowledged: () => safety.acknowledged(),
   anyRunning: () => state.running,
   onChange: voicesChanged,
+  // No route latches a strobe past the configured cap, whichever launches it.
+  strobeLatchMs: () => settings.get('safety.strobeMaxLatchSec') * 1000,
 });
 
 // The energy effects' latch and hold (energy-hold.ts), as voices of that manager.
 const legacyEnergy = new EnergyHold(() => {}, voices);
+// The manual strobe (strobe.ts): held, latched or burst, over the same manager.
+const strobe = new Strobe(voices, settings, safety);
 
 function voicesChanged(): void {
   legacyEnergy.sync();
@@ -194,9 +200,16 @@ function mirrorEnergy(): void {
   state.energyOverride = legacyEnergy.latched();
 }
 
-/** Latch an energy effect (`energyOverride`), or none: null, or an id that is no energy effect. */
+/**
+ * Latch an energy effect (`energyOverride`), or none: null, or an id that is
+ * no energy effect. The palette strobe is the manual strobe in its beat
+ * clock, so it replaces the manual one. None latched leaves the manual strobe
+ * alone: scenes, cues, MIDI and the auto show clear the energy all the time,
+ * and the operator's latch ends on an explicit off or its cap (strobe.ts).
+ */
 function latchEnergy(effect: string | null): void {
   legacyEnergy.latch(effect);
+  if (effect === HOLD_STROBE) voices.stop(STROBE_VOICE_ID);
   mirrorEnergy();
 }
 
@@ -444,6 +457,8 @@ function getLiveState() {
     paletteOverride: state.paletteOverride ? state.paletteOverride.map(toHex) : null,
     // Whether the room may see the fast flashes, and the limits beside it.
     safety: safety.status(),
+    // The manual strobe: what plays as it, how, and its settings (strobe.ts).
+    strobe: strobe.status(),
     autoIntensity: state.autoIntensity,
     autoSyncOffsetMs: state.autoSyncOffsetMs,
     autoSource: state.autoSource,
@@ -510,6 +525,7 @@ export {
   state,
   voices,
   legacyEnergy,
+  strobe,
   latchEnergy,
   onVoicesChange,
   freeClockRuns,

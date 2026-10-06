@@ -1,4 +1,4 @@
-import { state, getClientState, getLiveState, getFixture, maxBrightnessOf, clockState } from '../state.ts';
+import { state, getClientState, getLiveState, getFixture, maxBrightnessOf, clockState, strobe } from '../state.ts';
 import { applyPatch, applyOverride, setFixtureMaxBrightness, processTap } from '../patch.ts';
 import { PALETTES } from '../palettes.ts';
 import { messageOf, statusOf } from '../../errors.ts';
@@ -113,9 +113,11 @@ export function attachLookRoutes(app: Express, _ctx: RouteContext): void {
     } catch (err) { res.status(400).json({ ok: false, error: messageOf(err) }); }
   });
 
-  // Note: /api/energy/off must come before :id
+  // Note: /api/energy/off must come before :id. The operator's own off: it
+  // ends the manual strobe's latch too, which no automatic clear does.
   app.post('/api/energy/off', (_req, res) => {
     applyPatch({ energyOverride: null });
+    strobe.unlatch();
     res.json({ ok: true, energyOverride: null });
   });
 

@@ -329,7 +329,7 @@ export function UpdatePresets(self) {
 		{
 			id: 'energy',
 			name: 'Energy',
-			description: 'Latched energy effects: on until another replaces it or Energy Off. For momentary ones, see Busk → Hold',
+			description: 'Latched energy effects: on until another replaces it or Energy Off; Palette Strobe also ends by itself at the strobe latch limit (60 s unless changed). For momentary ones, see Busk → Hold',
 			definitions: [...energy.map((e) => `energy_${e.id}`), 'energy_off'],
 		},
 	]

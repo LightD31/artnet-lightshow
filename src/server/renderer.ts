@@ -28,7 +28,7 @@ import { anchorStep, stepAt, motionAdvance } from '../shared/beat-clock.ts';
 import { createFlashLimiter, lightLuminance, strobeCap } from './flash-limit.ts';
 import { identifyLights } from './identify.ts';
 import { HD_MASTER_DEFAULTS } from '../shared/effects/types.ts';
-import { canonical, effectContentKey, hdGuarded, relaunchEffect, renderEffectLayer, renderVoices, voiceAnchor, voiceLaunchKey, voiceLayout } from '../shared/effects/layer.ts';
+import { canonical, effectContentKey, handOverStrobes, hdGuarded, relaunchEffect, renderEffectLayer, renderVoices, voiceAnchor, voiceLaunchKey, voiceLayout } from '../shared/effects/layer.ts';
 import { energyEffectSpec } from '../shared/effects/catalogue.ts';
 import { endSequence, newSequenceRun, renderSequenceLayer, retable } from '../shared/effects/sequence.ts';
 import { kindOf, ridesLevel } from '../shared/effects/registry.ts';
@@ -428,6 +428,8 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
   // Each voice id's launch, so a relaunch under the same id starts afresh, and
   // its musical anchor, which moves when the music jumps while its wall times stay.
   const voiceRecords = new Map<string, VoiceRecord>();
+  // The strobe voices whose state the stepper holds: one gone hands its permit to the next (layer.ts).
+  const strobeTrail = new Set<string>();
   // The energy burst played as a voice for an input that names no voices.
   let compat: { energy: string; voice: VoiceFrame } | null = null;
   // The layouts the effects play on, with each cell's fixture id and Hue flag
@@ -462,6 +464,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     base = null;
     if (!clock) return;
     voiceRecords.clear();
+    strobeTrail.clear();
     // A clip's wall origin was on the old clock: its laps start again.
     endSequence(seqRun, stepper);
     lastEffectNow = null;
@@ -593,6 +596,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       voices.push(played);
     }
     for (const id of voiceRecords.keys()) if (!seen.has(id)) voiceRecords.delete(id);
+    handOverStrobes(stepper, strobeTrail, voices);
     return { voices, admitted };
   }
 

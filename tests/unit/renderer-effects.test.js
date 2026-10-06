@@ -746,10 +746,41 @@ test('the strobe\'s permit carries through a relaunch under its voice id and a r
     patternAnchor: { step: k < relaunchAt ? 0 : 1, epoch: 0, seq: k < relaunchAt ? 1 : 2 }, ...SAFETY() }), 0);
   assert.strictEqual(viaBase[0], 0);
   assert.ok(viaBase[1] >= 8, `the relaunched look waits: second rise on frame ${viaBase[1]}`);
-  // Without the carry two instances would each flash at once: a fresh id is a fresh permit.
-  const fresh = strobeRises(frames, (ms, k) => ({ voices: [voice(k < relaunchAt ? 'strobe' : 'other', WALL_STROBE, { tier: 'strobe',
-    startedAtMs: k < relaunchAt ? 0 : frames[relaunchAt] })], ...SAFETY() }), 0);
-  assert.strictEqual(fresh[1], relaunchAt, 'a different id flashes on its launch frame');
+});
+
+test('one strobe voice taking over from another inherits its permit: the manual strobe from the energy endpoints\', and back, at once or after a dark gap', () => {
+  const frames = Array.from({ length: 60 }, (_, k) => k * FRAME_MS);
+  const lone = (id, k, from) => voice(id, WALL_STROBE, { tier: 'strobe', launchSeq: from ? 2 : 1, startedAtMs: frames[from] });
+  for (const [first, second] of [['energy:palette-strobe', 'strobe'], ['strobe', 'energy:palette-strobe']]) {
+    // The first flashes on frame 0 and is replaced on frame 6, dark by then; then with frames 5 and 6 empty between them.
+    for (const [ends, starts] of [[6, 6], [5, 7]]) {
+      const rises = strobeRises(frames, (ms, k) => ({
+        voices: k < ends ? [lone(first, k, 0)] : k < starts ? [] : [lone(second, k, starts)], ...SAFETY() }), 0);
+      const label = `${first} → ${second}, replaced on frame ${starts}: ${rises}`;
+      assert.strictEqual(rises[0], 0, label);
+      assert.ok(rises[1] >= 8, `the new voice waits out the old one's flash: ${label}`);
+      for (let i = 1; i < rises.length; i++) assert.ok(rises[i] - rises[i - 1] >= 8, `(a) ${label}`);
+      for (let i = 5; i < rises.length; i++) assert.ok(rises[i] - rises[i - 5] >= 44, `(b) ${label}`);
+      assert.ok(rises.length >= 5, `and then flashes on: ${label}`);
+    }
+  }
+  // A hold over a latch and its release: each takes the other's permit in turn.
+  const held = (k) => k === 6;
+  const turns = strobeRises(frames, (ms, k) => ({
+    voices: [held(k) ? lone('energy:palette-strobe:hold', k, 6) : lone('energy:palette-strobe', k, 0)], ...SAFETY() }), 0);
+  assert.strictEqual(turns[0], 0);
+  for (let i = 1; i < turns.length; i++) assert.ok(turns[i] - turns[i - 1] >= 8, `hold and release: ${turns}`);
+  // A strobe voice beside one still playing takes nothing from it: the first keeps its own grid, rise for rise.
+  const alone = strobeRises(frames, () => ({ voices: [lone('strobe', 0, 0)], ...SAFETY() }), 0);
+  const beside = strobeRises(frames, (ms, k) => ({
+    voices: [voice('strobe', WALL_STROBE, { tier: 'strobe', launchSeq: 5, startedAtMs: 0 }),
+      ...(k >= 6 ? [voice('pad:x', WALL_STROBE, { tier: 'strobe', launchSeq: 1, startedAtMs: frames[6] })] : [])], ...SAFETY() }), 0);
+  assert.deepStrictEqual(beside, alone);
+  // A voice of another kind after a strobe has nothing to inherit and starts as it always did.
+  const blinder = strobeRises(frames, (ms, k) => ({
+    voices: [k < 6 ? lone('strobe', k, 0) : voice('pad:b', preset('energy.blinder'), { tier: 'strobe', startedAtMs: frames[6] })],
+    ...SAFETY() }), 0);
+  assert.deepStrictEqual(blinder, [0, 6], 'a blinder six frames after the strobe\'s flash lights at once');
 });
 
 test('two strobe voices on one lamp never interleave: the higher one covers it, flashing or not', () => {

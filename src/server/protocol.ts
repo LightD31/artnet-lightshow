@@ -52,6 +52,8 @@ const DOMAIN_OF: Readonly<Record<string, Domain>> = {
   masterDimmer: 'look', masterBlackout: 'look', flashLimit: 'look',
   strobeSpeed: 'look', strobeFunction: 'look', pixelMap: 'look', pixelPattern: 'look', panelPattern: 'look',
   energyOverride: 'look', paletteOverride: 'look', safety: 'look',
+  // The manual strobe, on or off and its settings: it plays over the look, and the look's views show it.
+  strobe: 'look',
 
   artnet: 'rig', universes: 'rig', fixtures: 'rig', profiles: 'rig', identify: 'rig', hueBridges: 'rig', armed: 'rig',
 

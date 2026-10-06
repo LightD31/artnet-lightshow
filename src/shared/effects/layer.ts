@@ -94,6 +94,30 @@ export function relaunchEffect(stepper: EffectStepper, previous: { id: string; k
   }
 }
 
+/**
+ * One strobe voice taking over from another (the manual strobe from the
+ * energy endpoints', a hold over a latch, either way round): a strobe voice
+ * with no state yet takes that of the strobe voice last played and now gone,
+ * so the permit carries through the handover as through a relaunch. `trail`
+ * is the caller's: the strobe voice ids whose state the stepper still has.
+ */
+export function handOverStrobes(stepper: EffectStepper, trail: Set<string>, playing: readonly VoiceFrame[]): void {
+  const now = new Set<string>();
+  for (const v of playing) if (v.spec.kind === 'strobe') now.add(v.id);
+  for (const id of trail) if (stepper.seenAt(id) === null) trail.delete(id);
+  for (const id of now) {
+    if (stepper.seenAt(id) === null) {
+      let from: string | null = null, seen = -Infinity;
+      for (const gone of trail) {
+        const at = now.has(gone) ? null : stepper.seenAt(gone);
+        if (at !== null && at > seen) { from = gone; seen = at; }
+      }
+      if (from !== null) { stepper.move(from, id); trail.delete(from); }
+    }
+    trail.add(id);
+  }
+}
+
 /** What a voice's priority reads. */
 export type VoiceRank = Pick<VoiceFrame, 'tier' | 'launchSeq' | 'startedAtMs'> & { targets: readonly unknown[] | null };
 

@@ -1,5 +1,5 @@
 import { transitionFor } from '../show/transition.ts';
-import { state, getLiveState, getDmxSnapshot, getDmxUniverses, setExtrasProvider, setSequenceProvider, voices } from './state.ts';
+import { state, getLiveState, getDmxSnapshot, getDmxUniverses, setExtrasProvider, setSequenceProvider, voices, strobe } from './state.ts';
 import { createPublisher, ROOM } from './protocol.ts';
 import { encodeDmxFrame } from '../shared/dmx-frame.ts';
 import { setHooks, applyPatch } from './patch.ts';
@@ -118,10 +118,11 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     effects: effectLibrary ?? new EffectLibrary(configFile('effects.json')).load(),
     palettes: paletteStore ?? new PaletteStore(configFile('palettes.json')).load(),
   };
-  // The pads play the library's presets, saved ones included, as they are at each press.
+  // The pads play the library's presets, saved ones included, as they are at
+  // each press; the strobe pad and voice-hold's `{ preset: 'strobe' }` hold the strobe.
   const pads = new Pads({
     voices, store: padStore ?? new PadStore(configFile('pads.json')).load(), lookup: () => presetLookup(library),
-    fixtureIds: () => state.fixtures.map((f) => f.id), beat: () => conductor.peek().beatPos,
+    fixtureIds: () => state.fixtures.map((f) => f.id), beat: () => conductor.peek().beatPos, strobe,
   });
 
   // ─── The sequencer ──────────────────────────────────────────────────────
