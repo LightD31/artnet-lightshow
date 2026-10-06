@@ -314,12 +314,28 @@ const patternLaneSchema = z.object({
   if (lane.kind === 'shared' && lane.slot >= MAX_SHARED_LANES) ctx.addIssue({ code: 'custom', path: ['slot'], message: `at most ${MAX_SHARED_LANES} shared lanes` });
 });
 
+/** The shortest pattern, in beats: a sixteenth note. */
+export const MIN_PATTERN_BEATS = 0.25;
+/** The most lanes a pattern has. */
+export const MAX_PATTERN_LANES = 256;
+/** The most clips one keep adds, a pattern holds, and copies one pattern hit makes. */
+export const MAX_KEEP_CLIPS = 4096;
+export const MAX_PATTERN_COPIES = 1024;
+
 export const patternSchema = z.object({
   id: idSchema,
   name: z.string().max(80).default(''),
-  lengthBeats: z.number().positive().finite(),
-  lanes: z.array(patternLaneSchema),
+  lengthBeats: z.number().min(MIN_PATTERN_BEATS).finite(),
+  lanes: z.array(patternLaneSchema).max(MAX_PATTERN_LANES),
 }).strict().superRefine((pattern, ctx) => {
+  let clips = 0;
+  let end = 0;
+  for (const lane of pattern.lanes) {
+    clips += lane.clips.length;
+    for (const c of lane.clips) end = Math.max(end, c.startBeat + c.lengthBeats);
+  }
+  if (clips > MAX_KEEP_CLIPS) ctx.addIssue({ code: 'custom', path: ['lanes'], message: `at most ${MAX_KEEP_CLIPS} clips` });
+  if (end > pattern.lengthBeats + EPS) ctx.addIssue({ code: 'custom', path: ['lengthBeats'], message: `shorter than its clips, which end at beat ${end}` });
   const seen = new Set<string>();
   pattern.lanes.forEach(({ kind, slot }, i) => {
     if (seen.has(`${kind}:${slot}`)) ctx.addIssue({ code: 'custom', path: ['lanes', i, 'slot'], message: `${kind} slot ${slot} is used twice` });
@@ -341,20 +357,28 @@ const recordSchema = z.object({
 }).strict();
 
 /** A pad launch while recording, in beats of the sequence; no end plays an explicit length, else the pad's. */
-export interface PadHit { bank: number; slot: number; startBeat: number; endBeat?: number; lengthBeats?: number }
+export interface PadHit {
+  bank: number; slot: number; startBeat: number; endBeat?: number; lengthBeats?: number;
+  /** The conductor beat the hit starts on: the count-in is decided on it. */
+  clockBeat?: number;
+  /** A release: how long the pad was held, in conductor beats. */
+  heldBeats?: number;
+  /** A once launch: a pattern plays one lap. */
+  once?: boolean;
+}
 /** What a pad plays, as a clip can: a preset on the pad's fixtures, or a pattern bundle on them. */
 export type PadTake = { presetId: string; targets: 'shared' | number[]; lengthBeats: number } | { patternId: string; targets: 'shared' | number[] };
 /** A removed clip that reached outside the take's range: how many beats before and after it went with it. */
 export interface RemovedBeyond { id: string; laneId: string; startBeat: number; lengthBeats: number; beforeBeats: number; afterBeats: number }
 /** A stopped take: kept ones also give the range the take wrote and the removed clips that reached outside it. */
 export interface KeepResult { added: Clip[]; removed: string[]; range?: { fromBeat: number; toBeat: number }; beyondRange?: RemovedBeyond[] }
-export interface RecordingStatus { mode: RecordOptions['mode']; fromBeat: number; quantise: number; hits: number }
+export interface RecordingStatus { mode: RecordOptions['mode']; fromBeat: number; quantise: number; hits: number; full?: boolean }
 // A pattern hit keeps its id; `drop` is a sequencePattern pad, which maps as insertion does.
 interface StagedHit {
   bank: number; slot: number; start: number; length: number; targets: 'shared' | number[]; open: boolean;
-  presetId?: string; patternId?: string; pattern?: SequencePattern; drop?: boolean;
+  presetId?: string; patternId?: string; pattern?: SequencePattern; drop?: boolean; once?: boolean; at?: number;
 }
-interface Recording { mode: RecordOptions['mode']; fromBeat: number; quantise: number; sequenceId: string; revision: number; take: StagedHit[] }
+interface Recording { mode: RecordOptions['mode']; fromBeat: number; clockFrom: number; full?: boolean; quantise: number; sequenceId: string; revision: number; take: StagedHit[] }
 
 /**
  * What a pad records: a preset with its length by the voice-duration
@@ -555,6 +579,8 @@ export interface SequencerOptions {
   pattern?: (id: string) => SequencePattern | null;
   /** What a pad plays, for recording its hits; null for a pad no clip can play. */
   pad?: (bank: number, slot: number) => PadTake | null;
+  /** The conductor's beat now, which a take's count-in counts on. The last frame's when left out. */
+  beat?: () => number;
 }
 
 const EPS = 1e-9;
@@ -597,6 +623,7 @@ export class Sequencer {
   declare _palette: string | null;
   declare _automation: { brightness: AutomationRun | null; tempo: AutomationRun | null };
   declare _last: MusicalTime | null;
+  declare _clock: () => number;
   declare _transport: SequenceTransport | null;
   declare _fixtureIds: () => readonly number[];
   declare _pattern: (id: string) => SequencePattern | null;
@@ -605,8 +632,9 @@ export class Sequencer {
 
   constructor({ resolve, palette = builtinPalette, apply = () => {}, current = () => ({ masterDimmer: 255, bpm: 120 }),
     musicMode = () => {}, admit = (spec) => safety.requireAcknowledged(spec), now = () => performance.now(), seed,
-    fixtureIds = () => [], pattern = () => null, pad = () => null }: SequencerOptions) {
+    fixtureIds = () => [], pattern = () => null, pad = () => null, beat }: SequencerOptions) {
     this._fixtureIds = fixtureIds;
+    this._clock = beat ?? (() => this._last?.beatPos ?? 0);
     this._pattern = pattern;
     this._pad = pad;
     this._record = null;
@@ -1362,8 +1390,14 @@ export class Sequencer {
     const lanes = seq.lanes.filter((l) => laneIds.includes(l.id));
     const clips = seq.clips.filter((c) => laneIds.includes(c.laneId) && c.startBeat < toBeat - EPS && c.startBeat + c.lengthBeats > fromBeat + EPS);
     const bar = barBeats(seq.timeSignature);
-    const start = Math.floor(Math.min(fromBeat, ...clips.map((c) => c.startBeat)) / bar + EPS) * bar;
-    const end = Math.ceil(Math.max(toBeat, ...clips.map((c) => c.startBeat + c.lengthBeats)) / bar - EPS) * bar;
+    let first = fromBeat;
+    let last = toBeat;
+    for (const c of clips) {
+      first = Math.min(first, c.startBeat);
+      last = Math.max(last, c.startBeat + c.lengthBeats);
+    }
+    const start = Math.floor(first / bar + EPS) * bar;
+    const end = Math.ceil(last / bar - EPS) * bar;
     const fixtures = this._fixtureIds();
     let shared = 0;
     const out = lanes.map((lane) => {
@@ -1383,14 +1417,18 @@ export class Sequencer {
     const opts = validate(recordSchema, raw, 'recording') as RecordOptions;
     if (!this._loaded) throw new HttpError(409, 'No sequence is loaded');
     if (this._record) throw new HttpError(409, 'A recording runs already');
-    this._record = { mode: opts.mode, quantise: opts.quantise, fromBeat: this.status().beat + opts.countInBeats, sequenceId: this._loaded.id, revision: this._revision, take: [] };
+    const at = this.status();
+    this._record = {
+      mode: opts.mode, quantise: opts.quantise, fromBeat: sequenceBeatAhead(at.beat, opts.countInBeats, at.loop), clockFrom: this._clock() + opts.countInBeats,
+      sequenceId: this._loaded.id, revision: this._revision, take: [],
+    };
     return this.recording()!;
   }
 
   /** The recording running, or null. */
   recording(): RecordingStatus | null {
     const r = this._record;
-    return r ? { mode: r.mode, fromBeat: r.fromBeat, quantise: r.quantise, hits: r.take.length } : null;
+    return r ? { mode: r.mode, fromBeat: r.fromBeat, quantise: r.quantise, hits: r.take.length, ...(r.full ? { full: true } : {}) } : null;
   }
 
   /**
@@ -1399,21 +1437,23 @@ export class Sequencer {
    * long. An end for a pad whose last hit has none yet is its release. Null for
    * a hit in the count-in or a pad no clip can play.
    */
-  onPadHit({ bank, slot, startBeat, endBeat, lengthBeats }: PadHit): StagedHit | null {
+  onPadHit({ bank, slot, startBeat, endBeat, lengthBeats, clockBeat, heldBeats, once = false }: PadHit): StagedHit | null {
     const rec = this._record;
     if (!rec) throw new HttpError(409, 'Nothing is recording');
-    if (!Number.isFinite(startBeat) || startBeat < rec.fromBeat - EPS) return null;
     const q = rec.quantise;
     const snap = (b: number) => (q > 0 ? Math.round(b / q) * q : b);
-    const start = snap(startBeat);
-    const lengthTo = (end: number, fallback: number) => Math.max(snap(end) - start, q > 0 ? q : 0) || fallback;
-    // Matched by pad, not by start: a release maps its start again a frame later.
-    const open = endBeat !== undefined ? rec.take.findLast((h) => h.bank === bank && h.slot === slot && h.open) : undefined;
+    const held = heldBeats !== undefined && Number.isFinite(heldBeats) ? Math.max(0, heldBeats) : undefined;
+    // Matched by pad, not by start, and before the count-in: a release maps its start again a frame later.
+    const open = endBeat !== undefined || held !== undefined ? rec.take.findLast((h) => h.bank === bank && h.slot === slot && h.open) : undefined;
     if (open) {
-      open.length = Math.max(snap(endBeat!) - open.start, q > 0 ? q : 0) || open.length;
+      const end = held !== undefined ? (open.at ?? open.start) + held : endBeat!;
+      open.length = Math.max(snap(end) - open.start, q > 0 ? q : 0) || open.length;
       open.open = false;
       return { ...open };
     }
+    if (!Number.isFinite(startBeat) || this._inCountIn(rec, startBeat, clockBeat) || this._full(rec)) return null;
+    const start = snap(startBeat);
+    const lengthTo = (end: number, fallback: number) => Math.max(snap(end) - start, q > 0 ? q : 0) || fallback;
     const content = this._pad(bank, slot);
     if (!content) return null;
     // Explicit end or length first, then the pad's (a pattern's own length).
@@ -1421,10 +1461,12 @@ export class Sequencer {
     const pattern = 'patternId' in content ? this._pattern(content.patternId) : null;
     if ('patternId' in content && !pattern) return null;
     const padLength = pattern ? pattern.lengthBeats : (content as { lengthBeats: number }).lengthBeats;
-    const length = endBeat !== undefined && Number.isFinite(endBeat) ? lengthTo(endBeat, padLength)
-      : lengthBeats !== undefined && lengthBeats > 0 && Number.isFinite(lengthBeats) ? lengthTo(startBeat + lengthBeats, padLength) : padLength;
+    const length = held !== undefined ? lengthTo(startBeat + held, padLength)
+      : endBeat !== undefined && Number.isFinite(endBeat) ? lengthTo(endBeat, padLength)
+        : lengthBeats !== undefined && lengthBeats > 0 && Number.isFinite(lengthBeats) ? lengthTo(startBeat + lengthBeats, padLength) : padLength;
     const what = pattern ? { patternId: pattern.id, pattern: structuredClone(pattern) } : { presetId: (content as { presetId: string }).presetId };
-    const hit: StagedHit = { bank, slot, start, length, ...what, targets: structuredClone(content.targets), open: endBeat === undefined && lengthBeats === undefined };
+    const isOpen = !once && endBeat === undefined && lengthBeats === undefined && held === undefined;
+    const hit: StagedHit = { bank, slot, start, at: startBeat, length, ...what, targets: structuredClone(content.targets), open: isOpen, ...(once ? { once } : {}) };
     rec.take.push(hit);
     return { ...hit };
   }
@@ -1433,14 +1475,29 @@ export class Sequencer {
    * A sequencePattern pad: staged on a running take (at the grid line, as
    * it falls), else inserted now. The clips added; none while staged.
    */
-  dropPattern(id: string, atBeat: number): Clip[] {
+  dropPattern(id: string, atBeat: number, clockBeat?: number): Clip[] {
     const rec = this._record;
-    if (!rec || !Number.isFinite(atBeat) || atBeat < rec.fromBeat - EPS) return this.insertPattern(id, atBeat);
+    if (!rec) return this.insertPattern(id, atBeat);
+    // A running take keeps the sequence it was armed on: a drop in its count-in is not played.
+    if (!Number.isFinite(atBeat) || this._inCountIn(rec, atBeat, clockBeat) || this._full(rec)) return [];
     const pattern = this._pattern(id);
     if (!pattern) throw new HttpError(404, `No such pattern: ${id}`);
     const q = rec.quantise;
     rec.take.push({ bank: -1, slot: -1, start: q > 0 ? Math.round(atBeat / q) * q : atBeat, length: 0, patternId: id, pattern: structuredClone(pattern), targets: 'shared', open: false, drop: true });
     return [];
+  }
+
+  /** A take holds at most as many hits as a keep adds clips; past that it says it is full. */
+  _full(rec: Recording): boolean {
+    if (rec.take.length < MAX_KEEP_CLIPS) return false;
+    rec.full = true;
+    return true;
+  }
+
+  /** Before the take's first beat: on the conductor's clock when the hit says its beat, else on the sequence. */
+  _inCountIn(rec: Recording, beat: number, clockBeat: number | undefined): boolean {
+    if (clockBeat !== undefined && Number.isFinite(clockBeat)) return clockBeat < rec.clockFrom - EPS;
+    return beat < rec.fromBeat - EPS;
   }
 
   /**
@@ -1449,7 +1506,7 @@ export class Sequencer {
    * lane), pattern hits expanded in the same batch; replace first removes
    * the whole clips it lands on. Discarded, or empty, nothing changes. A
    * refused keep (another sequence or revision loaded, a pattern that no
-   * longer maps) leaves the take running.
+   * longer maps, more copies or clips than the caps) leaves the take running.
    */
   stopRecording(keep: boolean): KeepResult {
     const rec = this._record;
@@ -1464,7 +1521,7 @@ export class Sequencer {
     const taken = takenIds(seq);
     const fixtures = this._fixtureIds();
     const added: Clip[] = [];
-    const put = (h: StagedHit, laneId: string, targets: Clip['targets']) => added.push({
+    const put = (h: StagedHit, laneId: string, targets: Clip['targets']) => addClip(added, {
       id: freshId(taken, 'c'), laneId, startBeat: h.start, lengthBeats: h.length, loopBeats: h.length, presetId: h.presetId!, targets, mute: false,
     });
     for (const h of rec.take) {
@@ -1486,12 +1543,16 @@ export class Sequencer {
     }
     const gone = rec.mode === 'replace' ? seq.clips.filter((c) => added.some((a) => landsOn(a, c))) : [];
     const removed = gone.map((c) => c.id);
-    seq.clips = [...seq.clips.filter((c) => !removed.includes(c.id)), ...added];
+    const removing = new Set(removed);
+    seq.clips = [...seq.clips.filter((c) => !removing.has(c.id)), ...added];
+    // Whole clips go, so a crossing one takes beats outside the take with it.
+    let fromBeat = rec.fromBeat;
+    for (const a of added) fromBeat = Math.min(fromBeat, a.startBeat);
+    let toBeat = fromBeat;
+    for (const a of added) toBeat = Math.max(toBeat, a.startBeat + a.lengthBeats);
+    const range = { fromBeat, toBeat };
     this.load(seq);
     this._record = null;
-    // Whole clips go, so a crossing one takes beats outside the take with it.
-    const fromBeat = Math.min(rec.fromBeat, ...added.map((a) => a.startBeat));
-    const range = { fromBeat, toBeat: Math.max(fromBeat, ...added.map((a) => a.startBeat + a.lengthBeats)) };
     const beyondRange = gone.map(({ id, laneId, startBeat, lengthBeats }) => ({
       id, laneId, startBeat, lengthBeats,
       beforeBeats: Math.max(0, range.fromBeat - startBeat), afterBeats: Math.max(0, startBeat + lengthBeats - range.toBeat),
@@ -1503,11 +1564,15 @@ export class Sequencer {
    * A staged pattern hit as clips: a drop maps as insertion (a missing slot
    * refuses), a pad's bundle as its voice (track ordinals over the pad's
    * fixtures in patch order, a missing one skipped; explicit clip fixtures
-   * intersect them). Released, the bundle repeats up to the release.
+   * intersect them). Released, the bundle repeats up to the release, a once
+   * plays one lap; a clip past the end is dropped, one crossing it cut there.
    */
   _expand(seq: Sequence, h: StagedHit, fixtures: readonly number[], taken: Set<string>, added: Clip[]): void {
     const pattern = h.pattern!;
-    const copies = h.drop || h.open ? 1 : Math.max(1, Math.ceil(h.length / pattern.lengthBeats - EPS));
+    const whole = h.drop || h.open;
+    const end = whole ? Infinity : h.start + h.length;
+    const copies = whole || h.once ? 1 : Math.max(1, Math.ceil(h.length / pattern.lengthBeats - EPS));
+    if (!(copies <= MAX_PATTERN_COPIES)) throw new HttpError(409, `Pattern ${pattern.id} would repeat ${copies} times, at most ${MAX_PATTERN_COPIES}: stop the take without keeping`);
     const selected = h.targets === 'shared' ? [...fixtures] : fixtures.filter((id) => (h.targets as number[]).includes(id));
     for (let k = 0; k < copies; k++) {
       const at = h.start + k * pattern.lengthBeats;
@@ -1526,7 +1591,9 @@ export class Sequencer {
             targets = c.targets === 'lane' ? [...selected] : c.targets.filter((id) => selected.includes(id));
             if (targets.length === 0) continue;
           }
-          added.push({ ...structuredClone(c), id: freshId(taken, 'c'), laneId, startBeat: c.startBeat + at, targets });
+          const startBeat = c.startBeat + at;
+          if (startBeat >= end - EPS) continue;
+          addClip(added, { ...structuredClone(c), id: freshId(taken, 'c'), laneId, startBeat, lengthBeats: Math.min(c.lengthBeats, end - startBeat), targets });
         }
       }
     }
@@ -1590,6 +1657,12 @@ function freshId(taken: Set<string>, prefix: string): string {
 }
 
 /** The slot-th shared lane, the missing ones made after the last lane. */
+/** One more clip for a keep, or 409 past the cap, before anything is loaded. */
+function addClip(added: Clip[], clip: Clip): void {
+  if (added.length >= MAX_KEEP_CLIPS) throw new HttpError(409, `The take would add more than ${MAX_KEEP_CLIPS} clips: stop it without keeping`);
+  added.push(clip);
+}
+
 function sharedLane(seq: Sequence, slot: number, taken: Set<string>): string {
   let lanes = seq.lanes.filter((l) => l.kind === 'shared');
   while (lanes.length <= slot) {

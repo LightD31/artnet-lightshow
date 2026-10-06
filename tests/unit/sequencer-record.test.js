@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { Sequencer, sequenceBeatAhead, padTakeOf } from '../../src/server/sequencer.ts';
+import { Sequencer, sequenceBeatAhead, padTakeOf, validatePattern } from '../../src/server/sequencer.ts';
 import { Pads, PadStore, STROBE_ID, patternPlayer } from '../../src/server/pads.ts';
 import { VoiceManager, builtinPresets } from '../../src/server/voices.ts';
 import { presetById } from '../../src/shared/effects/index.ts';
@@ -233,4 +233,134 @@ test('a replace keep names the removed clips that reach outside the recorded ran
   s.onPadHit({ bank: 0, slot: 1, startBeat: 20 });
   const over = s.stopRecording(true);
   assert.deepEqual([over.removed, over.beyondRange, over.range], [[], [], { fromBeat: 0, toBeat: 22 }]);
+});
+
+// A pattern the resolver hands over as stored, with no schema in the way.
+const TWO = { id: 'two', name: 'Two', lengthBeats: 8, lanes: [{ kind: 'shared', slot: 0, clips: [
+  { startBeat: 0, lengthBeats: 2, effect: GLOW, targets: 'lane', mute: false },
+  { startBeat: 6, lengthBeats: 2, effect: GLOW, targets: 'lane', mute: false }] }] };
+const TINY = { id: 'tiny', name: 'Tiny', lengthBeats: 1e-6, lanes: [{ kind: 'shared', slot: 0, clips: [{ startBeat: 0, lengthBeats: 1, effect: GLOW, targets: 'lane', mute: false }] }] };
+const LOOP = { on: true, startBeat: 0, endBeat: 16 };
+
+function clockRig({ pattern = TWO, pad = () => ({ patternId: pattern.id, targets: 'shared' }), fixtures = [1] } = {}) {
+  const c = { beat: 100, seq: 0, loop: null };
+  const s = new Sequencer({ resolve, fixtureIds: () => fixtures, pattern: (id) => (id === pattern.id ? pattern : null), pad, beat: () => c.beat });
+  s.load({ id: 'set', name: 'Set', lanes: [shared('a')], clips: [] });
+  const real = s.status.bind(s);
+  s.status = () => ({ ...real(), beat: c.seq, loop: c.loop });
+  return { s, c };
+}
+
+test('a pattern length is at least its clips and a sixteenth note', () => {
+  assert.throws(() => validatePattern(TINY), { status: 400 });
+  assert.throws(() => validatePattern({ ...TWO, lengthBeats: 7 }), { status: 400 }, 'shorter than its last clip');
+  assert.equal(validatePattern(TWO).lengthBeats, 8);
+});
+
+test('a keep that would make too many copies or clips is refused before anything changes', () => {
+  const { s } = clockRig({ pattern: TINY });
+  s.startRecording({ mode: 'overdub', quantise: 0 });
+  s.onPadHit({ bank: 0, slot: 0, startBeat: 0 });
+  s.onPadHit({ bank: 0, slot: 0, startBeat: 0, endBeat: 2 });
+  const revision = s.revision();
+  assert.throws(() => s.stopRecording(true), { status: 409 });
+  assert.equal(s.revision(), revision, 'nothing loaded');
+  assert.equal(s.current().clips.length, 0);
+  assert.equal(s.recording().hits, 1, 'the take stays for a discard');
+  s.stopRecording(false);
+  // Three held hits of 1024 laps, two clips each: the clip cap, not the copy cap.
+  const many = clockRig().s;
+  many.startRecording({ mode: 'overdub', quantise: 1 });
+  for (const at of [0, 10000, 20000]) many.onPadHit({ bank: 0, slot: 0, startBeat: at, endBeat: at + 8 * 1024 });
+  assert.throws(() => many.stopRecording(true), { status: 409 });
+  assert.equal(many.current().clips.length, 0);
+  assert.equal(many.recording().hits, 3);
+  many.stopRecording(false);
+  // The take itself is bounded: past the cap a hit is not staged and the status says so.
+  const one = clockRig({ pad: () => ({ presetId: 'ldj.FadeCycle', targets: 'shared', lengthBeats: 1 }) }).s;
+  one.startRecording({ mode: 'overdub', quantise: 0 });
+  for (let i = 0; i < 4097; i++) one.onPadHit({ bank: 0, slot: 0, startBeat: i, lengthBeats: 1 });
+  assert.deepEqual([one.recording().hits, one.recording().full], [4096, true]);
+  assert.equal(one.stopRecording(true).added.length, 4096);
+});
+
+test('the count-in is decided on conductor time: a take armed in a loop records every lap', () => {
+  const { s, c } = clockRig({ pad: () => ({ presetId: 'ldj.FadeCycle', targets: 'shared', lengthBeats: 1 }) });
+  c.loop = LOOP;
+  c.seq = 8;
+  s.startRecording({ mode: 'overdub', countInBeats: 0, quantise: 1 });
+  const lap2 = s.onPadHit({ bank: 0, slot: 0, startBeat: sequenceBeatAhead(8, 10, LOOP), clockBeat: 110 });
+  assert.equal(lap2?.start, 2, 'beat 2 of the next lap');
+  s.stopRecording(false);
+  c.seq = 14;
+  c.beat = 200;
+  assert.equal(s.startRecording({ mode: 'overdub', countInBeats: 4, quantise: 1 }).fromBeat, 2, 'shown wrapped');
+  assert.equal(s.onPadHit({ bank: 0, slot: 0, startBeat: sequenceBeatAhead(14, 2, LOOP), clockBeat: 202 }), null, 'in the count-in');
+  assert.equal(s.onPadHit({ bank: 0, slot: 0, startBeat: sequenceBeatAhead(14, 6, LOOP), clockBeat: 206 })?.start, 4);
+  assert.equal(s.stopRecording(true).added.length, 1);
+});
+
+test('a pattern hit records what was played: cut at the release, a once is one copy', () => {
+  const { s } = clockRig();
+  const kept = (hits) => {
+    s.startRecording({ mode: 'overdub', quantise: 1 });
+    for (const h of hits) s.onPadHit({ bank: 0, slot: 0, ...h });
+    return rounded(s.stopRecording(true).added).map(([, start, length]) => [start, length]);
+  };
+  assert.deepEqual(kept([{ startBeat: 0 }, { startBeat: 0, endBeat: 2 }]), [[0, 2]], 'a clip after the release is dropped');
+  assert.deepEqual(kept([{ startBeat: 20 }, { startBeat: 20, endBeat: 27 }]), [[20, 2], [26, 1]], 'a crossing clip is trimmed');
+  assert.deepEqual(kept([{ startBeat: 40, endBeat: 49 }]), [[40, 2], [46, 2], [48, 1]], 'a held length repeats, the last lap cut');
+  assert.deepEqual(kept([{ startBeat: 60, lengthBeats: 20, once: true }]), [[60, 2], [66, 2]], 'a once never laps');
+  assert.deepEqual(kept([{ startBeat: 80, lengthBeats: 5, once: true }]), [[80, 2]], 'a once is cut at its length');
+});
+
+test('a release carries its held length on the conductor clock and closes the hit even under the count-in line', () => {
+  const { s, c } = clockRig({ pad: () => ({ presetId: 'ldj.FadeCycle', targets: 'shared', lengthBeats: 1 }) });
+  c.loop = LOOP;
+  c.seq = 14;
+  s.startRecording({ mode: 'overdub', countInBeats: 0, quantise: 1 });
+  assert.equal(s.onPadHit({ bank: 0, slot: 0, startBeat: 14, clockBeat: 100 }).open, true);
+  // Released 4 beats later, past the wrap: its start maps below fromBeat.
+  const closed = s.onPadHit({ bank: 0, slot: 0, startBeat: sequenceBeatAhead(2, -4, LOOP), clockBeat: 100, heldBeats: 4 });
+  assert.equal(closed?.open, false);
+  assert.equal(closed.length, 4);
+  assert.deepEqual(rounded(s.stopRecording(true).added).map(([, start, length]) => [start, length]), [[14, 4]]);
+});
+
+test('a sequencePattern pad in the count-in of a running take leaves the loaded sequence alone', () => {
+  const { s, c } = clockRig({ pattern: PATTERN, pad: () => ({ presetId: 'ldj.FadeCycle', targets: 'shared', lengthBeats: 1 }), fixtures: [1, 2] });
+  c.beat = 0;
+  s.startRecording({ mode: 'overdub', countInBeats: 4, quantise: 1 });
+  const revision = s.revision();
+  assert.deepEqual(s.dropPattern('drop', 2, 2), []);
+  assert.deepEqual(s.dropPattern('drop', 2), [], 'no conductor beat: the sequence line decides');
+  assert.equal(s.revision(), revision);
+  s.onPadHit({ bank: 0, slot: 0, startBeat: 5, clockBeat: 5 });
+  assert.equal(s.stopRecording(true).added.length, 1);
+});
+
+test('a hold whose voice ends by itself is forgotten and its hit closes with the held length', (t) => {
+  const { c, pads, store, heard } = padRig(t);
+  store.set(0, 0, { label: 'Hold', accent: '#A855F7', content: { kind: 'preset', id: 'ldj.FadeCycle' }, launch: 'hold', quantise: 1, targets: 'shared' });
+  c.beat = 5;
+  for (const token of ['a', 'b', 'c']) {
+    assert.ok(pads.press(0, 0, 'tablet', token));
+    c.beat += 2;
+    pads.stopAll();
+    pads.sweep();
+  }
+  assert.equal(pads._holds.size, 0);
+  assert.deepEqual(heard.filter((h) => h.endBeat !== undefined).map((h) => h.endBeat - h.startBeat), [2, 2, 2]);
+  assert.equal(pads.release(0, 0, 'tablet', 'c'), false, 'nothing left to release');
+  assert.equal(heard.length, 6);
+  // A loop ended by stop-all closes the same way.
+  store.set(0, 1, { label: 'Loop', accent: '#A855F7', content: { kind: 'preset', id: 'ldj.FadeCycle' }, launch: 'loop', quantise: 1, targets: 'shared' });
+  assert.ok(pads.press(0, 1, 'tablet', 'l'));
+  c.beat += 3;
+  pads.sweep();
+  assert.equal(heard.length, 7, 'a running loop stays open');
+  pads.stopAll();
+  pads.sweep();
+  assert.equal(pads._latched.size, 0);
+  assert.deepEqual(heard.slice(6).map((h) => [h.slot, h.endBeat === undefined ? null : h.endBeat - h.startBeat]), [[1, null], [1, 3]]);
 });

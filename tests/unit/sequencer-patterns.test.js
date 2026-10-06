@@ -301,6 +301,14 @@ test('routes', async (t) => {
   assert.ok(res.body.added[1].lengthBeats > 0);
   assert.deepEqual(res.body.beyondRange, [], 'an overdub removes nothing');
   assert.ok(res.body.range.toBeat >= res.body.range.fromBeat);
+  // A hold stopped by stop-all is closed at the next sweep, through the same hook.
+  await s.call('POST', '/api/sequence/record', { mode: 'overdub', countInBeats: 0, quantise: 0 });
+  pads.press(0, 6, 'tablet', 'gone');
+  pads.stopAll();
+  pads.sweep();
+  assert.equal(pads._holds.size, 0);
+  assert.equal(s.integrations.sequence.sequencer._record.take.at(-1).open, false);
+  await s.call('POST', '/api/sequence/record/stop', { keep: false });
   pads.stopAll();
   assert.equal(conductor.now().beatPos >= 0, true);
 });
