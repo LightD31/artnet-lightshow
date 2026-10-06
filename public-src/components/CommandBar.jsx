@@ -2,7 +2,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { send, emitTap, pick } from '../state.js';
 import { formatBpm, clockSource } from '../utils.js';
 import { useDraft } from '../draft.js';
-import { useEnergyPads } from '../energy-pad.js';
+import { useVoicePads, holdsWhilePressed, padKey } from '../voice-pad.js';
 import { focusedByPointer } from '../focus-origin.js';
 
 // Steps per beat. 1/16 was in the README and on MIDI, and missing here (A7.26).
@@ -63,8 +63,8 @@ function BpmEntry({ bpm }) {
 }
 
 export function CommandBar() {
-  const [, padProps] = useEnergyPads();
-  const s = pick(['bpm', 'beatDivision', 'clock', 'running', 'masterDimmer', 'masterBlackout', 'energyEffects', 'energyOverride']);
+  const { held, padProps } = useVoicePads();
+  const s = pick(['bpm', 'beatDivision', 'clock', 'running', 'masterDimmer', 'masterBlackout', 'pads']);
   const bpm = s.bpm || 120;
   const division = s.beatDivision || 1;
   const periodMs = (60_000 / bpm) / division;
@@ -88,7 +88,9 @@ export function CommandBar() {
 
   const [dim, onMaster, commitMaster] = useDraft(s.masterDimmer ?? 255, (v) => send({ masterDimmer: v }));
   const masterPct = Math.round((dim / 255) * 100);
-  const effects = s.energyEffects || [];
+  // The strip is pads bank A, the filled ones, played as on the deck.
+  const strip = (s.pads?.layout || []).filter((p) => p.bank === 0 && p.content).sort((a, b) => a.slot - b.slot);
+  const lit = s.pads?.lit || [];
 
   return (
     <section class="command-bar" aria-label="Live controls">
@@ -158,20 +160,26 @@ export function CommandBar() {
 
       <div class="cb-divider" />
 
-      {/* Energy panic strip */}
+      {/* Pads bank A */}
       <div class="cb-block cb-energy">
-        <span class="cb-energy-label">ENERGY</span>
+        <span class="cb-energy-label">PADS</span>
         <div class="cb-energy-grid">
-          {effects.map((eff) => (
-            <button
-              key={eff.id}
-              class={`cb-energy-btn ${s.energyOverride === eff.id ? 'active' : ''}`}
-              {...padProps(eff.id)}
-              title={`${eff.name} — ${eff.desc} (hold)`}
-            >
-              <span class="cb-energy-name">{eff.name}</span>
-            </button>
-          ))}
+          {strip.map((p) => {
+            const on = !!lit[p.slot] || held.has(padKey(0, p.slot));
+            return (
+              <button
+                key={p.slot}
+                type="button"
+                class={`cb-energy-btn ${on ? 'active' : ''}`}
+                aria-pressed={on}
+                {...padProps(p)}
+                style={{ '--pad-accent': p.accent, touchAction: 'none' }}
+                title={`${p.label} (${holdsWhilePressed(p) ? 'hold' : p.launch === 'loop' ? 'tap to loop' : 'tap'})`}
+              >
+                <span class="cb-energy-name">{p.label}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
     </section>

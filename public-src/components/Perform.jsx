@@ -1,10 +1,14 @@
 import { useEffect, useState } from 'preact/hooks';
-import { api, autoPositionSig, connectedSig, emitTap, pick, send } from '../state.js';
+import { api, autoPositionSig, connectedSig, emitTap, librarySig, pick, send } from '../state.js';
 import { colorToCss, clockSource, fmtTime, formatBpm } from '../utils.js';
 import { timelinePosition } from '../timeline-state.js';
 import { useDraft } from '../draft.js';
-import { useEnergyPads } from '../energy-pad.js';
+import { Pads } from './Pads.jsx';
+import { StrobePad } from './StrobePad.jsx';
 import { activeQueue } from './Queue.jsx';
+import { isRandom, paletteName } from './PaletteEditor.jsx';
+import { Transport } from './Transport.jsx';
+import { AudioMeters } from './AudioMeters.jsx';
 
 /**
  * The view for running a show from a tablet: what a hand needs mid-set, as
@@ -13,26 +17,14 @@ import { activeQueue } from './Queue.jsx';
  *   outputs      armed or not: whether anything leaves the machine at all
  *   now / next   the track playing, how far in, and what comes after it
  *   sync         what the lights are keeping time by, and whether it is well
- *   pads         blackout, the energy effects held under a finger (or
- *                latched), and tap tempo
+ *   pads         two banks of eight, each played as its launch mode says,
+ *                the strobe held, blackout and tap tempo
  *   palettes     one tap writes the whole look's colours
  *   faders       the master and how hard the generated show pushes
  *
  * Everything here is also on the other views; this is the same controls laid
  * out for a thumb rather than a mouse.
  */
-
-// Short names for the pads: what fits in large type on a phone.
-const PAD_LABELS = {
-  kill: 'Kill',
-  blinder: 'Blinder',
-  'white-strobe': 'Strobe',
-  'color-strobe': 'Colour strobe',
-  'palette-strobe': 'Palette strobe',
-  'uv-wash': 'UV',
-  glow: 'Glow',
-};
-const PAD_ORDER = ['kill', 'blinder', 'white-strobe', 'color-strobe', 'palette-strobe', 'uv-wash', 'glow'];
 
 const SOURCE_LABELS = {
   prolink: 'PRO DJ LINK', hybrid: 'Spotify + OS clock', spotify: 'Spotify', deezer: 'Deezer',
@@ -41,10 +33,6 @@ const SOURCE_LABELS = {
 
 const SHOW_TEXT = {
   idle: 'Idle', downloading: 'Downloading', analyzing: 'Analysing', ready: 'Ready', playing: 'Running',
-};
-
-const readLatch = () => {
-  try { return localStorage.getItem('lightshow.perform.latch') === '1'; } catch { return false; }
 };
 
 /** How the source the show follows is doing: 'ok', 'warn', 'off' or 'none'. */
@@ -167,38 +155,21 @@ function SyncHealth() {
   );
 }
 
-function Pads() {
-  const s = pick(['masterBlackout', 'energyEffects', 'energyOverride']);
-  const [latch, setLatch] = useState(readLatch);
-  useEffect(() => { try { localStorage.setItem('lightshow.perform.latch', latch ? '1' : '0'); } catch { /* private mode */ } }, [latch]);
-  const [held, padProps] = useEnergyPads({ latch });
-  const effects = (s.energyEffects || []).slice().sort((a, b) => PAD_ORDER.indexOf(a.id) - PAD_ORDER.indexOf(b.id));
+function Utility() {
+  const s = pick(['masterBlackout']);
   return (
-    <section class="perform-pads" aria-label="Effects">
+    <section class="perform-utility" aria-label="Blackout and tap">
       <button type="button" class={`perform-pad pad-blackout ${s.masterBlackout ? 'active' : ''}`}
         aria-pressed={!!s.masterBlackout}
         onClick={() => send({ masterBlackout: !s.masterBlackout })}>
         <span class="perform-pad-name">Blackout</span>
         <span class="perform-pad-hint">{s.masterBlackout ? 'on — tap to restore' : 'tap'}</span>
       </button>
-      {effects.map((eff) => (
-        <button key={eff.id} type="button"
-          class={`perform-pad pad-${eff.id} ${held === eff.id || s.energyOverride === eff.id ? 'active' : ''}`}
-          title={eff.desc}
-          {...padProps(eff.id)}>
-          <span class="perform-pad-name">{PAD_LABELS[eff.id] || eff.name}</span>
-          <span class="perform-pad-hint">{latch ? (held === eff.id ? 'latched — tap to stop' : 'tap to latch') : 'hold'}</span>
-        </button>
-      ))}
       <button type="button" class="perform-pad pad-tap" onPointerDown={(e) => { if (e.button === 0) emitTap(); }}
         onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !e.repeat) { e.preventDefault(); emitTap(); } }}>
         <span class="perform-pad-name">Tap</span>
         <span class="perform-pad-hint">tempo</span>
       </button>
-      <label class="perform-latch">
-        <input type="checkbox" checked={latch} onChange={(e) => setLatch(e.target.checked)} />
-        <span>Latch effects</span>
-      </label>
     </section>
   );
 }
@@ -233,6 +204,49 @@ function PalettePads() {
   );
 }
 
+/** What PUT /api/palette-override takes for a palette: its id, rolled on the server. */
+export const overrideBody = (palette) => ({ paletteId: palette.id });
+
+/**
+ * Which strip button the live override is: 'off', the palette whose fixed
+ * colours it equals, or null (colours sent by hand, or a palette with random
+ * entries, which the server rolled).
+ */
+export function activeOverride(override, palettes) {
+  if (!override || !override.length) return 'off';
+  const want = override.map((c) => String(c).toUpperCase()).join();
+  const hit = palettes.find((p) => !(p.colours || []).some(isRandom)
+    && (p.colours || []).map((c) => String(c).toUpperCase()).join() === want);
+  return hit ? hit.id : null;
+}
+
+/** Light DJ's palette override: one tap puts a palette over every effect, "Off" takes it away. */
+export function PaletteOverride() {
+  const s = pick(['paletteOverride', 'userPalettes']);
+  const lib = librarySig.value;
+  const builtin = (lib.palettes && lib.palettes.builtin) || [];
+  const user = s.userPalettes || (lib.palettes && lib.palettes.user) || [];
+  const all = [...builtin, ...user];
+  const active = activeOverride(s.paletteOverride, all);
+  const button = (id, name, colours, onClick) => (
+    <button key={id} type="button" class={`override-pad${active === id ? ' active' : ''}`} aria-pressed={active === id}
+      data-override={id} onClick={onClick}>
+      <span class="override-swatches" aria-hidden="true">
+        {colours.map((c, i) => <span key={i} class={isRandom(c) ? 'random' : ''} style={isRandom(c) ? {} : { background: c }} />)}
+      </span>
+      <span class="override-name">{name}</span>
+    </button>
+  );
+  return (
+    <section class="perform-override" aria-label="Palette override">
+      {button('off', 'Off', [], () => api('/api/palette-override', { method: 'DELETE' }))}
+      {all.map((p) => button(p.id, paletteName(p), p.colours || [],
+        () => api('/api/palette-override', { method: 'PUT', body: JSON.stringify(overrideBody(p)) })))}
+      {active === null && <span class="override-custom">Custom colours on</span>}
+    </section>
+  );
+}
+
 function Faders() {
   const s = pick(['masterDimmer', 'autoShow']);
   const [dim, onDim, commitDim] = useDraft(s.masterDimmer ?? 255, (v) => send({ masterDimmer: v }));
@@ -262,12 +276,19 @@ export function Perform() {
       <ArmSwitch />
       <NowNext />
       <SyncHealth />
+      <Transport />
       <div class="perform-body">
         <div class="perform-controls">
           <Pads />
+          <StrobePad />
+          <Utility />
+          <PaletteOverride />
           <PalettePads />
         </div>
-        <Faders />
+        <div class="perform-side">
+          <Faders />
+          <AudioMeters />
+        </div>
       </div>
     </div>
   );

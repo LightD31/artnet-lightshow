@@ -28,7 +28,7 @@ test('the log: what the server has said, filtered, with its health above', async
   expect(shown.every((line) => /midi/i.test(line))).toBe(true);
 
   await page.getByRole('searchbox', { name: 'Filter the log' }).fill('');
-  await page.getByLabel('Show').selectOption('error');
+  await page.getByRole('combobox', { name: 'Show' }).selectOption('error');
   await expect(log.locator('.log-entry.lvl-info')).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Pause' }).click();
