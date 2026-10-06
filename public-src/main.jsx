@@ -18,15 +18,17 @@ import { ShortcutsOverlay } from './components/Shortcuts.jsx';
 import { Perform } from './components/Perform.jsx';
 import { TimelineView } from './components/TimelineView.jsx';
 import { StageView } from './components/StageView.jsx';
+import { Sequence } from './components/Sequence.jsx';
+import { Matrix } from './components/Matrix.jsx';
 import { RigView } from './components/setup/RigView.jsx';
 import { SourcesView } from './components/setup/SourcesView.jsx';
 import { SettingsView } from './components/setup/SettingsView.jsx';
 import { PreflightView } from './components/setup/PreflightView.jsx';
 import { Wizard, useFirstRun } from './components/setup/Wizard.jsx';
 
-// The views, in the order the tabs show them: the five for running a show,
+// The views, in the order the tabs show them: those for running a show,
 // then the four for setting one up. The keys are the digit that jumps to
-// each, and the hash that opens the page on it — a tablet at front of house
+// each (the views past the digits have none), and the hash that opens the page on it — a tablet at front of house
 // bookmarks /#perform; /#rig/outputs opens the Rig view on its outputs.
 const VIEWS = [
   { id: 'manual', key: '1', icon: '◧', label: 'Manual', hint: 'Patterns · Colours · Fixtures', group: 'live' },
@@ -34,6 +36,8 @@ const VIEWS = [
   { id: 'perform', key: '3', icon: '◉', label: 'Perform', hint: 'Pads · Palettes · Faders', group: 'live' },
   { id: 'timeline', key: '4', icon: '≋', label: 'Timeline', hint: 'Sections · Rehearse · Edits', group: 'live' },
   { id: 'stage', key: '5', icon: '◭', label: 'Stage', hint: 'The rig in 3D', group: 'live' },
+  { id: 'sequence', key: '', icon: '▤', label: 'Sequence', hint: 'Lanes · Patterns · Record', group: 'live' },
+  { id: 'matrix', key: '', icon: '▩', label: 'Matrix', hint: 'Hold colours', group: 'live' },
   { id: 'rig', key: '6', icon: '▦', label: 'Rig', hint: 'Plan · Patch · Outputs', group: 'setup' },
   { id: 'sources', key: '7', icon: '♫', label: 'Sources', hint: 'Players · Spotify · Live input', group: 'setup' },
   { id: 'settings', key: '8', icon: '⚙', label: 'Settings', hint: 'Show · MIDI · Server', group: 'setup' },
@@ -93,7 +97,7 @@ function ModeTabs({ mode, setMode }) {
           <span class="mode-tab-label">{v.label}</span>
           <span class="mode-tab-hint">{v.id === 'auto' && autoActive ? 'Running' : v.hint}</span>
           {v.id === 'auto' && autoActive && <span class="mode-tab-dot" aria-hidden="true" />}
-          <kbd class="mode-tab-key" aria-hidden="true">{v.key}</kbd>
+          {v.key && <kbd class="mode-tab-key" aria-hidden="true">{v.key}</kbd>}
         </button>,
       ])}
     </div>
@@ -125,6 +129,8 @@ const PANELS = {
   perform: Perform,
   timeline: TimelineView,
   stage: StageView,
+  sequence: Sequence,
+  matrix: Matrix,
   rig: RigView,
   sources: SourcesView,
   settings: SettingsView,
