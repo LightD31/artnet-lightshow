@@ -15,7 +15,9 @@ import type { EffectSpec } from '../shared/effects/types.ts';
  * long as the hand renews it; latched from the deck or the API until it is
  * turned off or the cap cuts it (settings safety.strobeMaxLatchSec, for the
  * latch forgotten with the room watching); or burst for a moment. One voice
- * at a time, under one id: a launch replaces whatever played before.
+ * at a time, under one id: a launch replaces whatever played before, except
+ * that a hold over a latch keeps the latch underneath, hidden, and the latch
+ * comes back with its own cap deadline when the hold ends.
  *
  * Its settings (settings.strobe: the kind's parameters and a palette of its
  * own) are what a cue keeps and the Strobe page edits. An edit reaches a
@@ -53,11 +55,14 @@ export class Strobe {
   declare _voices: StrobeVoices;
   declare _settings: StrobeSettingsStore;
   declare _safety: StrobeSafety;
+  /** The latch a hold plays over: its start and end, for when the hold goes. */
+  declare _under: { startedAtMs: number; untilMs: number | null } | null;
 
   constructor(voices: StrobeVoices, settings: StrobeSettingsStore, safety: StrobeSafety) {
     this._voices = voices;
     this._settings = settings;
     this._safety = safety;
+    this._under = null;
     // A cue's settings or PUT /api/settings reach a running strobe too, and a cap lowered cuts one.
     settings.onChange((changed) => {
       if (changed.some((key) => key.startsWith('strobe.'))) this._follow();
@@ -70,16 +75,19 @@ export class Strobe {
     this._admit();
     const current = this._voices.get(STROBE_VOICE_ID);
     if (current && current.mode === mode) return current;
+    this._under = null;
     return this._launch({ mode, maxLatchMs: this._capMs() });
   }
 
   /** End every strobe-kind voice: this one, the energy endpoints', hidden under a hold or not, an API's or a pad's. */
   off(): void {
+    this._under = null;
     this._voices.stopWhere((v) => v.spec.kind === 'strobe');
   }
 
   /** End the latch alone (the energy endpoints' off): a hold stays the hand's, a burst runs out. */
   unlatch(): void {
+    this._under = null;
     this._voices.stopWhere((v) => v.id === STROBE_VOICE_ID && v.mode === 'latched');
   }
 
@@ -89,13 +97,34 @@ export class Strobe {
       throw new HttpError(400, `strobe: a burst is ${BURST_MIN_MS} to ${BURST_MAX_MS} ms`);
     }
     this._admit();
+    this._under = null;
     return this._launch({ mode: 'once', lengthMs: ms });
   }
 
-  /** Hold it under a lease, the pad's or the page's: the same press again renews it (voices.ts). */
+  /**
+   * Hold it under a lease, the pad's or the page's: the same press again
+   * renews a live hold and never brings back one an off stopped (voices.ts,
+   * 409). Over a latch, the latch waits underneath until the hold ends.
+   */
   hold(owner: string, token: string): Voice {
     this._admit();
-    return this._launch({ mode: 'hold', owner, token });
+    const current = this._voices.get(STROBE_VOICE_ID);
+    const latch = current && current.mode === 'latched' ? { startedAtMs: current.startedAtMs, untilMs: current.untilMs } : null;
+    const voice = this._launch({ mode: 'hold', owner, token });
+    if (latch) this._under = latch;
+    return voice;
+  }
+
+  /** After any change to the voices: once no strobe plays, a latch kept under a hold comes back, to its own deadline. */
+  sync(): void {
+    const under = this._under;
+    if (!under || this._voices.get(STROBE_VOICE_ID)) return;
+    this._under = null;
+    if (!this._safety.acknowledged()) return;
+    const cap = this._capMs();
+    const until = Math.min(under.untilMs ?? Infinity, cap === undefined ? Infinity : under.startedAtMs + cap);
+    const voice = this._launch({ mode: 'latched', maxLatchMs: cap });
+    if (Number.isFinite(until)) this._voices.endBy(voice.id, until);
   }
 
   release(owner: string, token: string): void {
@@ -169,5 +198,6 @@ export class Strobe {
       const voice = this._voices.get(id);
       if (voice) this._voices.endBy(id, voice.startedAtMs + cap);
     }
+    if (this._under) this._under.untilMs = Math.min(this._under.untilMs ?? Infinity, this._under.startedAtMs + cap);
   }
 }

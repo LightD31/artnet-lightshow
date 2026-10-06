@@ -190,6 +190,8 @@ const matrix = new MatrixBoard({ voices, acknowledged: () => safety.acknowledged
 
 function voicesChanged(): void {
   legacyEnergy.sync();
+  // A latch kept under a strobe hold comes back when the hold ends.
+  strobe.sync();
   mirrorEnergy();
   reconcileFreeClock();
   for (const fn of [...voiceListeners]) {

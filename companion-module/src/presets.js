@@ -308,7 +308,7 @@ export function UpdatePresets(self) {
 		{
 			id: 'deck',
 			name: 'Deck',
-			description: 'The 16 pads (held while pressed, labelled from the server) and the strobe burst',
+			description: 'The 16 pads (a hold pad plays while pressed, a loop toggles, a once fires; labelled from the server) and the strobe burst',
 			definitions: [group('deck_pads', 'Pads', padIds), group('deck_strobe', 'Strobe', ['strobe_burst'])],
 		},
 		{

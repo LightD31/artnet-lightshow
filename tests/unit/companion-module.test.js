@@ -211,3 +211,32 @@ test('a refused token is reported as unauthorized, by the code the server sends'
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test('holdPad presses once and then renews, never pressing again; a pad with no hold to renew (a once, a loop, a hold ended) stops renewing', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+  const conn = new LightshowConnection({ host: 'localhost' });
+  const posts = [];
+  let renewed = true;
+  conn.post = async (path, body) => {
+    posts.push([path, body.token]);
+    return path.endsWith('/renew') ? { ok: true, renewed } : { ok: true, id: 'v' };
+  };
+  await conn.holdPad(0, 3);
+  for (let i = 0; i < 5; i++) { t.mock.timers.tick(400); await flush(); }
+  assert.deepStrictEqual(posts.map(([p]) => p.split('/').at(-1)), ['press', 'renew', 'renew', 'renew', 'renew', 'renew']);
+  assert.ok(posts.every(([, token]) => token === 'companion:0:3'));
+  renewed = false;
+  t.mock.timers.tick(400); await flush();
+  t.mock.timers.tick(4000); await flush();
+  assert.equal(posts.length, 7, 'stopped at the first renewal that found no hold');
+  // Let go before the press answered: no renewal starts.
+  posts.length = 0;
+  renewed = true;
+  const pressing = conn.holdPad(1, 2);
+  await conn.releasePad(1, 2);
+  await pressing;
+  t.mock.timers.tick(4000); await flush();
+  assert.deepStrictEqual(posts.map(([p]) => p.split('/').at(-1)), ['press', 'release']);
+  conn.disconnect();
+});

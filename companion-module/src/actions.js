@@ -347,9 +347,9 @@ export function UpdateActions(self) {
 			options: [],
 			callback: () => self.sendSet({ energyOverride: null }),
 		},
-		// The deck's pads: held from the press to the release (presets pair the two).
+		// The deck's pads: pressed once; a hold pad is renewed until the release, a loop toggles, a once fires (presets pair the two).
 		pad_hold: {
-			name: 'Pad: hold',
+			name: 'Pad: press (a hold pad until release)',
 			options: padOptions,
 			callback: ({ options }) => self.connection?.holdPad(options.bank, options.slot),
 		},

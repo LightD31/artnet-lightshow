@@ -81,14 +81,33 @@ export class LightshowConnection {
 		this.socket.on('state', (state) => this.onChange(this.store.merge(state)))
 	}
 
-	// A pad held over REST: pressed again within its 1200 ms lease to keep
-	// it, each pad on a renewal of its own; release ends that one alone.
+	// A pad held over REST: pressed once, then renewed within its 1200 ms
+	// lease, each pad on a renewal of its own; release ends that one alone.
+	// A once or a loop pad answers no hold to renew, and renewing stops, as it
+	// does when the hold ended on the server or the socket drops.
 	holdPad(bank, slot) {
 		const key = `${bank}:${slot}`
 		if (this.#pads.has(key)) return
-		const press = () => this.post(`/api/pads/${bank}/${slot}/press`, { token: `companion:${key}` }).catch(() => {})
-		press()
-		this.#pads.set(key, setInterval(press, PAD_RENEW_MS))
+		const body = { token: `companion:${key}` }
+		const stop = () => {
+			clearInterval(this.#pads.get(key))
+			this.#pads.delete(key)
+		}
+		const renew = () =>
+			this.post(`/api/pads/${bank}/${slot}/renew`, body)
+				.then((answer) => {
+					if (!answer || answer.renewed !== true) stop()
+				})
+				.catch(stop)
+		// Held from now; renewed once the press is in, unless let go meanwhile.
+		this.#pads.set(key, null)
+		return this.post(`/api/pads/${bank}/${slot}/press`, body)
+			.then((answer) => {
+				if (!this.#pads.has(key)) return
+				if (answer && answer.ok !== false) this.#pads.set(key, setInterval(renew, PAD_RENEW_MS))
+				else stop()
+			})
+			.catch(stop)
 	}
 
 	releasePad(bank, slot) {

@@ -67,9 +67,10 @@ function bench(t, { acknowledged = false, capSec = 60, now = 1000 } = {}) {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const c = { now, beat: 0, bpm: 120, acknowledged, running: false };
   const changes = [];
+  let strobe = null;
   const voices = new VoiceManager({
     now: () => c.now, beatPos: () => c.beat, bpm: () => c.bpm, acknowledged: () => c.acknowledged, anyRunning: () => c.running,
-    onChange: () => changes.push(voices.list().map((v) => v.id)),
+    onChange: () => { changes.push(voices.list().map((v) => v.id)); strobe?.sync(); },
     strobeLatchMs: () => values.safety.strobeMaxLatchSec * 1000,
   });
   const values = {
@@ -98,7 +99,7 @@ function bench(t, { acknowledged = false, capSec = 60, now = 1000 } = {}) {
     acknowledged: () => c.acknowledged,
     status: () => ({ photosensitivityAcknowledged: c.acknowledged, hdFlashIntervalMs: 350, strobeMaxLatchSec: values.safety.strobeMaxLatchSec }),
   };
-  const strobe = new Strobe(voices, settings, safety);
+  strobe = new Strobe(voices, settings, safety);
   const advance = (ms) => {
     c.now += ms;
     c.beat += (ms / 60000) * c.bpm;
@@ -206,6 +207,64 @@ test('a hold needs its renewal, as a pad hold does: it dies at its lease, and on
   strobe.release('tablet', 't');
   assert.equal(voices.get(STROBE_VOICE_ID).launchSeq, latched.launchSeq, 'the latch plays on');
   strobe.off();
+});
+
+test('off revokes a hold: the holder renewing or pressing again under the old token brings nothing back until it lets go or goes quiet for a lease; a fresh token holds at once', (t) => {
+  const { voices, strobe, advance, playing } = bench(t, { acknowledged: true });
+  strobe.hold('tablet', 't');
+  strobe.off();
+  assert.equal(voices.size, 0);
+  // The renewal path and a press-again both: nothing relaunches.
+  assert.equal(voices.renew('tablet', 't'), false);
+  assert.throws(() => strobe.hold('tablet', 't'), (err) => err.status === 409 && /stopped/.test(err.message));
+  advance(HOLD_TIMEOUT_MS / 2);
+  assert.throws(() => strobe.hold('tablet', 't'), (err) => err.status === 409, 'still refused while it keeps renewing');
+  assert.deepEqual(playing(), []);
+  // A fresh press (a new token) is a new hold.
+  assert.equal(strobe.hold('tablet', 'u').mode, 'hold');
+  strobe.release('tablet', 'u');
+  // Let go: the old token is fresh again.
+  strobe.release('tablet', 't');
+  assert.equal(strobe.hold('tablet', 't').mode, 'hold');
+  strobe.off();
+  // Gone quiet for a lease: fresh again too.
+  advance(HOLD_TIMEOUT_MS);
+  assert.equal(strobe.hold('tablet', 't').mode, 'hold');
+  // Stop-all is the same for any hold.
+  voices.stopAll();
+  assert.throws(() => strobe.hold('tablet', 't'), (err) => err.status === 409);
+});
+
+test('a hold over a latch keeps the latch underneath, hidden, and the latch comes back with its own cap deadline on release or a lease run out; off ends both', (t) => {
+  const { voices, strobe, advance } = bench(t, { acknowledged: true, capSec: 60 });
+  const latch = strobe.on('latched');
+  const deadline = latch.untilMs;
+  advance(10000);
+  strobe.hold('tablet', 't');
+  assert.deepEqual(voices.list().map((x) => [x.id, x.mode]), [[STROBE_VOICE_ID, 'hold']]);
+  assert.equal(strobe.status().mode, 'hold');
+  strobe.release('tablet', 't');
+  const back = voices.get(STROBE_VOICE_ID);
+  assert.deepEqual([back.mode, Math.abs(back.untilMs - deadline) < 1e-6], ['latched', true], 'the latch, to its first deadline');
+  assert.equal(strobe.status().mode, 'latched');
+
+  // A hold that dies at its lease hands back the latch too.
+  strobe.hold('tablet', 'u');
+  advance(HOLD_TIMEOUT_MS);
+  assert.equal(voices.get(STROBE_VOICE_ID).mode, 'latched');
+  // Past the latch's deadline under a hold: nothing comes back.
+  strobe.hold('tablet', 'v');
+  for (let i = 0; i < 60; i++) { advance(1000); voices.renew('tablet', 'v'); }
+  strobe.release('tablet', 'v');
+  assert.equal(voices.size, 0, 'the cap ran out underneath');
+
+  // Off ends the latch underneath with the hold.
+  strobe.on('latched');
+  strobe.hold('tablet', 'w');
+  strobe.off();
+  assert.equal(voices.size, 0);
+  strobe.release('tablet', 'w');
+  assert.equal(voices.size, 0, 'off took the latch underneath too');
 });
 
 test('update validates the settings (1..5 a second, 1..6 hex colours, the clock, the look between, the brightness), saves them, and the running strobe takes them in place', (t) => {

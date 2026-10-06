@@ -72,9 +72,13 @@ function pressVoice(owner: string, token: string, payload: VoiceHoldMessage, loo
 /** A voice-hold release: the hold its token names, through the pad it names, if any. */
 function releaseVoice(owner: string, token: string, payload: VoiceHoldMessage, pads?: Pads): void {
   if (!pads) return voices.release(owner, token);
-  if (payload.pad === undefined) return pads.releaseHold(owner, token);
-  const { bank, slot } = padOf(payload.pad);
-  pads.release(bank, slot, owner, token);
+  if (payload.pad === undefined) pads.releaseHold(owner, token);
+  else {
+    const { bank, slot } = padOf(payload.pad);
+    pads.release(bank, slot, owner, token);
+  }
+  // A hold a stop ended: its token is fresh again (voices.ts).
+  voices.release(owner, token);
 }
 
 /** What a page asked for when it connected: protocol 2, or the original. */

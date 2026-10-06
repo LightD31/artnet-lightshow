@@ -812,3 +812,38 @@ test('disarm stops a pad voice and the pads key shows it unlit', async (t) => {
   assert.deepEqual(res.body, { ok: true, id: null });
   assert.deepEqual(ids(), []);
 });
+
+test('REST renew extends a live pad hold and never launches: a loop is not toggled, a once not fired again, a hold stopped by DELETE /api/voices stays stopped', async (t) => {
+  const s = await serve(t);
+  await s.call('PUT', '/api/pads/0/3', pad(FADE, { quantise: 0 }));
+  await s.call('PUT', '/api/pads/0/4', pad(FADE, { quantise: 0, launch: 'loop' }));
+  await s.call('PUT', '/api/pads/0/5', pad(FADE, { quantise: 0, launch: 'once' }));
+
+  // A hold: press, then renew keeps the same launch.
+  const held = (await s.call('POST', '/api/pads/0/3/press', { token: 'deck-a' })).body.id;
+  const res = await s.call('POST', '/api/pads/0/3/renew', { token: 'deck-a' });
+  assert.deepEqual([res.status, res.body], [200, { ok: true, renewed: true }]);
+  assert.deepEqual(ids(), [held]);
+  // Another token's renew is not this hold's.
+  assert.equal((await s.call('POST', '/api/pads/0/3/renew')).body.renewed, false);
+
+  // Stop-all: the renewal finds nothing, and a press under the old token is refused until let go.
+  await s.call('DELETE', '/api/voices');
+  assert.equal((await s.call('POST', '/api/pads/0/3/renew', { token: 'deck-a' })).body.renewed, false);
+  assert.equal((await s.call('POST', '/api/pads/0/3/press', { token: 'deck-a' })).status, 409);
+  assert.deepEqual(ids(), []);
+  await s.call('POST', '/api/pads/0/3/release', { token: 'deck-a' });
+  assert.equal((await s.call('POST', '/api/pads/0/3/press', { token: 'deck-a' })).status, 200, 'let go: a fresh press');
+  await s.call('POST', '/api/pads/0/3/release', { token: 'deck-a' });
+
+  // A loop toggled on stays on through renewals; a once is not fired again.
+  const loop = (await s.call('POST', '/api/pads/0/4/press', { token: 'deck-b' })).body.id;
+  const once = (await s.call('POST', '/api/pads/0/5/press', { token: 'deck-c' })).body.id;
+  const seqOf = (id) => voices.get(id)?.launchSeq;
+  const before = [seqOf(loop), seqOf(once)];
+  assert.equal((await s.call('POST', '/api/pads/0/4/renew', { token: 'deck-b' })).body.renewed, false);
+  assert.equal((await s.call('POST', '/api/pads/0/5/renew', { token: 'deck-c' })).body.renewed, false);
+  assert.deepEqual([seqOf(loop), seqOf(once)], before, 'nothing launched again');
+  assert.ok(voices.get(loop), 'the loop still on');
+  assert.equal((await s.call('POST', '/api/pads/0/9/renew')).status, 400);
+});
