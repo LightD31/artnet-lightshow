@@ -1572,7 +1572,9 @@ Where voices overlap, the strobe is on top; of the rest, the one launched last
 wins, then one launched on chosen fixtures over one on the whole rig, then the
 later start. The live state's `voices` lists them (`id`, `source`, `label`,
 `mode`, `tier`, `kind`, `targets`, `launchSeq`, `startedAt`, `until`,
-`hidden`).
+`hidden`, and the effect each plays as `spec`), which is what the stage
+preview draws them from; `hueStrobe` beside them says how Hue lamps take a
+strobe.
 
 **Pads** — two banks of eight (`config/pads.json`), after Hue Dynamics' pad
 grid. A pad is `{ bank, slot, label, accent, content, launch, quantise, targets }`:
@@ -1586,7 +1588,9 @@ list of fixture ids. What a pad plays depends on its content:
   shared lane covers the pad's targets, a track lane goes to the selected
   fixtures in patch order (a track with no fixture left is skipped), and the
   pad alone decides its priority and lifetime. `hold` and `loop` repeat the
-  pattern; `once` plays it once.
+  pattern; `once` plays it once. A pattern that is not on the shelf answers
+  404, and one with a rapid-flash clip waits for the acknowledgement like
+  any other.
 - `strobe` — the strobe while the pad is held (id `strobe`, launch `hold`
   only; `once` and `toggle` answer 409).
 - `sequencePattern` — drops the pattern into the loaded sequence at the
@@ -1711,12 +1715,14 @@ away from zero), every clip at least one grid long; a launch with no release
 takes the pad's own length. Strobe pads and empty pads record nothing, and a
 pattern pad's hit lands as its whole bundle at once. The take is staged:
 `POST /api/sequence/record/stop` with `{ keep: false }` changes nothing; with
-`{ keep: true }` it is checked and saved as one new revision of the
-sequence, or refused (409) — keeping the sequence and the take as they were
-— when another sequence was loaded or this one edited during the take, or a
-pattern it used is gone. `replace` removes whole clips the take overlaps on
-the lanes and fixtures it writes, never cutting one, and the answer lists
-every clip removed (`removed`), including those reaching past the take. An
+`{ keep: true }` it is checked and becomes one new revision of the loaded
+sequence (saving that to the shelf stays its own step), or is refused (409)
+— keeping the sequence and the take as they were — when another sequence
+was loaded or this one edited during the take, or a pattern it used cannot
+be placed. `replace` removes whole clips the take overlaps on the lanes and
+fixtures it writes, never cutting one; the answer lists every clip removed
+(`removed`), the beats the take wrote (`range`) and, in `beyondRange`, each
+removed clip that reached outside them with how far before and after. An
 empty take changes nothing.
 
 The live state's `sequence` carries what is loaded, its revision, the
@@ -1739,6 +1745,13 @@ up to 5 s, `threshold`, `reactiveDepth`, `brightness`) shapes the levels as
 Hue Dynamics does; `ldjTrigger` (0.3) is Light DJ's trigger level. With no
 audio coming in, reactive effects play as in `tempo`. The levels go to
 clients that subscribe to the `audio` topic.
+
+One Disco detector and one loudness trigger serve every effect, so one
+effect's settings run each: the highest playing voice of that kind, else the
+highest playing clip of the sequence, else the base look, else the settings.
+A macro or a pattern counts through the step or clip it is playing at that
+moment. `GET /api/audio` and the live state's `audio` say who owns each
+(`detectors`).
 
 ---
 
@@ -2705,7 +2718,7 @@ Transport routes answer `{ ok, status }`; with no sequence loaded they answer
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/sequence` · `/api/sequence/status` | The loaded sequence and its status · the status alone |
+| GET | `/api/sequence` · `/api/sequence/status` | The loaded sequence, its clip table as the engine plays it (`table`) and its status · the status alone |
 | PUT | `/api/sequence` | Load a whole sequence, or `{ id }` of a saved one |
 | GET · POST | `/api/sequences` | The saved sequences · save one (201; 409 if the id is taken) |
 | GET · PUT · DELETE | `/api/sequences/:id` | One saved sequence |
@@ -2718,7 +2731,7 @@ Transport routes answer `{ ok, status }`; with no sequence loaded they answer
 | POST | `/api/sequence/insert-pattern` | `{ id, atBeat }` into the loaded sequence |
 | POST | `/api/sequence/capture-pattern` | `{ fromBeat, toBeat, laneIds, name }` from the loaded sequence (201) |
 | POST | `/api/sequence/record` | `{ mode: 'overdub' \| 'replace', countInBeats?, quantise? }` (0–1024 and 0–64 beats, default 0) — start a take |
-| POST | `/api/sequence/record/stop` | `{ keep }` — keep or discard the take; answers `{ ok, added, removed, status }` |
+| POST | `/api/sequence/record/stop` | `{ keep }` — keep or discard the take; answers `{ ok, added, removed, status }`, and for a kept take that wrote something `range: { fromBeat, toBeat }` and `beyondRange: [{ id, laneId, startBeat, lengthBeats, beforeBeats, afterBeats }]` |
 
 ### Audio
 
