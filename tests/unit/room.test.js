@@ -1,7 +1,7 @@
 // tests/unit/room.test.js
 import test from 'node:test';
 import assert from 'node:assert';
-import { buildRoom } from '../../src/shared/room.ts';
+import { buildRoom, roomOf } from '../../src/shared/room.ts';
 import { rigSignature } from '../../src/shared/rig.ts';
 
 // A square room: front-left, front-right, back-right, back-left. The plot's y grows downward:
@@ -72,4 +72,26 @@ test('one lamp: every array has one finite entry', () => {
 test('a fixture height changes the rig signature', () => {
   const fix = { profileId: 'p', position: { x: 10, y: 10 }, group: null, geometry: null };
   assert.notStrictEqual(rigSignature([fix]), rigSignature([{ ...fix, position: { x: 10, y: 10, height: 80 } }]));
+});
+
+// The renderer's effect layers and a party look read one plan with Hue flags
+// of their own; a room rebuilt every frame would also lose what is kept with
+// it (Light DJ's channel assignment).
+test('a plan read with two sets of Hue flags keeps one room for each, frame after frame', () => {
+  const plan = { x: [0.1, 0.4, 0.7, 0.9], y: [0.2, 0.2, 0.6, 0.6], z: [0.5, 0.5, 0.5, 0.5], group: [null, null, null, null] };
+  const look = [false, false, false, true];
+  const effects = [false, false, false, true];
+  const first = roomOf({ fixtureCount: 4, plan, xs: null, ys: null, noFlash: look });
+  const other = roomOf({ fixtureCount: 4, plan, xs: null, ys: null, noFlash: effects });
+  for (let frame = 0; frame < 3; frame++) {
+    assert.strictEqual(roomOf({ fixtureCount: 4, plan, xs: null, ys: null, noFlash: look }), first, `the look's room, frame ${frame}`);
+    assert.strictEqual(roomOf({ fixtureCount: 4, plan, xs: null, ys: null, noFlash: effects }), other, `the effects' room, frame ${frame}`);
+  }
+  assert.deepStrictEqual(other.hue, first.hue);
+  // Without a plan the slots' places are the key, the same way.
+  const xs = [0, 0.3, 0.6, 1];
+  const a = roomOf({ fixtureCount: 4, plan: null, xs, ys: null, noFlash: look });
+  const b = roomOf({ fixtureCount: 4, plan: null, xs, ys: null, noFlash: effects });
+  assert.strictEqual(roomOf({ fixtureCount: 4, plan: null, xs, ys: null, noFlash: look }), a);
+  assert.strictEqual(roomOf({ fixtureCount: 4, plan: null, xs, ys: null, noFlash: effects }), b);
 });

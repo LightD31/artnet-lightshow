@@ -63,14 +63,17 @@ let hueLatencyMs = 0;
  * The Hue settings, pushed into the sessions: one per bridge (hue.ts keeps
  * them by id), and the one delay they share. Either half may be left out.
  */
-function configureHue(config: Partial<Settings['hue']> | null | undefined): Settings['hue'] {
+function configureHue(config: Partial<Settings['hue']> | null | undefined): HueOutputConfig {
   const { latencyMs, bridges } = config || {};
   if (typeof latencyMs === 'number' && Number.isFinite(latencyMs)) hueLatencyMs = Math.max(0, Math.min(500, Math.round(latencyMs)));
   if (bridges) hue.configureBridges(bridges);
   return getHueConfig();
 }
 
-function getHueConfig(): Settings['hue'] {
+/** What the output holds of the Hue settings: the bridges and their delay. How a lamp takes a flash is the renderer's. */
+export type HueOutputConfig = Pick<Settings['hue'], 'bridges' | 'latencyMs'>;
+
+function getHueConfig(): HueOutputConfig {
   return { bridges: hue.getConfigs(), latencyMs: hueLatencyMs };
 }
 

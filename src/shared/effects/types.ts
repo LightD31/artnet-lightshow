@@ -46,8 +46,12 @@ export interface EffectSpec {
   scope?: 'singleBeat' | 'measure';
 }
 
-/** One slot's output. level 0..1 before brightness; strength 0 = transparent; strobe = a fixture strobe-channel value (energy kinds). */
-export interface EffectSlot { colour: Colour; level: number; strength: number; strobe?: number }
+/**
+ * One slot's output. level 0..1 before brightness; strength 0 = transparent; strobe = a fixture strobe-channel value (energy kinds).
+ * kind: the kind that drew the slot where that is not the rendered instance's own. A macro's slots name their step's kind, so
+ * Hue Dynamics' flash guard, which covers its own kinds only, still finds an hd.* step inside a macro. Absent: the instance's kind.
+ */
+export interface EffectSlot { colour: Colour; level: number; strength: number; strobe?: number; kind?: string }
 
 export interface HdMaster {
   sensitivity: number; smoothing: number; attackMs: number; releaseMs: number;
@@ -74,6 +78,14 @@ export interface EffectFrame {
   /** Runtime-only access; ordered colour refreshes become visible on the next render. */
   paletteAccess?: PaletteAccess;
   audio: AudioFrame | null; audioMode: AudioMode; master: HdMaster; seed: Seed; acknowledged: boolean; hueStrobe: 'flash' | 'pulse';
+  /** Fixture id per room slot, repeated on each cell of one fixture; Disco's manual bands are keyed by it. Absent: the slot index. */
+  fixtureIds?: readonly (number | string)[];
+  /** A manual strobe (hold, burst or latch) runs: Disco's automatic strobe stands down. Absent: false. */
+  manualStrobeActive?: boolean;
+  /** The look's smoothed expression level, 0..1, which energy.glow rides on its own curve. Absent: 1. */
+  expressionLevel?: number;
+  /** The rendering instance's id, filled by renderEffect; a macro names its steps' states after it. */
+  instanceId?: string;
 }
 /** What callers hand renderEffect; it fills in the rest per instance. */
 export type FrameBase = Omit<EffectFrame, 'spec' | 'palette' | 'roll'>;
@@ -84,8 +96,19 @@ export interface EffectKindDef<P = unknown, S = unknown> {
   defaults: { params: P; palette?: PaletteEntry[] | null; brightness?: number; rapidFlash?: boolean; minFlashIntervalMs?: number; scope?: 'singleBeat' | 'measure' };
   capabilities?: Partial<Record<HdCapability, boolean>> | null;
   rapidFlash?: boolean; stateful?: boolean; rideLevel?: boolean;
+  /** Steps on the wall clock: `params.cadence` changes nothing, and an editor leaves it out. */
+  wallClock?: boolean;
+  /** Built by the server only (a pattern bundle): no catalogue row, and public validation does not know it. */
+  internal?: boolean;
   /** Additional parameter-dependent acknowledgement shared by rendering and admission. */
   rapidFlashWhen?(params: P): boolean;
+  /**
+   * Whether the spec keeps its flash rate under its limit by state of its own
+   * (the strobe's permit, Disco's automatic strobe). A fresh instance starts
+   * that limit again, so such a spec never plays where each lap or step is a
+   * fresh instance: a macro's steps, a sequence's clips.
+   */
+  pacesOwnFlashes?(params: P): boolean;
   command?(state: S, cmd: EffectCommand, arg?: Colour): void;
   /** Whole-palette rerolls remain available alongside selective refreshes; the renderer reads this after state initialization. */
   rollOf?(state: S): number;

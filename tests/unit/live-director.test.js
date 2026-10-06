@@ -141,7 +141,7 @@ function rig({ listening = true } = {}) {
     running: true,
     status: () => ({ running: true, listening, bpm: 128, locked: true }),
     onStatus() {}, onReading(fn) { handlers.reading = fn; }, onEvent(fn) { handlers.event = fn; },
-    streamNowMs: () => null, recentEnvelope: () => [], getBeatReading: () => null,
+    streamNowMs: () => null, recentEnvelope: () => [], getBeatReading: () => null, useBands() {}, refreshBands() {},
   };
   const autoShow = {
     running: false, track: null, syncOffsetMs: 0, autoSyncMs: 0, analysis: null,

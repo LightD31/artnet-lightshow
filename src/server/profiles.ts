@@ -1,4 +1,5 @@
 import { UNIVERSE_SIZE, fitIssue } from '../shared/placement.ts';
+import { HUE_COLOR_PROFILE_ID, HUE_PROFILE_IDS, HUE_WHITE_AMBIANCE_PROFILE_ID, HUE_WHITE_PROFILE_ID } from '../shared/rig.ts';
 import type { Fixture, Profile } from '../types/rig.ts';
 
 // The profile a new fixture gets, and the fallback for a profile id nothing
@@ -9,10 +10,8 @@ const BUILTIN_PROFILE_ID = 'cameo-root-par-6-12ch';
 // entertainment area as a fixture of its own (routes/fixtures.ts), on the one
 // of these that says what the bridge reports it can show — colour, tunable
 // white or plain white (hueProfileFor). The server renders it like any other
-// fixture, and its channel is sent the colour that came out (output.ts).
-const HUE_COLOR_PROFILE_ID = 'generic-hue-lamp-7ch';
-const HUE_WHITE_AMBIANCE_PROFILE_ID = 'generic-hue-white-ambiance-3ch';
-const HUE_WHITE_PROFILE_ID = 'generic-hue-white-lamp-1ch';
+// fixture, and its channel is sent the colour that came out (output.ts). The
+// ids live in shared/rig.ts, so the browser's preview knows a Hue lamp too.
 
 // One DMX universe (UNIVERSE_SIZE, from shared/placement.ts). A fixture
 // patched past it has its writes silently dropped by the 512-byte buffer,
@@ -203,9 +202,6 @@ const BUILTIN_PROFILE_IDS = new Set([
   HUE_WHITE_AMBIANCE_PROFILE_ID,
   HUE_WHITE_PROFILE_ID,
 ]);
-
-// The profiles that stand for a Hue lamp rather than a DMX fixture.
-const HUE_PROFILE_IDS = new Set([HUE_COLOR_PROFILE_ID, HUE_WHITE_AMBIANCE_PROFILE_ID, HUE_WHITE_PROFILE_ID]);
 
 /** Why a Hue lamp profile cannot be patched, or a fixture made a Hue lamp, by hand. */
 const HUE_BY_HAND = 'A Hue lamp is added from its bridge: Rig → Outputs → Philips Hue, Add to patch';

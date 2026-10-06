@@ -4,7 +4,7 @@
 import type { Colour } from '../../types/rig.ts';
 import { hash01, permutation, pickExcluding, pickNotLast } from './hash.ts';
 import { LDJ_FRAME_MS, makeLdjKind } from './ldj-engine.ts';
-import type { LdjCtx, LdjEnvelope, LdjRow } from './ldj-engine.ts';
+import type { LampMark, LdjCtx, LdjEnvelope, LdjRow } from './ldj-engine.ts';
 import { registerKind } from './registry.ts';
 
 const INSTANT: LdjEnvelope = { kind: 'instant' };
@@ -14,8 +14,8 @@ const mod = (i: number, n: number) => ((i % n) + n) % n;
 // frame agree. The pure draw leaves cached backgrounds and pending rolls alone.
 const frameColour = (ctx: LdjCtx, index: number, slot: number) => ctx.frameColour(index, slot, Math.max(0, Math.floor((ctx.elapsedMs + 1e-8) / LDJ_FRAME_MS)));
 const paletteIndex = (ctx: LdjCtx, i: number) => mod(i, ctx.pal.length);
-const all = (ctx: LdjCtx, colour: Colour, env: LdjEnvelope = INSTANT) => {
-  for (let slot = 0; slot < ctx.n; slot++) ctx.lamps.set(slot, colour, 1, env);
+const all = (ctx: LdjCtx, colour: Colour, env: LdjEnvelope = INSTANT, mark?: LampMark) => {
+  for (let slot = 0; slot < ctx.n; slot++) ctx.lamps.set(slot, colour, 1, env, 0, mark);
 };
 const off = (ctx: LdjCtx) => { for (let slot = 0; slot < ctx.n; slot++) ctx.lamps.off(slot); };
 const refreshCount = (ctx: LdjCtx, count: number) => { for (let key = 0; key < count; key++) ctx.refresh(key); };
@@ -27,11 +27,12 @@ function pick(ctx: LdjCtx): number {
 }
 
 // Selectors work in radial ranks; only the final write translates into rig slots.
+// `mark` tags the selected lamp's set (a hard flash a Hue lamp may pulse).
 function single(ctx: LdjCtx, rank: number, colour: Colour, background?: Colour, bri = 1,
-  env: LdjEnvelope = INSTANT): void {
+  env: LdjEnvelope = INSTANT, mark?: LampMark): void {
   for (let j = 0; j < ctx.n; j++) {
     const slot = ctx.ringOrder[j];
-    if (j === rank) ctx.lamps.set(slot, colour, bri, env);
+    if (j === rank) ctx.lamps.set(slot, colour, bri, env, 0, mark);
     else if (background) ctx.lamps.set(slot, background, 1, INSTANT);
     else ctx.lamps.off(slot);
   }
@@ -46,7 +47,8 @@ function strobeRow(scatter: boolean, backlit: boolean, sine = false, cyclePalett
     if (backlit && mod(ctx.iter, ctx.n) === 0) ctx.refresh(1);
     const rank = scatter ? pick(ctx) : mod(ctx.iter, ctx.n);
     const bri = sine ? Math.sin(ctx.iter * Math.PI / 16) / 2 + .5 : 1;
-    single(ctx, rank, ctx.colour(index, key), backlit ? ctx.colour(1, 1) : undefined, bri);
+    // A hard flash over dark lamps; a backlit or sine row lights its background instead.
+    single(ctx, rank, ctx.colour(index, key), backlit ? ctx.colour(1, 1) : undefined, bri, INSTANT, backlit || sine ? undefined : 'flash');
   } };
 }
 
@@ -94,7 +96,7 @@ function stageRow(count: number, mode: StageMode, modified = false): LdjRow {
       if (group === stage || mode === 'Fill' && group <= stage) {
         const env: LdjEnvelope = mode === 'Fade' ? { kind: 'fade', beats: 1 }
           : mode === 'Flare' || mode === 'Glow' ? { kind: 'flare', beats: 1 } : INSTANT;
-        ctx.lamps.set(slot, colour, 1, env);
+        ctx.lamps.set(slot, colour, 1, env, 0, mode === 'Strobe' ? 'flash' : undefined);
       } else if (mode === 'Glow' && group === mod(stage - 1, count)) {
         ctx.lamps.set(slot, ctx.colour(event - 1), 1, { kind: 'fade', beats: 1 });
       } else ctx.lamps.off(slot);
@@ -109,7 +111,7 @@ function doubleRow(scatter: boolean): LdjRow {
     ctx.refresh(index);
     const rank = scatter ? phase === 0 ? pick(ctx) : ctx.state.lastPick ?? pick(ctx) : mod(group, ctx.n);
     if (phase % 2) off(ctx);
-    else single(ctx, rank, ctx.colour(index));
+    else single(ctx, rank, ctx.colour(index), undefined, 1, INSTANT, 'flash');
   } };
 }
 
@@ -130,7 +132,7 @@ function genreRow(actions: ScoreAction[]): LdjRow {
     ctx.refresh(0);
     // Explicit darkness owns the lamps but does not change the last lit pick.
     if (action === 'off') off(ctx);
-    else single(ctx, pick(ctx), ctx.colour(action === 'p' ? 1 : 0, 0));
+    else single(ctx, pick(ctx), ctx.colour(action === 'p' ? 1 : 0, 0), undefined, 1, INSTANT, 'flash');
   } };
 }
 
@@ -222,12 +224,12 @@ export const LDJ_ITERATION_ROWS: Record<string, LdjRow> = {
   DubstepStrobe: genreRow(GENRE_SCORES.Dubstep), DAndBStrobe: genreRow(GENRE_SCORES.DAndB),
   HouseStrobe: genreRow(GENRE_SCORES.House), ElectroStrobe: genreRow(GENRE_SCORES.Electro), TechnoStrobe: genreRow(GENRE_SCORES.Techno),
   TrueStrobe: { cadence: 'wall:50',
-    step(ctx) { if (mod(ctx.iter, 2)) off(ctx); else all(ctx, ctx.colour(1, 0)); },
+    step(ctx) { if (mod(ctx.iter, 2)) off(ctx); else all(ctx, ctx.colour(1, 0), INSTANT, 'flash'); },
     outputColour: (ctx, slot, lamp) => lamp.bri > 0 ? frameColour(ctx, 1, slot) : lamp.colour,
   },
   PaletteTrueStrobe: { cadence: .125, step(ctx) {
     const index = paletteIndex(ctx, Math.floor(ctx.iter / 4)); ctx.refresh(index);
-    if (mod(ctx.iter, 2)) off(ctx); else all(ctx, ctx.colour(index));
+    if (mod(ctx.iter, 2)) off(ctx); else all(ctx, ctx.colour(index), INSTANT, 'flash');
   } },
   PaletteSplit: { cadence: 1, step(ctx) {
     const index = paletteIndex(ctx, ctx.iter);
@@ -244,7 +246,7 @@ export const LDJ_ITERATION_ROWS: Record<string, LdjRow> = {
     const chosen = permutation(ctx.seed, ctx.iter * 2, ctx.n).slice(0, Math.min(ctx.n, ctx.pal.length)).sort((a, b) => a - b);
     const colours = permutation(ctx.seed, ctx.iter * 2 + 1, ctx.pal.length);
     off(ctx);
-    chosen.forEach((rank, j) => ctx.lamps.set(ctx.ringOrder[rank], ctx.colour(colours[j]), 1, INSTANT));
+    chosen.forEach((rank, j) => ctx.lamps.set(ctx.ringOrder[rank], ctx.colour(colours[j]), 1, INSTANT, 0, 'flash'));
     refreshCount(ctx, ctx.pal.length);
   } },
   PaletteTrail: { cadence: 1, step(ctx) {

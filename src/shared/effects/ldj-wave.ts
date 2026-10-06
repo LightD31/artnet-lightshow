@@ -3,6 +3,7 @@
 
 import { z } from 'zod';
 import type { Colour } from '../../types/rig.ts';
+import { tempoOf } from '../look-math.ts';
 import { LDJ_FRAME_MS } from './ldj-engine.ts';
 import { continuousSchema, ldjFrameAt, mixColours } from './ldj-rotation.ts';
 import { registerKind } from './registry.ts';
@@ -10,7 +11,6 @@ import type { EffectFrame } from './types.ts';
 
 const f32 = Math.fround;
 const BLACK: Colour = { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 };
-const tempo = (bpm: number) => Number.isFinite(bpm) && bpm > 0 ? bpm : 120;
 const at = (frame: EffectFrame, index: number, key: number) => frame.paletteAccess?.colour(index, key)
   ?? frame.palette[((index % frame.palette.length) + frame.palette.length) % frame.palette.length] ?? BLACK;
 
@@ -26,7 +26,7 @@ for (const name of ['GrooveWave', 'Ascent', 'Vortex', 'Impact']) {
     init: (_params, _room, frame): SineState => ({ originMs: frame.startedAtMs ?? frame.nowMs, frame: -1,
       index: groove ? 20 : 0, shownIndex: groove ? 20 : 0, steps: 1, refreshToggle: false }),
     render(_params, state, room, frame, out) {
-      const reached = ldjFrameAt(frame.nowMs, state.originMs), steps = Math.max(1, Math.floor(60000 / tempo(frame.bpm) / 22));
+      const reached = ldjFrameAt(frame.nowMs, state.originMs), steps = Math.max(1, Math.floor(60000 / tempoOf(frame.bpm) / 22));
       if (!Number.isSafeInteger(steps * 2 * wavelength)) throw new RangeError('Wave phase exceeds the safe integer range');
       while (state.frame < reached) {
         state.frame++; state.shownIndex = state.index; state.steps = steps;
@@ -93,7 +93,7 @@ for (const name of ['BigRoomWave', 'DoubleWave', 'Swagger']) {
         const reached = ldjFrameAt(untilMs, state.frontMs);
         while (state.frame < reached) {
           state.frame++;
-          if (state.frame > 0) state.progress += LDJ_FRAME_MS * tempo(frame.bpm) / 60000;
+          if (state.frame > 0) state.progress += LDJ_FRAME_MS * tempoOf(frame.bpm) / 60000;
         }
       };
       const recreate = (iteration: number, nowMs: number) => {

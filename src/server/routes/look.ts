@@ -1,4 +1,4 @@
-import { state, getClientState, getFixture, maxBrightnessOf } from '../state.ts';
+import { state, getClientState, getLiveState, getFixture, maxBrightnessOf, clockState, strobe } from '../state.ts';
 import { applyPatch, applyOverride, setFixtureMaxBrightness, processTap } from '../patch.ts';
 import { PALETTES } from '../palettes.ts';
 import { messageOf, statusOf } from '../../errors.ts';
@@ -14,10 +14,12 @@ export function attachLookRoutes(app: Express, _ctx: RouteContext): void {
   // ─── State ────────────────────────────────────────────────────────────────
   app.get('/api/state', (_req, res) => res.json(getClientState()));
 
+  // Answers with the live state: the catalogues (about 75 KB of built-ins)
+  // are GET /api/state's and the socket's first snapshot's, not every patch's.
   app.post('/api/set', (req, res) => {
     try {
       applyPatch(req.body);
-      res.json({ ok: true, state: getClientState() });
+      res.json({ ok: true, state: getLiveState() });
     } catch (err) {
       res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) });
     }
@@ -39,11 +41,23 @@ export function attachLookRoutes(app: Express, _ctx: RouteContext): void {
     res.json({ ok: true, masterBlackout: state.masterBlackout });
   });
 
+  // Automatic tempo match: 'auto' follows the music, 'manual' keeps the tempo
+  // tapped or typed here. Answers with what the clock now follows.
+  app.post('/api/tempo/:mode', (req, res) => {
+    try {
+      applyPatch({ tempoMode: req.params.mode });
+      res.json({ ok: true, tempoMode: state.tempoMode, clock: clockState() });
+    } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
+  });
+
+  // A legacy pattern or an effect preset by id or alias; an id nothing knows
+  // is taken and plays nothing, as it always has. An effect that waits for
+  // the photosensitivity acknowledgement is a 409, and the look stays.
   app.post('/api/pattern/:id', (req, res) => {
     try {
       applyPatch({ pattern: req.params.id });
       res.json({ ok: true, pattern: state.pattern });
-    } catch (err) { res.status(400).json({ ok: false, error: messageOf(err) }); }
+    } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
   app.post('/api/color/:slot/:index', (req, res) => {
@@ -99,9 +113,11 @@ export function attachLookRoutes(app: Express, _ctx: RouteContext): void {
     } catch (err) { res.status(400).json({ ok: false, error: messageOf(err) }); }
   });
 
-  // Note: /api/energy/off must come before :id
+  // Note: /api/energy/off must come before :id. The operator's own off: it
+  // ends the manual strobe's latch too, which no automatic clear does.
   app.post('/api/energy/off', (_req, res) => {
     applyPatch({ energyOverride: null });
+    strobe.unlatch();
     res.json({ ok: true, energyOverride: null });
   });
 

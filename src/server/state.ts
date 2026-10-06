@@ -1,14 +1,23 @@
 import { BUILTIN_PROFILE_ID, BUILTIN_PROFILE_IDS, HUE_PROFILE_IDS, getProfile, listProfiles } from './profiles.ts';
 import { settings } from './settings.ts';
 import * as universes from './universes.ts';
-import { COLOR_PRESETS, PATTERNS, STROBE_FUNCTIONS, ENERGY_EFFECTS, SYNC_OFFSET_LIMIT_MS } from './presets.ts';
+import { COLOR_PRESETS, PATTERNS, PRESET_ROWS, STROBE_FUNCTIONS, ENERGY_EFFECTS, SYNC_OFFSET_LIMIT_MS } from './presets.ts';
 import { PALETTES } from './palettes.ts';
 import { conductor } from './conductor.ts';
 import { isArmed } from './armed.ts';
+import { safety } from './safety.ts';
 import { HttpError } from '../errors.ts';
 import { footprintOf, universesOf, isInternalUniverse, placeAddressless } from '../shared/placement.ts';
+import { BUILTIN_PALETTES, FAMILIES } from '../shared/effects/index.ts';
+import { toHex } from '../shared/effects/palette.ts';
+import { HOLD_STROBE } from '../shared/look-math.ts';
+import { VoiceManager } from './voices.ts';
+import { EnergyHold } from './energy-hold.ts';
+import { Strobe, STROBE_VOICE_ID } from './strobe.ts';
+import { MatrixBoard } from './matrix.ts';
 import type { Settings } from './settings.ts';
-import type { Fixture, PixelMap, Profile, ShowDynamics } from '../types/rig.ts';
+import type { ClockSource, TempoMode } from './conductor.ts';
+import type { Colour, Fixture, PixelMap, Profile, ShowDynamics } from '../types/rig.ts';
 
 /** Where a running pattern counts its steps from (see patch.ts). */
 export interface PatternAnchor {
@@ -21,6 +30,8 @@ export interface PatternAnchor {
 export interface ShowState {
   artnet: Settings['artnet'];
   bpm: number;
+  /** Whether the clock follows the music or holds `bpm` (settings `clock.tempoMode`). */
+  tempoMode: TempoMode;
   beatDivision: number;
   running: boolean;
   pattern: string;
@@ -34,10 +45,13 @@ export interface ShowState {
   flashLimit: boolean;
   strobeSpeed: number;
   strobeFunction: string;
-  /** An energy effect's id, or null. */
+  /** The latched energy effect's id, or null; read off its voice (latchEnergy), held over or not. */
   energyOverride: string | null;
+  /** The energy effect held from a socket, or null; read off its voice too. */
   heldEnergy: string | null;
   palette: string | null;
+  /** Colours every effect plays instead of its own and the slots (Light DJ's active palette), or null. */
+  paletteOverride: Colour[] | null;
   autoIntensity: number;
   autoSyncOffsetMs: number;
   prolinkEnabled: boolean;
@@ -70,6 +84,9 @@ const state: ShowState = {
   // A fixture moved somewhere else stays where it was put.
   artnet: settings.group('artnet'),
   bpm: 120,
+  // The clock's own default, not the stored value: the applier puts that back
+  // at start through applyPatch, which tells the clock as well (apply.ts).
+  tempoMode: 'auto',
   beatDivision: 1,
   running: true,
   pattern: 'chase',
@@ -87,6 +104,9 @@ const state: ShowState = {
   // The named look the four colour slots came from, or null once any slot has
   // been written by hand. Only a label — the slots are the truth.
   palette: null,
+  // Fixed colours, even when a palette with random entries put them there:
+  // rolled once as it went on, so nothing re-rolls them frame to frame.
+  paletteOverride: null,
   // Mirrors the auto show's energy slider. The generated show owns the value;
   // this copy is what the MIDI surface reads to light an encoder ring and what
   // a client sees without asking the auto-show module.
@@ -142,6 +162,89 @@ state.fixtures = Array.from({ length: 4 }, (_, i) => ({
   maxBrightness: 255,
   override: null,
 }));
+
+// ── Voices ──────────────────────────────────────────────────────────────────
+// Every effect launched over the base look (voices.ts): pads, the energy
+// effects, the strobe, the API. One manager, timed on this process's
+// monotonic clock; the engine hands the renderer its voices on the clock it
+// renders by.
+const voiceListeners = new Set<() => void>();
+
+const voices = new VoiceManager({
+  now: () => performance.now(),
+  // The beat the engine reads next, the grid line and the tempo from one reading.
+  reading: () => conductor.peek(),
+  acknowledged: () => safety.acknowledged(),
+  anyRunning: () => state.running,
+  onChange: voicesChanged,
+  // No route latches a strobe past the configured cap, whichever launches it.
+  strobeLatchMs: () => settings.get('safety.strobeMaxLatchSec') * 1000,
+});
+
+// The energy effects' latch and hold (energy-hold.ts), as voices of that manager.
+const legacyEnergy = new EnergyHold(() => {}, voices);
+// The manual strobe (strobe.ts): held, latched or burst, over the same manager.
+const strobe = new Strobe(voices, settings, safety);
+// The matrix board (matrix.ts): one voice from the held cells, over the same manager.
+const matrix = new MatrixBoard({ voices, acknowledged: () => safety.acknowledged() });
+
+function voicesChanged(): void {
+  legacyEnergy.sync();
+  // A latch kept under a strobe hold comes back when the hold ends.
+  strobe.sync();
+  // The matrix board's voice stopped from outside takes its cells with it.
+  matrix.sync();
+  mirrorEnergy();
+  reconcileFreeClock();
+  for (const fn of [...voiceListeners]) {
+    try { fn(); } catch (err) { console.warn(`[voices] listener: ${err instanceof Error ? err.message : String(err)}`); }
+  }
+}
+
+/** The state's energy fields, from their voices. */
+function mirrorEnergy(): void {
+  state.heldEnergy = legacyEnergy.held();
+  state.energyOverride = legacyEnergy.latched();
+}
+
+/**
+ * Latch an energy effect (`energyOverride`), or none: null, or an id that is
+ * no energy effect. The palette strobe is the manual strobe in its beat
+ * clock, so it replaces the manual one. None latched leaves the manual strobe
+ * alone: scenes, cues, MIDI and the auto show clear the energy all the time,
+ * and the operator's latch ends on an explicit off or its cap (strobe.ts).
+ */
+function latchEnergy(effect: string | null): void {
+  legacyEnergy.latch(effect);
+  if (effect === HOLD_STROBE) voices.stop(STROBE_VOICE_ID);
+  mirrorEnergy();
+}
+
+/** Hear every change to the voices, after the state's own fields have followed. Returns the way to stop. */
+function onVoicesChange(fn: () => void): () => void {
+  voiceListeners.add(fn);
+  return () => { voiceListeners.delete(fn); };
+}
+
+// What the free clock was last told. It starts running, as the patterns do.
+let freeClockRunning = true;
+
+/**
+ * Whether the free tap clock runs: while the patterns run, and while any
+ * voice is launched (one waiting for its grid line too), so a pad pressed
+ * with the patterns stopped still counts its beats — and starts nothing else.
+ */
+function freeClockRuns(): boolean {
+  return state.running || voices.size > 0;
+}
+
+/** Tell the free clock whether it runs; `force` tells it even when that has not changed. */
+function reconcileFreeClock(force = false): void {
+  const want = freeClockRuns();
+  if (!force && want === freeClockRunning) return;
+  freeClockRunning = want;
+  conductor.setRunning(want);
+}
 
 /** A fixture's brightness trim, tolerating a show saved before there was one. */
 function maxBrightnessOf(fixture: Pick<Fixture, 'maxBrightness'>): number {
@@ -260,11 +363,42 @@ function getDmxSnapshotSize(universe: number): number {
   return Math.min(universes.UNIVERSE_SIZE, maxEnd);
 }
 
+/**
+ * The musical clock as the live state carries it: what it follows and its
+ * tempo (conductor.ts), and for screens that keep their own beat in phase
+ * with the rig — the visuals — where the beat is, its epoch, and the wall
+ * clock when that was read, `at`. Such a screen carries it on as
+ * beatPos + (now − at) / 60000 × bpm. The beat moves on every read; the
+ * publisher sends it only when that carrying-on would miss it (protocol.ts).
+ */
+function clockState(): { source: ClockSource; bpm: number; beatPos: number; epoch: number; at: number } {
+  const { beatPos, epoch } = conductor.phase();
+  const at = Date.now();
+  return { ...conductor.status(), beatPos, epoch, at };
+}
+
 // Returns the snapshot the UI consumes. Heavyweight fields (autoShow, prolink,
 // spotify) are filled in by integrations.js via injectExtras.
 let extrasProvider: () => Record<string, unknown> = () => ({});
 
 function setExtrasProvider(fn: () => Record<string, unknown>): void { extrasProvider = fn; }
+
+// The sequencer's status (sequencer.ts) as the live state carries it under
+// `sequence`; null while no sequencer is registered.
+let sequenceProvider: () => unknown = () => null;
+
+/** The sequencer's status alone, for health. */
+function getSequenceStatus(): unknown {
+  return sequenceProvider();
+}
+
+function setSequenceProvider(fn: (() => unknown) | null | undefined): void {
+  sequenceProvider = typeof fn === 'function' ? fn : () => null;
+}
+
+// The legacy patterns, then every built-in effect preset: one id space, as
+// `pattern` may name either.
+const PATTERN_CATALOG = [...PATTERNS, ...PRESET_ROWS];
 
 // The static half of the snapshot: fixed at boot and identical on every
 // broadcast. It was 63% of a 7 KB payload going out 10 times a second, so it is
@@ -272,10 +406,15 @@ function setExtrasProvider(fn: () => Record<string, unknown>): void { extrasProv
 function getCatalogs() {
   return {
     colorPresets: COLOR_PRESETS,
-    patterns: PATTERNS,
+    patterns: PATTERN_CATALOG,
     energyEffects: ENERGY_EFFECTS,
     strobeFunctions: STROBE_FUNCTIONS,
     palettes: PALETTES,
+    // The effect library's built-ins beside the presets `patterns` lists: the
+    // kinds by family with their defaults, and the effect palettes. JSON
+    // only; the presets and palettes saved here are live (domain `library`).
+    families: FAMILIES,
+    builtinPalettes: BUILTIN_PALETTES,
     // Which profiles ship with the server. The UI needs this to know which ones
     // it must not offer to delete — it used to test against the one built-in id
     // it had hardcoded, which stopped being the whole truth once the Hue lamp
@@ -302,9 +441,11 @@ function getLiveState() {
     artnet: { ...state.artnet },
     bpm: state.bpm,
     // What the pattern clock is locked to right now — the auto show's grid, a
-    // CDJ, the playing track, or the operator's own tempo — and the tempo it
-    // is keeping. See conductor.js.
-    clock: conductor.status(),
+    // CDJ, the playing track, or the operator's own tempo — the tempo it is
+    // keeping, and where its beat is. See clockState().
+    clock: clockState(),
+    // Whether that is the music's tempo or the operator's held one.
+    tempoMode: state.tempoMode,
     beatDivision: state.beatDivision,
     running: state.running,
     pattern: state.pattern,
@@ -321,7 +462,17 @@ function getLiveState() {
     pixelPattern: state.pixelPattern,
     panelPattern: state.panelPattern,
     energyOverride: state.heldEnergy ?? state.energyOverride,
+    // The voices over the look (voices.ts), the hidden latch under a hold too.
+    voices: voices.list(),
     palette: state.palette,
+    // Hex on the wire, as a palette is written everywhere else.
+    paletteOverride: state.paletteOverride ? state.paletteOverride.map(toHex) : null,
+    // Whether the room may see the fast flashes, and the limits beside it.
+    safety: safety.status(),
+    // The manual strobe: what plays as it, how, and its settings (strobe.ts).
+    strobe: strobe.status(),
+    // The matrix board: its mode, the held colours, the voice playing them.
+    matrix: matrix.status(),
     autoIntensity: state.autoIntensity,
     autoSyncOffsetMs: state.autoSyncOffsetMs,
     autoSource: state.autoSource,
@@ -339,7 +490,9 @@ function getLiveState() {
     profiles: { ...listProfiles() },
     // The bridges a Hue lamp's output can name, for the patch table and the
     // inspector to show the lamp's bridge by its label. Never the keys.
+    hueStrobe: settings.group('hue').strobe ?? 'flash',
     hueBridges: settings.group('hue').bridges.map(({ id, label, host, enabled }) => ({ id, label, host, enabled })),
+    sequence: sequenceProvider(),
     ...extrasProvider(),
   };
 }
@@ -385,6 +538,14 @@ function getClientState() {
 
 export {
   state,
+  voices,
+  legacyEnergy,
+  strobe,
+  matrix,
+  latchEnergy,
+  onVoicesChange,
+  freeClockRuns,
+  reconcileFreeClock,
   universeOf,
   maxBrightnessOf,
   activeUniverses,
@@ -399,8 +560,11 @@ export {
   getDmxSnapshotSize,
   getClientState,
   getLiveState,
+  clockState,
   getCatalogs,
   getDmxSnapshot,
   getDmxUniverses,
   setExtrasProvider,
+  setSequenceProvider,
+  getSequenceStatus,
 };

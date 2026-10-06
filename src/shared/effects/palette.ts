@@ -91,8 +91,12 @@ export interface PreparedPalette {
   pending: number[];
 }
 
-/** Prepare again when an instance's spec changes; fixed colours are parsed outside the frame loop. */
-export function preparePalette(spec: EffectSpec): PreparedPalette {
+/**
+ * Prepare again when an instance's spec changes; fixed colours are parsed
+ * outside the frame loop. Only the palette is read, so a palette on its own
+ * (the override a palette id puts on) prepares the same way.
+ */
+export function preparePalette(spec: Pick<EffectSpec, 'palette'>): PreparedPalette {
   const entries = spec.palette?.map((entry) => typeof entry === 'string' ? parseHex(entry) : { random: true } as const) ?? null;
   return { entries, hues: new Array<number | null>(entries?.length ?? 0).fill(null), roll: -1, seed: null, counters: [], pending: [] };
 }
@@ -104,7 +108,7 @@ export function preparePalette(spec: EffectSpec): PreparedPalette {
  * four slots and the slot's own previous hue, keeping colour changes distinct.
  * Renderers keep prepared state per instance; direct callers replay from roll zero.
  */
-export function resolvePalette(spec: EffectSpec, override: Colour[] | null, lookSlots: readonly Colour[], seed: Seed, roll: number, prepared?: PreparedPalette): Colour[] {
+export function resolvePalette(spec: Pick<EffectSpec, 'palette'>, override: Colour[] | null, lookSlots: readonly Colour[], seed: Seed, roll: number, prepared?: PreparedPalette): Colour[] {
   if (override && override.length) return [...override];
   const state = prepared ?? preparePalette(spec);
   const own = state.entries;

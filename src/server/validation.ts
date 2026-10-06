@@ -1,10 +1,11 @@
 import { z } from 'zod';
 import net from 'node:net';
-import { COLOR_PRESETS, AUTO_SOURCES, SYNC_OFFSET_LIMIT_MS } from './presets.ts';
+import { COLOR_PRESETS, AUTO_SOURCES, TEMPO_MODES, SYNC_OFFSET_LIMIT_MS } from './presets.ts';
 import { PALETTE_IDS } from './palettes.ts';
 import { FIXTURE_GROUPS } from '../shared/stage.ts';
 import { EMITTERS, PIXEL_MAPS, MAX_CELLS_PER_FIXTURE, MAX_PROFILE_CHANNELS } from '../shared/rig.ts';
 import { HUE_BRIDGE_ID_RE, stripIssue } from '../shared/placement.ts';
+import { parseHex } from '../shared/effects/palette.ts';
 import { HttpError } from '../errors.ts';
 
 /** Input that failed its schema: a 400, with zod's issues for the client. */
@@ -37,6 +38,14 @@ const fixtureGeometry = z.object({
 }).strict();
 const colorIdx = z.number().int().min(0).max(COLOR_PRESETS.length - 1);
 const unitValue = z.number().min(0).max(1).optional();
+
+/** A fixed colour as the effects take one on the wire: #RGB, #RRGGBB or #RRGGBBWW. */
+const hexColour = z.string().max(16).refine((value) => {
+  try { parseHex(value); return true; } catch { return false; }
+}, { message: 'expected a hex colour (#RGB, #RRGGBB or #RRGGBBWW)' });
+
+/** Colours every effect plays instead of its own: one to eight, fixed. Null lets them play their own. */
+const paletteOverride = z.array(hexColour).min(1).max(8).nullable();
 
 // Hostname per RFC 1123, or an IPv4 literal. Rejecting junk here means a typo
 // in the ArtNet panel surfaces as a validation error instead of a stream of
@@ -107,10 +116,13 @@ const artnetSchema = z.object({
 // Pattern / strobeFunction / energyOverride accept any string — the engine
 // silently no-ops on unknown ids, matching the previous lenient behaviour
 // and giving auto-show.js room for new pattern pools without a schema bump.
+// A pattern may name an effect preset as well (the effect library).
 const patchSchema = z.object({
   // Not rounded: a track at 123.7 BPM run at 124 drifts a beat off the music
   // in under a minute.
   bpm: z.number().min(20).max(300).optional(),
+  // Follow the music, or keep the tempo set here (conductor.ts). Stored.
+  tempoMode: z.enum(TEMPO_MODES).optional(),
   // The timeline time a scene was scheduled for, so its pattern counts from
   // that beat however late the frame that fired it was. Set by the auto show.
   anchorMs: z.number().finite().optional(),
@@ -145,6 +157,9 @@ const patchSchema = z.object({
   strobeSpeed: u8.optional(),
   strobeFunction: z.string().min(1).max(64).optional(),
   energyOverride: z.union([z.string().min(1).max(64), z.null()]).optional(),
+  // Light DJ's active palette: the effects play these instead of their own
+  // colours and the slots. An empty list is no clear command; null is.
+  paletteOverride: paletteOverride.optional(),
   // A named look from server/palettes.js. Writes all four colour slots at once;
   // null just clears the label. Unknown ids are rejected rather than ignored —
   // unlike a pattern id, a palette that silently does nothing looks like the
@@ -519,6 +534,8 @@ export type DeezerState = z.output<typeof deezerStateSchema>;
 export {
   fixtureId,
   dmxUniverse,
+  hexColour,
+  paletteOverride,
   patchSchema,
   deezerStateSchema,
   overrideSchema,

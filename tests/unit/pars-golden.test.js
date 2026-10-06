@@ -25,6 +25,7 @@ import { applyPatch, applyOverride, setFixtureMaxBrightness } from '../../src/se
 import { PATTERNS, COLOR_PRESETS } from '../../src/server/presets.ts';
 import { createPreviewSampler } from '../../src/shared/preview.ts';
 import AutoShow from '../../src/auto-show.ts';
+import { acknowledgeFlashes } from '../helpers/acknowledged.js';
 
 // The hashes have changed three times, each time on purpose.
 //
@@ -274,7 +275,13 @@ function directorHash() {
 }
 
 test('a rig of pars renders exactly the frames it always has', () => {
-  assert.strictEqual(engineHash(), GOLDEN.engine);
+  // The colour strobe burst is among them: the operator has acknowledged it.
+  const restore = acknowledgeFlashes();
+  try {
+    assert.strictEqual(engineHash(), GOLDEN.engine);
+  } finally {
+    restore();
+  }
 });
 
 test('the rehearsal preview of a rig of pars is unchanged', () => {

@@ -24,13 +24,18 @@ def lines_of(text):
     return [json.loads(line) for line in text.splitlines() if line.strip()]
 
 
-def run_service(track):
+def run_service(track, bands=None):
     from analysis.live import LiveService, Emitter, HOP
     out = io.StringIO()
-    service = LiveService(Emitter(out), sample_rate=track.sr)
+    service = LiveService(Emitter(out), sample_rate=track.sr, bands=bands)
     for start in range(0, len(track.samples), HOP):
         service.push(track.samples[start:start + HOP])
     return lines_of(out.getvalue())
+
+
+def tone_track(freq, seconds, **kwargs):
+    """`synth.tone` as a track, which is what `run_service` reads."""
+    return synth.Track(synth.tone(freq, seconds, **kwargs), synth.SR, 0.0, [], [], [])
 
 
 def beat_errors(lines, track, after=12.0):
@@ -172,6 +177,245 @@ class Sources(unittest.TestCase):
         self.assertTrue(line['fatal'])
         self.assertIn('pip install soundcard', line['message'])
         self.assertEqual(listed['backend'], None)
+
+
+def expected_spectrum(frame, bins, without_dc=True):
+    """
+    What the service should say about one 1024-sample frame, worked out apart
+    from it: the frame's mean taken off, the Hamming window from its formula,
+    the requested bins written out by hand, the total by Parseval in the time
+    domain. `without_dc=False` keeps the mean in, as the spectrum was first
+    worked out.
+    """
+    import numpy as np
+    x = np.asarray(frame, dtype=np.float64)
+    n = np.arange(x.size)
+    x0 = x - x.mean() if without_dc else x
+    xw = x0 * (0.54 - 0.46 * np.cos(2 * np.pi * n / (x.size - 1)))
+    spectrum = np.fft.rfft(xw)
+    power = spectrum.real ** 2 + spectrum.imag ** 2
+    # One-sided: every bin but DC and Nyquist stands for two.
+    nyquist = float(np.sum(xw * (-1.0) ** n))
+    total = (x.size * float(np.sum(xw ** 2)) + float(np.sum(xw)) ** 2 + nyquist ** 2) / 2.0
+    above_dc = power[1:93]
+    return {
+        'power': float(np.sum(x ** 2)),
+        'rms': float(np.sqrt(np.mean(x ** 2))),
+        'dominantHz': float(np.argmax(above_dc) + 1) * 22050 / 1024 if above_dc.max() > 0 else None,
+        'bands': [float(power[a:b + 1].sum()) for a, b in bins],
+        'fftPower': total,
+    }
+
+
+@needs_numpy
+class BandsTest(unittest.TestCase):
+    def test_bands_emitted_for_a_tone(self):
+        # A 1 kHz tone: the 750–2000 band carries nearly all the power; 0–160 and 3000–9000 next to nothing.
+        track = tone_track(1000.0, seconds=2.0, harmonics=1)   # synth.tone adds harmonics by default; a pure tone keeps the band ratio clean
+        lines = run_service(track, bands=[(0, 160), (750, 2000), (3000, 9000)])
+        states = [m for m in lines if m.get('type') == 'state']
+        s = states[len(states) // 2]['spectrum']
+        self.assertEqual(len(s['bands']), 3)
+        self.assertGreater(s['bands'][1], 50 * max(s['bands'][0], s['bands'][2]))
+        self.assertTrue(900 < s['dominantHz'] < 1100)
+        self.assertGreater(s['power'], 0)
+        self.assertGreater(s['rms'], 0)
+
+    def test_full_scale_sine_power_scale(self):
+        # |X|² of a Hamming-windowed 1024-point FFT of a full-scale sine peaks near (N/2 · 0.54)² ≈ 7.6e4 in its bin.
+        track = tone_track(1000.0, seconds=1.0, amplitude=1.0, harmonics=1)
+        lines = run_service(track, bands=[(900, 1100)])
+        s = [m for m in lines if m.get('type') == 'state'][-5]['spectrum']
+        self.assertTrue(3e4 < s['bands'][0] < 1.5e5, s['bands'][0])
+
+    def test_a_bin_centred_sine_lands_on_the_window_gain(self):
+        # Bin 64 exactly: |X|² = (A/2 · Σw)² in its own bin, (A/2 · 0.23 N)² in each neighbour.
+        import numpy as np
+        hz = 64 * 22050 / 1024
+        track = synth.Track((0.5 * np.sin(2 * np.pi * hz * np.arange(22050) / 22050)).astype(np.float32),
+                            22050, 0.0, [], [], [])
+        s = [m for m in run_service(track, bands=[(hz, hz + 1), (hz - 10, hz + 30)])
+             if m['type'] == 'state'][-1]['spectrum']
+        peak = (0.25 * (0.54 * 1024 - 0.46)) ** 2
+        side = (0.25 * 0.23 * 1024) ** 2
+        self.assertAlmostEqual(s['bands'][0] / (peak + side), 1.0, delta=0.005)
+        self.assertAlmostEqual(s['bands'][1] / (peak + 2 * side), 1.0, delta=0.005)
+        self.assertAlmostEqual(s['dominantHz'], hz, places=6)
+        # Σx² of a 0.5 sine over the frame, not the FFT's total: the two scales differ by ~N·Σw²/N.
+        self.assertAlmostEqual(s['power'], 0.125 * 1024, delta=1.0)
+        self.assertAlmostEqual(s['rms'], 0.5 / np.sqrt(2), delta=1e-3)
+        self.assertGreater(s['fftPower'], 100 * s['power'])
+
+    def test_the_newest_frame_whatever_the_block_sizes(self):
+        # Uneven blocks, several frames to some of them: each state describes
+        # the last whole frame, bins as asked, both edges of the spectrum
+        # summing two bins.
+        import numpy as np
+        from analysis.live import LiveService, Emitter
+        rng = np.random.default_rng(5)
+        n = np.arange(30000)
+        samples = (0.2 * rng.standard_normal(n.size) + 0.3 * np.sin(2 * np.pi * 440 * n / 22050)).astype(np.float32)
+        bands = [(0, 1), (0, 160), (750, 2000), (3000, 9000), (11024, 11025)]
+        bins = [(0, 1), (0, 7), (34, 92), (139, 417), (511, 512)]
+        out = io.StringIO()
+        service = LiveService(Emitter(out), sample_rate=22050, bands=bands)
+        at = frames = checked = 0
+        for size in [700, 200, 1500, 37, 4096, 256, 3, 2900, 9000, 11308]:
+            out.seek(0)
+            out.truncate()
+            service.push(samples[at:at + size])
+            at += size
+            states = [m for m in lines_of(out.getvalue()) if m['type'] == 'state']
+            before, frames = frames, 0 if at < 1024 else (at - 1024) // 256 + 1
+            if frames == before:
+                self.assertEqual(states, [])
+                continue
+            self.assertEqual(len(states), 1, 'one state for the newest frame')
+            newest = frames - 1
+            want = expected_spectrum(samples[newest * 256:newest * 256 + 1024], bins)
+            got = states[0]['spectrum']
+            for key in ('power', 'rms', 'fftPower'):
+                self.assertAlmostEqual(got[key] / want[key], 1.0, delta=1e-9, msg=key)
+            for g, w in zip(got['bands'], want['bands']):
+                self.assertAlmostEqual(g / w, 1.0, delta=1e-9)
+            self.assertAlmostEqual(got['dominantHz'], want['dominantHz'], places=9)
+            checked += 1
+        self.assertEqual(checked, 6)
+
+    def test_silence_reads_zero_and_has_no_dominant_frequency(self):
+        lines = run_service(synth.silence(seconds=0.5), bands=[(0, 160)])
+        s = [m for m in lines if m['type'] == 'state'][-1]['spectrum']
+        self.assertEqual(s, {'power': 0.0, 'rms': 0.0, 'dominantHz': None, 'bands': [0.0], 'fftPower': 0.0})
+
+    def test_dc_names_no_frequency(self):
+        # An offset under a tone: DC is the frame's strongest bin, but 0 Hz is
+        # no pitch for the effects to follow, so the tone dominates.
+        import numpy as np
+        hz = 46 * 22050 / 1024
+        n = np.arange(4096)
+        samples = (0.3 + 0.4 * np.sin(2 * np.pi * hz * n / 22050)).astype(np.float32)
+        track = synth.Track(samples, 22050, 0.0, [], [], [])
+        s = [m for m in run_service(track, bands=[(0, 160)]) if m['type'] == 'state'][-1]['spectrum']
+        newest = samples[-1024:].astype(np.float64)
+        power = np.abs(np.fft.rfft(newest * np.hamming(1024))) ** 2
+        self.assertEqual(int(np.argmax(power[:93])), 0, 'DC is the strongest bin')
+        self.assertAlmostEqual(s['dominantHz'], hz, places=6)
+
+    def test_a_frame_of_nothing_but_an_offset_has_no_dominant_frequency(self):
+        # The window would spread the offset into the bins above DC; the
+        # frame's mean is taken off first, so nothing is left in them.
+        import numpy as np
+        for offset in (0.3, -0.02, 1e-4):
+            with self.subTest(offset=offset):
+                track = synth.Track(np.full(4096, offset, dtype=np.float32), 22050, 0.0, [], [], [])
+                s = [m for m in run_service(track, bands=[(0, 160), (750, 2000)]) if m['type'] == 'state'][-1]['spectrum']
+                self.assertIsNone(s['dominantHz'])
+                self.assertEqual(s['bands'], [0.0, 0.0])
+                self.assertEqual(s['fftPower'], 0.0)
+                self.assertAlmostEqual(s['power'], 1024 * float(np.float32(offset)) ** 2, delta=1e-9 * max(1.0, s['power']))
+
+    def test_an_offset_under_a_quiet_tone_leaves_the_tone_dominant(self):
+        # An offset ten times the tone: its window skirt in the first bins
+        # would outweigh the tone, were the mean not taken off.
+        import numpy as np
+        n = np.arange(8192)
+        samples = (0.5 + 0.05 * np.sin(2 * np.pi * 440 * n / 22050)).astype(np.float32)
+        s = [m for m in run_service(synth.Track(samples, 22050, 0.0, [], [], []), bands=[(0, 160)])
+             if m['type'] == 'state'][-1]['spectrum']
+        self.assertLessEqual(abs(s['dominantHz'] - 440), 22050 / 1024)
+
+    def test_a_tone_with_no_offset_has_the_band_powers_it_always_had(self):
+        # Sixteen samples a period, a whole number of periods in every frame:
+        # its mean is nil, and taking it off changes nothing.
+        import numpy as np
+        period = np.sin(2 * np.pi * np.arange(16) / 16).astype(np.float32)
+        samples = np.tile(period, 22050 // 16)
+        hz = 22050 / 16
+        bands = [(0, 160), (hz - 10, hz + 30), (3000, 9000)]
+        s = [m for m in run_service(synth.Track(samples, 22050, 0.0, [], [], []), bands=bands)
+             if m['type'] == 'state'][-1]['spectrum']
+        frames = (samples.size - 1024) // 256 + 1
+        newest = samples[(frames - 1) * 256:(frames - 1) * 256 + 1024]
+        was = expected_spectrum(newest, [(0, 7), (63, 65), (139, 417)], without_dc=False)
+        for got, want in zip(s['bands'], was['bands']):
+            self.assertAlmostEqual(got / want, 1.0, delta=1e-9)
+        self.assertAlmostEqual(s['fftPower'] / was['fftPower'], 1.0, delta=1e-9)
+        self.assertAlmostEqual(s['dominantHz'], hz, places=6)
+
+    def test_nothing_above_dc_is_no_dominant_frequency(self):
+        import numpy as np
+        from analysis.live import dominant_hz
+        bin_hz = 22050 / 1024
+        only_dc = np.zeros(513)
+        only_dc[0] = 4.0
+        self.assertIsNone(dominant_hz(only_dc, bin_hz))
+        # Above 2 kHz is not looked at: bin 93 is 2002.6 Hz.
+        high = only_dc.copy()
+        high[93] = 9.0
+        self.assertIsNone(dominant_hz(high, bin_hz))
+        # Ties go to the lower bin.
+        self.assertEqual(dominant_hz(np.array([4.0, 1.0, 3.0, 3.0]), 10.0), 20.0)
+
+    def test_without_bands_the_lines_are_as_they_were(self):
+        # The band powers are a second window beside the analyser's own, not a
+        # change to it: every other field and every event is the same.
+        track = synth.four_on_the_floor(bpm=128, bars=4)
+        plain = run_service(track)
+        banded = run_service(track, bands=[(0, 160), (750, 2000)])
+        self.assertTrue(all('spectrum' not in m for m in plain))
+        self.assertEqual(len(plain), len(banded))
+        for a, b in zip(plain, banded):
+            if b['type'] == 'state':
+                self.assertEqual(len(b['spectrum']['bands']), 2)
+                b = {k: v for k, v in b.items() if k != 'spectrum'}
+            self.assertEqual(a, b)
+
+    def test_no_spectrum_before_the_first_whole_frame(self):
+        from analysis.live import LiveService, Emitter
+        out = io.StringIO()
+        service = LiveService(Emitter(out), sample_rate=22050, bands=[(0, 160)])
+        service.push([0.1] * 1000)
+        self.assertEqual(out.getvalue(), '')
+        self.assertNotIn('spectrum', service.state())
+
+    def test_bands_the_rate_cannot_carry_are_refused(self):
+        from analysis.live import LiveService, Emitter
+        for bands in ([(0, 8001)], [(160, 0)], [(100, 100)], [(-1, 100)], [(0, float('nan'))],
+                      [(0, 100)] * 13):
+            with self.subTest(bands=bands), self.assertRaises(ValueError):
+                LiveService(Emitter(io.StringIO()), sample_rate=16000, bands=bands)
+        LiveService(Emitter(io.StringIO()), sample_rate=16000, bands=[(0, 8000)] * 12)
+
+
+@needs_numpy
+class BandsArgument(unittest.TestCase):
+    def test_parsed_and_handed_to_the_service(self):
+        from analysis import live
+        self.assertEqual(live.parse_bands('0-160,750-2000,3000-9000'),
+                         [(0.0, 160.0), (750.0, 2000.0), (3000.0, 9000.0)])
+        # How JavaScript writes a very small edge.
+        self.assertEqual(live.parse_bands('1e-7-160,20.5-11025'), [(1e-7, 160.0), (20.5, 11025.0)])
+        made = []
+        out = io.StringIO()
+        with mock.patch.object(live, 'LiveService', lambda emitter, **kw: made.append(kw)), \
+                mock.patch.object(live, '_soundcard', return_value=None), \
+                mock.patch.object(live, '_sounddevice', return_value=None), \
+                mock.patch('sys.stdout', out):
+            live.main(['--source', 'loopback', '--bands', '0-160,750-2000'])
+        self.assertEqual(made, [{'bands': [(0.0, 160.0), (750.0, 2000.0)]}])
+
+    def test_a_bad_list_is_a_usage_error_before_any_device_is_opened(self):
+        from analysis import live
+        bad = ['0-12000', '160-0', '100-100', '', 'abc', '0-160,,750-2000', '0-160-200', '-5-100',
+               'nan-100', '0-inf', ','.join(['0-100'] * 13)]
+        for text in bad:
+            with self.subTest(bands=text):
+                err = io.StringIO()
+                with mock.patch.object(live, '_soundcard', side_effect=AssertionError('device opened')), \
+                        mock.patch('sys.stderr', err), self.assertRaises(SystemExit) as exit_:
+                    live.main(['--source', 'loopback', '--bands', text])
+                self.assertEqual(exit_.exception.code, 2)
+                self.assertIn('--bands', err.getvalue())
 
 
 if __name__ == '__main__':

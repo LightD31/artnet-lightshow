@@ -4,7 +4,7 @@
 import { z } from 'zod';
 import type { Colour } from '../../types/rig.ts';
 import { hash01, pickExcluding } from './hash.ts';
-import { ldjChannels, makeLdjKind } from './ldj-engine.ts';
+import { ldjChannels, ldjIterationsSchema, makeLdjKind } from './ldj-engine.ts';
 import type { LdjEnvelope, LdjParams, LdjState } from './ldj-engine.ts';
 import { LDJ_ITERATION_ROWS } from './ldj-iteration.ts';
 import { parseHex } from './palette.ts';
@@ -22,7 +22,8 @@ export function matrixInterval(mode: MatrixMode, n: number): number {
   return Math.max(MINIMUM[mode], Math.floor(NUMERATOR[mode] / n) + base);
 }
 
-const paramsSchema = z.object({ cadence: z.number().min(.125), beats: z.number().positive().optional(), speed: z.number().positive().optional() }).strict();
+const paramsSchema = z.object({ cadence: z.number().min(.125), beats: z.number().positive().optional(), speed: z.number().positive().optional(),
+  iterations: ldjIterationsSchema }).strict();
 const definitions = new Map<MatrixMode, EffectKindDef<LdjParams, LdjState>>();
 
 for (const [name, mode] of Object.entries({ PartyStrobe: 'pulse', MatrixPulse: 'pulse', MatrixFlash: 'flash',
@@ -41,7 +42,8 @@ for (const [name, mode] of Object.entries({ PartyStrobe: 'pulse', MatrixPulse: '
         : mode === 'flash' ? { kind: 'matrix', fadeIn: 0, peak: 10, fadeOut: 0 }
           : mode === 'splotch' ? { kind: 'matrix', fadeIn: 10, peak: 200, fadeOut: 1500 }
             : { kind: 'matrix', fadeIn: 50, peak: 150 + Math.floor(hash01(ctx.seed, 79, ctx.iter) * 101), fadeOut: 2000 };
-      ctx.lamps.set(slot, ctx.colour(index, slot), 1, envelope);
+      // Pulse and flash are hard flashes on a dark room; firework and splotch fade as authored.
+      ctx.lamps.set(slot, ctx.colour(index, slot), 1, envelope, 0, mode === 'pulse' || mode === 'flash' ? 'flash' : undefined);
       ctx.refresh(slot);
     },
   });

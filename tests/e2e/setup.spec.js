@@ -40,6 +40,9 @@ test('dragging a fixture on the plan moves it on the server', async ({ page, req
   const surface = await page.locator('.plan-surface').boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + 17);
   await page.mouse.down();
+  // Picked up, the lamp is selected and its panel shows: the plot must not move under the pointer.
+  await expect(page.locator('.plan-selected')).toBeVisible();
+  expect((await page.locator('.plan-surface').boundingBox()).y).toBe(surface.y);
   await page.mouse.move(surface.x + surface.width * 0.2, surface.y + surface.height * 0.8, { steps: 8 });
   await page.mouse.up();
   const after = await until(request, (st) => st.fixtures[0].position && st.fixtures[0].position.y > 60);

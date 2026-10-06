@@ -75,14 +75,25 @@ test('Beacon interleaves black sectors and ramps to each lit sector centre', () 
 
 test('the seeded noise lattice has inclusive extent and exact float32 samples', () => {
   const seed = seedFrom('review-waves'), field = createNoiseField(seed);
-  assert.equal(field.length, 301);
-  assert.ok(field.every((column) => column.length === 301));
+  assert.equal(field.rows, 301);
+  assert.equal(field.columns, 301);
   for (const [x, y, value] of [[0, 0, .5], [1, 1, .4663500189781189], [29, 29, .5332980155944824],
-    [30, 30, .5], [207, 147, .5000659227371216], [186, 146, .49782830476760864], [300, 300, .5]]) assert.equal(field[x][y], value);
+    [30, 30, .5], [207, 147, .5000659227371216], [186, 146, .49782830476760864], [300, 300, .5]]) assert.equal(field.at(x, y), value);
+  assert.equal(field.at(301, 0), undefined, 'nothing past the edge');
+  const rows = (f) => [1, 2, 3].map((x) => Array.from({ length: 301 }, (_, y) => f.at(x, y)));
   for (let word = 0; word < 4; word++) {
     const changed = [...seed]; changed[word] ^= 1;
-    assert.notDeepEqual(createNoiseField(changed).slice(1, 4), field.slice(1, 4), `seed word ${word}`);
+    assert.notDeepEqual(rows(createNoiseField(changed)), rows(field), `seed word ${word}`);
   }
+});
+
+test('the noise field cannot be changed, so a clone shares it', () => {
+  const field = createNoiseField(seedFrom('review-waves'));
+  assert.ok(Object.isFrozen(field));
+  assert.throws(() => { field.rows = 2; }, TypeError);
+  assert.throws(() => { field.extra = 1; }, TypeError);
+  assert.deepStrictEqual(Object.keys(field).sort(), ['columns', 'rows'], 'its values are not on it');
+  assert.equal(field.at(1, 1), .4663500189781189, 'unchanged');
 });
 
 test('noise sampling uses x-first orbits, padded terraces and interpolated northern colours', () => {
@@ -111,7 +122,12 @@ test('constant-tempo rotation and noise cold samples equal stepped samples', () 
     assert.deepEqual(cold.draw(at(90)), output, name);
     const clone = stepped.stepper.clone();
     assert.deepEqual(stepped.draw(at(91), clone), stepped.draw(at(91)), `${name} clone`);
-    if (name === 'Perlin') assert.notStrictEqual(clone.get(stepped.inst.id, () => null, 0).noise, stepped.state().noise);
+    // The constant noise field is shared; everything the kind steps is its own.
+    if (name === 'Perlin') {
+      const copied = clone.get(stepped.inst.id, () => null, 0);
+      assert.strictEqual(copied.noise, stepped.state().noise);
+      assert.notStrictEqual(copied, stepped.state());
+    }
   }
 });
 

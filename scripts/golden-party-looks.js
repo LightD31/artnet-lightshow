@@ -46,14 +46,18 @@ export function placedRig() {
   ];
 }
 
-/** Universe 0 as far as the rig is patched, at each of BEATS. */
-export function renderLookBytes(id, fixtures) {
+/**
+ * Universe 0 as far as the rig is patched, at each of BEATS. `effectOf`, when
+ * given, is what the engine asks for the look's effect (the effect library).
+ */
+export function renderLookBytes(id, fixtures, effectOf = null) {
   const last = Math.max(...fixtures.map((f) => f.address - 1 + getProfile(f).channelCount));
   const input = {
     running: true, pattern: id, colorA: 0, colorB: 6, colorC: 4, colorD: 8, beatDivision: 1,
     split: null, pixelMap: 'stage', strobeSpeed: 0, strobeFunction: 'standard',
     masterDimmer: 255, masterBlackout: false, energy: null, showDynamics: null, patternAnchor: null,
     fade: null, syncTest: null, universes: [0], fixtures,
+    ...(effectOf ? { effect: effectOf(id) } : {}),
   };
   // One renderer for the whole run: it anchors the step grid on the first
   // frame (beat 0), so the later beats land on steps 0..7 as a running show's

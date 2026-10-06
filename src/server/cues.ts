@@ -4,12 +4,16 @@ import { z } from 'zod';
 import { state } from './state.ts';
 import { applyPatch, applyOverride } from './patch.ts';
 import { conductor } from './conductor.ts';
-import { overrideSchema, fixtureId } from './validation.ts';
+import { overrideSchema, fixtureId, paletteOverride } from './validation.ts';
+import { settings, schema as settingsSchema } from './settings.ts';
 import { COLOR_PRESETS } from './presets.ts';
 import { PIXEL_MAPS } from '../shared/rig.ts';
-import { HttpError, messageOf } from '../errors.ts';
+import { HOLD_STROBE } from '../shared/look-math.ts';
+import { toHex } from '../shared/effects/palette.ts';
+import { HttpError, messageOf, statusOf } from '../errors.ts';
 import { JsonStore } from './json-store.ts';
 import type { OverrideInput } from './validation.ts';
+import type { SettingsPatch } from './settings.ts';
 import { configFile } from './config-dir.ts';
 
 /**
@@ -63,6 +67,14 @@ const lookSchema = z.object({
   // use the original ids (0, 1, ...) if they predate this field.
   fixtureIds: z.array(fixtureId).max(64).optional(),
   overrides: z.array(z.union([overrideSchema, z.null()])).max(64),
+  // The colours played over every effect, fixed, as hex. Absent in cues saved
+  // before there was one: those recall with none, so their slots show.
+  paletteOverride: paletteOverride.optional(),
+  // How the effects take the music, and how the manual strobe flashes — the
+  // settings, never whether it is on. Validated as the settings hold them;
+  // a cue without them leaves the ones in force.
+  audioMode: settingsSchema.shape.audio.shape.mode.optional(),
+  strobe: settingsSchema.shape.strobe.optional(),
 }).strict().refine((look) => !look.fixtureIds || (
   look.fixtureIds.length === look.overrides.length
     && new Set(look.fixtureIds).size === look.fixtureIds.length
@@ -114,7 +126,11 @@ function newId(): string {
   return crypto.randomBytes(8).toString('hex');
 }
 
-/** Everything on stage right now, as a cue look. */
+/**
+ * Everything on stage right now, as a cue look. A cue is the base look: an
+ * energy effect latched is part of it, the strobe never is — a cue must not
+ * start one.
+ */
 function captureLook() {
   return {
     bpm: state.bpm,
@@ -129,12 +145,15 @@ function captureLook() {
     masterBlackout: state.masterBlackout,
     strobeSpeed: state.strobeSpeed,
     strobeFunction: state.strobeFunction,
-    energyOverride: state.energyOverride,
+    energyOverride: state.energyOverride === HOLD_STROBE ? null : state.energyOverride,
     pixelMap: state.pixelMap,
     pixelPattern: state.pixelPattern,
     panelPattern: state.panelPattern,
     fixtureIds: state.fixtures.map((f) => f.id),
     overrides: state.fixtures.map((f) => (f.override ? { ...f.override } : null)),
+    paletteOverride: state.paletteOverride ? state.paletteOverride.map(toHex) : null,
+    audioMode: settings.get('audio.mode'),
+    strobe: settings.group('strobe'),
   };
 }
 
@@ -147,19 +166,43 @@ function captureLook() {
  * them — a cue is the whole rig, not a partial edit.
  */
 function recallLook(look: Look): void {
-  const { fixtureIds, overrides, bpm, ...rest } = look;
+  const { fixtureIds, overrides, bpm, audioMode, strobe, ...rest } = look;
   const patch: typeof rest & { bpm?: number } = {
     ...rest, pixelPattern: rest.pixelPattern ?? null, panelPattern: rest.panelPattern ?? null,
+    // A cue saved before the override recalls with none, as it was captured:
+    // an override left on would hide the colour slots it saved.
+    paletteOverride: rest.paletteOverride ?? null,
+    // Saved with the strobe latched, before cues left it out: the look comes
+    // back, the strobe does not.
+    energyOverride: rest.energyOverride === HOLD_STROBE ? null : rest.energyOverride,
   };
   // The saved tempo is for a set with no music to follow. While the clock is
   // locked to the song playing, the song's tempo stands: a cue is a look, and
   // recalling one is not the operator taking the tempo back by hand.
   if (conductor.status().source === 'tap') patch.bpm = bpm;
-  applyPatch(patch);
+  // Its settings are saved once the look is known to go ahead and before it
+  // does: a refused look leaves them, and a save that fails leaves the look.
+  const saved: SettingsPatch = {
+    ...(audioMode !== undefined ? { audio: { mode: audioMode } } : {}),
+    ...(strobe !== undefined ? { strobe } : {}),
+  };
+  applyPatch(patch, { beforeCommit: () => saveSettings(saved) });
 
   const byId = new Map<number, OverrideInput | null>((overrides || [])
     .map((override, index) => [fixtureIds?.[index] ?? index, override]));
   for (const fixture of state.fixtures) applyOverride(fixture.id, byId.get(fixture.id) || null);
+}
+
+/** A cue's settings, saved; a disk that will not take them is the server's fault, not the cue's. */
+function saveSettings(patch: SettingsPatch): void {
+  if (!Object.keys(patch).length) return;
+  try {
+    settings.update(patch);
+  } catch (err) {
+    if (statusOf(err)) throw err;
+    console.warn(`[cues] could not save the cue's settings: ${messageOf(err)}`);
+    throw new HttpError(500, `Could not save the cue's settings: ${messageOf(err)}`);
+  }
 }
 
 class CueStore extends JsonStore {

@@ -35,6 +35,25 @@ test('a tempo change keeps the phase: it speeds up from here, not from zero', ()
   assert.ok(close(r.c.now().beatPos, 3));
 });
 
+test('the free clock never hands out a tempo of zero: a typed value is held to 20..300, junk is ignored', () => {
+  const r = rig({ bpm: 120 });
+  for (const [typed, expected] of [[0, 20], [-5, 20], [1e9, 300], ['0', 20], [NaN, 120], [Infinity, 120], ['fast', 120]]) {
+    r.c.setBpm(typed);
+    const reading = r.c.now();
+    assert.strictEqual(reading.bpm, expected, `setBpm(${String(typed)})`);
+    assert.strictEqual(reading.source, 'tap');
+    r.c.setBpm(120);
+  }
+  // A locked source handing back to the free clock passes through the same floor.
+  const grid = makeGrid([0, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12]);
+  let pos = 50;
+  r.c.setTrack({ key: 'burst', grid, positionMs: () => pos });
+  for (let i = 0; i < 4; i++) { r.advance(25); pos += 25; r.c.now(); }
+  assert.ok(r.c.now().bpm > 0 && Number.isFinite(r.c.now().bpm), 'a 20 ms grid reads as a finite positive tempo');
+  r.c.clearTrack({ key: 'burst' });
+  assert.strictEqual(r.c.now().bpm, 300, 'carried on by the free clock, held to its ceiling');
+});
+
 test('a tap lands a beat on the tap', () => {
   const r = rig({ bpm: 120 });
   r.c.now();
@@ -263,4 +282,124 @@ test('the auto show\'s reading says which beat its scene was scheduled on', () =
   assert.ok(close(reading.anchorBeat, 8), 'for re-anchoring after a seek');
   r.c.setAutoSource(() => ({ grid, positionMs: 60000 * 10.4 / 128 }));
   assert.strictEqual(r.c.now().anchorBeat, undefined, 'and nothing when it does not know');
+});
+
+// ── The phase, for other screens ────────────────────────────────────────────
+// Visuals that keep their own beat read where the clock's is, with its epoch,
+// between the engine's frames: exactly where the next reading will find it,
+// and without moving anything the engine reads next.
+
+test('the phase is where the next reading will find the beat, and moves nothing', () => {
+  const r = rig({ bpm: 90 });
+  const grid = grid128();
+  let showRunning = true;
+  let pos = 60000 * 16 / 128;
+  r.c.setAutoSource(() => (showRunning ? { grid, positionMs: pos } : null));
+  const locked = r.c.now();
+
+  r.advance(10); pos += 10;
+  const between = r.c.phase();
+  assert.ok(close(between.beatPos, 16 + 10 * 128 / 60000), `mid-frame: ${between.beatPos}`);
+  assert.strictEqual(between.epoch, locked.epoch);
+
+  // The show stops between frames: the next reading carries on from where it
+  // was, and so does the phase, rather than reading the idle free clock.
+  showRunning = false;
+  r.advance(10);
+  const handing = r.c.phase();
+  r.c.phase();
+  const next = r.c.now();
+  assert.deepStrictEqual([handing.beatPos, handing.epoch], [next.beatPos, next.epoch]);
+  assert.strictEqual(next.source, 'tap', 'the hand-over is the engine\'s to make');
+
+  // A seek between frames: the jump and the epoch it will bring.
+  r.advance(23);
+  r.c.now();
+  r.c.setTrack({ key: 'song', grid, positionMs: () => 60000 * 64 / 128 });
+  const seeked = r.c.phase();
+  assert.ok(close(seeked.beatPos, 64));
+  assert.strictEqual(seeked.epoch, next.epoch + 1);
+  assert.strictEqual(r.c.now().epoch, seeked.epoch);
+});
+
+test('a tempo change keeps the phase moving forward, within its epoch', () => {
+  const r = rig({ bpm: 120 });
+  r.c.now();
+  const seen = [];
+  for (const [ms, change] of [[300, () => r.c.setBpm(60)], [200, () => r.c.setBpm(174)], [250, () => r.c.tap()],
+    [120, () => r.c.setBpm(90)], [400, null]]) {
+    for (let i = 0; i < 4; i++) {
+      r.advance(ms / 8);
+      seen.push(r.c.phase());
+      if (i % 2) r.c.now();
+    }
+    if (change) change();
+    seen.push(r.c.phase());
+  }
+  for (let i = 1; i < seen.length; i++) {
+    assert.ok(seen[i].beatPos >= seen[i - 1].beatPos, `step ${i}: ${seen[i - 1].beatPos} → ${seen[i].beatPos}`);
+    assert.strictEqual(seen[i].epoch, seen[0].epoch, `step ${i}: same epoch`);
+  }
+});
+
+test('a stopped free clock has a phase that stands still', () => {
+  const r = rig({ bpm: 120 });
+  r.c.now();
+  r.advance(1000);
+  r.c.setRunning(false);
+  const stopped = r.c.phase();
+  r.advance(5000);
+  assert.deepStrictEqual(r.c.phase(), stopped);
+  assert.ok(close(stopped.beatPos, 2));
+});
+
+// A source that stops answering hands over at the engine's next reading. A
+// tempo, a tap or a stop that comes in before that reading starts from where
+// the clock carries on, and the hand-over does not then undo it.
+test('a tempo, a tap or a stop in the frame a source stops answering is kept', () => {
+  for (const [what, act, want] of [
+    ['a typed tempo', (c) => c.setBpm(100), (reading, held) => close(reading.bpm, 100) && close(reading.beatPos, held + 18 * 100 / 60000, 1e-9)],
+    ['a tap', (c) => c.tap(), (reading, held) => close(reading.bpm, 128) && close(reading.beatPos, Math.floor(held) + 1 + 18 * 128 / 60000, 1e-9)],
+    ['a stop', (c) => c.setRunning(false), (reading, held) => close(reading.beatPos, held, 1e-9)],
+  ]) {
+    const r = rig({ bpm: 90 });
+    let on = true;
+    const start = r.t;
+    r.c.setLiveSource(() => (on ? { beatPos: 100 + ((r.t - start) / 60000) * 128, bpm: 128, key: 1 } : null));
+    const reported = [];
+    r.c.onTempo((bpm) => reported.push(bpm));
+    r.c.now();
+    r.advance(23);
+    const before = r.c.now();
+    on = false;
+    r.advance(5);
+    const held = before.beatPos + 5 * 128 / 60000;
+    act(r.c);
+    r.advance(18);
+    const after = r.c.now();
+    assert.strictEqual(after.source, 'tap', what);
+    assert.ok(want(after, held), `${what}: ${after.beatPos} at ${after.bpm} BPM, the music was at ${held}`);
+    assert.strictEqual(after.epoch, before.epoch, `${what}: no new epoch`);
+    assert.strictEqual(reported.at(-1), after.bpm, `${what}: the read-out is the tempo the clock runs at`);
+  }
+});
+
+// The MIDI clock reads between the engine's frames: in the frame a source
+// stops, it must find the beat where the engine will, not on the idle free
+// clock, or the pulses jump away and back.
+test('a peek in the frame a source stops finds the beat where the next reading will', () => {
+  const r = rig({ bpm: 120 });
+  r.advance(100000);                       // the idle free clock wanders on
+  let on = true;
+  const start = r.t;
+  r.c.setLiveSource(() => (on ? { beatPos: 7 + ((r.t - start) / 60000) * 128, bpm: 128, key: 1 } : null));
+  r.c.now();
+  r.advance(23);
+  r.c.now();
+  on = false;
+  r.advance(4);
+  const peeked = r.c.peek();
+  assert.deepStrictEqual({ source: peeked.source, bpm: peeked.bpm }, { source: 'tap', bpm: 128 });
+  assert.strictEqual(peeked.beatPos, r.c.phase().beatPos);
+  assert.strictEqual(peeked.beatPos, r.c.now().beatPos, 'where the engine finds it');
 });

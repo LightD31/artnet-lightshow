@@ -1,9 +1,11 @@
-import { state, getFixture, setDefaultUniverse } from './state.ts';
-import { beginFade } from './engine.ts';
+import { state, getFixture, setDefaultUniverse, latchEnergy, reconcileFreeClock } from './state.ts';
+import { beginFade, resolveEffect } from './engine.ts';
 import { conductor } from './conductor.ts';
+import { safety } from './safety.ts';
 import { anchorStep } from '../shared/beat-clock.ts';
+import { parseHex } from '../shared/effects/palette.ts';
 import { patchSchema, overrideSchema, validate } from './validation.ts';
-import { STROBE_FUNCTIONS, ENERGY_EFFECTS } from './presets.ts';
+import { STROBE_FUNCTIONS } from './presets.ts';
 import { paletteSlots } from './palettes.ts';
 import type { Patch } from './validation.ts';
 import type { SettingsPatch } from './settings.ts';
@@ -18,6 +20,8 @@ export interface PatchHooks {
   autoPrefetchDepth(value: number): void;
   broadcast(): void;
   showChanged(): void;
+  /** A hand on the master or the tempo (not the sequence's own change): the sequencer ends that automation. */
+  handEdit(edit: { masterDimmer: boolean; bpm: boolean }): void;
 }
 
 const COLOR_SLOTS = ['colorA', 'colorB', 'colorC', 'colorD'] as const;
@@ -36,6 +40,7 @@ const hooks: PatchHooks = {
   // here, because the show store reads this module's state and requiring it
   // back would be a cycle.
   showChanged: () => {},
+  handEdit: () => {},
 };
 
 function setHooks(partial: Partial<PatchHooks>): void { Object.assign(hooks, partial); }
@@ -68,30 +73,69 @@ function flushPendingPersist(): void {
   persist({ auto: { syncOffsetMs: state.autoSyncOffsetMs } });
 }
 
-function applyPatch(rawData: unknown): Patch {
+/** What applyPatch does between deciding a patch may go ahead and applying it. */
+export interface PatchOptions {
+  /**
+   * Run once the patch is validated and admitted, before anything changes: a
+   * throw refuses the whole patch. A cue saves its settings here, so a write
+   * that fails leaves the look as it was.
+   */
+  beforeCommit?: () => void;
+  /**
+   * 'sequence': the sequencer's own command or automation sample. It is no
+   * hand on the master or the tempo, so it ends no automation; and the
+   * sequencer, changing them a frame at a time, broadcasts on its own.
+   */
+  origin?: 'hand' | 'sequence';
+}
+
+/**
+ * One entry for every look change — REST, the socket, cues, the auto show,
+ * MIDI. The patch is validated and, when it asks for an effect, admitted
+ * before anything moves: an effect that waits for the photosensitivity
+ * acknowledgement refuses the whole patch (409), its tempo, master and fade
+ * included. A pattern id nothing knows is still taken, and plays nothing.
+ */
+function applyPatch(rawData: unknown, { beforeCommit, origin = 'hand' }: PatchOptions = {}): Patch {
   // Validate at the boundary. Throws on invalid input.
   const data = validate(patchSchema, rawData || {}, 'patch');
+  // Naming the pattern is starting it, even the one already on stage; a
+  // fader moved under it is not.
+  if (data.pattern !== undefined) {
+    const effect = resolveEffect(data.pattern);
+    if (effect) safety.requireAcknowledged(effect);
+  }
+  if (beforeCommit) beforeCommit();
 
   // A new look fades if it asks to and cuts if it does not — and a cut
   // cancels a fade still running, so a drop lands hard even mid-breakdown-fade.
   const changesLook = data.pattern !== undefined || data.palette !== undefined
     || data.split !== undefined || data.pixelMap !== undefined || data.pixelPattern !== undefined
-    || data.panelPattern !== undefined || COLOR_SLOTS.some((slot) => data[slot] !== undefined);
+    || data.panelPattern !== undefined || data.paletteOverride !== undefined
+    || COLOR_SLOTS.some((slot) => data[slot] !== undefined);
   if (data.fadeMs !== undefined || changesLook) beginFade(data.fadeMs || 0);
 
+  // Before the tempo: switching to 'manual' hands the free clock the tempo the
+  // music had, and a BPM in the same patch is meant to replace that one.
+  if (data.tempoMode !== undefined && data.tempoMode !== state.tempoMode) {
+    state.tempoMode = data.tempoMode;
+    conductor.setTempoMode(data.tempoMode);
+    persist({ clock: { tempoMode: data.tempoMode } });
+  }
   if (data.bpm !== undefined) {
     // To a hundredth: finer than any source measures, and 123.7 + 1 from a
     // nudge lands on 124.7 rather than on float noise.
     data.bpm = Math.round(data.bpm * 100) / 100;
-    state.bpm = data.bpm;
     // The free clock's tempo, from the beat it is on now. A tempo typed or
     // nudged by hand also takes the clock back from a locked track; the auto
-    // show's own tempo marks do not need to, since its grid outranks it.
-    conductor.setBpm(data.bpm, { manual: data.anchorMs === undefined });
+    // show's own tempo marks do not need to, since its grid outranks it, and
+    // the read-out shows a mark only when the clock took it (conductor.ts).
+    if (conductor.setBpm(data.bpm, { manual: data.anchorMs === undefined })) state.bpm = data.bpm;
   }
   if (data.running !== undefined) {
     state.running = data.running;
-    conductor.setRunning(data.running);
+    // Stopped, the free clock stands still — unless a voice still plays on it.
+    reconcileFreeClock(true);
   }
 
   // A new pattern or division counts its steps from here — from fixture one on
@@ -143,6 +187,10 @@ function applyPatch(rawData: unknown): Patch {
     if (!paletteApplied && value !== state[slot]) state.palette = null;
     state[slot] = value;
   }
+  // Parsed once here: the renderer takes colours, the wire and cues hex.
+  if (data.paletteOverride !== undefined) {
+    state.paletteOverride = data.paletteOverride === null ? null : data.paletteOverride.map(parseHex);
+  }
   if (data.split !== undefined) state.split = data.split;
   if (data.pixelMap !== undefined) state.pixelMap = data.pixelMap;
   if (data.pixelPattern !== undefined) state.pixelPattern = data.pixelPattern;
@@ -169,10 +217,9 @@ function applyPatch(rawData: unknown): Patch {
     state.strobeFunction = STROBE_FUNCTIONS.some((f) => f.id === data.strobeFunction)
       ? data.strobeFunction : 'standard';
   }
-  if (data.energyOverride !== undefined) {
-    state.energyOverride = data.energyOverride && ENERGY_EFFECTS.some((e) => e.id === data.energyOverride)
-      ? data.energyOverride : null;
-  }
+  // A voice now (state.ts): latched over the look until a patch takes it off.
+  // An id that is no energy effect takes the latched one off, as it always has.
+  if (data.energyOverride !== undefined) latchEnergy(data.energyOverride);
   if (data.artnet !== undefined) {
     // The universe field goes through setDefaultUniverse so fixtures sitting on
     // the rig's default universe move with it, as they did when there was only
@@ -220,6 +267,11 @@ function applyPatch(rawData: unknown): Patch {
     hooks.autoPrefetchDepth(data.autoPrefetchDepth);
   }
 
+  if (origin === 'sequence') return data;
+  // A tempo the auto show schedules (anchorMs) is the music's, not a hand's.
+  const masterDimmer = data.masterDimmer !== undefined;
+  const bpm = data.bpm !== undefined && data.anchorMs === undefined;
+  if (masterDimmer || bpm) hooks.handEdit({ masterDimmer, bpm });
   hooks.broadcast();
   return data;
 }
@@ -278,6 +330,7 @@ function processTap(): void {
     // A tenth of a BPM: finer than a hand can tap, coarse enough to read.
     state.bpm = Math.max(20, Math.min(300, Math.round(600000 / avg) / 10));
     conductor.setBpm(state.bpm);
+    hooks.handEdit({ masterDimmer: false, bpm: true });
   }
   // A tap *is* a beat: the clock jumps to the next whole beat, so the step
   // lands on the tap, and a track the clock was locked to hands the tempo over.

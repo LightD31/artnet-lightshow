@@ -1,5 +1,5 @@
 import { colourMixer } from './color.ts';
-import { HUE_PULSE_MS, HUE_PULSE_FLOOR, huePulseLevel } from './look-math.ts';
+import { HOLD_STROBE_MAX_HZ, HUE_PULSE_MS, HUE_PULSE_FLOOR, huePulseLevel } from './look-math.ts';
 import { roomOf, xOf, yOf } from './room.ts';
 import type { StagePlan } from './rig.ts';
 import type { Colour, Expression, PulseReading } from '../types/rig.ts';
@@ -26,6 +26,7 @@ import type { Colour, Expression, PulseReading } from '../types/rig.ts';
 //                       group, when the rig is placed (shared/rig.ts) — what
 //                       the party effects travel the room by; null otherwise
 //   ctx.noFlash       : which slots are Hue lamps, never flashed, or null
+//   ctx.hueStrobe     : 'flash' flashes those as well; 'pulse' or absent pulses them
 //   ctx.write(i, color, dim, strobe) — sets slot i's render colour
 //
 // 'fade' and 'hit' are whole-rig envelopes: the engine and the preview set
@@ -57,6 +58,11 @@ export interface PatternContext {
   plan?: StagePlan | null;
   /** The slots that are Hue lamps (or follow one) and so are never flashed, or null. */
   noFlash?: readonly boolean[] | null;
+  /**
+   * How those lamps take a flash: 'pulse' falls to a floor (huePulseLevel),
+   * 'flash' flashes them as any lamp. Absent is 'pulse', as before the setting.
+   */
+  hueStrobe?: 'flash' | 'pulse';
   write(i: number, colour: Colour, dim: number, strobe: number): void;
 }
 
@@ -1035,8 +1041,8 @@ function kitFromTheClock(ctx: PatternContext): { kick: number; snare: number; ha
 // lamp is flashed more than five times a second; a Hue lamp is never flashed
 // at all, but takes each flash as the colour at full falling to a floor.
 
-/** No lamp flashes faster than this, whatever the division (the party apps' cap). */
-const MAX_LAMP_FLASH_HZ = 5;
+/** No lamp flashes faster than this, whatever the division (the party apps' cap); the hold strobe's cap, one constant. */
+const MAX_LAMP_FLASH_HZ = HOLD_STROBE_MAX_HZ;
 /** What the lamps a backlit effect is not on are parked at, in colour B. */
 const BACKLIGHT = 120;
 
@@ -1094,8 +1100,8 @@ function lift(bed: number, level: number): number {
 // bridge can follow.
 const huePulse = huePulseLevel;
 
-/** Is slot i a Hue lamp, never flashed. */
-const isHueSlot = (ctx: PatternContext, i: number): boolean => !!ctx.noFlash && !!ctx.noFlash[i];
+/** Is slot i a Hue lamp the flash looks pulse; under 'flash' it is flashed as any other. */
+const isHueSlot = (ctx: PatternContext, i: number): boolean => ctx.hueStrobe !== 'flash' && !!ctx.noFlash && !!ctx.noFlash[i];
 
 /**
  * The steps a flash grid has to space its flashes by so that no lamp flashes

@@ -1,6 +1,6 @@
 import { computed, signal } from '@preact/signals';
 import { io } from 'socket.io-client';
-import { createHoldControl } from './hold-control.js';
+import { createVoiceHolds } from './hold-control.js';
 import { timelinePosition } from './timeline-state.js';
 import { createStore } from './store.js';
 import { decodeDmxFrame } from '../src/shared/dmx-frame.ts';
@@ -88,7 +88,7 @@ export const socket = io({
 
 // Created before socket listeners are registered so a very fast disconnect
 // during page startup cannot hit a temporal-dead-zone reference.
-export const energyHold = createHoldControl((payload) => emitLive('energy-hold', payload));
+export const voiceHolds = createVoiceHolds((payload) => emitLive('voice-hold', payload));
 
 // Whether this page has ever had a live socket, which is what separates "not up
 // yet" from "we lost it". Kept apart from connectionSig, which is already
@@ -100,10 +100,11 @@ socket.on('connect', () => {
   connectedSig.value = true;
   connectionSig.value = { status: 'online' };
   auth.connected();                       // clears the token prompt, if it was up
+  loadLibrary();
 });
 
 socket.on('disconnect', () => {
-  energyHold.release();
+  voiceHolds.releaseAll();
   freezePosition();
   connectedSig.value = false;
   connectionSig.value = { status: 'reconnecting' };
@@ -148,10 +149,13 @@ socket.on('patch', (patch) => {
     socket.emit('sync', (snapshot) => {
       resyncing = false;
       if (snapshot && snapshot.state) store.applySnapshot(snapshot);
+      // A library change may be among what was missed.
+      loadLibrary();
     });
     return;
   }
   if (result === 'ok' && patch.set && patch.set.autoShow && !patch.set.autoShow.running) freezePosition();
+  if (result === 'ok' && patch.d === 'library') loadLibrary();
 });
 
 // DMX as bytes (src/shared/dmx-frame.ts), while subscribed.
@@ -173,6 +177,25 @@ export function wantDmx() {
   };
 }
 socket.on('connect', () => { if (dmxWanted > 0) socket.emit('subscribe', ['dmx']); });
+
+// The audio topic: what the room hears, about 30 times a second, sent only to
+// pages that subscribe. Counted like the DMX feed; null while nobody listens.
+export const audioFeedSig = signal(null);
+socket.on('audio', (feed) => { audioFeedSig.value = feed; });
+let audioWanted = 0;
+export function wantAudio() {
+  if (audioWanted++ === 0 && socket.connected) socket.emit('subscribe', ['audio']);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    if (--audioWanted === 0) {
+      if (socket.connected) socket.emit('unsubscribe', ['audio']);
+      audioFeedSig.value = null;
+    }
+  };
+}
+socket.on('connect', () => { if (audioWanted > 0) socket.emit('subscribe', ['audio']); });
 socket.on('auto-position', ({ positionMs, running, advancing, revision }) => {
   if (!Number.isFinite(positionMs)) return;
   const currentRevision = stateSig.value.autoShow?.timelineRevision;
@@ -194,7 +217,9 @@ export { toast };
 //
 // The messages are written for a person (they name the fixture and say what the
 // limit is), so they go out as-is.
-socket.on('error-msg', ({ message }) => {
+socket.on('error-msg', ({ source, message, token }) => {
+  // A refused hold must not stay lit and renewing.
+  if (source === 'voice-hold') voiceHolds.refuse(token);
   if (message) toast.error(message);
 });
 
@@ -224,6 +249,31 @@ export async function api(path, init) {
     toast.error(`Could not reach the server: ${err.message}`);
     return { ok: false, error: err.message };
   }
+}
+
+// The effect library: the built-in presets with their specs, the presets and
+// palettes saved on this server, and each family's recommended settings. The
+// live state carries only summaries of the saved ones (`effects` and
+// `userPalettes`, domain `library`), so the specs come from GET /api/effects:
+// on connect, and again whenever that domain changes.
+export const librarySig = signal({ status: 'idle', families: [], builtin: [], user: [], palettes: { builtin: [], user: [] } });
+
+let libraryLoads = 0;
+export async function loadLibrary() {
+  const load = ++libraryLoads;
+  const res = await api('/api/effects');
+  // Two loads in flight answer in either order; only the latest may land.
+  if (load !== libraryLoads) return res;
+  librarySig.value = res.ok
+    ? { status: 'ready', families: res.families || [], builtin: res.builtin || [], user: res.user || [],
+      palettes: { builtin: [], user: [], ...(res.palettes || {}) } }
+    : { ...librarySig.value, status: 'error' };
+  return res;
+}
+
+/** Change the library on this page the moment a save answers, ahead of the broadcast. */
+export function patchLibrary(fn) {
+  librarySig.value = fn(librarySig.value);
 }
 
 // Live actions must never queue up for replay after reconnecting.

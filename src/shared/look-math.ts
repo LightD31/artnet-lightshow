@@ -81,18 +81,19 @@ function resolveEnergyOverride(id: string | null | undefined, colA: Colour | nul
 // the rig is playing. Not a strobe channel's blur but a run of hard flashes
 // the running look can be seen between, on the beat grid — the finest
 // division of the beat that stays under five flashes a second — each a colour
-// of the look at full for 80 ms, then black as long again, then the running
-// look shows through until the next. The flash limit still holds the rig as
-// a whole to its three a second. A Hue lamp is never flashed: it takes each
-// flash as the colour at full falling to a floor over 200 ms and held there
-// until the next, as the apps fade a hit lamp back.
+// of the look at full for 100 ms, then black as long again (Hue Dynamics'
+// manual strobe timing), then the running look shows through until the
+// next. The flash limit still holds the rig as a whole to its three a
+// second. A Hue lamp is never flashed: it takes each flash as the colour at
+// full falling to a floor over 200 ms and held there until the next, as the
+// apps fade a hit lamp back.
 
 /** The hold strobe's id among the energy effects (server/presets.ts). */
 const HOLD_STROBE = 'palette-strobe';
 /** No lamp flashes faster than this, however fast the music. */
 const HOLD_STROBE_MAX_HZ = 5;
-const HOLD_FLASH_MS = 80;
-const HOLD_BLACK_MS = 80;
+const HOLD_FLASH_MS = 100;
+const HOLD_BLACK_MS = 100;
 /** A Hue lamp takes a flash as the colour at full, falling to the floor over this long… */
 const HUE_PULSE_MS = 200;
 /** …and holds this, of 255, until its next flash: the fade brightness of the party apps. */
@@ -106,16 +107,33 @@ export interface HoldFlash {
 }
 
 /**
- * The hold strobe's flash at a beat position: on the finest power-of-two
- * division of the beat that flashes no faster than HOLD_STROBE_MAX_HZ, so
- * every flash lands on the grid. Without a tempo, 120 BPM.
+ * Flashes per beat: the finest power-of-two division of the beat that flashes
+ * no faster than `maxHz`, itself never above HOLD_STROBE_MAX_HZ. Without a
+ * tempo, 120 BPM.
  */
-function holdStrobeFlash(beatPos: number, bpm: number | null | undefined): HoldFlash {
-  const tempo = bpm && bpm > 0 ? bpm : 120;
+/** A tempo the arithmetic can use: `bpm` when finite and positive, else the party apps' 120. */
+function tempoOf(bpm: number | null | undefined): number {
+  return typeof bpm === 'number' && Number.isFinite(bpm) && bpm > 0 ? bpm : 120;
+}
+
+function holdStrobeDivision(bpm: number | null | undefined, maxHz: number = HOLD_STROBE_MAX_HZ): number {
+  const tempo = tempoOf(bpm);
+  const cap = Number.isFinite(maxHz) && maxHz > 0 ? Math.min(maxHz, HOLD_STROBE_MAX_HZ) : HOLD_STROBE_MAX_HZ;
   const rate = (perBeat: number) => (tempo / 60) * perBeat;
   let perBeat = 1;
-  while (rate(perBeat * 2) <= HOLD_STROBE_MAX_HZ) perBeat *= 2;
-  while (perBeat > 1 / 16 && rate(perBeat) > HOLD_STROBE_MAX_HZ) perBeat /= 2;
+  while (rate(perBeat * 2) <= cap) perBeat *= 2;
+  while (perBeat > 1 / 16 && rate(perBeat) > cap) perBeat /= 2;
+  return perBeat;
+}
+
+/**
+ * The hold strobe's flash at a beat position, on holdStrobeDivision's grid so
+ * every flash lands on it. The strobe kind passes its configured rate; the
+ * hold strobe keeps five a second.
+ */
+function holdStrobeFlash(beatPos: number, bpm: number | null | undefined, maxHz: number = HOLD_STROBE_MAX_HZ): HoldFlash {
+  const tempo = tempoOf(bpm);
+  const perBeat = holdStrobeDivision(tempo, maxHz);
   const periodMs = 60000 / tempo / perBeat;
   const pos = beatPos * perBeat;
   const index = Math.floor(pos);
@@ -293,9 +311,11 @@ export {
   HOLD_BLACK_MS,
   HUE_PULSE_MS,
   HUE_PULSE_FLOOR,
+  holdStrobeDivision,
   holdStrobeFlash,
   holdStrobeLook,
   huePulseLevel,
+  tempoOf,
   fadeBrightness,
   hitBrightness,
   grooveBrightness,

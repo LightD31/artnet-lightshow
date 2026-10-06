@@ -1,11 +1,14 @@
 import net from 'node:net';
 import { z } from 'zod';
-import { SYNC_OFFSET_LIMIT_MS } from './presets.ts';
+import { SYNC_OFFSET_LIMIT_MS, TEMPO_MODES } from './presets.ts';
 import { HttpError, messageOf } from '../errors.ts';
 import { configFile } from './config-dir.ts';
 import { isLoopback } from './loopback.ts';
 import { JsonStore } from './json-store.ts';
 import { HUE_BRIDGE_ID_RE } from '../shared/placement.ts';
+import { HD_MASTER_DEFAULTS } from '../shared/effects/types.ts';
+import { STROBE_DEFAULTS, STROBE_PARAMS_SCHEMA } from '../shared/effects/strobe.ts';
+import { hexColour } from './validation.ts';
 
 /**
  * Persisted configuration, edited in the app's Rig, Sources and Settings views.
@@ -97,6 +100,10 @@ const DEFAULTS: Settings = {
     // by eye against the sync test; 0 sends everything the moment it renders.
     // One delay for every bridge: they all sit behind the same kind of hop.
     latencyMs: 0,
+    // How a Hue lamp takes a flash: 'flash' hard on and off as far as the
+    // bridge follows, 'pulse' at full falling to a floor over 200 ms, as the
+    // party apps fade a hit lamp back.
+    strobe: 'flash',
   },
   midi: {
     input: '',
@@ -160,11 +167,43 @@ const DEFAULTS: Settings = {
     // track on its own, as if it were the first of the night.
     setMemory: true,
   },
+  clock: {
+    // Automatic tempo match: 'auto' follows the music (the auto show, a deck,
+    // the track, the live input); 'manual' keeps the tempo the operator taps
+    // or types, bar the running auto show's grid (conductor.ts). Kept so the
+    // choice survives a restart.
+    tempoMode: 'auto',
+  },
+  // How the party effects take the music (audio-features.ts). 'off' runs
+  // them on their loops, 'tempo' on the beat alone, 'reactive' lets what the
+  // live input hears drive them. Hue Dynamics' master shapes its Party levels
+  // and gates; Light DJ's trigger places its loud and soft beats while no
+  // playing Visualizer sets its own.
+  audio: {
+    mode: 'tempo',
+    master: { ...HD_MASTER_DEFAULTS },
+    ldjTrigger: 0.3,
+  },
   safety: {
     // Hold the rig to three large-area flashes a second, the photosensitivity
     // threshold broadcast and web guidance share (src/server/flash-limit.ts).
     // Off by default: most of what a party rig is for is above it.
     flashLimit: false,
+    // Hue Dynamics' limit on each lamp's bright rises inside its own effects:
+    // a second one within this many ms stays dark. 0 turns it off.
+    hdFlashIntervalMs: 350,
+    // The strobe and every effect that flashes faster than the photosensitivity
+    // threshold render nothing until the operator says the room may see them.
+    photosensitivityAcknowledged: false,
+    // A latched strobe is cut after this long, whoever latched it.
+    strobeMaxLatchSec: 60,
+  },
+  // The manual strobe: two flashes a second on the beat clock (Hue Dynamics
+  // keeps the wall clock), the look between them, 100 ms on and 100 ms black
+  // as Hue Dynamics flashes, in white. A cue keeps these, never whether it is on.
+  strobe: {
+    ...STROBE_DEFAULTS,
+    palette: ['#FFFFFF'],
   },
   // Whether anything leaves the machine (armed.ts). Stored so the Show
   // section and the REST routes share one switch; never honoured at start —
@@ -232,6 +271,13 @@ const LEGACY_HUE_BRIDGE_ID = 'bridge-1';
 // The scalar form hue took before hue.bridges: one bridge, its fields at the
 // top of the group. Migrated on load; refused on PUT, with a pointer.
 const LEGACY_HUE_KEYS = ['enabled', 'host', 'username', 'clientKey', 'applicationId', 'entertainmentId'] as const;
+
+// Hue Dynamics' music modes, as `audio.mode` takes them.
+const AUDIO_MODES = ['off', 'tempo', 'reactive'] as const;
+const fraction = z.number().min(0).max(1);
+// Hue Dynamics' own limits: two seconds of attack, five of release.
+const attackMs = z.number().int().min(0).max(2000);
+const releaseMs = z.number().int().min(0).max(5000);
 
 
 // Read once at boot, before anything is listening. Changing these persists
@@ -321,6 +367,7 @@ const schema = z.object({
     // Half a second is far past any bridge; anything that long is a setting
     // typed in the wrong unit.
     latencyMs: z.number().int().min(0).max(500),
+    strobe: z.enum(['flash', 'pulse']),
   }).strict(),
   midi: z.object({
     input: z.string().max(256),
@@ -357,8 +404,28 @@ const schema = z.object({
     syncOffsetMs: z.number().int().min(-SYNC_OFFSET_LIMIT_MS).max(SYNC_OFFSET_LIMIT_MS),
     setMemory: z.boolean(),
   }).strict(),
+  clock: z.object({
+    tempoMode: z.enum(TEMPO_MODES),
+  }).strict(),
+  audio: z.object({
+    mode: z.enum(AUDIO_MODES),
+    master: z.object({
+      sensitivity: fraction, smoothing: fraction, attackMs, releaseMs,
+      threshold: fraction, reactiveDepth: fraction, brightness: fraction,
+    }).strict(),
+    ldjTrigger: fraction,
+  }).strict(),
   safety: z.object({
     flashLimit: z.boolean(),
+    // No upper bounds of their own: the apps state none.
+    hdFlashIntervalMs: z.number().finite().min(0),
+    photosensitivityAcknowledged: z.boolean(),
+    strobeMaxLatchSec: z.number().finite().positive(),
+  }).strict(),
+  // The kind's own parameters, and its colours beside them: a palette of the
+  // strobe's, which the voice plays as its effect's palette.
+  strobe: STROBE_PARAMS_SCHEMA.extend({
+    palette: z.array(hexColour).min(1).max(6),
   }).strict(),
   outputs: z.object({
     armed: z.boolean(),

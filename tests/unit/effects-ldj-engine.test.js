@@ -393,3 +393,133 @@ test('fixed-palette chronological replay matches dense frames and preserves expl
   assert.deepStrictEqual(a, b);
   assert.ok(a.some((slot) => slot.colour.r > 0 && slot.colour.b > 0));
 });
+
+test('a finite row calls back its count, then keeps fading and holds without new callbacks', () => {
+  const calls = [];
+  registerKind(makeLdjKind('Finite', { cadence: 0.25, step: (ctx) => {
+    calls.push([ctx.iter, ctx.nowMs]);
+    ctx.lamps.set(0, ctx.p, 1, { kind: 'fade', beats: 0.5 });
+    ctx.refresh(0);
+  } }));
+  const room = roomAt([[0.5, 0.5]]), s = new EffectStepper();
+  const inst = { ...instance('ldj.Finite'), spec: validateSpec({ kind: 'ldj.Finite', params: { cadence: 0.25, iterations: 2 } }) };
+  const levels = [];
+  for (let ms = 0; ms <= 1000; ms += 1000 / 44) levels.push(draw(inst, frame({ beatPos: ms / 500, nowMs: ms }), room, s)[0].level);
+  assert.deepStrictEqual(calls.map(([iter]) => iter), [0, 1]);
+  assert.ok(calls[1][1] >= 125 && calls[1][1] < 125 + 1000 / 44);
+  assert.ok(levels.at(-1) === 0 && levels.slice(10, 14).some((level) => level > 0 && level < 1), 'the last fade still runs out');
+  // Unlimited rows keep their first-floor start: a cold render calls back the current step only.
+  calls.length = 0;
+  draw(instance('ldj.Finite'), frame({ beatPos: 2.3, nowMs: 1150 }), room, new EffectStepper());
+  assert.deepStrictEqual(calls, [[9, 1125]]);
+});
+
+test('a cold finite row replays its callbacks in order and matches dense rendering, before and after its count', () => {
+  const calls = [];
+  registerKind(makeLdjKind('FiniteFlip', { cadence: 0.9, channels: 1, step: (ctx) => {
+    calls.push([ctx.iter, ctx.nowMs]);
+    ctx.lamps.set(0, ctx.colour(ctx.iter % 2), 1, { kind: 'instant' });
+    ctx.lamps.set(1, ctx.p, 1, { kind: 'fade', beats: 1 });
+  } }));
+  const room = roomAt([[0, 0.5], [1, 0.5]]);
+  const spec = validateSpec({ kind: 'ldj.FiniteFlip', params: { cadence: 0.9, iterations: 4 } });
+  const inst = { ...instance('ldj.FiniteFlip'), spec, anchorBeat: 1, startedAtMs: 500 };
+  for (const beat of [2.5, 3.3, 4.5, 5.3, 9]) {
+    calls.length = 0;
+    const cold = draw(inst, frame({ beatPos: beat, nowMs: beat * 500 }), room, new EffectStepper());
+    const count = Math.min(4, Math.floor((beat - 1) / 0.9) + 1);
+    assert.deepStrictEqual(calls.map(([iter]) => iter), Array.from({ length: count }, (_, i) => i), `cold at ${beat}`);
+    calls.forEach(([iter, at]) => assert.ok(Math.abs(at - (1 + iter * 0.9) * 500) < 1e-6, `callback ${iter} at ${at}`));
+    const dense = new EffectStepper();
+    for (let ms = 500; ms < beat * 500; ms += 1000 / 44) draw(inst, frame({ beatPos: ms / 500, nowMs: ms }), room, dense);
+    assert.deepStrictEqual(cold, draw(inst, frame({ beatPos: beat, nowMs: beat * 500 }), room, dense), `dense at ${beat}`);
+  }
+  // Before its anchor nothing is called; the first callback lands between the samples around it.
+  calls.length = 0;
+  const s = new EffectStepper();
+  draw(inst, frame({ beatPos: 0.5, nowMs: 250 }), room, s);
+  draw(inst, frame({ beatPos: 0.8, nowMs: 400 }), room, s);
+  assert.deepStrictEqual(calls, []);
+  draw(inst, frame({ beatPos: 1.2, nowMs: 600 }), room, s);
+  assert.deepStrictEqual(calls.map(([iter]) => iter), [0]);
+  assert.ok(Math.abs(calls[0][1] - 500) < 1e-9);
+  // After the count a clone holds the same tail.
+  for (const beat of [5, 6, 7]) draw(inst, frame({ beatPos: beat, nowMs: beat * 500 }), room, s);
+  const clone = s.clone();
+  assert.deepStrictEqual(draw(inst, frame({ beatPos: 8, nowMs: 4000 }), room, s), draw(inst, frame({ beatPos: 8, nowMs: 4000 }), room, clone));
+  assert.deepStrictEqual(calls.map(([iter]) => iter), [0, 1, 2, 3]);
+});
+
+test('variable wall rows stop at their count too, without spinning through later deadlines', () => {
+  const calls = [];
+  registerKind(makeLdjKind('FiniteWall', { cadence: 1, nextDelayMs: () => 100, step: (ctx) => { calls.push(ctx.iter); } }));
+  const inst = { ...instance('ldj.FiniteWall'), spec: validateSpec({ kind: 'ldj.FiniteWall', params: { cadence: 1, iterations: 3 } }) };
+  const s = new EffectStepper();
+  draw(inst, frame({ nowMs: 250 }), roomAt([[0.5, 0.5]]), s);
+  draw(inst, frame({ nowMs: 60000 }), roomAt([[0.5, 0.5]]), s);
+  assert.deepStrictEqual(calls, [0, 1, 2]);
+});
+
+test('iterations are a positive safe integer', () => {
+  registerKind(makeLdjKind('FiniteBounds', { cadence: 1, step() {} }));
+  for (const iterations of [0, -1, 1.5, NaN, Infinity, 2 ** 53, '2']) {
+    assert.throws(() => validateSpec({ kind: 'ldj.FiniteBounds', params: { cadence: 1, iterations } }), String(iterations));
+  }
+  assert.strictEqual(validateSpec({ kind: 'ldj.FiniteBounds', params: { cadence: 1, iterations: 1 } }).params.iterations, 1);
+  assert.ok(!('iterations' in validateSpec({ kind: 'ldj.FiniteBounds' }).params), 'unlimited by default');
+  assert.strictEqual(validateSpec({ kind: 'ldj.MatrixFlash', params: { cadence: 1, iterations: 5 } }).params.iterations, 5, 'the matrix rows too');
+  const raw = instance('ldj.FiniteBounds');
+  raw.spec.params.iterations = 0.5;
+  assert.throws(() => draw(raw, frame(), roomAt([[0.5, 0.5]]), new EffectStepper()), /iterations/i);
+});
+
+// The channel assignment as first written: every pick scans every lamp for the
+// nearest free one. The renderer's is kept per room and sorted per anchor; it
+// must pick exactly the same lamps, ties included, on any rig.
+function scanChannels(room, selector, paletteCount = 1) {
+  const ANCHORS = { 1: [[0, 0]], 2: [[-1, 0], [1, 0]], 3: [[-1, 0], [0, 1], [1, 0]], 4: [[-1, 1], [-1, -1], [1, 1], [1, -1]], 5: [[-1, 1], [-1, -1], [1, 1], [1, -1], [0, 0]] };
+  const n = room.n;
+  if (n === 0) return [];
+  if (selector === 'lights') return Array.from({ length: n }, (_, i) => i);
+  const count = selector === 'depth' || selector === 'width' ? 2 : Math.min(n, selector === 'colours' ? Math.max(1, paletteCount) : selector);
+  if (selector === 'colours' && count === n) return Array.from({ length: n }, (_, i) => i);
+  const capacity = Array.from({ length: count }, (_, i) => Math.floor(n / count) + Number(i < n % count));
+  if (count > 5) return capacity.flatMap((size, channel) => Array(size).fill(channel));
+  const anchors = selector === 'depth' ? [[0, -1], [0, 1]] : ANCHORS[count];
+  const assigned = Array(n).fill(-1), sizes = Array(count).fill(0);
+  let remaining = n;
+  while (remaining) {
+    for (let channel = 0; channel < count; channel++) {
+      if (sizes[channel] >= capacity[channel]) continue;
+      let best = Infinity, pick = -1;
+      for (let i = 0; i < n; i++) {
+        if (assigned[i] !== -1) continue;
+        const d = Math.hypot(room.u[i] - anchors[channel][0], room.v[i] - anchors[channel][1]);
+        if (d < best) { best = d; pick = i; }
+      }
+      assigned[pick] = channel; sizes[channel]++; remaining--;
+    }
+  }
+  return assigned;
+}
+
+test('the channel assignment is the nearest-free scan exactly, kept per room and never handed out to be changed', () => {
+  let seed = 3;
+  const rand = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  for (let trial = 0; trial < 60; trial++) {
+    const n = 1 + Math.floor(rand() * 40);
+    // Some rigs on a coarse grid, so equal distances (ties) are common.
+    const coarse = trial % 2 === 0;
+    const xs = Array.from({ length: n }, () => (coarse ? Math.floor(rand() * 4) / 3 : rand()));
+    const ys = Array.from({ length: n }, () => (coarse ? Math.floor(rand() * 3) / 2 : rand()));
+    const room = buildRoom(n, (i) => xs[i] * 100, (i) => ys[i] * 100, () => 0.5, null);
+    for (const selector of [1, 2, 3, 4, 5, 'lights', 'colours', 'depth', 'width']) {
+      for (const colours of selector === 'colours' ? [1, 2, 3, 5, 6, 8] : [1]) {
+        assert.deepStrictEqual(ldjChannels(room, selector, colours), scanChannels(room, selector, colours), `trial ${trial}, n ${n}, ${selector}/${colours}`);
+      }
+    }
+  }
+  const room = buildRoom(6, (i) => i * 10, () => 50, () => 0.5, null);
+  assert.strictEqual(ldjChannels(room, 4), ldjChannels(room, 4), 'kept with the room');
+  assert.throws(() => { ldjChannels(room, 4)[0] = 3; }, TypeError, 'frozen');
+});

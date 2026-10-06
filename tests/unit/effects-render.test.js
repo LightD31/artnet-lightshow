@@ -3,13 +3,15 @@ import test from 'node:test';
 import assert from 'node:assert';
 import { z } from 'zod';
 import { registerKind, validateSpec, kindOf, KINDS, specWithDefaults } from '../../src/shared/effects/registry.ts';
-import { renderEffect, compositeVoices, slotToWrite } from '../../src/shared/effects/render.ts';
-import { EffectStepper } from '../../src/shared/effects/stepper.ts';
+import { renderEffect } from '../../src/shared/effects/render.ts';
+import { ConstantTable, EffectStepper } from '../../src/shared/effects/stepper.ts';
 import { EventAdmission } from '../../src/shared/effects/envelope.ts';
 import { parseHex, preparePalette, resolvePalette } from '../../src/shared/effects/palette.ts';
 import { HD_MASTER_DEFAULTS } from '../../src/shared/effects/types.ts';
 import { buildRoom } from '../../src/shared/room.ts';
 import { seedFrom } from '../../src/shared/effects/hash.ts';
+import { slotToWrite } from '../helpers/slots.js';
+import { CATALOGUE } from '../../src/shared/effects/index.ts';
 
 const WHITE = { r: 255, g: 255, b: 255, w: 0, a: 0, uv: 0 };
 const frame = (over = {}) => ({ beatPos: 0, bpm: 120, nowMs: 0, dtMs: 22.7, anchorBeat: 0, lookPalette: [WHITE], paletteOverride: null,
@@ -67,19 +69,6 @@ test('the palette override reaches the kind', () => {
   const out = blank(1);
   renderEffect(inst, frame({ paletteOverride: [{ r: 0, g: 0, b: 255, w: 0, a: 0, uv: 0 }] }), room, new EffectStepper(), out);
   assert.strictEqual(out[0].colour.b, 255);
-});
-
-test('compositeVoices: the strobe tier first, then the latest launch, then selected over shared; transparent slots show the base', () => {
-  const base = [{ colour: WHITE, level: 0.2, strength: 1 }, { colour: WHITE, level: 0.2, strength: 1 }];
-  const slots = (level) => [{ colour: WHITE, level, strength: 1 }, { colour: WHITE, level: 0, strength: 0 }];
-  const early = { slots: slots(0.6), tier: 'voice', launchSeq: 1, selected: false, startedAtMs: 0 };
-  const late = { slots: slots(0.8), tier: 'voice', launchSeq: 2, selected: false, startedAtMs: 10 };
-  const strobe = { slots: slots(1), tier: 'strobe', launchSeq: 0, selected: false, startedAtMs: 0 };
-  const selected = { slots: slots(0.7), tier: 'voice', launchSeq: 2, selected: true, startedAtMs: 10 };
-  assert.strictEqual(compositeVoices(base, [early, late])[0].level, 0.8, 'the later launch wins');
-  assert.strictEqual(compositeVoices(base, [late, strobe])[0].level, 1, 'the strobe wins');
-  assert.strictEqual(compositeVoices(base, [late, selected])[0].level, 0.7, 'selected lights beat shared at the same launch');
-  assert.strictEqual(compositeVoices(base, [late, strobe])[1].level, 0.2, 'transparent: the base');
 });
 
 test('states are swept after two seconds unseen, and a clone is independent', () => {
@@ -191,23 +180,6 @@ test('targets preserve existing slots and spec rapidFlash cannot bypass the ackn
   assert.deepStrictEqual(out, before, 'kind-level rapidFlash is authoritative too');
 });
 
-test('voice ordering uses all tie breakers and owned black hides the base without mutating inputs', () => {
-  const base = [{ colour: WHITE, level: 0.6, strength: 1 }];
-  const voice = (level, props = {}) => ({ slots: [{ colour: WHITE, level, strength: 1 }],
-    tier: 'voice', launchSeq: 1, selected: false, startedAtMs: 1, ...props });
-  const early = voice(0.4), late = voice(0.8, { startedAtMs: 2 });
-  const selected = voice(0.3, { selected: true }), launched = voice(0.7, { launchSeq: 2 });
-  const strobe = voice(0, { tier: 'strobe', launchSeq: 0 });
-  const voices = [late, early, selected, launched, strobe], snapshot = structuredClone(voices);
-  assert.strictEqual(compositeVoices(base, [early, late])[0].level, 0.8);
-  assert.strictEqual(compositeVoices(base, [late, selected])[0].level, 0.3);
-  assert.strictEqual(compositeVoices(base, [selected, launched])[0].level, 0.7);
-  assert.strictEqual(compositeVoices(base, voices)[0].level, 0, 'black is opaque when strength is positive');
-  assert.strictEqual(compositeVoices(base, [voice(1, { slots: [{ colour: WHITE, level: 1, strength: 0 }] })])[0].level, 0.6);
-  assert.deepStrictEqual(voices, snapshot);
-  assert.strictEqual(base[0].level, 0.6);
-});
-
 test('slot writes round brightness and default the strobe channel to zero', () => {
   assert.deepStrictEqual(slotToWrite({ colour: WHITE, level: 0.5, strength: 1 }), { colour: WHITE, dim: 128, strobe: 0 });
   assert.deepStrictEqual(slotToWrite({ colour: WHITE, level: 1, strength: 1, strobe: 77 }), { colour: WHITE, dim: 255, strobe: 77 });
@@ -242,6 +214,70 @@ test('a cloned stepper retains class methods and deep independent Map state', ()
   assert.strictEqual(original.admission.admit(1, 200), false);
 });
 
+test('a clone copies plain arrays and objects quickly and everything else property by property, keeping every alias', () => {
+  class Lamp { constructor() { this.level = 0.5; this.colour = { r: 1 }; } brighter() { return this.level * 2; } }
+  const shared = { r: 9 };
+  const tagged = { r: 3 };
+  Object.defineProperty(tagged, Symbol('binding'), { value: { index: 2 } });
+  const hidden = { visible: 1 };
+  Object.defineProperty(hidden, 'secret', { value: [1, 2], enumerable: false, writable: true, configurable: true });
+  const holey = [1, , 3]; // eslint-disable-line no-sparse-arrays
+  const extra = [1, 2]; extra.label = 'kept';
+  const frozen = Object.freeze([{ n: 1 }]);
+  const withGetter = { get now() { return 7; } };
+  const named = { constructor: 'not a function', ['__proto__']: null, plain: 1 };
+  const cyclic = { list: [] }; cyclic.list.push(cyclic);
+  const state = { lamps: [new Lamp(), new Lamp()], a: shared, b: shared, tagged, hidden, holey, extra, frozen, withGetter, named, cyclic,
+    numbers: Array.from({ length: 1000 }, (_, i) => i / 3) };
+  const s = new EffectStepper();
+  s.get('x', () => state, 0);
+  const copy = s.clone().get('x', () => null, 1);
+
+  assert.notStrictEqual(copy, state);
+  assert.ok(copy.lamps[0] instanceof Lamp && copy.lamps[0].brighter() === 1, 'class and methods');
+  assert.notStrictEqual(copy.lamps[0].colour, state.lamps[0].colour);
+  assert.strictEqual(copy.a, copy.b, 'one object reached twice is one copy');
+  assert.notStrictEqual(copy.a, shared);
+  assert.deepStrictEqual(Object.getOwnPropertySymbols(copy.tagged).map((k) => copy.tagged[k]), [{ index: 2 }], 'a symbol property kept');
+  assert.deepStrictEqual(copy.hidden.secret, [1, 2]);
+  assert.strictEqual(Object.getOwnPropertyDescriptor(copy.hidden, 'secret').enumerable, false, 'a hidden property stays hidden');
+  assert.strictEqual(copy.holey.length, 3);
+  assert.ok(!(1 in copy.holey), 'a hole stays a hole');
+  assert.strictEqual(copy.extra.label, 'kept');
+  assert.ok(Object.isFrozen(copy.frozen) && copy.frozen !== frozen, 'a frozen array is copied, frozen');
+  assert.notStrictEqual(copy.frozen[0], frozen[0], 'shallow-frozen is not immutable: its items are copied too');
+  assert.strictEqual(typeof Object.getOwnPropertyDescriptor(copy.withGetter, 'now').get, 'function', 'a getter stays a getter');
+  assert.strictEqual(copy.named.constructor, 'not a function');
+  assert.ok(Object.hasOwn(copy.named, '__proto__') && copy.named.__proto__ === null && Object.getPrototypeOf(copy.named) === Object.prototype,
+    'an own __proto__ is a property, not the prototype');
+  assert.strictEqual(copy.cyclic.list[0], copy.cyclic, 'a cycle closes on the copy');
+  assert.deepStrictEqual(copy.numbers, state.numbers);
+  copy.numbers[5] = -1; copy.lamps[1].level = 0;
+  assert.strictEqual(state.numbers[5], 5 / 3);
+  assert.strictEqual(state.lamps[1].level, 0.5);
+});
+
+test('a constant table is shared by a clone, and nothing can change it', () => {
+  const table = new ConstantTable(3, 2, (row, column) => row * 10 + column);
+  assert.deepStrictEqual([table.rows, table.columns, table.at(2, 1), table.at(3, 0), table.at(0, 2), table.at(-1, 0), table.at(0.5, 0)], [3, 2, 21, undefined, undefined, undefined, undefined]);
+  assert.ok(Object.isFrozen(table));
+  assert.throws(() => { table.rows = 1; }, TypeError);
+  assert.throws(() => { table.values = []; }, TypeError);
+  assert.deepStrictEqual(Object.keys(table).sort(), ['columns', 'rows'], 'its values are not reachable');
+  assert.throws(() => new ConstantTable(1.5, 1, () => 0), RangeError);
+  const s = new EffectStepper();
+  const state = s.get('x', () => ({ table, frozenRows: Object.freeze([Object.freeze([1, 2])]) }), 0);
+  const copy = s.clone().get('x', () => null, 1);
+  assert.strictEqual(copy.table, table, 'shared');
+  assert.notStrictEqual(copy, state);
+  assert.notStrictEqual(copy.frozenRows, state.frozenRows, 'a frozen array of its own is still copied');
+  // A subclass may carry state of its own: it is copied, never shared.
+  class Counting extends ConstantTable {}
+  const sub = new Counting(1, 1, () => 4);
+  s.get('y', () => ({ sub }), 0);
+  assert.notStrictEqual(s.clone().get('y', () => null, 1).sub, sub);
+});
+
 test('palette preparation shares expiry and clone lifetime without occupying another instance id', () => {
   const s = new EffectStepper(), spec = validateSpec({ kind: 'test.half', palette: [{ random: true }] });
   const kindState = s.get('a', () => ({ n: 1 }), 0);
@@ -260,4 +296,39 @@ test('palette preparation shares expiry and clone lifetime without occupying ano
   assert.notStrictEqual(s.palette('a', spec, 2002), prepared, 'sweep drops the prepared palette too');
   clone.reset();
   assert.notStrictEqual(clone.palette('a', spec, 2), cloned, 'reset drops the prepared palette too');
+});
+
+// A colour or brightness edit to the preset on stage reaches the running
+// instance without starting it again (the engine moves no revision for it),
+// so every kind must take a palette that changes size under it: eight colours
+// with a random one, then one, then two, its brightness down, and the
+// override coming and going between.
+test('every built-in preset takes its colours and brightness edited mid-run: every slot stays a colour and a level', () => {
+  const room = buildRoom(6, (i) => i / 5, (i) => (i < 3 ? 0 : 1), () => 0.5, null);
+  const eight = ['#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF', '#FFFFFF', { random: true }];
+  const look = ['#FF0000', '#00FF00', '#0000FF', '#FFFFFF'].map(parseHex);
+  const failures = [];
+  const silent = [];
+  for (const row of CATALOGUE.filter((p) => !p.legacy)) {
+    let drew = false;
+    const edits = [{ ...row.spec, palette: eight }, { ...row.spec, palette: ['#FF8800'] },
+      { ...row.spec, palette: eight, brightness: 0.3 }, { ...row.spec, palette: ['#123456', '#654321'] }];
+    const stepper = new EffectStepper();
+    try {
+      for (let k = 0; k < 240 && failures.length < 5; k++) {
+        const nowMs = (k + 1) * 1000 / 44;
+        const out = new Array(room.n);
+        renderEffect({ id: 'base:x:0', spec: edits[Math.floor(k / 60)], seed: seedFrom(row.id), anchorBeat: 0, startedAtMs: 0, targets: null },
+          frame({ beatPos: nowMs / 500, nowMs, lookPalette: look, paletteOverride: k % 90 > 70 ? [parseHex('#00FF00')] : null }), room, stepper, out);
+        const broken = out.find((slot) => slot && ![slot.level, slot.strength, slot.colour.r, slot.colour.g, slot.colour.b, slot.colour.w ?? 0].every(Number.isFinite));
+        if (broken) { failures.push(`${row.id} at frame ${k}: ${JSON.stringify(broken)}`); break; }
+        drew ||= out.some((slot) => slot && slot.strength > 0);
+      }
+    } catch (err) {
+      failures.push(`${row.id}: ${err.message}`);
+    }
+    if (!drew) silent.push(row.id);
+  }
+  assert.deepStrictEqual(failures, []);
+  assert.deepStrictEqual(silent, [], 'every preset drew through the edits');
 });

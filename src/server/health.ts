@@ -5,7 +5,8 @@ import { buffer } from './log.ts';
 import { engineStatus } from './engine.ts';
 import * as output from './output.ts';
 import { isArmed } from './armed.ts';
-import { state } from './state.ts';
+import { state, voices, getSequenceStatus } from './state.ts';
+import { KINDS } from '../shared/effects/registry.ts';
 import { supervision } from './supervised.ts';
 import type { Supervision } from './supervised.ts';
 import type { EngineStatus } from './engine.ts';
@@ -166,5 +167,17 @@ export function health({ autoShow = null }: HealthDeps = {}) {
     },
     auto: autoShow ? { status: inputs.auto?.status, running: !!autoShow.running, error: inputs.auto?.error ?? null } : null,
     log: { errors10m: recentErrors.length, lastError },
+    // Diagnostic only: none of these moves the status.
+    counts: counts(),
+  };
+}
+
+/** Effect kinds registered, voices playing, and the sequence loaded and playing. */
+function counts() {
+  const seq = getSequenceStatus() as { loaded?: unknown; playing?: unknown } | null;
+  return {
+    effects: KINDS.size,
+    voices: voices.list().length,
+    sequence: { loaded: seq?.loaded ? 1 : 0, playing: seq?.playing ? 1 : 0 },
   };
 }

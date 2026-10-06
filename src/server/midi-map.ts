@@ -48,6 +48,7 @@ export interface MidiAction {
 const ACTIONS: MidiAction[] = [
   // Buttons
   { id: 'tap',                 label: 'Tap tempo',                   input: 'button' },
+  { id: 'toggleTempoMode',     label: 'Automatic tempo match on / off', input: 'button' },
   { id: 'togglePlay',          label: 'Play / stop',                 input: 'button' },
   { id: 'toggleBlackout',      label: 'Master blackout',             input: 'button' },
   { id: 'setPattern',          label: 'Select pattern',              input: 'button', param: { key: 'value', kind: 'pattern', label: 'Pattern' } },
@@ -58,6 +59,7 @@ const ACTIONS: MidiAction[] = [
   { id: 'setBeatDivision',     label: 'Set beat division',           input: 'button', param: { key: 'value', kind: 'division', label: 'Division' } },
   { id: 'energyHold',          label: 'Energy override (hold)',      input: 'button', param: { key: 'value', kind: 'energy', label: 'Effect', optional: true } },
   { id: 'cycleEnergyEffect',   label: 'Cycle the held energy effect', input: 'button' },
+  { id: 'padPress',            label: 'Pad (held while the note is)', input: 'button' },
   { id: 'cycleStrobeFunction', label: 'Cycle strobe function',       input: 'button' },
   { id: 'toggleFixBlackout',   label: 'Fixture blackout',            input: 'button', param: { key: 'fixture', kind: 'fixture', label: 'Fixture' } },
   { id: 'recallCue',           label: 'Recall cue',                  input: 'button', param: { key: 'value', kind: 'cue', label: 'Cue' } },
@@ -95,7 +97,7 @@ function defaultTypeFor(actionId: string): 'relative' | 'absolute' {
 // ── Schema ──────────────────────────────────────────────────────────────────
 
 const bindingSchema = z.object({
-  // A custom message because the default lists all twenty-two ids, which is
+  // A custom message because the default lists every id, which is
   // unreadable in the toast this reaches the operator through.
   action: z.enum(ACTION_IDS as [string, ...string[]], { error: 'is not a known action' }),
   type: z.enum(['relative', 'absolute']).optional(),
@@ -106,7 +108,14 @@ const bindingSchema = z.object({
   value: z.union([z.string().max(64), z.number()]).optional(),
   fixture: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - 1).optional(),
   channel: z.number().int().min(0).max(15).optional(),
-}).strict();
+  // padPress only: which pad, bank 0-1 and slot 0-7 as the deck numbers them.
+  bank: z.number().int().min(0).max(1).optional(),
+  slot: z.number().int().min(0).max(7).optional(),
+}).strict().superRefine((b, ctx) => {
+  if (b.action === 'padPress' && (b.bank === undefined || b.slot === undefined)) {
+    ctx.addIssue({ code: 'custom', path: ['bank'], message: 'a pad binding names its bank and slot' });
+  }
+});
 
 // Keys are the MIDI controller/note number as a string, since that is what a
 // JSON object gives us back.
@@ -320,7 +329,9 @@ class MidiMapStore extends JsonStore {
 function sameControl(a: MidiBinding, b: MidiBinding): boolean {
   return a.action === b.action
     && (a.fixture ?? null) === (b.fixture ?? null)
-    && (a.value ?? null) === (b.value ?? null);
+    && (a.value ?? null) === (b.value ?? null)
+    && (a.bank ?? null) === (b.bank ?? null)
+    && (a.slot ?? null) === (b.slot ?? null);
 }
 
 // Fixed location, for the same reason settings.json is: it is how you find the

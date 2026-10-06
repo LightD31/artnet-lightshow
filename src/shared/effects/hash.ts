@@ -34,11 +34,14 @@ export function seedFrom(text: string, salt = 0): Seed {
   return [word(0), word(1), word(2), word(3)];
 }
 
-/** One of n, never `last` while n > 1 — Light DJ's random pick that excludes the previous one. */
-export function pickNotLast(seed: Seed, iter: number, n: number, last: number | null): number {
+/**
+ * One of n, never `last` while n > 1 — Light DJ's random pick that excludes the previous one.
+ * `key` names the random stream, so two choices of one instance stay independent.
+ */
+export function pickNotLast(seed: Seed, iter: number, n: number, last: number | null, key = 7): number {
   if (n <= 1) return 0;
-  if (last === null || last < 0 || last >= n) return Math.floor(hash01(seed, 7, iter) * n) % n;
-  const k = Math.floor(hash01(seed, 7, iter) * (n - 1)) % (n - 1);
+  if (last === null || last < 0 || last >= n) return Math.floor(hash01(seed, key, iter) * n) % n;
+  const k = Math.floor(hash01(seed, key, iter) * (n - 1)) % (n - 1);
   return k >= last ? k + 1 : k;
 }
 
