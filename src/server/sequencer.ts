@@ -1,3 +1,4 @@
+import type { BundleParams } from '../shared/effects/bundle.ts';
 import crypto from 'node:crypto';
 import { z, ZodError } from 'zod';
 
@@ -15,7 +16,7 @@ import { HttpError } from '../errors.ts';
 import type { RefinementCtx } from 'zod';
 import type { MusicalTime } from './conductor.ts';
 import type { AudioMode, EffectSpec, Seed } from '../shared/effects/types.ts';
-import type { SequenceLane, SequenceLoop, SequenceTable, SequenceTransport, TableClip } from '../shared/effects/sequence.ts';
+import type { PlayingClip, SequenceLane, SequenceLoop, SequenceTable, SequenceTransport, TableClip } from '../shared/effects/sequence.ts';
 
 /**
  * The sequencer: lanes of effect clips on a beat timeline, as Hue Dynamics
@@ -343,6 +344,10 @@ const recordSchema = z.object({
 export interface PadHit { bank: number; slot: number; startBeat: number; endBeat?: number; lengthBeats?: number }
 /** What a pad plays, as a clip can: a preset on the pad's fixtures, or a pattern bundle on them. */
 export type PadTake = { presetId: string; targets: 'shared' | number[]; lengthBeats: number } | { patternId: string; targets: 'shared' | number[] };
+/** A removed clip that reached outside the take's range: how many beats before and after it went with it. */
+export interface RemovedBeyond { id: string; laneId: string; startBeat: number; lengthBeats: number; beforeBeats: number; afterBeats: number }
+/** A stopped take: kept ones also give the range the take wrote and the removed clips that reached outside it. */
+export interface KeepResult { added: Clip[]; removed: string[]; range?: { fromBeat: number; toBeat: number }; beyondRange?: RemovedBeyond[] }
 export interface RecordingStatus { mode: RecordOptions['mode']; fromBeat: number; quantise: number; hits: number }
 // A pattern hit keeps its id; `drop` is a sequencePattern pad, which maps as insertion does.
 interface StagedHit {
@@ -375,7 +380,7 @@ export function sequenceBeatAhead(beat: number, ahead: number, loop: SequenceLoo
 }
 
 /** A pattern resolved for one pad voice: immutable lanes and clips over the voice's fixtures, its length, whether it waits for the acknowledgement. */
-export interface ResolvedBundle { patternId: string; lengthBeats: number; table: SequenceTable; rapid: boolean }
+export interface ResolvedBundle extends Omit<BundleParams, 'once'> { rapid: boolean }
 
 /**
  * A pattern as a pad voice plays it: shared lanes cover the pad's fixtures,
@@ -1298,12 +1303,17 @@ export class Sequencer {
 
   // ── What the rest of the server reads ─────────────────────────────────────
 
+  /** The beat the last frame was handed (NaN before the first): the voices' containers are looked up there too. */
+  lastBeat(): number {
+    return this._last ? this._last.beatPos : NaN;
+  }
+
   /**
    * The clips playing on top of `fixtureIds` at the last frame, highest
    * first, for the audio detectors: pure, from the transport that frame
    * handed out.
    */
-  playing(fixtureIds: readonly number[]): { id: string; spec: EffectSpec }[] {
+  playing(fixtureIds: readonly number[]): PlayingClip[] {
     if (!this._table || !this._transport || !this._last) return [];
     return playingClips(this._table, this._transport, this._last.beatPos, fixtureIds);
   }
@@ -1441,7 +1451,7 @@ export class Sequencer {
    * refused keep (another sequence or revision loaded, a pattern that no
    * longer maps) leaves the take running.
    */
-  stopRecording(keep: boolean): { added: Clip[]; removed: string[] } {
+  stopRecording(keep: boolean): KeepResult {
     const rec = this._record;
     if (!rec) throw new HttpError(409, 'Nothing is recording');
     if (!keep || rec.take.length === 0) {
@@ -1474,11 +1484,19 @@ export class Sequencer {
       }
       if (loose.length) put(h, sharedLane(seq, 0, taken), loose);
     }
-    const removed = rec.mode === 'replace' ? seq.clips.filter((c) => added.some((a) => landsOn(a, c))).map((c) => c.id) : [];
+    const gone = rec.mode === 'replace' ? seq.clips.filter((c) => added.some((a) => landsOn(a, c))) : [];
+    const removed = gone.map((c) => c.id);
     seq.clips = [...seq.clips.filter((c) => !removed.includes(c.id)), ...added];
     this.load(seq);
     this._record = null;
-    return structuredClone({ added, removed });
+    // Whole clips go, so a crossing one takes beats outside the take with it.
+    const fromBeat = Math.min(rec.fromBeat, ...added.map((a) => a.startBeat));
+    const range = { fromBeat, toBeat: Math.max(fromBeat, ...added.map((a) => a.startBeat + a.lengthBeats)) };
+    const beyondRange = gone.map(({ id, laneId, startBeat, lengthBeats }) => ({
+      id, laneId, startBeat, lengthBeats,
+      beforeBeats: Math.max(0, range.fromBeat - startBeat), afterBeats: Math.max(0, startBeat + lengthBeats - range.toBeat),
+    })).filter((c) => c.beforeBeats > EPS || c.afterBeats > EPS);
+    return structuredClone({ added, removed, range, beyondRange });
   }
 
   /**

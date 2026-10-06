@@ -23,7 +23,7 @@ import { showStore } from '../../src/server/show-store.ts';
 
 import { Sequencer, validatePattern } from '../../src/server/sequencer.ts';
 import { SequenceStore } from '../../src/server/sequence-store.ts';
-import { Pads, PadStore } from '../../src/server/pads.ts';
+import { Pads, PadStore, patternPlayer } from '../../src/server/pads.ts';
 import { presetById } from '../../src/shared/effects/index.ts';
 
 showStore.scheduleSave = () => {};   // never the real show file
@@ -162,7 +162,8 @@ test('a sequencePattern pad inserts at the next grid line', (t) => {
   const s = rig();
   const store = new PadStore(path.join(path.dirname(tempStore(t)), 'pads.json')).load();
   const c = { beat: 10.1 };
-  const pads = new Pads({ voices: {}, store, lookup: () => () => null, fixtureIds: () => [1, 2, 3], beat: () => c.beat, insertPattern: (id, at) => s.insertPattern(id, at) });
+  const patternVoice = patternPlayer({ voices: {}, pattern: () => null, fixtureIds: () => [1, 2, 3], resolve: () => null });
+  const pads = new Pads({ voices: {}, store, lookup: () => () => null, fixtureIds: () => [1, 2, 3], beat: () => c.beat, insertPattern: (id, at) => s.insertPattern(id, at), patternVoice });
   store.set(1, 4, { label: 'Drop', accent: '#A855F7', content: { kind: 'sequencePattern', id: 'drop' }, launch: 'once', quantise: 4, targets: 'shared' });
   assert.equal(pads.press(1, 4, 'tablet', 't'), null);
   assert.deepEqual(s.current().clips.slice(1).map((x) => x.startBeat), [12, 14]);
@@ -298,6 +299,8 @@ test('routes', async (t) => {
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.added.map((c) => [c.laneId, c.presetId, c.targets]), [['a', 'ldj.FadeCycle', 'lane'], ['a', 'ldj.FadeCycle', 'lane']]);
   assert.ok(res.body.added[1].lengthBeats > 0);
+  assert.deepEqual(res.body.beyondRange, [], 'an overdub removes nothing');
+  assert.ok(res.body.range.toBeat >= res.body.range.fromBeat);
   pads.stopAll();
   assert.equal(conductor.now().beatPos >= 0, true);
 });

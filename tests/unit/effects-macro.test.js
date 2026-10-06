@@ -11,6 +11,7 @@ import { EffectStepper } from '../../src/shared/effects/stepper.ts';
 import { LDJ_RANDOM_HUES, hsbToColour, parseHex } from '../../src/shared/effects/palette.ts';
 import { HD_MASTER_DEFAULTS } from '../../src/shared/effects/types.ts';
 import { seedFrom } from '../../src/shared/effects/hash.ts';
+import { playingLeaves } from '../../src/shared/effects/nesting.ts';
 import { buildRoom } from '../../src/shared/room.ts';
 
 const RED = parseHex('#FF0000'), GREEN = parseHex('#00FF00'), BLUE = parseHex('#0000FF'), YELLOW = parseHex('#FFFF00');
@@ -308,4 +309,24 @@ test('a macro\'s slots name the step kind that drew them, through nested macros,
   assert.strictEqual(sampler(instance(clear))(0).out[0].kind, undefined);
   const own = draw(instance(validateSpec({ kind: 'test.probe' })), frame(), room(), new EffectStepper());
   assert.ok(!('kind' in own[0]));
+});
+
+test('the playing leaves change on the frame the macro\'s rendered step changes, nested macros to the leaf', () => {
+  const inner = macro([step({ kind: 'test.tinted', params: { level: 1, clear: false } }, 1), step({ kind: 'test.probe', params: { level: 0.5, clear: false } }, 2)], 3);
+  const m = macro([step({ kind: 'test.probe', params: { level: 1, clear: false } }, 1.1), step(inner, 2.3)], 3.4);
+  // Anchors and beats that do not sum exactly in binary, either side of each boundary.
+  for (const anchorBeat of [0, 0.1, 1e6 + 0.3]) {
+    const stepper = new EffectStepper();
+    for (const rel of [0, 1.1 - 1e-12, 1.1, 1.1 + 1e-12, 2.1, 3.4 - 1e-12, 3.4, 4.5, 5.5, 6.8, 100.3]) {
+      const beatPos = anchorBeat + rel;
+      log.length = 0;
+      const out = draw(instance(m, { anchorBeat }), frame({ beatPos, nowMs: rel * 500 }), room(), stepper);
+      const leaves = playingLeaves(m, beatPos, anchorBeat, [0]);
+      // The kind and the level tell all three leaves apart.
+      assert.deepStrictEqual(leaves.map((s) => [s.kind, s.params.level]), [[log.at(-1).kind, out[0].level]], `${anchorBeat}+${rel}`);
+    }
+  }
+  assert.deepStrictEqual(playingLeaves(m, NaN, 0, [0]), [], 'no position, no step');
+  const plain = { kind: 'test.probe', params: { level: 1, clear: false } };
+  assert.deepStrictEqual(playingLeaves(plain, 3, 0, [0]), [plain], 'a plain effect is its own leaf');
 });

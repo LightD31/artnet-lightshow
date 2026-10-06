@@ -253,7 +253,8 @@ function voiceOf(event: PreviewEvent, beatPos: number): VoiceFrame | null {
     seed = [d.seed[0], d.seed[1], d.seed[2], d.seed[3]];
   } else return null;
   let spec: EffectSpec;
-  try { spec = validateSpec(d.effect); } catch { return null; }
+  // Voices come from the server, which alone builds internal kinds.
+  try { spec = validateSpec(d.effect, { internal: true }); } catch { return null; }
   // Never changed after this: checkpoints share it.
   return Object.freeze({ id: d.id, spec, targets, tier: d.tier, launchSeq: d.launchSeq as number, startedAtMs: event.timeMs,
     untilMs, anchorBeat: beatPos, seed });

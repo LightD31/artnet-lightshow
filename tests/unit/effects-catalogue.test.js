@@ -345,7 +345,11 @@ test('Hue Dynamics\' families carry their recommendation and capabilities as pla
   // own row's channel family lists it, and the Scene Maker family again for
   // the Fireworks row that plays it.
   const listed = FAMILIES.flatMap((f) => f.kinds.map((k) => k.kind)).sort();
-  assert.deepStrictEqual(listed, [...KINDS.keys(), 'ldj.SceneMakerFirework'].sort(), 'every registered kind once, the firework renderer twice');
+  // The internal pattern bundle is no family's: only a pattern pad's voice plays it.
+  const internal = [...KINDS.values()].filter((d) => d.internal).map((d) => d.kind);
+  assert.deepStrictEqual(internal, ['pattern.bundle']);
+  assert.ok(!listed.includes('pattern.bundle'));
+  assert.deepStrictEqual(listed, [...KINDS.keys()].filter((k) => !internal.includes(k)).concat('ldj.SceneMakerFirework').sort(), 'every public kind once, the firework renderer twice');
   for (const p of CATALOGUE) assert.ok(FAMILIES.some((f) => f.id === p.family), `${p.id}: family ${p.family}`);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(FAMILIES)), FAMILIES, 'no functions or schemas');
 });

@@ -16,6 +16,7 @@ import { presetById } from '../../src/shared/effects/catalogue.ts';
 import { registerKind, validateSpec } from '../../src/shared/effects/registry.ts';
 import { seedFrom } from '../../src/shared/effects/hash.ts';
 import { createPreviewSampler } from '../../src/shared/preview.ts';
+import { bundleSpec } from '../../src/shared/effects/bundle.ts';
 import { buildRig } from '../../src/shared/rig.ts';
 import { anchorStep, beatPositionAt, localBpm, makeGrid } from '../../src/shared/beat-clock.ts';
 import { HOLD_STROBE } from '../../src/shared/look-math.ts';
@@ -237,6 +238,43 @@ test('a seek after a scene part way into the track puts a voice on the scene\'s 
   assertSame(rig, preview, times);
   const unseeked = previewRun(createPreviewSampler(events.slice(0, 3), { beats }, { resolveEffect }), RIG, times);
   assert.ok(times.some((t, i) => t >= 3700 && key(preview[i][0]) !== key(unseeked[i][0])), 'the voice re-anchors at the seek');
+});
+
+test('a pattern bundle voice plays as the rig plays it, across a seek and back from a kept copy', () => {
+  const beats = Array.from({ length: 40 }, (_, i) => 0.2 + i * 0.5);
+  const grid = makeGrid(beats);
+  const lane = (id, kind, fixtureId) => ({ id, kind, ...(fixtureId !== undefined ? { fixtureId } : {}), name: id, mute: false, solo: false });
+  const clip = (id, laneId, spec, startBeat, lengthBeats, fixtureIds = null) => ({ id, laneId, fixtureIds, startBeat, lengthBeats, loopBeats: lengthBeats, spec, seed: seedFrom(id), mute: false });
+  // Shared clips over all three targets and one fixture, a track lane on the fourth par, a gap at beat 3.
+  const table = { revision: 0, lanes: [lane('shared:0', 'shared'), lane('track:0', 'track', PARS[3].id)], clips: [
+    clip('0:0', 'shared:0', FADE, 0, 2), clip('0:1', 'shared:0', preset('ldj.BigRoomWave'), 2, 1, [PARS[1].id]), clip('1:0', 'track:0', FADE, 1, 2.5),
+  ] };
+  const bundle = bundleSpec({ patternId: 'p', lengthBeats: 4, table }, false);
+  const targets = [PARS[0].id, PARS[1].id, PARS[3].id];
+  const events = [
+    { timeMs: 0, action: 'patch', data: { pattern: 'solid', ...LOOK } },
+    { timeMs: 2300, action: 'patch', data: { pattern: 'ldj.FadeCycle', beatDivision: 2 } },
+    { timeMs: 2511, action: 'voice', data: { id: 'pad:b', effect: bundle, targets, tier: 'voice', launchSeq: 1 } },
+    { timeMs: 3700, action: 'seek' },
+  ];
+  const sceneBeat = beatPositionAt(grid, 2300);
+  const times = frames(0, 9000);
+  const rig = rigRun(RIG, times, (t) => ({
+    ...(t < 2300 ? { pattern: 'solid', patternAnchor: { step: anchorStep(beatPositionAt(grid, 0)), epoch: 0 } } : {
+      pattern: 'ldj.FadeCycle', effect: FADE, beatDivision: 2, patternAnchor: { step: anchorStep(sceneBeat, 2), epoch: 0 } }),
+    voices: t >= 2511 ? [voice('pad:b', bundle, { targets, startedAtMs: 2511, anchorBeat: beatPositionAt(grid, 2511) })] : [],
+    reading: { beatPos: beatPositionAt(grid, t), bpm: localBpm(grid, t), epoch: t >= 3700 - 1e-6 ? 1 : 0,
+      anchorBeat: t >= 2300 ? sceneBeat : beatPositionAt(grid, 0) },
+  }));
+  const sample = createPreviewSampler(events, { beats }, { resolveEffect });
+  const preview = previewRun(sample, RIG, times);
+  assertSame(rig, preview, times);
+  const bare = previewRun(createPreviewSampler(events.filter((e) => e.action !== 'voice'), { beats }, { resolveEffect }), RIG, times);
+  for (const k of [0, 1, 3]) assert.ok(times.some((t, i) => t >= 2511 && key(preview[i][k]) !== key(bare[i][k])), `the bundle lights par ${k}`);
+  assert.ok(times.every((t, i) => key(preview[i][2]) === key(bare[i][2])), 'an untargeted par shows the look');
+  // Back over the seek and the bundle's laps: each frame from a kept copy matches the rig's.
+  const r = buildRig(RIG, getProfile);
+  for (let i = times.length - 1; i >= 0; i -= 37) assert.deepStrictEqual(sample(times[i], RIG, COLOR_PRESETS, r), rig[i], `back at ${times[i]}`);
 });
 
 // ── Going back ──────────────────────────────────────────────────────────────

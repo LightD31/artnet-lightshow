@@ -589,3 +589,12 @@ test('the matrix board over REST: GET, a mode set with no cell held is heard by 
   res = await s.call('POST', '/api/matrix/press', { colour: '#0000FF' });
   assert.deepEqual([res.status, res.body.mode, res.body.colours], [200, 'flashes', ['#0000FF']]);
 });
+
+test('POST /api/voices refuses the internal pattern bundle kind with a 400, even shaped as one', async (t) => {
+  const s = await serve(t);
+  const params = { patternId: 'p', lengthBeats: 4, once: false, table: { revision: 0, lanes: [], clips: [] } };
+  const res = await s.call('POST', '/api/voices', { effect: { kind: 'pattern.bundle', params }, beats: 4 });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /unknown effect kind/);
+  assert.deepEqual(playing(), []);
+});
