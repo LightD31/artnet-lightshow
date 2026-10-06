@@ -32,9 +32,12 @@ test('a clip added in the editor plays, and the lane cursor moves', async ({ pag
 });
 
 test('a pattern from the library inserts in one tap', async ({ page, request }) => {
+  // A pattern clip, like a sequence clip, plays exactly one preset (a strobe plays as a voice instead).
+  const library = await (await request.get('/api/effects')).json();
+  const preset = library.builtin.find((p) => !/strobe/i.test(`${p.id} ${p.kind || ''} ${(p.spec && p.spec.kind) || ''}`));
   const made = await request.post('/api/sequence/patterns', { data: {
     name: 'Four on the floor', lengthBeats: 4,
-    lanes: [{ kind: 'shared', slot: 0, clips: [{ startBeat: 0, lengthBeats: 4, loopBeats: 4, targets: 'lane', mute: false }] }],
+    lanes: [{ kind: 'shared', slot: 0, clips: [{ startBeat: 0, lengthBeats: 4, loopBeats: 4, presetId: preset.id, targets: 'lane', mute: false }] }],
   } });
   expect(made.ok()).toBe(true);
   await open(page, 'sequence');
