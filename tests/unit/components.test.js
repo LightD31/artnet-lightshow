@@ -26,6 +26,9 @@ async function load() {
         export { Inspector, readRecommendedPreference, savePreset, withRecommended } from './public-src/components/Inspector.jsx';
         export { PaletteEditor, isHexColour, normaliseHex, savePalette } from './public-src/components/PaletteEditor.jsx';
         export { librarySig, socket } from './public-src/state.js';
+        export { Pads, PadEditor, padGlyph, padBody, contentRows } from './public-src/components/Pads.jsx';
+        export { StrobePad, StrobeSettings, strobeBody } from './public-src/components/StrobePad.jsx';
+        export { createVoiceHolds } from './public-src/hold-control.js';
         export { BUILTIN_PALETTES, CATALOGUE, FAMILIES } from './src/shared/effects/index.ts';
         export { requiresAcknowledgement } from './src/shared/effects/registry.ts';
       `,
@@ -61,21 +64,46 @@ function given(state) {
     palettes: [{ id: 'arctic', name: 'Arctic', colors: { 4: [1, 2, 3, 4] } }, { id: 'volcanic', name: 'Volcanic', colors: { 4: [5, 6, 7, 8] } }],
     palette: 'volcanic', colorPresets: [], activeSource: 'timer',
     autoShow: { status: 'idle', intensity: 70 },
+    pads: { layout: LAYOUT, lit: Array(16).fill(null) }, voices: [], strobe: STROBE,
     ...state,
   } });
 }
 const count = (html, needle) => html.split(needle).length - 1;
 
-test('the Perform view has a pad for blackout, every effect, and tap — in the order a hand learns them', () => {
+// The pads layout as the server sends it: bank 0 the energy effects, the strobe and a look.
+const pad = (bank, slot, label, content, launch = 'hold', extra = {}) => ({
+  bank, slot, label, accent: '#FF8800', content, launch, quantise: 0.25, targets: 'shared', ...extra,
+});
+const LAYOUT = [
+  pad(0, 0, 'Kill', { kind: 'preset', id: 'energy.kill' }),
+  pad(0, 1, 'Blinder', { kind: 'preset', id: 'energy.blinder' }),
+  pad(0, 2, 'Strobe', { kind: 'strobe', id: 'strobe' }),
+  pad(0, 3, 'Colour strobe', { kind: 'preset', id: 'energy.colorStrobe' }),
+  pad(0, 4, 'UV', { kind: 'preset', id: 'energy.uvWash' }, 'loop'),
+  pad(0, 5, 'Glow', { kind: 'preset', id: 'energy.glow' }, 'once'),
+  pad(0, 6, 'Domino', { kind: 'preset', id: 'hd.neonDomino' }, 'loop', { targets: [2] }),
+  pad(0, 7, '', null),
+  ...Array.from({ length: 8 }, (_, i) => pad(1, i, `Look ${i + 1}`, { kind: 'pattern', id: 'chase' }, 'loop')),
+];
+const STROBE = {
+  active: null, mode: null,
+  settings: { palette: ['#FFFFFF'], flashesPerSecond: 5, continueBetween: false, clock: 'wall', brightness: 1, onMs: 100, blackMs: 100 },
+};
+const padLabels = (html) => [...html.matchAll(/class="pad-label">([^<]*)</g)].map((m) => m[1]);
+
+test('the Perform view has blackout, the pads of the bank, the strobe and tap', () => {
   given({});
   const html = ui.html(ui.h(ui.Perform, {}));
   const names = [...html.matchAll(/class="perform-pad-name">([^<]+)</g)].map((m) => m[1]);
-  assert.deepStrictEqual(names, ['Blackout', 'Kill', 'Blinder', 'Strobe', 'Colour strobe', 'UV', 'Glow', 'Tap']);
+  assert.deepStrictEqual(names, ['Blackout', 'Tap']);
+  assert.deepStrictEqual(padLabels(html), ['Kill', 'Blinder', 'Strobe', 'Colour strobe', 'UV', 'Glow', 'Domino', 'Empty']);
+  assert.match(html, /class="strobe-hold"/);
   assert.strictEqual(count(html, 'aria-pressed="true"'), 1, 'only the palette in use is pressed');
   assert.match(html, /class="perform-palette active" aria-pressed="true"><span[^>]*>.*?Volcanic/);
   assert.match(html, /aria-valuetext="50 percent"/, 'the master, as a person reads it');
   assert.match(html, /aria-valuetext="70 percent"/, 'the show\'s intensity');
   assert.match(html, /Nothing loaded/);
+  assert.doesNotMatch(html, /Latch effects/, 'a pad\'s launch mode says how it plays');
 });
 
 test('the Perform view has the outputs switch, saying what disarmed means', () => {
@@ -89,11 +117,13 @@ test('the Perform view has the outputs switch, saying what disarmed means', () =
   assert.match(html, /Armed.*frames go out to the rig — tap to disarm/s);
 });
 
-test('blackout and a held effect show as pressed', () => {
-  given({ masterBlackout: true, energyOverride: 'uv-wash' });
+test('blackout and a running voice\'s pad show as pressed', () => {
+  const lit = Array(16).fill(null);
+  lit[4] = 'v7';
+  given({ masterBlackout: true, pads: { layout: LAYOUT, lit } });
   const html = ui.html(ui.h(ui.Perform, {}));
   assert.match(html, /class="perform-pad pad-blackout active" aria-pressed="true"/);
-  assert.match(html, /class="perform-pad pad-uv-wash active"/);
+  assert.match(html, /class="pad-cell lit"[^>]*data-slot="4"[^>]*aria-pressed="true"/);
   assert.match(html, /on — tap to restore/);
 });
 
@@ -441,4 +471,95 @@ test('a family change asks, applies or keeps, as chosen once and kept in this br
   assert.strictEqual(after.name, 'x');
   assert.strictEqual(after.brightness, def.defaults.brightness ?? 0.1);
   assert.notStrictEqual(after.params, def.defaults.params, 'a copy, so editing it leaves the catalogue alone');
+});
+
+// ── Perform: pads and the strobe ─────────────────────────────────────────────
+
+test('a pad shows its label, accent and launch glyph; bank tabs switch the eight shown', () => {
+  given({});
+  const html = ui.html(ui.h(ui.Pads, {}));
+  assert.match(html, /role="tablist" aria-label="Pad banks"/);
+  assert.match(html, /role="tab" aria-selected="true"[^>]*>A</);
+  assert.match(html, /role="tab" aria-selected="false"[^>]*>B</);
+  assert.match(html, /style="--pad-accent:#FF8800;?"[^>]*data-bank="0" data-slot="1"/);
+  assert.deepStrictEqual([ui.padGlyph('hold'), ui.padGlyph('once'), ui.padGlyph('loop')], ['●', '▶', '↻']);
+  assert.match(html, /data-slot="4"[^>]*title="UV — tap to loop, tap again to stop"/);
+  assert.match(html, /data-slot="5"[^>]*title="Glow — tap to play once"/);
+  assert.match(html, /data-slot="1"[^>]*title="Blinder — hold"/);
+  assert.match(html, /class="pad-cell empty"[^>]*disabled/);
+  assert.match(html, /aria-pressed="false"[^>]*>Edit pads</);
+  const bank1 = ui.html(ui.h(ui.Pads, { initialBank: 1 }));
+  assert.deepStrictEqual(padLabels(bank1), ['Look 1', 'Look 2', 'Look 3', 'Look 4', 'Look 5', 'Look 6', 'Look 7', 'Look 8']);
+});
+
+test('the pad editor offers favourites, saved and party presets first, launch, quantise and fixtures', () => {
+  givenLibrary({ pads: { layout: LAYOUT, lit: Array(16).fill(null) } });
+  const rows = ui.contentRows([{ id: 'u1', name: 'My Domino', user: true }, ...PATTERN_ROWS], ['chase']);
+  assert.deepStrictEqual(rows.slice(0, 2).map((r) => r.id), ['chase', 'u1']);
+  assert.ok(rows.findIndex((r) => !r.party && !r.user && r.id !== 'chase') > rows.findIndex((r) => r.party), 'party before the rest');
+  const html = ui.html(ui.h(ui.PadEditor, { entry: LAYOUT[6], onClose: () => {} }));
+  assert.match(html, /role="dialog" aria-modal="true" aria-label="Edit pad A7"/);
+  assert.match(html, /<option value="preset:hd.neonDomino" selected/);
+  assert.match(html, /<option value="preset:u1"/);
+  assert.match(html, /<option value="pattern:chase"/);
+  assert.match(html, /name="pad-launch" value="loop" checked/);
+  assert.match(html, /<option value="0.25" selected>1\/4 beat</);
+  assert.match(html, /<input type="checkbox" value="2" checked[^>]*\/?>(?:<span>)?Par 2/);
+  assert.match(html, /<input type="checkbox" value="1"(?! checked)[^>]*\/?>(?:<span>)?Par 1/);
+});
+
+test('the pad editor sends the fields the server stores; the strobe pad stays held', () => {
+  const body = ui.padBody({ label: 'Domino', accent: '#00ff00', content: 'preset:hd.neonDomino', launch: 'loop', quantise: '1', targets: [2, 1] });
+  assert.deepStrictEqual(body, { label: 'Domino', accent: '#00FF00', content: { kind: 'preset', id: 'hd.neonDomino' }, launch: 'loop', quantise: 1, targets: [2, 1] });
+  assert.deepStrictEqual(ui.padBody({ label: '', accent: '#123456', content: 'strobe:strobe', launch: 'loop', quantise: 0, targets: 'shared' }).launch, 'hold');
+  assert.strictEqual(ui.padBody({ label: '', accent: '#123456', content: '', launch: 'once', quantise: 0, targets: [] }).content, null);
+  assert.strictEqual(ui.padBody({ label: '', accent: '#123456', content: '', launch: 'once', quantise: 0, targets: [] }).targets, 'shared', 'no fixture ticked is the whole rig');
+});
+
+test('the strobe pad holds, says when it runs, and offers a 2 s burst and its settings', () => {
+  given({});
+  let html = ui.html(ui.h(ui.StrobePad, {}));
+  assert.match(html, /class="strobe-hold"[^>]*aria-pressed="false"/);
+  assert.match(html, />Burst 2 s</);
+  assert.match(html, /aria-label="Strobe settings"/);
+  given({ strobe: { ...STROBE, active: { id: 'strobe', mode: 'hold', startedAt: 1, until: null }, mode: 'hold' } });
+  html = ui.html(ui.h(ui.StrobePad, {}));
+  assert.match(html, /class="strobe-hold active"[^>]*aria-pressed="true"/);
+});
+
+test('the strobe settings sheet: palette of up to six, flashes per second, continue, clock, brightness', () => {
+  givenLibrary({ strobe: STROBE });
+  const html = ui.html(ui.h(ui.StrobeSettings, { onClose: () => {} }));
+  assert.match(html, /role="dialog" aria-modal="true" aria-label="Strobe settings"/);
+  assert.match(html, /value="#FFFFFF"/, 'the palette editor with the strobe\'s colour');
+  assert.match(html, /aria-label="Flashes per second"[^>]*min="1"[^>]*max="5"[^>]*value="5"/);
+  assert.match(html, /<input type="checkbox"[^>]*\/?>(?:<span>)?Look shows between flashes/);
+  assert.match(html, /<option value="wall" selected/);
+  assert.match(html, /aria-label="Strobe brightness"[^>]*value="100"/);
+  assert.deepStrictEqual(ui.strobeBody({ palette: ['#ff0000', 'random', '#00FF00', '#1', '#2', '#3', '#444444', '#555555', '#666666', '#777777'], flashesPerSecond: '3', continueBetween: true, clock: 'beat', brightness: 50 }),
+    { palette: ['#FF0000', '#00FF00', '#444444', '#555555', '#666666', '#777777'], flashesPerSecond: 3, continueBetween: true, clock: 'beat', brightness: 0.5 });
+});
+
+test('voice holds: each pad its own token, a release names its pad, all let go at once', () => {
+  const sent = [];
+  const holds = ui.createVoiceHolds((p) => { sent.push(p); return true; });
+  holds.press('p0-1', { pad: { bank: 0, slot: 1 } });
+  holds.press('strobe', { effect: { preset: 'strobe' } });
+  assert.notStrictEqual(sent[0].token, sent[1].token);
+  assert.deepStrictEqual(sent[0], { action: 'press', token: sent[0].token, pad: { bank: 0, slot: 1 } });
+  assert.deepStrictEqual(sent[1], { action: 'press', token: sent[1].token, effect: { preset: 'strobe' } });
+  assert.deepStrictEqual(holds.held(), ['p0-1', 'strobe']);
+  holds.release('p0-1');
+  assert.deepStrictEqual(sent[2], { action: 'release', token: sent[0].token, pad: { bank: 0, slot: 1 } });
+  holds.releaseAll();
+  assert.deepStrictEqual(sent[3], { action: 'release', token: sent[1].token, effect: { preset: 'strobe' } });
+  assert.deepStrictEqual(holds.held(), []);
+});
+
+test('the command bar\'s strip is pads bank A', () => {
+  given({});
+  const html = ui.html(ui.h(ui.CommandBar, {}));
+  assert.match(html, /class="cb-energy-label">PADS</);
+  const names = [...html.matchAll(/class="cb-energy-name">([^<]*)</g)].map((m) => m[1]);
+  assert.deepStrictEqual(names, ['Kill', 'Blinder', 'Strobe', 'Colour strobe', 'UV', 'Glow', 'Domino']);
 });

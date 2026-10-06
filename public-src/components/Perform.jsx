@@ -3,7 +3,8 @@ import { api, autoPositionSig, connectedSig, emitTap, pick, send } from '../stat
 import { colorToCss, clockSource, fmtTime, formatBpm } from '../utils.js';
 import { timelinePosition } from '../timeline-state.js';
 import { useDraft } from '../draft.js';
-import { useEnergyPads } from '../energy-pad.js';
+import { Pads } from './Pads.jsx';
+import { StrobePad } from './StrobePad.jsx';
 import { activeQueue } from './Queue.jsx';
 
 /**
@@ -13,26 +14,14 @@ import { activeQueue } from './Queue.jsx';
  *   outputs      armed or not: whether anything leaves the machine at all
  *   now / next   the track playing, how far in, and what comes after it
  *   sync         what the lights are keeping time by, and whether it is well
- *   pads         blackout, the energy effects held under a finger (or
- *                latched), and tap tempo
+ *   pads         two banks of eight, each played as its launch mode says,
+ *                the strobe held, blackout and tap tempo
  *   palettes     one tap writes the whole look's colours
  *   faders       the master and how hard the generated show pushes
  *
  * Everything here is also on the other views; this is the same controls laid
  * out for a thumb rather than a mouse.
  */
-
-// Short names for the pads: what fits in large type on a phone.
-const PAD_LABELS = {
-  kill: 'Kill',
-  blinder: 'Blinder',
-  'white-strobe': 'Strobe',
-  'color-strobe': 'Colour strobe',
-  'palette-strobe': 'Palette strobe',
-  'uv-wash': 'UV',
-  glow: 'Glow',
-};
-const PAD_ORDER = ['kill', 'blinder', 'white-strobe', 'color-strobe', 'palette-strobe', 'uv-wash', 'glow'];
 
 const SOURCE_LABELS = {
   prolink: 'PRO DJ LINK', hybrid: 'Spotify + OS clock', spotify: 'Spotify', deezer: 'Deezer',
@@ -41,10 +30,6 @@ const SOURCE_LABELS = {
 
 const SHOW_TEXT = {
   idle: 'Idle', downloading: 'Downloading', analyzing: 'Analysing', ready: 'Ready', playing: 'Running',
-};
-
-const readLatch = () => {
-  try { return localStorage.getItem('lightshow.perform.latch') === '1'; } catch { return false; }
 };
 
 /** How the source the show follows is doing: 'ok', 'warn', 'off' or 'none'. */
@@ -167,38 +152,21 @@ function SyncHealth() {
   );
 }
 
-function Pads() {
-  const s = pick(['masterBlackout', 'energyEffects', 'energyOverride']);
-  const [latch, setLatch] = useState(readLatch);
-  useEffect(() => { try { localStorage.setItem('lightshow.perform.latch', latch ? '1' : '0'); } catch { /* private mode */ } }, [latch]);
-  const [held, padProps] = useEnergyPads({ latch });
-  const effects = (s.energyEffects || []).slice().sort((a, b) => PAD_ORDER.indexOf(a.id) - PAD_ORDER.indexOf(b.id));
+function Utility() {
+  const s = pick(['masterBlackout']);
   return (
-    <section class="perform-pads" aria-label="Effects">
+    <section class="perform-utility" aria-label="Blackout and tap">
       <button type="button" class={`perform-pad pad-blackout ${s.masterBlackout ? 'active' : ''}`}
         aria-pressed={!!s.masterBlackout}
         onClick={() => send({ masterBlackout: !s.masterBlackout })}>
         <span class="perform-pad-name">Blackout</span>
         <span class="perform-pad-hint">{s.masterBlackout ? 'on — tap to restore' : 'tap'}</span>
       </button>
-      {effects.map((eff) => (
-        <button key={eff.id} type="button"
-          class={`perform-pad pad-${eff.id} ${held === eff.id || s.energyOverride === eff.id ? 'active' : ''}`}
-          title={eff.desc}
-          {...padProps(eff.id)}>
-          <span class="perform-pad-name">{PAD_LABELS[eff.id] || eff.name}</span>
-          <span class="perform-pad-hint">{latch ? (held === eff.id ? 'latched — tap to stop' : 'tap to latch') : 'hold'}</span>
-        </button>
-      ))}
       <button type="button" class="perform-pad pad-tap" onPointerDown={(e) => { if (e.button === 0) emitTap(); }}
         onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !e.repeat) { e.preventDefault(); emitTap(); } }}>
         <span class="perform-pad-name">Tap</span>
         <span class="perform-pad-hint">tempo</span>
       </button>
-      <label class="perform-latch">
-        <input type="checkbox" checked={latch} onChange={(e) => setLatch(e.target.checked)} />
-        <span>Latch effects</span>
-      </label>
     </section>
   );
 }
@@ -265,6 +233,8 @@ export function Perform() {
       <div class="perform-body">
         <div class="perform-controls">
           <Pads />
+          <StrobePad />
+          <Utility />
           <PalettePads />
         </div>
         <Faders />

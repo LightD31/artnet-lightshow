@@ -1,6 +1,6 @@
 import { computed, signal } from '@preact/signals';
 import { io } from 'socket.io-client';
-import { createHoldControl } from './hold-control.js';
+import { createVoiceHolds } from './hold-control.js';
 import { timelinePosition } from './timeline-state.js';
 import { createStore } from './store.js';
 import { decodeDmxFrame } from '../src/shared/dmx-frame.ts';
@@ -88,7 +88,7 @@ export const socket = io({
 
 // Created before socket listeners are registered so a very fast disconnect
 // during page startup cannot hit a temporal-dead-zone reference.
-export const energyHold = createHoldControl((payload) => emitLive('energy-hold', payload));
+export const voiceHolds = createVoiceHolds((payload) => emitLive('voice-hold', payload));
 
 // Whether this page has ever had a live socket, which is what separates "not up
 // yet" from "we lost it". Kept apart from connectionSig, which is already
@@ -104,7 +104,7 @@ socket.on('connect', () => {
 });
 
 socket.on('disconnect', () => {
-  energyHold.release();
+  voiceHolds.releaseAll();
   freezePosition();
   connectedSig.value = false;
   connectionSig.value = { status: 'reconnecting' };
