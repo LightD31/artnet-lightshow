@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'preact/hooks';
-import { api, autoPositionSig, connectedSig, emitTap, pick, send } from '../state.js';
+import { api, autoPositionSig, connectedSig, emitTap, librarySig, pick, send } from '../state.js';
 import { colorToCss, clockSource, fmtTime, formatBpm } from '../utils.js';
 import { timelinePosition } from '../timeline-state.js';
 import { useDraft } from '../draft.js';
 import { Pads } from './Pads.jsx';
 import { StrobePad } from './StrobePad.jsx';
 import { activeQueue } from './Queue.jsx';
+import { isRandom, paletteName } from './PaletteEditor.jsx';
+import { Transport } from './Transport.jsx';
+import { AudioMeters } from './AudioMeters.jsx';
 
 /**
  * The view for running a show from a tablet: what a hand needs mid-set, as
@@ -201,6 +204,49 @@ function PalettePads() {
   );
 }
 
+/** What PUT /api/palette-override takes for a palette: its id, rolled on the server. */
+export const overrideBody = (palette) => ({ paletteId: palette.id });
+
+/**
+ * Which strip button the live override is: 'off', the palette whose fixed
+ * colours it equals, or null (colours sent by hand, or a palette with random
+ * entries, which the server rolled).
+ */
+export function activeOverride(override, palettes) {
+  if (!override || !override.length) return 'off';
+  const want = override.map((c) => String(c).toUpperCase()).join();
+  const hit = palettes.find((p) => !(p.colours || []).some(isRandom)
+    && (p.colours || []).map((c) => String(c).toUpperCase()).join() === want);
+  return hit ? hit.id : null;
+}
+
+/** Light DJ's palette override: one tap puts a palette over every effect, "Off" takes it away. */
+export function PaletteOverride() {
+  const s = pick(['paletteOverride', 'userPalettes']);
+  const lib = librarySig.value;
+  const builtin = (lib.palettes && lib.palettes.builtin) || [];
+  const user = s.userPalettes || (lib.palettes && lib.palettes.user) || [];
+  const all = [...builtin, ...user];
+  const active = activeOverride(s.paletteOverride, all);
+  const button = (id, name, colours, onClick) => (
+    <button key={id} type="button" class={`override-pad${active === id ? ' active' : ''}`} aria-pressed={active === id}
+      data-override={id} onClick={onClick}>
+      <span class="override-swatches" aria-hidden="true">
+        {colours.map((c, i) => <span key={i} class={isRandom(c) ? 'random' : ''} style={isRandom(c) ? {} : { background: c }} />)}
+      </span>
+      <span class="override-name">{name}</span>
+    </button>
+  );
+  return (
+    <section class="perform-override" aria-label="Palette override">
+      {button('off', 'Off', [], () => api('/api/palette-override', { method: 'DELETE' }))}
+      {all.map((p) => button(p.id, paletteName(p), p.colours || [],
+        () => api('/api/palette-override', { method: 'PUT', body: JSON.stringify(overrideBody(p)) })))}
+      {active === null && <span class="override-custom">Custom colours on</span>}
+    </section>
+  );
+}
+
 function Faders() {
   const s = pick(['masterDimmer', 'autoShow']);
   const [dim, onDim, commitDim] = useDraft(s.masterDimmer ?? 255, (v) => send({ masterDimmer: v }));
@@ -230,14 +276,19 @@ export function Perform() {
       <ArmSwitch />
       <NowNext />
       <SyncHealth />
+      <Transport />
       <div class="perform-body">
         <div class="perform-controls">
           <Pads />
           <StrobePad />
           <Utility />
+          <PaletteOverride />
           <PalettePads />
         </div>
-        <Faders />
+        <div class="perform-side">
+          <Faders />
+          <AudioMeters />
+        </div>
       </div>
     </div>
   );

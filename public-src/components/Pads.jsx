@@ -3,6 +3,7 @@ import { api, pick } from '../state.js';
 import { useFocusTrap } from '../focus-trap.js';
 import { useVoicePads, holdsWhilePressed, padKey } from '../voice-pad.js';
 import { quickDeck, readFavourites } from './Effects.jsx';
+import { useSafetyGate } from './Photosensitivity.jsx';
 
 /**
  * The deck's pads: two banks of eight, as the server's layout has them. A
@@ -55,6 +56,7 @@ export function Pads({ initialBank }) {
   const [editing, setEditing] = useState(false);
   const [open, setOpen] = useState(null);
   const { held, padProps } = useVoicePads({ onLongPress: setOpen });
+  const gate = useSafetyGate();
   const layout = s.pads?.layout || [];
   const lit = s.pads?.lit || [];
 
@@ -81,7 +83,10 @@ export function Pads({ initialBank }) {
           const index = entry.bank * SLOTS + entry.slot;
           const on = !!lit[index] || held.has(padKey(entry.bank, entry.slot));
           const name = entry.label || (entry.content ? entry.content.id : 'Empty');
-          const handlers = editing ? { onClick: () => setOpen(entry) } : padProps(entry);
+          // A strobe pad asks before the acknowledgement, as the strobe button does.
+          const asks = !editing && entry.content?.kind === 'strobe' && !gate.acknowledged;
+          const handlers = editing ? { onClick: () => setOpen(entry) }
+            : asks ? { onClick: () => gate.guard(name, () => {}), 'data-safety': 'ask' } : padProps(entry);
           delete handlers.style;
           return (
             <button key={index} type="button"
@@ -99,6 +104,7 @@ export function Pads({ initialBank }) {
         })}
       </div>
       {open && <PadEditor entry={open} onClose={() => setOpen(null)} />}
+      {gate.dialog}
     </section>
   );
 }

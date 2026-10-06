@@ -98,7 +98,8 @@ test('the Perform view has blackout, the pads of the bank, the strobe and tap', 
   assert.deepStrictEqual(names, ['Blackout', 'Tap']);
   assert.deepStrictEqual(padLabels(html), ['Kill', 'Blinder', 'Strobe', 'Colour strobe', 'UV', 'Glow', 'Domino', 'Empty']);
   assert.match(html, /class="strobe-hold"/);
-  assert.strictEqual(count(html, 'aria-pressed="true"'), 1, 'only the palette in use is pressed');
+  assert.strictEqual(count(html, 'aria-pressed="true"'), 2, 'only the palette in use and the override\'s Off are pressed');
+  assert.match(html, /aria-pressed="true" data-override="off"/, 'no palette override: Off is pressed');
   assert.match(html, /class="perform-palette active" aria-pressed="true"><span[^>]*>.*?Volcanic/);
   assert.match(html, /aria-valuetext="50 percent"/, 'the master, as a person reads it');
   assert.match(html, /aria-valuetext="70 percent"/, 'the show\'s intensity');

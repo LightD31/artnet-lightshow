@@ -3,6 +3,7 @@ import { api, librarySig, pick } from '../state.js';
 import { useFocusTrap } from '../focus-trap.js';
 import { useVoicePads } from '../voice-pad.js';
 import { PaletteEditor, isHexColour, normaliseHex } from './PaletteEditor.jsx';
+import { useSafetyGate } from './Photosensitivity.jsx';
 
 /**
  * The strobe: held under a finger, above every other voice. Touch screens
@@ -30,17 +31,25 @@ export function StrobePad() {
   const [open, setOpen] = useState(false);
   const { held, holdProps } = useVoicePads();
   const on = !!s.strobe?.active || held.has('strobe');
-  const handlers = holdProps('strobe', { effect: { preset: 'strobe' } });
+  const gate = useSafetyGate();
+  // Before the acknowledgement a press asks instead of holding: the finger is
+  // gone by the time the question is answered, so the next press holds.
+  const handlers = gate.acknowledged
+    ? holdProps('strobe', { effect: { preset: 'strobe' } })
+    : { onClick: () => gate.guard('Strobe', () => {}), 'data-safety': 'ask' };
   delete handlers.style;
+  const hint = on ? 'flashing' : gate.acknowledged ? 'hold' : 'confirm first';
   return (
     <section class="strobe-pad" aria-label="Strobe">
       <button type="button" class={`strobe-hold${on ? ' active' : ''}`} aria-pressed={on} {...handlers}>
         <span class="strobe-name">Strobe</span>
-        <span class="strobe-hint">{on ? 'flashing' : 'hold'}</span>
+        <span class="strobe-hint">{hint}</span>
       </button>
-      <button type="button" class="strobe-burst" onClick={() => api(`/api/strobe/burst/${BURST_MS}`, { method: 'POST' })}>Burst 2 s</button>
+      <button type="button" class="strobe-burst"
+        onClick={() => gate.guard('Strobe', () => api(`/api/strobe/burst/${BURST_MS}`, { method: 'POST' }))}>Burst 2 s</button>
       <button type="button" class="strobe-gear" aria-label="Strobe settings" onClick={() => setOpen(true)}>⚙</button>
       {open && <StrobeSettings onClose={() => setOpen(false)} />}
+      {gate.dialog}
     </section>
   );
 }

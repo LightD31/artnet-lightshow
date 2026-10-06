@@ -93,3 +93,37 @@ test('every target on the view is at least 44 px on a touch screen', async ({ pa
     .filter((x) => x.h < 44));
   expect(small).toEqual([]);
 });
+
+test('the strobe asks once before the acknowledgement, and never after it', async ({ page, request }) => {
+  await request.put('/api/settings', { data: { safety: { photosensitivityAcknowledged: false } } });
+  try {
+    await open(page, 'perform');
+    const strobe = page.locator('.strobe-pad .strobe-hold');
+    await expect(strobe).toHaveAttribute('data-safety', 'ask');
+    await strobe.click();
+    const dialog = page.getByRole('alertdialog', { name: 'Rapid flashing' });
+    await expect(dialog).toContainText('Strobe');
+    await dialog.getByRole('button', { name: 'I understand — play it' }).click();
+    await expect(dialog).toBeHidden();
+    await until(request, (s) => s.safety.photosensitivityAcknowledged === true);
+    await expect(strobe).not.toHaveAttribute('data-safety', 'ask');
+    await strobe.click();
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  } finally {
+    await request.put('/api/settings', { data: { safety: { photosensitivityAcknowledged: false } } });
+  }
+});
+
+test('the palette override goes on with one tap and comes off with Off', async ({ page, request }) => {
+  await request.delete('/api/palette-override');
+  await open(page, 'perform');
+  const strip = page.getByRole('region', { name: 'Palette override' });
+  await expect(strip.locator('[data-override="off"]')).toHaveAttribute('aria-pressed', 'true');
+  const first = strip.locator('.override-pad:not([data-override="off"])').first();
+  await first.click();
+  await until(request, (s) => Array.isArray(s.paletteOverride));
+  await expect(strip.locator('[data-override="off"]')).toHaveAttribute('aria-pressed', 'false');
+  await strip.locator('[data-override="off"]').click();
+  await until(request, (s) => s.paletteOverride === null);
+  await expect(strip.locator('[data-override="off"]')).toHaveAttribute('aria-pressed', 'true');
+});

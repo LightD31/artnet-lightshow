@@ -177,6 +177,25 @@ export function wantDmx() {
   };
 }
 socket.on('connect', () => { if (dmxWanted > 0) socket.emit('subscribe', ['dmx']); });
+
+// The audio topic: what the room hears, about 30 times a second, sent only to
+// pages that subscribe. Counted like the DMX feed; null while nobody listens.
+export const audioFeedSig = signal(null);
+socket.on('audio', (feed) => { audioFeedSig.value = feed; });
+let audioWanted = 0;
+export function wantAudio() {
+  if (audioWanted++ === 0 && socket.connected) socket.emit('subscribe', ['audio']);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    if (--audioWanted === 0) {
+      if (socket.connected) socket.emit('unsubscribe', ['audio']);
+      audioFeedSig.value = null;
+    }
+  };
+}
+socket.on('connect', () => { if (audioWanted > 0) socket.emit('subscribe', ['audio']); });
 socket.on('auto-position', ({ positionMs, running, advancing, revision }) => {
   if (!Number.isFinite(positionMs)) return;
   const currentRevision = stateSig.value.autoShow?.timelineRevision;

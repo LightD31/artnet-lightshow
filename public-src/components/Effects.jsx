@@ -1,8 +1,9 @@
 import { signal } from '@preact/signals';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { api, librarySig, pick, send } from '../state.js';
+import { librarySig, pick, send } from '../state.js';
 import { useFocusTrap } from '../focus-trap.js';
 import { Inspector, familyOf } from './Inspector.jsx';
+import { Photosensitivity as PhotosensitivityConfirm, acknowledgeThen } from './Photosensitivity.jsx';
 
 /**
  * The Effects view: an instrument first, an editor second. At the top a deck
@@ -147,31 +148,8 @@ function matches(row, q, families) {
   return [row.name, row.desc, row.id, family && family.name].some((text) => text && text.toLowerCase().includes(q));
 }
 
-/**
- * The warning before the first rapid flash, as both apps show it once. Yes
- * acknowledges on the server (saved) and plays; the question is not asked again.
- */
-export function PhotosensitivityConfirm({ preset, onConfirm, onCancel }) {
-  const box = useRef(null);
-  useFocusTrap(box, true, onCancel);
-  return (
-    <div class="confirm-veil" onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
-      <div ref={box} class="confirm-panel" role="alertdialog" aria-modal="true" aria-labelledby="photosensitivity-title"
-        aria-describedby="photosensitivity-text" tabIndex={-1}>
-        <h2 id="photosensitivity-title">Rapid flashing</h2>
-        <p id="photosensitivity-text">
-          <strong>{preset.name}</strong> flashes the lamps faster than the show otherwise ever does. Flashing at that rate can
-          bring on a seizure in someone with photosensitive epilepsy. Make sure nobody in the room is at risk and that the
-          flashing is announced. Playing it acknowledges this for the whole server, once.
-        </p>
-        <div class="confirm-actions">
-          <button type="button" class="btn" onClick={onCancel}>Cancel</button>
-          <button type="button" class="btn danger" onClick={onConfirm}>I understand — play it</button>
-        </div>
-      </div>
-    </div>
-  );
-}
+// The warning before the first rapid flash, shared with the strobe pad and the matrix.
+export { PhotosensitivityConfirm };
 
 /** A tap target that also takes a long press: the press opens the editor, and the click that follows it is not a tap. */
 function usePress(onTap, onLongPress) {
@@ -305,8 +283,7 @@ export function Effects() {
   const confirmPlay = async () => {
     const row = confirm;
     setConfirm(null);
-    const res = await api('/api/safety/acknowledge', { method: 'POST' });
-    if (res.ok) send({ pattern: row.id });
+    await acknowledgeThen(() => send({ pattern: row.id }));
   };
   const playById = (id) => {
     const row = rows.find((r) => r.id === id);

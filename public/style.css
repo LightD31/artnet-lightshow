@@ -3928,3 +3928,42 @@ input[type=range]::-moz-range-thumb {
 .matrix-cell { aspect-ratio: 1; min-height: 72px; border-radius: 12px; border: 2px solid transparent; -webkit-touch-callout: none; }
 .matrix-cell.held { border-color: #fff; box-shadow: 0 0 18px rgba(255, 255, 255, 0.6); transform: scale(0.96); }
 @media (min-width: 900px) { .matrix-grid { grid-template-columns: repeat(8, 1fr); } }
+
+/* ── Perform: transport, meters and safety ── */
+.perform-transport { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+.transport-row { display: flex; align-items: center; gap: 12px; }
+.transport-picker { flex: 1; min-width: 0; min-height: 44px; font-size: 16px; }
+.transport-position { font-variant-numeric: tabular-nums; font-size: 24px; font-weight: 700; min-width: 4ch; text-align: right; }
+.transport-buttons { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.transport-btn { min-height: 52px; font-size: 20px; border-radius: 10px; border: 1px solid var(--border-hi); background: transparent; color: inherit; }
+.transport-btn[aria-pressed="true"] { background: var(--accent-fill); border-color: var(--accent); color: #fff; }
+.transport-btn:disabled { opacity: 0.4; }
+.transport-lanes { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0; padding: 0; list-style: none; font-size: 13px; }
+.transport-lanes .lane-name { color: var(--muted); }
+.transport-error { margin: 0; color: #f87171; font-size: 13px; }
+.perform-side { display: flex; flex-direction: column; gap: 12px; }
+.perform-override { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.override-pad { display: flex; flex-direction: column; align-items: stretch; gap: 4px; min-width: 88px; min-height: 56px; padding: 6px 8px; border-radius: 10px; border: 2px solid var(--border-hi); background: transparent; color: inherit; }
+.override-pad.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
+.override-swatches { display: flex; height: 14px; border-radius: 4px; overflow: hidden; }
+.override-swatches span { flex: 1; }
+.override-swatches .random { background: repeating-linear-gradient(45deg, #f43f5e 0 4px, #22d3ee 4px 8px, #facc15 8px 12px); }
+.override-name { font-size: 13px; text-align: left; }
+.override-custom { font-size: 13px; color: var(--muted); }
+.perform-audio { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+.audio-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.audio-mode { min-height: 44px; font-size: 16px; }
+.audio-latency { margin-left: auto; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.spl-chip { padding: 2px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; text-transform: uppercase; background: var(--border-hi); }
+.spl-chip.loud { background: #dc2626; color: #fff; }
+.spl-chip.soft { background: #d97706; color: #fff; }
+.audio-meters { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; height: 96px; }
+.audio-meter { position: relative; display: flex; align-items: flex-end; justify-content: center; border-radius: 8px; background: var(--border); overflow: hidden; }
+.audio-meter-fill { position: absolute; left: 0; right: 0; bottom: 0; background: linear-gradient(to top, #22c55e, #facc15 70%, #ef4444); transition: height 60ms linear; }
+.audio-meter-name { position: relative; font-size: 12px; padding-bottom: 4px; text-transform: uppercase; }
+.audio-gates { display: flex; gap: 6px; }
+.audio-gates .gate { width: 18px; height: 18px; border-radius: 50%; background: var(--border-hi); }
+.audio-gates .gate.open { background: #22c55e; box-shadow: 0 0 8px #22c55e; }
+.audio-quiet { margin: 0; font-size: 13px; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .audio-meter-fill { transition: none; } }
+@media (max-width: 520px) { .transport-position { font-size: 20px; } .override-pad { min-width: 72px; } }
