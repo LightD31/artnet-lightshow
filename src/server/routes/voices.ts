@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { state, voices } from '../state.ts';
+import { state, voices, strobe, matrix } from '../state.ts';
+import { matrixPressSchema, matrixReleaseSchema } from '../matrix.ts';
 import { builtinPresets, launchOf, targetsOf } from '../voices.ts';
 import { padIndex, restOwner, REST_TOKEN } from '../pads.ts';
 import { validate } from '../validation.ts';
@@ -167,5 +168,68 @@ export function attachVoiceRoutes(app: Express, ctx: RouteContext): void {
     const ms = msOf(req);
     if (!pads().entry(bank, slot).content) return res.status(204).end();
     res.json({ ok: true, id: pads().once(bank, slot, ms)?.id ?? null });
+  });
+
+  // ── The strobe ────────────────────────────────────────────────────────────
+  // The deck latches it or bursts it, the Strobe page edits its settings;
+  // every answer is its status. On and burst wait for the acknowledgement
+  // (409), off never does. Holding it is the pads' and voice-hold's.
+  const strobeStatus = () => ({ ok: true, ...strobe.status() });
+
+  app.get('/api/strobe', (_req, res) => {
+    res.json(strobeStatus());
+  });
+
+  app.post('/api/strobe/on', (_req, res) => {
+    strobe.on('latched');
+    res.json(strobeStatus());
+  });
+
+  app.post('/api/strobe/off', (_req, res) => {
+    strobe.off();
+    res.json(strobeStatus());
+  });
+
+  app.post('/api/strobe/burst/:ms', (req, res) => {
+    const ms = /^\d+$/.test(req.params.ms) ? Number(req.params.ms) : NaN;
+    strobe.burst(ms);
+    res.json(strobeStatus());
+  });
+
+  // ── The matrix board ──────────────────────────────────────────────────────
+  // A cell is a token (the colour itself when none is given) under a lease
+  // that a repeated press renews; REST tokens live apart from the sockets'.
+  // Every change is told to the pages at once, a mode set with no cell held
+  // included: that one starts no voice to carry the news.
+  const restCell = (token: string) => `rest:${token}`;
+  const matrixAnswer = (status: ReturnType<typeof matrix.status>) => {
+    ctx.integrations.broadcast();
+    return { ok: true, ...status };
+  };
+
+  app.get('/api/matrix', (_req, res) => {
+    res.json({ ok: true, ...matrix.status() });
+  });
+
+  app.post('/api/matrix/press', (req, res) => {
+    const body = validate(matrixPressSchema, req.body ?? {}, 'matrix');
+    res.json(matrixAnswer(matrix.press(restCell(body.token ?? body.colour.toUpperCase()), body.colour)));
+  });
+
+  app.post('/api/matrix/release', (req, res) => {
+    const body = validate(matrixReleaseSchema, req.body ?? {}, 'matrix');
+    res.json(matrixAnswer(matrix.release(restCell(body.token ?? body.colour!.toUpperCase()))));
+  });
+
+  app.put('/api/matrix', (req, res) => {
+    const body = (req.body ?? {}) as { mode?: unknown };
+    res.json(matrixAnswer(matrix.setMode(body.mode)));
+  });
+
+  // Saved first; a running strobe takes them at once, and every page hears.
+  app.put('/api/strobe', (req, res) => {
+    strobe.update(req.body ?? {});
+    ctx.integrations.broadcast();
+    res.json(strobeStatus());
   });
 }

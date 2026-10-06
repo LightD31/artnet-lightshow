@@ -25,6 +25,8 @@ export class LightshowConnection {
 	#holdTimer = null
 	#holdCount = 0
 
+	#pads = new Map()
+
 	constructor({ host, port = 3000, token = '', onStatus = () => {}, onChange = () => {}, log = () => {} }) {
 		this.base = `http://${host}:${port}`
 		this.token = token || ''
@@ -52,14 +54,15 @@ export class LightshowConnection {
 		this.socket.on('connect', () => this.onStatus('ok'))
 		this.socket.on('disconnect', (reason) => {
 			this.#stopRenewing()
+			this.#releaseAllPads()
 			this.onStatus('disconnected', reason)
 		})
 		this.socket.on('connect_error', (err) => {
-			// The server rejects the handshake with "unauthorized" when this
-			// connection presented the wrong token (or none). Said plainly: a
+			// A wrong or missing token comes back as code "unauthorized" in the
+			// error's data, the message being for people. Said plainly: a
 			// "connection failure" would send someone hunting a network problem
 			// that is not there.
-			this.onStatus(err.message === 'unauthorized' ? 'unauthorized' : 'error', err.message)
+			this.onStatus(isUnauthorized(err) ? 'unauthorized' : 'error', err.message)
 		})
 		this.socket.on('error-msg', ({ source, message } = {}) => {
 			this.log('warn', `Server rejected ${source || 'message'}: ${message}`)
@@ -78,7 +81,34 @@ export class LightshowConnection {
 		this.socket.on('state', (state) => this.onChange(this.store.merge(state)))
 	}
 
+	// A pad held over REST: pressed again within its 1200 ms lease to keep
+	// it, each pad on a renewal of its own; release ends that one alone.
+	holdPad(bank, slot) {
+		const key = `${bank}:${slot}`
+		if (this.#pads.has(key)) return
+		const press = () => this.post(`/api/pads/${bank}/${slot}/press`, { token: `companion:${key}` }).catch(() => {})
+		press()
+		this.#pads.set(key, setInterval(press, PAD_RENEW_MS))
+	}
+
+	releasePad(bank, slot) {
+		const key = `${bank}:${slot}`
+		clearInterval(this.#pads.get(key))
+		this.#pads.delete(key)
+		return this.post(`/api/pads/${bank}/${slot}/release`, { token: `companion:${key}` }).catch(() => {})
+	}
+
+	strobeBurst(ms) {
+		return this.post(`/api/strobe/burst/${Math.round(ms)}`, {})
+	}
+
+	#releaseAllPads() {
+		for (const timer of this.#pads.values()) clearInterval(timer)
+		this.#pads.clear()
+	}
+
 	disconnect() {
+		this.#releaseAllPads()
 		this.#stopRenewing()
 		if (this.socket) {
 			this.socket.removeAllListeners()
@@ -179,4 +209,12 @@ export class LightshowConnection {
 		const on = mode === 'toggle' ? !this.state.armed : mode === 'arm'
 		return this.post(on ? '/api/outputs/arm' : '/api/outputs/disarm')
 	}
+}
+
+// Well inside the server's 1200 ms hold lease.
+const PAD_RENEW_MS = 400
+
+/** The server's handshake refusal: the code in the error's data, or the bare word older servers sent. */
+export function isUnauthorized(err) {
+	return (err && err.data && err.data.code === 'unauthorized') || (err && err.message === 'unauthorized')
 }

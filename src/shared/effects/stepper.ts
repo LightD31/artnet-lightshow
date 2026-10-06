@@ -167,6 +167,12 @@ export class EffectStepper {
     return entry?.initialized ? { value: entry.value as S } : null;
   }
 
+  /** When an instance with state was last rendered or kept; null for none. */
+  seenAt(id: string): number | null {
+    const entry = this.states.get(id);
+    return entry?.initialized ? entry.lastSeen : null;
+  }
+
   /** Mark an instance seen without rendering it (a held base look), so a sweep keeps it. */
   keep(id: string, nowMs: number): void {
     const entry = this.states.get(id);

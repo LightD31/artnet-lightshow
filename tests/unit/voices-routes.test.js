@@ -24,7 +24,7 @@ import { PadStore } from '../../src/server/pads.ts';
 import { startEngine, stopEngine, renderInput, renderFrame, engineStatus } from '../../src/server/engine.ts';
 import { applyPatch } from '../../src/server/patch.ts';
 import { captureLook } from '../../src/server/cues.ts';
-import { state, voices, freeClockRuns } from '../../src/server/state.ts';
+import { state, voices, freeClockRuns, matrix as liveMatrix } from '../../src/server/state.ts';
 import { conductor } from '../../src/server/conductor.ts';
 import { domainOf } from '../../src/server/protocol.ts';
 import { settings } from '../../src/server/settings.ts';
@@ -337,8 +337,14 @@ test('a page whose Wi-Fi drops: its hold ends at its 1.2 s lease, by the frame o
   // The engine's clock moved on by hand, so a lease can run out before its timer fires; the timers keep real time.
   const real = performance.now.bind(performance);
   let ahead = 0;
-  t.mock.method(performance, 'now', () => real() + ahead);
+  let still = null;
+  t.mock.method(performance, 'now', () => still ?? real() + ahead);
   const skipTo = (ms) => { ahead += Math.max(0, ms - performance.now()); };
+  // The clock standing at `ms` for one reading, then running on from there: a busy machine cannot slip past the moment asked about.
+  const standingAt = (ms, read) => {
+    still = Math.max(ms, performance.now());
+    try { return read(); } finally { ahead = still - real(); still = null; }
+  };
   const press = async (socket, event, token, effect) => {
     socket.emit(event, { action: 'press', token, effect });
     await until(() => ids().length === 1, `${event}: the hold`);
@@ -354,8 +360,7 @@ test('a page whose Wi-Fi drops: its hold ends at its 1.2 s lease, by the frame o
     const pressed = Date.now();
     renderFrame();
     assert.ok(blue() > 0, `${event}: held, the blinder on the rig`);
-    skipTo(held.untilMs - 1);
-    assert.deepEqual(playing(), [held.id], 'a millisecond before its lease ends it still plays');
+    standingAt(held.untilMs - 1, () => assert.deepEqual(playing(), [held.id], 'a millisecond before its lease ends it still plays'));
     skipTo(held.untilMs);
     assert.deepEqual(playing(), [], 'gone from the frame at its lease');
     renderFrame();
@@ -529,4 +534,58 @@ test('on the worker thread a voice plays on the worker\'s clock, from its start 
   }
   assert.ok(renderInput().voices.some((v) => v.id === soon.id), 'carried ahead of its start');
   voices.stop(strobe.id);
+});
+
+// ── The matrix board ────────────────────────────────────────────────────────
+
+test('the matrix board over REST: GET, a mode set with no cell held is heard by the pages, press and release by colour or token, 400 and 409, the live state carries `matrix`', async (t) => {
+  const s = await serve(t);
+  const { heard } = await s.page();
+  const heardMatrix = (found) => heard.patches.some((p) => p.d === 'look' && p.set.matrix && found(p.set.matrix));
+  t.after(() => { liveMatrix.clear(); liveMatrix.setMode('pulses'); });
+
+  let res = await s.call('GET', '/api/matrix');
+  assert.deepEqual(res, { status: 200, body: { ok: true, mode: 'pulses', colours: [], voice: null } });
+
+  // A rapid mode waits for the acknowledgement, and the refused press holds nothing.
+  res = await s.call('POST', '/api/matrix/press', { colour: '#ff0000' });
+  assert.deepEqual([res.status, res.body.ok], [409, false]);
+  assert.deepEqual((await s.call('GET', '/api/matrix')).body.colours, []);
+
+  // A mode set with no cell held starts no voice: the pages hear it all the same.
+  for (const body of [{ mode: 'disco' }, {}, { mode: 7 }]) assert.equal((await s.call('PUT', '/api/matrix', body)).status, 400, JSON.stringify(body));
+  res = await s.call('PUT', '/api/matrix', { mode: 'cycle' });
+  assert.deepEqual([res.status, res.body.mode, res.body.voice], [200, 'cycle', null]);
+  await until(() => heardMatrix((m) => m.mode === 'cycle'), 'the page hearing the mode');
+
+  // Cells: the colour is the token when none is given; the same press again renews, another token is another cell.
+  for (const body of [{}, { colour: 'red' }, { colour: '#12345' }, { colour: '#FF0000', extra: 1 }]) {
+    assert.equal((await s.call('POST', '/api/matrix/press', body)).status, 400, JSON.stringify(body));
+  }
+  res = await s.call('POST', '/api/matrix/press', { colour: '#ff0000' });
+  assert.deepEqual([res.status, res.body.colours], [200, ['#FF0000']]);
+  const first = res.body.voice;
+  assert.ok(first && ids().includes(first), 'one voice plays the board');
+  res = await s.call('POST', '/api/matrix/press', { colour: '#FF0000' });
+  assert.deepEqual([res.body.colours, res.body.voice], [['#FF0000'], first], 'renewed, not launched again');
+  res = await s.call('POST', '/api/matrix/press', { colour: '#00FF00', token: 'finger-2' });
+  assert.deepEqual(res.body.colours, ['#FF0000', '#00FF00']);
+  const live = (await s.call('GET', '/api/state')).body.matrix;
+  assert.deepEqual(live, { mode: 'cycle', colours: ['#FF0000', '#00FF00'], voice: res.body.voice });
+  await until(() => heardMatrix((m) => m.colours.length === 2), 'the page hearing both cells');
+
+  // Release: by token, by colour; one that names neither is a 400; the last ends the voice.
+  assert.equal((await s.call('POST', '/api/matrix/release', {})).status, 400);
+  res = await s.call('POST', '/api/matrix/release', { token: 'finger-2' });
+  assert.deepEqual(res.body.colours, ['#FF0000']);
+  res = await s.call('POST', '/api/matrix/release', { colour: '#ff0000' });
+  assert.deepEqual([res.status, res.body.colours, res.body.voice], [200, [], null]);
+  assert.ok(!voices.list().some((v) => v.source === 'matrix'), 'no matrix voice left');
+  await until(() => heardMatrix((m) => m.colours.length === 0 && m.voice === null), 'the page hearing the board empty');
+
+  // Acknowledged, a rapid mode plays.
+  await s.call('POST', '/api/safety/acknowledge');
+  await s.call('PUT', '/api/matrix', { mode: 'flashes' });
+  res = await s.call('POST', '/api/matrix/press', { colour: '#0000FF' });
+  assert.deepEqual([res.status, res.body.mode, res.body.colours], [200, 'flashes', ['#0000FF']]);
 });

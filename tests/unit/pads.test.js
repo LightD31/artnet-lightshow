@@ -388,14 +388,15 @@ test('a strobe pad takes the strobe hook when installed and otherwise the Task 1
   assert.deepEqual(calls.slice(2), [['hold', 'tablet', 'u'], ['release', 'tablet', 'u']]);
   assert.throws(() => pads.once(0, 6), refusedWith(409, /held/));
 
-  // Over the socket: the pad and `{ preset: 'strobe' }` alike.
+  // Over the socket: the pad and `{ preset: 'strobe' }` alike. The server
+  // installs the strobe's own hook, which waits for the acknowledgement.
   t.mock.timers.reset();
   const s = await serve(t);
   const { socket, heard } = await s.page();
   socket.emit('voice-hold', { action: 'press', token: 's1', effect: { preset: 'strobe' } });
   socket.emit('voice-hold', { action: 'press', token: 's2', pad: { bank: 0, slot: 6 } });
   await until(() => heard.errors.length === 2, 'both refused');
-  assert.deepEqual(heard.errors.map((e) => e.message), ['No such preset: strobe', 'No such preset: strobe']);
+  assert.deepEqual(heard.errors.map((e) => e.message), ['photosensitivity acknowledgement required', 'photosensitivity acknowledgement required']);
   const live = [];
   s.integrations.pads.strobe = {
     hold(owner, token) {

@@ -50,7 +50,7 @@ import { renderLayer } from './layer.ts';
 import { buildRig, isHueLamp, rigSignature } from './rig.ts';
 import { EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture, HOLD_STROBE, holdStrobeFlash, holdStrobeLook } from './look-math.ts';
 import { gridFromAnalysis, beatPositionAt, localBpm, anchorStep, stepAt, motionAdvance } from './beat-clock.ts';
-import { canonical, effectContentKey, hdGuarded, relaunchEffect, renderEffectLayer, renderVoices, voiceAnchor, voiceLaunchKey, voiceLayout } from './effects/layer.ts';
+import { canonical, effectContentKey, handOverStrobes, hdGuarded, relaunchEffect, renderEffectLayer, renderVoices, voiceAnchor, voiceLaunchKey, voiceLayout } from './effects/layer.ts';
 import { energyEffectSpec } from './effects/catalogue.ts';
 import { requiresAcknowledgement, ridesLevel, validateSpec } from './effects/registry.ts';
 import { EffectStepper } from './effects/stepper.ts';
@@ -345,6 +345,8 @@ interface Walk {
   /** The voices launched and not ended, in launch order. */
   voices: Map<string, VoiceFrame>;
   records: Map<string, VoiceRecord>;
+  /** The strobe voices whose state the stepper holds, as the renderer keeps them. */
+  strobes: Set<string>;
   /** The energy burst lane as a voice of its own. */
   compat: { energy: string; voice: VoiceFrame } | null;
   /** The fade in progress: which of the timeline's fades, and the base it froze. */
@@ -369,6 +371,7 @@ function copyWalk(w: Walk): Walk {
     // Voice frames, fade sources, shown lights and outputs are made afresh and never changed.
     voices: new Map(w.voices),
     records: new Map([...w.records].map(([id, rec]) => [id, { ...rec }])),
+    strobes: new Set(w.strobes),
     compat: w.compat && { ...w.compat },
     fade: w.fade && { ...w.fade },
     shown: [...w.shown],
@@ -381,7 +384,7 @@ interface Checkpoint { walk: Walk; periodic: boolean; used: number }
 
 const emptyWalk = (k: number, intervalMs: number): Walk => ({
   k, cursor: 0, stepper: new EffectStepper(), guard: new HdFlashGuard(intervalMs), expression: { ...EXPRESSION_REST }, phase: 0,
-  lastBeat: null, lastEpoch: 0, lastNow: null, lastSweep: -Infinity, epoch: 0, base: null, voices: new Map(), records: new Map(),
+  lastBeat: null, lastEpoch: 0, lastNow: null, lastSweep: -Infinity, epoch: 0, base: null, voices: new Map(), records: new Map(), strobes: new Set(),
   compat: null, fadeOf: null, fade: null, shown: [], output: null, seq: newSequenceRun(),
 });
 
@@ -746,6 +749,7 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
       voices.push(played);
     }
     for (const id of w.records.keys()) if (!seen.has(id)) w.records.delete(id);
+    handOverStrobes(w.stepper, w.strobes, voices);
     return { voices, admitted };
   }
 

@@ -369,3 +369,17 @@ test('the pickers receive the legacy patterns, then every preset once, with its 
   assert.strictEqual(new Set(patterns.map((p) => p.id)).size, patterns.length, 'no id listed twice');
   assert.deepStrictEqual(JSON.parse(JSON.stringify(patterns)), patterns);
 });
+
+test('a Light DJ kind that steps on the wall clock says so in its family entry, so an editor can leave its cadence out', () => {
+  const entries = FAMILIES.flatMap((f) => f.kinds);
+  const flagged = entries.filter((k) => k.wallClock).map((k) => k.kind);
+  assert.ok(flagged.includes('ldj.TrueStrobe'), `flagged: ${flagged}`);
+  for (const entry of entries) {
+    const def = kindOf(entry.kind);
+    assert.strictEqual(entry.wallClock, def.wallClock ? true : undefined, entry.kind);
+    // The flag is the row's clock, read off what the kind does: on the wall clock it is rapid at any cadence.
+    if (entry.wallClock) assert.strictEqual(def.rapidFlashWhen({ cadence: 8, beats: 32 }), true, entry.kind);
+    if (!entry.kind.startsWith('ldj.')) assert.strictEqual(entry.wallClock, undefined, entry.kind);
+  }
+  assert.ok(entries.some((k) => k.kind.startsWith('ldj.') && !k.wallClock), 'the beat-clocked rows carry no flag');
+});

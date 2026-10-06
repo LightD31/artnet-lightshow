@@ -96,6 +96,8 @@ export interface EffectKindDef<P = unknown, S = unknown> {
   defaults: { params: P; palette?: PaletteEntry[] | null; brightness?: number; rapidFlash?: boolean; minFlashIntervalMs?: number; scope?: 'singleBeat' | 'measure' };
   capabilities?: Partial<Record<HdCapability, boolean>> | null;
   rapidFlash?: boolean; stateful?: boolean; rideLevel?: boolean;
+  /** Steps on the wall clock: `params.cadence` changes nothing, and an editor leaves it out. */
+  wallClock?: boolean;
   /** Additional parameter-dependent acknowledgement shared by rendering and admission. */
   rapidFlashWhen?(params: P): boolean;
   /**

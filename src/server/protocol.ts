@@ -52,6 +52,10 @@ const DOMAIN_OF: Readonly<Record<string, Domain>> = {
   masterDimmer: 'look', masterBlackout: 'look', flashLimit: 'look',
   strobeSpeed: 'look', strobeFunction: 'look', pixelMap: 'look', pixelPattern: 'look', panelPattern: 'look',
   energyOverride: 'look', paletteOverride: 'look', safety: 'look',
+  // The manual strobe, on or off and its settings: it plays over the look, and the look's views show it.
+  strobe: 'look',
+  // The matrix board, its mode and held colours: like the strobe, played over the look.
+  matrix: 'look',
 
   artnet: 'rig', universes: 'rig', fixtures: 'rig', profiles: 'rig', identify: 'rig', hueBridges: 'rig', armed: 'rig',
 
@@ -82,6 +86,11 @@ const DOMAIN_OF: Readonly<Record<string, Domain>> = {
   // The pads' layout and which of them are lit: the deck and the pad grid watch it, nothing else.
   pads: 'pads',
 };
+
+/** Is the key named in the table (rather than falling to `system`)? */
+export function hasDomain(key: string): boolean {
+  return Object.hasOwn(DOMAIN_OF, key);
+}
 
 export function domainOf(key: string): Domain {
   return Object.hasOwn(DOMAIN_OF, key) ? DOMAIN_OF[key] : 'system';

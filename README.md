@@ -110,6 +110,10 @@ Companion** (with a page of presets for busking), and a REST API.
 - **Flash limit** — a switch that holds the whole rig to three large-area
   flashes a second, the photosensitivity threshold — see
   [Flash limit](#flash-limit)
+- **The party effects of Hue Dynamics and Light DJ** — their families,
+  presets and palettes on the placed rig, pads and voices over the look, a
+  strobe with a latch cap, and a sequencer with punch record — see
+  [Effects — Hue Dynamics and Light DJ](#effects--hue-dynamics-and-light-dj)
 - **Reads the buildup** — measures how far the snare roll subdivides and whether
   the tempo genuinely ramps into the drop, and drives the beat division and the
   beat clock from that rather than a fixed escalation
@@ -1514,12 +1518,101 @@ the upgrade — nothing is deleted, but the set list has to be built again.
 
 ---
 
+## Effects — Hue Dynamics and Light DJ
+
+Besides the patterns above, the server carries the effects of two Hue party
+apps, rebuilt to behave as they do: the Party families of **Hue Dynamics** and
+its Disco, and the effects of **Light DJ**. They render on the placed rig in
+the room frame the apps use, step on the musical clock, and can play as the
+base look, on a pad, in a sequence or over everything as a voice.
+
+- **Families** — 22: the eleven of Hue Dynamics (simple ADSR, position chase,
+  radial pulse, spatial wash, bouncing scan, streak, twinkle, breathing fade,
+  volume gate wash, frequency burst, Disco), nine of Light DJ, and the
+  fork's own party and energy effects. Each family carries the schema of its
+  parameters.
+- **Presets** — 214 built in: the presets of both apps and the fork's party
+  rows. A preset is a family with its parameters set. `/api/pattern/:id` and
+  the pattern picker take a preset id as well as a pattern id. Built-ins never
+  change: editing one saves a copy as a preset of your own
+  (`config/effects.json`), which reaches every open page at once.
+- **Palettes** — 28 built in (Light DJ's, Hue Dynamics' default and the
+  strobe's white), and palettes of your own (`config/palettes.json`). The
+  palette override plays one palette — 1 to 8 colours, or a saved palette —
+  over every effect until it is removed; the look's colour slots stay as they
+  are. The named looks of **The palettes** above are a separate thing and keep
+  their routes.
+- **The inspector** edits a preset field by field from its family's schema. A
+  change to one nested field (a trigger, a spatial setting) keeps its
+  siblings: the server fills the rest from the defaults. A command to the
+  effect on stage (`POST /api/effects/command`) is answered once the renderer
+  has decided it — applied on a frame of the effect it was meant for, or why
+  not: 409 when the look on stage takes no commands, changed before the
+  command reached it, cannot take one now or already decided it; 400 when the
+  effects do not know the command.
+
+Effects that flash faster than the photosensitivity threshold are marked as
+such and need the acknowledgement under **Safety**.
+
+---
+
+## Voices and pads
+
+A **voice** is an effect playing over the base look. Several play at once.
+Each comes from somewhere — a `pad`, an `energy` override, the `strobe`, the
+`api`, the `sequence` or the `matrix` board — and lives in one of three ways:
+
+| Mode | Ends |
+|------|------|
+| `hold` | When its owner lets go. The owner renews it; without a renewal for 1.2 s, or when its socket disconnects, it dies, so a tablet whose Wi-Fi drops never leaves an effect running |
+| `once` | After its length, given in ms or beats |
+| `latched` | When stopped. A latched `strobe` voice, from any route, also ends at the strobe cap (see **Strobe**) |
+
+Where voices overlap, the strobe is on top; of the rest, the one launched last
+wins, then one launched on chosen fixtures over one on the whole rig, then the
+later start. The live state's `voices` lists them (`id`, `source`, `label`,
+`mode`, `tier`, `kind`, `targets`, `launchSeq`, `startedAt`, `until`,
+`hidden`).
+
+**Pads** — two banks of eight (`config/pads.json`), after Hue Dynamics' pad
+grid. A pad is `{ bank, slot, label, accent, content, launch, quantise, targets }`:
+`content` is `{ kind, id }` or `null` for an empty pad; `launch` is `once`,
+`hold` or `loop`; `quantise` is a grid in beats — a launch waits for the next
+line of it, `0` starts at once; `targets` is `shared` (the whole rig) or a
+list of fixture ids. What a pad plays depends on its content:
+
+- `preset` — the preset as one voice.
+- `pattern` — a stored pattern, its lanes and clips, played as one voice: a
+  shared lane covers the pad's targets, a track lane goes to the selected
+  fixtures in patch order (a track with no fixture left is skipped), and the
+  pad alone decides its priority and lifetime. `hold` and `loop` repeat the
+  pattern; `once` plays it once.
+- `strobe` — the strobe while the pad is held (id `strobe`, launch `hold`
+  only; `once` and `toggle` answer 409).
+- `sequencePattern` — drops the pattern into the loaded sequence at the
+  pad's next grid line.
+
+A pad is pressed and released (hold), toggled (loop) or fired once, from
+REST, the `voice-hold` socket event, MIDI (the `padPress` action with a
+bank and a slot, held while the note is down) and Companion (pad buttons that
+hold while pressed, and a strobe burst of 100–30,000 ms). An empty pad answers
+204.
+
+**The matrix board** — after Light DJ's matrix strobe maker. Each cell is a
+colour; touching cells (up to eight at once) builds one colour list, and the
+board plays it in one mode: `fireworks`, `flashes`, `pulses`, `cycle` or
+`solid`. Every change starts the board's one voice again with the new list;
+letting go of the last cell ends it. Its cells are held like a hold voice,
+and the fast modes need the acknowledgement.
+
+---
+
 ## Energy overrides
 
-Panic-button effects that instantly override patterns and per-fixture settings.
-One at a time. They are scaled by the grand master and each fixture's maximum
-brightness — the master is the one hand you keep on the whole rig, and it should
-still mean something at the moment you hit the blinder.
+The panic-button effects, now voices of the `energy` source: one at a time,
+over the look, scaled by the grand master and each fixture's maximum
+brightness — the master is the one hand you keep on the whole rig, and it
+should still mean something at the moment you hit the blinder.
 
 | ID | Name | Effect |
 |----|------|--------|
@@ -1528,33 +1621,140 @@ still mean something at the moment you hit the blinder.
 | `blinder` | Blinder | Every emitter at full — the brightest the rig goes |
 | `uv-wash` | UV Wash | Blacklight — UV alone, no strobe |
 | `kill` | Kill | Everything out for as long as it is held |
-| `palette-strobe` | Palette Strobe | Flashes in the look's colours on the beat over the running look, up to five a second |
+| `palette-strobe` | Palette Strobe | The strobe (see **Strobe**) on the beat clock, over the running look |
 
 Five effects covering four separate jobs, so no two buttons do the same thing: a
 strobe punch that is either cold or in the look's own colour, a held wall of
 light, and a held *dark* moment that is either blacklight or nothing at all.
 
-`blinder` and `all-on` used to be two entries that both meant "a white wall at
-full", differing only in whether amber and UV joined in — which from the floor is
-not a difference. They are now one effect driving every emitter that makes
-visible light, which is brighter than either was. `uv-strobe` gave way to
-`uv-wash`: a third strobe was the one thing the list already had.
-
 `kill` is not master blackout. The master is a latching switch on the whole rig;
 this is momentary and auto-clears, which is what you want under a thumb on a drop.
 
-`palette-strobe` is the hold-to-strobe pad of the Hue party apps, and the one
-override that does not replace the look. While it is held, every lamp flashes
-a colour of the look — the slots' distinct colours in turn, one per flash — on
-the beat grid, at the finest division of the beat that stays under five
-flashes a second (half beats at 128 BPM, beats at 174): each flash 80 ms at
-full, then 80 ms of black, then the running pattern shows through until the
-next. A Hue lamp is never flashed: it takes each flash as the colour at full
-falling to a floor of 40 over 200 ms, held there until the next. Flash Limit
-still holds the rig as a whole to three large flashes a second.
+`palette-strobe` is the hold-to-strobe pad of the Hue party apps: the strobe
+voice itself, with its settings, on the beat clock and in the strobe's place
+above every other voice. Latching it stops a running manual strobe, and
+starting the manual strobe stops a latched `palette-strobe`.
 
 Trigger from the UI, MIDI (encoder push 8 — hold to activate, release to clear),
-REST, or Companion. Clear with `energyOverride: null`.
+REST, the `energy-hold` and `voice-hold` socket events, or Companion. Clear
+with `POST /api/energy/off` or `energyOverride: null`. Only
+`POST /api/energy/off` also ends a latched strobe: a scene, a cue, a MIDI
+note or the auto show clears the energy all the time, and never the strobe.
+
+---
+
+## Strobe
+
+One strobe, with Hue Dynamics' settings:
+
+| Setting | Values |
+|---------|--------|
+| `palette` | 1 to 6 colours, `#RRGGBB`, each flash at full; white by default |
+| `flashesPerSecond` | 1 to 5, whole numbers; 2 by default |
+| `continueBetween` | `true` (default): the look shows between flashes; `false`: black holds |
+| `clock` | `beat` (default): flashes on the finest beat division under the rate, the palette's colours in turn; `wall`: at the rate in seconds, a random palette colour each flash |
+| `brightness` | 0 to 1 |
+| `onMs` · `blackMs` | 100 ms of flash, 100 ms of black — fixed |
+
+`PUT /api/strobe` changes any of them. It never flashes faster than five
+times a second, whatever asks for it, and Flash Limit, when on, still holds
+the rig as a whole to three large flashes a second. Ways to run it:
+
+- **Hold** — the strobe pad, or `voice-hold` with `{ preset: 'strobe' }`:
+  as long as it is held and renewed.
+- **Burst** — `POST /api/strobe/burst/:ms`, 100 to 30,000 ms, once.
+- **Latch** — `POST /api/strobe/on`. A latch ends on `POST /api/strobe/off`,
+  on `POST /api/energy/off`, or at the cap, `safety.strobeMaxLatchSec`
+  (60 s by default; lowering it cuts a latch already running). A scene, cue,
+  MIDI note or the auto show clearing the energy does not end it. A latched
+  voice of kind `strobe` started any other way (`POST /api/voices`) carries
+  the same cap.
+
+`POST /api/strobe/off` stops every strobe voice — held, burst or latched;
+`POST /api/energy/off` ends only the latch. Until the photosensitivity
+acknowledgement is given, hold, burst and latch answer 409; stopping never
+does. The live state's `strobe` is `{ active, mode, settings }`, `active`
+being `{ id, mode, startedAt, until }` or `null`.
+
+---
+
+## Sequencer
+
+A sequence places effects on a timeline in beats (`config/sequences.json`),
+after Hue Dynamics' timeline and Light DJ's playlists. It has `lanes` —
+`shared` lanes and `track` lanes of one fixture each — `clips`
+(`{ id, laneId, startBeat, lengthBeats, loopBeats, presetId | effect, targets, mute }`,
+`targets` being `lane` or fixture ids), `commands` at a beat (`palette`,
+`tempo`, `brightness`, `goto`), tempo and brightness `automation`, a `loop`,
+a `snap`, a `musicMode`, a `bpm`, and Light DJ's playlist `options`
+(`autoplay`, `shuffle`, `randomPaletteOnLoop`, `initialPalette`).
+
+On each fixture a track's clip beats every shared lane's, a later shared lane
+beats an earlier one, and inside a lane the later start wins. A soloed lane
+silences the others; a muted one plays nothing.
+
+The transport plays, pauses (the current clip keeps looping), stops (holding
+the last frame, or black with `?blackout=1`), steps to the next or previous
+clip, shuffles, seeks to a beat, jumps to a clip, re-syncs on the next beat or
+bar and loops a range. Clips with fast-flashing effects need the
+acknowledgement.
+
+**Patterns** are reusable bundles of lanes and clips. Saved ones can be
+inserted into the loaded sequence at a beat, or captured from a range of
+its lanes; a `pattern` pad plays one as a voice.
+
+**Punch record** turns pad launches into clips. `POST /api/sequence/record`
+starts a take (`overdub` or `replace`, a count-in and a grid); each launch
+after the count-in is captured with the pad's content and targets as they
+were at that moment. Starts and ends snap to the nearest grid line (halves
+away from zero), every clip at least one grid long; a launch with no release
+takes the pad's own length. Strobe pads and empty pads record nothing, and a
+pattern pad's hit lands as its whole bundle at once. The take is staged:
+`POST /api/sequence/record/stop` with `{ keep: false }` changes nothing; with
+`{ keep: true }` it is checked and saved as one new revision of the
+sequence, or refused (409) — keeping the sequence and the take as they were
+— when another sequence was loaded or this one edited during the take, or a
+pattern it used is gone. `replace` removes whole clips the take overlaps on
+the lanes and fixtures it writes, never cutting one, and the answer lists
+every clip removed (`removed`), including those reaching past the take. An
+empty take changes nothing.
+
+The live state's `sequence` carries what is loaded, its revision, the
+transport, the beat and bar, the clip on each lane, the loop and, while a
+take runs, the take.
+
+---
+
+## Audio modes
+
+`settings.audio.mode` decides what the music does to the effects:
+
+- `off` — effects ignore their triggers and run on their loop;
+- `tempo` (default) — effects follow the tempo and its accents, with no audio;
+- `reactive` — the live input's levels drive the reactive effects and the
+  Disco and Visualizer kinds.
+
+The `master` (`sensitivity`, `smoothing`, `attackMs` up to 2 s, `releaseMs`
+up to 5 s, `threshold`, `reactiveDepth`, `brightness`) shapes the levels as
+Hue Dynamics does; `ldjTrigger` (0.3) is Light DJ's trigger level. With no
+audio coming in, reactive effects play as in `tempo`. The levels go to
+clients that subscribe to the `audio` topic.
+
+---
+
+## Safety
+
+| Setting | Default | |
+|---------|---------|---|
+| `safety.photosensitivityAcknowledged` | `false` | The strobe and every effect that flashes faster than the photosensitivity threshold play only once this is given |
+| `safety.strobeMaxLatchSec` | 60 | The longest a latched strobe runs |
+| `safety.hdFlashIntervalMs` | 350 | Hue Dynamics' per-lamp flash interval, applied to its effects only |
+| `safety.flashLimit` | `false` | Flash Limit (see **Flash limit**) |
+
+Until `POST /api/safety/acknowledge` is called (stored across restarts),
+starting the strobe, a fast-flashing voice, preset, sequence clip or matrix
+mode answers `409 photosensitivity acknowledgement required`; an energy
+strobe stays dark instead. Stopping and releasing never refuse.
 
 ---
 
@@ -2421,7 +2621,12 @@ It is made for busking. The **Busk** preset page has:
 
 Other presets cover every pattern and pixel effect (the bars' own picture and
 the pixel map too), colours A–D, transport, a blackout per fixture and latched
-energy effects, with feedback lighting the active state. The patterns,
+energy effects, with feedback lighting the active state. Pad buttons hold
+the server's pads while pressed (renewed, so a crash lets go as the energy
+holds do), and a strobe burst button fires the strobe for 100–30,000 ms
+(1 s by default). When the server refuses the access token it says so with
+a code, `unauthorized`, and the connection shows the token as the problem —
+set the matching one in its config — rather than a network failure. The patterns,
 palettes, fixtures and cues it offers are read from the server when it
 connects, so ones added there appear without a new module. It follows the
 server over protocol 2, so a large rig costs it nothing between changes. See
@@ -2448,11 +2653,79 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/tempo/auto` · `/api/tempo/manual` | Automatic tempo match on (follow the music) or off (keep the tapped or typed BPM); answers `{ ok, tempoMode, clock }`, stored across restarts |
 | POST | `/api/master/:value` | Master dimmer (0–255) |
 | POST | `/api/blackout/toggle` · `/api/blackout/on` · `/api/blackout/off` | Master blackout |
-| POST | `/api/pattern/:id` | Set pattern (e.g. `chase`, `rainbow`) |
+| POST | `/api/pattern/:id` | Set pattern (e.g. `chase`, `rainbow`) or an effect preset as the base look; an unknown id is taken and plays nothing |
 | POST | `/api/color/:slot/:index` | Set colour slot `a`–`d` (index 0–23) |
 | GET | `/api/palettes` | The named looks, their colours at each size, and the one on stage |
 | POST | `/api/palette/:id` | Write all four slots from a look (`{ size }` — 2, 3 or 4; default 4) |
-| POST | `/api/energy/:id` · `/api/energy/off` | Energy override |
+| POST | `/api/energy/:id` · `/api/energy/off` | Latch an energy override (a voice) · clear it, and end a latched strobe |
+
+### Effects, palettes and safety
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/effects` | `{ families, builtin, user, palettes: { builtin, user } }` — every family with its parameter schema, the built-in presets, yours, and both sets of palettes |
+| GET | `/api/effects/:id` | One preset (404 `No such effect`) |
+| POST | `/api/effects` | Save a preset of your own (201 `{ ok, preset }`) |
+| PUT · DELETE | `/api/effects/:id` | Change or delete one of yours; a built-in answers that it cannot be changed (save a copy) |
+| POST | `/api/effects/command` | `{ cmd, arg? }` to the effect playing as the base look; answers once the renderer has decided (see **Effects**) |
+| GET | `/api/palettes/:id` | One effect palette, built in or yours |
+| POST · PUT · DELETE | `/api/palettes` · `/api/palettes/:id` | Save (201), change or delete a palette of your own |
+| PUT | `/api/palette-override` | `{ colours: ['#RRGGBB', …] }` (1 to 8) or `{ paletteId }`: play one palette over every effect; answers `{ ok, paletteOverride }` |
+| DELETE | `/api/palette-override` | Remove it |
+| GET | `/api/safety` | `{ photosensitivityAcknowledged, hdFlashIntervalMs, strobeMaxLatchSec }` |
+| POST | `/api/safety/acknowledge` | Give the photosensitivity acknowledgement (stored) |
+
+### Voices, pads, strobe and the matrix board
+
+A refused effect for want of the acknowledgement answers
+`409 photosensitivity acknowledgement required`.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/voices` | The running voices |
+| POST | `/api/voices` | `{ effect \| preset, targets?, mode?, ms? \| beats? }` — `targets` `shared` or fixture ids, `mode` `once` (default, with `ms` or `beats`) or `latched` (no length); answers `{ ok, id }` |
+| DELETE | `/api/voices/:id` · `/api/voices` | Stop one (404 `No such voice`) · all (`{ ok, stopped }`) |
+| GET · PUT | `/api/pads` | The layout and the lit pads (`{ layout, lit }`) · a whole layout (`{ pads }`) |
+| PUT | `/api/pads/:bank/:slot` | One pad's fields (bank 0–1, slot 0–7) |
+| POST | `/api/pads/:bank/:slot/press` · `/release` | Hold a pad from REST (`{ token? }` or `?token=`, default `rest`) and let it go; the same press within 1.2 s renews the hold |
+| POST | `/api/pads/:bank/:slot/toggle` | Start or stop a pad as a loop |
+| POST | `/api/pads/:bank/:slot/once` | Fire it once (`?ms=` for a length) |
+| GET | `/api/strobe` | `{ active, mode, settings }`, as every strobe route answers |
+| PUT | `/api/strobe` | Strobe settings, any of them (see **Strobe**) |
+| POST | `/api/strobe/on` · `/api/strobe/off` | Latch (ends at the cap) · stop every strobe voice |
+| POST | `/api/strobe/burst/:ms` | One burst, 100–30,000 ms |
+| GET | `/api/matrix` | `{ mode, colours, voice }`, as every matrix route answers |
+| POST | `/api/matrix/press` · `/api/matrix/release` | `{ colour: '#RRGGBB', token? }` — touch a cell (up to eight at once) · `{ colour }` or `{ token }` — let go |
+| PUT | `/api/matrix` | `{ mode }`: `fireworks`, `flashes`, `pulses`, `cycle` or `solid` |
+
+### Sequencer
+
+Transport routes answer `{ ok, status }`; with no sequence loaded they answer
+409.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/sequence` · `/api/sequence/status` | The loaded sequence and its status · the status alone |
+| PUT | `/api/sequence` | Load a whole sequence, or `{ id }` of a saved one |
+| GET · POST | `/api/sequences` | The saved sequences · save one (201; 409 if the id is taken) |
+| GET · PUT · DELETE | `/api/sequences/:id` | One saved sequence |
+| POST | `/api/sequence/play` · `pause` · `stop` · `next` · `prev` · `shuffle` | Transport; `stop?blackout=1` (or `{ blackout: true }`) goes black |
+| POST | `/api/sequence/seek/:beat` · `/api/sequence/jump/:clipId` | Go to a beat · to a clip |
+| POST | `/api/sequence/resync/:boundary` | `beat` or `bar` |
+| POST | `/api/sequence/loop` | `{ on, startBeat, endBeat }` |
+| GET · POST | `/api/sequence/patterns` | The saved patterns · save one (409 if the id is taken) |
+| GET · PUT · DELETE | `/api/sequence/patterns/:id` | One pattern |
+| POST | `/api/sequence/insert-pattern` | `{ id, atBeat }` into the loaded sequence |
+| POST | `/api/sequence/capture-pattern` | `{ fromBeat, toBeat, laneIds, name }` from the loaded sequence (201) |
+| POST | `/api/sequence/record` | `{ mode: 'overdub' \| 'replace', countInBeats?, quantise? }` (0–1024 and 0–64 beats, default 0) — start a take |
+| POST | `/api/sequence/record/stop` | `{ keep }` — keep or discard the take; answers `{ ok, added, removed, status }` |
+
+### Audio
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/audio` | The audio settings, the levels heard and the detectors |
+| PUT | `/api/audio` | `{ mode?, master?, ldjTrigger? }` — `master` by field, the rest kept; answers `{ ok, changed, settings, detectors }` |
 
 ### Fixtures, profiles and shows
 
@@ -2593,24 +2866,39 @@ a file from before several bridges were possible loads its one bridge as
 ### Socket.IO
 
 The UI uses Socket.IO rather than polling. Clients send `set`, `override`,
-`fixture`, `tap`, `energy-hold` and `midi-connect`; the server emits
+`fixture`, `tap`, `voice-hold`, `energy-hold` and `midi-connect`; the server emits
 `auto-position`, `midi-status`, `midi-map`, `midi-learn` and `error-msg`, and
 the state in one of two forms, chosen when the client connects:
 
 - **Protocol 2** — asked for with `auth: { protocol: 2 }`; what the live page
   uses. A `snapshot` on connect (`{ protocol, versions, state }`), then
   `patch` events carrying only the keys that changed, grouped by domain (`look`,
-  `rig`, `show`, `sources`, `catalogs`, `system`) and numbered per domain:
+  `rig`, `show`, `sources`, `audio`, `sequence`, `catalogs`, `library`,
+  `voices`, `pads`, `system`) and numbered per domain:
   `{ d, v, set, del? }`. A client that sees a gap in a domain's numbers sends
   `sync` (with an ack) for a new snapshot. DMX goes out as `dmx-frame`, binary
   (`src/shared/dmx-frame.ts`: per universe its number, its length and its
   bytes), thirty times a second while it changes — volatile, and only to
-  clients that sent `subscribe: ['dmx']` (and until `unsubscribe`).
+  clients that sent `subscribe: ['dmx']` (and until `unsubscribe`). The
+  `audio` topic works the same way: after `subscribe: ['audio']` the client
+  gets `audio` events, volatile, up to thirty a second and only when they
+  change — `{ t, party: { full, bass, mid, high }, disco: { gate, level, hit }, spl: { db, level, beat, section, eventT? } }`
+  — and `audio` with `null` when the input has gone. Both topics send their
+  latest at once on subscribing.
 - **Protocol 1** — anything that does not ask, such as the Companion module
   before 2.1: `state` (the full snapshot on connect, the
   whole live state again whenever any of it changes) and `dmx` (channel values
   as JSON, keyed by universe, ten times a second — built only while such a
   client is connected).
+
+The `voice-hold` message holds a voice while a button is down:
+`{ action: 'press' | 'renew' | 'release', token, pad?: { bank, slot }, effect?, targets? }`.
+`token` (1–64 characters) names the hold; `pad` presses that pad, `effect` is
+an effect or `{ preset }` (`{ preset: 'strobe' }` holds the strobe), and the
+holder sends `renew` within 1.2 s or the voice dies, as it does when the socket
+disconnects. A refusal comes back as `error-msg` with `source: 'voice-hold'`.
+`energy-hold` (`{ action, token, effect }`, `effect` an energy override id) is
+kept for the Companion module.
 
 The `fixture` message carries
 `{ id, address?, universe?, label?, profileId?, maxBrightness?, position?, group?, geometry?, output? }`.
@@ -2747,7 +3035,9 @@ supervisor has had to start it again and why. With them: the uptime, the
 engine's frame timing, the main thread's delay over the last 30 seconds, the
 memory, the outputs — `outputs.armed` says whether anything leaves the
 machine, and while it is false a note among the problems says so, as
-information rather than a fault — and the auto show. The Log tab shows it
+information rather than a fault — the auto show, and `counts`: the effect
+kinds the engine knows, the voices running, and whether a sequence is loaded
+and playing (`sequence: { loaded, playing }`, 0 or 1). The Log tab shows it
 above the log.
 
 `GET /healthz` is the liveness probe for a service manager or a monitor: it

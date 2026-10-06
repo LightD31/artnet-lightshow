@@ -33,6 +33,7 @@ export function UpdateVariableDefinitions(self) {
 		strobe_function: { name: 'Strobe function name' },
 		strobe_speed: { name: 'Strobe speed (0-255)' },
 		energy_override: { name: 'Active energy override (or "off")' },
+		...padVariableDefinitions(),
 		auto_show: { name: 'Auto show running (true/false)' },
 		auto_source: { name: 'What the auto show follows now' },
 		auto_intensity: { name: 'Auto show intensity (0-100)' },
@@ -74,5 +75,25 @@ export function UpdateVariableValues(self) {
 		sync_offset: s.autoSyncOffsetMs,
 		track: track && track.name ? `${track.artist ? `${track.artist} — ` : ''}${track.name}` : '—',
 		cue_count: Array.isArray(s.cues) ? s.cues.length : 0,
+		...padLabels(s),
 	})
+}
+
+// The deck's 16 pads, numbered 1-16 across both banks as the presets are.
+export const PAD_COUNT = 16
+
+function padVariableDefinitions() {
+	const defs = {}
+	for (let n = 1; n <= PAD_COUNT; n++) defs[`pad_${n}_label`] = { name: `Pad ${n} label` }
+	return defs
+}
+
+function padLabels(s) {
+	const layout = (s.pads && Array.isArray(s.pads.layout) && s.pads.layout) || []
+	const values = {}
+	for (let n = 1; n <= PAD_COUNT; n++) {
+		const pad = layout.find((p) => p && p.bank * 8 + p.slot === n - 1)
+		values[`pad_${n}_label`] = (pad && pad.label) || ''
+	}
+	return values
 }

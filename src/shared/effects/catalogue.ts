@@ -41,7 +41,7 @@ export type CataloguePreset = CatalogueMetadata & (
 /** A family groups presets in the pickers; its kinds carry their recommended settings as plain data. */
 export interface CatalogueFamily {
   id: string; app: 'hd' | 'ldj' | 'own'; name: string;
-  kinds: { kind: string; defaults: EffectKindDef['defaults']; capabilities: EffectKindDef['capabilities'] }[];
+  kinds: { kind: string; defaults: EffectKindDef['defaults']; capabilities: EffectKindDef['capabilities']; wallClock?: true }[];
 }
 
 /** Freeze a value and everything in it: tables nobody may change at run time. */
@@ -351,7 +351,8 @@ function family(id: string, app: CatalogueFamily['app'], name: string, extra: st
   const kinds = [...new Set([...CATALOGUE.flatMap((p) => (p.legacy || p.family !== id ? [] : [p.spec.kind])), ...extra])];
   return { id, app, name, kinds: kinds.map((kind) => {
     const def = kindOf(kind)!;
-    return { kind, defaults: plain(def.defaults), capabilities: def.capabilities ? plain(def.capabilities) : null };
+    return { kind, defaults: plain(def.defaults), capabilities: def.capabilities ? plain(def.capabilities) : null,
+      ...(def.wallClock ? { wallClock: true as const } : {}) };
   }) };
 }
 const ldjFamily = (engine: LdjEngine | 'macro', extra?: string[]) => family(`ldj.${engine}`, 'ldj', FAMILY[engine].name, extra);

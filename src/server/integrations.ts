@@ -1,5 +1,5 @@
 import { transitionFor } from '../show/transition.ts';
-import { state, getLiveState, getDmxSnapshot, getDmxUniverses, setExtrasProvider, setSequenceProvider, voices } from './state.ts';
+import { state, getLiveState, getDmxSnapshot, getDmxUniverses, setExtrasProvider, setSequenceProvider, voices, strobe } from './state.ts';
 import { createPublisher, ROOM } from './protocol.ts';
 import { encodeDmxFrame } from '../shared/dmx-frame.ts';
 import { setHooks, applyPatch } from './patch.ts';
@@ -28,7 +28,7 @@ import { EffectLibrary } from './effect-library.ts';
 import { PaletteStore } from './palette-store.ts';
 import { PadStore, Pads } from './pads.ts';
 import { presetLookup } from './routes/voices.ts';
-import { Sequencer } from './sequencer.ts';
+import { padTakeOf, sequenceBeatAhead, Sequencer } from './sequencer.ts';
 import { SequenceStore } from './sequence-store.ts';
 import { toHex } from '../shared/effects/palette.ts';
 import { configFile } from './config-dir.ts';
@@ -118,11 +118,17 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     effects: effectLibrary ?? new EffectLibrary(configFile('effects.json')).load(),
     palettes: paletteStore ?? new PaletteStore(configFile('palettes.json')).load(),
   };
-  // The pads play the library's presets, saved ones included, as they are at each press.
+  // The pads play the library's presets, saved ones included, as they are at
+  // each press; the strobe pad and voice-hold's `{ preset: 'strobe' }` hold the strobe.
   const pads = new Pads({
     voices, store: padStore ?? new PadStore(configFile('pads.json')).load(), lookup: () => presetLookup(library),
-    fixtureIds: () => state.fixtures.map((f) => f.id), beat: () => conductor.peek().beatPos,
+    fixtureIds: () => state.fixtures.map((f) => f.id), beat: () => conductor.peek().beatPos, strobe,
   });
+  // MIDI padPress notes hold the deck's pads under their own owner and token.
+  midi.pads = {
+    press: (bank, slot, owner, token) => pads.press(bank, slot, owner, token),
+    release: (bank, slot, owner, token) => pads.release(bank, slot, owner, token),
+  };
 
   // ─── The sequencer ──────────────────────────────────────────────────────
   // The shelf of saved sequences and the transport playing the loaded one.
@@ -160,7 +166,31 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
         }
       },
       admit: (spec) => safety.requireAcknowledged(spec),
+      fixtureIds: () => state.fixtures.map((f) => f.id),
+      pattern: (id): ReturnType<SequenceStore['getPattern']> => sequence.store.getPattern(id),
+      // A preset pad records as its preset, a pattern pad as its bundle; the strobe and drops do not (padTakeOf).
+      pad: (bank, slot) => padTakeOf(pads.store.get(bank, slot), presetLookup(library)),
     }),
+  };
+  // The pads count in the conductor's beats, the sequence in its own: the
+  // same distance from now on both.
+  const toSequenceBeat = (beat: number) => {
+    const at = sequence.sequencer.status();
+    return sequenceBeatAhead(at.beat, beat - conductor.peek().beatPos, at.loop);
+  };
+  // During a take the drop is staged with it (dropPattern).
+  pads.insertPattern = (id, atBeat) => {
+    sequence.sequencer.dropPattern(id, toSequenceBeat(atBeat));
+    broadcast();
+  };
+  pads.onHit = ({ bank, slot, startBeat, endBeat, lengthMs }) => {
+    if (!sequence.sequencer.recording()) return;
+    // An explicit length in ms counts in beats at the tempo now.
+    const lengthBeats = lengthMs === undefined ? undefined : (lengthMs * conductor.peek().bpm) / 60000;
+    sequence.sequencer.onPadHit({
+      bank, slot, startBeat: toSequenceBeat(startBeat), ...(endBeat === undefined ? {} : { endBeat: toSequenceBeat(endBeat) }), ...(lengthBeats === undefined ? {} : { lengthBeats }),
+    });
+    broadcast();
   };
   // Read once a frame by the engine; its status rides the live state.
   setSequenceSource((reading) => sequence.sequencer.frame(reading));

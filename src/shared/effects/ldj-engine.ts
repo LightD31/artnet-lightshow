@@ -395,6 +395,7 @@ export function makeLdjKind(name: string, row: LdjRow): EffectKindDef<LdjParams,
     kind: `ldj.${name}`, app: 'ldj', schema: paramsSchema,
     defaults: { params: { cadence: typeof row.cadence === 'number' ? row.cadence : 1, beats: row.beats ?? 32 } },
     rapidFlash: row.rapidFlash, stateful: true, rollOf: (state) => state.roll,
+    ...(row.cadence === 'wall:50' ? { wallClock: true } : {}),
     rapidFlashWhen: (params) => row.cadence === 'wall:50' || (!row.nextDelayMs && params.cadence <= .25),
     init: (_params, room) => ({ lamps: new LdjLamps(room.n), lastIter: null, lastPick: null, recent: [], perm: null, roll: 0, scratch: {} }),
     render(params, state, room, frame, out) {
