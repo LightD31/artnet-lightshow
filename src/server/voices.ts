@@ -1,6 +1,7 @@
 // The entry point registers every kind, so a voice's spec validates against it.
 import { deepFreeze, presetById } from '../shared/effects/index.ts';
 import { requiresAcknowledgement, validateSpec } from '../shared/effects/registry.ts';
+import { BUNDLE_KIND, isMintedBundle } from '../shared/effects/bundle.ts';
 import { seedFrom } from '../shared/effects/hash.ts';
 import { scopedLoopLength } from '../shared/effects/hd.ts';
 import { canonical, hdGuarded } from '../shared/effects/layer.ts';
@@ -180,7 +181,7 @@ const launchKey = (spec: EffectSpec, targets: number[] | null, tier: VoiceTier, 
  */
 export function voiceSpec(raw: unknown): EffectSpec {
   try {
-    return deepFreeze(structuredClone(validateSpec(raw)));
+    return deepFreeze(structuredClone(validateSpec(raw, { internal: isMintedBundle(raw) })));
   } catch (err) {
     const issues = (err as { issues?: { path: PropertyKey[]; message: string }[] }).issues;
     const text = Array.isArray(issues)
@@ -206,6 +207,7 @@ export function lengthBeatsOf(spec: EffectSpec, presetLengthBeats?: number | nul
   }
   if (spec.kind.startsWith('ldj.') && positive(params.beats)) return params.beats;
   if (spec.kind === 'macro' && positive(params.loopBeats)) return params.loopBeats;
+  if (spec.kind === BUNDLE_KIND && positive(params.lengthBeats)) return params.lengthBeats;
   return spec.scope === 'singleBeat' ? 1 : 4;
 }
 

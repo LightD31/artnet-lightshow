@@ -15,6 +15,7 @@ import type { Layout, Rig } from '../rig.ts';
 import type { EffectLayerSet } from './layer.ts';
 import type { EffectInstance, EffectStepper } from './stepper.ts';
 import type { EffectSlot, EffectSpec, FrameBase, Seed } from './types.ts';
+import type { Room } from '../room.ts';
 
 /**
  * A lane of clips. Shared lanes stack in list order (the last is on top);
@@ -464,8 +465,35 @@ export function renderSequenceLayer(rig: Rig, layout: Layout, frame: FrameBase, 
     // A beat the moment cannot be placed on (not a number) left no picture: nothing covered until one can.
     return run.shown ? replay(run.shown, list, set) : false;
   }
+  const picture = freshPicture(run, list.length);
+  const keep = (k: number, colour: Colour, dim: number, strobe: number, kind: string | null) => {
+    const o = k * HELD_STRIDE;
+    const l = picture.light;
+    l[o] = colour.r; l[o + 1] = colour.g; l[o + 2] = colour.b; l[o + 3] = colour.w || 0; l[o + 4] = colour.a || 0; l[o + 5] = colour.uv || 0;
+    l[o + 6] = dim;
+    picture.kinds[k] = kind;
+    picture.covered[k] = 1;
+    set(list[k], colour, dim, strobe, kind);
+  };
+  const placed = renderPlaced(frame, table, transport, run, stepper, effectRoom(layout), ids, (k, slot, kind) => {
+    if (slot) keep(k, slot.colour, 255 * slot.level, slot.strobe ?? 0, slot.kind ?? kind);
+    else keep(k, BLACK, 0, 0, null);
+  });
+  if (placed === null) { endSequence(run, stepper); return false; }
+  return placed;
+}
+
+/**
+ * The playing part of a table at the music's beat, shared by the sequence
+ * layer and a pattern bundle voice: activations kept or started, each winning
+ * clip rendered once over `room` with its fixtures as its mask, and `lay`
+ * called per won cell with the slot (null where the winner is transparent).
+ * Null when the transport places nothing; else whether any cell was won.
+ */
+export function renderPlaced(frame: FrameBase, table: SequenceTable, transport: SequenceTransport, run: SequenceRun, stepper: EffectStepper,
+  room: Room, ids: readonly (number | string)[], lay: (k: number, slot: EffectSlot | null, kind: string) => void): boolean | null {
   const placed = placeSequence(table, transport, frame.beatPos, ids);
-  if (!placed) { endSequence(run, stepper); return false; }
+  if (!placed) return null;
   // A new anchor is no crossing: nothing between the frames either side of it is placed.
   if (run.last && run.last.anchor !== placed.anchor) run.last = null;
 
@@ -491,18 +519,7 @@ export function renderSequenceLayer(rig: Rig, layout: Layout, frame: FrameBase, 
     const cells = won.get(index);
     if (cells) cells.push(k); else won.set(index, [k]);
   });
-  const picture = freshPicture(run, list.length);
   if (!won.size) return false;
-  const keep = (k: number, colour: Colour, dim: number, strobe: number, kind: string | null) => {
-    const o = k * HELD_STRIDE;
-    const l = picture.light;
-    l[o] = colour.r; l[o + 1] = colour.g; l[o + 2] = colour.b; l[o + 3] = colour.w || 0; l[o + 4] = colour.a || 0; l[o + 5] = colour.uv || 0;
-    l[o + 6] = dim;
-    picture.kinds[k] = kind;
-    picture.covered[k] = 1;
-    set(list[k], colour, dim, strobe, kind);
-  };
-  const room = effectRoom(layout);
   for (const [index, cells] of won) {
     const clip = table.clips[index];
     const lane = table.lanes.find((l) => l?.id === clip.laneId)!;
@@ -515,8 +532,7 @@ export function renderSequenceLayer(rig: Rig, layout: Layout, frame: FrameBase, 
     renderEffect(instance, frame, room, stepper, out);
     for (const k of cells) {
       const slot = out[k] as EffectSlot | undefined;
-      if (slot && slot.strength > 0) keep(k, slot.colour, 255 * slot.level, slot.strobe ?? 0, slot.kind ?? clip.spec.kind);
-      else keep(k, BLACK, 0, 0, null);
+      lay(k, slot && slot.strength > 0 ? slot : null, clip.spec.kind);
     }
   }
   return true;

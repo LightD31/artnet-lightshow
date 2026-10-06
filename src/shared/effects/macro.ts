@@ -9,6 +9,7 @@ import type { Colour } from '../../types/rig.ts';
 import { tempoOf } from '../look-math.ts';
 import type { Room } from '../room.ts';
 import { seedFrom } from './hash.ts';
+import { MAX_NEST_DEPTH, anyChildSpec, nestRefusal, withinNest } from './nesting.ts';
 import { pacesOwnFlashes, registerKind, requiresAcknowledgement, validateSpec } from './registry.ts';
 import { renderEffect } from './render-instance.ts';
 import { EffectStepper } from './stepper.ts';
@@ -23,7 +24,7 @@ export interface MacroStep {
 export interface MacroParams { steps: MacroStep[]; loopBeats: number }
 
 /** Macros inside macros stop here, long before validation or rendering could exhaust the stack. */
-export const MAX_MACRO_DEPTH = 32;
+export const MAX_MACRO_DEPTH = MAX_NEST_DEPTH;
 const STROBE = 'strobe';
 
 const shapeSchema = z.object({ steps: z.array(z.unknown()).min(1), loopBeats: z.number().positive() }).strict();
@@ -38,23 +39,18 @@ const forward = (ctx: RefinementCtx, error: unknown, path: PropertyKey[]) => {
   for (const issue of error.issues) ctx.addIssue({ code: 'custom', message: issue.message, path: [...path, ...issue.path] });
 };
 
-// The step tables being validated, outermost first. Meeting one again means a
-// macro inside itself; one child object shared by siblings is not a cycle.
-const open: unknown[] = [];
-
 const schema: ZodType<MacroParams> = z.unknown().transform((input, ctx): MacroParams => {
   const shape = shapeSchema.safeParse(input);
   if (!shape.success) { forward(ctx, shape.error, []); return z.NEVER; }
   // The caller's own array, not zod's copy: identity is what reveals a cycle.
   const raw = (input as { steps: unknown[] }).steps;
-  if (open.includes(raw)) { ctx.addIssue({ code: 'custom', message: 'a macro may not contain itself', path: ['steps'] }); return z.NEVER; }
-  if (open.length >= MAX_MACRO_DEPTH) {
-    ctx.addIssue({ code: 'custom', message: `macros nest at most ${MAX_MACRO_DEPTH} deep`, path: ['steps'] });
+  const refusal = nestRefusal(raw);
+  if (refusal) {
+    ctx.addIssue({ code: 'custom', message: refusal === 'cycle' ? 'a macro may not contain itself' : `macros nest at most ${MAX_MACRO_DEPTH} deep`, path: ['steps'] });
     return z.NEVER;
   }
-  open.push(raw);
   const steps: MacroStep[] = [];
-  try {
+  withinNest(raw, () => {
     shape.data.steps.forEach((item, k) => {
       const step = stepSchema.safeParse(item);
       if (!step.success) { forward(ctx, step.error, ['steps', k]); return; }
@@ -70,9 +66,7 @@ const schema: ZodType<MacroParams> = z.unknown().transform((input, ctx): MacroPa
       }
       steps.push({ ...step.data, effect });
     });
-  } finally {
-    open.pop();
-  }
+  });
   if (steps.length !== shape.data.steps.length) return z.NEVER;
   const total = steps.reduce((sum, step) => sum + step.beats, 0), loop = shape.data.loopBeats;
   // Decimal tables (4 + 3.6 + 3.6 + 4.8) can miss their loop by rounding
@@ -173,21 +167,10 @@ function renderMacro(p: MacroParams, s: MacroState, room: Room, frame: EffectFra
   for (let i = 0; i < room.n; i++) if (out[i]?.strength > 0) out[i].kind ??= step.effect.kind;
 }
 
-// A macro with a rapid step is itself rapid, so admission and rendering refuse
-// it alike. Unvalidated specs may be cyclic: past the depth limit, assume the worst.
-let asking = 0;
+// A macro with a rapid step is itself rapid, so admission and rendering refuse it alike.
 function anyStepRapid(params: MacroParams): boolean {
-  if (asking >= MAX_MACRO_DEPTH) return true;
-  asking++;
-  try {
-    const steps: unknown = (params as Partial<MacroParams> | null)?.steps;
-    return Array.isArray(steps) && steps.some((item) => {
-      const effect: unknown = (item as Partial<MacroStep> | null)?.effect;
-      return effect !== null && typeof effect === 'object' && requiresAcknowledgement(effect as EffectSpec);
-    });
-  } finally {
-    asking--;
-  }
+  const steps: unknown = (params as Partial<MacroParams> | null)?.steps;
+  return Array.isArray(steps) && anyChildSpec(steps.map((item) => (item as Partial<MacroStep> | null)?.effect), requiresAcknowledgement);
 }
 
 registerKind<MacroParams, MacroState>({

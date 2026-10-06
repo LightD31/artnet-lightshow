@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { Sequencer, sequenceBeatAhead, padTakeOf } from '../../src/server/sequencer.ts';
-import { Pads, PadStore, STROBE_ID } from '../../src/server/pads.ts';
+import { Pads, PadStore, STROBE_ID, patternPlayer } from '../../src/server/pads.ts';
 import { VoiceManager, builtinPresets } from '../../src/server/voices.ts';
 import { presetById } from '../../src/shared/effects/index.ts';
 
@@ -46,7 +46,7 @@ test('a keep is refused when the loaded sequence was edited during the take; the
 });
 
 test('pattern and sequencePattern hits are staged on the take and expand as one batch at keep', () => {
-  const s = rig({ pad: (bank, slot) => (slot === 3 ? { patternId: 'drop', targets: 'shared' } : null) });
+  const s = rig({ pad: (_bank, slot) => (slot === 3 ? { patternId: 'drop', targets: 'shared' } : null) });
   const before = s.revision();
   s.startRecording({ mode: 'overdub', countInBeats: 0, quantise: 1 });
   s.onPadHit({ bank: 0, slot: 3, startBeat: 6.2 });
@@ -70,7 +70,7 @@ test('pattern and sequencePattern hits are staged on the take and expand as one 
 });
 
 test('a held pattern pad repeats its bundle up to the release; a pad with fixtures maps its ordinals and skips missing slots', () => {
-  const s = rig({ pad: (bank, slot) => (slot === 3 ? { patternId: 'drop', targets: 'shared' } : { patternId: 'drop', targets: [3] }) });
+  const s = rig({ pad: (_bank, slot) => (slot === 3 ? { patternId: 'drop', targets: 'shared' } : { patternId: 'drop', targets: [3] }) });
   s.startRecording({ mode: 'overdub', countInBeats: 0, quantise: 1 });
   s.onPadHit({ bank: 0, slot: 3, startBeat: 0 });
   s.onPadHit({ bank: 0, slot: 3, startBeat: 0, endBeat: 12 });
@@ -132,7 +132,8 @@ function padRig(t) {
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const store = new PadStore(path.join(dir, 'pads.json')).load();
   const strobe = { hold: () => ({ id: 'strobe-voice' }), release: () => {} };
-  const pads = new Pads({ voices, store, lookup: () => builtinPresets, fixtureIds: () => [0, 1], beat: () => c.beat, strobe });
+  const patternVoice = patternPlayer({ voices, pattern: () => null, fixtureIds: () => [0, 1], resolve: () => null });
+  const pads = new Pads({ voices, store, lookup: () => builtinPresets, fixtureIds: () => [0, 1], beat: () => c.beat, strobe, patternVoice });
   const heard = [];
   pads.onHit = (hit) => heard.push(hit);
   return { c, pads, store, heard };
@@ -171,4 +172,65 @@ test('a staged pattern hit keeps the pattern as launched: a later delete leaves 
   patterns.length = 0;
   assert.equal(s.onPadHit({ bank: 0, slot: 5, startBeat: 9 }), null, 'a pad whose pattern is gone records nothing');
   assert.equal(s.stopRecording(true).added.length, 4);
+});
+
+// The loaded sequence lives in memory only (the shelf is written by an explicit
+// save), so a keep has nothing to persist: it validates, then publishes once.
+test('a keep that fails validation leaves the loaded sequence and the take; a retry keeps or discards it', () => {
+  const library = new Set(['ldj.FadeCycle']);
+  const s = new Sequencer({
+    resolve: (id) => (library.has(id) ? presetById(id).spec : null),
+    fixtureIds: () => [1, 2, 3],
+    pad: () => ({ presetId: 'ldj.FadeCycle', targets: 'shared', lengthBeats: 2 }),
+  });
+  s.load(SET);
+  const before = s.current(), revision = s.revision();
+  s.startRecording({ mode: 'replace', countInBeats: 0, quantise: 1 });
+  s.onPadHit({ bank: 0, slot: 1, startBeat: 1 });
+  // The pad's preset goes from the library between the hit and the keep.
+  library.delete('ldj.FadeCycle');
+  assert.throws(() => s.stopRecording(true), (e) => e.status === 400 && /no effect ldj\.FadeCycle/.test(e.message));
+  assert.equal(s.revision(), revision);
+  assert.deepEqual(s.current(), before, 'the clip replace would remove is still there');
+  assert.equal(s.status().recording.hits, 1, 'the take survives the refusal');
+
+  library.add('ldj.FadeCycle');
+  const kept = s.stopRecording(true);
+  assert.deepEqual(kept.removed, ['A']);
+  assert.deepEqual(rounded(kept.added), [['a', 1, 2, 'lane']]);
+  assert.equal(s.revision(), revision + 1);
+
+  // Refused again, the same take can still be discarded.
+  const after = s.current();
+  s.startRecording({ mode: 'overdub', countInBeats: 0, quantise: 1 });
+  s.onPadHit({ bank: 0, slot: 1, startBeat: 6 });
+  library.clear();
+  assert.throws(() => s.stopRecording(true), (e) => e.status === 400);
+  assert.deepEqual(s.stopRecording(false), { added: [], removed: [] });
+  assert.deepEqual(s.current(), after);
+  assert.equal(s.revision(), revision + 1);
+});
+
+test('a replace keep names the removed clips that reach outside the recorded range, and by how far', () => {
+  const clip = (id, startBeat, lengthBeats) => ({ id, laneId: 'a', startBeat, lengthBeats, effect: GLOW, targets: 'lane', mute: false });
+  const s = rig({ pad: () => ({ presetId: 'ldj.FadeCycle', targets: 'shared', lengthBeats: 2 }) });
+  s.load({ ...SET, clips: [clip('X', 0, 4), clip('Y', 4.5, 1), clip('Z', 7, 5), { ...clip('T', 0, 16), laneId: 't2' }] });
+  // Count-in of two: the take runs from beat 2.
+  s.startRecording({ mode: 'replace', countInBeats: 2, quantise: 1 });
+  for (const beat of [2, 4, 6]) s.onPadHit({ bank: 0, slot: 1, startBeat: beat });
+  const kept = s.stopRecording(true);
+  assert.deepEqual([...kept.removed].sort(), ['X', 'Y', 'Z']);
+  assert.deepEqual(kept.range, { fromBeat: 2, toBeat: 8 });
+  // Whole clips go: X loses two beats before the take, Z four after it; Y lay inside.
+  assert.deepEqual(kept.beyondRange, [
+    { id: 'X', laneId: 'a', startBeat: 0, lengthBeats: 4, beforeBeats: 2, afterBeats: 0 },
+    { id: 'Z', laneId: 'a', startBeat: 7, lengthBeats: 5, beforeBeats: 0, afterBeats: 4 },
+  ]);
+  assert.ok(s.current().clips.some((c) => c.id === 'T'), 'another lane keeps its clip');
+
+  // Overdub removes nothing, so nothing reaches beyond.
+  s.startRecording({ mode: 'overdub', countInBeats: 0, quantise: 1 });
+  s.onPadHit({ bank: 0, slot: 1, startBeat: 20 });
+  const over = s.stopRecording(true);
+  assert.deepEqual([over.removed, over.beyondRange, over.range], [[], [], { fromBeat: 0, toBeat: 22 }]);
 });

@@ -7,6 +7,9 @@ import { JsonStore } from './json-store.ts';
 import { snapshot } from './effect-library.ts';
 import { validate, ValidationError } from './validation.ts';
 import { launchOf, targetsOf } from './voices.ts';
+import { resolveBundle } from './sequencer.ts';
+import { bundleSpec } from '../shared/effects/bundle.ts';
+import type { EffectResolver, SequencePattern } from './sequencer.ts';
 import type { PresetLookup, Voice, VoiceManager, VoiceMode, VoiceTargets } from './voices.ts';
 
 /**
@@ -63,6 +66,32 @@ export interface PadVoiceLaunch {
 }
 /** Plays a pattern as one voice; the sequencer's patterns install it. */
 export type PatternVoiceHook = (id: string, launch: PadVoiceLaunch) => Voice;
+
+export interface PatternPlayerOptions {
+  voices: VoiceManager;
+  /** A saved pattern by id, or null. */
+  pattern: (id: string) => SequencePattern | null;
+  fixtureIds: () => readonly number[];
+  resolve: EffectResolver;
+}
+
+/**
+ * The pattern player: the pattern resolved over the pad's fixtures, started
+ * as one bundle voice with the pad's launch. A once lasts the bundle's own
+ * length unless the launch gives one (R-voice-duration-clock).
+ */
+export function patternPlayer({ voices, pattern, fixtureIds, resolve }: PatternPlayerOptions): PatternVoiceHook {
+  return (id, launch) => {
+    const found = pattern(id);
+    if (!found) throw new HttpError(404, `No such pattern: ${id}`);
+    const bundle = resolveBundle(found, launch.targets, fixtureIds(), resolve);
+    const once = launch.mode === 'once';
+    return voices.start({
+      ...launch, spec: bundleSpec(bundle, once), tier: 'voice',
+      ...(once && launch.lengthMs === undefined ? { lengthBeats: bundle.lengthBeats } : {}),
+    });
+  };
+}
 /** Drops a pattern into the loaded sequence at a beat; the sequencer installs it. */
 export type InsertPatternHook = (id: string, atBeat: number) => void;
 /** A pad launched (its grid beat) or a held one released (with its end), for the sequencer's punch recording. */
@@ -280,7 +309,8 @@ export interface PadsOptions {
   /** The beat a sequence pattern is dropped in from. */
   beat?: () => number;
   insertPattern?: InsertPatternHook;
-  patternVoice?: PatternVoiceHook;
+  /** Required: a pattern pad always has a player (patternPlayer). */
+  patternVoice: PatternVoiceHook;
   strobe?: StrobeHook;
 }
 
@@ -299,13 +329,13 @@ const HELD_ONLY = 'The strobe pad plays while it is held: press and release it';
 
 export class Pads {
   declare store: PadStore;
-  // The hooks later tasks install; until then their pads answer 409.
+  // Installed by the sequencer; until then a sequencePattern pad answers 409.
   declare insertPattern: InsertPatternHook | undefined;
   declare onHit: PadHitHook | undefined;
   declare _holds: Map<string, number>;
   // A latched loop's start, for the end its toggle-off records.
   declare _latched: Map<number, number>;
-  declare patternVoice: PatternVoiceHook | undefined;
+  declare patternVoice: PatternVoiceHook;
   declare strobe: StrobeHook | undefined;
   declare _voices: VoiceManager;
   declare _lookup: () => PresetLookup;
@@ -315,6 +345,7 @@ export class Pads {
 
   constructor({ voices, store, lookup, fixtureIds, beat, insertPattern, patternVoice, strobe }: PadsOptions) {
     this.store = store;
+    if (typeof patternVoice !== 'function') throw new TypeError('Pads needs a pattern player');
     this.insertPattern = insertPattern;
     this.patternVoice = patternVoice;
     this.strobe = strobe;
@@ -455,7 +486,6 @@ export class Pads {
     };
     let voice: Voice;
     if (content.kind === 'pattern') {
-      if (!this.patternVoice) throw new HttpError(409, 'No pattern player on this server yet');
       voice = this.patternVoice(content.id, launch);
     } else {
       // A copy of the preset as it is now: a later edit leaves this launch as it was.

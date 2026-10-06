@@ -26,7 +26,7 @@ import { BIN_HZ } from '../shared/spectrum-bands.ts';
 import { safety } from './safety.ts';
 import { EffectLibrary } from './effect-library.ts';
 import { PaletteStore } from './palette-store.ts';
-import { PadStore, Pads } from './pads.ts';
+import { PadStore, Pads, patternPlayer } from './pads.ts';
 import { presetLookup } from './routes/voices.ts';
 import { padTakeOf, sequenceBeatAhead, Sequencer } from './sequencer.ts';
 import { SequenceStore } from './sequence-store.ts';
@@ -120,9 +120,14 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   };
   // The pads play the library's presets, saved ones included, as they are at
   // each press; the strobe pad and voice-hold's `{ preset: 'strobe' }` hold the strobe.
+  // A pattern pad plays a pattern from the sequence shelf (below) as one voice.
   const pads = new Pads({
     voices, store: padStore ?? new PadStore(configFile('pads.json')).load(), lookup: () => presetLookup(library),
     fixtureIds: () => state.fixtures.map((f) => f.id), beat: () => conductor.peek().beatPos, strobe,
+    patternVoice: patternPlayer({
+      voices, pattern: (id): ReturnType<SequenceStore['getPattern']> => sequence.store.getPattern(id), fixtureIds: () => state.fixtures.map((f) => f.id),
+      resolve: (id) => library.effects.resolve(id),
+    }),
   });
   // MIDI padPress notes hold the deck's pads under their own owner and token.
   midi.pads = {
