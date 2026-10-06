@@ -35,6 +35,9 @@ function hslHex(h) {
  * the server's lease runs out. A first press the server refuses (409 before
  * the photosensitivity acknowledgement, 400 past eight cells) stops renewing
  * and lets the finger go without a release; `onRefused` hears of it.
+ * Each finger's requests form one ordered chain: a request waits for the
+ * previous one to settle, so a release never overtakes its press or a
+ * renewal, and a renewal still waiting when the release is queued is dropped.
  */
 export function createMatrixHolds(post, onRefused = () => {}) {
   const page = Math.random().toString(36).slice(2, 8);
@@ -55,12 +58,20 @@ export function createMatrixHolds(post, onRefused = () => {}) {
   return {
     press(pointerId, colour) {
       release(pointerId);
-      const finger = { colour, refused: false };
+      const finger = { colour, refused: false, releasing: false, tail: null };
       finger.control = createHoldControl(({ action, token }) => {
         if (finger.refused) return false;
-        const sent = post(action === 'release' ? 'release' : 'press', { colour, token: `${page}-${pointerId}-${token}` }, action);
-        if (action === 'press') Promise.resolve(sent).then((r) => { if (r && r.ok === false) refuse(pointerId, finger); });
-        return sent !== false;
+        if (action === 'release') finger.releasing = true;
+        const send = () => {
+          if (finger.refused || (action === 'renew' && finger.releasing)) return null;
+          const sent = post(action === 'release' ? 'release' : 'press', { colour, token: `${page}-${pointerId}-${token}` }, action);
+          if (!sent || typeof sent.then !== 'function') return null;
+          return sent.then((r) => { if (action === 'press' && r && r.ok === false) refuse(pointerId, finger); }, () => {});
+        };
+        const next = finger.tail ? finger.tail.then(send) : send();
+        finger.tail = next;
+        if (next) next.then(() => { if (finger.tail === next) finger.tail = null; });
+        return true;
       });
       fingers.set(pointerId, finger);
       finger.control.press();
@@ -70,13 +81,23 @@ export function createMatrixHolds(post, onRefused = () => {}) {
   };
 }
 
+/** Space or Enter holds a cell from the keyboard; auto-repeat is ignored. */
+export function matrixCellKeys(colour, hold, letGo) {
+  const id = `key-${colour}`;
+  const ours = (e) => e.key === ' ' || e.key === 'Enter';
+  return {
+    onKeyDown: (e) => { if (!ours(e)) return; e.preventDefault(); if (!e.repeat) hold(id, colour); },
+    onKeyUp: (e) => { if (!ours(e)) return; e.preventDefault(); letGo(id); },
+    onBlur: () => letGo(id),
+  };
+}
+
 // A renewal that fails says nothing: the lease ending is the fallback. A
 // press or release goes through api(), which shows the server's error.
 function postMatrix(verb, body, action) {
   const init = { method: 'POST', body: JSON.stringify(body) };
   if (action === 'renew') {
-    fetch(`/api/matrix/${verb}`, { ...init, headers: { 'Content-Type': 'application/json' } }).catch(() => {});
-    return true;
+    return fetch(`/api/matrix/${verb}`, { ...init, headers: { 'Content-Type': 'application/json' } }).catch(() => {});
   }
   return api(`/api/matrix/${verb}`, init);
 }
@@ -101,18 +122,22 @@ export function Matrix() {
   }, [holds]);
 
   const gate = useSafetyGate();
+  // A rapid mode asks first, as the strobe pad does; the next press holds.
+  const hold = (id, colour) => {
+    if (matrixAsks(mode, gate.acknowledged)) { gate.guard(`Matrix ${mode}`, () => {}); return false; }
+    holds.press(id, colour);
+    setDown((d) => ({ ...d, [id]: colour }));
+    return true;
+  };
+  const letGo = (id) => {
+    holds.release(id);
+    lift(id);
+  };
   const press = (e, colour) => {
     e.preventDefault();
-    // A rapid mode asks first, as the strobe pad does; the next press holds.
-    if (matrixAsks(mode, gate.acknowledged)) { gate.guard(`Matrix ${mode}`, () => {}); return; }
-    e.currentTarget.setPointerCapture?.(e.pointerId);
-    holds.press(e.pointerId, colour);
-    setDown((d) => ({ ...d, [e.pointerId]: colour }));
+    if (hold(e.pointerId, colour)) e.currentTarget.setPointerCapture?.(e.pointerId);
   };
-  const release = (e) => {
-    holds.release(e.pointerId);
-    lift(e.pointerId);
-  };
+  const release = (e) => letGo(e.pointerId);
   const held = new Set([...playing, ...Object.values(down)]);
 
   return (
@@ -147,6 +172,7 @@ export function Matrix() {
             onPointerCancel={release}
             onLostPointerCapture={release}
             onContextMenu={(e) => e.preventDefault()}
+            {...matrixCellKeys(colour, hold, letGo)}
           />
         ))}
       </div>

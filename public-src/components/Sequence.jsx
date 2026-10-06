@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { field, api, librarySig } from '../state.js';
 import { drawRuler, drawClips } from '../timeline-renderer.js';
+import { beatsPerBar as barLength, positionText } from '../preview-inputs.js';
 
 // The sequencer as an instrument first: what plays and the transport stay
 // on top, saved sequences and patterns are one tap; lanes, clips, commands
@@ -26,6 +27,57 @@ export async function putSequence(request, next, setSeq) {
     if (kept.ok) setSeq(kept.sequence || null);
   }
   return r;
+}
+
+/**
+ * The page's copy of the sequence against GET /api/sequence: the latest load
+ * or edit wins, a GET sent before a local edit does not land, and a revision
+ * this page caused (its PUT answers with status.revision) is not fetched
+ * again. A revision seen while an edit is in flight waits for its answer.
+ */
+export function createSequenceSync(request, setSeq) {
+  let loads = 0;
+  let pending = 0;
+  let want = null;
+  let fetched = null;
+  const own = new Set();
+  const get = () => {
+    const n = ++loads;
+    return request('/api/sequence').then((r) => { if (n === loads && r && r.ok) setSeq(r.sequence || null); });
+  };
+  const mine = (r) => {
+    if (!r || !r.ok || !r.status) return;
+    own.add(r.status.revision);
+    if (own.size > 32) own.delete(own.values().next().value);
+  };
+  const settle = () => {
+    if (pending || want == null || own.has(want) || want === fetched) return;
+    fetched = want;
+    get();
+  };
+  const edit = async (send, show) => {
+    pending++;
+    const n = ++loads;
+    let r;
+    try { r = await send((v) => { if (n === loads) show(v); }); } finally { pending--; }
+    mine(r);
+    settle();
+    return r;
+  };
+  return {
+    reload(revision) {
+      want = revision;
+      if (pending || (revision != null && (own.has(revision) || revision === fetched))) return;
+      fetched = revision;
+      get();
+    },
+    commit: (next) => edit((show) => putSequence(request, next, show), setSeq),
+    load: (id) => edit(async (show) => {
+      const r = await request('/api/sequence', json('PUT', { id }));
+      if (r.ok) show(r.sequence);
+      return r;
+    }, setSeq),
+  };
 }
 
 // The server's units: tempo in BPM 20 to 300, the master 0 to 255, whole periods 1 to 512.
@@ -195,6 +247,7 @@ function ClipBlock({ clip, total, snap, editing, playing, selected, onSelect, on
       aria-label={`${clip.presetId || 'Effect'}, beats ${clip.startBeat} to ${clip.startBeat + clip.lengthBeats}`}
       style={{ left: `${(shown.startBeat / total) * 100}%`, width: `${(shown.lengthBeats / total) * 100}%` }}
       onClick={() => editing && onSelect(clip.id)}
+      onKeyDown={(e) => clipKeySelects(e, editing, () => onSelect(clip.id))}
       onPointerDown={(e) => start(e, 'move')}
       onPointerMove={move}
       onPointerUp={end}
@@ -204,6 +257,66 @@ function ClipBlock({ clip, total, snap, editing, playing, selected, onSelect, on
       {editing && <span class="seq-handle" aria-hidden="true" onPointerDown={(e) => start(e, 'resize')} />}
     </div>
   );
+}
+
+/** A beat as "bar.beat", both from 1. */
+export function barBeatText(beat, perBar) {
+  return `${Math.floor(beat / perBar) + 1}.${Math.floor(beat % perBar) + 1}`;
+}
+
+function parseBarBeat(text, perBar) {
+  const m = /^\s*(\d+)(?:\.(\d+))?\s*$/.exec(String(text));
+  if (!m) return undefined;
+  const bar = Number(m[1]);
+  const beat = m[2] === undefined ? 1 : Number(m[2]);
+  if (bar < 1 || beat < 1 || beat > Math.ceil(perBar)) return undefined;
+  return (bar - 1) * perBar + (beat - 1);
+}
+
+/**
+ * The loop the server takes ({ on, startBeat, endBeat }) from bars.beats, or
+ * an error: the end after the start, both inside the sequence's last bar.
+ */
+export function loopRegion(seq, { on, start, end }) {
+  const perBar = barLength(seq.timeSignature);
+  const startBeat = parseBarBeat(start, perBar);
+  const endBeat = parseBarBeat(end, perBar);
+  if (startBeat === undefined || endBeat === undefined) return { error: 'Write the loop as bars.beats, such as 2.1' };
+  if (!(endBeat > startBeat)) return { error: 'The loop ends after it starts' };
+  const last = Math.max(perBar, ...(seq.clips || []).map((c) => c.startBeat + c.lengthBeats));
+  if (endBeat > Math.ceil(last / perBar) * perBar) return { error: `The loop stays inside the sequence, up to ${barBeatText(Math.ceil(last / perBar) * perBar, perBar)}` };
+  return { loop: { on: !!on, startBeat, endBeat } };
+}
+
+function LoopControl({ seq, onCommit }) {
+  const perBar = barLength(seq.timeSignature);
+  const loop = seq.loop;
+  const [on, setOn] = useState(loop ? loop.on : true);
+  const [start, setStart] = useState(barBeatText(loop ? loop.startBeat : 0, perBar));
+  const [end, setEnd] = useState(barBeatText(loop ? loop.endBeat : perBar * 4, perBar));
+  const [error, setError] = useState(null);
+  const save = () => {
+    const r = loopRegion(seq, { on, start, end });
+    setError(r.error || null);
+    if (r.loop) onCommit({ ...seq, loop: r.loop });
+  };
+  return (
+    <div class="seq-loop" role="group" aria-label="Loop region">
+      <label><input type="checkbox" checked={on} onChange={(e) => setOn(e.currentTarget.checked)} /> Loop</label>
+      <input type="text" size="5" aria-label="Loop start, bars.beats" value={start} onInput={(e) => setStart(e.currentTarget.value)} />
+      <input type="text" size="5" aria-label="Loop end, bars.beats" value={end} onInput={(e) => setEnd(e.currentTarget.value)} />
+      <button type="button" class="seq-mini" onClick={save}>Set loop</button>
+      {loop && <button type="button" class="seq-mini" onClick={() => { setError(null); onCommit({ ...seq, loop: null }); }}>Clear loop</button>}
+      {error && <span class="seq-loop-error" role="alert">{error}</span>}
+    </div>
+  );
+}
+
+/** Enter or Space selects a clip block in edit mode. */
+export function clipKeySelects(e, editing, select) {
+  if (!editing || (e.key !== 'Enter' && e.key !== ' ')) return;
+  e.preventDefault();
+  select();
 }
 
 function Inspector({ clip, lanes, onChange, onDelete }) {
@@ -275,11 +388,12 @@ export function Sequence({ initial = {} }) {
   const refreshPatterns = () => api('/api/sequence/patterns').then((r) => r.ok && setPatterns(r.patterns || []));
   useEffect(() => { refreshShelf(); refreshPatterns(); }, []);
   // The live state carries the status only; the sequence itself is fetched when its revision moves.
-  useEffect(() => { api('/api/sequence').then((r) => r.ok && setSeq(r.sequence || null)); }, [revision]);
+  const sync = useMemo(() => createSequenceSync(api, setSeq), []);
+  useEffect(() => { sync.reload(revision); }, [revision]);
 
-  const commit = (next) => putSequence(api, next, setSeq);
+  const commit = (next) => sync.commit(next);
   const transport = (verb) => api(`/api/sequence/${verb}`, json('POST', {}));
-  const load = (id) => api('/api/sequence', json('PUT', { id })).then((r) => r.ok && setSeq(r.sequence));
+  const load = (id) => sync.load(id);
   const beat = status && Number.isFinite(status.beat) ? status.beat : 0;
 
   const shelfList = (
@@ -300,7 +414,7 @@ export function Sequence({ initial = {} }) {
   }
 
   const lanes = laneStack(seq.lanes);
-  const beatsPerBar = (seq.timeSignature && seq.timeSignature.beats) || 4;
+  const beatsPerBar = barLength(seq.timeSignature);
   const end = Math.max(32, ...seq.clips.map((c) => c.startBeat + c.lengthBeats), seq.loop ? seq.loop.endBeat : 0);
   const total = Math.ceil(end / beatsPerBar) * beatsPerBar + beatsPerBar;
   const onTop = new Set(((status && status.lanes) || []).map((l) => l.clip).filter(Boolean));
@@ -331,7 +445,7 @@ export function Sequence({ initial = {} }) {
       <div class="seq-top">
         <div class="seq-now" aria-live="polite">
           <strong>{seq.name}</strong> · {stateText(status)} · Bar {status ? status.bar : 1}
-          <span class="seq-beat"> beat {Math.floor(beat) + 1}</span>
+          <span class="seq-beat"> beat {status ? positionText({ ...status, beat }, beatsPerBar).split('.')[1] : 1}</span>
         </div>
         <div class="seq-transport">
           <button type="button" class="seq-big" aria-label="Play" onClick={() => transport('play')}>▶</button>
@@ -398,6 +512,7 @@ export function Sequence({ initial = {} }) {
 
       {editing && (
         <div class="seq-editor">
+          <LoopControl key={`${seq.id}:${JSON.stringify(seq.loop)}`} seq={seq} onCommit={commit} />
           <div class="seq-toolbar">
             <button type="button" role="switch" aria-checked={seq.mode === 'playlist'} class="seq-mini"
               onClick={() => commit({ ...seq, mode: seq.mode === 'playlist' ? 'arrangement' : 'playlist' })}>Playlist mode</button>

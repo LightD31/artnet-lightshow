@@ -44,6 +44,11 @@ function useAudioFeed() {
   }, []);
 }
 
+/** One dot per Disco band, open while the band hits; `gate` is only the power a hit needs. */
+export function gateDots(disco) {
+  return disco && Array.isArray(disco.hit) ? disco.hit.map(Boolean) : [];
+}
+
 export function AudioMeters({ latencyMs } = {}) {
   const s = pick(['audio']);
   const audio = s.audio || {};
@@ -60,7 +65,7 @@ export function AudioMeters({ latencyMs } = {}) {
 
   const party = feed ? feed.party : audio.levels;
   const spl = feed ? feed.spl : audio.spl;
-  const gates = feed && feed.disco ? feed.disco.gate : [];
+  const gates = gateDots(feed && feed.disco);
   const chip = splClass(spl);
   const setMode = (mode) => api('/api/audio', { method: 'PUT', body: JSON.stringify({ mode }) });
 
@@ -83,7 +88,7 @@ export function AudioMeters({ latencyMs } = {}) {
       </div>
       {gates.length > 0 && (
         <div class="audio-gates" aria-label="Disco band gates">
-          {gates.map((g, i) => <span key={i} class={g > 0 ? 'gate open' : 'gate'} title={`Band ${i + 1}`} />)}
+          {gates.map((open, i) => <span key={i} class={open ? 'gate open' : 'gate'} title={`Band ${i + 1}`} />)}
         </div>
       )}
       {audio.listening === false && !feed && <p class="audio-quiet">Nothing heard: the live input is off or silent.</p>}
