@@ -35,6 +35,8 @@ const FRAMES = 200;
 // faster one never scales it below the 5 ms it is written for.
 const QUIET_CALIBRATION_MS = 2;
 const FRAME_BUDGET_MS = 5;
+// Longer than the strobe's flash and the black after it together (0.2 s), several times over.
+const DARK_GAP_MS = 1000;
 
 /** CPU ms for a fixed piece of arithmetic, the cheapest of a few tries. */
 function calibrate(tries = 5) {
@@ -129,13 +131,14 @@ test('a party frame on forty placed fixtures renders inside 5 ms', () => {
     const mean = ms.reduce((a, b) => a + b, 0) / ms.length;
     const p95 = ms[Math.floor(ms.length * 0.95)];
 
-    // Not an empty engine: some channel on the rig is lit. One frame can fall
-    // dark (a strobe gap, an effect's off step), and under load which frame
-    // the timing loop ends on varies, so look over a few more, untimed.
+    // Not an empty engine: some channel on the rig is lit. The strobe holds
+    // the whole rig black for a tenth of a second after each flash, on the
+    // wall clock, and these frames run far faster than that: so look, untimed,
+    // for as long as that gap can last and a little more.
     const lit = () => state.fixtures.some((fix) => universes.getBuffer(fix.universe)
       .subarray(fix.address - 1, fix.address - 1 + width).some((v) => v > 0));
     let shown = lit();
-    for (let f = 0; f < FRAMES && !shown; f++) { frame(); shown = lit(); }
+    for (const until = performance.now() + DARK_GAP_MS; !shown && performance.now() < until;) { frame(); shown = lit(); }
     assert.ok(shown, 'the rig shows something');
 
     const slowdown = Math.max(1, calibration / QUIET_CALIBRATION_MS);
