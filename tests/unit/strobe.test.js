@@ -414,6 +414,8 @@ async function flashes(found, what, ms = 2000) {
   }
 }
 const UNACKNOWLEDGED = { ok: false, error: ACKNOWLEDGEMENT_REQUIRED };
+// A voice's length on the engine's own clock, whose times are fractions of a millisecond: to the microsecond.
+const capOf = (v) => Math.round((v.untilMs - v.startedAtMs) * 1000) / 1000;
 
 test('the routes: GET, on, off, burst and PUT; 409 unacknowledged, 400 for a bad burst or setting; the live state carries `strobe` in the look domain and every page hears it', async (t) => {
   const s = await serve(t);
@@ -634,14 +636,14 @@ test('a latched strobe-kind voice from POST /api/voices or a pad loop carries th
   let res = await s.call('POST', '/api/voices', { preset: 'palette-strobe', mode: 'latched' });
   assert.equal(res.status, 200);
   const api = voices.get(res.body.id);
-  assert.equal(api.untilMs - api.startedAtMs, 60_000);
+  assert.equal(capOf(api), 60_000);
   res = await s.call('POST', '/api/voices', { effect: { kind: 'ldj.FadeCycle', params: { cadence: 2 } }, mode: 'latched' });
   assert.equal(voices.get(res.body.id).untilMs, null, 'another kind: no cap of the strobe\'s');
   const pad = { label: 'Loop', accent: '#A855F7', content: { kind: 'preset', id: 'palette-strobe' }, launch: 'loop', quantise: 0, targets: 'shared' };
   assert.equal((await s.call('PUT', '/api/pads/1/3', pad)).status, 200);
   res = await s.call('POST', '/api/pads/1/3/toggle');
   const loop = voices.get(res.body.id);
-  assert.equal(loop.untilMs - loop.startedAtMs, 60_000);
+  assert.equal(capOf(loop), 60_000);
   assert.equal((await s.call('POST', '/api/strobe/off')).status, 200);
   assert.deepEqual(voices.list().map((v) => v.kind), ['ldj.FadeCycle'], 'the strobe\'s off took every strobe-kind voice');
   for (const route of ['/api/pads/0/6/once', '/api/pads/0/6/toggle']) {
