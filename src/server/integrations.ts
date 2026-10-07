@@ -52,7 +52,6 @@ import type { AudioFrame } from '../shared/effects/audio-frame.ts';
 import type { Detectors } from './audio-features.ts';
 import type { EffectSpec } from '../shared/effects/types.ts';
 
-/** Everything the integrations wire together. */
 export interface IntegrationDeps {
   io: Server;
   midi: MidiController;
@@ -63,19 +62,14 @@ export interface IntegrationDeps {
   autoShow: AutoShow;
   analysisCache?: AnalysisCache | null;
   liveInput?: LiveInput | null;
-  /** The effect library and the effect palettes; the ones in config/ unless a test stands in. */
   effectLibrary?: EffectLibrary | null;
   paletteStore?: PaletteStore | null;
-  /** The pads' layout; config/pads.json's unless a test stands in. */
   padStore?: PadStore | null;
-  /** The saved sequences; the ones in config/ unless a test stands in. */
   sequenceStore?: SequenceStore | null;
 }
 
-/** Which source the auto show follows. */
 export type AutoSource = 'prolink' | 'hybrid' | 'spotify' | 'deezer' | 'nowplaying' | 'live' | 'timer';
 
-/** A queued track, as a prefetch slot shows it. */
 interface SlotTrack {
   name: string;
   artist: string;
@@ -84,7 +78,6 @@ interface SlotTrack {
   durationMs: number;
 }
 
-/** One upcoming track and how its analysis is coming along. */
 export interface PrefetchSlot {
   track: SlotTrack | null;
   status: string;
@@ -92,7 +85,6 @@ export interface PrefetchSlot {
   cacheKey: string | null;
 }
 
-/** The track playing now: its cache key and the clock its show follows. */
 interface PlayingTrack {
   key: string | null;
   clock: () => number;
@@ -118,7 +110,6 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       resolve: (id) => library.effects.resolve(id),
     }),
   });
-  // MIDI padPress notes hold the deck's pads under their own owner and token.
   midi.pads = {
     press: (bank, slot, owner, token) => pads.press(bank, slot, owner, token),
     renew: (_bank, _slot, owner, token) => voices.renew(owner, token),
@@ -148,7 +139,6 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       },
       current: () => ({ masterDimmer: state.masterDimmer, bpm: state.bpm, paletteOverride: state.paletteOverride ? state.paletteOverride.map(toHex) : null, paletteOverrideId: state.paletteOverrideId }),
       musicMode: (mode) => {
-        // The settings file refusing the write leaves the mode as it was; the sequence still plays.
         try {
           settings.update({ audio: { mode } });
         } catch (err) {
@@ -158,27 +148,21 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       admit: (spec) => safety.requireAcknowledged(spec),
       fixtureIds: () => state.fixtures.map((f) => f.id),
       pattern: (id): ReturnType<SequenceStore['getPattern']> => sequence.store.getPattern(id),
-      // A preset pad records as its preset, a pattern pad as its bundle; the strobe and drops do not (padTakeOf).
       pad: (bank, slot) => padTakeOf(pads.store.get(bank, slot), presetLookup(library)),
       beat: () => conductor.peek().beatPos,
-      // Playing or paused, the sequence counts on the free clock with the patterns stopped.
       onRun: () => reconcileFreeClock(),
     }),
   };
-  // The pads count in the conductor's beats, the sequence in its own: the
-  // same distance from now on both.
   const toSequenceBeat = (beat: number) => {
     const at = sequence.sequencer.status();
     return sequenceBeatAhead(at.beat, beat - conductor.peek().beatPos, at.loop);
   };
-  // During a take the drop is staged with it (dropPattern).
   pads.insertPattern = (id, atBeat) => {
     sequence.sequencer.dropPattern(id, toSequenceBeat(atBeat), atBeat);
     broadcast();
   };
   pads.onHit = ({ bank, slot, startBeat, endBeat, lengthMs, once }) => {
     if (!sequence.sequencer.recording()) return;
-    // An explicit length in ms counts in beats at the tempo now; a release is how long it was held, on the conductor's clock.
     const lengthBeats = lengthMs === undefined ? undefined : (lengthMs * conductor.peek().bpm) / 60000;
     sequence.sequencer.onPadHit({
       bank, slot, startBeat: toSequenceBeat(startBeat), clockBeat: startBeat,
@@ -186,8 +170,6 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     });
     broadcast();
   };
-  // Read once a frame by the engine; its status rides the live state. Holds
-  // whose voice ended by itself close first.
   setSequenceSource((reading) => {
     pads.sweep();
     return sequence.sequencer.frame(reading);
@@ -204,14 +186,11 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   }
 
   function spotifyNextView(): PrefetchSlot {
-    // Back-compat: callers (and the old UI) read `spotifyNext.track / .status /
-    // .message / .cacheKey` directly. Keep that working by mirroring slot 0.
     return spotifySlots[0] || emptySlot('idle', '');
   }
 
   const sourceClock = new PlaybackClock();
 
-  /** Fold one playback report from the active single source into the clock. */
   function observePlayback(playing: NowPlaying): void {
     const now = Date.now();
     sourceClock.observe(playing.progressMs, {
@@ -225,7 +204,6 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
 
   const warmer = new Warmer({ autoShow, onChange: () => broadcast() });
 
-  // Throttle for the queue-lookahead poll.
   let lastQueuePeekAt = 0;
   const QUEUE_PEEK_INTERVAL_MS = 15000;
 
@@ -240,15 +218,11 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
 
   function getHybridPositionMs(): number { return hybrid.getPositionMs(); }
 
-  // How many upcoming tracks to prefetch. Validated to 1..5 on the way in; the
-  // clamp stays for a state object that did not come through validation.
   const prefetchDepth = () => Math.max(1, Math.min(5, state.autoPrefetchDepth || 1));
 
   const publisher = createPublisher(io);
 
   function broadcast(): void {
-    // Every edit to the patch ends in a broadcast, which makes this the one
-    // place the show hears whether the rig has LED bars to draw on.
     if (typeof autoShow.setRig === 'function') {
       const rig = currentRig();
       autoShow.setRig({ hasPixels: rig.hasPixels, hasPanels: rig.hasPanels, lamps: rig.fixtures.length });
@@ -257,8 +231,6 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     midi.sendFeedback();
   }
 
-  // Inject the heavy "extras" the UI needs (autoShow / spotify / nowPlaying /
-  // prolink) into the snapshot getClientState() builds.
   function extras() {
     return {
       spotify: spotify.getStatus(),
@@ -267,8 +239,6 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       nowPlaying: nowPlaying.getStatus(),
       hybrid: hybrid.getStatus(),
       activeSource: resolveAutoSource(),
-      // The operator has the show on — which a track change, loading the next
-      // analysis, or playing by ear all keep true while no timeline runs.
       showOn: showWanted,
       deezer: deezerSource.getStatus(),
       deezerPrefetch: deezerSlots,
@@ -286,30 +256,22 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       live: liveInput ? { ...liveInput.status(), director: liveDirector ? liveDirector.status() : null } : null,
       audio: liveAudio(),
       autoShow: autoShow.getClientState(),
-      // Summaries, not the stored looks: a hundred full cues would ride every
-      // broadcast, and the buttons only need a name and a swatch.
       cues: cues.summaries(),
-      // The presets and palettes saved here, so one saved mid-show reaches
-      // every open page; a preset's spec is GET /api/effects/:id's.
       effects: library.effects.summaries(),
       userPalettes: library.palettes.list(),
-      // The layout and which pads are lit; a voice starting or ending is a broadcast already.
       pads: pads.view(),
       // The saved sequences and patterns by id and name, so one saved on another page reaches the pickers.
       sequences: sequence.store.summaries(),
       sequencePatterns: sequence.store.patternSummaries(),
       warm: warmer.status(),
       midi: { enabled: midi.enabled, ports: midi.listPorts() },
-      // The fixtures showing themselves on the rig, marked on the stage plot.
       identify: identify.status(),
     };
   }
   setExtrasProvider(extras);
 
-  // Hook the patch module so it can react to higher-level concerns.
   setHooks({
     broadcast,
-    // A hand on the master or the tempo ends the sequence's automation of it.
     handEdit: (edit) => sequence.sequencer.handEdit(edit),
     prolinkEnable: () => {
       prolink.enable().catch((err) => {
@@ -325,8 +287,6 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     autoIntensity: (n) => autoShow.setIntensity(Number(n)),
     autoSyncOffsetMs: (n) => autoShow.setSyncOffsetMs(Number(n)),
     autoPrefetchDepth: () => {
-      // Depth change → trim slots that are now out of range and immediately
-      // queue prefetches for newly in-range positions.
       const depth = prefetchDepth();
       if (spotifySlots.length > depth) {
         spotifySlots = spotifySlots.slice(0, depth);
@@ -336,6 +296,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     },
   });
 
+  // Prefer richer matching sources while retaining fallbacks when their clock or metadata disappears.
   function resolveAutoSource(): AutoSource {
     if (state.autoSource === 'prolink' && prolink.connected) return 'prolink';
     if (state.autoSource === 'hybrid' && spotify.authenticated) return 'hybrid';
@@ -349,8 +310,6 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     if (spotify.authenticated) return 'spotify';
     if (deezerSource.authenticated) return 'deezer';
     if (nowPlaying.authenticated) return 'nowplaying';
-    // Something is heard but nothing names it: play by ear rather than
-    // against a stopwatch.
     if (liveListening()) return 'live';
     return 'timer';
   }
@@ -359,21 +318,16 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     return !!liveInput && liveInput.status().listening;
   }
 
-  /** Sources that take their content and their queue from Spotify. */
   function usesSpotifyContent(source: AutoSource): boolean {
     return source === 'spotify' || source === 'hybrid';
   }
 
-  // Whether the operator has the auto show on. It stays on across a track
-  // change, while the show itself stops to load the next track's analysis.
   let showWanted = false;
 
-  /** Start the auto show; on its own clock, from `fromMs` into the track. */
   function startAutoShow({ fromMs = 0 }: { fromMs?: number } = {}): AutoSource {
     const source = resolveAutoSource();
     showWanted = true;
     if (source === 'live') {
-      // No timeline to play: the live director answers what is heard.
       syncLiveDirector();
       return source;
     }
@@ -402,6 +356,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     syncLiveDirector();
   }
 
+  // Suppress live-director patches while a timeline plays so the two cannot fight over the look.
   const liveDirector = liveInput ? new LiveDirector({
     applyPatch: (patch) => { if (!autoShow.running) applyPatch(patch); },
     patterns: PATTERNS,
@@ -421,7 +376,6 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     const fixtureIds = state.fixtures.map((f) => f.id);
     return resolveDetectors({
       base: baseEffect(), clips: sequence.sequencer.playing(fixtureIds), voices: voices.frames(nowMs), nowMs,
-      // The reading both render paths handed the last frame (engine.ts runSequenceSource).
       beatPos: sequence.sequencer.lastBeat(),
       fixtureIds, ldjTrigger: settings.get('audio.ldjTrigger'),
       acknowledged: settings.get('safety.photosensitivityAcknowledged'),
@@ -432,14 +386,11 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     disco: () => detectors().disco,
     ldjTrigger: () => detectors().spl.trigger,
     binHz: BIN_HZ,
-    // Asked from inside a reading: the input is asked once that line has been handled.
     onBands: () => queueMicrotask(guarded('audio bands', () => { if (liveInput) liveInput.refreshBands(); })),
   });
   if (liveInput) {
-    // Every start of the live input, whoever starts it, asks for these bands.
     liveInput.useBands(() => audioFeatures.bandList());
-    // One listener for both: the live input keeps only one. Each is guarded,
-    // so a fault in one does not starve the other.
+    // Guard both live listeners independently so failure in one cannot starve the other.
     const directorHears = liveDirector ? guarded('live director', (r: LiveReading) => liveDirector.onReading(r)) : null;
     const featuresHear = guarded('audio features', (r: LiveReading) => audioFeatures.onReading(r));
     liveInput.onReading((r) => {
@@ -454,7 +405,6 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   }
   setAudioSource(heard);
 
-  /** What is heard, for a meter that reads a few times a second at most. */
   function heardSummary() {
     const frame = heard();
     return {
@@ -485,13 +435,10 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     return audioSummary(heardThen);
   }
 
-  // The last track each source reported, whether or not it was active then.
   const lastTrack: Record<'spotify' | 'nowplaying' | 'deezer', NowPlaying | null> = { spotify: null, nowplaying: null, deezer: null };
-  // The track that is playing but not yet analysed, locked to once it is.
   let pendingTrackKey: string | null = null;
   let lockGeneration = 0;
 
-  /** The playing track's cache key and clock, for the active source. */
   function playingTrack(): PlayingTrack | null {
     const source = resolveAutoSource();
     if (usesSpotifyContent(source) && lastTrack.spotify) {
@@ -510,7 +457,6 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
 
   function lockTo(playing: PlayingTrack, grid: BeatGrid): void {
     pendingTrackKey = null;
-    // The same position the auto show would play from, offset and all.
     conductor.setTrack({ key: playing.key, grid, positionMs: () => playing.clock() + autoShow.syncOffsetMs });
   }
 
@@ -527,8 +473,6 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       lockTo(playing, inMemory);
       return Promise.resolve();
     }
-    // Let go of the last song straight away: its beats read against this
-    // song's position would be a beat grid for the wrong music.
     if (conductor.trackKey !== playing.key) conductor.clearTrack({ key: playing.key });
     pendingTrackKey = playing.key;
     if (autoShow.running || !analysisCache || !autoShow.isCached(playing.key)) return Promise.resolve();
@@ -541,8 +485,6 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       .catch((err) => console.warn(`[conductor] could not load ${playing.key}: ${messageOf(err)}`));
   }
 
-  // A prefetch, a warm or an analyse request that finishes for the song that
-  // is on locks the patterns to it there and then.
   autoShow.onAnalysisCached = (key, analysis) => {
     if (!key || key !== pendingTrackKey) return;
     const playing = playingTrack();
@@ -550,7 +492,6 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     if (playing && playing.key === key && grid) lockTo(playing, grid);
   };
 
-  // ─── Prolink callbacks ──────────────────────────────────────────────────
   prolink.onTempoChange((bpm) => {
     if (!state.prolinkEnabled) return;
     const tempo = Math.round(bpm * 100) / 100;
@@ -566,7 +507,6 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   });
   prolink.onFollowChange(() => broadcast());
 
-  /** The analyses a CDJ track can have, best first. */
   function cdjSources(track: ProlinkTrack): { key: string; exact: boolean }[] {
     const out: { key: string; exact: boolean }[] = [];
     const exactKey = prolink.canFetchAudio(track) ? keyForProlinkTrack(track, { exact: true }) : null;
@@ -576,7 +516,6 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
           const file = await prolink.fetchAudio(track);
           return file ? audioToTempWav(file.data, file.fileName) : null;
         },
-        // rekordbox's grid and phrases, for this very file.
         refine: async (analysis) => applyRekordbox(analysis, {
           beatGrid: track.beatGrid,
           songStructure: await prolink.fetchSongStructure(track).catch((err) => {
@@ -595,12 +534,9 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   const cdjQuery = (track: ProlinkTrack) => (track.title && track.artist ? `${track.artist} - ${track.title}` : `CDJ track ${track.trackId}`);
   const cdjDurationSec = (track: ProlinkTrack) => (track.durationMs ? track.durationMs / 1000 : null);
 
-  /** Load a CDJ track's analysis as the show: its own file's, else a search's. */
   async function analyseCdjTrack(track: ProlinkTrack): Promise<void> {
     const sources = cdjSources(track);
     if (!sources.length) throw new Error('Track has no rekordbox metadata — cannot search');
-    // An analysis already made plays now: making the exact one takes a
-    // minute, and the prefetch has it ready by the next time the track loads.
     const ready = sources.find((s) => autoShow.isCached(s.key));
     let lastErr: unknown = null;
     for (const source of ready ? [ready] : sources) {
@@ -635,8 +571,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     }
   }
 
-  // Only the newest track change may start a show. One still making its
-  // track ready has stopped the show, and a newer one must still take over.
+  // Only the latest track preparation may start a show so a slow older request cannot take over.
   let cdjGeneration = 0;
   let cdjChanging = 0;
 
@@ -704,14 +639,12 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     liveTimer.unref();
   }
 
-  // Analyse every track loaded on any CDJ ahead of time. Fires once per track
-  // (deviceId:slot:trackId) per session.
   prolink.onAnyTrackLoaded((track) => {
     prefetchCdjTrack(track).catch((err) => console.warn(`[prolink] prefetch failed: ${messageOf(err)}`));
   });
 
-  // ─── Spotify polling ────────────────────────────────────────────────────
   spotify.onPlaybackUpdate((playing) => {
+    // Feed the hybrid source even when inactive so switching to it retains a warm clock.
     hybrid.observeContent(playing,
       typeof playing.sampledAt === 'number' && Number.isFinite(playing.sampledAt) ? playing.sampledAt : undefined);
 
@@ -737,7 +670,6 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
         return;
       }
 
-      // Take the first `depth` valid track entries from the user's queue.
       const upcoming = queue.filter((t) => t && t.trackId).slice(0, depth);
       if (!upcoming.length) {
         spotifySlots = [emptySlot('empty', 'Queue is empty')];
@@ -764,6 +696,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       spotifySlots = newSlots.map(({ _query, _isrc, _durationMs, ...slot }) => slot);
       broadcast();
 
+      // Re-rank waiting prefetches before adding jobs so reshaped queues keep their nearest tracks first.
       autoShow.applyQueueOrder(newSlots.map((s) => s.cacheKey));
 
       for (const [queuePos, seed] of newSlots.entries()) {
@@ -816,15 +749,12 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     broadcast();
     try {
       const query = `${playing.artist} - ${playing.name}`;
-      // An ISRC means the exact audio through src/deezer.js; without one, or
-      // when that fails, yt-dlp searches for the query.
       await autoShow.downloadAndAnalyze(query, playing.durationMs / 1000, cacheKey || keyForQuery(query), playing.isrc);
       autoShow.start(clock);
       console.log(`Auto show restarted for new ${what} track`);
     } catch (err) {
       reportAnalysisError(`${what} auto analysis failed for new track`, err);
     }
-    // The show has the new song in memory now; lock to it for when it stops.
     lockToPlayingTrack();
     broadcast();
   }
@@ -850,7 +780,6 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     }
   });
 
-  // ─── Now playing (OS media session) ─────────────────────────────────────
   nowPlaying.onPlaybackUpdate((playing) => {
     hybrid.observeSession(playing);
 
@@ -867,7 +796,6 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     await restartShowFor(playing, { clock: getAutoPositionMs, what: 'now-playing' });
   });
 
-  // ─── Deezer (browser extension) ─────────────────────────────────────────
   deezerSource.onPlaybackUpdate((playing) => {
     if (resolveAutoSource() !== 'deezer') return;
     observePlayback(playing);
@@ -890,8 +818,8 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     const depth = prefetchDepth();
     const upcoming = deezerSource.getQueue().slice(0, depth);
 
-    // Deezer's queue reshapes constantly (Flow and radio rebuild the tail), so
-    // re-rank the prefetches already waiting to the list as it stands now.
+    // Derive queue status from current cache and jobs so reordered tracks cannot revert spuriously to prefetching.
+
     autoShow.applyQueueOrder(upcoming.map((t) => keyForQuery(`${t.artist} - ${t.name}`)));
 
     const slots = upcoming.map((t, queuePos): PrefetchSlot => {
@@ -911,8 +839,6 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       };
     });
 
-    // Only broadcast when the rendered list (tracks + statuses) actually
-    // changed, so the 1 Hz updates don't spam identical state.
     const sig = slots.map((s) => `${s.cacheKey}:${s.status}`).join('|');
     deezerSlots = slots;
     if (sig === lastDeezerSlotsSig) return;
@@ -941,16 +867,12 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   }), 100);
   if (dmxTimer.unref) dmxTimer.unref();
 
-  // And as bytes, thirty times a second, to the protocol 2 pages that have
-  // asked for it — the monitor open, a preview showing live output.
   const dmxFrameTimer = setInterval(guarded('dmx-frame', () => {
     if (!publisher.wants(ROOM.dmx)) { publisher.resetDmx(); return; }
     publisher.sendDmxFrame(encodeDmxFrame(getDmxUniverses()));
   }), 1000 / 30);
   if (dmxFrameTimer.unref) dmxFrameTimer.unref();
 
-  // What the party effects hear, at the same rate, to the pages showing its
-  // meters; the hop the rig renders, not one the live state carries.
   const audioTimer = setInterval(guarded('audio-feed', () => {
     if (!publisher.wants(ROOM.audio)) { publisher.resetAudio(); return; }
     publisher.sendAudio(feedOf(heard()));
@@ -976,11 +898,9 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     broadcast,
     publisher,
     warmer,
-    // The audio features and their summary, for the audio route.
     audio: { features: audioFeatures, summary: audioSummary, detectors },
     library,
     pads,
-    // The shelf and the transport, for the sequence routes.
     sequence,
     hybrid,
     prefetchNextFromQueue,
@@ -992,8 +912,6 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     resolveAutoSource,
     analyseCdjTrack,
     lockToPlayingTrack,
-    // Called by the Deezer browser extension (via routes) with the web player's
-    // current track + upcoming queue.
     onDeezerState(payload: DeezerState | null | undefined) {
       if (!payload) return;
       if (payload.current) deezerSource.updatePlayback(payload.current);

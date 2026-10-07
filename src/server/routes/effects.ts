@@ -13,7 +13,6 @@ import type { RouteContext } from './common.ts';
 
 const commandSchema = z.object({ cmd: z.string().min(1).max(64), arg: z.unknown().optional() }).strict();
 
-// Colours, or a palette by id: one or the other, never both.
 const overrideSchema = z.union([
   z.object({ colours: paletteOverride.unwrap() }).strict(),
   z.object({ paletteId: z.string().min(1).max(64) }).strict(),
@@ -28,8 +27,6 @@ const REFUSALS: Record<Exclude<CommandStatus, 'applied'>, [number, string]> = {
 };
 
 export function attachEffectRoutes(app: Express, ctx: RouteContext): void {
-  // Read when a request comes, as the other domains read theirs: a test that
-  // stands in for the integrations with only what it needs still mounts these.
   const effects = () => ctx.integrations.library.effects;
   const palettes = () => ctx.integrations.library.palettes;
 
@@ -38,8 +35,6 @@ export function attachEffectRoutes(app: Express, ctx: RouteContext): void {
     res.json({ ok: true, families: FAMILIES, builtin, user, palettes: { builtin: BUILTIN_PALETTES, user: palettes().list() } });
   });
 
-  // Answers once the renderer has decided it, wherever it renders: applied on
-  // a frame of the effect it was meant for, or why not.
   app.post('/api/effects/command', asyncHandler(async (req, res) => {
     const { cmd, arg } = validate(commandSchema, req.body ?? {}, 'command');
     const result = await effectCommand(cmd, arg);
@@ -58,7 +53,6 @@ export function attachEffectRoutes(app: Express, ctx: RouteContext): void {
     res.status(201).json({ ok: true, preset: effects().create(req.body ?? {}) });
   });
 
-  /** The 404 for an id that is no saved preset: a built-in says how to make it one's own. */
   const noPreset = (id: string) => (effects().get(id)
     ? 'A built-in preset cannot be changed: save a copy as a preset of your own'
     : 'No such preset');
@@ -74,7 +68,6 @@ export function attachEffectRoutes(app: Express, ctx: RouteContext): void {
     res.json({ ok: true });
   });
 
-  // The list is GET /api/effects; GET /api/palettes stays the look palettes'.
   app.get('/api/palettes/:id', (req, res) => {
     const entry = palettes().get(req.params.id);
     if (!entry) return res.status(404).json({ ok: false, error: 'No such palette' });
@@ -117,10 +110,8 @@ export function attachEffectRoutes(app: Express, ctx: RouteContext): void {
     res.json({ ok: true, paletteOverride: null });
   });
 
-  // ─── Safety ───────────────────────────────────────────────────────────────
   app.get('/api/safety', (_req, res) => res.json({ ok: true, ...safety.status() }));
 
-  // Given once, and saved: from then on the strobes and the fast effects play.
   app.post('/api/safety/acknowledge', (_req, res) => {
     safety.acknowledge();
     ctx.integrations.broadcast();

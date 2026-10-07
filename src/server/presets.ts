@@ -2,8 +2,6 @@ import { CATALOGUE, presetById } from '../shared/effects/index.ts';
 import { ENERGY_KIND_BY_ID } from '../shared/effects/energy.ts';
 import { requiresAcknowledgement } from '../shared/effects/registry.ts';
 
-// Each entry defines a DMX range on channel 3. Speed-based functions map
-// the 0-255 strobeSpeed value into the [lo..hi] range (slow → fast).
 const STROBE_FUNCTIONS = [
   { id: 'standard',         name: 'Standard',         desc: 'Strobe slow → fast (1-20 Hz)', lo: 128, hi: 250 },
   { id: 'ramp-up-down',     name: 'Ramp Up/Down',     desc: 'Ramp up/down, slow → fast',    lo: 11,  hi: 22  },
@@ -18,63 +16,21 @@ const STROBE_FUNCTIONS = [
 
 const STROBE_FUNCTION_IDS = STROBE_FUNCTIONS.map((f) => f.id);
 
-// ── Colour presets ──────────────────────────────────────────────────────────
-//
-// A party rig is watched from across a dark room, through haze, on lamps that
-// are usually moving or flashing. Two colours that a screen shows as clearly
-// different — say a 260° violet and a 264° "actinic" — arrive at the audience
-// as the same colour, so a table full of near-neighbours is a table where most
-// of the buttons do the same thing. The list below is built the other way
-// round: pick the fewest colours that are all *obviously* different from each
-// other, and let the palettes and the four slots do the combining.
-//
-// The rule is one preset per recognisable hue, with no two saturated entries
-// closer than 30° on the wheel:
-//
-//   Red 0° · Amber 37° · Lime 85° · Green 140° · Cyan 187°
-//   Blue 220° · Congo 258° · Violet 288° · Magenta 325°
-//
-// Nine hues is the whole wheel at the resolution the eye resolves at distance.
-// Everything that used to sit between two of these (Coral, Flame, Gold, Sun,
-// Yellow, Rose, Fuchsia, Teal, Mint, Sky, Indigo, Actinic, Acid) collapsed into
-// its nearest neighbour; nothing was lost that a pair of slots cannot rebuild.
-//
-// Yellow is the one that may look missing. It went because the amber emitter
-// puts Amber at 37° and an RGB yellow at 60° — 23° apart, which is a difference
-// on a screen and not one across a dark room. Amber is also the more useful
-// half of that pair on a party rig: an RGB yellow tends to arrive as dirty
-// white once there is any haze in the air.
-//
-// Then three things a hue cannot do:
-//   - Warm/Cool White — the blinder and the "lights up" look. Two of them,
-//     because warm-vs-cool is the one white distinction that reads on stage.
-//   - Lavender / Moonlight — the pale tier. Deliberately desaturated: a wash
-//     you can leave up under everything else, for the chill-out end of the
-//     night, where a saturated colour would just be loud.
-//   - UV — blacklight, which no RGB mix approximates.
-//
-// `Blackout` stays last (auto-show.js looks it up by name).
+// Separate saturated presets by at least 30° so their differences remain visible across a room.
 const COLOR_PRESETS = [
-  // Saturated wheel — the workhorses. One entry per recognisable hue. The
-  // angles are the *mixed* hue: Amber is mostly the amber emitter, so its r/g/b
-  // triple on its own reads much redder than what the lamp puts out.
   { name: 'Red',        r: 255, g: 0,   b: 0,   w: 0,   a: 0,   uv: 0   }, // 0    0°
   { name: 'Amber',      r: 200, g: 150, b: 0,   w: 0,   a: 255, uv: 0   }, // 1   37° amber emitter leads
   { name: 'Lime',       r: 150, g: 255, b: 0,   w: 0,   a: 0,   uv: 0   }, // 2   85°
   { name: 'Green',      r: 0,   g: 255, b: 85,  w: 0,   a: 0,   uv: 0   }, // 3  140° emerald, not the
-                                                                           //         yellowish raw primary
   { name: 'Cyan',       r: 0,   g: 225, b: 255, w: 0,   a: 0,   uv: 0   }, // 4  187°
   { name: 'Blue',       r: 0,   g: 85,  b: 255, w: 0,   a: 0,   uv: 0   }, // 5  220°
   { name: 'Congo Blue', r: 75,  g: 0,   b: 255, w: 0,   a: 0,   uv: 0   }, // 6  258° the deep one
   { name: 'Violet',     r: 205, g: 0,   b: 255, w: 0,   a: 0,   uv: 0   }, // 7  288°
   { name: 'Magenta',    r: 255, g: 0,   b: 150, w: 0,   a: 0,   uv: 0   }, // 8  325° reads as hot pink
 
-  // Whites — warm and cool, the one white distinction that carries across a room.
   { name: 'Warm White', r: 90,  g: 30,  b: 0,   w: 255, a: 200, uv: 0   }, // 9  tungsten
   { name: 'Cool White', r: 0,   g: 30,  b: 80,  w: 255, a: 0,   uv: 0   }, // 10 daylight
 
-  // Pale tier — low saturation on purpose. These are washes to sit *under* a
-  // look, not colours to chase with.
   { name: 'Lavender',   r: 130, g: 45,  b: 200, w: 200, a: 0,   uv: 0   }, // 11
   { name: 'Moonlight',  r: 0,   g: 70,  b: 190, w: 190, a: 0,   uv: 0   }, // 12
 
@@ -82,23 +38,8 @@ const COLOR_PRESETS = [
   { name: 'Blackout',   r: 0,   g: 0,   b: 0,   w: 0,   a: 0,   uv: 0   }, // 14
 ];
 
-// ── Patterns ────────────────────────────────────────────────────────────────
-//
-// Grouped by what the rig actually *does*, because that is what an audience
-// tells apart. Twenty-five entries had collapsed into a handful of silhouettes
-// wearing different names: split / split-3 / split-4 were one pattern picked
-// three ways, as were chase / chase-3 / chase-4, alt-halves / alt-thirds /
-// alt-quarters, and pairs / pairs-4. The only thing the suffix changed was how
-// many colours the pattern reached for.
-//
-// Patterns now read that from the look itself (patterns.js paletteOf), so one
-// `split` covers all three sizes and the picker is eighteen genuinely different
-// motions rather than twenty-five names for eleven.
-//
-// Every row is a pattern function with no spec: `legacy` tells the pickers
-// that no pad, clip or voice can play it, whatever its id looks like.
+// Legacy patterns have no EffectSpec and cannot run as pads, clips or voices.
 const PATTERNS = [
-  // Whole rig, together.
   { id: 'solid',        name: 'Solid',         desc: 'All fixtures on colour A' },
   { id: 'fade',         name: 'Fade',          desc: 'All fixtures breathe together' },
   { id: 'hit',          name: 'Hit',           desc: 'All fixtures punch on the beat, decay between' },
@@ -106,7 +47,6 @@ const PATTERNS = [
   { id: 'color-cycle',  name: 'Colour Cycle',  desc: 'Whole rig steps to the next palette colour' },
   { id: 'rainbow',      name: 'Rainbow',       desc: 'Full spectrum spread across the rig — ignores the palette' },
 
-  // One or two lamps travelling, the rest held low.
   { id: 'chase',        name: 'Chase →',       desc: 'One fixture at a time, forward' },
   { id: 'chase-rev',    name: 'Chase ←',       desc: 'One fixture at a time, reverse' },
   { id: 'ping-pong',    name: 'Ping Pong',     desc: 'One fixture at a time, forward then back' },
@@ -115,20 +55,15 @@ const PATTERNS = [
   { id: 'wave',         name: 'Wave',          desc: 'Sine brightness sweep across the rig' },
   { id: 'stack-up',     name: 'Stack Up',      desc: 'Fill fixtures one by one, then reset' },
 
-  // Static blocks that rotate on the beat.
   { id: 'split',        name: 'Split',         desc: 'Palette colours alternating per fixture' },
   { id: 'sections',     name: 'Sections',      desc: 'Rig splits into one block per palette colour, blocks swap each beat' },
 
-  // Random.
   { id: 'twinkle',      name: 'Twinkle',       desc: 'Soft random levels, nothing goes fully dark' },
   { id: 'sparkle',      name: 'Sparkle',       desc: 'Hard random on/off, instant' },
   { id: 'random-flash', name: 'Random Flash',  desc: 'One random fixture pops each beat' },
   { id: 'ensemble', name: 'Ensemble', desc: 'Bass at the edges, vocals in the centre, airy moving accents' },
   { id: 'ribbon', name: 'Ribbon', desc: 'Continuous palette ribbons shaped by musical texture and width' },
 
-  // Pictures drawn across every cell of every LED bar. They run on pars too,
-  // as four samples of the same picture; `pixel` marks them for the picker
-  // and for the auto show, which reaches for them only on a rig with bars.
   { id: 'gradient', name: 'Gradient', desc: 'The look\'s colours as a gradient scrolling across the rig', pixel: true },
   { id: 'comet',    name: 'Comet',    desc: 'A head crossing the rig every four steps with a fading tail', pixel: true },
   { id: 'burst',    name: 'Burst',    desc: 'A ring thrown out from the centre of the stage on every step', pixel: true },
@@ -138,61 +73,26 @@ const PATTERNS = [
   { id: 'stems',    name: 'Stems',    desc: 'Voice, band, drums and bass in zones out from the centre, each as loud as it plays', pixel: true },
   { id: 'rise',     name: 'Rise',     desc: 'The rig filling up through a build-up, full on the drop', pixel: true },
   { id: 'impact',   name: 'Impact',   desc: 'A ring thrown out from the centre on every step, with sparks on every kick', pixel: true },
-  // After LedFx's and WLED's matrix effects: they stand up on a panel, and
-  // lie along a strip.
   { id: 'bars',     name: 'Bars',     desc: 'A spectrum analyser: kick, bass, drums, snare, band, voice and hats as columns, as high as each plays', pixel: true },
   { id: 'fire',     name: 'Fire',     desc: 'Flames licking up a panel, taller with the bass, flaring on the kick', pixel: true },
   { id: 'rain',     name: 'Rain',     desc: 'Drops falling down every column in time, the hats shaking loose more', pixel: true },
-  // After the programs of the hybrid strobes (a Jolt Panel, a Super Strobe
-  // ABL): hard flashes on black, zone by zone.
   { id: 'flash-chase',     name: 'Flash Chase',     desc: 'One flash stepping zone to zone, a lap a step', pixel: true },
   { id: 'flash-scatter',   name: 'Flash Scatter',   desc: 'Random zones strobing, denser with the hats', pixel: true },
   { id: 'flash-fill',      name: 'Flash Fill',      desc: 'Every step fills from the middle out, holds, and cuts to black', pixel: true },
   { id: 'flash-alternate', name: 'Flash Alternate', desc: 'Odd zones flash on the step, even ones between', pixel: true },
   { id: 'ramp',            name: 'Ramp',            desc: 'Every step swells from black to full from the middle, cut on the beat', pixel: true },
   { id: 'core',            name: 'Strobe Core',     desc: 'A colour wash with a white core striking on every kick', pixel: true },
-  // After the party engines of the Hue apps (patterns.ts, "Party effects"):
-  // they travel the room by where the lamps stand on the stage plot, and in
-  // stage order on a rig nobody has placed. `party` groups them in the picker.
-  // Named and described in the effect catalogue, which keeps them as its
-  // legacy rows beside the presets they were modelled on (`preset`).
   ...CATALOGUE.filter((p) => p.legacy).map(({ id, name, desc, party, preset }) => ({ id, name, desc, party, ...(preset ? { preset } : {}) })),
 ].map((row) => ({ ...row, legacy: true as const }));
 
 const PATTERN_IDS = PATTERNS.map((p) => p.id);
 
-// Every other built-in preset, as the pickers list it after the patterns.
-// `rapidFlash` is the effective requirement, parameters and macro steps
-// included, so a picker marks what the renderer will refuse unacknowledged.
+// Use the effective rapid-flash requirement so pickers match renderer admission.
 const PRESET_ROWS = CATALOGUE.flatMap((p) => p.legacy ? [] : [{
   id: p.id, name: p.name, desc: p.desc, ...(p.party ? { party: true } : {}), ...(p.pixel ? { pixel: true } : {}),
   app: p.app, family: p.family, rapidFlash: requiresAcknowledgement(p.spec), scope: p.spec.scope ?? null,
 }]);
 
-// ── Energy overrides ────────────────────────────────────────────────────────
-//
-// One-touch panic effects. They trump the pattern engine and per-fixture
-// overrides (see engine.js resolveEnergyOverride) — only master blackout wins.
-//
-// Same problem as the colour table: `blinder` and `all-on` were both "a white
-// wall at full", differing only in whether amber and UV joined in, which from
-// the floor is not a difference. They are now one effect that drives every
-// white-making emitter, which is both simpler and brighter than either was.
-//
-// What is left covers four separate things an operator reaches for, so no two
-// buttons do the same job:
-//   - a strobe punch, cold (white-strobe) or in the look's own colour
-//     (color-strobe)
-//   - a held wall of light (blinder)
-//   - a held *dark* moment — blacklight (uv-wash) or nothing at all (kill)
-//
-// `kill` is not master blackout: the master is a latching switch on the whole
-// rig, this is momentary and auto-clears, which is what you want under a thumb
-// on a drop.
-// The six energy kinds under their old ids, then the hold-to-strobe pad of the
-// Hue party apps (look-math.ts HOLD_STROBE): flashes in the look's colours on
-// the beat grid, the running look showing through between them. Labels and
-// descriptions are the catalogue's control presets'.
 const ENERGY_EFFECTS = [...Object.keys(ENERGY_KIND_BY_ID), 'palette-strobe'].map((id) => {
   const { name, desc } = presetById(id)!;
   return { id, name, desc };
@@ -200,30 +100,11 @@ const ENERGY_EFFECTS = [...Object.keys(ENERGY_KIND_BY_ID), 'palette-strobe'].map
 
 const ENERGY_EFFECT_IDS = ENERGY_EFFECTS.map((e) => e.id);
 
-// How far the operator can shift the generated show against the music, either
-// way. Two seconds covers every real source of lag — player buffering, a polled
-// and quantised position API, Art-Net across a network, fixture processing, and
-// the throw from a PA to the back of a room — with room to spare. Wider than
-// this and a mis-drag stops being a sync adjustment and starts being a
-// different part of the song.
-//
-// Lives here, with the other domain tables, because the settings store, the
-// patch validator, the MIDI surface and the auto show all need it, and this is
-// the only module among them that requires none of the others (only the
-// shared effect catalogue).
+// Keep sync bounds shared so settings, MIDI and playback accept the same range.
 const SYNC_OFFSET_LIMIT_MS = 2000;
 
-// 'hybrid' takes its content from Spotify (track identity, ISRC, duration and
-// the queue lookahead) and its clock from the OS media session, which is read
-// locally and so is both fresher and far steadier than a polled HTTP API.
-// See src/hybrid-source.js.
-// 'live' plays by ear: the live input hears the music and the live director
-// answers it (see src/show/live-director.ts), for music nothing has analysed.
 const AUTO_SOURCES = ['auto', 'hybrid', 'spotify', 'deezer', 'nowplaying', 'prolink', 'live', 'timer'] as const;
 
-// Whether the musical clock follows the music ('auto') or keeps the operator's
-// tempo ('manual'); see conductor.ts. Here for the settings store, the patch
-// validator and the clock alike.
 const TEMPO_MODES = ['auto', 'manual'] as const;
 
 export {

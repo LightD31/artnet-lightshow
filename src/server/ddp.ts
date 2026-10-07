@@ -3,27 +3,12 @@ import net from 'node:net';
 import dns from 'node:dns';
 import { messageOf } from '../errors.ts';
 
-/**
- * DDP, the Distributed Display Protocol, as WLED speaks it.
- *
- * Art-Net and sACN carry 512-channel universes, and a pixel strip on them is
- * universe bookkeeping: 170 pixels to each. DDP carries a device's pixels as
- * one run of bytes, up to 480 RGB pixels to a packet, each packet saying where
- * in the run it starts; the last packet of a frame says "show it now".
- *
- * A packet is a ten-byte header and the data:
- *
- *   0     flags: version 1 (0x40), and push (0x01) on a frame's last packet
- *   1     sequence, 1–15 and round again (0 means "not used")
- *   2     data type: RGB (0x0B) or RGBW (0x1B), 8 bits a channel
- *   3     destination: 1, the device's display
- *   4–7   where the data starts in the run, in bytes, big-endian
- *   8–9   how many bytes follow, big-endian
- */
+// DDP header: byte 0 version 0x40 + final-packet push 0x01; byte 1 sequence 1–15;
+// byte 2 RGB 0x0B / RGBW 0x1B; byte 3 display destination 1;
+// bytes 4–7 big-endian data offset; bytes 8–9 big-endian payload length.
 
 const DDP_PORT = 4048;
 const HEADER = 10;
-// 480 RGB pixels, or 360 RGBW: a whole number of either, inside one Ethernet frame.
 const MAX_DATA = 1440;
 
 const VERSION_1 = 0x40;
@@ -32,28 +17,18 @@ const TYPE_RGB = 0x0b;
 const TYPE_RGBW = 0x1b;
 const DISPLAY = 0x01;
 
-/**
- * Where a stretch of the frame's data goes in the device's pixels: `bytes`
- * bytes from `from` in the data, to byte `at` of the device's run.
- */
 export interface DdpRun {
   at: number;
   from: number;
   bytes: number;
 }
 
-/**
- * The packets for one frame of a device's pixels: `data` from byte 0 of its
- * run, or — for fixtures that are parts of one WLED, its segments — each of
- * `runs` at its own place in it. Only the frame's last packet says "show it",
- * so the device never shows one segment new and the next still old.
- */
+// Push only the final packet so segmented devices never display a partly updated frame.
 function buildDdpPackets(data: Uint8Array, { sequence, rgbw = false, runs }: { sequence: number; rgbw?: boolean; runs?: DdpRun[] }): Buffer[] {
   const packets: Buffer[] = [];
   const seq = ((sequence - 1) % 15 + 15) % 15 + 1;
   const spans = runs && runs.length ? runs : [{ at: 0, from: 0, bytes: data.length }];
   for (const span of spans) {
-    // At least one packet, so even an empty frame says "show it".
     const count = Math.max(1, Math.ceil(span.bytes / MAX_DATA));
     for (let k = 0; k < count; k++) {
       const offset = k * MAX_DATA;
@@ -73,7 +48,6 @@ function buildDdpPackets(data: Uint8Array, { sequence, rgbw = false, runs }: { s
   return packets;
 }
 
-/** What a packet says, for tests and a receiver: its header and its data. */
 function parseDdpPacket(packet: Buffer): { push: boolean; sequence: number; rgbw: boolean; offset: number; data: Buffer } | null {
   if (packet.length < HEADER || (packet[0] & 0xc0) !== VERSION_1) return null;
   const length = packet.readUInt16BE(8);
@@ -87,18 +61,12 @@ function parseDdpPacket(packet: Buffer): { push: boolean; sequence: number; rgbw
   };
 }
 
-// ── Sending ─────────────────────────────────────────────────────────────────
-// The socket opens with the first frame: the engine renders in a worker, and
-// the main thread loading this module has nothing to send.
-
 let socket: dgram.Socket | null = null;
 
 function sendSocket(): dgram.Socket {
   if (socket) return socket;
   const s = dgram.createSocket('udp4');
   socket = s;
-  // Without a listener a failed send is an unhandled 'error' that ends the
-  // process; a WLED that dropped off the network is not worth a show.
   s.on('error', (err) => logFailure(err));
   s.bind();
   s.unref();
@@ -121,8 +89,6 @@ function logFailure(err: unknown): void {
   console.warn(`[ddp] send failed: ${messageOf(err)}${extra}`);
 }
 
-// A hostname resolved once and kept, per device: dgram would look it up on
-// every one of 44 frames a second. Frames go nowhere until it has resolved.
 const RESOLVE_TTL_MS = 60_000;
 const RESOLVE_RETRY_MS = 5_000;
 const resolved = new Map<string, { address: string | null; at: number; pending: boolean }>();
@@ -143,7 +109,6 @@ function resolveHost(host: string): string | null {
   return resolved.get(host)?.address ?? null;
 }
 
-/** Send one frame of a device's pixels. False when its host has not resolved yet. */
 function sendDdp({ host, port = DDP_PORT, sequence, rgbw = false, runs }: { host: string; port?: number; sequence: number; rgbw?: boolean; runs?: DdpRun[] },
   data: Uint8Array): boolean {
   const address = resolveHost(host);

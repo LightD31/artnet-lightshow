@@ -1,42 +1,16 @@
-/**
- * The musical event stream, as the show engine sees it.
- *
- * The analyser produces this stream (see `src/analysis/events.py`) and the
- * director consumes it. This module is the boundary: it defines the vocabulary,
- * normalises whatever the analyser handed over, and — importantly — synthesises
- * an equivalent stream from an older analysis document that predates the event
- * layer.
- *
- * That last part is not decoration. Analyses are cached on disk between runs
- * and a cache is worth nothing if a schema change invalidates it, so a 1.x
- * document still produces a full show; it just produces one without the events
- * only the new pipeline can find (vocal spans, melody changes, per-band hits).
- *
- * Every event has the same shape:
- *
- *   { t, type, confidence, intensity, duration, effect, data }
- *
- * `t` is seconds from the start of the track. `intensity` is a musical
- * magnitude, not a brightness — the director decides what to spend on it.
- */
-
 import type { Drop, MusicalEvent, Span } from '../types/analysis.ts';
 import type { Analysis } from './score.ts';
 
-/** An event with every field filled in (see normalise). */
 export interface ShowEvent {
-  /** Seconds from the start of the track. */
   t: number;
   type: string;
   confidence: number;
   intensity: number;
   duration: number;
   effect: string;
-  /** Type-specific detail, as the analyser wrote it. */
   data: Record<string, unknown>;
 }
 
-// Fields documents written before the schema carried, still read here.
 type LegacyDrop = Drop & { time?: number };
 type LegacyBuildup = Span & { strength?: number };
 
@@ -58,11 +32,6 @@ const EVENT = Object.freeze({
 const num = (v: unknown, fallback = 0): number => (Number.isFinite(Number(v)) ? Number(v) : fallback);
 const clamp01 = (v: unknown): number => Math.max(0, Math.min(1, num(v, 0)));
 
-/**
- * Normalise one event, filling in anything the producer left out.
- * Returns null for an event with no usable timestamp — a NaN `t` would sort
- * unpredictably and then fire at a moment nobody can reason about.
- */
 function normalise(raw: Partial<MusicalEvent> | null | undefined): ShowEvent | null {
   if (!raw || typeof raw !== 'object') return null;
   const t = Number(raw.t);
@@ -78,13 +47,7 @@ function normalise(raw: Partial<MusicalEvent> | null | undefined): ShowEvent | n
   };
 }
 
-/**
- * The event stream for an analysis document.
- *
- * Prefers the analyser's own stream; falls back to synthesising one. Always
- * returns a time-sorted array, and never throws on a malformed document — a
- * bad analysis should cost the show its nuance, not its existence.
- */
+// Degrade malformed or old analysis into fewer events so missing nuance cannot stop the show.
 function deriveEvents(analysis: Analysis | null | undefined): ShowEvent[] {
   if (!analysis || typeof analysis !== 'object') return [];
   const supplied = Array.isArray(analysis.events) ? analysis.events : null;
@@ -95,9 +58,7 @@ function deriveEvents(analysis: Analysis | null | undefined): ShowEvent[] {
   return events;
 }
 
-// Ties at the same instant resolve in this order, so a director processing the
-// stream in sequence sees context (the section) before the thing that happens
-// inside it (the drop), and the drop last of all — it must win.
+// Process section context before drops at equal timestamps so the drop wins the resulting look.
 const ORDER: readonly string[] = [EVENT.SECTION, EVENT.TRANSITION, EVENT.BAR, EVENT.BEAT,
   EVENT.BASS_HIT, EVENT.MELODY_CHANGE, EVENT.VOCAL_SECTION, EVENT.BREAK,
   EVENT.SILENCE, EVENT.ENERGY_SPIKE, EVENT.BUILDUP, EVENT.DROP];
@@ -107,14 +68,7 @@ function priority(type: string): number {
   return index < 0 ? ORDER.length : index;
 }
 
-/**
- * Build an event stream from a pre-event-layer analysis document.
- *
- * Only the types the old document can support are produced. There is no
- * guessing at vocal spans or melodic movement from fields that never carried
- * them — a missing event type is a show with less nuance, an invented one is a
- * show that lights the wrong moments confidently.
- */
+// Synthesize only evidence supported by old documents so missing fields cannot invent musical events.
 function synthesise(analysis: Analysis): ShowEvent[] {
   const events: ShowEvent[] = [];
   const beats = Array.isArray(analysis.beats) ? analysis.beats : [];
@@ -154,10 +108,6 @@ function synthesise(analysis: Analysis): ShowEvent[] {
   segments.forEach((segment, i) => {
     const t = num(segment.start, -1);
     if (t < 0) return;
-    // Pre-2.0 documents have no section roles; `level` is all they carry, and
-    // inventing "chorus" from an energy tier would be a guess the director
-    // would then trust. `unknown` is the honest answer and the director has a
-    // path for it.
     const role = segment.role || 'unknown';
     const shared = {
       role, label: segment.label || null, level: segment.level || 'mid',
@@ -178,7 +128,6 @@ function synthesise(analysis: Analysis): ShowEvent[] {
   });
 
   for (const drop of (Array.isArray(analysis.drops) ? analysis.drops : []) as LegacyDrop[]) {
-    // Older documents used `t`; a couple of fixtures in the wild use `time`.
     const t = num(drop.t != null ? drop.t : drop.time, -1);
     if (t < 0) continue;
     const confidence = clamp01(drop.confidence == null ? 0.5 : drop.confidence);
@@ -216,7 +165,6 @@ function synthesise(analysis: Analysis): ShowEvent[] {
   return events;
 }
 
-/** Group a stream by type, for the director's lookups. */
 function byType(events: readonly ShowEvent[]): Map<string, ShowEvent[]> {
   const map = new Map<string, ShowEvent[]>();
   for (const event of events) {
@@ -230,7 +178,6 @@ function byType(events: readonly ShowEvent[]): Map<string, ShowEvent[]> {
   return map;
 }
 
-/** Does `t` fall inside any of these span events (with an optional margin)? */
 function inSpan(spans: readonly ShowEvent[], t: number, marginBefore = 0, marginAfter = 0): boolean {
   for (const span of spans) {
     const end = span.data && span.data.end != null ? span.data.end as number : span.t + span.duration;
@@ -239,7 +186,6 @@ function inSpan(spans: readonly ShowEvent[], t: number, marginBefore = 0, margin
   return false;
 }
 
-/** Is `t` within `window` seconds of any of these instant events? */
 function nearAny(events: readonly ShowEvent[], t: number, window: number): boolean {
   for (const event of events) {
     if (Math.abs(event.t - t) <= window) return true;

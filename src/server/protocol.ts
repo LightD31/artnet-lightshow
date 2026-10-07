@@ -1,12 +1,11 @@
+// Version each domain independently so clients can detect missed patches and request a snapshot.
 
 import type { Server } from 'socket.io';
 
 export const PROTOCOL = 2;
 
-/** Rooms a socket is in: which protocol it speaks, and what it subscribed to. */
 export const ROOM = { v1: 'protocol:1', v2: 'protocol:2', dmx: 'feed:dmx', audio: 'feed:audio' } as const;
 
-/** What a page may subscribe to. */
 export const TOPICS = { dmx: ROOM.dmx, audio: ROOM.audio } as const;
 
 export type Domain = 'look' | 'rig' | 'show' | 'sources' | 'audio' | 'sequence' | 'catalogs' | 'library' | 'voices' | 'pads' | 'system';
@@ -18,9 +17,7 @@ const DOMAIN_OF: Readonly<Record<string, Domain>> = {
   masterDimmer: 'look', masterBlackout: 'look', flashLimit: 'look',
   strobeSpeed: 'look', strobeFunction: 'look', pixelMap: 'look', pixelPattern: 'look', panelPattern: 'look',
   energyOverride: 'look', paletteOverride: 'look', paletteOverrideId: 'look', safety: 'look',
-  // The manual strobe, on or off and its settings: it plays over the look, and the look's views show it.
   strobe: 'look',
-  // The matrix board, its mode and held colours: like the strobe, played over the look.
   matrix: 'look',
 
   artnet: 'rig', universes: 'rig', fixtures: 'rig', profiles: 'rig', identify: 'rig', hueBridges: 'rig', hueStrobe: 'rig', armed: 'rig',
@@ -32,29 +29,21 @@ const DOMAIN_OF: Readonly<Record<string, Domain>> = {
   hybrid: 'sources', deezer: 'sources', deezerPrefetch: 'sources', prolink: 'sources', live: 'sources',
   midi: 'sources',
 
-  // The audio summary: its levels move every sweep, and only the meters watch them.
   audio: 'audio',
 
-  // The sequencer: the sequence loaded, and (from the transport) where it plays;
-  // the shelf of saved ones and of patterns, by id and name.
   sequence: 'sequence', sequences: 'sequence', sequencePatterns: 'sequence',
 
   colorPresets: 'catalogs', patterns: 'catalogs', energyEffects: 'catalogs', strobeFunctions: 'catalogs',
   palettes: 'catalogs', builtinProfileIds: 'catalogs', hueProfileIds: 'catalogs', syncOffsetLimitMs: 'catalogs',
   families: 'catalogs', builtinPalettes: 'catalogs',
 
-  // The presets and palettes saved on this server: one saved mid-show reaches
-  // every open page, and only the pickers watch them.
   effects: 'library', userPalettes: 'library',
 
-  // The effects launched over the look: a pad pressed moves only this, and only the pads watch it.
   voices: 'voices',
 
-  // The pads' layout and which of them are lit: the deck and the pad grid watch it, nothing else.
   pads: 'pads',
 };
 
-/** Is the key named in the table (rather than falling to `system`)? */
 export function hasDomain(key: string): boolean {
   return Object.hasOwn(DOMAIN_OF, key);
 }
@@ -63,8 +52,6 @@ export function domainOf(key: string): Domain {
   return Object.hasOwn(DOMAIN_OF, key) ? DOMAIN_OF[key] : 'system';
 }
 
-// How far a screen carrying the clock on may drift before the clock is news:
-// a frame of a 60 Hz display, which no closer correction could show.
 const CLOCK_TOLERANCE_MS = 1000 / 60;
 
 interface ClockPhase { bpm: number; beatPos: number; at: number }
@@ -108,7 +95,6 @@ export class StateDiffer {
     this._versions = Object.fromEntries(DOMAINS.map((d) => [d, 0])) as Record<Domain, number>;
   }
 
-  /** `live`, with a clock that is no news (clockMoved) swapped for the one last sent. */
   settle(live: Record<string, unknown>): Record<string, unknown> {
     if (live.clock === undefined || clockMoved(this._sentClock, live.clock)) return live;
     return { ...live, clock: this._sentClock };
@@ -140,20 +126,17 @@ export class StateDiffer {
     }));
   }
 
-  /** The version each domain is at, for a snapshot. */
   versions(): Record<Domain, number> {
     return { ...this._versions };
   }
 }
 
-/** The part of socket.io's server this needs; a test may pass less. */
 type Io = Pick<Server, 'emit'> & Partial<Pick<Server, 'to' | 'sockets'>>;
 
 export function createPublisher(io: Io) {
   const differ = new StateDiffer();
   let lastLiveJson = '';
   let lastFrame: Uint8Array | null = null;
-  // Undefined until something is sent; null once the audio has gone.
   let lastAudio: unknown;
   let lastAudioJson: string | undefined;
 
@@ -162,7 +145,6 @@ export function createPublisher(io: Io) {
 
   return {
     publishState(live: Record<string, unknown>): void {
-      // Settled first: a clock that only moved on as expected is no change.
       const json = JSON.stringify(differ.settle(live));
       if (json === lastLiveJson) return;
       lastLiveJson = json;
@@ -179,7 +161,6 @@ export function createPublisher(io: Io) {
       return size(name) > 0;
     },
 
-    /** A frame for the DMX subscribers, unless it is the one they already have. */
     sendDmxFrame(frame: Uint8Array): boolean {
       if (typeof io.to !== 'function') return false;
       if (lastFrame && lastFrame.length === frame.length && lastFrame.every((b, i) => b === frame[i])) return false;
@@ -188,16 +169,15 @@ export function createPublisher(io: Io) {
       return true;
     },
 
-    /** The last frame sent, for a page that has just subscribed. */
     lastDmxFrame(): Uint8Array | null {
       return lastFrame;
     },
 
-    /** Forget the last frame, so the next is sent even if it is the same. */
     resetDmx(): void {
       lastFrame = null;
     },
 
+    // Deliver audio disappearance reliably so meters cannot remain stuck on their last level.
     sendAudio(feed: unknown): boolean {
       if (typeof io.to !== 'function') return false;
       const json = JSON.stringify(feed ?? null);
@@ -209,12 +189,10 @@ export function createPublisher(io: Io) {
       return true;
     },
 
-    /** The audio last sent, for a page that has just subscribed; undefined before any. */
     lastAudio(): unknown {
       return lastAudio;
     },
 
-    /** Forget the last audio sent: nobody is subscribed. */
     resetAudio(): void {
       lastAudio = undefined;
       lastAudioJson = undefined;

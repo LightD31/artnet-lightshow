@@ -17,20 +17,10 @@ import type { HueBridgeSettings } from '../settings.ts';
 import { asyncHandler, resolveHueBridge } from './common.ts';
 import type { RouteContext } from './common.ts';
 
-/**
- * The outputs beyond a plain universe: Philips Hue (pairing, areas, the sync
- * test), the Art-Net nodes on the network, and the network interfaces sACN can
- * leave on.
- */
 export function attachOutputRoutes(app: Express, ctx: RouteContext): void {
   const { applier, integrations, hueAreas, huePair } = ctx;
 
-  // ─── Arming the outputs ───────────────────────────────────────────────────
-  // Whether anything leaves the machine (armed.ts): stored as outputs.armed
-  // and applied the moment it is saved, through the same applier the Show
-  // section's switch goes through. Never on at start. The live state and the
-  // health report carry it as `armed`.
-  // A disarm stops every voice even when the outputs were off already, once the save went through.
+  // Disarm voices even when outputs are already off so rehearsal cannot preserve a hidden latch.
   const answerArmed = (res: Response, on: boolean) => {
     applier.applyChanged(settings.update({ outputs: { armed: on } }));
     if (!on) applier.disarmed();
@@ -40,15 +30,8 @@ export function attachOutputRoutes(app: Express, ctx: RouteContext): void {
   app.post('/api/outputs/disarm', (_req, res) => answerArmed(res, false));
   app.post('/api/outputs/toggle', (_req, res) => answerArmed(res, !isArmed()));
 
-  // ─── Philips Hue ──────────────────────────────────────────────────────────
-  // Pairing and area selection cannot be plain settings fields: the bridge
-  // issues the credentials itself, and the list of areas only exists on the
-  // bridge. These are the calls the Rig view drives that with. A rig can have
-  // several bridges, each an entry of hue.bridges named by its id in a route;
-  // the routes from before several were possible (`/api/hue/areas`…) address
-  // the first one, except forgetting, which has to say which.
+  // Use bridge-issued pairing and area discovery because these values cannot be ordinary settings fields.
 
-  /** Every bridge, what it is set up with and what its stream is doing. Never the keys. */
   app.get('/api/hue/status', (_req, res) => {
     const config = output.getHueConfig();
     const live = new Map(output.getHueStatus().map((s) => [s.id, s]));
@@ -73,19 +56,10 @@ export function attachOutputRoutes(app: Express, ctx: RouteContext): void {
     });
   });
 
-  // Ten seconds of one white flash a second on every fixture, to film the pars
-  // against the Hue lamps while setting hue.latencyMs. Every bridge gets it:
-  // the flash is the show's, and every output carries the show.
   app.post('/api/hue/sync-test', (_req, res) => {
     res.json({ ok: true, seconds: startSyncTest(10) });
   });
 
-  /**
-   * The Art-Net nodes on the network. While the rig broadcasts, the server
-   * keeps this list itself and sends each node its universes directly; `scan`
-   * asks the network now — a fresh poll when the list is being kept, a one-off
-   * on every interface when it is not (a rig sending to one node already).
-   */
   app.get('/api/artnet/nodes', asyncHandler(async (req, res) => {
     const discovery = output.artnetDiscovery;
     const scan = req.query.scan === '1' || req.query.scan === 'true';
@@ -106,7 +80,6 @@ export function attachOutputRoutes(app: Express, ctx: RouteContext): void {
     }
     res.json({
       ok: true,
-      // Whether the server is keeping the list and routing by it, or not.
       routing: status.active,
       error,
       nodes: nodes.map((n) => ({
@@ -120,29 +93,15 @@ export function attachOutputRoutes(app: Express, ctx: RouteContext): void {
     });
   }));
 
-  // This machine's IPv4 addresses, for choosing which network sACN multicast
-  // leaves on.
   app.get('/api/network/interfaces', (_req, res) => {
     res.json({ ok: true, interfaces: interfaces().map(({ name, address, netmask, broadcast }) => ({ name, address, netmask, broadcast })) });
   });
 
   app.get('/api/hue/discover', asyncHandler(async (_req, res) => {
     const { bridges, error } = await discoverBridges();
-    // Not an error status: discovery needs internet access the show network may
-    // well not have, and typing the IP in is a perfectly normal path.
     res.json({ ok: true, bridges, error });
   }));
 
-  /**
-   * Pair with a bridge and store what it issues, as a bridge of its own.
-   *
-   * The link button has to have been pressed in the last 30 seconds, so the
-   * "press it and try again" answer is an ordinary outcome rather than a
-   * failure — the page reports it and lets the operator retry. Pairing a
-   * bridge that is already in the list again (its keys were lost, or it was
-   * unlinked in the Hue app) replaces its keys rather than adding a twin: a
-   * bridge is where it is.
-   */
   app.post('/api/hue/pair', asyncHandler(async (req, res) => {
     const { host, label } = validate(huePairSchema, req.body || {}, 'hue pair');
     const result = await huePair(host, { label: os.hostname() });
@@ -156,8 +115,6 @@ export function attachOutputRoutes(app: Express, ctx: RouteContext): void {
     const entry: HueBridgeSettings = {
       id: existing ? existing.id : nextBridgeId(bridges),
       label: label || (existing ? existing.label : '') || host,
-      // A bridge that has just been paired is meant to be used; it still does
-      // nothing until an area is picked and a lamp of it is in the patch.
       enabled: existing ? existing.enabled : true,
       host,
       username: result.username,
@@ -170,8 +127,6 @@ export function attachOutputRoutes(app: Express, ctx: RouteContext): void {
     });
     applier.applyChanged(changed);
 
-    // Hand back the areas straight away: pairing is only ever done in order to
-    // pick one, and a second round trip here just adds a step to the setup.
     let areas: EntertainmentArea[] = [];
     let areasError: string | null = null;
     try {
@@ -182,7 +137,6 @@ export function attachOutputRoutes(app: Express, ctx: RouteContext): void {
     res.json({ ok: true, bridge: { id: entry.id, label: entry.label, host }, host, areas, areasError });
   }));
 
-  /** The entertainment areas on a paired bridge, with their channel ids. */
   app.get(['/api/hue/areas', '/api/hue/:bridge/areas'], asyncHandler(async (req, res) => {
     const bridge = resolveHueBridge(req, res);
     if (!bridge) return;
@@ -197,16 +151,6 @@ export function attachOutputRoutes(app: Express, ctx: RouteContext): void {
     }
   }));
 
-  /**
-   * Forget a bridge: its entry goes, keys and all, and its stream with it.
-   *
-   * Its lamps in the patch would be left naming a bridge that is not there,
-   * so it refuses while there are any — unless asked to take them along
-   * (`removeFixtures`), which removes them as DELETE /api/fixtures/:id would.
-   * The application key stays registered on the bridge itself — Hue offers
-   * no way to revoke it from here, so that is done in the Hue app under
-   * linked devices.
-   */
   app.post('/api/hue/:bridge/disconnect', (req, res) => {
     try {
       const body = validate(hueDisconnectSchema, req.body || {}, 'hue disconnect');
@@ -243,13 +187,11 @@ export function attachOutputRoutes(app: Express, ctx: RouteContext): void {
     }
   });
 
-  // Forgetting has to say which bridge: with several, "the bridge" is nobody.
   app.post('/api/hue/disconnect', (_req, res) => {
     res.status(400).json({ ok: false, error: 'Name the bridge: POST /api/hue/:bridge/disconnect — GET /api/hue/status lists them.' });
   });
 }
 
-/** The next free id: bridge-1 first (the migrated one's), then up. */
 function nextBridgeId(bridges: readonly { id: string }[]): string {
   const taken = new Set(bridges.map((b) => b.id));
   for (let n = 1; ; n++) {
