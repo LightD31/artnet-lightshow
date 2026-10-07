@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { send, emitTap, pick } from '../state.js';
+import { padLabel } from '../now-playing.js';
 import { formatBpm, clockSource } from '../utils.js';
 import { useDraft } from '../draft.js';
 import { useVoicePads, holdsWhilePressed, padKey, rapidPad } from '../voice-pad.js';
@@ -168,7 +169,7 @@ export function CommandBar() {
         <div class="cb-energy-grid">
           {strip.map((p) => {
             const on = !!lit[p.slot] || held.has(padKey(0, p.slot));
-            const name = p.label || p.content.id;
+            const name = padLabel(p, s);
             return (
               <button
                 key={p.slot}

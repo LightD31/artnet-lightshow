@@ -4067,3 +4067,12 @@ input[type=range]::-moz-range-thumb {
   .perform-utility .perform-pad-name { font-size: 16px; }
   .perform-view { padding-bottom: 72px; }
 }
+
+.app-header { flex-wrap: wrap; row-gap: 4px; }
+.header-now { flex: 1 0 100%; min-width: 0; font-size: 11px; }
+.header-now .now-playing { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.perform-playing { margin-bottom: 8px; font-size: 13px; }
+.playing-voices { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.playing-voice { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 8px; font-size: 12px; }
+.playing-voice button { min-height: 44px; }
+@media (max-width: 900px) { .perform-controls > .playing-voices { order: 2; } }

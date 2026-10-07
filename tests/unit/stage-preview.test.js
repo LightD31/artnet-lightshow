@@ -1,7 +1,7 @@
 // What the stage preview's sampler is handed for a live state, and its "now playing" line.
 import test from 'node:test';
 import assert from 'node:assert';
-import { previewOptions, liveVoiceEvents, nowPlaying, matrixAsks, resolverOf, positionText } from '../../public-src/preview-inputs.js';
+import { previewOptions, liveVoiceEvents, matrixAsks, resolverOf, positionText } from '../../public-src/preview-inputs.js';
 import { createPreviewSampler } from '../../src/shared/preview.ts';
 import { buildRig } from '../../src/shared/rig.ts';
 import { presetById } from '../../src/shared/effects/catalogue.ts';
@@ -71,13 +71,10 @@ test('presets saved on this server resolve from the library GET /api/effects loa
   assert.strictEqual(previewOptions(STATE).resolveEffect('mine'), null, 'nothing loaded yet: no saved preset');
 });
 
-test('now playing counts the beat within the bar from the sequence\'s own bar length', () => {
-  const waltz = { pattern: 'solid', sequence: { loaded: { id: 's', name: 'Waltz' }, playing: true, bar: 2, beat: 5.5, loop: null } };
-  assert.strictEqual(nowPlaying(waltz, 3), 'solid · Waltz bar 2 beat 3');
-  assert.strictEqual(nowPlaying(waltz, 3), `solid · Waltz bar ${positionText(waltz.sequence, 3).replace('.', ' beat ')}`);
-  // As the stage calls it: the bar's length comes with the sequence's status.
-  assert.strictEqual(nowPlaying({ ...waltz, sequence: { ...waltz.sequence, beatsPerBar: 3 } }), 'solid · Waltz bar 2 beat 3');
-  assert.strictEqual(nowPlaying(waltz), 'solid · Waltz bar 2 beat 2', 'a status without one counts in four');
+test('sequence position uses its bar length', () => {
+  const seq = { bar: 2, beat: 5.5 };
+  assert.strictEqual(positionText(seq, 3), '2.3');
+  assert.strictEqual(positionText(seq, 4), '2.2');
 });
 
 test('a held pad plays over the rehearsed timeline', () => {
@@ -89,11 +86,6 @@ test('a held pad plays over the rehearsed timeline', () => {
   const alone = createPreviewSampler(timeline)(1000, fixtures, presets, rig);
   const withPad = createPreviewSampler([...timeline, ...liveVoiceEvents([voice])], null, previewOptions({}))(1000, fixtures, presets, rig);
   assert.notDeepStrictEqual(withPad, alone);
-});
-
-test('the now-playing line says the look, the pads, the strobe, the matrix and where the sequence is', () => {
-  assert.strictEqual(nowPlaying(STATE), 'solid · Pads: Blinder · Strobe · Matrix: 1 colour as flashes · Intro bar 3 beat 2 · Palette override');
-  assert.strictEqual(nowPlaying({ pattern: 'rainbow' }), 'rainbow');
 });
 
 test('the rapid board modes ask before the acknowledgement, the others never', () => {

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useFocusTrap } from '../focus-trap.js';
+import { VIEWS } from '../views.js';
 
 /**
  * Every keyboard shortcut the surface has, in one place.
@@ -19,11 +20,7 @@ export const SHORTCUTS = [
     group: 'Transport',
     items: [
       { keys: ['Space'], what: 'Tap tempo — tap along to set the BPM (also after clicking a button)' },
-      { keys: ['1'], what: 'Manual view' },
-      { keys: ['2'], what: 'Auto Show view' },
-      { keys: ['3'], what: 'Perform view' },
-      { keys: ['4', '5'], either: true, what: 'Timeline, Stage view' },
-      { keys: ['6', '7', '8', '9'], either: true, what: 'Rig, Sources, Settings, Preflight view' },
+      ...VIEWS.map((view) => ({ view: view.id, keys: [...(view.shift ? ['Shift'] : []), view.key], what: `${view.label} view` })),
       { keys: ['←', '→'], either: true, what: 'Next or previous view, on the view tabs' },
     ],
   },
@@ -39,10 +36,9 @@ export const SHORTCUTS = [
     ],
   },
   {
-    group: 'Energy effects',
+    group: 'Pads',
     items: [
-      { keys: ['Space'], what: 'Hold an energy button reached with Tab — releases when you let go' },
-      { keys: ['Enter'], what: 'Hold a focused energy button' },
+      { keys: ['Space', 'Enter'], either: true, what: 'Pad reached with Tab: hold plays until released; once plays one phrase; loop starts or stops on each press' },
     ],
   },
   {

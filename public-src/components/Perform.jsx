@@ -3,6 +3,7 @@ import { api, autoPositionSig, connectedSig, emitTap, librarySig, pick, send } f
 import { colorToCss, clockSource, fmtTime, formatBpm } from '../utils.js';
 import { timelinePosition } from '../timeline-state.js';
 import { useDraft } from '../draft.js';
+import { NowPlaying, PlayingVoices } from './NowPlaying.jsx';
 import { Pads } from './Pads.jsx';
 import { StrobePad } from './StrobePad.jsx';
 import { activeQueue } from './Queue.jsx';
@@ -99,6 +100,7 @@ function NowNext() {
   return (
     <section class="perform-now" aria-label="Now and next">
       <div class="perform-now-main">
+        <div class="perform-playing"><NowPlaying /></div>
         <span class="perform-kicker">Now</span>
         {track ? (
           <>
@@ -280,6 +282,7 @@ export function Perform() {
       <div class="perform-body">
         <div class="perform-controls">
           <Pads />
+          <PlayingVoices />
           <div class="perform-live-row">
             <StrobePad />
             <Utility />
