@@ -1,8 +1,3 @@
-// Light DJ's Scene Maker rows that change renderer mid-row (BigRoomMix, the
-// genre scores) as one kind: a score of effects in beats that loops. Each step
-// plays as its own instance with fresh state and its own seed, anchored where
-// the step starts, so it plays the same on every lap however it is sampled.
-
 import { z, ZodError } from 'zod';
 import type { RefinementCtx, ZodType } from 'zod';
 import type { Colour } from '../../types/rig.ts';
@@ -18,12 +13,10 @@ import type { EffectFrame, EffectSlot, EffectSpec, PaletteEntry, Seed } from './
 export interface MacroStep {
   effect: EffectSpec;
   beats: number;
-  /** Palette roles: the step plays these entries of the override, else of the macro's palette, else of the look. */
   paletteIndices?: number[];
 }
 export interface MacroParams { steps: MacroStep[]; loopBeats: number }
 
-/** Macros inside macros stop here, long before validation or rendering could exhaust the stack. */
 export const MAX_MACRO_DEPTH = MAX_NEST_DEPTH;
 const STROBE = 'strobe';
 
@@ -42,7 +35,7 @@ const forward = (ctx: RefinementCtx, error: unknown, path: PropertyKey[]) => {
 const schema: ZodType<MacroParams> = z.unknown().transform((input, ctx): MacroParams => {
   const shape = shapeSchema.safeParse(input);
   if (!shape.success) { forward(ctx, shape.error, []); return z.NEVER; }
-  // The caller's own array, not zod's copy: identity is what reveals a cycle.
+  // Validate the original array because its identity reveals cycles.
   const raw = (input as { steps: unknown[] }).steps;
   const refusal = nestRefusal(raw);
   if (refusal) {
@@ -56,9 +49,7 @@ const schema: ZodType<MacroParams> = z.unknown().transform((input, ctx): MacroPa
       if (!step.success) { forward(ctx, step.error, ['steps', k]); return; }
       let effect: EffectSpec;
       try { effect = validateSpec(step.data.effect); } catch (error) { forward(ctx, error, ['steps', k, 'effect']); return; }
-      // Every step is a fresh instance, so a strobe there would restart its
-      // five-a-second permit each lap, as Disco's automatic strobe would its
-      // limit; the strobe plays as a voice of its own.
+      // Fresh steps reset self-paced flash limits, so strobe kinds cannot run inside macros.
       if (pacesOwnFlashes(effect)) {
         const strobe = effect.kind === STROBE;
         ctx.addIssue({ code: 'custom', message: `a macro may not hold ${strobe ? 'the strobe' : 'an automatic strobe'}`, path: ['steps', k, 'effect', strobe ? 'kind' : 'params'] });
@@ -69,8 +60,7 @@ const schema: ZodType<MacroParams> = z.unknown().transform((input, ctx): MacroPa
   });
   if (steps.length !== shape.data.steps.length) return z.NEVER;
   const total = steps.reduce((sum, step) => sum + step.beats, 0), loop = shape.data.loopBeats;
-  // Decimal tables (4 + 3.6 + 3.6 + 4.8) can miss their loop by rounding
-  // alone; a real gap or overhang would leave beats nobody plays, or cut some.
+  // Allow rounding slack for decimal scores without accepting real gaps or overlaps.
   if (Math.abs(total - loop) > 4 * steps.length * Number.EPSILON * Math.max(total, loop)) {
     ctx.addIssue({ code: 'custom', message: `a macro's steps must fill its loop: ${total} beats of steps in a ${loop}-beat loop`, path: ['steps'] });
     return z.NEVER;
@@ -79,11 +69,9 @@ const schema: ZodType<MacroParams> = z.unknown().transform((input, ctx): MacroPa
 });
 
 interface Activation { lap: number; step: number; kind: string; id: string; seed: Seed; anchorBeat: number; startedAtMs: number }
-/** The children live in the macro's own stepper, so they are cloned, swept and reset with it. */
 interface MacroState { children: EffectStepper; active: Activation | null; last: { beat: number; ms: number } | null }
 
 
-/** The step playing `rel` beats after the macro's anchor: its lap, its index and where it starts in the loop. */
 function locate(p: MacroParams, rel: number): { lap: number; step: number; start: number } {
   const lap = Math.floor(rel / p.loopBeats);
   const within = rel - lap * p.loopBeats;
@@ -92,11 +80,9 @@ function locate(p: MacroParams, rel: number): { lap: number; step: number; start
     if (within < start + p.steps[k].beats) return { lap, step: k, start };
     start += p.steps[k].beats;
   }
-  // The last step runs to the end of the loop, taking up the table's rounding.
   return { lap, step: p.steps.length - 1, start };
 }
 
-/** The step playing at `beatPos` for a macro anchored on `anchorBeat`, and the beat that step is anchored on; null off the clock. */
 function stepAt(p: MacroParams, beatPos: number, anchorBeat: number): { lap: number; step: number; anchorBeat: number } | null {
   const rel = beatPos - anchorBeat;
   if (!Number.isFinite(rel)) return null;
@@ -104,12 +90,7 @@ function stepAt(p: MacroParams, beatPos: number, anchorBeat: number): { lap: num
   return { lap, step, anchorBeat: anchorBeat + lap * p.loopBeats + start };
 }
 
-/**
- * When a step began in wall time, for its wall-clock children. Known at the
- * launch for the very first step; otherwise between the two samples around
- * its boundary, or, on a cold sample, back-projected at the current tempo but
- * never before the launch. History the frames never showed cannot be recovered.
- */
+// Cold samples back-project at the current tempo because earlier tempo history is unavailable.
 function stepStart(s: MacroState, frame: EffectFrame, anchorBeat: number, first: boolean): number {
   const launch = Number.isFinite(frame.startedAtMs) ? frame.startedAtMs! : null;
   if (!s.last) {
@@ -123,13 +104,7 @@ function stepStart(s: MacroState, frame: EffectFrame, anchorBeat: number, first:
   return s.last.ms + (frame.nowMs - s.last.ms) * gone / span;
 }
 
-/**
- * A step's colours. Without roles an override passes through, and a step with
- * no palette of its own (an explicit null included) takes the macro's raw
- * entries, so random ones roll in the step's own cache. With roles the step
- * plays those entries of the override, the macro's palette or the look,
- * whatever it would have picked itself.
- */
+// Inherit raw palette entries so random colours roll in each child's own cache.
 function stepColours(step: MacroStep, frame: EffectFrame): { spec: EffectSpec; override: Colour[] | null; look: Colour[] } {
   const override = frame.paletteOverride?.length ? frame.paletteOverride : null;
   const inherited = frame.spec.palette?.length ? frame.spec.palette : null;
@@ -148,12 +123,9 @@ function renderMacro(p: MacroParams, s: MacroState, room: Room, frame: EffectFra
   const step = p.steps[k];
   let active = s.active;
   if (active && active.lap === lap && active.step === k && active.kind === step.effect.kind) {
-    // Re-anchored onto the step it plays (a voice after a jump in the music):
-    // the step plays on from the new anchor, its state and wall start kept,
-    // and takes the move as it takes a position that went back.
+    // Re-anchoring keeps child state and wall origin so clock jumps do not relaunch its effect.
     active.anchorBeat = anchorBeat;
   } else {
-    // A new activation forgets the last one entirely: state, palette cache and all.
     s.children.reset();
     active = s.active = {
       lap, step: k, kind: step.effect.kind, id: `${frame.instanceId ?? ''}:${k}`,
@@ -162,25 +134,20 @@ function renderMacro(p: MacroParams, s: MacroState, room: Room, frame: EffectFra
     };
   }
   s.last = { beat: frame.beatPos, ms: frame.nowMs };
-  // An unvalidated spec gets no further than validation would have let it.
   if (pacesOwnFlashes(step.effect)) return;
   const { spec, override, look } = stepColours(step, frame);
-  // The child applies its own brightness and acknowledgement; the macro's
-  // brightness and targets are applied once, by its caller, after this.
+  // Children apply brightness once; the caller applies the macro's brightness and targets.
   renderEffect({ id: active.id, spec, seed: active.seed, anchorBeat: active.anchorBeat, startedAtMs: active.startedAtMs, targets: null },
     { ...frame, paletteOverride: override, lookPalette: look }, room, s.children, out);
-  // Each slot names the step kind that drew it (the innermost, through
-  // nested macros), so guards kept for one family still find its kinds here.
+  // Keep the innermost kind so family-specific guards see effects inside nested macros.
   for (let i = 0; i < room.n; i++) if (out[i]?.strength > 0) out[i].kind ??= step.effect.kind;
 }
 
-// A macro with a rapid step is itself rapid, so admission and rendering refuse it alike.
 function anyStepRapid(params: MacroParams): boolean {
   const steps: unknown = (params as Partial<MacroParams> | null)?.steps;
   return Array.isArray(steps) && anyChildSpec(steps.map((item) => (item as Partial<MacroStep> | null)?.effect), requiresAcknowledgement);
 }
 
-// The detectors' owner lookup sees the step the lamps show.
 registerChildren('macro', (params, beatPos, anchorBeat) => {
   const p = params as MacroParams;
   const at = stepAt(p, beatPos, anchorBeat);

@@ -1,15 +1,6 @@
 import { channelReader, hasNoAddress } from '../src/shared/placement.ts';
 
-// Approximate the visual mix on a screen for the rig's RGBWAUV channels.
-// Amber adds warm orange (R + 0.5 G); UV reads as blue-violet (R 0.2 + B 0.9).
-//
-// Out-of-gamut sums are scaled back proportionally rather than clamped per
-// channel. Clamping threw away exactly the difference that matters: any preset
-// driving white hard pins all three channels at 255, so Warm White and Cool
-// White — which differ only in temperature — came out as the same flat swatch
-// and the operator could not tell the two buttons apart. Scaling keeps the hue
-// and gives up only absolute brightness, which a swatch was never showing
-// truthfully anyway.
+// Scale emitter mixes proportionally so white-heavy swatches retain their colour temperature.
 export function colorToCss({ r, g, b, w = 0, a = 0, uv = 0 }) {
   let rr = r + w + a + uv * 0.2;
   let gg = g + w + a * 0.5;
@@ -34,7 +25,6 @@ export function fmtPct(v) {
   return `${Math.round(v * 100)}%`;
 }
 
-/** A tempo as a person reads it: whole when it is whole, else to a tenth. */
 export function formatBpm(bpm) {
   const n = Number(bpm);
   if (bpm == null || !Number.isFinite(n)) return '—';
@@ -42,8 +32,6 @@ export function formatBpm(bpm) {
   return Number.isInteger(tenth) ? String(tenth) : tenth.toFixed(1);
 }
 
-// What the pattern clock is keeping time by (server/conductor.js), as the
-// tempo block names it.
 const CLOCK_SOURCES = {
   auto: { label: 'Auto', locked: true, title: 'Patterns step on the auto show\'s analysed beats' },
   cdj: { label: 'CDJ', locked: true, title: 'Patterns step on the playing deck\'s beats (PRO DJ LINK)' },
@@ -62,18 +50,12 @@ export function fmtNum(v, digits = 2) {
   return v.toFixed(digits);
 }
 
-// An LED bar's profile lists its cells, each with its own channels (see
-// src/shared/rig.js). Read here without importing it: this module is loaded on
-// its own by the tests, so it stays free of imports.
 const cellsOfProfile = (profile) => (profile && Array.isArray(profile.cells) && profile.cells.length >= 2
   ? profile.cells : null);
 
-/** A pinned fixture's colour, through the grand master and its own trim. */
 function overrideLight(fix, state) {
   const ov = fix.override;
   const dim = (ov.dim !== undefined ? ov.dim : 255) / 255;
-  // The same two scalers the engine applies: the grand master and the
-  // fixture's own trim.
   const mDim = (state.masterDimmer / 255) * ((fix.maxBrightness ?? 255) / 255);
   return {
     r:  Math.round(ov.r  * dim * mDim),
@@ -85,31 +67,21 @@ function overrideLight(fix, state) {
   };
 }
 
-/** What a Hue bridge is called, by its id in the rig's list (state.hueBridges); the id itself when the list does not know it. */
 export function hueBridgeLabel(bridges, id) {
   const bridge = (bridges || []).find((b) => b.id === id);
   return bridge ? (bridge.label || bridge.host || bridge.id) : (id || 'no bridge');
 }
 
-/**
- * Where a fixture is patched, in words: "Universe 0 / 13", or that it has no
- * DMX address — a Hue lamp's channel, and its bridge when the list is given.
- */
 export function patchedAt(fix, bridges) {
   if (!hasNoAddress(fix)) return `Universe ${fix.universe ?? 0} / ${fix.address}`;
   const where = bridges ? ` of ${hueBridgeLabel(bridges, fix.output.bridge)}` : '';
   return `Hue channel #${fix.output.channel}${where}, no DMX address`;
 }
 
-/**
- * A fixture's channels in the snapshot, through its placement: a strip that
- * runs on over several universes reads each cell from the one it is on.
- */
 function fixtureReader(fix, profile, all) {
   return channelReader(fix.universe ?? 0, fix.address, profile, (u) => all[u]);
 }
 
-/** One light's emitters, read through its channel map. */
 function readLight(at, ch, scale) {
   const k = scale * (ch.dimmer !== undefined ? at(ch.dimmer) / 255 : 1);
   return {
@@ -124,10 +96,6 @@ function readLight(at, ch, scale) {
 
 const BLACK = { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 };
 
-/**
- * What each cell of an LED bar is showing, as emitter values, or null for a
- * fixture that is one light. The bar's own dimmer scales every cell.
- */
 export function fixtureCellLights(fix, state, dmxSnapshot) {
   if (!fix) return null;
   const profile = state.profiles && state.profiles[fix.profileId];
@@ -144,13 +112,11 @@ export function fixtureCellLights(fix, state, dmxSnapshot) {
   return cells.map((cell) => readLight(at, cell.channelMap || {}, barDim));
 }
 
-/** Each cell of a bar as a CSS colour, or null for a fixture that is one light. */
 export function fixtureCellColors(fix, state, dmxSnapshot) {
   const lights = fixtureCellLights(fix, state, dmxSnapshot);
   return lights ? lights.map(colorToCss) : null;
 }
 
-/** The mean of several lights: a bar's overall glow, in one swatch. */
 export function meanLight(lights) {
   const sum = { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 };
   for (const light of lights) for (const key of Object.keys(sum)) sum[key] += light[key] || 0;
@@ -159,18 +125,12 @@ export function meanLight(lights) {
   return sum;
 }
 
-/**
- * What a fixture that is one light is showing, as emitter values (after its
- * dimmer and the masters), or null for a bar or a fixture with no profile.
- */
 export function fixtureLight(fix, state, dmxSnapshot) {
   if (!fix) return null;
   if (state.masterBlackout) return BLACK;
   if (fix.override && fix.override.enabled) return fix.override.blackout ? BLACK : overrideLight(fix, state);
   const profile = state.profiles && state.profiles[fix.profileId];
   if (!profile || !profile.channelMap || cellsOfProfile(profile)) return null;
-  // Read DMX snapshot through the fixture's profile channel map. The snapshot
-  // is keyed by universe, so pick out the one this fixture lives on.
   const at = fixtureReader(fix, profile, dmxSnapshot || state.dmxSnapshot || {});
   return readLight(at, profile.channelMap, 1);
 }
@@ -184,7 +144,6 @@ export function fixtureOutputColor(fix, state, dmxSnapshot) {
     return colorToCss(overrideLight(fix, state));
   }
 
-  // A bar is many colours at once; its swatch is their mean.
   const cells = fixtureCellLights(fix, state, dmxSnapshot);
   if (cells) return colorToCss(meanLight(cells));
 
@@ -192,10 +151,6 @@ export function fixtureOutputColor(fix, state, dmxSnapshot) {
   return light ? colorToCss(light) : '#111';
 }
 
-/**
- * Every light of the rig as it is now, from the DMX feed: one emitter set per
- * unit of `rig` (shared/rig.ts) — a par's, or each cell of a bar.
- */
 export function rigLights(fixtures, state, dmxSnapshot, rig) {
   const out = new Array(rig.units.length).fill(BLACK);
   fixtures.forEach((fix, i) => {

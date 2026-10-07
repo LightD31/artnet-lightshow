@@ -1,83 +1,40 @@
 import { isPlaced, stagePositions, spatialLayout, washFixtures } from './stage.ts';
 import type { ChannelMap, Geometry, Grid, GridPoint, PixelMap, Point, Profile, ProfileCell, StageFixture } from '../types/rig.ts';
 
-/**
- * The rig as the pattern layer sees it: fixtures, and the cells inside them.
- *
- * A par is one light. An LED bar is eight or sixteen, each with its own red,
- * green and blue channels, and a look only uses a bar properly when every one
- * of them can be a different colour. A profile says so with `cells`: one
- * channel map per cell, in the order the cells sit along the bar, beside the
- * fixture-level `channelMap` that keeps the channels the whole bar shares (a
- * master dimmer, a strobe). A profile without `cells` is one cell — its
- * channel map is the fixture's — which is every profile that existed before.
- *
- * Browser-safe: the server's engine and the rehearsal preview in the browser
- * both build their picture of the rig from here.
- */
 
-// The channels that make light. A cell is only a cell if it has one of them.
 const EMITTERS = ['red', 'green', 'blue', 'white', 'amber', 'uv', 'warmWhite', 'coolWhite'];
 
-// How a pixel effect is laid over the cells: across the whole stage, along each
-// bar on its own, or mirrored about the centre of the stage.
 const PIXEL_MAPS = ['stage', 'bar', 'mirror'] as const;
 
-// The most cells one fixture has: a 4,096-pixel strip, or a 64 × 64 panel. A
-// strip longer than a universe runs on into the next (shared/placement.ts).
-// The patch as a whole still renders at most MAX_UNITS (server/profiles.ts),
-// so a 64 × 32 WLED matrix leaves half of that for the rest of the rig.
 const MAX_CELLS_PER_FIXTURE = 4096;
 
-// The longest profile: 4,096 RGBW pixels, 32 universes.
 const MAX_PROFILE_CHANNELS = 16384;
 
-/** One light: a par, or one cell of a bar. */
 export interface Unit {
-  /** The fixture's index in the patch. */
   fixture: number;
-  /** Which of its cells (0 for a par). */
   cell: number;
 }
 
-/** A fixture's units: `count` of them from `start`. */
 export interface UnitRange {
   start: number;
   count: number;
 }
 
-/**
- * Where each slot of a layout stands on the stage plot, for the patterns that
- * travel the room by position (the party effects): across it, 0 at the left
- * edge of the plot and 1 at the right; down it, 0 at the top (the stage or
- * the TV, the room's front) and 1 at the bottom (the audience); how high, 0
- * at the floor and 1 at the ceiling; and the group the fixture hangs in. Only
- * when the operator placed the rig — an unplaced rig has a plan of null, and
- * those patterns travel in stage order instead.
- */
+// Plan coordinates use plot x/y and floor-to-ceiling z in 0..1 so effect geometry agrees with placement.
 export interface StagePlan {
   x: number[];
   y: number[];
-  /** Absent from a plan built by hand: the room takes such slots as mid-room. */
   z?: number[];
   group: (string | null)[];
 }
 
-/** The order the patterns travel in, for fixtures and for units (see layoutOf). */
 export interface Layout {
   wash: Set<number>;
-  /**
-   * `folded`, when the look is mirrored: the slots a stepped pattern travels
-   * through, each one or two fixtures standing symmetrically about the
-   * centre of the stage, from the middle out (members indices). `noFlash`
-   * marks the slots that are Hue lamps (or lights that follow one), which
-   * are never flashed, or is null when there are none.
-   */
+  // Folded slots pair symmetric fixtures so stepped patterns travel outward from the centre.
   fixtures: { members: number[]; order: number[]; xs: number[] | null; folded?: number[][]; plan: StagePlan | null; noFlash: boolean[] | null };
   units: { list: number[]; xs: number[] | null; ys: number[] | null; plan: StagePlan | null; noFlash: boolean[] | null };
 }
 
-/** The rig as lights (see buildRig). */
 export interface Rig<F extends StageFixture = StageFixture> {
   fixtures: readonly F[];
   units: Unit[];
@@ -87,42 +44,22 @@ export interface Rig<F extends StageFixture = StageFixture> {
   local: number[];
   localY: number[];
   grids: (Grid | null)[];
-  /**
-   * Is fixture i a panel of zones (a strobe panel) rather than a screen: laid
-   * out in its grid, but one of the bars when the look draws them apart.
-   */
   zoned: boolean[];
   hasPixels: boolean;
-  /** Does the rig have fixtures that are one light, beside any bars. */
   hasPars: boolean;
-  /** Does the rig have panels: screens whose cells stand in rows (a WLED matrix). */
   hasPanels: boolean;
   layout(split?: number | null, pixelMap?: PixelMap | string | null, only?: LayerPart | null): Layout;
 }
 
-/**
- * Which fixtures a layout covers: every one, only those that are one light
- * (the pars), or only those with cells (the bars). A look that gives the bars
- * a picture of their own draws the two parts apart (shared/layer.ts), and one
- * that gives the panels theirs too splits the cells into `strips` (a line of
- * them) and `panels` (rows of them); `unpanelled` is everything but those.
- */
 export type LayerPart = 'pars' | 'cells' | 'strips' | 'panels' | 'unpanelled';
 
-/** The profile a fixture runs, or nothing when it has none. */
 export type ProfileLookup<F> = (fixture: F) => Pick<Profile, 'cells' | 'grid' | 'zoned'> | null | undefined;
 
-/** The profile's cells, or null for a fixture that is one light. */
 function cellsOf(profile: Pick<Profile, 'cells'> | null | undefined): ProfileCell[] | null {
   const cells = profile && profile.cells;
   return Array.isArray(cells) && cells.length >= 2 ? cells : null;
 }
 
-/**
- * A panel's grid and where each of its cells is in it: a cell's own `at`, or
- * row by row in the order the cells are listed. Null for a profile that is
- * not a panel.
- */
 function gridOf(profile: Pick<Profile, 'cells' | 'grid'> | null | undefined): (Grid & { at: GridPoint[] }) | null {
   const cells = cellsOf(profile);
   const grid = profile && profile.grid;
@@ -134,27 +71,18 @@ function gridOf(profile: Pick<Profile, 'cells' | 'grid'> | null | undefined): (G
   };
 }
 
-/** How many lights a fixture on this profile is: its cells, or one. */
 function unitCount(profile: Pick<Profile, 'cells'> | null | undefined): number {
   const cells = cellsOf(profile);
   return cells ? cells.length : 1;
 }
 
-/** How many lights a patch is in total. */
 function countUnits<F>(fixtures: Iterable<F>, profileOf: ProfileLookup<F>): number {
   let total = 0;
   for (const fixture of fixtures) total += unitCount(profileOf(fixture));
   return total;
 }
 
-// ── Where every light is ─────────────────────────────────────────────────────
 
-/**
- * A bar's line on the stage plot: its own geometry, or a default that grows
- * with the number of cells (a panel's columns) — and, for a bar nobody has
- * placed, stays short enough not to run into its neighbours in the default
- * spread. A panel's line is its top edge; its rows run down from it.
- */
 function lineOf(fixture: StageFixture, cells: number, unplaced: number): Geometry {
   const g = fixture.geometry;
   if (g && Number.isFinite(g.length) && Number.isFinite(g.angle)) return { length: g.length, angle: g.angle };
@@ -163,21 +91,6 @@ function lineOf(fixture: StageFixture, cells: number, unplaced: number): Geometr
   return { length, angle: 0 };
 }
 
-/**
- * The rig as lights: one unit per par, one per cell of a bar.
- *
- *   units[u]   — { fixture, cell }: patch order, and a bar's cells in the order
- *                its profile lists them
- *   ranges[i]  — { start, count }: fixture i's units
- *   cellMaps[i]— the channel map of each of fixture i's cells, or null
- *   points[u]  — where the unit is on the stage plot, in stage percent
- *   local[u]   — 0…1 along its own bar, left to right on the plot (0.5 for a
- *                par)
- *   hasPixels  — is any fixture more than one light
- *
- * A rig of pars has exactly one unit per fixture, at the same index, so
- * everything built on units is what it was built on fixtures before bars.
- */
 function buildRig<F extends StageFixture>(fixtures: readonly F[], profileOf: ProfileLookup<F>): Rig<F> {
   const centres = stagePositions(fixtures);
   const unplaced = fixtures.filter((f) => !isPlaced(f.position)).length;
@@ -215,12 +128,8 @@ function buildRig<F extends StageFixture>(fixtures: readonly F[], profileOf: Pro
     const { length, angle } = lineOf(fixture, grid ? grid.columns : n, isPlaced(fixture.position) ? 0 : unplaced);
     const cos = Math.cos((angle * Math.PI) / 180);
     const sin = Math.sin((angle * Math.PI) / 180);
-    // Along the bar reads left to right on the plot; a bar standing upright
-    // reads from the back of the stage to the front.
     const forward = Math.abs(cos) > 1e-9 ? cos > 0 : sin > 0;
     if (grid) {
-      // A panel: a rectangle of square cells centred on its position, its
-      // columns along the line and its rows at right angles to it.
       const height = (length * grid.rows) / grid.columns;
       for (let c = 0; c < n; c++) {
         const { x, y } = grid.at[c];
@@ -252,7 +161,6 @@ function buildRig<F extends StageFixture>(fixtures: readonly F[], profileOf: Pro
   const layouts = new Map<string, Layout>();
   return {
     fixtures, units, ranges, cellMaps, points, local, localY, grids, zoned, hasPixels, hasPars, hasPanels,
-    /** The travel order for a look, cached per split, pixel map and part. */
     layout(split = null, pixelMap = 'stage', only = null) {
       const key = `${split}|${pixelMap}|${only || ''}`;
       let layout = layouts.get(key);
@@ -265,13 +173,6 @@ function buildRig<F extends StageFixture>(fixtures: readonly F[], profileOf: Pro
   };
 }
 
-/**
- * A short key for everything a rig built by buildRig depends on: which
- * profile each fixture runs (and `revision`, which changes whenever a profile
- * does), where it stands, its group and its line. Two patches with the same
- * key build the same rig, so a cache can compare this once a frame instead of
- * relying on every edit to announce itself.
- */
 function rigSignature(fixtures: readonly StageFixture[], revision: number | string = 0): string {
   let key = `${revision}|${fixtures.length}`;
   for (const f of fixtures) {
@@ -282,47 +183,23 @@ function rigSignature(fixtures: readonly StageFixture[], revision: number | stri
   return key;
 }
 
-/** Is a fixture a Hue lamp, or a light that follows one: never flashed. */
 function isHue(fixture: StageFixture): boolean {
   return !!fixture.hue || !!(fixture.output && fixture.output.protocol === 'hue');
 }
 
-// The built-in profiles that stand for a Hue lamp rather than a DMX fixture
-// (server/profiles.ts defines them from these ids). Here so the browser's
-// preview reads a Hue lamp as the renderer's effects do.
 const HUE_COLOR_PROFILE_ID = 'generic-hue-lamp-7ch';
 const HUE_WHITE_AMBIANCE_PROFILE_ID = 'generic-hue-white-ambiance-3ch';
 const HUE_WHITE_PROFILE_ID = 'generic-hue-white-lamp-1ch';
 const HUE_PROFILE_IDS: ReadonlySet<string> = new Set([HUE_COLOR_PROFILE_ID, HUE_WHITE_AMBIANCE_PROFILE_ID, HUE_WHITE_PROFILE_ID]);
 
-/**
- * A Hue lamp as the party effects read one: flagged, sent to a bridge, or
- * patched on a Hue lamp's profile alone. The pattern layer's own layouts keep
- * isHue, as the rig plays them.
- */
 function isHueLamp(fixture: StageFixture): boolean {
   return isHue(fixture) || (fixture.profileId !== undefined && HUE_PROFILE_IDS.has(fixture.profileId));
 }
 
-/** The flags of the slots that are Hue lamps, or null when none is. */
 function hueFlags(flags: boolean[]): boolean[] | null {
   return flags.some(Boolean) ? flags : null;
 }
 
-/**
- * The order the patterns travel in, for fixtures and for units.
- *
- *   wash      — the fixtures holding the split look's wash (patch indices)
- *   fixtures  — { members, order, xs }: exactly today's stage order among the
- *               fixtures not holding the wash; slot k is members[order[k]]
- *   units     — { list, xs, ys }: every unit of those fixtures, in the same
- *               stage order with a bar's cells left to right, and where each
- *               sits across the rig (ys on the same scale, so a ring drawn
- *               from them is round)
- *
- * With no bars in the rig, units are the fixtures and xs is the fixtures' own:
- * byte for byte what the patterns got before.
- */
 function layoutOf(rig: Rig, split: number | null | undefined, pixelMap: string | null | undefined,
   only: LayerPart | null = null): Layout {
   const { fixtures, ranges, points, local, localY } = rig;
@@ -331,7 +208,6 @@ function layoutOf(rig: Rig, split: number | null | undefined, pixelMap: string |
     switch (only) {
       case 'pars': return !rig.cellMaps[i];
       case 'cells': return !!rig.cellMaps[i];
-      // A panel of zones draws with the bars: it is a strobe, not a screen.
       case 'strips': return !!rig.cellMaps[i] && (!rig.grids[i] || rig.zoned[i]);
       case 'panels': return !!rig.grids[i] && !rig.zoned[i];
       case 'unpanelled': return !rig.grids[i] || rig.zoned[i];
@@ -340,15 +216,10 @@ function layoutOf(rig: Rig, split: number | null | undefined, pixelMap: string |
   };
   const members = fixtures.map((_, i) => i).filter((i) => !wash.has(i) && part(i));
   const { order, xs } = spatialLayout(members.map((i) => fixtures[i]));
-  // The plan is the plot as the operator placed it, so it is only given
-  // across the stage: laid per bar each bar is its own picture, and mirrored
-  // the picture folds about the centre, which no plot position describes.
   const perBar = pixelMap === 'bar' && rig.hasPixels;
   const mirrored = pixelMap === 'mirror' && members.length >= 3;
   const planned = !perBar && !mirrored && members.some((i) => isPlaced(fixtures[i].position));
   const fixturePlan: StagePlan | null = planned ? {
-    // A fixture stands at the middle of its lights: the par itself, the
-    // centre of a bar's line or of a panel.
     x: order.map((k) => centreOf(rig, members[k]).x / 100),
     y: order.map((k) => centreOf(rig, members[k]).y / 100),
     z: order.map((k) => heightOf(fixtures[members[k]])),
@@ -358,10 +229,6 @@ function layoutOf(rig: Rig, split: number | null | undefined, pixelMap: string |
     members, order, xs, plan: fixturePlan, noFlash: hueFlags(order.map((k) => isHue(fixtures[members[k]]))),
   };
   if (pixelMap === 'mirror' && members.length >= 3) {
-    // Folded about the centre: the two lamps either side of the middle are
-    // one slot, the next pair out the next, so a chase runs from the middle
-    // to both ends at once and a stack builds out from the centre. With an
-    // odd count the middle lamp is a slot of its own.
     const n = order.length;
     const folded: number[][] = [];
     for (let k = 0; k < Math.ceil(n / 2); k++) {
@@ -374,12 +241,9 @@ function layoutOf(rig: Rig, split: number | null | undefined, pixelMap: string |
 
   if (!rig.hasPixels) {
     const list = order.map((k) => ranges[members[k]].start);
-    // A picture laid mirrored on a rig of pars is drawn out from the centre,
-    // as it is across bars.
     const unitXs = pixelMap === 'mirror' && list.length >= 3
       ? (xs || list.map((_, k) => k / (list.length - 1))).map((x) => Math.abs(2 * x - 1))
       : xs;
-    // One unit per fixture, in the same order: the fixtures' plan is the units'.
     return { wash, fixtures: layoutFixtures, units: { list, xs: unitXs, ys: null, plan: fixturePlan, noFlash: layoutFixtures.noFlash } };
   }
 
@@ -388,7 +252,6 @@ function layoutOf(rig: Rig, split: number | null | undefined, pixelMap: string |
     const { start, count } = ranges[members[k]];
     const cells: number[] = [];
     for (let u = start; u < start + count; u++) cells.push(u);
-    // A panel's column is a tie across: its cells go top to bottom.
     if (rig.grids[members[k]]) cells.sort((a, b) => points[a].x - points[b].x || points[a].y - points[b].y || a - b);
     else cells.sort((a, b) => points[a].x - points[b].x || a - b);
     list.push(...cells);
@@ -411,8 +274,6 @@ function layoutOf(rig: Rig, split: number | null | undefined, pixelMap: string |
   }
 
   if (pixelMap === 'bar') {
-    // Each fixture draws the whole picture itself: along a bar, and across and
-    // down a panel.
     unitXs = list.map((u) => local[u]);
     unitYs = list.map((u) => localY[u]);
   } else if (pixelMap === 'mirror') {
@@ -423,7 +284,6 @@ function layoutOf(rig: Rig, split: number | null | undefined, pixelMap: string |
   const unitPlan: StagePlan | null = planned ? {
     x: list.map((u) => points[u].x / 100),
     y: list.map((u) => points[u].y / 100),
-    // A bar's cells hang at its height.
     z: list.map((u) => heightOf(fixtures[rig.units[u].fixture])),
     group: list.map((u) => fixtures[rig.units[u].fixture].group || null),
   } : null;
@@ -431,12 +291,10 @@ function layoutOf(rig: Rig, split: number | null | undefined, pixelMap: string |
   return { wash, fixtures: layoutFixtures, units: { list, xs: unitXs, ys: unitYs, plan: unitPlan, noFlash } };
 }
 
-/** How high a fixture hangs, 0 (the floor) to 1 (the ceiling): mid-room when nobody said. */
 function heightOf(fixture: StageFixture): number {
   return (fixture.position?.height ?? 50) / 100;
 }
 
-/** Where fixture i stands on the plot: the middle of its lights, in stage percent. */
 function centreOf(rig: Rig, i: number): Point {
   const { start, count } = rig.ranges[i];
   let x = 0;

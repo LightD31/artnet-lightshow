@@ -2,35 +2,13 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { api, voiceHolds } from './state.js';
 import { focusedByPointer } from './focus-origin.js';
 
-/**
- * Pads on buttons: the Perform deck, the command bar's strip and the strobe
- * pad share this, so a pad plays the same wherever it is.
- *
- *   hold   runs while held — a pointer pressed on it (captured, so sliding
- *          off does not drop it), or Space or Enter held down on it
- *   once   a tap plays it once; the server ends it
- *   loop   a tap starts it, the next tap stops it
- *
- * A hold is renewed with the server while it lasts (hold-control.js), each
- * pad under its own token, so several can be held at once and a page that
- * goes away lets go by itself. A hold ends when its pointer or key lets go
- * anywhere in the window, whatever happened to its button meanwhile, when
- * its pad is no longer shown as a hold pad, when the socket drops, and when
- * the window loses focus or the page is hidden. A long press on a tap pad
- * opens its editor.
- */
+// Window-level releases prevent stuck holds when a button unmounts or a pointer slides away.
 export const LONG_PRESS_MS = 500;
 
 export const padKey = (bank, slot) => `p${bank}-${slot}`;
 
-/** Whether a pad plays while held: hold pads and the strobe. */
 export const holdsWhilePressed = (entry) => entry.launch === 'hold' || entry.content?.kind === 'strobe';
 
-/**
- * Whether a pad needs the photosensitivity acknowledgement: the strobe, or
- * content the catalogue (`patterns`) or the saved presets (`effects`) mark
- * rapidFlash. Anything else is left to the server, which refuses with 409.
- */
 export function rapidPad(entry, patterns = [], effects = []) {
   const content = entry.content;
   if (!content) return false;
@@ -39,11 +17,6 @@ export function rapidPad(entry, patterns = [], effects = []) {
   return !!rows.find((r) => r.id === content.id)?.rapidFlash;
 }
 
-/**
- * One set of pads' presses over `holds` (createVoiceHolds), kept out of
- * Preact so it can be tested. `win` gets the pointerup, pointercancel and
- * keyup listeners; `onChange` gets the held keys whenever they change.
- */
 export function createPadPresses(holds, win, onChange) {
   const presses = new Map();
   const changed = () => onChange(new Set(presses.keys()));
@@ -56,7 +29,6 @@ export function createPadPresses(holds, win, onChange) {
   const releaseBy = (field, value) => { for (const [key, how] of [...presses]) if (how[field] === value) release(key); };
   const pointerEnd = (e) => releaseBy('pointer', e.pointerId);
   const keyUp = (e) => releaseBy('key', e.key);
-  // A hold dropped elsewhere (a disconnect, a refused press) unlights here.
   const unsubscribe = holds.onEnd((key) => { if (presses.delete(key)) changed(); });
   win.addEventListener('pointerup', pointerEnd, true);
   win.addEventListener('pointercancel', pointerEnd, true);
@@ -71,7 +43,6 @@ export function createPadPresses(holds, win, onChange) {
     release,
     releaseAll,
     mine: (key, field, value) => presses.get(key)?.[field] === value,
-    /** Lets go of every press whose key is not in `keys`, the pads shown as hold pads. */
     keep(keys) { for (const key of [...presses.keys()]) if (!keys.has(key)) release(key); },
     dispose() {
       releaseAll();
@@ -88,7 +59,6 @@ export function useVoicePads({ onLongPress } = {}) {
   const presses = useRef(null);
   const timer = useRef(null);
   const longPressed = useRef(false);
-  // The keys this render shows as hold pads; anything else held lets go.
   const shown = new Set();
 
   useEffect(() => {
@@ -112,7 +82,6 @@ export function useVoicePads({ onLongPress } = {}) {
   const press = (key, target, how) => !!presses.current?.press(key, target, how);
   const mine = (key, field, value) => !!presses.current?.mine(key, field, value);
 
-  /** Handlers for a button that runs `target` while held. */
   const holdProps = (key, target) => {
     shown.add(key);
     return {
@@ -126,7 +95,6 @@ export function useVoicePads({ onLongPress } = {}) {
       onLostPointerCapture: (e) => { if (mine(key, 'pointer', e.pointerId)) release(key); },
       onKeyDown: (e) => {
         if (![' ', 'Enter'].includes(e.key)) return;
-        // Space on a pad the pointer last touched is the tap-tempo key.
         if (e.key === ' ' && focusedByPointer(e.currentTarget)) return;
         e.preventDefault();
         if (!e.repeat) press(key, target, { key: e.key });
@@ -139,10 +107,8 @@ export function useVoicePads({ onLongPress } = {}) {
     };
   };
 
-  /** A tap on a once or loop pad. */
   const tap = (entry) => api(`/api/pads/${entry.bank}/${entry.slot}/${entry.launch === 'loop' ? 'toggle' : 'once'}`, { method: 'POST' });
 
-  /** Handlers for a pad of the layout, as its launch mode says. */
   const padProps = (entry) => {
     const { bank, slot } = entry;
     if (!entry.content) return {};
@@ -166,11 +132,7 @@ export function useVoicePads({ onLongPress } = {}) {
     };
   };
 
-  /**
-   * padProps behind the safety gate (useSafetyGate): before the
-   * acknowledgement a rapid pad asks instead; a tap pad then plays, a hold
-   * pad holds on the next press.
-   */
+  // After acknowledgement, hold pads wait for a fresh press so no released gesture starts a hold.
   const gatedPadProps = (entry, gate, rapid, name) => {
     if (!entry.content || !rapid || gate.acknowledged) return padProps(entry);
     return {

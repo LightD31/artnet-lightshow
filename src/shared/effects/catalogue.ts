@@ -1,9 +1,6 @@
-// The built-in presets, families and palettes that pickers, pads and routes
-// list. Specs stay wire data (hex colours, random sentinels) and are validated
-// here once, so a built-in validates to itself. Everything is frozen: editing
-// a built-in means copying it.
+// Freeze built-ins so editing a preset always requires a copy.
 
-// Every kind registers before the rows below validate against it.
+// Register every kind before validating the catalogue.
 import './index.ts';
 import { HOLD_STROBE } from '../look-math.ts';
 import { PATTERN_FUNCS } from '../patterns.ts';
@@ -24,27 +21,19 @@ import type { Ahdsr, Curve, EffectKindDef, EffectSpec, PaletteEntry, RgbEnvelope
 interface CatalogueMetadata {
   id: string; name: string; desc: string; app: 'hd' | 'ldj' | 'own'; family: string;
   party?: boolean; pixel?: boolean; aliases?: string[];
-  /** How long a once launch plays when the request names no length; kernel timing and macro loops are unaffected. */
   lengthBeats?: number;
 }
-/**
- * A legacy row names one of the fork's pattern functions, which keep rendering
- * it; it has no spec, so nothing can play it as an effect. Its `preset` points
- * the pickers at the parameterised preset it was modelled on, so they can offer
- * both. The link never redirects the id.
- */
+// Legacy ids keep their pattern function; preset links must not redirect playback.
 export type CataloguePreset = CatalogueMetadata & (
   | { legacy: true; spec?: never; preset?: string }
   | { legacy?: false; spec: EffectSpec; preset?: never }
 );
 
-/** A family groups presets in the pickers; its kinds carry their recommended settings as plain data. */
 export interface CatalogueFamily {
   id: string; app: 'hd' | 'ldj' | 'own'; name: string;
   kinds: { kind: string; defaults: EffectKindDef['defaults']; capabilities: EffectKindDef['capabilities']; wallClock?: true }[];
 }
 
-/** Freeze a value and everything in it: tables nobody may change at run time. */
 export function deepFreeze<T>(value: T): T {
   if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
     Object.freeze(value);
@@ -56,12 +45,9 @@ export function deepFreeze<T>(value: T): T {
 const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 const RANDOM_RANDOM: readonly PaletteEntry[] = LDJ_PALETTES.find((p) => p.id === 'randomRandom')!.colours;
-// Every Light DJ preset plays 32 beats once by default. Each type's own
-// minimum length in the app is at most 16 beats, so 32 is never shorter.
+// A 32-beat default exceeds every Light DJ preset's minimum once length.
 const LDJ_LENGTH_BEATS = 32;
 
-// The labels Light DJ shows its users where they are not the effect's name
-// split into words. Ids keep the names.
 const LABELS: Record<string, string> = {
   America: 'Old Glory', BrtSinScatter: 'Sine Scatter Strobe', BrtSinStrobe: 'Sine Strobe Cycle', DAndBStrobe: 'D&B Strobe',
   DoSiDo: 'Do-Si-Do', DrumAndBass: 'Drum & Bass', FlareAndBreak: 'Flare & Break', PalettePartyStrobe: 'OG Party Strobe',
@@ -73,7 +59,6 @@ const BITMAP_LABELS: Record<string, string> = {
   SolidBGDiagonalLines: 'Backlit Diagonal Lines', SolidBlackBGSineWave: 'Sine Wave', SolidBlackBGTriangleWave: 'Triangle Wave',
   SolidBlackBGDiagonalLines: 'Diagonal Lines',
 };
-// The Scene Maker's Studio rows N1..N5 are labelled by their length in beats.
 const STUDIO_BEATS = [1, 2, 4, 6, 8];
 
 const words = (name: string) => name
@@ -83,7 +68,6 @@ const words = (name: string) => name
   .replace(/([A-Z])(?=[A-Z][a-z])/g, '$1 ')
   .replace(/([a-z]{2})(?=\d)/g, '$1 ');
 
-/** The display name of a Light DJ effect type. */
 function ldjName(name: string): string {
   const studio = /^SMStudioN([1-5])(Pulse|Fill)(Multi)?$/.exec(name);
   if (studio) return `Studio ${studio[2]} ${STUDIO_BEATS[Number(studio[1]) - 1]}${studio[3] ? ' Multi' : ''}`;
@@ -102,9 +86,7 @@ const FAMILY: Record<LdjEngine | 'macro', { name: string; desc: string }> = {
   macro: { name: 'Scene Maker', desc: 'Light DJ Scene Maker' },
 };
 
-// Genre scores: one Beat Pulse per hit, held until the next replaces it.
-// A hit in the primary colour (P) maps the palette's second entry, in the
-// secondary (S) its first; a one-colour palette serves both.
+// Primary maps to palette entry 1 and secondary to entry 0; singleton palettes serve both.
 const P = 1, S = 0;
 type Hit = [pulse: 1 | 4, role: typeof P | typeof S, beats: number];
 const SCORES: Record<string, { hits: Hit[]; desc: string }> = {
@@ -115,29 +97,23 @@ const SCORES: Record<string, { hits: Hit[]; desc: string }> = {
   DrumAndBass: { hits: [[1, P, 1.5], [4, P, 1.5], [4, S, 1]], desc: 'a short primary pulse, then long held primary and secondary pulses' },
 };
 const scoreSteps = (hits: Hit[]): MacroStep[] => hits.map(([pulse, role, beats]) => ({
-  // A single callback: the row's own quarter-beat cadence would retrigger through every rest.
   effect: { kind: `ldj.BeatPulse${pulse}`, params: { cadence: .25, iterations: 1 } } as EffectSpec, beats, paletteIndices: [role],
 }));
 
 const macro = (steps: MacroStep[], loopBeats: number, palette?: readonly PaletteEntry[]) =>
   ({ kind: 'macro', params: { steps, loopBeats }, ...(palette ? { palette } : {}) });
 
-// The Scene Maker rows, as the specs they play.
 const SCENE_ROWS: Record<string, { spec: object; desc: string }> = {
-  // The firework renderer keeps the row's random wall-clock schedule itself.
-  // Light DJ re-runs a held row on the renderer still running, so its fades
-  // carry into the next lap; a macro would relaunch it and cut them.
+  // Keep the firework renderer alive across laps so its fades are not cut by macro relaunches.
   Fireworks: { desc: 'fireworks on random lamps at random moments', spec: { kind: 'ldj.SceneMakerFirework', palette: RANDOM_RANDOM } },
-  // Dark by brightness, not by a black palette an override could replace.
+  // Use brightness zero so a palette override cannot recolour blackout.
   Blackout: { desc: 'every lamp dark, whatever the palette',
     spec: macro([{ effect: { kind: 'ldj.MatrixSolid', palette: ['#000000'], brightness: 0 } as EffectSpec, beats: 32 }], 32) },
-  // The app's row ends after its fourth Flip, at 14.8 beats; the last Flip
-  // holds to the end of the sixteen-beat loop rather than adding a fifth.
+  // The fourth Flip holds through beat 16; adding another would change the score.
   BigRoomMix: { desc: 'a quick flash, two big-room waves and four flips in reversed colours, every sixteen beats', spec: macro([
     { effect: { kind: 'ldj.QuickFlash', params: { cadence: 4, iterations: 1 } } as EffectSpec, beats: 4 },
     { effect: { kind: 'ldj.BigRoomWave', params: { once: true, phase: 0 } } as EffectSpec, beats: 3.6 },
     { effect: { kind: 'ldj.BigRoomWave', params: { once: true, phase: 1 } } as EffectSpec, beats: 3.6 },
-    // Flip plays the two roles the other way round.
     { effect: { kind: 'ldj.Flip', params: { cadence: .9, iterations: 4 } } as EffectSpec, beats: 4.8, paletteIndices: [P, S] },
   ], 16, RANDOM_RANDOM) },
   ...Object.fromEntries(Object.entries(SCORES).map(([name, score]) =>
@@ -158,7 +134,6 @@ function ldjPresets(): CataloguePreset[] {
       const visualizer = VISUALIZER_PRESETS.find((p) => p.id === row.id)!;
       rows.push(ldjRow(row.id, visualizer.name, 'visualizer', { kind: 'ldj.visualizer', params: visualizer.params, palette: RANDOM_RANDOM }));
     } else if (row.kind === 'preset') {
-      // Old Glory has its own red, white and blue; every other effect takes Random, Random.
       rows.push(ldjRow(row.id, ldjName(row.name), row.engine, { kind: row.id, ...(row.name === 'America' ? {} : { palette: RANDOM_RANDOM }) }));
     }
   }
@@ -169,11 +144,6 @@ function ldjPresets(): CataloguePreset[] {
   return rows;
 }
 
-/**
- * Ids and aliases share one namespace with the pattern functions: a legacy row
- * is exactly one function's id, every other row stays clear of those ids, and
- * a name claimed twice is an error in the table.
- */
 export function presetIndex(rows: readonly CataloguePreset[]): ReadonlyMap<string, CataloguePreset> {
   const index = new Map<string, CataloguePreset>();
   for (const row of rows) {
@@ -192,26 +162,19 @@ export function presetIndex(rows: readonly CataloguePreset[]): ReadonlyMap<strin
 
 export const LDJ_PRESETS: readonly CataloguePreset[] = deepFreeze(ldjPresets());
 
-// ── Hue Dynamics ────────────────────────────────────────────────────────────
 
-/** attack, hold, decay, sustain, release, peak: times are fractions of the loop, sustain and peak are levels. */
+// Envelope tuple: attack, hold, decay, sustain, release, peak; times are loop fractions.
 const env = (attack: number, hold: number, decay: number, sustain: number, release: number, peak: number): Ahdsr =>
   ({ attack, hold, decay, sustain, release, peak });
-// A preset's own envelope replaces the family's whole one. What it leaves out
-// keeps the envelope defaults the recommendation was built from: a white
-// single colour, the default brightness and channel envelopes.
+// Replace the whole envelope so omitted fields retain that preset's recommendation defaults.
 const ENVELOPE_DEFAULTS: RgbEnvelope = HD_DEFAULTS['hd.simpleAdsr'].params.rgbEnvelope!;
-// The colour mode is always spelt out: the recommendation's single colour would
-// otherwise turn the channel presets into one white.
+// Specify colour mode so the family's single-colour default cannot turn channel presets white.
 const channels = (r: Ahdsr, g: Ahdsr, b: Ahdsr): RgbEnvelope => ({ ...ENVELOPE_DEFAULTS, colourMode: 'all', r, g, b });
 
-// The seven one-beat Simple ADSR presets, with their own curve and envelope.
-// Simple ADSR's id is its kind's, as a Light DJ preset's is.
 const SIMPLE_ADSR: [id: string, name: string, palette: string[], curve: Curve, envelope: RgbEnvelope, desc: string][] = [
   ['hd.iceStrike', 'Ice Strike', ['#D9FFFF'], 'easeOut',
     channels(env(0.01, 0.02, 0.08, 0, 0, 0.85), env(0.01, 0.02, 0.18, 0, 0, 1), env(0.01, 0.02, 0.29, 0, 0, 1)),
     'every beat a cold white flash that sheds its red, then its green, and is dark a third of the way to the next beat'],
-  // Green's explicit zero peak keeps green out entirely.
   ['hd.neonPulse', 'Neon Pulse', ['#FF00FF'], 'easeInOut',
     channels(env(0.12, 0, 0.38, 0, 0, 1), env(0, 0, 0, 0, 0, 0), env(0.12, 0, 0.58, 0, 0, 1)),
     'every beat a magenta swell, eased in and out, with no green in it; the red leaves first, so it ends in blue'],
@@ -227,13 +190,11 @@ const SIMPLE_ADSR: [id: string, name: string, palette: string[], curve: Curve, e
   ['hd.rainbowDrop', 'Rainbow Drop', ['#FF0000', '#00CC00', '#000099'], 'easeInOut',
     channels(env(0.02, 0.03, 0.24, 0.045, 0.08, 1), env(0.3, 0, 0.32, 0, 0, 0.8), env(0.65, 0, 0.25, 0.07, 0.1, 0.6)),
     'every beat the colour travels from red through green to blue as each channel rises and falls in turn'],
-  // Not the family's single-colour recommendation: the app starts this preset
-  // on staggered red, green and blue, keeping the default brightness envelope.
+  // This preset starts on staggered RGB instead of the family's single-colour recommendation.
   ['hd.simpleAdsr', 'Simple ADSR', ['#0080FF'], 'easeOut',
     channels(env(0.04, 0.08, 0.2, 0, 0.68, 1), env(0.2, 0, 0.4, 0, 0.4, 0.8), env(0.4, 0, 0, 0.6, 0.6, 0.6)),
     'every beat red, green and blue each rise and fall on an envelope of their own, the starting point for shaping one'],
 ];
-// The nine measure presets play their family's recommendation in their own colours.
 const HD_FAMILY_PRESETS: [id: string, name: string, kind: HdKind, palette: string[], desc: string][] = [
   ['hd.neonDomino', 'Neon Domino', 'hd.positionChase', ['#FF2BD6', '#7C3AED', '#22D3EE'],
     'pink, violet and cyan lamps lighting one after another in the order they stand, like falling dominoes'],
@@ -255,8 +216,6 @@ const HD_FAMILY_PRESETS: [id: string, name: string, kind: HdKind, palette: strin
     'three lamps in four popping in yellow, cyan, pink and lime on the beat, hardest on the high end, then dying away'],
 ];
 
-// validateSpec fills each row from its own copy of the family's recommendation,
-// output settings included; the rows add only what the app's presets change.
 function hdRow(id: string, name: string, kind: HdKind, palette: string[], desc: string, params?: { curve: Curve; rgbEnvelope: RgbEnvelope }): CataloguePreset {
   return { id, name, desc: `Hue Dynamics: ${desc}`, app: 'hd', family: kind,
     spec: validateSpec({ kind, params, palette, scope: kind === 'hd.simpleAdsr' ? 'singleBeat' : 'measure' }) };
@@ -266,18 +225,13 @@ const HD_PRESETS: CataloguePreset[] = [
   ...HD_FAMILY_PRESETS.map(([id, name, kind, palette, desc]) => hdRow(id, name, kind, palette, desc)),
 ];
 
-// The Disco's eleven genres from disco.ts, one copy of their data, as tuned
-// for this service's audio. Their automatic strobe asks for the acknowledgement
-// when it fires, so no row is marked rapid.
+// Disco asks for acknowledgement when its automatic strobe fires, not when its preset starts.
 const DISCO_ROWS: CataloguePreset[] = DISCO_PRESETS.map(({ id, name, params }) => ({
   id, name, app: 'hd', family: 'hd.disco', spec: validateSpec({ kind: 'hd.disco', params }),
   desc: `Hue Dynamics Disco: the lamps answer the bass, the voice and the treble in hues tuned for ${name}${params.allowStrobe ? ', with the automatic strobe' : ''}`,
 }));
 
-// ── The fork's own ──────────────────────────────────────────────────────────
 
-// The party looks keep their ids and their pattern functions (the golden test
-// holds their bytes). Nine were modelled on a Hue Dynamics preset and offer it.
 const OWN_LOOKS: [id: string, name: string, desc: string, preset?: string][] = [
   ['position-chase', 'Position Chase', 'A domino running across the room by position, turning a quarter every run', 'hd.neonDomino'],
   ['radial-pulse', 'Radial Pulse', 'A ring from the middle of the room out to its edge once a bar, driven by the bass', 'hd.bassBloom'],
@@ -301,8 +255,6 @@ const OWN_LOOKS: [id: string, name: string, desc: string, preset?: string][] = [
 const OWN_ROWS: CataloguePreset[] = OWN_LOOKS.map(([id, name, desc, preset]) =>
   ({ id, name, desc, app: 'own', family: 'own.party', party: true, legacy: true, ...(preset ? { preset } : {}) }));
 
-// The energy pads and the API's energy effects, under the ids they have always
-// had. Labels are the ones the pads show.
 const ENERGY_LABELS: Record<keyof typeof ENERGY_KIND_BY_ID, [name: string, desc: string]> = {
   'white-strobe': ['White Strobe', 'Cold white, fastest strobe'],
   'color-strobe': ['Colour Strobe', 'Colour A, fastest strobe'],
@@ -316,29 +268,19 @@ const CONTROL_ROWS: CataloguePreset[] = [
     const [name, desc] = ENERGY_LABELS[alias as keyof typeof ENERGY_KIND_BY_ID];
     return { id: kind, name, desc, app: 'own', family: 'own.energy', aliases: [alias], spec: validateSpec({ kind }) };
   }),
-  // The hold-to-strobe pad of the Hue party apps: the strobe kind flashing the
-  // look's own colours (no palette) on the beat grid at the five-a-second cap,
-  // the running look showing through between flashes. The manual strobe keeps
-  // its own white and rate; `strobe` itself stays the upstream pattern's id.
+  // Use a null palette for the hold strobe so look colours show between override selections.
   { id: 'palette-strobe', name: 'Palette Strobe', desc: 'Flashes in the look\'s colours on the beat over the running look, up to five a second',
     app: 'own', family: 'own.energy',
     spec: validateSpec({ kind: 'strobe', palette: null, params: { clock: 'beat', flashesPerSecond: 5, continueBetween: true } }) },
 ];
 
-/** Light DJ's rows, Hue Dynamics' sixteen, the eleven Disco genres, the fork's own looks, then the energy controls. */
 export const CATALOGUE: readonly CataloguePreset[] = deepFreeze([...LDJ_PRESETS, ...HD_PRESETS, ...DISCO_ROWS, ...OWN_ROWS, ...CONTROL_ROWS]);
 const INDEX = presetIndex(CATALOGUE);
 
-/** A built-in preset by id or alias. */
 export function presetById(id: string): CataloguePreset | null {
   return INDEX.get(id) ?? null;
 }
 
-/**
- * The effect an energy burst plays as, in the renderer and the preview alike:
- * the six energies' own kinds and the hold strobe's control row. Null for
- * any other id.
- */
 export function energyEffectSpec(energy: string): EffectSpec | null {
   const id = energy === HOLD_STROBE ? HOLD_STROBE
     : Object.hasOwn(ENERGY_KIND_BY_ID, energy) ? ENERGY_KIND_BY_ID[energy as keyof typeof ENERGY_KIND_BY_ID] : null;
@@ -346,7 +288,6 @@ export function energyEffectSpec(energy: string): EffectSpec | null {
   return row && !row.legacy ? row.spec : null;
 }
 
-/** A family lists the kinds its rows play, plus any extra; a legacy row plays none. */
 function family(id: string, app: CatalogueFamily['app'], name: string, extra: string[] = []): CatalogueFamily {
   const kinds = [...new Set([...CATALOGUE.flatMap((p) => (p.legacy || p.family !== id ? [] : [p.spec.kind])), ...extra])];
   return { id, app, name, kinds: kinds.map((kind) => {
@@ -356,15 +297,12 @@ function family(id: string, app: CatalogueFamily['app'], name: string, extra: st
   }) };
 }
 const ldjFamily = (engine: LdjEngine | 'macro', extra?: string[]) => family(`ldj.${engine}`, 'ldj', FAMILY[engine].name, extra);
-// Hue Dynamics' families are its kinds, under the names the app shows.
 const HD_FAMILY_NAMES: Record<HdKind, string> = {
   'hd.simpleAdsr': 'Simple ADSR', 'hd.positionChase': 'Position Chase', 'hd.radialPulse': 'Radial Pulse', 'hd.spatialWash': 'Spatial Wash',
   'hd.bouncingScan': 'Bouncing Scan', 'hd.streak': 'Streak', 'hd.twinkle': 'Twinkle', 'hd.breathingFade': 'Breathing Fade',
   'hd.volumeGateWash': 'Volume Gate Wash', 'hd.frequencyBurst': 'Frequency Burst',
 };
 
-// The touch board renders through the matrix family's kinds and has no preset of its own.
-// The Scene Maker family lists the macro kind and the firework renderer its Fireworks row plays.
 export const FAMILIES: readonly CatalogueFamily[] = deepFreeze([
   ldjFamily('channel'), ldjFamily('iteration'), ldjFamily('rotation'), ldjFamily('wave'), ldjFamily('matrix', ['ldj.matrixBoard']),
   ldjFamily('studio'), ldjFamily('visualizer'), ldjFamily('bitmap'), ldjFamily('macro'),
@@ -377,5 +315,4 @@ const HD_PALETTES: BuiltinPalette[] = [
   { id: 'hdDefault', app: 'hd', colours: ['#A855F7', '#22D3EE', '#F472B6'] },
   { id: 'hdStrobe', app: 'hd', colours: ['#FFFFFF'] },
 ];
-/** Light DJ's 26 seeded palettes, then Hue Dynamics' default and its strobe's white. */
 export const BUILTIN_PALETTES: readonly BuiltinPalette[] = deepFreeze([...LDJ_PALETTES, ...HD_PALETTES]);

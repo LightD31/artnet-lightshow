@@ -1,37 +1,14 @@
-/**
- * Musical time: where in the music a moment falls, counted in beats.
- *
- * Every pattern used to keep its own time. The chase stepped on a setTimeout
- * grid that started whenever a patch happened to arrive and ran at a BPM
- * rounded to a whole number, so between two scene changes it drifted off the
- * music — about 75 ms every sixteen bars on a 123.7 BPM track — and the fade
- * and hit patterns integrated their own phases on top of that.
- *
- * Now there is one quantity, the beat position: a continuous number that is 0
- * on the first analysed beat, 1 on the second, 2.5 halfway between the third
- * and the fourth. It comes from the analysed beat grid when there is one, so
- * it follows a drummer who speeds up and a DJ who pitches the track, and every
- * pattern derives its step and its phase from it. Nothing accumulates, so
- * nothing can drift, and any moment can be computed directly — which is also
- * what lets the rehearsal preview land on exactly the step the rig will.
- *
- * Pure functions only: shared by the server engine and the browser preview.
- */
-
-/** A beat grid ready for lookups: beat times in seconds, and the median interval. */
 export interface BeatGrid {
   beats: number[];
   interval: number;
 }
 
-/** What gridFromAnalysis reads of an analysis document. */
 export interface GridSource {
   beats?: unknown;
   downbeats?: unknown;
   meter?: unknown;
 }
 
-/** A fade breathes once every eight beats: two bars of four. */
 const FADE_BEATS = 8;
 
 // Numeric slack for float noise: 3 × (1/3) must still floor to 1.
@@ -44,14 +21,7 @@ function median(values: number[]): number | null {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-/**
- * A beat grid ready for lookups, from beat times in seconds.
- *
- * Non-finite and out-of-order entries are dropped, and so is a beat that lands
- * on top of the previous one, which would otherwise be a zero-length beat. The
- * median interval is what the grid extrapolates with past either end. Returns
- * null for fewer than two usable beats: one beat has no tempo.
- */
+// Discard duplicate beats to avoid zero-length intervals; extrapolate with the median interval.
 function makeGrid(beatsSec: unknown): BeatGrid | null {
   if (!Array.isArray(beatsSec)) return null;
   const beats: number[] = [];
@@ -67,10 +37,6 @@ function makeGrid(beatsSec: unknown): BeatGrid | null {
   return { beats, interval: median(gaps) as number };
 }
 
-/**
- * The grid for an analysis document: its beats, or — for a document that only
- * kept its downbeats — beats spread evenly across each bar.
- */
 function gridFromAnalysis(analysis: GridSource | null | undefined): BeatGrid | null {
   if (!analysis) return null;
   const direct = makeGrid(analysis.beats);
@@ -87,13 +53,6 @@ function gridFromAnalysis(analysis: GridSource | null | undefined): BeatGrid | n
   return makeGrid(beats);
 }
 
-/**
- * The beat position at a track time, in milliseconds.
- *
- * Linear between neighbouring beats, so it moves at exactly the local tempo;
- * before the first beat and after the last it carries on at the median
- * interval, so it never stalls or runs backwards at either end of a track.
- */
 function beatPositionAt(grid: BeatGrid, tMs: number): number;
 function beatPositionAt(grid: BeatGrid | null | undefined, tMs: number): number | null;
 function beatPositionAt(grid: BeatGrid | null | undefined, tMs: number): number | null {
@@ -112,7 +71,6 @@ function beatPositionAt(grid: BeatGrid | null | undefined, tMs: number): number 
   return lo + (t - b[lo]) / (b[hi] - b[lo]);
 }
 
-/** The track time, in milliseconds, of a beat position. The inverse of beatPositionAt. */
 function trackMsAtBeat(grid: BeatGrid, beatPos: number): number;
 function trackMsAtBeat(grid: BeatGrid | null | undefined, beatPos: number): number | null;
 function trackMsAtBeat(grid: BeatGrid | null | undefined, beatPos: number): number | null {
@@ -125,11 +83,7 @@ function trackMsAtBeat(grid: BeatGrid | null | undefined, beatPos: number): numb
   return (b[i] + (beatPos - i) * (b[i + 1] - b[i])) * 1000;
 }
 
-/**
- * The tempo at a track time, from the beats around it: the median of the
- * nearest nine intervals, so a single misplaced beat, or a drummer's push on
- * one of them, does not make the BPM read-out jump.
- */
+// Median tempo over nine intervals keeps a single misplaced beat from moving the readout.
 function localBpm(grid: BeatGrid, tMs: number): number;
 function localBpm(grid: BeatGrid | null | undefined, tMs: number): number | null;
 function localBpm(grid: BeatGrid | null | undefined, tMs: number): number | null {
@@ -142,45 +96,26 @@ function localBpm(grid: BeatGrid | null | undefined, tMs: number): number | null
   return 60 / gap;
 }
 
-/**
- * Where a pattern starts counting its steps, on the step grid.
- *
- * Rounded rather than floored: a scene is placed on a downbeat and fires a
- * frame or so after it, and a scene that fired 10 ms late must still start on
- * step 0 of that beat, not wait for the next one.
- */
+// Round the anchor so a scene firing slightly after a downbeat still starts on step zero.
 function anchorStep(beatPos: number, division = 1): number {
   return Math.round(beatPos * Math.max(1, division));
 }
 
-/** The step a pattern is on: how many steps of the grid since its anchor. */
 function stepAt(beatPos: number, anchor: number, division = 1): number {
   return Math.max(0, Math.floor(beatPos * Math.max(1, division) + EPS) - anchor);
 }
 
-/** How far through its current step the beat position is, 0..1. */
 function hitPhase(beatPos: number, division = 1): number {
   const x = beatPos * Math.max(1, division);
   return Math.max(0, Math.min(1, x - Math.floor(x + EPS)));
 }
 
-/**
- * Where `fade` is in its eight-beat breath, 0..1, counted from the pattern's
- * anchor — so a fade starts from its trough when its scene starts, as it
- * always has.
- */
 function fadePhase(beatPos: number, anchor = 0, division = 1): number {
   const since = beatPos - anchor / Math.max(1, division);
   const p = (since / FADE_BEATS) % 1;
   return p < 0 ? p + 1 : p;
 }
 
-/**
- * How far the expressive patterns travel across the rig in `dBeats` beats.
- * One crossing takes eight beats when the music is barely moving and two when
- * it is driving — the same speeds as before, now counted in beats rather than
- * in seconds at a remembered BPM.
- */
 function motionAdvance(dBeats: number, motion = 0.3): number {
   const m = Math.max(0, Math.min(1, Number.isFinite(motion) ? motion : 0.3));
   return Math.max(0, dBeats) / (8 - 6 * m);
