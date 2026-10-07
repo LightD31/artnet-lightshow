@@ -94,6 +94,9 @@ const COLOR_PRESETS = [
 // Patterns now read that from the look itself (patterns.js paletteOf), so one
 // `split` covers all three sizes and the picker is eighteen genuinely different
 // motions rather than twenty-five names for eleven.
+//
+// Every row is a pattern function with no spec: `legacy` tells the pickers
+// that no pad, clip or voice can play it, whatever its id looks like.
 const PATTERNS = [
   // Whole rig, together.
   { id: 'solid',        name: 'Solid',         desc: 'All fixtures on colour A' },
@@ -152,9 +155,9 @@ const PATTERNS = [
   // they travel the room by where the lamps stand on the stage plot, and in
   // stage order on a rig nobody has placed. `party` groups them in the picker.
   // Named and described in the effect catalogue, which keeps them as its
-  // legacy rows beside the presets they were modelled on.
-  ...CATALOGUE.filter((p) => p.legacy).map(({ id, name, desc, party }) => ({ id, name, desc, party })),
-];
+  // legacy rows beside the presets they were modelled on (`preset`).
+  ...CATALOGUE.filter((p) => p.legacy).map(({ id, name, desc, party, preset }) => ({ id, name, desc, party, ...(preset ? { preset } : {}) })),
+].map((row) => ({ ...row, legacy: true as const }));
 
 const PATTERN_IDS = PATTERNS.map((p) => p.id);
 

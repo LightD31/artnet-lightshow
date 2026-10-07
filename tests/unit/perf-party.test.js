@@ -93,7 +93,7 @@ test('a party frame on forty placed fixtures renders inside 5 ms', () => {
     // Two loop pads from the default layout, on the live voice manager.
     const pads = new Pads({
       voices, store: new PadStore(path.join(os.tmpdir(), 'perf-party-none', 'pads.json')),
-      lookup: () => builtinPresets, fixtureIds: () => state.fixtures.map((f) => f.id), beat: () => beat,
+      lookup: () => builtinPresets, pattern: () => null, fixtureIds: () => state.fixtures.map((f) => f.id), beat: () => beat,
       // No pattern is on the shelf here: the pads under test are preset loops.
       patternVoice: patternPlayer({
         voices, pattern: () => null, fixtureIds: () => state.fixtures.map((f) => f.id), resolve: (id) => presetById(id)?.spec ?? null,

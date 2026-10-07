@@ -53,6 +53,12 @@ test('PATTERNS stays the legacy list; PRESET_ROWS carries the presets with app, 
   assert.strictEqual(row.app, 'ldj'); assert.ok(row.family); assert.strictEqual(row.rapidFlash, true);
   assert.strictEqual(PRESET_ROWS.find((p) => p.name === 'Aurora Drift').scope, 'measure');
   assert.strictEqual(presetById('position-chase').preset, CATALOGUE.find((p) => p.name === 'Neon Domino').id);
+  // Every pattern row says it is legacy, so a picker tells it from a preset by that, not by its id
+  // (palette-strobe is a preset without a dot); a look modelled on a preset says which.
+  assert.deepStrictEqual(PATTERNS.filter((p) => p.legacy !== true).map((p) => p.id), []);
+  assert.ok(PRESET_ROWS.some((p) => p.id === 'palette-strobe' && !('legacy' in p)));
+  assert.strictEqual(PATTERNS.find((p) => p.id === 'position-chase').preset, 'hd.neonDomino');
+  assert.ok(!('preset' in PATTERNS.find((p) => p.id === 'chase')));
 });
 
 test('ENERGY_EFFECTS keeps its seven ids', () => {
@@ -238,7 +244,7 @@ test('the eighteen own looks are legacy rows: no spec, their pattern\'s name, an
     assert.ok(p.id in PATTERN_FUNCS, p.id);
     assert.deepStrictEqual([p.app, p.family, p.party], ['own', 'own.party', true], p.id);
     const pattern = PATTERNS.find((x) => x.id === p.id);
-    assert.deepStrictEqual({ id: p.id, name: p.name, desc: p.desc, party: true }, pattern, p.id);
+    assert.deepStrictEqual({ id: p.id, name: p.name, desc: p.desc, party: true, legacy: true, ...(p.preset ? { preset: p.preset } : {}) }, pattern, p.id);
     if (p.id in LINKS) {
       const target = presetById(p.preset);
       assert.strictEqual(target.name, LINKS[p.id], p.id);

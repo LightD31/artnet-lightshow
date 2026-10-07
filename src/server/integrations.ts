@@ -120,9 +120,11 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   };
   // The pads play the library's presets, saved ones included, as they are at
   // each press; the strobe pad and voice-hold's `{ preset: 'strobe' }` hold the strobe.
-  // A pattern pad plays a pattern from the sequence shelf (below) as one voice.
+  // A pattern pad plays a pattern from the sequence shelf (below) as one voice;
+  // a pattern or sequencePattern pad saves only naming one on the shelf.
   const pads = new Pads({
     voices, store: padStore ?? new PadStore(configFile('pads.json')).load(), lookup: () => presetLookup(library),
+    pattern: (id): ReturnType<SequenceStore['getPattern']> => sequence.store.getPattern(id),
     fixtureIds: () => state.fixtures.map((f) => f.id), beat: () => conductor.peek().beatPos, strobe,
     patternVoice: patternPlayer({
       voices, pattern: (id): ReturnType<SequenceStore['getPattern']> => sequence.store.getPattern(id), fixtureIds: () => state.fixtures.map((f) => f.id),
