@@ -478,6 +478,31 @@ test('a strobe pad takes the strobe hook when installed and otherwise the voice-
   assert.deepEqual(voices.list(), []);
 });
 
+test('the strobe hook is handed the strobe pad\'s fixtures still patched and its grid, and voice-hold\'s fixtures checked against the patch', (t) => {
+  const { c, voices: m, pads, put } = rig(t, { acknowledged: true });
+  const launches = [];
+  pads.strobe = {
+    hold(owner, token, launch) {
+      launches.push(launch);
+      return m.start({ spec: { kind: 'strobe' }, targets: 'shared', mode: 'hold', tier: 'strobe', source: 'strobe', owner, token, ...launch });
+    },
+    release(owner, token) { m.release(owner, token); },
+  };
+  put(0, 6, { label: 'Strobe', accent: '#E2E8F0', content: { kind: 'strobe', id: 'strobe' }, launch: 'hold', quantise: 0.5, targets: [1, 3] });
+  // Fixture 3 unpatched since the pad was saved.
+  c.fixtures = [0, 1, 2];
+  assert.deepEqual(pads.press(0, 6, 'tablet', 't').targets, [1]);
+  pads.release(0, 6, 'tablet', 't');
+  pads.holdStrobe('tablet', 'u', [2, 0]);
+  pads.releaseHold('tablet', 'u');
+  pads.holdStrobe('tablet', 'v');
+  pads.releaseHold('tablet', 'v');
+  assert.deepEqual(launches, [{ targets: [1], quantise: 0.5 }, { targets: [2, 0], quantise: 0 }, { targets: 'shared', quantise: 0 }]);
+  assert.throws(() => pads.holdStrobe('tablet', 'w', [3]), refusedWith(400, /no fixture 3/));
+  assert.equal(launches.length, 3, 'refused before the hook');
+  assert.equal(m.size, 0);
+});
+
 // ── From outside ────────────────────────────────────────────────────────────
 
 /**

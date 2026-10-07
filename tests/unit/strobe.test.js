@@ -267,6 +267,47 @@ test('a hold over a latch keeps the latch underneath, hidden, and the latch come
   assert.equal(voices.size, 0, 'off took the latch underneath too');
 });
 
+test('a stop ends a latch kept under a hold for good — stop-all, a stop by id, a stop picking the hold — while the holder letting go, its lease or its page going hands it back', (t) => {
+  const { voices, strobe, advance } = bench(t, { acknowledged: true, capSec: 60 });
+  const stops = [['stop-all', () => voices.stopAll()], ['a stop by id', () => voices.stop(STROBE_VOICE_ID)],
+    ['a stop picking the hold', () => voices.stopWhere((v) => v.mode === 'hold')]];
+  for (const [what, stop] of stops) {
+    strobe.on('latched');
+    strobe.hold('tablet', 't');
+    stop();
+    assert.equal(voices.size, 0, `${what}: nothing comes back`);
+    advance(HOLD_TIMEOUT_MS);
+    strobe.release('tablet', 't');
+    assert.equal(voices.size, 0, `${what}: nor at the holder's release`);
+  }
+  // The page going is the holder letting go, as its lease running out would be.
+  strobe.on('latched');
+  strobe.hold('tablet', 'u');
+  voices.disconnect('tablet');
+  assert.equal(voices.get(STROBE_VOICE_ID)?.mode, 'latched');
+  voices.stopAll();
+  assert.equal(voices.size, 0);
+});
+
+test('a hold plays on the fixtures and from the grid line it is given (the strobe pad\'s targets and quantise); with none, on the whole rig at once', (t) => {
+  const { c, voices, strobe, advance, playing } = bench(t, { acknowledged: true });
+  // The look plays, so a launch waits for its grid line.
+  c.running = true;
+  c.beat = 0.5;
+  const v = strobe.hold('tablet', 't', { targets: [1, 2], quantise: 1 });
+  assert.deepEqual([v.id, v.tier, v.targets], [STROBE_VOICE_ID, 'strobe', [1, 2]]);
+  assert.equal(v.startedAtMs, c.now + 250, 'half a beat at 120 BPM');
+  assert.deepEqual(playing(), [], 'not before its grid line');
+  advance(250);
+  assert.deepEqual(voices.frames(c.now).map((f) => [f.id, f.targets]), [[STROBE_VOICE_ID, [1, 2]]]);
+  assert.equal(strobe.hold('tablet', 't', { targets: [1, 2], quantise: 1 }).launchSeq, v.launchSeq, 'the same press renews it');
+  strobe.release('tablet', 't');
+  const all = strobe.hold('tablet', 'u');
+  assert.deepEqual([all.targets, all.startedAtMs], [null, c.now]);
+  strobe.release('tablet', 'u');
+  assert.equal(voices.size, 0);
+});
+
 test('update validates the settings (1..5 a second, 1..6 hex colours, the clock, the look between, the brightness), saves them, and the running strobe takes them in place', (t) => {
   const { voices, strobe, settings, values, advance, c } = bench(t, { acknowledged: true });
   const next = strobe.update({ flashesPerSecond: 5, palette: ['#ff0000', '#0000FF'], clock: 'wall', continueBetween: false, brightness: 0.5 });
@@ -454,9 +495,9 @@ async function serve(t) {
 
 const ids = () => voices.list().map((v) => v.id);
 const playing = () => renderInput().voices.map((v) => v.id);
-/** The first fixture's colour channels and dimmer on the rig. */
-const lamp = () => {
-  const fixture = state.fixtures[0];
+/** A fixture's colour channels and dimmer on the rig, the first one's by default. */
+const lamp = (i = 0) => {
+  const fixture = state.fixtures[i];
   const dmx = universes.getBuffer(fixture.universe ?? state.artnet.universe);
   const { channelMap: ch } = getProfile(fixture);
   const base = fixture.address - 1;
@@ -711,4 +752,82 @@ test('a latched strobe-kind voice from POST /api/voices or a pad loop carries th
     assert.deepEqual([res.status, res.body.ok], [409, false], route);
   }
   await s.call('DELETE', '/api/voices');
+});
+
+test('stop-all, a stop by id and every disarm end a latch kept under a strobe hold for good, and so does the energy endpoints\' latched strobe; letting go of the pad brings nothing back', async (t) => {
+  const s = await serve(t);
+  await s.call('POST', '/api/safety/acknowledge');
+  const holdOverLatch = async () => {
+    await s.call('POST', '/api/strobe/on');
+    const res = await s.call('POST', '/api/pads/0/6/press');
+    assert.deepEqual([res.status, voices.get(STROBE_VOICE_ID)?.mode], [200, 'hold']);
+  };
+  const gone = async (what) => {
+    assert.deepEqual([ids(), playing()], [[], []], what);
+    await s.call('POST', '/api/pads/0/6/release');
+    assert.deepEqual(ids(), [], `${what}: nor after the pad's release`);
+    assert.equal((await s.call('GET', '/api/strobe')).body.active, null, what);
+  };
+
+  await holdOverLatch();
+  assert.deepEqual((await s.call('DELETE', '/api/voices')).body, { ok: true, stopped: 1 });
+  await gone('DELETE /api/voices');
+  await holdOverLatch();
+  assert.equal((await s.call('DELETE', '/api/voices/strobe')).status, 200);
+  await gone('DELETE /api/voices/strobe');
+  // Disarmed already, as in a rehearsal: one stop, the route's.
+  await holdOverLatch();
+  assert.deepEqual((await s.call('POST', '/api/outputs/disarm')).body, { ok: true, armed: false });
+  await gone('a disarm with the outputs off');
+  // From armed, saved as a setting (the Settings switch): one stop, the applier's.
+  await s.call('POST', '/api/outputs/arm');
+  await holdOverLatch();
+  s.applier.applyChanged(settings.update({ outputs: { armed: false } }));
+  await gone('a disarm saved from armed');
+  // From armed, by the route: the applier's stop and the route's.
+  await s.call('POST', '/api/outputs/arm');
+  await holdOverLatch();
+  await s.call('POST', '/api/outputs/disarm');
+  await gone('POST /api/outputs/disarm from armed');
+
+  // The energy endpoints' latched strobe replaces the manual one, a latch kept under a hold included.
+  await holdOverLatch();
+  await s.call('POST', '/api/energy/palette-strobe');
+  assert.deepEqual([ids(), state.energyOverride], [['energy:palette-strobe'], 'palette-strobe']);
+  await s.call('POST', '/api/pads/0/6/release');
+  assert.deepEqual([ids(), state.energyOverride], [['energy:palette-strobe'], 'palette-strobe'], 'and stays at the pad\'s release');
+  await s.call('POST', '/api/energy/off');
+});
+
+test('the strobe pad plays on its own fixtures and leaves the rest to the look; voice-hold { preset: "strobe" } plays on the fixtures it names', async (t) => {
+  const s = await serve(t);
+  await s.call('POST', '/api/safety/acknowledge');
+  const [first, second, third] = state.fixtures.map((f) => f.id);
+  applyPatch({ pattern: 'solid', colorA: 0, running: true, masterDimmer: 255, masterBlackout: false, paletteOverride: null });
+  await s.call('PUT', '/api/strobe', { palette: ['#0000FF'], flashesPerSecond: 5 });
+  renderFrame();
+  assert.deepEqual([lamp(0).r, lamp(1).r], [255, 255], 'the look: red');
+  const entry = { label: 'Strobe', accent: '#E2E8F0', content: { kind: 'strobe', id: 'strobe' }, launch: 'hold', quantise: 0, targets: [first] };
+  let res = await s.call('PUT', '/api/pads/0/6', entry);
+  assert.deepEqual([res.status, res.body.pad.targets], [200, [first]]);
+  res = await s.call('POST', '/api/pads/0/6/press');
+  assert.deepEqual([res.status, voices.list().map((v) => [v.id, v.targets])], [200, [[STROBE_VOICE_ID, [first]]]]);
+  assert.deepEqual(renderInput().voices.map((v) => v.targets), [[first]]);
+  let elsewhere = false;
+  await flashes((l) => {
+    if (lamp(1).b !== 0) elsewhere = true;
+    return l.r === 0 && l.b === 255;
+  }, 'a blue flash on the pad\'s fixture');
+  assert.equal(elsewhere, false, 'the other fixtures keep the look');
+  await s.call('POST', '/api/pads/0/6/release');
+
+  const { socket, heard } = await s.page();
+  socket.emit('voice-hold', { action: 'press', token: 'q', effect: { preset: 'strobe' }, targets: [second, third] });
+  await until(() => ids().length === 1, 'the preset held');
+  assert.deepEqual(voices.get(STROBE_VOICE_ID).targets, [second, third]);
+  socket.emit('voice-hold', { action: 'release', token: 'q' });
+  await until(() => !ids().length, 'released');
+  socket.emit('voice-hold', { action: 'press', token: 'r', effect: { preset: 'strobe' }, targets: [9999] });
+  await until(() => heard.errors.length === 1, 'an unknown fixture refused');
+  assert.deepEqual([heard.errors[0].token, heard.errors[0].message, ids()], ['r', 'voice: no fixture 9999', []]);
 });

@@ -107,6 +107,44 @@ test('renew keeps it; release ends it; disconnect(owner) ends every voice of tha
   assert.deepEqual(m.list().map((s) => s.id), [theirs.id], 'everything the tablet launched went with it');
 });
 
+test('a stop is told as one before the change: stop, stopWhere and stopAll; a release, a lease, an end, a replacement or a disconnect never', (t) => {
+  const { m, c, advance } = rig(t);
+  const heard = [];
+  let changesAtStop = null;
+  const unhear = m.onStop((stopped) => {
+    heard.push(stopped.map((v) => v.id));
+    changesAtStop = c.changes;
+  });
+  const a = m.start(latched());
+  const before = c.changes;
+  assert.equal(m.stop(a.id), true);
+  assert.deepEqual([heard, changesAtStop, c.changes], [[[a.id]], before, before + 1], 'heard before the change was told');
+  const [b, d] = [m.start(latched()), m.start(once({ lengthMs: 100 }))];
+  m.stopWhere((v) => v.id === b.id);
+  m.stopAll();
+  m.stopAll();
+  assert.deepEqual(heard.slice(1), [[b.id], [d.id]], 'one call per stop that ended something');
+
+  heard.length = 0;
+  m.start(hold());
+  m.release('tablet', 't1');
+  m.start(hold());
+  advance(HOLD_TIMEOUT_MS);
+  m.start(once({ lengthMs: 100 }));
+  advance(100);
+  m.start(latched({ key: 'k' }));
+  m.start(latched({ key: 'k' }));
+  m.start(hold({ token: 'gone' }));
+  m.disconnect('tablet');
+  assert.deepEqual(heard, [], 'every end that is no stop');
+  m.stopAll();
+  assert.equal(heard.length, 1);
+  unhear();
+  m.start(latched());
+  m.stopAll();
+  assert.equal(heard.length, 1, 'no longer heard');
+});
+
 test('a renewal changes only the lease: same launch, same start, no change told; a lease already run out is not renewed', (t) => {
   const { m, c, advance } = rig(t);
   const v = m.start(hold());

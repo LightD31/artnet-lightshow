@@ -96,9 +96,13 @@ export function patternPlayer({ voices, pattern, fixtureIds, resolve }: PatternP
 export type InsertPatternHook = (id: string, atBeat: number) => void;
 /** A pad launched (its grid beat) or a held one released (with its end), for the sequencer's punch recording. */
 export type PadHitHook = (hit: { bank: number; slot: number; startBeat: number; endBeat?: number; lengthMs?: number; once?: boolean }) => void;
-/** The manual strobe's hold, which the strobe installs: the strobe pad and voice-hold's `{ preset: 'strobe' }` both go through it. */
+/**
+ * The manual strobe's hold, which the strobe installs: the strobe pad (on its
+ * fixtures, from its grid line) and voice-hold's `{ preset: 'strobe' }` (on
+ * the fixtures it names, at once) both go through it.
+ */
 export interface StrobeHook {
-  hold(owner: string, token: string): Voice;
+  hold(owner: string, token: string, launch: { targets: VoiceTargets; quantise: number }): Voice;
   release(owner: string, token: string): void;
 }
 
@@ -376,7 +380,7 @@ export class Pads {
     const content = entry.content;
     if (!content) return null;
     if (content.kind === 'sequencePattern') return this._insert(entry);
-    if (content.kind === 'strobe') return this._holdStrobe(index, owner, token, this._targets(entry));
+    if (content.kind === 'strobe') return this._holdStrobe(index, owner, token, this._targets(entry), entry.quantise);
     if (entry.launch === 'loop') return this._hit(bank, slot, entry, this._toggle(index, entry));
     if (entry.launch === 'once') return this._hit(bank, slot, entry, this._launch(index, entry, 'once'));
     const voice = this._hit(bank, slot, entry, this._launch(index, entry, 'hold', { owner, token }));
@@ -524,9 +528,9 @@ export class Pads {
     return voice;
   }
 
-  _holdStrobe(index: number | null, owner: string, token: string, targets: unknown): Voice {
+  _holdStrobe(index: number | null, owner: string, token: string, targets: unknown, quantise = 0): Voice {
     if (this.strobe) {
-      const voice = this.strobe.hold(owner, token);
+      const voice = this.strobe.hold(owner, token, { targets: targetsOf(targets, this._fixtureIds()), quantise });
       this._remember(index, voice, 'strobe', { owner, token });
       return voice;
     }

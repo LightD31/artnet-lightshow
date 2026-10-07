@@ -6,7 +6,7 @@ import { ACKNOWLEDGEMENT_REQUIRED } from './safety.ts';
 import { HttpError } from '../errors.ts';
 import type { Settings, SettingsStore } from './settings.ts';
 import type { SafetyStatus } from './safety.ts';
-import type { Voice, VoiceManager, VoiceMode, VoiceSummary } from './voices.ts';
+import type { Voice, VoiceManager, VoiceMode, VoiceSummary, VoiceTargets } from './voices.ts';
 import type { EffectSpec } from '../shared/effects/types.ts';
 
 /**
@@ -17,7 +17,8 @@ import type { EffectSpec } from '../shared/effects/types.ts';
  * latch forgotten with the room watching); or burst for a moment. One voice
  * at a time, under one id: a launch replaces whatever played before, except
  * that a hold over a latch keeps the latch underneath, hidden, and the latch
- * comes back with its own cap deadline when the hold ends.
+ * comes back with its own cap deadline when the hold is let go or its lease
+ * runs out. A stop (stop-all, a disarm, a stop by id) ends both.
  *
  * Its settings (settings.strobe: the kind's parameters and a palette of its
  * own) are what a cue keeps and the Strobe page edits. An edit reaches a
@@ -44,7 +45,9 @@ export interface StrobeStatus {
   settings: StrobeSettings;
 }
 
-type StrobeVoices = Pick<VoiceManager, 'start' | 'release' | 'stopWhere' | 'list' | 'get' | 'update' | 'endBy'>;
+type StrobeVoices = Pick<VoiceManager, 'start' | 'release' | 'stopWhere' | 'list' | 'get' | 'update' | 'endBy' | 'onStop'>;
+/** Where and when a hold plays: fixtures (the whole rig when left out) and a grid in beats (0, at once). */
+export interface StrobeHoldLaunch { targets?: VoiceTargets; quantise?: number }
 type StrobeSettingsStore = Pick<SettingsStore, 'group' | 'update' | 'onChange'>;
 interface StrobeSafety { acknowledged(): boolean; status(): Pick<SafetyStatus, 'strobeMaxLatchSec'> }
 
@@ -63,6 +66,10 @@ export class Strobe {
     this._settings = settings;
     this._safety = safety;
     this._under = null;
+    // A stop of the strobe takes the latch under its hold with it: nothing to come back.
+    voices.onStop((stopped) => {
+      if (stopped.some((v) => v.id === STROBE_VOICE_ID)) this._under = null;
+    });
     // A cue's settings or PUT /api/settings reach a running strobe too, and a cap lowered cuts one.
     settings.onChange((changed) => {
       if (changed.some((key) => key.startsWith('strobe.'))) this._follow();
@@ -102,20 +109,22 @@ export class Strobe {
   }
 
   /**
-   * Hold it under a lease, the pad's or the page's: the same press again
-   * renews a live hold and never brings back one an off stopped (voices.ts,
-   * 409). Over a latch, the latch waits underneath until the hold ends.
+   * Hold it under a lease, the pad's or the page's, on the fixtures and from
+   * the grid line given (the whole rig, at once, when none): the same press
+   * again renews a live hold and never brings back one an off stopped
+   * (voices.ts, 409). Over a latch, the latch waits underneath until the
+   * hold is let go.
    */
-  hold(owner: string, token: string): Voice {
+  hold(owner: string, token: string, { targets = 'shared', quantise = 0 }: StrobeHoldLaunch = {}): Voice {
     this._admit();
     const current = this._voices.get(STROBE_VOICE_ID);
     const latch = current && current.mode === 'latched' ? { startedAtMs: current.startedAtMs, untilMs: current.untilMs } : null;
-    const voice = this._launch({ mode: 'hold', owner, token });
+    const voice = this._launch({ mode: 'hold', owner, token, targets, quantise });
     if (latch) this._under = latch;
     return voice;
   }
 
-  /** After any change to the voices: once no strobe plays, a latch kept under a hold comes back, to its own deadline. */
+  /** After any change to the voices: once no strobe plays, a latch kept under a hold that was let go comes back, to its own deadline. */
   sync(): void {
     const under = this._under;
     if (!under || this._voices.get(STROBE_VOICE_ID)) return;
@@ -163,7 +172,7 @@ export class Strobe {
     return { kind: 'strobe', palette, params };
   }
 
-  _launch(launch: { mode: VoiceMode; maxLatchMs?: number; lengthMs?: number; owner?: string; token?: string }): Voice {
+  _launch(launch: { mode: VoiceMode; maxLatchMs?: number; lengthMs?: number; owner?: string; token?: string; targets?: VoiceTargets; quantise?: number }): Voice {
     const voice = this._voices.start({
       spec: this._spec(), targets: 'shared', tier: 'strobe', source: 'strobe', label: 'Strobe', id: STROBE_VOICE_ID, key: STROBE_KEY, ...launch,
     });

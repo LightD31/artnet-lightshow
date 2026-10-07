@@ -1,7 +1,7 @@
 // The Perform parts, rendered in Node as components.test.js does: the
 // photosensitivity dialog, the pads' holds and safety asks, the palette
-// override strip, the transport, the audio meters, and the audio feed's
-// subscription in state.js.
+// override strip, stop all voices, the transport, the audio meters, and the
+// audio feed's subscription in state.js.
 
 import test from 'node:test';
 import assert from 'node:assert';
@@ -26,7 +26,7 @@ async function load() {
         export { CommandBar } from './public-src/components/CommandBar.jsx';
         export { createPadPresses, rapidPad, padKey } from './public-src/voice-pad.js';
         export { createVoiceHolds } from './public-src/hold-control.js';
-        export { PaletteOverride, overrideBody, activeOverride } from './public-src/components/Perform.jsx';
+        export { PaletteOverride, overrideBody, activeOverride, Utility, stopAllVoices } from './public-src/components/Perform.jsx';
         export { Transport, positionText, beatsPerBar, loopBody, laneRows } from './public-src/components/Transport.jsx';
         export { AudioMeters, meterRows, splClass, latencyText } from './public-src/components/AudioMeters.jsx';
       `,
@@ -296,6 +296,22 @@ test('the override names a palette by id, and is matched back by its colours', (
   assert.strictEqual(ui.activeOverride(['#ff0000', '#ff8800'], [...BUILTIN, ...USER]), 'ldjFire');
   assert.strictEqual(ui.activeOverride(null, BUILTIN), 'off');
   assert.strictEqual(ui.activeOverride(['#ABCDEF'], BUILTIN), null);
+});
+
+test('stop all voices: one control after blackout and tap, saying how many voices are on, that stops every one and leaves the look', async () => {
+  given({ voices: [{ id: 'strobe', hidden: false }, { id: 'energy:blinder', hidden: true }], masterBlackout: false });
+  let html = ui.html(ui.h(ui.Utility));
+  assert.match(html, /class="perform-pad pad-stop-voices"[^>]*>.*Stop all voices.*2 voices — the look plays on/);
+  assert.match(html, />Blackout<[\s\S]*>Tap<[\s\S]*>Stop all voices</);
+  given({ voices: [] });
+  html = ui.html(ui.h(ui.Utility));
+  assert.match(html, /Stop all voices<\/span><span class="perform-pad-hint">none on</);
+  assert.doesNotMatch(html, /pad-stop-voices"[^>]*disabled/, 'never held back by a state that may lag');
+  const f = fakeFetch({ ok: true, stopped: 2 });
+  try {
+    assert.deepStrictEqual(await ui.stopAllVoices(), { ok: true, stopped: 2 });
+    assert.deepStrictEqual(f.calls.map(([p, init]) => [p, init.method]), [['/api/voices', 'DELETE']]);
+  } finally { f.restore(); }
 });
 
 const SEQ = {

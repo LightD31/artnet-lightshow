@@ -274,6 +274,7 @@ export class VoiceManager {
   declare _seq: number;
   /** Holds a stop ended, by owner and token: the lease end a holder still renewing keeps pushing on. */
   declare _revoked: Map<string, number>;
+  declare _stopListeners: Set<(stopped: Voice[]) => void>;
 
   constructor({ now, beatPos, bpm, reading, onChange, acknowledged, anyRunning, wallNow, strobeLatchMs }: VoiceManagerOptions) {
     this._now = now;
@@ -286,6 +287,17 @@ export class VoiceManager {
     this._records = new Map();
     this._seq = 0;
     this._revoked = new Map();
+    this._stopListeners = new Set();
+  }
+
+  /**
+   * Hear the voices a stop ended (stop, stopWhere, stopAll), before the
+   * change is told; never an end by release, lease, timer, replacement or
+   * disconnect. Returns the way to stop hearing.
+   */
+  onStop(fn: (stopped: Voice[]) => void): () => void {
+    this._stopListeners.add(fn);
+    return () => { this._stopListeners.delete(fn); };
   }
 
   /** How many voices there are, the ones still waiting for their grid line and the hidden ones included. */
@@ -418,9 +430,9 @@ export class VoiceManager {
     if (record && this._end(record)) this._changed();
   }
 
-  /** The owner went (a socket closed): every voice it launched goes with it. */
+  /** The owner went (a socket closed): every voice it launched goes with it, as if let go. */
   disconnect(owner: string): void {
-    this.stopWhere((v) => v.owner === owner);
+    this._stopWhere((v) => v.owner === owner, false);
   }
 
   /** Stop one voice; false when there is none by that id. */
@@ -428,6 +440,7 @@ export class VoiceManager {
     const record = this._records.get(id);
     if (!record || !this._end(record)) return false;
     this._revoke(record);
+    this._stopped([this._view(record)]);
     this._changed();
     return true;
   }
@@ -439,15 +452,7 @@ export class VoiceManager {
 
   /** Stop the voices `pred` picks; how many. */
   stopWhere(pred: (v: Voice) => boolean): number {
-    let n = 0;
-    for (const record of [...this._records.values()]) {
-      if (pred(this._view(record)) && this._end(record)) {
-        this._revoke(record);
-        n++;
-      }
-    }
-    if (n) this._changed();
-    return n;
+    return this._stopWhere(pred, true);
   }
 
   /**
@@ -583,6 +588,31 @@ export class VoiceManager {
     record.leaseWait = wait(HOLD_TIMEOUT_MS, () => {
       if (record.lease === lease && this._end(record)) this._changed();
     });
+  }
+
+  /** End the voices `pred` picks; `stop` tells the stop listeners. How many. */
+  _stopWhere(pred: (v: Voice) => boolean, stop: boolean): number {
+    const ended: Voice[] = [];
+    for (const record of [...this._records.values()]) {
+      if (pred(this._view(record)) && this._end(record)) {
+        this._revoke(record);
+        ended.push(this._view(record));
+      }
+    }
+    if (!ended.length) return 0;
+    if (stop) this._stopped(ended);
+    this._changed();
+    return ended.length;
+  }
+
+  _stopped(stopped: Voice[]): void {
+    for (const fn of [...this._stopListeners]) {
+      try {
+        fn(stopped);
+      } catch (err) {
+        console.warn(`[voices] stop listener: ${messageOf(err)}`);
+      }
+    }
   }
 
   /** Remove a record and its timers; false when it was gone already (a stale timer, a replacement). */
