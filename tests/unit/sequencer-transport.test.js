@@ -1276,3 +1276,42 @@ test('the beat the last frame was handed is what the detectors look a container\
   s.frame(next);
   assert.strictEqual(s.lastBeat(), next.beatPos);
 });
+
+test('replay keeps its initial palette when the old run ends that frame', () => {
+  const r = rig();
+  r.s.load(sequence({
+    clips: [clip('A', 'a', 0, 8)],
+    options: { initialPalette: 'redCyan' },
+    commands: [{ id: 'tail', atBeat: 7.95, type: 'palette', value: 'rainbow' }],
+  }));
+  r.s.play();
+  r.at(100);
+  r.at(107.9);
+  r.s.stop();
+  r.s.play();
+  assert.equal(r.at(108.5), 0);
+  assert.equal(r.s.status().playing, true);
+  assert.deepEqual(r.live.paletteOverride, PALETTE_HEX.redCyan);
+  assert.equal(r.live.paletteOverrideId, 'redCyan');
+});
+
+test('replay restores the previous override when its own run ends', () => {
+  const r = rig();
+  r.live.paletteOverride = ['#123456'];
+  r.s.load(sequence({
+    clips: [clip('A', 'a', 0, 8)],
+    options: { initialPalette: 'redCyan' },
+  }));
+  r.s.play();
+  r.at(100);
+  r.at(107.9);
+  r.s.stop();
+  r.s.play();
+  r.at(108.5);
+  const applied = r.applied.length;
+  r.at(116.5);
+  assert.deepEqual(r.applied.slice(applied), [{
+    paletteOverride: ['#123456'], paletteOverrideId: null,
+  }]);
+  assert.equal(r.s.status().ended, true);
+});
