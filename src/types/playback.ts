@@ -1,12 +1,3 @@
-/**
- * What is playing, as every playback source reports it: the shape Spotify's
- * client returns, which the browser extensions, the OS media session and the
- * hybrid source copy so the auto show can follow any of them.
- *
- * Types only.
- */
-
-/** The track playing now, and where in it playback is. */
 export interface NowPlaying {
   trackId: string;
   name: string;
@@ -38,7 +29,6 @@ export interface PlaybackUpdate {
   isrc?: string | null;
 }
 
-/** A track waiting in a player's queue. */
 export interface QueuedTrack {
   name: string;
   artist: string;
@@ -47,10 +37,8 @@ export interface QueuedTrack {
   trackId?: string | null;
 }
 
-/** Called with what is playing. */
 export type PlayingListener = (playing: NowPlaying) => void;
 
-/** Something the auto show can follow. */
 export interface PlaybackSource {
   readonly configured: boolean;
   readonly authenticated: boolean;
