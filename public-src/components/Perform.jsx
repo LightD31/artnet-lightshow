@@ -280,8 +280,10 @@ export function Perform() {
       <div class="perform-body">
         <div class="perform-controls">
           <Pads />
-          <StrobePad />
-          <Utility />
+          <div class="perform-live-row">
+            <StrobePad />
+            <Utility />
+          </div>
           <PaletteOverride />
           <PalettePads />
         </div>

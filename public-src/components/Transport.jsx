@@ -73,8 +73,8 @@ export function Transport({ initial } = {}) {
           ? <button type="button" class="transport-btn" aria-label="Pause" onClick={() => post('/api/sequence/pause')}>❚❚</button>
           : <button type="button" class="transport-btn" aria-label="Play" disabled={!loaded} onClick={() => post('/api/sequence/play')}>▶</button>}
         <button type="button" class="transport-btn" aria-label="Stop" disabled={!loaded} onClick={() => post('/api/sequence/stop')}>■</button>
-        <button type="button" class="transport-btn" aria-label="Next" disabled={!loaded} onClick={() => post('/api/sequence/next')}>⏭</button>
-        <button type="button" class="transport-btn" aria-label="Shuffle" disabled={!loaded} onClick={() => post('/api/sequence/shuffle')}>⤮</button>
+        <button type="button" class="transport-btn" aria-label="Next" disabled={!loaded} onClick={() => post('/api/sequence/next')}><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path fill="currentColor" d="M5 4v16l11-8zM17 4h3v16h-3z" /></svg></button>
+        <button type="button" class="transport-btn" aria-label="Shuffle" disabled={!loaded} onClick={() => post('/api/sequence/shuffle')}><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3 6h3c5 0 7 12 12 12h3m-4-4 4 4-4 4M3 18h3c2 0 3-2 4-4m4-4c1-2 2-4 4-4h3m-4-4 4 4-4 4" /></svg></button>
         <button type="button" class="transport-btn" aria-label="Loop" aria-pressed={!!(status && status.loop && status.loop.on)}
           disabled={!loop} title={loop ? 'Loop the region' : 'Set a loop region in the Sequence editor'}
           onClick={() => post('/api/sequence/loop', loop)}>↻</button>
