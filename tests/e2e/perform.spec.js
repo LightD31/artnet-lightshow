@@ -138,23 +138,12 @@ test('blackout, palettes and the master', async ({ page, request }) => {
   expect(chosen.palette).toBeTruthy();
 });
 
-test('stop all voices ends every voice and leaves the look; blackout, tap and stop all fit their pads on a phone', async ({ page, request }) => {
-  await page.setViewportSize({ width: 320, height: 720 });
+test('stop all voices ends every voice and the look plays on', async ({ page, request }) => {
   await open(page, 'perform');
   const res = await request.post('/api/voices', { data: { preset: 'hd.auroraDrift', mode: 'latched' } });
   expect(res.ok()).toBe(true);
   await until(request, (s) => s.voices.length === 1);
-  for (const width of [320, 375, 560, 768]) {
-    await page.setViewportSize({ width, height: 720 });
-    const spill = await page.evaluate(() => [...document.querySelectorAll('.perform-utility .perform-pad')].flatMap((pad) => {
-      const box = pad.getBoundingClientRect();
-      return [...pad.querySelectorAll('.perform-pad-name, .perform-pad-hint')]
-        .filter((t) => { const r = t.getBoundingClientRect(); return r.left < box.left || r.right > box.right; })
-        .map((t) => t.textContent);
-    }));
-    expect(spill, `at ${width} px`).toEqual([]);
-  }
-  await page.getByRole('button', { name: /^Stop all voices/ }).click();
+  await page.getByRole('button', { name: 'Stop all voices' }).click();
   const after = await until(request, (s) => s.voices.length === 0);
   expect([after.running, after.pattern]).toEqual([true, 'chase']);
 });

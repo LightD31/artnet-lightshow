@@ -91,7 +91,7 @@ const STROBE = {
 };
 const padLabels = (html) => [...html.matchAll(/class="pad-label">([^<]*)</g)].map((m) => m[1]);
 
-test('the Perform view has blackout, the pads of the bank, the strobe, tap and stop all voices', () => {
+test('the Perform view has blackout, the bank, the strobe, tap and stop all', () => {
   given({});
   const html = ui.html(ui.h(ui.Perform, {}));
   const names = [...html.matchAll(/class="perform-pad-name">([^<]+)</g)].map((m) => m[1]);

@@ -11,20 +11,9 @@ import type { EffectSpec } from '../shared/effects/types.ts';
 
 /**
  * The manual strobe: Hue Dynamics' hold strobe as one voice in the strobe
- * tier, above everything else on the rig. Held from a pad or a page for as
- * long as the hand renews it; latched from the deck or the API until it is
- * turned off or the cap cuts it (settings safety.strobeMaxLatchSec, for the
- * latch forgotten with the room watching); or burst for a moment. One voice
- * at a time, under one id: a launch replaces whatever played before, except
- * that a hold over a latch keeps the latch underneath, hidden, and the latch
- * comes back with its own cap deadline when the hold is let go or its lease
- * runs out. A stop (stop-all, a disarm, a stop by id) ends both.
- *
- * Its settings (settings.strobe: the kind's parameters and a palette of its
- * own) are what a cue keeps and the Strobe page edits. An edit reaches a
- * running strobe in place, so the next flash plays it with no relaunch and
- * the five-a-second permit carries on. Until the photosensitivity
- * acknowledgement, nothing here starts; off and release never refuse.
+ * tier, held, latched under the cap (safety.strobeMaxLatchSec) or burst. A
+ * hold over a latch keeps the latch hidden underneath until the hold is let
+ * go; a stop ends both. Nothing starts before the acknowledgement.
  */
 
 /** The voice's id, which the renderer and the preview know (voices.ts). */
@@ -46,7 +35,6 @@ export interface StrobeStatus {
 }
 
 type StrobeVoices = Pick<VoiceManager, 'start' | 'release' | 'stopWhere' | 'list' | 'get' | 'update' | 'endBy' | 'onStop'>;
-/** Where and when a hold plays: fixtures (the whole rig when left out) and a grid in beats (0, at once). */
 export interface StrobeHoldLaunch { targets?: VoiceTargets; quantise?: number }
 type StrobeSettingsStore = Pick<SettingsStore, 'group' | 'update' | 'onChange'>;
 interface StrobeSafety { acknowledged(): boolean; status(): Pick<SafetyStatus, 'strobeMaxLatchSec'> }
@@ -66,7 +54,7 @@ export class Strobe {
     this._settings = settings;
     this._safety = safety;
     this._under = null;
-    // A stop of the strobe takes the latch under its hold with it: nothing to come back.
+    // A stop ends the latch under the hold too, so nothing relaunches it.
     voices.onStop((stopped) => {
       if (stopped.some((v) => v.id === STROBE_VOICE_ID)) this._under = null;
     });
@@ -108,23 +96,17 @@ export class Strobe {
     return this._launch({ mode: 'once', lengthMs: ms });
   }
 
-  /**
-   * Hold it under a lease, the pad's or the page's, on the fixtures and from
-   * the grid line given (the whole rig, at once, when none): the same press
-   * again renews a live hold and never brings back one an off stopped
-   * (voices.ts, 409). Over a latch, the latch waits underneath until the
-   * hold is let go.
-   */
+  /** Hold it under a lease; the same press renews it. Over a latch it starts at once, so the strobe never goes dark. */
   hold(owner: string, token: string, { targets = 'shared', quantise = 0 }: StrobeHoldLaunch = {}): Voice {
     this._admit();
     const current = this._voices.get(STROBE_VOICE_ID);
     const latch = current && current.mode === 'latched' ? { startedAtMs: current.startedAtMs, untilMs: current.untilMs } : null;
-    const voice = this._launch({ mode: 'hold', owner, token, targets, quantise });
+    const voice = this._launch({ mode: 'hold', owner, token, targets, quantise: latch ? 0 : quantise });
     if (latch) this._under = latch;
     return voice;
   }
 
-  /** After any change to the voices: once no strobe plays, a latch kept under a hold that was let go comes back, to its own deadline. */
+  /** After any change to the voices: once no strobe plays, a latch kept under a hold comes back, to its own deadline. */
   sync(): void {
     const under = this._under;
     if (!under || this._voices.get(STROBE_VOICE_ID)) return;

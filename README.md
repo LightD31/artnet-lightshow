@@ -1593,8 +1593,9 @@ list of fixture ids. What a pad plays depends on its content:
   404, and one with a rapid-flash clip waits for the acknowledgement like
   any other.
 - `strobe` — the strobe while the pad is held, on the pad's targets from its
-  next grid line (id `strobe`, launch `hold` only; `once` and `toggle`
-  answer 409).
+  next grid line, at once by default (id `strobe`, launch `hold` only; `once`
+  and `toggle` answer 409). A strobe pad saved as shipped but on `0.25` is
+  read at `0`.
 - `sequencePattern` — drops the pattern into the loaded sequence at the
   pad's next grid line.
 
@@ -1676,16 +1677,16 @@ times a second, whatever asks for it, and Flash Limit, when on, still holds
 the rig as a whole to three large flashes a second. Ways to run it:
 
 - **Hold** — the strobe pad (on its `targets`, from its `quantise` grid
-  line), or `voice-hold` with `{ preset: 'strobe' }` (on its `targets`, at
-  once): as long as it is held and renewed. Over a latch, the latch stays
-  underneath, hidden, and comes back when the hold is let go, its lease runs
-  out or its page goes, still ending at its own cap. A stop ends the latch
-  underneath with the hold: `DELETE /api/voices`, `DELETE /api/voices/strobe`,
-  a disarm, and latching `palette-strobe`.
+  line, or at once over a latch), or `voice-hold` with
+  `{ preset: 'strobe' }` (on its `targets`, at once): as long as it is held
+  and renewed. Over a latch, the latch stays underneath, hidden, and comes
+  back when the hold is let go or its lease runs out, still ending at its
+  own cap. A stop ends the latch underneath with the hold:
+  `DELETE /api/voices`, `DELETE /api/voices/strobe`, a disarm, and latching
+  `palette-strobe`.
 - **Burst** — `POST /api/strobe/burst/:ms`, 100 to 30,000 ms, once.
 - **Latch** — `POST /api/strobe/on`. A latch ends on `POST /api/strobe/off`,
-  on `POST /api/energy/off`, on a burst, on `DELETE /api/voices` or
-  `DELETE /api/voices/strobe`, on a disarm, or at the
+  on `POST /api/energy/off`, on a burst, on `DELETE /api/voices`, or at the
   cap, `safety.strobeMaxLatchSec`
   (60 s by default; lowering it cuts a latch already running). A scene, cue,
   MIDI note or the auto show clearing the energy does not end it. A latched

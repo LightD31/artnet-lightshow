@@ -158,9 +158,8 @@ function SyncHealth() {
 /** Every voice off, hidden and waiting ones too (DELETE /api/voices); the look and the patterns play on. */
 export const stopAllVoices = () => api('/api/voices', { method: 'DELETE' });
 
-export function Utility() {
-  const s = pick(['masterBlackout', 'voices']);
-  const on = (s.voices || []).length;
+function Utility() {
+  const s = pick(['masterBlackout']);
   return (
     <section class="perform-utility" aria-label="Blackout, tap and stop all voices">
       <button type="button" class={`perform-pad pad-blackout ${s.masterBlackout ? 'active' : ''}`}
@@ -176,7 +175,6 @@ export function Utility() {
       </button>
       <button type="button" class="perform-pad pad-stop-voices" onClick={stopAllVoices}>
         <span class="perform-pad-name">Stop all voices</span>
-        <span class="perform-pad-hint">{on ? `${on} ${on === 1 ? 'voice' : 'voices'} — the look plays on` : 'none on'}</span>
       </button>
     </section>
   );

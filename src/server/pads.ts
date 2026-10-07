@@ -96,11 +96,7 @@ export function patternPlayer({ voices, pattern, fixtureIds, resolve }: PatternP
 export type InsertPatternHook = (id: string, atBeat: number) => void;
 /** A pad launched (its grid beat) or a held one released (with its end), for the sequencer's punch recording. */
 export type PadHitHook = (hit: { bank: number; slot: number; startBeat: number; endBeat?: number; lengthMs?: number; once?: boolean }) => void;
-/**
- * The manual strobe's hold, which the strobe installs: the strobe pad (on its
- * fixtures, from its grid line) and voice-hold's `{ preset: 'strobe' }` (on
- * the fixtures it names, at once) both go through it.
- */
+/** The manual strobe's hold, which the strobe installs: the strobe pad and voice-hold's `{ preset: 'strobe' }` both go through it. */
 export interface StrobeHook {
   hold(owner: string, token: string, launch: { targets: VoiceTargets; quantise: number }): Voice;
   release(owner: string, token: string): void;
@@ -186,12 +182,20 @@ const DEFAULTS: [content: PadContent, launch: PadLaunchMode, accent: string][] =
   [{ kind: 'preset', id: 'ldj.NorthernLights' }, 'loop', '#10B981'],
   [{ kind: 'preset', id: 'ldj.Popcorn' }, 'once', '#FACC15'],
 ];
+const startsAtOnce = (content: PadContent): boolean => content.kind === 'strobe';
 /** The layout a fresh install starts with, frozen; labels are the presets' names. */
 export const DEFAULT_PADS: readonly PadEntry[] = deepFreeze(DEFAULTS.map(([content, launch, accent], i): PadEntry => ({
   bank: Math.floor(i / PAD_SLOTS) as 0 | 1, slot: i % PAD_SLOTS,
   label: content.kind === 'strobe' ? 'Strobe' : presetById(content.id)!.name,
-  accent, content, launch, quantise: DEFAULT_QUANTISE, targets: 'shared',
+  accent, content, launch, quantise: startsAtOnce(content) ? 0 : DEFAULT_QUANTISE, targets: 'shared',
 })));
+
+/** A default pad saved when every default sat on the quarter beat is today's default; a pad the user changed keeps its grid. */
+function mended(entry: PadEntry): PadEntry {
+  const shipped = DEFAULT_PADS[entry.bank * PAD_SLOTS + entry.slot];
+  if (shipped.quantise === DEFAULT_QUANTISE) return entry;
+  return canonical(entry) === canonical({ ...shipped, quantise: DEFAULT_QUANTISE }) ? shipped : entry;
+}
 
 /** A refusal in the form validate() gives one: each issue under its path. */
 function refusal(label: string, issues: PadIssue[]): ValidationError {
@@ -218,7 +222,7 @@ export class PadStore extends JsonStore {
   // assigned (refused at launch), rather than costing the whole layout.
   load(): this {
     const saved = this.readValid(fileSchema);
-    if (saved) this._layout = deepFreeze(ordered(saved.pads));
+    if (saved) this._layout = deepFreeze(ordered(saved.pads).map(mended));
     return this;
   }
 
@@ -368,12 +372,7 @@ export class Pads {
     return this.store.get(bank, slot);
   }
 
-  /**
-   * A press, as the pad's launch says: a hold leased to `owner` and
-   * `token` (the same press again renews it), a once, a loop toggled, the
-   * strobe held, a pattern dropped into the sequence. Null when nothing
-   * plays: an empty pad, a loop stopped, a pattern dropped in.
-   */
+  /** A press, as the pad's launch says; null when nothing plays (an empty pad, a loop stopped, a pattern dropped in). */
   press(bank: number, slot: number, owner: string, token: string): Voice | null {
     const index = padIndex(bank, slot);
     const entry = this.store.get(bank, slot);
@@ -388,11 +387,7 @@ export class Pads {
     return voice;
   }
 
-  /**
-   * Let go of the hold this pad launched for `owner` and `token`, whatever
-   * the pad holds now: the press owns its release. A once and a loop play
-   * on; another owner's or token's hold is not this one's. Whether one went.
-   */
+  /** Let go of the hold this pad launched for `owner` and `token`, whatever the pad holds now; whether one went. */
   release(bank: number, slot: number, owner: string, token: string): boolean {
     const index = padIndex(bank, slot);
     const record = this._alive().find((r) => r.index === index && r.owner === owner && r.token === token);
@@ -460,11 +455,7 @@ export class Pads {
     return n + this._voices.stopWhere((v) => v.source === 'pad');
   }
 
-  /**
-   * voice-hold's `{ preset: 'strobe' }`: the strobe held, through the same
-   * hook as the strobe pad. Until the strobe is installed, what voice-hold
-   * always made of it: a preset by that id, and there is none (a 400).
-   */
+  /** voice-hold's `{ preset: 'strobe' }`, through the strobe pad's hook; without one, a preset by that id (a 400). */
   holdStrobe(owner: string, token: string, targets?: unknown): Voice {
     return this._holdStrobe(null, owner, token, targets);
   }
