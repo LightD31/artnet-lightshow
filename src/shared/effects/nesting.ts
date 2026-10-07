@@ -1,16 +1,20 @@
-// One stack counts nesting depth across mixed macro and bundle containers.
+// Containers (macros, pattern bundles) validate and ask about their children
+// on one shared stack, so a macro inside a bundle inside a macro counts every level.
 
 import type { EffectSpec } from './types.ts';
 
 export const MAX_NEST_DEPTH = 32;
 
+// Child tables being validated, outermost first; one met again is a cycle.
 const open: unknown[] = [];
 
+/** Why `table` may not open another level: it is already open, or the stack is full; null when it may. */
 export function nestRefusal(table: unknown): 'cycle' | 'deep' | null {
   if (open.includes(table)) return 'cycle';
   return open.length >= MAX_NEST_DEPTH ? 'deep' : null;
 }
 
+/** Run `fn` with `table` open as one more level. */
 export function withinNest<T>(table: unknown, fn: () => T): T {
   open.push(table);
   try {
@@ -21,7 +25,7 @@ export function withinNest<T>(table: unknown, fn: () => T): T {
 }
 
 let asking = 0;
-// Treat over-depth unvalidated children as rapid so cycles cannot bypass admission.
+/** Whether any child spec passes `test`; past the limit (an unvalidated cycle) assume yes. */
 export function anyChildSpec(children: readonly unknown[], test: (spec: EffectSpec) => boolean): boolean {
   if (asking >= MAX_NEST_DEPTH) return true;
   asking++;
@@ -32,11 +36,14 @@ export function anyChildSpec(children: readonly unknown[], test: (spec: EffectSp
   }
 }
 
+/** A container's child playing now and the beat it is anchored on. */
 export interface PlayingChild { spec: EffectSpec; anchorBeat: number }
+/** The children a container plays at `beatPos` when anchored on `anchorBeat`, highest first, over `fixtureIds`. */
 export type ChildrenAt = (params: unknown, beatPos: number, anchorBeat: number, fixtureIds: readonly (number | string)[]) => PlayingChild[];
 
 const childrenAt = new Map<string, ChildrenAt>();
 
+/** Each container kind answers with the same phase functions it renders with. */
 export function registerChildren(kind: string, fn: ChildrenAt): void {
   childrenAt.set(kind, fn);
 }

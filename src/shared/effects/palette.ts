@@ -4,7 +4,7 @@ import type { Colour } from '../../types/rig.ts';
 import { hash01 } from './hash.ts';
 import type { EffectSpec, ParsedPaletteEntry, Seed } from './types.ts';
 
-// Hue entries are degrees; the fixed set keeps random colours distinct.
+/** Light DJ's eight random hues in degrees: red, orange, yellow, green, cyan, blue, purple, pink. */
 export const LDJ_RANDOM_HUES = [0, 36, 60, 120, 195, 250, 280, 325];
 
 const colour = (r: number, g: number, b: number, w = 0): Colour => ({ r, g, b, w, a: 0, uv: 0 });
@@ -14,13 +14,14 @@ const WHITE = colour(255, 255, 255);
 const f32 = Math.fround;
 const round = (x: number) => Math.floor(f32(f32(x) + 0.5));
 
+/** Light DJ's HSB colour → RGB: HSV with no gamma, hue 0..1 of the circle, saturation and brightness 0..1. */
 export function hsbToColour(h01: number, s01: number, b01: number): Colour {
   const s = f32(Math.min(1, Math.max(0, s01 || 0)));
   const v = f32(Math.min(1, Math.max(0, b01 || 0)));
   const vb = round(f32(v * 255));
   if (Math.abs(s) <= 1 / 4096) return colour(vb, vb, vb);
   let hx = f32((h01 || 0) * 360);
-  // Out-of-range hue is red rather than wrapped, matching the preset colour model.
+  // As Android: a hue outside 0..360 is red, not wrapped.
   if (hx < 0 || hx >= 360) hx = 0;
   const w = f32(hx / 60);
   const f = f32(w - Math.floor(w));
@@ -37,6 +38,11 @@ export function hsbToColour(h01: number, s01: number, b01: number): Colour {
   }
 }
 
+/**
+ * The colour at `position` in a palette, after Hue Dynamics: the position wraps
+ * into 0..1, spans the whole palette and blends linearly in RGB to the next
+ * colour, the last one blending back into the first.
+ */
 export function samplePalette(pal: readonly Colour[], position: number): Colour {
   const n = pal.length;
   // An empty palette is white in Hue Dynamics too; never an undefined colour mid-frame.
@@ -53,6 +59,7 @@ export function samplePalette(pal: readonly Colour[], position: number): Colour 
 
 const isRandom = (e: ParsedPaletteEntry): e is { random: true } => 'random' in e && e.random === true;
 
+/** Plain instance state so the preview can clone a palette together with its effect state. */
 export interface PreparedPalette {
   entries: ParsedPaletteEntry[] | null;
   hues: (number | null)[];
@@ -62,13 +69,23 @@ export interface PreparedPalette {
   pending: number[];
 }
 
-// Prepare colours outside the frame loop; rebuild only when the spec changes.
+/**
+ * Prepare again when an instance's spec changes; fixed colours are parsed
+ * outside the frame loop. Only the palette is read, so a palette on its own
+ * (the override a palette id puts on) prepares the same way.
+ */
 export function preparePalette(spec: Pick<EffectSpec, 'palette'>): PreparedPalette {
   const entries = spec.palette?.map((entry) => typeof entry === 'string' ? parseHex(entry) : { random: true } as const) ?? null;
   return { entries, hues: new Array<number | null>(entries?.length ?? 0).fill(null), roll: -1, seed: null, counters: [], pending: [] };
 }
 
-// Rerolls exclude cached hues in slots 0–3 and each slot's prior hue to keep changes distinct.
+/**
+ * The palette an instance plays: the override (Light DJ's active palette) beats the
+ * effect's own, which beats the look's slots. Each `random` entry becomes one of
+ * Light DJ's eight hues for this roll. Re-rolls avoid the cached hues in the first
+ * four slots and the slot's own previous hue, keeping colour changes distinct.
+ * Renderers keep prepared state per instance; direct callers replay from roll zero.
+ */
 export function resolvePalette(spec: Pick<EffectSpec, 'palette'>, override: Colour[] | null, lookSlots: readonly Colour[], seed: Seed, roll: number, prepared?: PreparedPalette): Colour[] {
   if (override && override.length) return [...override];
   const state = prepared ?? preparePalette(spec);
@@ -101,22 +118,27 @@ export function resolvePalette(spec: Pick<EffectSpec, 'palette'>, override: Colo
 
 export interface PaletteAccess {
   palette: Colour[];
+  /** The default key is the wrapped palette index; explicit keys identify independent lamps or stages. */
   colour(paletteIndex: number, cacheKey?: number): Colour;
   refresh(cacheKey: number): void;
+  /** Uncached lamp-frame colour: repeats are allowed and prepared state is untouched. */
   frameColour(paletteIndex: number, lamp: number, wholeFrame: number): Colour;
 }
 
 export interface PaletteBinding { index: number; key: number }
 const PALETTE_BINDING = Symbol('paletteBinding');
 
+/** Runtime colour metadata is copied into plain lamp data, never serialized as colour bytes. */
 export function paletteBinding(colour: Colour): PaletteBinding | undefined {
   const binding = (colour as Colour & { [PALETTE_BINDING]?: PaletteBinding })[PALETTE_BINDING];
   return binding && { ...binding };
 }
 
+/** Per-render methods over plain instance data; queued changes become visible next render. */
 export function createPaletteAccess(spec: EffectSpec, override: Colour[] | null, look: readonly Colour[], seed: Seed,
   roll: number, state: PreparedPalette): PaletteAccess {
-  // Advance hidden colours too so removing an override preserves pending refresh order.
+  // Whole-roll callers retain their original sequence. Hidden colours advance
+  // too, so an override can be removed without losing pending ordered work.
   resolvePalette(spec, null, look, seed, roll, state);
   const checkKey = (key: number) => {
     if (!Number.isSafeInteger(key) || key < 0) throw new RangeError('Palette cache key must be a nonnegative safe integer');
@@ -129,7 +151,8 @@ export function createPaletteAccess(spec: EffectSpec, override: Colour[] | null,
     state.hues[key] = candidates[Math.floor(hash01(seed, 11 + key, counter) * candidates.length)];
     state.counters[key] = counter + 1;
   };
-  // Consume each refresh once so repeated keys work without growing checkpoint history.
+  // Splicing before consumption gives every request one lifetime, including
+  // repeated keys. It also prevents an ever-growing history in checkpoints.
   for (const key of state.pending.splice(0)) refresh(key);
   const entries: readonly ParsedPaletteEntry[] = override?.length ? override
     : state.entries?.length ? state.entries : look.length ? look : [WHITE];
@@ -140,7 +163,8 @@ export function createPaletteAccess(spec: EffectSpec, override: Colour[] | null,
     checkKey(key);
     if (isRandom(entry) && state.hues[key] == null) refresh(key);
     const colour = isRandom(entry) ? hsbToColour(LDJ_RANDOM_HUES[state.hues[key]!] / 360, 1, 1) : { ...entry };
-    // Copy bindings explicitly; a spread intentionally captures only colour channels.
+    // A normal spread deliberately captures just the six colour channels;
+    // live lamp bindings are obtained explicitly before copying those bytes.
     return Object.defineProperty(colour, PALETTE_BINDING, { value: { index, key } });
   };
   return {
@@ -150,6 +174,7 @@ export function createPaletteAccess(spec: EffectSpec, override: Colour[] | null,
       checkKey(lamp); checkKey(wholeFrame);
       const entry = entries[wrap(index)];
       if (!isRandom(entry)) return entry;
+      // This separate stream draws from all hues, without the cache's exclusions.
       const hue = Math.floor(hash01(seed, 71 + lamp, wholeFrame) * LDJ_RANDOM_HUES.length);
       return hsbToColour(LDJ_RANDOM_HUES[hue] / 360, 1, 1);
     },

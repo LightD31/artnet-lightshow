@@ -1,25 +1,61 @@
+/**
+ * Where a fixture's channels are on the wire.
+ *
+ * A fixture sits on one universe from its address: channel `offset` of its
+ * profile is channel `address + offset` of that universe. That is every par
+ * and bar there has ever been, and it has to fit — a DMX fixture cannot run
+ * on into the next universe.
+ *
+ * A pixel strip can. Three hundred RGB pixels is 900 channels, and a pixel
+ * controller (or WLED listening to Art-Net) takes the first 170 pixels on one
+ * universe and the other 130 on the next: whole pixels per universe, never one
+ * split across two. So a profile longer than a universe has to be a strip —
+ * nothing but cells of equal width, one after another — and starts at
+ * channel 1, running on through as many universes as it needs.
+ *
+ * Browser-safe: the engine writes through this, and the DMX monitor, the
+ * fixture swatches and the Hue lamps read through it.
+ */
+
 import type { Profile } from '../types/rig.ts';
 
+/** One DMX universe. */
 const UNIVERSE_SIZE = 512;
 
+/** The highest universe Art-Net can address (15 bits). */
 const LAST_UNIVERSE = 32767;
 
-// Internal universes render unaddressed fixtures without transmitting them on Art-Net.
+/**
+ * The first of the server's own universes. A fixture with no DMX address — a
+ * Philips Hue lamp, which the bridge drives — still has to be rendered
+ * somewhere for its Hue channel to read its colour back, so the server puts it
+ * on universes from here. They are rendered like any other and never sent: a
+ * fixture's universe is an Art-Net one, 32767 at most. Still under 65536, so
+ * the page's DMX frames (dmx-frame.ts), which carry a universe in 16 bits,
+ * can show them.
+ */
 const INTERNAL_UNIVERSE = 60000;
 
+/** Whether a universe is one of the server's own, never put on the wire. */
 function isInternalUniverse(universe: number): boolean {
   return universe >= INTERNAL_UNIVERSE;
 }
 
+/** A fixture with no DMX address: shown on a Hue lamp and nowhere else. */
 function hasNoAddress(fixture: { output?: { protocol: string } | null }): boolean {
   return !!fixture.output && fixture.output.protocol === 'hue';
 }
 
+/** What a Hue bridge's id looks like (settings' hue.bridges, a lamp's output): short, plain, usable in a route. */
 const HUE_BRIDGE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
+/** How a strip longer than a universe is laid out. */
 export interface Strip {
+  /** Channels per cell. */
   width: number;
+  /** Whole cells one universe carries. */
   perUniverse: number;
+  /** Universes the strip covers. */
   universes: number;
 }
 
@@ -27,6 +63,11 @@ type Placeable = Pick<Profile, 'channelCount' | 'channelMap' | 'cells'>;
 
 const strips = new WeakMap<object, Strip | null>();
 
+/**
+ * The layout of a profile longer than a universe, or null for any other
+ * profile (which must fit the universe it is patched on). Also null for a
+ * long profile that is not a strip of equal cells: it cannot be patched.
+ */
 function stripOf(profile: Placeable): Strip | null {
   if (!profile || profile.channelCount <= UNIVERSE_SIZE) return null;
   let strip = strips.get(profile);
@@ -52,23 +93,31 @@ function readStrip(profile: Placeable): Strip | null {
   return { width, perUniverse, universes: Math.ceil(cells.length / perUniverse) };
 }
 
+/** Why a profile of this length is not one that can be patched, or null. */
 function stripIssue(profile: Placeable): string | null {
   if (profile.channelCount <= UNIVERSE_SIZE || stripOf(profile)) return null;
   return `is ${profile.channelCount} channels, longer than a ${UNIVERSE_SIZE}-channel universe, and only a strip of `
     + 'equal cells (no channels for the whole fixture, each cell\'s channels together) can run on into the next';
 }
 
+/** How many universes a fixture on this profile covers. */
 function universeCount(profile: Placeable): number {
   const strip = stripOf(profile);
   return strip ? strip.universes : 1;
 }
 
+/**
+ * Where cell `c` of a fixture is: the universe (from the fixture's own) and
+ * what to add to the cell's channel offsets to index that universe. A fixture
+ * that does not span is one universe from its address.
+ */
 function cellPlace(strip: Strip | null, address: number, c: number): { universe: number; shift: number } {
   if (!strip) return { universe: 0, shift: address - 1 };
   const universe = Math.floor(c / strip.perUniverse);
   return { universe, shift: -universe * strip.perUniverse * strip.width };
 }
 
+/** Where profile channel `offset` of a fixture is: universe (from its own) and 0-based channel. */
 function channelPlace(strip: Strip | null, address: number, offset: number): { universe: number; index: number } {
   if (!strip) return { universe: 0, index: address - 1 + offset };
   const cell = Math.floor(offset / strip.width);
@@ -76,6 +125,11 @@ function channelPlace(strip: Strip | null, address: number, offset: number): { u
   return { universe, index: offset + shift };
 }
 
+/**
+ * Why a fixture patched at `address` on this profile does not fit, in words an
+ * operator can act on, or null when it does. With `universe`, a strip that
+ * would run past the last universe does not fit either.
+ */
 function fitIssue(label: string, address: number, profile: Placeable, universe?: number): string | null {
   const count = profile.channelCount;
   if (count <= UNIVERSE_SIZE) {
@@ -95,12 +149,17 @@ function fitIssue(label: string, address: number, profile: Placeable, universe?:
   return null;
 }
 
+/** The universes a fixture covers, from `universe` (its own). */
 function universesOf(universe: number, profile: Placeable): number[] {
   const out: number[] = [];
   for (let k = 0; k < universeCount(profile); k++) out.push(universe + k);
   return out;
 }
 
+/**
+ * The channels a fixture occupies on each universe it covers, as [first, last]
+ * 1-based: for telling whether two fixtures overlap.
+ */
 function footprintOf(universe: number, address: number, profile: Placeable): { universe: number; first: number; last: number }[] {
   const strip = stripOf(profile);
   if (!strip) return [{ universe, first: address, last: address + profile.channelCount - 1 }];
@@ -113,6 +172,7 @@ function footprintOf(universe: number, address: number, profile: Placeable): { u
   return out;
 }
 
+/** Do two footprints share a channel? */
 function overlaps(a: ReturnType<typeof footprintOf>, b: ReturnType<typeof footprintOf>): boolean {
   return a.some((x) => b.some((y) => x.universe === y.universe && x.first <= y.last && y.first <= x.last));
 }
@@ -124,7 +184,13 @@ interface Placed {
   output?: { protocol: string } | null;
 }
 
-// Internal placement can be rebuilt because no external consumer refers to these addresses.
+/**
+ * Give every fixture with no DMX address its place on the internal universes:
+ * one after another in patch order, each on a universe it fits, a strip from
+ * channel 1 of universes of its own. Changes `fixtures` in place, and says
+ * whether anything moved. Placement is the server's, so it is simply redone
+ * whenever the patch changes; nothing outside refers to these addresses.
+ */
 function placeAddressless<F extends Placed>(fixtures: readonly F[], profileOf: (fixture: F) => Placeable): boolean {
   let moved = false;
   let universe = INTERNAL_UNIVERSE;
@@ -153,6 +219,10 @@ function placeAddressless<F extends Placed>(fixtures: readonly F[], profileOf: (
   return moved;
 }
 
+/**
+ * A reader for a fixture's channels in rendered universes: `frames(universe)`
+ * gives a universe's bytes (a buffer or a plain array; missing reads as 0).
+ */
 function channelReader(universe: number, address: number, profile: Placeable,
   frames: (universe: number) => ArrayLike<number> | null | undefined): (offset: number | undefined) => number {
   const strip = stripOf(profile);

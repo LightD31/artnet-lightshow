@@ -1,3 +1,10 @@
+// A sequence's clips on the rig: where the sequence is, which clip plays on
+// which fixture, and each clip's laps as activations of their own (state,
+// seed, wall origin). The server's renderer and the rehearsal preview both
+// play a clip table through this, so they pick the same clips and laps.
+// Browser-safe: nothing here reads server state.
+
+// layer.ts is the way in that loads every kind; one instance is rendered as the macro renders its steps.
 import { canonical, effectContentKey, effectRoom } from './layer.ts';
 import { effectAdmission } from './hardware.ts';
 import { renderEffect } from './render-instance.ts';
@@ -11,9 +18,13 @@ import type { EffectInstance, EffectStepper } from './stepper.ts';
 import type { EffectSlot, EffectSpec, FrameBase, Seed } from './types.ts';
 import type { Room } from '../room.ts';
 
-// Track lanes outrank shared lanes; later shared lanes win so layering is deterministic.
+/**
+ * A lane of clips. Shared lanes stack in list order (the last is on top);
+ * a track is one fixture's own and beats every shared lane on it.
+ */
 export interface SequenceLane { id: string; kind: 'shared' | 'track'; fixtureId?: number; name: string; mute: boolean; solo: boolean }
 
+/** A clip as the renderer plays it: its effect resolved, its fixtures as ids (null: every fixture the lane covers). */
 export interface TableClip {
   id: string;
   laneId: string;
@@ -26,11 +37,23 @@ export interface TableClip {
   mute: boolean;
 }
 
+/** The loaded sequence's content. `revision` moves with the content, never with time. */
 export interface SequenceTable { revision: number; lanes: SequenceLane[]; clips: TableClip[] }
 
+/** An arrangement's loop region, half-open: the end is never reached, the start is. */
 export interface SequenceLoop { on: boolean; startBeat: number; endBeat: number }
 
-// Generation changes on seek so every clip starts a fresh activation.
+/**
+ * Where a sequence is, small enough to ride every snapshot: the music's beat
+ * it stood at `startPosition` on (beat 0 when that is left out), the
+ * traversal it was on then, the loop in force, and a generation a seek moves
+ * on (every clip starts again from a new generation). The sequencer anchors
+ * it afresh on a play, a seek, a resume or a jump of the music's clock.
+ *
+ * Paused (`hold`), the clips on top at the held position stay selected and
+ * play their own laps on from the music's `beat`. Stopped (`stop`), the base
+ * holds the last frame the sequence showed, or is black.
+ */
 export interface SequenceTransport {
   startBeat: number;
   loop: SequenceLoop | null;
@@ -43,11 +66,17 @@ export interface SequenceTransport {
 
 export interface SequenceHold { position: number; traversal: number; beat: number }
 
+/** `position` and `traversal` say what to show for a renderer that never saw the sequence play. */
 export interface SequenceStop { mode: 'hold' | 'black'; position: number; traversal: number }
 
 const finite = (v: unknown, fallback: number): number => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
 const count = (v: unknown): number => (Number.isSafeInteger(v) && (v as number) >= 0 ? v as number : 0);
 
+/**
+ * A transport handed over by a client or another thread, with only the
+ * fields a transport has: a pause or a stop it carries is kept, so the
+ * rehearsal holds and freezes as the rig does.
+ */
 export function transportOf(raw: SequenceTransport): SequenceTransport {
   const out: SequenceTransport = { startBeat: raw.startBeat, loop: raw.loop ?? null, generation: count(raw.generation) };
   if (raw.startPosition !== undefined) out.startPosition = Math.max(0, finite(raw.startPosition, 0));
@@ -61,13 +90,27 @@ export function transportOf(raw: SequenceTransport): SequenceTransport {
   return out;
 }
 
+/**
+ * A moment of the sequence: beats since its transport was anchored
+ * (`elapsed`, never wrapped), its position in the arrangement, how many times
+ * the loop has come round (`traversal`), and the music's beat this
+ * traversal's position 0 falls on.
+ */
 export interface SequencePlace { elapsed: number; position: number; traversal: number; origin: number }
 
-// Decimal loops need rounding slack so their laps do not start one frame late.
+// Positions land on a lap or a loop's start within this, so a decimal loop
+// (0.3 beats) does not start its laps a frame late on rounding alone.
 const EPS = 1e-9;
-// Tolerate conductor jitter so a sequence anchored just ahead does not disappear for one frame.
+// The music's clock may step back this far without a new epoch (the
+// conductor's own tolerance): a sequence anchored a hair ahead of such a
+// reading stays at its anchor rather than vanishing for a frame.
 const JITTER_BEATS = 0.25;
 
+/**
+ * Where the sequence is at the music's `beatPos`; null before it starts. A
+ * loop wraps the position when it runs into the loop's end (excluded) from
+ * before it; a sequence anchored past the end plays on.
+ */
 export function sequencePlace(transport: SequenceTransport, beatPos: number): SequencePlace | null {
   const since = beatPos - transport.startBeat;
   if (!Number.isFinite(since) || since < -JITTER_BEATS) return null;
@@ -80,6 +123,7 @@ export function sequencePlace(transport: SequenceTransport, beatPos: number): Se
   if (!loop || !loop.on || !(span > 0) || !Number.isFinite(span) || !(from < loop.endBeat - EPS) || end < loop.endBeat - EPS) {
     return { elapsed, position: end, traversal: base, origin: beatPos - end };
   }
+  // Past the end: each time round is a traversal of its own.
   let wraps = Math.floor((end - loop.startBeat) / span + EPS);
   if (!Number.isSafeInteger(wraps) || !Number.isSafeInteger(base + wraps)) return null;
   wraps = Math.max(1, wraps);
@@ -87,9 +131,11 @@ export function sequencePlace(transport: SequenceTransport, beatPos: number): Se
   return { elapsed, position, traversal: base + wraps, origin: beatPos - position };
 }
 
+/** A clip's lap at a position, and where that lap started; null where the clip does not cover it. */
 export function clipLap(clip: Pick<TableClip, 'startBeat' | 'lengthBeats' | 'loopBeats'>, position: number): { lap: number; lapStart: number } | null {
   if (!(position >= clip.startBeat && position < clip.startBeat + clip.lengthBeats)) return null;
   const rel = position - clip.startBeat;
+  // The last lap is the last that starts inside the clip, however close to its end the position is.
   const last = Math.ceil(clip.lengthBeats / clip.loopBeats - EPS) - 1;
   const lap = Math.min(last, Math.floor(rel / clip.loopBeats + EPS));
   if (!Number.isSafeInteger(lap) || lap < 0) return null;
@@ -97,24 +143,33 @@ export function clipLap(clip: Pick<TableClip, 'startBeat' | 'lengthBeats' | 'loo
   return { lap, lapStart: Math.min(position, clip.startBeat + lap * clip.loopBeats) };
 }
 
+/** A clip's activation: its id, unique to its lap in this traversal of this generation. */
 export function activationId(clipId: string, generation: number, traversal: number, lap: number): string {
   return `clip:${clipId}:${generation}.${traversal}.${lap}`;
 }
 
-// Lap seeds exclude table revision and fixture so edits do not change unchanged activations.
+/** A lap's seed: the clip's own and where the lap falls, never the table's revision or a fixture. */
 export function lapSeed(seed: Seed, traversal: number, lap: number): Seed {
   return seedFrom(`clip:${seed.join(':')}:${traversal}:${lap}`);
 }
 
-// Reject self-paced flash effects because fresh clip laps would reset their safety limits.
+/**
+ * Can a clip be played at all: the renderer trusts a table no further than
+ * this. An effect that keeps its own flash limit (the strobe, Disco's
+ * automatic strobe) never plays: each lap is a fresh instance and would start
+ * that limit afresh. The sequencer refuses one; a table holding one anyway
+ * never selects it.
+ */
 function playable(c: TableClip | null | undefined): c is TableClip {
   return !!c && typeof c.id === 'string' && typeof c.laneId === 'string' && !!c.spec && typeof c.spec.kind === 'string' && !pacesOwnFlashes(c.spec)
     && Number.isFinite(c.startBeat) && c.lengthBeats > 0 && c.loopBeats > 0 && Number.isFinite(c.startBeat + c.lengthBeats)
     && Array.isArray(c.seed) && (c.fixtureIds === null || Array.isArray(c.fixtureIds));
 }
 
+/** A clip playing now: its index in the table, its lap and where the lap started. */
 export interface ActiveClip { index: number; lap: number; lapStart: number }
 
+/** Does a clip on its lane cover a fixture: a track only its own, explicit ids only those. */
 function covers(lane: SequenceLane, clip: TableClip, fixtureId: number | string): boolean {
   if (lane.kind === 'track' && fixtureId !== lane.fixtureId) return false;
   return clip.fixtureIds === null || clip.fixtureIds.includes(fixtureId as number);
@@ -129,6 +184,7 @@ export function selectClips(table: SequenceTable, position: number, slotFixtureI
   const lanes = new Map<string, { lane: SequenceLane; index: number }>();
   table.lanes.forEach((lane, index) => { if (lane && !lanes.has(lane.id)) lanes.set(lane.id, { lane, index }); });
   const anySolo = table.lanes.some((l) => l?.solo);
+  // Each distinct fixture's winner, then every slot of it.
   const best = new Map<number | string, { index: number; rank: [number, number, number] }>();
   const ids = [...new Set(slotFixtureIds)];
   table.clips.forEach((clip, index) => {
@@ -142,6 +198,7 @@ export function selectClips(table: SequenceTable, position: number, slotFixtureI
     for (const id of ids) {
       if (!covers(on.lane, clip, id) || admit && !admit(clip, id, position)) continue;
       const held = best.get(id);
+      // Later in the list wins a tie: clips are met in list order.
       if (!held || compareRank(rank, held.rank) >= 0) best.set(id, { index, rank });
     }
   });
@@ -154,25 +211,37 @@ function compareRank(a: readonly number[], b: readonly number[]): number {
   return 0;
 }
 
+/** A clip activation playing now: which clip, its lap and id, and where that lap began. */
 export interface PlayingActivation {
   index: number;
   lap: number;
   id: string;
   seed: Seed;
+  /** The music's beat the lap began on, never after the beat now. */
   anchorBeat: number;
+  /** The `elapsed` the lap began at (see SequencePlace), for placing its start between two frames. */
   lapElapsed: number;
 }
 
+/** What plays at a moment: the winners per slot, every activation covering, and what identifies the anchoring. */
 export interface PlacedSequence {
   winners: number[];
   activations: PlayingActivation[];
   elapsed: number;
+  /** Changes whenever `elapsed` is counted from a new anchor, so no lap start is placed across it. */
   anchor: string;
+  /** The position the clips were selected at, and its traversal. */
   position: number;
   traversal: number;
 }
 
-// Pause keeps selecting the held position while selected clips continue their own laps.
+/**
+ * The clips playing at the music's `beatPos` and their activations, as the
+ * rig and the preview play them and the detectors pick from them. Playing,
+ * the transport's position selects them; paused, the held position does and
+ * each selected clip runs on through laps of its own, its length no longer
+ * ending it. Null while the transport is stopped or before it starts.
+ */
 export function placeSequence(table: SequenceTable, transport: SequenceTransport, beatPos: number,
   slotFixtureIds: readonly (number | string)[], admit?: (clip: TableClip, id: number | string, position: number) => boolean): PlacedSequence | null {
   if (transport.stop) return null;
@@ -184,6 +253,7 @@ export function placeSequence(table: SequenceTable, transport: SequenceTransport
     const { winners, active } = selectClips(table, hold.position, slotFixtureIds, admit);
     const activations = active.flatMap((a): PlayingActivation[] => {
       const clip = table.clips[a.index];
+      // Beats into the clip, the clip's laps counted on past its end.
       const local = (hold.position - clip.startBeat) + since;
       const lap = Math.max(a.lap, Math.floor(local / clip.loopBeats + EPS));
       if (!Number.isSafeInteger(lap)) return [];
@@ -206,9 +276,16 @@ export function placeSequence(table: SequenceTable, transport: SequenceTransport
   return { winners, activations, elapsed: place.elapsed, anchor, position: place.position, traversal: place.traversal };
 }
 
+/** A clip activation playing, with the beat its lap is anchored on and the position it was placed at, for a container clip's own step. */
 export interface PlayingClip { id: string; spec: EffectSpec; anchorBeat: number; beatPos: number }
 
-// Stopped sequences hold a picture, so they provide no live detector owner.
+/**
+ * The clip activations on top of at least one of `fixtureIds` at the music's
+ * `beatPos`, highest first in selectClips' order: the sequence's base as the
+ * audio detectors pick their owner from it. Nothing is rendered, no state
+ * touched, no dice rolled. A stopped sequence plays no effect: its base is a
+ * held picture or black.
+ */
 export function playingClips(table: SequenceTable, transport: SequenceTransport, beatPos: number, fixtureIds: readonly (number | string)[]):
   PlayingClip[] {
   const placed = placeSequence(table, transport, beatPos, fixtureIds);
@@ -225,11 +302,19 @@ export function playingClips(table: SequenceTable, transport: SequenceTransport,
     .map((a) => ({ id: a.id, spec: table.clips[a.index].spec, anchorBeat: a.anchorBeat, beatPos }));
 }
 
+// ── Musical boundaries ──────────────────────────────────────────────────────
 
+/** A time signature's beat in quarter-note beats: a 6/8 beat is half of one. */
 export const signatureBeat = (ts: { unit: number }): number => 4 / ts.unit;
 
+/** A bar in quarter-note beats: a 6/8 bar is three. */
 export const barBeats = (ts: { beats: number; unit: number }): number => ts.beats * signatureBeat(ts);
 
+/**
+ * Where a sequence ends when no loop brings it round, in its beats: a
+ * playlist after its last row or command, an arrangement at the bar line
+ * after its last clip or command (0 with nothing in it).
+ */
 export function sequenceEnd(seq: {
   mode?: string; timeSignature?: { beats: number; unit: number } | null;
   clips?: readonly { startBeat: number; lengthBeats: number }[]; commands?: readonly { atBeat: number }[];
@@ -242,6 +327,11 @@ export function sequenceEnd(seq: {
   return Math.ceil(last / bar - EPS) * bar;
 }
 
+/**
+ * Where a resync puts the sequence, after Hue Dynamics: to the nearest beat
+ * of the time signature (ties away from zero), or back to the start of the
+ * bar it is in.
+ */
 export function resyncPosition(position: number, ts: { beats: number; unit: number }, boundary: 'beat' | 'bar'): number {
   const p = Math.max(0, position);
   if (boundary === 'beat') {
@@ -252,11 +342,23 @@ export function resyncPosition(position: number, ts: { beats: number; unit: numb
   return Math.floor(p / bar + EPS) * bar;
 }
 
+// ── Playing a table ─────────────────────────────────────────────────────────
 
+/** One clip activation as it plays: its clip, its seed and when it began on the wall clock. */
 export interface ClipActivation { clip: string; seed: Seed; startedAtMs: number }
 
+/**
+ * The picture a stopped sequence holds: per cell of the layout, the colour
+ * and level the sequence last put there (`covered` 0 where it put nothing).
+ */
 export interface HeldPicture { n: number; light: Float64Array; kinds: (string | null)[]; covered: Uint8Array }
 
+/**
+ * What playing a table remembers from frame to frame: each clip's content as
+ * last seen, the activations playing, the last moment the sequence played
+ * (so a lap's start can be placed between two frames), and the last picture
+ * it showed, which a stop holds.
+ */
 export interface SequenceRun {
   keys: Map<string, string>;
   activations: Map<string, ClipActivation>;
@@ -266,6 +368,7 @@ export interface SequenceRun {
 
 export const newSequenceRun = (): SequenceRun => ({ keys: new Map(), activations: new Map(), last: null, shown: null });
 
+/** A run's own copy, for a preview checkpoint. */
 export function copySequenceRun(run: SequenceRun): SequenceRun {
   const shown = run.shown && { n: run.shown.n, light: run.shown.light.slice(), kinds: [...run.shown.kinds], covered: run.shown.covered.slice() };
   return {
@@ -276,12 +379,17 @@ export function copySequenceRun(run: SequenceRun): SequenceRun {
   };
 }
 
-// Exclude palette, brightness, length and lane so edits that preserve playback keep instance state.
+/**
+ * What makes a clip play the same: its kind and settings (not its colours or
+ * brightness), where its laps fall, what it covers and its seed. Its length
+ * and lane only decide where and over what it shows.
+ */
 function clipKey(table: SequenceTable, c: TableClip): string {
   const lane = table.lanes.find((l) => l?.id === c.laneId);
   return canonical([effectContentKey(c.spec), c.startBeat, c.loopBeats, c.fixtureIds, c.seed, lane?.kind === 'track' ? lane.fixtureId ?? null : null]);
 }
 
+/** End one activation: its state goes, so nothing of it is met again under its id. */
 function endActivation(run: SequenceRun, stepper: EffectStepper, id: string): void {
   stepper.forget(id);
   run.activations.delete(id);
@@ -291,7 +399,10 @@ function endActivations(run: SequenceRun, stepper: EffectStepper): void {
   for (const id of [...run.activations.keys()]) endActivation(run, stepper, id);
 }
 
-// Retain unchanged activations across table revisions so unrelated edits do not restart them.
+/**
+ * A new table: a clip whose content changed, or that is gone, starts again;
+ * every other clip plays on, its state and wall origin kept.
+ */
 export function retable(run: SequenceRun, table: SequenceTable | null, stepper: EffectStepper): void {
   const keys = new Map<string, string>();
   for (const c of table?.clips ?? []) if (playable(c) && !keys.has(c.id)) keys.set(c.id, clipKey(table!, c));
@@ -299,13 +410,19 @@ export function retable(run: SequenceRun, table: SequenceTable | null, stepper: 
   run.keys = keys;
 }
 
+/** Every activation ends and a held picture is let go: the sequence stopped playing. */
 export function endSequence(run: SequenceRun, stepper: EffectStepper): void {
   endActivations(run, stepper);
   run.last = null;
   run.shown = null;
 }
 
-// Cold activations back-project at current tempo because earlier tempo history is unavailable.
+/**
+ * When a lap began on the wall clock, the rule the macro's steps follow:
+ * between the last frame and this one when the sequence was seen crossing
+ * its start, now when it starts now, else counted back at the tempo now
+ * (history the frames never showed cannot be recovered).
+ */
 function lapWallStart(last: SequenceRun['last'], elapsed: number, nowMs: number, lapElapsed: number, bpm: number): number {
   if (lapElapsed >= elapsed) return nowMs;
   if (last && last.elapsed < lapElapsed && elapsed > last.elapsed) {
@@ -315,16 +432,29 @@ function lapWallStart(last: SequenceRun['last'], elapsed: number, nowMs: number,
 }
 
 const BLACK: Colour = { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 };
-// Held frames omit strobe bytes so stopping a sequence cannot leave hardware flashing.
+// Per cell of a held picture: r, g, b, w, a, uv, dim. No strobe: a held
+// picture is a still, and a strobe channel left open would flash on for good.
 const HELD_STRIDE = 7;
 
+/** The run's picture for `n` cells, every cell uncovered. */
 function freshPicture(run: SequenceRun, n: number): HeldPicture {
   if (!run.shown || run.shown.n !== n) run.shown = { n, light: new Float64Array(n * HELD_STRIDE), kinds: new Array(n).fill(null), covered: new Uint8Array(n) };
   else run.shown.covered.fill(0);
   return run.shown;
 }
 
-// A selected transparent clip owns black; uncovered cells keep the base look.
+/**
+ * The table's clips on a layout's cells, where the transport says the
+ * sequence is: each winning clip activation rendered once, over the whole
+ * room with its own fixtures as its mask, then laid on the cells it wins.
+ * A winner that leaves a cell transparent (or is gated, or unknown) owns it
+ * black; a cell no clip covers is not touched. `frame.fixtureIds` names each
+ * cell's fixture. Returns whether any cell was covered.
+ *
+ * Stopped, the sequence plays nothing: it lays the picture it last showed
+ * on the same cells again, strobe channels closed (rendered once at the
+ * stop's position for a run that never showed one), or black on every cell.
+ */
 export function renderSequenceLayer(rig: Rig, layout: Layout, frame: FrameBase, table: SequenceTable, transport: SequenceTransport,
   run: SequenceRun, stepper: EffectStepper, set: EffectLayerSet): boolean {
   const { list } = layout.units;
@@ -339,6 +469,7 @@ export function renderSequenceLayer(rig: Rig, layout: Layout, frame: FrameBase, 
       return true;
     }
     if (!run.shown || run.shown.n !== list.length) {
+      // Nothing seen to hold: the stop's own moment, once, and that is the picture from now on.
       const held: SequenceTransport = { ...transport, stop: null, hold: { position: stop.position, traversal: stop.traversal, beat: frame.beatPos } };
       renderSequenceLayer(rig, layout, frame, table, held, run, stepper, () => {});
       endActivations(run, stepper);
@@ -365,7 +496,13 @@ export function renderSequenceLayer(rig: Rig, layout: Layout, frame: FrameBase, 
   return placed;
 }
 
-// Render each winning activation once over the whole room before masking its won cells.
+/**
+ * The playing part of a table at the music's beat, shared by the sequence
+ * layer and a pattern bundle voice: activations kept or started, each winning
+ * clip rendered once over `room` with its fixtures as its mask, and `lay`
+ * called per won cell with the slot (null where the winner is transparent).
+ * Null when the transport places nothing; else whether any cell was won.
+ */
 export function renderPlaced(frame: FrameBase, table: SequenceTable, transport: SequenceTransport, run: SequenceRun, stepper: EffectStepper,
   room: Room, ids: readonly (number | string)[], lay: (k: number, slot: EffectSlot | null, kind: string) => void): boolean | null {
   const caps = new Map(ids.map((id, k) => [id, frame.hardware?.[k]]));
@@ -378,6 +515,7 @@ export function renderPlaced(frame: FrameBase, table: SequenceTable, transport: 
     return !capability || effectAdmission(clip.spec, { ...frame, beatPos: playingPosition, anchorBeat: lapStart, fixtureIds: [id] }, capability).mode !== 'exclude';
   });
   if (!placed) return null;
+  // A new anchor is no crossing: nothing between the frames either side of it is placed.
   if (run.last && run.last.anchor !== placed.anchor) run.last = null;
 
   const playing = new Map<number, { id: string; activation: ClipActivation; anchorBeat: number }>();
@@ -391,6 +529,7 @@ export function renderPlaced(frame: FrameBase, table: SequenceTable, transport: 
     }
     playing.set(a.index, { id: a.id, activation, anchorBeat: a.anchorBeat });
   }
+  // An activation not playing now is over: its lap ended, its clip stopped covering, or the loop came round.
   const live = new Set([...playing.values()].map((p) => p.id));
   for (const id of [...run.activations.keys()]) if (!live.has(id)) endActivation(run, stepper, id);
   run.last = { elapsed: placed.elapsed, ms: frame.nowMs, anchor: placed.anchor };
@@ -406,6 +545,7 @@ export function renderPlaced(frame: FrameBase, table: SequenceTable, transport: 
     const clip = table.clips[index];
     const lane = table.lanes.find((l) => l?.id === clip.laneId)!;
     const { id, activation, anchorBeat } = playing.get(index)!;
+    // The clip's own fixtures are its mask; it renders over the whole room once, whichever cells it wins.
     const all = lane.kind !== 'track' && clip.fixtureIds === null;
     const targets = all ? null : ids.flatMap((fid, k) => (covers(lane, clip, fid) ? [k] : []));
     const instance: EffectInstance = { id, spec: clip.spec, seed: activation.seed, anchorBeat, startedAtMs: activation.startedAtMs, targets };
@@ -419,6 +559,7 @@ export function renderPlaced(frame: FrameBase, table: SequenceTable, transport: 
   return true;
 }
 
+/** Lay a held picture on its cells again; whether it covers any. */
 function replay(picture: HeldPicture, list: readonly number[], set: EffectLayerSet): boolean {
   let any = false;
   for (let k = 0; k < picture.n; k++) {

@@ -1,8 +1,15 @@
 import { combineRgb } from '@companion-module/base'
 
+// The lists live in catalog.js, which has no Companion imports so the tests
+// can load it; this re-exports them for the rest of the module.
 export * from './catalog.js'
 
-// Scale the whole mix so white-heavy presets retain their colour temperature.
+// Map an RGBWAUV palette entry to a Companion RGB colour for button previews.
+// White lifts all channels, amber reads as warm orange, UV as blue-purple.
+// Mirrors colorToCss in public-src/utils.js, including the proportional
+// scale-back: clamping each channel at 255 made every white-heavy preset come
+// out the same flat white, so Warm White and Cool White were indistinguishable
+// on the buttons.
 export function presetColor(c) {
 	const w = c.w || 0
 	const a = c.a || 0

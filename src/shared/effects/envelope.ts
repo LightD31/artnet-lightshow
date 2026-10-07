@@ -1,12 +1,20 @@
+// Hue Dynamics Party's timing in beats (the app counts 960 ticks a beat): its
+// curves, the attack–hold–release envelope, the event grid, which events still
+// light a lamp, and the admission that holds rapid flashes apart.
+
 import { hash01 } from './hash.ts';
 import type { AudioMode, Curve, Direction, HdParams, Seed } from './types.ts';
 
+/** One Hue Dynamics tick in beats: the app's finest step, and every minimum below. */
 const TICK = 1 / 960;
 
+// NaN lands on the floor in these, unlike Math.max/min, so a bad parameter
+// darkens a lamp instead of poisoning the frame.
 const clamp01 = (x: number) => (x > 0 ? (x < 1 ? x : 1) : 0);
 const atLeast = (min: number, x: number) => (x > min ? x : min);
 const nonNegative = (x: number) => atLeast(0, x);
 
+/** Hue Dynamics' transition curve on progress 0..1; Cut jumps to full at the first moment past zero. */
 export function curveApply(x: number, curve: Curve): number {
   const t = clamp01(x);
   switch (curve) {
@@ -26,17 +34,21 @@ export function envelopeLength(p: HdParams): number {
   return nonNegative(p.attack) + nonNegative(p.hold) + nonNegative(p.release);
 }
 
+/** Beats between event starts: the loop, or with music on and a beat-accent trigger the trigger's interval, over the repetitions. */
 export function eventInterval(p: HdParams, loopLength: number, musicMode: AudioMode): number {
   const repetitions = atLeast(1, Math.floor(p.repetitions));
   const source = musicMode !== 'off' && p.trigger.mode === 'beatAccent' ? atLeast(TICK, p.trigger.beatInterval) : atLeast(TICK, loopLength);
   return atLeast(TICK, source / repetitions);
 }
 
+/** An event's level `age` beats after its start: attack by the curve, hold at 1, release by the inverse curve. */
 export function sampleEnvelope(age: number, p: HdParams): number {
   if (!(age >= 0)) return 0;
   const attack = nonNegative(p.attack), hold = nonNegative(p.hold), release = nonNegative(p.release);
   const length = attack + hold + release;
+  // The app lights a zero-length event on its own tick only; half a tick is that tick in beats.
   if (length === 0) return age < TICK / 2 ? 1 : 0;
+  // Cut skips the release: full until attack and hold are over, then dark.
   if (p.curve === 'cut') return age < attack + hold ? 1 : 0;
   if (attack > 0 && age < attack) return curveApply(age / attack, p.curve);
   if (age < attack + hold) return 1;
@@ -44,6 +56,7 @@ export function sampleEnvelope(age: number, p: HdParams): number {
   return 0;
 }
 
+/** Whether an event runs backwards; alternate tests |event % 2| == 1 as the app does, so event −1 is odd. */
 export function isReversed(direction: Direction, event: number, seed: Seed): boolean {
   switch (direction) {
     case 'reverse': return true;
@@ -53,15 +66,21 @@ export function isReversed(direction: Direction, event: number, seed: Seed): boo
   }
 }
 
+/** Position Chase's delay for a lamp, in beats: one stagger per place in the order, counted from the far end when reversed. */
 export function staggerOffset(stagger: number, orderedIndex: number, n: number, reversed: boolean): number {
   return nonNegative(stagger) * (reversed ? nonNegative(n - 1 - orderedIndex) : orderedIndex);
 }
 
 export interface ActiveEvent { index: number; start: number; age: number }
 
-// Bound backward traversal so degenerate presets cannot stall a frame.
+// A frame never walks further back than this, so a degenerate preset (one-tick
+// events under a long envelope) costs a bounded frame instead of a stall.
 const MAX_ACTIVE_EVENTS = 4096;
 
+/**
+ * The events that may light a lamp at `pos` (beats since the anchor), newest first: like Hue Dynamics,
+ * one event ahead with a negative age (composeEvents skips it), then back while envelope plus stagger span cover `pos`.
+ */
 export function activeEvents(pos: number, interval: number, envLen: number, maxStagger: number): ActiveEvent[] {
   const out: ActiveEvent[] = [];
   const step = atLeast(TICK, interval);
@@ -76,7 +95,11 @@ export function activeEvents(pos: number, interval: number, envLen: number, maxS
   return out;
 }
 
-// Near-equal strengths favor the later event so its palette position remains stable.
+/**
+ * One lamp over the active events: the strongest wins, the later one within 1e-6. `sample` gives envelope × kernel
+ * clamped to 0..1, as the app compares it, or null to skip. A zero strength still ties the empty start, so the newest
+ * such event names the palette position, as in the app. With no event `index` is Number.MIN_SAFE_INTEGER.
+ */
 export function composeEvents(
   events: readonly ActiveEvent[],
   sample: (e: ActiveEvent, age: number) => { strength: number; palettePos: number } | null,
@@ -95,10 +118,14 @@ export function composeEvents(
   return { strength, palettePos, index };
 }
 
-// Decide admission once per event so flashes cannot appear or vanish mid-envelope.
+/**
+ * Hue Dynamics' admission for its rapid-flash family: an event passes only if it starts `minIntervalMs` after the
+ * last one that passed. Each event is decided once, so a flash never appears or vanishes mid-envelope.
+ */
 export class EventAdmission {
   declare minIntervalMs: number;
   declare _answers: Map<number, boolean>;
+  /** The admitted events by ascending index, with their start in ms. */
   declare _admitted: { index: number; ms: number }[];
   declare _newest: number;
 
@@ -114,7 +141,9 @@ export class EventAdmission {
     if (known !== undefined) return known;
     const at = this._insertionPoint(eventIndex);
     const prev = this._admitted[at - 1], next = this._admitted[at];
-    // Late older events must also respect newer admissions that already spent the interval.
+    // The app decides events in index order, so `prev` is its last admitted
+    // event. An older event asked late (a first frame with several events
+    // under way) must also keep clear of a newer admitted one.
     const ok = Number.isFinite(startMs)
       && (!prev || startMs - prev.ms + 1e-6 >= this.minIntervalMs)
       && (!next || next.ms - startMs + 1e-6 >= this.minIntervalMs);
@@ -141,7 +170,9 @@ export class EventAdmission {
     return lo;
   }
 
-  // Keep the newest old admission when pruning so the next event still respects spacing.
+  // Answers older than any event a frame still asks about are dropped, so a
+  // long party does not grow the map; the newest admitted event below that
+  // line stays, because the next event is still spaced from it.
   _forget(): void {
     const floor = this._newest - MAX_ACTIVE_EVENTS;
     for (const index of this._answers.keys()) if (index < floor) this._answers.delete(index);

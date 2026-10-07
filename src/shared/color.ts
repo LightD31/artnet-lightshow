@@ -1,10 +1,38 @@
-// OkLCh follows the hue wheel so opposite colours do not fade through grey.
+/**
+ * Blending one look colour into another, the way it should read on stage.
+ *
+ * `ribbon` crossfades slot A into slot B across the rig, and it used to do it
+ * per channel: the midpoint was the average of the two DMX values. A and B in
+ * every bank are deliberately *opposites* — palettes.js calls B "contrast —
+ * its opposite" — and the average of two opposite colours of light is a washed
+ * out, near-white grey. On ten of the twenty-four coloured banks the middle of
+ * the ribbon kept less than half the saturation of either end; Green into
+ * Magenta kept about a twentieth. And `ribbon` is not a corner case: it is the
+ * pattern every resting passage — intro, breakdown, outro, a build-up's
+ * tension — resolves to.
+ *
+ * So the blend travels round the colour wheel instead of through the middle of
+ * it: lightness and chroma are interpolated in Oklab's polar form (OkLCh), and
+ * hue takes the short way round. The perceptual space is the point — a straight
+ * line in Oklab still passes through grey between two opposites, and measured
+ * worse than the naive average here; only the polar form keeps the colour.
+ *
+ * Two modelling decisions, both stated because either could be argued:
+ *
+ *   * A DMX value is treated as *linear light*, not as gamma-encoded sRGB. LED
+ *     fixtures drive their emitters by PWM, so 128 really is about half the
+ *     light of 255, and every other part of the engine already mixes as if so.
+ *   * The white, amber and UV dies blend linearly. Each is one fixed colour; the
+ *     only thing to interpolate is how hard it is driven.
+ *
+ * Pure and dependency-free: the engine and the browser rehearsal both run it.
+ */
 
 import type { Colour, EmitterLevels } from '../types/rig.ts';
 
 type Triple = [number, number, number];
 
-// Oklab by Björn Ottosson (2020); DMX PWM values are linear light, not gamma-encoded sRGB.
+// Oklab, after Björn Ottosson (2020), on linear RGB in 0..1.
 function toOklab(r: number, g: number, b: number): Triple {
   const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
   const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
@@ -27,7 +55,9 @@ function fromOklab(L: number, a: number, b: number): Triple {
   ];
 }
 
-// Borrow hue from the chromatic endpoint so fades to white do not swing through rounding noise.
+// Below this chroma a colour has no hue worth following — a white tint, or
+// black. Its hue is taken from the other end, so fading a colour towards white
+// does not swing through whatever angle rounding happened to leave on the white.
 const ACHROMATIC = 0.02;
 
 const inGamut = (rgb: Triple): boolean => rgb.every((v) => v >= -1e-6 && v <= 1 + 1e-6);
@@ -37,7 +67,12 @@ function toLch(col: Colour): { L: number; C: number; h: number } {
   return { L, C: Math.hypot(a, b), h: Math.atan2(b, a) };
 }
 
-// Cache endpoint conversions because each frame samples the same colour pair many times.
+/**
+ * A blend from `from` to `to`, returned as a function of t in 0..1.
+ *
+ * Built once per pair — the ends are converted once — and then called per lamp,
+ * because a pattern asks for many points along the same crossfade every frame.
+ */
 function colourMixer(from: Colour, to: Colour): (t: number) => EmitterLevels {
   const A = toLch(from);
   const B = toLch(to);
@@ -61,7 +96,9 @@ function colourMixer(from: Colour, to: Colour): (t: number) => EmitterLevels {
     const h = hueA + dh * t;
     let C = lerp(A.C, B.C, t);
     let rgb = fromOklab(L, C * Math.cos(h), C * Math.sin(h));
-    // Reduce chroma instead of clipping channels so out-of-gamut colours keep their hue.
+    // Travelling round the wheel can pass through colours the emitters cannot
+    // make. Clipping each channel would bend the hue; giving up chroma keeps it
+    // and loses only saturation, and only as much as the gamut demands.
     if (!inGamut(rgb)) {
       let lo = 0;
       let hi = C;
@@ -77,6 +114,7 @@ function colourMixer(from: Colour, to: Colour): (t: number) => EmitterLevels {
   };
 }
 
+/** Oklab chroma of a colour's RGB emitters, treating DMX as linear light. */
 function chromaOf(col: Colour): number {
   return toLch(col).C;
 }

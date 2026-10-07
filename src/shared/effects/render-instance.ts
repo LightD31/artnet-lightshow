@@ -27,7 +27,8 @@ function renderCore(inst: EffectInstance, frame: FrameBase & { roll?: number }, 
   if (lamps && frame.fixtureIds) f.fixtureIds = lamps.slots.map((slots) => frame.fixtureIds![slots[0]]);
   const paletteAt = (roll: number) => resolvePalette(inst.spec, frame.paletteOverride, frame.lookPalette, inst.seed, roll, prepared);
   const state = stepper.get(inst.id, () => {
-    // Initialization needs a palette before the kind can expose its own roll.
+    // Initialization can read the palette; a kind's own roll becomes available
+    // only after it has created its state.
     f.palette = paletteAt(initialRoll);
     return def.init(inst.spec.params, at, f);
   }, frame.nowMs);

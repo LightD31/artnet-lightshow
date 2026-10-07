@@ -1,8 +1,21 @@
 import { signal, computed, batch } from '@preact/signals';
 
-// Per-key signals avoid rerendering unrelated controls when another domain changes.
+/**
+ * The live state on the page, one signal per key (protocol v2, see
+ * src/server/protocol.ts).
+ *
+ * The server sends a snapshot on connect and then only the keys that changed,
+ * grouped by domain, each domain's patches numbered. A component that reads
+ * `field('masterDimmer')` re-renders when the master moves and not when the
+ * Spotify status ticks over — where every component used to re-render on
+ * every push, because every push was the whole state.
+ *
+ * A patch that is not the next one for its domain means something was
+ * missed; `applyPatch` says so and the caller asks for a snapshot.
+ */
 export function createStore() {
   const fields = new Map();
+  // Bumped when a key appears or goes, so `all` knows to look again.
   const shape = signal(0);
   let versions = null;
 
@@ -21,7 +34,9 @@ export function createStore() {
     return !existed;
   };
 
-  // Reading all subscribes to every key, so narrow controls should read individual fields.
+  // Everything, as one object, for the components that want the lot. Reading
+  // it subscribes to every key; a component that can say which keys it needs
+  // reads those instead.
   const all = computed(() => {
     shape.value;
     const out = {};
@@ -36,6 +51,7 @@ export function createStore() {
     field,
     all,
 
+    /** The whole state and the version each domain is at. */
     applySnapshot({ versions: v, state }) {
       batch(() => {
         let added = false;
@@ -51,6 +67,11 @@ export function createStore() {
       versions = { ...(v || {}) };
     },
 
+    /**
+     * One domain's changes. 'ok' when applied; 'stale' for one already seen;
+     * 'gap' when one was missed, or no snapshot has arrived yet — the caller
+     * should ask for a snapshot.
+     */
     applyPatch({ d, v, set: values, del }) {
       if (!versions || !Number.isInteger(v)) return 'gap';
       const at = versions[d] ?? 0;
@@ -71,6 +92,7 @@ export function createStore() {
       return 'ok';
     },
 
+    /** Merge whole-state pushes (protocol 1) or local updates in. */
     merge(values) {
       batch(() => {
         let added = false;

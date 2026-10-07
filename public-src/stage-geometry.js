@@ -1,4 +1,18 @@
-// Inset coordinates keep lamps fully inside the surface at 0 and 100 percent.
+/**
+ * The stage plot's geometry: where a point in stage percent is drawn, and
+ * back again. Shared by the stage preview and the Rig view's plan, so a
+ * fixture is placed, dragged and hit-tested by one set of numbers.
+ *
+ * The lamp's footprint, and the strips kept clear at the top and bottom for
+ * the two edge labels. A stored position is a percentage of the *travel*
+ * rather than of the surface, so a lamp at 0 or 100 sits fully inside the box
+ * instead of half outside it — which is why every offset below is expressed as
+ * an inset from an edge and the span subtracts both.
+ *
+ * style.css needs the same footprint to size the lamp, so a surface publishes
+ * LAMP_W/LAMP_H as custom properties (`surfaceStyle`) and `pointOf` is the
+ * exact inverse of `placeAt`.
+ */
 
 export const LAMP_W = 56;
 export const LAMP_H = 72;
@@ -10,18 +24,22 @@ const INSET_Y = HEAD + LAMP_H / 2;
 const SPAN_X = LAMP_W;
 const SPAN_Y = LAMP_H + HEAD + FOOT;
 
+// The plan's edges as the effects read the room (room.ts: v = +1, the top, is the front).
 export const STAGE_EDGES = { top: 'Stage · TV wall — front', bottom: 'Audience — back', left: 'Left', right: 'Right' };
 
 export const clamp = (n) => Math.max(0, Math.min(100, n));
 export const round1 = (n) => Math.round(n * 10) / 10;
 
+/** The custom properties a surface sets for the stylesheet. */
 export const surfaceStyle = { '--stage-lamp-w': `${LAMP_W}px`, '--stage-lamp-h': `${LAMP_H}px` };
 
+/** A point on the plot as a centre, for `style`. */
 export const placeAt = (point) => ({
   left: `calc(${INSET_X}px + (100% - ${SPAN_X}px) * ${point.x / 100})`,
   top: `calc(${INSET_Y}px + (100% - ${SPAN_Y}px) * ${point.y / 100})`,
 });
 
+/** Where client coordinates fall on a surface's rect, in the percent space positions use. */
 export function pointIn(rect, clientX, clientY) {
   if (!rect || !rect.width || !rect.height) return null;
   return {
@@ -30,6 +48,7 @@ export function pointIn(rect, clientX, clientY) {
   };
 }
 
+/** A bar's line, turned and stretched, kept inside what the server accepts. */
 export function geometryOf(length, angle) {
   let a = angle;
   while (a > 180) a -= 360;
@@ -37,7 +56,12 @@ export function geometryOf(length, angle) {
   return { length: round1(Math.max(1, Math.min(100, length))), angle: round1(a) };
 }
 
-// Extend the line by one cell because cell positions mark centres rather than outer edges.
+/**
+ * The line a bar is drawn along, from where its first cell should be to where
+ * its last should be: its centre, and its geometry. The cells sit at the
+ * middles of `count` equal parts of the line (shared/rig.ts), so the line is
+ * longer than the gap between the end cells by one cell.
+ */
 export function lineFromEnds(from, to, count) {
   const dx = to.x - from.x;
   const dy = to.y - from.y;
@@ -49,8 +73,10 @@ export function lineFromEnds(from, to, count) {
   };
 }
 
+/** A value on the snapping grid, when snapping. */
 export const snapTo = (value, step) => (step ? Math.round(value / step) * step : value);
 
+/** A point on the plot in pixels from a surface rect's corner: `pointIn`'s inverse. */
 export function pxOf(rect, point) {
   return {
     x: INSET_X + (rect.width - SPAN_X) * (point.x / 100),
@@ -58,19 +84,27 @@ export function pxOf(rect, point) {
   };
 }
 
+/** The plot's grid, in percent: where a placed lamp lands unless placed freely. */
 export const PLAN_SNAP = 2.5;
 
+/** The plotted area inside a surface (the 0…100 square), for the grid drawn under the lamps. */
 export const plotBox = { left: `${INSET_X}px`, top: `${INSET_Y}px`, right: `${SPAN_X - INSET_X}px`, bottom: `${SPAN_Y - INSET_Y}px` };
 
-// Plot top is the room front; audience rows therefore follow stage rows.
+// Rows from the top of the plot down: src/shared/room.ts reads the top as the
+// front (stage, TV) and the audience edge as the back.
 const AUTO_ROWS = ['front', null, 'room', 'floor', 'back'];
 
-/** @returns {{ id: number, position: { x: number, y: number, height?: number } }[]} */
+/**
+ * Proposed places: the lamps without a position (every lamp with `all`) in one
+ * row per group, spread evenly left to right in patch order. A lamp keeps its height.
+ * @returns {{ id: number, position: { x: number, y: number, height?: number } }[]}
+ */
 export function autoPlace(fixtures, { all = false } = {}) {
   const todo = fixtures.filter((f) => all || !f.position);
   const rowOf = (f) => (AUTO_ROWS.includes(f.group) ? f.group : null);
   const rows = AUTO_ROWS.filter((g) => todo.some((f) => rowOf(f) === g));
   const out = [];
+  // Placed lamps (and earlier proposals) keep a grid step clear around them.
   const taken = all ? [] : fixtures.filter((f) => f.position).map((f) => f.position);
   const free = (x, y) => !taken.some((t) => Math.abs(t.x - x) <= PLAN_SNAP && Math.abs(t.y - y) <= PLAN_SNAP);
   const spot = (x0, y0) => {
