@@ -4,7 +4,9 @@ import { useDmxFeed } from '../../use-dmx.js';
 import { stagePositions } from '../../../src/shared/stage.ts';
 import { buildRig, lineOf } from '../../../src/shared/rig.ts';
 import { fixtureOutputColor, fixtureCellColors, patchedAt } from '../../utils.js';
-import { clamp, geometryOf, lineFromEnds, placeAt, pointIn, pxOf, round1, snapTo, surfaceStyle } from '../../stage-geometry.js';
+import {
+  PLAN_SNAP, autoPlace, clamp, geometryOf, lineFromEnds, placeAt, plotBox, pointIn, pxOf, round1, snapTo, surfaceStyle,
+} from '../../stage-geometry.js';
 import { rigSelectionSig, selectOnly, toggleSelected, identifyFixtures, stopIdentify } from '../../rig-ui.js';
 
 /**
@@ -20,10 +22,12 @@ import { rigSelectionSig, selectOnly, toggleSelected, identifyFixtures, stopIden
  *            end hangs to the red end. The next bar in the patch is picked
  *            and lit, so a truss of bars is mapped one drag at a time
  *
- * With snapping on, positions keep to a 2.5% grid, angles to 15°.
+ * With snapping on, positions keep to a 2.5% grid, angles to 15°; Alt places
+ * freely. Lamps not placed yet wait as chips beside the plot: tap one, then
+ * the plot (or drag it there). Auto-place proposes places for them first.
  */
 
-const SNAP_STEP = 2.5;
+const SNAP_STEP = PLAN_SNAP;
 const SNAP_ANGLE = 15;
 const DRAW_IDENTIFY_SECONDS = 60;
 const readSnap = () => { try { return localStorage.getItem('lightshow.plan.snap') !== '0'; } catch { return true; } };
@@ -77,7 +81,11 @@ export function PlanEditor() {
   const [draft, setDraft] = useState(null);      // Map id → patch, while dragging
   const [band, setBand] = useState(null);        // { from, to } while picking with a band
   const [line, setLine] = useState(null);        // { from, to } while drawing a bar
+  const [armed, setArmed] = useState(null);      // id of the chip waiting to be placed
+  const [proposal, setProposal] = useState(null); // { all, list } auto-place, not applied yet
+  const [undo, setUndo] = useState(null);         // positions before the last auto-place
   const drag = useRef(null);
+  const chipDrag = useRef(null);
   const surface = useRef(null);
   useDmxFeed(true);
   const dmx = dmxSig.value;
@@ -104,7 +112,7 @@ export function PlanEditor() {
     return () => { document.removeEventListener('keydown', onKey); stopIdentify(); };
   }, [tool]);
   useEffect(() => { if (tool === 'draw' && !drawTarget) setTool('select'); }, [tool, drawTarget]);
-  useEffect(() => { if (!connected) { drag.current = null; setDraft(null); setBand(null); setLine(null); } }, [connected]);
+  useEffect(() => { if (!connected) { drag.current = null; setDraft(null); setBand(null); setLine(null); setArmed(null); } }, [connected]);
 
   const startDraw = () => {
     if (!drawTarget) return;
@@ -112,7 +120,30 @@ export function PlanEditor() {
     identifyFixtures([drawTarget], DRAW_IDENTIFY_SECONDS);
   };
 
+  // Any edit of the operator's own ends the offer to undo an auto-place.
+  const edit = (payload) => { setUndo(null); emitFixture(payload); };
   const pointOf = (e) => pointIn(surface.current && surface.current.getBoundingClientRect(), e.clientX, e.clientY);
+
+  const placeChip = (id, p, e) => {
+    const at = snap && !e.altKey ? { x: snapTo(p.x, SNAP_STEP), y: snapTo(p.y, SNAP_STEP) } : p;
+    edit({ id, position: { x: clamp(round1(at.x)), y: clamp(round1(at.y)) } });
+    selectOnly(id);
+    setArmed(null);
+  };
+  const onChipDown = (e, id) => {
+    if (e.button !== 0 || !connected) return;
+    setArmed(armed === id ? null : id);
+    chipDrag.current = { pointerId: e.pointerId, id };
+    if (e.currentTarget.setPointerCapture) e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  // A chip let go over the plot is placed there; let go where it was, it stays armed.
+  const onChipUp = (e) => {
+    const d = chipDrag.current;
+    chipDrag.current = null;
+    const r = surface.current && surface.current.getBoundingClientRect();
+    if (!d || d.pointerId !== e.pointerId || !r) return;
+    if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) placeChip(d.id, pointOf(e), e);
+  };
 
   const onPointerDown = (e) => {
     if (e.button !== 0 || !connected) return;
@@ -127,6 +158,11 @@ export function PlanEditor() {
       drag.current = { kind: 'draw', pointerId: e.pointerId, from, id: drawTarget };
       setLine({ from, to: from });
       capture();
+      return;
+    }
+    if (armed !== null && tool === 'select') {
+      e.preventDefault();
+      placeChip(armed, p, e);
       return;
     }
     if (handle) {
@@ -167,7 +203,7 @@ export function PlanEditor() {
       d.moved = true;
       // The one under the pointer lands on the grid; the rest keep their spacing.
       const o = d.origin.get(d.primary);
-      if (snap && o) {
+      if (snap && !e.altKey && o) {
         dx = snapTo(o.x + dx, SNAP_STEP) - o.x;
         dy = snapTo(o.y + dy, SNAP_STEP) - o.y;
       }
@@ -197,7 +233,7 @@ export function PlanEditor() {
     drag.current = null;
     if (surface.current && surface.current.hasPointerCapture(e.pointerId)) surface.current.releasePointerCapture(e.pointerId);
     if (save && (d.kind === 'move' || d.kind === 'turn') && d.patch) {
-      for (const [id, patch] of d.patch) emitFixture({ id, ...patch });
+      for (const [id, patch] of d.patch) edit({ id, ...patch });
     }
     if (d.kind === 'band') {
       const b = band;
@@ -221,7 +257,7 @@ export function PlanEditor() {
       if (save && Math.hypot(to.x - d.from.x, to.y - d.from.y) >= 1) {
         const i = indexOf.get(d.id);
         const placed = lineFromEnds(d.from, to, lineCells(rig, i));
-        emitFixture({ id: d.id, ...placed });
+        edit({ id: d.id, ...placed });
         // On to the next bar in the patch, lit so it can be found.
         const next = fixtures.slice(i + 1).find((f) => isBar(f.id));
         if (next) {
@@ -248,7 +284,7 @@ export function PlanEditor() {
       const dy = e.key === 'ArrowDown' ? step : e.key === 'ArrowUp' ? -step : 0;
       for (const id of moving) {
         const at = positions[indexOf.get(id)];
-        if (at) emitFixture({ id, position: { x: clamp(round1(at.x + dx)), y: clamp(round1(at.y + dy)) } });
+        if (at) edit({ id, position: { x: clamp(round1(at.x + dx)), y: clamp(round1(at.y + dy)) } });
       }
       return;
     }
@@ -264,7 +300,7 @@ export function PlanEditor() {
     else if (e.key === '0') geometry = null;
     else return;
     e.preventDefault();
-    emitFixture({ id: fix.id, geometry });
+    edit({ id: fix.id, geometry });
   };
 
   // ── Arranging the selection ──
@@ -272,16 +308,37 @@ export function PlanEditor() {
   const chosenBars = fixtures.filter((f) => chosen.includes(f.id) && isBar(f.id));
   const arrangeRow = () => {
     const points = chosen.map((id) => positions[indexOf.get(id)]);
-    rowPositions(points).forEach((position, k) => emitFixture({ id: chosen[k], position }));
+    rowPositions(points).forEach((position, k) => edit({ id: chosen[k], position }));
   };
   const arrangeEndToEnd = () => {
     const bars = chosenBars.map((f) => {
       const i = indexOf.get(f.id);
       return { id: f.id, length: lineAt(i).length, centre: positions[i] };
     });
-    endToEnd(bars).forEach((placed, k) => emitFixture({ id: bars[k].id, ...placed }));
+    endToEnd(bars).forEach((placed, k) => edit({ id: bars[k].id, ...placed }));
   };
-  const resetPlace = () => { for (const id of chosen) emitFixture({ id, position: null, geometry: null }); };
+  const resetPlace = () => { for (const id of chosen) edit({ id, position: null, geometry: null }); };
+
+  // ── Auto-place ──
+  const waiting = fixtures.filter((f) => !f.position);
+  const propose = (all) => setProposal({ all, list: autoPlace(fixtures, { all }) });
+  const applyProposal = () => {
+    // A lamp removed since the proposal was made is skipped.
+    const list = proposal.list.filter(({ id }) => indexOf.has(id));
+    setUndo(list.map(({ id, position }) => ({ id, position: fixtures[indexOf.get(id)].position || null, after: position })));
+    for (const { id, position } of list) emitFixture({ id, position });
+    setProposal(null);
+    setArmed(null);
+  };
+  // Offered only while every applied lamp still stands where the apply put it.
+  const canUndo = !!undo && undo.every(({ id, after }) => {
+    const at = indexOf.has(id) && fixtures[indexOf.get(id)].position;
+    return !!at && at.x === after.x && at.y === after.y;
+  });
+  const undoAutoPlace = () => {
+    for (const { id, position } of undo) if (indexOf.has(id)) emitFixture({ id, position });
+    setUndo(null);
+  };
 
   const rect = surface.current ? surface.current.getBoundingClientRect() : null;
   const drawLabel = drawTarget !== null ? fixtures[indexOf.get(drawTarget)]?.label : '';
@@ -309,6 +366,11 @@ export function PlanEditor() {
           title="Put the selected bars end to end, in patch order, as one long line">End to end</button>
         <button type="button" class="btn sm" disabled={!chosen.length || !connected} onClick={resetPlace}
           title="Forget where the selection stands: back to the default spread">Reset</button>
+        <span class="plan-tools-sep" aria-hidden="true" />
+        <button type="button" class="btn sm plan-auto" disabled={!fixtures.length || !connected} onClick={() => propose(!waiting.length)}
+          title="Propose places for the lamps not placed yet, one row per group, in patch order">
+          {waiting.length ? `Auto-place ${waiting.length}` : 'Auto-place all'}</button>
+        {canUndo && <button type="button" class="btn sm" disabled={!connected} onClick={undoAutoPlace}>Undo auto-place</button>}
         <span class="plan-count">{chosen.length ? `${chosen.length} selected` : 'Nothing selected'}</span>
       </div>
       {tool === 'draw' && drawTarget !== null && (
@@ -317,10 +379,13 @@ export function PlanEditor() {
           the green end hangs to the red end. Esc stops.
         </p>
       )}
-      <div ref={surface} class={`stage-surface plan-surface editing tool-${tool}`} role="group"
-        aria-label="Plan of the rig, viewed from above with the audience at the bottom" style={surfaceStyle}
+      <div class="plan-body">
+      <div ref={surface} class={`stage-surface plan-surface editing tool-${tool}${armed !== null ? ' placing' : ''}`} role="group"
+        aria-label="Plan of the rig, viewed from above with the audience at the bottom"
+        style={surfaceStyle}
         onPointerDown={onPointerDown} onPointerMove={onPointerMove}
         onPointerUp={(e) => finish(e, true)} onPointerCancel={(e) => finish(e, false)}>
+        <span class="plan-grid" aria-hidden="true" style={plotBox} />
         <span class="stage-back">BACK OF STAGE</span>
         {drawnFixtures.map((fix, i) => {
           if (!rig.cellMaps[i]) return null;
@@ -362,6 +427,9 @@ export function PlanEditor() {
           return <span key={`turn-${fix.id}`} class="stage-handle" style={placeAt(end)} data-handle={fix.id}
             aria-hidden="true" title={`Turn or stretch ${fix.label}`} />;
         })}
+        {proposal && proposal.list.map(({ id, position }) => (
+          indexOf.has(id) && <span key={`ghost-${id}`} class="plan-ghost" style={placeAt(position)} aria-hidden="true">{indexOf.get(id) + 1}</span>
+        ))}
         {band && rect && (() => {
           const a = pxOf(rect, band.from);
           const b = pxOf(rect, band.to);
@@ -382,6 +450,28 @@ export function PlanEditor() {
         {!fixtures.length && <p class="panel-empty">Nothing is patched yet. Add fixtures below.</p>}
         <span class="stage-audience">AUDIENCE</span>
       </div>
+      <div class="plan-unplaced" role="group" aria-label={`Not placed yet: ${waiting.length} lamp${waiting.length === 1 ? '' : 's'}`}>
+        <h3 class="plan-unplaced-title">Not placed yet</h3>
+        {waiting.length ? waiting.map((f) => (
+          <button key={f.id} type="button" class={`plan-chip ${armed === f.id ? 'armed' : ''}`} data-chip={f.id} aria-pressed={armed === f.id}
+            title={`Tap, then tap the plot to place ${f.label} (or drag it there)`} disabled={!connected}
+            onPointerDown={(e) => onChipDown(e, f.id)} onPointerUp={onChipUp} onPointerCancel={() => { chipDrag.current = null; }}
+            onClick={(e) => { if (e.detail === 0) setArmed(armed === f.id ? null : f.id); }}>
+            <span class="plan-chip-n">{indexOf.get(f.id) + 1}</span>{f.label}
+          </button>
+        )) : <p class="plan-unplaced-none">Every lamp is placed.</p>}
+        {armed !== null && <p class="plan-hint" role="status">Tap the plot where it hangs. Alt places it off the grid.</p>}
+      </div>
+      </div>
+      {/* Under the plot, so the plot does not move under the pointer when a proposal shows. */}
+      {proposal && (
+        <div class="plan-proposal" role="status">
+          <span>{proposal.list.length ? `Proposed places for ${proposal.list.length} lamp${proposal.list.length === 1 ? '' : 's'}, dashed on the plot.` : 'Nothing to place.'}</span>
+          <button type="button" class="btn active plan-apply" disabled={!connected || !proposal.list.length} onClick={applyProposal}>Apply</button>
+          {waiting.length > 0 && <label class="plan-snap"><input type="checkbox" checked={proposal.all} onChange={(e) => propose(e.target.checked)} /> Move placed lamps too</label>}
+          <button type="button" class="btn" onClick={() => setProposal(null)}>Cancel</button>
+        </div>
+      )}
       <p class="look-note">
         Numbers are patch order; a bar's first cell is outlined. Patterns travel across the rig as it is placed here.
         {rig.hasPixels ? ' Select a bar and Draw it to map which way it runs.' : ''}

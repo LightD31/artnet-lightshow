@@ -80,3 +80,52 @@ export function pxOf(rect, point) {
     y: INSET_Y + (rect.height - SPAN_Y) * (point.y / 100),
   };
 }
+
+/** The plot's grid, in percent: where a placed lamp lands unless placed freely. */
+export const PLAN_SNAP = 2.5;
+
+/** The plotted area inside a surface (the 0…100 square), for the grid drawn under the lamps. */
+export const plotBox = { left: `${INSET_X}px`, top: `${INSET_Y}px`, right: `${SPAN_X - INSET_X}px`, bottom: `${SPAN_Y - INSET_Y}px` };
+
+// Rows from the top of the plot down. The top edge is the back of the stage
+// and the bottom the audience, as the party patterns read the plot (the
+// StagePlan in src/shared/rig.ts: down it, 0 at the back and 1 at the front).
+const AUTO_ROWS = ['back', 'floor', 'room', null, 'front'];
+
+/**
+ * Proposed places: the lamps without a position (every lamp with `all`) in one
+ * row per group, spread evenly left to right in patch order, never on or
+ * beside a lamp that is placed already.
+ * @returns {{ id: number, position: { x: number, y: number } }[]}
+ */
+export function autoPlace(fixtures, { all = false } = {}) {
+  const todo = fixtures.filter((f) => all || !f.position);
+  const rowOf = (f) => (AUTO_ROWS.includes(f.group) ? f.group : null);
+  const rows = AUTO_ROWS.filter((g) => todo.some((f) => rowOf(f) === g));
+  const out = [];
+  // Placed lamps (and earlier proposals) keep a grid step clear around them.
+  const taken = all ? [] : fixtures.filter((f) => f.position).map((f) => f.position);
+  const free = (x, y) => !taken.some((t) => Math.abs(t.x - x) <= PLAN_SNAP && Math.abs(t.y - y) <= PLAN_SNAP);
+  const spot = (x0, y0) => {
+    for (let dy = 0; dy <= 80; dy += 2 * PLAN_SNAP) {
+      for (const y of dy ? [y0 + dy, y0 - dy] : [y0]) {
+        if (y < 5 || y > 95) continue;
+        for (let dx = 0; dx <= 90; dx += PLAN_SNAP) {
+          for (const x of dx ? [x0 + dx, x0 - dx] : [x0]) if (x >= 5 && x <= 95 && free(x, y)) return { x, y };
+        }
+      }
+    }
+    return { x: x0, y: y0 };
+  };
+  rows.forEach((g, r) => {
+    const members = todo.filter((f) => rowOf(f) === g);
+    const y = snapTo(15 + (70 * (r + 0.5)) / rows.length, PLAN_SNAP);
+    members.forEach((f, k) => {
+      const position = spot(snapTo(10 + (80 * (k + 0.5)) / members.length, PLAN_SNAP), y);
+      taken.push(position);
+      out.push({ id: f.id, position });
+    });
+  });
+  const order = new Map(fixtures.map((f, i) => [f.id, i]));
+  return out.sort((a, b) => order.get(a.id) - order.get(b.id));
+}
