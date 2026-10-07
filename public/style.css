@@ -149,6 +149,8 @@ html, body {
   font-feature-settings: 'cv02' on, 'cv03' on, 'cv04' on, 'cv11' on;
   height: 100%;
   overflow-x: hidden;
+  scroll-padding-top: calc(var(--header-height, 47px) + var(--commands-height, 0px) + var(--views-height, 0px));
+  scroll-padding-bottom: 64px;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -1539,6 +1541,9 @@ input[type=range]::-moz-range-thumb {
   gap: 6px;
   padding: 4px 0 8px;
   background: var(--card);
+}
+.effects-deck button, .effects-catalogue :is(button, summary) {
+  scroll-margin-top: calc(var(--effects-height, 0px) + 8px);
 }
 /* What is on stage, always in sight above the search. */
 .effects-now {
@@ -3855,7 +3860,7 @@ input[type=range]::-moz-range-thumb {
    ============================================================= */
 @media (pointer: coarse) {
   .btn, .btn.sm, .btn.icon, .segmented-btn, .bd-tab, .bd-toggle, .mode-tab, .nav-link,
-  .header-tool, .header-theme, .cb-energy-btn, .cb-tap, .cb-play, .cb-blackout, .cb-bpm-follow,
+  .header-tool, .header-theme, .stat-pill.gate, .cb-energy-btn, .cb-tap, .cb-play, .cb-blackout, .cb-bpm-follow,
   .palette-btn, .pattern-btn, .color-slot-tab, .cue-recall, .cue-capture, .sync-nudge,
   .transport-btn, .warm-toggle, .auto-select, .warm-playlist-select, .shortcuts-tab,
   .sub-tab, .remove-btn, .wizard-step-btn, .ofl-hit, .file-upload-btn, .timeline-section,

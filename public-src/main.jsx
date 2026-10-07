@@ -138,8 +138,8 @@ function Root() {
   useFirstRun();
 
   useEffect(() => {
-    const bars = ['header', 'commands', 'views'];
-    const elements = ['.app-header', '.command-bar', '.mode-nav'].map((selector) => document.querySelector(selector));
+    const bars = ['header', 'commands', 'views', 'effects'];
+    const elements = ['.app-header', '.command-bar', '.mode-nav', '.effects-tools'].map((selector) => document.querySelector(selector));
     const measure = () => elements.forEach((element, i) => {
       document.documentElement.style.setProperty(`--${bars[i]}-height`, `${element?.getBoundingClientRect().height || 0}px`);
     });

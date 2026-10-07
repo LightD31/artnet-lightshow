@@ -55,3 +55,16 @@ test('phone transport stays within the viewport', async ({ page }) => {
   const transport = await page.locator('.perform-transport').boundingBox();
   expect(transport.x + transport.width).toBeLessThanOrEqual(400);
 });
+
+
+test('catalogue controls scroll clear of sticky tools', async ({ page }) => {
+  await page.setViewportSize({ width: 1180, height: 820 });
+  await open(page, 'manual');
+  const group = page.locator('.effects-group summary').first();
+  await group.evaluate((element) => element.scrollIntoView({ block: 'start' }));
+  const tools = await page.locator('.effects-tools').boundingBox();
+  const target = await group.boundingBox();
+  expect(target.y).toBeGreaterThanOrEqual(tools.y + tools.height);
+  await group.click();
+  await expect(page.locator('.effects-group').first()).toHaveAttribute('open', '');
+});
