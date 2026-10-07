@@ -1540,7 +1540,11 @@ base look, on a pad, in a sequence or over everything as a voice.
   strobe's white), and palettes of your own (`config/palettes.json`). The
   palette override plays one palette — 1 to 8 colours, or a saved palette —
   over every effect until it is removed; the look's colour slots stay as they
-  are. The named looks of **The palettes** above are a separate thing and keep
+  are. Colour Strobe and Glow follow its first colour; White Strobe, Blinder,
+  UV Wash and Kill keep their fixed output. Random entries roll once per tap
+  and remain fixed; the selected button shows those colours. Sequence palettes
+  restore the previous override on stop or unload unless changed by hand.
+  The named looks of **The palettes** above are a separate thing and keep
   their routes.
 - **The inspector** edits a preset field by field from its family's schema. A
   change to one nested field (a trigger, a spatial setting) keeps its
@@ -2697,7 +2701,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/effects/command` | `{ cmd, arg? }` to the effect playing as the base look; answers once the renderer has decided (see **Effects**) |
 | GET | `/api/palettes/:id` | One effect palette, built in or yours |
 | POST · PUT · DELETE | `/api/palettes` · `/api/palettes/:id` | Save (201), change or delete a palette of your own |
-| PUT | `/api/palette-override` | `{ colours: ['#RRGGBB', …] }` (1 to 8) or `{ paletteId }`: play one palette over every effect; answers `{ ok, paletteOverride }` |
+| PUT | `/api/palette-override` | `{ colours: ['#RRGGBB', …] }` (1 to 8) or `{ paletteId }`: override effect palettes (fixed white, UV and blackout energies keep their output); random entries roll once per request; answers `{ ok, paletteOverride }` |
 | DELETE | `/api/palette-override` | Remove it |
 | GET | `/api/safety` | `{ photosensitivityAcknowledged, hdFlashIntervalMs, strobeMaxLatchSec }` |
 | POST | `/api/safety/acknowledge` | Give the photosensitivity acknowledgement (stored) |

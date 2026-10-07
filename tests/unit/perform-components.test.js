@@ -26,7 +26,7 @@ async function load() {
         export { CommandBar } from './public-src/components/CommandBar.jsx';
         export { createPadPresses, rapidPad, padKey } from './public-src/voice-pad.js';
         export { createVoiceHolds } from './public-src/hold-control.js';
-        export { PaletteOverride, overrideBody, activeOverride } from './public-src/components/Perform.jsx';
+        export { PalettePads, PaletteOverride, overrideBody, activeOverride } from './public-src/components/Perform.jsx';
         export { Transport, positionText, beatsPerBar, loopBody, laneRows } from './public-src/components/Transport.jsx';
         export { AudioMeters, meterRows, splClass, latencyText } from './public-src/components/AudioMeters.jsx';
       `,
@@ -297,6 +297,39 @@ test('the override names a palette by id, and is matched back by its colours', (
   assert.strictEqual(ui.activeOverride(null, BUILTIN), 'off');
   assert.strictEqual(ui.activeOverride(['#ABCDEF'], BUILTIN), null);
 });
+
+test('a named random override lights its palette button with live swatches', () => {
+  ui.librarySig.value = { status: 'ok', palettes: { builtin: BUILTIN, user: USER } };
+  given({ paletteOverride: ['#00FF00', '#2A00FF'], paletteOverrideId: 'hdDefault', userPalettes: USER });
+  const html = ui.html(ui.h(ui.PaletteOverride));
+  assert.match(html, /aria-pressed="true"[^>]*data-override="hdDefault"/);
+  const lit = html.match(/<button[^>]*data-override="hdDefault"[^>]*>.*?<\/button>/)[0];
+  assert.match(lit, /background:\s*#2A00FF/);
+  assert.doesNotMatch(lit, /class="random"/);
+});
+
+test('an unknown palette id falls back to matching fixed colours', () => {
+  assert.equal(ui.activeOverride(['#FF0000', '#FF8800'], BUILTIN, 'gone'), 'ldjFire');
+  assert.equal(ui.activeOverride(['#123456'], BUILTIN, 'gone'), null);
+});
+
+test('clearing the override ignores its old palette id', () => {
+  assert.equal(ui.activeOverride(null, BUILTIN, 'hdDefault'), 'off');
+});
+
+for (const [name, palette, override, hint] of [
+  ['own palette', ['#FF0000'], null, true],
+  ['look palette', null, null, false],
+  ['override', null, ['#00FF00'], true],
+]) {
+  test(`look palettes indicate whether the base uses ${name}`, () => {
+    ui.librarySig.value = { builtin: [{ id: 'effect', spec: { palette } }], user: [] };
+    given({ pattern: 'effect', paletteOverride: override, palettes: [{ id: 'look', colors: { 4: [0] } }] });
+    const html = ui.html(ui.h(ui.PalettePads));
+    assert.equal(/role="status"/.test(html), hint);
+    assert.match(html, /class="perform-palette /);
+  });
+}
 
 const SEQ = {
   id: 'set1', name: 'Set one', timeSignature: { beats: 4, unit: 4 },

@@ -472,6 +472,43 @@ test('PUT /api/palette-override with hex colours and with a palette id; DELETE c
   assert.equal(renderInput().paletteOverride, null);
 });
 
+test('a random override retains its palette identity in live state', async (t) => {
+  const s = await serve(t);
+  const res = await s.call('PUT', '/api/palette-override', { paletteId: 'randomRandom' });
+  assert.equal(res.status, 200);
+  assert.deepEqual([getLiveState().paletteOverride, getLiveState().paletteOverrideId], [res.body.paletteOverride, 'randomRandom']);
+  assert.ok(res.body.paletteOverride.every((c) => /^#[0-9A-F]{6}$/.test(c)));
+});
+
+test('an unrelated patch preserves override identity', async (t) => {
+  const s = await serve(t);
+  await s.call('PUT', '/api/palette-override', { paletteId: 'redCyan' });
+  applyPatch({ masterDimmer: 200 });
+  assert.equal(getLiveState().paletteOverrideId, 'redCyan');
+});
+
+test('a missing palette request preserves override identity', async (t) => {
+  const s = await serve(t);
+  await s.call('PUT', '/api/palette-override', { paletteId: 'redCyan' });
+  const res = await s.call('PUT', '/api/palette-override', { paletteId: 'missing' });
+  assert.equal(res.status, 404);
+  assert.equal(getLiveState().paletteOverrideId, 'redCyan');
+});
+
+for (const [name, change] of [
+  ['explicit colours', (s) => s.call('PUT', '/api/palette-override', { colours: ['#123456'] })],
+  ['patch colours', () => applyPatch({ paletteOverride: ['#FF0000'] })],
+  ['cue recall', () => recallLook({ ...captureLook(), paletteOverride: ['#FF0000'] })],
+  ['DELETE', (s) => s.call('DELETE', '/api/palette-override')],
+]) {
+  test(`${name} clears the previous override identity`, async (t) => {
+    const s = await serve(t);
+    await s.call('PUT', '/api/palette-override', { paletteId: 'redCyan' });
+    await change(s);
+    assert.equal(getLiveState().paletteOverrideId, null);
+  });
+}
+
 // The built-ins (about 75 KB) go out once per connection and in GET
 // /api/state; a patch or a cue recall answers with the live state alone, which
 // is all any caller reads from it.

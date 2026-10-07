@@ -21,7 +21,7 @@ export interface PatchHooks {
   broadcast(): void;
   showChanged(): void;
   /** A hand on the master or the tempo (not the sequence's own change): the sequencer ends that automation. */
-  handEdit(edit: { masterDimmer: boolean; bpm: boolean }): void;
+  handEdit(edit: { masterDimmer: boolean; bpm: boolean; paletteOverride?: boolean }): void;
 }
 
 const COLOR_SLOTS = ['colorA', 'colorB', 'colorC', 'colorD'] as const;
@@ -87,6 +87,7 @@ export interface PatchOptions {
    * sequencer, changing them a frame at a time, broadcasts on its own.
    */
   origin?: 'hand' | 'sequence';
+  paletteOverrideId?: string | null;
 }
 
 /**
@@ -96,7 +97,7 @@ export interface PatchOptions {
  * acknowledgement refuses the whole patch (409), its tempo, master and fade
  * included. A pattern id nothing knows is still taken, and plays nothing.
  */
-function applyPatch(rawData: unknown, { beforeCommit, origin = 'hand' }: PatchOptions = {}): Patch {
+function applyPatch(rawData: unknown, { beforeCommit, origin = 'hand', paletteOverrideId = null }: PatchOptions = {}): Patch {
   // Validate at the boundary. Throws on invalid input.
   const data = validate(patchSchema, rawData || {}, 'patch');
   // Naming the pattern is starting it, even the one already on stage; a
@@ -190,6 +191,7 @@ function applyPatch(rawData: unknown, { beforeCommit, origin = 'hand' }: PatchOp
   // Parsed once here: the renderer takes colours, the wire and cues hex.
   if (data.paletteOverride !== undefined) {
     state.paletteOverride = data.paletteOverride === null ? null : data.paletteOverride.map(parseHex);
+    state.paletteOverrideId = data.paletteOverride === null ? null : paletteOverrideId;
   }
   if (data.split !== undefined) state.split = data.split;
   if (data.pixelMap !== undefined) state.pixelMap = data.pixelMap;
@@ -271,7 +273,9 @@ function applyPatch(rawData: unknown, { beforeCommit, origin = 'hand' }: PatchOp
   // A tempo the auto show schedules (anchorMs) is the music's, not a hand's.
   const masterDimmer = data.masterDimmer !== undefined;
   const bpm = data.bpm !== undefined && data.anchorMs === undefined;
-  if (masterDimmer || bpm) hooks.handEdit({ masterDimmer, bpm });
+  if (masterDimmer || bpm || data.paletteOverride !== undefined) {
+    hooks.handEdit({ masterDimmer, bpm, ...(data.paletteOverride !== undefined ? { paletteOverride: true } : {}) });
+  }
   hooks.broadcast();
   return data;
 }

@@ -334,3 +334,17 @@ test('every built-in palette resolves through the palette store the server hands
   const s = await serve(t);
   for (const p of BUILTIN_PALETTES) assert.ok(s.integrations.library.palettes.materialize(p.id)?.length, p.id);
 });
+
+for (const manual of [false, true]) {
+  test(`sequence stop ${manual ? 'preserves a manual' : 'restores the prior'} named override`, async (t) => {
+    const s = await serve(t);
+    await s.call('PUT', '/api/palette-override', { paletteId: 'greenPink' });
+    await s.call('PUT', '/api/sequence', { ...SET, options: { initialPalette: 'redCyan' } });
+    await s.call('POST', '/api/sequence/play');
+    s.frame();
+    if (manual) await s.call('PUT', '/api/palette-override', { paletteId: 'redCyan' });
+    await s.call('POST', '/api/sequence/stop');
+    s.frame();
+    assert.equal(getLiveState().paletteOverrideId, manual ? 'redCyan' : 'greenPink');
+  });
+}

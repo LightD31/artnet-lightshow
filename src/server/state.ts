@@ -52,6 +52,7 @@ export interface ShowState {
   palette: string | null;
   /** Colours every effect plays instead of its own and the slots (Light DJ's active palette), or null. */
   paletteOverride: Colour[] | null;
+  paletteOverrideId: string | null;
   autoIntensity: number;
   autoSyncOffsetMs: number;
   prolinkEnabled: boolean;
@@ -107,6 +108,7 @@ const state: ShowState = {
   // Fixed colours, even when a palette with random entries put them there:
   // rolled once as it went on, so nothing re-rolls them frame to frame.
   paletteOverride: null,
+  paletteOverrideId: null,
   // Mirrors the auto show's energy slider. The generated show owns the value;
   // this copy is what the MIDI surface reads to light an encoder ring and what
   // a client sees without asking the auto-show module.
@@ -467,6 +469,7 @@ function getLiveState() {
     palette: state.palette,
     // Hex on the wire, as a palette is written everywhere else.
     paletteOverride: state.paletteOverride ? state.paletteOverride.map(toHex) : null,
+    paletteOverrideId: state.paletteOverrideId,
     // Whether the room may see the fast flashes, and the limits beside it.
     safety: safety.status(),
     // The manual strobe: what plays as it, how, and its settings (strobe.ts).
