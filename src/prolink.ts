@@ -316,11 +316,14 @@ class ProLink {
 
   /**
    * Where the followed deck is, in beats, for the pattern clock (see
-   * server/conductor.ts): `{ beatPos, bpm }`, or null unless it is playing and
-   * still reporting.
+   * server/conductor.ts): `{ beatPos, bpm, key }`, or null unless it is
+   * playing and still reporting. `key` names the deck and its track: a new
+   * one of either ends a tempo the operator took by hand from the decks.
    */
-  getBeatReading(): { beatPos: number; bpm: number | null } | null {
-    return this._followedDeck()?.beatReading(this._now()) ?? null;
+  getBeatReading(): { beatPos: number; bpm: number | null; key: string } | null {
+    const deck = this._followedDeck();
+    const reading = deck?.beatReading(this._now());
+    return deck && reading ? { ...reading, key: `${deck.deviceId}/${deck.identity}` } : null;
   }
 
   /** Position in ms within the followed deck's track. */

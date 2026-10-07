@@ -237,6 +237,8 @@ export function send(patch) { return emitLive('set', patch); }
 export function emitOverride(id, override) { return emitLive('override', { id, override }); }
 export function emitFixture(payload) { return emitLive('fixture', payload); }
 export function emitTap() { return emitLive('tap'); }
+// Over REST rather than the socket: 'auto' again gives a tempo held by hand back to the music.
+export function followMusic() { return api('/api/tempo/auto', { method: 'POST' }); }
 
 function freezePosition() {
   const ap = autoPositionSig.value;

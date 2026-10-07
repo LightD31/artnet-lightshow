@@ -8,6 +8,7 @@ import { isArmed } from './armed.ts';
 import { HttpError } from '../errors.ts';
 import { footprintOf, universesOf, isInternalUniverse, placeAddressless } from '../shared/placement.ts';
 import type { Settings } from './settings.ts';
+import type { ClockSource, TempoMode } from './conductor.ts';
 import type { Fixture, PixelMap, Profile, ShowDynamics } from '../types/rig.ts';
 
 /** Where a running pattern counts its steps from (see patch.ts). */
@@ -21,6 +22,8 @@ export interface PatternAnchor {
 export interface ShowState {
   artnet: Settings['artnet'];
   bpm: number;
+  /** Whether the clock follows the music or holds `bpm` (settings `clock.tempoMode`). */
+  tempoMode: TempoMode;
   beatDivision: number;
   running: boolean;
   pattern: string;
@@ -70,6 +73,9 @@ const state: ShowState = {
   // A fixture moved somewhere else stays where it was put.
   artnet: settings.group('artnet'),
   bpm: 120,
+  // The clock's own default, not the stored value: the applier puts that back
+  // at start through applyPatch, which tells the clock as well (apply.ts).
+  tempoMode: 'auto',
   beatDivision: 1,
   running: true,
   pattern: 'chase',
@@ -244,6 +250,21 @@ function getDmxSnapshotSize(universe: number): number {
   return Math.min(universes.UNIVERSE_SIZE, maxEnd);
 }
 
+/**
+ * The musical clock as the live state carries it: what it follows and its
+ * tempo (conductor.ts), and for screens that keep their own beat in phase
+ * with the rig — the visuals — where the beat is, its epoch, and the wall
+ * clock when that was read, `at`. Such a screen carries it on as
+ * beatPos + (now − at) / 60000 × bpm. The beat moves on every read; the
+ * publisher sends it only when that carrying-on would miss it (protocol.ts).
+ */
+function clockState(): { source: ClockSource; bpm: number; byHand: boolean; beatPos: number; epoch: number; at: number } {
+  const { beatPos, epoch } = conductor.phase();
+  const at = Date.now();
+  // byHand: a tempo taken by hand holds the music off, so the screens offer Follow.
+  return { ...conductor.status(), byHand: conductor.byHand(), beatPos, epoch, at };
+}
+
 // Returns the snapshot the UI consumes. Heavyweight fields (autoShow, prolink,
 // spotify) are filled in by integrations.js via injectExtras.
 let extrasProvider: () => Record<string, unknown> = () => ({});
@@ -281,9 +302,11 @@ function getLiveState() {
     artnet: { ...state.artnet },
     bpm: state.bpm,
     // What the pattern clock is locked to right now — the auto show's grid, a
-    // CDJ, the playing track, or the operator's own tempo — and the tempo it
-    // is keeping. See conductor.js.
-    clock: conductor.status(),
+    // CDJ, the playing track, or the operator's own tempo — the tempo it is
+    // keeping, and where its beat is. See clockState().
+    clock: clockState(),
+    // Whether that is the music's tempo or the operator's held one.
+    tempoMode: state.tempoMode,
     beatDivision: state.beatDivision,
     running: state.running,
     pattern: state.pattern,
@@ -377,6 +400,7 @@ export {
   getDmxSnapshotSize,
   getClientState,
   getLiveState,
+  clockState,
   getCatalogs,
   getDmxSnapshot,
   getDmxUniverses,

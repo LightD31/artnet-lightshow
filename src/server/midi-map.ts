@@ -48,6 +48,7 @@ export interface MidiAction {
 const ACTIONS: MidiAction[] = [
   // Buttons
   { id: 'tap',                 label: 'Tap tempo',                   input: 'button' },
+  { id: 'toggleTempoMode',     label: 'Automatic tempo match on / off', input: 'button' },
   { id: 'togglePlay',          label: 'Play / stop',                 input: 'button' },
   { id: 'toggleBlackout',      label: 'Master blackout',             input: 'button' },
   { id: 'setPattern',          label: 'Select pattern',              input: 'button', param: { key: 'value', kind: 'pattern', label: 'Pattern' } },
@@ -95,7 +96,7 @@ function defaultTypeFor(actionId: string): 'relative' | 'absolute' {
 // ── Schema ──────────────────────────────────────────────────────────────────
 
 const bindingSchema = z.object({
-  // A custom message because the default lists all twenty-two ids, which is
+  // A custom message because the default lists every id, which is
   // unreadable in the toast this reaches the operator through.
   action: z.enum(ACTION_IDS as [string, ...string[]], { error: 'is not a known action' }),
   type: z.enum(['relative', 'absolute']).optional(),

@@ -22,6 +22,7 @@ async function load() {
         export { store } from './public-src/state.js';
         export { Perform, sourceHealth } from './public-src/components/Perform.jsx';
         export { CommandBar } from './public-src/components/CommandBar.jsx';
+        export { followMusic } from './public-src/state.js';
       `,
       resolveDir: ROOT,
       loader: 'js',
@@ -114,4 +115,31 @@ test('the command bar offers every division to 1/16, a tempo to type, and a name
   assert.match(html, /aria-label="Tempo 124.5 BPM. Press to type a tempo."/);
   assert.match(html, /aria-label="Master dimmer" aria-valuetext="50 percent"/);
   assert.match(html, /<section class="command-bar" aria-label="Live controls">/);
+});
+
+test('a follow control sits beside the clock only while a tempo is held by hand', () => {
+  given({});
+  assert.doesNotMatch(ui.html(ui.h(ui.CommandBar, {})), /cb-bpm-follow/);
+  assert.doesNotMatch(ui.html(ui.h(ui.Perform, {})), /perform-follow/);
+  given({ clock: { source: 'tap', bpm: 140, byHand: true }, bpm: 140 });
+  assert.match(ui.html(ui.h(ui.CommandBar, {})),
+    /class="cb-bpm-source[^"]*"[^>]*>[^<]*<\/span><button type="button" class="cb-bpm-follow"/);
+  // The chip carrying the clock's BPM, whatever its wording.
+  assert.match(ui.html(ui.h(ui.Perform, {})),
+    /class="perform-chip-value">[^<]*\b140\b[^<]*<\/span><\/span><button type="button" class="perform-follow"/);
+});
+
+test('following the music again is POST /api/tempo/auto', async () => {
+  const calls = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (path, init) => {
+    calls.push({ path, init });
+    return { ok: true, status: 200, json: async () => ({ ok: true, tempoMode: 'auto' }) };
+  };
+  try {
+    assert.strictEqual((await ui.followMusic()).ok, true);
+    assert.deepStrictEqual(calls.map((c) => [c.path, c.init.method]), [['/api/tempo/auto', 'POST']]);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });

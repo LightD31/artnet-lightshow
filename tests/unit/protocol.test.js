@@ -9,11 +9,12 @@ import http from 'node:http';
 import { Server } from 'socket.io';
 import { io as connect } from 'socket.io-client';
 
-import { StateDiffer, createPublisher, domainOf, ROOM } from '../../src/server/protocol.ts';
+import { StateDiffer, createPublisher, domainOf, clockMoved, ROOM } from '../../src/server/protocol.ts';
 import { encodeDmxFrame, decodeDmxFrame } from '../../src/shared/dmx-frame.ts';
 import { attachSockets } from '../../src/server/sockets.ts';
 import { state, getLiveState, getDmxUniverses } from '../../src/server/state.ts';
 import { applyPatch } from '../../src/server/patch.ts';
+import { conductor } from '../../src/server/conductor.ts';
 
 test('only the keys that changed go out, grouped by domain, each domain counting its own versions', () => {
   const differ = new StateDiffer();
@@ -52,6 +53,30 @@ test('a DMX frame is each universe\'s channels as bytes, and reads back the same
   assert.strictEqual(decodeDmxFrame(frame.subarray(0, 100)), null, 'a frame that runs short');
   assert.strictEqual(decodeDmxFrame(Uint8Array.from([9, 0])), null, 'a format it does not know');
   assert.deepStrictEqual(decodeDmxFrame(encodeDmxFrame([])), {}, 'no universes');
+});
+
+// The clock's beat moves on every read. A screen carries the last one it was
+// sent on at its tempo, so only a beat that carrying-on would miss is news.
+test('a clock is news when a screen carrying the last one on would miss it', () => {
+  const sent = { source: 'tap', bpm: 120, beatPos: 10, epoch: 3, at: 1_000_000 };
+  const later = (ms, beatPos, over = {}) => ({ ...sent, at: sent.at + ms, beatPos, ...over });
+  assert.strictEqual(clockMoved(sent, later(30000, 70)), false, 'half a minute on, where its tempo put it');
+  assert.strictEqual(clockMoved(sent, later(30000, 70.03)), false, 'within a frame of a 60 Hz screen');
+  assert.strictEqual(clockMoved(sent, later(30000, 70.04)), true, 'more than a frame out');
+  assert.strictEqual(clockMoved(sent, later(30000, 69.96)), true, 'behind as well as ahead');
+  assert.strictEqual(clockMoved(sent, later(500, 12)), true, 'a tap that put the beat ahead');
+  assert.strictEqual(clockMoved(sent, later(5000, 10)), false, 'a stopped clock stands where it was sent');
+  assert.strictEqual(clockMoved(sent, later(0, 10, { bpm: 128 })), true, 'a new tempo');
+  assert.strictEqual(clockMoved(sent, later(0, 10, { epoch: 4 })), true, 'a new epoch');
+  assert.strictEqual(clockMoved(sent, later(0, 10, { source: 'live' })), true, 'a new source');
+  assert.strictEqual(clockMoved(undefined, sent), true, 'nothing sent yet');
+  assert.strictEqual(clockMoved({ source: 'tap', bpm: 120 }, { source: 'tap', bpm: 120 }), false, 'no beat to carry: compared as it is');
+
+  const differ = new StateDiffer();
+  assert.deepStrictEqual(differ.diff({ clock: sent, bpm: 120 }).map((p) => Object.keys(p.set)), [['clock', 'bpm']]);
+  assert.deepStrictEqual(differ.diff({ clock: later(1000, 12), bpm: 120 }), [], 'carried on as expected');
+  assert.deepStrictEqual(differ.diff({ clock: later(1000, 12), bpm: 121 }).map((p) => p.set), [{ bpm: 121 }], 'only the key that changed');
+  assert.deepStrictEqual(differ.diff({ clock: later(2000, 15), bpm: 121 }).map((p) => p.set), [{ clock: later(2000, 15) }]);
 });
 
 // ── Over a real socket ───────────────────────────────────────────────────────
@@ -155,4 +180,59 @@ test('the frame the feed sends is the engine\'s universes as they are patched', 
   assert.ok(universes.length >= 1);
   const last = Math.max(...state.fixtures.filter((f) => (f.universe ?? 0) === universes[0]).map((f) => f.address));
   assert.ok(frame[universes[0]].length >= last, 'up to the last patched channel at least');
+});
+
+// A key no domain names goes out as `system`, which no view watches.
+test('every key of the live state names its domain, the tempo mode the look\'s', () => {
+  assert.strictEqual(domainOf('tempoMode'), 'look');
+  const unnamed = Object.keys(getLiveState()).filter((key) => domainOf(key) === 'system');
+  assert.deepStrictEqual(unnamed, []);
+});
+
+// The live state is published when something in it changed, by every
+// broadcast and the once-a-second sweep. A clock read afresh each time must
+// not make every one of them a change, to either protocol.
+test('a beat that moves as it should adds nothing to the broadcasts', async () => {
+  const s = await serve();
+  const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    const v2 = s.client({ protocol: 2 });
+    const v1 = s.client();
+    await Promise.all([next(v2, 'snapshot'), next(v1, 'state')]);
+    s.integrations.broadcast();
+    await pause(50);
+    const patches = [];
+    const states = [];
+    v2.on('patch', (p) => patches.push(p));
+    v1.on('state', (w) => states.push(w));
+
+    for (let i = 0; i < 20; i++) { s.integrations.broadcast(); await pause(10); }
+    await pause(50);
+    assert.deepStrictEqual([patches.length, states.length], [0, 0], 'twenty sweeps of a running clock: nothing to send');
+
+    applyPatch({ masterDimmer: 77 });
+    s.integrations.broadcast();
+    await pause(50);
+    assert.deepStrictEqual(patches.map((p) => p.set), [{ masterDimmer: 77 }], 'the fader, without the clock');
+    assert.strictEqual(states.length, 1);
+    assert.ok(Math.abs(states[0].clock.at - Date.now()) < 100, 'protocol 1 gets the whole state, the clock read with it');
+
+    // The clock stopping is news once, and standing still is not.
+    conductor.setRunning(false);
+    for (let i = 0; i < 10; i++) { s.integrations.broadcast(); await pause(10); }
+    await pause(50);
+    assert.deepStrictEqual(patches.slice(1).map((p) => Object.keys(p.set)), [['clock']]);
+    const stopped = patches[1].set.clock;
+    conductor.setRunning(true);
+    await pause(30);
+    s.integrations.broadcast();
+    await pause(50);
+    assert.strictEqual(patches.length, 3, 'moving again is news');
+    assert.ok(patches[2].set.clock.beatPos >= stopped.beatPos && patches[2].set.clock.epoch === stopped.epoch);
+    assert.strictEqual(states.length, 3, 'protocol 1 is sent exactly when protocol 2 is');
+  } finally {
+    conductor.setRunning(true);
+    applyPatch({ masterDimmer: 255 });
+    await s.close();
+  }
 });
