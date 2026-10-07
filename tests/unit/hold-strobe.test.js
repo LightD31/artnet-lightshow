@@ -7,7 +7,8 @@ import assert from 'node:assert';
 
 import { createRenderer } from '../../src/server/renderer.ts';
 import * as universes from '../../src/server/universes.ts';
-import { getProfile, profilesRevision, BUILTIN_PROFILE_ID, HUE_COLOR_PROFILE_ID } from '../../src/server/profiles.ts';
+import { getProfile, profilesRevision, registerProfile, BUILTIN_PROFILE_ID } from '../../src/server/profiles.ts';
+import { HUE_COLOR } from './hue-test-lamps.js';
 import { COLOR_PRESETS, ENERGY_EFFECTS } from '../../src/server/presets.ts';
 import { createPreviewSampler } from '../../src/shared/preview.ts';
 import { buildRig } from '../../src/shared/rig.ts';
@@ -18,11 +19,12 @@ const BLUE = COLOR_PRESETS[5];
 
 const fixture = (id, address, profileId, extra = {}) => ({
   id, address, universe: 0, profileId, maxBrightness: 255, override: null,
-  position: null, group: null, geometry: null, hue: false, ...extra,
+  position: null, group: null, geometry: null, ...extra,
 });
 
 const PAR = fixture(0, 1, BUILTIN_PROFILE_ID);
-const LAMP = fixture(1, 20, HUE_COLOR_PROFILE_ID, { hue: true, output: { protocol: 'hue', channel: 1 } });
+registerProfile(HUE_COLOR);
+const LAMP = fixture(1, 20, HUE_COLOR.id, { output: { protocol: 'hue', channel: 1 } });
 
 // Red over blue, so a flash in colour B is told from the look in colour A.
 const LOOK = { pattern: 'solid', colorA: 0, colorB: 5, colorC: 0, colorD: 5, bpm: 120, beatDivision: 1 };

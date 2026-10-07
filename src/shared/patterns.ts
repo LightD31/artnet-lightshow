@@ -55,7 +55,7 @@ export interface PatternContext {
   stepMs?: number | null;
   /** Each slot's place on the stage plot and its group, or null for an unplaced rig. */
   plan?: StagePlan | null;
-  /** The slots that are Hue lamps (or follow one) and so are never flashed, or null. */
+  /** The slots that are Hue lamps and so are never flashed, or null. */
   noFlash?: readonly boolean[] | null;
   write(i: number, colour: Colour, dim: number, strobe: number): void;
 }

@@ -67,8 +67,8 @@ export interface Layout {
    * `folded`, when the look is mirrored: the slots a stepped pattern travels
    * through, each one or two fixtures standing symmetrically about the
    * centre of the stage, from the middle out (members indices). `noFlash`
-   * marks the slots that are Hue lamps (or lights that follow one), which
-   * are never flashed, or is null when there are none.
+   * marks the slots that are Hue lamps, which are never flashed, or is null
+   * when there are none.
    */
   fixtures: { members: number[]; order: number[]; xs: number[] | null; folded?: number[][]; plan: StagePlan | null; noFlash: boolean[] | null };
   units: { list: number[]; xs: number[] | null; ys: number[] | null; plan: StagePlan | null; noFlash: boolean[] | null };
@@ -279,9 +279,9 @@ function rigSignature(fixtures: readonly StageFixture[], revision: number | stri
   return key;
 }
 
-/** Is a fixture a Hue lamp, or a light that follows one: never flashed. */
+/** Is a fixture a Hue lamp: never flashed. */
 function isHue(fixture: StageFixture): boolean {
-  return !!fixture.hue || !!(fixture.output && fixture.output.protocol === 'hue');
+  return !!(fixture.output && fixture.output.protocol === 'hue');
 }
 
 /** The flags of the slots that are Hue lamps, or null when none is. */

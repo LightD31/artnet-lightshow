@@ -163,8 +163,6 @@ export interface StageFixture {
   profileId?: string;
   /** Where its universes go (a Fixture's `output`): a Hue lamp is never flashed. */
   output?: { protocol: string } | null;
-  /** A Hue lamp, or a light that follows one, already resolved (the engine's render fixture). */
-  hue?: boolean;
 }
 
 /** A fixture in the patch. */
