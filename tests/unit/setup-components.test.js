@@ -23,7 +23,7 @@ async function load() {
         export { rigSelectionSig } from './public-src/rig-ui.js';
         export { lineFromEnds, geometryOf } from './public-src/stage-geometry.js';
         export { SettingsSection } from './public-src/components/setup/Section.jsx';
-        export { SERVER, ENGINE, LIVE } from './public-src/components/setup/specs.js';
+        export { SERVER, ENGINE, LIVE, SHOW } from './public-src/components/setup/specs.js';
         export { PatchTable, conflictsOf } from './public-src/components/setup/PatchTable.jsx';
         export { Inspector } from './public-src/components/setup/Inspector.jsx';
         export { rowPositions, endToEnd } from './public-src/components/setup/PlanEditor.jsx';
@@ -91,6 +91,15 @@ test('a select keeps a stored value the list no longer has, and says so', () => 
   assert.match(html, /Scarlett 2i2 \(not found\)/);
   assert.match(html, /The default input/, 'the input list, for an input');
   assert.doesNotMatch(html, /Speakers/);
+});
+
+test('Settings → Show selects the saved Hue flash mode', () => {
+  ui.settingsSig.value = { settings: { outputs: { armed: false }, auto: { setMemory: true }, safety: { flashLimit: false }, hue: { strobe: 'pulse' } }, secrets: {} };
+  const html = ui.html(ui.h(ui.SettingsSection, ui.SHOW));
+  const select = html.match(/<select id="set-hue.strobe"[^>]*>(.*?)<\/select>/);
+  assert.ok(select);
+  assert.deepStrictEqual([...select[1].matchAll(/<option (?:selected )?value="([^"]+)"/g)].map((m) => m[1]), ['flash', 'pulse']);
+  assert.match(select[0], /<option selected value="pulse"/);
 });
 
 test('overlaps: on one universe only, and a strip on every universe it runs over', () => {
