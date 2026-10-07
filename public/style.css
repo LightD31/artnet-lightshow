@@ -366,6 +366,23 @@ button.cb-bpm-num:focus-visible { outline: 2px solid var(--accent); outline-offs
   cursor: help;
 }
 .cb-bpm-source.locked { color: var(--accent); border-color: var(--accent); }
+.cb-bpm-sources { display: flex; gap: 4px; align-items: center; }
+.cb-bpm-follow {
+  margin-top: 4px;
+  padding: 1px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--accent-fill);
+  color: #fff;
+  font: inherit;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.cb-bpm-follow:hover { background: var(--accent-hover); }
+.cb-bpm-follow:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .cb-tap {
   height: 44px;
@@ -716,6 +733,19 @@ button.cb-bpm-num:focus-visible { outline: 2px solid var(--accent); outline-offs
 .chip-warn .perform-chip-dot { background: var(--amber); }
 .chip-off { border-color: var(--red); }
 .chip-off .perform-chip-dot { background: var(--red); }
+.perform-follow {
+  min-height: 44px;
+  padding: 6px 14px;
+  background: var(--accent-fill);
+  color: #fff;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.perform-follow:hover { background: var(--accent-hover); }
 
 .perform-body { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; }
 .perform-controls { display: grid; gap: 12px; }
@@ -3783,7 +3813,7 @@ input[type=range]::-moz-range-thumb {
    ============================================================= */
 @media (pointer: coarse) {
   .btn, .btn.sm, .btn.icon, .segmented-btn, .bd-tab, .bd-toggle, .mode-tab, .nav-link,
-  .header-tool, .header-theme, .cb-energy-btn, .cb-tap, .cb-play, .cb-blackout,
+  .header-tool, .header-theme, .cb-energy-btn, .cb-tap, .cb-play, .cb-blackout, .cb-bpm-follow,
   .palette-btn, .pattern-btn, .color-slot-tab, .cue-recall, .cue-capture, .sync-nudge,
   .transport-btn, .warm-toggle, .auto-select, .warm-playlist-select, .shortcuts-tab,
   .sub-tab, .remove-btn, .wizard-step-btn, .ofl-hit, .file-upload-btn, .timeline-section,

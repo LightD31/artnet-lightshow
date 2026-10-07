@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import { send, emitTap, pick } from '../state.js';
+import { send, emitTap, followMusic, pick } from '../state.js';
 import { formatBpm, clockSource } from '../utils.js';
 import { useDraft } from '../draft.js';
 import { useVoicePads, holdsWhilePressed, padKey, rapidPad } from '../voice-pad.js';
@@ -104,7 +104,13 @@ export function CommandBar() {
         >
           <BpmEntry bpm={s.bpm} />
           <span class="cb-bpm-label">BPM</span>
-          <span class={`cb-bpm-source ${clock.locked ? 'locked' : ''}`} title={clock.title}>{clock.label}</span>
+          <span class="cb-bpm-sources">
+            <span class={`cb-bpm-source ${clock.locked ? 'locked' : ''}`} title={clock.title}>{clock.label}</span>
+            {s.clock && s.clock.byHand && (
+              <button type="button" class="cb-bpm-follow" onClick={followMusic}
+                title="The tempo is held by hand: follow the deck, the song or the live beat again">Follow</button>
+            )}
+          </span>
         </div>
         <button class="cb-tap" onClick={emitTap} title="Tap tempo (Space)">TAP</button>
         <div class="cb-bpm-controls">
