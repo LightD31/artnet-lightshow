@@ -45,7 +45,7 @@ test('prepared palettes parse hex once per instance and keep the spec serializab
   assert.deepStrictEqual(spec, before, 'no parsed colours or random results enter the spec');
 });
 
-test('Light DJ random hues avoid the first four cached slots and their own previous hue', () => {
+test("random hues exclude four cached slots and the previous hue", () => {
   const seed = seedFrom('s');
   const spec = { kind: 'x', params: {}, palette: Array.from({ length: 8 }, () => ({ random: true })) };
   const prepared = preparePalette(spec);
@@ -93,7 +93,7 @@ test('palette replay, seek, clone and instance isolation agree', () => {
   assert.deepStrictEqual(resolvePalette(spec, null, [], otherSeed, 4, prepared), resolvePalette(spec, null, [], otherSeed, 4));
 });
 
-test('a random entry resolves to one of Light DJ\'s eight hues, stable per roll and changing with it', () => {
+test("random entries remain stable within a roll", () => {
   const spec = { kind: 'x', params: {}, palette: [{ random: true }, { random: true }] };
   const a = resolvePalette(spec, null, [], seedFrom('s'), 3);
   assert.deepStrictEqual(a, resolvePalette(spec, null, [], seedFrom('s'), 3));

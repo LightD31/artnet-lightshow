@@ -136,7 +136,7 @@ test('the renderer renders clips over their fixtures and the look elsewhere', ()
   assert.deepEqual(shown(r.at(51_500, playing(t, 100))), { 10: RED, 11: RED, 12: RED, 13: RED });
 });
 
-test('a clip owns its fixture\'s strobe channel: the look\'s strobe runs only where no clip plays', () => {
+test("clips own their fixture strobe channel", () => {
   const r = rig();
   const plain = rig();
   const t = table(1, [lane('a')], [tclip('blue', 'a', 0, 4, paint('#0000FF'), { fixtureIds: [10] })]);
@@ -196,7 +196,7 @@ test('a clip plays over a stopped look, which keeps its own layer underneath', (
   assert.notEqual(colour(after[10]), '0,0,255,0');
 });
 
-test('a shared clip renders once a frame for all its fixtures; each lap is an activation of its own, clip:<id>:<lap>', () => {
+test("shared clips activate once per lap", () => {
   probeLog.length = 0;
   probeInits = 0;
   const r = rig();
@@ -238,7 +238,7 @@ test('a shared clip renders once a frame for all its fixtures; each lap is an ac
   assert.equal(wrapped.anchorBeat, 3, 'played from where the loop came round');
 });
 
-test('a lap\'s wall origin is where the music crossed its start, and stays there through a tempo change', () => {
+test("clip wall origins survive tempo changes", () => {
   probeLog.length = 0;
   const r = rig();
   const t = table(1, [lane('a')], [tclip('p', 'a', 0, 64, probe('w'), { loopBeats: 1 })]);
@@ -264,7 +264,7 @@ test('a lap\'s wall origin is where the music crossed its start, and stays there
   assert.ok(Math.abs(probeLog[0].startedAtMs - (1_250 - 0.49 * 500)) < 1e-6, `${probeLog[0].startedAtMs}`);
 });
 
-test('a new table keeps the clips that did not change playing, and starts the changed ones again', () => {
+test("table edits restart only changed clips", () => {
   probeLog.length = 0;
   const r = rig();
   const a = tclip('a', 'x', 0, 64, probe('a'), { fixtureIds: [10] });
@@ -337,7 +337,7 @@ function catalogueTable(revision) {
   ]);
 }
 
-test('the worker renders a table it is handed with a render request, byte for byte as the main thread does', async () => {
+test("worker sequence output matches the main thread", async () => {
   const worker = await captureWorker();
   try {
     const store = universes.createUniverseStore(universes.allocateShared());
@@ -450,7 +450,7 @@ test('the table is posted once per revision, not per frame', async () => {
   }
 });
 
-test('on the main thread the engine plays the sequencer\'s table straight from its source', async () => {
+test("main-thread rendering reads the live sequence table", async () => {
   state.artnet.enabled = false;
   const sequencer = new Sequencer({ resolve: () => null });
   sequencer.load({ id: 's', name: 'S', lanes: [lane('a')], clips: [{ id: 'c', laneId: 'a', startBeat: 0, lengthBeats: 1e6, effect: { kind: 'test.seqPaint', palette: ['#00FF00'] } }] });
@@ -487,7 +487,7 @@ test('on the main thread the engine plays the sequencer\'s table straight from i
   }
 });
 
-test('a worker takes a new table up with the snapshot that names it: no frame between the two plays the look', async () => {
+test("worker snapshots take their sequence table atomically", async () => {
   state.artnet.enabled = false;
   const shared = universes.allocateShared();
   const w = new Worker(WORKER, { workerData: { shared, epochMs: hrtimeMs(), periodMs: FRAME_MS } });
@@ -574,7 +574,7 @@ test('the preview renders the same clips', () => {
   assert.ok(keys(3) >= 2, 'the track\'s clip comes and goes');
 });
 
-test('the preview pauses and stops as the rig does: a held selection playing on, a held picture, black', () => {
+test("preview sequence transport matches the rig", () => {
   const BEATS = Array.from({ length: 41 }, (_, i) => i * 0.5);
   const grid = makeGrid(BEATS);
   const t = table(4, [lane('a'), lane('b')], [
@@ -622,7 +622,7 @@ test('the preview pauses and stops as the rig does: a held selection playing on,
   }
 });
 
-test('a beat that is not a number covers nothing, stopped as when playing; the next beat that is one shows the sequence', () => {
+test("invalid beats leave no sequence coverage", () => {
   const t = table(4, [lane('a')], [tclip('A', 'a', 0, 8, paint('#00FF00'))]);
   const held = { startBeat: 0, loop: null, generation: 1, stop: { mode: 'hold', position: 1, traversal: 0 } };
   for (const sequenceTransport of [{ startBeat: 0, loop: null, generation: 1 }, held]) {
@@ -633,7 +633,7 @@ test('a beat that is not a number covers nothing, stopped as when playing; the n
   }
 });
 
-test('glow rides the expression level on its own curve as the base and as a clip, as it does as a voice: never multiplied by it again', () => {
+test("glow uses its expression curve exactly once", () => {
   const GLOW = presetById('energy.glow').spec;
   const WHITE = paint('#FFFFFF');
   const half = { showDynamics: { level: 0.5 } };
@@ -681,7 +681,7 @@ test('the preview plays glow\'s own curve too, as the base and as a clip', () =>
   }
 });
 
-test('one lamp: lanes, tracks and explicit fixture ids that miss it, a muted lane, the look\'s strobe and a voice', () => {
+test("single-lamp sequence ownership follows lanes and voices", () => {
   const ONE = [fixture(10, 1)];
   const r = rig(ONE);
   const sequencer = new Sequencer({ resolve: () => null });

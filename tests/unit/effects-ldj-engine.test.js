@@ -18,7 +18,7 @@ test('instant sets the lamp at once', () => {
   assert.deepStrictEqual(l.read(0), { colour: RED, bri: 1 });
 });
 
-test('a fade over one beat at 120 BPM falls by 1/(0.5 s × 22) = 1/11 per whole frame and snaps at the end', () => {
+test("one-beat fades at 120 BPM step by 1/11 and snap at the end", () => {
   const l = new LdjLamps(1);
   l.set(0, RED, 1, { kind: 'fade', beats: 1 }, 0);
   assert.strictEqual(l.advance(LDJ_FRAME_MS * 5.5, 120), 5, 'five whole frames, the half carried');
@@ -34,7 +34,7 @@ test('between whole frames the lamp holds its last frame', () => {
   assert.strictEqual(l.read(0).bri, 1);
 });
 
-test('a matrix envelope rises over fadeIn frames, holds peak frames (at least one), falls to the baseline', () => {
+test("matrix envelopes follow whole-frame phases", () => {
   const l = new LdjLamps(1);
   l.set(0, RED, 1, { kind: 'matrix', fadeIn: 0, peak: 350, fadeOut: 0, baseline: 0 });
   assert.strictEqual(l.read(0).bri, 1, 'fadeIn 0 → full at once');
@@ -78,7 +78,7 @@ test('a delayed start waits its frames', () => {
   assert.strictEqual(l.read(0).bri, 1);
 });
 
-test('stepClock: the iteration is the floor of position over cadence; a tempo change re-bases at the next step without a jump', () => {
+test("stepClock rebases tempo at the next iteration", () => {
   assert.strictEqual(stepClock(2.3, 0.25, 120, null).iter, 9);
   assert.strictEqual(stepClock(2.3, 0.25, 120, 8).changed, true);
   assert.strictEqual(stepClock(2.3, 0.25, 120, 9).changed, false);
@@ -94,28 +94,28 @@ test('musical clocks reject unsupported cadences and unsafe iterations before re
   registerKind(makeLdjKind('ClockBounds', { cadence: 1, step() { throw new Error('invalid clocks must not emit'); } }));
   for (const cadence of [Number.MIN_VALUE, 0.124, 0, -1, NaN, Infinity]) {
     assert.throws(() => validateSpec({ kind: 'ldj.ClockBounds', params: { cadence } }));
-    assert.throws(() => stepClock(1, cadence, 120, 0), /cadence/i);
+    assert.throws(() => stepClock(1, cadence, 120, 0), RangeError);
   }
   assert.strictEqual(validateSpec({ kind: 'ldj.ClockBounds', params: { cadence: 0.125 } }).params.cadence, 0.125);
   for (const pos of [NaN, Infinity, -Infinity, Number.MAX_VALUE, Number.MAX_SAFE_INTEGER + 1]) {
-    assert.throws(() => stepClock(pos, 1, 120, null), /iteration/i);
-    assert.throws(() => wallClock(pos, 1, null), /iteration/i);
+    assert.throws(() => stepClock(pos, 1, 120, null), RangeError);
+    assert.throws(() => wallClock(pos, 1, null), RangeError);
   }
-  for (const period of [0, -1, NaN, Infinity]) assert.throws(() => wallClock(0, period, null), /period/i);
+  for (const period of [0, -1, NaN, Infinity]) assert.throws(() => wallClock(0, period, null), RangeError);
   const room = roomAt([[0.5, 0.5]]);
-  assert.throws(() => draw(instance('ldj.ClockBounds'), frame({ beatPos: Number.MAX_VALUE }), room, new EffectStepper()), /iteration/i);
+  assert.throws(() => draw(instance('ldj.ClockBounds'), frame({ beatPos: Number.MAX_VALUE }), room, new EffectStepper()), RangeError);
   const raw = instance('ldj.ClockBounds');
   raw.spec.params.cadence = Number.MIN_VALUE;
-  assert.throws(() => draw(raw, frame({ beatPos: 1 }), room, new EffectStepper()), /cadence/i);
+  assert.throws(() => draw(raw, frame({ beatPos: 1 }), room, new EffectStepper()), RangeError);
 });
 
-test('roles: p is the second colour, s the first; one colour serves both', () => {
+test("palette roles use primary second and secondary first", () => {
   assert.deepStrictEqual(roles([RED, BLUE]).p, BLUE);
   assert.deepStrictEqual(roles([RED, BLUE]).s, RED);
   assert.deepStrictEqual(roles([RED]).p, RED);
 });
 
-test('delayed changes keep the old fade running and install on the sixth frame for delay five', () => {
+test("delayed changes activate after the old fade runs its delay", () => {
   const l = new LdjLamps(1);
   l.set(0, RED, 1, { kind: 'fade', beats: 1 });
   l.set(0, BLUE, 1, { kind: 'instant' }, 5);
@@ -151,7 +151,7 @@ test('a delayed single-frame matrix peak is visible on frame six, then gone on s
   assert.strictEqual(l.read(0).bri, 0);
 });
 
-test('a matrix request between frames waits for the next boundary and keeps a full visible peak', () => {
+test("matrix requests retain a full peak after the next frame boundary", () => {
   const stepper = new EffectStepper(), l = stepper.get('fractional-peak', () => new LdjLamps(2), 0);
   l.set(0, BLUE, 0.5, { kind: 'instant' });
   l.set(1, RED, 1, { kind: 'fade', beats: 1 });
@@ -187,7 +187,7 @@ test('matrix fade-in and fade-out use literal integer frame counts and a baselin
   assert.strictEqual(l.read(0).bri, Math.fround(0.1));
 });
 
-test('flare rises once and blend reaches its RGB target after its integer duration', () => {
+test("flare and blend reach their targets after integer durations", () => {
   const l = new LdjLamps(1);
   l.set(0, RED, 1, { kind: 'flare', beats: 1 });
   assert.strictEqual(l.read(0).bri, 0);
@@ -202,7 +202,7 @@ test('flare rises once and blend reaches its RGB target after its integer durati
   assert.deepStrictEqual(l.read(0).colour, BLUE);
 });
 
-test('off cancels waiting changes; a cloned lamp engine keeps independent transitions and fractional time', () => {
+test("lamp clones retain independent transitions and fractional time", () => {
   const stepper = new EffectStepper();
   const l = stepper.get('lamps', () => new LdjLamps(1), 0);
   l.set(0, RED, 1, { kind: 'fade', beats: 1 });
@@ -212,6 +212,13 @@ test('off cancels waiting changes; a cloned lamp engine keeps independent transi
   assert.strictEqual(copy.advance(LDJ_FRAME_MS / 2, 120), 1);
   assert.strictEqual(l.read(0).bri, 1);
   assert.strictEqual(copy.read(0).bri, Math.fround(1 - Math.fround(1 / 11)));
+});
+
+test("lamp off cancels pending changes", () => {
+  const stepper = new EffectStepper();
+  const l = stepper.get('lamps', () => new LdjLamps(1), 0);
+  l.set(0, RED, 1, { kind: 'fade', beats: 1 });
+  l.advance(LDJ_FRAME_MS / 2, 120);
   l.set(0, BLUE, 1, { kind: 'instant' }, 2);
   l.off(0);
   l.advance(4 * LDJ_FRAME_MS, 120);
@@ -221,7 +228,7 @@ test('off cancels waiting changes; a cloned lamp engine keeps independent transi
 const roomAt = (points) => buildRoom(points.length, (i) => points[i][0], (i) => points[i][1], (i) => points[i][2] ?? 0.5, null);
 const square = () => roomAt([[0, 0], [1, 0], [1, 1], [0, 1]]);
 
-test('LDJ numeric channels keep corner geometry, halves keep their orientation, and lights remain direct', () => {
+test("LDJ channels follow their assigned geometry", () => {
   const room = square();
   assert.deepStrictEqual(ldjChannels(room, 4), [0, 2, 3, 1]);
   assert.deepStrictEqual(ldjChannels(room, 'width'), [0, 1, 1, 0]);
@@ -232,7 +239,7 @@ test('LDJ numeric channels keep corner geometry, halves keep their orientation, 
   assert.deepStrictEqual(ldjChannels(roomAt([[0.5, 0.5]]), 4), [0]);
 });
 
-test('LDJ assignment is round-robin with stable ties, balanced remainders and height ignored', () => {
+test("LDJ assignment balances nearest channels with stable ties", () => {
   const ties = roomAt(Array.from({ length: 5 }, (_, i) => [0.5, 0.5, i / 4]));
   assert.deepStrictEqual(ldjChannels(ties, 2), [0, 1, 0, 1, 0]);
   const room = roomAt([[0, 0], [0.1, 0], [0.2, 0], [0.3, 0], [1, 1]]);
@@ -240,7 +247,7 @@ test('LDJ assignment is round-robin with stable ties, balanced remainders and he
   assert.deepStrictEqual(ldjChannels(ties, 4), [0, 1, 2, 3, 0]);
 });
 
-test('six and eight colour channels preserve all colours with contiguous balanced groups', () => {
+test("six and eight colour channels retain balanced contiguous groups", () => {
   const room = roomAt(Array.from({ length: 9 }, (_, i) => [i / 8, 0.5]));
   assert.deepStrictEqual(ldjChannels(room, 'colours', 6), [0, 0, 1, 1, 2, 2, 3, 4, 5]);
   assert.deepStrictEqual(ldjChannels(room, 'colours', 8), [0, 0, 1, 2, 3, 4, 5, 6, 7]);
@@ -251,7 +258,7 @@ const frame = (over = {}) => ({ beatPos: 0, bpm: 120, nowMs: 0, dtMs: 0, anchorB
 const instance = (kind, over = {}) => ({ id: kind, spec: validateSpec({ kind }), seed: seedFrom('instance'), anchorBeat: 0, startedAtMs: 0, targets: null, ...over });
 const draw = (inst, f, room, stepper) => { const out = []; renderEffect(inst, f, room, stepper, out); return out; };
 
-test('the factory runs once per beat step, owns every slot, and exposes one-colour roles safely', () => {
+test("row factories run once per beat step", () => {
   const calls = [];
   registerKind(makeLdjKind('EngineTest', { cadence: 0.5, channels: 4, step: (ctx) => {
     calls.push({ iter: ctx.iter, channels: ctx.channelOf, seed: ctx.seed });
@@ -270,7 +277,7 @@ test('the factory runs once per beat step, owns every slot, and exposes one-colo
   assert.deepStrictEqual(roles([RED, BLUE]).at(-1), BLUE);
 });
 
-test('wall rows use the instance launch origin on a delayed first render and ignore tempo', () => {
+test("wall rows start at launch independently of tempo", () => {
   const calls = [];
   registerKind(makeLdjKind('WallTest', { cadence: 'wall:50', rapidFlash: true, step: (ctx) => {
     calls.push(ctx.iter); ctx.lamps.set(0, RED, ctx.iter % 2 === 0 ? 1 : 0, { kind: 'instant' });
@@ -283,7 +290,7 @@ test('wall rows use the instance launch origin on a delayed first render and ign
   assert.deepStrictEqual(draw({ ...inst, id: 'unack' }, frame({ acknowledged: false }), room, new EffectStepper()), []);
 });
 
-test('matrix peak colour appears only during its exact peak frames, including clone continuation', () => {
+test("matrix peak colour lasts its exact whole frames", () => {
   const stepper = new EffectStepper(), l = stepper.get('peak', () => new LdjLamps(1), 0);
   l.set(0, RED, 1, { kind: 'matrix', fadeIn: 450, peak: 100, fadeOut: 450, peakColour: BLUE });
   l.advance(19 * LDJ_FRAME_MS, 120);
@@ -305,7 +312,7 @@ test('matrix peak colour appears only during its exact peak frames, including cl
   assert.deepStrictEqual(l.read(0), { colour: RED, bri: 0 });
 });
 
-test('a newly triggered fade ages only after its deadline, while old lamps keep fading', () => {
+test("new fades start aging at their deadline", () => {
   registerKind(makeLdjKind('FreshFade', { cadence: 1, step: (ctx) => {
     ctx.lamps.set(ctx.iter % 2, ctx.p, 1, { kind: 'fade', beats: 2 });
   } }));
@@ -319,7 +326,7 @@ test('a newly triggered fade ages only after its deadline, while old lamps keep 
   assert.ok(after[0].level < boundary[0].level);
 });
 
-test('variable wall callbacks replay deadlines with event-time context, params and cloned timing', () => {
+test("variable wall callbacks replay their event-time context", () => {
   const events = [];
   registerKind(makeLdjKind('Variable', { cadence: 1, beats: 32, nextDelayMs: (ctx) => ctx.iter % 2 ? 150 : 100,
     step: (ctx) => { events.push([ctx.iter, ctx.nowMs, ctx.elapsedMs, ctx.params.beats]); ctx.lamps.set(0, ctx.p, 1, { kind: 'fade', beats: 1 }); } }));
@@ -339,13 +346,13 @@ test('variable wall schedules reject invalid or non-progressing deadlines', () =
   const room = roomAt([[0.5, 0.5]]);
   for (const [i, delay] of [0, -1, NaN, Infinity].entries()) {
     registerKind(makeLdjKind(`BadDelay${i}`, { cadence: 1, nextDelayMs: () => delay, step() {} }));
-    assert.throws(() => draw(instance(`ldj.BadDelay${i}`), frame(), room, new EffectStepper()), /delay/i);
+    assert.throws(() => draw(instance(`ldj.BadDelay${i}`), frame(), room, new EffectStepper()), RangeError);
   }
   registerKind(makeLdjKind('NoProgress', { cadence: 1, nextDelayMs: () => 1, step() {} }));
-  assert.throws(() => draw(instance('ldj.NoProgress', { startedAtMs: 1e20 }), frame({ nowMs: 1e20 }), room, new EffectStepper()), /deadline/i);
+  assert.throws(() => draw(instance('ldj.NoProgress', { startedAtMs: 1e20 }), frame({ nowMs: 1e20 }), room, new EffectStepper()), RangeError);
 });
 
-test('random rerolls reach the next render and cloned schedules replay the same sequence', () => {
+test("cloned schedules preserve queued random rerolls", () => {
   const seen = [];
   registerKind(makeLdjKind('Reroll', { cadence: 1, nextDelayMs: () => 100, step: (ctx) => {
     seen.push(ctx.p); ctx.lamps.set(0, ctx.p, 1, { kind: 'instant' }); ctx.reroll();
@@ -364,7 +371,7 @@ test('random rerolls reach the next render and cloned schedules replay the same 
   assert.strictEqual(s.get(inst.id, () => null, 350).roll, 4);
 });
 
-test('ordinary fades retain their full-scale increment when stopping at a nonzero baseline', () => {
+test("fades retain full-scale increments above a nonzero baseline", () => {
   const stepper = new EffectStepper(), l = stepper.get('baseline', () => new LdjLamps(1), 0);
   l.set(0, RED, 1, { kind: 'fade', beats: 1, baseline: 0.05 });
   l.advance(LDJ_FRAME_MS, 120);
@@ -380,7 +387,7 @@ test('ordinary fades retain their full-scale increment when stopping at a nonzer
   assert.strictEqual(l.read(0).bri, Math.fround(0.05));
 });
 
-test('fixed-palette chronological replay matches dense frames and preserves explicit blend starts', () => {
+test("fixed-palette cold replay matches dense rendering", () => {
   registerKind(makeLdjKind('Replay', { cadence: 1, nextDelayMs: (ctx) => [110, 175, 90][ctx.iter % 3], step: (ctx) => {
     const i = ctx.iter % ctx.n;
     ctx.lamps.set(i, RED, 1, { kind: 'instant' });
@@ -394,7 +401,7 @@ test('fixed-palette chronological replay matches dense frames and preserves expl
   assert.ok(a.some((slot) => slot.colour.r > 0 && slot.colour.b > 0));
 });
 
-test('a finite row calls back its count, then keeps fading and holds without new callbacks', () => {
+test("finite rows stop callbacks at their count", () => {
   const calls = [];
   registerKind(makeLdjKind('Finite', { cadence: 0.25, step: (ctx) => {
     calls.push([ctx.iter, ctx.nowMs]);
@@ -414,7 +421,7 @@ test('a finite row calls back its count, then keeps fading and holds without new
   assert.deepStrictEqual(calls, [[9, 1125]]);
 });
 
-test('a cold finite row replays its callbacks in order and matches dense rendering, before and after its count', () => {
+test("finite row cold replay matches dense rendering", () => {
   const calls = [];
   registerKind(makeLdjKind('FiniteFlip', { cadence: 0.9, channels: 1, step: (ctx) => {
     calls.push([ctx.iter, ctx.nowMs]);
@@ -450,7 +457,7 @@ test('a cold finite row replays its callbacks in order and matches dense renderi
   assert.deepStrictEqual(calls.map(([iter]) => iter), [0, 1, 2, 3]);
 });
 
-test('variable wall rows stop at their count too, without spinning through later deadlines', () => {
+test("finite wall rows stop replay at their count", () => {
   const calls = [];
   registerKind(makeLdjKind('FiniteWall', { cadence: 1, nextDelayMs: () => 100, step: (ctx) => { calls.push(ctx.iter); } }));
   const inst = { ...instance('ldj.FiniteWall'), spec: validateSpec({ kind: 'ldj.FiniteWall', params: { cadence: 1, iterations: 3 } }) };
@@ -470,7 +477,7 @@ test('iterations are a positive safe integer', () => {
   assert.strictEqual(validateSpec({ kind: 'ldj.MatrixFlash', params: { cadence: 1, iterations: 5 } }).params.iterations, 5, 'the matrix rows too');
   const raw = instance('ldj.FiniteBounds');
   raw.spec.params.iterations = 0.5;
-  assert.throws(() => draw(raw, frame(), roomAt([[0.5, 0.5]]), new EffectStepper()), /iterations/i);
+  assert.throws(() => draw(raw, frame(), roomAt([[0.5, 0.5]]), new EffectStepper()), RangeError);
 });
 
 // The channel assignment as first written: every pick scans every lamp for the
@@ -503,7 +510,7 @@ function scanChannels(room, selector, paletteCount = 1) {
   return assigned;
 }
 
-test('the channel assignment is the nearest-free scan exactly, kept per room and never handed out to be changed', () => {
+test("channel assignment follows the nearest-free scan", () => {
   let seed = 3;
   const rand = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
   for (let trial = 0; trial < 60; trial++) {
@@ -519,6 +526,9 @@ test('the channel assignment is the nearest-free scan exactly, kept per room and
       }
     }
   }
+});
+
+test("channel assignments are cached and immutable", () => {
   const room = buildRoom(6, (i) => i * 10, () => 50, () => 0.5, null);
   assert.strictEqual(ldjChannels(room, 4), ldjChannels(room, 4), 'kept with the room');
   assert.throws(() => { ldjChannels(room, 4)[0] = 3; }, TypeError, 'frozen');

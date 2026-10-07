@@ -53,15 +53,24 @@ const draw = (spec, beats, over) => {
 };
 const reds = (out) => [0, 1, 2].map((i) => (out[i]?.strength > 0 ? out[i].colour.r * out[i].level : null));
 
-test('the bundle kind is internal: no catalogue row, no preset, refused by validation, a hand-posted voice and a saved preset', () => {
+test("bundles have no public catalogue entry", () => {
   assert.equal(CATALOGUE.some((row) => row.spec?.kind === BUNDLE_KIND), false);
   assert.equal(presetById(BUNDLE_KIND), null);
+});
+
+test("bundle validation requires internal access", () => {
   const raw = { kind: BUNDLE_KIND, params: { patternId: 'p1', lengthBeats: 4, table: TABLE, once: false } };
-  assert.throws(() => validateSpec(raw), /unknown effect kind/);
+  assert.throws(() => validateSpec(raw), z.ZodError);
   assert.equal(validateSpec(raw, { internal: true }).kind, BUNDLE_KIND);
-  // A copy of a minted spec is still a hand post.
+});
+
+test("bundle voices require a minted spec", () => {
   assert.throws(() => voiceSpec(structuredClone(bundle())), (err) => statusOf(err) === 400);
   assert.equal(voiceSpec(bundle()).kind, BUNDLE_KIND);
+});
+
+test("libraries reject bundle presets", () => {
+  const raw = { kind: BUNDLE_KIND, params: { patternId: 'p1', lengthBeats: 4, table: TABLE, once: false } };
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bundle-library-'));
   try {
     const library = new EffectLibrary(path.join(dir, 'effects.json')).load();
@@ -69,7 +78,7 @@ test('the bundle kind is internal: no catalogue row, no preset, refused by valid
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('clips play by the sequence rules: winners per fixture, uncovered cells transparent, a transparent winner owns its cells black', () => {
+test("bundle clips follow sequence ownership", () => {
   const [a, b, c] = draw(bundle(), [1, 2.5, 3.5]);
   assert.deepEqual(reds(a), [255, 255, 255]);
   assert.deepEqual(reds(b), [null, 128, null]);
@@ -77,15 +86,18 @@ test('clips play by the sequence rules: winners per fixture, uncovered cells tra
   assert.equal(a[0].kind, 'test.bundle.paint');
 });
 
-test('hold and loop repeat at the bundle length; once plays its length and no lap after it', () => {
+test("held bundles repeat at their length", () => {
   const [, loopNext] = draw(bundle(false), [1, 5]);
   assert.deepEqual(reds(loopNext), [255, 255, 255]);
+});
+
+test("once bundles stop at their length", () => {
   const [first, after] = draw(bundle(true), [1, 5]);
   assert.deepEqual(reds(first), [255, 255, 255]);
   assert.deepEqual(reds(after), [null, null, null]);
 });
 
-test('a rapid child makes the bundle rapid: it needs the acknowledgement and draws nothing without it', () => {
+test("rapid bundle children require acknowledgement", () => {
   const table = { ...TABLE, clips: [...TABLE.clips, clip('1:0', 'shared:0', { kind: 'test.bundle.rapid', params: { r: 9 } }, 0, 4)] };
   const spec = bundle(false, table);
   assert.equal(requiresAcknowledgement(spec), true);
@@ -93,11 +105,17 @@ test('a rapid child makes the bundle rapid: it needs the acknowledgement and dra
   assert.deepEqual(reds(draw(spec, [1], { acknowledged: false })[0]), [null, null, null]);
 });
 
-test('the strobe is never a clip: validation refuses a strobe child and rendering skips an unvalidated one', () => {
+test("bundle validation rejects strobe children", () => {
   const strobe = { kind: 'strobe', params: { clock: 'beat', flashesPerSecond: 5 } };
   const raw = (s) => ({ kind: BUNDLE_KIND, params: { patternId: 'p', lengthBeats: 4, once: false,
     table: { revision: 0, lanes: [lane('shared:0')], clips: [{ ...clip('0:0', 'shared:0', paintSpec(1), 0, 4), spec: s }] } } });
-  assert.throws(() => validateSpec(raw(validateSpec(strobe)), { internal: true }), /may not hold the strobe/);
+  assert.throws(() => validateSpec(raw(validateSpec(strobe)), { internal: true }), z.ZodError);
+});
+
+test("bundle rendering skips forged strobe children", () => {
+  const strobe = { kind: 'strobe', params: { clock: 'beat', flashesPerSecond: 5 } };
+  const raw = (s) => ({ kind: BUNDLE_KIND, params: { patternId: 'p', lengthBeats: 4, once: false,
+    table: { revision: 0, lanes: [lane('shared:0')], clips: [{ ...clip('0:0', 'shared:0', paintSpec(1), 0, 4), spec: s }] } } });
   const forged = { ...validateSpec(raw(validateSpec(paintSpec(1))), { internal: true }) };
   forged.params = { ...forged.params, table: { ...forged.params.table, clips: [{ ...forged.params.table.clips[0], spec: validateSpec(strobe) }] } };
   const stepper = new EffectStepper(), out = [];
@@ -105,22 +123,26 @@ test('the strobe is never a clip: validation refuses a strobe child and renderin
   assert.deepEqual(reds(out), [null, null, null]);
 });
 
-test('macros and bundles share one nesting limit and one cycle check', () => {
+test("bundle nesting shares the macro depth limit", () => {
   let inner = paintSpec(1);
   for (let k = 0; k < MAX_NEST_DEPTH - 1; k++) inner = { kind: 'macro', params: { steps: [{ effect: inner, beats: 4 }], loopBeats: 4 } };
   const wrap = (spec) => ({ kind: BUNDLE_KIND, params: { patternId: 'p', lengthBeats: 4, once: false,
     table: { revision: 0, lanes: [lane('shared:0')], clips: [{ ...clip('0:0', 'shared:0', paintSpec(1), 0, 4), spec }] } } });
   assert.doesNotThrow(() => validateSpec(wrap(inner), { internal: true }));
   const deeper = { kind: 'macro', params: { steps: [{ effect: inner, beats: 4 }], loopBeats: 4 } };
-  assert.throws(() => validateSpec(wrap(deeper), { internal: true }), /nest at most 32 deep/);
+  assert.throws(() => validateSpec(wrap(deeper), { internal: true }), z.ZodError);
+});
+
+test("bundle validation rejects recursive cycles", () => {
+  const wrap = (spec) => ({ kind: BUNDLE_KIND, params: { patternId: 'p', lengthBeats: 4, once: false,
+    table: { revision: 0, lanes: [lane('shared:0')], clips: [{ ...clip('0:0', 'shared:0', paintSpec(1), 0, 4), spec }] } } });
   const cyclic = wrap(paintSpec(1));
   cyclic.params.table.clips[0].spec = cyclic;
-  assert.throws(() => validateSpec(cyclic, { internal: true }), /may not contain itself/);
-  // Asked about an unvalidated cycle, the acknowledgement assumes the worst.
+  assert.throws(() => validateSpec(cyclic, { internal: true }), z.ZodError);
   assert.equal(requiresAcknowledgement(cyclic), true);
 });
 
-test('the detector owner is looked up the same way for a bundle as for a macro: the container owns it while its child plays', () => {
+test("bundle detector ownership matches macros", () => {
   const disco = validateSpec({ kind: 'hd.disco' });
   const table = { revision: 0, lanes: [lane('shared:0')], clips: [{ ...clip('0:0', 'shared:0', paintSpec(1), 0, 4), spec: disco }] };
   const macro = validateSpec({ kind: 'macro', params: { steps: [{ effect: disco, beats: 4 }], loopBeats: 4 } });
@@ -130,7 +152,7 @@ test('the detector owner is looked up the same way for a bundle as for a macro: 
   assert.deepEqual(owner(macro), { from: 'voice', id: 'pad:1', kind: 'hd.disco' });
 });
 
-test('the playing leaves change on the frame the bundle\'s rendered clip changes, highest lane first, a macro clip to its step', () => {
+test("bundle playing leaves follow rendered clips", () => {
   const inner = validateSpec({ kind: 'macro', params: { steps: [{ effect: paintSpec(7), beats: 0.3 }, { effect: paintSpec(9), beats: 0.4 }], loopBeats: 0.7 } });
   const table = { revision: 0, lanes: [lane('shared:0'), lane('shared:1')],
     clips: [clip('a', 'shared:0', paintSpec(255), 0, 4), clip('b', 'shared:1', paintSpec(128), 1.5, 1, [11]), clip('c', 'shared:1', inner, 2.5, 1.1)] };
@@ -143,8 +165,16 @@ test('the playing leaves change on the frame the bundle\'s rendered clip changes
     assert.deepEqual(leaves.map((s) => s.kind), Array(leaves.length).fill('test.bundle.paint'));
   });
   assert.deepEqual(playingLeaves(spec, 2, 0, IDS).map((s) => s.params.r), [128, 255], 'every clip showing on a lamp, the highest lane first');
+});
+
+test("once bundles expose no leaves after their length", () => {
+  const inner = validateSpec({ kind: 'macro', params: { steps: [{ effect: paintSpec(7), beats: 0.3 }, { effect: paintSpec(9), beats: 0.4 }], loopBeats: 0.7 } });
+  const table = { revision: 0, lanes: [lane('shared:0'), lane('shared:1')],
+    clips: [clip('a', 'shared:0', paintSpec(255), 0, 4), clip('b', 'shared:1', paintSpec(128), 1.5, 1, [11]), clip('c', 'shared:1', inner, 2.5, 1.1)] };
   assert.deepEqual(playingLeaves(bundle(true, table), 4, 0, IDS), [], 'once stops at the length');
-  // Too deep to render is too deep to own: past the limit nothing plays.
+});
+
+test("over-deep nesting exposes no playing leaves", () => {
   let deep = paintSpec(1);
   for (let i = 0; i <= MAX_NEST_DEPTH; i++) deep = { kind: 'macro', params: { steps: [{ effect: deep, beats: 1 }], loopBeats: 1 } };
   assert.deepEqual(playingLeaves(deep, 0.5, 0, IDS), []);

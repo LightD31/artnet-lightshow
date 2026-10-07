@@ -37,7 +37,7 @@ test('every family is registered with its base and recommended settings', () => 
   assert.strictEqual(HD_DEFAULTS['hd.simpleAdsr'].scope, 'singleBeat');
 });
 
-test('the loop length follows the preset scope: a beat, or a bar stretched to the envelope', () => {
+test("preset scope determines the loop length", () => {
   const wash = HD_DEFAULTS['hd.spatialWash'].params;                 // 1920 + 960 + 1920 ticks = 5 beats
   assert.strictEqual(scopedLoopLength({ kind: 'hd.spatialWash', params: wash, scope: 'measure' }, wash), 5);
   const chase = HD_DEFAULTS['hd.positionChase'].params;              // 80 + 160 + 400 ticks < a bar
@@ -54,7 +54,7 @@ test('position chase: the envelope runs lamp to lamp by the stagger', () => {
   assert.deepStrictEqual(render('hd.positionChase', 0.1875, room4(), p).map((s) => s.level > 0), [false, true, false, false]);
 });
 
-test('position chase palette positions are a real division: four lamps show four colours', () => {
+test("position chase divides palette positions by lamp count", () => {
   const p = { curve: 'cut', attack: 0, hold: 4, release: 0, stagger: 0, loopLength: 4 };
   const out = render('hd.positionChase', 0.5, room4(), p);
   assert.strictEqual(new Set(out.map((s) => JSON.stringify(s.colour))).size, 4);
@@ -70,7 +70,7 @@ test('radial pulse: the lamps on the ring are bright, the lamp inside it dark', 
   assert.strictEqual(out[1].level, 0);
 });
 
-test('twinkle: lamps light by the hash against the probability; the same seed, the same lamps', () => {
+test("twinkle selection follows seeded probability", () => {
   const a = render('hd.twinkle', 0.01).map((s) => s.level > 0);
   const b = render('hd.twinkle', 0.01).map((s) => s.level > 0);
   assert.deepStrictEqual(a, b);
@@ -83,22 +83,32 @@ test('frequency burst renders nothing until photosensitivity is acknowledged', (
   assert.ok(out.every((s) => s.strength === 0));
 });
 
-test('reactive mode: 1 − depth + level·depth on a beat-accent trigger; a timeline trigger stays at one; no audio frame → as tempo', () => {
+test("timeline triggers ignore reactive depth", () => {
   const p = { curve: 'cut', attack: 0, hold: 4, release: 0, trigger: { mode: 'beatAccent', band: 'bass', beatInterval: 1, threshold: .2, reactiveDepth: 0.5 } };
   const timeline = { ...p, trigger: { ...p.trigger, mode: 'timeline' } };
   assert.ok(Math.abs(render('hd.breathingFade', 1, room4(), timeline, {}, { audioMode: 'reactive', audio: silence })[0].level - 1) < 0.02, 'timeline: no reactive scaling');
+});
+
+test("beat-accent triggers apply reactive depth", () => {
+  const p = { curve: 'cut', attack: 0, hold: 4, release: 0, trigger: { mode: 'beatAccent', band: 'bass', beatInterval: 1, threshold: .2, reactiveDepth: 0.5 } };
   const quiet = render('hd.breathingFade', 1, room4(), p, {}, { audioMode: 'reactive', audio: silence })[0].level;
   assert.ok(Math.abs(quiet - 0.5) < 0.02, `${quiet}`);
+});
+
+test("reactive effects fall back to tempo without audio", () => {
+  const p = { curve: 'cut', attack: 0, hold: 4, release: 0, trigger: { mode: 'beatAccent', band: 'bass', beatInterval: 1, threshold: .2, reactiveDepth: 0.5 } };
   const noAudio = render('hd.breathingFade', 1, room4(), p, {}, { audioMode: 'reactive', audio: null })[0].level;
   assert.ok(Math.abs(noAudio - 1) < 0.02, 'without an audio frame the kind runs on the clock');
-  // Volume gate: level 0.5 against thr = max(0.15 master, 0.25 trigger) → (0.5 − 0.25)/0.75 = 1/3, through depth 0.8.
+});
+
+test("volume gate responds to reactive audio", () => {
   const gate = { curve: 'cut', attack: 0, hold: 8, release: 0 };
   const loud = { ...silence, party: { full: 0.5, bass: 0.5, mid: 0.5, high: 0.5 } };
   const g = render('hd.volumeGateWash', 1, room4(), gate, {}, { audioMode: 'reactive', audio: loud })[0].level;
   assert.ok(g > 0.2 && g < 1, `${g}`);
 });
 
-test('a tempo change mid-effect does not disturb admitted events (frequency burst, one stepper, consecutive frames)', () => {
+test("changing tempo preserves admitted burst events", () => {
   // The admission converts event starts to ms with the tempo in force; a tempo change must not re-admit or drop an event already decided.
   const room = room4();
   const stepper = new EffectStepper();
@@ -111,7 +121,7 @@ test('a tempo change mid-effect does not disturb admitted events (frequency burs
   assert.deepStrictEqual(before.map((s) => s.level > 0), after.map((s) => s.level > 0), 'the lit set is unchanged across the tempo change');
 });
 
-test('simple ADSR: the loop drives the RGB envelopes, colour normalised to its max channel', () => {
+test("Simple ADSR normalizes its RGB envelopes", () => {
   const env = { attack: 0.1, hold: 0.1, decay: 0.1, sustain: 0.5, release: 0.2 };
   const p = { rgbEnvelope: { colourMode: 'all', singleColour: '#FFFFFF', r: env, g: { ...env, sustain: 0 }, b: { ...env, sustain: 0 }, brightness: env } };
   const out = render('hd.simpleAdsr', 0.1, room4(), p, { scope: 'singleBeat' });   // loop 1 beat, progress 0.1 = end of attack → full
@@ -128,7 +138,7 @@ test('one lamp, one colour: every family renders finite values', () => {
   }
 });
 
-test('orderTargets: position by the HD projection (X then Z), track by index, random by the seed', () => {
+test("target ordering follows position, track or seeded random order", () => {
   const room = buildRoom(3, (i) => [1, 0, 0.5][i], () => 0.5, () => 0.5, null);
   const p = HD_DEFAULTS['hd.positionChase'].params;
   assert.deepStrictEqual(orderTargets({ ...p, order: 'position' }, room, seedFrom('o')), [1, 2, 0]);
@@ -164,25 +174,31 @@ test('all recommended values are separate family settings, with nested capabilit
   assert.notStrictEqual(HD_DEFAULTS['hd.streak'].params.spatial, HD_DEFAULTS['hd.bouncingScan'].params.spatial);
 });
 
-test('HD schemas reject invalid controls, fill partial nested defaults and preserve wire envelopes', () => {
+test("HD schemas reject invalid controls", () => {
   for (const params of [{ attack: -1 }, { hold: Infinity }, { curve: 'wrong' }, { repetitions: 1.5 }, { repetitions: 0 },
     { probability: 1.01 }, { trail: -1 }, { loopLength: 0 }, { spatial: { x: -0.1 } }, { spatial: { radius: 1.1 } },
     { spatial: { angle: NaN } }, { trigger: { threshold: -0.1 } }, { trigger: { beatInterval: 0 } },
     { rgbEnvelope: { r: { peak: -0.1 } } }, { rgbEnvelope: { singleColour: 'red' } }]) {
     assert.throws(() => validateSpec({ kind: 'hd.simpleAdsr', params }), JSON.stringify(params));
   }
+});
+
+test("HD schemas fill partial nested defaults", () => {
   const spec = validateSpec({ kind: 'hd.radialPulse', params: { spatial: { angle: 45 }, trigger: { threshold: 0.995 } } });
   assert.strictEqual(spec.params.spatial.radius, 1);
   assert.strictEqual(spec.params.trigger.band, 'bass');
   assert.strictEqual(spec.params.trigger.threshold, 0.995);
   assert.deepStrictEqual(validateSpec(spec), spec);
+});
+
+test("HD schemas preserve custom wire envelopes", () => {
   const custom = validateSpec({ kind: 'hd.simpleAdsr', params: { rgbEnvelope: { r: { attack: 0.8, hold: 0.8, peak: 0.2, sustain: 0.9 } } } });
   assert.strictEqual(custom.params.rgbEnvelope.r.attack, 0.8);
   assert.strictEqual(custom.params.rgbEnvelope.r.sustain, 0.9);
   assert.deepStrictEqual(validateSpec(custom), custom);
 });
 
-test('wash, bounce, streak, twinkle and breathing have their precise level and palette position', () => {
+test("HD families retain their level and palette formulas", () => {
   const room = room4();
   const seed = seedFrom('hd');
   const progress = 0.25;
@@ -210,7 +226,7 @@ test('wash, bounce, streak, twinkle and breathing have their precise level and p
   assert.deepStrictEqual(render('hd.breathingFade', 1, room, { ...steady, direction: 'reverse' }), breathing);
 });
 
-test('directions reverse the chase stagger and applicable progress once, with deterministic random order', () => {
+test("direction reverses applicable progress once", () => {
   const room = room4();
   const chase = { ...steady, hold: 0.125, stagger: 0.125, direction: 'reverse' };
   assert.deepStrictEqual(render('hd.positionChase', 0.0625, room, chase).map((s) => s.level), [0, 0, 0, 1]);
@@ -242,7 +258,7 @@ function live(kind, params = {}, over = {}, room = room4()) {
   } };
 }
 
-test('volume follower attacks, holds and releases in beats, survives tempo changes and cloning', () => {
+test("volume followers retain state across tempo changes and clones", () => {
   const room = buildRoom(1, () => 0.5, () => 0.5, () => 0.5, null);
   const params = { curve: 'linear', attack: 1, hold: 1, release: 1, loopLength: 8,
     trigger: { mode: 'volumeGate', band: 'full', threshold: 0, reactiveDepth: 1 } };
@@ -265,7 +281,7 @@ test('volume follower attacks, holds and releases in beats, survives tempo chang
   near(half[0].level / full[0].level, 0.5, 'beat accent reads audio directly without a follower attack');
 });
 
-test('rapid admission keeps real spacing through long-session tempo changes in both directions', () => {
+test("rapid admission retains spacing across long-session tempo changes", () => {
   for (const [beforeBpm, afterBpm] of [[120, 128], [128, 120]]) {
     const show = live('hd.frequencyBurst', { ...steady, hold: 0.25, probability: 1, loopLength: 1,
       trigger: { ...HD_BASE.trigger, mode: 'beatAccent', beatInterval: 1 } });
@@ -278,12 +294,15 @@ test('rapid admission keeps real spacing through long-session tempo changes in b
   }
 });
 
-test('rapid flag admits non-burst events, while simple ADSR only uses the acknowledgement gate', () => {
+test("rapid non-burst events retain admission spacing", () => {
   const show = live('hd.breathingFade', { ...steady, hold: 0.1, loopLength: 1, repetitions: 4 }, { rapidFlash: true, minFlashIntervalMs: 400 });
   assert.strictEqual(show.at(0.01)[0].level, 1);
   assert.strictEqual(show.at(0.26)[0].level, 0);
   assert.strictEqual(show.at(1.01)[0].level, 1);
   assert.strictEqual(show.at(1.01, { acknowledged: false })[0].strength, 0);
+});
+
+test("Simple ADSR uses acknowledgement without event spacing", () => {
   const flat = { attack: 0, hold: 1, decay: 0, release: 0, sustain: 1, peak: 1 };
   const adsr = live('hd.simpleAdsr', { loopLength: 0.0625, rgbEnvelope: { colourMode: 'all', r: flat, g: flat, b: flat } }, { rapidFlash: true });
   assert.strictEqual(adsr.at(0.01)[0].level, 1);
@@ -291,7 +310,7 @@ test('rapid flag admits non-burst events, while simple ADSR only uses the acknow
   assert.strictEqual(adsr.at(0.08, { acknowledged: false })[0].strength, 0);
 });
 
-test('AHDSR peaks, phase interpolation and runtime normalization preserve serialized parameters', () => {
+test("AHDSR sampling preserves serialized envelope parameters", () => {
   const env = { attack: 0.1, hold: 0.1, decay: 0.2, release: 0.2, sustain: 0.2, peak: 0.8 };
   const zero = { ...env, peak: 0, sustain: 0.9 };
   const show = live('hd.simpleAdsr', { curve: 'linear', rgbEnvelope: { colourMode: 'all', r: env, g: zero, b: zero } });
@@ -307,11 +326,15 @@ test('AHDSR peaks, phase interpolation and runtime normalization preserve serial
   assert.deepStrictEqual(normalized.inst.spec, before);
 });
 
-test('single-colour envelopes normalize dim RGB and cut ramps jump at the phase start', () => {
+test("single-colour envelopes normalize dim RGB", () => {
   const flat = { attack: 0, hold: 1, decay: 0, release: 0, sustain: 1 };
   const out = render('hd.simpleAdsr', 0.5, room4(), { rgbEnvelope: { colourMode: 'singleColour', singleColour: '#804020', r: flat, g: flat, b: flat, brightness: flat } });
   near(out[0].level, 128 / 255);
   assert.deepStrictEqual(out[0].colour, { r: 255, g: 128, b: 64, w: 0, a: 0, uv: 0 });
+});
+
+test("cut envelope ramps jump at the phase start", () => {
+  const flat = { attack: 0, hold: 1, decay: 0, release: 0, sustain: 1 };
   const cut = render('hd.simpleAdsr', 0, room4(), { curve: 'cut', rgbEnvelope: { colourMode: 'all', r: { ...flat, attack: 0.2, hold: 0.8 }, g: flat, b: flat } });
   assert.strictEqual(cut[0].level, 1);
 });

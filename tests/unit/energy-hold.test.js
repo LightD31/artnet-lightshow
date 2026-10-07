@@ -34,7 +34,7 @@ test('a hold expires when the release packet is lost', (t) => {
   assert.deepStrictEqual(events, ['blinder', null]);
 });
 
-test('over(): the energy effect on top of the latch, whoever launched it; the latch itself, the manual strobe and other kinds are none', () => {
+test("energy holds report only the voice above the latch", () => {
   const hold = new EnergyHold(() => {}, new VoiceManager({ now: () => performance.now(), onChange() {}, acknowledged: () => true }));
   const m = hold.voices;
   const start = (spec, extra = {}) => m.start({ spec, targets: 'shared', mode: 'latched', tier: 'voice', source: 'pad', ...extra });

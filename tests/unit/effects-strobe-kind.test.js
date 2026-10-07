@@ -77,7 +77,7 @@ function assertCapped(label, times) {
   }
 }
 
-test('wall clock at 2/s: full for 100 ms, black for 100 ms, transparent until 500 ms; colours drawn from the palette', () => {
+test("wall strobe follows its palette and 500 ms cycle", () => {
   const inst = strobe({ params: { clock: 'wall', flashesPerSecond: 2 }, palette: ['#FF0000', '#00FF00', '#0000FF'] }, { startedAtMs: 1000 });
   const colourOf = (index) => [RED, GREEN, BLUE][Math.floor(hash01(SEED, 0, index) * 3)];
   const at = sampler(inst, PAR);
@@ -156,7 +156,7 @@ test('continueBetween false holds black between flashes', () => {
   assert.strictEqual(state(sampler(strobe({ params: { clock: 'wall', flashesPerSecond: 2, continueBetween: false } }), PAR)(350)[0]), 'black');
 });
 
-test('a Hue slot is flashed black with hueStrobe flash, and falls to 40/255 over 200 ms with pulse', () => {
+test("Hue strobe output follows the selected flash or pulse mode", () => {
   const inst = strobe({ params: { clock: 'wall', flashesPerSecond: 2 } });
   const flash = sampler(inst, MIXED, { hueStrobe: 'flash' });
   assert.deepStrictEqual(flash(0).map(state), ['lit', 'lit']);
@@ -223,7 +223,7 @@ test('a flash observed on a level\'s rounding edge reads as the hold strobe alwa
   assert.strictEqual(bytes(at(100)[1]), 148);
 });
 
-test('a tempo change never lets a flash through early, and a denied flash is never replayed', () => {
+test("tempo edits preserve strobe admission spacing", () => {
   const inst = strobe({ params: { clock: 'beat', flashesPerSecond: 5 }, palette: ['#FF0000', '#0000FF'] });
   for (const [room, hueStrobe] of [[PAR, 'flash'], [MIXED, 'pulse']]) {
     const stepper = new EffectStepper();
@@ -315,7 +315,7 @@ const AT_RATE = [
   ['three a second, 180 BPM', { clock: 'beat', flashesPerSecond: 3 }, 180, 1000 / 3, 30],
 ];
 
-test('on an ideal 44 Hz clock a grid at the rate shows every flash: 50 of 50 at five a second, 30 of 30 at three', () => {
+test("ideal frame clocks retain every allowed strobe flash", () => {
   for (const [label, params, bpm, periodMs, flashes] of AT_RATE) {
     for (const hueStrobe of ['flash', 'pulse']) {
       const frames = tenSeconds(bpm, hueStrobe);
@@ -335,7 +335,7 @@ test('on an ideal 44 Hz clock a grid at the rate shows every flash: 50 of 50 at 
   assert.deepStrictEqual(times.map(frameOf), Array.from({ length: 50 }, (_, k) => 5 + Math.ceil(k * 200 / FRAME_MS - 1e-9)));
 });
 
-test('±2 ms of frame jitter keeps (a) and (b) on the frame grid and loses no flash, five a second included', () => {
+test("frame jitter retains every allowed strobe flash", () => {
   const grids = [...AT_RATE, ['four a second, wall', { clock: 'wall', flashesPerSecond: 4 }, 120, 250, 40],
     ['five a second, 128 BPM', { clock: 'beat', flashesPerSecond: 5 }, 128, 60000 / 256, 43]];
   for (const [label, params, bpm, periodMs, flashes] of grids) {
@@ -407,7 +407,7 @@ test('renders nothing unacknowledged', () => {
   assert.strictEqual(draw(inst, frame(), MIXED, new EffectStepper()).length, 2);
 });
 
-test('the strobe flashes frame.palette: white by default, the look\'s colours with palette null, an override over both', () => {
+test("strobe palette follows effect, look and override precedence", () => {
   const spec = validateSpec({ kind: 'strobe' });
   assert.deepStrictEqual(spec.palette, ['#FFFFFF']);
   assert.deepStrictEqual(spec.params, STROBE_DEFAULTS);
