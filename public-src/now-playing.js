@@ -9,8 +9,14 @@ export function effectName(id, s = {}) {
 }
 
 export function padLabel(pad, s = {}) {
-  return pad.label?.trim() || (pad.content?.kind === 'strobe' ? 'Strobe'
-    : pad.content ? effectName(pad.content.id, s) : 'Empty');
+  if (pad.label?.trim()) return pad.label.trim();
+  const content = pad.content;
+  if (!content) return 'Empty';
+  if (content.kind === 'strobe') return 'Strobe';
+  if (content.kind === 'pattern' || content.kind === 'sequencePattern') {
+    return (s.sequencePatterns || []).find((row) => row.id === content.id)?.name || content.id;
+  }
+  return effectName(content.id, s);
 }
 
 export function playingState(s) {
@@ -19,6 +25,7 @@ export function playingState(s) {
     ...seq.loaded,
     mode: seq.paused ? 'paused' : seq.playing ? 'playing' : seq.stopped || (seq.ended ? 'ended' : 'loaded'),
     beat: seq.beat, bar: seq.bar, beatsPerBar: seq.beatsPerBar || 4,
+    activeClips: seq.activeClips || [],
   } : null;
   const pixels = (s.fixtures || []).map((fixture) => s.profiles?.[fixture.profileId]).filter((profile) => profile?.cells?.length >= 2);
   const layers = [

@@ -67,6 +67,7 @@ export function nowPlaying(s, perBar = s.sequence?.beatsPerBar || 4) {
   if (seq) {
     const state = { playing: 'playing', paused: 'paused', hold: 'holding frame', black: 'blackout', ended: 'ended', loaded: 'loaded' }[seq.mode];
     parts.push(`Sequence: ${seq.name || seq.id} (${state}) bar ${positionText(seq, perBar).replace('.', ' beat ')}`);
+    if (seq.activeClips.length) parts.push(`Clips: ${seq.activeClips.map((clip) => `${clip.lane}: ${clip.name}`).join(', ')}`);
   }
   if (playing.voices.length) parts.push(`Voices: ${playing.voices.map((voice) => voice.label).join(', ')}`);
   if (playing.strobe && !playing.voices.some((voice) => voice.tier === 'strobe')) parts.push('Strobe');

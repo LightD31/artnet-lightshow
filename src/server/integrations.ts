@@ -1,4 +1,5 @@
 import { transitionFor } from '../show/transition.ts';
+import { presetById } from '../shared/effects/catalogue.ts';
 import { state, getLiveState, getDmxSnapshot, getDmxUniverses, setExtrasProvider, setSequenceProvider, setSequenceRuns, reconcileFreeClock, voices, strobe } from './state.ts';
 import { createPublisher, ROOM } from './protocol.ts';
 import { encodeDmxFrame } from '../shared/dmx-frame.ts';
@@ -136,6 +137,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     store: sequenceStore ?? new SequenceStore(configFile('sequences.json')).load(),
     sequencer: new Sequencer({
       resolve: (id) => library.effects.resolve(id),
+      presetName: (id) => library.effects.summaries().find((preset) => preset.id === id)?.name ?? presetById(id)?.name ?? id,
       palette: (id) => library.palettes.materialize(id)?.map(toHex) ?? null,
       apply: ({ paletteOverrideId, ...patch }) => {
         // A refusal here must not cost the frame its sequence.
@@ -162,7 +164,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       pad: (bank, slot) => padTakeOf(pads.store.get(bank, slot), presetLookup(library)),
       beat: () => conductor.peek().beatPos,
       // Playing or paused, the sequence counts on the free clock with the patterns stopped.
-      onRun: () => reconcileFreeClock(),
+      onRun: () => { reconcileFreeClock(); broadcastSoon(); },
     }),
   };
   // The pads count in the conductor's beats, the sequence in its own: the
@@ -190,7 +192,9 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   // whose voice ended by itself close first.
   setSequenceSource((reading) => {
     pads.sweep();
-    return sequence.sequencer.frame(reading);
+    const frame = sequence.sequencer.frame(reading);
+    if (sequence.sequencer.runs()) broadcastSoon();
+    return frame;
   });
   setSequenceProvider(() => sequence.sequencer.status());
   setSequenceRuns(() => sequence.sequencer.runs());

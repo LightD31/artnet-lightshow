@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { effectName, padLabel, playingState } from '../../public-src/now-playing.js';
 import { VIEWS, viewShortcut } from '../../public-src/views.js';
 import { presetById } from '../../src/shared/effects/catalogue.ts';
+import { nowPlaying } from '../../public-src/preview-inputs.js';
 
 const sequence = { loaded: { id: 'intro', name: 'Intro' }, beat: 5.5, bar: 2, beatsPerBar: 3 };
 
@@ -13,7 +14,7 @@ test('status resolves the base name from saved presets first', () => {
 
 for (const [flags, mode] of [[{ playing: true }, 'playing'], [{ paused: true }, 'paused'], [{ stopped: 'hold' }, 'hold'], [{ stopped: 'black' }, 'black'], [{ ended: true }, 'ended'], [{}, 'loaded']]) {
   test(`status preserves sequence ${mode}`, () => {
-    assert.deepEqual(playingState({ sequence: { ...sequence, ...flags } }).sequence, { ...sequence.loaded, mode, beat: 5.5, bar: 2, beatsPerBar: 3 });
+    assert.deepEqual(playingState({ sequence: { ...sequence, ...flags } }).sequence, { ...sequence.loaded, mode, beat: 5.5, bar: 2, beatsPerBar: 3, activeClips: [] });
   });
 }
 
@@ -62,3 +63,17 @@ test('status retains separate pixel look names for patched panels', () => {
   assert.deepEqual(playingState(state).layers.map((layer) => layer.id), ['chase', 'rainbow']);
   assert.deepEqual(playingState({ ...state, fixtures: [] }).layers, []);
 });
+
+test('shared status names the clips covering the base look', () => {
+  const activeClips = [{ id: 'c1', laneId: 'a', lane: 'Front', name: 'Custom pulse' }];
+  const state = { pattern: 'solid', sequence: { ...sequence, playing: true, activeClips } };
+  assert.deepEqual(playingState(state).sequence.activeClips, activeClips);
+  assert.match(nowPlaying(state), /Clips: Front: Custom pulse/);
+});
+
+for (const kind of ['pattern', 'sequencePattern']) {
+  test(`empty ${kind} pad labels use the saved pattern name`, () => {
+    const sequencePatterns = [{ id: 'p1', name: 'Closing phrase' }];
+    assert.equal(padLabel({ label: '', content: { kind, id: 'p1' } }, { sequencePatterns }), 'Closing phrase');
+  });
+}

@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import { z, ZodError } from 'zod';
 
 // The entry point registers every kind, so a clip's effect validates against it.
-import { BUILTIN_PALETTES, deepFreeze } from '../shared/effects/index.ts';
+import { BUILTIN_PALETTES, FAMILIES, deepFreeze, presetById } from '../shared/effects/index.ts';
 import { pacesOwnFlashes, requiresAcknowledgement, validateSpec } from '../shared/effects/registry.ts';
 import { canonical } from '../shared/effects/layer.ts';
 import { hash01, pickNotLast, seedFrom } from '../shared/effects/hash.ts';
@@ -114,6 +114,7 @@ export interface SequenceStatus {
   beatsPerBar: number;
   loop: Sequence['loop'];
   lanes: { id: string; clip: string | null }[];
+  activeClips: { id: string; laneId: string; lane: string; name: string }[];
   error: SequenceError | null;
   /** Only while a punch recording runs. */
   recording?: RecordingStatus;
@@ -562,6 +563,7 @@ type Sorted = Command & { order: number };
 export interface SequencerOptions {
   /** A clip's preset by id (the effect library's resolve). */
   resolve: EffectResolver;
+  presetName?: (id: string) => string;
   /** A palette by id as the colours it puts on now (hex), or null for none. Built-in palettes when left out. */
   palette?: (id: string) => string[] | null;
   /** Put on what the sequence changes: the main thread's patch, from the sequence (never as a hand on a control). */
@@ -601,6 +603,7 @@ function builtinPalette(id: string): string[] | null {
 
 export class Sequencer {
   declare _resolve: EffectResolver;
+  declare _presetName: (id: string) => string;
   declare _paletteOf: (id: string) => string[] | null;
   declare _apply: (patch: SequencePatch) => void;
   declare _current: () => { masterDimmer: number; bpm: number; paletteOverride?: readonly string[] | null; paletteOverrideId?: string | null };
@@ -647,7 +650,7 @@ export class Sequencer {
   // What runs() was when last told.
   declare _told: boolean;
 
-  constructor({ resolve, palette = builtinPalette, apply = () => {}, current = () => ({ masterDimmer: 255, bpm: 120 }),
+  constructor({ resolve, presetName = (id) => presetById(id)?.name ?? id, palette = builtinPalette, apply = () => {}, current = () => ({ masterDimmer: 255, bpm: 120 }),
     musicMode = () => {}, admit = (spec) => safety.requireAcknowledged(spec), now = () => performance.now(), seed,
     fixtureIds = () => [], pattern = () => null, pad = () => null, beat, onRun = () => {} }: SequencerOptions) {
     this._onRun = onRun;
@@ -658,6 +661,7 @@ export class Sequencer {
     this._pad = pad;
     this._record = null;
     this._resolve = resolve;
+    this._presetName = presetName;
     this._paletteOf = palette;
     this._apply = apply;
     this._current = current;
@@ -1749,9 +1753,22 @@ export class Sequencer {
       beatsPerBar: seq ? barBeats(seq.timeSignature) : 4,
       loop: seq?.loop ? { ...seq.loop } : null,
       lanes: seq ? seq.lanes.map((l) => ({ id: l.id, clip: tops.get(l.id) ?? null })) : [],
+      activeClips: shows ? this._activeClips(where) : [],
       error: this._error ? { ...this._error } : null,
       ...(this._record ? { recording: this.recording()! } : {}),
     };
+  }
+
+  _activeClips(position: number): SequenceStatus['activeClips'] {
+    const { winners } = selectClips(this._table!, position, this._fixtureIds());
+    return [...new Set(winners)].filter((index) => index >= 0).map((index) => {
+      const clip = this._loaded!.clips[index];
+      const lane = this._loaded!.lanes.find((entry) => entry.id === clip.laneId)!;
+      const kind = this._table!.clips[index].spec.kind;
+      const name = clip.presetId ? this._presetName(clip.presetId)
+        : presetById(kind)?.name ?? FAMILIES.find((family) => family.kinds.some((entry) => entry.kind === kind))?.name ?? clip.id;
+      return { id: clip.id, laneId: lane.id, lane: lane.name, name };
+    });
   }
 
   // Per lane, the clip on top of it at a position (a later start, then later in the list).
