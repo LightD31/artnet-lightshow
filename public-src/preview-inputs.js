@@ -1,4 +1,5 @@
 import { presetById } from '../src/shared/effects/catalogue.ts';
+import { playingState } from './now-playing.js';
 
 // What the stage preview hands createPreviewSampler beside the timeline, so a
 // rehearsal shows what the rig plays over it: the voices held now (pads, the
@@ -58,22 +59,22 @@ export function liveVoiceEvents(voices) {
   }));
 }
 
-/**
- * One line: the look, the pads, the strobe, the matrix, where the sequence is,
- * the override. The bar's length in beats comes with the sequence's status;
- * `perBar` stands in for a server that does not send it.
- */
-export function nowPlaying(s, perBar = (s.sequence && s.sequence.beatsPerBar) || 4) {
-  const voices = (Array.isArray(s.voices) ? s.voices : []).filter((v) => !v.hidden);
-  const pads = voices.filter((v) => v.tier !== 'strobe' && v.source !== 'matrix').map((v) => v.label);
-  const parts = [s.pattern || 'No look'];
-  if (pads.length) parts.push(`Pads: ${pads.join(', ')}`);
-  if (s.strobe?.active || voices.some((v) => v.tier === 'strobe')) parts.push('Strobe');
-  const colours = s.matrix && Array.isArray(s.matrix.colours) ? s.matrix.colours.length : 0;
-  if (colours) parts.push(`Matrix: ${colours} colour${colours > 1 ? 's' : ''} as ${s.matrix.mode}`);
-  const seq = s.sequence;
-  if (seq && seq.playing && seq.loaded) parts.push(`${seq.loaded.name} bar ${positionText(seq, perBar).replace('.', ' beat ')}`);
-  if (Array.isArray(s.paletteOverride) && s.paletteOverride.length) parts.push('Palette override');
+export function nowPlaying(s, perBar = s.sequence?.beatsPerBar || 4) {
+  const playing = playingState(s);
+  const parts = [`Base: ${playing.base.name}${playing.base.running ? '' : ' (stopped)'}`];
+  parts.push(...playing.layers.map((layer) => `${layer.target}: ${layer.name}`));
+  const seq = playing.sequence;
+  if (seq) {
+    const state = { playing: 'playing', paused: 'paused', hold: 'holding frame', black: 'blackout', loaded: 'loaded' }[seq.mode];
+    parts.push(`Sequence: ${seq.name || seq.id} (${state}) bar ${positionText(seq, perBar).replace('.', ' beat ')}`);
+  }
+  if (playing.voices.length) parts.push(`Voices: ${playing.voices.map((voice) => voice.label).join(', ')}`);
+  if (playing.strobe && !playing.voices.some((voice) => voice.tier === 'strobe')) parts.push('Strobe');
+  if (playing.matrix && !playing.voices.some((voice) => voice.source === 'matrix')) {
+    const count = playing.matrix.colours.length;
+    parts.push(`Matrix: ${count} colour${count > 1 ? 's' : ''} as ${playing.matrix.mode}`);
+  }
+  if (playing.override) parts.push('Palette override');
   return parts.join(' · ');
 }
 

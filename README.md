@@ -3268,11 +3268,12 @@ Press **?** in the app for this list.
 | **1** / **2** / **3** | Manual / Auto Show / Perform view |
 | **4** / **5** | Timeline / Stage view |
 | **6** / **7** / **8** / **9** | Rig / Sources / Settings / Preflight view |
+| **0** / **Shift+0** | Sequence / Matrix view |
 | **←** **→**, **Home** / **End** on the view tabs | Next / previous / first / last view |
 | **←** **→** **↑** **↓**, **Home** / **End** | Move within the colour grid |
 | **Enter** / **Shift+Enter** | Write the focused swatch into the active slot / the paired slot (A↔B, C↔D) |
 | **Shift+click** or **right-click** | Write a swatch into the paired slot |
-| **Space** or **Enter** on an energy button | Hold the effect until released |
+| **Space** or **Enter** on a pad reached with Tab | Hold: play until released; once: play one phrase; loop: start or stop on each press |
 | **←** **→** **↑** **↓** (**Shift** for bigger steps) | Nudge the focused fixture on the stage plot (on the Rig view's plan, the whole selection) |
 | **[** **]**, **-** **=**, **0** on a bar | Turn it, change its length, back to its default line |
 | **Esc** on the plan | Stop drawing bars; else clear the selection |

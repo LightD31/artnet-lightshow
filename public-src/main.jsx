@@ -26,24 +26,7 @@ import { SettingsView } from './components/setup/SettingsView.jsx';
 import { PreflightView } from './components/setup/PreflightView.jsx';
 import { Wizard, useFirstRun } from './components/setup/Wizard.jsx';
 
-// The views, in the order the tabs show them: those for running a show,
-// then the four for setting one up. The keys are the digit that jumps to
-// each (the views past the digits have none), and the hash that opens the page on it — a tablet at front of house
-// bookmarks /#perform; /#rig/outputs opens the Rig view on its outputs.
-const VIEWS = [
-  { id: 'manual', key: '1', icon: '◧', label: 'Manual', hint: 'Patterns · Colours · Fixtures', group: 'live' },
-  { id: 'auto', key: '2', icon: '✦', label: 'Auto Show', hint: 'Spotify · Now Playing · PRO DJ LINK', group: 'live' },
-  { id: 'perform', key: '3', icon: '◉', label: 'Perform', hint: 'Pads · Palettes · Faders', group: 'live' },
-  { id: 'timeline', key: '4', icon: '≋', label: 'Timeline', hint: 'Sections · Rehearse · Edits', group: 'live' },
-  { id: 'stage', key: '5', icon: '◭', label: 'Stage', hint: 'The rig in 3D', group: 'live' },
-  { id: 'sequence', key: '', icon: '▤', label: 'Sequence', hint: 'Lanes · Patterns · Record', group: 'live' },
-  { id: 'matrix', key: '', icon: '▩', label: 'Matrix', hint: 'Hold colours', group: 'live' },
-  { id: 'rig', key: '6', icon: '▦', label: 'Rig', hint: 'Plan · Patch · Outputs', group: 'setup' },
-  { id: 'sources', key: '7', icon: '♫', label: 'Sources', hint: 'Players · Spotify · Live input', group: 'setup' },
-  { id: 'settings', key: '8', icon: '⚙', label: 'Settings', hint: 'Show · MIDI · Server', group: 'setup' },
-  { id: 'preflight', key: '9', icon: '✓', label: 'Preflight', hint: 'Pre-show check', group: 'setup' },
-];
-const VIEW_IDS = VIEWS.map((v) => v.id);
+import { VIEWS, VIEW_IDS, viewShortcut } from './views.js';
 
 /** The view a hash names: its first part, so /#rig/outputs is the Rig view. */
 const viewOfHash = () => window.location.hash.replace('#', '').split('/')[0];
@@ -104,7 +87,7 @@ function ModeTabs({ mode, setMode }) {
             <span class="mode-tab-label">{v.label}</span>
             <span class="mode-tab-hint">{v.id === 'auto' && autoActive ? 'Running' : v.hint}</span>
             {v.id === 'auto' && autoActive && <span class="mode-tab-dot" aria-hidden="true" />}
-            {v.key && <kbd class="mode-tab-key" aria-hidden="true">{v.key}</kbd>}
+            {v.key && <kbd class="mode-tab-key" aria-hidden="true">{v.shift ? '⇧' : ''}{v.key}</kbd>}
           </button>,
         ])}
       </div>
@@ -181,13 +164,11 @@ function Root() {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  // Keyboard shortcuts: 1–5 → the show views, 6–9 → the setup views
+  // View shortcuts leave keys handled by the focused control alone.
   useEffect(() => {
     const onKey = (e) => {
-      if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
-      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) || e.target.isContentEditable) return;
-      const view = VIEWS.find((v) => v.key === e.key);
-      if (view) setMode(view.id);
+      const view = viewShortcut(e);
+      if (view) { e.preventDefault(); setMode(view.id); }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);

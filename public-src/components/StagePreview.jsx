@@ -3,7 +3,7 @@ import { stateSig, dmxSig, connectedSig, emitFixture, stagePreviewSig } from '..
 import { colorToCss, fixtureOutputColor, fixtureCellColors, meanLight, fmtTime, patchedAt } from '../utils.js';
 import { useDmxFeed } from '../use-dmx.js';
 import { useRehearsalTrack, useRehearsalSampler } from '../rehearsal.js';
-import { nowPlaying } from '../preview-inputs.js';
+import { NowPlaying } from './NowPlaying.jsx';
 import { useTimeline } from '../use-timeline.js';
 import { stagePositions } from '../../src/shared/stage.ts';
 import { buildRig, lineOf } from '../../src/shared/rig.ts';
@@ -195,7 +195,7 @@ export function StagePreview() {
     <p class="look-note">{edit
       ? `Drag fixtures or use arrow keys.${rig.hasPixels ? ' Drag a bar\'s end handle to turn or stretch it.' : ''} Positions are saved with the show.`
       : 'Numbers are patch order. Patterns travel across the stage as placed here, left to right. Colours approximate the output.'}</p>
-    <p class="stage-now" aria-live="polite"><strong>Now playing</strong> {nowPlaying(s)}</p>
+    <p class="stage-now" aria-live="polite"><strong>Now playing</strong> <NowPlaying /></p>
     {data && <div class="stage-rehearsal">
       <button class={`btn sm ${rehearsal ? 'active' : ''}`} aria-pressed={rehearsal}
         onClick={() => setUi({ rehearsal: !rehearsal, playing: false })}>{rehearsal ? 'Return to live' : 'Rehearse track'}</button>

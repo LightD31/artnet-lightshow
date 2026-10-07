@@ -1,3 +1,4 @@
+import { NowPlaying } from './NowPlaying.jsx';
 import { connectedSig, pick } from '../state.js';
 import { formatBpm, clockSource } from '../utils.js';
 import { useState } from 'preact/hooks';
@@ -127,6 +128,7 @@ export function Header() {
         </div>
       </div>
       <DeviceTools />
+      <div class="header-now"><NowPlaying /></div>
     </header>
   );
 }

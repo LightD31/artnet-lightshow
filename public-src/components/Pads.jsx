@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { api, pick } from '../state.js';
+import { padLabel } from '../now-playing.js';
 import { useFocusTrap } from '../focus-trap.js';
 import { useVoicePads, holdsWhilePressed, padKey, rapidPad } from '../voice-pad.js';
 import { quickDeck, readFavourites } from './Effects.jsx';
@@ -101,7 +102,7 @@ export function Pads({ initialBank }) {
         {cells.map((entry) => {
           const index = entry.bank * SLOTS + entry.slot;
           const on = !!lit[index] || held.has(padKey(entry.bank, entry.slot));
-          const name = entry.label || (entry.content ? entry.content.id : 'Empty');
+          const name = padLabel(entry, s);
           // A rapid pad asks before the acknowledgement, as the strobe button does.
           const handlers = editing ? { onClick: () => setOpen(entry) }
             : gatedPadProps(entry, gate, rapidPad(entry, s.patterns, s.effects), name);
@@ -115,7 +116,7 @@ export function Pads({ initialBank }) {
               aria-pressed={on}
               disabled={!entry.content && !editing}
               {...handlers}>
-              <span class="pad-label">{entry.label || (entry.content ? name : 'Empty')}</span>
+              <span class="pad-label">{name}</span>
               <span class="pad-glyph" aria-hidden="true">{entry.content ? padGlyph(holdsWhilePressed(entry) ? 'hold' : entry.launch) : ''}</span>
             </button>
           );

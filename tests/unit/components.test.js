@@ -22,6 +22,10 @@ async function load() {
         export { store } from './public-src/state.js';
         export { Perform, sourceHealth } from './public-src/components/Perform.jsx';
         export { Header } from './public-src/components/Header.jsx';
+        export { StagePreview } from './public-src/components/StagePreview.jsx';
+        export { NowPlaying, PlayingVoices } from './public-src/components/NowPlaying.jsx';
+        export { SHORTCUTS } from './public-src/components/Shortcuts.jsx';
+        export { VIEWS } from './public-src/views.js';
         export { CommandBar } from './public-src/components/CommandBar.jsx';
         export { Effects, PhotosensitivityConfirm, editingSig, filterByLibrary, groupRows, quickDeck, tapRow, usePress } from './public-src/components/Effects.jsx';
         export { Inspector, readRecommendedPreference, savePreset, withRecommended } from './public-src/components/Inspector.jsx';
@@ -397,7 +401,7 @@ const deckOf = (html) => {
   return deck ? [...deck[1].matchAll(/<div class="effect-pad ?[^"]*" data-id="([^"]+)"/g)].map((m) => m[1]) : null;
 };
 
-test('the deck comes first: the presets saved here and the party looks as big pads, the app on each, the one on stage marked', () => {
+test('the deck marks the base among saved and party presets', () => {
   givenLibrary({ pattern: 'position-chase' });
   const html = ui.html(ui.h(ui.Effects, {}));
   assert.ok(html.indexOf('class="effects-deck"') < html.indexOf('class="effects-catalogue"'), 'the deck is above the catalogue');
@@ -406,27 +410,26 @@ test('the deck comes first: the presets saved here and the party looks as big pa
   assert.ok(deck.includes('swirl') && !deck.includes('hd.neonDomino') && !deck.includes('chase'), 'party looks only, no built-in or upstream row');
   // The badge names the app; a preset saved here carries its kind's app and says it is yours.
   assert.match(html, /data-id="u1">(?:(?!<\/div>).)*effect-pad-app">Hue Dynamics<span class="effect-pad-yours"> · Yours</s);
-  assert.match(html, /data-id="position-chase">(?:(?!<\/div>).)*effect-pad-app">Own</s);
-  assert.match(html, /<div class="effect-pad active" data-id="position-chase">(?:(?!<\/div>).)*effect-pad-now">Now playing</s);
-  assert.strictEqual(count(html, 'effect-pad-now">Now playing<'), 1);
+  assert.match(html, /data-id="position-chase"[^>]*>(?:(?!<\/div>).)*effect-pad-app">Own</s);
+  assert.match(html, /<div class="effect-pad active" data-id="position-chase" data-layer="base">/);
+  assert.strictEqual(count(html, 'class="effect-pad-now"'), 1);
   // Every pad and row has its pencil; the pencil is not the pad.
   assert.match(html, /<button type="button" class="effect-edit" aria-label="Edit My Domino"/);
   assert.match(html, /<button type="button" class="effect-edit" aria-label="Edit Neon Domino"/);
 });
 
-test('what is playing stays in sight above the search, even when its group is folded', () => {
+test('shared status stays above the effect search', () => {
   givenLibrary({});
   const html = ui.html(ui.h(ui.Effects, {}));
   const bar = /<div class="effects-now" role="status"[^>]*>(.*?)<\/div>/s.exec(html);
   assert.ok(bar, 'the now-playing bar is there');
-  assert.match(bar[1], /effects-now-name">Neon Domino</);
-  assert.match(bar[1], /effects-now-app">Hue Dynamics</);
+  assert.ok(bar[1].includes(ui.html(ui.h(ui.NowPlaying, {}))));
   assert.match(bar[1], /aria-label="Edit Neon Domino"/, 'its own pencil');
   assert.ok(html.indexOf('class="effects-now"') < html.indexOf('class="effects-search"'), 'above the search');
   assert.ok(html.indexOf('class="effects-tools"') < html.indexOf('class="effects-now"'), 'inside the sticky tools');
   assert.strictEqual(count(html, '<details class="effects-group" open'), 0, 'while every group is folded');
   givenLibrary({ pattern: null });
-  assert.doesNotMatch(ui.html(ui.h(ui.Effects, {})), /class="effects-now"/, 'nothing playing, no bar');
+  assert.match(ui.html(ui.h(ui.Effects, {})), /class="effects-now"/);
 });
 
 test('a favourite is pinned first on the deck, whatever it is', () => {
@@ -651,4 +654,46 @@ test('the command bar\'s strip is pads bank A', () => {
   assert.match(html, /class="cb-energy-label">PADS</);
   const names = [...html.matchAll(/class="cb-energy-name">([^<]*)</g)].map((m) => m[1]);
   assert.deepStrictEqual(names, ['Kill', 'Blinder', 'Strobe', 'Colour strobe', 'UV', 'Glow', 'Domino']);
+});
+
+
+test('every live status surface renders the shared state', () => {
+  givenLibrary({
+    sequence: { loaded: { id: 'intro', name: 'Intro' }, paused: true, beat: 3, bar: 1 },
+    voices: [{ id: 'api:1', label: 'API look', mode: 'latched', targets: 'shared' }],
+    paletteOverride: ['#123456'], fixtures: [],
+  });
+  const expected = ui.html(ui.h(ui.NowPlaying, {}));
+  for (const Component of [ui.Header, ui.Perform, ui.Effects, ui.StagePreview]) {
+    assert.ok(ui.html(ui.h(Component, {})).includes(expected));
+  }
+});
+
+test('pad labels agree between the deck and command bar', () => {
+  const entry = pad(0, 0, '', { kind: 'preset', id: 'hd.neonDomino' });
+  givenLibrary({ pads: { layout: [entry], lit: [] } });
+  const labels = padLabels(ui.html(ui.h(ui.Pads, {})));
+  const strip = ui.html(ui.h(ui.CommandBar, {}));
+  const rendered = /class="cb-energy-name">([^<]*)</.exec(strip);
+  assert.strictEqual(labels[0], rendered[1]);
+  assert.strictEqual(labels[0], ui.CATALOGUE.find((row) => row.id === entry.content.id).name);
+});
+
+test('shortcut help derives every view chord from the navigation', () => {
+  const items = ui.SHORTCUTS.flatMap((group) => group.items).filter((item) => item.view);
+  assert.deepStrictEqual(items.map((item) => [item.view, item.keys]), ui.VIEWS.map((view) => [view.id, [...(view.shift ? ['Shift'] : []), view.key]]));
+});
+
+test('voice stop uses the visible voice identifier', async () => {
+  given({ voices: [{ id: 'api:1/2', label: 'Remote', mode: 'latched', targets: 'shared' }, { id: 'hidden', hidden: true }] });
+  const children = ui.PlayingVoices({}).props.children[0];
+  assert.strictEqual(children.length, 1);
+  const stop = children[0].props.children.find((child) => child.type === 'button');
+  const calls = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (path, init) => { calls.push([path, init.method]); return { ok: true, json: async () => ({ ok: true }) }; };
+  try {
+    await stop.props.onClick();
+    assert.deepStrictEqual(calls, [['/api/voices/api%3A1%2F2', 'DELETE']]);
+  } finally { globalThis.fetch = realFetch; }
 });
