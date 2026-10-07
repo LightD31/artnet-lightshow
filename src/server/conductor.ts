@@ -216,7 +216,12 @@ class Conductor {
    * a BPM sent straight after the switch, and `status()` tells the truth.
    */
   setTempoMode(mode: unknown): void {
-    if (!TEMPO_MODES.includes(mode as TempoMode) || mode === this._tempoMode) return;
+    if (!TEMPO_MODES.includes(mode as TempoMode)) return;
+    // 'auto' asked for again is the operator saying "follow the music now".
+    if (mode === this._tempoMode) {
+      if (mode === 'auto') this.follow();
+      return;
+    }
     this._tempoMode = mode as TempoMode;
     // Following again means following: a tap that took the tempo from this
     // track or any other source, in either mode, no longer holds it off.
@@ -228,6 +233,29 @@ class Conductor {
     // read-out but not the clock, and the nudges start from the read-out.
     this._reportedBpm = null;
     this.now();
+  }
+
+  /**
+   * Give a tempo taken by hand back to the music now, rather than at its
+   * source's next discontinuity: the Follow control, and `auto` asked for
+   * while already in `auto`. Nothing to do in `manual`, or with no hand.
+   */
+  follow(): void {
+    if (this._tempoMode !== 'auto' || (!this._hand && !this._override)) return;
+    this._override = false;
+    this._hand = null;
+    this._reportedBpm = null;
+    this.now();
+  }
+
+  /**
+   * Whether a tempo taken by hand is what keeps a deck, the track or the live
+   * input from leading right now, so the screens offer follow(). False in
+   * `manual`, where nothing is followed to go back to.
+   */
+  byHand(): boolean {
+    if (this._tempoMode !== 'auto' || this._next(this._now()).reading.source !== 'tap') return false;
+    return this._handFrom() < FOLLOWED.length || (this._override && !!this._track);
   }
 
   /**

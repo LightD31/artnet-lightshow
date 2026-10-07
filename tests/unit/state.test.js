@@ -100,7 +100,8 @@ test('the clock carries its beat position, its epoch and when it was read', () =
   const before = Date.now();
   const { clock } = getLiveState();
   const after = Date.now();
-  assert.deepStrictEqual(Object.keys(clock).sort(), ['at', 'beatPos', 'bpm', 'epoch', 'source']);
+  assert.deepStrictEqual(Object.keys(clock).sort(), ['at', 'beatPos', 'bpm', 'byHand', 'epoch', 'source']);
+  assert.strictEqual(clock.byHand, false, 'nothing taken by hand');
   for (const key of ['at', 'beatPos', 'bpm', 'epoch']) assert.ok(Number.isFinite(clock[key]), `${key}: ${clock[key]}`);
   assert.ok(before <= clock.at && clock.at <= after, `read at ${clock.at}, between ${before} and ${after}`);
   assert.deepStrictEqual({ source: clock.source, bpm: clock.bpm }, conductor.status());

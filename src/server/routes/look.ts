@@ -40,7 +40,8 @@ export function attachLookRoutes(app: Express, _ctx: RouteContext): void {
   });
 
   // Automatic tempo match: 'auto' follows the music, 'manual' keeps the tempo
-  // tapped or typed here. Answers with what the clock now follows.
+  // tapped or typed here. 'auto' while already in 'auto' ends a tempo held by
+  // hand at once. Answers with what the clock now follows.
   app.post('/api/tempo/:mode', (req, res) => {
     try {
       applyPatch({ tempoMode: req.params.mode });

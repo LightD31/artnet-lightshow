@@ -1197,9 +1197,13 @@ measures a new one. The hand holds until the music moves on, and then the clock
 follows again: the next song; on the CDJs, the master deck loading a new track
 or another deck becoming the master; on the live input, the beat lost and found
 again. A tempo taken from decks that have since gone quiet also gives way to the
-next song or a new live beat. A deck's own tempo report never replaces a tempo
-held by hand. The auto show's grid is not taken by hand: a tempo typed under it
-leaves the read-out on the show's tempo. Recalling a cue while the clock follows
+next song or a new live beat. To follow the music again at once, press
+**Follow** beside the Tap badge (**Follow the music** beside the Clock chip on
+Perform), shown while a tempo is held by hand, or send `POST /api/tempo/auto`;
+with the deck paused, the clock carries on and follows it when it plays. A
+deck's own tempo report never replaces a tempo held by hand. The auto show's
+grid is not taken by hand: a tempo typed under it leaves the read-out on the
+show's tempo. Recalling a cue while the clock follows
 the music brings back the look and leaves the music's tempo in charge.
 
 When a song pauses, the clock carries on at its tempo rather than freezing the
@@ -1215,11 +1219,13 @@ type, nudge or send over MIDI. It takes over at the beat and tempo the music
 had reached, so nothing lurches. The running auto show still leads, because
 its scenes are scheduled on its track's beats.
 `POST /api/tempo/auto` follows the music again, from whatever source is best
-then; the choice is stored and survives a restart, and a tap never changes it.
+then, and ends a tempo held by hand; the choice is stored and survives a
+restart, and a tap never changes it.
 
 Other screens can keep the rig's beat: the live state's `clock` (`GET
-/api/state`, or the `look` domain over the socket) is `{ source, bpm, beatPos,
-epoch, at }`, the beat position read at `at` (wall-clock ms). Carry it on as
+/api/state`, or the `look` domain over the socket) is `{ source, bpm, byHand,
+beatPos, epoch, at }`, `byHand` true while a tempo taken by hand holds the
+music off, and the beat position read at `at` (wall-clock ms). Carry it on as
 `beatPos + (now − at) / 60000 × bpm`; a new `epoch` means the music jumped.
 While the patterns are stopped on the free clock (`running` false, source
 `tap`) the beat stands still: hold it there rather than carry it on. It rides
@@ -2477,7 +2483,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/play` · `/api/stop` | Start / stop the pattern engine |
 | POST | `/api/bpm/:value` | Set BPM (20–300, fractions allowed) |
 | POST | `/api/bpm/adjust/:delta` | Nudge BPM |
-| POST | `/api/tempo/auto` · `/api/tempo/manual` | Automatic tempo match on (follow the music) or off (keep the tapped or typed BPM); answers `{ ok, tempoMode, clock }`, stored across restarts |
+| POST | `/api/tempo/auto` · `/api/tempo/manual` | Automatic tempo match on (follow the music) or off (keep the tapped or typed BPM); `auto` while on ends a tempo held by hand; answers `{ ok, tempoMode, clock }`, stored across restarts |
 | POST | `/api/master/:value` | Master dimmer (0–255) |
 | POST | `/api/blackout/toggle` · `/api/blackout/on` · `/api/blackout/off` | Master blackout |
 | POST | `/api/pattern/:id` | Set pattern (e.g. `chase`, `rainbow`) |

@@ -59,6 +59,9 @@ test('the tempo mode is saved when it changes, and a refused one changes nothing
 
     applyPatch({ tempoMode: 'auto' });
     assert.deepStrictEqual(saved, [{ clock: { tempoMode: 'manual' } }, { clock: { tempoMode: 'auto' } }]);
+    // 'auto' again follows the music (it ends a tempo held by hand): no change to store.
+    applyPatch({ tempoMode: 'auto' });
+    assert.strictEqual(saved.length, 2);
   } finally {
     applyPatch({ tempoMode: 'auto' });
     setPersist(() => {});

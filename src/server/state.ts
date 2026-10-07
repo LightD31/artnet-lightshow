@@ -258,10 +258,11 @@ function getDmxSnapshotSize(universe: number): number {
  * beatPos + (now − at) / 60000 × bpm. The beat moves on every read; the
  * publisher sends it only when that carrying-on would miss it (protocol.ts).
  */
-function clockState(): { source: ClockSource; bpm: number; beatPos: number; epoch: number; at: number } {
+function clockState(): { source: ClockSource; bpm: number; byHand: boolean; beatPos: number; epoch: number; at: number } {
   const { beatPos, epoch } = conductor.phase();
   const at = Date.now();
-  return { ...conductor.status(), beatPos, epoch, at };
+  // byHand: a tempo taken by hand holds the music off, so the screens offer Follow.
+  return { ...conductor.status(), byHand: conductor.byHand(), beatPos, epoch, at };
 }
 
 // Returns the snapshot the UI consumes. Heavyweight fields (autoShow, prolink,

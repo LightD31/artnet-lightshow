@@ -81,10 +81,13 @@ function applyPatch(rawData: unknown): Patch {
 
   // Before the tempo: switching to 'manual' hands the free clock the tempo the
   // music had, and a BPM in the same patch is meant to replace that one.
-  if (data.tempoMode !== undefined && data.tempoMode !== state.tempoMode) {
+  // 'auto' sent again while already in 'auto' gives a tempo taken by hand back
+  // to the music, and changes nothing to store.
+  if (data.tempoMode !== undefined) {
+    const switches = data.tempoMode !== state.tempoMode;
     state.tempoMode = data.tempoMode;
     conductor.setTempoMode(data.tempoMode);
-    persist({ clock: { tempoMode: data.tempoMode } });
+    if (switches) persist({ clock: { tempoMode: data.tempoMode } });
   }
   if (data.bpm !== undefined) {
     // To a hundredth: finer than any source measures, and 123.7 + 1 from a
