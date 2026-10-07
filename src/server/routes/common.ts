@@ -4,7 +4,10 @@ import { messageOf, statusOf } from '../../errors.ts';
 import { cues as defaultCues } from '../cues.ts';
 import { createOflLibrary } from '../ofl-library.ts';
 import { wledClient } from '../wled.ts';
-import { listEntertainmentConfigs } from '../hue.ts';
+import { openrgbClient } from '../openrgb.ts';
+import { listEntertainmentConfigs, pair } from '../hue.ts';
+import * as output from '../output.ts';
+import type { HueBridgeSettings } from '../settings.ts';
 import type AutoShow from '../../auto-show.ts';
 import type { CueStore } from '../cues.ts';
 import type { AnalysisCache } from '../../analysis-cache.ts';
@@ -17,6 +20,7 @@ import type { createApplier } from '../apply.ts';
 import type { setupIntegrations } from '../integrations.ts';
 import type { OflLibrary } from '../ofl-library.ts';
 import type { WledClient } from '../wled.ts';
+import type { OpenRgbClient } from '../openrgb.ts';
 
 /**
  * What every domain's routes share (src/server/routes/): the subsystems they
@@ -39,8 +43,12 @@ export interface RouteDeps {
   oflLibrary?: OflLibrary;
   /** Finding and asking WLEDs; the real network unless a test stands in. */
   wled?: WledClient;
-  /** The paired bridge's entertainment areas; the real bridge unless a test stands in. */
+  /** Asking OpenRGB servers for their devices; the real network unless a test stands in. */
+  openrgb?: OpenRgbClient;
+  /** A bridge's entertainment areas; the real bridge unless a test stands in. */
   hueAreas?: typeof listEntertainmentConfigs;
+  /** Pairing with a bridge; the real one unless a test stands in. */
+  huePair?: typeof pair;
   /** The cue stack; the one saved in config/cues.json unless a test stands in. */
   cues?: CueStore;
   /** Stop to be started again by the supervisor; false when there is none. */
@@ -58,7 +66,7 @@ export const uploadOfl = multer({ storage: multer.memoryStorage(), limits: { fil
 
 /** The subsystems, with the ones a test may stand in for filled in. */
 export type RouteContext = RouteDeps & {
-  oflLibrary: OflLibrary; wled: WledClient; hueAreas: typeof listEntertainmentConfigs; cues: CueStore;
+  oflLibrary: OflLibrary; wled: WledClient; openrgb: OpenRgbClient; hueAreas: typeof listEntertainmentConfigs; huePair: typeof pair; cues: CueStore;
 };
 
 export function routeContext(deps: RouteDeps): RouteContext {
@@ -66,7 +74,9 @@ export function routeContext(deps: RouteDeps): RouteContext {
     ...deps,
     oflLibrary: deps.oflLibrary || createOflLibrary(),
     wled: deps.wled || wledClient,
+    openrgb: deps.openrgb || openrgbClient,
     hueAreas: deps.hueAreas || listEntertainmentConfigs,
+    huePair: deps.huePair || pair,
     cues: deps.cues || defaultCues,
   };
 }
@@ -74,6 +84,26 @@ export function routeContext(deps: RouteDeps): RouteContext {
 /** An async handler whose throw (or rejection) reaches the error handler. */
 export function asyncHandler(fn: (req: Request, res: Response, next: NextFunction) => unknown): RequestHandler {
   return (req, res, next) => { Promise.resolve(fn(req, res, next)).catch(next); };
+}
+
+/**
+ * The bridge a Hue route names (`/api/hue/:bridge/…`), or the first one for
+ * the routes from before there could be several (`/api/hue/…`), which keep
+ * working for a rig with one. Null once the refusal has been sent: 404 for a
+ * bridge that is not there, 409 when none is paired at all.
+ */
+export function resolveHueBridge(req: Request, res: Response): HueBridgeSettings | null {
+  const bridges = output.getHueConfig().bridges;
+  const id = (req.params as Record<string, string | undefined>).bridge;
+  if (id === undefined) {
+    if (bridges.length) return bridges[0];
+    res.status(409).json({ ok: false, error: 'Pair with a bridge first.' });
+    return null;
+  }
+  const bridge = bridges.find((b) => b.id === id);
+  if (bridge) return bridge;
+  res.status(404).json({ ok: false, error: `No Hue bridge "${id}" — GET /api/hue/status lists them.` });
+  return null;
 }
 
 // ─── Error handler ────────────────────────────────────────────────────────

@@ -76,6 +76,8 @@ test('out-of-range colour is clamped rather than wrapping', () => {
 
 // ── Configuration ───────────────────────────────────────────────────────────
 
+const BRIDGE = { id: 'b1', label: 'Lounge', enabled: false, host: '', username: '', clientKey: '', applicationId: '', entertainmentId: '' };
+
 test('a session is only considered configured once every credential is present', () => {
   assert.strictEqual(hue.isConfigured({ host: '10.0.0.2', username: 'u', clientKey: 'ab', entertainmentId: 'x' }), true);
   assert.strictEqual(hue.isConfigured({ host: '', username: 'u', clientKey: 'ab', entertainmentId: 'x' }), false);
@@ -84,51 +86,123 @@ test('a session is only considered configured once every credential is present',
   assert.strictEqual(hue.isConfigured({ host: '10.0.0.2', username: 'u', clientKey: 'ab', entertainmentId: '' }), false);
 });
 
-test('configure merges over what is already set', () => {
-  try {
-    hue.configure({ host: '10.0.0.2', username: 'user', clientKey: 'aabb' });
-    hue.configure({ entertainmentId: AREA });
-    const config = hue.getConfig();
-    assert.strictEqual(config.host, '10.0.0.2', 'untouched keys survive');
-    assert.strictEqual(config.entertainmentId, AREA);
-  } finally {
-    hue._reset();
-  }
+test('configure merges over what is already set, and the id is the registry\'s', () => {
+  const session = new hue.HueSession({ ...BRIDGE, host: '10.0.0.2', username: 'user', clientKey: 'aabb' });
+  session.configure({ entertainmentId: AREA, id: 'other' });
+  const config = session.getConfig();
+  assert.strictEqual(config.host, '10.0.0.2', 'untouched keys survive');
+  assert.strictEqual(config.entertainmentId, AREA);
+  assert.strictEqual(config.id, 'b1', 'a session never changes which bridge it is');
 });
 
 // Nothing may be sent before there is somewhere to send it: an unconfigured
 // bridge must not have the render loop opening sockets 40 times a second.
 test('an unconfigured or disabled session sends nothing', () => {
-  try {
-    assert.strictEqual(hue.sendFrame([{ id: 0, r: 255, g: 0, b: 0 }]), false);
-    hue.configure({ enabled: true, host: '10.0.0.2', username: 'user', clientKey: 'aabb' });
-    assert.strictEqual(hue.sendFrame([{ id: 0, r: 255, g: 0, b: 0 }]), false, 'no area picked');
-  } finally {
-    hue._reset();
-  }
+  const session = new hue.HueSession(BRIDGE);
+  assert.strictEqual(session.sendFrame([{ id: 0, r: 255, g: 0, b: 0 }]), false);
+  session.configure({ enabled: true, host: '10.0.0.2', username: 'user', clientKey: 'aabb' });
+  assert.strictEqual(session.sendFrame([{ id: 0, r: 255, g: 0, b: 0 }]), false, 'no area picked');
 });
 
-test('a fresh session reports itself idle and unconfigured', () => {
-  hue._reset();
-  const status = hue.getStatus();
-  assert.strictEqual(status.status, 'idle');
-  assert.strictEqual(status.configured, false);
-  assert.strictEqual(status.enabled, false);
-  assert.strictEqual(status.error, null);
+test('a fresh session reports itself idle and unconfigured, as its bridge', () => {
+  const status = new hue.HueSession(BRIDGE).getStatus();
+  assert.deepStrictEqual(
+    [status.id, status.label, status.status, status.configured, status.enabled, status.error],
+    ['b1', 'Lounge', 'idle', false, false, null],
+  );
 });
 
 // Opening a session puts the area into entertainment mode, which takes those
 // lamps out of normal Hue control. Doing that with no lamp in the patch seizes
 // them and then sends no colours, so the lamps are held hostage for no benefit.
 test('a fully paired session with no lamps in the patch never contacts the bridge', () => {
+  const session = new hue.HueSession({
+    ...BRIDGE, enabled: true, host: '10.0.0.2', username: 'user', clientKey: 'aabb', entertainmentId: AREA,
+  });
+  assert.strictEqual(session.isConfigured(), true, 'everything is set up');
+  assert.strictEqual(session.sendFrame([]), false);
+  assert.strictEqual(session.getStatus().status, 'idle', 'no connection was attempted');
+});
+
+// ── Several bridges ─────────────────────────────────────────────────────────
+// A house with two bridges streams two areas at once. Each bridge in the
+// settings has a session of its own, by its id, and what one is told never
+// reaches the other.
+
+test('the registry keeps one session per bridge, in order, and drops a bridge that leaves', () => {
   try {
-    hue.configure({
-      enabled: true, host: '10.0.0.2', username: 'user', clientKey: 'aabb',
-      entertainmentId: AREA,
-    });
-    assert.strictEqual(hue.isConfigured(), true, 'everything is set up');
-    assert.strictEqual(hue.sendFrame([]), false);
-    assert.strictEqual(hue.getStatus().status, 'idle', 'no connection was attempted');
+    hue.configureBridges([{ ...BRIDGE, id: 'b1' }, { ...BRIDGE, id: 'b2', label: 'Party' }]);
+    assert.deepStrictEqual(hue.listSessions().map((s) => s.id), ['b1', 'b2']);
+    assert.deepStrictEqual(hue.getStatusAll().map((s) => [s.id, s.label, s.status]), [['b1', 'Lounge', 'idle'], ['b2', 'Party', 'idle']]);
+    const first = hue.getSession('b1');
+    hue.configureBridges([{ ...BRIDGE, id: 'b1', host: '10.0.0.2' }, { ...BRIDGE, id: 'b3' }]);
+    assert.strictEqual(hue.getSession('b1'), first, 'a bridge still there keeps its session');
+    assert.strictEqual(first.getConfig().host, '10.0.0.2', 'reconfigured in place');
+    assert.strictEqual(hue.getSession('b2'), null, 'a bridge gone from the settings is forgotten');
+    assert.deepStrictEqual(hue.getConfigs().map((b) => b.id), ['b1', 'b3']);
+  } finally {
+    hue._reset();
+  }
+});
+
+test('configuring one bridge leaves the other as it was', () => {
+  try {
+    hue.configureBridges([{ ...BRIDGE, id: 'b1', host: '10.0.0.2' }, { ...BRIDGE, id: 'b2', host: '10.0.0.3', entertainmentId: AREA }]);
+    hue.configureBridges([{ ...BRIDGE, id: 'b1', host: '10.0.0.9' }, { ...BRIDGE, id: 'b2', host: '10.0.0.3', entertainmentId: AREA }]);
+    assert.strictEqual(hue.getSession('b1').getConfig().host, '10.0.0.9');
+    assert.deepStrictEqual([hue.getSession('b2').getConfig().host, hue.getSession('b2').getConfig().entertainmentId], ['10.0.0.3', AREA]);
+  } finally {
+    hue._reset();
+  }
+});
+
+test('a frame is handed to each bridge by id; a frame for no bridge, or a bridge not set up, goes nowhere', () => {
+  try {
+    hue.configureBridges([{ ...BRIDGE, id: 'b1' }, { ...BRIDGE, id: 'b2' }]);
+    const frames = new Map([['b1', [{ id: 0, r: 1, g: 2, b: 3 }]], ['b9', [{ id: 0, r: 1, g: 2, b: 3 }]]]);
+    assert.strictEqual(hue.sendFrames(frames), false);
+    assert.ok(hue.getStatusAll().every((s) => s.status === 'idle'), 'no connection was attempted');
+  } finally {
+    hue._reset();
+  }
+});
+
+test('whether any bridge is on is what decides the pars delay', () => {
+  try {
+    hue.configureBridges([{ ...BRIDGE, id: 'b1' }, { ...BRIDGE, id: 'b2', enabled: true }]);
+    assert.strictEqual(hue.anyEnabled(), true);
+    hue.configureBridges([{ ...BRIDGE, id: 'b1' }]);
+    assert.strictEqual(hue.anyEnabled(), false);
+    assert.strictEqual(hue.anyEnabled(), false);
+  } finally {
+    hue._reset();
+  }
+});
+
+// A bridge that is off, unplugged or mid-reboot fails on its own schedule:
+// the other bridge is not touched, and the render loop is not what retries.
+test('an unreachable bridge fails its own session and backs off; the other stays idle', async () => {
+  try {
+    hue.configureBridges([
+      { ...BRIDGE, id: 'b1', enabled: true, host: 'bridge.invalid', username: 'user', clientKey: 'aabb', applicationId: 'app-id', entertainmentId: AREA },
+      { ...BRIDGE, id: 'b2', enabled: true, host: '10.0.0.3', username: 'user', clientKey: 'aabb', applicationId: 'app-id', entertainmentId: AREA },
+    ]);
+    const frames = new Map([['b1', [{ id: 0, r: 255, g: 0, b: 0 }]]]);
+    assert.strictEqual(hue.sendFrames(frames), false, 'the handshake is in flight, the frame is dropped');
+    assert.strictEqual(hue.getSession('b1').getStatus().status, 'connecting');
+    assert.strictEqual(hue.getSession('b2').getStatus().status, 'idle', 'nothing of it in the patch: never contacted');
+    const deadline = Date.now() + 8000;
+    while (hue.getSession('b1').getStatus().status === 'connecting' && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    const status = hue.getSession('b1').getStatus();
+    assert.strictEqual(status.status, 'failed');
+    assert.match(status.error, /could not start the entertainment session/);
+    assert.strictEqual(hue.sendFrames(frames), false, 'backing off: no new attempt on the next frame');
+    assert.strictEqual(hue.getSession('b1').getStatus().status, 'failed');
+    assert.strictEqual(hue.getSession('b2').getStatus().status, 'idle');
+    await hue.stopAll();
+    assert.deepStrictEqual(hue.getStatusAll().map((s) => s.status), ['idle', 'idle'], 'stopped, every one');
   } finally {
     hue._reset();
   }

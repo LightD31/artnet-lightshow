@@ -5,6 +5,7 @@ import { HttpError, messageOf } from '../errors.ts';
 import { configFile } from './config-dir.ts';
 import { isLoopback } from './loopback.ts';
 import { JsonStore } from './json-store.ts';
+import { HUE_BRIDGE_ID_RE } from '../shared/placement.ts';
 
 /**
  * Persisted configuration, edited in the app's Rig, Sources and Settings views.
@@ -78,31 +79,23 @@ const DEFAULTS: Settings = {
     // the show network's address on a machine that is also on another one.
     interface: '',
   },
-  // Philips Hue Entertainment. Off by default: it needs credentials the bridge
-  // itself has to issue, so there is nothing sensible to default to. Unlike
-  // Art-Net and sACN this does not carry a universe: each lamp of the area is a
-  // fixture in the patch, and its channel is sent the colour it is rendered.
+  // Philips Hue Entertainment. Nothing by default: a bridge needs credentials
+  // it issues itself, so one only exists here once it has been paired. Unlike
+  // Art-Net and sACN this does not carry a universe: each lamp of a bridge's
+  // area is a fixture in the patch, and its channel is sent the colour it is
+  // rendered. Several bridges stream at once, each its own area.
   hue: {
-    enabled: false,
-    // The bridge's address. Found for you in the Rig view, or typed in
-    // when the show network has no route to Philips' discovery service.
-    host: '',
-    // Both issued by the bridge during pairing, never typed by anyone: the
-    // application key is the DTLS identity, the client key is the pre-shared
-    // key itself. Secrets, so they are write-only from the UI's point of view.
-    username: '',
-    clientKey: '',
-    // The bridge's id for this application, which is what the DTLS handshake
-    // uses as its identity. Issued alongside the keys and fetched during
-    // pairing; resolved on first connect for pairings made before that.
-    applicationId: '',
-    // Which entertainment area to drive. Areas are built in the Hue app, since
-    // that is where the lamps have already been placed on a floor plan.
-    entertainmentId: '',
+    // One entry per paired bridge (see hueBridge below): its id, which the
+    // fixtures name; a label; whether its output is on; its address; the
+    // application key and client key the bridge issued (secrets, write-only
+    // from the UI's point of view); the application id the DTLS handshake
+    // identifies as; and the entertainment area it streams.
+    bridges: [],
     // How far the Art-Net and sACN output is held back so the pars land with
     // the Hue lamps. The bridge and its Zigbee relay add a delay the DMX wire
     // does not have, so on a mixed rig every hit reaches the pars first. Tuned
     // by eye against the sync test; 0 sends everything the moment it renders.
+    // One delay for every bridge: they all sit behind the same kind of hop.
     latencyMs: 0,
   },
   midi: {
@@ -173,6 +166,13 @@ const DEFAULTS: Settings = {
     // Off by default: most of what a party rig is for is above it.
     flashLimit: false,
   },
+  // Whether anything leaves the machine (armed.ts). Stored so the Show
+  // section and the REST routes share one switch; never honoured at start —
+  // the applier puts it back to off, so a reboot cannot start a show in the
+  // room (apply.ts).
+  outputs: {
+    armed: false,
+  },
   // The first-run setup (the page's onboarding wizard): offered until it has
   // been finished or skipped once. A settings file from before the wizard
   // belongs to a rig that is set up already (see load()).
@@ -217,9 +217,22 @@ const DEFAULTS: Settings = {
 // and can set or clear the value, but never read it back.
 const SECRET_PATHS = [
   'server.token', 'spotify.clientSecret', 'spotify.refreshToken', 'deezer.arl',
-  // Bridge-issued, and together they are full control of the Hue system.
-  'hue.username', 'hue.clientKey',
 ];
+
+// The secrets inside each entry of hue.bridges: bridge-issued, and together
+// they are full control of that Hue system. Blanked on the way out like the
+// paths above; a blank one sent back keeps the stored value (see update()).
+const HUE_SECRET_KEYS = ['username', 'clientKey'] as const;
+
+// The id the one bridge of a settings file written before several were
+// possible gets, so the lamps already in the patch (which name no bridge)
+// find it. The ids after it are bridge-2, bridge-3… (routes/outputs.ts).
+const LEGACY_HUE_BRIDGE_ID = 'bridge-1';
+
+// The scalar form hue took before hue.bridges: one bridge, its fields at the
+// top of the group. Migrated on load; refused on PUT, with a pointer.
+const LEGACY_HUE_KEYS = ['enabled', 'host', 'username', 'clientKey', 'applicationId', 'entertainmentId'] as const;
+
 
 // Read once at boot, before anything is listening. Changing these persists
 // immediately but only takes effect on the next start.
@@ -233,6 +246,32 @@ const netHost = z.string().min(1).max(253).refine(
   (v) => v === '::' || v === '::1' || HOSTNAME_RE.test(v),
   { message: 'must be an IP address or hostname' },
 );
+
+/** One paired Hue bridge, as hue.bridges holds it. */
+const hueBridge = z.object({
+  id: z.string().regex(HUE_BRIDGE_ID_RE, 'must be a short plain id'),
+  label: z.string().max(64),
+  enabled: z.boolean(),
+  host: z.string().max(253).refine(
+    (v) => v === '' || HOSTNAME_RE.test(v),
+    { message: 'must be blank or the bridge IP address or hostname' },
+  ),
+  username: z.string().max(128),
+  applicationId: z.string().max(128),
+  // 32 hex characters as issued, but accept any even-length hex run so a
+  // future bridge with a longer key is a firmware note rather than a bug.
+  clientKey: z.string().max(128).refine(
+    (v) => v === '' || /^(?:[0-9a-fA-F]{2})+$/.test(v),
+    { message: 'must be blank or the hex client key issued by the bridge' },
+  ),
+  entertainmentId: z.string().max(64).refine(
+    (v) => v === '' || /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(v),
+    { message: 'must be blank or an entertainment area id' },
+  ),
+}).strict();
+
+/** A bridge entry: what the Hue output, the routes and the pre-show check read. */
+export type HueBridgeSettings = z.infer<typeof hueBridge>;
 
 const schema = z.object({
   server: z.object({
@@ -275,22 +314,9 @@ const schema = z.object({
     ),
   }).strict(),
   hue: z.object({
-    enabled: z.boolean(),
-    host: z.string().max(253).refine(
-      (v) => v === '' || HOSTNAME_RE.test(v),
-      { message: 'must be blank or the bridge IP address or hostname' },
-    ),
-    username: z.string().max(128),
-    applicationId: z.string().max(128),
-    // 32 hex characters as issued, but accept any even-length hex run so a
-    // future bridge with a longer key is a firmware note rather than a bug.
-    clientKey: z.string().max(128).refine(
-      (v) => v === '' || /^(?:[0-9a-fA-F]{2})+$/.test(v),
-      { message: 'must be blank or the hex client key issued by the bridge' },
-    ),
-    entertainmentId: z.string().max(64).refine(
-      (v) => v === '' || /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(v),
-      { message: 'must be blank or an entertainment area id' },
+    bridges: z.array(hueBridge).max(16).refine(
+      (list) => new Set(list.map((b) => b.id)).size === list.length,
+      { message: 'two bridges have the same id' },
     ),
     // Half a second is far past any bridge; anything that long is a setting
     // typed in the wrong unit.
@@ -333,6 +359,9 @@ const schema = z.object({
   }).strict(),
   safety: z.object({
     flashLimit: z.boolean(),
+  }).strict(),
+  outputs: z.object({
+    armed: z.boolean(),
   }).strict(),
   setup: z.object({
     completed: z.boolean(),
@@ -419,6 +448,49 @@ function clearNewlyInvalidFields(parsed: unknown): string[] {
   return cleared;
 }
 
+/** Whether a hue group is in the one-bridge form from before hue.bridges. */
+function isLegacyHue(hue: unknown): hue is Record<string, unknown> {
+  return !!hue && typeof hue === 'object' && !Array.isArray(hue)
+    && !('bridges' in hue) && LEGACY_HUE_KEYS.some((key) => key in hue);
+}
+
+/**
+ * The one bridge a file from before several were possible describes, moved
+ * into hue.bridges as bridge-1. Mutates `parsed`; returns whether it did.
+ *
+ * A file whose bridge was never paired (every field blank) migrates to no
+ * bridge at all: an empty entry would only be a row to forget. `hue.channels`,
+ * the binding map of an older build still, goes with the scalar fields.
+ */
+function migrateLegacyHue(parsed: unknown): boolean {
+  const root = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  const hue = root ? root.hue : null;
+  if (!root || !isLegacyHue(hue)) return false;
+  const text = (key: string) => (typeof hue[key] === 'string' ? hue[key] as string : '');
+  const bridge: HueBridgeSettings = {
+    id: LEGACY_HUE_BRIDGE_ID,
+    label: text('host') || 'Hue bridge',
+    enabled: hue.enabled === true,
+    host: text('host'),
+    username: text('username'),
+    clientKey: text('clientKey'),
+    applicationId: text('applicationId'),
+    entertainmentId: text('entertainmentId'),
+  };
+  const paired = !!(bridge.host || bridge.username || bridge.clientKey);
+  for (const key of [...LEGACY_HUE_KEYS, 'channels']) delete hue[key];
+  hue.bridges = paired ? [bridge] : [];
+  if (paired) {
+    console.warn(`[settings] the Hue bridge at ${bridge.host || '(no address)'} is now hue.bridges[0] as "${LEGACY_HUE_BRIDGE_ID}"`);
+  }
+  return true;
+}
+
+/** The bridge a Hue lamp that names none belongs to: the first, or the id the migration gives. */
+function defaultHueBridgeId(bridges: readonly { id: string }[]): string {
+  return bridges.length ? bridges[0].id : LEGACY_HUE_BRIDGE_ID;
+}
+
 class SettingsStore extends JsonStore {
   declare _values: Settings;
   declare _listeners: SettingsListener[];
@@ -447,6 +519,8 @@ class SettingsStore extends JsonStore {
       // file — Spotify credentials, the token, the Hue pairing — for the sake
       // of one field. Such fields are cleared here, loudly, and the rest loads.
       clearNewlyInvalidFields(parsed);
+      // One Hue bridge, written as scalars, becomes the first of hue.bridges.
+      migrateLegacyHue(parsed);
       // Merged onto the defaults first, so a file written by an older build,
       // missing keys added since, still loads instead of failing validation
       // wholesale.
@@ -484,6 +558,11 @@ class SettingsStore extends JsonStore {
       secrets[dotted] = !!groups[group][key];
       groups[group][key] = '';
     }
+    // A bridge's keys are blanked the same way; whether it is paired is what
+    // GET /api/hue/status says, so there is no entry for them here.
+    for (const bridge of out.hue.bridges) {
+      for (const key of HUE_SECRET_KEYS) bridge[key] = '';
+    }
     return { settings: out, secrets };
   }
 
@@ -496,7 +575,26 @@ class SettingsStore extends JsonStore {
    * operator actually typed one (or explicitly cleared it).
    */
   update(patch: unknown): string[] {
+    const hue = patch && typeof patch === 'object' ? (patch as { hue?: unknown }).hue : null;
+    if (isLegacyHue(hue)) {
+      const named = LEGACY_HUE_KEYS.filter((key) => key in hue).map((key) => `hue.${key}`).join(', ');
+      throw new HttpError(400,
+        `${named}: a Hue bridge is an entry of hue.bridges now. Pair one with POST /api/hue/pair, `
+        + 'pick its area and turn it on through hue.bridges, and forget it with POST /api/hue/:bridge/disconnect.');
+    }
     const parsedPatch = patchSchema.parse(patch || {});
+    // The keys a bridge was issued are never sent to a client, so a list sent
+    // back carries them blank: blank keeps what is stored, as an omitted
+    // secret does. Forgetting a bridge is removing its entry, never blanking.
+    const hueDraft = (parsedPatch as { hue?: Partial<Settings['hue']> }).hue;
+    if (hueDraft?.bridges) {
+      const stored = new Map(this._values.hue.bridges.map((b) => [b.id, b]));
+      for (const bridge of hueDraft.bridges) {
+        const was = stored.get(bridge.id);
+        if (!was) continue;
+        for (const key of HUE_SECRET_KEYS) if (!bridge[key]) bridge[key] = was[key];
+      }
+    }
     const next = schema.parse(merge(this._values, parsedPatch));
 
     // Refuse to save the one combination that locks the app out: a
@@ -601,9 +699,14 @@ export {
   SettingsStore,
   DEFAULTS,
   SECRET_PATHS,
+  HUE_SECRET_KEYS,
+  LEGACY_HUE_BRIDGE_ID,
   RESTART_PATHS,
   LEGACY_ENV,
   schema,
+  hueBridge,
   patchSchema,
+  defaultHueBridgeId,
+  migrateLegacyHue,
   warnAboutLegacyEnv,
 };

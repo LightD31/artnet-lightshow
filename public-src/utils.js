@@ -86,9 +86,28 @@ function overrideLight(fix, state) {
   };
 }
 
-/** Where a fixture is patched, in words: "Universe 0 / 13", or that it has no DMX address. */
-export function patchedAt(fix) {
-  return hasNoAddress(fix) ? `Hue ${hueChannelsLabel(fix.output.channels)}, no DMX address` : `Universe ${fix.universe ?? 0} / ${fix.address}`;
+/** What a Hue bridge is called, by its id in the rig's list (state.hueBridges); the id itself when the list does not know it. */
+export function hueBridgeLabel(bridges, id) {
+  const bridge = (bridges || []).find((b) => b.id === id);
+  return bridge ? (bridge.label || bridge.host || bridge.id) : (id || 'no bridge');
+}
+
+/** The device a WLED or an OpenRGB device is sent to, in words: "WLED at 10.0.0.5". */
+export function deviceLabel(fix) {
+  const out = fix.output;
+  return out.protocol === 'ddp' ? `WLED at ${out.host}` : `OpenRGB device #${out.device}${out.name ? ` ${out.name}` : ''} at ${out.host}`;
+}
+
+/**
+ * Where a fixture is patched, in words: "Universe 0 / 13", or that it has no
+ * DMX address — a Hue lamp's channels, and its bridge when the list is given;
+ * the WLED or OpenRGB device it is sent to.
+ */
+export function patchedAt(fix, bridges) {
+  if (!hasNoAddress(fix)) return `Universe ${fix.universe ?? 0} / ${fix.address}`;
+  if (fix.output.protocol !== 'hue') return `${deviceLabel(fix)}, no DMX address`;
+  const where = bridges ? ` of ${hueBridgeLabel(bridges, fix.output.bridge)}` : '';
+  return `Hue ${hueChannelsLabel(fix.output.channels)}${where}, no DMX address`;
 }
 
 /**

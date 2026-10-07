@@ -4,7 +4,7 @@ import { COLOR_PRESETS, AUTO_SOURCES, SYNC_OFFSET_LIMIT_MS } from './presets.ts'
 import { PALETTE_IDS } from './palettes.ts';
 import { FIXTURE_GROUPS } from '../shared/stage.ts';
 import { EMITTERS, PIXEL_MAPS, MAX_CELLS_PER_FIXTURE, MAX_PROFILE_CHANNELS } from '../shared/rig.ts';
-import { stripIssue } from '../shared/placement.ts';
+import { HUE_BRIDGE_ID_RE, stripIssue } from '../shared/placement.ts';
 import { HttpError } from '../errors.ts';
 
 /** Input that failed its schema: a 400, with zod's issues for the client. */
@@ -44,10 +44,13 @@ const HOSTNAME_RE = /^(?=.{1,253}$)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?
 // A fixture sent to a device of its own: a WLED over DDP, by its hostname or
 // address — its universes then go there and nowhere else (ddp-routes.ts) — or
 // a Hue lamp, which has no DMX address at all (shared/placement.ts): the
-// entertainment channels it renders, one a section in order along it. Hue
-// channel ids are a byte, and an area has at most 20 of them.
+// channels it renders of the area a bridge streams, one a section in order
+// along it. Hue channel ids are a byte, and an area has at most 20 of them.
+// The bridge is one of the settings' hue.bridges by id; a show saved before
+// there could be several names none (it loads as the first bridge's).
 const hueOutput = z.object({
   protocol: z.literal('hue'),
+  bridge: z.string().regex(HUE_BRIDGE_ID_RE, 'is not a bridge id').optional(),
   channels: z.array(z.number().int().min(0).max(255)).min(1).max(20)
     .refine((channels) => new Set(channels).size === channels.length, { message: 'names a channel twice' }),
 }).strict();
@@ -69,7 +72,19 @@ const ddpOutput = z.object({
       z.number().int().min(1).max(4096), z.number().int().min(1).max(4096),
     ])).max(MAX_CELLS_PER_FIXTURE).optional(),
   }).strict();
-const fixtureOutput = z.discriminatedUnion('protocol', [ddpOutput, hueOutput]);
+// One device of an OpenRGB SDK server (types/rig.ts OpenRgbOutput): which,
+// by index and by the name it had when it was added, and how many LEDs.
+const openrgbOutput = z.object({
+  protocol: z.literal('openrgb'),
+  host: z.string().regex(HOSTNAME_RE, 'is not a hostname or an IPv4 address'),
+  port: z.number().int().min(1).max(65535).optional(),
+  device: z.number().int().min(0).max(4095),
+  name: z.string().trim().min(1).max(128).optional(),
+  leds: z.number().int().min(1).max(MAX_CELLS_PER_FIXTURE),
+}).strict();
+/** The outputs a fixture can be given by hand: a device of its own, by address. */
+const deviceOutput = z.discriminatedUnion('protocol', [ddpOutput, openrgbOutput]);
+const fixtureOutput = z.discriminatedUnion('protocol', [ddpOutput, openrgbOutput, hueOutput]);
 
 // A string of dotted numeric labels is someone typing an IP, so hold it to
 // IPv4 rules rather than letting "2.255.255.256" through as a hostname (which
@@ -198,9 +213,10 @@ const fixtureMessageSchema = z.object({
   // Not part of the override — it applies to an energy override too.
   maxBrightness: u8.optional(),
   geometry: fixtureGeometry.nullable().optional(),
-  // A WLED's, or none. A Hue lamp's output is the bridge's to give: it is
-  // patched from the entertainment area (POST /api/hue/add), never made one.
-  output: ddpOutput.nullable().optional(),
+  // A WLED's or an OpenRGB device's, or none. A Hue lamp's output is the
+  // bridge's to give: it is patched from the entertainment area (POST
+  // /api/hue/add), never made one.
+  output: deviceOutput.nullable().optional(),
 }).strict();
 
 /**
@@ -437,14 +453,35 @@ const wledAddSchema = z.object({
   zones: z.number().int().min(2).max(64).optional(),
 }).strict();
 
-const huePairSchema = z.object({
-  host: z.string().min(1).max(253),
+// GET /api/openrgb/discover and POST /api/openrgb/add: an OpenRGB SDK server
+// by its address, which of its devices (every one not patched yet when none
+// are named), and what to call them.
+const openrgbHostSchema = z.object({
+  host: z.string().regex(HOSTNAME_RE, 'is not a hostname or an IPv4 address'),
+  port: z.coerce.number().int().min(1).max(65535).optional(),
+}).strict();
+const openrgbAddSchema = openrgbHostSchema.extend({
+  devices: z.array(z.number().int().min(0).max(4095)).min(1).max(64).optional(),
+  label: z.string().trim().min(1).max(64).optional(),
 }).strict();
 
-// POST /api/hue/add: lamps of the entertainment area to patch, by their
-// entertainment service id; every lamp not patched yet when none are named.
+const huePairSchema = z.object({
+  host: z.string().min(1).max(253),
+  // What to call the bridge in the Rig view and the patch; its address when blank.
+  label: z.string().trim().max(64).optional(),
+}).strict();
+
+// POST /api/hue/:bridge/add: lamps of the bridge's entertainment area to
+// patch, by their entertainment service id; every lamp not patched yet when
+// none are named.
 const hueAddSchema = z.object({
   lamps: z.array(z.string().min(1).max(64)).min(1).max(20).optional(),
+}).strict();
+
+// POST /api/hue/:bridge/disconnect: a bridge with lamps in the patch is only
+// forgotten when asked to take them with it.
+const hueDisconnectSchema = z.object({
+  removeFixtures: z.boolean().optional(),
 }).strict();
 
 // PUT /api/auto/overlay: the operator's edits to the loaded track's show
@@ -501,8 +538,11 @@ export {
   profileSchema,
   showSchema,
   midiConnectSchema,
+  openrgbHostSchema,
+  openrgbAddSchema,
   huePairSchema,
   hueAddSchema,
+  hueDisconnectSchema,
   wledAddSchema,
   fixtureAddSchema,
   overlaySchema,

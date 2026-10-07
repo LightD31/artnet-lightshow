@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import { autoPositionSig, connectedSig, emitTap, pick, send } from '../state.js';
+import { api, autoPositionSig, connectedSig, emitTap, pick, send } from '../state.js';
 import { colorToCss, clockSource, fmtTime, formatBpm } from '../utils.js';
 import { timelinePosition } from '../timeline-state.js';
 import { useDraft } from '../draft.js';
@@ -10,6 +10,7 @@ import { activeQueue } from './Queue.jsx';
  * The view for running a show from a tablet: what a hand needs mid-set, as
  * big as the screen allows, and nothing that needs reading twice.
  *
+ *   outputs      armed or not: whether anything leaves the machine at all
  *   now / next   the track playing, how far in, and what comes after it
  *   sync         what the lights are keeping time by, and whether it is well
  *   pads         blackout, the energy effects held under a finger (or
@@ -27,10 +28,11 @@ const PAD_LABELS = {
   blinder: 'Blinder',
   'white-strobe': 'Strobe',
   'color-strobe': 'Colour strobe',
+  'palette-strobe': 'Palette strobe',
   'uv-wash': 'UV',
   glow: 'Glow',
 };
-const PAD_ORDER = ['kill', 'blinder', 'white-strobe', 'color-strobe', 'uv-wash', 'glow'];
+const PAD_ORDER = ['kill', 'blinder', 'white-strobe', 'color-strobe', 'palette-strobe', 'uv-wash', 'glow'];
 
 const SOURCE_LABELS = {
   prolink: 'PRO DJ LINK', hybrid: 'Spotify + OS clock', spotify: 'Spotify', deezer: 'Deezer',
@@ -77,6 +79,25 @@ function Progress({ duration }) {
       <div class="perform-progress-fill" style={{ width: `${pct}%` }} />
       <span class="perform-progress-time">{fmtTime(at)} / {fmtTime(duration)}</span>
     </div>
+  );
+}
+
+/**
+ * The outputs' switch. Disarmed, the show renders for the preview and the
+ * stage view but nothing leaves the machine: the WLEDs and the Hue lamps are
+ * the house's again. The server starts disarmed; a party arms it here.
+ */
+function ArmSwitch() {
+  const s = pick(['armed']);
+  const armed = !!s.armed;
+  return (
+    <section class="perform-arm" aria-label="Outputs">
+      <button type="button" class={`perform-arm-switch${armed ? ' armed' : ''}`} role="switch" aria-checked={armed}
+        onClick={() => api(armed ? '/api/outputs/disarm' : '/api/outputs/arm', { method: 'POST' })}>
+        <span class="perform-arm-state">{armed ? 'Armed' : 'Disarmed'}</span>
+        <span class="perform-arm-hint">{armed ? 'frames go out to the rig — tap to disarm' : 'nothing goes out to the rig — tap to arm'}</span>
+      </button>
+    </section>
   );
 }
 
@@ -238,6 +259,7 @@ function Faders() {
 export function Perform() {
   return (
     <div class="perform-view">
+      <ArmSwitch />
       <NowNext />
       <SyncHealth />
       <div class="perform-body">

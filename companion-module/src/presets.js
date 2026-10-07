@@ -188,6 +188,12 @@ export function UpdatePresets(self) {
 		[{ actionId: 'play_stop', options: { mode: 'toggle' } }],
 		{ feedbacks: [{ feedbackId: 'playing', options: {}, style: { bgcolor: combineRgb(0, 180, 60), color: WHITE, text: '▶ PLAY' } }] },
 	)
+	presets['transport_armed'] = button(
+		'Outputs Armed',
+		{ text: 'OUTPUTS\nOFF', size: '14', color: combineRgb(200, 200, 200), bgcolor: combineRgb(30, 30, 30) },
+		[{ actionId: 'outputs_armed', options: { mode: 'toggle' } }],
+		{ feedbacks: [{ feedbackId: 'outputs_armed', options: {}, style: { bgcolor: combineRgb(0, 140, 90), color: WHITE, text: 'OUTPUTS\n● ARMED' } }] },
+	)
 	presets['transport_blackout'] = button(
 		'Master Blackout',
 		{ text: 'BLACK\nOUT', size: '18', color: combineRgb(255, 80, 80), bgcolor: combineRgb(40, 0, 0) },
@@ -305,6 +311,7 @@ export function UpdatePresets(self) {
 			id: 'transport',
 			name: 'Transport',
 			definitions: [
+				'transport_armed',
 				'transport_play_stop',
 				'transport_blackout',
 				'transport_tap_tempo',

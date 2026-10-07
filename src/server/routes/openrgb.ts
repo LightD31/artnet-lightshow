@@ -1,0 +1,121 @@
+import { state, allocateFixtureId, countUniverses, placeAddresslessFixtures } from '../state.ts';
+import { resizeFixtureBuffers } from '../engine.ts';
+import { MAX_FIXTURES, getProfile, registerProfile, unitCapOverflow } from '../profiles.ts';
+import { MAX_UNIVERSES } from '../universes.ts';
+import { INTERNAL_UNIVERSE } from '../../shared/placement.ts';
+import { ddpConflict } from '../ddp-routes.ts';
+import { openrgbOutputOf } from '../openrgb-routes.ts';
+import { OPENRGB_PORT } from '../openrgb.ts';
+import type { OpenRgbDevice } from '../openrgb.ts';
+import { openrgbProfile } from '../openrgb-devices.ts';
+import { showStore } from '../show-store.ts';
+import { openrgbAddSchema, openrgbHostSchema, validate } from '../validation.ts';
+import { messageOf, statusOf } from '../../errors.ts';
+import type { Express } from 'express';
+import type { Fixture, OpenRgbOutput, Profile } from '../../types/rig.ts';
+import { asyncHandler } from './common.ts';
+import type { RouteContext } from './common.ts';
+
+/**
+ * The devices of an OpenRGB SDK server — a gaming PC's RAM, board, GPU,
+ * keyboard, mouse, monitors — and adding them to the patch: each a fixture
+ * of its own, its LEDs as cells, with no DMX address, sent one packet a
+ * frame over the SDK (openrgb.ts, openrgb-routes.ts).
+ *
+ *   GET  /api/openrgb/discover?host=&port=   what the server lists
+ *   POST /api/openrgb/add                     { host, port?, devices?, label? }
+ */
+export function attachOpenRgbRoutes(app: Express, ctx: RouteContext): void {
+  const { integrations, openrgb } = ctx;
+
+  /**
+   * The fixture patched on a device the server lists, if any: the k-th
+   * fixture of the device's name for the k-th device of that name, as the
+   * transmitter finds them (openrgb.ts resolve), or the one patched by
+   * number alone.
+   */
+  const patchedOn = (host: string, port: number, listed: OpenRgbDevice[]) => {
+    const mine = state.fixtures
+      .map((fix) => ({ fix, output: openrgbOutputOf(fix) as OpenRgbOutput }))
+      .filter(({ output }) => output && output.host.toLowerCase() === host.toLowerCase() && (output.port ?? OPENRGB_PORT) === port);
+    return (device: OpenRgbDevice): Fixture | undefined => {
+      const k = listed.filter((d) => d.name === device.name).findIndex((d) => d.index === device.index);
+      const siblings = mine.filter(({ output }) => output.name === device.name).sort((a, b) => a.output.device - b.output.device);
+      return siblings[k]?.fix ?? mine.find(({ output }) => !output.name && output.device === device.index)?.fix;
+    };
+  };
+
+  app.get('/api/openrgb/discover', asyncHandler(async (req, res) => {
+    try {
+      const { host, port = OPENRGB_PORT } = validate(openrgbHostSchema, { host: req.query.host, ...(req.query.port !== undefined ? { port: req.query.port } : {}) }, 'openrgb');
+      const devices = await openrgb.discover(host, port);
+      const patched = patchedOn(host, port, devices);
+      res.json({
+        ok: true, host, port,
+        devices: devices.map((d) => ({ ...d, patched: patched(d)?.label ?? null })),
+      });
+    } catch (err) {
+      res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) });
+    }
+  }));
+
+  /** Patch devices of the server: those named, or every one with LEDs not patched yet. */
+  app.post('/api/openrgb/add', asyncHandler(async (req, res) => {
+    try {
+      const { host, port = OPENRGB_PORT, devices: wanted, label } = validate(openrgbAddSchema, req.body || {}, 'openrgb');
+      if (state.fixtures.length >= MAX_FIXTURES) {
+        return res.status(400).json({ ok: false, error: `Patch is full (${MAX_FIXTURES} fixtures)` });
+      }
+      const listed = await openrgb.discover(host, port);
+      const patched = patchedOn(host, port, listed);
+      for (const index of wanted || []) {
+        const device = listed.find((d) => d.index === index);
+        if (!device) return res.status(404).json({ ok: false, error: `OpenRGB at ${host} has no device #${index}; it lists ${listed.length}` });
+        if (device.leds < 1) return res.status(400).json({ ok: false, error: `${device.name} (#${index}) has no LEDs to light` });
+        const already = patched(device);
+        if (already) return res.status(409).json({ ok: false, error: `${device.name} (#${index}) is patched already, as "${already.label}"` });
+      }
+      const fresh = listed.filter((d) => (wanted ? wanted.includes(d.index) : d.leds >= 1 && !patched(d)));
+      if (!fresh.length) {
+        return res.status(409).json({ ok: false, error: listed.length ? `Every device of OpenRGB at ${host} is patched already` : `OpenRGB at ${host} lists no devices` });
+      }
+      if (state.fixtures.length + fresh.length > MAX_FIXTURES) {
+        return res.status(400).json({ ok: false, error: `${fresh.length} devices would take the patch past ${MAX_FIXTURES} fixtures` });
+      }
+      const built = fresh.map((device) => ({ device, profile: openrgbProfile(device, host, port) }));
+      // No DMX address: the server places each on universes of its own.
+      const draft: Fixture[] = [];
+      for (const { device, profile } of built) {
+        const output: OpenRgbOutput = { protocol: 'openrgb', host, ...(port === OPENRGB_PORT ? {} : { port }), device: device.index, name: device.name, leds: device.leds };
+        draft.push({
+          id: -1 - draft.length,
+          label: (label ? (built.length === 1 ? label : `${label} · ${device.name}`) : device.name).slice(0, 64),
+          address: 1, universe: INTERNAL_UNIVERSE, profileId: profile.id, maxBrightness: 255, override: null, position: null, group: null, geometry: null,
+          output,
+        });
+      }
+      const byId = new Map(built.map(({ profile }) => [profile.id, profile as Profile]));
+      const profileOf = (f: Pick<Fixture, 'profileId'>) => byId.get(f.profileId) || getProfile(f);
+      const next = [...state.fixtures.map((f) => ({ ...f })), ...draft];
+      placeAddresslessFixtures(next, profileOf);
+      const problem = unitCapOverflow(next, profileOf) || ddpConflict(next, profileOf)
+        || (countUniverses(next, profileOf) > MAX_UNIVERSES
+          ? `The devices at ${host} would put the patch on more than the ${MAX_UNIVERSES} universes this server transmits` : null);
+      if (problem) return res.status(400).json({ ok: false, error: problem });
+      for (const { profile } of built) {
+        if (!registerProfile(profile)) return res.status(400).json({ ok: false, error: 'Invalid profile' });
+      }
+      for (const fixture of draft) {
+        fixture.id = allocateFixtureId();
+        state.fixtures.push(fixture);
+      }
+      placeAddresslessFixtures();
+      resizeFixtureBuffers();
+      showStore.scheduleSave();
+      integrations.broadcast();
+      res.json({ ok: true, host, port, fixtures: draft, profiles: built.map(({ profile }) => profile), devices: built.map(({ device }) => device) });
+    } catch (err) {
+      res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) });
+    }
+  }));
+}

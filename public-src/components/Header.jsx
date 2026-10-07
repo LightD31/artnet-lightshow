@@ -76,7 +76,7 @@ function BpmPill({ bpm, running, source }) {
 
 export function Header() {
   const connected = connectedSig.value;
-  const s = pick(['bpm', 'clock', 'running', 'masterDimmer', 'masterBlackout', 'energyOverride', 'flashLimit', 'autoShow']);
+  const s = pick(['bpm', 'clock', 'running', 'masterDimmer', 'masterBlackout', 'energyOverride', 'flashLimit', 'autoShow', 'armed']);
   const blackout = !!s.masterBlackout;
   const energy = s.energyOverride;
   const auto = s.autoShow && s.autoShow.status;
@@ -86,6 +86,13 @@ export function Header() {
       <h1>ArtNet <span>Lightshow</span></h1>
 
       <div class="header-stats">
+        {s.armed != null && (
+          <div class={`stat-pill ${s.armed ? 'live' : ''}`}
+            title={s.armed ? 'Outputs armed: frames go out to the rig' : 'Outputs disarmed: nothing goes out to the rig — arm them in Perform or Settings → Show'}>
+            <span class="label">Outputs</span>
+            <span>{s.armed ? 'Armed' : 'Disarmed'}</span>
+          </div>
+        )}
         {s.bpm != null && <BpmPill bpm={s.bpm} running={!!s.running} source={s.clock && s.clock.source} />}
         {!blackout && <MasterPill master={s.masterDimmer} blackout={blackout} />}
         {blackout && (

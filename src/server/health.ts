@@ -4,6 +4,7 @@ import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { buffer } from './log.ts';
 import { engineStatus } from './engine.ts';
 import * as output from './output.ts';
+import { isArmed } from './armed.ts';
 import { state } from './state.ts';
 import { supervision } from './supervised.ts';
 import type { Supervision } from './supervised.ts';
@@ -41,6 +42,8 @@ export interface HealthInputs {
   errors: { count: number; last: { component: string | null; msg: string } | null };
   supervisor: Supervision;
   auto: { status: string; error: string | null } | null;
+  /** Whether anything leaves the machine (armed.ts); left out, nothing is said about it. */
+  armed?: boolean;
 }
 
 const WINDOW_MS = 30_000;
@@ -69,6 +72,9 @@ export function assess(inputs: HealthInputs): { status: HealthStatus; problems: 
     problems.push({ level: 'warn', what: `${errors.count} error${errors.count === 1 ? '' : 's'} logged in the last ten minutes.${last}` });
   }
   if (auto && auto.status === 'error' && auto.error) problems.push({ level: 'warn', what: `The auto show: ${auto.error}` });
+  // How the server spends its days, not a fault: said, so a dark rig with a
+  // healthy engine has its explanation in the same place.
+  if (inputs.armed === false) problems.push({ level: 'info', what: 'The outputs are disarmed: nothing goes out to the rig until they are armed.' });
   if (supervisor.restarts > 0) {
     const why = supervisor.lastExit ? ` The last: ${supervisor.lastExit.reason}.` : '';
     problems.push({ level: 'info', what: `Restarted ${supervisor.restarts} time${supervisor.restarts === 1 ? '' : 's'} by the supervisor.${why}` });
@@ -137,6 +143,7 @@ export function health({ autoShow = null }: HealthDeps = {}) {
     errors: { count: recentErrors.length, last: lastError && { component: lastError.component, msg: lastError.msg } },
     supervisor: supervision(),
     auto: autoShow ? { status: String(autoShow.status || 'idle'), error: autoShow.error ?? null } : null,
+    armed: isArmed(),
   };
   const { status, problems } = assess(inputs);
   return {
@@ -153,6 +160,7 @@ export function health({ autoShow = null }: HealthDeps = {}) {
     eventLoop: inputs.eventLoop,
     memory: { rssMb: Math.round(inputs.rssMb), heapUsedMb: Math.round(memory.heapUsed / 1024 / 1024) },
     outputs: {
+      armed: inputs.armed,
       artnet: { enabled: state.artnet.enabled !== false, host: state.artnet.host },
       hue: output.getHueStatus(),
     },

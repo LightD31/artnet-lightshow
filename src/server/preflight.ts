@@ -8,17 +8,22 @@ import { getProfile } from './profiles.ts';
 import { fitIssue, footprintOf, overlaps, hasNoAddress } from '../shared/placement.ts';
 import { MAX_UNIVERSES } from './universes.ts';
 import { settings } from './settings.ts';
+import type { Settings } from './settings.ts';
 import { discoverNodes, probeSend } from './artnet.ts';
 import { interfaces } from './artnet-nodes.ts';
 import * as output from './output.ts';
+import { isArmed } from './armed.ts';
 import { engineStatus } from './engine.ts';
 import { MIN_UNIVERSE, MAX_UNIVERSE } from './sacn.ts';
 import { listEntertainmentConfigs } from './hue.ts';
 import { wledClient } from './wled.ts';
 import { runsOf, pixelWidth } from './ddp-routes.ts';
+import { OPENRGB_PORT, openrgbClient } from './openrgb.ts';
+import { openrgbOutputOf } from './openrgb-routes.ts';
 import { unitCount } from '../shared/rig.ts';
 import type { WledClient } from './wled.ts';
-import type { DdpOutput } from '../types/rig.ts';
+import type { OpenRgbClient } from './openrgb.ts';
+import type { DdpOutput, Fixture } from '../types/rig.ts';
 import { cues } from './cues.ts';
 import { midiMap } from './midi-map.ts';
 import * as pythonEnv from '../python-env.ts';
@@ -243,6 +248,26 @@ function checkEngine(status: EngineStatus = engineStatus(), { standalone = false
   return { id: 'engine', label, status: OK, detail: `Rendering ${where}.${timing}${note}` };
 }
 
+/**
+ * Whether anything leaves the machine (armed.ts). Disarmed is how the server
+ * spends its days, so it is a warning here rather than a failure: worth
+ * seeing before doors open, and one press to put right.
+ */
+function checkOutputsArmed(armed: boolean = isArmed(), { standalone = false } = {}): Check {
+  const label = 'Outputs armed';
+  if (standalone) {
+    return { id: 'armed', label, status: INFO, detail: 'Checked on its own — the running server says whether its outputs are armed.' };
+  }
+  if (!armed) {
+    return {
+      id: 'armed', label, status: WARN,
+      detail: 'Outputs disarmed: the show renders, but nothing goes out to the rig.',
+      fix: 'Arm the outputs before doors open — the switch in Perform or Settings → Show, or POST /api/outputs/arm.',
+    };
+  }
+  return { id: 'armed', label, status: OK, detail: 'Armed: frames go out to the rig.' };
+}
+
 function checkSacn(): Check {
   const config = output.getSacnConfig();
   if (!config.enabled) {
@@ -333,6 +358,79 @@ async function checkWled(client: Pick<WledClient, 'info'> = wledClient): Promise
 }
 
 /**
+ * The OpenRGB devices in the patch: does each server answer, does it still
+ * list each device, and is the device still the length it was patched as? A
+ * PC that is off is a warning, not a failure: the rest of the show goes on
+ * without its RGB.
+ */
+async function checkOpenRgb(client: Pick<OpenRgbClient, 'discover'> = openrgbClient): Promise<Check> {
+  const fixtures = state.fixtures.filter((f) => openrgbOutputOf(f));
+  if (!fixtures.length) {
+    return { id: 'openrgb', label: 'OpenRGB', status: INFO, detail: 'None in the patch. Add a PC\'s devices under Rig → Outputs → OpenRGB.' };
+  }
+  const servers = new Map<string, { host: string; port: number; fixtures: typeof fixtures }>();
+  for (const fix of fixtures) {
+    const output = openrgbOutputOf(fix) as NonNullable<ReturnType<typeof openrgbOutputOf>>;
+    const port = output.port ?? OPENRGB_PORT;
+    const key = `${output.host.toLowerCase()}:${port}`;
+    const entry = servers.get(key) || { host: output.host, port, fixtures: [] };
+    entry.fixtures.push(fix);
+    servers.set(key, entry);
+  }
+  const where = (s: { host: string; port: number }) => (s.port === OPENRGB_PORT ? s.host : `${s.host}:${s.port}`);
+  const silent: string[] = [];
+  const wrong: string[] = [];
+  const fine: string[] = [];
+  await Promise.all([...servers.values()].map(async (server) => {
+    const names = server.fixtures.map((f) => `"${f.label}"`).join(', ');
+    let devices;
+    try {
+      devices = await client.discover(server.host, server.port);
+    } catch (err) {
+      silent.push(`OpenRGB at ${where(server)} does not answer (${messageOf(err)}); on it: ${names}`);
+      return;
+    }
+    const outputs = server.fixtures.map((fix) => ({ fix, output: openrgbOutputOf(fix) as NonNullable<ReturnType<typeof openrgbOutputOf>> }));
+    for (const { fix, output } of outputs) {
+      // A device patched under a name is the one of its name, in order, as
+      // the transmitter finds it (openrgb.ts resolve); one patched by number
+      // alone is that number.
+      let device = output.name ? undefined : devices.find((d) => d.index === output.device);
+      let moved = '';
+      if (output.name) {
+        const named = devices.filter((d) => d.name === output.name);
+        const siblings = outputs.filter((o) => o.output.name === output.name).map((o) => o.output.device).sort((a, b) => a - b);
+        device = named[Math.max(0, siblings.indexOf(output.device))];
+        if (!device) {
+          wrong.push(`"${fix.label}" (${output.name}, #${output.device}) is not among the ${devices.length} devices at ${where(server)}`);
+          continue;
+        }
+        if (device.index !== output.device) moved = ` (was #${output.device})`;
+      } else if (!device) {
+        wrong.push(`"${fix.label}" is device #${output.device} at ${where(server)}, which lists only ${devices.length}`);
+        continue;
+      }
+      if (device.leds !== output.leds) wrong.push(`"${fix.label}" (${device.name}) reports ${device.leds} LEDs but is patched as ${output.leds}`);
+      else fine.push(`"${fix.label}" at ${where(server)} #${device.index}${moved} ${device.name}, ${device.leds} LEDs`);
+    }
+  }));
+  if (silent.length) {
+    return {
+      id: 'openrgb', label: 'OpenRGB', status: WARN, detail: silent.join('; '),
+      fix: 'Start OpenRGB on that PC with its SDK server on, check the address in the patch, or remove its fixtures from the patch.',
+    };
+  }
+  if (wrong.length) {
+    return {
+      id: 'openrgb', label: 'OpenRGB', status: WARN, detail: wrong.join('; '),
+      fix: 'A device patched under its name is found again by it once OpenRGB lists it (a monitor asleep, a mouse off). '
+        + 'One gone for good, or patched by number alone and renumbered: remove the fixture and add the device again under Rig → Outputs → OpenRGB.',
+    };
+  }
+  return { id: 'openrgb', label: 'OpenRGB', status: OK, detail: `${fine.join('; ')}, sent over the OpenRGB SDK.` };
+}
+
+/**
  * Philips Hue: is the bridge there, does the area still exist, and is every
  * Hue lamp in the patch one of its channels?
  *
@@ -342,38 +440,71 @@ async function checkWled(client: Pick<WledClient, 'info'> = wledClient): Promise
  * the colour and ignores it, which on the night looks like a dead lamp rather
  * than a configuration mistake.
  */
-async function checkHue(listAreas = listEntertainmentConfigs): Promise<Check> {
+async function checkHue(listAreas = listEntertainmentConfigs): Promise<Check[]> {
   const config = output.getHueConfig();
   const lamps = state.fixtures.filter((f) => f.output?.protocol === 'hue');
-  const channelsOf = (f: (typeof lamps)[number]) => (f.output?.protocol === 'hue' ? f.output.channels : []);
-  if (!config.enabled) {
-    return lamps.length ? {
+  const bridgeOf = (f: (typeof lamps)[number]) => (f.output?.protocol === 'hue' ? f.output.bridge : '');
+  if (!config.bridges.length) {
+    return [lamps.length ? {
       id: 'hue', label: 'Philips Hue', status: WARN,
-      detail: `${lamps.length} Hue lamp${lamps.length === 1 ? ' is' : 's are'} in the patch, but the Hue output is off, so `
+      detail: `${lamps.length} Hue lamp${lamps.length === 1 ? ' is' : 's are'} in the patch, but no bridge is paired, so `
         + `${lamps.length === 1 ? 'it stays' : 'they stay'} dark.`,
-      fix: 'Turn it on in Rig → Outputs → Philips Hue, or remove the lamps from the patch.',
+      fix: 'Pair the bridge in Rig → Outputs → Philips Hue, or remove the lamps from the patch.',
     } : {
       id: 'hue', label: 'Philips Hue', status: INFO,
-      detail: 'Disabled. Turn it on in Rig → Outputs → Philips Hue to drive Hue lamps from the show.',
+      detail: 'No bridge paired. Pair one in Rig → Outputs → Philips Hue to drive Hue lamps from the show.',
+    }];
+  }
+
+  // Every bridge is asked at once: each is its own device on its own address.
+  const checks = await Promise.all(config.bridges.map((bridge) =>
+    checkHueBridge(bridge, lamps.filter((f) => bridgeOf(f) === bridge.id), listAreas)));
+  const known = new Set(config.bridges.map((b) => b.id));
+  const orphans = lamps.filter((f) => !known.has(bridgeOf(f)));
+  if (orphans.length) {
+    checks.push({
+      id: 'hue', label: 'Philips Hue', status: WARN,
+      detail: `${orphans.map((f) => `"${f.label}" (bridge ${bridgeOf(f)})`).join(', ')} name${orphans.length === 1 ? 's' : ''} a bridge `
+        + `that is not paired, so ${orphans.length === 1 ? 'it stays' : 'they stay'} dark.`,
+      fix: 'The bridge was forgotten. Remove those lamps and add them again from the bridge they belong to.',
+    });
+  }
+  return checks;
+}
+async function checkHueBridge(bridge: Settings['hue']['bridges'][number], lamps: typeof state.fixtures,
+  listAreas = listEntertainmentConfigs): Promise<Check> {
+  const id = `hue:${bridge.id}`;
+  const name = bridge.label || bridge.id;
+  const label = `Philips Hue — ${name}`;
+  const channelsOf = (f: (typeof lamps)[number]) => (f.output?.protocol === 'hue' ? f.output.channels : []);
+  if (!bridge.enabled) {
+    return lamps.length ? {
+      id, label, status: WARN,
+      detail: `${lamps.length} lamp${lamps.length === 1 ? ' is' : 's are'} in the patch, but the bridge's output is off, so `
+        + `${lamps.length === 1 ? 'it stays' : 'they stay'} dark.`,
+      fix: `Turn "${name}" on in Rig → Outputs → Philips Hue, or remove its lamps from the patch.`,
+    } : {
+      id, label, status: INFO,
+      detail: `Off. Turn "${name}" on in Rig → Outputs → Philips Hue to drive its lamps from the show.`,
     };
   }
 
   const missing = [];
-  if (!config.host) missing.push('bridge address');
-  if (!config.username || !config.clientKey) missing.push('pairing');
-  if (!config.entertainmentId) missing.push('entertainment area');
+  if (!bridge.host) missing.push('bridge address');
+  if (!bridge.username || !bridge.clientKey) missing.push('pairing');
+  if (!bridge.entertainmentId) missing.push('entertainment area');
   if (missing.length) {
     return {
-      id: 'hue', label: 'Philips Hue', status: FAIL,
-      detail: `Output is on but the ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not set up.`,
-      fix: 'Open Rig → Outputs → Philips Hue, find the bridge, press its link button to pair, then pick an area.',
+      id, label, status: FAIL,
+      detail: `"${name}" is on but the ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not set up.`,
+      fix: 'Open Rig → Outputs → Philips Hue, press the bridge\'s link button to pair, then pick an area.',
     };
   }
 
   if (!lamps.length) {
     return {
-      id: 'hue', label: 'Philips Hue', status: WARN,
-      detail: `Paired with ${config.host}, but no Hue lamp is in the patch, so nothing will light.`,
+      id, label, status: WARN,
+      detail: `Paired with "${name}" at ${bridge.host}, but none of its lamps is in the patch, so nothing of it will light.`,
       fix: 'Add the area\'s lamps in Rig → Outputs → Philips Hue.',
     };
   }
@@ -384,8 +515,8 @@ async function checkHue(listAreas = listEntertainmentConfigs): Promise<Check> {
       const other = seen.get(channel);
       if (other) {
         return {
-          id: 'hue', label: 'Philips Hue', status: WARN,
-          detail: `"${lamp.label}" and "${other}" are both on Hue channel ${channel}; only "${other}" is shown there.`,
+          id, label, status: WARN,
+          detail: `"${lamp.label}" and "${other}" are both on channel ${channel} of "${name}"; only "${other}" is shown there.`,
           fix: 'Remove one of them from the patch.',
         };
       }
@@ -393,22 +524,25 @@ async function checkHue(listAreas = listEntertainmentConfigs): Promise<Check> {
     }
   }
 
+  // A bridge that does not answer is a warning rather than a failure: the
+  // rest of the rig, and the other bridges, still run, and it is named so the
+  // operator knows which one to go and look at.
   let areas;
   try {
-    areas = await listAreas(config.host, config.username);
+    areas = await listAreas(bridge.host, bridge.username);
   } catch (err) {
     return {
-      id: 'hue', label: 'Philips Hue', status: FAIL,
-      detail: `Cannot reach the bridge at ${config.host} — ${messageOf(err)}`,
+      id, label, status: WARN,
+      detail: `Cannot reach "${name}" at ${bridge.host} — ${messageOf(err)}`,
       fix: 'Check the bridge is powered and on this network, and that its IP has not changed.',
     };
   }
 
-  const area = areas.find((a) => a.id === config.entertainmentId);
+  const area = areas.find((a) => a.id === bridge.entertainmentId);
   if (!area) {
     return {
-      id: 'hue', label: 'Philips Hue', status: FAIL,
-      detail: `The bridge at ${config.host} has no entertainment area ${config.entertainmentId} any more.`,
+      id, label, status: FAIL,
+      detail: `"${name}" at ${bridge.host} has no entertainment area ${bridge.entertainmentId} any more.`,
       fix: 'It was probably renamed or rebuilt in the Hue app. Pick the area again in Rig → Outputs → Philips Hue.',
     };
   }
@@ -418,10 +552,10 @@ async function checkHue(listAreas = listEntertainmentConfigs): Promise<Check> {
   const areaChannels = new Set(area.channels.map((c) => c.id));
   const stray = lamps.filter((f) => channelsOf(f).some((ch) => !areaChannels.has(ch)));
   if (stray.length) {
-    const missing = (f: (typeof lamps)[number]) => channelsOf(f).filter((ch) => !areaChannels.has(ch)).map((ch) => `#${ch}`).join(', ');
+    const absent = (f: (typeof lamps)[number]) => channelsOf(f).filter((ch) => !areaChannels.has(ch)).map((ch) => `#${ch}`).join(', ');
     return {
-      id: 'hue', label: 'Philips Hue', status: WARN,
-      detail: `"${area.name}" has no channel ${stray.map((f) => `${missing(f)} for "${f.label}"`).join('; ')}, `
+      id, label, status: WARN,
+      detail: `"${area.name}" has no channel ${stray.map((f) => `${absent(f)} for "${f.label}"`).join('; ')}, `
         + `so ${stray.length === 1 ? 'that stays' : 'those stay'} dark.`,
       fix: 'The area was probably changed in the Hue app. Remove those lamps and add them again from Rig → Outputs → Philips Hue.',
     };
@@ -436,26 +570,26 @@ async function checkHue(listAreas = listEntertainmentConfigs): Promise<Check> {
   });
   if (resectioned.length) {
     return {
-      id: 'hue', label: 'Philips Hue', status: WARN,
+      id, label, status: WARN,
       detail: `${resectioned.map((f) => `"${f.label}"`).join(', ')} ${resectioned.length === 1 ? 'has' : 'have'} different sections `
         + `in "${area.name}" now than when ${resectioned.length === 1 ? 'it was' : 'they were'} patched.`,
       fix: 'Remove those lamps and add them again from Rig → Outputs → Philips Hue.',
     };
   }
 
-  const live = output.getHueStatus();
-  if (live.status === 'failed') {
+  const live = output.getHueStatus().find((s) => s.id === bridge.id);
+  if (live && live.status === 'failed') {
     return {
-      id: 'hue', label: 'Philips Hue', status: WARN,
-      detail: `"${area.name}" on ${config.host} is set up correctly, but the last stream attempt failed — ${live.error}.`,
+      id, label, status: WARN,
+      detail: `"${area.name}" on "${name}" is set up correctly, but the last stream attempt failed — ${live.error}.`,
       fix: 'A bridge only allows one entertainment stream at a time. Close the Hue app\'s sync or any other tool streaming to it.',
     };
   }
 
   const left = area.lamps.filter((l) => !l.channels.some((ch) => seen.has(ch))).length;
   return {
-    id: 'hue', label: 'Philips Hue', status: OK,
-    detail: `"${area.name}" on ${config.host}: ${lamps.map((f) => f.label).join(', ')}`
+    id, label, status: OK,
+    detail: `"${area.name}" on "${name}" at ${bridge.host}: ${lamps.map((f) => f.label).join(', ')}`
       + `${left > 0 ? `; ${left} of its lamp${left === 1 ? ' is' : 's are'} not in the patch` : ''}.`,
   };
 }
@@ -480,7 +614,7 @@ function checkPatch(): Check {
   }
 
   const universes = wireUniverses();
-  const hueOnly = state.fixtures.filter(hasNoAddress).length;
+  const devices = state.fixtures.filter(hasNoAddress);
   const spanned = countUniverses(state.fixtures);
   if (spanned > MAX_UNIVERSES) {
     problems.push(`the patch spans ${spanned} universes, more than the ${MAX_UNIVERSES} rendered`);
@@ -496,10 +630,20 @@ function checkPatch(): Check {
 
   return {
     id: 'patch', label: 'Fixture patch', status: OK,
-    detail: `${state.fixtures.length - hueOnly} fixture${state.fixtures.length - hueOnly === 1 ? '' : 's'} `
+    detail: `${state.fixtures.length - devices.length} fixture${state.fixtures.length - devices.length === 1 ? '' : 's'} `
       + `on universe${universes.length === 1 ? '' : 's'} ${universes.join(', ')}, no overlaps`
-      + `${hueOnly ? `, and ${hueOnly} Hue lamp${hueOnly === 1 ? '' : 's'} with no DMX address` : ''}.`,
+      + `${devices.length ? `, and ${deviceCounts(devices)} with no DMX address` : ''}.`,
   };
+}
+
+/** The fixtures sent to devices of their own, counted by kind: "2 Hue lamps and 1 WLED". */
+function deviceCounts(fixtures: readonly Fixture[]): string {
+  const kinds: [string, string, string][] = [['hue', 'Hue lamp', 'Hue lamps'], ['ddp', 'WLED', 'WLEDs'], ['openrgb', 'OpenRGB device', 'OpenRGB devices']];
+  const parts = kinds.map(([protocol, one, many]) => {
+    const n = fixtures.filter((f) => f.output?.protocol === protocol).length;
+    return n ? `${n} ${n === 1 ? one : many}` : null;
+  }).filter((part): part is string => part !== null);
+  return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
 }
 
 function checkPython(): Check {
@@ -872,10 +1016,11 @@ async function runPreflight({ midi, spotify, prolink, analysisCache, downloadMod
   // The external-tool probes are independent and each costs a process spawn;
   // run them together rather than serially in front of an operator waiting on
   // the report.
-  const [artnet, hue, wled, ffmpeg, ytDlp, live, stack, models] = await Promise.all([
+  const [artnet, hue, wled, openrgb, ffmpeg, ytDlp, live, stack, models] = await Promise.all([
     checkArtnet(),
     checkHue(),
     checkWled(),
+    checkOpenRgb(),
     checkFfmpeg(),
     checkYtDlp(),
     checkLiveInput(),
@@ -885,10 +1030,12 @@ async function runPreflight({ midi, spotify, prolink, analysisCache, downloadMod
 
   const checks: Check[] = [
     checkEngine(engineStatus(), { standalone }),
+    checkOutputsArmed(isArmed(), { standalone }),
     artnet,
     checkSacn(),
-    hue,
+    ...hue,
     wled,
+    openrgb,
     checkPatch(),
     checkAccess(),
     checkMidi(midi),
@@ -921,9 +1068,11 @@ export {
   PANNS_CHECKPOINT_SIZE,
   checkPatch,
   checkEngine,
+  checkOutputsArmed,
   checkSacn,
   checkHue,
   checkWled,
+  checkOpenRgb,
   checkPanns,
   checkAnalysisModels,
   checkModelStack,

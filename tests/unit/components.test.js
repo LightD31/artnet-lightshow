@@ -72,6 +72,17 @@ test('the Perform view has a pad for blackout, every effect, and tap — in the 
   assert.match(html, /Nothing loaded/);
 });
 
+test('the Perform view has the outputs switch, saying what disarmed means', () => {
+  given({ armed: false });
+  let html = ui.html(ui.h(ui.Perform, {}));
+  assert.match(html, /class="perform-arm-switch" role="switch" aria-checked="false"/);
+  assert.match(html, /Disarmed.*nothing goes out to the rig — tap to arm/s);
+  given({ armed: true });
+  html = ui.html(ui.h(ui.Perform, {}));
+  assert.match(html, /class="perform-arm-switch armed" role="switch" aria-checked="true"/);
+  assert.match(html, /Armed.*frames go out to the rig — tap to disarm/s);
+});
+
 test('blackout and a held effect show as pressed', () => {
   given({ masterBlackout: true, energyOverride: 'uv-wash' });
   const html = ui.html(ui.h(ui.Perform, {}));

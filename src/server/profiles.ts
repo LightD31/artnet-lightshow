@@ -105,6 +105,8 @@ const BUILTIN_PROFILE_IDS = new Set([
 
 /** Why a Hue lamp profile cannot be patched, or a fixture made a Hue lamp, by hand. */
 const HUE_BY_HAND = 'A Hue lamp is added from its bridge: Rig → Outputs → Philips Hue, Add to patch';
+/** Why a fixture cannot be made a WLED or an OpenRGB device by hand, nor stop being one. */
+const DEVICE_BY_HAND = 'A WLED or an OpenRGB device is added from Rig → Outputs and stays one; remove it from the patch to take it out';
 
 /** Does this profile ship with the server, rather than being imported? */
 function isBuiltinProfile(id: string): boolean {
@@ -171,6 +173,7 @@ export {
   BUILTIN_PROFILE_IDS,
   LEGACY_HUE_PROFILE_IDS,
   HUE_BY_HAND,
+  DEVICE_BY_HAND,
   isBuiltinProfile,
   UNIVERSE_SIZE,
   MAX_FIXTURES,

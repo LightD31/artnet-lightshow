@@ -74,6 +74,24 @@ export const PATTERNS = [
 	{ id: 'ramp-scatter', name: 'Random Ramps', pixel: true },
 	{ id: 'decay-scatter', name: 'Random Hits', pixel: true },
 	{ id: 'flash-burst', name: 'Flash Burst', pixel: true },
+	{ id: 'position-chase', name: 'Position Chase' },
+	{ id: 'radial-pulse', name: 'Radial Pulse' },
+	{ id: 'spatial-wash', name: 'Spatial Wash' },
+	{ id: 'bounce-scan', name: 'Bouncing Scan' },
+	{ id: 'streak', name: 'Streak' },
+	{ id: 'starlight', name: 'Starlight' },
+	{ id: 'breathe', name: 'Breathe' },
+	{ id: 'volume-gate', name: 'Volume Gate' },
+	{ id: 'confetti', name: 'Confetti' },
+	{ id: 'anchor-fill', name: 'Anchor Fill' },
+	{ id: 'halves', name: 'Halves' },
+	{ id: 'flip', name: 'Flip' },
+	{ id: 'room-wave', name: 'Room Wave' },
+	{ id: 'ring-strobe', name: 'Ring Strobe' },
+	{ id: 'ring-backlit', name: 'Ring Backlit' },
+	{ id: 'fireworks', name: 'Fireworks' },
+	{ id: 'flashes', name: 'Flashes' },
+	{ id: 'swirl', name: 'Swirl' },
 ]
 
 export const ENERGY_EFFECTS = [
@@ -83,6 +101,7 @@ export const ENERGY_EFFECTS = [
 	{ id: 'uv-wash', name: 'UV Wash' },
 	{ id: 'kill', name: 'Kill' },
 	{ id: 'glow', name: 'Glow' },
+	{ id: 'palette-strobe', name: 'Palette Strobe' },
 ]
 
 export const STROBE_FUNCTIONS = [

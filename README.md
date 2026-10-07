@@ -43,7 +43,19 @@ Companion** (with a page of presets for busking), and a REST API.
   the audience without taking it out of the show
 - **Energy overrides** — one-touch panic effects that trump everything except
   master blackout
-- **Master controls** — global dimmer, master blackout, play/stop
+- **Master controls** — global dimmer, master blackout, play/stop, and the
+  **outputs armed** switch: until a party arms the outputs nothing leaves the
+  machine — no Art-Net, sACN or DDP frame, no OpenRGB packet, no Hue stream —
+  while the show still renders for the preview and the stage view. Disarming
+  ends every stream cleanly (a black frame, the sACN terminate, one dark frame
+  to each WLED so its timeout hands the strip back, one dark frame to each
+  OpenRGB device and the connection to its PC closed, one dark frame and the
+  session closed on each Hue bridge), stops the patterns and clears any energy
+  override; arming resumes transmit and plays nothing by itself. The server
+  **always starts disarmed**, whatever was stored, so a reboot never starts a
+  show in the room. The switch is in Perform, in Settings → Show and on
+  Companion; the top bar shows which it is — see
+  [Running the show server](#running-the-show-server)
 - **Cue stack** — save the look on stage under a name and recall it in one
   press; deleting or overwriting one can be undone
 - **Live DMX monitor** — real-time channel values
@@ -140,11 +152,12 @@ Companion** (with a page of presets for busking), and a REST API.
 - **The plan** — the Rig view's pixel map: drag fixtures to where they hang, and
   map an LED bar by drawing it on the plan from its first cell to its last while
   it lights up on the rig to show which end is which
-- **Identify** — any fixture, universe, Art-Net node, WLED or Hue lamp shows
-  itself on the rig: a par blinks, a bar lights its first cell green and its
+- **Identify** — any fixture, universe, Art-Net node, WLED, OpenRGB device or
+  Hue lamp shows itself on the rig: a par blinks, a bar lights its first cell green and its
   last red with a dot running between them
 - **Finding the rig** — Art-Net nodes (and their locate LEDs), other sACN
-  sources and the universes they share with you, WLEDs and Hue bridges
+  sources and the universes they share with you, WLEDs, OpenRGB servers and
+  Hue bridges
 - **Rig, Sources, Settings and Preflight views** — every setting in the same app
   as the controls, a tab away (keys **4**–**7**)
 
@@ -167,6 +180,10 @@ Companion** (with a page of presets for busking), and a REST API.
   colour zones above and below — on a 64 × 32, eight white segments four LEDs
   tall and 32 colour zones of 8 × 7. It plays the bars' programs, not a
   screen's pictures
+- **OpenRGB** — the RGB inside a gaming PC (its RAM, board, GPU, keyboard,
+  mouse, the light bars on its monitors) through OpenRGB's SDK server: its
+  devices found, each added as a fixture with a cell per LED, and sent one
+  packet a frame over one TCP connection to the PC
 - **Panels** — an LED matrix is a grid of cells on the stage plot, and the pixel
   effects draw across and down it; Bars, Fire and Rain, after LedFx, stand up
   on it
@@ -180,7 +197,8 @@ Companion** (with a page of presets for busking), and a REST API.
   fixtures that have no strobe channel
 - **Philips Hue** — each lamp of an entertainment area is a fixture of its own,
   added from the bridge with what it can show, driven through the Entertainment
-  API by every pattern, palette and cue the pars get; it takes no DMX address
+  API by every pattern, palette and cue the pars get; it takes no DMX address.
+  As many bridges as the house has, each streaming an area of its own
 - Save and load the whole patch as a show file
 
 ---
@@ -318,7 +336,7 @@ The app has nine views. The first five run a show — **Manual**, **Auto Show**,
 
 | View | Key | What is there |
 |------|-----|---------------|
-| **Rig** | 6 | *Plan & patch*: the plan, the patch table and the selected fixture. *Profiles*: the fixture library. *Outputs*: Art-Net, sACN, WLED, Hue, and the universes |
+| **Rig** | 6 | *Plan & patch*: the plan, the patch table and the selected fixture. *Profiles*: the fixture library. *Outputs*: Art-Net, sACN, WLED, OpenRGB, Hue, and the universes |
 | **Sources** | 7 | The players the show may follow, Spotify, Deezer, the live input, and the analysis and its models |
 | **Settings** | 8 | How the show behaves over a night, the MIDI controller and its mapping, MIDI clock, the engine, the server and access token, and the setup again |
 | **Preflight** | 9 | The [pre-show check](#pre-show-check) |
@@ -397,6 +415,9 @@ Identify is shown on the plan and in the patch table on every open page.
 - **A WLED** in the patch flashes through it; one not in the patch yet is sent
   the same picture directly over DDP and goes back to what it was doing when
   it stops.
+- **An OpenRGB device** in the patch flashes through it; one not in the patch
+  yet is streamed the same picture over the SDK, and is put back to the
+  colours and the mode it was showing when it stops.
 - **A Hue lamp** in the patch flashes through it; one not in the patch yet is
   asked to identify itself by the bridge.
 
@@ -411,7 +432,10 @@ Identify is shown on the plan and in the patch table on every open page.
   and lists any console or server there with its priority. A universe this rig
   sends that another source sends too is called out: the higher priority wins.
 - **WLEDs** — found over mDNS, identified, added in a click.
-- **Hue bridges** — found, paired, and the area's lamps added in a click.
+- **OpenRGB** — a PC's SDK server asked for its devices, each identified and
+  added in a click.
+- **Hue bridges** — found, paired (as many as the house has), and each one's
+  area's lamps added in a click.
 
 ---
 
@@ -479,8 +503,8 @@ A lamp with several sections is a fixture with cells, as an LED bar is: the
 patterns run along it, and it can be given a length and an angle on the plan.
 
 The server renders Hue lamps on universes of its own (from 60000) that are
-never sent on Art-Net, sACN or DDP, and their channels read their colour from
-there. They take up no DMX channels, never overlap a fixture, and move up when
+never sent on Art-Net or sACN, and their channels read their colour from
+there; WLEDs and OpenRGB devices are rendered there too. They take up no DMX channels, never overlap a fixture, and move up when
 one before them is removed.
 
 **UV yes, strobe no.** No Hue lamp emits ultraviolet, but the deep violet a UV
@@ -660,21 +684,22 @@ cross routers or VLANs) and lists every WLED that answers with its LED count;
 **Add to patch**, or **Add by address** for one mDNS cannot see. Adding one asks
 it for its name, how many LEDs it has, whether they have a white channel, and —
 set up as a 2D panel in WLED — its width and height, and builds its profile from
-that. It is patched on the first free universes from 1, from channel 1, and is
-then a fixture like any other: on the stage plot, in the patterns, in the
-monitor.
+that. It has no DMX address: the server renders it on universes of its own, as
+it does a Hue lamp, and sends it the bytes. Otherwise it is a fixture like any
+other: on the stage plot, in the patterns, in the monitor.
 
-- Its universes go to it and nowhere else, so nothing else may be patched on
-  them; the patch says so if you try.
-- Its row in the patch table shows its address. Change it when the WLED moves;
-  empty it to send the fixture on Art-Net and sACN instead.
+- It takes no universe or DMX address of the rig's, so it never collides with
+  a fixture on Art-Net or sACN, and is never sent there.
+- Its row in the patch table shows its address on the network. Change it when
+  the WLED moves. A WLED stays one: to drive the strip over Art-Net instead,
+  remove it and patch it as a strip.
 - Removed from the patch, it is sent one dark frame. WLED then hands the strip
   back to its own effects after its realtime timeout (Settings → Sync
   Interfaces in WLED), so set a preset of "off" there if it should stay dark.
 - The pre-show check asks every WLED in the patch: one that does not answer
   fails, and one whose LED count has changed since it was added warns.
 - A WLED panel of up to 4,096 LEDs is one fixture: a 64 × 32 matrix is added as
-  a 64 × 32 panel, over thirteen universes of its own.
+  a 64 × 32 panel.
 
 **Segments.** **Add each segment** makes each segment set up in WLED a fixture
 of its own. The front of a DJ booth and its two sides, all on one strip, become
@@ -688,11 +713,73 @@ and the pre-show check warns about one that reaches past the WLED's end. In
 realtime mode a WLED shows only what it is sent, so LEDs in no patched segment
 stay as they are.
 
+**Outside a show.** A WLED that is being sent frames is in realtime mode, and
+in realtime mode it is nobody else's: Home Assistant, its own presets and its
+app all wait. So while the outputs are disarmed ([Master
+controls](#features)) no DDP frame goes to any WLED — the moment they are
+disarmed each is sent one dark frame and then nothing, and its realtime
+timeout hands the strip back to its effects, as it does when a fixture leaves
+the patch. The server starts disarmed, so a reboot never seizes the house's
+strips. Identify is the one exception: asking a WLED to show itself still
+streams its picture to it, for the seconds asked for.
+
+### OpenRGB
+
+A gaming PC's RGB — its RAM, its board, its GPU, its keyboard and mouse, the
+light bars on its monitors — is driven through [OpenRGB](https://openrgb.org)'s
+SDK server: one TCP connection to the PC (port 6742), and every frame one
+packet a device with a colour for each of its LEDs. Turn the server on in
+OpenRGB under *SDK Server*, and let it through the PC's firewall.
+
+**Rig → Outputs → OpenRGB → Discover** asks the server at an address for its
+devices and lists each with its type and LED count; **Add to patch** adds one,
+**Add all** every one with LEDs. A device is a fixture of its own, its LEDs
+cells of red, green and blue, its profile named as OpenRGB names the device,
+with no DMX address — a WLED added as pixels, to the show: on the stage plot,
+in the patterns, in the monitor. The
+85 LEDs of a board are a bar; a two-LED mouse is a short one; a one-LED fan
+is a par.
+
+- Like a WLED, it takes no universe or DMX address of the rig's, and is never
+  sent on Art-Net or sACN.
+- Its row in the patch table shows the server's address and the device's
+  number and name. Change the address when the PC moves.
+- OpenRGB numbers its devices in the order it finds them, so hardware added
+  to or taken out of the PC — a monitor off, a wireless mouse asleep at
+  boot — can shift the others. A device is patched under its name as well
+  as its number, and the show finds it by name whatever its number today
+  (the k-th of that name on the server for the k-th in the patch, so
+  identical RAM sticks keep their order). The pre-show check reads the
+  server again and says where a device has moved; one that is gone, or
+  whose LED count has changed, warns.
+- A device in a hardware effect (a rainbow the board runs itself) is put into
+  its *Direct* mode the first time it is sent a frame, as OpenRGB's own
+  clients do; one with no mode that takes a colour a LED cannot be lit by the
+  show, and the list says so.
+- Removed from the patch, it is sent one dark frame. OpenRGB has no realtime
+  timeout: the device stays as it was last sent until OpenRGB, or a profile
+  loaded in it, says otherwise.
+- The PC being off is not a failure: the pre-show check warns, naming the
+  fixtures on it, and the rest of the show goes on. The connection is kept
+  open while frames go to it and dialled again, after a pause that grows to
+  thirty seconds, when it drops; a device that cannot keep up is sent fewer
+  frames rather than late ones, and the engine never waits on it.
+
+**Outside a show.** While the outputs are disarmed ([Master
+controls](#features)) no packet goes to any OpenRGB device: the moment they
+are disarmed each is sent one dark frame and the connection to the PC is
+closed, and nothing is sent until they are armed again, when the first frame
+dials it. The server starts disarmed, so a reboot never paints the PC.
+Identify is the exception, as it is for a WLED: a device not in the patch is
+streamed its picture for the seconds asked for, and then put back to the
+colours and the mode it was showing.
+
 ### Output protocols
 
 Frames go out over **Art-Net**, **sACN (E1.31)**, or both — each universe is
 sent on every protocol that is enabled, so a rig can run one node on Art-Net
-and a console on sACN at the same time.
+and a console on sACN at the same time. A WLED's or an OpenRGB device's
+universes go to it alone, as above.
 
 | | Art-Net | sACN (E1.31) |
 |---|---|---|
@@ -702,7 +789,7 @@ and a console on sACN at the same time.
 | Addressing | broadcast, or straight to the nodes it finds; or unicast to the node IP | multicast to `239.255.x.y` per universe, or unicast to a node IP |
 | Universe numbering | from 0 | from 1 |
 | Frame sync | ArtSync (optional) | — |
-| On stop | a black frame | a black frame, then stream-terminated packets |
+| On stop, and on disarm | a black frame | a black frame, then stream-terminated packets |
 
 **Finding Art-Net nodes.** While *Node IP* is a broadcast address — the default
 `2.255.255.255`, or anything ending in `.255` — and **Find Nodes** is on (the
@@ -725,9 +812,11 @@ nodes that don't support it.
 the server stops, gets one black frame; over sACN that is followed by three
 stream-terminated packets, so a receiver lets go at once instead of holding
 the last frame until it times out. Changing sACN's settings (another offset,
-another node, turning it off) ends the old streams the same way. Every ten
-seconds the server also lists the universes it is sending on sACN's discovery
-group, so a console can show this source without being told.
+another node, turning it off) ends the old streams the same way, and so does
+disarming the outputs ([Master controls](#features)) — after which nothing
+goes out until they are armed again. Every ten seconds the server also lists
+the universes it is sending on sACN's discovery group, so a console can show
+this source without being told.
 
 **Network.** On a machine that is on two networks — the show network and the
 house one — pick the show network under *sACN (E1.31) → Network*, so the
@@ -805,7 +894,10 @@ hertz.
 
 A swell too short to see at the tempo, or a flash faster than about eleven a
 second, slows to the next rung. Flash Limit holds them to the slowest. A Hue
-lamp is left out of them, as of the standard strobe.
+lamp is left out of them, as of the standard strobe. The party effects'
+strobes and the Palette Strobe know this too: on a Hue lamp each of their
+flashes is the colour at full falling to a floor over 200 ms (see
+[Party effects](#the-patterns)).
 
 ### Philips Hue
 
@@ -816,7 +908,9 @@ area is **a fixture of its own**, added from the bridge as a WLED is: the bridge
 says what each lamp can show, and it is patched on the profile that fits. The
 show renders it like any other fixture, so every pattern, palette, cue and
 auto-show decision reaches it, and its channel is sent the colour that came
-out.
+out. A house with more than one bridge pairs each of them: every bridge
+streams an area of its own, and a lamp in the patch names the bridge it
+belongs to.
 
 That colour is read from the rendered frame, which means it arrives with the
 dimmer, the lamp's trim, the grand master, any override and master blackout
@@ -828,12 +922,15 @@ already applied. Black out the rig and the Hue lamps go out with it.
    it. Areas are made there because that is where the lamps are already placed
    on a room plan; this server only reads them.
 2. Open **Rig → Outputs → Philips Hue** and press **Find bridges**, or type the
-   bridge IP in. Discovery uses Philips' cloud service, so a show network with
+   bridge IP in, with a name for it if you like ("Lounge"; its address when
+   left blank). Discovery uses Philips' cloud service, so a show network with
    no route to the internet will need the address typed in.
 3. Press the round button on the bridge, then press **Pair** within 30 seconds.
    The bridge issues an application key and a client key, which are stored as
    secrets in `config/settings.json` and never shown again. The client key is
-   only ever returned once, so a lost pairing has to be made again.
+   only ever returned once, so a lost pairing has to be made again — **Pair
+   again** on a bridge already listed replaces its keys rather than adding a
+   twin.
 
    A third value, the **application id**, is fetched at the same time. It is the
    identity the encrypted stream authenticates with, and it is what the Hue app
@@ -841,7 +938,9 @@ already applied. Black out the rig and the Hue lamps go out with it.
    readable in the settings. A pairing made before this was stored resolves
    it on the first connection and saves it then.
 4. Pick the **entertainment area** and **Apply**. A bridge streams one area at
-   a time.
+   a time; several bridges stream at once, each its own. Pair the next one the
+   same way and it is listed under the first, with an area, lamps and an
+   **Enabled** switch of its own.
 5. The area's lamps are listed below it: each lamp as you named it in the Hue
    app, the channels it renders, and what the bridge says it can show — its
    gamut, its range of whites, its sections. **Add to patch** makes one a
@@ -855,6 +954,14 @@ at all. Opening a stream puts the area into entertainment mode, which takes
 those lamps out of normal Hue control — worth doing only once something is
 actually driving them. A channel with no lamp in the patch is never sent, so
 the bridge keeps its own colour for it.
+
+**Outside a show.** For the same reason, the bridge is not contacted while the
+outputs are disarmed ([Master controls](#features)): disarming sends every
+streaming bridge one dark frame and closes its session, so the area leaves
+entertainment mode and the lamps answer the Hue app and the house again, and
+nothing opens a session until the outputs are armed — the first frame after
+that does. The server starts disarmed, whatever was stored, so a restart in
+the night never takes the lamps from the house.
 
 **How the lamp's dies are translated.** The stream carries red, green and blue
 and nothing else, so the other dies are folded in rather than dropped:
@@ -897,8 +1004,9 @@ would band on a DMX par do not here.
   the patch on a channel the area does not have. The bridge takes its colour
   and ignores it, which on the night looks like a dead lamp — the pre-show check
   catches it: remove the lamp and add it again.
-- **Forget** clears the credentials here but does not unregister this server on
-  the bridge. Remove it in the Hue app under linked devices.
+- **Forget** removes a bridge here, keys and all — and its lamps from the
+  patch, after asking, when any are in it — but does not unregister this server
+  on the bridge. Remove it in the Hue app under linked devices.
 
 **Lining the pars up with the lamps**
 
@@ -907,9 +1015,10 @@ through the bridge and a ZigBee hop, tens of milliseconds later. On a mixed rig
 every hit therefore lands on the pars first and the lamps after, which on a
 snare reads as two events. **Pars Delay (ms)** in Rig → Outputs → Philips Hue holds
 the Art-Net and sACN output back by that much; Hue is sent each frame as soon
-as it is rendered. It defaults to 0 and only applies while Hue output is on.
+as it is rendered. It defaults to 0, is one value for every bridge, and only
+applies while at least one bridge is on.
 
-To tune it, press **Flash for 10 s** under the stream status: every fixture
+To tune it, press **Flash for 10 s** beside the bridge list: every fixture
 flashes white once a second. Film a par and a lamp together in slow motion,
 raise the delay until the two flashes land on the same frame, and save. Start
 around 50 ms. The shutdown blackout skips the delay, so the rig still goes
@@ -1031,8 +1140,9 @@ answer, and exits non-zero if something will not work:
 | `--` | Nothing to verify, just worth seeing. |
 
 What it checks: the engine (where it is rendering, and whether its frames have
-gone out on time), Art-Net reachability (it sends an ArtPoll and lists the nodes
-that answer), the sACN configuration, universe mapping and network, the Hue bridge (that
+gone out on time), whether the outputs are armed (a warning while they are
+not — nothing goes out until they are), Art-Net reachability (it sends an
+ArtPoll and lists the nodes that answer), the sACN configuration, universe mapping and network, the Hue bridge (that
 it answers, that the entertainment area still exists, and that every channel is
 bound to a fixture that is still patched), the fixture patch
 for overlaps and out-of-universe addresses, the bind address and token, the
@@ -1216,6 +1326,53 @@ that drives as hard as a drop one of Flash Alternate, Flash Chase, Ramp, Strobe
 Core, Random Ramps and Random Hits, the same each time it comes round. The zone-by-zone ones run **Per bar**, so each
 fixture plays the program itself.
 
+**Party effects** — after the party engines of the Hue apps: the Party
+families of Hue Dynamics (its position chase, radial pulse, spatial wash,
+bouncing scan, streak, twinkle, breathing fade, volume gate and frequency
+burst) and the room effects of Light DJ (its fills, halves and flips, waves,
+strobe cycles, fireworks, flashes and swirl). Both drive a handful of lamps
+placed round a room, and so do these: a lamp's place on the stage plot — its
+position, and its group where front and back matter — decides where a chase
+reaches it, which half of the room it is in and which corner it fills from,
+so the effects travel across the room rather than along the patch. A rig
+nobody has placed travels in stage order, and a rig in one row sweeps along
+the row whatever the heading. Every one steps on the musical clock, with
+nothing accumulating from frame to frame, so the rehearsal preview shows
+exactly what the rig will:
+
+| | |
+|---|---|
+| **Position Chase** | A domino running across the room by position, half a step a lamp, each in the look's next colour; the heading turns a quarter every run |
+| **Radial Pulse** | A ring from the middle of the room out to its farthest lamp once a bar, swelling and fading, as hard as the bass pushes |
+| **Spatial Wash** | A soft crest of the look's colours rolling across the room along a heading that turns a quarter every bar, never below the bed |
+| **Bouncing Scan** | A bright line sweeping across the room along a heading of 28° and back again every bar, the next colour on every pass |
+| **Streak** | A comet with a long tail across the room along a heading of 42°, on two events in three, in a direction each event draws |
+| **Starlight** | About a third of the lamps light on every step, each in a colour drawn for it, and fade out over the step |
+| **Breathe** | The whole room swells and falls as one over a bar, the colour drifting a little further round the look on every breath |
+| **Volume Gate** | A slow wash of the look's colours across the room that opens with how loud the music is and closes as it goes quiet |
+| **Confetti** | Three lamps in four pop in colours of their own on every step — no closer than 400 ms — and die away; with the pulse, on the kick as it was hit |
+| **Anchor Fill** | The room split round its anchors by position — the two sides, the four corners, or the corners and the middle on a bigger rig — and filled anchor by anchor on every step, the next colour over the last |
+| **Halves** | The front of the room against the back on one step, the left against the right on the next, in A and B, swapping every other time round; front and back come from the fixture groups when set |
+| **Flip** | The four corners of the room, one diagonal in A and the other in B, swapping on every step |
+| **Room Wave** | A wave of the look's colours crossing the room once a bar along a heading that turns by a seventh of a circle every lap |
+| **Ring Strobe** | One lamp at a time round the ring of the room — from the front, clockwise seen from above — a flash on every step, each lap in the look's next colour |
+| **Ring Backlit** | The same ring with the lit lamp in colour A and the rest of the room parked on colour B |
+| **Fireworks** | A burst on one lamp on every step, never the one before, spreading to its neighbours a little later and dimmer the farther they stand, dying away over a bar |
+| **Flashes** | About a third of the lamps, drawn afresh on every step, flash hard in colours of the look and are cut after a fifth of the step |
+| **Swirl** | The look's colours laid round the room by angle and turning, a full turn every eight steps |
+
+Headings are degrees on the plot, 0° towards the audience and 90° to the
+right. The strobes among them are gated by the beat and never random: Ring
+Strobe flashes one lamp a step — on the beat, its halves, quarters or eighths
+as the beat division says — and, where a step is too short for that, holds
+the ring for two, so no lamp flashes more than five times a second (the party
+apps' own cap); Flashes and Confetti space their events the same way. A Hue
+lamp is never flashed: it takes each flash as the colour at full falling to a
+floor of 40 over 200 ms and held there until its next, as the apps fade a hit
+lamp back, so a ring of Hue lamps pulses where a ring of pars flashes. Flash
+Limit still holds the whole rig to three large flashes a second. The auto
+show does not pick them: they are for the picker, cues and MIDI.
+
 **Drums** and **Stems** play the analysis's *pulse*. That is every kick, snare
 and hat read off the separated drum stem, and each stem's level fifty times a
 second, sampled at the playback position every frame. The auto show uses them
@@ -1368,6 +1525,7 @@ still mean something at the moment you hit the blinder.
 | `blinder` | Blinder | Every emitter at full — the brightest the rig goes |
 | `uv-wash` | UV Wash | Blacklight — UV alone, no strobe |
 | `kill` | Kill | Everything out for as long as it is held |
+| `palette-strobe` | Palette Strobe | Flashes in the look's colours on the beat over the running look, up to five a second |
 
 Five effects covering four separate jobs, so no two buttons do the same thing: a
 strobe punch that is either cold or in the look's own colour, a held wall of
@@ -1381,6 +1539,16 @@ visible light, which is brighter than either was. `uv-strobe` gave way to
 
 `kill` is not master blackout. The master is a latching switch on the whole rig;
 this is momentary and auto-clears, which is what you want under a thumb on a drop.
+
+`palette-strobe` is the hold-to-strobe pad of the Hue party apps, and the one
+override that does not replace the look. While it is held, every lamp flashes
+a colour of the look — the slots' distinct colours in turn, one per flash — on
+the beat grid, at the finest division of the beat that stays under five
+flashes a second (half beats at 128 BPM, beats at 174): each flash 80 ms at
+full, then 80 ms of black, then the running pattern shows through until the
+next. A Hue lamp is never flashed: it takes each flash as the colour at full
+falling to a floor of 40 over 200 ms, held there until the next. Flash Limit
+still holds the rig as a whole to three large flashes a second.
 
 Trigger from the UI, MIDI (encoder push 8 — hold to activate, release to clear),
 REST, or Companion. Clear with `energyOverride: null`.
@@ -1967,7 +2135,7 @@ masters.
 - **Strobe channels and the software strobe** are capped at three flashes a
   second.
 
-It applies to every output (Art-Net, sACN, WLED, Hue) and to manual looks,
+It applies to every output (Art-Net, sACN, WLED, OpenRGB, Hue) and to manual looks,
 cues and overrides as much as to the auto show. The header shows **Flash ≤ 3/s**
 while it is on. It is off by default: most of what a party rig does is above
 this line.
@@ -2268,7 +2436,7 @@ All endpoints return JSON. When a token is configured, send it as an
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/state` | Full current state |
+| GET | `/api/state` | Full current state (`armed` says whether anything leaves the machine) |
 | POST | `/api/set` | Patch state fields (JSON body) |
 | POST | `/api/tap` | Tap tempo |
 | POST | `/api/play` · `/api/stop` | Start / stop the pattern engine |
@@ -2289,7 +2457,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/fixture/:id/override` | Set a fixture override (JSON body) |
 | POST | `/api/fixture/:id/blackout/toggle` · `/api/fixture/:id/clear` | Per-fixture blackout / clear |
 | POST | `/api/fixture/:id/max/:value` | Fixture maximum brightness (0–255) — scales the fixture's output; not an override |
-| POST | `/api/fixtures` · DELETE `/api/fixtures/:id` | Add / remove fixtures. With no body, one generic par behind whatever is on the default universe; with `{ profileId?, count?, universe?, address?, label? }`, `count` (up to 64) of that profile one after another, on into the next universe when one fills (a strip on universes of its own); answers `{ fixtures: [ids], placed: [{ universe, address }] }`. A Hue lamp's profile is refused: Hue lamps are added with `POST /api/hue/add`. DELETE answers with the fixture and its index |
+| POST | `/api/fixtures` · DELETE `/api/fixtures/:id` | Add / remove fixtures. With no body, one generic par behind whatever is on the default universe; with `{ profileId?, count?, universe?, address?, label? }`, `count` (up to 64) of that profile one after another, on into the next universe when one fills (a strip on universes of its own); answers `{ fixtures: [ids], placed: [{ universe, address }] }`. A Hue lamp's profile is refused: Hue lamps are added with `POST /api/hue/:bridge/add`. DELETE answers with the fixture and its index |
 | POST | `/api/fixtures/restore` | Put a deleted fixture back (`{ index, fixture }`) |
 | POST | `/api/gdtf/parse` | Parse an uploaded `.gdtf` (multipart `gdtf`) |
 | POST | `/api/ofl/parse` | Parse an uploaded Open Fixture Library `.json` (multipart `ofl`, optional `manufacturer`) |
@@ -2299,12 +2467,15 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/profiles/bar` | Build and register an LED bar profile from `{ id, name, cells, firstChannel, order, stride?, dimmer?, strobe? }`; `?dryRun=1` answers with it without registering |
 | GET · POST | `/api/show` | Export / import the patch |
 | GET | `/api/wled/discover` | Ask the network for WLEDs (mDNS): `{ devices: [{ host, name, leds, rgbw, matrix, version, segments, patched }] }` |
-| POST | `/api/wled/add` | Add a WLED to the patch from `{ host, label?, segments? }`: its profile from `/json/info`, on free universes, sent DDP. With `segments: true`, a fixture for each segment in its `/json/state` not patched yet: `{ fixtures, profiles, info, segments }` |
+| POST | `/api/wled/add` | Add a WLED to the patch from `{ host, label?, segments? }`: its profile from `/json/info`, with no DMX address, sent DDP. With `segments: true`, a fixture for each segment in its `/json/state` not patched yet: `{ fixtures, profiles, info, segments }` |
+| GET | `/api/openrgb/discover?host=&port=` | Ask an OpenRGB SDK server for its devices: `{ host, port, devices: [{ index, name, type, leds, direct, patched }] }` |
+| POST | `/api/openrgb/add` | Add devices of an OpenRGB server to the patch from `{ host, port?, devices?: [index], label? }` — those named, or every one with LEDs not patched yet — each a fixture with a cell per LED, with no DMX address, sent over the SDK: `{ fixtures, profiles, devices }` |
 
 ### Outputs
 
 | Method | Path | Description |
 |--------|------|-------------|
+| POST | `/api/outputs/arm` · `/api/outputs/disarm` · `/api/outputs/toggle` | Whether anything leaves the machine (`{ armed }` back). Disarm ends every stream — a black frame, the sACN terminate, a dark frame to each WLED, a dark frame to each OpenRGB device and its connection closed, a dark frame and the session closed on each Hue bridge — stops the patterns and clears the energy override; arm resumes transmit. Stored as `outputs.armed`, applied at once, always off at start |
 | GET | `/api/artnet/nodes` | The Art-Net nodes that answered, with the universes each outputs, and whether frames are being routed by them; `?scan=1` asks the network now |
 | GET | `/api/network/interfaces` | This machine's IPv4 addresses and their broadcast addresses, for sACN's network and the Art-Net target |
 | POST | `/api/artnet/identify` | `{ address, universes?, seconds? }`: send the node ArtAddress *locate* (and *normal* after), and identify the fixtures on the universes it outputs |
@@ -2315,9 +2486,10 @@ All endpoints return JSON. When a token is configured, send it as an
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/identify` | `{ fixtures?: [ids], universes?: [n], seconds? }` — those fixtures, and everything on those universes, show themselves for `seconds` (default 8, up to 60; 0 stops). Answers `{ ids, remainingMs }`; the live state carries it as `identify` |
-| POST | `/api/identify/stop` | Stop identifying, a streamed WLED included |
+| POST | `/api/identify/stop` | Stop identifying, a streamed WLED or OpenRGB device included |
 | POST | `/api/wled/identify` | `{ host, seconds? }`: through the patch when the WLED is in it (`via: 'patch'`), else its picture streamed over DDP (`via: 'device'`) |
-| POST | `/api/hue/identify` | `{ lamp, seconds? }`: that lamp of the area (its `id` from `/api/hue/lamps`) through the patch when it is in it (`via: 'fixture'`), else the bridge's own identify (`via: 'bridge'`) |
+| POST | `/api/openrgb/identify` | `{ host, port?, device, seconds? }`: through the patch when the device is in it (`via: 'patch'`), else its picture streamed over the SDK (`via: 'device'`, with `leds` and `name`) and the device put back after |
+| POST | `/api/hue/:bridge/identify` | `{ lamp, seconds? }`: that lamp of the bridge's area (its `id` from `/api/hue/:bridge/lamps`) through the patch when it is in it (`via: 'fixture'`), else the bridge's own identify (`via: 'bridge'`) |
 
 ### Cues
 
@@ -2328,6 +2500,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | PUT | `/api/cues/:id` | Rename (`{ name }`), overwrite from the live look (`{ recapture: true }`), or replace outright (`{ look }`) |
 | DELETE | `/api/cues/:id` | Delete a cue |
 | POST | `/api/cues/:id/recall` | Put a cue on stage |
+| POST | `/api/cues/by-name/:name/recall` | Put the cue with that name on stage (case ignored); 404 when none carries it |
 | POST | `/api/cues/restore` | Put a deleted cue back (`{ cue, index }` — what DELETE answered with) |
 | POST | `/api/cues/reorder` | Reorder the stack (`{ ids }`); ids left out keep their relative order |
 
@@ -2384,18 +2557,26 @@ All endpoints return JSON. When a token is configured, send it as an
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/hue/status` | Bridge address, whether it is paired, the area, and what the stream is doing |
+| GET | `/api/hue/status` | Every bridge: id, label, address, whether it is on and paired, its area, and what its stream is doing; plus `latencyMs` |
 | GET | `/api/hue/discover` | Bridges Philips' cloud service has seen on this network |
-| POST | `/api/hue/pair` | Pair with `{ host }` — the bridge link button must have been pressed in the last 30 seconds. Answers `409` with `pressLink: true` if it has not |
-| GET | `/api/hue/areas` | Entertainment areas on the paired bridge, with their channel ids and lamp names, and the same channels as `lamps` |
-| GET | `/api/hue/lamps` | The chosen area's lamps: each one's `id` (its entertainment service), name, product, devices, `channels` (one a section, in order along it), `capabilities` (`gamut`, `whites` in kelvin, `fixedWhite`) and `shows`, the profile's mode in words (`null` when the bridge would not say) |
-| POST | `/api/hue/add` | `{ lamps? }`: patch those lamps of the area by `id`, or every one not in the patch yet, each a fixture on a profile built from its capabilities, with `output: { protocol: 'hue', channels }` and no DMX address. Answers with the fixtures and their profiles |
-| POST | `/api/hue/disconnect` | Forget the bridge and turn the output off |
+| POST | `/api/hue/pair` | Pair with `{ host, label? }` — the bridge link button must have been pressed in the last 30 seconds. Answers `409` with `pressLink: true` if it has not. A new address is added to `hue.bridges` (as `bridge-1`, `bridge-2`…, on, with no area yet); one already there gets fresh keys. Answers the bridge and its areas |
+| GET | `/api/hue/:bridge/areas` | Entertainment areas on that bridge, with their channel ids and lamp names, and the same channels as `lamps` |
+| GET | `/api/hue/:bridge/lamps` | Its chosen area's lamps: each one's `id` (its entertainment service), name, product, devices, `channels` (one a section, in order along it), `capabilities` (`gamut`, `whites` in kelvin, `fixedWhite`) and `shows`, the profile's mode in words (`null` when the bridge would not say) |
+| POST | `/api/hue/:bridge/add` | `{ lamps? }`: patch those lamps of its area by `id`, or every one not in the patch yet, each a fixture on a profile built from its capabilities, with `output: { protocol: 'hue', bridge, channels }` and no DMX address. Answers with the fixtures and their profiles |
+| POST | `/api/hue/:bridge/disconnect` | Forget that bridge, keys and all. `409` while its lamps are in the patch unless `{ removeFixtures: true }` takes them along |
 | POST | `/api/hue/sync-test` | Flash every fixture white once a second for 10 s, to tune `hue.latencyMs` |
 
-Credentials are never returned by any of these — `/api/hue/status` reports only
-whether a pairing exists. Each patched lamp is a fixture like any other, saved
-with the show; the channel it drives is its `output`.
+`:bridge` is an id from `/api/hue/status`. The routes from before there could
+be several bridges — `/api/hue/areas`, `/lamps`, `/add`, `/identify` — still
+answer, for the first bridge; `/api/hue/disconnect` does not, since it would
+have to guess which. Credentials are never returned by any of these —
+`/api/hue/status` reports only whether a pairing exists, and `GET /api/settings`
+lists the bridges with their keys blanked. The bridges themselves are ordinary
+settings under `hue.bridges`, saved through `PUT /api/settings`: an entry sent
+back with blank keys keeps the stored ones, an entry left out is forgotten, and
+a file from before several bridges were possible loads its one bridge as
+`bridge-1`. Each patched lamp is a fixture like any other, saved with the
+show; the bridge and channels it drives are its `output`.
 
 ### The server
 
@@ -2434,11 +2615,17 @@ The `fixture` message carries
 of `front`, `back`, `room`, `floor`, or `null`; `geometry` is an LED bar's line
 (a panel's top edge), `{ length, angle }` (length 1–100 in stage percent, angle
 −180–180 degrees clockwise on the plot), or `null` for the default; `output` is
-`{ protocol: 'ddp', host, port?, at?, rowStride? }` to send the fixture's
-universes to a WLED — from its LED `at` for a segment, a row every `rowStride`
-LEDs for a rectangle of a panel — or `null` for Art-Net and sACN. A Hue lamp's
-`{ protocol: 'hue', channels }` is given by `POST /api/hue/add` and cannot be
-set or changed here, nor can its profile.
+`{ protocol: 'ddp', host, port?, at?, rowStride? }` for a WLED — from its LED
+`at` for a segment, a row every `rowStride` LEDs for a rectangle of a panel —
+or `{ protocol: 'openrgb', host, port?, device, name?, leds }` for device
+`device` of the OpenRGB SDK server at `host` (found by `name` when the server
+has renumbered it), `leds` LEDs long. Either is given when the device is added
+(`POST /api/wled/add`, `POST /api/openrgb/add`); here it can be changed — a new
+`host` when the device moves — but not removed, nor given to a fixture on DMX,
+and `address` and `universe` are ignored for it, which has none. A
+Hue lamp's `{ protocol: 'hue', bridge, channels }` is given by
+`POST /api/hue/:bridge/add` and cannot be set or changed here, nor can its
+profile.
 
 ---
 
@@ -2469,6 +2656,19 @@ one that never resolves on its own.
 ---
 
 ## Running the show server
+
+**It starts disarmed.** Whenever the server starts — by hand, by a service
+manager, by the supervisor after a crash — its outputs are disarmed, whatever
+`outputs.armed` in the settings said: it logs `[outputs] disarmed at start`
+and nothing leaves the machine until someone arms the outputs (the switch in
+Perform or Settings → Show, Companion, or `POST /api/outputs/arm`). The show
+still renders, so the preview and the stage view work, and the look the
+supervisor puts back comes back as it was; only transmit waits. On a home
+server that runs all day beside Home Assistant that is the point: a reboot at
+six in the morning must not seize the WLEDs, the Hue lamps and the PC's RGB
+from the house.
+Disarming later ends every stream cleanly and stops the patterns; `GET
+/api/health` and the pre-show check both say which state it is in.
 
 ### The supervisor
 
@@ -2544,7 +2744,10 @@ late, the main thread stalling for over 100 ms, the memory over 1.5 GB, errors
 logged in the last ten minutes, the auto show in error, and how many times the
 supervisor has had to start it again and why. With them: the uptime, the
 engine's frame timing, the main thread's delay over the last 30 seconds, the
-memory, the outputs and the auto show. The Log tab shows it above the log.
+memory, the outputs — `outputs.armed` says whether anything leaves the
+machine, and while it is false a note among the problems says so, as
+information rather than a fault — and the auto show. The Log tab shows it
+above the log.
 
 `GET /healthz` is the liveness probe for a service manager or a monitor: it
 answers `{ "ok": true }` when the server does, and needs no token.

@@ -161,6 +161,8 @@ export interface StageFixture {
   group?: string | null;
   geometry?: Geometry | null;
   profileId?: string;
+  /** Where its universes go (a Fixture's `output`): a Hue lamp is never flashed. */
+  output?: { protocol: string } | null;
 }
 
 /** A fixture in the patch. */
@@ -174,14 +176,15 @@ export interface Fixture extends StageFixture {
   maxBrightness?: number;
   override?: Override | null;
   /**
-   * Where its universes go, when not Art-Net and sACN: a WLED over DDP, or
-   * nowhere at all for a Hue lamp, which has no DMX address.
+   * Where its universes go, when not Art-Net and sACN: a WLED over DDP, an
+   * OpenRGB device over the SDK, or nowhere at all for a Hue lamp, which has
+   * no DMX address.
    */
   output?: FixtureOutput | null;
 }
 
 /** A fixture sent to a device of its own rather than on the rig's universes. */
-export type FixtureOutput = DdpOutput | HueOutput;
+export type FixtureOutput = DdpOutput | OpenRgbOutput | HueOutput;
 
 /**
  * A WLED, sent its pixels over DDP: all of them, or — for a fixture that is
@@ -206,15 +209,34 @@ export interface DdpOutput {
 }
 
 /**
- * A Philips Hue lamp: the channels of the bridge's entertainment area it
- * renders, one for each section in the order its profile's cells run (one,
- * for a bulb). Patched from the bridge (never by hand) and with no DMX
- * address: the server renders it on universes of its own that are never sent
- * (shared/placement.ts), and each channel is sent the colour its section was
- * rendered.
+ * One device of an OpenRGB SDK server (server/openrgb.ts): device `device`
+ * in the order the server listed them when it was added — and `name`, what
+ * the server called it then, by which it is found again when the server has
+ * renumbered its devices — `leds` LEDs long, each a cell of the fixture,
+ * sent as one UPDATELEDS packet a frame over one TCP connection to `host`.
+ * Its universes are its own, as a WLED's are.
+ */
+export interface OpenRgbOutput {
+  protocol: 'openrgb';
+  host: string;
+  port?: number;
+  device: number;
+  name?: string;
+  leds: number;
+}
+
+/**
+ * A Philips Hue lamp: the channels of the entertainment area that bridge
+ * `bridge` (an id in the settings' hue.bridges) streams, one for each section
+ * in the order its profile's cells run (one, for a bulb). Patched from the
+ * bridge (never by hand) and with no DMX address: the server renders it on
+ * universes of its own that are never sent (shared/placement.ts), and each
+ * channel is sent the colour its section was rendered. A show saved before
+ * several bridges were possible names none; it loads as the first bridge's.
  */
 export interface HueOutput {
   protocol: 'hue';
+  bridge: string;
   channels: number[];
 }
 

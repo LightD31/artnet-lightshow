@@ -90,20 +90,14 @@ export const SACN = {
 export const HUE = {
   id: 'hue',
   title: 'Philips Hue',
-  desc: 'Drive Hue lamps from the same show as the pars. Each lamp of an entertainment area is a fixture of its own, '
-    + 'added below on a profile for what the bridge says it can show. Build the area in the Hue app first, then pair here.',
+  desc: 'Drive Hue lamps from the same show as the pars, from as many bridges as the house has. Each lamp of a '
+    + 'bridge\'s entertainment area is a fixture of its own, added below on a profile for what the bridge says it can '
+    + 'show. Build the area in the Hue app first, then pair the bridge here; each bridge streams one area at a time.',
   fields: [
-    { path: 'hue.enabled', label: 'Enabled', type: 'toggle' },
-    { path: 'hue.host', label: 'Bridge Address', type: 'text',
-      help: 'The bridge IP. Find Bridges looks it up; a show network with no route to the internet has to have it typed in.' },
-    { path: 'hue.entertainmentId', label: 'Entertainment Area', type: 'select', empty: 'pair with a bridge first',
-      options: (ctx) => (ctx.hueAreas || []).map((a) => ({ value: a.id, label: `${a.name} (${a.channels.length} channels)` })),
-      missing: (value) => (value ? `${value} (not on the bridge)` : 'none picked'),
-      help: 'Areas are built in the Hue app, where the lamps are already placed on a floor plan. A bridge streams one area at a time.' },
     { path: 'hue.latencyMs', label: 'Pars Delay', type: 'number', unit: 'ms', min: 0, max: 500,
       help: 'Hue lamps answer later than the pars, so every hit lands on the pars first. This holds the Art-Net and sACN '
-        + 'output back to match. Start around 50: run the sync test, film it in slow motion, and raise this until the '
-        + 'pars and lamps flash together.' },
+        + 'output back to match, for every bridge. Start around 50: run the sync test, film it in slow motion, and raise '
+        + 'this until the pars and lamps flash together.' },
   ],
 };
 
@@ -233,6 +227,11 @@ export const SHOW = {
   title: 'Show',
   desc: 'How the generated show behaves across a night.',
   fields: [
+    { path: 'outputs.armed', label: 'Outputs Armed', type: 'toggle',
+      help: 'Nothing leaves the machine until a party arms it: disarmed, the show renders for the preview and the '
+        + 'stage view, but no Art-Net, sACN or DDP frame goes out and every Hue bridge is handed back to its app, so '
+        + 'a server that runs all day beside the house\'s lights does not hold them. Always off at start; disarming '
+        + 'stops the patterns and clears any energy effect. The same switch is in Perform.' },
     { path: 'auto.setMemory', label: 'Remember the Night', type: 'toggle',
       help: 'Each track avoids the palette and the looks of the one before it, keeps some of its colours when the two '
         + 'keys mix, and paces its biggest moments against the tracks before it. Off plans every track as if it were '

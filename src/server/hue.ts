@@ -3,8 +3,10 @@ import type { IncomingHttpHeaders } from 'node:http';
 import { dtls } from 'node-dtls-client';
 import { messageOf } from '../errors.ts';
 
-/** What the Hue output needs to stream (the settings' hue group, less the channel map). */
-export interface HueConfig {
+/** What one bridge's session needs to stream: an entry of the settings' hue.bridges. */
+export interface HueBridgeConfig {
+  id: string;
+  label: string;
   enabled: boolean;
   host: string;
   username: string;
@@ -24,6 +26,8 @@ export interface HueChannelColour {
 export type HueState = 'idle' | 'connecting' | 'streaming' | 'failed';
 
 export interface HueStatus {
+  id: string;
+  label: string;
   status: HueState;
   enabled: boolean;
   configured: boolean;
@@ -200,6 +204,10 @@ interface Lamp {
  * fixture of its own, patched from the bridge (routes/fixtures.ts) with no DMX
  * address, and the show renders it as it renders any other. Its channel is
  * sent the colour it was rendered (output.ts).
+ *
+ * A house can have several bridges, each streaming one area: every bridge in
+ * the settings has a session of its own here (HueSession), kept by its id,
+ * and a frame is handed to each the channels of its own lamps.
  */
 
 // The bridge's streaming port, fixed by the Entertainment API.
@@ -776,275 +784,370 @@ const FAILED: HueState = 'failed';
 const RETRY_BASE_MS = 2000;
 const RETRY_MAX_MS = 60000;
 
-let config: HueConfig = {
-  enabled: false,
-  host: '',
-  username: '',
-  clientKey: '',
-  applicationId: '',
-  entertainmentId: '',
-};
-
-// Resolved once per session when the stored credentials predate this being
-// fetched at pairing time. Never persisted from here — the applier owns
-// settings — so a restart re-resolves it, which costs one request.
-let resolvedApplicationId: string | null = null;
-
-/** Callback the applier sets so a lazily-fetched id gets written to settings. */
-let onApplicationId: ((id: string) => void) | null = null;
-function setApplicationIdSink(fn: ((id: string) => void) | null): void { onApplicationId = fn; }
-
-let status: HueState = IDLE;
-let socket: dtls.Socket | null = null;
-let sequence = 0;
-let lastSentAt = 0;
-let lastError: string | null = null;
-let retryAt = 0;
-let retryDelay = RETRY_BASE_MS;
-// Set while the REST "start" has been issued, so teardown knows it owes the
-// bridge a matching "stop" even if the DTLS handshake never completed.
-let sessionOpen = false;
-
 /** Is everything needed to stream actually filled in? */
-function isConfigured(c: HueConfig = config): boolean {
+function isConfigured(c: Pick<HueBridgeConfig, 'host' | 'username' | 'clientKey' | 'entertainmentId'>): boolean {
   return !!(c.host && c.username && c.clientKey && c.entertainmentId);
 }
 
-function getStatus(): HueStatus {
-  return {
-    status,
-    enabled: !!config.enabled,
-    configured: isConfigured(),
-    host: config.host,
-    entertainmentId: config.entertainmentId,
-    error: lastError,
-  };
-}
+/** Called when a session had to resolve its application id itself, so it gets stored. */
+type ApplicationIdSink = (bridgeId: string, applicationId: string) => void;
 
 /**
- * Replace the configuration.
- *
- * Any change to where or how we connect tears the current session down: the
- * bridge would otherwise be left with a session open against the old area, and
- * it only allows one at a time, so the next start would be refused.
+ * One bridge's stream: its credentials, its DTLS socket, where it is in the
+ * four states above, and the backoff it has earned. A house with two bridges
+ * has two of these, and nothing in one touches the other — a bridge that is
+ * off keeps failing on its own schedule while the other streams.
  */
-function configure(next: Partial<HueConfig> | null | undefined): HueConfig {
-  const previous = config;
-  config = { ...config, ...next };
+class HueSession {
+  readonly id: string;
+  private config: HueBridgeConfig;
+  private status: HueState = IDLE;
+  private socket: dtls.Socket | null = null;
+  private sequence = 0;
+  private lastSentAt = 0;
+  private lastError: string | null = null;
+  private retryAt = 0;
+  private retryDelay = RETRY_BASE_MS;
+  // Set while the REST "start" has been issued, so teardown knows it owes the
+  // bridge a matching "stop" even if the DTLS handshake never completed.
+  private sessionOpen = false;
+  // Resolved once per session when the stored credentials predate this being
+  // fetched at pairing time. Never persisted from here — the applier owns
+  // settings — so a restart re-resolves it, which costs one request.
+  private resolvedApplicationId: string | null = null;
+  // The channels the last frame lit, for the dark frame that ends a stream.
+  private lastChannels: number[] = [];
+  private readonly sink: () => ApplicationIdSink | null;
 
-  const moved = (['host', 'username', 'clientKey', 'applicationId', 'entertainmentId'] as const)
-    .some((k) => previous[k] !== config[k]);
-
-  // A different bridge or app key means the cached id belongs to someone else.
-  if (previous.host !== config.host || previous.username !== config.username) {
-    resolvedApplicationId = null;
+  constructor(config: HueBridgeConfig, sink: () => ApplicationIdSink | null = () => null) {
+    this.id = config.id;
+    this.config = { ...config };
+    this.sink = sink;
   }
 
-  if (moved || !config.enabled) {
-    stop().catch(() => { /* teardown is best effort */ });
+  /** What to call it in a log line. */
+  private get name(): string { return this.config.label || this.id; }
+
+  getConfig(): HueBridgeConfig { return { ...this.config }; }
+
+  isConfigured(): boolean { return isConfigured(this.config); }
+
+  getStatus(): HueStatus {
+    return {
+      id: this.id,
+      label: this.config.label,
+      status: this.status,
+      enabled: !!this.config.enabled,
+      configured: this.isConfigured(),
+      host: this.config.host,
+      entertainmentId: this.config.entertainmentId,
+      error: this.lastError,
+    };
   }
-  if (moved) {
-    // A new target deserves an immediate attempt rather than inheriting the
-    // backoff earned by the previous one.
-    retryDelay = RETRY_BASE_MS;
-    retryAt = 0;
-    lastError = null;
-  }
-  return { ...config };
-}
 
-function getConfig(): HueConfig { return { ...config }; }
+  /**
+   * Replace the configuration.
+   *
+   * Any change to where or how we connect tears the current session down: the
+   * bridge would otherwise be left with a session open against the old area,
+   * and it only allows one at a time, so the next start would be refused.
+   */
+  configure(next: Partial<HueBridgeConfig> | null | undefined): HueBridgeConfig {
+    const previous = this.config;
+    this.config = { ...this.config, ...next, id: this.id };
 
-/**
- * Bring the session up: REST start, then DTLS handshake.
- *
- * Never awaited by the render loop — it is kicked off from sendFrame() and the
- * frames that arrive while it runs are dropped. A light show cannot block on a
- * handshake.
- */
-async function connect(): Promise<void> {
-  if (status === CONNECTING || status === STREAMING) return;
-  if (!config.enabled || !isConfigured()) return;
+    const moved = (['host', 'username', 'clientKey', 'applicationId', 'entertainmentId'] as const)
+      .some((k) => previous[k] !== this.config[k]);
 
-  status = CONNECTING;
-
-  // The DTLS identity is the application id. Pairings made before that was
-  // fetched at pair time only have the application key stored, so resolve it
-  // here and hand it back to be saved. A bridge that cannot tell us still
-  // works: the key is what every older implementation used as the identity, and
-  // bridges accept it.
-  let identity = config.applicationId || resolvedApplicationId;
-  if (!identity) {
-    identity = await fetchApplicationId(config.host, config.username);
-    if (identity) {
-      resolvedApplicationId = identity;
-      if (onApplicationId) {
-        try { onApplicationId(identity); } catch (_) { /* persisting is best effort */ }
-      }
-    } else {
-      identity = config.username;
+    // A different bridge or app key means the cached id belongs to someone else.
+    if (previous.host !== this.config.host || previous.username !== this.config.username) {
+      this.resolvedApplicationId = null;
     }
+
+    if (moved || !this.config.enabled) {
+      this.stop().catch(() => { /* teardown is best effort */ });
+    }
+    if (moved) {
+      // A new target deserves an immediate attempt rather than inheriting the
+      // backoff earned by the previous one.
+      this.retryDelay = RETRY_BASE_MS;
+      this.retryAt = 0;
+      this.lastError = null;
+    }
+    return { ...this.config };
   }
 
-  try {
-    await setStreaming(config.host, config.username, config.entertainmentId, true);
-    sessionOpen = true;
-  } catch (err) {
-    fail(`could not start the entertainment session: ${messageOf(err)}`);
-    return;
-  }
+  /**
+   * Bring the session up: REST start, then DTLS handshake.
+   *
+   * Never awaited by the render loop — it is kicked off from sendFrame() and
+   * the frames that arrive while it runs are dropped. A light show cannot
+   * block on a handshake.
+   */
+  private async connect(): Promise<void> {
+    if (this.status === CONNECTING || this.status === STREAMING) return;
+    if (!this.config.enabled || !this.isConfigured()) return;
 
-  let pending: dtls.Socket;
-  try {
-    pending = dtls.createSocket({
-      type: 'udp4',
-      address: config.host,
-      port: STREAM_PORT,
-      // Identity is the application id as text; the PSK is the 32-character hex
-      // client key decoded to its 16 bytes. Handing the hex string across as-is
-      // is the classic way to get a handshake that fails with no useful
-      // diagnostic.
-      psk: { [identity]: Buffer.from(config.clientKey, 'hex') },
-      ciphers: [CIPHER_SUITE],
-      timeout: HANDSHAKE_TIMEOUT_MS,
-    });
-  } catch (err) {
-    fail(`could not open the stream socket: ${messageOf(err)}`);
-    return;
-  }
+    this.status = CONNECTING;
+    const config = this.config;
 
-  pending.on('connected', () => {
-    // A late handshake for a session we have since torn down: drop it rather
-    // than adopting a socket nobody asked for any more.
-    if (socket !== pending) {
-      try { pending.close(); } catch (_) { /* already gone */ }
+    // The DTLS identity is the application id. Pairings made before that was
+    // fetched at pair time only have the application key stored, so resolve
+    // it here and hand it back to be saved. A bridge that cannot tell us still
+    // works: the key is what every older implementation used as the identity,
+    // and bridges accept it.
+    let identity = config.applicationId || this.resolvedApplicationId;
+    if (!identity) {
+      identity = await fetchApplicationId(config.host, config.username);
+      if (identity) {
+        this.resolvedApplicationId = identity;
+        const sink = this.sink();
+        if (sink) {
+          try { sink(this.id, identity); } catch (_) { /* persisting is best effort */ }
+        }
+      } else {
+        identity = config.username;
+      }
+    }
+    // Reconfigured while the id was being fetched: that session is over.
+    if (this.config !== config || this.status !== CONNECTING) return;
+
+    try {
+      await setStreaming(config.host, config.username, config.entertainmentId, true);
+      this.sessionOpen = true;
+    } catch (err) {
+      this.fail(`could not start the entertainment session: ${messageOf(err)}`);
       return;
     }
-    status = STREAMING;
-    lastError = null;
-    retryDelay = RETRY_BASE_MS;
-    console.log(`[hue] streaming to ${config.host}, area ${config.entertainmentId}`);
-  });
-
-  pending.on('error', (err: Error) => {
-    if (socket !== pending) return;
-    fail(err.message);
-  });
-
-  pending.on('close', () => {
-    if (socket !== pending) return;
-    // Only a surprise if we thought we were streaming; a close we asked for has
-    // already moved the state on.
-    if (status === STREAMING || status === CONNECTING) fail('the bridge closed the stream');
-  });
-
-  socket = pending;
-}
-
-/** Record a failure, drop the session, and schedule the next attempt. */
-function fail(message: string): void {
-  lastError = message;
-  console.warn(`[hue] ${message}`);
-  status = FAILED;
-  retryAt = Date.now() + retryDelay;
-  retryDelay = Math.min(RETRY_MAX_MS, retryDelay * 2);
-  teardown();
-}
-
-/**
- * Drop the local socket and tell the bridge the session is over.
- *
- * The REST "stop" matters more than it looks: without it the area stays locked
- * to a stream that is no longer arriving, the lamps hold their last colour
- * until the bridge's own timeout, and the Hue app shows the area as busy.
- */
-function teardown(): void {
-  const dying = socket;
-  socket = null;
-  if (dying) {
-    try { dying.close(); } catch (_) { /* already gone */ }
-  }
-  if (sessionOpen && config.host && config.username && config.entertainmentId) {
-    setStreaming(config.host, config.username, config.entertainmentId, false)
-      .catch((err) => console.warn(`[hue] could not close the session cleanly: ${messageOf(err)}`));
-  }
-  sessionOpen = false;
-}
-
-/** Stop streaming and stay stopped until something asks for it again. */
-async function stop(): Promise<void> {
-  if (status === IDLE && !socket && !sessionOpen) return;
-  status = IDLE;
-  lastError = null;
-  teardown();
-}
-
-/**
- * Put one frame of channel colours on the wire.
- *
- * Called from the render loop, so every path through it is cheap and none of
- * them throw. Returns true only when bytes actually went out, which is what the
- * caller reports as "hue" having been reached.
- *
- * @param {Array<{id:number,r:number,g:number,b:number}>} channels
- */
-function sendFrame(channels: readonly HueChannelColour[]): boolean {
-  if (!config.enabled || !isConfigured()) return false;
-
-  // No lamp in the patch: stay off the bridge entirely. Opening a session puts
-  // the area into entertainment mode, which takes those lamps out of normal
-  // Hue control — the app and any schedules stop affecting them. Doing that
-  // and then sending no colours is the worst of both: the lamps are seized and
-  // nothing drives them. A session already open when the last lamp leaves the
-  // patch is closed for the same reason.
-  if (!channels.length) {
-    if (status === STREAMING || status === CONNECTING) {
-      console.log('[hue] no Hue lamp in the patch — releasing the entertainment area');
-      stop();
+    if (this.config !== config || this.status !== CONNECTING) {
+      this.teardown();
+      return;
     }
-    return false;
-  }
 
-  if (status === IDLE || (status === FAILED && Date.now() >= retryAt)) {
-    // Fire and forget: the handshake resolves into the socket, and the frames
-    // in between are simply not sent.
-    connect().catch((err) => fail(messageOf(err)));
-    return false;
-  }
-  if (status !== STREAMING || !socket) return false;
+    let pending: dtls.Socket;
+    try {
+      pending = dtls.createSocket({
+        type: 'udp4',
+        address: config.host,
+        port: STREAM_PORT,
+        // Identity is the application id as text; the PSK is the 32-character
+        // hex client key decoded to its 16 bytes. Handing the hex string
+        // across as-is is the classic way to get a handshake that fails with
+        // no useful diagnostic.
+        psk: { [identity]: Buffer.from(config.clientKey, 'hex') },
+        ciphers: [CIPHER_SUITE],
+        timeout: HANDSHAKE_TIMEOUT_MS,
+      });
+    } catch (err) {
+      this.fail(`could not open the stream socket: ${messageOf(err)}`);
+      return;
+    }
 
-  const now = Date.now();
-  if (now - lastSentAt < MIN_FRAME_INTERVAL_MS) return false;
-  lastSentAt = now;
-
-  sequence = (sequence + 1) & 0xff;
-  const slots = channels.length > MAX_CHANNELS ? channels.slice(0, MAX_CHANNELS) : channels;
-  try {
-    socket.send(buildStreamMessage(config.entertainmentId, slots, sequence), (err) => {
-      // The callback fires per datagram at the frame rate, so a bridge that has
-      // gone away must not produce a log line per frame. fail() moves us out of
-      // STREAMING, which stops the flood at source.
-      if (err && status === STREAMING) fail(`send failed: ${err.message}`);
+    pending.on('connected', () => {
+      // A late handshake for a session we have since torn down: drop it
+      // rather than adopting a socket nobody asked for any more.
+      if (this.socket !== pending) {
+        try { pending.close(); } catch (_) { /* already gone */ }
+        return;
+      }
+      this.status = STREAMING;
+      this.lastError = null;
+      this.retryDelay = RETRY_BASE_MS;
+      console.log(`[hue] ${this.name}: streaming to ${config.host}, area ${config.entertainmentId}`);
     });
-  } catch (err) {
-    fail(`send failed: ${messageOf(err)}`);
-    return false;
+
+    pending.on('error', (err: Error) => {
+      if (this.socket !== pending) return;
+      this.fail(err.message);
+    });
+
+    pending.on('close', () => {
+      if (this.socket !== pending) return;
+      // Only a surprise if we thought we were streaming; a close we asked for
+      // has already moved the state on.
+      if (this.status === STREAMING || this.status === CONNECTING) this.fail('the bridge closed the stream');
+    });
+
+    this.socket = pending;
   }
-  return true;
+
+  /** Record a failure, drop the session, and schedule the next attempt. */
+  private fail(message: string): void {
+    this.lastError = message;
+    console.warn(`[hue] ${this.name}: ${message}`);
+    this.status = FAILED;
+    this.retryAt = Date.now() + this.retryDelay;
+    this.retryDelay = Math.min(RETRY_MAX_MS, this.retryDelay * 2);
+    this.teardown();
+  }
+
+  /**
+   * Drop the local socket and tell the bridge the session is over.
+   *
+   * The REST "stop" matters more than it looks: without it the area stays
+   * locked to a stream that is no longer arriving, the lamps hold their last
+   * colour until the bridge's own timeout, and the Hue app shows the area as
+   * busy.
+   */
+  private teardown(): void {
+    const dying = this.socket;
+    this.socket = null;
+    if (dying) {
+      try { dying.close(); } catch (_) { /* already gone */ }
+    }
+    const { host, username, entertainmentId } = this.config;
+    if (this.sessionOpen && host && username && entertainmentId) {
+      setStreaming(host, username, entertainmentId, false)
+        .catch((err) => console.warn(`[hue] ${this.name}: could not close the session cleanly: ${messageOf(err)}`));
+    }
+    this.sessionOpen = false;
+  }
+
+  /** Stop streaming and stay stopped until something asks for it again. */
+  async stop(): Promise<void> {
+    if (this.status === IDLE && !this.socket && !this.sessionOpen) return;
+    this.status = IDLE;
+    this.lastError = null;
+    this.teardown();
+  }
+
+  /**
+   * One dark frame, then stop: the lamps go out before the bridge hands them
+   * back, rather than holding the look until it does. The frame skips the
+   * rate limit — it is the last one, and it has to go. What the outputs'
+   * disarming does to every bridge (output.ts).
+   */
+  async close(): Promise<void> {
+    if (this.status === STREAMING && this.socket && this.lastChannels.length) {
+      this.sequence = (this.sequence + 1) & 0xff;
+      const dark = this.lastChannels.map((id) => ({ id, r: 0, g: 0, b: 0 }));
+      try {
+        this.socket.send(buildStreamMessage(this.config.entertainmentId, dark, this.sequence), () => { /* on the way out */ });
+      } catch (_) { /* the session closes regardless */ }
+    }
+    await this.stop();
+  }
+
+  /**
+   * Put one frame of channel colours on the wire.
+   *
+   * Called from the render loop, so every path through it is cheap and none
+   * of them throw. Returns true only when bytes actually went out, which is
+   * what the caller reports as "hue" having been reached.
+   */
+  sendFrame(channels: readonly HueChannelColour[]): boolean {
+    if (!this.config.enabled || !this.isConfigured()) return false;
+
+    // No lamp in the patch: stay off the bridge entirely. Opening a session
+    // puts the area into entertainment mode, which takes those lamps out of
+    // normal Hue control — the app and any schedules stop affecting them.
+    // Doing that and then sending no colours is the worst of both: the lamps
+    // are seized and nothing drives them. A session already open when the
+    // last lamp leaves the patch is closed for the same reason.
+    if (!channels.length) {
+      if (this.status === STREAMING || this.status === CONNECTING) {
+        console.log(`[hue] ${this.name}: no lamp of it in the patch — releasing the entertainment area`);
+        this.stop();
+      }
+      return false;
+    }
+
+    if (this.status === IDLE || (this.status === FAILED && Date.now() >= this.retryAt)) {
+      // Fire and forget: the handshake resolves into the socket, and the
+      // frames in between are simply not sent.
+      this.connect().catch((err) => this.fail(messageOf(err)));
+      return false;
+    }
+    if (this.status !== STREAMING || !this.socket) return false;
+
+    const now = Date.now();
+    if (now - this.lastSentAt < MIN_FRAME_INTERVAL_MS) return false;
+    this.lastSentAt = now;
+
+    this.sequence = (this.sequence + 1) & 0xff;
+    const slots = channels.length > MAX_CHANNELS ? channels.slice(0, MAX_CHANNELS) : channels;
+    this.lastChannels = slots.map((c) => c.id);
+    try {
+      this.socket.send(buildStreamMessage(this.config.entertainmentId, slots, this.sequence), (err) => {
+        // The callback fires per datagram at the frame rate, so a bridge that
+        // has gone away must not produce a log line per frame. fail() moves
+        // us out of STREAMING, which stops the flood at source.
+        if (err && this.status === STREAMING) this.fail(`send failed: ${err.message}`);
+      });
+    } catch (err) {
+      this.fail(`send failed: ${messageOf(err)}`);
+      return false;
+    }
+    return true;
+  }
 }
 
-/** Tests only — a running show has no reason to forget its session. */
+// ── The bridges ─────────────────────────────────────────────────────────────
+
+// One session per bridge in the settings, by its id, in the settings' order.
+const sessions = new Map<string, HueSession>();
+
+/** Callback the applier sets so a lazily-fetched id gets written to settings. */
+let onApplicationId: ApplicationIdSink | null = null;
+function setApplicationIdSink(fn: ApplicationIdSink | null): void { onApplicationId = fn; }
+
+/**
+ * Make the sessions match the bridges in the settings: one for each, by id.
+ * A bridge still there is reconfigured (which tears its stream down only if
+ * something about the connection changed); one gone from the list is
+ * stopped and forgotten.
+ */
+function configureBridges(list: readonly HueBridgeConfig[]): void {
+  const keep = new Set(list.map((b) => b.id));
+  for (const [id, session] of sessions) {
+    if (keep.has(id)) continue;
+    session.stop().catch(() => { /* best effort */ });
+    sessions.delete(id);
+  }
+  for (const bridge of list) {
+    const session = sessions.get(bridge.id);
+    if (session) session.configure(bridge);
+    else sessions.set(bridge.id, new HueSession(bridge, () => onApplicationId));
+  }
+}
+
+function getSession(id: string): HueSession | null { return sessions.get(id) || null; }
+
+function listSessions(): HueSession[] { return [...sessions.values()]; }
+
+function getConfigs(): HueBridgeConfig[] { return listSessions().map((s) => s.getConfig()); }
+
+function getStatusAll(): HueStatus[] { return listSessions().map((s) => s.getStatus()); }
+
+/** Whether any bridge's output is on: what decides if the pars are held back. */
+function anyEnabled(): boolean { return listSessions().some((s) => s.getConfig().enabled); }
+
+/**
+ * One frame for every bridge: each is sent its own channels, and a bridge
+ * with none in the patch is sent an empty frame so it releases its area.
+ * True when any bridge was actually reached.
+ */
+function sendFrames(frames: ReadonlyMap<string, readonly HueChannelColour[]>): boolean {
+  let sent = false;
+  for (const session of sessions.values()) {
+    if (session.sendFrame(frames.get(session.id) || [])) sent = true;
+  }
+  return sent;
+}
+
+/** Stop every stream and stay stopped until the next frame asks again. */
+async function stopAll(): Promise<void> {
+  await Promise.all(listSessions().map((s) => s.stop()));
+}
+
+/** Every stream: one dark frame, then stopped — the bridges leave entertainment mode. */
+async function closeAll(): Promise<void> {
+  await Promise.all(listSessions().map((s) => s.close()));
+}
+
+/** Tests only — a running show has no reason to forget its sessions. */
 function _reset(): void {
-  socket = null;
-  sessionOpen = false;
-  status = IDLE;
-  lastError = null;
-  lastSentAt = 0;
-  retryAt = 0;
-  retryDelay = RETRY_BASE_MS;
-  sequence = 0;
-  config = { enabled: false, host: '', username: '', clientKey: '', applicationId: '', entertainmentId: '' };
-  resolvedApplicationId = null;
+  sessions.clear();
   onApplicationId = null;
 }
 
@@ -1075,11 +1178,16 @@ export {
   setStreaming,
   buildStreamMessage,
   to16,
-  configure,
-  getConfig,
-  getStatus,
   isConfigured,
-  sendFrame,
-  stop,
+  HueSession,
+  configureBridges,
+  getSession,
+  listSessions,
+  getConfigs,
+  getStatusAll,
+  anyEnabled,
+  sendFrames,
+  stopAll,
+  closeAll,
   _reset,
 };

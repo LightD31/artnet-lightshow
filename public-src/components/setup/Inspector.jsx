@@ -4,8 +4,9 @@ import { buildRig, lineOf } from '../../../src/shared/rig.ts';
 import { clamp, geometryOf, round1 } from '../../stage-geometry.js';
 import { rigSelectionSig, identifyFixtures } from '../../rig-ui.js';
 import { FieldInput } from './FieldInput.jsx';
-import { hasNoAddress } from '../../../src/shared/placement.ts';
+import { hasNoAddress, isHueLamp } from '../../../src/shared/placement.ts';
 import { hueChannelsLabel } from '../../../src/shared/hue-lamp.ts';
+import { hueBridgeLabel } from '../../utils.js';
 
 /**
  * The selected fixture, every property of it in one place: what it is, where
@@ -13,7 +14,7 @@ import { hueChannelsLabel } from '../../../src/shared/hue-lamp.ts';
  * runs. Several selected: what they are, and identifying them together.
  */
 export function Inspector() {
-  const s = pick(['fixtures', 'profiles', 'identify']);
+  const s = pick(['fixtures', 'profiles', 'identify', 'hueBridges']);
   const connected = connectedSig.value;
   const fixtures = s.fixtures || [];
   const profiles = s.profiles || {};
@@ -55,8 +56,10 @@ export function Inspector() {
   const send = (patch) => emitFixture({ id: fix.id, ...patch });
   const place = (patch) => send({ position: { x: clamp(round1(patch.x ?? point.x)), y: clamp(round1(patch.y ?? point.y)) } });
   const trimPct = Math.round(((fix.maxBrightness ?? 255) / 255) * 100);
-  const hueOnly = hasNoAddress(fix);
+  const addressless = hasNoAddress(fix);
+  const hueLamp = isHueLamp(fix);
   const wled = !!(fix.output && fix.output.protocol === 'ddp');
+  const openrgb = !!(fix.output && fix.output.protocol === 'openrgb');
 
   return (
     <aside class="panel inspector" aria-labelledby="inspector-title">
@@ -72,8 +75,9 @@ export function Inspector() {
           {profile && <small> · {profile.channelCount} ch{bar ? `, ${grid ? `${grid.columns} × ${grid.rows}` : rig.ranges[index].count} cells` : ''}</small>}</span>
         <span class="inspector-key">Output</span>
         <span class="inspector-value">{wled ? `WLED at ${fix.output.host}, over DDP`
-          : hueOnly ? `Hue ${hueChannelsLabel(fix.output.channels)}` : 'DMX (Art-Net, sACN)'}</span>
-        {!hueOnly && <>
+          : openrgb ? `OpenRGB device #${fix.output.device}${profile ? ` (${profile.name})` : ''} at ${fix.output.host}${fix.output.port ? `:${fix.output.port}` : ''}, over the SDK`
+            : hueLamp ? `Hue ${hueChannelsLabel(fix.output.channels)} of ${hueBridgeLabel(s.hueBridges, fix.output.bridge)}` : 'DMX (Art-Net, sACN)'}</span>
+        {!addressless && <>
           <label for="insp-universe">Universe</label>
           <FieldInput id="insp-universe" type="number" min="0" max="32767" value={fix.universe ?? 0} onCommit={(v) => send({ universe: v })} />
           <label for="insp-address">Address</label>
@@ -98,9 +102,11 @@ export function Inspector() {
           <span>{trimPct}%</span>
         </span>
       </div>
-      {hueOnly && <p class="setting-help">A lamp of the Hue bridge's entertainment area, added from Rig → Outputs → Philips
-        Hue on a profile built from what the bridge says it can show: it takes no DMX channels, and each of its
-        sections is sent the colour it is rendered.</p>}
+      {hueLamp && <p class="setting-help">A lamp of the entertainment area of the Hue bridge "{hueBridgeLabel(s.hueBridges, fix.output.bridge)}",
+        added from Rig → Outputs → Philips Hue on a profile built from what the bridge says it can show: it takes no DMX
+        channels, and each of its sections is sent the colour it is rendered.</p>}
+      {addressless && !hueLamp && <p class="setting-help">Added from Rig → Outputs: it takes no DMX channels, and is sent
+        its pixels {wled ? 'over DDP' : 'over the OpenRGB SDK'} every frame.</p>}
       <p class="setting-help">{fix.position ? '' : 'Not placed yet: drawn at its default spot. '}
         {bar ? 'At angle 0 its first cell is on the left and its last on the right; 180 is the other way round, and 90 runs from the back of the stage towards the audience.' : ''}</p>
       <div class="inspector-actions">

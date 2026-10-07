@@ -13,8 +13,12 @@
  * nothing but cells of equal width, one after another — and starts at
  * channel 1, running on through as many universes as it needs.
  *
+ * A fixture sent to a device of its own — a Philips Hue lamp, a WLED, an
+ * OpenRGB device — has no DMX address at all: the server renders it on
+ * universes of its own and hands the device its pixels.
+ *
  * Browser-safe: the engine writes through this, and the DMX monitor, the
- * fixture swatches and the Hue lamps read through it.
+ * fixture swatches and the devices read through it.
  */
 
 import type { Profile } from '../types/rig.ts';
@@ -27,12 +31,12 @@ const LAST_UNIVERSE = 32767;
 
 /**
  * The first of the server's own universes. A fixture with no DMX address — a
- * Philips Hue lamp, which the bridge drives — still has to be rendered
- * somewhere for its Hue channel to read its colour back, so the server puts it
- * on universes from here. They are rendered like any other and never sent: a
- * fixture's universe is an Art-Net one, 32767 at most. Still under 65536, so
- * the page's DMX frames (dmx-frame.ts), which carry a universe in 16 bits,
- * can show them.
+ * Philips Hue lamp, a WLED, an OpenRGB device — still has to be rendered
+ * somewhere for its device to be sent its colours, so the server puts it on
+ * universes from here. They are rendered like any other and never go out on
+ * Art-Net or sACN: a fixture's universe is an Art-Net one, 32767 at most.
+ * Still under 65536, so the page's DMX frames (dmx-frame.ts), which carry a
+ * universe in 16 bits, can show them.
  */
 const INTERNAL_UNIVERSE = 60000;
 
@@ -41,10 +45,21 @@ function isInternalUniverse(universe: number): boolean {
   return universe >= INTERNAL_UNIVERSE;
 }
 
-/** A fixture with no DMX address: shown on a Hue lamp and nowhere else. */
+/** The outputs that are a device of their own rather than a DMX address. */
+const DEVICE_PROTOCOLS = new Set(['hue', 'ddp', 'openrgb']);
+
+/** A fixture with no DMX address: a Hue lamp, a WLED or an OpenRGB device, sent its pixels and nothing else. */
 function hasNoAddress(fixture: { output?: { protocol: string } | null }): boolean {
+  return !!fixture.output && DEVICE_PROTOCOLS.has(fixture.output.protocol);
+}
+
+/** A Philips Hue lamp: patched from its bridge, on a profile built from what the bridge says it can show. */
+function isHueLamp(fixture: { output?: { protocol: string } | null }): boolean {
   return !!fixture.output && fixture.output.protocol === 'hue';
 }
+
+/** What a Hue bridge's id looks like (settings' hue.bridges, a lamp's output): short, plain, usable in a route. */
+const HUE_BRIDGE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
 /** How a strip longer than a universe is laid out. */
 export interface Strip {
@@ -239,8 +254,10 @@ function channelReader(universe: number, address: number, profile: Placeable,
 export {
   UNIVERSE_SIZE,
   INTERNAL_UNIVERSE,
+  HUE_BRIDGE_ID_RE,
   isInternalUniverse,
   hasNoAddress,
+  isHueLamp,
   placeAddressless,
   stripOf,
   stripIssue,

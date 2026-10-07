@@ -11,11 +11,14 @@ import { resolveCid } from '../sacn.ts';
 import { sendDdp } from '../ddp.ts';
 import { identifyDevices, listEntertainmentConfigs } from '../hue.ts';
 import { hueProfileId } from '../hue-profile.ts';
+import { OPENRGB_PORT } from '../openrgb.ts';
+import { createOpenRgbIdentify } from '../openrgb-devices.ts';
+import { openrgbOutputOf } from '../openrgb-routes.ts';
 import * as output from '../output.ts';
 import { validate } from '../validation.ts';
 import { messageOf, statusOf } from '../../errors.ts';
 import type { Express, Response } from 'express';
-import { asyncHandler } from './common.ts';
+import { asyncHandler, resolveHueBridge } from './common.ts';
 import type { Identify, PixelSend } from '../identify.ts';
 import type { SacnWatch } from '../sacn-watch.ts';
 import type { WledClient } from '../wled.ts';
@@ -32,7 +35,8 @@ import type { WledClient } from '../wled.ts';
  *                                 any universe one of them shares with the rig
  *   POST /api/wled/identify       a WLED: through the patch when it is in it,
  *                                 else streamed its picture directly
- *   POST /api/hue/identify        a Hue channel: through its lamp in the
+ *   POST /api/openrgb/identify    an OpenRGB device: the same, over the SDK
+ *   POST /api/hue/identify        a Hue lamp: through its fixture in the
  *                                 patch, else the bridge's own identify
  */
 
@@ -44,6 +48,7 @@ export interface IdentifyRouteDeps {
   identify?: Identify;
   sacnWatch?: SacnWatch;
   sendPixels?: PixelSend;
+  openrgbIdentify?: ReturnType<typeof createOpenRgbIdentify>;
   locate?: typeof sendArtAddress;
   hueIdentify?: typeof identifyDevices;
   hueAreas?: typeof listEntertainmentConfigs;
@@ -71,6 +76,13 @@ const wledIdentifySchema = z.object({
   seconds,
 }).strict();
 
+const openrgbIdentifySchema = z.object({
+  host: z.string().regex(IPV4_OR_HOST, 'is not a hostname or an IPv4 address'),
+  port: z.number().int().min(1).max(65535).optional(),
+  device: z.number().int().min(0).max(4095),
+  seconds,
+}).strict();
+
 // A lamp of the entertainment area, by its entertainment service id.
 const hueIdentifySchema = z.object({
   lamp: z.string().min(1).max(64),
@@ -88,6 +100,7 @@ function attachIdentifyRoutes(app: Express, deps: IdentifyRouteDeps): void {
   const identify = deps.identify || engineIdentify;
   const watch = deps.sacnWatch || createSacnWatch();
   const pixels = createPixelIdentify({ send: deps.sendPixels || ((target, data) => sendDdp(target, data)) });
+  const openrgbPixels = deps.openrgbIdentify || createOpenRgbIdentify();
   const locate = deps.locate || sendArtAddress;
   const hueIdentify = deps.hueIdentify || identifyDevices;
   const hueAreas = deps.hueAreas || listEntertainmentConfigs;
@@ -118,6 +131,7 @@ function attachIdentifyRoutes(app: Express, deps: IdentifyRouteDeps): void {
   app.post('/api/identify/stop', (_req, res) => {
     identify.stop();
     pixels.stopAll();
+    openrgbPixels.stopAll();
     res.json({ ok: true });
   });
 
@@ -194,20 +208,45 @@ function attachIdentifyRoutes(app: Express, deps: IdentifyRouteDeps): void {
     }
   }));
 
-  app.post('/api/hue/identify', asyncHandler(async (req, res) => {
+  app.post('/api/openrgb/identify', asyncHandler(async (req, res) => {
+    try {
+      const body = validate(openrgbIdentifySchema, req.body || {}, 'OpenRGB identify');
+      const secs = identifySeconds(body.seconds);
+      const port = body.port ?? OPENRGB_PORT;
+      const host = body.host.toLowerCase();
+      const patched = state.fixtures.filter((f) => {
+        const output = openrgbOutputOf(f);
+        return output && output.host.toLowerCase() === host && (output.port ?? OPENRGB_PORT) === port && output.device === body.device;
+      });
+      if (patched.length) {
+        openrgbPixels.stop(body.host, port, body.device);
+        return res.json({ ok: true, via: 'patch', ...start(patched.map((f) => f.id), secs) });
+      }
+      const { leds, name } = await openrgbPixels.start(body.host, port, body.device, secs);
+      res.json({ ok: true, via: 'device', leds, name, ids: [], remainingMs: leds ? secs * 1000 : 0 });
+    } catch (err) {
+      fail(res, err, 502);
+    }
+  }));
+
+  // A lamp of one bridge's area; the route from before several bridges
+  // were possible means the first one.
+  app.post(['/api/hue/identify', '/api/hue/:bridge/identify'], asyncHandler(async (req, res) => {
     try {
       const body = validate(hueIdentifySchema, req.body || {}, 'Hue identify');
       const secs = identifySeconds(body.seconds);
-      const config = output.getHueConfig();
-      if (!config.host || !config.username) return res.status(409).json({ ok: false, error: 'Pair with a bridge first.' });
+      const bridge = resolveHueBridge(req, res);
+      if (!bridge) return;
+      if (!bridge.host || !bridge.username) return res.status(409).json({ ok: false, error: `Pair with "${bridge.label || bridge.id}" first.` });
       // A lamp in the patch is streaming, so it shows itself through its fixture.
-      const patched = state.fixtures.find((f) => f.profileId === hueProfileId(body.lamp));
+      const patched = state.fixtures.find((f) => f.profileId === hueProfileId(body.lamp)
+        && f.output?.protocol === 'hue' && f.output.bridge === bridge.id);
       if (patched) return res.json({ ok: true, via: 'fixture', ...start([patched.id], secs) });
-      const areas = await hueAreas(config.host, config.username);
-      const area = areas.find((a) => a.id === config.entertainmentId) || null;
+      const areas = await hueAreas(bridge.host, bridge.username);
+      const area = areas.find((a) => a.id === bridge.entertainmentId) || null;
       const lamp = area ? area.lamps.find((l) => l.id === body.lamp) : null;
-      if (!lamp) return res.status(404).json({ ok: false, error: 'That lamp is not in the entertainment area' });
-      const lamps = secs > 0 ? await hueIdentify(config.host, config.username, lamp.devices || []) : 0;
+      if (!lamp) return res.status(404).json({ ok: false, error: `That lamp is not in the entertainment area of "${bridge.label || bridge.id}"` });
+      const lamps = secs > 0 ? await hueIdentify(bridge.host, bridge.username, lamp.devices || []) : 0;
       res.json({ ok: true, via: 'bridge', lamps });
     } catch (err) {
       fail(res, err, 502);

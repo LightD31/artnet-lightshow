@@ -7,10 +7,10 @@ import express from 'express';
 
 import { buildQuery, parseResponse, readInfo, readSegments, wledInfo, wledProfile, wledSpan, wledSeat, strobePanel } from '../../src/server/wled.ts';
 import { attachRoutes } from '../../src/server/routes.ts';
-import { state } from '../../src/server/state.ts';
+import { state, wireUniverses } from '../../src/server/state.ts';
 import { showStore } from '../../src/server/show-store.ts';
 import { stopEngine } from '../../src/server/engine.ts';
-import { stripOf } from '../../src/shared/placement.ts';
+import { stripOf, INTERNAL_UNIVERSE, isInternalUniverse } from '../../src/shared/placement.ts';
 
 state.artnet.enabled = false;
 state.running = false;
@@ -209,18 +209,18 @@ test('a 64 × 32 panel as a strobe panel: a white line across the middle, square
   assert.strictEqual(strobePanel(64, 2, 8), null, 'too few rows for a line and zones either side');
 });
 
-test('adding a WLED segment by segment: a fixture each, on its own LEDs and universes', async () => {
+test('adding a WLED segment by segment: a fixture each, on its own LEDs, with no DMX address', async () => {
   const infos = { '10.0.0.60': { ...INFO, name: 'Booth', leds: { count: 240, lc: 1 } }, '10.0.0.61': PANEL_INFO };
   const states = { '10.0.0.60': STRIP_STATE, '10.0.0.61': PANEL_STATE };
   const client = { ...fakeClient(infos), segments: async (host, info) => readSegments(states[host], info, host) };
   await withApp(client, async (call) => {
     const booth = await call('/api/wled/add', { host: '10.0.0.60', segments: true, mode: 'pixels' });
     assert.strictEqual(booth.status, 200, JSON.stringify(booth.body));
-    assert.deepStrictEqual(booth.body.fixtures.map((f) => [f.label, f.universe, f.output]), [
-      ['Booth · Front', 1, { protocol: 'ddp', host: '10.0.0.60', at: 0 }],
-      ['Booth · Segment 2', 2, { protocol: 'ddp', host: '10.0.0.60', at: 120 }],
-      ['Booth · Right side', 3, { protocol: 'ddp', host: '10.0.0.60', at: 180 }],
-    ]);
+    assert.deepStrictEqual(booth.body.fixtures.map((f) => [f.label, isInternalUniverse(f.universe), f.output]), [
+      ['Booth · Front', true, { protocol: 'ddp', host: '10.0.0.60', at: 0 }],
+      ['Booth · Segment 2', true, { protocol: 'ddp', host: '10.0.0.60', at: 120 }],
+      ['Booth · Right side', true, { protocol: 'ddp', host: '10.0.0.60', at: 180 }],
+    ], 'each placed by the server on its own universes');
     const again = await call('/api/wled/add', { host: '10.0.0.60', segments: true, mode: 'pixels' });
     assert.deepStrictEqual([again.status, again.body.error], [409, 'Every segment of Booth is patched already']);
     const whole = await call('/api/wled/add', { host: '10.0.0.60' });
@@ -305,7 +305,7 @@ const fakeClient = (infos) => ({
   },
 });
 
-test('adding a WLED patches it on universes of its own, sent DDP', async () => {
+test('adding a WLED patches it with no DMX address, sent DDP', async () => {
   const infos = {
     '10.0.0.50': { ...INFO, leds: { count: 300, lc: 1 } },
     '10.0.0.51': { ...INFO, name: 'Garden', mac: '0000000000aa', leds: { count: 60, lc: 1 } },
@@ -315,12 +315,13 @@ test('adding a WLED patches it on universes of its own, sent DDP', async () => {
     assert.strictEqual(added.status, 200, JSON.stringify(added.body));
     assert.deepStrictEqual(
       [added.body.fixture.label, added.body.fixture.universe, added.body.fixture.address, added.body.fixture.output],
-      ['Porch', 1, 1, { protocol: 'ddp', host: '10.0.0.50' }],
-      'from universe 1: the rig\'s default universe 0 stays clear');
-    // 300 pixels is universes 1 and 2; the next WLED goes after them.
+      ['Porch', INTERNAL_UNIVERSE, 1, { protocol: 'ddp', host: '10.0.0.50' }],
+      'on the server\'s own universes: no Art-Net universe is taken');
+    // 300 pixels is two of them; the next WLED goes after them.
     const second = await call('/api/wled/add', { host: '10.0.0.51', label: 'Garden strip', mode: 'pixels' });
-    assert.deepStrictEqual([second.body.fixture.label, second.body.fixture.universe], ['Garden strip', 3]);
+    assert.deepStrictEqual([second.body.fixture.label, second.body.fixture.universe], ['Garden strip', INTERNAL_UNIVERSE + 2]);
     assert.strictEqual(state.fixtures.length, 3);
+    assert.deepStrictEqual(wireUniverses(), [state.artnet.universe], 'and nothing of either goes out on Art-Net or sACN');
 
     const again = await call('/api/wled/add', { host: '10.0.0.50' });
     assert.deepStrictEqual([again.status, /patched already, as "Porch"/.test(again.body.error)], [409, true]);

@@ -75,6 +75,73 @@ function resolveEnergyOverride(id: string | null | undefined, colA: Colour | nul
   }
 }
 
+// ── The hold strobe ─────────────────────────────────────────────────────────
+// The energy effect `palette-strobe`, after the hold-to-strobe pad of the Hue
+// party apps: while it is held, flashes in the look's colours over whatever
+// the rig is playing. Not a strobe channel's blur but a run of hard flashes
+// the running look can be seen between, on the beat grid — the finest
+// division of the beat that stays under five flashes a second — each a colour
+// of the look at full for 80 ms, then black as long again, then the running
+// look shows through until the next. The flash limit still holds the rig as
+// a whole to its three a second. A Hue lamp is never flashed: it takes each
+// flash as the colour at full falling to a floor over 200 ms and held there
+// until the next, as the apps fade a hit lamp back.
+
+/** The hold strobe's id among the energy effects (server/presets.ts). */
+const HOLD_STROBE = 'palette-strobe';
+/** No lamp flashes faster than this, however fast the music. */
+const HOLD_STROBE_MAX_HZ = 5;
+const HOLD_FLASH_MS = 80;
+const HOLD_BLACK_MS = 80;
+/** A Hue lamp takes a flash as the colour at full, falling to the floor over this long… */
+const HUE_PULSE_MS = 200;
+/** …and holds this, of 255, until its next flash: the fade brightness of the party apps. */
+const HUE_PULSE_FLOOR = 40;
+
+/** Where the hold strobe is: which flash, how far into it, and how long each is. */
+export interface HoldFlash {
+  index: number;
+  sinceMs: number;
+  periodMs: number;
+}
+
+/**
+ * The hold strobe's flash at a beat position: on the finest power-of-two
+ * division of the beat that flashes no faster than HOLD_STROBE_MAX_HZ, so
+ * every flash lands on the grid. Without a tempo, 120 BPM.
+ */
+function holdStrobeFlash(beatPos: number, bpm: number | null | undefined): HoldFlash {
+  const tempo = bpm && bpm > 0 ? bpm : 120;
+  const rate = (perBeat: number) => (tempo / 60) * perBeat;
+  let perBeat = 1;
+  while (rate(perBeat * 2) <= HOLD_STROBE_MAX_HZ) perBeat *= 2;
+  while (perBeat > 1 / 16 && rate(perBeat) > HOLD_STROBE_MAX_HZ) perBeat /= 2;
+  const periodMs = 60000 / tempo / perBeat;
+  const pos = beatPos * perBeat;
+  const index = Math.floor(pos);
+  return { index, sinceMs: (pos - index) * periodMs, periodMs };
+}
+
+/**
+ * What the hold strobe puts on one light, or null between flashes, when the
+ * running look shows through. `palette` is the look's distinct colours
+ * (patterns.ts paletteOf), taken in turn, one per flash.
+ */
+function holdStrobeLook(palette: readonly Colour[], flash: HoldFlash, hue: boolean): EnergyLook | null {
+  const n = Math.max(1, palette.length);
+  const col = palette[((flash.index % n) + n) % n] || { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 };
+  if (hue) return { col, dim: huePulseLevel(flash.sinceMs), strobe: 0 };
+  if (flash.sinceMs < HOLD_FLASH_MS) return { col, dim: 255, strobe: 0 };
+  if (flash.sinceMs < HOLD_FLASH_MS + HOLD_BLACK_MS) return { col: { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 }, dim: 0, strobe: 0 };
+  return null;
+}
+
+/** A Hue lamp's level `sinceMs` after a flash: full, falling to `floor` over HUE_PULSE_MS and held. */
+function huePulseLevel(sinceMs: number, floor = HUE_PULSE_FLOOR): number {
+  const fall = Math.max(0, Math.min(1, sinceMs / HUE_PULSE_MS));
+  return Math.round(255 - (255 - floor) * fall);
+}
+
 /** `fade`'s sine, 25..255. `phase` is 0..1 across its eight beats (beat-clock.js). */
 function fadeBrightness(phase: number): number {
   return Math.round(((Math.sin(phase * Math.PI * 2 - Math.PI / 2) + 1) / 2) * 230 + 25);
@@ -220,6 +287,15 @@ export {
   blendFixture,
   EXPRESSION_REST,
   resolveEnergyOverride,
+  HOLD_STROBE,
+  HOLD_STROBE_MAX_HZ,
+  HOLD_FLASH_MS,
+  HOLD_BLACK_MS,
+  HUE_PULSE_MS,
+  HUE_PULSE_FLOOR,
+  holdStrobeFlash,
+  holdStrobeLook,
+  huePulseLevel,
   fadeBrightness,
   hitBrightness,
   grooveBrightness,

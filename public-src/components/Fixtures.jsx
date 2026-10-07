@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo, useRef } from 'preact/hooks';
 import { dmxSig, emitOverride, emitFixture, pick } from '../state.js';
-import { fixtureOutputColor, fixtureCellColors } from '../utils.js';
+import { fixtureOutputColor, fixtureCellColors, hueBridgeLabel, deviceLabel } from '../utils.js';
 import { useDmxFeed } from '../use-dmx.js';
 import { useDraft, createFrameThrottle, SETTLE_MS } from '../draft.js';
 import { FIXTURE_GROUPS } from '../../src/shared/stage.ts';
-import { hasNoAddress } from '../../src/shared/placement.ts';
+import { hasNoAddress, isHueLamp } from '../../src/shared/placement.ts';
+import { hueChannelsLabel } from '../../src/shared/hue-lamp.ts';
 
 const GROUP_LABELS = { front: 'Front', back: 'Back', room: 'Room', floor: 'Floor' };
 
@@ -108,7 +109,8 @@ function FixtureCard({ fix, state }) {
           }}
           onBlur={(e) => emitFixture({ id: fix.id, label: e.target.textContent.trim() })}
         >{fix.label}</span>
-        {hasNoAddress(fix) ? <span class="fixture-addr fixture-hue" title="Driven by the Hue bridge, never on DMX">Hue</span> : (
+        {isHueLamp(fix) ? <span class="fixture-addr fixture-hue" title={`${hueChannelsLabel(fix.output.channels).replace(/^c/, 'C')} of the Hue bridge "${hueBridgeLabel(state.hueBridges, fix.output.bridge)}", never on DMX`}>Hue</span>
+          : hasNoAddress(fix) ? <span class="fixture-addr fixture-hue" title={`${deviceLabel(fix)}, never on DMX`}>{fix.output.protocol === 'ddp' ? 'WLED' : 'OpenRGB'}</span> : (
         <span class="fixture-addr" title="Universe / DMX address">
           <input
             class="fixture-universe"
@@ -203,7 +205,7 @@ function FixtureCard({ fix, state }) {
 
 export function Fixtures() {
   useDmxFeed();
-  const s = pick(['fixtures', 'profiles', 'masterDimmer', 'masterBlackout']);
+  const s = pick(['fixtures', 'profiles', 'masterDimmer', 'masterBlackout', 'hueBridges']);
   const fixtures = s.fixtures || [];
   return (
     <div class="card">

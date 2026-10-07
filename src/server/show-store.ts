@@ -3,12 +3,13 @@ import { state, universeOf, maxBrightnessOf, setDefaultUniverse, placeAddressles
 import { resizeFixtureBuffers } from './engine.ts';
 import { BUILTIN_PROFILE_ID, BUILTIN_PROFILE_IDS, LEGACY_HUE_PROFILE_IDS, isBuiltinProfile, MAX_FIXTURES, universeOverflow, unitCapOverflow, registerProfile, clearNonBuiltinProfiles, listProfiles } from './profiles.ts';
 import { MAX_UNIVERSES } from './universes.ts';
-import { INTERNAL_UNIVERSE, hasNoAddress, universesOf } from '../shared/placement.ts';
+import { INTERNAL_UNIVERSE, hasNoAddress, isHueLamp, universesOf } from '../shared/placement.ts';
 import { isHueProfile, hueSections } from '../shared/hue-lamp.ts';
 import { ddpConflict } from './ddp-routes.ts';
 import { showSchema, validate } from './validation.ts';
 import { HttpError, messageOf } from '../errors.ts';
 import { JsonStore } from './json-store.ts';
+import { settings, defaultHueBridgeId } from './settings.ts';
 import type { ShowFile } from './validation.ts';
 import type { Fixture, Profile } from '../types/rig.ts';
 import { configFile } from './config-dir.ts';
@@ -52,8 +53,9 @@ function snapshotShow() {
     // already, so shipping them in the file would mean a show loaded onto a
     // newer build quietly reinstating an older copy of them.
     profiles: Object.values(profiles).filter((p) => !isBuiltinProfile(p.id)),
-    // A Hue lamp has no DMX address: where the server rendered it is its own
-    // business, and is worked out again when the show is loaded.
+    // A Hue lamp, a WLED and an OpenRGB device have no DMX address: where the
+    // server rendered one is its own business, and is worked out again when
+    // the show is loaded (a show saved with one on DMX universes loads the same).
     fixtures: state.fixtures.map((f) => ({
       id: f.id,
       label: f.label,
@@ -128,6 +130,9 @@ function applyShow(rawShow: unknown): ShowFile {
   if (hasFixtures) {
     const ids = fixtures.map((fixture, i) => fixture.id ?? i);
     if (new Set(ids).size !== ids.length) throw badShow('Show contains duplicate fixture ids');
+    // A lamp names the bridge whose area it is a channel of; one saved before
+    // there could be several bridges names none, and is the first bridge's.
+    const fallback = defaultHueBridgeId(settings.group('hue').bridges);
     next = fixtures.map((f, i): Fixture => ({
       id: ids[i],
       label: f.label || `Fixture ${i + 1}`,
@@ -140,17 +145,18 @@ function applyShow(rawShow: unknown): ShowFile {
       position: f.position ? { ...f.position } : null,
       group: f.group || null,
       geometry: f.geometry ? { ...f.geometry } : null,
-      output: f.output ? { ...f.output } : null,
+      output: !f.output ? null
+        : f.output.protocol === 'hue' ? { ...f.output, bridge: f.output.bridge || fallback } : { ...f.output },
       override: null,
     }));
     // A Hue lamp is channels of the bridge's area, one for each section of its
     // own profile, and nothing else is: a Hue profile on DMX, or a Hue output
     // on a par, is not a rig this server can drive.
-    const mixed = next.find((f) => hasNoAddress(f) !== isHueProfile(incoming[f.profileId]));
+    const mixed = next.find((f) => isHueLamp(f) !== isHueProfile(incoming[f.profileId]));
     if (mixed) {
-      throw badShow(`"${mixed.label}" ${hasNoAddress(mixed) ? 'is a Hue lamp on a profile that is not one' : 'is on a Hue lamp\'s profile but not a Hue lamp'}`);
+      throw badShow(`"${mixed.label}" ${isHueLamp(mixed) ? 'is a Hue lamp on a profile that is not one' : 'is on a Hue lamp\'s profile but not a Hue lamp'}`);
     }
-    const channels = new Map<number, string>();
+    const channels = new Map<string, string>();
     for (const fix of next) {
       if (fix.output?.protocol !== 'hue') continue;
       const sections = hueSections(incoming[fix.profileId]);
@@ -158,9 +164,10 @@ function applyShow(rawShow: unknown): ShowFile {
         throw badShow(`"${fix.label}" has ${sections} section${sections === 1 ? '' : 's'} but ${fix.output.channels.length} Hue channel${fix.output.channels.length === 1 ? '' : 's'}`);
       }
       for (const channel of fix.output.channels) {
-        const other = channels.get(channel);
-        if (other) throw badShow(`"${fix.label}" and "${other}" are both on Hue channel ${channel}`);
-        channels.set(channel, fix.label);
+        const key = `${fix.output.bridge}:${channel}`;
+        const other = channels.get(key);
+        if (other) throw badShow(`"${fix.label}" and "${other}" are both on Hue channel ${channel} of bridge ${fix.output.bridge}`);
+        channels.set(key, fix.label);
       }
     }
     placeAddresslessFixtures(next, (fix) => incoming[fix.profileId]);
@@ -172,7 +179,7 @@ function applyShow(rawShow: unknown): ShowFile {
     }
     const tooMany = unitCapOverflow(next, (fix) => incoming[fix.profileId]);
     if (tooMany) throw badShow(tooMany);
-    const wled = ddpConflict(next, (fix) => incoming[fix.profileId] as Profile, (fix) => fix.universe as number);
+    const wled = ddpConflict(next, (fix) => incoming[fix.profileId] as Profile);
     if (wled) throw badShow(wled);
     const spanned = new Set([showUniverse, ...next.flatMap((f) => universesOf(f.universe as number, incoming[f.profileId]))]);
     if (spanned.size > MAX_UNIVERSES) {
