@@ -1,7 +1,7 @@
 import { useState } from 'preact/hooks';
 import { pick, connectedSig, emitFixture, api, toast } from '../../state.js';
 import { post } from '../../setup-state.js';
-import { footprintOf, overlaps, hasNoAddress } from '../../../src/shared/placement.ts';
+import { footprintOf, overlaps, hasNoAddress, isHueLamp } from '../../../src/shared/placement.ts';
 import { isHueProfile, hueChannelsLabel } from '../../../src/shared/hue-lamp.ts';
 import { rigSelectionSig, selectOnly, toggleSelected, identifyFixtures } from '../../rig-ui.js';
 import { FieldInput } from './FieldInput.jsx';
@@ -16,7 +16,7 @@ import { hueBridgeLabel } from '../../utils.js';
 const profileLabel = (p) => `${p.manufacturer ? `${p.manufacturer} ` : ''}${p.name}${p.modeName ? ` — ${p.modeName}` : ''}`;
 const cellCount = (p) => (p && Array.isArray(p.cells) && p.cells.length >= 2 ? p.cells.length : 0);
 
-/** The fixtures that share a channel with another, by id. Hue lamps have no channels to share. */
+/** The fixtures that share a channel with another, by id. Hue lamps, WLEDs and OpenRGB devices have no DMX channels to share. */
 export function conflictsOf(fixtures, profiles) {
   fixtures = fixtures.filter((f) => !hasNoAddress(f));
   const parts = fixtures.map((f) => footprintOf(f.universe ?? 0, f.address, profiles[f.profileId] || { channelCount: 1, channelMap: {} }));
@@ -122,8 +122,8 @@ export function PatchTable() {
         {conflicts.size > 0 && <span class="panel-tag warn">{conflicts.size} overlapping</span>}
       </header>
       <p class="section-desc">Each fixture's profile, universe and first DMX address. Addresses only collide within the same
-        universe. A WLED or an OpenRGB device shows the address it is sent to. A Hue lamp has none: it is a lamp of the
-        Hue bridge, added from Rig → Outputs.</p>
+        universe. A Hue lamp, a WLED or an OpenRGB device has none: it is added from Rig → Outputs and sent to the
+        device, whose address is shown instead.</p>
       <div class="table-scroll">
         <table class="patch-table">
           <thead>
@@ -158,40 +158,37 @@ export function PatchTable() {
                   <td><FieldInput value={fix.label} maxLength={64} aria-label={`Label of fixture ${index + 1}`}
                     onCommit={(label) => send({ id: fix.id, label })} /></td>
                   <td>
-                    {hasNoAddress(fix) ? <span title="Built from what the Hue bridge says this lamp can show">{profile ? profileLabel(profile) : fix.profileId}</span> : (
+                    {hasNoAddress(fix) ? <span title={isHueLamp(fix) ? 'Built from what the Hue bridge says this lamp can show' : 'Built from what the device says it has'}>
+                      {profile ? profileLabel(profile) : fix.profileId}</span> : (
                       <select value={fix.profileId} aria-label={`Profile of ${fix.label}`} onChange={(e) => send({ id: fix.id, profileId: e.target.value })}>
                         {!profile && <option value={fix.profileId}>{fix.profileId} (missing)</option>}
                         {dmxProfiles.map((p) => <option key={p.id} value={p.id}>{profileLabel(p)}</option>)}
                       </select>
                     )}
                   </td>
-                  {hasNoAddress(fix) ? (
+                  {isHueLamp(fix) ? (
                     <td colSpan={2}>
                       <span class="patch-hue" title={`A lamp of the entertainment area of the Hue bridge "${hueBridgeLabel(s.hueBridges, fix.output.bridge)}": no DMX address`}>
                         Hue lamp · {hueBridgeLabel(s.hueBridges, fix.output.bridge)} {hueChannelsLabel(fix.output.channels)}</span>
+                    </td>
+                  ) : hasNoAddress(fix) ? (
+                    <td colSpan={2}>
+                      {/* A WLED or an OpenRGB device: no DMX address, only the device's own, which can change but not be emptied. */}
+                      <span class="patch-wled">
+                        <span class="addr-range">{fix.output.protocol === 'ddp' ? 'WLED' : 'OpenRGB'}</span>
+                        <FieldInput value={fix.output.host} class="wled-host"
+                          aria-label={`${fix.output.protocol === 'ddp' ? 'WLED' : 'OpenRGB server'} address of ${fix.label}`}
+                          title={fix.output.protocol === 'ddp' ? 'Sent to this WLED over DDP; it has no DMX address.'
+                            : `Device #${fix.output.device}${profile ? ` (${profile.name})` : ''} of the OpenRGB server at this address; it has no DMX address.`}
+                          onCommit={(host) => { if (host.trim()) send({ id: fix.id, output: { ...fix.output, host: host.trim() } }); }} />
+                        {fix.output.protocol === 'openrgb' && <span class="addr-range">#{fix.output.device}{profile ? ` ${profile.name}` : ''}</span>}
+                      </span>
                     </td>
                   ) : <>
                   <td>
                     <FieldInput type="number" min="0" max="32767" class={clash ? 'addr-conflict' : ''} value={fix.universe ?? 0}
                       aria-label={`Universe of ${fix.label}`}
                       onCommit={(v) => send({ id: fix.id, universe: Number.isInteger(v) && v >= 0 ? v : 0 })} />
-                    {fix.output && fix.output.protocol === 'ddp' && (
-                      <span class="patch-wled">
-                        <span class="addr-range">WLED</span>
-                        <FieldInput value={fix.output.host} class="wled-host" aria-label={`WLED address of ${fix.label}`}
-                          title="Sent to this WLED over DDP. Empty it to send on Art-Net and sACN instead."
-                          onCommit={(host) => send({ id: fix.id, output: host.trim() ? { ...fix.output, host: host.trim() } : null })} />
-                      </span>
-                    )}
-                    {fix.output && fix.output.protocol === 'openrgb' && (
-                      <span class="patch-wled">
-                        <span class="addr-range">OpenRGB</span>
-                        <FieldInput value={fix.output.host} class="wled-host" aria-label={`OpenRGB server of ${fix.label}`}
-                          title={`Device #${fix.output.device}${profile ? ` (${profile.name})` : ''} of the OpenRGB server at this address. Empty it to send on Art-Net and sACN instead.`}
-                          onCommit={(host) => send({ id: fix.id, output: host.trim() ? { ...fix.output, host: host.trim() } : null })} />
-                        <span class="addr-range">#{fix.output.device}{profile ? ` ${profile.name}` : ''}</span>
-                      </span>
-                    )}
                   </td>
                   <td>
                     <FieldInput type="number" min="1" max="512" class={clash ? 'addr-conflict' : ''} value={fix.address}

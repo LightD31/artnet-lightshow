@@ -249,9 +249,13 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
     // Disarmed, nothing leaves — not even a blackout: there is nothing on the
     // wire to black out, the streams having been ended on the way here.
     if (!syncArmed(config)) return sent;
-    // The server's own universes (fixtures with no DMX address, read back by
-    // the Hue lamps) are rendered and never sent.
-    if (isInternalUniverse(universe)) return sent;
+    // A WLED's or an OpenRGB device's universes are the server's own (it has
+    // no DMX address) and go to the devices on them alone; several small ones
+    // can share one. The rest of the server's own — the Hue lamps', read back
+    // on the main thread — are rendered and never sent.
+    const toWled = ddpUniverses(config.ddp)?.has(universe) ?? false;
+    const toOpenRgb = openrgbUniverses(config.openrgb)?.has(universe) ?? false;
+    if (!toWled && !toOpenRgb && isInternalUniverse(universe)) return sent;
     if (!immediate && config.delayMs > 0) {
       const ready = delayedFrame(universe, frame, config.delayMs);
       if (!ready) return sent;
@@ -260,19 +264,17 @@ function createTransmitter({ wires = DEFAULT_WIRES, now = () => performance.now(
       delayLine.delete(universe);
     }
 
-    // A WLED's universe is its alone: it waits for the frame's end, when the
-    // WLED is sent every universe of its pixels as one run.
-    const toWled = ddpUniverses(config.ddp);
-    if (toWled && toWled.has(universe)) {
-      ddpFrames.set(universe, frame);
-      sent.push('ddp');
-      return sent;
-    }
-    // And an OpenRGB device's: one UPDATELEDS packet a device at the frame's end.
-    const toOpenRgb = openrgbUniverses(config.openrgb);
-    if (toOpenRgb && toOpenRgb.has(universe)) {
-      openrgbFrames.set(universe, frame);
-      sent.push('openrgb');
+    // A device waits for the frame's end: a WLED is then sent every universe
+    // of its pixels as one run, an OpenRGB device one UPDATELEDS packet.
+    if (toWled || toOpenRgb) {
+      if (toWled) {
+        ddpFrames.set(universe, frame);
+        sent.push('ddp');
+      }
+      if (toOpenRgb) {
+        openrgbFrames.set(universe, frame);
+        sent.push('openrgb');
+      }
       return sent;
     }
 

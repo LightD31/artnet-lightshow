@@ -1,6 +1,6 @@
 // DDP to WLED: the packets, the transmitter sending a WLED's universes as one
-// run of pixels instead of on Art-Net, and the patch keeping those universes
-// the WLED's alone.
+// run of pixels instead of on Art-Net, and a WLED in the patch with no DMX
+// address of its own.
 
 import test from 'node:test';
 import assert from 'node:assert';
@@ -9,6 +9,7 @@ import dgram from 'node:dgram';
 import { buildDdpPackets, parseDdpPacket, sendDdp, DDP_MAX_DATA } from '../../src/server/ddp.ts';
 import { ddpRoutes, ddpConflict } from '../../src/server/ddp-routes.ts';
 import { createTransmitter } from '../../src/server/transmit.ts';
+import { INTERNAL_UNIVERSE } from '../../src/shared/placement.ts';
 import { state } from '../../src/server/state.ts';
 import { snapshotShow, applyShow } from '../../src/server/show-store.ts';
 import { stopEngine } from '../../src/server/engine.ts';
@@ -124,19 +125,41 @@ test('an RGBW WLED says so, and one held back for Hue waits for all its universe
   assert.ok(sent.ddp[0].data.every((v) => v === 7), 'the frame from 50 ms ago');
 });
 
-test('a universe that goes to a WLED is the WLED\'s alone', () => {
+// A WLED has no DMX address: the server places it on universes of its own,
+// so nothing else can be patched on them. What is left to clash is its LEDs.
+test('two fixtures on one WLED may not share a LED; universes no longer clash', () => {
   const profiles = { long: strip(300), par: { id: 'par', name: 'Par', channelCount: 12, channelMap: { red: 0 } } };
   const profileOf = (f) => profiles[f.profileId];
-  const universeOf = (f) => f.universe;
-  const wled = { id: 1, label: 'Porch', address: 1, universe: 3, profileId: 'long', output: { protocol: 'ddp', host: '10.0.0.50' } };
-  assert.strictEqual(ddpConflict([wled, { id: 2, label: 'Par', address: 1, universe: 5, profileId: 'par' }], profileOf, universeOf), null);
-  assert.match(ddpConflict([wled, { id: 2, label: 'Par', address: 400, universe: 4, profileId: 'par' }], profileOf, universeOf),
-    /"Par" is on universe 4, which goes to "Porch"'s WLED over DDP and nowhere else/);
-  assert.match(ddpConflict([wled, { ...wled, id: 3, label: 'Garden', universe: 4, output: { protocol: 'ddp', host: '10.0.0.51' } }], profileOf, universeOf),
-    /"Garden" and "Porch" both send universe 4 to a WLED/);
-  assert.match(ddpConflict([wled, { ...wled, id: 3, label: 'Garden', universe: 10 }], profileOf, universeOf),
+  const wled = { id: 1, label: 'Porch', address: 1, universe: INTERNAL_UNIVERSE, profileId: 'long', output: { protocol: 'ddp', host: '10.0.0.50' } };
+  assert.strictEqual(ddpConflict([wled, { id: 2, label: 'Par', address: 1, universe: 5, profileId: 'par' }], profileOf), null);
+  assert.strictEqual(ddpConflict([wled, { ...wled, id: 3, label: 'Garden', output: { protocol: 'ddp', host: '10.0.0.51' } }], profileOf), null,
+    'two WLEDs, each its own device');
+  assert.match(ddpConflict([wled, { ...wled, id: 3, label: 'Garden' }], profileOf),
     /"Garden" and "Porch" both drive LEDs 1–300 of the WLED at 10.0.0.50; give each a segment of its own/,
     'one WLED twice over');
+});
+
+// Its universes are the server's own: a Hue lamp's are never sent, a WLED's
+// go to it, and several small devices can share one.
+test('an internal universe goes to the WLED and the OpenRGB device on it, and only to them', () => {
+  const fixtures = [
+    { id: 1, label: 'Shelf', address: 1, universe: INTERNAL_UNIVERSE, profileId: 'small', output: { protocol: 'ddp', host: '10.0.0.50' } },
+  ];
+  const profiles = { small: strip(10) };
+  const ddp = ddpRoutes(fixtures, (f) => profiles[f.profileId], (f) => f.universe);
+  const openrgb = [{ host: '10.0.0.7', port: 6742, device: 0, leds: 4, parts: [{ universe: INTERNAL_UNIVERSE, from: 30, bytes: 12 }], width: 3, rgb: [0, 1, 2] }];
+  const { sent, wires } = fakeWires();
+  const rgb = [];
+  const tx = createTransmitter({ wires: { ...wires, openrgb: (target, data) => { rgb.push(Buffer.from(data)); return true; }, openrgbClose() {} } });
+  const config = outputs(ddp, { openrgb });
+  const frame = Buffer.from(Array.from({ length: 512 }, (_, i) => i % 256));
+  assert.deepStrictEqual(tx.send(INTERNAL_UNIVERSE, frame, config), ['ddp', 'openrgb']);
+  assert.deepStrictEqual(tx.send(INTERNAL_UNIVERSE + 1, frame, config), [], 'one with no device on it is never sent');
+  tx.endFrame(config);
+  assert.deepStrictEqual([sent.artnet, sent.sacn], [[], []], 'never on Art-Net or sACN');
+  assert.strictEqual(sent.ddp.length, 1);
+  assert.deepStrictEqual([...sent.ddp[0].data], [...frame.subarray(0, 30)]);
+  assert.deepStrictEqual(rgb.map((d) => [...d]), [[...frame.subarray(30, 42)]]);
 });
 
 test('segments of one WLED go as one frame: each run where it belongs, shown once', () => {
@@ -254,24 +277,24 @@ test('frames reach a WLED over UDP', async () => {
   }
 });
 
-test('a WLED is saved with the show, and a show that puts a par on its universes is refused', () => {
+// A show saved when a WLED sat on DMX universes of its own loads it with no
+// address, and the par that was beside it keeps its universe.
+test('a WLED is saved with the show without a DMX address, and one saved on universes loads without one', () => {
   const before = { fixtures: state.fixtures, next: state.nextFixtureId };
   const profile = strip(300, 3, 'acme-wled-300');
   try {
     applyShow({
       profiles: [profile],
-      fixtures: [{ id: 1, label: 'Porch', address: 1, universe: 3, profileId: 'acme-wled-300', output: { protocol: 'ddp', host: '10.0.0.50' } }],
-    });
-    assert.deepStrictEqual(state.fixtures[0].output, { protocol: 'ddp', host: '10.0.0.50' });
-    assert.deepStrictEqual(snapshotShow().fixtures[0].output, { protocol: 'ddp', host: '10.0.0.50' });
-    assert.throws(() => applyShow({
-      profiles: [profile],
       fixtures: [
         { id: 1, label: 'Porch', address: 1, universe: 3, profileId: 'acme-wled-300', output: { protocol: 'ddp', host: '10.0.0.50' } },
         { id: 2, label: 'Par', address: 1, universe: 4, profileId: 'cameo-root-par-6-12ch' },
       ],
-    }), /"Par" is on universe 4, which goes to "Porch"'s WLED/);
-    assert.strictEqual(state.fixtures.length, 1, 'and nothing on the rig changed');
+    });
+    assert.deepStrictEqual(state.fixtures.map((f) => [f.label, f.universe, f.address]), [['Porch', INTERNAL_UNIVERSE, 1], ['Par', 4, 1]]);
+    assert.deepStrictEqual(state.fixtures[0].output, { protocol: 'ddp', host: '10.0.0.50' });
+    const saved = snapshotShow().fixtures;
+    assert.deepStrictEqual([saved[0].output, saved[0].universe, saved[0].address], [{ protocol: 'ddp', host: '10.0.0.50' }, undefined, undefined]);
+    assert.deepStrictEqual([saved[1].universe, saved[1].address], [4, 1]);
   } finally {
     state.fixtures = before.fixtures;
     state.nextFixtureId = before.next;

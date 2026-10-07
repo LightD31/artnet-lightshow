@@ -174,7 +174,11 @@ function Sacn() {
 
 // ── The universes ────────────────────────────────────────────────────────────
 
-/** Every universe the patch uses: what is on it, where it goes, and identify. */
+/**
+ * Every universe the patch sends: what is on it, where it goes, and identify.
+ * Hue lamps, WLEDs and OpenRGB devices have no universe here: each is sent to
+ * its own device (their sections below).
+ */
 function Universes({ nodes }) {
   const s = pick(['fixtures', 'profiles', 'universes', 'artnet']);
   const data = settingsSig.value;
@@ -186,11 +190,9 @@ function Universes({ nodes }) {
     const profile = profiles[fix.profileId];
     if (!profile || hasNoAddress(fix)) continue;
     for (const part of footprintOf(fix.universe ?? 0, fix.address, profile)) {
-      const entry = on.get(part.universe) || { fixtures: [], ddp: null, openrgb: null, last: 0 };
+      const entry = on.get(part.universe) || { fixtures: [], last: 0 };
       entry.fixtures.push(fix.label);
       entry.last = Math.max(entry.last, part.last);
-      if (fix.output && fix.output.protocol === 'ddp') entry.ddp = fix.output.host;
-      if (fix.output && fix.output.protocol === 'openrgb') entry.openrgb = `${fix.output.host} #${fix.output.device}`;
       on.set(part.universe, entry);
     }
   }
@@ -209,12 +211,8 @@ function Universes({ nodes }) {
               const entry = on.get(u);
               const outputs = nodes.filter((n) => (n.outputs || []).includes(u)).map((n) => n.shortName || n.address);
               const routes = [];
-              if (entry.ddp) routes.push(`WLED ${entry.ddp} (DDP)`);
-              else if (entry.openrgb) routes.push(`OpenRGB ${entry.openrgb}`);
-              else {
-                if (s.artnet && s.artnet.enabled !== false) routes.push(outputs.length ? `Art-Net: ${outputs.join(', ')}` : `Art-Net: ${s.artnet.host}`);
-                if (sacn && sacn.enabled) routes.push(`sACN ${u + (sacn.universeOffset ?? 1)}${sacn.host ? ` to ${sacn.host}` : ''}`);
-              }
+              if (s.artnet && s.artnet.enabled !== false) routes.push(outputs.length ? `Art-Net: ${outputs.join(', ')}` : `Art-Net: ${s.artnet.host}`);
+              if (sacn && sacn.enabled) routes.push(`sACN ${u + (sacn.universeOffset ?? 1)}${sacn.host ? ` to ${sacn.host}` : ''}`);
               return (
                 <tr key={u}>
                   <td class="mono">{u}<small class="addr-range">{entry.last} ch</small></td>
@@ -268,7 +266,7 @@ function Wled() {
     const labels = added.map((f) => f.label).join(', ');
     setStatus(segments
       ? `Added ${plural(added.length, 'segment')} of ${res.info.name}, each a fixture of its own: ${labels}. Place them on the plan.`
-      : `Added "${res.fixture.label}": ${res.profile.modeName}, from universe ${res.fixture.universe}.`);
+      : `Added "${res.fixture.label}": ${res.profile.modeName}. Place it on the plan.`);
     setDevices((list) => (list || []).map((d) => (d.host === address ? { ...d, patched: labels } : d)));
     toast.info(segments ? `Added ${plural(added.length, 'segment')} of ${res.info.name} to the patch` : `Added ${res.fixture.label} to the patch`);
   };
@@ -280,7 +278,7 @@ function Wled() {
     <section class="panel" aria-labelledby="wled-title">
       <header class="panel-head"><h2 class="panel-title" id="wled-title">WLED</h2></header>
       <p class="section-desc">WLED strips and panels, sent their pixels over DDP rather than Art-Net. Adding one reads its LED
-        count (and its grid, set up as a panel) from the device and patches it on universes of its own, as a wash, in zones
+        count (and its grid, set up as a panel) from the device and patches it, with no DMX address, as a wash, in zones
         or pixel by pixel. <em>Add each segment</em> makes every segment set up in WLED a fixture of its own — the front of
         the booth and its sides, or a panel's halves — to be placed on the plan one by one.</p>
       <div class="inline-form wled-mode">
@@ -387,8 +385,8 @@ function OpenRgb() {
     <section class="panel" aria-labelledby="openrgb-title">
       <header class="panel-head"><h2 class="panel-title" id="openrgb-title">OpenRGB</h2></header>
       <p class="section-desc">A PC's RGB — its RAM, board, GPU, keyboard, mouse, monitors — through OpenRGB's SDK server (turn it on
-        in OpenRGB under <em>SDK Server</em>). Each device becomes a fixture of its own with a cell per LED, on universes of its
-        own, sent one packet a frame over one connection to the PC.</p>
+        in OpenRGB under <em>SDK Server</em>). Each device becomes a fixture of its own with a cell per LED and no DMX address,
+        sent one packet a frame over one connection to the PC.</p>
       <div class="discovery">
         <form class="inline-form" onSubmit={(e) => { e.preventDefault(); find(); }}>
           <label for="openrgb-host">Server</label>

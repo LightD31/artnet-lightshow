@@ -23,7 +23,7 @@ import { openrgbOutputOf } from './openrgb-routes.ts';
 import { unitCount } from '../shared/rig.ts';
 import type { WledClient } from './wled.ts';
 import type { OpenRgbClient } from './openrgb.ts';
-import type { DdpOutput } from '../types/rig.ts';
+import type { DdpOutput, Fixture } from '../types/rig.ts';
 import { cues } from './cues.ts';
 import { midiMap } from './midi-map.ts';
 import * as pythonEnv from '../python-env.ts';
@@ -614,7 +614,7 @@ function checkPatch(): Check {
   }
 
   const universes = wireUniverses();
-  const hueOnly = state.fixtures.filter(hasNoAddress).length;
+  const devices = state.fixtures.filter(hasNoAddress);
   const spanned = countUniverses(state.fixtures);
   if (spanned > MAX_UNIVERSES) {
     problems.push(`the patch spans ${spanned} universes, more than the ${MAX_UNIVERSES} rendered`);
@@ -630,10 +630,20 @@ function checkPatch(): Check {
 
   return {
     id: 'patch', label: 'Fixture patch', status: OK,
-    detail: `${state.fixtures.length - hueOnly} fixture${state.fixtures.length - hueOnly === 1 ? '' : 's'} `
+    detail: `${state.fixtures.length - devices.length} fixture${state.fixtures.length - devices.length === 1 ? '' : 's'} `
       + `on universe${universes.length === 1 ? '' : 's'} ${universes.join(', ')}, no overlaps`
-      + `${hueOnly ? `, and ${hueOnly} Hue lamp${hueOnly === 1 ? '' : 's'} with no DMX address` : ''}.`,
+      + `${devices.length ? `, and ${deviceCounts(devices)} with no DMX address` : ''}.`,
   };
+}
+
+/** The fixtures sent to devices of their own, counted by kind: "2 Hue lamps and 1 WLED". */
+function deviceCounts(fixtures: readonly Fixture[]): string {
+  const kinds: [string, string, string][] = [['hue', 'Hue lamp', 'Hue lamps'], ['ddp', 'WLED', 'WLEDs'], ['openrgb', 'OpenRGB device', 'OpenRGB devices']];
+  const parts = kinds.map(([protocol, one, many]) => {
+    const n = fixtures.filter((f) => f.output?.protocol === protocol).length;
+    return n ? `${n} ${n === 1 ? one : many}` : null;
+  }).filter((part): part is string => part !== null);
+  return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
 }
 
 function checkPython(): Check {

@@ -217,22 +217,6 @@ function setDefaultUniverse(next: number): void {
   state.artnet.universe = next;
 }
 
-/**
- * The first run of `count` universes nothing is patched on, from 1: the
- * rig's default universe stays clear, since new fixtures land on it.
- * `taken` adds universes about to be used. Null when none is free.
- */
-function freeUniverses(count: number, taken: ReadonlySet<number> = new Set()): number | null {
-  const used = new Set<number>([state.artnet.universe, ...taken]);
-  for (const f of state.fixtures) for (const part of footprintOf(universeOf(f), f.address, getProfile(f))) used.add(part.universe);
-  for (let u = 1; u + count - 1 <= 32767; u++) {
-    let free = true;
-    for (let k = 0; k < count && free; k++) free = !used.has(u + k);
-    if (free) return u;
-  }
-  return null;
-}
-
 function getFixtureCount(): number { return state.fixtures.length; }
 
 function getFixture(id: number): Fixture | null {
@@ -386,7 +370,6 @@ export {
   wireUniverses,
   placeAddresslessFixtures,
   countUniverses,
-  freeUniverses,
   setDefaultUniverse,
   getFixtureCount,
   getFixture,

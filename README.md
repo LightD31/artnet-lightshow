@@ -503,8 +503,8 @@ A lamp with several sections is a fixture with cells, as an LED bar is: the
 patterns run along it, and it can be given a length and an angle on the plan.
 
 The server renders Hue lamps on universes of its own (from 60000) that are
-never sent on Art-Net, sACN or DDP, and their channels read their colour from
-there. They take up no DMX channels, never overlap a fixture, and move up when
+never sent on Art-Net or sACN, and their channels read their colour from
+there; WLEDs and OpenRGB devices are rendered there too. They take up no DMX channels, never overlap a fixture, and move up when
 one before them is removed.
 
 **UV yes, strobe no.** No Hue lamp emits ultraviolet, but the deep violet a UV
@@ -684,21 +684,22 @@ cross routers or VLANs) and lists every WLED that answers with its LED count;
 **Add to patch**, or **Add by address** for one mDNS cannot see. Adding one asks
 it for its name, how many LEDs it has, whether they have a white channel, and —
 set up as a 2D panel in WLED — its width and height, and builds its profile from
-that. It is patched on the first free universes from 1, from channel 1, and is
-then a fixture like any other: on the stage plot, in the patterns, in the
-monitor.
+that. It has no DMX address: the server renders it on universes of its own, as
+it does a Hue lamp, and sends it the bytes. Otherwise it is a fixture like any
+other: on the stage plot, in the patterns, in the monitor.
 
-- Its universes go to it and nowhere else, so nothing else may be patched on
-  them; the patch says so if you try.
-- Its row in the patch table shows its address. Change it when the WLED moves;
-  empty it to send the fixture on Art-Net and sACN instead.
+- It takes no universe or DMX address of the rig's, so it never collides with
+  a fixture on Art-Net or sACN, and is never sent there.
+- Its row in the patch table shows its address on the network. Change it when
+  the WLED moves. A WLED stays one: to drive the strip over Art-Net instead,
+  remove it and patch it as a strip.
 - Removed from the patch, it is sent one dark frame. WLED then hands the strip
   back to its own effects after its realtime timeout (Settings → Sync
   Interfaces in WLED), so set a preset of "off" there if it should stay dark.
 - The pre-show check asks every WLED in the patch: one that does not answer
   fails, and one whose LED count has changed since it was added warns.
 - A WLED panel of up to 4,096 LEDs is one fixture: a 64 × 32 matrix is added as
-  a 64 × 32 panel, over thirteen universes of its own.
+  a 64 × 32 panel.
 
 **Segments.** **Add each segment** makes each segment set up in WLED a fixture
 of its own. The front of a DJ booth and its two sides, all on one strip, become
@@ -734,16 +735,15 @@ OpenRGB under *SDK Server*, and let it through the PC's firewall.
 devices and lists each with its type and LED count; **Add to patch** adds one,
 **Add all** every one with LEDs. A device is a fixture of its own, its LEDs
 cells of red, green and blue, its profile named as OpenRGB names the device,
-patched on the first free universes from 1, from channel 1 — a WLED added as
-pixels, to the show: on the stage plot, in the patterns, in the monitor. The
+with no DMX address — a WLED added as pixels, to the show: on the stage plot,
+in the patterns, in the monitor. The
 85 LEDs of a board are a bar; a two-LED mouse is a short one; a one-LED fan
 is a par.
 
-- Its universes go to it and nowhere else, so nothing else may be patched on
-  them; the patch says so if you try, as it does for a WLED.
+- Like a WLED, it takes no universe or DMX address of the rig's, and is never
+  sent on Art-Net or sACN.
 - Its row in the patch table shows the server's address and the device's
-  number and name. Change the address when the PC moves; empty it to send the
-  fixture on Art-Net and sACN instead.
+  number and name. Change the address when the PC moves.
 - OpenRGB numbers its devices in the order it finds them, so hardware added
   to or taken out of the PC — a monitor off, a wireless mouse asleep at
   boot — can shift the others. A device is patched under its name as well
@@ -2467,9 +2467,9 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/profiles/bar` | Build and register an LED bar profile from `{ id, name, cells, firstChannel, order, stride?, dimmer?, strobe? }`; `?dryRun=1` answers with it without registering |
 | GET · POST | `/api/show` | Export / import the patch |
 | GET | `/api/wled/discover` | Ask the network for WLEDs (mDNS): `{ devices: [{ host, name, leds, rgbw, matrix, version, segments, patched }] }` |
-| POST | `/api/wled/add` | Add a WLED to the patch from `{ host, label?, segments? }`: its profile from `/json/info`, on free universes, sent DDP. With `segments: true`, a fixture for each segment in its `/json/state` not patched yet: `{ fixtures, profiles, info, segments }` |
+| POST | `/api/wled/add` | Add a WLED to the patch from `{ host, label?, segments? }`: its profile from `/json/info`, with no DMX address, sent DDP. With `segments: true`, a fixture for each segment in its `/json/state` not patched yet: `{ fixtures, profiles, info, segments }` |
 | GET | `/api/openrgb/discover?host=&port=` | Ask an OpenRGB SDK server for its devices: `{ host, port, devices: [{ index, name, type, leds, direct, patched }] }` |
-| POST | `/api/openrgb/add` | Add devices of an OpenRGB server to the patch from `{ host, port?, devices?: [index], label? }` — those named, or every one with LEDs not patched yet — each a fixture with a cell per LED, on free universes, sent over the SDK: `{ fixtures, profiles, devices }` |
+| POST | `/api/openrgb/add` | Add devices of an OpenRGB server to the patch from `{ host, port?, devices?: [index], label? }` — those named, or every one with LEDs not patched yet — each a fixture with a cell per LED, with no DMX address, sent over the SDK: `{ fixtures, profiles, devices }` |
 
 ### Outputs
 
@@ -2615,12 +2615,14 @@ The `fixture` message carries
 of `front`, `back`, `room`, `floor`, or `null`; `geometry` is an LED bar's line
 (a panel's top edge), `{ length, angle }` (length 1–100 in stage percent, angle
 −180–180 degrees clockwise on the plot), or `null` for the default; `output` is
-`{ protocol: 'ddp', host, port?, at?, rowStride? }` to send the fixture's
-universes to a WLED — from its LED `at` for a segment, a row every `rowStride`
-LEDs for a rectangle of a panel — `{ protocol: 'openrgb', host, port?, device,
-name?, leds }` to send them to device `device` of the OpenRGB SDK server at
-`host` (found by `name` when the server has renumbered it), `leds` LEDs long
-(as `POST /api/openrgb/add` patches it) — or `null` for Art-Net and sACN. A
+`{ protocol: 'ddp', host, port?, at?, rowStride? }` for a WLED — from its LED
+`at` for a segment, a row every `rowStride` LEDs for a rectangle of a panel —
+or `{ protocol: 'openrgb', host, port?, device, name?, leds }` for device
+`device` of the OpenRGB SDK server at `host` (found by `name` when the server
+has renumbered it), `leds` LEDs long. Either is given when the device is added
+(`POST /api/wled/add`, `POST /api/openrgb/add`); here it can be changed — a new
+`host` when the device moves — but not removed, nor given to a fixture on DMX,
+and `address` and `universe` are ignored for it, which has none. A
 Hue lamp's `{ protocol: 'hue', bridge, channels }` is given by
 `POST /api/hue/:bridge/add` and cannot be set or changed here, nor can its
 profile.

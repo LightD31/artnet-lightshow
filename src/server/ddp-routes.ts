@@ -4,14 +4,14 @@ import { openrgbConflict } from './openrgb-routes.ts';
 import type { DdpOutput, Fixture, Profile } from '../types/rig.ts';
 
 /**
- * Which universes go to a WLED over DDP rather than out on Art-Net and sACN.
+ * Which universes go to a WLED over DDP.
  *
- * A WLED is patched as a fixture like any other — a strip of its pixels, on
- * universes of its own, from channel 1 — with `output: { protocol: 'ddp',
- * host }`. The engine renders it into those universes as it renders any strip
- * (so the monitor, the previews and the Hue lamps see it as they see anything
- * else), and the transmitter sends them to the WLED as one run of pixels
- * instead of as universes. Built on the main thread from the patch, and
+ * A WLED is patched as a fixture like any other — a strip of its pixels —
+ * with `output: { protocol: 'ddp', host }` and no DMX address: the server
+ * places it on universes of its own (shared/placement.ts) and renders it there
+ * as it renders any strip (so the monitor, the previews and the Hue lamps see
+ * it as they see anything else), and the transmitter sends its bytes to the
+ * WLED as one run of pixels. Built on the main thread from the patch, and
  * handed to the transmitter with every frame.
  */
 
@@ -144,17 +144,13 @@ function pixelWidth(profile: Profile): number {
   return Number.isInteger(width) ? width : 0;
 }
 
-/** Is a fixture sent to a device of its own: a WLED over DDP, or an OpenRGB device. */
-const toDevice = (fix: Fixture) => !!fix.output && (fix.output.protocol === 'ddp' || fix.output.protocol === 'openrgb');
-const deviceName = (fix: Fixture) => (fix.output?.protocol === 'openrgb' ? 'an OpenRGB device' : 'a WLED');
-
 /**
- * Why a patch cannot go out as it is, or null: a universe that carries a WLED
- * over DDP, or an OpenRGB device, is that device's alone, since nothing on it
- * goes out on Art-Net or sACN — a par patched there would silently never
- * light. Two fixtures on one OpenRGB device would fight over it.
+ * Why a patch cannot go out as it is, or null: two fixtures on one WLED that
+ * share a LED, or two on one OpenRGB device, would fight over it. Their
+ * universes cannot clash: a WLED and an OpenRGB device have no DMX address,
+ * and the server gives each a place of its own (shared/placement.ts).
  */
-function ddpConflict(fixtures: readonly Fixture[], profileOf: ProfileOf, universeOf: UniverseOf): string | null {
+function ddpConflict(fixtures: readonly Fixture[], profileOf: ProfileOf): string | null {
   const twice = openrgbConflict(fixtures);
   if (twice) return twice;
   // Two fixtures on one WLED are two of its segments, and may not share a LED.
@@ -174,26 +170,6 @@ function ddpConflict(fixtures: readonly Fixture[], profileOf: ProfileOf, univers
       taken.push({ fixture: fix, from: run.at, to: run.at + run.count - 1 });
     }
     leds.set(key, taken);
-  }
-  const owner = new Map<number, Fixture>();
-  for (const fix of fixtures) {
-    if (!toDevice(fix)) continue;
-    for (const part of footprintOf(universeOf(fix), fix.address, profileOf(fix))) {
-      const other = owner.get(part.universe);
-      if (other) return `"${fix.label}" and "${other.label}" both send universe ${part.universe} to ${deviceName(fix)}; give each universes of its own`;
-      owner.set(part.universe, fix);
-    }
-  }
-  for (const fix of fixtures) {
-    if (toDevice(fix)) continue;
-    for (const part of footprintOf(universeOf(fix), fix.address, profileOf(fix))) {
-      const device = owner.get(part.universe);
-      if (device) {
-        const where = device.output?.protocol === 'openrgb' ? 'OpenRGB device' : 'WLED over DDP';
-        return `"${fix.label}" is on universe ${part.universe}, which goes to "${device.label}"'s ${where} and nowhere else; `
-          + 'patch it on another universe';
-      }
-    }
   }
   return null;
 }

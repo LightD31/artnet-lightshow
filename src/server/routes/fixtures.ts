@@ -1,9 +1,9 @@
-import { state, allocateFixtureId, universeOf, maxBrightnessOf, countUniverses, freeUniverses, placeAddresslessFixtures } from '../state.ts';
+import { state, allocateFixtureId, universeOf, maxBrightnessOf, countUniverses, placeAddresslessFixtures } from '../state.ts';
 import { resizeFixtureBuffers } from '../engine.ts';
 import { parseGDTF } from '../../gdtf.ts';
 import { BUILTIN_PROFILE_ID, HUE_BY_HAND, isBuiltinProfile, MAX_FIXTURES, UNIVERSE_SIZE, endChannel, fitsInUniverse, universeOverflow, registerProfile, unregisterProfile, listProfiles, getProfile, unitCapOverflow } from '../profiles.ts';
 import { MAX_UNIVERSES } from '../universes.ts';
-import { INTERNAL_UNIVERSE, footprintOf, hasNoAddress, universeCount } from '../../shared/placement.ts';
+import { INTERNAL_UNIVERSE, footprintOf, hasNoAddress, isHueLamp, universeCount } from '../../shared/placement.ts';
 import { isHueProfile, hueSections } from '../../shared/hue-lamp.ts';
 import { hueProfile, hueProfileId } from '../hue-profile.ts';
 import type { AreaLamp, EntertainmentArea } from '../hue.ts';
@@ -128,14 +128,14 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
       if (sameDevice) {
         return res.status(409).json({ ok: false, error: `${info.name} is patched already, as "${sameDevice.label}"; change its address in the patch table` });
       }
-      const universe = freeUniverses(universeCount(profile));
-      if (universe === null) return res.status(400).json({ ok: false, error: 'No free universes left for it' });
+      // No DMX address: the server places it on universes of its own.
       const fixture: Fixture = {
-        id: -1, label: (label || info.name).slice(0, 64), address: 1, universe, profileId: profile.id, maxBrightness: 255,
+        id: -1, label: (label || info.name).slice(0, 64), address: 1, universe: INTERNAL_UNIVERSE, profileId: profile.id, maxBrightness: 255,
         override: null, position: null, group: null, geometry: null, output: { protocol: 'ddp', host, ...wledSpan(info, null, look) },
       };
-      const next = [...state.fixtures, fixture];
       const profileOf = (f: Pick<Fixture, 'profileId'>) => (f.profileId === profile.id ? profile : getProfile(f));
+      const next = [...state.fixtures.map((f) => ({ ...f })), fixture];
+      placeAddresslessFixtures(next, profileOf);
       const tooMany = unitCapOverflow(next, profileOf);
       if (tooMany) return res.status(400).json({ ok: false, error: tooMany });
       if (countUniverses(next, profileOf) > MAX_UNIVERSES) {
@@ -144,6 +144,7 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
       if (!registerProfile(profile)) return res.status(400).json({ ok: false, error: 'Invalid profile' });
       fixture.id = allocateFixtureId();
       state.fixtures.push(fixture);
+      placeAddresslessFixtures();
       resizeFixtureBuffers();
       showStore.scheduleSave();
       integrations.broadcast();
@@ -155,8 +156,8 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
 
   /**
    * A WLED patched segment by segment: a fixture for each of its segments not
-   * patched yet, each on universes of its own and sent to its own LEDs, so the
-   * stage plot can put the booth's front and its sides where they are.
+   * patched yet, each sent to its own LEDs, so the stage plot can put the
+   * booth's front and its sides where they are.
    */
   async function addSegments(res: Response, host: string, label: string | undefined, look: WledLook) {
     if (!wled.segments) return res.status(501).json({ ok: false, error: 'This server cannot read WLED segments' });
@@ -170,14 +171,10 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
     if (state.fixtures.length + fresh.length > MAX_FIXTURES) {
       return res.status(400).json({ ok: false, error: `${fresh.length} segments would take the patch past ${MAX_FIXTURES} fixtures` });
     }
-    const taken = new Set<number>();
     const draft: Fixture[] = [];
     for (const { segment, profile } of fresh) {
-      const universe = freeUniverses(universeCount(profile), taken);
-      if (universe === null) return res.status(400).json({ ok: false, error: 'No free universes left for it' });
-      for (let k = 0; k < universeCount(profile); k++) taken.add(universe + k);
       draft.push({
-        id: -1 - draft.length, label: `${label || info.name} · ${segment.name}`.slice(0, 64), address: 1, universe,
+        id: -1 - draft.length, label: `${label || info.name} · ${segment.name}`.slice(0, 64), address: 1, universe: INTERNAL_UNIVERSE,
         profileId: profile.id, maxBrightness: 255, override: null, position: null, group: null, geometry: null,
         output: {
           protocol: 'ddp', host, at: segment.at, ...(segment.rowStride ? { rowStride: segment.rowStride } : {}), ...wledSpan(info, segment, look),
@@ -186,8 +183,9 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
     }
     const byId = new Map(fresh.map(({ profile }) => [profile.id, profile as Profile]));
     const profileOf = (f: Pick<Fixture, 'profileId'>) => byId.get(f.profileId) || getProfile(f);
-    const next = [...state.fixtures, ...draft];
-    const problem = unitCapOverflow(next, profileOf) || ddpConflict(next, profileOf, universeOf)
+    const next = [...state.fixtures.map((f) => ({ ...f })), ...draft];
+    placeAddresslessFixtures(next, profileOf);
+    const problem = unitCapOverflow(next, profileOf) || ddpConflict(next, profileOf)
       || (countUniverses(next, profileOf) > MAX_UNIVERSES
         ? `${info.name}'s segments would put the patch on more than the ${MAX_UNIVERSES} universes this server transmits` : null);
     if (problem) return res.status(400).json({ ok: false, error: problem });
@@ -198,6 +196,7 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
       fixture.id = allocateFixtureId();
       state.fixtures.push(fixture);
     }
+    placeAddresslessFixtures();
     resizeFixtureBuffers();
     showStore.scheduleSave();
     integrations.broadcast();
@@ -262,8 +261,8 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
     if (!users.length) return null;
     const profiles = listProfiles();
     const profileOf = (f: Pick<Fixture, 'profileId'>) => (f.profileId === profile.id ? profile : profiles[f.profileId] || profiles[BUILTIN_PROFILE_ID]);
-    // A WLED's profile growing reaches onto more universes, which must be free.
-    return unitCapOverflow(state.fixtures, profileOf) || ddpConflict(state.fixtures, profileOf, universeOf);
+    // A WLED's profile growing must still leave every LED to one fixture.
+    return unitCapOverflow(state.fixtures, profileOf) || ddpConflict(state.fixtures, profileOf);
   }
 
   app.delete('/api/profiles/:id', (req, res) => {
@@ -352,7 +351,7 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
     const next = [...state.fixtures, ...draft];
     const tooMany = unitCapOverflow(next);
     if (tooMany) return res.status(400).json({ ok: false, error: tooMany });
-    const wled = ddpConflict(next, getProfile, universeOf);
+    const wled = ddpConflict(next, getProfile);
     if (wled) return res.status(400).json({ ok: false, error: wled });
     if (countUniverses(next) > MAX_UNIVERSES) {
       return res.status(400).json({
@@ -501,7 +500,8 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
     resizeFixtureBuffers();
     showStore.scheduleSave();
     integrations.broadcast();
-    // A Hue lamp's place is the server's own, and goes back wherever it fits.
+    // A Hue lamp's, a WLED's or an OpenRGB device's place is the server's own,
+    // and goes back wherever it fits.
     const addressless = hasNoAddress(removed);
     res.json({
       ok: true,
@@ -539,7 +539,8 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
       const profiles = listProfiles();
       const profileId = profiles[fixture.profileId] ? fixture.profileId : BUILTIN_PROFILE_ID;
       const addressless = hasNoAddress(fixture);
-      if (addressless !== isHueProfile(profiles[profileId])) return res.status(400).json({ ok: false, error: HUE_BY_HAND });
+      const hueLamp = isHueLamp(fixture);
+      if (hueLamp !== isHueProfile(profiles[profileId])) return res.status(400).json({ ok: false, error: HUE_BY_HAND });
       // A lamp from before several bridges were possible names none: it is
       // the first bridge's, as the show loader makes it.
       const hueOut = fixture.output?.protocol === 'hue'
@@ -547,7 +548,7 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
       // A WLED's or an OpenRGB device's output comes back with it; Hue is settled above.
       const deviceOut = fixture.output && (fixture.output.protocol === 'ddp' || fixture.output.protocol === 'openrgb') ? fixture.output : null;
       const channels = hueOut ? hueOut.channels : [];
-      if (addressless && channels.length !== hueSections(profiles[profileId])) {
+      if (hueLamp && channels.length !== hueSections(profiles[profileId])) {
         return res.status(400).json({ ok: false, error: `"${fixture.label}" no longer matches its lamp's sections; add it again from the bridge` });
       }
       const onChannel = (ch: number) => state.fixtures.find((f) => f.output?.protocol === 'hue'
@@ -589,7 +590,7 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
       placeAddresslessFixtures(proposed);
       const tooMany = unitCapOverflow(proposed);
       if (tooMany) return res.status(400).json({ ok: false, error: tooMany });
-      const wled = ddpConflict(proposed, getProfile, universeOf);
+      const wled = ddpConflict(proposed, getProfile);
       if (wled) return res.status(400).json({ ok: false, error: wled });
 
       if (countUniverses(proposed) > MAX_UNIVERSES) {

@@ -3,16 +3,15 @@ import { pixelWidth } from './ddp-routes.ts';
 import type { Fixture, OpenRgbOutput, Profile } from '../types/rig.ts';
 
 /**
- * Which universes go to an OpenRGB device rather than out on Art-Net and
- * sACN — as ddp-routes.ts does for WLEDs.
+ * Which universes go to an OpenRGB device — as ddp-routes.ts does for WLEDs.
  *
- * A device is patched as a fixture like any other — its LEDs as cells, on
- * universes of its own, from channel 1 — with `output: { protocol:
- * 'openrgb', host, device, name, leds }`. The engine renders it into those
- * universes as it renders any strip, and the transmitter sends them to the
- * device as one UPDATELEDS packet a frame (transmit.ts, openrgb.ts). Built
- * on the main thread from the patch, and handed to the transmitter with
- * every frame.
+ * A device is patched as a fixture like any other — its LEDs as cells — with
+ * `output: { protocol: 'openrgb', host, device, name, leds }` and no DMX
+ * address: the server places it on universes of its own (shared/placement.ts)
+ * and renders it there as it renders any strip, and the transmitter sends
+ * its bytes to the device as one UPDATELEDS packet a frame (transmit.ts,
+ * openrgb.ts). Built on the main thread from the patch, and handed to the
+ * transmitter with every frame.
  */
 
 // The SDK server's port. Here rather than in openrgb.ts, which the transmitter

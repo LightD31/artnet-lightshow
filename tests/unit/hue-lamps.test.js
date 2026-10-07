@@ -14,7 +14,7 @@ import { Server } from 'socket.io';
 import { io as connect } from 'socket.io-client';
 
 import {
-  INTERNAL_UNIVERSE, isInternalUniverse, hasNoAddress, placeAddressless, fitIssue,
+  INTERNAL_UNIVERSE, isInternalUniverse, hasNoAddress, isHueLamp, placeAddressless, fitIssue,
 } from '../../src/shared/placement.ts';
 import { createTransmitter } from '../../src/server/transmit.ts';
 import { attachRoutes } from '../../src/server/routes.ts';
@@ -67,8 +67,10 @@ test('the internal universes are past every Art-Net universe, and fit the page\'
   assert.strictEqual(isInternalUniverse(32767), false);
   assert.strictEqual(isInternalUniverse(INTERNAL_UNIVERSE), true);
   assert.strictEqual(hasNoAddress({ output: HUE }), true);
-  assert.strictEqual(hasNoAddress({ output: { protocol: 'ddp', host: 'x' } }), false);
+  assert.strictEqual(hasNoAddress({ output: { protocol: 'ddp', host: 'x' } }), true, 'a WLED has none either');
+  assert.strictEqual(hasNoAddress({ output: { protocol: 'openrgb', host: 'x', device: 0, leds: 1 } }), true, 'nor an OpenRGB device');
   assert.strictEqual(hasNoAddress({ output: null }), false);
+  assert.deepStrictEqual([isHueLamp({ output: HUE }), isHueLamp({ output: { protocol: 'ddp', host: 'x' } })], [true, false]);
 });
 
 test('fixtures with no address are packed one after another on the internal universes, in patch order', () => {
@@ -473,6 +475,56 @@ test('over a socket, a Hue lamp stays a Hue lamp and a par stays off the bridge'
       assert.deepStrictEqual([second.profileId, first.output ?? null], [BUILTIN_PROFILE_ID, null], 'a par does not become a Hue lamp');
       assert.strictEqual(errors.length, 5, errors.join('\n'));
       assert.ok(state.fixtures.filter((f) => !isInternalUniverse(f.universe)).length === 2);
+    });
+  } finally {
+    socket.close();
+    io.close();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+// A WLED or an OpenRGB device is added from its section of Rig → Outputs and
+// stays one: never switched over to Art-Net, nor a par made one by hand.
+test('over a socket, a WLED keeps no DMX address: its own address changes, but it is never put on Art-Net', async () => {
+  const strip = barProfile({ id: 'test-wled-30', name: 'WLED', cells: 30, firstChannel: 1, order: 'RGB' });
+  registerProfile(strip);
+  const wled = { id: 1, label: 'Porch', address: 1, universe: 0, profileId: strip.id, maxBrightness: 255, override: null,
+    output: { protocol: 'ddp', host: '10.0.0.50' } };
+  const server = http.createServer();
+  const io = new Server(server);
+  const publisher = createPublisher(io);
+  attachSockets(io, { midi: { onLearn() {}, enabled: false, listPorts: () => [] }, integrations: { broadcast() {}, publisher } });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const socket = connect(`http://127.0.0.1:${server.address().port}`, { transports: ['websocket'], forceNew: true });
+  const errors = [];
+  socket.on('error-msg', (e) => errors.push(e.message));
+  const settle = () => new Promise((r) => setTimeout(r, 80));
+  try {
+    await withPatch([par(0, 1), wled], async () => {
+      await new Promise((r) => socket.once('connect', r));
+      const [first, porch] = state.fixtures;
+      assert.deepStrictEqual([porch.universe, porch.address], [INTERNAL_UNIVERSE, 1], 'placed by the server, whatever it was patched at');
+
+      socket.emit('fixture', { id: 1, output: { protocol: 'ddp', host: '10.0.0.51' } });
+      await settle();
+      assert.deepStrictEqual(porch.output, { protocol: 'ddp', host: '10.0.0.51' }, 'its address on the network can change');
+
+      socket.emit('fixture', { id: 1, universe: 3, address: 100 });
+      await settle();
+      assert.deepStrictEqual([porch.universe, porch.address], [INTERNAL_UNIVERSE, 1], 'a DMX address sent for it is ignored');
+
+      socket.emit('fixture', { id: 1, output: null });
+      await settle();
+      assert.deepStrictEqual([porch.output, porch.universe], [{ protocol: 'ddp', host: '10.0.0.51' }, INTERNAL_UNIVERSE], 'never put on Art-Net');
+      socket.emit('fixture', { id: 1, output: { protocol: 'openrgb', host: '10.0.0.7', device: 0, leds: 30 } });
+      await settle();
+      assert.strictEqual(porch.output.protocol, 'ddp', 'nor made another kind of device');
+      socket.emit('fixture', { id: 0, output: { protocol: 'ddp', host: '10.0.0.52' } });
+      await settle();
+      assert.strictEqual(first.output ?? null, null, 'nor a par made a WLED by hand');
+      assert.strictEqual(errors.length, 3, errors.join('\n'));
+      assert.ok(errors.every((e) => /added from Rig → Outputs and stays one/.test(e)));
+      assert.deepStrictEqual(wireUniverses(), [state.artnet.universe], 'only the par goes out on Art-Net');
     });
   } finally {
     socket.close();
