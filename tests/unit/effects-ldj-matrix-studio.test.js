@@ -19,7 +19,7 @@ const studio = [...['N', 'C', '5x'].flatMap((prefix) => [1, 2, 3, 4, 5].map((n) 
 const state = (room = square()) => initStudio(room, seedFrom('studio'), RED, 0);
 const advance = (s, frame, bpm = 120) => advanceStudio(s, frame * LDJ_FRAME_MS, bpm);
 
-test('all twenty-five kinds register strict, idempotent wire defaults and appropriate acknowledgement', () => {
+test("matrix and Studio kinds register strict wire defaults", () => {
   for (const name of [...matrix, 'matrixBoard', ...studio]) {
     const kind = kindOf(`ldj.${name}`);
     assert.ok(kind?.stateful, name);
@@ -27,22 +27,28 @@ test('all twenty-five kinds register strict, idempotent wire defaults and approp
     assert.deepEqual(validateSpec(spec), spec);
     assert.throws(() => validateSpec({ kind: kind.kind, params: { unsupported: true } }));
   }
+});
+
+test("matrix and Studio kinds expose effective acknowledgement", () => {
   for (const name of matrix.concat('StudioFireworks', 'StudioFlashes')) assert.equal(requiresAcknowledgement(validateSpec({ kind: `ldj.${name}` })), true);
   for (const name of ['StudioN1', 'StudioSwirl']) assert.equal(requiresAcknowledgement(validateSpec({ kind: `ldj.${name}` })), false);
   for (const mode of ['fireworks', 'flashes', 'pulses', 'cycle', 'solid']) {
     assert.equal(requiresAcknowledgement(validateSpec({ kind: 'ldj.matrixBoard', params: { mode } })), !['cycle', 'solid'].includes(mode));
   }
+});
+
+test("matrix board rejects invalid colour lists", () => {
   for (const colours of [[], Array(9).fill('#FFFFFF'), ['red']]) assert.throws(() => validateSpec({ kind: 'ldj.matrixBoard', params: { colours } }));
 });
 
-test('matrix intervals use integer quotient and twelve lamps make the flash and firework floors bind', () => {
+test("matrix intervals apply integer quotient floors", () => {
   for (const [n, expected] of [[1, [300, 1200, 1400, 800]], [3, [123, 423, 490, 290]],
     [4, [105, 330, 380, 230]], [12, [100, 135, 150, 100]]]) {
     assert.deepEqual(['pulse', 'flash', 'firework', 'splotch'].map((mode) => matrixInterval(mode, n)), expected);
   }
 });
 
-test('matrix loops fire at launch then wall deadlines, avoiding the last n−1 selections and retaining old peaks', () => {
+test("matrix loops retain their wall schedule and selection history", () => {
   const h = harness('ldj.PartyStrobe', square());
   const picks = [];
   for (let i = 0; i < 10; i++) {
@@ -81,7 +87,7 @@ test('matrix envelopes expose the prescribed peak and queued whole-frame activat
   assert.equal(firework.draw(at(10))[0].level, .9888888597488403, '2000 ms literal falls over ninety frames');
 });
 
-test('matrix cold replay and checkpoint cloning preserve fixed-colour output and pending notes', () => {
+test("matrix clones and cold replay retain pending notes", () => {
   for (const name of matrix) {
     const h = harness(`ldj.${name}`, square());
     for (let t = 0; t <= 900; t += 50) h.draw(ms(t));
@@ -91,7 +97,7 @@ test('matrix cold replay and checkpoint cloning preserve fixed-colour output and
   }
 });
 
-test('the board uses its touched list, common palette precedence and balanced solid mapping', () => {
+test("matrix board renders its touched list", () => {
   const room = row(7), colours = ['#FF0000', '#00FFFF', '#FFFF00'];
   const h = harness('ldj.matrixBoard', room, { palette: [parseHex('#00FF00')], params: { mode: 'solid', colours } });
   const output = h.draw(ms(0)), mapping = ldjChannels(room, 'colours', colours.length);
@@ -101,7 +107,7 @@ test('the board uses its touched list, common palette precedence and balanced so
   assert.ok(explicit.draw(ms(0)).every((slot) => slot.colour.b === 255 && slot.colour.r === 0));
 });
 
-test('solid board edits at 0/19/20 ms accept, ignore and accept without extending the guard', () => {
+test("solid board edits respect the 20 ms guard", () => {
   const h = harness('ldj.matrixBoard', row(1), { params: { colours: ['#FF0000'], mode: 'solid' } });
   assert.deepEqual(h.draw(ms(0))[0].colour, RED);
   h.inst.spec.params.colours = ['#00FFFF'];
@@ -112,7 +118,7 @@ test('solid board edits at 0/19/20 ms accept, ignore and accept without extendin
   assert.equal(h.draw(ms(22))[0].level, 1);
 });
 
-test('board cycle and pulse modes reuse their kernels and restart only on accepted list/mode changes', () => {
+test("board kernels restart only after accepted changes", () => {
   for (const [mode, kind] of [['cycle', 'MatrixCycle'], ['pulses', 'MatrixPulse'], ['flashes', 'MatrixFlash'], ['fireworks', 'MatrixFirework']]) {
     const options = { seed: 'board', spec: { palette: ['#FF0000', '#00FFFF'] } };
     const board = harness('ldj.matrixBoard', square(), { ...options, params: { mode, colours: ['#FF0000', '#00FFFF'] } });
@@ -125,14 +131,14 @@ test('board cycle and pulse modes reuse their kernels and restart only on accept
   }
 });
 
-test('N1 exposes launch peak, then exact float32 full-scale fade to the visible baseline', () => {
+test("N1 fades from its launch peak to the visible baseline", () => {
   const h = harness('ldj.StudioN1', row(1), { palette: [RED] });
   for (const [frame, expected] of [[0, 1], [1, .9090908765792847], [5, .5454543828964233],
     [10, .09090891480445862], [11, FLOOR], [40, FLOOR]]) assert.equal(h.draw(at(frame))[0].level, expected);
   assert.equal(h.state().notes, 1, 'standalone notes never retrigger at a beat boundary');
 });
 
-test('all five note durations are captured at launch while unselected lamps start at the coloured baseline', () => {
+test("Studio notes capture their launch duration", () => {
   const beats = [1, 2, 4, 6, 8];
   for (let i = 0; i < 5; i++) {
     const h = harness(`ldj.StudioN${i + 1}`, square(), { palette: [RED] });
@@ -142,7 +148,7 @@ test('all five note durations are captured at launch while unselected lamps star
   }
 });
 
-test('N excludes floor(n/2), C retains last N without history changes, and fresh C remains bounded', () => {
+test("Studio note selectors retain bounded history", () => {
   const s = state(row(3)), picks = [];
   for (let i = 0; i < 8; i++) { triggerStudioNote(s, 'N', 1, RED, 120); picks.push(s.lastChosen); }
   assert.ok(picks.slice(1).every((value, i) => value !== picks[i]));
@@ -188,19 +194,24 @@ test('Studio clone retains queued notes, independent state and pure command inte
   assert.notStrictEqual(copy.pending, original.pending);
 });
 
-test('swirl and wave retain exact float arithmetic, quantized geometry and integer wave plateaus', () => {
+test("Studio swirl retains float arithmetic and quantized geometry", () => {
   const angles = [0, 45, 90, 180, 270];
   angles.forEach((angle, i) => {
     close(studioSwirlLevel(angle, 0, false), [.75, .4848349392414093, .375, .75, .375][i]);
     close(studioSwirlLevel(angle, 0, true), [.44999998807907104, .18483492732048035, .07499998807907104, .44999998807907104, .07499998807907104][i]);
   });
-  [20, 394, 395, 789, 790, 3159].forEach((index, i) => close(studioWaveLevel(0, 1.75, index),
-    [.3343145549297333, .3343145549297333, .09999998658895493, .09999998658895493, .3343145549297333, .8999999761581421][i]));
-  const h = harness('ldj.StudioSwirl', square()); h.draw(at(0)); h.draw(at(1));
+  const h = harness('ldj.StudioSwirl', square());
+  h.draw(at(0));
+  h.draw(at(1));
   assert.equal(h.state().swirl, .4000000059604645);
 });
 
-test('background helpers preserve swirl phase, reset wave on configure, and need no audio to move', () => {
+test("Studio waves retain integer plateaus", () => {
+  [20, 394, 395, 789, 790, 3159].forEach((index, i) => close(studioWaveLevel(0, 1.75, index),
+    [.3343145549297333, .3343145549297333, .09999998658895493, .09999998658895493, .3343145549297333, .8999999761581421][i]));
+});
+
+test("Studio background configuration preserves the intended phase", () => {
   const s = state(); configureBackground(s, 'swirl', CYAN); advance(s, 5);
   assert.ok(s.lamps.some((lamp) => lamp.bri > FLOOR)); const angle = s.swirl;
   configureBackground(s, 'swirl', CYAN); assert.equal(s.swirl, angle);
@@ -209,7 +220,7 @@ test('background helpers preserve swirl phase, reset wave on configure, and need
   configureBackground(s, 'none', RED); advance(s, 7); assert.ok(s.lamps.every((lamp) => lamp.bri === 0));
 });
 
-test('solid background brightness and RGB interpolation are independent and use real colour fractions', () => {
+test("solid background colour and brightness interpolate independently", () => {
   const s = state(row(1)); configureBackground(s, 'solid', CYAN);
   for (const [frame, expected] of [[0, FLOOR], [1, .07000000029802322], [5, .14999999105930328], [10, .2499999701976776], [11, .25]]) {
     advance(s, frame); assert.equal(readStudio(s, 0).bri, expected);
@@ -218,7 +229,7 @@ test('solid background brightness and RGB interpolation are independent and use 
   advance(s, 23); assert.deepEqual(readStudio(s, 0).colour, CYAN);
 });
 
-test('automatic modes fire immediately and every five frames, stop preserves tails and cannot reinitialize them', () => {
+test("automatic Studio modes stop without restarting tails", () => {
   for (const [name, beats] of [['StudioFireworks', 6], ['StudioFlashes', 2]]) {
     const h = harness(`ldj.${name}`, row(12)); h.draw(at(0)); assert.equal(h.state().notes, 1);
     assert.equal(h.state().lamps.find((lamp) => lamp.note).seconds, beats / 2);
@@ -230,15 +241,26 @@ test('automatic modes fire immediately and every five frames, stop preserves tai
   }
 });
 
-test('stop preserves already queued 5x notes and comboBreak is an exact no-op', () => {
-  const s = state(); triggerStudioNote(s, '5x', 1, RED, 120);
-  const before = structuredClone(s); studioCommand(s, 'comboBreak'); assert.deepEqual(s, before);
-  studioCommand(s, 'stop'); advance(s, 11);
-  assert.ok(s.lamps.some((lamp) => lamp.bri > FLOOR)); assert.equal(s.pending.length, 2);
-  advance(s, 60); assert.ok(s.lamps.every((lamp) => lamp.bri === 0));
+test("comboBreak leaves queued Studio notes unchanged", () => {
+  const s = state();
+  triggerStudioNote(s, '5x', 1, RED, 120);
+  const before = structuredClone(s);
+  studioCommand(s, 'comboBreak');
+  assert.deepEqual(s, before);
 });
 
-test('fadeToBaseline gives continuous lamps a one-beat fallback while preserving active note durations', () => {
+test("Studio stop preserves already queued 5x notes", () => {
+  const s = state();
+  triggerStudioNote(s, '5x', 1, RED, 120);
+  studioCommand(s, 'stop');
+  advance(s, 11);
+  assert.ok(s.lamps.some((lamp) => lamp.bri > FLOOR));
+  assert.equal(s.pending.length, 2);
+  advance(s, 60);
+  assert.ok(s.lamps.every((lamp) => lamp.bri === 0));
+});
+
+test("fadeToBaseline retains active note durations", () => {
   const s = state(row(2)); configureBackground(s, 'swirl', RED);
   advance(s, 10); studioCommand(s, 'fadeToBaseline', CYAN);
   advance(s, 21); assert.ok(s.lamps.every((lamp) => lamp.bri === FLOOR));
@@ -247,7 +269,7 @@ test('fadeToBaseline gives continuous lamps a one-beat fallback while preserving
   advance(n, 1, 240); studioCommand(n, 'fadeToBaseline'); assert.equal(n.lamps[0].seconds, 2);
 });
 
-test('baseline colour intent is consumed next tick; note ownership holds it until explicit release', () => {
+test("note ownership defers baseline colour changes", () => {
   const s = state(row(1)); triggerStudioNote(s, 'N', 1, RED, 120);
   studioCommand(s, 'setPulserBaselineColor', CYAN); assert.deepEqual(readStudio(s, 0).colour, RED);
   advance(s, 1); assert.equal(s.pendingColour, null); assert.deepEqual(s.baselineColour, CYAN);
@@ -287,7 +309,7 @@ test('Studio RGB interpolation captures both endpoints across random refreshes',
   assert.notDeepEqual(readStudio(s, 0).colour, target);
 });
 
-test('explicit Studio colour changes retarget the current RGB fraction without restarting it', () => {
+test("Studio colour edits retain the current interpolation progress", () => {
   const blue = parseHex('#0000FF'), green = parseHex('#00FF00');
   for (const command of ['configure', 'fadeToBaseline', 'setPulserBaselineColor']) {
     const s = state(row(1)); configureBackground(s, 'solid', blue); advance(s, 6);
@@ -316,7 +338,7 @@ test('all Studio presets replay late first samples and clone fractional frame cl
   }
 });
 
-test('Studio backgrounds skip note-owned lamps and the wave index wraps within a lamp frame', () => {
+test("Studio backgrounds skip note-owned lamps", () => {
   const s = state(row(3)); triggerStudioNote(s, 'N', 8, RED, 120);
   configureBackground(s, 'swirl', CYAN); advance(s, 1);
   assert.equal(s.swirl, f32(f32(.1) + f32(.1)), 'only two idle lamps advance the phase');
@@ -325,7 +347,7 @@ test('Studio backgrounds skip note-owned lamps and the wave index wraps within a
   assert.deepEqual(readStudio(s, s.ring[s.lastChosen]).colour, RED, 'background configure does not steal note colour');
 });
 
-test('one lamp, one colour and empty rooms are finite for every matrix and Studio kind', () => {
+test("matrix and Studio kinds render finite output on small rigs", () => {
   for (const name of [...matrix, 'matrixBoard', ...studio]) {
     for (const n of [0, 1]) {
       const h = harness(`ldj.${name}`, row(n), { palette: [RED] });

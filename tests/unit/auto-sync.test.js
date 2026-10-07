@@ -15,11 +15,16 @@ const ev = (timeMs, id) => ({ timeMs, action: 'patch', data: { pattern: id } });
 
 /**
  * An AutoShow with a hand-written timeline and a position we control, so the
- * offset can be tested without audio, a Python analyzer or a clock.
+ * offset can be tested without audio, a Python analyzer or a clock. `refuse`
+ * answers the error the server would throw for a patch, or null.
  */
-function harness(timeline = []) {
+function harness(timeline = [], refuse = () => null) {
   const fired = [];
-  const show = new AutoShow((patch) => fired.push(patch), [{ name: 'Blackout' }], []);
+  const show = new AutoShow((patch) => {
+    const err = refuse(patch);
+    if (err) throw err;
+    fired.push(patch);
+  }, [{ name: 'Blackout' }], []);
   let position = 0;
   // start() refuses an empty timeline, so park a marker far past anything a
   // test seeks to. Tests that only care about the position use this alone.
@@ -185,6 +190,25 @@ test('expressive seeks restore current targets without replaying missed bursts',
   } finally { h.stop(); }
 });
 
+test('refused strobe bursts preserve the previous burst expiry', async (t) => {
+  const errors = [];
+  t.mock.method(console, 'error', (...args) => errors.push(args.map(String).join(' ')));
+  const refusal = Object.assign(new Error('photosensitivity acknowledgement required'), { status: 409 });
+  const h = harness([
+    { timeMs: 1000, action: 'energy', data: { id: 'blinder', durationMs: 80 } },
+    { timeMs: 1010, action: 'energy', data: { id: 'white-strobe', durationMs: 5000 } },
+  ], (patch) => (patch.energyOverride === 'white-strobe' ? refusal : null));
+  try {
+    h.seek(1000); h.tick();
+    h.seek(1010); h.tick();
+    assert.deepStrictEqual(h.fired, [{ energyOverride: 'blinder' }]);
+    assert.strictEqual(errors.length, 1);
+    assert.ok(errors[0]);
+    await new Promise((r) => setTimeout(r, 200));
+    assert.deepStrictEqual(h.fired, [{ energyOverride: 'blinder' }, { energyOverride: null }], 'the blinder ends on its own timer');
+  } finally { h.stop(); }
+});
+
 // ── Driven by the render loop ─────────────────────────────────────────────────
 // On the server the auto show has no timer: the engine calls tick() at the top
 // of every frame, so a cue fires in the very frame it falls due instead of up
@@ -254,7 +278,7 @@ test('a scene carries the time it was scheduled for, played through or seeked in
   } finally { h.stop(); }
 });
 
-test('while it runs, the pattern clock reads the track\'s beat grid at the show\'s position', () => {
+test('pattern clock follows the track beat grid at the show position', () => {
   const h = frameHarness();
   try {
     const file = path.join(import.meta.dirname, '..', 'fixtures', 'tracks', 'orelsan-boss.json');

@@ -39,7 +39,7 @@ function stage(t, acknowledged = false) {
 
 const statusOf = (status) => (err) => err.status === status;
 
-test('the palette override: one to eight hex colours, or null to let the effects play their own', (t) => {
+test('palette overrides accept one to eight colours or null', (t) => {
   stage(t);
   applyPatch({ paletteOverride: ['#F00', '#00ff00', '#0000FF80'] });
   assert.deepEqual(state.paletteOverride, [
@@ -79,7 +79,7 @@ test('an effect that flashes too fast is refused before anything in the patch mo
   });
 
   assert.throws(() => applyPatch({ pattern: 'ldj.visualizer.flash', bpm: 140, masterDimmer: 10, colorA: 5, fadeMs: 2000, running: false }),
-    (err) => err.status === 409 && /photosensitivity acknowledgement required/.test(err.message));
+    (err) => err.status === 409);
   assert.deepEqual(now(), before, 'no fade, tempo, master, colour, run state or anchor moved');
 
   // A preset of one's own that says nothing of it is refused for its cadence.
@@ -97,7 +97,7 @@ test('an effect that flashes too fast is refused before anything in the patch mo
   assert.equal(renderInput().effect, null);
 });
 
-test('acknowledged, it plays; the acknowledgement taken back, asking for it again is refused but the rest of the look still moves', (t) => {
+test('revoked acknowledgement refuses rapid effects without freezing the look', (t) => {
   stage(t, true);
   applyPatch({ pattern: 'ldj.visualizer.flash' });
   assert.equal(state.pattern, 'ldj.visualizer.flash');

@@ -6,24 +6,14 @@ import { ACKNOWLEDGEMENT_REQUIRED } from './safety.ts';
 import { HttpError } from '../errors.ts';
 import type { Settings, SettingsStore } from './settings.ts';
 import type { SafetyStatus } from './safety.ts';
-import type { Voice, VoiceManager, VoiceMode, VoiceSummary } from './voices.ts';
+import type { Voice, VoiceManager, VoiceMode, VoiceSummary, VoiceTargets } from './voices.ts';
 import type { EffectSpec } from '../shared/effects/types.ts';
 
 /**
  * The manual strobe: Hue Dynamics' hold strobe as one voice in the strobe
- * tier, above everything else on the rig. Held from a pad or a page for as
- * long as the hand renews it; latched from the deck or the API until it is
- * turned off or the cap cuts it (settings safety.strobeMaxLatchSec, for the
- * latch forgotten with the room watching); or burst for a moment. One voice
- * at a time, under one id: a launch replaces whatever played before, except
- * that a hold over a latch keeps the latch underneath, hidden, and the latch
- * comes back with its own cap deadline when the hold ends.
- *
- * Its settings (settings.strobe: the kind's parameters and a palette of its
- * own) are what a cue keeps and the Strobe page edits. An edit reaches a
- * running strobe in place, so the next flash plays it with no relaunch and
- * the five-a-second permit carries on. Until the photosensitivity
- * acknowledgement, nothing here starts; off and release never refuse.
+ * tier, held, latched under the cap (safety.strobeMaxLatchSec) or burst. A
+ * hold over a latch keeps the latch hidden underneath until the hold is let
+ * go; a stop ends both. Nothing starts before the acknowledgement.
  */
 
 /** The voice's id, which the renderer and the preview know (voices.ts). */
@@ -44,7 +34,8 @@ export interface StrobeStatus {
   settings: StrobeSettings;
 }
 
-type StrobeVoices = Pick<VoiceManager, 'start' | 'release' | 'stopWhere' | 'list' | 'get' | 'update' | 'endBy'>;
+type StrobeVoices = Pick<VoiceManager, 'start' | 'release' | 'stopWhere' | 'list' | 'get' | 'update' | 'endBy' | 'onStop'>;
+export interface StrobeHoldLaunch { targets?: VoiceTargets; quantise?: number }
 type StrobeSettingsStore = Pick<SettingsStore, 'group' | 'update' | 'onChange'>;
 interface StrobeSafety { acknowledged(): boolean; status(): Pick<SafetyStatus, 'strobeMaxLatchSec'> }
 
@@ -63,6 +54,10 @@ export class Strobe {
     this._settings = settings;
     this._safety = safety;
     this._under = null;
+    // A stop ends the latch under the hold too, so nothing relaunches it.
+    voices.onStop((stopped) => {
+      if (stopped.some((v) => v.id === STROBE_VOICE_ID)) this._under = null;
+    });
     // A cue's settings or PUT /api/settings reach a running strobe too, and a cap lowered cuts one.
     settings.onChange((changed) => {
       if (changed.some((key) => key.startsWith('strobe.'))) this._follow();
@@ -101,16 +96,12 @@ export class Strobe {
     return this._launch({ mode: 'once', lengthMs: ms });
   }
 
-  /**
-   * Hold it under a lease, the pad's or the page's: the same press again
-   * renews a live hold and never brings back one an off stopped (voices.ts,
-   * 409). Over a latch, the latch waits underneath until the hold ends.
-   */
-  hold(owner: string, token: string): Voice {
+  /** Hold it under a lease; the same press renews it. Over a latch it starts at once, so the strobe never goes dark. */
+  hold(owner: string, token: string, { targets = 'shared', quantise = 0 }: StrobeHoldLaunch = {}): Voice {
     this._admit();
     const current = this._voices.get(STROBE_VOICE_ID);
     const latch = current && current.mode === 'latched' ? { startedAtMs: current.startedAtMs, untilMs: current.untilMs } : null;
-    const voice = this._launch({ mode: 'hold', owner, token });
+    const voice = this._launch({ mode: 'hold', owner, token, targets, quantise: latch ? 0 : quantise });
     if (latch) this._under = latch;
     return voice;
   }
@@ -163,7 +154,7 @@ export class Strobe {
     return { kind: 'strobe', palette, params };
   }
 
-  _launch(launch: { mode: VoiceMode; maxLatchMs?: number; lengthMs?: number; owner?: string; token?: string }): Voice {
+  _launch(launch: { mode: VoiceMode; maxLatchMs?: number; lengthMs?: number; owner?: string; token?: string; targets?: VoiceTargets; quantise?: number }): Voice {
     const voice = this._voices.start({
       spec: this._spec(), targets: 'shared', tier: 'strobe', source: 'strobe', label: 'Strobe', id: STROBE_VOICE_ID, key: STROBE_KEY, ...launch,
     });

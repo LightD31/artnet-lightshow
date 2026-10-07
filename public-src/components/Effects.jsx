@@ -1,3 +1,4 @@
+import { NowPlaying, PlayingVoices } from './NowPlaying.jsx';
 import { signal } from '@preact/signals';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { librarySig, pick, send } from '../state.js';
@@ -29,8 +30,6 @@ const LIBRARY_MODES = [
 ];
 const FAVOURITES_KEY = 'lightshow.effects.favourites';
 const LONG_PRESS_MS = 500;
-// The bars that stay at the top of the page while it scrolls; the search sticks under them.
-const STUCK_BARS = '.app-header, .command-bar, .mode-tabs';
 
 /** The preset the inspector is open on, or null: one editor for the page, so a pad elsewhere can open it too. */
 export const editingSig = signal(null);
@@ -177,24 +176,6 @@ export function usePress(onTap, onLongPress) {
   return press.current.handlers;
 }
 
-/** Where the search sticks: under whichever of the page's bars are stuck at this width. */
-function useStickyTop(ref) {
-  useEffect(() => {
-    const place = () => {
-      if (!ref.current) return;
-      let top = 0;
-      for (const el of document.querySelectorAll(STUCK_BARS)) {
-        const cs = getComputedStyle(el);
-        if (cs.position === 'sticky') top = Math.max(top, (parseFloat(cs.top) || 0) + el.getBoundingClientRect().height);
-      }
-      ref.current.style.top = `${Math.round(top)}px`;
-    };
-    place();
-    window.addEventListener('resize', place);
-    return () => window.removeEventListener('resize', place);
-  }, []);
-}
-
 /** The inspector as a sheet over the page: opened by Edit or a long press, closed by Close, Escape or the veil. */
 function InspectorSheet({ id, onSelect, onPlay, onClose }) {
   const box = useRef(null);
@@ -229,11 +210,11 @@ function EditButton({ row, onEdit }) {
 function Pad({ row, active, favourite, onTap, onEdit, onToggleFavourite }) {
   const press = usePress(() => onTap(row), () => onEdit(row.id));
   return (
-    <div class={`effect-pad ${active ? 'active' : ''}`} data-id={row.id}>
+    <div class={`effect-pad ${active ? 'active' : ''}`} data-id={row.id} data-layer={active ? 'base' : undefined}>
       <button type="button" class="effect-pad-tap" aria-pressed={active} title={row.desc || row.name} {...press}>
         <span class="effect-pad-name">{row.name}</span>
         <span class="effect-pad-app">{APP_BADGES[row.user ? row.kindApp || 'own' : appOf(row)]}{row.user && <span class="effect-pad-yours"> · Yours</span>}</span>
-        {active && <span class="effect-pad-now">Now playing</span>}
+        {active && <span class="effect-pad-now">Base</span>}
         {row.rapidFlash && <Rapid />}
       </button>
       <div class="effect-pad-tools">
@@ -254,7 +235,7 @@ function Row({ row, active, onBars, onPanels, favourite, onTap, onEdit, onToggle
         aria-pressed={active} title={row.desc || row.name} {...press}>
         <span class="icon" aria-hidden="true">{PATTERN_ICONS[row.id] || APP_ICONS[appOf(row)]}</span>
         <span class="body">
-          <span class="name">{row.name}{where && <span class="layer-tag"> · on {where}</span>}</span>
+          <span class="name">{row.name}{active && <span class="layer-tag" data-layer="base"> · Base</span>}{where && <span class="layer-tag"> · on {where}</span>}</span>
         </span>
         {row.rapidFlash && <Rapid />}
       </button>
@@ -274,8 +255,6 @@ export function Effects() {
   const [library, setLibrary] = useState('all');
   const [favourites, setFavourites] = useState(readFavourites);
   const [confirm, setConfirm] = useState(null);
-  const tools = useRef(null);
-  useStickyTop(tools);
   const acknowledged = !!(s.safety && s.safety.photosensitivityAcknowledged);
 
   // The presets saved here ride the live state as summaries; they list like the built-ins.
@@ -315,7 +294,6 @@ export function Effects() {
   const onBars = bars && s.pixelPattern ? s.pixelPattern : null;
   const panels = hasPanels(s);
   const onPanels = panels && s.panelPattern ? s.panelPattern : null;
-  const nameOf = (id) => rows.find((p) => p.id === id)?.name || id;
   const playing = s.pattern ? rows.find((r) => r.id === s.pattern) || { id: s.pattern, name: s.pattern } : null;
   const pixel = (s.patterns || []).filter((p) => p.pixel);
   // Along each bar is across the stage on a rig without bars.
@@ -327,20 +305,11 @@ export function Effects() {
   return <>
     <div class="card effects">
       <div class="card-title">Effects</div>
-      <div class="effects-tools" ref={tools}>
-        {playing && (
-          <div class="effects-now" role="status" aria-live="polite">
-            <span class="effects-now-label">Now playing</span>
-            <span class="effects-now-name">{playing.name}</span>
-            {(playing.app || playing.user) && <span class="effects-now-app">{APP_BADGES[playing.user ? playing.kindApp || 'own' : appOf(playing)]}</span>}
-            {(onBars || onPanels) && (
-              <span class="effects-now-layers">
-                {[onBars && `on the pars, bars on ${nameOf(onBars)}`, onPanels && `panels on ${nameOf(onPanels)}`].filter(Boolean).join(', ')}
-              </span>
-            )}
-            <EditButton row={playing} onEdit={edit} />
-          </div>
-        )}
+      <div class="effects-tools">
+        <div class="effects-now" role="status" aria-live="polite">
+          <NowPlaying />
+          {playing && <EditButton row={playing} onEdit={edit} />}
+        </div>
         <input class="effects-search" type="search" aria-label="Search effects" placeholder="Search effects" value={q} onInput={(e) => setQ(e.target.value)} />
         <div class="effects-chips" role="group" aria-label="Filters">
           {FLAG_CHIPS.map(([flag, label, desc]) => (
@@ -354,6 +323,7 @@ export function Effects() {
           ))}
         </div>
       </div>
+      <PlayingVoices stopAll />
       <div class="effects-deck" role="group" aria-label="Favourites, your presets and the party looks">
         {deck.length === 0 && <p class="effects-empty">{query ? 'Nothing on the deck matches.' : 'Star an effect to pin it here.'}</p>}
         {deck.map((row) => <Pad key={row.id} {...rowProps(row)} />)}

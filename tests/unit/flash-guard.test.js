@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert';
 import { HdFlashGuard, StrobeLampGuard } from '../../src/shared/effects/flash-guard.ts';
 
-test('a second bright rise inside 350 ms is zeroed; after it, allowed', () => {
+test("bright rises wait for the guard interval", () => {
   const g = new HdFlashGuard(350);
   assert.strictEqual(g.apply(0, 1, 0), 1);
   assert.strictEqual(g.apply(0, 0, 100), 0);
@@ -11,10 +11,17 @@ test('a second bright rise inside 350 ms is zeroed; after it, allowed', () => {
   assert.strictEqual(g.apply(0, 1, 400), 1, 'allowed again');
 });
 
-test('dim rises never count, and lamps are independent', () => {
+test("dim rises do not spend guard admission", () => {
   const g = new HdFlashGuard(350);
-  g.apply(0, 1, 0); g.apply(0, 0, 50);
+  g.apply(0, 1, 0);
+  g.apply(0, 0, 50);
   assert.strictEqual(g.apply(0, 0.5, 100), 0.5);
+});
+
+test("flash guard admission is independent per lamp", () => {
+  const g = new HdFlashGuard(350);
+  g.apply(0, 1, 0);
+  g.apply(0, 0, 50);
   assert.strictEqual(g.apply(1, 1, 100), 1);
 });
 
@@ -24,7 +31,7 @@ test('interval 0 disables the guard', () => {
   assert.strictEqual(g.apply(0, 1, 20), 1);
 });
 
-test('threshold is inclusive and a suppressed rise remains suppressed until exactly the interval', () => {
+test("suppressed rises remain blocked until the inclusive interval", () => {
   const g = new HdFlashGuard(350);
   assert.strictEqual(g.apply(0, 0.55, 0), 0.55);
   assert.strictEqual(g.apply(0, 0.8, 10), 0.8, 'held brightness is not a new rise');
@@ -34,7 +41,7 @@ test('threshold is inclusive and a suppressed rise remains suppressed until exac
   assert.strictEqual(g.apply(0, 0.6, 351), 0.6);
 });
 
-test('reset forgets each lamp and custom intervals use milliseconds', () => {
+test("guard reset clears lamp histories", () => {
   const g = new HdFlashGuard(100);
   g.apply(0, 1, 1000); g.apply(0, 0, 1010);
   assert.strictEqual(g.apply(0, 1, 1099), 0);
@@ -63,7 +70,7 @@ test('a new interval applies from the next rise and keeps every lamp\'s history'
   assert.throws(() => g.setInterval(NaN));
 });
 
-test('another layer\'s frame ends a held rise without spending one, and is free on a lamp the guard never saw', () => {
+test("another layer ends a held rise without spending one", () => {
   const g = new HdFlashGuard(350);
   assert.strictEqual(g.apply(0, 1, 0), 1);
   g.clear(0);
@@ -73,7 +80,7 @@ test('another layer\'s frame ends a held rise without spending one, and is free 
   assert.strictEqual(g.size, 1, 'clearing an unseen lamp keeps nothing for it');
 });
 
-test('the guard counts the lamps it holds bright, so a caller can tell when there is nothing to watch', () => {
+test("guard counts its held lamps", () => {
   const g = new HdFlashGuard(350);
   g.apply(0, 1, 0); g.apply(1, 1, 0); g.apply(2, 0.2, 0);
   assert.strictEqual(g.brightCount, 2);
@@ -104,7 +111,7 @@ test('a clone keeps the interval and every lamp\'s history, and goes its own way
 
 // ── The strobe's permit per lamp ────────────────────────────────────────────
 
-test('the strobe guard admits a lamp\'s rises eight frames apart and five in any forty-four, whoever draws them', () => {
+test("strobe guard retains one rolling permit per lamp", () => {
   const g = new StrobeLampGuard();
   assert.strictEqual(g.apply(0, 1, 0), 1, 'the first rise');
   assert.strictEqual(g.apply(0, 1, 1), 1, 'held: no new rise');
@@ -123,7 +130,7 @@ test('the strobe guard admits a lamp\'s rises eight frames apart and five in any
   assert.strictEqual(g.apply(1, 1, 45), 1);
 });
 
-test('the strobe guard: a refused lamp only dims, the same frame drawn twice is one rise, another layer on the lamp keeps its rises', () => {
+test("strobe guard retains rises across repeated frames and layers", () => {
   const g = new StrobeLampGuard();
   // A Hue lamp pulsed: full, falling to its floor; a rise refused holds it at what it showed.
   assert.strictEqual(g.apply(0, 1, 0), 1);

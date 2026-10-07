@@ -57,8 +57,8 @@ const PALETTE_HEX = Object.fromEntries(BUILTIN_PALETTES.map((p) => [p.id, p.colo
  * A sequencer on stand-in actions: what it applies is logged and taken as the
  * live master and tempo; the clock in milliseconds is the test's.
  */
-function rig({ master = 255, bpm = 120, seed = [1, 2, 3, 4], admit = () => {}, musicMode = null } = {}) {
-  const live = { master, bpm, paletteOverride: null, ms: 0 };
+function rig({ master = 255, bpm = 120, seed = [1, 2, 3, 4], admit = () => {}, musicMode = null, onRun } = {}) {
+  const live = { master, bpm, paletteOverride: null, paletteOverrideId: null, ms: 0 };
   const applied = [];
   const modes = [];
   const s = new Sequencer({
@@ -68,13 +68,18 @@ function rig({ master = 255, bpm = 120, seed = [1, 2, 3, 4], admit = () => {}, m
       applied.push(patch);
       if (patch.masterDimmer !== undefined) live.master = patch.masterDimmer;
       if (patch.bpm !== undefined) live.bpm = patch.bpm;
-      if (patch.paletteOverride !== undefined) live.paletteOverride = patch.paletteOverride;
+      // As applyPatch: colours without a palette's name name none.
+      if (patch.paletteOverride !== undefined) {
+        live.paletteOverride = patch.paletteOverride;
+        live.paletteOverrideId = patch.paletteOverride === null ? null : patch.paletteOverrideId ?? null;
+      }
     },
-    current: () => ({ masterDimmer: live.master, bpm: live.bpm, paletteOverride: live.paletteOverride }),
+    current: () => ({ masterDimmer: live.master, bpm: live.bpm, paletteOverride: live.paletteOverride, paletteOverrideId: live.paletteOverrideId }),
     musicMode: musicMode ?? ((mode) => modes.push(mode)),
     admit,
     now: () => live.ms,
     seed,
+    onRun,
   });
   /** One frame at the music's beat; the sequence's position then, or null. */
   const at = (beat, opts) => {
@@ -93,8 +98,7 @@ const close = (actual, expected, eps = 1e-9) => assert.ok(Math.abs(actual - expe
 
 const ROWS = { mode: 'playlist', lanes: [lane('rows')], clips: [clip('A', 'rows', 0, 4), clip('B', 'rows', 4, 4), clip('C', 'rows', 8, 4)] };
 
-test('playlist semantics: one shared lane, autoplay advances at each clip\'s end; autoplay off loops the clip; next skips; shuffle picks ≠ current', () => {
-  // Autoplay (the default): each row plays for its own length, then the next.
+test('playlist autoplay advances at each row end', () => {
   const on = rig();
   on.s.load(sequence(ROWS));
   assert.equal(on.at(100), null, 'loaded is not playing');
@@ -107,20 +111,25 @@ test('playlist semantics: one shared lane, autoplay advances at each clip\'s end
   assert.equal(on.top(), 'B', 'A ended: B');
   on.at(109);
   assert.equal(on.top(), 'C');
+});
 
-  // Autoplay off: the row repeats, each time round a lap of its own, until next.
+test('playlist without autoplay repeats the current row', () => {
   const off = rig();
   off.s.load(sequence({ ...ROWS, options: { autoplay: false } }));
   off.s.play();
   off.at(100);
-  const t = () => off.s.frame(reading(off.beat)).transport;
-  off.beat = 103;
-  assert.deepEqual(playingClips(off.s.table(), t(), 103, [1]).map((c) => c.id), ['clip:A:1.0.0']);
-  off.beat = 105;
-  assert.equal(sequencePlace(t(), 105).position, 1, 'A again, not B');
+  const t = (beat) => off.s.frame(reading(beat)).transport;
+  assert.deepEqual(playingClips(off.s.table(), t(103), 103, [1]).map((c) => c.id), ['clip:A:1.0.0']);
+  assert.equal(sequencePlace(t(105), 105).position, 1, 'A again, not B');
   assert.equal(off.top(), 'A');
-  assert.deepEqual(playingClips(off.s.table(), t(), 105, [1]).map((c) => c.id), ['clip:A:1.1.0'], 'a fresh lap');
-  // Next skips at once, to B's start, and B then repeats in its turn.
+  assert.deepEqual(playingClips(off.s.table(), t(105), 105, [1]).map((c) => c.id), ['clip:A:1.1.0'], 'a fresh lap');
+});
+
+test('playlist next and previous wrap through repeating rows', () => {
+  const off = rig();
+  off.s.load(sequence({ ...ROWS, options: { autoplay: false } }));
+  off.s.play();
+  off.at(100);
   off.s.next();
   assert.equal(off.at(105.5), 4);
   assert.equal(off.top(), 'B');
@@ -137,8 +146,13 @@ test('playlist semantics: one shared lane, autoplay advances at each clip\'s end
   off.s.prev();
   off.at(111);
   assert.equal(off.top(), 'C');
+});
 
-  // Shuffle: another row each time, never the one playing; all the others in time.
+test('playlist shuffle chooses another row', () => {
+  const off = rig();
+  off.s.load(sequence({ ...ROWS, options: { autoplay: false } }));
+  off.s.play();
+  off.at(100);
   let beat = 112;
   const seen = new Set();
   for (let i = 0; i < 24; i++) {
@@ -149,7 +163,9 @@ test('playlist semantics: one shared lane, autoplay advances at each clip\'s end
     seen.add(off.top());
   }
   assert.deepEqual([...seen].sort(), ['A', 'B', 'C']);
-  // One row: nothing else to pick, so nothing moves.
+});
+
+test('shuffle on a single-row playlist preserves position', () => {
   const one = rig();
   one.s.load(sequence({ mode: 'playlist', lanes: [lane('rows')], clips: [clip('A', 'rows', 0, 4)] }));
   one.s.play();
@@ -203,21 +219,23 @@ test('loop region wraps the beat', () => {
   // Each time round is a traversal of its own: B's laps are fresh activations.
   const t = r.s.frame(reading(112.5)).transport;
   assert.deepEqual(playingClips(r.s.table(), t, 112.5, [1]).map((c) => c.id), ['clip:B:1.2.0']);
-  // Switched off, it plays on past the end: from 4.5 to 8.5.
+  // Switched off, it plays on to its end, the bar line after the last clip: from 4.5 to 8, where it is over.
   r.s.setLoop({ on: false, startBeat: 4, endBeat: 8 });
   assert.equal(r.at(113), 5, 'from the position it had');
-  assert.equal(r.at(116.5), 8.5);
-  assert.deepEqual(r.applied.at(-1), { masterDimmer: 20, paletteOverride: PALETTE_HEX.redCyan }, 'its end plays now');
-  assert.equal(playingClips(r.s.table(), r.s.frame(reading(116.5)).transport, 116.5, [1]).length, 0, 'past every clip');
-  // A region switched on behind the position: it plays on.
+  assert.equal(r.at(116), null);
+  assert.deepEqual(r.applied.at(-1), { masterDimmer: 20 }, 'its end plays now');
+  assert.equal(r.s.status().ended, true);
+  // A region set on the ended sequence: the next play, from the top, loops it.
   r.s.setLoop({ on: true, startBeat: 0, endBeat: 2 });
-  assert.equal(r.at(117), 9);
+  r.s.play();
+  assert.equal(r.at(117), 0);
+  assert.equal(r.at(120.5), 1.5);
   assert.equal(r.s.current().loop.endBeat, 2, 'the loaded sequence keeps the region');
 });
 
 // ── Palettes ────────────────────────────────────────────────────────────────
 
-test('initialPalette sets the override on play; randomPaletteOnLoop changes it at each wrap', () => {
+test('sequence palette options apply at start and loop boundaries', () => {
   const r = rig();
   r.s.load(sequence({
     clips: [clip('A', 'a', 0, 2)], loop: { on: true, startBeat: 0, endBeat: 2 },
@@ -226,7 +244,7 @@ test('initialPalette sets the override on play; randomPaletteOnLoop changes it a
   }));
   r.s.play();
   // A real start: the palette, the tempo and the music mode go on at once.
-  assert.deepEqual(r.applied, [{ paletteOverride: PALETTE_HEX.greenPink }, { bpm: 128 }]);
+  assert.deepEqual(r.applied, [{ paletteOverride: PALETTE_HEX.greenPink, paletteOverrideId: 'greenPink' }, { bpm: 128 }]);
   assert.deepEqual(r.modes, ['reactive']);
   r.at(100);
   r.at(101.5);
@@ -272,11 +290,13 @@ test('initialPalette sets the override on play; randomPaletteOnLoop changes it a
     h.s.play();
     h.at(0);
     h.live.paletteOverride = PALETTE_HEX.redCyan.map((c) => c.toLowerCase());
+    h.live.paletteOverrideId = null;
     h.at(2.5);
     assert.equal(h.applied.length, 2, `seed ${seed}`);
     assert.notEqual(idOf(h.applied[1].paletteOverride), 'redCyan', `seed ${seed}: the one on`);
     // Cleared by hand: any built-in palette may go on.
     h.live.paletteOverride = null;
+    h.live.paletteOverrideId = null;
     h.at(4.5);
     assert.equal(h.applied.length, 3, `seed ${seed}: a palette each wrap`);
   }
@@ -291,9 +311,140 @@ test('initialPalette sets the override on play; randomPaletteOnLoop changes it a
   assert.deepEqual(r.modes, ['reactive']);
 });
 
+test('random loop palettes exclude the named random override', () => {
+  for (let seed = 1; seed <= 60; seed++) {
+    const r = rig({ seed: [seed, 2, 3, 4] });
+    r.live.paletteOverride = ['#2A0088', '#EF6900'];
+    r.live.paletteOverrideId = 'randomRandom';
+    r.s.load(sequence({ clips: [clip('A', 'a', 0, 2)], loop: { on: true, startBeat: 0, endBeat: 2 }, options: { randomPaletteOnLoop: true } }));
+    r.s.play();
+    r.at(0);
+    r.at(2.5);
+    assert.notEqual(r.live.paletteOverrideId, 'randomRandom');
+  }
+});
+
+const PALETTE_COMMAND = { id: 'pal', atBeat: 2, type: 'palette', value: 'redCyan' };
+const paletteState = (r) => [r.live.paletteOverride, r.live.paletteOverrideId];
+function paletteRun({ options = {}, before = [null, null], commands = [PALETTE_COMMAND] } = {}) {
+  const r = rig();
+  [r.live.paletteOverride, r.live.paletteOverrideId] = before;
+  r.s.load(sequence({ clips: [clip('A', 'a', 0, 8)], commands, options }));
+  r.s.play();
+  r.at(100);
+  r.at(102.25);
+  return r;
+}
+
+for (const blackout of [false, true]) {
+  test(`stop restores the previous palette with blackout=${blackout}`, () => {
+    const r = paletteRun();
+    r.s.stop({ blackout });
+    assert.deepEqual(paletteState(r), [null, null]);
+    r.at(102.5);
+    assert.deepEqual(paletteState(r), [null, null]);
+    r.at(103);
+    assert.equal(r.applied.filter((p) => p.paletteOverride !== undefined).length, 2);
+  });
+}
+
+test('palette restoration supports current-state providers without ids', () => {
+  const r = paletteRun();
+  const current = r.s._current;
+  r.s._current = () => ({ ...current(), paletteOverrideId: undefined });
+  r.s.stop();
+  assert.deepEqual(paletteState(r), [null, null]);
+});
+
+test('unload restores the palette beneath initial and command palettes', () => {
+  const before = [['#123456'], 'mine'];
+  const r = paletteRun({ options: { initialPalette: 'greenPink' }, before });
+  r.s.unload();
+  assert.deepEqual(paletteState(r), before);
+});
+
+test('loading another sequence restores the prior palette', () => {
+  const before = [['#123456'], 'mine'];
+  const r = paletteRun({ before });
+  r.s.load(sequence({ id: 'set-2', clips: [clip('B', 'a', 0, 8)] }));
+  assert.deepEqual(paletteState(r), before);
+});
+
+test('a replay restores its prior palette on the next stop', () => {
+  const before = [['#123456'], 'mine'];
+  const r = paletteRun({ before });
+  r.s.stop();
+  r.at(103);
+  r.s.play();
+  r.at(104);
+  r.at(106.25);
+  r.s.stop();
+  r.at(107);
+  assert.deepEqual(paletteState(r), before);
+});
+
+test('stop and replay between frames retain the new initial palette', () => {
+  const r = paletteRun({ options: { initialPalette: 'greenPink' } });
+  r.s.stop();
+  r.s.play();
+  r.at(103);
+  assert.deepEqual(paletteState(r), [PALETTE_HEX.greenPink, 'greenPink']);
+  r.s.stop();
+  assert.deepEqual(paletteState(r), [null, null]);
+});
+
+test('pause preserves the sequence palette', () => {
+  const r = paletteRun();
+  r.s.pause();
+  r.at(103);
+  assert.deepEqual(paletteState(r), [PALETTE_HEX.redCyan, 'redCyan']);
+});
+
+for (const hand of [['#ABCDEF'], null]) {
+  test(`stop preserves a manually ${hand ? 'changed' : 'cleared'} palette`, () => {
+    const r = paletteRun({ before: [['#123456'], 'mine'] });
+    r.live.paletteOverride = hand;
+    r.live.paletteOverrideId = null;
+    r.s.handEdit({ paletteOverride: true });
+    r.s.stop();
+    r.at(103);
+    r.s.unload();
+    assert.deepEqual(paletteState(r), [hand, null]);
+  });
+}
+
+test('reselecting the same palette transfers ownership to the operator', () => {
+  const r = paletteRun();
+  r.s.handEdit({ paletteOverride: true });
+  r.s.stop();
+  r.at(103);
+  assert.deepEqual(paletteState(r), [PALETTE_HEX.redCyan, 'redCyan']);
+});
+
+test('a palette command due on the stop frame never changes the override', () => {
+  const r = rig();
+  r.s.load(sequence({ clips: [clip('A', 'a', 0, 8)], commands: [PALETTE_COMMAND] }));
+  r.s.play();
+  r.at(100);
+  r.s.stop();
+  r.at(102.25);
+  assert.equal(r.live.paletteOverride, null);
+  assert.ok(r.applied.every((p) => p.paletteOverride === undefined));
+});
+
+test('a sequence without palette commands leaves the override untouched', () => {
+  const before = [['#123456'], 'mine'];
+  const r = paletteRun({ before, commands: [] });
+  r.s.stop();
+  r.at(103);
+  r.s.unload();
+  assert.deepEqual(paletteState(r), before);
+  assert.ok(r.applied.every((p) => p.paletteOverride === undefined));
+});
+
 // ── Command rows ────────────────────────────────────────────────────────────
 
-test('commands fire once when the beat passes them: palette override set, tempo applied, brightness applied, goto jumps', () => {
+test('commands execute once at each crossing', () => {
   const r = rig();
   r.s.load(sequence({
     clips: [clip('A', 'a', 0, 16)],
@@ -312,7 +463,7 @@ test('commands fire once when the beat passes them: palette override set, tempo 
   r.at(101.9);
   assert.equal(r.applied.length, 1);
   r.at(102.25);
-  assert.deepEqual(r.applied.at(-1), { paletteOverride: PALETTE_HEX.redCyan });
+  assert.deepEqual(r.applied.at(-1), { paletteOverride: PALETTE_HEX.redCyan, paletteOverrideId: 'redCyan' });
   r.at(102.5);
   assert.equal(r.applied.length, 2, 'passed once, fired once');
   // Two on one beat, crossed in one frame: in their order, applied together.
@@ -325,7 +476,7 @@ test('commands fire once when the beat passes them: palette override set, tempo 
   // The way back over 2 is a new pass: the palette goes on again. The tempo
   // and the master at 3 fire too, but are already what they set: no write.
   r.at(107.5);
-  assert.deepEqual(r.applied.slice(3), [{ paletteOverride: PALETTE_HEX.redCyan }]);
+  assert.deepEqual(r.applied.slice(3), [{ paletteOverride: PALETTE_HEX.redCyan, paletteOverrideId: 'redCyan' }]);
   r.at(108.5);
   assert.equal(r.applied.length, 4);
   assert.equal(r.s.frame(reading(108.5)).transport.generation, gen);
@@ -349,7 +500,7 @@ test('commands fire once when the beat passes them: palette override set, tempo 
   assert.equal(long.s.status().error, null);
 });
 
-test('a goto that comes straight back to itself stops the sequence with an error, not a hang', () => {
+test('goto cycles stop with a recoverable error', () => {
   const r = rig();
   r.s.load(sequence({
     clips: [clip('A', 'a', 0, 8)],
@@ -363,12 +514,58 @@ test('a goto that comes straight back to itself stops the sequence with an error
   assert.equal(st.playing, false);
   assert.equal(st.stopped, 'hold');
   assert.equal(st.error.code, 'goto-cycle');
-  assert.match(st.error.message, /there|back/);
+});
+
+test('free-clock ownership follows sequence transport state', () => {
+  const told = [];
+  const r = rig({
+    onRun: () => {
+      const st = r.s.status();
+      assert.equal(r.s.runs(), st.playing || st.paused, 'what it tells is what its status says');
+      told.push(r.s.runs());
+    },
+  });
+  r.s.load(sequence({ clips: [clip('A', 'a', 0, 8)] }));
+  assert.equal(r.s.runs(), false, 'loaded is not moving');
+  r.s.play();
+  assert.deepEqual(told, [true], 'play moves it at once, before the next frame');
+  r.at(100);
+  r.s.pause();
+  assert.equal(r.s.runs(), true, 'paused, its clips play their laps on');
+  r.at(101);
+  r.s.play();
+  r.at(102);
+  assert.deepEqual(told, [true], 'pause and resume: still moving, nothing to tell');
+  r.s.stop();
+  assert.deepEqual(told, [true, false]);
+  r.at(103);
+  r.s.stop({ blackout: true });
+  r.at(104);
+  assert.deepEqual(told, [true, false], 'stopped over black: still standing');
+  // Another sequence loaded stops the one playing; an edit of it does not.
+  r.s.play();
+  r.s.load(sequence({ name: 'Edited', clips: [clip('A', 'a', 0, 8)] }));
+  assert.equal(r.s.runs(), true);
+  r.s.load(sequence({ id: 'set-2', clips: [clip('A', 'a', 0, 8)] }));
+  assert.deepEqual(told, [true, false, true, false]);
+  r.s.play();
+  r.s.unload();
+  assert.deepEqual(told, [true, false, true, false, true, false]);
+  // Stopped by its own goto cycle, within a frame.
+  r.s.load(sequence({
+    clips: [clip('A', 'a', 0, 8)],
+    commands: [{ id: 'there', atBeat: 4, type: 'goto', value: 2 }, { id: 'back', atBeat: 2, type: 'goto', value: 4 }],
+  }));
+  r.s.play();
+  r.at(200);
+  r.at(204.5);
+  assert.equal(r.s.status().error.code, 'goto-cycle');
+  assert.deepEqual(told, [true, false, true, false, true, false, true, false]);
 });
 
 // ── The traversal budget ────────────────────────────────────────────────────
 
-test('a frame does at most 4096 commands, wraps and row advances; the 4097th stops the sequence where it was, and play carries on from there', () => {
+test('frame traversal limits preserve the next unprocessed operation', () => {
   assert.equal(MAX_FRAME_OPERATIONS, 4096);
   const commands = (n) => Array.from({ length: n }, (_, i) => ({ id: `c${i}`, atBeat: 1, type: 'brightness', value: i % 200 }));
   // Exactly 4096 on one beat: all of them, the last value on.
@@ -430,7 +627,7 @@ test('a frame does at most 4096 commands, wraps and row advances; the 4097th sto
 
 // ── Automation ──────────────────────────────────────────────────────────────
 
-test('automation sine over 8 beats between min and max; tempo automation counts seconds', () => {
+test('automation samples its configured clock', () => {
   const a = (mode, extra = {}) => ({ mode, period: 8, min: 0, max: 100, growing: true, ...extra });
   // Light DJ's timer shapes, from the current value 25, rising.
   const triangle = [0, 4, 8, 12].map((e) => automationValue(a('triangle'), 25, e));
@@ -596,7 +793,7 @@ function stage() {
   };
 }
 
-test('pause holds the clip looping; stop holds the last frame; stop with blackout sends black', () => {
+test('pause and stop retain their specified output', () => {
   const show = stage();
   const r = rig();
   // A on 10 and 11 for four beats, looping every two; B after it; a command at 5.
@@ -627,7 +824,10 @@ test('pause holds the clip looping; stop holds the last frame; stop with blackou
   show(r.s, 110.5);
   assert.deepEqual(r.applied, [{ masterDimmer: 1 }], 'beat 5 is reached three and a half beats later');
 
-  // Stop: the last picture stays, whatever the clip would have done; masters and voices still act.
+});
+
+test('stopped frames retain master and voice control', () => {
+  const show = stage();
   const s2 = rig();
   s2.s.load(sequence({ clips: [clip('A', 'a', 0, 8, { effect: PROBE, targets: [10, 11] })] }));
   s2.s.play();
@@ -652,7 +852,9 @@ test('pause holds the clip looping; stop holds the last frame; stop with blackou
   s2.s.load(sequence({ id: 'set-2', clips: [] }));
   assert.equal(show(s2.s, 235)[10].r, 255);
   assert.equal(s2.s.status().stopped, null);
-  // Play after a stop starts from the top.
+});
+
+test('playing after stop restarts from beat zero', () => {
   const s3 = rig();
   s3.s.load(sequence({ clips: [clip('A', 'a', 0, 8)] }));
   s3.s.play();
@@ -664,7 +866,135 @@ test('pause holds the clip looping; stop holds the last frame; stop with blackou
   assert.equal(s3.at(310), 0);
 });
 
-test('play after a pause re-bases the transport and starts nothing again: the lap playing plays on', () => {
+// ── The end ─────────────────────────────────────────────────────────────────
+
+test('non-looping arrangements finish at their end bar', () => {
+  const show = stage();
+  const r = rig();
+  r.s.load(sequence({
+    clips: [clip('A', 'a', 0, 5.5, { targets: [10] })],
+    automation: { tempo: null, brightness: { mode: 'sine', period: 8, min: 0, max: 255, growing: true } },
+  }));
+  r.s.play();
+  assert.equal(r.at(100), 0);
+  assert.equal(r.at(107.5), 7.5, 'the bar of 4/4 its clip ends in plays out');
+  assert.equal(r.s.status().playing, true);
+  const patches = r.applied.length;
+  assert.equal(r.at(108), null, 'at its end: no transport, nothing held');
+  const { playing, paused, stopped, ended, beat, bar, lanes } = r.s.status();
+  assert.deepEqual({ playing, paused, stopped, ended, beat, bar, lanes }, { playing: false, paused: false, stopped: null, ended: true, beat: 0, bar: 1, lanes: [{ id: 'a', clip: null }] });
+  assert.equal(show(r.s, 109)[10].r, 255, 'the look plays');
+  r.at(114);
+  assert.equal(r.applied.length, patches, 'its automation ended with it');
+  // Stop has nothing to hold; play starts from the top.
+  r.s.stop();
+  assert.equal(r.s.status().stopped, null);
+  r.s.play();
+  assert.equal(r.at(200), 0);
+  assert.equal(r.top(), 'A');
+  assert.equal(r.s.status().ended, false);
+
+});
+
+test('commands extend an arrangement to their ending bar', () => {
+  const long = rig();
+  long.s.load(sequence({ clips: [clip('A', 'a', 0, 66.5)], commands: [{ id: 'dim', atBeat: 70, type: 'brightness', value: 9 }] }));
+  long.s.play();
+  long.at(0);
+  assert.equal(long.at(71.5), 71.5);
+  assert.deepEqual(long.applied.at(-1), { masterDimmer: 9 }, 'the command past the clips runs');
+  assert.equal(long.at(72), null);
+});
+
+test('arrangement end uses its own time signature', () => {
+  const waltz = rig();
+  waltz.s.load(sequence({ timeSignature: { beats: 3, unit: 4 }, clips: [clip('A', 'a', 0, 4)] }));
+  waltz.s.play();
+  waltz.at(0);
+  assert.equal(waltz.at(5.5), 5.5);
+  assert.equal(waltz.at(6), null);
+});
+
+test('an empty arrangement ends immediately', () => {
+  const empty = rig();
+  empty.s.load(sequence());
+  empty.s.play();
+  assert.equal(empty.at(0), null);
+  assert.equal(empty.s.status().ended, true);
+
+});
+
+test('recording holds an arrangement past its end', () => {
+  const take = rig();
+  take.s.load(sequence({ clips: [clip('A', 'a', 0, 4)] }));
+  take.s.startRecording({ mode: 'overdub', countInBeats: 0, quantise: 1 });
+  take.s.play();
+  take.at(0);
+  assert.equal(take.at(20), 20);
+  assert.equal(take.s.status().playing, true);
+  take.s.stopRecording(false);
+  assert.equal(take.at(21), null);
+  assert.equal(take.s.status().ended, true);
+
+});
+
+test('a goto command at the end keeps the arrangement playing', () => {
+  const round = rig();
+  round.s.load(sequence({ clips: [clip('A', 'a', 0, 4)], commands: [{ id: 'back', atBeat: 64, type: 'goto', value: 0 }] }));
+  round.s.play();
+  round.at(0);
+  assert.equal(round.at(64.5), 0.5);
+});
+
+test('seeking beyond a loop allows the arrangement to finish', () => {
+  const looped = rig();
+  looped.s.load(sequence({ clips: [clip('A', 'a', 0, 4), clip('B', 'a', 8, 4)], loop: { on: true, startBeat: 0, endBeat: 4 } }));
+  looped.s.play();
+  looped.at(0);
+  assert.equal(looped.at(301), 1);
+  looped.s.seek(5);
+  assert.equal(looped.at(302), 5, 'behind the loop now');
+  assert.equal(looped.at(308), 11);
+  assert.equal(looped.at(309), null, 'and on to the end');
+
+});
+
+test('seeking updates the ended state', () => {
+  const seek = rig();
+  seek.s.load(sequence({ clips: [clip('A', 'a', 0, 4)] }));
+  seek.s.play();
+  seek.at(0);
+  seek.s.seek(80);
+  assert.equal(seek.at(1), null);
+  assert.equal(seek.s.status().ended, true);
+  // A seek forgets that it ended.
+  seek.s.seek(2);
+  assert.deepEqual([seek.s.status().ended, seek.s.status().beat], [false, 2]);
+});
+
+test('an autoplay playlist ends after its last row', () => {
+  const r = rig();
+  r.s.load(sequence(ROWS));
+  r.s.play();
+  r.at(100);
+  assert.equal(r.at(111.5), 11.5);
+  assert.equal(r.top(), 'C');
+  assert.equal(r.at(112), null);
+  assert.equal(r.s.status().ended, true);
+});
+
+for (const [name, options] of [['repeat', { autoplay: false }], ['shuffle', { shuffle: true }]]) {
+  test(`a playlist in ${name} mode continues past its last row`, () => {
+    const on = rig();
+    on.s.load(sequence({ ...ROWS, options }));
+    on.s.play();
+    on.at(100);
+    assert.notEqual(on.at(140), null, JSON.stringify(options));
+    assert.equal(on.s.status().playing, true);
+  });
+}
+
+test('resuming rebases transport without restarting clip generations', () => {
   const show = stage();
   const r = rig();
   r.s.load(sequence({ clips: [clip('A', 'a', 0, 8, { effect: PROBE, targets: [10] })] }));
@@ -697,7 +1027,7 @@ test('a renderer that never saw the sequence play holds the stop\'s own moment, 
   assert.deepEqual(show(r.s, 410), first);
 });
 
-test('a held picture is a still: a clip that drove a fixture\'s strobe channel leaves it closed once stopped', () => {
+test('stopped pictures close fixture strobe channels', () => {
   const show = stage();
   const r = rig();
   const acknowledged = { safety: { hdFlashIntervalMs: 350, acknowledged: true } };
@@ -743,7 +1073,7 @@ test('resync to the bar re-bases the transport', () => {
   assert.throws(() => r.s.resync('phrase'), (err) => err.status === 400);
 });
 
-test('a jump of the music\'s clock re-bases the sequence: it carries on from where it was, replaying nothing', () => {
+test('music-clock jumps rebase without replaying commands', () => {
   const r = rig();
   r.s.load(sequence({ clips: [clip('A', 'a', 0, 64)], commands: [{ id: 'm', atBeat: 20, type: 'brightness', value: 3 }] }));
   r.s.play();
@@ -760,7 +1090,7 @@ test('a jump of the music\'s clock re-bases the sequence: it carries on from whe
 
 // ── Admission and loading ───────────────────────────────────────────────────
 
-test('play refuses a sequence holding a clip that needs the photosensitivity acknowledgement (409); nothing starts', () => {
+test('rapid clips prevent unacknowledged playback', () => {
   const FAST = validateSpec({ kind: 'ldj.StrobeCycle', params: { cadence: 0.25 } });
   const refused = [];
   const r = rig({ admit: (spec) => { if (spec.kind === 'ldj.StrobeCycle') { refused.push(spec); const e = new Error('photosensitivity acknowledgement required'); e.status = 409; throw e; } } });
@@ -780,11 +1110,12 @@ test('play refuses a sequence holding a clip that needs the photosensitivity ack
   assert.equal(ok.s.status().playing, true);
 });
 
-test('a start whose settings cannot go on starts nothing, and a later play starts it whole', () => {
+test('failed start settings leave the sequence retryable', () => {
   let fail = true;
-  const r = rig({ musicMode: () => { if (fail) throw new Error('disk full'); } });
+  const failure = new Error('write failed');
+  const r = rig({ musicMode: () => { if (fail) throw failure; } });
   r.s.load(sequence({ clips: [clip('A', 'a', 0, 8)], musicMode: 'tempo' }));
-  assert.throws(() => r.s.play(), /disk full/);
+  assert.throws(() => r.s.play(), (err) => err === failure);
   assert.equal(r.s.status().playing, false);
   assert.equal(r.at(100), null, 'nothing queued to start');
   fail = false;
@@ -792,7 +1123,7 @@ test('a start whose settings cannot go on starts nothing, and a later play start
   assert.equal(r.at(101), 0);
 });
 
-test('an edit of the sequence playing plays on; another sequence loaded stops the one playing', () => {
+test('editing the playing sequence preserves playback', () => {
   const r = rig();
   r.s.load(sequence({ clips: [clip('A', 'a', 0, 64)] }));
   r.s.play();
@@ -808,7 +1139,7 @@ test('an edit of the sequence playing plays on; another sequence loaded stops th
   assert.equal(r.s.status().loaded.id, 'set-2');
 });
 
-test('an edit while the sequence stands on a command\'s beat runs nothing of that beat again: paused on it, or stopped on it by the budget', () => {
+test('edits at a held command beat do not replay it', () => {
   // Paused right on beat 4 after a seek: its two commands ran with the seek.
   const r = rig({ master: 255 });
   const at4 = [{ id: 'pal', atBeat: 4, type: 'palette', value: 'redCyan' }, { id: 'dim', atBeat: 4, type: 'brightness', value: 7 }];
@@ -819,7 +1150,7 @@ test('an edit while the sequence stands on a command\'s beat runs nothing of tha
   r.s.seek(4);
   r.s.pause();
   r.at(100.5);
-  assert.deepEqual(r.applied, [{ paletteOverride: PALETTE_HEX.redCyan, masterDimmer: 7 }]);
+  assert.deepEqual(r.applied, [{ paletteOverride: PALETTE_HEX.redCyan, paletteOverrideId: 'redCyan', masterDimmer: 7 }]);
   r.s.load(seq('two'));
   r.live.master = 99;
   r.s.play();
@@ -832,7 +1163,7 @@ test('an edit while the sequence stands on a command\'s beat runs nothing of tha
   r.live.master = 99;
   r.live.bpm = 100;
   r.at(102.5);
-  assert.deepEqual(r.applied.slice(2), [{ paletteOverride: PALETTE_HEX.redCyan, masterDimmer: 7, bpm: 128 }]);
+  assert.deepEqual(r.applied.slice(2), [{ paletteOverride: PALETTE_HEX.redCyan, paletteOverrideId: 'redCyan', masterDimmer: 7, bpm: 128 }]);
 
   // Stopped by the budget on a loop's wrap, its start's three commands run this time round.
   const h = rig({ master: 255, bpm: 120 });
@@ -852,13 +1183,13 @@ test('an edit while the sequence stands on a command\'s beat runs nothing of tha
   h.at(100.5);
   assert.deepEqual(h.applied.slice(n), [], 'on from the wrap: none of the three again');
   h.at(100.5 + 2e-6);
-  assert.deepEqual(h.applied.slice(n), [{ paletteOverride: PALETTE_HEX.redCyan, masterDimmer: 7, bpm: 128 }], 'the next time round, all three');
+  assert.deepEqual(h.applied.slice(n), [{ paletteOverride: PALETTE_HEX.redCyan, paletteOverrideId: 'redCyan', masterDimmer: 7, bpm: 128 }], 'the next time round, all three');
 });
 
-test('the status: what is loaded, playing or paused, the beat and bar, the loop and the clip on each lane', () => {
+test('status identifies the active sequence position and clips', () => {
   const r = rig();
   assert.deepEqual(r.s.status(), {
-    loaded: null, revision: 0, mode: null, playing: false, paused: false, stopped: null, beat: 0, bar: 1, beatsPerBar: 4, loop: null, lanes: [], error: null,
+    loaded: null, revision: 0, mode: null, playing: false, paused: false, stopped: null, ended: false, beat: 0, bar: 1, beatsPerBar: 4, loop: null, lanes: [], activeClips: [], error: null,
   });
   r.s.load(sequence({
     lanes: [lane('a'), lane('b', { mute: true }), { id: 't', kind: 'track', fixtureId: 3, name: 't', mute: false, solo: false }],
@@ -869,8 +1200,8 @@ test('the status: what is loaded, playing or paused, the beat and bar, the loop 
   r.at(100);
   r.at(102.5);
   assert.deepEqual(r.s.status(), {
-    loaded: { id: 'set-1', name: 'Set one' }, revision: 1, mode: 'arrangement', playing: true, paused: false, stopped: null,
-    beat: 2.5, bar: 1, beatsPerBar: 3, loop: null, lanes: [{ id: 'a', clip: 'A2' }, { id: 'b', clip: null }, { id: 't', clip: null }], error: null,
+    loaded: { id: 'set-1', name: 'Set one' }, revision: 1, mode: 'arrangement', playing: true, paused: false, stopped: null, ended: false,
+    beat: 2.5, bar: 1, beatsPerBar: 3, loop: null, lanes: [{ id: 'a', clip: 'A2' }, { id: 'b', clip: null }, { id: 't', clip: null }], activeClips: [], error: null,
   });
   r.at(104.5);
   assert.deepEqual(r.s.status().lanes, [{ id: 'a', clip: 'A' }, { id: 'b', clip: null }, { id: 't', clip: 'T' }]);
@@ -880,11 +1211,34 @@ test('the status: what is loaded, playing or paused, the beat and bar, the loop 
   assert.equal(r.s.status().loaded, null);
 });
 
+test('stop at the sequence end leaves the transport idle', () => {
+  const r = rig();
+  r.s.load(sequence({ clips: [clip('A', 'a', 0, 4)] }));
+  r.s.play();
+  r.at(100);
+  r.s.stop();
+  r.at(104);
+  assert.equal(r.s.status().ended, true);
+  assert.equal(r.s.status().stopped, null);
+  assert.equal(r.s.status().playing, false);
+});
+
+test('blackout stop at the sequence end holds black', () => {
+  const r = rig();
+  r.s.load(sequence({ clips: [clip('A', 'a', 0, 4)] }));
+  r.s.play();
+  r.at(100);
+  r.s.stop({ blackout: true });
+  r.at(104);
+  assert.equal(r.s.status().ended, false);
+  assert.equal(r.s.status().stopped, 'black');
+});
+
 // ── The worker ──────────────────────────────────────────────────────────────
 
 const WORKER = path.join(import.meta.dirname, '..', '..', 'src', 'server', 'engine-worker.ts');
 
-test('the worker plays a pause and a stop from the snapshot, and takes a new table only with the snapshot that names it', async () => {
+test('worker snapshots pair transport with the matching sequence table', async () => {
   const shared = universes.allocateShared();
   const w = new Worker(WORKER, { workerData: { shared, epochMs: hrtimeMs(), periodMs: FRAME_MS } });
   let frames = 0;
@@ -945,7 +1299,7 @@ test('the worker plays a pause and a stop from the snapshot, and takes a new tab
   }
 });
 
-test('the beat the last frame was handed is what the detectors look a container\'s child up at, loaded or not', () => {
+test('detector lookups use the last frame beat', () => {
   const { s } = rig();
   assert.ok(Number.isNaN(s.lastBeat()), 'no frame yet, no beat');
   const first = reading(7.25);
@@ -955,4 +1309,43 @@ test('the beat the last frame was handed is what the detectors look a container\
   const next = reading(9.5);
   s.frame(next);
   assert.strictEqual(s.lastBeat(), next.beatPos);
+});
+
+test('replay keeps its initial palette when the old run ends that frame', () => {
+  const r = rig();
+  r.s.load(sequence({
+    clips: [clip('A', 'a', 0, 8)],
+    options: { initialPalette: 'redCyan' },
+    commands: [{ id: 'tail', atBeat: 7.95, type: 'palette', value: 'rainbow' }],
+  }));
+  r.s.play();
+  r.at(100);
+  r.at(107.9);
+  r.s.stop();
+  r.s.play();
+  assert.equal(r.at(108.5), 0);
+  assert.equal(r.s.status().playing, true);
+  assert.deepEqual(r.live.paletteOverride, PALETTE_HEX.redCyan);
+  assert.equal(r.live.paletteOverrideId, 'redCyan');
+});
+
+test('replay restores the previous override when its own run ends', () => {
+  const r = rig();
+  r.live.paletteOverride = ['#123456'];
+  r.s.load(sequence({
+    clips: [clip('A', 'a', 0, 8)],
+    options: { initialPalette: 'redCyan' },
+  }));
+  r.s.play();
+  r.at(100);
+  r.at(107.9);
+  r.s.stop();
+  r.s.play();
+  r.at(108.5);
+  const applied = r.applied.length;
+  r.at(116.5);
+  assert.deepEqual(r.applied.slice(applied), [{
+    paletteOverride: ['#123456'], paletteOverrideId: null,
+  }]);
+  assert.equal(r.s.status().ended, true);
 });

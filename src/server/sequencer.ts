@@ -3,12 +3,12 @@ import crypto from 'node:crypto';
 import { z, ZodError } from 'zod';
 
 // The entry point registers every kind, so a clip's effect validates against it.
-import { BUILTIN_PALETTES, deepFreeze } from '../shared/effects/index.ts';
+import { BUILTIN_PALETTES, FAMILIES, deepFreeze, presetById } from '../shared/effects/index.ts';
 import { pacesOwnFlashes, requiresAcknowledgement, validateSpec } from '../shared/effects/registry.ts';
 import { canonical } from '../shared/effects/layer.ts';
 import { hash01, pickNotLast, seedFrom } from '../shared/effects/hash.ts';
 import { resolvePalette, toHex } from '../shared/effects/palette.ts';
-import { barBeats, playingClips, resyncPosition, selectClips } from '../shared/effects/sequence.ts';
+import { barBeats, playingClips, resyncPosition, selectClips, sequenceEnd } from '../shared/effects/sequence.ts';
 import { validate, ValidationError } from './validation.ts';
 import { safety } from './safety.ts';
 import { lengthBeatsOf } from './voices.ts';
@@ -94,9 +94,10 @@ export interface SequenceFrame { table: SequenceTable | null; transport: Sequenc
 
 /**
  * The sequencer as the live state carries it (`sequence`): what is loaded,
- * whether it plays, is paused or stopped (holding its picture, or black), the
- * beat of the sequence it is on and that beat's bar (counted from 1), the
- * loop region, the clip on top of each lane, and why it stopped by itself.
+ * whether it plays, is paused or stopped (holding its picture, or black) or
+ * played to its end, the beat of the sequence it is on and that beat's bar
+ * (counted from 1), the loop region, the clip on top of each lane, and why
+ * it stopped by itself.
  */
 export interface SequenceStatus {
   loaded: { id: string; name: string } | null;
@@ -105,12 +106,15 @@ export interface SequenceStatus {
   playing: boolean;
   paused: boolean;
   stopped: 'hold' | 'black' | null;
+  /** It played to its end (sequenceEnd) and let go: the next play starts from the top. */
+  ended: boolean;
   beat: number;
   bar: number;
   /** The loaded sequence's bar, in beats (4 with none loaded): what `bar` counts in. */
   beatsPerBar: number;
   loop: Sequence['loop'];
   lanes: { id: string; clip: string | null }[];
+  activeClips: { id: string; laneId: string; lane: string; name: string }[];
   error: SequenceError | null;
   /** Only while a punch recording runs. */
   recording?: RecordingStatus;
@@ -511,7 +515,9 @@ export function automationValue(a: Automation, from: number, elapsed: number): n
 }
 
 /** What the sequence changes on the rig, applied as one patch a frame: the palette override (hex), the tempo, the master. */
-export interface SequencePatch { paletteOverride?: string[]; bpm?: number; masterDimmer?: number }
+export interface SequencePatch { paletteOverride?: string[] | null; paletteOverrideId?: string | null; bpm?: number; masterDimmer?: number }
+
+type PaletteState = { paletteOverride: string[] | null; paletteOverrideId: string | null };
 
 // One automation playing: its settings, the value it started from, and how
 // far it has come (beats for the master, counted frame by frame so a tempo
@@ -557,6 +563,7 @@ type Sorted = Command & { order: number };
 export interface SequencerOptions {
   /** A clip's preset by id (the effect library's resolve). */
   resolve: EffectResolver;
+  presetName?: (id: string) => string;
   /** A palette by id as the colours it puts on now (hex), or null for none. Built-in palettes when left out. */
   palette?: (id: string) => string[] | null;
   /** Put on what the sequence changes: the main thread's patch, from the sequence (never as a hand on a control). */
@@ -566,7 +573,7 @@ export interface SequencerOptions {
    * and the palette override on it (hex, null for none) when the rig can say:
    * the random palette on loop picks another one.
    */
-  current?: () => { masterDimmer: number; bpm: number; paletteOverride?: readonly string[] | null };
+  current?: () => { masterDimmer: number; bpm: number; paletteOverride?: readonly string[] | null; paletteOverrideId?: string | null };
   /** Set the audio mode a sequence asks for when it starts. */
   musicMode?: (mode: AudioMode) => void;
   /** Throws (409) for an effect that may not play yet: the photosensitivity gate. */
@@ -583,6 +590,8 @@ export interface SequencerOptions {
   pad?: (bank: number, slot: number) => PadTake | null;
   /** The conductor's beat now, which a take's count-in counts on. The last frame's when left out. */
   beat?: () => number;
+  /** Told when the transport starts or stops moving (runs()): the free clock runs for it (state.ts). */
+  onRun?: () => void;
 }
 
 const EPS = 1e-9;
@@ -594,9 +603,10 @@ function builtinPalette(id: string): string[] | null {
 
 export class Sequencer {
   declare _resolve: EffectResolver;
+  declare _presetName: (id: string) => string;
   declare _paletteOf: (id: string) => string[] | null;
   declare _apply: (patch: SequencePatch) => void;
-  declare _current: () => { masterDimmer: number; bpm: number; paletteOverride?: readonly string[] | null };
+  declare _current: () => { masterDimmer: number; bpm: number; paletteOverride?: readonly string[] | null; paletteOverrideId?: string | null };
   declare _musicMode: (mode: AudioMode) => void;
   declare _admit: (spec: EffectSpec) => void;
   declare _now: () => number;
@@ -604,6 +614,9 @@ export class Sequencer {
   declare _loaded: Sequence | null;
   declare _key: string | null;
   declare _table: SequenceTable | null;
+  // Where the loaded sequence ends when no loop brings it round.
+  declare _end: number | null;
+  declare _ended: boolean;
   declare _revision: number;
   declare _commands: Sorted[];
   // What was asked for, at once (play twice is play once); and what the
@@ -623,6 +636,8 @@ export class Sequencer {
   declare _gotos: Map<string, number>;
   declare _patch: SequencePatch;
   declare _palette: string | null;
+  declare _paletteBefore: PaletteState | null;
+  declare _paletteApplied: PaletteState | null;
   declare _automation: { brightness: AutomationRun | null; tempo: AutomationRun | null };
   declare _last: MusicalTime | null;
   declare _clock: () => number;
@@ -631,16 +646,22 @@ export class Sequencer {
   declare _pattern: (id: string) => SequencePattern | null;
   declare _pad: (bank: number, slot: number) => PadTake | null;
   declare _record: Recording | null;
+  declare _onRun: () => void;
+  // What runs() was when last told.
+  declare _told: boolean;
 
-  constructor({ resolve, palette = builtinPalette, apply = () => {}, current = () => ({ masterDimmer: 255, bpm: 120 }),
+  constructor({ resolve, presetName = (id) => presetById(id)?.name ?? id, palette = builtinPalette, apply = () => {}, current = () => ({ masterDimmer: 255, bpm: 120 }),
     musicMode = () => {}, admit = (spec) => safety.requireAcknowledged(spec), now = () => performance.now(), seed,
-    fixtureIds = () => [], pattern = () => null, pad = () => null, beat }: SequencerOptions) {
+    fixtureIds = () => [], pattern = () => null, pad = () => null, beat, onRun = () => {} }: SequencerOptions) {
+    this._onRun = onRun;
+    this._told = false;
     this._fixtureIds = fixtureIds;
     this._clock = beat ?? (() => this._last?.beatPos ?? 0);
     this._pattern = pattern;
     this._pad = pad;
     this._record = null;
     this._resolve = resolve;
+    this._presetName = presetName;
     this._paletteOf = palette;
     this._apply = apply;
     this._current = current;
@@ -651,8 +672,11 @@ export class Sequencer {
     this._loaded = null;
     this._key = null;
     this._table = null;
+    this._end = null;
     this._revision = 0;
     this._commands = [];
+    this._paletteBefore = null;
+    this._paletteApplied = null;
     this._release();
     this._last = null;
     this._spent = 0;
@@ -687,10 +711,12 @@ export class Sequencer {
     this._loaded = deepFreeze(seq);
     this._key = key;
     this._table = deepFreeze({ ...table, revision: this._revision });
+    this._end = sequenceEnd(seq);
     const commands = this._commands;
     this._commands = sortCommands(seq.commands);
     if (!same) this._release();
     else this._edited(before!, commands);
+    this._tell();
     return structuredClone(this._loaded!);
   }
 
@@ -701,9 +727,11 @@ export class Sequencer {
     this._loaded = null;
     this._key = null;
     this._table = null;
+    this._end = null;
     this._commands = [];
     this._revision++;
     this._release();
+    this._tell();
   }
 
   /** The loaded sequence as a copy, or null. */
@@ -734,6 +762,7 @@ export class Sequencer {
 
   // Back to nothing playing: no transport, no held picture, no automation.
   _release(): void {
+    this._restorePalette();
     this._mode = 'idle';
     this._asked = null;
     this._run = 'idle';
@@ -744,6 +773,7 @@ export class Sequencer {
     this._hold = null;
     this._stop = null;
     this._error = null;
+    this._ended = false;
     this._palette = null;
     this._automation = { brightness: null, tempo: null };
     this._transport = null;
@@ -800,6 +830,7 @@ export class Sequencer {
     this._mode = 'playing';
     this._asked = null;
     this._ops.push({ type: 'start', real });
+    this._tell();
   }
 
   /** Pause: the clips on top stay, playing their own laps on; the transport, its commands and its selection wait. */
@@ -822,10 +853,12 @@ export class Sequencer {
     if (this._mode === 'idle' && !blackout) return;
     // Stopped by its own error, a stop by hand still lets go of where it stopped.
     if (this._mode === 'stopped' && !this._error && (this._asked === mode || !blackout)) return;
+    this._restorePalette();
     this._mode = 'stopped';
     this._asked = mode;
     this._ops.push({ type: 'stop', mode });
     if (this._run !== 'playing' && this._run !== 'paused') this._applyQueued(null);
+    this._tell();
   }
 
   /** To a beat of the sequence: every clip starts again there; the commands on that beat run, none before it. */
@@ -888,7 +921,8 @@ export class Sequencer {
   }
 
   /** A hand on the master or the tempo: the automation of that one ends; the sequence's own samples never come here. */
-  handEdit({ masterDimmer = false, bpm = false }: { masterDimmer?: boolean; bpm?: boolean }): void {
+  handEdit({ masterDimmer = false, bpm = false, paletteOverride = false }: { masterDimmer?: boolean; bpm?: boolean; paletteOverride?: boolean }): void {
+    if (paletteOverride) this._paletteBefore = this._paletteApplied = null;
     if (masterDimmer) this._automation.brightness = null;
     if (bpm) this._automation.tempo = null;
   }
@@ -912,7 +946,7 @@ export class Sequencer {
       const colours = this._paletteOf(seq.options.initialPalette);
       if (colours) {
         this._palette = seq.options.initialPalette;
-        this._apply({ paletteOverride: colours });
+        this._applyPalette({ paletteOverride: colours, paletteOverrideId: seq.options.initialPalette });
       }
     }
     if (seq.bpm !== null) this._apply({ bpm: seq.bpm });
@@ -1016,6 +1050,8 @@ export class Sequencer {
     this._flush();
     this._last = reading;
     this._transport = this._transportNow(reading);
+    // It may have stopped by itself.
+    this._tell();
     return { table: this._table, transport: this._transport };
   }
 
@@ -1049,12 +1085,15 @@ export class Sequencer {
   _applyOp(op: Op, reading: MusicalTime | null): void {
     switch (op.type) {
       case 'start': {
+        this._mode = 'playing';
+        this._asked = null;
         if (op.real) {
           this._generation++;
           this._cursor = { pos: this._cursor.pos, traversal: 0, next: this._firstFrom(this._cursor.pos, true) };
           this._automation = { brightness: newAutomation(this._loaded!.automation.brightness), tempo: newAutomation(this._loaded!.automation.tempo) };
         }
         this._error = null;
+        this._ended = false;
         this._stop = null;
         this._hold = null;
         this._run = 'playing';
@@ -1064,6 +1103,7 @@ export class Sequencer {
       }
       case 'resume': {
         if (this._run !== 'paused') return;
+        this._mode = 'playing';
         const hold = this._hold!;
         this._hold = null;
         this._run = 'playing';
@@ -1073,15 +1113,21 @@ export class Sequencer {
       }
       case 'pause': {
         if (this._run !== 'playing') return;
+        this._mode = 'paused';
         this._run = 'paused';
         this._hold = { position: this._cursor.pos, traversal: this._cursor.traversal, beat: reading!.beatPos };
         this._anchor = null;
         return;
       }
       case 'stop': {
+        delete this._patch.paletteOverride;
+        delete this._patch.paletteOverrideId;
         // A hold with nothing played to hold, or over black, leaves it as it was.
         if (op.mode === 'hold' && (this._run === 'idle' || (this._run === 'stopped' && this._stop?.mode === 'black'))) return;
         const paused = this._run === 'paused';
+        this._ended = false;
+        this._mode = 'stopped';
+        this._asked = op.mode;
         this._stop = { mode: op.mode, position: paused ? this._hold!.position : this._cursor.pos, traversal: paused ? this._hold!.traversal : this._cursor.traversal };
         this._run = 'stopped';
         this._hold = null;
@@ -1096,6 +1142,7 @@ export class Sequencer {
         const to = op.to(from);
         if (to === null) return;
         this._error = null;
+        this._ended = false;
         // Its own beat's commands are still to run: now while playing, on resuming while paused.
         this._cursor = { pos: to, traversal: 0, next: this._firstFrom(to, true) };
         if (this._run === 'playing') {
@@ -1141,12 +1188,33 @@ export class Sequencer {
     this._automation = { brightness: null, tempo: null };
   }
 
+  // Played to its end: the transport lets go, holding nothing (no clip
+  // covers a fixture there, so the look plays on), its automation ends, and
+  // the next play starts from the top.
+  _finish(): void {
+    delete this._patch.paletteOverride;
+    delete this._patch.paletteOverrideId;
+    // A queued replay already owns its initial palette.
+    if (!this._ops.some((op) => op.type === 'start' && op.real)) this._restorePalette();
+    this._ended = true;
+    this._run = 'idle';
+    // Queued controls run next; an ordinary stop cannot hold an ended picture.
+    this._mode = 'idle';
+    this._asked = null;
+    this._anchor = null;
+    this._hold = null;
+    this._stop = null;
+    this._automation = { brightness: null, tempo: null };
+    this._cursor = { pos: 0, traversal: 0, next: 0 };
+  }
+
   /**
    * Walk the sequence from where it is to `beats` past the anchor's beat:
    * the commands on the way run once each, in beat and list order (a loop's
    * end is never reached, its start is); a goto jumps and carries on from
-   * its destination; a playlist moves its rows on. Returns false when the
-   * walk stopped the sequence.
+   * its destination; a playlist moves its rows on; with no loop ahead the
+   * sequence ends at its end. Returns false when the walk stopped or ended
+   * the sequence.
    */
   _walk(beats: number): boolean {
     const seq = this._loaded!;
@@ -1161,7 +1229,7 @@ export class Sequencer {
       const wraps = !!loop && loop.on && loop.endBeat - loop.startBeat > 0 && c.pos < loop.endBeat - EPS;
       let end = c.pos + travel;
       // What the way meets first: the loop's end, a row's end or start, else nothing.
-      let event: 'wrap' | 'shuffle' | 'enter' | 'advance' | null = null;
+      let event: 'wrap' | 'shuffle' | 'enter' | 'advance' | 'end' | null = null;
       let leaving = -1;
       if (wraps && end >= loop.endBeat - EPS) { end = loop.endBeat; event = 'wrap'; }
       if (playlist && !a.rowLoop) {
@@ -1178,6 +1246,10 @@ export class Sequencer {
           if (nextRow && nextRow.startBeat <= end + EPS && (event === null || nextRow.startBeat < end - EPS)) { end = nextRow.startBeat; event = 'enter'; }
         }
       }
+      // With no loop ahead, the sequence's end, unless something else comes
+      // first; while a take runs there is none, for the take to land in.
+      const last = this._record ? Infinity : this._end!;
+      if (!wraps && end >= last - EPS && (event === null || last < end - EPS)) { end = Math.max(c.pos, last); event = 'end'; }
       // The commands up to there: past an end that is never reached (a wrap,
       // a shuffled row's end) only those before it.
       const exclusive = event === 'wrap' || event === 'shuffle';
@@ -1211,7 +1283,7 @@ export class Sequencer {
       }
       if (this._anchor !== a) continue;
       // Stopped short of a wrap or a row's end, the walk meets it again from here.
-      if (event !== null && !this._spend()) return false;
+      if (event !== null && event !== 'end' && !this._spend()) return false;
       a.walked += end - c.pos;
       // Off this beat, what was done on it is behind.
       if (end !== c.pos) c.done = null;
@@ -1220,6 +1292,10 @@ export class Sequencer {
         // A clock that stepped back a hair moves nothing back: the walk waits for it.
         a.walked = Math.max(a.walked, target);
         return true;
+      }
+      if (event === 'end') {
+        this._finish();
+        return false;
       }
       if (event === 'wrap') {
         c.pos = loop!.startBeat;
@@ -1251,6 +1327,7 @@ export class Sequencer {
       if (!colours) return;
       this._palette = cmd.value;
       this._patch.paletteOverride = colours;
+      this._patch.paletteOverrideId = cmd.value;
     } else if (cmd.type === 'tempo') {
       this._automation.tempo = null;
       this._patch.bpm = cmd.value;
@@ -1265,14 +1342,17 @@ export class Sequencer {
   // the one the sequence last put on.
   _randomPalette(): void {
     const ids = BUILTIN_PALETTES.map((p) => p.id);
-    const live = this._current().paletteOverride;
-    const on = live === undefined ? this._palette : live === null ? null : ids.find((id) => samePalette(this._paletteOf(id), live)) ?? null;
+    const current = this._current();
+    const live = current.paletteOverride;
+    const on = live === undefined ? this._palette : live === null ? null
+      : current.paletteOverrideId ?? ids.find((id) => samePalette(this._paletteOf(id), live)) ?? null;
     const now = on === null ? null : ids.indexOf(on);
     const id = ids[pickNotLast(this._rng.seed, this._rng.iter++, ids.length, now, PALETTE_KEY)];
     const colours = this._paletteOf(id);
     if (!colours) return;
     this._palette = id;
     this._patch.paletteOverride = colours;
+    this._patch.paletteOverrideId = id;
   }
 
   // ── Automation and what goes on ───────────────────────────────────────────
@@ -1318,7 +1398,34 @@ export class Sequencer {
     const live = this._current();
     if (patch.masterDimmer === live.masterDimmer) delete patch.masterDimmer;
     if (patch.bpm === live.bpm) delete patch.bpm;
-    if (Object.keys(patch).length) this._apply(patch);
+    if (Object.keys(patch).length) this._applyPalette(patch);
+  }
+
+  _applyPalette(patch: SequencePatch): void {
+    if (patch.paletteOverride !== undefined) {
+      const live = this._current();
+      this._paletteBefore ??= {
+        paletteOverride: live.paletteOverride ? [...live.paletteOverride] : null,
+        paletteOverrideId: live.paletteOverrideId ?? null,
+      };
+      this._paletteApplied = { paletteOverride: patch.paletteOverride, paletteOverrideId: patch.paletteOverrideId ?? null };
+    }
+    this._apply(patch);
+  }
+
+  _restorePalette(): void {
+    if (this._patch) {
+      delete this._patch.paletteOverride;
+      delete this._patch.paletteOverrideId;
+    }
+    const before = this._paletteBefore;
+    const applied = this._paletteApplied;
+    this._paletteBefore = this._paletteApplied = null;
+    if (!before || !applied) return;
+    const live = this._current();
+    // A manual palette takes ownership, including reselecting the same colours.
+    if ((live.paletteOverrideId === undefined || live.paletteOverrideId === applied.paletteOverrideId) && live.paletteOverride
+      && samePalette(applied.paletteOverride, live.paletteOverride)) this._apply(before);
   }
 
   _transportNow(reading: MusicalTime): SequenceTransport | null {
@@ -1333,6 +1440,22 @@ export class Sequencer {
   }
 
   // ── What the rest of the server reads ─────────────────────────────────────
+
+  /**
+   * Whether the transport moves: playing, or paused with its clips playing
+   * their laps on. Asked for counts at once, as the status says; a stopped
+   * sequence's picture stands still.
+   */
+  runs(): boolean {
+    return this._mode === 'playing' || this._mode === 'paused';
+  }
+
+  _tell(): void {
+    const runs = this.runs();
+    if (runs === this._told) return;
+    this._told = runs;
+    this._onRun();
+  }
 
   /** The beat the last frame was handed (NaN before the first): the voices' containers are looked up there too. */
   lastBeat(): number {
@@ -1624,14 +1747,28 @@ export class Sequencer {
       playing: this._mode === 'playing',
       paused: this._mode === 'paused',
       stopped: this._mode === 'stopped' ? this._asked : null,
+      ended: this._mode === 'idle' && this._ended,
       beat,
       bar,
       beatsPerBar: seq ? barBeats(seq.timeSignature) : 4,
       loop: seq?.loop ? { ...seq.loop } : null,
       lanes: seq ? seq.lanes.map((l) => ({ id: l.id, clip: tops.get(l.id) ?? null })) : [],
+      activeClips: shows ? this._activeClips(where) : [],
       error: this._error ? { ...this._error } : null,
       ...(this._record ? { recording: this.recording()! } : {}),
     };
+  }
+
+  _activeClips(position: number): SequenceStatus['activeClips'] {
+    const { winners } = selectClips(this._table!, position, this._fixtureIds());
+    return [...new Set(winners)].filter((index) => index >= 0).map((index) => {
+      const clip = this._loaded!.clips[index];
+      const lane = this._loaded!.lanes.find((entry) => entry.id === clip.laneId)!;
+      const kind = this._table!.clips[index].spec.kind;
+      const name = clip.presetId ? this._presetName(clip.presetId)
+        : presetById(kind)?.name ?? FAMILIES.find((family) => family.kinds.some((entry) => entry.kind === kind))?.name ?? clip.id;
+      return { id: clip.id, laneId: lane.id, lane: lane.name, name };
+    });
   }
 
   // Per lane, the clip on top of it at a position (a later start, then later in the list).

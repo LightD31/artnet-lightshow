@@ -52,7 +52,7 @@ function bothModes(kind, room, options, ms = 4000) {
 // Two callbacks of TrueStrobe: on at 0, off at 50 ms, then nothing.
 const ONE_FLASH = { iterations: 2 };
 
-test('an isolated hard flash on a Hue lamp is full, then 148 and 40 of 255 at 100 and 200 ms, held there', () => {
+test("Hue hard flashes decay to 148 then 40 after 100 and 200 ms", () => {
   const h = instance('ldj.TrueStrobe', row(1), { params: ONE_FLASH, palette: [CYAN] });
   const levels = [0, 50, 100, 200, 600].map((t) => h.draw(t));
   assert.deepStrictEqual(levels.map((out) => Math.round(255 * out[0].level)), [255, huePulseLevel(50), 148, 40, 40]);
@@ -62,7 +62,7 @@ test('an isolated hard flash on a Hue lamp is full, then 148 and 40 of 255 at 10
   assert.deepStrictEqual([0, 25, 50, 100].map((t) => hard.draw(t, 'flash')[0].level), [1, 1, 0, 0]);
 });
 
-test('TrueStrobe keeps ten flashes a second on every lamp in flash mode; a Hue lamp pulsing restarts on each real flash, never on a render', () => {
+test("TrueStrobe pulses restart only on real flashes", () => {
   const frames = bothModes('ldj.TrueStrobe', row(2, [false, true]), {}, 1000);
   // The par is untouched by the mode.
   for (const { pulse, flash } of frames) assert.deepStrictEqual(pulse[0], flash[0]);
@@ -75,7 +75,7 @@ test('TrueStrobe keeps ten flashes a second on every lamp in flash mode; a Hue l
   }
 });
 
-test('Strobe Cycle pulses a Hue lamp only in its one-colour form; with a background colour it is a change of colour, drawn as is', () => {
+test("Strobe Cycle pulses only its single-colour form", () => {
   const one = bothModes('ldj.StrobeCycle', corners(), { palette: [RED] }, 3000);
   assert.ok(one.some(({ pulse, flash }) => pulse.some((s, i) => s.level !== flash[i].level)), 'one colour: the flashes are pulsed');
   // A lamp the cycle has not reached yet is dark, with no floor of a flash it never had.
@@ -103,7 +103,7 @@ test('a genre strobe\'s holds and offs never start a pulse again', () => {
   assert.deepStrictEqual([at(520).colour.r, at(520).colour.g], [255, 0], 'in s\'s colour, the palette\'s first');
 });
 
-test('a one-frame matrix flash pulses from the 22 Hz frame it first shows on, not from when it was asked for', () => {
+test("matrix pulses start on their first visible lamp frame", () => {
   // Matrix Flash on four lamps asks every 330 ms; the second ask falls 10 ms into a lamp frame.
   const room = row(4);
   const hard = instance('ldj.MatrixFlash', room, { palette: [RED] });
@@ -122,7 +122,7 @@ test('a one-frame matrix flash pulses from the 22 Hz frame it first shows on, no
   }
 });
 
-test('Matrix Pulse keeps its fifteen-frame plateau and softens only its cut: full to 681.8 ms, then 148 and 40 of 255', () => {
+test("Matrix Pulse softens the cut after its fifteen-frame plateau", () => {
   // One ask (iterations 1): on one lamp the next would come 300 ms on and start the plateau again.
   const h = instance('ldj.MatrixPulse', row(1), { palette: [RED], params: { iterations: 1 } });
   const plateau = 15 * LDJ_FRAME_MS;
@@ -136,7 +136,7 @@ test('Matrix Pulse keeps its fifteen-frame plateau and softens only its cut: ful
   assert.strictEqual(flash.draw(plateau + 1, 'flash')[0].level, 0, 'and its hard cut');
 });
 
-test('Tri-Pulse\'s rest cuts its last plateau once: full at 750 ms, 148/255 at 850, 40/255 at 950, nothing renewed at 1000', () => {
+test("Tri-Pulse starts one tail when its final plateau ends", () => {
   // 120 BPM: hits at 0, 250 and 500 ms (ten-frame peaks), rests from 750 ms every 250.
   const h = instance('ldj.TriPulse', row(1), { palette: [RED] });
   const times = [0, 250, 500, 600, 749, 750, 800, 850, 900, 950, 1000, 1100, 1250, 1400];
@@ -163,7 +163,7 @@ test('switching modes shows the tail an existing flash has, and starts none', ()
   close(h.draw(300, 'pulse')[0].level, FLOOR, 'no new onset from the switches');
 });
 
-test('the tail keeps the flash\'s colour as last drawn: a per-frame colour while lit, frozen once out', () => {
+test("pulse tails freeze the last lit colour", () => {
   // TrueStrobe draws a fresh colour per lamp frame while lit, uncached; with a random palette it changes.
   const h = instance('ldj.TrueStrobe', row(1), { params: ONE_FLASH, spec: { palette: [{ random: true }, { random: true }] } });
   const lit = [0, 22.7, 45.5].map((t) => ({ ...h.draw(t)[0].colour }));
@@ -233,7 +233,7 @@ test('every hard-flash family pulses its Hue lamps and leaves the others as they
   }
 });
 
-test('every authored fade, blend, background, sine, fill and continuous family is drawn the same in both modes', () => {
+test("authored continuous output is independent of Hue strobe mode", () => {
   const room = corners();
   for (const kind of AS_DRAWN) {
     const frames = bothModes(kind, room, { palette: [RED, CYAN] }, 4000);
@@ -241,7 +241,7 @@ test('every authored fade, blend, background, sine, fill and continuous family i
   }
 });
 
-test('a pulsed lamp takes the very lamps and colours the flash would: no selection or colour is drawn again', () => {
+test("pulse mode preserves selected lamps and colours", () => {
   // Palette Strobe lights a seeded subset in a seeded order on every beat; on each beat the pulsed
   // lamps that light are exactly the flash's, in its colours, at full.
   const room = row(6);
@@ -259,7 +259,7 @@ test('a pulsed lamp takes the very lamps and colours the flash would: no selecti
   }
 });
 
-test('an off step keeps a lamp\'s flash tail, a plain set replaces it, a rest only cuts a plateau once', async () => {
+test("lamp commands retain the correct pulse tail", async () => {
   const { LdjLamps } = await import('../../src/shared/effects/ldj-engine.ts');
   const lamps = new LdjLamps(2);
   assert.strictEqual(lamps.pulse(0), null, 'a lamp that never flashed: no floor');
@@ -281,7 +281,7 @@ test('an off step keeps a lamp\'s flash tail, a plain set replaces it, a rest on
   close(lamps.pulse(1).bri, FLOOR, 'a second rest renews nothing');
 });
 
-test('a row whose fast cadence needs the acknowledgement renders nothing without it, whatever its spec says', () => {
+test("fast catalogue rows always require acknowledgement", () => {
   const room = row(2);
   const draw = (params, spec, acknowledged) => {
     const inst = { id: 'x', spec: validateSpec({ kind: 'ldj.FadeCycle', params, ...spec }), seed: seedFrom('x'), anchorBeat: 0, startedAtMs: 0, targets: null };

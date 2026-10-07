@@ -37,7 +37,7 @@ test('the plan is the stage from above: its corners, its centre', () => {
   assert.deepEqual(world.planToWorld({ x: 100, y: 100 }), { x: world.STAGE_W / 2, z: world.STAGE_D / 2 }, 'the front edge, by the audience');
 });
 
-test('a par hangs on the truss, aimed down at the stage and a little towards the audience', () => {
+test('truss pars aim down toward the stage and audience', () => {
   const { room } = placed([fixture(0, 'par', { position: { x: 25, y: 20 }, group: 'front' })]);
   assert.equal(room.lamps.length, 1);
   assert.equal(room.cells.length, 0);
@@ -53,7 +53,7 @@ test('a par hangs on the truss, aimed down at the stage and a little towards the
   assert.equal(room.trusses[0].y, world.TRUSS_H + 0.2);
 });
 
-test('the floor group stands on the deck and aims up; the room group and Hue lamps are bulbs', () => {
+test('floor fixtures aim upward while room and Hue fixtures use bulbs', () => {
   const { room } = placed([
     fixture(0, 'par', { position: { x: 50, y: 80 }, group: 'floor' }),
     fixture(1, 'par', { position: { x: 5, y: 95 }, group: 'room' }),
@@ -130,7 +130,7 @@ test('trusses: a row per line of hung fixtures, across their span', () => {
   assert.deepEqual(two.map((t) => t.z), [-3, 1], 'back to front');
 });
 
-test('a light\'s colour: black is dark, full red is red, white and amber mix in, too much is scaled whole', () => {
+test('stage lights mix channels and scale overbright colours together', () => {
   const out = new Float32Array(6);
   assert.equal(world.lightRGB(null, out), 0);
   assert.deepEqual([...out.slice(0, 3)], [0, 0, 0]);

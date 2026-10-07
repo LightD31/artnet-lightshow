@@ -1,24 +1,28 @@
+import { Fragment } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
-import { api, autoPositionSig, connectedSig, emitTap, librarySig, pick, send } from '../state.js';
+import { api, autoPositionSig, connectedSig, emitTap, followMusic, librarySig, pick, send } from '../state.js';
 import { colorToCss, clockSource, fmtTime, formatBpm } from '../utils.js';
 import { timelinePosition } from '../timeline-state.js';
 import { useDraft } from '../draft.js';
+import { NowPlaying, PlayingVoices } from './NowPlaying.jsx';
 import { Pads } from './Pads.jsx';
 import { StrobePad } from './StrobePad.jsx';
 import { activeQueue } from './Queue.jsx';
 import { isRandom, paletteName } from './PaletteEditor.jsx';
 import { Transport } from './Transport.jsx';
 import { AudioMeters } from './AudioMeters.jsx';
+import { StrobesOff } from './Photosensitivity.jsx';
 
 /**
  * The view for running a show from a tablet: what a hand needs mid-set, as
  * big as the screen allows, and nothing that needs reading twice.
  *
  *   outputs      armed or not: whether anything leaves the machine at all
+ *   strobes      off until the photosensitivity acknowledgement, one tap from it
  *   now / next   the track playing, how far in, and what comes after it
  *   sync         what the lights are keeping time by, and whether it is well
  *   pads         two banks of eight, each played as its launch mode says,
- *                the strobe held, blackout and tap tempo
+ *                the strobe held, blackout, tap tempo and stop all voices
  *   palettes     one tap writes the whole look's colours
  *   faders       the master and how hard the generated show pushes
  *
@@ -99,6 +103,7 @@ function NowNext() {
   return (
     <section class="perform-now" aria-label="Now and next">
       <div class="perform-now-main">
+        <div class="perform-playing"><NowPlaying /></div>
         <span class="perform-kicker">Now</span>
         {track ? (
           <>
@@ -128,6 +133,7 @@ function SyncHealth() {
     'deezer', 'nowPlaying', 'live', 'hybrid']);
   const connected = connectedSig.value;
   const clock = clockSource(s.clock && s.clock.source);
+  const byHand = !!(s.clock && s.clock.byHand);
   const health = sourceHealth(s);
   const as = s.autoShow || {};
   const status = as.status || 'idle';
@@ -143,22 +149,31 @@ function SyncHealth() {
   return (
     <section class="perform-sync" aria-label="Sync health">
       {chips.map((c) => (
-        <span key={c.id} class={`perform-chip chip-${c.state}`} title={c.title}>
-          <span class="perform-chip-dot" aria-hidden="true" />
-          <span class="perform-chip-label">{c.label}</span>
-          <span class="perform-chip-value">{c.value}</span>
-          {c.state === 'off' && <span class="sr-only">(not working)</span>}
-          {c.state === 'warn' && <span class="sr-only">(needs attention)</span>}
-        </span>
+        <Fragment key={c.id}>
+          <span class={`perform-chip chip-${c.state}`} title={c.title}>
+            <span class="perform-chip-dot" aria-hidden="true" />
+            <span class="perform-chip-label">{c.label}</span>
+            <span class="perform-chip-value">{c.value}</span>
+            {c.state === 'off' && <span class="sr-only">(not working)</span>}
+            {c.state === 'warn' && <span class="sr-only">(needs attention)</span>}
+          </span>
+          {c.id === 'clock' && byHand && (
+            <button type="button" class="perform-follow" onClick={followMusic}
+              title="The tempo is held by hand: follow the deck, the song or the live beat again">Follow the music</button>
+          )}
+        </Fragment>
       ))}
     </section>
   );
 }
 
+/** Every voice off, hidden and waiting ones too (DELETE /api/voices); the look and the patterns play on. */
+export const stopAllVoices = () => api('/api/voices', { method: 'DELETE' });
+
 function Utility() {
   const s = pick(['masterBlackout']);
   return (
-    <section class="perform-utility" aria-label="Blackout and tap">
+    <section class="perform-utility" aria-label="Blackout, tap and stop all voices">
       <button type="button" class={`perform-pad pad-blackout ${s.masterBlackout ? 'active' : ''}`}
         aria-pressed={!!s.masterBlackout}
         onClick={() => send({ masterBlackout: !s.masterBlackout })}>
@@ -170,12 +185,19 @@ function Utility() {
         <span class="perform-pad-name">Tap</span>
         <span class="perform-pad-hint">tempo</span>
       </button>
+      <button type="button" class="perform-pad pad-stop-voices" onClick={stopAllVoices}>
+        <span class="perform-pad-name">Stop all voices</span>
+      </button>
     </section>
   );
 }
 
-function PalettePads() {
-  const s = pick(['palettes', 'palette', 'colorPresets']);
+export function PalettePads() {
+  const s = pick(['palettes', 'palette', 'colorPresets', 'pattern', 'paletteOverride']);
+  const lib = librarySig.value;
+  const base = [...(lib.builtin || []), ...(lib.user || [])].find((p) => p.id === s.pattern);
+  const reason = s.paletteOverride?.length ? 'Palette override controls the effect colours.'
+    : base?.spec?.palette?.length ? 'The base effect uses its own palette. Use Palette override to recolour it.' : null;
   const palettes = s.palettes || [];
   const presets = s.colorPresets || [];
   let size = 4;
@@ -189,7 +211,8 @@ function PalettePads() {
     return !c ? '#333' : c.name === 'Blackout' ? '#111' : colorToCss(c);
   };
   return (
-    <section class="perform-palettes" aria-label="Palettes">
+    <section class="perform-palettes" aria-label="Look palettes">
+      {reason && <p class="muted" role="status" style={{ gridColumn: '1 / -1' }}>{reason}</p>}
       {palettes.map((p) => (
         <button key={p.id} type="button" class={`perform-palette ${s.palette === p.id ? 'active' : ''}`}
           aria-pressed={s.palette === p.id}
@@ -207,13 +230,10 @@ function PalettePads() {
 /** What PUT /api/palette-override takes for a palette: its id, rolled on the server. */
 export const overrideBody = (palette) => ({ paletteId: palette.id });
 
-/**
- * Which strip button the live override is: 'off', the palette whose fixed
- * colours it equals, or null (colours sent by hand, or a palette with random
- * entries, which the server rolled).
- */
-export function activeOverride(override, palettes) {
+// Named random palettes cannot be identified from their rolled colours.
+export function activeOverride(override, palettes, id = null) {
   if (!override || !override.length) return 'off';
+  if (id && palettes.some((p) => p.id === id)) return id;
   const want = override.map((c) => String(c).toUpperCase()).join();
   const hit = palettes.find((p) => !(p.colours || []).some(isRandom)
     && (p.colours || []).map((c) => String(c).toUpperCase()).join() === want);
@@ -222,12 +242,12 @@ export function activeOverride(override, palettes) {
 
 /** Light DJ's palette override: one tap puts a palette over every effect, "Off" takes it away. */
 export function PaletteOverride() {
-  const s = pick(['paletteOverride', 'userPalettes']);
+  const s = pick(['paletteOverride', 'paletteOverrideId', 'userPalettes']);
   const lib = librarySig.value;
   const builtin = (lib.palettes && lib.palettes.builtin) || [];
   const user = s.userPalettes || (lib.palettes && lib.palettes.user) || [];
   const all = [...builtin, ...user];
-  const active = activeOverride(s.paletteOverride, all);
+  const active = activeOverride(s.paletteOverride, all, s.paletteOverrideId);
   const button = (id, name, colours, onClick) => (
     <button key={id} type="button" class={`override-pad${active === id ? ' active' : ''}`} aria-pressed={active === id}
       data-override={id} onClick={onClick}>
@@ -240,8 +260,10 @@ export function PaletteOverride() {
   return (
     <section class="perform-override" aria-label="Palette override">
       {button('off', 'Off', [], () => api('/api/palette-override', { method: 'DELETE' }))}
-      {all.map((p) => button(p.id, paletteName(p), p.colours || [],
+      {all.map((p) => button(p.id, paletteName(p), active === p.id ? s.paletteOverride : p.colours || [],
         () => api('/api/palette-override', { method: 'PUT', body: JSON.stringify(overrideBody(p)) })))}
+      {all.some((p) => p.id === active && p.colours?.some(isRandom))
+        && <span class="override-custom">Random colours held — tap again to reroll</span>}
       {active === null && <span class="override-custom">Custom colours on</span>}
     </section>
   );
@@ -274,14 +296,18 @@ export function Perform() {
   return (
     <div class="perform-view">
       <ArmSwitch />
+      <StrobesOff perform />
       <NowNext />
       <SyncHealth />
       <Transport />
       <div class="perform-body">
         <div class="perform-controls">
           <Pads />
-          <StrobePad />
-          <Utility />
+          <PlayingVoices />
+          <div class="perform-live-row">
+            <StrobePad />
+            <Utility />
+          </div>
           <PaletteOverride />
           <PalettePads />
         </div>

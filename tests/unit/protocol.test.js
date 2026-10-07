@@ -16,7 +16,7 @@ import { state, getLiveState, getDmxUniverses } from '../../src/server/state.ts'
 import { applyPatch } from '../../src/server/patch.ts';
 import { conductor } from '../../src/server/conductor.ts';
 
-test('only the keys that changed go out, grouped by domain, each domain counting its own versions', () => {
+test('deltas version changed keys independently by domain', () => {
   const differ = new StateDiffer();
   const first = differ.diff({ masterDimmer: 255, pattern: 'chase', fixtures: [{ id: 0 }], spotify: { ok: true }, mystery: 1 });
   assert.deepStrictEqual(first.map((p) => [p.d, p.v, Object.keys(p.set)]), [
@@ -107,7 +107,7 @@ async function serve() {
 
 const next = (socket, event) => new Promise((resolve) => socket.once(event, resolve));
 
-test('a page that asks for protocol 2 gets a snapshot, then only what changed; the others the whole state', async () => {
+test('protocol 2 subscribers receive snapshots followed by deltas', async () => {
   const s = await serve();
   try {
     const v2 = s.client({ protocol: 2 });
@@ -190,6 +190,7 @@ test('the library domain: saved presets and palettes; the built-ins stay catalog
   assert.strictEqual(domainOf('userPalettes'), 'library');
   for (const key of ['palettes', 'families', 'builtinPalettes', 'patterns']) assert.strictEqual(domainOf(key), 'catalogs', key);
   assert.strictEqual(domainOf('paletteOverride'), 'look');
+  assert.strictEqual(domainOf('paletteOverrideId'), 'look');
   assert.strictEqual(domainOf('safety'), 'look');
 });
 
@@ -269,9 +270,11 @@ test('every live-state key is in DOMAIN_OF', () => {
   const missing = Object.keys(getLiveState()).filter((key) => !hasDomain(key));
   assert.deepStrictEqual(missing, []);
   // The integrations' keys and the deck's, which need a running server to appear.
-  const named = ['strobe', 'pads', 'sequence', 'voices', 'matrix', 'audio', 'paletteOverride', 'safety', 'effects', 'userPalettes',
+  const named = ['strobe', 'pads', 'sequence', 'sequences', 'sequencePatterns', 'voices', 'matrix', 'audio', 'paletteOverride', 'safety', 'effects', 'userPalettes',
     'spotify', 'nowPlaying', 'prolink', 'live', 'cues', 'warm', 'midi', 'autoShow', 'activeSource', 'showOn'];
   assert.deepStrictEqual(named.filter((key) => !hasDomain(key)), []);
   assert.equal(domainOf('matrix'), 'look');
   assert.equal(domainOf('strobe'), 'look');
+  assert.equal(domainOf('sequences'), 'sequence');
+  assert.equal(domainOf('sequencePatterns'), 'sequence');
 });

@@ -54,7 +54,7 @@ test('Swirl random primary and Rotation random sectors use their angular hues', 
   assert.deepEqual(output[0].colour, RED);
 });
 
-test('Rotation uses palette-sized sectors, later ownership at a boundary and a 90-frame revolution', () => {
+test("Rotation completes palette sectors in ninety frames", () => {
   const room = { ...row(4), ringDegrees: [0, 179, 180, 359] };
   const h = harness('ldj.Rotation', room);
   const start = h.draw(at(0));
@@ -96,7 +96,7 @@ test('the noise field cannot be changed, so a clone shares it', () => {
   assert.equal(field.at(1, 1), .4663500189781189, 'unchanged');
 });
 
-test('noise sampling uses x-first orbits, padded terraces and interpolated northern colours', () => {
+test("noise sampling preserves field coordinates and interpolation", () => {
   const perlin = harness('ldj.Perlin', row(1), { seed: 'review-waves' });
   assert.deepEqual(perlin.draw(at(0))[0].colour, CYAN);
   const table = perlin.state().noise;
@@ -131,7 +131,7 @@ test('constant-tempo rotation and noise cold samples equal stepped samples', () 
   }
 });
 
-test('Groove keeps its initial phase, reference beat divisor and secondary-first colour', () => {
+test("Groove retains initial phase and secondary-first colour", () => {
   const h = harness('ldj.GrooveWave', centreSquare());
   const start = h.draw(at(0));
   near(levels(start), [.9115049839019775, .24369803071022034, .2588604688644409, .9178358316421509, .644576370716095]);
@@ -243,7 +243,7 @@ test('BigRoom one-shot phases remain independent and do not recreate or refresh 
   assert.deepEqual(harness('ldj.BigRoomWave', square()).draw(0), harness('ldj.BigRoomWave', square(), { params: { phase: 0, once: false } }).draw(0));
 });
 
-test('transition endpoints capture their deferred refresh once and rebind only on palette edits', () => {
+test("transition endpoints capture pending refreshes once", () => {
   const room = { ...row(2), waveLength: () => 1, waveDistance: () => [0, 1] };
   const h = harness('ldj.BigRoomWave', room, { params: { once: true }, spec: { palette: [{ random: true }, { random: true }] } });
   const initial = h.draw(at(0)), pendingClone = h.stepper.clone();
@@ -262,7 +262,7 @@ test('transition endpoints capture their deferred refresh once and rebind only o
   assert.deepEqual(h.draw(at(0)).map((s) => s.colour), [parseHex('#000000'), parseHex('#FFFFFF')]);
 });
 
-test('a sparse transition crosses a musical recreation at its interpolated time after a tempo change', () => {
+test("sparse transitions interpolate recreation time through tempo edits", () => {
   const h = harness('ldj.DoubleWave', square());
   h.draw(0); h.draw({ nowMs: 200, beatPos: .4, bpm: 120 });
   h.draw({ nowMs: 400, beatPos: .4 + 200 * 128 / 60000, bpm: 128 });
@@ -282,7 +282,7 @@ test('wave geometry retains integer projection and finite normalized heading cac
   near(room.waveDistance(0), [.7853582896777438, 2.792385029965311, 2.7574802170907446, .7504534768031773, 1.7801454566028858]);
 });
 
-test('nonzero launches and multiple crossed fronts retain whole-frame and pending-capture identity', () => {
+test("wave relaunches retain whole-frame identity", () => {
   const shifted = harness('ldj.Swirl', square(), { startedAtMs: 12345 });
   const original = harness('ldj.Swirl', square());
   for (const frame of [0, .5, 1, 10]) assert.deepEqual(shifted.draw({ ...at(frame), nowMs: 12345 + frame * LDJ_FRAME_MS }), original.draw(at(frame)));
@@ -298,7 +298,7 @@ test('nonzero launches and multiple crossed fronts retain whole-frame and pendin
   assert.deepEqual(prepared.pending, []);
 });
 
-test('all twelve kinds are finite on empty and single-lamp rooms with one colour and no audio', () => {
+test("rotation and wave kinds render finite output on small rigs", () => {
   for (const name of names) for (const n of [0, 1]) {
     const h = harness(`ldj.${name}`, row(n), { palette: [RED] });
     for (const frame of [0, .5, 1, 50]) {

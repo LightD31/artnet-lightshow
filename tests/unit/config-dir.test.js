@@ -35,7 +35,7 @@ test('in a checkout, everything is where it always was', (t) => {
   assert.equal(venvDir(), path.join(ROOT, '.venv'));
 });
 
-test('a data directory takes the config, the cache, the logs and the environment, not the app', (t) => {
+test('external data directories contain mutable data, not application files', (t) => {
   const data = path.resolve('/srv/lightshow-data');
   withEnv(t, { LIGHTSHOW_DATA_DIR: data });
   assert.equal(appDir(), ROOT);

@@ -47,9 +47,7 @@ import { LookStore, currentLook, putBack, resumeAt } from './server/look-store.t
 import { configFile } from './server/config-dir.ts';
 import { messageOf } from './errors.ts';
 
-// Before anything else can fail: a fault the code did not expect is reported
-// and the rig keeps running, rather than the process exiting with every
-// fixture latched on its last frame. See server/guard.ts.
+// Install fault handlers first so module startup failures are reported before the show begins.
 installProcessSafetyNet();
 startHealthMonitor();
 
@@ -58,32 +56,20 @@ if (supervised.restarts) {
   console.warn(`[supervisor] restart ${supervised.restarts}: the last run ${supervised.lastExit ? supervised.lastExit.reason : 'ended'}`);
 }
 
-// A .env from before settings moved into the UI would otherwise go quiet: the
-// rig would come up on defaults with no clue why. Say which variables are now
-// ignored, then carry on.
 warnAboutLegacyEnv();
 
-// ─── Bind address & access control ──────────────────────────────────────────
-// Loopback by default: exposing the rig to the whole network should be a
-// deliberate act, and once it is, a token is mandatory. These three are read
-// before anything is listening, so changing them in the settings takes
-// effect on the next start.
 const HOST = settings.get('server.host');
 const LIGHTSHOW_TOKEN = settings.get('server.token');
 
 const fatal = configError({ host: HOST, token: LIGHTSHOW_TOKEN, configFile: CONFIG_FILE });
 if (fatal) {
   console.error(`\n${fatal}\n`);
-  // Not 1: starting again would only refuse again, and the supervisor knows
-  // this code as "do not restart".
   process.exit(EXIT_CONFIG);
 }
 
 const auth = createAuth({
   token: LIGHTSHOW_TOKEN,
-  // Names beyond the ones every machine has (IP literals, localhost, its own
-  // host name). Read per request so a public URL saved in the settings
-  // applies without a restart.
+  // Read allowed public hostnames per request so URL edits take effect without restart.
   allowedHosts: () => [HOST, hostOfUrl(settings.get('server.publicUrl'))],
 });
 
@@ -91,39 +77,23 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { allowRequest: auth.allowSocketRequest });
 
-// Before anything else, static files included: a page reached through a name
-// this machine is not known by is a DNS-rebinding page, and it gets nothing.
 app.use(auth.hostMiddleware);
 
-// Compressed: the bundle and the timeline documents are text, and a tablet on
-// venue Wi-Fi fetches both (A7.26). Socket.IO compresses its own messages.
 app.use(compression());
 
-// The bundle's source map is for whoever is debugging at this machine, not for
-// every phone on the venue network (A7.26).
 app.use(sourceMapsForLoopback);
 
-// Static assets stay open: they carry no secrets, and the page needs to load
-// before it can present a token. Everything that reads or changes show state
-// goes through the guard.
 app.use(express.static(path.join(import.meta.dirname, '..', 'public')));
 app.use('/api', auth.httpMiddleware);   // before express.json: reject first, parse after
 app.use(express.json());
 io.use(auth.socketMiddleware);
 
-// ─── Subsystems ─────────────────────────────────────────────────────────────
-
 const midi = new MidiController(state, applyPatch, processTap);
 midi.overrideFixture = applyOverride;
 midi.setFixtureMax = setFixtureMaxBrightness;
 
-// The control map is stored and relearnable, so the controller follows edits
-// without a reconnect. Cue recall is wired in from here rather than reached for
-// inside midi.js, which has no business knowing about the cue store.
 midi.setMap(midiMap.get());
 midiMap.onChange((map) => midi.setMap(map));
-// A fader learned on its touch sensor is moved to its movement once both have
-// been seen (midi.ts), and kept that way.
 midi.onRebind = (_from, to, binding) => midiMap.setBinding('cc', to, binding);
 midi.recallCue = (id) => {
   if (!cues.recall(id)) console.warn(`[MIDI] recallCue: no cue ${id} — it may have been deleted`);
@@ -140,25 +110,15 @@ const autoShow = new AutoShow(applyPatch, COLOR_PRESETS, PATTERNS, analysisCache
 
 const integrations = setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolink, autoShow, analysisCache, liveInput });
 
-// One clock for every pattern (see src/server/conductor.js). The render loop
-// drives the auto show's cursor, so a cue fires on the frame it is due, and
-// the pattern clock follows the show's beat grid while it runs, else the
-// playing deck's, else the playing track's, else the beat the live input
-// hears, else the operator's tap.
 autoShow.useFrameClock();
 setFrameHook(() => autoShow.tick());
 setPulseSource(() => autoShow.pulse());
-// A model downloaded while the server runs is used from the next worker on:
-// restart it, so it loads (and warms) what just arrived — once the track it
-// may be analysing is done, not by starting that one over.
+// Recycle an idle worker after model downloads so current analysis is not interrupted.
 modelManager.onFinished((job) => {
   if (Object.values(job.models).some((m) => m.state === 'done') && autoShow.restartWorker) {
     autoShow.restartWorker('analysis models downloaded', { whenIdle: true });
   }
 });
-// Setting the analysis environment up replaces the Python the analyser and
-// the live input run from — which, on Windows, a running Python keeps locked.
-// Both stand aside while uv works, and come back on what it made.
 let liveBeforeSetup: LiveOptions | null = null;
 pythonSetup.onHooks({
   before: (reason) => {
@@ -175,57 +135,34 @@ pythonSetup.onHooks({
 conductor.setAutoSource(() => autoShow.beatSource());
 conductor.setProlinkSource(() => (state.prolinkEnabled && !autoShow.running ? prolink.getBeatReading() : null));
 conductor.setLiveSource(() => liveInput.getBeatReading());
-// The same clock, out to MIDI (settings: midi.clockOutput).
 const midiClock = new MidiClock({ open: openMidiOutput, beatPos: () => conductor.peek().beatPos });
 conductor.onTempo((bpm) => { state.bpm = bpm; });
 
-// The OS's "now playing" feeds the generic now-playing source: the Windows
-// media session (SMTC), or the MPRIS players on Linux's session bus. Any
-// player that reports to it (Deezer, Tidal, Spotify, YouTube, a browser tab,
-// a desktop app…) drives the auto-show.
 const smtc = createOsNowPlaying();
 smtc.onUpdate((payload) => nowPlaying.updatePlayback(payload));
 
-// The patch the operator left behind, put back before anything reads the
-// fixture list: the applier binds Hue channels to fixtures, the engine sizes
-// its buffers to them, and the banner below prints them.
 const patchRestored = showStore.restore();
 
-// Everything configurable is pushed into the subsystems from one place, both
-// here at boot and again whenever the settings are saved.
 const applier = createApplier({
   midi, spotify, smtc, live: liveInput, midiClock, deezer, autoShow, applyPatch,
   broadcast: () => integrations.broadcast(),
 });
 applier.applyAll();
 
-// Art-Net, PRO DJ LINK and MIDI are also reachable from the main page and the
-// patch panel. Persist those edits so the Rig view keeps showing the
-// truth and the choice survives a restart.
 setPersist((patch) => {
   try { settings.update(patch); }
   catch (err) { console.warn(`[settings] could not persist: ${messageOf(err)}`); }
 });
 
-// The patch itself is not a setting — it is the rig — so it has its own file.
-// Edits reach it from the patch panel, the fixture routes and the socket, and
-// every one of them saves, so the rig comes back as it was left.
 setHooks({ showChanged: () => showStore.scheduleSave() });
 
-// Started again by the supervisor — after a crash, a hang, or a restart from
-// the app — the rig comes back as it was, not on the default look: put back
-// before the engine's first frame (look-store.ts).
 const lookStore = new LookStore(configFile('look.json'));
 const savedLook = supervised.recovering ? lookStore.load() : undefined;
 if (savedLook && putBack(savedLook)) {
   console.log(`[look] put back the look from ${savedLook.savedAt}, before the restart`);
 }
 
-// Keep the Spotify session across restarts. Only the refresh token is stored —
-// access tokens last an hour, so one saved at shutdown would be stale by the
-// next show, while the refresh token mints a fresh one on demand. Spotify may
-// rotate it on any refresh, so this fires on every change rather than only at
-// the initial connect.
+// Persist refresh-token changes because short-lived access tokens cannot survive between shows.
 spotify.onTokens((refreshToken) => {
   try { settings.update({ spotify: { refreshToken } }); }
   catch (err) { console.warn(`[spotify] could not save the session: ${messageOf(err)}`); }
@@ -237,10 +174,7 @@ attachSockets(io, { midi, integrations });
 // On a thread of its own unless the settings say otherwise (engine.thread).
 startEngine({ thread: settings.get('engine.thread') });
 
-// The auto show, if it was running: its track's show from the cache, following
-// what it followed before. A player the server has to reconnect to (Spotify,
-// the decks) is given half a minute to come back first, so the show picks up
-// where the music is rather than from the top on a stopwatch.
+// Wait for the playback source on recovery so a resumed show follows the music rather than a stopwatch.
 async function resumeAutoShow(auto: NonNullable<NonNullable<typeof savedLook>['auto']>): Promise<void> {
   const saved = savedLook as NonNullable<typeof savedLook>;
   if (!auto.key || !(await autoShow.resume(auto.key, auto.track as typeof autoShow.track))) {
@@ -256,23 +190,10 @@ async function resumeAutoShow(auto: NonNullable<NonNullable<typeof savedLook>['a
 }
 if (savedLook?.auto?.running) resumeAutoShow(savedLook.auto).catch((err) => console.warn(`[look] could not resume the auto show: ${messageOf(err)}`));
 
-// Kept every two seconds when it has changed, for the next restart to put back.
 setInterval(() => lookStore.save(currentLook(autoShow, integrations.resolveAutoSource())), 2000).unref();
-// While Art-Net broadcasts, find the nodes and send each its universes.
 artnetDiscovery.start();
 
-/**
- * Sign back in with the stored refresh token, if there is one.
- *
- * Deliberately not awaited: a rig should come up and start doing lights whether
- * or not Spotify is reachable, and the poller starts on its own once this
- * lands. The two failure modes are treated differently — Spotify rejecting the
- * grant means the session is genuinely gone (revoked in the account, or the
- * client id changed under it) and the stored token is cleared so the banner
- * stops promising a connection that will never come; anything else is the
- * network not being up yet, which a headless rig does at every boot, and the
- * token is kept for the next attempt.
- */
+// Do not await Spotify sign-in because network failures must not prevent the rig from starting.
 function restoreSpotifySession() {
   const stored = settings.get('spotify.refreshToken');
   if (!stored || !spotify.configured) return;
@@ -285,8 +206,6 @@ function restoreSpotifySession() {
       console.log('  Spotify           →  reconnected from the saved session');
     })
     .catch((err) => {
-      // restoreSession has already cleared the stored token if Spotify rejected
-      // the grant, and kept it if the request simply never landed.
       if (err && err.status >= 400 && err.status < 500) {
         console.warn(`[spotify] saved session is no longer valid (${err.message}) — reconnect at /auth/spotify`);
       } else {
@@ -295,13 +214,8 @@ function restoreSpotifySession() {
     });
 }
 
-// ─── Listen ─────────────────────────────────────────────────────────────────
-
 const PORT = settings.get('server.port');
 
-// The safety net keeps the process up through unexpected faults, which is the
-// wrong answer for this one: a server that cannot listen is no server at all,
-// and staying up would leave the operator with a console and no page.
 server.on('error', (err: NodeJS.ErrnoException) => {
   if (err.code === 'EADDRINUSE') {
     console.error(`\nPort ${PORT} is already in use — is another copy of the lightshow running? `
@@ -311,18 +225,11 @@ server.on('error', (err: NodeJS.ErrnoException) => {
   }
   let engineDown = Promise.resolve();
   try { engineDown = stopEngine(); } catch (_) { /* on the way out regardless */ }
-  // Another program has the port, or the address is not this machine's:
-  // starting again would fail the same way, so the supervisor is told not to.
   Promise.resolve(engineDown).catch(() => {}).finally(() => process.exit(EXIT_CONFIG));
 });
 
 server.listen(PORT, HOST, () => {
-  // Under the supervisor: say the server is up, and keep saying so.
   startHeartbeat();
-  // Where the OAuth proxy sends the operator's browser back to. Must be an
-  // address that browser can actually reach: "localhost" is only right when the
-  // browser is on this machine. The "public URL" setting overrides for
-  // anything unusual (reverse proxy, hostname, https).
   applier.refreshCallbackUrl();
 
   const shownHost = isLoopback(HOST) ? 'localhost' : HOST;
@@ -332,8 +239,6 @@ server.listen(PORT, HOST, () => {
   console.log(`  Setup             →  http://${shownHost}:${PORT}/#rig  (the Rig, Sources and Settings views)`);
   console.log(`  Config file       →  ${CONFIG_FILE}`);
   if (process.env.LIGHTSHOW_DATA_DIR) console.log(`  Data folder       →  ${dataDir()}`);
-  // Deliberately not the token itself: this banner is the first thing anyone
-  // pastes into a bug report or a chat window.
   console.log(`  Access            →  ${auth.enabled
     ? 'token required — the page asks for it on first open'
     : 'no token — loopback only, this machine can reach it'}`);
@@ -367,16 +272,9 @@ server.listen(PORT, HOST, () => {
 
   restoreSpotifySession();
 
-  // Say this after the banner, where it won't scroll past unnoticed: otherwise
-  // the first sign of a wrong interpreter is a traceback minutes into a set,
-  // after a track has already downloaded.
   pythonEnv.warnIfUnusable();
 });
 
-// ─── Shutdown ───────────────────────────────────────────────────────────────
-// One path for both signals: the two copies had to be edited in lockstep, and
-// neither put the rig out on the way down. stopEngine() sends a final all-zero
-// frame so the fixtures don't hold the last look after the server is gone.
 let shuttingDown = false;
 
 function shutdown(signal: string, exitCode = 0): void {
@@ -384,16 +282,12 @@ function shutdown(signal: string, exitCode = 0): void {
   shuttingDown = true;
   console.log(`\n${signal} — blacking out and shutting down…`);
 
-  // Each of these is independent: one throwing must not skip the rest. The
-  // engine answers once the rig is blacked out; the server waits for that
-  // before it closes.
   let engineDown = Promise.resolve();
   for (const [what, fn] of [
     ['engine', () => { engineDown = stopEngine(); }],
     ['artnet', () => artnetDiscovery.stop()],
     ['smtc', () => smtc.stop()],
     ['autoShow', () => autoShow.destroy()],
-    // No `forget`: this is the way down, not the operator disconnecting.
     ['spotify', () => spotify.disconnect()],
     ['nowPlaying', () => nowPlaying.disconnect()],
     ['deezer', () => deezerSource.disconnect()],
@@ -401,37 +295,25 @@ function shutdown(signal: string, exitCode = 0): void {
     ['live input', () => liveInput.stop()],
     ['midi clock', () => midiClock.stop()],
     ['midi', () => midi.close()],
-    // Lands a debounced patch write that had not fired yet. A no-op when the
-    // file already matches, which is the usual case.
     ['show', () => showStore.save()],
-    // Likewise a sync offset nudged in the last moment before quitting.
     ['settings', () => flushPendingPersist()],
   ] as [string, () => unknown][]) {
     try { fn(); } catch (err) { console.warn(`[shutdown] ${what}: ${messageOf(err)}`); }
   }
 
   Promise.resolve(engineDown).catch(() => {}).finally(() => server.close(() => process.exit(exitCode)));
-  // Don't hang on a lingering keep-alive socket or an in-flight analysis.
   setTimeout(() => process.exit(exitCode), 2000).unref();
 }
 
-/**
- * Stop, to be started again by the supervisor straight away — for a setting
- * that only applies on a restart. False when there is no supervisor to do the
- * starting (the server was run with --no-supervisor, or under `node --watch`).
- */
 function restartServer(reason: string): boolean {
   if (!supervised.supervised || !process.send) return false;
   process.send({ type: 'restart', reason });
-  // A moment for the answer to reach the page that asked.
   setTimeout(() => shutdown('Restart', EXIT_RESTART), 200);
   return true;
 }
 
 process.on('SIGINT',  () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
-// A terminal hung up — on Windows, the console window closed, with a few
-// seconds before Windows ends the process: enough to black out.
 process.on('SIGHUP',  () => shutdown('SIGHUP'));
 listenToSupervisor({
   stop: (signal) => shutdown(signal),

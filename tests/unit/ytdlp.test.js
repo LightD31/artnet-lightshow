@@ -31,7 +31,7 @@ test('the runtime handed over is the Node running this server', () => {
   assert.match(ytdlp.runtimeName({ sea: false }), /^Node \d+\.\d+\.\d+ \(this server\)$/);
 });
 
-test('as the packaged executable, the environment\'s Deno, or nothing rather than itself', () => {
+test('packaged builds use environment Deno without launching themselves', () => {
   assert.deepStrictEqual(ytdlp.runtimeArgs('2025.11.12', { sea: true, deno: '/data/.venv/bin/deno' }),
     ['--js-runtimes', 'deno:/data/.venv/bin/deno']);
   assert.deepStrictEqual(ytdlp.runtimeArgs('2025.11.12', { sea: true, deno: null }), []);

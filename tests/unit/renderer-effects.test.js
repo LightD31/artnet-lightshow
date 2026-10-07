@@ -82,7 +82,7 @@ const lit = (out) => out.dim > 0 && (out.r > 0 || out.g > 0 || out.b > 0);
 
 // ── A base effect, voices over it, the burst, the guard, Hue lamps ──────────
 
-test('a base effect preset renders through the layout: ldj.StrobeCycle lights one par per beat', () => {
+test("Strobe Cycle renders one par per beat", () => {
   const r = rig(PARS);
   const strobeCycle = preset('ldj.StrobeCycle');
   // Its own palette is two random colours: the step's par in one, the rest in the other.
@@ -131,7 +131,7 @@ test('a voice over the base replaces only its targets', () => {
   assert.deepStrictEqual([out[LAMP.id].dim, out[LAMP.id].r, out[LAMP.id].g, out[LAMP.id].b], [255, 255, 0, 0], 'the lamp shows the base (solid red)');
 });
 
-test('the strobe tier outranks a later pad voice; between two pads the later launch wins', () => {
+test("voice composition follows tier and launch order", () => {
   const kill = preset('energy.kill');
   const blinder = preset('energy.blinder');
   const uv = preset('energy.uvWash');
@@ -151,7 +151,7 @@ test('the strobe tier outranks a later pad voice; between two pads the later lau
   assert.strictEqual(between.w, 255, 'between flashes the blinder shows');
 });
 
-test('a voice beats a pinned override and a fixture blackout alike, as the energy burst does today', () => {
+test("voices override pinned fixture output", () => {
   const pinned = { ...PAR, override: { enabled: true, r: 10, g: 20, b: 30, w: 0, a: 0, uv: 0, dim: 90, strobe: 0, blackout: false } };
   const dark = { ...PAR, override: { enabled: false, r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 0, strobe: 0, blackout: true } };
   for (const fix of [pinned, dark]) {
@@ -166,7 +166,7 @@ test('a voice beats a pinned override and a fixture blackout alike, as the energ
   assert.strictEqual(rig([pinned]).at(10, { voices: [voice('pad', preset('energy.kill'))] })[PAR.id].dim, 0);
 });
 
-test('input.energy without voices renders through the compatibility voice: energy "blinder" is full white on every fixture; "palette-strobe" flashes', () => {
+test("compatibility energy voices render legacy bursts", () => {
   const blinder = rig().at(10, { energy: 'blinder' });
   for (const f of [PAR, LAMP]) assert.deepStrictEqual([blinder[f.id].dim, blinder[f.id].r, blinder[f.id].g, blinder[f.id].b], [255, 255, 255, 255]);
   // The hold strobe: colour A on the beat, black after, the look between, colour B on the half beat.
@@ -202,7 +202,7 @@ test('the HD guard zeroes a second bright rise inside 350 ms on an hd.* kind onl
   assert.ok(trueStrobe.length >= 10, `TrueStrobe ${trueStrobe.length} a second`);
 });
 
-test('a Hue lamp is flashed black between strobe flashes with hueStrobe flash, and pulsed with pulse', () => {
+test("Hue strobe rendering follows flash and pulse mode", () => {
   const strobe = voice('strobe', preset(HOLD_STROBE), { tier: 'strobe' });
   const lampAt150 = (hueStrobe) => {
     const r = rig();
@@ -270,7 +270,7 @@ registerKind({
 
 // ── Identity, resets and clocks ─────────────────────────────────────────────
 
-test('the base keeps its state frame to frame, and starts again on a new launch, revision, content or layout; a palette edit keeps it', () => {
+test("base effect state follows launch identity", () => {
   const r = rig(PARS);
   const at = (ms, patch = {}, reading = {}) => captureState(r, probe('a'), ms, patch, reading);
   const first = at(0);
@@ -295,7 +295,7 @@ test('the base keeps its state frame to frame, and starts again on a new launch,
   assert.strictEqual(split.frames[1].frame.startedAtMs, split.born);
 });
 
-test('address, universe and trim edits do not restart an effect; another fixture or a changed id does', () => {
+test("patch edits restart effects only when fixture identity changes", () => {
   const r = rig(PARS);
   const first = captureState(r, probe(), 0);
   const moved = PARS.map((f, i) => ({ ...f, address: 101 + 12 * i, maxBrightness: 100 + i }));
@@ -304,7 +304,7 @@ test('address, universe and trim edits do not restart an effect; another fixture
   assert.notStrictEqual(captureState(r, probe(), 50, { fixtures: renamed }), first, 'a different fixture id is a different patch');
 });
 
-test('a changed patch starts a voice again once, on the frame it changes, and the next frame is handed the real time since', () => {
+test("patch changes restart each voice once", () => {
   const r = rig(PARS);
   const v = voice('pad', probe('v'));
   r.at(0, { voices: [v] });
@@ -318,7 +318,7 @@ test('a changed patch starts a voice again once, on the frame it changes, and th
   assert.strictEqual(fresh.frames.at(-1).frame.dtMs, 25);
 });
 
-test('a jump in the music starts the base again; a voice keeps its launch, deadline and state and moves its beat anchor', () => {
+test("music jumps preserve voice lifetime and re-anchor its beat", () => {
   const r = rig(PARS);
   const v = voice('pad:1', probe('v'), { startedAtMs: 0, untilMs: 5000, anchorBeat: 0.5 });
   const base = probe('base');
@@ -343,7 +343,7 @@ test('a jump in the music starts the base again; a voice keeps its launch, deadl
   assert.strictEqual(late.at(5000, { voices: [voice('pad:1', preset('energy.blinder'), { untilMs: 5000 })] }, { epoch: 7 })[0].w, 0, 'half-open: off at its deadline');
 });
 
-test('a macro voice takes a jump in the music down to its step: the step plays on from the new beat, its state kept', () => {
+test("macro voices retain step state through music jumps", () => {
   const r = rig(PARS);
   const macro = spec({ kind: 'macro', params: { steps: [{ effect: probe('step 0'), beats: 4 }, { effect: probe('step 1'), beats: 4 }], loopBeats: 8 } });
   const v = voice('pad:1', macro, { startedAtMs: 0, anchorBeat: 0 });
@@ -368,7 +368,7 @@ test('a jump in the music starts the base again, even back onto the step it was 
   assert.strictEqual(again.frames[0].frame.instanceId, first.frames[0].frame.instanceId, 'the same public id');
 });
 
-test('effects are handed the real time since their last frame, not the expression\'s clamped step', () => {
+test("effects receive the actual elapsed frame time", () => {
   const r = rig(PARS);
   captureState(r, probe(), 0);
   const s = captureState(r, probe(), 1000);
@@ -377,7 +377,7 @@ test('effects are handed the real time since their last frame, not the expressio
   assert.strictEqual(s.frames[2].frame.dtMs, 0, 'never negative');
 });
 
-test('a voice before its start or at its end plays nothing; a relaunch under the same id starts it afresh, the same snapshot does not', () => {
+test("voice state follows launch identity and lifetime", () => {
   const blinder = preset('energy.blinder');
   const r = rig([PAR]);
   assert.strictEqual(r.at(99, { voices: [voice('pad', blinder, { startedAtMs: 100 })] })[0].w, 0, 'not yet');
@@ -400,7 +400,7 @@ test('a voice before its start or at its end plays nothing; a relaunch under the
 
 const BAR = barProfile({ id: 'effects-test-bar', name: 'Test Bar', cells: 4, firstChannel: 3, order: 'RGBW', dimmer: 1, strobe: 2 });
 
-test('voice targets are fixture ids on every cell: odd ids, a bar\'s cells, a wash fixture, a missing id, none', () => {
+test("voice fixture targets cover every assigned cell", () => {
   registerProfile(BAR);
   try {
     // Ids out of patch order and far apart; a bar of four cells among them.
@@ -441,7 +441,7 @@ test('voice targets are fixture ids on every cell: odd ids, a bar\'s cells, a wa
   }
 });
 
-test('the base plays on the look\'s split cells; the wash holds colour B and a split change leaves the voices be', () => {
+test("split looks retain independent base and voice layers", () => {
   const placed = PARS.map((f, i) => ({ ...f, position: { x: 10 + 25 * i, y: 50 }, group: i < 2 ? 'front' : 'back' }));
   const r = rig(placed);
   const v = voice('pad', probe('v'), { targets: [] });
@@ -457,7 +457,7 @@ test('the base plays on the look\'s split cells; the wash holds colour B and a s
   assert.strictEqual(lastState, voiceState, 'the voice\'s layout is the whole rig: a new split does not restart it');
 });
 
-test('a frame carries each cell\'s fixture id, the room\'s Hue lamps (profile-only included), the Hue strobe and the same audio frame', () => {
+test("effect frames carry fixture, Hue and audio context", () => {
   registerProfile(BAR);
   try {
     const profileOnly = fixture(9, 40, HUE_COLOR_PROFILE_ID);
@@ -490,7 +490,7 @@ test('a frame carries each cell\'s fixture id, the room\'s Hue lamps (profile-on
   }
 });
 
-test('on a placed rig with a Hue lamp each layer keeps its room frame after frame, under a base effect and under a party look', () => {
+test("placed layers retain their room frame", () => {
   // The look, the base effect and the voices all read the plan; a room built
   // afresh each frame would lose what is kept with it (Light DJ's channels).
   const placed = [...PARS, { ...LAMP, address: 60 }].map((f, i) => ({ ...f, position: { x: 10 + 20 * i, y: 30 + 10 * i } }));
@@ -513,7 +513,7 @@ test('on a placed rig with a Hue lamp each layer keeps its room frame after fram
   assert.ok(same(underLook.voice), 'the voices\' room under a party look that reads the plan too');
 });
 
-test('a hand-built input without audio, mode or master renders an effect as the explicit defaults do', () => {
+test("missing engine input fields use effect defaults", () => {
   const run = (patch) => {
     const r = rig(PARS);
     const frames = [];
@@ -528,7 +528,7 @@ test('a hand-built input without audio, mode or master renders an effect as the 
   assert.ok(bare.some((f) => f.some(([dim]) => dim > 0)), 'and it plays: tempo, not black');
 });
 
-test('Disco\'s automatic strobe stands down for any playing manual strobe, on top or not; one ended or still to come does not count', () => {
+test("playing manual strobes suppress Disco automatic flashes", () => {
   const r = rig(PARS);
   const flag = (voices) => captureState(r, probe(), 0, { voices }).frames.at(-1).frame.manualStrobeActive;
   const strobe = (extra) => voice('strobe', preset(HOLD_STROBE), { tier: 'strobe', ...extra });
@@ -558,7 +558,7 @@ test('an empty rig renders no effect and initializes nothing', () => {
 // glow rides the expression level, and the hold strobe flashes per lamp.
 const BURST = JSON.parse(fs.readFileSync(new URL('../fixtures/golden/energy-burst.json', import.meta.url), 'utf8'));
 
-test('every energy and the hold strobe play exactly as the burst always did, extra emitters and strobe channel included', () => {
+test("energy effects preserve legacy emitter output", () => {
   registerProfile(BAR);
   try {
     const FIX = [PAR, LAMP, fixture(2, 30, BAR.id)];
@@ -582,7 +582,15 @@ test('every energy and the hold strobe play exactly as the burst always did, ext
   }
 });
 
-test('the hold strobe is the catalogue\'s palette-strobe row: five a second on the beat grid, the look\'s colours, the look between', () => {
+for (const energy of ['color-strobe', 'glow']) {
+  test(`${energy} renders the override's first colour`, () => {
+    const paletteOverride = [{ r: 0, g: 255, b: 0, w: 0, a: 0, uv: 0 }];
+    const rendered = rig([PAR]).at(10, { pattern: 'chase', colorA: 9, energy, paletteOverride })[PAR.id];
+    assert.deepEqual([rendered.r, rendered.g, rendered.b, rendered.w, rendered.a, rendered.uv], [0, 255, 0, 0, 0, 0]);
+  });
+}
+
+test("hold strobe uses catalogue palette-strobe timing", () => {
   const row = preset(HOLD_STROBE);
   assert.strictEqual(row.params.flashesPerSecond, 5, 'not the strobe kind\'s own default of two');
   assert.deepStrictEqual([row.kind, row.params.clock, row.params.continueBetween, row.palette], ['strobe', 'beat', true, null]);
@@ -602,7 +610,7 @@ test('the hold strobe is the catalogue\'s palette-strobe row: five a second on t
   for (let i = 1; i < flashes.length; i++) assert.ok(Math.abs(flashes[i] - flashes[i - 1] - 234.375) < FRAME_MS, `${flashes[i - 1]} → ${flashes[i]}`);
 });
 
-test('only the renderer\'s own burst, on an input that says nothing of safety, keeps the old admission', () => {
+test("compatibility bursts alone retain implicit legacy admission", () => {
   const white = (patch) => rig([PAR]).at(10, { pattern: 'solid', colorA: 0, ...patch })[PAR.id];
   // The strobe-channel energies, the hold strobe: rapid kinds.
   assert.strictEqual(white({ energy: 'white-strobe' }).g, 255, 'no safety field: as it always played');
@@ -636,7 +644,7 @@ function brightRises(fixtures, patch, { seconds = 1, from = 0 } = {}) {
 }
 const SAFETY = (hdFlashIntervalMs = 350, acknowledged = true) => ({ safety: { hdFlashIntervalMs, acknowledged } });
 
-test('Disco is outside the limit: its reactive hits flash at their own rate under 350 ms', () => {
+test("Disco reactive flashes bypass the HD guard", () => {
   // A bass hit every 100 ms of stream time, each a new hop.
   const hop = (t) => ({ t, generation: 1, rms: 0.2, power: 1, dominantHz: 80, party: { full: 0.8, bass: 0.9, mid: 0.2, high: 0.1 },
     disco: { hit: [true, false, false], gate: [0, 0, 0], level: [1, 0, 0], peakHit: false, neural: { mainFrequency: 0, amplitude: 0 } },
@@ -648,7 +656,7 @@ test('Disco is outside the limit: its reactive hits flash at their own rate unde
   assert.ok(limited.length > 3, `${limited.length} hits a second`);
 });
 
-test('the limit reads the winning slot\'s kind: a macro\'s Hue Dynamics step is held, another layer on top is not', () => {
+test("flash guards inspect the winning slot kind", () => {
   const twinkleMacro = spec({ kind: 'macro', params: { steps: [{ effect: WHITE_TWINKLE, beats: 4 }], loopBeats: 4 } });
   const macro = brightRises([PAR], () => ({ pattern: 'look', effect: twinkleMacro, ...SAFETY() }));
   assert.ok(macro.length <= 3, `a macro step of twinkle: ${macro.length} rises`);
@@ -666,7 +674,7 @@ test('the limit reads the winning slot\'s kind: a macro\'s Hue Dynamics step is 
   assert.ok(after[0] >= 200 && after[0] < 270, `first rise after the kill at ${after[0]} ms`);
 });
 
-test('a lamp a low master or trim keeps dim spends no rise; another layer between rises ends a held one; a new interval keeps the history', () => {
+test("flash guards follow effective lamp brightness", () => {
   // At master 100 the twinkle never reaches 55 %: nothing is held back, every event shows.
   const r = rig([PAR]);
   const lows = [];
@@ -717,7 +725,7 @@ function strobeRises(times, patch, grid) {
   return rises;
 }
 
-test('the effects count frames from the grid\'s origin: at any phase, with timer jitter, five a second shows all fifty flashes', () => {
+test("strobe grid origins retain all flashes under jitter", () => {
   for (const phase of [0, 7.3, FRAME_MS / 2 - 1, FRAME_MS / 2 + 1, FRAME_MS - 0.5]) {
     for (const jitter of ['late', 'both']) {
       const origin = 123456.789 + phase;
@@ -733,7 +741,7 @@ test('the effects count frames from the grid\'s origin: at any phase, with timer
   }
 });
 
-test('the strobe\'s permit carries through a relaunch under its voice id and a relaunch of a strobe look', () => {
+test("strobe relaunches retain their permit", () => {
   const frames = Array.from({ length: 30 }, (_, k) => k * FRAME_MS);
   // Relaunched six frames (136 ms) after its first flash, dark by then: the new grid's first flash waits out the permit.
   const relaunchAt = 6;
@@ -748,7 +756,7 @@ test('the strobe\'s permit carries through a relaunch under its voice id and a r
   assert.ok(viaBase[1] >= 8, `the relaunched look waits: second rise on frame ${viaBase[1]}`);
 });
 
-test('one strobe voice taking over from another inherits its permit: the manual strobe from the energy endpoints\', and back, at once or after a dark gap', () => {
+test("manual and energy strobe handoffs retain their permit", () => {
   const frames = Array.from({ length: 60 }, (_, k) => k * FRAME_MS);
   const lone = (id, k, from) => voice(id, WALL_STROBE, { tier: 'strobe', launchSeq: from ? 2 : 1, startedAtMs: frames[from] });
   for (const [first, second] of [['energy:palette-strobe', 'strobe'], ['strobe', 'energy:palette-strobe']]) {
@@ -783,7 +791,7 @@ test('one strobe voice taking over from another inherits its permit: the manual 
   assert.deepStrictEqual(blinder, [0, 6], 'a blinder six frames after the strobe\'s flash lights at once');
 });
 
-test('two strobe voices on one lamp never interleave: the higher one covers it, flashing or not', () => {
+test("strobe voices cannot interleave on one lamp", () => {
   const frames = Array.from({ length: 88 }, (_, k) => k * FRAME_MS);
   const a = voice('strobe', WALL_STROBE, { tier: 'strobe', launchSeq: 2 });
   const b = voice('energy:palette-strobe', spec({ kind: 'strobe', palette: ['#FF0000'], params: { flashesPerSecond: 5, clock: 'wall', continueBetween: true } }),
@@ -793,7 +801,7 @@ test('two strobe voices on one lamp never interleave: the higher one covers it, 
   for (let i = 1; i < rises.length; i++) assert.ok(rises[i] - rises[i - 1] >= 8);
 });
 
-test('a lamp keeps one strobe permit whoever draws it: a strobe ending over another, a strobe look showing again from under a strobe voice', () => {
+test("strobe layers share one lamp permit", () => {
   const frames = Array.from({ length: 100 }, (_, k) => k * FRAME_MS);
   const legal = (rises, label) => {
     for (let i = 1; i < rises.length; i++) assert.ok(rises[i] - rises[i - 1] >= 8, `(a) ${label}: ${rises}`);
@@ -826,7 +834,7 @@ test('a lamp keeps one strobe permit whoever draws it: a strobe ending over anot
 
 // ── Commands for the base effect ────────────────────────────────────────────
 
-test('commands reach the base\'s state once each, in order, after it starts and before it first draws', () => {
+test("base commands apply once in order before rendering", () => {
   const r = rig(PARS);
   const base = probe('studio-like');
   const intent = baseIntentOf({ pattern: 'look', effect: base });
@@ -851,7 +859,7 @@ test('commands reach the base\'s state once each, in order, after it starts and 
   assert.deepStrictEqual(r.renderer.commandStatus(), { processed: 4, applied: 4 });
 });
 
-test('a command meant for another base, a pattern, a kind without commands or a base that may not play is refused, decided but not applied', () => {
+test("inapplicable base commands are refused", () => {
   const r = rig(PARS);
   const base = probe('a');
   captureState(r, base, 0);
@@ -962,7 +970,7 @@ test('a pulsed tail never outlives its voice or leaks onto a lamp it does not co
   }
 });
 
-test('voices of every engine play on through a jump in the music: wall-clock tails continue, musical schedules start again from the new beat', () => {
+test("engine voices retain continuity through music jumps", () => {
   const read = (out) => PARS.map((f) => [out[f.id].dim, out[f.id].r, out[f.id].g, out[f.id].b]);
   for (const id of ['ldj.StudioN2', 'ldj.GrooveWave', 'ldj.visualizer.swirl', 'ldj.House', 'ldj.FadeCycle', 'ldj.SceneMakerFirework']) {
     const v = voice('pad', preset(id), { launchSeq: 1, startedAtMs: 0, anchorBeat: 0 });

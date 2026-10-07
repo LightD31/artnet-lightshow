@@ -1,50 +1,3 @@
-// Pure rehearsal sampler. Replays a planned timeline so the browser can show
-// what a track will look like before the room is full.
-//
-// It shares its arithmetic with the live engine rather than restating it: the
-// pattern functions come from patterns.js, and every curve, burst colour and
-// emitter scale comes from shared/look-math.js. An earlier version kept its own
-// copies and had already drifted — it showed a cool-white blinder where the rig
-// throws warm and a UV wash at a little over half its real level. A rehearsal
-// view that is confidently wrong is worse than none.
-//
-// Two things it deliberately does not reproduce, both operator state rather
-// than show state:
-//
-//   * the grand master and master blackout — rehearsing a track with the rig
-//     blacked out is exactly when this view is useful, and an operator who left
-//     the master down should still see the show;
-//   * strobe, which has no meaning at preview frame rates.
-//
-// Per-fixture maximum brightness *is* applied, because that is a property of
-// where the lamp hangs rather than of what the operator is doing right now.
-//
-// Time is counted the way the rig counts it (shared/beat-clock.js): in beats of
-// the track's analysed grid, with each scene's pattern anchored on the beat it
-// was scheduled for. So a chase rehearsed here is on the step the room will
-// see at that moment, not on one worked out from elapsed seconds at a rounded
-// tempo. A timeline with no grid is counted at its own tempo marks, as the
-// rig's free clock would.
-//
-// It draws the pattern layer through the same function the rig does
-// (shared/layer.js), so it answers per light: one entry per par, one per cell
-// of an LED bar, in the rig's order (shared/rig.js).
-//
-// The party effects keep state from frame to frame, so a timeline that plays
-// one (a scene whose pattern the caller's `resolveEffect` resolves to an
-// effect, or any voice) is stepped instead: through the renderer's own
-// effect layer (shared/effects/layer.ts), on the engine's 44 Hz frame grid
-// counted from the timeline's zero, with the events due before each frame
-// applied first. A frame of that grid is rendered once, whatever is asked;
-// a moment between two frames is rendered on a copy of the frame before it,
-// which is then thrown away, so how often the browser asks never changes
-// what the rehearsal shows. Asked for an earlier moment, it starts again from
-// the nearest copy of the walk at or before it: one kept at each scene and
-// seek, and the most recently used of those kept every second.
-//
-// A sequence (a clip table and its transport, as the rig's renderer is
-// handed them) plays its clips over the look the same way, through the same
-// selection and laps (shared/effects/sequence.ts).
 import { PATTERN_FUNCS, paletteOf } from './patterns.ts';
 import { renderLayer } from './layer.ts';
 import { buildRig, isHueLamp, rigSignature } from './rig.ts';
@@ -95,11 +48,6 @@ export type PreviewPatch = Partial<PreviewLook> & {
   durationMs?: number;
 };
 
-/**
- * A `voice` event's data: a voice launched at the event's time on fixtures
- * ('shared' is the whole rig), as the renderer is handed one. `effect` is the
- * resolved effect; the seed is seedFrom(id) unless given (a recorded launch).
- */
 export interface PreviewVoice {
   id: string;
   effect: EffectSpec;
@@ -116,11 +64,6 @@ export interface PreviewVoiceEnd {
   id: string;
 }
 
-/**
- * One event of a planned timeline: `patch` and `energy` as the auto show
- * plays them; `voice` and `voice-end`; `seek`, where the music jumped (the
- * effects start again there, as the rig's do on a new clock epoch).
- */
 export interface PreviewEvent {
   timeMs: number;
   action?: string;
@@ -150,31 +93,11 @@ export interface PreviewSafety {
 }
 
 export interface PreviewOptions {
-  /**
-   * The effect a pattern id plays, as the engine resolves it (the browser has
-   * the catalogue and the library). Nothing, as for one of the fork's own
-   * patterns, plays the pattern.
-   */
   resolveEffect?: ((id: string) => EffectSpec | null | undefined) | null;
   /** How Hue lamps take a flash. Absent is 'pulse', as for a renderer input without it. */
   hueStrobe?: 'flash' | 'pulse';
-  /**
-   * The settings' safety (350 ms and unacknowledged where a field is left
-   * out). Absent altogether, the old energy bursts keep the admission they
-   * always had, as on a renderer input without safety.
-   */
   safety?: Partial<PreviewSafety> | null;
-  /**
-   * A sequence playing through the rehearsal: its clip table and its
-   * transport, the transport's beats on the timeline's beat count. Its clips
-   * are the base of the fixtures they cover, as on the rig.
-   */
   sequence?: { table: SequenceTable; transport: SequenceTransport } | null;
-  /**
-   * The colours played over every effect, as the live state carries them
-   * (hex, `paletteOverride`). Absent, null, or not a list of colours, the
-   * effects play their own.
-   */
   paletteOverride?: readonly string[] | null;
 }
 
@@ -220,10 +143,6 @@ const SLACK_MS = 1e-6;
 const gridTime = (k: number): number => k * FRAME_MS;
 /** The last frame of the grid at or before `ms`. */
 const frameAt = (ms: number): number => Math.floor((ms + SLACK_MS) / FRAME_MS);
-// A copy of the walk every second of frames, so going back replays at most a
-// second. A copy holds every kind's state (about 0.6 MB on 1024 cells for the
-// heaviest), so only the most recently used are kept, and a long walk keeps
-// only those near its end.
 const CHECKPOINT_FRAMES = 44;
 const CHECKPOINTS = 16;
 // A copy costs about five frames' stepping: a walk moves to one ahead of it only when that saves more.
@@ -259,11 +178,6 @@ function voiceOf(event: PreviewEvent, beatPos: number): VoiceFrame | null {
   return Object.freeze({ id: d.id, spec, targets, tier: d.tier, launchSeq: d.launchSeq as number, startedAtMs: event.timeMs,
     untilMs, anchorBeat: beatPos, seed });
 }
-
-// ── What a sample is handed, as content ─────────────────────────────────────
-// The rig, the patch, the colour table and the effects belong to the whole
-// rehearsed timeline: one that changes rebuilds the stepped history (equal to
-// a fresh sampler with it), one rebuilt with the same content keeps it.
 
 /** An object's JSON: read afresh each time, as a caller may change an object it hands over again. */
 const contentOf = (value: unknown): string => JSON.stringify(value) ?? 'undefined';
@@ -397,11 +311,6 @@ const unitLight = (c: Colour, dim: number, strobe = 0): UnitLight => ({
   r: c.r, g: c.g, b: c.b, w: c.w || 0, a: c.a || 0, uv: c.uv || 0, dim, strobe,
 });
 
-/**
- * `grid` is the analysis the timeline was planned from — `{ beats, downbeats,
- * meter }`, as the timeline data carries it — or nothing. `options` says how
- * the effects resolve and what the settings are (PreviewOptions).
- */
 function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSource | null = null,
   options: PreviewOptions = {}): PreviewSample {
   const beatGrid = gridFromAnalysis(grid);
@@ -420,10 +329,6 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
   let anchor = 0;
   let anchorBeat: number | null = null;
   let burst: Frame['burst'] = null;
-  // Carried across the walk so each frame records where the continuous channels
-  // had got to by the time it fired. The blend below is a first-order lag, and
-  // that is exact over any step while the target holds — so one step per event
-  // lands on the same value the engine reaches in forty steps a second.
   let expression: Expression = { ...EXPRESSION_REST };
   let motionPhase = 0;
   // The crossfade in progress, as the engine keeps it: which frame was on
@@ -496,20 +401,12 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
   /** The look's four colours, resolved against the colour table. */
   const coloursOf = (s: PreviewLook, presets: readonly Colour[]): Colour[] => COLOUR_KEYS.map((key) => presets[s[key]] || presets[0]);
 
-  /**
-   * The pattern layer at a moment: the pattern and colours through the layer
-   * the engine draws, one entry per light of `rig`. A crossfade is the
-   * caller's business.
-   */
   function drawPattern(f: Frame, positionMs: number, rig: Rig, colors: Colour[], expr: Expression, phase: number, bpm: number): LayerEntry[] {
     const s = f.look;
     const division = Math.max(1, s.beatDivision || 1);
     const beatPos = beatAt(positionMs, f);
     const step = stepAt(beatPos, f.anchor, division);
     const layer: LayerEntry[] = rig.units.map(() => ({ color: colors[0], dim: 0 }));
-    // The same layer the engine draws, so a chase rehearsed here travels across
-    // the plot exactly as it will across the room — in stage order, around a
-    // split look's wash, and along the cells of every bar.
     renderLayer(rig, {
       pattern: PATTERN_FUNCS[s.pattern] ? s.pattern : 'solid',
       colors,
@@ -537,12 +434,6 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
     return layer;
   }
 
-  /**
-   * What the pattern layer shows at a moment: the pattern and colours, with the
-   * two continuous patterns and any crossfade applied — everything the engine
-   * computes before a burst, the music's level and the trims go on top. One
-   * entry per light of `rig`.
-   */
   function patternLayer(index: number, positionMs: number, rig: Rig, presets: readonly Colour[]): {
     layer: LayerEntry[];
     colors: Colour[];
@@ -586,12 +477,6 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
     return lo - 1;
   }
 
-  /**
-   * The old timeline, patterns and the energy lane, answered for any moment
-   * straight from the walk above. A burst the renderer would hold back for
-   * the acknowledgement is held back here too, and a Hue lamp takes the hold
-   * strobe as the setting says.
-   */
   function sampleLegacy(positionMs: number, env: Pick<Env, 'fixtures' | 'presets' | 'rig' | 'hue'>): Colour[] {
     const { fixtures, presets, rig, hue } = env;
     const index = frameIndex(positionMs);
@@ -604,13 +489,13 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
       const spec = energyEffectSpec(burstId);
       if (spec && requiresAcknowledgement(spec)) burstId = null;
     }
-    const energy = burstId ? resolveEnergyOverride(burstId, colors[0], expr.level) : null;
+    const energy = burstId ? resolveEnergyOverride(burstId, paletteOverride?.[0] ?? colors[0], expr.level) : null;
     // The hold strobe is a burst per light, as the rig renders it: a flash,
     // a Hue lamp's pulse, or nothing between flashes.
     const hold = !energy && burstId === HOLD_STROBE
       ? holdStrobeFlash(beatAt(positionMs, frame), beatGrid ? localBpm(beatGrid, positionMs) : frame.look.bpm)
       : null;
-    const palette = hold ? paletteOf({ colors }) : null;
+    const palette = hold ? paletteOverride ?? paletteOf({ colors }) : null;
 
     return layer.map(({ color, dim }, u) => {
       const { fixture: i, cell } = rig.units[u];
@@ -631,9 +516,6 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
   // ── The stepped timeline ──────────────────────────────────────────────────
 
   let env: Env | null = null;
-  // The canonical frames: the walk as far as it has gone, the copies taken
-  // on the way (never changed; in frame order), and the last moment between
-  // two frames asked for.
   let walk: Walk | null = null;
   let checkpoints: Checkpoint[] = [];
   let periodicCount = 0;
@@ -715,14 +597,6 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
     return launch;
   }
 
-  /**
-   * The voices playing at `t`, each on the musical anchor it plays from, as
-   * renderer.ts playingVoices: a voice not started or past its deadline plays
-   * nothing; a new launch under an id starts its state again (a strobe keeps
-   * its permit); a seek moves a voice's anchor to the start of the scene's
-   * beat and leaves its wall times. The energy lane rides along as a voice of
-   * its own, admitted without the acknowledgement only while no safety is given.
-   */
   function playingVoices(w: Walk, t: number, beatPos: number, f: Frame): { voices: VoiceFrame[]; admitted: Set<VoiceFrame> } {
     const energy = f.burst && t < f.burst.end ? f.burst.id ?? null : null;
     if (!energy) w.compat = null;
@@ -757,12 +631,6 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
     return { voices, admitted };
   }
 
-  /**
-   * One frame of the stepped timeline at `t`, after the events due by then:
-   * renderer.ts frame() without the masters, the strobe channel, overrides,
-   * the sync test and the flash limit. Its lights only when asked for: a
-   * frame stepped through on the way to another leaves only its state.
-   */
   function render(w: Walk, t: number, e: Env, lights: boolean): Colour[] | null {
     const { fixtures, presets, rig } = e;
     const f = frames[w.cursor - 1];
@@ -929,10 +797,6 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
     return lo;
   }
 
-  /**
-   * The checkpoint to start from for frame `k`: the last one at or before
-   * it, and before it when its lights are asked for and that copy has none.
-   */
   function checkpointBefore(k: number, lights: boolean): Checkpoint {
     let i = checkpointIndex(k) - 1;
     const c = checkpoints[i];
@@ -956,11 +820,6 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
     periodicCount--;
   }
 
-  /**
-   * The canonical walk at frame `k` (not before the one before the
-   * timeline's first frame). The walk renders the lights of the frame it
-   * stops on; a copy it starts from may have none, and `lights` asks for them.
-   */
   function walkTo(k: number, e: Env, lights: boolean): Walk {
     if (!checkpoints.length) checkpoints.push({ walk: emptyWalk(firstFrame - 1, intervalMs), periodic: false, used: 0 });
     if (walk && walk.k === k && (walk.output || !lights)) return walk;
@@ -1002,11 +861,6 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
     return copyOut(output);
   }
 
-  /**
-   * The rig's lights at `positionMs`, as emitter values: one entry per par and
-   * one per cell of each bar. `rig` is the rig built with the profiles (see
-   * shared/rig.js); without one, every fixture is taken as a single light.
-   */
   return (positionMs, fixtures, presets, rig = buildRig(fixtures, () => null)) => {
     // Nothing due yet (or no colours to show): nothing plays.
     if (!presets?.length || !timeline.length || !(timeline[0].timeMs <= positionMs + SLACK_MS)) return dark(rig);
@@ -1019,10 +873,6 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
 // What a clip whose effect does not validate plays: no kind, so where it wins it is black, as an unknown kind is on the rig.
 const NO_EFFECT: EffectSpec = Object.freeze({ kind: '', params: {} });
 
-/**
- * The sequence a sampler plays, its clips' effects checked once as any
- * effect is. Null for none, or for something that is not a table and a transport.
- */
 function sequenceOf(given: PreviewOptions['sequence']): { table: SequenceTable; transport: SequenceTransport } | null {
   const table = given?.table;
   const transport = given?.transport;
@@ -1037,11 +887,6 @@ const dark = (rig: Rig): Colour[] => rig.units.map(() => ({ r: 0, g: 0, b: 0 }))
 /** The caller's own copy of a frame's lights. */
 const copyOut = (lights: readonly Colour[]): Colour[] => lights.map((c) => ({ ...c }));
 
-/**
- * A cell's emitters as the rig drives them: only those its channel map has.
- * A strobe panel's white zone shows a red chase as the rig does — dark — and
- * lights for a white strobe.
- */
 function onlyItsEmitters(v: ReturnType<typeof emitterValues>, map: ChannelMap | null | undefined): ReturnType<typeof emitterValues> {
   if (!map) return v;
   const has = (...names: string[]) => names.some((n) => map[n] !== undefined);

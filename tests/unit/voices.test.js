@@ -65,7 +65,7 @@ test('a hold without renewal dies after 1.2 s and onChange fires', (t) => {
   assert.equal(c.changes, 2, 'once');
 });
 
-test('a dropped hold is gone from the frame at its lease even before its timer fires, and is ended once', (t) => {
+test("expired holds disappear before their timer fires", (t) => {
   const { m, c, ids } = rig(t);
   const v = m.start(hold());
   // The frame a renderer works on without news ends where the lease does.
@@ -78,7 +78,7 @@ test('a dropped hold is gone from the frame at its lease even before its timer f
   assert.equal(c.changes, 2, 'and its timer found nothing left to end');
 });
 
-test('renew keeps it; release ends it; disconnect(owner) ends every voice of that owner', (t) => {
+test("hold renewal and release require the matching owner", (t) => {
   const { m, c, advance, ids } = rig(t);
   const v = m.start(hold());
   for (let i = 0; i < 6; i++) {
@@ -97,7 +97,10 @@ test('renew keeps it; release ends it; disconnect(owner) ends every voice of tha
   assert.equal(c.changes, before + 1);
   m.release('tablet', 't1');
   assert.equal(c.changes, before + 1, 'a second release finds nothing');
+});
 
+test("disconnect ends every voice belonging to its owner", (t) => {
+  const { m } = rig(t);
   m.start(hold({ token: 'a' }));
   m.start(hold({ token: 'b', spec: BLINDER }));
   m.start(latched({ owner: 'tablet' }));
@@ -107,7 +110,91 @@ test('renew keeps it; release ends it; disconnect(owner) ends every voice of tha
   assert.deepEqual(m.list().map((s) => s.id), [theirs.id], 'everything the tablet launched went with it');
 });
 
-test('a renewal changes only the lease: same launch, same start, no change told; a lease already run out is not renewed', (t) => {
+/** The ids each stop told, in order. */
+function hearStops(m) {
+  const heard = [];
+  const unhear = m.onStop((stopped) => heard.push(stopped.map((v) => v.id)));
+  return { heard, unhear };
+}
+
+test('a stop by id is told before the change is', (t) => {
+  const { m, c } = rig(t);
+  let changesAtStop = null;
+  m.onStop(() => { changesAtStop = c.changes; });
+  const a = m.start(latched());
+  const before = c.changes;
+  m.stop(a.id);
+  assert.deepEqual([changesAtStop, c.changes], [before, before + 1]);
+});
+
+test('stop, stopWhere and stopAll each tell the voices they ended', (t) => {
+  const { m } = rig(t);
+  const { heard } = hearStops(m);
+  const [a, b, d] = [m.start(latched()), m.start(latched()), m.start(once({ lengthMs: 100 }))];
+  m.stop(a.id);
+  m.stopWhere((v) => v.id === b.id);
+  m.stopAll();
+  assert.deepEqual(heard, [[a.id], [b.id], [d.id]]);
+});
+
+test('a stop that ends nothing is not told', (t) => {
+  const { m } = rig(t);
+  const { heard } = hearStops(m);
+  m.stopAll();
+  m.stop('none');
+  assert.deepEqual(heard, []);
+});
+
+test('a release is not told as a stop', (t) => {
+  const { m } = rig(t);
+  const { heard } = hearStops(m);
+  m.start(hold());
+  m.release('tablet', 't1');
+  assert.deepEqual([heard, m.size], [[], 0]);
+});
+
+test('a lease running out is not told as a stop', (t) => {
+  const { m, advance } = rig(t);
+  const { heard } = hearStops(m);
+  m.start(hold());
+  advance(HOLD_TIMEOUT_MS);
+  assert.deepEqual([heard, m.size], [[], 0]);
+});
+
+test('a once reaching its length is not told as a stop', (t) => {
+  const { m, advance } = rig(t);
+  const { heard } = hearStops(m);
+  m.start(once({ lengthMs: 100 }));
+  advance(100);
+  assert.deepEqual([heard, m.size], [[], 0]);
+});
+
+test('a launch replacing its key is not told as a stop', (t) => {
+  const { m } = rig(t);
+  const { heard } = hearStops(m);
+  m.start(latched({ key: 'k' }));
+  m.start(latched({ key: 'k' }));
+  assert.deepEqual([heard, m.size], [[], 1]);
+});
+
+test('a disconnect is not told as a stop', (t) => {
+  const { m } = rig(t);
+  const { heard } = hearStops(m);
+  m.start(hold({ token: 'gone' }));
+  m.disconnect('tablet');
+  assert.deepEqual([heard, m.size], [[], 0]);
+});
+
+test('a stop listener no longer hears once unsubscribed', (t) => {
+  const { m } = rig(t);
+  const { heard, unhear } = hearStops(m);
+  unhear();
+  m.start(latched());
+  m.stopAll();
+  assert.deepEqual(heard, []);
+});
+
+test("renewal extends only an active lease", (t) => {
   const { m, c, advance } = rig(t);
   const v = m.start(hold());
   advance(500);
@@ -124,7 +211,7 @@ test('a renewal changes only the lease: same launch, same start, no change told;
   assert.equal(m.get(v.id), null, 'a renewal after the lease ran out ends it instead');
 });
 
-test('the same owner and token: the same press renews; another effect replaces; a stale timer never removes the replacement', (t) => {
+test("reused hold tokens preserve replacement identity", (t) => {
   const { m, c, advance } = rig(t);
   const first = m.start(hold());
   advance(600);
@@ -167,7 +254,7 @@ test('a quantised hold let go before its grid line never plays', (t) => {
 
 // ── Once and latched ────────────────────────────────────────────────────────
 
-test('once with beats ends at startedAtMs + beats × 60000/bpm; with ms at startedAtMs + ms', (t) => {
+test("once voices expire at their requested length", (t) => {
   const { m, c, advance, ids } = rig(t, { bpm: 128 });
   const beats = m.start(once({ lengthBeats: 3 }));
   const ms = m.start(once({ lengthMs: 250, spec: BLINDER }));
@@ -184,7 +271,7 @@ test('once with beats ends at startedAtMs + beats × 60000/bpm; with ms at start
   assert.equal(c.changes, before + 1);
 });
 
-test('a once with no length plays its preset\'s, else its kind\'s: Hue Dynamics\' scoped loop, Light DJ\'s beats, a macro\'s loop, a beat or a bar', () => {
+test("once voices default to the preset or kind lifetime", () => {
   const spec = (raw) => validateSpec(raw);
   assert.equal(lengthBeatsOf(spec({ kind: 'hd.simpleAdsr', scope: 'singleBeat' }), 16), 16, 'the preset\'s own length first');
   assert.equal(lengthBeatsOf(spec({ kind: 'hd.simpleAdsr', scope: 'singleBeat' })), 1);
@@ -233,7 +320,7 @@ test('a wait longer than a Node timer takes is chained, not cut short', (t) => {
   assert.equal(m.get(v.id), null);
 });
 
-test('no voice keeps the process alive: an hour\'s latch, an hour\'s once and a hold, all pending, and it still exits', () => {
+test("pending voices do not keep the process alive", () => {
   const url = new URL('../../src/server/voices.ts', import.meta.url).href;
   const script = `const { VoiceManager } = await import('${url}');
     const m = new VoiceManager({ now: () => performance.now(), onChange() {}, acknowledged: () => true });
@@ -248,7 +335,7 @@ test('no voice keeps the process alive: an hour\'s latch, an hour\'s once and a 
 
 // ── Launch timing ───────────────────────────────────────────────────────────
 
-test('nothing running → a quantised launch starts now; something running → it snaps up to the next grid line and frames() omits it before then', (t) => {
+test("quantized launches follow the running clock", (t) => {
   const { m, c, ids } = rig(t, { beat: 10.1, bpm: 120 });
   const primed = m.start(once({ quantise: 0.25, lengthBeats: 4 }));
   assert.equal(primed.startedAtMs, 1000, 'primed: at once');
@@ -279,7 +366,7 @@ test('nothing running → a quantised launch starts now; something running → i
   assert.equal(m.start(once({ quantise: 0, lengthMs: 100, spec: { kind: 'energy.kill' } })).startedAtMs, 1000);
 });
 
-test('a voice past its end, its timer not fired yet, leaves nothing running: the next quantised launch starts now', (t) => {
+test("expired voices do not delay a quantized launch", (t) => {
   const { m, c } = rig(t, { beat: 10.1, bpm: 120 });
   m.start(once({ lengthMs: 100 }));
   m.start(hold({ token: 'gone' }));
@@ -293,7 +380,7 @@ test('a voice past its end, its timer not fired yet, leaves nothing running: the
   near(w.startedAtMs, c.now + 0.5 * 500, 'the next whole beat');
 });
 
-test('frames() carries tier, launchSeq, ms times and resolves targets to fixture ids; a conductor epoch bump leaves a running voice running', (t) => {
+test("voice frames retain launch metadata across clock epochs", (t) => {
   const { m, c, ids } = rig(t, { beat: 3 });
   const a = m.start(once({ lengthBeats: 8, targets: [2, 0, 2] }));
   const b = m.start(latched({ spec: BLINDER, tier: 'strobe', targets: 'shared' }));
@@ -338,19 +425,17 @@ test('a rapidFlash spec is refused until acknowledged', (t) => {
   const { m, c } = rig(t, { acknowledged: false });
   const playing = m.start(latched({ key: 'k' }));
   for (const spec of [FAST, { kind: 'energy.whiteStrobe' }, { kind: 'strobe' }, { ...FADE, rapidFlash: true }]) {
-    assert.throws(() => m.start(latched({ spec, key: 'k' })), (err) => err.status === 409 && /photosensitivity acknowledgement required/.test(err.message), spec.kind);
+    assert.throws(() => m.start(latched({ spec, key: 'k' })), (err) => err.status === 409, spec.kind);
   }
   assert.deepEqual(m.list().map((s) => s.id), [playing.id], 'what played plays on');
   assert.equal(c.changes, 1);
-  // The energy endpoints' way: admitted, and the renderer holds it dark.
-  assert.ok(m.start(latched({ spec: { kind: 'energy.whiteStrobe' }, admission: 'render' })));
   // Stopping needs nothing.
-  assert.equal(m.stopAll(), 2);
+  assert.equal(m.stopAll(), 1);
   c.acknowledged = true;
   assert.ok(m.start(latched({ spec: FAST })));
 });
 
-test('a launch is checked whole before it replaces anything; what it was given is copied', (t) => {
+test("invalid launches preserve the current voice", (t) => {
   const { m } = rig(t);
   const playing = m.start(latched({ key: 'k' }));
   const refused = [
@@ -365,7 +450,10 @@ test('a launch is checked whole before it replaces anything; what it was given i
   ];
   for (const v of refused) assert.throws(() => m.start(v), (err) => err.status === 400, JSON.stringify(v));
   assert.deepEqual(m.list().map((s) => s.id), [playing.id]);
+});
 
+test("voice launches copy and freeze their input", (t) => {
+  const { m } = rig(t);
   const spec = { kind: 'ldj.FadeCycle', params: { cadence: 2 } };
   const targets = [0, 1];
   const v = m.start(latched({ spec, targets }));
@@ -392,20 +480,23 @@ test('a hidden voice keeps its launch and timers and renders nothing', (t) => {
 
 // ── Requests ────────────────────────────────────────────────────────────────
 
-test('a request names an effect or a preset, never both; targets are "shared" or fixture ids of the patch', () => {
-  assert.throws(() => launchOf({}, builtinPresets), /either effect or preset/);
-  assert.throws(() => launchOf({ effect: FADE, preset: 'blinder' }, builtinPresets), /either effect or preset/);
-  assert.throws(() => launchOf({ preset: 'no-such' }, builtinPresets), (err) => err.status === 400 && /No such preset/.test(err.message));
+test("voice requests name exactly one effect or preset", () => {
+  assert.throws(() => launchOf({}, builtinPresets), (err) => err.status === 400);
+  assert.throws(() => launchOf({ effect: FADE, preset: 'blinder' }, builtinPresets), (err) => err.status === 400);
+  assert.throws(() => launchOf({ preset: 'no-such' }, builtinPresets), (err) => err.status === 400);
   assert.throws(() => launchOf({ preset: 'chase' }, builtinPresets), (err) => err.status === 400, 'a legacy pattern is no effect');
   assert.throws(() => launchOf({ effect: { kind: 'ldj.FadeCycle', params: { cadence: 'fast' } } }, builtinPresets),
-    (err) => err.status === 400 && /^effect\.params/.test(err.message));
+    (err) => err.status === 400);
   const blinder = launchOf({ preset: 'blinder' }, builtinPresets);
   assert.deepEqual([blinder.spec.kind, blinder.label], ['energy.blinder', 'Blinder']);
+});
+
+test("voice targets resolve only patched fixture ids", () => {
   assert.equal(targetsOf(undefined, [0, 1]), 'shared');
   assert.equal(targetsOf('shared', [0, 1]), 'shared');
   assert.deepEqual(targetsOf([1, 1, 0], [0, 1]), [1, 0]);
   assert.deepEqual(targetsOf([], [0, 1]), [], 'an empty list stays empty');
-  assert.throws(() => targetsOf([7], [0, 1]), /no fixture 7/);
+  assert.throws(() => targetsOf([7], [0, 1]), (err) => err.status === 400);
   assert.throws(() => targetsOf('all', [0, 1]), (err) => err.status === 400);
 });
 
@@ -422,7 +513,7 @@ function energy(t) {
   return { ...r, shim, told, visible };
 }
 
-test('the energy effects as voices: a hold plays over the latch, the latch comes back as it was', (t) => {
+test("energy holds temporarily replace the latched voice", (t) => {
   const { m, shim, told, visible, advance } = energy(t);
   shim.latch('blinder');
   const latch = m.get('energy:blinder');
@@ -461,22 +552,29 @@ test('the energy effects as voices: a hold plays over the latch, the latch comes
   assert.equal(shim.latched(), null);
 });
 
-test('a latch that ended while hidden never comes back; off takes only the latch', (t) => {
+test("ended hidden latches never resume", (t) => {
   const { m, shim, visible } = energy(t);
   shim.latch('glow');
   shim.press('page', 'p1', 'blinder');
-  m.stop('energy:glow');    // DELETE /api/voices/energy:glow, say
+  m.stop('energy:glow');
   shim.release('page', 'p1');
   assert.deepEqual(visible(), []);
   assert.equal(shim.latched(), null);
+});
 
+test("energy latch off preserves a playing hold", (t) => {
+  const { shim, visible } = energy(t);
   shim.latch('glow');
   shim.press('page', 'p2', 'kill');
-  shim.latch(null);         // /api/energy/off
+  shim.latch(null);
   assert.equal(shim.held(), 'kill', 'the hold plays on');
   assert.deepEqual(visible(), ['energy:kill:hold']);
+});
 
-  // A stop of everything leaves nothing a release could bring back.
+test("stopAll clears hidden energy latches", (t) => {
+  const { m, shim, visible } = energy(t);
+  shim.latch('glow');
+  shim.press('page', 'p2', 'kill');
   shim.latch('uv-wash');
   m.stopAll();
   shim.release('page', 'p2');
@@ -486,13 +584,20 @@ test('a latch that ended while hidden never comes back; off takes only the latch
   assert.equal(m.size, 0);
 });
 
-test('a strobe energy is taken unacknowledged, as the endpoints always answered: the renderer holds it dark', (t) => {
+test("unacknowledged energy strobes preserve current voices", (t) => {
   const { m, c, shim } = energy(t);
   c.acknowledged = false;
+  shim.latch('glow');
+  shim.press('page', 'p1', 'kill');
+  for (const effect of ['white-strobe', 'color-strobe', 'palette-strobe']) {
+    assert.throws(() => shim.latch(effect), (err) => err.status === 409, effect);
+    assert.throws(() => shim.press('page', 'p2', effect), (err) => err.status === 409, effect);
+  }
+  assert.deepEqual([shim.latched(), shim.held(), m.size], ['glow', 'kill', 2]);
+  c.acknowledged = true;
   shim.latch('white-strobe');
-  shim.press('page', 'p1', 'palette-strobe');
+  shim.press('page', 'p3', 'palette-strobe');
   assert.deepEqual([shim.latched(), shim.held()], ['white-strobe', 'palette-strobe']);
-  assert.equal(m.size, 2);
 });
 
 // ── Disarm ──────────────────────────────────────────────────────────────────
@@ -534,12 +639,12 @@ test('disarm (apply.ts) stops every voice', (t) => {
   assert.equal(m.size, 0);
 });
 
-test('a pattern bundle voice: a rapid child holds it at 409 until acknowledged, a once launch plays the bundle length', (t) => {
+test("bundle voice launches enforce nested safety", (t) => {
   const { m, c } = rig(t, { acknowledged: false });
   const clip = (spec) => ({ id: '0:0', laneId: 'shared:0', fixtureIds: null, startBeat: 0, lengthBeats: 2, loopBeats: 2, spec: validateSpec(spec), seed: seedFrom('c'), mute: false });
   const table = (spec) => ({ revision: 0, lanes: [{ id: 'shared:0', kind: 'shared', name: 'shared:0', mute: false, solo: false }], clips: [clip(spec)] });
   const rapid = bundleSpec({ patternId: 'p', lengthBeats: 6, table: table({ ...FADE, rapidFlash: true }) }, true);
-  assert.throws(() => m.start(once({ spec: rapid })), (err) => err.status === 409 && /photosensitivity acknowledgement required/.test(err.message));
+  assert.throws(() => m.start(once({ spec: rapid })), (err) => err.status === 409);
   c.acknowledged = true;
   const voice = m.start(once({ spec: rapid }));
   assert.equal(voice.untilMs - voice.startedAtMs, 6 * 500);

@@ -1,3 +1,4 @@
+import { ZodError } from 'zod';
 // tests/unit/effects-macro.test.js
 // The macro kind: Light DJ's composite Scene Maker rows as a looping score of effects.
 import test from 'node:test';
@@ -56,7 +57,7 @@ function sampler(inst, r = room()) {
 }
 const TWO_STEPS = () => macro([step({ kind: 'test.probe', palette: ['#FF0000'] }, 2), step({ kind: 'test.probe', palette: ['#0000FF'] }, 2)], 4);
 
-test('two steps of 2 beats each alternate, looping every 4; each step\'s effect anchors at the step start', () => {
+test("macro steps anchor at their loop boundaries", () => {
   const at = sampler(instance(TWO_STEPS(), { anchorBeat: 10, startedAtMs: 5000 }));
   const rows = [[0, RED, 10, 'm:0', 5000, 1], [1, RED, 10, 'm:0', 5000, 2], [1.99, RED, 10, 'm:0', 5000, 3], [2, BLUE, 12, 'm:1', 6000, 1],
     [3, BLUE, 12, 'm:1', 6000, 2], [4, RED, 14, 'm:0', 7000, 1], [5, RED, 14, 'm:0', 7000, 2], [6, BLUE, 16, 'm:1', 8000, 1], [8, RED, 18, 'm:0', 9000, 1]];
@@ -68,7 +69,7 @@ test('two steps of 2 beats each alternate, looping every 4; each step\'s effect 
   }
 });
 
-test('a step starts at its boundary in wall time: the known launch, a back-projection clamped to the launch, or between two samples', () => {
+test("macro steps derive wall origins from their boundaries", () => {
   // A late first sample in step 0 of lap 0 still starts at the launch, whatever the tempo now.
   assert.strictEqual(sampler(instance(TWO_STEPS(), { startedAtMs: 1000 }))(0.5).child.startedAtMs, 1000);
   assert.strictEqual(sampler(instance(TWO_STEPS(), { startedAtMs: 1000 }))(0.5, { bpm: 240 }).child.startedAtMs, 1000);
@@ -91,7 +92,7 @@ test('a step starts at its boundary in wall time: the known launch, a back-proje
   assert.deepStrictEqual([landed.child.id, landed.child.anchorBeat, landed.child.startedAtMs], ['m:0', 4, 2000]);
 });
 
-test('a macro re-anchored onto the step it plays (a voice after a jump in the music) moves the step\'s anchor and keeps its state', () => {
+test("re-anchoring a macro retains its active step state", () => {
   // The renderer moves a playing voice's anchor to the beat the music jumped to; its wall times stay.
   const stepper = new EffectStepper();
   const inst = instance(TWO_STEPS(), { startedAtMs: 0 });
@@ -109,7 +110,7 @@ test('a macro re-anchored onto the step it plays (a voice after a jump in the mu
   assert.deepStrictEqual([later.id, later.anchorBeat, later.renders], ['m:1', 42, 1]);
 });
 
-test('each lap and step plays with fresh state and its own seed, and two macros never share a child', () => {
+test("macro activations keep independent state and seeds", () => {
   const at = sampler(instance(TWO_STEPS()));
   const seeds = [0, 2, 4, 6].map((beat) => at(beat).child);
   assert.ok(seeds.every((child) => child.renders === 1), 'fresh state at every activation');
@@ -145,17 +146,23 @@ test('each lap and step plays with fresh state and its own seed, and two macros 
   assert.deepStrictEqual(run(stepper), run(clone));
 });
 
-test('macros validate recursively: steps fill the loop, bounded nesting, no cycles, idempotent', () => {
-  const probe = { kind: 'test.probe' };
+test("macro child specs survive repeated validation", () => {
   const spec = TWO_STEPS();
   assert.deepStrictEqual(spec.params.steps[0].effect, validateSpec({ kind: 'test.probe', palette: ['#FF0000'] }), 'children are validated specs');
   assert.deepStrictEqual(validateSpec(spec), spec, 'idempotent');
   assert.deepStrictEqual(validateSpec(JSON.parse(JSON.stringify(spec))), spec, 'plain data on the wire');
-  // Decimal step tables that fill the loop pass; a real gap or overhang does not.
+});
+
+test("macro steps must fill their loop", () => {
+  const probe = { kind: 'test.probe' };
   assert.doesNotThrow(() => macro([step(probe, 4), step(probe, 3.6), step(probe, 3.6), step(probe, 4.8)], 16));
   for (const [beats, loop] of [[[4, 3.6, 3.6, 4.7], 16], [[4, 3.6, 3.6, 4.8001], 16], [[2, 2], 4.000001], [[2], 4]]) {
-    assert.throws(() => macro(beats.map((b) => step(probe, b)), loop), /fill/, `${beats} in ${loop}`);
+    assert.throws(() => macro(beats.map((b) => step(probe, b)), loop), ZodError, `${beats} in ${loop}`);
   }
+});
+
+test("macro schemas reject invalid controls", () => {
+  const probe = { kind: 'test.probe' };
   for (const params of [{ steps: [], loopBeats: 4 }, { steps: [step(probe, 0)], loopBeats: 0 }, { steps: [step(probe, -1)], loopBeats: -1 },
     { steps: [step(probe, Infinity)], loopBeats: Infinity }, { steps: [step(probe, NaN)], loopBeats: NaN }, { steps: [step({ kind: 'nope' }, 4)], loopBeats: 4 },
     { steps: [step(probe, 4, { paletteIndices: [] })], loopBeats: 4 }, { steps: [step(probe, 4, { paletteIndices: [8] })], loopBeats: 4 },
@@ -163,32 +170,43 @@ test('macros validate recursively: steps fill the loop, bounded nesting, no cycl
     { steps: [step({ kind: 'test.probe', params: { level: 2 } }, 4)], loopBeats: 4 }, { steps: [{ effect: probe, beats: 4, extra: 1 }], loopBeats: 4 }]) {
     assert.throws(() => validateSpec({ kind: 'macro', params }), JSON.stringify(params));
   }
-  // 32 levels of nesting pass, the 33rd does not, and a far deeper chain fails the same way.
+});
+
+test("macro nesting is bounded at 32 levels", () => {
+  const probe = { kind: 'test.probe' };
   const nest = (depth) => {
     let inner = probe;
     for (let d = 0; d < depth; d++) inner = { kind: 'macro', params: { steps: [step(inner, 1)], loopBeats: 1 } };
     return inner;
   };
   assert.doesNotThrow(() => validateSpec(nest(32)));
-  assert.throws(() => validateSpec(nest(33)), /32/);
-  assert.throws(() => validateSpec(nest(20000)), /32/);
+  assert.throws(() => validateSpec(nest(33)), ZodError);
+  assert.throws(() => validateSpec(nest(20000)), ZodError);
   const deep = validateSpec(nest(32));
   assert.deepStrictEqual(draw(instance(deep), frame({ acknowledged: false }), room(), new EffectStepper())[0].colour, RED,
     'and render, not mistaken for rapid at the depth limit');
-  // A macro that contains itself is refused; one child shared by siblings is not a cycle.
+});
+
+test("macro validation rejects recursive cycles", () => {
   const cyclic = { kind: 'macro', params: { steps: [step(null, 1)], loopBeats: 1 } };
   cyclic.params.steps[0].effect = cyclic;
-  assert.throws(() => validateSpec(cyclic), /itself/);
+  assert.throws(() => validateSpec(cyclic), ZodError);
   assert.strictEqual(requiresAcknowledgement(cyclic), true, 'unvalidated cycles assume the worst rather than overflow');
+});
+
+test("macro children may share a noncyclic spec", () => {
+  const probe = { kind: 'test.probe' };
   const shared = { kind: 'macro', params: { steps: [step(probe, 1)], loopBeats: 1 } };
   assert.doesNotThrow(() => macro([step(shared, 1), step(shared, 1), step(probe, 1)], 3));
-  // Shape keeps its defaults: one step that fills its loop.
+});
+
+test("default macros contain one full-length step", () => {
   const fallback = validateSpec({ kind: 'macro' });
   assert.strictEqual(fallback.params.steps.length, 1);
   assert.strictEqual(fallback.params.steps[0].beats, fallback.params.loopBeats);
 });
 
-test('palettes: an override wins, then the child\'s own (its kind\'s default too), then the parent\'s, then the look; indices map roles', () => {
+test("macro palette precedence resolves each child role", () => {
   const colourAt = (spec, over = {}) => draw(instance(spec), frame(over), room(), new EffectStepper())[0].colour;
   const one = (effect, extra = {}, parent = {}) => macro([step(effect, 4, extra)], 4, parent);
   assert.deepStrictEqual(colourAt(one({ kind: 'test.probe' })), RED, 'the look');
@@ -220,14 +238,22 @@ test('palettes: an override wins, then the child\'s own (its kind\'s default too
   assert.deepStrictEqual(spec.palette, [{ random: true }, '#0000FF']);
 });
 
-test('brightness applies once at each level, transparency survives, targets mask, and a rapid child needs the acknowledgement', () => {
+test("macro brightness applies once at each level", () => {
   const dim = macro([step({ kind: 'test.probe', brightness: 0.5 }, 4)], 4, { brightness: 0.5 });
   assert.strictEqual(draw(instance(dim), frame(), room(), new EffectStepper())[0].level, 0.25);
+});
+
+test("macro children retain transparency", () => {
   const clear = macro([step({ kind: 'test.probe', params: { clear: true } }, 4)], 4);
   assert.strictEqual(draw(instance(clear), frame(), room(2), new EffectStepper())[0].strength, 0);
+});
+
+test("macro targets mask child output", () => {
   const masked = draw(instance(TWO_STEPS(), { targets: [1] }), frame(), room(3), new EffectStepper());
   assert.deepStrictEqual(Object.keys(masked), ['1']);
-  // A macro with a rapid step is a rapid effect: refused and dark until acknowledged.
+});
+
+test("rapid macro children require acknowledgement", () => {
   const rapid = macro([step({ kind: 'test.probe' }, 2), step({ kind: 'test.flashy' }, 2)], 4);
   assert.strictEqual(requiresAcknowledgement(rapid), true);
   assert.strictEqual(requiresAcknowledgement(TWO_STEPS()), false);
@@ -236,8 +262,7 @@ test('brightness applies once at each level, transparency survives, targets mask
   assert.strictEqual(draw(instance(rapid), frame(), room(), new EffectStepper()).length, 1);
 });
 
-test('finite Light DJ children: a single pulse never retriggers, and Flip\'s four updates hold to the end of the loop', () => {
-  // BeatPulse1 once over a one-beat step: one pulse, then dark — no quarter-beat retrigger.
+test("finite macro pulses never retrigger within a step", () => {
   const pulse = macro([step({ kind: 'ldj.BeatPulse1', params: { cadence: 0.25, iterations: 1 } }, 1)], 1);
   const at = sampler(instance(pulse));
   const levels = [];
@@ -245,7 +270,9 @@ test('finite Light DJ children: a single pulse never retriggers, and Flip\'s fou
   const rises = levels.filter((level, i) => level > 0.5 && !(levels[i - 1] > 0.5)).length;
   assert.strictEqual(rises, 1);
   assert.ok(levels.slice(-8).every((level) => level === 0), 'it fades and stays dark');
-  // Flip at .9 beats, four times from 11.2: updates at 11.2, 12.1, 13 and 13.9, the last held through 16.
+});
+
+test("finite macro Flip children hold after four updates", () => {
   const bigRoom = macro([step({ kind: 'test.probe' }, 11.2), step({ kind: 'ldj.Flip', params: { cadence: 0.9, iterations: 4 } }, 4.8)], 16);
   const flip = sampler(instance(bigRoom), square());
   const changes = [];
@@ -259,32 +286,30 @@ test('finite Light DJ children: a single pulse never retriggers, and Flip\'s fou
   }
   assert.strictEqual(changes.length, 4, `changes at ${changes}`);
   [11.2, 12.1, 13, 13.9].forEach((due, k) => assert.ok(changes[k] >= due - 1e-9 && changes[k] < due + 0.05, `update ${k} at ${changes[k]}`));
-  // A cold sample at 15.5 shows the last update, as dense rendering does.
   const cold = sampler(instance(bigRoom), square())(15.5).out;
   assert.deepStrictEqual(cold, dense);
   assert.deepStrictEqual(cold.map((slot) => slot.colour), [RED, BLUE, BLUE, BLUE], 'iteration 3, not a fifth update');
-  // The next lap starts the step table again, with a fresh Flip.
   assert.deepStrictEqual(flip(16).out.map((slot) => slot.colour), [RED, RED, RED, RED]);
   assert.deepStrictEqual(sampler(instance(bigRoom), square())(16 + 15.5).out, cold);
 });
 
-test('a macro may not hold the strobe, which would restart its five-a-second permit at every step', () => {
+test("macros reject strobe children", () => {
   const strobe = { kind: 'strobe', params: { clock: 'wall', flashesPerSecond: 5 } };
-  assert.throws(() => macro([step(strobe, 0.25)], 0.25), /strobe/);
-  assert.throws(() => macro([step({ kind: 'test.probe' }, 1), step({ kind: 'macro', params: { steps: [step(strobe, 1)], loopBeats: 1 } }, 1)], 2), /strobe/, 'nested');
+  assert.throws(() => macro([step(strobe, 0.25)], 0.25), ZodError);
+  assert.throws(() => macro([step({ kind: 'test.probe' }, 1), step({ kind: 'macro', params: { steps: [step(strobe, 1)], loopBeats: 1 } }, 1)], 2), ZodError, 'nested');
   // A hand-built spec that skipped validation renders the step dark: no quarter-beat laps of fresh strobes.
   const raw = { kind: 'macro', params: { steps: [{ effect: validateSpec(strobe), beats: 0.25 }], loopBeats: 0.25 }, palette: null, brightness: 1 };
   const at = sampler(instance(raw));
   for (let ms = 0; ms < 1000; ms += 1000 / 44) assert.strictEqual(at(ms / 500).out[0].strength, 0, `${ms} ms`);
 });
 
-test('nor Disco with its automatic strobe on, whose five-a-second limit each step would start again', () => {
+test("macros reject Disco children with automatic strobe", () => {
   const disco = (id, over = {}) => ({ kind: 'hd.disco', params: { ...DISCO_PRESETS.find((p) => p.id === id).params, ...over } });
   assert.throws(() => macro([step(disco('hd.disco.drumAndBass'), 0.75)], 0.75),
-    (err) => err.issues.some((i) => i.path.join('.') === 'params.steps.0.effect.params' && i.message === 'a macro may not hold an automatic strobe'));
+    (err) => err.issues.some((i) => i.path.join('.') === 'params.steps.0.effect.params' && i.code === 'custom'));
   const peak = DISCO_PRESETS.find((p) => p.id === 'hd.disco.pop').params;
   assert.throws(() => macro([step(disco('hd.disco.pop', { style: 'peak', channels: peak.channels.map((c, i) => (i === 3 ? { ...c, strobeOn: true } : c)) }), 1)], 1),
-    /a macro may not hold an automatic strobe/);
+    ZodError);
   // Without it, Disco is a step like any other.
   assert.strictEqual(macro([step(disco('hd.disco.pop'), 1)], 1).params.steps[0].effect.kind, 'hd.disco');
   // A hand-built spec that skipped validation renders that step dark, where Disco without the strobe lights on a hit.
@@ -297,7 +322,7 @@ test('nor Disco with its automatic strobe on, whose five-a-second limit each ste
   assert.strictEqual(heard('hd.disco.drumAndBass'), 0);
 });
 
-test('a macro\'s slots name the step kind that drew them, through nested macros, so a guard for one family still finds it', () => {
+test("macro output slots identify their leaf kind", () => {
   const hd = macro([step({ kind: 'hd.simpleAdsr' }, 2), step({ kind: 'test.probe' }, 2)], 4);
   const at = sampler(instance(hd), room(2));
   assert.deepStrictEqual(at(0.5).out.map((slot) => [slot.strength, slot.kind]), [[1, 'hd.simpleAdsr'], [1, 'hd.simpleAdsr']]);
@@ -311,7 +336,7 @@ test('a macro\'s slots name the step kind that drew them, through nested macros,
   assert.ok(!('kind' in own[0]));
 });
 
-test('the playing leaves change on the frame the macro\'s rendered step changes, nested macros to the leaf', () => {
+test("macro playing leaves follow rendered step boundaries", () => {
   const inner = macro([step({ kind: 'test.tinted', params: { level: 1, clear: false } }, 1), step({ kind: 'test.probe', params: { level: 0.5, clear: false } }, 2)], 3);
   const m = macro([step({ kind: 'test.probe', params: { level: 1, clear: false } }, 1.1), step(inner, 2.3)], 3.4);
   // Anchors and beats that do not sum exactly in binary, either side of each boundary.

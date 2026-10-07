@@ -16,28 +16,10 @@ import type { OverrideInput } from './validation.ts';
 import type { SettingsPatch } from './settings.ts';
 import { configFile } from './config-dir.ts';
 
-/**
- * Named looks, saved and recalled.
- *
- * A cue is a snapshot of everything that decides what the rig is doing right
- * now — tempo, pattern, palette, master, strobe, and each fixture's override —
- * captured under a name so it can be put back on stage in one press. That is
- * what a console's cue stack is for, and without one the only way back to a
- * look you liked was to rebuild it by hand while the room watched.
- *
- * Stored in config/cues.json next to the settings. A corrupt file is moved
- * aside rather than deleted, and the show still starts.
- */
-
-// A cue list is a set list, not a database. The cap keeps a stuck client from
-// growing the file (and the state broadcast) without bound.
 const MAX_CUES = 128;
 
 const colorIdx = z.number().int().min(0).max(COLOR_PRESETS.length - 1);
 
-// What a cue restores. Deliberately the operator-facing look and nothing else:
-// no fixture patch, no Art-Net target, no analysis. Recalling a cue must never
-// re-address the rig or move it to another universe mid-show.
 const lookSchema = z.object({
   bpm: z.number().min(20).max(300),
   beatDivision: z.number().int().min(1).max(16),
@@ -52,27 +34,12 @@ const lookSchema = z.object({
   strobeSpeed: z.number().int().min(0).max(255),
   strobeFunction: z.string().min(1).max(64),
   energyOverride: z.union([z.string().min(1).max(64), z.null()]),
-  // Absent in cues saved before LED bars: those recall with the pixel map
-  // that is already on stage.
   pixelMap: z.enum(PIXEL_MAPS).optional(),
-  // The bars' own picture. Absent in cues saved before the pars and the bars
-  // could run apart: those recall as one pattern on the whole rig, as they
-  // were captured.
   pixelPattern: z.string().min(1).max(64).nullable().optional(),
-  // The panels' own picture, likewise: a cue saved before it recalls with the
-  // panels drawing what the bars do.
   panelPattern: z.string().min(1).max(64).nullable().optional(),
-  // New cues carry ids beside their overrides so deleting a fixture cannot
-  // make a cue's look land on a different light. Old cues without this field
-  // use the original ids (0, 1, ...) if they predate this field.
   fixtureIds: z.array(fixtureId).max(64).optional(),
   overrides: z.array(z.union([overrideSchema, z.null()])).max(64),
-  // The colours played over every effect, fixed, as hex. Absent in cues saved
-  // before there was one: those recall with none, so their slots show.
   paletteOverride: paletteOverride.optional(),
-  // How the effects take the music, and how the manual strobe flashes — the
-  // settings, never whether it is on. Validated as the settings hold them;
-  // a cue without them leaves the ones in force.
   audioMode: settingsSchema.shape.audio.shape.mode.optional(),
   strobe: settingsSchema.shape.strobe.optional(),
 }).strict().refine((look) => !look.fixtureIds || (
@@ -92,16 +59,6 @@ const fileSchema = z.object({
   cues: z.array(cueSchema).max(MAX_CUES),
 }).strict();
 
-/**
- * The body of POST /api/cues and PUT /api/cues/:id.
- *
- * On create, an absent look means "capture what is on stage now". On update,
- * an absent look leaves the stored one alone, so renaming a cue never quietly
- * overwrites its look — `recapture` is how you ask for that, and it is a
- * separate flag because the client only holds cue *summaries* and so cannot
- * send a complete look back. A caller may still send one outright, which is
- * how a cue exported from one rig loads onto another.
- */
 const cueWriteSchema = z.object({
   name: z.string().min(1).max(80).optional(),
   look: lookSchema.optional(),
@@ -112,8 +69,6 @@ const reorderSchema = z.object({
   ids: z.array(z.string().min(1).max(64)).max(MAX_CUES),
 }).strict();
 
-/** POST /api/cues/restore: put a just-deleted cue back where it was. */
-/** A stored look: everything a cue puts back on stage. */
 export type Look = z.output<typeof lookSchema>;
 export type Cue = z.output<typeof cueSchema>;
 
@@ -126,11 +81,6 @@ function newId(): string {
   return crypto.randomBytes(8).toString('hex');
 }
 
-/**
- * Everything on stage right now, as a cue look. A cue is the base look: an
- * energy effect latched is part of it, the strobe never is — a cue must not
- * start one.
- */
 function captureLook() {
   return {
     bpm: state.bpm,
@@ -157,31 +107,14 @@ function captureLook() {
   };
 }
 
-/**
- * Put a look back on stage.
- *
- * The overrides go on after the patch so a cue captured with a fixture
- * overridden reproduces exactly that, and fixtures the cue has nothing to say
- * about are *cleared* rather than left holding whatever the last look put on
- * them — a cue is the whole rig, not a partial edit.
- */
 function recallLook(look: Look): void {
   const { fixtureIds, overrides, bpm, audioMode, strobe, ...rest } = look;
   const patch: typeof rest & { bpm?: number } = {
     ...rest, pixelPattern: rest.pixelPattern ?? null, panelPattern: rest.panelPattern ?? null,
-    // A cue saved before the override recalls with none, as it was captured:
-    // an override left on would hide the colour slots it saved.
     paletteOverride: rest.paletteOverride ?? null,
-    // Saved with the strobe latched, before cues left it out: the look comes
-    // back, the strobe does not.
     energyOverride: rest.energyOverride === HOLD_STROBE ? null : rest.energyOverride,
   };
-  // The saved tempo is for a set with no music to follow. While the clock is
-  // locked to the song playing, the song's tempo stands: a cue is a look, and
-  // recalling one is not the operator taking the tempo back by hand.
   if (conductor.status().source === 'tap') patch.bpm = bpm;
-  // Its settings are saved once the look is known to go ahead and before it
-  // does: a refused look leaves them, and a save that fails leaves the look.
   const saved: SettingsPatch = {
     ...(audioMode !== undefined ? { audio: { mode: audioMode } } : {}),
     ...(strobe !== undefined ? { strobe } : {}),
@@ -193,7 +126,6 @@ function recallLook(look: Look): void {
   for (const fixture of state.fixtures) applyOverride(fixture.id, byId.get(fixture.id) || null);
 }
 
-/** A cue's settings, saved; a disk that will not take them is the server's fault, not the cue's. */
 function saveSettings(patch: SettingsPatch): void {
   if (!Object.keys(patch).length) return;
   try {
@@ -208,11 +140,6 @@ function saveSettings(patch: SettingsPatch): void {
 class CueStore extends JsonStore {
   declare _cues: Cue[];
 
-  /**
-   * cues.json. No file is normal (no cues saved yet); a corrupt one is moved
-   * aside (JsonStore), so a hand-edit that went wrong is recoverable and the
-   * show still starts.
-   */
   constructor(file: string) {
     super(file, { tag: 'cues', fallback: 'starting with no cues' });
     this._cues = [];
@@ -232,16 +159,10 @@ class CueStore extends JsonStore {
     this.writeJson({ cues: this._cues });
   }
 
-  /** Every cue, in show order, with its full look. */
   list(): Cue[] {
     return this._cues.map((c) => JSON.parse(JSON.stringify(c)));
   }
 
-  /**
-   * The list the UI renders: identity plus enough to draw a swatch, without the
-   * per-fixture overrides. A hundred full looks ride every state broadcast
-   * otherwise, and the buttons never needed them.
-   */
   summaries() {
     return this._cues.map((c) => ({
       id: c.id,
@@ -258,15 +179,12 @@ class CueStore extends JsonStore {
     return this._cues.find((c) => c.id === id) || null;
   }
 
-  /** The first cue carrying this name, case and surrounding space ignored — what a
-   *  controller that knows the look by its label (Home Assistant, a show file) asks for. */
   findByName(name: string): Cue | null {
     const wanted = String(name).trim().toLowerCase();
     if (!wanted) return null;
     return this._cues.find((c) => c.name.trim().toLowerCase() === wanted) || null;
   }
 
-  /** Save a new cue. `look` defaults to what is on stage now. */
   create({ name, look }: { name?: string; look?: unknown }): Cue {
     if (this._cues.length >= MAX_CUES) {
       throw new HttpError(400, `Cue stack is full (${MAX_CUES} cues)`);
@@ -284,11 +202,6 @@ class CueStore extends JsonStore {
     return cue;
   }
 
-  /**
-   * Rename a cue, re-capture it over the live look, or both. With neither
-   * `recapture` nor `look`, the stored look is left alone — a rename must
-   * never quietly overwrite it with whatever happens to be on stage.
-   */
   update(id: string, { name, look, recapture }: { name?: string; look?: unknown; recapture?: boolean }): Cue | null {
     const cue = this.get(id);
     if (!cue) return null;
@@ -317,12 +230,6 @@ class CueStore extends JsonStore {
     return { cue, index };
   }
 
-  /**
-   * Put a removed cue back where it was, id intact.
-   *
-   * Idempotent on the id: pressing undo twice, or on a cue that has since been
-   * re-created, must not end up with two rows claiming the same id.
-   */
   insert(cue: unknown, index?: number): Cue | null {
     const parsed = cueSchema.parse(cue);
     if (this.get(parsed.id)) return null;
@@ -335,10 +242,6 @@ class CueStore extends JsonStore {
     return parsed;
   }
 
-  /**
-   * Reorder the stack. Ids not in the list keep their relative order at the
-   * end, so a client working from a stale list cannot drop cues by omission.
-   */
   reorder(ids: readonly string[]): Cue[] {
     const byId = new Map(this._cues.map((c) => [c.id, c]));
     const ordered: Cue[] = [];
@@ -352,7 +255,6 @@ class CueStore extends JsonStore {
     return this._cues;
   }
 
-  /** Put a stored cue on stage. Returns false when the id is unknown. */
   recall(id: string): boolean {
     const cue = this.get(id);
     if (!cue) return false;
@@ -360,9 +262,6 @@ class CueStore extends JsonStore {
     return true;
   }
 
-  // A failed write must not leave the process disagreeing with the file: a cue
-  // the operator thinks is saved and isn't would come back missing after a
-  // restart, mid-set.
   _persist(): void {
     try {
       this.save();
@@ -373,8 +272,6 @@ class CueStore extends JsonStore {
   }
 }
 
-// Fixed location for the same reason settings.json is: it is how you *find* the
-// cues, not itself a setting. Tests construct their own CueStore.
 const CUES_FILE = configFile('cues.json');
 const cues = new CueStore(CUES_FILE).load();
 

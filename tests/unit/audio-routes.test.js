@@ -26,7 +26,7 @@ import { HD_MASTER_DEFAULTS } from '../../src/shared/effects/types.ts';
 import { createRenderer, withInputDefaults } from '../../src/server/renderer.ts';
 import * as universes from '../../src/server/universes.ts';
 import { getProfile, profilesRevision, BUILTIN_PROFILE_ID } from '../../src/server/profiles.ts';
-import LiveInput from '../../src/live-input.ts';
+import LiveInput, { bandsArg } from '../../src/live-input.ts';
 
 showStore.scheduleSave = () => {};   // never the real show file
 
@@ -34,13 +34,18 @@ showStore.scheduleSave = () => {};   // never the real show file
 const BANDS = [[20, 250], [250, 3000], [3000, 9000], [0, 160], [750, 2000]];
 const KEY = BANDS.map(([lo, hi]) => `${lo}-${hi}`).join(',');
 
+/** A stand-in for the service's process: what is written to its stdin lands in `asked`. */
 function fakeProcess() {
   const proc = new EventEmitter();
   proc.stdout = new PassThrough();
   proc.stderr = new PassThrough();
+  proc.stdin = new PassThrough();
+  proc.asked = [];
+  proc.stdin.on('data', (d) => proc.asked.push(...d.toString().split('\n').filter(Boolean).map((l) => JSON.parse(l))));
   proc.kill = () => { proc.killed = true; proc.emit('close', null); };
   return proc;
 }
+const settle = () => new Promise((r) => setImmediate(r));
 
 /** A line of the live input's, with a spectrum over the defaults' five bands. */
 const line = (t, { rms = 0.1, bands = [1, 1, 1, 1, 1], type = 'state' } = {}) => JSON.stringify({
@@ -58,7 +63,8 @@ async function serve({ now } = {}) {
   settings.save = () => {};
   settings._values = { ...settings.all(), audio: JSON.parse(JSON.stringify(DEFAULTS.audio)), live: { ...DEFAULTS.live } };
   const spawned = [];
-  const live = new LiveInput({ now, spawner: (exe, args) => { spawned.push(args); return fakeProcess(); } });
+  const procs = [];
+  const live = new LiveInput({ now, spawner: (exe, args) => { spawned.push(args); const p = fakeProcess(); procs.push(p); return p; } });
   const idle = { onPlaybackUpdate() {}, onTrackChange() {}, getStatus: () => ({}), authenticated: false };
   const autoShow = {
     running: false, track: null, syncOffsetMs: 0, autoSyncMs: 0, analysis: null,
@@ -96,7 +102,7 @@ async function serve({ now } = {}) {
   }).then(async (res) => ({ status: res.status, body: await res.json() }));
   const clients = [];
   return {
-    live, spawned, integrations, applier, call,
+    live, spawned, procs, integrations, applier, call,
     client() {
       const socket = connect(url, { transports: ['websocket'], auth: { protocol: 2 }, forceNew: true });
       clients.push(socket);
@@ -147,7 +153,7 @@ test('GET /api/audio returns the mode, master and listening state', async () => 
   }
 });
 
-test('PUT /api/audio { mode: "reactive" } persists to settings and the engine input carries it', async () => {
+test('PUT /api/audio persists the mode used by the engine', async () => {
   const s = await serve();
   try {
     assert.deepStrictEqual([renderInput().audioMode, renderInput().audio], ['tempo', null]);
@@ -195,7 +201,7 @@ test('PUT /api/audio with threshold 2 is 400', async () => {
   }
 });
 
-test('a socket subscribed to the audio topic receives frames; one that is not does not', async () => {
+test('only audio-topic subscribers receive frames', async () => {
   const s = await serve();
   try {
     const watching = await s.client();
@@ -282,7 +288,7 @@ test('the engine reads the hop the room hears now: the live input\'s latency, on
   }
 });
 
-test('a latency raised while listening holds the hop the rig has until the room catches up: none is handed out twice', async () => {
+test('increased latency delays delivery without repeating hops', async () => {
   let liveNow = 10000;
   const s = await serve({ now: () => liveNow });
   try {
@@ -305,7 +311,7 @@ test('a latency raised while listening holds the hop the rig has until the room 
 
 // The detectors run on the settings of the Visualizer or Disco that plays: the
 // base look's own effect counts, once the room may see what the Visualizer flashes.
-test('the detectors take the base look\'s effect, validated, when the photosensitivity acknowledgement admits it', async () => {
+test('admitted base effects configure the audio detectors', async () => {
   const s = await serve();
   const pattern = state.pattern;
   try {
@@ -333,7 +339,7 @@ test('the detectors take the base look\'s effect, validated, when the photosensi
 
 // What the operator sets to see the strobes and to keep Hue lamps pulsing:
 // the engine reads both from the settings on every frame.
-test('the engine takes the acknowledgement and the Hue strobe from the settings, as PUT /api/settings sets them', async () => {
+test('engine safety and Hue mode follow saved settings', async () => {
   const s = await serve();
   try {
     const flashLimit = settings.get('safety.flashLimit');
@@ -349,7 +355,7 @@ test('the engine takes the acknowledgement and the Hue strobe from the settings,
   }
 });
 
-test('a hand-built render input reads as no audio, tempo and the master\'s defaults; what the engine passes stands', () => {
+test('render input defaults apply only to omitted audio settings', () => {
   const PAR = { id: 0, address: 1, universe: 0, profileId: BUILTIN_PROFILE_ID, maxBrightness: 255, override: null,
     position: null, group: null, geometry: null, hue: false };
   const hand = {
@@ -428,6 +434,76 @@ test('a settings apply, a restart and the return from the Python setup keep the 
     s.live.handleLine(line(1));
     assert.strictEqual(s.integrations.audio.features.frame().t, 1);
   } finally {
+    await s.close();
+  }
+});
+
+// A Disco brings its own bands, so the live input sums other ones while it
+// plays. Its process carries on through the change: the beat it
+// has locked to, its clock and the director playing by ear are not lost.
+test('Disco band updates preserve the input process and beat lock', async () => {
+  let liveNow = 10000;
+  const s = await serve({ now: () => liveNow });
+  const pattern = state.pattern;
+  const autoSource = state.autoSource;
+  try {
+    s.applier.applyChanged(settings.update({ live: { enabled: true } }));
+    assert.strictEqual(s.spawned.length, 1);
+    const proc = s.procs[0];
+    // Lines as the service writes them, over the list it sums; and its word that it took the one sent last.
+    let layout = KEY;
+    let hop = 0;
+    const tOf = (i) => 1 + i * 0.0116;
+    const hear = (n) => {
+      for (let i = 0; i < n; i++, hop++, liveNow += 11.6) s.live.handleLine(line(tOf(hop), { bands: layout.split(',').map(() => 1) }));
+    };
+    const take = () => { const sent = proc.asked.at(-1); layout = sent.bands; s.live.handleLine(JSON.stringify(sent)); };
+    hear(5);
+    state.autoSource = 'live';
+    assert.strictEqual(s.integrations.startAutoShow(), 'live');
+    const key = s.live.getBeatReading().key;
+    const epoch = s.integrations.audio.features.frame().generation;
+    const steady = (what) => {
+      assert.deepStrictEqual([s.spawned.length, proc.killed], [1, undefined], `${what}: one process, never stopped`);
+      assert.strictEqual(s.live.getBeatReading().key, key, `${what}: the same lock`);
+      assert.strictEqual(getLiveState().live.director.active, true, `${what}: the director plays on`);
+      assert.deepStrictEqual([s.integrations.audio.features.frame().t, s.integrations.audio.features.frame().generation], [tOf(hop - 1), epoch],
+        `${what}: heard, in the same stream`);
+    };
+
+    let voice = null;
+    const plays = [
+      ['the look', () => s.call('POST', '/api/pattern/hd.disco.pop'), () => s.call('POST', `/api/pattern/${pattern}`)],
+      ['a voice', async () => { voice = (await s.call('POST', '/api/voices', { preset: 'hd.disco.trance', mode: 'latched' })).body.id; },
+        () => s.call('DELETE', `/api/voices/${voice}`)],
+    ];
+    for (const [as, start, stop] of plays) {
+      const asked = proc.asked.length;
+      await start();
+      assert.notStrictEqual((await s.call('GET', '/api/audio')).body.detectors.disco.owner.from, 'fallback', `${as}: the Disco owns the detector`);
+      hear(2);
+      await settle();
+      assert.strictEqual(proc.asked.length, asked + 1, `${as}: asked once`);
+      assert.deepStrictEqual(proc.asked.at(-1), { type: 'bands', bands: bandsArg(s.integrations.audio.features.bandList()) });
+      assert.notStrictEqual(proc.asked.at(-1).bands, KEY, `${as}: other bands than the defaults'`);
+      take();
+      hear(3);
+      steady(`${as} started`);
+
+      await stop();
+      assert.strictEqual((await s.call('GET', '/api/audio')).body.detectors.disco.owner.from, 'fallback');
+      hear(2);
+      await settle();
+      assert.deepStrictEqual(proc.asked.at(-1), { type: 'bands', bands: KEY }, `${as}: the defaults again`);
+      take();
+      hear(3);
+      steady(`${as} stopped`);
+    }
+    s.integrations.stopAutoShow();
+  } finally {
+    await s.call('DELETE', '/api/voices');
+    state.pattern = pattern;
+    state.autoSource = autoSource;
     await s.close();
   }
 });

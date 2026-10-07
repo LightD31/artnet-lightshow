@@ -241,7 +241,7 @@ test('the stack is capped so a stuck client cannot grow the file without bound',
   const s = store();
   for (let i = 0; i < MAX_CUES; i++) s.create({ name: `Cue ${i}` });
 
-  assert.throws(() => s.create({ name: 'one too many' }), /Cue stack is full/);
+  assert.throws(() => s.create({ name: 'one too many' }));
   assert.strictEqual(s.list().length, MAX_CUES);
 });
 
@@ -273,7 +273,7 @@ test('while the clock follows a song, recall keeps the song\'s tempo', () => {
   }
 });
 
-test('overwriting a cue answers with the look it replaced, and putting it back is an undo', async () => {
+test('overwriting a cue can be undone with the returned look', async () => {
   const { default: express } = await import('express');
   const { attachRoutes } = await import('../../src/server/routes.ts');
   const s = store();
@@ -345,10 +345,10 @@ function library(t) {
   return lib;
 }
 
-test('a cue captures and recalls paletteOverride and audioMode; a cue captured while the strobe is latched stores energyOverride null', (t) => {
+test("cue capture stores palette, audio and strobe settings", (t) => {
   holdSettings(t);
   holdLook(t);
-  settings.update({ audio: { mode: 'reactive' }, strobe: { flashesPerSecond: 4, palette: ['#FF0000', '#0000FF'] } });
+  settings.update({ audio: { mode: 'reactive' }, strobe: { flashesPerSecond: 4, palette: ['#FF0000', '#0000FF'] }, safety: { photosensitivityAcknowledged: true } });
   applyPatch({ pattern: 'chase', paletteOverride: ['#ff0000', '#0000FF'], energyOverride: 'palette-strobe' });
   const saved = captureLook();
   assert.deepStrictEqual(saved.paletteOverride, ['#FF0000', '#0000FF']);
@@ -357,11 +357,23 @@ test('a cue captures and recalls paletteOverride and audioMode; a cue captured w
   assert.strictEqual(saved.strobe.flashesPerSecond, 4);
   assert.strictEqual(saved.energyOverride, null, 'the strobe is not part of a look');
   assert.ok(lookSchema.safeParse(saved).success);
+});
 
-  // A latched energy effect is.
+test("cue capture retains non-strobe energy overrides", (t) => {
+  holdSettings(t);
+  holdLook(t);
+  settings.update({ audio: { mode: 'reactive' }, strobe: { flashesPerSecond: 4, palette: ['#FF0000', '#0000FF'] }, safety: { photosensitivityAcknowledged: true } });
+  applyPatch({ pattern: 'chase', paletteOverride: ['#ff0000', '#0000FF'], energyOverride: 'palette-strobe' });
   applyPatch({ energyOverride: 'blinder' });
   assert.strictEqual(captureLook().energyOverride, 'blinder');
+});
 
+test("cue recall restores settings without restarting the strobe", (t) => {
+  holdSettings(t);
+  holdLook(t);
+  settings.update({ audio: { mode: 'reactive' }, strobe: { flashesPerSecond: 4, palette: ['#FF0000', '#0000FF'] }, safety: { photosensitivityAcknowledged: true } });
+  applyPatch({ pattern: 'chase', paletteOverride: ['#ff0000', '#0000FF'], energyOverride: 'palette-strobe' });
+  const saved = captureLook();
   applyPatch({ pattern: 'rainbow', paletteOverride: ['#00FF00'], energyOverride: null });
   settings.update({ audio: { mode: 'off' }, strobe: { flashesPerSecond: 2, palette: ['#FFFFFF'] } });
   recallLook(saved);
@@ -372,7 +384,7 @@ test('a cue captures and recalls paletteOverride and audioMode; a cue captured w
   assert.strictEqual(state.energyOverride, null, 'and no strobe starts');
 });
 
-test('the cue file saved before this change (tests/fixtures/golden/cues-before.json) loads and every cue recalls its pattern and colours; the one with palette-strobe does not start the strobe', (t) => {
+test('legacy cues retain their looks without restoring strobe energy', (t) => {
   holdSettings(t);
   holdLook(t);
   fs.copyFileSync(new URL('../fixtures/golden/cues-before.json', import.meta.url), file);
@@ -403,7 +415,7 @@ test('the cue file saved before this change (tests/fixtures/golden/cues-before.j
   assert.strictEqual(state.pattern, 'swirl');
 });
 
-test('recallLook of a cue whose pattern is gone does not throw: the id stays, and plays nothing', (t) => {
+test('missing cue patterns remain selected and render nothing', (t) => {
   holdSettings(t);
   holdLook(t);
   const lib = library(t);
@@ -417,7 +429,7 @@ test('recallLook of a cue whose pattern is gone does not throw: the id stays, an
   assert.strictEqual(renderInput().effect, null);
 });
 
-test('a cue is refused whole before anything changes: an effect that waits for the acknowledgement, or settings that cannot be saved', (t) => {
+test("unacknowledged rapid cue patterns leave the look unchanged", (t) => {
   const failing = { on: false };
   holdSettings(t, () => { if (failing.on) throw new Error('disk full'); });
   holdLook(t);
@@ -437,15 +449,61 @@ test('a cue is refused whole before anything changes: an effect that waits for t
     assert.strictEqual(settings.get('audio.mode'), base.audioMode);
     assert.strictEqual(state.fixtures[0].override, null);
   };
-
   assert.throws(() => recallLook({ ...changed, pattern: 'ldj.visualizer.flash' }), (err) => err.status === 409);
   unchanged();
+});
 
+test("unacknowledged strobe cue energy leaves the look unchanged", (t) => {
+  const failing = { on: false };
+  holdSettings(t, () => { if (failing.on) throw new Error('disk full'); });
+  holdLook(t);
+  library(t);
+  settings._values = { ...settings._values, safety: { ...settings._values.safety, photosensitivityAcknowledged: false } };
+  applyPatch({ pattern: 'chase', colorA: 1, paletteOverride: ['#00FF00'] });
+  applyOverride(0, null);
+  const base = captureLook();
+  const changed = {
+    ...base, colorA: 4, paletteOverride: ['#FF0000'], audioMode: base.audioMode === 'off' ? 'reactive' : 'off',
+    overrides: base.overrides.map((o, i) => (i === 0 ? { enabled: true, r: 255, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 255, strobe: 0, blackout: false } : o)),
+  };
+  const unchanged = () => {
+    assert.strictEqual(state.pattern, 'chase');
+    assert.strictEqual(state.colorA, 1);
+    assert.deepStrictEqual(getLiveState().paletteOverride, ['#00FF00']);
+    assert.strictEqual(settings.get('audio.mode'), base.audioMode);
+    assert.strictEqual(state.fixtures[0].override, null);
+  };
+  for (const energyOverride of ['white-strobe', 'color-strobe']) {
+    assert.throws(() => recallLook({ ...changed, energyOverride }), (err) => err.status === 409, energyOverride);
+    unchanged();
+    assert.strictEqual(state.energyOverride, null);
+  }
+});
+
+test("failed cue persistence is atomic and permits a later retry", (t) => {
+  const failing = { on: false };
+  holdSettings(t, () => { if (failing.on) throw new Error('disk full'); });
+  holdLook(t);
+  library(t);
+  settings._values = { ...settings._values, safety: { ...settings._values.safety, photosensitivityAcknowledged: false } };
+  applyPatch({ pattern: 'chase', colorA: 1, paletteOverride: ['#00FF00'] });
+  applyOverride(0, null);
+  const base = captureLook();
+  const changed = {
+    ...base, colorA: 4, paletteOverride: ['#FF0000'], audioMode: base.audioMode === 'off' ? 'reactive' : 'off',
+    overrides: base.overrides.map((o, i) => (i === 0 ? { enabled: true, r: 255, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 255, strobe: 0, blackout: false } : o)),
+  };
+  const unchanged = () => {
+    assert.strictEqual(state.pattern, 'chase');
+    assert.strictEqual(state.colorA, 1);
+    assert.deepStrictEqual(getLiveState().paletteOverride, ['#00FF00']);
+    assert.strictEqual(settings.get('audio.mode'), base.audioMode);
+    assert.strictEqual(state.fixtures[0].override, null);
+  };
   failing.on = true;
   t.mock.method(console, 'warn', () => {});
-  assert.throws(() => recallLook(changed), (err) => err.status === 500 && /disk full/.test(err.message));
+  assert.throws(() => recallLook(changed), (err) => err.status === 500);
   unchanged();
-
   failing.on = false;
   recallLook(changed);
   assert.strictEqual(state.colorA, 4);

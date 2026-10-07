@@ -1,4 +1,5 @@
 import { pickPattern, burstFor, goldenStep } from './look.ts';
+import { messageOf } from '../errors.ts';
 import type { Character } from './look.ts';
 import type { LiveEvent, LiveReading } from '../live-input.ts';
 
@@ -74,7 +75,17 @@ class LiveDirector {
 
   constructor({ applyPatch, patterns, pixels = () => false, now = () => performance.now(),
     setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = (t) => clearTimeout(t as ReturnType<typeof setTimeout>) }: LiveDirectorOptions) {
-    this._apply = applyPatch;
+    // Called from the live input's events, where a throw would end the server:
+    // a patch refused (a strobe burst before the photosensitivity
+    // acknowledgement, 409) is logged with why, and the director plays on.
+    this._apply = (patch) => {
+      try {
+        return applyPatch(patch);
+      } catch (err) {
+        console.warn(`[live] ${Object.keys(patch).join(', ')} refused: ${messageOf(err)}`);
+        return undefined;
+      }
+    };
     this._available = new Set(patterns.map((p) => p.id));
     this._pixels = pixels;
     this._now = now;

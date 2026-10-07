@@ -66,8 +66,8 @@ test('a built-in, changed and saved as a copy, lists as a preset of your own', a
   // A plain tap puts it on stage.
   await page.locator('.effects-deck .effect-pad-tap', { hasText: NAME }).click();
   await until(request, (st) => st.pattern === saved.id);
-  await expect(page.locator('.effects-now-name')).toHaveText(NAME);
-  await expect(page.locator('.effects-deck .effect-pad.active .effect-pad-now')).toHaveText('Now playing');
+  await expect(page.locator('.effects-now .now-playing')).toContainText(NAME);
+  await expect(page.locator('.effects-deck .effect-pad.active')).toHaveAttribute('data-layer', 'base');
 
   // The deck with a pad on stage, and the inspector over it, pass axe.
   await page.getByRole('button', { name: `Edit ${NAME}` }).first().click();

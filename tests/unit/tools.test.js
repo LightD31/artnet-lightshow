@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { scriptsDirs, envTool, onPath, ffmpeg, ffmpegCommand, _reset } from '../../src/tools.ts';
 
-test('an environment keeps its programs beside its python — or, on Windows, in Scripts below it', () => {
+test('Python environments resolve tools beside Python or in Windows Scripts', () => {
   assert.deepEqual(scriptsDirs('/data/.venv/bin/python', 'linux'), ['/data/.venv/bin']);
   assert.deepEqual(scriptsDirs('C:\\data\\.venv\\Scripts\\python.exe', 'win32'),
     ['C:\\data\\.venv\\Scripts', 'C:\\data\\.venv\\Scripts\\Scripts']);

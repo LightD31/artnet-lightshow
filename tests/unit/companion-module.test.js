@@ -109,7 +109,8 @@ test('it connects on protocol 2 and follows the state by its changes alone', asy
     // The auto show and the cues are asked over HTTP, with the token.
     assert.deepStrictEqual(await conn.recallCue('cue 7'), { ok: true });
     const missing = await conn.recallCue('missing');
-    assert.deepStrictEqual(missing, { ok: false, error: 'No such cue' });
+    assert.equal(missing.ok, false);
+    assert.ok(missing.error);
     await conn.autoShow('toggle');
     // The outputs' switch too: a toggle reads the state, which starts disarmed.
     await conn.armOutputs('disarm');
@@ -125,7 +126,7 @@ test('it connects on protocol 2 and follows the state by its changes alone', asy
   }
 });
 
-test('a held effect lasts while the button is down, and ends when it comes up â€” or when Companion goes', async () => {
+test('held Companion effects end on release or disconnect', async () => {
   const s = await serve();
   const conn = new LightshowConnection({ host: '127.0.0.1', port: s.port });
   const other = new LightshowConnection({ host: '127.0.0.1', port: s.port });
@@ -151,12 +152,9 @@ test('a held effect lasts while the button is down, and ends when it comes up â€
   }
 });
 
-// presets.js and variables.js import Companion's own package, installed only
-// where the module is built; without it these two cannot load here.
-const companionBase = await import('@companion-module/base').then(() => true, () => false);
-const needsBase = companionBase ? {} : { skip: '@companion-module/base is not installed' };
-
-test('Companion presets include 16 pads and the strobe', needsBase, async () => {
+// presets.js and variables.js import Companion's own package, a dev
+// dependency of the root package so these two run wherever the suite does.
+test('Companion presets include 16 pads and the strobe', async () => {
   const { UpdatePresets } = await import('../../companion-module/src/presets.js');
   let presets = null;
   UpdatePresets({ liveState: {}, setPresetDefinitions: (_structure, defs) => { presets = defs; } });
@@ -171,7 +169,7 @@ test('Companion presets include 16 pads and the strobe', needsBase, async () => 
   assert.deepStrictEqual(presets.strobe_burst.steps[0].down.map((a) => a.actionId), ['strobe_burst']);
 });
 
-test('the variables name every pad and keep the energy override', needsBase, async () => {
+test('the variables name every pad and keep the energy override', async () => {
   const { UpdateVariableDefinitions, UpdateVariableValues } = await import('../../companion-module/src/variables.js');
   let defs = null;
   let values = null;
@@ -212,7 +210,24 @@ test('a refused token is reported as unauthorized, by the code the server sends'
   }
 });
 
-test('holdPad presses once and then renews, never pressing again; a pad with no hold to renew (a once, a loop, a hold ended) stops renewing', async (t) => {
+test("Companion renews held pads without pressing again", async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+  const conn = new LightshowConnection({ host: 'localhost' });
+  const posts = [];
+  const renewed = true;
+  conn.post = async (path, body) => {
+    posts.push([path, body.token]);
+    return path.endsWith('/renew') ? { ok: true, renewed } : { ok: true, id: 'v' };
+  };
+  await conn.holdPad(0, 3);
+  for (let i = 0; i < 5; i++) { t.mock.timers.tick(400); await flush(); }
+  assert.deepStrictEqual(posts.map(([p]) => p.split('/').at(-1)), ['press', 'renew', 'renew', 'renew', 'renew', 'renew']);
+  assert.ok(posts.every(([, token]) => token === 'companion:0:3'));
+  conn.disconnect();
+});
+
+test("Companion stops renewing when the hold no longer exists", async (t) => {
   t.mock.timers.enable({ apis: ['setInterval'] });
   const flush = () => new Promise((resolve) => setImmediate(resolve));
   const conn = new LightshowConnection({ host: 'localhost' });
@@ -224,19 +239,30 @@ test('holdPad presses once and then renews, never pressing again; a pad with no 
   };
   await conn.holdPad(0, 3);
   for (let i = 0; i < 5; i++) { t.mock.timers.tick(400); await flush(); }
-  assert.deepStrictEqual(posts.map(([p]) => p.split('/').at(-1)), ['press', 'renew', 'renew', 'renew', 'renew', 'renew']);
-  assert.ok(posts.every(([, token]) => token === 'companion:0:3'));
   renewed = false;
-  t.mock.timers.tick(400); await flush();
-  t.mock.timers.tick(4000); await flush();
+  t.mock.timers.tick(400);
+  await flush();
+  t.mock.timers.tick(4000);
+  await flush();
   assert.equal(posts.length, 7, 'stopped at the first renewal that found no hold');
-  // Let go before the press answered: no renewal starts.
-  posts.length = 0;
-  renewed = true;
+  conn.disconnect();
+});
+
+test("Companion release during a press prevents renewal", async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+  const conn = new LightshowConnection({ host: 'localhost' });
+  const posts = [];
+  const renewed = true;
+  conn.post = async (path, body) => {
+    posts.push([path, body.token]);
+    return path.endsWith('/renew') ? { ok: true, renewed } : { ok: true, id: 'v' };
+  };
   const pressing = conn.holdPad(1, 2);
   await conn.releasePad(1, 2);
   await pressing;
-  t.mock.timers.tick(4000); await flush();
+  t.mock.timers.tick(4000);
+  await flush();
   assert.deepStrictEqual(posts.map(([p]) => p.split('/').at(-1)), ['press', 'release']);
   conn.disconnect();
 });

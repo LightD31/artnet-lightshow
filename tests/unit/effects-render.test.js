@@ -25,16 +25,22 @@ test.before(() => {
     init: () => ({}), render: (p, s, room, f, out) => { for (let i = 0; i < room.n; i++) out[i] = { colour: f.palette[0], level: 1, strength: 1 }; } });
 });
 
-test('validateSpec fills the kind\'s defaults (params and brightness) and rejects unknown kinds and bad palettes', () => {
+test("spec validation fills kind defaults", () => {
   const spec = validateSpec({ kind: 'test.half' });
   assert.deepStrictEqual(spec.params, { level: 0.5 });
   assert.strictEqual(spec.brightness, 0.8);
+});
+
+test("spec validation rejects unknown kinds", () => {
   assert.throws(() => validateSpec({ kind: 'nope' }));
+});
+
+test("spec validation accepts only valid palette colours", () => {
   assert.throws(() => validateSpec({ kind: 'test.half', palette: ['red'] }));
   assert.strictEqual(validateSpec({ kind: 'test.half', palette: ['#FF0000'] }).palette[0], '#FF0000');
 });
 
-test('renderEffect writes every slot at level × brightness and keeps state per instance', () => {
+test("rendering applies brightness to every owned slot", () => {
   const room = buildRoom(3, (i) => i / 2, () => 0.5, () => 0.5, null);
   const stepper = new EffectStepper();
   const inst = { id: 'a', spec: validateSpec({ kind: 'test.half' }), seed: seedFrom('a'), anchorBeat: 0, startedAtMs: 0, targets: null };
@@ -45,7 +51,7 @@ test('renderEffect writes every slot at level × brightness and keeps state per 
   assert.strictEqual(stepper.get('a', () => null, 23).frames, 2);
 });
 
-test('targets restrict the slots written; the rest stay transparent', () => {
+test("target masks leave untargeted slots transparent", () => {
   const room = buildRoom(3, (i) => i / 2, () => 0.5, () => 0.5, null);
   const inst = { id: 'b', spec: validateSpec({ kind: 'test.half' }), seed: seedFrom('b'), anchorBeat: 0, startedAtMs: 0, targets: [1] };
   const out = blank(3);
@@ -71,7 +77,7 @@ test('the palette override reaches the kind', () => {
   assert.strictEqual(out[0].colour.b, 255);
 });
 
-test('states are swept after two seconds unseen, and a clone is independent', () => {
+test("stepper expiry and cloning preserve independent state", () => {
   const s = new EffectStepper();
   s.get('old', () => ({ n: 1 }), 0);
   const c = s.clone();
@@ -116,7 +122,7 @@ test('validation rejects invalid metadata, palettes and params', () => {
   assert.strictEqual(validateSpec({ kind: 'test.half', palette: Array(8).fill('#FFFFFF') }).palette.length, 8);
 });
 
-test('instance seed and anchor reach initialization and rendering; state roll wins over caller roll', () => {
+test("instance context reaches the effect kernel", () => {
   let initialized, rendered;
   registerKind({ kind: 'test.frame', app: 'own', schema: z.object({}), defaults: { params: {} },
     init: (_p, _room, f) => { initialized = { ...f }; return { roll: 2 }; }, rollOf: (s) => s.roll,
@@ -161,7 +167,7 @@ test('prepared palettes belong to instances and survive independent stepper clon
   assert.strictEqual(stepper.get('cache', () => 'wrong', 0), null, 'metadata does not wrap null kind state');
 });
 
-test('targets preserve existing slots and spec rapidFlash cannot bypass the acknowledgement', () => {
+test("target masks retain slots while safety gates rapid effects", () => {
   const room = buildRoom(3, (i) => i / 2, () => 0.5, () => 0.5, null), stepper = new EffectStepper();
   const inst = { id: 'target', spec: validateSpec({ kind: 'test.half' }), seed: seedFrom('target'), anchorBeat: 0, startedAtMs: 0, targets: [1] };
   const out = blank(3); out[0].level = 0.9;
@@ -185,7 +191,7 @@ test('slot writes round brightness and default the strobe channel to zero', () =
   assert.deepStrictEqual(slotToWrite({ colour: WHITE, level: 1, strength: 1, strobe: 77 }), { colour: WHITE, dim: 255, strobe: 77 });
 });
 
-test('stepper expiry follows last use and reset clears every state, including undefined', () => {
+test("stepper reset clears expired and undefined state", () => {
   const s = new EffectStepper();
   let calls = 0;
   const make = () => { calls++; return undefined; };
@@ -214,7 +220,7 @@ test('a cloned stepper retains class methods and deep independent Map state', ()
   assert.strictEqual(original.admission.admit(1, 200), false);
 });
 
-test('a clone copies plain arrays and objects quickly and everything else property by property, keeping every alias', () => {
+test("stepper clones preserve object aliases", () => {
   class Lamp { constructor() { this.level = 0.5; this.colour = { r: 1 }; } brighter() { return this.level * 2; } }
   const shared = { r: 9 };
   const tagged = { r: 3 };
@@ -257,28 +263,38 @@ test('a clone copies plain arrays and objects quickly and everything else proper
   assert.strictEqual(state.lamps[1].level, 0.5);
 });
 
-test('a constant table is shared by a clone, and nothing can change it', () => {
+test("constant tables expose bounded row and column access", () => {
   const table = new ConstantTable(3, 2, (row, column) => row * 10 + column);
   assert.deepStrictEqual([table.rows, table.columns, table.at(2, 1), table.at(3, 0), table.at(0, 2), table.at(-1, 0), table.at(0.5, 0)], [3, 2, 21, undefined, undefined, undefined, undefined]);
+});
+
+test("constant tables cannot be changed", () => {
+  const table = new ConstantTable(3, 2, (row, column) => row * 10 + column);
   assert.ok(Object.isFrozen(table));
   assert.throws(() => { table.rows = 1; }, TypeError);
   assert.throws(() => { table.values = []; }, TypeError);
   assert.deepStrictEqual(Object.keys(table).sort(), ['columns', 'rows'], 'its values are not reachable');
+});
+
+test("constant tables require integral dimensions", () => {
   assert.throws(() => new ConstantTable(1.5, 1, () => 0), RangeError);
+});
+
+test("stepper clones share exact constant tables only", () => {
+  const table = new ConstantTable(3, 2, (row, column) => row * 10 + column);
   const s = new EffectStepper();
   const state = s.get('x', () => ({ table, frozenRows: Object.freeze([Object.freeze([1, 2])]) }), 0);
   const copy = s.clone().get('x', () => null, 1);
   assert.strictEqual(copy.table, table, 'shared');
   assert.notStrictEqual(copy, state);
   assert.notStrictEqual(copy.frozenRows, state.frozenRows, 'a frozen array of its own is still copied');
-  // A subclass may carry state of its own: it is copied, never shared.
   class Counting extends ConstantTable {}
   const sub = new Counting(1, 1, () => 4);
   s.get('y', () => ({ sub }), 0);
   assert.notStrictEqual(s.clone().get('y', () => null, 1).sub, sub);
 });
 
-test('palette preparation shares expiry and clone lifetime without occupying another instance id', () => {
+test("palette caches share instance expiry and clone lifetime", () => {
   const s = new EffectStepper(), spec = validateSpec({ kind: 'test.half', palette: [{ random: true }] });
   const kindState = s.get('a', () => ({ n: 1 }), 0);
   const other = s.get('a:palette', () => ({ n: 2 }), 0);
@@ -303,7 +319,7 @@ test('palette preparation shares expiry and clone lifetime without occupying ano
 // so every kind must take a palette that changes size under it: eight colours
 // with a random one, then one, then two, its brightness down, and the
 // override coming and going between.
-test('every built-in preset takes its colours and brightness edited mid-run: every slot stays a colour and a level', () => {
+test("preset palette and brightness edits reach the next frame", () => {
   const room = buildRoom(6, (i) => i / 5, (i) => (i < 3 ? 0 : 1), () => 0.5, null);
   const eight = ['#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF', '#FFFFFF', { random: true }];
   const look = ['#FF0000', '#00FF00', '#0000FF', '#FFFFFF'].map(parseHex);

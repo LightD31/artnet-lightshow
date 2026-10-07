@@ -33,7 +33,7 @@ async function samples(page, count) {
 
 const distance = (a, b) => Math.max(Math.abs(a.r - b.r), Math.abs(a.g - b.g), Math.abs(a.b - b.b));
 
-test('a held pad and the latched strobe show on the stage preview and the 3D stage, and go again', async ({ page, context, request }) => {
+test('voices appear over the stage look and disappear when stopped', async ({ page, context, request }) => {
   await reset(request);
   // A still look and no sequence playing, so anything that moves on the stage is a voice.
   await request.post('/api/sequence/stop', { data: {} });
@@ -54,8 +54,8 @@ test('a held pad and the latched strobe show on the stage preview and the 3D sta
     await expect(page.getByRole('img', { name: /The rig in 3D/ })).toHaveAttribute('aria-label', /showing the live output/);
     await open(preview, 'manual');
     const now = preview.locator('.stage-now');
-    await expect(now).toHaveText(/^Now playing solid/);
-    await expect(now).not.toContainText(/Pads:|Strobe| bar \d+ beat/);
+    await expect(now).toContainText(start.patterns.find((row) => row.id === start.pattern).name);
+    await expect(preview.locator('.playing-voice')).toHaveCount(0);
     const baseline = await now.textContent();
     const look = await samples(page, 6);
     const lookLum = Math.max(...look.map((s) => s.lum));
@@ -65,7 +65,7 @@ test('a held pad and the latched strobe show on the stage preview and the 3D sta
     expect(press.id, JSON.stringify(press)).toBeTruthy();
     const held = await until(request, (s) => s.voices.some((v) => v.id === press.id));
     const label = held.voices.find((v) => v.id === press.id).label;
-    await expect(now).toContainText(`Pads: ${label}`);
+    await expect(now).toContainText(label);
     const fromLook = (s) => Math.min(...look.map((l) => distance(l, s)));
     await expect.poll(async () => fromLook(await stageSample(page)),
       { message: 'the held pad changes the stage picture', timeout: 5000 }).toBeGreaterThan(4);
@@ -81,7 +81,7 @@ test('a held pad and the latched strobe show on the stage preview and the 3D sta
     expect((await request.post('/api/safety/acknowledge', { data: {} })).ok()).toBe(true);
     expect((await request.post('/api/strobe/on', { data: {} })).ok()).toBe(true);
     await until(request, (s) => !!s.strobe?.active);
-    await expect(now).toContainText('Strobe');
+    await expect(preview.locator('.playing-voice[data-voice="strobe"]')).toBeVisible();
     await expect.poll(async () => Math.max(...(await samples(page, 10)).map((s) => s.lum)),
       { message: 'the strobe flashes the stage', timeout: 8000 }).toBeGreaterThan(lookLum + 4);
     await request.post('/api/strobe/off', { data: {} });

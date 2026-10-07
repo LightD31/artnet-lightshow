@@ -45,16 +45,23 @@ function runningBed(room, params = {}, options = {}) {
   return h;
 }
 
-test('the kind registers strict, idempotent defaults, needs the acknowledgement and has seven presets', () => {
+test("visualizer registers strict defaults", () => {
   const kind = kindOf('ldj.visualizer');
   assert.ok(kind?.stateful && kind.command);
   const spec = validateSpec({ kind: 'ldj.visualizer' });
   assert.deepEqual(spec.params, { active: 'firework', mellow: 'swirl', trigger: .3, autoColours: false });
   assert.deepEqual(validateSpec(spec), spec);
-  assert.equal(requiresAcknowledgement(spec), true, 'spikes on every loud beat are rapid flashes');
   for (const params of [{ active: 'none' }, { mellow: 'fire' }, { trigger: 1.5 }, { trigger: -.1 }, { autoColours: 'yes' }, { extra: 1 }]) {
     assert.throws(() => validateSpec({ kind: 'ldj.visualizer', params }), JSON.stringify(params));
   }
+});
+
+test("visualizer spikes require acknowledgement", () => {
+  const spec = validateSpec({ kind: 'ldj.visualizer' });
+  assert.equal(requiresAcknowledgement(spec), true, 'spikes on every loud beat are rapid flashes');
+});
+
+test("visualizer presets remain independent wire data", () => {
   assert.deepEqual(VISUALIZER_PRESETS.map((p) => [p.id, p.params.active, p.params.mellow]), [
     ['ldj.visualizer.firework', 'firework', 'swirl'], ['ldj.visualizer.flash', 'flash', 'swirl'],
     ['ldj.visualizer.splotch', 'splotch', 'swirl'], ['ldj.visualizer.pulse', 'pulse', 'swirl'],
@@ -159,7 +166,7 @@ test('mix picks firework/pulse/flash 30/30/40 by the seed over 100 beats (±10)'
   }
 });
 
-test('the weighted blend uses rendered bytes, 32-bit weights and truncation, on every emitter', () => {
+test("visualizer blending uses truncated bytes and 32-bit weights", () => {
   assert.deepEqual(blendRendered(RED, 1, BLUE, .25), { r: 203, g: 0, b: 12, w: 0, a: 0, uv: 0 });
   assert.deepEqual(blendRendered(RED, 1, BLUE, 1), { r: 127, g: 0, b: 127, w: 0, a: 0, uv: 0 });
   assert.deepEqual(blendRendered(BLACK, 1, BLACK, 1), BLACK, 'no light, no division');
@@ -196,7 +203,7 @@ test('the mellow swirl runs under the spikes and blends by brightness', () => {
   assert.deepEqual(next[slot].colour, expectedBlend(later.colour, later.bri, s.lamps.read(slot).colour, s.lamps.read(slot).bri));
 });
 
-test('the mellow background starts after 16 quiet beats in a quiet section and is re-sent every beat', () => {
+test("quiet sections start the mellow background after sixteen beats", () => {
   const h = vis(row(4), { mellow: 'swirl' });
   hear(h, at(0), audio(0, null, 'quiet'));
   for (let k = 1; k <= 15; k++) {
@@ -238,7 +245,7 @@ test('the mellow background starts after 16 quiet beats in a quiet section and i
   assert.equal(other.state().mellow.running, false);
 });
 
-test('wave is re-sent every eight beats and resets its index; swirl keeps its phase', () => {
+test("visualizer wave restarts every eight beats", () => {
   const h = runningBed(row(4), { mellow: 'wave' });
   const s = h.state();
   assert.equal(s.bed.mode, 'visualizerWave');
@@ -248,6 +255,9 @@ test('wave is re-sent every eight beats and resets its index; swirl keeps its ph
   hear(h, ms(4000), null);
   assert.equal(s.mellow.nextBeat, 16);
   assert.equal(s.bed.wave, 20, 'the reassertion at beat 8 restarts the wave');
+});
+
+test("visualizer swirl reassertions retain their phase", () => {
   const swirl = runningBed(row(4), { mellow: 'swirl' });
   swirl.draw(ms(499));
   const phase = swirl.state().bed.swirl;
@@ -336,7 +346,7 @@ test('a spike between lamp frames waits for the next one', () => {
   assert.equal(s.lamps.read(slot).bri, .75);
 });
 
-test('a spike hands its lamp back to the bed: pulse at once, the others over 22 frames', () => {
+test("spikes return their lamps to the bed at their prescribed rate", () => {
   const h = runningBed(row(4), { active: 'flash' }, { palette: [RED, CYAN] });
   for (let frame = 1; frame <= 30; frame++) hear(h, at(frame), audio(0, 'soft', 'soft'));
   hear(h, at(31), audio(1, 'loud', 'soft'));
@@ -407,7 +417,7 @@ test('a spike hands its lamp back to the bed: pulse at once, the others over 22 
   assert.equal(stopped.state().handoffs[last], null, 'a stopped bed releases at the endpoint');
 });
 
-test('Hue lamps in pulse mode soften a Pulse spike\'s cut over 200 ms, then give the lamp to the bed', () => {
+test("Hue Pulse spikes soften their cut before returning to the bed", () => {
   const hueRow = (n) => buildRoom(n, (i) => n > 1 ? i / (n - 1) : .5, () => .5, () => .5, null, Array(n).fill(true));
   const launch = (hueStrobe, room = hueRow(4)) => {
     const h = vis(room, { active: 'pulse' }, { hueStrobe });
@@ -460,7 +470,7 @@ test('Hue lamps in pulse mode soften a Pulse spike\'s cut over 200 ms, then give
   assert.deepEqual(again[0], { colour: expectedBlend(BLACK, 0, one.state().lamps.read(0).colour, 1), level: 1, strength: 1 });
 });
 
-test('a random spike colour follows its lamp cache until the endpoint, then stays captured', () => {
+test("random spike colours freeze at their endpoint", () => {
   const h = runningBed(row(4), { active: 'flash' }, { spec: { palette: [{ random: true }] } });
   hear(h, at(1), audio(0, 'soft', 'soft'));
   hear(h, at(2), audio(1, 'loud', 'soft'));
@@ -546,7 +556,7 @@ test('no audio frame: the mellow background alone', () => {
   assert.equal(h.state().mellow.running, false);
 });
 
-test('a section heard again after the audio was gone is no news: a quiet bed keeps running', () => {
+test("repeated section data leaves the quiet bed running", () => {
   const h = vis(row(4), { mellow: 'swirl' });
   hear(h, at(0), audio(0, null, 'quiet'));
   for (let k = 1; k <= 16; k++) hear(h, at(2 * k), audio(k, 'quiet', 'quiet'));
@@ -568,7 +578,7 @@ test('a section heard again after the audio was gone is no news: a quiet bed kee
   assert.equal(s.mellow.running, false);
 });
 
-test('automatic colours: 7.5 s apart, forced every 20 s, loud from many colours and soft as one', () => {
+test("automatic colours follow quiet and loud timing rules", () => {
   const h = vis(row(4), { autoColours: true });
   hear(h, ms(0), audio(0, null, 'soft'));
   hear(h, ms(100), audio(1, 'soft', 'loud'));
@@ -615,7 +625,7 @@ test('automatic colours: 7.5 s apart, forced every 20 s, loud from many colours 
   for (let i = 1; i < louds.length; i++) assert.notEqual(louds[i], louds[i - 1]);
 });
 
-test('automatic colours stand under an override and give way to an edited palette or switching off', () => {
+test("manual palettes take precedence over automatic colours", () => {
   const h = runningBed(row(4), { autoColours: true, mellow: 'solid' });
   h.draw(ms(20000));
   const s = h.state();
@@ -642,7 +652,7 @@ test('automatic colours stand under an override and give way to an edited palett
   assert.equal(s.auto.forceAtMs, 90000, 'switching on starts a fresh 20 s');
 });
 
-test('the bed keeps one drawn colour until its mode or list changes; solid takes the first', () => {
+test("bed colours persist until mode or palette changes", () => {
   const palette = ['#FF0000', '#00FF00', '#0000FF', '#FFFF00'].map(parseHex);
   const h = runningBed(row(4), { mellow: 'swirl' }, { palette });
   const s = h.state(), chosen = { ...s.bed.backgroundColour };

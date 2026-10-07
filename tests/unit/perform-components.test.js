@@ -1,7 +1,7 @@
 // The Perform parts, rendered in Node as components.test.js does: the
 // photosensitivity dialog, the pads' holds and safety asks, the palette
-// override strip, the transport, the audio meters, and the audio feed's
-// subscription in state.js.
+// override strip, stop all voices, the transport, the audio meters, and the
+// audio feed's subscription in state.js.
 
 import test from 'node:test';
 import assert from 'node:assert';
@@ -26,8 +26,9 @@ async function load() {
         export { CommandBar } from './public-src/components/CommandBar.jsx';
         export { createPadPresses, rapidPad, padKey } from './public-src/voice-pad.js';
         export { createVoiceHolds } from './public-src/hold-control.js';
-        export { PaletteOverride, overrideBody, activeOverride } from './public-src/components/Perform.jsx';
+        export { PalettePads, PaletteOverride, overrideBody, activeOverride, stopAllVoices } from './public-src/components/Perform.jsx';
         export { Transport, positionText, beatsPerBar, loopBody, laneRows } from './public-src/components/Transport.jsx';
+        export { presetNameOf } from './public-src/preview-inputs.js';
         export { AudioMeters, meterRows, splClass, latencyText } from './public-src/components/AudioMeters.jsx';
       `,
       resolveDir: ROOT,
@@ -70,6 +71,14 @@ test('the photosensitivity dialog names what flashes and both answers', () => {
   assert.match(html, /photosensitive epilepsy/i);
   assert.match(html, />I understand — play it</);
   assert.match(html, />Cancel</);
+});
+
+test('strobe notice opens a server-wide acknowledgement dialog', () => {
+  const html = ui.html(ui.h(ui.Photosensitivity, { allow: true, onConfirm: () => {}, onCancel: () => {} }));
+  assert.match(html, /<strong>The strobe and every fast-flashing effect<\/strong> flash the lamps/);
+  assert.match(html, /Allowing them acknowledges this for the whole server, once/);
+  assert.match(html, />I understand — allow them</);
+  assert.doesNotMatch(html, /play it/);
 });
 
 test('the Effects view asks through the same dialog', () => {
@@ -143,7 +152,7 @@ function presses() {
 }
 const target = (bank, slot) => ({ pad: { bank, slot } });
 
-test('a held pad lets go on its pointer\'s up anywhere, after a bank switch under a second finger', () => {
+test('held pads release on pointer-up after a bank switch', () => {
   const t = presses();
   t.p.press(ui.padKey(0, 0), target(0, 0), { pointer: 1 });
   // The second finger taps bank B: A1 is no longer rendered at all.
@@ -169,7 +178,7 @@ test('a held pad lets go on pointercancel and on its key\'s up anywhere', () => 
   t.p.dispose();
 });
 
-test('a held pad no longer rendered as a hold pad lets go: bank switch, Edit pads, a layout change', () => {
+test('held pads release when their rendered slot disappears', () => {
   for (const shown of [new Set(), new Set([ui.padKey(1, 0)])]) {
     const t = presses();
     t.p.press(ui.padKey(0, 3), target(0, 3), { pointer: 1 });
@@ -205,7 +214,7 @@ test('a disconnect clears the held pads and nothing presses again by itself', ()
   t.p.dispose();
 });
 
-test('a press the server refused unlights and stops renewing; the pad held before it stays', () => {
+test('refused pad presses leave earlier holds active', () => {
   const t = presses();
   t.p.press(ui.padKey(0, 2), target(0, 2), { pointer: 1 });
   t.p.press(ui.padKey(0, 0), target(0, 0), { pointer: 2 });
@@ -215,7 +224,7 @@ test('a press the server refused unlights and stops renewing; the pad held befor
   t.p.dispose();
 });
 
-test('a refusal that names its press clears that one, whichever came later; an older press of the same pad clears nothing', () => {
+test('pad refusals only clear their matching press', () => {
   const t = presses();
   t.p.press(ui.padKey(0, 0), target(0, 0), { pointer: 1 });
   const first = t.sent.findLast((m) => m.action === 'press').token;
@@ -235,7 +244,7 @@ const CATALOGUE_ROWS = [
 ];
 const pad = (slot, label, content, launch = 'hold') => ({ bank: 0, slot, label, accent: '#FFFFFF', content, launch, quantise: 0, targets: 'shared' });
 
-test('a pad needs the acknowledgement for the strobe and for what the catalogue or library calls rapid', () => {
+test('pad acknowledgement follows rapid metadata', () => {
   const mine = [{ id: 'u1', rapidFlash: true }, { id: 'u2', rapidFlash: false }];
   const rapid = (content) => ui.rapidPad({ content }, CATALOGUE_ROWS, mine);
   assert.strictEqual(rapid({ kind: 'strobe', id: 'strobe' }), true);
@@ -249,7 +258,7 @@ test('a pad needs the acknowledgement for the strobe and for what the catalogue 
   assert.strictEqual(ui.rapidPad({ content: null }, CATALOGUE_ROWS, mine), false);
 });
 
-test('rapid pads ask before the acknowledgement on the deck and on the command bar strip, and play after it', () => {
+test('rapid pad controls gate presses until acknowledgement', () => {
   const layout = [
     pad(0, 'White', { kind: 'preset', id: 'energy.whiteStrobe' }),
     pad(1, 'Glow', { kind: 'preset', id: 'energy.glow' }),
@@ -270,15 +279,18 @@ test('rapid pads ask before the acknowledgement on the deck and on the command b
 });
 
 test('a strip pad with no label is named by its content, as on the deck', () => {
-  given({ safety: { photosensitivityAcknowledged: true }, pads: { layout: [pad(1, '', { kind: 'preset', id: 'energy.glow' })], lit: [] } });
+  given({ safety: { photosensitivityAcknowledged: true }, pads: { layout: [pad(0, '', { kind: 'preset', id: 'energy.glow' })], lit: [] } });
   const html = ui.html(ui.h(ui.CommandBar, {}));
-  assert.match(html, /class="cb-energy-name">energy\.glow</);
+  const deck = ui.html(ui.h(ui.Pads, { initialBank: 0 }));
+  const name = html.match(/class="cb-energy-name">([^<]+)</)?.[1];
+  assert.ok(name);
+  assert.equal(name, deck.match(/class="pad-label">([^<]+)</)?.[1]);
 });
 
 const BUILTIN = [{ id: 'ldjFire', app: 'ldj', colours: ['#FF0000', '#FF8800'] }, { id: 'hdDefault', app: 'hd', colours: ['#00FF00', { random: true }] }];
 const USER = [{ id: 'mine', name: 'Mine', colours: ['#123456'] }];
 
-test('the palette override strip: Off first, built-in then your palettes, the one on stage pressed', () => {
+test('palette override strip orders and selects palettes', () => {
   ui.librarySig.value = { status: 'ok', families: [], builtin: [], user: [], palettes: { builtin: BUILTIN, user: USER } };
   given({ paletteOverride: null, userPalettes: USER });
   let html = ui.html(ui.h(ui.PaletteOverride));
@@ -298,9 +310,50 @@ test('the override names a palette by id, and is matched back by its colours', (
   assert.strictEqual(ui.activeOverride(['#ABCDEF'], BUILTIN), null);
 });
 
+test('stop all voices sends DELETE /api/voices', async () => {
+  const f = fakeFetch({ ok: true, stopped: 2 });
+  try {
+    await ui.stopAllVoices();
+    assert.deepStrictEqual(f.calls.map(([p, init]) => [p, init.method]), [['/api/voices', 'DELETE']]);
+  } finally { f.restore(); }
+});
+
+test('a named random override lights its palette button with live swatches', () => {
+  ui.librarySig.value = { status: 'ok', palettes: { builtin: BUILTIN, user: USER } };
+  given({ paletteOverride: ['#00FF00', '#2A00FF'], paletteOverrideId: 'hdDefault', userPalettes: USER });
+  const html = ui.html(ui.h(ui.PaletteOverride));
+  assert.match(html, /aria-pressed="true"[^>]*data-override="hdDefault"/);
+  const lit = html.match(/<button[^>]*data-override="hdDefault"[^>]*>.*?<\/button>/)[0];
+  assert.match(lit, /background:\s*#2A00FF/);
+  assert.doesNotMatch(lit, /class="random"/);
+});
+
+test('an unknown palette id falls back to matching fixed colours', () => {
+  assert.equal(ui.activeOverride(['#FF0000', '#FF8800'], BUILTIN, 'gone'), 'ldjFire');
+  assert.equal(ui.activeOverride(['#123456'], BUILTIN, 'gone'), null);
+});
+
+test('clearing the override ignores its old palette id', () => {
+  assert.equal(ui.activeOverride(null, BUILTIN, 'hdDefault'), 'off');
+});
+
+for (const [name, palette, override, hint] of [
+  ['own palette', ['#FF0000'], null, true],
+  ['look palette', null, null, false],
+  ['override', null, ['#00FF00'], true],
+]) {
+  test(`look palettes indicate whether the base uses ${name}`, () => {
+    ui.librarySig.value = { builtin: [{ id: 'effect', spec: { palette } }], user: [] };
+    given({ pattern: 'effect', paletteOverride: override, palettes: [{ id: 'look', colors: { 4: [0] } }] });
+    const html = ui.html(ui.h(ui.PalettePads));
+    assert.equal(/role="status"/.test(html), hint);
+    assert.match(html, /class="perform-palette /);
+  });
+}
+
 const SEQ = {
   id: 'set1', name: 'Set one', timeSignature: { beats: 4, unit: 4 },
-  lanes: [{ id: 'front', name: 'Front' }, { id: 'back', name: '' }], clips: [{ id: 'c1', name: 'Intro' }],
+  lanes: [{ id: 'front', name: 'Front' }, { id: 'back', name: '' }], clips: [{ id: 'c1', presetId: 'hd.neonDomino' }, { id: 'c2', presetId: 'mine-1' }, { id: 'c3', effect: { kind: 'energy.glow' } }],
   loop: { on: false, startBeat: 0, endBeat: 16 },
 };
 const STATUS = {
@@ -317,8 +370,13 @@ test('the position reads bars.beats, and the bar follows the time signature', ()
   assert.strictEqual(ui.positionText(null, 4), '–');
 });
 
-test('each lane shows its playing clip by name', () => {
-  assert.deepStrictEqual(ui.laneRows(STATUS, SEQ), [{ id: 'front', lane: 'Front', clip: 'Intro' }, { id: 'back', lane: 'back', clip: null }]);
+test('each lane shows its playing clip by its preset\'s name, a saved preset\'s first', () => {
+  const nameOf = ui.presetNameOf([{ id: 'mine-1', name: 'My wash' }]);
+  assert.deepStrictEqual(ui.laneRows(STATUS, SEQ, nameOf), [{ id: 'front', lane: 'Front', clip: 'Neon Domino' }, { id: 'back', lane: 'back', clip: null }]);
+  const lanes = (clip) => ui.laneRows({ ...STATUS, lanes: [{ id: 'front', clip }] }, SEQ, nameOf)[0].clip;
+  assert.strictEqual(lanes('c2'), 'My wash');
+  assert.strictEqual(lanes('c3'), 'Effect', 'an effect of its own, no preset');
+  assert.strictEqual(lanes('gone'), 'gone', 'a clip the page has not fetched yet: its id');
 });
 
 test('loop flips the loaded region on and off, and is unavailable without one', () => {
@@ -327,24 +385,38 @@ test('loop flips the loaded region on and off, and is unavailable without one', 
   assert.strictEqual(ui.loopBody({ ...STATUS, loop: null }), null);
 });
 
-test('the transport shows the sequence, its position, the clips and the controls', () => {
-  given({ sequence: STATUS });
-  const html = ui.html(ui.h(ui.Transport, { initial: { sequences: [{ id: 'set1', name: 'Set one' }, { id: 'set2', name: 'Set two' }], sequence: SEQ } }));
+test("transport lists available sequences and marks the loaded one", () => {
+  given({ sequence: STATUS, sequences: [{ id: 'set1', name: 'Set one' }, { id: 'set2', name: 'Set two' }] });
+  const html = ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } }));
   assert.match(html, /aria-label="Sequence"/);
   assert.match(html, /<option value="set1" selected[^>]*>Set one</);
   assert.match(html, /<option value="set2"[^>]*>Set two</);
+});
+
+test("playing transport exposes clip position and controls", () => {
+  given({ sequence: STATUS, sequences: [{ id: 'set1', name: 'Set one' }, { id: 'set2', name: 'Set two' }] });
+  const html = ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } }));
   for (const label of ['Pause', 'Stop', 'Next', 'Shuffle', 'Loop']) assert.match(html, new RegExp(`aria-label="${label}"`));
   assert.match(html, /class="transport-position"[^>]*>3\.2</);
-  assert.match(html, /Front[\s\S]*Intro/);
+  assert.match(html, /Front[\s\S]*Neon Domino/);
+});
+
+test("paused transport offers play and unloading", () => {
   given({ sequence: { ...STATUS, playing: false, paused: true } });
-  assert.match(ui.html(ui.h(ui.Transport, { initial: { sequences: [], sequence: SEQ } })), /aria-label="Play"/);
-  // With one loaded, the picker's first entry gives the rig back to the look.
-  assert.match(ui.html(ui.h(ui.Transport, { initial: { sequences: [], sequence: SEQ } })), /<option value(="")?[^>]*>No sequence \(back to the look\)</);
+  assert.match(ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } })), /aria-label="Play"/);
+  assert.match(ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } })), /<option value(="")?[^>]*>No sequence \(back to the look\)</);
+});
+
+test('sequence picker follows shelves received from other clients', () => {
+  given({ sequence: STATUS, sequences: [{ id: 'set1', name: 'Set one' }] });
+  assert.doesNotMatch(ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } })), /Saved on the tablet/);
+  given({ sequence: STATUS, sequences: [{ id: 'set1', name: 'Set one' }, { id: 'tab', name: 'Saved on the tablet' }] });
+  assert.match(ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } })), /<option value="tab"[^>]*>Saved on the tablet</);
 });
 
 test('with nothing loaded the transport offers the picker and no position', () => {
-  given({ sequence: { ...STATUS, loaded: null, playing: false, lanes: [] } });
-  const html = ui.html(ui.h(ui.Transport, { initial: { sequences: [{ id: 'set1', name: 'Set one' }], sequence: null } }));
+  given({ sequence: { ...STATUS, loaded: null, playing: false, lanes: [] }, sequences: [{ id: 'set1', name: 'Set one' }] });
+  const html = ui.html(ui.h(ui.Transport, { initial: { sequence: null } }));
   assert.match(html, /<option value(="")? selected[^>]*>Pick a sequence</);
   assert.match(html, /aria-label="Play"[^>]*disabled/);
 });
@@ -355,34 +427,60 @@ const FEED = {
   spl: { db: -12, level: 0.7, beat: 'loud', section: 'soft' },
 };
 
-test('the meters read the party levels as percentages and the band gates as open or shut', () => {
+test("meter rows express normalized audio levels as percentages", () => {
   assert.deepStrictEqual(ui.meterRows(FEED.party).map((r) => [r.key, r.pct]), [['full', 80], ['bass', 50], ['mid', 25], ['high', 0]]);
+});
+
+test("missing audio levels render zeroed meters", () => {
   assert.deepStrictEqual(ui.meterRows(null).map((r) => r.pct), [0, 0, 0, 0]);
+});
+
+test("SPL classes follow beat or section loudness", () => {
   assert.strictEqual(ui.splClass(FEED.spl), 'loud');
   assert.strictEqual(ui.splClass({ beat: null, section: 'quiet' }), 'quiet');
   assert.strictEqual(ui.splClass(null), null);
+});
+
+test("latency text preserves sign and handles missing readings", () => {
   assert.strictEqual(ui.latencyText(40), '+40 ms');
   assert.strictEqual(ui.latencyText(-25), '−25 ms');
   assert.strictEqual(ui.latencyText(undefined), '–');
 });
 
-test('the audio panel: the mode select, the meters, the gates, the SPL chip and the latency', () => {
+test("audio panel selects the live audio mode", () => {
   given({ audio: { mode: 'reactive', listening: true, levels: FEED.party, spl: FEED.spl, detectors: { spl: {}, disco: { owner: null, bands: [], globals: {} } } } });
   ui.audioFeedSig.value = FEED;
   const html = ui.html(ui.h(ui.AudioMeters, { latencyMs: 40 }));
   assert.match(html, /<select[^>]*aria-label="Audio mode"/);
   for (const m of ['off', 'tempo', 'reactive']) assert.match(html, new RegExp(`<option value="${m}"`));
   assert.match(html, /<option value="reactive" selected/);
+});
+
+test("audio panel renders meter levels", () => {
+  given({ audio: { mode: 'reactive', listening: true, levels: FEED.party, spl: FEED.spl, detectors: { spl: {}, disco: { owner: null, bands: [], globals: {} } } } });
+  ui.audioFeedSig.value = FEED;
+  const html = ui.html(ui.h(ui.AudioMeters, { latencyMs: 40 }));
   assert.strictEqual((html.match(/role="meter"/g) || []).length, 4);
   assert.match(html, /aria-label="bass"[^>]*aria-valuenow="50"/);
-  // A band is open while it is hit, not whenever it has a threshold.
+});
+
+test("audio panel renders detector gate states", () => {
+  given({ audio: { mode: 'reactive', listening: true, levels: FEED.party, spl: FEED.spl, detectors: { spl: {}, disco: { owner: null, bands: [], globals: {} } } } });
+  ui.audioFeedSig.value = FEED;
+  const html = ui.html(ui.h(ui.AudioMeters, { latencyMs: 40 }));
   assert.strictEqual((html.match(/class="gate open"/g) || []).length, 1);
   assert.strictEqual((html.match(/class="gate"/g) || []).length, 2);
+});
+
+test("audio panel renders SPL and latency readings", () => {
+  given({ audio: { mode: 'reactive', listening: true, levels: FEED.party, spl: FEED.spl, detectors: { spl: {}, disco: { owner: null, bands: [], globals: {} } } } });
+  ui.audioFeedSig.value = FEED;
+  const html = ui.html(ui.h(ui.AudioMeters, { latencyMs: 40 }));
   assert.match(html, /class="spl-chip loud"/);
   assert.match(html, /\+40 ms/);
 });
 
-test('the audio feed is subscribed once for any number of meters and dropped with the last', () => {
+test('audio feed subscriptions share one connection', () => {
   ui.socket.connected = true;
   ui.socket.sent.length = 0;
   const a = ui.wantAudio();

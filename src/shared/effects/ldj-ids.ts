@@ -1,19 +1,14 @@
-// Every member of Light DJ's effect-type list, by ordinal, and what the port
-// makes of it. The catalogue is checked against this table rather than against
-// its own lists, so an effect the port forgot shows up as a missing preset.
-// Members that are not effects are recorded by ordinal and description only.
+// Ordinal positions are stable catalogue keys, including entries that are not effects.
 
 import { BITMAP_PATTERNS } from './ldj-bitmap.ts';
 import type { EffectCommand } from './types.ts';
 
-/** The renderer family a Light DJ preset belongs to; its catalogue family is `ldj.<engine>`. */
 export type LdjEngine = 'channel' | 'iteration' | 'rotation' | 'wave' | 'matrix' | 'studio' | 'visualizer' | 'bitmap';
 
 export type LdjClass =
   | { name: string; kind: 'preset'; id: string; engine: LdjEngine }
   | { name: string; kind: 'macro'; id: string }
   | { name: string; kind: 'engineCommand'; command: EffectCommand }
-  /** `presets`: the presets a carrier stands for, where it has any. */
   | { kind: 'internal'; description: string; presets?: readonly string[] }
   | { name: string; kind: 'outOfScope'; reason: 'nanoleaf' | 'dead' };
 
@@ -25,8 +20,6 @@ const macro = (name: string): LdjClass => ({ name, kind: 'macro', id: `ldj.${nam
 const command = (name: string, cmd: EffectCommand): LdjClass => ({ name, kind: 'engineCommand', command: cmd });
 const internal = (description: string, presets?: readonly string[]): LdjClass =>
   presets ? { kind: 'internal', description, presets } : { kind: 'internal', description };
-// Nanoleaf-only effects never reach a lamp of this rig; the dead ones have a
-// renderer in the app that nothing ever starts.
 const nanoleaf = (name: string): LdjClass => ({ name, kind: 'outOfScope', reason: 'nanoleaf' });
 const dead = (name: string): LdjClass => ({ name, kind: 'outOfScope', reason: 'dead' });
 
@@ -78,5 +71,4 @@ const ROWS: LdjClass[] = [
 const freeze = (row: LdjClass): LdjClass => Object.freeze(row.kind === 'internal' && row.presets
   ? { ...row, presets: Object.freeze([...row.presets]) } : row);
 
-/** Ordinals 0..171 of Light DJ's effect-type list. */
 export const LDJ_IDS: Readonly<Record<number, LdjClass>> = Object.freeze(Object.fromEntries(ROWS.map((row, i) => [i, freeze(row)])));

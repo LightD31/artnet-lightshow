@@ -41,8 +41,7 @@ export function attachLookRoutes(app: Express, _ctx: RouteContext): void {
     res.json({ ok: true, masterBlackout: state.masterBlackout });
   });
 
-  // Automatic tempo match: 'auto' follows the music, 'manual' keeps the tempo
-  // tapped or typed here. Answers with what the clock now follows.
+  // 'auto' follows the music, and already on ends a tempo held by hand; 'manual' keeps the typed tempo.
   app.post('/api/tempo/:mode', (req, res) => {
     try {
       applyPatch({ tempoMode: req.params.mode });
@@ -121,11 +120,13 @@ export function attachLookRoutes(app: Express, _ctx: RouteContext): void {
     res.json({ ok: true, energyOverride: null });
   });
 
+  // A strobe one that waits for the photosensitivity acknowledgement is a
+  // 409, and the latch before it stays.
   app.post('/api/energy/:id', (req, res) => {
     try {
       applyPatch({ energyOverride: req.params.id });
       res.json({ ok: true, energyOverride: state.energyOverride });
-    } catch (err) { res.status(400).json({ ok: false, error: messageOf(err) }); }
+    } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
   // ─── Per-fixture overrides ────────────────────────────────────────────────

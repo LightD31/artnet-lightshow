@@ -7,19 +7,12 @@ import type { RouteContext } from './common.ts';
 
 const audio = schema.shape.audio.shape;
 
-// The audio settings, any of them; the master by field, the rest of it kept.
 const audioPatchSchema = z.object({
   mode: audio.mode.optional(),
   master: audio.master.partial().strict().optional(),
   ldjTrigger: audio.ldjTrigger.optional(),
 }).strict();
 
-/**
- * How the party effects take the music: the audio mode, Hue Dynamics'
- * master, Light DJ's trigger, and what is heard. The trigger and the Disco
- * settings stored here are the fallback: a Disco or Visualizer playing runs
- * the detectors on its own, and `detectors` says whose they run on.
- */
 export function attachAudioRoutes(app: Express, ctx: RouteContext): void {
   const { integrations, applier } = ctx;
 

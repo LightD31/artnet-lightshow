@@ -58,7 +58,7 @@ function tempStore(t) {
   return path.join(dir, 'sequences.json');
 }
 
-test('insertPattern remaps a two-lane pattern onto the loaded sequence at the beat and creates a missing shared lane', () => {
+test('pattern insertion maps lanes at the requested beat', () => {
   const s = rig();
   const revision = s.revision();
   const added = s.insertPattern('drop', 16);
@@ -112,7 +112,7 @@ test('capturePattern round-trips', () => {
   assert.throws(() => s.capturePattern(0, 4, ['ghost']), (e) => e.status === 404);
 });
 
-test('record captures pad hits as clips quantised to the grid after the count-in; replace clears the range; stop(false) discards', () => {
+test('recording stages quantised clips until the take is kept', () => {
   const pads = { '0:1': { presetId: 'ldj.FadeCycle', targets: 'shared', lengthBeats: 2 }, '0:2': { presetId: 'ldj.FadeCycle', targets: [2, 3], lengthBeats: 4 } };
   const s = rig({ pad: (bank, slot) => pads[`${bank}:${slot}`] ?? null });
   assert.equal(s.status().recording, undefined, 'the status says nothing of a recording until one runs');
@@ -163,13 +163,16 @@ test('a sequencePattern pad inserts at the next grid line', (t) => {
   const store = new PadStore(path.join(path.dirname(tempStore(t)), 'pads.json')).load();
   const c = { beat: 10.1 };
   const patternVoice = patternPlayer({ voices: {}, pattern: () => null, fixtureIds: () => [1, 2, 3], resolve: () => null });
-  const pads = new Pads({ voices: {}, store, lookup: () => () => null, fixtureIds: () => [1, 2, 3], beat: () => c.beat, insertPattern: (id, at) => s.insertPattern(id, at), patternVoice });
+  const pads = new Pads({
+    voices: {}, store, lookup: () => () => null, pattern: (id) => (id === PATTERN.id ? PATTERN : null), fixtureIds: () => [1, 2, 3], beat: () => c.beat,
+    insertPattern: (id, at) => s.insertPattern(id, at), patternVoice,
+  });
   store.set(1, 4, { label: 'Drop', accent: '#A855F7', content: { kind: 'sequencePattern', id: 'drop' }, launch: 'once', quantise: 4, targets: 'shared' });
   assert.equal(pads.press(1, 4, 'tablet', 't'), null);
   assert.deepEqual(s.current().clips.slice(1).map((x) => x.startBeat), [12, 14]);
 });
 
-test('the shelf keeps patterns beside the sequences, reads a file from before them, and caps them as it caps sequences', (t) => {
+test('pattern shelves retain compatibility with pre-pattern files', (t) => {
   const file = tempStore(t);
   fs.writeFileSync(file, JSON.stringify({ version: 1, sequences: [{ ...SET, clips: [] }] }));
   const store = new SequenceStore(file).load();
@@ -182,12 +185,14 @@ test('the shelf keeps patterns beside the sequences, reads a file from before th
   assert.equal(changes, 1, 'the same pattern again is not written');
   assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).patterns.map((p) => p.id), ['drop']);
   assert.deepEqual(new SequenceStore(file).load().getPattern('drop'), saved);
+  assert.deepEqual(store.patternSummaries(), [{ id: 'drop', name: 'Drop', lengthBeats: 8 }], 'what the live state lists');
   for (let i = 1; i < 64; i++) store.savePattern({ ...PATTERN, id: `p${i}` });
   assert.throws(() => store.savePattern({ ...PATTERN, id: 'one-more' }), (e) => e.status === 400);
   store.savePattern({ ...PATTERN, id: 'p1', name: 'Renamed' });
   assert.equal(store.removePattern('p1'), true);
   assert.equal(store.removePattern('p1'), false);
   assert.equal(store.getPattern('p1'), null);
+  assert.ok(!store.patternSummaries().some((p) => p.id === 'p1'));
 });
 
 /** The routes on stand-in sources, with a library, palettes and a shelf of their own in a throwaway directory. */

@@ -240,6 +240,12 @@ export const SHOW = {
       help: 'Photosensitivity: at most three large-area flashes a second (WCAG 2.3.1, ITU-R BT.1702). Strobes are capped '
         + 'at three a second, and a look that would flash the whole rig faster is held to a flicker under a tenth of '
         + 'full brightness. Covers every output, manual looks included. Off by default.' },
+    { path: 'hue.strobe', label: 'Hue Lamps Take a Flash', type: 'select',
+      options: () => [
+        { value: 'flash', label: 'Flash: hard, as the pars do' },
+        { value: 'pulse', label: 'Pulse: falling to a glow' },
+      ],
+      help: 'Flash keeps a look’s hard brightness cuts on Hue lamps; pulse softens them into a 200 ms fall to a glow.' },
   ],
 };
 

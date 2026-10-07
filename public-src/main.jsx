@@ -1,5 +1,5 @@
 import { render } from 'preact';
-import { useState, useEffect } from 'preact/hooks';
+import { useState, useEffect, useRef } from 'preact/hooks';
 import { field } from './state.js';
 import { setUpDevice } from './device.js';
 
@@ -26,24 +26,7 @@ import { SettingsView } from './components/setup/SettingsView.jsx';
 import { PreflightView } from './components/setup/PreflightView.jsx';
 import { Wizard, useFirstRun } from './components/setup/Wizard.jsx';
 
-// The views, in the order the tabs show them: those for running a show,
-// then the four for setting one up. The keys are the digit that jumps to
-// each (the views past the digits have none), and the hash that opens the page on it — a tablet at front of house
-// bookmarks /#perform; /#rig/outputs opens the Rig view on its outputs.
-const VIEWS = [
-  { id: 'manual', key: '1', icon: '◧', label: 'Manual', hint: 'Patterns · Colours · Fixtures', group: 'live' },
-  { id: 'auto', key: '2', icon: '✦', label: 'Auto Show', hint: 'Spotify · Now Playing · PRO DJ LINK', group: 'live' },
-  { id: 'perform', key: '3', icon: '◉', label: 'Perform', hint: 'Pads · Palettes · Faders', group: 'live' },
-  { id: 'timeline', key: '4', icon: '≋', label: 'Timeline', hint: 'Sections · Rehearse · Edits', group: 'live' },
-  { id: 'stage', key: '5', icon: '◭', label: 'Stage', hint: 'The rig in 3D', group: 'live' },
-  { id: 'sequence', key: '', icon: '▤', label: 'Sequence', hint: 'Lanes · Patterns · Record', group: 'live' },
-  { id: 'matrix', key: '', icon: '▩', label: 'Matrix', hint: 'Hold colours', group: 'live' },
-  { id: 'rig', key: '6', icon: '▦', label: 'Rig', hint: 'Plan · Patch · Outputs', group: 'setup' },
-  { id: 'sources', key: '7', icon: '♫', label: 'Sources', hint: 'Players · Spotify · Live input', group: 'setup' },
-  { id: 'settings', key: '8', icon: '⚙', label: 'Settings', hint: 'Show · MIDI · Server', group: 'setup' },
-  { id: 'preflight', key: '9', icon: '✓', label: 'Preflight', hint: 'Pre-show check', group: 'setup' },
-];
-const VIEW_IDS = VIEWS.map((v) => v.id);
+import { VIEWS, VIEW_IDS, viewShortcut } from './views.js';
 
 /** The view a hash names: its first part, so /#rig/outputs is the Rig view. */
 const viewOfHash = () => window.location.hash.replace('#', '').split('/')[0];
@@ -62,6 +45,11 @@ function initialView() {
 function ModeTabs({ mode, setMode }) {
   // Subscribes here rather than in Root, so an auto-show status change re-renders
   // this tab strip alone instead of the whole tree.
+  const strip = useRef(null);
+  useEffect(() => {
+    const tab = document.getElementById(`tab-${mode}`);
+    if (tab && strip.current) strip.current.scrollLeft = tab.offsetLeft - strip.current.offsetLeft;
+  }, [mode]);
   const autoShow = field('autoShow').value;
   const autoActive = !!(autoShow && autoShow.status && autoShow.status !== 'idle');
 
@@ -79,28 +67,32 @@ function ModeTabs({ mode, setMode }) {
   };
 
   return (
-    <div class={`mode-tabs in-${mode}`} role="tablist" aria-label="Views" onKeyDown={onKeyDown}>
-      {VIEWS.map((v, i) => [
-        i > 0 && VIEWS[i - 1].group !== v.group && <span key={`sep-${v.id}`} class="mode-tab-sep" role="presentation" />,
-        <button
-          key={v.id}
-          id={`tab-${v.id}`}
-          role="tab"
-          type="button"
-          aria-selected={mode === v.id}
-          aria-controls={`panel-${v.id}`}
-          tabIndex={mode === v.id ? 0 : -1}
-          class={`mode-tab ${mode === v.id ? 'active' : ''}`}
-          onClick={() => setMode(v.id)}
-        >
-          <span class="mode-tab-icon" aria-hidden="true">{v.icon}</span>
-          <span class="mode-tab-label">{v.label}</span>
-          <span class="mode-tab-hint">{v.id === 'auto' && autoActive ? 'Running' : v.hint}</span>
-          {v.id === 'auto' && autoActive && <span class="mode-tab-dot" aria-hidden="true" />}
-          {v.key && <kbd class="mode-tab-key" aria-hidden="true">{v.key}</kbd>}
-        </button>,
-      ])}
-    </div>
+    <>
+      <button class="mode-scroll" type="button" aria-label="Scroll views left" onClick={() => strip.current.scrollBy({ left: -strip.current.clientWidth })}>‹</button>
+      <div ref={strip} class={`mode-tabs in-${mode}`} role="tablist" aria-label="Views" onKeyDown={onKeyDown}>
+        {VIEWS.map((v, i) => [
+          i > 0 && VIEWS[i - 1].group !== v.group && <span key={`sep-${v.id}`} class="mode-tab-sep" role="presentation" />,
+          <button
+            key={v.id}
+            id={`tab-${v.id}`}
+            role="tab"
+            type="button"
+            aria-selected={mode === v.id}
+            aria-controls={`panel-${v.id}`}
+            tabIndex={mode === v.id ? 0 : -1}
+            class={`mode-tab ${mode === v.id ? 'active' : ''}`}
+            onClick={() => setMode(v.id)}
+          >
+            <span class="mode-tab-icon" aria-hidden="true">{v.icon}</span>
+            <span class="mode-tab-label">{v.label}</span>
+            <span class="mode-tab-hint">{v.id === 'auto' && autoActive ? 'Running' : v.hint}</span>
+            {v.id === 'auto' && autoActive && <span class="mode-tab-dot" aria-hidden="true" />}
+            {v.key && <kbd class="mode-tab-key" aria-hidden="true">{v.shift ? '⇧' : ''}{v.key}</kbd>}
+          </button>,
+        ])}
+      </div>
+      <button class="mode-scroll" type="button" aria-label="Scroll views right" onClick={() => strip.current.scrollBy({ left: strip.current.clientWidth })}>›</button>
+    </>
   );
 }
 
@@ -146,6 +138,18 @@ function Root() {
   useFirstRun();
 
   useEffect(() => {
+    const bars = ['header', 'commands', 'views', 'effects'];
+    const elements = ['.app-header', '.command-bar', '.mode-nav', '.effects-tools'].map((selector) => document.querySelector(selector));
+    const measure = () => elements.forEach((element, i) => {
+      document.documentElement.style.setProperty(`--${bars[i]}-height`, `${element?.getBoundingClientRect().height || 0}px`);
+    });
+    const observer = new ResizeObserver(measure);
+    elements.filter(Boolean).forEach((element) => observer.observe(element));
+    measure();
+    return () => observer.disconnect();
+  }, [mode]);
+
+  useEffect(() => {
     try { localStorage.setItem('lightshow.mode', mode); } catch { /* private mode */ }
     // A view with tabs of its own keeps its part of the hash (/#rig/outputs).
     if (viewOfHash() !== mode) window.history.replaceState(null, '', `#${mode}`);
@@ -160,13 +164,11 @@ function Root() {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  // Keyboard shortcuts: 1–5 → the show views, 6–9 → the setup views
+  // View shortcuts leave keys handled by the focused control alone.
   useEffect(() => {
     const onKey = (e) => {
-      if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
-      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) || e.target.isContentEditable) return;
-      const view = VIEWS.find((v) => v.key === e.key);
-      if (view) setMode(view.id);
+      const view = viewShortcut(e);
+      if (view) { e.preventDefault(); setMode(view.id); }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);

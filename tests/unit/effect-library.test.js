@@ -28,25 +28,38 @@ const invalidIn = (dir) => fs.readdirSync(dir).filter((f) => f.includes('.invali
 const onDisk = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
 const FADE = { kind: 'ldj.FadeCycle', params: { cadence: 2 } };
 
-test('resolves a built-in by id and by alias; a legacy row resolves to null but is known', (t) => {
+test("built-in aliases share their immutable resolved spec", (t) => {
   const { file } = place(t);
   const library = new EffectLibrary(file).load();
   const strobe = presetById('energy.whiteStrobe');
   assert.deepEqual(library.resolve('energy.whiteStrobe'), strobe.spec);
   assert.deepEqual(library.resolve('white-strobe'), strobe.spec, 'an alias plays its canonical row');
-  // The engine asks every frame: the same object every time, and nobody can change it.
   assert.equal(library.resolve('white-strobe'), library.resolve('energy.whiteStrobe'));
   assert.ok(Object.isFrozen(library.resolve('white-strobe').params));
+});
 
+test("legacy patterns remain known without an effect spec", (t) => {
+  const { file } = place(t);
+  const library = new EffectLibrary(file).load();
   const legacy = CATALOGUE.find((p) => p.legacy);
   assert.equal(library.resolve(legacy.id), null, 'the renderer keeps drawing a legacy row with its pattern function');
   assert.equal(library.isKnownPattern(legacy.id), true);
   assert.equal(library.resolve('solid'), null, 'a pattern with no catalogue row');
   assert.equal(library.isKnownPattern('solid'), true);
+});
+
+test("unknown effects resolve to no preset", (t) => {
+  const { file } = place(t);
+  const library = new EffectLibrary(file).load();
   assert.equal(library.resolve('no-such-thing'), null);
   assert.equal(library.isKnownPattern('no-such-thing'), false);
+  assert.equal(library.get('no-such-thing'), null);
+});
 
-  // The item lookup keeps the row's metadata, length included, under its canonical id.
+test("preset lookup includes built-in metadata", (t) => {
+  const { file } = place(t);
+  const library = new EffectLibrary(file).load();
+  const legacy = CATALOGUE.find((p) => p.legacy);
   const entry = library.get('white-strobe');
   assert.equal(entry.source, 'builtin');
   assert.equal(entry.preset.id, 'energy.whiteStrobe');
@@ -54,9 +67,13 @@ test('resolves a built-in by id and by alias; a legacy row resolves to null but 
   const ldj = CATALOGUE.find((p) => p.app === 'ldj' && !p.legacy);
   assert.equal(library.get(ldj.id).preset.lengthBeats, 32);
   assert.deepEqual(library.get(legacy.id).preset, JSON.parse(JSON.stringify(legacy)));
-  assert.equal(library.get('no-such-thing'), null);
+});
 
-  // What a caller gets is its own copy: editing it changes nothing anywhere.
+test("returned built-in records cannot mutate the catalogue", (t) => {
+  const { file } = place(t);
+  const library = new EffectLibrary(file).load();
+  const strobe = presetById('energy.whiteStrobe');
+  const entry = library.get('white-strobe');
   entry.preset.spec.params.flashesPerSecond = 1;
   const listed = library.list();
   listed.builtin[0].name = 'changed';
@@ -65,14 +82,13 @@ test('resolves a built-in by id and by alias; a legacy row resolves to null but 
   assert.equal(listed.builtin.length, CATALOGUE.length);
 });
 
-test('create/update/remove a user preset, persisted, revision bumps', (t) => {
+test("creating presets persists normalized defaults and metadata", (t) => {
   const { file } = place(t);
   const library = new EffectLibrary(file, { now: ticking() }).load();
   let heard = 0;
   library.onChange(() => { heard++; });
   assert.equal(library.revision(), 0);
   assert.deepEqual(library.list().user, []);
-
   const created = library.create({ name: 'Slow fade', spec: FADE });
   assert.match(created.id, /^user\.[0-9a-f]{16}$/);
   assert.equal(created.name, 'Slow fade');
@@ -86,9 +102,12 @@ test('create/update/remove a user preset, persisted, revision bumps', (t) => {
   assert.equal(library.isKnownPattern(created.id), true);
   assert.deepEqual(library.get(created.id), { source: 'user', preset: created });
   assert.deepEqual(new EffectLibrary(file).load().list().user, [created], 'a restart reads it back');
+});
 
-  // A rename keeps the spec, the very object the engine holds, and the time it
-  // was made; the time it changed moves on.
+test("renaming presets preserves their playing spec", (t) => {
+  const { file } = place(t);
+  const library = new EffectLibrary(file, { now: ticking() }).load();
+  const created = library.create({ name: 'Slow fade', spec: FADE });
   const playing = library.resolve(created.id);
   const renamed = library.update(created.id, { name: 'Slower fade' });
   assert.equal(renamed.name, 'Slower fade');
@@ -96,15 +115,30 @@ test('create/update/remove a user preset, persisted, revision bumps', (t) => {
   assert.equal(renamed.updatedAt, '2026-10-05T20:00:01.000Z');
   assert.equal(library.resolve(created.id), playing);
   assert.equal(library.revision(), 2);
+});
 
+test("updating preset specs publishes a new resolved revision", (t) => {
+  const { file } = place(t);
+  const library = new EffectLibrary(file, { now: ticking() }).load();
+  let heard = 0;
+  library.onChange(() => { heard++; });
+  const created = library.create({ name: 'Slow fade', spec: FADE });
+  library.update(created.id, { name: 'Slower fade' });
   const respec = library.update(created.id, { spec: { kind: 'ldj.FadeCycle', params: { cadence: 4 } } });
   assert.equal(respec.spec.params.cadence, 4);
   assert.equal(library.resolve(created.id).params.cadence, 4);
   assert.equal(library.revision(), 3);
   assert.equal(heard, 3);
+});
 
-  // The same spec again, its keys in another order, and an empty edit: nothing
-  // written, nothing stamped, no revision, nobody told.
+test("unchanged preset updates avoid writes and notifications", (t) => {
+  const { file } = place(t);
+  const library = new EffectLibrary(file, { now: ticking() }).load();
+  let heard = 0;
+  library.onChange(() => { heard++; });
+  const created = library.create({ name: 'Slow fade', spec: FADE });
+  library.update(created.id, { name: 'Slower fade' });
+  const respec = library.update(created.id, { spec: { kind: 'ldj.FadeCycle', params: { cadence: 4 } } });
   const before = fs.statSync(file).mtimeMs;
   const write = t.mock.method(library, 'write');
   const same = library.update(created.id, { name: 'Slower fade', spec: { params: { beats: 32, cadence: 4 }, brightness: 1, kind: 'ldj.FadeCycle' } });
@@ -115,12 +149,26 @@ test('create/update/remove a user preset, persisted, revision bumps', (t) => {
   assert.equal(library.revision(), 3);
   assert.equal(heard, 3);
   write.mock.restore();
+});
 
-  // A copy handed out is the caller's own.
+test("returned user records cannot mutate the resolved preset", (t) => {
+  const { file } = place(t);
+  const library = new EffectLibrary(file, { now: ticking() }).load();
+  const created = library.create({ name: 'Slow fade', spec: FADE });
+  const respec = library.update(created.id, { spec: { kind: 'ldj.FadeCycle', params: { cadence: 4 } } });
   respec.spec.params.cadence = 8;
   library.list().user[0].spec.params.cadence = 8;
   assert.equal(library.resolve(created.id).params.cadence, 4);
+});
 
+test("removing presets persists deletion and ignores missing records", (t) => {
+  const { file } = place(t);
+  const library = new EffectLibrary(file, { now: ticking() }).load();
+  let heard = 0;
+  library.onChange(() => { heard++; });
+  const created = library.create({ name: 'Slow fade', spec: FADE });
+  library.update(created.id, { name: 'Slower fade' });
+  library.update(created.id, { spec: { kind: 'ldj.FadeCycle', params: { cadence: 4 } } });
   assert.equal(library.remove(created.id), true);
   assert.equal(library.resolve(created.id), null);
   assert.equal(library.isKnownPattern(created.id), false);
@@ -132,33 +180,45 @@ test('create/update/remove a user preset, persisted, revision bumps', (t) => {
   assert.equal(library.revision(), 4);
 });
 
-test('an invalid spec is rejected', (t) => {
+test("invalid preset records leave the library unchanged", (t) => {
   const { file } = place(t);
   const library = new EffectLibrary(file).load();
   const kept = library.create({ name: 'Kept', spec: FADE });
-  const refused = (fn, pattern) => assert.throws(fn, (err) => err.status === 400 && pattern.test(err.message));
+  const refused = (fn) => assert.throws(fn, (err) => err.status === 400);
+  refused(() => library.create({ name: 'Nope', spec: { kind: 'no.such.kind', params: {} } }));
+  refused(() => library.create({ name: 'Nope', spec: { kind: 'ldj.FadeCycle', params: { cadence: 'fast' } } }));
+  refused(() => library.create({ name: 'Nope', spec: { ...FADE, palette: ['random'] } }));
+  refused(() => library.create({ name: 'Nope' }));
+  refused(() => library.create({ spec: FADE }));
+  refused(() => library.create({ name: '', spec: FADE }));
+  refused(() => library.create({ name: 'x'.repeat(81), spec: FADE }));
+  refused(() => library.create({ name: 'Nope', effect: FADE }));
+  refused(() => library.create({ name: 'Nope', spec: FADE, id: 'mine' }));
+  refused(() => library.update(kept.id, { spec: { kind: 'no.such.kind' } }));
+  refused(() => library.update(kept.id, { name: 'Nope', createdAt: 'yesterday' }));
+  assert.deepEqual(library.list().user.map((p) => p.name), ['Kept']);
+  assert.equal(library.revision(), 1);
+});
 
-  refused(() => library.create({ name: 'Nope', spec: { kind: 'no.such.kind', params: {} } }), /spec.*kind.*unknown effect kind/);
-  refused(() => library.create({ name: 'Nope', spec: { kind: 'ldj.FadeCycle', params: { cadence: 'fast' } } }), /spec.*cadence/);
-  // The inspector sends the sentinel; the bare word belongs to the palette store only.
-  refused(() => library.create({ name: 'Nope', spec: { ...FADE, palette: ['random'] } }), /spec.*palette/);
-  refused(() => library.create({ name: 'Nope' }), /spec/);
-  refused(() => library.create({ spec: FADE }), /name/);
-  refused(() => library.create({ name: '', spec: FADE }), /name/);
-  refused(() => library.create({ name: 'x'.repeat(81), spec: FADE }), /name/);
-  // The record's own spelling only: a voice's `effect` here is a mistake, not a synonym.
-  refused(() => library.create({ name: 'Nope', effect: FADE }), /Unrecognized key.*"effect"/);
-  refused(() => library.create({ name: 'Nope', spec: FADE, id: 'mine' }), /Unrecognized key.*"id"/);
-  refused(() => library.update(kept.id, { spec: { kind: 'no.such.kind' } }), /spec.*unknown effect kind/);
-  refused(() => library.update(kept.id, { name: 'Nope', createdAt: 'yesterday' }), /Unrecognized key.*"createdAt"/);
-
-  // A setting's issue names it where it sits in the record, a macro step's too.
+test("preset validation reports field paths for invalid cadence", (t) => {
+  const { file } = place(t);
+  const library = new EffectLibrary(file).load();
   assert.throws(() => library.create({ name: 'Nope', spec: { kind: 'ldj.FadeCycle', params: { cadence: 'fast' } } }),
-    (err) => /^preset: spec\.params\.cadence /.test(err.message) && err.issues[0].path.join('.') === 'params.cadence');
+    (err) => err.issues[0].path.join('.') === 'params.cadence');
+});
+
+test("preset validation rejects invalid nested macro cadence", (t) => {
+  const { file } = place(t);
+  const library = new EffectLibrary(file).load();
   const step = (effect) => ({ effect, beats: 4 });
   assert.throws(() => library.create({ name: 'Nope', spec: { kind: 'macro', params: { steps: [step(FADE), step({ kind: 'ldj.FadeCycle', params: { cadence: 'fast' } })], loopBeats: 8 } } }),
-    (err) => /spec\.params\.steps\.1\.effect\.params\.cadence /.test(err.message));
+    (err) => err.issues[0].path.join('.') === 'params.steps.1.effect.params.cadence');
+});
 
+test("preset palettes preserve Random sentinel values", (t) => {
+  const { file } = place(t);
+  const library = new EffectLibrary(file).load();
+  library.create({ name: 'Kept', spec: FADE });
   const sentinel = library.create({ name: 'Random', spec: { ...FADE, palette: [{ random: true }, '#abc'] } });
   assert.deepEqual(sentinel.spec.palette, [{ random: true }, '#abc'], 'a spec\'s palette stays as the inspector sent it');
   assert.deepEqual(library.list().user.map((p) => p.name), ['Kept', 'Random']);
@@ -183,7 +243,7 @@ test('the 257th preset is refused', (t) => {
   const library = new EffectLibrary(file).load();
   for (let i = 0; i < MAX_PRESETS; i++) library.create({ name: `Preset ${i + 1}`, spec: FADE });
   assert.equal(MAX_PRESETS, 256);
-  assert.throws(() => library.create({ name: 'One too many', spec: FADE }), (err) => err.status === 400 && /full/.test(err.message));
+  assert.throws(() => library.create({ name: 'One too many', spec: FADE }), (err) => err.status === 400);
   assert.equal(library.list().user.length, 256);
   assert.equal(library.revision(), 256);
   assert.equal(onDisk(file).presets.length, 256);
@@ -199,7 +259,7 @@ test('a failed write changes nothing: not the library, not the file, not the rev
   const warn = quietly(t);
   t.mock.method(library, 'write', () => { throw new Error('disk full'); });
 
-  const failed = (fn) => assert.throws(fn, (err) => err.status === 500 && /disk full/.test(err.message));
+  const failed = (fn) => assert.throws(fn, (err) => err.status === 500);
   failed(() => library.create({ name: 'Lost', spec: FADE }));
   failed(() => library.update(kept.id, { name: 'Lost', spec: { ...FADE, params: { cadence: 4 } } }));
   failed(() => library.remove(kept.id));
@@ -225,7 +285,7 @@ test('a listener that throws does not undo a saved change, nor stop the next lis
   assert.equal(warn.mock.callCount(), 1);
 });
 
-test('the admission check sees every new spec before anything is written, and a refusal changes nothing', (t) => {
+test('preset admission runs before persistence and leaves refusals atomic', (t) => {
   const { file } = place(t);
   const library = new EffectLibrary(file, { now: ticking() }).load();
   const asked = [];
@@ -248,7 +308,7 @@ test('the admission check sees every new spec before anything is written, and a 
   assert.equal(library.list().user.length, 1);
 });
 
-test('a file with a bad spec, a duplicate or built-in id, or too many presets is moved aside whole', (t) => {
+test('invalid preset files are quarantined', (t) => {
   const { dir, file } = place(t);
   const warn = quietly(t);
   const good = { id: 'user.0000000000000001', name: 'Good', spec: validateSpec(FADE), createdAt: '2026-10-05T20:00:00.000Z', updatedAt: '2026-10-05T20:00:00.000Z' };

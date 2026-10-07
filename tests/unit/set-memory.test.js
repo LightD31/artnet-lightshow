@@ -105,7 +105,7 @@ test('a section does not open on the look the same section opened on last track'
   assert.ok(checked >= 8, `roles compared: ${checked}`);
 });
 
-test('a track that mixes in keeps more of the last track\'s colours than one that clashes', () => {
+test('harmonic transitions preserve more of the previous palette', () => {
   let mixed = 0;
   let clashed = 0;
   for (const file of files) {

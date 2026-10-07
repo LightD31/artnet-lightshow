@@ -60,7 +60,7 @@ test('a long press whose row is gone before it fires opens nothing', () => {
   }
 });
 
-test('a long press fires once and swallows the click after it; a tap is a tap', () => {
+test("long presses suppress their following click", () => {
   mock.timers.enable({ apis: ['setTimeout'] });
   try {
     const { calls, handlers } = press();
@@ -121,7 +121,7 @@ test('with focus fallen to the page, Tab and Shift+Tab land back in the sheet', 
   assert.strictEqual(doc.activeElement, b);
 });
 
-test('focus that walks out of the sheet is put back in it; focus inside is left alone', () => {
+test("modal focus stays inside the sheet", () => {
   const doc = { body: {}, activeElement: null };
   const { a, b, box } = sheet(doc);
   const outside = { focus() { doc.activeElement = outside; } };
@@ -133,7 +133,7 @@ test('focus that walks out of the sheet is put back in it; focus inside is left 
   assert.strictEqual(doc.activeElement, b);
 });
 
-test('a palette echoed back by its owner is the same palette; a revert is not', () => {
+test("palette echoes preserve edit identity", () => {
   assert.ok(ui.sameColours(['#ff0000', { random: true }], ['#FF0000', { random: true }]));
   assert.ok(ui.sameColours(['#f00'], ['#FF0000']));
   assert.ok(!ui.sameColours(['#FF0000', '#00FF00'], ['#FF0000', '#0000FF']));

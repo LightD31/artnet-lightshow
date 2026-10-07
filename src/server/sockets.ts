@@ -257,13 +257,18 @@ function attachSockets(io: Server, { midi, integrations }: {
     // The energy effects' hold, as Companion and the pages before voices send
     // it: a voice under its energy's id, over the latched one (state.ts). Its
     // lease is the voices': one token names one hold, whichever event pressed it.
+    // A press refused (a strobe before the acknowledgement) is told as a voice-hold's is.
     socket.on('energy-hold', (payload: EnergyHoldMessage | null) => {
       if (!payload || !validToken(payload.token)) return;
       const { action, token, effect } = payload;
-      if (action === 'press' && ENERGY_EFFECTS.some((e) => e.id === effect)) {
-        legacyEnergy.press(socket.id, token, effect as string);
-      } else if (action === 'renew') legacyEnergy.renew(socket.id, token);
-      else if (action === 'release') legacyEnergy.release(socket.id, token);
+      try {
+        if (action === 'press' && ENERGY_EFFECTS.some((e) => e.id === effect)) {
+          legacyEnergy.press(socket.id, token, effect as string);
+        } else if (action === 'renew') legacyEnergy.renew(socket.id, token);
+        else if (action === 'release') legacyEnergy.release(socket.id, token);
+      } catch (err) {
+        socket.emit('error-msg', { source: 'energy-hold', token, message: messageOf(err) });
+      }
     });
 
     // Any effect or pad held down: renewed by this page, gone with it. The

@@ -1,11 +1,6 @@
 import { useRef, useState } from 'preact/hooks';
 
-/**
- * A text or number box over a value the server owns: it shows the server's
- * value until it is focused, keeps what is typed while it is (a live update
- * arriving mid-word does not wipe it), and sends it on Enter or on leaving
- * the box. Escape puts the server's value back.
- */
+// Keep focused input local so arriving server updates cannot overwrite typing.
 export function FieldInput({ value, onCommit, type = 'text', ...props }) {
   const [text, setText] = useState(null);
   const cancelled = useRef(false);

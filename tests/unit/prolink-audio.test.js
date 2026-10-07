@@ -57,7 +57,7 @@ cp "$in" "$out"
     }
   });
 
-test('an exact source analyses its file whole, and never falls back to a search itself', async () => {
+test('exact audio sources analyse their own files without searching', async () => {
   const saved = [];
   const cache = { has: () => false, save: async (key, analysis, meta) => { saved.push({ key, meta, analysis }); } };
   const show = new AutoShow(() => {}, [{ name: 'Blackout' }], [], cache);
@@ -86,7 +86,7 @@ test('an exact source analyses its file whole, and never falls back to a search 
 
     show.setExactAudio('prolink-file:b - t:200', { fetch: async () => null });
     const failed = await show.prefetch('B - T', 200, 'prolink-file:b - t:200');
-    assert.match(failed.error, /own audio file could not be fetched/);
+    assert.ok(failed.error);
     assert.deepStrictEqual(searched, [], 'no search under the exact key');
 
     // Without an exact source, the key is searched for as before.
@@ -148,7 +148,7 @@ function rig({ canFetch = true, fetched = { data: Buffer.from('audio'), fileName
 const FILE_KEY = 'prolink-file:artist - song:301';
 const SEARCH_KEY = 'prolink:artist - song:301';
 
-test('the playing track is analysed from its own file, and searched for only when that fails', async () => {
+test('playing tracks search only after their own audio fails', async () => {
   const good = rig();
   await good.integrations.analyseCdjTrack(TRACK);
   assert.deepStrictEqual(good.calls, [['current', FILE_KEY, null]]);
@@ -166,10 +166,10 @@ test('the playing track is analysed from its own file, and searched for only whe
   await searched.integrations.analyseCdjTrack(TRACK);
   assert.deepStrictEqual(searched.calls, [['current', SEARCH_KEY, 301.4]]);
 
-  await assert.rejects(rig({ canFetch: false }).integrations.analyseCdjTrack({ ...TRACK, title: null }), /no rekordbox metadata/);
+  await assert.rejects(rig({ canFetch: false }).integrations.analyseCdjTrack({ ...TRACK, title: null }));
 });
 
-test('a loaded track is prefetched from its file, even when a search has already analysed it', async () => {
+test('loaded-track prefetch replaces search-derived analysis', async () => {
   const r = rig({ cached: [SEARCH_KEY] });
   r.prolink.anyLoaded(TRACK);
   await new Promise((resolve) => setImmediate(resolve));

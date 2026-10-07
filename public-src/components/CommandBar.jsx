@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
-import { send, emitTap, pick } from '../state.js';
+import { send, emitTap, followMusic, pick } from '../state.js';
+import { padLabel } from '../now-playing.js';
 import { formatBpm, clockSource } from '../utils.js';
 import { useDraft } from '../draft.js';
 import { useVoicePads, holdsWhilePressed, padKey, rapidPad } from '../voice-pad.js';
@@ -66,7 +67,7 @@ function BpmEntry({ bpm }) {
 export function CommandBar() {
   const { held, gatedPadProps } = useVoicePads();
   const gate = useSafetyGate();
-  const s = pick(['bpm', 'beatDivision', 'clock', 'running', 'masterDimmer', 'masterBlackout', 'pads', 'patterns', 'effects']);
+  const s = pick(['bpm', 'beatDivision', 'clock', 'running', 'masterDimmer', 'masterBlackout', 'pads', 'patterns', 'effects', 'sequencePatterns']);
   const bpm = s.bpm || 120;
   const division = s.beatDivision || 1;
   const periodMs = (60_000 / bpm) / division;
@@ -104,7 +105,13 @@ export function CommandBar() {
         >
           <BpmEntry bpm={s.bpm} />
           <span class="cb-bpm-label">BPM</span>
-          <span class={`cb-bpm-source ${clock.locked ? 'locked' : ''}`} title={clock.title}>{clock.label}</span>
+          <span class="cb-bpm-sources">
+            <span class={`cb-bpm-source ${clock.locked ? 'locked' : ''}`} title={clock.title}>{clock.label}</span>
+            {s.clock && s.clock.byHand && (
+              <button type="button" class="cb-bpm-follow" onClick={followMusic}
+                title="The tempo is held by hand: follow the deck, the song or the live beat again">Follow</button>
+            )}
+          </span>
         </div>
         <button class="cb-tap" onClick={emitTap} title="Tap tempo (Space)">TAP</button>
         <div class="cb-bpm-controls">
@@ -168,7 +175,7 @@ export function CommandBar() {
         <div class="cb-energy-grid">
           {strip.map((p) => {
             const on = !!lit[p.slot] || held.has(padKey(0, p.slot));
-            const name = p.label || p.content.id;
+            const name = padLabel(p, s);
             return (
               <button
                 key={p.slot}

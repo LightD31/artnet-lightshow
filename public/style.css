@@ -149,6 +149,8 @@ html, body {
   font-feature-settings: 'cv02' on, 'cv03' on, 'cv04' on, 'cv11' on;
   height: 100%;
   overflow-x: hidden;
+  scroll-padding-top: calc(var(--header-height, 47px) + var(--commands-height, 0px) + var(--views-height, 0px));
+  scroll-padding-bottom: 64px;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -253,6 +255,16 @@ header {
   border-color: rgba(16, 185, 129, .45);
   color: var(--text-on-green);
 }
+/* The strobes refused until the photosensitivity acknowledgement: a button, one tap from it. */
+.stat-pill.gate {
+  font-family: inherit;
+  line-height: inherit;
+  background: rgba(245, 158, 11, .18);
+  border-color: rgba(245, 158, 11, .55);
+  color: var(--text-on-amber);
+  cursor: pointer;
+}
+.stat-pill.gate:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 @keyframes gentle-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .65; } }
 
@@ -278,7 +290,6 @@ body {
 
 main {
   flex: 1;
-  overflow: auto;
   padding: 10px 12px 56px;
 }
 
@@ -287,7 +298,7 @@ main {
    ============================================================= */
 .command-bar {
   position: sticky;
-  top: 47px;
+  top: var(--header-height, 47px);
   z-index: 80;
   display: flex;
   align-items: center;
@@ -366,6 +377,23 @@ button.cb-bpm-num:focus-visible { outline: 2px solid var(--accent); outline-offs
   cursor: help;
 }
 .cb-bpm-source.locked { color: var(--accent); border-color: var(--accent); }
+.cb-bpm-sources { display: flex; gap: 4px; align-items: center; }
+.cb-bpm-follow {
+  margin-top: 4px;
+  padding: 1px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--accent-fill);
+  color: #fff;
+  font: inherit;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.cb-bpm-follow:hover { background: var(--accent-hover); }
+.cb-bpm-follow:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .cb-tap {
   height: 44px;
@@ -521,14 +549,23 @@ button.cb-bpm-num:focus-visible { outline: 2px solid var(--accent); outline-offs
 /* =============================================================
    MODE TABS
    ============================================================= */
-.mode-tabs {
+.mode-nav {
   position: sticky;
-  top: 109px;
+  top: calc(var(--header-height, 47px) + var(--commands-height, 0px));
   z-index: 70;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--bg);
+}
+.mode-scroll { min-width: 32px; min-height: 44px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 24px; }
+.mode-tabs {
+  min-width: 0;
   display: inline-flex;
   gap: 2px;
   padding: 6px;
-  margin: 8px 12px 0;
+  margin: 0;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -601,7 +638,7 @@ button.cb-bpm-num:focus-visible { outline: 2px solid var(--accent); outline-offs
 }
 @media (max-width: 560px) {
   /* The Perform view carries tempo and master: the header keeps what is alarming. */
-  .header-stats .stat-pill:not(.alert):not(.conn) { display: none; }
+  .header-stats .stat-pill:not(.alert):not(.conn):not(.gate) { display: none; }
   /* And room for this device's tools: the name shortens, the theme picker narrows. */
   .app-header h1 span { display: none; }
   .header-theme { max-width: 104px; }
@@ -696,6 +733,28 @@ button.cb-bpm-num:focus-visible { outline: 2px solid var(--accent); outline-offs
 .perform-arm-hint { font-size: 13px; color: var(--muted); text-align: right; }
 .perform-arm-switch.armed .perform-arm-hint { color: var(--text-2); }
 
+.perform-gate { display: flex; }
+.perform-gate-button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding: 8px 16px;
+  background: rgba(245, 158, 11, .14);
+  border: 2px solid rgba(245, 158, 11, .55);
+  border-radius: var(--radius-lg);
+  color: var(--text-on-amber);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.perform-gate-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.perform-gate-state { font-size: 15px; font-weight: 800; letter-spacing: .02em; }
+.perform-gate-hint { font-size: 13px; color: var(--text-2); text-align: right; }
+
 .perform-sync { display: flex; flex-wrap: wrap; gap: 8px; }
 .perform-chip {
   display: inline-flex;
@@ -716,6 +775,19 @@ button.cb-bpm-num:focus-visible { outline: 2px solid var(--accent); outline-offs
 .chip-warn .perform-chip-dot { background: var(--amber); }
 .chip-off { border-color: var(--red); }
 .chip-off .perform-chip-dot { background: var(--red); }
+.perform-follow {
+  min-height: 44px;
+  padding: 6px 14px;
+  background: var(--accent-fill);
+  color: #fff;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.perform-follow:hover { background: var(--accent-hover); }
 
 .perform-body { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; }
 .perform-controls { display: grid; gap: 12px; }
@@ -803,13 +875,15 @@ button.cb-bpm-num:focus-visible { outline: 2px solid var(--accent); outline-offs
 
 @media (max-width: 900px) {
   .perform-now { grid-template-columns: 1fr; }
-  /* One column: the faders come straight after the pads, where a thumb is,
-     not below two dozen palettes. */
+  /* Keep the pads before the meters and colour libraries. */
   .perform-body { display: flex; flex-direction: column; align-items: stretch; }
   .perform-controls { display: contents; }
   .perform-pads { order: 1; }
-  .perform-faders { order: 2; justify-content: center; }
-  .perform-palettes { order: 3; }
+  .perform-live-row { order: 2; }
+  .perform-side { order: 3; }
+  .perform-override { order: 4; }
+  .perform-palettes { order: 5; }
+  .perform-faders { justify-content: center; }
   .perform-fader input[type=range] { height: 240px; }
 }
 @media (max-width: 560px) {
@@ -1460,13 +1534,16 @@ input[type=range]::-moz-range-thumb {
 /* The search and the chips stay in reach while the catalogue scrolls by. */
 .effects-tools {
   position: sticky;
-  top: 0;
+  top: calc(var(--header-height, 47px) + var(--commands-height, 0px) + var(--views-height, 0px));
   z-index: 2;
   display: flex;
   flex-direction: column;
   gap: 6px;
   padding: 4px 0 8px;
   background: var(--card);
+}
+.effects-deck button, .effects-catalogue :is(button, summary) {
+  scroll-margin-top: calc(var(--effects-height, 0px) + 8px);
 }
 /* What is on stage, always in sight above the search. */
 .effects-now {
@@ -2176,7 +2253,7 @@ input[type=range]::-moz-range-thumb {
   .cb-divider { display: none; }
   .cb-energy { width: 100%; }
   .cb-energy-grid { flex-wrap: wrap; }
-  .mode-tabs { top: auto; position: static; padding: 12px 14px 0; }
+
   .manual-view { grid-template-columns: 1fr; }
   .header-stats .stat-pill .label { display: none; }
   main { padding: 14px; }
@@ -3187,8 +3264,8 @@ input[type=range]::-moz-range-thumb {
   margin: 4px 4px;
   background: var(--border-hi);
 }
-/* Nine tabs: on a narrow screen the strip scrolls rather than squashing them. */
-.mode-tabs { max-width: calc(100% - 24px); overflow-x: auto; scrollbar-width: thin; }
+/* The arrows expose views beyond the visible scroll area. */
+.mode-tabs { overflow-x: auto; scrollbar-width: thin; }
 .mode-tab { flex-shrink: 0; white-space: nowrap; }
 
 .setup-view { display: flex; flex-direction: column; gap: 10px; max-width: 1400px; }
@@ -3783,7 +3860,7 @@ input[type=range]::-moz-range-thumb {
    ============================================================= */
 @media (pointer: coarse) {
   .btn, .btn.sm, .btn.icon, .segmented-btn, .bd-tab, .bd-toggle, .mode-tab, .nav-link,
-  .header-tool, .header-theme, .cb-energy-btn, .cb-tap, .cb-play, .cb-blackout,
+  .header-tool, .header-theme, .stat-pill.gate, .cb-energy-btn, .cb-tap, .cb-play, .cb-blackout, .cb-bpm-follow,
   .palette-btn, .pattern-btn, .color-slot-tab, .cue-recall, .cue-capture, .sync-nudge,
   .transport-btn, .warm-toggle, .auto-select, .warm-playlist-select, .shortcuts-tab,
   .sub-tab, .remove-btn, .wizard-step-btn, .ofl-hit, .file-upload-btn, .timeline-section,
@@ -3862,7 +3939,20 @@ input[type=range]::-moz-range-thumb {
   background: var(--card); color: var(--text); border: 1px solid var(--border-hi); font-weight: 600;
 }
 .strobe-gear { font-size: 1.4rem; }
-.perform-utility { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.perform-live-row { display: grid; gap: 12px; }
+@media (min-width: 901px) and (orientation: landscape) {
+  .perform-live-row { order: -1; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .perform-live-row .perform-pad { min-height: 88px; }
+  .perform-live-row .perform-pad-name { font-size: 16px; }
+  .perform-live-row .strobe-pad { gap: 6px; }
+  .perform-live-row .strobe-burst, .perform-live-row .strobe-gear { min-width: 44px; padding: 0 8px; }
+}
+.perform-utility { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+/* Three in a row leave Blackout no room on a phone: stop all voices takes a row of its own. */
+@media (max-width: 560px) {
+  .perform-utility { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pad-stop-voices { grid-column: 1 / -1; }
+}
 
 .pad-editor h2, .strobe-settings h2 { margin: 0 0 12px; font-size: 1.1rem; }
 .pad-field { display: flex; flex-direction: column; gap: 6px; margin: 0 0 12px; border: 0; padding: 0; }
@@ -3883,7 +3973,9 @@ input[type=range]::-moz-range-thumb {
 /* ── Sequence and Matrix views ── */
 .sequence-view, .matrix-view { display: flex; flex-direction: column; gap: 12px; padding: 12px; min-width: 0; }
 .seq-top { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 2; background: var(--bg); padding: 4px 0; }
-.seq-now, .matrix-now { flex: 1 1 240px; font-size: 18px; color: var(--text); }
+.seq-now, .matrix-now { font-size: 18px; color: var(--text); }
+.seq-now { flex: 1 1 240px; }
+.matrix-now { flex: none; }
 .seq-beat { color: var(--muted); font-variant-numeric: tabular-nums; }
 .seq-transport { display: flex; gap: 8px; }
 .seq-big { min-width: 56px; min-height: 56px; font-size: 20px; border-radius: var(--radius); }
@@ -3895,12 +3987,16 @@ input[type=range]::-moz-range-thumb {
 .seq-shelf-item.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
 .seq-record select, .seq-toolbar select, .seq-toolbar button, .seq-capture input, .seq-capture button { min-height: 44px; }
 .seq-danger { color: var(--accent-4); }
+.seq-confirm { color: var(--text); }
 .seq-note { margin: 0; color: var(--muted); font-size: 13px; }
 .seq-arrangement { display: grid; grid-template-columns: minmax(90px, 160px) 1fr; gap: 0 8px; min-width: 0; }
 .seq-lanes { padding-top: 40px; }
 .seq-lane { height: 44px; display: flex; align-items: center; gap: 6px; border-bottom: 1px solid var(--border); }
 .seq-lane.track .seq-lane-name { color: var(--text-2); font-style: italic; }
-.seq-lane-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seq-lane-name, .seq-lane-pick { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* In Edit, a lane's name picks where Add clip puts the next clip. */
+.seq-lane-pick { min-height: 44px; padding: 0; border: 0; background: none; color: var(--text); font: inherit; text-align: left; }
+.seq-lane-pick[aria-pressed="true"] { color: var(--accent); font-weight: 600; }
 .seq-rows { min-width: 0; overflow-x: auto; }
 .seq-ruler-wrap { display: flex; flex-direction: column; }
 .seq-ruler { width: 100%; height: 22px; display: block; }
@@ -3913,6 +4009,8 @@ input[type=range]::-moz-range-thumb {
 .seq-clip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
 .seq-handle { position: absolute; right: 0; top: 0; bottom: 0; width: 12px; cursor: ew-resize; background: rgba(255, 255, 255, 0.25); touch-action: none; }
 .seq-cursor { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; box-shadow: 0 0 6px rgba(255, 255, 255, 0.7); pointer-events: none; }
+/* Where the sequence ends when no loop brings it round. */
+.seq-end { position: absolute; top: 0; bottom: 0; border-left: 2px dashed var(--muted); pointer-events: none; }
 .seq-editor { display: flex; flex-direction: column; gap: 12px; border-top: 1px solid var(--border); padding-top: 12px; }
 .seq-cliplist, .seq-commands { display: flex; flex-direction: column; gap: 6px; }
 .seq-clip-row, .seq-command-row { display: grid; grid-template-columns: minmax(80px, 1fr) 2fr 90px 90px auto; gap: 6px; align-items: center; padding: 4px; border-radius: var(--radius); }
@@ -3934,8 +4032,9 @@ input[type=range]::-moz-range-thumb {
 .transport-row { display: flex; align-items: center; gap: 12px; }
 .transport-picker { flex: 1; min-width: 0; min-height: 44px; font-size: 16px; }
 .transport-position { font-variant-numeric: tabular-nums; font-size: 24px; font-weight: 700; min-width: 4ch; text-align: right; }
-.transport-buttons { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.transport-buttons { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
 .transport-btn { min-height: 52px; font-size: 20px; border-radius: 10px; border: 1px solid var(--border-hi); background: transparent; color: inherit; }
+.transport-btn svg { vertical-align: middle; }
 .transport-btn[aria-pressed="true"] { background: var(--accent-fill); border-color: var(--accent); color: #fff; }
 .transport-btn:disabled { opacity: 0.4; }
 .transport-lanes { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0; padding: 0; list-style: none; font-size: 13px; }
@@ -4025,3 +4124,33 @@ input[type=range]::-moz-range-thumb {
 .stage-now { margin: 6px 0; font-size: 1.05rem; line-height: 1.4; }
 .stage-now strong { margin-right: 6px; text-transform: uppercase; font-size: .8rem; letter-spacing: .06em; opacity: .75; }
 .seq-beyond { margin: 6px 0; padding: 8px 10px; border: 1px solid currentColor; border-radius: 6px; }
+
+@media (max-width: 560px) {
+  .command-bar { flex-wrap: nowrap; gap: 6px; padding: 6px 8px; }
+  .cb-tempo { gap: 6px; }
+  .cb-bpm { min-width: 42px; }
+  .cb-bpm-num { font-size: 22px; }
+  .cb-bpm-controls, .cb-bpm-source, .cb-energy, .cb-play, .cb-master-label, .cb-master-val { display: none; }
+  .cb-tap { min-width: 44px; height: 44px; padding: 0 8px; }
+  .cb-transport { min-width: 0; gap: 6px; }
+  .cb-blackout { min-height: 44px; padding: 0 8px; font-size: 10px; letter-spacing: 0; }
+  .cb-blackout-dot { display: none; }
+  .cb-master { min-width: 44px; height: 44px; padding: 0 6px; }
+  .cb-master input { min-width: 0; width: 100%; }
+}
+
+@media (max-width: 900px) and (orientation: landscape) {
+  .perform-utility { position: fixed; bottom: 0; left: 0; right: 0; z-index: 75; padding: 6px 14px; background: var(--surface); }
+  .perform-utility .perform-pad { min-height: 52px; padding: 4px; }
+  .perform-utility .perform-pad-name { font-size: 16px; }
+  .perform-view { padding-bottom: 72px; }
+}
+
+.app-header { flex-wrap: wrap; row-gap: 4px; }
+.header-now { flex: 1 0 100%; min-width: 0; font-size: 11px; }
+.header-now .now-playing { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.perform-playing { margin-bottom: 8px; font-size: 13px; }
+.playing-voices { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.playing-voice { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 8px; font-size: 12px; }
+.playing-voice button { min-height: 44px; }
+@media (max-width: 900px) { .perform-controls > .playing-voices { order: 2; } }

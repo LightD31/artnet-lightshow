@@ -53,7 +53,7 @@ const colours = (out) => out.map(([c]) => c);
 const brightest = (out) => dims(out).indexOf(Math.max(...dims(out)));
 const BED = 45;
 
-test('every party effect is in the engine, the picker and the cell patterns, under its own group', () => {
+test('party effects register with the engine, picker and cell renderer', () => {
   assert.strictEqual(PARTY.length, 18);
   for (const id of PARTY) {
     assert.strictEqual(PATTERN_FUNCS[id], PARTY_PATTERNS[id], id);
@@ -96,7 +96,7 @@ test('an unplaced rig is a row in stage order', () => {
 
 // ── Hue Dynamics' Party families ─────────────────────────────────────────────
 
-test('position chase: a domino along the heading by position, the heading turning a quarter every run', () => {
+test('position chase follows a heading that rotates each run', () => {
   // Three steps a run on four lamps half a step apart, each lamp's attack an
   // eighth of a step. To the front on a row is along the row, left to right;
   // the third run heads back, so right to left.
@@ -160,7 +160,7 @@ test('streak: a comet along the heading on some events, resting on the others', 
   assert.ok(new Set(heads).size >= 3, `and gets across: ${heads}`);
 });
 
-test('starlight: about a third of the lamps light on each step and fade out by its end', () => {
+test('starlight fades a third of the lamps on each step', () => {
   const lit = (ms) => dims(draw('starlight', { n: 24, ...at(ms) })).filter((d) => d > 20).length;
   assert.ok(lit(0) >= 3 && lit(0) <= 16, `${lit(0)} of 24 lit`);
   assert.notStrictEqual(lit(0), 0);
@@ -206,7 +206,7 @@ test('confetti: three lamps in four pop on the step and die away, or follow the 
 
 // ── Light DJ's room effects ──────────────────────────────────────────────────
 
-test('anchor fill: the corners by position, filled one a step in the next colour over the last', () => {
+test('anchor fill adds corners in sequence over the previous colour', () => {
   const fill = (step) => colours(draw('anchor-fill', { plan: CORNERS, colors: QUAD, ...at(step * 500) }));
   // The anchors run front left, front right, back right, back left; the front is the plot top.
   assert.deepStrictEqual(fill(0), [RED, MAGENTA, MAGENTA, MAGENTA], 'front left first');
@@ -223,7 +223,7 @@ test('anchor fill: the corners by position, filled one a step in the next colour
   assert.strictEqual(colours(draw('anchor-fill', { n: 9, plan: nine, colors: QUAD, ...at(4 * 500) }))[4], RED, 'the middle fills last');
 });
 
-test('halves: front against back, then left against right, swapping every other time round', () => {
+test('halves alternate front/back and left/right partitions', () => {
   const half = (step, groups) => colours(draw('halves', { plan: groups ? plan([FL, FR, BR, BL], groups) : CORNERS, ...at(step * 500) }));
   // The front half is the plot top, and it keeps colour A though the room numbers it 1, after Light DJ.
   assert.deepStrictEqual(half(0), [RED, RED, BLUE, BLUE], 'front A, back B');
@@ -250,7 +250,7 @@ test('room wave: a wave across the room once a bar, on a heading that turns ever
   for (const d of dims(draw('room-wave', { plan: ROW, ...at(300) }))) assert.ok(d >= BED);
 });
 
-test('ring strobe: one lamp at a time round the ring, a flash on every step, each lap in the next colour', () => {
+test('ring strobe advances lamps per step and colours per lap', () => {
   const ring = (ms, extra = {}) => draw('ring-strobe', { plan: CORNERS, ...at(ms), ...extra });
   // Clockwise from straight ahead, the front being the plot top: front right first, front left last.
   assert.deepStrictEqual(dims(ring(0)), [0, 255, 0, 0], 'front right on the first step');
@@ -297,7 +297,7 @@ test('on a Hue lamp a flash is the colour at full falling to a floor, never blac
 // The Hue strobe setting reaches the fork's own flash looks: 'flash' takes a
 // Hue lamp as any other between flashes, 'pulse' (and a context that says
 // nothing, as every call above) keeps its falling pulse.
-test('ring strobe: with hueStrobe flash the Hue lamp is black between flashes; pulse or nothing keeps its 148', () => {
+test('ring strobe respects Hue flash and pulse modes', () => {
   const noFlash = [true, false, false, false];
   assert.strictEqual(draw('ring-strobe', { noFlash, hueStrobe: 'flash', ...at(100) })[0][1], 0, 'black between flashes');
   assert.strictEqual(draw('ring-strobe', { noFlash, hueStrobe: 'flash', ...at(0) })[0][1], 255, 'and flashed hard on its step');
@@ -309,7 +309,7 @@ test('ring strobe: with hueStrobe flash the Hue lamp is black between flashes; p
   assert.deepStrictEqual(backlit[0], draw('ring-backlit', { noFlash: null, ...at(100) })[0], 'exactly a par\'s backlight');
 });
 
-test('flashes: with hueStrobe flash a Hue lamp is cut to the look\'s bed like a par; pulse or nothing keeps its fall', () => {
+test('flashes preserve the Hue pulse floor unless flash mode is requested', () => {
   const all = new Array(8).fill(true);
   const lit = brightest(draw('flashes', { n: 8, noFlash: all, ...at(0) }));
   for (const ms of [0, 60, 125, 250]) {
@@ -329,7 +329,7 @@ test('ring backlit: the lit lamp in colour A, the rest parked on B', () => {
   assert.deepStrictEqual(draw('ring-backlit', { plan: CORNERS, ...at(600) })[2], [BLUE, BACKLIGHT], 'and parked again after the flash');
 });
 
-test('fireworks: a burst on one lamp a step, never the same one twice running, dying away over a bar', () => {
+test('fireworks avoid consecutive lamp repeats and fade over a bar', () => {
   const first = draw('fireworks', { plan: CORNERS, ...at(0) });
   const o = brightest(first);
   assert.strictEqual(first[o][1], 255);
@@ -342,7 +342,7 @@ test('fireworks: a burst on one lamp a step, never the same one twice running, d
   assert.ok(spread[o][1] > Math.max(...dims(spread).filter((_, i) => i !== o)), 'dimmer the farther they stand');
 });
 
-test('flashes: a scatter of lamps flashes hard on the step and is cut, no lamp over five a second', () => {
+test('flashes cap each lamp at five flashes per second', () => {
   const start = draw('flashes', { n: 16, ...at(0) });
   const lit = dims(start).filter((d) => d === 255).length;
   assert.ok(lit >= 2 && lit <= 10, `${lit} of 16`);
@@ -368,7 +368,7 @@ test('swirl: the crest goes round the ring, a turn every eight steps', () => {
 
 // ── Through the layer ───────────────────────────────────────────────────────
 
-test('the layer hands a placed rig its plan and its Hue lamps, and an unplaced rig neither', () => {
+test('layer context provides placement and Hue membership', () => {
   const fixtures = [
     { position: { x: 80, y: 20 }, group: 'back', output: { protocol: 'hue', channel: 1 } },
     { position: { x: 10, y: 60 } },
@@ -397,7 +397,7 @@ test('the layer hands a placed rig its plan and its Hue lamps, and an unplaced r
   assert.strictEqual(pixels.layout(null, 'bar').units.plan, null);
 });
 
-test('rendered through the layer, a Hue lamp in the ring is pulsed where a par is flashed', () => {
+test('layer rendering pulses Hue ring lamps while flashing pars', () => {
   const fixtures = [
     { position: { x: 10, y: 90 }, output: { protocol: 'hue', channel: 1 } },
     { position: { x: 90, y: 90 } },

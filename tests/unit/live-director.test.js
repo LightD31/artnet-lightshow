@@ -11,12 +11,16 @@ import { PATTERNS, ENERGY_EFFECT_IDS } from '../../src/server/presets.ts';
 import { setupIntegrations } from '../../src/server/integrations.ts';
 import { state } from '../../src/server/state.ts';
 
-function director() {
+function director({ refuse = () => null } = {}) {
   const patches = [];
   const timers = [];
   let now = 0;
   const d = new LiveDirector({
-    applyPatch: (p) => patches.push(p),
+    applyPatch: (p) => {
+      const err = refuse(p);
+      if (err) throw err;
+      patches.push(p);
+    },
     patterns: PATTERNS,
     now: () => now,
     setTimer: (fn, ms) => { const t = { fn, at: now + ms }; timers.push(t); return t; },
@@ -94,6 +98,23 @@ test('a build doubles the pace, a drop lands a burst on a new look, and it clear
   assert.deepStrictEqual(t.last(), { energyOverride: null });
 });
 
+test('refused live strobe bursts preserve the drop look', (t) => {
+  const warned = [];
+  t.mock.method(console, 'warn', (...args) => warned.push(args.map(String).join(' ')));
+  const refusal = Object.assign(new Error('photosensitivity acknowledgement required'), { status: 409 });
+  const s = director({ refuse: (p) => (p.energyOverride ? refusal : null) });
+  s.hear({ seconds: 3 });
+  s.d.start();
+  assert.doesNotThrow(() => s.event('DROP'));
+  assert.strictEqual(s.last().beatDivision, 1, 'the drop\'s new look is on');
+  assert.ok(warned.length > 0);
+  // The drop counted: a spike right after it is inside the cooldown, and asks for nothing.
+  const asked = warned.length;
+  s.event('ENERGY_SPIKE');
+  assert.strictEqual(warned.length, asked);
+  assert.strictEqual(s.d.active, true);
+});
+
 test('silence is dark until the music comes back, with something new', () => {
   const t = director();
   t.hear({ seconds: 3 });
@@ -114,7 +135,7 @@ test('silence is dark until the music comes back, with something new', () => {
   assert.notStrictEqual(look.colorA, before.colorA);
 });
 
-test('a long passage moves on every sixteen bars, and stopping hands the rig back clean', () => {
+test('live passages advance every sixteen bars and release on stop', () => {
   const t = director();
   t.hear({ seconds: 3 });
   t.d.start();

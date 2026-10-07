@@ -77,7 +77,7 @@ test('a fixture height changes the rig signature', () => {
 // The renderer's effect layers and a party look read one plan with Hue flags
 // of their own; a room rebuilt every frame would also lose what is kept with
 // it (Light DJ's channel assignment).
-test('a plan read with two sets of Hue flags keeps one room for each, frame after frame', () => {
+test('room caches remain separate for different Hue memberships', () => {
   const plan = { x: [0.1, 0.4, 0.7, 0.9], y: [0.2, 0.2, 0.6, 0.6], z: [0.5, 0.5, 0.5, 0.5], group: [null, null, null, null] };
   const look = [false, false, false, true];
   const effects = [false, false, false, true];

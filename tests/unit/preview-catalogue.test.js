@@ -71,7 +71,7 @@ function differs(rig, preview, times) {
   return null;
 }
 
-test('every built-in preset rehearses as the rig plays it, as the base and as a voice, Hue lamps flashing and pulsing', () => {
+test("catalogue previews match rig output in each Hue strobe mode", () => {
   assert.ok(ROWS.length > 150, `${ROWS.length} presets`);
   const r = buildRig(RIG, getProfile);
   const times = frames(1200);
@@ -108,7 +108,7 @@ test('every built-in preset rehearses as the rig plays it, as the base and as a 
 // The palette over every effect (PUT /api/palette-override) is the live
 // state's, as the Hue strobe mode and the safety are: a rehearsal under it
 // plays every preset in those colours, as the rig does.
-test('every built-in preset rehearses under the palette override as the rig plays it, as the base and as a voice', () => {
+test("catalogue previews match rig output under palette overrides", () => {
   const r = buildRig(RIG, getProfile);
   const times = frames(600);
   const hex = ['#FF0000', '#00FF0080'];
@@ -137,7 +137,7 @@ test('every built-in preset rehearses under the palette override as the rig play
   assert.ok(differsFromOwn > ROWS.length / 2, `the override recolours most presets (${differsFromOwn} of ${ROWS.length})`);
 });
 
-test('an override that is not a list of hex colours is none: the effects rehearse in their own', () => {
+test("invalid preview palette overrides preserve effect colours", () => {
   const r = buildRig(RIG, getProfile);
   const row = ROWS.find((p) => p.id === 'ldj.FadeCycle');
   const events = [{ timeMs: 0, action: 'patch', data: { pattern: row.id, ...LOOK } }];

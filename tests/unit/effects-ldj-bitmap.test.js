@@ -13,7 +13,7 @@ const rowsAt = (image, x, pixel) => image.rows.flatMap((row, y) => (pixel === un
 const band = (centre, half, height) => Array.from({ length: Math.min(height - 1, centre + half) - Math.max(0, centre - half) + 1 }, (_, i) => Math.max(0, centre - half) + i);
 const redBlue = { spec: { palette: ['#FF0000', '#0000FF'] } };
 
-test('the bitmap kind exposes exactly the twenty-two patterns and strict finite speed defaults', () => {
+test("bitmap kinds register all patterns with defaults", () => {
   assert.deepEqual(BITMAP_PATTERNS, ['SolidTest', 'SmoothLoop', 'SmoothMirror', 'VertLines',
     'ThickPaletteLoop', 'ThinPaletteLoop', 'ThickPaletteMirror', 'ThinPaletteMirror',
     'ThickBandedLoop', 'ThickBandedMirror', 'ThinBandedLoop', 'ThinBandedMirror',
@@ -25,13 +25,16 @@ test('the bitmap kind exposes exactly the twenty-two patterns and strict finite 
     const spec = validateSpec({ kind: 'ldj.bitmap', params: { pattern } });
     assert.equal(spec.params.speed, 1); assert.deepEqual(validateSpec(spec), spec);
   }
+});
+
+test("bitmap schemas validate finite speed", () => {
   for (const params of [{ pattern: 'missing' }, { speed: -1 }, { speed: Infinity }, { speed: NaN }, { speed: '1' }, { unsupported: true }]) {
     assert.throws(() => validateSpec({ kind: 'ldj.bitmap', params }), JSON.stringify(params));
   }
   assert.equal(validateSpec({ kind: 'ldj.bitmap', params: { speed: 0 } }).params.speed, 0);
 });
 
-test('fast scrolling needs the photosensitivity acknowledgement, the native rate does not', () => {
+test("fast bitmap scrolling requires acknowledgement", () => {
   const needs = (params) => requiresAcknowledgement(validateSpec({ kind: 'ldj.bitmap', params }));
   for (const pattern of BITMAP_PATTERNS) assert.equal(needs({ pattern }), false, pattern);
   assert.equal(needs({ pattern: 'ThinPaletteLoop', speed: 1.8 }), false);
@@ -68,7 +71,7 @@ test('native bitmap blends preserve endpoints and their integer hue quantization
   assert.equal(bitmapBlend(pack(RED), pack(RED), .24), 0xFE0000, 'equal colours still pass through intermediate float weights');
 });
 
-test('the bitmap is generated once per (pattern, palette) and sampled by lamp position', () => {
+test("bitmap generation is cached by pattern and palette", () => {
   // u −1, 0 and +1 span the picture's height of 40 px, not its 400 px period.
   const h = harness('ldj.bitmap', row(3), { params: { pattern: 'SmoothLoop' }, ...redBlue });
   const first = h.draw(at(0)), image = h.state().image;
@@ -81,7 +84,7 @@ test('the bitmap is generated once per (pattern, palette) and sampled by lamp po
   for (const frame of [1, 2, 22, 500]) { h.draw(at(frame)); assert.strictEqual(h.state().image, image); }
 });
 
-test('all generator dimensions include actual segment widths and mirror endpoint order', () => {
+test("bitmap dimensions include full segment widths", () => {
   const expected = [[40,40], [600,40], [800,40], [120,40], [144,40], [72,40], [192,40], [96,40],
     [720,40], [960,40], [360,40], [480,40], [600,40], [600,100], [600,60],
     [400,40], [400,100], [400,60], [600,40], [600,100], [600,60], [600,40]];
@@ -98,7 +101,7 @@ test('all generator dimensions include actual segment widths and mirror endpoint
   assert.deepEqual([triangle.width, triangle.height], [1600, 100]);
 });
 
-test('palette segments and mirrors neither duplicate terminal blocks nor blend their plateaus', () => {
+test("bitmap palette plateaus preserve segment boundaries", () => {
   for (const [pattern, width] of [['ThickPaletteMirror', 48], ['ThinPaletteMirror', 24]]) {
     const image = buildBitmap(pattern, [RED, GREEN, BLUE]);
     assert.deepEqual([0, 1, 2, 3].map(i => image.rows[0][i * width]), [RED, GREEN, BLUE, GREEN].map(pack));
@@ -140,12 +143,18 @@ test('diagonal raster preserves repeated subtraction and the inclusive wrapped b
   assert.equal(image.rows[17][100], pack(RED)); assert.equal(image.rows[41][100], 0);
 });
 
-test('vertical lines have sixteen lit columns and groove dims the same colour to black', () => {
+test("VertLines has sixteen lit columns", () => {
   const vertical = buildBitmap('VertLines', [RED, BLUE]);
   assert.deepEqual([0,15,16,39,40].map(x => vertical.rows[0][x]), [pack(RED), pack(RED), 0, 0, pack(BLUE)]);
+});
+
+test("Groove bitmap dims each palette colour to black", () => {
   const groove = buildBitmap('OGGrooveWave', [RED, BLUE]);
-  assert.equal(groove.rows[0][0], 0); assert.equal(groove.rows[0][100], pack(RED));
-  assert.equal(groove.rows[0][199], 0); assert.equal(groove.rows[0][200], 0); assert.equal(groove.rows[0][300], pack(BLUE));
+  assert.equal(groove.rows[0][0], 0);
+  assert.equal(groove.rows[0][100], pack(RED));
+  assert.equal(groove.rows[0][199], 0);
+  assert.equal(groove.rows[0][200], 0);
+  assert.equal(groove.rows[0][300], pack(BLUE));
   assert.equal(groove.rows[0][50] & 0xFFFF, 0);
 });
 
@@ -160,7 +169,7 @@ test('singletons are copied and padded with black before a black-background pref
   assert.deepEqual(sampleBitmap(whiteDie, 'SolidTest', 0, 0, 0), parseHex('#123456'));
 });
 
-test('sampling uses height for both axes, exact orientation, floor and positive wrapping', () => {
+test("bitmap sampling wraps floored coordinates by height", () => {
   const image = { width: 8, height: 4, rows: Array.from({ length: 4 }, (_, y) => Array.from({ length: 8 }, (_, x) => y * 16 + x)) };
   const value = (pattern, u, v, scroll = 0) => sampleBitmap(image, pattern, u, v, scroll).b;
   assert.deepEqual([-1,0,1].map(u => value('SmoothLoop', u, 0)), [32,34,36]);
@@ -197,7 +206,7 @@ test('VertLines scrolls at half speed', () => {
   assert.deepEqual(h.draw(at(22))[0].colour, BLUE, 'column 46');
 });
 
-test('speed scales the rate before flooring, zero freezes, and a late first render keeps its launch', () => {
+test("bitmap speed edits scale and freeze scrolling", () => {
   const image = buildBitmap('SmoothLoop', [RED, BLUE]);
   const h = harness('ldj.bitmap', row(1), { params: { pattern: 'SmoothLoop', speed: .5 }, startedAtMs: 250, ...redBlue });
   assert.equal(bitmapScroll(250 + 3 * LDJ_FRAME_MS, 250, 120, .5, 'SmoothLoop'), 3);
@@ -205,12 +214,16 @@ test('speed scales the rate before flooring, zero freezes, and a late first rend
   h.inst.spec.params.speed = 0;
   assert.equal(bitmapScroll(250 + 100 * LDJ_FRAME_MS, 250, 120, 0, 'SmoothLoop'), 0);
   assert.equal(pack(h.draw(at(100, 120, 250))[0].colour), image.rows[20][20], 'frozen on column 20');
+});
+
+test("late bitmap renders retain their launch origin", () => {
+  const image = buildBitmap('SmoothLoop', [RED, BLUE]);
   const late = harness('ldj.bitmap', row(1), { params: { pattern: 'SmoothLoop' }, startedAtMs: 1000, ...redBlue });
   assert.equal(bitmapScroll(1000 + 22.5 * LDJ_FRAME_MS, 1000, 120, 1, 'SmoothLoop'), 52, 'frame 22 of 22.5');
   assert.equal(pack(late.draw(at(22.5, 120, 1000))[0].colour), image.rows[20][72]);
 });
 
-test('subframes hold and repeated or backward samples reproduce their exact bitmap pixels', () => {
+test("bitmap subframes and seeks retain exact pixels", () => {
   const h = harness('ldj.bitmap', row(2), { params: { pattern: 'SmoothLoop' }, ...redBlue });
   const initial = h.draw(at(0)); assert.notDeepEqual(initial[0].colour, initial[1].colour);
   assert.deepEqual(h.draw(at(.5)), initial);
@@ -219,7 +232,7 @@ test('subframes hold and repeated or backward samples reproduce their exact bitm
   assert.deepEqual(harness('ldj.bitmap', row(2), { params: { pattern: 'SmoothLoop' }, ...redBlue }).draw(at(1)), next);
 });
 
-test('content cache survives cloned input arrays, tempo and geometry changes but replaces changed content', () => {
+test("bitmap caches persist until content changes", () => {
   const room = row(2), h = harness('ldj.bitmap', room, { params: { pattern: 'SmoothLoop' }, ...redBlue });
   h.draw(at(0)); const image = h.state().image;
   room.u[0] = .5; h.draw(at(1)); assert.strictEqual(h.state().image, image);
@@ -233,7 +246,7 @@ test('content cache survives cloned input arrays, tempo and geometry changes but
   assert.notStrictEqual(h.state().image, changed);
 });
 
-test('any effective random entry uses one fixed rainbow while fixed overrides suppress it', () => {
+test("random bitmap palettes use a fixed rainbow", () => {
   const h = harness('ldj.bitmap', row(1), { params: { pattern: 'ThickPaletteLoop' }, spec: { palette: ['#123456', { random: true }] } });
   h.draw(at(0)); const rainbow = h.state().image;
   assert.equal(rainbow.width, 384); assert.equal(rainbow.rows[0][0], pack(RED)); assert.equal(rainbow.rows[0][48], 0xFF9900);
@@ -244,7 +257,7 @@ test('any effective random entry uses one fixed rainbow while fixed overrides su
   h.draw(at(12)); assert.deepEqual(h.state().image, rainbow);
 });
 
-test('bitmap checkpoint clones preserve row aliases without sharing mutable state with the original', () => {
+test("bitmap clones retain independent rows and aliases", () => {
   const h = harness('ldj.bitmap', square(), { params: { pattern: 'SmoothMirror' } });
   h.draw(at(3)); const clone = h.stepper.clone(), original = h.state().image;
   const copied = clone.get(h.inst.id, () => null, 0).image;
@@ -257,7 +270,7 @@ test('bitmap checkpoint clones preserve row aliases without sharing mutable stat
   copied.rows[0][0] = -1; assert.notEqual(original.rows[0][0], -1);
 });
 
-test('hand-built frames retain their first-time origin and the outer renderer applies brightness once', () => {
+test("hand-built bitmap frames retain their first origin", () => {
   const def = kindOf('ldj.bitmap'), spec = validateSpec({ kind: 'ldj.bitmap' }), room = row(1);
   const frame = { nowMs: 123, bpm: 120, palette: [RED, BLUE], paletteOverride: null, spec };
   const state = def.init(spec.params, room, frame), out = [];
@@ -266,6 +279,10 @@ test('hand-built frames retain their first-time origin and the outer renderer ap
   assert.equal(bitmapScroll(123 + 3 * LDJ_FRAME_MS, 123, 120, 1, 'SmoothLoop'), 7);
   assert.equal(pack(out[0].colour), state.image.rows[20][27], 'three frames from the first render, not from zero');
   assert.deepEqual(Object.keys(state).sort(), ['image', 'key', 'originMs'], 'no per-render scratch is kept in the state');
+});
+
+test("bitmap brightness is applied once", () => {
+  const room = row(1);
   const h = harness('ldj.bitmap', room, { params: { pattern: 'SolidTest' }, palette: [RED], spec: { brightness: .4 } });
   assert.deepEqual(h.draw(at(0))[0], { colour: RED, level: .4, strength: 1 });
 });
@@ -284,10 +301,13 @@ test('every pattern renders finite values on one lamp with one colour', () => {
   }
 });
 
-test('nonfinite clocks and unsafe offsets throw; an invalid tempo reads as 120 like the other lamp kernels', () => {
+test("bitmap clocks reject nonfinite and unsafe values", () => {
   const h = harness('ldj.bitmap', row(1));
   for (const input of [{ nowMs: Infinity, bpm: 120 }, { nowMs: -Infinity, bpm: 120 }, { nowMs: NaN, bpm: 120 },
     { nowMs: 1e30, bpm: 120 }, { nowMs: LDJ_FRAME_MS, bpm: 1e30 }]) assert.throws(() => h.draw({ ...input, beatPos: 0 }), RangeError, JSON.stringify(input));
+});
+
+test("bitmap invalid tempos fall back to 120 BPM", () => {
   const reference = harness('ldj.bitmap', row(1), redBlue).draw(at(3));
   for (const bpm of [NaN, Infinity, 0, -128]) {
     assert.equal(bitmapScroll(3 * LDJ_FRAME_MS, 0, bpm, 1, 'SmoothLoop'), 7, String(bpm));

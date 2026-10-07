@@ -1,27 +1,4 @@
-/**
- * What the party effects hear, worked out from the live input's hops on the
- * main thread: one AudioFrame per hop, carried to the renderer in the frame's
- * input (engine.ts).
- *
- *   party   Hue Dynamics Party's band levels: the frame's RMS scaled by the
- *           master sensitivity, its three bands by their share of the FFT,
- *           each smoothed with the master's attack and release
- *   disco   Hue Dynamics Disco's hit detection, all three styles at once:
- *           Spectrum (three bands against eighty hops of their own past),
- *           Peak (the raw frame power) and Neural (the RMS and the dominant
- *           frequency), each on a history of its own
- *   spl     Light DJ's loudness classes: a level every 50 ms on its 16-bit
- *           scale, a loud, soft or quiet beat every 100 ms, and the section
- *           the last sixteen beats add up to
- *
- * Elapsed audio is the stream's own clock (the hops' `t`), never the wall:
- * the wall decides only whether the audio is still fresh. A hop is known by
- * (process generation, t), so a repeated or late line changes nothing, and
- * the frames carry an epoch of their own that moves on whenever the stream
- * starts again, so an effect never takes a new stream's hop for one it has
- * already answered. Within an epoch the hops handed to the effects only move
- * forward (`heard`).
- */
+// Use stream time and generation for hop identity so wall jitter and restarts cannot replay audio events.
 
 import { bandBins } from '../shared/spectrum-bands.ts';
 import { DISCO_DEFAULTS } from '../shared/effects/disco.ts';
@@ -38,33 +15,23 @@ import type { LiveReading, LiveSpectrum } from '../live-input.ts';
 type Edges = [number, number];
 export type SplClass = 'loud' | 'soft' | 'quiet';
 
-/** The Disco detector's settings: its three bands and floors, and its globals. */
 export interface DiscoDetector { bands: DiscoParams['bands']; globals: DiscoGlobals }
 
 export interface AudioFeaturesOptions {
   master: () => HdMaster;
   disco: () => DiscoDetector;
-  /** Light DJ's sound trigger, 0..1, for the loudness classes. */
   ldjTrigger: () => number;
-  /** The width of one FFT bin, Hz. */
   binHz: number;
-  /** Arrival clock, ms. */
   now?: () => number;
-  /** The input sums other bands than `bandList()`: start it again with them. */
   onBands?: () => void;
 }
 
-// Hue Dynamics Party's fixed bands: bass, mid, high.
 const PARTY_BANDS: readonly Edges[] = [[20, 250], [250, 3000], [3000, 9000]];
 const HISTORY = 80;
-// No new hop for this long: the audio is gone.
 const STALE_MS = 500;
-// A longer silence between two hops is a new stream, not elapsed audio.
 const GAP_SEC = 0.5;
-// Enough for the ±500 ms of live.latencyMs and a margin of hops.
 const KEEP_SEC = 1.25;
 const KEEP_FRAMES = 256;
-// Light DJ: a level every 50 ms, a class every two of them, sections over sixteen classes.
 const SAMPLE_US = 50000;
 const SECTION_WINDOW = 16;
 const SECTION_AT: Record<SplClass, number> = { quiet: 7, soft: 3, loud: 11 };
@@ -72,14 +39,12 @@ const DOMINANT_MAX_HZ = 2000;
 // Compared field by field, so an equal object built in another order is no edit.
 const GLOBAL_KEYS = Object.keys(DISCO_DEFAULTS.globals) as (keyof DiscoGlobals)[];
 
-// Disco's arithmetic is single precision where the app's is.
 const f32 = Math.fround;
 const unit = (x: number) => (x > 1 ? 1 : x > 0 ? x : 0);
 const nonNegative = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x) && x >= 0;
 const percentFactor = (x: number) => f32(f32(f32(x) / 100) * 2);
 const dbToPower = (db: number) => 10 ** (Math.min(0, Math.max(-120, db)) / 10);
 
-// The app's float mean and population variance, rounded at every step.
 function mean32(ring: Float32Array): number {
   let sum = 0;
   for (let i = 0; i < ring.length; i++) sum = f32(sum + ring[i]);
@@ -93,21 +58,15 @@ function variance32(ring: Float32Array): number {
 }
 const varianceCoefficient = (ring: Float32Array) => -0.0025714 * variance32(ring) + 1.5142857;
 
-/**
- * Neural's smoothers, `length` hops long. Written at the history slot modulo
- * their length, only the first eighty slots of a longer one ever take a
- * value, as in the app; the rest stay zero, so they are counted, not stored.
- */
+// Keep Neural’s source history indexing so long smoothers retain the app’s zero-filled remainder.
 interface Smoother { length: number; values: Float32Array }
 const smootherLength = (n: number) => Math.min(Number.MAX_SAFE_INTEGER, n);
 function smoother(length: number): Smoother { return { length, values: new Float32Array(Math.min(length, HISTORY)) }; }
-// The app's float mean over every slot, the unstored zeros included.
 function smootherMean(s: Smoother): number {
   let sum = 0;
   for (let i = 0; i < s.values.length; i++) sum = f32(sum + s.values[i]);
   return s.length ? f32(sum / s.length) : 0;
 }
-// The lower of the two middle values for an even count, as the app takes it; the unstored zeros sort first.
 function smootherMedian(s: Smoother): number {
   if (!s.length) return 0;
   const zeros = s.length - s.values.length;
@@ -124,16 +83,13 @@ function onesRing(): Float32Array { return new Float32Array(HISTORY).fill(1); }
 class AudioFeatures {
   declare _opts: AudioFeaturesOptions;
   declare _now: () => number;
-  // The band list and where each detector's bands are in it.
   declare _list: Edges[];
   declare _key: string;
   declare _partyAt: number[];
   declare _discoAt: number[];
-  // What the detector settings were when last read, to tell an edit from a new object.
   declare _edgeKeys: string[] | null;
   declare _contentKey: string | null;
   declare _disco: DiscoDetector;
-  // Disco's histories: one shared slot, separate rings per detector.
   declare _slot: number;
   declare _spectrum: SpectrumBand[];
   declare _peak: Gate & { ring: Float32Array };
@@ -145,9 +101,7 @@ class AudioFeatures {
   declare _freshAt: number;
   declare _frames: AudioFrame[];
   declare _asked: string | null;
-  // A process started since the last hop heard for more than a band edit.
   declare _resetDue: boolean;
-  // The last hop `heard` handed out, by epoch.
   declare _heard: { epoch: number; t: number } | null;
 
   constructor(opts: AudioFeaturesOptions) {
@@ -173,32 +127,21 @@ class AudioFeatures {
     this._sync();
   }
 
-  /** The bands to ask the live input for: Party's three, then Disco's, each once, in that order. */
   bandList(): [number, number][] {
     this._sync();
     return this._list.map(([lo, hi]) => [lo, hi]);
   }
 
-  /**
-   * The Disco bands' histories start again, each from its next power, as when
-   * they are edited.
-   */
   reseed(): void {
     for (const band of this._spectrum) band.prime = true;
   }
 
-  /** One hop from the live input. */
   onReading(r: LiveReading): void {
     this._sync();
     if (!r || !Number.isFinite(r.t)) return;
     const generation = Number.isFinite(r.generation) ? r.generation as number : null;
     const last = this._stream;
-    // A newer process started for more than a band edit — another source,
-    // device or file, a stop, a death — is a new stream of audio, even when
-    // none of its lines is heard and a band edit replaces it.
     if (last && generation !== null && last.generation !== null && generation > last.generation && r.cause !== 'bands') this._resetDue = true;
-    // Summed over other bands than these: not this list's to read, and the
-    // input has to be asked for this one.
     if (r.layout !== undefined && r.layout !== this._key) {
       this._askForBands(r.generation);
       return;
@@ -209,15 +152,11 @@ class AudioFeatures {
     if (!last) {
       this._startStream('reset');
     } else if (generation !== last.generation) {
-      // Lines of a process already replaced are not heard (live-input.ts
-      // drops them too); a new process is a new stream. One the input started
-      // for a band edit alone, on the same input, keeps what the edit left.
       if (generation !== null && last.generation !== null && generation < last.generation) return;
       this._startStream(r.cause === 'bands' && !this._resetDue ? 'bands' : 'reset');
     } else if (r.t === last.t) {
       return;
     } else if (r.t < last.t) {
-      // A late line of the same process; without a generation, a restart.
       if (generation !== null) return;
       this._startStream('reset');
     } else if (r.t - last.t > GAP_SEC) {
@@ -230,12 +169,6 @@ class AudioFeatures {
     this._keep(this._analyse(r.t, spectrum, dtSec));
   }
 
-  /**
-   * The newest frame, or with the stream time the room hears now, the newest
-   * at or before it; null when nothing has arrived for half a second, and
-   * before the earliest one kept. A time past the newest gets the newest: the
-   * audio that will be heard later is not there to read yet.
-   */
   frame(alignedStreamSec?: number): AudioFrame | null {
     this._sync();
     const frames = this._frames;
@@ -246,13 +179,7 @@ class AudioFeatures {
     return null;
   }
 
-  /**
-   * `frame(alignedStreamSec)` for the readers that answer each hop once (the
-   * effects, the meters): never a hop older than the last one handed out in
-   * this epoch. The aligned clock can step back — the latency raised, its
-   * least-delayed arrival leaving the window — and an older hop handed out
-   * again would be news to them, its hits and classes played twice.
-   */
+  // Never return an older hop after latency changes because effects would replay its hits.
   heard(alignedStreamSec?: number): AudioFrame | null {
     const held = this._heard && this._heard.epoch === this._epoch ? this._heard.t : -Infinity;
     const at = alignedStreamSec === undefined || !Number.isFinite(alignedStreamSec) ? undefined : Math.max(alignedStreamSec, held);
@@ -261,14 +188,6 @@ class AudioFeatures {
     return f;
   }
 
-  // ── Settings ───────────────────────────────────────────────────────────────
-
-  /**
-   * Read the Disco settings in force and act on what changed in them, by
-   * content: the same settings from another owner change nothing. An edited
-   * band's history starts from its next power; any edit takes back the hits
-   * already published, so a frame read again is no hit under the new rules.
-   */
   _sync(): void {
     const d = this._opts.disco();
     const b = d.bands;
@@ -290,7 +209,6 @@ class AudioFeatures {
     this._discoAt = [b.bass, b.voice, b.treble].map(at);
     this._list = list;
     this._key = bandsArg(list);
-    // Each band's floor is its per-bin floor over the bins it actually sums.
     [b.bass, b.voice, b.treble].forEach(([lo, hi], i) => {
       this._spectrum[i].floor = f32(dbToPower(b.floorDb[i]) * bandBins(lo, hi, this._opts.binHz).count);
     });
@@ -301,7 +219,6 @@ class AudioFeatures {
       ? { ...f, disco: { ...f.disco, hit: [false, false, false], peakHit: false } } : f));
   }
 
-  // Once per process: asking again for every line of it would restart it in a loop.
   _askForBands(generation: number | undefined): void {
     const ask = `${generation ?? ''}|${this._key}`;
     if (ask === this._asked || !this._opts.onBands) return;
@@ -309,7 +226,6 @@ class AudioFeatures {
     this._opts.onBands();
   }
 
-  // Finite and non-negative, the bands as many as asked for: anything else is a line not to trust.
   _spectrumOf(s: LiveSpectrum | undefined): LiveSpectrum | null {
     if (!s || typeof s !== 'object') return null;
     if (!nonNegative(s.power) || !nonNegative(s.rms) || !Array.isArray(s.bands) || s.bands.length !== this._list.length) return null;
@@ -319,16 +235,6 @@ class AudioFeatures {
     return s;
   }
 
-  // ── The stream ─────────────────────────────────────────────────────────────
-
-  /**
-   * A new stream: a new epoch, and none of the old frames kept. After a band
-   * edit on the same input only the edited bands start again (marked by
-   * _sync) and the classes keep their past; anything else — another source,
-   * device or file, a gap, a restart — is another stream of audio, and every
-   * history goes back to its start. The Party levels stay where they were:
-   * they move on with the next hop.
-   */
   _startStream(why: 'bands' | 'reset'): void {
     this._epoch += 1;
     this._frames = [];
@@ -355,8 +261,6 @@ class AudioFeatures {
     while (frames.length > KEEP_FRAMES || frame.t - frames[0].t > KEEP_SEC) frames.shift();
   }
 
-  // ── One hop ────────────────────────────────────────────────────────────────
-
   _analyse(t: number, s: LiveSpectrum, dtSec: number): AudioFrame {
     const party = this._partyLevels(s, dtSec * 1000);
     const slot = this._slot;
@@ -377,18 +281,10 @@ class AudioFeatures {
     };
   }
 
-  /**
-   * Hue Dynamics Party: full = rms × (2 + 18 × sensitivity), each band
-   * full × √(its share of the whole FFT) × 1.8, all clamped to 0..1, then
-   * each eased toward with τ = attack or release × (1 + 4 × smoothing). The
-   * share is of the same FFT's total; a hop without one (an older producer)
-   * stands its raw power in.
-   */
   _partyLevels(s: LiveSpectrum, dtMs: number): AudioFrame['party'] {
     const m = this._opts.master();
     const full = unit(s.rms * (2 + 18 * unit(m.sensitivity)));
     const total = s.fftPower ?? s.power;
-    // Any positive total has shares: the app's guard is the smallest double, not a rounding epsilon.
     const band = (i: number) => (total > Number.MIN_VALUE ? unit(full * Math.sqrt(unit(s.bands[this._partyAt[i]] / total)) * 1.8) : 0);
     const target = { full, bass: band(0), mid: band(1), high: band(2) };
     if (!(dtMs > 0)) return { ...this._party };
@@ -403,14 +299,6 @@ class AudioFeatures {
     return { ...this._party };
   }
 
-  /**
-   * Disco Spectrum, per band: the history's mean and variance before this
-   * hop, C = −0.0025714 × variance + 1.5142857, and a hit when the power times
-   * the sensitivity clears the floor, half the mean and C × the mean, and the
-   * power itself clears the gate the last hit left. The gate then decays by
-   * advancedDecay/1000 of that hit, once per hop, below zero if it gets there.
-   * `level` is the band's raw power; `gate` the raw power that would hit.
-   */
   _spectrumHits(s: LiveSpectrum, slot: number): Pick<AudioFrame['disco'], 'hit' | 'gate' | 'level'> {
     const g = this._disco.globals;
     const sensitivity = percentFactor(g.sensitivity);
@@ -432,11 +320,6 @@ class AudioFeatures {
     return { hit, gate, level };
   }
 
-  /**
-   * Disco Peak, on the raw frame power: the scaled power over the floor
-   * (simpleMinimumThreshold/100000), scaled twice over the mean, once over
-   * C × the mean, and the power over its gate.
-   */
   _peakHit(s: LiveSpectrum, slot: number): boolean {
     const g = this._disco.globals;
     const peak = this._peak;
@@ -452,14 +335,6 @@ class AudioFeatures {
     return hit;
   }
 
-  /**
-   * Disco Neural: this hop's RMS joins its history first, and the amplitude is
-   * the scaled RMS over C × the history's mean — zero under the floor — then
-   * averaged over smoothnessAnalyser hops. The frequency is the dominant bin's
-   * place below 2 kHz, the lower median of max(3, 3 × smoothnessAnalyser)
-   * hops. Both smoothers are written at the shared history slot, wrapped to
-   * their length, as the app does.
-   */
   _neuralReading(s: LiveSpectrum, slot: number): AudioFrame['disco']['neural'] {
     const g = this._disco.globals;
     const n = this._neural;
@@ -483,13 +358,6 @@ class AudioFeatures {
     return { mainFrequency: unit(smootherMedian(n.frequencies)), amplitude: smootherMean(n.energies) };
   }
 
-  // ── Light DJ's classes ─────────────────────────────────────────────────────
-
-  /**
-   * Each hop's RMS² covers the time since the hop before, split at the 50 ms
-   * marks from the stream's first hop; each 50 ms is a level, each pair of
-   * levels a class, stamped with the stream time of its 100 ms mark.
-   */
   _splAdvance(t: number, rms: number): void {
     const spl = this._spl;
     const us = Math.round(t * 1e6);
@@ -507,7 +375,6 @@ class AudioFeatures {
     spl.lastUs = us;
   }
 
-  // dB = 20·log10(rms16 / 2e-6) − 80 with rms16 on the 16-bit scale, level = trunc(dB) − 55; silence reads 0 dB.
   _splSample(rms: number, endUs: number): void {
     const spl = this._spl;
     const rms16 = rms * 32768;
@@ -518,11 +385,6 @@ class AudioFeatures {
     this._splClass(Math.max(spl.first ? spl.first.level : sample.level, sample.level), endUs);
   }
 
-  /**
-   * Over loudFloor = 15 + 65 × trigger loud, under 0.6 × that quiet, on or
-   * between them soft. The section turns to this class when it has its count
-   * in the last sixteen (quiet 7, soft 3, loud 11), else stays.
-   */
   _splClass(level: number, eventUs: number): void {
     const spl = this._spl;
     const raw = this._opts.ldjTrigger();
@@ -539,7 +401,6 @@ class AudioFeatures {
 interface SplState {
   originUs: number | null;
   lastUs: number;
-  // The open 50 ms window: its index from the origin and Σ rms² × µs so far.
   index: number;
   acc: number;
   first: { db: number; level: number } | null;
@@ -560,19 +421,14 @@ function decayGate(gate: Gate, hit: boolean, power: number, decay: number): void
   else gate.decayed = f32(gate.decayed - f32(gate.last * decay));
 }
 
-// ── Whose settings the detectors run on ─────────────────────────────────────
-
-/** A launched effect as the detectors see it; the renderer's voices carry these fields. */
 export interface DetectorVoice {
   id: string;
   spec: EffectSpec;
-  /** Fixture ids; null for the whole rig. */
   targets: readonly number[] | null;
   tier: 'strobe' | 'voice';
   launchSeq: number;
   startedAtMs: number;
   untilMs: number | null;
-  /** The beat a container's steps count from; without it a container plays no child. */
   anchorBeat?: number;
 }
 
@@ -585,30 +441,14 @@ export interface Detectors {
 
 const FALLBACK: DetectorOwner = { from: 'fallback', id: null, kind: null };
 
-/**
- * One detector of each kind serves every instance, so one effect's settings
- * run it: the highest playing voice of that kind, in the renderer's order
- * (the strobe tier, the later launch, a targeted voice over the whole rig,
- * the later start, the first listed), else the highest clip of the sequence
- * playing on top of a patched fixture (`clips`, highest first), else the
- * base look if it is that kind, else the settings. A container (a macro, a
- * pattern bundle) counts as the kind of the child it plays at `beatPos`, and
- * that child's settings run the detector (nesting.ts playingLeaves). A voice that has not started, has ended, or
- * targets nothing patched does not count; nor does any other kind of effect,
- * nor one that flashes too fast to play without the photosensitivity
- * acknowledgement while it is not given (the Visualizer).
- */
 export function resolveDetectors({ base, clips = [], voices, nowMs, beatPos = NaN, fixtureIds, ldjTrigger, acknowledged }: {
   base: { id: string; spec: EffectSpec; anchorBeat?: number } | null;
-  /** The sequence's clip activations on top of the patch, highest first (shared/effects/sequence.ts playingClips). */
   clips?: readonly { id: string; spec: EffectSpec; anchorBeat?: number; beatPos?: number }[];
   voices: readonly DetectorVoice[];
   nowMs: number;
-  /** The music's beat now, where the containers' children are looked up. */
   beatPos?: number;
   fixtureIds: readonly number[];
   ldjTrigger: number;
-  /** The photosensitivity acknowledgement, which admits the effects that need it. */
   acknowledged: boolean;
 }): Detectors {
   const playing = voices
@@ -619,7 +459,6 @@ export function resolveDetectors({ base, clips = [], voices, nowMs, beatPos = Na
     .sort((a, b) => voiceOrder(a.v, b.v) || (a.index - b.index))
     .map(({ v }) => v);
   const admitted = (spec: EffectSpec) => acknowledged || !requiresAcknowledgement(spec);
-  // The leaf of `kind` an admitted effect plays now: itself, or a container's child.
   const leafOf = (spec: EffectSpec, kind: string, at: number, anchorBeat: number | undefined, ids: readonly number[]): EffectSpec | null => {
     if (!admitted(spec)) return null;
     const leaf = spec.kind === kind ? spec : playingLeaves(spec, at, anchorBeat ?? NaN, ids).find((l) => l.kind === kind);
@@ -654,7 +493,6 @@ export function resolveDetectors({ base, clips = [], voices, nowMs, beatPos = Na
   };
 }
 
-/** What the audio feed sends its subscribers each time the heard frame changes. */
 export interface AudioFeed {
   t: number;
   party: AudioFrame['party'];

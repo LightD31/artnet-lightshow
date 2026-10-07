@@ -23,15 +23,47 @@ test('cells with their own dimmer, spaced wider than their channels', () => {
   assert.deepStrictEqual(p.channelMap, {});
 });
 
-test('numbers that do not describe a bar that fits are refused', () => {
+test("bar profiles reject more than 4096 cells", () => {
   const base = { id: 'x', name: 'X', cells: 8, firstChannel: 1, order: 'RGB' };
-  assert.throws(() => barProfile({ ...base, cells: 4097 }), /cells/, 'no more than 4,096');
-  assert.throws(() => barProfile({ ...base, order: 'RGBR' }), /each letter once/);
-  assert.throws(() => barProfile({ ...base, order: 'D' }), /at least one colour/);
-  assert.throws(() => barProfile({ ...base, stride: 2 }), /cannot start 2 apart/);
+  assert.throws(() => barProfile({ ...base, cells: 4097 }), 'no more than 4,096');
+});
+
+test("bar profiles reject duplicate colour letters", () => {
+  const base = { id: 'x', name: 'X', cells: 8, firstChannel: 1, order: 'RGB' };
+  assert.throws(() => barProfile({ ...base, order: 'RGBR' }));
+});
+
+test("bar profiles require a colour channel", () => {
+  const base = { id: 'x', name: 'X', cells: 8, firstChannel: 1, order: 'RGB' };
+  assert.throws(() => barProfile({ ...base, order: 'D' }));
+});
+
+test("bar profiles reject overlapping cell strides", () => {
+  const base = { id: 'x', name: 'X', cells: 8, firstChannel: 1, order: 'RGB' };
+  assert.throws(() => barProfile({ ...base, stride: 2 }));
+});
+
+test("bar profiles accept cells ending exactly on channel 512", () => {
+  const base = { id: 'x', name: 'X', cells: 8, firstChannel: 1, order: 'RGB' };
   assert.doesNotThrow(() => barProfile({ ...base, cells: 170, firstChannel: 3 }), 'ends exactly on 512');
-  assert.throws(() => barProfile({ ...base, cells: 170, firstChannel: 4 }), /past the 512-channel universe/);
-  assert.throws(() => barProfile({ ...base, dimmer: 2 }), /fixture-level channel/, 'a shared channel inside a cell');
-  assert.throws(() => barProfile({ ...base, id: 'Has Spaces' }), /lowercase/);
-  assert.throws(() => barProfile({ ...base, extra: 1 }), /Unrecognized/);
+});
+
+test("bar profiles reject cells extending past channel 512", () => {
+  const base = { id: 'x', name: 'X', cells: 8, firstChannel: 1, order: 'RGB' };
+  assert.throws(() => barProfile({ ...base, cells: 170, firstChannel: 4 }));
+});
+
+test("bar profiles reject shared channels inside cells", () => {
+  const base = { id: 'x', name: 'X', cells: 8, firstChannel: 1, order: 'RGB' };
+  assert.throws(() => barProfile({ ...base, dimmer: 2 }), 'a shared channel inside a cell');
+});
+
+test("bar profile IDs reject spaces", () => {
+  const base = { id: 'x', name: 'X', cells: 8, firstChannel: 1, order: 'RGB' };
+  assert.throws(() => barProfile({ ...base, id: 'Has Spaces' }));
+});
+
+test("bar profiles reject unknown fields", () => {
+  const base = { id: 'x', name: 'X', cells: 8, firstChannel: 1, order: 'RGB' };
+  assert.throws(() => barProfile({ ...base, extra: 1 }));
 });

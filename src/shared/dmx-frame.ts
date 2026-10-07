@@ -1,29 +1,10 @@
-/**
- * A frame of DMX as one binary message: what the live page's previews and
- * monitor draw from, thirty times a second (server/protocol.ts).
- *
- * It was a JSON object of number arrays ten times a second — a universe of
- * 512 channels is about 2 KB of text, and at that rate a strobe or a fast
- * chase was invisible in the UI. As bytes a universe is 516, and the page
- * reads it without parsing anything.
- *
- *   byte 0      format (1)
- *   byte 1      how many universes follow
- *   per universe:
- *     2 bytes   its number, little-endian
- *     2 bytes   how many channels, little-endian
- *     n bytes   the channels, 1 first
- *
- * Shared by the server, which encodes, and the page, which decodes.
- */
+// Wire: version u8, count u8; per universe: id u16LE, channel count u16LE, channel bytes.
 
 export const DMX_FRAME_FORMAT = 1;
 const MAX_UNIVERSES_IN_FRAME = 255;
 
-/** Channels by universe, as the engine's buffers hold them. */
 export type DmxFrame = Record<number, Uint8Array>;
 
-/** One message holding every universe given, in the order given. */
 export function encodeDmxFrame(universes: ReadonlyArray<readonly [number, Uint8Array]>): Uint8Array {
   const list = universes.slice(0, MAX_UNIVERSES_IN_FRAME);
   let size = 2;
@@ -43,10 +24,6 @@ export function encodeDmxFrame(universes: ReadonlyArray<readonly [number, Uint8A
   return out;
 }
 
-/**
- * The universes in a message, each a view onto it rather than a copy. Null for
- * anything that is not a frame this format can read, or that runs short.
- */
 export function decodeDmxFrame(message: ArrayBuffer | ArrayBufferView): DmxFrame | null {
   const bytes = message instanceof ArrayBuffer
     ? new Uint8Array(message)

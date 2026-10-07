@@ -1,2588 +1,589 @@
 # ArtNet Lightshow
 
-Web-based light show controller speaking **Art-Net**, **sACN (E1.31)** and the
-**Philips Hue Entertainment API** to DMX fixtures and Hue lamps, with an
-automatic mode that analyses the music you're playing and builds a show from
-it.
+Lighting controller for Art-Net, sACN, WLED/DDP, OpenRGB and Philips Hue
+Entertainment. Control it from the browser, MIDI, Bitfocus Companion or REST.
+Manual looks, effects, pads and sequences work without Python; analysed shows
+and live audio use the optional analysis environment.
 
-Ships configured for **4× Cameo ROOT PAR 6**, but any fixture works — import a
-GDTF file, or find the fixture in the Open Fixture Library, and patch it in the
-UI.
+## Setup and deployment
 
-Control surfaces: the web UI, **any MIDI controller** (with MIDI learn, which
-knows a motorised fader's touch sensor from the fader; a Behringer X-Touch
-Compact is mapped out of the box), an **Elgato Stream Deck** via **Bitfocus
-Companion** (with a page of presets for busking), and a REST API.
+### Source checkout
 
----
-
-## Features
-
-**Manual control**
-
-- **Musical clock** — patterns step on the song's own beats: the auto show's
-  analysed grid, a CDJ's rekordbox grid, the cached analysis of whatever is
-  playing, or the beat the live input hears — else tap tempo or a BPM typed to a
-  tenth. Beat subdivision 1/1 … 1/16. It also goes out as **MIDI clock**
-- **18 patterns** — solid, chases, ping-pong, strobe, fade, colour cycle,
-  rainbow, twinkle, sparkle, wave, runner, splits and sections; each one takes
-  its colour count from the palette rather than needing a variant per size
-- **LED bars** — every cell of a bar is a light of its own: import one from
-  GDTF or build its profile from the manual, lay it on the stage plot, and the
-  wave, ribbon, rainbow and the pixel effects (gradient, comet, burst, plasma,
-  meter, and on a panel the LedFx-style bars, fire and rain) draw across its
-  cells
-- **15 colour presets** — a nine-hue wheel with nothing closer than 30° on it,
-  plus two whites, two pale washes and UV — and four colour slots (A–D) that
-  patterns draw from
-- **Palettes** — the auto show's sixteen hand-tuned looks, pickable by hand: one
-  press fills all four slots with colours that were chosen to sit together
-- **Per-fixture overrides** — independent RGBWAUV + dimmer + strobe, or an
-  instant per-fixture blackout
-- **Per-fixture maximum brightness** — scale down a lamp that is too close to
-  the audience without taking it out of the show
-- **Energy overrides** — one-touch panic effects that trump everything except
-  master blackout
-- **Master controls** — global dimmer, master blackout, play/stop, and the
-  **outputs armed** switch: until a party arms the outputs nothing leaves the
-  machine — no Art-Net, sACN or DDP frame, no OpenRGB packet, no Hue stream —
-  while the show still renders for the preview and the stage view. Disarming
-  ends every stream cleanly (a black frame, the sACN terminate, one dark frame
-  to each WLED so its timeout hands the strip back, one dark frame to each
-  OpenRGB device and the connection to its PC closed, one dark frame and the
-  session closed on each Hue bridge), stops the patterns and clears any energy
-  override; arming resumes transmit and plays nothing by itself. The server
-  **always starts disarmed**, whatever was stored, so a reboot never starts a
-  show in the room. The switch is in Perform, in Settings → Show and on
-  Companion; the top bar shows which it is — see
-  [Running the show server](#running-the-show-server)
-- **Cue stack** — save the look on stage under a name and recall it in one
-  press; deleting or overwriting one can be undone
-- **Live DMX monitor** — real-time channel values
-
-**Running it from a tablet**
-
-- **Perform view** — the live controls laid out for a thumb: now and next,
-  sync health, big pads for blackout and every energy effect (held, or
-  latched), tap tempo, one-tap palettes, and the master and show-intensity
-  faders. Open it at `/#perform`, or press **3**
-- **Stage view** — the rig in 3D, in a hazy room: beams from the pars, every
-  cell of every bar, the Hue lamps around the room, from the audience, from
-  above or from the side. Live, it shows what is going out; rehearsing, the
-  planned show at any moment of the track — see [The Stage view](#the-stage-view)
-- **Installable** — a web app manifest and icons, and a service worker that
-  keeps the app shell so a tablet reloading while the server restarts gets the
-  page back rather than a browser error (on HTTPS or localhost, where browsers
-  allow one)
-- **Keep awake and full screen** — from the header: the screen stays on through
-  the set, over plain HTTP too
-- **Themes** — dark, light, and a red night mode that draws the whole page in
-  red alone, for a dark room; or follow the system
-- **Accessible** — keyboard throughout, labelled controls, 4.5:1 text contrast
-  in every theme, 44 px targets on a touch screen, reduced motion honoured;
-  checked with axe-core on every view in CI
-
-**Automatic show**
-
-- Analyses a track and generates a timed show: palette, pattern choices, drops,
-  build-ups and accents. The pipeline finds tempo, metre and downbeats, splits
-  the track into named sections (intro, verse, chorus, drop, breakdown, bridge,
-  outro), and describes seven frequency bands by what they are *doing* rather
-  than how loud they are — see [Audio analysis](docs/audio-analysis.md)
-- **Paces itself** — an accent budget per minute, quiet before and after a drop,
-  and sections that deliberately rest, so the big moments stay big; and across
-  the night, too — no palette or look twice in a row, colours carried over
-  when the keys mix, the blinder saved for the tracks that peak — see
-  [Remembering the night](#remembering-the-night)
-- **Pars and bars as two layers** — with LED bars in the patch the pars carry
-  the colour and the bars the movement: a gradient through a verse, a fill
-  rising through a build, a mirrored chase on the chorus, a burst sparking on
-  every kick at the drop
-- **Accents on the drums as played** — on the kick or snare that marks the bar,
-  none on a bar nothing was hit on, one on the last hit of a fill
-- **Timeline view** — the loaded track laid out wide: its sections, curves,
-  drops and the planned looks and accents, to zoom into and scrub. Press on it
-  to rehearse from there, on the stage preview and the 3D stage — see
-  [The Timeline view](#the-timeline-view)
-- **Track edits that stick** — lock a track's palette, swap a section's look,
-  add or take away an accent; kept with the track and put back every time it
-  plays — see [Track edits](#track-edits)
-- **Flash limit** — a switch that holds the whole rig to three large-area
-  flashes a second, the photosensitivity threshold — see
-  [Flash limit](#flash-limit)
-- **The party effects of Hue Dynamics and Light DJ** — their families,
-  presets and palettes on the placed rig, pads and voices over the look, a
-  strobe with a latch cap, and a sequencer with punch record — see
-  [Effects — Hue Dynamics and Light DJ](#effects--hue-dynamics-and-light-dj)
-- **Reads the buildup** — measures how far the snare roll subdivides and whether
-  the tempo genuinely ramps into the drop, and drives the beat division and the
-  beat clock from that rather than a fixed escalation
-- Follows playback from **Spotify**, **PRO DJ LINK** (CDJs), the **OS media
-  session** — Windows' own, or the MPRIS players on Linux (any player that
-  reports to it) — or the **Deezer web player** via the bundled browser
-  extension
-- **CDJs, properly** — follows the deck the room hears (on air, not just the
-  tempo master), to the millisecond on a CDJ-3000; analyses the exact file off
-  the USB stick rather than searching for it; takes rekordbox's beat grid and
-  phrases (intro, up, down, chorus…) as the show's; and follows a DJ's mix
-  from one deck to the other, blending onto the incoming drop or the incoming
-  track's next phrase — see [PRO DJ LINK](#pro-dj-link)
-- **Live input** — hears the music as it plays (what this PC plays, or a line-in
-  off the booth), lines a known track's show up with what the room hears, and
-  plays music nothing has analysed **by ear** — see [Live input](#live-input)
-- **Spotify + OS clock** — a hybrid that takes the track, the ISRC and the queue
-  from Spotify and the *position* from the OS media session, which is read
-  locally rather than polled over the network. Around 11 ms of mean sync error
-  against Spotify's own 189 ms, and never a backward jump — see
-  [Spotify + OS clock](#spotify--os-clock-the-hybrid-source)
-- Caches analyses on disk (up to 4 GB, dropping the least recently played
-  first) and **prefetches the next tracks in the queue**, so a
-  track change flips instantly instead of stalling for a download
-- **Set-list warming** — paste tonight's tracks (or point it at a Spotify
-  playlist) at load-in and have the whole night analysed before doors open
-
-**Before the show**
-
-- **Preflight** — one command that checks Art-Net reachability, the patch,
-  Python, ffmpeg, yt-dlp and the analysis models before doors open
-- **Set-list warming** — analyse the whole night up front, from a pasted list or
-  a Spotify playlist, rather than relying on the live queue lookahead
-
-**Setting up**
-
-- **A first-run setup** — a fresh install walks through where the DMX goes,
-  what is hung, where it hangs and what the lights follow, and ends on the
-  pre-show check; it can be run again from Settings
-- **The plan** — the Rig view's pixel map: drag fixtures to where they hang, and
-  map an LED bar by drawing it on the plan from its first cell to its last while
-  it lights up on the rig to show which end is which
-- **Identify** — any fixture, universe, Art-Net node, WLED, OpenRGB device or
-  Hue lamp shows itself on the rig: a par blinks, a bar lights its first cell green and its
-  last red with a dot running between them
-- **Finding the rig** — Art-Net nodes (and their locate LEDs), other sACN
-  sources and the universes they share with you, WLEDs, OpenRGB servers and
-  Hue bridges
-- **Rig, Sources, Settings and Preflight views** — every setting in the same app
-  as the controls, a tab away (keys **4**–**7**)
-
-**Fixtures**
-
-- **GDTF and Open Fixture Library import** — drop in a `.gdtf` file or an OFL
-  `.json`, or search the Open Fixture Library from the Rig view; pick a
-  DMX mode, patch it
-- **Multiple universes** — every fixture names the universe it lives on, so a
-  rig is no longer capped at one node's 512 channels; a pixel strip longer than
-  a universe runs on into the next ones, 170 RGB pixels to each
-- **WLED** — find WLED strips and panels on the network and add one in a click,
-  a 64 × 32 matrix included, or each of its segments as a fixture of its own;
-  it is sent its pixels over DDP. Like a DMX bar's channel modes, it is patched
-  as a **wash** (one light: it washes, chases, strobes and blinds with the
-  pars), in **zones** (a few cells along it, like an LED bar; the default), as
-  **pixels** (every LED its own, and a panel a picture) or, set up as a matrix,
-  as a **strobe panel** after an ADJ Jolt Panel: a line of white segments
-  across its middle that only strobes and blinders light, with rows of square
-  colour zones above and below — on a 64 × 32, eight white segments four LEDs
-  tall and 32 colour zones of 8 × 7. It plays the bars' programs, not a
-  screen's pictures
-- **OpenRGB** — the RGB inside a gaming PC (its RAM, board, GPU, keyboard,
-  mouse, the light bars on its monitors) through OpenRGB's SDK server: its
-  devices found, each added as a fixture with a cell per LED, and sent one
-  packet a frame over one TCP connection to the PC
-- **Panels** — an LED matrix is a grid of cells on the stage plot, and the pixel
-  effects draw across and down it; Bars, Fire and Rain, after LedFx, stand up
-  on it
-- **Art-Net and sACN (E1.31)** — run either, or both at once while a venue is
-  migrating from one to the other. Art-Net finds the nodes on the network and
-  sends each its universes directly, with ArtSync if you want it; sACN ends its
-  streams properly and announces its universes
-- **Its own thread** — the engine renders on a thread of its own at 44 frames a
-  second, so planning a track or serving the UI never holds up the rig
-- **16-bit dimming** where the fixture has it, and a software strobe for
-  fixtures that have no strobe channel
-- **Philips Hue** — each lamp of an entertainment area is a fixture of its own,
-  added from the bridge with what it can show, driven through the Entertainment
-  API by every pattern, palette and cue the pars get; it takes no DMX address.
-  As many bridges as the house has, each streaming an area of its own
-- Save and load the whole patch as a show file
-
----
-
-## Quick start
-
-**On Windows, with nothing installed:** download the installer (or the
-portable zip) from the [releases](https://github.com/LightD31/artnet-lightshow/releases),
-run it, and start **ArtNet Lightshow** from the Start menu. It opens in the
-browser. See [The packaged build](#the-packaged-build).
-
-**From the source**, you need **Node.js 24 LTS** (22.18 or newer still works):
-the server is TypeScript, and Node runs it as it is. `npm start` says so
-plainly on an older Node.
+Use Node.js 24 LTS; Node 22.18 or newer is also supported.
 
 ```bash
-npm install
+npm ci
 npm start
 ```
 
-Open **http://localhost:3000**. A fresh install opens the setup, which walks
-through the outputs, the fixtures, where they hang and the music — see
-[Setting up the rig](#setting-up-the-rig). Everything it touches lives in the
-**Rig**, **Sources** and **Settings** views afterwards.
+Open **http://localhost:3000**. `npm start` builds the browser client and starts
+the server under its supervisor. Complete or skip the first-run wizard; its
+controls remain available in Rig, Sources and Settings.
 
-Before a show, run `npm run preflight` — see [Pre-show check](#pre-show-check).
+The server always starts **disarmed**, including after a crash or restart.
+Previewing still works. Arm from Perform, Settings → Show, Companion, or
+`POST /api/outputs/arm` when the rig should transmit. Arming alone does not
+start the pattern engine.
 
-`npm start` runs the server under a small supervisor that starts it again if it
-crashes or hangs, with the look it had — see
-[Running the show server](#running-the-show-server).
+### Packaged builds
 
-The auto-show needs Python and a few extras, which the app sets up itself
-under Sources → **Analysis environment** — see
-[Auto show setup](#auto-show-setup). Manual control works without them.
+Download from [Releases](https://github.com/LightD31/artnet-lightshow/releases).
+The packages include Node; the analysis environment is installed separately
+from the app when needed.
 
----
+| Package | Start and data location |
+|---------|-------------------------|
+| Windows installer, `*-win32-x64-setup.exe` | Start menu → ArtNet Lightshow; per-user install in `%LOCALAPPDATA%\Programs\ArtNet Lightshow`, data in `%LOCALAPPDATA%\ArtNet Lightshow` |
+| Windows portable, `*-win32-x64.zip` | Run `ArtNet Lightshow.exe`; data in the adjacent `data` folder while the `portable` marker exists |
+| Linux archive, `*-linux-x64.tar.gz` | Run `./artnet-lightshow`; portable data as above, otherwise `~/.local/share/artnet-lightshow` |
 
-## The packaged build
+Closing the server console stops the show. `--version` prints the version.
+`--no-supervisor` disables the built-in process supervisor.
+`LIGHTSHOW_DATA_DIR` overrides the data location. Updating or uninstalling the
+Windows installer leaves the data directory in place.
 
-A Windows installer, a portable Windows zip and a Linux archive, from the
-[releases](https://github.com/LightD31/artnet-lightshow/releases). Each runs on a
-machine with nothing installed: no Node, no Python.
+### Network access
 
-| Download | What it does |
-|----------|--------------|
-| `ArtNet-Lightshow-<version>-win32-x64-setup.exe` | Installs for you alone (no administrator) in `%LOCALAPPDATA%\Programs\ArtNet Lightshow`, with a Start menu entry. The data goes in `%LOCALAPPDATA%\ArtNet Lightshow`; an update or uninstall leaves it there |
-| `ArtNet-Lightshow-<version>-win32-x64.zip` | Portable: unzip it anywhere, a USB stick included. The data stays in a `data` folder beside it, because of the file called `portable`. Delete that file to use `%LOCALAPPDATA%\ArtNet Lightshow` instead |
-| `ArtNet-Lightshow-<version>-linux-x64.tar.gz` | The same as the zip, for Linux: run `./artnet-lightshow`. Without `portable`, the data goes in `~/.local/share/artnet-lightshow` |
+The default bind is `127.0.0.1:3000`. To use another device:
 
-"The data" is everything the app writes: the settings, the show, the cues, the
-analysis cache, the logs and the analysis environment.
+1. In Settings → Server & access, generate an access token and apply it.
+2. Set the bind address to `0.0.0.0`, apply, and restart.
+3. Visit `http://<server>:3000/?token=<token>` once per browser, or enter the
+   token in the access prompt. The browser saves it and removes it from the URL.
 
-**Starting it.** Double-click **ArtNet Lightshow**. Its console window is the
-server, under [the supervisor](#the-supervisor). On its first start it opens
-the app in the browser (**http://localhost:3000**). Closing the window stops
-the show, and the rig blacks out first. The executable isn't code-signed, so
-Windows SmartScreen may say it "protected your PC" the first time: choose
-*More info* → *Run anyway*.
+A non-loopback bind without a token is rejected both when saving and at
+startup. Give integrations the same token in `X-Lightshow-Token`; REST also
+accepts `?token=`. Configure **Public URL** when accessing through a custom
+hostname or reverse proxy. Cross-origin requests and unrecognised hostnames
+are rejected.
 
-**The automatic show** needs the analysis environment. Set it up with one button
-under Sources → **Analysis environment**: it downloads Python, torch and the
-models' code, a few gigabytes. Then fetch the models under Sources →
-**Analysis models**. The package carries its own
-[uv](https://docs.astral.sh/uv/) to do this. See [Auto show setup](#auto-show-setup).
+An authenticated reverse proxy may overwrite `X-Lightshow-Token` on HTTP and
+Socket.IO traffic. Restrict the backend to the proxy and authorised
+integrations; forwarded usernames alone do not authenticate a client.
 
-`browser-extension/` beside the executable is the Deezer extension. Load it in
-Chrome or Edge from the extensions page (*Developer mode* → *Load unpacked*).
+### Upgrade and rollback
 
-From a terminal, `"ArtNet Lightshow.exe" --version` gives the version. Pass
-`--no-browser` to not open the browser, and `--no-supervisor` to run without
-the supervisor. `LIGHTSHOW_DATA_DIR` puts the data elsewhere. A `.env` in the
-data folder is read at start (see [Moving from .env](#moving-from-env)).
+Stop the service and copy the **entire config directory** before upgrading:
+settings, patch, profiles, cues, MIDI bindings, effects, palettes, pads and
+sequences. For the default source-checkout location:
 
-**How it is made.** The executable is Node 24 itself, made a
-[single executable application](https://nodejs.org/api/single-executable-applications.html)
-whose one job (`scripts/sea-main.cjs`) is to choose the data folder and start
-the app beside it. The app is not bundled. The `app` folder holds the same
-files a checkout runs (`server.js`, `src/`, the built page and the production
-`node_modules`), and Node strips their types as it does for `npm start`, so what
-the tests test is what ships. See [Development](#development) to build one.
+```bash
+cp -a config config.pre-engine
+```
 
----
+Use the actual `LIGHTSHOW_CONFIG_DIR` or packaged data directory when it differs.
+Preserve the matching application revision or package as well. Update through
+the installation's normal release/service path; for a checkout, install the
+locked dependencies with `npm ci` and rebuild with `npm run build:client`.
+Restart, run preflight, check `/api/health`, and verify the preview while
+outputs remain disarmed.
 
-## Network access
+**Before rolling back to a pre-engine build, stop the server and restore its
+matching copy of `config/`.** Newer builds migrate or write versioned preset,
+pad and sequence data; older builds must not be pointed at those changed
+files. Keep the newer config separately if returning to the newer build later.
 
-By default the server binds **127.0.0.1** and is reachable only from the machine
-it runs on. Nothing more is needed for a normal single-machine setup.
+### Service operation
 
-To reach the UI from a phone or another machine, bind wider **and set a token**.
-Both live under **Settings → Server & access**:
+The built-in supervisor restarts a crashed or unresponsive server. Heartbeats
+arrive every second; the timeout is 15 seconds, or 60 during startup. Restart
+backoff is 0.5, 1, 2, 5 and 10 seconds; three failures before startup complete
+stop retries. Configuration failures exit 78; requested restarts exit 75.
 
-1. Press **Generate** next to *Access Token*, then **Apply**.
-2. Set *Bind Address* to `0.0.0.0` and **Apply**.
-3. Restart the server — both are read at startup.
+On a supervised restart, `config/look.json` restores the saved look and a
+cached auto-show track. Active energy effects are not restored. A normal
+start ignores that recovery file, and every start remains disarmed.
 
-The order matters, and the page enforces it: saving a non-loopback bind with no
-token is refused, because the server would then refuse to start and there would
-be no UI left to undo it from. (The same check runs at startup as a backstop for
-a hand-edited config file.) Every control — blackout, strobe, the Art-Net
-target — would otherwise be open to anyone on the network.
+For an external service manager that owns restarts, run:
 
-Then open the UI **once** per browser at
-`http://<machine>:3000/?token=<the token>`. The page stores it and strips it
-from the URL; later visits need nothing in the address bar.
+```bash
+node server.js --no-supervisor
+```
 
-A browser that arrives without the token — including the one you generated it
-in, which has nothing stored until you do this — is told so and asked for it:
-the page covers itself with an **Access token required** prompt, and typing the
-token there connects on the spot, no reload and no hand-built URL. That is worth
-knowing because a refused handshake is never retried by the browser, so nothing
-recovers on its own until the token is entered.
+`LIGHTSHOW_SUPERVISOR=0` has the same effect. Without the built-in supervisor,
+restart the process through the service manager; `/api/server/restart`
+returns 409. If a Deezer ARL is configured, an unsupervised Node process needs
+`--openssl-legacy-provider`.
 
-The same token goes in:
+## Views and controls
 
-- **Companion** → the connection's *Access token* field
-- **Browser extension** → its preferences page (server URL and token)
+| View | Shortcut | Purpose |
+|------|----------|---------|
+| Manual | 1 | Effects catalogue and inspector, cues, look colours, fixture overrides and stage preview |
+| Auto Show | 2 | Analyse music, choose the playback source, start/stop the generated show and warm a set list |
+| Perform | 3 | Arm outputs, current/next track, live status, sequence transport, pads, strobe, blackout, tap, palette overrides and faders |
+| Timeline | 4 | Inspect sections, rehearse an analysed track and edit its show |
+| Stage | 5 | Monitor the rendered rig in 3D |
+| Sequence | 0 | Create/load sequences; transport and recording; lanes, clips and patterns behind Edit |
+| Matrix | Shift+0 | Hold colour cells in fireworks, flashes, pulses, cycle or solid mode |
+| Rig | 6 | Plan, patch, fixture profiles and outputs |
+| Sources | 7 | Playback sources, live input, analysis environment and models |
+| Settings | 8 | Show behaviour, safety, MIDI, engine and server access |
+| Preflight | 9 | Run the pre-show checks |
 
-Behind an SSO reverse proxy, have the proxy overwrite `X-Lightshow-Token` with
-the server's token **after** authenticating the user, on both HTTP requests and
-Socket.IO connections. Browser users then need only SSO; the token stays on the
-server. Keep the backend restricted to the proxy and authorized integrations,
-and retain the host and origin checks. Forwarded user names alone do not grant access.
+Hashes open a view directly, such as `/#perform` or `/#rig/outputs`.
+The view strip scrolls with its arrow buttons; keyboard arrows, Home and End
+work while a view tab is focused.
 
-Cross-origin requests are refused whether or not a token is set, so a website
-you happen to have open in another tab cannot drive the rig — over HTTP or over
-the live socket.
+Header, Perform, Manual and the stage preview share the same status line:
+base look, sequence transport, visible voices and palette override. The
+highlighted catalogue row identifies the **base**; a sequence or voice may
+be above it. Perform and Manual list visible voices with individual Stop
+buttons. Stop all voices also clears latched and off-bank effects.
 
-The server also only answers to names it knows: any IP address, `localhost`, and
-this machine's own host name (bare or with `.local`). That stops a web page from
-pointing its own domain at your machine to get around the origin check. If you
-reach the rig by some other name — `lights.lan`, a reverse proxy — set that
-address as the **Public URL** in *Server & access*.
+Pads with no custom label use the catalogue name on both Perform and the
+command bar. Once, hold and loop are distinct launch modes. Header controls
+select theme, screen wake lock and fullscreen for the current device.
 
----
+## Configuration
 
-## Setting up the rig
+Use Rig, Sources and Settings, then **Apply**. `GET /api/settings` reports
+settings with secrets blanked, per-secret presence flags and pending restart
+keys; `PUT /api/settings` changes selected fields.
 
-The app has nine views. The first five run a show — **Manual**, **Auto Show**,
-**Perform**, **Timeline** (**4**, [below](#the-timeline-view)) and **Stage**
-(**5**, [below](#the-stage-view)) — and the other four set one up:
+| Section | Fields and defaults |
+|---------|---------------------|
+| `server` | `host: '127.0.0.1'`, `port: 3000`, `token: ''`, `publicUrl: ''` |
+| `artnet` | `enabled: true`, `host: '2.255.255.255'`, `port: 6454`, `universe: 0`, `discovery: true`, `sync: false` |
+| `sacn` | `enabled: false`, `host: ''` for multicast, `priority: 100`, `sourceName: 'ArtNet Lightshow'`, `universeOffset: 1`, `interface: ''`; stable generated `cid` |
+| `hue` | `bridges: []`, `latencyMs: 0`, `strobe: 'flash'`; each paired bridge has an id, address, enabled flag, area and write-only credentials |
+| `outputs` | `armed: false`; always reset to false at startup |
+| `sources` | `prolink: false`, `smtc: true` |
+| `spotify` | Client id, secret, server-written refresh token; optional `proxyBase`; `allowUnverifiedState: false` |
+| `deezer` | Optional `arl` cookie |
+| `live` | `enabled: false`, `source: 'loopback'`, `device: ''`, `latencyMs: 0`, `autoSync: true`, `director: true` |
+| `auto` | `syncOffsetMs: 0`, `setMemory: true` |
+| `clock` | `tempoMode: 'auto'` or `'manual'` |
+| `audio` | `mode: 'tempo'`, Hue Dynamics master controls, `ldjTrigger: 0.3` |
+| `safety` | `photosensitivityAcknowledged: false`, `strobeMaxLatchSec: 60`, `hdFlashIntervalMs: 350`, `flashLimit: false` |
+| `strobe` | Palette, rate, clock, background behaviour and brightness; see [Strobe](#strobe) |
+| `midi` | `input: ''`, `output: ''`, `clockOutput: ''`, `controlFeedback: true` |
+| `engine` | `thread: 'worker'`; `'main'` is available for diagnosis |
+| `analysis` | `analyzerTimeoutMs: 600000`, `downloadTimeoutMs: 300000`, `localRoot: ''`, `pythonPath: ''`, `separator: 'demucs'`, `structureModel: 'auto'`, `gpuMemory: 'auto'` |
+| `setup` | `completed: false` until the first-run wizard is completed or skipped |
 
-| View | Key | What is there |
-|------|-----|---------------|
-| **Rig** | 6 | *Plan & patch*: the plan, the patch table and the selected fixture. *Profiles*: the fixture library. *Outputs*: Art-Net, sACN, WLED, OpenRGB, Hue, and the universes |
-| **Sources** | 7 | The players the show may follow, Spotify, Deezer, the live input, and the analysis and its models |
-| **Settings** | 8 | How the show behaves over a night, the MIDI controller and its mapping, MIDI clock, the engine, the server and access token, and the setup again |
-| **Preflight** | 9 | The [pre-show check](#pre-show-check) |
+`server.host`, `server.port`, `server.token`, engine thread and the first Deezer
+ARL require a restart.
+Other settings apply immediately. The UI lists pending restart keys.
 
-A view with tabs of its own names them in the address: `/#rig/outputs` opens the
-Rig view on its outputs. The old `/settings.html` and its tabs (`#music`,
-`#output`…) land on the view that holds them now.
+### Files and environment
 
-### The first-run setup
+| Location | Contents |
+|----------|----------|
+| `config/settings.json` | Settings and credentials; gitignored, mode 0600 |
+| `config/show.json` | Fixture patch and custom profiles |
+| `config/cues.json` | Saved looks |
+| `config/midi-map.json` | Custom MIDI map |
+| `config/effects.json`, `palettes.json`, `pads.json`, `sequences.json` | Effect library, effect palettes, pad layout, sequences and reusable patterns |
+| `config/look.json` | Supervisor recovery snapshot |
+| `cache/` | Analysis cache |
+| `logs/` | Structured logs |
+| `.venv/` | Managed analysis environment |
 
-A fresh install — no `config/settings.json` yet — opens the setup over the app:
+The checkout is the default data directory. `LIGHTSHOW_DATA_DIR` moves the
+whole data tree; `LIGHTSHOW_CONFIG_DIR`, `LIGHTSHOW_CACHE_DIR` and
+`LIGHTSHOW_LOG_DIR` override individual directories. Corrupt or unsupported
+JSON store files are moved aside as `.invalid-<timestamp>` and defaults load.
+Stored secrets are never returned by the settings API.
 
-1. **Outputs** — Art-Net to a broadcast address (the ones this machine is on are
-   offered) or to one node found on the network, sACN on or off, and any WLEDs
-   found, added to the patch in a click.
-2. **Fixtures** — each kind of fixture: its profile, how many, and where the
-   first is addressed; the rest follow on, into the next universe when one
-   fills. Each can be identified from the list.
-3. **Placement** — the plan, to drag each fixture to where it hangs (see below).
-4. **Music** — PRO DJ LINK, this computer's player, the live input, Spotify's
-   client ID and secret.
-5. **Check** — the pre-show check, run there and then.
+A `.env` in the startup directory is still loaded, but old output/source
+configuration variables are ignored and named in a startup warning. Use the
+settings API or UI for them. Supported environment controls are listed in
+[.env.example](.env.example), including `ARTNET_PYTHON`, `DEBUG_MIDI`, log
+settings and data paths.
 
-It changes nothing it does not ask about, and leaving part way keeps what was
-done. **Settings → Setup → Run the setup again** brings it back. A rig set up
-before the setup existed is not offered it.
+## Rig and outputs
 
-### The plan — placing the rig and mapping pixels
+### Patch and placement
 
-**Rig → Plan & patch** is the rig from above, the audience at the bottom. Where
-each fixture is drawn is where the patterns find it: a chase travels across the
-rig as it is placed here, and an LED bar's cells are where its line puts them.
+A fresh patch has four Cameo ROOT PAR 6 fixtures in 12-channel mode, on
+Art-Net universe 0 at addresses 1, 13, 25 and 37.
 
-- **Select** a fixture by clicking it, or its row in the patch table below
-  (Shift or Ctrl adds). Drag across empty floor to pick several. The inspector
-  beside the plan shows the one selected — label, universe, address, where it
-  stands, a bar's length and angle, its trim — and changes any of it.
-- **Move** by dragging (the selection moves together) or with the arrow keys
-  (Shift for bigger steps). **Snap** keeps positions to a 2.5% grid and angles
-  to 15°.
-- **Turn and stretch** a selected bar by dragging the handle at its far end, or
-  with `[` `]` and `-` `=`; `0` puts it back to its default line.
-- **Draw bar** maps a bar in one gesture: select it and press *Draw bar*. It
-  lights up on the rig — first cell green, last cell red, a white dot running
-  from one to the other — and you drag on the plan from where its green end
-  hangs to its red end. A bar hung backwards is drawn backwards, and runs that
-  way. The next bar in the patch is then picked and lit, so a truss of bars is
-  mapped one drag at a time; Esc stops.
-- **Row** lines the selection up evenly; **End to end** puts the selected bars
-  in one long line, in patch order; **Reset** forgets where they stand.
-
-The patch table below the plan patches each fixture (label, profile, universe,
-address), marks any two that share a channel, and adds a run of one profile in
-one go: *how many*, *universe* and *from address*.
-
-### Identify
-
-Every fixture in the patch, every universe, every Art-Net node, WLED and Hue
-channel has an **Identify** button. What it does on the rig, for eight seconds:
-
-- **a par** blinks white, slowly;
-- **a bar or panel** lights its first cell green and its last red, with a white
-  dot running from the first to the last in wiring order — so a strip hung the
-  other way round, or a panel wired in a snake, shows itself.
-
-It goes over whatever the look is doing and through the master and a blackout
-(it is asked for on purpose, and a lamp that stays dark answers nothing), at
-the fixture's own trim.
-Identify is shown on the plan and in the patch table on every open page.
-
-- **An Art-Net node** is sent ArtAddress *locate*, which flashes its own
-  indicators if it implements it, and everything patched on the universes it
-  outputs flashes too.
-- **A universe** (Rig → Outputs → Universes) flashes everything on it — the way
-  to find an sACN receiver, which never announces itself.
-- **A WLED** in the patch flashes through it; one not in the patch yet is sent
-  the same picture directly over DDP and goes back to what it was doing when
-  it stops.
-- **An OpenRGB device** in the patch flashes through it; one not in the patch
-  yet is streamed the same picture over the SDK, and is put back to the
-  colours and the mode it was showing when it stops.
-- **A Hue lamp** in the patch flashes through it; one not in the patch yet is
-  asked to identify itself by the bridge.
-
-### Finding what is on the network
-
-**Rig → Outputs** lists what answers:
-
-- **Art-Net nodes** — who answered a poll, their universes, *Identify*, and
-  *Send only here* to stop broadcasting and talk to that node alone.
-- **Other sACN sources** — *Listen for other sources* listens for twelve seconds
-  to the universe discovery every source sends and to the rig's own universes,
-  and lists any console or server there with its priority. A universe this rig
-  sends that another source sends too is called out: the higher priority wins.
-- **WLEDs** — found over mDNS, identified, added in a click.
-- **OpenRGB** — a PC's SDK server asked for its devices, each identified and
-  added in a click.
-- **Hue bridges** — found, paired (as many as the house has), and each one's
-  area's lamps added in a click.
-
----
-
-## Fixture setup
-
-### Default patch
-
-| Fixture | Label | Universe | Start address |
-|---------|-------|----------|---------------|
-| 1 | PAR 1 | 0 | 1 |
-| 2 | PAR 2 | 0 | 13 |
-| 3 | PAR 3 | 0 | 25 |
-| 4 | PAR 4 | 0 | 37 |
-
-### Cameo ROOT PAR 6 — 12-channel mode (D12CH)
-
-| Ch | Function | Ch | Function |
-|----|----------|----|----------|
+| Channel | Function | Channel | Function |
+|---------|----------|---------|----------|
 | 1 | Dimmer | 7 | White |
 | 2 | Dimmer fine | 8 | Amber |
 | 3 | Strobe | 9 | UV |
-| 4 | Red | 10 | Colour macros (keep at 0) |
+| 4 | Red | 10 | Colour macros, held at 0 |
 | 5 | Green | 11 | Sound |
 | 6 | Blue | 12 | DMX delay |
 
-Set each fixture to **12-channel mode** and give it the start address above.
+Rig → Plan & patch adds fixtures, assigns profiles/addresses and places them
+on the room plan. Positions use `{ x, y }` percentages. Fixture groups are
+`front`, `back`, `room` or `floor`. Bar geometry is `{ length, angle }`:
+length 1–100 stage percent, angle −180–180 degrees; `null` restores defaults.
+Panel geometry describes its top edge. Positions and geometry are saved.
 
-### Generic Hue Lamp profiles
+**Maximum brightness** is a fixture trim, 0–255, applied after looks and
+masters; it is not a temporary override. A fixture override can set colour,
+dimmer, strobe or blackout. Clear removes the override. Cues capture looks,
+not patch changes.
 
-Three profiles ship for Philips Hue lamps, one for each thing a lamp can be.
-A lamp is not patched on one by hand: it is added from the bridge (see
-[Philips Hue](#philips-hue)), which says what it can show, and lands on the
-profile that fits. A Hue lamp has **no DMX address**: the bridge drives it, so
-there is nothing on DMX to address, and a Hue lamp profile is never put on
-DMX.
+Import GDTF `.gdtf` or Open Fixture Library `.json` profiles through Rig →
+Profiles. OFL search can fetch a fixture online. Profiles in use cannot be
+deleted. LED profiles use `cells`; `grid` describes a panel. An undriven
+channel's nonzero default belongs in `defaults: [{ offset, value }]`.
+Use `/api/profiles/bar` to build a bar profile from cell count, channel order,
+stride and optional dimmer/strobe channels.
 
-| Profile | Channels | For |
-|---------|----------|-----|
-| **Philips Hue — Generic Lamp** | Dimmer, Red, Green, Blue, Warm White, Cool White, UV | A light with a colour gamut: White and Color Ambiance bulbs, light strips, Play bars |
-| **Philips Hue — Generic White Ambiance Lamp** | Dimmer, Warm White, Cool White | A light with only a colour temperature: tunable-white bulbs |
-| **Philips Hue — Generic White Lamp** | Dimmer | A light with neither: plain white bulbs that only dim |
-
-**Why the colour lamp is RGBWW.** A Hue colour bulb is not RGB: it has red,
-green and blue dies *plus* a warm white and a cool white one, which is how the
-same bulb does saturated colour and tunable white from 2000K to 6500K. Modelling
-only RGB is not merely imprecise, it throws show content away — the colour
-presets carry most of their white in the white and amber components, so *Cool
-White* (`r0 g30 b80` with white at full) arrived as a dim dark blue and *Warm
-White* as a dim dark orange. The white dies have to be in the patch for that
-content to survive.
-
-The show's colour model has no fourth and fifth primary to drive them with, so
-the two dies are fed from the components that already carry exactly that
-meaning: **warm white** from the warm (amber) content, **cool white** from the
-neutral white content. Every existing preset, palette and pattern therefore
-drives a Hue lamp correctly with no changes.
-
-The server renders Hue lamps on universes of its own (from 60000) that are
-never sent on Art-Net, sACN or DDP, and their channels read their colour from
-there. They take up no DMX channels, never overlap a fixture, and move up when
-one before them is removed. A Hue lamp can be moved to another Hue lamp profile
-in the patch table, and nothing else: no fixture on DMX becomes a Hue lamp, and
-no Hue lamp goes on DMX.
-
-**UV yes, strobe no.** Two channels on the colour lamp are not emitters the bulb
-has, and the difference between them is the rule. UV is carried because it
-produces something: a Hue lamp cannot emit ultraviolet, but the deep violet a UV
-wash looks like is a real stand-in, and without the channel every Hue lamp would
-go black for the length of a UV look while the pars glowed. Strobe is left out
-because it produces nothing — the bridge interpolates between frames and
-discards a strobe value on arrival. Strobe and blinder effects still reach Hue
-lamps as colour and brightness, they simply do not flash.
-
-**What the bridge actually receives is still RGB.** The Entertainment stream
-carries one of exactly two colour spaces — RGB, or xy plus brightness — and
-neither has a white, warm white, cool white or colour temperature component.
-Every channel is seven bytes: one of channel id and three 16-bit colour values.
-So the white dies and UV fold into the colour that goes out, and the lamp's own
-firmware decides which dies to light. The profile describes the lamp; the
-transport is a separate question.
-
-This server streams RGB, which gives the widest range per bulb. The xy
-alternative is hardware-independent and would let brightness travel separately
-from hue, at the cost of being mapped into each bulb's own gamut.
-
-Where a mix sums past what one lamp can show — full red with the warm white on
-as well — all three primaries are scaled together rather than clamped one by
-one. Clamping moves the hue, pushing the weaker primaries up towards the
-strongest. Scaling keeps the colour and gives up brightness instead, which is
-the right way round when there is a dimmer for brightness and nothing that can
-put a lost hue back.
-
-The plain white profile is read as neutral white at its dimmer level.
-
-Both are **built in**, so they cannot be deleted and loading a show file never
-removes them.
-
-### Other fixtures — GDTF import
-
-**Settings → Import GDTF**: upload a `.gdtf` file, pick a DMX mode, and the
-channel map is derived automatically. Patch fixtures to the new profile in the
-same page. The patch table flags address overlaps, and the server refuses a
-fixture whose channels would run past the end of the universe.
-
-The import reads what GDTF says about the fixture's shape too:
-
-- **A fixture with a geometry per cell** — an LED bar's `Pixel 1` … `Pixel 16`,
-  either as geometries of their own or as one template placed N times by
-  `GeometryReference`s — imports as a bar with cells (see below). The mode list
-  says how many.
-- **16-bit channels** (`Offset="1,2"`) count their fine byte in the footprint,
-  and a 16-bit dimmer's fine byte is mapped.
-- **Virtual channels** (no `Offset`) take no DMX address.
-- A lamp with **warm and cool white** dies drives both; GDTF's amber,
-  `ColorAdd_RY`, is amber.
-- **Shutters and strobes** are read from their channel functions. A strobe
-  channel is the show's strobe only when it is open at rest and strobes across
-  the show's standard range (128–250); otherwise the show flashes the fixture
-  itself. A shutter closed at rest is held open, a dimmer the show does not
-  drive is held at full, and every other channel it does not drive sits at the
-  file's default (`InitialFunction`, or GDTF 1.0's `Default`). Before this, a
-  moving head whose shutter is closed at 0 imported dark.
-- A channel on a **second DMX break**, or past channel 512, is left out, and the
-  import says so beside the channel list.
-
-A bar imported before cells existed is still one light. Import it again: the
-profile is replaced under the same id, and every fixture on it becomes a bar of
-cells on the next frame.
-
-### Other fixtures — the Open Fixture Library
-
-The [Open Fixture Library](https://open-fixture-library.org) describes
-thousands of fixtures, most of the cheap LED bars and pars among them, which
-rarely ship a GDTF file. Two ways in, both under **Settings → Fixture
-Profiles**, both ending in the same mode picker as a GDTF import:
-
-- **Search the Open Fixture Library**: type a name ("pixel bar", "root par") and
-  pick a result. Needs the internet; the server fetches the fixture from
-  open-fixture-library.org and nowhere else.
-- **Import OFL File**: a fixture's `.json`, downloaded from its page on the
-  library. Works offline. The file does not say who makes the fixture, so type
-  the maker into the picker's *Manufacturer* field.
-
-What a mode becomes:
-
-- **Dimmer and colours** are what the show drives: red, green, blue, white,
-  amber and UV (warm and cold white each when a lamp has both). A dimmer with
-  its fine channel in the mode is 16-bit. Cyan, magenta, yellow, lime and indigo
-  are not mixed, and the picker says so.
-- **Pixels become cells.** A pixel bar's per-pixel mode imports as a bar with a
-  cell per pixel, and a mode that drives halves or quarters as a bar with a cell
-  per group. Cells go in the order they sit along the bar, which is not always
-  the order they are numbered. A group of every pixel (OFL's "Master") is the
-  whole fixture. A grid of pixels is laid along one line, row by row.
-- **The strobe channel** becomes the show's strobe when it is open at rest and
-  flashes across the show's standard strobe range (128–250). Otherwise the show
-  flashes the fixture itself, as for a fixture without one.
-- **Every other channel** sits at the library's default value, except that a
-  shutter closed at 0 is held open and a dimmer the show does not drive is held
-  at full, so an imported fixture is never dark for a reason you cannot see. The
-  channel preview highlights what the show drives and shows `=value` on what it
-  holds.
-- A channel that **changes meaning with another** (a speed that becomes a sound
-  sensitivity once a program runs) is read as what it is while that other
-  channel sits where the import holds it.
-
-Modes the show cannot use (more than 512 channels) are left out, and the picker
-says why.
-
-### LED bars
-
-A bar is eight, sixteen or more lights in one fixture, each cell with its own
-red, green and blue (and white, amber, UV or a cell dimmer). Every cell is
-rendered as a light of its own: a wave rolls along a bar, a comet runs down it,
-and a gradient spreads across all of them.
-
-**Getting one into the patch**
-
-- From **GDTF** or the **Open Fixture Library**, as above.
-- Without either, **Settings → Fixture Profiles → Make an LED bar
-  profile**: the number of cells, the channel the first cell starts on, the
-  order of each cell's channels (`RGB`, `RGBW`, `DRGB` with a cell dimmer
-  first…), the spacing between cells if the bar leaves gaps, and the channels
-  the whole bar shares (a master dimmer, a strobe). The channels preview as you
-  type; the numbers are on the back of the bar's manual.
-
-**On the stage plot** a bar is drawn as its cells, along a line centred on its
-position. In **Position fixtures** mode, drag the handle at its far end to turn
-it and to lengthen or shorten it; with the bar focused, `[` and `]` turn it,
-`-` and `=` change its length, and `0` puts it back to a straight line across
-the stage. That line is where the cells are for every pattern, so draw it where
-the bar hangs.
-
-**How patterns use the cells.** The pictures — Wave, Ribbon, Ensemble, Rainbow,
-Twinkle, Sparkle and the pixel effects — are drawn across every cell. The
-stepped patterns — the chases, Split, Sections and the like — travel through
-*fixtures*, and a bar takes its step's colour on every cell, so a chase across
-four pars and two bars has six stops, not thirty-six.
-
-**Levels.** Each cell is driven so it looks exactly as a par with the same
-channels would at the same level: the bar's dimmer follows its brightest cell,
-and each cell makes up the rest. A look that is the same on every cell drives a
-bar with exactly a par's values; a kill or a silence closes the bar's dimmer
-as well. A bar without a strobe channel is flashed in software (see
-[Strobe](#strobe-without-a-strobe-channel)).
-
-**Panels.** A profile can put its cells in rows and columns — an LED matrix —
-with `grid: { columns, rows }`, each cell's place in it given by `at: { x, y }`
-or, without, row by row in the order the cells are listed (so a panel wired as
-a serpentine says so cell by cell). On the stage plot a panel is a rectangle of
-square cells: its line, turned and stretched like a bar's, is its top edge, and
-its rows run below it. The pictures cross it in two dimensions, and with **Per
-bar** each panel draws the whole picture across and down itself. An Open
-Fixture Library matrix of two axes imports as a panel, and so does a WLED set up
-as one.
-
-**Strips longer than a universe.** A profile longer than 512 channels must be a
-plain strip — equal cells one after another, nothing for the whole fixture —
-patched at channel 1. It runs on into the next universes with whole pixels to
-each, as pixel controllers (and WLED over Art-Net) expect: 170 RGB pixels, or
-128 RGBW, to a universe. The patch table shows where it ends ("1–390 on 2"),
-and everything that reads the rig — the monitor, the previews, the Hue lamps,
-the overlap checks — follows each pixel to its universe. The bar maker builds
-one when it is plain pixels from channel 1.
-
-**How much.** The engine renders up to 4,096 cells, all of them to one fixture
-if it has that many (a 4,096-pixel strip, or a 64 × 64 panel; a 64 × 32 WLED
-matrix leaves half for the rest of the rig). Measured on the engine's thread,
-4,096 cells cost 0.5–2 ms a frame for most patterns and 6–7 ms for the heaviest
-(Plasma, Gradient), out of the 22.7 ms each frame has.
-
-### WLED
-
-[WLED](https://kno.wled.ge) strips and panels are sent their pixels over
-[DDP](https://kno.wled.ge/interfaces/ddp/) — one run of bytes per frame, 480
-RGB pixels to a packet — rather than as universes of Art-Net.
-
-**Settings → Output → WLED → Find WLEDs** asks the network (mDNS, which does not
-cross routers or VLANs) and lists every WLED that answers with its LED count;
-**Add to patch**, or **Add by address** for one mDNS cannot see. Adding one asks
-it for its name, how many LEDs it has, whether they have a white channel, and —
-set up as a 2D panel in WLED — its width and height, and builds its profile from
-that. It is patched on the first free universes from 1, from channel 1, and is
-then a fixture like any other: on the stage plot, in the patterns, in the
-monitor.
-
-- Its universes go to it and nowhere else, so nothing else may be patched on
-  them; the patch says so if you try.
-- Its row in the patch table shows its address. Change it when the WLED moves;
-  empty it to send the fixture on Art-Net and sACN instead.
-- Removed from the patch, it is sent one dark frame. WLED then hands the strip
-  back to its own effects after its realtime timeout (Settings → Sync
-  Interfaces in WLED), so set a preset of "off" there if it should stay dark.
-- The pre-show check asks every WLED in the patch: one that does not answer
-  fails, and one whose LED count has changed since it was added warns.
-- A WLED panel of up to 4,096 LEDs is one fixture: a 64 × 32 matrix is added as
-  a 64 × 32 panel, over thirteen universes of its own.
-
-**Segments.** **Add each segment** makes each segment set up in WLED a fixture
-of its own. The front of a DJ booth and its two sides, all on one strip, become
-three fixtures to place on the plan where they stand. A panel split into halves
-becomes two panels. Over DDP a WLED takes its LEDs in their own order (a
-panel's row by row, its wiring worked out by WLED itself). So a segment is sent
-the stretch of that order it covers, from its first LED, and a rectangle of a
-panel is sent a row at a time. All of one WLED's segments go in one frame,
-shown once, so no segment is a frame behind another. They may not share an LED,
-and the pre-show check warns about one that reaches past the WLED's end. In
-realtime mode a WLED shows only what it is sent, so LEDs in no patched segment
-stay as they are.
-
-**Outside a show.** A WLED that is being sent frames is in realtime mode, and
-in realtime mode it is nobody else's: Home Assistant, its own presets and its
-app all wait. So while the outputs are disarmed ([Master
-controls](#features)) no DDP frame goes to any WLED — the moment they are
-disarmed each is sent one dark frame and then nothing, and its realtime
-timeout hands the strip back to its effects, as it does when a fixture leaves
-the patch. The server starts disarmed, so a reboot never seizes the house's
-strips. Identify is the one exception: asking a WLED to show itself still
-streams its picture to it, for the seconds asked for.
-
-### OpenRGB
-
-A gaming PC's RGB — its RAM, its board, its GPU, its keyboard and mouse, the
-light bars on its monitors — is driven through [OpenRGB](https://openrgb.org)'s
-SDK server: one TCP connection to the PC (port 6742), and every frame one
-packet a device with a colour for each of its LEDs. Turn the server on in
-OpenRGB under *SDK Server*, and let it through the PC's firewall.
-
-**Rig → Outputs → OpenRGB → Discover** asks the server at an address for its
-devices and lists each with its type and LED count; **Add to patch** adds one,
-**Add all** every one with LEDs. A device is a fixture of its own, its LEDs
-cells of red, green and blue, its profile named as OpenRGB names the device,
-patched on the first free universes from 1, from channel 1 — a WLED added as
-pixels, to the show: on the stage plot, in the patterns, in the monitor. The
-85 LEDs of a board are a bar; a two-LED mouse is a short one; a one-LED fan
-is a par.
-
-- Its universes go to it and nowhere else, so nothing else may be patched on
-  them; the patch says so if you try, as it does for a WLED.
-- Its row in the patch table shows the server's address and the device's
-  number and name. Change the address when the PC moves; empty it to send the
-  fixture on Art-Net and sACN instead.
-- OpenRGB numbers its devices in the order it finds them, so hardware added
-  to or taken out of the PC — a monitor off, a wireless mouse asleep at
-  boot — can shift the others. A device is patched under its name as well
-  as its number, and the show finds it by name whatever its number today
-  (the k-th of that name on the server for the k-th in the patch, so
-  identical RAM sticks keep their order). The pre-show check reads the
-  server again and says where a device has moved; one that is gone, or
-  whose LED count has changed, warns.
-- A device in a hardware effect (a rainbow the board runs itself) is put into
-  its *Direct* mode the first time it is sent a frame, as OpenRGB's own
-  clients do; one with no mode that takes a colour a LED cannot be lit by the
-  show, and the list says so.
-- Removed from the patch, it is sent one dark frame. OpenRGB has no realtime
-  timeout: the device stays as it was last sent until OpenRGB, or a profile
-  loaded in it, says otherwise.
-- The PC being off is not a failure: the pre-show check warns, naming the
-  fixtures on it, and the rest of the show goes on. The connection is kept
-  open while frames go to it and dialled again, after a pause that grows to
-  thirty seconds, when it drops; a device that cannot keep up is sent fewer
-  frames rather than late ones, and the engine never waits on it.
-
-**Outside a show.** While the outputs are disarmed ([Master
-controls](#features)) no packet goes to any OpenRGB device: the moment they
-are disarmed each is sent one dark frame and the connection to the PC is
-closed, and nothing is sent until they are armed again, when the first frame
-dials it. The server starts disarmed, so a reboot never paints the PC.
-Identify is the exception, as it is for a WLED: a device not in the patch is
-streamed its picture for the seconds asked for, and then put back to the
-colours and the mode it was showing.
+**Identify** selects fixtures or universes for 8 seconds by default, up to
+60; 0 or `/api/identify/stop` ends it. Identify may send a temporary test even
+while show outputs are disarmed. Removing a cue, fixture or profile offers
+Undo for 12 seconds; restore still checks patch conflicts.
 
 ### Output protocols
 
-Frames go out over **Art-Net**, **sACN (E1.31)**, or both — each universe is
-sent on every protocol that is enabled, so a rig can run one node on Art-Net
-and a console on sACN at the same time. A WLED's or an OpenRGB device's
-universes go to it alone, as above.
+| Output | Addressing | Setup |
+|--------|------------|-------|
+| Art-Net | UDP 6454, universes from 0 | Broadcast, unicast, or discovered-node routing; optional ArtSync |
+| sACN/E1.31 | UDP 5568, universes from 1 | Multicast `239.255.x.y` or unicast; default offset +1 from the patch |
+| WLED/DDP | Device host, optional port and LED offset | Discover by mDNS or add by address; dedicated fixture universes |
+| OpenRGB | TCP SDK server, default port 6742 | Enable the SDK server, discover devices and add those with direct LED control |
+| Hue Entertainment | Bridge and entertainment-area channel | Pair bridge, select area, add its lamps |
 
-| | Art-Net | sACN (E1.31) |
-|---|---|---|
-| Settings section | *ArtNet Output* | *sACN (E1.31)* |
-| Default | on | off |
-| Port | 6454 | 5568 |
-| Addressing | broadcast, or straight to the nodes it finds; or unicast to the node IP | multicast to `239.255.x.y` per universe, or unicast to a node IP |
-| Universe numbering | from 0 | from 1 |
-| Frame sync | ArtSync (optional) | — |
-| On stop, and on disarm | a black frame | a black frame, then stream-terminated packets |
+Art-Net and sACN can run together. Universe mappings and the selected network
+interface are configured under Rig → Outputs. Preflight detects overlapping
+patches, output reachability problems and competing sACN sources.
 
-**Finding Art-Net nodes.** While *Node IP* is a broadcast address — the default
-`2.255.255.255`, or anything ending in `.255` — and **Find Nodes** is on (the
-default), the server polls every network it is on every three seconds and
-sends each universe a node outputs straight to that node. That is what makes a
-first night on a `192.168.x` network light up without typing anything, and it
-keeps the rig's traffic off every other device on the network. A universe no
-node claims still goes to the broadcast address, so a node that never answers
-polls — plenty don't — is driven exactly as before. The nodes that answered are
-listed under *ArtNet Output*, with *Send to this node* to talk to one node and
-nothing else. With *Node IP* set to one node, or to this machine (a visualiser
-running here), nothing is polled and nothing changes.
+Disarm stops pattern playback and all voices. It sends a dark frame, terminates
+sACN streams, stops DDP updates, closes OpenRGB connections and releases Hue
+Entertainment sessions. Master blackout keeps the outputs owned and streaming.
 
-**ArtSync.** With it on, every frame ends with an ArtSync, and a node that
-supports it changes all its universes at that instant — a wall of LED bars
-across several universes moves as one instead of in a ripple. Leave it off for
-nodes that don't support it.
+### WLED
 
-**Ending a stream.** A universe that leaves the patch, and every universe when
-the server stops, gets one black frame; over sACN that is followed by three
-stream-terminated packets, so a receiver lets go at once instead of holding
-the last frame until it times out. Changing sACN's settings (another offset,
-another node, turning it off) ends the old streams the same way, and so does
-disarming the outputs ([Master controls](#features)) — after which nothing
-goes out until they are armed again. Every ten seconds the server also lists
-the universes it is sending on sACN's discovery group, so a console can show
-this source without being told.
+Find WLEDs on the local network or add a host directly. Adding reads its LED
+count, RGB/RGBW layout and panel dimensions; up to 4096 LEDs form one fixture.
+Dedicated WLED universes are not also sent on Art-Net or sACN.
 
-**Network.** On a machine that is on two networks — the show network and the
-house one — pick the show network under *sACN (E1.31) → Network*, so the
-multicast groups go out where the nodes are.
+**Add each segment** creates separate fixtures. Segment regions must not
+overlap. A panel rectangle uses its LED offset and row stride; WLED resolves
+its own wiring order. All segments of one device are delivered as one frame.
+LEDs outside patched segments keep their previous values.
 
-sACN is off until you turn it on. Once it is, leave *Node IP* blank for the
-normal deployment — each universe multicasts to its own group and receivers
-subscribe to what they need.
+Removing a fixture or disarming sends darkness and stops updates. WLED resumes
+its own effects after its configured realtime timeout. Set its fallback preset
+accordingly. Preflight checks reachability and changed LED counts.
 
-**Universe offset.** Art-Net counts universes from 0 and sACN from 1, so the
-default offset of `+1` lines them up: a fixture patched on universe 0 goes out
-as sACN universe 1. Change it if your console numbers universes differently.
+### OpenRGB
 
-**Component ID.** A receiver tells sACN sources apart by CID, so a fresh one
-every boot would look like a second source arriving and start the console
-arbitrating between two of us. One is generated on first start and stored in
-`config/settings.json` from then on. Change it only if two servers on the same
-network ended up sharing one.
+Each device is a fixture, with one RGB cell per LED, on dedicated universes.
+The patch keeps the device name as well as its number so discovery can resolve
+renumbered devices. Devices must support a direct LED colour mode.
 
-**Priority** (0–200, default 100) decides who wins when two sources drive the
-same universe.
-
-To run sACN *only*, turn **ArtNet Output → Enabled** off.
-
-### The engine
-
-Every frame is rendered on a thread of its own, forty-four times a second —
-the fastest a full DMX line refreshes, and the most E1.31 lets a source send.
-The main thread runs the server, the UI, the auto show's planning, the uploads
-and the integrations; any of those can hold it for tens of milliseconds, and
-the moment a new track starts is exactly when it does. The engine's thread
-keeps rendering through that: a few milliseconds before each frame the main
-thread fires the auto show's cues and hands the engine the look and where the
-music is, and when that hand-off is late the frame still goes out on time, with
-the beat carried forward.
-
-Each frame is due at a fixed time, so a late frame does not push the rest later
-and the rig does not drift. **Settings → Engine** shows where the engine is
-rendering and how its frames have gone over the last minute; the pre-show check
-warns about frames that went out late. *Render On → The main thread* is how it
-ran before, and is only worth choosing to rule the thread out when chasing a
-problem. If the thread cannot start, or stops three times in a minute, the
-engine renders on the main thread instead and says why.
-
-**16-bit dimming.** A fixture whose profile has a *Dimmer Fine* channel is
-dimmed with sixteen bits, so a slow fade to black glides where it used to step.
-
-#### Strobe without a strobe channel
-
-A fixture with a strobe channel strobes itself. One without — plenty of LED bars
-and cheap pars — is flashed in software through the strobe pattern and every
-strobing burst: one to twenty flashes a second from the strobe speed, each a
-frame to 50 ms long, all such fixtures together (the random strobe functions
-flash each on its own). A Hue lamp is never flashed: a bridge cannot keep up,
-and Hue's own guidance is to keep effects slower than that. The party effects'
-strobes and the Palette Strobe know this too: on a Hue lamp each of their
-flashes is the colour at full falling to a floor over 200 ms (see
-[Party effects](#the-patterns)).
+Disarm or removal sends darkness and closes the connection. OpenRGB has no
+realtime timeout: another client/profile must restore the desired hardware
+effect. Unavailable PCs generate warnings; other outputs continue.
 
 ### Philips Hue
 
-Hue lamps can run from the same show as the pars, through the **Hue
-Entertainment API**. Unlike Art-Net and sACN this is not a universe transport —
-a bridge has no idea what a universe is. Instead each lamp of an entertainment
-area is **a fixture of its own**, added from the bridge as a WLED is: the bridge
-says what each lamp can show, and it is patched on the profile that fits. The
-show renders it like any other fixture, so every pattern, palette, cue and
-auto-show decision reaches it, and its channel is sent the colour that came
-out. A house with more than one bridge pairs each of them: every bridge
-streams an area of its own, and a lamp in the patch names the bridge it
-belongs to.
-
-That colour is read from the rendered frame, which means it arrives with the
-dimmer, the lamp's trim, the grand master, any override and master blackout
-already applied. Black out the rig and the Hue lamps go out with it.
-
-**Setting it up**
-
-1. Build an **entertainment area** in the Philips Hue app and put your lamps in
-   it. Areas are made there because that is where the lamps are already placed
-   on a room plan; this server only reads them.
-2. Open **Rig → Outputs → Philips Hue** and press **Find bridges**, or type the
-   bridge IP in, with a name for it if you like ("Lounge"; its address when
-   left blank). Discovery uses Philips' cloud service, so a show network with
-   no route to the internet will need the address typed in.
-3. Press the round button on the bridge, then press **Pair** within 30 seconds.
-   The bridge issues an application key and a client key, which are stored as
-   secrets in `config/settings.json` and never shown again. The client key is
-   only ever returned once, so a lost pairing has to be made again — **Pair
-   again** on a bridge already listed replaces its keys rather than adding a
-   twin.
-
-   A third value, the **application id**, is fetched at the same time. It is the
-   identity the encrypted stream authenticates with, and it is what the Hue app
-   shows as the holder of an entertainment area. It is not a secret, so it stays
-   readable in the settings. A pairing made before this was stored resolves
-   it on the first connection and saves it then.
-4. Pick the **entertainment area** and **Apply**. A bridge streams one area at
-   a time; several bridges stream at once, each its own. Pair the next one the
-   same way and it is listed under the first, with an area, lamps and an
-   **Enabled** switch of its own.
-5. The area's lamps are listed below it: each channel, the lamp as you named it
-   in the Hue app, and what the bridge says it can show — *Colour*, *White
-   ambiance* or *White*. **Add to patch** makes one a fixture, on the
-   [profile](#generic-hue-lamp-profiles) for what it can show; **Add all** does
-   every lamp not in the patch yet. A lamp that renders several channels, such
-   as a gradient strip or a Play bar, has them numbered in the order the area
-   lists them, and each is a fixture of its own. Place them on the plan.
-
-Until at least one lamp is in the patch, the server does not contact the bridge
-at all. Opening a stream puts the area into entertainment mode, which takes
-those lamps out of normal Hue control — worth doing only once something is
-actually driving them. A channel with no lamp in the patch is never sent, so
-the bridge keeps its own colour for it.
-
-**Outside a show.** For the same reason, the bridge is not contacted while the
-outputs are disarmed ([Master controls](#features)): disarming sends every
-streaming bridge one dark frame and closes its session, so the area leaves
-entertainment mode and the lamps answer the Hue app and the house again, and
-nothing opens a session until the outputs are armed — the first frame after
-that does. The server starts disarmed, whatever was stored, so a restart in
-the night never takes the lamps from the house.
-
-**How the lamp's dies are translated.** The stream carries red, green and blue
-and nothing else, so the other dies are folded in rather than dropped:
-
-| On the profile | Sent to the lamp |
-|---|---|
-| Red, green, blue | as-is |
-| Warm white | tungsten, around 2700K — a warm white still has real blue in it |
-| Cool white | daylight, around 6500K — near neutral with a faint blue lean |
-| UV | deep violet, because Hue cannot emit UV and black would read as a dead lamp |
-| Dimmer alone (a white lamp) | the dimmer, as neutral white |
-
-A mix that sums past full is scaled as a whole so the hue survives; see
-[Generic Hue Lamp profiles](#generic-hue-lamp-profiles).
-
-Values are widened from 8-bit to the 16-bit the bridge takes, so fades that
-would band on a DMX par do not here.
-
-**Things worth knowing before a show**
-
-- A bridge allows **one** entertainment stream at a time. If the Hue app's sync
-  feature, Hue Sync Box or another tool is streaming, this cannot connect — the
-  pre-show check reports it. The area's `active_streamer` field names whoever
-  is holding it.
-- An area carries at most **20 channels**, which is also the most a single
-  stream message can address.
-- The stream is DTLS 1.2 with a pre-shared key on UDP 2100, and the bridge drops
-  it after about ten seconds of silence. The show's own frames are the
-  keepalive, going out at the render rate of 44 Hz against Hue's recommended
-  50-60 Hz. Note that is the *message* rate: the bridge relays over ZigBee at a
-  maximum of 25 Hz, so Hue's guidance is to keep effects themselves below about
-  12.5 Hz, which is a property of the show rather than of this transport.
-- The bridge needs software version 1948086000 or newer for the Entertainment
-  API to exist at all.
-- A bridge that is off, unreachable or busy is retried with a backoff rather
-  than on every frame, so nothing stalls the render loop. Turning the show off
-  sends one black frame and closes the session, so the lamps do not sit holding
-  the last look.
-- An area rebuilt in the Hue app, or another area picked, can leave a lamp in
-  the patch on a channel the area does not have. The bridge takes its colour
-  and ignores it, which on the night looks like a dead lamp — the pre-show check
-  catches it: remove the lamp and add it again.
-- **Forget** removes a bridge here, keys and all — and its lamps from the
-  patch, after asking, when any are in it — but does not unregister this server
-  on the bridge. Remove it in the Hue app under linked devices.
-
-**Lining the pars up with the lamps**
-
-Art-Net reaches a node in about a millisecond; a Hue lamp hears the same frame
-through the bridge and a ZigBee hop, tens of milliseconds later. On a mixed rig
-every hit therefore lands on the pars first and the lamps after, which on a
-snare reads as two events. **Pars Delay (ms)** in Rig → Outputs → Philips Hue holds
-the Art-Net and sACN output back by that much; Hue is sent each frame as soon
-as it is rendered. It defaults to 0, is one value for every bridge, and only
-applies while at least one bridge is on.
-
-To tune it, press **Flash for 10 s** beside the bridge list: every fixture
-flashes white once a second. Film a par and a lamp together in slow motion,
-raise the delay until the two flashes land on the same frame, and save. Start
-around 50 ms. The shutdown blackout skips the delay, so the rig still goes
-dark the moment the server stops.
-
-### Universes
-
-Each fixture carries a **universe** alongside its DMX address, so a rig can be
-larger than one node's 512 channels. Set it per fixture in the patch table (or
-in the fixture card on the live page) — addresses only collide with other
-fixtures on the *same* universe.
-
-The **Universe** field in *ArtNet Output* is the rig's **default** universe: it
-seeds new fixtures, and fixtures sitting on it follow when you change it, which
-is what that field used to do when there was only one universe to be on. A
-fixture you deliberately patched somewhere else stays put.
-
-Universes with nothing patched on them are transmitted for one final all-zero
-frame and then dropped, so a node never sits holding the look it had when its
-last fixture moved away. The server transmits at most **64** universes.
-
----
-
-## Set-list warming
-
-Live prefetch only looks one to five tracks down the queue, and only once a
-source is playing. That makes a track change instant *during* a set, and is no
-help at all for the first track of the night, for a DJ who does not queue ahead,
-or for a venue whose network you would rather not depend on once the room is
-full.
-
-Analysing a track takes tens of seconds. Doing forty of them at load-in costs
-nothing but time you already have.
-
-**Auto Show → Set-list warming**: paste one `Artist - Title` per line and press
-**Warm this list**. Blank lines, `#` comments and leading track numbers are
-ignored, so a list copied out of rekordbox or a notes app works as-is.
-
-```
-1. Daft Punk - Around the World
-02) Justice - Genesis
-# encore
-A-Trak - Ray Ban Vision
-```
-
-**Warm the Spotify queue** does the same for everything Spotify has queued,
-rather than only the next few.
-
-**Warm a Spotify playlist** takes the set list you already have. Pick one of the
-connected account's playlists from the dropdown, or paste a link — a share link,
-a `spotify:playlist:…` URI or the bare id all work. Unlike the queue, a playlist
-exists before anything is playing, which is the case warming was built for.
-
-Since Spotify's February 2026 API changes, it only lists the tracks of playlists
-the connected account **owns or collaborates on**. To warm someone else's, add
-its tracks to one of your own playlists first (*Add to other playlist* in the
-Spotify app), or paste them as a set list.
-
-Tracks keep their Spotify id, so a warmed playlist track is already cached under
-the exact key the live path looks up when it plays. Podcast episodes and tracks
-pulled from the catalogue are skipped; local files in a playlist are warmed by
-name, the same way a pasted line is.
-
-Private and collaborative playlists need the `playlist-read-private` and
-`playlist-read-collaborative` scopes, which are requested at login. A Spotify
-connection made before this feature existed does not carry them — Spotify then
-reports your own playlist as simply not found — so reconnect Spotify under
-Sources. Public playlists work either way.
-
-Progress is live — each track shows *queued*, *analysing*, *cached* or *failed*.
-Tracks already on disk are skipped without touching the analyser, so re-running
-a list is nearly instant. A track yt-dlp cannot find is recorded and the rest of
-the list continues.
-
-Warming runs at normal priority, so a track change during a set never sits
-behind an hour of it. The song that starts playing is submitted as the current
-track: it jumps the queue and interrupts the warm job already running, which
-keeps its audio and is re-analysed as soon as the live track is served.
-**Stop** ends the queue; the track being analysed at that moment finishes, since
-abandoning it would mean throwing away work that was nearly done.
-
-Up to 200 tracks per run.
-
----
-
-## Pre-show check
-
-Everything in this stack degrades quietly on purpose. Art-Net send failures are
-logged and the render loop carries on. A missing MuQ-MuLan checkpoint drops
-genre classification and falls back to a mood palette. An absent ffmpeg only surfaces
-when the first track downloads. Individually that is right — none of it should
-take the show down mid-set. Collectively it means the first sign of a broken rig
-is the rig not working, in front of an audience.
-
-```bash
-npm run preflight
-```
-
-It asks every one of those questions while there is still time to fix the
-answer, and exits non-zero if something will not work:
-
-```
-  [ok]   Engine             Rendering on its own thread. 44 frames a second; 0.8 ms to render a frame (p95), …
-  [ok]   Art-Net output     2 nodes answered: DMX-1 at 192.168.1.50 (universe 0), …
-  [--]   sACN output        Disabled. Turn it on in Settings → sACN (E1.31) …
-  [ok]   Philips Hue        "Living Room" on 192.168.1.40: Shelf, Desk, Hall; 2 of its channels are not in the patch.
-  [ok]   Fixture patch      8 fixtures on universes 0, 1, no overlaps.
-  [warn] MIDI               "X-TOUCH COMPACT" is not among the available inputs (none).
-                            → Plug the controller in and reconnect it in Settings → MIDI.
-  [FAIL] ffmpeg             Not usable — not found on PATH. …
-                            → Install ffmpeg with your package manager …
-```
-
-| Status | Meaning |
-|--------|---------|
-| `ok` | Working. |
-| `warn` | Works, but degraded — or we could not prove it either way. Does not fail the run. |
-| `FAIL` | Will not work. Exits 1. |
-| `--` | Nothing to verify, just worth seeing. |
-
-What it checks: the engine (where it is rendering, and whether its frames have
-gone out on time), whether the outputs are armed (a warning while they are
-not — nothing goes out until they are), Art-Net reachability (it sends an
-ArtPoll and lists the nodes that answer), the sACN configuration, universe mapping and network, the Hue bridge (that
-it answers, that the entertainment area still exists, and that every channel is
-bound to a fixture that is still patched), the fixture patch
-for overlaps and out-of-universe addresses, the bind address and token, the
-MIDI controller, the Python interpreter and the analyser's imports, ffmpeg,
-yt-dlp, the analysis model weights, the optional PANNs checkpoint, the analysis
-cache, and which playback sources are connected.
-
-The same report is the **Preflight** view (key **7**) — run there,
-it also sees the *live* MIDI and playback-source connections rather than only
-what is configured. If a model the show needs is missing, it starts downloading
-it in the background and says so; the show keeps running, and the progress is
-under Sources → Analysis models. **Model stack** imports torch, torchaudio,
-torchvision and the models for real, which catches a torch build mismatch that a
-plain "is it installed" check cannot see, and names the device they run on.
-
-A node that never answers an ArtPoll is a warning, not a failure: plenty of
-them do not implement it, and a broadcast rig works fine without ever replying.
-
----
-
-## Keeping time — the musical clock
-
-Every pattern keeps time by one clock: a continuous beat position, 0 on the
-first beat of the song, 1 on the second, 2.5 halfway between the third and the
-fourth. Each chase step, the fade's eight-beat breath, the hit's decay and the
-sweep of the expressive patterns are worked out from it every frame, so nothing
-accumulates and nothing drifts: a chase is on the same step whether the show
-played into the moment or was seeked there.
-
-What the clock follows, best first — the badge under the BPM says which:
-
-| Badge | Following |
-|---|---|
-| **Auto** | The auto show is running: the track's analysed beat grid at the show's position, sync offset included. A drummer who pushes the chorus or a DJ who pitches the track is followed beat by beat. |
-| **CDJ** | PRO DJ LINK is on and a deck is playing: the position of the deck the room hears, through rekordbox's own beat grid. |
-| **Track** | The auto show is off, but the song playing (Spotify, the hybrid source, the OS media session or the Deezer extension) has an analysis in the cache: manual patterns lock to its beats. A song that is not analysed yet locks as soon as a prefetch, a warm or an analyse request writes one. |
-| **Live** | The live input hears the music and has found its beat: for a track nothing else knows. See [Live input](#live-input). |
-| **Tap** | None of those: a free-running clock at the BPM you tap, type, nudge or send over MIDI. |
-
-The BPM read-out follows the clock, to a tenth: a 123.7 BPM song shows 123.7,
-and ± nudges from there. **Tapping, typing or nudging a BPM takes the tempo by
-hand** from a CDJ, a locked song or the live input: the badge reads Tap and the
-read-out is the tempo the rig runs at. The take-over starts from the beat the
-music is on, and a single tap keeps the music's tempo until a second tap
-measures a new one. The hand holds until the music moves on, and then the clock
-follows again: the next song; on the CDJs, the master deck loading a new track
-or another deck becoming the master; on the live input, the beat lost and found
-again. A tempo taken from decks that have since gone quiet also gives way to the
-next song or a new live beat. A deck's own tempo report never replaces a tempo
-held by hand. The auto show's grid is not taken by hand: a tempo typed under it
-leaves the read-out on the show's tempo. Recalling a cue while the clock follows
-the music brings back the look and leaves the music's tempo in charge.
-
-When a song pauses, the clock carries on at its tempo rather than freezing the
-rig on one step, and locks again when the music resumes. Stopping the auto show
-hands over to the song or the free clock mid-beat, without restarting the chase.
-
-**Automatic tempo match** is on by default: the clock follows the best source
-above. Switch it off (`POST /api/tempo/manual`, `tempoMode: 'manual'` through
-`/api/set`, or a MIDI button bound to *Automatic tempo match on / off*) and the
-tempo is yours: CDJ, Track and Live are not followed (a deck's pitch does not
-move it either), the badge reads Tap, and the clock runs at the BPM you tap,
-type, nudge or send over MIDI. It takes over at the beat and tempo the music
-had reached, so nothing lurches. The running auto show still leads, because
-its scenes are scheduled on its track's beats.
-`POST /api/tempo/auto` follows the music again, from whatever source is best
-then; the choice is stored and survives a restart, and a tap never changes it.
-
-Other screens can keep the rig's beat: the live state's `clock` (`GET
-/api/state`, or the `look` domain over the socket) is `{ source, bpm, beatPos,
-epoch, at }`, the beat position read at `at` (wall-clock ms). Carry it on as
-`beatPos + (now − at) / 60000 × bpm`; a new `epoch` means the music jumped.
-While the patterns are stopped on the free clock (`running` false, source
-`tap`) the beat stands still: hold it there rather than carry it on. It rides
-the broadcasts the state already makes, and is sent again only when carrying
-it on would be more than a 60 Hz frame out — after a tap, a seek, a stop or a
-tempo change — never just because the beat moved on, nor again while it stands
-still.
-
-A scene from the auto show counts its steps from the beat it was scheduled on,
-not from the frame that fired it, and cues fire from the render loop itself, so
-each lands in the frame it is due. Walked against the analysed beats of the
-test tracks, every step shows within one 22.7 ms render frame of its beat for the
-whole track. The timer-driven chase this replaced ran at a whole-number BPM from
-whenever its scene happened to fire; modelled on the same tracks, it was 80–200
-ms off the beat by the end of a sixteen-bar scene.
-
----
-
-## Colours, patterns and palettes
-
-### The colour presets
-
-A party rig is watched from across a dark room, through haze, on lamps that are
-usually moving or flashing. Two colours a screen shows as clearly different — a
-260° violet and a 264° "actinic", say — arrive at the audience as the same
-colour, so a long list of near-neighbours is a list where most of the buttons do
-the same thing.
-
-The table is built the other way round: the fewest colours that are all
-*obviously* different from one another, with the four slots left to do the
-combining. Nine saturated hues, none closer than 30° on the wheel:
-
-| | | | |
-|---|---|---|---|
-| Red 0° | Amber 37° | Lime 85° | Green 140° |
-| Cyan 187° | Blue 220° | Congo Blue 258° | Violet 288° |
-| Magenta 325° | | | |
-
-Then five things a hue cannot do: **Warm White** and **Cool White** (warm-vs-cool
-is the one white distinction that carries across a room), **Lavender** and
-**Moonlight** (the pale tier — deliberately desaturated washes to leave up under
-everything else, for the quiet end of the night), and **UV**, which no RGB mix
-approximates. Plus **Blackout**, which stays last.
-
-Everything that used to sit between two of these — Coral, Flame, Gold, Sun,
-Yellow, Rose, Fuchsia, Teal, Mint, Sky, Indigo, Actinic, Acid — collapsed into
-its nearest neighbour. Nothing was lost that a pair of slots cannot rebuild.
-
-Yellow is the one that may look missing. The amber emitter puts Amber at 37° and
-an RGB yellow at 60°: a difference on a screen, not one across a dark room. Amber
-is also the more useful half of that pair on a party rig, since an RGB yellow
-tends to arrive as dirty white once there is any haze in the air.
-
-### The patterns
-
-Eighteen, grouped by what the rig actually *does* — which is what an audience
-tells apart:
-
-| | |
-|---|---|
-| **Whole rig** | Solid · Fade · Hit · Strobe · Colour Cycle · Rainbow |
-| **Travelling** | Chase → · Chase ← · Ping Pong · Runner · Pairs · Wave · Stack Up |
-| **Sectional** | Split · Sections |
-| **Random** | Twinkle · Sparkle · Random Flash |
-
-There used to be twenty-five, but several were one pattern wearing different
-names. `split`, `split-3` and `split-4` were the same renderer picked three
-ways; so were `chase` / `chase-3` / `chase-4`, `alt-halves` / `alt-thirds` /
-`alt-quarters`, and `pairs` / `pairs-4`. The only thing the suffix changed was
-how many colours the pattern reached for, which meant an operator on a
-two-colour palette had to know not to press the `-4` button.
-
-A pattern now reads that off the look itself: the four slots wrap a smaller
-palette (a duo fills them A/B/A/B), so counting the distinct ones recovers the
-size that was picked. One `split` covers all three. `alt-halves` became
-**Sections** — the rig divides into one block per palette colour and the blocks
-rotate each beat — because with a variable block count the old name was wrong
-two thirds of the time.
-
-**Rainbow** is the one pattern that ignores the palette, spreading a full
-spectrum across the rig; no set of solid presets approximates that, which is
-why it survives the fold and why the auto show never picks it. **Colour Cycle**
-used to ignore the palette too and was excluded for the same reason — it now
-steps the whole rig through the look's colours, so it has joined the pool.
-
-**Pixel effects** — pictures drawn across every cell of the rig's LED bars.
-They run on pars too, as a handful of samples of the same picture, but they are
-made for bars. The auto show uses four of them on a rig of pars as well —
-Gradient, Plasma, Comet and Burst read on a row of lamps — and Drums when the
-track's drum lanes can be trusted (below):
-
-| | |
-|---|---|
-| **Gradient** | The look's colours as a gradient across the rig, scrolling a full cycle every sixteen steps |
-| **Comet** | A head crossing the rig every four steps with a tail that is long in slow music and short when it drives; each lap in the next colour |
-| **Burst** | A ring thrown out from the centre of the stage on every step |
-| **Plasma** | Three slow interfering waves in the look's colours |
-| **Meter** | A level meter filled by the low end and kicked on every step |
-| **Drums** | The kit as it is hit: the kick fills each bar from its middle, the snare cracks at its ends, the hats scatter along it |
-| **Stems** | Voice, band, drums and bass in zones out from the centre, each as loud as it is playing |
-| **Bars** | A spectrum analyser, after LedFx: the kick, bass, drums, snare, the rest of the band, the voice and the hats as columns, each as high as it plays, filled from the bottom |
-| **Fire** | Flames licking up from the bottom, taller with the bass and flaring on every kick, from the look's first colour at the root to its last at the tips |
-| **Rain** | Drops falling down every column in time, a lap every four steps, each column at its own speed; the hats shake loose more |
-
-**Bars**, **Fire** and **Rain** are made for panels — a WLED matrix, or an Open
-Fixture Library matrix — where they stand up: the bars rise from the panel's
-bottom row, the flames lick up it and the rain falls down it. Laid out **Per
-bar**, each panel draws its own; **Across stage**, a panel's rows are its
-height. On a strip, which has no height, the strip is laid along it instead:
-the bars become zones, the fire rises from its start, three drops run along it.
-They play the pulse like Drums and Stems, and the clock without it. On a rig
-with panels the auto show gives the panels one of the three by section (see
-[Shaping the generated show](#shaping-the-generated-show)); the **Panels**
-menu under the patterns picks one by hand, and it holds until a pattern is
-picked.
-
-**Strobe effects** — the programs of the hybrid strobes (an ADJ Jolt Panel, a
-Eurolite Super Strobe ABL, a Chauvet Color STRIKE and the rest of that family),
-for a bar or a WLED patched in zones. Every one is hard flashes on black, each
-at least two frames long and no zone flashing more than about eleven times a
-second, however fast the music; Flash Limit still holds the whole rig to three
-large flashes a second:
-
-| | |
-|---|---|
-| **Flash Chase** | One flash stepping zone to zone, a lap a step (longer on a long rig); mirrored, out from the middle to both ends |
-| **Flash Scatter** | A random segment strobe: a scatter of zones on every flash, more with the air in the track and on the off-beat |
-| **Flash Fill** | Every step fills from the middle out, holds, and is cut to black before the next |
-| **Flash Alternate** | Odd zones flash on the step, even ones on the half-step between |
-| **Ramp** | Every step swells from black to full, the middle first, and is cut on the beat |
-| **Strobe Core** | The hybrid's own look: its outer zones a wash in the look's colour, a cold white core striking on every step, or on the kick with the pulse |
-
-The auto show turns through Impact, Flash Fill, Flash Scatter and Strobe Core
-from one drop to the next, and gives a chorus, a bridge or a solo that drives as
-hard as a drop one of Flash Alternate, Flash Chase, Ramp and Strobe Core, the
-same each time it comes round. The zone-by-zone ones run **Per bar**, so each
-fixture plays the program itself.
-
-**Party effects** — after the party engines of the Hue apps: the Party
-families of Hue Dynamics (its position chase, radial pulse, spatial wash,
-bouncing scan, streak, twinkle, breathing fade, volume gate and frequency
-burst) and the room effects of Light DJ (its fills, halves and flips, waves,
-strobe cycles, fireworks, flashes and swirl). Both drive a handful of lamps
-placed round a room, and so do these: a lamp's place on the stage plot — its
-position, and its group where front and back matter — decides where a chase
-reaches it, which half of the room it is in and which corner it fills from,
-so the effects travel across the room rather than along the patch. A rig
-nobody has placed travels in stage order, and a rig in one row sweeps along
-the row whatever the heading. Every one steps on the musical clock, with
-nothing accumulating from frame to frame, so the rehearsal preview shows
-exactly what the rig will:
-
-| | |
-|---|---|
-| **Position Chase** | A domino running across the room by position, half a step a lamp, each in the look's next colour; the heading turns a quarter every run |
-| **Radial Pulse** | A ring from the middle of the room out to its farthest lamp once a bar, swelling and fading, as hard as the bass pushes |
-| **Spatial Wash** | A soft crest of the look's colours rolling across the room along a heading that turns a quarter every bar, never below the bed |
-| **Bouncing Scan** | A bright line sweeping across the room along a heading of 28° and back again every bar, the next colour on every pass |
-| **Streak** | A comet with a long tail across the room along a heading of 42°, on two events in three, in a direction each event draws |
-| **Starlight** | About a third of the lamps light on every step, each in a colour drawn for it, and fade out over the step |
-| **Breathe** | The whole room swells and falls as one over a bar, the colour drifting a little further round the look on every breath |
-| **Volume Gate** | A slow wash of the look's colours across the room that opens with how loud the music is and closes as it goes quiet |
-| **Confetti** | Three lamps in four pop in colours of their own on every step — no closer than 400 ms — and die away; with the pulse, on the kick as it was hit |
-| **Anchor Fill** | The room split round its anchors by position — the two sides, the four corners, or the corners and the middle on a bigger rig — and filled anchor by anchor on every step, the next colour over the last |
-| **Halves** | The front of the room against the back on one step, the left against the right on the next, in A and B, swapping every other time round; front and back come from the fixture groups when set |
-| **Flip** | The four corners of the room, one diagonal in A and the other in B, swapping on every step |
-| **Room Wave** | A wave of the look's colours crossing the room once a bar along a heading that turns by a seventh of a circle every lap |
-| **Ring Strobe** | One lamp at a time round the ring of the room — from the front, clockwise seen from above — a flash on every step, each lap in the look's next colour |
-| **Ring Backlit** | The same ring with the lit lamp in colour A and the rest of the room parked on colour B |
-| **Fireworks** | A burst on one lamp on every step, never the one before, spreading to its neighbours a little later and dimmer the farther they stand, dying away over a bar |
-| **Flashes** | About a third of the lamps, drawn afresh on every step, flash hard in colours of the look and are cut after a fifth of the step |
-| **Swirl** | The look's colours laid round the room by angle and turning, a full turn every eight steps |
-
-Headings are degrees on the plot, 0° towards the audience and 90° to the
-right. The strobes among them are gated by the beat and never random: Ring
-Strobe flashes one lamp a step — on the beat, its halves, quarters or eighths
-as the beat division says — and, where a step is too short for that, holds
-the ring for two, so no lamp flashes more than five times a second (the party
-apps' own cap); Flashes and Confetti space their events the same way. A Hue
-lamp is never flashed: it takes each flash as the colour at full falling to a
-floor of 40 over 200 ms and held there until its next, as the apps fade a hit
-lamp back, so a ring of Hue lamps pulses where a ring of pars flashes. Flash
-Limit still holds the whole rig to three large flashes a second. The auto
-show does not pick them: they are for the picker, cues and MIDI.
-
-**Drums** and **Stems** play the analysis's *pulse*. That is every kick, snare
-and hat read off the separated drum stem, and each stem's level fifty times a
-second, sampled at the playback position every frame. The auto show uses them
-on a rig with bars, for tracks analysed since they arrived, and Drums on a rig
-of three or more pars too — the kick in the middle lamps, the snare at the
-ends — when the lanes were found by the rules measured on real drumming.
-Chosen by hand without an analysed track, they fall back to the clock: a kick
-on every step, a snare on every other.
-
-**Hit** follows the drums the same way. With those lanes it flashes the rig on
-each kick (and, on the separated drum stem, each snare) as hard as it was hit,
-with the step's own pulse still there underneath at half height — so a
-breakbeat, a half-time groove or a live drummer flashes where the drums do and
-not only on the grid. Without them, it pulses on every step as it always has.
-
-With three or more fixtures in the patch, the pattern card also offers how the
-look lies over the rig: **Across stage** (as the lamps stand on the plot) or
-**Mirrored** (about the centre of the stage: a chase runs from the middle out
-to both ends at once, a stack builds out from the centre). With bars there is
-also **Per bar** (each bar draws the whole picture along itself). Cues remember
-the choice.
-
-### The palettes
-
-Sixteen named looks — the same bank the auto show locks a song to, offered by
-hand. One press writes all four colour slots with colours that were picked to
-sit together, which is the fiddly part of driving the rig manually.
-
-Every four-colour look is four slots with four different jobs, in this order:
-
-| Slot | Job |
-|------|-----|
-| **A** | **dominant** — the colour the look is named for, the one most on stage |
-| **B** | **contrast** — its opposite. A and B carry `split`, `alt-halves` and the two-colour chases, so this pair has to survive being the only two colours in the room |
-| **C** | **accent** — a third well-separated hue for the 3- and 4-colour patterns |
-| **D** | **lift** — a white, a pale wash or UV. Not a fourth hue: without a brightness break, a four-colour chase reads as a rainbow rather than as a look |
-
-No two *saturated* colours in one look sit within 30° of each other. Where a look
-does hold two from the same family they are on different saturation tiers on
-purpose — `violetDream` puts its violet over a pale lavender — which the eye
-reads as depth rather than as a repeat.
-
-Pick a size first: **2** for a small rig (two strongly contrasting hues that
-still read from the back of the room), **3** for three well-separated hues, or
-**4** for the full hand-tuned tetrad. Each size is its own bank rather than a
-slice of the four-colour one — a tetrad's two analogous colours look like one
-colour when there are only two lamps. A palette smaller than four slots wraps to
-fill them all, so the four-colour patterns still have something in every slot.
-
-The picker lives at the top of the *Colours* card. The active look stays named
-until you edit a slot by hand, at which point the rig is no longer showing that
-palette and the name goes.
-
-Palettes are also a bindable MIDI action (**Select palette**) and reachable over
-REST at `POST /api/palette/:id`.
-
-These rules are enforced by `tests/unit/color-design.test.js`, so a new preset
-that lands three degrees from an existing one fails the build rather than quietly
-making two buttons do the same thing.
-
----
-
-## Fixture maximum brightness
-
-Every fixture carries a **brightness trim** — the *Max* slider on its card. It
-**scales** that fixture's output rather than clipping it: at 50% the fixture is
-half as bright at *every* level, not merely capped at half. A clamp would leave a
-fixture already sitting below the line untouched and only bite at the top, so the
-bottom of the throw would go dead and two fixtures on different trims would
-converge as they dimmed.
-
-It is a trim, not a look:
-
-- It applies to whatever is driving the fixture: the pattern engine, a
-  per-fixture override, or an energy override.
-- It does **not** put the fixture into override mode. Trimming a lamp that is
-  hanging a metre from someone's face should not also take it out of the show.
-- It is not captured in a cue, and recalling a cue does not change it. A trim
-  belongs with the patch — it describes where the lamp is hung, not what the
-  show is doing.
-- It survives clearing the override, and it rides the show file so a rig loads
-  back trimmed the way it was left.
-
-The grand master and the trim both multiply, so they compose: a fixture trimmed
-to 50% with the master at 50% comes up at 25%.
-
-## Fixture groups
-
-Each fixture card has a **Group**: Front, Back, Room or Floor. The auto show
-uses them to split a look in two. In a driving passage on a travelling pattern
-(a chase, a runner, a sparkle), one group holds a steady wash in colour B while
-the rest of the rig runs the pattern in stage order among themselves. The same
-chorus splits the same way each time it returns; which group washes is picked
-from the groups actually in use.
-
-Nothing splits with fewer than two groups in use, so an ungrouped rig runs
-exactly as before. Resting passages, drops, build-ups and whole-rig looks
-(solid, strobe, fade, hit, ribbon, ensemble) always use the whole rig, and
-ungrouped fixtures always run the pattern. The rehearsal preview shows the
-split too. Groups are saved with the patch.
-
-Set it from the fixture card, from MIDI (**Fixture max brightness** on a fader,
-**Nudge fixture max brightness** on an encoder), or over REST at
-`POST /api/fixture/:id/max/:value`.
-
----
-
-## Cues
-
-A **cue** is the look on stage saved under a name: tempo and beat division,
-pattern, all four colour slots, master dimmer, blackout, strobe, the active
-energy override, and every fixture's override. Build something you like, press
-**Save current look**, and it is one press away for the rest of the night.
-
-Cues live in the *Cues* card on the live page.
-
-- **Recall** — click the cue.
-- **✎** rename. Renaming never touches the stored look.
-- **⟳** overwrite the cue with what is on stage now.
-- **×** delete — with an **Undo** that puts the same cue back in the same slot.
-
-A cue holds no patch data — no addresses, no universes, no Art-Net target, and
-no per-fixture brightness trim — so recalling one can never re-address the rig,
-move a fixture to another universe, or undo a trim mid-show. Fixtures the cue
-says nothing about are cleared rather than left holding the previous look: a cue
-is the whole rig, not a partial edit. The saved tempo applies when the clock is
-running free; while it follows a song, the song's tempo stands.
-
-They are stored in `config/cues.json` and survive restarts. Up to 128.
-
-Cues saved before the colour table was rebuilt do not carry over: they store
-colour *indices*, and every index now names a different colour. A stored index
-of 15 or above no longer exists at all, so such a file fails validation and is
-moved aside to `config/cues.json.invalid-<timestamp>` on the first start after
-the upgrade — nothing is deleted, but the set list has to be built again.
-
----
-
-## Effects — Hue Dynamics and Light DJ
-
-Besides the patterns above, the server carries the effects of two Hue party
-apps, rebuilt to behave as they do: the Party families of **Hue Dynamics** and
-its Disco, and the effects of **Light DJ**. They render on the placed rig in
-the room frame the apps use, step on the musical clock, and can play as the
-base look, on a pad, in a sequence or over everything as a voice.
-
-- **Families** — 22: the eleven of Hue Dynamics (simple ADSR, position chase,
-  radial pulse, spatial wash, bouncing scan, streak, twinkle, breathing fade,
-  volume gate wash, frequency burst, Disco), nine of Light DJ, and the
-  fork's own party and energy effects. Each family carries the schema of its
-  parameters.
-- **Presets** — 214 built in: the presets of both apps and the fork's party
-  rows. A preset is a family with its parameters set. `/api/pattern/:id` and
-  the pattern picker take a preset id as well as a pattern id. Built-ins never
-  change: editing one saves a copy as a preset of your own
-  (`config/effects.json`), which reaches every open page at once.
-- **Palettes** — 28 built in (Light DJ's, Hue Dynamics' default and the
-  strobe's white), and palettes of your own (`config/palettes.json`). The
-  palette override plays one palette — 1 to 8 colours, or a saved palette —
-  over every effect until it is removed; the look's colour slots stay as they
-  are. The named looks of **The palettes** above are a separate thing and keep
-  their routes.
-- **The inspector** edits a preset field by field from its family's schema. A
-  change to one nested field (a trigger, a spatial setting) keeps its
-  siblings: the server fills the rest from the defaults. A command to the
-  effect on stage (`POST /api/effects/command`) is answered once the renderer
-  has decided it — applied on a frame of the effect it was meant for, or why
-  not: 409 when the look on stage takes no commands, changed before the
-  command reached it, cannot take one now or already decided it; 400 when the
-  effects do not know the command.
-
-Effects that flash faster than the photosensitivity threshold are marked as
-such and need the acknowledgement under **Safety**.
-
----
+1. Create an entertainment area in the Hue app.
+2. In Rig → Outputs → Philips Hue, discover the bridge or enter its address.
+3. Press the bridge link button and pair; choose an area.
+4. Add the area's lamps to the patch and place them on the plan.
+
+Multiple bridges can stream simultaneously. A bridge supports one active
+entertainment stream; stop another sync client before connecting. Pairing keys
+are stored as secrets. Disconnect refuses while lamps remain patched unless
+`removeFixtures: true` is supplied.
+
+| Profile | Channels |
+|---------|----------|
+| Generic Lamp | Dimmer, RGB, warm white, cool white, UV |
+| Generic White Ambiance Lamp | Dimmer, warm white, cool white |
+| Generic White Lamp | Dimmer |
+
+Hue fixtures have no DMX address; their internal universes start at 60000 and
+are not sent to DMX outputs. UV is represented as violet, warm white as a warm
+tint, cool white as daylight. `hue.latencyMs` delays Art-Net/sACN relative to
+Hue; use `/api/hue/sync-test` to compare them.
+
+### Hue flash handling
+
+Hue lamps remain exempt from the generic 1–20 Hz software-strobe emulation
+used for non-Hue fixtures without a strobe channel. Brightness-flash effects
+use `hue.strobe` instead:
+
+- `flash` retains hard cuts and the effect's own background glow.
+- `pulse` falls over 200 ms to a floor of 40/255, or the effect's own glow.
+
+Authored Hue Dynamics attack/release envelopes are preserved in either mode.
+Disco's automatic strobe retains its 200 ms fall on every lamp. The setting
+does not rewrite these envelopes. Fixed-output energy effects also remain
+exempt from palette override: White Strobe, Blinder, UV Wash and Kill keep
+their output; Colour Strobe and Glow follow the override's first colour.
+
+## Looks, palettes and cues
+
+The base `pattern` accepts classic pattern ids or effect-preset ids. Manual →
+Effects filters the catalogue by family/library and supports favourites.
+Editing a built-in saves a copy; user presets are editable and deletable.
+`GET /api/effects` exposes family parameter schemas and preset metadata.
+
+Look palettes and effect palettes are separate controls:
+
+| Control | Behaviour |
+|---------|-----------|
+| Look palette, `/api/palette/:id` | Writes colour slots A–D for a size of 2, 3 or 4 |
+| Effect preset palette | Supplies colours for that preset |
+| Effect palette override, `/api/palette-override` | Overrides effect palettes without changing look slots |
+
+Override accepts 1–8 hex colours or a saved `paletteId`. Random palette slots
+are materialised once per request. Live state contains the colours in
+`paletteOverride` and the selected name's id in `paletteOverrideId`; explicit
+custom colours have a null id. The named selection stays identifiable after
+random colours are rolled.
+
+A sequence that changes the override captures both its previous colours and
+id. Stop, unload or natural completion restores both unless a manual palette
+change took ownership in the meantime.
+
+Save a cue from the current look or supply a `look` explicitly. Recall restores
+its pattern/effect, colours, masters, fixture overrides and strobe settings;
+it does not save a held strobe as active. Cues can be renamed, reordered,
+recaptured and recalled by id or case-insensitive name.
 
 ## Voices and pads
 
-A **voice** is an effect playing over the base look. Several play at once.
-Each comes from somewhere — a `pad`, an `energy` override, the `strobe`, the
-`api`, the `sequence` or the `matrix` board — and lives in one of three ways:
+A voice plays above the base or sequence. Strobe tier has priority; ordinary
+voices use launch order, target specificity and start time. State summaries
+include `id`, `source`, `label`, `mode`, `tier`, `kind`, `targets`, `launchSeq`,
+`startedAt`, `until`, `hidden` and `spec`.
 
-| Mode | Ends |
-|------|------|
-| `hold` | When its owner lets go. The owner renews it; without a renewal for 1.2 s, or when its socket disconnects, it dies, so a tablet whose Wi-Fi drops never leaves an effect running |
-| `once` | After its length, given in ms or beats |
-| `latched` | When stopped. A latched `strobe` voice, from any route, also ends at the strobe cap (see **Strobe**) |
+| Mode | Lifetime |
+|------|----------|
+| `hold` | Until release, disconnect or a missing renewal for 1.2 seconds |
+| `once` | Its requested ms/beats or the preset's duration |
+| `latched` | Until stopped; manual strobe-kind voices also obey the latch cap |
 
-Where voices overlap, the strobe is on top; of the rest, the one launched last
-wins, then one launched on chosen fixtures over one on the whole rig, then the
-later start. The live state's `voices` lists them (`id`, `source`, `label`,
-`mode`, `tier`, `kind`, `targets`, `launchSeq`, `startedAt`, `until`,
-`hidden`, and the effect each plays as `spec`), which is what the stage
-preview draws them from; `hueStrobe` beside them says how Hue lamps take a
-strobe.
+There are two banks of eight pads. Each stores
+`{ bank, slot, label, accent, content, launch, quantise, targets }`.
+`launch` is `once`, `hold` or `loop`; `targets` is `shared` or fixture ids.
+`quantise` is beats: 0 launches immediately; a nonzero value waits for its
+next grid while a base, voice or sequence is active. Otherwise it starts now.
+Default energy and strobe pads launch immediately; other defaults use 0.25.
 
-**Pads** — two banks of eight (`config/pads.json`), after Hue Dynamics' pad
-grid. A pad is `{ bank, slot, label, accent, content, launch, quantise, targets }`:
-`content` is `{ kind, id }` or `null` for an empty pad; `launch` is `once`,
-`hold` or `loop`; `quantise` is a grid in beats — a launch waits for the next
-line of it, `0` starts at once; `targets` is `shared` (the whole rig) or a
-list of fixture ids. What a pad plays depends on its content:
+| Content kind | Result |
+|--------------|--------|
+| `preset` | A built-in or user preset with an effect spec |
+| `pattern` | A saved lane/clip bundle played as one voice |
+| `strobe` | Manual strobe while held, using the pad's targets and grid |
+| `sequencePattern` | Insert a saved pattern into the loaded sequence |
+| `null` | Empty pad; pressing returns 204 |
 
-- `preset` — the preset as one voice.
-- `pattern` — a stored pattern, its lanes and clips, played as one voice: a
-  shared lane covers the pad's targets, a track lane goes to the selected
-  fixtures in patch order (a track with no fixture left is skipped), and the
-  pad alone decides its priority and lifetime. `hold` and `loop` repeat the
-  pattern; `once` plays it once. A pattern that is not on the shelf answers
-  404, and one with a rapid-flash clip waits for the acknowledgement like
-  any other.
-- `strobe` — the strobe while the pad is held (id `strobe`, launch `hold`
-  only; `once` and `toggle` answer 409).
-- `sequencePattern` — drops the pattern into the loaded sequence at the
-  pad's next grid line.
+Saving rejects unknown content and legacy pattern ids without a corresponding
+preset. Pattern voices map shared lanes to the pad targets and track lanes to
+target fixtures in patch order. Hold and loop repeat the bundle; once plays it
+once. Strobe content permits only hold, not once/toggle.
 
-A pad is pressed and released (hold), toggled (loop) or fired once, from
-REST, the `voice-hold` socket event, MIDI (the `padPress` action with a
-bank and a slot) and Companion (pad buttons, and a strobe burst of
-100–30,000 ms). MIDI and Companion press a pad once and, for a `hold` pad
-only, renew it until the note-off or the button's release; a `loop` pad
-toggles on the press and a `once` pad fires on it, and neither hears the
-release. A renewal only extends a live hold, never launches: a hold ended by
-`POST /api/strobe/off` or `DELETE /api/voices` stays ended, and a press under
-its old token answers 409 until it is let go or 1.2 s pass without a word
-from its holder. A MIDI hold with no note-off stops when the controller's
-input port leaves the port list, at `safety.strobeMaxLatchSec` for the
-strobe pad, and after 5 minutes for any other pad. An empty pad answers 204.
+REST, Socket.IO, MIDI `padPress` and Companion share these launch semantics.
+Renewal extends only an existing hold. Explicit stop revokes the old token;
+it cannot relaunch until released or absent for 1.2 seconds. MIDI holds also
+end on port loss; a missing note-off is bounded by the strobe cap for a strobe
+pad and five minutes for other pads.
 
-**The matrix board** — after Light DJ's matrix strobe maker. Each cell is a
-colour; touching cells (up to eight at once) builds one colour list, and the
-board plays it in one mode: `fireworks`, `flashes`, `pulses`, `cycle` or
-`solid`. Every change starts the board's one voice again with the new list;
-letting go of the last cell ends it. Its cells are held like a hold voice,
-and the fast modes need the acknowledgement; letting go is never refused.
-Stopping every voice, or disarming, empties the board, and a finger still
-down starts nothing until it lifts and presses again.
+Legacy energy ids remain available: `white-strobe`, `color-strobe`, `blinder`,
+`uv-wash`, `kill`, `palette-strobe`. A momentary hold can cover a latched energy
+and reveal the latch again on release. Explicit stops clear the latent intent.
 
----
+### Matrix
 
-## Energy overrides
+Hold up to eight cells. Each contributes a colour to one board voice; equal
+colours remain separate touches. Modes are `fireworks`, `flashes`, `pulses`,
+`cycle`, `solid`. Cell holds expire without renewal; releasing the final cell
+stops the voice. Stop-all or disarm clears the board and pending changes.
 
-The panic-button effects, now voices of the `energy` source: one at a time,
-over the look, scaled by the grand master and each fixture's maximum
-brightness — the master is the one hand you keep on the whole rig, and it
-should still mean something at the moment you hit the blinder.
+### Strobe
 
-| ID | Name | Effect |
-|----|------|--------|
-| `white-strobe` | White Strobe | Cold white, fastest strobe |
-| `color-strobe` | Colour Strobe | Colour A, fastest strobe |
-| `blinder` | Blinder | Every emitter at full — the brightest the rig goes |
-| `uv-wash` | UV Wash | Blacklight — UV alone, no strobe |
-| `kill` | Kill | Everything out for as long as it is held |
-| `palette-strobe` | Palette Strobe | The strobe (see **Strobe**) on the beat clock, over the running look |
+| Field | Values/default |
+|-------|----------------|
+| `palette` | 1–6 `#RRGGBB` colours; white |
+| `flashesPerSecond` | Integer 1–5; 2 |
+| `continueBetween` | `true`: underlying look between flashes; `false`: black |
+| `clock` | `beat` default, or `wall` |
+| `brightness` | 0–1 |
+| `onMs`, `blackMs` | Fixed at 100 ms each |
 
-Five effects covering four separate jobs, so no two buttons do the same thing: a
-strobe punch that is either cold or in the look's own colour, a held wall of
-light, and a held *dark* moment that is either blacklight or nothing at all.
-
-`kill` is not master blackout. The master is a latching switch on the whole rig;
-this is momentary and auto-clears, which is what you want under a thumb on a drop.
-
-`palette-strobe` is the hold-to-strobe pad of the Hue party apps: the strobe
-voice itself, with its settings, on the beat clock and in the strobe's place
-above every other voice. Latching it stops a running manual strobe, and
-starting the manual strobe stops a latched `palette-strobe`.
-
-Trigger from the UI, MIDI (encoder push 8 — hold to activate, release to clear),
-REST, the `energy-hold` and `voice-hold` socket events, or Companion. Clear
-with `POST /api/energy/off` or `energyOverride: null`. Only
-`POST /api/energy/off` also ends a latched strobe: a scene, a cue, a MIDI
-note or the auto show clears the energy all the time, and never the strobe.
-
----
-
-## Strobe
-
-One strobe, with Hue Dynamics' settings:
-
-| Setting | Values |
-|---------|--------|
-| `palette` | 1 to 6 colours, `#RRGGBB`, each flash at full; white by default |
-| `flashesPerSecond` | 1 to 5, whole numbers; 2 by default |
-| `continueBetween` | `true` (default): the look shows between flashes; `false`: black holds |
-| `clock` | `beat` (default): flashes on the finest beat division under the rate, the palette's colours in turn; `wall`: at the rate in seconds, a random palette colour each flash |
-| `brightness` | 0 to 1 |
-| `onMs` · `blackMs` | 100 ms of flash, 100 ms of black — fixed |
-
-`PUT /api/strobe` changes any of them. It never flashes faster than five
-times a second, whatever asks for it, and Flash Limit, when on, still holds
-the rig as a whole to three large flashes a second. Ways to run it:
-
-- **Hold** — the strobe pad, or `voice-hold` with `{ preset: 'strobe' }`:
-  as long as it is held and renewed. Over a latch, the latch stays
-  underneath, hidden, and comes back when the hold is let go or its lease
-  runs out, still ending at its own cap.
-- **Burst** — `POST /api/strobe/burst/:ms`, 100 to 30,000 ms, once.
-- **Latch** — `POST /api/strobe/on`. A latch ends on `POST /api/strobe/off`,
-  on `POST /api/energy/off`, on a burst, on `DELETE /api/voices`, or at the
-  cap, `safety.strobeMaxLatchSec`
-  (60 s by default; lowering it cuts a latch already running). A scene, cue,
-  MIDI note or the auto show clearing the energy does not end it. A latched
-  voice of kind `strobe` started any other way (`POST /api/voices`) carries
-  the same cap.
-
-`POST /api/strobe/off` stops every strobe voice — held, burst or latched;
-`POST /api/energy/off` ends only the latch. Until the photosensitivity
-acknowledgement is given, hold, burst and latch answer 409; stopping never
-does. The live state's `strobe` is `{ active, mode, settings }`, `active`
-being `{ id, mode, startedAt, until }` or `null`.
-
----
+Beat clock uses the finest beat division under the configured rate and cycles
+colours; wall clock uses seconds and random palette selection. Bursts accept
+100–30,000 ms. `/api/strobe/off` stops all manual strobe-kind voices, including
+API/pad launches. Latches are capped by `safety.strobeMaxLatchSec`.
 
 ## Sequencer
 
-A sequence places effects on a timeline in beats (`config/sequences.json`),
-after Hue Dynamics' timeline and Light DJ's playlists. It has `lanes` —
-`shared` lanes and `track` lanes of one fixture each — `clips`
-(`{ id, laneId, startBeat, lengthBeats, loopBeats, presetId | effect, targets, mute }`,
-`targets` being `lane` or fixture ids), `commands` at a beat (`palette`,
-`tempo`, `brightness`, `goto`), tempo and brightness `automation`, a `loop`,
-a `snap`, a `musicMode`, a `bpm`, and Light DJ's playlist `options`
-(`autoplay`, `shuffle`, `randomPaletteOnLoop`, `initialPalette`).
+Live sequence status includes `activeClips`, naming the clips currently winning on patched fixtures.
 
-On each fixture a track's clip beats every shared lane's, a later shared lane
-beats an earlier one, and inside a lane the later start wins. A soloed lane
-silences the others; a muted one plays nothing.
+Create a sequence in Sequence, or load one from its shelf. A new sequence has
+one shared lane and 4/4 at the current BPM. Edit exposes name, lanes, clips,
+mute/solo, pattern insertion and save/duplicate/delete. Deleting a saved
+sequence requires confirmation; Unload releases the current sequence.
 
-The transport plays, pauses (the current clip keeps looping), stops (holding
-the last frame, or black with `?blackout=1`), steps to the next or previous
-clip, shuffles, seeks to a beat, jumps to a clip, re-syncs on the next beat or
-bar and loops a range. A stopped sequence keeps the rig: unloading it
-(`DELETE /api/sequence`, or the first entry of the deck's sequence picker)
-gives the base back to the look. Clips with fast-flashing effects need the
-acknowledgement.
+| Field | Meaning |
+|-------|---------|
+| `mode` | `arrangement` or `playlist` |
+| `lanes` | Up to three shared lanes; at most one track lane per fixture |
+| `clips` | `id`, `laneId`, `startBeat`, `lengthBeats`, `loopBeats`, exactly one `presetId`/`effect`, `targets`, `mute` |
+| `commands` | Palette, tempo, brightness or goto commands at beats |
+| `automation` | Tempo or brightness automation |
+| `loop`, `snap`, `timeSignature`, `bpm`, `musicMode` | Loop bounds, grid and timing |
+| `options` | `autoplay`, `shuffle`, `randomPaletteOnLoop`, `initialPalette` |
 
-**Patterns** are reusable bundles of lanes and clips. Saved ones can be
-inserted into the loaded sequence at a beat, or captured from a range of
-its lanes; a `pattern` pad plays one as a voice.
+A track clip wins over shared lanes; a later shared lane wins over an earlier
+one; later clip start wins within a lane. Solo excludes other lanes and mute
+still suppresses a soloed lane. Missing target fixtures receive nothing.
+Playlist mode requires one shared lane with non-overlapping chronological rows.
 
-**Punch record** turns pad launches into clips. `POST /api/sequence/record`
-starts a take (`overdub` or `replace`, a count-in and a grid); each launch
-after the count-in is captured with the pad's content and targets as they
-were at that moment. Starts and ends snap to the nearest grid line (halves
-away from zero), every clip at least one grid long; a launch with no release
-takes the pad's own length. Strobe pads and empty pads record nothing, and a
-pattern pad's hit lands as its whole bundle at once. The take is staged:
-`POST /api/sequence/record/stop` with `{ keep: false }` changes nothing; with
-`{ keep: true }` it is checked and becomes one new revision of the loaded
-sequence (saving that to the shelf stays its own step), or is refused (409)
-— keeping the sequence and the take as they were — when another sequence
-was loaded or this one edited during the take, or a pattern it used cannot
-be placed. `replace` removes whole clips the take overlaps on the lanes and
-fixtures it writes, never cutting one; the answer lists every clip removed
-(`removed`), the beats the take wrote (`range`) and, in `beyondRange`, each
-removed clip that reached outside them with how far before and after. An
-empty take changes nothing.
+| Transport | Behaviour |
+|-----------|-----------|
+| Play | Start or resume; runs even while the base engine is stopped |
+| Pause | Hold sequence position while selected clips continue looping |
+| Stop | Freeze the last base/sequence picture; `blackout=1` freezes black |
+| Unload | Release the held picture and return ownership to the base look |
+| Next/previous/shuffle/jump/seek | Select another position or clip |
+| Resync | Align to beat or bar; 6/8 is three quarter-note beats per bar |
 
-The live state's `sequence` carries what is loaded, its revision, the
-transport, the beat and bar (and the bar's length in beats), the clip on each lane, the loop and, while a
-take runs, the take.
+Without a future loop, an arrangement ends at the bar after its final clip or
+command. A playlist ends after its last row unless autoplay is off or shuffle
+continues selection. Natural completion releases the look and reports `ended`;
+the next Play starts from the beginning. Recording can continue beyond that end.
 
----
+Patterns are reusable lane/clip bundles: capture a range or insert a saved
+pattern at a beat. Capturing includes complete intersecting clips and can
+expand the returned range. A pattern pad plays the bundle as a voice instead.
 
-## Audio modes
+Punch recording stages pad launches after count-in. `overdub` adds clips;
+`replace` removes whole overlapping clips on the written lanes/fixtures.
+Starts/ends snap to the nearest grid, ties away from zero, minimum one quantum.
+Empty pads and strobe pads record nothing. Keep validates one transaction;
+conflicting edits return 409 and retain the take. Discard changes nothing.
+Saving the loaded sequence to the shelf remains a separate action.
 
-`settings.audio.mode` decides what the music does to the effects:
-
-- `off` — effects ignore their triggers and run on their loop;
-- `tempo` (default) — effects follow the tempo and its accents, with no audio;
-- `reactive` — the live input's levels drive the reactive effects and the
-  Disco and Visualizer kinds.
-
-The `master` (`sensitivity`, `smoothing`, `attackMs` up to 2 s, `releaseMs`
-up to 5 s, `threshold`, `reactiveDepth`, `brightness`) shapes the levels as
-Hue Dynamics does; `ldjTrigger` (0.3) is Light DJ's trigger level. With no
-audio coming in, reactive effects play as in `tempo`. The levels go to
-clients that subscribe to the `audio` topic.
-
-One Disco detector and one loudness trigger serve every effect, so one
-effect's settings run each: the highest playing voice of that kind, else the
-highest playing clip of the sequence, else the base look, else the settings.
-A macro or a pattern counts through the step or clip it is playing at that
-moment. `GET /api/audio` and the live state's `audio` say who owns each
-(`detectors`).
-
----
+A kept take reports `added`, `removed`, `range` and `beyondRange` for removed
+clips extending outside the take. State includes transport, beat/bar, lane
+selection and recording status; `sequences` and `sequencePatterns` provide the
+shelf summaries. The shelf permits 64 saved sequences.
 
 ## Safety
 
-| Setting | Default | |
-|---------|---------|---|
-| `safety.photosensitivityAcknowledged` | `false` | The strobe and every effect that flashes faster than the photosensitivity threshold play only once this is given |
-| `safety.strobeMaxLatchSec` | 60 | The longest a latched strobe runs |
-| `safety.hdFlashIntervalMs` | 350 | Hue Dynamics' per-lamp flash interval, applied to its effects only |
-| `safety.flashLimit` | `false` | Flash Limit (see **Flash limit**) |
+`photosensitivityAcknowledged` starts false and persists when acknowledged via
+`POST /api/safety/acknowledge`. Until then, rapid-flash presets/voices,
+strobes, rapid sequence content and rapid Matrix modes are refused. REST
+returns `409 photosensitivity acknowledgement required`; socket commands
+return `error-msg`; MIDI/Companion report the refusal. Stop/release remains
+available. The Header and Perform acknowledgement indicator opens the warning.
 
-Until `POST /api/safety/acknowledge` is called (stored across restarts),
-starting the strobe, a fast-flashing voice, preset, sequence clip or matrix
-mode answers `409 photosensitivity acknowledgement required`; an energy
-strobe stays dark instead. Stopping and releasing never refuse.
+| Control | Scope |
+|---------|-------|
+| `safety.strobeMaxLatchSec`, default 60 | Maximum manual strobe-kind latch lifetime, regardless of launch route |
+| `safety.hdFlashIntervalMs`, default 350 | Per-lamp bright-rise interval for Hue Dynamics Party effects; not Disco or every effect family |
+| `safety.flashLimit`, default false | Limit large-area flashing to three flashes per second |
+| Master blackout | Darken the show while retaining output ownership |
+| Disarm | Darken/release output streams, stop the base and clear voices |
 
----
+Other rapid loop/latched effects do not inherit the manual strobe cap.
+Hue flash/pulse adaptation preserves the exemptions described under
+[Hue flash handling](#hue-flash-handling).
 
-## Auto show setup
+## Music, analysis and audio
 
-The analyser is Python. Manual control does not need any of this.
-[docs/audio-analysis.md](docs/audio-analysis.md) covers what it does, which
-numbers you can turn and where to extend it.
+### Analysis environment
 
-**The environment** is one button: Sources → **Analysis environment** →
-*Set up the analysis environment*. It runs [uv](https://docs.astral.sh/uv/)
-on the app's lockfile. uv downloads a Python of its own (3.12), so nothing
-has to be installed first. It suggests the torch build for the machine: CUDA
-when `nvidia-smi` names an NVIDIA card, ROCm where ROCm is installed on Linux,
-the CPU build otherwise. You can pick another. The page shows the downloads as
-they go and what uv said, and it can cancel. While it runs, the analyser waits
-and the live input stops (on Windows a running Python locks the files uv
-replaces). Both start again on the new environment. The packaged build carries
-its own uv; a checkout uses the one on `PATH`. From a terminal, the same:
+Sources → Analysis environment installs the locked Python environment using
+uv and Python 3.12. Select CPU, CUDA (`cu128`) or ROCm. In a checkout, uv must
+be on `PATH`; packaged builds include it.
 
 ```bash
-npm run setup:python                   # the build the machine suits
-npm run setup:python -- --build cu128  # or: cpu, cu128, rocm
+npm run setup:python
+npm run setup:python -- --build cu128
+python scripts/download-models.py --list
+python scripts/download-models.py
 ```
 
-which runs, with uv's own Python and into the analysis environment,
+Download required model weights before the show via Sources → Analysis models
+or the script. Analysis itself does not download missing weights. The managed
+environment supplies yt-dlp, Deno and ffmpeg; a tool already on `PATH` takes
+precedence. The analysis needs torch; manual control does not.
 
-```bash
-uv sync --locked --extra cpu --python 3.12   # or --extra cu128 (NVIDIA), --extra rocm (AMD, Linux)
-```
-
-The environment is the `.venv` in the project folder, or in the packaged
-build's data folder. The server finds it by itself. The lock keeps torch,
-torchaudio and torchvision on one build. A torchvision from another build
-installs without complaint and then fails every model with
-`operator torchvision::nms does not exist`. Without uv,
-`pip install -r requirements.txt` into a Python of your own still works: install
-torch, torchaudio and torchvision together from one index first.
-
-**The model weights** come next, before the show and not at load-in on venue
-wifi. The analysis never downloads them itself. Settings → **Analysis Models**
-lists each one: what it is for, whether it is here, its size and licence. It
-fetches the missing ones with a progress bar, and restarts the analyser to use
-them. From a terminal:
-
-```bash
-python scripts/download-models.py --list   # what is here
-python scripts/download-models.py          # what the show needs (~4 GB with MuQ)
-python scripts/download-models.py --only songformer,panns
-```
-
-**ffmpeg** and **yt-dlp** come with the environment: yt-dlp itself, and an
-ffmpeg binary (imageio-ffmpeg). The server looks on `PATH` first, so one you
-installed yourself wins, then in the analysis environment, whose scripts folder
-is on no `PATH` unless it was activated. The pre-show check says which it found
-and where.
-
-yt-dlp needs to be **2025.11.12 or newer**: YouTube now requires a JavaScript
-runtime to download at all. You do not need to install one. The server hands
-yt-dlp the Node it is itself running on. The environment also installs
-[Deno](https://deno.com/) beside yt-dlp, where yt-dlp looks first. That is the
-runtime the packaged build uses, because its executable is no Node yt-dlp can
-run. The pre-show check warns about an older yt-dlp;
-`pip install -U "yt-dlp[default,deno]"` updates it.
-
-**torch is required.** The beat grid, the metre and the instrument roles come
-from models — a beat-tracking transformer and a source separator — and there is
-no signal-processing fallback for the beat grid. The chain that used to be there
-reported a 99 BPM pop song at 198, because reasoning about periodicity cannot
-tell a song counted at 99 from the same song counted at 198. An analyser that
-cannot load the model says so and names the install command, rather than quietly
-returning a worse answer under the same field name.
-
-CUDA is used when it is there and threads when it is not; `ARTNET_ANALYSIS_DEVICE=cpu`
-forces threads, which is worth setting on a one-machine rig whose GPU is already
-driving a visualiser. On CPU expect roughly 0.6× realtime, most of it separation
-— set `separate_sources=False` in `src/analysis/config.py` to trade the
-stem-derived instrument roles for a 4× faster analysis.
-`python scripts/bench-analyze.py track.wav` shows where a machine spends its
-time, stage by stage.
-
-**GPU memory.** The separator, MuQ, MuQ-MuLan and SongFormer are several
-gigabytes of weights between them, which an 8 GB card cannot hold at once with
-room left for a pass: kept on the card, whichever ran last failed with *CUDA out
-of memory*, on some tracks and not others. So on a card under 12 GB the models
-wait in RAM, and each goes onto the card for its own pass only. The weights are
-pinned (page-locked) in RAM, so each copy runs at the bus's full speed. A
-gigabyte takes a fraction of a second, where reloading it from its checkpoint
-took seconds. After the pass the card's copy is dropped rather than copied back,
-since the weights do not change. At most a quarter of the RAM is pinned
-(`ARTNET_PINNED_GB` changes it), and anything past that waits in ordinary
-memory. A pass that still runs the card out of memory is run again on the CPU.
-That is slower, but the track gets its answer, and a card that was keeping
-models resident keeps them in RAM from then on. **Settings → Analysis → GPU
-memory** chooses: *Auto*, *In RAM* (always) or *On the card* (never; for a card
-with room to spare). The analyser's log says which it is using.
-
-**Structure.** Settings → Analysis → **Structure** decides who names the
-sections. [SongFormer](https://huggingface.co/ASLP-lab/SongFormer) was trained
-on thousands of annotated songs. It knows a pre-chorus, a chorus that is not the
-loudest part, and an instrumental break. Without it, the sections come from where
-the music repeats, and arrangement rules supply the names. **Auto** uses SongFormer
-when the analyser has a GPU and its weights (2.9 GB) are downloaded. On a CPU it
-takes most of the track's length, so there it is only used when set to
-**SongFormer**. Its memory grows with the square of how much of the track it
-reads at once, so it reads in windows sized to the memory that is free: a long
-track in a machine with little to spare is read in shorter windows, and one
-that has not enough for even a minute falls back to the arrangement rules.
-Scored against human annotations of ten live recordings, the sections it
-produces match the annotated names over 68 % of the track, where the
-arrangement rules manage 33 % (`scripts/eval-structure.py` runs that check).
-Try it on the show machine first:
-`python scripts/bench-analyze.py track.wav --structure songformer`.
-
-**Separator.** Settings → Analysis → **Separator** picks the model that splits
-each track into stems. **Demucs** is the default and keeps up with a live set.
-**BS-RoFormer** takes about seven times as long, so the playing track is rarely
-ready in time. On a Radeon 890M, a 3½-minute track takes about 60 s with Demucs
-and about 400 s with BS-RoFormer. Changing it restarts the analyzer; tracks
-already analysed keep their cached result.
-
-**AMD GPUs** run through ROCm. Install torch from AMD's index before
-`requirements.txt`; the comment above `torch` there has the command and the
-version pairing. The analyser turns AMD's MIOpen library off, because
-the Windows nightlies cannot compile its BatchNorm kernel. It also handles a
-known ROCm fault: when a GPU FFT fails mid-track, that track finishes on the
-CPU and the analyzer restarts itself before the next one.
-
-PANNs (the AudioSet tagger) stays optional. Genre no longer depends on it:
-genre comes from MuQ-MuLan, scored zero-shot against the subgenres by name. What
-PANNs still supplies is the instrument-role priors, and a genre fallback for a
-rig that has it but no MuQ-MuLan checkpoint. Without either, palette selection
-falls back to a mood-based path. Fetch it under Analysis Models or with
-`python scripts/setup-panns.py` (~310 MB, over HTTPS with verified digests). A
-track never waits for it: without its weights the analysis simply goes untagged.
-
-### Which Python?
-
-The environment `uv sync` made comes first when it exists: `.venv` in the
-project folder, or in the packaged build's data folder. It was built for this
-project from its lockfile. Otherwise, having
-*a* Python is not the same as having the right one. `py` (the Windows
-launcher) and `python` (whatever is first on `PATH`, often a conda env) are
-routinely two different installations, and `pip install -r requirements.txt`
-only ever populates one of them.
-
-The server therefore picks the interpreter that can actually import the
-analyser's dependencies, not merely the first one that answers, and prints what
-it chose at startup:
-
-```
-Python  →  py → C:\Users\you\miniconda3\python.exe (3.12.7)
-```
-
-If nothing on the machine has them, it says so at startup — with the exact
-command to fix it — rather than letting the failure surface minutes into a set
-as a `ModuleNotFoundError` after a track has already downloaded:
-
-```
-[python] C:\Python312\python.exe is missing: librosa, numpy, soundfile
-[python] Interpreters found:
-[python]   py     → C:\Python312\python.exe (3.12.7) — missing librosa, numpy, soundfile
-[python]   python → C:\Users\you\miniconda3\python.exe (3.12.7) — has everything
-[python] Fix: set it up from the app — Sources → Analysis environment, one button — or from the
-[python]   project folder with: npm run setup:python   (uv sync from the lockfile)
-[python] or install into this interpreter with
-[python]   "C:\Python312\python.exe" -m pip install -r requirements.txt
-```
-
-To force a specific interpreter, set its full path under **Sources → Analysis →
-Python**. The page shows which one is live and what it is missing.
-Changing it recycles the analyzer process; no restart needed.
+Analysis settings select Demucs or BS-RoFormer separation, structure model,
+GPU memory policy and timeouts. `analysis.pythonPath` selects an interpreter;
+`ARTNET_PYTHON` overrides discovery. See
+[Audio analysis](docs/audio-analysis.md) for the analysis schema and controls.
 
 ### Playback sources
 
-| Source | What it needs |
-|--------|---------------|
-| **Spotify + OS clock** | Both of the two below. The best option when you play Spotify on this machine — see [Spotify + OS clock](#spotify--os-clock-the-hybrid-source). |
-| **Spotify** | A client ID and secret under Sources → Spotify, then *Connect Spotify*. Register the redirect URI the server prints at startup — see [Spotify authorisation](#spotify-authorisation). |
-| **PRO DJ LINK** | CDJs on the same network. Toggle it under Sources → Playback sources, or on the main page. See [PRO DJ LINK](#pro-dj-link). |
-| **Now playing (OS)** | Nothing — reads the OS media session, so any player that reports to it works: the Windows media session (SMTC), or on Linux the MPRIS players on the session bus, through systemd's `busctl`. Not on macOS. Toggle it under *Playback Sources*. |
-| **Deezer** | The extension in `browser-extension/` (see its README). Carries ISRC and the upcoming queue, so it prefetches. |
-| **Live input (by ear)** | The [live input](#live-input) on. Needs no analysis: the show answers what it hears. *Auto-detect* falls back to it before the timer. |
-| **Timer** | Fallback: plays the analysed timeline against a wall clock. |
-
-The Deezer ARL cookie (Sources → *Deezer*) is optional: with it, audio is
-fetched by ISRC for an exact match instead of a yt-dlp search. Downloading from
-Deezer this way is **against Deezer's terms of use** — the ARL comes from your
-own account, and the choice is yours. Nothing of it is loaded until an ARL is
-set ([d-fi-core](https://www.npmjs.com/package/d-fi-core) is an optional
-dependency, imported the first time Deezer is used), and the first ARL takes a
-restart: decrypting Deezer's audio needs an OpenSSL module that the server only
-turns on when there is one (see the note under [Configuration](#configuration)).
-
-### PRO DJ LINK
-
-Turn it on under *Playback Sources* (or on the main page) with the CDJs and the
-mixer on the same network as this machine. It uses
-[alphatheta-connect](https://github.com/chrisle/alphatheta-connect), installed
-with the rest by `npm install` — it builds a native SQLite module, so an install
-that cannot build it leaves PRO DJ LINK reporting why and everything else
-working.
-
-- **Which deck.** The show follows the deck the room hears: the tempo master
-  while it is on air, else the deck it already follows, else the one that has
-  been on air longest. *On air* is the DJM's: its channel is up. Without a DJM
-  on the network every playing deck counts. A change waits three quarters of a
-  second, so a fader flicked through a scratch does not throw the show across.
-- **Where it is.** Each deck is placed by its status packets, pinned on every
-  beat by its beat packets, and on a CDJ-3000 set outright every 30 ms by its
-  absolute-position packets — through loops, hot cues, scratching and reverse
-  play. The *PRO DJ LINK* panel shows each deck, which is on air, the master,
-  and which the show follows.
-- **The exact file.** A track on a USB stick or SD card in a player is fetched
-  off it over the network and analysed as it is: the recording the DJ plays, so
-  the analysis lines up with the deck to the millisecond. It is cached apart from
-  a search result, which is only the fallback (rekordbox over the link, a CD, or
-  a fetch that fails). Every loaded track is prefetched this way.
-- **rekordbox's grid and phrases.** The deck's beat grid becomes the analysis's
-  beats, and rekordbox's phrase analysis its sections — for club tracks
-  Intro/Up/Down/Chorus/Outro as intro/verse/breakdown/drop/outro, for songs
-  intro/verse/bridge/chorus/outro — so the looks change where the DJ's rekordbox
-  says the chorus starts, and a returning chorus gets the same look.
-- **Through a mix.** When the show moves to the incoming deck, the outgoing
-  track's show plays on, on its own deck, until the incoming track is ready.
-  Then the lights blend into it as an operator watching the mix would:
-  - after a cut, they cut;
-  - with a drop in the incoming track within ten seconds, they blend until
-    the drop and let it land as a cut;
-  - otherwise the blend ends on the incoming track's next phrase — its next
-    section or its next eight bars, at least two bars on;
-  - brought in already in a chorus or a drop, a bar's blend;
-  - with nothing within reach, two bars.
-
-  Times follow the deck's own tempo, so a track pitched up gets there sooner.
-  The server log says which it chose.
-
-### Spotify + OS clock (the hybrid source)
-
-Neither Spotify nor the OS media session is good at both halves of the job, and
-this source takes each from whichever has it.
-
-**Spotify knows what is playing.** The track id, the ISRC that fetches the exact
-recording rather than a search result, the real duration, and — the part nothing
-else has — the *upcoming queue*, which is what lets the next few tracks be
-analysed before anyone hears them. What it is bad at is *where* playback is: it
-answers about once a second, over the network, with a position that was already
-a round trip old when it was measured.
-
-**The OS media session knows where playback is.** It is read locally with no
-network in the path, so its position is fresher and far steadier. What it does
-not expose is any track id or ISRC — only the artist and title strings the
-player chose to publish, which is not enough to fetch the right recording or to
-see what is coming next.
-
-So: content and queue from Spotify, clock from the OS. Measured against a
-simulated 1 Hz Spotify poll with ±350 ms of jitter, and a 2 Hz local session
-with ±60 ms:
-
-| | Mean error | 95th percentile | Backward jumps per 2 min |
-|---|---|---|---|
-| Spotify alone, interpolated | 189 ms | 337 ms | 27 |
-| Hybrid | 11 ms | 25 ms | 0 |
-
-The backward jumps matter as much as the error: a cursor that moves backwards
-re-crosses timeline events it has already fired, so the rig flashes twice for
-one beat. The hybrid clock is monotonic by construction — corrections go into
-its *speed*, capped at five percent, never into its position. See
-`src/playback-clock.js`.
-
-**It is never worse than plain Spotify.** The OS session only drives the clock
-while it is reporting the track Spotify says is playing — matched on title,
-artist and duration. When it is not (a different app took the media keys, the
-session went stale, you are playing on another device) the clock falls back to
-Spotify's own position, which is exactly what the Spotify source would have
-done. On a machine with no media session at all — a Mac, or a server started
-outside the desktop session — hybrid still runs; it just runs on the Spotify
-clock.
-
-**On Linux** the session is MPRIS. Spotify, Firefox and Chromium tabs, VLC, mpv,
-Rhythmbox and the other desktop players publish themselves on the session bus
-as `org.mpris.MediaPlayer2.*`, and the server reads them through `busctl`, which
-comes with systemd, twice a second. With several players it follows the one
-that started playing last and stays with it while it plays. With none playing,
-it reports the one that played last, paused. The server has to run inside the
-desktop session (as your user, with `DBUS_SESSION_BUS_ADDRESS` set) to see the
-players. Started from a system service it has no session bus, and it says so
-once in the log.
-
-The *Follow* selector's **Auto-detect** picks it whenever both halves are live.
-The source strip shows which clock is driving, with the current drift in its
-tooltip.
-
-### Spotify authorisation
-
-Spotify requires HTTPS for OAuth redirect URIs, with one exception: **loopback
-IP literals**. `http://127.0.0.1:PORT` is accepted, and `http://[::1]:PORT` for
-IPv6. `http://localhost:PORT` is not — Spotify dropped it in February 2025
-because localhost resolution varies between machines.
-
-That exception is enough to authorise without any third party, so **the OAuth
-proxy is optional and off by default**. Leave *OAuth Proxy* blank and the flow
-goes straight to `accounts.spotify.com`; register the redirect URI the server
-prints at startup, which is:
-
-```
-http://127.0.0.1:<port>/auth/spotify/callback
-```
-
-Use the literal `127.0.0.1` in the dashboard whatever `server.host` is set to —
-it is the redirect Spotify checks, not the address you browse the UI on.
-
-**When you still want a proxy.** The loopback redirect only works if the browser
-doing the authorisation is on the same machine as the server: a phone on the LAN
-that follows it would land on its *own* `127.0.0.1`. So if the rig is headless
-and you drive it from a tablet, either
-
-- do the connect once from a browser on the server machine — the session is
-  saved, so this really is once and not once per boot (see below), or
-- set *OAuth Proxy* to a relay, which is the original behaviour — the proxy
-  takes Spotify's callback and forwards the code to this server's LAN address.
-
-### The connection survives a restart
-
-Connecting stores the Spotify **refresh token** in `settings.json` under
-`spotify.refreshToken`, and the server signs back in with it at startup. The
-banner says `reconnected from the saved session` when it works.
-
-Only the refresh token is kept. Access tokens last an hour, so one saved at
-shutdown would be stale by the next show, while the refresh token mints a fresh
-one on demand. Spotify sometimes hands back a *new* refresh token during a
-refresh; that is stored too, so the saved session cannot quietly go stale.
-
-It is a credential — anyone holding it can read the connected account until it
-is revoked — so it is treated like the client secret and the Deezer cookie:
-`settings.json` is written `0600`, and the app is only ever told
-*whether* one is set, never its value. There is no field for it; it is written
-by the server, not typed.
-
-Two things clear it: pressing **Disconnect**, and Spotify itself rejecting the
-stored token (revoked in your account, or the client ID changed underneath it) —
-in which case the server says so and leaves you to reconnect. A network failure
-at boot does *not* clear it, because a headless rig routinely comes up before
-its network does; it is simply retried on the next start.
-
-Going direct is also the safer of the two: the authorization code never passes
-through anyone else's server, and the OAuth `state` nonce round-trips through
-Spotify intact, so the *Allow Unverified State* escape hatch (which exists for
-relays that strip `state`, and which disables OAuth CSRF protection) is not
-needed at all.
-
-### Shaping the generated show
-
-Two controls sit in the *Look* panel and decide how the generated show reads:
-
-- **Palette** — how many colours a song locks to: 2, 3, 4, or **Auto**. On Auto
-  the show sizes it per track — one colour per distinct passage, capped at four,
-  and one fewer when the music cannot carry the separation, because four hues on
-  a track with two ideas read as arbitrary rather than as rich. The button shows
-  what the current track resolved to. Picking a number yourself always wins.
-- **Intensity** — 0–100, how hard the show pushes: accent density, drop effects,
-  strobe bursts and beat-division scaling. 50 is normal.
-
-Both are live: changing either rebuilds the timeline from the analysis already
-in hand, so the new setting takes effect on the next tick without re-analysing
-the track. Neither touches the master dimmer — that slider stays yours.
-
-With LED bars in the patch, the look comes apart in two. The pars carry the
-colour and the wash, and the bars carry the movement: the pars no longer chase
-underneath bars that are chasing too. The bars' picture follows what the music
-is doing:
-
-| Where | The bars | Laid out |
-|---|---|---|
-| verse, intro | a slow gradient | across the stage |
-| pre-chorus, build-up | **Rise**: a fill that climbs through it, full as the drop lands | mirrored, from the middle out |
-| chorus | a comet: a mirrored chase | mirrored |
-| drop | **Impact**: a ring thrown out from the centre on every step, sparks on every kick | across the stage |
-| breakdown, outro | low plasma | across the stage |
-| bridge, a solo | the kit as it is played, when the analysis has the drum hits | per bar |
-
-- **The pars.** A wash by how hard the passage drives: held colour, a
-  split, a pulse on every step, a colour cycle.
-- **A drop's first instant** is the one whole-rig moment: every fixture on
-  the hot colour at once.
-- **The group split** is left off on such a rig: the pars and the bars are
-  the two layers now.
-- **The Patterns panel** says what each is on ("Pars on Hit, bars on
-  Impact"). A pattern picked by hand runs on the whole rig again, and so
-  does a cue saved before this.
-- **Replanning.** Adding or removing the last bar replans the track.
-
-With panels in the patch too — a WLED matrix, cells in rows — the panels get
-a picture of their own, one that stands up on a screen, while the pars and
-the bars keep theirs:
-
-| Where | The panels |
-|---|---|
-| verse, pre-chorus, build-up, bridge, a solo | **Bars**: the band's levels, a column for each part |
-| chorus, drop | **Fire**, taller with the bass and flaring on the kick |
-| intro, breakdown, outro | **Rain**, slow and long-trailed |
-
-A drop's first instant is still every fixture at once, the panels included.
-The panels are laid out as the bars are (across the stage, per bar, or
-mirrored), so a matrix added as two halves burns as one. Adding or removing
-the last panel replans the track; a cue saved before this recalls with the
-panels drawing what the bars do.
-
-On a rig of pars there are no bars to carry the movement, so the pars carry
-all of it, and the show gives them shape:
-
-| Where | The pars | Laid out |
-|---|---|---|
-| chorus, drop | the passage's travelling look — a chase, pairs, a runner, a stack | mirrored, from the middle out to both ends at once |
-| a drop's first bars | the movement it lands into | mirrored |
-| build-up | a stack that builds out from the middle on every step, the steps quickening to the peak | mirrored |
-| verse, intro, breakdown, outro | as chosen for the passage; resting on a ribbon, a fade, a wave, a rolling gradient or a slow plasma | across the stage |
-
-- **A long passage comes round.** Inside a chorus the look turns every two to
-  eight bars, through three others and back to the passage's own, so the look
-  the chorus opened on returns at the top of every phrase — where it used to
-  swap between the same two for as long as the chorus lasted.
-- **Every scene says how it is laid out**, so the verse after a mirrored
-  chorus crosses the stage again, and stopping the show puts the rig back
-  across the stage.
-
-Past 70, intensity also lifts a calm or rock track out of its tier *for drops
-only*. A fader that did nothing on a ballad is a fader you stop trusting; it
-buys the drops, never accent density, so the track still does not strobe through
-its verses.
-
-### Where the show rests
-
-The generated show spends a budget rather than reacting to everything. Contrast
-is the product: a show that flashes constantly has no big moments, because
-everything is one.
-
-- Accents are capped per rolling minute, from the track's style and the
-  intensity fader. Over budget, the weakest candidates are dropped — weakest
-  meaning least confident *and* smallest: a big energy spike outranks a small
-  one the analyser was equally sure of.
-- Nothing fires in the bar before a drop, so the build-up's own arc has the room
-  to itself, and nothing in the drop's first bar — the drop is the statement.
-  Counted in bars so it scales with the tempo, and never inside a burst the
-  drop itself fired.
-- Intros, breakdowns and outros carry no accents at all and stay on quarter-note
-  movement. That is what makes the chorus after them land.
-- Passages the analyser recognises as the same get the same pattern and the same
-  palette rotation every time they return, so the second chorus reads as the
-  chorus rather than as a new idea. Recognition is the structure labeller's
-  clustering where it has an answer, and the timbre embeddings where it does not
-  — which catches a returning chorus the labeller split in two.
-- The last time a passage comes round is the biggest: it keeps its look but
-  steps up one beat subdivision where the pulse can carry it, and wins the
-  accent budget when it competes for it.
-- Looks arrive the way the music does. Into a breakdown or an outro the rig
-  crossfades over two bars (never more than four seconds), into a verse over
-  half a bar, and into a chorus or a drop it cuts on the downbeat. Colour moves
-  and rotations inside a section blend over a beat. The rehearsal preview shows
-  the same fades, and steps its chases on the same analysed beats as the rig.
-
-Accents land on the drums as they were played, where the analysis has them:
-
-- **Bar accents** go on the kick or snare that marks the bar, not on the
-  grid's idea of it. A bar line nothing was hit on gets none.
-- **A drum fill into a new section** is marked on its last hit.
-
-Only strong hits count, and only from lanes found by the rules measured on
-real drumming ([How well the lanes work](docs/audio-analysis.md#how-well-the-lanes-work)).
-On the separated drum stem those kicks are right nine times in ten and those
-snares four in five. Without separation only the kick is trusted. A track
-analysed before these rules keeps its accents on the grid until it is analysed
-again.
-
-The show also *reads the track continuously*, not only at section boundaries.
-Twice a second it takes the separated stems' levels — how much low end, whether
-a voice is present, how much air is on top, how fast the music is moving — and
-the rig follows them underneath whatever pattern is running. A chase through a
-breakdown and the same chase through the chorus after it are the same pattern in
-the same colours, and they do not look remotely the same. None of it touches the
-master dimmer.
-
-### Remembering the night
-
-Every track is planned on its own, and on its own each plan is a good one.
-Played back to back they could be the same plan twice: two house records an
-hour apart in one palette, the same chase on every chorus, a blinder at every
-drop from the first track to the last. The show now remembers the tracks it
-has played tonight:
-
-- **No repeats.** The palette the last track played in is never used straight
-  after, and no section opens on the look the same section opened on last
-  track.
-- **Keys that mix keep colours.** When a track mixes harmonically out of the
-  last one — the same number on the Camelot wheel, or a step round it — the
-  palette leans towards banks that share its colours. A key change that did
-  not blend is free to change them all. Over the test tracks this changes the
-  pick for about half the pairs.
-- **An arc across the night.** A track that drives harder than the last few is
-  a peak: more accents, and the blinder. A breather after them spends less,
-  and the first twenty minutes warm up. After a blinder, the next track that
-  is no peak trades its blinders for the white strobe.
-
-The *Look* panel says how many tracks the night has had and where this one
-sits. A track starting more than an hour after the last one started begins a
-new night. **Settings → Show → Remember the Night** turns it off.
-
-### Track edits
-
-The show replans a track whenever anything it reads changes: the intensity,
-the palette size, the rig, the tracks before it. **Track edits**, on the
-[Timeline view](#the-timeline-view), are the changes of yours that survive that:
-
-- **Lock** the palette the track is playing in.
-- **Add** an accent at the playhead — or, rehearsing, at the rehearsal mark
-  (blinder, white or colour strobe, UV wash, kill or glow) — or **remove** the
-  one nearest it. An added accent fires whatever the budget says.
-- **Swap a section's look**: for the whole rig, or for the pars, the bars and
-  the panels apart. The section holds it, and its rotation stops too. Each row
-  shows the show's own choice beside yours.
-
-They are kept beside the track's analysis in the cache, and put back every
-time the track plays. Analysing the track again keeps them: sections match
-within two seconds and accents within 150 ms. Clearing the cache takes them.
-`GET` and `PUT /api/auto/overlay` read and replace them from a script.
-
-### The Timeline view
-
-**Timeline** (**4**, `/#timeline`) is the loaded track's show laid out to be
-read and rehearsed: the analysis (sections, the energy and band curves, beats,
-drops and build-ups) with the planned looks and accents under it, the analysis
-in numbers, the stage preview and the [track edits](#track-edits).
-
-- **Zoom** to 2×, 4× or 8× and the timeline scrolls; it keeps the mark in view
-  as it moves, and leaves it where you scrolled it otherwise.
-- **Press or drag** on it, or use **←** **→** on it (**Shift** for ten
-  seconds, **Home** / **End** for the ends), to rehearse from there. The
-  section buttons under it jump to a section's start.
-- **Rehearsing** plays the planned show on the stage preview and the
-  [Stage view](#the-stage-view) — nothing goes out to the rig — from the same
-  position on both. **Back to live** returns them to the output. The white
-  line is where the music is now; the amber one is the rehearsal.
-
-### The Stage view
-
-**Stage** (**5**, `/#stage`) draws the rig in 3D, in a hazy room, from where
-the audience stands, from above or from the side. Drag to look around, scroll
-or pinch to move closer; with the stage focused, the arrow keys turn and tilt
-and **+** / **−** move closer. **Haze** thickens the beams and the fog.
-
-Fixtures hang where the plan puts them, by their group: *front*, *back* and
-ungrouped ones on the truss, aimed down at the stage and a little towards the
-audience; *floor* ones on the deck, aimed up; *room* ones as lamps at head
-height around the room. A Philips Hue lamp is a bulb wherever it is. A bar's
-cells hang in a line where the plan draws it, and a panel stands upright.
-
-- **Live**, it shows what is going out: the DMX feed read through each
-  fixture's profile, every light of every bar, after the masters, overrides
-  and identify.
-- **Rehearse track** plays the loaded track's planned show at any moment of it
-  — scrub to the drop and see it — sampled by the same shared code the engine
-  renders with (`src/shared/preview.ts`), at the display's frame rate.
-
-three.js is fetched the first time the view opens, not with the page, and kept
-by the service worker with the rest of the app. A browser with WebGL turned
-off is told so; the plan in the Manual and Rig views shows the same rig from
-above.
-
-### Flash limit
-
-**Settings → Show → Flash Limit** holds the whole rig to three large-area
-flashes a second. That is the photosensitivity threshold broadcast and web
-guidance share (WCAG 2.3.1, ITU-R BT.1702). A flash is a pair of opposing
-changes of a tenth of full brightness or more, the darker side under 80 %.
-It is measured over the rig as a whole: every fixture's mean light, after the
-masters.
-
-- **A look that flashes faster** — a Hit at sixteenths, a run of kills — is
-  held, once the second has had its three, to a flicker of under a tenth
-  around where the light last turned. It is dimmed, never blacked out.
-- **Strobe channels and the software strobe** are capped at three flashes a
-  second.
-
-It applies to every output (Art-Net, sACN, WLED, OpenRGB, Hue) and to manual looks,
-cues and overrides as much as to the auto show. The header shows **Flash ≤ 3/s**
-while it is on. It is off by default: most of what a party rig does is above
-this line.
-
-### Seeing what the analyser heard
-
-```bash
-python src/analyze.py track.wav --report report.html
-```
-
-writes a standalone page — no plotting library, no network — with the waveform
-and detected sections, beat markers scaled by per-beat confidence, all seven
-frequency bands, the impact curve with drops and build-ups over it, and every
-musical event on its own lane. It is the fastest way to answer "why did it do
-that there".
-
-### Buildups — following what the music actually does
-
-The eight seconds before a drop used to get the same treatment every time: beat
-division 1, then 2, then 4, whatever the track was doing. That is right often
-enough to look deliberate and wrong often enough to look mechanical. Those eight
-seconds are now measured.
-
-Two separate things happen in there, and they are independent — a track can do
-either, both or neither.
-
-**The roll.** Standard production practice is to double the *subdivision* at
-constant tempo: a snare on quarters, then eighths, then sixteenths, sometimes
-thirty-seconds. That is what an audience hears as "speeding up", and it never
-touches the BPM. The analyser counts it and reports it as the buildup's
-`subdivision`, and the rig's beat division follows how far it actually goes. For
-documents written before the analyser counted it, onset density stands in — the
-onsets in the last third of the buildup against the first third:
-
-| Onset density ratio | Peak beat division |
-|---|---|
-| under 1.4× | 2 — a riser with no roll under it; the rig does not sprint |
-| 1.4–3× | 4 — one doubling, the common case |
-| 3× and up | 8 — two doublings, all the way to thirty-seconds |
-
-A buildup that starts from silence has nothing in its early third, which would
-make the ratio a division by roughly zero; that case is detected and left on the
-default rather than slamming the rig to its fastest division. In 3/4 the
-division stays at 1 whatever the roll does, because subdividing a triple metre
-by two puts the rig on the off-beats of the bar.
-
-**The ramp.** Some tracks genuinely change tempo into a drop. Rarer than the
-roll, but when it happens the beat clock has to follow or the rig drifts out of
-time exactly when it is most exposed. The analyser's tempo curve is clamped to
-±15% of the global BPM and smoothed over ~2 s, so what survives is real: a
-change of 3 BPM or more across the buildup, moving mostly one way, is followed
-with stepped BPM patches.
-
-What happens *at* the drop is decided by the track, not by a guess — the tempo
-curve for the few seconds after the drop says whether the ramp resolved or
-stuck:
-
-- a push that falls back is undone at the drop, or every pattern after it runs
-  at the buildup's peak tempo;
-- a genuine tempo change is kept, for the same reason.
-
-On a track the analyser already considers unstable (`tempoStability` below 0.60)
-the periodic BPM path is emitting across the whole track from the same curve, so
-buildups leave the tempo alone — two sources of truth for the beat clock would
-fight each other.
-
-### Sync — lining the lights up with the room
-
-There is always a gap between the audio a room hears and the light that answers
-it, and none of it is under this program's control. The player buffers. A
-position API like Spotify's is polled and quantised, so the number it reports is
-already a little stale. Art-Net crosses a network. The fixture has its own
-processing delay. And the PA is metres away from the audience, which is a few
-more milliseconds by itself. It adds up to a fixed error for a given rig — but a
-different one for every rig, so it cannot be derived, only dialled in.
-
-The **Sync** control in the *Look* panel does that. It shifts the whole
-generated show against the reported track position:
-
-- **Positive** runs the lights **ahead** — use it when the rig feels late. It
-  moves the pattern clock with the cues: the chase steps on the shifted beats.
-- **Negative** holds them back.
-- Range is ±2000 ms, in 5 ms steps.
-
-The `−` and `+` buttons move it 5 ms at a time, which is how it actually gets
-dialled in; the slider is for coarse jumps, and clicking the read-out puts it
-back to zero.
-
-Unlike palette and intensity, this one is **saved with your settings**
-(`auto.syncOffsetMs`), because the right value belongs to the rig and the room
-rather than to tonight's set — you calibrate it once and it is there next time.
-
-Nudging it mid-set never replays the show. Stepping the offset forward over an
-event skips that event rather than firing it: a backwards nudge could not
-un-fire what already played, and a forwards one that caught up would empty every
-event it crossed into the room in a single frame. The cost is a beat of the
-previous look; the alternative is a burst of strobe.
-
-It is on the control surface too — **Light/music sync offset** on a fader
-(centre is zero), **Nudge light/music sync** on an encoder at 5 ms a detent —
-and over REST at `POST /api/auto/sync-offset/:value`.
-
-Intensity is also on the control surface (**Auto-show intensity** on a fader,
-bound to fader 8 by default; **Nudge auto-show intensity** on an encoder) and
-over REST at `POST /api/auto/intensity/:value`, so it can be driven from a
-Stream Deck or a script mid-set rather than only from the browser.
-
----
-
-## Live input
-
-The live input hears the music as it plays: **what this computer plays** (any
-player, straight from the sound card, no cable) or **an input** — a line off the
-booth output, the only way to hear a set played on other equipment. Turn it on in
-*Settings → Live Input*; it needs the Python packages in `requirements.txt`
-(`soundcard`, with `sounddevice` as a fallback for inputs).
-
-A Python process (`src/live_input.py`) reads the audio a 12 ms hop at a time and
-tracks the beat with no look-ahead; the server reads it onto its own clock, so the
-beat it reports for *now* was within 9–13 ms of the true beat on a test track
-played in real time. What it is used for:
-
-- **Keeping the beat.** The pattern clock follows it (**Live** badge) whenever
-  nothing better knows the music.
-- **Auto-sync.** With a known track's show running from Spotify, the hybrid
-  source, the OS media session or Deezer, the last 16 seconds of what it hears
-  are compared with the track's analysed onsets once a second, and the show is
-  moved by however far the source is off — typically the few hundred
-  milliseconds a polled position is out, different for every track. A lag is
-  only taken when it clearly beats the lag one beat along, and only when two
-  measurements agree; the auto panel says what it corrected. The **Sync** slider
-  is then left to cover the lights' own delay. Not used for CDJs, whose position
-  is exact.
-- **Playing by ear.** With the auto show on and no analysed track to play — the
-  source is *Live input (by ear)*, or the next track is still being analysed —
-  the show answers what it hears: a new look at each change of section (cut on
-  the way up, faded on the way down), the pattern doubling through a build-up, a
-  burst on the drop, and darkness in the silences. The auto panel shows **By ear**.
-
-*Room latency* (ms) covers the distance between the sound card and the room:
-positive when the room hears the music later than this machine does, negative
-for a line-in that arrives after the room has heard it.
-
----
-
-## MIDI
-
-Any MIDI controller works. Pick its ports under Settings → MIDI controller (the choice is
-remembered), then map it — either keep the built-in layout, or relearn the
-bindings you want onto the controls you have.
-
-### MIDI clock out
-
-*Settings → MIDI Clock Out* sends the tempo the lights keep — the show's, a
-CDJ's, the live input's or a tap — as MIDI clock (24 pulses a beat, with start
-and stop) to a port of its own, so a drum machine, a DAW or a visuals app plays
-in the same time. To reach software on this machine, create a loopback port
-(loopMIDI on Windows, IAC on macOS) and pick it. The pulses are counted off the
-clock's beat position, so they cannot drift; when the music jumps, the count
-starts again from there rather than sending a burst.
-
-### MIDI learn
-
-**Settings → MIDI Mapping**: pick an action, press **Learn**, and move the
-control you want it on. The next message that arrives is bound to it and saved.
-
-- **Learn** next to an existing row *moves* that action to another control — it
-  does not leave the old one firing as well.
-- **×** unbinds a control.
-- **Reset to default** goes back to the X-Touch layout below and forgets your
-  file.
-
-Learning an action that takes a parameter (a pattern, a colour, a cue, a
-fixture) asks for it first, so *Recall cue → Chorus* and *Recall cue → Verse* are
-two separate bindings on two separate buttons.
-
-Bindings can name a **MIDI channel**, which a controller whose second layer
-repeats the same note numbers on another channel needs; leave it out and any
-channel matches.
-
-Your mapping is stored in `config/midi-map.json`. Until you change something the
-file does not exist and the default below is used.
-
-LED feedback follows the map: a button bound to the live pattern lights up
-wherever you put it, rather than wherever the X-Touch originally had it.
-
-**Touch-sensitive faders.** A motorised fader usually has a touch sensor that
-sends a CC of its own — 127 the moment a finger lands, 0 when it lifts. Learning
-a fader waits for a value between the ends, so it binds the fader's movement and
-not that sensor. A fader action on a control that has only ever sent 0 and 127
-is ignored (with one warning in the log), since obeying it would throw the
-master to full on touch and to black on release. A map that already bound the
-sensor heals itself: touch and move the fader once, and the binding moves to the
-fader's own CC and is saved. While a fader is touched the motor leaves it alone.
-
-### Motorised faders and encoder rings
-
-The X-Touch Compact's nine faders are motorised and its eight encoders have LED
-rings, and both move the same way — the server sends the controller the CC it
-would have sent you. So the surface tracks the show: change the master dimmer in
-the browser and the physical fader follows, instead of staying where it was and
-snapping the rig back on the next touch.
-
-A control you are touching is left alone for a moment afterwards, so you never
-fight the motor, and a position already sent is not sent again, because a motor
-re-driven to where it already is hums. Connecting drives the whole surface to
-the current show.
-
-On by default — a controller without motors just ignores the CC. Turn it off in
-**Settings → Control → MIDI** if a MIDI loopback echoes the feedback back in as
-input.
-
-A 7-bit fader has 128 positions for 281 tempo values, so a BPM fader sits at the
-nearest step (~2.2 BPM) rather than exactly on the beat count.
-
-`DEBUG_MIDI=1` logs every incoming message — useful when mapping an unfamiliar
-controller, far too noisy during a show.
+| Source | Setup |
+|--------|-------|
+| Spotify | Configure client id/secret, then Connect Spotify; session persists |
+| Spotify + OS clock | Spotify metadata with the local media-session position |
+| PRO DJ LINK | Enable on the CDJs' network |
+| OS now playing | Windows SMTC or Linux MPRIS through `busctl`; unavailable on macOS |
+| Deezer | Load `browser-extension/` in a Chromium browser; configure server/token |
+| Live input | Enable loopback or input capture and select a device |
+| Timer | Run an analysed track against local time |
+
+For direct Spotify OAuth, register the callback the server prints, normally
+`http://127.0.0.1:3000/auth/spotify/callback`, and authorise in a browser on the
+server machine. For a remote tablet, use the configured OAuth proxy. The
+optional Deezer ARL enables ISRC-matched downloads; its first configuration
+requires restart. Without it, downloads use the search path.
+
+Set-list warming accepts one artist/title per line, explicit track objects,
+a Spotify queue or playlist. It prepares analysis ahead of playback. Cache
+management is available in Auto Show and through `/api/auto/cache`.
+
+### Clock and sync
+
+Clock priority is Auto Show → playing PRO DJ LINK deck → analysed current
+track → live beat → Tap. `clock.tempoMode: 'manual'` disables CDJ/Track/Live
+following; the running Auto Show still follows its analysed grid.
+
+Tap, type or nudge temporarily takes tempo by hand until the source changes.
+Follow, or `POST /api/tempo/auto`, returns immediately to automatic timing.
+BPM accepts 20–300 including fractions. Divisions are 1, 2, 4, 8 and 16.
+A playing or paused sequence and active/pending voices keep the free clock
+running even with `running: false` for the base.
+
+State `clock` is `{ source, bpm, byHand, beatPos, epoch, at }`, with wall-clock
+milliseconds in `at`. Extrapolate as
+`beatPos + (now - at) / 60000 * bpm`; reset interpretation on a new `epoch`.
+Do not extrapolate a stopped Tap clock with no base, voice or active sequence.
+
+`auto.syncOffsetMs` moves the generated show relative to track position,
+−2000 to 2000 ms. Live auto-sync can refine alignment against captured audio;
+`live.latencyMs` accounts for the room's audio path. Hue latency separately
+delays the DMX outputs to align with Hue lamps.
+
+### Audio modes
+
+| `audio.mode` | Behaviour |
+|--------------|-----------|
+| `off` | Effects use their own loops without audio triggers |
+| `tempo` | Default; musical tempo without live reactive levels |
+| `reactive` | Live levels drive reactive, Disco and Visualizer effects |
+
+With no input, reactive effects use their tempo behaviour. Master controls
+include sensitivity, smoothing, attack (up to 2 s), release (up to 5 s),
+threshold, reactive depth and brightness. `ldjTrigger` defaults to 0.3.
+The highest applicable voice, then sequence clip, then base owns each detector;
+otherwise configured defaults apply. `/api/audio` reports detector ownership.
+
+## MIDI and Companion
+
+### MIDI
+
+Select input/output ports in Settings → MIDI. Learn binds the next matching
+control to an action; parameters such as cue, fixture, bank and slot belong
+to that binding. Optional MIDI channel restricts matching. Reset restores the
+built-in X-Touch Compact map. Custom maps live in `config/midi-map.json`.
+
+Actions cover transport, tap/tempo mode, patterns, colour slots, palettes,
+energy holds, pads (`padPress` with bank/slot), cues, fixture controls and
+master/intensity/sync faders. Relative encoders support two's complement and
+binary offset. Button/LED feedback follows the mapping.
+
+Motorised fader feedback defaults on; disable `midi.controlFeedback` for an
+echoing loopback. Touch sensors do not count as absolute fader values.
+`midi.clockOutput` sends 24 pulses per beat plus start/stop on its own port.
+`DEBUG_MIDI=1` logs incoming messages.
 
 ### Default mapping — Behringer X-Touch Compact
 
@@ -2606,61 +607,45 @@ the first port matching `/x.?touch/i`.
 | Button row 1 | Notes 16–23 | Patterns |
 | Button row 2 | Notes 24–31 | 2 patterns + Colour A presets 1–6 |
 
-### Bindable actions
+### Bitfocus Companion
 
-| Control | Actions |
-|---------|---------|
-| **Buttons** | Tap tempo · Automatic tempo match on/off · Play/stop · Master blackout · Select pattern · Set colour slot A–D · Select palette · Set beat division · Energy override (hold) · Cycle the held energy effect · Cycle strobe function · Fixture blackout · Recall cue |
-| **Encoders** (relative) | Nudge BPM · Nudge master dimmer · Nudge strobe speed · Nudge fixture dimmer · Nudge fixture max brightness · Nudge auto-show intensity · Nudge light/music sync |
+Use Companion 4.3+ and the module in `companion-module/`. Install its dependencies,
+then place or symlink the module inside the configured Developer modules folder.
+Add an ArtNet Lightshow connection with host, port and access token.
 
-An endless encoder sends "moved a bit, this way", and there are two ways to
-spell that — two's complement (1 up, 127 down) and binary offset (65 up, 63
-down). Which one a controller uses is a setting on the device, and nothing in
-the MIDI message says which you are being sent, so the encoding is worked out
-from the values themselves: a value next to 64 can only be binary offset, one
-next to 0 or 127 can only be two's complement. The first detent settles it, per
-encoder, so a surface may mix the two. Nothing needs configuring, and a
-controller you reconfigure is re-learned on the next restart.
-| **Faders** (absolute) | Master dimmer · Strobe speed · BPM · Fixture dimmer · Fixture max brightness · Auto-show intensity · Light/music sync offset |
+Presets cover busking palettes, energy holds, transport, cues, pads, strobe
+bursts, generated-show controls and fixture controls. Hold buttons renew until
+release; once and loop pads launch once per press. Server catalogs populate
+actions and feedback. The module uses Socket.IO protocol 2. See
+[installation](companion-module/INSTALL.md) and
+[action/feedback reference](companion-module/companion/HELP.md).
 
----
+## Home Assistant integration surface
 
-## Stream Deck — Bitfocus Companion
+Use authenticated REST commands and a sensor polling `/api/state`; the server
+requires no Home Assistant-specific transport. Supply `X-Lightshow-Token` and
+`Content-Type: application/json` for JSON bodies. Keep GET polling separate
+from POST/PUT/DELETE actions.
 
-See **[companion-module/INSTALL.md](companion-module/INSTALL.md)**. Requires
-Companion **v4.3+** (the module uses the v2 connection API).
+| Integration function | API/state |
+|----------------------|-----------|
+| Ownership switch | `POST /api/outputs/arm` and `/disarm`; state `armed` |
+| Base playback | `POST /api/play`, `/stop`, `/api/pattern/:id`; state `running`, `pattern` |
+| Master | `/api/master/:value`, `/api/blackout/on` or `/off`; `masterDimmer`, `masterBlackout` |
+| Palette | `PUT /api/palette-override` with `{ paletteId }`; clear with DELETE; feedback `paletteOverrideId` plus materialised `paletteOverride` |
+| Pads | Press/renew/release, toggle or once; `pads.layout`, `pads.lit` |
+| Voices | GET/POST/DELETE `/api/voices`; state `voices` |
+| Strobe | PUT settings, POST on/off/burst; state `strobe`; burst 100–30,000 ms |
+| Sequence | Load/unload and transport routes; state `sequence`, shelf `sequences` |
+| Matrix | PUT mode and POST press/release; state `matrix` |
+| Audio | GET/PUT `/api/audio`; state `audio`; reactive effects need reactive mode |
+| Safety | GET `/api/safety`, explicit POST acknowledgement; state `safety` |
+| Availability | `/healthz` for liveness; `/api/health` for diagnostics |
 
-1. `npm install` inside `companion-module/`
-2. Point Companion's *Developer modules* folder at it
-3. Add an **ArtNet Lightshow** connection — host, port, and the access token if
-   the server uses one
-4. Drag presets onto buttons
-
-It is made for busking. The **Busk** preset page has:
-- every palette on the server;
-- energy effects and a blackout that last only while their button is held
-  (sent as `energy-hold`, which the server lets go of on its own if Companion
-  stops renewing it, so a crash with a button down never latches a strobe);
-- tap tempo, ×2 and ÷2;
-- the auto show's on/off, intensity and sync nudge;
-- the master level;
-- a button for every saved cue.
-
-Other presets cover every pattern and pixel effect (the bars' own picture and
-the pixel map too), colours A–D, transport, a blackout per fixture and latched
-energy effects, with feedback lighting the active state. Pad buttons hold
-the server's pads while pressed (renewed, so a crash lets go as the energy
-holds do), and a strobe burst button fires the strobe for 100–30,000 ms
-(1 s by default). When the server refuses the access token it says so with
-a code, `unauthorized`, and the connection shows the token as the problem —
-set the matching one in its config — rather than a network failure. The patterns,
-palettes, fixtures and cues it offers are read from the server when it
-connects, so ones added there appear without a new module. It follows the
-server over protocol 2, so a large rig costs it nothing between changes. See
-[its help](companion-module/companion/HELP.md) for every action, feedback and
-variable.
-
----
+Disarm when releasing the rig to the house. Blackout alone does not release
+Hue Entertainment, WLED realtime control or OpenRGB ownership. Every restart
+is disarmed; an integration must deliberately re-arm. Surface a 409 safety
+refusal to the operator instead of retrying it as an acknowledgement.
 
 ## REST API
 
@@ -2677,14 +662,14 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/play` · `/api/stop` | Start / stop the pattern engine |
 | POST | `/api/bpm/:value` | Set BPM (20–300, fractions allowed) |
 | POST | `/api/bpm/adjust/:delta` | Nudge BPM |
-| POST | `/api/tempo/auto` · `/api/tempo/manual` | Automatic tempo match on (follow the music) or off (keep the tapped or typed BPM); answers `{ ok, tempoMode, clock }`, stored across restarts |
+| POST | `/api/tempo/auto` · `/api/tempo/manual` | Automatic tempo match on (follow the music) or off (keep the tapped or typed BPM); `auto` while on ends a tempo held by hand; answers `{ ok, tempoMode, clock }`, stored across restarts |
 | POST | `/api/master/:value` | Master dimmer (0–255) |
 | POST | `/api/blackout/toggle` · `/api/blackout/on` · `/api/blackout/off` | Master blackout |
 | POST | `/api/pattern/:id` | Set pattern (e.g. `chase`, `rainbow`) or an effect preset as the base look; an unknown id is taken and plays nothing |
 | POST | `/api/color/:slot/:index` | Set colour slot `a`–`d` (index 0–23) |
 | GET | `/api/palettes` | The named looks, their colours at each size, and the one on stage |
 | POST | `/api/palette/:id` | Write all four slots from a look (`{ size }` — 2, 3 or 4; default 4) |
-| POST | `/api/energy/:id` · `/api/energy/off` | Latch an energy override (a voice) · clear it, and end a latched strobe |
+| POST | `/api/energy/:id` · `/api/energy/off` | Latch an energy override (a voice; a strobe one is a 409 until the photosensitivity acknowledgement) · clear it, and end a latched strobe |
 
 ### Effects, palettes and safety
 
@@ -2694,10 +679,10 @@ All endpoints return JSON. When a token is configured, send it as an
 | GET | `/api/effects/:id` | One preset (404 `No such effect`) |
 | POST | `/api/effects` | Save a preset of your own (201 `{ ok, preset }`) |
 | PUT · DELETE | `/api/effects/:id` | Change or delete one of yours; a built-in answers that it cannot be changed (save a copy) |
-| POST | `/api/effects/command` | `{ cmd, arg? }` to the effect playing as the base look; answers once the renderer has decided (see **Effects**) |
+| POST | `/api/effects/command` | `{ cmd, arg? }` to the effect playing as the base look; answers once the renderer has decided (see [Looks, palettes and cues](#looks-palettes-and-cues)) |
 | GET | `/api/palettes/:id` | One effect palette, built in or yours |
 | POST · PUT · DELETE | `/api/palettes` · `/api/palettes/:id` | Save (201), change or delete a palette of your own |
-| PUT | `/api/palette-override` | `{ colours: ['#RRGGBB', …] }` (1 to 8) or `{ paletteId }`: play one palette over every effect; answers `{ ok, paletteOverride }` |
+| PUT | `/api/palette-override` | `{ colours: ['#RRGGBB', …] }` (1 to 8) or `{ paletteId }`: override effect palettes (fixed white, UV and blackout energies keep their output); random entries roll once per request; answers `{ ok, paletteOverride }` |
 | DELETE | `/api/palette-override` | Remove it |
 | GET | `/api/safety` | `{ photosensitivityAcknowledged, hdFlashIntervalMs, strobeMaxLatchSec }` |
 | POST | `/api/safety/acknowledge` | Give the photosensitivity acknowledgement (stored) |
@@ -2720,7 +705,7 @@ A refused effect for want of the acknowledgement answers
 | GET | `/api/strobe` | `{ active, mode, settings }`, as every strobe route answers |
 | PUT | `/api/strobe` | Strobe settings, any of them (see **Strobe**) |
 | POST | `/api/strobe/on` · `/api/strobe/off` | Latch (ends at the cap) · stop every strobe voice |
-| POST | `/api/strobe/burst/:ms` | One burst, 100–30,000 ms |
+| POST | `/api/strobe/burst/:ms` | One burst, 100–30,000 ms; any other length is a 400 |
 | GET | `/api/matrix` | `{ mode, colours, voice }`, as every matrix route answers |
 | POST | `/api/matrix/press` · `/api/matrix/release` | `{ colour: '#RRGGBB', token? }` — touch a cell (up to eight at once) · `{ colour }` or `{ token }` — let go |
 | PUT | `/api/matrix` | `{ mode }`: `fireworks`, `flashes`, `pulses`, `cycle` or `solid` |
@@ -2780,7 +765,7 @@ Transport routes answer `{ ok, status }`; with no sequence loaded they answer
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/outputs/arm` · `/api/outputs/disarm` · `/api/outputs/toggle` | Whether anything leaves the machine (`{ armed }` back). Disarm ends every stream — a black frame, the sACN terminate, a dark frame to each WLED, a dark frame to each OpenRGB device and its connection closed, a dark frame and the session closed on each Hue bridge — stops the patterns and clears the energy override; arm resumes transmit. Stored as `outputs.armed`, applied at once, always off at start |
+| POST | `/api/outputs/arm` · `/api/outputs/disarm` · `/api/outputs/toggle` | Whether anything leaves the machine (`{ armed }` back). Disarm ends every stream — a black frame, the sACN terminate, a dark frame to each WLED, a dark frame to each OpenRGB device and its connection closed, a dark frame and the session closed on each Hue bridge — stops the patterns and clears every voice; arm resumes transmit. Stored as `outputs.armed`, applied at once, always off at start |
 | GET | `/api/artnet/nodes` | The Art-Net nodes that answered, with the universes each outputs, and whether frames are being routed by them; `?scan=1` asks the network now |
 | GET | `/api/network/interfaces` | This machine's IPv4 addresses and their broadcast addresses, for sACN's network and the Art-Net target |
 | POST | `/api/artnet/identify` | `{ address, universes?, seconds? }`: send the node ArtAddress *locate* (and *normal* after), and identify the fixtures on the universes it outputs |
@@ -2882,12 +867,22 @@ back with blank keys keeps the stored ones, an entry left out is forgotten, and
 a file from before several bridges were possible loads its one bridge as
 `bridge-1`.
 
+### Settings and models
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/settings` | Redacted values, secret-presence flags and pending restart keys |
+| PUT | `/api/settings` | Update selected settings groups/fields |
+| POST | `/api/settings/token/suggest` | Generate a token suggestion; apply it through settings |
+| GET | `/api/models` | Model availability and current download job; `?refresh=1` refreshes the listing |
+| POST | `/api/models/download` | Download selected models with `{ ids }` |
+
 ### The server
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/healthz` | Liveness: `{ ok: true }`, no token needed |
-| GET | `/api/health` | Status (`ok` / `degraded` / `failing`), problems in words, uptime, engine, main-thread delay, memory, outputs, supervisor — see [Health](#health) |
+| GET | `/api/health` | Status (`ok` / `degraded` / `failing`), problems in words, uptime, engine, main-thread delay, memory, outputs, supervisor — see [diagnostics](#pre-show-checks-and-diagnostics) |
 | GET | `/api/logs` | The last log entries: `?after=<seq>` for those after one, `?level=` (`trace`…`fatal`) and `?limit=` (up to 1000); answers `{ last, entries }` |
 | POST | `/api/server/restart` | Restart the server under the supervisor (the look comes back); 409 without one |
 
@@ -2944,217 +939,32 @@ Art-Net and sACN. A Hue lamp's
 `{ protocol: 'hue', bridge, channel }` is given by `POST /api/hue/:bridge/add`
 and cannot be set or changed here.
 
----
+## Pre-show checks and diagnostics
 
-## Mistakes and feedback
+Run `npm run preflight` or use the Preflight view. Checks cover patch/output
+configuration, Art-Net nodes, sACN conflicts, Hue, WLED/OpenRGB, MIDI, playback
+sources, Python imports, models, ffmpeg and download tools. Missing required
+models may be downloaded in the background.
 
-Anything the server refuses says so, in a toast in the corner — a DMX address
-past the end of a universe, a profile you cannot delete because fixtures are
-patched to it, a patch that is full. These used to be silent: the control just
-snapped back on the next broadcast.
+| Result | Meaning |
+|--------|---------|
+| `ok` | Working |
+| `warn` | Degraded or unverified; does not fail the run |
+| `FAIL` | Will not work; command exits 1 |
+| `--` | No check needed |
 
-Deleting is undoable. Removing a **cue**, a **fixture** or a **fixture
-profile**, or resetting the **MIDI mapping**, offers an **Undo** for twelve
-seconds that puts the thing back where it was — a cue keeps its id and its
-position in the stack, a fixture keeps its address, universe and override.
+`/healthz` is an unauthenticated liveness probe. `/api/health` reports
+`ok`, `degraded` or `failing`, problems, uptime, engine timing, memory, outputs,
+supervisor and effect/voice/sequence counts. Disarmed is informational.
 
-Undo is held to the same rules as the original action: if the patch changed
-while the toast was up, restoring a fixture that would now overlap or overflow
-a universe is refused and says why.
+Logs appear in the terminal, the app's Log drawer and `logs/lightshow.log`.
+Files are JSON lines, rotated at 10 MB with three retained rotations.
+`LOG_LEVEL` changes verbosity; `LOG_FORMAT=pretty|json` controls terminal
+format. `/api/logs` supports sequence, level and limit filters.
 
-A control that silently stopped working is worse than one that says so, so the
-page bars itself whenever the socket is not live, and says which of the three it
-is: **Connecting** while it is still coming up, **Disconnected** when a live
-connection dropped (the rig holds its last look, and the veil clears itself when
-the server comes back), and **Access token required** when the server refused
-this browser — the only one of the three that needs you, because it is the only
-one that never resolves on its own.
-
----
-
-## Running the show server
-
-**It starts disarmed.** Whenever the server starts — by hand, by a service
-manager, by the supervisor after a crash — its outputs are disarmed, whatever
-`outputs.armed` in the settings said: it logs `[outputs] disarmed at start`
-and nothing leaves the machine until someone arms the outputs (the switch in
-Perform or Settings → Show, Companion, or `POST /api/outputs/arm`). The show
-still renders, so the preview and the stage view work, and the look the
-supervisor puts back comes back as it was; only transmit waits. On a home
-server that runs all day beside Home Assistant that is the point: a reboot at
-six in the morning must not seize the WLEDs, the Hue lamps and the PC's RGB
-from the house.
-Disarming later ends every stream cleanly and stops the patterns; `GET
-/api/health` and the pre-show check both say which state it is in.
-
-### The supervisor
-
-`npm start` runs `node server.js` (and the packaged build its executable),
-which is two processes: a small supervisor, and the server as its child. The supervisor starts the server again when it
-dies — a native module that faulted, the memory running out — and when it
-stops answering: the server reports in every second, and one whose main
-thread has been silent for **15 seconds** (60 while it is starting) is killed
-and started again.
-
-- **The look comes back.** The look on stage is kept in `config/look.json`
-  every two seconds — the pattern, the colours, the masters, every override,
-  as a cue captures it — and a server the supervisor starts again puts it back
-  before its first frame. If the auto show was running it reloads that track's
-  show from the analysis cache and follows the music again. An energy effect
-  is never put back: a held blinder whose release was lost must not come back
-  stuck on. A normal start ignores the file.
-- **Restarts back off** — half a second, then 1, 2, 5 and 10 seconds while it
-  keeps dying, back to half a second once a run has lasted a minute. A server
-  that dies three times before it has even started is not going to start: the
-  supervisor gives up and says why.
-- **It stops when told to.** Ctrl-C or a service manager's stop (SIGINT,
-  SIGTERM) stops the server cleanly and then the supervisor. The supervisor
-  asks over their IPC channel rather than with a signal, because on Windows a
-  signal to another process is an immediate kill. That would leave the rig
-  holding its last frame; asked, the server blacks it out first. It is killed
-  only if it has not gone after ten seconds. Closing the console window
-  (SIGHUP; on Windows there are seconds before the process is ended) is a
-  clean stop too.
-- **It does not outlive the supervisor.** A server whose supervisor has gone,
-  killed or ended from the task manager, shuts down too. Otherwise it would
-  hold the port with nothing to start it again.
-- **Some starts are not retried.** A server that
-  cannot start because of its configuration (the port taken, the address not
-  on this machine, a network address without a token) exits with code **78** and the supervisor stops with it,
-  rather than trying again forever; one asking to be started again (the
-  **Restart now** button, for the settings that only apply at start) exits
-  with **75** and is started again at once.
-
-To run the server without it — under a service manager that restarts it
-itself, or while developing — pass `--no-supervisor` (`node server.js
---no-supervisor`) or set `LIGHTSHOW_SUPERVISOR=0`. `npm run dev` does: the
-watcher restarts it instead. Without the supervisor, nothing puts the look back
-after a crash, and **Restart now** says to restart the server yourself.
-
-### Logs
-
-The server logs in structured lines ([pino](https://getpino.io/)), each with a
-level and the part of the server it is from (`engine`, `prolink`, `auto-show`,
-`supervisor`, …):
-
-- **In the terminal**, one readable line each when it is a terminal, JSON
-  lines when it is not (a service manager, a pipe). `LOG_FORMAT=pretty` or
-  `LOG_FORMAT=json` picks one either way.
-- **In a file**, `logs/lightshow.log` as JSON lines, rotated at 10 MB to
-  `lightshow.1.log` and on, three kept. `LIGHTSHOW_LOG_DIR` puts them
-  elsewhere.
-- **In the app**, the bottom drawer's **Log** tab: the last thousand entries,
-  newest at the bottom, filtered by level and by text, with a pause to read.
-  After a restart the tail of the run before is read back from the file and
-  marked as such, so what led up to a crash is there to read.
-
-`LOG_LEVEL` (`trace`, `debug`, `info`, `warn`, `error`; default `info`) sets
-how much is written.
-
-### Health
-
-`GET /api/health` says how the server is doing: its status — `ok`,
-`degraded` (something to look at; the show is running) or `failing` (the engine
-is down: nothing is going out to the rig) — and what is wrong, in words: the
-engine not running or fallen back to the main thread, more than 5 % of frames
-late, the main thread stalling for over 100 ms, the memory over 1.5 GB, errors
-logged in the last ten minutes, the auto show in error, and how many times the
-supervisor has had to start it again and why. With them: the uptime, the
-engine's frame timing, the main thread's delay over the last 30 seconds, the
-memory, the outputs — `outputs.armed` says whether anything leaves the
-machine, and while it is false a note among the problems says so, as
-information rather than a fault — the auto show, and `counts`: the effect
-kinds the engine knows, the voices running, and whether a sequence is loaded
-and playing (`sequence: { loaded, playing }`, 0 or 1). The Log tab shows it
-above the log.
-
-`GET /healthz` is the liveness probe for a service manager or a monitor: it
-answers `{ "ok": true }` when the server does, and needs no token.
-
----
-
-## Configuration
-
-Everything is configured in the app, in its **Rig**, **Sources** and
-**Settings** views (keys **4**, **5**, **6**). There are no environment
-variables to set: the server stores your choices in `config/settings.json` and
-reads them from there.
-
-Change what you need in a section and press its **Apply**; a section says when
-it has edits not applied yet. Most settings take effect immediately.
-
-| Where | Section | Settings |
-|-------|---------|----------|
-| Rig → Outputs | **Art-Net** | Enabled, node IP, port, default universe, finding nodes, ArtSync |
-| Rig → Outputs | **sACN (E1.31)** | Enabled, node IP, priority, source name, universe offset, network, component ID |
-| Rig → Outputs | **Philips Hue** | Enabled, bridge address, pairing, entertainment area, pars delay, adding the area's lamps to the patch |
-| Sources | **Playback sources** | PRO DJ LINK, the OS now-playing (SMTC on Windows, MPRIS on Linux) |
-| Sources | **Spotify** | Client ID, client secret, optional OAuth proxy, unverified-state escape hatch, and the saved session (server-written, never shown) |
-| Sources | **Deezer** | ARL cookie — exact ISRC-matched audio instead of a yt-dlp search |
-| Sources | **Live input** | Enabled, what to listen to, device, auto-sync, play by ear, room latency |
-| Sources | **Analysis** | Separator, structure model, GPU memory, analyser and download timeouts, library folder, Python interpreter |
-| Settings | **Show** | Remember the night, flash limit |
-| Settings | **MIDI controller** | Input and output port, motorised fader feedback |
-| Settings | **MIDI clock out** | The port the clock goes to, or off |
-| Settings | **Engine** | Its own thread or the main thread |
-| Settings | **Server & access** | Bind address, port, access token, public URL |
-
-The **Server & access** settings and the engine thread are read before the
-server starts, so they are marked `restart` and applied on the next start, and
-so is the first Deezer ARL. While any are waiting, the Sources and Settings
-views say which, with a **Restart now** button: the rig blacks out for a few
-seconds and the supervisor brings the server back with the look it had (see
-[Running the show server](#running-the-show-server)). Everything else applies
-as soon as you press Apply.
-
-### The config file
-
-`config/settings.json` holds secrets — the Spotify client secret, the Deezer
-ARL, the access token, the Hue application and client keys — so it is written
-`0600` and is gitignored. Nothing else
-needs to be in it: any key you have not set uses the built-in default.
-
-The app never shows a stored secret. It reports only whether one is set, and
-lets you replace or clear it.
-
-If the file is corrupt or fails validation at startup, it is moved aside as
-`settings.json.invalid-<timestamp>` and the server starts on defaults rather
-than refusing to boot mid-gig.
-
-### Moving from .env
-
-Environment variables are **no longer read**. If you have a `.env` from an
-earlier version, the server names the variables it is ignoring at startup:
-
-```
-[settings] These environment variables are no longer read: ARTNET_HOST, DEEZER_ARL
-[settings] Settings now live in the app (its Rig, Sources and Settings views) and are stored
-[settings] in config/settings.json. Set them there; you can delete them from .env.
-```
-
-Set those values once in the app and delete them. A `.env` in the folder the
-server starts from is still read, by Node's own loader (a variable already set
-in the environment wins). For the packaged build, that folder is its data
-folder. It is for the few things that are not settings: `DEBUG_MIDI=1` to log
-every MIDI message, `ARTNET_PYTHON` for the Python that runs the analysis,
-`LIGHTSHOW_DATA_DIR` (everything the server writes) and
-`LIGHTSHOW_CONFIG_DIR` / `LIGHTSHOW_CACHE_DIR` / `LIGHTSHOW_LOG_DIR` (one part
-of it each), `LOG_LEVEL` / `LOG_FORMAT`, and `LIGHTSHOW_SUPERVISOR=0`. See
-`.env.example` and [Running the show server](#running-the-show-server).
-
-Art-Net changes made over the socket (a page, Companion) are persisted to the
-same file.
-
-> **Why a restart for the first Deezer ARL?** Deezer track decryption uses
-> Blowfish (`bf-cbc`), which OpenSSL 3 moved to its legacy provider, and Node
-> only turns that on at start (`--openssl-legacy-provider`). Nothing else here
-> needs it, so it is no longer on by default: the supervisor passes it to the
-> server only when `config/settings.json` has an ARL. Until the restart the
-> Deezer section says it is waiting on one, and audio falls back to a yt-dlp
-> search. Run without the supervisor (`npm run dev`, a service manager), start
-> Node with `--openssl-legacy-provider` yourself if you use Deezer.
-
----
+The UI shows server refusals as toasts and blocks controls while disconnected.
+An access-token prompt requires a valid token; ordinary disconnects reconnect
+automatically. Use the logs and pending-restart list before changing settings.
 
 ## Keyboard shortcuts
 
@@ -3166,11 +976,12 @@ Press **?** in the app for this list.
 | **1** / **2** / **3** | Manual / Auto Show / Perform view |
 | **4** / **5** | Timeline / Stage view |
 | **6** / **7** / **8** / **9** | Rig / Sources / Settings / Preflight view |
+| **0** / **Shift+0** | Sequence / Matrix view |
 | **←** **→**, **Home** / **End** on the view tabs | Next / previous / first / last view |
 | **←** **→** **↑** **↓**, **Home** / **End** | Move within the colour grid |
 | **Enter** / **Shift+Enter** | Write the focused swatch into the active slot / the paired slot (A↔B, C↔D) |
 | **Shift+click** or **right-click** | Write a swatch into the paired slot |
-| **Space** or **Enter** on an energy button | Hold the effect until released |
+| **Space** or **Enter** on a pad reached with Tab | Hold: play until released; once: play one phrase; loop: start or stop on each press |
 | **←** **→** **↑** **↓** (**Shift** for bigger steps) | Nudge the focused fixture on the stage plot (on the Rig view's plan, the whole selection) |
 | **[** **]**, **-** **=**, **0** on a bar | Turn it, change its length, back to its default line |
 | **Esc** on the plan | Stop drawing bars; else clear the selection |
@@ -3178,124 +989,28 @@ Press **?** in the app for this list.
 | **←** **→** **↑** **↓**, **+** / **−** on the 3D stage | Turn and tilt the view, move closer / further |
 | **?** / **Esc** | Show / close the shortcuts overlay |
 
----
-
 ## Development
 
 ```bash
-npm run lint         # ESLint
-npm run typecheck    # tsc, strict
-npm test             # node:test unit suite (components included)
-npm run check        # all three
-npm run test:e2e     # Playwright: the page in Chromium against a real server
-npm run preflight    # pre-show check (exits 1 if something will not work)
-npm run watch:client # rebuild the client bundle on change
-npm run dev          # server with --watch, without the supervisor
-npm run gen:analysis-types  # after changing the analysis document schema
-npm run setup:python # the analysis environment, from the lockfile (as Sources → Analysis environment does)
-npm run package      # the packaged build for this machine, in dist/
+npm run build:client       # build the browser assets
+npm run watch:client       # rebuild browser assets on changes
+npm run dev                # watch the server, without supervisor
+npm run lint
+npm run typecheck
+node --test --test-concurrency=3 tests/unit/*.test.js
+npm run test:e2e
+npm run gen:analysis-types # after changing the analysis document schema
+npm run package            # package this platform into dist/
 ```
 
-**TypeScript, run as it is.** Everything in `src/` is strict TypeScript that
-Node runs directly by stripping the types (24 LTS, which `.nvmrc` names, and
-22.18+ — CI checks both): nothing is compiled, and
-`tsc` only checks. So the code sticks to syntax Node can strip (no enums,
-namespaces or parameter properties), type-only imports say `import type`, and
-imports name the `.ts` file. `server.js` is a small bootstrap that checks the
-Node version and loads `src/main.ts`. The tests are ES-module JavaScript that
-import the `.ts` modules.
+Server TypeScript runs directly through Node's type stripping. Browser sources
+are in `public-src/`; generated `public/app.bundle.js` and chunks are not
+committed. Playwright uses a temporary server/config with output disabled;
+install its Chromium with `npx playwright install chromium` when needed.
 
-**The server's layout.** The HTTP routes are a module per domain in
-`src/server/routes/` (look, MIDI, sources, fixtures, cues, auto show,
-warming, setup, outputs, identify), composed by `routes.ts`, with what they
-share — the subsystems, the async wrapper, upload limits, the JSON error
-handler — in `routes/common.ts`. The files in the config directory
-(settings, show, cues, MIDI map) are each a `JsonStore`
-(`src/server/json-store.ts`): no file is normal, a bad one is moved aside as
-`<file>.invalid-<time>` rather than lost, and every write is atomic. Whether a
-host is this machine only is `src/server/loopback.ts`, the one answer the
-access check, the settings, the pre-show check and Art-Net discovery all
-use.
-
-**The analysis document** — what the Python analyser writes and the show is
-built from — is described once, in `src/analysis/document.schema.json`. The
-Python tests validate real analyser output against it, and
-`npm run gen:analysis-types` generates `src/types/analysis.ts` from it; a unit
-test fails when the generated file is out of date.
-
-`public/app.bundle.js` is generated from `public-src/` by esbuild and is not
-committed; `npm start` builds it automatically via `prestart`. It is an ES
-module, split: the Stage view's three.js is a chunk of its own in
-`public/chunks/`, loaded when the view first opens, and the build lists the
-chunks in `public/chunks/index.json` for the service worker to keep. On the page, the
-state is one signal per key (`public-src/store.js`), so a component re-renders
-only for the keys it reads (`pick([...])`), and faders keep a local draft while
-they move (`public-src/draft.js`).
-
-**Tests.** The unit suite includes the page's components, bundled by esbuild
-and rendered in Node from a state snapshot (`tests/unit/components.test.js`).
-`npm run test:e2e` runs the real server — on port 3999, with a throwaway config
-directory and analysis cache and no DMX output (`tests/e2e/serve.js`) — and
-drives the page in Chromium: the views, protocol 2, the Perform pads on a
-desktop and a touch tablet, the Timeline and the 3D stage (on an analysed
-track the server seeds its cache with, so no test needs Python), the fixes,
-the PWA, the log and restart views, and axe-core on every view in every theme. It uses
-the Playwright pinned in `package.json`; `npx playwright install chromium`
-fetches its browser where there is none.
-
-**Where things are written** is one data directory
-(`src/server/config-dir.ts`): the checkout, unless `LIGHTSHOW_DATA_DIR` names
-another, as the packaged build's launcher does. It holds `config/` (the
-settings, `show.json`, `cues.json`, `midi-map.json` and `look.json`),
-`cache/` (the analysis cache), `logs/` and `.venv/` (the analysis
-environment). `LIGHTSHOW_CONFIG_DIR`, `LIGHTSHOW_CACHE_DIR` and
-`LIGHTSHOW_LOG_DIR` move one part each. The app's own files are read from where
-the code is, whatever the data directory. The programs the analysis needs
-besides Python (yt-dlp, its Deno, ffmpeg) are found on `PATH` and then in the
-environment (`src/tools.ts`). The in-app setup is
-`src/server/python-setup.ts`, tested with a stand-in uv
-(`tests/helpers/fake-uv.mjs`).
-
-**The supervisor** (`src/supervisor.ts`) forks `server.js` again with
-`LIGHTSHOW_SUPERVISED=1`, which runs `src/main.ts` directly; the two talk over
-the fork's IPC channel (`src/server/supervised.ts`: the heartbeat, a restart
-asked for, the exit codes). Its unit tests drive it with a fake child
-(`tests/unit/supervisor.test.js`), and `tests/e2e/supervisor.spec.js` runs it
-for real: it kills the server mid-look with SIGKILL and checks the look comes
-back, restarts it from the API, stops it, and kills the supervisor to check the
-server goes with it. The e2e server itself runs without it.
-
-**The packaged build.** `npm run package` builds it for the machine it runs on,
-into `dist/`:
-
-1. It copies the app, runs `npm ci --omit=dev` in the copy, and takes uv from
-   its PyPI wheel, checked against PyPI's digest.
-2. It makes the executable. The Node running the build becomes a
-   [SEA](https://nodejs.org/api/single-executable-applications.html) whose
-   script is `scripts/sea-main.cjs`: the blob comes from
-   `--experimental-sea-config` and is injected with
-   [postject](https://github.com/nodejs/postject). On Windows the executable
-   also gets the app's icon and name ([resedit](https://github.com/jet2jet/resedit-js)).
-3. It archives the folder: a zip on Windows, a `.tar.gz` on Linux.
-
-Build it with Node 24, on the platform it is for, since `node_modules` holds
-native modules. `node scripts/smoke-package.js` then starts it, checks it and
-stops it. `packaging/windows/installer.iss` wraps the Windows package in an
-[Inno Setup](https://jrsoftware.org/isinfo.php) installer. CI
-(`.github/workflows/package.yml`) does all of this on Linux and Windows on every
-push, and installs, runs and uninstalls the installer. A version tag `v1.2.3`
-matching `package.json` builds the same and drafts a release with them
-(`release.yml`).
-
-The app icons (`public/icons/`, and `public/favicon.ico`, which is also the
-Windows executable's) are drawn by `node scripts/make-icons.js`, which needs no
-dependencies; run it after changing the design.
-
-CI runs lint, the typecheck, tests, a client build, the end-to-end suite, the
-Python analysis tests, the packages and `npm audit --omit=dev` on every push
-and pull request.
-
----
+Build packages with Node 24 on the target platform. Package/release workflows
+are in `.github/workflows/`; a version tag matching `package.json` drafts the
+release. Preserve repository hooks, CI checks and normal release policies.
 
 ## Licence
 

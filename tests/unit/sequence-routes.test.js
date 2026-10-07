@@ -21,7 +21,7 @@ import { SequenceStore } from '../../src/server/sequence-store.ts';
 import { startEngine, stopEngine, renderInput } from '../../src/server/engine.ts';
 import { applyPatch, processTap } from '../../src/server/patch.ts';
 import { conductor } from '../../src/server/conductor.ts';
-import { state, getLiveState } from '../../src/server/state.ts';
+import { state, getLiveState, voices, freeClockRuns } from '../../src/server/state.ts';
 import { settings } from '../../src/server/settings.ts';
 import { showStore } from '../../src/server/show-store.ts';
 import * as universes from '../../src/server/universes.ts';
@@ -185,6 +185,31 @@ test('routes: CRUD + transport + status', async (t) => {
   assert.deepEqual(getLiveState().sequence, s.integrations.sequence.sequencer.status());
 });
 
+test('shelf changes are broadcast to all clients', async (t) => {
+  const s = await serve(t);
+  const published = [];
+  const patterns = [];
+  const publish = s.integrations.publisher.publishState;
+  s.integrations.publisher.publishState = (live) => {
+    published.push(live.sequences);
+    patterns.push(live.sequencePatterns);
+    return publish.call(s.integrations.publisher, live);
+  };
+  t.after(() => { s.integrations.publisher.publishState = publish; });
+  assert.deepEqual(getLiveState().sequences, []);
+  await s.call('POST', '/api/sequences', SET);
+  assert.deepEqual(published.at(-1), [{ id: 'set-1', name: 'Set one' }], 'a save is broadcast');
+  await s.call('PUT', '/api/sequences/set-1', { ...SET, name: 'Renamed' });
+  assert.deepEqual(published.at(-1), [{ id: 'set-1', name: 'Renamed' }]);
+  await s.call('DELETE', '/api/sequences/set-1');
+  assert.deepEqual(published.at(-1), []);
+  assert.deepEqual(getLiveState().sequences, []);
+  const made = await s.call('POST', '/api/sequence/patterns', { name: 'Drop', lengthBeats: 4, lanes: [] });
+  assert.deepEqual(patterns.at(-1), [{ id: made.body.pattern.id, name: 'Drop', lengthBeats: 4 }], 'a pattern saved is broadcast');
+  await s.call('DELETE', `/api/sequence/patterns/${made.body.pattern.id}`);
+  assert.deepEqual(patterns.at(-1), []);
+});
+
 test('the engine plays the loaded sequence from the sequencer the server registers', async (t) => {
   const s = await serve(t);
   const artnet = state.artnet.enabled;
@@ -234,6 +259,72 @@ test('the engine plays the loaded sequence from the sequencer the server registe
   assert.equal((await s.call('POST', '/api/sequence/play')).status, 409);
 });
 
+test('sequence playback owns the free clock while the look is stopped', async (t) => {
+  const s = await serve(t);
+  t.after(() => applyPatch({ running: true }));
+  applyPatch({ running: false });
+  assert.equal(voices.size, 0);
+  assert.equal(freeClockRuns(), false);
+  await s.call('PUT', '/api/sequence', { ...SET, clips: [clip('A', 0, 1e6)] });
+  const still = conductor.phase().beatPos;
+  await wait(60);
+  assert.equal(conductor.phase().beatPos, still, 'loaded is not playing: the clock stands');
+  let res = await s.call('POST', '/api/sequence/play');
+  assert.equal(res.body.status.playing, true);
+  assert.equal(freeClockRuns(), true);
+  assert.equal(state.running, false, 'the sequence starts nothing else');
+  s.frame();
+  await wait(120);
+  s.frame();
+  res = await s.call('GET', '/api/sequence/status');
+  assert.equal(res.body.status.playing, true);
+  assert.ok(res.body.status.beat > 0.1, `playing: the sequence counts its beats (beat ${res.body.status.beat})`);
+  // Paused, its clips play their laps on the clock.
+  await s.call('POST', '/api/sequence/pause');
+  s.frame();
+  assert.equal(freeClockRuns(), true);
+  let from = conductor.phase().beatPos;
+  await wait(60);
+  assert.ok(conductor.phase().beatPos > from, 'paused: the clock runs');
+  // Stopped, its picture holds and the clock stands.
+  await s.call('POST', '/api/sequence/stop');
+  s.frame();
+  assert.equal(freeClockRuns(), false);
+  from = conductor.phase().beatPos;
+  await wait(60);
+  assert.equal(conductor.phase().beatPos, from, 'stopped: the clock stands');
+  // Played from the top again, it counts on; unloaded, the clock stands.
+  await s.call('POST', '/api/sequence/play');
+  s.frame();
+  await wait(120);
+  s.frame();
+  assert.ok((await s.call('GET', '/api/sequence/status')).body.status.beat > 0.1);
+  await s.call('DELETE', '/api/sequence');
+  assert.equal(freeClockRuns(), false);
+  from = conductor.phase().beatPos;
+  await wait(60);
+  assert.equal(conductor.phase().beatPos, from, 'unloaded: the clock stands');
+});
+
+test('quantised voices follow the active sequence clock', async (t) => {
+  const s = await serve(t);
+  t.after(() => { voices.stopAll(); applyPatch({ running: true }); });
+  applyPatch({ running: false });
+  const launch = () => voices.start({ spec: { kind: 'ldj.FadeCycle', params: { cadence: 2 } }, targets: 'shared', mode: 'latched', tier: 'voice', source: 'api', quantise: 4 });
+  await s.call('PUT', '/api/sequence', { ...SET, clips: [clip('A', 0, 1e6)] });
+  const before = performance.now();
+  let v = launch();
+  assert.ok(v.startedAtMs <= performance.now() && v.startedAtMs >= before, 'primed: now');
+  voices.stopAll();
+  await s.call('POST', '/api/sequence/play');
+  s.frame();
+  await wait(20);
+  const beat = conductor.peek().beatPos;
+  v = launch();
+  assert.equal(v.anchorBeat % 4, 0, 'a sequence playing: on the next grid line');
+  assert.ok(v.anchorBeat > beat && v.startedAtMs > performance.now() - 1, `beat ${beat}, grid ${v.anchorBeat}`);
+});
+
 test('unloading the sequence drops a take that was running', async (t) => {
   const s = await serve(t);
   await s.call('PUT', '/api/sequence', SET);
@@ -261,7 +352,7 @@ test('the audio detectors run on the settings of a Disco playing as a clip', asy
   assert.equal(s.integrations.audio.detectors().disco.owner.from, 'fallback');
 });
 
-test('play is refused (409) while a clip needs the photosensitivity acknowledgement, and goes once it is given', async (t) => {
+test('rapid sequence playback requires acknowledgement', async (t) => {
   const s = await serve(t);
   const fast = { kind: 'ldj.StrobeCycle', params: { cadence: 0.25 } };
   await s.call('PUT', '/api/sequence', { ...SET, clips: [clip('A', 0, 4), clip('F', 4, 4, fast)], options: { initialPalette: 'redCyan' } });
@@ -277,7 +368,7 @@ test('play is refused (409) while a clip needs the photosensitivity acknowledgem
   assert.deepEqual(state.paletteOverride.map((c) => [c.r, c.g, c.b]), [[255, 0, 0], [0, 191, 255]], 'its first palette on');
 });
 
-test('a hand on the master or the tempo ends the sequence\'s automation of it; its own commands and samples do not', async (t) => {
+test('manual property edits cancel matching automation', async (t) => {
   const s = await serve(t);
   applyPatch({ masterDimmer: 100, bpm: 120 });
   await s.call('PUT', '/api/sequence', {
@@ -311,7 +402,7 @@ test('a hand on the master or the tempo ends the sequence\'s automation of it; i
   assert.equal(s.integrations.sequence.sequencer._current().paletteOverride, null);
 });
 
-test('a sequence\'s audio mode that the settings file will not take leaves the mode, and the sequence plays', async (t) => {
+test('failed audio-mode persistence leaves sequence playback available', async (t) => {
   const s = await serve(t);
   t.mock.method(console, 'warn', () => {});
   const mode = settings.get('audio.mode');
@@ -330,7 +421,43 @@ async function until(check, ms = 2000) {
 }
 
 // The built-in palettes the random palette on loop picks from are all a palette the store resolves.
-test('every built-in palette resolves through the palette store the server hands the sequencer', async (t) => {
+test('all built-in palettes resolve for sequence commands', async (t) => {
   const s = await serve(t);
   for (const p of BUILTIN_PALETTES) assert.ok(s.integrations.library.palettes.materialize(p.id)?.length, p.id);
+});
+
+for (const manual of [false, true]) {
+  test(`sequence stop ${manual ? 'preserves a manual' : 'restores the prior'} named override`, async (t) => {
+    const s = await serve(t);
+    await s.call('PUT', '/api/palette-override', { paletteId: 'greenPink' });
+    await s.call('PUT', '/api/sequence', { ...SET, options: { initialPalette: 'redCyan' } });
+    await s.call('POST', '/api/sequence/play');
+    s.frame();
+    if (manual) await s.call('PUT', '/api/palette-override', { paletteId: 'redCyan' });
+    await s.call('POST', '/api/sequence/stop');
+    s.frame();
+    assert.equal(getLiveState().paletteOverrideId, manual ? 'redCyan' : 'greenPink');
+  });
+}
+
+test('live active clips resolve saved preset names across clip changes', async (t) => {
+  const s = await serve(t);
+  const saved = s.integrations.library.effects.create({ name: 'Closing glow', spec: GLOW });
+  await s.call('PUT', '/api/sequence', {
+    ...SET, clips: [
+      { ...clip('A', 0, 4), effect: undefined, presetId: saved.id },
+      { ...clip('B', 4, 4), effect: undefined, presetId: 'ldj.FadeCycle' },
+    ],
+  });
+  await s.call('POST', '/api/sequence/play');
+  const sequencer = s.integrations.sequence.sequencer;
+  sequencer.frame({ beatPos: 100, bpm: 120, epoch: 0 });
+  assert.deepEqual(getLiveState().sequence.activeClips, [{
+    id: 'A', laneId: 'a', lane: 'a', name: saved.name,
+  }]);
+  sequencer.frame({ beatPos: 104, bpm: 120, epoch: 0 });
+  const res = await s.call('GET', '/api/sequence/status');
+  assert.deepEqual(res.body.status.activeClips, [{
+    id: 'B', laneId: 'a', lane: 'a', name: presetById('ldj.FadeCycle').name,
+  }]);
 });

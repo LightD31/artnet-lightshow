@@ -1,21 +1,6 @@
-/**
- * Keep one fault from ending the show.
- *
- * Everything that drives the rig runs from a timer: the 44 Hz render, the beat
- * clock, the auto show's cursor, the status sweeps. A throw inside any of them
- * is an uncaught exception, and Node's answer to that is to exit — at which
- * point the fixtures latch whatever frame they last received and hold it for
- * the rest of the night, with nothing left running that could put them out.
- *
- * So faults are contained where they happen and reported, loudly but not at
- * frame rate: a bug in the render path would otherwise print forty identical
- * stack traces a second and bury everything else in the console.
- */
-
 const REPORT_INTERVAL_MS = 5000;
 const reports = new Map<string, { at: number; suppressed: number }>();
 
-/** Log a contained fault, at most once per interval for each `where`. */
 function report(where: string, err: unknown): void {
   const now = Date.now();
   const last = reports.get(where) || { at: -Infinity, suppressed: 0 };
@@ -31,11 +16,7 @@ function report(where: string, err: unknown): void {
   console.error(`[${where}] ${detail}${extra}`);
 }
 
-/**
- * Wrap a callback so a throw is reported instead of escaping. For timers:
- * `createTicker({ onTick: guarded('render', renderDmx) })` keeps rendering the
- * next frame even if this one failed.
- */
+// Catch timer callback failures so one bad frame does not end the render loop.
 function guarded<A extends unknown[], R, T = unknown>(where: string,
   fn: (this: T, ...args: A) => R): (this: T, ...args: A) => R | undefined {
   return function guardedCall(this: T, ...args: A): R | undefined {
@@ -50,16 +31,6 @@ function guarded<A extends unknown[], R, T = unknown>(where: string,
 
 let installed = false;
 
-/**
- * The last line of defence, for faults that no guard was placed around: a
- * callback from a library, a promise nobody awaited.
- *
- * Staying up after an uncaught exception is not what Node recommends for a
- * web service, which would rather restart clean. A light show is the other
- * way round: the render loop is independent of whatever just failed, and a
- * rig that keeps running on slightly inconsistent state is far better than
- * one frozen on its last frame mid-set. The fault is still reported.
- */
 function installProcessSafetyNet(): void {
   if (installed) return;
   installed = true;

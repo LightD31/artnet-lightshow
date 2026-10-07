@@ -4,26 +4,7 @@ import { format } from 'node:util';
 import pino from 'pino';
 import type { Logger } from 'pino';
 
-/**
- * The server's log: structured (pino), kept three ways.
- *
- *   the terminal    a readable line per entry on a terminal, the JSON record
- *                   otherwise (a service manager, a pipe) — LOG_FORMAT
- *                   overrides;
- *   a file          logs/lightshow.log, JSON lines, rotated at 10 MB with
- *                   three old files kept. Written synchronously: the lines
- *                   before a crash are the ones worth having;
- *   memory          the last thousand entries, for the log view and
- *                   GET /api/logs — with the tail of the run before this one,
- *                   read back from the file at startup, so after a crash the
- *                   log view still shows what led up to it.
- *
- * Every module already signs what it prints — `console.warn('[show] …')` — so
- * rather than rewrite a hundred and eighty calls, startLogging() takes the
- * console over: each call becomes an entry at its level, the bracketed tag its
- * component. What the libraries print arrives the same way. New code can ask
- * for logger('component') and add fields of its own.
- */
+// Write crash logs synchronously so the last events survive process failure.
 
 export type LevelName = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal';
 
@@ -31,23 +12,17 @@ export const LEVELS: Record<LevelName, number> = { trace: 10, debug: 20, info: 3
 const NAMES = Object.fromEntries(Object.entries(LEVELS).map(([name, value]) => [value, name])) as Record<number, LevelName>;
 
 export interface LogEntry {
-  /** Counts up within this run; what a reader asks for more after. */
   seq: number;
-  /** Epoch milliseconds. */
   time: number;
   level: LevelName;
-  /** What logged it — 'show', 'hue', 'supervisor'… — or null. */
   component: string | null;
   msg: string;
-  /** Any other fields the record carried. */
   data?: Record<string, unknown>;
-  /** From the run before this one, read back from the log file. */
   previous?: true;
 }
 
 type NewEntry = Omit<LogEntry, 'seq'>;
 
-/** The last entries, oldest first. */
 export class LogBuffer {
   declare _entries: LogEntry[];
   declare _max: number;
@@ -66,15 +41,10 @@ export class LogBuffer {
     return stored;
   }
 
-  /** The last entry's seq: what to ask for more after. */
   get last(): number {
     return this._seq;
   }
 
-  /**
-   * Entries after `after` at `level` or above, the latest `limit` of them.
-   * A reader that polls passes the `last` it was given back as `after`.
-   */
   since(after = 0, { level = 'trace', limit = 500 }: { level?: LevelName; limit?: number } = {}): LogEntry[] {
     const min = LEVELS[level] ?? 0;
     const out = this._entries.filter((e) => e.seq > after && LEVELS[e.level] >= min);
@@ -82,7 +52,6 @@ export class LogBuffer {
   }
 }
 
-/** "[component] message", the way the server's messages are signed, apart. */
 export function splitComponent(text: string): { component: string | null; msg: string } {
   const m = /^(\s*)\[([^\]\n]{1,40})\] ?([\s\S]*)$/.exec(text);
   return m ? { component: m[2], msg: m[1] + m[3] } : { component: null, msg: text };
@@ -90,7 +59,6 @@ export function splitComponent(text: string): { component: string | null; msg: s
 
 const SKIP = new Set(['level', 'time', 'msg', 'component', 'pid', 'hostname']);
 
-/** A pino record as an entry; null for what is not one. */
 export function entryOf(record: unknown): NewEntry | null {
   if (!record || typeof record !== 'object') return null;
   const r = record as Record<string, unknown>;
@@ -109,7 +77,6 @@ export function entryOf(record: unknown): NewEntry | null {
 
 const COLOURS: Partial<Record<LevelName, string>> = { trace: '2', debug: '2', warn: '33', error: '31', fatal: '1;31' };
 
-/** An entry as a line for a person at a terminal. Info, the usual, carries no level. */
 export function prettyLine(entry: NewEntry, { colour = false }: { colour?: boolean } = {}): string {
   const paint = (code: string | undefined, text: string) => (colour && code ? `\u001b[${code}m${text}\u001b[0m` : text);
   const t = new Date(entry.time);
@@ -117,18 +84,10 @@ export function prettyLine(entry: NewEntry, { colour = false }: { colour?: boole
   const level = entry.level === 'info' ? '' : `${paint(COLOURS[entry.level], entry.level.toUpperCase())} `;
   const component = entry.component ? `[${entry.component}] ` : '';
   const data = entry.data ? ` ${JSON.stringify(entry.data)}` : '';
-  // A message that opens with a blank line (the startup banner) keeps it,
-  // before the time rather than after.
   const lead = /^\n*/.exec(entry.msg)?.[0] || '';
   return `${lead}${paint('2', time)} ${level}${component}${entry.msg.slice(lead.length)}${data}\n`;
 }
 
-/**
- * A log file that rotates: past `maxBytes`, lightshow.log becomes
- * lightshow.1.log (and .1 becomes .2, and so on to `keep`), and a new one is
- * started. Written synchronously, so nothing is lost to a crash but the line
- * being written.
- */
 export class RotatingFile {
   declare file: string;
   declare _maxBytes: number;
@@ -171,8 +130,7 @@ export class RotatingFile {
       fs.writeSync(this._open(), line);
       this._size += bytes;
     } catch (_) {
-      // A full disk must not take the show down with it; the terminal and the
-      // log view still have the entry.
+      // Ignore disk-write failures so logging cannot stop the show.
     }
   }
 
@@ -183,10 +141,6 @@ export class RotatingFile {
   }
 }
 
-/**
- * The last entries of a log file — the run before this one — at most
- * `maxLines`, read from its last 256 KB.
- */
 export function readTail(file: string, maxLines = 200): NewEntry[] {
   let text: string;
   try {
@@ -215,9 +169,6 @@ export function readTail(file: string, maxLines = 200): NewEntry[] {
   return out.slice(-maxLines);
 }
 
-// ── The server's log ─────────────────────────────────────────────────────────
-
-/** What the log view reads. */
 export const buffer = new LogBuffer(1000);
 
 const streams = pino.multistream([{
@@ -239,7 +190,6 @@ const root: Logger = pino({
   timestamp: pino.stdTimeFunctions.epochTime,
 }, streams);
 
-/** A logger for one part of the server; its entries carry `component`. */
 export function logger(component: string): Logger {
   return root.child({ component });
 }
@@ -248,7 +198,6 @@ type ConsoleMethod = 'log' | 'info' | 'warn' | 'error' | 'debug';
 const CONSOLE_LEVELS: Record<ConsoleMethod, LevelName> = { log: 'info', info: 'info', warn: 'warn', error: 'error', debug: 'debug' };
 let original: Partial<Record<ConsoleMethod, (...args: unknown[]) => void>> | null = null;
 
-/** Every console call from here on as an entry: its level, and its tag as the component. */
 function captureConsole(): void {
   if (original) return;
   original = {};
@@ -262,7 +211,6 @@ function captureConsole(): void {
   }
 }
 
-/** Give the console back (for tests). */
 export function releaseConsole(): void {
   if (!original) return;
   for (const [method, fn] of Object.entries(original)) (console as unknown as Record<string, unknown>)[method] = fn;
@@ -270,20 +218,13 @@ export function releaseConsole(): void {
 }
 
 export interface LoggingOptions {
-  /** The log file's directory; none, no file. */
   dir?: string | null;
-  /** 'pretty', 'json', or 'auto' (pretty on a terminal); LOG_FORMAT overrides. */
   terminal?: 'pretty' | 'json' | 'auto' | 'none';
-  /** Take the console over (the server does; a test need not). */
   console?: boolean;
 }
 
 let file: RotatingFile | null = null;
 
-/**
- * Start logging to the terminal and the file, reading back the tail of the
- * last run first. Called once, first thing, by the server.
- */
 export function startLogging({ dir = null, terminal = 'auto', console: capture = true }: LoggingOptions = {}): { file: string | null } {
   if (dir) {
     const logFile = path.join(dir, 'lightshow.log');

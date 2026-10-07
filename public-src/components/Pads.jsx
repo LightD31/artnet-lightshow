@@ -1,5 +1,6 @@
-import { useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { api, pick } from '../state.js';
+import { padLabel } from '../now-playing.js';
 import { useFocusTrap } from '../focus-trap.js';
 import { useVoicePads, holdsWhilePressed, padKey, rapidPad } from '../voice-pad.js';
 import { quickDeck, readFavourites } from './Effects.jsx';
@@ -32,8 +33,27 @@ export function contentRows(rows, favourites = []) {
   return [...first, ...rows.filter((r) => !seen.has(r.id))];
 }
 
-// Catalogue ids are dotted (hd.…, ldj.…, energy.…); saved presets are flagged; the rest are upstream patterns.
-const contentValue = (row) => `${row.user || row.id.includes('.') ? 'preset' : 'pattern'}:${row.id}`;
+/**
+ * What the editor offers, as { value, name }: every saved and built-in preset
+ * once under kind `preset`, in contentRows' order. A legacy row has no spec
+ * and plays from no pad: one modelled on a preset offers that preset in its
+ * place, under the preset's name; the rest offer nothing. Then the shelf's
+ * patterns, played as one voice (`pattern`) or dropped into the sequence
+ * (`sequencePattern`).
+ */
+export function padChoices(rows, shelf = [], favourites = []) {
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const seen = new Set();
+  const presets = [];
+  for (const row of contentRows(rows, favourites)) {
+    const target = row.legacy ? byId.get(row.preset) : row;
+    if (!target || target.legacy || seen.has(target.id)) continue;
+    seen.add(target.id);
+    presets.push({ value: `preset:${target.id}`, name: target.name });
+  }
+  const shelved = (kind) => shelf.map((p) => ({ value: `${kind}:${p.id}`, name: p.name || p.id }));
+  return { presets, patterns: shelved('pattern'), drops: shelved('sequencePattern') };
+}
 
 /** What PUT /api/pads/:bank/:slot takes, from the editor's fields. */
 export function padBody(draft) {
@@ -51,7 +71,7 @@ export function padBody(draft) {
 }
 
 export function Pads({ initialBank }) {
-  const s = pick(['pads', 'patterns', 'effects']);
+  const s = pick(['pads', 'patterns', 'effects', 'sequencePatterns']);
   const [bank, setBank] = useState(() => initialBank ?? readBank());
   const [editing, setEditing] = useState(false);
   const [open, setOpen] = useState(null);
@@ -82,7 +102,7 @@ export function Pads({ initialBank }) {
         {cells.map((entry) => {
           const index = entry.bank * SLOTS + entry.slot;
           const on = !!lit[index] || held.has(padKey(entry.bank, entry.slot));
-          const name = entry.label || (entry.content ? entry.content.id : 'Empty');
+          const name = padLabel(entry, s);
           // A rapid pad asks before the acknowledgement, as the strobe button does.
           const handlers = editing ? { onClick: () => setOpen(entry) }
             : gatedPadProps(entry, gate, rapidPad(entry, s.patterns, s.effects), name);
@@ -96,7 +116,7 @@ export function Pads({ initialBank }) {
               aria-pressed={on}
               disabled={!entry.content && !editing}
               {...handlers}>
-              <span class="pad-label">{entry.label || (entry.content ? name : 'Empty')}</span>
+              <span class="pad-label">{name}</span>
               <span class="pad-glyph" aria-hidden="true">{entry.content ? padGlyph(holdsWhilePressed(entry) ? 'hold' : entry.launch) : ''}</span>
             </button>
           );
@@ -108,9 +128,11 @@ export function Pads({ initialBank }) {
   );
 }
 
-/** The pad editor, as a sheet: content from the library, launch, quantise, fixtures. */
-export function PadEditor({ entry, onClose }) {
+/** The pad editor, as a sheet: content from the library and the pattern shelf, launch, quantise, fixtures. */
+export function PadEditor({ entry, onClose, initial = {} }) {
   const s = pick(['patterns', 'effects', 'fixtures']);
+  const [shelf, setShelf] = useState(initial.patterns || []);
+  useEffect(() => { api('/api/sequence/patterns').then((r) => r.ok && setShelf(r.patterns || [])); }, []);
   const box = useRef(null);
   useFocusTrap(box, true, onClose);
   const current = entry.content ? `${entry.content.kind}:${entry.content.id}` : '';
@@ -120,8 +142,9 @@ export function PadEditor({ entry, onClose }) {
   });
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
   const userRows = (s.effects || []).map((e) => ({ ...e, user: true }));
-  const rows = contentRows([...userRows, ...(s.patterns || [])], readFavourites());
-  const values = new Set(rows.map(contentValue));
+  const choices = padChoices([...userRows, ...(s.patterns || [])], shelf, readFavourites());
+  const values = new Set([...choices.presets, ...choices.patterns, ...choices.drops].map((c) => c.value));
+  const option = (c) => <option key={c.value} value={c.value} selected={draft.content === c.value}>{c.name}</option>;
   const strobe = draft.content === 'strobe:strobe';
   const toggleFixture = (id, on) => set({ targets: on ? [...draft.targets, id] : draft.targets.filter((t) => t !== id) });
 
@@ -139,10 +162,9 @@ export function PadEditor({ entry, onClose }) {
             <option value="" selected={draft.content === ''}>Nothing</option>
             <option value="strobe:strobe" selected={strobe}>Strobe (held)</option>
             {current && current !== 'strobe:strobe' && !values.has(current) && <option value={current} selected={draft.content === current}>{entry.content.id}</option>}
-            {rows.map((row) => {
-              const value = contentValue(row);
-              return <option key={value} value={value} selected={draft.content === value}>{row.name}</option>;
-            })}
+            {choices.presets.map(option)}
+            {shelf.length > 0 && <optgroup label="Patterns, played as one voice">{choices.patterns.map(option)}</optgroup>}
+            {shelf.length > 0 && <optgroup label="Patterns, dropped into the sequence">{choices.drops.map(option)}</optgroup>}
           </select>
         </label>
         <label class="pad-field"><span>Label</span>

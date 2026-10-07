@@ -47,7 +47,7 @@ function rigAt(ms, patch) {
   return [read(PAR), read(LAMP)];
 }
 
-test('a par flashes in the look\'s colours on the half beat, black after, the look between', () => {
+test("par strobe follows the look palette on half beats", () => {
   // 120 BPM: half beats, a flash every 250 ms.
   assert.deepStrictEqual(rigAt(0)[0], { dim: 255, r: 255, g: 0, b: 0 }, 'colour A on the beat');
   assert.deepStrictEqual(rigAt(100)[0], { dim: 0, r: 0, g: 0, b: 0 }, 'black after the flash');
@@ -100,6 +100,28 @@ test('the preview drives the same bytes as the rig, par and lamp alike', () => {
   }
 });
 
+const OVERRIDE = [{ r: 0, g: 255, b: 0, w: 0, a: 0, uv: 0 }, { r: 255, g: 0, b: 136, w: 0, a: 0, uv: 0 }];
+for (const energy of [HOLD_STROBE, 'color-strobe', 'glow']) {
+  test(`${energy} preview matches the rig under a palette override`, () => {
+    const fixtures = [PAR, LAMP];
+    const rig = buildRig(fixtures, getProfile);
+    const sample = createPreviewSampler([
+      { timeMs: 0, action: 'patch', data: LOOK },
+      { timeMs: 0, action: 'energy', data: { id: energy, durationMs: 5000 } },
+    ], null, { paletteOverride: ['#00FF00', '#FF0088'] });
+    for (const ms of [0, 60, 100, 170, 200, 250, 320, 480, 760, 1010]) {
+      const preview = sample(ms, fixtures, COLOR_PRESETS, rig);
+      const rendered = rigAt(ms, { energy, paletteOverride: OVERRIDE });
+      assert.deepEqual(rendered.map((c) => [c.r, c.g, c.b]), preview.map((c) => [c.r, c.g, c.b]));
+    }
+  });
+}
+
+test('the hold strobe cycles the override colours', () => {
+  assert.deepEqual(rigAt(0, { paletteOverride: OVERRIDE })[0], { dim: 255, r: 0, g: 255, b: 0 });
+  assert.deepEqual(rigAt(250, { paletteOverride: OVERRIDE })[0], { dim: 255, r: 255, g: 0, b: 136 });
+});
+
 // ── Its timing and its look, per lamp ───────────────────────────────────────
 
 test('the hold strobe is an energy effect the look resolves per lamp', () => {
@@ -120,7 +142,7 @@ test('its flashes fall on the finest division of the beat under five a second', 
   assert.ok(Math.abs(holdStrobeFlash(0.6, 128).sinceMs - 0.1 * (60000 / 128)) < 1e-9);
 });
 
-test('each flash is a colour of the look at full, then black, then the look shows through', () => {
+test("hold strobe restores the look between palette flashes", () => {
   const pal = [RED, BLUE];
   const flash = (index, sinceMs) => holdStrobeLook(pal, { index, sinceMs, periodMs: 250 }, false);
   assert.deepStrictEqual(flash(0, 0), { col: RED, dim: 255, strobe: 0 });

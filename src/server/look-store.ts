@@ -4,22 +4,7 @@ import { lookSchema, captureLook, recallLook } from './cues.ts';
 import { state } from './state.ts';
 import { messageOf, statusOf } from '../errors.ts';
 
-/**
- * The look on stage, kept so a restart can put it back (config/look.json).
- *
- * When the supervisor starts the server again — after a crash, a hang, or a
- * restart asked for from the app — the rig has been holding its last frame,
- * or has gone dark, and the operator is mid-set. The new run reads this back
- * before its first frame (LIGHTSHOW_RECOVER) and the rig comes back as it
- * was: the pattern, the colours, the masters, every override — the same look
- * a cue captures (cues.ts) — and, if the auto show was running, its track's
- * show, reloaded from the analysis cache and following the music again.
- *
- * Saved every couple of seconds when it has changed. An energy effect is
- * never put back: a held blinder whose release was lost in the crash must not
- * come back stuck on. A normal start ignores the file: the night starts from
- * the defaults, as it always has.
- */
+// Never restore held energy effects because a lost release could leave a blinder or strobe latched.
 
 const savedSchema = z.object({
   savedAt: z.string().max(40),
@@ -28,11 +13,7 @@ const savedSchema = z.object({
     running: z.boolean(),
     key: z.string().max(2048).nullable(),
     track: z.record(z.string(), z.unknown()).nullable(),
-    // What it followed: the music player, the decks, the live input, or its
-    // own clock ('timer').
     source: z.string().max(16),
-    // Only with the auto show's own clock: a player-driven show follows the
-    // player, wherever it has got to.
     positionMs: z.number().finite().min(0).nullable(),
   }).strict().nullable(),
 }).strict();
@@ -52,7 +33,6 @@ export class LookStore extends JsonStore {
     return this.readValid(savedSchema);
   }
 
-  /** Save the look when it differs from the last one saved; true when it wrote. */
   save(look: Unsaved): boolean {
     const body = JSON.stringify(look);
     if (body === this._last) return false;
@@ -67,7 +47,6 @@ export class LookStore extends JsonStore {
   }
 }
 
-/** The auto show, as far as keeping and resuming it goes. */
 export interface ResumableShow {
   running: boolean;
   analysisKey: string | null;
@@ -75,7 +54,6 @@ export interface ResumableShow {
   getPositionMs(): number;
 }
 
-/** What is on stage now, as it would be put back; `source` is what the auto show follows. */
 export function currentLook(autoShow: ResumableShow | null, source = 'timer'): Unsaved {
   const auto = autoShow && autoShow.running && autoShow.analysisKey ? {
     running: true,
@@ -87,16 +65,7 @@ export function currentLook(autoShow: ResumableShow | null, source = 'timer'): U
   return { look: lookSchema.parse(captureLook()), auto };
 }
 
-/**
- * Put a saved look back on stage — without its energy effect, and without
- * the settings a cue carries (audio mode, strobe): settings.json holds those
- * as they were last saved, and a look up to two seconds older must not undo
- * a change made just before the restart. An effect that waits for a
- * photosensitivity acknowledgement taken back since stays off, as an energy
- * effect does: the rest of the look comes back on the pattern the server
- * started with, its masters and overrides included. False, and the look left
- * as it is, when even that is refused. A restart comes up either way.
- */
+// Keep current settings on recovery so an older look snapshot cannot undo saved safety or audio changes.
 export function putBack(saved: SavedLook): boolean {
   const { audioMode: _audioMode, strobe: _strobe, ...look } = saved.look;
   try {
@@ -114,10 +83,6 @@ export function putBack(saved: SavedLook): boolean {
   }
 }
 
-/**
- * Where a show on its own clock has got to by now: where it was saved, plus
- * the time since — the music did not stop for the restart.
- */
 export function resumeAt(saved: SavedLook, now = Date.now()): number | null {
   if (!saved.auto || saved.auto.positionMs === null) return null;
   const since = now - Date.parse(saved.savedAt);
