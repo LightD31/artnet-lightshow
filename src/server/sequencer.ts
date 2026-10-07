@@ -514,7 +514,9 @@ export function automationValue(a: Automation, from: number, elapsed: number): n
 }
 
 /** What the sequence changes on the rig, applied as one patch a frame: the palette override (hex), the tempo, the master. */
-export interface SequencePatch { paletteOverride?: string[]; bpm?: number; masterDimmer?: number }
+export interface SequencePatch { paletteOverride?: string[] | null; paletteOverrideId?: string | null; bpm?: number; masterDimmer?: number }
+
+type PaletteState = { paletteOverride: string[] | null; paletteOverrideId: string | null };
 
 // One automation playing: its settings, the value it started from, and how
 // far it has come (beats for the master, counted frame by frame so a tempo
@@ -569,7 +571,7 @@ export interface SequencerOptions {
    * and the palette override on it (hex, null for none) when the rig can say:
    * the random palette on loop picks another one.
    */
-  current?: () => { masterDimmer: number; bpm: number; paletteOverride?: readonly string[] | null };
+  current?: () => { masterDimmer: number; bpm: number; paletteOverride?: readonly string[] | null; paletteOverrideId?: string | null };
   /** Set the audio mode a sequence asks for when it starts. */
   musicMode?: (mode: AudioMode) => void;
   /** Throws (409) for an effect that may not play yet: the photosensitivity gate. */
@@ -601,7 +603,7 @@ export class Sequencer {
   declare _resolve: EffectResolver;
   declare _paletteOf: (id: string) => string[] | null;
   declare _apply: (patch: SequencePatch) => void;
-  declare _current: () => { masterDimmer: number; bpm: number; paletteOverride?: readonly string[] | null };
+  declare _current: () => { masterDimmer: number; bpm: number; paletteOverride?: readonly string[] | null; paletteOverrideId?: string | null };
   declare _musicMode: (mode: AudioMode) => void;
   declare _admit: (spec: EffectSpec) => void;
   declare _now: () => number;
@@ -631,6 +633,8 @@ export class Sequencer {
   declare _gotos: Map<string, number>;
   declare _patch: SequencePatch;
   declare _palette: string | null;
+  declare _paletteBefore: PaletteState | null;
+  declare _paletteApplied: PaletteState | null;
   declare _automation: { brightness: AutomationRun | null; tempo: AutomationRun | null };
   declare _last: MusicalTime | null;
   declare _clock: () => number;
@@ -667,6 +671,8 @@ export class Sequencer {
     this._end = null;
     this._revision = 0;
     this._commands = [];
+    this._paletteBefore = null;
+    this._paletteApplied = null;
     this._release();
     this._last = null;
     this._spent = 0;
@@ -752,6 +758,7 @@ export class Sequencer {
 
   // Back to nothing playing: no transport, no held picture, no automation.
   _release(): void {
+    this._restorePalette();
     this._mode = 'idle';
     this._asked = null;
     this._run = 'idle';
@@ -842,6 +849,7 @@ export class Sequencer {
     if (this._mode === 'idle' && !blackout) return;
     // Stopped by its own error, a stop by hand still lets go of where it stopped.
     if (this._mode === 'stopped' && !this._error && (this._asked === mode || !blackout)) return;
+    this._restorePalette();
     this._mode = 'stopped';
     this._asked = mode;
     this._ops.push({ type: 'stop', mode });
@@ -909,7 +917,8 @@ export class Sequencer {
   }
 
   /** A hand on the master or the tempo: the automation of that one ends; the sequence's own samples never come here. */
-  handEdit({ masterDimmer = false, bpm = false }: { masterDimmer?: boolean; bpm?: boolean }): void {
+  handEdit({ masterDimmer = false, bpm = false, paletteOverride = false }: { masterDimmer?: boolean; bpm?: boolean; paletteOverride?: boolean }): void {
+    if (paletteOverride) this._paletteBefore = this._paletteApplied = null;
     if (masterDimmer) this._automation.brightness = null;
     if (bpm) this._automation.tempo = null;
   }
@@ -933,7 +942,7 @@ export class Sequencer {
       const colours = this._paletteOf(seq.options.initialPalette);
       if (colours) {
         this._palette = seq.options.initialPalette;
-        this._apply({ paletteOverride: colours });
+        this._applyPalette({ paletteOverride: colours, paletteOverrideId: seq.options.initialPalette });
       }
     }
     if (seq.bpm !== null) this._apply({ bpm: seq.bpm });
@@ -1072,6 +1081,8 @@ export class Sequencer {
   _applyOp(op: Op, reading: MusicalTime | null): void {
     switch (op.type) {
       case 'start': {
+        this._mode = 'playing';
+        this._asked = null;
         if (op.real) {
           this._generation++;
           this._cursor = { pos: this._cursor.pos, traversal: 0, next: this._firstFrom(this._cursor.pos, true) };
@@ -1088,6 +1099,7 @@ export class Sequencer {
       }
       case 'resume': {
         if (this._run !== 'paused') return;
+        this._mode = 'playing';
         const hold = this._hold!;
         this._hold = null;
         this._run = 'playing';
@@ -1097,12 +1109,15 @@ export class Sequencer {
       }
       case 'pause': {
         if (this._run !== 'playing') return;
+        this._mode = 'paused';
         this._run = 'paused';
         this._hold = { position: this._cursor.pos, traversal: this._cursor.traversal, beat: reading!.beatPos };
         this._anchor = null;
         return;
       }
       case 'stop': {
+        delete this._patch.paletteOverride;
+        delete this._patch.paletteOverrideId;
         // A hold with nothing played to hold, or over black, leaves it as it was.
         if (op.mode === 'hold' && (this._run === 'idle' || (this._run === 'stopped' && this._stop?.mode === 'black'))) return;
         const paused = this._run === 'paused';
@@ -1173,6 +1188,7 @@ export class Sequencer {
   // covers a fixture there, so the look plays on), its automation ends, and
   // the next play starts from the top.
   _finish(): void {
+    this._restorePalette();
     this._ended = true;
     this._run = 'idle';
     // Queued controls run next; an ordinary stop cannot hold an ended picture.
@@ -1304,6 +1320,7 @@ export class Sequencer {
       if (!colours) return;
       this._palette = cmd.value;
       this._patch.paletteOverride = colours;
+      this._patch.paletteOverrideId = cmd.value;
     } else if (cmd.type === 'tempo') {
       this._automation.tempo = null;
       this._patch.bpm = cmd.value;
@@ -1318,14 +1335,17 @@ export class Sequencer {
   // the one the sequence last put on.
   _randomPalette(): void {
     const ids = BUILTIN_PALETTES.map((p) => p.id);
-    const live = this._current().paletteOverride;
-    const on = live === undefined ? this._palette : live === null ? null : ids.find((id) => samePalette(this._paletteOf(id), live)) ?? null;
+    const current = this._current();
+    const live = current.paletteOverride;
+    const on = live === undefined ? this._palette : live === null ? null
+      : current.paletteOverrideId ?? ids.find((id) => samePalette(this._paletteOf(id), live)) ?? null;
     const now = on === null ? null : ids.indexOf(on);
     const id = ids[pickNotLast(this._rng.seed, this._rng.iter++, ids.length, now, PALETTE_KEY)];
     const colours = this._paletteOf(id);
     if (!colours) return;
     this._palette = id;
     this._patch.paletteOverride = colours;
+    this._patch.paletteOverrideId = id;
   }
 
   // ── Automation and what goes on ───────────────────────────────────────────
@@ -1371,7 +1391,34 @@ export class Sequencer {
     const live = this._current();
     if (patch.masterDimmer === live.masterDimmer) delete patch.masterDimmer;
     if (patch.bpm === live.bpm) delete patch.bpm;
-    if (Object.keys(patch).length) this._apply(patch);
+    if (Object.keys(patch).length) this._applyPalette(patch);
+  }
+
+  _applyPalette(patch: SequencePatch): void {
+    if (patch.paletteOverride !== undefined) {
+      const live = this._current();
+      this._paletteBefore ??= {
+        paletteOverride: live.paletteOverride ? [...live.paletteOverride] : null,
+        paletteOverrideId: live.paletteOverrideId ?? null,
+      };
+      this._paletteApplied = { paletteOverride: patch.paletteOverride, paletteOverrideId: patch.paletteOverrideId ?? null };
+    }
+    this._apply(patch);
+  }
+
+  _restorePalette(): void {
+    if (this._patch) {
+      delete this._patch.paletteOverride;
+      delete this._patch.paletteOverrideId;
+    }
+    const before = this._paletteBefore;
+    const applied = this._paletteApplied;
+    this._paletteBefore = this._paletteApplied = null;
+    if (!before || !applied) return;
+    const live = this._current();
+    // A manual palette takes ownership, including reselecting the same colours.
+    if ((live.paletteOverrideId === undefined || live.paletteOverrideId === applied.paletteOverrideId) && live.paletteOverride
+      && samePalette(applied.paletteOverride, live.paletteOverride)) this._apply(before);
   }
 
   _transportNow(reading: MusicalTime): SequenceTransport | null {

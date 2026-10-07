@@ -190,6 +190,7 @@ test('the library domain: saved presets and palettes; the built-ins stay catalog
   assert.strictEqual(domainOf('userPalettes'), 'library');
   for (const key of ['palettes', 'families', 'builtinPalettes', 'patterns']) assert.strictEqual(domainOf(key), 'catalogs', key);
   assert.strictEqual(domainOf('paletteOverride'), 'look');
+  assert.strictEqual(domainOf('paletteOverrideId'), 'look');
   assert.strictEqual(domainOf('safety'), 'look');
 });
 

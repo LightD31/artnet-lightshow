@@ -582,6 +582,14 @@ test('every energy and the hold strobe play exactly as the burst always did, ext
   }
 });
 
+for (const energy of ['color-strobe', 'glow']) {
+  test(`${energy} renders the override's first colour`, () => {
+    const paletteOverride = [{ r: 0, g: 255, b: 0, w: 0, a: 0, uv: 0 }];
+    const rendered = rig([PAR]).at(10, { pattern: 'chase', colorA: 9, energy, paletteOverride })[PAR.id];
+    assert.deepEqual([rendered.r, rendered.g, rendered.b, rendered.w, rendered.a, rendered.uv], [0, 255, 0, 0, 0, 0]);
+  });
+}
+
 test('the hold strobe is the catalogue\'s palette-strobe row: five a second on the beat grid, the look\'s colours, the look between', () => {
   const row = preset(HOLD_STROBE);
   assert.strictEqual(row.params.flashesPerSecond, 5, 'not the strobe kind\'s own default of two');

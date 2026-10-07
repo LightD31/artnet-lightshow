@@ -424,32 +424,44 @@ test('the strobe flashes frame.palette: white by default, the look\'s colours wi
   }
 });
 
-test('each energy kind matches resolveEnergyOverride\'s colour, level and strobe', () => {
-  const A = { r: 10, g: 20, b: 30, w: 40, a: 50, uv: 60 };
-  assert.deepStrictEqual(ENERGY_KIND_BY_ID, { 'white-strobe': 'energy.whiteStrobe', 'color-strobe': 'energy.colorStrobe', blinder: 'energy.blinder',
-    'uv-wash': 'energy.uvWash', kill: 'energy.kill', glow: 'energy.glow' });
-  for (const [id, kind] of Object.entries(ENERGY_KIND_BY_ID)) {
-    for (const expressionLevel of [undefined, 0, 0.5, 1]) {
-      // Neither the effect's palette nor an override moves colour A.
-      const inst = { id: kind, spec: validateSpec({ kind, palette: ['#FF00FF'] }), seed: SEED, anchorBeat: 0, startedAtMs: 0, targets: null };
-      const out = draw(inst, frame({ lookPalette: [A, BLUE], paletteOverride: [GREEN], expressionLevel }), MIXED, new EffectStepper());
-      const legacy = resolveEnergyOverride(id, A, expressionLevel ?? 1);
-      assert.strictEqual(out.length, 2);
-      for (const slot of out) {
-        assert.deepStrictEqual(slotToWrite(slot), { colour: legacy.col, dim: legacy.dim, strobe: legacy.strobe }, `${kind} at ${expressionLevel}`);
-        assert.strictEqual(slot.strength, 1, 'owned, kill\'s black included');
+for (const [id, kind] of Object.entries(ENERGY_KIND_BY_ID)) {
+  for (const [name, palette, paletteOverride] of [
+    ['look', null, null], ['own', ['#FF00FF'], null],
+    ['override', ['#FF00FF'], [GREEN]], ['override only', null, [GREEN]],
+  ]) {
+    test(`${kind} preserves energy output with its ${name} palette`, () => {
+      const A = { r: 10, g: 20, b: 30, w: 40, a: 50, uv: 60 };
+      const first = paletteOverride?.[0] ?? (palette ? parseHex(palette[0]) : A);
+      const inst = { id: kind, spec: validateSpec({ kind, palette }), seed: SEED, anchorBeat: 0, startedAtMs: 0, targets: null };
+      for (const expressionLevel of [undefined, 0, 0.5, 1]) {
+        const out = draw(inst, frame({ lookPalette: [A, BLUE], paletteOverride, expressionLevel }), MIXED, new EffectStepper());
+        const legacy = resolveEnergyOverride(id, first, expressionLevel ?? 1);
+        assert.equal(out.length, MIXED.n);
+        for (const slot of out) {
+          assert.deepEqual(slotToWrite(slot), { colour: legacy.col, dim: legacy.dim, strobe: legacy.strobe });
+          assert.equal(slot.strength, 1);
+        }
       }
-    }
+    });
   }
-  const glow = (expressionLevel) => slotToWrite(draw({ id: 'g', spec: validateSpec({ kind: 'energy.glow' }), seed: SEED, anchorBeat: 0, startedAtMs: 0, targets: null },
-    frame({ expressionLevel }), PAR, new EffectStepper())[0]).dim;
-  assert.deepStrictEqual([0, 0.5, 1].map(glow), [150, 203, 255], 'glow rides the expression level on its own curve');
-  assert.strictEqual(kindOf('energy.glow').rideLevel, true);
-  for (const [kind, rapid] of [['energy.whiteStrobe', true], ['energy.colorStrobe', true], ['energy.blinder', false], ['energy.uvWash', false],
-    ['energy.kill', false], ['energy.glow', false]]) {
-    assert.strictEqual(requiresAcknowledgement(validateSpec({ kind })), rapid, kind);
-    const out = draw({ id: kind, spec: validateSpec({ kind }), seed: SEED, anchorBeat: 0, startedAtMs: 0, targets: null }, frame({ acknowledged: false }), PAR, new EffectStepper());
-    assert.strictEqual(out.length, rapid ? 0 : 1, `${kind} unacknowledged`);
-  }
-  assert.throws(() => validateSpec({ kind: 'energy.blinder', params: { level: 1 } }), 'no params');
+}
+
+test('glow preserves its expression curve under palette resolution', () => {
+  const inst = { id: 'g', spec: validateSpec({ kind: 'energy.glow' }), seed: SEED, anchorBeat: 0, startedAtMs: 0, targets: null };
+  const glow = (expressionLevel) => slotToWrite(draw(inst, frame({ expressionLevel }), PAR, new EffectStepper())[0]).dim;
+  assert.deepEqual([0, 0.5, 1].map(glow), [150, 203, 255]);
+  assert.equal(kindOf('energy.glow').rideLevel, true);
+});
+
+for (const [kind, rapid] of [['energy.whiteStrobe', true], ['energy.colorStrobe', true], ['energy.blinder', false],
+  ['energy.uvWash', false], ['energy.kill', false], ['energy.glow', false]]) {
+  test(`${kind} keeps its acknowledgement requirement`, () => {
+    assert.equal(requiresAcknowledgement(validateSpec({ kind })), rapid);
+    const inst = { id: kind, spec: validateSpec({ kind }), seed: SEED, anchorBeat: 0, startedAtMs: 0, targets: null };
+    assert.equal(draw(inst, frame({ acknowledged: false }), PAR, new EffectStepper()).length, rapid ? 0 : 1);
+  });
+}
+
+test('energy specs reject unsupported parameters', () => {
+  assert.throws(() => validateSpec({ kind: 'energy.blinder', params: { level: 1 } }));
 });

@@ -50,6 +50,7 @@ export interface ShowState {
   palette: string | null;
   /** Colours every effect plays instead of its own and the slots (Light DJ's active palette), or null. */
   paletteOverride: Colour[] | null;
+  paletteOverrideId: string | null;
   autoIntensity: number;
   autoSyncOffsetMs: number;
   prolinkEnabled: boolean;
@@ -96,7 +97,7 @@ const state: ShowState = {
   palette: null,
   // Rolled once when set, so a palette's random entries do not re-roll each frame.
   paletteOverride: null,
-  // A copy of the auto show's energy slider, for the MIDI encoder ring and clients.
+  paletteOverrideId: null,
   autoIntensity: 50,
   // A rig calibration, not a look, so it lives in settings (patch.ts persists it).
   autoSyncOffsetMs: settings.group('auto').syncOffsetMs,
@@ -373,6 +374,7 @@ function getLiveState() {
     palette: state.palette,
     // Hex on the wire, as a palette is written everywhere else.
     paletteOverride: state.paletteOverride ? state.paletteOverride.map(toHex) : null,
+    paletteOverrideId: state.paletteOverrideId,
     safety: safety.status(),
     strobe: strobe.status(),
     matrix: matrix.status(),

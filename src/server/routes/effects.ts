@@ -19,10 +19,6 @@ const overrideSchema = z.union([
   z.object({ paletteId: z.string().min(1).max(64) }).strict(),
 ], { error: 'expected { colours: hex[] } (1 to 8) or { paletteId }' });
 
-// What the renderer decided, as the HTTP answer. A base look that is no
-// effect, or one that takes no commands, conflicts with what is on stage
-// (409), as does one that changed under the command or cannot play it now; a
-// command the effects do not know is the caller's mistake (400).
 const REFUSALS: Record<Exclude<CommandStatus, 'applied'>, [number, string]> = {
   unsupported: [409, 'The look on stage is not an effect that takes commands'],
   stale: [409, 'The look on stage changed before the command reached it'],
@@ -31,16 +27,6 @@ const REFUSALS: Record<Exclude<CommandStatus, 'applied'>, [number, string]> = {
   invalid: [400, 'Not a command the effects know, or not its argument'],
 };
 
-/**
- * The effect library: the built-in catalogue, the presets and palettes saved
- * on this server, commands to the effect playing as the base look, the
- * palette played over every effect, and the photosensitivity gate.
- *
- * Errors fall through to the error handler: a refusal answers with its own
- * status, and a disk that will not take a write is a 500, not the client's
- * fault. The look palettes keep their routes (GET /api/palettes, POST
- * /api/palette/:id); these are the effect palettes beside them.
- */
 export function attachEffectRoutes(app: Express, ctx: RouteContext): void {
   // Read when a request comes, as the other domains read theirs: a test that
   // stands in for the integrations with only what it needs still mounts these.
@@ -110,10 +96,6 @@ export function attachEffectRoutes(app: Express, ctx: RouteContext): void {
     res.json({ ok: true });
   });
 
-  // ─── The palette override ─────────────────────────────────────────────────
-  // Light DJ's active palette: every effect plays these colours instead of its
-  // own. A palette by id goes on as the colours it has now, its random ones
-  // rolled once; a later edit to the palette leaves what is on stage.
   const overrideNow = () => (state.paletteOverride ? state.paletteOverride.map(toHex) : null);
 
   app.put('/api/palette-override', (req, res) => {
@@ -126,7 +108,7 @@ export function attachEffectRoutes(app: Express, ctx: RouteContext): void {
     } else {
       colours = body.colours;
     }
-    applyPatch({ paletteOverride: colours });
+    applyPatch({ paletteOverride: colours }, { paletteOverrideId: 'paletteId' in body ? body.paletteId : null });
     res.json({ ok: true, paletteOverride: overrideNow() });
   });
 

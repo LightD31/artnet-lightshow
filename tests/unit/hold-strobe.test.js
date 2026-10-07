@@ -100,6 +100,28 @@ test('the preview drives the same bytes as the rig, par and lamp alike', () => {
   }
 });
 
+const OVERRIDE = [{ r: 0, g: 255, b: 0, w: 0, a: 0, uv: 0 }, { r: 255, g: 0, b: 136, w: 0, a: 0, uv: 0 }];
+for (const energy of [HOLD_STROBE, 'color-strobe', 'glow']) {
+  test(`${energy} preview matches the rig under a palette override`, () => {
+    const fixtures = [PAR, LAMP];
+    const rig = buildRig(fixtures, getProfile);
+    const sample = createPreviewSampler([
+      { timeMs: 0, action: 'patch', data: LOOK },
+      { timeMs: 0, action: 'energy', data: { id: energy, durationMs: 5000 } },
+    ], null, { paletteOverride: ['#00FF00', '#FF0088'] });
+    for (const ms of [0, 60, 100, 170, 200, 250, 320, 480, 760, 1010]) {
+      const preview = sample(ms, fixtures, COLOR_PRESETS, rig);
+      const rendered = rigAt(ms, { energy, paletteOverride: OVERRIDE });
+      assert.deepEqual(rendered.map((c) => [c.r, c.g, c.b]), preview.map((c) => [c.r, c.g, c.b]));
+    }
+  });
+}
+
+test('the hold strobe cycles the override colours', () => {
+  assert.deepEqual(rigAt(0, { paletteOverride: OVERRIDE })[0], { dim: 255, r: 0, g: 255, b: 0 });
+  assert.deepEqual(rigAt(250, { paletteOverride: OVERRIDE })[0], { dim: 255, r: 255, g: 0, b: 136 });
+});
+
 // ── Its timing and its look, per lamp ───────────────────────────────────────
 
 test('the hold strobe is an energy effect the look resolves per lamp', () => {

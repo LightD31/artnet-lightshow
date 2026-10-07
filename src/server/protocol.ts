@@ -1,31 +1,3 @@
-/**
- * What the live page is sent, and how: protocol v2.
- *
- * Version 1 pushed the whole live state — about 7 KB — on every change: every
- * step of a slider drag, two expression updates a second, a 1 Hz status sweep.
- * Nearly every component on the page re-rendered each time, and the DMX
- * monitor re-diffed its 512 cells. DMX itself went out as JSON arrays ten
- * times a second, to every open page whether it showed DMX or not.
- *
- * Version 2, which a page asks for when it connects (`auth.protocol: 2`):
- *
- *   snapshot   on connect, and whenever the page asks (`sync`): the whole
- *              state and the version each domain is at
- *   patch      after that, only the keys that changed, grouped by domain —
- *              { d: domain, v: version, set: { key: value }, del?: [key] }.
- *              Each domain counts its own versions, so a page that misses one
- *              knows to ask for a snapshot rather than drifting
- *   dmx-frame  the DMX, as bytes (shared/dmx-frame.ts), thirty times a second
- *              while it changes, and only to pages that have subscribed to it
- *              (`subscribe: ['dmx']`). Volatile: a frame a slow page cannot
- *              take is dropped rather than queued behind the next
- *   audio      what the party effects hear (audio-features.ts), the same way:
- *              up to thirty times a second, to `subscribe: ['audio']`
- *
- * Version 1 is kept, unchanged, for whatever connects without asking — the
- * Bitfocus Companion module, a page from before protocol 2 — and its JSON DMX
- * stream is only built while one is connected.
- */
 
 import type { Server } from 'socket.io';
 
@@ -40,18 +12,12 @@ export const TOPICS = { dmx: ROOM.dmx, audio: ROOM.audio } as const;
 export type Domain = 'look' | 'rig' | 'show' | 'sources' | 'audio' | 'sequence' | 'catalogs' | 'library' | 'voices' | 'pads' | 'system';
 export const DOMAINS: readonly Domain[] = ['look', 'rig', 'show', 'sources', 'audio', 'sequence', 'catalogs', 'library', 'voices', 'pads', 'system'];
 
-/**
- * Which domain each key of the live state belongs to. Grouped by what changes
- * together and what a view watches: the look on stage moves with every fader,
- * the rig when the patch is edited, the show with the track, the sources on
- * their own clocks. A key not named here is `system`.
- */
 const DOMAIN_OF: Readonly<Record<string, Domain>> = {
   bpm: 'look', clock: 'look', tempoMode: 'look', beatDivision: 'look', running: 'look', pattern: 'look',
   colorA: 'look', colorB: 'look', colorC: 'look', colorD: 'look', palette: 'look',
   masterDimmer: 'look', masterBlackout: 'look', flashLimit: 'look',
   strobeSpeed: 'look', strobeFunction: 'look', pixelMap: 'look', pixelPattern: 'look', panelPattern: 'look',
-  energyOverride: 'look', paletteOverride: 'look', safety: 'look',
+  energyOverride: 'look', paletteOverride: 'look', paletteOverrideId: 'look', safety: 'look',
   // The manual strobe, on or off and its settings: it plays over the look, and the look's views show it.
   strobe: 'look',
   // The matrix board, its mode and held colours: like the strobe, played over the look.
@@ -108,15 +74,6 @@ function isClockPhase(value: unknown): value is ClockPhase {
   return !!v && typeof v === 'object' && [v.bpm, v.beatPos, v.at].every(Number.isFinite) && (v.bpm as number) > 0;
 }
 
-/**
- * Whether the live state's `clock` says anything a screen holding `sent`
- * does not know. Its beat is read afresh every time, so equal JSON would make
- * every broadcast and every sweep a change. A screen carries the beat on as
- * beatPos + (now − at) / 60000 × bpm: a beat that lands within a frame of
- * that, or one standing where it was sent (the patterns stopped), is no news;
- * a tap, a seek, a stop or a drifting tempo is, as are a new source, tempo or
- * epoch. Anything without a beat compares as it is.
- */
 export function clockMoved(sent: unknown, fresh: unknown): boolean {
   if (!isClockPhase(sent) || !isClockPhase(fresh)) return JSON.stringify(sent) !== JSON.stringify(fresh);
   const { beatPos: was, at: wasAt, ...before } = sent;
@@ -140,10 +97,6 @@ export interface Snapshot {
   state: Record<string, unknown>;
 }
 
-/**
- * The live state, diffed against what was last published: the keys that
- * changed, grouped by domain, each domain's version moved on by one.
- */
 export class StateDiffer {
   declare _sent: Map<string, string>;
   declare _sentClock: unknown;
@@ -196,17 +149,6 @@ export class StateDiffer {
 /** The part of socket.io's server this needs; a test may pass less. */
 type Io = Pick<Server, 'emit'> & Partial<Pick<Server, 'to' | 'sockets'>>;
 
-/**
- * Sends each protocol its own form of the same changes.
- *
- *   publishState(live)  on every broadcast: v1 pages get the whole live state
- *                       when anything in it changed, v2 pages the patches
- *   snapshot(full)      for a v2 page connecting or asking to resync
- *   wants(room)         whether anyone is listening there, so a feed nobody
- *                       reads is not built
- *   sendDmxFrame(bytes) to the pages subscribed to DMX
- *   sendAudio(feed)     to the pages subscribed to the audio
- */
 export function createPublisher(io: Io) {
   const differ = new StateDiffer();
   let lastLiveJson = '';
@@ -229,9 +171,6 @@ export function createPublisher(io: Io) {
     },
 
     snapshot(full: Record<string, unknown>): Snapshot {
-      // Built from the state as it is now, which may be ahead of the last
-      // publish: the patches that follow set those keys again, which is
-      // harmless, and nothing is missed.
       const { dmxSnapshot: _dmx, ...state } = full;
       return { protocol: PROTOCOL, versions: differ.versions(), state };
     },
@@ -259,11 +198,6 @@ export function createPublisher(io: Io) {
       lastFrame = null;
     },
 
-    /**
-     * What the party effects hear, to its subscribers, unless they have it
-     * already. Volatile like the DMX; the one message that the audio has gone
-     * (null) is not, so no meter is left standing on the last level.
-     */
     sendAudio(feed: unknown): boolean {
       if (typeof io.to !== 'function') return false;
       const json = JSON.stringify(feed ?? null);

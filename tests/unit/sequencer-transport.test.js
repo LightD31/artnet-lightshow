@@ -58,7 +58,7 @@ const PALETTE_HEX = Object.fromEntries(BUILTIN_PALETTES.map((p) => [p.id, p.colo
  * live master and tempo; the clock in milliseconds is the test's.
  */
 function rig({ master = 255, bpm = 120, seed = [1, 2, 3, 4], admit = () => {}, musicMode = null, onRun } = {}) {
-  const live = { master, bpm, paletteOverride: null, ms: 0 };
+  const live = { master, bpm, paletteOverride: null, paletteOverrideId: null, ms: 0 };
   const applied = [];
   const modes = [];
   const s = new Sequencer({
@@ -68,9 +68,13 @@ function rig({ master = 255, bpm = 120, seed = [1, 2, 3, 4], admit = () => {}, m
       applied.push(patch);
       if (patch.masterDimmer !== undefined) live.master = patch.masterDimmer;
       if (patch.bpm !== undefined) live.bpm = patch.bpm;
-      if (patch.paletteOverride !== undefined) live.paletteOverride = patch.paletteOverride;
+      // As applyPatch: colours without a palette's name name none.
+      if (patch.paletteOverride !== undefined) {
+        live.paletteOverride = patch.paletteOverride;
+        live.paletteOverrideId = patch.paletteOverride === null ? null : patch.paletteOverrideId ?? null;
+      }
     },
-    current: () => ({ masterDimmer: live.master, bpm: live.bpm, paletteOverride: live.paletteOverride }),
+    current: () => ({ masterDimmer: live.master, bpm: live.bpm, paletteOverride: live.paletteOverride, paletteOverrideId: live.paletteOverrideId }),
     musicMode: musicMode ?? ((mode) => modes.push(mode)),
     admit,
     now: () => live.ms,
@@ -208,7 +212,7 @@ test('loop region wraps the beat', () => {
   r.s.setLoop({ on: false, startBeat: 4, endBeat: 8 });
   assert.equal(r.at(113), 5, 'from the position it had');
   assert.equal(r.at(116), null);
-  assert.deepEqual(r.applied.at(-1), { masterDimmer: 20, paletteOverride: PALETTE_HEX.redCyan }, 'its end plays now');
+  assert.deepEqual(r.applied.at(-1), { masterDimmer: 20 }, 'its end plays now');
   assert.equal(r.s.status().ended, true);
   // A region set on the ended sequence: the next play, from the top, loops it.
   r.s.setLoop({ on: true, startBeat: 0, endBeat: 2 });
@@ -229,7 +233,7 @@ test('initialPalette sets the override on play; randomPaletteOnLoop changes it a
   }));
   r.s.play();
   // A real start: the palette, the tempo and the music mode go on at once.
-  assert.deepEqual(r.applied, [{ paletteOverride: PALETTE_HEX.greenPink }, { bpm: 128 }]);
+  assert.deepEqual(r.applied, [{ paletteOverride: PALETTE_HEX.greenPink, paletteOverrideId: 'greenPink' }, { bpm: 128 }]);
   assert.deepEqual(r.modes, ['reactive']);
   r.at(100);
   r.at(101.5);
@@ -275,11 +279,13 @@ test('initialPalette sets the override on play; randomPaletteOnLoop changes it a
     h.s.play();
     h.at(0);
     h.live.paletteOverride = PALETTE_HEX.redCyan.map((c) => c.toLowerCase());
+    h.live.paletteOverrideId = null;
     h.at(2.5);
     assert.equal(h.applied.length, 2, `seed ${seed}`);
     assert.notEqual(idOf(h.applied[1].paletteOverride), 'redCyan', `seed ${seed}: the one on`);
     // Cleared by hand: any built-in palette may go on.
     h.live.paletteOverride = null;
+    h.live.paletteOverrideId = null;
     h.at(4.5);
     assert.equal(h.applied.length, 3, `seed ${seed}: a palette each wrap`);
   }
@@ -292,6 +298,137 @@ test('initialPalette sets the override on play; randomPaletteOnLoop changes it a
   r.at(beat + 0.25);
   assert.equal(r.applied.length, before);
   assert.deepEqual(r.modes, ['reactive']);
+});
+
+test('random loop palettes exclude the named random override', () => {
+  for (let seed = 1; seed <= 60; seed++) {
+    const r = rig({ seed: [seed, 2, 3, 4] });
+    r.live.paletteOverride = ['#2A0088', '#EF6900'];
+    r.live.paletteOverrideId = 'randomRandom';
+    r.s.load(sequence({ clips: [clip('A', 'a', 0, 2)], loop: { on: true, startBeat: 0, endBeat: 2 }, options: { randomPaletteOnLoop: true } }));
+    r.s.play();
+    r.at(0);
+    r.at(2.5);
+    assert.notEqual(r.live.paletteOverrideId, 'randomRandom');
+  }
+});
+
+const PALETTE_COMMAND = { id: 'pal', atBeat: 2, type: 'palette', value: 'redCyan' };
+const paletteState = (r) => [r.live.paletteOverride, r.live.paletteOverrideId];
+function paletteRun({ options = {}, before = [null, null], commands = [PALETTE_COMMAND] } = {}) {
+  const r = rig();
+  [r.live.paletteOverride, r.live.paletteOverrideId] = before;
+  r.s.load(sequence({ clips: [clip('A', 'a', 0, 8)], commands, options }));
+  r.s.play();
+  r.at(100);
+  r.at(102.25);
+  return r;
+}
+
+for (const blackout of [false, true]) {
+  test(`stop restores the previous palette with blackout=${blackout}`, () => {
+    const r = paletteRun();
+    r.s.stop({ blackout });
+    assert.deepEqual(paletteState(r), [null, null]);
+    r.at(102.5);
+    assert.deepEqual(paletteState(r), [null, null]);
+    r.at(103);
+    assert.equal(r.applied.filter((p) => p.paletteOverride !== undefined).length, 2);
+  });
+}
+
+test('palette restoration supports current-state providers without ids', () => {
+  const r = paletteRun();
+  const current = r.s._current;
+  r.s._current = () => ({ ...current(), paletteOverrideId: undefined });
+  r.s.stop();
+  assert.deepEqual(paletteState(r), [null, null]);
+});
+
+test('unload restores the palette beneath initial and command palettes', () => {
+  const before = [['#123456'], 'mine'];
+  const r = paletteRun({ options: { initialPalette: 'greenPink' }, before });
+  r.s.unload();
+  assert.deepEqual(paletteState(r), before);
+});
+
+test('loading another sequence restores the prior palette', () => {
+  const before = [['#123456'], 'mine'];
+  const r = paletteRun({ before });
+  r.s.load(sequence({ id: 'set-2', clips: [clip('B', 'a', 0, 8)] }));
+  assert.deepEqual(paletteState(r), before);
+});
+
+test('a replay restores its prior palette on the next stop', () => {
+  const before = [['#123456'], 'mine'];
+  const r = paletteRun({ before });
+  r.s.stop();
+  r.at(103);
+  r.s.play();
+  r.at(104);
+  r.at(106.25);
+  r.s.stop();
+  r.at(107);
+  assert.deepEqual(paletteState(r), before);
+});
+
+test('stop and replay between frames retain the new initial palette', () => {
+  const r = paletteRun({ options: { initialPalette: 'greenPink' } });
+  r.s.stop();
+  r.s.play();
+  r.at(103);
+  assert.deepEqual(paletteState(r), [PALETTE_HEX.greenPink, 'greenPink']);
+  r.s.stop();
+  assert.deepEqual(paletteState(r), [null, null]);
+});
+
+test('pause preserves the sequence palette', () => {
+  const r = paletteRun();
+  r.s.pause();
+  r.at(103);
+  assert.deepEqual(paletteState(r), [PALETTE_HEX.redCyan, 'redCyan']);
+});
+
+for (const hand of [['#ABCDEF'], null]) {
+  test(`stop preserves a manually ${hand ? 'changed' : 'cleared'} palette`, () => {
+    const r = paletteRun({ before: [['#123456'], 'mine'] });
+    r.live.paletteOverride = hand;
+    r.live.paletteOverrideId = null;
+    r.s.handEdit({ paletteOverride: true });
+    r.s.stop();
+    r.at(103);
+    r.s.unload();
+    assert.deepEqual(paletteState(r), [hand, null]);
+  });
+}
+
+test('reselecting the same palette transfers ownership to the operator', () => {
+  const r = paletteRun();
+  r.s.handEdit({ paletteOverride: true });
+  r.s.stop();
+  r.at(103);
+  assert.deepEqual(paletteState(r), [PALETTE_HEX.redCyan, 'redCyan']);
+});
+
+test('a palette command due on the stop frame never changes the override', () => {
+  const r = rig();
+  r.s.load(sequence({ clips: [clip('A', 'a', 0, 8)], commands: [PALETTE_COMMAND] }));
+  r.s.play();
+  r.at(100);
+  r.s.stop();
+  r.at(102.25);
+  assert.equal(r.live.paletteOverride, null);
+  assert.ok(r.applied.every((p) => p.paletteOverride === undefined));
+});
+
+test('a sequence without palette commands leaves the override untouched', () => {
+  const before = [['#123456'], 'mine'];
+  const r = paletteRun({ before, commands: [] });
+  r.s.stop();
+  r.at(103);
+  r.s.unload();
+  assert.deepEqual(paletteState(r), before);
+  assert.ok(r.applied.every((p) => p.paletteOverride === undefined));
 });
 
 // ── Command rows ────────────────────────────────────────────────────────────
@@ -315,7 +452,7 @@ test('commands fire once when the beat passes them: palette override set, tempo 
   r.at(101.9);
   assert.equal(r.applied.length, 1);
   r.at(102.25);
-  assert.deepEqual(r.applied.at(-1), { paletteOverride: PALETTE_HEX.redCyan });
+  assert.deepEqual(r.applied.at(-1), { paletteOverride: PALETTE_HEX.redCyan, paletteOverrideId: 'redCyan' });
   r.at(102.5);
   assert.equal(r.applied.length, 2, 'passed once, fired once');
   // Two on one beat, crossed in one frame: in their order, applied together.
@@ -328,7 +465,7 @@ test('commands fire once when the beat passes them: palette override set, tempo 
   // The way back over 2 is a new pass: the palette goes on again. The tempo
   // and the master at 3 fire too, but are already what they set: no write.
   r.at(107.5);
-  assert.deepEqual(r.applied.slice(3), [{ paletteOverride: PALETTE_HEX.redCyan }]);
+  assert.deepEqual(r.applied.slice(3), [{ paletteOverride: PALETTE_HEX.redCyan, paletteOverrideId: 'redCyan' }]);
   r.at(108.5);
   assert.equal(r.applied.length, 4);
   assert.equal(r.s.frame(reading(108.5)).transport.generation, gen);
@@ -979,7 +1116,7 @@ test('an edit while the sequence stands on a command\'s beat runs nothing of tha
   r.s.seek(4);
   r.s.pause();
   r.at(100.5);
-  assert.deepEqual(r.applied, [{ paletteOverride: PALETTE_HEX.redCyan, masterDimmer: 7 }]);
+  assert.deepEqual(r.applied, [{ paletteOverride: PALETTE_HEX.redCyan, paletteOverrideId: 'redCyan', masterDimmer: 7 }]);
   r.s.load(seq('two'));
   r.live.master = 99;
   r.s.play();
@@ -992,7 +1129,7 @@ test('an edit while the sequence stands on a command\'s beat runs nothing of tha
   r.live.master = 99;
   r.live.bpm = 100;
   r.at(102.5);
-  assert.deepEqual(r.applied.slice(2), [{ paletteOverride: PALETTE_HEX.redCyan, masterDimmer: 7, bpm: 128 }]);
+  assert.deepEqual(r.applied.slice(2), [{ paletteOverride: PALETTE_HEX.redCyan, paletteOverrideId: 'redCyan', masterDimmer: 7, bpm: 128 }]);
 
   // Stopped by the budget on a loop's wrap, its start's three commands run this time round.
   const h = rig({ master: 255, bpm: 120 });
@@ -1012,7 +1149,7 @@ test('an edit while the sequence stands on a command\'s beat runs nothing of tha
   h.at(100.5);
   assert.deepEqual(h.applied.slice(n), [], 'on from the wrap: none of the three again');
   h.at(100.5 + 2e-6);
-  assert.deepEqual(h.applied.slice(n), [{ paletteOverride: PALETTE_HEX.redCyan, masterDimmer: 7, bpm: 128 }], 'the next time round, all three');
+  assert.deepEqual(h.applied.slice(n), [{ paletteOverride: PALETTE_HEX.redCyan, paletteOverrideId: 'redCyan', masterDimmer: 7, bpm: 128 }], 'the next time round, all three');
 });
 
 test('the status: what is loaded, playing or paused, the beat and bar, the loop and the clip on each lane', () => {
