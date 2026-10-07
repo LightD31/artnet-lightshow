@@ -38,14 +38,14 @@ test('stem activity shapes actual render targets and source confidence gates lea
   }
 });
 
-test('embeddings restore the identity of repeated passages with different structure labels', () => {
+test('embeddings identify repeated passages across structure labels', () => {
   const a = track({ embeddings: [{ time: 4, vector: [1, 0] }, { time: 24, vector: [1, 0] }] });
   const scenes = plan(a).intents.filter(i => i.source.startsWith('section:'));
   assert.equal(scenes[0].identity, scenes[1].identity);
   assert.deepEqual(scenes[0].colors, scenes[1].colors);
 });
 
-test('short silence closes all automatic light immediately and restores at its exact end', () => {
+test('silence closes automatic light until its exact end', () => {
   const a = track({ events: [{ t: 1.1, duration: .1, type: 'SILENCE', confidence: 1 }] });
   const out = renderIntents(plan(a).intents);
   const start = out.find(e => e.timeMs === 1100);
@@ -61,14 +61,14 @@ test('intensity is bounded and zero removes accents without touching master cont
   assert.ok(high.intents.some(i => ['kill', 'color-strobe'].includes(i.burst)));
 });
 
-test('legacy documents still plan, corrupt vectors and nonfinite similarities are ignored', () => {
+test('legacy plans tolerate corrupt vectors and nonfinite similarities', () => {
   assert.ok(plan({ duration: 10, bpm: 120, segments: [] }).intents.length);
   const p = plan(track({ embeddings: [{ time: 0, vector: [NaN] }], semantic_scores: [{ label: 'warm', score: Infinity }] }));
   assert.doesNotThrow(() => JSON.stringify(p.intents));
   assert.ok(p.intents.every(i => Number.isFinite(i.timeMs)));
 });
 
-test('expressive opening survives same-time scene patches and quiet spans block accents', () => {
+test('expressive openings survive scene patches and suppress quiet accents', () => {
   const a = track({ events: [
     { t: 8, type: 'SILENCE', confidence: 1, duration: 2 },
     { t: 8.2, type: 'DROP', confidence: 1 },
@@ -80,7 +80,7 @@ test('expressive opening survives same-time scene patches and quiet spans block 
   assert.ok(!p.intents.some(i => i.kind === 'ACCENT' && i.timeMs >= 8000 && i.timeMs < 10000));
 });
 
-test('stereo width and vocal activity change the rendered pattern, for one through eight lamps', () => {
+test('stereo width and vocals influence rigs with one through eight lamps', () => {
   const draw = (count, vocal, width) => {
     const rows = [];
     PATTERN_FUNCS.ensemble({ colors: COLOR_PRESETS.slice(0, 4), fixtureCount: count, phase: .2,

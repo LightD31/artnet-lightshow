@@ -65,7 +65,7 @@ function given(state) {
   ui.store.applySnapshot({ versions: {}, state: { profiles: PROFILES, fixtures: [], ...state } });
 }
 
-test('a settings section: secrets never shown, restart badges, and what the server resolved', () => {
+test("server settings mask configured secrets", () => {
   ui.settingsSig.value = {
     settings: { server: { host: '127.0.0.1', port: 3000, token: '', publicUrl: '' }, engine: { thread: 'worker' } },
     secrets: { 'server.token': true },
@@ -77,10 +77,30 @@ test('a settings section: secrets never shown, restart badges, and what the serv
   assert.match(server, /id="set-server.token" type="password"/);
   assert.match(server, /placeholder="•••••••• \(leave blank to keep\)"/, 'says a token is set, never what it is');
   assert.doesNotMatch(server, /value="[^"]+" aria-describedby="set-server.token-help"/);
+});
+
+test("server settings mark restart requirements and unchanged values", () => {
+  ui.settingsSig.value = {
+    settings: { server: { host: '127.0.0.1', port: 3000, token: '', publicUrl: '' }, engine: { thread: 'worker' } },
+    secrets: { 'server.token': true },
+    restartKeys: ['server.host', 'server.port', 'server.token', 'engine.thread'],
+    pendingRestart: ['server.port'],
+    engine: { thread: 'worker', rate: 44, frames: 100, renderMs: { p95: 0.4 }, lateFrames: 1, skippedFrames: 0 },
+  };
+  const server = ui.html(ui.h(ui.SettingsSection, ui.SERVER));
   assert.strictEqual(server.split('class="setting-badge ').length - 1, 3, 'host, port and token restart');
   assert.match(server, /restart to apply/, 'the port differs from what is running');
   assert.match(server, /class="btn active" disabled>Apply/, 'nothing to apply yet');
+});
 
+test("engine settings show resolved runtime values", () => {
+  ui.settingsSig.value = {
+    settings: { server: { host: '127.0.0.1', port: 3000, token: '', publicUrl: '' }, engine: { thread: 'worker' } },
+    secrets: { 'server.token': true },
+    restartKeys: ['server.host', 'server.port', 'server.token', 'engine.thread'],
+    pendingRestart: ['server.port'],
+    engine: { thread: 'worker', rate: 44, frames: 100, renderMs: { p95: 0.4 }, lateFrames: 1, skippedFrames: 0 },
+  };
   const engine = ui.html(ui.h(ui.SettingsSection, ui.ENGINE));
   assert.match(engine, /Currently: its own thread — 44 frames a second, 0.4 ms to render \(p95\), 1 late or dropped/);
 });

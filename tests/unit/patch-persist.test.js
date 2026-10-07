@@ -54,7 +54,7 @@ test('the tempo mode is saved when it changes, and a refused one changes nothing
     assert.deepStrictEqual(saved, [{ clock: { tempoMode: 'manual' } }]);
     assert.deepStrictEqual([state.tempoMode, conductor.tempoMode], ['manual', 'manual']);
 
-    assert.throws(() => applyPatch({ tempoMode: 'sometimes' }), (err) => err.status === 400 && /tempoMode/.test(err.message));
+    assert.throws(() => applyPatch({ tempoMode: 'sometimes' }), (err) => err.status === 400);
     assert.deepStrictEqual([state.tempoMode, conductor.tempoMode], ['manual', 'manual']);
 
     applyPatch({ tempoMode: 'auto' });

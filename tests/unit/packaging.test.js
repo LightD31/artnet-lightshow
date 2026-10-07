@@ -36,7 +36,7 @@ test('LIGHTSHOW_DATA_DIR wins over both', () => {
     '/opt/ls/data', 'a blank one is none');
 });
 
-test('the browser opens on the packaged build\'s first start only, and not when told not to', () => {
+test('packaged browser launch runs only on an enabled first start', () => {
   const packaged = { LIGHTSHOW_PACKAGED: '1' };
   assert.equal(shouldOpenBrowser({ env: packaged, argv: [], restarts: 0 }), true);
   assert.equal(shouldOpenBrowser({ env: packaged, argv: [], restarts: 1 }), false, 'not each time the supervisor starts it again');
@@ -45,7 +45,7 @@ test('the browser opens on the packaged build\'s first start only, and not when 
   assert.equal(shouldOpenBrowser({ env: {}, argv: [], restarts: 0 }), false, 'never from a checkout');
 });
 
-test('the browser is opened by what each system opens URLs with, without waiting for it', () => {
+test('browser launch uses each platform\'s detached URL opener', () => {
   const calls = [];
   const spawner = (command, args, options) => {
     calls.push([command, args, options.detached, options.stdio]);

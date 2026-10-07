@@ -131,7 +131,7 @@ test('nothing moves while the show is stopped, auto-sync is off, or nothing is h
   assert.strictEqual(l.show.autoSyncMs, 0);
 });
 
-test('the show carries the correction in its position, and a new show starts without one', () => {
+test('new shows reset playback position corrections', () => {
   const show = new AutoShow(() => {}, [{ name: 'Blackout' }], []);
   try {
     show.timeline = [{ timeMs: 0, action: 'patch', data: { pattern: 'chase' } }];

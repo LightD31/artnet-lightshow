@@ -68,7 +68,7 @@ test('the schema takes an overlay and refuses what is not one', () => {
   assert.ok(!overlaySchema.safeParse({ sections: [{ atMs: -1 }] }).success);
 });
 
-test('edits are kept beside the analysis, survive it being analysed again, and replan the show', async () => {
+test('show edits survive reanalysis and trigger replanning', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'overlay-'));
   try {
     const cache = new AnalysisCache(dir);

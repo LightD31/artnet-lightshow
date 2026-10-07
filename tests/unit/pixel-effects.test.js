@@ -120,7 +120,7 @@ test('bars: each band a column, filled from the bottom as high as it plays', () 
   assert.ok(strip[0] > strip[6], `kick bright, snare dim: ${strip}`);
 });
 
-test('fire: hottest at the root, taller with the bass, and the same flames for the same moment', () => {
+test('fire rendering follows bass height and deterministic time', () => {
   const quiet = panel('fire', 8, 16, { stepPos: 3.2, pulse: { ...PULSE, bass: 0.1, kick: 0 } });
   const loud = panel('fire', 8, 16, { stepPos: 3.2, pulse: { ...PULSE, bass: 1, kick: 1 } });
   const row = (p, r) => [...Array(8).keys()].reduce((sum, c) => sum + p.at(c, r)[1], 0);
@@ -149,7 +149,7 @@ test('rain: drops falling down each column in time, the head in the lift colour'
   assert.ok(new Set(headRows).size > 4, `each column its own drop: ${headRows}`);
 });
 
-test('the panel effects cost no more on a 64 × 32 WLED matrix than the pictures the engine already draws', () => {
+test('panel effects fit the established matrix render budget', () => {
   // Against Plasma, the costliest of those (see "How much" in the README),
   // timed alongside them: a machine busy with other tests slows both alike.
   const cost = (id) => {
@@ -181,7 +181,7 @@ const at = (ms, bpm = 128, division = 1) => {
   return { step: Math.floor(stepPos), stepPos, stepPhase: stepPos - Math.floor(stepPos), stepMs };
 };
 
-test('the strobe effects run on every zone, say so in the picker, and draw the same moment the same way', () => {
+test('strobe effects advertise zones and render deterministically', () => {
   for (const id of STROBES) {
     assert.ok(CELL_PATTERNS.has(id), id);
     assert.strictEqual(PATTERNS.find((p) => p.id === id).pixel, true, id);
@@ -189,7 +189,7 @@ test('the strobe effects run on every zone, say so in the picker, and draw the s
   }
 });
 
-test('a flash is hard, on black, and never shorter than two frames, however fast the music', () => {
+test('flashes remain hard and last at least two frames', () => {
   for (const id of ['flash-chase', 'flash-scatter', 'flash-alternate']) {
     for (const [bpm, division] of [[90, 1], [128, 2], [174, 4]]) {
       const runs = new Map();
@@ -220,7 +220,7 @@ test('a flash chase lights one zone at a time, out from the middle when mirrored
   assert.strictEqual(mirrored.length, 5);
 });
 
-test('a fill flash grows from the middle, holds, and is cut to black before the next step', () => {
+test('fill flashes grow centrally and cut to black before repeating', () => {
   const lit = (phase) => draw('flash-fill', { n: 8, step: 0, stepPos: phase, stepPhase: phase }).map(([, d]) => (d ? 1 : 0)).join('');
   assert.strictEqual(lit(0), '00011000', 'the two zones nearest the middle first');
   assert.strictEqual(lit(0.15), '00111100');
