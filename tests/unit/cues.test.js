@@ -348,7 +348,8 @@ function library(t) {
 test('a cue captures and recalls paletteOverride and audioMode; a cue captured while the strobe is latched stores energyOverride null', (t) => {
   holdSettings(t);
   holdLook(t);
-  settings.update({ audio: { mode: 'reactive' }, strobe: { flashesPerSecond: 4, palette: ['#FF0000', '#0000FF'] } });
+  // Acknowledged: the strobe latches only then.
+  settings.update({ audio: { mode: 'reactive' }, strobe: { flashesPerSecond: 4, palette: ['#FF0000', '#0000FF'] }, safety: { photosensitivityAcknowledged: true } });
   applyPatch({ pattern: 'chase', paletteOverride: ['#ff0000', '#0000FF'], energyOverride: 'palette-strobe' });
   const saved = captureLook();
   assert.deepStrictEqual(saved.paletteOverride, ['#FF0000', '#0000FF']);
@@ -440,6 +441,12 @@ test('a cue is refused whole before anything changes: an effect that waits for t
 
   assert.throws(() => recallLook({ ...changed, pattern: 'ldj.visualizer.flash' }), (err) => err.status === 409);
   unchanged();
+  // An energy strobe is such an effect too.
+  for (const energyOverride of ['white-strobe', 'color-strobe']) {
+    assert.throws(() => recallLook({ ...changed, energyOverride }), (err) => err.status === 409, energyOverride);
+    unchanged();
+    assert.strictEqual(state.energyOverride, null);
+  }
 
   failing.on = true;
   t.mock.method(console, 'warn', () => {});

@@ -14,6 +14,7 @@ import { applyPatch, applyOverride } from '../../src/server/patch.ts';
 import { setEffectSource, stopEngine } from '../../src/server/engine.ts';
 import { settings } from '../../src/server/settings.ts';
 import { presetById } from '../../src/shared/effects/index.ts';
+import { acknowledgeFlashes } from '../helpers/acknowledged.js';
 
 // applyPatch re-arms the beat timer, which would otherwise keep this process up.
 test.after(() => stopEngine());
@@ -59,7 +60,9 @@ test('saved when it changes, read back, and a file that is not a look is moved a
   assert.ok(fs.readdirSync(path.dirname(file)).some((f) => f.includes('.invalid-')));
 });
 
-test('put back: the look and its overrides, but never an energy effect', () => {
+test('put back: the look and its overrides, but never an energy effect', (t) => {
+  // Acknowledged, so the strobe latches at all; put back leaves it off even so.
+  t.after(acknowledgeFlashes());
   const id = state.fixtures[0].id;
   applyPatch({ pattern: 'chase', colorB: 5, masterBlackout: false, energyOverride: 'white-strobe', paletteOverride: ['#FF0000'] });
   applyOverride(id, { enabled: true, r: 255, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 255, strobe: 0, blackout: false });

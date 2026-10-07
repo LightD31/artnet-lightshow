@@ -4,6 +4,7 @@ import { conductor } from './conductor.ts';
 import { safety } from './safety.ts';
 import { anchorStep } from '../shared/beat-clock.ts';
 import { parseHex } from '../shared/effects/palette.ts';
+import { energyEffectSpec } from '../shared/effects/catalogue.ts';
 import { patchSchema, overrideSchema, validate } from './validation.ts';
 import { STROBE_FUNCTIONS } from './presets.ts';
 import { paletteSlots } from './palettes.ts';
@@ -94,7 +95,8 @@ export interface PatchOptions {
  * MIDI. The patch is validated and, when it asks for an effect, admitted
  * before anything moves: an effect that waits for the photosensitivity
  * acknowledgement refuses the whole patch (409), its tempo, master and fade
- * included. A pattern id nothing knows is still taken, and plays nothing.
+ * included — a pattern, or an energy strobe. A pattern id nothing knows is
+ * still taken, and plays nothing.
  */
 function applyPatch(rawData: unknown, { beforeCommit, origin = 'hand' }: PatchOptions = {}): Patch {
   // Validate at the boundary. Throws on invalid input.
@@ -104,6 +106,11 @@ function applyPatch(rawData: unknown, { beforeCommit, origin = 'hand' }: PatchOp
   if (data.pattern !== undefined) {
     const effect = resolveEffect(data.pattern);
     if (effect) safety.requireAcknowledged(effect);
+  }
+  // Naming an energy effect is starting it too; an id that is none takes the latch off.
+  if (data.energyOverride) {
+    const energy = energyEffectSpec(data.energyOverride);
+    if (energy) safety.requireAcknowledged(energy);
   }
   if (beforeCommit) beforeCommit();
 

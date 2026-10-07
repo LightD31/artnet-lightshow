@@ -21,6 +21,7 @@ async function load() {
         export { h } from 'preact';
         export { store } from './public-src/state.js';
         export { Perform, sourceHealth } from './public-src/components/Perform.jsx';
+        export { Header } from './public-src/components/Header.jsx';
         export { CommandBar } from './public-src/components/CommandBar.jsx';
         export { Effects, PhotosensitivityConfirm, editingSig, filterByLibrary, groupRows, quickDeck, tapRow, usePress } from './public-src/components/Effects.jsx';
         export { Inspector, readRecommendedPreference, savePreset, withRecommended } from './public-src/components/Inspector.jsx';
@@ -116,6 +117,18 @@ test('the Perform view has the outputs switch, saying what disarmed means', () =
   html = ui.html(ui.h(ui.Perform, {}));
   assert.match(html, /class="perform-arm-switch armed" role="switch" aria-checked="true"/);
   assert.match(html, /Armed.*frames go out to the rig — tap to disarm/s);
+});
+
+test('until the acknowledgement, the header and Perform say the strobes are off, one tap from the warning; acknowledged, or before the server has said, nothing', () => {
+  const views = () => [ui.html(ui.h(ui.Header, {})), ui.html(ui.h(ui.Perform, {}))];
+  const notice = /<button type="button" class="[^"]*" data-safety="ask"[^>]*>(?:<[^>]+>)*Strobes off until acknowledged/;
+  given({ safety: { photosensitivityAcknowledged: false, hdFlashIntervalMs: 350, strobeMaxLatchSec: 60 } });
+  for (const html of views()) assert.match(html, notice);
+  assert.match(views()[1], /tap to acknowledge/);
+  given({ safety: { photosensitivityAcknowledged: true, hdFlashIntervalMs: 350, strobeMaxLatchSec: 60 } });
+  for (const html of views()) assert.doesNotMatch(html, /Strobes off/);
+  given({});
+  for (const html of views()) assert.doesNotMatch(html, /Strobes off/);
 });
 
 test('blackout and a running voice\'s pad show as pressed', () => {

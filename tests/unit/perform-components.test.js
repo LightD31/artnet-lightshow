@@ -72,6 +72,14 @@ test('the photosensitivity dialog names what flashes and both answers', () => {
   assert.match(html, />Cancel</);
 });
 
+test('asked from the strobes-off notice, the dialog names the strobe and every fast effect, and allows them', () => {
+  const html = ui.html(ui.h(ui.Photosensitivity, { allow: true, onConfirm: () => {}, onCancel: () => {} }));
+  assert.match(html, /<strong>The strobe and every fast-flashing effect<\/strong> flash the lamps/);
+  assert.match(html, /Allowing them acknowledges this for the whole server, once/);
+  assert.match(html, />I understand — allow them</);
+  assert.doesNotMatch(html, /play it/);
+});
+
 test('the Effects view asks through the same dialog', () => {
   assert.strictEqual(ui.PhotosensitivityConfirm, ui.Photosensitivity);
 });

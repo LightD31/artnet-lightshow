@@ -11,12 +11,16 @@ import { PATTERNS, ENERGY_EFFECT_IDS } from '../../src/server/presets.ts';
 import { setupIntegrations } from '../../src/server/integrations.ts';
 import { state } from '../../src/server/state.ts';
 
-function director() {
+function director({ refuse = () => null } = {}) {
   const patches = [];
   const timers = [];
   let now = 0;
   const d = new LiveDirector({
-    applyPatch: (p) => patches.push(p),
+    applyPatch: (p) => {
+      const err = refuse(p);
+      if (err) throw err;
+      patches.push(p);
+    },
     patterns: PATTERNS,
     now: () => now,
     setTimer: (fn, ms) => { const t = { fn, at: now + ms }; timers.push(t); return t; },
@@ -92,6 +96,23 @@ test('a build doubles the pace, a drop lands a burst on a new look, and it clear
   assert.ok(ENERGY_EFFECT_IDS.includes(t.last().energyOverride));
   t.run(150);
   assert.deepStrictEqual(t.last(), { energyOverride: null });
+});
+
+test('a burst the server refuses (a strobe before the photosensitivity acknowledgement) is logged with why; the event never throws into the live input, and the drop keeps its look', (t) => {
+  const warned = [];
+  t.mock.method(console, 'warn', (...args) => warned.push(args.map(String).join(' ')));
+  const refusal = Object.assign(new Error('photosensitivity acknowledgement required'), { status: 409 });
+  const s = director({ refuse: (p) => (p.energyOverride ? refusal : null) });
+  s.hear({ seconds: 3 });
+  s.d.start();
+  assert.doesNotThrow(() => s.event('DROP'));
+  assert.strictEqual(s.last().beatDivision, 1, 'the drop\'s new look is on');
+  assert.ok(warned.some((w) => /photosensitivity acknowledgement required/.test(w)), warned.join('\n'));
+  // The drop counted: a spike right after it is inside the cooldown, and asks for nothing.
+  const asked = warned.length;
+  s.event('ENERGY_SPIKE');
+  assert.strictEqual(warned.length, asked);
+  assert.strictEqual(s.d.active, true);
 });
 
 test('silence is dark until the music comes back, with something new', () => {

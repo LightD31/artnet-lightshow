@@ -5,8 +5,9 @@ import { EventEmitter } from 'node:events';
 import MidiController from '../../src/midi.ts';
 
 // A stand-in for the state the controller reads and the callbacks it drives, so
-// these tests need neither a MIDI port nor the engine.
-function harness(map) {
+// these tests need neither a MIDI port nor the engine. `refuse` answers the
+// error the server would throw for a patch, or null.
+function harness(map, refuse = () => null) {
   const state = {
     bpm: 120,
     beatDivision: 1,
@@ -32,7 +33,12 @@ function harness(map) {
   const taps = [];
   const leds = [];
 
-  const midi = new MidiController(state, (p) => { patches.push(p); Object.assign(state, p); }, () => taps.push(Date.now()));
+  const midi = new MidiController(state, (p) => {
+    const err = refuse(p);
+    if (err) throw err;
+    patches.push(p);
+    Object.assign(state, p);
+  }, () => taps.push(Date.now()));
   midi.overrideFixture = (id, override) => overrides.push({ id, override });
   midi.setFixtureMax = (id, value) => {
     maxes.push({ id, value });
@@ -144,6 +150,20 @@ test('note-on with velocity 0 releases a held energy button', () => {
 
   h.input.emit('noteon', { note: 7, velocity: 0, channel: 0 });
   assert.strictEqual(h.state.energyOverride, null);
+});
+
+test('an energy button the server refuses (a strobe before the photosensitivity acknowledgement) warns with why, lights nothing, and lets go cleanly', (t) => {
+  const warned = [];
+  t.mock.method(console, 'warn', (...args) => warned.push(args.map(String).join(' ')));
+  const refusal = Object.assign(new Error('photosensitivity acknowledgement required'), { status: 409 });
+  const h = harness({ cc: {}, notes: { 7: { action: 'energyHold', value: 'white-strobe' } } },
+    (p) => (p.energyOverride === 'white-strobe' ? refusal : null));
+
+  assert.doesNotThrow(() => h.input.emit('noteon', { note: 7, velocity: 127, channel: 0 }));
+  assert.strictEqual(h.state.energyOverride, null);
+  assert.deepStrictEqual(warned, ['[MIDI] energyHold failed: photosensitivity acknowledgement required']);
+  h.input.emit('noteoff', { note: 7, channel: 0 });
+  assert.deepStrictEqual(h.patches, [{ energyOverride: null }]);
 });
 
 test('fixture blackout keeps the previous look and releases it cleanly', () => {

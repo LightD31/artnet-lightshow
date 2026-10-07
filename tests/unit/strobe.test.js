@@ -557,8 +557,12 @@ test('the next flash uses the new settings: a strobe latched in white flashes bl
 
 test('/api/energy/palette-strobe still latches the energy endpoints\' strobe voice, now under the cap and shown by GET /api/strobe; /api/energy/off and /api/strobe/off end it; the manual latch goes with the operator\'s /api/energy/off alone, never with an automatic clear, and a hold with neither', async (t) => {
   const s = await serve(t);
-  // Unacknowledged, as the endpoint always answered: 200, the renderer holds it dark.
+  // Unacknowledged, refused as the strobe's own routes are.
   let res = await s.call('POST', '/api/energy/palette-strobe');
+  assert.deepEqual([res.status, res.body], [409, { ok: false, error: 'photosensitivity acknowledgement required' }]);
+  assert.deepEqual([ids(), state.energyOverride], [[], null]);
+  await s.call('POST', '/api/safety/acknowledge');
+  res = await s.call('POST', '/api/energy/palette-strobe');
   assert.deepEqual([res.status, res.body], [200, { ok: true, energyOverride: 'palette-strobe' }]);
   const [legacy] = (await s.call('GET', '/api/voices')).body.voices;
   assert.deepEqual([legacy.id, legacy.source, legacy.tier, legacy.mode, legacy.kind], ['energy:palette-strobe', 'energy', 'strobe', 'latched', 'strobe']);
@@ -575,7 +579,6 @@ test('/api/energy/palette-strobe still latches the energy endpoints\' strobe voi
   assert.deepEqual([ids(), state.energyOverride], [[], null], 'the strobe\'s off ends the energy endpoints\' strobe as well');
 
   // One strobe at a time: the manual one launched replaces the endpoints' latch, and the endpoints' latch the manual one.
-  await s.call('POST', '/api/safety/acknowledge');
   await s.call('POST', '/api/energy/palette-strobe');
   res = await s.call('POST', '/api/strobe/burst/5000');
   assert.deepEqual([ids(), state.energyOverride, res.body.active.id], [[STROBE_VOICE_ID], null, STROBE_VOICE_ID]);
