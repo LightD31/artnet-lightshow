@@ -509,7 +509,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     disco: () => detectors().disco,
     ldjTrigger: () => detectors().spl.trigger,
     binHz: BIN_HZ,
-    // Asked from inside a reading: restart once that line has been handled.
+    // Asked from inside a reading: the input is asked once that line has been handled.
     onBands: () => queueMicrotask(guarded('audio bands', () => { if (liveInput) liveInput.refreshBands(); })),
   });
   if (liveInput) {

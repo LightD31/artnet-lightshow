@@ -50,7 +50,7 @@ export interface AudioFeaturesOptions {
   binHz: number;
   /** Arrival clock, ms. */
   now?: () => number;
-  /** The input sums other bands than `bandList()`: start it again with them. */
+  /** The input sums other bands than `bandList()`: ask it for them. */
   onBands?: () => void;
 }
 
@@ -198,7 +198,8 @@ class AudioFeatures {
     // none of its lines is heard and a band edit replaces it.
     if (last && generation !== null && last.generation !== null && generation > last.generation && r.cause !== 'bands') this._resetDue = true;
     // Summed over other bands than these: not this list's to read, and the
-    // input has to be asked for this one.
+    // input has to be asked for this one. A running process takes it in
+    // place, so its first line over this list goes on with the stream.
     if (r.layout !== undefined && r.layout !== this._key) {
       this._askForBands(r.generation);
       return;
@@ -301,7 +302,7 @@ class AudioFeatures {
       ? { ...f, disco: { ...f.disco, hit: [false, false, false], peakHit: false } } : f));
   }
 
-  // Once per process: asking again for every line of it would restart it in a loop.
+  // Once per process and list: not again for every line still on its way over the old one.
   _askForBands(generation: number | undefined): void {
     const ask = `${generation ?? ''}|${this._key}`;
     if (ask === this._asked || !this._opts.onBands) return;
