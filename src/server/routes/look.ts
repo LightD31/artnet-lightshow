@@ -41,8 +41,7 @@ export function attachLookRoutes(app: Express, _ctx: RouteContext): void {
     res.json({ ok: true, masterBlackout: state.masterBlackout });
   });
 
-  // Automatic tempo match: 'auto' follows the music, 'manual' keeps the tempo
-  // tapped or typed here. Answers with what the clock now follows.
+  // 'auto' follows the music, and already on ends a tempo held by hand; 'manual' keeps the typed tempo.
   app.post('/api/tempo/:mode', (req, res) => {
     try {
       applyPatch({ tempoMode: req.params.mode });

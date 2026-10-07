@@ -1,5 +1,6 @@
+import { Fragment } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
-import { api, autoPositionSig, connectedSig, emitTap, librarySig, pick, send } from '../state.js';
+import { api, autoPositionSig, connectedSig, emitTap, followMusic, librarySig, pick, send } from '../state.js';
 import { colorToCss, clockSource, fmtTime, formatBpm } from '../utils.js';
 import { timelinePosition } from '../timeline-state.js';
 import { useDraft } from '../draft.js';
@@ -128,6 +129,7 @@ function SyncHealth() {
     'deezer', 'nowPlaying', 'live', 'hybrid']);
   const connected = connectedSig.value;
   const clock = clockSource(s.clock && s.clock.source);
+  const byHand = !!(s.clock && s.clock.byHand);
   const health = sourceHealth(s);
   const as = s.autoShow || {};
   const status = as.status || 'idle';
@@ -143,13 +145,19 @@ function SyncHealth() {
   return (
     <section class="perform-sync" aria-label="Sync health">
       {chips.map((c) => (
-        <span key={c.id} class={`perform-chip chip-${c.state}`} title={c.title}>
-          <span class="perform-chip-dot" aria-hidden="true" />
-          <span class="perform-chip-label">{c.label}</span>
-          <span class="perform-chip-value">{c.value}</span>
-          {c.state === 'off' && <span class="sr-only">(not working)</span>}
-          {c.state === 'warn' && <span class="sr-only">(needs attention)</span>}
-        </span>
+        <Fragment key={c.id}>
+          <span class={`perform-chip chip-${c.state}`} title={c.title}>
+            <span class="perform-chip-dot" aria-hidden="true" />
+            <span class="perform-chip-label">{c.label}</span>
+            <span class="perform-chip-value">{c.value}</span>
+            {c.state === 'off' && <span class="sr-only">(not working)</span>}
+            {c.state === 'warn' && <span class="sr-only">(needs attention)</span>}
+          </span>
+          {c.id === 'clock' && byHand && (
+            <button type="button" class="perform-follow" onClick={followMusic}
+              title="The tempo is held by hand: follow the deck, the song or the live beat again">Follow the music</button>
+          )}
+        </Fragment>
       ))}
     </section>
   );
