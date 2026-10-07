@@ -1188,7 +1188,10 @@ export class Sequencer {
   // covers a fixture there, so the look plays on), its automation ends, and
   // the next play starts from the top.
   _finish(): void {
-    this._restorePalette();
+    delete this._patch.paletteOverride;
+    delete this._patch.paletteOverrideId;
+    // A queued replay already owns its initial palette.
+    if (!this._ops.some((op) => op.type === 'start' && op.real)) this._restorePalette();
     this._ended = true;
     this._run = 'idle';
     // Queued controls run next; an ordinary stop cannot hold an ended picture.
