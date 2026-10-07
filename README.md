@@ -519,8 +519,11 @@ produces something: a Hue lamp cannot emit ultraviolet, but the deep violet a UV
 wash looks like is a real stand-in, and without the channel every Hue lamp would
 go black for the length of a UV look while the pars glowed. Strobe is left out
 because it produces nothing — the bridge interpolates between frames and
-discards a strobe value on arrival. Strobe and blinder effects still reach Hue
-lamps as colour and brightness, they simply do not flash.
+discards a strobe value on arrival. What drives a strobe channel — the Strobe
+look, the white and colour strobes, a strobe value on a fixture — reaches a Hue
+lamp as its colour and brightness, steady; what flashes by brightness flashes
+it or pulses it, as **Hue Lamps Take a Flash** says (see
+[Strobe without a strobe channel](#strobe-without-a-strobe-channel)).
 
 **What the bridge actually receives is still RGB.** The Entertainment stream
 carries one of exactly two colour spaces — RGB, or xy plus brightness — and
@@ -877,11 +880,27 @@ A fixture with a strobe channel strobes itself. One without — plenty of LED ba
 and cheap pars — is flashed in software through the strobe pattern and every
 strobing burst: one to twenty flashes a second from the strobe speed, each a
 frame to 50 ms long, all such fixtures together (the random strobe functions
-flash each on its own). A Hue lamp is never flashed: a bridge cannot keep up,
-and Hue's own guidance is to keep effects slower than that. The party effects'
-strobes and the Palette Strobe know this too: on a Hue lamp each of their
-flashes is the colour at full falling to a floor over 200 ms (see
-[Party effects](#the-patterns)).
+flash each on its own). A Hue lamp is not strobed in software, as the
+software strobe reaches rates Hue's own guidance rules out for effects: the
+Strobe look and the white and colour strobes hold it at their colour, steady.
+
+The effects that flash by brightness reach a Hue lamp as **Settings → Show →
+Hue Lamps Take a Flash** (`hue.strobe`) says. They are the manual strobe,
+Palette Strobe, Light DJ's strobes, the party looks' Ring Strobe, Ring Backlit and
+Flashes, and the strobe effects (Flash Chase to Strobe Core).
+
+- **Flash**, the default: hard brightness cuts, as on a par, to black or the
+  look's own background glow.
+- **Pulse**: each flash is the colour at full, falling over 200 ms to a floor
+  (40 of 255, or the look's own glow where it has one), for lamps that read
+  hard flashes as flicker. A cut or snap to black falls the same way. Sparse
+  Flashes and Flash Scatter return to their resting brightness after a long
+  gap without a hit.
+
+Authored brightness envelopes are preserved in both modes. Hue Dynamics'
+families keep their attack and release, and Disco's automatic strobe falls
+to 40 over 200 ms on every lamp. When Strobe Core follows analysed drums,
+Pulse follows the kick's envelope down to the core's glow.
 
 ### Philips Hue
 
@@ -1326,7 +1345,9 @@ Eurolite Super Strobe ABL, a Chauvet Color STRIKE and the rest of that family),
 for a bar or a WLED patched in zones. Every one is hard flashes on black, each
 at least two frames long and no zone flashing more than about eleven times a
 second, however fast the music; Flash Limit still holds the whole rig to three
-large flashes a second:
+large flashes a second. With **Hue Lamps Take a Flash** on Pulse, a Hue lamp
+takes each flash, and each cut to black, as a fall to a floor over 200 ms (see
+[Strobe without a strobe channel](#strobe-without-a-strobe-channel)):
 
 | | |
 |---|---|
@@ -1384,9 +1405,11 @@ Strobe flashes one lamp a step — on the beat, its halves, quarters or eighths
 as the beat division says — and, where a step is too short for that, holds
 the ring for two, so no lamp flashes more than five times a second (the party
 apps' own cap); Flashes and Confetti space their events the same way. A Hue
-lamp is never flashed: it takes each flash as the colour at full falling to a
-floor of 40 over 200 ms and held there until its next, as the apps fade a hit
-lamp back, so a ring of Hue lamps pulses where a ring of pars flashes. Flash
+lamp flashes as a par does, or, with **Hue Lamps Take a Flash** on Pulse, takes
+each flash as the colour at full falling to a floor of 40 over 200 ms and held
+there until its next, as the apps fade a hit lamp back, so a ring of Hue lamps
+pulses where a ring of pars flashes (see
+[Strobe without a strobe channel](#strobe-without-a-strobe-channel)). Flash
 Limit still holds the whole rig to three large flashes a second. The auto
 show does not pick them: they are for the picker, cues and MIDI.
 
@@ -1706,7 +1729,10 @@ One strobe, with Hue Dynamics' settings:
 
 `PUT /api/strobe` changes any of them. It never flashes faster than five
 times a second, whatever asks for it, and Flash Limit, when on, still holds
-the rig as a whole to three large flashes a second. Ways to run it:
+the rig as a whole to three large flashes a second. A Hue lamp takes it as
+`hue.strobe` says (see
+[Strobe without a strobe channel](#strobe-without-a-strobe-channel)). Ways to
+run it:
 
 - **Hold** — the strobe pad (on its `targets`, from its `quantise` grid
   line, or at once over a latch), or `voice-hold` with
@@ -1836,6 +1862,7 @@ moment. `GET /api/audio` and the live state's `audio` say who owns each
 | `safety.strobeMaxLatchSec` | 60 | The longest a latched strobe runs |
 | `safety.hdFlashIntervalMs` | 350 | Hue Dynamics' per-lamp flash interval, applied to its effects only |
 | `safety.flashLimit` | `false` | Flash Limit (see **Flash limit**) |
+| `hue.strobe` | `flash` | Hue Lamps Take a Flash: `flash` keeps the look's hard cuts; `pulse` softens them into a fall to a glow over 200 ms (see **Strobe without a strobe channel**) |
 
 Until `POST /api/safety/acknowledge` is called (stored across restarts),
 starting the strobe, an energy strobe (`white-strobe`, `color-strobe`,
