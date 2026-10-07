@@ -58,7 +58,7 @@ function tempStore(t) {
   return path.join(dir, 'sequences.json');
 }
 
-test('insertPattern remaps a two-lane pattern onto the loaded sequence at the beat and creates a missing shared lane', () => {
+test('pattern insertion maps lanes at the requested beat', () => {
   const s = rig();
   const revision = s.revision();
   const added = s.insertPattern('drop', 16);
@@ -112,7 +112,7 @@ test('capturePattern round-trips', () => {
   assert.throws(() => s.capturePattern(0, 4, ['ghost']), (e) => e.status === 404);
 });
 
-test('record captures pad hits as clips quantised to the grid after the count-in; replace clears the range; stop(false) discards', () => {
+test('recording stages quantised clips until the take is kept', () => {
   const pads = { '0:1': { presetId: 'ldj.FadeCycle', targets: 'shared', lengthBeats: 2 }, '0:2': { presetId: 'ldj.FadeCycle', targets: [2, 3], lengthBeats: 4 } };
   const s = rig({ pad: (bank, slot) => pads[`${bank}:${slot}`] ?? null });
   assert.equal(s.status().recording, undefined, 'the status says nothing of a recording until one runs');
@@ -172,7 +172,7 @@ test('a sequencePattern pad inserts at the next grid line', (t) => {
   assert.deepEqual(s.current().clips.slice(1).map((x) => x.startBeat), [12, 14]);
 });
 
-test('the shelf keeps patterns beside the sequences, reads a file from before them, and caps them as it caps sequences', (t) => {
+test('pattern shelves retain compatibility with pre-pattern files', (t) => {
   const file = tempStore(t);
   fs.writeFileSync(file, JSON.stringify({ version: 1, sequences: [{ ...SET, clips: [] }] }));
   const store = new SequenceStore(file).load();

@@ -16,7 +16,7 @@ import { state, getLiveState, getDmxUniverses } from '../../src/server/state.ts'
 import { applyPatch } from '../../src/server/patch.ts';
 import { conductor } from '../../src/server/conductor.ts';
 
-test('only the keys that changed go out, grouped by domain, each domain counting its own versions', () => {
+test('deltas version changed keys independently by domain', () => {
   const differ = new StateDiffer();
   const first = differ.diff({ masterDimmer: 255, pattern: 'chase', fixtures: [{ id: 0 }], spotify: { ok: true }, mystery: 1 });
   assert.deepStrictEqual(first.map((p) => [p.d, p.v, Object.keys(p.set)]), [
@@ -107,7 +107,7 @@ async function serve() {
 
 const next = (socket, event) => new Promise((resolve) => socket.once(event, resolve));
 
-test('a page that asks for protocol 2 gets a snapshot, then only what changed; the others the whole state', async () => {
+test('protocol 2 subscribers receive snapshots followed by deltas', async () => {
   const s = await serve();
   try {
     const v2 = s.client({ protocol: 2 });

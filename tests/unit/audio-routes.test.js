@@ -153,7 +153,7 @@ test('GET /api/audio returns the mode, master and listening state', async () => 
   }
 });
 
-test('PUT /api/audio { mode: "reactive" } persists to settings and the engine input carries it', async () => {
+test('PUT /api/audio persists the mode used by the engine', async () => {
   const s = await serve();
   try {
     assert.deepStrictEqual([renderInput().audioMode, renderInput().audio], ['tempo', null]);
@@ -201,7 +201,7 @@ test('PUT /api/audio with threshold 2 is 400', async () => {
   }
 });
 
-test('a socket subscribed to the audio topic receives frames; one that is not does not', async () => {
+test('only audio-topic subscribers receive frames', async () => {
   const s = await serve();
   try {
     const watching = await s.client();
@@ -288,7 +288,7 @@ test('the engine reads the hop the room hears now: the live input\'s latency, on
   }
 });
 
-test('a latency raised while listening holds the hop the rig has until the room catches up: none is handed out twice', async () => {
+test('increased latency delays delivery without repeating hops', async () => {
   let liveNow = 10000;
   const s = await serve({ now: () => liveNow });
   try {
@@ -311,7 +311,7 @@ test('a latency raised while listening holds the hop the rig has until the room 
 
 // The detectors run on the settings of the Visualizer or Disco that plays: the
 // base look's own effect counts, once the room may see what the Visualizer flashes.
-test('the detectors take the base look\'s effect, validated, when the photosensitivity acknowledgement admits it', async () => {
+test('admitted base effects configure the audio detectors', async () => {
   const s = await serve();
   const pattern = state.pattern;
   try {
@@ -339,7 +339,7 @@ test('the detectors take the base look\'s effect, validated, when the photosensi
 
 // What the operator sets to see the strobes and to keep Hue lamps pulsing:
 // the engine reads both from the settings on every frame.
-test('the engine takes the acknowledgement and the Hue strobe from the settings, as PUT /api/settings sets them', async () => {
+test('engine safety and Hue mode follow saved settings', async () => {
   const s = await serve();
   try {
     const flashLimit = settings.get('safety.flashLimit');
@@ -355,7 +355,7 @@ test('the engine takes the acknowledgement and the Hue strobe from the settings,
   }
 });
 
-test('a hand-built render input reads as no audio, tempo and the master\'s defaults; what the engine passes stands', () => {
+test('render input defaults apply only to omitted audio settings', () => {
   const PAR = { id: 0, address: 1, universe: 0, profileId: BUILTIN_PROFILE_ID, maxBrightness: 255, override: null,
     position: null, group: null, geometry: null, hue: false };
   const hand = {
@@ -441,7 +441,7 @@ test('a settings apply, a restart and the return from the Python setup keep the 
 // A Disco brings its own bands, so the live input sums other ones while it
 // plays. Its process carries on through the change: the beat it
 // has locked to, its clock and the director playing by ear are not lost.
-test('a Disco started and stopped, as the look or as a voice, changes the live input\'s bands in place: one process, the lock kept', async () => {
+test('Disco band updates preserve the input process and beat lock', async () => {
   let liveNow = 10000;
   const s = await serve({ now: () => liveNow });
   const pattern = state.pattern;

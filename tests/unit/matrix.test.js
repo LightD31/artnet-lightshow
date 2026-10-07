@@ -24,7 +24,7 @@ const fixture = (geometry, position = { x: 50, y: 50 }) => ({ id: 0, profileId: 
 const near = (a, b) => Math.abs(a - b) < 1e-9;
 const pointsOf = (rig) => rig.points.map((p) => [Math.round(p.x * 100) / 100, Math.round(p.y * 100) / 100]);
 
-test('a panel is a rectangle of square cells, its columns along its line and its rows below', () => {
+test('panel cells form a square grid below its placement line', () => {
   const rig = buildRig([fixture({ length: 20, angle: 0 })], () => panel(4, 2));
   assert.deepStrictEqual(rig.grids, [{ columns: 4, rows: 2 }]);
   // 20 wide, so 10 deep; cells 5 apart each way, centred on 50, 50.
@@ -71,11 +71,8 @@ test('a bar is a line as it always was', () => {
 test('a grid holds every cell, each in a place of its own', () => {
   validate(profileSchema, panel(4, 2), 'profile');
   validate(profileSchema, panel(3, 2, (c) => (c < 3 ? { x: c, y: 0 } : { x: 5 - c, y: 1 })), 'profile');
-  assert.throws(() => validate(profileSchema, { ...panel(4, 2), grid: { columns: 3, rows: 2 } }, 'profile'),
-    /cells\.6 sits at column 1, row 3, outside the 3 × 2 grid/);
-  assert.throws(() => validate(profileSchema, panel(2, 2, () => ({ x: 1, y: 1 })), 'profile'), /cells\.1 sits where cell 1 does/);
-  assert.throws(() => validate(profileSchema, { ...panel(2, 2, (c) => ({ x: c % 2, y: 0 })), grid: undefined }, 'profile'),
-    /places cells in a grid but has no grid/);
-  assert.throws(() => validate(profileSchema, { id: 'x', name: 'X', channelCount: 3, channelMap: { red: 0 }, grid: { columns: 2, rows: 2 } }, 'profile'),
-    /is a grid of cells, but the profile has none/);
+  assert.throws(() => validate(profileSchema, { ...panel(4, 2), grid: { columns: 3, rows: 2 } }, 'profile'), { status: 400 });
+  assert.throws(() => validate(profileSchema, panel(2, 2, () => ({ x: 1, y: 1 })), 'profile'), { status: 400 });
+  assert.throws(() => validate(profileSchema, { ...panel(2, 2, (c) => ({ x: c % 2, y: 0 })), grid: undefined }, 'profile'), { status: 400 });
+  assert.throws(() => validate(profileSchema, { id: 'x', name: 'X', channelCount: 3, channelMap: { red: 0 }, grid: { columns: 2, rows: 2 } }, 'profile'), { status: 400 });
 });

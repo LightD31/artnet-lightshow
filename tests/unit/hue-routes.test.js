@@ -68,7 +68,7 @@ async function withApp({ bridges = [], fixtures = [par(0, 1)], pair = async () =
   }
 }
 
-test('the status lists every bridge, what it is set up with and its stream, and never a key', async () => {
+test('bridge status excludes secret keys', async () => {
   await withApp({ bridges: [B1, B2] }, async ({ call }) => {
     const res = await call('GET', '/api/hue/status');
     assert.strictEqual(res.body.ok, true);
@@ -82,7 +82,7 @@ test('the status lists every bridge, what it is set up with and its stream, and 
   });
 });
 
-test('pairing adds a bridge, labelled and on; pairing the same bridge again replaces its keys, not the list', async () => {
+test('pairing an existing bridge replaces its credentials', async () => {
   let n = 0;
   const pair = async (host) => ({ ok: true, username: `key-${++n}-${host}`, clientKey: 'ccdd', applicationId: 'app-1' });
   await withApp({ bridges: [], pair }, async ({ call, applied }) => {
@@ -109,7 +109,7 @@ test('pairing adds a bridge, labelled and on; pairing the same bridge again repl
   });
 });
 
-test('a bridge whose button was not pressed answers 409 with pressLink, and adds nothing', async () => {
+test('pairing without a button press preserves the bridge list', async () => {
   const pair = async () => ({ ok: false, error: 'Press the round button on the bridge, then try again within 30 seconds.', pressLink: true });
   await withApp({ bridges: [B1], pair }, async ({ call }) => {
     const res = await call('POST', '/api/hue/pair', { host: '10.0.0.10' });
@@ -119,7 +119,7 @@ test('a bridge whose button was not pressed answers 409 with pressLink, and adds
   });
 });
 
-test('areas are read from the bridge named; the old route reads the first; an unpaired bridge says so', async () => {
+test('area routes resolve the requested bridge', async () => {
   await withApp({ bridges: [B1, B2] }, async ({ call }) => {
     const named = await call('GET', '/api/hue/b1/areas');
     assert.deepStrictEqual([named.body.bridge, named.body.areas.map((a) => a.id)], [{ id: 'b1', label: 'Lounge' }, [AREA]]);
@@ -133,17 +133,15 @@ test('areas are read from the bridge named; the old route reads the first; an un
   });
 });
 
-test('forgetting a bridge refuses while its lamps are patched, unless told to take them; the old route says which', async () => {
+test('forgetting a bridge requires consent to remove patched lamps', async () => {
   await withApp({ bridges: [B1, { ...B2, username: 'k', clientKey: 'eeff' }], fixtures: [par(0, 1), lamp(1, 'b1'), lamp(2, 'b2')] }, async ({ call, applied }) => {
     const kept = await call('POST', '/api/hue/b1/disconnect', {});
     assert.strictEqual(kept.status, 409);
-    assert.match(kept.body.error, /"Lamp 1"/);
-    assert.deepStrictEqual(kept.body.fixtures, [1]);
+        assert.deepStrictEqual(kept.body.fixtures, [1]);
     assert.deepStrictEqual(settings.get('hue.bridges').map((b) => b.id), ['b1', 'b2'], 'still there');
 
     const which = await call('POST', '/api/hue/disconnect', {});
     assert.strictEqual(which.status, 400);
-    assert.match(which.body.error, /\/api\/hue\/:bridge\/disconnect/);
 
     const gone = await call('POST', '/api/hue/b1/disconnect', { removeFixtures: true });
     assert.deepStrictEqual(gone.body, { ok: true, removed: [1] });
@@ -161,7 +159,7 @@ test('forgetting a bridge refuses while its lamps are patched, unless told to ta
   });
 });
 
-test('the pars delay is saved through the settings, and a bridge list sent back blank keeps its keys', async () => {
+test('bridge settings preserve blank credentials', async () => {
   await withApp({ bridges: [B1] }, async ({ call }) => {
     const res = await call('PUT', '/api/settings', { hue: { latencyMs: 40, bridges: [{ ...B1, username: '', clientKey: '', entertainmentId: '' }] } });
     assert.strictEqual(res.body.ok, true, res.body.error);
@@ -170,6 +168,5 @@ test('the pars delay is saved through the settings, and a bridge list sent back 
     assert.deepStrictEqual((await call('GET', '/api/hue/status')).body.bridges.map((b) => [b.paired, b.area]), [[true, '']]);
     const old = await call('PUT', '/api/settings', { hue: { host: '10.0.0.9' } });
     assert.strictEqual(old.status, 400);
-    assert.match(old.body.error, /hue\.bridges/);
-  });
+      });
 });

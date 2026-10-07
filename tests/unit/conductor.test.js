@@ -35,7 +35,7 @@ test('a tempo change keeps the phase: it speeds up from here, not from zero', ()
   assert.ok(close(r.c.now().beatPos, 3));
 });
 
-test('the free clock never hands out a tempo of zero: a typed value is held to 20..300, junk is ignored', () => {
+test('free tempo stays in the valid range', () => {
   const r = rig({ bpm: 120 });
   for (const [typed, expected] of [[0, 20], [-5, 20], [1e9, 300], ['0', 20], [NaN, 120], [Infinity, 120], ['fast', 120]]) {
     r.c.setBpm(typed);

@@ -22,7 +22,7 @@ function bench(t, { acknowledged = true } = {}) {
   return { c, voices, board, advance, playing, spec };
 }
 
-test('two held cells make one pulses voice drawing from both colours; a third press restarts it with three', (t) => {
+test('matrix touches compose one shared pulses voice', (t) => {
   const { board, playing, spec } = bench(t);
   board.setMode('pulses');
   board.press('a', RED);
@@ -41,7 +41,7 @@ test('two held cells make one pulses voice drawing from both colours; a third pr
   assert.deepStrictEqual(board.status(), { mode: 'pulses', colours: [RED, GREEN, BLUE], voice: playing()[0].id });
 });
 
-test('repeated equal colours stay separate cells, a renewal restarts nothing, and a mode change restarts', (t) => {
+test('matrix voice identity changes only with its effective content', (t) => {
   const { board, playing, spec } = bench(t);
   board.setMode('pulses');
   board.press('a', RED);
@@ -171,7 +171,7 @@ function wired(t, options) {
   return { c, voices, board, advance, playing };
 }
 
-test('letting go is never refused: with the acknowledgement taken back, held rapid cells stop playing, lapse and release as always', (t) => {
+test('revoked acknowledgement still permits matrix release', (t) => {
   const { c, board, advance, playing } = wired(t);
   board.setMode('pulses');
   board.press('a', RED);
@@ -199,7 +199,7 @@ test('letting go is never refused: with the acknowledgement taken back, held rap
   board.release('d');
 });
 
-test('the board\'s voice stopped from outside takes the cells with it, and a finger still down does not start it again', (t) => {
+test('an external stop clears matrix touches and rejects stale renewals', (t) => {
   const { voices, board, advance, playing } = wired(t);
   board.setMode('cycle');
   board.press('a', RED);
