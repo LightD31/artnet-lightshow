@@ -2,17 +2,9 @@ import { useRef, useState } from 'preact/hooks';
 import { api, pick } from '../state.js';
 import { useFocusTrap } from '../focus-trap.js';
 
-/**
- * The photosensitivity warning, as both apps show it once. It is asked while
- * the server has no acknowledgement; Yes saves one there (POST
- * /api/safety/acknowledge) and then plays, and from then on nothing asks.
- * The Effects view, the strobe pad, a rapid matrix mode and the strobes-off
- * notice all ask through it.
- */
 
 export const isAcknowledged = (safety) => !!(safety && safety.photosensitivityAcknowledged);
 
-/** Runs `run` when acknowledged; otherwise hands `ask` the question and runs nothing. */
 export function guardRapid(acknowledged, name, run, ask) {
   if (acknowledged) {
     run();
@@ -22,7 +14,6 @@ export function guardRapid(acknowledged, name, run, ask) {
   return false;
 }
 
-/** Saves the acknowledgement, then runs `run`; a refusal runs nothing. */
 export async function acknowledgeThen(run) {
   const res = await api('/api/safety/acknowledge', { method: 'POST' });
   if (!res.ok) return false;
@@ -30,7 +21,6 @@ export async function acknowledgeThen(run) {
   return true;
 }
 
-/** The warning. `allow`: asked from the strobes-off notice, for every fast effect at once, playing nothing. */
 export function Photosensitivity({ name, preset, allow = false, onConfirm, onCancel }) {
   const box = useRef(null);
   useFocusTrap(box, true, onCancel);
@@ -54,11 +44,7 @@ export function Photosensitivity({ name, preset, allow = false, onConfirm, onCan
   );
 }
 
-/**
- * The gate as a hook: `guard(name, run)` plays at once or asks, and `dialog`
- * is the warning to render while a question is open. A local flag covers the
- * moment between the server's answer and the broadcast that carries it.
- */
+// Keep a local acknowledgement while the server response is ahead of its state broadcast.
 export function useSafetyGate() {
   const s = pick(['safety']);
   const [question, setQuestion] = useState(null);
@@ -76,13 +62,6 @@ export function useSafetyGate() {
   return { acknowledged, guard, dialog };
 }
 
-/**
- * Until the acknowledgement the server refuses the strobe and every fast
- * effect (409), from any page, controller or cue, and the auto show's strobe
- * bursts with them. This says so where the operator looks — the header, as a
- * pill, and Perform — and one tap opens the warning that acknowledges.
- * Nothing before the server has said either way.
- */
 export function StrobesOff({ perform = false }) {
   const s = pick(['safety']);
   const [asking, setAsking] = useState(false);

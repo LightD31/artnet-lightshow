@@ -1,17 +1,5 @@
 import { send, pick } from '../state.js';
 
-/**
- * What the auto-show will play next, and how far ahead to analyse.
- *
- * There used to be two near-identical lists — one for Spotify, one for Deezer —
- * both always rendered, and the depth control lived somewhere else entirely, as
- * a bare number spinner labelled "QUEUE" in the transport row. Nothing said
- * what the number did or that it governed the list below it.
- *
- * Only one source drives prefetch at a time server-side, so only one list is
- * ever populated. This renders that one, names it, and puts the depth control
- * in its header, where it reads as what it is: how many of these rows there are.
- */
 
 const DEPTHS = [1, 2, 3, 4, 5];
 
@@ -25,12 +13,7 @@ const STATUS_LABEL = {
   unavailable: 'unavailable',
 };
 
-/**
- * The queue actually being warmed, with the source that owns it.
- *
- * Prefer whichever list has entries; fall back to a connected source so the
- * panel can still explain itself when nothing is queued yet.
- */
+// Use a connected source as fallback so empty queues can still explain their state.
 export function activeQueue(s) {
   const spotify = Array.isArray(s.spotifyPrefetch) ? s.spotifyPrefetch : [];
   const deezer = Array.isArray(s.deezerPrefetch) ? s.deezerPrefetch : [];
@@ -66,8 +49,7 @@ export function Queue() {
 
   const depth = Math.max(1, Math.min(5, s.autoPrefetchDepth || 1));
   const slots = queue.slots.filter((slot) => slot.track);
-  // A slot with no track carries the reason there is nothing to show — an empty
-  // queue, a disconnected source — which is more useful than a blank panel.
+  // Empty slots carry reasons, so show them instead of a blank panel.
   const reason = queue.slots.find((slot) => !slot.track);
 
   return (

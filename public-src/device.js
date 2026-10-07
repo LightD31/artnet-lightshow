@@ -1,17 +1,7 @@
 import { signal } from '@preact/signals';
 import NoSleep from 'nosleep.js';
 
-/**
- * What the page asks of the device it is on: stay awake, fill the screen, and
- * open even while the server is away.
- *
- * A tablet running the show that dims and locks mid-set is the rig going
- * dark in the operator's hand. The Screen Wake Lock API stops that, but only
- * on a secure page — HTTPS or localhost — and a tablet on the venue network
- * reaches the server over plain HTTP. So the lock is NoSleep's: the API where
- * the page may use it, else a muted, looping, inline video, which every
- * mobile browser keeps the screen on for.
- */
+// NoSleep provides a video fallback because venue HTTP pages cannot use the Wake Lock API.
 
 export const awakeSig = signal(false);
 export const fullscreenSig = signal(false);
@@ -23,7 +13,7 @@ function remember(on) {
   try { localStorage.setItem(AWAKE_KEY, on ? '1' : '0'); } catch { /* private mode */ }
 }
 
-/** Keep the screen on, or let it sleep. Call from a tap or a key: the video needs one. */
+// Call from a user gesture because the fallback video cannot autoplay.
 export async function setAwake(on) {
   try {
     if (on) {
@@ -49,13 +39,7 @@ export function toggleFullscreen() {
   else document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
 }
 
-/**
- * Once, at startup: follow fullscreen, register the app shell's service
- * worker (sw.js — only on a secure page, which is the only place a browser
- * allows one), and, if the operator left the screen kept awake, keep it
- * awake again from their first touch — the browser will not start the lock
- * without one.
- */
+// Resume a saved wake lock on the first gesture because browsers require user activation.
 export function setUpDevice() {
   if (typeof document === 'undefined') return;
   document.addEventListener('fullscreenchange', () => { fullscreenSig.value = !!document.fullscreenElement; });
