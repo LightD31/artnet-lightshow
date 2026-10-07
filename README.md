@@ -1722,12 +1722,25 @@ silences the others; a muted one plays nothing.
 The transport plays, pauses (the current clip keeps looping), stops (holding
 the last frame, or black with `?blackout=1`), steps to the next or previous
 clip, shuffles, seeks to a beat, jumps to a clip, re-syncs on the next beat or
-bar and loops a range. Playing or paused, a sequence counts its beats with
-the patterns stopped (a disarm stops them): the free clock runs for it, as
-for a voice, and it starts nothing else. A stopped sequence keeps the rig:
-unloading it (`DELETE /api/sequence`, or the first entry of the deck's
-sequence picker) gives the base back to the look. Clips with fast-flashing
-effects need the acknowledgement.
+bar and loops a range. Playing or paused, it advances with the base look
+stopped; the free clock runs for the sequence without starting the look. With no loop ahead of it a sequence ends — an
+arrangement at the bar line after its last clip or command, a playlist after
+its last row (autoplay off keeps the row looping, shuffle keeps picking) —
+and lets go: nothing is held, the look plays, the status says `ended`, and
+the next play starts from the top. While a take runs it plays on past the
+end, for the take to land in. A stopped sequence keeps the rig: unloading it
+(`DELETE /api/sequence`, the Sequence view's **Unload**, or the first entry
+of the deck's sequence picker) gives the base back to the look. Clips with
+fast-flashing effects need the acknowledgement.
+
+The Sequence view starts a new sequence (one shared lane in 4/4 at the rig's
+tempo, named apart from the saved ones) and, behind **Edit**, names it, adds
+lanes and clips — a clip picks its preset from the library by name and goes
+on the lane picked (the selected clip's, else the lane tapped, else the
+first), lanes mute and solo, patterns insert at the playhead — and saves,
+duplicates or deletes it on the shelf, the delete after a confirmation.
+Outside Edit, clips cannot be edited directly; recording and keeping a take
+still adds clips.
 
 **Patterns** are reusable bundles of lanes and clips. Saved ones can be
 inserted into the loaded sequence at a beat, or captured from a range of
@@ -1752,8 +1765,11 @@ removed clip that reached outside them with how far before and after. An
 empty take changes nothing.
 
 The live state's `sequence` carries what is loaded, its revision, the
-transport, the beat and bar (and the bar's length in beats), the clip on each lane, the loop and, while a
-take runs, the take.
+transport (`playing`, `paused`, `stopped`, `ended`), the beat and bar (and
+the bar's length in beats), the clip on each lane, the loop and, while a
+take runs, the take. `sequences` and `sequencePatterns` list the shelf —
+each saved sequence's id and name, each pattern's id, name and length — so
+a sequence saved on one page reaches every other page's picker.
 
 ---
 

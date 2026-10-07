@@ -71,6 +71,11 @@ export class SequenceStore extends JsonStore {
     return this._sequences.map((s) => structuredClone(s));
   }
 
+  /** Each saved sequence's id and name, in shelf order: what the live state lists. */
+  summaries(): { id: string; name: string }[] {
+    return this._sequences.map(({ id, name }) => ({ id, name }));
+  }
+
   /** One saved sequence as a copy, or null. */
   get(id: string): Sequence | null {
     const seq = this._sequences.find((s) => s.id === id);
@@ -100,6 +105,11 @@ export class SequenceStore extends JsonStore {
     if (!this._sequences.some((s) => s.id === id)) return false;
     this._commit(this._sequences.filter((s) => s.id !== id));
     return true;
+  }
+
+  /** Each saved pattern's id, name and length, in shelf order: what the live state lists. */
+  patternSummaries(): { id: string; name: string; lengthBeats: number }[] {
+    return this._patterns.map(({ id, name, lengthBeats }) => ({ id, name, lengthBeats }));
   }
 
   /** Every saved pattern, as copies. */

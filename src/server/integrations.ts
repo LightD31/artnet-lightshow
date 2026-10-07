@@ -345,6 +345,9 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       userPalettes: library.palettes.list(),
       // The layout and which pads are lit; a voice starting or ending is a broadcast already.
       pads: pads.view(),
+      // The saved sequences and patterns by id and name, so one saved on another page reaches the pickers.
+      sequences: sequence.store.summaries(),
+      sequencePatterns: sequence.store.patternSummaries(),
       warm: warmer.status(),
       midi: { enabled: midi.enabled, ports: midi.listPorts() },
       // The fixtures showing themselves on the rig, marked on the stage plot.
@@ -1175,6 +1178,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   });
   library.palettes.onChange(() => broadcast());
   pads.store.onChange(() => broadcast());
+  sequence.store.onChange(() => broadcast());
 
   return {
     broadcast,

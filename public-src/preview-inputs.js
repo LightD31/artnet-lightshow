@@ -11,6 +11,12 @@ export function resolverOf(saved = []) {
   return (id) => mine.get(id) || presetById(id)?.spec || null;
 }
 
+/** A preset id's name: a saved preset's (the live state's `effects`), then the catalogue's, else the id. */
+export function presetNameOf(saved = []) {
+  const mine = new Map((Array.isArray(saved) ? saved : []).filter((p) => p && p.id && p.name).map((p) => [p.id, p.name]));
+  return (id) => mine.get(id) || presetById(id)?.name || id;
+}
+
 /** Beats in a bar, in quarter notes: 6/8 is three. */
 export function beatsPerBar(ts) {
   if (!ts || !(ts.beats > 0) || !(ts.unit > 0)) return 4;

@@ -3895,12 +3895,16 @@ input[type=range]::-moz-range-thumb {
 .seq-shelf-item.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
 .seq-record select, .seq-toolbar select, .seq-toolbar button, .seq-capture input, .seq-capture button { min-height: 44px; }
 .seq-danger { color: var(--accent-4); }
+.seq-confirm { color: var(--text); }
 .seq-note { margin: 0; color: var(--muted); font-size: 13px; }
 .seq-arrangement { display: grid; grid-template-columns: minmax(90px, 160px) 1fr; gap: 0 8px; min-width: 0; }
 .seq-lanes { padding-top: 40px; }
 .seq-lane { height: 44px; display: flex; align-items: center; gap: 6px; border-bottom: 1px solid var(--border); }
 .seq-lane.track .seq-lane-name { color: var(--text-2); font-style: italic; }
-.seq-lane-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seq-lane-name, .seq-lane-pick { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* In Edit, a lane's name picks where Add clip puts the next clip. */
+.seq-lane-pick { min-height: 44px; padding: 0; border: 0; background: none; color: var(--text); font: inherit; text-align: left; }
+.seq-lane-pick[aria-pressed="true"] { color: var(--accent); font-weight: 600; }
 .seq-rows { min-width: 0; overflow-x: auto; }
 .seq-ruler-wrap { display: flex; flex-direction: column; }
 .seq-ruler { width: 100%; height: 22px; display: block; }
@@ -3913,6 +3917,8 @@ input[type=range]::-moz-range-thumb {
 .seq-clip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
 .seq-handle { position: absolute; right: 0; top: 0; bottom: 0; width: 12px; cursor: ew-resize; background: rgba(255, 255, 255, 0.25); touch-action: none; }
 .seq-cursor { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; box-shadow: 0 0 6px rgba(255, 255, 255, 0.7); pointer-events: none; }
+/* Where the sequence ends when no loop brings it round. */
+.seq-end { position: absolute; top: 0; bottom: 0; border-left: 2px dashed var(--muted); pointer-events: none; }
 .seq-editor { display: flex; flex-direction: column; gap: 12px; border-top: 1px solid var(--border); padding-top: 12px; }
 .seq-cliplist, .seq-commands { display: flex; flex-direction: column; gap: 6px; }
 .seq-clip-row, .seq-command-row { display: grid; grid-template-columns: minmax(80px, 1fr) 2fr 90px 90px auto; gap: 6px; align-items: center; padding: 4px; border-radius: var(--radius); }

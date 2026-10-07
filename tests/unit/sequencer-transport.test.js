@@ -204,15 +204,17 @@ test('loop region wraps the beat', () => {
   // Each time round is a traversal of its own: B's laps are fresh activations.
   const t = r.s.frame(reading(112.5)).transport;
   assert.deepEqual(playingClips(r.s.table(), t, 112.5, [1]).map((c) => c.id), ['clip:B:1.2.0']);
-  // Switched off, it plays on past the end: from 4.5 to 8.5.
+  // Switched off, it plays on to its end, the bar line after the last clip: from 4.5 to 8, where it is over.
   r.s.setLoop({ on: false, startBeat: 4, endBeat: 8 });
   assert.equal(r.at(113), 5, 'from the position it had');
-  assert.equal(r.at(116.5), 8.5);
+  assert.equal(r.at(116), null);
   assert.deepEqual(r.applied.at(-1), { masterDimmer: 20, paletteOverride: PALETTE_HEX.redCyan }, 'its end plays now');
-  assert.equal(playingClips(r.s.table(), r.s.frame(reading(116.5)).transport, 116.5, [1]).length, 0, 'past every clip');
-  // A region switched on behind the position: it plays on.
+  assert.equal(r.s.status().ended, true);
+  // A region set on the ended sequence: the next play, from the top, loops it.
   r.s.setLoop({ on: true, startBeat: 0, endBeat: 2 });
-  assert.equal(r.at(117), 9);
+  r.s.play();
+  assert.equal(r.at(117), 0);
+  assert.equal(r.at(120.5), 1.5);
   assert.equal(r.s.current().loop.endBeat, 2, 'the loaded sequence keeps the region');
 });
 
@@ -712,6 +714,116 @@ test('pause holds the clip looping; stop holds the last frame; stop with blackou
   assert.equal(s3.at(310), 0);
 });
 
+// ── The end ─────────────────────────────────────────────────────────────────
+
+test('an arrangement with no loop ends at the bar line after its last clip or command: it lets go, says so, and plays from the top again', () => {
+  const show = stage();
+  const r = rig();
+  r.s.load(sequence({
+    clips: [clip('A', 'a', 0, 5.5, { targets: [10] })],
+    automation: { tempo: null, brightness: { mode: 'sine', period: 8, min: 0, max: 255, growing: true } },
+  }));
+  r.s.play();
+  assert.equal(r.at(100), 0);
+  assert.equal(r.at(107.5), 7.5, 'the bar of 4/4 its clip ends in plays out');
+  assert.equal(r.s.status().playing, true);
+  const patches = r.applied.length;
+  assert.equal(r.at(108), null, 'at its end: no transport, nothing held');
+  const { playing, paused, stopped, ended, beat, bar, lanes } = r.s.status();
+  assert.deepEqual({ playing, paused, stopped, ended, beat, bar, lanes }, { playing: false, paused: false, stopped: null, ended: true, beat: 0, bar: 1, lanes: [{ id: 'a', clip: null }] });
+  assert.equal(show(r.s, 109)[10].r, 255, 'the look plays');
+  r.at(114);
+  assert.equal(r.applied.length, patches, 'its automation ended with it');
+  // Stop has nothing to hold; play starts from the top.
+  r.s.stop();
+  assert.equal(r.s.status().stopped, null);
+  r.s.play();
+  assert.equal(r.at(200), 0);
+  assert.equal(r.top(), 'A');
+  assert.equal(r.s.status().ended, false);
+
+  // A command past the last clip runs first, and the bar line after it is the end.
+  const long = rig();
+  long.s.load(sequence({ clips: [clip('A', 'a', 0, 66.5)], commands: [{ id: 'dim', atBeat: 70, type: 'brightness', value: 9 }] }));
+  long.s.play();
+  long.at(0);
+  assert.equal(long.at(71.5), 71.5);
+  assert.deepEqual(long.applied.at(-1), { masterDimmer: 9 }, 'the command past the clips runs');
+  assert.equal(long.at(72), null);
+  // The bar is the sequence's own: in 3/4 a clip to beat 4 ends the sequence at 6.
+  const waltz = rig();
+  waltz.s.load(sequence({ timeSignature: { beats: 3, unit: 4 }, clips: [clip('A', 'a', 0, 4)] }));
+  waltz.s.play();
+  waltz.at(0);
+  assert.equal(waltz.at(5.5), 5.5);
+  assert.equal(waltz.at(6), null);
+  // Nothing in it, nothing to play: it ends as it starts.
+  const empty = rig();
+  empty.s.load(sequence());
+  empty.s.play();
+  assert.equal(empty.at(0), null);
+  assert.equal(empty.s.status().ended, true);
+
+  // While a take runs it plays on past its end, for the take to land in; the take dropped, it ends where it is.
+  const take = rig();
+  take.s.load(sequence({ clips: [clip('A', 'a', 0, 4)] }));
+  take.s.startRecording({ mode: 'overdub', countInBeats: 0, quantise: 1 });
+  take.s.play();
+  take.at(0);
+  assert.equal(take.at(20), 20);
+  assert.equal(take.s.status().playing, true);
+  take.s.stopRecording(false);
+  assert.equal(take.at(21), null);
+  assert.equal(take.s.status().ended, true);
+
+  // A goto on its end, or a loop, takes it round; a loop behind the position does not.
+  const round = rig();
+  round.s.load(sequence({ clips: [clip('A', 'a', 0, 4)], commands: [{ id: 'back', atBeat: 64, type: 'goto', value: 0 }] }));
+  round.s.play();
+  round.at(0);
+  assert.equal(round.at(64.5), 0.5);
+  const looped = rig();
+  looped.s.load(sequence({ clips: [clip('A', 'a', 0, 4), clip('B', 'a', 8, 4)], loop: { on: true, startBeat: 0, endBeat: 4 } }));
+  looped.s.play();
+  looped.at(0);
+  assert.equal(looped.at(301), 1);
+  looped.s.seek(5);
+  assert.equal(looped.at(302), 5, 'behind the loop now');
+  assert.equal(looped.at(308), 11);
+  assert.equal(looped.at(309), null, 'and on to the end');
+
+  // A seek past the end ends it at once.
+  const seek = rig();
+  seek.s.load(sequence({ clips: [clip('A', 'a', 0, 4)] }));
+  seek.s.play();
+  seek.at(0);
+  seek.s.seek(80);
+  assert.equal(seek.at(1), null);
+  assert.equal(seek.s.status().ended, true);
+  // A seek forgets that it ended.
+  seek.s.seek(2);
+  assert.deepEqual([seek.s.status().ended, seek.s.status().beat], [false, 2]);
+});
+
+test('a playlist ends after its last row; autoplay off or shuffle keep it going', () => {
+  const r = rig();
+  r.s.load(sequence(ROWS));
+  r.s.play();
+  r.at(100);
+  assert.equal(r.at(111.5), 11.5);
+  assert.equal(r.top(), 'C');
+  assert.equal(r.at(112), null);
+  assert.equal(r.s.status().ended, true);
+  for (const options of [{ autoplay: false }, { shuffle: true }]) {
+    const on = rig();
+    on.s.load(sequence({ ...ROWS, options }));
+    on.s.play();
+    on.at(100);
+    assert.notEqual(on.at(140), null, JSON.stringify(options));
+    assert.equal(on.s.status().playing, true);
+  }
+});
+
 test('play after a pause re-bases the transport and starts nothing again: the lap playing plays on', () => {
   const show = stage();
   const r = rig();
@@ -906,7 +1018,7 @@ test('an edit while the sequence stands on a command\'s beat runs nothing of tha
 test('the status: what is loaded, playing or paused, the beat and bar, the loop and the clip on each lane', () => {
   const r = rig();
   assert.deepEqual(r.s.status(), {
-    loaded: null, revision: 0, mode: null, playing: false, paused: false, stopped: null, beat: 0, bar: 1, beatsPerBar: 4, loop: null, lanes: [], error: null,
+    loaded: null, revision: 0, mode: null, playing: false, paused: false, stopped: null, ended: false, beat: 0, bar: 1, beatsPerBar: 4, loop: null, lanes: [], error: null,
   });
   r.s.load(sequence({
     lanes: [lane('a'), lane('b', { mute: true }), { id: 't', kind: 'track', fixtureId: 3, name: 't', mute: false, solo: false }],
@@ -917,7 +1029,7 @@ test('the status: what is loaded, playing or paused, the beat and bar, the loop 
   r.at(100);
   r.at(102.5);
   assert.deepEqual(r.s.status(), {
-    loaded: { id: 'set-1', name: 'Set one' }, revision: 1, mode: 'arrangement', playing: true, paused: false, stopped: null,
+    loaded: { id: 'set-1', name: 'Set one' }, revision: 1, mode: 'arrangement', playing: true, paused: false, stopped: null, ended: false,
     beat: 2.5, bar: 1, beatsPerBar: 3, loop: null, lanes: [{ id: 'a', clip: 'A2' }, { id: 'b', clip: null }, { id: 't', clip: null }], error: null,
   });
   r.at(104.5);
@@ -926,6 +1038,29 @@ test('the status: what is loaded, playing or paused, the beat and bar, the loop 
   r.s.unload();
   assert.equal(r.at(105), null);
   assert.equal(r.s.status().loaded, null);
+});
+
+test('stop at the sequence end leaves the transport idle', () => {
+  const r = rig();
+  r.s.load(sequence({ clips: [clip('A', 'a', 0, 4)] }));
+  r.s.play();
+  r.at(100);
+  r.s.stop();
+  r.at(104);
+  assert.equal(r.s.status().ended, true);
+  assert.equal(r.s.status().stopped, null);
+  assert.equal(r.s.status().playing, false);
+});
+
+test('blackout stop at the sequence end holds black', () => {
+  const r = rig();
+  r.s.load(sequence({ clips: [clip('A', 'a', 0, 4)] }));
+  r.s.play();
+  r.at(100);
+  r.s.stop({ blackout: true });
+  r.at(104);
+  assert.equal(r.s.status().ended, false);
+  assert.equal(r.s.status().stopped, 'black');
 });
 
 // ── The worker ──────────────────────────────────────────────────────────────

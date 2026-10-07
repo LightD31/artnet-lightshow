@@ -69,8 +69,9 @@ const DOMAIN_OF: Readonly<Record<string, Domain>> = {
   // The audio summary: its levels move every sweep, and only the meters watch them.
   audio: 'audio',
 
-  // The sequencer: the sequence loaded, and (from the transport) where it plays.
-  sequence: 'sequence',
+  // The sequencer: the sequence loaded, and (from the transport) where it plays;
+  // the shelf of saved ones and of patterns, by id and name.
+  sequence: 'sequence', sequences: 'sequence', sequencePatterns: 'sequence',
 
   colorPresets: 'catalogs', patterns: 'catalogs', energyEffects: 'catalogs', strobeFunctions: 'catalogs',
   palettes: 'catalogs', builtinProfileIds: 'catalogs', hueProfileIds: 'catalogs', syncOffsetLimitMs: 'catalogs',

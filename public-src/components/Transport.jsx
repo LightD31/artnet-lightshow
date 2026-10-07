@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'preact/hooks';
 import { api, pick } from '../state.js';
-import { beatsPerBar, positionText } from '../preview-inputs.js';
+import { beatsPerBar, positionText, presetNameOf } from '../preview-inputs.js';
 
 /**
  * The sequence transport: pick a saved sequence, then play, pause, stop,
  * next, shuffle and loop it. The position reads bars.beats, and each lane
- * names the clip it plays now. Status comes from the live `sequence` key;
- * the shelf and the loaded sequence (for names and the bar length) from REST.
+ * names the clip it plays now. Status and the shelf come from the live
+ * `sequence` and `sequences` keys; the loaded sequence (for names and the
+ * bar length) from REST.
  */
 
 export { beatsPerBar, positionText };
@@ -17,30 +18,29 @@ export function loopBody(status) {
   return loop ? { on: !loop.on, startBeat: loop.startBeat, endBeat: loop.endBeat } : null;
 }
 
-export function laneRows(status, sequence) {
+/** Each lane and what plays on it: the clip's preset by name, 'Effect' for one of its own, its id before the sequence arrives. */
+export function laneRows(status, sequence, nameOf = (id) => id) {
   const lanes = (sequence && sequence.lanes) || [];
   const clips = (sequence && sequence.clips) || [];
+  const label = (clip) => {
+    const c = clips.find((x) => x.id === clip);
+    return !c ? clip : c.presetId ? nameOf(c.presetId) : 'Effect';
+  };
   return ((status && status.lanes) || []).map(({ id, clip }) => {
     const lane = lanes.find((l) => l.id === id);
-    const c = clip ? clips.find((x) => x.id === clip) : null;
-    return { id, lane: (lane && lane.name) || id, clip: clip ? (c && c.name) || clip : null };
+    return { id, lane: (lane && lane.name) || id, clip: clip ? label(clip) : null };
   });
 }
 
 const post = (path, body) => api(path, { method: 'POST', ...(body ? { body: JSON.stringify(body) } : {}) });
 
 export function Transport({ initial } = {}) {
-  const s = pick(['sequence']);
+  const s = pick(['sequence', 'sequences', 'effects']);
   const status = s.sequence || null;
-  const [sequences, setSequences] = useState(initial ? initial.sequences : []);
+  const sequences = s.sequences || [];
   const [sequence, setSequence] = useState(initial ? initial.sequence : null);
   const loadedId = status && status.loaded ? status.loaded.id : '';
   const revision = status ? status.revision : 0;
-
-  useEffect(() => {
-    if (initial) return;
-    api('/api/sequences').then((res) => { if (res.ok) setSequences(res.sequences || []); });
-  }, []);
   // The loaded sequence again whenever another is loaded or it is edited.
   useEffect(() => {
     if (initial) return;
@@ -55,7 +55,7 @@ export function Transport({ initial } = {}) {
   const playing = !!(status && status.playing && !status.paused);
   const loop = loopBody(status);
   const perBar = beatsPerBar(sequence && sequence.timeSignature);
-  const lanes = laneRows(status, sequence);
+  const lanes = laneRows(status, sequence, presetNameOf(s.effects));
   // The first entry unloads: a stopped sequence holds its picture, and this gives the rig back to the look.
   const pick_ = (id) => (id ? api('/api/sequence', { method: 'PUT', body: JSON.stringify({ id }) }) : api('/api/sequence', { method: 'DELETE' }));
 

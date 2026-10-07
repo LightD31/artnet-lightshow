@@ -269,9 +269,11 @@ test('every live-state key is in DOMAIN_OF', () => {
   const missing = Object.keys(getLiveState()).filter((key) => !hasDomain(key));
   assert.deepStrictEqual(missing, []);
   // The integrations' keys and the deck's, which need a running server to appear.
-  const named = ['strobe', 'pads', 'sequence', 'voices', 'matrix', 'audio', 'paletteOverride', 'safety', 'effects', 'userPalettes',
+  const named = ['strobe', 'pads', 'sequence', 'sequences', 'sequencePatterns', 'voices', 'matrix', 'audio', 'paletteOverride', 'safety', 'effects', 'userPalettes',
     'spotify', 'nowPlaying', 'prolink', 'live', 'cues', 'warm', 'midi', 'autoShow', 'activeSource', 'showOn'];
   assert.deepStrictEqual(named.filter((key) => !hasDomain(key)), []);
   assert.equal(domainOf('matrix'), 'look');
   assert.equal(domainOf('strobe'), 'look');
+  assert.equal(domainOf('sequences'), 'sequence');
+  assert.equal(domainOf('sequencePatterns'), 'sequence');
 });
