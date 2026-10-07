@@ -23,7 +23,11 @@ export interface EmitterLevels {
 /** A colour with every die present — what a burst or an override drives. */
 export type FullColour = EmitterLevels;
 
-/** Zero-based channel offsets; imported attributes outside these names are retained but not driven. */
+/**
+ * Which channel, counted from the fixture's first, does what. Offsets are
+ * 0-based. The names below are the ones the engine drives; a profile may name
+ * others (from a GDTF or OFL import), which are kept but not driven.
+ */
 export interface ChannelMap {
   dimmer?: number;
   dimmerFine?: number;
@@ -68,7 +72,10 @@ export interface ChannelListEntry {
   cell?: number;
 }
 
-/** Values for undriven channels, such as an open shutter or full dimmer. */
+/**
+ * A channel the show does not drive, and the value it sits at instead of 0:
+ * a shutter whose 0 is closed, a dimmer the show leaves at full.
+ */
 export interface ChannelDefault {
   offset: number;
   value: number;
@@ -92,7 +99,10 @@ export interface Profile {
   grid?: Grid;
   /** Undriven channels that must not sit at 0, written under every frame. */
   defaults?: ChannelDefault[];
-  /** Grid zones use bar programs instead of panel images. */
+  /**
+   * A fixture of a few zones in rows (a strobe panel), not a screen: laid out
+   * in its grid, but given the bars' programs rather than a panel's pictures.
+   */
   zoned?: boolean;
   [key: string]: unknown;
 }
@@ -150,14 +160,28 @@ export interface Fixture extends StageFixture {
   profileId: string;
   maxBrightness?: number;
   override?: Override | null;
-  /** Device-specific output; Hue has no transmitted DMX universe. */
+  /**
+   * Where its universes go, when not Art-Net and sACN: a WLED over DDP, an
+   * OpenRGB device over the SDK, or nowhere at all for a Hue lamp, which has
+   * no DMX address.
+   */
   output?: FixtureOutput | null;
 }
 
 /** A fixture sent to a device of its own rather than on the rig's universes. */
 export type FixtureOutput = DdpOutput | OpenRgbOutput | HueOutput;
 
-/** DDP pixels: `at` starts the segment; `rowStride` is panel width; `areas` holds column/row/width/height zones. */
+/**
+ * A WLED, sent its pixels over DDP: all of them, or — for a fixture that is
+ * one of its segments — from its LED `at`. A segment of a panel is a
+ * rectangle: its rows lie `rowStride` LEDs apart (the panel's width).
+ *
+ * A WLED patched as a wash or in zones has fewer cells than LEDs: `leds` is
+ * how many it lights, each cell an equal share of them in order — or, with
+ * `columns`, rows of that many LEDs, each cell a band of columns across them —
+ * or, with `areas`, each cell the rectangle of those rows it names (a strobe
+ * panel's zones: column, row, width, height).
+ */
 export interface DdpOutput {
   protocol: 'ddp';
   host: string;
@@ -169,7 +193,14 @@ export interface DdpOutput {
   areas?: [number, number, number, number][];
 }
 
-/** OpenRGB resolves the saved device by name when device indices change. */
+/**
+ * One device of an OpenRGB SDK server (server/openrgb.ts): device `device`
+ * in the order the server listed them when it was added — and `name`, what
+ * the server called it then, by which it is found again when the server has
+ * renumbered its devices — `leds` LEDs long, each a cell of the fixture,
+ * sent as one UPDATELEDS packet a frame over one TCP connection to `host`.
+ * Its universes are its own, as a WLED's are.
+ */
 export interface OpenRgbOutput {
   protocol: 'openrgb';
   host: string;
@@ -179,14 +210,24 @@ export interface OpenRgbOutput {
   leds: number;
 }
 
-/** Bridge and entertainment-area channel; legacy shows migrate to the first bridge. */
+/**
+ * A Philips Hue lamp: channel `channel` of the entertainment area that bridge
+ * `bridge` (an id in the settings' hue.bridges) streams, patched from the
+ * bridge (never by hand) and with no DMX address. The server renders it on
+ * universes of its own that are never sent (shared/placement.ts), and its
+ * channel is sent the colour it was rendered. A show saved before several
+ * bridges were possible names none; it loads as the first bridge's.
+ */
 export interface HueOutput {
   protocol: 'hue';
   bridge: string;
   channel: number;
 }
 
-/** Expression values are normalized to 0–1. */
+/**
+ * The music's expression channel, each 0–1: how loud, how much bass and voice
+ * and air, how wide, how fast it moves, how long it decays.
+ */
 export interface Expression {
   level: number;
   bass: number;
@@ -200,7 +241,12 @@ export interface Expression {
 /** What a show asks the expression channel for; any key may be missing. */
 export type ShowDynamics = Partial<Expression>;
 
-/** Levels and decaying drum hits at pixel rate, 0–1; unavailable stems are absent. */
+/**
+ * The music at this frame, at pixel rate (src/show/pulse.ts), each 0–1: the
+ * mix's level and each separated stem's, and how recently and how hard the
+ * kick, the snare and the hats were hit — 1 on the hit, falling away after.
+ * A stem the track was not separated into is missing.
+ */
 export interface PulseReading {
   mix: number;
   drums?: number;
@@ -210,7 +256,12 @@ export interface PulseReading {
   kick: number;
   snare: number;
   hats: number;
-  /** Normalized drum-lane intensity; present only for detector version 2 or newer. */
+  /**
+   * How hard the drums are hitting now by the lanes a light may follow, 0..1:
+   * the kick, and the snare too when it was read off the drum stem. Only for
+   * lanes found by the rules measured on real drumming (`pulse.detector` 2);
+   * absent for the first ones, which fire on a snare's body as a kick.
+   */
   groove?: number;
 }
 
