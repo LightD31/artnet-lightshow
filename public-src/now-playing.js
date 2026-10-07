@@ -17,7 +17,7 @@ export function playingState(s) {
   const seq = s.sequence;
   const sequence = seq?.loaded ? {
     ...seq.loaded,
-    mode: seq.paused ? 'paused' : seq.playing ? 'playing' : seq.stopped || 'loaded',
+    mode: seq.paused ? 'paused' : seq.playing ? 'playing' : seq.stopped || (seq.ended ? 'ended' : 'loaded'),
     beat: seq.beat, bar: seq.bar, beatsPerBar: seq.beatsPerBar || 4,
   } : null;
   const pixels = (s.fixtures || []).map((fixture) => s.profiles?.[fixture.profileId]).filter((profile) => profile?.cells?.length >= 2);
