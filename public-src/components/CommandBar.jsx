@@ -67,7 +67,7 @@ function BpmEntry({ bpm }) {
 export function CommandBar() {
   const { held, gatedPadProps } = useVoicePads();
   const gate = useSafetyGate();
-  const s = pick(['bpm', 'beatDivision', 'clock', 'running', 'masterDimmer', 'masterBlackout', 'pads', 'patterns', 'effects']);
+  const s = pick(['bpm', 'beatDivision', 'clock', 'running', 'masterDimmer', 'masterBlackout', 'pads', 'patterns', 'effects', 'sequencePatterns']);
   const bpm = s.bpm || 120;
   const division = s.beatDivision || 1;
   const periodMs = (60_000 / bpm) / division;

@@ -659,11 +659,13 @@ test('the command bar\'s strip is pads bank A', () => {
 
 test('every live status surface renders the shared state', () => {
   givenLibrary({
-    sequence: { loaded: { id: 'intro', name: 'Intro' }, paused: true, beat: 3, bar: 1 },
+    sequence: { loaded: { id: 'intro', name: 'Intro' }, paused: true, beat: 3, bar: 1,
+      activeClips: [{ id: 'c1', laneId: 'a', lane: 'Front', name: 'Custom pulse' }] },
     voices: [{ id: 'api:1', label: 'API look', mode: 'latched', targets: 'shared' }],
     paletteOverride: ['#123456'], fixtures: [],
   });
   const expected = ui.html(ui.h(ui.NowPlaying, {}));
+  assert.match(expected, /Clips: Front: Custom pulse/);
   for (const Component of [ui.Header, ui.Perform, ui.Effects, ui.StagePreview]) {
     assert.ok(ui.html(ui.h(Component, {})).includes(expected));
   }
@@ -696,4 +698,12 @@ test('voice stop uses the visible voice identifier', async () => {
     await stop.props.onClick();
     assert.deepStrictEqual(calls, [['/api/voices/api%3A1%2F2', 'DELETE']]);
   } finally { globalThis.fetch = realFetch; }
+});
+
+test('saved pattern pad names agree between the deck and command bar', () => {
+  const entry = pad(0, 0, '', { kind: 'pattern', id: 'p1' });
+  givenLibrary({ pads: { layout: [entry], lit: [] }, sequencePatterns: [{ id: 'p1', name: 'Closing phrase' }] });
+  assert.strictEqual(padLabels(ui.html(ui.h(ui.Pads, {})))[0], 'Closing phrase');
+  const strip = ui.html(ui.h(ui.CommandBar, {}));
+  assert.strictEqual(/class="cb-energy-name">([^<]*)</.exec(strip)[1], 'Closing phrase');
 });

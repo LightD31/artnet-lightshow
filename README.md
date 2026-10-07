@@ -410,6 +410,8 @@ API/pad launches. Latches are capped by `safety.strobeMaxLatchSec`.
 
 ## Sequencer
 
+Live sequence status includes `activeClips`, naming the clips currently winning on patched fixtures.
+
 Create a sequence in Sequence, or load one from its shelf. A new sequence has
 one shared lane and 4/4 at the current BPM. Edit exposes name, lanes, clips,
 mute/solo, pattern insertion and save/duplicate/delete. Deleting a saved

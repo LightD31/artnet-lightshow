@@ -1189,7 +1189,7 @@ test('edits at a held command beat do not replay it', () => {
 test('status identifies the active sequence position and clips', () => {
   const r = rig();
   assert.deepEqual(r.s.status(), {
-    loaded: null, revision: 0, mode: null, playing: false, paused: false, stopped: null, ended: false, beat: 0, bar: 1, beatsPerBar: 4, loop: null, lanes: [], error: null,
+    loaded: null, revision: 0, mode: null, playing: false, paused: false, stopped: null, ended: false, beat: 0, bar: 1, beatsPerBar: 4, loop: null, lanes: [], activeClips: [], error: null,
   });
   r.s.load(sequence({
     lanes: [lane('a'), lane('b', { mute: true }), { id: 't', kind: 'track', fixtureId: 3, name: 't', mute: false, solo: false }],
@@ -1201,7 +1201,7 @@ test('status identifies the active sequence position and clips', () => {
   r.at(102.5);
   assert.deepEqual(r.s.status(), {
     loaded: { id: 'set-1', name: 'Set one' }, revision: 1, mode: 'arrangement', playing: true, paused: false, stopped: null, ended: false,
-    beat: 2.5, bar: 1, beatsPerBar: 3, loop: null, lanes: [{ id: 'a', clip: 'A2' }, { id: 'b', clip: null }, { id: 't', clip: null }], error: null,
+    beat: 2.5, bar: 1, beatsPerBar: 3, loop: null, lanes: [{ id: 'a', clip: 'A2' }, { id: 'b', clip: null }, { id: 't', clip: null }], activeClips: [], error: null,
   });
   r.at(104.5);
   assert.deepEqual(r.s.status().lanes, [{ id: 'a', clip: 'A' }, { id: 'b', clip: null }, { id: 't', clip: 'T' }]);

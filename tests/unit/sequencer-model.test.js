@@ -375,7 +375,7 @@ test('the live state carries the sequencer\'s status in a domain of its own', ()
   const sequencer = new Sequencer({ resolve });
   try {
     setSequenceProvider(() => sequencer.status());
-    const idle = { playing: false, paused: false, stopped: null, ended: false, beat: 0, bar: 1, beatsPerBar: 4, loop: null, error: null };
+    const idle = { playing: false, paused: false, stopped: null, ended: false, beat: 0, bar: 1, beatsPerBar: 4, loop: null, activeClips: [], error: null };
     assert.deepEqual(getLiveState().sequence, { loaded: null, revision: 0, mode: null, ...idle, lanes: [] });
     sequencer.load(sequence({ mode: 'playlist', lanes: [lane('a')] }));
     assert.deepEqual(getLiveState().sequence, { loaded: { id: 'set-1', name: 'Set one' }, revision: 1, mode: 'playlist', ...idle, lanes: [{ id: 'a', clip: null }] });
@@ -383,6 +383,33 @@ test('the live state carries the sequencer\'s status in a domain of its own', ()
     setSequenceProvider(null);
   }
   assert.equal(getLiveState().sequence, null, 'without a sequencer');
+});
+
+test('active clip status names only winners on patched fixtures', () => {
+  const s = new Sequencer({ resolve, fixtureIds: () => [10, 11] });
+  s.load(sequence({
+    lanes: [lane('a'), lane('b', { name: 'Front' }), track('t', 11), track('missing', 99)],
+    clips: [clip('covered', 'a', 0, 8),
+      clip('fade', 'b', 0, 8, { effect: undefined, presetId: 'ldj.FadeCycle' }),
+      clip('own', 't', 0, 8), clip('unpatched', 'missing', 0, 8)],
+  }));
+  s.play();
+  s.frame({ beatPos: 100, bpm: 120, epoch: 0 });
+  assert.deepEqual(s.status().activeClips, [
+    { id: 'fade', laneId: 'b', lane: 'Front', name: presetById('ldj.FadeCycle').name },
+    { id: 'own', laneId: 't', lane: 't', name: presetById('energy.glow').name },
+  ]);
+});
+
+test('paused clip status keeps the selected names through later beats', () => {
+  const s = new Sequencer({ resolve, fixtureIds: () => [10] });
+  s.load(sequence({ lanes: [lane('a')], clips: [clip('first', 'a', 0, 4), clip('next', 'a', 4, 4)] }));
+  s.play();
+  s.frame({ beatPos: 100, bpm: 120, epoch: 0 });
+  s.pause();
+  s.frame({ beatPos: 101, bpm: 120, epoch: 0 });
+  s.frame({ beatPos: 109, bpm: 120, epoch: 0 });
+  assert.deepEqual(s.status().activeClips.map((entry) => entry.id), ['first']);
 });
 
 // ── The shelf ───────────────────────────────────────────────────────────────

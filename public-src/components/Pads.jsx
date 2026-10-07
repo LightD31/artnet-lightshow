@@ -71,7 +71,7 @@ export function padBody(draft) {
 }
 
 export function Pads({ initialBank }) {
-  const s = pick(['pads', 'patterns', 'effects']);
+  const s = pick(['pads', 'patterns', 'effects', 'sequencePatterns']);
   const [bank, setBank] = useState(() => initialBank ?? readBank());
   const [editing, setEditing] = useState(false);
   const [open, setOpen] = useState(null);

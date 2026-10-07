@@ -439,3 +439,25 @@ for (const manual of [false, true]) {
     assert.equal(getLiveState().paletteOverrideId, manual ? 'redCyan' : 'greenPink');
   });
 }
+
+test('live active clips resolve saved preset names across clip changes', async (t) => {
+  const s = await serve(t);
+  const saved = s.integrations.library.effects.create({ name: 'Closing glow', spec: GLOW });
+  await s.call('PUT', '/api/sequence', {
+    ...SET, clips: [
+      { ...clip('A', 0, 4), effect: undefined, presetId: saved.id },
+      { ...clip('B', 4, 4), effect: undefined, presetId: 'ldj.FadeCycle' },
+    ],
+  });
+  await s.call('POST', '/api/sequence/play');
+  const sequencer = s.integrations.sequence.sequencer;
+  sequencer.frame({ beatPos: 100, bpm: 120, epoch: 0 });
+  assert.deepEqual(getLiveState().sequence.activeClips, [{
+    id: 'A', laneId: 'a', lane: 'a', name: saved.name,
+  }]);
+  sequencer.frame({ beatPos: 104, bpm: 120, epoch: 0 });
+  const res = await s.call('GET', '/api/sequence/status');
+  assert.deepEqual(res.body.status.activeClips, [{
+    id: 'B', laneId: 'a', lane: 'a', name: presetById('ldj.FadeCycle').name,
+  }]);
+});
