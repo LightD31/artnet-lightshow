@@ -29,8 +29,6 @@ const LIBRARY_MODES = [
 ];
 const FAVOURITES_KEY = 'lightshow.effects.favourites';
 const LONG_PRESS_MS = 500;
-// The bars that stay at the top of the page while it scrolls; the search sticks under them.
-const STUCK_BARS = '.app-header, .command-bar, .mode-tabs';
 
 /** The preset the inspector is open on, or null: one editor for the page, so a pad elsewhere can open it too. */
 export const editingSig = signal(null);
@@ -177,24 +175,6 @@ export function usePress(onTap, onLongPress) {
   return press.current.handlers;
 }
 
-/** Where the search sticks: under whichever of the page's bars are stuck at this width. */
-function useStickyTop(ref) {
-  useEffect(() => {
-    const place = () => {
-      if (!ref.current) return;
-      let top = 0;
-      for (const el of document.querySelectorAll(STUCK_BARS)) {
-        const cs = getComputedStyle(el);
-        if (cs.position === 'sticky') top = Math.max(top, (parseFloat(cs.top) || 0) + el.getBoundingClientRect().height);
-      }
-      ref.current.style.top = `${Math.round(top)}px`;
-    };
-    place();
-    window.addEventListener('resize', place);
-    return () => window.removeEventListener('resize', place);
-  }, []);
-}
-
 /** The inspector as a sheet over the page: opened by Edit or a long press, closed by Close, Escape or the veil. */
 function InspectorSheet({ id, onSelect, onPlay, onClose }) {
   const box = useRef(null);
@@ -274,8 +254,6 @@ export function Effects() {
   const [library, setLibrary] = useState('all');
   const [favourites, setFavourites] = useState(readFavourites);
   const [confirm, setConfirm] = useState(null);
-  const tools = useRef(null);
-  useStickyTop(tools);
   const acknowledged = !!(s.safety && s.safety.photosensitivityAcknowledged);
 
   // The presets saved here ride the live state as summaries; they list like the built-ins.
@@ -327,7 +305,7 @@ export function Effects() {
   return <>
     <div class="card effects">
       <div class="card-title">Effects</div>
-      <div class="effects-tools" ref={tools}>
+      <div class="effects-tools">
         {playing && (
           <div class="effects-now" role="status" aria-live="polite">
             <span class="effects-now-label">Now playing</span>

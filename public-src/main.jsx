@@ -1,5 +1,5 @@
 import { render } from 'preact';
-import { useState, useEffect } from 'preact/hooks';
+import { useState, useEffect, useRef } from 'preact/hooks';
 import { field } from './state.js';
 import { setUpDevice } from './device.js';
 
@@ -62,6 +62,11 @@ function initialView() {
 function ModeTabs({ mode, setMode }) {
   // Subscribes here rather than in Root, so an auto-show status change re-renders
   // this tab strip alone instead of the whole tree.
+  const strip = useRef(null);
+  useEffect(() => {
+    const tab = document.getElementById(`tab-${mode}`);
+    if (tab && strip.current) strip.current.scrollLeft = tab.offsetLeft - strip.current.offsetLeft;
+  }, [mode]);
   const autoShow = field('autoShow').value;
   const autoActive = !!(autoShow && autoShow.status && autoShow.status !== 'idle');
 
@@ -79,28 +84,32 @@ function ModeTabs({ mode, setMode }) {
   };
 
   return (
-    <div class={`mode-tabs in-${mode}`} role="tablist" aria-label="Views" onKeyDown={onKeyDown}>
-      {VIEWS.map((v, i) => [
-        i > 0 && VIEWS[i - 1].group !== v.group && <span key={`sep-${v.id}`} class="mode-tab-sep" role="presentation" />,
-        <button
-          key={v.id}
-          id={`tab-${v.id}`}
-          role="tab"
-          type="button"
-          aria-selected={mode === v.id}
-          aria-controls={`panel-${v.id}`}
-          tabIndex={mode === v.id ? 0 : -1}
-          class={`mode-tab ${mode === v.id ? 'active' : ''}`}
-          onClick={() => setMode(v.id)}
-        >
-          <span class="mode-tab-icon" aria-hidden="true">{v.icon}</span>
-          <span class="mode-tab-label">{v.label}</span>
-          <span class="mode-tab-hint">{v.id === 'auto' && autoActive ? 'Running' : v.hint}</span>
-          {v.id === 'auto' && autoActive && <span class="mode-tab-dot" aria-hidden="true" />}
-          {v.key && <kbd class="mode-tab-key" aria-hidden="true">{v.key}</kbd>}
-        </button>,
-      ])}
-    </div>
+    <>
+      <button class="mode-scroll" type="button" aria-label="Scroll views left" onClick={() => strip.current.scrollBy({ left: -strip.current.clientWidth })}>‹</button>
+      <div ref={strip} class={`mode-tabs in-${mode}`} role="tablist" aria-label="Views" onKeyDown={onKeyDown}>
+        {VIEWS.map((v, i) => [
+          i > 0 && VIEWS[i - 1].group !== v.group && <span key={`sep-${v.id}`} class="mode-tab-sep" role="presentation" />,
+          <button
+            key={v.id}
+            id={`tab-${v.id}`}
+            role="tab"
+            type="button"
+            aria-selected={mode === v.id}
+            aria-controls={`panel-${v.id}`}
+            tabIndex={mode === v.id ? 0 : -1}
+            class={`mode-tab ${mode === v.id ? 'active' : ''}`}
+            onClick={() => setMode(v.id)}
+          >
+            <span class="mode-tab-icon" aria-hidden="true">{v.icon}</span>
+            <span class="mode-tab-label">{v.label}</span>
+            <span class="mode-tab-hint">{v.id === 'auto' && autoActive ? 'Running' : v.hint}</span>
+            {v.id === 'auto' && autoActive && <span class="mode-tab-dot" aria-hidden="true" />}
+            {v.key && <kbd class="mode-tab-key" aria-hidden="true">{v.key}</kbd>}
+          </button>,
+        ])}
+      </div>
+      <button class="mode-scroll" type="button" aria-label="Scroll views right" onClick={() => strip.current.scrollBy({ left: strip.current.clientWidth })}>›</button>
+    </>
   );
 }
 
@@ -144,6 +153,18 @@ function Root() {
   const [mode, setMode] = useState(initialView);
   const Panel = PANELS[mode];
   useFirstRun();
+
+  useEffect(() => {
+    const bars = ['header', 'commands', 'views'];
+    const elements = ['.app-header', '.command-bar', '.mode-nav'].map((selector) => document.querySelector(selector));
+    const measure = () => elements.forEach((element, i) => {
+      document.documentElement.style.setProperty(`--${bars[i]}-height`, `${element?.getBoundingClientRect().height || 0}px`);
+    });
+    const observer = new ResizeObserver(measure);
+    elements.filter(Boolean).forEach((element) => observer.observe(element));
+    measure();
+    return () => observer.disconnect();
+  }, [mode]);
 
   useEffect(() => {
     try { localStorage.setItem('lightshow.mode', mode); } catch { /* private mode */ }

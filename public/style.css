@@ -288,7 +288,6 @@ body {
 
 main {
   flex: 1;
-  overflow: auto;
   padding: 10px 12px 56px;
 }
 
@@ -297,7 +296,7 @@ main {
    ============================================================= */
 .command-bar {
   position: sticky;
-  top: 47px;
+  top: var(--header-height, 47px);
   z-index: 80;
   display: flex;
   align-items: center;
@@ -548,14 +547,23 @@ button.cb-bpm-num:focus-visible { outline: 2px solid var(--accent); outline-offs
 /* =============================================================
    MODE TABS
    ============================================================= */
-.mode-tabs {
+.mode-nav {
   position: sticky;
-  top: 109px;
+  top: calc(var(--header-height, 47px) + var(--commands-height, 0px));
   z-index: 70;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--bg);
+}
+.mode-scroll { min-width: 32px; min-height: 44px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 24px; }
+.mode-tabs {
+  min-width: 0;
   display: inline-flex;
   gap: 2px;
   padding: 6px;
-  margin: 8px 12px 0;
+  margin: 0;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -865,13 +873,15 @@ button.cb-bpm-num:focus-visible { outline: 2px solid var(--accent); outline-offs
 
 @media (max-width: 900px) {
   .perform-now { grid-template-columns: 1fr; }
-  /* One column: the faders come straight after the pads, where a thumb is,
-     not below two dozen palettes. */
+  /* Keep the pads before the meters and colour libraries. */
   .perform-body { display: flex; flex-direction: column; align-items: stretch; }
   .perform-controls { display: contents; }
   .perform-pads { order: 1; }
-  .perform-faders { order: 2; justify-content: center; }
-  .perform-palettes { order: 3; }
+  .perform-live-row { order: 2; }
+  .perform-side { order: 3; }
+  .perform-override { order: 4; }
+  .perform-palettes { order: 5; }
+  .perform-faders { justify-content: center; }
   .perform-fader input[type=range] { height: 240px; }
 }
 @media (max-width: 560px) {
@@ -1522,7 +1532,7 @@ input[type=range]::-moz-range-thumb {
 /* The search and the chips stay in reach while the catalogue scrolls by. */
 .effects-tools {
   position: sticky;
-  top: 0;
+  top: calc(var(--header-height, 47px) + var(--commands-height, 0px) + var(--views-height, 0px));
   z-index: 2;
   display: flex;
   flex-direction: column;
@@ -2238,7 +2248,7 @@ input[type=range]::-moz-range-thumb {
   .cb-divider { display: none; }
   .cb-energy { width: 100%; }
   .cb-energy-grid { flex-wrap: wrap; }
-  .mode-tabs { top: auto; position: static; padding: 12px 14px 0; }
+
   .manual-view { grid-template-columns: 1fr; }
   .header-stats .stat-pill .label { display: none; }
   main { padding: 14px; }
@@ -3249,8 +3259,8 @@ input[type=range]::-moz-range-thumb {
   margin: 4px 4px;
   background: var(--border-hi);
 }
-/* Nine tabs: on a narrow screen the strip scrolls rather than squashing them. */
-.mode-tabs { max-width: calc(100% - 24px); overflow-x: auto; scrollbar-width: thin; }
+/* The arrows expose views beyond the visible scroll area. */
+.mode-tabs { overflow-x: auto; scrollbar-width: thin; }
 .mode-tab { flex-shrink: 0; white-space: nowrap; }
 
 .setup-view { display: flex; flex-direction: column; gap: 10px; max-width: 1400px; }
@@ -3924,6 +3934,14 @@ input[type=range]::-moz-range-thumb {
   background: var(--card); color: var(--text); border: 1px solid var(--border-hi); font-weight: 600;
 }
 .strobe-gear { font-size: 1.4rem; }
+.perform-live-row { display: grid; gap: 12px; }
+@media (min-width: 901px) and (orientation: landscape) {
+  .perform-live-row { order: -1; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .perform-live-row .perform-pad { min-height: 88px; }
+  .perform-live-row .perform-pad-name { font-size: 16px; }
+  .perform-live-row .strobe-pad { gap: 6px; }
+  .perform-live-row .strobe-burst, .perform-live-row .strobe-gear { min-width: 44px; padding: 0 8px; }
+}
 .perform-utility { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 /* Three in a row leave Blackout no room on a phone: stop all voices takes a row of its own. */
 @media (max-width: 560px) {
@@ -3950,7 +3968,9 @@ input[type=range]::-moz-range-thumb {
 /* ── Sequence and Matrix views ── */
 .sequence-view, .matrix-view { display: flex; flex-direction: column; gap: 12px; padding: 12px; min-width: 0; }
 .seq-top { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 2; background: var(--bg); padding: 4px 0; }
-.seq-now, .matrix-now { flex: 1 1 240px; font-size: 18px; color: var(--text); }
+.seq-now, .matrix-now { font-size: 18px; color: var(--text); }
+.seq-now { flex: 1 1 240px; }
+.matrix-now { flex: none; }
 .seq-beat { color: var(--muted); font-variant-numeric: tabular-nums; }
 .seq-transport { display: flex; gap: 8px; }
 .seq-big { min-width: 56px; min-height: 56px; font-size: 20px; border-radius: var(--radius); }
@@ -4007,8 +4027,9 @@ input[type=range]::-moz-range-thumb {
 .transport-row { display: flex; align-items: center; gap: 12px; }
 .transport-picker { flex: 1; min-width: 0; min-height: 44px; font-size: 16px; }
 .transport-position { font-variant-numeric: tabular-nums; font-size: 24px; font-weight: 700; min-width: 4ch; text-align: right; }
-.transport-buttons { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.transport-buttons { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
 .transport-btn { min-height: 52px; font-size: 20px; border-radius: 10px; border: 1px solid var(--border-hi); background: transparent; color: inherit; }
+.transport-btn svg { vertical-align: middle; }
 .transport-btn[aria-pressed="true"] { background: var(--accent-fill); border-color: var(--accent); color: #fff; }
 .transport-btn:disabled { opacity: 0.4; }
 .transport-lanes { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0; padding: 0; list-style: none; font-size: 13px; }
@@ -4098,3 +4119,24 @@ input[type=range]::-moz-range-thumb {
 .stage-now { margin: 6px 0; font-size: 1.05rem; line-height: 1.4; }
 .stage-now strong { margin-right: 6px; text-transform: uppercase; font-size: .8rem; letter-spacing: .06em; opacity: .75; }
 .seq-beyond { margin: 6px 0; padding: 8px 10px; border: 1px solid currentColor; border-radius: 6px; }
+
+@media (max-width: 560px) {
+  .command-bar { flex-wrap: nowrap; gap: 6px; padding: 6px 8px; }
+  .cb-tempo { gap: 6px; }
+  .cb-bpm { min-width: 42px; }
+  .cb-bpm-num { font-size: 22px; }
+  .cb-bpm-controls, .cb-bpm-source, .cb-energy, .cb-play, .cb-master-label, .cb-master-val { display: none; }
+  .cb-tap { min-width: 44px; height: 44px; padding: 0 8px; }
+  .cb-transport { min-width: 0; gap: 6px; }
+  .cb-blackout { min-height: 44px; padding: 0 8px; font-size: 10px; letter-spacing: 0; }
+  .cb-blackout-dot { display: none; }
+  .cb-master { min-width: 44px; height: 44px; padding: 0 6px; }
+  .cb-master input { min-width: 0; width: 100%; }
+}
+
+@media (max-width: 900px) and (orientation: landscape) {
+  .perform-utility { position: fixed; bottom: 0; left: 0; right: 0; z-index: 75; padding: 6px 14px; background: var(--surface); }
+  .perform-utility .perform-pad { min-height: 52px; padding: 4px; }
+  .perform-utility .perform-pad-name { font-size: 16px; }
+  .perform-view { padding-bottom: 72px; }
+}
