@@ -1,5 +1,6 @@
 // The Perform view, on a desktop and on a touch tablet: pads that hold,
-// loop and let go; bank switching; blackout; palettes; the faders.
+// loop and let go, and what the live state shows of an energy pad; bank
+// switching; blackout; palettes; the faders.
 
 import { test, expect } from '@playwright/test';
 import { open, reset, state, until } from './helpers.js';
@@ -22,6 +23,37 @@ async function padOf(request, id) {
   return { ...entry, index: entry.bank * 8 + entry.slot };
 }
 const cell = (page, { bank, slot }) => page.locator(`.pad-cell[data-bank="${bank}"][data-slot="${slot}"]`);
+
+test('an energy pad runs its effect while held, and stops when let go', async ({ page, request }) => {
+  await open(page, 'perform');
+  const blinder = await padOf(request, 'energy.blinder');
+  const button = cell(page, blinder);
+  await button.scrollIntoViewIfNeeded();
+  await hold(page, button);
+  // What Companion, MIDI, Home Assistant and the header read.
+  await until(request, (s) => s.energyOverride === 'blinder');
+  await expect(button).toHaveAttribute('aria-pressed', 'true');
+  await page.mouse.up();
+  await until(request, (s) => s.energyOverride === null);
+});
+
+test('an energy pad set to loop starts its effect on a tap and the next tap stops it', async ({ page, request }) => {
+  const { index: _i, bank, slot, ...before } = await padOf(request, 'energy.uvWash');
+  await request.put(`/api/pads/${bank}/${slot}`, { data: { ...before, launch: 'loop' } });
+  try {
+    await open(page, 'perform');
+    const uv = cell(page, { bank, slot });
+    await uv.scrollIntoViewIfNeeded();
+    await uv.click();
+    await until(request, (s) => s.energyOverride === 'uv-wash');
+    await page.waitForTimeout(700);
+    await until(request, (s) => s.energyOverride === 'uv-wash', { timeout: 500 });
+    await uv.click();
+    await until(request, (s) => s.energyOverride === null);
+  } finally {
+    await request.put(`/api/pads/${bank}/${slot}`, { data: before });
+  }
+});
 
 test('a hold pad runs while held, and lets go when the window loses focus', async ({ page, request }) => {
   await open(page, 'perform');

@@ -164,6 +164,8 @@ const ordered = (pads: readonly PadEntry[]): PadEntry[] =>
 // A fresh install: the six energy effects and the strobe held, then Hue
 // Dynamics and Light DJ looks. None but the two energy strobes (and the
 // strobe pad, the strobe's own) waits for the photosensitivity acknowledgement.
+// The energy effects and the strobe start on the press, as they always have;
+// the looks on Hue Dynamics' quarter beat.
 const DEFAULTS: [content: PadContent, launch: PadLaunchMode, accent: string][] = [
   [{ kind: 'preset', id: 'energy.whiteStrobe' }, 'hold', '#FFFFFF'],
   [{ kind: 'preset', id: 'energy.colorStrobe' }, 'hold', '#F472B6'],
@@ -182,12 +184,24 @@ const DEFAULTS: [content: PadContent, launch: PadLaunchMode, accent: string][] =
   [{ kind: 'preset', id: 'ldj.NorthernLights' }, 'loop', '#10B981'],
   [{ kind: 'preset', id: 'ldj.Popcorn' }, 'once', '#FACC15'],
 ];
+const startsAtOnce = (content: PadContent): boolean => content.kind === 'strobe' || content.id.startsWith('energy.');
 /** The layout a fresh install starts with, frozen; labels are the presets' names. */
 export const DEFAULT_PADS: readonly PadEntry[] = deepFreeze(DEFAULTS.map(([content, launch, accent], i): PadEntry => ({
   bank: Math.floor(i / PAD_SLOTS) as 0 | 1, slot: i % PAD_SLOTS,
   label: content.kind === 'strobe' ? 'Strobe' : presetById(content.id)!.name,
-  accent, content, launch, quantise: DEFAULT_QUANTISE, targets: 'shared',
+  accent, content, launch, quantise: startsAtOnce(content) ? 0 : DEFAULT_QUANTISE, targets: 'shared',
 })));
+
+/**
+ * A pad saved by a build that put every default pad on the quarter beat:
+ * one still as that build shipped it is today's default. A pad changed in
+ * any way is the user's, and keeps its grid.
+ */
+function mended(entry: PadEntry): PadEntry {
+  const shipped = DEFAULT_PADS[entry.bank * PAD_SLOTS + entry.slot];
+  if (shipped.quantise === DEFAULT_QUANTISE) return entry;
+  return canonical(entry) === canonical({ ...shipped, quantise: DEFAULT_QUANTISE }) ? shipped : entry;
+}
 
 /** A refusal in the form validate() gives one: each issue under its path. */
 function refusal(label: string, issues: PadIssue[]): ValidationError {
@@ -214,7 +228,7 @@ export class PadStore extends JsonStore {
   // assigned (refused at launch), rather than costing the whole layout.
   load(): this {
     const saved = this.readValid(fileSchema);
-    if (saved) this._layout = deepFreeze(ordered(saved.pads));
+    if (saved) this._layout = deepFreeze(ordered(saved.pads).map(mended));
     return this;
   }
 

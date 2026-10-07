@@ -1,12 +1,15 @@
 import { VoiceManager, HOLD_TIMEOUT_MS } from './voices.ts';
 import { ENERGY_EFFECTS } from './presets.ts';
 import { energyEffectSpec } from '../shared/effects/catalogue.ts';
+import { ENERGY_KIND_BY_ID } from '../shared/effects/energy.ts';
+import { canonical } from '../shared/effects/layer.ts';
 import { HOLD_STROBE } from '../shared/look-math.ts';
+import type { VoiceSummary } from './voices.ts';
 
 /**
  * The energy effects as they have always been asked for, played as voices:
  * one latched (`energyOverride`: REST, cues, MIDI, the auto show) and one held
- * from a socket (`energy-hold`: Companion, the Perform page). As when the
+ * from a socket (`energy-hold`: Companion). As when the
  * engine showed `heldEnergy ?? energyOverride`, the hold plays over the latch
  * and the latch comes back when it is let go: kept underneath, hidden, its
  * launch and end untouched. Whatever ends a voice — a stop, a disarm, a
@@ -20,6 +23,15 @@ const LATCH_KEY = 'energy:latch';
 
 // Each voice id the two slots launch under, to its energy's id.
 const ENERGY_OF_VOICE = new Map(ENERGY_EFFECTS.flatMap(({ id }) => [[`energy:${id}`, id], [`energy:${id}:hold`, id]]));
+// Each energy kind to its energy's id; the palette strobe is the strobe kind, known by its whole spec.
+const ENERGY_OF_KIND = new Map<string, string>(Object.entries(ENERGY_KIND_BY_ID).map(([id, kind]) => [kind, id]));
+const PALETTE_STROBE = canonical(energyEffectSpec(HOLD_STROBE));
+
+/** The energy effect a voice plays, whoever launched it, or null; the manual strobe is none. */
+function energyOf(v: VoiceSummary): string | null {
+  if (v.hidden || v.source === 'strobe') return null;
+  return ENERGY_OF_KIND.get(v.kind) ?? (v.kind === 'strobe' && canonical(v.spec) === PALETTE_STROBE ? HOLD_STROBE : null);
+}
 
 class EnergyHold {
   declare onChange: (effect: string | null) => void;
@@ -89,6 +101,24 @@ class EnergyHold {
   latched(): string | null {
     const latch = this.voices.keyed(LATCH_KEY);
     return latch ? ENERGY_OF_VOICE.get(latch.id) ?? null : null;
+  }
+
+  /**
+   * The energy effect playing over the latch, or null: of the voices playing
+   * an energy effect (this hold, a pad's, the API's), the one on top — the
+   * strobe tier, then the latest launch — unless that is the latch.
+   */
+  over(): string | null {
+    let top: VoiceSummary | null = null;
+    let energy: string | null = null;
+    for (const v of this.voices.list()) {
+      const id = energyOf(v);
+      if (id && (!top || (v.tier === top.tier ? v.launchSeq > top.launchSeq : v.tier === 'strobe'))) {
+        top = v;
+        energy = id;
+      }
+    }
+    return top && top.id !== this.voices.keyed(LATCH_KEY)?.id ? energy : null;
   }
 
   /** After any change to the voices: the latch hides while a hold is down, and a change of hold is told. */

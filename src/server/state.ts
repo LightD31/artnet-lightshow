@@ -47,7 +47,7 @@ export interface ShowState {
   strobeFunction: string;
   /** The latched energy effect's id, or null; read off its voice (latchEnergy), held over or not. */
   energyOverride: string | null;
-  /** The energy effect held from a socket, or null; read off its voice too. */
+  /** The energy effect playing over the latch, or null: the energy hold's, a pad's or the API's (energy-hold.ts over()). */
   heldEnergy: string | null;
   palette: string | null;
   /** Colours every effect plays instead of its own and the slots (Light DJ's active palette), or null. */
@@ -201,9 +201,9 @@ function voicesChanged(): void {
   }
 }
 
-/** The state's energy fields, from their voices. */
+/** The state's energy fields, from their voices: the latch, and any voice of an energy effect over it. */
 function mirrorEnergy(): void {
-  state.heldEnergy = legacyEnergy.held();
+  state.heldEnergy = legacyEnergy.over();
   state.energyOverride = legacyEnergy.latched();
 }
 
