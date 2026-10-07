@@ -1,15 +1,6 @@
 import { codeOf, messageOf } from './errors.ts';
 
-/**
- * Read `.env` from the working directory into the environment, with Node's
- * own parser (process.loadEnvFile) — what the dotenv package used to do. A
- * variable already set in the environment wins, and no file is normal: almost
- * nothing is configured this way any more (see .env.example).
- *
- * A module of its own, imported first — by server.js before it decides
- * whether to start the supervisor, and by main.ts — so the variables are in
- * place before any other module is evaluated.
- */
+// Load before other modules so startup decisions see the working directory’s environment file.
 export function loadEnv(file = '.env'): boolean {
   try {
     process.loadEnvFile(file);

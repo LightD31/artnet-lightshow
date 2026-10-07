@@ -4,8 +4,6 @@ import { EMITTERS, MAX_CELLS_PER_FIXTURE } from './shared/rig.ts';
 import { STROBE_FUNCTIONS } from './server/presets.ts';
 import type { ChannelDefault, ChannelListEntry, ChannelMap, ImportedFixture, ImportedMode } from './types/rig.ts';
 
-// The parts of description.xml this reads. It comes from a file anyone can
-// write, so every attribute is treated as possibly missing.
 type XmlNode = { [key: string]: unknown };
 
 interface XmlChannelSet {
@@ -31,9 +29,7 @@ interface XmlDmxChannel {
   '@_Offset'?: string | number;
   '@_Geometry'?: string;
   '@_DMXBreak'?: string;
-  /** GDTF 1.0: the channel's value at rest. */
   '@_Default'?: string | number;
-  /** GDTF 1.1+: "Channel.LogicalChannel.ChannelFunction", the function it starts on. */
   '@_InitialFunction'?: string;
   LogicalChannel?: XmlLogicalChannel[];
 }
@@ -52,7 +48,6 @@ interface XmlFixtureType {
   Geometries?: XmlNode;
 }
 
-/** A GeometryReference: the template it places and where its channels land. */
 interface GeometryRef {
   name: string | undefined;
   template: string | undefined;
@@ -64,7 +59,6 @@ interface GeometryIndex {
   references: GeometryRef[];
 }
 
-/** One channel of a mode, placed: which geometry, which bytes, what it does. */
 interface ModeEntry {
   key: string | undefined;
   bytes: number[];
@@ -72,24 +66,18 @@ interface ModeEntry {
   displayName: string;
   order: number;
   attribute?: string | null;
-  /** What each range of its values does, and where it sits at rest. */
   values: ChannelValues;
-  /** A shutter the show cannot run as its strobe: left to the software strobe. */
   unmapped?: boolean;
 }
 
-/** What a stretch of a channel's values does, as far as holding the light open is concerned. */
 type Effect = 'open' | 'closed' | 'strobe' | 'flash' | 'dimmer' | 'none' | 'other';
 
-/** A channel's value ranges and its value at rest, in its own resolution (all its bytes). */
 interface ChannelValues {
   width: number;
-  /** Each range from where it starts to the next one, in order; empty when the file gives none. */
   ranges: { from: number; effect: Effect }[];
   rest: number;
 }
 
-/** JSZip's streamed read of one entry (not in its published types). */
 interface ChunkStream {
   on(event: 'data', fn: (chunk: Uint8Array) => void): ChunkStream;
   on(event: 'error', fn: (err: Error) => void): ChunkStream;
@@ -98,14 +86,10 @@ interface ChunkStream {
   resume(): ChunkStream;
 }
 
-/** A value, or a list of them, as a list (the XML parser gives either). */
 const asList = <T>(value: T | T[] | null | undefined): T[] => (value == null ? [] : ([] as T[]).concat(value));
 
-// Upper bound on the decompressed description.xml. Real fixture definitions are
-// a few hundred KB at most; anything past this is a zip bomb, not a fixture.
 const MAX_DESCRIPTION_BYTES = 16 * 1024 * 1024;
 
-// Map GDTF attribute names to our internal channel attributes
 const ATTR_MAP: Record<string, string> = {
   'Dimmer':           'dimmer',
   'Dimmer1':          'dimmer',
@@ -125,8 +109,6 @@ const ATTR_MAP: Record<string, string> = {
   'ColorAdd_CW':      'white',
   'ColorAdd_A':       'amber',
   'ColorAdd_Amber':   'amber',
-  // GDTF's own name for amber is red-yellow; A and Amber are what fixture
-  // builders wrote before the attribute list settled.
   'ColorAdd_RY':      'amber',
   'ColorAdd_GY':      'lime',
   'ColorAdd_UV':      'uv',
@@ -154,10 +136,7 @@ const ATTR_MAP: Record<string, string> = {
   'NoFeature':        'noFeature',
 };
 
-/** A GDTF attribute without its dotted qualifiers or trailing number. */
 function attributeBase(attrString: string | null | undefined): string {
-  // GDTF attributes can be dotted like "Dimmer.Dimmer.Dimmer 1"
-  // Take the first segment
   return attrString ? attrString.split('.')[0].replace(/\s+\d+$/, '') : '';
 }
 
@@ -174,7 +153,6 @@ function resolveAttribute(attrString: string | null | undefined): string | null 
 async function parseGDTF(fileBuffer: Buffer | Uint8Array | ArrayBuffer): Promise<ImportedFixture> {
   const zip = await JSZip.loadAsync(fileBuffer);
 
-  // Find description.xml (case-insensitive)
   let descFile = null as JSZip.JSZipObject | null;
   zip.forEach((relativePath, entry) => {
     if (relativePath.toLowerCase() === 'description.xml') {
@@ -186,10 +164,6 @@ async function parseGDTF(fileBuffer: Buffer | Uint8Array | ArrayBuffer): Promise
     throw new Error('No description.xml found in GDTF file');
   }
 
-  // Refuse to decompress a zip bomb. A real GDTF description.xml is well under
-  // a megabyte; without this a small upload can expand to gigabytes of heap and
-  // take the process down. The size is read from the central
-  // directory, so this check happens before any decompression.
   const internals = (descFile as unknown as { _data?: { uncompressedSize?: number } })._data;
   const declaredSize = internals && internals.uncompressedSize;
   if (typeof declaredSize === 'number' && Number.isFinite(declaredSize) && declaredSize > MAX_DESCRIPTION_BYTES) {
@@ -199,9 +173,7 @@ async function parseGDTF(fileBuffer: Buffer | Uint8Array | ArrayBuffer): Promise
     );
   }
 
-  // The declared size above comes from the archive itself, so a crafted file
-  // can simply understate it. Inflate as a stream and stop at the limit, so
-  // what bounds the heap is the bytes actually produced.
+  // Bound actual inflated bytes because an archive can understate its declared size.
   const xmlContent = await inflateCapped(descFile, MAX_DESCRIPTION_BYTES);
 
   const parser = new XMLParser({
@@ -212,7 +184,6 @@ async function parseGDTF(fileBuffer: Buffer | Uint8Array | ArrayBuffer): Promise
 
   const parsed = parser.parse(xmlContent);
 
-  // Navigate the GDTF XML structure
   const fixtureType: XmlFixtureType | undefined = parsed.GDTF?.FixtureType || parsed.FixtureType;
   if (!fixtureType) {
     throw new Error('Invalid GDTF: no FixtureType element found');
@@ -221,7 +192,6 @@ async function parseGDTF(fileBuffer: Buffer | Uint8Array | ArrayBuffer): Promise
   const name = fixtureType['@_Name'] || fixtureType['@_LongName'] || 'Unknown Fixture';
   const manufacturer = fixtureType['@_Manufacturer'] || 'Unknown';
 
-  // Parse DMX modes
   const dmxModes = fixtureType.DMXModes?.DMXMode;
   if (!dmxModes || dmxModes.length === 0) {
     throw new Error('No DMX modes found in GDTF file');
@@ -233,19 +203,6 @@ async function parseGDTF(fileBuffer: Buffer | Uint8Array | ArrayBuffer): Promise
   return { name, manufacturer, modes };
 }
 
-// ── Geometry ────────────────────────────────────────────────────────────────
-//
-// An LED bar in GDTF is a geometry per cell. Either each cell is a geometry of
-// its own ("Pixel 1" … "Pixel 16") with channels naming it, or the fixture
-// describes one cell as a template geometry and places it N times with
-// GeometryReferences, each saying at what DMX offset its copy of the template's
-// channels starts. Both come out here as cells.
-
-/**
- * Every named geometry's top-level ancestor (a direct child of <Geometries>,
- * the only kind a GeometryReference may point at), and every reference with
- * the template it places and its breaks.
- */
 function indexGeometries(root: XmlNode | undefined): GeometryIndex {
   const topOf = new Map<string, string>();
   const references: GeometryRef[] = [];
@@ -275,7 +232,6 @@ function indexGeometries(root: XmlNode | undefined): GeometryIndex {
   return { topOf, references };
 }
 
-/** A Break's DMXOffset: an address, or "universe.address" counted from 1.1. */
 function dmxOffset(raw: unknown): number {
   const text = String(raw ?? '1');
   if (text.includes('.')) {
@@ -285,7 +241,6 @@ function dmxOffset(raw: unknown): number {
   return parseInt(text, 10) || 1;
 }
 
-/** The attribute and a display name for one DMXChannel, as the flat parser read them. */
 function describeChannel(ch: XmlDmxChannel, fallbackName: string): { attrName: string | null; displayName: string } {
   const logical = asList(ch.LogicalChannel);
   let attrName: string | null = null;
@@ -302,23 +257,8 @@ function describeChannel(ch: XmlDmxChannel, fallbackName: string): { attrName: s
   return { attrName, displayName };
 }
 
-// ── Values at rest ──────────────────────────────────────────────────────────
-//
-// The engine writes 0 to every channel it does not drive, and writes a strobe
-// channel only while it strobes. On a fixture whose shutter is closed at 0 —
-// most moving heads, plenty of pars — that is a dark fixture with nothing on
-// screen to say why. So a channel's ChannelFunctions are read for what each
-// range of values does: a shutter becomes the show's strobe only when it is
-// open at rest and strobes across the show's standard range, and every channel
-// the show does not drive is held at its default, a closed shutter held open
-// and a dimmer at full (the same rules as the OFL import, src/server/ofl.ts).
-
 const STANDARD_STROBE = STROBE_FUNCTIONS.find((f) => f.id === 'standard') || STROBE_FUNCTIONS[0];
 
-/**
- * A GDTF DMXValue ("128/1", "32768/2", "255/1s" byte-mirrored, or a bare
- * number) in a channel `width` bytes wide; null when there is none.
- */
 function dmxValue(raw: unknown, width: number): number | null {
   if (raw === undefined || raw === null) return null;
   const m = /^\s*(\d+)(?:\/(\d+)(s?))?\s*$/.exec(String(raw));
@@ -331,7 +271,6 @@ function dmxValue(raw: unknown, width: number): number | null {
   return Math.min(top, scaled);
 }
 
-/** What a range does, from its function's attribute and, for a plain shutter, the name it is given. */
 function effectOf(attribute: string, name: string): Effect {
   const base = attributeBase(attribute).replace(/^Shutter\d*/, 'Shutter');
   if (base === 'NoFeature') return 'none';
@@ -346,14 +285,11 @@ function effectOf(attribute: string, name: string): Effect {
   return 'other';
 }
 
-/** A channel's value ranges, from its ChannelFunctions and their named ChannelSets, and its value at rest. */
 function readValues(ch: XmlDmxChannel, width: number): ChannelValues {
   const functions: { fn: XmlChannelFunction; attribute: string }[] = [];
   for (const lc of asList(ch.LogicalChannel)) {
     for (const fn of asList(lc.ChannelFunction)) functions.push({ fn, attribute: fn['@_Attribute'] || lc['@_Attribute'] || '' });
   }
-  // A function with a ModeMaster is a second reading of the same values while
-  // another channel is in some mode; the plain ones say what the channel does.
   const plain = functions.filter((f) => !f.fn['@_ModeMaster']);
   const used = plain.length ? plain : functions;
 
@@ -361,7 +297,6 @@ function readValues(ch: XmlDmxChannel, width: number): ChannelValues {
   for (const { fn, attribute } of used) {
     const own = effectOf(attribute, fn['@_Name'] || '');
     ranges.push({ from: dmxValue(fn['@_DMXFrom'], width) ?? 0, effect: own });
-    // A set names part of its function's range ("Closed", "Open", "Strobe slow → fast").
     for (const set of asList(fn.ChannelSet)) {
       const from = dmxValue(set['@_DMXFrom'], width);
       if (from === null || !set['@_Name']) continue;
@@ -369,12 +304,9 @@ function readValues(ch: XmlDmxChannel, width: number): ChannelValues {
       ranges.push({ from, effect: named === 'other' ? own : named });
     }
   }
-  // In order; where two start together, the later — a set within its function — says it.
   ranges.sort((a, b) => a.from - b.from);
   const distinct = ranges.filter((r, i) => i === ranges.length - 1 || ranges[i + 1].from !== r.from);
 
-  // GDTF 1.1 names the function a channel starts on; 1.0 gave the channel a
-  // Default of its own; failing both, it starts on its first function.
   const initial = ch['@_InitialFunction'] ? ch['@_InitialFunction'].split('.').pop() : undefined;
   const rest = (initial !== undefined ? dmxValue(used.find((f) => f.fn['@_Name'] === initial)?.fn['@_Default'], width) : null)
     ?? dmxValue(ch['@_Default'], width)
@@ -383,7 +315,6 @@ function readValues(ch: XmlDmxChannel, width: number): ChannelValues {
   return { width, ranges: distinct, rest };
 }
 
-/** The range a value falls in, or null below the first. */
 function rangeAt(values: ChannelValues, value: number): { from: number; effect: Effect } | null {
   let found: { from: number; effect: Effect } | null = null;
   for (const range of values.ranges) {
@@ -393,11 +324,6 @@ function rangeAt(values: ChannelValues, value: number): { from: number; effect: 
   return found;
 }
 
-/**
- * Where a channel the show does not drive sits: its default, unless that
- * leaves the light dark — then a closed shutter's first open value, or a
- * dimmer's top.
- */
 function restOf(values: ChannelValues, dimmer: boolean): { value: number; why: 'open' | 'full' | 'closed' | null } {
   const at = rangeAt(values, values.rest);
   if (at?.effect === 'closed') {
@@ -413,11 +339,6 @@ function restOf(values: ChannelValues, dimmer: boolean): { value: number; why: '
   return { value: values.rest, why: null };
 }
 
-/**
- * Can the show run this shutter as its strobe? Between flashes it sits at
- * `rest`, which must leave the light open; flashing, it writes the standard
- * strobe's range, all of which must strobe.
- */
 function strobesLikeTheShow(values: ChannelValues, rest: number): boolean {
   const at = rangeAt(values, rest);
   if (!at || !(at.effect === 'open' || at.effect === 'none')) return false;
@@ -428,15 +349,10 @@ function strobesLikeTheShow(values: ChannelValues, rest: number): boolean {
   return true;
 }
 
-/** Byte `index` (0 the coarse one) of a value `width` bytes wide. */
 function byteOf(value: number, width: number, index: number): number {
   return Math.floor(value / 256 ** (width - 1 - index)) % 256;
 }
 
-/**
- * One DMX mode as a profile: its footprint, its fixture-level channel map, and
- * — for a fixture that is several lights — its cells, in the order they sit.
- */
 function parseMode(mode: XmlDmxMode, geometries: GeometryIndex): ImportedMode {
   const modeName = mode['@_Name'] || 'Default';
   const root = mode['@_Geometry'] || null;
@@ -445,11 +361,8 @@ function parseMode(mode: XmlDmxMode, geometries: GeometryIndex): ImportedMode {
   const entries: ModeEntry[] = [];
 
   channels.forEach((ch, idx) => {
-    // A channel without an address is virtual: a control the fixture's own
-    // firmware computes, not one the desk drives.
     const rawOffset = ch['@_Offset'];
     if (rawOffset == null || String(rawOffset).trim() === '' || String(rawOffset).trim() === 'None') return;
-    // Highest byte first: "1,2" is a 16-bit channel, coarse on 1 and fine on 2.
     const bytes = String(rawOffset).split(',').map((v) => parseInt(v, 10)).filter(Number.isFinite);
     if (!bytes.length) return;
 
@@ -458,13 +371,10 @@ function parseMode(mode: XmlDmxMode, geometries: GeometryIndex): ImportedMode {
     const channelBreak = ch['@_DMXBreak'] ?? '1';
     const values = readValues(ch, bytes.length);
 
-    // A channel on a geometry that is placed by references is a template:
-    // one copy per reference, at that reference's offset.
     const template = geometry ? geometries.topOf.get(geometry) : undefined;
     const refs = template ? geometries.references.filter((r) => r.template === template) : [];
     const instances = refs.length
       ? refs.map((r) => {
-        // "Overwrite" takes the reference's own break — by convention its last.
         const b = channelBreak === 'Overwrite'
           ? r.breaks[r.breaks.length - 1]
           : r.breaks.find((x) => x.dmxBreak === (parseInt(channelBreak, 10) || 1));
@@ -487,8 +397,6 @@ function parseMode(mode: XmlDmxMode, geometries: GeometryIndex): ImportedMode {
     }
   });
 
-  // A lamp with both a warm and a cool white die gets both; with only one of
-  // them, it is the lamp's white.
   const bases = new Set(entries.map((e) => attributeBase(e.attrName)));
   const splitWhites = bases.has('ColorAdd_WW') && bases.has('ColorAdd_CW');
   for (const e of entries) {
@@ -498,8 +406,6 @@ function parseMode(mode: XmlDmxMode, geometries: GeometryIndex): ImportedMode {
         : resolveAttribute(e.attrName);
   }
 
-  // What the import holds or leaves alone, one line per kind naming every
-  // channel it applies to: a bar repeats its shutter in every cell.
   const notes = new Map<string, { attr: string; what: string; channels: number[] }>();
   const note = (e: ModeEntry, what: string) => {
     const attr = e.attrName || e.displayName;
@@ -509,17 +415,13 @@ function parseMode(mode: XmlDmxMode, geometries: GeometryIndex): ImportedMode {
     notes.set(id, entry);
   };
 
-  // A shutter that never flashes is a shutter, not a strobe: nothing drives
-  // it, and it is held open below. One the file says nothing more about keeps
-  // the strobe its attribute names.
+  // Keep non-strobing shutters open so unsupported hardware does not black out the fixture.
   for (const e of entries) {
     if (e.attribute === 'strobe' && e.values.ranges.length && !e.values.ranges.some((r) => r.effect === 'strobe' || r.effect === 'flash')) {
       e.attribute = 'shutter';
     }
   }
 
-  // Cells: the geometries that make light, if there are at least two of them.
-  // The mode's own geometry is the fixture as a whole, never a cell.
   const firstAddress = new Map<string, number>();
   for (const e of entries) {
     if (!e.key || e.key === root || !e.attribute || !EMITTERS.includes(e.attribute)) continue;
@@ -550,9 +452,7 @@ function parseMode(mode: XmlDmxMode, geometries: GeometryIndex): ImportedMode {
   }
   channelList.sort((a, b) => a.offset - b.offset);
 
-  // The fixture's strobe is the show's only when it behaves as one: open at
-  // rest, and strobing across the standard range. A cell's own strobe is never
-  // driven, so there is nothing to decide for it.
+  // Drive only shutters whose rest and flashing range match the show’s strobe contract.
   for (const e of entries) {
     if (e.attribute !== 'strobe' || !e.values.ranges.length || cellIndex.has(e.key)) continue;
     if (strobesLikeTheShow(e.values, restOf(e.values, false).value)) continue;
@@ -560,8 +460,6 @@ function parseMode(mode: XmlDmxMode, geometries: GeometryIndex): ImportedMode {
     note(e, `does not strobe as the show expects (open at rest, flashing from ${STANDARD_STROBE.lo} to ${STANDARD_STROBE.hi}), so the show flashes this fixture itself`);
   }
 
-  // Only the first occurrence of each attribute is driven, per cell and for
-  // the fixture as a whole; a 16-bit dimmer's fine byte is its dimmerFine.
   const mapInto = (map: ChannelMap, e: ModeEntry) => {
     if (!e.attribute || e.unmapped || e.attribute in map) return;
     map[e.attribute] = e.bytes[0];
@@ -576,18 +474,9 @@ function parseMode(mode: XmlDmxMode, geometries: GeometryIndex): ImportedMode {
     else mapInto(channelMap, e);
   }
 
-  // channelCount is the mode's DMX *footprint*, not how many channel entries
-  // it has. Offsets can be sparse or start above zero, and the render loop
-  // clears `for (c < channelCount)` before writing by offset — so a count
-  // smaller than the highest offset leaves channels written but never
-  // cleared, latching stale values until master blackout. It also drives
-  // auto-addressing and the patch table's overlap detection. A 16-bit
-  // channel's fine byte is part of it.
+  // Include sparse offsets and fine bytes in the footprint so writes cannot escape overlap and clearing checks.
   const channelCount = channelList.reduce((max, ch) => Math.max(max, ch.offset), -1) + 1;
 
-  // The channels the engine writes every frame: a bar's own dimmer and strobe
-  // and its cells' lights, or a single light's dimmer, strobe and colours. The
-  // strobe is written only while it flashes, so it sits at its default between.
   const written = new Set<number>();
   for (const [attr, offset] of Object.entries(channelMap)) {
     if (offset === undefined) continue;
@@ -598,7 +487,6 @@ function parseMode(mode: XmlDmxMode, geometries: GeometryIndex): ImportedMode {
       if (offset !== undefined && (attr === 'dimmer' || EMITTERS.includes(attr))) written.add(offset);
     }
   }
-  // Everything else sits at its default, held open or at full where the default is dark.
   const held = new Map<number, number>();
   for (const e of entries) {
     const driven = written.has(e.bytes[0]);
@@ -624,10 +512,6 @@ function parseMode(mode: XmlDmxMode, geometries: GeometryIndex): ImportedMode {
   return result;
 }
 
-/**
- * Decompress one zip entry to a UTF-8 string, refusing once more than `limit`
- * bytes have come out.
- */
 function inflateCapped(entry: JSZip.JSZipObject, limit: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];

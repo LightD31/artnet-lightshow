@@ -21,28 +21,6 @@ import { attachSequenceRoutes } from './routes/sequence.ts';
 export type { RouteDeps, RouteContext } from './routes/common.ts';
 export type { AnalyzeSource } from './routes/auto.ts';
 
-/**
- * Every HTTP route, a domain to a module (src/server/routes/):
- *
- *   look       the state, the quick controls, per-fixture overrides
- *   midi       the controller's ports, mapping and learn
- *   sources    PRO DJ LINK, Spotify, the OS media session, Deezer, live input devices
- *   fixtures   profiles (GDTF, OFL, bars), WLEDs, the patch, the show file
- *   openrgb    the devices of an OpenRGB SDK server, added to the patch
- *   cues       the cue stack
- *   auto       analysing, running and editing the auto show; the analysis cache
- *   warm       set-list warming
- *   setup      the pre-show check, the analysis models, the settings
- *   outputs    Philips Hue, Art-Net nodes, network interfaces
- *   identify   finding the rig and making it show itself
- *   audio      the party effects' audio mode and master, and what they hear
- *   effects    the effect library: presets and palettes, commands to the effect on stage
- *   voices     the effects launched over the look: what plays, a launch, a stop
- *   sequence   the sequence loaded, the shelf of saved ones, and the transport
- *   ops        the log, the server's health, restarting it
- *
- * and, last, the error handler every one of them falls through to.
- */
 function attachRoutes(app: Express, deps: RouteDeps): void {
   const ctx = routeContext(deps);
   attachLookRoutes(app, ctx);

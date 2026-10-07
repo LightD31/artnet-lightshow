@@ -5,23 +5,11 @@ import { profileSchema, validate } from './validation.ts';
 import type { ProfileInput } from './validation.ts';
 import type { ChannelMap, ProfileCell } from '../types/rig.ts';
 
-/**
- * Finding a WLED and making it a fixture.
- *
- * A WLED announces itself over mDNS as `_wled._tcp`, and says what it is at
- * http://<it>/json/info: its name, how many LEDs, whether they have a white
- * channel, and — set up as a panel — its width and height. That is everything
- * a profile needs, so adding one is: ask it, build the profile, patch it on
- * universes of its own and send it DDP (ddp-routes.ts).
- */
-
-/** A WLED that answered. */
 export interface FoundWled {
   host: string;
   name: string;
 }
 
-/** What a WLED says it is. */
 export interface WledInfo {
   name: string;
   version: string;
@@ -31,10 +19,6 @@ export interface WledInfo {
   mac: string | null;
 }
 
-/**
- * One of a WLED's segments: its LEDs from `at`, `count` of them, and — on a
- * panel — the rectangle they make, whose rows lie `rowStride` LEDs apart.
- */
 export interface WledSegment {
   id: number;
   name: string;
@@ -47,13 +31,8 @@ export interface WledSegment {
 export interface WledClient {
   discover(timeoutMs?: number): Promise<FoundWled[]>;
   info(host: string): Promise<WledInfo>;
-  /** Its segments, as its /json/state lists them. */
   segments?(host: string, info: WledInfo): Promise<WledSegment[]>;
 }
-
-// ── mDNS ────────────────────────────────────────────────────────────────────
-// A PTR question for _wled._tcp.local, and what comes back: the service's
-// instances (PTR), where each runs (SRV) and that host's address (A).
 
 const MDNS_GROUP = '224.0.0.251';
 const MDNS_PORT = 5353;
@@ -62,7 +41,6 @@ const TYPE_A = 1;
 const TYPE_PTR = 12;
 const TYPE_SRV = 33;
 
-/** A one-question DNS query for the WLED service's instances. */
 function buildQuery(): Buffer {
   const labels = SERVICE.split('.');
   const name = Buffer.concat([...labels.map((l) => Buffer.concat([Buffer.from([l.length]), Buffer.from(l)])), Buffer.from([0])]);
@@ -74,7 +52,6 @@ function buildQuery(): Buffer {
   return Buffer.concat([header, name, tail]);
 }
 
-/** A name at `offset`, following compression pointers; and where the name ends. */
 function readName(buf: Buffer, offset: number): { name: string; end: number } {
   const labels: string[] = [];
   let at = offset;
@@ -99,10 +76,6 @@ function readName(buf: Buffer, offset: number): { name: string; end: number } {
   throw new Error('too many name pointers');
 }
 
-/**
- * The WLEDs a response names: each instance of the service, at the address of
- * the host its SRV names, or failing that the address the response came from.
- */
 function parseResponse(buf: Buffer, from: string): FoundWled[] {
   if (buf.length < 12) return [];
   const questions = buf.readUInt16BE(4);
@@ -135,12 +108,6 @@ function parseResponse(buf: Buffer, from: string): FoundWled[] {
   }
 }
 
-/**
- * Ask the network for WLEDs and wait `timeoutMs` for answers. The question
- * goes out from a port of its own, which RFC 6762 answers directly; a socket
- * on 5353 also hears answers sent to the group, when this machine lets it
- * share that port.
- */
 async function discover(timeoutMs = 2000): Promise<FoundWled[]> {
   const found = new Map<string, FoundWled>();
   const take = (msg: Buffer, rinfo: dgram.RemoteInfo) => {
@@ -171,23 +138,18 @@ async function discover(timeoutMs = 2000): Promise<FoundWled[]> {
   return [...found.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// ── What a WLED is ──────────────────────────────────────────────────────────
-
 const INFO_TIMEOUT_MS = 3000;
 const INFO_MAX_BYTES = 256 * 1024;
 
-/** GET http://<host>/json/info, bounded in time and size, and the fields a profile needs. */
 async function info(host: string, { fetchImpl = fetch, port }: { fetchImpl?: typeof fetch; port?: number } = {}): Promise<WledInfo> {
   return readInfo(await getJson(host, '/json/info', { fetchImpl, port }), host);
 }
 
-/** GET http://<host>/json/state, bounded the same way: the segments it lists. */
 async function segments(host: string, wled: WledInfo,
   { fetchImpl = fetch, port }: { fetchImpl?: typeof fetch; port?: number } = {}): Promise<WledSegment[]> {
   return readSegments(await getJson(host, '/json/state', { fetchImpl, port }), wled, host);
 }
 
-/** One of a WLED's JSON documents, bounded in time and size. */
 async function getJson(host: string, path: string, { fetchImpl = fetch, port }: { fetchImpl?: typeof fetch; port?: number }): Promise<unknown> {
   let raw: unknown;
   try {
@@ -208,7 +170,6 @@ async function getJson(host: string, path: string, { fetchImpl = fetch, port }: 
   return raw;
 }
 
-/** A response body as text, refused past INFO_MAX_BYTES however it is sent. */
 async function readCapped(res: Response, host: string): Promise<string> {
   const tooMuch = () => new HttpError(502, `${host} sent too much to be a WLED's info`);
   if (Number(res.headers.get('content-length')) > INFO_MAX_BYTES) throw tooMuch();
@@ -229,13 +190,11 @@ async function readCapped(res: Response, host: string): Promise<string> {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-/** The fields a profile needs, from a WLED's /json/info, checked. */
 function readInfo(raw: unknown, host: string): WledInfo {
   const body = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const leds = (body.leds && typeof body.leds === 'object' ? body.leds : null) as Record<string, unknown> | null;
   const count = leds && Number.isInteger(leds.count) ? leds.count as number : null;
   if (!leds || count === null) throw new HttpError(502, `${host} is not a WLED: its info says nothing about LEDs`);
-  // `lc` is what the LEDs can do, bit 2 a white channel; older builds said `rgbw`.
   const rgbw = leds.rgbw === true || (Number.isInteger(leds.lc) && ((leds.lc as number) & 0x02) !== 0);
   const m = leds.matrix && typeof leds.matrix === 'object' ? leds.matrix as Record<string, unknown> : null;
   const matrix = m && Number.isInteger(m.w) && Number.isInteger(m.h) && (m.w as number) > 0 && (m.h as number) > 0
@@ -250,16 +209,7 @@ function readInfo(raw: unknown, host: string): WledInfo {
   };
 }
 
-/**
- * A WLED's segments, from its /json/state: each one's first LED and length, or
- * on a panel the rectangle it covers. Segments that cover nothing, or reach
- * past the WLED's LEDs, are left out.
- *
- * Over DDP a WLED is sent its LEDs in their logical order (a panel's row by
- * row, its own wiring worked out by WLED), not through its segments — so a
- * segment is simply the stretch of that order it covers, or on a panel one
- * stretch for each of its rows.
- */
+// Address segment LEDs in logical order because WLED applies the physical wiring map.
 function readSegments(raw: unknown, wled: WledInfo, host: string): WledSegment[] {
   const body = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   if (!Array.isArray(body.seg)) throw new HttpError(502, `${host} is not a WLED: its state lists no segments`);
@@ -289,57 +239,31 @@ function readSegments(raw: unknown, wled: WledInfo, host: string): WledSegment[]
   return out;
 }
 
-/**
- * What a WLED is patched as, as a DMX bar has a 3-channel mode and a pixel one:
- *
- *   wash    one light, every LED the same colour — a par, to the show: it
- *           takes the rig's wash, its chases step by it, and it strobes and
- *           blinds with the pars
- *   zones   a few cells along it, each an equal share of its LEDs (on a panel,
- *           a band of its columns) — an LED bar, to the show
- *   pixels  every LED a cell of its own, and a panel a picture
- *   strobe  a panel as a strobe panel is built (an ADJ Jolt Panel): a line
- *           of white segments across its middle, which light only for white
- *           — a strobe, a blinder, the strobe core's strike — and rows of
- *           square colour zones above and below it; `zones` is how many
- *           across. A fixture laid out in rows, to the show, that plays the
- *           bars' programs rather than a panel's pictures
- */
+// Modes: wash = one light; zones = a few equal spans; pixels = every LED;
+// strobe = white core segments with colour zones, rendered as a zoned fixture.
 export type WledMode = 'wash' | 'zones' | 'pixels' | 'strobe';
 
 export const WLED_MODES: readonly WledMode[] = ['wash', 'zones', 'pixels', 'strobe'];
 export const DEFAULT_WLED_MODE: WledMode = 'zones';
 export const DEFAULT_WLED_ZONES = 8;
 
-/** How a WLED is patched: its mode, and in zones how many. */
 export interface WledLook {
   mode?: WledMode;
   zones?: number;
 }
 
-/** The LEDs a whole WLED, or one segment of it, lights; and a panel's grid. */
 function areaOf(wled: WledInfo, segment: WledSegment | null): { leds: number; grid: { columns: number; rows: number } | null } {
   if (segment) return { leds: segment.count, grid: segment.grid };
   const grid = wled.matrix && wled.matrix.w * wled.matrix.h === wled.leds ? { columns: wled.matrix.w, rows: wled.matrix.h } : null;
   return { leds: wled.leds, grid };
 }
 
-/** One zone of a strobe panel: where it sits in the fixture's grid, the LEDs it covers, and whether it is white. */
 export interface StrobeZone {
   at: { x: number; y: number };
-  /** Its rectangle of LEDs: column, row, width, height. */
   area: [number, number, number, number];
   white: boolean;
 }
 
-/**
- * The zones of a strobe panel `columns` × `rows` LEDs, `across` of them
- * across: a line of white segments through the middle, an eighth of the
- * panel high, and above and below it rows of colour zones as near square as
- * the panel allows. Top to bottom, left to right; the grid is `across` wide
- * and a row for the white line between the colour rows. Null when the panel
- * is too small to hold them.
- */
 function strobePanel(columns: number, rows: number, across: number): { grid: { columns: number; rows: number }; zones: StrobeZone[] } | null {
   let band = Math.max(1, Math.round(rows / 8));
   if ((rows - band) % 2) band += 1;
@@ -361,10 +285,6 @@ function strobePanel(columns: number, rows: number, across: number): { grid: { c
   return { grid: { columns: count, rows: 2 * tall + 1 }, zones };
 }
 
-/**
- * How many cells a WLED patched this way is: its LEDs, a panel's columns in
- * zones or its LEDs if fewer, or one. Fewer than two zones is a wash.
- */
 function cellCount(leds: number, grid: { columns: number; rows: number } | null, { mode = 'pixels', zones = DEFAULT_WLED_ZONES }: WledLook): number {
   if (mode === 'pixels') return leds;
   if (mode === 'strobe') return grid ? strobePanel(grid.columns, grid.rows, zones)?.zones.length ?? 0 : 0;
@@ -373,13 +293,6 @@ function cellCount(leds: number, grid: { columns: number; rows: number } | null,
   return n >= 2 ? n : 1;
 }
 
-/**
- * The profile for a WLED: its LEDs as cells of red, green and blue (and white),
- * in a grid when it is set up as a panel — or, with `segment`, the profile for
- * that one segment of it — or, as a wash or in zones, one light or a few
- * spread over them (wledSpan says over how many). Throws a 400 for one the
- * engine cannot take.
- */
 function wledProfile(wled: WledInfo, host: string, segment: WledSegment | null = null, look: WledLook = {}): ProfileInput {
   const { leds, grid: area } = areaOf(wled, segment);
   const mode = look.mode || 'pixels';
@@ -394,8 +307,7 @@ function wledProfile(wled: WledInfo, host: string, segment: WledSegment | null =
   const width = names.length;
   const mapOf = (c: number): ChannelMap => Object.fromEntries(names.map((n, k) => [n, c * width + k]));
   const grid = mode === 'pixels' ? area : null;
-  // The pixels keep the id they always had, so a show saved before modes
-  // still finds its WLED's profile.
+  // Preserve pixel profile IDs so older saved shows still resolve their fixtures.
   const suffix = mode === 'pixels' ? '' : cells === 1 ? '-wash' : `-zones${cells}`;
   const id = `wled-${wled.mac || host.toLowerCase().replace(/[^a-z0-9]+/g, '-')}${segment ? `-seg${segment.id}` : ''}${suffix}`.slice(0, 128);
   const kind = wled.rgbw ? 'RGBW' : 'RGB';
@@ -408,10 +320,6 @@ function wledProfile(wled: WledInfo, host: string, segment: WledSegment | null =
     manufacturer: 'WLED',
     modeName: `${shape}${segment ? `, from LED ${segment.at + 1}` : ''}`,
     channelCount: cells * width,
-    // One cell is one light; more are its cells, one after another. No channel
-    // list and no cell names: a 64 × 32 panel's were half a megabyte of
-    // "Pixel 1234 Green" in the show file and in every copy of the rig sent
-    // to a page, and the cells already say which channel is which colour.
     channelMap: cells === 1 ? mapOf(0) : {},
     ...(cells > 1 ? { cells: Array.from({ length: cells }, (_, c): ProfileCell => ({ channelMap: mapOf(c) })) } : {}),
     ...(grid ? { grid } : {}),
@@ -419,13 +327,6 @@ function wledProfile(wled: WledInfo, host: string, segment: WledSegment | null =
   return validate(profileSchema, profile, 'WLED profile');
 }
 
-/**
- * A WLED panel as a strobe panel (see WledMode): its zones in a grid, each
- * colour zone red, green and blue and each white one only white — on an RGB
- * WLED a byte the DDP sends to all three of its LEDs' dies (ddp-routes.ts).
- * `zoned`: a fixture in rows, not a screen, so the show gives it the bars'
- * programs (shared/rig.ts).
- */
 function strobeProfile(wled: WledInfo, host: string, segment: WledSegment | null, area: { columns: number; rows: number } | null,
   across: number): ProfileInput {
   const label = `${wled.name}${segment ? ` · ${segment.name}` : ''}`;
@@ -434,7 +335,6 @@ function strobeProfile(wled: WledInfo, host: string, segment: WledSegment | null
   if (!panel) throw new HttpError(400, `${label} is ${area.columns} × ${area.rows}: too small for a strobe panel`);
   const width = wled.rgbw ? 4 : 3;
   const cells = panel.zones.map((zone, c): ProfileCell => ({
-    // A white zone is one byte of its cell — the white die's on an RGBW WLED.
     channelMap: zone.white ? { white: c * width + (wled.rgbw ? 3 : 0) } : { red: c * width, green: c * width + 1, blue: c * width + 2 },
     at: zone.at,
   }));
@@ -454,11 +354,6 @@ function strobeProfile(wled: WledInfo, host: string, segment: WledSegment | null
   return validate(profileSchema, profile, 'WLED profile');
 }
 
-/**
- * What a fixture's DDP output adds to say its cells are spread over the LEDs
- * (types/rig.ts DdpOutput): nothing in pixels, where each cell is one; for a
- * strobe panel, the rectangle each zone covers.
- */
 function wledSpan(wled: WledInfo, segment: WledSegment | null = null, look: WledLook = {}):
   { leds?: number; columns?: number; areas?: [number, number, number, number][] } {
   const { leds, grid } = areaOf(wled, segment);
@@ -470,10 +365,6 @@ function wledSpan(wled: WledInfo, segment: WledSegment | null = null, look: Wled
   return { leds, ...(grid ? { columns: grid.columns } : {}) };
 }
 
-/**
- * The profile id a WLED's is, whatever mode it is patched in: two fixtures
- * with the same one light the same LEDs.
- */
 function wledSeat(profileId: string): string {
   return profileId.replace(/-(?:wash|zones\d+|strobe\d+)$/, '');
 }

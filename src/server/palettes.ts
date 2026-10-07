@@ -1,44 +1,10 @@
 import { COLOR_PRESETS } from './presets.ts';
 
-/**
- * Named colour looks, shared by the auto show and manual mode.
- *
- * These banks used to live inside auto-show.js, where only the generated show
- * could reach them. They are the same thing an operator wants by hand — a set
- * of colours that were picked to sit together — so they moved here and manual
- * mode picks from the same list. One bank per palette size, keyed identically,
- * so a look means the same thing whether you ask for two colours or four.
- *
- * Colour preset indices (see presets.js COLOR_PRESETS):
- *    0=Red  1=Amber  2=Lime  3=Green  4=Cyan  5=Blue  6=Congo Blue  7=Violet
- *    8=Magenta  9=Warm White  10=Cool White  11=Lavender  12=Moonlight
- *   13=UV  14=Blackout
- *
- * ── How a look is built ─────────────────────────────────────────────────────
- *
- * Every tetrad is four slots with four different jobs, in this order:
- *
- *   A  dominant — the colour the look is named for; the one most on stage
- *   B  contrast — its opposite. A and B carry `split`, `alt-halves` and the
- *                 two-colour chases, so this pair has to survive being the
- *                 only two colours in the room
- *   C  accent   — a third well-separated hue for the 3- and 4-colour patterns
- *   D  lift     — a white, a pale wash or UV. Not a fourth hue: without a
- *                 brightness break, a four-colour chase reads as a rainbow
- *                 rather than as a look
- *
- * The rule that keeps the banks honest: no two *saturated* entries in one look
- * sit within ~30° of each other. Old looks broke this constantly — `noirUv`
- * paired a 260° "actinic" with a 251° indigo, and `violetDream` was three
- * purples and a white — which is why so many of them read as one colour and a
- * bit of noise. Where a look does hold two colours from the same family they
- * are on different saturation tiers on purpose (`violetDream`'s violet under a
- * pale lavender), which the eye reads as depth rather than as a repeat.
- */
+// Preset indices: 0 Red, 1 Amber, 2 Lime, 3 Green, 4 Cyan, 5 Blue, 6 Congo Blue, 7 Violet,
+// 8 Magenta, 9 Warm White, 10 Cool White, 11 Lavender, 12 Moonlight, 13 UV, 14 Blackout.
+// Tetrad slots: A dominant, B contrast, C accent, D lift.
+// Separate saturated hues by about 30° so each slot remains visible across the room.
 
-// ── Tetrads (4 colours) ─────────────────────────────────────────────────────
-// [dominant, contrast, accent, lift] — see the note above.
-/** A bank: look id to colour-preset indices. */
 export type PaletteBank = Record<string, number[]>;
 
 const TETRADS: PaletteBank = {
@@ -59,13 +25,6 @@ const TETRADS: PaletteBank = {
   aurora:      [3, 7, 4, 12],  // Green / Violet / Cyan / Moonlight — the actual northern-lights hues
   lunar:       [12, 9, 11, 10],// Moonlight / Warm White / Lavender / Cool White — the pale look
 
-  // ── White-forward looks ───────────────────────────────────────────────────
-  //
-  // Electronic music is lit white far more than a hue-first catalogue suggests,
-  // and a rig of static pars has no other way to read as *hard*. These put a
-  // white in the dominant slot rather than the lift, so the colour is what
-  // punctuates the white instead of the other way round. `arctic` was the only
-  // look doing this and it had to cover every club track on its own.
   whiteout:    [10, 6, 8, 12], // Cool White / Congo / Magenta / Moonlight — white room, neon cuts
   strobeLab:   [10, 4, 0, 9],  // Cool White / Cyan / Red / Warm White — clinical white, hot and cold
   hardTechno:  [10, 0, 5, 12], // Cool White / Red / Blue / Moonlight — warehouse: white, siren, blue
@@ -73,17 +32,13 @@ const TETRADS: PaletteBank = {
   acidRave:    [2, 8, 6, 10],  // Lime / Magenta / Congo / Cool White — acid green against hot pink
   iceFire:     [4, 0, 8, 10],  // Cyan / Red / Magenta / Cool White — the cold/hot split, hard edge
 
-  // ── Further hue looks ─────────────────────────────────────────────────────
   midnight:    [5, 8, 2, 12],  // Blue / Magenta / Lime / Moonlight — deep blue with two sharp cuts
   peppermint:  [0, 3, 4, 10],  // Red / Green / Cyan / Cool White — primary and bright, nothing muddy
   mint:        [3, 0, 7, 10],  // Green / Red / Violet / Cool White — fresh green over a red contrast
   nightDrive:  [6, 1, 4, 12],  // Congo / Amber / Cyan / Moonlight — headlights on a deep blue road
 };
 
-// ── Triads (3 colours) ──────────────────────────────────────────────────────
-// Mostly [dominant, contrast, accent] — the lift is what a third lamp can
-// least afford to spend itself on. `desert` and `lunar` keep a pale entry
-// because that *is* their look.
+// Triads usually omit the lift so a third lamp still contributes a distinct hue.
 const TRIADS: PaletteBank = {
   synthwave:   [8, 4, 6],     // Magenta / Cyan / Congo
   sunsetDrive: [1, 6, 8],     // Amber / Congo / Magenta
@@ -113,13 +68,7 @@ const TRIADS: PaletteBank = {
   nightDrive:  [6, 1, 4],     // Congo / Amber / Cyan
 };
 
-// ── Duos (2 colours) ────────────────────────────────────────────────────────
-// Two lamps means the pair *is* the look, so every duo is a complementary or
-// near-complementary split — nothing under about 70° apart, or else a hard
-// tier contrast (`arctic` puts white against a deep blue). A few reach for a
-// colour the tetrad does not use — `desert` takes Blue rather than its pale
-// Moonlight, `royal` drops to two of its four — because a tint cannot hold up
-// half a rig on its own.
+// Duos need strong hue or brightness contrast because each colour occupies half the rig.
 const DUOS: PaletteBank = {
   synthwave:   [8, 4],        // Magenta / Cyan
   sunsetDrive: [1, 6],        // Amber / Congo
@@ -149,15 +98,12 @@ const DUOS: PaletteBank = {
   nightDrive:  [6, 12],       // Congo / Moonlight — tier contrast
 };
 
-/** Look up the right bank for a palette size. 4 is the default. */
 function paletteBankForSize(size: number): PaletteBank {
   if (size === 2) return DUOS;
   if (size === 3) return TRIADS;
   return TETRADS;
 }
 
-// Display names for the picker. The bank keys are camelCase identifiers; these
-// are what the operator reads on the button.
 const PALETTE_NAMES: Record<string, string> = {
   synthwave:   'Synthwave',
   sunsetDrive: 'Sunset Drive',
@@ -187,11 +133,6 @@ const PALETTE_NAMES: Record<string, string> = {
   nightDrive:  'Night Drive',
 };
 
-/**
- * The catalogue the UI and the MIDI binding picker render: one entry per look,
- * carrying the colours it resolves to at each size so a client can draw the
- * swatches without knowing the banks.
- */
 const PALETTES = Object.keys(TETRADS).map((id) => ({
   id,
   name: PALETTE_NAMES[id] || id,
@@ -200,11 +141,6 @@ const PALETTES = Object.keys(TETRADS).map((id) => ({
 
 const PALETTE_IDS = PALETTES.map((p) => p.id);
 
-/**
- * The colour-preset indices for one look at one size, or null when the id is
- * not a look we know. Indices are clamped to the preset table so a bank entry
- * can never hand out something the engine would read past the end of.
- */
 function paletteColors(id: string, size = 4): number[] | null {
   const bank = paletteBankForSize(size);
   const raw = bank[id];
@@ -213,14 +149,6 @@ function paletteColors(id: string, size = 4): number[] | null {
   return raw.map((i) => Math.max(0, Math.min(maxIdx, i)));
 }
 
-/**
- * The four colour slots a look fills.
- *
- * A palette smaller than four slots wraps: a duo becomes A/B/A/B, a triad
- * A/B/C/A. That keeps every pattern usable — the four-colour patterns still
- * have something in every slot — while the look stays the two or three colours
- * that were chosen to sit together.
- */
 function paletteSlots(id: string, size = 4): { colorA: number; colorB: number; colorC: number; colorD: number } | null {
   const colors = paletteColors(id, size);
   if (!colors) return null;

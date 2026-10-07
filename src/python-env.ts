@@ -3,7 +3,6 @@ import fs from 'node:fs';
 import { settings } from './server/settings.ts';
 import { venvPython } from './server/config-dir.ts';
 
-/** What probing one interpreter found. */
 export interface PythonProbe {
   exe: string;
   ok: boolean;
@@ -12,38 +11,14 @@ export interface PythonProbe {
   missing: string[];
 }
 
-/** The interpreter the analyser will run, and how it was chosen. */
 export interface PythonInfo extends PythonProbe {
   source: 'configured' | 'detected' | 'fallback';
   considered?: PythonProbe[];
 }
 
-/**
- * Pick the Python interpreter that runs the analyzer.
- *
- * The hard part on Windows is that having *a* Python is not the same as having
- * the right one. `py` (the python.org launcher) and `python` (whatever is first
- * on PATH — often a conda env) are routinely two different installations, and
- * `pip install -r requirements.txt` only ever populates one of them. Probing
- * with `--version` alone picks whichever answers first, which is how you end up
- * with a server that starts cleanly, downloads a track, and only then dies with
- * `ModuleNotFoundError: No module named 'librosa'`.
- *
- * So the probe asks the question that actually matters: can *this* interpreter
- * import the analyzer's dependencies? An interpreter that can beats one that
- * merely exists.
- */
-
-// The analyzer cannot run without these. The beat grid comes from a model and
-// has no signal-processing fallback, so torch and Beat This! are as required
-// as librosa. panns_inference and the MuQ packages stay out: everything they
-// feed degrades gracefully without them.
+// Require the beat-grid dependencies because there is no signal-processing fallback for their model.
 const REQUIRED_MODULES = ['librosa', 'numpy', 'soundfile', 'torch', 'beat_this'];
 
-// The environment `uv sync` makes from the lockfile comes first — in the
-// checkout, or in the data directory of a packaged build (config-dir.ts): it
-// was built for this project, which no other interpreter on the machine can
-// say.
 const PROJECT_VENV = venvPython();
 
 const CANDIDATES = process.platform === 'win32'
@@ -52,13 +27,11 @@ const CANDIDATES = process.platform === 'win32'
 
 let projectVenv: string | null = PROJECT_VENV;
 
-/** Where to look, in order: the project's environment when there is one, then PATH. */
 function candidates(): string[] {
   return [...(projectVenv && fs.existsSync(projectVenv) ? [projectVenv] : []), ...CANDIDATES];
 }
 
-// find_spec() resolves a module without importing it, so this stays a bare
-// interpreter startup (~100ms) rather than the 5-10s librosa itself costs.
+// Probe with find_spec() to avoid importing expensive audio dependencies just to locate Python.
 const PROBE = `
 import sys, importlib.util as u
 mods = ${JSON.stringify(REQUIRED_MODULES)}
@@ -78,7 +51,6 @@ function probe(exe: string): PythonProbe | null {
   } catch (_) {
     return null;
   }
-  // The Microsoft Store stub exits non-zero and prints nothing useful.
   if (!r || r.error || r.status !== 0) return null;
 
   const [version = '', executable = '', missing = ''] = String(r.stdout || '').trim().split(/\r?\n/);
@@ -93,12 +65,6 @@ function probe(exe: string): PythonProbe | null {
 
 let cached: PythonInfo | null = null;
 
-/**
- * Resolve the interpreter to use, with the reasoning behind the choice.
- *
- * An explicit path from the settings always wins — it is the operator
- * saying "use this one", and second-guessing it would just hide their mistake.
- */
 function resolve({ refresh = false } = {}): PythonInfo {
   if (cached && !refresh) return cached;
 
@@ -116,28 +82,23 @@ function resolve({ refresh = false } = {}): PythonInfo {
     const info = probe(name);
     if (!info) continue;
     probed.push(info);
-    // An interpreter with the dependencies wins outright — no need to look
-    // further, and no need to prefer `py` just because it answered first.
+    // Prefer an interpreter with the dependencies so an earlier empty interpreter does not win.
     if (!info.missing.length) {
       cached = { ...info, source: 'detected', considered: probed };
       return cached;
     }
   }
 
-  // Nothing has the dependencies. Fall back to the first that runs so the
-  // eventual failure names a real interpreter, and let the caller warn.
   cached = probed.length
     ? { ...probed[0], source: 'detected', considered: probed }
     : { exe: 'python', ok: false, version: '', executable: '', missing: REQUIRED_MODULES, source: 'fallback', considered: [] };
   return cached;
 }
 
-/** Just the executable, for spawning. Resolved lazily and cached. */
 function pythonExe(): string {
   return resolve().exe;
 }
 
-/** One line for the startup banner. */
 function describe(): string {
   const info = resolve();
   if (!info.ok) return `${info.exe} — NOT RUNNABLE`;
@@ -146,10 +107,7 @@ function describe(): string {
   return `${info.exe}${where} (${info.version})${deps}`;
 }
 
-/**
- * Warn at startup rather than at the first track change. Without this the
- * failure surfaces minutes into a set, after a download, as a traceback.
- */
+// Report missing dependencies at startup so failures do not first appear during a set.
 function warnIfUnusable(log: (line: string) => void = console.warn): PythonInfo | null {
   const info = resolve();
   if (info.ok && !info.missing.length) return null;
@@ -180,25 +138,17 @@ function warnIfUnusable(log: (line: string) => void = console.warn): PythonInfo 
   return info;
 }
 
-/** What importing the model stack for real found (see `verify`). */
 export interface StackReport {
   ok: boolean;
   python: string;
   torch?: string;
   torchaudio?: string;
   torchvision?: string;
-  /** 'cuda', 'rocm' or 'cpu', and the card's name when there is one. */
   accelerator?: string;
   device?: string;
-  /** Module → the error importing it raised. */
   errors: Record<string, string>;
 }
 
-// Imports the stack rather than finding it. `find_spec` says a package is
-// installed; only importing it says its native half loads — a torchvision
-// built for another torch installs cleanly and then fails every model with
-// "operator torchvision::nms does not exist". Seconds, not milliseconds, so it
-// runs for the pre-show check, not on every start.
 const VERIFY = `
 import importlib, importlib.util as u, json, sys
 out = {"python": sys.version.split()[0], "errors": {}}
@@ -230,10 +180,6 @@ print(json.dumps(out))
 const verified = new Map<string, { at: number; report: Promise<StackReport> }>();
 const VERIFY_TTL_MS = 10 * 60 * 1000;
 
-/**
- * Import the model stack in `exe` and report what loaded, and on what device.
- * Cached per interpreter for ten minutes.
- */
 function verify(exe: string = resolve().executable || resolve().exe,
   { refresh = false, spawner = spawn, timeoutMs = 120000 }:
   { refresh?: boolean; spawner?: typeof spawn; timeoutMs?: number } = {}): Promise<StackReport> {
@@ -271,7 +217,6 @@ function verify(exe: string = resolve().executable || resolve().exe,
 }
 
 export const _reset = () => { cached = null; verified.clear(); };
-/** Tests: point the project environment elsewhere, or nowhere. */
 export const _setProjectVenv = (venv: string | null) => { projectVenv = venv; };
 
 export {

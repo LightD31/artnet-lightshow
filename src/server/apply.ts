@@ -5,7 +5,6 @@ import { generateCid } from './sacn.ts';
 import * as pythonEnv from '../python-env.ts';
 import { messageOf } from '../errors.ts';
 
-/** The subsystems settings are pushed into. */
 export interface ApplierDeps {
   midi: {
     close(): void;
@@ -24,22 +23,10 @@ export interface ApplierDeps {
   autoShow?: { restartWorker?(reason: string): void } | null;
   applyPatch(patch: unknown): unknown;
   broadcast(): void;
-  /** The voices a disarm stops (state.ts's, unless a test stands in). */
   voices?: { stopAll(): number };
 }
 
-/**
- * Push stored settings into the running subsystems.
- *
- * Most settings take effect the moment they are saved; the handful that are
- * read before anything is listening (bind host, port, access token) are
- * reported as pending-restart instead. Keys not listed here — the analysis
- * timeouts, the local-file root, the Spotify unverified-state flag — are read
- * from the store at call time by the code that uses them, so they need no
- * action at all.
- */
 function createApplier({ midi, spotify, smtc, live = null, midiClock = null, deezer, autoShow, applyPatch, broadcast, voices = liveVoices }: ApplierDeps) {
-  // What this process actually booted with, for pending-restart detection.
   const bootValues = {
     server: {
       host: settings.get('server.host'),
@@ -51,7 +38,6 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
     },
   };
 
-  /** The URL the OAuth proxy sends the operator's browser back to. */
   function refreshCallbackUrl() {
     const configured = settings.get('server.publicUrl');
     const host = bootValues.server.host;
@@ -60,9 +46,6 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
       ? configured.replace(/\/+$/, '')
       : `http://${shown}:${bootValues.server.port}`;
     spotify.localCallbackUrl = `${base}/auth/spotify/callback`;
-    // Without a proxy the redirect has to be the loopback literal on the port
-    // we are actually listening on, whatever `server.host` or `publicUrl` say —
-    // that is the only http:// form Spotify accepts.
     spotify.setLoopbackPort(bootValues.server.port);
     return base;
   }
@@ -79,17 +62,9 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
   function applyArtnet() {
     const { universe, ...rest } = settings.group('artnet');
     Object.assign(state.artnet, rest);
-    // Same rule as the Art-Net panel: fixtures on the old default universe
-    // follow it, ones deliberately patched elsewhere stay put.
     setDefaultUniverse(universe);
   }
 
-  /**
-   * A receiver tells sACN sources apart by their CID, so ours has to survive a
-   * restart: a fresh one every boot reads as a second source arriving and
-   * starts the console arbitrating between two of us. Mint one on first use and
-   * store it.
-   */
   function ensureSacnCid() {
     if (settings.get('sacn.cid')) return;
     try {
@@ -109,19 +84,9 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
     }
   }
 
-  /**
-   * Push the Hue configuration at the output layer, which owns the session.
-   *
-   * No connecting happens here: the module brings the session up from the first
-   * rendered frame and retries on its own schedule. Saving settings with a
-   * bridge that is switched off should not block the page that saved them.
-   */
   function applyHue() {
     const config = settings.group('hue');
     output.configureHue(config);
-    // A pairing made before the application id was fetched at pair time has to
-    // resolve it on the first connect. Store it when that happens so the next
-    // start does not ask the bridge again.
     output.onHueApplicationId((bridgeId, applicationId) => {
       const bridges = settings.group('hue').bridges;
       const bridge = bridges.find((b) => b.id === bridgeId);
@@ -150,8 +115,6 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
 
   function applyMidi() {
     midi.close();
-    // Set before connecting: connect() pushes the current show to the surface,
-    // and it should already know whether it is allowed to.
     midi.setControlFeedback(settings.get('midi.controlFeedback'));
     midi.connect(settings.get('midi.input') || null, settings.get('midi.output') || null);
   }
@@ -164,8 +127,6 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
   function applyLive() {
     if (!live) return;
     const config = settings.group('live');
-    // No bands here: the live input asks its band source (the audio features)
-    // on every start, so a latency or device change keeps them.
     if (config.enabled) live.start({ source: config.source, device: config.device, latencyMs: config.latencyMs });
     else live.stop();
     broadcast();
@@ -175,26 +136,16 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
     if (midiClock) midiClock.setPort(settings.get('midi.clockOutput'));
   }
 
-  /**
-   * The stored tempo mode, through applyPatch so the clock hears it too. The
-   * clock starts in 'auto', so a default file needs nothing.
-   */
   function applyClock() {
     const tempoMode = settings.get('clock.tempoMode');
     if (tempoMode !== state.tempoMode) applyPatch({ tempoMode });
   }
 
   function applyProlink() {
-    // Routed through applyPatch so the enable/disable hooks and the broadcast
-    // fire exactly as they do when the toggle is used on the main page.
     applyPatch({ prolinkEnabled: settings.get('sources.prolink') });
   }
 
-  /**
-   * The interpreter is cached (probing three Pythons is not free) and the
-   * running worker process *is* the old one, so a change needs both a
-   * re-resolve and a recycle.
-   */
+  // Invalidate the interpreter probe and recycle its worker so both adopt a changed Python setting.
   function applyPython() {
     pythonEnv._reset();
     const info = pythonEnv.resolve();
@@ -231,18 +182,7 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
     state.flashLimit = !!settings.get('safety.flashLimit');
   }
 
-  /**
-   * Whether anything leaves the machine (armed.ts, output.setArmed).
-   *
-   * Never at start: a server that booted into a show — after a crash
-   * mid-party, or at six in the morning after a power cut — would seize the
-   * WLEDs and the Hue lamps from the house with nobody there. So a stored
-   * "armed" is put back to off and said so, and the look the supervisor
-   * restores comes back with its transmit off. Disarming also stops the
-   * patterns and every voice (the energy effects among them), so the next
-   * arming starts from a quiet look rather than mid-strobe; arming plays
-   * nothing by itself.
-   */
+  // Start disarmed and clear voices on disarm so restarts or later arming cannot revive a strobe.
   function applyOutputs({ boot = false } = {}) {
     let wanted = !!settings.get('outputs.armed');
     if (boot) {
@@ -265,8 +205,6 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
     applyPatch({ running: false, energyOverride: null });
   }
 
-  // changed key prefix → what to re-apply. Grouped so one save touching three
-  // Spotify fields reconfigures the client once.
   const HANDLERS: { match: (key: string) => boolean; run: () => unknown }[] = [
     { match: (k) => k.startsWith('artnet.'), run: applyArtnet },
     { match: (k) => k.startsWith('sacn.'), run: applySacn },
@@ -291,7 +229,6 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
   ];
 
   return {
-    /** Everything, at boot. */
     applyAll() {
       applyArtnet();
       ensureSacnCid();
@@ -309,7 +246,6 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
       if (settings.get('sources.prolink')) applyProlink();
     },
 
-    /** Just what a save touched. */
     applyChanged(changed: string[]) {
       for (const { match, run } of HANDLERS) {
         if (changed.some(match)) {
@@ -319,22 +255,12 @@ function createApplier({ midi, spotify, smtc, live = null, midiClock = null, dee
       broadcast();
     },
 
-    /**
-     * Restart-only keys whose stored value differs from the running one — and
-     * a Deezer ARL this server cannot use until it is started with OpenSSL's
-     * legacy provider, which the supervisor does when there is one (deezer.ts).
-     */
     pendingRestart() {
       const pending = settings.pendingRestart(bootValues);
       if (settings.get('deezer.arl') && deezer.canDecrypt && !deezer.canDecrypt()) pending.push('deezer.arl');
       return pending;
     },
 
-    /**
-     * The operator asked for the outputs off: every voice stops, even when
-     * they were off already and the save changed nothing — a rehearsal
-     * launches voices while disarmed, and a disarm is how they all go.
-     */
     disarmed(): number {
       return voices.stopAll();
     },

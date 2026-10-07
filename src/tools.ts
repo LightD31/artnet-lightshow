@@ -3,33 +3,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as pythonEnv from './python-env.ts';
 
-/**
- * The programs the analysis needs besides Python — yt-dlp, the JavaScript
- * runtime yt-dlp solves YouTube's challenges with, and ffmpeg — found on PATH
- * first, then in the analysis environment.
- *
- * The locked environment (`uv sync`, or Sources → Analysis → Set up) installs
- * all three: yt-dlp, Deno beside it (yt-dlp[deno]), and an ffmpeg binary
- * (imageio-ffmpeg). But an environment's scripts folder is on nobody's PATH
- * unless it has been activated, and never for the packaged build, started from
- * a shortcut — so looking only on PATH, as the server used to, found none of
- * them. PATH still comes first: a tool the operator installed is the one they
- * meant.
- */
-
 const pathFor = (platform: NodeJS.Platform) => (platform === 'win32' ? path.win32 : path.posix);
 
-/** Where an interpreter's environment keeps its programs. */
 export function scriptsDirs(python: string, platform: NodeJS.Platform = process.platform): string[] {
   const p = pathFor(platform);
   const dir = p.dirname(python);
-  // A virtual environment's python sits in its scripts folder; a Windows
-  // installation's python.exe sits above its Scripts folder.
   return platform === 'win32' ? [dir, p.join(dir, 'Scripts')] : [dir];
 }
 
 export interface EnvToolOptions {
-  /** The analysis interpreter; its environment is searched. */
   python?: string | null;
   platform?: NodeJS.Platform;
   exists?: (file: string) => boolean;
@@ -40,7 +22,6 @@ function analysisPython(): string | null {
   return info.ok ? (info.executable || info.exe) : null;
 }
 
-/** A program in the analysis environment, by name; null when it has none. */
 export function envTool(name: string, {
   python = analysisPython(), platform = process.platform, exists = fs.existsSync,
 }: EnvToolOptions = {}): string | null {
@@ -54,11 +35,6 @@ export function envTool(name: string, {
   return null;
 }
 
-/**
- * A program on PATH, as the shell would find it (with PATHEXT's extensions on
- * Windows); null when there is none. Looked for, not run: a stand-in that
- * does not answer `-version` is still the one a spawn would start.
- */
 export function onPath(name: string, {
   env = process.env, platform = process.platform, exists = fs.existsSync,
 }: { env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform; exists?: (file: string) => boolean } = {}): string | null {
@@ -76,7 +52,6 @@ export function onPath(name: string, {
   return null;
 }
 
-/** The ffmpeg imageio-ffmpeg installed in the analysis environment, or null. */
 function envFfmpeg(python: string | null): Promise<string | null> {
   if (!python) return Promise.resolve(null);
   return new Promise((resolve) => {
@@ -90,17 +65,11 @@ function envFfmpeg(python: string | null): Promise<string | null> {
 
 export interface Ffmpeg {
   command: string;
-  /** Where it was found. */
   from: 'path' | 'environment';
 }
 
 let ffmpeg$: Promise<Ffmpeg | null> | null = null;
 
-/**
- * The ffmpeg to run: the one on PATH, else the analysis environment's; null
- * when there is neither. Asked once; not finding one is not remembered, so
- * installing it while the server runs is picked up by the next conversion.
- */
 export function ffmpeg({ python = analysisPython }: { python?: () => string | null } = {}): Promise<Ffmpeg | null> {
   if (!ffmpeg$) {
     ffmpeg$ = (async (): Promise<Ffmpeg | null> => {
@@ -115,12 +84,10 @@ export function ffmpeg({ python = analysisPython }: { python?: () => string | nu
   return ffmpeg$;
 }
 
-/** The ffmpeg command to spawn: bare `ffmpeg` when there is none, to fail as it always has. */
 export async function ffmpegCommand(options: Parameters<typeof ffmpeg>[0] = {}): Promise<string> {
   return (await ffmpeg(options))?.command ?? 'ffmpeg';
 }
 
-/** Forget what was found (tests; an environment just set up). */
 export function _reset(): void {
   ffmpeg$ = null;
 }
