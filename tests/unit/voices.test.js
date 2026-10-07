@@ -426,10 +426,8 @@ test('a rapidFlash spec is refused until acknowledged', (t) => {
   }
   assert.deepEqual(m.list().map((s) => s.id), [playing.id], 'what played plays on');
   assert.equal(c.changes, 1);
-  // The energy endpoints' way: admitted, and the renderer holds it dark.
-  assert.ok(m.start(latched({ spec: { kind: 'energy.whiteStrobe' }, admission: 'render' })));
   // Stopping needs nothing.
-  assert.equal(m.stopAll(), 2);
+  assert.equal(m.stopAll(), 1);
   c.acknowledged = true;
   assert.ok(m.start(latched({ spec: FAST })));
 });
@@ -570,13 +568,20 @@ test('a latch that ended while hidden never comes back; off takes only the latch
   assert.equal(m.size, 0);
 });
 
-test('a strobe energy is taken unacknowledged, as the endpoints always answered: the renderer holds it dark', (t) => {
+test('a strobe energy waits for the acknowledgement as every voice does: a 409, and the latch and the hold before it play on', (t) => {
   const { m, c, shim } = energy(t);
   c.acknowledged = false;
+  shim.latch('glow');
+  shim.press('page', 'p1', 'kill');
+  for (const effect of ['white-strobe', 'color-strobe', 'palette-strobe']) {
+    assert.throws(() => shim.latch(effect), (err) => err.status === 409 && /photosensitivity acknowledgement required/.test(err.message), effect);
+    assert.throws(() => shim.press('page', 'p2', effect), (err) => err.status === 409, effect);
+  }
+  assert.deepEqual([shim.latched(), shim.held(), m.size], ['glow', 'kill', 2]);
+  c.acknowledged = true;
   shim.latch('white-strobe');
-  shim.press('page', 'p1', 'palette-strobe');
+  shim.press('page', 'p3', 'palette-strobe');
   assert.deepEqual([shim.latched(), shim.held()], ['white-strobe', 'palette-strobe']);
-  assert.equal(m.size, 2);
 });
 
 // ── Disarm ──────────────────────────────────────────────────────────────────

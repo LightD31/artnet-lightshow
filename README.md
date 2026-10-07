@@ -1675,8 +1675,10 @@ above every other voice. Latching it stops a running manual strobe, and
 starting the manual strobe stops a latched `palette-strobe`.
 
 Trigger from the UI, MIDI (encoder push 8 — hold to activate, release to clear),
-REST, the `energy-hold` and `voice-hold` socket events, or Companion. Clear
-with `POST /api/energy/off` or `energyOverride: null`. Only
+REST, the `energy-hold` and `voice-hold` socket events, or Companion. The
+three strobes are refused (409) until the photosensitivity acknowledgement
+(see **Safety**). Clear with `POST /api/energy/off` or `energyOverride:
+null`. Only
 `POST /api/energy/off` also ends a latched strobe: a scene, a cue, a MIDI
 note or the auto show clears the energy all the time, and never the strobe.
 
@@ -1715,6 +1717,8 @@ the rig as a whole to three large flashes a second. Ways to run it:
   `DELETE /api/voices`, `DELETE /api/voices/strobe`, a disarm, and latching
   `palette-strobe`.
 - **Burst** — `POST /api/strobe/burst/:ms`, 100 to 30,000 ms, once.
+  Lengths outside this range return 400; Home Assistant sliders must use the
+  same limit.
 - **Latch** — `POST /api/strobe/on`. A latch ends on `POST /api/strobe/off`,
   on `POST /api/energy/off`, on a burst, on `DELETE /api/voices`, or at the
   cap, `safety.strobeMaxLatchSec`
@@ -1834,9 +1838,21 @@ moment. `GET /api/audio` and the live state's `audio` say who owns each
 | `safety.flashLimit` | `false` | Flash Limit (see **Flash limit**) |
 
 Until `POST /api/safety/acknowledge` is called (stored across restarts),
-starting the strobe, a fast-flashing voice, preset, sequence clip or matrix
-mode answers `409 photosensitivity acknowledgement required`; an energy
-strobe stays dark instead. Stopping and releasing never refuse.
+starting the strobe, an energy strobe (`white-strobe`, `color-strobe`,
+`palette-strobe`), a fast-flashing voice, preset, sequence clip or matrix
+mode answers `409 photosensitivity acknowledgement required` wherever it is
+asked for, and what played before plays on. REST, `/api/set` and a cue answer
+the 409; the `set`, `energy-hold` and `voice-hold` socket events answer an
+`error-msg` with that reason (a hold's names its token), which Companion
+logs; a MIDI button logs it. The auto show's and the live director's strobe
+bursts are refused the same way and logged: a drop lands its look without
+them. Stopping and releasing never refuse.
+
+Until then the header and Perform show **Strobes off until acknowledged**;
+a tap on it opens the warning, and its Yes gives the acknowledgement. The
+live state's `safety.photosensitivityAcknowledged` says which, for Home
+Assistant's `sensor.lightshow` (its `safety` attribute) and anything else
+that reads the state.
 
 ---
 
@@ -2739,7 +2755,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/color/:slot/:index` | Set colour slot `a`–`d` (index 0–23) |
 | GET | `/api/palettes` | The named looks, their colours at each size, and the one on stage |
 | POST | `/api/palette/:id` | Write all four slots from a look (`{ size }` — 2, 3 or 4; default 4) |
-| POST | `/api/energy/:id` · `/api/energy/off` | Latch an energy override (a voice) · clear it, and end a latched strobe |
+| POST | `/api/energy/:id` · `/api/energy/off` | Latch an energy override (a voice; a strobe one is a 409 until the photosensitivity acknowledgement) · clear it, and end a latched strobe |
 
 ### Effects, palettes and safety
 
@@ -2775,7 +2791,7 @@ A refused effect for want of the acknowledgement answers
 | GET | `/api/strobe` | `{ active, mode, settings }`, as every strobe route answers |
 | PUT | `/api/strobe` | Strobe settings, any of them (see **Strobe**) |
 | POST | `/api/strobe/on` · `/api/strobe/off` | Latch (ends at the cap) · stop every strobe voice |
-| POST | `/api/strobe/burst/:ms` | One burst, 100–30,000 ms |
+| POST | `/api/strobe/burst/:ms` | One burst, 100–30,000 ms; any other length is a 400 |
 | GET | `/api/matrix` | `{ mode, colours, voice }`, as every matrix route answers |
 | POST | `/api/matrix/press` · `/api/matrix/release` | `{ colour: '#RRGGBB', token? }` — touch a cell (up to eight at once) · `{ colour }` or `{ token }` — let go |
 | PUT | `/api/matrix` | `{ mode }`: `fireworks`, `flashes`, `pulses`, `cycle` or `solid` |

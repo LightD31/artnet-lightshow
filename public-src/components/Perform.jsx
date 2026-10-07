@@ -10,12 +10,14 @@ import { activeQueue } from './Queue.jsx';
 import { isRandom, paletteName } from './PaletteEditor.jsx';
 import { Transport } from './Transport.jsx';
 import { AudioMeters } from './AudioMeters.jsx';
+import { StrobesOff } from './Photosensitivity.jsx';
 
 /**
  * The view for running a show from a tablet: what a hand needs mid-set, as
  * big as the screen allows, and nothing that needs reading twice.
  *
  *   outputs      armed or not: whether anything leaves the machine at all
+ *   strobes      off until the photosensitivity acknowledgement, one tap from it
  *   now / next   the track playing, how far in, and what comes after it
  *   sync         what the lights are keeping time by, and whether it is well
  *   pads         two banks of eight, each played as its launch mode says,
@@ -288,6 +290,7 @@ export function Perform() {
   return (
     <div class="perform-view">
       <ArmSwitch />
+      <StrobesOff perform />
       <NowNext />
       <SyncHealth />
       <Transport />

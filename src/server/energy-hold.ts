@@ -13,9 +13,9 @@ import type { VoiceSummary } from './voices.ts';
  * engine showed `heldEnergy ?? energyOverride`, the hold plays over the latch
  * and the latch comes back when it is let go: kept underneath, hidden, its
  * launch and end untouched. Whatever ends a voice — a stop, a disarm, a
- * lease — leaves nothing to restore. The strobe ones stay dark until the
- * photosensitivity acknowledgement, the renderer's gate, so the endpoints
- * answer as they always have.
+ * lease — leaves nothing to restore. Until the photosensitivity
+ * acknowledgement the strobe ones are refused (409) as every voice is, and
+ * the latch and hold before them play on.
  */
 
 const HOLD_KEY = 'energy:hold';
@@ -41,8 +41,8 @@ class EnergyHold {
   /**
    * `onChange` hears the held effect, or null, each time it changes. With no
    * manager given this keeps one of its own (no tempo, nothing acknowledged:
-   * the energies' admission is the renderer's), for a hold on its own; the
-   * server's is one over the live manager, whose changes call sync().
+   * a strobe energy is refused), for a hold on its own; the server's is one
+   * over the live manager, whose changes call sync().
    */
   constructor(onChange: (effect: string | null) => void, voices?: VoiceManager) {
     this.onChange = onChange;
@@ -52,11 +52,12 @@ class EnergyHold {
     });
   }
 
-  /** Hold `effect` down: the hold before it, whoever's, is let go first. */
+  /** Hold `effect` down: the hold before it, whoever's, is let go first. A refused one (409) lets go of nothing. */
   press(owner: string, token: unknown, effect: string): void {
+    const launch = this._launch(effect);
+    if (launch) this.voices.admit(launch.spec);
     const hold = this.voices.keyed(HOLD_KEY);
     if (hold) this.voices.stop(hold.id);
-    const launch = this._launch(effect);
     if (launch) this.voices.start({ ...launch, id: `energy:${effect}:hold`, key: HOLD_KEY, mode: 'hold', owner, token });
     this.sync();
   }
@@ -78,7 +79,7 @@ class EnergyHold {
   /**
    * Latch `effect`, or nothing (null, or an id that is no energy effect).
    * The one latched already stays as it is, not launched again; under a
-   * hold, the new latch waits hidden.
+   * hold, the new latch waits hidden. A refused one (409) changes nothing.
    */
   latch(effect: string | null): void {
     const current = this.voices.keyed(LATCH_KEY);
@@ -140,7 +141,7 @@ class EnergyHold {
     // strobe always flashed; the strobe tier for it, as the renderer's own
     // compatibility voice had.
     return { spec, targets: 'shared' as const, tier: effect === HOLD_STROBE ? 'strobe' as const : 'voice' as const,
-      source: 'energy' as const, label, holdsGrid: true, admission: 'render' as const };
+      source: 'energy' as const, label, holdsGrid: true };
   }
 }
 

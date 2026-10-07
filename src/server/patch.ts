@@ -4,6 +4,7 @@ import { conductor } from './conductor.ts';
 import { safety } from './safety.ts';
 import { anchorStep } from '../shared/beat-clock.ts';
 import { parseHex } from '../shared/effects/palette.ts';
+import { energyEffectSpec } from '../shared/effects/catalogue.ts';
 import { patchSchema, overrideSchema, validate } from './validation.ts';
 import { STROBE_FUNCTIONS } from './presets.ts';
 import { paletteSlots } from './palettes.ts';
@@ -78,6 +79,11 @@ function applyPatch(rawData: unknown, { beforeCommit, origin = 'hand' }: PatchOp
   if (data.pattern !== undefined) {
     const effect = resolveEffect(data.pattern);
     if (effect) safety.requireAcknowledged(effect);
+  }
+  // Naming an energy effect is starting it too; an id that is none takes the latch off.
+  if (data.energyOverride) {
+    const energy = energyEffectSpec(data.energyOverride);
+    if (energy) safety.requireAcknowledged(energy);
   }
   if (beforeCommit) beforeCommit();
 

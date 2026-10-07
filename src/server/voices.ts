@@ -55,12 +55,6 @@ export interface StartVoice {
   anchorBeat?: number;
   /** Plays from beat 0 on the global beat grid and stays there when the music jumps, as the energy burst always did. */
   holdsGrid?: boolean;
-  /**
-   * When the photosensitivity gate is asked: at launch (a 409), or only at
-   * render time, where the renderer holds it dark — the energy endpoints'
-   * way, which answer as they always have.
-   */
-  admission?: 'launch' | 'render';
   /** Launched hidden (setHidden): kept and timed, never rendered. */
   hidden?: boolean;
 }
@@ -279,9 +273,7 @@ export class VoiceManager {
    */
   start(v: StartVoice): Voice {
     const spec = voiceSpec(v.spec);
-    if (v.admission !== 'render' && requiresAcknowledgement(spec) && !this._acknowledged()) {
-      throw new HttpError(409, ACKNOWLEDGEMENT_REQUIRED);
-    }
+    this.admit(spec);
     const ids = fixtureIdsOf(v.targets);
     const targets = ids ? Object.freeze(ids) as number[] : null;
     if (!['hold', 'once', 'latched'].includes(v.mode)) throw bad('voice: mode must be hold, once or latched');
@@ -366,6 +358,11 @@ export class VoiceManager {
     if (v.mode === 'hold') this._renewRecord(record, now);
     this._changed();
     return this._view(record);
+  }
+
+  /** The photosensitivity gate a launch passes first: a 409 while `spec` waits for the acknowledgement. */
+  admit(spec: EffectSpec): void {
+    if (requiresAcknowledgement(spec) && !this._acknowledged()) throw new HttpError(409, ACKNOWLEDGEMENT_REQUIRED);
   }
 
   /**

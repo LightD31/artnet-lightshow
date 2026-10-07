@@ -253,6 +253,16 @@ header {
   border-color: rgba(16, 185, 129, .45);
   color: var(--text-on-green);
 }
+/* The strobes refused until the photosensitivity acknowledgement: a button, one tap from it. */
+.stat-pill.gate {
+  font-family: inherit;
+  line-height: inherit;
+  background: rgba(245, 158, 11, .18);
+  border-color: rgba(245, 158, 11, .55);
+  color: var(--text-on-amber);
+  cursor: pointer;
+}
+.stat-pill.gate:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 @keyframes gentle-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .65; } }
 
@@ -618,7 +628,7 @@ button.cb-bpm-num:focus-visible { outline: 2px solid var(--accent); outline-offs
 }
 @media (max-width: 560px) {
   /* The Perform view carries tempo and master: the header keeps what is alarming. */
-  .header-stats .stat-pill:not(.alert):not(.conn) { display: none; }
+  .header-stats .stat-pill:not(.alert):not(.conn):not(.gate) { display: none; }
   /* And room for this device's tools: the name shortens, the theme picker narrows. */
   .app-header h1 span { display: none; }
   .header-theme { max-width: 104px; }
@@ -712,6 +722,28 @@ button.cb-bpm-num:focus-visible { outline: 2px solid var(--accent); outline-offs
 .perform-arm-state { font-size: 18px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
 .perform-arm-hint { font-size: 13px; color: var(--muted); text-align: right; }
 .perform-arm-switch.armed .perform-arm-hint { color: var(--text-2); }
+
+.perform-gate { display: flex; }
+.perform-gate-button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding: 8px 16px;
+  background: rgba(245, 158, 11, .14);
+  border: 2px solid rgba(245, 158, 11, .55);
+  border-radius: var(--radius-lg);
+  color: var(--text-on-amber);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.perform-gate-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.perform-gate-state { font-size: 15px; font-weight: 800; letter-spacing: .02em; }
+.perform-gate-hint { font-size: 13px; color: var(--text-2); text-align: right; }
 
 .perform-sync { display: flex; flex-wrap: wrap; gap: 8px; }
 .perform-chip {

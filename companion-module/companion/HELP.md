@@ -19,7 +19,7 @@ The patterns, colours, palettes, energy effects, fixtures and cues offered in ac
 The **Busk** preset page has what a set played by hand needs:
 
 - **Palettes** — every palette on the server, each button in its first colour, lit while it is the look's palette.
-- **Hold** — each energy effect (white strobe, colour strobe, blinder, UV wash, kill, glow) and a blackout, **on only while the button is held**. The server lets go of a held effect on its own a second after it last heard from Companion, so a crash or a dropped network with a button down never leaves the rig strobing.
+- **Hold** — each energy effect (white strobe, colour strobe, blinder, UV wash, kill, glow) and a blackout, **on only while the button is held**. The server lets go of a held effect on its own a second after it last heard from Companion, so a crash or a dropped network with a button down never leaves the rig strobing. The two strobes wait for the photosensitivity acknowledgement on the server: until it is given, a press (held or latched) is refused and the module's log says why.
 - **Tempo** — tap, the BPM, double and halve, ±5.
 - **Auto show** — start or stop it, its intensity (±10 and a display), a sync nudge (±20 ms) and the track playing.
 - **Master** — the master level (±10 % and a display) and blackout.

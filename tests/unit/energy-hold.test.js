@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { EnergyHold, HOLD_TIMEOUT_MS } from '../../src/server/energy-hold.ts';
+import { VoiceManager } from '../../src/server/voices.ts';
 
 test('an energy hold releases on the matching token', () => {
   const events = [];
@@ -34,10 +35,9 @@ test('a hold expires when the release packet is lost', (t) => {
 });
 
 test('over(): the energy effect on top of the latch, whoever launched it; the latch itself, the manual strobe and other kinds are none', () => {
-  const hold = new EnergyHold(() => {});
+  const hold = new EnergyHold(() => {}, new VoiceManager({ acknowledged: () => true }));
   const m = hold.voices;
-  // Admitted at render: this manager has no acknowledgement.
-  const start = (spec, extra = {}) => m.start({ spec, targets: 'shared', mode: 'latched', tier: 'voice', source: 'pad', admission: 'render', ...extra });
+  const start = (spec, extra = {}) => m.start({ spec, targets: 'shared', mode: 'latched', tier: 'voice', source: 'pad', ...extra });
   assert.strictEqual(hold.over(), null);
   const blinder = start({ kind: 'energy.blinder' });
   assert.strictEqual(hold.over(), 'blinder', 'a pad playing an energy kind');

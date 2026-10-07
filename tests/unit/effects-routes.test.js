@@ -404,13 +404,14 @@ test('a rapidFlash preset is 409 until POST /api/safety/acknowledge', async (t) 
   assert.equal(renderInput().effect.kind, 'ldj.visualizer');
 });
 
-test('/api/energy/<strobe> still answers 200 unacknowledged and the rig shows the running look; acknowledged, the strobe flashes', async (t) => {
+test('/api/energy/<strobe> answers 409 unacknowledged, as the strobe and every rapid voice do, and the rig shows the running look; acknowledged, the strobe flashes', async (t) => {
   const s = await serve(t);
   applyPatch({ pattern: 'ldj.FadeCycle', energyOverride: null, masterDimmer: 255, masterBlackout: false });
   const look = renderStage();
   for (const id of ['white-strobe', 'color-strobe', 'palette-strobe']) {
     const res = await s.call('POST', `/api/energy/${id}`);
-    assert.deepEqual([res.status, res.body], [200, { ok: true, energyOverride: id }]);
+    assert.deepEqual([res.status, res.body], [409, { ok: false, error: 'photosensitivity acknowledgement required' }]);
+    assert.equal(getLiveState().energyOverride, null, `${id} is not shown as on`);
     assert.deepEqual(renderStage(), look, `${id} waits for the acknowledgement`);
   }
   await s.call('POST', '/api/safety/acknowledge');

@@ -207,6 +207,49 @@ test('socket energy-hold press/release still works through the shim', async (t) 
   assert.deepEqual(ids(), ['energy:blinder']);
 });
 
+test('until acknowledged, an energy strobe is refused with the reason wherever it is asked for, as a voice is: REST, /api/set, the set and energy-hold sockets; nothing latches, what played plays on, and the live state says why', async (t) => {
+  const s = await serve(t);
+  const { socket, heard } = await s.page();
+  const refused = { ok: false, error: 'photosensitivity acknowledgement required' };
+  await s.call('POST', '/api/energy/glow');
+  for (const id of ['white-strobe', 'color-strobe', 'palette-strobe']) {
+    const res = await s.call('POST', `/api/energy/${id}`);
+    assert.deepEqual([res.status, res.body], [409, refused], id);
+  }
+  const master = state.masterDimmer;
+  const res = await s.call('POST', '/api/set', { energyOverride: 'white-strobe', masterDimmer: (master + 1) % 256 });
+  assert.deepEqual([res.status, res.body], [409, refused]);
+  assert.equal(state.masterDimmer, master, 'refused whole, its master too');
+
+  // A hold down, then the sockets' refusals: each told to the page that asked, the hold's with its token.
+  socket.emit('energy-hold', { action: 'press', token: 'k', effect: 'kill' });
+  await until(() => state.heldEnergy === 'kill', 'the hold');
+  socket.emit('set', { energyOverride: 'color-strobe' });
+  socket.emit('energy-hold', { action: 'press', token: 'x', effect: 'white-strobe' });
+  await until(() => heard.errors.length === 2, 'two refusals');
+  assert.deepEqual(heard.errors, [
+    { source: 'set', message: 'photosensitivity acknowledgement required' },
+    { source: 'energy-hold', token: 'x', message: 'photosensitivity acknowledgement required' },
+  ]);
+  assert.deepEqual([state.energyOverride, state.heldEnergy, ids().sort()], ['glow', 'kill', ['energy:glow', 'energy:kill:hold']],
+    'the latch and the hold before them play on');
+  const live = (await s.call('GET', '/api/state')).body;
+  assert.deepEqual([live.energyOverride, live.safety.photosensitivityAcknowledged], ['kill', false],
+    'the state shows what plays, and that the strobes wait for the acknowledgement');
+  socket.emit('energy-hold', { action: 'release', token: 'k' });
+  await until(() => state.heldEnergy === null, 'the release');
+
+  // Acknowledged: the page hears it, and the same requests play.
+  await s.call('POST', '/api/safety/acknowledge');
+  await until(() => heard.patches.some((p) => p.d === 'look' && p.set.safety?.photosensitivityAcknowledged === true), 'the page hearing the acknowledgement');
+  assert.deepEqual(await s.call('POST', '/api/energy/white-strobe'), { status: 200, body: { ok: true, energyOverride: 'white-strobe' } });
+  socket.emit('energy-hold', { action: 'press', token: 'y', effect: 'palette-strobe' });
+  await until(() => state.heldEnergy === 'palette-strobe', 'the strobe held');
+  socket.emit('energy-hold', { action: 'release', token: 'y' });
+  await until(() => state.heldEnergy === null, 'its release');
+  assert.equal(heard.errors.length, 2, 'nothing more refused');
+});
+
 // ── POST /api/voices ────────────────────────────────────────────────────────
 
 test('POST /api/voices with a preset and ms returns an id and the voice ends by itself', async (t) => {
