@@ -63,6 +63,7 @@ export default [
       'tests/fixtures/**',
       '.venv/**',
       'dist/**',                   // the packaged build (npm run package)
+      '.superpowers/**',           // untracked agent workspace, not project source
     ],
   },
 

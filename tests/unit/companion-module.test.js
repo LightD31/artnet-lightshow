@@ -151,12 +151,9 @@ test('a held effect lasts while the button is down, and ends when it comes up â€
   }
 });
 
-// presets.js and variables.js import Companion's own package, installed only
-// where the module is built; without it these two cannot load here.
-const companionBase = await import('@companion-module/base').then(() => true, () => false);
-const needsBase = companionBase ? {} : { skip: '@companion-module/base is not installed' };
-
-test('Companion presets include 16 pads and the strobe', needsBase, async () => {
+// presets.js and variables.js import Companion's own package, a dev
+// dependency of the root package so these two run wherever the suite does.
+test('Companion presets include 16 pads and the strobe', async () => {
   const { UpdatePresets } = await import('../../companion-module/src/presets.js');
   let presets = null;
   UpdatePresets({ liveState: {}, setPresetDefinitions: (_structure, defs) => { presets = defs; } });
@@ -171,7 +168,7 @@ test('Companion presets include 16 pads and the strobe', needsBase, async () => 
   assert.deepStrictEqual(presets.strobe_burst.steps[0].down.map((a) => a.actionId), ['strobe_burst']);
 });
 
-test('the variables name every pad and keep the energy override', needsBase, async () => {
+test('the variables name every pad and keep the energy override', async () => {
   const { UpdateVariableDefinitions, UpdateVariableValues } = await import('../../companion-module/src/variables.js');
   let defs = null;
   let values = null;

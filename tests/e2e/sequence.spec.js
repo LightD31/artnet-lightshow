@@ -13,6 +13,8 @@ const BASE = {
 
 // What the tests change, put back after each so later specs start the same.
 let before = null;
+// The voices the tests launch, stopped after each: a once hit plays on past its take.
+const launched = [];
 
 test.beforeEach(async ({ request }) => {
   const { settings } = await (await request.get('/api/settings')).json();
@@ -29,6 +31,8 @@ test.beforeEach(async ({ request }) => {
 });
 
 test.afterEach(async ({ request }) => {
+  // 404 when the voice ended on its own.
+  for (const id of launched.splice(0)) await request.delete(`/api/voices/${encodeURIComponent(id)}`);
   // Unloaded, not only stopped: a stopped sequence holds its picture over the look.
   expect((await request.delete('/api/sequence')).ok()).toBe(true);
   const { bank: _b, slot: _s, ...pad } = before.pad;
@@ -89,6 +93,7 @@ test('a pad hit while recording is kept as a clip', async ({ page, request }) =>
   await expect(page.getByRole('button', { name: 'Keep take' })).toBeVisible();
   const hit = await request.post('/api/pads/0/0/once', { data: {} });
   expect(hit.ok(), await hit.text()).toBe(true);
+  launched.push((await hit.json()).id);
   await page.waitForTimeout(600);
   await page.getByRole('button', { name: 'Keep take' }).click();
   await expect(page.locator('.seq-block')).not.toHaveCount(0);
