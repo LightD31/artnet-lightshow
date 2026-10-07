@@ -412,6 +412,35 @@ test('a disarm asked for stops every voice, even with the outputs disarmed alrea
   assert.deepEqual(ids(), []);
 });
 
+test('a disarm stops the patterns, not the sequence: one playing counts on, and one played after a disarm counts its beats', async (t) => {
+  const s = await serve(t);
+  const sequencer = s.integrations.sequence.sequencer;
+  t.after(() => sequencer.unload());
+  const frame = () => sequencer.frame(conductor.now());
+  const beat = () => sequencer.status().beat;
+  await s.call('POST', '/api/outputs/arm');
+  assert.equal((await s.call('POST', '/api/outputs/disarm')).body.armed, false);
+  assert.deepEqual([state.running, ids()], [false, []]);
+  const glow = { id: 'set-1', name: 'Set one', lanes: [{ id: 'a', kind: 'shared', name: 'a', mute: false, solo: false }],
+    clips: [{ id: 'A', laneId: 'a', startBeat: 0, lengthBeats: 1e6, effect: { kind: 'energy.glow', params: {} }, targets: 'lane', mute: false }] };
+  assert.equal((await s.call('PUT', '/api/sequence', glow)).status, 200);
+  assert.equal((await s.call('POST', '/api/sequence/play')).body.status.playing, true, 'play with the outputs disarmed just runs');
+  frame();
+  await wait(120);
+  frame();
+  assert.equal(state.running, false);
+  assert.ok(beat() > 0.1, `after a disarm: the sequence counts its beats (beat ${beat()})`);
+  // Disarmed again while it plays: the patterns stop, the sequence plays on.
+  await s.call('POST', '/api/outputs/arm');
+  assert.equal((await s.call('POST', '/api/outputs/disarm')).body.armed, false);
+  assert.equal(freeClockRuns(), true);
+  const from = beat();
+  await wait(120);
+  frame();
+  assert.equal(sequencer.status().playing, true);
+  assert.ok(beat() > from + 0.1, `a disarm under it: the sequence counts on (beat ${from} → ${beat()})`);
+});
+
 // ── The voices at work ──────────────────────────────────────────────────────
 
 test('the live state carries the voices as a domain of their own', async (t) => {

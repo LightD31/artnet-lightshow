@@ -57,7 +57,7 @@ const PALETTE_HEX = Object.fromEntries(BUILTIN_PALETTES.map((p) => [p.id, p.colo
  * A sequencer on stand-in actions: what it applies is logged and taken as the
  * live master and tempo; the clock in milliseconds is the test's.
  */
-function rig({ master = 255, bpm = 120, seed = [1, 2, 3, 4], admit = () => {}, musicMode = null } = {}) {
+function rig({ master = 255, bpm = 120, seed = [1, 2, 3, 4], admit = () => {}, musicMode = null, onRun } = {}) {
   const live = { master, bpm, paletteOverride: null, ms: 0 };
   const applied = [];
   const modes = [];
@@ -75,6 +75,7 @@ function rig({ master = 255, bpm = 120, seed = [1, 2, 3, 4], admit = () => {}, m
     admit,
     now: () => live.ms,
     seed,
+    onRun,
   });
   /** One frame at the music's beat; the sequence's position then, or null. */
   const at = (beat, opts) => {
@@ -364,6 +365,53 @@ test('a goto that comes straight back to itself stops the sequence with an error
   assert.equal(st.stopped, 'hold');
   assert.equal(st.error.code, 'goto-cycle');
   assert.match(st.error.message, /there|back/);
+});
+
+test('the transport tells when it starts or stops moving: playing or paused it moves, stopped, unloaded, replaced or stopped by itself it stands', () => {
+  const told = [];
+  const r = rig({
+    onRun: () => {
+      const st = r.s.status();
+      assert.equal(r.s.runs(), st.playing || st.paused, 'what it tells is what its status says');
+      told.push(r.s.runs());
+    },
+  });
+  r.s.load(sequence({ clips: [clip('A', 'a', 0, 8)] }));
+  assert.equal(r.s.runs(), false, 'loaded is not moving');
+  r.s.play();
+  assert.deepEqual(told, [true], 'play moves it at once, before the next frame');
+  r.at(100);
+  r.s.pause();
+  assert.equal(r.s.runs(), true, 'paused, its clips play their laps on');
+  r.at(101);
+  r.s.play();
+  r.at(102);
+  assert.deepEqual(told, [true], 'pause and resume: still moving, nothing to tell');
+  r.s.stop();
+  assert.deepEqual(told, [true, false]);
+  r.at(103);
+  r.s.stop({ blackout: true });
+  r.at(104);
+  assert.deepEqual(told, [true, false], 'stopped over black: still standing');
+  // Another sequence loaded stops the one playing; an edit of it does not.
+  r.s.play();
+  r.s.load(sequence({ name: 'Edited', clips: [clip('A', 'a', 0, 8)] }));
+  assert.equal(r.s.runs(), true);
+  r.s.load(sequence({ id: 'set-2', clips: [clip('A', 'a', 0, 8)] }));
+  assert.deepEqual(told, [true, false, true, false]);
+  r.s.play();
+  r.s.unload();
+  assert.deepEqual(told, [true, false, true, false, true, false]);
+  // Stopped by its own goto cycle, within a frame.
+  r.s.load(sequence({
+    clips: [clip('A', 'a', 0, 8)],
+    commands: [{ id: 'there', atBeat: 4, type: 'goto', value: 2 }, { id: 'back', atBeat: 2, type: 'goto', value: 4 }],
+  }));
+  r.s.play();
+  r.at(200);
+  r.at(204.5);
+  assert.equal(r.s.status().error.code, 'goto-cycle');
+  assert.deepEqual(told, [true, false, true, false, true, false, true, false]);
 });
 
 // ── The traversal budget ────────────────────────────────────────────────────

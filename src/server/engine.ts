@@ -552,8 +552,8 @@ function controlTick(): void {
     at,
     input: renderInput(),
     // The free clock stands still while the patterns are stopped and no voice
-    // plays; carried forward it must too. Read after the input, whose voices
-    // may have just ended.
+    // or sequence plays; carried forward it must too. Read after the input,
+    // whose voices may have just ended.
     reading: { ...reading, moving: freeClockRuns() },
     outputs: output.transmitConfig(),
   });
