@@ -105,7 +105,8 @@ class Sources(unittest.TestCase):
             path = os.path.join(tmp, 'track.wav')
             soundfile.write(path, track.samples, track.sr)
             out = io.StringIO()
-            with mock.patch('sys.stdout', out):
+            # stdin empty: the service reads requests from it, and the runner's is not its.
+            with mock.patch('sys.stdout', out), mock.patch('sys.stdin', io.StringIO()):
                 self.assertEqual(live.main(['--file', path]), 0)
         lines = lines_of(out.getvalue())
         self.assertEqual(lines[0]['type'], 'ready')
@@ -169,7 +170,7 @@ class Sources(unittest.TestCase):
         out = io.StringIO()
         with mock.patch.object(live, '_soundcard', return_value=None), \
                 mock.patch.object(live, '_sounddevice', return_value=None), \
-                mock.patch('sys.stdout', out):
+                mock.patch('sys.stdout', out), mock.patch('sys.stdin', io.StringIO()):
             self.assertEqual(live.main(['--source', 'loopback']), 2)
             listed = live.list_devices()
         [line] = lines_of(out.getvalue())
@@ -400,7 +401,7 @@ class BandsArgument(unittest.TestCase):
         with mock.patch.object(live, 'LiveService', lambda emitter, **kw: made.append(kw)), \
                 mock.patch.object(live, '_soundcard', return_value=None), \
                 mock.patch.object(live, '_sounddevice', return_value=None), \
-                mock.patch('sys.stdout', out):
+                mock.patch('sys.stdout', out), mock.patch('sys.stdin', io.StringIO()):
             live.main(['--source', 'loopback', '--bands', '0-160,750-2000'])
         self.assertEqual(made, [{'bands': [(0.0, 160.0), (750.0, 2000.0)]}])
 
@@ -416,6 +417,140 @@ class BandsArgument(unittest.TestCase):
                     live.main(['--source', 'loopback', '--bands', text])
                 self.assertEqual(exit_.exception.code, 2)
                 self.assertIn('--bands', err.getvalue())
+
+
+def push_track(service, track, ask_at=None, requests=()):
+    """`track` a hop at a time; at sample `ask_at` the server's `requests` reach the service."""
+    from analysis.live import HOP
+    for start in range(0, len(track.samples), HOP):
+        if start == ask_at:
+            for request in requests:
+                service.ask(request)
+        service.push(track.samples[start:start + HOP])
+
+
+@needs_numpy
+class BandsRequest(unittest.TestCase):
+    """Other bands asked for on stdin while the service runs: taken between two hops, the stream going on."""
+
+    def run_asking(self, track, bands, requests):
+        from analysis.live import LiveService, Emitter, HOP
+        out = io.StringIO()
+        service = LiveService(Emitter(out), sample_rate=track.sr, bands=bands)
+        push_track(service, track, ask_at=(len(track.samples) // HOP // 2) * HOP, requests=requests)
+        return lines_of(out.getvalue())
+
+    def test_a_new_list_is_summed_from_the_next_hop_on_in_the_same_stream(self):
+        # Before the word, every line is the old list's; after it, the new
+        # list's; and the rest of each line is what an uninterrupted service
+        # writes: the same beat, clock and levels, no hop missing.
+        track = synth.four_on_the_floor(bpm=128, bars=4)
+        old, new = [(0, 160), (750, 2000)], [(20, 250), (250, 3000), (3000, 9000)]
+        lines = self.run_asking(track, old, [json.dumps({'type': 'bands', 'bands': '20-250,250-3000,3000-9000'})])
+        [taken] = [i for i, m in enumerate(lines) if m['type'] == 'bands']
+        self.assertEqual(lines[taken], {'type': 'bands', 'bands': '20-250,250-3000,3000-9000'})
+        before = [m for m in lines[:taken] if m['type'] == 'state']
+        after = [m for m in lines[taken + 1:] if m['type'] == 'state']
+        self.assertTrue(before and after)
+        on_old = [m for m in run_service(track, bands=old) if m['type'] == 'state']
+        on_new = [m for m in run_service(track, bands=new) if m['type'] == 'state']
+        self.assertEqual(len(before) + len(after), len(on_old))
+        self.assertEqual(before, on_old[:len(before)])
+        self.assertEqual(after, on_new[len(before):])
+
+    def test_an_empty_list_sums_none_and_a_list_after_it_sums_again(self):
+        track = synth.four_on_the_floor(bpm=128, bars=2)
+        lines = self.run_asking(track, [(0, 160)], [json.dumps({'type': 'bands', 'bands': ''}),
+                                                    json.dumps({'type': 'bands', 'bands': '750-2000'})])
+        words = [m for m in lines if m['type'] == 'bands']
+        self.assertEqual(words, [{'type': 'bands', 'bands': ''}, {'type': 'bands', 'bands': '750-2000'}])
+        taken = max(i for i, m in enumerate(lines) if m['type'] == 'bands')
+        after = [m for m in lines[taken + 1:] if m['type'] == 'state']
+        self.assertTrue(after and all(len(m['spectrum']['bands']) == 1 for m in after))
+        # And from nothing at the start.
+        lines = self.run_asking(track, None, [json.dumps({'type': 'bands', 'bands': '750-2000'})])
+        taken = [i for i, m in enumerate(lines) if m['type'] == 'bands'][0]
+        self.assertTrue(all('spectrum' not in m for m in lines[:taken]))
+        self.assertTrue(all(len(m['spectrum']['bands']) == 1 for m in lines[taken + 1:] if m['type'] == 'state'))
+
+    def test_a_request_it_cannot_take_is_an_error_and_the_bands_stay(self):
+        track = synth.four_on_the_floor(bpm=128, bars=2)
+        bad = ['not json', '[]', json.dumps({'type': 'other', 'bands': '0-160'}), json.dumps({'type': 'bands', 'bands': [[0, 160]]}),
+               json.dumps({'type': 'bands', 'bands': '0-12000'}), json.dumps({'type': 'bands', 'bands': '160-0'}),
+               json.dumps({'type': 'bands', 'bands': ','.join(['0-100'] * 13)})]
+        lines = self.run_asking(track, [(0, 160), (750, 2000)], bad)
+        errors = [m for m in lines if m['type'] == 'error']
+        self.assertEqual(len(errors), len(bad))
+        self.assertTrue(all(m['fatal'] is False for m in errors))
+        self.assertFalse(any(m['type'] == 'bands' for m in lines))
+        self.assertEqual([m for m in lines if m['type'] == 'state'],
+                         [m for m in run_service(track, bands=[(0, 160), (750, 2000)]) if m['type'] == 'state'])
+
+    def test_the_service_reads_its_stdin_while_it_captures(self):
+        import threading
+        from analysis import live
+        track = synth.four_on_the_floor(bpm=128, bars=4)
+        # The request arrives on a pipe a hundred hops in, and is in by the next.
+        r, w = os.pipe()
+        read = threading.Event()
+        reader = live.read_requests
+
+        def reading(stream, service):
+            reader(stream, service)
+            read.set()
+
+        class Recorder:
+            at = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def record(self, numframes):
+                if self.at == 100 * numframes:
+                    os.write(w, (json.dumps({'type': 'bands', 'bands': '750-2000'}) + '\n').encode())
+                    os.close(w)
+                    self.assertion = read.wait(5)
+                if self.at >= 200 * numframes:
+                    raise KeyboardInterrupt
+                block = track.samples[self.at:self.at + numframes]
+                self.at += numframes
+                return block
+
+        recorder = Recorder()
+
+        class Mic:
+            name = 'Speakers'
+
+            def recorder(self, samplerate, blocksize):
+                return recorder
+
+        class FakeSoundcard:
+            @staticmethod
+            def default_speaker():
+                return Mic()
+
+            @staticmethod
+            def get_microphone(id, include_loopback=False):
+                return Mic()
+
+        out = io.StringIO()
+        with os.fdopen(r) as stdin, mock.patch.object(live, '_soundcard', return_value=FakeSoundcard), \
+                mock.patch.object(live, 'read_requests', reading), \
+                mock.patch('sys.stdin', stdin), mock.patch('sys.stdout', out):
+            self.assertEqual(live.main(['--source', 'loopback', '--bands', '0-160,750-2000']), 0)
+        self.assertTrue(recorder.assertion, 'stdin was read')
+        lines = lines_of(out.getvalue())
+        [taken] = [i for i, m in enumerate(lines) if m['type'] == 'bands']
+        self.assertEqual(lines[taken], {'type': 'bands', 'bands': '750-2000'})
+        before = [m for m in lines[:taken] if m['type'] == 'state']
+        after = [m for m in lines[taken + 1:] if m['type'] == 'state']
+        self.assertTrue(before and after)
+        self.assertTrue(all(len(m['spectrum']['bands']) == 2 for m in before if 'spectrum' in m))
+        self.assertTrue(all(len(m['spectrum']['bands']) == 1 for m in after))
+        self.assertEqual(len([m for m in lines if m['type'] == 'ready']), 1, 'one capture throughout')
 
 
 if __name__ == '__main__':

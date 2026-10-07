@@ -35,16 +35,30 @@ offset is not sound), unnormalised:
 centre of the strongest bin above DC up to 2 kHz, and null when none of those
 bins carries any power: a frame of nothing but an offset has none.
 
+The server changes the bands without a restart, which would lose the stream,
+its clock and the beat it has locked to, by writing a line to stdin:
+
+    {"type": "bands", "bands": "lo-hi,..."}           ('' for none)
+
+They are summed from the next hop on, and the service says so before the
+first state over them, with the list as it was sent:
+
+    {"type": "bands", "bands": "lo-hi,..."}
+
+A list it cannot take is an error that is not fatal, and the bands stay.
+
 Capture uses the `soundcard` package, which does loopback on Windows and Linux
 alike; `sounddevice` is the fallback for a line-in when `soundcard` is not
 installed. Neither is needed for a file, which is what the tests use.
 """
 
 import argparse
+import collections
 import json
 import math
 import re
 import sys
+import threading
 import time
 
 import numpy as np
@@ -163,13 +177,36 @@ class LiveService:
         # No bands, no spectrum: the lines stay as they were for every reader
         # that never asked.
         self.band_bins = None
+        self.top_hz = min(BAND_HZ_MAX, sample_rate / 2.0)
         if bands:
-            top = min(BAND_HZ_MAX, sample_rate / 2.0)
-            self.band_bins = band_bins(check_bands(bands, top), sample_rate)
+            self.band_bins = band_bins(check_bands(bands, self.top_hz), sample_rate)
         self.analyzer = StreamingAnalyzer(live_config(), sample_rate=sample_rate)
         self.captured = 0
+        # The server's lines, from the stdin thread; taken between two hops.
+        self._requests = collections.deque()
+
+    def ask(self, line):
+        """A line from the server, from any thread: applied before the next hop."""
+        self._requests.append(line)
+
+    def _take_requests(self):
+        while self._requests:
+            line = self._requests.popleft()
+            try:
+                msg = json.loads(line)
+                if not isinstance(msg, dict) or msg.get('type') != 'bands' or not isinstance(msg.get('bands'), str):
+                    raise ValueError('not {"type": "bands", "bands": "lo-hi,..."}')
+                text = msg['bands']
+                bands = check_bands(parse_bands(text), self.top_hz) if text else []
+            except ValueError as err:
+                self.emitter.send({'type': 'error', 'fatal': False, 'message': f'bands: {err}'})
+                continue
+            self.band_bins = band_bins(bands, self.sample_rate) if bands else None
+            self.emitter.send({'type': 'bands', 'bands': text})
 
     def push(self, block):
+        if self._requests:
+            self._take_requests()
         block = np.asarray(block, dtype=np.float32)
         if block.ndim > 1:
             block = block.mean(axis=1)
@@ -227,6 +264,13 @@ class LiveService:
             'bands': [float(power[lower:upper + 1].sum()) for lower, upper in self.band_bins],
             'fftPower': float(power.sum()),
         }
+
+
+def read_requests(stream, service):
+    """The server's lines on `stream`, handed to the service until it ends."""
+    for line in stream:
+        if line.strip():
+            service.ask(line)
 
 
 # ── Sources ───────────────────────────────────────────────────────────────────
@@ -347,6 +391,8 @@ def main(argv=None):
         return 0
 
     service = LiveService(emitter, bands=args.bands)
+    if sys.stdin is not None:
+        threading.Thread(target=read_requests, args=(sys.stdin, service), daemon=True).start()
     try:
         if args.file:
             play_file(args.file, service, emitter, realtime=args.realtime)

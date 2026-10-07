@@ -515,17 +515,18 @@ test('the band list follows the Disco bands in force, without repeats, and hands
   assert.strictEqual(a.frame().disco.level[0], 10);
 });
 
-test('a band edit starts the input again on the new list; a floor or a globals edit does not', async () => {
+/** A stand-in for the service's process: its stdin's lines land in `asked`. */
+function standIn() {
+  const proc = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough(), stdin: new PassThrough(), asked: [] });
+  proc.stdin.on('data', (d) => proc.asked.push(...d.toString().split('\n').filter(Boolean).map((l) => JSON.parse(l))));
+  proc.kill = () => { proc.killed = true; proc.emit('close', null); };
+  return proc;
+}
+
+test('a band edit is sent to the running input, which carries on; a floor or a globals edit asks for nothing', async () => {
   const spawned = [];
-  const live = new LiveInput({
-    now: () => 0,
-    spawner: (exe, args) => {
-      spawned.push(args);
-      const proc = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() });
-      proc.kill = () => proc.emit('close', null);
-      return proc;
-    },
-  });
+  const procs = [];
+  const live = new LiveInput({ now: () => 0, spawner: (exe, args) => { spawned.push(args); const p = standIn(); procs.push(p); return p; } });
   let d = disco();
   const a = features({ disco: () => d, onBands: () => { Promise.resolve().then(() => live.refreshBands()); } });
   live.useBands(() => a.bandList());
@@ -533,44 +534,40 @@ test('a band edit starts the input again on the new list; a floor or a globals e
   live.start({ source: 'loopback' });
   const line = (t) => JSON.stringify({ type: 'state', t, captured: t, beat: 0, bpm: 120, phase: 0, locked: true, energy: 0.1, onset: 0, flux: 0,
     rms: 0.1, tension: 0, bands: {}, spectrum: { power: 1, rms: 0.1, dominantHz: null, bands: [1, 1, 1, 1, 1], fftPower: 5 } });
-  const settle = () => new Promise((r) => setImmediate(r));
   live.handleLine(line(1));
+  const epoch = a.frame().generation;
   d = { ...d, bands: { ...d.bands, floorDb: [-60, -60, -60] } };
   live.handleLine(line(1.0116));
   d = { ...d, globals: { ...d.globals, sensitivity: 70 } };
   live.handleLine(line(1.0232));
   await settle();
-  assert.deepStrictEqual([spawned.length, a.frame().t], [1, 1.0232], 'heard throughout, and nothing restarted');
+  assert.deepStrictEqual([spawned.length, procs[0].asked, a.frame().t], [1, [], 1.0232], 'heard throughout, and nothing asked');
 
   d = { ...d, bands: { ...d.bands, bass: [0, 120] } };
+  const edited = '20-250,250-3000,3000-9000,0-120,750-2000';
   live.handleLine(line(1.0348));
   live.handleLine(line(1.0464));
   await settle();
-  assert.strictEqual(spawned.length, 2);
-  assert.deepStrictEqual(spawned[1].slice(-2), ['--bands', '20-250,250-3000,3000-9000,0-120,750-2000']);
-  assert.strictEqual(a.frame().t, 1.0232, 'the old process\'s last lines were not heard');
-  live.handleLine(line(0.0116));
-  assert.deepStrictEqual([a.frame().t, a.frame().generation], [0.0116, 2]);
+  assert.deepStrictEqual([spawned.length, procs[0].killed], [1, undefined], 'no restart');
+  assert.deepStrictEqual(procs[0].asked, [{ type: 'bands', bands: edited }], 'asked once');
+  assert.strictEqual(a.frame().t, 1.0232, 'the lines summed over the old bands were not heard');
+  // The service takes the new list between two hops and says so.
+  live.handleLine(JSON.stringify({ type: 'bands', bands: edited }));
+  live.handleLine(line(1.058));
+  assert.deepStrictEqual([a.frame().t, a.frame().generation], [1.058, epoch], 'the same stream, on the new bands');
   live.stop();
 });
 
 /**
  * A real live input feeding the features, its process a stand-in: the bands
- * come from the features, a band edit asks for a restart, as integrations.ts
- * wires them.
+ * come from the features, a band edit asks the input for them, as
+ * integrations.ts wires them.
  */
 function listening() {
   const spawned = [];
-  const live = new LiveInput({
-    now: () => 0,
-    spawner: (exe, args) => {
-      spawned.push(args);
-      const proc = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() });
-      proc.kill = () => proc.emit('close', null);
-      return proc;
-    },
-  });
-  const rig = { d: disco(), spawned, live };
+  const procs = [];
+  const live = new LiveInput({ now: () => 0, spawner: (exe, args) => { spawned.push(args); const p = standIn(); procs.push(p); return p; } });
+  const rig = { d: disco(), spawned, procs, live };
   rig.a = features({ disco: () => rig.d, onBands: () => { Promise.resolve().then(() => live.refreshBands()); } });
   live.useBands(() => rig.a.bandList());
   live.onReading((r) => rig.a.onReading(r));
@@ -580,6 +577,8 @@ function listening() {
   }));
   // Ninety hops 25 ms apart: a quiet Peak history and a soft section.
   rig.history = () => { for (let i = 0; i < 90; i++) rig.line(i * 0.025); };
+  // The service's word that it sums the list it was last sent.
+  rig.taken = () => { const asked = rig.procs.at(-1).asked; live.handleLine(JSON.stringify(asked.at(-1))); };
   return rig;
 }
 const settle = () => new Promise((r) => setImmediate(r));
@@ -587,17 +586,18 @@ const settle = () => new Promise((r) => setImmediate(r));
 test('a restart on another source, device or file starts every history again, even with the bands changed in it', async () => {
   // A power of 0.01 is a Peak hit against a quiet history of 0.001, not
   // against the ones it starts from; the soft section is kept or forgotten.
-  const after = (rig) => { rig.line(0.0116, { power: 0.01 }); const f = rig.a.frame(); return [f.disco.peakHit, f.spl.section]; };
+  const after = (rig, t = 0.0116) => { rig.line(t, { power: 0.01 }); const f = rig.a.frame(); return [f.disco.peakHit, f.spl.section]; };
 
   let rig = listening();
   rig.live.start({ source: 'loopback' });
   rig.history();
   assert.deepStrictEqual([rig.a.frame().disco.peakHit, rig.a.frame().spl.section], [false, 'soft']);
   rig.d = { ...rig.d, bands: { ...rig.d.bands, bass: [0, 120] } };
-  rig.line(2.3);
+  rig.line(2.25);
   await settle();
-  assert.strictEqual(rig.spawned.length, 2, 'a band edit alone restarts it');
-  assert.deepStrictEqual(after(rig), [true, 'soft'], 'and keeps the histories the edit left');
+  assert.strictEqual(rig.spawned.length, 1, 'a band edit alone restarts nothing');
+  rig.taken();
+  assert.deepStrictEqual(after(rig, 2.2616), [true, 'soft'], 'and keeps the histories the edit left');
   rig.live.stop();
 
   for (const other of [{ source: 'input', device: 'Line In' }, { source: 'file', file: '/music/a.wav' }]) {

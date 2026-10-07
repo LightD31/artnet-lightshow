@@ -126,14 +126,21 @@ test('events, status and the envelope for lining a track up', () => {
 
 // ── The process ───────────────────────────────────────────────────────────────
 
-function fakeProcess() {
+/** A stand-in process; `asked` holds the lines written to its stdin. Without `stdin` it takes none. */
+function fakeProcess({ stdin = true } = {}) {
   const proc = new EventEmitter();
   proc.stdout = new PassThrough();
   proc.stderr = new PassThrough();
+  proc.asked = [];
+  if (stdin) {
+    proc.stdin = new PassThrough();
+    proc.stdin.on('data', (d) => proc.asked.push(...d.toString().split('\n').filter(Boolean).map((l) => JSON.parse(l))));
+  }
   proc.killed = false;
   proc.kill = () => { proc.killed = true; proc.emit('close', null); };
   return proc;
 }
+const settle = () => new Promise((r) => setImmediate(r));
 
 test('the process is started with the source asked for, and again when it dies', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
@@ -171,15 +178,20 @@ test('the process is started with the source asked for, and again when it dies',
 
 // ── Band powers ───────────────────────────────────────────────────────────────
 
-test('bands are passed to the service and a changed list restarts it', () => {
-  const spawned = [];
-  const live = new LiveInput({ spawner: (exe, args) => { spawned.push(args); return fakeProcess(); }, now: () => 0 });
+test('bands are passed to the service, and a changed list on the same input is sent to it, not a restart', async () => {
+  const procs = [];
+  const live = new LiveInput({ spawner: (exe, args) => { const p = fakeProcess(); p.args = args; procs.push(p); return p; }, now: () => 0 });
   live.start({ source: 'loopback', bands: [[0, 160], [750, 2000]] });
-  assert.ok(spawned[0].join(' ').includes('--bands 0-160,750-2000'));
+  assert.ok(procs[0].args.join(' ').includes('--bands 0-160,750-2000'));
   live.start({ source: 'loopback', bands: [[0, 160], [750, 2000]] });
-  assert.strictEqual(spawned.length, 1, 'same bands: no restart');
   live.start({ source: 'loopback', bands: [[20, 250]] });
-  assert.strictEqual(spawned.length, 2);
+  live.start({ source: 'loopback' });
+  await settle();
+  assert.strictEqual(procs.length, 1, 'one process throughout');
+  assert.strictEqual(procs[0].killed, false);
+  assert.deepStrictEqual(procs[0].asked, [{ type: 'bands', bands: '20-250' }, { type: 'bands', bands: '' }], 'same bands: nothing asked');
+  assert.strictEqual(live.options.bands, undefined);
+  live.stop();
 });
 
 test('the spectrum rides on the reading', () => {
@@ -189,9 +201,10 @@ test('the spectrum rides on the reading', () => {
   assert.deepStrictEqual(live.getReading().spectrum.bands, [1, 2, 3]);
 });
 
-test('the band list is copied in and out, and no list is the same as an empty one', () => {
+test('the band list is copied in and out, and no list is the same as an empty one', async () => {
   const spawned = [];
-  const live = new LiveInput({ scriptPath: '/srv/live_input.py', spawner: (exe, args) => { spawned.push(args); return fakeProcess(); }, now: () => 0 });
+  const procs = [];
+  const live = new LiveInput({ scriptPath: '/srv/live_input.py', spawner: (exe, args) => { spawned.push(args); const p = fakeProcess(); procs.push(p); return p; }, now: () => 0 });
   live.start({ source: 'loopback' });
   live.start({ source: 'loopback', bands: [] });
   assert.strictEqual(spawned.length, 1);
@@ -200,21 +213,22 @@ test('the band list is copied in and out, and no list is the same as an empty on
 
   // Edited in place and passed again: a different list, which the copy kept at the start can tell.
   const bands = [[0, 160], [750, 2000]];
-  live.start({ source: 'loopback', bands });
+  live.start({ source: 'input', bands });
   bands[1][1] = 2500;
-  live.start({ source: 'loopback', bands });
-  assert.strictEqual(spawned.length, 3);
-  assert.deepStrictEqual(spawned[2].slice(-2), ['--bands', '0-160,750-2500']);
+  live.start({ source: 'input', bands });
+  await settle();
+  assert.strictEqual(spawned.length, 2);
+  assert.deepStrictEqual(procs[1].asked, [{ type: 'bands', bands: '0-160,750-2500' }]);
 
   // A file is heard with bands too, and what `options` hands out is a copy.
   const given = live.options;
   given.bands[0][0] = 20;
   assert.deepStrictEqual(live.options.bands, [[0, 160], [750, 2500]]);
   live.start({ source: 'file', file: '/music/a.wav', bands: live.options.bands });
-  assert.deepStrictEqual(spawned[3], ['/srv/live_input.py', '--file', '/music/a.wav', '--realtime', '--bands', '0-160,750-2500']);
+  assert.deepStrictEqual(spawned[2], ['/srv/live_input.py', '--file', '/music/a.wav', '--realtime', '--bands', '0-160,750-2500']);
 });
 
-test('a band list the service would refuse throws, and the running process is left alone', () => {
+test('a band list the service would refuse throws, and the running process is left alone', async () => {
   const procs = [];
   const live = new LiveInput({ spawner: () => { const p = fakeProcess(); procs.push(p); return p; }, now: () => 0 });
   live.start({ source: 'loopback', bands: [[0, 160]] });
@@ -225,12 +239,15 @@ test('a band list the service would refuse throws, and the running process is le
   assert.strictEqual(procs[0].killed, false);
   assert.deepStrictEqual(live.options.bands, [[0, 160]]);
   live.start({ source: 'loopback', bands: Array.from({ length: MAX_BANDS }, () => [0, BAND_HZ_MAX]) });
-  assert.strictEqual(procs.length, 2, 'a dozen, up to 11 025 Hz, is fine');
+  await settle();
+  assert.strictEqual(procs.length, 1);
+  assert.deepStrictEqual(procs[0].asked, [{ type: 'bands', bands: Array(MAX_BANDS).fill(`0-${BAND_HZ_MAX}`).join(',') }], 'a dozen, up to 11 025 Hz, is fine');
 });
 
-test('with a band source, every start asks it, whatever the start brought, and a refresh restarts only on a change', () => {
+test('with a band source, every start asks it, whatever the start brought, and a refresh tells the service only of a change', async () => {
   const spawned = [];
-  const live = new LiveInput({ spawner: (exe, args) => { spawned.push(args); return fakeProcess(); }, now: () => 0 });
+  const procs = [];
+  const live = new LiveInput({ spawner: (exe, args) => { spawned.push(args); const p = fakeProcess(); procs.push(p); return p; }, now: () => 0 });
   let bands = [[20, 250], [0, 160]];
   live.useBands(() => bands);
   live.start({ source: 'loopback' });
@@ -241,38 +258,82 @@ test('with a band source, every start asks it, whatever the start brought, and a
   assert.strictEqual(spawned.length, 1, 'the source\'s bands, still: nothing restarts');
   assert.deepStrictEqual(live.options.bands, [[20, 250], [0, 160]]);
   live.refreshBands();
-  assert.strictEqual(spawned.length, 1, 'the same list');
   bands = [[20, 250], [0, 120]];
   live.refreshBands();
-  assert.deepStrictEqual(spawned[1].slice(-2), ['--bands', '20-250,0-120']);
+  await settle();
+  assert.strictEqual(spawned.length, 1, 'the running service takes the new list');
+  assert.deepStrictEqual(procs[0].asked, [{ type: 'bands', bands: '20-250,0-120' }], 'and is told of a change only');
+  assert.deepStrictEqual(live.options.bands, [[20, 250], [0, 120]]);
   assert.strictEqual(live.options.latencyMs, 40, 'the rest of the options as they were');
   live.stop();
   bands = [[20, 250]];
   live.refreshBands();
-  assert.strictEqual(spawned.length, 2, 'stopped: a refresh starts nothing');
+  assert.strictEqual(spawned.length, 1, 'stopped: a refresh starts nothing');
   live.start(live.options);
-  assert.deepStrictEqual(spawned[2].slice(-2), ['--bands', '20-250'], 'started again with the bands of now');
+  assert.deepStrictEqual(spawned[1].slice(-2), ['--bands', '20-250'], 'started again with the bands of now');
   live.useBands(null);
-  live.start({ source: 'loopback', bands: [[0, 160]] });
-  assert.deepStrictEqual(spawned[3].slice(-2), ['--bands', '0-160'], 'without a source, a start\'s own bands');
+  live.start({ source: 'input', bands: [[0, 160]] });
+  assert.deepStrictEqual(spawned[2].slice(-2), ['--bands', '0-160'], 'without a source, a start\'s own bands');
   live.stop();
 });
 
-test('a reading says which bands it was summed over', () => {
+test('a reading says which bands it was summed over: after a change, the new ones from the service\'s word on', () => {
   const live = new LiveInput({ spawner: () => fakeProcess(), now: () => 1000 });
   live.start({ source: 'loopback', bands: [[0, 160], [750, 2000]] });
   live.handleLine(state({ spectrum: { power: 1, rms: 0.03, dominantHz: null, bands: [1, 2], fftPower: 9 } }));
   assert.strictEqual(live.getReading().layout, '0-160,750-2000');
-  live.start({ source: 'loopback' });
+  // Lines already on their way were summed over the old list.
+  live.start({ source: 'loopback', bands: [[20, 250]] });
+  live.handleLine(state({ t: 10.0116, spectrum: { power: 1, rms: 0.03, dominantHz: null, bands: [1, 2], fftPower: 9 } }));
+  assert.strictEqual(live.getReading().layout, '0-160,750-2000', 'not yet taken');
+  live.handleLine(JSON.stringify({ type: 'bands', bands: '20-250' }));
+  live.handleLine(state({ t: 10.0232, spectrum: { power: 1, rms: 0.03, dominantHz: null, bands: [1], fftPower: 9 } }));
+  assert.strictEqual(live.getReading().layout, '20-250');
+  live.start({ source: 'input' });
   live.handleLine(state());
   assert.strictEqual(live.getReading().layout, '', 'none');
   live.stop();
 });
 
-test('a reading says why its process was started: a band edit, another input, or a start', (t) => {
+test('a band change on the same input keeps the process, its stream clock, its lock and its envelope', async () => {
+  let now = 50000;
+  const procs = [];
+  const live = new LiveInput({ spawner: () => { const p = fakeProcess(); procs.push(p); return p; }, now: () => now });
+  live.start({ source: 'loopback', bands: [[0, 160]] });
+  live._rl.emit('line', state({ t: 600, captured: 600.01, beat: 1200, locked: true }));
+  const before = live.getBeatReading();
+  assert.strictEqual(before.key, 1);
+  live.start({ source: 'loopback', bands: [[20, 250], [0, 160]] });
+  await settle();
+  assert.deepStrictEqual([procs.length, procs[0].killed], [1, false]);
+  assert.deepStrictEqual(procs[0].asked, [{ type: 'bands', bands: '20-250,0-160' }]);
+  assert.deepStrictEqual(live.getBeatReading(), before, 'the reading and the lock stand');
+  assert.strictEqual(live.status().listening, true);
+  now += 12;
+  live._rl.emit('line', JSON.stringify({ type: 'bands', bands: '20-250,0-160' }));
+  live._rl.emit('line', state({ t: 600.012, captured: 600.022, beat: 1200.024, locked: false }));
+  const r = live.getReading();
+  assert.deepStrictEqual([r.generation, r.cause, r.layout], [1, 'start', '20-250,0-160'], 'the same process, on the new bands');
+  assert.strictEqual(live.getBeatReading().key, 1, 'one unlocked line is no lost lock');
+  assert.ok(Math.abs(live.streamNowMs() - (600010 + 12)) < 1e-6, 'the stream sits where it did on the clock');
+  assert.deepStrictEqual(live.recentEnvelope().map((e) => e.t), [600, 600.012]);
+  live.stop();
+});
+
+test('a write to a process that has gone is no crash, and no error of the input\'s', () => {
+  const procs = [];
+  const live = new LiveInput({ spawner: () => { const p = fakeProcess(); procs.push(p); return p; }, now: () => 0 });
+  live.start({ source: 'loopback', bands: [[0, 160]] });
+  procs[0].stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+  assert.strictEqual(live.status().error, null);
+  live.stop();
+});
+
+test('a reading says why its process was started: a band edit the service could not be told, another input, or a start', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const procs = [];
-  const live = new LiveInput({ spawner: () => { const p = fakeProcess(); procs.push(p); return p; }, now: () => 1000 });
+  // Processes that take no requests: a band edit has to start one on the new list.
+  const live = new LiveInput({ spawner: () => { const p = fakeProcess({ stdin: false }); procs.push(p); return p; }, now: () => 1000 });
   const causeNow = () => { live.handleLine(state()); return live.getReading().cause; };
   live.start({ source: 'loopback', bands: [[0, 160]] });
   assert.strictEqual(causeNow(), 'start');
@@ -348,10 +409,10 @@ test('a reading says which process it came from, and a replaced process is not h
   assert.strictEqual(live.getReading().generation, 1);
   assert.deepStrictEqual(live.getReading().spectrum, spectrum, 'raw Σx² and the FFT total both arrive as written');
 
-  // A new band list is a new process. Nothing from the old one counts any
+  // Another input is a new process. Nothing from the old one counts any
   // more: its lines were summed over the old bands, and a late error from it
   // must not restart the new one.
-  live.start({ source: 'loopback', bands: [[20, 250]] });
+  live.start({ source: 'input', bands: [[20, 250]] });
   firstLines.emit('line', state({ t: 2, spectrum: { power: 1, rms: 0.03, dominantHz: null, bands: [5], fftPower: 9 } }));
   assert.strictEqual(live.getReading(), null);
   procs[0].emit('error', new Error('late'));
