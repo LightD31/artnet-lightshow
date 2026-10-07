@@ -1728,7 +1728,8 @@ lanes and clips — a clip picks its preset from the library by name and goes
 on the lane picked (the selected clip's, else the lane tapped, else the
 first), lanes mute and solo, patterns insert at the playhead — and saves,
 duplicates or deletes it on the shelf, the delete after a confirmation.
-Outside Edit a tap changes nothing.
+Outside Edit, clips cannot be edited directly; recording and keeping a take
+still adds clips.
 
 **Patterns** are reusable bundles of lanes and clips. Saved ones can be
 inserted into the loaded sequence at a beat, or captured from a range of

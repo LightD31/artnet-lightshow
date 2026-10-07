@@ -1094,6 +1094,8 @@ export class Sequencer {
         if (op.mode === 'hold' && (this._run === 'idle' || (this._run === 'stopped' && this._stop?.mode === 'black'))) return;
         const paused = this._run === 'paused';
         this._ended = false;
+        this._mode = 'stopped';
+        this._asked = op.mode;
         this._stop = { mode: op.mode, position: paused ? this._hold!.position : this._cursor.pos, traversal: paused ? this._hold!.traversal : this._cursor.traversal };
         this._run = 'stopped';
         this._hold = null;
@@ -1160,11 +1162,9 @@ export class Sequencer {
   _finish(): void {
     this._ended = true;
     this._run = 'idle';
-    // A stop asked for in this frame still goes; a pause has nothing left to pause.
-    if (this._mode === 'playing' || this._mode === 'paused') {
-      this._mode = 'idle';
-      this._asked = null;
-    }
+    // Queued controls run next; an ordinary stop cannot hold an ended picture.
+    this._mode = 'idle';
+    this._asked = null;
     this._anchor = null;
     this._hold = null;
     this._stop = null;

@@ -992,6 +992,29 @@ test('the status: what is loaded, playing or paused, the beat and bar, the loop 
   assert.equal(r.s.status().loaded, null);
 });
 
+test('stop at the sequence end leaves the transport idle', () => {
+  const r = rig();
+  r.s.load(sequence({ clips: [clip('A', 'a', 0, 4)] }));
+  r.s.play();
+  r.at(100);
+  r.s.stop();
+  r.at(104);
+  assert.equal(r.s.status().ended, true);
+  assert.equal(r.s.status().stopped, null);
+  assert.equal(r.s.status().playing, false);
+});
+
+test('blackout stop at the sequence end holds black', () => {
+  const r = rig();
+  r.s.load(sequence({ clips: [clip('A', 'a', 0, 4)] }));
+  r.s.play();
+  r.at(100);
+  r.s.stop({ blackout: true });
+  r.at(104);
+  assert.equal(r.s.status().ended, false);
+  assert.equal(r.s.status().stopped, 'black');
+});
+
 // ── The worker ──────────────────────────────────────────────────────────────
 
 const WORKER = path.join(import.meta.dirname, '..', '..', 'src', 'server', 'engine-worker.ts');
