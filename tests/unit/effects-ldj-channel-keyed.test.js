@@ -48,7 +48,7 @@ test('channel cache identity is independent of primary and secondary palette rol
   }
 });
 
-test('four random Blur wells and selective CrossFade endpoints survive pending-state cloning', () => {
+test("channel palette caches survive cloning", () => {
   const spec = { palette: [{ random: true }, { random: true }] };
   const blur = harness('ldj.Blur', square(), { spec });
   blur.draw(0);
@@ -70,7 +70,7 @@ test('four random Blur wells and selective CrossFade endpoints survive pending-s
   assert.deepEqual(cross.state().scratch.crossTarget, fixed);
 });
 
-test('Fade Cycle reads its second cache well before and after the ordered four-key refresh', () => {
+test("Fade Cycle reads the second well across refreshes", () => {
   const h = harness('ldj.FadeCycle', square(), { spec: { palette: [{ random: true }, { random: true }] } });
   const first = h.draw(0), slot = first.findIndex((s) => s.level === 1);
   const prepared = h.stepper.palette(h.inst.id, h.inst.spec, 0);

@@ -36,27 +36,39 @@ test('Grow Cycle spends one beat at half then full before changing corner', () =
   assert.deepEqual(frames.map((out) => Math.max(...levels(out))), [.5, .5, 1, .5, 1, .5, 1, .5, 1]);
 });
 
-test('Fade Cycle and Soft Strobe preserve the specified fade duration and other lamps', () => {
+test("Fade Cycle preserves its prescribed fade duration", () => {
   const [a, b, c] = run('ldj.FadeCycle', square(), [0, .5, 1]);
-  assert.deepEqual(lit(a), [0]); approximate(b[0].level, .5454543828964233);
-  assert.deepEqual(lit(c), [3]); assert.equal(c[3].level, 1);
+  assert.deepEqual(lit(a), [0]);
+  approximate(b[0].level, .5454543828964233);
+  assert.deepEqual(lit(c), [3]);
+  assert.equal(c[3].level, 1);
+});
+
+test("Soft Strobe dims only its selected lamp", () => {
   const [soft, half] = run('ldj.SoftStrobe', square(), [0, 1]);
-  assert.deepEqual(levels(soft), [1, 1, 1, 1]); approximate(half[0].level, .5);
+  assert.deepEqual(levels(soft), [1, 1, 1, 1]);
+  approximate(half[0].level, .5);
   assert.deepEqual(levels(half).slice(1), [1, 1, 1]);
 });
 
-test('Fill Cycle and Double Fill follow their entire colour and blackout scores', () => {
+test("Fill Cycle follows its colour and blackout score", () => {
   assert.deepEqual(run('ldj.FillCycle', square(), Array.from({ length: 8 }, (_, i) => i / 2)).map(colors), [
     ['p', 's', 's', 's'], ['p', 's', 's', 'p'], ['p', 'p', 's', 'p'], ['p', 'p', 'p', 'p'],
     ['s', 'p', 'p', 'p'], ['s', 'p', 'p', 's'], ['s', 's', 'p', 's'], ['s', 's', 's', 's'],
   ]);
+});
+
+test("Double Fill follows its colour and blackout score", () => {
   assert.deepEqual(run('ldj.DoubleFill', square(), [0, .5, 1, 1.5, 2]).map(colors), [
     ['s', '-', '-', 's'], ['s', 's', 's', 's'], ['-', 's', 's', '-'], ['-', '-', '-', '-'], ['p', '-', '-', 'p'],
   ]);
 });
 
-test('Split and Flip keep the channel colour rules including the unwrapped Flip sum', () => {
+test("Split swaps its channel palette roles", () => {
   assert.deepEqual(run('ldj.Split', square(), [0, 1]).map(colors), [['s', 'p', 'p', 's'], ['p', 's', 's', 'p']]);
+});
+
+test("Flip retains its unwrapped channel sum", () => {
   assert.deepEqual(run('ldj.Flip', square(), [0, 2, 4, 6]).map(colors), [
     ['s', 'p', 's', 'p'], ['p', 's', 'p', 'p'], ['p', 'p', 'p', 's'], ['s', 'p', 'p', 'p'],
   ]);
@@ -76,18 +88,24 @@ test('Rotating Halfs rotates depth and width with the correct colours', () => {
   ]);
 });
 
-test('CrossFade and Blur blend from explicit colours over four beats', () => {
+test("CrossFade blends explicit colours over four beats", () => {
   const cross = run('ldj.CrossFade', square(), [0, 2, 4, 6, 8]);
-  assert.deepEqual(cross[0][0].colour, RED); assert.deepEqual(cross[2][0].colour, CYAN); assert.deepEqual(cross[4][0].colour, RED);
+  assert.deepEqual(cross[0][0].colour, RED);
+  assert.deepEqual(cross[2][0].colour, CYAN);
+  assert.deepEqual(cross[4][0].colour, RED);
   assert.deepEqual(cross[1][0].colour, parseHex('#808080'));
+});
+
+test("Blur blends explicit colours over four beats", () => {
   const blur = run('ldj.Blur', square(), [0, 2, 4, 8, 12]);
   assert.deepEqual(colors(blur[0]), ['s', 'p', 's', 'p']);
   assert.ok(blur[1].every((s) => s.colour.r === 128 && s.colour.g === 128));
   assert.deepEqual(colors(blur[2]), ['p', 's', 'p', 's']);
-  assert.deepEqual(colors(blur[3]), colors(blur[0])); assert.deepEqual(colors(blur[4]), colors(blur[2]));
+  assert.deepEqual(colors(blur[3]), colors(blur[0]));
+  assert.deepEqual(colors(blur[4]), colors(blur[2]));
 });
 
-test('random CrossFade endpoints stay continuous and clones keep their own blend state', () => {
+test("CrossFade clones retain continuous random endpoints", () => {
   const h = harness('ldj.CrossFade', square(), { spec: { palette: [{ random: true }, { random: true }] } });
   h.draw(0); h.draw(3.99);
   const previousTarget = h.state().scratch.crossTarget;
@@ -114,24 +132,35 @@ test('Double Drip leaves the previous half fading and alternates its four colour
   assert.ok(!isCyan(frames[2][0])); assert.ok(isCyan(frames[3][1]));
 });
 
-test('Glow rises and returns once; Drip changes colour every two beats', () => {
+test("Glow rises and returns once", () => {
   const frames = run('ldj.Glow', row(1), [0, 1, 2, 3, 3.99]);
-  assert.equal(frames[0][0].level, 0); approximate(frames[1][0].level, .5); approximate(frames[2][0].level, 1);
-  approximate(frames[3][0].level, .5); assert.ok(frames[4][0].level < .1);
-  const drip = run('ldj.Drip', row(1), [0, 1, 2]);
-  assert.deepEqual(drip[0][0].colour, RED); approximate(drip[1][0].level, .5); assert.deepEqual(drip[2][0].colour, CYAN);
+  assert.equal(frames[0][0].level, 0);
+  approximate(frames[1][0].level, .5);
+  approximate(frames[2][0].level, 1);
+  approximate(frames[3][0].level, .5);
+  assert.ok(frames[4][0].level < .1);
 });
 
-test('Tri-Pulse exposes three whole-frame pulses and rests near .1 for the rest of three beats', () => {
+test("Drip changes colour every two beats", () => {
+  const drip = run('ldj.Drip', row(1), [0, 1, 2]);
+  assert.deepEqual(drip[0][0].colour, RED);
+  approximate(drip[1][0].level, .5);
+  assert.deepEqual(drip[2][0].colour, CYAN);
+});
+
+test("Tri-Pulse rests after three whole-frame pulses", () => {
   const frames = run('ldj.TriPulse', square(), [0, .56, 1.02, 1.6, 2.4, 3.02]);
   for (const i of [0, 1, 2, 5]) assert.ok(frames[i][0].level > .9, String(i));
   for (const i of [3, 4]) approximate(frames[i][0].level, .1, .02);
 });
 
-test('Sketch has four brightness steps per corner and Do Si Do swaps both roles', () => {
+test("Sketch has four brightness steps per corner", () => {
   const sketch = run('ldj.Sketch', square(), Array.from({ length: 16 }, (_, i) => i / 4));
   assert.deepEqual(sketch.map((out) => Math.max(...levels(out))), Array(4).fill([0, .25, .5, .75]).flat());
   assert.deepEqual([3, 7, 11, 15].map((i) => lit(sketch[i])[0]), [0, 3, 1, 2]);
+});
+
+test("Do Si Do swaps both channel roles", () => {
   assert.deepEqual(run('ldj.DoSiDo', square(), [0, .5]).map(colors), [['s', 'p', 'p', 'p'], ['p', 'p', 'p', 's']]);
 });
 
@@ -147,16 +176,20 @@ test('Trance and America slow to four beats above twenty lamps', () => {
   assert.deepEqual(america.map((out) => out[0].colour), [RED, parseHex('#FFFFFF'), parseHex('#2A00FF')]);
 });
 
-test('Beat Pulse durations use their fixed matrix literals and gate rapid rows', () => {
+test("Beat Pulse durations use fixed matrix literals", () => {
   const short = run('ldj.BeatPulse1', row(1), [0, atMs(LDJ_FRAME_MS * 4)], { params: { cadence: 4 } });
   const long = run('ldj.BeatPulse4', row(1), [0, atMs(LDJ_FRAME_MS * 4)], { params: { cadence: 4 } });
-  assert.equal(short[1][0].level, 0); assert.equal(long[1][0].level, 1);
+  assert.equal(short[1][0].level, 0);
+  assert.equal(long[1][0].level, 1);
+});
+
+test("rapid channel rows require acknowledgement", () => {
   for (const name of names.filter((name) => LDJ_CHANNEL_ROWS[name].rapidFlash)) {
     assert.ok(run(`ldj.${name}`, square(), [0], { acknowledged: false })[0].every((s) => s.strength === 0), name);
   }
 });
 
-test('every matrix pulse requires acknowledgement even when the spec clears its rapid flag', () => {
+test("matrix pulse acknowledgement cannot be cleared by spec", () => {
   for (const name of ['TriPulse', 'BeatPulse1', 'BeatPulse4', 'Cauldron', 'QuickFlash', 'SceneMakerFirework']) {
     assert.equal(kindOf(`ldj.${name}`).rapidFlash, true, name);
     const positions = [0, .5, 1, 1.9, 4];
@@ -221,7 +254,7 @@ test('wall fireworks replay a delayed first render and survive cloned continuati
   assert.deepEqual(sparse.draw(atMs(2500)), sparse.draw(atMs(2500), cloned));
 });
 
-test('every channel row handles empty, one-lamp and one-colour rigs with finite owned output', () => {
+test("channel rows render finite output on small rigs", () => {
   for (const name of names) for (const count of [0, 1, 5]) {
     const frames = run(`ldj.${name}`, row(count), [0, .6, 1.3, 2.7, 8.1], { palette: [RED] });
     for (const out of frames) for (const s of out) {

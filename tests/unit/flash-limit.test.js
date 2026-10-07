@@ -107,7 +107,7 @@ function render(patch, { seconds = 3, bpm = 180 } = {}) {
   }
 }
 
-test('a hit at sixteenths flashes the whole rig, and the limit holds it to three a second', () => {
+test("sixteenth-note hits remain capped at three flashes per second", () => {
   const free = render({});
   assert.ok(worstSecond(free.levels) > FLASHES_PER_SECOND, `off: ${worstSecond(free.levels)} flashes a second`);
   const held = render({ flashLimit: true });

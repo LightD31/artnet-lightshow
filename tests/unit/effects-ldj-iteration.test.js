@@ -12,7 +12,7 @@ const lit = (out) => out.flatMap((s, i) => s.level > .001 ? [i] : []);
 const hex = (slot) => toHex(slot.colour);
 const BLUE = parseHex('#00F'), GREEN = parseHex('#0F0');
 
-test('all 57 iteration rows register with serializable defaults and finite small rooms', () => {
+test("iteration rows register finite serializable defaults", () => {
   assert.equal(NAMES.length, 57);
   assert.deepEqual(Object.keys(LDJ_ITERATION_ROWS).sort(), [...NAMES].sort());
   for (const name of NAMES) {
@@ -33,7 +33,7 @@ test('all 57 iteration rows register with serializable defaults and finite small
   }
 });
 
-test('quarter-beat scatter excludes its previous lamp while Circuit follows the radial ring', () => {
+test("scatter and Circuit follow their lamp selection rules", () => {
   const room = square(), scatter = harness('ldj.ScatterStrobe', room), circuit = harness('ldj.Circuit', room);
   let previous = null;
   for (let i = 0; i < 12; i++) {
@@ -88,7 +88,7 @@ test('modified stages count only the two active half-beat events', () => {
   }
 });
 
-test('backlit fades blend colour at full level; ordinary Scatter Fade dims instead', () => {
+test("backlit fades preserve level while blending colours", () => {
   for (const name of ['BLFadeCycle', 'BLScatterFade']) {
     const h = harness(`ldj.${name}`, row(5));
     const first = h.draw(0), pick = first.findIndex((s) => hex(s) === '#FF0000');
@@ -104,7 +104,7 @@ test('backlit fades blend colour at full level; ordinary Scatter Fade dims inste
   assert.equal(h.draw({ beatPos: .5, nowMs: LDJ_FRAME_MS * 5 })[pick].level, .5454543828964233);
 });
 
-test('grow rows retain one lamp for half/full pairs and sine brightness follows integer iterations', () => {
+test("grow rows retain one lamp across half and full steps", () => {
   for (const name of ['BLGrowCycle', 'ScatterGrow', 'BLScatterGrow']) {
     const h = harness(`ldj.${name}`, row(4));
     for (let pair = 0; pair < 4; pair++) {
@@ -114,6 +114,9 @@ test('grow rows retain one lamp for half/full pairs and sine brightness follows 
       assert.equal(b[selected].level, 1); assert.deepEqual(b[selected].colour, RED);
     }
   }
+});
+
+test("sine brightness follows integer iterations", () => {
   for (const name of ['BrtSinStrobe', 'BrtSinScatter']) {
     const h = harness(`ldj.${name}`, row(4));
     for (let i = 0; i < 18; i++) {
@@ -169,7 +172,7 @@ test('genre scores preserve four distinct hit, colour, off and hold actions', ()
   }
 });
 
-test('wall and palette strobes obey their separate half-cycle clocks and acknowledgement', () => {
+test("wall and palette strobes follow their own half-cycle clocks", () => {
   for (const bpm of [60, 174]) {
     const h = harness('ldj.TrueStrobe', row(1), { bpm, startedAtMs: 1000 });
     assert.deepEqual([0, 40, 60, 110, 160].map((ms) => h.draw({ nowMs: 1000 + ms, beatPos: 0 })[0].level), [1, 1, 0, 1, 0]);
@@ -185,7 +188,7 @@ test('wall and palette strobes obey their separate half-cycle clocks and acknowl
   }
 });
 
-test('palette drip, flare and glow preserve their two-beat phases, including the black glow half', () => {
+test("palette envelopes retain two-beat phases", () => {
   for (const name of ['PaletteDrip', 'PaletteFlare', 'PaletteGlow']) {
     const h = harness(`ldj.${name}`, row(1));
     assert.equal(h.draw(0)[0].level, name === 'PaletteDrip' ? 1 : 0);
@@ -197,7 +200,7 @@ test('palette drip, flare and glow preserve their two-beat phases, including the
   }
 });
 
-test('Popcorn follows both masks, retains its background and blends at constant brightness', () => {
+test("Popcorn retains its background between masked hits", () => {
   const masks = [[0, 2, 3, 5, 6, 9, 11, 12, 13], [0, 2, 3, 5, 6, 7, 10, 11, 13]];
   const h = harness('ldj.Popcorn', row(6));
   for (let i = 0; i < 32; i++) {
@@ -228,14 +231,18 @@ test('palette trails and fills wrap with short, equal and oversized palettes', (
   }
 });
 
-test('palette strobe shuffles distinct colours onto distinct lamps; party holds prior lamps', () => {
+test("palette strobe shuffles distinct colours onto distinct lamps", () => {
   const h = harness('ldj.PaletteStrobe', row(7), { palette: [RED, CYAN, BLUE] });
   for (let i = 0; i < 8; i++) {
     const out = h.draw(i), picks = lit(out);
     assert.equal(picks.length, 3); assert.equal(new Set(picks.map((p) => hex(out[p]))).size, 3);
   }
+});
+
+test("palette party strobe holds previously lit lamps", () => {
   const party = harness('ldj.PalettePartyStrobe', row(6));
-  assert.equal(lit(party.draw(0)).length, 1); assert.equal(lit(party.draw(.25)).length, 2);
+  assert.equal(lit(party.draw(0)).length, 1);
+  assert.equal(lit(party.draw(.25)).length, 2);
 });
 
 test('Studio rows preserve note durations, half-room exclusion and the .05 baseline', () => {
@@ -256,18 +263,26 @@ test('Studio rows preserve note durations, half-room exclusion and the .05 basel
   multi.draw(0); assert.equal(lit(multi.draw(1)).length, 2);
 });
 
-test('Flare and Break restarts after its staggered break; the long stage fade survives hold steps', () => {
+test("Flare and Break restarts after its staggered rest", () => {
   const h = harness('ldj.FlareAndBreak', row(5));
-  h.draw(0); assert.ok(h.draw(2).every((s) => s.level > .5));
-  h.draw(3); assert.ok(h.draw(3.9).some((s) => s.level === 0));
-  const restart = h.draw(4); assert.ok(restart.every((s) => s.level === 0 && hex(s) === '#00FFFF'));
+  h.draw(0);
+  assert.ok(h.draw(2).every((s) => s.level > .5));
+  h.draw(3);
+  assert.ok(h.draw(3.9).some((s) => s.level === 0));
+  const restart = h.draw(4);
+  assert.ok(restart.every((s) => s.level === 0 && hex(s) === '#00FFFF'));
+});
+
+test("long stage fades survive hold steps", () => {
   const stage = harness('ldj.ThreeStrobeAndFade', row(6));
-  stage.draw(0); stage.draw(1); stage.draw(2);
+  stage.draw(0);
+  stage.draw(1);
+  stage.draw(2);
   assert.ok(stage.draw(3).every((s) => s.level === 1));
   assert.ok(stage.draw(7).every((s) => s.level > .2 && s.level < .4));
 });
 
-test('selective random backgrounds and independent lamp caches survive clone continuation', () => {
+test("selective random caches survive cloned continuation", () => {
   const random = { palette: [{ random: true }, { random: true }] };
   const h = harness('ldj.BLStrobeCycle', row(5), { spec: random });
   h.draw(0); h.draw(.1);
@@ -290,7 +305,7 @@ test('selective random backgrounds and independent lamp caches survive clone con
   assert.deepEqual(fill.draw(9, clone), fill.draw(9));
 });
 
-test('palette index and random cache identity remain distinct in matrix and envelope rows', () => {
+test("palette roles remain distinct from random cache keys", () => {
   const probe = (name, iter) => {
     const reads = [], pending = [];
     LDJ_ITERATION_ROWS[name].step({ n: 3, iter, pal: [RED, CYAN, BLUE], ringOrder: [0, 1, 2], state: { scratch: {} },
@@ -309,7 +324,7 @@ test('palette index and random cache identity remain distinct in matrix and enve
   assert.deepEqual(probe('ThreeStageStrobeMod', 3).pending, [2]);
 });
 
-test('uncached random rows change per lamp frame while faster samples and cached backgrounds hold', () => {
+test("uncached colours advance only on whole lamp frames", () => {
   const spec = { palette: [{ random: true }, { random: true }] };
   const sample = (h, elapsed) => h.draw({ nowMs: 1000 + elapsed, beatPos: elapsed / 500 });
   for (const name of ['PaletteSplit', 'TrueStrobe']) {
@@ -343,7 +358,7 @@ test('uncached random rows change per lamp frame while faster samples and cached
   }
 });
 
-test('uncached colours advance exactly at whole lamp frames after a nonzero launch time', () => {
+test("uncached colours retain their nonzero launch origin", () => {
   const h = harness('ldj.PaletteSplit', row(8), { spec: { palette: [{ random: true }] }, startedAtMs: 1000 });
   const access = createPaletteAccess(h.inst.spec, null, [], h.inst.seed, 0, preparePalette(h.inst.spec));
   for (let tick = 0; tick <= 12; tick++) {

@@ -47,7 +47,7 @@ function rigAt(ms, patch) {
   return [read(PAR), read(LAMP)];
 }
 
-test('a par flashes in the look\'s colours on the half beat, black after, the look between', () => {
+test("par strobe follows the look palette on half beats", () => {
   // 120 BPM: half beats, a flash every 250 ms.
   assert.deepStrictEqual(rigAt(0)[0], { dim: 255, r: 255, g: 0, b: 0 }, 'colour A on the beat');
   assert.deepStrictEqual(rigAt(100)[0], { dim: 0, r: 0, g: 0, b: 0 }, 'black after the flash');
@@ -142,7 +142,7 @@ test('its flashes fall on the finest division of the beat under five a second', 
   assert.ok(Math.abs(holdStrobeFlash(0.6, 128).sinceMs - 0.1 * (60000 / 128)) < 1e-9);
 });
 
-test('each flash is a colour of the look at full, then black, then the look shows through', () => {
+test("hold strobe restores the look between palette flashes", () => {
   const pal = [RED, BLUE];
   const flash = (index, sinceMs) => holdStrobeLook(pal, { index, sinceMs, periodMs: 250 }, false);
   assert.deepStrictEqual(flash(0, 0), { col: RED, dim: 255, strobe: 0 });

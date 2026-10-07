@@ -143,7 +143,7 @@ const distinct = (outputs, u) => new Set(outputs.map((o) => key(o[u]))).size;
 
 // ── Preview and rig, frame by frame ─────────────────────────────────────────
 
-test('the preview drives the same bytes as the rig for a base effect and a voice, stepped through the same frames', () => {
+test("preview base and voice output matches the rig", () => {
   const times = frames(0, 1000);
   assert.strictEqual(times.length, 45);
   const pad = voice('pad:1', BLINDER, { targets: [PARS[1].id] });
@@ -166,7 +166,7 @@ test('the preview drives the same bytes as the rig for a base effect and a voice
   assertSame(freeRig, previewRun(free, RIG, times), times, 'free clock');
 });
 
-test('sampling earlier than the last sample restarts from the keyframe and reaches the same bytes', () => {
+test("backward samples replay from their keyframe", () => {
   const events = [
     { timeMs: 0, action: 'patch', data: { pattern: 'ldj.FadeCycle', ...LOOK } },
     { timeMs: 140, action: 'voice', data: { id: 'pad:1', effect: preset('ldj.CrossFade'), targets: [PARS[2].id, LAMP.id], tier: 'voice', launchSeq: 1 } },
@@ -212,7 +212,7 @@ test('a seek keyframe resets the instance states', () => {
   assert.ok(after.some((i) => key(preview[i][1]) !== key(unseeked[i][1])), 'the base starts again at the seek');
 });
 
-test('a seek after a scene part way into the track puts a voice on the scene\'s beat, as the rig does', () => {
+test("seeked voices retain their scene beat", () => {
   // Beats from 200 ms, so the scene at 2300 ms is on beat 4.2 and the voice launched on 4.622.
   const beats = Array.from({ length: 40 }, (_, i) => 0.2 + i * 0.5);
   const grid = makeGrid(beats);
@@ -240,7 +240,7 @@ test('a seek after a scene part way into the track puts a voice on the scene\'s 
   assert.ok(times.some((t, i) => t >= 3700 && key(preview[i][0]) !== key(unseeked[i][0])), 'the voice re-anchors at the seek');
 });
 
-test('a pattern bundle voice plays as the rig plays it, across a seek and back from a kept copy', () => {
+test("bundle voice previews match the rig across seeks", () => {
   const beats = Array.from({ length: 40 }, (_, i) => 0.2 + i * 0.5);
   const grid = makeGrid(beats);
   const lane = (id, kind, fixtureId) => ({ id, kind, ...(fixtureId !== undefined ? { fixtureId } : {}), name: id, mute: false, solo: false });
@@ -289,7 +289,7 @@ const LONG = [
   { timeMs: 40000, action: 'patch', data: { pattern: 'ldj.StrobeCycle' } },
 ];
 
-test('going back within the last 16 s walked replays at most a second of frames, from a copy kept on the way, and shows what a fresh sampler shows', () => {
+test("recent backward seeks replay at most one second", () => {
   const r = buildRig(RIG, getProfile);
   const options = { resolveEffect, safety: ACK };
   const sample = createPreviewSampler(LONG, null, options);
@@ -310,7 +310,7 @@ test('going back within the last 16 s walked replays at most a second of frames,
   assert.deepStrictEqual(second, fresh(10000));
 });
 
-test('the copies kept every second are the 16 most recently used, and a sampler that jumps about still shows what a fresh one shows', () => {
+test("preview retains the sixteen most recently used checkpoints", () => {
   const r = buildRig(RIG, getProfile);
   const options = { resolveEffect, safety: ACK };
   const renders = (sample, t) => { const before = probeRenders; sample(t, RIG, COLOR_PRESETS, r); return probeRenders - before; };
@@ -331,7 +331,7 @@ test('the copies kept every second are the 16 most recently used, and a sampler 
   }
 });
 
-test('a moment just before the first frame, within the grid\'s rounding, renders on a copy rather than failing', () => {
+test("pre-frame rounding renders safely on a copy", () => {
   // The scene lands 1.5 ns after the fifth frame; the moment asked for is 0.6 ns after it.
   const at = 5 * FRAME_MS;
   const events = [{ timeMs: at + 1.5e-6, action: 'patch', data: { pattern: 'ldj.FadeCycle', ...LOOK } }];
@@ -341,7 +341,7 @@ test('a moment just before the first frame, within the grid\'s rounding, renders
   assert.deepStrictEqual(sample(6 * FRAME_MS, PARS, COLOR_PRESETS), createPreviewSampler(events, GRID, { resolveEffect })(6 * FRAME_MS, PARS, COLOR_PRESETS));
 });
 
-test('a frame asked for after a moment inside it is rendered from where the walk stands, not replayed', () => {
+test("in-frame samples leave the frame cursor unchanged", () => {
   const events = [
     { timeMs: 0, action: 'patch', data: { pattern: 'solid', ...LOOK } },
     { timeMs: 0, action: 'voice', data: { id: 'count', effect: OWN.probe, targets: [PARS[0].id], tier: 'voice', launchSeq: 1 } },
@@ -356,7 +356,7 @@ test('a frame asked for after a moment inside it is rendered from where the walk
 
 // ── The canonical grid ──────────────────────────────────────────────────────
 
-test('an exact frame asked for twice is the same bytes and consumes nothing a later frame needs', () => {
+test("repeated frame samples preserve future output", () => {
   // A wave played once keeps a queued colour change for its next render: a
   // second render of the same moment would take it.
   const events = [{ timeMs: 0, action: 'patch', data: { pattern: 'wave-once', ...LOOK } }];
@@ -375,7 +375,7 @@ test('an exact frame asked for twice is the same bytes and consumes nothing a la
   assert.ok(new Set(seen.map((o) => o.map(key).join('|'))).size > 2, 'the wave plays');
 });
 
-test('off-grid samples render on a copy: the frames after them are the ones a sampler that never saw them renders', () => {
+test("off-grid samples leave subsequent frames unchanged", () => {
   const events = [
     { timeMs: 0, action: 'patch', data: { pattern: 'ldj.FadeCycle', ...LOOK } },
     { timeMs: 90, action: 'voice', data: { id: 'pad:x', effect: preset('ldj.CrossFade'), targets: [PARS[0].id, LAMP.id], tier: 'voice', launchSeq: 1 } },
@@ -409,7 +409,7 @@ test('off-grid samples render on a copy: the frames after them are the ones a sa
   assertSame(rig.slice(-1), [late], [350]);
 });
 
-test('only the frames of the grid count: repeats, moments between frames and going back render nothing into the history', () => {
+test("only grid frames mutate preview history", () => {
   // Under a blue look, whose red is 0.
   const events = [
     { timeMs: 0, action: 'patch', data: { pattern: 'solid', ...LOOK, colorA: 5 } },
@@ -430,7 +430,7 @@ test('only the frames of the grid count: repeats, moments between frames and goi
   assert.strictEqual(renders(30 * FRAME_MS), 29);
 });
 
-test('a base effect starts on the first frame that plays it, whatever was asked in between; a voice on its event\'s own moment', () => {
+test("preview launch anchors follow their event clocks", () => {
   const events = [
     { timeMs: 0, action: 'patch', data: { pattern: 'solid', ...LOOK, colorA: 5 } },
     { timeMs: 30, action: 'voice', data: { id: 'count', effect: OWN.probe, targets: [PARS[3].id], tier: 'voice', launchSeq: 1 } },
@@ -456,7 +456,7 @@ test('a base effect starts on the first frame that plays it, whatever was asked 
   assertSame(rig.slice(-1), [later], times.slice(-1));
 });
 
-test('scenes between two frames render once, as the last of them, and a voice keeps its own launch', () => {
+test("scenes between frames collapse to their last base state", () => {
   const pad = { id: 'pad:w', effect: FADE, targets: [PARS[0].id, PARS[1].id], tier: 'voice', launchSeq: 1 };
   const events = [
     { timeMs: 0, action: 'patch', data: { pattern: 'ldj.FadeCycle', ...LOOK } },
@@ -484,7 +484,7 @@ test('scenes between two frames render once, as the last of them, and a voice ke
   assert.deepStrictEqual(preview.map((o) => o.slice(0, 2)), still.map((o) => o.slice(0, 2)));
 });
 
-test('a scene sending its pattern again on the same step plays on, as the rig does; on another step it starts again; a colour patch carries on', () => {
+test("preview pattern relaunches match the rig", () => {
   const times = frames(0, 1200);
   const base = { timeMs: 0, action: 'patch', data: { pattern: 'ldj.FadeCycle', ...LOOK } };
   const plain = previewRun(createPreviewSampler([base], GRID, { resolveEffect }), RIG, times);
@@ -507,7 +507,7 @@ test('a scene sending its pattern again on the same step plays on, as the rig do
 
 // ── Fades ───────────────────────────────────────────────────────────────────
 
-test('a crossfade starts from what the base showed on the frame before, without the voice over it, and a second fade from the first', () => {
+test("preview crossfades start from the prior base frame", () => {
   const pad = { id: 'pad:b', effect: BLINDER, targets: [PARS[0].id], tier: 'voice', launchSeq: 1 };
   const events = [
     { timeMs: 0, action: 'patch', data: { pattern: 'ldj.FadeCycle', ...LOOK } },
@@ -532,7 +532,7 @@ test('a crossfade starts from what the base showed on the frame before, without 
 
 // ── Voices ──────────────────────────────────────────────────────────────────
 
-test('voices: tiers and launches, a deadline, an end and a relaunch at one moment, fixtures a voice names, a split wash and a bar', () => {
+test("preview voice composition matches the rig", () => {
   registerProfile(BAR);
   try {
     const placed = [...PARS.map((f, i) => ({ ...f, position: { x: 10 + 20 * i, y: 50 }, group: i < 2 ? 'front' : 'back' })),
@@ -578,7 +578,7 @@ test('voices: tiers and launches, a deadline, an end and a relaunch at one momen
   }
 });
 
-test('one strobe voice taking over from another carries the permit in the preview as on the rig, at once and after a dark gap', () => {
+test("preview strobe handoffs retain the rig permit", () => {
   const strobe = validateSpec({ kind: 'strobe', palette: ['#FFFFFF'], params: { flashesPerSecond: 5, clock: 'wall', continueBetween: false } });
   const times = frames(0, 1400);
   for (const [first, second] of [['energy:palette-strobe', 'strobe'], ['strobe', 'energy:palette-strobe']]) {
@@ -607,7 +607,7 @@ test('one strobe voice taking over from another carries the permit in the previe
   }
 });
 
-test('a lamp keeps one strobe permit whoever draws it, in the preview as on the rig: a strobe voice ending over another strobe', () => {
+test("preview strobe layers share one permit per lamp", () => {
   const strobe = validateSpec({ kind: 'strobe', palette: ['#FFFFFF'], params: { flashesPerSecond: 5, clock: 'wall', continueBetween: false } });
   const times = frames(0, 1800);
   for (const [from, ends] of [[3, 10], [5, 12], [7, 15]]) {
@@ -634,7 +634,7 @@ test('a lamp keeps one strobe permit whoever draws it, in the preview as on the 
   }
 });
 
-test('a mixed timeline plays its energy bursts as tracked voices: replaced, expired and cancelled as the old lane', () => {
+test("preview energy bursts follow voice lifetime", () => {
   const events = [
     { timeMs: 0, action: 'patch', data: { pattern: 'ldj.FadeCycle', ...LOOK } },
     { timeMs: 0, action: 'voice', data: { id: 'pad:1', effect: preset('energy.uvWash'), targets: [PARS[3].id], tier: 'voice', launchSeq: 1 } },
@@ -670,7 +670,7 @@ test('a mixed timeline plays its energy bursts as tracked voices: replaced, expi
 
 // ── Safety, Hue lamps and Hue Dynamics' limit ───────────────────────────────
 
-test('an unacknowledged rapid effect or voice is gated as on the rig; the old burst keeps its admission only while no safety is given', () => {
+test("preview rapid effects respect safety admission", () => {
   const times = frames(0, 600);
   const strobe = preset('ldj.TrueStrobe');
   const white = preset('energy.whiteStrobe');
@@ -708,7 +708,7 @@ test('an unacknowledged rapid effect or voice is gated as on the rig; the old bu
   assert.ok(lane({ safety: ACK }, ACK).every((o) => o[0].w === 255));
 });
 
-test('the old patch and energy timeline: the bursts gate with a safety given, Hue lamps take the setting, a Hue profile alone is a Hue lamp', () => {
+test("legacy preview bursts retain safety and Hue mode", () => {
   const times = [0, 60, 100, 170, 200, 250, 320, 480, 760, 1010];
   const profileOnly = fixture(15, 70, HUE_COLOR_PROFILE_ID);
   const fixtures = [PARS[0], LAMP, profileOnly];
@@ -740,7 +740,7 @@ test('the old patch and energy timeline: the bursts gate with a safety given, Hu
   }
 });
 
-test('Hue Dynamics\' flash limit, a trimmed lamp and Light DJ\'s flashes on a Hue lamp in both modes rehearse as the rig plays them', () => {
+test("preview flash guards match rig output", () => {
   const trimmed = [{ ...PARS[0], maxBrightness: 100 }, PARS[1], PARS[2], LAMP];
   const times = frames(0, 1500);
   for (const hueStrobe of ['flash', 'pulse']) {
@@ -758,7 +758,7 @@ test('Hue Dynamics\' flash limit, a trimmed lamp and Light DJ\'s flashes on a Hu
   assert.ok(rises >= 3 && rises <= 5, `${rises} rises in 1.5 s`);
 });
 
-test('a scene part way into an analysed track, a tempo change under it and a voice launched off the grid', () => {
+test("preview handles off-grid scenes and tempo changes", () => {
   // 120 BPM, then 128 from the eighth beat.
   const beats = [];
   for (let t = 0.2, i = 0; i < 40; i++) { beats.push(t); t += i < 8 ? 0.5 : 60 / 128; }
@@ -782,7 +782,7 @@ test('a scene part way into an analysed track, a tempo change under it and a voi
 
 // ── What the sampler is handed ──────────────────────────────────────────────
 
-test('the rig, the colours and the effects are the whole timeline\'s: equal ones keep the history, changed ones are a fresh sampler\'s', () => {
+test("preview history resets only when timeline inputs change", () => {
   const events = [
     { timeMs: 0, action: 'patch', data: { pattern: 'fade-look', ...LOOK } },
     { timeMs: 0, action: 'voice', data: { id: 'count', effect: OWN.probe, targets: [PARS[3].id], tier: 'voice', launchSeq: 1 } },
@@ -831,7 +831,7 @@ test('the rig, the colours and the effects are the whole timeline\'s: equal ones
   assert.deepStrictEqual(sample(900, RIG, COLOR_PRESETS, buildRig(RIG, getProfile)), before);
 });
 
-test('a pattern no effect resolves plays the legacy layer; an unknown one plays solid', () => {
+test("unresolved preview effects use legacy patterns", () => {
   const events = [{ timeMs: 0, action: 'patch', data: { pattern: 'no-such-look', ...LOOK } }];
   const out = createPreviewSampler(events, GRID, { resolveEffect })(100, PARS, COLOR_PRESETS);
   assert.deepStrictEqual(out.map((c) => [c.r, c.g, c.b]), PARS.map(() => [255, 0, 0]));
@@ -845,7 +845,7 @@ test('a pattern no effect resolves plays the legacy layer; an unknown one plays 
   assertSame(rig, previewRun(mixed, PARS, times), times);
 });
 
-test('voice events are checked once: a bad one is ignored, not played', () => {
+test("invalid preview voice events are ignored", () => {
   const ok = { id: 'v', effect: BLINDER, targets: [PARS[0].id], tier: 'voice', launchSeq: 1 };
   const bad = [
     { ...ok, effect: { kind: 'no.such.kind', params: {} } },
@@ -873,7 +873,7 @@ test('voice events are checked once: a bad one is ignored, not played', () => {
   assert.strictEqual(played(50, PARS, COLOR_PRESETS)[0].w, 0, 'gone at its deadline');
 });
 
-test('a timeline out of order rehearses as the same timeline in order, and the caller\'s array is left as it was', () => {
+test("preview sorts timeline events without mutating input", () => {
   const ordered = [
     { timeMs: 0, action: 'patch', data: { pattern: 'ldj.FadeCycle', ...LOOK } },
     { timeMs: 200, action: 'voice', data: { id: 'p', effect: BLINDER, targets: [PARS[0].id], tier: 'voice', launchSeq: 1 } },

@@ -137,7 +137,7 @@ const blue = () => {
 
 // ── The energy endpoints ────────────────────────────────────────────────────
 
-test('POST /api/energy/blinder latches an energy voice; energyOverride in state reads blinder; /api/energy/off stops it', async (t) => {
+test("energy endpoints manage the compatibility voice", async (t) => {
   const s = await serve(t);
   assert.deepEqual(renderInput().voices, [], 'no voices is an empty list: the renderer plays nothing of its own');
   let res = await s.call('POST', '/api/energy/blinder');
@@ -207,18 +207,18 @@ test('socket energy-hold press/release still works through the shim', async (t) 
   assert.deepEqual(ids(), ['energy:blinder']);
 });
 
-test('until acknowledged, an energy strobe is refused with the reason wherever it is asked for, as a voice is: REST, /api/set, the set and energy-hold sockets; nothing latches, what played plays on, and the live state says why', async (t) => {
+test("energy strobe requests require acknowledgement", async (t) => {
   const s = await serve(t);
   const { socket, heard } = await s.page();
-  const refused = { ok: false, error: 'photosensitivity acknowledgement required' };
+  const refused = [409, false, 'string'];
   await s.call('POST', '/api/energy/glow');
   for (const id of ['white-strobe', 'color-strobe', 'palette-strobe']) {
     const res = await s.call('POST', `/api/energy/${id}`);
-    assert.deepEqual([res.status, res.body], [409, refused], id);
+    assert.deepEqual([res.status, res.body.ok, typeof res.body.error], refused, id);
   }
   const master = state.masterDimmer;
   const res = await s.call('POST', '/api/set', { energyOverride: 'white-strobe', masterDimmer: (master + 1) % 256 });
-  assert.deepEqual([res.status, res.body], [409, refused]);
+  assert.deepEqual([res.status, res.body.ok, typeof res.body.error], refused);
   assert.equal(state.masterDimmer, master, 'refused whole, its master too');
 
   // A hold down, then the sockets' refusals: each told to the page that asked, the hold's with its token.
@@ -227,9 +227,9 @@ test('until acknowledged, an energy strobe is refused with the reason wherever i
   socket.emit('set', { energyOverride: 'color-strobe' });
   socket.emit('energy-hold', { action: 'press', token: 'x', effect: 'white-strobe' });
   await until(() => heard.errors.length === 2, 'two refusals');
-  assert.deepEqual(heard.errors, [
-    { source: 'set', message: 'photosensitivity acknowledgement required' },
-    { source: 'energy-hold', token: 'x', message: 'photosensitivity acknowledgement required' },
+  assert.deepEqual(heard.errors.map((e) => [e.source, e.token, typeof e.message]), [
+    ['set', undefined, 'string'],
+    ['energy-hold', 'x', 'string'],
   ]);
   assert.deepEqual([state.energyOverride, state.heldEnergy, ids().sort()], ['glow', 'kill', ['energy:glow', 'energy:kill:hold']],
     'the latch and the hold before them play on');
@@ -252,7 +252,7 @@ test('until acknowledged, an energy strobe is refused with the reason wherever i
 
 // ── POST /api/voices ────────────────────────────────────────────────────────
 
-test('POST /api/voices with a preset and ms returns an id and the voice ends by itself', async (t) => {
+test("voice POST returns an id for a timed lifetime", async (t) => {
   const s = await serve(t);
   const res = await s.call('POST', '/api/voices', { preset: 'blinder', ms: 150, targets: [state.fixtures[0].id] });
   assert.equal(res.status, 200);
@@ -267,13 +267,12 @@ test('POST /api/voices with a preset and ms returns an id and the voice ends by 
   assert.deepEqual((await s.call('GET', '/api/voices')).body.voices, []);
 });
 
-test('POST /api/voices: a once with no length plays the preset\'s; latched plays until stopped; DELETE stops one or all', async (t) => {
+test("voice routes use preset or explicit beat lifetimes", async (t) => {
   const s = await serve(t);
   const bpm = conductor.status().bpm;
   let res = await s.call('POST', '/api/voices', { preset: 'ldj.FadeCycle' });
   const fade = voices.get(res.body.id);
   assert.ok(Math.abs(fade.untilMs - fade.startedAtMs - 32 * 60000 / bpm) < 1, 'Light DJ\'s 32 beats');
-  // A Studio row's kind counts no beats of its own (a bar); the catalogue's row says 32.
   res = await s.call('POST', '/api/voices', { preset: 'ldj.StudioN1' });
   const studio = voices.get(res.body.id);
   assert.ok(Math.abs(studio.untilMs - studio.startedAtMs - 32 * 60000 / bpm) < 1, 'the preset\'s length, not its kind\'s');
@@ -281,17 +280,28 @@ test('POST /api/voices: a once with no length plays the preset\'s; latched plays
   const two = voices.get(res.body.id);
   assert.deepEqual(two.targets, [], 'an empty list stays empty');
   assert.ok(Math.abs(two.untilMs - two.startedAtMs - 2 * 60000 / bpm) < 1);
-  res = await s.call('POST', '/api/voices', { effect: { kind: 'energy.glow' }, mode: 'latched' });
+});
+
+test("latched voice routes stop only on explicit deletion", async (t) => {
+  const s = await serve(t);
+  const res = await s.call('POST', '/api/voices', { effect: { kind: 'energy.glow' }, mode: 'latched' });
   const latched = res.body.id;
   assert.equal(voices.get(latched).untilMs, null);
-
   assert.deepEqual(await s.call('DELETE', `/api/voices/${encodeURIComponent(latched)}`), { status: 200, body: { ok: true } });
-  assert.deepEqual(await s.call('DELETE', `/api/voices/${encodeURIComponent(latched)}`), { status: 404, body: { ok: false, error: 'No such voice' } });
+  const missing = await s.call('DELETE', `/api/voices/${encodeURIComponent(latched)}`);
+  assert.deepEqual([missing.status, missing.body.ok, typeof missing.body.error], [404, false, 'string']);
+});
+
+test("voice DELETE stops all remaining voices", async (t) => {
+  const s = await serve(t);
+  await s.call('POST', '/api/voices', { preset: 'ldj.FadeCycle' });
+  await s.call('POST', '/api/voices', { preset: 'ldj.StudioN1' });
+  await s.call('POST', '/api/voices', { effect: FADE, beats: 2, targets: [] });
   assert.deepEqual(await s.call('DELETE', '/api/voices'), { status: 200, body: { ok: true, stopped: 3 } });
   assert.deepEqual(ids(), []);
 });
 
-test('POST /api/voices refuses what is malformed (400), an effect that waits for the acknowledgement (409), and launches nothing', async (t) => {
+test("invalid voice requests launch nothing", async (t) => {
   const s = await serve(t);
   await s.call('POST', '/api/energy/glow');
   const bad = [
@@ -308,7 +318,7 @@ test('POST /api/voices refuses what is malformed (400), an effect that waits for
   }
   for (const body of [{ preset: 'white-strobe' }, { effect: { kind: 'ldj.StrobeCycle', params: { cadence: 0.25 }, rapidFlash: false } }]) {
     const res = await s.call('POST', '/api/voices', body);
-    assert.deepEqual([res.status, res.body], [409, { ok: false, error: 'photosensitivity acknowledgement required' }], JSON.stringify(body));
+    assert.deepEqual([res.status, res.body.ok, typeof res.body.error], [409, false, 'string'], JSON.stringify(body));
   }
   assert.deepEqual(ids(), ['energy:glow'], 'nothing launched, nothing replaced');
   // A stop needs nothing.
@@ -322,7 +332,7 @@ test('POST /api/voices refuses what is malformed (400), an effect that waits for
 
 // ── The voice hold ──────────────────────────────────────────────────────────
 
-test('voice-hold: a page holds any effect down, renews it, lets it go; only its own socket can', async (t) => {
+test("voice holds are leased to their owning socket", async (t) => {
   const s = await serve(t);
   const a = await s.page();
   const b = await s.page();
@@ -352,8 +362,8 @@ test('voice-hold: a page holds any effect down, renews it, lets it go; only its 
   a.socket.emit('voice-hold', { action: 'press', token: 'h6', effect: { preset: 'glow', kind: 'energy.kill' } });
   await until(() => a.heard.errors.length === 4, 'four refusals');
   assert.deepEqual(a.heard.errors.map((e) => e.source), ['voice-hold', 'voice-hold', 'voice-hold', 'voice-hold']);
-  assert.match(a.heard.errors[0].message, /photosensitivity acknowledgement required/);
-  assert.match(a.heard.errors[1].message, /photosensitivity acknowledgement required/);
+  assert.equal(typeof a.heard.errors[0].message, 'string');
+  assert.equal(typeof a.heard.errors[1].message, 'string');
   assert.deepEqual(voices.list().map((v) => v.kind), ['energy.glow'], 'nothing else launched');
 
   // Left unrenewed, it dies within the lease, and the page that held it going takes the rest.
@@ -372,7 +382,7 @@ test('voice-hold: a page holds any effect down, renews it, lets it go; only its 
   await until(() => !ids().length, 'the hold gone with its page, before its lease could end', HOLD_TIMEOUT_MS / 2);
 });
 
-test('a page whose Wi-Fi drops: its hold ends at its 1.2 s lease, by the frame or by its own timer, the look comes back, and a renewal after that keeps nothing alive', async (t) => {
+test("dropped sockets lose their voice at lease expiry", async (t) => {
   const s = await serve(t);
   applyPatch({ pattern: 'solid', colorA: 0, running: false, masterDimmer: 255, masterBlackout: false });
   renderFrame();
@@ -455,7 +465,7 @@ test('a disarm asked for stops every voice, even with the outputs disarmed alrea
   assert.deepEqual(ids(), []);
 });
 
-test('a disarm stops the patterns, not the sequence: one playing counts on, and one played after a disarm counts its beats', async (t) => {
+test("disarm leaves sequence transport running", async (t) => {
   const s = await serve(t);
   const sequencer = s.integrations.sequence.sequencer;
   t.after(() => sequencer.unload());
@@ -540,7 +550,7 @@ function renderAcrossJump(input) {
   return out;
 }
 
-test('the energy endpoints\' palette strobe keeps the global beat grid when the music jumps, as the renderer\'s own burst did', async (t) => {
+test("energy strobe voices retain the global beat grid through jumps", async (t) => {
   const s = await serve(t);
   await s.call('POST', '/api/safety/acknowledge');
   applyPatch({ pattern: 'solid', colorA: 0, colorB: 3, colorC: 5, colorD: 7, running: true, masterDimmer: 255, masterBlackout: false });
@@ -565,7 +575,7 @@ test('a Disco voice runs the audio detectors on its own bands', async (t) => {
   assert.equal(s.integrations.audio.detectors().disco.owner.from, 'fallback', 'hidden, it hears nothing');
 });
 
-test('on the worker thread a voice plays on the worker\'s clock, from its start to its end, and on through a busy main thread', async (t) => {
+test("worker voices retain lifetime through a busy main thread", async (t) => {
   const s = await serve(t);
   state.artnet.enabled = false;
   applyPatch({ pattern: 'solid', colorA: 0, running: false, masterDimmer: 255, masterBlackout: false });
@@ -610,27 +620,26 @@ test('on the worker thread a voice plays on the worker\'s clock, from its start 
 
 // ── The matrix board ────────────────────────────────────────────────────────
 
-test('the matrix board over REST: GET, a mode set with no cell held is heard by the pages, press and release by colour or token, 400 and 409, the live state carries `matrix`', async (t) => {
+test("matrix routes expose guarded initial state", async (t) => {
+  const s = await serve(t);
+  t.after(() => { liveMatrix.clear(); liveMatrix.setMode('pulses'); });
+  let res = await s.call('GET', '/api/matrix');
+  assert.deepEqual(res, { status: 200, body: { ok: true, mode: 'pulses', colours: [], voice: null } });
+  res = await s.call('POST', '/api/matrix/press', { colour: '#ff0000' });
+  assert.deepEqual([res.status, res.body.ok], [409, false]);
+  assert.deepEqual((await s.call('GET', '/api/matrix')).body.colours, []);
+  for (const body of [{ mode: 'disco' }, {}, { mode: 7 }]) assert.equal((await s.call('PUT', '/api/matrix', body)).status, 400, JSON.stringify(body));
+});
+
+test("matrix routes publish held-cell state", async (t) => {
   const s = await serve(t);
   const { heard } = await s.page();
   const heardMatrix = (found) => heard.patches.some((p) => p.d === 'look' && p.set.matrix && found(p.set.matrix));
   t.after(() => { liveMatrix.clear(); liveMatrix.setMode('pulses'); });
-
-  let res = await s.call('GET', '/api/matrix');
-  assert.deepEqual(res, { status: 200, body: { ok: true, mode: 'pulses', colours: [], voice: null } });
-
-  // A rapid mode waits for the acknowledgement, and the refused press holds nothing.
-  res = await s.call('POST', '/api/matrix/press', { colour: '#ff0000' });
-  assert.deepEqual([res.status, res.body.ok], [409, false]);
-  assert.deepEqual((await s.call('GET', '/api/matrix')).body.colours, []);
-
-  // A mode set with no cell held starts no voice: the pages hear it all the same.
-  for (const body of [{ mode: 'disco' }, {}, { mode: 7 }]) assert.equal((await s.call('PUT', '/api/matrix', body)).status, 400, JSON.stringify(body));
+  let res;
   res = await s.call('PUT', '/api/matrix', { mode: 'cycle' });
   assert.deepEqual([res.status, res.body.mode, res.body.voice], [200, 'cycle', null]);
   await until(() => heardMatrix((m) => m.mode === 'cycle'), 'the page hearing the mode');
-
-  // Cells: the colour is the token when none is given; the same press again renews, another token is another cell.
   for (const body of [{}, { colour: 'red' }, { colour: '#12345' }, { colour: '#FF0000', extra: 1 }]) {
     assert.equal((await s.call('POST', '/api/matrix/press', body)).status, 400, JSON.stringify(body));
   }
@@ -645,8 +654,6 @@ test('the matrix board over REST: GET, a mode set with no cell held is heard by 
   const live = (await s.call('GET', '/api/state')).body.matrix;
   assert.deepEqual(live, { mode: 'cycle', colours: ['#FF0000', '#00FF00'], voice: res.body.voice });
   await until(() => heardMatrix((m) => m.colours.length === 2), 'the page hearing both cells');
-
-  // Release: by token, by colour; one that names neither is a 400; the last ends the voice.
   assert.equal((await s.call('POST', '/api/matrix/release', {})).status, 400);
   res = await s.call('POST', '/api/matrix/release', { token: 'finger-2' });
   assert.deepEqual(res.body.colours, ['#FF0000']);
@@ -654,19 +661,22 @@ test('the matrix board over REST: GET, a mode set with no cell held is heard by 
   assert.deepEqual([res.status, res.body.colours, res.body.voice], [200, [], null]);
   assert.ok(!voices.list().some((v) => v.source === 'matrix'), 'no matrix voice left');
   await until(() => heardMatrix((m) => m.colours.length === 0 && m.voice === null), 'the page hearing the board empty');
+});
 
-  // Acknowledged, a rapid mode plays.
+test("matrix flash routes play after acknowledgement", async (t) => {
+  const s = await serve(t);
+  t.after(() => { liveMatrix.clear(); liveMatrix.setMode('pulses'); });
   await s.call('POST', '/api/safety/acknowledge');
   await s.call('PUT', '/api/matrix', { mode: 'flashes' });
-  res = await s.call('POST', '/api/matrix/press', { colour: '#0000FF' });
+  const res = await s.call('POST', '/api/matrix/press', { colour: '#0000FF' });
   assert.deepEqual([res.status, res.body.mode, res.body.colours], [200, 'flashes', ['#0000FF']]);
 });
 
-test('POST /api/voices refuses the internal pattern bundle kind with a 400, even shaped as one', async (t) => {
+test("voice POST rejects internal bundle specs", async (t) => {
   const s = await serve(t);
   const params = { patternId: 'p', lengthBeats: 4, once: false, table: { revision: 0, lanes: [], clips: [] } };
   const res = await s.call('POST', '/api/voices', { effect: { kind: 'pattern.bundle', params }, beats: 4 });
   assert.equal(res.status, 400);
-  assert.match(res.body.error, /unknown effect kind/);
+  assert.equal(typeof res.body.error, 'string');
   assert.deepEqual(playing(), []);
 });

@@ -8,7 +8,7 @@ const hue = (degrees) => hsbToColour(degrees / 360, 1, 1);
 const seed = seedFrom('review-selective');
 const access = (state, override = null, source = spec, roll = 0) => createPaletteAccess(source, override, [], seed, roll, state);
 
-test('ordered keyed refreshes keep the current frame and consume repeated keys once next frame', () => {
+test("keyed refreshes consume repeated keys on the next frame", () => {
   const state = preparePalette(spec), a = access(state);
   const before = [0, 1, 6, 7].map((key) => a.colour(0, key));
   assert.deepEqual(before, [250, 0, 280, 280].map(hue));
@@ -39,7 +39,7 @@ test('pending keyed colours clone independently and fixed colours and overrides 
   assert.deepEqual(access(clone, null, source).colour(1, 9), b.colour(1, 9));
 });
 
-test('legacy whole-roll palette vectors stay equal when no keyed changes are requested', () => {
+test("legacy palette rolls are unchanged without keyed refreshes", () => {
   const source = { ...spec, palette: Array.from({ length: 8 }, () => ({ random: true })) };
   const state = preparePalette(source);
   for (let roll = 0; roll < 20; roll++) {
@@ -47,7 +47,7 @@ test('legacy whole-roll palette vectors stay equal when no keyed changes are req
   }
 });
 
-test('keyed cache exclusions cover first four keys and the refreshed key own previous hue', () => {
+test("keyed refreshes exclude recent cache hues", () => {
   const state = preparePalette(spec);
   let a = access(state);
   for (let key = 0; key < 10; key++) a.colour(0, key);
@@ -64,7 +64,7 @@ test('keyed cache exclusions cover first four keys and the refreshed key own pre
   assert.throws(() => a.colour(0, Infinity));
 });
 
-test('renderer checkpoints, spec changes, reset and expiry own the complete pending cache', async () => {
+test("stepper lifecycle retains complete pending palette state", async () => {
   const { harness, row } = await import('../helpers/ldj-harness.js');
   const h = harness('ldj.BLStrobeCycle', row(5), { spec: { palette: [{ random: true }, { random: true }] } });
   const initial = h.draw(0);
@@ -102,7 +102,7 @@ test('ordinary cycling wraps its cache key while explicit lamp keys stay indepen
   assert.deepEqual(next.colour(1), a.palette[1]);
 });
 
-test('frame colours draw independently without changing cached hues or refresh requests', () => {
+test("frame colours leave cached refresh state unchanged", () => {
   const state = preparePalette(spec), a = access(state);
   a.refresh(0);
   const before = structuredClone(state);
@@ -117,7 +117,7 @@ test('frame colours draw independently without changing cached hues or refresh r
   assert.deepEqual(override.frameColour(0, 3, 17), blue);
 });
 
-test('queued keyed refreshes recolour active lamps next render without another row event', async () => {
+test("keyed refreshes recolour active lamps on the next render", async () => {
   const { harness, row, square } = await import('../helpers/ldj-harness.js');
   const { toHex } = await import('../../src/shared/effects/palette.ts');
   for (const name of ['BLStrobeCycle', 'ScatterFill', 'PaletteDrip', 'StrobeCycle']) {
@@ -138,7 +138,7 @@ test('queued keyed refreshes recolour active lamps next render without another r
   }
 });
 
-test('matrix bindings include queued peaks while real RGB blends retain captured endpoints', async () => {
+test("matrix bindings retain queued peaks and captured blend endpoints", async () => {
   const { LdjLamps, LDJ_FRAME_MS } = await import('../../src/shared/effects/ldj-engine.ts');
   const state = preparePalette(spec), a = access(state), lamps = new LdjLamps(2);
   lamps.set(0, a.colour(0, 0), 1, { kind: 'matrix', fadeIn: 44, peak: 88, fadeOut: 44, peakColour: a.colour(0, 1) }, 1);

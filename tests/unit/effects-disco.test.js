@@ -1,3 +1,4 @@
+import { ZodError } from 'zod';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DISCO_DEFAULTS, DISCO_PRESETS, assignDiscoBands, hdAutoStrobeFlash, hdHsbToColour } from '../../src/shared/effects/disco.ts';
@@ -36,7 +37,7 @@ const BASS = [true, false, false], TREBLE = [false, false, true], BASS_TREBLE = 
 // Spectrum releases from full to the default fade floor; `k` is the fraction of the fall done.
 const falling = (k) => 1 + (L(40) - 1) * k;
 
-test('the defaults carry all five channels, the globals and the bands with their floors', () => {
+test("Disco defaults include channels and band floors", () => {
   const shared = { enabled: true, fadeBrightness: 40, fadeSaturation: 255, useAmbience: false, palette: null, strobeOn: false, linkLights: false };
   assert.deepEqual(DISCO_DEFAULTS.channels, [
     { fade: true, allowPulse: true, minHue: 0, maxHue: 10000, idleFadeBrightness: 254, sequenceLength: 8, modulateSaturation: false },
@@ -64,7 +65,7 @@ test('the defaults carry all five channels, the globals and the bands with their
   assert.equal(kindOf('hd.disco').stateful, true);
 });
 
-test('the kind never needs the acknowledgement as a whole: its automatic strobe is gated inside it', () => {
+test("only Disco automatic strobes require acknowledgement", () => {
   const strobing = { allowStrobe: true, channels: channels({ 3: { strobeOn: true } }) };
   assert.equal(requiresAcknowledgement(validateSpec({ kind: 'hd.disco', params: strobing })), false);
   const h = disco(row(3), strobing, { acknowledged: false });
@@ -82,10 +83,10 @@ test('band bins: a 22050/1024 Hz grid, never fewer than two bins, Nyquist includ
   close(perBinFloorDb(1e-5, 0, 1), -53.01029995663981);
 });
 
-test('band edges must ascend within 0..11025 Hz; nothing is clamped', () => {
+test("band edges must ascend within 0..11025 Hz", () => {
   const withBands = (over) => ({ kind: 'hd.disco', params: { bands: { ...DISCO_DEFAULTS.bands, ...over } } });
   for (const bad of [[0, 11026], [300, 200], [100, 100], [-1, 100], [4000, 12000]]) {
-    assert.throws(() => validateSpec(withBands({ treble: bad })), /11025/, JSON.stringify(bad));
+    assert.throws(() => validateSpec(withBands({ treble: bad })), ZodError, JSON.stringify(bad));
   }
   for (const bad of [[NaN, 100], [0, Infinity], [100], [0, 100, 200]]) assert.throws(() => validateSpec(withBands({ bass: bad })), String(bad));
   const edge = validateSpec(withBands({ bass: [0, 1], treble: [11024, 11025] })).params.bands;
@@ -111,28 +112,26 @@ test('the schema rejects what the app cannot play', () => {
   assert.deepEqual(ok.strobe, { palette: ['#FFFFFF'], flashesPerSecond: 5 });
 });
 
-test('lamps are assigned to the enabled band with the fewest lamps, ties Bass < Voice < Treble; a manual assignment wins', () => {
+test("Disco balances lamps across enabled bands", () => {
   const on = [true, true, true];
   assert.deepEqual(assignDiscoBands(['1', '2', '3', '4', '5', '6'], {}, on), [0, 1, 2, 0, 1, 2]);
-  // A fixture's cells share its id and its manual band; the others balance around them.
   assert.deepEqual(assignDiscoBands(['200', '200', '17', '99'], { 200: 'treble' }, on), [2, 2, 0, 1]);
   assert.deepEqual(assignDiscoBands(['17', '200', '99', '200'], { 200: 'treble' }, on), [0, 2, 1, 2]);
   assert.deepEqual(assignDiscoBands(['1', '2', '3', '4'], { 1: 'bass', 2: 'bass' }, on), [0, 0, 1, 2]);
-  // A manual band that is switched off keeps its lamp dark rather than moving it.
   assert.deepEqual(assignDiscoBands(['17', '1', '2', '3'], { 17: 'voice' }, [true, false, true]), [-1, 0, 2, 0]);
   assert.deepEqual(assignDiscoBands(['1', '2'], {}, [false, false, false]), [-1, -1]);
   assert.deepEqual(assignDiscoBands([], {}, on), []);
+});
 
-  // In the kind, fixture ids come with the frame; without them each slot is its own fixture.
+test("manual Disco assignments follow fixture ids", () => {
   const ids = [200, 200, 17, 99];
   const h = disco(row(4), { assign: { 200: 'treble' } });
   h.draw(quiet(0, { fixtureIds: ids }));
   assert.deepEqual(lit(h.draw(live(100, hop(1, { hit: TREBLE }), { fixtureIds: ids }))), [0, 1]);
-  // A changed layout reassigns: fixture 200 now sits in slots 1 and 3.
   assert.deepEqual(full(h.draw(live(300, hop(2, { hit: TREBLE }), { fixtureIds: [17, 200, 99, 200] }))), [1, 3]);
 });
 
-test('a bass hit lights up to three random bass lamps at full in a hue from the band\'s range, transition 0', () => {
+test("bass hits select up to three lamps from the band", () => {
   const h = disco(row(15));
   h.draw(quiet(0));
   const out = h.draw(live(100, hop(1, { hit: BASS })));
@@ -149,7 +148,7 @@ test('a bass hit lights up to three random bass lamps at full in a hue from the 
   out.forEach((s, i) => assert.equal(s.strength, on.includes(i) ? 1 : 0, `slot ${i}: the hit lamps are owned, the rest show the layer below`));
 });
 
-test('a lamp is owned from its first command; before that the layer below shows, and a lamp in no band is owned dark', () => {
+test("Disco owns lamps after their first command", () => {
   const BLACK = { colour: C(0, 0, 0), level: 0, strength: 1 }, CLEAR = { colour: C(0, 0, 0), level: 0, strength: 0 };
   // Slot 1 is pinned to treble, slot 3 to the disabled voice band; 0 and 2 balance into bass.
   const h = disco(row(4), { assign: { 1: 'treble', 3: 'voice' }, channels: channels({ 1: { enabled: false } }) });
@@ -191,7 +190,7 @@ test('neural with channel 4 off renders owned dark and never idles', () => {
   assert.deepEqual(h.draw(quiet(3000)), dark, 'nor does the idle run');
 });
 
-test('the batch is the per-hit cap shared by the enabled bands, empty ones included, at least one lamp', () => {
+test("Disco shares its hit batch across enabled bands", () => {
   const assign = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [i, 'bass']));
   const count = (params) => {
     const h = disco(row(12), { assign, ...params });
@@ -212,32 +211,31 @@ test('the look palette does not replace the band ranges', () => {
   assert.ok(hue >= 207 && hue <= 286, String(hue));
 });
 
-test('with Fade the hit lamps fall to fadeBrightness over max(T + smoothness − 500, 0) ms after a 32 ms delay; Voice (fade off) holds', () => {
-  // One lamp per band: slot 0 bass, 1 voice, 2 treble.
+test("Disco channel fades use elapsed hit time", () => {
   const h = disco(row(3));
   h.draw(quiet(0));
   const hit = h.draw(live(100, hop(1, { hit: [true, true, false] })));
   assert.deepEqual([hit[0].level, hit[1].level], [1, 1]);
   assert.equal(h.draw(quiet(132))[0].level, 1);
-  // T = 100 ms since launch: a 100 ms fall.
   close(h.draw(quiet(182))[0].level, L(147));
   const low = h.draw(quiet(232))[0];
   close(low.level, L(40));
   assert.deepEqual(low.colour, hit[0].colour, 'fadeSaturation 255 keeps the colour');
-  // T = 1000 ms: a 1000 ms fall.
   h.draw(live(1100, hop(2, { hit: BASS })));
   assert.equal(h.draw(quiet(1132))[0].level, 1);
   close(h.draw(quiet(1632))[0].level, L(147));
   assert.equal(h.draw(quiet(2000))[1].level, 1, 'voice holds');
   close(h.draw(quiet(2132))[0].level, L(40));
+});
 
-  // A render that skips the deadline still sees the fall as it ran.
+test("sparse Disco renders finish pending fades", () => {
   const sparse = disco(row(3));
   sparse.draw(quiet(0));
   sparse.draw(live(100, hop(1, { hit: BASS })));
   close(sparse.draw(quiet(250))[0].level, L(40));
+});
 
-  // Smoothness 300 shortens the fall by 200 ms; T is capped at 1400 ms.
+test("Disco smoothness adjusts hit release duration", () => {
   const smooth = disco(row(3), { smoothness: 300 });
   smooth.draw(quiet(0));
   smooth.draw(live(100, hop(1, { hit: BASS })));
@@ -258,7 +256,7 @@ test('a channel accepts a second hit only 100 ms after the first, counted from l
   close(h.draw(quiet(282))[0].level, L(147));
 });
 
-test('one hop is one hit: holding it, or switching to reactive while it is held, never fires again', () => {
+test("a held audio hop cannot trigger a second hit", () => {
   const h = disco(row(3));
   h.draw(quiet(0));
   h.draw(live(100, hop(1, { hit: BASS })));
@@ -278,7 +276,7 @@ test('one hop is one hit: holding it, or switching to reactive while it is held,
   close(h.draw(quiet(1200, { audio: hop(12, { hit: BASS }), audioMode: 'tempo' }))[0].level, L(40));
 });
 
-test('after 2 s without a hit a random batch idles to idleFadeBrightness over 2000 ms, every 2 s', () => {
+test("Disco idles every two seconds without hits", () => {
   const h = disco(row(15));
   h.draw(quiet(0));
   assert.deepEqual(lit(h.draw(quiet(1999))), []);
@@ -302,7 +300,7 @@ test('a sparse render idles at its own time, without replaying the idles it miss
   assert.equal(h.draw(quiet(7000))[0].level, 1);
 });
 
-test('the sequence wraps at sequenceLength and toggles pulse mode when allowed (T = 200 ms)', () => {
+test("Disco sequence wrap toggles permitted pulse mode", () => {
   // Hits 300 ms apart: 100 ms into a fall, an ordinary one (T = 300) and a pulse (200) differ.
   const normal = falling(1 / 3), pulse = L(147), first = L(40);
   const run = (over) => {
@@ -329,7 +327,7 @@ test('the sequence wraps at sequenceLength and toggles pulse mode when allowed (
   close(h.draw(quiet(3132))[0].level, falling(100 / 1400), 'an ordinary fall with T capped at 1400');
 });
 
-test('peak style uses channel 3: one random lamp per peak hit, held 100 ms then released; with fade off it holds; linkLights sends the whole group', () => {
+test("peak hits fade one lamp on channel 3", () => {
   const h = disco(row(4), { style: 'peak' });
   h.draw(quiet(0));
   const on = lit(h.draw(live(100, hop(1, { peakHit: true }))));
@@ -339,32 +337,38 @@ test('peak style uses channel 3: one random lamp per peak hit, held 100 ms then 
   close(h.draw(quiet(350))[i].level, L(147), '300 ms release');
   close(h.draw(quiet(500))[i].level, L(40));
   assert.deepEqual(lit(h.draw(live(600, hop(2, { hit: ALL })))), [i], 'Spectrum hits mean nothing here');
+});
 
-  // Fade off holds the lamp at full: it is not switched off after 100 ms.
+test("peak hits hold when channel fade is disabled", () => {
   const hold = disco(row(4), { style: 'peak', channels: channels({ 3: { fade: false } }) });
   hold.draw(quiet(0));
   const [j] = lit(hold.draw(live(100, hop(1, { peakHit: true }))));
   for (const t of [200, 300, 1000, 2099]) assert.equal(hold.draw(quiet(t))[j].level, 1, `${t}`);
+});
 
-  // Pulse mode keeps the hold and shortens the fall to 200 ms.
+test("peak pulse mode uses a 200 ms release", () => {
   const pulse = disco(row(4), { style: 'peak', channels: channels({ 3: { sequenceLength: 1 } }) });
   pulse.draw(quiet(0));
   const [k] = lit(pulse.draw(live(100, hop(1, { peakHit: true }))));
   assert.equal(pulse.draw(quiet(200))[k].level, 1);
   close(pulse.draw(quiet(300))[k].level, L(147));
   close(pulse.draw(quiet(400))[k].level, L(40));
+});
 
+test("linked peak hits light the whole group", () => {
   const link = disco(row(4), { style: 'peak', channels: channels({ 3: { linkLights: true } }) });
   link.draw(quiet(0));
   assert.deepEqual(full(link.draw(live(100, hop(1, { peakHit: true })))), [0, 1, 2, 3]);
+});
 
+test("disabled peak channels remain dark", () => {
   const off = disco(row(4), { style: 'peak', channels: channels({ 3: { enabled: false } }) });
   off.draw(quiet(0));
   assert.deepEqual(lit(off.draw(live(100, hop(1, { peakHit: true })))), []);
   assert.deepEqual(lit(off.draw(quiet(3000))), [], 'a disabled channel does not idle either');
 });
 
-test('peak hits postpone the idle; the idle washes the whole group, however large', () => {
+test("peak hits postpone whole-group idle", () => {
   const h = disco(row(4), { style: 'peak' });
   h.draw(quiet(0));
   h.draw(live(100, hop(1, { peakHit: true })));
@@ -385,7 +389,7 @@ test('peak hits postpone the idle; the idle washes the whole group, however larg
   assert.notDeepEqual(a, b);
 });
 
-test('neural style uses channel 4: hue from mainFrequency across minHue..maxHue, brightness 254·amplitude, sat = bri when modulating', () => {
+test("neural readings drive channel 4 colour and brightness", () => {
   const h = disco(row(3), { style: 'neural' });
   h.draw(quiet(0));
   const reading = (t, mainFrequency, amplitude) => h.draw(live(t, hop(t, { mainFrequency, amplitude })));
@@ -421,7 +425,7 @@ test('neural style uses channel 4: hue from mainFrequency across minHue..maxHue,
   check(own.draw(live(10, hop(1, { mainFrequency: 0.5, amplitude: 0.5 }))), parseHex('#123456'), 0.5);
 });
 
-test('fresh neural readings postpone the idle; without them channel 4 idles', () => {
+test("neural readings postpone channel 4 idle", () => {
   const h = disco(row(2), { style: 'neural' });
   h.draw(quiet(0));
   h.draw(live(1500, hop(1, { mainFrequency: 0.5, amplitude: 0 })));
@@ -431,7 +435,7 @@ test('fresh neural readings postpone the idle; without them channel 4 idles', ()
   for (const s of out) close(s.level, L(70));
 });
 
-test('automatic strobe: bass and treble in the same frame flash every enabled channel\'s batch in a strobe palette colour, falling to 40 over 200 ms', () => {
+test("coincident bass and treble trigger automatic strobe", () => {
   const palette = ['#FF00FF', '#00FFFF', '#FFFFFF', '#FF0000', '#00FF00', '#0000FF'];
   // A slow smoothness and a high fade floor do not change the flash's fixed fall.
   const h = disco(row(15), { allowStrobe: true, smoothness: 900, strobe: { palette, flashesPerSecond: 2 },
@@ -450,7 +454,7 @@ test('automatic strobe: bass and treble in the same frame flash every enabled ch
   }
 });
 
-test('the automatic strobe flashes no faster than five a second, whatever the manual rate; refused, Spectrum plays the hits', () => {
+test("automatic strobe caps flashes at five per second", () => {
   const h = disco(row(3), { allowStrobe: true });
   h.draw(quiet(0));
   assert.deepEqual(h.draw(live(100, hop(1, { hit: BASS_TREBLE }))).map((s) => s.colour), [WHITE, WHITE, WHITE]);
@@ -479,7 +483,7 @@ test('a flash no channel can take does not use up the permit', () => {
   assert.deepEqual(h.draw(live(350, hop(4, { hit: BASS_TREBLE }))).map((s) => [s.colour, s.level]), [[WHITE, 1], [WHITE, 1], [WHITE, 1]]);
 });
 
-test('a peak flash lights one lamp, even with linkLights; a flash the cap refuses holds instead of pulsing', () => {
+test("peak strobe uses one lamp per accepted flash", () => {
   const h = disco(row(4), { style: 'peak', channels: channels({ 3: { strobeOn: true, linkLights: true } }) });
   h.draw(quiet(0));
   let out = h.draw(live(100, hop(1, { peakHit: true })));
@@ -495,7 +499,7 @@ test('a peak flash lights one lamp, even with linkLights; a flash the cap refuse
   assert.deepEqual(out[full(out)[0]].colour, WHITE);
 });
 
-test('without the acknowledgement or under a manual strobe the music plays on with no automatic flash', () => {
+test("manual strobes and safety suppress automatic flashes", () => {
   for (const over of [{ acknowledged: false }, { manualStrobeActive: true }]) {
     const h = disco(row(3), { allowStrobe: true });
     h.draw(quiet(0, over));
@@ -541,7 +545,7 @@ test('no audio frame: nothing hits, the idle cycle still runs', () => {
   }
 });
 
-test('Hue colours convert as Hue Dynamics streams them: whole degrees of hue / 182.04, truncated bytes', () => {
+test("Hue colour conversion matches stream quantization", () => {
   const vectors = [[0, C(255, 0, 0)], [9000, C(255, 208, 0)], [32768, C(0, 255, 255)], [43690, C(0, 0, 255)], [49151, C(127, 0, 255)],
     [54613, C(255, 0, 255)], [60000, C(255, 0, 131)], [65534, C(255, 0, 4)], [65535, C(255, 0, 4)]];
   for (const [hue, colour] of vectors) assert.deepEqual(hdHsbToColour(hue, 254), colour, String(hue));
@@ -550,7 +554,7 @@ test('Hue colours convert as Hue Dynamics streams them: whole degrees of hue / 1
   assert.deepEqual(hdHsbToColour(9000, 0), WHITE);
 });
 
-test('an override or the effect\'s own palette plays as literal colours; ambience takes only a colour\'s hue', () => {
+test("Disco preserves literal palette colours through release and idle", () => {
   const lamp = parseHex('#11223344');
   const h = disco(row(3), {}, { spec: { palette: ['#11223344'] } });
   h.draw(quiet(0));
@@ -563,20 +567,23 @@ test('an override or the effect\'s own palette plays as literal colours; ambienc
   out = h.draw(quiet(3000));
   assert.deepEqual(out[1].colour, lamp, 'and so does the idle');
   close(out[1].level, 0.5);
+});
 
-  // An override beats the effect's palette, the strobe palette included.
+test("Disco automatic strobes use the palette override", () => {
   const green = parseHex('#00FF00');
   const s = disco(row(3), { allowStrobe: true }, { spec: { palette: ['#11223344'] } });
   s.draw(quiet(0, { paletteOverride: [green] }));
   assert.deepEqual(s.draw(live(100, hop(1, { hit: BASS_TREBLE }), { paletteOverride: [green] })).map((x) => [x.colour, x.level]),
     [[green, 1], [green, 1], [green, 1]]);
+});
 
-  // White and pale colours from a palette stay white and pale.
+test("linked peak hits preserve literal white palettes", () => {
   const pale = disco(row(4), { style: 'peak', channels: channels({ 3: { linkLights: true } }) }, { spec: { palette: ['#FFFFFF'] } });
   pale.draw(quiet(0));
   assert.deepEqual(pale.draw(live(100, hop(1, { peakHit: true })))[0].colour, WHITE);
+});
 
-  // Ambience: a pale pink plays as pure red.
+test("ambience palettes contribute hue only", () => {
   const amb = disco(row(3), { channels: channels({ 0: { useAmbience: true, palette: ['#FF8080'] } }) });
   amb.draw(quiet(0));
   assert.deepEqual(amb.draw(live(100, hop(1, { hit: BASS })))[0].colour, C(255, 0, 0));
