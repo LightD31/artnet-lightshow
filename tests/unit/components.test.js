@@ -26,7 +26,7 @@ async function load() {
         export { Inspector, readRecommendedPreference, savePreset, withRecommended } from './public-src/components/Inspector.jsx';
         export { PaletteEditor, isHexColour, normaliseHex, savePalette } from './public-src/components/PaletteEditor.jsx';
         export { librarySig, socket } from './public-src/state.js';
-        export { Pads, PadEditor, padGlyph, padBody, contentRows } from './public-src/components/Pads.jsx';
+        export { Pads, PadEditor, padGlyph, padBody, contentRows, padChoices } from './public-src/components/Pads.jsx';
         export { StrobePad, StrobeSettings, strobeBody } from './public-src/components/StrobePad.jsx';
         export { createVoiceHolds } from './public-src/hold-control.js';
         export { BUILTIN_PALETTES, CATALOGUE, FAMILIES } from './src/shared/effects/index.ts';
@@ -83,7 +83,7 @@ const LAYOUT = [
   pad(0, 5, 'Glow', { kind: 'preset', id: 'energy.glow' }, 'once'),
   pad(0, 6, 'Domino', { kind: 'preset', id: 'hd.neonDomino' }, 'loop', { targets: [2] }),
   pad(0, 7, '', null),
-  ...Array.from({ length: 8 }, (_, i) => pad(1, i, `Look ${i + 1}`, { kind: 'pattern', id: 'chase' }, 'loop')),
+  ...Array.from({ length: 8 }, (_, i) => pad(1, i, `Look ${i + 1}`, { kind: 'pattern', id: 'groove' }, 'loop')),
 ];
 const STROBE = {
   active: null, mode: null,
@@ -160,10 +160,11 @@ const PRESET_ROWS = ui.CATALOGUE.filter((p) => !p.legacy).map((p) => ({
   id: p.id, name: p.name, desc: p.desc, ...(p.party ? { party: true } : {}), ...(p.pixel ? { pixel: true } : {}),
   app: p.app, family: p.family, rapidFlash: ui.requiresAcknowledgement(p.spec), scope: p.spec.scope ?? null,
 }));
-const LEGACY_ROWS = ui.CATALOGUE.filter((p) => p.legacy).map(({ id, name, desc, party }) => ({ id, name, desc, party }));
+const LEGACY_ROWS = ui.CATALOGUE.filter((p) => p.legacy)
+  .map(({ id, name, desc, party, preset }) => ({ id, name, desc, party, ...(preset ? { preset } : {}), legacy: true }));
 const UPSTREAM_ROWS = [
-  { id: 'chase', name: 'Chase →', desc: 'One fixture at a time, forward' },
-  { id: 'gradient', name: 'Gradient', desc: 'The look\'s colours as a gradient scrolling across the rig', pixel: true },
+  { id: 'chase', name: 'Chase →', desc: 'One fixture at a time, forward', legacy: true },
+  { id: 'gradient', name: 'Gradient', desc: 'The look\'s colours as a gradient scrolling across the rig', pixel: true, legacy: true },
 ];
 const PATTERN_ROWS = [...UPSTREAM_ROWS, ...LEGACY_ROWS, ...PRESET_ROWS];
 const domino = ui.CATALOGUE.find((p) => p.id === 'hd.neonDomino');
@@ -520,15 +521,40 @@ test('the pad editor offers favourites, saved and party presets first, launch, q
   const rows = ui.contentRows([{ id: 'u1', name: 'My Domino', user: true }, ...PATTERN_ROWS], ['chase']);
   assert.deepStrictEqual(rows.slice(0, 2).map((r) => r.id), ['chase', 'u1']);
   assert.ok(rows.findIndex((r) => !r.party && !r.user && r.id !== 'chase') > rows.findIndex((r) => r.party), 'party before the rest');
-  const html = ui.html(ui.h(ui.PadEditor, { entry: LAYOUT[6], onClose: () => {} }));
+  const html = ui.html(ui.h(ui.PadEditor, { entry: LAYOUT[6], onClose: () => {}, initial: { patterns: [{ id: 'groove', name: 'Groove' }] } }));
   assert.match(html, /role="dialog" aria-modal="true" aria-label="Edit pad A7"/);
   assert.match(html, /<option value="preset:hd.neonDomino" selected/);
   assert.match(html, /<option value="preset:u1"/);
-  assert.match(html, /<option value="pattern:chase"/);
+  // Every preset under kind preset, palette-strobe too; a legacy row never as a preset or a pattern.
+  assert.match(html, /<option value="preset:palette-strobe"/);
+  assert.doesNotMatch(html, /value="(?:preset|pattern):(?:chase|gradient|confetti|swirl)"/);
+  // The shelf's patterns: played as one voice, or dropped into the sequence.
+  assert.match(html, /<optgroup label="Patterns, played as one voice"><option value="pattern:groove"[^>]*>Groove</);
+  assert.match(html, /<optgroup label="Patterns, dropped into the sequence"><option value="sequencePattern:groove"[^>]*>Groove</);
   assert.match(html, /name="pad-launch" value="loop" checked/);
   assert.match(html, /<option value="0.25" selected>1\/4 beat</);
   assert.match(html, /<input type="checkbox" value="2" checked[^>]*\/?>(?:<span>)?Par 2/);
   assert.match(html, /<input type="checkbox" value="1"(?! checked)[^>]*\/?>(?:<span>)?Par 1/);
+});
+
+test('the pad editor offers only what a pad can play: presets by kind preset, a legacy look as the preset it was modelled on', () => {
+  const rows = [{ id: 'u1', name: 'My Domino', user: true }, ...PATTERN_ROWS];
+  const shelf = [{ id: 'groove', name: 'Groove' }, { id: 'p2', name: '' }];
+  const { presets, patterns, drops } = ui.padChoices(rows, shelf, ['chase', 'confetti']);
+  const values = presets.map((c) => c.value);
+  // Every saved and built-in preset once, by its own id, whatever the id looks like.
+  assert.deepStrictEqual([...values].sort(), ['preset:u1', ...PRESET_ROWS.map((r) => `preset:${r.id}`)].sort());
+  // The favourites lead: chase is no preset and offers none; confetti offers Voltage Confetti, under its own name.
+  assert.deepStrictEqual(presets.slice(0, 2), [
+    { value: 'preset:hd.voltageConfetti', name: 'Voltage Confetti' }, { value: 'preset:u1', name: 'My Domino' },
+  ]);
+  // Then the other looks' presets in the looks' order, before the rest of the catalogue.
+  const linked = LEGACY_ROWS.filter((r) => r.preset && r.id !== 'confetti').map((r) => `preset:${r.preset}`);
+  assert.deepStrictEqual(values.slice(2, 2 + linked.length), linked);
+  assert.deepStrictEqual(patterns, [{ value: 'pattern:groove', name: 'Groove' }, { value: 'pattern:p2', name: 'p2' }]);
+  assert.deepStrictEqual(drops, [{ value: 'sequencePattern:groove', name: 'Groove' }, { value: 'sequencePattern:p2', name: 'p2' }]);
+  assert.deepStrictEqual(ui.padBody({ label: '', accent: '#123456', content: 'sequencePattern:groove', launch: 'once', quantise: 4, targets: [] }).content,
+    { kind: 'sequencePattern', id: 'groove' });
 });
 
 test('the pad editor sends the fields the server stores; the strobe pad stays held', () => {

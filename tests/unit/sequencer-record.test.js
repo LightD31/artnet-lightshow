@@ -133,7 +133,7 @@ function padRig(t) {
   const store = new PadStore(path.join(dir, 'pads.json')).load();
   const strobe = { hold: () => ({ id: 'strobe-voice' }), release: () => {} };
   const patternVoice = patternPlayer({ voices, pattern: () => null, fixtureIds: () => [0, 1], resolve: () => null });
-  const pads = new Pads({ voices, store, lookup: () => builtinPresets, fixtureIds: () => [0, 1], beat: () => c.beat, strobe, patternVoice });
+  const pads = new Pads({ voices, store, lookup: () => builtinPresets, pattern: () => null, fixtureIds: () => [0, 1], beat: () => c.beat, strobe, patternVoice });
   const heard = [];
   pads.onHit = (hit) => heard.push(hit);
   return { c, pads, store, heard };

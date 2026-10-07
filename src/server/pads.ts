@@ -210,8 +210,8 @@ export class PadStore extends JsonStore {
     this._admit = null;
   }
 
-  // Shapes only: a preset deleted since, or a fixture gone, leaves the pad
-  // assigned (refused at launch), rather than costing the whole layout.
+  // Shapes only: a preset or pattern deleted since, or a fixture gone, leaves
+  // the pad assigned (refused at launch), rather than costing the whole layout.
   load(): this {
     const saved = this.readValid(fileSchema);
     if (saved) this._layout = deepFreeze(ordered(saved.pads));
@@ -304,6 +304,8 @@ export interface PadsOptions {
   store: PadStore;
   /** Presets by id or alias, as a launch reads them now (the library's, saved ones included). */
   lookup: () => PresetLookup;
+  /** A pattern on the sequence shelf by id, or null: what a pattern or sequencePattern pad must name when saved. */
+  pattern: (id: string) => SequencePattern | null;
   /** The patch's fixture ids now. */
   fixtureIds: () => readonly number[];
   /** The beat a sequence pattern is dropped in from. */
@@ -339,18 +341,21 @@ export class Pads {
   declare strobe: StrobeHook | undefined;
   declare _voices: VoiceManager;
   declare _lookup: () => PresetLookup;
+  declare _pattern: (id: string) => SequencePattern | null;
   declare _fixtureIds: () => readonly number[];
   declare _beat: () => number;
   declare _records: PadRecord[];
 
-  constructor({ voices, store, lookup, fixtureIds, beat, insertPattern, patternVoice, strobe }: PadsOptions) {
+  constructor({ voices, store, lookup, pattern, fixtureIds, beat, insertPattern, patternVoice, strobe }: PadsOptions) {
     this.store = store;
     if (typeof patternVoice !== 'function') throw new TypeError('Pads needs a pattern player');
+    if (typeof pattern !== 'function') throw new TypeError('Pads needs the pattern shelf');
     this.insertPattern = insertPattern;
     this.patternVoice = patternVoice;
     this.strobe = strobe;
     this._voices = voices;
     this._lookup = lookup;
+    this._pattern = pattern;
     this._fixtureIds = fixtureIds;
     this._beat = beat ?? (() => 0);
     this._records = [];
@@ -589,12 +594,17 @@ export class Pads {
     return this._records;
   }
 
-  /** What a new assignment names must be there now: its preset, its fixtures. Only what changed is asked. */
+  /** What a new assignment names must be there now: its preset or shelf pattern, its fixtures. Only what changed is asked. */
   _admit(entry: PadEntry, before: PadEntry): PadIssue[] {
     const issues: PadIssue[] = [];
     const { content, targets } = entry;
-    if (content?.kind === 'preset' && canonical(content) !== canonical(before.content) && !this._lookup()(content.id)) {
-      issues.push({ path: ['content', 'id'], message: `No such preset: ${content.id}` });
+    if (content && canonical(content) !== canonical(before.content)) {
+      if (content.kind === 'preset' && !this._lookup()(content.id)) {
+        issues.push({ path: ['content', 'id'], message: `No such preset: ${content.id}` });
+      }
+      if ((content.kind === 'pattern' || content.kind === 'sequencePattern') && !this._pattern(content.id)) {
+        issues.push({ path: ['content', 'id'], message: `No such pattern: ${content.id}` });
+      }
     }
     if (Array.isArray(targets) && canonical(targets) !== canonical(before.targets)) {
       const known = new Set(this._fixtureIds());

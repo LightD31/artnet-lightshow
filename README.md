@@ -1588,13 +1588,20 @@ list of fixture ids. What a pad plays depends on its content:
   shared lane covers the pad's targets, a track lane goes to the selected
   fixtures in patch order (a track with no fixture left is skipped), and the
   pad alone decides its priority and lifetime. `hold` and `loop` repeat the
-  pattern; `once` plays it once. A pattern that is not on the shelf answers
-  404, and one with a rapid-flash clip waits for the acknowledgement like
-  any other.
+  pattern; `once` plays it once. A pattern taken off the shelf since the pad
+  was saved answers 404, and one with a rapid-flash clip waits for the
+  acknowledgement like any other.
 - `strobe` — the strobe while the pad is held (id `strobe`, launch `hold`
   only; `once` and `toggle` answer 409).
 - `sequencePattern` — drops the pattern into the loaded sequence at the
   pad's next grid line.
+
+Saving a pad checks what it newly names: a `preset` must be a saved or
+built-in preset with an effect (a legacy pattern such as `chase` or
+`confetti` is none), and a `pattern` or `sequencePattern` a pattern on the
+shelf; anything else is refused with 400. The pad editor offers only what a
+pad can play: the presets, a party look as the preset it was modelled on
+where there is one, and the shelf's patterns both ways.
 
 A pad is pressed and released (hold), toggled (loop) or fired once, from
 REST, the `voice-hold` socket event, MIDI (the `padPress` action with a

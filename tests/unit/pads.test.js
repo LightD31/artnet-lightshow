@@ -85,7 +85,9 @@ function rig(t, { now = 1000, beat = 0, bpm = 120, running = false, acknowledged
   const patternVoice = patternPlayer({
     voices: manager, pattern: (id) => c.patterns[id] ?? null, fixtureIds: () => c.fixtures, resolve: (id) => presetById(id)?.spec ?? null,
   });
-  const pads = new Pads({ voices: manager, store, lookup: () => builtinPresets, fixtureIds: () => c.fixtures, beat: () => c.beat, patternVoice });
+  const pads = new Pads({
+    voices: manager, store, lookup: () => builtinPresets, pattern: (id) => c.patterns[id] ?? null, fixtureIds: () => c.fixtures, beat: () => c.beat, patternVoice,
+  });
   const advance = (ms) => {
     c.now += ms;
     c.beat += (ms / 60000) * c.bpm;
@@ -312,8 +314,19 @@ test('toggle on a loop pad starts, toggle again stops', (t) => {
 
 // ── Content a later task plays ──────────────────────────────────────────────
 
+const GLOW = { kind: 'energy.glow', params: {} };
+/** Six beats: a shared lane over the pad's fixtures and track slot 1 on the second of them. */
+const GROOVE = {
+  id: 'groove', name: 'Groove', lengthBeats: 6,
+  lanes: [
+    { kind: 'shared', slot: 0, clips: [{ startBeat: 0, lengthBeats: 4, presetId: 'ldj.FadeCycle', targets: 'lane', mute: false }] },
+    { kind: 'track', slot: 1, clips: [{ startBeat: 2, lengthBeats: 4, effect: GLOW, targets: 'lane', mute: false }] },
+  ],
+};
+
 test('a sequencePattern pad is 409 while no `insertPattern` hook is installed', (t) => {
   const { c, voices: m, pads, put } = rig(t, { beat: 10.1, running: true });
+  c.patterns.drop = { ...GROOVE, id: 'drop' };
   put(1, 4, pad({ kind: 'sequencePattern', id: 'drop' }, { quantise: 1 }));
   assert.throws(() => pads.press(1, 4, 'tablet', 't'), refusedWith(409, /pattern/));
   assert.throws(() => pads.once(1, 4), refusedWith(409, /pattern/));
@@ -329,11 +342,33 @@ test('a sequencePattern pad is 409 while no `insertPattern` hook is installed', 
   assert.equal(m.size, 0);
 });
 
-test('a pattern pad plays as one voice with the pad\'s launch; no Pads is built without a pattern player', (t) => {
+test('a pattern or sequencePattern pad saves only naming a pattern on the shelf, alone or in a whole layout', (t) => {
+  const { c, store, put } = rig(t);
+  const before = store.layout();
+  for (const kind of ['pattern', 'sequencePattern']) {
+    assert.throws(() => put(1, 5, pad({ kind, id: 'groove' })), refusedWith(400, /content\.id No such pattern: groove/), kind);
+    assert.throws(() => store.replace(before.map((p, i) => (i === 13 ? { ...p, content: { kind, id: 'groove' } } : p))),
+      refusedWith(400, /13\.content\.id No such pattern: groove/), kind);
+  }
+  assert.deepEqual(store.layout(), before, 'nothing saved');
+  c.patterns.groove = GROOVE;
+  put(1, 4, pad({ kind: 'sequencePattern', id: 'groove' }));
+  put(1, 5, pad({ kind: 'pattern', id: 'groove' }));
+  assert.deepEqual([store.get(1, 4).content, store.get(1, 5).content], [{ kind: 'sequencePattern', id: 'groove' }, { kind: 'pattern', id: 'groove' }]);
+  // Taken off the shelf since, it stays on its pads, and the pad's other fields still save.
+  delete c.patterns.groove;
+  put(1, 5, pad({ kind: 'pattern', id: 'groove' }, { label: 'Kept' }));
+  assert.equal(store.get(1, 5).label, 'Kept');
+});
+
+test('a pattern pad plays as one voice with the pad\'s launch; no Pads is built without a pattern player or the shelf', (t) => {
   const { c, voices: m, pads, put, store } = rig(t);
+  c.patterns.groove = GROOVE;
   put(1, 5, pad({ kind: 'pattern', id: 'groove' }, { launch: 'once', quantise: 0.5, targets: [1] }));
-  assert.throws(() => new Pads({ voices: m, store, lookup: () => builtinPresets, fixtureIds: () => c.fixtures }), /pattern player/);
-  // A pattern not on the shelf is 404, and nothing plays.
+  assert.throws(() => new Pads({ voices: m, store, lookup: () => builtinPresets, pattern: () => null, fixtureIds: () => c.fixtures }), /pattern player/);
+  assert.throws(() => new Pads({ voices: m, store, lookup: () => builtinPresets, fixtureIds: () => c.fixtures, patternVoice: pads.patternVoice }), /shelf/);
+  // A pattern taken off the shelf since it was assigned is 404, and nothing plays.
+  delete c.patterns.groove;
   assert.throws(() => pads.press(1, 5, 'tablet', 't'), refusedWith(404, /groove/));
   assert.throws(() => pads.toggle(1, 5), refusedWith(404, /groove/));
   assert.equal(m.size, 0);
@@ -354,16 +389,6 @@ test('a pattern pad plays as one voice with the pad\'s launch; no Pads is built 
   pads.release(1, 5, 'tablet', 'h');
   assert.equal(pads.lit()[13], null, 'its release is the hold\'s, as any pad\'s');
 });
-
-const GLOW = { kind: 'energy.glow', params: {} };
-/** Six beats: a shared lane over the pad's fixtures and track slot 1 on the second of them. */
-const GROOVE = {
-  id: 'groove', name: 'Groove', lengthBeats: 6,
-  lanes: [
-    { kind: 'shared', slot: 0, clips: [{ startBeat: 0, lengthBeats: 4, presetId: 'ldj.FadeCycle', targets: 'lane', mute: false }] },
-    { kind: 'track', slot: 1, clips: [{ startBeat: 2, lengthBeats: 4, effect: GLOW, targets: 'lane', mute: false }] },
-  ],
-};
 
 test('the pattern player: one bundle voice over the pad\'s fixtures, a once lasting the bundle\'s length unless given one', (t) => {
   const { c, voices: m, pads, put, advance } = rig(t, { bpm: 120 });
@@ -581,7 +606,8 @@ test('a pattern pad over REST plays its saved pattern on the pad\'s fixtures (20
   const look = [lamp(a), lamp(b)];
   const saved = await s.call('POST', '/api/sequence/patterns', onlyClip('fade', { presetId: 'ldj.FadeCycle' }));
   assert.ok(saved.status < 300, JSON.stringify(saved.body));
-  await s.call('PUT', '/api/pads/1/5', pad({ kind: 'pattern', id: 'fade' }, { quantise: 0, targets: [a.id] }));
+  assert.equal((await s.call('PUT', '/api/pads/1/5', pad({ kind: 'pattern', id: 'fade' }, { quantise: 0, targets: [a.id] }))).status, 200);
+  assert.equal((await s.call('PUT', '/api/pads/1/4', pad({ kind: 'sequencePattern', id: 'fade' }))).status, 200);
   assert.equal((await s.call('POST', '/api/pads/1/5/press')).status, 200);
   const id = s.integrations.pads.lit()[13];
   assert.deepEqual(renderInput().voices.filter((v) => v.id === id).map((v) => v.spec.kind), ['pattern.bundle'], 'one bundle voice');
@@ -608,7 +634,7 @@ test('a pattern pad over REST plays its saved pattern on the pad\'s fixtures (20
   await s.call('POST', '/api/pads/1/6/release');
 });
 
-test('PUT a pad entry persists and validates (unknown preset → 400)', async (t) => {
+test('PUT a pad entry persists and validates (unknown preset or pattern → 400)', async (t) => {
   const s = await serve(t);
   const [a, b] = state.fixtures.map((f) => f.id);
   const entry = pad(preset('hd.auroraDrift'), { label: 'Drift', accent: '#06b6d4', launch: 'loop', quantise: 0.5, targets: [b, a, b] });
@@ -630,6 +656,11 @@ test('PUT a pad entry persists and validates (unknown preset → 400)', async (t
   };
   await refused('/api/pads/1/3', { ...entry, content: preset('no.such') }, /content\.id No such preset: no\.such/);
   await refused('/api/pads/1/3', { ...entry, content: preset('strobe') }, /content\.id No such preset: strobe/);
+  // A legacy pattern is no preset, and no pattern on the shelf either.
+  await refused('/api/pads/1/3', { ...entry, content: preset('chase') }, /content\.id No such preset: chase/);
+  await refused('/api/pads/1/3', { ...entry, content: preset('confetti') }, /content\.id No such preset: confetti/);
+  await refused('/api/pads/1/3', { ...entry, content: { kind: 'pattern', id: 'chase' } }, /content\.id No such pattern: chase/);
+  await refused('/api/pads/1/3', { ...entry, content: { kind: 'sequencePattern', id: 'chase' } }, /content\.id No such pattern: chase/);
   await refused('/api/pads/1/3', { ...entry, quantise: -0.25 }, /quantise/);
   await refused('/api/pads/1/3', { ...entry, targets: [999] }, /targets no fixture 999/);
   await refused('/api/pads/1/3', { ...entry, targets: 'all' }, /targets/);
