@@ -3,8 +3,9 @@
 // can never drift. Browser-safe static data; nothing here is mutable.
 
 import type { PaletteEntry } from './types.ts';
+import type { GradientSettings } from '../palette-model.ts';
 
-export interface BuiltinPalette { id: string; app: 'ldj' | 'hd'; colours: readonly PaletteEntry[] }
+export interface BuiltinPalette extends GradientSettings { id: string; name?: string; app: 'ldj' | 'hd' | 'look'; colours: readonly PaletteEntry[] }
 
 const RANDOM = Object.freeze({ random: true as const });
 

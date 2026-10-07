@@ -26,7 +26,8 @@ async function load() {
         export { CommandBar } from './public-src/components/CommandBar.jsx';
         export { createPadPresses, rapidPad, padKey } from './public-src/voice-pad.js';
         export { createVoiceHolds } from './public-src/hold-control.js';
-        export { PalettePads, PaletteOverride, overrideBody, activeOverride, stopAllVoices } from './public-src/components/Perform.jsx';
+        export { stopAllVoices } from './public-src/components/Perform.jsx';
+        export { PaletteStrip, overrideBody, activeOverride } from './public-src/components/PaletteStrip.jsx';
         export { Transport, positionText, beatsPerBar, loopBody, laneRows } from './public-src/components/Transport.jsx';
         export { presetNameOf } from './public-src/preview-inputs.js';
         export { AudioMeters, meterRows, splClass, latencyText } from './public-src/components/AudioMeters.jsx';
@@ -293,12 +294,12 @@ const USER = [{ id: 'mine', name: 'Mine', colours: ['#123456'] }];
 test('palette override strip orders and selects palettes', () => {
   ui.librarySig.value = { status: 'ok', families: [], builtin: [], user: [], palettes: { builtin: BUILTIN, user: USER } };
   given({ paletteOverride: null, userPalettes: USER });
-  let html = ui.html(ui.h(ui.PaletteOverride));
+  let html = ui.html(ui.h(ui.PaletteStrip));
   const names = [...html.matchAll(/class="override-name">([^<]+)</g)].map((m) => m[1]);
   assert.deepStrictEqual(names, ['Off', 'Ldj Fire', 'Hue Dynamics default', 'Mine']);
   assert.match(html, /aria-pressed="true"[^>]*data-override="off"/);
   given({ paletteOverride: ['#123456'], userPalettes: USER });
-  html = ui.html(ui.h(ui.PaletteOverride));
+  html = ui.html(ui.h(ui.PaletteStrip));
   assert.match(html, /aria-pressed="true"[^>]*data-override="mine"/);
   assert.match(html, /aria-pressed="false"[^>]*data-override="off"/);
 });
@@ -320,8 +321,9 @@ test('stop all voices sends DELETE /api/voices', async () => {
 
 test('a named random override lights its palette button with live swatches', () => {
   ui.librarySig.value = { status: 'ok', palettes: { builtin: BUILTIN, user: USER } };
-  given({ paletteOverride: ['#00FF00', '#2A00FF'], paletteOverrideId: 'hdDefault', userPalettes: USER });
-  const html = ui.html(ui.h(ui.PaletteOverride));
+  given({ paletteOverride: ['#00FF00', '#2A00FF'], paletteOverrideId: 'hdDefault',
+    overridePalette: { colours: ['#00FF00', '#2A00FF'] }, userPalettes: USER });
+  const html = ui.html(ui.h(ui.PaletteStrip));
   assert.match(html, /aria-pressed="true"[^>]*data-override="hdDefault"/);
   const lit = html.match(/<button[^>]*data-override="hdDefault"[^>]*>.*?<\/button>/)[0];
   assert.match(lit, /background:\s*#2A00FF/);
@@ -337,6 +339,28 @@ test('clearing the override ignores its old palette id', () => {
   assert.equal(ui.activeOverride(null, BUILTIN, 'hdDefault'), 'off');
 });
 
+test('override inference distinguishes authored gradients from matching flat slots', () => {
+  const body = { colours: ['#FF0000', '#FF8800'], gradients: [{ name: 'uv', space: 'step', wrap: false,
+    stops: [{ at: 0, colour: '#0000000000FF' }, { at: 1, colour: '#0000000000FF' }] }] };
+  assert.equal(ui.activeOverride(body.colours, BUILTIN, null, body), null);
+  given({ paletteOverride: body.colours, overridePalette: body, builtinPalettes: BUILTIN });
+  const html = ui.html(ui.h(ui.PaletteStrip));
+  assert.doesNotMatch(html, /aria-pressed="true"[^>]*data-override="ldjFire"/);
+});
+
+test('named override matching includes every gradient body field', () => {
+  const ramp = (name, space) => ({ name, space, wrap: false, stops: [{ at: 0, slot: 0 }, { at: 1, slot: 1 }] });
+  const body = { colours: ['#FF0000', '#FF8800'], gradients: [ramp('one', 'rgb'), ramp('two', 'step')],
+    sets: [{ name: 'pair', roles: ['one', 'two'] }], gradient: 'one', gradientSet: 'pair', gradientRole: 0 };
+  const saved = [{ id: 'saved', ...body }];
+  assert.equal(ui.activeOverride(body.colours, saved, 'saved', body), 'saved');
+  for (const changed of [
+    { gradients: [ramp('one', 'oklch'), ramp('two', 'step')] },
+    { sets: [{ name: 'pair', roles: ['two', 'one'] }] },
+    { gradient: 'two' }, { gradientSet: null }, { gradientRole: 1 },
+  ]) assert.equal(ui.activeOverride(body.colours, saved, 'saved', { ...body, ...changed }), null);
+});
+
 for (const [name, palette, override, hint] of [
   ['own palette', ['#FF0000'], null, true],
   ['look palette', null, null, false],
@@ -344,10 +368,10 @@ for (const [name, palette, override, hint] of [
 ]) {
   test(`look palettes indicate whether the base uses ${name}`, () => {
     ui.librarySig.value = { builtin: [{ id: 'effect', spec: { palette } }], user: [] };
-    given({ pattern: 'effect', paletteOverride: override, palettes: [{ id: 'look', colors: { 4: [0] } }] });
-    const html = ui.html(ui.h(ui.PalettePads));
+    given({ pattern: 'effect', paletteOverride: override, builtinPalettes: [{ id: 'look', colours: ['#FF0000'] }] });
+    const html = ui.html(ui.h(ui.PaletteStrip, { initialTarget: 'base' }));
     assert.equal(/role="status"/.test(html), hint);
-    assert.match(html, /class="perform-palette /);
+    assert.match(html, /class="override-pad/);
   });
 }
 
@@ -388,9 +412,9 @@ test('loop flips the loaded region on and off, and is unavailable without one', 
 test("transport lists available sequences and marks the loaded one", () => {
   given({ sequence: STATUS, sequences: [{ id: 'set1', name: 'Set one' }, { id: 'set2', name: 'Set two' }] });
   const html = ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } }));
-  assert.match(html, /aria-label="Sequence"/);
-  assert.match(html, /<option value="set1" selected[^>]*>Set one</);
-  assert.match(html, /<option value="set2"[^>]*>Set two</);
+  assert.match(html, /aria-label="Transport source"/);
+  assert.match(html, /<option value="sequence:set1" selected[^>]*>Set one</);
+  assert.match(html, /<option value="sequence:set2"[^>]*>Set two</);
 });
 
 test("playing transport exposes clip position and controls", () => {
@@ -404,21 +428,23 @@ test("playing transport exposes clip position and controls", () => {
 test("paused transport offers play and unloading", () => {
   given({ sequence: { ...STATUS, playing: false, paused: true } });
   assert.match(ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } })), /aria-label="Play"/);
-  assert.match(ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } })), /<option value(="")?[^>]*>No sequence \(back to the look\)</);
+  assert.match(ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } })), /<option value="look"[^>]*>Look by hand</);
 });
 
 test('sequence picker follows shelves received from other clients', () => {
   given({ sequence: STATUS, sequences: [{ id: 'set1', name: 'Set one' }] });
   assert.doesNotMatch(ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } })), /Saved on the tablet/);
   given({ sequence: STATUS, sequences: [{ id: 'set1', name: 'Set one' }, { id: 'tab', name: 'Saved on the tablet' }] });
-  assert.match(ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } })), /<option value="tab"[^>]*>Saved on the tablet</);
+  assert.match(ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } })), /<option value="sequence:tab"[^>]*>Saved on the tablet</);
 });
 
-test('with nothing loaded the transport offers the picker and no position', () => {
-  given({ sequence: { ...STATUS, loaded: null, playing: false, lanes: [] }, sequences: [{ id: 'set1', name: 'Set one' }] });
+test('with no sequence loaded the transport controls the look', () => {
+  given({ running: false, sequence: { ...STATUS, loaded: null, playing: false, lanes: [] }, sequences: [{ id: 'set1', name: 'Set one' }] });
   const html = ui.html(ui.h(ui.Transport, { initial: { sequence: null } }));
-  assert.match(html, /<option value(="")? selected[^>]*>Pick a sequence</);
-  assert.match(html, /aria-label="Play"[^>]*disabled/);
+  assert.match(html, /<option value="look" selected[^>]*>Look by hand</);
+  assert.match(html, /aria-label="Play look"/);
+  assert.doesNotMatch(html, /aria-label="Play look"[^>]*disabled/);
+  assert.doesNotMatch(html, /transport-position/);
 });
 
 const FEED = {

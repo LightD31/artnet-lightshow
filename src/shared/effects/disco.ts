@@ -1,3 +1,4 @@
+import { HEX_COLOUR } from '../palette-model.ts';
 // Hue Dynamics' Disco: lamps answer the hits in three bands (Spectrum), the
 // loudest peaks (Peak) or a running reading of pitch and level (Neural), with
 // idle washes between hits and an automatic strobe. The app streams to its
@@ -218,7 +219,7 @@ export const DISCO_PRESETS: { id: string; name: string; params: DiscoParams }[] 
 // Hues, levels and saturations are the app's integer units. Unknown keys are
 // refused: a misspelt floor or band must not be dropped without a word.
 // Colours stay hex on the wire, as in every other kind's spec.
-const hex = z.string().regex(/^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i, 'expected a hex colour');
+const hex = z.string().regex(HEX_COLOUR, 'expected a hex colour');
 const hue = z.number().int().min(0).max(65535);
 const brightness = z.number().int().min(0).max(FULL);
 const channelSchema = z.object({
@@ -556,7 +557,7 @@ function renderDisco(p: DiscoParams, s: DiscoState, room: Room, f: EffectFrame, 
 // Not a rapidFlash kind: only its automatic strobe needs the acknowledgement,
 // and that is gated where the flash is decided, so the music plays regardless.
 registerKind<DiscoParams, DiscoState>({
-  kind: 'hd.disco', app: 'hd', schema: discoSchema, defaults: { params: DISCO_DEFAULTS, brightness: 1 }, stateful: true,
+  kind: 'hd.disco', level: 'lamp', app: 'hd', schema: discoSchema, defaults: { params: DISCO_DEFAULTS, brightness: 1 }, stateful: true,
   // The automatic strobe's five-a-second limit is the instance's own (lastFlash), where the style can flash at all.
   pacesOwnFlashes: (p) => (p.style === 'spectrum' && !!p.allowStrobe) || (p.style === 'peak' && !!p.channels?.[3]?.strobeOn),
   init: initDisco, render: renderDisco,

@@ -2,6 +2,7 @@
 // and open the page on a view with a clean look.
 
 import { E2E_TRACK } from './paths.js';
+import { resolveRoute } from '../../public-src/views.js';
 
 export async function state(request) {
   const res = await request.get('/api/state');
@@ -22,14 +23,14 @@ export async function reset(request) {
 }
 
 /** The page on `view`, connected and drawn. */
-export async function open(page, view = 'manual', { theme = 'dark' } = {}) {
+export async function open(page, view = 'effects', { theme = 'dark' } = {}) {
   await page.addInitScript((t) => {
     try { localStorage.setItem('lightshow.theme', t); } catch { /* private mode */ }
   }, theme);
   await page.goto(`/#${view}`);
   await page.locator('.offline-veil').waitFor({ state: 'detached' });
   // A view with tabs of its own is named with them: rig/outputs.
-  await page.locator(`#panel-${view.split('/')[0]}`).waitFor();
+  await page.locator(`#panel-${resolveRoute(view).view}`).waitFor();
 }
 
 /** Poll the server until `check(state)` holds, or fail with the last state. */

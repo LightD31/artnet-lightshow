@@ -281,7 +281,7 @@ const paramsSchema = z.object({
 }).strict();
 
 registerKind<VisualizerParams, VisualizerState>({
-  kind: 'ldj.visualizer', app: 'ldj', schema: paramsSchema, defaults: { params: { ...VISUALIZER_DEFAULTS } },
+  kind: 'ldj.visualizer', level: 'lamp', app: 'ldj', schema: paramsSchema, defaults: { params: { ...VISUALIZER_DEFAULTS } },
   stateful: true, rapidFlash: true,
   command(state, cmd, arg) {
     studioCommand(state.bed, cmd, arg);

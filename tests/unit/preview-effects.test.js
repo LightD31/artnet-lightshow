@@ -1,3 +1,4 @@
+import { parseHex } from '../../src/shared/palette-model.ts';
 // The rehearsal preview plays the party effects as the rig does: a base
 // effect in place of the look's pattern and voices over it, stepped through
 // the renderer's own layer on the engine's 44 Hz frame grid. Each parity test
@@ -571,8 +572,8 @@ test("preview voice composition matches the rig", () => {
     // Par 11 at 300: the strobe-tier kill over the later blinder.
     assert.strictEqual(at(300)[1].r, 0);
     // The bar (units 4..7) at 300: the blinder over the uv wash; at 420 past the blinder's deadline, the uv wash.
-    assert.deepStrictEqual([at(300)[4].r, at(300)[7].g], [255, 255]);
-    assert.deepStrictEqual([at(420)[4].r, at(420)[4].b], [0, 0]);
+    assert.deepStrictEqual([at(300)[4].r, at(300)[7].g], [255, 224]);
+    assert.deepStrictEqual([at(420)[4].r, at(420)[4].b], [115, 217]);
   } finally {
     unregisterProfile(BAR.id);
   }
@@ -899,4 +900,63 @@ test('a patch that sets no fade cuts one in progress, as the engine does', () =>
   ]);
   const [first] = sample(1250, [{ maxBrightness: 255 }], COLOR_PRESETS);
   assert.deepStrictEqual([first.r, first.g, first.b], [0, 85, 255]);
+});
+
+const AUTHORED = { colours: ['#102030405060', '#60708090A0B0'], gradients: [
+  { name: 'main', space: 'rgb', wrap: false, stops: [{ at: 0, slot: 0 }, { at: 1, slot: 1 }] },
+] };
+for (const mode of ['base', 'override']) {
+  for (const pattern of ['solid', 'gradient', 'hd.auroraDrift']) {
+    test(`authored ${mode} palette matches preview for ${pattern}`, () => {
+      const times = frames(0, 1000);
+      const original = resolveEffect(pattern);
+      const effect = original ? { ...original, palette: null } : null;
+      const selected = mode === 'base' ? { basePalette: AUTHORED } : { overridePalette: AUTHORED, paletteOverride: AUTHORED.colours.map(parseHex) };
+      const look = { pattern, ...LOOK, split: 2, ...(mode === 'base' ? { basePalette: AUTHORED } : {}) };
+      const rendered = rigRun(PARS, times, () => ({ ...look, ...selected, effect }));
+      const sample = createPreviewSampler([{ timeMs: 0, action: 'patch', data: look }], GRID,
+        { ...selected, paletteOverride: mode === 'override' ? AUTHORED.colours : null, resolveEffect: () => effect });
+      const preview = previewRun(sample, PARS, times);
+      assertSame(rendered, preview, times);
+      assert.ok(preview.some((lights) => lights.some((c) => c.a > 0 && c.uv > 0)), 'amber and UV survive rendering');
+    });
+  }
+}
+
+for (const policy of ['max', 'hold', 'exclude']) {
+  test(`hardware ${policy} playback matches preview and backward seeks`, () => {
+    const fixtures = RIG.map((f, i) => ({ ...f, hardware: { maxFlashHz: i === 0 ? 20 : 1, minTransitionMs: 40 }, admission: policy }));
+    const hardware = { technologies: {}, products: {} };
+    const profiles = Object.fromEntries(fixtures.map((f) => [f.profileId, getProfile(f)]));
+    const times = frames(0, 2500);
+    const effect = OWN.twinkle8;
+    const rendered = rigRun(fixtures, times, () => ({ pattern: 'twinkle8', effect, hardware }));
+    const sample = createPreviewSampler([{ timeMs: 0, action: 'patch', data: { pattern: 'twinkle8', ...LOOK } }], GRID,
+      { resolveEffect, hardware, profiles });
+    assertSame(rendered, previewRun(sample, fixtures, times), times);
+    const backwards = [...times].reverse();
+    assertSame([...rendered].reverse(), previewRun(sample, fixtures, backwards), backwards);
+  });
+}
+
+test('classic patterns obey individual limits in renderer and preview', () => {
+  const fixtures = RIG.map((f, i) => ({ ...f, hardware: { maxFlashHz: i === 0 ? 20 : 1, minTransitionMs: 50 } }));
+  const hardware = { technologies: {}, products: {} }, times = frames(0, 2500);
+  const profiles = Object.fromEntries(fixtures.map((f) => [f.profileId, getProfile(f)]));
+  const look = { ...LOOK, pattern: 'hit', beatDivision: 4 };
+  const rendered = rigRun(fixtures, times, () => ({ ...look, hardware }));
+  const sample = createPreviewSampler([{ timeMs: 0, action: 'patch', data: look }], GRID, { hardware, profiles });
+  assertSame(rendered, previewRun(sample, fixtures, times), times);
+});
+
+test('legacy strobe on a rate-limited Hue matches preview', () => {
+  const fixtures = [{ ...LAMP, hardware: { maxFlashHz: 2, minTransitionMs: 40 } }];
+  const hardware = { technologies: {}, products: {} }, times = frames(0, 2000);
+  const profiles = { [LAMP.profileId]: getProfile(LAMP) };
+  const look = { ...LOOK, pattern: 'strobe', strobeSpeed: 255 };
+  const rendered = rigRun(fixtures, times, () => ({ ...look, hardware }));
+  const sample = createPreviewSampler([{ timeMs: 0, action: 'patch', data: look }], GRID, { hardware, profiles });
+  assertSame(rendered, previewRun(sample, fixtures, times), times);
+  assert.ok(rendered.some((frame) => frame[0].r === 0));
+  assert.ok(rendered.some((frame) => frame[0].r > 0));
 });

@@ -1,7 +1,8 @@
 import { z } from 'zod';
+import { admissionPolicySchema, rateOverrideSchema } from '../shared/hardware.ts';
 import net from 'node:net';
 import { COLOR_PRESETS, AUTO_SOURCES, TEMPO_MODES, SYNC_OFFSET_LIMIT_MS } from './presets.ts';
-import { PALETTE_IDS } from './palettes.ts';
+import { paletteBodySchema } from '../shared/palette-model.ts';
 import { FIXTURE_GROUPS } from '../shared/stage.ts';
 import { EMITTERS, PIXEL_MAPS, MAX_CELLS_PER_FIXTURE, MAX_PROFILE_CHANNELS } from '../shared/rig.ts';
 import { HUE_BRIDGE_ID_RE, stripIssue } from '../shared/placement.ts';
@@ -116,10 +117,9 @@ const patchSchema = z.object({
   strobeFunction: z.string().min(1).max(64).optional(),
   energyOverride: z.union([z.string().min(1).max(64), z.null()]).optional(),
   paletteOverride: paletteOverride.optional(),
-  // Explain unknown palette IDs explicitly so a failed selection is not a generic validation error.
-  palette: z.union([z.enum(PALETTE_IDS as [string, ...string[]]), z.null()], {
-    error: `is not a known palette (${PALETTE_IDS.join(', ')})`,
-  }).optional(),
+  basePalette: paletteBodySchema.nullable().optional(),
+  overridePalette: paletteBodySchema.nullable().optional(),
+  palette: z.string().min(1).max(64).nullable().optional(),
   paletteSize: z.union([z.literal(2), z.literal(3), z.literal(4)]).optional(),
   artnet: artnetSchema.optional(),
   prolinkEnabled: z.boolean().optional(),
@@ -161,6 +161,9 @@ const fixtureAddSchema = z.object({
 }).strict();
 
 const fixtureMessageSchema = z.object({
+  productId: z.string().min(1).max(128).nullable().optional(),
+  hardware: rateOverrideSchema.nullable().optional(),
+  admission: admissionPolicySchema.nullable().optional(),
   id: fixtureId,
   position: fixturePosition.nullable().optional(),
   group: fixtureGroup.nullable().optional(),
@@ -176,6 +179,9 @@ const fixtureMessageSchema = z.object({
 const fixtureRestoreSchema = z.object({
   index: z.number().int().min(0).max(255),
   fixture: z.object({
+    productId: z.string().min(1).max(128).nullable().optional(),
+    hardware: rateOverrideSchema.nullable().optional(),
+    admission: admissionPolicySchema.nullable().optional(),
     id: fixtureId.optional(),
     position: fixturePosition.nullable().optional(),
     group: fixtureGroup.nullable().optional(),
@@ -199,6 +205,8 @@ interface CellCheck {
 }
 
 const profileSchema = z.object({
+  hardware: rateOverrideSchema.optional(),
+  strobeHz: z.object({ min: z.number().nonnegative().max(100), max: z.number().positive().max(100) }).strict().refine((v) => v.min <= v.max).optional(),
   id: z.string().min(1).max(128)
     .refine((v) => !RESERVED_PROFILE_IDS.includes(v), { message: 'is a reserved id' }),
   name: z.string().min(1).max(128),
@@ -305,6 +313,9 @@ const showSchema = z.object({
   artnet: artnetSchema.optional(),
   profiles: z.array(profileSchema).optional(),
   fixtures: z.array(z.object({
+    productId: z.string().min(1).max(128).nullable().optional(),
+    hardware: rateOverrideSchema.nullable().optional(),
+    admission: admissionPolicySchema.nullable().optional(),
     id: fixtureId.optional(),
     position: fixturePosition.nullable().optional(),
     group: fixtureGroup.nullable().optional(),

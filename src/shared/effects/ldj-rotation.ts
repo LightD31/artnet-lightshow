@@ -83,7 +83,7 @@ for (const name of ['Swirl', 'Rotation', 'Beacon', 'Perlin', 'NorthernLights']) 
         if (state.nextAngle >= 360) state.nextAngle -= 360;
         state.nextGradient = wrap(state.nextGradient + 3);
       }
-      const effective = (name === 'Beacon' || noisy) && frame.palette.some((_, i) => randomInput(frame, i)) ? RAINBOW : frame.palette;
+      const effective = !frame.gradient && (name === 'Beacon' || noisy) && frame.palette.some((_, i) => randomInput(frame, i)) ? RAINBOW : frame.palette;
       const palette = effective.length ? effective : [BLACK];
       const sectors = name === 'Beacon' ? palette.flatMap((colour) => [colour, BLACK]) : palette;
       const padded = [palette.length > 1 ? palette[0] : BLACK, ...palette, palette.length > 1 ? palette.at(-1)! : BLACK];
@@ -92,7 +92,8 @@ for (const name of ['Swirl', 'Rotation', 'Beacon', 'Perlin', 'NorthernLights']) 
         let colour: Colour, level = 1;
         if (name === 'Swirl') {
           const phase = wrap(angle + state.angle);
-          if (randomInput(frame, 1)) colour = hsbToColour(Math.trunc(phase) / 360, 1, 1);
+          if (frame.gradient) { colour = frame.gradient.sample(phase / 360); level = f32(Math.sin(phase * Math.PI / 180) / 2 + .5); }
+          else if (randomInput(frame, 1)) colour = hsbToColour(Math.trunc(phase) / 360, 1, 1);
           else { colour = palette[1 % palette.length]; level = f32(Math.sin(phase * Math.PI / 180) / 2 + .5); }
         } else if (noisy) {
           const multiplier = name === 'Perlin' ? 3 : 4, radius = name === 'Perlin' ? 60 : 40;
@@ -100,7 +101,8 @@ for (const name of ['Swirl', 'Rotation', 'Beacon', 'Perlin', 'NorthernLights']) 
           const x = Math.floor(radius * Math.abs(cosine) + centre + room.u[slot] * multiplier);
           const y = Math.floor(radius * cosine * Math.sin(state.angle) + centre + room.v[slot] * multiplier);
           const value = Math.min(f32(.9999999), Math.max(0, state.noise!.at(x, y)!));
-          if (name === 'Perlin') colour = padded[Math.trunc(f32(value * padded.length))];
+          if (frame.gradient) colour = frame.gradient.sample(value);
+          else if (name === 'Perlin') colour = padded[Math.trunc(f32(value * padded.length))];
           else {
             const position = f32(value * (padded.length - 1)), lo = Math.floor(position), hi = Math.ceil(position);
             colour = mixColours(padded[lo], padded[hi], f32(1 - f32(position - lo)));
@@ -108,7 +110,10 @@ for (const name of ['Swirl', 'Rotation', 'Beacon', 'Perlin', 'NorthernLights']) 
         } else {
           const phase = wrap(angle + state.angle), width = 360 / sectors.length;
           const index = Math.floor(phase / width);
-          if (name === 'Rotation' && randomInput(frame, index)) colour = hsbToColour(Math.trunc(wrap(angle + state.gradient)) / 360, 1, 1);
+          if (frame.gradient) {
+            colour = name === 'Beacon' && index % 2 ? BLACK : frame.gradient.sample(phase / 360);
+            if (name === 'Beacon') level = f32(Math.max(0, 1 - Math.abs((index + .5) * width - phase) / (width / 2)));
+          } else if (name === 'Rotation' && randomInput(frame, index)) colour = hsbToColour(Math.trunc(wrap(angle + state.gradient)) / 360, 1, 1);
           else {
             colour = sectors[index];
             if (name === 'Beacon') level = f32(Math.max(0, 1 - Math.abs((index + .5) * width - phase) / (width / 2)));

@@ -2,6 +2,8 @@
 // Specs remain wire data: fixed colours are only parsed when an instance starts.
 
 import { z } from 'zod';
+import { admissionPolicySchema } from '../hardware.ts';
+import { HEX_COLOUR, gradientFields, checkGradients, paletteBodySchema } from '../palette-model.ts';
 import type { EffectKindDef, EffectSpec } from './types.ts';
 
 export const KINDS = new Map<string, EffectKindDef>();
@@ -34,17 +36,19 @@ let internalAdmitted = false;
 
 const paramsSchema = z.record(z.string(), z.unknown());
 const specSchema = z.object({
+  admission: admissionPolicySchema.optional(),
   kind: z.string().refine((kind) => KINDS.has(kind) && (internalAdmitted || !KINDS.get(kind)!.internal), 'unknown effect kind'),
   params: paramsSchema.optional(),
   palette: z.array(z.union([
-    z.string().regex(/^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i, 'expected a hex colour'),
+    z.string().regex(HEX_COLOUR, 'expected a full colour hex value'),
     z.object({ random: z.literal(true) }),
   ])).min(1).max(8).nullable().optional(),
+  ...gradientFields,
   brightness: z.number().min(0).max(1).optional(),
   rapidFlash: z.boolean().optional(),
   minFlashIntervalMs: z.number().min(0).optional(),
   scope: z.enum(['singleBeat', 'measure']).optional(),
-});
+}).superRefine((spec, ctx) => checkGradients(spec, spec.palette?.length ?? 8, ctx));
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -73,6 +77,10 @@ export function validateSpec(raw: unknown, { internal = false }: { internal?: bo
 }
 
 function validateAdmitted(raw: unknown): EffectSpec {
+  if (isRecord(raw) && isRecord(raw.palette)) {
+    const { colours, ...gradient } = paletteBodySchema.parse(raw.palette);
+    raw = { ...raw, ...gradient, palette: colours };
+  }
   const supplied = specSchema.parse(raw);
   const def = KINDS.get(supplied.kind)!;
   // Only absence inherits a recommendation: false, zero and null remain explicit.

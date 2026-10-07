@@ -5,7 +5,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert';
-import { PATTERN_FUNCS, CELL_PATTERNS, PARTY_PATTERNS, roomOf, MAX_LAMP_FLASH_HZ, BACKLIGHT } from '../../src/shared/patterns.ts';
+import { PATTERN_FUNCS, CELL_PATTERNS, LAMP_PATTERNS, PARTY_PATTERNS, roomOf, MAX_LAMP_FLASH_HZ, BACKLIGHT } from '../../src/shared/patterns.ts';
 import { PATTERNS, COLOR_PRESETS } from '../../src/server/presets.ts';
 import { buildRig } from '../../src/shared/rig.ts';
 import { renderLayer } from '../../src/shared/layer.ts';
@@ -53,11 +53,14 @@ const colours = (out) => out.map(([c]) => c);
 const brightest = (out) => dims(out).indexOf(Math.max(...dims(out)));
 const BED = 45;
 
-test('party effects register with the engine, picker and cell renderer', () => {
+test('party effects register on their fixture or pixel level', () => {
   assert.strictEqual(PARTY.length, 18);
+  const lamps = ['position-chase', 'starlight', 'confetti', 'anchor-fill', 'halves', 'flip',
+    'ring-strobe', 'ring-backlit', 'fireworks', 'flashes'];
   for (const id of PARTY) {
     assert.strictEqual(PATTERN_FUNCS[id], PARTY_PATTERNS[id], id);
-    assert.ok(CELL_PATTERNS.has(id), `${id} runs on every cell`);
+    assert.strictEqual(LAMP_PATTERNS.has(id), lamps.includes(id), id);
+    assert.strictEqual(CELL_PATTERNS.has(id), !lamps.includes(id), id);
     const entry = PATTERNS.find((p) => p.id === id);
     assert.ok(entry && entry.party === true && !entry.pixel, `${id} is listed as a party effect`);
   }

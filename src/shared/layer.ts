@@ -1,4 +1,8 @@
-import { PATTERN_FUNCS, CELL_PATTERNS } from './patterns.ts';
+import { hardwareDecision } from './hardware.ts';
+import type { HardwareCaps } from './hardware.ts';
+import type { HardwareClock } from './hardware-clock.ts';
+import type { ResolvedGradient } from './palette-model.ts';
+import { PATTERN_FUNCS, CELL_PATTERNS, LAMP_PATTERNS } from './patterns.ts';
 import { fadeBrightness, grooveBrightness, hitBrightness } from './look-math.ts';
 import { fadePhase, hitPhase } from './beat-clock.ts';
 import type { PatternContext } from './patterns.ts';
@@ -6,6 +10,7 @@ import type { LayerPart, Layout, Rig } from './rig.ts';
 import type { Colour, Expression, PulseReading } from '../types/rig.ts';
 
 export interface LayerLook {
+  gradient?: ResolvedGradient | null;
   pattern: string;
   colors: readonly Colour[];
   split?: number | null;
@@ -17,6 +22,9 @@ export interface LayerLook {
 }
 
 export interface LayerClock {
+  random?: () => number;
+  hardware?: readonly HardwareCaps[];
+  hardwareClock?: HardwareClock;
   beatPos: number;
   step: number;
   anchor: number;
@@ -79,7 +87,7 @@ function spanOf(look: LayerLook): Span | null {
   return look.pixelSpan ? { beats: look.pixelSpan, from: look.pixelFrom ?? 0 } : null;
 }
 
-function paint(rig: Rig, layout: Layout, pattern: string, look: LayerLook, clock: LayerClock | null,
+function paintCore(rig: Rig, layout: Layout, pattern: string, look: LayerLook, clock: LayerClock | null,
   twinkle: number[] | undefined, span: Span | null, set: LayerSet, everyUnit: boolean): void {
   if (!clock) return;
   const { colors } = look;
@@ -94,15 +102,16 @@ function paint(rig: Rig, layout: Layout, pattern: string, look: LayerLook, clock
     return;
   }
   const fn = PATTERN_FUNCS[pattern];
-  if (fn) fn(patternContext(rig, layout, pattern, colors, clock, twinkle ?? clock.twinkle, span, set));
+  if (fn) fn(patternContext(rig, layout, pattern, colors, clock, twinkle ?? clock.twinkle, span, set, look.gradient));
 }
 
 function patternContext(rig: Rig, layout: Layout, pattern: string, colors: readonly Colour[], clock: LayerClock,
-  twinkle: number[], span: Span | null, set: LayerSet): PatternContext {
+  twinkle: number[], span: Span | null, set: LayerSet, gradient?: ResolvedGradient | null): PatternContext {
   const division = Math.max(1, clock.division || 1);
   const stepPos = Math.max(0, clock.beatPos * division - clock.anchor);
   const common = {
-    colors,
+    random: clock.random,
+    colors, gradient,
     step: clock.step,
     stepPos,
     stepPhase: hitPhase(clock.beatPos, division),
@@ -127,6 +136,19 @@ function patternContext(rig: Rig, layout: Layout, pattern: string, colors: reado
       plan,
       noFlash,
       write: (k, colour, dim, strobe) => set(list[k], colour, dim, strobe),
+    };
+  }
+  if (LAMP_PATTERNS.has(pattern)) {
+    const lamps = layout.lamps;
+    const { list, xs, ys, plan, noFlash } = layout.units;
+    return {
+      ...common, fixtureCount: lamps?.slots.length ?? list.length,
+      xs: lamps ? lamps.xs : xs, ys: lamps ? null : ys, plan: lamps ? lamps.plan : plan,
+      noFlash: lamps && noFlash ? lamps.slots.map((slots) => noFlash[slots[0]]) : noFlash,
+      write: (k, colour, dim, strobe) => {
+        if (lamps) for (const cell of lamps.slots[k]) set(list[cell], colour, dim, strobe);
+        else set(list[k], colour, dim, strobe);
+      },
     };
   }
   const { members, order, xs, folded, plan, noFlash } = layout.fixtures;
@@ -165,3 +187,41 @@ function patternContext(rig: Rig, layout: Layout, pattern: string, colors: reado
 export {
   renderLayer,
 };
+
+function paint(rig: Rig, layout: Layout, pattern: string, look: LayerLook, clock: LayerClock | null,
+  twinkle: number[] | undefined, span: Span | null, set: LayerSet, everyUnit: boolean): void {
+  if (!clock?.hardware?.length || pattern === 'solid') {
+    paintCore(rig, layout, pattern, look, clock, twinkle, span, set, everyUnit);
+    return;
+  }
+  const groups = new Map<string, { fixtures: Set<number>; ratio: number; mode: string }>();
+  clock.hardware.forEach((caps, i) => {
+    const decision = hardwareDecision({ flashHz: (clock.bpm || 120) / 60 * clock.division }, caps);
+    const key = decision.mode === 'play' ? 'play' : `${decision.mode}:${caps.maxFlashHz}:${caps.minTransitionMs}`;
+    const group = groups.get(key);
+    if (group) group.fixtures.add(i);
+    else groups.set(key, { fixtures: new Set([i]), ratio: decision.ratio, mode: decision.mode });
+  });
+  const originalTwinkle = [...(twinkle ?? clock.twinkle)];
+  const draws: number[] = [];
+  let first = true;
+  for (const [key, group] of groups) {
+    const { ratio, mode, fixtures } = group;
+    const anchor = clock.anchor / clock.division;
+    const time = clock.hardwareClock?.at(`${pattern}:${key}`, anchor, clock.beatPos, clock.phase, ratio)
+      ?? { beat: anchor + (clock.beatPos - anchor) * ratio, phase: clock.phase * ratio };
+    const beatPos = mode === 'hold' ? anchor + .25 / clock.division : time.beat;
+    const scaled = mode === 'play' ? clock : { ...clock, beatPos, step: Math.max(0, Math.floor(beatPos * clock.division + 1e-9) - clock.anchor), phase: mode === 'hold' ? .25 : time.phase };
+    let draw = 0;
+    const random = () => {
+      if (draw === draws.length) draws.push((clock.random ?? Math.random)());
+      return draws[draw++];
+    };
+    paintCore(rig, layout, pattern, look, { ...scaled, random }, first ? twinkle : [...originalTwinkle], span, (u, colour, dim, strobe) => {
+      if (!fixtures.has(rig.units[u].fixture)) return;
+      const held = mode === 'hold' ? clock.hardwareClock?.hold(`${pattern}:${key}`, u, colour, dim) : null;
+      set(u, held?.colour ?? colour, mode === 'exclude' ? 0 : held?.dim ?? dim, mode === 'hold' ? 0 : strobe);
+    }, everyUnit);
+    first = false;
+  }
+}

@@ -107,28 +107,33 @@ returns 409. If a Deezer ARL is configured, an unsupervised Node process needs
 
 ## Views and controls
 
+An **effect** draws the lights. A **look** combines the base effect, colours and fixture
+settings. A **pattern** is a reusable sequence of clips. Favourites are quick access
+to effects; pad banks launch effects or patterns over the look.
+
 | View | Shortcut | Purpose |
 |------|----------|---------|
-| Manual | 1 | Effects catalogue and inspector, cues, look colours, fixture overrides and stage preview |
-| Auto Show | 2 | Analyse music, choose the playback source, start/stop the generated show and warm a set list |
-| Perform | 3 | Arm outputs, current/next track, live status, sequence transport, pads, strobe, blackout, tap, palette overrides and faders |
-| Timeline | 4 | Inspect sections, rehearse an analysed track and edit its show |
+| Perform | 1 | Arm outputs, pads and Matrix, transport, strobe, blackout, tap, colours and faders |
+| Effects | 2 | Effects catalogue and inspector, cues, look colours, fixture overrides and stage preview |
+| Auto Show | 3 | Analyse music, choose its source, run the generated show; Timeline tab for rehearsal and edits |
+| Sequence | 4 | Create/load sequences; shared transport and recording; lanes, clips and patterns behind Edit |
 | Stage | 5 | Monitor the rendered rig in 3D |
-| Sequence | 0 | Create/load sequences; transport and recording; lanes, clips and patterns behind Edit |
-| Matrix | Shift+0 | Hold colour cells in fireworks, flashes, pulses, cycle or solid mode |
 | Rig | 6 | Plan, patch, fixture profiles and outputs |
 | Sources | 7 | Playback sources, live input, analysis environment and models |
 | Settings | 8 | Show behaviour, safety, MIDI, engine and server access |
 | Preflight | 9 | Run the pre-show checks |
 
 Hashes open a view directly, such as `/#perform` or `/#rig/outputs`.
+Perform opens by default. Old `#manual`, `#timeline` and `#matrix` bookmarks redirect
+to Effects, Auto Show → Timeline and Perform → Matrix. The shared transport names
+the look, Auto Show or sequence it controls.
 The view strip scrolls with its arrow buttons; keyboard arrows, Home and End
 work while a view tab is focused.
 
-Header, Perform, Manual and the stage preview share the same status line:
+Header, Perform, Effects and the stage preview share the same status line:
 base look, sequence transport, visible voices and palette override. The
 highlighted catalogue row identifies the **base**; a sequence or voice may
-be above it. Perform and Manual list visible voices with individual Stop
+be above it. Perform and Effects list visible voices with individual Stop
 buttons. Stop all voices also clears latched and off-bank effects.
 
 Pads with no custom label use the catalogue name on both Perform and the
@@ -174,7 +179,7 @@ Other settings apply immediately. The UI lists pending restart keys.
 | `config/show.json` | Fixture patch and custom profiles |
 | `config/cues.json` | Saved looks |
 | `config/midi-map.json` | Custom MIDI map |
-| `config/effects.json`, `palettes.json`, `pads.json`, `sequences.json` | Effect library, effect palettes, pad layout, sequences and reusable patterns |
+| `config/effects.json`, `palettes.json`, `pads.json`, `sequences.json` | Effect library, palettes, pad layout, sequences and reusable patterns |
 | `config/look.json` | Supervisor recovery snapshot |
 | `cache/` | Analysis cache |
 | `logs/` | Structured logs |
@@ -299,9 +304,9 @@ Hue; use `/api/hue/sync-test` to compare them.
 
 ### Hue flash handling
 
-Hue lamps remain exempt from the generic 1–20 Hz software-strobe emulation
-used for non-Hue fixtures without a strobe channel. Brightness-flash effects
-use `hue.strobe` instead:
+Hardware admission and rate limits apply to Hue lamps, including software
+emulation of strobe-channel requests. Brightness-flash effects use `hue.strobe`
+to choose their presentation within those limits:
 
 - `flash` retains hard cuts and the effect's own background glow.
 - `pulse` falls over 200 ms to a floor of 40/255, or the effect's own glow.
@@ -314,28 +319,33 @@ their output; Colour Strobe and Glow follow the override's first colour.
 
 ## Looks, palettes and cues
 
-The base `pattern` accepts classic pattern ids or effect-preset ids. Manual →
-Effects filters the catalogue by family/library and supports favourites.
+The base `pattern` accepts classic pattern ids or effect-preset ids. Effects filters the catalogue by family/library and supports favourites.
 Editing a built-in saves a copy; user presets are editable and deletable.
 `GET /api/effects` exposes family parameter schemas and preset metadata.
 
-Look palettes and effect palettes are separate controls:
+Base looks, effects and the global override use one palette model and one editor.
+The Perform and Effects palette strip selects its destination: **Base** changes
+look colours; **Override** replaces palettes across the stage. Fixed white, UV
+and blackout energy effects retain their dedicated output.
 
-| Control | Behaviour |
-|---------|-----------|
-| Look palette, `/api/palette/:id` | Writes colour slots A–D for a size of 2, 3 or 4 |
-| Effect preset palette | Supplies colours for that preset |
-| Effect palette override, `/api/palette-override` | Overrides effect palettes without changing look slots |
+A palette contains 1–8 `colours`: `#RGB`, `#RRGGBB`, `#RRGGBBWW`,
+`#RRGGBBWWAA` or `#RRGGBBWWAAUU`, plus `{ random: true }` slots. Named
+`gradients` have ordered stops (`{ at, slot }` or `{ at, colour }`), `rgb`,
+`oklch` or `step` interpolation, and optional wrapping. Named `sets` contain
+up to four gradient roles; `gradientSet` and `gradientRole` select the active
+role. Without authored gradients, effects keep their existing interpolation.
 
-Override accepts 1–8 hex colours or a saved `paletteId`. Random palette slots
-are materialised once per request. Live state contains the colours in
-`paletteOverride` and the selected name's id in `paletteOverrideId`; explicit
-custom colours have a null id. The named selection stays identifiable after
-random colours are rolled.
+`POST /api/set` accepts `basePalette` and `overridePalette` bodies, or null.
+`PUT /api/palette-override` accepts the same body or `{ paletteId }`.
+`paletteOverride` and `paletteOverrideId` remain compatible with existing
+clients. Old indexed palettes retain their curated 2/3/4-colour variants;
+old palette files, presets and cues load without losing colours or Random.
+The library offers every built-in and saved palette in either destination.
 
-A sequence that changes the override captures both its previous colours and
-id. Stop, unload or natural completion restores both unless a manual palette
-change took ownership in the meantime.
+Random stage slots roll once when selected. Cues snapshot full palette bodies.
+A sequence captures the override's colours, gradients and id; stop, unload
+or completion restores that snapshot unless a manual palette change takes
+over. Editing or deleting the saved palette cannot alter that snapshot.
 
 Save a cue from the current look or supply a `look` explicitly. Recall restores
 its pattern/effect, colours, masters, fixture overrides and strobe settings;
@@ -396,7 +406,7 @@ stops the voice. Stop-all or disarm clears the board and pending changes.
 
 | Field | Values/default |
 |-------|----------------|
-| `palette` | 1–6 `#RRGGBB` colours; white |
+| `palette` | 1–6 RGBWAUV hex colours; white |
 | `flashesPerSecond` | Integer 1–5; 2 |
 | `continueBetween` | `true`: underlying look between flashes; `false`: black |
 | `clock` | `beat` default, or `wall` |
@@ -667,7 +677,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/blackout/toggle` · `/api/blackout/on` · `/api/blackout/off` | Master blackout |
 | POST | `/api/pattern/:id` | Set pattern (e.g. `chase`, `rainbow`) or an effect preset as the base look; an unknown id is taken and plays nothing |
 | POST | `/api/color/:slot/:index` | Set colour slot `a`–`d` (index 0–23) |
-| GET | `/api/palettes` | The named looks, their colours at each size, and the one on stage |
+| GET | `/api/palettes` | The unified catalogue and legacy look sizes, plus the selected base |
 | POST | `/api/palette/:id` | Write all four slots from a look (`{ size }` — 2, 3 or 4; default 4) |
 | POST | `/api/energy/:id` · `/api/energy/off` | Latch an energy override (a voice; a strobe one is a 409 until the photosensitivity acknowledgement) · clear it, and end a latched strobe |
 
@@ -680,7 +690,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/effects` | Save a preset of your own (201 `{ ok, preset }`) |
 | PUT · DELETE | `/api/effects/:id` | Change or delete one of yours; a built-in answers that it cannot be changed (save a copy) |
 | POST | `/api/effects/command` | `{ cmd, arg? }` to the effect playing as the base look; answers once the renderer has decided (see [Looks, palettes and cues](#looks-palettes-and-cues)) |
-| GET | `/api/palettes/:id` | One effect palette, built in or yours |
+| GET | `/api/palettes/:id` | One palette, built in or yours |
 | POST · PUT · DELETE | `/api/palettes` · `/api/palettes/:id` | Save (201), change or delete a palette of your own |
 | PUT | `/api/palette-override` | `{ colours: ['#RRGGBB', …] }` (1 to 8) or `{ paletteId }`: override effect palettes (fixed white, UV and blackout energies keep their output); random entries roll once per request; answers `{ ok, paletteOverride }` |
 | DELETE | `/api/palette-override` | Remove it |
@@ -973,10 +983,9 @@ Press **?** in the app for this list.
 | Key | Action |
 |-----|--------|
 | **Space** | Tap tempo — also right after clicking a button; a control reached with Tab keeps Space for itself |
-| **1** / **2** / **3** | Manual / Auto Show / Perform view |
-| **4** / **5** | Timeline / Stage view |
+| **1** / **2** / **3** | Perform / Effects / Auto Show view |
+| **4** / **5** | Sequence / Stage view |
 | **6** / **7** / **8** / **9** | Rig / Sources / Settings / Preflight view |
-| **0** / **Shift+0** | Sequence / Matrix view |
 | **←** **→**, **Home** / **End** on the view tabs | Next / previous / first / last view |
 | **←** **→** **↑** **↓**, **Home** / **End** | Move within the colour grid |
 | **Enter** / **Shift+Enter** | Write the focused swatch into the active slot / the paired slot (A↔B, C↔D) |
@@ -1011,6 +1020,41 @@ install its Chromium with `npx playwright install chromium` when needed.
 Build packages with Node 24 on the target platform. Package/release workflows
 are in `.github/workflows/`; a version tag matching `package.json` drafts the
 release. Preserve repository hooks, CI checks and normal release policies.
+
+## Hardware capability and admission
+
+Settings → Hardware limits defines defaults for DMX, DDP, OpenRGB and Hue,
+plus named product limits. In Rig, select a fixture to choose its product,
+override its flash rate or minimum transition time, and choose its admission
+policy. Profile limits sit above technology defaults; a product overrides
+those, and an individual fixture overrides the product. Show export, import
+and fixture undo retain these fields.
+
+Effects have the same admission choice. When a fixture cannot follow an effect,
+**Play at device maximum** slows its clock while preserving the room geometry;
+**Hold a value** keeps the first lit value; **Exclude** leaves lower voices or
+clips visible (an excluded base is dark). The more restrictive fixture or preset
+policy wins. Classic patterns also obey fixture limits; their hold policy uses
+a fixed point in the pattern. Existing acknowledgement and photosensitivity
+limits remain in force. Perform and the effect inspector show hardware fit;
+Preflight reports unverified limits.
+
+Capabilities include the profile's colour channels, pixel count and hardware
+strobe range. RGB outputs approximate missing white, amber and UV with visible
+RGB. White-only cells continue to respond to their white channels. OFL and
+GDTF imports retain numeric physical strobe rates when the driven standard
+range has a supported increasing mapping. Unknown or nonnumeric mappings retain
+the unverified 1–20 Hz fallback. Software strobes cannot exceed half the render
+frame rate; hardware channels use their profile mapping.
+
+Native strobe previews estimate visible pulses from the quantized profile frequency;
+their phase is a model prediction, not an optical measurement of the fixture.
+Defaults are policy limits, not measurements. A limit is marked measured only
+when both measurement evidence and a verified flash rate covering the configured
+maximum are supplied at the same override level. The 2026-10-07 curtain census
+confirmed full-panel DDP coverage, but its roughly 10 Hz live-view capture cannot
+verify visible flashing at 10–20 Hz. Physical optical calibration remains separate.
+
 
 ## Licence
 

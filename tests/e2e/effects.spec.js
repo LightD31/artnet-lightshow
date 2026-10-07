@@ -26,7 +26,7 @@ test.afterEach(async ({ request }) => {
 });
 
 test('a built-in, changed and saved as a copy, lists as a preset of your own', async ({ page, request }) => {
-  await open(page, 'manual');
+  await open(page, 'effects');
   const search = page.getByLabel('Search effects');
   await search.fill('Neon Domino');
   // The inspector stays closed until Edit is chosen.
@@ -91,7 +91,7 @@ test.describe('on a touch screen', () => {
     .filter((x) => x.h < 44), root);
 
   test('the deck, the chips, the catalogue and the inspector are all at least 44 px', async ({ page }) => {
-    await open(page, 'manual');
+    await open(page, 'effects');
     await page.locator('.effects-group summary').first().click();
     expect(await small(page, '.card.effects')).toEqual([]);
     await page.getByRole('button', { name: 'Edit Neon Domino' }).first().click();

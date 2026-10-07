@@ -1,3 +1,5 @@
+import { parseHex } from '../palette-model.ts';
+export { parseHex, toHex } from '../palette-model.ts';
 import type { Colour } from '../../types/rig.ts';
 import { hash01 } from './hash.ts';
 import type { EffectSpec, ParsedPaletteEntry, Seed } from './types.ts';
@@ -7,23 +9,6 @@ export const LDJ_RANDOM_HUES = [0, 36, 60, 120, 195, 250, 280, 325];
 
 const colour = (r: number, g: number, b: number, w = 0): Colour => ({ r, g, b, w, a: 0, uv: 0 });
 const WHITE = colour(255, 255, 255);
-
-const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
-
-export function parseHex(hex: string): Colour {
-  if (typeof hex !== 'string' || !HEX.test(hex)) throw new Error(`not a hex colour: ${String(hex)}`);
-  const d = hex.slice(1);
-  if (d.length === 3) return colour(...([0, 1, 2].map((i) => parseInt(d[i] + d[i], 16)) as [number, number, number]));
-  const byte = (i: number) => parseInt(d.slice(2 * i, 2 * i + 2), 16);
-  return colour(byte(0), byte(1), byte(2), d.length === 8 ? byte(3) : 0);
-}
-
-// Hex preserves white but has no amber or UV representation.
-export function toHex(c: Colour): string {
-  const two = (v: number | undefined) => Math.max(0, Math.min(255, Math.round(v ?? 0))).toString(16).padStart(2, '0');
-  const w = Math.round(c.w ?? 0) > 0 ? two(c.w) : '';
-  return `#${two(c.r)}${two(c.g)}${two(c.b)}${w}`.toUpperCase();
-}
 
 // Float32 HSV arithmetic and floor(x + 0.5) preserve the preset colour bytes.
 const f32 = Math.fround;

@@ -13,6 +13,32 @@ const rowsAt = (image, x, pixel) => image.rows.flatMap((row, y) => (pixel === un
 const band = (centre, half, height) => Array.from({ length: Math.min(height - 1, centre + half) - Math.max(0, centre - half) + 1 }, (_, i) => Math.max(0, centre - half) + i);
 const redBlue = { spec: { palette: ['#FF0000', '#0000FF'] } };
 
+test('bitmap solids retain RGB, white, amber and UV from a palette', () => {
+  const colour = parseHex('#102030405060');
+  const image = buildBitmap('SolidTest', [colour]);
+  assert.deepEqual(sampleBitmap(image, 'SolidTest', 0, 0, 0), colour);
+});
+
+test('native bitmap transitions interpolate white, amber and UV', () => {
+  const image = buildBitmap('SmoothLoop', [parseHex('#FF0000004080'), parseHex('#0000FF804000')]);
+  const colour = sampleBitmap(image, 'SmoothLoop', -1, 0, 100);
+  assert.deepEqual([colour.w, colour.a, colour.uv], [64, 64, 64]);
+});
+
+test('bitmap gradients follow live override roles without restarting scroll', () => {
+  const gradient = (name, colour) => ({ name, space: 'step', wrap: false,
+    stops: [{ at: 0, colour }, { at: 1, colour }] });
+  const body = { gradients: [gradient('amber', '#00000000FF'), gradient('uv', '#0000000000FF')],
+    sets: [{ name: 'pair', roles: ['amber', 'uv'] }], gradientSet: 'pair', gradientRole: 0 };
+  const h = harness('ldj.bitmap', row(3), { params: { pattern: 'SmoothLoop' }, ...redBlue });
+  const frame = { ...at(12), paletteOverride: [RED, BLUE], overrideGradient: body };
+  assert.ok(h.draw(frame).every((slot) => slot.colour.a === 255 && slot.colour.uv === 0));
+  const image = h.state().image;
+  assert.ok(h.draw({ ...frame, overrideGradient: { ...body, gradientRole: 1 } }).every((slot) => slot.colour.uv === 255 && slot.colour.a === 0));
+  assert.notEqual(h.state().image, image);
+  assert.equal(h.state().originMs, 0);
+});
+
 test("bitmap kinds register all patterns with defaults", () => {
   assert.deepEqual(BITMAP_PATTERNS, ['SolidTest', 'SmoothLoop', 'SmoothMirror', 'VertLines',
     'ThickPaletteLoop', 'ThinPaletteLoop', 'ThickPaletteMirror', 'ThinPaletteMirror',
@@ -166,7 +192,7 @@ test('singletons are copied and padded with black before a black-background pref
   assert.equal(black.width, 400); assert.equal(black.rows[31][0], pack(RED));
   assert.equal(black.rows[0][0], 0); assert.equal(black.rows[31][200], 0);
   const whiteDie = buildBitmap('SolidTest', [parseHex('#123456FF')]);
-  assert.deepEqual(sampleBitmap(whiteDie, 'SolidTest', 0, 0, 0), parseHex('#123456'));
+  assert.deepEqual(sampleBitmap(whiteDie, 'SolidTest', 0, 0, 0), parseHex('#123456FF'));
 });
 
 test("bitmap sampling wraps floored coordinates by height", () => {

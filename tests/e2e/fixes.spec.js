@@ -12,7 +12,7 @@ test('Space taps tempo without retriggering a clicked button', async ({ page, re
     const [event] = JSON.parse(payload.slice(2));
     if (event === 'tap') taps.push(event);
   }));
-  await open(page, 'manual');
+  await open(page, 'effects');
   await page.locator('.cb-blackout').click();
   await until(request, (s) => s.masterBlackout === true);
   // Clicked again, so focus is left on the button, as a click leaves it.
@@ -24,7 +24,7 @@ test('Space taps tempo without retriggering a clicked button', async ({ page, re
 });
 
 test('a tempo can be typed, to a tenth', async ({ page, request }) => {
-  await open(page, 'manual');
+  await open(page, 'effects');
   await page.getByRole('button', { name: /Press to type a tempo/ }).click();
   const field = page.getByRole('spinbutton', { name: 'Tempo, BPM' });
   await field.fill('128.5');
@@ -37,7 +37,7 @@ test('a tempo can be typed, to a tenth', async ({ page, request }) => {
 });
 
 test('the division row goes to 1/16', async ({ page, request }) => {
-  await open(page, 'manual');
+  await open(page, 'effects');
   await page.getByRole('button', { name: '1/16', exact: true }).click();
   await until(request, (s) => s.beatDivision === 16);
 });

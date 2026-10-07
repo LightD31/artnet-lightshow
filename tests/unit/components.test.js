@@ -28,7 +28,7 @@ async function load() {
         export { VIEWS } from './public-src/views.js';
         export { CommandBar } from './public-src/components/CommandBar.jsx';
         export { Effects, PhotosensitivityConfirm, editingSig, filterByLibrary, groupRows, quickDeck, tapRow, usePress } from './public-src/components/Effects.jsx';
-        export { Inspector, readRecommendedPreference, savePreset, withRecommended } from './public-src/components/Inspector.jsx';
+        export { Inspector, SingleColourField, readRecommendedPreference, savePreset, withRecommended } from './public-src/components/Inspector.jsx';
         export { PaletteEditor, isHexColour, normaliseHex, savePalette } from './public-src/components/PaletteEditor.jsx';
         export { librarySig, socket, followMusic } from './public-src/state.js';
         export { Pads, PadEditor, padGlyph, padBody, contentRows, padChoices } from './public-src/components/Pads.jsx';
@@ -103,9 +103,10 @@ test('the Perform view has blackout, the bank, the strobe, tap and stop all', ()
   assert.deepStrictEqual(names, ['Blackout', 'Tap', 'Stop all voices']);
   assert.deepStrictEqual(padLabels(html), ['Kill', 'Blinder', 'Strobe', 'Colour strobe', 'UV', 'Glow', 'Domino', 'Empty']);
   assert.match(html, /class="strobe-hold"/);
-  assert.strictEqual(count(html, 'aria-pressed="true"'), 2, 'only the palette in use and the override\'s Off are pressed');
+  assert.strictEqual(count(html, 'aria-pressed="true"'), 2, 'the Override destination and Off are pressed');
   assert.match(html, /aria-pressed="true" data-override="off"/, 'no palette override: Off is pressed');
-  assert.match(html, /class="perform-palette active" aria-pressed="true"><span[^>]*>.*?Volcanic/);
+  assert.match(html, /aria-label="Palette destination"/);
+  assert.match(html, />Base<.*>Override</);
   assert.match(html, /aria-valuetext="50 percent"/, 'the master, as a person reads it');
   assert.match(html, /aria-valuetext="70 percent"/, 'the show\'s intensity');
   assert.match(html, /Nothing loaded/);
@@ -242,7 +243,7 @@ test('Effects groups presets by source and family', () => {
   givenLibrary({});
   const html = ui.html(ui.h(ui.Effects, {}));
   const groups = [...html.matchAll(/class="effects-group-title">([^<]+)</g)].map((m) => m[1]);
-  assert.deepStrictEqual(groups, ['Hue Dynamics', 'Light DJ', 'Own', 'Upstream patterns']);
+  assert.deepStrictEqual(groups, ['Hue Dynamics', 'Light DJ', 'Own', 'Classic effects']);
   // A family heads its presets.
   assert.match(html, /Position Chase<\/[^>]+>(?:(?!effects-family-title).)*data-id="hd\.neonDomino"/s);
   assert.match(html, /effects-family-title">Disco<\/[^>]+>(?:(?!effects-family-title).)*data-id="hd\.disco\.pop"/s);
@@ -289,7 +290,7 @@ test("Library groups saved presets before the other custom families", () => {
   const grouped = ui.groupRows([{ id: 'u1', name: 'Mine', user: true, scope: 'measure' }, ...PATTERN_ROWS], ui.FAMILIES);
   assert.deepStrictEqual(grouped.map((g) => g.app), ['hd', 'ldj', 'own', 'upstream']);
   assert.deepStrictEqual(grouped[2].families.map((f) => f.name), ['Your presets', 'Party Looks', 'Energy']);
-  assert.deepStrictEqual(grouped[3].families.map((f) => f.name), ['Patterns', 'Pixel effects']);
+  assert.deepStrictEqual(grouped[3].families.map((f) => f.name), ['Effects', 'Pixel effects']);
 });
 
 test("Position Chase inspector exposes ordered envelope controls", () => {
@@ -366,6 +367,49 @@ test("hex colour input accepts supported channel widths", () => {
 test("hex colours normalize to uppercase full width", () => {
   assert.strictEqual(ui.normaliseHex('#abc'), '#AABBCC');
   assert.strictEqual(ui.normaliseHex('#aabbccdd'), '#AABBCCDD');
+});
+
+function singleColourInputs(value, onChange) {
+  const walk = (node) => !node || typeof node !== 'object' ? [] : [node, ...[node.props?.children].flat(Infinity).flatMap(walk)];
+  return walk(ui.SingleColourField({ value, onChange }));
+}
+
+test('single-colour envelopes display every stored emitter channel', () => {
+  const html = ui.html(ui.h(ui.SingleColourField, { value: '#123456789ABC', onChange: () => {} }));
+  assert.match(html, /id="insp-rgbEnvelope-singleColour"[^>]*value="#123456789ABC"/);
+  assert.match(html, /aria-label="Single colour W"[^>]*value="120"/);
+  assert.match(html, /aria-label="Single colour A"[^>]*value="154"/);
+  assert.match(html, /aria-label="Single colour UV"[^>]*value="188"/);
+});
+
+test('single-colour RGB picker edits preserve white, amber and UV', () => {
+  const changes = [];
+  const inputs = singleColourInputs('#123456789ABC', (next) => changes.push(next));
+  inputs.find((node) => node.props?.type === 'color').props.onInput({ target: { value: '#abcdef' } });
+  assert.deepStrictEqual(changes, ['#ABCDEF789ABC']);
+});
+
+test('single-colour hex entry accepts full emitter values', () => {
+  const changes = [];
+  const inputs = singleColourInputs('#FFFFFF', (next) => changes.push(next));
+  const field = inputs.find((node) => node.props?.id === 'insp-rgbEnvelope-singleColour');
+  field.props.onCommit('#123456789abc');
+  assert.deepStrictEqual(changes, ['#123456789ABC']);
+});
+
+test('single-colour emitter inputs preserve the other channels', () => {
+  const changes = [];
+  const inputs = singleColourInputs('#123456789ABC', (next) => changes.push(next));
+  inputs.find((node) => node.props?.['aria-label'] === 'Single colour UV').props.onCommit(64);
+  assert.deepStrictEqual(changes, ['#123456789A40']);
+});
+
+test('single-colour controls ignore invalid emitter values', () => {
+  const changes = [];
+  const inputs = singleColourInputs('#FFFFFF', (next) => changes.push(next));
+  inputs.find((node) => node.props?.id === 'insp-rgbEnvelope-singleColour').props.onCommit('invalid');
+  inputs.find((node) => node.props?.['aria-label'] === 'Single colour UV').props.onCommit(256);
+  assert.deepStrictEqual(changes, []);
 });
 
 test("palette editor marks invalid colours and offers saved palettes", () => {

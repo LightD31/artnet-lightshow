@@ -1,14 +1,12 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
+import { HEX_COLOUR, parseHex, toHex, paletteBodySchema } from '../../src/shared/palette-model.ts';
+import { GradientEditor, gradientSettings } from './GradientEditor.jsx';
 import { api, patchLibrary } from '../state.js';
 
-// Palettes travel as hex: #RGB, #RRGGBB or #RRGGBBWW, as the server's palette
-// store takes them. A Light DJ "Random" entry stays a sentinel until an
-// instance rolls it, so the editor shows it as a word rather than a colour.
-const HEX_RE = /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 export const MAX_COLOURS = 8;
 
 export function isHexColour(value) {
-  return typeof value === 'string' && HEX_RE.test(value);
+  return typeof value === 'string' && HEX_COLOUR.test(value);
 }
 export const isRandom = (entry) => !!entry && typeof entry === 'object' && entry.random === true;
 
@@ -41,7 +39,8 @@ export function paletteName(palette) {
 
 /** Save colours as a palette of your own; the page's library takes it at once. */
 export async function savePalette(name, colours) {
-  const res = await api('/api/palettes', { method: 'POST', body: JSON.stringify({ name, colours }) });
+  const body = Array.isArray(colours) ? { colours } : colours;
+  const res = await api('/api/palettes', { method: 'POST', body: JSON.stringify({ name, ...body }) });
   if (res.ok && res.palette) {
     patchLibrary((lib) => ({
       ...lib, palettes: { ...lib.palettes, user: [...lib.palettes.user.filter((p) => p.id !== res.palette.id), res.palette] },
@@ -50,24 +49,21 @@ export async function savePalette(name, colours) {
   return res;
 }
 
-/**
- * One to eight colours, each a swatch that opens the native picker beside a
- * hex field, or Light DJ's Random; a whole palette picked from the built-ins
- * and the ones saved here; the lot saved as a palette of your own.
- */
-export function PaletteEditor({ colours, onChange, onInvalid, builtin = [], user = [], label = 'Palette' }) {
+export function PaletteEditor({ colours, onChange, body, onBodyChange, onInvalid, builtin = [], user = [], label = 'Palette' }) {
   // What is typed into a hex field, by index, kept while it is edited; the
   // stored colour is written back on blur or Enter.
   const texts = useRef({});
   const [, redraw] = useState(0);
   const [naming, setNaming] = useState(false);
   const [name, setName] = useState('');
-  const list = Array.isArray(colours) ? colours : [];
+  const list = body?.colours ?? (Array.isArray(colours) ? colours : []);
+  const palette = { ...gradientSettings(body || {}), colours: list };
   // Colours changed from outside (revert, recommended, another family) drop what was typed.
   const own = useRef(list);
   if (!sameColours(list, own.current)) { own.current = list; texts.current = {}; }
   const setTexts = (next) => { texts.current = next; redraw((n) => n + 1); };
-  const emit = (next) => { own.current = next; onChange(next); };
+  const emitBody = (next) => { own.current = next.colours; if (onBodyChange) onBodyChange(next); else onChange(next.colours); };
+  const emit = (next) => emitBody({ ...palette, colours: next });
   const setAt = (i, entry) => emit(list.map((c, j) => (j === i ? entry : c)));
   const typed = (i, text) => {
     setTexts({ ...texts.current, [i]: text });
@@ -81,25 +77,31 @@ export function PaletteEditor({ colours, onChange, onInvalid, builtin = [], user
   const picked = (i, value) => {
     const { [i]: _done, ...rest } = texts.current;
     setTexts(rest);
-    setAt(i, normaliseHex(value));
+    const extra = isHexColour(list[i]) ? normaliseHex(list[i]).slice(7) : '';
+    setAt(i, normaliseHex(value) + extra);
   };
-  const remove = (i) => { setTexts({}); emit(list.filter((_, j) => j !== i)); };
+  const remove = (i) => {
+    setTexts({});
+    emitBody({ ...palette, colours: list.filter((_, j) => j !== i), gradients: palette.gradients.map((g) => ({ ...g,
+      stops: g.stops.map((s) => 'slot' in s ? { ...s, slot: Math.min(list.length - 2, s.slot >= i ? Math.max(0, s.slot - 1) : s.slot) } : s) })) });
+  };
   const add = (entry) => emit([...list, entry]);
   const pickPalette = (e) => {
     const palette = [...builtin, ...user].find((p) => p.id === e.target.value);
     e.target.value = '';
     if (!palette) return;
     setTexts({});
-    emit([...palette.colours]);
+    emitBody({ ...gradientSettings(palette), colours: [...palette.colours] });
   };
   const textAt = (entry, i) => (texts.current[i] !== undefined ? texts.current[i] : (isRandom(entry) ? '' : entry));
-  const anyInvalid = list.some((entry, i) => !isRandom(entry) && !isHexColour(textAt(entry, i)));
+  const parsed = paletteBodySchema.safeParse(palette);
+  const anyInvalid = !parsed.success || list.some((entry, i) => !isRandom(entry) && !isHexColour(textAt(entry, i)));
   useEffect(() => { if (onInvalid) onInvalid(anyInvalid); }, [anyInvalid]);
   useEffect(() => () => { if (onInvalid) onInvalid(false); }, []);
   const save = async () => {
     const trimmed = name.trim();
     if (!trimmed || !list.length || anyInvalid) return;
-    const res = await savePalette(trimmed, list);
+    const res = await savePalette(trimmed, onBodyChange ? palette : list);
     if (res.ok) { setNaming(false); setName(''); }
   };
   const byApp = (app) => builtin.filter((p) => p.app === app);
@@ -118,9 +120,17 @@ export function PaletteEditor({ colours, onChange, onInvalid, builtin = [], user
                 <span class="palette-swatch" style={{ background: pickerValue(entry) }}>
                   <input type="color" aria-label={`Colour ${i + 1} picker`} value={pickerValue(entry)} onInput={(e) => picked(i, e.target.value)} />
                 </span>
-                <input type="text" class="palette-hex" aria-label={`Colour ${i + 1}`} value={text} maxLength={9} spellcheck={false}
+                <input type="text" class="palette-hex" aria-label={`Colour ${i + 1}`} value={text} maxLength={13} spellcheck={false}
                   aria-invalid={invalid ? 'true' : undefined} onInput={(e) => typed(i, e.target.value)}
                   onBlur={() => settle(i)} onKeyDown={(e) => { if (e.key === 'Enter') settle(i); }} />
+                <details class="palette-emitters"><summary>W / A / UV</summary>
+                  {['w', 'a', 'uv'].map((die) => <label key={die}>{die.toUpperCase()}
+                    <input type="number" min="0" max="255" step="1" aria-label={`Colour ${i + 1} ${die.toUpperCase()}`}
+                      value={isHexColour(entry) ? parseHex(entry)[die] : 0} onInput={(e) => {
+                        if (isHexColour(entry)) setAt(i, toHex({ ...parseHex(entry), [die]: Number(e.target.value) }));
+                      }} />
+                  </label>)}
+                </details>
               </>}
               <button type="button" class="btn xs" aria-label={`Remove colour ${i + 1}`} disabled={list.length <= 1} onClick={() => remove(i)}>×</button>
             </div>
@@ -133,9 +143,12 @@ export function PaletteEditor({ colours, onChange, onInvalid, builtin = [], user
           <button type="button" class="btn sm" title={randomTitle} onClick={() => add({ random: true })}>+ Random</button>
         </div>
       )}
+      {onBodyChange && <GradientEditor body={palette} onChange={emitBody} />}
+      {!parsed.success && <p class="error" role="alert">{parsed.error.issues[0].message}</p>}
       <div class="palette-tools">
         <select class="auto-select" aria-label="Pick a palette" value="" onChange={pickPalette}>
           <option value="">Pick a palette…</option>
+          {!!byApp('look').length && <optgroup label="Stage palettes">{byApp('look').map((p) => <option key={p.id} value={p.id}>{paletteName(p)}</option>)}</optgroup>}
           {byApp('ldj').length > 0 && (
             <optgroup label="Light DJ">{byApp('ldj').map((p) => <option key={p.id} value={p.id}>{paletteName(p)}</option>)}</optgroup>
           )}

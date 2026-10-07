@@ -9,10 +9,10 @@ const AXE = createRequire(import.meta.url).resolve('axe-core/axe.min.js');
 test.beforeEach(async ({ request }) => { await reset(request); });
 
 for (const theme of ['dark', 'light', 'red']) {
-  for (const view of ['manual', 'auto', 'perform', 'timeline', 'stage', 'rig', 'rig/profiles', 'rig/outputs', 'sources', 'settings', 'preflight']) {
+  for (const view of ['effects', 'auto', 'perform', 'perform/matrix', 'auto/timeline', 'sequence', 'stage', 'rig', 'rig/profiles', 'rig/outputs', 'sources', 'settings', 'preflight']) {
     test(`${view}, ${theme} theme`, async ({ page, request }) => {
       // The show's views, with a show to show.
-      const withTrack = view === 'timeline' || view === 'stage';
+      const withTrack = view === 'auto/timeline' || view === 'stage';
       if (withTrack) await loadTrack(request);
       await open(page, view, { theme });
       if (view === 'preflight') {
@@ -36,7 +36,7 @@ test('the setup wizard, every step', async ({ page, request }) => {
   test.setTimeout(90_000);
   await request.put('/api/settings', { data: { setup: { completed: false } } });
   try {
-    await open(page, 'manual');
+    await open(page, 'effects');
     const dialog = page.getByRole('dialog', { name: /Set up the rig/ });
     await page.addScriptTag({ path: AXE });
     for (const step of ['Welcome', 'Outputs', 'Fixtures', 'Placement', 'Music', 'Check']) {

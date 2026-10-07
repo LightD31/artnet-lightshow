@@ -1,3 +1,4 @@
+import { HEX_COLOUR } from '../palette-model.ts';
 // Hue Dynamics Party's ten families share timing and colours, while each keeps
 // its own spatial kernel, recommended controls and audio response. All times
 // here are beats, so the worker and the rehearsal preview use the same clock.
@@ -5,7 +6,7 @@
 import { z } from 'zod';
 import type { ZodType } from 'zod';
 import type { Colour } from '../../types/rig.ts';
-import type { Room } from '../room.ts';
+import type { LampRoom, Room } from '../room.ts';
 import { activeEvents, composeEvents, curveApply, envelopeLength, eventInterval, EventAdmission, isReversed, sampleEnvelope, staggerOffset } from './envelope.ts';
 import { hash01 } from './hash.ts';
 import { parseHex, samplePalette } from './palette.ts';
@@ -43,7 +44,7 @@ const unit = z.number().min(0).max(1);
 const beats = z.number().min(0);
 const ahdsrSchema = z.object({ attack: unit, hold: unit, decay: unit, sustain: unit, release: unit, peak: unit.optional() });
 const rgbSchema = z.object({
-  colourMode: z.enum(['all', 'singleColour']), singleColour: z.string().regex(/^#[0-9a-f]{6}$/i, 'expected an RGB hex colour'),
+  colourMode: z.enum(['all', 'singleColour']), singleColour: z.string().regex(HEX_COLOUR, 'expected a full colour hex value'),
   r: ahdsrSchema, g: ahdsrSchema, b: ahdsrSchema, brightness: ahdsrSchema,
 });
 // Unsupported controls still round-trip when switching families. Capability
@@ -224,17 +225,17 @@ function sampleAhdsr(e: Ahdsr, progress: number, curve: Curve): number {
 }
 function renderAdsr(p: HdParams, s: HdState, room: Room, frame: EffectFrame, out: EffectSlot[]): void {
   const progress = frac(Math.max(0, frame.beatPos - frame.anchorBeat) / scopedLoopLength(frame.spec, p));
-  let r: number, g: number, b: number;
+  let colour: Colour, level: number;
   if (s.rgb.colourMode === 'singleColour') {
-    const level = sampleAhdsr(s.rgb.brightness, progress, p.curve);
-    r = s.single.r / 255 * level; g = s.single.g / 255 * level; b = s.single.b / 255 * level;
+    const peak = Math.max(s.single.r, s.single.g, s.single.b, s.single.w ?? 0, s.single.a ?? 0, s.single.uv ?? 0) / 255;
+    level = peak * sampleAhdsr(s.rgb.brightness, progress, p.curve);
+    const channel = (key: keyof Colour) => Math.round((s.single[key] ?? 0) / peak);
+    colour = level > 0 ? { r: channel('r'), g: channel('g'), b: channel('b'), w: channel('w'), a: channel('a'), uv: channel('uv') } : BLACK;
   } else {
-    r = sampleAhdsr(s.rgb.r, progress, p.curve); g = sampleAhdsr(s.rgb.g, progress, p.curve); b = sampleAhdsr(s.rgb.b, progress, p.curve);
+    const r = sampleAhdsr(s.rgb.r, progress, p.curve), g = sampleAhdsr(s.rgb.g, progress, p.curve), b = sampleAhdsr(s.rgb.b, progress, p.curve);
+    level = Math.max(r, g, b);
+    colour = level > 0 ? { r: Math.round(255 * r / level), g: Math.round(255 * g / level), b: Math.round(255 * b / level), w: 0, a: 0, uv: 0 } : BLACK;
   }
-  const level = Math.max(r, g, b);
-  // Separating hue from level preserves dim single colours and unequal RGB
-  // peaks while the shared renderer applies the spec brightness just once.
-  const colour = level > 0 ? { r: Math.round(255 * r / level), g: Math.round(255 * g / level), b: Math.round(255 * b / level), w: 0, a: 0, uv: 0 } : BLACK;
   for (let i = 0; i < room.n; i++) out[i] = { colour, level, strength: level > 0 ? 1 : 0 };
 }
 
@@ -303,7 +304,7 @@ function kernel(kind: HdKind, p: HdParams, room: Room, slot: number, index: numb
   }
 }
 
-function renderHd(kind: HdKind, p: HdParams, state: HdState, room: Room, f: EffectFrame, out: EffectSlot[]): void {
+function renderHd(kind: HdKind, p: HdParams, state: HdState, room: Room, f: EffectFrame, out: EffectSlot[], lamps?: LampRoom): void {
   // Simple ADSR has no event admission; the shared renderer already enforces
   // acknowledgement when this or any other spec is marked as rapid flashing.
   if (kind === 'hd.simpleAdsr') { renderAdsr(p, state, room, f, out); return; }
@@ -323,8 +324,10 @@ function renderHd(kind: HdKind, p: HdParams, state: HdState, room: Room, f: Effe
   }
   state.lastPosition = position;
   const reactive = reactiveLevel(kind, p, state, f);
-  for (let slot = 0; slot < room.n; slot++) {
-    const index = indices[slot];
+  const positions = lamps && cellPositions(lamps, p);
+  for (let target = 0; target < (lamps?.cells.n ?? room.n); target++) {
+    const slot = lamps ? lamps.lampOf[target] : target;
+    const index = indices[slot] + (positions ? positions[target] - 0.5 : 0);
     // Overlapping envelopes compete by strength, rather than adding levels.
     // Their palette positions follow the same winning event and tie rule.
     const composed = composeEvents(events, (event, rawAge) => {
@@ -339,14 +342,36 @@ function renderHd(kind: HdKind, p: HdParams, state: HdState, room: Room, f: Effe
       return { strength: clamp(envelope * sample.strength), palettePos: sample.palettePos };
     });
     const level = composed.strength * reactive;
-    out[slot] = { colour: samplePalette(f.palette, composed.palettePos), level, strength: level > 0 ? 1 : 0 };
+    out[target] = { colour: f.gradient?.sample(composed.palettePos) ?? samplePalette(f.palette, composed.palettePos), level, strength: level > 0 ? 1 : 0 };
   }
 }
 
-// Importing this module is sufficient for every process to render all ten
-// families; registration carries their recommended values and inspector data.
+const cellPositionMemo = new WeakMap<LampRoom, Map<number, number[]>>();
+function cellPositions(lamps: LampRoom, p: HdParams): readonly number[] {
+  if (p.order !== 'position') return lamps.cellAlong;
+  let angles = cellPositionMemo.get(lamps);
+  if (!angles) { angles = new Map(); cellPositionMemo.set(lamps, angles); }
+  const angle = p.spatial.angle;
+  let positions = angles.get(angle);
+  if (positions) return positions;
+  const projected = lamps.cells.hdProject(angle);
+  positions = new Array<number>(lamps.cells.n);
+  for (const slots of lamps.slots) {
+    let lo = Infinity, hi = -Infinity;
+    for (const slot of slots) { lo = Math.min(lo, projected[slot]); hi = Math.max(hi, projected[slot]); }
+    for (const slot of slots) positions[slot] = hi - lo > 1e-9 ? (projected[slot] - lo) / (hi - lo) : 0.5;
+  }
+  if (angles.size >= 64) angles.clear();
+  angles.set(angle, positions);
+  return positions;
+}
+
+const ALONG_KINDS = new Set(['hd.positionChase', 'hd.bouncingScan', 'hd.streak']);
+const LAMP_KINDS = new Set([...ALONG_KINDS, 'hd.twinkle', 'hd.frequencyBurst']);
 for (const kind of KINDS) registerKind<HdParams, HdState>({
-  kind, app: 'hd', schema: hdSchema, defaults: HD_DEFAULTS[kind], capabilities: HD_CAPABILITIES[kind],
+  kind, level: LAMP_KINDS.has(kind) ? 'lamp' : 'cell', app: 'hd', schema: hdSchema, defaults: HD_DEFAULTS[kind], capabilities: HD_CAPABILITIES[kind],
   rapidFlash: kind === 'hd.frequencyBurst', stateful: true,
+  ...(ALONG_KINDS.has(kind) ? { renderCells: (params: HdParams, state: HdState, lamps: LampRoom, frame: EffectFrame, out: EffectSlot[]) =>
+    renderHd(kind, params, state, lamps, frame, out, lamps) } : {}),
   init: initHd, render: (params, state, room, frame, out) => renderHd(kind, params, state, room, frame, out),
 });

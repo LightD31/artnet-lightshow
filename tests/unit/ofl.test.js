@@ -324,3 +324,22 @@ test('a long list of problems is cut short', () => {
   assert.strictEqual(mode.warnings.length, 12);
   assert.ok(mode.warnings[11]);
 });
+
+test('physical strobe speeds survive import on the driven DMX range', () => {
+  const mode = one(fixture({ Strobe: { capabilities: [
+    { dmxRange: [0, 127], type: 'ShutterStrobe', shutterEffect: 'Open' },
+    { dmxRange: [128, 250], type: 'ShutterStrobe', shutterEffect: 'Strobe', speedStart: '2Hz', speedEnd: '12Hz' },
+    { dmxRange: [251, 255], type: 'ShutterStrobe', shutterEffect: 'Open' },
+  ] } }, { Main: ['Strobe'] }));
+  assert.deepStrictEqual(mode.strobeHz, { min: 2, max: 12 });
+});
+
+test('zero-based physical strobe ranges survive OFL import', () => {
+  const mode = one(fixture({ Strobe: { capabilities: [
+    { dmxRange: [0, 127], type: 'ShutterStrobe', shutterEffect: 'Open' },
+    { dmxRange: [128, 250], type: 'ShutterStrobe', shutterEffect: 'Strobe', speedStart: '0Hz', speedEnd: '30Hz' },
+    { dmxRange: [251, 255], type: 'ShutterStrobe', shutterEffect: 'Open' },
+  ] } }, { Main: ['Strobe'] }));
+  assert.deepStrictEqual(mode.strobeHz, { min: 0, max: 30 });
+  validate(profileSchema, { id: 'zero-strobe', name: 'Zero strobe', ...mode }, 'profile');
+});

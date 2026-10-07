@@ -7,7 +7,7 @@ test.beforeEach(async ({ request }) => {
 });
 
 async function sheetFor(page, name) {
-  await open(page, 'manual');
+  await open(page, 'effects');
   await page.getByLabel('Search effects').fill(name);
   await page.getByRole('button', { name: `Edit ${name}` }).first().click();
   return page.getByRole('dialog', { name: 'Edit effect' });

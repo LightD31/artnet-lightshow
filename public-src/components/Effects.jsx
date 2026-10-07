@@ -1,3 +1,5 @@
+import { LAMP_PATTERNS } from '../../src/shared/patterns.ts';
+import { Strobe } from './Strobe.jsx';
 import { NowPlaying, PlayingVoices } from './NowPlaying.jsx';
 import { signal } from '@preact/signals';
 import { useEffect, useRef, useState } from 'preact/hooks';
@@ -16,8 +18,8 @@ import { Photosensitivity as PhotosensitivityConfirm, acknowledgeThen } from './
  * the inspector for it, in a sheet over the page.
  */
 
-const APP_NAMES = { hd: 'Hue Dynamics', ldj: 'Light DJ', own: 'Own', upstream: 'Upstream patterns' };
-const APP_BADGES = { hd: 'Hue Dynamics', ldj: 'Light DJ', own: 'Own', upstream: 'Upstream' };
+const APP_NAMES = { hd: 'Hue Dynamics', ldj: 'Light DJ', own: 'Own', upstream: 'Classic effects' };
+const APP_BADGES = { hd: 'Hue Dynamics', ldj: 'Light DJ', own: 'Own', upstream: 'Classic' };
 const APP_ORDER = ['hd', 'ldj', 'own', 'upstream'];
 const APP_ICONS = { hd: '◆', ldj: '♪', own: '◉', upstream: '·' };
 const FLAG_CHIPS = [
@@ -98,7 +100,7 @@ export function groupRows(rows, families = []) {
   for (const row of rows) {
     const app = appOf(row);
     const fam = row.user ? { id: 'user', name: 'Your presets', rank: -1 }
-      : app === 'upstream' ? (row.pixel ? { id: 'pixel', name: 'Pixel effects', rank: 1 } : { id: 'patterns', name: 'Patterns', rank: 0 })
+      : app === 'upstream' ? (row.pixel ? { id: 'pixel', name: 'Pixel effects', rank: 1 } : { id: 'patterns', name: 'Effects', rank: 0 })
         : row.app ? { id: row.family, name: nameOf(row.family), rank: rank.get(row.family) ?? 999 }
           : { id: 'own.party', name: nameOf('own.party'), rank: rank.get('own.party') ?? 999 };
     if (!groups.has(app)) groups.set(app, new Map());
@@ -196,7 +198,7 @@ const Rapid = () => (
 function Star({ row, on, onToggle }) {
   return (
     <button type="button" class={`effect-star ${on ? 'on' : ''}`} aria-pressed={on} aria-label={`Favourite ${row.name}`}
-      title={on ? 'Unpin from the deck' : 'Pin to the deck'} onClick={() => onToggle(row.id)}>{on ? '★' : '☆'}</button>
+      title={on ? 'Remove from favourites' : 'Add to favourites'} onClick={() => onToggle(row.id)}>{on ? '★' : '☆'}</button>
   );
 }
 
@@ -295,6 +297,9 @@ export function Effects() {
   const panels = hasPanels(s);
   const onPanels = panels && s.panelPattern ? s.panelPattern : null;
   const playing = s.pattern ? rows.find((r) => r.id === s.pattern) || { id: s.pattern, name: s.pattern } : null;
+  const activePreset = [...(lib.builtin || []), ...(lib.user || [])].find((p) => p.id === s.pattern);
+  const activeKind = activePreset?.spec?.kind || playing?.kind;
+  const lampLevel = LAMP_PATTERNS.has(s.pattern) || families.some((f) => f.kinds?.some((k) => k.kind === activeKind && k.level === 'lamp'));
   const pixel = (s.patterns || []).filter((p) => p.pixel);
   // Along each bar is across the stage on a rig without bars.
   const map = !bars && s.pixelMap === 'bar' ? 'stage' : (s.pixelMap || 'stage');
@@ -324,8 +329,8 @@ export function Effects() {
         </div>
       </div>
       <PlayingVoices stopAll />
-      <div class="effects-deck" role="group" aria-label="Favourites, your presets and the party looks">
-        {deck.length === 0 && <p class="effects-empty">{query ? 'Nothing on the deck matches.' : 'Star an effect to pin it here.'}</p>}
+      <div class="effects-deck" role="group" aria-label="Favourites, your presets and party effects">
+        {deck.length === 0 && <p class="effects-empty">{query ? 'No featured effects match.' : 'Star an effect to pin it here.'}</p>}
         {deck.map((row) => <Pad key={row.id} {...rowProps(row)} />)}
       </div>
       <div class="effects-catalogue">
@@ -357,15 +362,17 @@ export function Effects() {
         </label>
       )}
       {(s.fixtures || []).length >= 3 && (
-        <div class="pixel-map" role="group" aria-label="How the pattern is laid over the rig">
+        <div class="pixel-map" role="group" aria-label="How the effect is laid over the rig">
           {PIXEL_MAPS.filter((m) => bars || !m.bars).map((m) => (
             <button key={m.id} type="button" class={`btn sm ${map === m.id ? 'active' : ''}`}
-              aria-pressed={map === m.id} title={m.desc}
+              aria-pressed={map === m.id} disabled={m.id === 'bar' && lampLevel}
+              title={m.id === 'bar' && lampLevel ? 'This effect selects whole fixtures; Per bar applies to pixel effects.' : m.desc}
               onClick={() => send({ pixelMap: m.id })}>{m.name}</button>
           ))}
         </div>
       )}
     </div>
+    <Strobe />
     {editing && <InspectorSheet id={editing} onSelect={edit} onPlay={playById} onClose={() => edit(null)} />}
     {confirm && <PhotosensitivityConfirm preset={confirm} onConfirm={confirmPlay} onCancel={() => setConfirm(null)} />}
   </>;

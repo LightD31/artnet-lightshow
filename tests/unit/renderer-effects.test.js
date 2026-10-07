@@ -558,7 +558,7 @@ test('an empty rig renders no effect and initializes nothing', () => {
 // glow rides the expression level, and the hold strobe flashes per lamp.
 const BURST = JSON.parse(fs.readFileSync(new URL('../fixtures/golden/energy-burst.json', import.meta.url), 'utf8'));
 
-test("energy effects preserve legacy emitter output", () => {
+test("energies preserve native dies and fold missing bar dies", () => {
   registerProfile(BAR);
   try {
     const FIX = [PAR, LAMP, fixture(2, 30, BAR.id)];
@@ -567,12 +567,23 @@ test("energy effects preserve legacy emitter output", () => {
       for (const ms of times) r.at(ms, { pattern: 'chase', colorA: 9, colorB: 5, colorC: 9, colorD: 5, ...patch });
       return Array.from(r.store.getBuffer(0).subarray(0, 47));
     };
+    const expected = (key) => {
+      const bytes = [...BURST[key]];
+      // Warm amber normalises (290,162,68); blinder (510,423.3,341.7).
+      const rgb = {
+        'color-strobe': [255, 142, 60], blinder: [255, 212, 171], 'uv-wash': [115, 0, 217],
+        glow: [255, 142, 60], 'glow@0': [150, 84, 35], 'glow@0.5': [203, 113, 48], 'glow@1': [255, 142, 60],
+        'blinder@0.3': [255, 212, 171], 'blinder-master': [128, 106, 86], 'hold@0': [255, 142, 60], 'hold@60': [255, 142, 60],
+      }[key];
+      if (rgb) for (let c = 0; c < 4; c++) bytes.splice(31 + c * 4, 3, ...rgb);
+      return bytes;
+    };
     const settle = Array.from({ length: 81 }, (_, k) => k * 25);
-    for (const e of ['white-strobe', 'color-strobe', 'blinder', 'uv-wash', 'kill', 'glow']) assert.deepStrictEqual(bytes({ energy: e }, [10]), BURST[e], e);
-    for (const level of [0, 0.5, 1]) assert.deepStrictEqual(bytes({ energy: 'glow', showDynamics: { level } }, settle), BURST[`glow@${level}`], `glow at ${level}`);
-    assert.deepStrictEqual(bytes({ energy: 'blinder', showDynamics: { level: 0.3 } }, settle), BURST['blinder@0.3'], 'the burst bypasses the expression');
-    assert.deepStrictEqual(bytes({ energy: 'blinder', masterDimmer: 128 }, [10]), BURST['blinder-master'], 'and follows the master');
-    for (const ms of [0, 60, 100, 170, 200, 250, 320, 480, 760]) assert.deepStrictEqual(bytes({ energy: HOLD_STROBE }, [ms]), BURST[`hold@${ms}`], `the hold strobe at ${ms} ms`);
+    for (const e of ['white-strobe', 'color-strobe', 'blinder', 'uv-wash', 'kill', 'glow']) assert.deepStrictEqual(bytes({ energy: e }, [10]), expected(e), e);
+    for (const level of [0, 0.5, 1]) assert.deepStrictEqual(bytes({ energy: 'glow', showDynamics: { level } }, settle), expected(`glow@${level}`), `glow at ${level}`);
+    assert.deepStrictEqual(bytes({ energy: 'blinder', showDynamics: { level: 0.3 } }, settle), expected('blinder@0.3'), 'the burst bypasses the expression');
+    assert.deepStrictEqual(bytes({ energy: 'blinder', masterDimmer: 128 }, [10]), expected('blinder-master'), 'and follows the master');
+    for (const ms of [0, 60, 100, 170, 200, 250, 320, 480, 760]) assert.deepStrictEqual(bytes({ energy: HOLD_STROBE }, [ms]), expected(`hold@${ms}`), `the hold strobe at ${ms} ms`);
     // Glow's own curve: 150, 203 and 255 at levels 0, .5 and 1, never multiplied by the level again.
     assert.deepStrictEqual([0, 0.5, 1].map((level) => BURST[`glow@${level}`][0]), [150, 203, 255]);
     assert.deepStrictEqual([0, 0.5, 1].map((level) => resolveEnergyOverride('glow', COLOR_PRESETS[9], level).dim), [150, 203, 255]);
@@ -998,4 +1009,44 @@ test("engine voices retain continuity through music jumps", () => {
   }
   for (let k = 1; k < dims.length; k++) assert.ok(dims[k] <= dims[k - 1], `the note only falls: frame ${k} ${dims[k - 1]} → ${dims[k]}`);
   assert.ok(dims[30] > dims[60] && dims[31] < 255, 'mid-fade at the jump, and no new note at it');
+});
+
+
+test('the flash limiter respects imported physical strobe ranges', () => {
+  for (const min of [2, 5]) {
+    const id = `test-physical-strobe-${min}`;
+    registerProfile({ ...getProfile(PAR), id, name: id, strobeHz: { min, max: 30 } });
+    try {
+      const f = fixture(0, 1, id), r = rig([f]);
+      const patch = { hardware: { technologies: {}, products: {} }, flashLimit: true,
+        pattern: 'strobe', strobeSpeed: 255, strobeFunction: 'standard' };
+      const out = r.at(0, patch)[0];
+      if (min < 3) {
+        assert.ok(out.strobe >= 128);
+        const hz = min + (out.strobe - 128) / (250 - 128) * (30 - min);
+        assert.ok(hz <= 3, `physical strobe ${hz} Hz`);
+      } else {
+        assert.equal(out.strobe, 0, 'an unsupportable native rate uses software');
+        assert.equal(r.at(250, patch)[0].dim, 0);
+        assert.ok(r.at(350, patch)[0].dim > 0);
+      }
+    } finally { unregisterProfile(id); }
+  }
+});
+
+
+test('mixed hardware rates preserve unrelated lamps and random draws', () => {
+  const random = Math.random;
+  const run = (hueHz) => {
+    let draws = 0;
+    Math.random = () => (++draws * .137) % 1;
+    const r = rig(), out = [];
+    for (const pattern of ['twinkle', 'sparkle', 'random-flash']) {
+      for (let k = 0; k < 24; k++) out.push(r.at(out.length * 125, { pattern,
+        hardware: { technologies: { hue: { maxFlashHz: hueHz } }, products: {} } })[PAR.id]);
+    }
+    return { out, draws };
+  };
+  try { assert.deepStrictEqual(run(1), run(20)); }
+  finally { Math.random = random; }
 });

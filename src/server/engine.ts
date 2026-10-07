@@ -200,10 +200,13 @@ function renderInput(): RenderInput {
       acknowledged: settings.get('safety.photosensitivityAcknowledged'),
     },
     hueStrobe: settings.get('hue.strobe'),
+    hardware: settings.group('hardware'),
     effect,
     effectRevision,
     voices: voiceFrames(),
     paletteOverride: state.paletteOverride,
+    basePalette: state.basePalette,
+    overridePalette: state.overridePalette,
     sequenceRevision: revisionOf(sequenceNow),
     sequenceTransport: sequenceNow.transport,
     fixtures: state.fixtures.map((f) => ({
@@ -217,6 +220,8 @@ function renderInput(): RenderInput {
       group: f.group || null,
       geometry: f.geometry || null,
       hue: hasNoAddress(f),
+      output: f.output ? { protocol: f.output.protocol } : null,
+      productId: f.productId, hardware: f.hardware, admission: f.admission,
     })),
   };
 }

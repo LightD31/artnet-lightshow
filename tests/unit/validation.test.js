@@ -106,11 +106,14 @@ test('a fixture restore is bounded like every other patch write', () => {
 // does not know. Unlike a pattern id — which the engine can sensibly no-op on —
 // a palette that quietly does nothing reads as the colour buttons being broken,
 // so the schema names the looks it accepts.
-test('patch schema accepts known palettes and refuses the rest', () => {
+test('palette patches accept saved ids and bound palette sizes', () => {
   assert.ok(ok(patchSchema, { palette: 'arctic' }));
   assert.ok(ok(patchSchema, { palette: 'arctic', paletteSize: 2 }));
   assert.ok(ok(patchSchema, { palette: null }));
-  rejects(patchSchema, { palette: 'not-a-look' });
+  assert.ok(ok(patchSchema, { palette: 'user.saved-palette' }));
+  rejects(patchSchema, { palette: '' });
+  rejects(patchSchema, { palette: 'x'.repeat(65) });
+  rejects(patchSchema, { palette: 7 });
   rejects(patchSchema, { palette: 'arctic', paletteSize: 5 });
   rejects(patchSchema, { palette: 'arctic', paletteSize: 0 });
 });

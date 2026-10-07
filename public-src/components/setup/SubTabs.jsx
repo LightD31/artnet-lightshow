@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
+import { resolveRoute } from '../../views.js';
 
 /**
  * A view's own tabs, under the main ones: the ARIA tabs pattern (one stop in
@@ -8,8 +9,8 @@ import { useEffect, useState } from 'preact/hooks';
  */
 
 function fromHash(view, ids) {
-  const [head, sub] = window.location.hash.replace('#', '').split('/');
-  return head === view && ids.includes(sub) ? sub : null;
+  const route = typeof window === 'undefined' ? null : resolveRoute(window.location.hash);
+  return route?.view === view && ids.includes(route.sub) ? route.sub : null;
 }
 
 export function useSubTab(view, tabs) {

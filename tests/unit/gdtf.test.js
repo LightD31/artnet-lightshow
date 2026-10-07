@@ -253,3 +253,28 @@ test('a bar\'s shutter in every cell is held open, said once for all of them', a
   assert.equal(m.warnings.length, 1);
   validate(profileSchema, { id: 'acme-bar', name: 'Bar', ...m }, 'profile');
 });
+
+test('physical strobe speeds survive GDTF import', async () => {
+  const xml = `<GDTF><FixtureType Name="Lamp"><DMXModes><DMXMode Name="Main"><DMXChannels>
+    <DMXChannel Offset="1"><LogicalChannel Attribute="Shutter1">
+      <ChannelFunction Attribute="Shutter1" Name="Open" DMXFrom="0/1" />
+      <ChannelFunction Attribute="StrobeFrequency" Name="Strobe" DMXFrom="128/1" PhysicalFrom="2" PhysicalTo="12" />
+      <ChannelFunction Attribute="Shutter1" Name="Open" DMXFrom="251/1" />
+    </LogicalChannel></DMXChannel>
+    </DMXChannels></DMXMode></DMXModes></FixtureType></GDTF>`;
+  const parsed = await parseGDTF(await gdtf(xml));
+  assert.deepStrictEqual(parsed.modes[0].strobeHz, { min: 2, max: 12 });
+});
+
+test('zero-based physical strobe ranges survive GDTF import', async () => {
+  const xml = `<GDTF><FixtureType Name="Lamp"><DMXModes><DMXMode Name="Main"><DMXChannels>
+    <DMXChannel Offset="1"><LogicalChannel Attribute="Shutter1">
+      <ChannelFunction Attribute="Shutter1" Name="Open" DMXFrom="0/1" />
+      <ChannelFunction Attribute="StrobeFrequency" Name="Strobe" DMXFrom="128/1" PhysicalFrom="0" PhysicalTo="30" />
+      <ChannelFunction Attribute="Shutter1" Name="Open" DMXFrom="251/1" />
+    </LogicalChannel></DMXChannel>
+    </DMXChannels></DMXMode></DMXModes></FixtureType></GDTF>`;
+  const parsed = await parseGDTF(await gdtf(xml));
+  assert.deepStrictEqual(parsed.modes[0].strobeHz, { min: 0, max: 30 });
+  validate(profileSchema, { id: 'zero-strobe', name: 'Zero strobe', ...parsed.modes[0] }, 'profile');
+});

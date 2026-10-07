@@ -388,3 +388,12 @@ test('strobe settings enforce flash-rate and palette bounds', () => {
   }
   assert.strictEqual(s.get('strobe.flashesPerSecond'), 5, 'a refused update changes nothing');
 });
+
+test('hardware products persist and can be removed without stale entries', () => {
+  const s = store().load();
+  s.update({ hardware: { products: { curtain: { name: 'Curtain', technology: 'ddp', maxFlashHz: 4, minTransitionMs: 50 } } } });
+  assert.equal(new SettingsStore(s.file).load().group('hardware').products.curtain.maxFlashHz, 4);
+  s.update({ hardware: { products: {} } });
+  assert.deepEqual(new SettingsStore(s.file).load().group('hardware').products, {});
+  assert.throws(() => s.update({ hardware: { technologies: { hue: { maxFlashHz: -1 } } } }));
+});

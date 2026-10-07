@@ -7,12 +7,19 @@ import { parseHex } from '../shared/effects/palette.ts';
 import { energyEffectSpec } from '../shared/effects/catalogue.ts';
 import { patchSchema, overrideSchema, validate } from './validation.ts';
 import { STROBE_FUNCTIONS } from './presets.ts';
+import { materializePalette } from './palette-store.ts';
+import { ALL_PALETTES } from './palette-catalogue.ts';
+import type { PaletteBody } from '../shared/palette-model.ts';
+import { HttpError } from '../errors.ts';
+import { COLOR_PRESETS } from './presets.ts';
+import { toHex } from '../shared/palette-model.ts';
 import { paletteSlots } from './palettes.ts';
 import type { Patch } from './validation.ts';
 import type { SettingsPatch } from './settings.ts';
 
 /** What the rest of the server does when a patch touches it (set by integrations). */
 export interface PatchHooks {
+  palette(id: string): PaletteBody | null;
   prolinkEnable(): void;
   prolinkDisable(): void;
   autoPaletteSize(size: NonNullable<Patch['autoPaletteSize']>): void;
@@ -28,6 +35,12 @@ export interface PatchHooks {
 const COLOR_SLOTS = ['colorA', 'colorB', 'colorC', 'colorD'] as const;
 
 const hooks: PatchHooks = {
+  palette: (id) => {
+    const entry = ALL_PALETTES.find((p) => p.id === id);
+    if (!entry) return null;
+    const { id: _id, name: _name, app: _app, ...body } = entry;
+    return materializePalette({ ...body, colours: [...body.colours] });
+  },
   prolinkEnable: () => {},
   prolinkDisable: () => {},
   autoPaletteSize: () => {},
@@ -76,6 +89,10 @@ export interface PatchOptions {
 // Admission comes first: an effect awaiting the photosensitivity acknowledgement refuses it all (409).
 function applyPatch(rawData: unknown, { beforeCommit, origin = 'hand', paletteOverrideId = null }: PatchOptions = {}): Patch {
   const data = validate(patchSchema, rawData || {}, 'patch');
+  const selected = data.palette ? hooks.palette(data.palette) : null;
+  if (data.palette && !selected) throw new HttpError(400, `is not a known palette: ${data.palette}`);
+  const baseBody = data.basePalette ? materializePalette(data.basePalette) : data.basePalette;
+  const overrideBody = data.overridePalette ? materializePalette(data.overridePalette) : data.overridePalette;
   // Naming the pattern is starting it, even the one on stage; a fader moved under it is not.
   if (data.pattern !== undefined) {
     const effect = resolveEffect(data.pattern);
@@ -92,6 +109,7 @@ function applyPatch(rawData: unknown, { beforeCommit, origin = 'hand', paletteOv
   const changesLook = data.pattern !== undefined || data.palette !== undefined
     || data.split !== undefined || data.pixelMap !== undefined || data.pixelPattern !== undefined
     || data.panelPattern !== undefined || data.paletteOverride !== undefined
+    || data.basePalette !== undefined || data.overridePalette !== undefined
     || COLOR_SLOTS.some((slot) => data[slot] !== undefined);
   if (data.fadeMs !== undefined || changesLook) beginFade(data.fadeMs || 0);
 
@@ -132,29 +150,41 @@ function applyPatch(rawData: unknown, { beforeCommit, origin = 'hand', paletteOv
 
   if (wantsPalette) {
     const id = data.palette !== undefined ? data.palette : state.palette;
-    if (id === null) {
-      state.palette = null;
-    } else {
+    state.palette = id;
+    if (id) {
       const slots = paletteSlots(id, data.paletteSize || 4);
       if (slots) {
         Object.assign(state, slots);
-        state.palette = id;
-        paletteApplied = true;
+        // Keep the curated duo/triad variants when an old show selects a size.
+        state.basePalette = { colours: COLOR_SLOTS.map((slot) => toHex(COLOR_PRESETS[slots[slot]])) };
+      } else {
+        state.basePalette = selected ?? hooks.palette(id);
       }
+      paletteApplied = true;
     }
   }
 
-  // A slot written by hand drops the look's label; re-sending the value it had is no edit.
-  for (const slot of COLOR_SLOTS) {
-    const value = data[slot];
+  for (let i = 0; i < COLOR_SLOTS.length; i++) {
+    const slot = COLOR_SLOTS[i], value = data[slot];
     if (value === undefined) continue;
-    if (!paletteApplied && value !== state[slot]) state.palette = null;
+    const previous = state.basePalette?.colours[i % state.basePalette.colours.length];
+    const changed = typeof previous === 'string' ? toHex(parseHex(previous)) !== toHex(COLOR_PRESETS[value]) : value !== state[slot];
+    if (!paletteApplied && changed) state.palette = null;
     state[slot] = value;
+    if (state.basePalette) {
+      const colours = [...state.basePalette.colours];
+      while (colours.length <= i) colours.push(colours[colours.length % state.basePalette.colours.length]);
+      colours[i] = toHex(COLOR_PRESETS[value]);
+      state.basePalette = { ...state.basePalette, colours };
+    }
   }
-  // Parsed once here: the renderer takes colours, the wire and cues hex.
-  if (data.paletteOverride !== undefined) {
-    state.paletteOverride = data.paletteOverride === null ? null : data.paletteOverride.map(parseHex);
-    state.paletteOverrideId = data.paletteOverride === null ? null : paletteOverrideId;
+  if (baseBody !== undefined) { state.basePalette = baseBody; state.palette = null; }
+  if (data.paletteOverride !== undefined || overrideBody !== undefined) {
+    const body = overrideBody !== undefined ? overrideBody
+      : data.paletteOverride ? { colours: data.paletteOverride } : null;
+    state.overridePalette = body;
+    state.paletteOverride = body ? body.colours.map((c) => parseHex(c as string)) : null;
+    state.paletteOverrideId = body ? paletteOverrideId : null;
   }
   if (data.split !== undefined) state.split = data.split;
   if (data.pixelMap !== undefined) state.pixelMap = data.pixelMap;
@@ -226,8 +256,8 @@ function applyPatch(rawData: unknown, { beforeCommit, origin = 'hand', paletteOv
   // A tempo the auto show schedules (anchorMs) is the music's, not a hand's.
   const masterDimmer = data.masterDimmer !== undefined;
   const bpm = data.bpm !== undefined && data.anchorMs === undefined;
-  if (masterDimmer || bpm || data.paletteOverride !== undefined) {
-    hooks.handEdit({ masterDimmer, bpm, ...(data.paletteOverride !== undefined ? { paletteOverride: true } : {}) });
+  if (masterDimmer || bpm || data.paletteOverride !== undefined || data.overridePalette !== undefined) {
+    hooks.handEdit({ masterDimmer, bpm, ...(data.paletteOverride !== undefined || data.overridePalette !== undefined ? { paletteOverride: true } : {}) });
   }
   hooks.broadcast();
   return data;

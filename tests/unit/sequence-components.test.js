@@ -22,7 +22,7 @@ async function load() {
         export { h } from 'preact';
         export { store, librarySig } from './public-src/state.js';
         export { Sequence, laneStack, moveClip, resizeClip, putSequence, automationStart, newClip, commandAs, createTextDraft, parseNumber, beyondRangeNotice, clipKeySelects, loopRegion, barBeatText, blankSequence, clipPresetRows, createSequenceSync } from './public-src/components/Sequence.jsx';
-        export { Matrix, MATRIX_MODES, createMatrixHolds, matrixCellKeys } from './public-src/components/Matrix.jsx';
+        export { Matrix, MATRIX_MODES, createMatrixHolds, matrixCellKeys, matrixModeKey } from './public-src/components/Matrix.jsx';
         export { drawRuler, drawClips } from './public-src/timeline-renderer.js';
       `,
       resolveDir: ROOT,
@@ -152,7 +152,7 @@ test('playing sequences expose transport while edits stay gated', () => {
   const html = ui.html(ui.h(ui.Sequence, { initial: { sequence: SEQ } }));
   assert.match(html, /class="seq-now"[^>]*aria-live="polite"/);
   assert.match(html, /Friday.*Playing.*Bar 3/s);
-  for (const verb of ['Play', 'Pause', 'Stop']) assert.match(html, new RegExp(`aria-label="${verb}"`));
+  for (const verb of ['Pause', 'Stop', 'Next', 'Shuffle', 'Loop']) assert.match(html, new RegExp(`aria-label="${verb}"`));
   assert.match(html, /class="seq-edit-toggle" aria-pressed="false"/);
   assert.doesNotMatch(html, /class="seq-inspector"/, 'the inspector waits for Edit');
   const lanes = [...html.matchAll(/class="seq-lane-name">([^<]+)</g)].map((m) => m[1]);
@@ -461,6 +461,26 @@ test('the Matrix board is a grid of colours with the five board modes', () => {
   assert.ok(count(html, 'class="matrix-cell') >= 12);
   assert.match(html, /class="matrix-cell held"[^>]*aria-label="Colour #ff0000"/, 'a colour the board plays shows held');
   assert.match(html, /touch-action: none|touch-action:none/);
+});
+
+test('only the selected Matrix mode is in the tab order', () => {
+  given({ matrix: { mode: 'flashes', colours: [] } });
+  const html = ui.html(ui.h(ui.Matrix, {}));
+  const radios = html.match(/<button[^>]*role="radio"[^>]*>/g);
+  assert.equal(radios.filter((radio) => /tabindex="0"/i.test(radio)).length, 1);
+  assert.match(radios.find((radio) => /aria-checked="true"/.test(radio)), /tabindex="0"/i);
+});
+
+test('Matrix arrow keys wrap and select the newly focused mode', () => {
+  const selected = [], focused = [];
+  const buttons = ui.MATRIX_MODES.map(({ id }) => ({ value: id, focus: () => focused.push(id) }));
+  for (const [key, from, to] of [['ArrowRight', 4, 0], ['ArrowLeft', 0, 4], ['ArrowDown', 0, 1], ['ArrowUp', 1, 0]]) {
+    const event = { key, target: buttons[from], currentTarget: { querySelectorAll: () => buttons }, preventDefault() { this.prevented = true; } };
+    ui.matrixModeKey(event, (value) => selected.push(value));
+    assert.equal(event.prevented, true);
+    assert.equal(focused.at(-1), buttons[to].value);
+    assert.equal(selected.at(-1), buttons[to].value);
+  }
 });
 
 test('each matrix finger owns an independent hold token', (t) => {

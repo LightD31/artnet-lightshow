@@ -1,4 +1,5 @@
 import { canonical, effectContentKey, effectRoom } from './layer.ts';
+import { effectAdmission } from './hardware.ts';
 import { renderEffect } from './render-instance.ts';
 import { pacesOwnFlashes } from './registry.ts';
 import { seedFrom } from './hash.ts';
@@ -120,7 +121,7 @@ function covers(lane: SequenceLane, clip: TableClip, fixtureId: number | string)
 }
 
 // Choose track, later shared lane, later start, then later saved clip to resolve overlap.
-export function selectClips(table: SequenceTable, position: number, slotFixtureIds: readonly (number | string)[]):
+export function selectClips(table: SequenceTable, position: number, slotFixtureIds: readonly (number | string)[], admit?: (clip: TableClip, id: number | string, position: number) => boolean):
   { winners: number[]; active: ActiveClip[] } {
   const winners = new Array<number>(slotFixtureIds.length).fill(-1);
   const active: ActiveClip[] = [];
@@ -139,7 +140,7 @@ export function selectClips(table: SequenceTable, position: number, slotFixtureI
     active.push({ index, ...lap });
     const rank: [number, number, number] = [on.lane.kind === 'track' ? 1 : 0, on.index, clip.startBeat];
     for (const id of ids) {
-      if (!covers(on.lane, clip, id)) continue;
+      if (!covers(on.lane, clip, id) || admit && !admit(clip, id, position)) continue;
       const held = best.get(id);
       if (!held || compareRank(rank, held.rank) >= 0) best.set(id, { index, rank });
     }
@@ -173,14 +174,14 @@ export interface PlacedSequence {
 
 // Pause keeps selecting the held position while selected clips continue their own laps.
 export function placeSequence(table: SequenceTable, transport: SequenceTransport, beatPos: number,
-  slotFixtureIds: readonly (number | string)[]): PlacedSequence | null {
+  slotFixtureIds: readonly (number | string)[], admit?: (clip: TableClip, id: number | string, position: number) => boolean): PlacedSequence | null {
   if (transport.stop) return null;
   const generation = transport.generation;
   const hold = transport.hold;
   if (hold) {
     if (!Number.isFinite(hold.position) || !Number.isFinite(hold.beat) || !Number.isSafeInteger(hold.traversal)) return null;
     const since = Number.isFinite(beatPos) ? Math.max(0, beatPos - hold.beat) : 0;
-    const { winners, active } = selectClips(table, hold.position, slotFixtureIds);
+    const { winners, active } = selectClips(table, hold.position, slotFixtureIds, admit);
     const activations = active.flatMap((a): PlayingActivation[] => {
       const clip = table.clips[a.index];
       const local = (hold.position - clip.startBeat) + since;
@@ -195,7 +196,7 @@ export function placeSequence(table: SequenceTable, transport: SequenceTransport
   }
   const place = sequencePlace(transport, beatPos);
   if (!place) return null;
-  const { winners, active } = selectClips(table, place.position, slotFixtureIds);
+  const { winners, active } = selectClips(table, place.position, slotFixtureIds, admit);
   const activations = active.map((a): PlayingActivation => {
     const clip = table.clips[a.index];
     return { index: a.index, lap: a.lap, id: activationId(clip.id, generation, place.traversal, a.lap), seed: lapSeed(clip.seed, place.traversal, a.lap),
@@ -347,17 +348,17 @@ export function renderSequenceLayer(rig: Rig, layout: Layout, frame: FrameBase, 
     return run.shown ? replay(run.shown, list, set) : false;
   }
   const picture = freshPicture(run, list.length);
-  const keep = (k: number, colour: Colour, dim: number, strobe: number, kind: string | null) => {
+  const keep = (k: number, colour: Colour, dim: number, strobe: number, kind: string | null, owner?: string) => {
     const o = k * HELD_STRIDE;
     const l = picture.light;
     l[o] = colour.r; l[o + 1] = colour.g; l[o + 2] = colour.b; l[o + 3] = colour.w || 0; l[o + 4] = colour.a || 0; l[o + 5] = colour.uv || 0;
     l[o + 6] = dim;
     picture.kinds[k] = kind;
     picture.covered[k] = 1;
-    set(list[k], colour, dim, strobe, kind);
+    set(list[k], colour, dim, strobe, kind, owner);
   };
   const placed = renderPlaced(frame, table, transport, run, stepper, effectRoom(layout), ids, (k, slot, kind) => {
-    if (slot) keep(k, slot.colour, 255 * slot.level, slot.strobe ?? 0, slot.kind ?? kind);
+    if (slot) keep(k, slot.colour, 255 * slot.level, slot.strobe ?? 0, slot.kind ?? kind, slot.owner);
     else keep(k, BLACK, 0, 0, null);
   });
   if (placed === null) { endSequence(run, stepper); return false; }
@@ -367,7 +368,15 @@ export function renderSequenceLayer(rig: Rig, layout: Layout, frame: FrameBase, 
 // Render each winning activation once over the whole room before masking its won cells.
 export function renderPlaced(frame: FrameBase, table: SequenceTable, transport: SequenceTransport, run: SequenceRun, stepper: EffectStepper,
   room: Room, ids: readonly (number | string)[], lay: (k: number, slot: EffectSlot | null, kind: string) => void): boolean | null {
-  const placed = placeSequence(table, transport, frame.beatPos, ids);
+  const caps = new Map(ids.map((id, k) => [id, frame.hardware?.[k]]));
+  const placed = placeSequence(table, transport, frame.beatPos, ids, (clip, id, position) => {
+    const capability = caps.get(id);
+    const held = transport.hold;
+    const playingPosition = position + (held ? Math.max(0, frame.beatPos - held.beat) : 0);
+    const lapStart = held ? clip.startBeat + Math.floor((playingPosition - clip.startBeat) / clip.loopBeats + EPS) * clip.loopBeats
+      : clipLap(clip, position)?.lapStart ?? clip.startBeat;
+    return !capability || effectAdmission(clip.spec, { ...frame, beatPos: playingPosition, anchorBeat: lapStart, fixtureIds: [id] }, capability).mode !== 'exclude';
+  });
   if (!placed) return null;
   if (run.last && run.last.anchor !== placed.anchor) run.last = null;
 

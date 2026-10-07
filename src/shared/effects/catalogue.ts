@@ -31,7 +31,7 @@ export type CataloguePreset = CatalogueMetadata & (
 
 export interface CatalogueFamily {
   id: string; app: 'hd' | 'ldj' | 'own'; name: string;
-  kinds: { kind: string; defaults: EffectKindDef['defaults']; capabilities: EffectKindDef['capabilities']; wallClock?: true }[];
+  kinds: { kind: string; defaults: EffectKindDef['defaults']; capabilities: EffectKindDef['capabilities']; level?: 'lamp' | 'cell'; wallClock?: true }[];
 }
 
 export function deepFreeze<T>(value: T): T {
@@ -293,7 +293,7 @@ function family(id: string, app: CatalogueFamily['app'], name: string, extra: st
   return { id, app, name, kinds: kinds.map((kind) => {
     const def = kindOf(kind)!;
     return { kind, defaults: plain(def.defaults), capabilities: def.capabilities ? plain(def.capabilities) : null,
-      ...(def.wallClock ? { wallClock: true as const } : {}) };
+      ...(def.requirements ? { requirements: def.requirements } : {}), ...(def.level ? { level: def.level } : {}), ...(def.wallClock ? { wallClock: true as const } : {}) };
   }) };
 }
 const ldjFamily = (engine: LdjEngine | 'macro', extra?: string[]) => family(`ldj.${engine}`, 'ldj', FAMILY[engine].name, extra);

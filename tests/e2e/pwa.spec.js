@@ -6,7 +6,7 @@ import { open, reset } from './helpers.js';
 test.beforeEach(async ({ request }) => { await reset(request); });
 
 test('the page names its manifest and icons, and they are there', async ({ page, request }) => {
-  await open(page, 'manual');
+  await open(page, 'effects');
   const href = await page.locator('link[rel="manifest"]').getAttribute('href');
   const manifest = await (await request.get(href)).json();
   expect(manifest.display).toBe('standalone');
@@ -15,7 +15,7 @@ test('the page names its manifest and icons, and they are there', async ({ page,
 });
 
 test('on a secure page the service worker takes over, and keeps out of the API', async ({ page, request }) => {
-  await open(page, 'manual');
+  await open(page, 'effects');
   const scope = await page.evaluate(async () => (await navigator.serviceWorker.ready).scope);
   expect(scope).toMatch(/\/$/);
   const text = await (await request.get('/sw.js')).text();
@@ -23,7 +23,7 @@ test('on a secure page the service worker takes over, and keeps out of the API',
 });
 
 test('the shell the service worker keeps has the page\'s chunks, three.js with them', async ({ page, request }) => {
-  await open(page, 'manual');
+  await open(page, 'effects');
   await page.evaluate(async () => { await navigator.serviceWorker.ready; });
   const listed = await (await request.get('/chunks/index.json')).json();
   expect(listed.some((p) => /^\/chunks\/scene-/.test(p))).toBe(true);
@@ -35,7 +35,7 @@ test('the shell the service worker keeps has the page\'s chunks, three.js with t
 });
 
 test('a theme picked is the theme after a reload, set before the page draws', async ({ page }) => {
-  await page.goto('/#manual');
+  await page.goto('/#effects');
   await page.getByLabel('Theme').selectOption('light');
   await page.reload();
   expect(await page.evaluate(() => document.documentElement.dataset.theme)).toBe('light');

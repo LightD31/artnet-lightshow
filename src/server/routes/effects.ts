@@ -1,11 +1,13 @@
 import { z } from 'zod';
-import { BUILTIN_PALETTES, FAMILIES } from '../../shared/effects/index.ts';
+import { FAMILIES } from '../../shared/effects/index.ts';
 import { toHex } from '../../shared/effects/palette.ts';
 import { effectCommand } from '../engine.ts';
 import { applyPatch } from '../patch.ts';
 import { safety } from '../safety.ts';
 import { state } from '../state.ts';
-import { paletteOverride, validate } from '../validation.ts';
+import { ALL_PALETTES } from '../palette-catalogue.ts';
+import { paletteBodySchema } from '../../shared/palette-model.ts';
+import { validate } from '../validation.ts';
 import { asyncHandler } from './common.ts';
 import type { Express } from 'express';
 import type { CommandStatus } from '../renderer.ts';
@@ -14,7 +16,7 @@ import type { RouteContext } from './common.ts';
 const commandSchema = z.object({ cmd: z.string().min(1).max(64), arg: z.unknown().optional() }).strict();
 
 const overrideSchema = z.union([
-  z.object({ colours: paletteOverride.unwrap() }).strict(),
+  paletteBodySchema,
   z.object({ paletteId: z.string().min(1).max(64) }).strict(),
 ], { error: 'expected { colours: hex[] } (1 to 8) or { paletteId }' });
 
@@ -32,7 +34,7 @@ export function attachEffectRoutes(app: Express, ctx: RouteContext): void {
 
   app.get('/api/effects', (_req, res) => {
     const { builtin, user } = effects().list();
-    res.json({ ok: true, families: FAMILIES, builtin, user, palettes: { builtin: BUILTIN_PALETTES, user: palettes().list() } });
+    res.json({ ok: true, families: FAMILIES, builtin, user, palettes: { builtin: ALL_PALETTES, user: palettes().list() } });
   });
 
   app.post('/api/effects/command', asyncHandler(async (req, res) => {
@@ -93,15 +95,9 @@ export function attachEffectRoutes(app: Express, ctx: RouteContext): void {
 
   app.put('/api/palette-override', (req, res) => {
     const body = validate(overrideSchema, req.body ?? {}, 'palette-override');
-    let colours: string[];
-    if ('paletteId' in body) {
-      const fixed = palettes().materialize(body.paletteId);
-      if (!fixed) return res.status(404).json({ ok: false, error: 'No such palette' });
-      colours = fixed.map(toHex);
-    } else {
-      colours = body.colours;
-    }
-    applyPatch({ paletteOverride: colours }, { paletteOverrideId: 'paletteId' in body ? body.paletteId : null });
+    const palette = 'paletteId' in body ? palettes().materializeBody(body.paletteId) : body;
+    if (!palette) return res.status(404).json({ ok: false, error: 'No such palette' });
+    applyPatch({ overridePalette: palette }, { paletteOverrideId: 'paletteId' in body ? body.paletteId : null });
     res.json({ ok: true, paletteOverride: overrideNow() });
   });
 

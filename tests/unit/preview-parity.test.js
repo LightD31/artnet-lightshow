@@ -281,6 +281,9 @@ const BARE_BAR = {
 };
 
 test('rig and preview agree on every cell of a bar', () => {
+  const realNow = performance.now;
+  let now = 1e9;
+  performance.now = () => now;
   registerProfile(BARE_BAR);
   const before = state.fixtures;
   let beat = 0;
@@ -297,11 +300,13 @@ test('rig and preview agree on every cell of a bar', () => {
       const look = { pattern, colorA: 1, colorB: 5, colorC: 3, colorD: 8, bpm: 120, beatDivision: 2, split: null };
       const sample = createPreviewSampler([{ timeMs: 0, action: 'patch', data: look }]);
       beat = 0;
+      now += 10000;
       // The stand-in deck keeps the beat, at the look's 120 BPM. Typed into
       // the patch, the BPM would take the tempo from the deck by hand.
       const { bpm: _tempo, ...onDeck } = look;
       applyPatch({ ...onDeck, running: true, masterDimmer: 255, masterBlackout: false, energyOverride: null, showDynamics: null });
       for (beat = 0.1; beat < 6; beat += 0.25) {
+        now += 125;
         renderFrame();
         const preview = sample(beat * 500, state.fixtures, COLOR_PRESETS, rig);
         assert.strictEqual(preview.length, 9, 'one light for the par, eight for the bar');
@@ -319,6 +324,7 @@ test('rig and preview agree on every cell of a bar', () => {
     state.fixtures = before;
     resizeFixtureBuffers();
     unregisterProfile('parity-bar');
+    performance.now = realNow;
     startEngine();
   }
 });

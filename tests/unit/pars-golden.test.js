@@ -27,7 +27,7 @@ import { createPreviewSampler } from '../../src/shared/preview.ts';
 import AutoShow from '../../src/auto-show.ts';
 import { acknowledgeFlashes } from '../helpers/acknowledged.js';
 
-// The hashes have changed three times, each time on purpose.
+// The hashes have changed four times, each time on purpose.
 //
 // 1. The engine: the built-in par's dimmer is 16-bit, and its fine channel
 //    used to be written 0. It now carries the low byte of the level
@@ -58,8 +58,14 @@ import { acknowledgeFlashes } from '../helpers/acknowledged.js';
 //    in one track came out a unit in the last place away from Node 22's. The
 //    plan did not change — hashed to the bit on Node 22 it is still
 //    880194d8…b17c — and both Nodes now hash it the same.
+// 4. Hardware admission now limits Hue to 5 Hz and 40 ms transitions and
+//    renders legacy strobes on Hue. Comparing all 2,908 frames against 2b3c8a4
+//    (engine b825f49a…c1d) changed only Hue bytes 48–58. The additional par
+//    digest is taken from that deployed baseline, retaining its exact output.
+//    Falling transitions retain colour; explicit cuts and exclusions remain immediate.
 const GOLDEN = {
-  engine: 'b825f49a6d0c219d16d2f921722d4a8f86d500eac246b750a424e2a2e3910c1d',
+  engine: '5a5c5d56456b5abdc26613202adb7b384cc0328d89bc705217680e50a2f40cf3',
+  pars: 'f09adeceba236949a3dbf0326a7f37186921a63d97fc0ec33c90bc3e0920db51',
   preview: '65bd25548046cbe773dba9b0fee279aa99c3fc922498d7cfb965724057119178',
   director: '1c05f05e93b67859d56e850ddd4f178fdab4c366e8c7c22b1a0ba82f15e6b978',
 };
@@ -121,6 +127,7 @@ const PAR_PATTERNS = [
 
 function engineHash() {
   const hash = crypto.createHash('sha256');
+  const pars = crypto.createHash('sha256');
   state.artnet.enabled = false;
   let beat = 0;
   conductor.setProlinkSource(() => ({ beatPos: beat, bpm: 120 }));
@@ -132,6 +139,7 @@ function engineHash() {
           beat += 0.125;
           renderFrame();
           for (const u of universes.list()) hash.update(universes.getBuffer(u));
+          pars.update(universes.getBuffer(0).subarray(0, 48));
         }
       };
       const scene = (patch, n = 48) => {
@@ -198,7 +206,7 @@ function engineHash() {
     conductor.setProlinkSource(null);
     setPulseSource(null);
   }
-  return hash.digest('hex');
+  return { engine: hash.digest('hex'), pars: pars.digest('hex') };
 }
 
 function previewHash() {
@@ -278,7 +286,7 @@ test('a rig of pars renders exactly the frames it always has', () => {
   // The colour strobe burst is among them: the operator has acknowledged it.
   const restore = acknowledgeFlashes();
   try {
-    assert.strictEqual(engineHash(), GOLDEN.engine);
+    assert.deepStrictEqual(engineHash(), { engine: GOLDEN.engine, pars: GOLDEN.pars });
   } finally {
     restore();
   }
