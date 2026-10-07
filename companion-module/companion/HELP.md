@@ -33,7 +33,7 @@ The **Busk** preset page has what a set played by hand needs:
 | Set Bars Pattern                  | The LED bars' own picture (a pixel effect) while the pars run the pattern; or none   |
 | Set Panels Pattern                | The panels' own picture (a WLED matrix: bars, fire, rain…); or none, as the bars     |
 | Set Pixel Map                     | Lay pixel effects across the stage, along each bar, or mirrored                      |
-| Set Palette                       | A palette from the server, at 2, 3 or 4 colours                                      |
+| Set Palette                       | A server palette with 1–8 colour slots and authored gradients; classic variants use 2, 3 or 4 colours |
 | Set Colour A / B / C / D          | Change one colour slot (C/D feed 3/4-colour patterns)                                |
 | Set BPM / Adjust BPM              | Set exact BPM or nudge it by ± amount                                                |
 | Double / Halve BPM                | ×2 or ÷2                                                                             |
