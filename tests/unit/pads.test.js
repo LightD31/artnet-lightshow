@@ -116,7 +116,8 @@ test('the default layout has 16 entries', (t) => {
   assert.ok(nine.some((row) => row.app === 'ldj'));
   for (const p of layout) {
     assert.match(p.accent, /^#[0-9A-F]{6}$/);
-    assert.deepEqual([p.quantise, p.targets], [0.25, 'shared'], 'Hue Dynamics\' quarter beat, on the whole rig');
+    assert.equal(p.targets, 'shared', 'on the whole rig');
+    assert.equal(p.quantise, p.content.kind === 'strobe' ? 0 : 0.25, p.label);
     if (p.content.kind === 'preset') assert.equal(p.label, presetById(p.content.id).name);
   }
   // A fresh install plays every pad but the two energy strobes before the
@@ -158,6 +159,25 @@ test('pads.json: a restart reads the layout back; a file that does not validate 
   write(saved.map((p, i) => (i === 9 ? { ...p, content: preset('user.0123456789abcdef') } : p)));
   const kept = new PadStore(file).load();
   assert.deepEqual(kept.get(1, 1).content, preset('user.0123456789abcdef'));
+});
+
+/** pads.json as a build wrote it that saved every default pad on the quarter beat. */
+const quarterBeatLayout = () => defaults().map((p) => ({ ...p, quantise: 0.25 }));
+
+test('pads.json: a strobe pad still as shipped on 0.25 is read at 0', (t) => {
+  const { file } = rig(t);
+  const before = quarterBeatLayout();
+  fs.writeFileSync(file, JSON.stringify({ pads: before }));
+  assert.deepEqual(new PadStore(file).load().layout(), defaults());
+  assert.deepEqual(onDisk(file), { pads: before }, 'read, not written');
+});
+
+test('pads.json: a strobe pad the user changed keeps its quarter beat', (t) => {
+  const { file } = rig(t);
+  const before = quarterBeatLayout();
+  before[6] = { ...before[6], targets: [1] };
+  fs.writeFileSync(file, JSON.stringify({ pads: before }));
+  assert.deepEqual(new PadStore(file).load().get(0, 6), before[6]);
 });
 
 // ── Launching ───────────────────────────────────────────────────────────────
@@ -501,6 +521,55 @@ test('a strobe pad takes the strobe hook when installed and otherwise the voice-
   await until(() => live.length === 4, 'the hook, both ways, both forms');
   assert.deepEqual(live, [['hold', socket.id, 's1'], ['release', socket.id, 's1'], ['hold', socket.id, 's2'], ['release', socket.id, 's2']]);
   assert.deepEqual(voices.list(), []);
+});
+
+/** A strobe hook that hands its launch to the manager, and the launches it was given. */
+function strobeHook(m) {
+  const launches = [];
+  const hook = {
+    hold(owner, token, launch) {
+      launches.push(launch);
+      return m.start({ spec: { kind: 'strobe' }, targets: 'shared', mode: 'hold', tier: 'strobe', source: 'strobe', owner, token, ...launch });
+    },
+    release(owner, token) { m.release(owner, token); },
+  };
+  return { hook, launches };
+}
+
+test('the strobe hook gets the strobe pad\'s patched fixtures and its grid', (t) => {
+  const { c, voices: m, pads, put } = rig(t, { acknowledged: true });
+  const { hook, launches } = strobeHook(m);
+  pads.strobe = hook;
+  put(0, 6, { label: 'Strobe', accent: '#E2E8F0', content: { kind: 'strobe', id: 'strobe' }, launch: 'hold', quantise: 0.5, targets: [1, 3] });
+  // Fixture 3 unpatched since the pad was saved.
+  c.fixtures = [0, 1, 2];
+  pads.press(0, 6, 'tablet', 't');
+  assert.deepEqual(launches, [{ targets: [1], quantise: 0.5 }]);
+});
+
+test('the strobe hook gets voice-hold\'s fixtures, at once', (t) => {
+  const { voices: m, pads } = rig(t, { acknowledged: true });
+  const { hook, launches } = strobeHook(m);
+  pads.strobe = hook;
+  pads.holdStrobe('tablet', 'u', [2, 0]);
+  pads.holdStrobe('tablet', 'v');
+  assert.deepEqual(launches, [{ targets: [2, 0], quantise: 0 }, { targets: 'shared', quantise: 0 }]);
+});
+
+test('voice-hold\'s strobe on an unpatched fixture is refused before the hook', (t) => {
+  const { voices: m, pads } = rig(t, { acknowledged: true });
+  const { hook, launches } = strobeHook(m);
+  pads.strobe = hook;
+  assert.throws(() => pads.holdStrobe('tablet', 'w', [7]), (err) => err.status === 400);
+  assert.deepEqual([launches, m.size], [[], 0]);
+});
+
+test('the default strobe pad starts on the press while the patterns run', (t) => {
+  // 5 ms after beat 32 at 120 BPM: a quarter-beat grid would wait 120 ms.
+  const { c, voices: m, pads } = rig(t, { beat: 32.01, running: true, acknowledged: true });
+  pads.strobe = strobeHook(m).hook;
+  const v = pads.press(0, 6, 'tablet', 't');
+  assert.deepEqual([v.startedAtMs, v.anchorBeat], [c.now, 32.01]);
 });
 
 // ── From outside ────────────────────────────────────────────────────────────

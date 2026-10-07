@@ -138,6 +138,16 @@ test('blackout, palettes and the master', async ({ page, request }) => {
   expect(chosen.palette).toBeTruthy();
 });
 
+test('stop all voices ends every voice and the look plays on', async ({ page, request }) => {
+  await open(page, 'perform');
+  const res = await request.post('/api/voices', { data: { preset: 'hd.auroraDrift', mode: 'latched' } });
+  expect(res.ok()).toBe(true);
+  await until(request, (s) => s.voices.length === 1);
+  await page.getByRole('button', { name: 'Stop all voices' }).click();
+  const after = await until(request, (s) => s.voices.length === 0);
+  expect([after.running, after.pattern]).toEqual([true, 'chase']);
+});
+
 test('every target on the view is at least 44 px on a touch screen', async ({ page }, info) => {
   test.skip(info.project.name !== 'tablet', 'touch sizing');
   await open(page, 'perform');

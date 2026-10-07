@@ -11,26 +11,13 @@ import type { VoiceFrame } from '../shared/effects/layer.ts';
 import type { EffectSpec, HdParams, Seed } from '../shared/effects/types.ts';
 
 /**
- * Voices: effects launched over the base look, each on its fixtures, for as
- * long as its mode says. A pad held down, an energy effect, the strobe, a
- * REST call: one manager owns every launch, its timers and its leases, and
- * hands the renderer the voices playing now (layer.ts lays them over the
- * base by tier and launch).
- *
- *   hold     lives while its owner renews it: a press, then a renewal at
- *            least every HOLD_TIMEOUT_MS, then a release. A tablet whose
- *            Wi-Fi drops stops renewing, and the voice dies on its own
- *   once     ends by itself, after its length in milliseconds or beats
- *   latched  stays until it is stopped, or until its maximum latch
- *
- * Every time is in milliseconds on the manager's clock: a quantised start is
- * converted at launch at the tempo in force, and so is a length in beats.
- * Neither moves afterwards, whatever the tempo or the music's epoch does;
- * the renderer re-anchors a voice's beat when the music jumps.
+ * Voices: effects launched over the base look, each on its fixtures. A hold
+ * lives while its owner renews it, a once ends after its length, a latch
+ * stays until stopped or its cap. Times are milliseconds on the manager's
+ * clock, fixed at launch whatever the tempo does afterwards.
  */
 
-// A browser must keep a momentary effect alive. Losing the release packet,
-// closing the tab, or a broken connection can therefore never latch the effect.
+// A lost release or a dropped connection must never latch a momentary effect.
 export const HOLD_TIMEOUT_MS = 1200;
 
 // Node's timers take a 32-bit delay; a longer wait is chained in such steps.
@@ -78,7 +65,6 @@ export interface StartVoice {
   hidden?: boolean;
 }
 
-/** A launched voice. */
 export interface Voice {
   id: string;
   spec: EffectSpec;
@@ -177,11 +163,7 @@ const positive = (value: unknown): value is number => typeof value === 'number' 
 const launchKey = (spec: EffectSpec, targets: number[] | null, tier: VoiceTier, source: VoiceSource, label: string, key: string | null,
   id: string | null, holdsGrid: boolean): string => canonical({ spec, targets, tier, source, label, key, id, holdsGrid });
 
-/**
- * A spec as the effects play it, or a 400 saying what is wrong with it. A
- * frozen copy: validation passes some values through as given, and the
- * voice must not change with the caller's object, nor freeze it.
- */
+/** A frozen copy of the validated spec, so the voice never changes with the caller's object; a 400 if invalid. */
 export function voiceSpec(raw: unknown): EffectSpec {
   try {
     return deepFreeze(structuredClone(validateSpec(raw, { internal: isMintedBundle(raw) })));
@@ -194,13 +176,7 @@ export function voiceSpec(raw: unknown): EffectSpec {
   }
 }
 
-/**
- * The beats a once launch plays when it names no length: the preset's own
- * length, then Hue Dynamics' scoped loop for its ten Party kinds, a Light DJ
- * kind's `beats`, a macro's loop, and last one beat for a single-beat scope
- * and a bar for any other. `spec` is validated, so every field read here is
- * one its kind owns.
- */
+/** The beats a once launch plays when it names no length: the preset's, else the kind's loop, else a beat or a bar. */
 export function lengthBeatsOf(spec: EffectSpec, presetLengthBeats?: number | null): number {
   if (positive(presetLengthBeats)) return presetLengthBeats;
   const params = (spec.params ?? {}) as Record<string, unknown>;
@@ -223,10 +199,7 @@ export const builtinPresets: PresetLookup = (id) => {
   return row && !row.legacy ? { spec: row.spec, lengthBeats: row.lengthBeats, name: row.name } : null;
 };
 
-/**
- * What a request launches: `effect`, a spec, or `preset`, an id — one of the
- * two. A preset no library knows is a 400, like a spec that does not validate.
- */
+/** What a request launches: `effect`, a spec, or `preset`, an id, one of the two; an unknown preset is a 400. */
 export function launchOf({ effect, preset }: { effect?: unknown; preset?: unknown }, lookup: PresetLookup):
   { spec: EffectSpec; lengthBeats: number | undefined; label: string } {
   if ((effect === undefined) === (preset === undefined)) throw bad('voice: give either effect or preset');
@@ -240,11 +213,7 @@ export function launchOf({ effect, preset }: { effect?: unknown; preset?: unknow
   return { spec, lengthBeats: undefined, label: spec.kind };
 }
 
-/**
- * Wire targets as a launch takes them: `'shared'`, or fixture ids of the
- * patch, once each. An empty list stays empty (it covers nothing); an id the
- * patch does not have is a 400 rather than a voice that silently shows nowhere.
- */
+/** Wire targets as a launch takes them; an id the patch lacks is a 400 rather than a voice that shows nowhere. */
 export function targetsOf(raw: unknown, fixtureIds: readonly number[]): VoiceTargets {
   const targets = fixtureIdsOf(raw);
   if (!targets) return 'shared';
@@ -274,6 +243,7 @@ export class VoiceManager {
   declare _seq: number;
   /** Holds a stop ended, by owner and token: the lease end a holder still renewing keeps pushing on. */
   declare _revoked: Map<string, number>;
+  declare _stopListeners: Set<(stopped: Voice[]) => void>;
 
   constructor({ now, beatPos, bpm, reading, onChange, acknowledged, anyRunning, wallNow, strobeLatchMs }: VoiceManagerOptions) {
     this._now = now;
@@ -286,6 +256,13 @@ export class VoiceManager {
     this._records = new Map();
     this._seq = 0;
     this._revoked = new Map();
+    this._stopListeners = new Set();
+  }
+
+  /** Hear the voices a stop ended, before the change is told; never ends by release, lease, timer or disconnect. */
+  onStop(fn: (stopped: Voice[]) => void): () => void {
+    this._stopListeners.add(fn);
+    return () => { this._stopListeners.delete(fn); };
   }
 
   /** How many voices there are, the ones still waiting for their grid line and the hidden ones included. */
@@ -418,9 +395,9 @@ export class VoiceManager {
     if (record && this._end(record)) this._changed();
   }
 
-  /** The owner went (a socket closed): every voice it launched goes with it. */
+  /** The owner went (a socket closed): every voice it launched goes with it, as if let go. */
   disconnect(owner: string): void {
-    this.stopWhere((v) => v.owner === owner);
+    this._stopWhere((v) => v.owner === owner, false);
   }
 
   /** Stop one voice; false when there is none by that id. */
@@ -428,6 +405,7 @@ export class VoiceManager {
     const record = this._records.get(id);
     if (!record || !this._end(record)) return false;
     this._revoke(record);
+    this._stopped([this._view(record)]);
     this._changed();
     return true;
   }
@@ -439,32 +417,16 @@ export class VoiceManager {
 
   /** Stop the voices `pred` picks; how many. */
   stopWhere(pred: (v: Voice) => boolean): number {
-    let n = 0;
-    for (const record of [...this._records.values()]) {
-      if (pred(this._view(record)) && this._end(record)) {
-        this._revoke(record);
-        n++;
-      }
-    }
-    if (n) this._changed();
-    return n;
+    return this._stopWhere(pred, true);
   }
 
-  /**
-   * Hide a voice, or show it again: hidden, it keeps its launch, its timers
-   * and its lease and renders nothing. The energy endpoints' latch hides
-   * under their hold this way. Tells no one: the caller is in a change already.
-   */
+  /** Hide a voice or show it again, timers and lease kept; tells no one, as the caller is in a change already. */
   setHidden(id: string, hidden: boolean): void {
     const record = this._records.get(id);
     if (record) record.voice.hidden = hidden;
   }
 
-  /**
-   * A new spec of the same kind for a running voice (the strobe's settings
-   * edited live). Launch, start, seed, lease and end stay, so the renderer
-   * keeps its state and the strobe its permit. Null for no such voice.
-   */
+  /** A new spec of the same kind for a running voice, in place, so the renderer keeps its state; null for none. */
   update(id: string, raw: unknown): Voice | null {
     const record = this._records.get(id);
     if (!record) return null;
@@ -516,12 +478,8 @@ export class VoiceManager {
   }
 
   /**
-   * The voices playing at `nowMs`, as the renderer takes them. A voice not
-   * started yet is left out (unless it starts within `aheadMs`: the renderer
-   * holds it until its start), and so is a hidden one. A voice past its end
-   * or its lease is ended here, whether or not its timer has fired: the
-   * frame is the second check that a dropped hold dies on time. A hold's
-   * frame ends at its lease, so a renderer working on without news stops it too.
+   * The voices playing at `nowMs` (or starting within `aheadMs`), hidden ones left out. One past its end or
+   * lease is ended here even before its timer fires, so a dropped hold dies on time.
    */
   frames(nowMs: number, aheadMs = 0): VoiceFrame[] {
     const out: VoiceFrame[] = [];
@@ -583,6 +541,31 @@ export class VoiceManager {
     record.leaseWait = wait(HOLD_TIMEOUT_MS, () => {
       if (record.lease === lease && this._end(record)) this._changed();
     });
+  }
+
+  /** End the voices `pred` picks; `stop` tells the stop listeners. How many. */
+  _stopWhere(pred: (v: Voice) => boolean, stop: boolean): number {
+    const ended: Voice[] = [];
+    for (const record of [...this._records.values()]) {
+      if (pred(this._view(record)) && this._end(record)) {
+        this._revoke(record);
+        ended.push(this._view(record));
+      }
+    }
+    if (!ended.length) return 0;
+    if (stop) this._stopped(ended);
+    this._changed();
+    return ended.length;
+  }
+
+  _stopped(stopped: Voice[]): void {
+    for (const fn of [...this._stopListeners]) {
+      try {
+        fn(stopped);
+      } catch (err) {
+        console.warn(`[voices] stop listener: ${messageOf(err)}`);
+      }
+    }
   }
 
   /** Remove a record and its timers; false when it was gone already (a stale timer, a replacement). */

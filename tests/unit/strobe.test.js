@@ -267,6 +267,80 @@ test('a hold over a latch keeps the latch underneath, hidden, and the latch come
   assert.equal(voices.size, 0, 'off took the latch underneath too');
 });
 
+/** A latch with a hold over it, then `stop`: nothing comes back, nor at the holder's release. */
+function stoppedForGood(t, stop) {
+  const { voices, strobe, advance } = bench(t, { acknowledged: true, capSec: 60 });
+  strobe.on('latched');
+  strobe.hold('tablet', 't');
+  stop(voices);
+  assert.equal(voices.size, 0, 'nothing comes back');
+  advance(HOLD_TIMEOUT_MS);
+  strobe.release('tablet', 't');
+  assert.equal(voices.size, 0, 'nor at the holder\'s release');
+}
+
+test('stop-all ends a latch kept under a hold for good', (t) => {
+  stoppedForGood(t, (voices) => voices.stopAll());
+});
+
+test('a stop by id ends a latch kept under a hold for good', (t) => {
+  stoppedForGood(t, (voices) => voices.stop(STROBE_VOICE_ID));
+});
+
+test('a stop picking the hold ends the latch under it for good', (t) => {
+  stoppedForGood(t, (voices) => voices.stopWhere((v) => v.mode === 'hold'));
+});
+
+test('the holder\'s page going hands back the latch kept under its hold', (t) => {
+  const { voices, strobe } = bench(t, { acknowledged: true, capSec: 60 });
+  strobe.on('latched');
+  strobe.hold('tablet', 'u');
+  voices.disconnect('tablet');
+  assert.equal(voices.get(STROBE_VOICE_ID)?.mode, 'latched');
+});
+
+test('a hold plays on the fixtures it is given', (t) => {
+  const { c, voices, strobe } = bench(t, { acknowledged: true });
+  const v = strobe.hold('tablet', 't', { targets: [1, 2] });
+  assert.deepEqual([v.id, v.tier, v.targets], [STROBE_VOICE_ID, 'strobe', [1, 2]]);
+  assert.deepEqual(voices.frames(c.now).map((f) => [f.id, f.targets]), [[STROBE_VOICE_ID, [1, 2]]]);
+});
+
+test('a hold waits for the grid line it is given while the look plays', (t) => {
+  const { c, strobe, advance, playing } = bench(t, { acknowledged: true });
+  c.running = true;
+  c.beat = 0.5;
+  const v = strobe.hold('tablet', 't', { quantise: 1 });
+  assert.equal(v.startedAtMs, c.now + 250, 'half a beat at 120 BPM');
+  assert.deepEqual(playing(), []);
+  advance(250);
+  assert.deepEqual(playing(), [STROBE_VOICE_ID]);
+});
+
+test('a targeted hold pressed again renews it', (t) => {
+  const { strobe } = bench(t, { acknowledged: true });
+  const v = strobe.hold('tablet', 't', { targets: [1, 2], quantise: 1 });
+  assert.equal(strobe.hold('tablet', 't', { targets: [1, 2], quantise: 1 }).launchSeq, v.launchSeq);
+});
+
+test('a hold given no launch plays on the whole rig at once', (t) => {
+  const { c, strobe } = bench(t, { acknowledged: true });
+  c.running = true;
+  c.beat = 0.5;
+  const v = strobe.hold('tablet', 't');
+  assert.deepEqual([v.targets, v.startedAtMs], [null, c.now]);
+});
+
+test('a quantised hold over a latch starts at once', (t) => {
+  const { c, strobe, playing } = bench(t, { acknowledged: true });
+  c.running = true;
+  c.beat = 0.5;
+  strobe.on('latched');
+  const v = strobe.hold('tablet', 't', { quantise: 1 });
+  assert.equal(v.startedAtMs, c.now);
+  assert.deepEqual(playing(), [STROBE_VOICE_ID]);
+});
+
 test('update validates the settings (1..5 a second, 1..6 hex colours, the clock, the look between, the brightness), saves them, and the running strobe takes them in place', (t) => {
   const { voices, strobe, settings, values, advance, c } = bench(t, { acknowledged: true });
   const next = strobe.update({ flashesPerSecond: 5, palette: ['#ff0000', '#0000FF'], clock: 'wall', continueBetween: false, brightness: 0.5 });
@@ -454,9 +528,9 @@ async function serve(t) {
 
 const ids = () => voices.list().map((v) => v.id);
 const playing = () => renderInput().voices.map((v) => v.id);
-/** The first fixture's colour channels and dimmer on the rig. */
-const lamp = () => {
-  const fixture = state.fixtures[0];
+/** A fixture's colour channels and dimmer on the rig, the first one's by default. */
+const lamp = (i = 0) => {
+  const fixture = state.fixtures[i];
   const dmx = universes.getBuffer(fixture.universe ?? state.artnet.universe);
   const { channelMap: ch } = getProfile(fixture);
   const base = fixture.address - 1;
@@ -711,4 +785,107 @@ test('a latched strobe-kind voice from POST /api/voices or a pad loop carries th
     assert.deepEqual([res.status, res.body.ok], [409, false], route);
   }
   await s.call('DELETE', '/api/voices');
+});
+
+async function acknowledged(t) {
+  const s = await serve(t);
+  await s.call('POST', '/api/safety/acknowledge');
+  return s;
+}
+
+/** The strobe latched and the strobe pad held over it. */
+async function holdOverLatch(s) {
+  await s.call('POST', '/api/strobe/on');
+  const res = await s.call('POST', '/api/pads/0/6/press');
+  assert.deepEqual([res.status, voices.get(STROBE_VOICE_ID)?.mode], [200, 'hold']);
+  return s;
+}
+
+/** Nothing plays, nor once the pad is let go. */
+async function gone(s) {
+  assert.deepEqual([ids(), playing()], [[], []]);
+  await s.call('POST', '/api/pads/0/6/release');
+  assert.deepEqual(ids(), [], 'nor after the pad\'s release');
+  assert.equal((await s.call('GET', '/api/strobe')).body.active, null);
+}
+
+test('DELETE /api/voices ends a latch kept under a strobe hold', async (t) => {
+  const s = await holdOverLatch(await acknowledged(t));
+  assert.deepEqual((await s.call('DELETE', '/api/voices')).body, { ok: true, stopped: 1 });
+  await gone(s);
+});
+
+test('DELETE /api/voices/strobe ends a latch kept under a strobe hold', async (t) => {
+  const s = await holdOverLatch(await acknowledged(t));
+  assert.equal((await s.call('DELETE', '/api/voices/strobe')).status, 200);
+  await gone(s);
+});
+
+test('a disarm with the outputs off ends a latch kept under a strobe hold', async (t) => {
+  const s = await holdOverLatch(await acknowledged(t));
+  assert.deepEqual((await s.call('POST', '/api/outputs/disarm')).body, { ok: true, armed: false });
+  await gone(s);
+});
+
+test('a disarm saved from armed ends a latch kept under a strobe hold', async (t) => {
+  const s = await acknowledged(t);
+  await s.call('POST', '/api/outputs/arm');
+  await holdOverLatch(s);
+  s.applier.applyChanged(settings.update({ outputs: { armed: false } }));
+  await gone(s);
+});
+
+test('POST /api/outputs/disarm from armed ends a latch kept under a strobe hold', async (t) => {
+  const s = await acknowledged(t);
+  await s.call('POST', '/api/outputs/arm');
+  await holdOverLatch(s);
+  await s.call('POST', '/api/outputs/disarm');
+  await gone(s);
+});
+
+test('a latched palette strobe replaces a latch kept under a strobe hold', async (t) => {
+  const s = await holdOverLatch(await acknowledged(t));
+  await s.call('POST', '/api/energy/palette-strobe');
+  await s.call('POST', '/api/pads/0/6/release');
+  assert.deepEqual([ids(), state.energyOverride], [['energy:palette-strobe'], 'palette-strobe']);
+  await s.call('POST', '/api/energy/off');
+});
+
+test('the strobe pad plays on its own fixtures and leaves the rest to the look', async (t) => {
+  const s = await acknowledged(t);
+  const [first] = state.fixtures.map((f) => f.id);
+  applyPatch({ pattern: 'solid', colorA: 0, running: true, masterDimmer: 255, masterBlackout: false, paletteOverride: null });
+  await s.call('PUT', '/api/strobe', { palette: ['#0000FF'], flashesPerSecond: 5 });
+  renderFrame();
+  assert.deepEqual([lamp(0).r, lamp(1).r], [255, 255], 'the look: red');
+  const entry = { label: 'Strobe', accent: '#E2E8F0', content: { kind: 'strobe', id: 'strobe' }, launch: 'hold', quantise: 0, targets: [first] };
+  assert.equal((await s.call('PUT', '/api/pads/0/6', entry)).status, 200);
+  await s.call('POST', '/api/pads/0/6/press');
+  assert.deepEqual(renderInput().voices.map((v) => [v.id, v.targets]), [[STROBE_VOICE_ID, [first]]]);
+  let elsewhere = false;
+  await flashes((l) => {
+    if (lamp(1).b !== 0) elsewhere = true;
+    return l.r === 0 && l.b === 255;
+  }, 'a blue flash on the pad\'s fixture');
+  assert.equal(elsewhere, false, 'the other fixtures keep the look');
+  await s.call('POST', '/api/pads/0/6/release');
+});
+
+test('voice-hold { preset: "strobe" } plays on the fixtures it names', async (t) => {
+  const s = await acknowledged(t);
+  const [, second, third] = state.fixtures.map((f) => f.id);
+  const { socket } = await s.page();
+  socket.emit('voice-hold', { action: 'press', token: 'q', effect: { preset: 'strobe' }, targets: [second, third] });
+  await until(() => ids().length === 1, 'the preset held');
+  assert.deepEqual(voices.get(STROBE_VOICE_ID).targets, [second, third]);
+  socket.emit('voice-hold', { action: 'release', token: 'q' });
+  await until(() => !ids().length, 'released');
+});
+
+test('voice-hold { preset: "strobe" } on an unknown fixture is refused', async (t) => {
+  const s = await acknowledged(t);
+  const { socket, heard } = await s.page();
+  socket.emit('voice-hold', { action: 'press', token: 'r', effect: { preset: 'strobe' }, targets: [9999] });
+  await until(() => heard.errors.length === 1, 'an unknown fixture refused');
+  assert.deepEqual([heard.errors[0].token, ids()], ['r', []]);
 });

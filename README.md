@@ -64,8 +64,9 @@ Companion** (with a page of presets for busking), and a REST API.
 
 - **Perform view** — the live controls laid out for a thumb: now and next,
   sync health, big pads for blackout and every energy effect (held, or
-  latched), tap tempo, one-tap palettes, and the master and show-intensity
-  faders. Open it at `/#perform`, or press **3**
+  latched), **Stop all voices** (`DELETE /api/voices`: every voice ends, the
+  look plays on), tap tempo, one-tap palettes, and the master and
+  show-intensity faders. Open it at `/#perform`, or press **3**
 - **Stage view** — the rig in 3D, in a hazy room: beams from the pars, every
   cell of every bar, the Hue lamps around the room, from the audience, from
   above or from the side. Live, it shows what is going out; rehearsing, the
@@ -1591,11 +1592,13 @@ content:
   shared lane covers the pad's targets, a track lane goes to the selected
   fixtures in patch order (a track with no fixture left is skipped), and the
   pad alone decides its priority and lifetime. `hold` and `loop` repeat the
-  pattern; `once` plays it once. A pattern taken off the shelf since the pad
-  was saved answers 404, and one with a rapid-flash clip waits for the
-  acknowledgement like any other.
-- `strobe` — the strobe while the pad is held (id `strobe`, launch `hold`
-  only; `once` and `toggle` answer 409).
+  pattern; `once` plays it once. A pattern that is not on the shelf answers
+  404, and one with a rapid-flash clip waits for the acknowledgement like
+  any other.
+- `strobe` — the strobe while the pad is held, on the pad's targets from its
+  next grid line, at once by default (id `strobe`, launch `hold` only; `once`
+  and `toggle` answer 409). A strobe pad saved as shipped but on `0.25` is
+  read at `0`.
 - `sequencePattern` — drops the pattern into the loaded sequence at the
   pad's next grid line.
 
@@ -1683,10 +1686,14 @@ One strobe, with Hue Dynamics' settings:
 times a second, whatever asks for it, and Flash Limit, when on, still holds
 the rig as a whole to three large flashes a second. Ways to run it:
 
-- **Hold** — the strobe pad, or `voice-hold` with `{ preset: 'strobe' }`:
-  as long as it is held and renewed. Over a latch, the latch stays
-  underneath, hidden, and comes back when the hold is let go or its lease
-  runs out, still ending at its own cap.
+- **Hold** — the strobe pad (on its `targets`, from its `quantise` grid
+  line, or at once over a latch), or `voice-hold` with
+  `{ preset: 'strobe' }` (on its `targets`, at once): as long as it is held
+  and renewed. Over a latch, the latch stays underneath, hidden, and comes
+  back when the hold is let go or its lease runs out, still ending at its
+  own cap. A stop ends the latch underneath with the hold:
+  `DELETE /api/voices`, `DELETE /api/voices/strobe`, a disarm, and latching
+  `palette-strobe`.
 - **Burst** — `POST /api/strobe/burst/:ms`, 100 to 30,000 ms, once.
 - **Latch** — `POST /api/strobe/on`. A latch ends on `POST /api/strobe/off`,
   on `POST /api/energy/off`, on a burst, on `DELETE /api/voices`, or at the

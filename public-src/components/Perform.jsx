@@ -18,7 +18,7 @@ import { AudioMeters } from './AudioMeters.jsx';
  *   now / next   the track playing, how far in, and what comes after it
  *   sync         what the lights are keeping time by, and whether it is well
  *   pads         two banks of eight, each played as its launch mode says,
- *                the strobe held, blackout and tap tempo
+ *                the strobe held, blackout, tap tempo and stop all voices
  *   palettes     one tap writes the whole look's colours
  *   faders       the master and how hard the generated show pushes
  *
@@ -155,10 +155,13 @@ function SyncHealth() {
   );
 }
 
+/** Every voice off, hidden and waiting ones too (DELETE /api/voices); the look and the patterns play on. */
+export const stopAllVoices = () => api('/api/voices', { method: 'DELETE' });
+
 function Utility() {
   const s = pick(['masterBlackout']);
   return (
-    <section class="perform-utility" aria-label="Blackout and tap">
+    <section class="perform-utility" aria-label="Blackout, tap and stop all voices">
       <button type="button" class={`perform-pad pad-blackout ${s.masterBlackout ? 'active' : ''}`}
         aria-pressed={!!s.masterBlackout}
         onClick={() => send({ masterBlackout: !s.masterBlackout })}>
@@ -169,6 +172,9 @@ function Utility() {
         onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !e.repeat) { e.preventDefault(); emitTap(); } }}>
         <span class="perform-pad-name">Tap</span>
         <span class="perform-pad-hint">tempo</span>
+      </button>
+      <button type="button" class="perform-pad pad-stop-voices" onClick={stopAllVoices}>
+        <span class="perform-pad-name">Stop all voices</span>
       </button>
     </section>
   );
