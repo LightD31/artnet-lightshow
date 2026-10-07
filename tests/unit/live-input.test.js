@@ -139,6 +139,53 @@ test('the process is started with the source asked for, and again when it dies',
   assert.strictEqual(spawned.length, 3, 'and stays stopped');
 });
 
+test('a replaced process is not heard, nor its late error', () => {
+  const procs = [];
+  const live = new LiveInput({ spawner: () => { const p = fakeProcess(); procs.push(p); return p; }, now: () => 50000 });
+  live.start({ source: 'input' });
+  const firstLines = live._rl;
+  live.start({ source: 'loopback' });
+  assert.strictEqual(procs.length, 2);
+
+  // Closing the old reader does not stop lines it already holds.
+  firstLines.emit('line', state());
+  assert.strictEqual(live.getReading(), null);
+  procs[0].emit('error', new Error('late'));
+  assert.strictEqual(live.status().error, null, 'the new process carries on');
+  assert.strictEqual(procs.length, 2);
+  live.stop();
+});
+
+test('a process that dies takes its stream clock, lock and envelope with it', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let now = 50000;
+  const procs = [];
+  const live = new LiveInput({ spawner: () => { const p = fakeProcess(); procs.push(p); return p; }, now: () => now });
+  live.start({ source: 'loopback' });
+  // Ten minutes in and locked: stream time 600.01 s arrives at 50 000 ms.
+  live._rl.emit('line', state({ t: 600, captured: 600.01, beat: 1200, locked: true }));
+  assert.ok(Math.abs(live.streamNowMs() - 600010) < 1e-6);
+  assert.deepStrictEqual(live.recentEnvelope().map((e) => e.t), [600]);
+
+  procs[0].emit('close', 1);
+  now += 2000;
+  t.mock.timers.tick(2000);
+  assert.strictEqual(procs.length, 2, 'started again');
+
+  // The new process counts its stream from zero. The dead one's lock does not
+  // vouch for a grid it never heard, its arrivals do not place the new stream
+  // on the clock, and its levels are not the new stream's envelope.
+  now += 500;
+  live._rl.emit('line', state({ t: 0.5, captured: 0.512, beat: 1.0, locked: false }));
+  assert.strictEqual(live.getBeatReading(), null, 'unlocked, and the old lock is gone');
+  now += 100;
+  live._rl.emit('line', state({ t: 0.6, captured: 0.612, beat: 1.2, locked: true }));
+  assert.ok(Math.abs(live.streamNowMs() - 612) < 1e-6, `stream now ${live.streamNowMs()}`);
+  assert.ok(Math.abs(live.getBeatReading().beatPos - (1.2 + 0.012 * 2)) < 1e-9, `beat ${live.getBeatReading().beatPos}`);
+  assert.deepStrictEqual(live.recentEnvelope().map((e) => e.t), [0.5, 0.6]);
+  live.stop();
+});
+
 test('the devices come from the service, and a failure says why', async () => {
   const withOutput = (out, code = 0, err = '') => () => {
     const p = fakeProcess();

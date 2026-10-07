@@ -316,6 +316,12 @@ The same token goes in:
 - **Companion** → the connection's *Access token* field
 - **Browser extension** → its preferences page (server URL and token)
 
+Behind an SSO reverse proxy, have the proxy overwrite `X-Lightshow-Token` with
+the server's token **after** authenticating the user, on both HTTP requests and
+Socket.IO connections. Browser users then need only SSO; the token stays on the
+server. Keep the backend restricted to the proxy and authorized integrations,
+and retain the host and origin checks. Forwarded user names alone do not grant access.
+
 Cross-origin requests are refused whether or not a token is set, so a website
 you happen to have open in another tab cannot drive the rig — over HTTP or over
 the live socket.

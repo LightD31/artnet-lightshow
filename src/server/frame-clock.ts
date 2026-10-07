@@ -28,6 +28,11 @@ const MAX_BEHIND_FRAMES = 2;
 // How long a window the timing figures describe.
 const STATS_WINDOW_S = 60;
 
+// How far before its deadline a real timer can go off: Node truncates the
+// delay to whole milliseconds and counts it from its loop clock, itself a
+// whole millisecond, so up to one of each.
+const TIMER_SLACK_MS = 2;
+
 /** Milliseconds on the process-wide monotonic clock. */
 function hrtimeMs(): number {
   return Number(process.hrtime.bigint()) / 1e6;
@@ -115,11 +120,18 @@ class FrameStats {
  * Call `onTick(dueMs, nowMs)` once per frame, on the grid
  * `epochMs + phaseMs + k·periodMs`.
  *
- * Each timer is armed for the next deadline measured from the later of now
- * and the deadline just served. A timer that fires a hair early therefore
- * still arms the next one a full period on, and under mocked timers (where the
- * clock does not move while the test ticks) the loop runs at exactly the
- * period, as an interval would.
+ * Each timer is armed for the next deadline measured from now. Node keeps
+ * timers in whole milliseconds of its loop clock, so one goes off up to
+ * TIMER_SLACK_MS before a deadline on hrtime; measured from the deadline
+ * instead, that hair carried into every frame after it, and the loop ran ahead
+ * of its grid without bound (44.7 frames a second, 155 ms ahead after ten
+ * seconds). Measuring from no earlier than TIMER_SLACK_MS before the deadline
+ * brings even a timer that went off further early back onto the grid.
+ *
+ * A frame more than half a period early is on a clock that does not move with
+ * the timers — mocked timers in a test — and arms the next one a full period
+ * on from its deadline, so the loop runs at exactly the period there, as an
+ * interval would.
  */
 /** A running frame loop (see createTicker). */
 export interface Ticker {
@@ -172,7 +184,7 @@ function createTicker({
       stats.record(t - due, now() - t);
       index++;
       // Stopped from inside the tick: nothing left to arm.
-      if (running) arm(Math.max(now(), due));
+      if (running) arm(t < due - periodMs / 2 ? due : Math.max(now(), due - TIMER_SLACK_MS));
     }
   }
 

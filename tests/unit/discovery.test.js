@@ -105,7 +105,9 @@ async function withRoutes(fn, { fixtures = [], hue = null } = {}) {
   state.fixtures = fixtures;
   if (hue) output.configureHue({ bridges: hue });
   const calls = { broadcast: 0, locate: [], pixels: [], hue: [], info: [] };
-  const identify = createIdentify({ setTimer: () => ({}), clearTimer: () => {} });
+  // The test's own time, as its timers are: a busy runner passing a
+  // millisecond between start and answer must not change what is answered.
+  const identify = createIdentify({ clock: () => 1000, setTimer: () => ({}), clearTimer: () => {} });
   const app = express();
   app.use(express.json());
   attachIdentifyRoutes(app, {
