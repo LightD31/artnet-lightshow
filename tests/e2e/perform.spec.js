@@ -107,7 +107,7 @@ test('a rapid preset pad asks before the acknowledgement on the deck and on the 
     await expect(dialog).toBeHidden();
     await expect(pad).toHaveAttribute('aria-pressed', String(litBefore));
     // The command bar's strip, on every view but Perform.
-    await open(page, 'manual');
+    await open(page, 'effects');
     const strip = (await state(request)).pads.layout.filter((p) => p.bank === 0 && p.content).sort((a, b) => a.slot - b.slot);
     const onStrip = page.locator('.cb-energy-btn').nth(strip.findIndex((p) => p.slot === white.slot));
     await expect(onStrip).toHaveAttribute('data-safety', 'ask');

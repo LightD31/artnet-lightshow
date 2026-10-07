@@ -107,28 +107,33 @@ returns 409. If a Deezer ARL is configured, an unsupervised Node process needs
 
 ## Views and controls
 
+An **effect** draws the lights. A **look** combines the base effect, colours and fixture
+settings. A **pattern** is a reusable sequence of clips. Favourites are quick access
+to effects; pad banks launch effects or patterns over the look.
+
 | View | Shortcut | Purpose |
 |------|----------|---------|
-| Manual | 1 | Effects catalogue and inspector, cues, look colours, fixture overrides and stage preview |
-| Auto Show | 2 | Analyse music, choose the playback source, start/stop the generated show and warm a set list |
-| Perform | 3 | Arm outputs, current/next track, live status, sequence transport, pads, strobe, blackout, tap, palette overrides and faders |
-| Timeline | 4 | Inspect sections, rehearse an analysed track and edit its show |
+| Perform | 1 | Arm outputs, pads and Matrix, transport, strobe, blackout, tap, colours and faders |
+| Effects | 2 | Effects catalogue and inspector, cues, look colours, fixture overrides and stage preview |
+| Auto Show | 3 | Analyse music, choose its source, run the generated show; Timeline tab for rehearsal and edits |
+| Sequence | 4 | Create/load sequences; shared transport and recording; lanes, clips and patterns behind Edit |
 | Stage | 5 | Monitor the rendered rig in 3D |
-| Sequence | 0 | Create/load sequences; transport and recording; lanes, clips and patterns behind Edit |
-| Matrix | Shift+0 | Hold colour cells in fireworks, flashes, pulses, cycle or solid mode |
 | Rig | 6 | Plan, patch, fixture profiles and outputs |
 | Sources | 7 | Playback sources, live input, analysis environment and models |
 | Settings | 8 | Show behaviour, safety, MIDI, engine and server access |
 | Preflight | 9 | Run the pre-show checks |
 
 Hashes open a view directly, such as `/#perform` or `/#rig/outputs`.
+Perform opens by default. Old `#manual`, `#timeline` and `#matrix` bookmarks redirect
+to Effects, Auto Show → Timeline and Perform → Matrix. The shared transport names
+the look, Auto Show or sequence it controls.
 The view strip scrolls with its arrow buttons; keyboard arrows, Home and End
 work while a view tab is focused.
 
-Header, Perform, Manual and the stage preview share the same status line:
+Header, Perform, Effects and the stage preview share the same status line:
 base look, sequence transport, visible voices and palette override. The
 highlighted catalogue row identifies the **base**; a sequence or voice may
-be above it. Perform and Manual list visible voices with individual Stop
+be above it. Perform and Effects list visible voices with individual Stop
 buttons. Stop all voices also clears latched and off-bank effects.
 
 Pads with no custom label use the catalogue name on both Perform and the
@@ -314,8 +319,7 @@ their output; Colour Strobe and Glow follow the override's first colour.
 
 ## Looks, palettes and cues
 
-The base `pattern` accepts classic pattern ids or effect-preset ids. Manual →
-Effects filters the catalogue by family/library and supports favourites.
+The base `pattern` accepts classic pattern ids or effect-preset ids. Effects filters the catalogue by family/library and supports favourites.
 Editing a built-in saves a copy; user presets are editable and deletable.
 `GET /api/effects` exposes family parameter schemas and preset metadata.
 
@@ -973,10 +977,9 @@ Press **?** in the app for this list.
 | Key | Action |
 |-----|--------|
 | **Space** | Tap tempo — also right after clicking a button; a control reached with Tab keeps Space for itself |
-| **1** / **2** / **3** | Manual / Auto Show / Perform view |
-| **4** / **5** | Timeline / Stage view |
+| **1** / **2** / **3** | Perform / Effects / Auto Show view |
+| **4** / **5** | Sequence / Stage view |
 | **6** / **7** / **8** / **9** | Rig / Sources / Settings / Preflight view |
-| **0** / **Shift+0** | Sequence / Matrix view |
 | **←** **→**, **Home** / **End** on the view tabs | Next / previous / first / last view |
 | **←** **→** **↑** **↓**, **Home** / **End** | Move within the colour grid |
 | **Enter** / **Shift+Enter** | Write the focused swatch into the active slot / the paired slot (A↔B, C↔D) |

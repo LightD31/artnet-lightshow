@@ -388,9 +388,9 @@ test('loop flips the loaded region on and off, and is unavailable without one', 
 test("transport lists available sequences and marks the loaded one", () => {
   given({ sequence: STATUS, sequences: [{ id: 'set1', name: 'Set one' }, { id: 'set2', name: 'Set two' }] });
   const html = ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } }));
-  assert.match(html, /aria-label="Sequence"/);
-  assert.match(html, /<option value="set1" selected[^>]*>Set one</);
-  assert.match(html, /<option value="set2"[^>]*>Set two</);
+  assert.match(html, /aria-label="Transport source"/);
+  assert.match(html, /<option value="sequence:set1" selected[^>]*>Set one</);
+  assert.match(html, /<option value="sequence:set2"[^>]*>Set two</);
 });
 
 test("playing transport exposes clip position and controls", () => {
@@ -404,21 +404,23 @@ test("playing transport exposes clip position and controls", () => {
 test("paused transport offers play and unloading", () => {
   given({ sequence: { ...STATUS, playing: false, paused: true } });
   assert.match(ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } })), /aria-label="Play"/);
-  assert.match(ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } })), /<option value(="")?[^>]*>No sequence \(back to the look\)</);
+  assert.match(ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } })), /<option value="look"[^>]*>Look by hand</);
 });
 
 test('sequence picker follows shelves received from other clients', () => {
   given({ sequence: STATUS, sequences: [{ id: 'set1', name: 'Set one' }] });
   assert.doesNotMatch(ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } })), /Saved on the tablet/);
   given({ sequence: STATUS, sequences: [{ id: 'set1', name: 'Set one' }, { id: 'tab', name: 'Saved on the tablet' }] });
-  assert.match(ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } })), /<option value="tab"[^>]*>Saved on the tablet</);
+  assert.match(ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } })), /<option value="sequence:tab"[^>]*>Saved on the tablet</);
 });
 
-test('with nothing loaded the transport offers the picker and no position', () => {
-  given({ sequence: { ...STATUS, loaded: null, playing: false, lanes: [] }, sequences: [{ id: 'set1', name: 'Set one' }] });
+test('with no sequence loaded the transport controls the look', () => {
+  given({ running: false, sequence: { ...STATUS, loaded: null, playing: false, lanes: [] }, sequences: [{ id: 'set1', name: 'Set one' }] });
   const html = ui.html(ui.h(ui.Transport, { initial: { sequence: null } }));
-  assert.match(html, /<option value(="")? selected[^>]*>Pick a sequence</);
-  assert.match(html, /aria-label="Play"[^>]*disabled/);
+  assert.match(html, /<option value="look" selected[^>]*>Look by hand</);
+  assert.match(html, /aria-label="Play look"/);
+  assert.doesNotMatch(html, /aria-label="Play look"[^>]*disabled/);
+  assert.doesNotMatch(html, /transport-position/);
 });
 
 const FEED = {

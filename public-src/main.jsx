@@ -8,7 +8,7 @@ import { CommandBar } from './components/CommandBar.jsx';
 import { Colors } from './components/Colors.jsx';
 import { AutoMode } from './components/AutoMode.jsx';
 import { Warm } from './components/Warm.jsx';
-import { Patterns } from './components/Patterns.jsx';
+import { Effects } from './components/Effects.jsx';
 import { Cues } from './components/Cues.jsx';
 import { Fixtures } from './components/Fixtures.jsx';
 import { StagePreview } from './components/StagePreview.jsx';
@@ -19,27 +19,27 @@ import { Perform } from './components/Perform.jsx';
 import { TimelineView } from './components/TimelineView.jsx';
 import { StageView } from './components/StageView.jsx';
 import { Sequence } from './components/Sequence.jsx';
-import { Matrix } from './components/Matrix.jsx';
+import { SubTabs, SubPanel, useSubTab } from './components/setup/SubTabs.jsx';
+import { Transport } from './components/Transport.jsx';
+import { useTapShortcut } from './keys.js';
 import { RigView } from './components/setup/RigView.jsx';
 import { SourcesView } from './components/setup/SourcesView.jsx';
 import { SettingsView } from './components/setup/SettingsView.jsx';
 import { PreflightView } from './components/setup/PreflightView.jsx';
 import { Wizard, useFirstRun } from './components/setup/Wizard.jsx';
 
-import { VIEWS, VIEW_IDS, viewShortcut } from './views.js';
+import { VIEWS, VIEW_IDS, viewShortcut, resolveRoute } from './views.js';
 
-/** The view a hash names: its first part, so /#rig/outputs is the Rig view. */
-const viewOfHash = () => window.location.hash.replace('#', '').split('/')[0];
+const viewOfHash = () => resolveRoute(window.location.hash)?.view;
 
 function initialView() {
-  const hash = viewOfHash();
-  if (VIEW_IDS.includes(hash)) return hash;
-  try {
-    const saved = localStorage.getItem('lightshow.mode');
-    return VIEW_IDS.includes(saved) ? saved : 'manual';
-  } catch {
-    return 'manual';
+  let route = resolveRoute(window.location.hash);
+  if (!route) {
+    try { route = resolveRoute(localStorage.getItem('lightshow.mode')); } catch { /* private mode */ }
   }
+  const canonical = route?.canonical || 'perform';
+  window.history.replaceState(null, '', `#${canonical}`);
+  return route?.view || 'perform';
 }
 
 function ModeTabs({ mode, setMode }) {
@@ -96,33 +96,36 @@ function ModeTabs({ mode, setMode }) {
   );
 }
 
-function ManualView() {
+function EffectsView() {
   return (
     <div class="manual-view">
-      <div class="manual-col col-patterns"><Cues /><Patterns /></div>
+      <div class="manual-col col-patterns"><Cues /><Effects /></div>
       <div class="manual-col col-colors"><Colors /></div>
       <div class="manual-col col-fixtures"><StagePreview /><Fixtures /></div>
     </div>
   );
 }
 
+const AUTO_TABS = [{ id: 'show', label: 'Show' }, { id: 'timeline', label: 'Timeline' }];
 function AutoView() {
+  const [tab, setTab] = useSubTab('auto', AUTO_TABS);
   return (
     <div class="auto-view">
-      <AutoMode />
-      <Warm />
+      <Transport prefer="auto" />
+      <SubTabs view="auto" tabs={AUTO_TABS} tab={tab} setTab={setTab} label="Auto Show" />
+      <SubPanel view="auto" tab={tab}>
+        {tab === 'timeline' ? <TimelineView /> : <><AutoMode /><Warm /></>}
+      </SubPanel>
     </div>
   );
 }
 
 const PANELS = {
-  manual: ManualView,
+  effects: EffectsView,
   auto: AutoView,
   perform: Perform,
-  timeline: TimelineView,
   stage: StageView,
   sequence: Sequence,
-  matrix: Matrix,
   rig: RigView,
   sources: SourcesView,
   settings: SettingsView,
@@ -136,6 +139,7 @@ function Root() {
   const [mode, setMode] = useState(initialView);
   const Panel = PANELS[mode];
   useFirstRun();
+  useTapShortcut();
 
   useEffect(() => {
     const bars = ['header', 'commands', 'views', 'effects'];
@@ -152,7 +156,9 @@ function Root() {
   useEffect(() => {
     try { localStorage.setItem('lightshow.mode', mode); } catch { /* private mode */ }
     // A view with tabs of its own keeps its part of the hash (/#rig/outputs).
-    if (viewOfHash() !== mode) window.history.replaceState(null, '', `#${mode}`);
+    const route = resolveRoute(window.location.hash);
+    const path = route?.view === mode ? route.canonical : mode;
+    if (window.location.hash !== `#${path}`) window.history.replaceState(null, '', `#${path}`);
   }, [mode]);
 
   useEffect(() => {
@@ -182,7 +188,7 @@ function Root() {
         document.getElementById(`panel-${mode}`)?.focus();
       }}>Skip to the controls</a>
       <Header />
-      {mode !== 'perform' && <CommandBar />}
+      {mode !== 'perform' && <CommandBar transport={mode !== 'auto' && mode !== 'sequence'} />}
       <nav class="mode-nav" aria-label="Views">
         <ModeTabs mode={mode} setMode={setMode} />
       </nav>

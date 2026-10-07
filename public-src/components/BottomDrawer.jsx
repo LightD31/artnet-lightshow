@@ -1,6 +1,4 @@
 import { useState } from 'preact/hooks';
-import { stateSig } from '../state.js';
-import { Strobe } from './Strobe.jsx';
 import { DmxMonitor } from './DmxMonitor.jsx';
 import { Prolink } from './Prolink.jsx';
 import { LiveInput } from './LiveInput.jsx';
@@ -8,18 +6,15 @@ import { LogView } from './LogView.jsx';
 
 const TABS = [
   { id: 'dmx',     label: 'DMX Monitor' },
-  { id: 'strobe',  label: 'Strobe',  showWhen: (s) => s.pattern === 'strobe' },
   { id: 'prolink', label: 'PRO DJ LINK' },
   { id: 'live',    label: 'Live Input' },
   { id: 'log',     label: 'Log' },
 ];
 
 export function BottomDrawer() {
-  const s = stateSig.value;
   const [open, setOpen]   = useState(false);
   const [tab, setTab]     = useState('dmx');
 
-  const visibleTabs = TABS.filter((t) => !t.showWhen || t.showWhen(s));
 
   return (
     <div class={`bottom-drawer ${open ? 'open' : ''}`}>
@@ -29,7 +24,7 @@ export function BottomDrawer() {
           than being an unlabelled div that happened to respond to clicks. */}
       <div class="bd-handle" onClick={() => setOpen((v) => !v)}>
         <div class="bd-tabs" role="group" aria-label="Drawer panels">
-          {visibleTabs.map((t) => (
+          {TABS.map((t) => (
             <button
               key={t.id}
               type="button"
@@ -53,7 +48,6 @@ export function BottomDrawer() {
       {open && (
         <div class="bd-body">
           {tab === 'dmx'     && <DmxMonitor />}
-          {tab === 'strobe'  && <Strobe />}
           {tab === 'prolink' && <Prolink />}
           {tab === 'live'    && <LiveInput />}
           {tab === 'log'     && <LogView />}

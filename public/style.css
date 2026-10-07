@@ -4032,8 +4032,8 @@ input[type=range]::-moz-range-thumb {
 .transport-row { display: flex; align-items: center; gap: 12px; }
 .transport-picker { flex: 1; min-width: 0; min-height: 44px; font-size: 16px; }
 .transport-position { font-variant-numeric: tabular-nums; font-size: 24px; font-weight: 700; min-width: 4ch; text-align: right; }
-.transport-buttons { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
-.transport-btn { min-height: 52px; font-size: 20px; border-radius: 10px; border: 1px solid var(--border-hi); background: transparent; color: inherit; }
+.transport-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.transport-btn { min-height: 52px; flex: 1; gap: 8px; padding: 8px 12px; font-size: 14px; border-radius: 10px; border: 1px solid var(--border-hi); background: transparent; color: inherit; }
 .transport-btn svg { vertical-align: middle; }
 .transport-btn[aria-pressed="true"] { background: var(--accent-fill); border-color: var(--accent); color: #fff; }
 .transport-btn:disabled { opacity: 0.4; }
@@ -4154,3 +4154,21 @@ input[type=range]::-moz-range-thumb {
 .playing-voice { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 8px; font-size: 12px; }
 .playing-voice button { min-height: 44px; }
 @media (max-width: 900px) { .perform-controls > .playing-voices { order: 2; } }
+
+.transport-compact { border: 0; padding: 0; background: transparent; }
+.transport-compact .transport-btn { min-height: 44px; white-space: nowrap; }
+.perform-controls > .sub-panel { min-width: 0; }
+.perform-music { display: grid; gap: 12px; }
+.seq-top > .perform-transport { flex: 1; min-width: min(100%, 260px); }
+@media (max-width: 900px) {
+  .perform-controls > .sub-tabs { order: 0; }
+  .perform-controls > .sub-panel { order: 1; }
+}
+@media (max-width: 560px) {
+  .command-bar .cb-energy, .command-bar .cb-divider { display: none; }
+  .command-bar { gap: 6px; }
+  .transport-compact .transport-btn > span:last-child { display: none; }
+  .transport-compact .transport-btn { min-width: 44px; }
+  .transport-buttons { gap: 4px; }
+  .transport-btn { padding: 8px; }
+}

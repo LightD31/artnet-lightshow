@@ -52,7 +52,7 @@ test('voices appear over the stage look and disappear when stopped', async ({ pa
   try {
     await open(page, 'stage');
     await expect(page.getByRole('img', { name: /The rig in 3D/ })).toHaveAttribute('aria-label', /showing the live output/);
-    await open(preview, 'manual');
+    await open(preview, 'effects');
     const now = preview.locator('.stage-now');
     await expect(now).toContainText(start.patterns.find((row) => row.id === start.pattern).name);
     await expect(preview.locator('.playing-voice')).toHaveCount(0);

@@ -10,6 +10,8 @@ import { StrobePad } from './StrobePad.jsx';
 import { activeQueue } from './Queue.jsx';
 import { isRandom, paletteName } from './PaletteEditor.jsx';
 import { Transport } from './Transport.jsx';
+import { Matrix } from './Matrix.jsx';
+import { SubTabs, SubPanel, useSubTab } from './setup/SubTabs.jsx';
 import { AudioMeters } from './AudioMeters.jsx';
 import { StrobesOff } from './Photosensitivity.jsx';
 
@@ -292,17 +294,19 @@ function Faders() {
   );
 }
 
+const INSTRUMENTS = [{ id: 'pads', label: 'Pads' }, { id: 'matrix', label: 'Matrix' }];
+
 export function Perform() {
+  const [tab, setTab] = useSubTab('perform', INSTRUMENTS);
   return (
     <div class="perform-view">
       <ArmSwitch />
       <StrobesOff perform />
-      <NowNext />
-      <SyncHealth />
       <Transport />
       <div class="perform-body">
         <div class="perform-controls">
-          <Pads />
+          <SubTabs view="perform" tabs={INSTRUMENTS} tab={tab} setTab={setTab} label="Instruments" />
+          <SubPanel view="perform" tab={tab}>{tab === 'matrix' ? <Matrix /> : <Pads />}</SubPanel>
           <PlayingVoices />
           <div class="perform-live-row">
             <StrobePad />
@@ -316,6 +320,10 @@ export function Perform() {
           <AudioMeters />
         </div>
       </div>
+      <section class="perform-music" aria-label="Music and sync">
+        <NowNext />
+        <SyncHealth />
+      </section>
     </div>
   );
 }

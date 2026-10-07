@@ -1,11 +1,9 @@
 export const VIEWS = [
-  { id: 'manual', key: '1', icon: '◧', label: 'Manual', hint: 'Patterns · Colours · Fixtures', group: 'live' },
-  { id: 'auto', key: '2', icon: '✦', label: 'Auto Show', hint: 'Spotify · Now Playing · PRO DJ LINK', group: 'live' },
-  { id: 'perform', key: '3', icon: '◉', label: 'Perform', hint: 'Pads · Palettes · Faders', group: 'live' },
-  { id: 'timeline', key: '4', icon: '≋', label: 'Timeline', hint: 'Sections · Rehearse · Edits', group: 'live' },
+  { id: 'perform', key: '1', icon: '◉', label: 'Perform', hint: 'Pads · Strobe · Matrix', group: 'live' },
+  { id: 'effects', key: '2', icon: '◧', label: 'Effects', hint: 'Look · Colours · Fixtures', group: 'live' },
+  { id: 'auto', key: '3', icon: '✦', label: 'Auto Show', hint: 'Music · Timeline · Rehearse', group: 'live' },
+  { id: 'sequence', key: '4', icon: '▤', label: 'Sequence', hint: 'Lanes · Patterns · Record', group: 'live' },
   { id: 'stage', key: '5', icon: '◭', label: 'Stage', hint: 'The rig in 3D', group: 'live' },
-  { id: 'sequence', key: '0', icon: '▤', label: 'Sequence', hint: 'Lanes · Patterns · Record', group: 'live' },
-  { id: 'matrix', key: '0', shift: true, icon: '▩', label: 'Matrix', hint: 'Hold colours', group: 'live' },
   { id: 'rig', key: '6', icon: '▦', label: 'Rig', hint: 'Plan · Patch · Outputs', group: 'setup' },
   { id: 'sources', key: '7', icon: '♫', label: 'Sources', hint: 'Players · Spotify · Live input', group: 'setup' },
   { id: 'settings', key: '8', icon: '⚙', label: 'Settings', hint: 'Show · MIDI · Server', group: 'setup' },
@@ -18,4 +16,14 @@ export function viewShortcut(event) {
   if (['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target?.tagName) || event.target?.isContentEditable) return null;
   return VIEWS.find((view) => !!view.shift === !!event.shiftKey
     && (view.shift ? event.code === `Digit${view.key}` : event.key === view.key)) || null;
+}
+
+const ALIASES = { manual: 'effects', timeline: 'auto/timeline', matrix: 'perform/matrix' };
+
+export function resolveRoute(hash) {
+  const path = String(hash || '').replace(/^#/, '');
+  const [head, ...tail] = path.split('/');
+  const canonical = [ALIASES[head] || head, ...tail].filter(Boolean).join('/');
+  const [view, sub] = canonical.split('/');
+  return VIEW_IDS.includes(view) ? { view, sub: sub || null, canonical } : null;
 }

@@ -242,7 +242,7 @@ test('Effects groups presets by source and family', () => {
   givenLibrary({});
   const html = ui.html(ui.h(ui.Effects, {}));
   const groups = [...html.matchAll(/class="effects-group-title">([^<]+)</g)].map((m) => m[1]);
-  assert.deepStrictEqual(groups, ['Hue Dynamics', 'Light DJ', 'Own', 'Upstream patterns']);
+  assert.deepStrictEqual(groups, ['Hue Dynamics', 'Light DJ', 'Own', 'Classic effects']);
   // A family heads its presets.
   assert.match(html, /Position Chase<\/[^>]+>(?:(?!effects-family-title).)*data-id="hd\.neonDomino"/s);
   assert.match(html, /effects-family-title">Disco<\/[^>]+>(?:(?!effects-family-title).)*data-id="hd\.disco\.pop"/s);
@@ -289,7 +289,7 @@ test("Library groups saved presets before the other custom families", () => {
   const grouped = ui.groupRows([{ id: 'u1', name: 'Mine', user: true, scope: 'measure' }, ...PATTERN_ROWS], ui.FAMILIES);
   assert.deepStrictEqual(grouped.map((g) => g.app), ['hd', 'ldj', 'own', 'upstream']);
   assert.deepStrictEqual(grouped[2].families.map((f) => f.name), ['Your presets', 'Party Looks', 'Energy']);
-  assert.deepStrictEqual(grouped[3].families.map((f) => f.name), ['Patterns', 'Pixel effects']);
+  assert.deepStrictEqual(grouped[3].families.map((f) => f.name), ['Effects', 'Pixel effects']);
 });
 
 test("Position Chase inspector exposes ordered envelope controls", () => {

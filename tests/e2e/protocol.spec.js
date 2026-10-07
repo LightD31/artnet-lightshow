@@ -23,7 +23,7 @@ function watch(page) {
 
 test('a change reaches the page as that key alone', async ({ page, request }) => {
   const seen = watch(page);
-  await open(page, 'manual');
+  await open(page, 'effects');
   expect(seen.snapshot).toBe(1);
   expect(seen.state).toBe(0);
   await set(request, { masterDimmer: 90 });
@@ -38,12 +38,12 @@ test('DMX flows only while a view that draws it is on screen', async ({ page }) 
   await open(page, 'perform');
   await page.waitForTimeout(600);
   expect(seen.frames, 'Perform draws no DMX').toBe(0);
-  await page.getByRole('tab', { name: /Manual/ }).click();
+  await page.getByRole('tab', { name: /Effects/ }).click();
   await expect.poll(() => seen.frames, { timeout: 3000 }).toBeGreaterThan(0);
 });
 
 test('a fader drag goes out as the latest value, and the fader does not jump back', async ({ page, request }) => {
-  await open(page, 'manual');
+  await open(page, 'effects');
   const fader = page.getByRole('slider', { name: 'Master dimmer' });
   await fader.focus();
   for (let i = 0; i < 20; i++) await page.keyboard.press('ArrowLeft');

@@ -1,3 +1,4 @@
+import { Transport } from './Transport.jsx';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { field, api, librarySig } from '../state.js';
 import { drawRuler, drawClips } from '../timeline-renderer.js';
@@ -450,7 +451,6 @@ export function Sequence({ initial = {} }) {
   useEffect(() => { sync.reload(revision); }, [revision]);
 
   const commit = (next) => sync.commit(next);
-  const transport = (verb) => api(`/api/sequence/${verb}`, json('POST', {}));
   const load = (id) => sync.load(id);
   const create = () => {
     setSelected(null);
@@ -522,11 +522,7 @@ export function Sequence({ initial = {} }) {
           <strong>{seq.name}</strong> · {stateText(status)} · Bar {status ? status.bar : 1}
           <span class="seq-beat"> beat {status ? positionText({ ...status, beat }, beatsPerBar).split('.')[1] : 1}</span>
         </div>
-        <div class="seq-transport">
-          <button type="button" class="seq-big" aria-label="Play" onClick={() => transport('play')}>▶</button>
-          <button type="button" class="seq-big" aria-label="Pause" onClick={() => transport('pause')}>❚❚</button>
-          <button type="button" class="seq-big" aria-label="Stop" onClick={() => transport('stop')}>■</button>
-        </div>
+        <Transport prefer="sequence" initial={initial} />
         <button type="button" class="seq-mini" title="Back to the look" onClick={() => sync.unload()}>Unload</button>
         <button type="button" class={`seq-edit-toggle${editing ? ' active' : ''}`} aria-pressed={editing}
           onClick={() => setEditing(!editing)}>Edit</button>

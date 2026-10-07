@@ -152,7 +152,7 @@ test('playing sequences expose transport while edits stay gated', () => {
   const html = ui.html(ui.h(ui.Sequence, { initial: { sequence: SEQ } }));
   assert.match(html, /class="seq-now"[^>]*aria-live="polite"/);
   assert.match(html, /Friday.*Playing.*Bar 3/s);
-  for (const verb of ['Play', 'Pause', 'Stop']) assert.match(html, new RegExp(`aria-label="${verb}"`));
+  for (const verb of ['Pause', 'Stop', 'Next', 'Shuffle', 'Loop']) assert.match(html, new RegExp(`aria-label="${verb}"`));
   assert.match(html, /class="seq-edit-toggle" aria-pressed="false"/);
   assert.doesNotMatch(html, /class="seq-inspector"/, 'the inspector waits for Edit');
   const lanes = [...html.matchAll(/class="seq-lane-name">([^<]+)</g)].map((m) => m[1]);

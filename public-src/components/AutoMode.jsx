@@ -156,59 +156,13 @@ export function AutoMode() {
   // Playing by ear runs the show with no timeline, and so no busy badge.
   const byEar = !!(s.showOn && s.live && s.live.director && s.live.director.active && status !== 'playing');
   const busy = !byEar && (status === 'downloading' || status === 'analyzing');
-  const running = status === 'playing' || byEar;
-
-  const analyzeAndStart = () => {
-    if (running) return;
-    if (status === 'ready') { api('/api/auto/start', { method: 'POST' }); return; }
-
-    const requestedSource = s.autoSource || 'auto';
-    // The server is authoritative about source priority. In auto mode it may
-    // choose PRO DJ LINK over Spotify (or Deezer over generic OS media), so
-    // deciding from credentials here can analyse one track and then run the
-    // timeline against another clock. Explicit choices still use their own
-    // endpoint so an unavailable source produces its useful error message.
-    const source = requestedSource === 'auto' ? (s.activeSource || 'timer') : requestedSource;
-
-    // The server starts the show once the analysis is in (`start`), so it
-    // still happens if this tab is switched away or the page is closed
-    // meanwhile. api() reports a failure; a cancel is not one.
-    const triggerAnalyze = (endpoint) => {
-      api(endpoint, { method: 'POST', body: JSON.stringify({ start: true }) });
-    };
-
-    if (source === 'spotify' || source === 'hybrid') triggerAnalyze('/api/auto/analyze-spotify');
-    else if (source === 'deezer') triggerAnalyze('/api/auto/analyze-deezer');
-    else if (source === 'nowplaying') triggerAnalyze('/api/auto/analyze-nowplaying');
-    else if (source === 'prolink') triggerAnalyze('/api/auto/analyze-prolink');
-    else api('/api/auto/start', { method: 'POST' });
-  };
-
-  const stop = () => api('/api/auto/stop', { method: 'POST' });
-  const cancel = () => api('/api/auto/cancel', { method: 'POST' });
-
   // Signed, because which way it is pointing is the whole question.
   const syncLabel = `${syncOffset > 0 ? '+' : syncOffset < 0 ? '\u2212' : ''}${Math.abs(syncOffset)} ms`;
   const nudgeSync = (by) => commitSync(Math.max(-syncLimit, Math.min(syncLimit, syncOffset + by)));
 
   return (
     <div class="auto-layout">
-      {/* One transport bar. Start and stop are the same button in two states —
-          two buttons, each disabled half the time, said the same thing twice. */}
       <div class="auto-transport">
-        <button
-          class={`transport-btn ${running ? 'running' : ''}`}
-          disabled={busy}
-          onClick={running ? stop : analyzeAndStart}
-        >
-          <span class="transport-glyph" aria-hidden="true">{busy ? '⟳' : running ? '■' : '▶'}</span>
-          <span>{busy ? (as.startPending ? 'Analysing, then starting…' : 'Analysing…') : running ? 'Stop show' : 'Start show'}</span>
-        </button>
-        {busy && (
-          <button type="button" class="btn transport-cancel" onClick={cancel}
-            title="Stop analysing this track. The show goes back to what it had loaded.">Cancel</button>
-        )}
-
         {byEar
           ? <span class="auto-badge auto-badge-playing" title="No analysed track to play: answering what the live input hears">By ear</span>
           : <span class={`auto-badge auto-badge-${status}`}>{STATUS_TEXT[status] || status}</span>}
@@ -355,7 +309,7 @@ export function AutoMode() {
               </section>
               <section class="panel">
                 <p class="panel-empty">
-                  The <a href="#timeline">Timeline view</a> has this track&rsquo;s show at full width, to rehearse any moment
+                  The <a href="#auto/timeline">Timeline</a> has this track&rsquo;s show at full width, to rehearse any moment
                   of it and keep edits with the track; the <a href="#stage">Stage view</a> shows it in 3D.
                 </p>
               </section>
