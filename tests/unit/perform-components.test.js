@@ -279,7 +279,7 @@ test('rapid pads ask before the acknowledgement on the deck and on the command b
 });
 
 test('a strip pad with no label is named by its content, as on the deck', () => {
-  given({ safety: { photosensitivityAcknowledged: true }, pads: { layout: [pad(1, '', { kind: 'preset', id: 'energy.glow' })], lit: [] } });
+  given({ safety: { photosensitivityAcknowledged: true }, pads: { layout: [pad(0, '', { kind: 'preset', id: 'energy.glow' })], lit: [] } });
   const html = ui.html(ui.h(ui.CommandBar, {}));
   const deck = ui.html(ui.h(ui.Pads, { initialBank: 0 }));
   const name = html.match(/class="cb-energy-name">([^<]+)</)?.[1];
