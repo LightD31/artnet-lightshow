@@ -1,9 +1,16 @@
+import { outputEmitters } from './emitter-capability.ts';
+import { HardwareClock } from './hardware-clock.ts';
+import { HardwareGuard } from './hardware-guard.ts';
+import { hardwareStrobe } from './hardware-strobe.ts';
+import { hardwareOf } from './hardware.ts';
+import type { HardwareCaps, HardwareSettings } from './hardware.ts';
+import type { Profile } from '../types/rig.ts';
 import { fixedColours, colourSlots, resolveGradient } from './palette-model.ts';
 import type { PaletteBody } from './palette-model.ts';
 import { PATTERN_FUNCS, paletteOf } from './patterns.ts';
 import { renderLayer } from './layer.ts';
 import { buildRig, isHueLamp, rigSignature } from './rig.ts';
-import { EXPRESSION_REST, resolveEnergyOverride, blendExpression, emitterValues, blendFixture, HOLD_STROBE, holdStrobeFlash, holdStrobeLook } from './look-math.ts';
+import { EXPRESSION_REST, resolveEnergyOverride, blendExpression, blendFixture, HOLD_STROBE, holdStrobeFlash, holdStrobeLook } from './look-math.ts';
 import { gridFromAnalysis, beatPositionAt, localBpm, anchorStep, stepAt, motionAdvance } from './beat-clock.ts';
 import { canonical, effectContentKey, handOverStrobes, hdGuarded, relaunchEffect, renderEffectLayer, renderVoices, voiceAnchor, voiceLaunchKey, voiceLayout } from './effects/layer.ts';
 import { energyEffectSpec } from './effects/catalogue.ts';
@@ -97,6 +104,8 @@ export interface PreviewSafety {
 }
 
 export interface PreviewOptions {
+  hardware?: HardwareSettings;
+  profiles?: Record<string, Profile>;
   resolveEffect?: ((id: string) => EffectSpec | null | undefined) | null;
   /** How Hue lamps take a flash. Absent is 'pulse', as for a renderer input without it. */
   hueStrobe?: 'flash' | 'pulse';
@@ -131,6 +140,7 @@ interface Frame {
 }
 
 interface LayerEntry {
+  strobe?: number;
   color: Colour;
   dim: number;
 }
@@ -208,7 +218,7 @@ function rigContent(rig: Rig): string {
 /** What the preview reads of each fixture: its id, its trim and whether it is a Hue lamp. */
 function fixturesContent(fixtures: readonly PreviewFixture[]): string {
   let key = `${fixtures.length}`;
-  for (const f of fixtures) key += `|${f.id ?? ''};${f.maxBrightness ?? 255};${isHueLamp(f) ? 'h' : ''}`;
+  for (const f of fixtures) key += JSON.stringify([f.hardware, f.productId, f.admission, f.output?.protocol]) + `|${f.id ?? ''};${f.maxBrightness ?? 255};${isHueLamp(f) ? 'h' : ''}`;
   return key;
 }
 
@@ -228,12 +238,14 @@ function checkedSpec(raw: unknown): { spec: EffectSpec | null; key: string } {
 
 /** The cells of a layout with each cell's fixture id and Hue flag, as the renderer's effects read them. */
 interface Cells {
+  hardware?: HardwareCaps[];
   key: string;
   layout: Layout;
   ids: (number | string)[];
 }
 
 interface Env {
+  hardware?: HardwareCaps[];
   key: string;
   stepped: boolean;
   fixtures: readonly PreviewFixture[];
@@ -256,6 +268,9 @@ interface Walk {
   guard: HdFlashGuard;
   /** The strobe's permit per lamp, as the renderer keeps it. */
   strobeGuard: StrobeLampGuard;
+  hardwareGuard: HardwareGuard;
+  hardwareStrobeGuard: HardwareGuard;
+  hardwareClock: HardwareClock;
   expression: Expression;
   phase: number;
   lastBeat: number | null;
@@ -290,6 +305,9 @@ function copyWalk(w: Walk): Walk {
     stepper: w.stepper.clone(),
     guard: w.guard.clone(),
     strobeGuard: w.strobeGuard.clone(),
+    hardwareGuard: w.hardwareGuard.clone(),
+    hardwareStrobeGuard: w.hardwareStrobeGuard.clone(),
+    hardwareClock: w.hardwareClock.clone(),
     expression: { ...w.expression },
     base: w.base && { ...w.base },
     // Voice frames, fade sources, shown lights and outputs are made afresh and never changed.
@@ -307,7 +325,7 @@ function copyWalk(w: Walk): Walk {
 interface Checkpoint { walk: Walk; periodic: boolean; used: number }
 
 const emptyWalk = (k: number, intervalMs: number): Walk => ({
-  k, cursor: 0, stepper: new EffectStepper(), guard: new HdFlashGuard(intervalMs), strobeGuard: new StrobeLampGuard(), expression: { ...EXPRESSION_REST }, phase: 0,
+  k, cursor: 0, stepper: new EffectStepper(), guard: new HdFlashGuard(intervalMs), strobeGuard: new StrobeLampGuard(), hardwareGuard: new HardwareGuard(), hardwareStrobeGuard: new HardwareGuard(), hardwareClock: new HardwareClock(), expression: { ...EXPRESSION_REST }, phase: 0,
   lastBeat: null, lastEpoch: 0, lastNow: null, lastSweep: -Infinity, epoch: 0, base: null, voices: new Map(), records: new Map(), strobes: new Set(),
   compat: null, fadeOf: null, fade: null, shown: [], output: null, seq: newSequenceRun(),
 });
@@ -416,7 +434,7 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
     return slots;
   };
 
-  function drawPattern(f: Frame, positionMs: number, rig: Rig, colors: Colour[], expr: Expression, phase: number, bpm: number): LayerEntry[] {
+  function drawPattern(f: Frame, positionMs: number, rig: Rig, colors: Colour[], expr: Expression, phase: number, bpm: number, hardware?: HardwareCaps[], hardwareClock?: HardwareClock): LayerEntry[] {
     const s = f.look;
     const division = Math.max(1, s.beatDivision || 1);
     const beatPos = beatAt(positionMs, f);
@@ -442,12 +460,12 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
       expression: expr,
       dynamicsOn: !!s.showDynamics,
       bpm,
-      hueStrobe,
+      hueStrobe, hardware, hardwareClock,
       fixtureCount: rig.fixtures.length,
       twinkle: rig.units.map(() => 0),
       pixelTwinkle: rig.units.map(() => 0),
       panelTwinkle: rig.units.map(() => 0),
-    }, (u, color, dim) => { layer[u] = { color, dim }; });
+    }, (u, color, dim, strobe) => { layer[u] = { color, dim, strobe }; });
     return layer;
   }
 
@@ -526,7 +544,7 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
         if (dyn && dyn.level === 0) dim = 0;
       }
       const scale = (dim / 255) * ((fixture.maxBrightness ?? 255) / 255);
-      return onlyItsEmitters(emitterValues(color, scale), rig.cellMaps[i]?.[cell]);
+      return outputEmitters(color, scale, rig.cellMaps[i]?.[cell] ?? options.profiles?.[fixtures[i]?.profileId ?? '']?.channelMap);
     });
   }
 
@@ -551,7 +569,7 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
       if (spec) anyEffect = true;
       effectsKey += `${JSON.stringify(id)}=${key};`;
     }
-    if (!(explicitVoices || anyEffect || sequence)) {
+    if (!(explicitVoices || anyEffect || sequence || options.hardware)) {
       // Nothing steps: answered straight from the timeline, nothing kept.
       if (env) { env = null; forgetHistory(); }
       return { key: '', stepped: false, fixtures, presets, rig, specs, hue: fixtures.map(isHueLamp), cells: new Map() };
@@ -562,7 +580,8 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
       env.fixtures = fixtures; env.presets = presets; env.rig = rig;
       return env;
     }
-    env = { key, stepped: true, fixtures, presets, rig, specs, hue: fixtures.map(isHueLamp), cells: new Map() };
+    env = { key, stepped: true, fixtures, presets, rig, specs, hue: fixtures.map(isHueLamp), cells: new Map(),
+      hardware: options.hardware ? fixtures.map((f) => hardwareOf(f, options.profiles?.[f.profileId ?? ''], options.hardware)) : undefined };
     forgetHistory();
     return env;
   }
@@ -583,7 +602,8 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
       const ids = list.map((u) => { const i = e.rig.units[u].fixture; return e.fixtures[i]?.id ?? `#${i}`; });
       const flags = list.map((u) => e.hue[e.rig.units[u].fixture]);
       const noFlash = flags.some(Boolean) ? flags : null;
-      cells = { key, layout: { ...base, units: { ...base.units, noFlash } }, ids };
+      cells = { key, layout: { ...base, units: { ...base.units, noFlash } }, ids,
+        hardware: e.hardware && list.map((u) => e.hardware![e.rig.units[u].fixture]) };
       e.cells.set(key, cells);
     }
     return cells;
@@ -679,6 +699,7 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
     const n = rig.units.length;
     const units: UnitLight[] = new Array<UnitLight>(n);
     const baseKind: (string | null)[] = new Array<string | null>(n).fill(null);
+    const baseOwner: (string | undefined)[] = new Array(n);
     let fb: FrameBase | null = null;
     let voiceCells: Cells | null = null;
     if (spec || voices.length || sequence) {
@@ -710,33 +731,35 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
         w.base = { key, id, kind: spec.kind, seed: seedFrom(id), startedAtMs: t };
       }
       const instance: EffectInstance = { id, spec, seed: w.base.seed, anchorBeat: f.anchor / division, startedAtMs: w.base.startedAtMs, targets: null };
-      renderEffectLayer(rig, cells.layout, { ...fb, fixtureIds: cells.ids }, instance, w.stepper, (u, colour, dim, strobe, kind) => {
+      renderEffectLayer(rig, cells.layout, { ...fb, fixtureIds: cells.ids, hardware: cells.hardware }, instance, w.stepper, (u, colour, dim, strobe, kind, owner) => {
         units[u] = unitLight(colour, dim, strobe);
         baseKind[u] = kind;
+        baseOwner[u] = owner;
       });
       for (const i of cells.layout.wash) {
         const { start, count } = rig.ranges[i];
         for (let u = start; u < start + count; u++) { units[u] = unitLight(colourSlots(paletteOverride ?? colors)[1], 255); baseKind[u] = null; }
       }
     } else {
-      const layer = drawPattern(f, t, rig, colors, w.expression, w.phase, bpm);
-      for (let u = 0; u < n; u++) units[u] = unitLight(layer[u].color, layer[u].dim);
+      const layer = drawPattern(f, t, rig, colors, w.expression, w.phase, bpm, e.hardware, w.hardwareClock);
+      for (let u = 0; u < n; u++) units[u] = unitLight(layer[u].color, layer[u].dim, layer[u].strobe);
     }
 
     // The sequence's clip on top of each light it covers, over the look, as renderer.ts renderSequence.
     let clips: (UnitLight | null)[] | null = null;
     const clipKind: (string | null)[] = new Array<string | null>(n).fill(null);
+    const clipOwner: (string | undefined)[] = new Array(n);
     if (sequence && fb && voiceCells) {
       const lights = new Array<UnitLight | null>(n).fill(null);
-      const covered = renderSequenceLayer(rig, voiceCells.layout, { ...fb, fixtureIds: voiceCells.ids }, sequence.table, sequence.transport, w.seq, w.stepper,
-        (u, colour, dim, strobe, kind) => { lights[u] = unitLight(colour, dim, strobe); clipKind[u] = kind; });
+      const covered = renderSequenceLayer(rig, voiceCells.layout, { ...fb, fixtureIds: voiceCells.ids, hardware: voiceCells.hardware }, sequence.table, sequence.transport, w.seq, w.stepper,
+        (u, colour, dim, strobe, kind, owner) => { lights[u] = unitLight(colour, dim, strobe); clipKind[u] = kind; clipOwner[u] = owner; });
       if (covered) clips = lights;
     }
 
     // The voice on top of each light, or null where the base shows.
     let voiceTop: (EffectSlot | null)[] | null = null;
     if (voices.length && fb && voiceCells) {
-      const winners = renderVoices(rig, voiceCells.layout, { ...fb, fixtureIds: voiceCells.ids }, voices, w.stepper, { admit: admitted });
+      const winners = renderVoices(rig, voiceCells.layout, { ...fb, fixtureIds: voiceCells.ids, hardware: voiceCells.hardware }, voices, w.stepper, { admit: admitted });
       voiceTop = new Array<EffectSlot | null>(n).fill(null);
       const { list } = voiceCells.layout.units;
       for (let k = 0; k < list.length; k++) voiceTop[list[k]] = winners[k];
@@ -750,6 +773,7 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
     const shown: UnitLight[] = new Array<UnitLight>(n);
     const cols: Colour[] = new Array<Colour>(n);
     const dims: number[] = new Array<number>(n);
+    const flashes: number[] = new Array(n);
     const tops: (string | null)[] = new Array<string | null>(n);
     let guarded = false;
     let strobed = false;
@@ -771,11 +795,22 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
         const rides = ridesLevel(clip ? clipKind[u] : baseKind[u]);
         dims[u] = target?.level === 0 ? 0 : below.dim * (rides ? 1 : w.expression.level);
       }
+      flashes[u] = voice ? voice.strobe ?? 0 : clip ? clip.strobe : s.pattern === 'strobe' ? Number(s.strobeSpeed) || 0 : below.strobe;
       tops[u] = voice ? voice.kind ?? null : clip ? clipKind[u] : baseKind[u];
       if (hdGuarded(tops[u])) guarded = true;
       if (tops[u] === 'strobe') strobed = true;
     }
     w.shown = shown;
+    if (e.hardware) for (let u = 0; u < n; u++) {
+      const { fixture: i, cell } = rig.units[u];
+      const voice = voiceTop?.[u], clip = clips?.[u];
+      const owner = voice?.owner ?? (clip ? clipOwner[u] ?? 'sequence:black' : spec ? baseOwner[u] ?? 'base:excluded' : `legacy:${s.pattern}`);
+      const cut = tops[u] === 'energy.kill' || !voice && (target?.level === 0 || !!clip && sequence?.transport.stop?.mode === 'black');
+      const guardedLight = w.hardwareGuard.light(`${fixtures[i]?.id ?? i}:${cell}`, cols[u], dims[u], t, e.hardware[i], owner, cut);
+      cols[u] = guardedLight.colour; dims[u] = guardedLight.dim;
+      if (w.hardwareStrobeGuard.apply(String(fixtures[i]?.id ?? i), hardwareStrobe(flashes[u], e.hardware[i], t).previewLevel, t,
+        { ...e.hardware[i], minTransitionMs: 0 }) === 0) dims[u] = 0;
+    }
     // Hue Dynamics' limit on its own kinds, on what each lamp puts out at its trim (the preview's master is full).
     if (guarded) {
       for (let u = 0; u < n; u++) {
@@ -800,7 +835,7 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
     for (let u = 0; u < n; u++) {
       const { fixture: i, cell } = rig.units[u];
       const scale = (dims[u] / 255) * ((fixtures[i]?.maxBrightness ?? 255) / 255);
-      out[u] = onlyItsEmitters(emitterValues(cols[u], scale), rig.cellMaps[i]?.[cell]);
+      out[u] = outputEmitters(cols[u], scale, rig.cellMaps[i]?.[cell] ?? options.profiles?.[fixtures[i]?.profileId ?? '']?.channelMap);
     }
     return out;
   }
@@ -905,20 +940,6 @@ const dark = (rig: Rig): Colour[] => rig.units.map(() => ({ r: 0, g: 0, b: 0 }))
 /** The caller's own copy of a frame's lights. */
 const copyOut = (lights: readonly Colour[]): Colour[] => lights.map((c) => ({ ...c }));
 
-function onlyItsEmitters(v: ReturnType<typeof emitterValues>, map: ChannelMap | null | undefined): ReturnType<typeof emitterValues> {
-  if (!map) return v;
-  const has = (...names: string[]) => names.some((n) => map[n] !== undefined);
-  if (!has('red', 'green', 'blue', 'white', 'coolWhite', 'amber', 'warmWhite', 'uv')) return v;
-  return {
-    ...v,
-    r: has('red') ? v.r : 0,
-    g: has('green') ? v.g : 0,
-    b: has('blue') ? v.b : 0,
-    w: has('white', 'coolWhite') ? v.w : 0,
-    a: has('amber', 'warmWhite') ? v.a : 0,
-    uv: has('uv') ? v.uv : 0,
-  };
-}
 
 export {
   createPreviewSampler,

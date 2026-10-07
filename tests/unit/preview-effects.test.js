@@ -572,8 +572,8 @@ test("preview voice composition matches the rig", () => {
     // Par 11 at 300: the strobe-tier kill over the later blinder.
     assert.strictEqual(at(300)[1].r, 0);
     // The bar (units 4..7) at 300: the blinder over the uv wash; at 420 past the blinder's deadline, the uv wash.
-    assert.deepStrictEqual([at(300)[4].r, at(300)[7].g], [255, 255]);
-    assert.deepStrictEqual([at(420)[4].r, at(420)[4].b], [0, 0]);
+    assert.deepStrictEqual([at(300)[4].r, at(300)[7].g], [255, 224]);
+    assert.deepStrictEqual([at(420)[4].r, at(420)[4].b], [115, 217]);
   } finally {
     unregisterProfile(BAR.id);
   }
@@ -922,3 +922,41 @@ for (const mode of ['base', 'override']) {
     });
   }
 }
+
+for (const policy of ['max', 'hold', 'exclude']) {
+  test(`hardware ${policy} playback matches preview and backward seeks`, () => {
+    const fixtures = RIG.map((f, i) => ({ ...f, hardware: { maxFlashHz: i === 0 ? 20 : 1, minTransitionMs: 40 }, admission: policy }));
+    const hardware = { technologies: {}, products: {} };
+    const profiles = Object.fromEntries(fixtures.map((f) => [f.profileId, getProfile(f)]));
+    const times = frames(0, 2500);
+    const effect = OWN.twinkle8;
+    const rendered = rigRun(fixtures, times, () => ({ pattern: 'twinkle8', effect, hardware }));
+    const sample = createPreviewSampler([{ timeMs: 0, action: 'patch', data: { pattern: 'twinkle8', ...LOOK } }], GRID,
+      { resolveEffect, hardware, profiles });
+    assertSame(rendered, previewRun(sample, fixtures, times), times);
+    const backwards = [...times].reverse();
+    assertSame([...rendered].reverse(), previewRun(sample, fixtures, backwards), backwards);
+  });
+}
+
+test('classic patterns obey individual limits in renderer and preview', () => {
+  const fixtures = RIG.map((f, i) => ({ ...f, hardware: { maxFlashHz: i === 0 ? 20 : 1, minTransitionMs: 50 } }));
+  const hardware = { technologies: {}, products: {} }, times = frames(0, 2500);
+  const profiles = Object.fromEntries(fixtures.map((f) => [f.profileId, getProfile(f)]));
+  const look = { ...LOOK, pattern: 'hit', beatDivision: 4 };
+  const rendered = rigRun(fixtures, times, () => ({ ...look, hardware }));
+  const sample = createPreviewSampler([{ timeMs: 0, action: 'patch', data: look }], GRID, { hardware, profiles });
+  assertSame(rendered, previewRun(sample, fixtures, times), times);
+});
+
+test('legacy strobe on a rate-limited Hue matches preview', () => {
+  const fixtures = [{ ...LAMP, hardware: { maxFlashHz: 2, minTransitionMs: 40 } }];
+  const hardware = { technologies: {}, products: {} }, times = frames(0, 2000);
+  const profiles = { [LAMP.profileId]: getProfile(LAMP) };
+  const look = { ...LOOK, pattern: 'strobe', strobeSpeed: 255 };
+  const rendered = rigRun(fixtures, times, () => ({ ...look, hardware }));
+  const sample = createPreviewSampler([{ timeMs: 0, action: 'patch', data: look }], GRID, { hardware, profiles });
+  assertSame(rendered, previewRun(sample, fixtures, times), times);
+  assert.ok(rendered.some((frame) => frame[0].r === 0));
+  assert.ok(rendered.some((frame) => frame[0].r > 0));
+});

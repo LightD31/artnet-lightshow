@@ -108,11 +108,13 @@ function stepStart(s: MacroState, frame: EffectFrame, anchorBeat: number, first:
 function stepColours(step: MacroStep, frame: EffectFrame): { spec: EffectSpec; override: Colour[] | null; look: Colour[] } {
   const override = frame.paletteOverride?.length ? frame.paletteOverride : null;
   const inherited = frame.spec.palette?.length ? frame.spec.palette : null;
+  const { gradients, sets, gradient, gradientSet, gradientRole } = frame.spec;
+  const settings = { gradients, sets, gradient, gradientSet, gradientRole };
   const roles = step.paletteIndices;
-  if (!roles) return { spec: step.effect.palette?.length ? step.effect : { ...step.effect, palette: inherited }, override, look: frame.lookPalette };
+  if (!roles) return { spec: step.effect.palette?.length ? step.effect : { ...step.effect, ...settings, palette: inherited }, override, look: frame.lookPalette };
   const pick = <T>(source: readonly T[]): T[] => roles.map((i) => source[i % source.length]);
   if (override) return { spec: step.effect, override: pick(override), look: frame.lookPalette };
-  if (inherited) return { spec: { ...step.effect, palette: pick<PaletteEntry>(inherited) }, override: null, look: frame.lookPalette };
+  if (inherited) return { spec: { ...step.effect, ...settings, palette: pick<PaletteEntry>(inherited) }, override: null, look: frame.lookPalette };
   return { spec: { ...step.effect, palette: null }, override: null, look: frame.lookPalette.length ? pick(frame.lookPalette) : frame.lookPalette };
 }
 

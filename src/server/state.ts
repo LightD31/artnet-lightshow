@@ -402,6 +402,7 @@ function getLiveState() {
     profiles: { ...listProfiles() },
     // Labels for the patch table and inspector; never the keys.
     hueStrobe: settings.group('hue').strobe ?? 'flash',
+    hardware: settings.group('hardware'),
     hueBridges: settings.group('hue').bridges.map(({ id, label, host, enabled }) => ({ id, label, host, enabled })),
     sequence: sequenceProvider(),
     ...extrasProvider(),

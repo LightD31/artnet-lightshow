@@ -163,7 +163,7 @@ function attachSockets(io: Server, { midi, integrations }: {
 
     socket.on('fixture', (payload) => {
       try {
-        const { id, address, universe, label, profileId, maxBrightness, position, group, geometry, output } = validate(fixtureMessageSchema, payload, 'fixture-msg');
+        const { id, address, universe, label, profileId, maxBrightness, position, group, geometry, output, productId, hardware, admission } = validate(fixtureMessageSchema, payload, 'fixture-msg');
         const fixture = getFixture(id);
         if (!fixture) return;
 
@@ -233,6 +233,9 @@ function attachSockets(io: Server, { midi, integrations }: {
         fixture.output = nextOutput;
         placeAddresslessFixtures();
         if (label !== undefined) fixture.label = label;
+        if (productId !== undefined) fixture.productId = productId;
+        if (hardware !== undefined) fixture.hardware = hardware;
+        if (admission !== undefined) fixture.admission = admission;
         // A trim, not part of the patch: it needs none of the universe or
         // address checks above, but it rides the same message so dragging the
         // slider does not need a second channel.

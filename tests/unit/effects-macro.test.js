@@ -57,6 +57,16 @@ function sampler(inst, r = room()) {
 }
 const TWO_STEPS = () => macro([step({ kind: 'test.probe', palette: ['#FF0000'] }, 2), step({ kind: 'test.probe', palette: ['#0000FF'] }, 2)], 4);
 
+test('macro children inherit the parent palette gradient settings', () => {
+  const palette = { colours: ['#FF0000', '#0000FF'], gradients: [{ name: 'uv', space: 'step', wrap: false,
+    stops: [{ at: 0, colour: '#0000000000FF' }, { at: 1, colour: '#0000000000FF' }] }],
+  sets: [{ name: 'show', roles: ['uv'] }], gradientSet: 'show', gradientRole: 0 };
+  const spec = macro([step({ kind: 'hd.spatialWash', palette: null }, 4)], 4, { palette });
+  const { out } = sampler(instance(spec), square())(1);
+  assert.ok(out.some((slot) => slot.level > 0));
+  assert.ok(out.every((slot) => slot.colour.uv === 255));
+});
+
 test("macro steps anchor at their loop boundaries", () => {
   const at = sampler(instance(TWO_STEPS(), { anchorBeat: 10, startedAtMs: 5000 }));
   const rows = [[0, RED, 10, 'm:0', 5000, 1], [1, RED, 10, 'm:0', 5000, 2], [1.99, RED, 10, 'm:0', 5000, 3], [2, BLUE, 12, 'm:1', 6000, 1],

@@ -92,6 +92,18 @@ export function matrixCellKeys(colour, hold, letGo) {
   };
 }
 
+export function matrixModeKey(event, choose) {
+  const buttons = [...event.currentTarget.querySelectorAll('[role="radio"]')];
+  const at = buttons.indexOf(event.target);
+  const direction = ['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : ['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 0;
+  const to = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+    : direction && at >= 0 ? (at + direction + buttons.length) % buttons.length : -1;
+  if (to < 0 || !buttons[to]) return;
+  event.preventDefault();
+  buttons[to].focus();
+  choose(buttons[to].value);
+}
+
 // A renewal that fails says nothing: the lease ending is the fallback. A
 // press or release goes through api(), which shows the server's error.
 function postMatrix(verb, body, action) {
@@ -139,21 +151,24 @@ export function Matrix() {
   };
   const release = (e) => letGo(e.pointerId);
   const held = new Set([...playing, ...Object.values(down)]);
+  const chooseMode = (next) => api('/api/matrix', { method: 'PUT', body: JSON.stringify({ mode: next }) });
 
   return (
     <section class="matrix-view" aria-label="Matrix board">
       <div class="matrix-now" aria-live="polite">
         {playing.length ? `Playing ${playing.length} colour${playing.length > 1 ? 's' : ''} as ${mode}` : 'Hold colours to play them'}
       </div>
-      <div class="matrix-modes" role="radiogroup" aria-label="Board mode">
+      <div class="matrix-modes" role="radiogroup" aria-label="Board mode" onKeyDown={(event) => matrixModeKey(event, chooseMode)}>
         {MATRIX_MODES.map((m) => (
           <button
             key={m.id}
             type="button"
             role="radio"
             aria-checked={mode === m.id}
+            tabIndex={(mode || MATRIX_MODES[0].id) === m.id ? 0 : -1}
+            value={m.id}
             class={`matrix-mode ${mode === m.id ? 'active' : ''}`}
-            onClick={() => api('/api/matrix', { method: 'PUT', body: JSON.stringify({ mode: m.id }) })}
+            onClick={() => chooseMode(m.id)}
           >{m.label}</button>
         ))}
       </div>

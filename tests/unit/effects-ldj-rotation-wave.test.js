@@ -15,6 +15,25 @@ const levels = (slots) => slots.map((slot) => slot.level);
 const near = (actual, expected) => actual.forEach((v, i) => close(v, expected[i]));
 const centreSquare = () => buildRoom(5, (i) => [0, 1, 1, 0, .5][i], (i) => [0, 0, 1, 1, .5][i], () => .5, null);
 
+for (const name of names) test(`${name} uses an authored full-colour gradient`, () => {
+  const colour = parseHex('#102030405060');
+  const palette = { colours: ['#FF0000', '#00FFFF'], gradients: [{ name: 'fixed', space: 'step', wrap: false,
+    stops: [{ at: 0, colour: '#102030405060' }, { at: 1, colour: '#102030405060' }] }] };
+  const h = harness(`ldj.${name}`, square(), { spec: { palette } });
+  const out = h.draw(at(5));
+  const coloured = out.filter((slot) => Object.values(slot.colour).some((v) => v > 0));
+  assert.ok(coloured.length > 0);
+  for (const slot of coloured) assert.deepEqual(slot.colour, colour);
+});
+
+test('Rotation uses authored stop positions across its angular phase', () => {
+  const room = { ...row(4), ringDegrees: [0, 179, 180, 359] };
+  const palette = { colours: ['#00000000FF', '#0000000000FF'], gradients: [{ name: 'split', space: 'step', wrap: false,
+    stops: [{ at: 0, slot: 0 }, { at: .5, slot: 1 }] }] };
+  const out = harness('ldj.Rotation', room, { spec: { palette } }).draw(at(0));
+  assert.deepEqual(out.map((s) => [s.colour.a, s.colour.uv]), [[255, 0], [255, 0], [0, 255], [0, 255]]);
+});
+
 test('twelve rotation and wave kinds have strict, idempotent defaults', () => {
   for (const name of names) {
     const kind = kindOf(`ldj.${name}`);
@@ -241,6 +260,18 @@ test('BigRoom one-shot phases remain independent and do not recreate or refresh 
   const cold = harness('ldj.BigRoomWave', square(), { params: { phase: 1, once: true } });
   const output = cold.draw(4); assert.ok(output.every((s) => s.colour.r === 255));
   assert.deepEqual(harness('ldj.BigRoomWave', square()).draw(0), harness('ldj.BigRoomWave', square(), { params: { phase: 0, once: false } }).draw(0));
+});
+
+test('authored transition gradients retain their captured random slots', () => {
+  const palette = { colours: [{ random: true }, { random: true }], gradients: [{ name: 'front', space: 'rgb', wrap: false,
+    stops: [{ at: 0, slot: 0 }, { at: 1, slot: 1 }] }] };
+  const h = harness('ldj.BigRoomWave', square(), { params: { once: true }, spec: { palette } });
+  h.draw(at(0));
+  const captured = h.draw(at(0));
+  const prepared = h.stepper.palette(h.inst.id, h.inst.spec, 0);
+  prepared.pending.push(0, 1);
+  assert.deepEqual(h.draw(at(0)), captured);
+  assert.deepEqual(h.draw(at(0), h.stepper.clone()), captured);
 });
 
 test("transition endpoints capture pending refreshes once", () => {

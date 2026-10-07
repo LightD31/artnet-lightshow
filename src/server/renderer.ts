@@ -1,6 +1,12 @@
 import { fixedColours, colourSlots, resolveGradient } from '../shared/palette-model.ts';
 import type { PaletteBody } from '../shared/palette-model.ts';
 import { COLOR_PRESETS, STROBE_FUNCTIONS } from './presets.ts';
+import { outputEmitters } from '../shared/emitter-capability.ts';
+import { HardwareClock } from '../shared/hardware-clock.ts';
+import { HardwareGuard } from '../shared/hardware-guard.ts';
+import { hardwareStrobe } from '../shared/hardware-strobe.ts';
+import { hardwareOf } from '../shared/hardware.ts';
+import type { HardwareCaps, HardwareSettings } from '../shared/hardware.ts';
 import { HUE_PROFILE_IDS } from './profiles.ts';
 import { FRAME_MS } from './frame-clock.ts';
 import { PATTERN_FUNCS, paletteOf } from '../shared/patterns.ts';
@@ -8,9 +14,9 @@ import { renderLayer } from '../shared/layer.ts';
 import { buildRig, rigSignature } from '../shared/rig.ts';
 import { cellPlace, channelPlace, stripOf } from '../shared/placement.ts';
 // Shared with the browser's rehearsal preview so the two cannot drift.
-import { EXPRESSION_REST, blendExpression, emitterValues, blendFixture, cellDrive, HOLD_STROBE } from '../shared/look-math.ts';
+import { EXPRESSION_REST, blendExpression, blendFixture, cellDrive, HOLD_STROBE } from '../shared/look-math.ts';
 import { anchorStep, stepAt, motionAdvance } from '../shared/beat-clock.ts';
-import { createFlashLimiter, lightLuminance, strobeCap } from './flash-limit.ts';
+import { createFlashLimiter, lightLuminance, strobeCap, FLASHES_PER_SECOND } from './flash-limit.ts';
 import { identifyLights } from './identify.ts';
 import { HD_MASTER_DEFAULTS } from '../shared/effects/types.ts';
 import { canonical, effectContentKey, handOverStrobes, hdGuarded, relaunchEffect, renderEffectLayer, renderVoices, voiceAnchor, voiceLaunchKey, voiceLayout } from '../shared/effects/layer.ts';
@@ -60,6 +66,7 @@ export interface SyncTestRequest {
 }
 
 export interface RenderInput {
+  hardware?: HardwareSettings;
   running: boolean;
   pattern: string;
   colorA: number;
@@ -169,6 +176,7 @@ interface LightValue {
 interface StrobeRequest {
   raw: number;
   fnId: string;
+  limitHz?: number;
 }
 
 type Dmx = Buffer | Uint8Array;
@@ -272,11 +280,15 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
   const stepper = new EffectStepper();
   const guard = new HdFlashGuard(RENDER_SAFETY_DEFAULTS.hdFlashIntervalMs);
   const strobeGuard = new StrobeLampGuard();
+  const hardwareGuard = new HardwareGuard();
+  const hardwareStrobeGuard = new HardwareGuard();
+  const hardwareClock = new HardwareClock();
   let lastSweep = -Infinity;
   // Use the frame grid’s phase so render jitter cannot invent extra strobe frames.
   let gridPhase: number | null = null;
   let lastEffectNow: number | null = null;
   const baseKind: (string | null)[] = [];
+  const baseOwner: (string | undefined)[] = [];
   let baseKinds = false;
   const topKind: (string | null)[] = [];
   let base: {
@@ -295,6 +307,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
   const seqRun = newSequenceRun();
   const seqLight: (UnitLight | null)[] = [];
   const seqKind: (string | null)[] = [];
+  const seqOwner: (string | undefined)[] = [];
   let seqUnits = false;
 
   const commandQueue: { seq: number; cmd: string; arg?: unknown; intent: BaseIntent | null }[] = [];
@@ -339,6 +352,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     const identity = `${rigKey}|${ids}`;
     if (identity !== identityKey) {
       if (identityKey) resetEffects(false);
+      hardwareClock.clear();
       identityKey = identity;
       baseCells = null;
       voiceCells = null;
@@ -346,6 +360,27 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     const baseKey = `${input.split}|${input.pixelMap}`;
     if (!baseCells || baseCells.key !== baseKey) baseCells = { key: baseKey, ...effectCells(rigNow.layout(input.split, input.pixelMap), rigNow, input.fixtures) };
     if (!voiceCells) voiceCells = { key: '', ...effectCells(voiceLayout(rigNow), rigNow, input.fixtures) };
+  }
+
+  let hardwareKey = '';
+  let capabilities: HardwareCaps[] = [];
+  let capabilityIndex = new Map<number, number>();
+  const inputFixtureIndex = (f: RenderFixture) => capabilityIndex.get(f.id) ?? -1;
+  function hardwareFor(input: RenderInput): void {
+    if (!input.hardware) { capabilities = []; hardwareKey = ''; hardwareClock.clear(); return; }
+    const key = JSON.stringify([profilesRevision(), input.hardware, input.fixtures.map((f) =>
+      [f.id, f.profileId, f.productId, f.hardware, f.admission, f.output?.protocol, f.hue])]);
+    if (key !== hardwareKey) {
+      hardwareKey = key;
+      hardwareClock.clear();
+      hardwareGuard.blackout();
+      capabilityIndex = new Map(input.fixtures.map((f, i) => [f.id, i]));
+      hardwareStrobeGuard.retain(new Set(input.fixtures.map((f) => String(f.id))));
+      capabilities = input.fixtures.map((f) => hardwareOf(f, profileOf(f), input.hardware));
+    }
+  }
+  function cellHardware(layout: Layout, rig: Rig): HardwareCaps[] | undefined {
+    return capabilities.length ? layout.units.list.map((u) => capabilities[rig.units[u].fixture]) : undefined;
   }
 
   function frameBaseOf(input: FrameInput, reading: MusicalTime, nowMs: number, dtMs: number, acknowledged: boolean,
@@ -602,6 +637,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       pulse: input.pulse ?? null,
       bpm: reading.bpm,
       hueStrobe: input.hueStrobe,
+      hardware: capabilities, hardwareClock,
       fixtureCount,
       twinkle,
       pixelTwinkle,
@@ -619,9 +655,9 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
         stepper.keep(base.id, fb.nowMs);
         const intent = baseIntentOf(input);
         const same = !!intent && base.pattern === intent.pattern && base.revision === intent.revision && base.content === intent.content;
-        const held = same && commands.due.length ? stepper.peek(base.id) : null;
-        if (held && def?.command) {
-          for (const c of commands.due) def.command(held.value, c.cmd, c.arg);
+        const held = same && commands.due.length ? stepper.values(base.id) : [];
+        if (held.length && def?.command) {
+          for (const value of held) for (const c of commands.due) def.command(value, c.cmd, c.arg);
           applied = true;
         }
       }
@@ -636,9 +672,10 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       for (const c of commands.due) def!.command!(state, c.cmd, c.arg);
     };
     baseKinds = true;
-    renderEffectLayer(rigNow, cells.layout, { ...fb, fixtureIds: cells.ids }, instance, stepper, (u, colour, dim, strobe, kind) => {
+    renderEffectLayer(rigNow, cells.layout, { ...fb, fixtureIds: cells.ids, hardware: cellHardware(cells.layout, rigNow) }, instance, stepper, (u, colour, dim, strobe, kind, owner) => {
       setUnitColor(u, colour, dim, strobe);
       baseKind[u] = kind;
+      baseOwner[u] = owner;
     }, commands.due.length ? prepare : undefined);
     commands.decide(prepared);
     const colourB = colourSlots(input.paletteOverride ?? fixedColours(input.basePalette, [input.colorA, input.colorB, input.colorC, input.colorD].map((i) => COLOR_PRESETS[i])))[1];
@@ -657,16 +694,17 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
 
   // Compose sequence clips separately so uncovered fixtures retain the base look.
   function renderSequence(input: FrameInput, rigNow: Rig<RenderFixture>, fb: FrameBase | null): void {
-    if (seqUnits) { seqLight.fill(null); seqKind.fill(null); seqUnits = false; }
+    if (seqUnits) { seqLight.fill(null); seqKind.fill(null); seqOwner.fill(undefined); seqUnits = false; }
     if (!fb || !sequencePlays(input)) {
       if (seqRun.activations.size || seqRun.last || seqRun.shown) endSequence(seqRun, stepper);
       return;
     }
     const cells = voiceCells!;
-    seqUnits = renderSequenceLayer(rigNow, cells.layout, { ...fb, fixtureIds: cells.ids }, sequence!, input.sequenceTransport!, seqRun, stepper,
-      (u, colour, dim, strobe, kind) => {
+    seqUnits = renderSequenceLayer(rigNow, cells.layout, { ...fb, fixtureIds: cells.ids, hardware: cellHardware(cells.layout, rigNow) }, sequence!, input.sequenceTransport!, seqRun, stepper,
+      (u, colour, dim, strobe, kind, owner) => {
         seqLight[u] = { r: colour.r, g: colour.g, b: colour.b, w: colour.w || 0, a: colour.a || 0, uv: colour.uv || 0, dim, strobe };
         seqKind[u] = kind;
+        seqOwner[u] = owner;
       });
   }
 
@@ -722,8 +760,9 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     const own = !!energy || clip;
     let raw = own ? strobe : (input.pattern === 'strobe' ? input.strobeSpeed : strobe);
     if (!(raw > 0)) return null;
-    if (input.flashLimit) raw = Math.min(raw, FLASH_LIMIT_STROBE);
-    return { raw, fnId: own ? 'standard' : input.strobeFunction };
+    if (input.flashLimit && !capabilities.length) raw = Math.min(raw, FLASH_LIMIT_STROBE);
+    return { raw, fnId: own || input.flashLimit ? 'standard' : input.strobeFunction,
+      limitHz: input.flashLimit ? FLASHES_PER_SECOND : undefined };
   }
 
   function strobeValue(request: StrobeRequest | null): number | null {
@@ -732,16 +771,26 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     return fn.lo + Math.round((request.raw / 255) * (fn.hi - fn.lo));
   }
 
-  // Exclude Hue from hardware-strobe fallback because its bridge cannot follow that rate.
+  // Legacy inputs retain their fallback; configured outputs share capability admission.
   function strobe(dmx: Dmx, base: number, fix: RenderFixture, ch: ChannelMap, request: StrobeRequest | null,
-    now: number): boolean {
+    now: number): number {
+    const caps = capabilities[inputFixtureIndex(fix)];
+    if (caps) {
+      const planned = hardwareStrobe(request?.raw ?? 0, caps, now, request?.limitHz);
+      if (planned.raw !== null && ch.strobe !== undefined) {
+        dmx[base + ch.strobe] = strobeValue({ raw: planned.raw,
+          fnId: planned.raw === request?.raw ? request.fnId : 'standard' })!;
+      }
+      return hardwareStrobeGuard.apply(String(fix.id), planned.level, now,
+        { ...caps, maxFlashHz: Math.min(caps.maxFlashHz, request?.limitHz ?? Infinity), minTransitionMs: 0 });
+    }
     if (ch.strobe !== undefined) {
       const value = strobeValue(request);
       if (value !== null) dmx[base + ch.strobe] = value;
-      return true;
+      return 1;
     }
-    if (!request || hueLamp(fix)) return true;
-    return softStrobeLit(request, now);
+    if (!request || hueLamp(fix)) return 1;
+    return softStrobeLit(request, now) ? 1 : 0;
   }
 
   function writePar(input: RenderInput, store: FrameStore, fix: RenderFixture, { col, dim, strobe: flash }: LightValue,
@@ -810,6 +859,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     expressionPhase = (expressionPhase + motionAdvance(dBeats, expression.motion)) % 1;
 
     const rigNow = rigFor(input.fixtures);
+    hardwareFor(input);
     sizeUnitBuffers(rigNow.units.length);
 
     const effNow = effectNow(now, gridOriginMs);
@@ -842,7 +892,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     let voiceTop: (EffectSlot | null)[] | null = null;
     if (voices.length && fb) {
       const cells = voiceCells!;
-      const winners = renderVoices(rigNow, cells.layout, { ...fb, fixtureIds: cells.ids }, voices, stepper, { admit: admitted });
+      const winners = renderVoices(rigNow, cells.layout, { ...fb, fixtureIds: cells.ids, hardware: cellHardware(cells.layout, rigNow) }, voices, stepper, { admit: admitted });
       voiceTop = new Array<EffectSlot | null>(rigNow.units.length).fill(null);
       const { list } = cells.layout.units;
       for (let k = 0; k < list.length; k++) voiceTop[list[k]] = winners[k];
@@ -865,6 +915,8 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     const sync = syncTestEnergy(now);
 
     if (input.masterBlackout) {
+      hardwareGuard.blackout();
+      hardwareStrobeGuard.blackout();
       if (input.flashLimit) limiter.commit(0, now);
       if (guard.brightCount) for (let u = 0; u < rigNow.units.length; u++) guard.clear(u);
       if (strobeGuard.liveCount) for (let u = 0; u < rigNow.units.length; u++) strobeGuard.clear(u);
@@ -903,6 +955,24 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       owned.push(first);
       clipped.push(clip);
       all.push(lights);
+    }
+    if (capabilities.length) {
+      const ids = new Set<string>();
+      for (let i = 0; i < fixtures.length; i++) for (let c = 0; c < all[i].length; c++) {
+        const id = `${fixtures[i].id}:${c}`; ids.add(id);
+        const light = all[i][c];
+        const u = rigNow.ranges[i].start + c, fix = fixtures[i], voice = voiceTop?.[u];
+        const override = fix.override && (fix.override.enabled || fix.override.blackout);
+        const clip = seqUnits && seqLight[u];
+        const kind = watch ? topKind[u] : null;
+        const owner = sync ? 'sync' : voice?.owner ?? (override ? 'override' : clip ? seqOwner[u] ?? 'sequence:black'
+          : input.effect ? baseOwner[u] ?? 'base:excluded' : `legacy:${input.pattern}`);
+        const cut = kind === 'energy.kill' || !voice && !sync && (!!fix.override?.blackout
+          || target?.level === 0 && !fix.override?.enabled || !!clip && input.sequenceTransport?.stop?.mode === 'black');
+        const guardedLight = hardwareGuard.light(id, light.col, light.dim, effNow, capabilities[i], owner, cut);
+        light.col = guardedLight.colour; light.dim = guardedLight.dim;
+      }
+      hardwareGuard.retain(ids);
     }
     if (guarded) limitHdRises(input, rigNow, all, effNow);
     else if (guard.brightCount) for (let u = 0; u < rigNow.units.length; u++) guard.clear(u);
@@ -951,28 +1021,53 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     }
   }
 
-  function rigLuminance(input: RenderInput, all: LightValue[][]): number {
+  function rigLuminance(input: RenderInput, all: LightValue[][], gain = 1): number {
     if (!all.length) return 0;
+    const dimmer = (ch: ChannelMap, level: number) => ch.dimmer === undefined ? 255
+      : ch.dimmerFine === undefined ? Math.round(level) : Math.round(level / 255 * 65535) >> 8;
     let sum = 0;
     for (let i = 0; i < all.length; i++) {
-      const lights = all[i];
+      const fix = input.fixtures[i], profile = profileOf(fix), ms = mastersOf(input, fix);
+      const lights = all[i], cells = rig?.cellMaps[i] ?? profile.cells?.map((c) => c.channelMap);
+      const levels = lights.map((light) => Math.min(255, light.dim * gain));
+      const top = Math.max(...levels), fixtureDimmer = profile.channelMap.dimmer !== undefined;
       let fixture = 0;
-      for (const { col, dim } of lights) fixture += lightLuminance(col, dim);
-      sum += (fixture / Math.max(1, lights.length)) * mastersOf(input, input.fixtures[i]);
+      for (let c = 0; c < lights.length; c++) {
+        const map = cells?.[c] ?? profile.channelMap, dim = levels[c];
+        const drive = cells ? cellDrive(dim, top, ms, fixtureDimmer, map.dimmer !== undefined) : null;
+        const master = dimmer(profile.channelMap, (cells ? top : dim) * ms);
+        const cell = drive ? dimmer(map, drive.cellDim) : 255;
+        fixture += lightLuminance(outputEmitters(lights[c].col, drive?.scale ?? ms * dim / 255, map), master * cell / 255);
+      }
+      sum += fixture / Math.max(1, lights.length);
     }
     return sum / all.length;
   }
 
   function limitFlashes(input: RenderInput, all: LightValue[][], now: number): void {
-    const luminance = rigLuminance(input, all);
-    const allowed = limiter.target(luminance, now);
+    // Fit emitters and dimmers before measuring: RGB fallback changes real brightness.
+    const luminance = rigLuminance(input, all), allowed = limiter.target(luminance, now);
     if (luminance > 1e-6 && Math.abs(allowed - luminance) > 1e-4) {
-      const scale = allowed / luminance;
-      for (const lights of all) for (const light of lights) light.dim = Math.min(255, light.dim * scale);
-      limiter.commit(rigLuminance(input, all), now);
-    } else {
-      limiter.commit(luminance, now);
+      let lo = 0, hi = 1;
+      if (allowed > luminance) {
+        let previous = luminance;
+        for (let k = 0; k < 16; k++) {
+          hi *= 2;
+          const brighter = rigLuminance(input, all, hi);
+          if (brighter >= allowed || brighter - previous < 1e-6) break;
+          previous = brighter;
+        }
+      }
+      let gain = 1, error = Math.abs(allowed - luminance);
+      for (let k = 0; k < 14; k++) {
+        const mid = (lo + hi) / 2, actual = rigLuminance(input, all, mid);
+        if (Math.abs(actual - allowed) < error) { gain = mid; error = Math.abs(actual - allowed); }
+        if (error < .001) break;
+        if (actual < allowed) lo = mid; else hi = mid;
+      }
+      for (const lights of all) for (const light of lights) light.dim = Math.min(255, light.dim * gain);
     }
+    limiter.commit(rigLuminance(input, all), now);
   }
 
   return {
@@ -1003,7 +1098,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
 }
 
 function writeEmitters(dmx: Dmx, base: number, ch: ChannelMap, col: Colour, scale: number): void {
-  const v = emitterValues(col, scale);
+  const v = outputEmitters(col, scale, ch);
   if (ch.red !== undefined)       dmx[base + ch.red]       = v.r;
   if (ch.green !== undefined)     dmx[base + ch.green]     = v.g;
   if (ch.blue !== undefined)      dmx[base + ch.blue]      = v.b;

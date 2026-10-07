@@ -198,7 +198,7 @@ const Rapid = () => (
 function Star({ row, on, onToggle }) {
   return (
     <button type="button" class={`effect-star ${on ? 'on' : ''}`} aria-pressed={on} aria-label={`Favourite ${row.name}`}
-      title={on ? 'Unpin from the deck' : 'Pin to the deck'} onClick={() => onToggle(row.id)}>{on ? '★' : '☆'}</button>
+      title={on ? 'Remove from favourites' : 'Add to favourites'} onClick={() => onToggle(row.id)}>{on ? '★' : '☆'}</button>
   );
 }
 
@@ -329,8 +329,8 @@ export function Effects() {
         </div>
       </div>
       <PlayingVoices stopAll />
-      <div class="effects-deck" role="group" aria-label="Favourites, your presets and the party looks">
-        {deck.length === 0 && <p class="effects-empty">{query ? 'Nothing on the deck matches.' : 'Star an effect to pin it here.'}</p>}
+      <div class="effects-deck" role="group" aria-label="Favourites, your presets and party effects">
+        {deck.length === 0 && <p class="effects-empty">{query ? 'No featured effects match.' : 'Star an effect to pin it here.'}</p>}
         {deck.map((row) => <Pad key={row.id} {...rowProps(row)} />)}
       </div>
       <div class="effects-catalogue">
@@ -362,7 +362,7 @@ export function Effects() {
         </label>
       )}
       {(s.fixtures || []).length >= 3 && (
-        <div class="pixel-map" role="group" aria-label="How the pattern is laid over the rig">
+        <div class="pixel-map" role="group" aria-label="How the effect is laid over the rig">
           {PIXEL_MAPS.filter((m) => bars || !m.bars).map((m) => (
             <button key={m.id} type="button" class={`btn sm ${map === m.id ? 'active' : ''}`}
               aria-pressed={map === m.id} disabled={m.id === 'bar' && lampLevel}

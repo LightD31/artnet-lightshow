@@ -13,6 +13,8 @@ state.artnet.enabled = false;
 
 test('music expression scales scenes and master scales overrides', t => {
   t.mock.timers.enable({ apis: ['setInterval', 'setTimeout', 'Date'], now: Date.now() });
+  const realNow = performance.now;
+  performance.now = () => Date.now();
   const fixture = state.fixtures[0];
   const channel = getProfile(fixture).channelMap;
   const read = name => universes.getBuffer(state.artnet.universe)[fixture.address - 1 + channel[name]];
@@ -35,5 +37,5 @@ test('music expression scales scenes and master scales overrides', t => {
     t.mock.timers.tick(25);
     assert.equal(state.masterDimmer, 128);
     assert.ok(read('dimmer') > 0);
-  } finally { stopEngine(); t.mock.timers.reset(); }
+  } finally { stopEngine(); performance.now = realNow; t.mock.timers.reset(); }
 });

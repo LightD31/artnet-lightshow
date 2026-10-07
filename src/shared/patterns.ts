@@ -6,6 +6,7 @@ import type { StagePlan } from './rig.ts';
 import type { Colour, Expression, PulseReading } from '../types/rig.ts';
 
 export interface PatternContext {
+  random?: () => number;
   gradient?: ResolvedGradient | null;
   colors: readonly Colour[];
   fixtureCount: number;
@@ -284,7 +285,7 @@ const PATTERN_FUNCS: Record<string, PatternFn> = {
     const pal = paletteOf(ctx);
     const density = 0.15 + dyn(ctx, 'air', .4) * 0.5;
     for (let i = 0; i < ctx.fixtureCount; i++) {
-      if (Math.random() < density) ctx.twinkle[i] = Math.random() < 0.7 ? 255 : 60;
+      if ((ctx.random ?? Math.random)() < density) ctx.twinkle[i] = (ctx.random ?? Math.random)() < 0.7 ? 255 : 60;
       ctx.write(i, pal[i % pal.length], ctx.twinkle[i], 0);
     }
   },
@@ -293,14 +294,14 @@ const PATTERN_FUNCS: Record<string, PatternFn> = {
     const pal = paletteOf(ctx);
     const density = 0.12 + dyn(ctx, 'air', .4) * 0.45;
     for (let i = 0; i < ctx.fixtureCount; i++) {
-      ctx.write(i, pal[i % pal.length], Math.random() < density ? 255 : 0, 0);
+      ctx.write(i, pal[i % pal.length], (ctx.random ?? Math.random)() < density ? 255 : 0, 0);
     }
   },
 
   'random-flash'(ctx) {
     const pal = paletteOf(ctx);
     const N = ctx.fixtureCount;
-    const target = Math.floor(Math.random() * Math.max(1, N));
+    const target = Math.floor((ctx.random ?? Math.random)() * Math.max(1, N));
     const bed = Math.round(bedOf(ctx) * 0.5);
     for (let i = 0; i < N; i++) {
       ctx.write(i, pal[ctx.step % pal.length], i === target ? 255 : bed, 0);

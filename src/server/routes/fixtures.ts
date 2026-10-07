@@ -545,6 +545,7 @@ export function attachFixtureRoutes(app: Express, ctx: RouteContext): void {
         geometry: fixture.geometry || null,
         output: hueOut || deviceOut,
         override: fixture.override || null,
+        productId: fixture.productId, hardware: fixture.hardware, admission: fixture.admission,
       };
 
       if (state.fixtures.some((existing) => existing.id === restored.id)) {

@@ -141,13 +141,15 @@ export const COLOR_SLOTS = [
 ]
 
 /** The state keys whose change changes what there is to choose from. */
-export const CATALOG_KEYS = ['patterns', 'colorPresets', 'palettes', 'energyEffects', 'strobeFunctions', 'fixtures', 'cues']
+export const CATALOG_KEYS = ['patterns', 'colorPresets', 'palettes', 'builtinPalettes', 'userPalettes', 'energyEffects', 'strobeFunctions', 'fixtures', 'cues']
 
 const listed = (value, fallback) => (Array.isArray(value) && value.length ? value : fallback)
 
 export const patternsOf = (state) => listed(state.patterns, PATTERNS)
 export const colorsOf = (state) => listed(state.colorPresets, COLOR_PRESETS)
-export const palettesOf = (state) => listed(state.palettes, [])
+export const palettesOf = (state) => [...new Map([
+	...listed(state.builtinPalettes, listed(state.palettes, [])), ...listed(state.userPalettes, []),
+].map((palette) => [palette.id, palette])).values()]
 export const energyOf = (state) => listed(state.energyEffects, ENERGY_EFFECTS)
 export const strobesOf = (state) => listed(state.strobeFunctions, STROBE_FUNCTIONS)
 export const cuesOf = (state) => listed(state.cues, [])
@@ -174,11 +176,37 @@ export const colorName = (state, index) => {
 	return c ? c.name : String(index)
 }
 
-/**
- * The first colours of a palette, as preset objects, to draw a button with:
- * its duo when it has one.
- */
+const DIES = ['r', 'g', 'b', 'w', 'a', 'uv']
+function hexColour(value) {
+	if (typeof value !== 'string' || !/^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8}|[0-9a-f]{10}|[0-9a-f]{12})$/i.test(value)) return null
+	const raw = value.slice(1), hex = raw.length === 3 ? [...raw].map((d) => d + d).join('') : raw
+	return Object.fromEntries(DIES.map((die, i) => [die, parseInt(hex.slice(i * 2, i * 2 + 2) || '0', 16)]))
+}
+
+function slotEntry(state, slot) {
+	const colours = state.basePalette?.colours
+	const index = COLOR_SLOTS.findIndex((s) => s.id === slot)
+	return Array.isArray(colours) && colours.length && index >= 0 ? colours[index % colours.length] : null
+}
+
+export function slotColorName(state, slot) {
+	const entry = slotEntry(state, slot)
+	if (entry === null) return colorName(state, state[slot])
+	if (typeof entry !== 'string') return 'Random'
+	const colour = hexColour(entry)
+	return colorsOf(state).find((c) => colour && DIES.every((die) => (c[die] || 0) === colour[die]))?.name || entry
+}
+
+export function slotColorSelected(state, slot, index) {
+	const entry = slotEntry(state, slot)
+	if (entry === null) return state[slot] === index
+	const colour = hexColour(entry), preset = colorsOf(state)[index]
+	return !!colour && !!preset && DIES.every((die) => colour[die] === (preset[die] || 0))
+}
+
+// Legacy servers publish indexed duo/triad banks; unified servers send full colour slots.
 export function paletteSwatch(state, palette) {
+	if (Array.isArray(palette.colours)) return palette.colours.map(hexColour).filter(Boolean)
 	const indices = (palette.colors && (palette.colors[2] || palette.colors[4])) || []
 	const table = colorsOf(state)
 	return indices.map((i) => table[i]).filter(Boolean)

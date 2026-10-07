@@ -9,6 +9,7 @@ import {
 	fixturesOf,
 	palettesOf,
 	patternsOf,
+	slotColorSelected,
 } from './constants.js'
 
 const WHITE = combineRgb(255, 255, 255)
@@ -196,7 +197,7 @@ export function UpdateFeedbacks(self) {
 					choices: colorChoices(state),
 				},
 			],
-			callback: ({ options }) => self.liveState[slot.id] === options.color,
+			callback: ({ options }) => slotColorSelected(self.liveState, slot.id, options.color),
 		}
 	}
 

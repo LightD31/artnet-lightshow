@@ -321,7 +321,8 @@ test('stop all voices sends DELETE /api/voices', async () => {
 
 test('a named random override lights its palette button with live swatches', () => {
   ui.librarySig.value = { status: 'ok', palettes: { builtin: BUILTIN, user: USER } };
-  given({ paletteOverride: ['#00FF00', '#2A00FF'], paletteOverrideId: 'hdDefault', userPalettes: USER });
+  given({ paletteOverride: ['#00FF00', '#2A00FF'], paletteOverrideId: 'hdDefault',
+    overridePalette: { colours: ['#00FF00', '#2A00FF'] }, userPalettes: USER });
   const html = ui.html(ui.h(ui.PaletteStrip));
   assert.match(html, /aria-pressed="true"[^>]*data-override="hdDefault"/);
   const lit = html.match(/<button[^>]*data-override="hdDefault"[^>]*>.*?<\/button>/)[0];
@@ -336,6 +337,28 @@ test('an unknown palette id falls back to matching fixed colours', () => {
 
 test('clearing the override ignores its old palette id', () => {
   assert.equal(ui.activeOverride(null, BUILTIN, 'hdDefault'), 'off');
+});
+
+test('override inference distinguishes authored gradients from matching flat slots', () => {
+  const body = { colours: ['#FF0000', '#FF8800'], gradients: [{ name: 'uv', space: 'step', wrap: false,
+    stops: [{ at: 0, colour: '#0000000000FF' }, { at: 1, colour: '#0000000000FF' }] }] };
+  assert.equal(ui.activeOverride(body.colours, BUILTIN, null, body), null);
+  given({ paletteOverride: body.colours, overridePalette: body, builtinPalettes: BUILTIN });
+  const html = ui.html(ui.h(ui.PaletteStrip));
+  assert.doesNotMatch(html, /aria-pressed="true"[^>]*data-override="ldjFire"/);
+});
+
+test('named override matching includes every gradient body field', () => {
+  const ramp = (name, space) => ({ name, space, wrap: false, stops: [{ at: 0, slot: 0 }, { at: 1, slot: 1 }] });
+  const body = { colours: ['#FF0000', '#FF8800'], gradients: [ramp('one', 'rgb'), ramp('two', 'step')],
+    sets: [{ name: 'pair', roles: ['one', 'two'] }], gradient: 'one', gradientSet: 'pair', gradientRole: 0 };
+  const saved = [{ id: 'saved', ...body }];
+  assert.equal(ui.activeOverride(body.colours, saved, 'saved', body), 'saved');
+  for (const changed of [
+    { gradients: [ramp('one', 'oklch'), ramp('two', 'step')] },
+    { sets: [{ name: 'pair', roles: ['two', 'one'] }] },
+    { gradient: 'two' }, { gradientSet: null }, { gradientRole: 1 },
+  ]) assert.equal(ui.activeOverride(body.colours, saved, 'saved', { ...body, ...changed }), null);
 });
 
 for (const [name, palette, override, hint] of [

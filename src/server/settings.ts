@@ -1,5 +1,6 @@
 import net from 'node:net';
 import { z } from 'zod';
+import { DEFAULT_HARDWARE, hardwareSettingsSchema } from '../shared/hardware.ts';
 import { SYNC_OFFSET_LIMIT_MS, TEMPO_MODES } from './presets.ts';
 import { HttpError, messageOf } from '../errors.ts';
 import { configFile } from './config-dir.ts';
@@ -25,6 +26,7 @@ export type SettingAt<P extends string> = P extends `${infer G}.${infer K}`
 export type SettingsListener = (changed: string[], settings: Settings) => void;
 
 const DEFAULTS: Settings = {
+  hardware: structuredClone(DEFAULT_HARDWARE),
   server: {
     host: '127.0.0.1',
     port: 3000,
@@ -268,6 +270,7 @@ const schema = z.object({
     }).strict(),
     ldjTrigger: fraction,
   }).strict(),
+  hardware: hardwareSettingsSchema,
   safety: z.object({
     flashLimit: z.boolean(),
     hdFlashIntervalMs: z.number().finite().min(0),

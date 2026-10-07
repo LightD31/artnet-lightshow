@@ -225,17 +225,17 @@ function sampleAhdsr(e: Ahdsr, progress: number, curve: Curve): number {
 }
 function renderAdsr(p: HdParams, s: HdState, room: Room, frame: EffectFrame, out: EffectSlot[]): void {
   const progress = frac(Math.max(0, frame.beatPos - frame.anchorBeat) / scopedLoopLength(frame.spec, p));
-  let r: number, g: number, b: number;
+  let colour: Colour, level: number;
   if (s.rgb.colourMode === 'singleColour') {
-    const level = sampleAhdsr(s.rgb.brightness, progress, p.curve);
-    r = s.single.r / 255 * level; g = s.single.g / 255 * level; b = s.single.b / 255 * level;
+    const peak = Math.max(s.single.r, s.single.g, s.single.b, s.single.w ?? 0, s.single.a ?? 0, s.single.uv ?? 0) / 255;
+    level = peak * sampleAhdsr(s.rgb.brightness, progress, p.curve);
+    const channel = (key: keyof Colour) => Math.round((s.single[key] ?? 0) / peak);
+    colour = level > 0 ? { r: channel('r'), g: channel('g'), b: channel('b'), w: channel('w'), a: channel('a'), uv: channel('uv') } : BLACK;
   } else {
-    r = sampleAhdsr(s.rgb.r, progress, p.curve); g = sampleAhdsr(s.rgb.g, progress, p.curve); b = sampleAhdsr(s.rgb.b, progress, p.curve);
+    const r = sampleAhdsr(s.rgb.r, progress, p.curve), g = sampleAhdsr(s.rgb.g, progress, p.curve), b = sampleAhdsr(s.rgb.b, progress, p.curve);
+    level = Math.max(r, g, b);
+    colour = level > 0 ? { r: Math.round(255 * r / level), g: Math.round(255 * g / level), b: Math.round(255 * b / level), w: 0, a: 0, uv: 0 } : BLACK;
   }
-  const level = Math.max(r, g, b);
-  // Separating hue from level preserves dim single colours and unequal RGB
-  // peaks while the shared renderer applies the spec brightness just once.
-  const colour = level > 0 ? { r: Math.round(255 * r / level), g: Math.round(255 * g / level), b: Math.round(255 * b / level), w: 0, a: 0, uv: 0 } : BLACK;
   for (let i = 0; i < room.n; i++) out[i] = { colour, level, strength: level > 0 ? 1 : 0 };
 }
 

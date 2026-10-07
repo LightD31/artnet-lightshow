@@ -108,3 +108,14 @@ test('a show with more cells than the engine renders is refused whole', () => {
     assert.strictEqual(state.fixtures.length, 1, 'and nothing on the rig changed');
   });
 });
+
+test('product, device limits and admission survive a show round trip', () => {
+  const hardware = { maxFlashHz: 3, minTransitionMs: 80, evidence: 'Bench', verifiedFlashHz: 3 };
+  withFixtures([{ id: 4, label: 'Front', address: 1, universe: 0, profileId: 'cameo-root-par-6-12ch',
+    productId: 'front-par', hardware, admission: 'exclude' }], () => {
+    applyShow(snapshotShow());
+    assert.equal(state.fixtures[0].productId, 'front-par');
+    assert.equal(state.fixtures[0].admission, 'exclude');
+    assert.deepStrictEqual(state.fixtures[0].hardware, hardware);
+  });
+});

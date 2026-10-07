@@ -304,9 +304,9 @@ Hue; use `/api/hue/sync-test` to compare them.
 
 ### Hue flash handling
 
-Hue lamps remain exempt from the generic 1–20 Hz software-strobe emulation
-used for non-Hue fixtures without a strobe channel. Brightness-flash effects
-use `hue.strobe` instead:
+Hardware admission and rate limits apply to Hue lamps, including software
+emulation of strobe-channel requests. Brightness-flash effects use `hue.strobe`
+to choose their presentation within those limits:
 
 - `flash` retains hard cuts and the effect's own background glow.
 - `pulse` falls over 200 ms to a floor of 40/255, or the effect's own glow.
@@ -1020,6 +1020,41 @@ install its Chromium with `npx playwright install chromium` when needed.
 Build packages with Node 24 on the target platform. Package/release workflows
 are in `.github/workflows/`; a version tag matching `package.json` drafts the
 release. Preserve repository hooks, CI checks and normal release policies.
+
+## Hardware capability and admission
+
+Settings → Hardware limits defines defaults for DMX, DDP, OpenRGB and Hue,
+plus named product limits. In Rig, select a fixture to choose its product,
+override its flash rate or minimum transition time, and choose its admission
+policy. Profile limits sit above technology defaults; a product overrides
+those, and an individual fixture overrides the product. Show export, import
+and fixture undo retain these fields.
+
+Effects have the same admission choice. When a fixture cannot follow an effect,
+**Play at device maximum** slows its clock while preserving the room geometry;
+**Hold a value** keeps the first lit value; **Exclude** leaves lower voices or
+clips visible (an excluded base is dark). The more restrictive fixture or preset
+policy wins. Classic patterns also obey fixture limits; their hold policy uses
+a fixed point in the pattern. Existing acknowledgement and photosensitivity
+limits remain in force. Perform and the effect inspector show hardware fit;
+Preflight reports unverified limits.
+
+Capabilities include the profile's colour channels, pixel count and hardware
+strobe range. RGB outputs approximate missing white, amber and UV with visible
+RGB. White-only cells continue to respond to their white channels. OFL and
+GDTF imports retain numeric physical strobe rates when the driven standard
+range has a supported increasing mapping. Unknown or nonnumeric mappings retain
+the unverified 1–20 Hz fallback. Software strobes cannot exceed half the render
+frame rate; hardware channels use their profile mapping.
+
+Native strobe previews estimate visible pulses from the quantized profile frequency;
+their phase is a model prediction, not an optical measurement of the fixture.
+Defaults are policy limits, not measurements. A limit is marked measured only
+when both measurement evidence and a verified flash rate covering the configured
+maximum are supplied at the same override level. The 2026-10-07 curtain census
+confirmed full-panel DDP coverage, but its roughly 10 Hz live-view capture cannot
+verify visible flashing at 10–20 Hz. Physical optical calibration remains separate.
+
 
 ## Licence
 

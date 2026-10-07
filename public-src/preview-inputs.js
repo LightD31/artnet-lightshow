@@ -29,6 +29,7 @@ export function previewOptions(s, { table = null, library = null } = {}) {
   const override = Array.isArray(s.paletteOverride) && s.paletteOverride.length ? s.paletteOverride : null;
   return {
     resolveEffect: resolverOf(library && library.user),
+    hardware: s.hardware, profiles: s.profiles,
     hueStrobe: s.hueStrobe === 'pulse' ? 'pulse' : 'flash',
     safety: s.safety ? { acknowledged: !!s.safety.photosensitivityAcknowledged, hdFlashIntervalMs: s.safety.hdFlashIntervalMs ?? 350 } : null,
     paletteOverride: override,

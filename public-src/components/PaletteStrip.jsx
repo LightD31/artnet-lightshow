@@ -5,11 +5,20 @@ import { colorToCss } from '../utils.js';
 import { PaletteEditor, isRandom, paletteName } from './PaletteEditor.jsx';
 
 export const overrideBody = (palette) => ({ paletteId: palette.id });
-export function activeOverride(override, palettes, id = null) {
+const gradientIdentity = (body) => JSON.stringify([
+  (body.gradients || []).map((g) => [g.name, g.space, g.wrap,
+    g.stops.map((s) => [s.at, 'slot' in s ? s.slot : toHex(parseHex(s.colour))])]),
+  (body.sets || []).map((s) => [s.name, s.roles]), body.gradient ?? null, body.gradientSet ?? null, body.gradientRole ?? 0,
+]);
+
+export function activeOverride(override, palettes, id = null, body = null) {
   if (!override?.length) return 'off';
-  if (id && palettes.some((p) => p.id === id)) return id;
-  const want = override.map((c) => toHex(parseHex(c))).join();
-  return palettes.find((p) => !p.colours.some(isRandom) && p.colours.map((c) => toHex(parseHex(c))).join() === want)?.id ?? null;
+  const want = override.map((c) => toHex(parseHex(c)));
+  const matches = (p, random = false) => p.colours.length === want.length
+    && p.colours.every((c, i) => isRandom(c) ? random : toHex(parseHex(c)) === want[i])
+    && (!body || gradientIdentity(p) === gradientIdentity(body));
+  if (id && palettes.some((p) => p.id === id && (!body || matches(p, true)))) return id;
+  return palettes.find((p) => matches(p))?.id ?? null;
 }
 
 export function PaletteStrip({ initialTarget = 'override' }) {
@@ -27,7 +36,7 @@ export function PaletteStrip({ initialTarget = 'override' }) {
   const user = s.userPalettes || lib.palettes?.user || [];
   const all = [...builtin, ...user];
   const override = target === 'override';
-  const active = override ? activeOverride(s.paletteOverride, all, s.paletteOverrideId) : s.palette;
+  const active = override ? activeOverride(s.paletteOverride, all, s.paletteOverrideId, s.overridePalette) : s.palette;
   const base = [...(lib.builtin || []), ...(lib.user || [])].find((p) => p.id === s.pattern);
   const reason = !override && (s.paletteOverride?.length ? 'Palette override controls the stage colours.'
     : base?.spec?.palette?.length ? 'This effect has its own palette. Select Override to recolour it.' : null);

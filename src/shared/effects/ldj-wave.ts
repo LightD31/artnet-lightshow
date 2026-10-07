@@ -3,6 +3,8 @@
 
 import { z } from 'zod';
 import type { Colour } from '../../types/rig.ts';
+import { resolveGradient } from '../palette-model.ts';
+import type { GradientSettings } from '../palette-model.ts';
 import { tempoOf } from '../look-math.ts';
 import { LDJ_FRAME_MS } from './ldj-engine.ts';
 import { continuousSchema, ldjFrameAt, mixColours } from './ldj-rotation.ts';
@@ -46,7 +48,9 @@ for (const name of ['GrooveWave', 'Ascent', 'Vortex', 'Impact']) {
       for (let slot = 0; slot < room.n; slot++) {
         const sine = Math.sin(((length - distance[slot]) + state.shownIndex / state.steps * length) / length * Math.PI / wavelength);
         const local = sine < 0 ? 1 : 0;
-        out[slot] = { colour: { ...at(frame, groove ? local : 1 - local, local) }, level: f32(Math.abs(sine)), strength: 1 };
+        const phase = (sine + 1) / 2;
+        const colour = frame.gradient?.sample(groove ? 1 - phase : phase) ?? at(frame, groove ? local : 1 - local, local);
+        out[slot] = { colour: { ...colour }, level: f32(Math.abs(sine)), strength: 1 };
       }
     },
   });
@@ -60,6 +64,7 @@ interface FrontState {
   originMs: number; lastNowMs: number; lastBeat: number; frontMs: number; frame: number;
   recreation: number; phase: number; heading: number; progress: number;
   endpoints: [Colour, Colour]; paletteKey: string; pendingCapture: boolean;
+  gradient: (GradientSettings & { colours: Colour[] }) | null;
 }
 
 for (const name of ['BigRoomWave', 'DoubleWave', 'Swagger']) {
@@ -72,7 +77,7 @@ for (const name of ['BigRoomWave', 'DoubleWave', 'Swagger']) {
       const originMs = frame.startedAtMs ?? frame.nowMs;
       return { originMs, lastNowMs: originMs, lastBeat: frame.anchorBeat, frontMs: originMs, frame: -1,
         recreation: -1, phase: 0, heading: 0, progress: 0, endpoints: [{ ...BLACK }, { ...BLACK }],
-        paletteKey: '', pendingCapture: false };
+        paletteKey: '', pendingCapture: false, gradient: null };
     },
     render(params, state, room, frame, out) {
       ldjFrameAt(frame.nowMs, state.originMs);
@@ -80,10 +85,14 @@ for (const name of ['BigRoomWave', 'DoubleWave', 'Swagger']) {
       const position = Math.max(0, frame.beatPos - frame.anchorBeat);
       const target = bigRoom && params.once ? 0 : Math.floor(position / cadence + 1e-9);
       if (!Number.isSafeInteger(target)) throw new RangeError('Wave recreation exceeds the safe integer range');
-      const paletteKey = JSON.stringify(frame.paletteOverride?.length ? ['override', frame.paletteOverride]
-        : frame.spec.palette?.length ? ['spec', frame.spec.palette] : ['look', frame.lookPalette]);
+      const settings = frame.paletteOverride?.length ? frame.overrideGradient : frame.spec.palette?.length ? frame.spec : frame.lookGradient;
+      const { gradients, sets, gradient, gradientSet, gradientRole } = settings ?? {};
+      const authored = { gradients, sets, gradient, gradientSet, gradientRole };
+      const paletteKey = JSON.stringify([frame.paletteOverride?.length ? ['override', frame.paletteOverride]
+        : frame.spec.palette?.length ? ['spec', frame.spec.palette] : ['look', frame.lookPalette], authored]);
       const capture = () => {
         state.endpoints = [{ ...at(frame, 0, 0) }, { ...at(frame, 1, 1) }];
+        state.gradient = frame.gradient ? { ...authored, colours: frame.palette.map((c) => ({ ...c })) } : null;
         state.paletteKey = paletteKey; state.pendingCapture = false;
       };
       // A front owns two captured endpoints. Its initial refresh is deferred
@@ -117,9 +126,11 @@ for (const name of ['BigRoomWave', 'DoubleWave', 'Swagger']) {
       const distance = room.waveDistance(state.heading), front = state.progress * room.waveLength(state.heading, swagger ? 2 : 1);
       const [first, second] = state.endpoints;
       const ahead = state.phase % 2 ? second : first, behind = state.phase % 2 ? first : second;
+      const ramp = state.gradient && resolveGradient(state.gradient, state.gradient.colours);
       for (let slot = 0; slot < room.n; slot++) {
         const fraction = Math.max(0, Math.min(1, (distance[slot] - front) / .75));
-        out[slot] = { colour: mixColours(ahead, behind, f32(fraction)), level: 1, strength: 1 };
+        out[slot] = { colour: ramp?.sample(state.phase % 2 ? fraction : 1 - fraction)
+          ?? mixColours(ahead, behind, f32(fraction)), level: 1, strength: 1 };
       }
     },
   });

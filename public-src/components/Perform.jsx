@@ -1,3 +1,4 @@
+import { HardwareFit } from './HardwareFit.jsx';
 import { Fragment } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { api, autoPositionSig, connectedSig, emitTap, followMusic, pick, send } from '../state.js';
@@ -236,6 +237,7 @@ export function Perform() {
             <Utility />
           </div>
           <PaletteStrip />
+          <HardwareFit />
         </div>
         <div class="perform-side">
           <Faders />

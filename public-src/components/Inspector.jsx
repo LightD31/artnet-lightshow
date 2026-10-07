@@ -1,7 +1,11 @@
+import { HardwareFit } from './HardwareFit.jsx';
+import { ADMISSION_LABELS } from './setup/Hardware.jsx';
 import { gradientSettings } from './GradientEditor.jsx';
 import { useMemo, useState } from 'preact/hooks';
 import { api, librarySig, patchLibrary, pick } from '../state.js';
-import { PaletteEditor } from './PaletteEditor.jsx';
+import { PaletteEditor, isHexColour, normaliseHex, pickerValue } from './PaletteEditor.jsx';
+import { parseHex, toHex, HEX_COLOUR } from '../../src/shared/palette-model.ts';
+import { FieldInput } from './setup/FieldInput.jsx';
 
 /**
  * The preset picked in the Effects list, with every setting its family can
@@ -198,6 +202,25 @@ function CheckField({ label, path, value, onChange }) {
 
 const Section = ({ title }) => <div class="insp-section-title">{title}</div>;
 
+export function SingleColourField({ value = '#FFFFFF', onChange }) {
+  const colour = parseHex(value);
+  return <Field label="Single colour" path="rgbEnvelope.singleColour">
+    <div class="palette-entry">
+      <input type="color" aria-label="Single colour RGB picker" value={pickerValue(value)}
+        onInput={(e) => onChange(normaliseHex(e.target.value) + normaliseHex(value).slice(7))} />
+      <FieldInput id={fid('rgbEnvelope.singleColour')} class="palette-hex" value={value} maxLength={13} spellcheck={false}
+        pattern={HEX_COLOUR.source.replaceAll('a-f', 'a-fA-F')} title="Hex colour: RGB, RGBW, RGBWA or RGBWAUV"
+        onCommit={(next) => { if (isHexColour(next)) onChange(normaliseHex(next)); }} />
+      <details class="palette-emitters"><summary>W / A / UV</summary>
+        {['w', 'a', 'uv'].map((die) => <label key={die}>{die.toUpperCase()}
+          <FieldInput type="number" min="0" max="255" step="1" aria-label={`Single colour ${die.toUpperCase()}`} value={colour[die]}
+            onCommit={(next) => { if (Number.isInteger(next) && next >= 0 && next <= 255) onChange(toHex({ ...colour, [die]: next })); }} />
+        </label>)}
+      </details>
+    </div>
+  </Field>;
+}
+
 // ── Families ────────────────────────────────────────────────────────────────
 
 /** Hue Dynamics Party: what the family's capabilities allow, nothing else. */
@@ -256,10 +279,7 @@ function RgbEnvelope({ env, setParam }) {
       <SelectField label="Colour mode" path="rgbEnvelope.colourMode" value={env.colourMode} options={{ all: 'All channels', singleColour: 'Single colour' }}
         onChange={(v) => setParam('rgbEnvelope.colourMode', v)} />
       {env.colourMode === 'singleColour' && (
-        <Field label="Single colour" path="rgbEnvelope.singleColour">
-          <input id={fid('rgbEnvelope.singleColour')} type="color" value={env.singleColour || '#ffffff'}
-            onInput={(e) => setParam('rgbEnvelope.singleColour', e.target.value.toUpperCase())} />
-        </Field>
+        <SingleColourField value={env.singleColour || '#FFFFFF'} onChange={(value) => setParam('rgbEnvelope.singleColour', value)} />
       )}
     </div>
     <div class="insp-table-wrap">
@@ -456,7 +476,7 @@ export function Inspector({ id, onSelect, onPlay, onClose }) {
         {title}
         <div class="effect-inspector-head"><strong>{preset.name}</strong></div>
         {preset.desc && <p class="effect-inspector-desc">{preset.desc}</p>}
-        <p class="effect-inspector-desc">A pattern of the fork's own: it has no settings here.</p>
+        <p class="effect-inspector-desc">This classic effect has no editable settings.</p>
         {modelled && onSelect && (
           <button type="button" class="btn sm" onClick={() => onSelect(modelled.id)}>Open {modelled.name}, the preset it was modelled on</button>
         )}
@@ -548,6 +568,9 @@ export function Inspector({ id, onSelect, onPlay, onClose }) {
             options={{ ask: 'Ask', apply: 'Apply recommended', keep: 'Keep mine' }} />
         )}
         <UnitField label="Brightness" path="brightness" value={spec.brightness ?? 1} onChange={(v) => setSpec('brightness', v)} />
+        <HardwareFit spec={spec} />
+        <SelectField label="When hardware cannot follow" path="admission" value={spec.admission || 'max'} options={ADMISSION_LABELS}
+          onChange={(v) => setSpec('admission', v)} />
         <SelectField label="Scope" path="scope" value={spec.scope || ''} options={{ '': 'Not set', singleBeat: 'Single beat', measure: 'Measure' }}
           onChange={(v) => setSpec('scope', v || undefined)} />
       </div>

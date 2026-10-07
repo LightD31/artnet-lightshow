@@ -2,6 +2,7 @@
 // Specs remain wire data: fixed colours are only parsed when an instance starts.
 
 import { z } from 'zod';
+import { admissionPolicySchema } from '../hardware.ts';
 import { HEX_COLOUR, gradientFields, checkGradients, paletteBodySchema } from '../palette-model.ts';
 import type { EffectKindDef, EffectSpec } from './types.ts';
 
@@ -35,6 +36,7 @@ let internalAdmitted = false;
 
 const paramsSchema = z.record(z.string(), z.unknown());
 const specSchema = z.object({
+  admission: admissionPolicySchema.optional(),
   kind: z.string().refine((kind) => KINDS.has(kind) && (internalAdmitted || !KINDS.get(kind)!.internal), 'unknown effect kind'),
   params: paramsSchema.optional(),
   palette: z.array(z.union([

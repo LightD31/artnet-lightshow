@@ -124,7 +124,7 @@ export function voiceLayout(rig: Rig): Layout {
   return rig.layout(null, 'stage');
 }
 
-export type EffectLayerSet = (unit: number, colour: Colour, dim: number, strobe: number, kind: string | null) => void;
+export type EffectLayerSet = (unit: number, colour: Colour, dim: number, strobe: number, kind: string | null, owner?: string) => void;
 
 const BLACK: Colour = { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 };
 const unwritten = (n: number): EffectSlot[] => new Array<EffectSlot>(n);
@@ -139,7 +139,7 @@ export function renderEffectLayer(rig: Rig, layout: Layout, frame: FrameBase, in
   renderEffect(instance, frame, room, stepper, out, prepare);
   for (let k = 0; k < list.length; k++) {
     const slot = out[k] as EffectSlot | undefined;
-    if (slot && slot.strength > 0) set(list[k], slot.colour, 255 * slot.level, slot.strobe ?? 0, slot.kind ?? instance.spec.kind);
+    if (slot && slot.strength > 0) set(list[k], slot.colour, 255 * slot.level, slot.strobe ?? 0, slot.kind ?? instance.spec.kind, slot.owner);
     else set(list[k], BLACK, 0, 0, null);
   }
 }
@@ -181,6 +181,7 @@ export function renderVoices(rig: Rig, layout: Layout, frame: FrameBase, voices:
       for (const k of slots) covers[k] = true;
     }
     for (let k = 0; k < n; k++) {
+      if (out[k]?.excluded) continue;
       if (strobe) {
         if (covers && !covers[k]) continue;
         if (strobeHeld[k]) continue;

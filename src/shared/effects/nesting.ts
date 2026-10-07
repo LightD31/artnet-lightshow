@@ -41,6 +41,10 @@ export function registerChildren(kind: string, fn: ChildrenAt): void {
   childrenAt.set(kind, fn);
 }
 
+export function playingChildren(spec: EffectSpec, beatPos: number, anchorBeat: number, fixtureIds: readonly (number | string)[]): PlayingChild[] | null {
+  return childrenAt.get(spec.kind)?.(spec.params, beatPos, anchorBeat, fixtureIds) ?? null;
+}
+
 export function playingLeaves(spec: EffectSpec, beatPos: number, anchorBeat: number, fixtureIds: readonly (number | string)[], depth = 0): EffectSpec[] {
   const children = childrenAt.get(spec.kind);
   if (!children) return [spec];

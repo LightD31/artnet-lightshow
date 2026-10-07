@@ -21,7 +21,7 @@ const DOMAIN_OF: Readonly<Record<string, Domain>> = {
   strobe: 'look',
   matrix: 'look',
 
-  artnet: 'rig', universes: 'rig', fixtures: 'rig', profiles: 'rig', identify: 'rig', hueBridges: 'rig', hueStrobe: 'rig', armed: 'rig',
+  artnet: 'rig', universes: 'rig', fixtures: 'rig', profiles: 'rig', identify: 'rig', hueBridges: 'rig', hueStrobe: 'rig', hardware: 'rig', armed: 'rig',
 
   autoIntensity: 'show', autoSyncOffsetMs: 'show', autoSource: 'show', autoPrefetchDepth: 'show',
   autoShow: 'show', activeSource: 'show', showOn: 'show', cues: 'show', warm: 'show',

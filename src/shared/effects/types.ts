@@ -1,4 +1,5 @@
 import type { ZodType } from 'zod';
+import type { AdmissionPolicy, HardwareCaps, OutputNeeds } from '../hardware.ts';
 import type { Colour } from '../../types/rig.ts';
 import type { LampRoom, Room } from '../room.ts';
 import type { AudioFrame } from './audio-frame.ts';
@@ -33,6 +34,7 @@ export type HdCapability = keyof HdParams | `spatial.${keyof Spatial}` | `trigge
 export type ParsedPaletteEntry = Colour | { random: true };
 
 export interface EffectSpec extends GradientSettings {
+  admission?: AdmissionPolicy;
   kind: string;
   params: Record<string, unknown>;
   palette?: PaletteEntry[] | null;
@@ -43,7 +45,7 @@ export interface EffectSpec extends GradientSettings {
 }
 
 // Slot kind preserves the innermost family so safety guards also cover macro steps.
-export interface EffectSlot { colour: Colour; level: number; strength: number; strobe?: number; kind?: string }
+export interface EffectSlot { colour: Colour; level: number; strength: number; excluded?: boolean; strobe?: number; kind?: string; owner?: string }
 
 export interface HdMaster {
   sensitivity: number; smoothing: number; attackMs: number; releaseMs: number;
@@ -58,6 +60,8 @@ export type Seed = [number, number, number, number];
 export type EffectCommand = 'stop' | 'comboBreak' | 'toggleDirection' | 'fadeToBaseline' | 'setPulserBaselineColor';
 
 export interface EffectFrame {
+  hardware?: readonly HardwareCaps[];
+  admission?: AdmissionPolicy;
   gradient?: ResolvedGradient | null;
   lookGradient?: GradientSettings | null;
   overrideGradient?: GradientSettings | null;
@@ -79,6 +83,7 @@ export interface EffectFrame {
 export type FrameBase = Omit<EffectFrame, 'spec' | 'palette' | 'roll' | 'gradient'>;
 
 export interface EffectKindDef<P = unknown, S = unknown> {
+  requirements?: Pick<OutputNeeds, 'pixels' | 'channels'>;
   level?: 'lamp' | 'cell';
   renderCells?(params: P, state: S, room: LampRoom, frame: EffectFrame, out: EffectSlot[]): void;
   kind: string; app: 'hd' | 'ldj' | 'own'; schema: ZodType<P>;

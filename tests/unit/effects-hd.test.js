@@ -333,6 +333,22 @@ test("single-colour envelopes normalize dim RGB", () => {
   assert.deepStrictEqual(out[0].colour, { r: 255, g: 128, b: 64, w: 0, a: 0, uv: 0 });
 });
 
+test('single-colour envelopes normalize white, amber and UV with RGB', () => {
+  const flat = { attack: 0, hold: 1, decay: 0, release: 0, sustain: 1 };
+  const out = render('hd.simpleAdsr', 0.5, room4(), { rgbEnvelope: { colourMode: 'singleColour',
+    singleColour: '#102030408060', brightness: flat } });
+  near(out[0].level, 128 / 255);
+  assert.deepStrictEqual(out[0].colour, { r: 32, g: 64, b: 96, w: 128, a: 255, uv: 191 });
+});
+
+test('a UV-only single-colour envelope remains lit', () => {
+  const flat = { attack: 0, hold: 1, decay: 0, release: 0, sustain: 1 };
+  const out = render('hd.simpleAdsr', 0.5, room4(), { rgbEnvelope: { colourMode: 'singleColour',
+    singleColour: '#000000000080', brightness: flat } });
+  near(out[0].level, 128 / 255);
+  assert.deepStrictEqual(out[0].colour, { r: 0, g: 0, b: 0, w: 0, a: 0, uv: 255 });
+});
+
 test("cut envelope ramps jump at the phase start", () => {
   const flat = { attack: 0, hold: 1, decay: 0, release: 0, sustain: 1 };
   const cut = render('hd.simpleAdsr', 0, room4(), { curve: 'cut', rgbEnvelope: { colourMode: 'all', r: { ...flat, attack: 0.2, hold: 0.8 }, g: flat, b: flat } });

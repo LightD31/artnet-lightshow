@@ -28,7 +28,7 @@ async function load() {
         export { VIEWS } from './public-src/views.js';
         export { CommandBar } from './public-src/components/CommandBar.jsx';
         export { Effects, PhotosensitivityConfirm, editingSig, filterByLibrary, groupRows, quickDeck, tapRow, usePress } from './public-src/components/Effects.jsx';
-        export { Inspector, readRecommendedPreference, savePreset, withRecommended } from './public-src/components/Inspector.jsx';
+        export { Inspector, SingleColourField, readRecommendedPreference, savePreset, withRecommended } from './public-src/components/Inspector.jsx';
         export { PaletteEditor, isHexColour, normaliseHex, savePalette } from './public-src/components/PaletteEditor.jsx';
         export { librarySig, socket, followMusic } from './public-src/state.js';
         export { Pads, PadEditor, padGlyph, padBody, contentRows, padChoices } from './public-src/components/Pads.jsx';
@@ -367,6 +367,49 @@ test("hex colour input accepts supported channel widths", () => {
 test("hex colours normalize to uppercase full width", () => {
   assert.strictEqual(ui.normaliseHex('#abc'), '#AABBCC');
   assert.strictEqual(ui.normaliseHex('#aabbccdd'), '#AABBCCDD');
+});
+
+function singleColourInputs(value, onChange) {
+  const walk = (node) => !node || typeof node !== 'object' ? [] : [node, ...[node.props?.children].flat(Infinity).flatMap(walk)];
+  return walk(ui.SingleColourField({ value, onChange }));
+}
+
+test('single-colour envelopes display every stored emitter channel', () => {
+  const html = ui.html(ui.h(ui.SingleColourField, { value: '#123456789ABC', onChange: () => {} }));
+  assert.match(html, /id="insp-rgbEnvelope-singleColour"[^>]*value="#123456789ABC"/);
+  assert.match(html, /aria-label="Single colour W"[^>]*value="120"/);
+  assert.match(html, /aria-label="Single colour A"[^>]*value="154"/);
+  assert.match(html, /aria-label="Single colour UV"[^>]*value="188"/);
+});
+
+test('single-colour RGB picker edits preserve white, amber and UV', () => {
+  const changes = [];
+  const inputs = singleColourInputs('#123456789ABC', (next) => changes.push(next));
+  inputs.find((node) => node.props?.type === 'color').props.onInput({ target: { value: '#abcdef' } });
+  assert.deepStrictEqual(changes, ['#ABCDEF789ABC']);
+});
+
+test('single-colour hex entry accepts full emitter values', () => {
+  const changes = [];
+  const inputs = singleColourInputs('#FFFFFF', (next) => changes.push(next));
+  const field = inputs.find((node) => node.props?.id === 'insp-rgbEnvelope-singleColour');
+  field.props.onCommit('#123456789abc');
+  assert.deepStrictEqual(changes, ['#123456789ABC']);
+});
+
+test('single-colour emitter inputs preserve the other channels', () => {
+  const changes = [];
+  const inputs = singleColourInputs('#123456789ABC', (next) => changes.push(next));
+  inputs.find((node) => node.props?.['aria-label'] === 'Single colour UV').props.onCommit(64);
+  assert.deepStrictEqual(changes, ['#123456789A40']);
+});
+
+test('single-colour controls ignore invalid emitter values', () => {
+  const changes = [];
+  const inputs = singleColourInputs('#FFFFFF', (next) => changes.push(next));
+  inputs.find((node) => node.props?.id === 'insp-rgbEnvelope-singleColour').props.onCommit('invalid');
+  inputs.find((node) => node.props?.['aria-label'] === 'Single colour UV').props.onCommit(256);
+  assert.deepStrictEqual(changes, []);
 });
 
 test("palette editor marks invalid colours and offers saved palettes", () => {

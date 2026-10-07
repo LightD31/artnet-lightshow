@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { Colour } from '../../types/rig.ts';
+import type { ResolvedGradient } from '../palette-model.ts';
 import { tempoOf } from '../look-math.ts';
 import { MAX_LAMP_FLASH_HZ } from '../patterns.ts';
 import { ldjFrameAt } from './ldj-rotation.ts';
@@ -16,8 +17,11 @@ export type BitmapPattern = typeof BITMAP_PATTERNS[number];
 export interface BitmapImage { width: number; height: number; rows: number[][] }
 
 const f32 = Math.fround;
-const pack = (colour: Colour): number => (colour.r << 16) | (colour.g << 8) | colour.b;
-const unpack = (pixel: number): Colour => ({ r: (pixel >>> 16) & 255, g: (pixel >>> 8) & 255, b: pixel & 255, w: 0, a: 0, uv: 0 });
+// Six bytes fit exactly in a JS number; keeping RGB low preserves native raster bytes.
+const pack = (c: Colour): number => c.r * 65536 + c.g * 256 + c.b + (c.w ?? 0) * 2 ** 24 + (c.a ?? 0) * 2 ** 32 + (c.uv ?? 0) * 2 ** 40;
+const byteAt = (pixel: number, shift: number) => Math.floor(pixel / 2 ** shift) % 256;
+const unpack = (pixel: number): Colour => ({ r: byteAt(pixel, 16), g: byteAt(pixel, 8), b: byteAt(pixel, 0),
+  w: byteAt(pixel, 24), a: byteAt(pixel, 32), uv: byteAt(pixel, 40) });
 const mod = (value: number, length: number): number => ((value % length) + length) % length;
 const RAINBOW = LDJ_RANDOM_HUES.map((hue) => pack(hsbToColour(hue / 360, 1, 1)));
 // Repeated addition preserves quarter-turn pixels that division would round differently.
@@ -43,7 +47,9 @@ export function bitmapBlend(a: number, b: number, t: number): number {
   }
   const saturation = Math.trunc((high ? f32(delta / high) : 0) * 65535);
   const value = Math.trunc(f32(high / 255) * 65535);
-  return pack(hsbToColour(Math.trunc(hue) / 360, saturation / 65535, value / 65535));
+  const emitter = (shift: number) => Math.round(byteAt(a, shift) * wa + byteAt(b, shift) * wb);
+  return pack({ ...hsbToColour(Math.trunc(hue) / 360, saturation / 65535, value / 65535),
+    w: emitter(24), a: emitter(32), uv: emitter(40) });
 }
 
 // Random entries use the fixed rainbow so rerolls do not rebuild the picture.
@@ -76,7 +82,11 @@ function diagonalBand(row: number, line: number, height: number): boolean {
   return (line >= low && line <= high) || (line >= wrapLow && line <= wrapHigh);
 }
 
-function raster(pattern: BitmapPattern, palette: number[]): BitmapImage {
+function raster(pattern: BitmapPattern, palette: number[], gradient?: ResolvedGradient | null): BitmapImage {
+  const blackBackground = pattern.startsWith('SolidBlackBG');
+  const authored = (position: number) => pack(gradient!.sample(position));
+  if (gradient) palette = palette.map((colour, i) => blackBackground && i === 0 ? colour
+    : authored((i - Number(blackBackground)) / Math.max(1, palette.length - Number(blackBackground))));
   if (pattern === 'SolidTest') return repeatedRow(new Array<number>(40).fill(palette[0]));
   const count = palette.length, mirror = pattern.endsWith('Mirror'), segment = pattern.startsWith('Thick') ? 48 : 24;
   const row: number[] = [];
@@ -88,7 +98,9 @@ function raster(pattern: BitmapPattern, palette: number[]): BitmapImage {
     const banded = pattern.includes('Banded'), path = sequence(count, mirror, true);
     for (let i = 0; i < path.length - 1; i++) {
       for (let t = 0; t <= LAST_T; t += banded ? .2 : SMOOTH_STEP) {
-        const pixel = bitmapBlend(palette[path[i]], palette[path[i + 1]], t);
+        const phase = (i + t) / (path.length - 1);
+        const pixel = gradient ? authored(mirror ? 1 - Math.abs(2 * phase - 1) : phase)
+          : bitmapBlend(palette[path[i]], palette[path[i + 1]], t);
         if (banded) row.push(...new Array<number>(segment).fill(pixel));
         else row.push(pixel);
       }
@@ -117,9 +129,11 @@ function raster(pattern: BitmapPattern, palette: number[]): BitmapImage {
     const from = solid ? s + 1 : s;
     const to = solid ? (s + 1) % segments + 1 : (s + 1) % count;
     for (let t = 0; t <= LAST_T; t += SMOOTH_STEP) {
-      const background = solid ? palette[0] : bitmapBlend(palette[from], palette[to], t);
-      const foreground = solid ? bitmapBlend(palette[from], palette[to], t)
-        : bitmapBlend(palette[(from + shift) % count], palette[(to + shift) % count], t);
+      const phase = (s + t) / segments;
+      const background = solid ? palette[0] : gradient ? authored(phase) : bitmapBlend(palette[from], palette[to], t);
+      const foreground = gradient ? authored(solid ? phase : (phase + .5) % 1)
+        : solid ? bitmapBlend(palette[from], palette[to], t)
+          : bitmapBlend(palette[(from + shift) % count], palette[(to + shift) % count], t);
       if (!triangle && !diagonal) {
         const phase = solid ? t + s : t;
         line = Math.trunc(((Math.cos((phase * 2) * Math.PI) * .598 + 1) / 2) * height);
@@ -143,8 +157,8 @@ function raster(pattern: BitmapPattern, palette: number[]): BitmapImage {
   return { width, height, rows };
 }
 
-export function buildBitmap(pattern: BitmapPattern, palette: readonly Colour[], random = false): BitmapImage {
-  return raster(pattern, picturePalette(pattern, palette, random));
+export function buildBitmap(pattern: BitmapPattern, palette: readonly Colour[], random = false, gradient?: ResolvedGradient | null): BitmapImage {
+  return raster(pattern, picturePalette(pattern, palette, random && !gradient), gradient);
 }
 
 // Both axes use picture height; width only controls the scroll period.
@@ -174,15 +188,22 @@ interface BitmapState {
 const schema = z.object({ pattern: z.enum(BITMAP_PATTERNS), speed: z.number().nonnegative().default(1) }).strict();
 
 registerKind<z.infer<typeof schema>, BitmapState>({
+  requirements: { pixels: true, channels: ['r', 'g', 'b'] },
   kind: 'ldj.bitmap', app: 'ldj', schema, defaults: { params: { pattern: 'SmoothLoop', speed: 1 } }, stateful: true,
   rapidFlashWhen: (params) => params.speed > RAPID_SPEED,
   init: (_params, _room, frame) => ({ originMs: frame.startedAtMs ?? frame.nowMs, key: '', image: null }),
   render(params, state, room, frame, out) {
     const scroll = bitmapScroll(frame.nowMs, state.originMs, frame.bpm, params.speed, params.pattern);
-    const random = !frame.paletteOverride?.length && Boolean(frame.spec.palette?.some((entry) => typeof entry === 'object' && entry.random));
+    const random = !frame.gradient && !frame.paletteOverride?.length && Boolean(frame.spec.palette?.some((entry) => typeof entry === 'object' && entry.random));
     const palette = picturePalette(params.pattern, frame.palette, random);
-    const key = `${params.pattern}:${palette.join(',')}`;
-    if (state.image === null || state.key !== key) { state.image = raster(params.pattern, palette); state.key = key; }
+    const gradient = frame.gradient ?? null;
+    const settings = frame.paletteOverride?.length ? frame.overrideGradient : frame.spec.palette?.length ? frame.spec : frame.lookGradient;
+    const key = `${params.pattern}:${palette.join(',')}${gradient ? JSON.stringify([
+      settings?.gradients, settings?.sets, settings?.gradient, settings?.gradientSet, settings?.gradientRole,
+    ]) : ''}`;
+    if (state.image === null || state.key !== key) {
+      state.image = raster(params.pattern, palette, gradient); state.key = key;
+    }
     for (let slot = 0; slot < room.n; slot++) {
       out[slot] = { colour: sampleBitmap(state.image, params.pattern, room.u[slot], room.v[slot], scroll), level: 1, strength: 1 };
     }

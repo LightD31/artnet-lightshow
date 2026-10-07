@@ -50,6 +50,28 @@ test('its built-in lists are the server\'s, for before it has connected', () => 
 
 // ── Against the server ───────────────────────────────────────────────────────
 
+test('Companion palettes include unified builtins and saved palettes', () => {
+  const live = { palettes: [{ id: 'old' }], builtinPalettes: [{ id: 'all', name: 'All' }],
+    userPalettes: [{ id: 'mine', name: 'Mine' }] };
+  assert.deepStrictEqual(catalog.palettesOf(live).map((p) => p.id), ['all', 'mine']);
+  assert.equal(catalog.paletteName(live, 'mine'), 'Mine');
+  assert.ok(['builtinPalettes', 'userPalettes'].every((key) => catalog.CATALOG_KEYS.includes(key)));
+});
+
+test('Companion palette swatches retain every full-colour emitter', () => {
+  assert.deepStrictEqual(catalog.paletteSwatch({}, { colours: ['#102030405060', '#abc', { random: true }] }), [
+    { r: 16, g: 32, b: 48, w: 64, a: 80, uv: 96 }, { r: 170, g: 187, b: 204, w: 0, a: 0, uv: 0 },
+  ]);
+});
+
+test('Companion colour feedback follows the base body instead of stale indices', () => {
+  const live = { colorA: 0, colorB: 0, basePalette: { colours: ['#0000000000FF', '#FF0000'] } };
+  assert.equal(catalog.slotColorSelected(live, 'colorA', 0), false);
+  assert.equal(catalog.slotColorSelected(live, 'colorB', 0), true);
+  assert.equal(catalog.slotColorName(live, 'colorB'), 'Red');
+  assert.equal(catalog.slotColorName(live, 'colorC'), catalog.slotColorName(live, 'colorA'));
+});
+
 async function serve() {
   const app = express();
   const rest = [];

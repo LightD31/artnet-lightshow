@@ -293,7 +293,7 @@ function family(id: string, app: CatalogueFamily['app'], name: string, extra: st
   return { id, app, name, kinds: kinds.map((kind) => {
     const def = kindOf(kind)!;
     return { kind, defaults: plain(def.defaults), capabilities: def.capabilities ? plain(def.capabilities) : null,
-      ...(def.level ? { level: def.level } : {}), ...(def.wallClock ? { wallClock: true as const } : {}) };
+      ...(def.requirements ? { requirements: def.requirements } : {}), ...(def.level ? { level: def.level } : {}), ...(def.wallClock ? { wallClock: true as const } : {}) };
   }) };
 }
 const ldjFamily = (engine: LdjEngine | 'macro', extra?: string[]) => family(`ldj.${engine}`, 'ldj', FAMILY[engine].name, extra);

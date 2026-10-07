@@ -1,3 +1,5 @@
+import type { AdmissionPolicy, RateOverride } from '../shared/hardware.ts';
+
 /** A look colour: red, green and blue, and the extra dies, each 0–255. */
 export interface Colour {
   r: number;
@@ -74,6 +76,8 @@ export interface ChannelDefault {
 
 /** What a kind of fixture is, channel by channel. */
 export interface Profile {
+  hardware?: RateOverride;
+  strobeHz?: { min: number; max: number };
   id: string;
   name: string;
   manufacturer?: string;
@@ -123,6 +127,9 @@ export interface Override {
 
 /** What the stage plot and the pattern layer need to know of a fixture. */
 export interface StageFixture {
+  productId?: string | null;
+  hardware?: RateOverride | null;
+  admission?: AdmissionPolicy | null;
   position?: Point | null;
   group?: string | null;
   geometry?: Geometry | null;
@@ -212,6 +219,7 @@ export type PixelMap = 'stage' | 'bar' | 'mirror';
 
 /** One DMX mode of an imported fixture (GDTF or OFL), ready to become a profile. */
 export interface ImportedMode {
+  strobeHz?: { min: number; max: number };
   modeName: string;
   channelCount: number;
   channelMap: ChannelMap;

@@ -3,7 +3,7 @@
 
 import { preparePalette } from './palette.ts';
 import type { PreparedPalette } from './palette.ts';
-import type { EffectSpec, Seed } from './types.ts';
+import type { EffectSlot, EffectSpec, Seed } from './types.ts';
 
 export interface EffectInstance {
   id: string;
@@ -15,7 +15,12 @@ export interface EffectInstance {
   targets: number[] | null;
 }
 
+export interface HardwareRun {
+  stepper: EffectStepper; nowMs: number; beatPos: number; anchorBeat: number; lastMs: number; lastBeat: number; held: Map<number, EffectSlot>;
+}
+
 interface InstanceState {
+  hardware?: Map<string, HardwareRun>;
   initialized: boolean;
   value: unknown;
   lastSeen: number;
@@ -161,6 +166,17 @@ export class EffectStepper {
     return entry.palette.prepared;
   }
 
+  hardware(id: string, nowMs: number): Map<string, HardwareRun> {
+    const entry = this.touch(id, nowMs);
+    return entry.hardware ??= new Map();
+  }
+
+  values(id: string): unknown[] {
+    const entry = this.states.get(id);
+    return entry?.hardware ? [...entry.hardware.values()].flatMap((run) => run.stepper.values(id))
+      : entry?.initialized ? [entry.value] : [];
+  }
+
   /** The state an instance already has, without creating one; null before its first initialization. */
   peek<S>(id: string): { value: S } | null {
     const entry = this.states.get(id);
@@ -170,7 +186,7 @@ export class EffectStepper {
   /** When an instance with state was last rendered or kept; null for none. */
   seenAt(id: string): number | null {
     const entry = this.states.get(id);
-    return entry?.initialized ? entry.lastSeen : null;
+    return entry && (entry.initialized || entry.hardware?.size) ? entry.lastSeen : null;
   }
 
   /** Mark an instance seen without rendering it (a held base look), so a sweep keeps it. */
@@ -190,6 +206,7 @@ export class EffectStepper {
     if (!entry) return;
     this.states.delete(from);
     this.states.set(to, entry);
+    for (const run of entry.hardware?.values() ?? []) run.stepper.move(from, to);
   }
 
   sweep(nowMs: number, keepMs = 2000): void {
