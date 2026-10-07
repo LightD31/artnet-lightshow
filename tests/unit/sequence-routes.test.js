@@ -21,7 +21,7 @@ import { SequenceStore } from '../../src/server/sequence-store.ts';
 import { startEngine, stopEngine, renderInput } from '../../src/server/engine.ts';
 import { applyPatch, processTap } from '../../src/server/patch.ts';
 import { conductor } from '../../src/server/conductor.ts';
-import { state, getLiveState } from '../../src/server/state.ts';
+import { state, getLiveState, voices, freeClockRuns } from '../../src/server/state.ts';
 import { settings } from '../../src/server/settings.ts';
 import { showStore } from '../../src/server/show-store.ts';
 import * as universes from '../../src/server/universes.ts';
@@ -232,6 +232,72 @@ test('the engine plays the loaded sequence from the sequencer the server registe
   res = await s.call('DELETE', '/api/sequence');
   assert.deepEqual([res.status, res.body.status.loaded], [200, null]);
   assert.equal((await s.call('POST', '/api/sequence/play')).status, 409);
+});
+
+test('a sequence plays on the free clock with the patterns stopped and no voice; stopped or unloaded, the clock stands', async (t) => {
+  const s = await serve(t);
+  t.after(() => applyPatch({ running: true }));
+  applyPatch({ running: false });
+  assert.equal(voices.size, 0);
+  assert.equal(freeClockRuns(), false);
+  await s.call('PUT', '/api/sequence', { ...SET, clips: [clip('A', 0, 1e6)] });
+  const still = conductor.phase().beatPos;
+  await wait(60);
+  assert.equal(conductor.phase().beatPos, still, 'loaded is not playing: the clock stands');
+  let res = await s.call('POST', '/api/sequence/play');
+  assert.equal(res.body.status.playing, true);
+  assert.equal(freeClockRuns(), true);
+  assert.equal(state.running, false, 'the sequence starts nothing else');
+  s.frame();
+  await wait(120);
+  s.frame();
+  res = await s.call('GET', '/api/sequence/status');
+  assert.equal(res.body.status.playing, true);
+  assert.ok(res.body.status.beat > 0.1, `playing: the sequence counts its beats (beat ${res.body.status.beat})`);
+  // Paused, its clips play their laps on the clock.
+  await s.call('POST', '/api/sequence/pause');
+  s.frame();
+  assert.equal(freeClockRuns(), true);
+  let from = conductor.phase().beatPos;
+  await wait(60);
+  assert.ok(conductor.phase().beatPos > from, 'paused: the clock runs');
+  // Stopped, its picture holds and the clock stands.
+  await s.call('POST', '/api/sequence/stop');
+  s.frame();
+  assert.equal(freeClockRuns(), false);
+  from = conductor.phase().beatPos;
+  await wait(60);
+  assert.equal(conductor.phase().beatPos, from, 'stopped: the clock stands');
+  // Played from the top again, it counts on; unloaded, the clock stands.
+  await s.call('POST', '/api/sequence/play');
+  s.frame();
+  await wait(120);
+  s.frame();
+  assert.ok((await s.call('GET', '/api/sequence/status')).body.status.beat > 0.1);
+  await s.call('DELETE', '/api/sequence');
+  assert.equal(freeClockRuns(), false);
+  from = conductor.phase().beatPos;
+  await wait(60);
+  assert.equal(conductor.phase().beatPos, from, 'unloaded: the clock stands');
+});
+
+test('a quantised voice over a sequence playing with the patterns stopped waits for its grid line; with nothing playing it starts at once', async (t) => {
+  const s = await serve(t);
+  t.after(() => { voices.stopAll(); applyPatch({ running: true }); });
+  applyPatch({ running: false });
+  const launch = () => voices.start({ spec: { kind: 'ldj.FadeCycle', params: { cadence: 2 } }, targets: 'shared', mode: 'latched', tier: 'voice', source: 'api', quantise: 4 });
+  await s.call('PUT', '/api/sequence', { ...SET, clips: [clip('A', 0, 1e6)] });
+  const before = performance.now();
+  let v = launch();
+  assert.ok(v.startedAtMs <= performance.now() && v.startedAtMs >= before, 'primed: now');
+  voices.stopAll();
+  await s.call('POST', '/api/sequence/play');
+  s.frame();
+  await wait(20);
+  const beat = conductor.peek().beatPos;
+  v = launch();
+  assert.equal(v.anchorBeat % 4, 0, 'a sequence playing: on the next grid line');
+  assert.ok(v.anchorBeat > beat && v.startedAtMs > performance.now() - 1, `beat ${beat}, grid ${v.anchorBeat}`);
 });
 
 test('unloading the sequence drops a take that was running', async (t) => {

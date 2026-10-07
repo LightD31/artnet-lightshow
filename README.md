@@ -1196,8 +1196,9 @@ Other screens can keep the rig's beat: the live state's `clock` (`GET
 /api/state`, or the `look` domain over the socket) is `{ source, bpm, beatPos,
 epoch, at }`, the beat position read at `at` (wall-clock ms). Carry it on as
 `beatPos + (now − at) / 60000 × bpm`; a new `epoch` means the music jumped.
-While the patterns are stopped on the free clock (`running` false, source
-`tap`) the beat stands still: hold it there rather than carry it on. It rides
+While the free clock stands (source `tap`, the patterns stopped — `running`
+false — with no voice launched and no sequence playing or paused) the beat
+stands still: hold it there rather than carry it on. It rides
 the broadcasts the state already makes, and is sent again only when carrying
 it on would be more than a 60 Hz frame out — after a tap, a seek, a stop or a
 tempo change — never just because the beat moved on, nor again while it stands
@@ -1580,8 +1581,10 @@ strobe.
 grid. A pad is `{ bank, slot, label, accent, content, launch, quantise, targets }`:
 `content` is `{ kind, id }` or `null` for an empty pad; `launch` is `once`,
 `hold` or `loop`; `quantise` is a grid in beats — a launch waits for the next
-line of it, `0` starts at once; `targets` is `shared` (the whole rig) or a
-list of fixture ids. What a pad plays depends on its content:
+line of it while anything plays (the patterns, a voice, a sequence playing or
+paused), and starts at once on a quiet rig or with `0`; `targets` is `shared`
+(the whole rig) or a list of fixture ids. What a pad plays depends on its
+content:
 
 - `preset` — the preset as one voice.
 - `pattern` — a stored pattern, its lanes and clips, played as one voice: a
@@ -1719,10 +1722,12 @@ silences the others; a muted one plays nothing.
 The transport plays, pauses (the current clip keeps looping), stops (holding
 the last frame, or black with `?blackout=1`), steps to the next or previous
 clip, shuffles, seeks to a beat, jumps to a clip, re-syncs on the next beat or
-bar and loops a range. A stopped sequence keeps the rig: unloading it
-(`DELETE /api/sequence`, or the first entry of the deck's sequence picker)
-gives the base back to the look. Clips with fast-flashing effects need the
-acknowledgement.
+bar and loops a range. Playing or paused, a sequence counts its beats with
+the patterns stopped (a disarm stops them): the free clock runs for it, as
+for a voice, and it starts nothing else. A stopped sequence keeps the rig:
+unloading it (`DELETE /api/sequence`, or the first entry of the deck's
+sequence picker) gives the base back to the look. Clips with fast-flashing
+effects need the acknowledgement.
 
 **Patterns** are reusable bundles of lanes and clips. Saved ones can be
 inserted into the loaded sequence at a beat, or captured from a range of

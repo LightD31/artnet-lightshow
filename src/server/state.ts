@@ -175,7 +175,7 @@ const voices = new VoiceManager({
   // The beat the engine reads next, the grid line and the tempo from one reading.
   reading: () => conductor.peek(),
   acknowledged: () => safety.acknowledged(),
-  anyRunning: () => state.running,
+  anyRunning: () => state.running || sequenceRuns(),
   onChange: voicesChanged,
   // No route latches a strobe past the configured cap, whichever launches it.
   strobeLatchMs: () => settings.get('safety.strobeMaxLatchSec') * 1000,
@@ -229,13 +229,23 @@ function onVoicesChange(fn: () => void): () => void {
 // What the free clock was last told. It starts running, as the patterns do.
 let freeClockRunning = true;
 
+// Whether the sequencer's transport moves (sequencer.ts runs()); false while none is registered.
+let sequenceRuns: () => boolean = () => false;
+
 /**
- * Whether the free tap clock runs: while the patterns run, and while any
- * voice is launched (one waiting for its grid line too), so a pad pressed
- * with the patterns stopped still counts its beats — and starts nothing else.
+ * Whether the free tap clock runs: while the patterns run, while any voice
+ * is launched (one waiting for its grid line too), and while a sequence
+ * plays or is paused, so a pad pressed or a sequence played with the
+ * patterns stopped still counts its beats — and starts nothing else.
  */
 function freeClockRuns(): boolean {
-  return state.running || voices.size > 0;
+  return state.running || voices.size > 0 || sequenceRuns();
+}
+
+/** Register what says whether the sequence moves; the free clock follows it from now. */
+function setSequenceRuns(fn: (() => boolean) | null | undefined): void {
+  sequenceRuns = typeof fn === 'function' ? fn : () => false;
+  reconcileFreeClock();
 }
 
 /** Tell the free clock whether it runs; `force` tells it even when that has not changed. */
@@ -566,5 +576,6 @@ export {
   getDmxUniverses,
   setExtrasProvider,
   setSequenceProvider,
+  setSequenceRuns,
   getSequenceStatus,
 };

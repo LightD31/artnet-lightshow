@@ -1,5 +1,5 @@
 import { transitionFor } from '../show/transition.ts';
-import { state, getLiveState, getDmxSnapshot, getDmxUniverses, setExtrasProvider, setSequenceProvider, voices, strobe } from './state.ts';
+import { state, getLiveState, getDmxSnapshot, getDmxUniverses, setExtrasProvider, setSequenceProvider, setSequenceRuns, reconcileFreeClock, voices, strobe } from './state.ts';
 import { createPublisher, ROOM } from './protocol.ts';
 import { encodeDmxFrame } from '../shared/dmx-frame.ts';
 import { setHooks, applyPatch } from './patch.ts';
@@ -180,6 +180,8 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       // A preset pad records as its preset, a pattern pad as its bundle; the strobe and drops do not (padTakeOf).
       pad: (bank, slot) => padTakeOf(pads.store.get(bank, slot), presetLookup(library)),
       beat: () => conductor.peek().beatPos,
+      // Playing or paused, the sequence counts on the free clock with the patterns stopped.
+      onRun: () => reconcileFreeClock(),
     }),
   };
   // The pads count in the conductor's beats, the sequence in its own: the
@@ -210,6 +212,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     return sequence.sequencer.frame(reading);
   });
   setSequenceProvider(() => sequence.sequencer.status());
+  setSequenceRuns(() => sequence.sequencer.runs());
   // Slot statuses, one per upcoming track up to state.autoPrefetchDepth.
   // slots[0] is the immediate next track (back-compat with the old
   // spotifyNext shape — that field still mirrors slots[0]).

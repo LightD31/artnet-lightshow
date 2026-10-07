@@ -583,6 +583,8 @@ export interface SequencerOptions {
   pad?: (bank: number, slot: number) => PadTake | null;
   /** The conductor's beat now, which a take's count-in counts on. The last frame's when left out. */
   beat?: () => number;
+  /** Told when the transport starts or stops moving (runs()): the free clock runs for it (state.ts). */
+  onRun?: () => void;
 }
 
 const EPS = 1e-9;
@@ -631,10 +633,15 @@ export class Sequencer {
   declare _pattern: (id: string) => SequencePattern | null;
   declare _pad: (bank: number, slot: number) => PadTake | null;
   declare _record: Recording | null;
+  declare _onRun: () => void;
+  // What runs() was when last told.
+  declare _told: boolean;
 
   constructor({ resolve, palette = builtinPalette, apply = () => {}, current = () => ({ masterDimmer: 255, bpm: 120 }),
     musicMode = () => {}, admit = (spec) => safety.requireAcknowledged(spec), now = () => performance.now(), seed,
-    fixtureIds = () => [], pattern = () => null, pad = () => null, beat }: SequencerOptions) {
+    fixtureIds = () => [], pattern = () => null, pad = () => null, beat, onRun = () => {} }: SequencerOptions) {
+    this._onRun = onRun;
+    this._told = false;
     this._fixtureIds = fixtureIds;
     this._clock = beat ?? (() => this._last?.beatPos ?? 0);
     this._pattern = pattern;
@@ -691,6 +698,7 @@ export class Sequencer {
     this._commands = sortCommands(seq.commands);
     if (!same) this._release();
     else this._edited(before!, commands);
+    this._tell();
     return structuredClone(this._loaded!);
   }
 
@@ -704,6 +712,7 @@ export class Sequencer {
     this._commands = [];
     this._revision++;
     this._release();
+    this._tell();
   }
 
   /** The loaded sequence as a copy, or null. */
@@ -800,6 +809,7 @@ export class Sequencer {
     this._mode = 'playing';
     this._asked = null;
     this._ops.push({ type: 'start', real });
+    this._tell();
   }
 
   /** Pause: the clips on top stay, playing their own laps on; the transport, its commands and its selection wait. */
@@ -826,6 +836,7 @@ export class Sequencer {
     this._asked = mode;
     this._ops.push({ type: 'stop', mode });
     if (this._run !== 'playing' && this._run !== 'paused') this._applyQueued(null);
+    this._tell();
   }
 
   /** To a beat of the sequence: every clip starts again there; the commands on that beat run, none before it. */
@@ -1016,6 +1027,8 @@ export class Sequencer {
     this._flush();
     this._last = reading;
     this._transport = this._transportNow(reading);
+    // It may have stopped by itself.
+    this._tell();
     return { table: this._table, transport: this._transport };
   }
 
@@ -1333,6 +1346,22 @@ export class Sequencer {
   }
 
   // ── What the rest of the server reads ─────────────────────────────────────
+
+  /**
+   * Whether the transport moves: playing, or paused with its clips playing
+   * their laps on. Asked for counts at once, as the status says; a stopped
+   * sequence's picture stands still.
+   */
+  runs(): boolean {
+    return this._mode === 'playing' || this._mode === 'paused';
+  }
+
+  _tell(): void {
+    const runs = this.runs();
+    if (runs === this._told) return;
+    this._told = runs;
+    this._onRun();
+  }
 
   /** The beat the last frame was handed (NaN before the first): the voices' containers are looked up there too. */
   lastBeat(): number {
