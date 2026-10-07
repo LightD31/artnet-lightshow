@@ -2,6 +2,7 @@ import { validate, midiConnectSchema } from './validation.ts';
 import { settings } from './settings.ts';
 import { messageOf } from '../errors.ts';
 
+/** The MIDI surface, as far as connecting it goes. */
 export interface MidiPorts {
   enabled: boolean;
   close(): void;
@@ -9,6 +10,16 @@ export interface MidiPorts {
   listPorts(): unknown;
 }
 
+/**
+ * Open the named MIDI ports and remember them for the next start.
+ *
+ * The REST route and the socket both connect ports (Companion uses one, the app
+ * the other). The
+ * two used to be separate implementations, and had already drifted once — one
+ * validated its input and the other did not — so both now come here.
+ *
+ * Throws on an invalid payload; a port that will not open is `ok: false`.
+ */
 function connectMidi(midi: MidiPorts, payload: unknown): { ok: boolean; enabled: boolean; ports: unknown } {
   const { input, output } = validate(midiConnectSchema, payload || {}, 'midi-connect');
   midi.close();

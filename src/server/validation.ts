@@ -9,6 +9,7 @@ import { HUE_BRIDGE_ID_RE, stripIssue } from '../shared/placement.ts';
 import { parseHex } from '../shared/effects/palette.ts';
 import { HttpError } from '../errors.ts';
 
+/** Input that failed its schema: a 400, with zod's issues for the client. */
 export class ValidationError extends HttpError {
   issues: z.ZodIssue[];
 
@@ -25,9 +26,13 @@ const fixtureId = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1
 const fixturePosition = z.object({
   x: z.number().finite().min(0).max(100),
   y: z.number().finite().min(0).max(100),
+  // Floor to ceiling, for the party effects that read the room's height.
   height: z.number().min(0).max(100).optional(),
 }).strict();
 const fixtureGroup = z.enum(FIXTURE_GROUPS);
+// A bar's line on the stage plot, centred on its position: how long it is in
+// percent of the stage's width, and which way it points (degrees clockwise on
+// the plot, 0 with its first cell at stage left).
 const fixtureGeometry = z.object({
   length: z.number().finite().min(1).max(100),
   angle: z.number().finite().min(-180).max(180),
@@ -35,14 +40,25 @@ const fixtureGeometry = z.object({
 const colorIdx = z.number().int().min(0).max(COLOR_PRESETS.length - 1);
 const unitValue = z.number().min(0).max(1).optional();
 
+/** A fixed colour as the effects take one on the wire: #RGB, #RRGGBB or #RRGGBBWW. */
 const hexColour = z.string().max(16).refine((value) => {
   try { parseHex(value); return true; } catch { return false; }
 }, { message: 'expected a hex colour (#RGB, #RRGGBB or #RRGGBBWW)' });
 
+/** Colours every effect plays instead of its own: one to eight, fixed. Null lets them play their own. */
 const paletteOverride = z.array(hexColour).min(1).max(8).nullable();
 
+// Hostname per RFC 1123, or an IPv4 literal. Rejecting junk here means a typo
+// in the ArtNet panel surfaces as a validation error instead of a stream of
+// failed sends.
 const HOSTNAME_RE = /^(?=.{1,253}$)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
 
+// A fixture sent to a device of its own: a WLED over DDP, by its hostname or
+// address — its universes then go there and nowhere else (ddp-routes.ts) — or
+// a Hue lamp, one channel of the area a bridge streams, which has no DMX
+// address at all (shared/placement.ts). Hue channel ids are a byte; the
+// bridge is one of the settings' hue.bridges by id, and a show saved before
+// there could be several names none (it loads as the first bridge's).
 const hueOutput = z.object({
   protocol: z.literal('hue'),
   bridge: z.string().regex(HUE_BRIDGE_ID_RE, 'is not a bridge id').optional(),
@@ -52,15 +68,22 @@ const ddpOutput = z.object({
     protocol: z.literal('ddp'),
     host: z.string().regex(HOSTNAME_RE, 'is not a hostname or an IPv4 address'),
     port: z.number().int().min(1).max(65535).optional(),
+    // One segment of the WLED: its first LED, and a panel's width when the
+    // segment is a rectangle narrower than the panel.
     at: z.number().int().min(0).max(65535).optional(),
     rowStride: z.number().int().min(1).max(4096).optional(),
+    // A wash or zones: the LEDs its few cells are spread over (types/rig.ts).
     leds: z.number().int().min(1).max(65535).optional(),
     columns: z.number().int().min(1).max(4096).optional(),
+    // A strobe panel: each cell's rectangle of those LEDs — column, row,
+    // width, height — in rows `columns` wide.
     areas: z.array(z.tuple([
       z.number().int().min(0).max(4095), z.number().int().min(0).max(4095),
       z.number().int().min(1).max(4096), z.number().int().min(1).max(4096),
     ])).max(MAX_CELLS_PER_FIXTURE).optional(),
   }).strict();
+// One device of an OpenRGB SDK server (types/rig.ts OpenRgbOutput): which,
+// by index and by the name it had when it was added, and how many LEDs.
 const openrgbOutput = z.object({
   protocol: z.literal('openrgb'),
   host: z.string().regex(HOSTNAME_RE, 'is not a hostname or an IPv4 address'),
@@ -69,10 +92,13 @@ const openrgbOutput = z.object({
   name: z.string().trim().min(1).max(128).optional(),
   leds: z.number().int().min(1).max(MAX_CELLS_PER_FIXTURE),
 }).strict();
+/** The outputs a fixture can be given by hand: a device of its own, by address. */
 const deviceOutput = z.discriminatedUnion('protocol', [ddpOutput, openrgbOutput]);
 const fixtureOutput = z.discriminatedUnion('protocol', [ddpOutput, openrgbOutput, hueOutput]);
 
-// Apply IPv4 rules to dotted numeric input so malformed addresses cannot pass as hostnames.
+// A string of dotted numeric labels is someone typing an IP, so hold it to
+// IPv4 rules rather than letting "2.255.255.256" through as a hostname (which
+// RFC 1123 would technically permit) and failing later at DNS.
 const DOTTED_NUMERIC_RE = /^[0-9]+(\.[0-9]+)*$/;
 
 const artnetHost = z.string().min(1).max(253)
@@ -88,20 +114,36 @@ const artnetSchema = z.object({
   sync: z.boolean().optional(),
 }).strict();
 
+// Pattern / strobeFunction / energyOverride accept any string — the engine
+// silently no-ops on unknown ids, matching the previous lenient behaviour
+// and giving auto-show.js room for new pattern pools without a schema bump.
+// A pattern may name an effect preset as well (the effect library).
 const patchSchema = z.object({
+  // Not rounded: a track at 123.7 BPM run at 124 drifts a beat off the music
+  // in under a minute.
   bpm: z.number().min(20).max(300).optional(),
+  // Follow the music, or keep the tempo set here (conductor.ts). Stored.
   tempoMode: z.enum(TEMPO_MODES).optional(),
+  // The timeline time a scene was scheduled for, so its pattern counts from
+  // that beat however late the frame that fired it was. Set by the auto show.
   anchorMs: z.number().finite().optional(),
   beatDivision: z.number().int().min(1).max(16).optional(),
   running: z.boolean().optional(),
   pattern: z.string().min(1).max(64).optional(),
   // Crossfade into this patch's pattern and colours rather than cutting.
   fadeMs: z.number().int().min(0).max(10000).optional(),
+  // Split the look: one fixture group holds a wash in colour B while the rest
+  // run the pattern. The number picks which group; null runs the whole rig.
   split: z.number().int().min(0).max(1e9).nullable().optional(),
+  // How a pixel effect is laid over the cells of LED bars. See shared/rig.js.
   pixelMap: z.enum(PIXEL_MAPS).optional(),
+  // The bars' own picture while the pars run `pattern`; null for one pattern
+  // on the whole rig. And how many beats it takes to play once, if it does.
   pixelPattern: z.string().min(1).max(64).nullable().optional(),
   pixelSpan: z.number().min(0).max(4096).nullable().optional(),
   pixelFrom: z.number().min(0).max(1).nullable().optional(),
+  // The panels' own picture while the bars run theirs; null for the panels
+  // to draw what the bars do.
   panelPattern: z.string().min(1).max(64).nullable().optional(),
   colorA: colorIdx.optional(),
   colorB: colorIdx.optional(),
@@ -116,6 +158,8 @@ const patchSchema = z.object({
   strobeSpeed: u8.optional(),
   strobeFunction: z.string().min(1).max(64).optional(),
   energyOverride: z.union([z.string().min(1).max(64), z.null()]).optional(),
+  // Light DJ's active palette: the effects play these instead of their own
+  // colours and the slots. An empty list is no clear command; null is.
   paletteOverride: paletteOverride.optional(),
   basePalette: paletteBodySchema.nullable().optional(),
   overridePalette: paletteBodySchema.nullable().optional(),
@@ -124,6 +168,9 @@ const patchSchema = z.object({
   artnet: artnetSchema.optional(),
   prolinkEnabled: z.boolean().optional(),
   autoSource: z.enum(AUTO_SOURCES).optional(),
+  // `'auto'` hands the choice to the director, which sizes the palette from the
+  // track. The manual `paletteSize` above stays 2 | 3 | 4: that one is the
+  // colour panel's own setting and there is no music behind it to ask.
   autoPaletteSize: z.union([z.literal(2), z.literal(3), z.literal(4),
     z.literal('auto')]).optional(),
   autoIntensity: z.number().min(0).max(100).optional(),
@@ -152,6 +199,8 @@ const overrideMessageSchema = z.object({
 
 const dmxUniverse = z.number().int().min(0).max(32767);
 
+// POST /api/fixtures: how many of which profile, from where. Everything is
+// optional — no body adds one generic par behind the rig's default universe.
 const fixtureAddSchema = z.object({
   universe: dmxUniverse.optional(),
   profileId: z.string().min(1).max(128).optional(),
@@ -171,11 +220,22 @@ const fixtureMessageSchema = z.object({
   universe: dmxUniverse.optional(),
   label: z.string().max(64).optional(),
   profileId: z.string().min(1).max(128).optional(),
+  // The fixture's brightness trim: scales its output, whatever is driving it.
+  // Not part of the override — it applies to an energy override too.
   maxBrightness: u8.optional(),
   geometry: fixtureGeometry.nullable().optional(),
+  // A WLED's or an OpenRGB device's, or none. A Hue lamp's output is the
+  // bridge's to give: it is patched from the entertainment area (POST
+  // /api/hue/add), never made one.
   output: deviceOutput.nullable().optional(),
 }).strict();
 
+/**
+ * POST /api/fixtures/restore: an undo for a just-deleted fixture.
+ *
+ * Carries the override too — a fixture deleted while overridden should come
+ * back the way it left, not reset to the pattern engine.
+ */
 const fixtureRestoreSchema = z.object({
   index: z.number().int().min(0).max(255),
   fixture: z.object({
@@ -188,6 +248,7 @@ const fixtureRestoreSchema = z.object({
     geometry: fixtureGeometry.nullable().optional(),
     output: fixtureOutput.nullable().optional(),
     label: z.string().max(64),
+    // Absent for a fixture with no DMX address, which the server places.
     address: z.number().int().min(1).max(512).optional(),
     universe: dmxUniverse.optional(),
     profileId: z.string().min(1).max(128),
@@ -196,8 +257,11 @@ const fixtureRestoreSchema = z.object({
   }).strict(),
 }).strict();
 
+// Profile ids reach an object key, so reject the ones that would collide with
+// object machinery before they get anywhere near the registry.
 const RESERVED_PROFILE_IDS = ['__proto__', 'constructor', 'prototype'];
 
+/** A profile's channel maps, as checkCells reads them. */
 interface CellCheck {
   channelCount: number;
   channelMap?: Record<string, number>;
@@ -212,26 +276,42 @@ const profileSchema = z.object({
   name: z.string().min(1).max(128),
   manufacturer: z.string().max(128).optional(),
   modeName: z.string().max(128).optional(),
+  // Up to a universe for any fixture; a strip may run on over several.
   channelCount: z.number().int().min(1).max(MAX_PROFILE_CHANNELS),
   channelMap: z.record(z.string(), z.number().int().min(0).max(MAX_PROFILE_CHANNELS - 1)),
   channelList: z.array(z.object({
     offset: z.number().int().min(0).max(MAX_PROFILE_CHANNELS - 1),
     name: z.string().min(1),
     attribute: z.string().min(1),
+    // Which cell the channel drives, for labelling the monitor.
     cell: z.number().int().min(0).max(MAX_CELLS_PER_FIXTURE - 1).optional(),
   })).optional(),
+  // The cells of a fixture that is more than one light — an LED bar — in the
+  // order they sit along it. Each has its own channels, at offsets inside the
+  // fixture's footprint; the fixture-level channelMap keeps what they share.
   cells: z.array(z.object({
     name: z.string().max(64).optional(),
     channelMap: z.record(z.string(), z.number().int().min(0).max(MAX_PROFILE_CHANNELS - 1)),
+    // Where the cell is in the grid below, column and row from 0.
     at: z.object({ x: gridIndex, y: gridIndex }).strict().optional(),
   }).strict()).min(2).max(MAX_CELLS_PER_FIXTURE).optional(),
+  // A panel — an LED matrix — has its cells in rows and columns rather than
+  // along a line. Cells without `at` fill it row by row in the order listed.
   grid: z.object({ columns: gridSize, rows: gridSize }).strict().optional(),
+  // Channels the show does not drive and the value each sits at instead of 0:
+  // a shutter whose 0 is closed, a dimmer the show leaves at full. Written
+  // under every frame, so a channel the show does drive still wins.
   defaults: z.array(z.object({
     offset: z.number().int().min(0).max(MAX_PROFILE_CHANNELS - 1),
     value: u8,
   }).strict()).max(MAX_PROFILE_CHANNELS).optional(),
 }).passthrough()
-  // Validate offsets against the footprint so profiles cannot write into the next fixture.
+  // channelCount is the fixture's DMX footprint: it decides where the *next*
+  // fixture can be patched and what the universe-bounds check reserves. An
+  // offset at or past it would be written outside the footprint the profile
+  // claims — straight into whatever fixture is patched next. The GDTF importer
+  // already derives channelCount from the highest offset; this holds the
+  // hand-written and API-posted paths to the same rule.
   .superRefine((profile, ctx) => {
     const over: string[] = [];
     for (const [attr, offset] of Object.entries(profile.channelMap || {})) {
@@ -254,10 +334,12 @@ const profileSchema = z.object({
     }
     if (profile.cells) checkCells({ ...profile, cells: profile.cells }, ctx);
     checkGrid(profile, ctx);
+    // Longer than a universe: only a strip can run on into the next one.
     const long = stripIssue(profile);
     if (long) ctx.addIssue({ code: 'custom', path: ['channelCount'], message: long });
   });
 
+/** A panel's grid holds every cell, each in a place of its own. */
 function checkGrid(profile: { grid?: { columns: number; rows: number }; cells?: { at?: { x: number; y: number } }[] }, ctx: z.RefinementCtx): void {
   const { grid, cells } = profile;
   if (!grid) {
@@ -284,7 +366,11 @@ function checkGrid(profile: { grid?: { columns: number; rows: number }; cells?: 
   });
 }
 
-// Reject shared cell channels so independent looks cannot fight over the same DMX byte.
+/**
+ * A cell drives channels of its own. Two cells on one channel, or a cell on a
+ * channel the whole fixture uses, would have two looks fighting over one
+ * byte; a cell with no light in it is not a cell.
+ */
 function checkCells(profile: CellCheck, ctx: z.RefinementCtx): void {
   const fixtureLevel = new Set(Object.values(profile.channelMap || {}));
   const owner = new Map<number, string>();
@@ -323,12 +409,21 @@ const showSchema = z.object({
     output: fixtureOutput.nullable().optional(),
     label: z.string().max(64).optional(),
     address: z.number().int().min(1).max(512).optional(),
+    // Absent in shows saved before multi-universe: those load onto the rig's
+    // default universe, which is exactly where they used to live.
     universe: dmxUniverse.optional(),
     profileId: z.string().optional(),
+    // Absent in shows saved before the brightness trim existed: those load at
+    // 255 — no scaling — which is what they were rendering at.
     maxBrightness: u8.optional(),
   })).optional(),
 }).passthrough();
 
+// The browser extension POSTs the Deezer web player's state. DeezerSource
+// coerces the field types defensively, but nothing bounded the *sizes*: track
+// names and a queue of any length flowed straight into state that is broadcast
+// to every connected client (and into yt-dlp search queries and cache keys).
+// A text field is a text field — cap it at something no real track exceeds.
 const deezerTrackSchema = z.object({
   name: z.string().max(512).optional(),
   title: z.string().max(512).optional(),
@@ -344,6 +439,8 @@ const deezerTrackSchema = z.object({
 
 const deezerStateSchema = z.object({
   current: deezerTrackSchema.nullable().optional(),
+  // Only the first `autoPrefetchDepth` (max 5) entries are ever read; 50 is
+  // generous headroom without letting a client park an unbounded array here.
   upcoming: z.array(deezerTrackSchema).max(50).optional(),
 }).passthrough();
 
@@ -352,15 +449,23 @@ const midiConnectSchema = z.object({
   output: z.string().nullable().optional(),
 }).strict();
 
+// Pairing is the one Hue call that names a bridge the settings do not hold yet:
+// the operator has just picked it off the discovery list, or typed it in.
+// POST /api/wled/add: a WLED by its hostname or address, and what to call it.
 const wledAddSchema = z.object({
   host: z.string().regex(HOSTNAME_RE, 'is not a hostname or an IPv4 address'),
   label: z.string().trim().min(1).max(64).optional(),
   // One fixture for each of its segments, rather than one for all its LEDs.
   segments: z.boolean().optional(),
+  // One light (a wash), a few cells along it (zones, the default) or every
+  // LED its own (pixels) — as a DMX bar has a 3-channel mode and a pixel one.
   mode: z.enum(['wash', 'zones', 'pixels', 'strobe']).optional(),
   zones: z.number().int().min(2).max(64).optional(),
 }).strict();
 
+// GET /api/openrgb/discover and POST /api/openrgb/add: an OpenRGB SDK server
+// by its address, which of its devices (every one not patched yet when none
+// are named), and what to call them.
 const openrgbHostSchema = z.object({
   host: z.string().regex(HOSTNAME_RE, 'is not a hostname or an IPv4 address'),
   port: z.coerce.number().int().min(1).max(65535).optional(),
@@ -372,17 +477,25 @@ const openrgbAddSchema = openrgbHostSchema.extend({
 
 const huePairSchema = z.object({
   host: z.string().min(1).max(253),
+  // What to call the bridge in the Rig view and the patch; its address when blank.
   label: z.string().trim().max(64).optional(),
 }).strict();
 
+// POST /api/hue/:bridge/add: channels of the bridge's area to patch, each a
+// lamp of its own; every channel not patched yet when none are named.
 const hueAddSchema = z.object({
   channels: z.array(z.number().int().min(0).max(255)).min(1).max(20).optional(),
 }).strict();
 
+// POST /api/hue/:bridge/disconnect: a bridge with lamps in the patch is only
+// forgotten when asked to take them with it.
 const hueDisconnectSchema = z.object({
   removeFixtures: z.boolean().optional(),
 }).strict();
 
+// PUT /api/auto/overlay: the operator's edits to the loaded track's show
+// (src/show/overlay.ts). Times are track times in ms; a pattern the rig does
+// not know is ignored by the engine as any patch's is.
 const trackMs = z.number().finite().min(0).max(24 * 3600 * 1000);
 const overlaySchema = z.object({
   palette: z.string().regex(/^[A-Za-z0-9-]{1,64}$/).nullable().optional(),
@@ -413,6 +526,7 @@ function validate<S extends z.ZodTypeAny>(schema: S, value: unknown, label: stri
   return result.data;
 }
 
+/** A look change, as applyPatch takes it. */
 export type Patch = z.output<typeof patchSchema>;
 export type OverrideInput = z.output<typeof overrideSchema>;
 export type FixtureEdit = z.output<typeof fixtureMessageSchema>;

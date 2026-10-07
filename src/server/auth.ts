@@ -6,8 +6,10 @@ import type { NextFunction, Request, Response } from 'express';
 import type { Socket } from 'socket.io';
 import { isLoopback } from './loopback.ts';
 
+/** Socket.IO's answer to a handshake: an error, or whether to let it in. */
 type AllowCallback = (err: string | null | undefined, success: boolean) => void;
 
+/** The access checks, for Express and for Socket.IO. */
 export interface Auth {
   enabled: boolean;
   hostMiddleware(req: Request, res: Response, next: NextFunction): void;
@@ -16,28 +18,58 @@ export interface Auth {
   socketMiddleware(socket: Socket, next: (err?: Error) => void): void;
 }
 
-// Check token, Origin and Host independently; localhost still needs CSRF and rebinding protection.
+/**
+ * Access control for the control surface.
+ *
+ * Two independent concerns, deliberately kept separate:
+ *
+ *   1. Authentication (who may talk to the API at all). A shared token,
+ *      required whenever the server is bound to anything other than loopback.
+ *      Sent as an `X-Lightshow-Token` header, a `token` query parameter, or a
+ *      Socket.IO handshake `auth.token`.
+ *
+ *   2. CSRF (which *pages* may talk to it). Even on a loopback bind with no
+ *      token, a website the operator has open in another tab can POST to
+ *      localhost — several control routes take no body, which makes them
+ *      "simple" cross-origin requests that skip preflight entirely. The origin
+ *      check below rejects those regardless of whether a token is configured,
+ *      and the host check rejects a page that re-points its own domain at this
+ *      machine (DNS rebinding), which the origin check alone cannot see.
+ *
+ * This is proportionate defence for a tool on a venue network. It is not a
+ * hardened auth system: one shared secret, no users, no revocation.
+ */
 
+/** Constant-time string compare that tolerates differing lengths. */
 function safeEqual(a: unknown, b: unknown): boolean {
   const bufA = Buffer.from(String(a || ''), 'utf8');
   const bufB = Buffer.from(String(b || ''), 'utf8');
   if (bufA.length !== bufB.length) {
+    // Still burn a comparison so length isn't leaked by timing alone.
     crypto.timingSafeEqual(bufA, bufA);
     return false;
   }
   return crypto.timingSafeEqual(bufA, bufB);
 }
 
+/** Generate a token suitable for LIGHTSHOW_TOKEN. */
 function generateToken(): string {
   return crypto.randomBytes(24).toString('base64url');
 }
 
+/**
+ * Refuse to start in a configuration that silently exposes the rig.
+ * Returns a fatal message, or null when the configuration is acceptable.
+ */
 function configError({ host, token, configFile = 'config/settings.json' }: {
   host: string;
   token: string;
   configFile?: string;
 }): string | null {
   if (isLoopback(host) || token) return null;
+  // The Settings view normally refuses to save this combination, so reaching
+  // here means the file was hand-edited — and with the server refusing to
+  // start there is no UI to fix it from. Give file-level instructions.
   return [
     `Refusing to start: the bind address is "${host}" (not loopback) with no access token.`,
     '',
@@ -55,11 +87,19 @@ function configError({ host, token, configFile = 'config/settings.json' }: {
   ].join('\n');
 }
 
-// Allow clients without Origin while checking browser-supplied origins for cross-site requests.
+/**
+ * Is this request's Origin allowed to drive the API?
+ *
+ * Browsers set Origin themselves and a page cannot forge it, so this is a
+ * reliable filter for cross-site requests. Non-browser clients (Companion,
+ * curl, scripts) send no Origin and are unaffected.
+ */
 function originAllowed(req: { headers: IncomingHttpHeaders }): boolean {
   const origin = req.headers.origin;
   if (!origin) return true;                       // not a browser-initiated cross-origin request
 
+  // The browser extension's background script legitimately posts now-playing
+  // state from its own origin.
   if (/^(moz|chrome)-extension:\/\//.test(origin)) return true;
 
   try {
@@ -72,6 +112,10 @@ function originAllowed(req: { headers: IncomingHttpHeaders }): boolean {
   }
 }
 
+/**
+ * The host name a `Host` header names, lower-cased, without port or brackets.
+ * Empty when there is nothing usable in it.
+ */
 function hostnameOf(hostHeader: unknown): string {
   let raw = String(hostHeader || '').trim().toLowerCase();
   if (!raw) return '';
@@ -79,11 +123,13 @@ function hostnameOf(hostHeader: unknown): string {
     const end = raw.indexOf(']');
     return end > 0 ? raw.slice(1, end) : '';
   }
+  // One colon is a port; several are an unbracketed IPv6 literal.
   const colon = raw.indexOf(':');
   if (colon >= 0 && colon === raw.lastIndexOf(':')) raw = raw.slice(0, colon);
   return raw.endsWith('.') ? raw.slice(0, -1) : raw;
 }
 
+/** The names this machine answers to on a LAN without any configuration. */
 function machineNames(): Set<string> {
   const names = new Set<string>();
   const full = String(os.hostname() || '').trim().toLowerCase();
@@ -96,7 +142,25 @@ function machineNames(): Set<string> {
   return names;
 }
 
-// Validate Host as well as Origin because DNS rebinding can make both attacker-controlled values agree.
+/**
+ * May a request carrying this `Host` header reach the server?
+ *
+ * The origin check alone cannot stop DNS rebinding: a page on
+ * attacker.example re-resolves its own name to 127.0.0.1, and from then on its
+ * requests carry `Origin: http://attacker.example:3000` *and*
+ * `Host: attacker.example:3000`, so origin and host agree and the request
+ * looks same-origin. What it cannot fake is a host name this machine is
+ * actually known by, so the Host header is checked against those:
+ *
+ *   - any IP literal — rebinding needs a name, and an address typed into the
+ *     address bar is the normal way to reach the rig from a phone;
+ *   - localhost and *.localhost, which browsers never resolve through DNS;
+ *   - this machine's own host name, bare and with `.local`;
+ *   - whatever the operator configured: the bind host and the public URL.
+ *
+ * A request with no Host header at all is not a browser (HTTP/1.1 browsers
+ * always send one), so it is left to the token check.
+ */
 function hostAllowed(hostHeader: unknown, extraNames: readonly string[] = []): boolean {
   if (hostHeader === undefined || hostHeader === null || hostHeader === '') return true;
   const name = hostnameOf(hostHeader);
@@ -107,18 +171,22 @@ function hostAllowed(hostHeader: unknown, extraNames: readonly string[] = []): b
   return extraNames.some((extra) => hostnameOf(extra) === name);
 }
 
+/** The host name of a configured URL such as `server.publicUrl`, or ''. */
 function hostOfUrl(value: string | null | undefined): string {
   if (!value) return '';
   try { return new URL(value).host; } catch (_) { return ''; }
 }
 
+/** Pull a presented token out of an Express request. */
 function tokenFromRequest(req: Request): unknown {
   return req.headers['x-lightshow-token']
     || (req.query && req.query.token)
     || '';
 }
 
-// Log each refused host only once so browser retries do not flood the console.
+// A refused Host is almost always an operator reaching the rig by a name the
+// server does not know, so it is worth one console line — but only one per
+// name, since a browser retries.
 const warnedHosts = new Set();
 
 function warnRefusedHost(name: string): void {
@@ -128,12 +196,24 @@ function warnRefusedHost(name: string): void {
     + 'set it as the Public URL in Settings → Server & Access.');
 }
 
+/**
+ * Build the Express middleware and the Socket.IO handshake guard.
+ *
+ * `token` empty means authentication is disabled — only valid on a loopback
+ * bind, which configError() enforces at startup. The origin and host checks
+ * still run.
+ *
+ * `allowedHosts` returns extra host names to accept (the configured bind host
+ * and public URL). It is a function so a public URL changed in the settings
+ * page applies without a restart.
+ */
 function createAuth({ token = '', allowedHosts = () => [] }: {
   token?: string;
   allowedHosts?: () => string[];
 } = {}): Auth {
   const enabled = !!token;
 
+  /** Refuse requests addressed to a host name this machine is not known by. */
   function hostMiddleware(req: Request, res: Response, next: NextFunction) {
     if (hostAllowed(req.headers.host, allowedHosts())) return next();
     const name = hostnameOf(req.headers.host);
@@ -145,7 +225,15 @@ function createAuth({ token = '', allowedHosts = () => [] }: {
     );
   }
 
-  // Apply host and origin checks to Socket.IO separately because its handshake bypasses Express.
+  /**
+   * Socket.IO `allowRequest`: the handshake is an HTTP request that never
+   * passes through Express, so it gets the host and origin checks here.
+   *
+   * The origin check matters most on this path. Browsers do not apply CORS to
+   * WebSockets, so without it any page the operator has open could connect to
+   * ws://127.0.0.1 and send `set` — blackout, strobe, the Art-Net target —
+   * whether or not a token is configured.
+   */
   function allowSocketRequest(req: IncomingMessage, callback: AllowCallback) {
     if (!hostAllowed(req.headers.host, allowedHosts())) {
       warnRefusedHost(hostnameOf(req.headers.host));
@@ -169,12 +257,18 @@ function createAuth({ token = '', allowedHosts = () => [] }: {
 
   function socketMiddleware(socket: Socket, next: (err?: Error) => void) {
     if (!enabled) return next();
+    // Match HTTP: an authenticated reverse proxy can supply the credential
+    // without exposing it to browser storage. Prefer it over stale client tokens.
     const presented = socket.handshake.headers?.['x-lightshow-token']
       || (socket.handshake.auth && socket.handshake.auth.token)
       || socket.handshake.query.token
       || '';
     if (safeEqual(presented, token)) return next();
 
+    // Socket.IO does not retry a handshake a middleware rejected, so this
+    // message is the only thing the operator gets — "unauthorized" left them
+    // staring at a page that claimed it was reconnecting. Say which of the two
+    // it is, and carry a code so the client does not have to match on wording.
     const err: Error & { data?: unknown } = new Error(presented
       ? 'Access token refused'
       : 'This server requires an access token');
@@ -185,6 +279,11 @@ function createAuth({ token = '', allowedHosts = () => [] }: {
   return { enabled, hostMiddleware, allowSocketRequest, httpMiddleware, socketMiddleware };
 }
 
+/**
+ * Source maps only to this machine. The bundle's map is the client's whole
+ * source, 700 KB of it, and the one person who needs it is debugging at the
+ * machine running the show; every phone on the venue network does not.
+ */
 function sourceMapsForLoopback(req: { path: string; socket: { remoteAddress?: string } },
   res: { status(code: number): { end(): void } }, next: () => void): void {
   if (req.path.endsWith('.map') && !isLoopback(req.socket.remoteAddress)) {

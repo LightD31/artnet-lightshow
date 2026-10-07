@@ -2,35 +2,72 @@ import { UNIVERSE_SIZE, fitIssue } from '../shared/placement.ts';
 import { HUE_COLOR_PROFILE_ID, HUE_PROFILE_IDS, HUE_WHITE_AMBIANCE_PROFILE_ID, HUE_WHITE_PROFILE_ID } from '../shared/rig.ts';
 import type { Fixture, Profile } from '../types/rig.ts';
 
+// The profile a new fixture gets, and the fallback for a profile id nothing
+// knows about. One of several built-ins — see BUILTIN_PROFILE_IDS.
 const BUILTIN_PROFILE_ID = 'cameo-root-par-6-12ch';
 
-// Validate the full DMX footprint so sparse offsets cannot write beyond the reserved channels.
+// Philips Hue lamps have no DMX address: each is patched from the bridge's
+// entertainment area as a fixture of its own (routes/fixtures.ts), on the one
+// of these that says what the bridge reports it can show — colour, tunable
+// white or plain white (hueProfileFor). The server renders it like any other
+// fixture, and its channel is sent the colour that came out (output.ts). The
+// ids live in shared/rig.ts, so the browser's preview knows a Hue lamp too.
 
-// Bound patch growth so a stuck client cannot expand rendering and broadcasts indefinitely.
+// One DMX universe (UNIVERSE_SIZE, from shared/placement.ts). A fixture
+// patched past it has its writes silently dropped by the 512-byte buffer,
+// leaving it half-controllable with no error, so every path that sets an
+// address checks it with universeOverflow — which also lets a pixel strip
+// longer than a universe run on into the next.
+
+// A show is a handful of fixtures. The cap exists so a stuck client or a
+// scripted loop cannot grow the patch (and with it every state broadcast)
+// without bound.
 const MAX_FIXTURES = 64;
 
+// Every light the engine renders — a par, or one cell of an LED bar or strip —
+// is worked out every frame. Measured on the worker thread: 4,096 cells cost
+// 0.5–2 ms a frame for most patterns and 6–7 ms for the heaviest (plasma,
+// gradient), of the 22.7 ms a frame has; 8,192 cost twice that, which a
+// slower laptop would not keep up with. Sixty-four sixteen-cell bars is 1,024.
 const MAX_UNITS = 4096;
 
+/** Last channel a fixture at `address` with `channelCount` channels occupies. */
 function endChannel(address: number, channelCount: number): number {
   return address + channelCount - 1;
 }
 
+/** Does a fixture patched here fit inside the universe? */
 function fitsInUniverse(address: number, channelCount: number): boolean {
   return address >= 1 && endChannel(address, channelCount) <= UNIVERSE_SIZE;
 }
 
+/**
+ * Why a fixture does not fit where it is patched, in words an operator can act
+ * on, or null when it does. One wording for every path that patches a fixture:
+ * editing one, restoring a deleted one and loading a show used to say it three
+ * ways. A strip longer than a universe fits from channel 1 (shared/placement).
+ */
 function universeOverflow(label: string, address: number, profile: Pick<Profile, 'channelCount' | 'channelMap' | 'cells'>,
   universe?: number): string | null {
   return fitIssue(label, address, profile, universe);
 }
 
-// Share UV compensation with the preview so both use the same emitter arithmetic.
+// UV LEDs are physically dimmer than RGBW — boost their DMX value so they
+// remain visually competitive at lower dimmer settings.
+//
+// Defined in src/shared/look-math.js, which is where the arithmetic that
+// applies it lives and is reachable from the browser preview too. Re-exported
+// here because this is where callers have always asked for it.
 import { UV_BOOST } from '../shared/look-math.ts';
 import { countUnits } from '../shared/rig.ts';
 
+// Ids that would collide with object-machinery keys. Rejected at registration
+// as defence in depth alongside the null-prototype registry below.
 const RESERVED_PROFILE_IDS = new Set(['__proto__', 'constructor', 'prototype']);
 
-// A null prototype keeps uploaded profile IDs such as __proto__ from changing the map’s prototype.
+// Null-prototype map: profile ids come straight from user input (GDTF upload,
+// POST /api/profiles), and on a plain object literal an id of "__proto__" would
+// reassign this object's prototype instead of adding a key.
 const fixtureProfiles: Record<string, Profile> = Object.assign(Object.create(null), {
   [BUILTIN_PROFILE_ID]: {
     id: BUILTIN_PROFILE_ID,
@@ -60,7 +97,38 @@ const fixtureProfiles: Record<string, Profile> = Object.assign(Object.create(nul
     ],
   },
 
-  // Keep white and UV channels so Hue retains show content; fold them to RGB only at transport output.
+  // White and Color Ambiance bulbs, light strips and Play bars — the lamps most
+  // people mean by "a Hue light". The hardware is RGBWW: red, green and blue
+  // dies plus a warm white and a cool white one, which is how the same bulb can
+  // do saturated colour *and* tunable white from 2000K to 6500K.
+  //
+  // Modelling only RGB would throw away real show content rather than merely
+  // being imprecise. The colour presets carry most of their white in the white
+  // and amber components — "Cool White" is r0 g30 b80 with white at full — so a
+  // profile with no white channels rendered it as a dim dark blue. The white
+  // dies have to be in the patch for that content to survive.
+  //
+  // What the bridge receives is still RGB: the Entertainment stream has no
+  // white channel, so these fold into the colour that goes out (see
+  // hueChannelColors) and the lamp's own firmware decides which dies to light.
+  // The profile describes the lamp; the transport is a separate question.
+  //
+  // Two channels here are not emitters the lamp has, and the difference between
+  // them is the whole rule:
+  //
+  //   UV is carried because it produces something. A Hue lamp cannot emit UV,
+  //   but the deep violet a UV wash looks like is a real approximation of it.
+  //   Without the channel the show's UV content has nowhere to land, and every
+  //   Hue lamp goes black for the length of a UV look while the pars glow —
+  //   which reads as a dead lamp, not as an effect.
+  //
+  //   Strobe is left out because it produces nothing. The bridge interpolates
+  //   between the frames it is sent, so a strobe value is discarded on arrival.
+  //   A channel that cannot do anything is worse than no channel: it reads as a
+  //   feature that is broken rather than one the hardware does not have.
+  //
+  // There is no separate amber channel either, and none is needed: the show's
+  // warm content already drives the warm white die (see engine.js).
   [HUE_COLOR_PROFILE_ID]: {
     id: HUE_COLOR_PROFILE_ID,
     name: 'Generic Lamp',
@@ -84,6 +152,9 @@ const fixtureProfiles: Record<string, Profile> = Object.assign(Object.create(nul
     ],
   },
 
+  // White Ambiance bulbs: tunable white, no colour dies at all. Balancing the
+  // two whites is the whole of what they do, so they get both channels and no
+  // primaries.
   [HUE_WHITE_AMBIANCE_PROFILE_ID]: {
     id: HUE_WHITE_AMBIANCE_PROFILE_ID,
     name: 'Generic White Ambiance Lamp',
@@ -101,6 +172,11 @@ const fixtureProfiles: Record<string, Profile> = Object.assign(Object.create(nul
     ],
   },
 
+  // Plain Hue White bulbs: one fixed warm white die that dims, and nothing
+  // else. One channel is the honest description, and the Hue output already
+  // treats a fixture with no colour channels as neutral white at its dimmer
+  // level — so this needs no special case anywhere, it simply says what the
+  // lamp is.
   [HUE_WHITE_PROFILE_ID]: {
     id: HUE_WHITE_PROFILE_ID,
     name: 'Generic White Lamp',
@@ -116,7 +192,10 @@ const fixtureProfiles: Record<string, Profile> = Object.assign(Object.create(nul
   },
 });
 
-// Keep built-ins when loading shows because saved files may contain only imported profiles.
+// Every profile that ships with the server. None of them may be deleted, and
+// loading a show must not wipe them: a show file carries only the profiles it
+// brought with it, so anything built in has to survive the swap or a fixture
+// referencing one would land on the fallback instead.
 const BUILTIN_PROFILE_IDS = new Set([
   BUILTIN_PROFILE_ID,
   HUE_COLOR_PROFILE_ID,
@@ -124,20 +203,26 @@ const BUILTIN_PROFILE_IDS = new Set([
   HUE_WHITE_PROFILE_ID,
 ]);
 
+/** Why a Hue lamp profile cannot be patched, or a fixture made a Hue lamp, by hand. */
 const HUE_BY_HAND = 'A Hue lamp is added from its bridge: Rig → Outputs → Philips Hue, Add to patch';
 
+/** The profile for a Hue lamp that can show `kind` (hue.ts). */
 function hueProfileFor(kind: 'color' | 'ambiance' | 'white'): string {
   if (kind === 'ambiance') return HUE_WHITE_AMBIANCE_PROFILE_ID;
   if (kind === 'white') return HUE_WHITE_PROFILE_ID;
   return HUE_COLOR_PROFILE_ID;
 }
 
+/** Does this profile ship with the server, rather than being imported? */
 function isBuiltinProfile(id: string): boolean {
   return BUILTIN_PROFILE_IDS.has(id);
 }
 
+// Bumped whenever the registry changes, so anything that caches what the rig
+// looks like (see src/server/rig.js) knows a profile under it has changed.
 let revision = 0;
 
+/** Changes whenever a profile is added, replaced or removed. */
 function profilesRevision(): number {
   return revision;
 }
@@ -149,7 +234,9 @@ function getProfile(fixture: Pick<Fixture, 'profileId'>): Profile {
 function registerProfile(profile: Profile | null | undefined): boolean {
   if (!profile || !profile.id || !profile.name || !profile.channelCount) return false;
   if (RESERVED_PROFILE_IDS.has(profile.id)) return false;
-  // Reject built-in replacements so saved shows and uploads cannot pin or overwrite shipped profiles.
+  // A built-in is defined by this file. An upload or a show file carrying the
+  // same id would otherwise replace it for every fixture patched to it — and a
+  // show file saved with the built-ins in it would pin an old copy forever.
   if (isBuiltinProfile(profile.id)) return false;
   fixtureProfiles[profile.id] = profile;
   revision++;
@@ -174,6 +261,11 @@ function clearNonBuiltinProfiles(): void {
   revision++;
 }
 
+/**
+ * Why a patch has more cells than the engine renders, or null when it fits.
+ * `profileOf` resolves a fixture's profile — the live registry by default, or
+ * the profiles a show is bringing with it.
+ */
 function unitCapOverflow<F extends Pick<Fixture, 'profileId'>>(fixtures: Iterable<F>,
   profileOf: (fixture: F) => Pick<Profile, 'cells'> | null | undefined = getProfile): string | null {
   const total = countUnits(fixtures, profileOf);

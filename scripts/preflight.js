@@ -1,4 +1,16 @@
 #!/usr/bin/env node
+/**
+ * Pre-show preflight: one command that checks everything that fails quietly.
+ *
+ *   npm run preflight
+ *
+ * Exits 0 when nothing is broken, 1 when something will not work. Warnings do
+ * not fail the run — a missing PANNs checkpoint or a node that ignores ArtPoll
+ * is worth knowing about, not worth blocking on.
+ *
+ * Runs standalone: it reads the same config/settings.json the server does, so
+ * it can be run before the server is started, or alongside it.
+ */
 
 import '../src/load-env.ts';
 
@@ -9,6 +21,8 @@ import { cacheDir } from '../src/server/config-dir.ts';
 import * as pythonEnv from '../src/python-env.ts';
 import { spawnSync } from 'node:child_process';
 
+// ANSI only when someone is actually looking at a terminal; piping this into a
+// log or a CI job should produce plain text.
 const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
 const paint = (code, text) => (useColor ? `\u001b[${code}m${text}\u001b[0m` : text);
 
@@ -19,6 +33,7 @@ const MARKS = {
   info: { glyph: '[--]  ', color: '90' },
 };
 
+/** Wrap `text` to the terminal width, indented under the label column. */
 function wrap(text, indent, width) {
   const words = String(text).split(/\s+/);
   const lines = [];
@@ -37,6 +52,7 @@ function wrap(text, indent, width) {
 
 async function main() {
   if (process.argv.includes('--download-models')) {
+    // The interpreter the server would run the analysis in (python-env.ts).
     const python = process.env.ARTNET_PYTHON || pythonEnv.pythonExe();
     console.log('  Downloading pretrained analysis weights from Hugging Face…');
     const result = spawnSync(python, [path.join(import.meta.dirname, 'download-models.py')], {
@@ -48,10 +64,14 @@ async function main() {
 
   console.log('\n  Pre-show preflight\n');
 
-  // Read stored configuration without live subsystems so preflight can run beside the server.
+  // No live subsystems here: this runs before (or beside) the server, so the
+  // MIDI/Spotify/PRO DJ LINK checks report what is configured rather than what
+  // is connected. Everything that matters for output and analysis is checked
+  // from the stored config, which is the same config the server will read.
   const report = await runPreflight({ analysisCache, standalone: true });
 
   const labelWidth = Math.max(...report.checks.map((c) => c.label.length));
+  // Two spaces, a six-character mark, a space, the label column, two spaces.
   const indent = 2 + 6 + 1 + labelWidth + 2;
   const gutter = ' '.repeat(indent);
   const width = Math.max(40, (process.stdout.columns || 100) - indent);

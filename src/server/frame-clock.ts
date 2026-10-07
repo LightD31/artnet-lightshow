@@ -1,24 +1,49 @@
-// Anchor deadlines to one epoch so a late callback cannot shift every later frame.
+/**
+ * The frame clock: when each frame is due, and how close to it it went out.
+ *
+ * The render loop used to be `setInterval(render, 25)`. An interval re-arms
+ * from whenever its callback happened to run, so every late frame pushed all
+ * the frames after it later too: the rig ran a little under forty frames a
+ * second and drifted against anything counting real time. Here frame k is due
+ * at `epoch + phase + k·period`, fixed in advance, and each timer is armed for
+ * the next of those deadlines — a late frame costs that frame, not the rest.
+ *
+ * Forty-four a second: the fastest a full 512-slot DMX line refreshes, and the
+ * most E1.31 lets a source send per universe.
+ *
+ * Time is `process.hrtime`, which is the same monotonic clock in every thread
+ * of the process. The engine's worker and the main thread's control tick
+ * share one frame grid through it (see engine.js), so the main thread can run
+ * its tick a fixed few milliseconds ahead of every frame the worker renders.
+ */
 
 const FRAME_RATE = 44;
 const FRAME_MS = 1000 / FRAME_RATE;
 
-// Skip excessive catch-up frames so a stall is not followed by a burst of stale output.
+// Further behind than this and the missed frames are skipped rather than run
+// back to back: a burst of catch-up frames after a stall would only put a
+// second glitch on stage after the first.
 const MAX_BEHIND_FRAMES = 2;
 
+// How long a window the timing figures describe.
 const STATS_WINDOW_S = 60;
 
-// Allow timer slack because Node truncates both delay and loop-clock readings to milliseconds.
+// How far before its deadline a real timer can go off: Node truncates the
+// delay to whole milliseconds and counts it from its loop clock, itself a
+// whole millisecond, so up to one of each.
 const TIMER_SLACK_MS = 2;
 
+/** Milliseconds on the process-wide monotonic clock. */
 function hrtimeMs(): number {
   return Number(process.hrtime.bigint()) / 1e6;
 }
 
+/** The index of the first deadline at or after `t`. */
 function nextIndex(t: number, epoch: number, phase: number, period: number): number {
   return Math.max(0, Math.ceil((t - epoch - phase) / period - 1e-9));
 }
 
+/** The value at fraction `q` of an ascending list. */
 function quantile(sorted: readonly number[], q: number): number {
   if (!sorted.length) return 0;
   return sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
@@ -26,7 +51,12 @@ function quantile(sorted: readonly number[], q: number): number {
 
 const round2 = (v: number): number => Math.round(v * 100) / 100;
 
-// Use a fixed timing ring so monitoring memory does not grow with show duration.
+/**
+ * How the frames have been going: how late each went out against its
+ * deadline, and how long each took. A fixed ring, so a show that runs all
+ * night costs the same as one that started a minute ago.
+ */
+/** Percentiles of a timing, in milliseconds. */
 export interface Spread {
   p50: number;
   p95: number;
@@ -67,10 +97,13 @@ class FrameStats {
     this._count = Math.min(this._size, this._count + 1);
   }
 
+  /** p50/p95/max of lateness and render time, and the frames that went out late. */
   summary(): FrameSummary {
     const n = this._count;
     const late = Array.from(this._late.subarray(0, n)).sort((a, b) => a - b);
     const work = Array.from(this._work.subarray(0, n)).sort((a, b) => a - b);
+    // A frame half a period late is visibly off the grid; under that is the
+    // ordinary jitter of an OS timer.
     let lateFrames = 0;
     for (const v of late) if (v > this.periodMs / 2) lateFrames++;
     return {
@@ -83,7 +116,24 @@ class FrameStats {
   }
 }
 
-// Schedule from the next absolute deadline so timer rounding cannot accumulate drift.
+/**
+ * Call `onTick(dueMs, nowMs)` once per frame, on the grid
+ * `epochMs + phaseMs + k·periodMs`.
+ *
+ * Each timer is armed for the next deadline measured from now. Node keeps
+ * timers in whole milliseconds of its loop clock, so one goes off up to
+ * TIMER_SLACK_MS before a deadline on hrtime; measured from the deadline
+ * instead, that hair carried into every frame after it, and the loop ran ahead
+ * of its grid without bound (44.7 frames a second, 155 ms ahead after ten
+ * seconds). Measuring from no earlier than TIMER_SLACK_MS before the deadline
+ * brings even a timer that went off further early back onto the grid.
+ *
+ * A frame more than half a period early is on a clock that does not move with
+ * the timers — mocked timers in a test — and arms the next one a full period
+ * on from its deadline, so the loop runs at exactly the period there, as an
+ * interval would.
+ */
+/** A running frame loop (see createTicker). */
 export interface Ticker {
   stats: FrameStats;
   periodMs: number;
@@ -122,6 +172,7 @@ function createTicker({
     let due = epoch + phaseMs + index * periodMs;
     const t = now();
     if (t - due > MAX_BEHIND_FRAMES * periodMs) {
+      // Serve the latest deadline already passed and drop the ones before it.
       const caughtUp = Math.floor((t - epoch - phaseMs) / periodMs);
       stats.skipped += caughtUp - index;
       index = caughtUp;
@@ -132,6 +183,7 @@ function createTicker({
     } finally {
       stats.record(t - due, now() - t);
       index++;
+      // Stopped from inside the tick: nothing left to arm.
       if (running) arm(t < due - periodMs / 2 ? due : Math.max(now(), due - TIMER_SLACK_MS));
     }
   }

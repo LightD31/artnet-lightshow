@@ -3,6 +3,7 @@ import net from 'node:net';
 import dns from 'node:dns';
 import { messageOf } from '../errors.ts';
 
+/** A node that answered an ArtPoll (see parseArtPollReply). */
 export interface ArtNode {
   address: string;
   port: number;
@@ -14,6 +15,7 @@ export interface ArtNode {
   bindIndex: number;
 }
 
+/** Where a universe's Art-Net goes: one host, or several nodes that output it. */
 export interface ArtDmxTarget {
   host?: string;
   hosts?: readonly string[] | null;
@@ -21,7 +23,10 @@ export interface ArtDmxTarget {
   universe: number;
 }
 
-// Open the sender lazily so discovery-only processes do not allocate an unused socket.
+// The send socket, opened by the first frame sent rather than when this module
+// loads: the engine renders in a worker thread, and the main thread (which
+// loads this module for discovery and the pre-show check) has no frames to
+// send and no reason to hold a socket for them.
 let udpSocket: dgram.Socket | null = null;
 
 function sendSocket(): dgram.Socket {
@@ -29,19 +34,30 @@ function sendSocket(): dgram.Socket {
   const socket = dgram.createSocket('udp4');
   udpSocket = socket;
 
-  // Handle socket errors so an invalid destination cannot terminate the render loop.
+  // A dgram socket with no 'error' listener turns any send failure into an
+  // unhandled 'error' event, which terminates the process. Since the Art-Net
+  // target is operator-editable and renderDmx() sends at 44 Hz, a typo in the
+  // settings panel used to be enough to kill the server mid-show.
+  //
+  // Failures here are also almost always transient or configuration-level
+  // (unreachable host, broadcast not permitted), so the right response is to
+  // log and keep rendering, not to die.
   socket.on('error', (err) => logSendFailure(err));
 
   socket.bind(() => {
     try { socket.setBroadcast(true); } catch (_) { /* not all networks allow it */ }
   });
 
-  // Unref the send-only socket so it cannot keep utility scripts alive.
+  // This socket only ever sends. The HTTP listener is what should keep the
+  // server alive, so don't let a bound send-only socket hold the event loop
+  // open — it otherwise stops any script that merely sends a frame from exiting.
   socket.unref();
   return socket;
 }
 
-// Rate-limit send errors so a broken target cannot bury other diagnostics.
+// Art-Net output is a firehose; a broken target would otherwise produce 40
+// identical log lines a second and bury everything else. Report the first
+// failure immediately, then at most one line per interval.
 const LOG_INTERVAL_MS = 5000;
 let lastLoggedAt = 0;
 let suppressedCount = 0;
@@ -58,7 +74,11 @@ function logSendFailure(err: unknown): void {
   console.warn(`[artnet] send failed: ${messageOf(err)}${extra}`);
 }
 
-// Cache hostname resolution so each render frame does not trigger another DNS lookup.
+// ── Destination resolution ──────────────────────────────────────────────────
+// dgram.send() resolves a hostname on every call, so a non-IP target meant 40
+// DNS lookups per second. Resolve once per distinct host and cache it; IP
+// literals (the overwhelmingly common case — Art-Net targets are addresses like
+// 2.255.255.255) skip resolution entirely.
 
 const RESOLVE_TTL_MS = 60000;
 const RESOLVE_RETRY_MS = 5000;
@@ -75,6 +95,8 @@ function resolveHost(host: string): string | null {
 
   if (!resolving && (resolved.host !== host || now - resolved.at > RESOLVE_RETRY_MS)) {
     resolving = true;
+    // Mark the attempt now so a failing lookup backs off instead of firing on
+    // every frame.
     resolved = { host, address: resolved.host === host ? resolved.address : null, at: now };
     dns.lookup(host, { family: 4 }, (err, address) => {
       resolving = false;
@@ -86,10 +108,16 @@ function resolveHost(host: string): string | null {
     });
   }
 
+  // Null until the first lookup lands — frames are dropped until then, which
+  // is correct: we have nowhere to send them.
   return resolved.host === host ? resolved.address : null;
 }
 
-// Count sequences per universe so interleaved universes cannot create apparent packet gaps.
+// Art-Net sequence counters, one per universe: a receiver uses the number to
+// put a universe's packets back in order, so it has to count that universe's
+// packets and nobody else's. One counter shared by every universe made each
+// universe's numbers jump by however many others went out in between. 0 tells
+// receivers "sequencing disabled"; 1-255 wrapping is what the spec asks for.
 const sequences = new Map<number, number>();
 
 function nextSequence(universe: number): number {
@@ -114,7 +142,16 @@ function buildArtDmxPacket(universe: number, dmxData: Buffer, seq = nextSequence
 
 const OP_SYNC = 0x5200;
 
-// Send ArtSync after all universes so receivers present one frame together.
+/**
+ * ArtSync: "output what you have been sent, now".
+ *
+ * A node that has seen one holds each ArtDmx it receives until the next
+ * ArtSync, so every universe of a frame changes at the same instant rather
+ * than one after another as their packets arrive — which on a wall of LED
+ * bars spread over several universes is the difference between one movement
+ * and a ripple. A node that stops receiving them goes back to outputting on
+ * arrival after four seconds.
+ */
 function buildArtSync(): Buffer {
   const packet = Buffer.alloc(14);
   packet.write('Art-Net\0', 0, 'ascii');
@@ -127,6 +164,7 @@ function buildArtSync(): Buffer {
 
 const SYNC_PACKET = buildArtSync();
 
+/** Send an ArtSync. False when there is no address to send it to yet. */
 function sendArtSync({ host, port }: { host: string; port: number }): boolean {
   const address = resolveHost(host);
   if (!address) return false;
@@ -136,6 +174,11 @@ function sendArtSync({ host, port }: { host: string; port: number }): boolean {
   return true;
 }
 
+/**
+ * Queue one frame to `host`, or to each of `hosts` (the nodes that output this
+ * universe). One packet, one sequence number, however many nodes get it.
+ * False when there is no address to send it to yet.
+ */
 function sendArtDmx({ host, hosts, port, universe }: ArtDmxTarget, dmxData: Buffer): boolean {
   const addresses: string[] = [];
   for (const target of hosts || [host]) {
@@ -145,6 +188,7 @@ function sendArtDmx({ host, hosts, port, universe }: ArtDmxTarget, dmxData: Buff
   if (!addresses.length) return false;
 
   const packet = buildArtDmxPacket(universe, dmxData);
+  // The callback keeps per-send failures out of the socket's 'error' event.
   for (const address of addresses) {
     sendSocket().send(packet, 0, packet.length, port, address, (err) => {
       if (err) logSendFailure(err);
@@ -152,6 +196,11 @@ function sendArtDmx({ host, hosts, port, universe }: ArtDmxTarget, dmxData: Buff
   }
   return true;
 }
+
+// ── Discovery (ArtPoll / ArtPollReply) ──────────────────────────────────────
+// Used by the preflight check, not by the render loop. "The rig looks dark" is
+// a terrible way to find out that the node is on a different subnet, so ask it
+// to introduce itself before doors open.
 
 const ARTNET_PORT = 6454;
 const OP_POLL = 0x2000;
@@ -173,6 +222,15 @@ function buildArtPoll(talkToMe = 0): Buffer {
   return packet;
 }
 
+/**
+ * Read an ArtPollReply, or null if this is not one.
+ *
+ * Who answered, what it calls itself, and which universes its output ports
+ * are listening to. A port's universe is its Art-Net port-address: 7 bits of
+ * net, 4 of subnet and 4 of universe, the last per port (SwOut). A node with
+ * more than four ports answers once per group of four, told apart by its bind
+ * index.
+ */
 function parseArtPollReply(buf: Buffer | null | undefined): ArtNode | null {
   if (!buf || buf.length < 207) return null;
   if (buf.subarray(0, 8).toString('ascii') !== 'Art-Net\0') return null;
@@ -183,6 +241,7 @@ function parseArtPollReply(buf: Buffer | null | undefined): ArtNode | null {
   const subnet = buf[19] & 0x0f;
   const outputs: number[] = [];
   for (let i = 0; i < 4; i++) {
+    // Bit 7 of the port type: this port outputs DMX from the network.
     if (buf[174 + i] & 0x80) outputs.push((net << 8) | (subnet << 4) | (buf[190 + i] & 0x0f));
   }
   const mac = buf.length >= 207
@@ -194,6 +253,8 @@ function parseArtPollReply(buf: Buffer | null | undefined): ArtNode | null {
     port: buf.readUInt16LE(14),
     shortName: trim(26, 18),
     longName: trim(44, 64),
+    // The universes this node outputs, and the first of them — what the
+    // pre-show check names when it lists who answered.
     outputs,
     universe: outputs.length ? outputs[0] : ((net << 8) | (subnet << 4)),
     mac,
@@ -201,7 +262,15 @@ function parseArtPollReply(buf: Buffer | null | undefined): ArtNode | null {
   };
 }
 
-// Bind discovery to port 6454 because nodes reply there, not necessarily to the source port.
+/**
+ * Send one ArtPoll and collect the replies.
+ *
+ * Binds the Art-Net port so nodes replying to 6454 (which is what the spec
+ * says they do, rather than to our source port) are heard. That port is often
+ * already held by another lighting tool on the same machine, which is why a
+ * bind failure comes back as a result rather than a throw — it means "could not
+ * ask", not "nothing is there".
+ */
 function discoverNodes({ host, hosts = null, port = ARTNET_PORT, timeoutMs = 1500 }: {
   host?: string;
   hosts?: readonly string[] | null;
@@ -237,13 +306,21 @@ function discoverNodes({ host, hosts = null, port = ARTNET_PORT, timeoutMs = 150
       let failed = 0;
       for (const target of targets) {
         socket.send(packet, 0, packet.length, port, target, (err) => {
-          // Treat total send failure as the discovery result because no replies can arrive.
+          // A send failure is the answer: nothing will reply to a poll that
+          // never left, and "network is unreachable" is exactly what preflight
+          // is for. With several targets, only when none of them could be sent.
           if (err && ++failed === targets.length) finish(err.message);
         });
       }
     });
   });
 }
+
+// ── Locating a node (ArtAddress) ────────────────────────────────────────────
+// Art-Net 4's identify: ArtAddress carries a command, and three of them set
+// the node's front-panel indicators — normal, off, or flashing to be found
+// ("locate"). A node that does not implement it ignores the packet, which is
+// why identify also flashes the fixtures patched on the node's universes.
 
 const OP_ADDRESS = 0x6000;
 const ADDRESS_SIZE = 107;
@@ -252,6 +329,16 @@ const AC_LED_NORMAL = 0x02;
 const AC_LED_MUTE = 0x03;
 const AC_LED_LOCATE = 0x04;
 
+/**
+ * An ArtAddress that changes nothing about the node but `command`:
+ *
+ *   0 ID, 8 OpCode, 10 protocol version, 12 NetSwitch, 13 BindIndex,
+ *   14 PortName[18], 32 LongName[64], 96 SwIn[4], 100 SwOut[4],
+ *   104 SubSwitch, 105 AcnPriority, 106 Command
+ *
+ * Names left blank, switches at 0x7f and the sACN priority at 255 are each
+ * the spec's "no change".
+ */
 function buildArtAddress(command: number, bindIndex = 1): Buffer {
   const packet = Buffer.alloc(ADDRESS_SIZE);
   packet.write('Art-Net\0', 0, 'ascii');
@@ -266,6 +353,7 @@ function buildArtAddress(command: number, bindIndex = 1): Buffer {
   return packet;
 }
 
+/** Send one ArtAddress to a node, and say whether it left. */
 function sendArtAddress({ host, port = ARTNET_PORT, command, bindIndex = 1 }: {
   host: string; port?: number; command: number; bindIndex?: number;
 }, timeoutMs = 2000): Promise<{ ok: boolean; error: string | null }> {
@@ -289,6 +377,13 @@ function sendArtAddress({ host, port = ARTNET_PORT, command, bindIndex = 1 }: {
   });
 }
 
+/**
+ * Try one send to the configured target and report what the OS said.
+ *
+ * Catches the failures that leave the rig dark with no error during a show — an
+ * unreachable network, a hostname that will not resolve, broadcast refused —
+ * because renderDmx() deliberately logs and carries on rather than dying.
+ */
 function probeSend({ host, port, universe = 0 }: { host: string; port: number; universe?: number },
   timeoutMs = 2000): Promise<{ ok: boolean; error: string | null }> {
   return new Promise((resolve) => {

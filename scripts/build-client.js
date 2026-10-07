@@ -6,7 +6,9 @@ const watch = process.argv.includes('--watch');
 
 const outdir = path.join(import.meta.dirname, '..', 'public');
 
-// Write the chunk manifest so the service worker can cache content-hashed bundles.
+// The chunks are named by their content, so the service worker (sw.js) cannot
+// list them: it reads their names from chunks/index.json, written here after
+// every build, and keeps them with the rest of the shell.
 const chunkList = {
   name: 'chunk-list',
   setup(build) {
@@ -23,7 +25,9 @@ const opts = {
   entryPoints: { 'app.bundle': path.join(import.meta.dirname, '..', 'public-src', 'main.jsx') },
   outdir,
   bundle: true,
-  // Split view-only dependencies so every tablet does not download Three.js on initial load.
+  // ES modules, split: what only one view needs — three.js, for the Stage
+  // view — is its own chunk, fetched the first time that view opens rather
+  // than by every page load on every tablet.
   format: 'esm',
   splitting: true,
   chunkNames: 'chunks/[name]-[hash]',
@@ -31,12 +35,18 @@ const opts = {
   jsx: 'automatic',
   jsxImportSource: 'preact',
   minify: !watch,
+  // Emitted for the minified build too. The bundle is served from the same
+  // machine that runs the show, so the .map costs nothing until someone opens
+  // devtools — and the moment it is worth having is a stack trace from a crash
+  // mid-set, which without this reads as one column of a single minified line.
   sourcemap: true,
   logLevel: 'info',
   loader: { '.js': 'jsx' },
   plugins: [chunkList],
 };
 
+// Chunks are named by their content: clear out the last build's, or every
+// build would leave its three.js behind.
 fs.rmSync(path.join(outdir, 'chunks'), { recursive: true, force: true });
 
 if (watch) {

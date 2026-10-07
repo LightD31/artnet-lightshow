@@ -1,6 +1,25 @@
-// X-Touch Compact Standard mode, Layer A: EN 1–8 turn CC 10–17; push notes 0–7;
-// BT 1–8 notes 16–23; BT 9–16 notes 24–31; FD 1–9 CC 1–9; all channel 1.
-// LED Note On velocities: 0 off, 1 on, 127 bright; follow the learned binding map.
+/**
+ * MIDI control surface.
+ *
+ * The mapping — which message does what — lives in src/server/midi-map.js and
+ * is stored in config/midi-map.json. It defaults to a Behringer X-Touch Compact
+ * in Standard mode (Layer A), which is what this was built against, but every
+ * binding can be relearned from the Settings view by pressing the control you
+ * want, so any controller works.
+ *
+ * X-Touch Compact Standard mode, Layer A, for reference:
+ *   Encoders EN1-8 turn : CC 10-17, ch 1 (relative; the encoding is worked out
+ *                          from the values — see relEvidence)
+ *   Encoders EN1-8 push : Note 0-7,  ch 1
+ *   Button row 1 (BT1-8)  : Note 16-23, ch 1
+ *   Button row 2 (BT9-16) : Note 24-31, ch 1
+ *   Faders FD1-9 : CC 1-9, ch 1 (absolute 0-127)
+ *
+ * LED feedback is sent back via Note On (velocity = colour):
+ *   0 = off, 1 = on (fixture-default), 127 = bright on
+ * Which notes get lit is derived from the map rather than hardcoded, so
+ * feedback follows a relearned layout instead of pointing at the old buttons.
+ */
 
 import { DEFAULT_MAP, ACTIONS } from './server/midi-map.ts';
 import { createRequire } from 'node:module';
@@ -11,6 +30,8 @@ import type { MidiBinding, MidiMap } from './server/midi-map.ts';
 import type { ShowState } from './server/state.ts';
 import type { Override } from './types/rig.ts';
 
+// easymidi is optional, so it is loaded at run time and described here by the
+// parts this module uses.
 interface NoteMessage { note: number; velocity: number; channel: number }
 interface CcMessage { controller: number; value: number; channel: number }
 interface PitchMessage { value: number; channel: number }
@@ -36,11 +57,13 @@ interface EasyMidi {
   Output: new (name: string) => MidiOutput;
 }
 
+/** The ports this machine has. */
 export interface MidiPortList {
   inputs: string[];
   outputs: string[];
 }
 
+/** A control captured by learn mode. */
 export interface LearnCapture {
   kind: 'cc' | 'notes';
   number: number;
@@ -48,12 +71,16 @@ export interface LearnCapture {
   binding: MidiBinding;
 }
 
+/** A learn-mode transition, for every open page. */
 export type LearnEvent = { status: string; binding: MidiBinding } & Partial<LearnCapture>;
 
 type RelMode = 'twos' | 'offset';
 
+// Loaded through require so it can stay optional: a missing or broken native
+// MIDI binding turns MIDI off rather than stopping the server from starting.
 const require = createRequire(import.meta.url);
 
+// Milliseconds per encoder detent when nudging the light/music sync.
 const SYNC_NUDGE_MS = 5;
 
 let easymidi: EasyMidi | undefined;
@@ -63,35 +90,87 @@ try {
   console.warn('[MIDI] easymidi not available — run `npm install easymidi` to enable MIDI support.');
 }
 
+// Taken from the tables in server/presets.js rather than copied. These drive
+// the cycle buttons, so a hand-written copy that fell behind would leave the
+// surface cycling an effect the server no longer accepts — silently, since the
+// patch validator just drops an unknown id.
 const ENERGY_IDS = ENERGY_EFFECT_IDS;
+// Well inside the pads' 1200 ms hold lease.
 const PAD_RENEW_MS = 400;
+// The longest a MIDI hold lasts without its note-off (a controller unplugged
+// mid-hold); a held strobe pad stops at safety.strobeMaxLatchSec instead.
 export const MIDI_HOLD_MAX_MS = 5 * 60 * 1000;
 
 interface MidiPads {
+  /** What the press launched: a hold is renewed, anything else is left alone. */
   press(bank: number, slot: number, owner: string, token: string): { mode?: string; spec?: { kind?: string } } | null | undefined;
+  /** Extend a live hold's lease, never launch; whether one was renewed. */
   renew(bank: number, slot: number, owner: string, token: string): boolean;
   release(bank: number, slot: number, owner: string, token: string): unknown;
+  /** The strobe's latch cap in ms. */
   strobeMaxMs?(): number;
 }
 interface HeldPad { bank: number; slot: number; owner: string; token: string; renew: ReturnType<typeof setInterval> | null }
 const STROBE_FN_IDS = STROBE_FUNCTION_IDS;
 
+// An armed learn that nobody completes would sit swallowing the next press for
+// the rest of the night. Give up on it.
 const LEARN_TIMEOUT_MS = 30000;
 
+// After a control sends us a value, hold off echoing that control for a moment.
+// A motorised fader that is being moved by hand must not be driven back to
+// where the last frame said it was — the operator ends up fighting the motor.
 const ECHO_SUPPRESS_MS = 400;
 
+// ── Touch-sensitive faders ──────────────────────────────────────────────────
+//
+// A motorised fader with a touch sensor — the X-Touch Compact's nine — is two
+// controls on the wire: its position on one CC, and on another CC, 127 the
+// moment a finger lands on it and 0 when it lifts. Learn used to take the
+// first CC it saw, and touching a fader to move it sends the touch first: the
+// fader's binding went to its touch sensor, so touching it threw what it
+// controlled to 100% and letting go to 0%, and moving it did nothing.
+//
+// A fader is known by sending a value between the ends; a touch sensor (or a
+// switch) never does. So a fader action is only ever driven by a control that
+// has, learn skips the ones that have not, and a touch sensor is paired with
+// the fader that starts moving right after it goes to 127 — which also says
+// when the motor must leave that fader alone, and heals a map that bound the
+// sensor: the binding moves to the fader it belongs to.
 const TOUCH_PAIR_MS = 300;
 
+// The actions a fader drives, which only a fader should: from the catalogue.
 const FADER_ACTIONS = new Set(ACTIONS.filter((a) => a.input === 'fader').map((a) => a.id));
 
-// Relative encoders: two’s complement CW 1,2,… / CCW 127,126,…;
-// binary offset CW 65,66,… / CCW 63,62,… (some devices send decrement 1).
-// Infer encoding from the stream because MIDI carries no encoding flag.
+// ── Relative encoders ───────────────────────────────────────────────────────
+//
+// An endless encoder sends "moved a bit, this way", and there are two ways to
+// spell that. Which one a controller uses is a setting on the device; nothing
+// in the MIDI message says which you are being sent.
+//
+//   two's complement   CW 1, 2, 3 …        CCW 127, 126, 125 …   values hug 0/128
+//   binary offset      CW 65, 66, 67 …     CCW 63, 62, 61 …      values hug 64
+//
+// This only ever decoded two's complement, and Behringer's X-Touch family
+// sends binary offset — its MIDI implementation gives increment 65 and
+// decrement 1. Read the wrong way round, one detent clockwise came out as
+// 65 - 128 = -63 and one anticlockwise as +63: a single click threw the
+// parameter to an end stop, which is what "the nudge only goes to the maximum"
+// was. With a scale of 4 on the master dimmer it was ±252 per click.
+//
+// The two encodings put their values in different places, so the stream itself
+// says which is in use: nobody hand-turns an encoder 63 detents inside one MIDI
+// message, so a value next to 64 can only be binary offset, and one next to 0
+// or 127 can only be two's complement. That makes the first detent decisive.
 const REL_TWOS: RelMode = 'twos';
 const REL_OFFSET: RelMode = 'offset';
 
+// How close to a landmark a value has to be to count as evidence. Wide enough
+// for a fast spin (a few detents per message), far narrower than the 63 that
+// would be needed for the two encodings to be confused.
 const REL_EVIDENCE_BAND = 7;
 
+/** Which encoding this raw value could only have come from, or null. */
 function relEvidence(value: number): RelMode | null {
   if (Math.abs(value - 64) <= REL_EVIDENCE_BAND) return REL_OFFSET;
   if (value <= REL_EVIDENCE_BAND || value >= 127 - REL_EVIDENCE_BAND) return REL_TWOS;
@@ -99,12 +178,15 @@ function relEvidence(value: number): RelMode | null {
 }
 
 function relDelta(value: number, mode: RelMode): number {
+  // Both encodings agree that 64 is "no movement", and neither sends it.
   if (value === 64) return 0;
   if (mode === REL_OFFSET) return value - 64;
   return value > 64 ? value - 128 : value;
 }
 
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
+
+// ── MidiController class ──────────────────────────────────────────────────────
 
 class MidiController {
   declare state: ShowState;
@@ -128,6 +210,7 @@ class MidiController {
   declare _touchOf: Map<string, string>;
   declare _warnedSwitch: Set<string>;
   declare onRebind: ((from: number, to: number, binding: MidiBinding) => void) | null;
+  /** The deck's pads, for padPress (integrations sets it); null leaves those notes silent. */
   declare pads: MidiPads | null;
   declare _heldPads: Map<string, HeldPad>;
   declare _inputName: string | null;
@@ -145,28 +228,48 @@ class MidiController {
     this.map    = DEFAULT_MAP;
     this.enabled = false;
 
+    // Set externally: recallCue needs the cue store, which this module has no
+    // business reaching into itself.
     this.recallCue = null;
 
     this._learn = null;       // { binding, resolve, timer } while learn is armed
     this._learnListeners = [];
 
+    // Control feedback: what we last sent to each CC, and when each last sent
+    // to us. Both exist to keep the motors quiet — see _sendControlFeedback.
     this._lastCcOut = new Map();
     this._lastCcIn = new Map();
+    // Which relative encoding each encoder has shown itself to use, learned
+    // from the values it sends. See relEvidence.
     this._relModes = new Map();
     this.controlFeedback = true;
+    // Touch-sensitive faders (see TOUCH_PAIR_MS): the controls that have sent a
+    // value between the ends, the switch-like ones held at 127 and since when,
+    // and which fader each touch sensor belongs to. Keyed "channel:cc".
     this._moved = new Set();
     this._touchDown = new Map();
     this._touchOf = new Map();
     this._warnedSwitch = new Set();
+    // Set externally: persists a binding moved off a touch sensor.
     this.onRebind = null;
   }
 
+  /** Swap the control map. Takes effect on the next message; no reconnect. */
   setMap(map: MidiMap | null | undefined): void {
     this.map = map || DEFAULT_MAP;
+    // A rebound control shows something different now, so nothing we sent for
+    // the old map still describes it.
     this._lastCcOut.clear();
     this.sendFeedback();
   }
 
+  /**
+   * Turn motorised-fader and encoder-ring feedback on or off.
+   *
+   * On by default: a controller without motors simply ignores the CC. It is a
+   * setting because a MIDI loopback — a virtual port wired back to our own
+   * input — would otherwise echo our feedback in as operator input.
+   */
   setControlFeedback(enabled: unknown): void {
     this.controlFeedback = !!enabled;
     this._lastCcOut.clear();
@@ -175,6 +278,7 @@ class MidiController {
 
   listPorts(): MidiPortList {
     if (!easymidi) return { inputs: [], outputs: [] };
+    // Cache the result — enumerate once, refresh only on explicit connect/close
     if (this._cachedPorts) return this._cachedPorts;
     try {
       this._cachedPorts = { inputs: easymidi.getInputs(), outputs: easymidi.getOutputs() };
@@ -204,6 +308,7 @@ class MidiController {
     console.log('[MIDI] Available inputs: ', inputs);
     console.log('[MIDI] Available outputs:', outputs);
 
+    // Auto-detect X-Touch Compact if no name given
     const findPort = (list: string[], hint: string | null): string | null => {
       if (hint) return list.find(n => n === hint) || null;
       return list.find(n => /x.?touch/i.test(n)) || list[0] || null;
@@ -230,6 +335,8 @@ class MidiController {
       this._bindInput();
       this.enabled = true;
       this._lastCcOut.clear();
+      // Drive the surface to the current show immediately, rather than waiting
+      // for the first thing to change.
       this.sendFeedback();
       return true;
     } catch (err) {
@@ -238,6 +345,7 @@ class MidiController {
     }
   }
 
+  /** The binding for an incoming message, honouring an optional channel filter. */
   _bindingFor(kind: 'cc' | 'notes', number: number, channel: number): MidiBinding | null {
     const binding = this.map[kind] && this.map[kind][number];
     if (!binding) return null;
@@ -248,7 +356,13 @@ class MidiController {
   _bindInput(): void {
     const input = this.input;
     if (!input) return;
+    // this.map is read at dispatch time rather than captured here, so a
+    // relearned binding takes effect immediately instead of on the next
+    // reconnect.
 
+    // MIDI monitor: one line per incoming message. Invaluable when mapping a
+    // controller, unusable during a show — a single encoder sweep is hundreds
+    // of lines. Off unless DEBUG_MIDI=1.
     if (process.env.DEBUG_MIDI === '1') {
       input.on('noteon',  ({ note, velocity, channel }) =>
         console.log(`[MIDI] noteon  ch=${channel + 1} note=${note} vel=${velocity}  → ${this.map.notes[note] ? this.map.notes[note].action : 'unmapped'}`));
@@ -260,7 +374,10 @@ class MidiController {
         console.log(`[MIDI] pitch   ch=${channel + 1} val=${value}`));
     }
 
+    // Note On → button press
     input.on('noteon', ({ note, velocity, channel }) => {
+      // A learn in progress swallows the message: the operator is telling us
+      // which control they mean, not asking for it to fire.
       if (velocity > 0 && this._captureLearn('notes', note, channel)) return;
 
       if (velocity === 0 && this._releasePad(channel, note)) return;
@@ -271,12 +388,14 @@ class MidiController {
         return;
       }
       if (velocity === 0) {
+        // Note-off: release momentary actions
         if (binding.action === 'energyHold') this.apply({ energyOverride: null });
         return;
       }
       this._safely(binding, () => this._dispatch(binding));
     });
 
+    // Explicit Note Off for controllers that send it separately
     input.on('noteoff', ({ note, channel }) => {
       if (this._releasePad(channel, note)) return;
       const binding = this._bindingFor('notes', note, channel);
@@ -286,28 +405,39 @@ class MidiController {
       }
     });
 
+    // CC → encoder (relative) or fader (absolute)
     input.on('cc', ({ controller, value, channel }) => {
       const key = `${channel}:${controller}`;
       const between = value > 0 && value < 127;
       this._trackTouch(key, controller, channel, value, between);
 
+      // Learning a fader: its touch sensor speaks first, and is not the fader.
       if (this._learn && !between && !this._moved.has(key) && this._learnWantsFader()) return;
       if (this._captureLearn('cc', controller, channel)) return;
 
+      // Note the touch even when unmapped: a fader being moved is a fader we
+      // should not be driving, whatever it is bound to.
       this._lastCcIn.set(controller, Date.now());
 
       const binding = this._bindingFor('cc', controller, channel);
       if (!binding) return;
+      // Only a control that has shown itself to be a fader drives a fader
+      // action: a touch sensor would throw it to the ends.
       if (binding.type !== 'relative' && FADER_ACTIONS.has(binding.action) && !this._moved.has(key)) {
         this._warnSwitch(key, controller, binding);
         return;
       }
       if (binding.type === 'relative') {
+        // Remembered per control, because a surface can mix encoder types and
+        // because the answer cannot change while the device is plugged in. A
+        // controller reconfigured mid-session is re-learned on the next restart.
         const key = `${channel}:${controller}`;
         const evidence = relEvidence(value);
         if (evidence) this._relModes.set(key, evidence);
         const delta = relDelta(value, this._relModes.get(key) || REL_TWOS)
           * (binding.scale || 1);
+        // A no-movement message is not an edit: dispatching zero would still
+        // clear the palette label and suppress the control's own feedback.
         if (delta !== 0) {
           this._safely(binding, () => this._dispatchContinuous(binding, delta));
         }
@@ -317,13 +447,22 @@ class MidiController {
     });
   }
 
+  /** Is the learn in progress for a fader action? */
   _learnWantsFader(): boolean {
     const binding = this._learn && this._learn.binding;
     return !!binding && binding.type !== 'relative' && FADER_ACTIONS.has(binding.action);
   }
 
+  /**
+   * Follow the touch sensors: a switch-like control going to 127 is a finger
+   * landing, possibly; the fader that starts moving within TOUCH_PAIR_MS is
+   * the one it belongs to. A pairing heals a map that bound the sensor, and
+   * a sensor let go hands its fader back to the motor at once.
+   */
   _trackTouch(key: string, controller: number, channel: number, value: number, between: boolean): void {
     const now = Date.now();
+    // An encoder is no touch sensor, whatever it sends: two's complement turns
+    // anticlockwise as 127, over and over, and never says 0.
     const bound = this._bindingFor('cc', controller, channel);
     if (bound && (bound.type === 'relative' || !FADER_ACTIONS.has(bound.action))) {
       if (between) this._moved.add(key);
@@ -343,6 +482,7 @@ class MidiController {
       this._touchDown.set(key, now);
     } else {
       this._touchDown.delete(key);
+      // Let go: the fader is the motor's again, to where the show now is.
       const fader = this._touchOf.get(key);
       if (fader) {
         this._lastCcOut.delete(Number(fader.split(':')[1]));
@@ -351,6 +491,7 @@ class MidiController {
     }
   }
 
+  /** A fader action bound to its fader's touch sensor moves to the fader, when the fader is free. */
   _heal(touchKey: string, faderKey: string): void {
     const touchCc = Number(touchKey.split(':')[1]);
     const faderCc = Number(faderKey.split(':')[1]);
@@ -367,6 +508,7 @@ class MidiController {
     }
   }
 
+  /** Say once why a fader action ignores a control that has only sent 0 and 127. */
   _warnSwitch(key: string, controller: number, binding: MidiBinding): void {
     if (this._warnedSwitch.has(key)) return;
     this._warnedSwitch.add(key);
@@ -374,6 +516,7 @@ class MidiController {
       + 'touch sensor or a button — ignored until it moves between the ends. Relearn the fader by moving it.');
   }
 
+  /** Is this fader held by a finger, by what its touch sensor says? */
   _touched(faderCc: number): boolean {
     for (const [touch, fader] of this._touchOf) {
       if (Number(fader.split(':')[1]) === faderCc && this._touchDown.has(touch)) return true;
@@ -381,6 +524,17 @@ class MidiController {
     return false;
   }
 
+  /**
+   * Run a dispatch, surviving a binding the server refuses.
+   *
+   * The map's `value` is loose on purpose — it is a pattern id, a colour index,
+   * a cue id or a palette name depending on the action — so a hand-edited
+   * midi-map.json can hold one the server validates and rejects. applyPatch
+   * throws in that case, and this handler runs inside an easymidi event
+   * callback: unguarded, a single wrong entry in a config file takes the whole
+   * server down the first time that button is pressed, mid-show. A warning and
+   * a dead button is the right cost.
+   */
   _safely(binding: MidiBinding, run: () => void): void {
     try {
       run();
@@ -389,6 +543,16 @@ class MidiController {
     }
   }
 
+  // ── Learn mode ───────────────────────────────────────────────────────────
+
+  /**
+   * Arm learn: the next note or CC that arrives is bound to `binding`.
+   *
+   * Returns a promise that settles with the captured `{ kind, number, channel,
+   * binding }`, or null if it was cancelled or timed out. Arming a second learn
+   * cancels the first, so a client that changed its mind cannot leave one armed
+   * behind it.
+   */
   startLearn(binding: MidiBinding): Promise<LearnCapture | null> {
     this.cancelLearn('superseded');
     return new Promise<LearnCapture | null>((resolve) => {
@@ -411,6 +575,7 @@ class MidiController {
 
   get learning(): boolean { return !!this._learn; }
 
+  /** True when this message was consumed by an armed learn. */
   _captureLearn(kind: 'cc' | 'notes', number: number, channel: number): boolean {
     const learn = this._learn;
     if (!learn) return false;
@@ -423,6 +588,7 @@ class MidiController {
     return true;
   }
 
+  /** Register a listener for learn-mode transitions (armed/captured/cancelled). */
   onLearn(fn: (event: LearnEvent) => void): void { this._learnListeners.push(fn); }
 
   _emitLearn(event: LearnEvent): void {
@@ -430,6 +596,8 @@ class MidiController {
       try { fn(event); } catch (err) { console.warn(`[MIDI] learn listener: ${messageOf(err)}`); }
     }
   }
+
+  // ── Dispatch ─────────────────────────────────────────────────────────────
 
   _dispatch(binding: MidiBinding): void {
     const s = this.state;
@@ -465,11 +633,14 @@ class MidiController {
         this.apply({ beatDivision: Number(binding.value) || 1 });
         break;
       case 'energyHold': {
+        // Momentary: note-on activates, note-off (handled above) deactivates.
+        // A bound effect wins; otherwise this button follows cycleEnergyEffect.
         const effect = binding.value || this._energyEffect || ENERGY_IDS[0];
         this.apply({ energyOverride: effect });
         break;
       }
       case 'cycleEnergyEffect': {
+        // Cycle which effect the energy hold button triggers (without activating it)
         const curIdx = ENERGY_IDS.indexOf(this._energyEffect || ENERGY_IDS[0]);
         this._energyEffect = ENERGY_IDS[(curIdx + 1) % ENERGY_IDS.length];
         break;
@@ -488,6 +659,8 @@ class MidiController {
           this._emitFixOverride(fix.id, null);
           break;
         }
+        // Blackout is a gate, not a replacement look. Clearing it restores the
+        // prior override; if there was none, return to the pattern engine.
         this._emitFixOverride(fix.id, {
           ...(cur || { enabled: false, r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 255, strobe: 0 }),
           blackout: newBo,
@@ -495,9 +668,13 @@ class MidiController {
         break;
       }
       case 'recallCue':
+        // Wired up by server.js; a rig with no cue store just does nothing.
         if (this.recallCue && binding.value) this.recallCue(String(binding.value));
         break;
       case 'setPalette':
+        // One press writes all four colour slots from a named look. The server
+        // rejects an id it does not know, which surfaces as a toast rather than
+        // a button that silently does nothing.
         if (binding.value) this.apply({ palette: String(binding.value) });
         break;
     }
@@ -533,9 +710,14 @@ class MidiController {
         break;
       }
       case 'adjustAutoIntensity':
+        // 0-100, not 0-255: the auto show's slider is a percentage.
         this.apply({ autoIntensity: clamp(Math.round((s.autoIntensity ?? 50) + delta), 0, 100) });
         break;
       case 'adjustAutoSync':
+        // 5 ms a detent. One encoder click of 1 ms would be unusable — you
+        // cannot hear a millisecond — and a whole beat per click would overshoot
+        // the error every time. Five is small enough to creep up on the right
+        // answer and large enough to get there within a song.
         this.apply({
           autoSyncOffsetMs: clamp(
             Math.round((s.autoSyncOffsetMs ?? 0) + delta * SYNC_NUDGE_MS),
@@ -546,6 +728,7 @@ class MidiController {
     }
   }
 
+  /** `raw` is the 0-127 the controller sent; each action scales it itself. */
   _dispatchAbsolute(binding: MidiBinding, raw: number): void {
     const s = this.state;
     const level = Math.round((raw / 127) * 255);
@@ -569,12 +752,15 @@ class MidiController {
         break;
       }
       case 'setFixtureMax':
+        // Deliberately does NOT enable the override: scaling a fixture down is
+        // not the same as taking it out of the pattern engine.
         if (s.fixtures.some((fixture) => fixture.id === binding.fixture)) this._emitFixMax(binding.fixture as number, level);
         break;
       case 'setAutoIntensity':
         this.apply({ autoIntensity: Math.round((raw / 127) * 100) });
         break;
       case 'setAutoSync':
+        // A fader spans the whole range, so centre detent (64) is zero offset.
         this.apply({
           autoSyncOffsetMs: Math.round(((raw - 63.5) / 63.5) * SYNC_OFFSET_LIMIT_MS),
         });
@@ -582,8 +768,11 @@ class MidiController {
     }
   }
 
+  // Override callback — set externally to wire into engine
   overrideFixture: ((id: number, override: Partial<Override> | null) => void) | null = null;
 
+  // Brightness-trim callback — likewise. Separate from overrideFixture because
+  // the trim is not part of the override.
   setFixtureMax: ((id: number, value: number) => void) | null = null;
 
   _emitFixOverride(id: number, override: Partial<Override> | null): void {
@@ -594,6 +783,19 @@ class MidiController {
     if (this.setFixtureMax) this.setFixtureMax(id, value);
   }
 
+  // ── Feedback to the controller ───────────────────────────────────────────
+
+  /**
+   * Push the live state back to the controller: button LEDs, and the position
+   * of every continuous control.
+   *
+   * The second half is what makes a motorised surface worth having. The X-Touch
+   * Compact's nine faders are motorised and its eight encoders have LED rings,
+   * and both are driven the same way — send the controller the CC it would have
+   * sent you, and it moves. Without this the surface only ever *pushed* state:
+   * change the master dimmer in the browser and the physical fader stayed where
+   * it was, so the next touch snapped the rig back to a stale value.
+   */
   sendFeedback(): void {
     if (!this.output) return;
     const s = this.state;
@@ -611,6 +813,7 @@ class MidiController {
         case 'setBeatDivision':  lit = Number(binding.value) === s.beatDivision; break;
         case 'setPalette':       lit = binding.value === s.palette; break;
         case 'toggleBlackout':   lit = !!s.masterBlackout; break;
+        // Lit while the clock follows the music, as Play is while it runs.
         case 'toggleTempoMode':  lit = s.tempoMode !== 'manual'; break;
         case 'togglePlay':       lit = !!s.running; break;
         case 'energyHold':       lit = !!s.energyOverride; break;
@@ -625,6 +828,14 @@ class MidiController {
     }
   }
 
+  /**
+   * The 0-127 position of whatever a CC binding controls, or null when the
+   * action has no position to show (a trigger, an unknown action).
+   *
+   * Relative encoders get one too: the value does not move the encoder, but on
+   * a surface with LED rings it lights the ring to match, which is the same
+   * information the fader gives you by being somewhere.
+   */
   _feedbackValue(binding: MidiBinding): number | null {
     const s = this.state;
     const to127 = (value: number, max: number) => Math.max(0, Math.min(127, Math.round((value / max) * 127)));
@@ -638,11 +849,14 @@ class MidiController {
         return to127(s.strobeSpeed, 255);
       case 'setBpm':
       case 'adjustBpm':
+        // The inverse of the fader mapping in _dispatchAbsolute: 20-300 BPM.
         return to127(s.bpm - 20, 280);
       case 'setFixtureDim':
       case 'adjustFixtureDim': {
         const fix = s.fixtures.find((fixture) => fixture.id === binding.fixture);
         if (!fix) return null;
+        // No override means the pattern engine owns the fixture and it is at
+        // full — which is where the fader should sit, ready to pull it down.
         const dim = (fix.override && fix.override.enabled) ? fix.override.dim ?? 255 : 255;
         return to127(dim, 255);
       }
@@ -664,6 +878,14 @@ class MidiController {
     }
   }
 
+  /**
+   * Move every mapped continuous control to where the show actually is.
+   *
+   * Two guards, both about not fighting the operator or the hardware:
+   * a control that sent us something in the last moment is being touched, so it
+   * is left alone; and a value we already sent is not sent again, because a
+   * motor re-driven to its current position at the broadcast rate hums.
+   */
   _sendControlFeedback(): void {
     const output = this.output;
     if (!this.controlFeedback || !output) return;
@@ -694,6 +916,11 @@ class MidiController {
     } catch (_) { /* the port can vanish mid-show; feedback is not worth dying for */ }
   }
 
+  // The pad is captured at note-on, so the note-off releases that pad even
+  // after the map changed; a held note's repeat never presses it again. A
+  // once fires and a loop toggles on the note-on alone; only a hold is kept,
+  // by a renewal that never relaunches, until the note-off, the ceiling, the
+  // hold ending (an off, a stop-all) or the input port going away.
   _pressPad(channel: number, note: number, binding: MidiBinding): void {
     const key = `${channel}:${note}`;
     if (!this.pads || this._heldPads.has(key) || binding.bank === undefined || binding.slot === undefined) return;
@@ -706,6 +933,7 @@ class MidiController {
     const maxMs = strobeMs !== undefined && Number.isFinite(strobeMs) && strobeMs > 0 ? strobeMs : MIDI_HOLD_MAX_MS;
     let ticks = 0;
     held.renew = setInterval(() => this._safely(binding, () => {
+      // Let go already: a tick still in flight renews nothing.
       if (this._heldPads.get(key) !== held) return;
       ticks++;
       const renewed = ticks * PAD_RENEW_MS < maxMs && !this._portGone() && !!this.pads?.renew(pad.bank, pad.slot, pad.owner, pad.token);
@@ -714,6 +942,7 @@ class MidiController {
     held.renew.unref?.();
   }
 
+  /** Whether the open input port has left the port list (a controller unplugged), read fresh. */
   _portGone(): boolean {
     if (!easymidi || !this._inputName) return false;
     try {
@@ -739,6 +968,8 @@ class MidiController {
       this._releasePad(channel, note);
     }
     this.cancelLearn('disconnected');
+    // Forget what we sent: the next connection has to push the full state so
+    // the faders fly to where the show is rather than staying where they lay.
     this._lastCcOut.clear();
     this._lastCcIn.clear();
     this._touchDown.clear();
@@ -750,6 +981,11 @@ class MidiController {
   }
 }
 
+/**
+ * Open an output port by name, for sending something other than control
+ * feedback (the MIDI clock). Null when MIDI is unavailable or the port is not
+ * there.
+ */
 function openMidiOutput(name: string): MidiOutput | null {
   if (!easymidi || !name) return null;
   if (!easymidi.getOutputs().includes(name)) return null;

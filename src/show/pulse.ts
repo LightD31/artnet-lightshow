@@ -1,17 +1,43 @@
+/**
+ * The analysis's `pulse` block, read at the playback position: what an LED bar
+ * shows inside the beat.
+ *
+ * The analyser keeps each stem's level fifty times a second and the time of
+ * every kick, snare and hat (src/analysis/pulse.py). This decodes that once per
+ * track and answers, for any moment, how loud each stem is — interpolated
+ * between its 20 ms points — and how recently each drum was hit: its strength
+ * on the hit, decaying after it the way the sound does, a kick slower than a
+ * hat. The pixel patterns read the answer every frame (shared/patterns.ts).
+ *
+ * The lanes are only worth following as far as they were measured to be
+ * right (src/analysis/pulse.py). A document from the rules measured on real
+ * drumming also says how hard the drums are hitting as a light should take
+ * it — `groove`: the kick, right nine times in ten on its strong hits, and on
+ * the drum stem the snare, right four in five. `hit` pulses the whole rig on
+ * it (shared/layer.ts), so a rig of pars flashes with the drummer rather
+ * than with the grid.
+ */
+
 import type { Pulse } from '../types/analysis.ts';
 import type { PulseReading } from '../types/rig.ts';
 
+/** How fast each hit fades, ms to about a third: a kick rings, a hat ticks. */
 const DECAY_MS: Record<'kick' | 'snare' | 'hats', number> = { kick: 110, snare: 90, hats: 45 };
 const STEMS = ['drums', 'bass', 'vocals', 'other'] as const;
+/** The lane rules measured on real drumming (analysis/pulse.py DETECTOR). */
 const TRUSTED_DETECTOR = 2;
+/** A snare counts for a little less than a kick in the groove: it is right less often. */
 const SNARE_IN_GROOVE = 0.85;
 
 export interface PulseTrack {
+  /** Whether the track was separated, so the stem levels are there. */
   readonly stems: boolean;
+  /** Whether the drum lanes are the ones measured on real drumming, so `groove` is read. */
   readonly trusted: boolean;
   at(positionMs: number): PulseReading;
 }
 
+/** Base64 to bytes, in Node and in a browser alike. */
 function bytes(text: string): Uint8Array {
   const raw = atob(text);
   const out = new Uint8Array(raw.length);
@@ -34,6 +60,7 @@ function hits(lane: { t?: unknown; s?: unknown } | undefined): Hits {
   return { t: times, s: strengths };
 }
 
+/** The last hit at or before `ms`, or -1. */
 function lastHit(times: Float64Array, ms: number): number {
   let lo = 0;
   let hi = times.length - 1;
@@ -61,6 +88,7 @@ function level(envelope: Uint8Array, rate: number, ms: number): number {
   return (envelope[i] * (1 - f) + envelope[i + 1] * f) / 255;
 }
 
+/** A track's pulse, or null when its analysis has none (or one this cannot read). */
 function pulseTrack(block: Pulse | null | undefined): PulseTrack | null {
   if (!block || block.encoding !== 'u8-base64' || !(block.rate > 0) || !block.envelopes) return null;
   let envelopes: Record<string, Uint8Array>;

@@ -6,11 +6,51 @@ import { configFile } from './server/config-dir.ts';
 import { EXIT_CONFIG, EXIT_RESTART } from './server/supervised.ts';
 import type { LastExit } from './server/supervised.ts';
 
+/**
+ * Keep the server running through a crash.
+ *
+ * `npm start` runs this: a small parent process that starts the server as its
+ * child and starts it again when it dies — a native module that faulted, the
+ * memory running out — or stops responding: the server heartbeats every
+ * second (supervised.ts), and one whose main thread has gone quiet for fifteen
+ * seconds is killed and started again. Each new run is told it is one
+ * (LIGHTSHOW_RECOVER), and puts the look back before its first frame
+ * (look-store.ts), so the rig comes back as it was rather than on a default
+ * chase.
+ *
+ * Restarts back off (half a second, then longer, to ten) while the server
+ * keeps dying, and reset once a run has lasted a minute. A server that dies
+ * three times before it has even started is not going to start: that, and an
+ * exit saying the configuration will not let it (EXIT_CONFIG), end the
+ * supervisor too. An exit asking to be started again (EXIT_RESTART, for a
+ * setting that only applies on a restart) is done at once. A clean exit
+ * (Ctrl-C, a service manager's stop) ends both.
+ *
+ * Deezer's downloads need OpenSSL's legacy provider (Blowfish), which is
+ * nothing anything else here should have: it is turned on for the server only
+ * when a Deezer ARL is set (deezer.ts).
+ *
+ * Stopping asks the server over the IPC channel, where it blacks the rig out
+ * before it exits, rather than with a signal: on Windows a signal sent to
+ * another process is no signal at all but an immediate kill, and a DMX node
+ * left without its blackout holds the last frame it was sent. A server that
+ * has not gone after ten seconds is killed.
+ *
+ * In the packaged build the supervisor and the server are one executable
+ * (a Node single executable application, scripts/sea-main.cjs), which runs
+ * its own script whatever it is given and takes no Node flags on its command
+ * line: the server is forked as that executable again, and the legacy
+ * provider goes through NODE_OPTIONS instead.
+ */
+
 export interface SupervisorOptions {
+  /** The server's entry point. */
   script: string;
   args?: string[];
+  /** Node flags for the server (the supervisor's own, less what is its alone). */
   execArgv?: string[];
   env?: NodeJS.ProcessEnv;
+  /** Whether the server needs OpenSSL's legacy provider (a Deezer ARL is set). */
   legacyProvider?: () => boolean;
   fork?: (script: string, args: string[], options: ForkOptions) => ChildProcess;
   log?: (message: string) => void;
@@ -21,17 +61,27 @@ export interface SupervisorOptions {
   backoffMs?: number[];
   stableMs?: number;
   startupFailures?: number;
+  /** How often the watchdog looks. */
   checkMs?: number;
+  /**
+   * Stop a server with no IPC channel left with a signal; on Windows the
+   * console has sent it already, and kill() is not a signal.
+   */
   forwardSignals?: boolean;
+  /** Running as a single executable application: Node flags go in NODE_OPTIONS. */
   sea?: boolean;
 }
 
 export interface Supervisor {
+  /** Stop the server (and with it the supervisor). */
   stop(signal?: NodeJS.Signals): void;
+  /** Resolves with the exit code the supervisor should end with. */
   done: Promise<number>;
+  /** How many times the server has been started again. */
   restarts(): number;
 }
 
+/** Whether settings.json has a Deezer ARL: Deezer's downloads need the legacy provider. */
 export function deezerArlSet(file = configFile('settings.json')): boolean {
   try {
     const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -41,6 +91,7 @@ export function deezerArlSet(file = configFile('settings.json')): boolean {
   }
 }
 
+/** Why a run ended, in words. */
 export function describeExit(code: number | null, signal: string | null,
   { hungMs = 0, requested = null }: { hungMs?: number; requested?: string | null } = {}): string {
   if (requested) return `restarted on request (${requested})`;
@@ -84,6 +135,7 @@ export function supervise(options: SupervisorOptions): Supervisor {
     if (stopping) return;
     const flags = [...execArgv.filter((f) => f !== '--openssl-legacy-provider')];
     if (legacyProvider()) flags.push('--openssl-legacy-provider');
+    // A single executable takes its flags from NODE_OPTIONS, not its command line.
     const nodeOptions = sea
       ? [...String(env.NODE_OPTIONS || '').split(/\s+/).filter((f) => f && f !== '--openssl-legacy-provider'), ...flags].join(' ')
       : env.NODE_OPTIONS;
@@ -176,12 +228,14 @@ export function supervise(options: SupervisorOptions): Supervisor {
       stopping = true;
       const c = child;
       if (!c) { settle(0); return; }
-      // Request graceful shutdown before signalling so the child can send its blackout frame.
+      // Asked, so it blacks out first (supervised.ts); a signal only when the
+      // channel is gone.
       let asked = false;
       if (c.connected) {
         try { c.send({ type: 'stop', signal }); asked = true; } catch (_) { /* closed under us */ }
       }
       if (!asked && forwardSignals) c.kill(signal);
+      // A server that will not stop in time is stopped.
       const timer = setTimeout(() => { if (child === c) c.kill('SIGKILL'); }, stopMs);
       timer.unref?.();
     },
@@ -190,6 +244,7 @@ export function supervise(options: SupervisorOptions): Supervisor {
   };
 }
 
+/** Run the server under a supervisor, as `npm start` does (server.js). */
 export async function runSupervisor(script: string): Promise<never> {
   const supervisor = supervise({
     script,
@@ -201,6 +256,8 @@ export async function runSupervisor(script: string): Promise<never> {
     process.on(signal, () => supervisor.stop(signal === 'SIGHUP' ? 'SIGTERM' : signal));
   }
   const code = await supervisor.done;
+  // The packaged build is started with a double-click: a console that closes
+  // the moment it fails takes the reason with it.
   if (code !== 0 && process.env.LIGHTSHOW_PACKAGED === '1' && process.stdin.isTTY) {
     process.stderr.write('\nThe lightshow has stopped. Press Enter to close this window.\n');
     await new Promise((resolve) => process.stdin.once('data', resolve));

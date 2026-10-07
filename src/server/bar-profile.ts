@@ -1,3 +1,13 @@
+/**
+ * A profile for an LED bar, from the few numbers on the back of its manual.
+ *
+ * Plenty of bars ship without a GDTF file, and their pixel modes are all the
+ * same shape: a couple of channels for the whole bar, then N cells of the same
+ * few channels one after another. Typing that in as a hundred-channel
+ * profile is what nobody does, so this builds it from the cell count, where
+ * the first cell starts, and the order of each cell's channels.
+ */
+
 import { z } from 'zod';
 import { MAX_CELLS_PER_FIXTURE } from '../shared/rig.ts';
 import { profileSchema, validate } from './validation.ts';
@@ -5,6 +15,7 @@ import { HttpError } from '../errors.ts';
 import type { ProfileInput } from './validation.ts';
 import type { ChannelListEntry, ChannelMap, ProfileCell } from '../types/rig.ts';
 
+// One letter per channel of a cell, in the order the manual lists them.
 const LETTERS: Record<string, { attribute: string; name: string }> = {
   R: { attribute: 'red', name: 'Red' },
   G: { attribute: 'green', name: 'Green' },
@@ -22,15 +33,24 @@ const barSpecSchema = z.object({
   name: z.string().min(1).max(128),
   manufacturer: z.string().max(128).optional(),
   cells: z.number().int().min(2).max(MAX_CELLS_PER_FIXTURE),
+  // The DMX channel of cell 1's first channel, counted from 1.
   firstChannel: channelNo,
+  // What each cell's channels are, in order: "RGB", "RGBW", "DRGB"…
   order: z.string().regex(/^[RGBWAUD]{1,8}$/, 'letters R G B W A U D, each once')
     .refine((v) => new Set(v).size === v.length, 'each letter once')
     .refine((v) => /[RGBWAU]/.test(v), 'at least one colour'),
+  // Channels from one cell to the next; the length of `order` unless the bar
+  // leaves gaps between cells.
   stride: z.number().int().min(1).max(64).optional(),
+  // The channels the whole bar shares, counted from 1.
   dimmer: channelNo.optional(),
   strobe: channelNo.optional(),
 }).strict();
 
+/**
+ * The profile for a bar, validated as any other profile is. Throws with a
+ * `status` of 400 when the numbers do not describe a bar that fits.
+ */
 function barProfile(spec: unknown): ProfileInput {
   const bar = validate(barSpecSchema, spec, 'bar');
   const stride = bar.stride ?? bar.order.length;
@@ -61,6 +81,8 @@ function barProfile(spec: unknown): ProfileInput {
   channelList.sort((a, b) => a.offset - b.offset);
 
   const channelCount = channelList.reduce((max, ch) => Math.max(max, ch.offset), -1) + 1;
+  // Past one universe, only a plain strip of pixels runs on into the next
+  // (shared/placement.ts): from channel 1, no gaps, nothing for the whole bar.
   const plain = bar.firstChannel === 1 && stride === bar.order.length && bar.dimmer === undefined && bar.strobe === undefined;
   if (channelCount > 512 && !plain) {
     throw badBar(`${bar.cells} cells of ${stride} channels from channel ${bar.firstChannel} end at ${channelCount}, past the 512-channel universe; `

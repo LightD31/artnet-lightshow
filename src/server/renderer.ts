@@ -41,8 +41,10 @@ import type { AudioMode, EffectCommand, EffectSlot, EffectSpec, FrameBase, HdMas
 import type { ChannelDefault, ChannelMap, Colour, Expression, Override, PixelMap, Profile, PulseReading, ShowDynamics, StageFixture } from '../types/rig.ts';
 
 export type { VoiceFrame } from '../shared/effects/layer.ts';
+// The preview keys its effects the same way; both read it from the shared layer.
 export { effectContentKey };
 
+/** A fixture as a frame needs it: its universe and trim resolved. */
 export interface RenderFixture extends StageFixture {
   id: number;
   address: number;
@@ -50,21 +52,25 @@ export interface RenderFixture extends StageFixture {
   profileId: string;
   maxBrightness: number;
   override: Override | null;
+  /** A Hue lamp, so it is never strobed in software. */
   hue: boolean;
 }
 
+/** A crossfade asked for: from what is on stage at `at`, over `ms`. */
 export interface FadeRequest {
   seq: number;
   ms: number;
   at: number;
 }
 
+/** The Hue sync test asked for: flash for `seconds` from `at`. */
 export interface SyncTestRequest {
   seq: number;
   seconds: number;
   at: number;
 }
 
+/** Everything a frame depends on (engine.ts renderInput builds it). */
 export interface RenderInput {
   hardware?: HardwareSettings;
   running: boolean;
@@ -75,36 +81,65 @@ export interface RenderInput {
   colorD: number;
   split: number | null;
   pixelMap: PixelMap;
+  /** The bars' own picture while the pars run `pattern`, or null. */
   pixelPattern?: string | null;
   pixelSpan?: number | null;
   pixelFrom?: number | null;
+  /** The panels' own picture while the bars run `pixelPattern`, or null. */
   panelPattern?: string | null;
   beatDivision: number;
   strobeSpeed: number;
   strobeFunction: string;
   masterDimmer: number;
   masterBlackout: boolean;
+  /** Hold the rig to three large-area flashes a second (flash-limit.ts). */
   flashLimit?: boolean;
+  /** An energy effect's id, or null. */
   energy: string | null;
   showDynamics: ShowDynamics | null;
+  /** The music at pixel rate, while a show with an analysed track runs. */
   pulse?: PulseReading | null;
   patternAnchor: PatternAnchor | null;
   fade: FadeRequest | null;
   syncTest: SyncTestRequest | null;
+  /** Fixtures showing themselves on the rig (identify.ts), or null. */
   identify?: IdentifyRequest | null;
   universes: number[];
   fixtures: RenderFixture[];
+  /**
+   * What the party effects hear this frame (audio-features.ts), the audio
+   * mode and Hue Dynamics' master. A hand-built input may leave them out:
+   * frame() reads them as no audio, 'tempo' and the master's defaults.
+   */
   audio?: AudioFrame | null;
   audioMode?: AudioMode;
   master?: HdMaster;
+  /**
+   * The base look as an effect, in place of `pattern`'s own picture; null or
+   * absent plays the pattern. `effectRevision` changes when the effect is
+   * replaced on purpose, so the same content starts again.
+   */
   effect?: EffectSpec | null;
   effectRevision?: number;
+  /**
+   * The voices playing over the base, highest by tier and launch. Absent, the
+   * renderer plays `energy` as a voice of its own, as it always played the
+   * energy burst; present (even empty), the caller owns every voice.
+   */
   voices?: VoiceFrame[];
+  /** Colours the effects play instead of their own and the look's, or null. */
   paletteOverride?: Colour[] | null;
   basePalette?: PaletteBody | null;
   overridePalette?: PaletteBody | null;
   safety?: RenderSafety;
+  /** How Hue lamps take a flash: 'flash' hard, 'pulse' falling to a floor. Absent is 'pulse', as before the setting. */
   hueStrobe?: 'flash' | 'pulse';
+  /**
+   * The sequence playing: the revision of the clip table it plays (handed
+   * over apart, by setSequence) and where it is. The table plays only while
+   * both are given and the revision is the table's own; absent or null, the
+   * look plays alone.
+   */
   sequenceRevision?: number | null;
   sequenceTransport?: SequenceTransport | null;
 }
@@ -114,11 +149,14 @@ export interface RenderSafety {
   acknowledged: boolean;
 }
 
+/** What frame() reads for a field a hand-built input leaves out. */
 export const RENDER_SAFETY_DEFAULTS: Readonly<RenderSafety> = Object.freeze({ hdFlashIntervalMs: 350, acknowledged: false });
 
+/** A RenderInput with every optional field the effects read filled in, as frame() sees it. */
 export type FrameInput = RenderInput & Required<Pick<RenderInput,
   'audio' | 'audioMode' | 'master' | 'effect' | 'voices' | 'paletteOverride' | 'safety' | 'hueStrobe' | 'sequenceRevision' | 'sequenceTransport'>>;
 
+/** The input with its defaults; the caller's object is left as it was. */
 export function withInputDefaults(input: RenderInput): FrameInput {
   return {
     ...input,
@@ -135,23 +173,34 @@ export function withInputDefaults(input: RenderInput): FrameInput {
   };
 }
 
+/**
+ * Which base effect a command is meant for: the pattern id it plays under,
+ * its revision, and its content without the palette (a palette edit is the
+ * same effect playing on). The engine sends it with each command; the
+ * renderer applies the command only to a base that still matches.
+ */
 export interface BaseIntent { pattern: string; revision: number | null; content: string }
 
+/** A command's outcome: applied to the base's state, or why not. */
 export type CommandStatus = 'applied' | 'stale' | 'unavailable' | 'unsupported' | 'invalid' | 'duplicate';
 export interface CommandResult { seq: number; status: CommandStatus }
 
 const COMMANDS: readonly EffectCommand[] = ['stop', 'comboBreak', 'toggleDirection', 'fadeToBaseline', 'setPulserBaselineColor'];
 
+/** The base effect an input plays, as a command names it; null for a pattern. */
 export function baseIntentOf(input: Pick<RenderInput, 'pattern' | 'effect' | 'effectRevision'>): BaseIntent | null {
   if (!input.effect) return null;
   return { pattern: input.pattern, revision: input.effectRevision ?? null, content: effectContentKey(input.effect) };
 }
 
+/** A grid origin's phase on the 44 Hz frame grid, 0..FRAME_MS. */
 function gridPhaseOf(originMs: number): number {
   const phase = ((originMs % FRAME_MS) + FRAME_MS) % FRAME_MS;
+  // A hair under a whole frame is the frame's start.
   return FRAME_MS - phase < 1e-6 ? 0 : phase;
 }
 
+/** A command's argument as its kind takes it: null for none, a colour for the baseline; undefined is refused. */
 function commandArg(cmd: string, arg: unknown): Colour | null | undefined {
   if (!(COMMANDS as readonly string[]).includes(cmd)) return undefined;
   if (cmd !== 'setPulserBaselineColor') return arg === undefined || arg === null ? null : undefined;
@@ -165,14 +214,17 @@ function commandArg(cmd: string, arg: unknown): Colour | null | undefined {
   return Object.values(colour).every((v) => !Number.isNaN(v)) ? colour : undefined;
 }
 
+/** The universe buffers a frame writes. */
 export type FrameStore = Pick<UniverseStore, 'getBuffer' | 'sync' | 'clearAll'>;
 
+/** What the look puts on one light before the masters. */
 interface LightValue {
   col: Colour;
   dim: number;
   strobe: number;
 }
 
+/** A strobe asked for: its 1–255 value and the function it runs. */
 interface StrobeRequest {
   raw: number;
   fnId: string;
@@ -182,32 +234,71 @@ interface StrobeRequest {
 type Dmx = Buffer | Uint8Array;
 
 export interface Renderer {
+  /**
+   * `gridOriginMs`: where the 44 Hz frame grid this frame belongs to starts,
+   * on `now`'s clock. The effects count their frames from it. Without it the
+   * renderer's own first frame starts the grid.
+   */
   frame(input: RenderInput, reading: MusicalTime, now: number, store: FrameStore, gridOriginMs?: number): Rig<RenderFixture>;
   invalidateRig(): void;
+  /** Queue a command for the base effect; it is decided at the next frame, in order. */
   command(seq: number, cmd: string, arg?: unknown, intent?: BaseIntent | null): void;
+  /** The commands decided since the last call, in order. */
   takeCommandResults(): CommandResult[];
+  /** Decide every queued command as `status` without a frame (a worker with nothing to render). */
   rejectCommands(status: CommandStatus): void;
+  /** The highest sequence decided (applied or not) and the highest applied. */
   commandStatus(): { processed: number; applied: number };
+  /**
+   * The loaded sequence's clip table, or null. Kept until replaced: a frame
+   * plays it while its input names this table's revision and a transport.
+   * A clip that did not change plays on through a new table.
+   */
   setSequence(table: SequenceTable | null): void;
 }
 
+// Patterns that roll dice. They re-roll when the step moves or the look
+// changes — a twinkle redrawn every frame is noise, not a twinkle.
 const RANDOM_PATTERNS = new Set(['twinkle', 'sparkle', 'random-flash']);
 
+// The Hue sync test: every fixture flashes white for a tenth of a second,
+// once a second, so the pars and the Hue lamps can be filmed side by side and
+// the latency setting turned until the two flashes land together.
 const SYNC_FLASH_MS = 100;
 
 const blankUnit = (): UnitLight => ({ r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0, dim: 255, strobe: 0 });
 
-// Use software strobe only without a hardware channel, and exclude Hue from that fallback.
+// ── Software strobe ──────────────────────────────────────────────────────────
+// A fixture with a strobe channel flashes itself: the strobe value goes to
+// that channel and the lamp's own electronics do the rest. A fixture without
+// one — plenty of LED bars and cheap pars — used to sit there steady through
+// the strobe pattern and every strobing burst. It is now flashed here instead,
+// by leaving it dark on the frames between flashes.
+//
+// 1 to 20 flashes a second, as the fixtures' own standard strobe runs, and no
+// faster than every other frame. Each flash lasts at least one frame (so none
+// falls between two), a third of the period at most, and never more than 50 ms:
+// a strobe is a flash, not a blink.
 const SOFT_STROBE_MIN_HZ = 1;
 const SOFT_STROBE_MAX_HZ = Math.min(20, 1000 / (2 * FRAME_MS));
 const SOFT_FLASH_MAX_MS = 50;
 
+/** Flashes a second for a strobe value of 1–255. */
 function softStrobeHz(raw: number): number {
   return SOFT_STROBE_MIN_HZ + (Math.min(255, raw) / 255) * (SOFT_STROBE_MAX_HZ - SOFT_STROBE_MIN_HZ);
 }
 
+// The fastest strobe the flash limit allows, on the same scale: three a
+// second. A fixture's own strobe channel is taken to run the same range
+// (1–20 Hz, as most LED pars' standard strobe does), since what it actually
+// runs at is the fixture's secret.
 const FLASH_LIMIT_STROBE = strobeCap(softStrobeHz);
 
+/**
+ * Is a software-strobed fixture lit on the frame at `now`? Periodic, on the
+ * clock, so every such fixture flashes together; the random strobe functions
+ * flash each fixture on its own, at the same average rate.
+ */
 function softStrobeLit({ raw, fnId }: StrobeRequest, now: number): boolean {
   const hz = softStrobeHz(raw);
   if (/random|rnd/.test(fnId)) return Math.random() < (hz * FRAME_MS) / 1000;
@@ -216,7 +307,13 @@ function softStrobeLit({ raw, fnId }: StrobeRequest, now: number): boolean {
   return ((now % period) + period) % period < flash;
 }
 
-// Write both dimmer bytes so fine-channel fixtures retain smooth fades.
+/**
+ * Write a dimmer level (0–255, fractional) to its channel — as a 16-bit value
+ * across the coarse and fine channels when the profile has a fine one. The
+ * fine byte used to be written 0, so a 16-bit fixture fading out stepped
+ * through 256 levels when it can do 65,536: the steps are what a slow fade
+ * into black looks like on an LED.
+ */
 function writeDimmer(dmx: Dmx, base: number, ch: ChannelMap, level: number): void {
   if (ch.dimmer === undefined) return;
   const clamped = level > 255 ? 255 : (level > 0 ? level : 0);
@@ -229,12 +326,17 @@ function writeDimmer(dmx: Dmx, base: number, ch: ChannelMap, level: number): voi
   dmx[base + ch.dimmerFine] = v16 & 0xff;
 }
 
-// Write defaults first so driven channels can override them in the same frame.
+/**
+ * Put a profile's undriven channels at their defaults (profileSchema's
+ * `defaults`). Written first, so a channel the show drives — a strobe that is
+ * open at rest and flashing now — still ends up at the show's value.
+ */
 function writeDefaults(dmx: Dmx, base: number, defaults: ChannelDefault[] | undefined): void {
   if (!defaults) return;
   for (let i = 0; i < defaults.length; i++) dmx[base + defaults[i].offset] = defaults[i].value;
 }
 
+/** writeDefaults for a strip that runs over several universes. */
 function writeStripDefaults(store: FrameStore, fix: RenderFixture, strip: NonNullable<ReturnType<typeof stripOf>>,
   defaults: ChannelDefault[] | undefined): void {
   if (!defaults) return;
@@ -244,28 +346,47 @@ function writeStripDefaults(store: FrameStore, fix: RenderFixture, strip: NonNul
   }
 }
 
+/**
+ * @param profileOf         fixture → its profile
+ * @param profilesRevision  () → a number that changes whenever a profile does
+ * @param now               the clock reading the first frame's dt is taken from
+ */
 function createRenderer({ profileOf, profilesRevision = () => 0, now = performance.now() }: {
   profileOf: (fixture: RenderFixture) => Profile;
   profilesRevision?: () => number;
   now?: number;
 }): Renderer {
+  // The pattern layer, one entry per light: a par is one, each cell of an LED
+  // bar another (see shared/rig.js). On a rig of pars, entry i is fixture i.
   const unitColors = Array.from({ length: 4 }, blankUnit);
   const twinkle = new Array(4).fill(0);
+  // The bars' own dice, when they run a picture apart from the pars', and
+  // the panels'.
   const pixelTwinkle = new Array(4).fill(0);
   const panelTwinkle = new Array(4).fill(0);
 
-  // Fade only the base layer so live bursts and pinned fixtures stay immediate.
+  // ── Crossfades ─────────────────────────────────────────────────────────────
+  // The show asks for a fade where the music does — long into a breakdown,
+  // none into a drop — and each light blends from what it was last showing to
+  // what the new look renders, frame by frame, so a moving pattern keeps
+  // moving underneath. Only the pattern layer fades: a burst or a pinned
+  // fixture sits on top.
   const shown: UnitLight[] = [];     // the pattern layer as it went out last frame, per light
   let fade: { start: number; ms: number; from: UnitLight[] } | null = null;
   let syncTest: { start: number; until: number } | null = null;
   let identify: { ids: Set<number>; start: number; until: number } | null = null;
   const adopted = { fade: 0, syncTest: 0, identify: 0 };
 
+  // The continuous expression channel, smoothed towards whatever the show last
+  // asked for, and how far the expressive patterns have travelled.
   let expression: Expression = { ...EXPRESSION_REST };
   let expressionPhase = 0;
   let lastReading: MusicalTime | null = null;
   let lastNow = now;
 
+  // Where the pattern counts its steps from. The live state carries the anchor
+  // a scene set; this is the one in force, which also moves when the music
+  // jumps. Only a *new* anchor from the state replaces it.
   let anchor: PatternAnchor | null = null;
   let givenAnchor: PatternAnchor | null = null;
   let lastRandomKey: string | null = null;
@@ -276,33 +397,48 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
   let rigKey = '';
   const limiter = createFlashLimiter();
 
-  // Keep base and voices in one stepper so checkpoints, expiry and resets share their lifetimes.
+  // ── Effects ────────────────────────────────────────────────────────────────
+  // The base effect and the voices keep their state in one stepper, so a
+  // preview checkpoint, an expiry and a reset all see the same lifetimes.
   const stepper = new EffectStepper();
   const guard = new HdFlashGuard(RENDER_SAFETY_DEFAULTS.hdFlashIntervalMs);
+  // The strobe's permit per lamp, whichever strobe draws it (flash-guard.ts).
   const strobeGuard = new StrobeLampGuard();
   const hardwareGuard = new HardwareGuard();
   const hardwareStrobeGuard = new HardwareGuard();
   const hardwareClock = new HardwareClock();
   let lastSweep = -Infinity;
-  // Use the frame grid’s phase so render jitter cannot invent extra strobe frames.
+  // The effects count time from the frame grid's phase, so a frame a few ms
+  // early or late is still its own frame (strobe.ts counts in frames).
   let gridPhase: number | null = null;
   let lastEffectNow: number | null = null;
+  // Per unit, the kind that drew the base layer; null for a pattern, the wash or black.
+  // `baseKinds` says whether any entry may be set, so a rig of patterns pays nothing for it.
   const baseKind: (string | null)[] = [];
   const baseOwner: (string | undefined)[] = [];
   let baseKinds = false;
+  // Per unit, the kind on top this frame: what Hue Dynamics' flash limit reads.
   const topKind: (string | null)[] = [];
   let base: {
     key: string; id: string; kind: string; pattern: string; revision: number | null; content: string;
     seed: Seed; startedAtMs: number;
   } | null = null;
-  // Track launch identity separately from musical anchors so seeks preserve wall-clock lifetimes.
+  // Each voice id's launch, so a relaunch under the same id starts afresh, and
+  // its musical anchor, which moves when the music jumps while its wall times stay.
   const voiceRecords = new Map<string, VoiceRecord>();
+  // The strobe voices whose state the stepper holds: one gone hands its permit to the next (layer.ts).
   const strobeTrail = new Set<string>();
+  // The energy burst played as a voice for an input that names no voices.
   let compat: { energy: string; voice: VoiceFrame } | null = null;
+  // The layouts the effects play on, with each cell's fixture id and Hue flag
+  // taken from the patch as it is now (the cached rig keeps the ids it was built with).
   let baseCells: { key: string; layout: Layout; ids: number[] } | null = null;
   let voiceCells: { key: string; layout: Layout; ids: number[] } | null = null;
   let identityKey = '';
 
+  // The sequence's clip table, and what playing it remembers. Per unit, the
+  // clip on top this frame (over the look's layer, under overrides and
+  // voices) and the kind that drew it; `seqUnits` says whether any is set.
   let sequence: SequenceTable | null = null;
   const seqRun = newSequenceRun();
   const seqLight: (UnitLight | null)[] = [];
@@ -310,12 +446,17 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
   const seqOwner: (string | undefined)[] = [];
   let seqUnits = false;
 
+  // Commands for the base effect: decided at the next frame, in order, once.
   const commandQueue: { seq: number; cmd: string; arg?: unknown; intent: BaseIntent | null }[] = [];
   let commandResults: CommandResult[] = [];
   let processedSeq = 0;
   let appliedSeq = 0;
 
-  // Reset effect history on a new grid or patch while adopting each voice launch only once.
+  /**
+   * Every effect starts again: the state and the flash histories. A new grid
+   * also forgets the launches and the clock; a new patch, found partway
+   * through a frame, keeps this frame's, so its voices start again only once.
+   */
   function resetEffects(clock = true): void {
     stepper.reset();
     guard.reset();
@@ -324,21 +465,25 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     if (!clock) return;
     voiceRecords.clear();
     strobeTrail.clear();
+    // A clip's wall origin was on the old clock: its laps start again.
     endSequence(seqRun, stepper);
     lastEffectNow = null;
   }
 
+  /** This frame's time on the effects' clock, which counts from the grid's phase. */
   function effectNow(now: number, gridOriginMs: number | undefined): number {
     let phase = gridPhase;
     if (gridOriginMs !== undefined && Number.isFinite(gridOriginMs)) phase = gridPhaseOf(gridOriginMs);
     else if (phase === null) phase = gridPhaseOf(now);
     if (gridPhase !== null && Math.abs(phase - gridPhase) > 1e-6) {
+      // Another grid (the engine restarted): what the effects counted no longer lines up.
       resetEffects();
     }
     gridPhase = phase;
     return now - phase;
   }
 
+  /** Each cell of a layout with its fixture's current id, and its Hue flag as the renderer reads Hue lamps. */
   function effectCells(layout: Layout, rigNow: Rig<RenderFixture>, fixtures: RenderFixture[]): { layout: Layout; ids: number[] } {
     const { list } = layout.units;
     const ids = list.map((u) => fixtures[rigNow.units[u].fixture].id);
@@ -347,6 +492,12 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     return { layout: { ...layout, units: { ...layout.units, noFlash } }, ids };
   }
 
+  /**
+   * The base layout and the voices' layout for this frame. A change of what
+   * the patch is (its fixtures, their ids, profiles and places) starts every
+   * effect and every lamp's flash history again; the look's split or pixel
+   * map only moves the base. Addresses, universes and trims change nothing here.
+   */
   function cellsFor(input: FrameInput, rigNow: Rig<RenderFixture>): void {
     const ids = input.fixtures.map((f) => f.id).join(',');
     const identity = `${rigKey}|${ids}`;
@@ -396,11 +547,19 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     };
   }
 
+  /**
+   * The base effect's instance for this frame. Its public id and seed come
+   * from the look's launch (`base:<pattern>:<anchor step>`); a change of
+   * content, revision, layout or launch starts it again, a palette edit does
+   * not. The strobe is the exception: its per-lamp permit carries on through
+   * a relaunch or an edit, or relaunching a strobe look would outrun its cap.
+   */
   function baseInstance(input: FrameInput, anchorStepNow: number, division: number, nowMs: number): EffectInstance {
     const spec = input.effect!;
     const id = `base:${input.pattern}:${anchorStepNow}`;
     const content = effectContentKey(spec);
     const revision = input.effectRevision ?? null;
+    // The music jumping re-anchors the look: a new generation even on the step it had.
     const key = canonical([id, revision, content, baseCells!.key, anchor?.epoch ?? null]);
     if (!base || base.key !== key) {
       relaunchEffect(stepper, base, id, spec.kind);
@@ -409,6 +568,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     return { id, spec, seed: base.seed, anchorBeat: anchorStepNow / division, startedAtMs: base.startedAtMs, targets: null };
   }
 
+  /** The energy burst as a voice, as /api/energy has always played it: look colour A, every fixture. */
   function compatVoice(input: FrameInput, now: number): VoiceFrame | null {
     const energy = input.energy;
     if (!energy) { compat = null; return null; }
@@ -416,30 +576,46 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     const spec = energyEffectSpec(energy);
     if (!spec) { compat = null; return null; }
     const id = `energy:${energy}`;
+    // The hold strobe stays on the global beat grid (anchor 0), as it always flashed.
     compat = { energy, voice: { id, spec, targets: null, tier: energy === HOLD_STROBE ? 'strobe' : 'voice', launchSeq: 0,
       startedAtMs: now, untilMs: null, anchorBeat: 0, seed: seedFrom(id) } };
     return compat.voice;
   }
 
+  /**
+   * The voices playing now, on the effects' clock, each with the musical
+   * anchor it plays from. A voice not started yet, or ended, plays nothing
+   * (and suppresses nothing). The music jumping (a new epoch) moves a voice's
+   * anchor to the start of the beat it is now in; its launch, deadline, seed
+   * and wall-clock state stay, and its kind takes the jump as it takes a
+   * position that went back.
+   */
   function playingVoices(given: RenderInput, input: FrameInput, reading: MusicalTime, now: number, phase: number):
     { voices: VoiceFrame[]; admitted: Set<VoiceFrame> } {
     const admitted = new Set<VoiceFrame>();
     const legacy = given.voices === undefined;
+    // A voices field, even an empty one, means the caller owns every voice:
+    // the renderer plays the energy burst itself only for an input without one.
     if (!legacy) compat = null;
     const synthesized = legacy ? compatVoice(input, now) : null;
     const source = legacy ? (synthesized ? [synthesized] : []) : input.voices;
     const seen = new Set<string>();
     const voices: VoiceFrame[] = [];
+    // After a jump in the music, the beat a voice re-anchors on: its scene's when the auto show says which, else where the music is.
     const beatNow = reading.anchorBeat !== undefined && Number.isFinite(reading.anchorBeat) ? reading.anchorBeat : reading.beatPos;
     for (const v of source) {
       if (!v || typeof v.id !== 'string' || !v.spec || typeof v.spec.kind !== 'string') continue;
       if (!(Number.isFinite(v.startedAtMs) && now >= v.startedAtMs)) continue;
+      // Half-open: gone at its deadline. A deadline left out is none.
       if (v.untilMs != null && !(now < v.untilMs)) continue;
       if (seen.has(v.id)) continue;
       seen.add(v.id);
+      // The hold strobe keeps the global beat grid it has always flashed on,
+      // played by the renderer itself or as the energy endpoints' voice.
       const holdsGrid = (legacy && v === compat?.voice) || v.holdsGrid === true;
       const anchorBeat = voiceAnchor(voiceRecords, stepper, v, voiceLaunchKey(v), reading.epoch, beatNow, holdsGrid);
       const played: VoiceFrame = { ...v, startedAtMs: v.startedAtMs - phase, untilMs: v.untilMs == null ? null : v.untilMs - phase, anchorBeat };
+      // Only the renderer's own burst, for an input that says nothing of safety, keeps the old admission.
       if (legacy && given.safety === undefined && v === compat?.voice) admitted.add(played);
       voices.push(played);
     }
@@ -448,16 +624,22 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     return { voices, admitted };
   }
 
+  /** Is a voice on at least one fixture of the patch: null covers them all, an unknown id none. */
   function coversPatch(v: VoiceFrame, ids: readonly number[]): boolean {
     return v.targets === null || v.targets.some((id) => ids.includes(id));
   }
 
   const NO_COMMANDS = { due: [], decide() {} };
 
+  /**
+   * Decide this frame's commands: refused ones at once, the base's own when
+   * the base effect renders (after its initialization, before its sample).
+   */
   function takeCommands(input: FrameInput): { due: { seq: number; cmd: EffectCommand; arg?: Colour }[]; decide: (applied: boolean) => void } {
     if (!commandQueue.length) return NO_COMMANDS;
     const queued = commandQueue.splice(0);
     const due: { seq: number; cmd: EffectCommand; arg?: Colour }[] = [];
+    // Each command's outcome, in the order they came; the ones due are decided by the frame.
     const decided: (CommandResult | null)[] = [];
     const def = input.effect ? kindOf(input.effect.kind) : null;
     const now = baseIntentOf(input);
@@ -491,6 +673,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     };
   }
 
+  /** The rig as lights, rebuilt only when what it depends on changes. */
   function rigFor(fixtures: RenderFixture[]): Rig<RenderFixture> {
     const key = rigSignature(fixtures, profilesRevision());
     if (!rig || key !== rigKey) {
@@ -500,6 +683,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     return rig;
   }
 
+  /** Size the per-light buffers to the rig. Cheap when nothing changed. */
   function sizeUnitBuffers(count: number): void {
     while (unitColors.length < count) unitColors.push(blankUnit());
     if (unitColors.length > count) unitColors.length = count;
@@ -530,6 +714,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     };
   }
 
+  /** A fade or a sync test asked for since the last frame starts now. */
   function adoptRequests(input: RenderInput): void {
     const f = input.fade;
     if (f && f.seq !== adopted.fade) {
@@ -548,11 +733,17 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     }
   }
 
+  /** The fixtures identifying themselves this frame, or null. */
   function identifying(now: number): { ids: Set<number>; start: number } | null {
     if (identify && now >= identify.until) identify = null;
     return identify;
   }
 
+  /**
+   * A fixture showing itself (identify.ts): its own picture, over the look
+   * and through the master and a blackout, at its trim. No strobe, no burst,
+   * no flash limit — the picture is slower than any of them would allow.
+   */
   function writeIdentified(input: RenderInput, store: FrameStore, fix: RenderFixture, cells: ChannelMap[] | null,
     elapsed: number, now: number): void {
     const plain: RenderInput = { ...input, masterDimmer: 255, pattern: '', flashLimit: false };
@@ -561,7 +752,15 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     else writePar(plain, store, fix, lights[0], null, now);
   }
 
-  // Re-anchor after clock epochs so patterns cannot keep an anchor from the old transport position.
+  /**
+   * The step the pattern is on, counted from its anchor on the step grid.
+   *
+   * The anchor is set when a scene changes the pattern or the division (see
+   * patch.js). When the music itself jumps — a seek, a new track, another
+   * source taking over the clock — the old anchor belongs to a beat position
+   * that no longer exists, so the pattern re-anchors: on its scene's beat when
+   * the auto show says which that is, else where the music now is.
+   */
   function patternStep(input: RenderInput, reading: MusicalTime): { step: number; anchor: number; division: number } {
     const division = Math.max(1, input.beatDivision || 1);
     const given = input.patternAnchor;
@@ -570,7 +769,8 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     }
     givenAnchor = given ? { step: given.step, epoch: given.epoch } : null;
     if (!anchor || anchor.epoch !== reading.epoch) {
-      // Use the scene’s scheduled beat after seeking so phase matches uninterrupted playback.
+      // After a seek in the auto show, from the beat its scene was scheduled
+      // on, so the chase is on the step that playing through would have reached.
       const from = reading.anchorBeat !== undefined && Number.isFinite(reading.anchorBeat)
         ? reading.anchorBeat : reading.beatPos;
       anchor = { step: anchorStep(from, division), epoch: reading.epoch };
@@ -578,9 +778,19 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     return { step: stepAt(reading.beatPos, anchor.step, division), anchor: anchor.step, division };
   }
 
-  // Derive pattern steps from musical position so timers and seeks cannot cause phase drift.
+  /**
+   * Write the pattern layer for this frame, from the musical clock, through
+   * the layer the rehearsal preview draws with too (shared/layer.js).
+   *
+   * The step is a function of where the music is, not a counter a timer
+   * advances, so it cannot drift off the beat and lands on the same step
+   * however the moment was reached. Deterministic patterns render every
+   * frame, so a colour or a split shows the moment it is set rather than on
+   * the next beat. Stopped, the layer holds what it last showed.
+   */
   function renderPattern(input: FrameInput, rigNow: Rig<RenderFixture>, reading: MusicalTime): void {
     if (!input.running) return;
+    // A pattern is no effect: Hue Dynamics' flash limit does not cover it.
     if (baseKinds) { baseKind.fill(null); baseKinds = false; }
     const pixelPattern = rigNow.hasPixels && input.pixelPattern ? input.pixelPattern : null;
     const panelPattern = rigNow.hasPanels && input.panelPattern && PATTERN_FUNCS[input.panelPattern] ? input.panelPattern : null;
@@ -599,6 +809,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       panelPattern,
     };
     if (!known && !knownPixel && !panelPattern) {
+      // Nothing to draw, but a split look's wash still holds.
       renderLayer(rigNow, look, null, setUnitColor, { skipPattern: true, skipPixelPattern: true, skipPanelPattern: true });
       return;
     }
@@ -645,6 +856,12 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     }, setUnitColor, { skipPattern, skipPixelPattern, skipPanelPattern });
   }
 
+  /**
+   * The base effect in place of the pattern, over the look's split cells,
+   * with the split look's wash holding colour B on its own lamps as it does
+   * under a pattern. Stopped, the layer holds what it last showed and the
+   * effect keeps its state; a command still reaches that state.
+   */
   function renderBaseEffect(input: FrameInput, rigNow: Rig<RenderFixture>, reading: MusicalTime, fb: FrameBase,
     commands: ReturnType<typeof takeCommands>): void {
     const cells = baseCells!;
@@ -688,11 +905,18 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     }
   }
 
+  /** Does this frame play the sequence: a table, a transport, and the input naming that table. */
   function sequencePlays(input: FrameInput): boolean {
     return !!sequence && !!input.sequenceTransport && input.sequenceRevision === sequence.revision;
   }
 
-  // Compose sequence clips separately so uncovered fixtures retain the base look.
+  /**
+   * The sequence's clips over the look, on the voices' cells (every fixture,
+   * the whole stage): on each fixture a clip covers, the clip on top is its
+   * base, black where that clip leaves it dark; elsewhere the look shows.
+   * Kept apart from the look's layer, so a stopped or random look underneath
+   * still holds its own picture for when the clip ends.
+   */
   function renderSequence(input: FrameInput, rigNow: Rig<RenderFixture>, fb: FrameBase | null): void {
     if (seqUnits) { seqLight.fill(null); seqKind.fill(null); seqOwner.fill(undefined); seqUnits = false; }
     if (!fb || !sequencePlays(input)) {
@@ -715,15 +939,26 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     return { col: { r: 255, g: 255, b: 255, w: 255, a: 0, uv: 0 }, dim: lit ? 255 : 0, strobe: 0 };
   }
 
+  /** A Hue lamp, or a light that follows one: a bridge cannot flash. */
   function hueLamp(fix: RenderFixture): boolean {
     return fix.hue || HUE_PROFILE_IDS.has(fix.profileId);
   }
 
+  /**
+   * What one light shows this frame before the masters: a burst over
+   * everything, a pinned fixture over the look, else the pattern layer
+   * (partway through a fade if one is running). The music scales the pattern
+   * underneath manual effects and fixture overrides; silence puts out what the
+   * music drives, and a pinned fixture is not driven by the music — it holds
+   * through the quiet the same as it holds through the level above.
+   */
   function lightOf(u: number, fix: RenderFixture, energy: EnergyLook | null, fadeT: number,
     target: ShowDynamics | null): LightValue {
-    // Keep the shown base under bursts so later fades do not capture the burst.
+    // Kept whatever sits on top of it this frame, so a fade that starts under
+    // a burst starts from the look and not from the burst.
     const layer = fade && fade.from[u] ? blendFixture(fade.from[u], unitColors[u], fadeT) : unitColors[u];
     shown[u] = layer;
+    // A clip of the sequence stands in for the look on its fixture; a fade of the look goes on under it.
     const clip = seqUnits ? seqLight[u] : null;
     const below = clip ?? layer;
 
@@ -745,18 +980,34 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     }
 
     const pinned = fix.override && fix.override.enabled;
+    // Glow rides the level on its own curve, as the base or a clip as it does as a voice: not multiplied again.
     if (!energy && !pinned && !ridesLevel(clip ? seqKind[u] : baseKind[u])) dim *= expression.level;
     if (target?.level === 0 && !energy && !pinned) dim = 0;
     return { col, dim, strobe };
   }
 
-  // Multiply masters and trim so dim fixtures retain the same proportional response.
+  // Two scalers sit above whatever is driving a fixture, and both apply to
+  // every source of light including an energy override. The grand master is
+  // the operator's one hand on the whole rig; the per-fixture trim is for the
+  // lamp hanging a metre from someone's face.
+  //
+  // Both multiply rather than clamp. A trim that clipped — min(level, trim) —
+  // would leave a fixture already below the line untouched and only bite at
+  // the top, so the bottom of the throw would go dead and two fixtures on
+  // different trims would converge as they dimmed. Multiplying keeps the whole
+  // range proportional: half the trim is half the output at every level.
   function mastersOf(input: RenderInput, fix: RenderFixture): number {
     return (input.masterDimmer / 255) * (fix.maxBrightness / 255);
   }
 
+  /**
+   * The strobe asked for — `{ raw, fnId }` — or null for none. `clip`: a
+   * clip of the sequence is the fixture's base, so the look's strobe is not
+   * its to run.
+   */
   function strobeRequest(input: RenderInput, energy: EnergyLook | null, strobe: number, clip = false): StrobeRequest | null {
-    // Force standard strobe for energies and clips so they cannot inherit a prior ramp or break function.
+    // Energy overrides force 'standard' strobe so a colour-strobe burst never
+    // inherits a slow ramp/break function from the prior segment; a clip likewise.
     const own = !!energy || clip;
     let raw = own ? strobe : (input.pattern === 'strobe' ? input.strobeSpeed : strobe);
     if (!(raw > 0)) return null;
@@ -765,6 +1016,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       limitHz: input.flashLimit ? FLASHES_PER_SECOND : undefined };
   }
 
+  /** The strobe channel's value, or null to leave it closed. */
   function strobeValue(request: StrobeRequest | null): number | null {
     if (!request) return null;
     const fn = STROBE_FUNCTIONS.find((f) => f.id === request.fnId) || STROBE_FUNCTIONS[0];
@@ -793,6 +1045,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     return softStrobeLit(request, now) ? 1 : 0;
   }
 
+  /** A fixture that is one light. */
   function writePar(input: RenderInput, store: FrameStore, fix: RenderFixture, { col, dim, strobe: flash }: LightValue,
     energy: EnergyLook | null, now: number, clip = false): void {
     const dmx = store.getBuffer(fix.universe);
@@ -807,6 +1060,12 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     writeEmitters(dmx, base, ch, col, ms * (dim / 255));
   }
 
+  /**
+   * An LED bar: the channels the bar shares, then every cell's own. Each cell
+   * comes out as a par with the same channels would at its level (see
+   * cellDrive in look-math.js), so a look the same on every cell drives a bar
+   * exactly as it drives a par, and kill or silence closes the bar's dimmer.
+   */
   function writeBar(input: RenderInput, store: FrameStore, fix: RenderFixture, cells: ChannelMap[], lights: LightValue[],
     energy: EnergyLook | null, now: number, clip = false): void {
     const dmx = store.getBuffer(fix.universe);
@@ -814,6 +1073,8 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     const profile = profileOf(fix);
     const ch = profile.channelMap;
     const ms = mastersOf(input, fix);
+    // A strip longer than a universe runs on into the next ones, whole cells
+    // to a universe (shared/placement.ts); anything else is all on its own.
     const strip = stripOf(profile);
 
     if (strip) writeStripDefaults(store, fix, strip, profile.defaults);
@@ -844,7 +1105,18 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     }
   }
 
+  /**
+   * Render one frame into `store` (the universes module's API).
+   *
+   * @param given    renderInput(): the look, masters, patch and requests
+   * @param reading  the Conductor's `{ beatPos, bpm, epoch, anchorBeat? }`
+   * @param now      this frame's time, on the clock `given`'s request times use
+   * @param store    the universe buffers to write
+   * @param gridOriginMs  where the frame grid starts on `now`'s clock (see Renderer.frame)
+   */
   function frame(given: RenderInput, reading: MusicalTime, now: number, store: FrameStore, gridOriginMs?: number): Rig<RenderFixture> {
+    // Fields a hand-built input leaves out get their defaults here, once, so
+    // everything below reads one complete input.
     const input = withInputDefaults(given);
     const dt = Math.max(0, Math.min(0.25, (now - lastNow) / 1000));
     lastNow = now;
@@ -853,6 +1125,11 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     const target = input.showDynamics;
     expression = blendExpression(expression, target, dt);
 
+    // How fast the expressive patterns travel across the rig: motion decides
+    // how many beats one crossing takes, eight when the track is barely moving
+    // and two when it is driving. Counted in beats of the musical clock, so the
+    // sweep follows the track's own tempo — and a jump in the music does not
+    // fling it.
     const dBeats = lastReading && lastReading.epoch === reading.epoch
       ? Math.min(4, Math.max(0, reading.beatPos - lastReading.beatPos)) : 0;
     lastReading = reading;
@@ -862,6 +1139,8 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     hardwareFor(input);
     sizeUnitBuffers(rigNow.units.length);
 
+    // The effects' clock, and the real time since their last frame (not the
+    // expression's clamped seconds: a Light DJ fade replays the whole gap).
     const effNow = effectNow(now, gridOriginMs);
     const effDt = lastEffectNow === null ? 0 : Math.max(0, effNow - lastEffectNow);
     lastEffectNow = effNow;
@@ -877,6 +1156,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     let fb: FrameBase | null = null;
     if (effects) {
       cellsFor(input, rigNow);
+      // Disco's automatic strobe stands down for any manual strobe playing, whichever voice is on top.
       const manualStrobeActive = voices.some((v) => v.spec.kind === 'strobe' && coversPatch(v, voiceCells!.ids));
       fb = frameBaseOf(input, reading, effNow, effDt, input.safety.acknowledged, manualStrobeActive);
     }
@@ -889,6 +1169,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     }
     renderSequence(input, rigNow, fb);
 
+    // The voices' cells, by unit: the voice on top of each, or null for the base.
     let voiceTop: (EffectSlot | null)[] | null = null;
     if (voices.length && fb) {
       const cells = voiceCells!;
@@ -898,10 +1179,20 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       for (let k = 0; k < list.length; k++) voiceTop[list[k]] = winners[k];
     }
 
-    // Reconcile universes each frame so readdressed fixtures take effect without another invalidation path.
+    // Allocate a buffer for every universe the patch now spans and retire the
+    // ones it left. Done every frame rather than on patch edits: a fixture
+    // moved between universes takes effect immediately, and no caller has to
+    // remember.
     store.sync(input.universes);
 
-    // Clear whole universes so removed or readdressed fixtures cannot leave orphan channels latched.
+    // Clear every universe each frame, then let each fixture write its own
+    // channels back. Zeroing per-fixture ranges instead used to leave any
+    // channel no *current* fixture covers latched at its last value forever:
+    // delete a fixture, re-address one, load a smaller show, or map a profile
+    // offset past its channelCount, and the orphaned channels kept streaming
+    // with no way to clear them — master blackout only walked the current
+    // fixtures, so it could not turn those lights off either. A 512-byte
+    // memset per universe per frame is far cheaper than the bug.
     store.clearAll();
 
     let fadeT = 1;
@@ -912,12 +1203,16 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
 
     const { fixtures } = input;
     const ident = identifying(now);
+    // The Hue sync test, forced on every fixture above the voices.
     const sync = syncTestEnergy(now);
 
+    // With the buffers already cleared, a blackout is simply empty universes —
+    // but for a fixture asked to identify itself.
     if (input.masterBlackout) {
       hardwareGuard.blackout();
       hardwareStrobeGuard.blackout();
       if (input.flashLimit) limiter.commit(0, now);
+      // Dark is no rise: a lamp coming back bright afterwards is a new one.
       if (guard.brightCount) for (let u = 0; u < rigNow.units.length; u++) guard.clear(u);
       if (strobeGuard.liveCount) for (let u = 0; u < rigNow.units.length; u++) strobeGuard.clear(u);
       if (ident) {
@@ -927,9 +1222,15 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       }
       return rigNow;
     }
+    // Each light: its source (a burst or a voice, a pinned fixture, or the
+    // pattern layer partway through any fade), then the music's level on top.
+    // A voice stands where the energy burst always stood: over a pinned
+    // fixture and a fixture's blackout alike, at its own level.
     const all: LightValue[][] = [];
     const owned: (EnergyLook | null)[] = [];
+    // Fixtures whose base is a clip of the sequence (a bar when any of its cells is), as a voice owns one.
     const clipped: boolean[] = [];
+    // Which kind is on top of each unit matters only while an effect plays.
     const watch = !!voiceTop || baseKinds || seqUnits;
     let guarded = false;
     let strobed = false;
@@ -976,6 +1277,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     }
     if (guarded) limitHdRises(input, rigNow, all, effNow);
     else if (guard.brightCount) for (let u = 0; u < rigNow.units.length; u++) guard.clear(u);
+    // Only while a strobe is on top of a lamp, or one it drew is still counted as lit.
     if (strobed) limitStrobeRises(rigNow, all, effNow);
     else if (strobeGuard.liveCount) for (let u = 0; u < rigNow.units.length; u++) strobeGuard.clear(u);
     if (input.flashLimit) limitFlashes(input, all, now);
@@ -989,7 +1291,12 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     return rigNow;
   }
 
-  // Check HD rises after masters and trim so levels below the bright threshold do not spend a permit.
+  /**
+   * Hue Dynamics' per-lamp limit on its own kinds: a second bright rise of a
+   * lamp inside the interval is dark. It reads what the lamp would put out,
+   * after the masters and its trim, so a lamp a low master keeps under the
+   * threshold spends no rise; any other source on a lamp ends its held rise.
+   */
   function limitHdRises(input: FrameInput, rigNow: Rig<RenderFixture>, all: LightValue[][], nowMs: number): void {
     for (let i = 0; i < input.fixtures.length; i++) {
       const { start } = rigNow.ranges[i];
@@ -1004,7 +1311,13 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     }
   }
 
-  // Share strobe permits across winning instances so handovers cannot raise a lamp early.
+  /**
+   * The strobe's permit on each lamp, across every strobe that draws it: one
+   * ending over another, or a strobe look showing again from under a strobe
+   * voice, cannot raise a lamp sooner than one strobe alone could. It reads
+   * the level the strobe asks for, before the masters: a fader moved is not
+   * a flash.
+   */
   function limitStrobeRises(rigNow: Rig<RenderFixture>, all: LightValue[][], nowMs: number): void {
     const frameIndex = strobeFrameOf(nowMs);
     for (let i = 0; i < all.length; i++) {
@@ -1044,6 +1357,11 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     return sum / all.length;
   }
 
+  /**
+   * Hold this frame inside the flash limit (flash-limit.ts): scale every
+   * light towards the brightness the limiter allows, then tell it what went
+   * out.
+   */
   function limitFlashes(input: RenderInput, all: LightValue[][], now: number): void {
     // Fit emitters and dimmers before measuring: RGB fallback changes real brightness.
     const luminance = rigLuminance(input, all), allowed = limiter.target(luminance, now);
@@ -1072,6 +1390,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
 
   return {
     frame,
+    /** Forget the cached rig, so the next frame builds it afresh. */
     invalidateRig() { rig = null; },
     command(seq, cmd, arg, intent = null) {
       commandQueue.push({ seq, cmd, arg, intent });
@@ -1090,6 +1409,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     },
     commandStatus() { return { processed: processedSeq, applied: appliedSeq }; },
     setSequence(table) {
+      // From another thread or a test: anything that is not a table is none.
       const ok = !!table && typeof table === 'object' && Number.isFinite(table.revision) && Array.isArray(table.lanes) && Array.isArray(table.clips);
       sequence = ok ? table : null;
       retable(seqRun, sequence, stepper);
@@ -1097,6 +1417,16 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
   };
 }
 
+/**
+ * Route one resolved colour onto the channels a map names. One resolution of
+ * colour × scale for every emitter, shared with the rehearsal preview.
+ *
+ * A lamp with separate warm and cool white dies (a Hue bulb) rather than one
+ * white emitter and an amber one gets them from the two components that
+ * already carry exactly that meaning: the neutral white content, and the warm
+ * content. "Cool White" (white at full) and "Warm White" (white and amber
+ * together) then land on such a lamp as the whites they are named after.
+ */
 function writeEmitters(dmx: Dmx, base: number, ch: ChannelMap, col: Colour, scale: number): void {
   const v = outputEmitters(col, scale, ch);
   if (ch.red !== undefined)       dmx[base + ch.red]       = v.r;

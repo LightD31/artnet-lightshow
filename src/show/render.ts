@@ -1,9 +1,28 @@
-// Clamp final values to the patch schema so timer callbacks cannot fail on generated intents.
+/**
+ * Intents to Art-Net patches.
+ *
+ *     musical events -> lighting intent -> DMX / ART-NET OUTPUT
+ *
+ * This is the only file in the show layer that knows what a patch field is
+ * called. Everything above it reasons about music and about gestures; this
+ * translates a gesture into whatever the rig in front of it happens to be, and
+ * enforces the two rules the timeline itself has to guarantee:
+ *
+ *   Every value must be one the patch schema accepts. The timeline fires from a
+ *   timer callback, so an out-of-range number is not a bad look — it is an
+ *   uncaught exception that ends the process mid-set and leaves the rig stuck
+ *   on whatever it was last told. Scale first, then clamp, always.
+ *
+ *   Every burst must get the length it asked for. Bursts come from independent
+ *   passes that cannot see each other, and two overlapping ones mean the first
+ *   is cut off before the fixtures have finished responding to it.
+ */
 
 import { INTENT } from './intents.ts';
 import type { Intent, IntentKind, SceneIntent } from './intents.ts';
 import type { ShowDynamics } from '../types/rig.ts';
 
+/** The patch fields a timeline event sets. */
 export interface PatchData {
   pattern?: string;
   colorA?: number;
@@ -26,6 +45,7 @@ export interface PatchData {
   energyOverride?: null;
 }
 
+/** A burst: which one, and for how long. */
 export interface EnergyData {
   id: string;
   durationMs: number;
@@ -33,6 +53,7 @@ export interface EnergyData {
 
 interface EventBase {
   timeMs: number;
+  /** The director's decision behind the event, for the performance view. */
   source?: string;
   kind?: IntentKind;
 }
@@ -47,24 +68,41 @@ export interface EnergyEvent extends EventBase {
   data: EnergyData;
 }
 
+/** One entry of the timeline the playback loop fires. */
 export type TimelineEvent = PatchEvent | EnergyEvent;
 
 type ColourSlot = 'colorA' | 'colorB' | 'colorC' | 'colorD';
 const SLOTS: readonly ColourSlot[] = ['colorA', 'colorB', 'colorC', 'colorD'];
 
 const u8 = (n: number): number => Math.max(0, Math.min(255, Math.round(n) || 0));
+// Kept to a hundredth: a 123.7 BPM track is not at 124, and the tempo the
+// show reports is the one the free clock carries on at when the show stops.
 const clampBpm = (n: number): number => Math.max(20, Math.min(300, Math.round(n * 100) / 100 || 120));
 const division = (n: number): number => Math.max(1, Math.min(16, Math.round(n) || 1));
 
+// Loudest wins when two bursts collide. The order is the vocabulary's own:
+// a glow is a lift, a punch is a stab, and the three above them are flashes.
 const BURST_PRIORITY: Record<string, number> = {
   glow: 0, kill: 1, 'uv-wash': 2, 'color-strobe': 3, blinder: 4, 'white-strobe': 5,
 };
 
+// A burst may not start until the previous one has fully played out, plus this
+// gap. Without it a second burst 150 ms in clips the first one in half, and at
+// a 300 ms minimum length that is most of it.
 const DEBOUNCE_SAFETY_MS = 60;
 
+// Scenes from these sources leave any running burst alone. A build-up phase or
+// a hype pattern is layered *under* a burst that is already playing, so
+// clearing the energy override there would cancel the very thing it decorates.
 const KEEPS_ENERGY = new Set(['buildup:tension', 'buildup:rise', 'buildup:peak',
   'drop:hype-pattern']);
 
+/**
+ * Render planned intents into the timeline the playback loop fires.
+ *
+ * Returns `[{ timeMs, action: 'patch' | 'energy', data }]`, time sorted, with
+ * bursts debounced.
+ */
 function renderIntents(intents: readonly Intent[], { blackoutIndex = 0 } = {}): TimelineEvent[] {
   const events: TimelineEvent[] = [];
 
@@ -121,6 +159,8 @@ function renderIntents(intents: readonly Intent[], { blackoutIndex = 0 } = {}): 
       default:
         break;
     }
+    // Keep the director's actual decision alongside the output, including
+    // after burst arbitration, so the performance UI can explain the show.
     for (let i = first; i < events.length; i++) {
       events[i].source = intent.source;
       events[i].kind = intent.kind;
@@ -139,13 +179,21 @@ function sceneData(intent: SceneIntent): PatchData {
   });
 
   if (intent.fadeMs && intent.fadeMs > 0) data.fadeMs = Math.min(10000, Math.round(intent.fadeMs));
+  // Every scene says whether it is split, so a drop's whole-rig hit after a
+  // split chorus is whole-rig rather than inheriting the split.
   data.split = Number.isInteger(intent.split) ? intent.split as number : null;
+  // How the picture lies over the rig's LED bars; only planned when it has any.
   if (intent.pixelMap) data.pixelMap = String(intent.pixelMap);
+  // The bars' own picture, planned only on a rig that has bars. A scene that
+  // plans one says so every time, null included, so a whole-rig moment after
+  // a two-part look is whole-rig; a picture that plays once says how long.
   if (intent.pixelPattern !== undefined) {
     data.pixelPattern = intent.pixelPattern ? String(intent.pixelPattern) : null;
     data.pixelSpan = intent.pixelSpan && intent.pixelSpan > 0 ? Math.min(4096, intent.pixelSpan) : null;
     data.pixelFrom = intent.pixelFrom && intent.pixelFrom > 0 ? Math.min(1, intent.pixelFrom) : null;
   }
+  // The panels' own picture, planned only on a rig that has panels, and said
+  // every time for the same reason.
   if (intent.panelPattern !== undefined) data.panelPattern = intent.panelPattern ? String(intent.panelPattern) : null;
   if (intent.beatDivision != null) data.beatDivision = division(intent.beatDivision);
   if (intent.strobeSpeed != null) data.strobeSpeed = u8(intent.strobeSpeed);
@@ -157,7 +205,14 @@ function sceneData(intent: SceneIntent): PatchData {
   return data;
 }
 
-// Apply same-time patches before bursts so clearing an old override cannot cancel a new burst.
+/**
+ * Sort by time; at the same instant patches fire before bursts, and insertion
+ * order is preserved within each.
+ *
+ * The patch-first rule matters: a section boundary and a burst can land on the
+ * same downbeat, and the boundary's `energyOverride: null` would otherwise
+ * cancel the burst that started a moment earlier on the same millisecond.
+ */
 function sortEvents<E extends { timeMs: number; action: string }>(events: readonly E[]): E[] {
   return events
     .map((event, index) => ({ event, index }))
@@ -169,7 +224,14 @@ function sortEvents<E extends { timeMs: number; action: string }>(events: readon
     .map(({ event }) => event);
 }
 
-// Resolve collisions before output so every accepted burst receives its full duration.
+/**
+ * Guarantee every emitted burst its full declared length.
+ *
+ * The next burst cannot start until the previous one has finished plus a safety
+ * gap. When two collide, the louder one wins and replaces the earlier one —
+ * a white strobe that arrives during a colour strobe is the bigger musical
+ * moment, and the colour strobe was the one that turned out to be premature.
+ */
 function debounceBursts(events: readonly TimelineEvent[]): TimelineEvent[] {
   const out: TimelineEvent[] = [];
   let active: EnergyEvent | null = null;

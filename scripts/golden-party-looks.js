@@ -1,4 +1,7 @@
-// Regenerate fixtures only for intentional visual changes so golden checks cannot silently bless regressions.
+// Golden bytes of the eighteen party looks. `node scripts/golden-party-looks.js`
+// rewrites tests/fixtures/golden/party-looks-{flat,placed}.json, which
+// tests/unit/party-looks-golden.test.js replays: re-run it only for a change
+// meant to be visible, and say so in the commit.
 
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -20,6 +23,7 @@ export const BEATS = [0, 0.5, 1.25, 3, 7.5];
 
 const BPM = 120;
 const MS_PER_BEAT = 60000 / BPM;
+// Pars back to back, as the server patches a fresh rig (1, 13, 25, 37).
 const PAR_FOOTPRINT = 12;
 
 function par(id, position) {
@@ -29,10 +33,15 @@ function par(id, position) {
   };
 }
 
+/** The rig a fresh server starts with: four pars nobody has placed. */
 export function flatRig() {
   return [0, 1, 2, 3].map((id) => par(id, null));
 }
 
+/**
+ * Eight pars on the stage plot, the front row (the plot's top, the stage or
+ * TV) first, then the back row by the audience at the bottom.
+ */
 export function placedRig() {
   const across = [10, 37, 63, 90];
   return [
@@ -41,6 +50,10 @@ export function placedRig() {
   ];
 }
 
+/**
+ * Universe 0 as far as the rig is patched, at each of BEATS. `effectOf`, when
+ * given, is what the engine asks for the look's effect (the effect library).
+ */
 export function renderLookBytes(id, fixtures, effectOf = null) {
   const last = Math.max(...fixtures.map((f) => f.address - 1 + getProfile(f).channelCount));
   const input = {
@@ -51,7 +64,9 @@ export function renderLookBytes(id, fixtures, effectOf = null) {
     safety: { acknowledged: true, hdFlashIntervalMs: 350 },
     ...(effectOf ? { effect: effectOf(id) } : {}),
   };
-  // Reuse one renderer so later samples retain the running show’s original step anchor.
+  // One renderer for the whole run: it anchors the step grid on the first
+  // frame (beat 0), so the later beats land on steps 0..7 as a running show's
+  // would. A fresh one per beat would re-anchor and see step 0 every time.
   const renderer = createRenderer({ profileOf: getProfile, profilesRevision, now: 0 });
   const store = universes.createUniverseStore(universes.allocateShared());
   return BEATS.map((beatPos) => {

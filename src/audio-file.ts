@@ -6,8 +6,21 @@ import path from 'node:path';
 import { messageOf } from './errors.ts';
 import { ffmpegCommand } from './tools.ts';
 
+/**
+ * Audio from elsewhere, made into what the analyser reads best: a WAV file in
+ * the temp folder. The analyser can open most formats itself, but not all of
+ * what a DJ's USB stick holds (AIFF with odd chunks, ALAC in an .m4a), and a
+ * conversion here fails loudly and early rather than halfway into a model.
+ */
+
+// What a file's own name may contribute to a temp file's: its extension, if it
+// is one of these, which ffmpeg then trusts over its own guess.
 const KNOWN_EXTENSIONS = new Set(['.mp3', '.wav', '.ogg', '.flac', '.m4a', '.mp4', '.aac', '.alac', '.aiff', '.aif', '.wma', '.opus']);
 
+/**
+ * Convert any audio file ffmpeg can read to a 44.1 kHz stereo WAV — with the
+ * ffmpeg on PATH, or the analysis environment's (tools.ts).
+ */
 async function toWav(inputPath: string, outputPath: string): Promise<string> {
   const ffmpeg = await ffmpegCommand();
   return new Promise((resolve, reject) => {
@@ -27,11 +40,17 @@ async function toWav(inputPath: string, outputPath: string): Promise<string> {
   });
 }
 
+/**
+ * Write `data`, an audio file called `fileName` somewhere else, to a temp WAV
+ * and return its path. The caller removes it.
+ */
 async function audioToTempWav(data: Uint8Array, fileName: string): Promise<string> {
   const ext = path.extname(fileName || '').toLowerCase();
   const id = randomUUID();
   const original = path.join(os.tmpdir(), `lightshow-audio-${id}${KNOWN_EXTENSIONS.has(ext) ? ext : ''}`);
   const wav = path.join(os.tmpdir(), `lightshow-audio-${id}-decoded.wav`);
+  // Async: a lossless file is tens of megabytes, and a synchronous write that
+  // size stalls the event loop the Art-Net frames go out on.
   await fsp.writeFile(original, data);
   try {
     return await toWav(original, wav);

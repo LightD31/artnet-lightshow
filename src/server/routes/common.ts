@@ -22,6 +22,13 @@ import type { OflLibrary } from '../ofl-library.ts';
 import type { WledClient } from '../wled.ts';
 import type { OpenRgbClient } from '../openrgb.ts';
 
+/**
+ * What every domain's routes share (src/server/routes/): the subsystems they
+ * drive, the async wrapper that hands a throw to the error handler, the upload
+ * limits, and the error handler itself.
+ */
+
+/** The live subsystems the routes drive. */
 export interface RouteDeps {
   midi: MidiController;
   autoShow: AutoShow;
@@ -32,19 +39,32 @@ export interface RouteDeps {
   analysisCache: AnalysisCache;
   integrations: ReturnType<typeof setupIntegrations>;
   applier: ReturnType<typeof createApplier>;
+  /** The Open Fixture Library online; the real one unless a test stands in. */
   oflLibrary?: OflLibrary;
+  /** Finding and asking WLEDs; the real network unless a test stands in. */
   wled?: WledClient;
+  /** Asking OpenRGB servers for their devices; the real network unless a test stands in. */
   openrgb?: OpenRgbClient;
+  /** A bridge's entertainment areas; the real bridge unless a test stands in. */
   hueAreas?: typeof listEntertainmentConfigs;
+  /** Pairing with a bridge; the real one unless a test stands in. */
   huePair?: typeof pair;
+  /** The cue stack; the one saved in config/cues.json unless a test stands in. */
   cues?: CueStore;
+  /** Stop to be started again by the supervisor; false when there is none. */
   restart?: (reason: string) => boolean;
 }
 
+// Audio uploads genuinely need headroom; GDTF files do not. Separate limits so
+// the fixture importer isn't handed a 50 MB budget it has no use for — a real
+// GDTF is a few hundred KB.
+// One file and a handful of fields per request: both are held in memory.
 export const uploadAudio = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024, files: 1, fields: 8 } });
 export const uploadGdtf = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024, files: 1, fields: 8 } });
+// An OFL fixture is plain JSON, tens of KB even for a pixel bar.
 export const uploadOfl = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 8 } });
 
+/** The subsystems, with the ones a test may stand in for filled in. */
 export type RouteContext = RouteDeps & {
   oflLibrary: OflLibrary; wled: WledClient; openrgb: OpenRgbClient; hueAreas: typeof listEntertainmentConfigs; huePair: typeof pair; cues: CueStore;
 };
@@ -61,10 +81,17 @@ export function routeContext(deps: RouteDeps): RouteContext {
   };
 }
 
+/** An async handler whose throw (or rejection) reaches the error handler. */
 export function asyncHandler(fn: (req: Request, res: Response, next: NextFunction) => unknown): RequestHandler {
   return (req, res, next) => { Promise.resolve(fn(req, res, next)).catch(next); };
 }
 
+/**
+ * The bridge a Hue route names (`/api/hue/:bridge/…`), or the first one for
+ * the routes from before there could be several (`/api/hue/…`), which keep
+ * working for a rig with one. Null once the refusal has been sent: 404 for a
+ * bridge that is not there, 409 when none is paired at all.
+ */
 export function resolveHueBridge(req: Request, res: Response): HueBridgeSettings | null {
   const bridges = output.getHueConfig().bridges;
   const id = (req.params as Record<string, string | undefined>).bridge;
@@ -79,6 +106,13 @@ export function resolveHueBridge(req: Request, res: Response): HueBridgeSettings
   return null;
 }
 
+// ─── Error handler ────────────────────────────────────────────────────────
+// Must be registered last. Without it, anything that reaches next(err) — an
+// upload over the size limit, a malformed JSON body, a throw inside an
+// asyncHandler — fell through to Express's default handler, which answers
+// with an HTML page carrying the stack trace (it only hides it when NODE_ENV
+// is 'production', which a locally-run show tool never sets). Every other
+// route here answers JSON; this makes the failure paths agree.
 export const errorHandler: ErrorRequestHandler = (err: unknown, _req, res, _next) => {
   if (res.headersSent) return;
   const e = (err ?? {}) as { code?: string; field?: string; status?: number; statusCode?: number; stack?: string; message?: string };
@@ -96,6 +130,7 @@ export const errorHandler: ErrorRequestHandler = (err: unknown, _req, res, _next
     return res.status(status).json({ ok: false, error: messageOf(err) });
   }
 
+  // Genuine server-side faults: log the detail, return only the message.
   console.error('[api] unhandled error:', e.stack ? e.stack : err);
   res.status(500).json({ ok: false, error: e.message || 'Internal error' });
 };

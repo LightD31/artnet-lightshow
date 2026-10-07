@@ -12,12 +12,20 @@ const logQuery = z.object({
   limit: z.coerce.number().int().min(1).max(1000).optional(),
 }).strict();
 
+/**
+ * Running the server: its log, its health, and restarting it.
+ */
 export function attachOpsRoutes(app: Express, ctx: RouteContext): void {
+  // Liveness for a service manager: answers when the server does, says
+  // nothing, and needs no token (it is not under /api).
   app.get('/healthz', (_req, res) => res.json({ ok: true }));
 
+  // How the server is doing, in full (health.ts).
   app.get('/api/health', (_req, res) => res.json(health({ autoShow: ctx.autoShow })));
 
-  // Require a supervisor for restart so the command cannot stop a server that nobody will relaunch.
+  // Start again — for a setting that only applies on a restart. Only the
+  // supervisor can start the server again, so without one this says so rather
+  // than stopping a show nobody will start.
   app.post('/api/server/restart', (_req, res) => {
     if (!ctx.restart || !ctx.restart('from the app')) {
       return res.status(409).json({
@@ -28,6 +36,8 @@ export function attachOpsRoutes(app: Express, ctx: RouteContext): void {
     res.json({ ok: true, restarting: true });
   });
 
+  // The log: the last entries (after `after`, at `level` and above), and the
+  // seq to ask for more after. The log view polls this while it is open.
   app.get('/api/logs', (req, res) => {
     const { after = 0, level = 'trace', limit = 500 } = validate(logQuery, req.query, 'logs');
     res.json({ ok: true, last: buffer.last, entries: buffer.since(after, { level, limit }) });

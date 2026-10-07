@@ -1,16 +1,36 @@
-// Count pulses from the musical clock so MIDI output cannot drift on an independent timer.
+/**
+ * MIDI clock out: the pattern clock, twenty-four pulses a beat, to a port.
+ *
+ * Whatever the rig keeps time by — the show's analysed grid, a CDJ, a known
+ * track, the live input, a tap — goes out as MIDI clock too, so a drum machine,
+ * a DAW or a visuals app on the same machine (through a loopback port such as
+ * loopMIDI) plays in the same time as the lights.
+ *
+ * Pulses are counted from the clock's beat position rather than timed on their
+ * own, so they cannot drift from it: every few milliseconds, as many pulses go
+ * out as the beat position has passed since the last. MIDI clock has no way to
+ * jump, so when the music does — a seek, a new track — the count is set to the
+ * new position and the receiver simply carries on at the tempo it hears.
+ */
 
 export const PULSES_PER_BEAT = 24;
+// How often the pulses are topped up. A pulse is 20 ms apart at 125 BPM; this
+// keeps each within a few milliseconds of its time, as far as the platform's
+// timers allow.
 const TICK_MS = 4;
+// Further than this from the count in one tick is a jump, not a late timer.
 const JUMP_PULSES = 2 * PULSES_PER_BEAT;
 
+/** The port, as far as sending clock goes. */
 export interface ClockOutput {
   send(type: 'clock' | 'start' | 'stop'): void;
   close(): void;
 }
 
 export interface MidiClockOptions {
+  /** Open a port by name; null when it is not there. */
   open: (name: string) => ClockOutput | null;
+  /** Where the music is, in beats. */
   beatPos: () => number;
   setInterval?: (fn: () => void, ms: number) => unknown;
   clearInterval?: (timer: unknown) => void;
@@ -40,6 +60,7 @@ class MidiClock {
     this._error = null;
   }
 
+  /** Send clock to `port`, or to nothing when it is blank. */
   setPort(port: string): void {
     if ((port || null) === this._port && (this._output || !port)) return;
     this.stop();
@@ -74,6 +95,7 @@ class MidiClock {
     this._sent = null;
   }
 
+  /** Send the pulses the beat position has passed. Public for tests. */
   tick(): number {
     const output = this._output;
     if (!output) return 0;
@@ -81,6 +103,7 @@ class MidiClock {
     if (!Number.isFinite(beat)) return 0;
     const target = Math.floor(beat * PULSES_PER_BEAT);
     if (this._sent === null || target - this._sent > JUMP_PULSES || target < this._sent - PULSES_PER_BEAT / 2) {
+      // The first reading, or the music jumped: count from here.
       this._sent = target;
       return 0;
     }

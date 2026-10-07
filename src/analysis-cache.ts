@@ -6,8 +6,10 @@ import { messageOf } from './errors.ts';
 import type { Analysis } from './show/score.ts';
 import type { ShowOverlay } from './show/overlay.ts';
 
+/** What else is stored with an analysis: the track as the player named it. */
 export type CacheMeta = Record<string, unknown>;
 
+/** One cached analysis, as written to disk. */
 export interface CacheEntry {
   key: string;
   meta: CacheMeta;
@@ -15,6 +17,7 @@ export interface CacheEntry {
   analysis: Analysis;
 }
 
+/** The small file beside each entry, so listing does not read the documents. */
 export interface CacheSummary {
   key: string;
   meta: CacheMeta;
@@ -27,8 +30,10 @@ export interface CacheSummary {
   bytes: number;
 }
 
+/** A row of the cache view. */
 export type CacheListing = Omit<CacheSummary, 'schemaVersion' | 'bytes'>;
 
+/** What identifies a CDJ track. */
 export interface ProlinkTrackRef {
   deviceId?: number | null;
   slot?: string | number | null;
@@ -38,6 +43,24 @@ export interface ProlinkTrackRef {
   durationMs?: number;
 }
 
+/**
+ * Simple file-backed cache for audio analysis results.
+ *
+ * Each entry is one JSON file named after sha1(key), storing:
+ *   { key, meta, cachedAt, analysis }
+ *
+ * Keys are plain strings built by the `keyFor*` helpers below so the same
+ * track always produces the same key regardless of the code path (Spotify
+ * track change, manual Spotify analyze, YouTube URL, search query, local
+ * file, upload).
+ */
+// ── Schema compatibility ─────────────────────────────────────────────────────
+// The analyser stamps every document with its schema version, and version.py
+// names the oldest one a consumer can still read. Taken from that file rather
+// than restated here, so bumping the analyser is the only edit a breaking
+// change needs. An entry older than that is a miss: replaying it would drive
+// tonight's show from a document the director no longer understands, silently,
+// for as long as the track stays in the cache.
 function readMinCompatible(): [number, number] {
   try {
     const source = fs.readFileSync(path.join(import.meta.dirname, 'analysis', 'version.py'), 'utf8');
@@ -48,6 +71,7 @@ function readMinCompatible(): [number, number] {
 }
 const MIN_COMPATIBLE = readMinCompatible();
 
+/** Whether a document's schemaVersion is one this build can still replay. */
 function isCompatible(analysis: { schemaVersion?: unknown } | null | undefined, min = MIN_COMPATIBLE): boolean {
   const m = /^(\d+)\.(\d+)/.exec(String(analysis?.schemaVersion ?? ''));
   if (!m) return false;
@@ -55,15 +79,20 @@ function isCompatible(analysis: { schemaVersion?: unknown } | null | undefined, 
   return major > min[0] || (major === min[0] && minor >= min[1]);
 }
 
+// Room for a season of shows. Past this the least recently played analyses
+// go first; a track that comes back is simply analysed again.
 const DEFAULT_MAX_BYTES = 4 * 1024 * 1024 * 1024;
 
 const SUMMARY_SUFFIX = '.summary.json';
+// The operator's edits to a track's show (show/overlay.ts), beside its entry.
 const OVERLAY_SUFFIX = '.overlay.json';
 
+/** A main entry file, as opposed to its summary, its edits or a write in progress. */
 function isEntryFile(name: string): boolean {
   return name.endsWith('.json') && !name.endsWith(SUMMARY_SUFFIX) && !name.endsWith(OVERLAY_SUFFIX);
 }
 
+/** The few fields the cache list shows, taken from a full entry. */
 function summarise(entry: CacheEntry, bytes: number): CacheSummary {
   const a: Analysis = entry.analysis || {};
   return {
@@ -79,10 +108,12 @@ function summarise(entry: CacheEntry, bytes: number): CacheSummary {
   };
 }
 
+/** The listing's shape: the summary without the bookkeeping fields. */
 function listing({ schemaVersion: _v, bytes: _b, ...rest }: CacheSummary): CacheListing {
   return rest;
 }
 
+/** Write a file so a reader sees the old contents or the new, never half. */
 function writeAtomicSync(file: string, body: string): void {
   const tmp = `${file}.tmp-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
   fs.writeFileSync(tmp, body);
@@ -131,6 +162,15 @@ class AnalysisCache {
     return this._pathFor(key).replace(/\.json$/, OVERLAY_SUFFIX);
   }
 
+  /**
+   * The operator's edits to this track's show, or null. A few hundred bytes,
+   * so read synchronously: the show reads it when it plans.
+   *
+   * Kept apart from the analysis on purpose. Analysing the track again —
+   * a newer analyser, a better source for the same song — rewrites the
+   * entry and leaves the edits, and so does evicting it: only clearing the
+   * whole cache takes them.
+   */
   overlay(key: string | null | undefined): ShowOverlay | null {
     if (!key) return null;
     try {
@@ -141,6 +181,7 @@ class AnalysisCache {
     }
   }
 
+  /** Store the edits (null or an empty overlay removes them). */
   setOverlay(key: string | null | undefined, overlay: ShowOverlay | null): void {
     if (!key) return;
     const p = this._overlayPathFor(key);
@@ -153,9 +194,12 @@ class AnalysisCache {
     writeAtomicSync(p, JSON.stringify({ key, updatedAt: new Date().toISOString(), overlay }));
   }
 
+  /** Validate a parsed entry; drop it from disk when it is too old to replay. */
   _accept(key: string, entry: CacheEntry | null | undefined): Analysis | null {
     if (!entry || !entry.analysis) return null;
     if (!isCompatible(entry.analysis)) {
+      // Removed rather than skipped, so has(), which the warmer and the
+      // prefetch poll, stops reporting it as analysed.
       console.log(`[analysis-cache] ${key}: schema ${entry.analysis.schemaVersion ?? 'none'} `
         + `is older than ${MIN_COMPATIBLE.join('.')}; it will be re-analysed`);
       this.delete(key);
@@ -164,7 +208,11 @@ class AnalysisCache {
     return entry.analysis;
   }
 
-  // Use async reads for live playback because analysis documents are large enough to block rendering.
+  /**
+   * Synchronous read. Kept for scripts and tests; the show itself uses
+   * load(), because a document is megabytes and reading it synchronously
+   * holds up the render loop that shares this thread.
+   */
   get(key: string | null | undefined): Analysis | null {
     if (!key) return null;
     const p = this._pathFor(key);
@@ -176,6 +224,7 @@ class AnalysisCache {
     }
   }
 
+  /** Read an entry without blocking; null on a miss. Marks it recently used. */
   async load(key: string | null | undefined): Promise<Analysis | null> {
     if (!key) return null;
     const p = this._pathFor(key);
@@ -192,13 +241,19 @@ class AnalysisCache {
       return null;
     }
     if (analysis) {
-      // Evict by last use so regularly played tracks outlive unused warm-cache entries.
+      // Least recently *used*, not least recently analysed: a track played
+      // every week must outlive one that was warmed once and never played.
       const now = new Date();
       fsp.utimes(p, now, now).catch(() => {});
     }
     return analysis;
   }
 
+  /**
+   * Is this key analysed and still readable? Cheap enough to poll: it reads
+   * only the small summary, and an entry the analyser has moved past counts
+   * as missing, so the warmer re-analyses it instead of skipping it.
+   */
   has(key: string | null | undefined): boolean {
     if (!key) return false;
     try {
@@ -221,6 +276,7 @@ class AnalysisCache {
     return { key, meta, cachedAt: new Date().toISOString(), analysis };
   }
 
+  /** Synchronous write, for scripts and tests. See save(). */
   set(key: string | null | undefined, analysis: Analysis | null | undefined, meta: CacheMeta = {}): void {
     if (!key || !analysis) return;
     const p = this._pathFor(key);
@@ -234,7 +290,14 @@ class AnalysisCache {
     }
   }
 
-  // Rename completed writes so interrupted analysis cannot leave a truncated cache hit.
+  /**
+   * Store an analysis without blocking, then trim the cache to its budget.
+   *
+   * Written to a temporary file and renamed into place, so a crash or a full
+   * disk mid-write leaves the previous entry or none — never a truncated one
+   * that has() would report as analysed for ever after. The summary is
+   * written second: an entry with no summary is still read correctly.
+   */
   async save(key: string | null | undefined, analysis: Analysis | null | undefined, meta: CacheMeta = {}): Promise<void> {
     if (!key || !analysis) return;
     const p = this._pathFor(key);
@@ -271,10 +334,19 @@ class AnalysisCache {
     return removed;
   }
 
+  /** How many analyses are stored. Directory listing only — no reads. */
   count(): number {
     try { return fs.readdirSync(this.dir).filter(isEntryFile).length; } catch (_) { return 0; }
   }
 
+  /**
+   * Every entry, newest first, for the cache view.
+   *
+   * Reads the summaries, not the documents: listing used to parse every
+   * cached analysis synchronously, megabytes each, on the thread that renders
+   * DMX. An entry written before summaries existed is read once, in full,
+   * and gets one.
+   */
   async list(): Promise<CacheListing[]> {
     let files;
     try { files = (await fsp.readdir(this.dir)).filter(isEntryFile); } catch (_) { return []; }
@@ -297,6 +369,10 @@ class AnalysisCache {
     return out.sort((a, b) => String(b.cachedAt).localeCompare(String(a.cachedAt)));
   }
 
+  /**
+   * Remove the least recently used entries until the cache fits its budget.
+   * One pass at a time; a call while one is running joins it.
+   */
   evict(): Promise<number> {
     if (!this._evicting) {
       this._evicting = this._evictOnce().finally(() => { this._evicting = null; });
@@ -332,12 +408,14 @@ class AnalysisCache {
   }
 }
 
-// Keep cache keys stable across restarts so warmed analysis remains reusable.
+// ── Key builders ────────────────────────────────────────────────────────────
+// All builders must be stable across restarts and runs.
 
 function keyForSpotify(trackId: string | number | null | undefined): string | null {
   return trackId ? `spotify:${trackId}` : null;
 }
 
+/** Returns a YouTube key if `input` looks like a YT URL, else null. */
 function keyForYouTube(input: unknown): string | null {
   if (!input) return null;
   const m = String(input).match(
@@ -346,6 +424,7 @@ function keyForYouTube(input: unknown): string | null {
   return m ? `yt:${m[1]}` : null;
 }
 
+/** Normalized free-text search query key. */
 function keyForQuery(query: unknown): string | null {
   if (!query) return null;
   const norm = String(query).trim().toLowerCase().replace(/\s+/g, ' ');
@@ -353,6 +432,7 @@ function keyForQuery(query: unknown): string | null {
   return `q:${norm}`;
 }
 
+/** Path + size + mtime — invalidates automatically on file changes. */
 function keyForLocalFile(filepath: string): string | null {
   try {
     const abs = path.resolve(filepath);
@@ -363,13 +443,30 @@ function keyForLocalFile(filepath: string): string | null {
   }
 }
 
+/** Content hash for uploaded buffers — same file gives same key. */
 function keyForBuffer(buf: Buffer | null | undefined): string | null {
   if (!buf || !buf.length) return null;
   const hash = crypto.createHash('sha1').update(buf).digest('hex');
   return `upload:${hash}`;
 }
 
-// Key tracks by metadata and duration because rekordbox IDs can be reused after USB re-export.
+/**
+ * Stable key for a track loaded on a CDJ via PRO DJ LINK.
+ *
+ * Keyed on what the track *is* — artist, title and length — whenever rekordbox
+ * says. The device/slot/id tuple is only an address: rekordbox numbers tracks
+ * per export, so the same id on another DJ's USB stick, or on the same stick
+ * after a re-export, is a different song, and a key built from it handed that
+ * song the wrong analysis. The length is part of the key because it is also
+ * what picks the download, so an extended mix and a radio edit stay apart.
+ *
+ * `exact` is for an analysis of the track's own file, fetched off the player:
+ * it lines up with the deck, and with rekordbox's grid and phrases, to the
+ * millisecond, which one of a recording found by name need not — so the two
+ * are kept apart, and a search result never stands in for the real file.
+ *
+ * The tuple is still the fallback for a track rekordbox has no metadata for.
+ */
 function keyForProlinkTrack({ deviceId, slot, trackId, title, artist, durationMs }: ProlinkTrackRef = {},
   { exact = false }: { exact?: boolean } = {}): string | null {
   if (title && artist) {
@@ -378,6 +475,8 @@ function keyForProlinkTrack({ deviceId, slot, trackId, title, artist, durationMs
       ? Math.round(durationMs / 1000) : 0;
     return `${exact ? 'prolink-file' : 'prolink'}:${norm}:${seconds}`;
   }
+  // Without a name there is nothing to key the file's analysis on but its
+  // address, which is no good across USB sticks.
   if (exact) return null;
   if (deviceId != null && slot != null && trackId) {
     return `prolink:${deviceId}:${slot}:${trackId}`;

@@ -3,15 +3,41 @@ import { DDP_PORT } from './ddp.ts';
 import { openrgbConflict } from './openrgb-routes.ts';
 import type { DdpOutput, Fixture, Profile } from '../types/rig.ts';
 
+/**
+ * Which universes go to a WLED over DDP rather than out on Art-Net and sACN.
+ *
+ * A WLED is patched as a fixture like any other — a strip of its pixels, on
+ * universes of its own, from channel 1 — with `output: { protocol: 'ddp',
+ * host }`. The engine renders it into those universes as it renders any strip
+ * (so the monitor, the previews and the Hue lamps see it as they see anything
+ * else), and the transmitter sends them to the WLED as one run of pixels
+ * instead of as universes. Built on the main thread from the patch, and
+ * handed to the transmitter with every frame.
+ */
+
+/**
+ * One fixture on a WLED: where the WLED is, which bytes of which universes
+ * are the fixture's pixels, in order, and where those pixels go among the
+ * WLED's LEDs — from 0 for a whole WLED, from its first LED for a segment, a
+ * row at a time for a rectangle of a panel.
+ */
 export interface DdpRoute {
   host: string;
   port: number;
   rgbw: boolean;
   parts: { universe: number; from: number; bytes: number }[];
+  /** Runs of the fixture's LEDs, in order: `count` of them from LED `at`. */
   runs: { at: number; count: number }[];
+  /** A wash or zones: its few cells, spread over the LEDs of its runs. */
   spread?: Spread;
 }
 
+/**
+ * `cells` pixels spread over `leds` LEDs: each an equal share of them in
+ * order, or with `columns`, of rows that many LEDs wide, a band of columns —
+ * or with `areas`, the rectangle of those rows each names. `white` cells are
+ * one byte, their white level, which an RGB WLED is sent on all three dies.
+ */
 export interface Spread {
   cells: number;
   leds: number;
@@ -23,6 +49,7 @@ export interface Spread {
 type ProfileOf = (fixture: Pick<Fixture, 'profileId'>) => Profile;
 type UniverseOf = (fixture: Pick<Fixture, 'universe'>) => number;
 
+/** The DDP routes of a patch. */
 function ddpRoutes(fixtures: readonly Fixture[], profileOf: ProfileOf, universeOf: UniverseOf): DdpRoute[] {
   const routes: DdpRoute[] = [];
   for (const fix of fixtures) {
@@ -41,14 +68,17 @@ function ddpRoutes(fixtures: readonly Fixture[], profileOf: ProfileOf, universeO
   return routes;
 }
 
+/** How many pixels a profile's channels are. */
 function pixelsOf(profile: Profile, width: number): number {
   return Math.max(1, Math.round(profile.channelCount / Math.max(1, width)));
 }
 
+/** Where a fixture's LEDs are among its WLED's (see DdpRoute.runs). */
 function runsOf(output: DdpOutput, profile: Profile, width: number): { at: number; count: number }[] {
   const at = output.at ?? 0;
   const pixels = pixelsOf(profile, width);
   const leds = output.leds && output.leds > pixels ? output.leds : pixels;
+  // The rectangle its LEDs make: the output's rows, or the profile's grid.
   const columns = leds !== pixels ? output.columns : profile.grid && profile.grid.columns * profile.grid.rows === pixels ? profile.grid.columns : undefined;
   if (output.rowStride && columns && leds % columns === 0 && output.rowStride > columns) {
     return Array.from({ length: leds / columns }, (_, r) => ({ at: at + r * (output.rowStride as number), count: columns }));
@@ -56,6 +86,7 @@ function runsOf(output: DdpOutput, profile: Profile, width: number): { at: numbe
   return [{ at, count: leds }];
 }
 
+/** A fixture's cells spread over more LEDs than it has, or null. */
 function spreadOf(output: DdpOutput, profile: Profile, width: number): Spread | null {
   const cells = pixelsOf(profile, width);
   if (!output.leds || output.leds <= cells) return null;
@@ -68,6 +99,11 @@ function spreadOf(output: DdpOutput, profile: Profile, width: number): Spread | 
   };
 }
 
+/**
+ * A fixture's cells, `width` bytes each, as the bytes of the LEDs they are
+ * spread over: LED i lights cell ⌊i·cells/leds⌋, or across rows ⌊x·cells/columns⌋
+ * for its column x.
+ */
 function spreadPixels(cells: Uint8Array, width: number, spread: Spread): Uint8Array {
   const out = new Uint8Array(spread.leds * width);
   const n = spread.cells;
@@ -84,6 +120,7 @@ function spreadPixels(cells: Uint8Array, width: number, spread: Spread): Uint8Ar
   return out;
 }
 
+/** Which cell each LED is lit by, from the cells' rectangles; -1 for none. */
 function areaOwners(areas: readonly [number, number, number, number][], columns: number, leds: number): Int32Array {
   const owner = new Int32Array(leds).fill(-1);
   areas.forEach(([x, y, w, h], c) => {
@@ -97,6 +134,7 @@ function areaOwners(areas: readonly [number, number, number, number][], columns:
   return owner;
 }
 
+/** Channels to a pixel, when the profile is one pixel after another; 0 otherwise. */
 function pixelWidth(profile: Profile): number {
   const strip = stripOf(profile);
   if (strip) return strip.width;
@@ -106,13 +144,20 @@ function pixelWidth(profile: Profile): number {
   return Number.isInteger(width) ? width : 0;
 }
 
+/** Is a fixture sent to a device of its own: a WLED over DDP, or an OpenRGB device. */
 const toDevice = (fix: Fixture) => !!fix.output && (fix.output.protocol === 'ddp' || fix.output.protocol === 'openrgb');
 const deviceName = (fix: Fixture) => (fix.output?.protocol === 'openrgb' ? 'an OpenRGB device' : 'a WLED');
 
-// Reserve device universes exclusively so DMX fixtures cannot be patched onto channels never sent to DMX.
+/**
+ * Why a patch cannot go out as it is, or null: a universe that carries a WLED
+ * over DDP, or an OpenRGB device, is that device's alone, since nothing on it
+ * goes out on Art-Net or sACN — a par patched there would silently never
+ * light. Two fixtures on one OpenRGB device would fight over it.
+ */
 function ddpConflict(fixtures: readonly Fixture[], profileOf: ProfileOf, universeOf: UniverseOf): string | null {
   const twice = openrgbConflict(fixtures);
   if (twice) return twice;
+  // Two fixtures on one WLED are two of its segments, and may not share a LED.
   const leds = new Map<string, { fixture: Fixture; from: number; to: number }[]>();
   for (const fix of fixtures) {
     const output = fix.output;

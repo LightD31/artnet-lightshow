@@ -6,6 +6,7 @@ import type { AnalysisPriority } from '../analyzer-worker.ts';
 
 export type WarmStatus = 'pending' | 'warming' | 'ready' | 'cached' | 'error' | 'cancelled';
 
+/** One track of a set list being warmed. */
 export interface WarmJob {
   query: string;
   cacheKey: string;
@@ -15,8 +16,10 @@ export interface WarmJob {
   message: string;
 }
 
+/** A track as a set list or a playlist names it. */
 export type WarmInput = z.output<typeof trackInputSchema>;
 
+/** A playlist track as the Spotify client returns it. */
 export interface PlaylistTrack {
   name?: string;
   artist?: string;
@@ -25,6 +28,7 @@ export interface PlaylistTrack {
   durationMs?: number;
 }
 
+/** What the warmer needs of the auto show. */
 export interface WarmTarget {
   isCached(cacheKey: string): boolean;
   prefetch(query: string, durationSec: number | null, cacheKey: string, meta: CacheMeta,
@@ -43,8 +47,29 @@ export interface WarmProgress {
   tracks: Pick<WarmJob, 'query' | 'cacheKey' | 'status' | 'message'>[];
 }
 
+/**
+ * Warm the analysis cache for a whole set list, ahead of the show.
+ *
+ * Live prefetch only looks one to five tracks down the queue, and only once a
+ * source is playing. That is enough to make a track change instant *during* a
+ * set, and no help at all for the first track of the night, for a DJ who does
+ * not queue ahead, or for a venue whose network you would rather not depend on
+ * once the room is full. Analysing a track takes tens of seconds; doing forty of
+ * them at load-in costs nothing but time you already have.
+ *
+ * So: paste the set list, walk away, come back to a cache that already knows
+ * every track.
+ *
+ * Runs one track at a time. The analyzer worker serialises anyway, and doing it
+ * in order means the progress list says something true rather than showing
+ * forty tracks all "in progress".
+ */
+
+// A set list, not a library. The cap bounds both the work and the progress
+// payload that rides the state broadcast.
 const MAX_TRACKS = 200;
 
+// Track statuses, in the order one moves through them.
 const PENDING: WarmStatus = 'pending';
 const WARMING: WarmStatus = 'warming';
 const READY: WarmStatus = 'ready';
@@ -53,6 +78,7 @@ const ERROR: WarmStatus = 'error';
 const CANCELLED: WarmStatus = 'cancelled';
 
 const trackInputSchema = z.object({
+  // Either a ready-made query, or the parts to build one from.
   query: z.string().min(1).max(512).optional(),
   title: z.string().max(512).optional(),
   artist: z.string().max(512).optional(),
@@ -63,15 +89,21 @@ const trackInputSchema = z.object({
 
 const warmRequestSchema = z.object({
   tracks: z.array(trackInputSchema).max(MAX_TRACKS).optional(),
+  // A pasted set list: one "Artist - Title" per line. Blank lines and lines
+  // starting with # are ignored, and leading track numbers are stripped.
   text: z.string().max(64 * 1024).optional(),
 }).strict();
 
+// A playlist to warm, as pasted: a share link, a Spotify URI or a bare id.
+// The id itself is parsed (and rejected) by the Spotify client.
 const warmPlaylistSchema = z.object({
   playlist: z.string().min(1).max(512),
 }).strict();
 
+// "1. ", "01) ", "12 - " at the start of a pasted line.
 const LEADING_NUMBER_RE = /^\s*\d{1,3}\s*[.)\]-]\s+/;
 
+/** Turn a pasted set list into track inputs. */
 function parseSetList(text: unknown): { query: string }[] {
   return String(text || '')
     .split(/\r?\n/)
@@ -81,6 +113,13 @@ function parseSetList(text: unknown): { query: string }[] {
     .map((query) => ({ query }));
 }
 
+/**
+ * Map Spotify track summaries — from the live queue or from a playlist — onto
+ * warm inputs. Both sources hand back the same shape, and both want the same
+ * thing out of it: the Spotify id (so the warmed entry lands under the key the
+ * live path will look up) plus the ISRC, which finds the exact recording
+ * instead of whatever a title search turns up.
+ */
 function fromSpotifyTracks(tracks: readonly PlaylistTrack[] | null | undefined): WarmInput[] {
   return (tracks || [])
     .filter((t): t is PlaylistTrack & { name: string } => !!(t && t.name))
@@ -93,7 +132,14 @@ function fromSpotifyTracks(tracks: readonly PlaylistTrack[] | null | undefined):
     }));
 }
 
-// Reuse live-playback cache keys so warmed tracks are found when they start.
+/**
+ * Normalise one input into the job the warmer runs.
+ *
+ * The cache key has to be the same one the live path will look up when the
+ * track actually plays, or the warming was wasted: a Spotify track id when we
+ * have one, a YouTube id for a URL, and otherwise the normalised
+ * "artist - title" query, which is what every other source falls back to.
+ */
 function toJob(input: WarmInput): WarmJob | null {
   const query = input.query || [input.artist, input.title].filter(Boolean).join(' - ');
   if (!query) return null;
@@ -111,6 +157,7 @@ function toJob(input: WarmInput): WarmJob | null {
   };
 }
 
+/** Build the job list, dropping duplicates so a repeated track is warmed once. */
 function buildJobs(inputs: readonly WarmInput[]): WarmJob[] {
   const seen = new Set<string>();
   const jobs: WarmJob[] = [];
@@ -145,6 +192,7 @@ class Warmer {
 
   get running(): boolean { return this._running; }
 
+  /** The progress view the UI renders and the REST endpoints return. */
   status(): WarmProgress {
     const done = this._jobs.filter((j) => j.status !== PENDING && j.status !== WARMING).length;
     const current = this._jobs.find((j) => j.status === WARMING);
@@ -163,6 +211,10 @@ class Warmer {
     };
   }
 
+  /**
+   * Start warming. Rejects a second run rather than interleaving two set lists,
+   * which would make the progress list meaningless and the ordering arbitrary.
+   */
   start(inputs: readonly WarmInput[]): WarmProgress {
     if (this._running) {
       throw new HttpError(409, 'Already warming — cancel the current run first');
@@ -180,6 +232,9 @@ class Warmer {
     this._finishedAt = null;
     this._onChange();
 
+    // Deliberately not awaited: the caller gets an immediate answer and follows
+    // progress over the state broadcast. Warming a forty-track set is minutes
+    // of work, not a request.
     this._run().catch((err) => {
       console.warn(`[warm] run failed: ${messageOf(err)}`);
       this._running = false;
@@ -190,6 +245,14 @@ class Warmer {
     return this.status();
   }
 
+  /**
+   * Stop after the track currently being analysed.
+   *
+   * The analyzer worker has no way to abandon a job mid-run, and killing it
+   * would take the live show's analysis down with it. So the in-flight track
+   * finishes — its result goes in the cache, which is what was wanted anyway —
+   * and nothing else starts.
+   */
   cancel(): boolean {
     if (!this._running) return false;
     this._cancelled = true;
@@ -203,6 +266,7 @@ class Warmer {
     return true;
   }
 
+  /** Drop a finished run's list. Refuses while one is in progress. */
   clear(): boolean {
     if (this._running) return false;
     this._jobs = [];
@@ -216,6 +280,8 @@ class Warmer {
     for (const job of this._jobs) {
       if (this._cancelled) break;
 
+      // Cheap check first: a track already on disk needs no worker at all, and
+      // re-running a whole set list should be nearly instant.
       if (this._autoShow.isCached(job.cacheKey)) {
         job.status = CACHED;
         job.message = 'Already cached';
@@ -228,7 +294,11 @@ class Warmer {
       this._onChange();
 
       try {
-        // Keep warm jobs below current and queued tracks so background preparation cannot delay the show.
+        // Normal priority and no queue position: a track change during a set
+        // submits as the current track, which must not sit behind an hour of
+        // warming — it interrupts the warm job in flight and this one resumes
+        // after. Prefetches for the upcoming queue have a position and so are
+        // served ahead of warm jobs waiting in the same band.
         const result = await this._autoShow.prefetch(
           job.query, job.durationSec, job.cacheKey,
           { track: { name: job.query } }, job.isrc, 'normal',

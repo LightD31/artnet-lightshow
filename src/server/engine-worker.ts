@@ -1,3 +1,31 @@
+/**
+ * The engine's own thread.
+ *
+ * The main thread serves the UI, plans each track, parses uploads, talks to
+ * Spotify, the CDJs and the MIDI controller — and any of those can hold it for
+ * tens of milliseconds at the moment a new track starts, which is exactly when
+ * the rig's timing matters most. Here nothing else runs: this thread renders
+ * every frame on its own clock and puts it on the wire.
+ *
+ * The main thread stays the owner of the show. A few milliseconds before each
+ * frame it runs the auto show's cursor, reads the musical clock and posts a
+ * snapshot — the renderer's input, the clock reading, the output settings (see
+ * engine.js). This thread renders from the latest one. When a snapshot is late
+ * the frame still goes out on time, from the last snapshot with the musical
+ * clock carried forward (clock-follow.js), so a stall on the main thread no
+ * longer shows on stage.
+ *
+ * Frames are rendered into this thread's own buffers, then copied whole into
+ * memory the main thread shares (universes.js), which is how the DMX monitor
+ * and the Hue lamps read them. Rendering clears every universe first, so
+ * rendering in the shared memory let a read catch a frame half black. After
+ * each frame a one-word message tells the main thread to feed Hue.
+ *
+ * `capture` mode is for tests: no timer, no sockets — each `render` message
+ * renders exactly one frame from the input and reading it carries, and the
+ * reply carries the bytes.
+ */
+
 import { parentPort, workerData } from 'node:worker_threads';
 
 import { createRenderer } from './renderer.ts';
@@ -19,12 +47,14 @@ import type { Profile } from '../types/rig.ts';
 if (!parentPort) throw new Error('engine-worker.ts runs as a worker thread');
 const port = parentPort;
 
+/** Tell the main thread something. */
 const post = (msg: FromWorker) => port.postMessage(msg);
 
 const {
   shared, epochMs, periodMs = FRAME_MS, capture = false, seed = null, startNow = null,
 } = (workerData || {}) as EngineWorkerData;
 
+/** A seeded stand-in for Math.random, so a test can roll the same dice on both threads. */
 function seeded(value: number): () => number {
   let a = value >>> 0;
   return () => {
@@ -47,7 +77,12 @@ const renderer = createRenderer({
 });
 const follow = createClockFollower();
 
-// Warm effects on private buffers so first-use compilation cannot overrun a live frame.
+/**
+ * A few frames of the energy burst and the hold strobe on a small rig of its
+ * own, before the first deadline: the first frame to play one otherwise
+ * compiles the effects' code on the clock, which on a large rig ran past a
+ * whole frame. Its own renderer and buffers; nothing is sent or posted.
+ */
 function warmUp(): void {
   const scratch = createUniverseStore(allocateShared());
   const warm = createRenderer({ profileOf: getProfile, profilesRevision, now: 0 });
@@ -71,8 +106,12 @@ function warmUp(): void {
 }
 
 let snapshot: { input: RenderInput; outputs: TransmitConfig } | null = null;   // from the main thread
+// A new clip table waits here for the snapshot posted right behind it. Taken
+// up at once, a frame rendered between the two messages would meet the new
+// table under the old snapshot's revision, play no clip and end every lap.
 let pendingSequence: { table: SequenceTable | null } | null = null;
 
+/** Hand the renderer the table that came before this snapshot or request, if one did. */
 function takeSequence(): void {
   if (!pendingSequence) return;
   renderer.setSequence(pendingSequence.table);
@@ -81,11 +120,13 @@ function takeSequence(): void {
 
 let lastStatsAt = -Infinity;
 
+/** The imported profiles, replaced wholesale. The built-ins are already here. */
 function setProfiles(profiles: Profile[] | null | undefined): void {
   clearNonBuiltinProfiles();
   for (const profile of profiles || []) registerProfile(profile);
 }
 
+/** Copy the finished frame into the shared memory, universe by universe. */
 function publish(): void {
   const live = store.list();
   published.sync(live);
@@ -103,6 +144,7 @@ function transmit(outputs: TransmitConfig): void {
 
 let ticker: Ticker | null = null;
 
+/** Tell the main thread what became of its commands, when anything did. */
 function postCommands(): void {
   const results = renderer.takeCommandResults();
   if (!results.length) return;
@@ -113,10 +155,12 @@ function postCommands(): void {
 function renderTick(due: number, now: number): void {
   const reading = snapshot ? follow.at(now) : null;
   if (!snapshot || !reading) {
+    // Nothing to render yet: a command waiting would wait for nothing.
     renderer.rejectCommands('unavailable');
     postCommands();
     return;
   }
+  // The effects count their frames from the ticker's grid (epochMs, phase 0).
   renderer.frame(snapshot.input, reading, now, store, epochMs);
   postCommands();
   transmit(snapshot.outputs);
@@ -128,6 +172,7 @@ function renderTick(due: number, now: number): void {
   }
 }
 
+/** Every universe out now, bypassing the Hue delay, then say so. */
 function blackout(): void {
   if (snapshot) {
     store.sync(snapshot.input.universes);
@@ -146,6 +191,7 @@ function blackout(): void {
   publish();
 }
 
+/** One frame on request, for tests: the universes' bytes come back. */
 function renderOnce({ input, reading, now, gridOriginMs }: { input: RenderInput; reading: MusicalTime; now: number; gridOriginMs?: number }): RenderedFrames {
   renderer.frame(input, reading, now, store, gridOriginMs);
   const frames: RenderedFrames = {};
@@ -190,6 +236,7 @@ port.on('message', guarded('engine-worker', (msg: ToWorker | null) => {
 }));
 
 if (!capture) {
+  // A failed warm-up costs only a cold first frame.
   try { warmUp(); } catch { /* nothing to undo: it touched only its own renderer */ }
   ticker = createTicker({ onTick: guarded('render', renderTick), periodMs, epochMs });
   ticker.start();

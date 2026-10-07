@@ -1,4 +1,15 @@
 #!/usr/bin/env node
+/**
+ * Set the analysis environment up from the command line — what Sources →
+ * Analysis environment does from the page (src/server/python-setup.ts): uv
+ * makes it from the lockfile, with a Python of its own.
+ *
+ *   npm run setup:python                    the torch build this machine suits
+ *   npm run setup:python -- --build cu128   or the one named: cpu, cu128, rocm
+ *
+ * Stop the server first, or set it up from the page instead: on Windows a
+ * running analyser keeps the files uv has to replace locked.
+ */
 
 import '../src/load-env.ts';
 
@@ -25,6 +36,7 @@ console.log(`Setting up the analysis environment in ${venvDir()}`);
 console.log(`  torch build: ${BUILDS[build].label}${asked ? '' : ` (${detected.why})`}`);
 console.log(`  uv: ${uv.command}\n`);
 
+// uv's own output, as it comes.
 const setup = createPythonSetup({
   spawner: (command, args, options) => {
     const child = spawn(command, args, options);
