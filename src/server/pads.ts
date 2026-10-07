@@ -164,6 +164,8 @@ const ordered = (pads: readonly PadEntry[]): PadEntry[] =>
 // A fresh install: the six energy effects and the strobe held, then Hue
 // Dynamics and Light DJ looks. None but the two energy strobes (and the
 // strobe pad, the strobe's own) waits for the photosensitivity acknowledgement.
+// The energy effects and the strobe start on the press, as they always have;
+// the looks on Hue Dynamics' quarter beat.
 const DEFAULTS: [content: PadContent, launch: PadLaunchMode, accent: string][] = [
   [{ kind: 'preset', id: 'energy.whiteStrobe' }, 'hold', '#FFFFFF'],
   [{ kind: 'preset', id: 'energy.colorStrobe' }, 'hold', '#F472B6'],
@@ -182,7 +184,7 @@ const DEFAULTS: [content: PadContent, launch: PadLaunchMode, accent: string][] =
   [{ kind: 'preset', id: 'ldj.NorthernLights' }, 'loop', '#10B981'],
   [{ kind: 'preset', id: 'ldj.Popcorn' }, 'once', '#FACC15'],
 ];
-const startsAtOnce = (content: PadContent): boolean => content.kind === 'strobe';
+const startsAtOnce = (content: PadContent): boolean => content.kind === 'strobe' || content.id.startsWith('energy.');
 /** The layout a fresh install starts with, frozen; labels are the presets' names. */
 export const DEFAULT_PADS: readonly PadEntry[] = deepFreeze(DEFAULTS.map(([content, launch, accent], i): PadEntry => ({
   bank: Math.floor(i / PAD_SLOTS) as 0 | 1, slot: i % PAD_SLOTS,

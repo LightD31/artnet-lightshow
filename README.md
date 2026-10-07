@@ -63,10 +63,12 @@ Companion** (with a page of presets for busking), and a REST API.
 **Running it from a tablet**
 
 - **Perform view** — the live controls laid out for a thumb: now and next,
-  sync health, big pads for blackout and every energy effect (held, or
-  latched), **Stop all voices** (`DELETE /api/voices`: every voice ends, the
-  look plays on), tap tempo, one-tap palettes, and the master and
-  show-intensity faders. Open it at `/#perform`, or press **3**
+  sync health, the pads (bank A starts with the energy effects and the
+  strobe, held, each starting on the press; **Edit pads** sets any pad to
+  play once or to loop until it is tapped again), blackout, tap tempo,
+  **Stop all voices** (the base look continues),
+  one-tap palettes, and the master and show-intensity faders. Open it at
+  `/#perform`, or press **3**
 - **Stage view** — the rig in 3D, in a hazy room: beams from the pars, every
   cell of every bar, the Hue lamps around the room, from the audience, from
   above or from the side. Live, it shows what is going out; rehearsing, the
@@ -1582,10 +1584,15 @@ strobe.
 grid. A pad is `{ bank, slot, label, accent, content, launch, quantise, targets }`:
 `content` is `{ kind, id }` or `null` for an empty pad; `launch` is `once`,
 `hold` or `loop`; `quantise` is a grid in beats — a launch waits for the next
-line of it while anything plays (the patterns, a voice, a sequence playing or
-paused), and starts at once on a quiet rig or with `0`; `targets` is `shared`
-(the whole rig) or a list of fixture ids. What a pad plays depends on its
-content:
+line while the look, a voice or a sequence runs; otherwise it starts
+at once. `0` always starts at once; `targets` is `shared` (the whole rig) or a
+list of fixture ids. The default layout holds, in bank A, the six energy
+effects and the strobe, held, at `0`, so they start on the press as the
+energy effects always have, then Hue Dynamics and Light DJ looks at `0.25`,
+Hue Dynamics' quarter beat. A `pads.json` from a build that put every
+default pad at `0.25` is read with its energy and strobe pads at `0` where
+they are still as shipped; a pad changed in any way keeps its own grid.
+What a pad plays depends on its content:
 
 - `preset` — the preset as one voice.
 - `pattern` — a stored pattern, its lanes and clips, played as one voice: a
@@ -1666,6 +1673,13 @@ REST, the `energy-hold` and `voice-hold` socket events, or Companion. Clear
 with `POST /api/energy/off` or `energyOverride: null`. Only
 `POST /api/energy/off` also ends a latched strobe: a scene, a cue, a MIDI
 note or the auto show clears the energy all the time, and never the strobe.
+
+The live state's `energyOverride` names the energy effect on top: the
+latched one, the `energy-hold` one (the latch waits under it) or any pad or
+voice playing an energy effect (an energy preset, or the palette strobe's),
+the strobe tier first, then the one launched last. Companion's energy
+variable and feedback, the MIDI energy LED and the top bar read it. A cue
+saves only the latched one.
 
 ---
 

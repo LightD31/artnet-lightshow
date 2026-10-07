@@ -32,3 +32,34 @@ test('a hold expires when the release packet is lost', (t) => {
   t.mock.timers.tick(1);
   assert.deepStrictEqual(events, ['blinder', null]);
 });
+
+test('over(): the energy effect on top of the latch, whoever launched it; the latch itself, the manual strobe and other kinds are none', () => {
+  const hold = new EnergyHold(() => {});
+  const m = hold.voices;
+  // Admitted at render: this manager has no acknowledgement.
+  const start = (spec, extra = {}) => m.start({ spec, targets: 'shared', mode: 'latched', tier: 'voice', source: 'pad', admission: 'render', ...extra });
+  assert.strictEqual(hold.over(), null);
+  const blinder = start({ kind: 'energy.blinder' });
+  assert.strictEqual(hold.over(), 'blinder', 'a pad playing an energy kind');
+  // A latch launched after it plays over it: the latch is energyOverride's, nothing is over it.
+  hold.latch('kill');
+  assert.deepStrictEqual([hold.over(), hold.latched()], [null, 'kill']);
+  const uv = start({ kind: 'energy.uvWash' }, { source: 'api' });
+  assert.strictEqual(hold.over(), 'uv-wash', 'the latest launch over the latch');
+  // The energy hold hides the latch and shows, launched last.
+  hold.press('socket-a', 'one', 'glow');
+  assert.strictEqual(hold.over(), 'glow');
+  hold.release('socket-a', 'one');
+  assert.strictEqual(hold.over(), 'uv-wash');
+  m.stop(uv.id);
+  m.stop(blinder.id);
+  hold.latch(null);
+  // Other kinds, and the manual strobe even in the palette strobe's colours, are no energy effect.
+  start({ kind: 'ldj.FadeCycle' });
+  start({ kind: 'strobe', palette: null, params: { clock: 'beat', flashesPerSecond: 5, continueBetween: true } }, { source: 'strobe', tier: 'strobe' });
+  assert.strictEqual(hold.over(), null);
+  // The palette strobe's preset from a pad is; and the strobe tier outranks a later voice.
+  start({ kind: 'strobe', palette: null, params: { clock: 'beat', flashesPerSecond: 5, continueBetween: true } }, { tier: 'strobe' });
+  start({ kind: 'energy.kill' });
+  assert.strictEqual(hold.over(), 'palette-strobe');
+});

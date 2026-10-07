@@ -30,6 +30,7 @@ import * as universes from '../../src/server/universes.ts';
 import { getProfile } from '../../src/server/profiles.ts';
 import { applyPatch } from '../../src/server/patch.ts';
 import { state, voices } from '../../src/server/state.ts';
+import { captureLook } from '../../src/server/cues.ts';
 import { conductor } from '../../src/server/conductor.ts';
 import { domainOf } from '../../src/server/protocol.ts';
 import { settings } from '../../src/server/settings.ts';
@@ -117,9 +118,11 @@ test('the default layout has 16 entries', (t) => {
   for (const p of layout) {
     assert.match(p.accent, /^#[0-9A-F]{6}$/);
     assert.equal(p.targets, 'shared', 'on the whole rig');
-    assert.equal(p.quantise, p.content.kind === 'strobe' ? 0 : 0.25, p.label);
     if (p.content.kind === 'preset') assert.equal(p.label, presetById(p.content.id).name);
   }
+  // The energy pads and the strobe start on the press, as the energy effects
+  // always have; the looks on Hue Dynamics' quarter beat.
+  assert.deepEqual(layout.map((p) => p.quantise), [0, 0, 0, 0, 0, 0, 0, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25]);
   // A fresh install plays every pad but the two energy strobes before the
   // photosensitivity acknowledgement (the strobe pad is the strobe's own).
   const waiting = layout.filter((p) => p.content.kind === 'preset' && requiresAcknowledgement(builtinPresets(p.content.id).spec));
@@ -178,6 +181,22 @@ test('pads.json: a strobe pad the user changed keeps its quarter beat', (t) => {
   before[6] = { ...before[6], targets: [1] };
   fs.writeFileSync(file, JSON.stringify({ pads: before }));
   assert.deepEqual(new PadStore(file).load().get(0, 6), before[6]);
+});
+
+test('pads.json from a build that put the energy pads on the quarter beat: the ones still as shipped start on the press; a pad the user changed keeps its grid', (t) => {
+  const { file } = rig(t);
+  // What that build wrote: every default pad on 0.25, the Blinder relabelled, the Kill on a beat, a look moved to 0.5.
+  const before = defaults().map((p) => ({ ...p, quantise: 0.25 }));
+  before[2] = { ...before[2], label: 'Flash' };
+  before[4] = { ...before[4], quantise: 1 };
+  before[9] = { ...before[9], quantise: 0.5 };
+  fs.writeFileSync(file, JSON.stringify({ pads: before }));
+  const loaded = new PadStore(file).load().layout();
+  assert.deepEqual(loaded.map((p) => p.quantise), [0, 0, 0.25, 0, 1, 0, 0, 0.25, 0.25, 0.5, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25]);
+  assert.deepEqual(loaded[2], before[2], 'the relabelled Blinder is the user\'s, its grid with it');
+  assert.deepEqual(loaded[0], defaults()[0], 'the White Strobe as shipped is today\'s');
+  // Read, not written: the file is as that build left it until something changes.
+  assert.deepEqual(onDisk(file), { pads: before });
 });
 
 // ── Launching ───────────────────────────────────────────────────────────────
@@ -241,6 +260,18 @@ test('press on a hold pad starts a hold voice with the pad\'s quantise and targe
   advance(HOLD_TIMEOUT_MS);
   assert.equal(m.get(dropped.id), null);
   assert.equal(pads.lit()[2], null);
+});
+
+test('the default energy pads start on the press while the patterns run; a look waits for its quarter beat', (t) => {
+  // A press 5 ms after beat 32 at 120 BPM: a quarter-beat grid would start it 120 ms later.
+  const { c, pads } = rig(t, { beat: 32.01, running: true, acknowledged: true });
+  for (const slot of [0, 1, 2, 3, 4, 5]) {
+    const v = pads.press(0, slot, 'tablet', `e${slot}`);
+    assert.deepEqual([v.startedAtMs, v.anchorBeat], [c.now, 32.01], pads.entry(0, slot).label);
+  }
+  const look = pads.press(0, 7, 'tablet', 'look');
+  near(look.startedAtMs, c.now + 120, 'Bass Bloom on the grid line');
+  assert.equal(look.anchorBeat, 32.25);
 });
 
 test('once ends after the preset\'s scoped loop length', async (t) => {
@@ -886,6 +917,56 @@ test('a REST press and a socket press of the same pad do not share a lease', asy
   // A REST hold is renewed only by pressing again: left alone, it dies with its lease.
   res = await s.call('POST', '/api/pads/0/3/press');
   await until(() => !voices.get(res.body.id), 'the REST hold\'s lease running out', HOLD_TIMEOUT_MS + 1000);
+});
+
+test('a pad or a voice playing an energy effect is the live state\'s energyOverride, as the energy hold is; the latch and a cue stay the energy endpoints\'', async (t) => {
+  const s = await serve(t);
+  settings._values.safety.photosensitivityAcknowledged = true;
+  const live = async () => (await s.call('GET', '/api/state')).body.energyOverride;
+  const { socket } = await s.page();
+
+  // The default Blinder (A3) held from the deck, as Perform and the command bar hold it.
+  socket.emit('voice-hold', { action: 'press', token: 'b', pad: { bank: 0, slot: 2 } });
+  await until(() => state.heldEnergy === 'blinder', 'the held pad');
+  assert.equal(await live(), 'blinder');
+  assert.equal(state.energyOverride, null, 'nothing latched');
+  assert.equal(captureLook().energyOverride, null, 'a cue saves the latch alone');
+  socket.emit('voice-hold', { action: 'release', token: 'b', pad: { bank: 0, slot: 2 } });
+  await until(() => state.heldEnergy === null, 'let go');
+  assert.equal(await live(), null);
+
+  // The UV Wash (A4) as a loop: on until tapped again.
+  await s.call('PUT', '/api/pads/0/3', { ...s.integrations.pads.entry(0, 3), launch: 'loop' });
+  await s.call('POST', '/api/pads/0/3/toggle');
+  assert.equal(await live(), 'uv-wash');
+  // A latch launched after it plays over it, and shows; a pad launched after the latch plays over that.
+  await s.call('POST', '/api/energy/kill');
+  assert.deepEqual([state.heldEnergy, state.energyOverride, await live()], [null, 'kill', 'kill']);
+  await s.call('POST', '/api/pads/0/3/toggle');
+  await s.call('POST', '/api/pads/0/3/toggle');
+  assert.deepEqual([state.heldEnergy, state.energyOverride, await live()], ['uv-wash', 'kill', 'uv-wash']);
+  assert.equal(captureLook().energyOverride, 'kill');
+  await s.call('POST', '/api/energy/off');
+  assert.equal(await live(), 'uv-wash');
+  await s.call('POST', '/api/pads/0/3/toggle');
+  assert.equal(await live(), null);
+
+  // A voice of an energy kind from the API, and a pad playing the palette strobe, show as well.
+  const { id } = (await s.call('POST', '/api/voices', { preset: 'energy.kill', mode: 'latched' })).body;
+  assert.equal(await live(), 'kill');
+  await s.call('DELETE', `/api/voices/${id}`);
+  assert.equal(await live(), null);
+  await s.call('PUT', '/api/pads/1/0', pad(preset('palette-strobe'), { quantise: 0 }));
+  await s.call('POST', '/api/pads/1/0/press');
+  assert.equal(await live(), 'palette-strobe');
+  await s.call('POST', '/api/pads/1/0/release');
+  assert.equal(await live(), null);
+
+  // The manual strobe (the strobe pad, A7) is no energy effect: the live state's strobe says it plays.
+  await s.call('POST', '/api/pads/0/6/press');
+  assert.equal((await s.call('GET', '/api/state')).body.strobe.mode, 'hold');
+  assert.equal(await live(), null);
+  await s.call('POST', '/api/pads/0/6/release');
 });
 
 test('disarm stops a pad voice and the pads key shows it unlit', async (t) => {
