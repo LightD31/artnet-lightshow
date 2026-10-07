@@ -65,7 +65,7 @@ test('the bars draw what the section is doing', () => {
   }
 });
 
-test('the drops and the hardest-driving passages play the bars as strobes, each laid as it runs', () => {
+test('drops and driving passages lay out strobe bars', () => {
   const MAPS = { impact: 'stage', 'flash-scatter': 'stage', 'flash-chase': 'mirror',
     'flash-fill': 'bar', 'flash-alternate': 'bar', ramp: 'bar', core: 'bar' };
   const dropPrograms = new Set();
@@ -206,7 +206,7 @@ test('a strobe panel is laid out in rows, but draws with the bars, not the scree
   for (const c of [0, 8, 24, 39]) assert.ok(out[c].colour === RED && out[c].dim > 100, `colour zone ${c} holds the wash`);
 });
 
-test('the rehearsal shows a strobe panel\'s white line as the rig lights it: dark under a colour, lit by a strobe', () => {
+test('rehearsal preserves the strobe panel\'s white-channel behavior', () => {
   const fixtures = [{ profileId: 'sp', maxBrightness: 255 }];
   const rig = buildRig(fixtures, () => STROBE_PANEL);
   const sample = createPreviewSampler([

@@ -11,7 +11,7 @@ import * as universes from '../../src/server/universes.ts';
 // into its buffers and nothing leaves the machine.
 state.artnet.enabled = false;
 
-test('music dims the rendered scene; silence closes it; master still scales an override', t => {
+test('music expression scales scenes and master scales overrides', t => {
   t.mock.timers.enable({ apis: ['setInterval', 'setTimeout', 'Date'], now: Date.now() });
   const fixture = state.fixtures[0];
   const channel = getProfile(fixture).channelMap;

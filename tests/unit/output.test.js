@@ -84,7 +84,7 @@ const colors = (bridge = 'b1') => output.hueChannelColors().get(bridge) ?? [];
 
 // Two bridges stream two areas: each is sent the colours of its own lamps,
 // and the same channel number on each is two different lamps.
-test('each bridge is collected its own frame, and only bridges with a lamp in the patch get one', () => {
+test('Hue output groups patched lamps by bridge', () => {
   withLamps([{ channel: 0 }, { channel: 0, bridge: 'b2' }, { channel: 4, bridge: 'b2' }], (set) => {
     set(0, 'red', 10); set(1, 'red', 20); set(2, 'green', 30);
     const frames = output.hueChannelColors();
@@ -289,7 +289,7 @@ const ON = {
 const frameMarked = (marker) => { const f = Buffer.alloc(512); f[0] = marker; return f; };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-test('with Hue on, Art-Net frames go out the configured delay after they were rendered', async () => {
+test('Hue latency delays Art-Net output by the configured interval', async () => {
   let start = 0;
   const got = await artnetCapture(async () => {
     output.configureHue({ bridges: [ON], latencyMs: 80 });

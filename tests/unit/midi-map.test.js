@@ -219,7 +219,7 @@ function padBench(t, launch) {
 }
 const HOLD = { mode: 'hold', spec: { kind: 'chase' } };
 
-test('MIDI padPress presses once and renews only a hold, through the renewal: a loop toggles and a once fires on the note-on alone', (t) => {
+test('MIDI pad presses renew holds without retriggering loops or one-shots', (t) => {
   const modes = { hold: HOLD, loop: { mode: 'latched', spec: { kind: 'chase' } }, once: { mode: 'once', spec: { kind: 'chase' } }, off: null };
   for (const [name, voice] of Object.entries(modes)) {
     const { midi, input, count } = padBench(t, () => voice);
@@ -235,19 +235,18 @@ test('MIDI padPress presses once and renews only a hold, through the renewal: a 
   }
 });
 
-test('MIDI padPress stops renewing and lets go when the hold ended, the input port went or the ceiling came: the strobe cap for a strobe pad, MIDI_HOLD_MAX_MS for any other', (t) => {
-  // The hold ended on the server (an off, a stop-all): no renewal brings it back.
-  let b = padBench(t, () => HOLD);
+test("MIDI stops renewing an ended hold", (t) => {
+  const b = padBench(t, () => HOLD);
   b.input.emit('noteon', { note: 40, velocity: 100, channel: 0 });
   b.c.live = false;
   t.mock.timers.tick(400);
   t.mock.timers.tick(4000);
   assert.deepEqual([b.count('press'), b.count('renew'), b.count('release')], [1, 1, 1]);
   b.midi.close();
-  t.mock.timers.reset();
+});
 
-  // The controller unplugged with the note down: the next renewal sees the port gone.
-  b = padBench(t, () => HOLD);
+test("MIDI releases holds when the input port disappears", (t) => {
+  const b = padBench(t, () => HOLD);
   b.input.emit('noteon', { note: 40, velocity: 100, channel: 0 });
   t.mock.timers.tick(800);
   b.midi._portGone = () => true;
@@ -255,20 +254,20 @@ test('MIDI padPress stops renewing and lets go when the hold ended, the input po
   t.mock.timers.tick(4000);
   assert.deepEqual([b.count('renew'), b.count('release')], [2, 1]);
   b.midi.close();
-  t.mock.timers.reset();
+});
 
-  // A strobe pad held past the strobe's cap (2 s here).
-  b = padBench(t, () => ({ mode: 'hold', spec: { kind: 'strobe' } }));
+test("MIDI strobe holds obey the configured strobe ceiling", (t) => {
+  const b = padBench(t, () => ({ mode: 'hold', spec: { kind: 'strobe' } }));
   b.input.emit('noteon', { note: 40, velocity: 100, channel: 0 });
   t.mock.timers.tick(1600);
   assert.deepEqual([b.count('renew'), b.count('release')], [4, 0]);
   t.mock.timers.tick(400);
   assert.deepEqual([b.count('renew'), b.count('release')], [4, 1], 'let go at the cap');
   b.midi.close();
-  t.mock.timers.reset();
+});
 
-  // Any other hold: the fixed ceiling.
-  b = padBench(t, () => HOLD);
+test("MIDI effect holds obey the five-minute ceiling", (t) => {
+  const b = padBench(t, () => HOLD);
   b.input.emit('noteon', { note: 40, velocity: 100, channel: 0 });
   t.mock.timers.tick(MIDI_HOLD_MAX_MS - 400);
   assert.equal(b.count('release'), 0);

@@ -70,7 +70,7 @@ const sectionAt = (doc, ms) => doc.segments.find((s) => ms / 1000 >= s.start - 0
 const TRAVELLING = new Set(['chase', 'chase-rev', 'runner', 'pairs', 'ping-pong', 'stack-up',
   'sections', 'split', 'random-flash', 'wave', 'comet', 'gradient']);
 
-test('every scene says how it is laid out, so a verse after a chorus crosses the stage again', () => {
+test('scene maps restore stage movement after choruses', () => {
   for (const intensity of [30, 60, 90]) {
     for (const s of scenes(plan(analysis(), { intensity }).intents)) {
       assert.ok(s.pixelMap === 'stage' || s.pixelMap === 'mirror', `${s.source} at ${s.timeMs}: ${s.pixelMap}`);
@@ -95,7 +95,7 @@ test('the chorus and the drop are laid about the centre; the verses across', () 
   assert.strictEqual(verse.pixelMap, 'stage');
 });
 
-test('a build-up stacks out from the middle, and its peak and the drop anchor are the whole rig', () => {
+test('build-ups expand from the centre into full-rig peaks', () => {
   const { intents } = plan();
   const rise = intents.find((i) => i.source === 'buildup:rise');
   assert.strictEqual(rise.pattern, 'stack-up');
@@ -117,7 +117,7 @@ test('a long passage comes back to its own look at the top of every phrase', () 
   assert.ok(!looks.slice(0, 3).includes(chorus.pattern), 'and in between, others');
 });
 
-test('the pars take the pictures that read on a few lamps, the kit only on drum lanes a light may follow', () => {
+test('par shows reserve drum kits for suitable lanes', () => {
   assert.ok(!PAR_PICTURES.has('drums') && PAR_PICTURES_WITH_DRUMS.has('drums'));
   assert.ok(!PAR_PICTURES.has('stems'), 'four zones need more lamps than a row of pars has');
   const available = new Set(PATTERNS.map((p) => p.id));
@@ -154,7 +154,7 @@ function drummed(detector = 2) {
   return analysis({ pulse: { rate: 50, encoding: 'u8-base64', source: 'stems', envelopes: { mix: '' }, lanes: { kick: lane, snare: { t: [], s: [] }, hats: { t: [], s: [] } }, ...(detector ? { detector } : {}) } });
 }
 
-test('a rig of pars replans when it crosses three lamps, and not for a lamp more or less above it', async () => {
+test('par rigs replan only when crossing the three-lamp threshold', async () => {
   const { default: AutoShow } = await import('../../src/auto-show.ts');
   const show = new AutoShow(() => {}, COLOR_PRESETS, PATTERNS);
   show._worker.shutdown();

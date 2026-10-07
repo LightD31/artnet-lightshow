@@ -188,7 +188,7 @@ test('with a picture of their own, the bars run it and the pars keep the look', 
 });
 
 
-test('with a picture of their own, the panels run it and the rest of the rig keeps its look', () => {
+test('panel pictures leave the rest of the rig on its base look', () => {
   rig(fixture(0, 1, PAR.profileId), fixture(1, 13, BAR.id), fixture(2, 40, PANEL.id));
   const panelOf = (dmx) => dmx.slice(39, 39 + 24);
   const look = { pattern: 'solid', pixelPattern: 'comet', pixelMap: 'bar', anchorMs: 0 };

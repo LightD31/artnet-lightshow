@@ -123,7 +123,7 @@ test('the Perform view has the outputs switch, saying what disarmed means', () =
   assert.match(html, /Armed.*frames go out to the rig — tap to disarm/s);
 });
 
-test('until the acknowledgement, the header and Perform say the strobes are off, one tap from the warning; acknowledged, or before the server has said, nothing', () => {
+test('unacknowledged strobe notices follow server safety state', () => {
   const views = () => [ui.html(ui.h(ui.Header, {})), ui.html(ui.h(ui.Perform, {}))];
   const notice = /<button type="button" class="[^"]*" data-safety="ask"[^>]*>(?:<[^>]+>)*Strobes off until acknowledged/;
   given({ safety: { photosensitivityAcknowledged: false, hdFlashIntervalMs: 350, strobeMaxLatchSec: 60 } });
@@ -160,7 +160,7 @@ test('sync health says when the source the show follows is not working', () => {
   assert.match(html, /chip-warn" title="no beats"/, 'a failed analysis is flagged, with why');
 });
 
-test('the command bar offers every division to 1/16, a tempo to type, and a named master', () => {
+test('command bar exposes tempo, division and master controls', () => {
   given({});
   const html = ui.html(ui.h(ui.CommandBar, {}));
   const divisions = [...html.matchAll(/title="Beat division 1\/(\d+)"/g)].map((m) => Number(m[1]));
@@ -238,7 +238,7 @@ const rowOf = (html, id) => {
   return m ? m[0] : null;
 };
 
-test('the Effects view lists Hue Dynamics and Light DJ by family, then the fork\'s own and the upstream patterns', () => {
+test('Effects groups presets by source and family', () => {
   givenLibrary({});
   const html = ui.html(ui.h(ui.Effects, {}));
   const groups = [...html.matchAll(/class="effects-group-title">([^<]+)</g)].map((m) => m[1]);
@@ -265,7 +265,7 @@ test('the Effects view lists Hue Dynamics and Light DJ by family, then the fork\
   assert.match(html, /type="search"[^>]*aria-label="Search effects"/);
 });
 
-test('the Library filter: Single is the one-beat presets, Multi the measure ones, Custom the saved ones, All everything', () => {
+test("Library filters presets by duration and ownership", () => {
   const rows = [
     { id: 'a', scope: 'singleBeat' }, { id: 'b', scope: 'measure' }, { id: 'u', scope: 'measure', user: true }, { id: 'c' },
   ];
@@ -274,23 +274,27 @@ test('the Library filter: Single is the one-beat presets, Multi the measure ones
   assert.deepStrictEqual(ids('multi'), ['b', 'u']);
   assert.deepStrictEqual(ids('custom'), ['u']);
   assert.deepStrictEqual(ids('all'), ['a', 'b', 'u', 'c']);
+});
+
+test("Library exposes filter chips with All selected initially", () => {
   givenLibrary({});
   const html = ui.html(ui.h(ui.Effects, {}));
   const labels = [...html.matchAll(/class="effects-chip library[^"]*"[^>]*aria-pressed="(true|false)"[^>]*>([^<]+)</g)].map((m) => `${m[2]}:${m[1]}`);
   assert.deepStrictEqual(labels, ['Single:false', 'Multi:false', 'Custom:false', 'All:true']);
   const chips = [...html.matchAll(/class="effects-chip ?[^"]*"[^>]*aria-pressed="false"[^>]*>([^<]+)</g)].map((m) => m[1]);
   assert.deepStrictEqual(chips.slice(0, 3), ['Party', 'Pixel', 'Rapid flash'], 'the filters are chips');
-  // Grouping keeps the server's family order and puts the saved presets first among the fork's own.
+});
+
+test("Library groups saved presets before the other custom families", () => {
   const grouped = ui.groupRows([{ id: 'u1', name: 'Mine', user: true, scope: 'measure' }, ...PATTERN_ROWS], ui.FAMILIES);
   assert.deepStrictEqual(grouped.map((g) => g.app), ['hd', 'ldj', 'own', 'upstream']);
   assert.deepStrictEqual(grouped[2].families.map((f) => f.name), ['Your presets', 'Party Looks', 'Energy']);
   assert.deepStrictEqual(grouped[3].families.map((f) => f.name), ['Patterns', 'Pixel effects']);
 });
 
-test('the inspector offers only what the family can use, with beats read out in ticks', () => {
+test("Position Chase inspector exposes ordered envelope controls", () => {
   givenLibrary({});
-  // Position Chase: staggered, ordered, on an angle — no trail, probability or origin.
-  let html = ui.html(ui.h(ui.Inspector, { id: 'hd.neonDomino' }));
+  const html = ui.html(ui.h(ui.Inspector, { id: 'hd.neonDomino' }));
   assert.match(html, /Neon Domino/);
   for (const label of ['Curve', 'Attack', 'Hold', 'Release', 'Stagger', 'Direction', 'Order', 'Angle', 'Repetitions', 'Loop length', 'Trigger']) {
     assert.match(html, new RegExp(`>${label}<`), `${label} is offered`);
@@ -302,40 +306,69 @@ test('the inspector offers only what the family can use, with beats read out in 
   assert.match(html, /default 4 beats/, 'a measure preset loops over the bar unless told otherwise');
   assert.match(html, /Save as…/);
   assert.doesNotMatch(html, />Delete</, 'a built-in cannot be deleted');
-  // Radial Pulse: an origin and a radius, no angle, stagger or order.
-  html = ui.html(ui.h(ui.Inspector, { id: 'hd.bassBloom' }));
+});
+
+test("Radial Pulse inspector exposes origins and radius", () => {
+  givenLibrary({});
+  const html = ui.html(ui.h(ui.Inspector, { id: 'hd.bassBloom' }));
   for (const label of ['Origin x', 'Origin y', 'Origin z', 'Radius', 'Direction']) assert.match(html, new RegExp(`>${label}<`), label);
   for (const label of ['Angle', 'Stagger', 'Order', 'Trail']) assert.doesNotMatch(html, new RegExp(`>${label}<`), label);
-  // Simple ADSR: the per-channel envelope instead of the attack, hold and release.
-  html = ui.html(ui.h(ui.Inspector, { id: 'hd.iceStrike' }));
+});
+
+test("Simple ADSR inspector exposes its envelope", () => {
+  givenLibrary({});
+  const html = ui.html(ui.h(ui.Inspector, { id: 'hd.iceStrike' }));
   assert.match(html, />Envelope</);
   assert.doesNotMatch(html, />Attack</);
   assert.match(html, /default 1 beat</, 'a single-beat preset loops once a beat');
-  // A Light DJ row: its cadence and length, and Backlit where the row has a backlit twin.
-  html = ui.html(ui.h(ui.Inspector, { id: 'ldj.StrobeCycle' }));
+});
+
+test("Light DJ strobe inspector offers its backlit variant", () => {
+  givenLibrary({});
+  const html = ui.html(ui.h(ui.Inspector, { id: 'ldj.StrobeCycle' }));
   assert.match(html, />Cadence</);
   assert.match(html, />Beats</);
   assert.match(html, />Backlit</);
-  html = ui.html(ui.h(ui.Inspector, { id: 'ldj.Swirl' }));
+});
+
+test("Light DJ Swirl inspector omits a backlit variant", () => {
+  givenLibrary({});
+  const html = ui.html(ui.h(ui.Inspector, { id: 'ldj.Swirl' }));
   assert.doesNotMatch(html, />Backlit</);
-  // The Visualizer and the Disco.
-  html = ui.html(ui.h(ui.Inspector, { id: 'ldj.visualizer.firework' }));
+});
+
+test("Visualizer inspector exposes activity and automatic colours", () => {
+  givenLibrary({});
+  const html = ui.html(ui.h(ui.Inspector, { id: 'ldj.visualizer.firework' }));
   for (const label of ['Active', 'Mellow', 'Auto colours']) assert.match(html, new RegExp(`>${label}<`), label);
-  html = ui.html(ui.h(ui.Inspector, { id: 'hd.disco.pop' }));
+});
+
+test("Disco inspector exposes channels and detectors", () => {
+  givenLibrary({});
+  const html = ui.html(ui.h(ui.Inspector, { id: 'hd.disco.pop' }));
   for (const label of ['Style', 'Channels', 'Bands', 'Globals', 'Par 1', 'Par 2']) assert.match(html, new RegExp(`>${label}<`), label);
-  // A preset of your own saves in place and can go.
-  html = ui.html(ui.h(ui.Inspector, { id: 'u1' }));
+});
+
+test("saved preset inspectors permit replacement and deletion", () => {
+  givenLibrary({});
+  const html = ui.html(ui.h(ui.Inspector, { id: 'u1' }));
   assert.match(html, /My Domino/);
   assert.match(html, /480 ticks/, 'its own attack');
   assert.match(html, />Save</);
   assert.match(html, />Delete</);
 });
 
-test('the palette editor takes hex colours and Light DJ\'s Random, and flags what is neither', () => {
+test("hex colour input accepts supported channel widths", () => {
   assert.ok(ui.isHexColour('#abc') && ui.isHexColour('#AABBCC') && ui.isHexColour('#aabbccdd'));
   assert.ok(!ui.isHexColour('AABBCC') && !ui.isHexColour('#GGGGGG') && !ui.isHexColour('#AABBCCD') && !ui.isHexColour(''));
+});
+
+test("hex colours normalize to uppercase full width", () => {
   assert.strictEqual(ui.normaliseHex('#abc'), '#AABBCC');
   assert.strictEqual(ui.normaliseHex('#aabbccdd'), '#AABBCCDD');
+});
+
+test("palette editor marks invalid colours and offers saved palettes", () => {
   const html = ui.html(ui.h(ui.PaletteEditor, {
     colours: ['#FF0000', 'nope', { random: true }], onChange: () => {}, builtin: ui.BUILTIN_PALETTES, user: [USER_PALETTE],
   }));
@@ -346,7 +379,9 @@ test('the palette editor takes hex colours and Light DJ\'s Random, and flags wha
   assert.match(html, /<optgroup label="Light DJ">(?:(?!<\/optgroup>).)*>Red Cyan</s);
   assert.match(html, /<optgroup label="Your palettes">(?:(?!<\/optgroup>).)*>Mine</s);
   assert.match(html, /Save as palette…/);
-  // Eight is the most; a full palette offers no ninth.
+});
+
+test("full palettes omit the add-colour control", () => {
   const full = ui.html(ui.h(ui.PaletteEditor, { colours: Array(8).fill('#FFFFFF'), onChange: () => {} }));
   assert.doesNotMatch(full, />\+ Colour</);
 });
@@ -449,7 +484,7 @@ test('a favourite is pinned first on the deck, whatever it is', () => {
   }
 });
 
-test('a row press: a long press opens the editor once and is not a tap; a quick tap is a tap', () => {
+test('row gestures distinguish long press from tap', () => {
   const calls = { tap: 0, long: 0 };
   let press = null;
   const Probe = () => { press = ui.usePress(() => { calls.tap += 1; }, () => { calls.long += 1; }); return null; };
@@ -511,7 +546,7 @@ test('the inspector stays hidden until Edit is chosen, and closes again', () => 
   }
 });
 
-test('a family change asks, applies or keeps, as chosen once and kept in this browser', () => {
+test("family recommendation preferences persist in this browser", () => {
   givenLibrary({});
   const stored = {};
   globalThis.localStorage = { getItem: (key) => stored[key] ?? null, setItem: (key, v) => { stored[key] = v; }, removeItem() {} };
@@ -529,7 +564,9 @@ test('a family change asks, applies or keeps, as chosen once and kept in this br
   } finally {
     delete globalThis.localStorage;
   }
-  // Apply recommended: the family's params and the output settings that travel with them, the name untouched.
+});
+
+test("recommended settings preserve the name and copy family defaults", () => {
   const def = ui.FAMILIES.flatMap((f) => f.kinds).find((k) => k.defaults && k.defaults.params);
   const before = { name: 'x', kind: 'hd.other', params: { stale: 1 }, brightness: 0.1 };
   const after = ui.withRecommended(before, def);
@@ -542,7 +579,7 @@ test('a family change asks, applies or keeps, as chosen once and kept in this br
 
 // ── Perform: pads and the strobe ─────────────────────────────────────────────
 
-test('a pad shows its label, accent and launch glyph; bank tabs switch the eight shown', () => {
+test('pad banks render each slot\'s presentation and launch mode', () => {
   given({});
   const html = ui.html(ui.h(ui.Pads, {}));
   assert.match(html, /role="tablist" aria-label="Pad banks"/);
@@ -559,7 +596,7 @@ test('a pad shows its label, accent and launch glyph; bank tabs switch the eight
   assert.deepStrictEqual(padLabels(bank1), ['Look 1', 'Look 2', 'Look 3', 'Look 4', 'Look 5', 'Look 6', 'Look 7', 'Look 8']);
 });
 
-test('the pad editor offers favourites, saved and party presets first, launch, quantise and fixtures', () => {
+test('pad editor exposes effect, launch, quantise and fixture choices', () => {
   givenLibrary({ pads: { layout: LAYOUT, lit: Array(16).fill(null) } });
   const rows = ui.contentRows([{ id: 'u1', name: 'My Domino', user: true }, ...PATTERN_ROWS], ['chase']);
   assert.deepStrictEqual(rows.slice(0, 2).map((r) => r.id), ['chase', 'u1']);
@@ -580,7 +617,7 @@ test('the pad editor offers favourites, saved and party presets first, launch, q
   assert.match(html, /<input type="checkbox" value="1"(?! checked)[^>]*\/?>(?:<span>)?Par 1/);
 });
 
-test('the pad editor offers only what a pad can play: presets by kind preset, a legacy look as the preset it was modelled on', () => {
+test('pad editor offers playable presets and migrated legacy looks', () => {
   const rows = [{ id: 'u1', name: 'My Domino', user: true }, ...PATTERN_ROWS];
   const shelf = [{ id: 'groove', name: 'Groove' }, { id: 'p2', name: '' }];
   const { presets, patterns, drops } = ui.padChoices(rows, shelf, ['chase', 'confetti']);
@@ -600,15 +637,24 @@ test('the pad editor offers only what a pad can play: presets by kind preset, a 
     { kind: 'sequencePattern', id: 'groove' });
 });
 
-test('the pad editor sends the fields the server stores; the strobe pad stays held', () => {
+test("pad editor serializes the fields stored by the server", () => {
   const body = ui.padBody({ label: 'Domino', accent: '#00ff00', content: 'preset:hd.neonDomino', launch: 'loop', quantise: '1', targets: [2, 1] });
   assert.deepStrictEqual(body, { label: 'Domino', accent: '#00FF00', content: { kind: 'preset', id: 'hd.neonDomino' }, launch: 'loop', quantise: 1, targets: [2, 1] });
+});
+
+test("strobe pad edits force hold launch", () => {
   assert.deepStrictEqual(ui.padBody({ label: '', accent: '#123456', content: 'strobe:strobe', launch: 'loop', quantise: 0, targets: 'shared' }).launch, 'hold');
+});
+
+test("empty pad content serializes as null", () => {
   assert.strictEqual(ui.padBody({ label: '', accent: '#123456', content: '', launch: 'once', quantise: 0, targets: [] }).content, null);
+});
+
+test("empty pad target selection means the whole rig", () => {
   assert.strictEqual(ui.padBody({ label: '', accent: '#123456', content: '', launch: 'once', quantise: 0, targets: [] }).targets, 'shared', 'no fixture ticked is the whole rig');
 });
 
-test('the strobe pad holds, says when it runs, and offers a 2 s burst and its settings', () => {
+test('strobe pad exposes hold, burst and settings controls', () => {
   given({});
   let html = ui.html(ui.h(ui.StrobePad, {}));
   assert.match(html, /class="strobe-hold"[^>]*aria-pressed="false"/);
@@ -619,7 +665,7 @@ test('the strobe pad holds, says when it runs, and offers a 2 s burst and its se
   assert.match(html, /class="strobe-hold active"[^>]*aria-pressed="true"/);
 });
 
-test('the strobe settings sheet: palette of up to six, flashes per second, continue, clock, brightness', () => {
+test("strobe settings show the current controls", () => {
   givenLibrary({ strobe: STROBE });
   const html = ui.html(ui.h(ui.StrobeSettings, { onClose: () => {} }));
   assert.match(html, /role="dialog" aria-modal="true" aria-label="Strobe settings"/);
@@ -628,11 +674,14 @@ test('the strobe settings sheet: palette of up to six, flashes per second, conti
   assert.match(html, /<input type="checkbox"[^>]*\/?>(?:<span>)?Look shows between flashes/);
   assert.match(html, /<option value="wall" selected/);
   assert.match(html, /aria-label="Strobe brightness"[^>]*value="100"/);
+});
+
+test("strobe settings serialize bounded normalized palette values", () => {
   assert.deepStrictEqual(ui.strobeBody({ palette: ['#ff0000', 'random', '#00FF00', '#1', '#2', '#3', '#444444', '#555555', '#666666', '#777777'], flashesPerSecond: '3', continueBetween: true, clock: 'beat', brightness: 50 }),
     { palette: ['#FF0000', '#00FF00', '#444444', '#555555', '#666666', '#777777'], flashesPerSecond: 3, continueBetween: true, clock: 'beat', brightness: 0.5 });
 });
 
-test('voice holds: each pad its own token, a release names its pad, all let go at once', () => {
+test('voice holds release their own tokens', () => {
   const sent = [];
   const holds = ui.createVoiceHolds((p) => { sent.push(p); return true; });
   holds.press('p0-1', { pad: { bank: 0, slot: 1 } });

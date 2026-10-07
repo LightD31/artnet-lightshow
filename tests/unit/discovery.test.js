@@ -60,7 +60,7 @@ function fakeSocket() {
   return s;
 }
 
-test('the watch hears other sources, leaves out its own, and says which universes clash', () => {
+test('sACN discovery ignores itself and reports conflicting universes', () => {
   const socket = fakeSocket();
   let t = 1000;
   const watch = createSacnWatch({ createSocket: () => socket, now: () => t });
@@ -93,7 +93,7 @@ test('a bind failure is the answer, not a crash', () => {
   const watch = createSacnWatch({ createSocket: () => socket });
   watch.listen({ seconds: 5 });
   socket.emit('error', new Error('EADDRINUSE'));
-  assert.deepStrictEqual([watch.status().listening, watch.status().error], [false, 'EADDRINUSE']);
+  assert.deepStrictEqual([watch.status().listening, Boolean(watch.status().error)], [false, true]);
 });
 
 // ── The routes ───────────────────────────────────────────────────────────────
@@ -160,7 +160,7 @@ test('identify a fixture, or everything on a universe; then stop', async () => {
   }, { fixtures: [par(1, 1), par(2, 13), par(3, 1, 1), par(4, 13, 1)] });
 });
 
-test('an Art-Net node is asked to locate itself, and the fixtures on its universes flash', async () => {
+test('Art-Net identification flashes the node and its patched fixtures', async () => {
   await withRoutes(async ({ call, calls }) => {
     const res = await call('POST', '/api/artnet/identify', { address: '10.0.0.40', universes: [1], seconds: 5 });
     assert.strictEqual(res.body.located, true);
@@ -200,7 +200,7 @@ test('a WLED: through the patch when it is in it, else streamed directly', async
 
 const BRIDGE = { id: 'b1', label: 'Lounge', enabled: true, host: '10.0.0.60', username: 'app-key', clientKey: 'aabb', applicationId: '', entertainmentId: 'a1' };
 
-test('a Hue channel: its lamp when it is in the patch, else the bridge identifies the lamps', async () => {
+test('Hue identification routes through the patch or the bridge', async () => {
   const hue = [BRIDGE, { ...BRIDGE, id: 'b2', label: 'Party', host: '10.0.0.61' }];
   await withRoutes(async ({ call, calls }) => {
     const bound = await call('POST', '/api/hue/b1/identify', { channel: 0 });

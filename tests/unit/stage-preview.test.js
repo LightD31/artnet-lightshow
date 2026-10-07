@@ -25,7 +25,7 @@ const STATE = {
   sequence: { loaded: { id: 's', name: 'Intro' }, playing: true, bar: 3, beat: 9.5, loop: null },
 };
 
-test('the sampler is given the live settings: Hue strobe, override, safety, the playing sequence', () => {
+test('preview samplers receive live rendering settings', () => {
   const o = previewOptions({ ...STATE, hueStrobe: 'pulse' }, { table: TABLE });
   assert.strictEqual(o.hueStrobe, 'pulse');
   assert.deepStrictEqual(o.paletteOverride, ['#ff0000', '#0000ff']);
@@ -64,7 +64,7 @@ test('an unacknowledged server gives the preview acknowledged: false', () => {
   assert.strictEqual(o.safety.acknowledged, false);
 });
 
-test('presets saved on this server resolve from the library GET /api/effects loads, not the live summaries', () => {
+test('preview resolves saved presets from the effects library', () => {
   const library = { status: 'ready', families: [], builtin: [], user: [{ id: 'mine', name: 'Mine', spec: WASH }], palettes: { builtin: [], user: [] } };
   const o = previewOptions({ ...STATE, effects: [{ id: 'mine', name: 'Mine' }] }, { library });
   assert.deepStrictEqual(o.resolveEffect('mine'), WASH);

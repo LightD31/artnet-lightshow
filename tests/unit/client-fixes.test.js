@@ -37,7 +37,7 @@ async function load() {
 
 const ui = await load();
 
-test('a Disco gate dot is open only while its band is hit, not whenever it has a threshold', () => {
+test('Disco gate dots follow band hits', () => {
   // The audio frame's disco block: each band's power, the power that would hit, and whether it hit this frame.
   const disco = { level: [0.4, 0.2, 0.1], gate: [0.3, 0.25, 0.05], hit: [true, false, false], peakHit: false };
   assert.deepStrictEqual(ui.gateDots(disco), [true, false, false]);
@@ -53,7 +53,7 @@ function server() {
   return { calls, request, flush };
 }
 
-test('sequence loads: two overlapping edits keep both, and the page reloads only for revisions it did not cause', async () => {
+test('concurrent sequence edits preserve both revisions', async () => {
   const { calls, request, flush } = server();
   const shown = [];
   const sync = ui.createSequenceSync(request, (s) => shown.push(s));
@@ -87,7 +87,7 @@ test('sequence loads: two overlapping edits keep both, and the page reloads only
   assert.deepStrictEqual(shown.at(-1), muteA, 'the GET sent before the edit is dropped');
 });
 
-test('sequence loads: of two GETs in flight only the latest lands, and a foreign revision seen during an edit is fetched after it', async () => {
+test('sequence reads discard stale replies and defer foreign revisions', async () => {
   const { calls, request, flush } = server();
   const shown = [];
   const sync = ui.createSequenceSync(request, (s) => shown.push(s));

@@ -74,7 +74,7 @@ test('the stage preview names its top and bottom edges as the plot does', () => 
   assert.doesNotMatch(preview, /BACK OF STAGE|>AUDIENCE</);
 });
 
-test('a lamp placed at the plot\'s top-left is front-left and high in the room the effects receive', () => {
+test('plot coordinates map top-left lamps to front-left room positions', () => {
   // A click by the plot's top-left corner and one by its bottom-right, on a 1000 × 600 surface.
   const rect = { left: 0, top: 0, width: 1000, height: 600 };
   const topLeft = ui.pointIn(rect, 28, 14 + 36);
@@ -143,7 +143,7 @@ test('height steps by 5 and stays between the floor and the ceiling', () => {
   assert.equal(ui.stepHeight(42, 1), 45, 'off-grid heights land on the next step');
 });
 
-test('auto-place spreads the unplaced lamps by group in patch order and leaves placed ones alone', () => {
+test('auto-place groups unplaced lamps without moving placed ones', () => {
   const fixtures = [
     fixture(1, { position: { x: 5, y: 5 } }),
     fixture(2, { group: 'back' }),
@@ -177,7 +177,7 @@ test('auto-place "all" re-spreads every lamp, keeping each one\'s height', () =>
   assert.deepEqual(ui.autoPlace([fixture(1, { position: { x: 1, y: 1 } })]), [], 'nothing unplaced, nothing proposed');
 });
 
-test('auto-place keeps a grid step clear of placed lamps and of its own proposals, opening another row when one is full', () => {
+test('auto-place preserves grid clearance and opens rows as needed', () => {
   const near = (a, b) => Math.abs(a.x - b.x) <= ui.PLAN_SNAP && Math.abs(a.y - b.y) <= ui.PLAN_SNAP;
   const one = ui.autoPlace([fixture(1, { position: { x: 50, y: 50 } }), fixture(2)]);
   assert.equal(one.length, 1);
