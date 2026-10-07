@@ -10,6 +10,8 @@ import os from 'node:os';
 import path from 'node:path';
 import esbuild from 'esbuild';
 
+import { validateSequence } from '../../src/server/sequencer.ts';
+
 const ROOT = path.join(import.meta.dirname, '..', '..');
 
 async function load() {
@@ -19,7 +21,7 @@ async function load() {
         export { render as html } from 'preact-render-to-string';
         export { h } from 'preact';
         export { store, librarySig } from './public-src/state.js';
-        export { Sequence, laneStack, moveClip, resizeClip, putSequence, automationStart, newClip, commandAs, createTextDraft, parseNumber, beyondRangeNotice, clipKeySelects, loopRegion, barBeatText } from './public-src/components/Sequence.jsx';
+        export { Sequence, laneStack, moveClip, resizeClip, putSequence, automationStart, newClip, commandAs, createTextDraft, parseNumber, beyondRangeNotice, clipKeySelects, loopRegion, barBeatText, blankSequence, clipPresetRows, createSequenceSync } from './public-src/components/Sequence.jsx';
         export { Matrix, MATRIX_MODES, createMatrixHolds, matrixCellKeys } from './public-src/components/Matrix.jsx';
         export { drawRuler, drawClips } from './public-src/timeline-renderer.js';
       `,
@@ -114,17 +116,41 @@ test('dragging a clip snaps to the grid and never before beat 0; resizing keeps 
   assert.strictEqual(ui.resizeClip(clip, 3.2, 1).lengthBeats, 7);
 });
 
-test('with nothing loaded the Sequence view offers the saved sequences, one tap each', () => {
-  given({});
-  const html = ui.html(ui.h(ui.Sequence, { initial: { shelf: SHELF } }));
+test('with nothing loaded the Sequence view offers the saved sequences, one tap each, and a new one', () => {
+  given({ sequences: SHELF });
+  const html = ui.html(ui.h(ui.Sequence, {}));
   assert.match(html, /No sequence loaded/);
-  assert.strictEqual(count(html, 'class="seq-shelf-item'), 2);
+  assert.strictEqual(count(html, 'aria-label="Load '), 2);
   assert.match(html, /aria-label="Load Warm-up"/);
+  assert.match(html, />New sequence</, 'a fresh install has somewhere to start');
+});
+
+test('a new sequence is one shared lane in 4/4 at the rig\'s tempo, named apart from the saved ones, and the server takes it', () => {
+  const blank = ui.blankSequence(SHELF);
+  assert.deepStrictEqual(validateSequence(blank), blank, 'whole and valid as it is');
+  assert.strictEqual(blank.name, 'New sequence');
+  assert.deepStrictEqual(blank.lanes.map((l) => l.kind), ['shared']);
+  assert.deepStrictEqual([blank.clips, blank.commands, blank.bpm, blank.timeSignature, blank.mode], [[], [], null, { beats: 4, unit: 4 }, 'arrangement']);
+  assert.ok(!SHELF.some((q) => q.id === blank.id));
+  const taken = [...SHELF, { id: 'n1', name: 'New sequence' }, { id: 'n2', name: 'New sequence 2' }];
+  assert.strictEqual(ui.blankSequence(taken).name, 'New sequence 3');
+  assert.notStrictEqual(ui.blankSequence([]).id, ui.blankSequence([]).id);
+});
+
+test('the shelf and the patterns are the live state\'s: one saved on another page appears without a reload', () => {
+  given({ sequence: STATUS, sequences: SHELF, sequencePatterns: [] });
+  let html = ui.html(ui.h(ui.Sequence, { initial: { sequence: SEQ, editing: true } }));
+  assert.doesNotMatch(html, /Load From the tablet/);
+  assert.doesNotMatch(html, /Insert Four on the floor/);
+  given({ sequence: STATUS, sequences: [...SHELF, { id: 'tab', name: 'From the tablet' }], sequencePatterns: PATTERNS });
+  html = ui.html(ui.h(ui.Sequence, { initial: { sequence: SEQ, editing: true } }));
+  assert.match(html, /aria-label="Load From the tablet"/);
+  assert.match(html, /aria-label="Insert Four on the floor at beat 9"/);
 });
 
 test('a playing sequence shows what plays, where, and the transport, with editing behind Edit', () => {
-  given({ sequence: STATUS });
-  const html = ui.html(ui.h(ui.Sequence, { initial: { sequence: SEQ, shelf: SHELF, patterns: PATTERNS } }));
+  given({ sequence: STATUS, sequences: SHELF, sequencePatterns: PATTERNS });
+  const html = ui.html(ui.h(ui.Sequence, { initial: { sequence: SEQ } }));
   assert.match(html, /class="seq-now"[^>]*aria-live="polite"/);
   assert.match(html, /Friday.*Playing.*Bar 3/s);
   for (const verb of ['Play', 'Pause', 'Stop']) assert.match(html, new RegExp(`aria-label="${verb}"`));
@@ -135,11 +161,47 @@ test('a playing sequence shows what plays, where, and the transport, with editin
   assert.match(html, /the last shared lane wins/i);
   assert.strictEqual(count(html, 'class="seq-block'), 2);
   assert.match(html, /class="seq-block[^"]*playing/, 'the clip on top of its lane shows it plays');
+  // A tap outside Edit changes nothing: the patterns insert only in the editor.
+  assert.doesNotMatch(html, /Insert Four on the floor/);
+  assert.match(html, />New sequence</, 'a new one with one loaded too');
+});
+
+test('the view unloads the sequence: back to the look without leaving it', async () => {
+  given({ sequence: { ...STATUS, playing: false, stopped: 'hold' }, sequences: SHELF });
+  const html = ui.html(ui.h(ui.Sequence, { initial: { sequence: SEQ } }));
+  assert.match(html, /<button type="button" class="seq-mini" title="Back to the look"[^>]*>Unload</);
+  const calls = [];
+  const shown = [];
+  const request = async (url, init) => { calls.push([url, init && init.method]); return { ok: true, status: { ...STATUS, loaded: null, revision: 4 } }; };
+  const sync = ui.createSequenceSync(request, (v) => shown.push(v));
+  await sync.unload();
+  assert.deepStrictEqual(calls, [['/api/sequence', 'DELETE']]);
+  assert.deepStrictEqual(shown, [null]);
+  sync.reload(4);
+  assert.strictEqual(calls.length, 1, 'its own revision is not fetched again');
+});
+
+test('a sequence that played to its end says so, and the arrangement marks where that is', () => {
+  given({ sequence: { ...STATUS, playing: false, ended: true, beat: 0, bar: 1, lanes: [{ id: 'a', clip: null }, { id: 'b', clip: null }] } });
+  const html = ui.html(ui.h(ui.Sequence, { initial: { sequence: SEQ } }));
+  assert.match(html, /Friday.*Ended/s);
+  // The bar line after the last clip and command, beat 16, on a ruler of 36 beats.
+  assert.match(html, /class="seq-end" style="left: ?44\.44444\d*%;?"/);
+});
+
+test('clips show their preset by name, a saved preset\'s first', () => {
+  given({ sequence: STATUS, effects: [{ id: 'mine-1', name: 'My wash' }] });
+  const seq = { ...SEQ, clips: [{ ...SEQ.clips[0], presetId: 'hd.neonDomino' }, { ...SEQ.clips[1], presetId: 'mine-1' }] };
+  const html = ui.html(ui.h(ui.Sequence, { initial: { sequence: seq } }));
+  assert.match(html, /class="seq-clip-label">Neon Domino</);
+  assert.match(html, /aria-label="Neon Domino, beats 0 to 16"/);
+  assert.match(html, /class="seq-clip-label">My wash</);
+  assert.doesNotMatch(html, />hd\.neonDomino</);
 });
 
 test('the editor has clip rows, the inspector, command rows, automation and the playlist switch', () => {
-  given({ sequence: STATUS });
-  const html = ui.html(ui.h(ui.Sequence, { initial: { sequence: SEQ, shelf: SHELF, patterns: PATTERNS, editing: true, selected: 'c2' } }));
+  given({ sequence: STATUS, sequences: SHELF, sequencePatterns: PATTERNS });
+  const html = ui.html(ui.h(ui.Sequence, { initial: { sequence: SEQ, editing: true, selected: 'c2' } }));
   assert.match(html, /class="seq-edit-toggle active" aria-pressed="true"/);
   assert.strictEqual(count(html, 'class="seq-clip-row'), 2);
   assert.match(html, /class="seq-inspector"/);
@@ -154,11 +216,70 @@ test('the editor has clip rows, the inspector, command rows, automation and the 
   assert.match(html, /role="switch" aria-checked="false"[^>]*>[^<]*Playlist/);
   assert.match(html, /Add a track for/);
   for (const verb of ['Save', 'Duplicate', 'Delete']) assert.match(html, new RegExp(`>${verb}<`));
+  assert.match(html, /aria-label="Sequence name"[^>]*value="Friday"|value="Friday"[^>]*aria-label="Sequence name"/);
+});
+
+test('each lane has mute and solo in the editor', () => {
+  given({ sequence: STATUS });
+  const seq = { ...SEQ, lanes: SEQ.lanes.map((l) => (l.id === 'b' ? { ...l, solo: true } : l)) };
+  const html = ui.html(ui.h(ui.Sequence, { initial: { sequence: seq, editing: true } }));
+  assert.match(html, /class="seq-mini" aria-pressed="false" aria-label="Mute Base"[^>]*>M</);
+  assert.match(html, /class="seq-mini" aria-pressed="false" aria-label="Solo Base"[^>]*>S</);
+  assert.match(html, /class="seq-mini active" aria-pressed="true" aria-label="Solo Accents"[^>]*>S</);
+  assert.doesNotMatch(ui.html(ui.h(ui.Sequence, { initial: { sequence: seq } })), /aria-label="Solo Base"/, 'behind Edit, as mute is');
+});
+
+test('Add clip goes on the selected clip\'s lane, else the lane last picked, else the first', () => {
+  given({ sequence: STATUS, patterns: [{ id: 'hd.neonDomino' }] });
+  const view = (initial) => ui.html(ui.h(ui.Sequence, { initial: { sequence: SEQ, editing: true, ...initial } }));
+  assert.match(view({}), />Add clip to Base</);
+  assert.match(view({ selected: 'c2' }), />Add clip to Accents</);
+  assert.match(view({ lane: 't1' }), />Add clip to Left</);
+  assert.match(view({ lane: 't1' }), /class="seq-lane-pick" aria-pressed="true"[^>]*>Left</, 'the lane picked shows it');
+  assert.match(view({ lane: 'gone' }), />Add clip to Base</);
+});
+
+test('a saved sequence is deleted only after the view asks, and only one on the shelf can be', () => {
+  given({ sequence: STATUS, sequences: SHELF });
+  let html = ui.html(ui.h(ui.Sequence, { initial: { sequence: SEQ, editing: true } }));
+  assert.match(html, /class="seq-danger"[^>]*>Delete</);
+  assert.doesNotMatch(html, /Delete it/);
+  html = ui.html(ui.h(ui.Sequence, { initial: { sequence: SEQ, editing: true, deleting: true } }));
+  assert.match(html, /role="alert"[^>]*>Delete “Friday” from the saved sequences\? The one loaded stays until it is unloaded\.</);
+  assert.match(html, />Delete it<.*>Keep</s);
+  given({ sequence: STATUS, sequences: [{ id: 'warmup', name: 'Warm-up' }] });
+  html = ui.html(ui.h(ui.Sequence, { initial: { sequence: SEQ, editing: true } }));
+  assert.doesNotMatch(html, />Delete</, 'not saved yet: nothing to delete');
+});
+
+test('a clip\'s preset is picked from the library by name: saved presets first, nothing a clip cannot hold', (t) => {
+  t.after(() => { ui.librarySig.value = { ...ui.librarySig.value, builtin: [], user: [] }; });
+  ui.librarySig.value = {
+    ...ui.librarySig.value,
+    builtin: [
+      { id: 'hd.neonDomino', name: 'Neon Domino', spec: { kind: 'hd.neonDomino' } },
+      { id: 'chase', name: 'Chase', legacy: true },
+      { id: 'strobe', name: 'Strobe', spec: { kind: 'strobe' } },
+      { id: 'hd.disco.rock', name: 'Rock', spec: { kind: 'hd.disco', params: { style: 'spectrum', allowStrobe: true } } },
+      { id: 'hd.auroraDrift', name: 'Aurora Drift', spec: { kind: 'hd.auroraDrift' } },
+    ],
+    user: [{ id: 'mine-1', name: 'My wash', spec: { kind: 'energy.glow' } }],
+  };
+  assert.deepStrictEqual(ui.clipPresetRows(ui.librarySig.value).map((r) => r.id), ['mine-1', 'hd.neonDomino', 'hd.auroraDrift']);
+  given({ sequence: STATUS });
+  const seq = { ...SEQ, clips: [{ ...SEQ.clips[0], presetId: 'hd.auroraDrift' }, SEQ.clips[1]] };
+  const html = ui.html(ui.h(ui.Sequence, { initial: { sequence: seq, editing: true, selected: 'c1' } }));
+  assert.doesNotMatch(html, /type="text"[^>]*aria-label="Preset"|aria-label="Preset"[^>]*type="text"/, 'no id typed by hand');
+  assert.match(html, /<option value="hd.auroraDrift" selected[^>]*>Aurora Drift</);
+  assert.match(html, /<option value="mine-1"[^>]*>My wash</);
+  assert.doesNotMatch(html, /value="chase"|value="strobe"|value="hd.disco.rock"/);
+  // A preset the library has not got (yet) stays, under its id.
+  assert.match(html, /<option value="hd.neon-domino" selected[^>]*>hd.neon-domino</);
 });
 
 test('the pattern library inserts at the playhead in one tap and captures a range', () => {
-  given({ sequence: STATUS });
-  const html = ui.html(ui.h(ui.Sequence, { initial: { sequence: SEQ, patterns: PATTERNS, editing: true } }));
+  given({ sequence: STATUS, sequencePatterns: PATTERNS });
+  const html = ui.html(ui.h(ui.Sequence, { initial: { sequence: SEQ, editing: true } }));
   assert.match(html, /aria-label="Insert Four on the floor at beat 9"/);
   assert.match(html, /Capture beats/);
 });
@@ -237,27 +358,28 @@ test('a new clip plays a preset: the selected clip\'s, else the last clip\'s, el
 const CLIP_LIBRARY = [
   { id: 'hd.old-chase', legacy: true },
   { id: 'hd.strobe', spec: { kind: 'strobe' } },
+  { id: 'hd.disco.rock', spec: { kind: 'hd.disco', params: { style: 'spectrum', allowStrobe: true } } },
   { id: 'ldj.visualizer.firework', spec: { kind: 'ldj.visualizer' } },
   { id: 'hd.glow', spec: { kind: 'glow' } },
 ];
 const CLIP_ROWS = [{ id: 'hd.strobe', rapidFlash: true }, { id: 'ldj.visualizer.firework', rapidFlash: true }, { id: 'hd.glow', rapidFlash: false }];
 
-test('a new clip from the library skips a legacy row, a strobe, and a rapid flash before the acknowledgement', () => {
+test('a new clip from the library skips a legacy row, a strobe or an automatic one, and a rapid flash before the acknowledgement', () => {
   const at = { laneId: 'a', startBeat: 4, beatsPerBar: 4 };
   const empty = { ...SEQ, clips: [] };
   assert.strictEqual(ui.newClip(empty, { ...at, library: CLIP_LIBRARY, rows: CLIP_ROWS }).presetId, 'hd.glow');
   assert.strictEqual(ui.newClip(empty, { ...at, library: CLIP_LIBRARY, rows: CLIP_ROWS, acknowledged: true }).presetId, 'ldj.visualizer.firework');
-  assert.strictEqual(ui.newClip(empty, { ...at, library: CLIP_LIBRARY.slice(0, 3), rows: CLIP_ROWS }), null, 'nothing that plays, no clip');
+  assert.strictEqual(ui.newClip(empty, { ...at, library: CLIP_LIBRARY.slice(0, 4), rows: CLIP_ROWS }), null, 'nothing that plays, no clip');
 });
 
 test('Add clip reads the live preset rows and acknowledgement: only rapid flashes unacknowledged, no clip to add', (t) => {
   t.after(() => { ui.librarySig.value = { ...ui.librarySig.value, builtin: [] }; });
-  ui.librarySig.value = { ...ui.librarySig.value, builtin: CLIP_LIBRARY.slice(0, 3) };
-  const view = () => ui.html(ui.h(ui.Sequence, { initial: { sequence: { ...SEQ, clips: [] }, shelf: SHELF, patterns: PATTERNS, editing: true } }));
+  ui.librarySig.value = { ...ui.librarySig.value, builtin: CLIP_LIBRARY.slice(0, 4) };
+  const view = () => ui.html(ui.h(ui.Sequence, { initial: { sequence: { ...SEQ, clips: [] }, editing: true } }));
   given({ sequence: STATUS, patterns: CLIP_ROWS, safety: { photosensitivityAcknowledged: false } });
-  assert.match(view(), /<button type="button" disabled title="No preset to play yet">Add clip</);
+  assert.match(view(), /<button type="button" disabled title="No preset to play yet">Add clip to Base</);
   given({ sequence: STATUS, patterns: CLIP_ROWS, safety: { photosensitivityAcknowledged: true } });
-  assert.match(view(), /<button type="button">Add clip</);
+  assert.match(view(), /<button type="button">Add clip to Base</);
 });
 
 test('a command changed to another type takes a value of that type', () => {

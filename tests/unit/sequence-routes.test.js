@@ -185,6 +185,31 @@ test('routes: CRUD + transport + status', async (t) => {
   assert.deepEqual(getLiveState().sequence, s.integrations.sequence.sequencer.status());
 });
 
+test('the live state lists the saved sequences and patterns, and every page hears of a save, a rename or a delete', async (t) => {
+  const s = await serve(t);
+  const published = [];
+  const patterns = [];
+  const publish = s.integrations.publisher.publishState;
+  s.integrations.publisher.publishState = (live) => {
+    published.push(live.sequences);
+    patterns.push(live.sequencePatterns);
+    return publish.call(s.integrations.publisher, live);
+  };
+  t.after(() => { s.integrations.publisher.publishState = publish; });
+  assert.deepEqual(getLiveState().sequences, []);
+  await s.call('POST', '/api/sequences', SET);
+  assert.deepEqual(published.at(-1), [{ id: 'set-1', name: 'Set one' }], 'a save is broadcast');
+  await s.call('PUT', '/api/sequences/set-1', { ...SET, name: 'Renamed' });
+  assert.deepEqual(published.at(-1), [{ id: 'set-1', name: 'Renamed' }]);
+  await s.call('DELETE', '/api/sequences/set-1');
+  assert.deepEqual(published.at(-1), []);
+  assert.deepEqual(getLiveState().sequences, []);
+  const made = await s.call('POST', '/api/sequence/patterns', { name: 'Drop', lengthBeats: 4, lanes: [] });
+  assert.deepEqual(patterns.at(-1), [{ id: made.body.pattern.id, name: 'Drop', lengthBeats: 4 }], 'a pattern saved is broadcast');
+  await s.call('DELETE', `/api/sequence/patterns/${made.body.pattern.id}`);
+  assert.deepEqual(patterns.at(-1), []);
+});
+
 test('the engine plays the loaded sequence from the sequencer the server registers', async (t) => {
   const s = await serve(t);
   const artnet = state.artnet.enabled;

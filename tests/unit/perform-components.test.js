@@ -28,6 +28,7 @@ async function load() {
         export { createVoiceHolds } from './public-src/hold-control.js';
         export { PaletteOverride, overrideBody, activeOverride } from './public-src/components/Perform.jsx';
         export { Transport, positionText, beatsPerBar, loopBody, laneRows } from './public-src/components/Transport.jsx';
+        export { presetNameOf } from './public-src/preview-inputs.js';
         export { AudioMeters, meterRows, splClass, latencyText } from './public-src/components/AudioMeters.jsx';
       `,
       resolveDir: ROOT,
@@ -300,7 +301,7 @@ test('the override names a palette by id, and is matched back by its colours', (
 
 const SEQ = {
   id: 'set1', name: 'Set one', timeSignature: { beats: 4, unit: 4 },
-  lanes: [{ id: 'front', name: 'Front' }, { id: 'back', name: '' }], clips: [{ id: 'c1', name: 'Intro' }],
+  lanes: [{ id: 'front', name: 'Front' }, { id: 'back', name: '' }], clips: [{ id: 'c1', presetId: 'hd.neonDomino' }, { id: 'c2', presetId: 'mine-1' }, { id: 'c3', effect: { kind: 'energy.glow' } }],
   loop: { on: false, startBeat: 0, endBeat: 16 },
 };
 const STATUS = {
@@ -317,8 +318,13 @@ test('the position reads bars.beats, and the bar follows the time signature', ()
   assert.strictEqual(ui.positionText(null, 4), '–');
 });
 
-test('each lane shows its playing clip by name', () => {
-  assert.deepStrictEqual(ui.laneRows(STATUS, SEQ), [{ id: 'front', lane: 'Front', clip: 'Intro' }, { id: 'back', lane: 'back', clip: null }]);
+test('each lane shows its playing clip by its preset\'s name, a saved preset\'s first', () => {
+  const nameOf = ui.presetNameOf([{ id: 'mine-1', name: 'My wash' }]);
+  assert.deepStrictEqual(ui.laneRows(STATUS, SEQ, nameOf), [{ id: 'front', lane: 'Front', clip: 'Neon Domino' }, { id: 'back', lane: 'back', clip: null }]);
+  const lanes = (clip) => ui.laneRows({ ...STATUS, lanes: [{ id: 'front', clip }] }, SEQ, nameOf)[0].clip;
+  assert.strictEqual(lanes('c2'), 'My wash');
+  assert.strictEqual(lanes('c3'), 'Effect', 'an effect of its own, no preset');
+  assert.strictEqual(lanes('gone'), 'gone', 'a clip the page has not fetched yet: its id');
 });
 
 test('loop flips the loaded region on and off, and is unavailable without one', () => {
@@ -328,23 +334,30 @@ test('loop flips the loaded region on and off, and is unavailable without one', 
 });
 
 test('the transport shows the sequence, its position, the clips and the controls', () => {
-  given({ sequence: STATUS });
-  const html = ui.html(ui.h(ui.Transport, { initial: { sequences: [{ id: 'set1', name: 'Set one' }, { id: 'set2', name: 'Set two' }], sequence: SEQ } }));
+  given({ sequence: STATUS, sequences: [{ id: 'set1', name: 'Set one' }, { id: 'set2', name: 'Set two' }] });
+  const html = ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } }));
   assert.match(html, /aria-label="Sequence"/);
   assert.match(html, /<option value="set1" selected[^>]*>Set one</);
   assert.match(html, /<option value="set2"[^>]*>Set two</);
   for (const label of ['Pause', 'Stop', 'Next', 'Shuffle', 'Loop']) assert.match(html, new RegExp(`aria-label="${label}"`));
   assert.match(html, /class="transport-position"[^>]*>3\.2</);
-  assert.match(html, /Front[\s\S]*Intro/);
+  assert.match(html, /Front[\s\S]*Neon Domino/);
   given({ sequence: { ...STATUS, playing: false, paused: true } });
-  assert.match(ui.html(ui.h(ui.Transport, { initial: { sequences: [], sequence: SEQ } })), /aria-label="Play"/);
+  assert.match(ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } })), /aria-label="Play"/);
   // With one loaded, the picker's first entry gives the rig back to the look.
-  assert.match(ui.html(ui.h(ui.Transport, { initial: { sequences: [], sequence: SEQ } })), /<option value(="")?[^>]*>No sequence \(back to the look\)</);
+  assert.match(ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } })), /<option value(="")?[^>]*>No sequence \(back to the look\)</);
+});
+
+test('the picker lists the shelf the live state carries: a sequence saved elsewhere appears without a reload', () => {
+  given({ sequence: STATUS, sequences: [{ id: 'set1', name: 'Set one' }] });
+  assert.doesNotMatch(ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } })), /Saved on the tablet/);
+  given({ sequence: STATUS, sequences: [{ id: 'set1', name: 'Set one' }, { id: 'tab', name: 'Saved on the tablet' }] });
+  assert.match(ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } })), /<option value="tab"[^>]*>Saved on the tablet</);
 });
 
 test('with nothing loaded the transport offers the picker and no position', () => {
-  given({ sequence: { ...STATUS, loaded: null, playing: false, lanes: [] } });
-  const html = ui.html(ui.h(ui.Transport, { initial: { sequences: [{ id: 'set1', name: 'Set one' }], sequence: null } }));
+  given({ sequence: { ...STATUS, loaded: null, playing: false, lanes: [] }, sequences: [{ id: 'set1', name: 'Set one' }] });
+  const html = ui.html(ui.h(ui.Transport, { initial: { sequence: null } }));
   assert.match(html, /<option value(="")? selected[^>]*>Pick a sequence</);
   assert.match(html, /aria-label="Play"[^>]*disabled/);
 });

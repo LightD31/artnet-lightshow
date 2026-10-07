@@ -318,6 +318,23 @@ export const signatureBeat = (ts: { unit: number }): number => 4 / ts.unit;
 export const barBeats = (ts: { beats: number; unit: number }): number => ts.beats * signatureBeat(ts);
 
 /**
+ * Where a sequence ends when no loop brings it round, in its beats: a
+ * playlist after its last row or command, an arrangement at the bar line
+ * after its last clip or command (0 with nothing in it).
+ */
+export function sequenceEnd(seq: {
+  mode?: string; timeSignature?: { beats: number; unit: number } | null;
+  clips?: readonly { startBeat: number; lengthBeats: number }[]; commands?: readonly { atBeat: number }[];
+}): number {
+  let last = 0;
+  for (const c of seq.clips ?? []) last = Math.max(last, c.startBeat + c.lengthBeats);
+  for (const k of seq.commands ?? []) last = Math.max(last, k.atBeat);
+  if (seq.mode === 'playlist') return last;
+  const bar = barBeats(seq.timeSignature ?? { beats: 4, unit: 4 });
+  return Math.ceil(last / bar - EPS) * bar;
+}
+
+/**
  * Where a resync puts the sequence, after Hue Dynamics: to the nearest beat
  * of the time signature (ties away from zero), or back to the start of the
  * bar it is in.

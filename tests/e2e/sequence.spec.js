@@ -1,6 +1,7 @@
-// The Sequence view: a clip added in the editor plays and the lane cursor
-// moves; a pattern inserts at the playhead in one tap; a pad hit during a
-// take becomes a clip.
+// The Sequence view: a sequence started in the view plays, and unloads back
+// to the look; a clip added in the editor plays and the lane cursor moves; a
+// pattern inserts at the playhead in one tap of the editor; a pad hit during
+// a take becomes a clip.
 
 import { test, expect } from '@playwright/test';
 import { open, reset } from './helpers.js';
@@ -57,7 +58,30 @@ test('a clip added in the editor plays, and the lane cursor moves', async ({ pag
   await expect.poll(() => cursorLeft(page), { timeout: 4000 }).toBeGreaterThan(before);
 });
 
-test('a pattern from the library inserts in one tap', async ({ page, request }) => {
+test('a sequence started in the view plays, and Unload gives the rig back to the look', async ({ page, request }) => {
+  expect((await request.delete('/api/sequence')).ok()).toBe(true);
+  await open(page, 'sequence');
+  await expect(page.locator('.seq-now')).toContainText('No sequence loaded');
+  await page.getByRole('button', { name: 'New sequence' }).click();
+  await expect(page.locator('.seq-now')).toContainText('New sequence');
+  await expect(page.getByRole('button', { name: 'Edit' })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Add clip to Lane 1' }).click();
+  await expect(page.locator('.seq-block')).toHaveCount(1);
+  // The sequence ends at the bar line after its last clip: long enough to watch it play.
+  const length = page.locator('.seq-clip-row').getByLabel('Length');
+  await length.fill('64');
+  await length.press('Enter');
+  await expect(page.locator('.seq-block')).toHaveAttribute('aria-label', /beats 0 to 64/);
+  await page.getByRole('button', { name: 'Play' }).click();
+  await expect(page.locator('.seq-now')).toContainText('Playing');
+  await page.getByRole('button', { name: 'Stop' }).click();
+  await page.getByRole('button', { name: 'Unload' }).click();
+  await expect(page.locator('.seq-now')).toContainText('No sequence loaded');
+  const { status } = await (await request.get('/api/sequence/status')).json();
+  expect(status.loaded).toBe(null);
+});
+
+test('a pattern from the library inserts in one tap of the editor', async ({ page, request }) => {
   // A pattern clip, like a sequence clip, plays exactly one preset (a strobe plays as a voice instead).
   const library = await (await request.get('/api/effects')).json();
   const preset = library.builtin.find((p) => !/strobe/i.test(`${p.id} ${p.kind || ''} ${(p.spec && p.spec.kind) || ''}`));
@@ -68,6 +92,9 @@ test('a pattern from the library inserts in one tap', async ({ page, request }) 
   expect(made.ok()).toBe(true);
   await open(page, 'sequence');
   await expect(page.locator('.seq-block')).toHaveCount(0);
+  // Outside Edit a stray tap inserts nothing.
+  await expect(page.getByRole('button', { name: /^Insert Four on the floor at beat/ })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Edit' }).click();
   await page.getByRole('button', { name: /^Insert Four on the floor at beat/ }).click();
   await expect(page.locator('.seq-block')).toHaveCount(1);
 });

@@ -182,12 +182,14 @@ test('the shelf keeps patterns beside the sequences, reads a file from before th
   assert.equal(changes, 1, 'the same pattern again is not written');
   assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).patterns.map((p) => p.id), ['drop']);
   assert.deepEqual(new SequenceStore(file).load().getPattern('drop'), saved);
+  assert.deepEqual(store.patternSummaries(), [{ id: 'drop', name: 'Drop', lengthBeats: 8 }], 'what the live state lists');
   for (let i = 1; i < 64; i++) store.savePattern({ ...PATTERN, id: `p${i}` });
   assert.throws(() => store.savePattern({ ...PATTERN, id: 'one-more' }), (e) => e.status === 400);
   store.savePattern({ ...PATTERN, id: 'p1', name: 'Renamed' });
   assert.equal(store.removePattern('p1'), true);
   assert.equal(store.removePattern('p1'), false);
   assert.equal(store.getPattern('p1'), null);
+  assert.ok(!store.patternSummaries().some((p) => p.id === 'p1'));
 });
 
 /** The routes on stand-in sources, with a library, palettes and a shelf of their own in a throwaway directory. */

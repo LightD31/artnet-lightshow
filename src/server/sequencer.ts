@@ -8,7 +8,7 @@ import { pacesOwnFlashes, requiresAcknowledgement, validateSpec } from '../share
 import { canonical } from '../shared/effects/layer.ts';
 import { hash01, pickNotLast, seedFrom } from '../shared/effects/hash.ts';
 import { resolvePalette, toHex } from '../shared/effects/palette.ts';
-import { barBeats, playingClips, resyncPosition, selectClips } from '../shared/effects/sequence.ts';
+import { barBeats, playingClips, resyncPosition, selectClips, sequenceEnd } from '../shared/effects/sequence.ts';
 import { validate, ValidationError } from './validation.ts';
 import { safety } from './safety.ts';
 import { lengthBeatsOf } from './voices.ts';
@@ -94,9 +94,10 @@ export interface SequenceFrame { table: SequenceTable | null; transport: Sequenc
 
 /**
  * The sequencer as the live state carries it (`sequence`): what is loaded,
- * whether it plays, is paused or stopped (holding its picture, or black), the
- * beat of the sequence it is on and that beat's bar (counted from 1), the
- * loop region, the clip on top of each lane, and why it stopped by itself.
+ * whether it plays, is paused or stopped (holding its picture, or black) or
+ * played to its end, the beat of the sequence it is on and that beat's bar
+ * (counted from 1), the loop region, the clip on top of each lane, and why
+ * it stopped by itself.
  */
 export interface SequenceStatus {
   loaded: { id: string; name: string } | null;
@@ -105,6 +106,8 @@ export interface SequenceStatus {
   playing: boolean;
   paused: boolean;
   stopped: 'hold' | 'black' | null;
+  /** It played to its end (sequenceEnd) and let go: the next play starts from the top. */
+  ended: boolean;
   beat: number;
   bar: number;
   /** The loaded sequence's bar, in beats (4 with none loaded): what `bar` counts in. */
@@ -604,6 +607,9 @@ export class Sequencer {
   declare _loaded: Sequence | null;
   declare _key: string | null;
   declare _table: SequenceTable | null;
+  // Where the loaded sequence ends when no loop brings it round.
+  declare _end: number | null;
+  declare _ended: boolean;
   declare _revision: number;
   declare _commands: Sorted[];
   // What was asked for, at once (play twice is play once); and what the
@@ -651,6 +657,7 @@ export class Sequencer {
     this._loaded = null;
     this._key = null;
     this._table = null;
+    this._end = null;
     this._revision = 0;
     this._commands = [];
     this._release();
@@ -687,6 +694,7 @@ export class Sequencer {
     this._loaded = deepFreeze(seq);
     this._key = key;
     this._table = deepFreeze({ ...table, revision: this._revision });
+    this._end = sequenceEnd(seq);
     const commands = this._commands;
     this._commands = sortCommands(seq.commands);
     if (!same) this._release();
@@ -701,6 +709,7 @@ export class Sequencer {
     this._loaded = null;
     this._key = null;
     this._table = null;
+    this._end = null;
     this._commands = [];
     this._revision++;
     this._release();
@@ -744,6 +753,7 @@ export class Sequencer {
     this._hold = null;
     this._stop = null;
     this._error = null;
+    this._ended = false;
     this._palette = null;
     this._automation = { brightness: null, tempo: null };
     this._transport = null;
@@ -1055,6 +1065,7 @@ export class Sequencer {
           this._automation = { brightness: newAutomation(this._loaded!.automation.brightness), tempo: newAutomation(this._loaded!.automation.tempo) };
         }
         this._error = null;
+        this._ended = false;
         this._stop = null;
         this._hold = null;
         this._run = 'playing';
@@ -1082,6 +1093,7 @@ export class Sequencer {
         // A hold with nothing played to hold, or over black, leaves it as it was.
         if (op.mode === 'hold' && (this._run === 'idle' || (this._run === 'stopped' && this._stop?.mode === 'black'))) return;
         const paused = this._run === 'paused';
+        this._ended = false;
         this._stop = { mode: op.mode, position: paused ? this._hold!.position : this._cursor.pos, traversal: paused ? this._hold!.traversal : this._cursor.traversal };
         this._run = 'stopped';
         this._hold = null;
@@ -1096,6 +1108,7 @@ export class Sequencer {
         const to = op.to(from);
         if (to === null) return;
         this._error = null;
+        this._ended = false;
         // Its own beat's commands are still to run: now while playing, on resuming while paused.
         this._cursor = { pos: to, traversal: 0, next: this._firstFrom(to, true) };
         if (this._run === 'playing') {
@@ -1141,12 +1154,31 @@ export class Sequencer {
     this._automation = { brightness: null, tempo: null };
   }
 
+  // Played to its end: the transport lets go, holding nothing (no clip
+  // covers a fixture there, so the look plays on), its automation ends, and
+  // the next play starts from the top.
+  _finish(): void {
+    this._ended = true;
+    this._run = 'idle';
+    // A stop asked for in this frame still goes; a pause has nothing left to pause.
+    if (this._mode === 'playing' || this._mode === 'paused') {
+      this._mode = 'idle';
+      this._asked = null;
+    }
+    this._anchor = null;
+    this._hold = null;
+    this._stop = null;
+    this._automation = { brightness: null, tempo: null };
+    this._cursor = { pos: 0, traversal: 0, next: 0 };
+  }
+
   /**
    * Walk the sequence from where it is to `beats` past the anchor's beat:
    * the commands on the way run once each, in beat and list order (a loop's
    * end is never reached, its start is); a goto jumps and carries on from
-   * its destination; a playlist moves its rows on. Returns false when the
-   * walk stopped the sequence.
+   * its destination; a playlist moves its rows on; with no loop ahead the
+   * sequence ends at its end. Returns false when the walk stopped or ended
+   * the sequence.
    */
   _walk(beats: number): boolean {
     const seq = this._loaded!;
@@ -1161,7 +1193,7 @@ export class Sequencer {
       const wraps = !!loop && loop.on && loop.endBeat - loop.startBeat > 0 && c.pos < loop.endBeat - EPS;
       let end = c.pos + travel;
       // What the way meets first: the loop's end, a row's end or start, else nothing.
-      let event: 'wrap' | 'shuffle' | 'enter' | 'advance' | null = null;
+      let event: 'wrap' | 'shuffle' | 'enter' | 'advance' | 'end' | null = null;
       let leaving = -1;
       if (wraps && end >= loop.endBeat - EPS) { end = loop.endBeat; event = 'wrap'; }
       if (playlist && !a.rowLoop) {
@@ -1178,6 +1210,10 @@ export class Sequencer {
           if (nextRow && nextRow.startBeat <= end + EPS && (event === null || nextRow.startBeat < end - EPS)) { end = nextRow.startBeat; event = 'enter'; }
         }
       }
+      // With no loop ahead, the sequence's end, unless something else comes
+      // first; while a take runs there is none, for the take to land in.
+      const last = this._record ? Infinity : this._end!;
+      if (!wraps && end >= last - EPS && (event === null || last < end - EPS)) { end = Math.max(c.pos, last); event = 'end'; }
       // The commands up to there: past an end that is never reached (a wrap,
       // a shuffled row's end) only those before it.
       const exclusive = event === 'wrap' || event === 'shuffle';
@@ -1211,7 +1247,7 @@ export class Sequencer {
       }
       if (this._anchor !== a) continue;
       // Stopped short of a wrap or a row's end, the walk meets it again from here.
-      if (event !== null && !this._spend()) return false;
+      if (event !== null && event !== 'end' && !this._spend()) return false;
       a.walked += end - c.pos;
       // Off this beat, what was done on it is behind.
       if (end !== c.pos) c.done = null;
@@ -1220,6 +1256,10 @@ export class Sequencer {
         // A clock that stepped back a hair moves nothing back: the walk waits for it.
         a.walked = Math.max(a.walked, target);
         return true;
+      }
+      if (event === 'end') {
+        this._finish();
+        return false;
       }
       if (event === 'wrap') {
         c.pos = loop!.startBeat;
@@ -1624,6 +1664,7 @@ export class Sequencer {
       playing: this._mode === 'playing',
       paused: this._mode === 'paused',
       stopped: this._mode === 'stopped' ? this._asked : null,
+      ended: this._mode === 'idle' && this._ended,
       beat,
       bar,
       beatsPerBar: seq ? barBeats(seq.timeSignature) : 4,

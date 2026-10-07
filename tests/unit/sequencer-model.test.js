@@ -361,7 +361,7 @@ test('the live state carries the sequencer\'s status in a domain of its own', ()
   const sequencer = new Sequencer({ resolve });
   try {
     setSequenceProvider(() => sequencer.status());
-    const idle = { playing: false, paused: false, stopped: null, beat: 0, bar: 1, beatsPerBar: 4, loop: null, error: null };
+    const idle = { playing: false, paused: false, stopped: null, ended: false, beat: 0, bar: 1, beatsPerBar: 4, loop: null, error: null };
     assert.deepEqual(getLiveState().sequence, { loaded: null, revision: 0, mode: null, ...idle, lanes: [] });
     sequencer.load(sequence({ mode: 'playlist', lanes: [lane('a')] }));
     assert.deepEqual(getLiveState().sequence, { loaded: { id: 'set-1', name: 'Set one' }, revision: 1, mode: 'playlist', ...idle, lanes: [{ id: 'a', clip: null }] });
@@ -394,6 +394,8 @@ test('the shelf keeps up to 64 sequences in a versioned file, saved whole and va
   assert.deepEqual(onDisk(file), { version: 1, sequences: [saved] });
   assert.deepEqual(new SequenceStore(file).load().list(), [saved], 'a restart reads it back');
   assert.equal(heard, 1);
+  // The live state's summaries: each sequence's id and name, in shelf order.
+  assert.deepEqual(store.summaries(), [{ id: 'set-1', name: 'Set one' }]);
   // The same again is no write; a copy handed out is the caller's own.
   const write = t.mock.method(store, 'write');
   store.save(structuredClone(saved));
@@ -407,6 +409,7 @@ test('the shelf keeps up to 64 sequences in a versioned file, saved whole and va
   const renamed = store.save({ ...saved, name: 'Renamed' });
   assert.equal(renamed.name, 'Renamed');
   assert.deepEqual(store.list().map((s) => s.name), ['Renamed']);
+  assert.deepEqual(store.summaries(), [{ id: 'set-1', name: 'Renamed' }]);
   assert.equal(heard, 2);
   refused(() => store.save({ ...saved, clips: [clip('c', 'nowhere', 0, 4)] }), /sequence: clips\.0\.laneId/);
   assert.equal(store.get('set-1').name, 'Renamed', 'a refused save changes nothing');
@@ -420,6 +423,7 @@ test('the shelf keeps up to 64 sequences in a versioned file, saved whole and va
   assert.equal(store.remove('set-1'), true);
   assert.equal(store.remove('set-1'), false);
   assert.equal(store.list().length, 63);
+  assert.ok(!store.summaries().some((q) => q.id === 'set-1'));
 });
 
 test('a shelf file that does not validate is moved aside whole, and a failed write keeps what was there', (t) => {
