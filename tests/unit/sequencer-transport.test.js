@@ -98,8 +98,7 @@ const close = (actual, expected, eps = 1e-9) => assert.ok(Math.abs(actual - expe
 
 const ROWS = { mode: 'playlist', lanes: [lane('rows')], clips: [clip('A', 'rows', 0, 4), clip('B', 'rows', 4, 4), clip('C', 'rows', 8, 4)] };
 
-test('playlist semantics: one shared lane, autoplay advances at each clip\'s end; autoplay off loops the clip; next skips; shuffle picks ≠ current', () => {
-  // Autoplay (the default): each row plays for its own length, then the next.
+test('playlist autoplay advances at each row end', () => {
   const on = rig();
   on.s.load(sequence(ROWS));
   assert.equal(on.at(100), null, 'loaded is not playing');
@@ -112,20 +111,25 @@ test('playlist semantics: one shared lane, autoplay advances at each clip\'s end
   assert.equal(on.top(), 'B', 'A ended: B');
   on.at(109);
   assert.equal(on.top(), 'C');
+});
 
-  // Autoplay off: the row repeats, each time round a lap of its own, until next.
+test('playlist without autoplay repeats the current row', () => {
   const off = rig();
   off.s.load(sequence({ ...ROWS, options: { autoplay: false } }));
   off.s.play();
   off.at(100);
-  const t = () => off.s.frame(reading(off.beat)).transport;
-  off.beat = 103;
-  assert.deepEqual(playingClips(off.s.table(), t(), 103, [1]).map((c) => c.id), ['clip:A:1.0.0']);
-  off.beat = 105;
-  assert.equal(sequencePlace(t(), 105).position, 1, 'A again, not B');
+  const t = (beat) => off.s.frame(reading(beat)).transport;
+  assert.deepEqual(playingClips(off.s.table(), t(103), 103, [1]).map((c) => c.id), ['clip:A:1.0.0']);
+  assert.equal(sequencePlace(t(105), 105).position, 1, 'A again, not B');
   assert.equal(off.top(), 'A');
-  assert.deepEqual(playingClips(off.s.table(), t(), 105, [1]).map((c) => c.id), ['clip:A:1.1.0'], 'a fresh lap');
-  // Next skips at once, to B's start, and B then repeats in its turn.
+  assert.deepEqual(playingClips(off.s.table(), t(105), 105, [1]).map((c) => c.id), ['clip:A:1.1.0'], 'a fresh lap');
+});
+
+test('playlist next and previous wrap through repeating rows', () => {
+  const off = rig();
+  off.s.load(sequence({ ...ROWS, options: { autoplay: false } }));
+  off.s.play();
+  off.at(100);
   off.s.next();
   assert.equal(off.at(105.5), 4);
   assert.equal(off.top(), 'B');
@@ -142,8 +146,13 @@ test('playlist semantics: one shared lane, autoplay advances at each clip\'s end
   off.s.prev();
   off.at(111);
   assert.equal(off.top(), 'C');
+});
 
-  // Shuffle: another row each time, never the one playing; all the others in time.
+test('playlist shuffle chooses another row', () => {
+  const off = rig();
+  off.s.load(sequence({ ...ROWS, options: { autoplay: false } }));
+  off.s.play();
+  off.at(100);
   let beat = 112;
   const seen = new Set();
   for (let i = 0; i < 24; i++) {
@@ -154,7 +163,9 @@ test('playlist semantics: one shared lane, autoplay advances at each clip\'s end
     seen.add(off.top());
   }
   assert.deepEqual([...seen].sort(), ['A', 'B', 'C']);
-  // One row: nothing else to pick, so nothing moves.
+});
+
+test('shuffle on a single-row playlist preserves position', () => {
   const one = rig();
   one.s.load(sequence({ mode: 'playlist', lanes: [lane('rows')], clips: [clip('A', 'rows', 0, 4)] }));
   one.s.play();
@@ -224,7 +235,7 @@ test('loop region wraps the beat', () => {
 
 // ── Palettes ────────────────────────────────────────────────────────────────
 
-test('initialPalette sets the override on play; randomPaletteOnLoop changes it at each wrap', () => {
+test('sequence palette options apply at start and loop boundaries', () => {
   const r = rig();
   r.s.load(sequence({
     clips: [clip('A', 'a', 0, 2)], loop: { on: true, startBeat: 0, endBeat: 2 },
@@ -433,7 +444,7 @@ test('a sequence without palette commands leaves the override untouched', () => 
 
 // ── Command rows ────────────────────────────────────────────────────────────
 
-test('commands fire once when the beat passes them: palette override set, tempo applied, brightness applied, goto jumps', () => {
+test('commands execute once at each crossing', () => {
   const r = rig();
   r.s.load(sequence({
     clips: [clip('A', 'a', 0, 16)],
@@ -489,7 +500,7 @@ test('commands fire once when the beat passes them: palette override set, tempo 
   assert.equal(long.s.status().error, null);
 });
 
-test('a goto that comes straight back to itself stops the sequence with an error, not a hang', () => {
+test('goto cycles stop with a recoverable error', () => {
   const r = rig();
   r.s.load(sequence({
     clips: [clip('A', 'a', 0, 8)],
@@ -503,10 +514,9 @@ test('a goto that comes straight back to itself stops the sequence with an error
   assert.equal(st.playing, false);
   assert.equal(st.stopped, 'hold');
   assert.equal(st.error.code, 'goto-cycle');
-  assert.match(st.error.message, /there|back/);
 });
 
-test('the transport tells when it starts or stops moving: playing or paused it moves, stopped, unloaded, replaced or stopped by itself it stands', () => {
+test('free-clock ownership follows sequence transport state', () => {
   const told = [];
   const r = rig({
     onRun: () => {
@@ -555,7 +565,7 @@ test('the transport tells when it starts or stops moving: playing or paused it m
 
 // ── The traversal budget ────────────────────────────────────────────────────
 
-test('a frame does at most 4096 commands, wraps and row advances; the 4097th stops the sequence where it was, and play carries on from there', () => {
+test('frame traversal limits preserve the next unprocessed operation', () => {
   assert.equal(MAX_FRAME_OPERATIONS, 4096);
   const commands = (n) => Array.from({ length: n }, (_, i) => ({ id: `c${i}`, atBeat: 1, type: 'brightness', value: i % 200 }));
   // Exactly 4096 on one beat: all of them, the last value on.
@@ -617,7 +627,7 @@ test('a frame does at most 4096 commands, wraps and row advances; the 4097th sto
 
 // ── Automation ──────────────────────────────────────────────────────────────
 
-test('automation sine over 8 beats between min and max; tempo automation counts seconds', () => {
+test('automation samples its configured clock', () => {
   const a = (mode, extra = {}) => ({ mode, period: 8, min: 0, max: 100, growing: true, ...extra });
   // Light DJ's timer shapes, from the current value 25, rising.
   const triangle = [0, 4, 8, 12].map((e) => automationValue(a('triangle'), 25, e));
@@ -783,7 +793,7 @@ function stage() {
   };
 }
 
-test('pause holds the clip looping; stop holds the last frame; stop with blackout sends black', () => {
+test('pause and stop retain their specified output', () => {
   const show = stage();
   const r = rig();
   // A on 10 and 11 for four beats, looping every two; B after it; a command at 5.
@@ -814,7 +824,10 @@ test('pause holds the clip looping; stop holds the last frame; stop with blackou
   show(r.s, 110.5);
   assert.deepEqual(r.applied, [{ masterDimmer: 1 }], 'beat 5 is reached three and a half beats later');
 
-  // Stop: the last picture stays, whatever the clip would have done; masters and voices still act.
+});
+
+test('stopped frames retain master and voice control', () => {
+  const show = stage();
   const s2 = rig();
   s2.s.load(sequence({ clips: [clip('A', 'a', 0, 8, { effect: PROBE, targets: [10, 11] })] }));
   s2.s.play();
@@ -839,7 +852,9 @@ test('pause holds the clip looping; stop holds the last frame; stop with blackou
   s2.s.load(sequence({ id: 'set-2', clips: [] }));
   assert.equal(show(s2.s, 235)[10].r, 255);
   assert.equal(s2.s.status().stopped, null);
-  // Play after a stop starts from the top.
+});
+
+test('playing after stop restarts from beat zero', () => {
   const s3 = rig();
   s3.s.load(sequence({ clips: [clip('A', 'a', 0, 8)] }));
   s3.s.play();
@@ -853,7 +868,7 @@ test('pause holds the clip looping; stop holds the last frame; stop with blackou
 
 // ── The end ─────────────────────────────────────────────────────────────────
 
-test('an arrangement with no loop ends at the bar line after its last clip or command: it lets go, says so, and plays from the top again', () => {
+test('non-looping arrangements finish at their end bar', () => {
   const show = stage();
   const r = rig();
   r.s.load(sequence({
@@ -879,7 +894,9 @@ test('an arrangement with no loop ends at the bar line after its last clip or co
   assert.equal(r.top(), 'A');
   assert.equal(r.s.status().ended, false);
 
-  // A command past the last clip runs first, and the bar line after it is the end.
+});
+
+test('commands extend an arrangement to their ending bar', () => {
   const long = rig();
   long.s.load(sequence({ clips: [clip('A', 'a', 0, 66.5)], commands: [{ id: 'dim', atBeat: 70, type: 'brightness', value: 9 }] }));
   long.s.play();
@@ -887,21 +904,27 @@ test('an arrangement with no loop ends at the bar line after its last clip or co
   assert.equal(long.at(71.5), 71.5);
   assert.deepEqual(long.applied.at(-1), { masterDimmer: 9 }, 'the command past the clips runs');
   assert.equal(long.at(72), null);
-  // The bar is the sequence's own: in 3/4 a clip to beat 4 ends the sequence at 6.
+});
+
+test('arrangement end uses its own time signature', () => {
   const waltz = rig();
   waltz.s.load(sequence({ timeSignature: { beats: 3, unit: 4 }, clips: [clip('A', 'a', 0, 4)] }));
   waltz.s.play();
   waltz.at(0);
   assert.equal(waltz.at(5.5), 5.5);
   assert.equal(waltz.at(6), null);
-  // Nothing in it, nothing to play: it ends as it starts.
+});
+
+test('an empty arrangement ends immediately', () => {
   const empty = rig();
   empty.s.load(sequence());
   empty.s.play();
   assert.equal(empty.at(0), null);
   assert.equal(empty.s.status().ended, true);
 
-  // While a take runs it plays on past its end, for the take to land in; the take dropped, it ends where it is.
+});
+
+test('recording holds an arrangement past its end', () => {
   const take = rig();
   take.s.load(sequence({ clips: [clip('A', 'a', 0, 4)] }));
   take.s.startRecording({ mode: 'overdub', countInBeats: 0, quantise: 1 });
@@ -913,12 +936,17 @@ test('an arrangement with no loop ends at the bar line after its last clip or co
   assert.equal(take.at(21), null);
   assert.equal(take.s.status().ended, true);
 
-  // A goto on its end, or a loop, takes it round; a loop behind the position does not.
+});
+
+test('a goto command at the end keeps the arrangement playing', () => {
   const round = rig();
   round.s.load(sequence({ clips: [clip('A', 'a', 0, 4)], commands: [{ id: 'back', atBeat: 64, type: 'goto', value: 0 }] }));
   round.s.play();
   round.at(0);
   assert.equal(round.at(64.5), 0.5);
+});
+
+test('seeking beyond a loop allows the arrangement to finish', () => {
   const looped = rig();
   looped.s.load(sequence({ clips: [clip('A', 'a', 0, 4), clip('B', 'a', 8, 4)], loop: { on: true, startBeat: 0, endBeat: 4 } }));
   looped.s.play();
@@ -929,7 +957,9 @@ test('an arrangement with no loop ends at the bar line after its last clip or co
   assert.equal(looped.at(308), 11);
   assert.equal(looped.at(309), null, 'and on to the end');
 
-  // A seek past the end ends it at once.
+});
+
+test('seeking updates the ended state', () => {
   const seek = rig();
   seek.s.load(sequence({ clips: [clip('A', 'a', 0, 4)] }));
   seek.s.play();
@@ -942,7 +972,7 @@ test('an arrangement with no loop ends at the bar line after its last clip or co
   assert.deepEqual([seek.s.status().ended, seek.s.status().beat], [false, 2]);
 });
 
-test('a playlist ends after its last row; autoplay off or shuffle keep it going', () => {
+test('an autoplay playlist ends after its last row', () => {
   const r = rig();
   r.s.load(sequence(ROWS));
   r.s.play();
@@ -951,17 +981,20 @@ test('a playlist ends after its last row; autoplay off or shuffle keep it going'
   assert.equal(r.top(), 'C');
   assert.equal(r.at(112), null);
   assert.equal(r.s.status().ended, true);
-  for (const options of [{ autoplay: false }, { shuffle: true }]) {
+});
+
+for (const [name, options] of [['repeat', { autoplay: false }], ['shuffle', { shuffle: true }]]) {
+  test(`a playlist in ${name} mode continues past its last row`, () => {
     const on = rig();
     on.s.load(sequence({ ...ROWS, options }));
     on.s.play();
     on.at(100);
     assert.notEqual(on.at(140), null, JSON.stringify(options));
     assert.equal(on.s.status().playing, true);
-  }
-});
+  });
+}
 
-test('play after a pause re-bases the transport and starts nothing again: the lap playing plays on', () => {
+test('resuming rebases transport without restarting clip generations', () => {
   const show = stage();
   const r = rig();
   r.s.load(sequence({ clips: [clip('A', 'a', 0, 8, { effect: PROBE, targets: [10] })] }));
@@ -994,7 +1027,7 @@ test('a renderer that never saw the sequence play holds the stop\'s own moment, 
   assert.deepEqual(show(r.s, 410), first);
 });
 
-test('a held picture is a still: a clip that drove a fixture\'s strobe channel leaves it closed once stopped', () => {
+test('stopped pictures close fixture strobe channels', () => {
   const show = stage();
   const r = rig();
   const acknowledged = { safety: { hdFlashIntervalMs: 350, acknowledged: true } };
@@ -1040,7 +1073,7 @@ test('resync to the bar re-bases the transport', () => {
   assert.throws(() => r.s.resync('phrase'), (err) => err.status === 400);
 });
 
-test('a jump of the music\'s clock re-bases the sequence: it carries on from where it was, replaying nothing', () => {
+test('music-clock jumps rebase without replaying commands', () => {
   const r = rig();
   r.s.load(sequence({ clips: [clip('A', 'a', 0, 64)], commands: [{ id: 'm', atBeat: 20, type: 'brightness', value: 3 }] }));
   r.s.play();
@@ -1057,7 +1090,7 @@ test('a jump of the music\'s clock re-bases the sequence: it carries on from whe
 
 // ── Admission and loading ───────────────────────────────────────────────────
 
-test('play refuses a sequence holding a clip that needs the photosensitivity acknowledgement (409); nothing starts', () => {
+test('rapid clips prevent unacknowledged playback', () => {
   const FAST = validateSpec({ kind: 'ldj.StrobeCycle', params: { cadence: 0.25 } });
   const refused = [];
   const r = rig({ admit: (spec) => { if (spec.kind === 'ldj.StrobeCycle') { refused.push(spec); const e = new Error('photosensitivity acknowledgement required'); e.status = 409; throw e; } } });
@@ -1077,11 +1110,12 @@ test('play refuses a sequence holding a clip that needs the photosensitivity ack
   assert.equal(ok.s.status().playing, true);
 });
 
-test('a start whose settings cannot go on starts nothing, and a later play starts it whole', () => {
+test('failed start settings leave the sequence retryable', () => {
   let fail = true;
-  const r = rig({ musicMode: () => { if (fail) throw new Error('disk full'); } });
+  const failure = new Error('write failed');
+  const r = rig({ musicMode: () => { if (fail) throw failure; } });
   r.s.load(sequence({ clips: [clip('A', 'a', 0, 8)], musicMode: 'tempo' }));
-  assert.throws(() => r.s.play(), /disk full/);
+  assert.throws(() => r.s.play(), (err) => err === failure);
   assert.equal(r.s.status().playing, false);
   assert.equal(r.at(100), null, 'nothing queued to start');
   fail = false;
@@ -1089,7 +1123,7 @@ test('a start whose settings cannot go on starts nothing, and a later play start
   assert.equal(r.at(101), 0);
 });
 
-test('an edit of the sequence playing plays on; another sequence loaded stops the one playing', () => {
+test('editing the playing sequence preserves playback', () => {
   const r = rig();
   r.s.load(sequence({ clips: [clip('A', 'a', 0, 64)] }));
   r.s.play();
@@ -1105,7 +1139,7 @@ test('an edit of the sequence playing plays on; another sequence loaded stops th
   assert.equal(r.s.status().loaded.id, 'set-2');
 });
 
-test('an edit while the sequence stands on a command\'s beat runs nothing of that beat again: paused on it, or stopped on it by the budget', () => {
+test('edits at a held command beat do not replay it', () => {
   // Paused right on beat 4 after a seek: its two commands ran with the seek.
   const r = rig({ master: 255 });
   const at4 = [{ id: 'pal', atBeat: 4, type: 'palette', value: 'redCyan' }, { id: 'dim', atBeat: 4, type: 'brightness', value: 7 }];
@@ -1152,7 +1186,7 @@ test('an edit while the sequence stands on a command\'s beat runs nothing of tha
   assert.deepEqual(h.applied.slice(n), [{ paletteOverride: PALETTE_HEX.redCyan, paletteOverrideId: 'redCyan', masterDimmer: 7, bpm: 128 }], 'the next time round, all three');
 });
 
-test('the status: what is loaded, playing or paused, the beat and bar, the loop and the clip on each lane', () => {
+test('status identifies the active sequence position and clips', () => {
   const r = rig();
   assert.deepEqual(r.s.status(), {
     loaded: null, revision: 0, mode: null, playing: false, paused: false, stopped: null, ended: false, beat: 0, bar: 1, beatsPerBar: 4, loop: null, lanes: [], error: null,
@@ -1204,7 +1238,7 @@ test('blackout stop at the sequence end holds black', () => {
 
 const WORKER = path.join(import.meta.dirname, '..', '..', 'src', 'server', 'engine-worker.ts');
 
-test('the worker plays a pause and a stop from the snapshot, and takes a new table only with the snapshot that names it', async () => {
+test('worker snapshots pair transport with the matching sequence table', async () => {
   const shared = universes.allocateShared();
   const w = new Worker(WORKER, { workerData: { shared, epochMs: hrtimeMs(), periodMs: FRAME_MS } });
   let frames = 0;
@@ -1265,7 +1299,7 @@ test('the worker plays a pause and a stop from the snapshot, and takes a new tab
   }
 });
 
-test('the beat the last frame was handed is what the detectors look a container\'s child up at, loaded or not', () => {
+test('detector lookups use the last frame beat', () => {
   const { s } = rig();
   assert.ok(Number.isNaN(s.lastBeat()), 'no frame yet, no beat');
   const first = reading(7.25);

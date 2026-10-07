@@ -27,7 +27,7 @@ test('the band list is the union of the party and disco bands', () => {
   assert.deepStrictEqual(make().bandList(), [[20, 250], [250, 3000], [3000, 9000], [0, 160], [750, 2000], [3000, 9000]].filter((b, i, a) => a.findIndex((c) => c[0] === b[0] && c[1] === b[1]) === i));
 });
 
-test('party levels: full = clamp(rms·(2+18·sens)), bands by sqrt share ×1.8, smoothed with 30/220 ms', () => {
+test('party levels use the configured attack and release', () => {
   const a = make();
   for (let i = 0; i < 40; i++) a.onReading(reading(i * HOP, [4, 1, 0, 0, 0], 0.1, 5));
   const f = a.frame();
@@ -36,7 +36,7 @@ test('party levels: full = clamp(rms·(2+18·sens)), bands by sqrt share ×1.8, 
   assert.ok(Math.abs(f.party.bass - Math.min(1, f.party.full * Math.sqrt(4 / 5) * 1.8)) < 0.05);
 });
 
-test('disco: a band well above its history and floor is a hit; the next frame, the decayed gate holds it off', () => {
+test('Disco gates repeated hits against their decaying history', () => {
   const a = make();
   for (let i = 0; i < 80; i++) a.onReading(reading(i * HOP, [0, 0, 0, 1e-3, 0]));      // quiet bass history
   a.onReading(reading(1, [0, 0, 0, 1, 0]));                                              // bass jumps
@@ -45,7 +45,7 @@ test('disco: a band well above its history and floor is a hit; the next frame, t
   assert.strictEqual(a.frame().disco.hit[0], false, 'below the decayed gate');
 });
 
-test('disco floor: a band under the total floor (minimumThreshold / 200000 = 1e-5) never hits', () => {
+test('Disco ignores bands below its minimum floor', () => {
   const a = make();
   for (let i = 0; i < 90; i++) a.onReading(reading(i * HOP, [0, 0, 0, i === 89 ? 9e-6 : 1e-9, 0]));
   assert.strictEqual(a.frame().disco.hit[0], false);
@@ -61,7 +61,7 @@ test('a synthetic kick trips the Disco defaults\' bass hit; a quiet bed does not
   assert.strictEqual(a.frame().disco.hit[0], true);
 });
 
-test('SPL on the 16-bit scale: full scale → level 69 LOUD, −40 dBFS → level 29 SOFT, silence QUIET', () => {
+test('SPL classification uses the 16-bit power scale', () => {
   const a = make();
   for (let i = 0; i < 20; i++) a.onReading(reading(i * HOP, [0, 0, 0, 0, 0], 32767 / 32768));
   assert.strictEqual(a.frame().spl.level, 69);
@@ -102,7 +102,7 @@ function features(over = {}) {
   return new AudioFeatures({ master: () => HD_MASTER_DEFAULTS, disco, ldjTrigger: () => 0.30, binHz: BIN_HZ, now: () => 0, ...over });
 }
 
-test('the party bands share the FFT total, not the raw frame power, which stands in only when the total is absent', () => {
+test('party band levels use FFT total power when available', () => {
   const master = { ...HD_MASTER_DEFAULTS, smoothing: 0, attackMs: 30 };
   const run = (spectrum, bands = [25, 4, 0, 0, 0]) => {
     const a = features({ master: () => master });
@@ -129,7 +129,7 @@ test('the party bands share the FFT total, not the raw frame power, which stands
   near(p.mid, 0.072 * k);
 });
 
-test('party smoothing runs on stream time with the master\'s attack and release, and polls cannot move it', () => {
+test('party smoothing advances only with stream time', () => {
   const at = (master, steps) => {
     const a = features({ master: () => ({ ...HD_MASTER_DEFAULTS, ...master }) });
     for (const [t, rms] of steps) a.onReading(hop({ t, rms }));
@@ -157,7 +157,7 @@ test('party smoothing runs on stream time with the master\'s attack and release,
   assert.strictEqual(a.frame().party.full, 0.6321205588285577);
 });
 
-test('the history is the 80 hops before this one, from ones at the start, and a hit tests the gate before it decays', () => {
+test('Disco compares each hit against the preceding 80 hops', () => {
   // A first bass hop of 1.52 against eighty ones: mean 1, no variance, so
   // C × mean = 1.5142857 and it hits. With the hop counted in first, or the
   // history seeded with it, C × mean would be over 1.52.
@@ -189,7 +189,7 @@ test('the history is the 80 hops before this one, from ones at the start, and a 
   assert.strictEqual(a.frame().disco.gate[0], decayed);
 });
 
-test('the gate is the raw power a band must pass: the larger of its decayed hit and its thresholds over the sensitivity', () => {
+test('Disco gates raw band power against sensitivity thresholds', () => {
   const a = features({ disco: () => ({ bands: DISCO_DEFAULTS.bands, globals: { ...DISCO_DEFAULTS.globals, sensitivity: 25 } }) });
   a.onReading(hop({ t: 0, bands: [0, 0, 0, 0.1, 0] }));
   // Eighty ones: mean 1, C = 1.5142857; s = 25/100 × 2 = 0.5.
@@ -213,7 +213,7 @@ test('a changed band starts its history from its next power; the others keep the
   assert.deepStrictEqual(fresh.frame().disco.hit.slice(0, 2), [true, true]);
 });
 
-test('a band edit drops the hops summed over the old bands and asks the input for the new ones', () => {
+test('band edits discard old hops and request the new bands', () => {
   let now = 0;
   let bands = DISCO_DEFAULTS.bands;
   const asked = [];
@@ -276,7 +276,7 @@ test('an owner change with the same settings changes nothing', () => {
   }
 });
 
-test('Peak reads the raw frame power, with its sensitivity counted twice against the mean', () => {
+test('Peak applies sensitivity twice to raw frame power', () => {
   const peak = (power, globals = {}) => {
     const a = features({ disco: () => ({ bands: DISCO_DEFAULTS.bands, globals: { ...DISCO_DEFAULTS.globals, ...globals } }) });
     a.onReading(hop({ t: 0, power, fftPower: 1e5 }));
@@ -291,7 +291,7 @@ test('Peak reads the raw frame power, with its sensitivity counted twice against
   assert.strictEqual(peak(4.5, { simpleSensitivity: 25 }), true);
 });
 
-test('Neural: the RMS over its own history from zeros, in single precision, never clipped and never NaN', () => {
+test('Neural measures finite RMS against its zero-initialized history', () => {
   let a = features();
   a.onReading(hop({ t: 0, rms: 0.1 }));
   assert.strictEqual(a.frame().disco.neural.amplitude, 17.61006736755371, 'ratio 52.83 over a three-hop mean');
@@ -311,7 +311,7 @@ test('Neural: the RMS over its own history from zeros, in single precision, neve
   assert.strictEqual(a.frame().disco.neural.mainFrequency, 0.5);
 });
 
-test('Neural\'s frequency is a lower median, its smoothers written at the shared history slot modulo their length', () => {
+test('Neural smoothers share the circular history cursor', () => {
   const at = (smoothnessAnalyser, bins) => {
     const a = features({ disco: () => ({ bands: DISCO_DEFAULTS.bands, globals: { ...DISCO_DEFAULTS.globals, smoothnessAnalyser } }) });
     bins.forEach((bin, i) => a.onReading(hop({ t: i * HOP, dominantHz: bin === null ? null : bin * BIN_HZ })));
@@ -394,7 +394,7 @@ test('the section moves when the current class has its count over the last sixte
   assert.deepStrictEqual([a.frame().spl.beat, a.frame().spl.section], ['quiet', 'quiet']);
 });
 
-test('a trigger change decides the next class and keeps the history; level 29 is soft at 0.30, loud at 0.10', () => {
+test('trigger edits reclassify the next hop without clearing history', () => {
   let trigger = 0.3;
   const a = features({ ldjTrigger: () => trigger });
   const t = classes(a, [29, 29, 29]);
@@ -406,7 +406,7 @@ test('a trigger change decides the next class and keeps the history; level 29 is
   assert.deepStrictEqual([a.frame().spl.beat, a.frame().spl.section], ['loud', 'soft']);
 });
 
-test('a gap of over half a second starts the classes again; a shorter one is heard as it was', () => {
+test('a half-second audio gap resets classification', () => {
   const a = features();
   let t = classes(a, [29, 29, 29]);
   a.onReading(hop({ t: t + 0.8, rms: rmsFor(29) }));
@@ -423,7 +423,7 @@ test('a gap of over half a second starts the classes again; a shorter one is hea
 
 // ── Identity, freshness and latency ──────────────────────────────────────────
 
-test('a repeated hop arriving later neither changes the analysis nor keeps the audio fresh', () => {
+test('repeated hops cannot refresh audio freshness', () => {
   let now = 0;
   const a = features({ now: () => now });
   a.onReading(hop({ t: 1, generation: 1, bands: [0, 0, 0, 2, 0] }));
@@ -436,7 +436,7 @@ test('a repeated hop arriving later neither changes the analysis nor keeps the a
   assert.strictEqual(a.frame(), null);
 });
 
-test('a line from a replaced process is ignored; a new process is a new epoch with nothing held', () => {
+test('only the current input process can advance the audio epoch', () => {
   const a = features();
   let t = 0;
   for (; t < 0.31; t += 0.025) a.onReading(hop({ t, generation: 2, rms: rmsFor(29), bands: [0, 0, 0, 1e-3, 0] }));
@@ -462,7 +462,7 @@ test('a hop without a generation that runs backwards is a restart', () => {
   assert.deepStrictEqual([a.frame().t, a.frame().generation], [0.0116, before + 1]);
 });
 
-test('the frame for the aligned stream time comes from the recent hops; freshness goes by the newest arrival', () => {
+test('aligned frames use stream time while freshness uses arrival time', () => {
   let now = 0;
   const a = features({ now: () => now });
   for (const t of [1.0, 1.1, 1.2]) { a.onReading(hop({ t })); now += 100; }
@@ -503,7 +503,7 @@ test('a malformed spectrum is not heard, and what is published is always finite'
   assert.ok(numbers.length > 10 && numbers.every(Number.isFinite), JSON.stringify(a.frame()));
 });
 
-test('the band list follows the Disco bands in force, without repeats, and hands out a copy', () => {
+test('Disco band selection is deduplicated and copied', () => {
   const bands = { ...DISCO_DEFAULTS.bands, bass: [20, 250] };
   const a = features({ disco: () => ({ bands, globals: DISCO_DEFAULTS.globals }) });
   const list = a.bandList();
@@ -523,7 +523,7 @@ function standIn() {
   return proc;
 }
 
-test('a band edit is sent to the running input, which carries on; a floor or a globals edit asks for nothing', async () => {
+test('only band edits update the running input band list', async () => {
   const spawned = [];
   const procs = [];
   const live = new LiveInput({ now: () => 0, spawner: (exe, args) => { spawned.push(args); const p = standIn(); procs.push(p); return p; } });
@@ -583,7 +583,7 @@ function listening() {
 }
 const settle = () => new Promise((r) => setImmediate(r));
 
-test('a restart on another source, device or file starts every history again, even with the bands changed in it', async () => {
+test('input source changes clear detector history', async () => {
   // A power of 0.01 is a Peak hit against a quiet history of 0.001, not
   // against the ones it starts from; the soft section is kept or forgotten.
   const after = (rig, t = 0.0116) => { rig.line(t, { power: 0.01 }); const f = rig.a.frame(); return [f.disco.peakHit, f.spl.section]; };
@@ -613,7 +613,7 @@ test('a restart on another source, device or file starts every history again, ev
   }
 });
 
-test('a process started for more than a band edit resets the histories even when only a later band edit is heard', () => {
+test('input restart reasons survive later band-only changes', () => {
   const old = KEY(LIST);
   const edited = KEY([[20, 250], [250, 3000], [3000, 9000], [0, 120], [750, 2000]]);
   const run = (between) => {
@@ -631,7 +631,7 @@ test('a process started for more than a band edit resets the histories even when
   assert.deepStrictEqual(run([hop({ t: 0.0116, generation: 2, layout: old, cause: 'start' })]), [false, null], 'a restart after it died');
 });
 
-test('the hops handed to the effects never step back within an epoch, while the selector still answers any time', () => {
+test('effect audio frames remain monotonic within an epoch', () => {
   let now = 0;
   const a = features({ now: () => now });
   for (const t of [1.0, 1.1, 1.2]) a.onReading(hop({ t, generation: 1, layout: KEY(LIST), cause: 'start' }));
@@ -655,7 +655,7 @@ test('the hops handed to the effects never step back within an epoch, while the 
   assert.strictEqual(a.heard(0.0232), null, 'and stale is stale');
 });
 
-test('Neural\'s smoothers longer than the history count their unwritten zeros, without storing them', () => {
+test('long Neural smoothers include their unwritten zero slots', () => {
   const at = (smoothnessAnalyser, hops = 1) => {
     const a = features({ disco: () => ({ bands: DISCO_DEFAULTS.bands, globals: { ...DISCO_DEFAULTS.globals, smoothnessAnalyser } }) });
     for (let i = 0; i < hops; i++) a.onReading(hop({ t: i * HOP, rms: 0.1, dominantHz: 46 * BIN_HZ }));
@@ -678,14 +678,14 @@ const visualizer = (trigger) => ({ kind: 'ldj.visualizer', params: { ...VISUALIZ
 const voice = (id, spec, over = {}) => ({ id, spec, targets: null, tier: 'voice', launchSeq: 1, startedAtMs: 0, untilMs: null, ...over });
 const resolve = (over) => resolveDetectors({ base: null, voices: [], nowMs: 1000, fixtureIds: [1, 2], ldjTrigger: 0.3, acknowledged: true, ...over });
 
-test('with no Disco or Visualizer playing, the detectors run on the settings and Disco\'s defaults', () => {
+test('idle detectors use configured defaults', () => {
   const d = resolve({ voices: [voice('pad', { kind: 'hd.twinkle', params: {} })] });
   assert.deepStrictEqual(d.spl, { owner: { from: 'fallback', id: null, kind: null }, trigger: 0.3 });
   assert.deepStrictEqual(d.disco.owner, { from: 'fallback', id: null, kind: null });
   assert.deepStrictEqual([d.disco.bands, d.disco.globals], [DISCO_DEFAULTS.bands, DISCO_DEFAULTS.globals]);
 });
 
-test('the highest relevant voice owns a detector, else the base look, each detector on its own', () => {
+test('each detector follows its highest-priority relevant effect', () => {
   const pop = DISCO_PRESETS.find((p) => p.id === 'hd.disco.pop').params;
   const base = { id: 'ldj.visualizer.firework', spec: visualizer(0.2) };
   let d = resolve({ base });
@@ -719,7 +719,7 @@ test('the highest relevant voice owns a detector, else the base look, each detec
   assert.strictEqual(d.spl.owner.id, 'first');
 });
 
-test('a Visualizer that cannot play without the acknowledgement owns nothing until it is given; the Disco needs none', () => {
+test('unacknowledged Visualizers cannot own detectors', () => {
   const pop = DISCO_PRESETS.find((p) => p.id === 'hd.disco.pop').params;
   const voices = [voice('pad', visualizer(0.1), { launchSeq: 2 }), voice('disco', { kind: 'hd.disco', params: pop })];
   const base = { id: 'ldj.visualizer.firework', spec: visualizer(0.2) };
@@ -761,7 +761,7 @@ const bundleOf = (table, lengthBeats = 8, once = false) => bundleSpec({ patternI
 // A voice as the voices hand it out, anchored on its launch beat.
 const pad = (id, spec, over = {}) => voice(id, spec, { anchorBeat: 0, ...over });
 
-test('a macro owns Disco\'s detector only while its Disco step plays, with that step\'s bands', () => {
+test('a macro owns Disco detection only during its Disco step', () => {
   const m = macroOf([[twinkle, 4], [{ kind: 'hd.disco', params: pop() }, 4]], 8);
   const at = (beatPos, anchorBeat = 0) => resolve({ beatPos, voices: [pad('pad', m, { anchorBeat })] }).disco;
   assert.deepStrictEqual(at(2).owner, { from: 'fallback', id: null, kind: null });
@@ -775,7 +775,7 @@ test('a macro owns Disco\'s detector only while its Disco step plays, with that 
   assert.strictEqual(resolve({ voices: [pad('pad', m)] }).disco.owner.from, 'fallback');
 });
 
-test('a pattern bundle owns the Visualizer\'s trigger while a Visualizer clip covers the position, highest lane first', () => {
+test('pattern detector ownership follows the winning active lane', () => {
   const b = bundleOf(tableOf(['shared:0', 'shared:1'], [['a', 'shared:0', visualizer(0.2), 0, 4], ['b', 'shared:1', visualizer(0.7), 2, 1]]));
   const at = (beatPos) => resolve({ beatPos, voices: [pad('pad:1', b)] }).spl;
   assert.deepStrictEqual(at(1), { owner: { from: 'voice', id: 'pad:1', kind: 'ldj.visualizer' }, trigger: 0.2 });
@@ -786,7 +786,7 @@ test('a pattern bundle owns the Visualizer\'s trigger while a Visualizer clip co
   assert.strictEqual(resolve({ beatPos: 9, voices: [pad('pad:1', once)] }).spl.owner.from, 'fallback', 'once stops at its length');
 });
 
-test('a container\'s child takes the normal voice priority: a higher plain voice of the kind still wins', () => {
+test('container children follow ordinary voice priority', () => {
   const m = macroOf([[{ kind: 'hd.disco', params: pop() }, 4]], 4);
   const plain = voice('plain', { kind: 'hd.disco', params: {} }, { launchSeq: 5 });
   let d = resolve({ beatPos: 1, voices: [pad('macro', m, { launchSeq: 3 }), plain] }).disco;
@@ -798,7 +798,7 @@ test('a container\'s child takes the normal voice priority: a higher plain voice
   assert.strictEqual(d.owner.id, 'plain');
 });
 
-test('a child that needs the photosensitivity acknowledgement owns nothing while it is not given', () => {
+test('unacknowledged container children cannot own detectors', () => {
   const m = macroOf([[visualizer(0.6), 4]], 4);
   const b = bundleOf(tableOf(['shared:0'], [['a', 'shared:0', visualizer(0.6), 0, 8]]));
   for (const spec of [m, b]) {
@@ -807,7 +807,7 @@ test('a child that needs the photosensitivity acknowledgement owns nothing while
   }
 });
 
-test('nested containers resolve to the leaf playing now, for a voice, a sequence clip and the base alike', () => {
+test('nested containers resolve detector ownership to the active leaf', () => {
   const m = macroOf([[twinkle, 2], [{ kind: 'hd.disco', params: pop() }, 2]], 4);
   const b = bundleOf(tableOf(['shared:0'], [['m', 'shared:0', m, 0, 8]]));
   const at = (beatPos) => resolve({ beatPos, voices: [pad('pad:1', b)] }).disco.owner.from;

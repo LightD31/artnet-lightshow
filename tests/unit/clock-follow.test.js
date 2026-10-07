@@ -25,7 +25,7 @@ test('a stopped clock is not carried forward', () => {
   assert.strictEqual(follow.at(1500).beatPos, 4);
 });
 
-test('a reading that lands a hair behind what was shown holds instead of stepping back', () => {
+test('a slightly late reading cannot move the clock backward', () => {
   const follow = createClockFollower();
   follow.push(reading(10), 1000);
   const shown = follow.at(1100).beatPos;                    // 10.2

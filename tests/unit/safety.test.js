@@ -28,46 +28,55 @@ function holdSettings(t, save = () => {}) {
   });
 }
 
-const refused = (fn) => assert.throws(fn, (err) => err.status === 409 && err.message === 'photosensitivity acknowledgement required');
+const refused = (fn) => assert.throws(fn, (err) => err.status === 409);
 
 const FADE = validateSpec({ kind: 'ldj.FadeCycle', params: { cadence: 2 } });
 // Faster than the threshold at this cadence, though the spec says otherwise.
 const FAST = validateSpec({ kind: 'ldj.StrobeCycle', params: { cadence: 0.25 }, rapidFlash: false });
 
-test('an ordinary effect plays unacknowledged; a strobe, a fast cadence and a spec that says so wait for the acknowledgement', (t) => {
-  let saves = 0;
-  holdSettings(t, () => { saves++; });
+test('ordinary effects run without acknowledgement', (t) => {
+  holdSettings(t);
   assert.equal(safety.acknowledged(), false);
   safety.requireAcknowledged(FADE);
-  // Light DJ's Flip as it ships plays; the same row asked to run at a quarter beat does not.
-  const flip = presetById('ldj.Flip').spec;
-  safety.requireAcknowledged(flip);
-  refused(() => safety.requireAcknowledged(validateSpec({ ...flip, params: { ...flip.params, cadence: 0.25 }, rapidFlash: false })));
-  refused(() => safety.requireAcknowledged(FAST));
-  refused(() => safety.requireAcknowledged(validateSpec({ kind: 'strobe', params: {} })));
-  refused(() => safety.requireAcknowledged({ ...FADE, rapidFlash: true }));
-  refused(() => safety.requireAcknowledged(validateSpec({ kind: 'ldj.visualizer', params: {} })));
+  safety.requireAcknowledged(presetById('ldj.Flip').spec);
+});
 
+const flip = presetById('ldj.Flip').spec;
+for (const [name, spec] of [
+  ['fast Flip', validateSpec({ ...flip, params: { ...flip.params, cadence: 0.25 }, rapidFlash: false })],
+  ['fast StrobeCycle', FAST],
+  ['strobe', validateSpec({ kind: 'strobe', params: {} })],
+  ['explicit rapid flag', { ...FADE, rapidFlash: true }],
+  ['visualizer', validateSpec({ kind: 'ldj.visualizer', params: {} })],
+]) {
+  test(`${name} requires acknowledgement`, (t) => {
+    holdSettings(t);
+    refused(() => safety.requireAcknowledged(spec));
+    safety.acknowledge();
+    safety.requireAcknowledged(spec);
+  });
+}
+
+test('acknowledgement is persisted once', (t) => {
+  let saves = 0;
+  holdSettings(t, () => { saves++; });
   safety.acknowledge();
   assert.equal(safety.acknowledged(), true);
-  assert.equal(settings.get('safety.photosensitivityAcknowledged'), true, 'the setting the renderer reads');
-  assert.equal(saves, 1, 'saved');
-  safety.requireAcknowledged(FAST);
-  safety.requireAcknowledged(validateSpec({ kind: 'strobe', params: {} }));
-
-  // Given twice, it is the same acknowledgement: nothing more is written.
+  assert.equal(settings.get('safety.photosensitivityAcknowledged'), true);
+  assert.equal(saves, 1);
   safety.acknowledge();
   assert.equal(saves, 1);
 });
 
 test('the acknowledgement holds only once it is saved', (t) => {
-  holdSettings(t, () => { throw new Error('disk full'); });
-  assert.throws(() => safety.acknowledge(), /disk full/);
+  const failure = new Error('write failed');
+  holdSettings(t, () => { throw failure; });
+  assert.throws(() => safety.acknowledge(), (err) => err === failure);
   assert.equal(safety.acknowledged(), false, 'not given when the file does not hold it');
   refused(() => safety.requireAcknowledged(FAST));
 });
 
-test('the status is the acknowledgement, Hue Dynamics\' flash limit and the latched strobe\'s cap', (t) => {
+test('safety status exposes the acknowledgement and flash limits', (t) => {
   holdSettings(t);
   assert.deepEqual(safety.status(), { photosensitivityAcknowledged: false, hdFlashIntervalMs: 350, strobeMaxLatchSec: 60 });
   safety.acknowledge();

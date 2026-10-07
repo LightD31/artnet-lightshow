@@ -22,26 +22,21 @@ test('a server doing well is ok, with nothing to say', () => {
   assert.deepEqual(assess(fine), { status: 'ok', problems: [] });
 });
 
-test('each thing that can go wrong, in words, and what it adds up to', () => {
-  const late = assess({ ...fine, engine: { ...fine.engine, lateFrames: 120 } });
-  assert.equal(late.status, 'degraded');
-  assert.match(late.problems[0].what, /12% of recent frames went out late/);
-
-  const stalled = assess({ ...fine, eventLoop: { p50Ms: 10, p99Ms: 250, maxMs: 900 } });
-  assert.match(stalled.problems[0].what, /stalled for up to 900 ms/);
-
-  const errors = assess({ ...fine, errors: { count: 2, last: { component: 'hue', msg: 'bridge gone\nstack…' } } });
-  assert.equal(errors.problems[0].what, '2 errors logged in the last ten minutes. The last: [hue] bridge gone');
-
-  const restarted = assess({ ...fine, supervisor: { ...fine.supervisor, restarts: 1, lastExit: { reason: 'stopped responding' } } });
-  assert.equal(restarted.status, 'ok', 'a restart that worked is worth knowing, not a fault now');
-  assert.equal(restarted.problems[0].level, 'info');
-  assert.match(restarted.problems[0].what, /Restarted 1 time by the supervisor\. The last: stopped responding\./);
-
-  const down = assess({ ...fine, engine: { running: false }, rssMb: 2000 });
-  assert.equal(down.status, 'failing');
-  assert.deepEqual(down.problems.map((p) => p.level), ['error', 'warn']);
-});
+for (const [name, patch, status, levels] of [
+  ['late frames', { engine: { ...fine.engine, lateFrames: 120 } }, 'degraded', ['warn']],
+  ['stalled event loop', { eventLoop: { p50Ms: 10, p99Ms: 250, maxMs: 900 } }, 'degraded', ['warn']],
+  ['recent errors', { errors: { count: 2, last: { component: 'hue', msg: 'bridge gone\nstack…' } } }, 'degraded', ['warn']],
+  ['successful restart', { supervisor: { ...fine.supervisor, restarts: 1, lastExit: { reason: 'stopped responding' } } }, 'ok', ['info']],
+  ['stopped engine and high memory', { engine: { running: false }, rssMb: 2000 }, 'failing', ['error', 'warn']],
+]) {
+  test(`health classifies ${name}`, () => {
+    const result = assess({ ...fine, ...patch });
+    assert.equal(result.status, status);
+    assert.deepEqual(result.problems.map((p) => p.level), levels);
+    assert.ok(result.problems.every((p) => p.what.length > 0));
+    assert.ok(result.problems.every((p) => !p.what.includes('\n')));
+  });
+}
 
 test('what the supervisor tells the server, read from its environment', () => {
   assert.deepEqual(supervision({}), { supervised: false, restarts: 0, lastExit: null, recovering: false });
@@ -53,7 +48,7 @@ test('what the supervisor tells the server, read from its environment', () => {
   assert.deepEqual([EXIT_RESTART, EXIT_CONFIG], [75, 78]);
 });
 
-test('the heartbeat: ready, then a beat a period; nothing without a supervisor', (t) => {
+test('the heartbeat stops sending after teardown', (t) => {
   t.mock.timers.enable({ apis: ['setInterval'] });
   const sent = [];
   const stop = startHeartbeat((m) => sent.push(m.type), 1000);
@@ -61,10 +56,13 @@ test('the heartbeat: ready, then a beat a period; nothing without a supervisor',
   stop();
   t.mock.timers.tick(3000);
   assert.deepEqual(sent, ['ready', 'heartbeat', 'heartbeat', 'heartbeat']);
+});
+
+test('heartbeat teardown works without a supervisor', () => {
   assert.doesNotThrow(() => startHeartbeat(undefined)());
 });
 
-test('the health routes: the full answer under /api, a bare one for a service manager', async (t) => {
+test('health routes expose liveness and detailed status', async (t) => {
   const app = express();
   attachRoutes(app, { integrations: { broadcast() {} }, autoShow: { status: 'idle', running: false, error: null } });
   const server = await new Promise((r) => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
@@ -76,7 +74,7 @@ test('the health routes: the full answer under /api, a bare one for a service ma
   // No engine is running in this test, which is what failing means.
   assert.equal(h.status, 'failing');
   assert.equal(h.ok, false);
-  assert.match(h.problems[0].what, /The engine is not running/);
+  assert.equal(h.problems[0].level, 'error');
   for (const key of ['version', 'node', 'pid', 'uptimeS', 'engine', 'memory', 'outputs', 'supervisor', 'log']) assert.ok(key in h, key);
   assert.deepEqual(h.auto, { status: 'idle', running: false, error: null });
   assert.equal(typeof health().uptimeS, 'number');

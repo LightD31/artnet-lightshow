@@ -185,7 +185,7 @@ test('routes: CRUD + transport + status', async (t) => {
   assert.deepEqual(getLiveState().sequence, s.integrations.sequence.sequencer.status());
 });
 
-test('the live state lists the saved sequences and patterns, and every page hears of a save, a rename or a delete', async (t) => {
+test('shelf changes are broadcast to all clients', async (t) => {
   const s = await serve(t);
   const published = [];
   const patterns = [];
@@ -259,7 +259,7 @@ test('the engine plays the loaded sequence from the sequencer the server registe
   assert.equal((await s.call('POST', '/api/sequence/play')).status, 409);
 });
 
-test('a sequence plays on the free clock with the patterns stopped and no voice; stopped or unloaded, the clock stands', async (t) => {
+test('sequence playback owns the free clock while the look is stopped', async (t) => {
   const s = await serve(t);
   t.after(() => applyPatch({ running: true }));
   applyPatch({ running: false });
@@ -306,7 +306,7 @@ test('a sequence plays on the free clock with the patterns stopped and no voice;
   assert.equal(conductor.phase().beatPos, from, 'unloaded: the clock stands');
 });
 
-test('a quantised voice over a sequence playing with the patterns stopped waits for its grid line; with nothing playing it starts at once', async (t) => {
+test('quantised voices follow the active sequence clock', async (t) => {
   const s = await serve(t);
   t.after(() => { voices.stopAll(); applyPatch({ running: true }); });
   applyPatch({ running: false });
@@ -352,7 +352,7 @@ test('the audio detectors run on the settings of a Disco playing as a clip', asy
   assert.equal(s.integrations.audio.detectors().disco.owner.from, 'fallback');
 });
 
-test('play is refused (409) while a clip needs the photosensitivity acknowledgement, and goes once it is given', async (t) => {
+test('rapid sequence playback requires acknowledgement', async (t) => {
   const s = await serve(t);
   const fast = { kind: 'ldj.StrobeCycle', params: { cadence: 0.25 } };
   await s.call('PUT', '/api/sequence', { ...SET, clips: [clip('A', 0, 4), clip('F', 4, 4, fast)], options: { initialPalette: 'redCyan' } });
@@ -368,7 +368,7 @@ test('play is refused (409) while a clip needs the photosensitivity acknowledgem
   assert.deepEqual(state.paletteOverride.map((c) => [c.r, c.g, c.b]), [[255, 0, 0], [0, 191, 255]], 'its first palette on');
 });
 
-test('a hand on the master or the tempo ends the sequence\'s automation of it; its own commands and samples do not', async (t) => {
+test('manual property edits cancel matching automation', async (t) => {
   const s = await serve(t);
   applyPatch({ masterDimmer: 100, bpm: 120 });
   await s.call('PUT', '/api/sequence', {
@@ -402,7 +402,7 @@ test('a hand on the master or the tempo ends the sequence\'s automation of it; i
   assert.equal(s.integrations.sequence.sequencer._current().paletteOverride, null);
 });
 
-test('a sequence\'s audio mode that the settings file will not take leaves the mode, and the sequence plays', async (t) => {
+test('failed audio-mode persistence leaves sequence playback available', async (t) => {
   const s = await serve(t);
   t.mock.method(console, 'warn', () => {});
   const mode = settings.get('audio.mode');
@@ -421,7 +421,7 @@ async function until(check, ms = 2000) {
 }
 
 // The built-in palettes the random palette on loop picks from are all a palette the store resolves.
-test('every built-in palette resolves through the palette store the server hands the sequencer', async (t) => {
+test('all built-in palettes resolve for sequence commands', async (t) => {
   const s = await serve(t);
   for (const p of BUILTIN_PALETTES) assert.ok(s.integrations.library.palettes.materialize(p.id)?.length, p.id);
 });
