@@ -392,7 +392,7 @@ const paramsSchema = z.object({ cadence: z.number().min(MIN_CADENCE), beats: z.n
 
 export function makeLdjKind(name: string, row: LdjRow): EffectKindDef<LdjParams, LdjState> {
   return {
-    kind: `ldj.${name}`, app: 'ldj', schema: paramsSchema,
+    kind: `ldj.${name}`, level: 'lamp', app: 'ldj', schema: paramsSchema,
     defaults: { params: { cadence: typeof row.cadence === 'number' ? row.cadence : 1, beats: row.beats ?? 32 } },
     rapidFlash: row.rapidFlash, stateful: true, rollOf: (state) => state.roll,
     ...(row.cadence === 'wall:50' ? { wallClock: true } : {}),

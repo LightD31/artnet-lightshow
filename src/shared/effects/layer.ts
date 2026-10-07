@@ -102,9 +102,22 @@ export function hdGuarded(kind: string | null | undefined): boolean {
   return !!kind && HD_GUARDED.has(kind);
 }
 
+const effectRooms = new WeakMap<Layout['units'], Room>();
+
 export function effectRoom(layout: Layout): Room {
   const { list, xs, ys, plan, noFlash } = layout.units;
-  return roomOf({ fixtureCount: list.length, xs, ys, plan, noFlash });
+  const cells = roomOf({ fixtureCount: list.length, xs, ys, plan, noFlash });
+  if (!layout.lamps) return cells;
+  const remembered = effectRooms.get(layout.units);
+  if (remembered) return remembered;
+  const lamps = layout.lamps;
+  const hue = noFlash && lamps.slots.map((slots) => noFlash[slots[0]]);
+  const room: Room = { ...cells, lamps: {
+    ...roomOf({ fixtureCount: lamps.slots.length, xs: lamps.xs, ys: null, plan: lamps.plan, noFlash: hue }),
+    cells, slots: lamps.slots, lampOf: lamps.lampOf, cellAlong: lamps.cellAlong,
+  } };
+  effectRooms.set(layout.units, room);
+  return room;
 }
 
 export function voiceLayout(rig: Rig): Layout {

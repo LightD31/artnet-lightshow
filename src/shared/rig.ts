@@ -33,6 +33,15 @@ export interface Layout {
   // Folded slots pair symmetric fixtures so stepped patterns travel outward from the centre.
   fixtures: { members: number[]; order: number[]; xs: number[] | null; folded?: number[][]; plan: StagePlan | null; noFlash: boolean[] | null };
   units: { list: number[]; xs: number[] | null; ys: number[] | null; plan: StagePlan | null; noFlash: boolean[] | null };
+  lamps?: LayoutLamps;
+}
+
+export interface LayoutLamps {
+  slots: number[][];
+  lampOf: number[];
+  cellAlong: number[];
+  xs: number[] | null;
+  plan: StagePlan | null;
 }
 
 export interface Rig<F extends StageFixture = StageFixture> {
@@ -288,7 +297,27 @@ function layoutOf(rig: Rig, split: number | null | undefined, pixelMap: string |
     group: list.map((u) => fixtures[rig.units[u].fixture].group || null),
   } : null;
   const noFlash = hueFlags(list.map((u) => isHue(fixtures[rig.units[u].fixture])));
-  return { wash, fixtures: layoutFixtures, units: { list, xs: unitXs, ys: unitYs, plan: unitPlan, noFlash } };
+  const layout: Layout = { wash, fixtures: layoutFixtures, units: { list, xs: unitXs, ys: unitYs, plan: unitPlan, noFlash } };
+  if (list.length > members.length) {
+    const lampIndex = new Map(order.map((k, i) => [members[k], i]));
+    const slots = order.map(() => [] as number[]);
+    const lampOf = list.map((u, i) => {
+      const lamp = lampIndex.get(rig.units[u].fixture)!;
+      slots[lamp].push(i);
+      return lamp;
+    });
+    layout.lamps = {
+      slots, lampOf, cellAlong: list.map((u) => local[u]),
+      xs: mirrored ? (xs ?? order.map((_, i) => i / (order.length - 1))).map((x) => Math.abs(2 * x - 1)) : xs,
+      plan: !mirrored && members.some((i) => isPlaced(fixtures[i].position)) ? {
+        x: order.map((k) => centreOf(rig, members[k]).x / 100),
+        y: order.map((k) => centreOf(rig, members[k]).y / 100),
+        z: order.map((k) => heightOf(fixtures[members[k]])),
+        group: order.map((k) => fixtures[members[k]].group || null),
+      } : null,
+    };
+  }
+  return layout;
 }
 
 function heightOf(fixture: StageFixture): number {

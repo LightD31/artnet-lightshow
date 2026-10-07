@@ -5,7 +5,7 @@
 import { z } from 'zod';
 import type { ZodType } from 'zod';
 import type { Colour } from '../../types/rig.ts';
-import type { Room } from '../room.ts';
+import type { LampRoom, Room } from '../room.ts';
 import { activeEvents, composeEvents, curveApply, envelopeLength, eventInterval, EventAdmission, isReversed, sampleEnvelope, staggerOffset } from './envelope.ts';
 import { hash01 } from './hash.ts';
 import { parseHex, samplePalette } from './palette.ts';
@@ -303,7 +303,7 @@ function kernel(kind: HdKind, p: HdParams, room: Room, slot: number, index: numb
   }
 }
 
-function renderHd(kind: HdKind, p: HdParams, state: HdState, room: Room, f: EffectFrame, out: EffectSlot[]): void {
+function renderHd(kind: HdKind, p: HdParams, state: HdState, room: Room, f: EffectFrame, out: EffectSlot[], lamps?: LampRoom): void {
   // Simple ADSR has no event admission; the shared renderer already enforces
   // acknowledgement when this or any other spec is marked as rapid flashing.
   if (kind === 'hd.simpleAdsr') { renderAdsr(p, state, room, f, out); return; }
@@ -323,8 +323,10 @@ function renderHd(kind: HdKind, p: HdParams, state: HdState, room: Room, f: Effe
   }
   state.lastPosition = position;
   const reactive = reactiveLevel(kind, p, state, f);
-  for (let slot = 0; slot < room.n; slot++) {
-    const index = indices[slot];
+  const positions = lamps && cellPositions(lamps, p);
+  for (let target = 0; target < (lamps?.cells.n ?? room.n); target++) {
+    const slot = lamps ? lamps.lampOf[target] : target;
+    const index = indices[slot] + (positions ? positions[target] - 0.5 : 0);
     // Overlapping envelopes compete by strength, rather than adding levels.
     // Their palette positions follow the same winning event and tie rule.
     const composed = composeEvents(events, (event, rawAge) => {
@@ -339,14 +341,36 @@ function renderHd(kind: HdKind, p: HdParams, state: HdState, room: Room, f: Effe
       return { strength: clamp(envelope * sample.strength), palettePos: sample.palettePos };
     });
     const level = composed.strength * reactive;
-    out[slot] = { colour: samplePalette(f.palette, composed.palettePos), level, strength: level > 0 ? 1 : 0 };
+    out[target] = { colour: samplePalette(f.palette, composed.palettePos), level, strength: level > 0 ? 1 : 0 };
   }
 }
 
-// Importing this module is sufficient for every process to render all ten
-// families; registration carries their recommended values and inspector data.
+const cellPositionMemo = new WeakMap<LampRoom, Map<number, number[]>>();
+function cellPositions(lamps: LampRoom, p: HdParams): readonly number[] {
+  if (p.order !== 'position') return lamps.cellAlong;
+  let angles = cellPositionMemo.get(lamps);
+  if (!angles) { angles = new Map(); cellPositionMemo.set(lamps, angles); }
+  const angle = p.spatial.angle;
+  let positions = angles.get(angle);
+  if (positions) return positions;
+  const projected = lamps.cells.hdProject(angle);
+  positions = new Array<number>(lamps.cells.n);
+  for (const slots of lamps.slots) {
+    let lo = Infinity, hi = -Infinity;
+    for (const slot of slots) { lo = Math.min(lo, projected[slot]); hi = Math.max(hi, projected[slot]); }
+    for (const slot of slots) positions[slot] = hi - lo > 1e-9 ? (projected[slot] - lo) / (hi - lo) : 0.5;
+  }
+  if (angles.size >= 64) angles.clear();
+  angles.set(angle, positions);
+  return positions;
+}
+
+const ALONG_KINDS = new Set(['hd.positionChase', 'hd.bouncingScan', 'hd.streak']);
+const LAMP_KINDS = new Set([...ALONG_KINDS, 'hd.twinkle', 'hd.frequencyBurst']);
 for (const kind of KINDS) registerKind<HdParams, HdState>({
-  kind, app: 'hd', schema: hdSchema, defaults: HD_DEFAULTS[kind], capabilities: HD_CAPABILITIES[kind],
+  kind, level: LAMP_KINDS.has(kind) ? 'lamp' : 'cell', app: 'hd', schema: hdSchema, defaults: HD_DEFAULTS[kind], capabilities: HD_CAPABILITIES[kind],
   rapidFlash: kind === 'hd.frequencyBurst', stateful: true,
+  ...(ALONG_KINDS.has(kind) ? { renderCells: (params: HdParams, state: HdState, lamps: LampRoom, frame: EffectFrame, out: EffectSlot[]) =>
+    renderHd(kind, params, state, lamps, frame, out, lamps) } : {}),
   init: initHd, render: (params, state, room, frame, out) => renderHd(kind, params, state, room, frame, out),
 });

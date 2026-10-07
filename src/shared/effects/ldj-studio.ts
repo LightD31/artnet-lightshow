@@ -249,7 +249,7 @@ const names = [...['N', 'C', '5x'].flatMap((prefix) => durations.map((_, i) => `
   'StudioSwirl', 'StudioWave', 'StudioFireworks', 'StudioFlashes'];
 
 for (const name of names) registerKind({
-  kind: `ldj.${name}`, app: 'ldj', schema, defaults: { params: {} }, stateful: true,
+  kind: `ldj.${name}`, level: 'lamp', app: 'ldj', schema, defaults: { params: {} }, stateful: true,
   rapidFlash: name === 'StudioFireworks' || name === 'StudioFlashes', command: studioCommand,
   init(_params, room, frame) {
     const colour = frame.palette[0] ?? BLACK, binding = { index: 0, key: 0 };

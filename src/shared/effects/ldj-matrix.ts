@@ -65,7 +65,7 @@ interface BoardState {
 const rapidMode = (params: BoardParams) => ['fireworks', 'flashes', 'pulses'].includes(params.mode);
 
 registerKind<BoardParams, BoardState>({
-  kind: 'ldj.matrixBoard', app: 'ldj', schema: boardSchema,
+  kind: 'ldj.matrixBoard', level: 'lamp', app: 'ldj', schema: boardSchema,
   defaults: { params: { colours: ['#FFFFFF'], mode: 'solid' } }, stateful: true,
   rapidFlashWhen: rapidMode, rollOf: (state) => state.child?.roll ?? 0,
   init: (params, _room, frame) => ({ key: JSON.stringify(params), mode: params.mode, colours: params.colours.map(parseHex),

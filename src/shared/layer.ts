@@ -1,4 +1,4 @@
-import { PATTERN_FUNCS, CELL_PATTERNS } from './patterns.ts';
+import { PATTERN_FUNCS, CELL_PATTERNS, LAMP_PATTERNS } from './patterns.ts';
 import { fadeBrightness, grooveBrightness, hitBrightness } from './look-math.ts';
 import { fadePhase, hitPhase } from './beat-clock.ts';
 import type { PatternContext } from './patterns.ts';
@@ -127,6 +127,19 @@ function patternContext(rig: Rig, layout: Layout, pattern: string, colors: reado
       plan,
       noFlash,
       write: (k, colour, dim, strobe) => set(list[k], colour, dim, strobe),
+    };
+  }
+  if (LAMP_PATTERNS.has(pattern)) {
+    const lamps = layout.lamps;
+    const { list, xs, ys, plan, noFlash } = layout.units;
+    return {
+      ...common, fixtureCount: lamps?.slots.length ?? list.length,
+      xs: lamps ? lamps.xs : xs, ys: lamps ? null : ys, plan: lamps ? lamps.plan : plan,
+      noFlash: lamps && noFlash ? lamps.slots.map((slots) => noFlash[slots[0]]) : noFlash,
+      write: (k, colour, dim, strobe) => {
+        if (lamps) for (const cell of lamps.slots[k]) set(list[cell], colour, dim, strobe);
+        else set(list[k], colour, dim, strobe);
+      },
     };
   }
   const { members, order, xs, folded, plan, noFlash } = layout.fixtures;

@@ -69,14 +69,16 @@ function paletteOf(ctx: Pick<PatternContext, 'colors'>): Colour[] {
   return out.length ? out : [{ r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 }];
 }
 
+export const LAMP_PATTERNS = new Set(['position-chase', 'starlight', 'confetti', 'anchor-fill', 'halves', 'flip',
+  'ring-strobe', 'ring-backlit', 'fireworks', 'flashes']);
+
 const CELL_PATTERNS = new Set([
   'ensemble', 'ribbon', 'wave', 'rainbow', 'twinkle', 'sparkle',
   'gradient', 'comet', 'burst', 'plasma', 'meter', 'drums', 'stems',
   'rise', 'impact', 'bars', 'fire', 'rain',
   'flash-chase', 'flash-scatter', 'flash-fill', 'flash-alternate', 'ramp', 'core',
-  'position-chase', 'radial-pulse', 'spatial-wash', 'bounce-scan', 'streak', 'starlight',
-  'breathe', 'volume-gate', 'confetti',
-  'anchor-fill', 'halves', 'flip', 'room-wave', 'ring-strobe', 'ring-backlit', 'fireworks', 'flashes', 'swirl',
+  'radial-pulse', 'spatial-wash', 'bounce-scan', 'streak',
+  'breathe', 'volume-gate', 'room-wave', 'swirl',
 ]);
 
 const frac = (v: number): number => v - Math.floor(v);

@@ -7,7 +7,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { LOOKS, flatRig, placedRig, renderLookBytes } from '../../scripts/golden-party-looks.js';
+import { LOOKS, flatRig, placedRig, renderLookBytes, withMixedRig, mixedBytes } from '../../scripts/golden-party-looks.js';
 import { EffectLibrary } from '../../src/server/effect-library.ts';
 import { PATTERN_FUNCS } from '../../src/shared/patterns.ts';
 
@@ -26,3 +26,8 @@ for (const id of LOOKS) {
   });
   test(`${id} renders byte-identically on the placed rig`, () => assert.deepStrictEqual(renderLookBytes(id, placedRig(), effectOf), placed[id]));
 }
+
+test('mixed fixtures preserve whole lamps and detailed pixel fields', () => {
+  const golden = JSON.parse(fs.readFileSync(new URL('../fixtures/golden/party-looks-mixed.json', import.meta.url), 'utf8'));
+  withMixedRig((fixtures) => assert.deepStrictEqual(mixedBytes(fixtures), golden));
+});

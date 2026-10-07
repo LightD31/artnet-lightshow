@@ -1,6 +1,6 @@
 import type { ZodType } from 'zod';
 import type { Colour } from '../../types/rig.ts';
-import type { Room } from '../room.ts';
+import type { LampRoom, Room } from '../room.ts';
 import type { AudioFrame } from './audio-frame.ts';
 import type { PaletteAccess } from './palette.ts';
 
@@ -65,7 +65,7 @@ export interface EffectFrame {
   // Refreshes appear next render so all samples in one render see the same palette.
   paletteAccess?: PaletteAccess;
   audio: AudioFrame | null; audioMode: AudioMode; master: HdMaster; seed: Seed; acknowledged: boolean; hueStrobe: 'flash' | 'pulse';
-  // Fixture ids repeat per cell so Disco bands remain keyed to physical fixtures.
+  // Ids follow the kind's level: one per lamp, repeated per cell for pixel kinds.
   fixtureIds?: readonly (number | string)[];
   // Manual strobe activity suppresses Disco automatic strobes.
   manualStrobeActive?: boolean;
@@ -75,6 +75,8 @@ export interface EffectFrame {
 export type FrameBase = Omit<EffectFrame, 'spec' | 'palette' | 'roll'>;
 
 export interface EffectKindDef<P = unknown, S = unknown> {
+  level?: 'lamp' | 'cell';
+  renderCells?(params: P, state: S, room: LampRoom, frame: EffectFrame, out: EffectSlot[]): void;
   kind: string; app: 'hd' | 'ldj' | 'own'; schema: ZodType<P>;
   defaults: { params: P; palette?: PaletteEntry[] | null; brightness?: number; rapidFlash?: boolean; minFlashIntervalMs?: number; scope?: 'singleBeat' | 'measure' };
   capabilities?: Partial<Record<HdCapability, boolean>> | null;

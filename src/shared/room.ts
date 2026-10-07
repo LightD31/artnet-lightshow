@@ -2,6 +2,7 @@ import type { PatternContext } from './patterns.ts';
 
 
 export interface Room {
+  lamps?: LampRoom;
   n: number;
   u: number[];
   v: number[];
@@ -26,6 +27,13 @@ export interface Room {
   waveDistance(angleDeg: number): number[];
   waveLength(angleDeg: number, lambda: number): number;
   hdProject(angleDeg: number): number[];
+}
+
+export interface LampRoom extends Room {
+  cells: Room;
+  slots: readonly (readonly number[])[];
+  lampOf: readonly number[];
+  cellAlong: readonly number[];
 }
 
 export function xOf(ctx: Pick<PatternContext, 'xs' | 'fixtureCount'>, i: number): number {
