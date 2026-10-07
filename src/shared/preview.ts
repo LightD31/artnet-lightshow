@@ -1,3 +1,5 @@
+import { fixedColours, colourSlots, resolveGradient } from './palette-model.ts';
+import type { PaletteBody } from './palette-model.ts';
 import { PATTERN_FUNCS, paletteOf } from './patterns.ts';
 import { renderLayer } from './layer.ts';
 import { buildRig, isHueLamp, rigSignature } from './rig.ts';
@@ -24,6 +26,8 @@ import type { ChannelMap, Colour, Expression, ShowDynamics, StageFixture } from 
 
 /** The look as a planned timeline builds it up, patch by patch. */
 export interface PreviewLook {
+  basePalette?: PaletteBody | null;
+  baseSlotEdits?: Partial<Record<'colorA' | 'colorB' | 'colorC' | 'colorD', number>>;
   pattern: string;
   colorA: number;
   colorB: number;
@@ -99,6 +103,8 @@ export interface PreviewOptions {
   safety?: Partial<PreviewSafety> | null;
   sequence?: { table: SequenceTable; transport: SequenceTransport } | null;
   paletteOverride?: readonly string[] | null;
+  basePalette?: PaletteBody | null;
+  overridePalette?: PaletteBody | null;
 }
 
 /** The override's colours, parsed once; anything that is not a list of hex colours is none. */
@@ -129,7 +135,7 @@ interface LayerEntry {
   dim: number;
 }
 
-const LOOK_KEYS = ['pattern', 'palette', 'split', 'pixelMap', 'pixelPattern', 'panelPattern', 'colorA', 'colorB', 'colorC', 'colorD'];
+const LOOK_KEYS = ['basePalette', 'pattern', 'palette', 'split', 'pixelMap', 'pixelPattern', 'panelPattern', 'colorA', 'colorB', 'colorC', 'colorD'];
 const COLOUR_KEYS = ['colorA', 'colorB', 'colorC', 'colorD'] as const;
 
 const OPENING: PreviewLook = {
@@ -320,12 +326,12 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
   const intervalMs = typeof givenInterval === 'number' && Number.isFinite(givenInterval) && givenInterval >= 0 ? givenInterval : 350;
   const acknowledged = options.safety?.acknowledged === true;
   const sequence = sequenceOf(options.sequence);
-  const paletteOverride = overrideOf(options.paletteOverride);
+  const paletteOverride = options.overridePalette ? fixedColours(options.overridePalette, []) : overrideOf(options.paletteOverride);
 
   // In time order, ties in the order given, on a copy: an event with no time is ignored.
   const timeline = events.filter((e) => Number.isFinite(e.timeMs)).sort((a, b) => a.timeMs - b.timeMs);
 
-  let look: PreviewLook = { ...OPENING };
+  let look: PreviewLook = { ...OPENING, ...(options.basePalette ? { basePalette: options.basePalette } : {}) };
   let anchor = 0;
   let anchorBeat: number | null = null;
   let burst: Frame['burst'] = null;
@@ -360,7 +366,10 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
     if (event.action === 'patch') {
       const patch = (event.data || {}) as PreviewPatch;
       const dynamics = patch.showDynamics && { ...look.showDynamics, ...patch.showDynamics };
-      look = { ...look, ...patch };
+      const edits = Object.fromEntries(COLOUR_KEYS.filter((key) => patch[key] !== undefined).map((key) => [key, patch[key]]));
+      const reset = patch.basePalette !== undefined || patch.palette !== undefined;
+      look = { ...look, ...(patch.palette !== undefined ? { basePalette: null } : {}), ...patch,
+        baseSlotEdits: reset ? {} : { ...look.baseSlotEdits, ...edits } };
       if (dynamics) look.showDynamics = dynamics;
       // As the rig anchors a scheduled scene (server/patch.js): on the step
       // grid, at the beat the scene was due.
@@ -399,17 +408,25 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
   });
 
   /** The look's four colours, resolved against the colour table. */
-  const coloursOf = (s: PreviewLook, presets: readonly Colour[]): Colour[] => COLOUR_KEYS.map((key) => presets[s[key]] || presets[0]);
+  const coloursOf = (s: PreviewLook, presets: readonly Colour[]): Colour[] => {
+    const colours = fixedColours(s.basePalette, COLOUR_KEYS.map((key) => presets[s[key]] || presets[0]));
+    if (!s.basePalette || !Object.keys(s.baseSlotEdits ?? {}).length) return colours;
+    const slots = colourSlots(colours);
+    COLOUR_KEYS.forEach((key, i) => { if (s.baseSlotEdits?.[key] !== undefined) slots[i] = presets[s.baseSlotEdits[key]]; });
+    return slots;
+  };
 
   function drawPattern(f: Frame, positionMs: number, rig: Rig, colors: Colour[], expr: Expression, phase: number, bpm: number): LayerEntry[] {
     const s = f.look;
     const division = Math.max(1, s.beatDivision || 1);
     const beatPos = beatAt(positionMs, f);
     const step = stepAt(beatPos, f.anchor, division);
+    colors = colourSlots(paletteOverride ?? colors);
     const layer: LayerEntry[] = rig.units.map(() => ({ color: colors[0], dim: 0 }));
     renderLayer(rig, {
       pattern: PATTERN_FUNCS[s.pattern] ? s.pattern : 'solid',
       colors,
+      gradient: resolveGradient(paletteOverride ? options.overridePalette : s.basePalette, colors),
       split: s.split,
       pixelMap: s.pixelMap,
       pixelPattern: s.pixelPattern && PATTERN_FUNCS[s.pixelPattern] ? s.pixelPattern : null,
@@ -670,7 +687,8 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
       // Disco's automatic strobe stands down for any manual strobe playing.
       const manualStrobeActive = voices.some((v) => v.spec.kind === 'strobe' && (v.targets === null || v.targets.some((id) => ids.includes(id))));
       fb = {
-        beatPos, bpm, nowMs: t, dtMs: dt, anchorBeat: 0, lookPalette: paletteOf({ colors }), paletteOverride,
+        beatPos, bpm, nowMs: t, dtMs: dt, anchorBeat: 0, lookPalette: s.basePalette?.gradients?.length ? colors : paletteOf({ colors }), paletteOverride,
+        lookGradient: s.basePalette, overrideGradient: options.overridePalette,
         audio: null, audioMode: 'tempo', master: { ...HD_MASTER_DEFAULTS }, seed: [0, 0, 0, 0], acknowledged, hueStrobe,
         manualStrobeActive, expressionLevel: w.expression.level,
       };
@@ -698,7 +716,7 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
       });
       for (const i of cells.layout.wash) {
         const { start, count } = rig.ranges[i];
-        for (let u = start; u < start + count; u++) { units[u] = unitLight(colors[1], 255); baseKind[u] = null; }
+        for (let u = start; u < start + count; u++) { units[u] = unitLight(colourSlots(paletteOverride ?? colors)[1], 255); baseKind[u] = null; }
       }
     } else {
       const layer = drawPattern(f, t, rig, colors, w.expression, w.phase, bpm);

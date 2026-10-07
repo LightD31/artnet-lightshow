@@ -24,6 +24,6 @@ export function useRehearsalSampler(data) {
     return () => { live = false; };
   }, [revision]);
   const options = previewOptions(s, { table, library: librarySig.value });
-  const key = JSON.stringify([s.voices, options.hueStrobe, options.paletteOverride, options.safety, options.sequence && options.sequence.table.revision, librarySig.value.user]);
+  const key = JSON.stringify([s.voices, options.hueStrobe, options.paletteOverride, options.basePalette, options.overridePalette, options.safety, options.sequence && options.sequence.table.revision, librarySig.value.user]);
   return useMemo(() => createPreviewSampler([...(data?.timeline || []), ...liveVoiceEvents(s.voices)], data, options), [data, key]);
 }

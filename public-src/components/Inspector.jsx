@@ -1,3 +1,4 @@
+import { gradientSettings } from './GradientEditor.jsx';
 import { useMemo, useState } from 'preact/hooks';
 import { api, librarySig, patchLibrary, pick } from '../state.js';
 import { PaletteEditor } from './PaletteEditor.jsx';
@@ -101,7 +102,7 @@ export function withRecommended(spec, def) {
   for (const key of ['brightness', 'rapidFlash', 'minFlashIntervalMs', 'scope', 'palette']) {
     if (d[key] !== undefined) carried[key] = clone(d[key]);
   }
-  return { ...spec, kind: def.kind, params: clone(d.params) || {}, ...carried };
+  return { ...spec, ...(spec.gradients || d.gradients ? gradientSettings(d) : {}), kind: def.kind, params: clone(d.params) || {}, ...carried };
 }
 
 // Light DJ's backlit rows are kinds of their own (BL…): a row with a twin gets
@@ -568,7 +569,7 @@ export function Inspector({ id, onSelect, onPlay, onClose }) {
         <span>The look's own colours</span>
       </label>
       {spec.palette != null && (
-        <PaletteEditor key={paletteEpoch} colours={spec.palette} onChange={(colours) => setSpec('palette', colours)} onInvalid={setPaletteInvalid} builtin={palettes.builtin} user={palettes.user} />
+        <PaletteEditor key={paletteEpoch} body={{ colours: spec.palette, ...gradientSettings(spec) }} onBodyChange={({ colours, ...settings }) => update((d) => ({ ...d, spec: { ...d.spec, ...settings, palette: colours } }))} onInvalid={setPaletteInvalid} builtin={palettes.builtin} user={palettes.user} />
       )}
 
       <div class="insp-actions">

@@ -1,3 +1,4 @@
+import type { PaletteBody, GradientSettings } from '../shared/palette-model.ts';
 import type { BundleParams } from '../shared/effects/bundle.ts';
 import crypto from 'node:crypto';
 import { z, ZodError } from 'zod';
@@ -515,9 +516,9 @@ export function automationValue(a: Automation, from: number, elapsed: number): n
 }
 
 /** What the sequence changes on the rig, applied as one patch a frame: the palette override (hex), the tempo, the master. */
-export interface SequencePatch { paletteOverride?: string[] | null; paletteOverrideId?: string | null; bpm?: number; masterDimmer?: number }
+export interface SequencePatch { overridePalette?: PaletteBody | null; paletteOverride?: string[] | null; paletteOverrideId?: string | null; bpm?: number; masterDimmer?: number }
 
-type PaletteState = { paletteOverride: string[] | null; paletteOverrideId: string | null };
+type PaletteState = { overridePalette?: PaletteBody | null; paletteOverride: string[] | null; paletteOverrideId: string | null };
 
 // One automation playing: its settings, the value it started from, and how
 // far it has come (beats for the master, counted frame by frame so a tempo
@@ -566,6 +567,7 @@ export interface SequencerOptions {
   presetName?: (id: string) => string;
   /** A palette by id as the colours it puts on now (hex), or null for none. Built-in palettes when left out. */
   palette?: (id: string) => string[] | null;
+  paletteSettings?: (id: string) => GradientSettings | null;
   /** Put on what the sequence changes: the main thread's patch, from the sequence (never as a hand on a control). */
   apply?: (patch: SequencePatch) => void;
   /**
@@ -573,7 +575,7 @@ export interface SequencerOptions {
    * and the palette override on it (hex, null for none) when the rig can say:
    * the random palette on loop picks another one.
    */
-  current?: () => { masterDimmer: number; bpm: number; paletteOverride?: readonly string[] | null; paletteOverrideId?: string | null };
+  current?: () => { masterDimmer: number; bpm: number; paletteOverride?: readonly string[] | null; paletteOverrideId?: string | null; overridePalette?: PaletteBody | null };
   /** Set the audio mode a sequence asks for when it starts. */
   musicMode?: (mode: AudioMode) => void;
   /** Throws (409) for an effect that may not play yet: the photosensitivity gate. */
@@ -604,9 +606,10 @@ function builtinPalette(id: string): string[] | null {
 export class Sequencer {
   declare _resolve: EffectResolver;
   declare _presetName: (id: string) => string;
+  declare _paletteSettings: (id: string) => GradientSettings | null;
   declare _paletteOf: (id: string) => string[] | null;
   declare _apply: (patch: SequencePatch) => void;
-  declare _current: () => { masterDimmer: number; bpm: number; paletteOverride?: readonly string[] | null; paletteOverrideId?: string | null };
+  declare _current: () => { masterDimmer: number; bpm: number; paletteOverride?: readonly string[] | null; paletteOverrideId?: string | null; overridePalette?: PaletteBody | null };
   declare _musicMode: (mode: AudioMode) => void;
   declare _admit: (spec: EffectSpec) => void;
   declare _now: () => number;
@@ -650,7 +653,7 @@ export class Sequencer {
   // What runs() was when last told.
   declare _told: boolean;
 
-  constructor({ resolve, presetName = (id) => presetById(id)?.name ?? id, palette = builtinPalette, apply = () => {}, current = () => ({ masterDimmer: 255, bpm: 120 }),
+  constructor({ resolve, presetName = (id) => presetById(id)?.name ?? id, palette = builtinPalette, paletteSettings = () => null, apply = () => {}, current = () => ({ masterDimmer: 255, bpm: 120 }),
     musicMode = () => {}, admit = (spec) => safety.requireAcknowledged(spec), now = () => performance.now(), seed,
     fixtureIds = () => [], pattern = () => null, pad = () => null, beat, onRun = () => {} }: SequencerOptions) {
     this._onRun = onRun;
@@ -663,6 +666,7 @@ export class Sequencer {
     this._resolve = resolve;
     this._presetName = presetName;
     this._paletteOf = palette;
+    this._paletteSettings = paletteSettings;
     this._apply = apply;
     this._current = current;
     this._musicMode = musicMode;
@@ -1404,11 +1408,16 @@ export class Sequencer {
   _applyPalette(patch: SequencePatch): void {
     if (patch.paletteOverride !== undefined) {
       const live = this._current();
+      if (patch.overridePalette === undefined && patch.paletteOverrideId) {
+        const settings = this._paletteSettings(patch.paletteOverrideId);
+        if (settings) patch.overridePalette = { ...settings, colours: patch.paletteOverride ?? [] };
+      }
       this._paletteBefore ??= {
+        ...(live.overridePalette !== undefined ? { overridePalette: structuredClone(live.overridePalette) } : {}),
         paletteOverride: live.paletteOverride ? [...live.paletteOverride] : null,
         paletteOverrideId: live.paletteOverrideId ?? null,
       };
-      this._paletteApplied = { paletteOverride: patch.paletteOverride, paletteOverrideId: patch.paletteOverrideId ?? null };
+      this._paletteApplied = { ...(patch.overridePalette !== undefined ? { overridePalette: structuredClone(patch.overridePalette) } : {}), paletteOverride: patch.paletteOverride, paletteOverrideId: patch.paletteOverrideId ?? null };
     }
     this._apply(patch);
   }
@@ -1425,6 +1434,7 @@ export class Sequencer {
     const live = this._current();
     // A manual palette takes ownership, including reselecting the same colours.
     if ((live.paletteOverrideId === undefined || live.paletteOverrideId === applied.paletteOverrideId) && live.paletteOverride
+      && (live.overridePalette === undefined || canonical(applied.overridePalette ?? null) === canonical(live.overridePalette))
       && samePalette(applied.paletteOverride, live.paletteOverride)) this._apply(before);
   }
 

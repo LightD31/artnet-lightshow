@@ -1,14 +1,14 @@
 import { Fragment } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
-import { api, autoPositionSig, connectedSig, emitTap, followMusic, librarySig, pick, send } from '../state.js';
-import { colorToCss, clockSource, fmtTime, formatBpm } from '../utils.js';
+import { api, autoPositionSig, connectedSig, emitTap, followMusic, pick, send } from '../state.js';
+import { clockSource, fmtTime, formatBpm } from '../utils.js';
 import { timelinePosition } from '../timeline-state.js';
 import { useDraft } from '../draft.js';
 import { NowPlaying, PlayingVoices } from './NowPlaying.jsx';
 import { Pads } from './Pads.jsx';
 import { StrobePad } from './StrobePad.jsx';
 import { activeQueue } from './Queue.jsx';
-import { isRandom, paletteName } from './PaletteEditor.jsx';
+import { PaletteStrip } from './PaletteStrip.jsx';
 import { Transport } from './Transport.jsx';
 import { Matrix } from './Matrix.jsx';
 import { SubTabs, SubPanel, useSubTab } from './setup/SubTabs.jsx';
@@ -194,83 +194,6 @@ function Utility() {
   );
 }
 
-export function PalettePads() {
-  const s = pick(['palettes', 'palette', 'colorPresets', 'pattern', 'paletteOverride']);
-  const lib = librarySig.value;
-  const base = [...(lib.builtin || []), ...(lib.user || [])].find((p) => p.id === s.pattern);
-  const reason = s.paletteOverride?.length ? 'Palette override controls the effect colours.'
-    : base?.spec?.palette?.length ? 'The base effect uses its own palette. Use Palette override to recolour it.' : null;
-  const palettes = s.palettes || [];
-  const presets = s.colorPresets || [];
-  let size = 4;
-  try {
-    const saved = parseInt(localStorage.getItem('lightshow.paletteSize'), 10);
-    if (saved === 2 || saved === 3) size = saved;
-  } catch { /* private mode */ }
-  if (!palettes.length) return null;
-  const swatch = (i) => {
-    const c = presets[i];
-    return !c ? '#333' : c.name === 'Blackout' ? '#111' : colorToCss(c);
-  };
-  return (
-    <section class="perform-palettes" aria-label="Look palettes">
-      {reason && <p class="muted" role="status" style={{ gridColumn: '1 / -1' }}>{reason}</p>}
-      {palettes.map((p) => (
-        <button key={p.id} type="button" class={`perform-palette ${s.palette === p.id ? 'active' : ''}`}
-          aria-pressed={s.palette === p.id}
-          onClick={() => send({ palette: p.id, paletteSize: size })}>
-          <span class="perform-palette-swatches" aria-hidden="true">
-            {((p.colors && p.colors[size]) || []).map((idx, i) => <span key={i} style={{ background: swatch(idx) }} />)}
-          </span>
-          <span class="perform-palette-name">{p.name}</span>
-        </button>
-      ))}
-    </section>
-  );
-}
-
-/** What PUT /api/palette-override takes for a palette: its id, rolled on the server. */
-export const overrideBody = (palette) => ({ paletteId: palette.id });
-
-// Named random palettes cannot be identified from their rolled colours.
-export function activeOverride(override, palettes, id = null) {
-  if (!override || !override.length) return 'off';
-  if (id && palettes.some((p) => p.id === id)) return id;
-  const want = override.map((c) => String(c).toUpperCase()).join();
-  const hit = palettes.find((p) => !(p.colours || []).some(isRandom)
-    && (p.colours || []).map((c) => String(c).toUpperCase()).join() === want);
-  return hit ? hit.id : null;
-}
-
-/** Light DJ's palette override: one tap puts a palette over every effect, "Off" takes it away. */
-export function PaletteOverride() {
-  const s = pick(['paletteOverride', 'paletteOverrideId', 'userPalettes']);
-  const lib = librarySig.value;
-  const builtin = (lib.palettes && lib.palettes.builtin) || [];
-  const user = s.userPalettes || (lib.palettes && lib.palettes.user) || [];
-  const all = [...builtin, ...user];
-  const active = activeOverride(s.paletteOverride, all, s.paletteOverrideId);
-  const button = (id, name, colours, onClick) => (
-    <button key={id} type="button" class={`override-pad${active === id ? ' active' : ''}`} aria-pressed={active === id}
-      data-override={id} onClick={onClick}>
-      <span class="override-swatches" aria-hidden="true">
-        {colours.map((c, i) => <span key={i} class={isRandom(c) ? 'random' : ''} style={isRandom(c) ? {} : { background: c }} />)}
-      </span>
-      <span class="override-name">{name}</span>
-    </button>
-  );
-  return (
-    <section class="perform-override" aria-label="Palette override">
-      {button('off', 'Off', [], () => api('/api/palette-override', { method: 'DELETE' }))}
-      {all.map((p) => button(p.id, paletteName(p), active === p.id ? s.paletteOverride : p.colours || [],
-        () => api('/api/palette-override', { method: 'PUT', body: JSON.stringify(overrideBody(p)) })))}
-      {all.some((p) => p.id === active && p.colours?.some(isRandom))
-        && <span class="override-custom">Random colours held — tap again to reroll</span>}
-      {active === null && <span class="override-custom">Custom colours on</span>}
-    </section>
-  );
-}
-
 function Faders() {
   const s = pick(['masterDimmer', 'autoShow']);
   const [dim, onDim, commitDim] = useDraft(s.masterDimmer ?? 255, (v) => send({ masterDimmer: v }));
@@ -312,8 +235,7 @@ export function Perform() {
             <StrobePad />
             <Utility />
           </div>
-          <PaletteOverride />
-          <PalettePads />
+          <PaletteStrip />
         </div>
         <div class="perform-side">
           <Faders />

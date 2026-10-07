@@ -3,6 +3,9 @@ import type { Colour } from '../../types/rig.ts';
 import type { LampRoom, Room } from '../room.ts';
 import type { AudioFrame } from './audio-frame.ts';
 import type { PaletteAccess } from './palette.ts';
+import type { GradientSettings, ResolvedGradient } from '../palette-model.ts';
+export type { PaletteEntry } from '../palette-model.ts';
+import type { PaletteEntry } from '../palette-model.ts';
 
 export type Curve = 'linear' | 'easeIn' | 'easeOut' | 'easeInOut' | 'cut';
 export type Direction = 'forward' | 'reverse' | 'alternate' | 'random';
@@ -26,12 +29,10 @@ export interface HdParams {
 // Nested capabilities are separate because a family can use angle without radius.
 export type HdCapability = keyof HdParams | `spatial.${keyof Spatial}` | `trigger.${keyof Trigger}`;
 
-// Random entries remain sentinels until an instance rolls them.
-export type PaletteEntry = string | { random: true };
 // Parsed colours stay outside specs so wire data remains serializable.
 export type ParsedPaletteEntry = Colour | { random: true };
 
-export interface EffectSpec {
+export interface EffectSpec extends GradientSettings {
   kind: string;
   params: Record<string, unknown>;
   palette?: PaletteEntry[] | null;
@@ -57,6 +58,9 @@ export type Seed = [number, number, number, number];
 export type EffectCommand = 'stop' | 'comboBreak' | 'toggleDirection' | 'fadeToBaseline' | 'setPulserBaselineColor';
 
 export interface EffectFrame {
+  gradient?: ResolvedGradient | null;
+  lookGradient?: GradientSettings | null;
+  overrideGradient?: GradientSettings | null;
   beatPos: number; bpm: number; nowMs: number; dtMs: number; anchorBeat: number;
   startedAtMs?: number;
   spec: EffectSpec;
@@ -72,13 +76,13 @@ export interface EffectFrame {
   expressionLevel?: number;
   instanceId?: string;
 }
-export type FrameBase = Omit<EffectFrame, 'spec' | 'palette' | 'roll'>;
+export type FrameBase = Omit<EffectFrame, 'spec' | 'palette' | 'roll' | 'gradient'>;
 
 export interface EffectKindDef<P = unknown, S = unknown> {
   level?: 'lamp' | 'cell';
   renderCells?(params: P, state: S, room: LampRoom, frame: EffectFrame, out: EffectSlot[]): void;
   kind: string; app: 'hd' | 'ldj' | 'own'; schema: ZodType<P>;
-  defaults: { params: P; palette?: PaletteEntry[] | null; brightness?: number; rapidFlash?: boolean; minFlashIntervalMs?: number; scope?: 'singleBeat' | 'measure' };
+  defaults: GradientSettings & { params: P; palette?: PaletteEntry[] | null; brightness?: number; rapidFlash?: boolean; minFlashIntervalMs?: number; scope?: 'singleBeat' | 'measure' };
   capabilities?: Partial<Record<HdCapability, boolean>> | null;
   rapidFlash?: boolean; stateful?: boolean; rideLevel?: boolean;
   // Wall-clock kinds ignore cadence, so the editor must omit it.

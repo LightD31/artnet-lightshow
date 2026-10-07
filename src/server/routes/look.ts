@@ -1,5 +1,6 @@
 import { state, getClientState, getLiveState, getFixture, maxBrightnessOf, clockState, strobe } from '../state.ts';
 import { applyPatch, applyOverride, setFixtureMaxBrightness, processTap } from '../patch.ts';
+import { ALL_PALETTES } from '../palette-catalogue.ts';
 import { PALETTES } from '../palettes.ts';
 import { messageOf, statusOf } from '../../errors.ts';
 import type { Express } from 'express';
@@ -10,7 +11,7 @@ import type { RouteContext } from './common.ts';
  * presses (tap, blackout, pattern, colour, palette, tempo, master, energy),
  * and the per-fixture overrides.
  */
-export function attachLookRoutes(app: Express, _ctx: RouteContext): void {
+export function attachLookRoutes(app: Express, ctx: RouteContext): void {
   // ─── State ────────────────────────────────────────────────────────────────
   app.get('/api/state', (_req, res) => res.json(getClientState()));
 
@@ -70,7 +71,7 @@ export function attachLookRoutes(app: Express, _ctx: RouteContext): void {
 
   // The named looks manual mode picks from, and the one on stage.
   app.get('/api/palettes', (_req, res) => {
-    res.json({ ok: true, palettes: PALETTES, palette: state.palette });
+    res.json({ ok: true, palettes: PALETTES, builtin: ALL_PALETTES, user: ctx.integrations.library.palettes.list(), palette: state.palette });
   });
 
   // Writes all four colour slots from one look. `size` picks the bank (2, 3 or

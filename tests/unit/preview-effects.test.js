@@ -1,3 +1,4 @@
+import { parseHex } from '../../src/shared/palette-model.ts';
 // The rehearsal preview plays the party effects as the rig does: a base
 // effect in place of the look's pattern and voices over it, stepped through
 // the renderer's own layer on the engine's 44 Hz frame grid. Each parity test
@@ -900,3 +901,24 @@ test('a patch that sets no fade cuts one in progress, as the engine does', () =>
   const [first] = sample(1250, [{ maxBrightness: 255 }], COLOR_PRESETS);
   assert.deepStrictEqual([first.r, first.g, first.b], [0, 85, 255]);
 });
+
+const AUTHORED = { colours: ['#102030405060', '#60708090A0B0'], gradients: [
+  { name: 'main', space: 'rgb', wrap: false, stops: [{ at: 0, slot: 0 }, { at: 1, slot: 1 }] },
+] };
+for (const mode of ['base', 'override']) {
+  for (const pattern of ['solid', 'gradient', 'hd.auroraDrift']) {
+    test(`authored ${mode} palette matches preview for ${pattern}`, () => {
+      const times = frames(0, 1000);
+      const original = resolveEffect(pattern);
+      const effect = original ? { ...original, palette: null } : null;
+      const selected = mode === 'base' ? { basePalette: AUTHORED } : { overridePalette: AUTHORED, paletteOverride: AUTHORED.colours.map(parseHex) };
+      const look = { pattern, ...LOOK, split: 2, ...(mode === 'base' ? { basePalette: AUTHORED } : {}) };
+      const rendered = rigRun(PARS, times, () => ({ ...look, ...selected, effect }));
+      const sample = createPreviewSampler([{ timeMs: 0, action: 'patch', data: look }], GRID,
+        { ...selected, paletteOverride: mode === 'override' ? AUTHORED.colours : null, resolveEffect: () => effect });
+      const preview = previewRun(sample, PARS, times);
+      assertSame(rendered, preview, times);
+      assert.ok(preview.some((lights) => lights.some((c) => c.a > 0 && c.uv > 0)), 'amber and UV survive rendering');
+    });
+  }
+}

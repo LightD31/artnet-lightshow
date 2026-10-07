@@ -156,7 +156,8 @@ test('blackout, palettes and the master', async ({ page, request }) => {
   await page.getByRole('button', { name: /^Blackout/ }).click();
   await until(request, (s) => s.masterBlackout === false);
 
-  const palette = page.locator('.perform-palette').nth(2);
+  await page.locator('.palette-strip').getByRole('button', { name: 'Base', exact: true }).click();
+  const palette = page.locator('[data-palette="solarPunch"]');
   await palette.scrollIntoViewIfNeeded();
   await palette.click();
   await expect(palette).toHaveAttribute('aria-pressed', 'true');

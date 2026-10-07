@@ -1,3 +1,4 @@
+import { HEX_COLOUR } from '../palette-model.ts';
 // Matrix loops run on wall deadlines while each lamp keeps its own quantized
 // transition. A new selection never discards another lamp's unfinished tail.
 
@@ -54,7 +55,7 @@ for (const [name, mode] of Object.entries({ PartyStrobe: 'pulse', MatrixPulse: '
 
 const cycle = makeLdjKind('MatrixCycle', LDJ_ITERATION_ROWS.MatrixCycle);
 const boardSchema = z.object({
-  colours: z.array(z.string().regex(/^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i)).min(1).max(8),
+  colours: z.array(z.string().regex(HEX_COLOUR)).min(1).max(8),
   mode: z.enum(['fireworks', 'flashes', 'pulses', 'cycle', 'solid']),
 }).strict();
 type BoardParams = z.infer<typeof boardSchema>;

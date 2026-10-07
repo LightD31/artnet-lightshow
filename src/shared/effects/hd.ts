@@ -1,3 +1,4 @@
+import { HEX_COLOUR } from '../palette-model.ts';
 // Hue Dynamics Party's ten families share timing and colours, while each keeps
 // its own spatial kernel, recommended controls and audio response. All times
 // here are beats, so the worker and the rehearsal preview use the same clock.
@@ -43,7 +44,7 @@ const unit = z.number().min(0).max(1);
 const beats = z.number().min(0);
 const ahdsrSchema = z.object({ attack: unit, hold: unit, decay: unit, sustain: unit, release: unit, peak: unit.optional() });
 const rgbSchema = z.object({
-  colourMode: z.enum(['all', 'singleColour']), singleColour: z.string().regex(/^#[0-9a-f]{6}$/i, 'expected an RGB hex colour'),
+  colourMode: z.enum(['all', 'singleColour']), singleColour: z.string().regex(HEX_COLOUR, 'expected a full colour hex value'),
   r: ahdsrSchema, g: ahdsrSchema, b: ahdsrSchema, brightness: ahdsrSchema,
 });
 // Unsupported controls still round-trip when switching families. Capability
@@ -341,7 +342,7 @@ function renderHd(kind: HdKind, p: HdParams, state: HdState, room: Room, f: Effe
       return { strength: clamp(envelope * sample.strength), palettePos: sample.palettePos };
     });
     const level = composed.strength * reactive;
-    out[target] = { colour: samplePalette(f.palette, composed.palettePos), level, strength: level > 0 ? 1 : 0 };
+    out[target] = { colour: f.gradient?.sample(composed.palettePos) ?? samplePalette(f.palette, composed.palettePos), level, strength: level > 0 ? 1 : 0 };
   }
 }
 

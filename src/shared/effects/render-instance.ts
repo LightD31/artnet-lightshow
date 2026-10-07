@@ -1,3 +1,4 @@
+import { resolveGradient } from '../palette-model.ts';
 // Containers import this module to avoid validating the catalogue before all kinds register.
 
 import type { Colour } from '../../types/rig.ts';
@@ -31,6 +32,8 @@ export function renderEffect(inst: EffectInstance, frame: FrameBase & { roll?: n
   f.roll = def.rollOf?.(state) ?? initialRoll;
   f.paletteAccess = createPaletteAccess(inst.spec, frame.paletteOverride, frame.lookPalette, inst.seed, f.roll, prepared);
   f.palette = f.paletteAccess.palette;
+  f.gradient = resolveGradient(frame.paletteOverride?.length ? frame.overrideGradient
+    : inst.spec.palette?.length ? inst.spec : frame.lookGradient, f.palette);
   // A fresh buffer prevents partial writes from dimming old slots or claiming untargeted cells.
   const cellsPass = lamps && def.renderCells;
   const slots: EffectSlot[] = Array.from({ length: cellsPass ? room.n : at.n }, () => ({ colour: { ...BLACK }, level: 0, strength: 0 }));

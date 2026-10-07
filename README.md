@@ -179,7 +179,7 @@ Other settings apply immediately. The UI lists pending restart keys.
 | `config/show.json` | Fixture patch and custom profiles |
 | `config/cues.json` | Saved looks |
 | `config/midi-map.json` | Custom MIDI map |
-| `config/effects.json`, `palettes.json`, `pads.json`, `sequences.json` | Effect library, effect palettes, pad layout, sequences and reusable patterns |
+| `config/effects.json`, `palettes.json`, `pads.json`, `sequences.json` | Effect library, palettes, pad layout, sequences and reusable patterns |
 | `config/look.json` | Supervisor recovery snapshot |
 | `cache/` | Analysis cache |
 | `logs/` | Structured logs |
@@ -323,23 +323,29 @@ The base `pattern` accepts classic pattern ids or effect-preset ids. Effects fil
 Editing a built-in saves a copy; user presets are editable and deletable.
 `GET /api/effects` exposes family parameter schemas and preset metadata.
 
-Look palettes and effect palettes are separate controls:
+Base looks, effects and the global override use one palette model and one editor.
+The Perform and Effects palette strip selects its destination: **Base** changes
+look colours; **Override** replaces palettes across the stage. Fixed white, UV
+and blackout energy effects retain their dedicated output.
 
-| Control | Behaviour |
-|---------|-----------|
-| Look palette, `/api/palette/:id` | Writes colour slots A–D for a size of 2, 3 or 4 |
-| Effect preset palette | Supplies colours for that preset |
-| Effect palette override, `/api/palette-override` | Overrides effect palettes without changing look slots |
+A palette contains 1–8 `colours`: `#RGB`, `#RRGGBB`, `#RRGGBBWW`,
+`#RRGGBBWWAA` or `#RRGGBBWWAAUU`, plus `{ random: true }` slots. Named
+`gradients` have ordered stops (`{ at, slot }` or `{ at, colour }`), `rgb`,
+`oklch` or `step` interpolation, and optional wrapping. Named `sets` contain
+up to four gradient roles; `gradientSet` and `gradientRole` select the active
+role. Without authored gradients, effects keep their existing interpolation.
 
-Override accepts 1–8 hex colours or a saved `paletteId`. Random palette slots
-are materialised once per request. Live state contains the colours in
-`paletteOverride` and the selected name's id in `paletteOverrideId`; explicit
-custom colours have a null id. The named selection stays identifiable after
-random colours are rolled.
+`POST /api/set` accepts `basePalette` and `overridePalette` bodies, or null.
+`PUT /api/palette-override` accepts the same body or `{ paletteId }`.
+`paletteOverride` and `paletteOverrideId` remain compatible with existing
+clients. Old indexed palettes retain their curated 2/3/4-colour variants;
+old palette files, presets and cues load without losing colours or Random.
+The library offers every built-in and saved palette in either destination.
 
-A sequence that changes the override captures both its previous colours and
-id. Stop, unload or natural completion restores both unless a manual palette
-change took ownership in the meantime.
+Random stage slots roll once when selected. Cues snapshot full palette bodies.
+A sequence captures the override's colours, gradients and id; stop, unload
+or completion restores that snapshot unless a manual palette change takes
+over. Editing or deleting the saved palette cannot alter that snapshot.
 
 Save a cue from the current look or supply a `look` explicitly. Recall restores
 its pattern/effect, colours, masters, fixture overrides and strobe settings;
@@ -400,7 +406,7 @@ stops the voice. Stop-all or disarm clears the board and pending changes.
 
 | Field | Values/default |
 |-------|----------------|
-| `palette` | 1–6 `#RRGGBB` colours; white |
+| `palette` | 1–6 RGBWAUV hex colours; white |
 | `flashesPerSecond` | Integer 1–5; 2 |
 | `continueBetween` | `true`: underlying look between flashes; `false`: black |
 | `clock` | `beat` default, or `wall` |
@@ -671,7 +677,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/blackout/toggle` · `/api/blackout/on` · `/api/blackout/off` | Master blackout |
 | POST | `/api/pattern/:id` | Set pattern (e.g. `chase`, `rainbow`) or an effect preset as the base look; an unknown id is taken and plays nothing |
 | POST | `/api/color/:slot/:index` | Set colour slot `a`–`d` (index 0–23) |
-| GET | `/api/palettes` | The named looks, their colours at each size, and the one on stage |
+| GET | `/api/palettes` | The unified catalogue and legacy look sizes, plus the selected base |
 | POST | `/api/palette/:id` | Write all four slots from a look (`{ size }` — 2, 3 or 4; default 4) |
 | POST | `/api/energy/:id` · `/api/energy/off` | Latch an energy override (a voice; a strobe one is a 409 until the photosensitivity acknowledgement) · clear it, and end a latched strobe |
 
@@ -684,7 +690,7 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/effects` | Save a preset of your own (201 `{ ok, preset }`) |
 | PUT · DELETE | `/api/effects/:id` | Change or delete one of yours; a built-in answers that it cannot be changed (save a copy) |
 | POST | `/api/effects/command` | `{ cmd, arg? }` to the effect playing as the base look; answers once the renderer has decided (see [Looks, palettes and cues](#looks-palettes-and-cues)) |
-| GET | `/api/palettes/:id` | One effect palette, built in or yours |
+| GET | `/api/palettes/:id` | One palette, built in or yours |
 | POST · PUT · DELETE | `/api/palettes` · `/api/palettes/:id` | Save (201), change or delete a palette of your own |
 | PUT | `/api/palette-override` | `{ colours: ['#RRGGBB', …] }` (1 to 8) or `{ paletteId }`: override effect palettes (fixed white, UV and blackout energies keep their output); random entries roll once per request; answers `{ ok, paletteOverride }` |
 | DELETE | `/api/palette-override` | Remove it |

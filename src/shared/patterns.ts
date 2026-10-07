@@ -1,3 +1,4 @@
+import type { ResolvedGradient } from './palette-model.ts';
 import { colourMixer } from './color.ts';
 import { HOLD_STROBE_MAX_HZ, HUE_PULSE_MS, HUE_PULSE_FLOOR, huePulseLevel } from './look-math.ts';
 import { roomOf, xOf, yOf } from './room.ts';
@@ -5,6 +6,7 @@ import type { StagePlan } from './rig.ts';
 import type { Colour, Expression, PulseReading } from '../types/rig.ts';
 
 export interface PatternContext {
+  gradient?: ResolvedGradient | null;
   colors: readonly Colour[];
   fixtureCount: number;
   step: number;
@@ -101,6 +103,10 @@ function gradientOf(pal: readonly Colour[]): Colour[] {
     gradients.set(key, table);
   }
   return table;
+}
+
+function contextGradient(ctx: PatternContext, pal: readonly Colour[], p: number): Colour {
+  return ctx.gradient?.sample(p) ?? gradientAt(pal, p);
 }
 
 function gradientAt(pal: readonly Colour[], p: number): Colour {
@@ -308,7 +314,7 @@ Object.assign(PATTERN_FUNCS, {
     const span = 0.5 + dyn(ctx, 'width', 0.5);
     const scroll = (ctx.stepPos ?? ctx.step) / 16;
     for (let i = 0; i < ctx.fixtureCount; i++) {
-      ctx.write(i, gradientAt(pal, xOf(ctx, i) * span - scroll), 255, 0);
+      ctx.write(i, contextGradient(ctx, pal, xOf(ctx, i) * span - scroll), 255, 0);
     }
   },
 
@@ -353,7 +359,7 @@ Object.assign(PATTERN_FUNCS, {
       const x = xOf(ctx, i);
       const y = yOf(ctx, i);
       const v = (Math.sin(x * f + t) + Math.sin(y * f * 0.8 - t * 1.3) + Math.sin((x + y) * f * 0.5 + t * 0.7) + 3) / 6;
-      ctx.write(i, gradientAt(pal, v), Math.round(floor + Math.pow(v, 1.5) * (255 - floor)), 0);
+      ctx.write(i, contextGradient(ctx, pal, v), Math.round(floor + Math.pow(v, 1.5) * (255 - floor)), 0);
     }
   },
 
@@ -463,7 +469,7 @@ Object.assign(PATTERN_FUNCS, {
       const height = rows(i);
       if (height > level) { ctx.write(i, pal[pal.length - 1], bed, 0); continue; }
       const top = level - height < 0.07;
-      ctx.write(i, gradientAt(pal, height * (pal.length - 1) / pal.length), top ? 255 : Math.round(170 + 60 * height), 0);
+      ctx.write(i, contextGradient(ctx, pal, height * (pal.length - 1) / pal.length), top ? 255 : Math.round(170 + 60 * height), 0);
     }
   },
 
@@ -483,7 +489,7 @@ Object.assign(PATTERN_FUNCS, {
       const flame = heat * (0.55 + 0.9 * noise2(across * 7, t * 0.8, 11));
       const lick = 0.75 + 0.25 * noise2(across * 13, height * 6 - t * 3, 29);
       const v = clamp01((flame - height) / Math.max(0.05, flame)) * lick;
-      ctx.write(i, gradientAt(pal, (1 - v) * far), Math.round(255 * Math.pow(v, 0.9)), 0);
+      ctx.write(i, contextGradient(ctx, pal, (1 - v) * far), Math.round(255 * Math.pow(v, 0.9)), 0);
     }
   },
 
@@ -876,7 +882,7 @@ const PARTY_PATTERNS = {
     for (let i = 0; i < ctx.fixtureCount; i++) {
       const d = room.dist[i];
       const ring = 1 - smoothstep(0.12, 0.45, Math.abs(d - progress));
-      ctx.write(i, gradientAt(pal, (d + progress) / 2 + event / pal.length), lift(bed, env * ring * drive), 0);
+      ctx.write(i, contextGradient(ctx, pal, (d + progress) / 2 + event / pal.length), lift(bed, env * ring * drive), 0);
     }
   },
 
@@ -900,7 +906,7 @@ const PARTY_PATTERNS = {
     const [before, beforePhase] = wash(event - 1, 1 + progress);
     for (let i = 0; i < ctx.fixtureCount; i++) {
       const fromNow = now[i] >= before[i];
-      ctx.write(i, gradientAt(pal, fromNow ? nowPhase[i] : beforePhase[i]), lift(bed, fromNow ? now[i] : before[i]), 0);
+      ctx.write(i, contextGradient(ctx, pal, fromNow ? nowPhase[i] : beforePhase[i]), lift(bed, fromNow ? now[i] : before[i]), 0);
     }
   },
 
@@ -948,7 +954,7 @@ const PARTY_PATTERNS = {
     for (let i = 0; i < ctx.fixtureCount; i++) {
       const roll = scatter(i, event * 131 + 1);
       const level = roll <= 0.35 ? 0.82 * envelope(progress, 0, 0.08, 0.72, 'out') : 0;
-      ctx.write(i, gradientAt(pal, roll + event * 0.07), lift(bed, level), 0);
+      ctx.write(i, contextGradient(ctx, pal, roll + event * 0.07), lift(bed, level), 0);
     }
   },
 
@@ -956,7 +962,7 @@ const PARTY_PATTERNS = {
     const pal = paletteOf(ctx);
     const { event, progress } = eventAt(posOf(ctx), 4);
     const env = envelope(progress, 0.4, 0.15, 0.4, 'inout');
-    const colour = gradientAt(pal, progress * 0.3 + event * 0.17);
+    const colour = contextGradient(ctx, pal, progress * 0.3 + event * 0.17);
     const dim = Math.round(25 + 230 * env);
     for (let i = 0; i < ctx.fixtureCount; i++) ctx.write(i, colour, dim, 0);
   },
@@ -971,7 +977,7 @@ const PARTY_PATTERNS = {
     const along = room.along(90);
     for (let i = 0; i < ctx.fixtureCount; i++) {
       const phase = along[i] - progress + 0.11 * event;
-      ctx.write(i, gradientAt(pal, phase), Math.round(255 * (0.72 + 0.28 * crest(phase)) * open), 0);
+      ctx.write(i, contextGradient(ctx, pal, phase), Math.round(255 * (0.72 + 0.28 * crest(phase)) * open), 0);
     }
   },
 
@@ -982,7 +988,7 @@ const PARTY_PATTERNS = {
     const env = ctx.pulse ? ctx.pulse.kick : envelope(progress, 0, 0.17, 0.46, 'out');
     for (let i = 0; i < ctx.fixtureCount; i++) {
       const lit = scatter(i, event * 17 + 3) < 0.75;
-      const colour = gradientAt(pal, scatter(i, event * 17 + 9) + event * 0.31);
+      const colour = contextGradient(ctx, pal, scatter(i, event * 17 + 9) + event * 0.31);
       ctx.write(i, colour, lit ? Math.round(255 * env) : 0, 0);
     }
   },
@@ -1029,7 +1035,7 @@ const PARTY_PATTERNS = {
     const along = room.along(Math.round(25.7 + 51.4 * (((lap % 7) + 7) % 7)) % 360);
     for (let i = 0; i < ctx.fixtureCount; i++) {
       const travel = along[i] - progress;
-      ctx.write(i, gradientAt(pal, travel), lift(bed, Math.pow(crest(travel / 2), 1.3)), 0);
+      ctx.write(i, contextGradient(ctx, pal, travel), lift(bed, Math.pow(crest(travel / 2), 1.3)), 0);
     }
   },
 
@@ -1053,7 +1059,7 @@ const PARTY_PATTERNS = {
         const level = envelope(age, 0, 0.3, 3.7, 'out') * (1 - 0.65 * Math.pow(d, 0.7));
         if (level > best) {
           best = level;
-          colour = gradientAt(pal, e / pal.length + 0.15 * d);
+          colour = contextGradient(ctx, pal, e / pal.length + 0.15 * d);
         }
       }
       ctx.write(i, colour, lift(bed, best), 0);
@@ -1088,7 +1094,7 @@ const PARTY_PATTERNS = {
     const t = posOf(ctx) / 8;
     for (let i = 0; i < ctx.fixtureCount; i++) {
       const phase = room.turn[i] - t;
-      ctx.write(i, gradientAt(pal, phase), lift(bed, Math.pow(crest(phase), 1.2)), 0);
+      ctx.write(i, contextGradient(ctx, pal, phase), lift(bed, Math.pow(crest(phase), 1.2)), 0);
     }
   },
 } satisfies Record<string, PatternFn>;

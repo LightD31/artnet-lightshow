@@ -1,3 +1,4 @@
+import type { ResolvedGradient } from './palette-model.ts';
 import { PATTERN_FUNCS, CELL_PATTERNS, LAMP_PATTERNS } from './patterns.ts';
 import { fadeBrightness, grooveBrightness, hitBrightness } from './look-math.ts';
 import { fadePhase, hitPhase } from './beat-clock.ts';
@@ -6,6 +7,7 @@ import type { LayerPart, Layout, Rig } from './rig.ts';
 import type { Colour, Expression, PulseReading } from '../types/rig.ts';
 
 export interface LayerLook {
+  gradient?: ResolvedGradient | null;
   pattern: string;
   colors: readonly Colour[];
   split?: number | null;
@@ -94,15 +96,15 @@ function paint(rig: Rig, layout: Layout, pattern: string, look: LayerLook, clock
     return;
   }
   const fn = PATTERN_FUNCS[pattern];
-  if (fn) fn(patternContext(rig, layout, pattern, colors, clock, twinkle ?? clock.twinkle, span, set));
+  if (fn) fn(patternContext(rig, layout, pattern, colors, clock, twinkle ?? clock.twinkle, span, set, look.gradient));
 }
 
 function patternContext(rig: Rig, layout: Layout, pattern: string, colors: readonly Colour[], clock: LayerClock,
-  twinkle: number[], span: Span | null, set: LayerSet): PatternContext {
+  twinkle: number[], span: Span | null, set: LayerSet, gradient?: ResolvedGradient | null): PatternContext {
   const division = Math.max(1, clock.division || 1);
   const stepPos = Math.max(0, clock.beatPos * division - clock.anchor);
   const common = {
-    colors,
+    colors, gradient,
     step: clock.step,
     stepPos,
     stepPhase: hitPhase(clock.beatPos, division),

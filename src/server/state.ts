@@ -2,13 +2,15 @@ import { BUILTIN_PROFILE_ID, BUILTIN_PROFILE_IDS, HUE_PROFILE_IDS, getProfile, l
 import { settings } from './settings.ts';
 import * as universes from './universes.ts';
 import { COLOR_PRESETS, PATTERNS, PRESET_ROWS, STROBE_FUNCTIONS, ENERGY_EFFECTS, SYNC_OFFSET_LIMIT_MS } from './presets.ts';
+import { ALL_PALETTES } from './palette-catalogue.ts';
+import type { PaletteBody } from '../shared/palette-model.ts';
 import { PALETTES } from './palettes.ts';
 import { conductor } from './conductor.ts';
 import { isArmed } from './armed.ts';
 import { safety } from './safety.ts';
 import { HttpError } from '../errors.ts';
 import { footprintOf, universesOf, isInternalUniverse, placeAddressless } from '../shared/placement.ts';
-import { BUILTIN_PALETTES, FAMILIES } from '../shared/effects/index.ts';
+import { FAMILIES } from '../shared/effects/index.ts';
 import { toHex } from '../shared/effects/palette.ts';
 import { HOLD_STROBE } from '../shared/look-math.ts';
 import { VoiceManager } from './voices.ts';
@@ -51,6 +53,8 @@ export interface ShowState {
   /** Colours every effect plays instead of its own and the slots (Light DJ's active palette), or null. */
   paletteOverride: Colour[] | null;
   paletteOverrideId: string | null;
+  basePalette: PaletteBody | null;
+  overridePalette: PaletteBody | null;
   autoIntensity: number;
   autoSyncOffsetMs: number;
   prolinkEnabled: boolean;
@@ -98,6 +102,8 @@ const state: ShowState = {
   // Rolled once when set, so a palette's random entries do not re-roll each frame.
   paletteOverride: null,
   paletteOverrideId: null,
+  basePalette: null,
+  overridePalette: null,
   autoIntensity: 50,
   // A rig calibration, not a look, so it lives in settings (patch.ts persists it).
   autoSyncOffsetMs: settings.group('auto').syncOffsetMs,
@@ -335,7 +341,7 @@ function getCatalogs() {
     strobeFunctions: STROBE_FUNCTIONS,
     palettes: PALETTES,
     families: FAMILIES,
-    builtinPalettes: BUILTIN_PALETTES,
+    builtinPalettes: ALL_PALETTES,
     // So the UI offers no Remove for a profile the server refuses to delete.
     builtinProfileIds: [...BUILTIN_PROFILE_IDS],
     // A fixture on a Hue profile has no DMX address by default, so the patch does not ask for one.
@@ -375,6 +381,8 @@ function getLiveState() {
     // Hex on the wire, as a palette is written everywhere else.
     paletteOverride: state.paletteOverride ? state.paletteOverride.map(toHex) : null,
     paletteOverrideId: state.paletteOverrideId,
+    basePalette: state.basePalette,
+    overridePalette: state.overridePalette,
     safety: safety.status(),
     strobe: strobe.status(),
     matrix: matrix.status(),

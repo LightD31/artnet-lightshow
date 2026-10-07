@@ -130,6 +130,12 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       resolve: (id) => library.effects.resolve(id),
       presetName: (id) => library.effects.summaries().find((preset) => preset.id === id)?.name ?? presetById(id)?.name ?? id,
       palette: (id) => library.palettes.materialize(id)?.map(toHex) ?? null,
+      paletteSettings: (id) => {
+        const p = library.palettes.get(id)?.palette;
+        if (!p) return null;
+        const { gradients, sets, gradient, gradientSet, gradientRole } = p;
+        return { gradients, sets, gradient, gradientSet, gradientRole };
+      },
       apply: ({ paletteOverrideId, ...patch }) => {
         // A refusal here must not cost the frame its sequence.
         try {
@@ -139,7 +145,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
         }
         broadcastSoon();
       },
-      current: () => ({ masterDimmer: state.masterDimmer, bpm: state.bpm, paletteOverride: state.paletteOverride ? state.paletteOverride.map(toHex) : null, paletteOverrideId: state.paletteOverrideId }),
+      current: () => ({ masterDimmer: state.masterDimmer, bpm: state.bpm, paletteOverride: state.paletteOverride ? state.paletteOverride.map(toHex) : null, paletteOverrideId: state.paletteOverrideId, overridePalette: state.overridePalette }),
       musicMode: (mode) => {
         try {
           settings.update({ audio: { mode } });
@@ -275,6 +281,7 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   setExtrasProvider(extras);
 
   setHooks({
+    palette: (id) => library.palettes.materializeBody(id),
     broadcast,
     handEdit: (edit) => sequence.sequencer.handEdit(edit),
     prolinkEnable: () => {

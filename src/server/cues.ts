@@ -9,6 +9,7 @@ import { settings, schema as settingsSchema } from './settings.ts';
 import { COLOR_PRESETS } from './presets.ts';
 import { PIXEL_MAPS } from '../shared/rig.ts';
 import { HOLD_STROBE } from '../shared/look-math.ts';
+import { paletteBodySchema } from '../shared/palette-model.ts';
 import { toHex } from '../shared/effects/palette.ts';
 import { HttpError, messageOf, statusOf } from '../errors.ts';
 import { JsonStore } from './json-store.ts';
@@ -40,6 +41,8 @@ const lookSchema = z.object({
   fixtureIds: z.array(fixtureId).max(64).optional(),
   overrides: z.array(z.union([overrideSchema, z.null()])).max(64),
   paletteOverride: paletteOverride.optional(),
+  basePalette: paletteBodySchema.nullable().optional(),
+  overridePalette: paletteBodySchema.nullable().optional(),
   audioMode: settingsSchema.shape.audio.shape.mode.optional(),
   strobe: settingsSchema.shape.strobe.optional(),
 }).strict().refine((look) => !look.fixtureIds || (
@@ -101,6 +104,8 @@ function captureLook() {
     panelPattern: state.panelPattern,
     fixtureIds: state.fixtures.map((f) => f.id),
     overrides: state.fixtures.map((f) => (f.override ? { ...f.override } : null)),
+    basePalette: state.basePalette ? structuredClone(state.basePalette) : null,
+    overridePalette: state.overridePalette ? structuredClone(state.overridePalette) : null,
     paletteOverride: state.paletteOverride ? state.paletteOverride.map(toHex) : null,
     audioMode: settings.get('audio.mode'),
     strobe: settings.group('strobe'),
@@ -112,6 +117,8 @@ function recallLook(look: Look): void {
   const patch: typeof rest & { bpm?: number } = {
     ...rest, pixelPattern: rest.pixelPattern ?? null, panelPattern: rest.panelPattern ?? null,
     paletteOverride: rest.paletteOverride ?? null,
+    basePalette: rest.basePalette ?? null,
+    overridePalette: rest.overridePalette ?? (rest.paletteOverride ? { colours: rest.paletteOverride } : null),
     energyOverride: rest.energyOverride === HOLD_STROBE ? null : rest.energyOverride,
   };
   if (conductor.status().source === 'tap') patch.bpm = bpm;

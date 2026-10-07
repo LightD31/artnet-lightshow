@@ -1,3 +1,4 @@
+import { ALL_PALETTES } from '../../src/server/palette-catalogue.ts';
 // The effect library's routes (src/server/routes/effects.ts): the built-in
 // catalogue and the presets and palettes saved here, edited over REST, and
 // commands to the effect on stage. Then the library at work: a preset picked
@@ -114,13 +115,13 @@ test('GET /api/effects lists families, built-ins, user presets and both palette 
   assert.deepEqual(res.body.builtin, json(CATALOGUE));
   assert.equal(res.body.builtin.length, 214);
   assert.deepEqual(res.body.user, [preset]);
-  assert.deepEqual(res.body.palettes, { builtin: json(BUILTIN_PALETTES), user: [palette] });
-  assert.equal(res.body.palettes.builtin.length, 28);
+  assert.deepEqual(res.body.palettes, { builtin: json(ALL_PALETTES), user: [palette] });
+  assert.equal(res.body.palettes.builtin.length, 54);
   assert.deepEqual(res.body.palettes.user[0].colours, ['#FF0000', { random: true }]);
 
-  // The look palettes keep their route and its answer.
+  // Indexed clients retain curated variants alongside the shared catalogue.
   const legacy = await s.call('GET', '/api/palettes');
-  assert.deepEqual(legacy.body, { ok: true, palettes: json(PALETTES), palette: state.palette });
+  assert.deepEqual(legacy.body, { ok: true, palettes: json(PALETTES), builtin: json(ALL_PALETTES), user: [palette], palette: state.palette });
 
   // One preset by id or alias, with what the list carries.
   let one = await s.call('GET', '/api/effects/white-strobe');
@@ -471,7 +472,7 @@ test("invalid palette overrides preserve current colours", async (t) => {
   let res;
   await s.call('PUT', '/api/palette-override', { paletteId: palette.id });
   const rolled = resolvePalette({ palette: palette.colours }, null, [], SEED, 0).map(toHex);
-  for (const body of [{}, { colours: [] }, { colours: Array(9).fill('#FFFFFF') }, { colours: ['random'] },
+  for (const body of [{}, { colours: [] }, { colours: Array(9).fill('#FFFFFF') }, { colours: ['not-a-colour'] },
     { colours: ['#FFFFFF'], paletteId: 'redCyan' }, { paletteId: '' }, { colours: ['#FFFFFF'], extra: 1 }]) {
     res = await s.call('PUT', '/api/palette-override', body);
     assert.equal(res.status, 400, JSON.stringify(body));
@@ -571,7 +572,7 @@ test('a user preset saved by one client appears in the live state (domain librar
   assert.deepEqual(snapshot.state.userPalettes, []);
   assert.equal(snapshot.versions.library, 0);
   assert.deepEqual(snapshot.state.families, JSON.parse(JSON.stringify(FAMILIES)), 'the built-ins come once, with the catalogues');
-  assert.deepEqual(snapshot.state.builtinPalettes, JSON.parse(JSON.stringify(BUILTIN_PALETTES)));
+  assert.deepEqual(snapshot.state.builtinPalettes, JSON.parse(JSON.stringify(ALL_PALETTES)));
 
   // What is sent arrives in order, but a busy runner may take a while: wait by deadline.
   const waitFor = async (found, what) => {

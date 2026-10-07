@@ -5,7 +5,7 @@ test('portrait pads precede strobe, meters and colour libraries', async ({ page 
   await page.setViewportSize({ width: 768, height: 1024 });
   await open(page, 'perform');
   const pads = await page.locator('.perform-pads').boundingBox();
-  for (const selector of ['.strobe-pad', '.perform-side', '.perform-override', '.perform-palettes']) {
+  for (const selector of ['.strobe-pad', '.perform-side', '.palette-strip']) {
     expect((await page.locator(selector).boundingBox()).y).toBeGreaterThan(pads.y);
   }
 });

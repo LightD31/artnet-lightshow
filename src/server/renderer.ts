@@ -1,3 +1,5 @@
+import { fixedColours, colourSlots, resolveGradient } from '../shared/palette-model.ts';
+import type { PaletteBody } from '../shared/palette-model.ts';
 import { COLOR_PRESETS, STROBE_FUNCTIONS } from './presets.ts';
 import { HUE_PROFILE_IDS } from './profiles.ts';
 import { FRAME_MS } from './frame-clock.ts';
@@ -92,6 +94,8 @@ export interface RenderInput {
   effectRevision?: number;
   voices?: VoiceFrame[];
   paletteOverride?: Colour[] | null;
+  basePalette?: PaletteBody | null;
+  overridePalette?: PaletteBody | null;
   safety?: RenderSafety;
   hueStrobe?: 'flash' | 'pulse';
   sequenceRevision?: number | null;
@@ -346,9 +350,12 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
 
   function frameBaseOf(input: FrameInput, reading: MusicalTime, nowMs: number, dtMs: number, acknowledged: boolean,
     manualStrobeActive: boolean): FrameBase {
+    const colours = fixedColours(input.basePalette, [input.colorA, input.colorB, input.colorC, input.colorD].map((i) => COLOR_PRESETS[i]));
     return {
       beatPos: reading.beatPos, bpm: reading.bpm, nowMs, dtMs, anchorBeat: 0,
-      lookPalette: paletteOf({ colors: [input.colorA, input.colorB, input.colorC, input.colorD].map((i) => COLOR_PRESETS[i]) }),
+      lookPalette: input.basePalette?.gradients?.length ? colours : paletteOf({ colors: colours }),
+      lookGradient: input.basePalette,
+      overrideGradient: input.overridePalette,
       paletteOverride: input.paletteOverride, audio: input.audio, audioMode: input.audioMode, master: input.master,
       seed: [0, 0, 0, 0], acknowledged, hueStrobe: input.hueStrobe, manualStrobeActive, expressionLevel: expression.level,
     };
@@ -544,9 +551,11 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
     const panelPattern = rigNow.hasPanels && input.panelPattern && PATTERN_FUNCS[input.panelPattern] ? input.panelPattern : null;
     const known = !!PATTERN_FUNCS[input.pattern];
     const knownPixel = !!pixelPattern && !!PATTERN_FUNCS[pixelPattern];
+    const colours = input.paletteOverride ?? fixedColours(input.basePalette, [input.colorA, input.colorB, input.colorC, input.colorD].map((i) => COLOR_PRESETS[i]));
     const look = {
       pattern: input.pattern,
-      colors: [input.colorA, input.colorB, input.colorC, input.colorD].map((i) => COLOR_PRESETS[i]),
+      colors: colourSlots(colours),
+      gradient: resolveGradient(input.paletteOverride ? input.overridePalette : input.basePalette, colours),
       split: input.split,
       pixelMap: input.pixelMap,
       pixelPattern,
@@ -561,7 +570,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
 
     const fixtureCount = input.fixtures.length;
     const { step, anchor: from, division } = patternStep(input, reading);
-    const lookKey = `${step}|${input.colorA},${input.colorB},${input.colorC},${input.colorD}|${input.split}|${fixtureCount}`;
+    const lookKey = `${step}|${input.colorA},${input.colorB},${input.colorC},${input.colorD}|${input.split}|${fixtureCount}|${JSON.stringify([input.basePalette, input.overridePalette, input.paletteOverride])}`;
     const pixels = `|${rigNow.hasPixels ? rigNow.units.length : ''}|${input.pixelMap}|${panelPattern}`;
     let skipPattern = !known;
     if (known && RANDOM_PATTERNS.has(input.pattern)) {
@@ -632,7 +641,7 @@ function createRenderer({ profileOf, profilesRevision = () => 0, now = performan
       baseKind[u] = kind;
     }, commands.due.length ? prepare : undefined);
     commands.decide(prepared);
-    const colourB = COLOR_PRESETS[input.colorB];
+    const colourB = colourSlots(input.paletteOverride ?? fixedColours(input.basePalette, [input.colorA, input.colorB, input.colorC, input.colorD].map((i) => COLOR_PRESETS[i])))[1];
     for (const i of cells.layout.wash) {
       const { start, count } = rigNow.ranges[i];
       for (let u = start; u < start + count; u++) {

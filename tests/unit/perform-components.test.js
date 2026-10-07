@@ -26,7 +26,8 @@ async function load() {
         export { CommandBar } from './public-src/components/CommandBar.jsx';
         export { createPadPresses, rapidPad, padKey } from './public-src/voice-pad.js';
         export { createVoiceHolds } from './public-src/hold-control.js';
-        export { PalettePads, PaletteOverride, overrideBody, activeOverride, stopAllVoices } from './public-src/components/Perform.jsx';
+        export { stopAllVoices } from './public-src/components/Perform.jsx';
+        export { PaletteStrip, overrideBody, activeOverride } from './public-src/components/PaletteStrip.jsx';
         export { Transport, positionText, beatsPerBar, loopBody, laneRows } from './public-src/components/Transport.jsx';
         export { presetNameOf } from './public-src/preview-inputs.js';
         export { AudioMeters, meterRows, splClass, latencyText } from './public-src/components/AudioMeters.jsx';
@@ -293,12 +294,12 @@ const USER = [{ id: 'mine', name: 'Mine', colours: ['#123456'] }];
 test('palette override strip orders and selects palettes', () => {
   ui.librarySig.value = { status: 'ok', families: [], builtin: [], user: [], palettes: { builtin: BUILTIN, user: USER } };
   given({ paletteOverride: null, userPalettes: USER });
-  let html = ui.html(ui.h(ui.PaletteOverride));
+  let html = ui.html(ui.h(ui.PaletteStrip));
   const names = [...html.matchAll(/class="override-name">([^<]+)</g)].map((m) => m[1]);
   assert.deepStrictEqual(names, ['Off', 'Ldj Fire', 'Hue Dynamics default', 'Mine']);
   assert.match(html, /aria-pressed="true"[^>]*data-override="off"/);
   given({ paletteOverride: ['#123456'], userPalettes: USER });
-  html = ui.html(ui.h(ui.PaletteOverride));
+  html = ui.html(ui.h(ui.PaletteStrip));
   assert.match(html, /aria-pressed="true"[^>]*data-override="mine"/);
   assert.match(html, /aria-pressed="false"[^>]*data-override="off"/);
 });
@@ -321,7 +322,7 @@ test('stop all voices sends DELETE /api/voices', async () => {
 test('a named random override lights its palette button with live swatches', () => {
   ui.librarySig.value = { status: 'ok', palettes: { builtin: BUILTIN, user: USER } };
   given({ paletteOverride: ['#00FF00', '#2A00FF'], paletteOverrideId: 'hdDefault', userPalettes: USER });
-  const html = ui.html(ui.h(ui.PaletteOverride));
+  const html = ui.html(ui.h(ui.PaletteStrip));
   assert.match(html, /aria-pressed="true"[^>]*data-override="hdDefault"/);
   const lit = html.match(/<button[^>]*data-override="hdDefault"[^>]*>.*?<\/button>/)[0];
   assert.match(lit, /background:\s*#2A00FF/);
@@ -344,10 +345,10 @@ for (const [name, palette, override, hint] of [
 ]) {
   test(`look palettes indicate whether the base uses ${name}`, () => {
     ui.librarySig.value = { builtin: [{ id: 'effect', spec: { palette } }], user: [] };
-    given({ pattern: 'effect', paletteOverride: override, palettes: [{ id: 'look', colors: { 4: [0] } }] });
-    const html = ui.html(ui.h(ui.PalettePads));
+    given({ pattern: 'effect', paletteOverride: override, builtinPalettes: [{ id: 'look', colours: ['#FF0000'] }] });
+    const html = ui.html(ui.h(ui.PaletteStrip, { initialTarget: 'base' }));
     assert.equal(/role="status"/.test(html), hint);
-    assert.match(html, /class="perform-palette /);
+    assert.match(html, /class="override-pad/);
   });
 }
 

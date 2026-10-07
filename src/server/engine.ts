@@ -204,6 +204,8 @@ function renderInput(): RenderInput {
     effectRevision,
     voices: voiceFrames(),
     paletteOverride: state.paletteOverride,
+    basePalette: state.basePalette,
+    overridePalette: state.overridePalette,
     sequenceRevision: revisionOf(sequenceNow),
     sequenceTransport: sequenceNow.transport,
     fixtures: state.fixtures.map((f) => ({

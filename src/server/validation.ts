@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import net from 'node:net';
 import { COLOR_PRESETS, AUTO_SOURCES, TEMPO_MODES, SYNC_OFFSET_LIMIT_MS } from './presets.ts';
-import { PALETTE_IDS } from './palettes.ts';
+import { paletteBodySchema } from '../shared/palette-model.ts';
 import { FIXTURE_GROUPS } from '../shared/stage.ts';
 import { EMITTERS, PIXEL_MAPS, MAX_CELLS_PER_FIXTURE, MAX_PROFILE_CHANNELS } from '../shared/rig.ts';
 import { HUE_BRIDGE_ID_RE, stripIssue } from '../shared/placement.ts';
@@ -116,10 +116,9 @@ const patchSchema = z.object({
   strobeFunction: z.string().min(1).max(64).optional(),
   energyOverride: z.union([z.string().min(1).max(64), z.null()]).optional(),
   paletteOverride: paletteOverride.optional(),
-  // Explain unknown palette IDs explicitly so a failed selection is not a generic validation error.
-  palette: z.union([z.enum(PALETTE_IDS as [string, ...string[]]), z.null()], {
-    error: `is not a known palette (${PALETTE_IDS.join(', ')})`,
-  }).optional(),
+  basePalette: paletteBodySchema.nullable().optional(),
+  overridePalette: paletteBodySchema.nullable().optional(),
+  palette: z.string().min(1).max(64).nullable().optional(),
   paletteSize: z.union([z.literal(2), z.literal(3), z.literal(4)]).optional(),
   artnet: artnetSchema.optional(),
   prolinkEnabled: z.boolean().optional(),
