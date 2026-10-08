@@ -32,7 +32,7 @@ const WORKER = path.join(import.meta.dirname, '..', '..', 'src', 'server', 'engi
 
 const fixture = (id, address, extra = {}) => ({
   id, address, universe: 0, profileId: BUILTIN_PROFILE_ID, maxBrightness: 255, override: null,
-  position: null, group: null, geometry: null, hue: false, ...extra,
+  position: null, group: null, geometry: null, ...extra,
 });
 // Ids that are not slot numbers.
 const PARS = [fixture(10, 1), fixture(11, 13), fixture(12, 25), fixture(13, 37)];

@@ -8,13 +8,18 @@ import { fileURLToPath } from 'node:url';
 
 import { createRenderer } from '../src/server/renderer.ts';
 import * as universes from '../src/server/universes.ts';
-import { getProfile, profilesRevision, registerProfile, unregisterProfile, BUILTIN_PROFILE_ID, HUE_COLOR_PROFILE_ID } from '../src/server/profiles.ts';
+import { getProfile, profilesRevision, registerProfile, unregisterProfile, BUILTIN_PROFILE_ID } from '../src/server/profiles.ts';
+import { HUE_COLOR } from '../tests/unit/hue-test-lamps.js';
 
 export const LOOKS = ['position-chase', 'radial-pulse', 'spatial-wash', 'bounce-scan', 'streak', 'starlight', 'breathe', 'volume-gate', 'confetti',
   'anchor-fill', 'halves', 'flip', 'room-wave', 'ring-strobe', 'ring-backlit', 'fireworks', 'flashes', 'swirl'];
 
 import { barProfile } from '../src/server/bar-profile.ts';
 import { presetById } from '../src/shared/effects/catalogue.ts';
+
+// A Hue lamp's profile is built from its bridge; this one is laid out as the
+// generic colour lamp the expectations were taken with.
+registerProfile(HUE_COLOR);
 
 export const MIXED_EFFECTS = ['ldj.PartyStrobe', 'ldj.SceneMakerFirework', 'ldj.ScatterStrobe', 'ldj.Popcorn',
   'hd.neonDomino', 'hd.prismRicochet', 'hd.meteorShower', 'hd.auroraDrift'];
@@ -29,7 +34,7 @@ const PAR_FOOTPRINT = 12;
 function par(id, position) {
   return {
     id, address: 1 + id * PAR_FOOTPRINT, universe: 0, profileId: BUILTIN_PROFILE_ID, maxBrightness: 255,
-    override: null, position, group: null, geometry: null, hue: false,
+    override: null, position, group: null, geometry: null,
   };
 }
 
@@ -80,7 +85,7 @@ export function withMixedRig(run) {
   registerProfile(profile);
   const fixtures = [
     par(0, { x: 10, y: 10 }), par(1, { x: 90, y: 10 }),
-    ...[2, 3].map((id) => ({ ...par(id, { x: id === 2 ? 10 : 90, y: 90 }), profileId: HUE_COLOR_PROFILE_ID, hue: true })),
+    ...[2, 3].map((id) => ({ ...par(id, { x: id === 2 ? 10 : 90, y: 90 }), profileId: HUE_COLOR.id, output: { protocol: 'hue', bridge: 'b1', channels: [id] } })),
     { ...par(4, { x: 50, y: 50 }), profileId: profile.id, geometry: { length: 30, angle: 0 } },
   ];
   try { return run(fixtures); } finally { unregisterProfile(profile.id); }

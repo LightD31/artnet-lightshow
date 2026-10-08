@@ -23,7 +23,7 @@ function Rates({ id, value, fallback, change }) {
 export function FixtureHardware({ fixture, profile, settings = DEFAULT_HARDWARE, send }) {
   const caps = hardwareOf(fixture, profile, settings);
   const inherited = hardwareOf({ ...fixture, hardware: null }, profile, settings);
-  const products = Object.entries(settings.products).filter(([, p]) => p.technology === technologyOf(fixture));
+  const products = Object.entries(settings.products).filter(([, p]) => p.technology === technologyOf(fixture, profile));
   return <details class="setup-section hardware-limits"><summary>Hardware capability · {caps.maxFlashHz} Hz · {caps.source}</summary>
     <p class="setting-help">{caps.pixels > 1 ? `${caps.pixels} pixels` : 'Single lamp'} · {caps.channels.map((c) => c.toUpperCase()).join(' / ') || 'No colour channels'}.
       {' '}{caps.measured ? 'Measured to the configured rate.' : 'Configured limit; not verified to this rate.'}</p>

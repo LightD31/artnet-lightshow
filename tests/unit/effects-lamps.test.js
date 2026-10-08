@@ -14,9 +14,9 @@ import '../../src/shared/effects/index.ts';
 const WHITE = { r: 255, g: 255, b: 255, w: 0, a: 0, uv: 0 };
 const fixtures = [
   { id: 10, position: { x: 10, y: 20 } },
-  { id: 20, position: { x: 30, y: 80 }, hue: true },
+  { id: 20, position: { x: 30, y: 80 }, output: { protocol: 'hue', bridge: 'b1', channels: [0] } },
   { id: 30, position: { x: 50, y: 20 }, geometry: { length: 20, angle: 0 } },
-  { id: 40, position: { x: 70, y: 80 }, hue: true },
+  { id: 40, position: { x: 70, y: 80 }, output: { protocol: 'hue', bridge: 'b1', channels: [0] } },
   { id: 50, position: { x: 90, y: 20 } },
 ];
 const rigOf = (count) => buildRig(fixtures, (f) => f.id === 30 && count > 1

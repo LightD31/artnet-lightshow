@@ -10,7 +10,8 @@ import { z } from 'zod';
 
 import { createRenderer } from '../../src/server/renderer.ts';
 import * as universes from '../../src/server/universes.ts';
-import { getProfile, profilesRevision, registerProfile, unregisterProfile, BUILTIN_PROFILE_ID, HUE_COLOR_PROFILE_ID } from '../../src/server/profiles.ts';
+import { getProfile, profilesRevision, registerProfile, unregisterProfile, BUILTIN_PROFILE_ID } from '../../src/server/profiles.ts';
+import { HUE_COLOR } from './hue-test-lamps.js';
 import { COLOR_PRESETS } from '../../src/server/presets.ts';
 import { FRAME_MS } from '../../src/server/frame-clock.ts';
 import { presetById } from '../../src/shared/effects/catalogue.ts';
@@ -22,14 +23,18 @@ import { buildRig } from '../../src/shared/rig.ts';
 import { anchorStep, beatPositionAt, localBpm, makeGrid } from '../../src/shared/beat-clock.ts';
 import { HOLD_STROBE } from '../../src/shared/look-math.ts';
 
+// A Hue lamp's profile is built from its bridge; this one is laid out as the
+// generic colour lamp the expectations were taken with.
+registerProfile(HUE_COLOR);
+
 const fixture = (id, address, profileId = BUILTIN_PROFILE_ID, extra = {}) => ({
   id, address, universe: 0, profileId, maxBrightness: 255, override: null,
-  position: null, group: null, geometry: null, hue: false, ...extra,
+  position: null, group: null, geometry: null, ...extra,
 });
 
 // Ids that are not slot numbers, and a Hue lamp among the pars.
 const PARS = [fixture(10, 1), fixture(11, 13), fixture(12, 25), fixture(13, 37)];
-const LAMP = fixture(14, 60, HUE_COLOR_PROFILE_ID, { hue: true, output: { protocol: 'hue', channel: 1 } });
+const LAMP = fixture(14, 60, HUE_COLOR.id, { output: { protocol: 'hue', bridge: 'b1', channels: [1] } });
 const RIG = [...PARS, LAMP];
 
 // A bar of four bare RGB cells: no fixture dimmer, so every cell drives as the preview counts it.
@@ -711,7 +716,7 @@ test("preview rapid effects respect safety admission", () => {
 
 test("legacy preview bursts retain safety and Hue mode", () => {
   const times = [0, 60, 100, 170, 200, 250, 320, 480, 760, 1010];
-  const profileOnly = fixture(15, 70, HUE_COLOR_PROFILE_ID);
+  const profileOnly = fixture(15, 70, HUE_COLOR.id, { output: { protocol: 'hue', bridge: 'b1', channels: [2] } });
   const fixtures = [PARS[0], LAMP, profileOnly];
   const at = (energy, options, input) => {
     const events = [
@@ -807,12 +812,12 @@ test("preview history resets only when timeline inputs change", () => {
   inits = probeInits;
   assert.deepStrictEqual(sample(900, RIG, COLOR_PRESETS, buildRig(RIG, getProfile)), fresh(RIG));
   assert.strictEqual(probeInits, inits + 1, 'only the fresh sampler started one');
-  // Changed: a fixture's id, a trim, a place, a Hue flag, the colour table, an effect's settings.
+  // Changed: a fixture's id, a trim, a place, a Hue output, the colour table, an effect's settings.
   const changes = [
     RIG.map((f, i) => (i === 0 ? { ...f, id: 77 } : f)),
     RIG.map((f, i) => (i === 2 ? { ...f, maxBrightness: 90 } : f)),
     RIG.map((f, i) => (i === 0 ? { ...f, position: { x: 80, y: 20 } } : f)),
-    RIG.map((f, i) => (i === 3 ? { ...f, hue: true } : f)),
+    RIG.map((f, i) => (i === 3 ? { ...f, output: { protocol: 'hue', bridge: 'b1', channels: [0] } } : f)),
   ];
   const before = sample(900, RIG, COLOR_PRESETS, buildRig(RIG, getProfile));
   for (const fixtures of changes) {

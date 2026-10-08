@@ -1,4 +1,4 @@
-import { state, allocateFixtureId, universeOf, maxBrightnessOf, countUniverses, freeUniverses, placeAddresslessFixtures } from '../state.ts';
+import { state, allocateFixtureId, universeOf, maxBrightnessOf, countUniverses, placeAddresslessFixtures } from '../state.ts';
 import { resizeFixtureBuffers } from '../engine.ts';
 import { parseGDTF } from '../../gdtf.ts';
 import { BUILTIN_PROFILE_ID, HUE_BY_HAND, isBuiltinProfile, MAX_FIXTURES, UNIVERSE_SIZE, endChannel, fitsInUniverse, universeOverflow, registerProfile, unregisterProfile, listProfiles, getProfile, unitCapOverflow } from '../profiles.ts';

@@ -8,7 +8,8 @@ import assert from 'node:assert';
 
 import { createRenderer } from '../../src/server/renderer.ts';
 import * as universes from '../../src/server/universes.ts';
-import { getProfile, profilesRevision, BUILTIN_PROFILE_ID, HUE_COLOR_PROFILE_ID } from '../../src/server/profiles.ts';
+import { getProfile, profilesRevision, registerProfile, BUILTIN_PROFILE_ID } from '../../src/server/profiles.ts';
+import { HUE_COLOR } from './hue-test-lamps.js';
 import { COLOR_PRESETS } from '../../src/server/presets.ts';
 import { FRAME_MS } from '../../src/server/frame-clock.ts';
 import { CATALOGUE } from '../../src/shared/effects/index.ts';
@@ -17,12 +18,16 @@ import { createPreviewSampler } from '../../src/shared/preview.ts';
 import { buildRig } from '../../src/shared/rig.ts';
 import { beatPositionAt, localBpm, makeGrid } from '../../src/shared/beat-clock.ts';
 
+// A Hue lamp's profile is built from its bridge; this one is laid out as the
+// generic colour lamp the expectations were taken with.
+registerProfile(HUE_COLOR);
+
 const fixture = (id, address, profileId = BUILTIN_PROFILE_ID, extra = {}) => ({
   id, address, universe: 0, profileId, maxBrightness: 255, override: null,
-  position: null, group: null, geometry: null, hue: false, ...extra,
+  position: null, group: null, geometry: null, ...extra,
 });
 const PARS = [fixture(10, 1), fixture(11, 13), fixture(12, 25), fixture(13, 37)];
-const LAMP = fixture(14, 60, HUE_COLOR_PROFILE_ID, { hue: true, output: { protocol: 'hue', channel: 1 } });
+const LAMP = fixture(14, 60, HUE_COLOR.id, { output: { protocol: 'hue', bridge: 'b1', channels: [1] } });
 const RIG = [...PARS, LAMP];
 const LOOK = { colorA: 0, colorB: 5, colorC: 3, colorD: 8, bpm: 120, beatDivision: 1 };
 const BEATS = Array.from({ length: 41 }, (_, i) => i * 0.5);

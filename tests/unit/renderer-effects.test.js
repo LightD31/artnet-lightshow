@@ -10,7 +10,8 @@ import { z } from 'zod';
 
 import { createRenderer, withInputDefaults, baseIntentOf } from '../../src/server/renderer.ts';
 import * as universes from '../../src/server/universes.ts';
-import { getProfile, profilesRevision, registerProfile, unregisterProfile, BUILTIN_PROFILE_ID, HUE_COLOR_PROFILE_ID } from '../../src/server/profiles.ts';
+import { getProfile, profilesRevision, registerProfile, unregisterProfile, BUILTIN_PROFILE_ID } from '../../src/server/profiles.ts';
+import { HUE_COLOR } from './hue-test-lamps.js';
 import { barProfile } from '../../src/server/bar-profile.ts';
 import { COLOR_PRESETS } from '../../src/server/presets.ts';
 import { FRAME_MS } from '../../src/server/frame-clock.ts';
@@ -22,14 +23,18 @@ import { HD_MASTER_DEFAULTS } from '../../src/shared/effects/types.ts';
 import { HOLD_STROBE, resolveEnergyOverride } from '../../src/shared/look-math.ts';
 import { resolveDetectors } from '../../src/server/audio-features.ts';
 
+// A Hue lamp's profile is built from its bridge; this one is laid out as the
+// generic colour lamp the expectations were taken with.
+registerProfile(HUE_COLOR);
+
 const fixture = (id, address, profileId = BUILTIN_PROFILE_ID, extra = {}) => ({
   id, address, universe: 0, profileId, maxBrightness: 255, override: null,
-  position: null, group: null, geometry: null, hue: false, ...extra,
+  position: null, group: null, geometry: null, ...extra,
 });
 
 // As hold-strobe.test.js: a par at 1, a Hue lamp at 20.
 const PAR = fixture(0, 1);
-const LAMP = fixture(1, 20, HUE_COLOR_PROFILE_ID, { hue: true, output: { protocol: 'hue', channel: 1 } });
+const LAMP = fixture(1, 20, HUE_COLOR.id, { output: { protocol: 'hue', bridge: 'b1', channels: [1] } });
 const PARS = [0, 1, 2, 3].map((i) => fixture(i, 1 + 12 * i));
 
 const RED = COLOR_PRESETS[0];
@@ -460,7 +465,7 @@ test("split looks retain independent base and voice layers", () => {
 test("effect frames carry fixture, Hue and audio context", () => {
   registerProfile(BAR);
   try {
-    const profileOnly = fixture(9, 40, HUE_COLOR_PROFILE_ID);
+    const profileOnly = fixture(9, 40, HUE_COLOR.id, { output: { protocol: 'hue', bridge: 'b1', channels: [2] } });
     const fixtures = [fixture(51, 1), fixture(30, 13, BAR.id), LAMP, profileOnly];
     const audio = { t: 3.25, generation: 2, rms: 0.1, power: 1, dominantHz: 100, party: { full: 0.5, bass: 0.5, mid: 0.5, high: 0.5 },
       disco: { hit: [false, false, false], gate: [0, 0, 0], level: [0, 0, 0], peakHit: false, neural: { mainFrequency: 0, amplitude: 0 } },

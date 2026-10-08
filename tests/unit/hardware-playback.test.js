@@ -171,7 +171,7 @@ test('RGB-only output approximates missing white, amber and UV dies', async () =
 
 test('legacy strobe adapts Hue and honours product hardware frequencies', async () => {
   const { hardwareStrobe } = await import('../../src/shared/hardware-strobe.ts');
-  const hue = hardwareOf({ hue: true, hardware: { maxFlashHz: 2 } });
+  const hue = hardwareOf({ output: { protocol: 'hue', bridge: 'b1', channels: [0] }, hardware: { maxFlashHz: 2 } });
   assert.equal(hardwareStrobe(255, hue, 0).level, 1);
   assert.equal(hardwareStrobe(255, hue, 300).level, 0);
   assert.equal(hardwareStrobe(255, hue, 500).level, 1);

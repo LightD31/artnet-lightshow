@@ -357,7 +357,7 @@ test('engine safety and Hue mode follow saved settings', async () => {
 
 test('render input defaults apply only to omitted audio settings', () => {
   const PAR = { id: 0, address: 1, universe: 0, profileId: BUILTIN_PROFILE_ID, maxBrightness: 255, override: null,
-    position: null, group: null, geometry: null, hue: false };
+    position: null, group: null, geometry: null };
   const hand = {
     running: true, pattern: 'solid', colorA: 0, colorB: 5, colorC: 0, colorD: 5, beatDivision: 1, split: null, pixelMap: 'stage',
     strobeSpeed: 0, strobeFunction: 'standard', masterDimmer: 255, masterBlackout: false, energy: null, showDynamics: null,

@@ -603,7 +603,7 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
     if (!(explicitVoices || anyEffect || sequence || options.hardware)) {
       // Nothing steps: answered straight from the timeline, nothing kept.
       if (env) { env = null; forgetHistory(); }
-      return { key: '', stepped: false, fixtures, presets, rig, specs, hue: fixtures.map(isHueLamp), cells: new Map() };
+      return { key: '', stepped: false, fixtures, presets, rig, specs, hue: rig.hue, cells: new Map() };
     }
     const key = `${effectsKey}\n${fixturesContent(fixtures)}\n${rigContent(rig)}\n${presets.map(contentOf).join(',')}`;
     if (env && env.key === key) {
@@ -611,7 +611,7 @@ function createPreviewSampler(events: readonly PreviewEvent[] = [], grid: GridSo
       env.fixtures = fixtures; env.presets = presets; env.rig = rig;
       return env;
     }
-    env = { key, stepped: true, fixtures, presets, rig, specs, hue: fixtures.map(isHueLamp), cells: new Map(),
+    env = { key, stepped: true, fixtures, presets, rig, specs, hue: rig.hue, cells: new Map(),
       hardware: options.hardware ? fixtures.map((f) => hardwareOf(f, options.profiles?.[f.profileId ?? ''], options.hardware)) : undefined };
     forgetHistory();
     return env;

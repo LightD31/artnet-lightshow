@@ -3,20 +3,25 @@ import assert from 'node:assert';
 
 import { createRenderer } from '../../src/server/renderer.ts';
 import * as universes from '../../src/server/universes.ts';
-import { getProfile, profilesRevision, BUILTIN_PROFILE_ID, HUE_COLOR_PROFILE_ID } from '../../src/server/profiles.ts';
+import { getProfile, profilesRevision, registerProfile, BUILTIN_PROFILE_ID } from '../../src/server/profiles.ts';
+import { HUE_COLOR } from './hue-test-lamps.js';
 import { FRAME_MS } from '../../src/server/frame-clock.ts';
 import { validateSpec } from '../../src/shared/effects/registry.ts';
 import { seedFrom } from '../../src/shared/effects/hash.ts';
 import { PATTERN_FUNCS } from '../../src/shared/patterns.ts';
 import { HOLD_STROBE, HUE_PULSE_FLOOR, HUE_PULSE_MS } from '../../src/shared/look-math.ts';
 
+// A Hue lamp's profile is built from its bridge; this one is laid out as the
+// generic colour lamp the expectations were taken with.
+registerProfile(HUE_COLOR);
+
 const fixture = (id, address, profileId = BUILTIN_PROFILE_ID, extra = {}) => ({
   id, address, universe: 0, profileId, maxBrightness: 255, override: null,
-  position: null, group: null, geometry: null, hue: false, ...extra,
+  position: null, group: null, geometry: null, ...extra,
 });
 
 const LEFT = fixture(0, 1);
-const LAMP = fixture(1, 20, HUE_COLOR_PROFILE_ID, { hue: true, output: { protocol: 'hue', channel: 1 } });
+const LAMP = fixture(1, 20, HUE_COLOR.id, { output: { protocol: 'hue', bridge: 'b1', channels: [1] } });
 const RIGHT = fixture(2, 40);
 const HUE_RIG = [LEFT, LAMP, RIGHT];
 const PAR_RIG = [LEFT, fixture(1, 20), RIGHT];

@@ -761,7 +761,7 @@ test('touching the master cancels the brightness automation', () => {
 
 const fixture = (id, address) => ({
   id, address, universe: 0, profileId: BUILTIN_PROFILE_ID, maxBrightness: 255, override: null,
-  position: null, group: null, geometry: null, hue: false,
+  position: null, group: null, geometry: null,
 });
 const PARS = [fixture(10, 1), fixture(11, 13), fixture(12, 25)];
 const LOOK = { pattern: 'solid', colorA: 0, colorB: 5, colorC: 0, colorD: 5, beatDivision: 1 };
