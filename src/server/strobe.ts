@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { STROBE_PARAMS_SCHEMA } from '../shared/effects/strobe.ts';
+import { STROBE_PARAMS_EDIT_SCHEMA } from '../shared/effects/strobe.ts';
 import { canonical } from '../shared/effects/layer.ts';
 import { hexColour, validate } from './validation.ts';
 import { ACKNOWLEDGEMENT_REQUIRED } from './safety.ts';
@@ -40,7 +40,7 @@ type StrobeSettingsStore = Pick<SettingsStore, 'group' | 'update' | 'onChange'>;
 interface StrobeSafety { acknowledged(): boolean; status(): Pick<SafetyStatus, 'strobeMaxLatchSec'> }
 
 // An edit: any of the settings, each as the settings hold it; nothing else.
-const updateSchema = STROBE_PARAMS_SCHEMA.partial().extend({ palette: z.array(hexColour).min(1).max(6).optional() }).strict();
+const updateSchema = STROBE_PARAMS_EDIT_SCHEMA.extend({ palette: z.array(hexColour).min(1).max(6).optional() }).strict();
 
 export class Strobe {
   declare _voices: StrobeVoices;

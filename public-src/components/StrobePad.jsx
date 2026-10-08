@@ -8,7 +8,8 @@ import { useSafetyGate } from './Photosensitivity.jsx';
 /**
  * The strobe: held under a finger, above every other voice. Touch screens
  * that drop long holds get "Burst 2 s". The gear opens its settings, which
- * apply as they change.
+ * apply as they change: palette flashes as Hue Dynamics draws them, or one of
+ * the ROOT PAR programs the look's strobe draws, at a speed of its own.
  */
 const BURST_MS = 2000;
 const MAX_COLOURS = 6;
@@ -19,6 +20,8 @@ export function strobeBody(d) {
   const palette = (d.palette || []).filter(isHexColour).map((c) => normaliseHex(c).toUpperCase()).slice(0, MAX_COLOURS);
   return {
     palette,
+    function: typeof d.function === 'string' && d.function ? d.function : 'palette',
+    speed: Math.min(255, Math.max(1, Math.round(Number(d.speed) || 128))),
     flashesPerSecond: Math.min(MAX_FLASHES, Math.max(1, Math.round(Number(d.flashesPerSecond) || 1))),
     continueBetween: !!d.continueBetween,
     clock: d.clock === 'beat' ? 'beat' : 'wall',
@@ -54,12 +57,19 @@ export function StrobePad() {
   );
 }
 
+/** The strobe's functions: its own palette flashes, then the look's drawn ones (the catalogue's, but the fixture's own standard strobe). */
+export function strobeChoices(strobeFunctions) {
+  return [{ id: 'palette', name: 'Palette flashes' },
+    ...(strobeFunctions || []).filter((f) => f.id !== 'standard').map(({ id, name }) => ({ id, name }))];
+}
+
 export function StrobeSettings({ onClose }) {
-  const s = pick(['strobe', 'userPalettes']);
+  const s = pick(['strobe', 'userPalettes', 'strobeFunctions']);
   const box = useRef(null);
   useFocusTrap(box, true, onClose);
   const settings = s.strobe?.settings || {};
-  const [draft, setDraft] = useState(() => ({ ...settings, brightness: Math.round((settings.brightness ?? 1) * 100) }));
+  const [draft, setDraft] = useState(() => ({ function: 'palette', speed: 128, ...settings, brightness: Math.round((settings.brightness ?? 1) * 100) }));
+  const program = draft.function !== 'palette';
   const lib = librarySig.value;
 
   const apply = (patch) => {
@@ -75,21 +85,36 @@ export function StrobeSettings({ onClose }) {
         <PaletteEditor label={`Colours (up to ${MAX_COLOURS})`} colours={(draft.palette || []).slice(0, MAX_COLOURS)}
           builtin={lib.palettes?.builtin || []} user={s.userPalettes || lib.palettes?.user || []}
           onChange={(palette) => apply({ palette: palette.slice(0, MAX_COLOURS) })} />
-        <label class="pad-field"><span>Flashes per second: {draft.flashesPerSecond}</span>
-          <input type="range" aria-label="Flashes per second" min="1" max={String(MAX_FLASHES)} step="1" value={draft.flashesPerSecond}
-            onInput={(e) => setDraft({ ...draft, flashesPerSecond: Number(e.target.value) })}
-            onChange={(e) => apply({ flashesPerSecond: Number(e.target.value) })} />
+        <label class="pad-field"><span>Function</span>
+          <select value={draft.function} onChange={(e) => apply({ function: e.target.value })}>
+            {strobeChoices(s.strobeFunctions).map((f) => <option key={f.id} value={f.id} selected={draft.function === f.id}>{f.name}</option>)}
+          </select>
         </label>
+        {program ? (
+          <label class="pad-field"><span>Speed: {draft.speed} (on the beat, never over five flashes a second a lamp)</span>
+            <input type="range" aria-label="Strobe speed" min="1" max="255" step="1" value={draft.speed}
+              onInput={(e) => setDraft({ ...draft, speed: Number(e.target.value) })}
+              onChange={(e) => apply({ speed: Number(e.target.value) })} />
+          </label>
+        ) : (
+          <label class="pad-field"><span>Flashes per second: {draft.flashesPerSecond}</span>
+            <input type="range" aria-label="Flashes per second" min="1" max={String(MAX_FLASHES)} step="1" value={draft.flashesPerSecond}
+              onInput={(e) => setDraft({ ...draft, flashesPerSecond: Number(e.target.value) })}
+              onChange={(e) => apply({ flashesPerSecond: Number(e.target.value) })} />
+          </label>
+        )}
         <label class="pad-choice">
           <input type="checkbox" checked={!!draft.continueBetween} onChange={(e) => apply({ continueBetween: e.target.checked })} />
           <span>Look shows between flashes</span>
         </label>
-        <label class="pad-field"><span>Clock</span>
-          <select value={draft.clock} onChange={(e) => apply({ clock: e.target.value })}>
-            <option value="wall" selected={draft.clock !== 'beat'}>Steady (flashes per second)</option>
-            <option value="beat" selected={draft.clock === 'beat'}>On the beat</option>
-          </select>
-        </label>
+        {!program && (
+          <label class="pad-field"><span>Clock</span>
+            <select value={draft.clock} onChange={(e) => apply({ clock: e.target.value })}>
+              <option value="wall" selected={draft.clock !== 'beat'}>Steady (flashes per second)</option>
+              <option value="beat" selected={draft.clock === 'beat'}>On the beat</option>
+            </select>
+          </label>
+        )}
         <label class="pad-field"><span>Brightness: {draft.brightness} %</span>
           <input type="range" aria-label="Strobe brightness" min="0" max="100" step="5" value={draft.brightness}
             onInput={(e) => setDraft({ ...draft, brightness: Number(e.target.value) })}

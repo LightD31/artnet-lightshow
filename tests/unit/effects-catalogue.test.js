@@ -278,7 +278,7 @@ test("control presets resolve to energy and strobe kinds", () => {
   // The compatibility strobe: the look's colours, five a second on the beat grid, the look showing between.
   assert.deepStrictEqual(presetById('palette-strobe').spec, {
     kind: 'strobe', palette: null, brightness: 1,
-    params: { flashesPerSecond: 5, continueBetween: true, clock: 'beat', brightness: 1, onMs: 100, blackMs: 100 },
+    params: { function: 'palette', speed: 128, flashesPerSecond: 5, continueBetween: true, clock: 'beat', brightness: 1, onMs: 100, blackMs: 100 },
   });
   // The manual strobe keeps its own white at two a second.
   assert.deepStrictEqual(validateSpec({ kind: 'strobe' }).palette, ['#FFFFFF']);

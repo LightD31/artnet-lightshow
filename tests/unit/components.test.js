@@ -32,7 +32,7 @@ async function load() {
         export { PaletteEditor, isHexColour, normaliseHex, savePalette } from './public-src/components/PaletteEditor.jsx';
         export { librarySig, socket, followMusic } from './public-src/state.js';
         export { Pads, PadEditor, padGlyph, padBody, contentRows, padChoices } from './public-src/components/Pads.jsx';
-        export { StrobePad, StrobeSettings, strobeBody } from './public-src/components/StrobePad.jsx';
+        export { StrobePad, StrobeSettings, strobeBody, strobeChoices } from './public-src/components/StrobePad.jsx';
         export { createVoiceHolds } from './public-src/hold-control.js';
         export { BUILTIN_PALETTES, CATALOGUE, FAMILIES } from './src/shared/effects/index.ts';
         export { requiresAcknowledgement } from './src/shared/effects/registry.ts';
@@ -722,7 +722,21 @@ test("strobe settings show the current controls", () => {
 
 test("strobe settings serialize bounded normalized palette values", () => {
   assert.deepStrictEqual(ui.strobeBody({ palette: ['#ff0000', 'random', '#00FF00', '#1', '#2', '#3', '#444444', '#555555', '#666666', '#777777'], flashesPerSecond: '3', continueBetween: true, clock: 'beat', brightness: 50 }),
-    { palette: ['#FF0000', '#00FF00', '#444444', '#555555', '#666666', '#777777'], flashesPerSecond: 3, continueBetween: true, clock: 'beat', brightness: 0.5 });
+    { palette: ['#FF0000', '#00FF00', '#444444', '#555555', '#666666', '#777777'], function: 'palette', speed: 128, flashesPerSecond: 3, continueBetween: true, clock: 'beat', brightness: 0.5 });
+  // A ROOT PAR program keeps its speed, bounded to the look's 1..255.
+  const ramp = ui.strobeBody({ palette: ['#ffffff'], function: 'ramp-up', speed: 400, flashesPerSecond: 2, continueBetween: false, clock: 'beat', brightness: 100 });
+  assert.deepStrictEqual([ramp.function, ramp.speed], ['ramp-up', 255]);
+});
+
+test('the strobe sheet offers its palette flashes and the look\'s drawn functions, a program with its speed', () => {
+  const functions = [{ id: 'standard', name: 'Standard' }, { id: 'ramp-up-down', name: 'Ramp Up/Down' }, { id: 'break', name: 'Burst' }];
+  assert.deepStrictEqual(ui.strobeChoices(functions).map((f) => f.id), ['palette', 'ramp-up-down', 'break'],
+    'the fixture\'s own standard strobe is the look\'s, not the voice\'s');
+  given({ strobeFunctions: functions, strobe: { active: null, settings: { function: 'break', speed: 200, flashesPerSecond: 2, continueBetween: true, clock: 'beat', brightness: 1, palette: ['#FFFFFF'] } } });
+  const html = ui.html(ui.h(ui.StrobeSettings, { onClose() {} }));
+  assert.match(html, /<option value="break" selected[^>]*>Burst<\/option>/);
+  assert.match(html, /aria-label="Strobe speed"[^>]*value="200"/);
+  assert.doesNotMatch(html, /Flashes per second/, 'a program runs at its speed, not a rate');
 });
 
 test('voice holds release their own tokens', () => {

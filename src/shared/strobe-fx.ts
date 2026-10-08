@@ -138,19 +138,22 @@ function randomFlash(t: number, slotMs: number, light: number): number {
  * slowest, as many flashes as fit at the fastest a light may flash, evenly,
  * so the first lands on the beat.
  */
-function burst(t: number, cycle: number, beatMs: number): number {
+function burst(t: number, cycle: number, beatMs: number, slotMs = MIN_SLOT_MS): number {
   const into = frac(t) * cycle;
-  const length = Math.max(0.5, Math.min(2, cycle / 4));
+  let length = Math.max(0.5, Math.min(2, cycle / 4));
+  // Paced slower than the light may flash, a burst is long enough for its
+  // two flashes at that pace, inside its cycle.
+  if (slotMs > MIN_SLOT_MS) length = Math.min(cycle, Math.max(length, (2 * slotMs) / beatMs));
   if (into >= length) return 0;
   const lengthMs = length * beatMs;
-  const flashes = Math.max(2, Math.floor(lengthMs / MIN_SLOT_MS));
+  const flashes = Math.max(2, Math.floor(lengthMs / slotMs));
   const pos = (into / length) * flashes;
   return flashLit(frac(pos), lengthMs / flashes) ? 1 : 0;
 }
 
 // ── The functions ───────────────────────────────────────────────────────────
 
-type Program = (t: number, cycle: number, beatMs: number, light: number) => number;
+type Program = (t: number, cycle: number, beatMs: number, light: number, slotMs: number) => number;
 
 interface StrobeProgram {
   ladder: readonly number[];
@@ -169,8 +172,11 @@ const PROGRAMS: Record<string, StrobeProgram> = {
     ladder: RANDOM_BEATS, minMs: MIN_SLOT_MS,
     draw: (t, cycle, beatMs, light) => randomFlash(t, cycle * beatMs, light),
   },
-  break: { ladder: BURST_BEATS, minMs: BURST_MIN_MS, draw: (t, cycle, beatMs) => burst(t, cycle, beatMs) },
+  break: { ladder: BURST_BEATS, minMs: BURST_MIN_MS, draw: (t, cycle, beatMs, _light, slotMs) => burst(t, cycle, beatMs, slotMs) },
 };
+
+/** The functions the show draws itself, every one of them but the standard strobe. */
+const DRAWN_STROBE_FUNCTIONS = Object.keys(PROGRAMS);
 
 /** Is this strobe function drawn by the show, rather than by a strobe channel? */
 function drawnByTheShow(fnId: string): boolean {
@@ -186,13 +192,18 @@ function drawnByTheShow(fnId: string): boolean {
  * @param bpm      its tempo, or nothing to take 120
  * @param light    which light: the rig's unit index, the dice the random
  *                 functions roll for it
+ * @param minMs    the shortest a swell, a random flash's slot or a burst's
+ *                 flash may be: the strobe voice keeps every light to Hue
+ *                 Dynamics' five flashes a second (look-math.ts
+ *                 HOLD_STROBE_MAX_HZ). Without it, the functions' own floors.
  */
-function strobeLevel(fnId: string, raw: number, beatPos: number, bpm: number | null | undefined, light: number): number {
+function strobeLevel(fnId: string, raw: number, beatPos: number, bpm: number | null | undefined, light: number,
+  minMs = 0): number {
   const program = Object.hasOwn(PROGRAMS, fnId) ? PROGRAMS[fnId] : null;
   if (!program) return 1;
   const tempo = bpm && bpm > 0 ? bpm : DEFAULT_BPM;
-  const cycle = cycleBeats(raw, program.ladder, tempo, program.minMs);
-  return clamp01(program.draw(beatPos / cycle, cycle, 60000 / tempo, light));
+  const cycle = cycleBeats(raw, program.ladder, tempo, Math.max(program.minMs, minMs));
+  return clamp01(program.draw(beatPos / cycle, cycle, 60000 / tempo, light, Math.max(MIN_SLOT_MS, minMs)));
 }
 
 export {
@@ -210,4 +221,5 @@ export {
   burst,
   drawnByTheShow,
   strobeLevel,
+  DRAWN_STROBE_FUNCTIONS,
 };

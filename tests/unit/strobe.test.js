@@ -353,6 +353,24 @@ test("strobe settings persist valid edits", (t) => {
   assert.equal(strobe.update({}).flashesPerSecond, 1, 'nothing to change is fine');
 });
 
+test('the strobe plays a ROOT PAR program in place of its palette flashes, and an edit of one setting keeps the rest', (t) => {
+  const { voices, strobe } = bench(t, { acknowledged: true });
+  strobe.update({ function: 'break', speed: 220 });
+  assert.deepEqual([strobe.status().settings.function, strobe.status().settings.speed], ['break', 220]);
+  // Edits of the palette flashes' own settings leave the program, and the other way round.
+  strobe.update({ flashesPerSecond: 4 });
+  assert.deepEqual([strobe.status().settings.function, strobe.status().settings.speed], ['break', 220]);
+  strobe.update({ speed: 30 });
+  assert.equal(strobe.status().settings.flashesPerSecond, 4);
+  // The voice carries the program as its effect's function.
+  strobe.on('latched');
+  assert.deepEqual([voices.get(STROBE_VOICE_ID).spec.params.function, voices.get(STROBE_VOICE_ID).spec.params.speed], ['break', 30]);
+  strobe.off();
+  for (const bad of [{ function: 'standard' }, { function: 'strobe' }, { speed: 0 }, { speed: 300 }, { speed: 2.5 }]) {
+    assert.throws(() => strobe.update(bad), refusedWith(400), JSON.stringify(bad));
+  }
+});
+
 test("strobe settings reject invalid edits without mutation", (t) => {
   const { strobe, values } = bench(t, { acknowledged: true });
   const before = structuredClone(values.strobe);

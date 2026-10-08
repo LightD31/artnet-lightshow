@@ -371,7 +371,7 @@ test('effect safety and Hue settings validate and persist', () => {
 // their own, never a parameter of the kind.
 test('strobe settings enforce flash-rate and palette bounds', () => {
   assert.deepStrictEqual(DEFAULTS.strobe, {
-    flashesPerSecond: 2, continueBetween: true, clock: 'beat', brightness: 1, onMs: 100, blackMs: 100, palette: ['#FFFFFF'],
+    function: 'palette', speed: 128, flashesPerSecond: 2, continueBetween: true, clock: 'beat', brightness: 1, onMs: 100, blackMs: 100, palette: ['#FFFFFF'],
   });
   const older = store();
   fs.writeFileSync(older.file, JSON.stringify({ artnet: { host: '10.0.0.9' } }));
@@ -381,7 +381,11 @@ test('strobe settings enforce flash-rate and palette bounds', () => {
   assert.deepStrictEqual(s.update({ strobe: { flashesPerSecond: 5, clock: 'wall', palette: ['#FF0000', '#0000FF80'] } }).sort(),
     ['strobe.clock', 'strobe.flashesPerSecond', 'strobe.palette']);
   assert.deepStrictEqual(new SettingsStore(s.file).load().get('strobe.palette'), ['#FF0000', '#0000FF80']);
-  for (const bad of [{ strobe: { flashesPerSecond: 6 } }, { strobe: { flashesPerSecond: 0 } }, { strobe: { flashesPerSecond: 2.5 } },
+  // A ROOT PAR program in place of the palette flashes, at a speed of its own; the rest stays.
+  assert.deepStrictEqual(s.update({ strobe: { function: 'ramp-up-rnd', speed: 200 } }).sort(), ['strobe.function', 'strobe.speed']);
+  assert.deepStrictEqual([s.get('strobe.function'), s.get('strobe.speed'), s.get('strobe.flashesPerSecond')], ['ramp-up-rnd', 200, 5]);
+  for (const bad of [{ strobe: { function: 'standard' } }, { strobe: { speed: 0 } }, { strobe: { speed: 256 } },
+    { strobe: { flashesPerSecond: 6 } }, { strobe: { flashesPerSecond: 0 } }, { strobe: { flashesPerSecond: 2.5 } },
     { strobe: { brightness: 1.5 } }, { strobe: { onMs: 50 } }, { strobe: { clock: 'bar' } },
     { strobe: { palette: [] } }, { strobe: { palette: Array(7).fill('#FFFFFF') } }, { strobe: { palette: ['random'] } }, { strobe: { colour: '#FFFFFF' } }]) {
     assert.throws(() => s.update(bad), JSON.stringify(bad));
