@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { pick, socket, toast } from '../../state.js';
 import { post } from '../../setup-state.js';
+import { paletteName } from '../PaletteEditor.jsx';
 
 /**
  * Which MIDI message does what. Defaults to a Behringer X-Touch Compact in
@@ -20,8 +21,13 @@ function paramOptions(kind, s) {
     case 'energy': return (s.energyEffects || []).map((e) => ({ value: e.id, label: e.name }));
     case 'cue': return (s.cues || []).map((c) => ({ value: c.id, label: c.name }));
     case 'palette': return (s.palettes || []).map((p) => ({ value: p.id, label: p.name }));
+    case 'overridePalette': return [...(s.builtinPalettes || []), ...(s.userPalettes || [])].map((p) => ({ value: p.id, label: paletteName(p) }));
     case 'fixture': return (s.fixtures || []).map((f) => ({ value: f.id, label: f.label }));
     case 'division': return DIVISIONS.map((d) => ({ value: d, label: d === 1 ? '1/1' : `1/${d}` }));
+    case 'colorSlot': return ['A', 'B', 'C', 'D'].map((l) => ({ value: `color${l}`, label: `Colour ${l}` }));
+    case 'lookKind': return [{ value: 'pattern', label: 'Patterns' }, { value: 'effect', label: 'Effects' }];
+    case 'bpmFactor': return [{ value: 2, label: '×2' }, { value: 0.5, label: '÷2' }];
+    case 'burstMs': return [500, 1000, 2000, 4000].map((ms) => ({ value: ms, label: `${ms / 1000} s` }));
     default: return [];
   }
 }
@@ -35,7 +41,7 @@ function controlLabel(kind, number, binding) {
 }
 
 export function MidiMap() {
-  const s = pick(['patterns', 'colorPresets', 'energyEffects', 'cues', 'palettes', 'fixtures']);
+  const s = pick(['patterns', 'colorPresets', 'energyEffects', 'cues', 'palettes', 'builtinPalettes', 'userPalettes', 'fixtures']);
   const [data, setData] = useState(null);      // { map, customised, actions }
   const [learning, setLearning] = useState(null);   // banner text
   const [actionId, setActionId] = useState('');
@@ -91,7 +97,7 @@ export function MidiMap() {
     if (chosen.param) {
       const options = paramOptions(chosen.param.kind, s);
       const raw = param !== '' ? param : chosen.param.optional ? '' : String(options[0] ? options[0].value : '');
-      if (raw !== '') binding[chosen.param.key] = ['color', 'fixture', 'division'].includes(chosen.param.kind) ? Number(raw) : raw;
+      if (raw !== '') binding[chosen.param.key] = ['color', 'fixture', 'division', 'bpmFactor', 'burstMs'].includes(chosen.param.kind) ? Number(raw) : raw;
     }
     if (chosen.input === 'encoder') binding.type = 'relative';
     if (chosen.input === 'fader') binding.type = 'absolute';

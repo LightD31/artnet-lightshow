@@ -31,8 +31,11 @@ export interface MidiAction {
  *
  * A binding is `{ action, type?, scale?, value?, fixture?, channel? }`:
  *   type    'relative' (encoder, 1-63 = CW / 65-127 = CCW) or 'absolute'
- *           (fader, 0-127 scaled to 0-255). CC bindings only.
- *   scale   step multiplier for relative encoders.
+ *           (fader, 0-127 scaled to 0-255; on an encoder action, an encoder
+ *           that sends its position, each change a step). For an encoder it
+ *           is only the guess until the encoder shows which (see midi.ts).
+ *           CC bindings only.
+ *   scale   step multiplier for encoders.
  *   value   what the action sets: a pattern id, colour index, cue id…
  *   fixture which fixture the action applies to, by its stable id.
  *   channel restrict to one MIDI channel (0-15). Absent matches any, which is
@@ -64,8 +67,17 @@ const ACTIONS: MidiAction[] = [
   { id: 'toggleFixBlackout',   label: 'Fixture blackout',            input: 'button', param: { key: 'fixture', kind: 'fixture', label: 'Fixture' } },
   { id: 'recallCue',           label: 'Recall cue',                  input: 'button', param: { key: 'value', kind: 'cue', label: 'Cue' } },
   { id: 'setPalette',          label: 'Select palette',              input: 'button', param: { key: 'value', kind: 'palette', label: 'Palette' } },
+  { id: 'togglePaletteOverride', label: 'Palette override on / off',  input: 'button', param: { key: 'value', kind: 'overridePalette', label: 'Palette' } },
+  // Busking: playing a show by hand with the auto show stopped.
+  { id: 'randomLook',          label: 'Random pattern or effect',    input: 'button', param: { key: 'value', kind: 'lookKind', label: 'Of' } },
+  { id: 'randomColor',         label: 'Random colour',               input: 'button', param: { key: 'value', kind: 'colorSlot', label: 'Slot' } },
+  { id: 'clearPaletteOverride', label: 'Palette override off',       input: 'button' },
+  { id: 'scaleBpm',            label: 'Double / halve BPM',          input: 'button', param: { key: 'value', kind: 'bpmFactor', label: 'By' } },
+  { id: 'stopEffects',         label: 'Stop every effect',           input: 'button' },
+  { id: 'strobeBurst',         label: 'Strobe burst',                input: 'button', param: { key: 'value', kind: 'burstMs', label: 'Length', optional: true } },
+  { id: 'toggleAutoShow',      label: 'Auto show on / off',          input: 'button' },
 
-  // Encoders (relative)
+  // Encoders (relative, or sending their position)
   { id: 'adjustBpm',           label: 'Nudge BPM',                   input: 'encoder' },
   { id: 'adjustMasterDimmer',  label: 'Nudge master dimmer',         input: 'encoder' },
   { id: 'adjustStrobeSpeed',   label: 'Nudge strobe speed',          input: 'encoder' },
@@ -73,6 +85,14 @@ const ACTIONS: MidiAction[] = [
   { id: 'adjustFixtureMax',    label: 'Nudge fixture max brightness', input: 'encoder', param: { key: 'fixture', kind: 'fixture', label: 'Fixture' } },
   { id: 'adjustAutoIntensity', label: 'Nudge auto-show intensity',   input: 'encoder' },
   { id: 'adjustAutoSync',      label: 'Nudge light/music sync',       input: 'encoder' },
+  { id: 'browsePattern',       label: 'Browse patterns',             input: 'encoder' },
+  { id: 'browseEffect',        label: 'Browse effects',              input: 'encoder' },
+  { id: 'browseColor',         label: 'Browse colours',              input: 'encoder', param: { key: 'value', kind: 'colorSlot', label: 'Slot' } },
+  { id: 'browseBeatDivision',  label: 'Browse beat division',        input: 'encoder' },
+  { id: 'browseBarsPattern',   label: 'Browse the bars\' picture',   input: 'encoder' },
+  { id: 'browsePalette',       label: 'Browse palette override',     input: 'encoder' },
+  { id: 'adjustFadeTime',      label: 'Fade time of look changes',   input: 'encoder' },
+  { id: 'adjustStrobeRate',    label: 'Nudge strobe flashes per second', input: 'encoder' },
 
   // Faders (absolute)
   { id: 'setMasterDimmer',     label: 'Master dimmer',               input: 'fader' },
@@ -140,11 +160,11 @@ const bindingWriteSchema = z.object({
 
 // ── The built-in default: Behringer X-Touch Compact, Standard mode, Layer A ──
 //
-//   Encoders EN1-8 turn : CC 10-17, ch 1 (relative — the encoding is worked out
-//                         from the values the encoder sends; see midi.js
-//                         relEvidence. Behringer's own surfaces use binary
-//                         offset, 65 up and 63 down, not the two's complement
-//                         this comment used to claim.)
+//   Encoders EN1-8 turn : CC 10-17, ch 1 (out of the box, the position 0-127,
+//                         which the binding's 'absolute' turns into steps.
+//                         Set to relative in the X-TOUCH Editor, the encoding
+//                         is worked out from the values instead; see midi.ts
+//                         relEvidence.)
 //   Encoders EN1-8 push : Note 0-7,  ch 1
 //   Button row 1 (BT1-8)  : Note 16-23, ch 1
 //   Button row 2 (BT9-16) : Note 24-31, ch 1
@@ -160,19 +180,23 @@ type MidiListener = (map: MidiMap) => void;
 
 const DEFAULT_MAP: MidiMap = {
   cc: {
-    // Relative encoders EN1-EN8 turn: CC10-CC17
-    10: { action: 'adjustBpm',          type: 'relative', scale: 1 },
-    11: { action: 'adjustMasterDimmer', type: 'relative', scale: 4 },
-    12: { action: 'adjustFixtureDim',   type: 'relative', scale: 4, fixture: 0 },
-    13: { action: 'adjustFixtureDim',   type: 'relative', scale: 4, fixture: 1 },
-    14: { action: 'adjustFixtureDim',   type: 'relative', scale: 4, fixture: 2 },
-    15: { action: 'adjustFixtureDim',   type: 'relative', scale: 4, fixture: 3 },
-    16: { action: 'adjustStrobeSpeed',  type: 'relative', scale: 4 },
+    // Encoders EN1-EN8 turn: CC10-CC17. Out of the box each sends its
+    // position, so 'absolute': every change in it is a step (see midi.ts).
+    10: { action: 'adjustBpm',          type: 'absolute', scale: 1 },
+    11: { action: 'adjustMasterDimmer', type: 'absolute', scale: 4 },
+    // EN3-EN6 and FD1-FD4 trim fixtures 1-4 rather than dim them: a dimmer
+    // takes the fixture out of the show into its override, and the show is
+    // mostly running by itself. A trim scales whatever drives the fixture.
+    12: { action: 'adjustFixtureMax',   type: 'absolute', scale: 4, fixture: 0 },
+    13: { action: 'adjustFixtureMax',   type: 'absolute', scale: 4, fixture: 1 },
+    14: { action: 'adjustFixtureMax',   type: 'absolute', scale: 4, fixture: 2 },
+    15: { action: 'adjustFixtureMax',   type: 'absolute', scale: 4, fixture: 3 },
+    16: { action: 'adjustStrobeSpeed',  type: 'absolute', scale: 4 },
     // Absolute faders FD1-FD9: CC1-CC9 (0-127 → 0-255)
-    1: { action: 'setFixtureDim', type: 'absolute', fixture: 0 },
-    2: { action: 'setFixtureDim', type: 'absolute', fixture: 1 },
-    3: { action: 'setFixtureDim', type: 'absolute', fixture: 2 },
-    4: { action: 'setFixtureDim', type: 'absolute', fixture: 3 },
+    1: { action: 'setFixtureMax', type: 'absolute', fixture: 0 },
+    2: { action: 'setFixtureMax', type: 'absolute', fixture: 1 },
+    3: { action: 'setFixtureMax', type: 'absolute', fixture: 2 },
+    4: { action: 'setFixtureMax', type: 'absolute', fixture: 3 },
     // FD8 sits next to the master on the X-Touch, which is where the auto
     // show's energy slider belongs: the two faders you reach for are "how
     // bright" and "how hard".
@@ -183,30 +207,35 @@ const DEFAULT_MAP: MidiMap = {
     // Encoder push buttons EN1-EN8: notes 0-7
     0: { action: 'tap' },
     1: { action: 'toggleBlackout' },
-    2: { action: 'togglePlay' },
+    // Not play/stop: stopped, the rig holds its last frame while the auto show
+    // plays on unseen. This picks the energy effect EN8's push fires instead.
+    2: { action: 'cycleEnergyEffect' },
     3: { action: 'toggleFixBlackout', fixture: 0 },
     4: { action: 'toggleFixBlackout', fixture: 1 },
     5: { action: 'toggleFixBlackout', fixture: 2 },
     6: { action: 'toggleFixBlackout', fixture: 3 },
     7: { action: 'energyHold' },
-    // Button row 1 (BT1-8, notes 16-23): 8 patterns
-    16: { action: 'setPattern', value: 'solid'       },
-    17: { action: 'setPattern', value: 'chase'       },
-    18: { action: 'setPattern', value: 'chase-rev'   },
-    19: { action: 'setPattern', value: 'ping-pong'   },
-    20: { action: 'setPattern', value: 'strobe'      },
-    21: { action: 'setPattern', value: 'fade'        },
-    22: { action: 'setPattern', value: 'color-cycle' },
-    23: { action: 'setPattern', value: 'rainbow'     },
-    // Button row 2 (BT9-16, notes 24-31): 2 patterns + 6 colour presets
-    24: { action: 'setPattern', value: 'twinkle'     },
-    25: { action: 'setPattern', value: 'split'       },
-    26: { action: 'setColorA', value: 0 },
-    27: { action: 'setColorA', value: 1 },
-    28: { action: 'setColorA', value: 2 },
-    29: { action: 'setColorA', value: 3 },
-    30: { action: 'setColorA', value: 4 },
-    31: { action: 'setColorA', value: 5 },
+    // Button rows 1 and 2 (BT1-16, notes 16-31): palettes over the show, each
+    // on until pressed again. Patterns and colour slots picked by hand last
+    // only to the auto show's next scene; the override is never the show's.
+    // Row 1, two colours
+    16: { action: 'togglePaletteOverride', value: 'redCyan'         },
+    17: { action: 'togglePaletteOverride', value: 'orangeBlue'      },
+    18: { action: 'togglePaletteOverride', value: 'yellowPurple'    },
+    19: { action: 'togglePaletteOverride', value: 'greenPink'       },
+    20: { action: 'togglePaletteOverride', value: 'redYellow'       },
+    21: { action: 'togglePaletteOverride', value: 'greenBlue'       },
+    22: { action: 'togglePaletteOverride', value: 'rocketPop'       },
+    23: { action: 'togglePaletteOverride', value: 'hdDefault'       },
+    // Row 2, three and more
+    24: { action: 'togglePaletteOverride', value: 'redOrangeYellow' },
+    25: { action: 'togglePaletteOverride', value: 'greenCyanBlue'   },
+    26: { action: 'togglePaletteOverride', value: 'cyanBluePurple'  },
+    27: { action: 'togglePaletteOverride', value: 'bluePurplePink'  },
+    28: { action: 'togglePaletteOverride', value: 'purplePinkRed'   },
+    29: { action: 'togglePaletteOverride', value: 'blueDream'       },
+    30: { action: 'togglePaletteOverride', value: 'electricSummer'  },
+    31: { action: 'togglePaletteOverride', value: 'rainbow'         },
   },
 };
 

@@ -1,6 +1,8 @@
 import { transitionFor } from '../show/transition.ts';
 import { presetById } from '../shared/effects/catalogue.ts';
-import { state, getLiveState, getDmxSnapshot, getDmxUniverses, setExtrasProvider, setSequenceProvider, setSequenceRuns, reconcileFreeClock, voices, strobe } from './state.ts';
+import { state, getLiveState, getCatalogs, getDmxSnapshot, getDmxUniverses, setExtrasProvider, setSequenceProvider, setSequenceRuns, reconcileFreeClock, voices, strobe } from './state.ts';
+import { ALL_PALETTES } from './palette-catalogue.ts';
+import { HOLD_STROBE_MAX_HZ } from '../shared/look-math.ts';
 import { createPublisher, ROOM } from './protocol.ts';
 import { encodeDmxFrame } from '../shared/dmx-frame.ts';
 import { setHooks, applyPatch } from './patch.ts';
@@ -132,6 +134,21 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
       resolve: (id) => library.effects.resolve(id),
     }),
   });
+  // MIDI's palette override buttons put a palette on as the strip does
+  // (routes/effects.ts): by id, as the colours it has now, its random ones rolled.
+  midi.setPaletteOverride = (id) => {
+    if (id === null) {
+      applyPatch({ paletteOverride: null });
+      return;
+    }
+    const body = library.palettes.materializeBody(id);
+    if (!body) {
+      console.warn(`[MIDI] palette override: no palette ${id} — it may have been deleted`);
+      return;
+    }
+    applyPatch({ overridePalette: body }, { paletteOverrideId: id });
+  };
+
   // MIDI padPress notes hold the deck's pads under their own owner and token.
   midi.pads = {
     press: (bank, slot, owner, token) => pads.press(bank, slot, owner, token),
@@ -475,6 +492,32 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     autoShow.stop();
     syncLiveDirector();
   }
+
+  // Playing the show by hand from the controller (midi.ts, "Busking"). The
+  // auto show starts and stops as from its routes (routes/auto.ts).
+  midi.busk = {
+    looks: () => getCatalogs().patterns,
+    palettes: () => [...ALL_PALETTES.map((p) => p.id), ...library.palettes.list().map((p) => p.id)],
+    acknowledged: () => safety.acknowledged(),
+    stopEffects: () => { voices.stopAll(); broadcast(); },
+    strobeBurst: (ms) => { strobe.burst(ms); broadcast(); },
+    strobeRate: () => strobe.status().settings.flashesPerSecond,
+    setStrobeRate: (hz) => { strobe.update({ flashesPerSecond: hz }); broadcast(); },
+    strobeMaxRate: HOLD_STROBE_MAX_HZ,
+    autoShowOn: () => showWanted,
+    toggleAutoShow: () => {
+      if (showWanted) {
+        autoShow.startPending = null;
+        stopAutoShow();
+      } else if (!autoShow.analysis && resolveAutoSource() !== 'live') {
+        console.warn('[MIDI] auto show: no analysis loaded. Analyze a track first, or turn on the live input to play by ear.');
+        return;
+      } else {
+        startAutoShow();
+      }
+      broadcast();
+    },
+  };
 
   // ─── Playing by ear ─────────────────────────────────────────────────────
   // With the auto show on and no timeline running — the source is `live`, or

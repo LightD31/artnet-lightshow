@@ -1594,7 +1594,8 @@ ungrouped fixtures always run the pattern. The rehearsal preview shows the
 split too. Groups are saved with the patch.
 
 Set it from the fixture card, from MIDI (**Fixture max brightness** on a fader,
-**Nudge fixture max brightness** on an encoder), or over REST at
+**Nudge fixture max brightness** on an encoder — the default X-Touch mapping has
+fixtures 1–4 on faders 1–4 and encoders 3–6), or over REST at
 `POST /api/fixture/:id/max/:value`.
 
 ---
@@ -2791,43 +2792,89 @@ controller, far too noisy during a show.
 
 ### Default mapping — Behringer X-Touch Compact
 
-Set the controller to **Standard MIDI mode** (Layer A), then pick its input and
-output ports under **Settings → MIDI controller**. The server never picks a port
-by itself: until one is picked, MIDI stays off.
+Leave the controller on its factory settings — **Standard MIDI mode** (MC MODE
+light off), Layer A — then pick its input and output ports under **Settings →
+MIDI controller**. The server never picks a port by itself: until one is picked,
+MIDI stays off. A controller edited in the X-TOUCH Editor goes back to this with
+the editor's reset of both layers.
 
 | Control | MIDI | Action |
 |---------|------|--------|
-| Encoder 1 | CC 10 (relative) | BPM ±1 |
-| Encoder 2 | CC 11 (relative) | Master dimmer |
-| Encoders 3–6 | CC 12–15 (relative) | Fixture 1–4 dimmer |
-| Encoder 7 | CC 16 (relative) | Strobe speed |
-| Faders 1–4 | CC 1–4 (absolute) | Fixture 1–4 dimmer |
+| Encoder 1 | CC 10 (absolute) | BPM ±1 |
+| Encoder 2 | CC 11 (absolute) | Master dimmer |
+| Encoders 3–6 | CC 12–15 (absolute) | Fixture 1–4 max brightness |
+| Encoder 7 | CC 16 (absolute) | Strobe speed |
+| Faders 1–4 | CC 1–4 (absolute) | Fixture 1–4 max brightness |
 | Fader 8 | CC 8 (absolute) | Auto-show intensity |
 | Fader 9 | CC 9 (absolute) | Master dimmer |
 | Encoder push 1 | Note 0 | Tap tempo |
 | Encoder push 2 | Note 1 | Toggle blackout |
-| Encoder push 3 | Note 2 | Toggle play/stop |
+| Encoder push 3 | Note 2 | Next energy effect (for push 8) |
 | Encoder push 4–7 | Note 3–6 | Fixture 1–4 blackout |
 | Encoder push 8 | Note 7 | Energy override (hold) |
-| Button row 1 | Notes 16–23 | Patterns |
-| Button row 2 | Notes 24–31 | 2 patterns + Colour A presets 1–6 |
+| Button row 1 | Notes 16–23 | Palette override: Red Cyan, Orange Blue, Yellow Purple, Green Pink, Red Yellow, Green Blue, Rocket Pop, Hue Dynamics default |
+| Button row 2 | Notes 24–31 | Palette override: Red Orange Yellow, Green Cyan Blue, Cyan Blue Purple, Blue Purple Pink, Purple Pink Red, Blue Dream, Electric Summer, Rainbow |
+
+Faders 1–4 and encoders 3–6 set the [maximum brightness](#fixture-maximum-brightness)
+of fixtures 1–4, not their dimmer: a trim scales whatever is driving the fixture,
+so it stays in the show, where a dimmer would take it over. Bind **Fixture
+dimmer** to them in the mapping to dim by hand instead.
+
+**Busking.** For a show played by hand with the auto show stopped, encoders
+can browse the patterns (the classic and party ones), the effects (Hue
+Dynamics and Light DJ; the fast-flashing ones once the photosensitivity
+acknowledgement is given), each colour slot, the beat division, the bars'
+own picture and the palette override; a browse goes round its list, and the
+ring shows where in it the look is. A fade-time encoder sets the crossfade the
+controller's own look changes go out with (0 to 4 s). Buttons throw in a
+random pattern, effect or colour (never the one on stage, never the blackout
+colour), double or halve the BPM, stop every pad and effect, fire a strobe
+burst, or turn the auto show on and off; that one is lit while it runs. The
+Busk page in Companion offers the same.
+
+The mapping is laid out for a show that mostly runs itself, so nothing on it
+fights the auto show. The two button rows put a palette over whatever is
+playing until pressed again — lit while on, and another one replaces it. A
+pattern or a colour picked by hand lasts only to the auto show's next scene; the
+palette override is never the show's, so it stays (see Palettes under
+[Effects](#effects--hue-dynamics-and-light-dj)). Encoder push 3 picks which energy effect push 8 fires,
+rather than play/stop: stopped, the rig holds its last frame while the auto show
+plays on unseen. Patterns, colour slots and play/stop can all still be bound in
+the mapping.
 
 ### Bindable actions
 
 | Control | Actions |
 |---------|---------|
-| **Buttons** | Tap tempo · Automatic tempo match on/off · Play/stop · Master blackout · Select pattern · Set colour slot A–D · Select palette · Set beat division · Energy override (hold) · Cycle the held energy effect · Cycle strobe function · Fixture blackout · Recall cue |
-| **Encoders** (relative) | Nudge BPM · Nudge master dimmer · Nudge strobe speed · Nudge fixture dimmer · Nudge fixture max brightness · Nudge auto-show intensity · Nudge light/music sync |
-
-An endless encoder sends "moved a bit, this way", and there are two ways to
-spell that — two's complement (1 up, 127 down) and binary offset (65 up, 63
-down). Which one a controller uses is a setting on the device, and nothing in
-the MIDI message says which you are being sent, so the encoding is worked out
-from the values themselves: a value next to 64 can only be binary offset, one
-next to 0 or 127 can only be two's complement. The first detent settles it, per
-encoder, so a surface may mix the two. Nothing needs configuring, and a
-controller you reconfigure is re-learned on the next restart.
+| **Buttons** | Tap tempo · Automatic tempo match on/off · Play/stop · Master blackout · Select pattern · Set colour slot A–D · Select palette · Palette override on/off · Set beat division · Energy override (hold) · Cycle the held energy effect · Cycle strobe function · Fixture blackout · Recall cue · Random pattern or effect · Random colour · Palette override off · Double / halve BPM · Stop every effect · Strobe burst · Auto show on/off |
+| **Encoders** (relative or absolute) | Nudge BPM · Nudge master dimmer · Nudge strobe speed · Nudge fixture dimmer · Nudge fixture max brightness · Nudge auto-show intensity · Nudge light/music sync · Browse patterns · Browse effects · Browse colours · Browse beat division · Browse the bars' picture · Browse palette override · Fade time of look changes · Nudge strobe flashes per second |
 | **Faders** (absolute) | Master dimmer · Strobe speed · BPM · Fixture dimmer · Fixture max brightness · Auto-show intensity · Light/music sync offset |
+
+An X-Touch Compact on its factory settings sends each encoder's position, 0–127,
+rather than how far it moved; set to relative in the X-TOUCH Editor, it sends
+"moved a bit, this way" instead. Which one is a setting on the device, and
+nothing in the MIDI message says, so the server works it out per encoder from
+what it sends, and either works with any map. Steps only ever land within 15 of
+0, 64 or 127, so a value further from all three is a position; a position moves
+a few at a time from where the encoder is and never repeats away from the ends,
+so a step-like value far from there, or the same one twice, is a step.
+
+Until an encoder has shown which, its binding's type is the guess: `absolute`
+for a position, as in the default mapping, or `relative` for steps. Unsure of a
+`relative` guess, the server moves the encoder's ring clear of 0, 64 and 127 for
+a moment, so its next click says which, and at most one click is misread.
+Learning an encoder does the same, and stores the type it found; an encoder that
+gives no answer within two seconds keeps the type the learn asked for.
+
+A position's every change is one step, so BPM still moves by one a click. The
+X-Touch takes the ring position the server sends as its own, so the encoder
+counts on from where the show is; it stops at the ends of its ring, and within a
+second of letting go the server sends it back to where the show is.
+
+Steps come in two spellings — two's complement (1 up, 127 down) and binary
+offset (65 up, 63 down) — also worked out from the values: a value next to 64
+can only be binary offset, one next to 0 or 127 can only be two's complement.
+The first detent settles it, per encoder, so a surface may mix the two.
 
 ---
 
@@ -2842,19 +2889,31 @@ Companion **v4.3+** (the module uses the v2 connection API).
    the server uses one
 4. Drag presets onto buttons
 
-It is made for busking. The **Busk** preset page has:
-- every palette on the server;
-- energy effects and a blackout that last only while their button is held
-  (sent as `energy-hold`, which the server lets go of on its own if Companion
-  stops renewing it, so a crash with a button down never latches a strobe);
-- tap tempo, ×2 and ÷2;
-- the auto show's on/off, intensity and sync nudge;
-- the master level;
+It is made for busking: the **Busk** preset page plays a show by hand with
+the auto show stopped.
+- **Looks** — the previous and next pattern or effect (the same lists the
+  X-Touch's encoders browse), the look on stage, a random pattern or effect,
+  and play/stop.
+- **Colours over every effect** — every palette on the server as the palette
+  override, on until pressed again and lit while on; palette off; a random
+  palette; random colours A–D.
+- **Hits** — the 16 pads (a hold pad plays while its button is down, renewed,
+  so a crash lets go of it), a strobe burst and a blackout held.
+- **Tempo** — tap, the BPM, ×2 and ÷2, automatic tempo match on/off, and the
+  beat division from 1/1 to 1/16.
+- **Show** — the auto show on/off, what is playing, stop every effect, the
+  master level and blackout.
 - a button for every saved cue.
 
+The **Auto show** page has its on/off, intensity and sync nudge for riding it.
+Button texts name the connection's variables by its own label, so they keep
+working whatever the connection is called.
+
 Other presets cover every pattern and pixel effect (the bars' own picture and
-the pixel map too), colours A–D, transport, a blackout per fixture and latched
-energy effects, with feedback lighting the active state. Pad buttons hold
+the pixel map too), colours A–D and whole palettes into them, transport, a
+blackout per fixture and energy effects latched or held (sent as
+`energy-hold`, let go of by the server if Companion stops renewing it), with
+feedback lighting the active state. Pad buttons hold
 the server's pads while pressed (renewed, so a crash lets go as the energy
 holds do), and a strobe burst button fires the strobe for 100–30,000 ms
 (1 s by default). When the server refuses the access token it says so with

@@ -288,3 +288,97 @@ test("Companion release during a press prevents renewal", async (t) => {
   assert.deepStrictEqual(posts.map(([p]) => p.split('/').at(-1)), ['press', 'release']);
   conn.disconnect();
 });
+
+// ── Busking: the Busk page and its actions ───────────────────────────────────
+
+const buskState = () => ({
+  pattern: 'chase', paletteOverrideId: null, paletteOverride: null, tempoMode: 'auto',
+  safety: { photosensitivityAcknowledged: false },
+  patterns: [
+    { id: 'solid', legacy: true }, { id: 'chase', legacy: true }, { id: 'breathe', party: true }, { id: 'gradient', pixel: true },
+    { id: 'hd.iceStrike', app: 'hd', rapidFlash: false }, { id: 'ldj.visualizer.firework', app: 'ldj', rapidFlash: true },
+    { id: 'ldj.Swirl', app: 'ldj', rapidFlash: false }, { id: 'energy.whiteStrobe', app: 'own', rapidFlash: true },
+  ],
+  colorPresets: COLOR_PRESETS,
+  builtinPalettes: [{ id: 'redCyan', colours: ['#FF0000', '#00BFFF'] }, { id: 'rainbow', colours: ['#FF0000'] }],
+});
+
+test('the Busk lists step and randomise as the X-Touch does', () => {
+  const s = buskState();
+  assert.deepStrictEqual(catalog.lookList(s, 'pattern').map((r) => r.id), ['solid', 'chase', 'breathe']);
+  assert.deepStrictEqual(catalog.lookList(s, 'effect').map((r) => r.id), ['hd.iceStrike', 'ldj.Swirl'], 'no fast flashes before the acknowledgement, no energy effects');
+  assert.strictEqual(catalog.stepLook(s, 'pattern', 'next'), 'breathe');
+  assert.strictEqual(catalog.stepLook({ ...s, pattern: 'breathe' }, 'pattern', 'next'), 'solid', 'round the list');
+  assert.strictEqual(catalog.stepLook(s, 'effect', 'previous'), 'ldj.Swirl', 'from a pattern, the last effect');
+  assert.strictEqual(catalog.randomLook(s, 'pattern', () => 0), 'solid', 'never the look on stage');
+  assert.strictEqual(catalog.randomPalette({ ...s, paletteOverrideId: 'redCyan' }, () => 0), 'rainbow');
+  const colours = catalog.randomColours(s, () => 0.9999);
+  assert.deepStrictEqual(Object.keys(colours), ['colorA', 'colorB', 'colorC', 'colorD']);
+  assert.ok(Object.values(colours).every((i) => COLOR_PRESETS[i].name !== 'Blackout'), 'never the blackout entry');
+  assert.strictEqual(catalog.palettesOf(s)[0].name, 'Red Cyan', 'a nameless built-in palette is named');
+});
+
+test('the Busk page plays looks, colours over the effects, the pads, tempo and the panic buttons', async () => {
+  const { UpdatePresets } = await import('../../companion-module/src/presets.js');
+  let structure = null;
+  let presets = null;
+  UpdatePresets({ label: 'show', liveState: buskState(), setPresetDefinitions: (st, defs) => { structure = st; presets = defs; } });
+  const busk = structure.find((c) => c.id === 'busk');
+  assert.deepStrictEqual(busk.definitions.map((g) => g.id), ['busk_looks', 'busk_colours', 'busk_hits', 'busk_tempo', 'busk_show']);
+  for (const group of structure.flatMap((c) => c.definitions)) {
+    for (const id of typeof group === 'string' ? [group] : group.presets) assert.ok(presets[id], `${id} is defined`);
+  }
+  assert.deepStrictEqual(presets.override_redCyan.steps[0].down, [{ actionId: 'palette_override', options: { palette: 'redCyan', mode: 'toggle' } }]);
+  assert.strictEqual(presets.override_redCyan.feedbacks[0].feedbackId, 'palette_override_active');
+  assert.deepStrictEqual(presets.look_effect_next.steps[0].down, [{ actionId: 'browse_look', options: { kind: 'effect', direction: 'next', fadeMs: 0 } }]);
+  assert.ok(busk.definitions.find((g) => g.id === 'busk_hits').presets.includes('pad_16'));
+  assert.strictEqual(presets.transport_bpm_display.style.text, '$(show:bpm)\nBPM', 'variables by the connection\'s own label');
+  assert.strictEqual(presets.pad_1.style.text, '$(show:pad_1_label)');
+});
+
+test('the Busk actions reach the server', async () => {
+  const { UpdateActions } = await import('../../companion-module/src/actions.js');
+  let actions = null;
+  const sent = [];
+  const self = {
+    liveState: buskState(),
+    setActionDefinitions: (defs) => { actions = defs; },
+    sendSet: (patch) => sent.push(['set', patch]),
+    paletteOverride: async (id) => sent.push(['override', id]),
+    stopEffects: async () => sent.push(['stop']),
+  };
+  UpdateActions(self);
+  await actions.palette_override.callback({ options: { palette: 'redCyan', mode: 'toggle' } });
+  self.liveState.paletteOverrideId = 'redCyan';
+  await actions.palette_override.callback({ options: { palette: 'redCyan', mode: 'toggle' } });
+  await actions.browse_look.callback({ options: { kind: 'pattern', direction: 'next', fadeMs: 500 } });
+  await actions.random_look.callback({ options: { what: 'effect' } });
+  await actions.stop_effects.callback({ options: {} });
+  await actions.tempo_mode.callback({ options: { mode: 'toggle' } });
+  assert.deepStrictEqual(sent.slice(0, 3), [['override', 'redCyan'], ['override', null], ['set', { pattern: 'breathe', fadeMs: 500 }]]);
+  assert.ok(['hd.iceStrike', 'ldj.Swirl'].includes(sent[3][1].pattern));
+  assert.deepStrictEqual(sent.slice(4), [['stop'], ['set', { tempoMode: 'manual' }]]);
+  assert.ok(actions.beat_division.options[0].choices.some((c) => c.id === 16), 'down to 1/16');
+});
+
+test('the palette override and stopping every effect go out on their routes', async () => {
+  const calls = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push([init.method, new URL(url).pathname, init.body ? JSON.parse(init.body) : undefined]);
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  };
+  try {
+    const conn = new LightshowConnection({ host: 'localhost' });
+    await conn.paletteOverride('rainbow');
+    await conn.paletteOverride(null);
+    await conn.stopEffects();
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.deepStrictEqual(calls, [
+    ['PUT', '/api/palette-override', { paletteId: 'rainbow' }],
+    ['DELETE', '/api/palette-override', undefined],
+    ['DELETE', '/api/voices', undefined],
+  ]);
+});

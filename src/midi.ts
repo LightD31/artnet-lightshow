@@ -8,8 +8,9 @@
  * want, so any controller works.
  *
  * X-Touch Compact Standard mode, Layer A, for reference:
- *   Encoders EN1-8 turn : CC 10-17, ch 1 (relative; the encoding is worked out
- *                          from the values — see relEvidence)
+ *   Encoders EN1-8 turn : CC 10-17, ch 1 (the position, 0-127, out of the box;
+ *                          set to relative, the encoding is worked out from the
+ *                          values — see relEvidence)
  *   Encoders EN1-8 push : Note 0-7,  ch 1
  *   Button row 1 (BT1-8)  : Note 16-23, ch 1
  *   Button row 2 (BT9-16) : Note 24-31, ch 1
@@ -21,10 +22,10 @@
  * feedback follows a relearned layout instead of pointing at the old buttons.
  */
 
-import { DEFAULT_MAP, ACTIONS } from './server/midi-map.ts';
+import { DEFAULT_MAP, ACTIONS, defaultTypeFor } from './server/midi-map.ts';
 import { createRequire } from 'node:module';
 
-import { ENERGY_EFFECT_IDS, STROBE_FUNCTION_IDS, SYNC_OFFSET_LIMIT_MS } from './server/presets.ts';
+import { COLOR_PRESETS, ENERGY_EFFECT_IDS, STROBE_FUNCTION_IDS, SYNC_OFFSET_LIMIT_MS } from './server/presets.ts';
 import { messageOf } from './errors.ts';
 import type { MidiBinding, MidiMap } from './server/midi-map.ts';
 import type { ShowState } from './server/state.ts';
@@ -69,6 +70,8 @@ export interface LearnCapture {
   number: number;
   channel: number;
   binding: MidiBinding;
+  /** For an encoder: the kind it showed itself to be, as a binding type. */
+  type?: 'relative' | 'absolute';
 }
 
 /** A learn-mode transition, for every open page. */
@@ -113,6 +116,29 @@ interface MidiPads {
   /** The strobe's latch cap in ms. */
   strobeMaxMs?(): number;
 }
+/** A row of the look catalogue as the server sends it (state.ts getCatalogs): a pattern or an effect preset. */
+export interface LookRow { id: string; pixel?: boolean; app?: string; rapidFlash?: boolean }
+
+/**
+ * What playing a show by hand reaches on the server (integrations sets it);
+ * null leaves those controls silent.
+ */
+export interface MidiBusk {
+  /** The patterns and effect presets, as the pages get them. */
+  looks(): readonly LookRow[];
+  /** Every palette by id, built in and saved, for the palette knob. */
+  palettes(): readonly string[];
+  /** Whether the photosensitivity acknowledgement is given: until then the fast-flashing effects are skipped. */
+  acknowledged(): boolean;
+  stopEffects(): unknown;
+  strobeBurst(ms: number): unknown;
+  strobeRate(): number;
+  setStrobeRate(hz: number): unknown;
+  strobeMaxRate: number;
+  autoShowOn(): boolean;
+  toggleAutoShow(): unknown;
+}
+
 interface HeldPad { bank: number; slot: number; owner: string; token: string; renew: ReturnType<typeof setInterval> | null }
 const STROBE_FN_IDS = STROBE_FUNCTION_IDS;
 
@@ -187,6 +213,78 @@ function relDelta(value: number, mode: RelMode): number {
   return value > 64 ? value - 128 : value;
 }
 
+// ── Encoders that send their position ───────────────────────────────────────
+//
+// An X-Touch Compact out of the box (or reset in the X-TOUCH Editor) does not
+// send its encoders as steps at all: each sends where it is, 0-127, and stops
+// at the ends. Read as relative, a turn threw the parameter to an end stop and
+// turning back left it there. The device also takes the ring position we send
+// as its own, and carries on counting from it.
+//
+// So an encoder sending its position is taken by the change: we know where it
+// is from what it last sent us or what we last sent it, and the difference is
+// the number of steps.
+//
+// Which kind an encoder is, steps or its position, is a setting on the device,
+// so it is worked out from what it sends, as the step encoding is. Steps land
+// within STEP_REACH of 0, 64 or 127 — a fast spin included — so a value
+// further from all three is a position. A position moves a few from where the
+// encoder was and never repeats itself away from the ends, so a step-like
+// value far from there, or the same one again, is a step.
+//
+// Until one of those, the binding's type is the guess, and the message is read
+// as it says. A steps guess also moves the ring clear of every landmark, so the
+// encoder's next message says which — a position counts on from the ring, a
+// step lands far from it — and a wrong guess misreads one message, not the
+// dozen a position takes to leave a landmark behind (66 read as a step is two
+// up from 64). A position guess, the built-in map's, is not probed, or a right
+// one would see its ring jump on the first touch; a step encoder misread as
+// positions is shown up by its next click, except at an end, where it stalls
+// until turned the other way.
+type EncoderMode = 'position' | 'steps';
+
+// The most steps a controller's acceleration packs into one message, and
+// further than an encoder sending its position moves in one.
+const STEP_REACH = 15;
+
+/** How far `value` is from the nearest landmark a step lands next to. */
+const fromLandmark = (value: number): number => Math.min(value, Math.abs(value - 64), 127 - value);
+
+// The actions an encoder drives: from the catalogue.
+const ENCODER_ACTIONS = new Set(ACTIONS.filter((a) => a.input === 'encoder').map((a) => a.id));
+
+// ── Busking ─────────────────────────────────────────────────────────────────
+//
+// With the auto show stopped the controller plays the show itself: encoders
+// browse the patterns, the effects, the colours and the bars' picture, and
+// buttons throw in a random one. A browse wraps round its list; the beat
+// division, the fade and the strobe rate stop at their ends. The ring shows
+// where in the list the look is, and an encoder sending its position counts
+// on from there (see "Encoders that send their position").
+
+const DIVISIONS = [1, 2, 4, 8, 16];
+// The crossfade the controller's own look changes go out with, a quarter second a click.
+const FADE_STEP_MS = 250;
+const FADE_MAX_MS = 4000;
+const COLOR_SLOTS = ['colorA', 'colorB', 'colorC', 'colorD'] as const;
+type ColorSlot = typeof COLOR_SLOTS[number];
+const slotOf = (value: unknown): ColorSlot | null => COLOR_SLOTS.find((slot) => slot === value) ?? null;
+// A random colour is one that lights: never the blackout entry.
+const LIT_COLORS = COLOR_PRESETS.map((c, i) => ({ c: c as Record<string, unknown>, i }))
+  .filter(({ c }) => ['r', 'g', 'b', 'w', 'a', 'uv'].some((k) => Number(c[k]) > 0)).map(({ i }) => i);
+const wrapIndex = (i: number, n: number): number => ((i % n) + n) % n;
+
+// How long a ring moved off its end is left there for the encoder to say what
+// it is, before the show's value goes back on it.
+const PROBE_HOLD_MS = 3000;
+
+// How long learn waits, after an encoder's first message, for one that says
+// which kind it is. Without one the binding keeps the type it was asked with.
+const LEARN_CONFIRM_MS = 2000;
+
+/** A ring position clear of every landmark, on the side of `value`. */
+const clearRing = (value: number): number => (value >= 64 ? 96 : 32);
+
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
 
 // ── MidiController class ──────────────────────────────────────────────────────
@@ -200,11 +298,24 @@ class MidiController {
   declare map: MidiMap;
   declare enabled: boolean;
   declare recallCue: ((id: string) => unknown) | null;
-  declare _learn: { binding: MidiBinding; resolve: (capture: LearnCapture | null) => void; timer: ReturnType<typeof setTimeout> } | null;
+  declare setPaletteOverride: ((id: string | null) => unknown) | null;
+  declare busk: MidiBusk | null;
+  declare _fadeMs: number;
+  declare _random: () => number;
+  declare _learn: {
+    binding: MidiBinding;
+    resolve: (capture: LearnCapture | null) => void;
+    timer: ReturnType<typeof setTimeout>;
+    // An encoder caught, waiting for the message that says which kind it is.
+    encoder?: { key: string; number: number; channel: number };
+  } | null;
   declare _learnListeners: ((event: LearnEvent) => void)[];
   declare _lastCcOut: Map<number, number>;
   declare _lastCcIn: Map<number, number>;
   declare _relModes: Map<string, RelMode>;
+  declare _positions: Map<string, number>;
+  declare _encModes: Map<string, EncoderMode>;
+  declare _probes: Map<string, number>;
   declare controlFeedback: boolean;
   declare _cachedPorts: MidiPortList | null;
   declare _energyEffect: string | undefined;
@@ -231,9 +342,13 @@ class MidiController {
     this.map    = DEFAULT_MAP;
     this.enabled = false;
 
-    // Set externally: recallCue needs the cue store, which this module has no
-    // business reaching into itself.
+    // Set externally: recallCue needs the cue store, and setPaletteOverride
+    // the palette library, which this module has no business reaching into.
     this.recallCue = null;
+    this.setPaletteOverride = null;
+    this.busk = null;
+    this._fadeMs = 0;
+    this._random = Math.random;
 
     this._learn = null;       // { binding, resolve, timer } while learn is armed
     this._learnListeners = [];
@@ -245,6 +360,12 @@ class MidiController {
     // Which relative encoding each encoder has shown itself to use, learned
     // from the values it sends. See relEvidence.
     this._relModes = new Map();
+    // Encoders, keyed "channel:cc": where each is if it sends its position,
+    // which kind each has shown itself to be, and the rings moved off an end
+    // to find out, with when. See "Encoders that send their position".
+    this._positions = new Map();
+    this._encModes = new Map();
+    this._probes = new Map();
     this.controlFeedback = true;
     // Touch-sensitive faders (see TOUCH_PAIR_MS): the controls that have sent a
     // value between the ends, the switch-like ones held at 127 and since when,
@@ -425,7 +546,7 @@ class MidiController {
 
       // Learning a fader: its touch sensor speaks first, and is not the fader.
       if (this._learn && !between && !this._moved.has(key) && this._learnWantsFader()) return;
-      if (this._captureLearn('cc', controller, channel)) return;
+      if (this._captureLearn('cc', controller, channel, value)) return;
 
       // Note the touch even when unmapped: a fader being moved is a fader we
       // should not be driving, whatever it is bound to.
@@ -439,24 +560,77 @@ class MidiController {
         this._warnSwitch(key, controller, binding);
         return;
       }
-      if (binding.type === 'relative') {
-        // Remembered per control, because a surface can mix encoder types and
-        // because the answer cannot change while the device is plugged in. A
-        // controller reconfigured mid-session is re-learned on the next restart.
-        const key = `${channel}:${controller}`;
-        const evidence = relEvidence(value);
-        if (evidence) this._relModes.set(key, evidence);
-        const delta = relDelta(value, this._relModes.get(key) || REL_TWOS)
-          * (binding.scale || 1);
+      if (ENCODER_ACTIONS.has(binding.action)) {
+        const delta = this._encoderSteps(key, controller, channel, binding, value) * (binding.scale || 1);
         // A no-movement message is not an edit: dispatching zero would still
         // clear the palette label and suppress the control's own feedback.
         if (delta !== 0) {
           this._safely(binding, () => this._dispatchContinuous(binding, delta));
         }
-      } else {
+      } else if (binding.type !== 'relative') {
         this._safely(binding, () => this._dispatchAbsolute(binding, value));
       }
     });
+  }
+
+  /**
+   * How many steps an encoder's message is, whichever kind it is.
+   *
+   * Remembered per control, because a surface can mix encoder types and the
+   * answer cannot change while the device is plugged in. A controller
+   * reconfigured mid-session shows itself again with its next decisive message.
+   */
+  _encoderSteps(key: string, controller: number, channel: number, binding: MidiBinding, value: number): number {
+    const at = this._positions.get(key);
+    this._probes.delete(key);
+    const evidence = this._encoderEvidence(at, value);
+    if (evidence) this._encModes.set(key, evidence);
+    this._positions.set(key, value);
+
+    const steps = (): number => {
+      const encoding = relEvidence(value);
+      if (encoding) this._relModes.set(key, encoding);
+      return relDelta(value, this._relModes.get(key) || REL_TWOS);
+    };
+    const mode = this._encModes.get(key);
+    if (mode === 'position') return at === undefined ? 0 : value - at;
+    if (mode === 'steps') return steps();
+
+    // Not shown yet, so the value is next to a landmark: the binding's type is
+    // the guess. With nothing to measure from, a position only says where it is.
+    if (binding.type !== 'relative') return at === undefined ? 0 : value - at;
+    if (at !== undefined) this._probe(key, controller, channel, value);
+    return steps();
+  }
+
+  /** The kind this message can only have come from, measured from `at`; null if either. */
+  _encoderEvidence(at: number | undefined, value: number): EncoderMode | null {
+    if (fromLandmark(value) > STEP_REACH) return 'position';
+    if (at === undefined) return null;
+    if (Math.abs(value - at) > STEP_REACH) return 'steps';
+    if (value === at && value !== 0 && value !== 127) return 'steps';
+    return null;
+  }
+
+  /** The kind an encoder is taken to be: what it has shown, or its binding's guess. */
+  _encoderMode(key: string, binding: MidiBinding): EncoderMode {
+    return this._encModes.get(key) ?? (binding.type === 'relative' ? 'steps' : 'position');
+  }
+
+  /**
+   * Move an encoder's ring clear of every landmark, so its next message says
+   * which kind it is, and leave it there for PROBE_HOLD_MS. Not with feedback
+   * off: whatever echoes it back would be taken for the encoder.
+   */
+  _probe(key: string, controller: number, channel: number, value: number): void {
+    if (!this.output || !this.controlFeedback) return;
+    const ring = clearRing(value);
+    try {
+      this.output.send('cc', { controller, value: ring, channel });
+    } catch (_) { return; }
+    this._lastCcOut.set(controller, ring);
+    this._positions.set(key, ring);
+    this._probes.set(key, Date.now());
   }
 
   /** Is the learn in progress for a fader action? */
@@ -588,16 +762,59 @@ class MidiController {
   get learning(): boolean { return !!this._learn; }
 
   /** True when this message was consumed by an armed learn. */
-  _captureLearn(kind: 'cc' | 'notes', number: number, channel: number): boolean {
+  _captureLearn(kind: 'cc' | 'notes', number: number, channel: number, value = 0): boolean {
     const learn = this._learn;
     if (!learn) return false;
+    if (kind === 'cc' && ENCODER_ACTIONS.has(learn.binding.action)) return this._learnEncoder(learn, number, channel, value);
+    // An encoder already caught: the rest of the surface works meanwhile.
+    if (learn.encoder) return false;
+    this._finishLearn(learn, { kind, number, channel, binding: learn.binding });
+    return true;
+  }
+
+  /**
+   * Learning an encoder: its first message binds it, but which kind it is —
+   * steps or its position — is what makes the binding work, and one message
+   * seldom says. So the ring is moved clear of every landmark, and the next
+   * messages say which (see _encoderEvidence). Without one in LEARN_CONFIRM_MS
+   * the binding keeps the type it was asked with.
+   */
+  _learnEncoder(learn: NonNullable<MidiController['_learn']>, number: number, channel: number, value: number): boolean {
+    const key = `${channel}:${number}`;
+    if (learn.encoder && learn.encoder.key !== key) return false;
+
+    // Where the encoder was before is not to be trusted: it was not ours to follow.
+    const first = !learn.encoder;
+    const evidence = this._encoderEvidence(first ? undefined : this._positions.get(key), value);
+    this._positions.set(key, value);
+    if (first) {
+      learn.encoder = { key, number, channel };
+      clearTimeout(learn.timer);
+      learn.timer = setTimeout(() => this._finishLearnEncoder(learn, null), LEARN_CONFIRM_MS);
+      learn.timer.unref?.();
+    }
+    if (evidence) this._finishLearnEncoder(learn, evidence);
+    else if (first) this._probe(key, number, channel, value);
+    return true;
+  }
+
+  _finishLearnEncoder(learn: NonNullable<MidiController['_learn']>, mode: EncoderMode | null): void {
+    const encoder = learn.encoder;
+    if (!encoder) return;
+    if (mode) this._encModes.set(encoder.key, mode);
+    const type = mode === 'position' ? 'absolute'
+      : mode === 'steps' ? 'relative'
+        : learn.binding.type || defaultTypeFor(learn.binding.action);
+    this._finishLearn(learn, { kind: 'cc', number: encoder.number, channel: encoder.channel, binding: learn.binding, type });
+  }
+
+  _finishLearn(learn: NonNullable<MidiController['_learn']>, captured: LearnCapture): void {
+    // Cancelled or superseded meanwhile: that already answered.
+    if (this._learn !== learn) return;
     this._learn = null;
     clearTimeout(learn.timer);
-
-    const captured: LearnCapture = { kind, number, channel, binding: learn.binding };
     learn.resolve(captured);
     this._emitLearn({ status: 'captured', ...captured });
-    return true;
   }
 
   /** Register a listener for learn-mode transitions (armed/captured/cancelled). */
@@ -689,8 +906,74 @@ class MidiController {
         // a button that silently does nothing.
         if (binding.value) this.apply({ palette: String(binding.value) });
         break;
+      case 'togglePaletteOverride': {
+        // Over whatever is playing until pressed again. The auto show never
+        // sets the override, so this colours the show rather than fighting it.
+        if (!binding.value || !this.setPaletteOverride) break;
+        const id = String(binding.value);
+        this.setPaletteOverride(s.paletteOverrideId === id ? null : id);
+        break;
+      }
+      case 'clearPaletteOverride':
+        this.setPaletteOverride?.(null);
+        break;
+      case 'randomLook': {
+        const others = this._lookList(binding.value === 'effect' ? 'effect' : 'pattern').filter((id) => id !== s.pattern);
+        if (others.length) this._look(this._pick(others));
+        break;
+      }
+      case 'randomColor': {
+        const slot = slotOf(binding.value);
+        const others = LIT_COLORS.filter((i) => !slot || i !== s[slot]);
+        if (slot && others.length) this.apply({ [slot]: this._pick(others), ...this._fade() });
+        break;
+      }
+      case 'scaleBpm': {
+        const factor = Number(binding.value);
+        if (factor > 0) this.apply({ bpm: clamp(Math.round(s.bpm * factor * 100) / 100, 20, 300) });
+        break;
+      }
+      case 'stopEffects':
+        this.busk?.stopEffects();
+        break;
+      case 'strobeBurst':
+        this.busk?.strobeBurst(Number(binding.value) || 1000);
+        break;
+      case 'toggleAutoShow':
+        this.busk?.toggleAutoShow();
+        break;
     }
     this.sendFeedback();
+  }
+
+  /**
+   * The looks an encoder browses: the rig's patterns (the classic and party
+   * ones, not the pixel pictures), or the Hue Dynamics and Light DJ effects —
+   * the fast-flashing ones only once the acknowledgement is given.
+   */
+  _lookList(kind: 'pattern' | 'effect'): string[] {
+    const rows = this.busk?.looks() ?? [];
+    if (kind === 'pattern') return rows.filter((r) => !r.pixel && !r.app).map((r) => r.id);
+    const acknowledged = !!this.busk?.acknowledged();
+    return rows.filter((r) => (r.app === 'hd' || r.app === 'ldj') && (acknowledged || !r.rapidFlash)).map((r) => r.id);
+  }
+
+  /** The bars' own pictures, "as the whole rig" first. */
+  _barsList(): (string | null)[] {
+    return [null, ...(this.busk?.looks() ?? []).filter((r) => r.pixel).map((r) => r.id)];
+  }
+
+  /** Put a look on, with the controller's fade. */
+  _look(id: string): void {
+    this.apply({ pattern: id, ...this._fade() });
+  }
+
+  _fade(): { fadeMs?: number } {
+    return this._fadeMs > 0 ? { fadeMs: this._fadeMs } : {};
+  }
+
+  _pick<T>(list: readonly T[]): T {
+    return list[Math.min(list.length - 1, Math.floor(this._random() * list.length))];
   }
 
   _dispatchContinuous(binding: MidiBinding, delta: number): void {
@@ -725,6 +1008,45 @@ class MidiController {
         // 0-100, not 0-255: the auto show's slider is a percentage.
         this.apply({ autoIntensity: clamp(Math.round((s.autoIntensity ?? 50) + delta), 0, 100) });
         break;
+      case 'browsePattern':
+      case 'browseEffect': {
+        const list = this._lookList(binding.action === 'browsePattern' ? 'pattern' : 'effect');
+        if (!list.length) break;
+        const at = list.indexOf(s.pattern);
+        // Not in the list (the other kind is on): the first turn lands on its first or last.
+        this._look(list[at < 0 ? (delta > 0 ? 0 : list.length - 1) : wrapIndex(at + delta, list.length)]);
+        break;
+      }
+      case 'browseColor': {
+        const slot = slotOf(binding.value);
+        if (slot) this.apply({ [slot]: wrapIndex(s[slot] + delta, COLOR_PRESETS.length), ...this._fade() });
+        break;
+      }
+      case 'browseBeatDivision': {
+        const at = Math.max(0, DIVISIONS.indexOf(s.beatDivision));
+        this.apply({ beatDivision: DIVISIONS[clamp(at + delta, 0, DIVISIONS.length - 1)] });
+        break;
+      }
+      case 'browseBarsPattern': {
+        const list = this._barsList();
+        this.apply({ pixelPattern: list[wrapIndex(Math.max(0, list.indexOf(s.pixelPattern)) + delta, list.length)] });
+        break;
+      }
+      case 'browsePalette': {
+        const list = this.busk?.palettes() ?? [];
+        if (!list.length || !this.setPaletteOverride) break;
+        const at = s.paletteOverrideId ? list.indexOf(s.paletteOverrideId) : -1;
+        this.setPaletteOverride(list[at < 0 ? (delta > 0 ? 0 : list.length - 1) : wrapIndex(at + delta, list.length)]);
+        break;
+      }
+      case 'adjustFadeTime':
+        this._fadeMs = clamp(this._fadeMs + delta * FADE_STEP_MS, 0, FADE_MAX_MS);
+        break;
+      case 'adjustStrobeRate': {
+        const busk = this.busk;
+        if (busk) busk.setStrobeRate(clamp(Math.round(busk.strobeRate() + delta), 1, busk.strobeMaxRate));
+        break;
+      }
       case 'adjustAutoSync':
         // 5 ms a detent. One encoder click of 1 ms would be unusable — you
         // cannot hear a millisecond — and a whole beat per click would overshoot
@@ -824,6 +1146,10 @@ class MidiController {
         case 'setColorD':        lit = binding.value === s.colorD; break;
         case 'setBeatDivision':  lit = Number(binding.value) === s.beatDivision; break;
         case 'setPalette':       lit = binding.value === s.palette; break;
+        case 'togglePaletteOverride': lit = !!binding.value && s.paletteOverrideId === String(binding.value); break;
+        // Lit while there is something for it to do.
+        case 'clearPaletteOverride': lit = !!s.paletteOverride; break;
+        case 'toggleAutoShow':   lit = !!this.busk?.autoShowOn(); break;
         case 'toggleBlackout':   lit = !!s.masterBlackout; break;
         // Lit while the clock follows the music, as Play is while it runs.
         case 'toggleTempoMode':  lit = s.tempoMode !== 'manual'; break;
@@ -885,6 +1211,31 @@ class MidiController {
       case 'adjustAutoSync':
         // Bipolar, so centre the ring rather than parking it at the bottom.
         return to127((s.autoSyncOffsetMs ?? 0) + SYNC_OFFSET_LIMIT_MS, SYNC_OFFSET_LIMIT_MS * 2);
+      case 'browsePattern':
+      case 'browseEffect': {
+        const list = this._lookList(binding.action === 'browsePattern' ? 'pattern' : 'effect');
+        const at = list.indexOf(s.pattern);
+        return at < 0 ? null : to127(at, Math.max(1, list.length - 1));
+      }
+      case 'browseColor': {
+        const slot = slotOf(binding.value);
+        return slot ? to127(s[slot], COLOR_PRESETS.length - 1) : null;
+      }
+      case 'browseBeatDivision':
+        return to127(Math.max(0, DIVISIONS.indexOf(s.beatDivision)), DIVISIONS.length - 1);
+      case 'browseBarsPattern': {
+        const list = this._barsList();
+        return to127(Math.max(0, list.indexOf(s.pixelPattern)), Math.max(1, list.length - 1));
+      }
+      case 'browsePalette': {
+        const list = this.busk?.palettes() ?? [];
+        const at = s.paletteOverrideId ? list.indexOf(s.paletteOverrideId) : -1;
+        return at < 0 ? null : to127(at, Math.max(1, list.length - 1));
+      }
+      case 'adjustFadeTime':
+        return to127(this._fadeMs, FADE_MAX_MS);
+      case 'adjustStrobeRate':
+        return this.busk ? to127(this.busk.strobeRate() - 1, Math.max(1, this.busk.strobeMaxRate - 1)) : null;
       default:
         return null;
     }
@@ -912,9 +1263,18 @@ class MidiController {
       if (now - touchedAt < ECHO_SUPPRESS_MS) continue;
       // A finger on it, by its touch sensor: the motor must not fight it.
       if (this._touched(number)) continue;
-      if (this._lastCcOut.get(number) === value) continue;
+      const encoder = ENCODER_ACTIONS.has(binding.action) ? `${binding.channel || 0}:${number}` : null;
+      // A ring moved off its end stays there until the encoder says what it is.
+      if (encoder !== null && now - (this._probes.get(encoder) ?? -Infinity) < PROBE_HOLD_MS) continue;
+      // An encoder sending its position counts on from where it was turned to,
+      // which is not always where the ring was sent: send it again, so the
+      // ring shows the show and the encoder counts from there.
+      const drifted = encoder !== null && this._encoderMode(encoder, binding) === 'position'
+        && this._positions.get(encoder) !== value;
+      if (this._lastCcOut.get(number) === value && !drifted) continue;
 
       this._lastCcOut.set(number, value);
+      if (encoder !== null) this._positions.set(encoder, value);
       try {
         output.send('cc', { controller: number, value, channel: binding.channel || 0 });
       } catch (_) { /* the port can vanish mid-show; feedback is not worth dying for */ }
@@ -985,6 +1345,9 @@ class MidiController {
     this._lastCcOut.clear();
     this._lastCcIn.clear();
     this._touchDown.clear();
+    this._positions.clear();
+    this._encModes.clear();
+    this._probes.clear();
     if (this.input)  { try { this.input.close();  } catch (_) {} }
     if (this.output) { try { this.output.close(); } catch (_) {} }
     this.enabled = false;

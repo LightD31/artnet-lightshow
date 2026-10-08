@@ -38,6 +38,8 @@ function textOn(bg) {
 
 export function UpdatePresets(self) {
 	const state = self.liveState
+	// A variable is named by the connection's label, which the user can change.
+	const ref = (name) => `$(${self.label || 'lightshow'}:${name})`
 	const presets = {}
 	const patterns = patternsOf(state)
 	const pixels = patterns.filter((p) => p.pixel)
@@ -88,6 +90,60 @@ export function UpdatePresets(self) {
 		},
 	)
 
+	// Looks: through the patterns or the effects, a step or a random one.
+	for (const kind of ['pattern', 'effect']) {
+		const word = kind === 'pattern' ? 'PATTERN' : 'EFFECT'
+		for (const direction of ['previous', 'next']) {
+			presets[`look_${kind}_${direction}`] = button(
+				`${kind === 'pattern' ? 'Pattern' : 'Effect'} ${direction}`,
+				{ text: direction === 'next' ? `${word}\n▶` : `◀\n${word}`, size: '14', color: combineRgb(220, 220, 255), bgcolor: combineRgb(25, 20, 60) },
+				[{ actionId: 'browse_look', options: { kind, direction, fadeMs: 0 } }],
+			)
+		}
+		presets[`look_random_${kind}`] = button(
+			`Random ${kind}`,
+			{ text: `RANDOM\n${word}`, size: '14', color: combineRgb(255, 230, 160), bgcolor: combineRgb(60, 40, 0) },
+			[{ actionId: 'random_look', options: { what: kind } }],
+		)
+	}
+	presets['look_display'] = button('Look on stage', { text: ref('pattern'), size: 'auto' }, [])
+
+	// Colours: a palette over every effect, on until pressed again.
+	for (const palette of palettes) {
+		const swatch = paletteSwatch(state, palette)
+		const bg = swatch.length ? presetColor(swatch[0]) : DARK
+		presets[`override_${palette.id}`] = button(
+			`Palette over the show: ${palette.name}`,
+			{ text: palette.name, bgcolor: bg, color: textOn(bg) },
+			[{ actionId: 'palette_override', options: { palette: palette.id, mode: 'toggle' } }],
+			{ feedbacks: [{ feedbackId: 'palette_override_active', options: { palette: palette.id }, style: { bgcolor: WHITE, color: BLACK, text: `● ${palette.name}` } }] },
+		)
+	}
+	presets['override_off'] = button(
+		'Palette override off',
+		{ text: 'PALETTE\nOFF', size: '14', color: combineRgb(200, 200, 200) },
+		[{ actionId: 'palette_override_off', options: {} }],
+		{ feedbacks: [{ feedbackId: 'palette_override_active', options: { palette: '' }, style: { bgcolor: combineRgb(90, 90, 90), color: WHITE } }] },
+	)
+	presets['random_palette'] = button('Random palette', { text: 'RANDOM\nPALETTE', size: '14', color: combineRgb(255, 230, 160), bgcolor: combineRgb(60, 40, 0) }, [
+		{ actionId: 'random_look', options: { what: 'palette' } },
+	])
+	presets['random_colours'] = button('Random colours', { text: 'RANDOM\nCOLOURS', size: '14', color: combineRgb(255, 230, 160), bgcolor: combineRgb(60, 40, 0) }, [
+		{ actionId: 'random_look', options: { what: 'colours' } },
+	])
+
+	presets['tempo_auto'] = button(
+		'Automatic tempo match',
+		{ text: 'TEMPO\nMINE', size: '14', color: combineRgb(200, 200, 200) },
+		[{ actionId: 'tempo_mode', options: { mode: 'toggle' } }],
+		{ feedbacks: [{ feedbackId: 'tempo_auto', options: {}, style: { bgcolor: combineRgb(0, 120, 160), color: WHITE, text: 'TEMPO\n● MUSIC' } }] },
+	)
+	presets['stop_effects'] = button(
+		'Stop every effect',
+		{ text: 'STOP\nEFFECTS', size: '14', color: combineRgb(255, 200, 200), bgcolor: combineRgb(70, 0, 0) },
+		[{ actionId: 'stop_effects', options: {} }],
+	)
+
 	presets['tempo_double'] = button('BPM ×2', { text: 'BPM\n×2', size: '18' }, [
 		{ actionId: 'multiply_bpm', options: { factor: 2 } },
 	])
@@ -103,7 +159,7 @@ export function UpdatePresets(self) {
 	)
 	presets['auto_intensity_display'] = button(
 		'Auto Intensity',
-		{ text: 'ENERGY\n$(artnet-lightshow:auto_intensity)', size: '14' },
+		{ text: `ENERGY\n${ref('auto_intensity')}`, size: '14' },
 		[],
 	)
 	for (const delta of [10, -10]) {
@@ -120,7 +176,7 @@ export function UpdatePresets(self) {
 			[{ actionId: 'nudge_sync', options: { delta } }],
 		)
 	}
-	presets['track_display'] = button('Now playing', { text: '$(artnet-lightshow:track)', size: '7' }, [])
+	presets['track_display'] = button('Now playing', { text: `${ref('track')}`, size: '7' }, [])
 
 	for (const cue of cues) {
 		presets[`cue_${cue.id}`] = button(
@@ -208,7 +264,7 @@ export function UpdatePresets(self) {
 	presets['transport_bpm_display'] = {
 		type: 'simple',
 		name: 'BPM Display',
-		style: { text: '$(artnet-lightshow:bpm)\nBPM', size: '18', color: WHITE, bgcolor: DARK },
+		style: { text: `${ref('bpm')}\nBPM`, size: '18', color: WHITE, bgcolor: DARK },
 		feedbacks: [],
 		steps: [],
 	}
@@ -224,6 +280,7 @@ export function UpdatePresets(self) {
 		{ div: 2, label: '1/2' },
 		{ div: 4, label: '1/4' },
 		{ div: 8, label: '1/8' },
+		{ div: 16, label: '1/16' },
 	]
 	for (const { div, label } of beatDivisions) {
 		presets[`transport_beat_${div}`] = button(
@@ -239,7 +296,7 @@ export function UpdatePresets(self) {
 			[{ actionId: 'adjust_master_dimmer', options: { delta } }],
 		)
 	}
-	presets['master_display'] = button('Master', { text: 'MASTER\n$(artnet-lightshow:master_dimmer_pct)%', size: '14' }, [])
+	presets['master_display'] = button('Master', { text: `MASTER\n${ref('master_dimmer_pct')}%`, size: '14' }, [])
 
 	// ── Fixtures ──
 
@@ -281,7 +338,7 @@ export function UpdatePresets(self) {
 		padIds.push(`pad_${n}`)
 		presets[`pad_${n}`] = button(
 			`Pad ${n}`,
-			{ text: `$(lightshow:pad_${n}_label)`, size: 'auto' },
+			{ text: ref(`pad_${n}_label`), size: 'auto' },
 			[{ actionId: 'pad_hold', options: { bank, slot } }],
 			{ up: [{ actionId: 'pad_release', options: { bank, slot } }] },
 		)
@@ -295,15 +352,23 @@ export function UpdatePresets(self) {
 		{
 			id: 'busk',
 			name: 'Busk',
-			description: 'Palettes, momentary holds, tempo and the auto show: a set played by hand',
+			description: 'A show played by hand with the auto show stopped: looks, colours over every effect, hits, tempo and the panic buttons',
 			definitions: [
-				group('busk_palettes', 'Palettes', palettes.map((p) => `palette_${p.id}`)),
-				group('busk_holds', 'Hold (on while pressed)', [...energy.map((e) => `hold_${e.id}`), 'hold_blackout']),
-				group('busk_tempo', 'Tempo', ['transport_tap_tempo', 'transport_bpm_display', 'tempo_double', 'tempo_halve', 'transport_bpm_up', 'transport_bpm_down']),
-				group('busk_auto', 'Auto show', ['auto_toggle', 'auto_intensity_display', 'auto_intensity_up', 'auto_intensity_down', 'sync_earlier', 'sync_later', 'track_display']),
-				group('busk_master', 'Master', ['master_display', 'master_up', 'master_down', 'transport_blackout']),
+				group('busk_looks', 'Looks', ['look_pattern_previous', 'look_display', 'look_pattern_next', 'look_effect_previous', 'look_effect_next',
+					'look_random_pattern', 'look_random_effect', 'transport_play_stop']),
+				group('busk_colours', 'Colours over every effect (on until pressed again)', [...palettes.map((p) => `override_${p.id}`), 'override_off', 'random_palette', 'random_colours']),
+				group('busk_hits', 'Hits (the pads; a hold pad plays while pressed)', [...padIds, 'strobe_burst', 'hold_blackout']),
+				group('busk_tempo', 'Tempo', ['transport_tap_tempo', 'transport_bpm_display', 'tempo_double', 'tempo_halve', 'tempo_auto',
+					...beatDivisions.map(({ div }) => `transport_beat_${div}`)]),
+				group('busk_show', 'Show', ['auto_toggle', 'track_display', 'stop_effects', 'master_display', 'master_up', 'master_down', 'transport_blackout']),
 				...(cues.length ? [group('busk_cues', 'Cues', cues.map((c) => `cue_${c.id}`))] : []),
 			],
+		},
+		{
+			id: 'auto',
+			name: 'Auto show',
+			description: 'Riding the auto show: on and off, its energy and its sync',
+			definitions: [group('auto_ride', 'Auto show', ['auto_toggle', 'auto_intensity_display', 'auto_intensity_up', 'auto_intensity_down', 'sync_earlier', 'sync_later', 'track_display'])],
 		},
 		{
 			id: 'deck',
@@ -326,10 +391,13 @@ export function UpdatePresets(self) {
 		{
 			id: 'colours',
 			name: 'Colours',
-			description: 'Palette slots A-D. C and D feed the 3- and 4-colour patterns',
-			definitions: COLOR_SLOTS.map((slot) =>
-				group(`colour_${slot.label.toLowerCase()}`, `Colour ${slot.label}`, table.map((_, i) => `color_${slot.label.toLowerCase()}_${i}`)),
-			),
+			description: 'The look\'s own colours: palette slots A-D (C and D feed the 3- and 4-colour patterns), or a whole palette into them. The auto show writes these at its next scene',
+			definitions: [
+				...COLOR_SLOTS.map((slot) =>
+					group(`colour_${slot.label.toLowerCase()}`, `Colour ${slot.label}`, table.map((_, i) => `color_${slot.label.toLowerCase()}_${i}`)),
+				),
+				group('colour_palettes', 'A palette into the slots', palettes.map((p) => `palette_${p.id}`)),
+			],
 		},
 		{
 			id: 'transport',
@@ -354,7 +422,10 @@ export function UpdatePresets(self) {
 			id: 'energy',
 			name: 'Energy',
 			description: 'Latched energy effects: on until another replaces it or Energy Off; Palette Strobe also ends by itself at the strobe latch limit (60 s unless changed). For momentary ones, see Busk → Hold',
-			definitions: [...energy.map((e) => `energy_${e.id}`), 'energy_off'],
+			definitions: [
+				group('energy_latched', 'Latched', [...energy.map((e) => `energy_${e.id}`), 'energy_off']),
+				group('energy_held', 'Held (on while pressed)', [...energy.map((e) => `hold_${e.id}`), 'hold_blackout']),
+			],
 		},
 	]
 

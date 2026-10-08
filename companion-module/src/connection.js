@@ -192,9 +192,14 @@ export class LightshowConnection {
 	// ── The HTTP API ───────────────────────────────────────────────────────────
 
 	/** POST to the server's API, with the token. Resolves to its JSON answer. */
-	async post(path, body) {
+	post(path, body) {
+		return this.request('POST', path, body)
+	}
+
+	/** Any method on the server's API, with the token. Resolves to its JSON answer, or `{ ok: false, error }`. */
+	async request(method, path, body) {
 		const res = await fetch(`${this.base}${path}`, {
-			method: 'POST',
+			method,
 			headers: { 'Content-Type': 'application/json', 'X-Lightshow-Token': this.token },
 			body: body === undefined ? undefined : JSON.stringify(body),
 			signal: AbortSignal.timeout(REST_TIMEOUT_MS),
@@ -215,6 +220,16 @@ export class LightshowConnection {
 
 	recallCue(id) {
 		return this.post(`/api/cues/${encodeURIComponent(id)}/recall`)
+	}
+
+	/** Put a palette over every effect until it is taken off (null takes it off). */
+	paletteOverride(id) {
+		return id ? this.request('PUT', '/api/palette-override', { paletteId: id }) : this.request('DELETE', '/api/palette-override')
+	}
+
+	/** Stop every running pad, effect and strobe. */
+	stopEffects() {
+		return this.request('DELETE', '/api/voices')
 	}
 
 	/** Start or stop the auto show; 'toggle' asks the state which. */

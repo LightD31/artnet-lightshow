@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
 
 import MidiController from '../../src/midi.ts';
+import { DEFAULT_MAP } from '../../src/server/midi-map.ts';
 
 // A stand-in for the state the controller reads and the callbacks it drives, so
 // these tests need neither a MIDI port nor the engine. `refuse` answers the
@@ -105,7 +106,7 @@ test('a relative encoder nudges and clamps', () => {
   assert.strictEqual(h.state.bpm, 122);
 
   h.state.bpm = 299;
-  h.input.emit('cc', { controller: 10, value: 20, channel: 0 });
+  h.input.emit('cc', { controller: 10, value: 5, channel: 0 });
   assert.strictEqual(h.state.bpm, 300, 'clamped at the top of the range');
 });
 
@@ -907,4 +908,357 @@ test('our own RtMidi ports are not offered to pick', () => {
   withPorts([XTOUCH, 'RtMidi Output Client:RtMidi Output 133:0'], [XTOUCH, 'RtMidi Input Client:RtMidi Input 131:0'], (midi) => {
     assert.deepStrictEqual(midi.listPorts(), { inputs: [XTOUCH], outputs: [XTOUCH] });
   });
+});
+
+// An X-Touch Compact on its factory settings sends each encoder's position,
+// 0-127, not a step, and takes the ring position it is sent as its own. Read as
+// relative, one turn threw the parameter to an end stop and turning back left
+// it there. Bound 'absolute', every change in position is a step.
+const turn = (h, controller, ...values) => {
+  for (const value of values) h.input.emit('cc', { controller, value, channel: 0 });
+};
+
+test('an encoder sending its position steps by the change, from the ring it was sent', () => {
+  const h = harness({ cc: { 11: { action: 'adjustMasterDimmer', type: 'absolute', scale: 4 } }, notes: {} });
+  h.sent.length = 0;
+  h.state.masterDimmer = 128;
+  h.midi.sendFeedback();
+  assert.deepStrictEqual(h.cc().map((m) => [m.controller, m.value]), [[11, 64]], 'the ring, which the encoder counts on from');
+
+  turn(h, 11, 65, 66);            // two clicks right
+  assert.strictEqual(h.state.masterDimmer, 136);
+  turn(h, 11, 65, 64, 63);        // three left
+  assert.strictEqual(h.state.masterDimmer, 124);
+  turn(h, 11, 66);                // a fast click: three steps in one message
+  assert.strictEqual(h.state.masterDimmer, 136);
+});
+
+test('an encoder sending its position stays put against the end of its ring', () => {
+  const h = harness({ cc: { 11: { action: 'adjustMasterDimmer', type: 'absolute', scale: 4 } }, notes: {} });
+  // The harness's master is at full, so the ring went out at the top.
+  h.patches.length = 0;
+  turn(h, 11, 127, 127);
+  assert.deepStrictEqual(h.patches, [], 'turning on past the top is not a step');
+  turn(h, 11, 126);
+  assert.strictEqual(h.state.masterDimmer, 251);
+});
+
+test('with no ring sent, the first message from an encoder only says where it is', () => {
+  const h = harness({ cc: { 10: { action: 'adjustBpm', type: 'absolute', scale: 1 } }, notes: {} });
+  h.midi._positions.clear();      // as after connecting with feedback off
+  turn(h, 10, 30);
+  assert.strictEqual(h.state.bpm, 120);
+  turn(h, 10, 31, 32);
+  assert.strictEqual(h.state.bpm, 122);
+});
+
+test('an encoder that counted past its ring is sent back to it', () => {
+  const h = harness({ cc: { 10: { action: 'adjustBpm', type: 'absolute', scale: 1 } }, notes: {} });
+  // 120 BPM is ring 45. One BPM is less than one ring step, so a click can
+  // leave the ring where it was while the encoder has counted on.
+  const settle = () => { h.midi._lastCcIn.clear(); h.midi.sendFeedback(); };
+  turn(h, 10, 46);
+  settle();                       // 121 BPM: ring 46, where the encoder is
+  h.sent.length = 0;
+  turn(h, 10, 47);
+  settle();                       // 122 BPM: still ring 46, the encoder at 47
+  assert.deepStrictEqual(h.cc().map((m) => [m.controller, m.value]), [[10, 46]], 'sent again, though it was sent before');
+  turn(h, 10, 47);                // counting on from 46
+  assert.strictEqual(h.state.bpm, 123);
+});
+
+test('the built-in map follows an X-Touch on its factory settings', () => {
+  const h = harness(DEFAULT_MAP);
+  h.state.masterDimmer = 128;
+  h.midi.sendFeedback();          // encoder 2's ring to 64
+  turn(h, 11, 65, 66, 67, 68, 69, 70);
+  assert.strictEqual(h.state.masterDimmer, 152, 'six clicks right');
+  turn(h, 11, 69, 68, 67, 66, 65, 64, 63, 62, 61, 60);
+  assert.strictEqual(h.state.masterDimmer, 112, 'ten clicks back');
+});
+
+// Which kind an encoder is — steps or its position — is a setting on the
+// device, so it is worked out from what it sends; the binding's type is only
+// the guess until then.
+const ring = (h, controller) => h.cc().filter((m) => m.controller === controller).map((m) => m.value);
+
+test('a map saying relative follows an encoder that sends its position', () => {
+  const h = harness({ cc: { 10: { action: 'adjustBpm', type: 'relative', scale: 1 } }, notes: {} });
+  // 120 BPM is ring 45, and 46 is further from 0, 64 and 127 than any step lands.
+  turn(h, 10, 46, 47);
+  assert.strictEqual(h.state.bpm, 122);
+  turn(h, 10, 46, 45, 44);
+  assert.strictEqual(h.state.bpm, 119);
+});
+
+test('a map saying absolute follows an encoder that sends steps', () => {
+  const h = harness({ cc: { 10: { action: 'adjustBpm', type: 'absolute', scale: 1 } }, notes: {} });
+  // Ring 45: binary offset's 65 is too far from it to be where the encoder went.
+  turn(h, 10, 65, 65);
+  assert.strictEqual(h.state.bpm, 122);
+  turn(h, 10, 63);
+  assert.strictEqual(h.state.bpm, 121);
+});
+
+test('next to a landmark, a steps guess moves the ring clear and the next message settles it', () => {
+  // Ring 64: an encoder's 65 there is one up either way.
+  const position = harness({ cc: { 11: { action: 'adjustMasterDimmer', type: 'relative', scale: 4 } }, notes: {} });
+  position.state.masterDimmer = 128;
+  position.midi.sendFeedback();
+  position.sent.length = 0;
+  turn(position, 11, 65);
+  assert.strictEqual(position.state.masterDimmer, 132);
+  assert.deepStrictEqual(ring(position, 11), [96], 'the ring moved clear of every landmark');
+  position.midi._lastCcIn.clear();
+  position.midi.sendFeedback();
+  assert.deepStrictEqual(ring(position, 11), [96], 'and left there for the answer');
+  turn(position, 11, 97, 98, 97);  // counting on from the ring: a position
+  assert.strictEqual(position.state.masterDimmer, 136);
+
+  const steps = harness({ cc: { 11: { action: 'adjustMasterDimmer', type: 'relative', scale: 4 } }, notes: {} });
+  steps.state.masterDimmer = 128;
+  steps.midi.sendFeedback();
+  turn(steps, 11, 65, 65, 63);     // far from the ring it was sent: steps
+  assert.strictEqual(steps.state.masterDimmer, 132);
+});
+
+test('learning an encoder finds out whether it sends steps or its position', async () => {
+  const position = harness({ cc: {}, notes: {} });
+  const learnt = position.midi.startLearn({ action: 'adjustMasterDimmer', type: 'relative' });
+  turn(position, 11, 3);           // next to 0: either kind
+  assert.strictEqual(position.midi.learning, true, 'one message does not say');
+  assert.deepStrictEqual(ring(position, 11), [32], 'the ring moved clear of every landmark');
+  turn(position, 11, 33);          // counting on from it
+  const captured = await learnt;
+  assert.deepStrictEqual([captured.kind, captured.number, captured.type], ['cc', 11, 'absolute']);
+
+  const steps = harness({ cc: {}, notes: {} });
+  const learntSteps = steps.midi.startLearn({ action: 'adjustMasterDimmer' });
+  turn(steps, 11, 65, 65);
+  assert.strictEqual((await learntSteps).type, 'relative');
+
+  const plain = harness({ cc: {}, notes: {} });
+  const learntPlain = plain.midi.startLearn({ action: 'adjustMasterDimmer', type: 'relative' });
+  turn(plain, 11, 40);             // nowhere a step lands: settled at once
+  assert.strictEqual((await learntPlain).type, 'absolute');
+});
+
+test('an encoder that does not say keeps the type its learn asked for', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = harness({ cc: {}, notes: {} });
+  const learnt = h.midi.startLearn({ action: 'adjustBpm', type: 'relative' });
+  turn(h, 10, 1);
+  t.mock.timers.tick(2000);
+  const captured = await learnt;
+  assert.deepStrictEqual([captured.number, captured.type], [10, 'relative']);
+  assert.strictEqual(h.midi.learning, false);
+});
+
+test('while an encoder is being learned, the rest of the surface works', async () => {
+  const h = harness({ cc: {}, notes: { 2: { action: 'togglePlay' } } });
+  const learnt = h.midi.startLearn({ action: 'adjustBpm' });
+  turn(h, 10, 1);
+  h.input.emit('noteon', { note: 2, velocity: 127, channel: 0 });
+  assert.deepStrictEqual(h.patches.at(-1), { running: false });
+  turn(h, 10, 1);
+  assert.strictEqual((await learnt).type, 'relative');
+});
+
+test('the built-in map trims fixtures 1-4, and leaves them in the show', () => {
+  const h = harness(DEFAULT_MAP);
+  turn(h, 1, 100, 64);            // fader 1: a fader shows itself on the way
+  assert.deepStrictEqual(h.maxes.at(-1), { id: 0, value: 129 });
+  turn(h, 13, 126);               // encoder 4, one click down from full
+  assert.deepStrictEqual(h.maxes.at(-1), { id: 1, value: 251 });
+  assert.deepStrictEqual(h.overrides, [], 'no fixture taken out of the show');
+});
+
+// A palette override is never the auto show's, so a palette put on by hand
+// colours the show instead of lasting to its next scene.
+test('a palette button puts its palette over the show, and takes it off again', () => {
+  const h = harness({ cc: {}, notes: {
+    16: { action: 'togglePaletteOverride', value: 'redCyan' },
+    17: { action: 'togglePaletteOverride', value: 'rainbow' },
+  } });
+  const asked = [];
+  h.state.paletteOverrideId = null;
+  h.midi.setPaletteOverride = (id) => { asked.push(id); h.state.paletteOverrideId = id; };
+  const press = (note) => h.input.emit('noteon', { note, velocity: 127, channel: 0 });
+  const lit = () => { h.leds.length = 0; h.midi.sendFeedback(); return h.leds.filter((m) => m.velocity > 0).map((m) => m.note); };
+
+  press(16);
+  assert.deepStrictEqual(lit(), [16]);
+  press(17);                      // another palette replaces it
+  assert.deepStrictEqual(lit(), [17]);
+  press(17);                      // the lit one again: the show's own colours
+  assert.deepStrictEqual(lit(), []);
+  assert.deepStrictEqual(asked, ['redCyan', 'rainbow', null]);
+});
+
+test('the built-in map picks the energy effect on EN3\'s push, not play/stop', () => {
+  const h = harness(DEFAULT_MAP);
+  const press = (note) => h.input.emit('noteon', { note, velocity: 127, channel: 0 });
+  press(2);                       // EN3 push: the next effect
+  press(7);                       // EN8 push: hold it
+  assert.deepStrictEqual(h.patches.at(-1), { energyOverride: 'color-strobe' });
+  assert.ok(!h.patches.some((p) => 'running' in p), 'the show is never stopped');
+});
+
+// Busking: with the auto show stopped, the controller plays the show itself.
+function busk(h, { acknowledged = false } = {}) {
+  const calls = [];
+  let rate = 10;
+  let on = false;
+  h.midi.busk = {
+    looks: () => [
+      { id: 'solid', legacy: true }, { id: 'chase', legacy: true }, { id: 'breathe', party: true },
+      { id: 'gradient', pixel: true }, { id: 'comet', pixel: true },
+      { id: 'hd.iceStrike', app: 'hd', rapidFlash: false },
+      { id: 'ldj.visualizer.firework', app: 'ldj', rapidFlash: true },
+      { id: 'ldj.Swirl', app: 'ldj', rapidFlash: false },
+      { id: 'energy.whiteStrobe', app: 'own', rapidFlash: true },
+    ],
+    palettes: () => ['redCyan', 'rainbow', 'blueDream'],
+    acknowledged: () => acknowledged,
+    stopEffects: () => calls.push('stopEffects'),
+    strobeBurst: (ms) => calls.push(['burst', ms]),
+    strobeRate: () => rate,
+    setStrobeRate: (hz) => { rate = hz; calls.push(['rate', hz]); },
+    strobeMaxRate: 12,
+    autoShowOn: () => on,
+    toggleAutoShow: () => { on = !on; calls.push('auto'); },
+  };
+  return calls;
+}
+const step = (h, controller, ...values) => {
+  for (const value of values) h.input.emit('cc', { controller, value, channel: 0 });
+};
+const press = (h, note) => h.input.emit('noteon', { note, velocity: 127, channel: 0 });
+
+test('the pattern and effect encoders browse their own lists, and wrap round', () => {
+  const h = harness({ cc: {
+    37: { action: 'browsePattern', type: 'relative' },
+    38: { action: 'browseEffect', type: 'relative' },
+  }, notes: {} });
+  busk(h);
+  step(h, 37, 1);                 // chase → the next rig pattern
+  assert.strictEqual(h.state.pattern, 'breathe');
+  step(h, 37, 1);                 // past the last: the first, never a pixel picture
+  assert.strictEqual(h.state.pattern, 'solid');
+  step(h, 37, 127);
+  assert.strictEqual(h.state.pattern, 'breathe');
+  step(h, 38, 1);                 // a pattern on: the effects start from their first
+  assert.strictEqual(h.state.pattern, 'hd.iceStrike');
+  step(h, 38, 1);                 // the fast-flashing one is skipped until acknowledged
+  assert.strictEqual(h.state.pattern, 'ldj.Swirl');
+  step(h, 38, 1);
+  assert.strictEqual(h.state.pattern, 'hd.iceStrike', 'and no energy effect: those are the pads');
+});
+
+test('acknowledged, the effects encoder reaches the fast-flashing effects', () => {
+  const h = harness({ cc: { 38: { action: 'browseEffect', type: 'relative' } }, notes: {} });
+  busk(h, { acknowledged: true });
+  step(h, 38, 1, 1);
+  assert.strictEqual(h.state.pattern, 'ldj.visualizer.firework');
+});
+
+test('a colour encoder steps its slot, and the fade goes out with the change', () => {
+  const h = harness({ cc: {
+    39: { action: 'browseColor', type: 'relative', value: 'colorB' },
+    44: { action: 'adjustFadeTime', type: 'relative' },
+  }, notes: {} });
+  busk(h);
+  step(h, 44, 1, 1);              // half a second
+  step(h, 39, 1);
+  assert.deepStrictEqual(h.patches.at(-1), { colorB: 7, fadeMs: 500 });
+  h.state.colorB = 14;
+  step(h, 39, 1);
+  assert.strictEqual(h.state.colorB, 0, 'round from the last colour to the first');
+  h.sent.length = 0;
+  h.midi._lastCcIn.clear();
+  h.midi.sendFeedback();
+  assert.deepStrictEqual(h.cc().filter((m) => m.controller === 44).map((m) => m.value), [16], 'the fade ring at half a second of four');
+});
+
+test('beat division, fade and strobe rate stop at their ends', () => {
+  const h = harness({ cc: {
+    43: { action: 'browseBeatDivision', type: 'relative' },
+    44: { action: 'adjustFadeTime', type: 'relative' },
+    47: { action: 'adjustStrobeRate', type: 'relative' },
+  }, notes: {} });
+  const calls = busk(h);
+  step(h, 43, 127);
+  assert.strictEqual(h.state.beatDivision, 1);
+  step(h, 43, 1);
+  assert.strictEqual(h.state.beatDivision, 2);
+  step(h, 43, 10);                // a fast spin
+  assert.strictEqual(h.state.beatDivision, 16);
+  step(h, 44, 127);
+  assert.strictEqual(h.midi._fadeMs, 0);
+  step(h, 47, 3);
+  assert.deepStrictEqual(calls.at(-1), ['rate', 12]);
+});
+
+test('the bars encoder browses their pictures from "as the whole rig", and the palette knob the overrides', () => {
+  const h = harness({ cc: {
+    45: { action: 'browseBarsPattern', type: 'relative' },
+    46: { action: 'browsePalette', type: 'relative' },
+  }, notes: { 70: { action: 'clearPaletteOverride' } } });
+  busk(h);
+  const overrides = [];
+  h.midi.setPaletteOverride = (id) => { overrides.push(id); h.state.paletteOverrideId = id; h.state.paletteOverride = id ? [{}] : null; };
+  h.state.pixelPattern = null;
+  step(h, 45, 1);
+  assert.strictEqual(h.state.pixelPattern, 'gradient');
+  step(h, 45, 127);
+  assert.strictEqual(h.state.pixelPattern, null);
+  step(h, 46, 1, 1);
+  h.leds.length = 0;
+  h.midi.sendFeedback();
+  assert.ok(h.leds.some((m) => m.note === 70 && m.velocity > 0), 'palette off is lit while one is on');
+  press(h, 70);
+  assert.deepStrictEqual(overrides, ['redCyan', 'rainbow', null]);
+});
+
+test('random buttons never repeat what is on, and never pick the blackout colour', () => {
+  const h = harness({ cc: {}, notes: {
+    55: { action: 'randomLook', value: 'pattern' },
+    56: { action: 'randomLook', value: 'effect' },
+    57: { action: 'randomColor', value: 'colorA' },
+  } });
+  busk(h);
+  h.midi._random = () => 0;
+  press(h, 55);                   // chase is on: solid or breathe
+  assert.strictEqual(h.state.pattern, 'solid');
+  press(h, 56);
+  assert.strictEqual(h.state.pattern, 'hd.iceStrike');
+  h.midi._random = () => 0.9999;
+  press(h, 57);
+  assert.strictEqual(h.state.colorA, 13, 'the last colour that lights (UV), not blackout');
+});
+
+test('busking buttons reach the server, and BPM doubles and halves within range', () => {
+  const h = harness({ cc: {}, notes: {
+    104: { action: 'scaleBpm', value: 0.5 },
+    105: { action: 'scaleBpm', value: 2 },
+    107: { action: 'toggleAutoShow' },
+    108: { action: 'stopEffects' },
+    69: { action: 'strobeBurst' },
+    68: { action: 'strobeBurst', value: 2000 },
+  } });
+  const calls = busk(h);
+  press(h, 105);
+  assert.strictEqual(h.state.bpm, 240);
+  press(h, 105);
+  assert.strictEqual(h.state.bpm, 300, 'clamped at the top');
+  press(h, 104);
+  assert.strictEqual(h.state.bpm, 150);
+  press(h, 107);
+  press(h, 108);
+  press(h, 69);
+  press(h, 68);
+  assert.deepStrictEqual(calls, ['auto', 'stopEffects', ['burst', 1000], ['burst', 2000]]);
+  h.leds.length = 0;
+  h.midi.sendFeedback();
+  assert.ok(h.leds.some((m) => m.note === 107 && m.velocity > 0), 'auto show lit while on');
 });
