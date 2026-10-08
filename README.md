@@ -59,13 +59,21 @@ Companion** (with a page of presets for busking), and a REST API.
 - **Cue stack** — save the look on stage under a name and recall it in one
   press; deleting or overwriting one can be undone
 - **Live DMX monitor** — real-time channel values
+- **The party effects of Hue Dynamics and Light DJ** — their families,
+  presets and palettes on the placed rig, pads and voices over the look, one
+  strobe that plays Hue Dynamics' palette flashes or the ROOT PAR's ramps,
+  random flashes and burst, and a sequencer with punch record — see
+  [Effects — Hue Dynamics and Light DJ](#effects--hue-dynamics-and-light-dj)
 
 **Running it from a tablet**
 
-- **Perform view** — the live controls laid out for a thumb: now and next,
-  sync health, big pads for blackout and every energy effect (held, or
-  latched), tap tempo, one-tap palettes, and the master and show-intensity
-  faders. Open it at `/#perform`, or press **3**
+- **Perform view** — the live controls laid out for a thumb, and the view the
+  app opens on: now and next, sync health, the pads (bank A starts with the
+  energy effects and the strobe, held, each starting on the press; **Edit
+  pads** sets any pad to play once or to loop until it is tapped again),
+  blackout, tap tempo, **Stop all voices** (the base look continues), the
+  Matrix colour board, one-tap palettes, and the master and show-intensity
+  faders. Open it at `/#perform`, or press **1**
 - **Stage view** — the rig in 3D, in a hazy room: beams from the pars, every
   cell of every bar, the Hue lamps around the room, from the audience, from
   above or from the side. Live, it shows what is going out; rehearsing, the
@@ -336,9 +344,21 @@ address as the **Public URL** in *Server & access*.
 
 ## Setting up the rig
 
-The app has nine views. The first five run a show — **Manual**, **Auto Show**,
-**Perform**, **Timeline** (**4**, [below](#the-timeline-view)) and **Stage**
-(**5**, [below](#the-stage-view)) — and the other four set one up:
+The app has nine views. The first five run a show — **Perform** (**1**, the
+view it opens on: the pads, the strobe and the Matrix board), **Effects**
+(**2**: the effects catalogue and its inspector, cues, the look's colours,
+fixture overrides and the stage preview), **Auto Show** (**3**, with the
+[Timeline](#the-timeline-view) as a tab of its own), **Sequence** (**4**: see
+[Sequencer](#sequencer)) and **Stage** (**5**, [below](#the-stage-view)) —
+and the other four set one up. Bookmarks from before keep working: `#manual`
+opens Effects, `#timeline` Auto Show → Timeline and `#matrix` Perform →
+Matrix.
+
+The header, Perform, Effects and the stage preview share one status line:
+the base look, the sequence's transport, the voices playing over it and the
+palette override. The highlighted catalogue row is the **base**; a sequence
+or a voice may be playing above it. Perform and Effects list the voices with
+a Stop each, and **Stop all voices** clears the latched and off-bank ones too.
 
 | View | Key | What is there |
 |------|-----|---------------|
@@ -372,9 +392,12 @@ before the setup existed is not offered it.
 
 ### The plan — placing the rig and mapping pixels
 
-**Rig → Plan & patch** is the rig from above, the audience at the bottom. Where
-each fixture is drawn is where the patterns find it: a chase travels across the
-rig as it is placed here, and an LED bar's cells are where its line puts them.
+**Rig → Plan & patch** is the rig from above: the stage and TV wall at the top
+— the front of the room, as the party effects and a Hue entertainment area
+read it — the audience at the bottom, left and right as the audience sees
+them. Where each fixture is drawn is where the patterns find it: a chase
+travels across the rig as it is placed here, and an LED bar's cells are where
+its line puts them.
 
 - **Select** a fixture by clicking it, or its row in the patch table below
   (Shift or Ctrl adds). Drag across empty floor to pick several. The inspector
@@ -393,6 +416,17 @@ rig as it is placed here, and an LED bar's cells are where its line puts them.
   mapped one drag at a time; Esc stops.
 - **Row** lines the selection up evenly; **End to end** puts the selected bars
   in one long line, in patch order; **Reset** forgets where they stand.
+- **Not placed yet**: a lamp nobody has placed waits as a chip beside the plot.
+  Tap it, then tap the plot where it hangs, or drag it on; Alt places it off
+  the grid.
+- **Auto-place** proposes a place for every lamp not placed yet, one row per
+  group, in patch order, never on or beside a lamp already placed (or every
+  lamp, with *Move placed lamps too*). The proposal shows dashed on the plot
+  until **Apply**; **Undo auto-place** puts things back, until the next edit.
+- **Height**: a placed lamp hangs at a height from 0 (the floor) to 100 (the
+  ceiling), shown on the plot and set for the selected lamp under it; a lamp
+  never given one is mid-room. The party effects read it, as the apps read a
+  Hue lamp's height.
 
 The patch table below the plan patches each fixture (label, profile, universe,
 address), marks any two that share a channel, and adds a run of one profile in
@@ -876,8 +910,28 @@ On the standard strobe, a fixture with a strobe channel strobes itself. One
 without — plenty of LED bars and cheap pars — is flashed in software through the
 strobe pattern and every strobing burst: one to twenty flashes a second from the
 strobe speed, each a frame to 50 ms long, all such fixtures together. A Hue lamp
-is never flashed: a bridge cannot keep up, and Hue's own guidance is to keep
-effects slower than that.
+is not strobed in software, as the software strobe reaches rates Hue's own
+guidance rules out for effects: the Strobe look and the white and colour
+strobes hold it at their colour, steady.
+
+The effects that flash by brightness reach a Hue lamp as **Settings → Show →
+Hue Lamps Take a Flash** (`hue.strobe`) says. They are the strobe's palette
+flashes, Palette Strobe, Light DJ's strobes, the party looks' Ring Strobe, Ring
+Backlit and Flashes, and the strobe effects (Flash Chase to Strobe Core). None
+of them flashes a lamp more than five times a second.
+
+- **Flash**, the default: hard brightness cuts, as on a par, to black or the
+  look's own background glow.
+- **Pulse**: each flash is the colour at full, falling over 200 ms to a floor
+  (40 of 255, or the look's own glow where it has one), for lamps that read
+  hard flashes as flicker. A cut or snap to black falls the same way. Sparse
+  Flashes and Flash Scatter return to their resting brightness after a long
+  gap without a hit.
+
+Authored brightness envelopes are preserved in both modes. Hue Dynamics'
+families keep their attack and release, and Disco's automatic strobe falls
+to 40 over 200 ms on every lamp. When Strobe Core follows analysed drums,
+Pulse follows the kick's envelope down to the core's glow.
 
 #### Strobe functions
 
@@ -900,10 +954,9 @@ hertz.
 
 A swell too short to see at the tempo, or a flash faster than about eleven a
 second, slows to the next rung. Flash Limit holds them to the slowest. A Hue
-lamp is left out of them, as of the standard strobe. The party effects'
-strobes and the Palette Strobe know this too: on a Hue lamp each of their
-flashes is the colour at full falling to a floor over 200 ms (see
-[Party effects](#the-patterns)).
+lamp is left out of them, as of the standard strobe. The strobe pad plays the
+same functions, drawn by the same code, every lamp held to five flashes a
+second (see [Strobe](#strobe)).
 
 ### Philips Hue
 
@@ -1227,8 +1280,9 @@ Other screens can keep the rig's beat: the live state's `clock` (`GET
 beatPos, epoch, at }`, `byHand` true while a tempo taken by hand holds the
 music off, and the beat position read at `at` (wall-clock ms). Carry it on as
 `beatPos + (now − at) / 60000 × bpm`; a new `epoch` means the music jumped.
-While the patterns are stopped on the free clock (`running` false, source
-`tap`) the beat stands still: hold it there rather than carry it on. It rides
+While the free clock stands (source `tap`, the patterns stopped — `running`
+false — with no voice launched and no sequence playing or paused) the beat
+stands still: hold it there rather than carry it on. It rides
 the broadcasts the state already makes, and is sent again only when carrying
 it on would be more than a 60 Hz frame out — after a tap, a seek, a stop or a
 tempo change — never just because the beat moved on, nor again while it stands
@@ -1347,7 +1401,9 @@ Eurolite Super Strobe ABL, a Chauvet Color STRIKE and the rest of that family),
 for a bar or a WLED patched in zones. Every one is hard flashes on black, each
 at least two frames long and no zone flashing more than about eleven times a
 second, however fast the music; Flash Limit still holds the whole rig to three
-large flashes a second:
+large flashes a second. With **Hue Lamps Take a Flash** on Pulse, a Hue lamp
+takes each flash, and each cut to black, as a fall to a floor over 200 ms (see
+[Strobe without a strobe channel](#strobe-without-a-strobe-channel)):
 
 | | |
 |---|---|
@@ -1408,9 +1464,11 @@ Strobe flashes one lamp a step — on the beat, its halves, quarters or eighths
 as the beat division says — and, where a step is too short for that, holds
 the ring for two, so no lamp flashes more than five times a second (the party
 apps' own cap); Flashes and Confetti space their events the same way. A Hue
-lamp is never flashed: it takes each flash as the colour at full falling to a
-floor of 40 over 200 ms and held there until its next, as the apps fade a hit
-lamp back, so a ring of Hue lamps pulses where a ring of pars flashes. Flash
+lamp flashes as a par does, or, with **Hue Lamps Take a Flash** on Pulse, takes
+each flash as the colour at full falling to a floor of 40 over 200 ms and held
+there until its next, as the apps fade a hit lamp back, so a ring of Hue lamps
+pulses where a ring of pars flashes (see
+[Strobe without a strobe channel](#strobe-without-a-strobe-channel)). Flash
 Limit still holds the whole rig to three large flashes a second. The auto
 show does not pick them: they are for the picker, cues and MIDI.
 
@@ -1473,6 +1531,26 @@ REST at `POST /api/palette/:id`.
 These rules are enforced by `tests/unit/color-design.test.js`, so a new preset
 that lands three degrees from an existing one fails the build rather than quietly
 making two buttons do the same thing.
+
+**The palettes of the effects.** Base looks, effects and the global override
+use one palette model and one editor. The palette strip on Perform and Effects
+picks where a palette goes: **Base** changes the look's colours; **Override**
+plays it over every effect on stage. Fixed white, UV and blackout energy
+effects keep their own output.
+
+A palette holds 1–8 `colours` — `#RGB`, `#RRGGBB`, `#RRGGBBWW`, `#RRGGBBWWAA`
+or `#RRGGBBWWAAUU` — and `{ random: true }` slots, which roll once when the
+palette is picked. Named `gradients` have ordered stops (`{ at, slot }` or
+`{ at, colour }`), `rgb`, `oklch` or `step` interpolation and optional
+wrapping; named `sets` hold up to four gradient roles, and `gradientSet` and
+`gradientRole` pick the one playing. Without authored gradients, effects keep
+their own interpolation. `POST /api/set` takes `basePalette` and
+`overridePalette` bodies, or null; `PUT /api/palette-override` the same body or
+`{ paletteId }`. The named looks above keep their 2-, 3- and 4-colour sizes,
+and palette files, presets and cues saved before load with their colours and
+random slots. Cues keep whole palette bodies. A sequence captures the
+override's colours, gradients and id, and its stop, unload or end puts that
+back unless a palette was changed by hand meanwhile.
 
 ---
 
@@ -1552,6 +1630,128 @@ the upgrade — nothing is deleted, but the set list has to be built again.
 
 ---
 
+## Effects — Hue Dynamics and Light DJ
+
+Besides the patterns above, the server carries the effects of two Hue party
+apps, rebuilt to behave as they do: the Party families of **Hue Dynamics** and
+its Disco, and the effects of **Light DJ**. They render on the placed rig in
+the room frame the apps use, step on the musical clock, and can play as the
+base look, on a pad, in a sequence or over everything as a voice.
+
+- **Families** — 22: the eleven of Hue Dynamics (simple ADSR, position chase,
+  radial pulse, spatial wash, bouncing scan, streak, twinkle, breathing fade,
+  volume gate wash, frequency burst, Disco), nine of Light DJ, and the
+  fork's own party and energy effects. Each family carries the schema of its
+  parameters.
+- **Presets** — 214 built in: the presets of both apps and the fork's party
+  rows. A preset is a family with its parameters set. `/api/pattern/:id` and
+  the pattern picker take a preset id as well as a pattern id. Built-ins never
+  change: editing one saves a copy as a preset of your own
+  (`config/effects.json`), which reaches every open page at once.
+- **Palettes** — 28 built in (Light DJ's, Hue Dynamics' default and the
+  strobe's white), and palettes of your own (`config/palettes.json`). The
+  palette override plays one palette — 1 to 8 colours, or a saved palette —
+  over every effect until it is removed; the look's colour slots stay as they
+  are. Colour Strobe and Glow follow its first colour; White Strobe, Blinder,
+  UV Wash and Kill keep their fixed output. Random entries roll once per tap
+  and remain fixed; the selected button shows those colours. Sequence palettes
+  restore the previous override on stop or unload unless changed by hand.
+  The named looks of **The palettes** above are a separate thing and keep
+  their routes.
+- **The inspector** edits a preset field by field from its family's schema. A
+  change to one nested field (a trigger, a spatial setting) keeps its
+  siblings: the server fills the rest from the defaults. A command to the
+  effect on stage (`POST /api/effects/command`) is answered once the renderer
+  has decided it — applied on a frame of the effect it was meant for, or why
+  not: 409 when the look on stage takes no commands, changed before the
+  command reached it, cannot take one now or already decided it; 400 when the
+  effects do not know the command.
+
+Effects that flash faster than the photosensitivity threshold are marked as
+such and need the acknowledgement under [Safety](#safety).
+
+---
+
+## Voices and pads
+
+A **voice** is an effect playing over the base look. Several play at once.
+Each comes from somewhere — a `pad`, an `energy` override, the `strobe`, the
+`api`, the `sequence` or the `matrix` board — and lives in one of three ways:
+
+| Mode | Ends |
+|------|------|
+| `hold` | When its owner lets go. The owner renews it; without a renewal for 1.2 s, or when its socket disconnects, it dies, so a tablet whose Wi-Fi drops never leaves an effect running |
+| `once` | After its length, given in ms or beats |
+| `latched` | When stopped. A latched `strobe` voice, from any route, also ends at the strobe cap (see **Strobe**) |
+
+Where voices overlap, the strobe is on top; of the rest, the one launched last
+wins, then one launched on chosen fixtures over one on the whole rig, then the
+later start. The live state's `voices` lists them (`id`, `source`, `label`,
+`mode`, `tier`, `kind`, `targets`, `launchSeq`, `startedAt`, `until`,
+`hidden`, and the effect each plays as `spec`), which is what the stage
+preview draws them from; `hueStrobe` beside them says how Hue lamps take a
+strobe.
+
+**Pads** — two banks of eight (`config/pads.json`), after Hue Dynamics' pad
+grid. A pad is `{ bank, slot, label, accent, content, launch, quantise, targets }`:
+`content` is `{ kind, id }` or `null` for an empty pad; `launch` is `once`,
+`hold` or `loop`; `quantise` is a grid in beats — a launch waits for the next
+line while the look, a voice or a sequence runs; otherwise it starts
+at once. `0` always starts at once; `targets` is `shared` (the whole rig) or a
+list of fixture ids. The default layout holds, in bank A, the six energy
+effects and the strobe, held, at `0`, so they start on the press as the
+energy effects always have, then Hue Dynamics and Light DJ looks at `0.25`,
+Hue Dynamics' quarter beat. A `pads.json` from a build that put every
+default pad at `0.25` is read with its energy and strobe pads at `0` where
+they are still as shipped; a pad changed in any way keeps its own grid.
+What a pad plays depends on its content:
+
+- `preset` — the preset as one voice.
+- `pattern` — a stored pattern, its lanes and clips, played as one voice: a
+  shared lane covers the pad's targets, a track lane goes to the selected
+  fixtures in patch order (a track with no fixture left is skipped), and the
+  pad alone decides its priority and lifetime. `hold` and `loop` repeat the
+  pattern; `once` plays it once. A pattern that is not on the shelf answers
+  404, and one with a rapid-flash clip waits for the acknowledgement like
+  any other.
+- `strobe` — the strobe while the pad is held, on the pad's targets from its
+  next grid line, at once by default (id `strobe`, launch `hold` only; `once`
+  and `toggle` answer 409). A strobe pad saved as shipped but on `0.25` is
+  read at `0`.
+- `sequencePattern` — drops the pattern into the loaded sequence at the
+  pad's next grid line.
+
+Saving a pad checks what it newly names: a `preset` must be a saved or
+built-in preset with an effect (a legacy pattern such as `chase` or
+`confetti` is none), and a `pattern` or `sequencePattern` a pattern on the
+shelf; anything else is refused with 400. The pad editor offers only what a
+pad can play: the presets, a party look as the preset it was modelled on
+where there is one, and the shelf's patterns both ways.
+
+A pad is pressed and released (hold), toggled (loop) or fired once, from
+REST, the `voice-hold` socket event, MIDI (the `padPress` action with a
+bank and a slot) and Companion (pad buttons, and a strobe burst of
+100–30,000 ms). MIDI and Companion press a pad once and, for a `hold` pad
+only, renew it until the note-off or the button's release; a `loop` pad
+toggles on the press and a `once` pad fires on it, and neither hears the
+release. A renewal only extends a live hold, never launches: a hold ended by
+`POST /api/strobe/off` or `DELETE /api/voices` stays ended, and a press under
+its old token answers 409 until it is let go or 1.2 s pass without a word
+from its holder. A MIDI hold with no note-off stops when the controller's
+input port leaves the port list, at `safety.strobeMaxLatchSec` for the
+strobe pad, and after 5 minutes for any other pad. An empty pad answers 204.
+
+**The matrix board** — after Light DJ's matrix strobe maker. Each cell is a
+colour; touching cells (up to eight at once) builds one colour list, and the
+board plays it in one mode: `fireworks`, `flashes`, `pulses`, `cycle` or
+`solid`. Every change starts the board's one voice again with the new list;
+letting go of the last cell ends it. Its cells are held like a hold voice,
+and the fast modes need the acknowledgement; letting go is never refused.
+Stopping every voice, or disarming, empties the board, and a finger still
+down starts nothing until it lifts and presses again.
+
+---
+
 ## Energy overrides
 
 Panic-button effects that instantly override patterns and per-fixture settings.
@@ -1566,7 +1766,7 @@ still mean something at the moment you hit the blinder.
 | `blinder` | Blinder | Every emitter at full — the brightest the rig goes |
 | `uv-wash` | UV Wash | Blacklight — UV alone, no strobe |
 | `kill` | Kill | Everything out for as long as it is held |
-| `palette-strobe` | Palette Strobe | Flashes in the look's colours on the beat over the running look, up to five a second |
+| `palette-strobe` | Palette Strobe | The strobe (see [Strobe](#strobe)) on the beat clock, over the running look |
 
 Five effects covering four separate jobs, so no two buttons do the same thing: a
 strobe punch that is either cold or in the look's own colour, a held wall of
@@ -1581,18 +1781,212 @@ visible light, which is brighter than either was. `uv-strobe` gave way to
 `kill` is not master blackout. The master is a latching switch on the whole rig;
 this is momentary and auto-clears, which is what you want under a thumb on a drop.
 
-`palette-strobe` is the hold-to-strobe pad of the Hue party apps, and the one
-override that does not replace the look. While it is held, every lamp flashes
-a colour of the look — the slots' distinct colours in turn, one per flash — on
-the beat grid, at the finest division of the beat that stays under five
-flashes a second (half beats at 128 BPM, beats at 174): each flash 80 ms at
-full, then 80 ms of black, then the running pattern shows through until the
-next. A Hue lamp is never flashed: it takes each flash as the colour at full
-falling to a floor of 40 over 200 ms, held there until the next. Flash Limit
-still holds the rig as a whole to three large flashes a second.
+`palette-strobe` is the hold-to-strobe pad of the Hue party apps: the strobe
+voice itself, with its settings — its function among them, so it can play a
+ROOT PAR program too — on the beat clock and in the strobe's place above every
+other voice. Latching it stops a running manual strobe, and starting the
+manual strobe stops a latched `palette-strobe`.
 
-Trigger from the UI, MIDI (encoder push 8 — hold to activate, release to clear),
-REST, or Companion. Clear with `energyOverride: null`.
+Each energy effect plays as a voice over the look (see
+[Voices and pads](#voices-and-pads)). Trigger from the UI, MIDI (encoder push 8
+— hold to activate, release to clear), REST, the `energy-hold` and
+`voice-hold` socket events, or Companion. The three strobes are refused (409)
+until the photosensitivity acknowledgement (see [Safety](#safety)). Clear with
+`POST /api/energy/off` or `energyOverride: null`. Only `POST /api/energy/off`
+also ends a latched strobe: a scene, a cue, a MIDI note or the auto show
+clears the energy all the time, and never the strobe.
+
+The live state's `energyOverride` names the energy effect on top: the
+latched one, the `energy-hold` one (the latch waits under it) or any pad or
+voice playing an energy effect (an energy preset, or the palette strobe's),
+the strobe tier first, then the one launched last. Companion's energy
+variable and feedback, the MIDI energy LED and the top bar read it. A cue
+saves only the latched one.
+
+---
+
+## Strobe
+
+One strobe, held, latched or burst over everything else, and two kinds of
+strobe for it to draw:
+
+- **Palette flashes**, the default: Hue Dynamics' manual strobe — hard
+  flashes in the palette's colours at a rate of up to five a second.
+- **A ROOT PAR program**: one of the look's [strobe functions](#strobe-functions)
+  — Ramp Up/Down, Ramp Up, Ramp Down, each at random moments too, Random and
+  Burst — drawn by the same code, on the beat, at a speed of its own. Its
+  lamps take the palette's colours in turn round the room, and a Hue lamp is
+  left to what plays below it, as the look's functions leave it. Where the
+  look's go up to about eleven flashes a second, here every swell, random
+  flash and burst flash is held to five a second a lamp, Hue Dynamics' limit.
+
+| Setting | Values |
+|---------|--------|
+| `function` | `palette` (default), or a strobe function's id: `ramp-up-down`, `ramp-up`, `ramp-down`, each with `-rnd`, `random` or `break`. The standard strobe is a fixture's own and stays the look's |
+| `speed` | A program's speed, 1 to 255, slow to fast, as the look's strobe speed picks how many beats a swell or burst takes; 128 by default. The palette flashes leave it be |
+| `palette` | 1 to 6 colours, `#RRGGBB`, each flash at full; white by default |
+| `flashesPerSecond` | The palette flashes' rate, 1 to 5, whole numbers; 2 by default |
+| `continueBetween` | `true` (default): the look shows between flashes and swells; `false`: black holds |
+| `clock` | The palette flashes' clock: `beat` (default), on the finest beat division under the rate, the palette's colours in turn; `wall`, at the rate in seconds, a random palette colour each flash. A program is always on the beat |
+| `brightness` | 0 to 1 |
+| `onMs` · `blackMs` | The palette flashes' 100 ms of flash and 100 ms of black — fixed |
+
+The strobe settings sheet (the gear beside the strobe pad) picks the function,
+with the speed for a program and the rate and clock for the palette flashes.
+A strobe saved before there was a function — in the settings, a cue or a
+preset — is the palette strobe it was.
+
+`PUT /api/strobe` changes any of them; an edit of one keeps the rest. It
+never flashes a lamp faster than five times a second, whatever asks for it,
+and Flash Limit, when on, still holds the rig as a whole to three large
+flashes a second. A Hue lamp takes the palette flashes as `hue.strobe` says
+(see [Strobe without a strobe channel](#strobe-without-a-strobe-channel)). Ways
+to run it:
+
+- **Hold** — the strobe pad (on its `targets`, from its `quantise` grid
+  line, or at once over a latch), or `voice-hold` with
+  `{ preset: 'strobe' }` (on its `targets`, at once): as long as it is held
+  and renewed. Over a latch, the latch stays underneath, hidden, and comes
+  back when the hold is let go or its lease runs out, still ending at its
+  own cap. A stop ends the latch underneath with the hold:
+  `DELETE /api/voices`, `DELETE /api/voices/strobe`, a disarm, and latching
+  `palette-strobe`.
+- **Burst** — `POST /api/strobe/burst/:ms`, 100 to 30,000 ms, once.
+  Lengths outside this range return 400; Home Assistant sliders must use the
+  same limit.
+- **Latch** — `POST /api/strobe/on`. A latch ends on `POST /api/strobe/off`,
+  on `POST /api/energy/off`, on a burst, on `DELETE /api/voices`, or at the
+  cap, `safety.strobeMaxLatchSec`
+  (60 s by default; lowering it cuts a latch already running). A scene, cue,
+  MIDI note or the auto show clearing the energy does not end it. A latched
+  voice of kind `strobe` started any other way (`POST /api/voices`) carries
+  the same cap.
+
+`POST /api/strobe/off` stops every strobe voice — held, burst or latched;
+`POST /api/energy/off` ends only the latch. Until the photosensitivity
+acknowledgement is given, hold, burst and latch answer 409; stopping never
+does. The live state's `strobe` is `{ active, mode, settings }`, `active`
+being `{ id, mode, startedAt, until }` or `null`.
+
+---
+
+## Sequencer
+
+Live sequence status includes `activeClips`, naming the clips currently winning on patched fixtures.
+
+Create a sequence in Sequence, or load one from its shelf. A new sequence has
+one shared lane and 4/4 at the current BPM. Edit exposes name, lanes, clips,
+mute/solo, pattern insertion and save/duplicate/delete. Deleting a saved
+sequence requires confirmation; Unload releases the current sequence.
+
+On each fixture a track's clip beats every shared lane's, a later shared lane
+beats an earlier one, and inside a lane the later start wins. A soloed lane
+silences the others; a muted one plays nothing.
+
+The transport plays, pauses (the current clip keeps looping), stops (holding
+the last frame, or black with `?blackout=1`), steps to the next or previous
+clip, shuffles, seeks to a beat, jumps to a clip, re-syncs on the next beat or
+bar and loops a range. Playing or paused, it advances with the base look
+stopped; the free clock runs for the sequence without starting the look. With no loop ahead of it a sequence ends — an
+arrangement at the bar line after its last clip or command, a playlist after
+its last row (autoplay off keeps the row looping, shuffle keeps picking) —
+and lets go: nothing is held, the look plays, the status says `ended`, and
+the next play starts from the top. While a take runs it plays on past the
+end, for the take to land in. A stopped sequence keeps the rig: unloading it
+(`DELETE /api/sequence`, the Sequence view's **Unload**, or the first entry
+of the deck's sequence picker) gives the base back to the look. Clips with
+fast-flashing effects need the acknowledgement.
+
+The Sequence view starts a new sequence (one shared lane in 4/4 at the rig's
+tempo, named apart from the saved ones) and, behind **Edit**, names it, adds
+lanes and clips — a clip picks its preset from the library by name and goes
+on the lane picked (the selected clip's, else the lane tapped, else the
+first), lanes mute and solo, patterns insert at the playhead — and saves,
+duplicates or deletes it on the shelf, the delete after a confirmation.
+Outside Edit, clips cannot be edited directly; recording and keeping a take
+still adds clips.
+
+**Patterns** are reusable bundles of lanes and clips. Saved ones can be
+inserted into the loaded sequence at a beat, or captured from a range of
+its lanes; a `pattern` pad plays one as a voice.
+
+**Punch record** turns pad launches into clips. `POST /api/sequence/record`
+starts a take (`overdub` or `replace`, a count-in and a grid); each launch
+after the count-in is captured with the pad's content and targets as they
+were at that moment. Starts and ends snap to the nearest grid line (halves
+away from zero), every clip at least one grid long; a launch with no release
+takes the pad's own length. Strobe pads and empty pads record nothing, and a
+pattern pad's hit lands as its whole bundle at once. The take is staged:
+`POST /api/sequence/record/stop` with `{ keep: false }` changes nothing; with
+`{ keep: true }` it is checked and becomes one new revision of the loaded
+sequence (saving that to the shelf stays its own step), or is refused (409)
+— keeping the sequence and the take as they were — when another sequence
+was loaded or this one edited during the take, or a pattern it used cannot
+be placed. `replace` removes whole clips the take overlaps on the lanes and
+fixtures it writes, never cutting one; the answer lists every clip removed
+(`removed`), the beats the take wrote (`range`) and, in `beyondRange`, each
+removed clip that reached outside them with how far before and after. An
+empty take changes nothing.
+
+The live state's `sequence` carries what is loaded, its revision, the
+transport (`playing`, `paused`, `stopped`, `ended`), the beat and bar (and
+the bar's length in beats), the clip on each lane, the loop and, while a
+take runs, the take. `sequences` and `sequencePatterns` list the shelf —
+each saved sequence's id and name, each pattern's id, name and length — so
+a sequence saved on one page reaches every other page's picker.
+
+---
+
+## Audio modes
+
+`settings.audio.mode` decides what the music does to the effects:
+
+- `off` — effects ignore their triggers and run on their loop;
+- `tempo` (default) — effects follow the tempo and its accents, with no audio;
+- `reactive` — the live input's levels drive the reactive effects and the
+  Disco and Visualizer kinds.
+
+The `master` (`sensitivity`, `smoothing`, `attackMs` up to 2 s, `releaseMs`
+up to 5 s, `threshold`, `reactiveDepth`, `brightness`) shapes the levels as
+Hue Dynamics does; `ldjTrigger` (0.3) is Light DJ's trigger level. With no
+audio coming in, reactive effects play as in `tempo`. The levels go to
+clients that subscribe to the `audio` topic.
+
+One Disco detector and one loudness trigger serve every effect, so one
+effect's settings run each: the highest playing voice of that kind, else the
+highest playing clip of the sequence, else the base look, else the settings.
+A macro or a pattern counts through the step or clip it is playing at that
+moment. `GET /api/audio` and the live state's `audio` say who owns each
+(`detectors`).
+
+---
+
+## Safety
+
+| Setting | Default | |
+|---------|---------|---|
+| `safety.photosensitivityAcknowledged` | `false` | The strobe and every effect that flashes faster than the photosensitivity threshold play only once this is given |
+| `safety.strobeMaxLatchSec` | 60 | The longest a latched strobe runs |
+| `safety.hdFlashIntervalMs` | 350 | Hue Dynamics' per-lamp flash interval, applied to its effects only |
+| `safety.flashLimit` | `false` | Flash Limit (see [Flash limit](#flash-limit)) |
+| `hue.strobe` | `flash` | Hue Lamps Take a Flash: `flash` keeps the look's hard cuts; `pulse` softens them into a fall to a glow over 200 ms (see [Strobe without a strobe channel](#strobe-without-a-strobe-channel)) |
+
+Until `POST /api/safety/acknowledge` is called (stored across restarts),
+starting the strobe, an energy strobe (`white-strobe`, `color-strobe`,
+`palette-strobe`), a fast-flashing voice, preset, sequence clip or matrix
+mode answers `409 photosensitivity acknowledgement required` wherever it is
+asked for, and what played before plays on. REST, `/api/set` and a cue answer
+the 409; the `set`, `energy-hold` and `voice-hold` socket events answer an
+`error-msg` with that reason (a hold's names its token), which Companion
+logs; a MIDI button logs it. The auto show's and the live director's strobe
+bursts are refused the same way and logged: a drop lands its look without
+them. Stopping and releasing never refuse.
+
+Until then the header and Perform show **Strobes off until acknowledged**;
+a tap on it opens the warning, and its Yes gives the acknowledgement. The
+live state's `safety.photosensitivityAcknowledged` says which, for Home
+Assistant's `sensor.lightshow` (its `safety` attribute) and anything else
+that reads the state.
 
 ---
 
@@ -2121,7 +2515,7 @@ within two seconds and accents within 150 ms. Clearing the cache takes them.
 
 ### The Timeline view
 
-**Timeline** (**4**, `/#timeline`) is the loaded track's show laid out to be
+**Timeline** (a tab of **Auto Show**, `/#auto/timeline`) is the loaded track's show laid out to be
 read and rehearsed: the analysis (sections, the energy and band curves, beats,
 drops and build-ups) with the planned looks and accents under it, the analysis
 in numbers, the stage preview and the [track edits](#track-edits).
@@ -2158,7 +2552,7 @@ cells hang in a line where the plan draws it, and a panel stands upright.
 
 three.js is fetched the first time the view opens, not with the page, and kept
 by the service worker with the rest of the app. A browser with WebGL turned
-off is told so; the plan in the Manual and Rig views shows the same rig from
+off is told so; the plan in the Effects and Rig views shows the same rig from
 above.
 
 ### Flash limit
@@ -2459,7 +2853,12 @@ It is made for busking. The **Busk** preset page has:
 
 Other presets cover every pattern and pixel effect (the bars' own picture and
 the pixel map too), colours A–D, transport, a blackout per fixture and latched
-energy effects, with feedback lighting the active state. The patterns,
+energy effects, with feedback lighting the active state. Pad buttons hold
+the server's pads while pressed (renewed, so a crash lets go as the energy
+holds do), and a strobe burst button fires the strobe for 100–30,000 ms
+(1 s by default). When the server refuses the access token it says so with
+a code, `unauthorized`, and the connection shows the token as the problem —
+set the matching one in its config — rather than a network failure. The patterns,
 palettes, fixtures and cues it offers are read from the server when it
 connects, so ones added there appear without a new module. It follows the
 server over protocol 2, so a large rig costs it nothing between changes. See
@@ -2486,11 +2885,80 @@ All endpoints return JSON. When a token is configured, send it as an
 | POST | `/api/tempo/auto` · `/api/tempo/manual` | Automatic tempo match on (follow the music) or off (keep the tapped or typed BPM); `auto` while on ends a tempo held by hand; answers `{ ok, tempoMode, clock }`, stored across restarts |
 | POST | `/api/master/:value` | Master dimmer (0–255) |
 | POST | `/api/blackout/toggle` · `/api/blackout/on` · `/api/blackout/off` | Master blackout |
-| POST | `/api/pattern/:id` | Set pattern (e.g. `chase`, `rainbow`) |
+| POST | `/api/pattern/:id` | Set pattern (e.g. `chase`, `rainbow`) or an effect preset as the base look; an unknown id is taken and plays nothing; an effect that waits for the photosensitivity acknowledgement is a 409 and the look stays |
 | POST | `/api/color/:slot/:index` | Set colour slot `a`–`d` (index 0–23) |
-| GET | `/api/palettes` | The named looks, their colours at each size, and the one on stage |
+| GET | `/api/palettes` | The unified palette catalogue and the named looks at each size, and the one on stage |
 | POST | `/api/palette/:id` | Write all four slots from a look (`{ size }` — 2, 3 or 4; default 4) |
-| POST | `/api/energy/:id` · `/api/energy/off` | Energy override |
+| POST | `/api/energy/:id` · `/api/energy/off` | Latch an energy override (a voice; a strobe one is a 409 until the photosensitivity acknowledgement) · clear it, and end a latched strobe |
+
+### Effects, palettes and safety
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/effects` | `{ families, builtin, user, palettes: { builtin, user } }` — every family with its parameter schema, the built-in presets, yours, and both sets of palettes |
+| GET | `/api/effects/:id` | One preset (404 `No such effect`) |
+| POST | `/api/effects` | Save a preset of your own (201 `{ ok, preset }`) |
+| PUT · DELETE | `/api/effects/:id` | Change or delete one of yours; a built-in answers that it cannot be changed (save a copy) |
+| POST | `/api/effects/command` | `{ cmd, arg? }` to the effect playing as the base look; answers once the renderer has decided (see [Effects — Hue Dynamics and Light DJ](#effects--hue-dynamics-and-light-dj)) |
+| GET | `/api/palettes/:id` | One palette, built in or yours |
+| POST · PUT · DELETE | `/api/palettes` · `/api/palettes/:id` | Save (201), change or delete a palette of your own |
+| PUT | `/api/palette-override` | `{ colours: ['#RRGGBB', …] }` (1 to 8) or `{ paletteId }`: override effect palettes (fixed white, UV and blackout energies keep their output); random entries roll once per request; answers `{ ok, paletteOverride }` |
+| DELETE | `/api/palette-override` | Remove it |
+| GET | `/api/safety` | `{ photosensitivityAcknowledged, hdFlashIntervalMs, strobeMaxLatchSec }` |
+| POST | `/api/safety/acknowledge` | Give the photosensitivity acknowledgement (stored) |
+
+### Voices, pads, strobe and the matrix board
+
+A refused effect for want of the acknowledgement answers
+`409 photosensitivity acknowledgement required`.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/voices` | The running voices |
+| POST | `/api/voices` | `{ effect \| preset, targets?, mode?, ms? \| beats? }` — `targets` `shared` or fixture ids, `mode` `once` (default, with `ms` or `beats`) or `latched` (no length); answers `{ ok, id }` |
+| DELETE | `/api/voices/:id` · `/api/voices` | Stop one (404 `No such voice`) · all (`{ ok, stopped }`) |
+| GET · PUT | `/api/pads` | The layout and the lit pads (`{ layout, lit }`) · a whole layout (`{ pads }`) |
+| PUT | `/api/pads/:bank/:slot` | One pad's fields (bank 0–1, slot 0–7) |
+| POST | `/api/pads/:bank/:slot/press` · `/renew` · `/release` | Press a pad from REST (`{ token? }` or `?token=`, default `rest`), keep its hold, let it go. `renew` within 1.2 s extends a live hold and never launches (`{ renewed }`, false for a `once`, a `loop` or a hold ended); the same press within 1.2 s also renews a hold |
+| POST | `/api/pads/:bank/:slot/toggle` | Start or stop a pad as a loop |
+| POST | `/api/pads/:bank/:slot/once` | Fire it once (`?ms=` for a length) |
+| GET | `/api/strobe` | `{ active, mode, settings }`, as every strobe route answers |
+| PUT | `/api/strobe` | Strobe settings, any of them: an edit of one keeps the rest (see [Strobe](#strobe)) |
+| POST | `/api/strobe/on` · `/api/strobe/off` | Latch (ends at the cap) · stop every strobe voice |
+| POST | `/api/strobe/burst/:ms` | One burst, 100–30,000 ms; any other length is a 400 |
+| GET | `/api/matrix` | `{ mode, colours, voice }`, as every matrix route answers |
+| POST | `/api/matrix/press` · `/api/matrix/release` | `{ colour: '#RRGGBB', token? }` — touch a cell (up to eight at once) · `{ colour }` or `{ token }` — let go |
+| PUT | `/api/matrix` | `{ mode }`: `fireworks`, `flashes`, `pulses`, `cycle` or `solid` |
+
+### Sequencer
+
+Transport routes answer `{ ok, status }`; with no sequence loaded they answer
+409.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/sequence` · `/api/sequence/status` | The loaded sequence, its clip table as the engine plays it (`table`) and its status · the status alone |
+| PUT | `/api/sequence` | Load a whole sequence, or `{ id }` of a saved one |
+| DELETE | `/api/sequence` | Unload it: nothing is loaded, a running take is dropped, and the look is the rig's base again |
+| GET · POST | `/api/sequences` | The saved sequences · save one (201; 409 if the id is taken) |
+| GET · PUT · DELETE | `/api/sequences/:id` | One saved sequence |
+| POST | `/api/sequence/play` · `pause` · `stop` · `next` · `prev` · `shuffle` | Transport; `stop?blackout=1` (or `{ blackout: true }`) goes black |
+| POST | `/api/sequence/seek/:beat` · `/api/sequence/jump/:clipId` | Go to a beat · to a clip |
+| POST | `/api/sequence/resync/:boundary` | `beat` or `bar` |
+| POST | `/api/sequence/loop` | `{ on, startBeat, endBeat }` |
+| GET · POST | `/api/sequence/patterns` | The saved patterns · save one (409 if the id is taken) |
+| GET · PUT · DELETE | `/api/sequence/patterns/:id` | One pattern |
+| POST | `/api/sequence/insert-pattern` | `{ id, atBeat }` into the loaded sequence |
+| POST | `/api/sequence/capture-pattern` | `{ fromBeat, toBeat, laneIds, name }` from the loaded sequence (201) |
+| POST | `/api/sequence/record` | `{ mode: 'overdub' \| 'replace', countInBeats?, quantise? }` (0–1024 and 0–64 beats, default 0) — start a take |
+| POST | `/api/sequence/record/stop` | `{ keep }` — keep or discard the take; answers `{ ok, added, removed, status }`, and for a kept take that wrote something `range: { fromBeat, toBeat }` and `beyondRange: [{ id, laneId, startBeat, lengthBeats, beforeBeats, afterBeats }]` |
+
+### Audio
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/audio` | The audio settings, the levels heard and the detectors |
+| PUT | `/api/audio` | `{ mode?, master?, ldjTrigger? }` — `master` by field, the rest kept; answers `{ ok, changed, settings, detectors }` |
 
 ### Fixtures, profiles and shows
 
@@ -2632,24 +3100,39 @@ show; the bridge and channels it drives are its `output`.
 ### Socket.IO
 
 The UI uses Socket.IO rather than polling. Clients send `set`, `override`,
-`fixture`, `tap`, `energy-hold` and `midi-connect`; the server emits
+`fixture`, `tap`, `voice-hold`, `energy-hold` and `midi-connect`; the server emits
 `auto-position`, `midi-status`, `midi-map`, `midi-learn` and `error-msg`, and
 the state in one of two forms, chosen when the client connects:
 
 - **Protocol 2** — asked for with `auth: { protocol: 2 }`; what the live page
   uses. A `snapshot` on connect (`{ protocol, versions, state }`), then
   `patch` events carrying only the keys that changed, grouped by domain (`look`,
-  `rig`, `show`, `sources`, `catalogs`, `system`) and numbered per domain:
+  `rig`, `show`, `sources`, `audio`, `sequence`, `catalogs`, `library`,
+  `voices`, `pads`, `system`) and numbered per domain:
   `{ d, v, set, del? }`. A client that sees a gap in a domain's numbers sends
   `sync` (with an ack) for a new snapshot. DMX goes out as `dmx-frame`, binary
   (`src/shared/dmx-frame.ts`: per universe its number, its length and its
   bytes), thirty times a second while it changes — volatile, and only to
-  clients that sent `subscribe: ['dmx']` (and until `unsubscribe`).
+  clients that sent `subscribe: ['dmx']` (and until `unsubscribe`). The
+  `audio` topic works the same way: after `subscribe: ['audio']` the client
+  gets `audio` events, volatile, up to thirty a second and only when they
+  change — `{ t, party: { full, bass, mid, high }, disco: { gate, level, hit }, spl: { db, level, beat, section, eventT? } }`
+  — and `audio` with `null` when the input has gone. Both topics send their
+  latest at once on subscribing.
 - **Protocol 1** — anything that does not ask, such as the Companion module
   before 2.1: `state` (the full snapshot on connect, the
   whole live state again whenever any of it changes) and `dmx` (channel values
   as JSON, keyed by universe, ten times a second — built only while such a
   client is connected).
+
+The `voice-hold` message holds a voice while a button is down:
+`{ action: 'press' | 'renew' | 'release', token, pad?: { bank, slot }, effect?, targets? }`.
+`token` (1–64 characters) names the hold; `pad` presses that pad, `effect` is
+an effect or `{ preset }` (`{ preset: 'strobe' }` holds the strobe), and the
+holder sends `renew` within 1.2 s or the voice dies, as it does when the socket
+disconnects. A refusal comes back as `error-msg` with `source: 'voice-hold'`.
+`energy-hold` (`{ action, token, effect }`, `effect` an energy override id) is
+kept for the Companion module.
 
 The `fixture` message carries
 `{ id, address?, universe?, label?, profileId?, maxBrightness?, position?, group?, geometry?, output? }`.
@@ -2788,7 +3271,9 @@ supervisor has had to start it again and why. With them: the uptime, the
 engine's frame timing, the main thread's delay over the last 30 seconds, the
 memory, the outputs — `outputs.armed` says whether anything leaves the
 machine, and while it is false a note among the problems says so, as
-information rather than a fault — and the auto show. The Log tab shows it
+information rather than a fault — the auto show, and `counts`: the effect
+kinds the engine knows, the voices running, and whether a sequence is loaded
+and playing (`sequence: { loaded, playing }`, 0 or 1). The Log tab shows it
 above the log.
 
 `GET /healthz` is the liveness probe for a service manager or a monitor: it
@@ -2879,6 +3364,40 @@ same file.
 
 ---
 
+## Hardware capability and admission
+
+Settings → Hardware limits defines defaults for DMX, DDP, OpenRGB and Hue,
+plus named product limits. In Rig, select a fixture to choose its product,
+override its flash rate or minimum transition time, and choose its admission
+policy. Profile limits sit above technology defaults; a product overrides
+those, and an individual fixture overrides the product. Show export, import
+and fixture undo retain these fields.
+
+Effects have the same admission choice. When a fixture cannot follow an effect,
+**Play at device maximum** slows its clock while preserving the room geometry;
+**Hold a value** keeps the first lit value; **Exclude** leaves lower voices or
+clips visible (an excluded base is dark). The more restrictive fixture or preset
+policy wins. Classic patterns also obey fixture limits; their hold policy uses
+a fixed point in the pattern. Existing acknowledgement and photosensitivity
+limits remain in force. Perform and the effect inspector show hardware fit;
+Preflight reports unverified limits.
+
+Capabilities include the profile's colour channels, pixel count and hardware
+strobe range. RGB outputs approximate missing white, amber and UV with visible
+RGB. White-only cells continue to respond to their white channels. OFL and
+GDTF imports retain numeric physical strobe rates when the driven standard
+range has a supported increasing mapping. Unknown or nonnumeric mappings retain
+the unverified 1–20 Hz fallback. Software strobes cannot exceed half the render
+frame rate; hardware channels use their profile mapping.
+
+Native strobe previews estimate visible pulses from the quantized profile frequency;
+their phase is a model prediction, not an optical measurement of the fixture.
+Defaults are policy limits, not measurements. A limit is marked measured only
+when both measurement evidence and a verified flash rate covering the configured
+maximum are supplied at the same override level. Physical optical calibration remains separate.
+
+---
+
 ## Keyboard shortcuts
 
 Press **?** in the app for this list.
@@ -2886,14 +3405,14 @@ Press **?** in the app for this list.
 | Key | Action |
 |-----|--------|
 | **Space** | Tap tempo — also right after clicking a button; a control reached with Tab keeps Space for itself |
-| **1** / **2** / **3** | Manual / Auto Show / Perform view |
-| **4** / **5** | Timeline / Stage view |
+| **1** / **2** / **3** | Perform / Effects / Auto Show view |
+| **4** / **5** | Sequence / Stage view |
 | **6** / **7** / **8** / **9** | Rig / Sources / Settings / Preflight view |
 | **←** **→**, **Home** / **End** on the view tabs | Next / previous / first / last view |
 | **←** **→** **↑** **↓**, **Home** / **End** | Move within the colour grid |
 | **Enter** / **Shift+Enter** | Write the focused swatch into the active slot / the paired slot (A↔B, C↔D) |
 | **Shift+click** or **right-click** | Write a swatch into the paired slot |
-| **Space** or **Enter** on an energy button | Hold the effect until released |
+| **Space** or **Enter** on a pad reached with Tab | Hold: play until released; once: play one phrase; loop: start or stop on each press |
 | **←** **→** **↑** **↓** (**Shift** for bigger steps) | Nudge the focused fixture on the stage plot (on the Rig view's plan, the whole selection) |
 | **[** **]**, **-** **=**, **0** on a bar | Turn it, change its length, back to its default line |
 | **Esc** on the plan | Stop drawing bars; else clear the selection |
