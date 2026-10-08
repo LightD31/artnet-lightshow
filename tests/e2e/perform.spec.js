@@ -225,3 +225,28 @@ test('the palette override goes on with one tap and comes off with Off', async (
   await until(request, (s) => s.paletteOverride === null);
   await expect(strip.locator('[data-override="off"]')).toHaveAttribute('aria-pressed', 'true');
 });
+
+test('the strobe sheet switches the strobe to a ROOT PAR program and back, keeping the rest', async ({ page, request }) => {
+  const before = (await state(request)).strobe.settings;
+  try {
+    await open(page, 'perform');
+    await page.getByRole('button', { name: 'Strobe settings' }).click();
+    const sheet = page.getByRole('dialog', { name: 'Strobe settings' });
+    await expect(sheet.getByRole('slider', { name: 'Flashes per second' })).toBeVisible();
+    await sheet.getByRole('combobox', { name: 'Function' }).selectOption('ramp-up-rnd');
+    await until(request, (s) => s.strobe.settings.function === 'ramp-up-rnd');
+    // A program runs at its speed, on the beat: the rate and the clock are the palette flashes'.
+    const speed = sheet.getByRole('slider', { name: 'Strobe speed' });
+    await expect(speed).toBeVisible();
+    await expect(sheet.getByRole('slider', { name: 'Flashes per second' })).toHaveCount(0);
+    await speed.fill('200');
+    await until(request, (s) => s.strobe.settings.speed === 200);
+    const now = (await state(request)).strobe.settings;
+    expect([now.flashesPerSecond, now.palette], 'the other strobe settings are kept').toEqual([before.flashesPerSecond, before.palette]);
+    await sheet.getByRole('combobox', { name: 'Function' }).selectOption('palette');
+    await until(request, (s) => s.strobe.settings.function === 'palette' && s.strobe.settings.speed === 200);
+    await expect(sheet.getByRole('slider', { name: 'Flashes per second' })).toBeVisible();
+  } finally {
+    await request.put('/api/strobe', { data: { function: before.function ?? 'palette', speed: before.speed ?? 128 } });
+  }
+});
