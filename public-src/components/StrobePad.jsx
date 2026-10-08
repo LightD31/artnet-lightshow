@@ -80,48 +80,53 @@ export function StrobeSettings({ onClose }) {
 
   return (
     <div class="effect-sheet-veil" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div ref={box} class="effect-sheet strobe-settings" role="dialog" aria-modal="true" aria-label="Strobe settings" tabIndex={-1}>
-        <h2>Strobe</h2>
-        <PaletteEditor label={`Colours (up to ${MAX_COLOURS})`} colours={(draft.palette || []).slice(0, MAX_COLOURS)}
-          builtin={lib.palettes?.builtin || []} user={s.userPalettes || lib.palettes?.user || []}
-          onChange={(palette) => apply({ palette: palette.slice(0, MAX_COLOURS) })} />
-        <label class="pad-field"><span>Function</span>
-          <select value={draft.function} onChange={(e) => apply({ function: e.target.value })}>
-            {strobeChoices(s.strobeFunctions).map((f) => <option key={f.id} value={f.id} selected={draft.function === f.id}>{f.name}</option>)}
-          </select>
-        </label>
-        {program ? (
-          <label class="pad-field"><span>Speed: {draft.speed} (on the beat, never over five flashes a second a lamp)</span>
-            <input type="range" aria-label="Strobe speed" min="1" max="255" step="1" value={draft.speed}
-              onInput={(e) => setDraft({ ...draft, speed: Number(e.target.value) })}
-              onChange={(e) => apply({ speed: Number(e.target.value) })} />
-          </label>
-        ) : (
-          <label class="pad-field"><span>Flashes per second: {draft.flashesPerSecond}</span>
-            <input type="range" aria-label="Flashes per second" min="1" max={String(MAX_FLASHES)} step="1" value={draft.flashesPerSecond}
-              onInput={(e) => setDraft({ ...draft, flashesPerSecond: Number(e.target.value) })}
-              onChange={(e) => apply({ flashesPerSecond: Number(e.target.value) })} />
-          </label>
-        )}
-        <label class="pad-choice">
-          <input type="checkbox" checked={!!draft.continueBetween} onChange={(e) => apply({ continueBetween: e.target.checked })} />
-          <span>Look shows between flashes</span>
-        </label>
-        {!program && (
-          <label class="pad-field"><span>Clock</span>
-            <select value={draft.clock} onChange={(e) => apply({ clock: e.target.value })}>
-              <option value="wall" selected={draft.clock !== 'beat'}>Steady (flashes per second)</option>
-              <option value="beat" selected={draft.clock === 'beat'}>On the beat</option>
+      <div ref={box} class="effect-sheet" role="dialog" aria-modal="true" aria-label="Strobe settings" tabIndex={-1}>
+        <div class="card sheet-card strobe-settings">
+          <div class="card-title"><span class="sheet-title">Strobe</span>
+            <button type="button" class="btn xs" aria-label="Close the strobe settings" onClick={onClose}>Close</button>
+          </div>
+          <p class="insp-section-title">Colours</p>
+          <PaletteEditor label={`Colours (up to ${MAX_COLOURS})`} colours={(draft.palette || []).slice(0, MAX_COLOURS)}
+            builtin={lib.palettes?.builtin || []} user={s.userPalettes || lib.palettes?.user || []}
+            onChange={(palette) => apply({ palette: palette.slice(0, MAX_COLOURS) })} />
+          <label class="pad-field"><span>Function</span>
+            <select value={draft.function} onChange={(e) => apply({ function: e.target.value })}>
+              {strobeChoices(s.strobeFunctions).map((f) => <option key={f.id} value={f.id} selected={draft.function === f.id}>{f.name}</option>)}
             </select>
           </label>
-        )}
-        <label class="pad-field"><span>Brightness: {draft.brightness} %</span>
-          <input type="range" aria-label="Strobe brightness" min="0" max="100" step="5" value={draft.brightness}
-            onInput={(e) => setDraft({ ...draft, brightness: Number(e.target.value) })}
-            onChange={(e) => apply({ brightness: Number(e.target.value) })} />
-        </label>
-        <div class="pad-editor-actions">
-          <button type="button" class="primary" onClick={onClose}>Done</button>
+          {program ? (
+            <label class="pad-field"><span>Speed: {draft.speed} (on the beat, never over five flashes a second a lamp)</span>
+              <input type="range" aria-label="Strobe speed" min="1" max="255" step="1" value={draft.speed}
+                onInput={(e) => setDraft({ ...draft, speed: Number(e.target.value) })}
+                onChange={(e) => apply({ speed: Number(e.target.value) })} />
+            </label>
+          ) : (
+            <label class="pad-field"><span>Flashes per second: {draft.flashesPerSecond}</span>
+              <input type="range" aria-label="Flashes per second" min="1" max={String(MAX_FLASHES)} step="1" value={draft.flashesPerSecond}
+                onInput={(e) => setDraft({ ...draft, flashesPerSecond: Number(e.target.value) })}
+                onChange={(e) => apply({ flashesPerSecond: Number(e.target.value) })} />
+            </label>
+          )}
+          <label class="pad-choice">
+            <input type="checkbox" checked={!!draft.continueBetween} onChange={(e) => apply({ continueBetween: e.target.checked })} />
+            <span>Look shows between flashes</span>
+          </label>
+          {!program && (
+            <label class="pad-field"><span>Clock</span>
+              <select value={draft.clock} onChange={(e) => apply({ clock: e.target.value })}>
+                <option value="wall" selected={draft.clock !== 'beat'}>Steady (flashes per second)</option>
+                <option value="beat" selected={draft.clock === 'beat'}>On the beat</option>
+              </select>
+            </label>
+          )}
+          <label class="pad-field"><span>Brightness: {draft.brightness} %</span>
+            <input type="range" aria-label="Strobe brightness" min="0" max="100" step="5" value={draft.brightness}
+              onInput={(e) => setDraft({ ...draft, brightness: Number(e.target.value) })}
+              onChange={(e) => apply({ brightness: Number(e.target.value) })} />
+          </label>
+          <div class="pad-editor-actions">
+            <button type="button" class="btn active" onClick={onClose}>Done</button>
+          </div>
         </div>
       </div>
     </div>

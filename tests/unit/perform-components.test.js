@@ -438,6 +438,14 @@ test('sequence picker follows shelves received from other clients', () => {
   assert.match(ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } })), /<option value="sequence:tab"[^>]*>Saved on the tablet</);
 });
 
+test('a loaded sequence not yet saved is named in the picker, not left blank', () => {
+  given({ sequence: { ...STATUS, loaded: { id: 'fresh', name: 'New sequence' } }, sequences: [{ id: 'set1', name: 'Set one' }] });
+  const html = ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } }));
+  assert.match(html, /<option value="sequence:fresh" selected[^>]*>New sequence \(not saved\)</);
+  given({ sequence: STATUS, sequences: [{ id: 'set1', name: 'Set one' }] });
+  assert.doesNotMatch(ui.html(ui.h(ui.Transport, { initial: { sequence: SEQ } })), /not saved/, 'a saved one is on the shelf already');
+});
+
 test('with no sequence loaded the transport controls the look', () => {
   given({ running: false, sequence: { ...STATUS, loaded: null, playing: false, lanes: [] }, sequences: [{ id: 'set1', name: 'Set one' }] });
   const html = ui.html(ui.h(ui.Transport, { initial: { sequence: null } }));

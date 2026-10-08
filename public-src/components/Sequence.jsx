@@ -602,10 +602,10 @@ export function Sequence({ initial = {} }) {
             <button type="button" onClick={() => commit({ ...seq, lanes: [...seq.lanes, { id: newId('l'), kind: 'shared', name: `Lane ${lanes.length + 1}`, mute: false, solo: false }] })}>Add shared lane</button>
             <select aria-label="Add a track for a fixture" value="" onChange={(e) => {
               const f = fixtures.find((x) => String(x.id) === e.currentTarget.value);
-              if (f) commit({ ...seq, lanes: [...seq.lanes, { id: newId('t'), kind: 'track', fixtureId: f.id, name: f.name || `Fixture ${f.id}`, mute: false, solo: false }] });
+              if (f) commit({ ...seq, lanes: [...seq.lanes, { id: newId('t'), kind: 'track', fixtureId: f.id, name: f.label || `Fixture ${f.id}`, mute: false, solo: false }] });
             }}>
               <option value="">Add a track for…</option>
-              {untracked.map((f) => <option key={f.id} value={f.id}>{f.name || `Fixture ${f.id}`}</option>)}
+              {untracked.map((f) => <option key={f.id} value={f.id}>{f.label || `Fixture ${f.id}`}</option>)}
             </select>
             <button type="button" disabled={!addable} title={addable ? undefined : 'No preset to play yet'} onClick={() => {
               const c = addable && newClip(seq, { ...clipFrom, laneId: target.id, startBeat: toGrid(beat, seq.snap), beatsPerBar });

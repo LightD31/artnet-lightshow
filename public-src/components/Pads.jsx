@@ -155,48 +155,52 @@ export function PadEditor({ entry, onClose, initial = {} }) {
 
   return (
     <div class="effect-sheet-veil" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div ref={box} class="effect-sheet pad-editor" role="dialog" aria-modal="true" aria-label={`Edit pad ${padName(entry.bank, entry.slot)}`} tabIndex={-1}>
-        <h2>Pad {padName(entry.bank, entry.slot)}</h2>
-        <label class="pad-field"><span>Plays</span>
-          <select value={draft.content} onChange={(e) => set({ content: e.target.value })}>
-            <option value="" selected={draft.content === ''}>Nothing</option>
-            <option value="strobe:strobe" selected={strobe}>Strobe (held)</option>
-            {current && current !== 'strobe:strobe' && !values.has(current) && <option value={current} selected={draft.content === current}>{entry.content.id}</option>}
-            {choices.presets.map(option)}
-            {shelf.length > 0 && <optgroup label="Patterns, played as one voice">{choices.patterns.map(option)}</optgroup>}
-            {shelf.length > 0 && <optgroup label="Patterns, dropped into the sequence">{choices.drops.map(option)}</optgroup>}
-          </select>
-        </label>
-        <label class="pad-field"><span>Label</span>
-          <input type="text" maxLength={80} value={draft.label} onInput={(e) => set({ label: e.target.value })} />
-        </label>
-        <label class="pad-field"><span>Colour</span>
-          <input type="color" value={draft.accent.toLowerCase()} onInput={(e) => set({ accent: e.target.value })} />
-        </label>
-        <fieldset class="pad-field" disabled={strobe}><legend>Launch</legend>
-          {['once', 'hold', 'loop'].map((mode) => (
-            <label key={mode} class="pad-choice">
-              <input type="radio" name="pad-launch" value={mode} checked={(strobe ? 'hold' : draft.launch) === mode} onChange={() => set({ launch: mode })} />
-              <span>{padGlyph(mode)} {mode === 'once' ? 'Once' : mode === 'hold' ? 'Hold' : 'Loop'}</span>
-            </label>
-          ))}
-        </fieldset>
-        <label class="pad-field"><span>Starts on</span>
-          <select value={String(draft.quantise)} onChange={(e) => set({ quantise: Number(e.target.value) })}>
-            {QUANTISE.map(([beats, text]) => <option key={beats} value={String(beats)} selected={Number(draft.quantise) === beats}>{text}</option>)}
-          </select>
-        </label>
-        <fieldset class="pad-field pad-targets"><legend>Fixtures (none ticked: the whole rig)</legend>
-          {(s.fixtures || []).map((f) => (
-            <label key={f.id} class="pad-choice">
-              <input type="checkbox" value={String(f.id)} checked={draft.targets.includes(f.id)} onChange={(e) => toggleFixture(f.id, e.target.checked)} />
-              <span>{f.name}</span>
-            </label>
-          ))}
-        </fieldset>
-        <div class="pad-editor-actions">
-          <button type="button" onClick={onClose}>Cancel</button>
-          <button type="button" class="primary" onClick={save}>Save</button>
+      <div ref={box} class="effect-sheet" role="dialog" aria-modal="true" aria-label={`Edit pad ${padName(entry.bank, entry.slot)}`} tabIndex={-1}>
+        <div class="card sheet-card pad-editor">
+          <div class="card-title"><span class="sheet-title">Pad {padName(entry.bank, entry.slot)}</span>
+            <button type="button" class="btn xs" aria-label="Close the pad editor" onClick={onClose}>Close</button>
+          </div>
+          <label class="pad-field"><span>Plays</span>
+            <select value={draft.content} onChange={(e) => set({ content: e.target.value })}>
+              <option value="" selected={draft.content === ''}>Nothing</option>
+              <option value="strobe:strobe" selected={strobe}>Strobe (held)</option>
+              {current && current !== 'strobe:strobe' && !values.has(current) && <option value={current} selected={draft.content === current}>{entry.content.id}</option>}
+              {choices.presets.map(option)}
+              {shelf.length > 0 && <optgroup label="Patterns, played as one voice">{choices.patterns.map(option)}</optgroup>}
+              {shelf.length > 0 && <optgroup label="Patterns, dropped into the sequence">{choices.drops.map(option)}</optgroup>}
+            </select>
+          </label>
+          <label class="pad-field"><span>Label</span>
+            <input type="text" maxLength={80} value={draft.label} onInput={(e) => set({ label: e.target.value })} />
+          </label>
+          <label class="pad-field"><span>Colour</span>
+            <input type="color" value={draft.accent.toLowerCase()} onInput={(e) => set({ accent: e.target.value })} />
+          </label>
+          <fieldset class="pad-field" disabled={strobe}><legend>Launch</legend>
+            {['once', 'hold', 'loop'].map((mode) => (
+              <label key={mode} class="pad-choice">
+                <input type="radio" name="pad-launch" value={mode} checked={(strobe ? 'hold' : draft.launch) === mode} onChange={() => set({ launch: mode })} />
+                <span>{padGlyph(mode)} {mode === 'once' ? 'Once' : mode === 'hold' ? 'Hold' : 'Loop'}</span>
+              </label>
+            ))}
+          </fieldset>
+          <label class="pad-field"><span>Starts on</span>
+            <select value={String(draft.quantise)} onChange={(e) => set({ quantise: Number(e.target.value) })}>
+              {QUANTISE.map(([beats, text]) => <option key={beats} value={String(beats)} selected={Number(draft.quantise) === beats}>{text}</option>)}
+            </select>
+          </label>
+          <fieldset class="pad-field pad-targets"><legend>Fixtures (none ticked: the whole rig)</legend>
+            {(s.fixtures || []).map((f) => (
+              <label key={f.id} class="pad-choice">
+                <input type="checkbox" value={String(f.id)} checked={draft.targets.includes(f.id)} onChange={(e) => toggleFixture(f.id, e.target.checked)} />
+                <span>{f.label || `Fixture ${f.id}`}</span>
+              </label>
+            ))}
+          </fieldset>
+          <div class="pad-editor-actions">
+            <button type="button" class="btn" onClick={onClose}>Cancel</button>
+            <button type="button" class="btn active" onClick={save}>Save</button>
+          </div>
         </div>
       </div>
     </div>

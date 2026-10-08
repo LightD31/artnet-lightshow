@@ -407,7 +407,7 @@ function DiscoControls({ spec, fixtures, setParam }) {
       <Section title="Band per fixture" />
       <div class="insp-grid">
         {fixtures.map((f) => (
-          <SelectField key={f.id} label={f.name || `Fixture ${f.id}`} path={`assign.${f.id}`} value={assign[String(f.id)] || ''}
+          <SelectField key={f.id} label={f.label || `Fixture ${f.id}`} path={`assign.${f.id}`} value={assign[String(f.id)] || ''}
             options={{ '': 'Automatic', bass: 'Bass', voice: 'Voice', treble: 'Treble' }} onChange={(v) => assignFixture(String(f.id), v)} />
         ))}
       </div>

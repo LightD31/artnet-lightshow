@@ -47,7 +47,7 @@ const ui = await load();
 
 function given(state) {
   ui.store.applySnapshot({ versions: {}, state: {
-    bpm: 128, running: true, fixtures: [{ id: 1, name: 'Left' }, { id: 2, name: 'Right' }],
+    bpm: 128, running: true, fixtures: [{ id: 1, label: 'Left' }, { id: 2, label: 'Right' }],
     sequence: null, ...state,
   } });
 }
@@ -232,6 +232,13 @@ test('new clips use the selected lane', () => {
   assert.match(view({ lane: 't1' }), />Add clip to Left</);
   assert.match(view({ lane: 't1' }), /class="seq-lane-pick" aria-pressed="true"[^>]*>Left</, 'the lane picked shows it');
   assert.match(view({ lane: 'gone' }), />Add clip to Base</);
+});
+
+test('a track is offered for each fixture without one, by its label', () => {
+  given({ sequence: STATUS });
+  const html = ui.html(ui.h(ui.Sequence, { initial: { sequence: SEQ, editing: true } }));
+  assert.match(html, /<option value="2">Right<\/option>/);
+  assert.doesNotMatch(html, /<option value="1">Left<\/option>/, 'Left has its track already');
 });
 
 test('deleting a saved sequence requires confirmation', () => {
