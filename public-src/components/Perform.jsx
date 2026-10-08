@@ -1,39 +1,37 @@
+import { HardwareFit } from './HardwareFit.jsx';
 import { Fragment } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { api, autoPositionSig, connectedSig, emitTap, followMusic, pick, send } from '../state.js';
-import { colorToCss, clockSource, fmtTime, formatBpm } from '../utils.js';
+import { clockSource, fmtTime, formatBpm } from '../utils.js';
 import { timelinePosition } from '../timeline-state.js';
 import { useDraft } from '../draft.js';
-import { useEnergyPads } from '../energy-pad.js';
+import { NowPlaying, PlayingVoices } from './NowPlaying.jsx';
+import { Pads } from './Pads.jsx';
+import { StrobePad } from './StrobePad.jsx';
 import { activeQueue } from './Queue.jsx';
+import { PaletteStrip } from './PaletteStrip.jsx';
+import { Transport } from './Transport.jsx';
+import { Matrix } from './Matrix.jsx';
+import { SubTabs, SubPanel, useSubTab } from './setup/SubTabs.jsx';
+import { AudioMeters } from './AudioMeters.jsx';
+import { StrobesOff } from './Photosensitivity.jsx';
 
 /**
  * The view for running a show from a tablet: what a hand needs mid-set, as
  * big as the screen allows, and nothing that needs reading twice.
  *
  *   outputs      armed or not: whether anything leaves the machine at all
+ *   strobes      off until the photosensitivity acknowledgement, one tap from it
  *   now / next   the track playing, how far in, and what comes after it
  *   sync         what the lights are keeping time by, and whether it is well
- *   pads         blackout, the energy effects held under a finger (or
- *                latched), and tap tempo
+ *   pads         two banks of eight, each played as its launch mode says,
+ *                the strobe held, blackout, tap tempo and stop all voices
  *   palettes     one tap writes the whole look's colours
  *   faders       the master and how hard the generated show pushes
  *
  * Everything here is also on the other views; this is the same controls laid
  * out for a thumb rather than a mouse.
  */
-
-// Short names for the pads: what fits in large type on a phone.
-const PAD_LABELS = {
-  kill: 'Kill',
-  blinder: 'Blinder',
-  'white-strobe': 'Strobe',
-  'color-strobe': 'Colour strobe',
-  'palette-strobe': 'Palette strobe',
-  'uv-wash': 'UV',
-  glow: 'Glow',
-};
-const PAD_ORDER = ['kill', 'blinder', 'white-strobe', 'color-strobe', 'palette-strobe', 'uv-wash', 'glow'];
 
 const SOURCE_LABELS = {
   prolink: 'PRO DJ LINK', hybrid: 'Spotify + OS clock', spotify: 'Spotify', deezer: 'Deezer',
@@ -42,10 +40,6 @@ const SOURCE_LABELS = {
 
 const SHOW_TEXT = {
   idle: 'Idle', downloading: 'Downloading', analyzing: 'Analysing', ready: 'Ready', playing: 'Running',
-};
-
-const readLatch = () => {
-  try { return localStorage.getItem('lightshow.perform.latch') === '1'; } catch { return false; }
 };
 
 /** How the source the show follows is doing: 'ok', 'warn', 'off' or 'none'. */
@@ -112,6 +106,7 @@ function NowNext() {
   return (
     <section class="perform-now" aria-label="Now and next">
       <div class="perform-now-main">
+        <div class="perform-playing"><NowPlaying /></div>
         <span class="perform-kicker">Now</span>
         {track ? (
           <>
@@ -175,68 +170,27 @@ function SyncHealth() {
   );
 }
 
-function Pads() {
-  const s = pick(['masterBlackout', 'energyEffects', 'energyOverride']);
-  const [latch, setLatch] = useState(readLatch);
-  useEffect(() => { try { localStorage.setItem('lightshow.perform.latch', latch ? '1' : '0'); } catch { /* private mode */ } }, [latch]);
-  const [held, padProps] = useEnergyPads({ latch });
-  const effects = (s.energyEffects || []).slice().sort((a, b) => PAD_ORDER.indexOf(a.id) - PAD_ORDER.indexOf(b.id));
+/** Every voice off, hidden and waiting ones too (DELETE /api/voices); the look and the patterns play on. */
+export const stopAllVoices = () => api('/api/voices', { method: 'DELETE' });
+
+function Utility() {
+  const s = pick(['masterBlackout']);
   return (
-    <section class="perform-pads" aria-label="Effects">
+    <section class="perform-utility" aria-label="Blackout, tap and stop all voices">
       <button type="button" class={`perform-pad pad-blackout ${s.masterBlackout ? 'active' : ''}`}
         aria-pressed={!!s.masterBlackout}
         onClick={() => send({ masterBlackout: !s.masterBlackout })}>
         <span class="perform-pad-name">Blackout</span>
         <span class="perform-pad-hint">{s.masterBlackout ? 'on — tap to restore' : 'tap'}</span>
       </button>
-      {effects.map((eff) => (
-        <button key={eff.id} type="button"
-          class={`perform-pad pad-${eff.id} ${held === eff.id || s.energyOverride === eff.id ? 'active' : ''}`}
-          title={eff.desc}
-          {...padProps(eff.id)}>
-          <span class="perform-pad-name">{PAD_LABELS[eff.id] || eff.name}</span>
-          <span class="perform-pad-hint">{latch ? (held === eff.id ? 'latched — tap to stop' : 'tap to latch') : 'hold'}</span>
-        </button>
-      ))}
       <button type="button" class="perform-pad pad-tap" onPointerDown={(e) => { if (e.button === 0) emitTap(); }}
         onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !e.repeat) { e.preventDefault(); emitTap(); } }}>
         <span class="perform-pad-name">Tap</span>
         <span class="perform-pad-hint">tempo</span>
       </button>
-      <label class="perform-latch">
-        <input type="checkbox" checked={latch} onChange={(e) => setLatch(e.target.checked)} />
-        <span>Latch effects</span>
-      </label>
-    </section>
-  );
-}
-
-function PalettePads() {
-  const s = pick(['palettes', 'palette', 'colorPresets']);
-  const palettes = s.palettes || [];
-  const presets = s.colorPresets || [];
-  let size = 4;
-  try {
-    const saved = parseInt(localStorage.getItem('lightshow.paletteSize'), 10);
-    if (saved === 2 || saved === 3) size = saved;
-  } catch { /* private mode */ }
-  if (!palettes.length) return null;
-  const swatch = (i) => {
-    const c = presets[i];
-    return !c ? '#333' : c.name === 'Blackout' ? '#111' : colorToCss(c);
-  };
-  return (
-    <section class="perform-palettes" aria-label="Palettes">
-      {palettes.map((p) => (
-        <button key={p.id} type="button" class={`perform-palette ${s.palette === p.id ? 'active' : ''}`}
-          aria-pressed={s.palette === p.id}
-          onClick={() => send({ palette: p.id, paletteSize: size })}>
-          <span class="perform-palette-swatches" aria-hidden="true">
-            {((p.colors && p.colors[size]) || []).map((idx, i) => <span key={i} style={{ background: swatch(idx) }} />)}
-          </span>
-          <span class="perform-palette-name">{p.name}</span>
-        </button>
-      ))}
+      <button type="button" class="perform-pad pad-stop-voices" onClick={stopAllVoices}>
+        <span class="perform-pad-name">Stop all voices</span>
+      </button>
     </section>
   );
 }
@@ -264,19 +218,36 @@ function Faders() {
   );
 }
 
+const INSTRUMENTS = [{ id: 'pads', label: 'Pads' }, { id: 'matrix', label: 'Matrix' }];
+
 export function Perform() {
+  const [tab, setTab] = useSubTab('perform', INSTRUMENTS);
   return (
     <div class="perform-view">
       <ArmSwitch />
-      <NowNext />
-      <SyncHealth />
+      <StrobesOff perform />
+      <Transport />
       <div class="perform-body">
         <div class="perform-controls">
-          <Pads />
-          <PalettePads />
+          <SubTabs view="perform" tabs={INSTRUMENTS} tab={tab} setTab={setTab} label="Instruments" />
+          <SubPanel view="perform" tab={tab}>{tab === 'matrix' ? <Matrix /> : <Pads />}</SubPanel>
+          <PlayingVoices />
+          <div class="perform-live-row">
+            <StrobePad />
+            <Utility />
+          </div>
+          <PaletteStrip />
+          <HardwareFit />
         </div>
-        <Faders />
+        <div class="perform-side">
+          <Faders />
+          <AudioMeters />
+        </div>
       </div>
+      <section class="perform-music" aria-label="Music and sync">
+        <NowNext />
+        <SyncHealth />
+      </section>
     </div>
   );
 }

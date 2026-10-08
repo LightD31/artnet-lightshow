@@ -30,8 +30,10 @@ export function attachOutputRoutes(app: Express, ctx: RouteContext): void {
   // and applied the moment it is saved, through the same applier the Show
   // section's switch goes through. Never on at start. The live state and the
   // health report carry it as `armed`.
+  // A disarm stops every voice even when the outputs were off already, once the save went through.
   const answerArmed = (res: Response, on: boolean) => {
     applier.applyChanged(settings.update({ outputs: { armed: on } }));
+    if (!on) applier.disarmed();
     res.json({ ok: true, armed: isArmed() });
   };
   app.post('/api/outputs/arm', (_req, res) => answerArmed(res, true));

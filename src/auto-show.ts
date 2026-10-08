@@ -1139,8 +1139,11 @@ class AutoShow {
       }
       case 'energy': {
         const duration = ev.data.durationMs || 200;
-        this._cancelEnergyTimer();
+        // Applied before the last burst's end is cancelled: a burst refused
+        // (a strobe before the photosensitivity acknowledgement) throws, and
+        // the one before it still ends on its own timer.
         this._applyPatch({ energyOverride: ev.data.id });
+        this._cancelEnergyTimer();
         this._energyTimer = setTimeout(() => {
           this._energyTimer = null;
           // Its own timer, so it needs its own guard — a throw here would be

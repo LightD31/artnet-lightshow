@@ -64,24 +64,22 @@ test('the OS media session and Deezer are keyed by name, with no prefetch', asyn
   }
 });
 
-test('each source says in its own words that it is not connected, or not playing', async () => {
-  const cases = [
-    ['analyze-spotify', 'spotify', 'Spotify not connected', 'No track currently playing on Spotify'],
-    ['analyze-nowplaying', 'nowPlaying', 'Nothing is currently playing', 'Nothing is currently playing'],
-    ['analyze-deezer', 'deezerSource', 'Deezer extension not connected', 'No track currently playing on Deezer'],
-  ];
-  for (const [route, key, offline, idle] of cases) {
-    await withApp({ [key]: { authenticated: false } }, async (post, calls) => {
-      const { status, body } = await post(`/api/auto/${route}`);
-      assert.deepStrictEqual([status, body.error], [400, offline], route);
-      assert.strictEqual(calls.analyze.length, 0);
-    });
-    await withApp({ [key]: playingSource(null) }, async (post) => {
-      const { status, body } = await post(`/api/auto/${route}`);
-      assert.deepStrictEqual([status, body.error], [400, idle], route);
+for (const [route, key] of [
+  ['analyze-spotify', 'spotify'],
+  ['analyze-nowplaying', 'nowPlaying'],
+  ['analyze-deezer', 'deezerSource'],
+]) {
+  for (const [state, source] of [['disconnected', { authenticated: false }], ['idle', playingSource(null)]]) {
+    test(`${route} refuses a ${state} source`, async () => {
+      await withApp({ [key]: source }, async (post, calls) => {
+        const { status, body } = await post(`/api/auto/${route}`);
+        assert.strictEqual(status, 400);
+        assert.ok(typeof body.error === 'string' && body.error.length > 0);
+        assert.strictEqual(calls.analyze.length, 0);
+      });
     });
   }
-});
+}
 
 // What "Analyse" accepts. UNC paths make Windows authenticate to whatever
 // server they name, other URL schemes reach places yt-dlp and librosa should

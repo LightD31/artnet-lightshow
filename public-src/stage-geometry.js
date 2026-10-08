@@ -16,13 +16,16 @@
 
 export const LAMP_W = 56;
 export const LAMP_H = 72;
-const HEAD = 14;   // "BACK OF STAGE"
-const FOOT = 14;   // "AUDIENCE"
+const HEAD = 14;   // the top edge label
+const FOOT = 14;   // the audience edge label
 
 const INSET_X = LAMP_W / 2;
 const INSET_Y = HEAD + LAMP_H / 2;
 const SPAN_X = LAMP_W;
 const SPAN_Y = LAMP_H + HEAD + FOOT;
+
+// The plan's edges as the effects read the room (room.ts: v = +1, the top, is the front).
+export const STAGE_EDGES = { top: 'Stage · TV wall — front', bottom: 'Audience — back', left: 'Left', right: 'Right' };
 
 export const clamp = (n) => Math.max(0, Math.min(100, n));
 export const round1 = (n) => Math.round(n * 10) / 10;
@@ -87,16 +90,14 @@ export const PLAN_SNAP = 2.5;
 /** The plotted area inside a surface (the 0…100 square), for the grid drawn under the lamps. */
 export const plotBox = { left: `${INSET_X}px`, top: `${INSET_Y}px`, right: `${SPAN_X - INSET_X}px`, bottom: `${SPAN_Y - INSET_Y}px` };
 
-// Rows from the top of the plot down. The top edge is the back of the stage
-// and the bottom the audience, as the party patterns read the plot (the
-// StagePlan in src/shared/rig.ts: down it, 0 at the back and 1 at the front).
-const AUTO_ROWS = ['back', 'floor', 'room', null, 'front'];
+// Rows from the top of the plot down: src/shared/room.ts reads the top as the
+// front (stage, TV) and the audience edge as the back.
+const AUTO_ROWS = ['front', null, 'room', 'floor', 'back'];
 
 /**
  * Proposed places: the lamps without a position (every lamp with `all`) in one
- * row per group, spread evenly left to right in patch order, never on or
- * beside a lamp that is placed already.
- * @returns {{ id: number, position: { x: number, y: number } }[]}
+ * row per group, spread evenly left to right in patch order. A lamp keeps its height.
+ * @returns {{ id: number, position: { x: number, y: number, height?: number } }[]}
  */
 export function autoPlace(fixtures, { all = false } = {}) {
   const todo = fixtures.filter((f) => all || !f.position);
@@ -123,6 +124,7 @@ export function autoPlace(fixtures, { all = false } = {}) {
     members.forEach((f, k) => {
       const position = spot(snapTo(10 + (80 * (k + 0.5)) / members.length, PLAN_SNAP), y);
       taken.push(position);
+      if (f.position && Number.isFinite(f.position.height)) position.height = f.position.height;
       out.push({ id: f.id, position });
     });
   });

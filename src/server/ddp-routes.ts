@@ -144,6 +144,10 @@ function pixelWidth(profile: Profile): number {
   return Number.isInteger(width) ? width : 0;
 }
 
+/** Is a fixture sent to a device of its own: a WLED over DDP, or an OpenRGB device. */
+const toDevice = (fix: Fixture) => !!fix.output && (fix.output.protocol === 'ddp' || fix.output.protocol === 'openrgb');
+const deviceName = (fix: Fixture) => (fix.output?.protocol === 'openrgb' ? 'an OpenRGB device' : 'a WLED');
+
 /**
  * Why a patch cannot go out as it is, or null: two fixtures on one WLED that
  * share a LED, or two on one OpenRGB device, would fight over it. Their

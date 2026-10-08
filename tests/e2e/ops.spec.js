@@ -15,7 +15,7 @@ async function openLog(page) {
 }
 
 test('the log: what the server has said, filtered, with its health above', async ({ page }) => {
-  await open(page, 'manual');
+  await open(page, 'effects');
   const log = await openLog(page);
   await expect(log.locator('.log-entry').first()).toBeVisible();
   await expect(log).toContainText('starting');
@@ -28,7 +28,7 @@ test('the log: what the server has said, filtered, with its health above', async
   expect(shown.every((line) => /midi/i.test(line))).toBe(true);
 
   await page.getByRole('searchbox', { name: 'Filter the log' }).fill('');
-  await page.getByLabel('Show').selectOption('error');
+  await page.getByRole('combobox', { name: 'Show' }).selectOption('error');
   await expect(log.locator('.log-entry.lvl-info')).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Pause' }).click();
@@ -37,7 +37,7 @@ test('the log: what the server has said, filtered, with its health above', async
 
 for (const theme of ['dark', 'light', 'red']) {
   test(`the log drawer, ${theme} theme, has no axe violations`, async ({ page }) => {
-    await open(page, 'manual', { theme });
+    await open(page, 'effects', { theme });
     const log = await openLog(page);
     await expect(log.locator('.log-entry').first()).toBeVisible();
     await expect(page.locator('.log-health')).toBeVisible();

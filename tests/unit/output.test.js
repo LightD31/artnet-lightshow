@@ -334,7 +334,7 @@ const ON = {
 const frameMarked = (marker) => { const f = Buffer.alloc(512); f[0] = marker; return f; };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-test('with Hue on, Art-Net frames go out the configured delay after they were rendered', async () => {
+test('Hue latency delays Art-Net output by the configured interval', async () => {
   let start = 0;
   const got = await artnetCapture(async () => {
     output.configureHue({ bridges: [ON], latencyMs: 80 });

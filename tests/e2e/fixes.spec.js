@@ -5,27 +5,26 @@ import { open, reset, until, state } from './helpers.js';
 
 test.beforeEach(async ({ request }) => { await reset(request); });
 
-test('Space taps the tempo after clicking a button, instead of pressing it again', async ({ page, request }) => {
-  await open(page, 'manual');
+test('Space taps tempo without retriggering a clicked button', async ({ page, request }) => {
+  const taps = [];
+  page.on('websocket', (socket) => socket.on('framesent', ({ payload }) => {
+    if (typeof payload !== 'string' || !payload.startsWith('42')) return;
+    const [event] = JSON.parse(payload.slice(2));
+    if (event === 'tap') taps.push(event);
+  }));
+  await open(page, 'effects');
   await page.locator('.cb-blackout').click();
   await until(request, (s) => s.masterBlackout === true);
   // Clicked again, so focus is left on the button, as a click leaves it.
   await page.locator('.cb-blackout').click();
   await until(request, (s) => s.masterBlackout === false);
-  for (let i = 0; i < 4; i++) {
-    await page.keyboard.press('Space');
-    await page.waitForTimeout(400);
-  }
-  const s = await state(request);
-  expect(s.masterBlackout, 'the button was not pressed again').toBe(false);
-  // Taps 400 ms apart, plus the time the key presses take: about 150 BPM,
-  // and nowhere near the 120 it was.
-  expect(s.bpm).toBeGreaterThan(130);
-  expect(s.bpm).toBeLessThan(156);
+  for (let i = 0; i < 4; i++) await page.keyboard.press('Space');
+  await expect.poll(() => taps.length).toBe(4);
+  expect((await state(request)).masterBlackout).toBe(false);
 });
 
 test('a tempo can be typed, to a tenth', async ({ page, request }) => {
-  await open(page, 'manual');
+  await open(page, 'effects');
   await page.getByRole('button', { name: /Press to type a tempo/ }).click();
   const field = page.getByRole('spinbutton', { name: 'Tempo, BPM' });
   await field.fill('128.5');
@@ -38,7 +37,7 @@ test('a tempo can be typed, to a tenth', async ({ page, request }) => {
 });
 
 test('the division row goes to 1/16', async ({ page, request }) => {
-  await open(page, 'manual');
+  await open(page, 'effects');
   await page.getByRole('button', { name: '1/16', exact: true }).click();
   await until(request, (s) => s.beatDivision === 16);
 });

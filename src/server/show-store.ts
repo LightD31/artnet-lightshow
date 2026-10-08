@@ -61,6 +61,7 @@ function snapshotShow() {
       label: f.label,
       ...(hasNoAddress(f) ? {} : { address: f.address, universe: universeOf(f) }),
       profileId: f.profileId,
+      productId: f.productId, hardware: f.hardware, admission: f.admission,
       maxBrightness: maxBrightnessOf(f),
       position: f.position ? { ...f.position } : null,
       group: f.group || null,
@@ -147,6 +148,7 @@ function applyShow(rawShow: unknown): ShowFile {
       geometry: f.geometry ? { ...f.geometry } : null,
       output: !f.output ? null
         : f.output.protocol === 'hue' ? { ...f.output, bridge: f.output.bridge || fallback } : { ...f.output },
+      productId: f.productId, hardware: f.hardware, admission: f.admission,
       override: null,
     }));
     // A Hue lamp is channels of the bridge's area, one for each section of its

@@ -272,6 +272,24 @@ export function UpdatePresets(self) {
 		{ actionId: 'energy_override_off', options: {} },
 	])
 
+	// ── The deck: its 16 pads, held while the button is down, and the strobe burst ──
+
+	const padIds = []
+	for (let n = 1; n <= 16; n++) {
+		const bank = Math.floor((n - 1) / 8)
+		const slot = (n - 1) % 8
+		padIds.push(`pad_${n}`)
+		presets[`pad_${n}`] = button(
+			`Pad ${n}`,
+			{ text: `$(lightshow:pad_${n}_label)`, size: 'auto' },
+			[{ actionId: 'pad_hold', options: { bank, slot } }],
+			{ up: [{ actionId: 'pad_release', options: { bank, slot } }] },
+		)
+	}
+	presets['strobe_burst'] = button('Strobe burst', { text: 'STROBE\nBURST', bgcolor: combineRgb(80, 80, 80) }, [
+		{ actionId: 'strobe_burst', options: { ms: 1000 } },
+	])
+
 	const group = (id, name, ids) => ({ id, type: 'simple', name, presets: ids })
 	const structure = [
 		{
@@ -286,6 +304,12 @@ export function UpdatePresets(self) {
 				group('busk_master', 'Master', ['master_display', 'master_up', 'master_down', 'transport_blackout']),
 				...(cues.length ? [group('busk_cues', 'Cues', cues.map((c) => `cue_${c.id}`))] : []),
 			],
+		},
+		{
+			id: 'deck',
+			name: 'Deck',
+			description: 'The 16 pads (a hold pad plays while pressed, a loop toggles, a once fires; labelled from the server) and the strobe burst',
+			definitions: [group('deck_pads', 'Pads', padIds), group('deck_strobe', 'Strobe', ['strobe_burst'])],
 		},
 		{
 			id: 'patterns',
@@ -329,7 +353,7 @@ export function UpdatePresets(self) {
 		{
 			id: 'energy',
 			name: 'Energy',
-			description: 'Latched energy effects: on until another replaces it or Energy Off. For momentary ones, see Busk → Hold',
+			description: 'Latched energy effects: on until another replaces it or Energy Off; Palette Strobe also ends by itself at the strobe latch limit (60 s unless changed). For momentary ones, see Busk → Hold',
 			definitions: [...energy.map((e) => `energy_${e.id}`), 'energy_off'],
 		},
 	]

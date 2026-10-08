@@ -1,3 +1,4 @@
+import { FixtureHardware } from './Hardware.jsx';
 import { pick, connectedSig, emitFixture } from '../../state.js';
 import { stagePositions } from '../../../src/shared/stage.ts';
 import { buildRig, lineOf } from '../../../src/shared/rig.ts';
@@ -14,7 +15,7 @@ import { hueBridgeLabel } from '../../utils.js';
  * runs. Several selected: what they are, and identifying them together.
  */
 export function Inspector() {
-  const s = pick(['fixtures', 'profiles', 'identify', 'hueBridges']);
+  const s = pick(['fixtures', 'profiles', 'identify', 'hueBridges', 'hardware']);
   const connected = connectedSig.value;
   const fixtures = s.fixtures || [];
   const profiles = s.profiles || {};
@@ -102,6 +103,7 @@ export function Inspector() {
           <span>{trimPct}%</span>
         </span>
       </div>
+      <FixtureHardware fixture={fix} profile={profile} settings={s.hardware} send={send} />
       {hueLamp && <p class="setting-help">A lamp of the entertainment area of the Hue bridge "{hueBridgeLabel(s.hueBridges, fix.output.bridge)}",
         added from Rig → Outputs → Philips Hue on a profile built from what the bridge says it can show: it takes no DMX
         channels, and each of its sections is sent the colour it is rendered.</p>}

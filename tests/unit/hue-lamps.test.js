@@ -62,7 +62,7 @@ async function withPatch(fixtures, fn) {
 
 // ── Placement ────────────────────────────────────────────────────────────────
 
-test('the internal universes are past every Art-Net universe, and fit the page\'s 16-bit DMX frames', () => {
+test('internal Hue universes fit DMX frames beyond the Art-Net range', () => {
   assert.ok(INTERNAL_UNIVERSE > 32767 && INTERNAL_UNIVERSE + 64 < 65536);
   assert.strictEqual(isInternalUniverse(32767), false);
   assert.strictEqual(isInternalUniverse(INTERNAL_UNIVERSE), true);
@@ -73,7 +73,7 @@ test('the internal universes are past every Art-Net universe, and fit the page\'
   assert.deepStrictEqual([isHueLamp({ output: HUE }), isHueLamp({ output: { protocol: 'ddp', host: 'x' } })], [true, false]);
 });
 
-test('fixtures with no address are packed one after another on the internal universes, in patch order', () => {
+test('addressless Hue fixtures pack in patch order', () => {
   const profiles = { p: { channelCount: 12, channelMap: {} }, w: { channelCount: 1, channelMap: {} }, big: { channelCount: 500, channelMap: {} } };
   const fixtures = [
     { profileId: 'p', address: 1, universe: 0, output: HUE },
@@ -93,7 +93,7 @@ test('fixtures with no address are packed one after another on the internal univ
   assert.strictEqual(placeAddressless(fixtures, (f) => profiles[f.profileId]), false, 'placed already: nothing moves');
 });
 
-test('a strip with no address takes internal universes of its own, and fits wherever it lands', () => {
+test('addressless strips occupy dedicated internal universes', () => {
   const strip = barProfile({ id: 'hue-strip', name: 'Strip', cells: 300, firstChannel: 1, order: 'RGB' });
   const small = { channelCount: 4, channelMap: {} };
   const fixtures = [
@@ -129,7 +129,7 @@ test('an internal universe goes out on no wire, whatever is on', () => {
   assert.ok(sent.every(([, universe]) => universe !== INTERNAL_UNIVERSE));
 });
 
-test('the rig lists only the universes on the wire; the DMX feed carries the lamps for the swatches', async () => {
+test('rig universes exclude Hue while DMX previews include it', async () => {
   await withPatch([par(0, 1), lamp(1)], () => {
     assert.ok(activeUniverses().includes(INTERNAL_UNIVERSE), 'rendered');
     assert.deepStrictEqual(wireUniverses(), [state.artnet.universe]);

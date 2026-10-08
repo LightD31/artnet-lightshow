@@ -1,29 +1,13 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useFocusTrap } from '../focus-trap.js';
+import { VIEWS } from '../views.js';
 
-/**
- * Every keyboard shortcut the surface has, in one place.
- *
- * They existed and worked; two of them were hinted in `title` attributes and
- * the rest were not written down anywhere, which for a surface meant to be
- * driven in a dark room during a set is the same as not having them. This table
- * is the list the overlay renders, so a shortcut added here is documented by
- * construction.
- *
- * `keys` is a chord — Shift and Enter held together — unless `either` is set,
- * in which case they are alternatives. Joining four arrow keys with "+" read as
- * an instruction to press all four at once.
- */
 export const SHORTCUTS = [
   {
     group: 'Transport',
     items: [
       { keys: ['Space'], what: 'Tap tempo — tap along to set the BPM (also after clicking a button)' },
-      { keys: ['1'], what: 'Manual view' },
-      { keys: ['2'], what: 'Auto Show view' },
-      { keys: ['3'], what: 'Perform view' },
-      { keys: ['4', '5'], either: true, what: 'Timeline, Stage view' },
-      { keys: ['6', '7', '8', '9'], either: true, what: 'Rig, Sources, Settings, Preflight view' },
+      ...VIEWS.map((view) => ({ view: view.id, keys: [...(view.shift ? ['Shift'] : []), view.key], what: `${view.label} view` })),
       { keys: ['←', '→'], either: true, what: 'Next or previous view, on the view tabs' },
     ],
   },
@@ -39,10 +23,23 @@ export const SHORTCUTS = [
     ],
   },
   {
-    group: 'Energy effects',
+    group: 'Pads',
     items: [
-      { keys: ['Space'], what: 'Hold an energy button reached with Tab — releases when you let go' },
-      { keys: ['Enter'], what: 'Hold a focused energy button' },
+      { keys: ['Space', 'Enter'], either: true, what: 'Pad reached with Tab: hold plays until released; once plays one phrase; loop starts or stops on each press' },
+    ],
+  },
+  {
+    group: 'Matrix and Sequence',
+    items: [
+      { keys: ['Space', 'Enter'], either: true, what: 'Hold a focused Matrix colour until released' },
+      { keys: ['Space', 'Enter'], either: true, what: 'Select a focused sequence clip while Edit is on' },
+    ],
+  },
+  {
+    group: 'Timeline',
+    items: [
+      { keys: ['←', '→'], either: true, what: 'Rehearse from one second earlier or later; Shift moves ten seconds' },
+      { keys: ['Home', 'End'], either: true, what: 'Rehearse from the start or end' },
     ],
   },
   {
@@ -50,6 +47,11 @@ export const SHORTCUTS = [
     items: [
       { keys: ['←', '→', '↑', '↓'], either: true, what: 'Nudge the focused fixture while positioning' },
       { keys: ['Shift', '←'], what: 'Nudge further (10% instead of 2%)' },
+      { keys: ['[', ']'], either: true, what: 'Turn the selected bar on the plan' },
+      { keys: ['-', '='], either: true, what: 'Change the selected bar length; 0 restores its default line' },
+      { keys: ['Esc'], what: 'Stop drawing bars, or clear the plan selection' },
+      { keys: ['←', '→', '↑', '↓'], either: true, what: 'Turn and tilt the focused 3D stage' },
+      { keys: ['+', '−'], either: true, what: 'Move closer or further in the 3D stage' },
     ],
   },
   {

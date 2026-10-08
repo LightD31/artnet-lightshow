@@ -1,4 +1,4 @@
-import { getClientState } from '../state.ts';
+import { getLiveState } from '../state.ts';
 import { cueWriteSchema, cueRestoreSchema, reorderSchema } from '../cues.ts';
 import { validate } from '../validation.ts';
 import { messageOf, statusOf } from '../../errors.ts';
@@ -71,12 +71,14 @@ export function attachCueRoutes(app: Express, ctx: RouteContext): void {
     } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
-  // By name, for callers that hold the label rather than the generated id.
+  // By name, for callers that hold the label rather than the generated id. A
+  // recall answers with the live state it left, as POST /api/set does: the
+  // catalogues are GET /api/state's.
   app.post('/api/cues/by-name/:name/recall', (req, res) => {
     try {
       const cue = cues.findByName(req.params.name);
       if (!cue || !cues.recall(cue.id)) return res.status(404).json({ ok: false, error: 'No cue by that name' });
-      res.json({ ok: true, id: cue.id, state: getClientState() });
+      res.json({ ok: true, id: cue.id, state: getLiveState() });
     } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 
@@ -84,7 +86,7 @@ export function attachCueRoutes(app: Express, ctx: RouteContext): void {
     try {
       if (!cues.recall(req.params.id)) return res.status(404).json({ ok: false, error: 'No such cue' });
       // recallLook goes through applyPatch, which broadcasts on its own.
-      res.json({ ok: true, state: getClientState() });
+      res.json({ ok: true, state: getLiveState() });
     } catch (err) { res.status(statusOf(err) || 400).json({ ok: false, error: messageOf(err) }); }
   });
 }

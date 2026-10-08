@@ -9,14 +9,14 @@ import http from 'node:http';
 import { Server } from 'socket.io';
 import { io as connect } from 'socket.io-client';
 
-import { StateDiffer, createPublisher, domainOf, clockMoved, ROOM } from '../../src/server/protocol.ts';
+import { StateDiffer, createPublisher, domainOf, hasDomain, clockMoved, ROOM } from '../../src/server/protocol.ts';
 import { encodeDmxFrame, decodeDmxFrame } from '../../src/shared/dmx-frame.ts';
 import { attachSockets } from '../../src/server/sockets.ts';
 import { state, getLiveState, getDmxUniverses } from '../../src/server/state.ts';
 import { applyPatch } from '../../src/server/patch.ts';
 import { conductor } from '../../src/server/conductor.ts';
 
-test('only the keys that changed go out, grouped by domain, each domain counting its own versions', () => {
+test('deltas version changed keys independently by domain', () => {
   const differ = new StateDiffer();
   const first = differ.diff({ masterDimmer: 255, pattern: 'chase', fixtures: [{ id: 0 }], spotify: { ok: true }, mystery: 1 });
   assert.deepStrictEqual(first.map((p) => [p.d, p.v, Object.keys(p.set)]), [
@@ -34,7 +34,7 @@ test('only the keys that changed go out, grouped by domain, each domain counting
     { d: 'rig', v: 2, set: { fixtures: [{ id: 0, label: 'Left' }] } },
     { d: 'sources', v: 2, set: {}, del: ['spotify'] },
   ], 'an edited fixture and a key that went away');
-  assert.deepStrictEqual(differ.versions(), { look: 2, rig: 2, show: 0, sources: 2, catalogs: 0, system: 1 });
+  assert.deepStrictEqual(differ.versions(), { look: 2, rig: 2, show: 0, sources: 2, audio: 0, sequence: 0, catalogs: 0, library: 0, voices: 0, pads: 0, system: 1 });
   assert.strictEqual(domainOf('autoShow'), 'show');
   assert.strictEqual(domainOf('hueBridges'), 'rig', 'the patch table reads the bridges with the fixtures');
   assert.strictEqual(domainOf('toString'), 'system', 'only the keys it names');
@@ -107,7 +107,7 @@ async function serve() {
 
 const next = (socket, event) => new Promise((resolve) => socket.once(event, resolve));
 
-test('a page that asks for protocol 2 gets a snapshot, then only what changed; the others the whole state', async () => {
+test('protocol 2 subscribers receive snapshots followed by deltas', async () => {
   const s = await serve();
   try {
     const v2 = s.client({ protocol: 2 });
@@ -182,6 +182,18 @@ test('the frame the feed sends is the engine\'s universes as they are patched', 
   assert.ok(frame[universes[0]].length >= last, 'up to the last patched channel at least');
 });
 
+// The library a client edits mid-show is a domain of its own; the built-ins
+// beside it are catalogues, sent once; the colours over the effects and the
+// gate on the fast ones are the look's.
+test('the library domain: saved presets and palettes; the built-ins stay catalogues', () => {
+  assert.strictEqual(domainOf('effects'), 'library');
+  assert.strictEqual(domainOf('userPalettes'), 'library');
+  for (const key of ['palettes', 'families', 'builtinPalettes', 'patterns']) assert.strictEqual(domainOf(key), 'catalogs', key);
+  assert.strictEqual(domainOf('paletteOverride'), 'look');
+  assert.strictEqual(domainOf('paletteOverrideId'), 'look');
+  assert.strictEqual(domainOf('safety'), 'look');
+});
+
 // A key no domain names goes out as `system`, which no view watches.
 test('every key of the live state names its domain, the tempo mode the look\'s', () => {
   assert.strictEqual(domainOf('tempoMode'), 'look');
@@ -195,37 +207,54 @@ test('every key of the live state names its domain, the tempo mode the look\'s',
 test('a beat that moves as it should adds nothing to the broadcasts', async () => {
   const s = await serve();
   const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+  // What is sent arrives in order on each socket, but a busy runner may take a
+  // while: wait for it by deadline, and pause only to show nothing more came.
+  const until = async (done, what) => {
+    const end = Date.now() + 10000;
+    while (!done()) {
+      assert.ok(Date.now() < end, `still waiting for ${what}`);
+      await pause(5);
+    }
+  };
   try {
     const v2 = s.client({ protocol: 2 });
     const v1 = s.client();
     await Promise.all([next(v2, 'snapshot'), next(v1, 'state')]);
-    s.integrations.broadcast();
-    await pause(50);
     const patches = [];
     const states = [];
     v2.on('patch', (p) => patches.push(p));
     v1.on('state', (w) => states.push(w));
+    // Once both have this fader, everything sent before it has arrived too.
+    applyPatch({ masterDimmer: 76 });
+    s.integrations.broadcast();
+    await until(() => patches.some((p) => p.set.masterDimmer === 76) && states.some((w) => w.masterDimmer === 76), 'the first broadcast');
+    patches.length = 0;
+    states.length = 0;
 
     for (let i = 0; i < 20; i++) { s.integrations.broadcast(); await pause(10); }
     await pause(50);
     assert.deepStrictEqual([patches.length, states.length], [0, 0], 'twenty sweeps of a running clock: nothing to send');
 
+    const sentAfter = Date.now();
     applyPatch({ masterDimmer: 77 });
     s.integrations.broadcast();
+    await until(() => patches.length && states.length, 'the fader');
     await pause(50);
     assert.deepStrictEqual(patches.map((p) => p.set), [{ masterDimmer: 77 }], 'the fader, without the clock');
     assert.strictEqual(states.length, 1);
-    assert.ok(Math.abs(states[0].clock.at - Date.now()) < 100, 'protocol 1 gets the whole state, the clock read with it');
+    assert.ok(states[0].clock.at >= sentAfter, 'protocol 1 gets the whole state, the clock read with it');
 
     // The clock stopping is news once, and standing still is not.
     conductor.setRunning(false);
     for (let i = 0; i < 10; i++) { s.integrations.broadcast(); await pause(10); }
+    await until(() => patches.length >= 2, 'the stop');
     await pause(50);
     assert.deepStrictEqual(patches.slice(1).map((p) => Object.keys(p.set)), [['clock']]);
     const stopped = patches[1].set.clock;
     conductor.setRunning(true);
     await pause(30);
     s.integrations.broadcast();
+    await until(() => patches.length >= 3 && states.length >= 3, 'moving again');
     await pause(50);
     assert.strictEqual(patches.length, 3, 'moving again is news');
     assert.ok(patches[2].set.clock.beatPos >= stopped.beatPos && patches[2].set.clock.epoch === stopped.epoch);
@@ -235,4 +264,17 @@ test('a beat that moves as it should adds nothing to the broadcasts', async () =
     applyPatch({ masterDimmer: 255 });
     await s.close();
   }
+});
+
+test('every live-state key is in DOMAIN_OF', () => {
+  const missing = Object.keys(getLiveState()).filter((key) => !hasDomain(key));
+  assert.deepStrictEqual(missing, []);
+  // The integrations' keys and the deck's, which need a running server to appear.
+  const named = ['strobe', 'pads', 'sequence', 'sequences', 'sequencePatterns', 'voices', 'matrix', 'audio', 'paletteOverride', 'safety', 'effects', 'userPalettes',
+    'spotify', 'nowPlaying', 'prolink', 'live', 'cues', 'warm', 'midi', 'autoShow', 'activeSource', 'showOn'];
+  assert.deepStrictEqual(named.filter((key) => !hasDomain(key)), []);
+  assert.equal(domainOf('matrix'), 'look');
+  assert.equal(domainOf('strobe'), 'look');
+  assert.equal(domainOf('sequences'), 'sequence');
+  assert.equal(domainOf('sequencePatterns'), 'sequence');
 });

@@ -147,10 +147,24 @@ class SKey(unittest.TestCase):
         # torchaudio 2.9+ routes `load` through torchcodec, which the ROCm
         # wheels do not ship; S-KEY's own loader then fails and every track
         # silently loses its key. The adapter reads the file itself.
+        #
+        # The fake is a module of its own, as S-KEY's key_detection is: its
+        # detect_key looks up `load_audio` and `print` in its module, which is
+        # where the adapter replaces both.
+        import io
         import types
         import numpy as np
         import soundfile as sf
         seen = {}
+        module = types.ModuleType('key_detection')
+        module.seen = seen
+        module.load_audio = MagicMock(side_effect=RuntimeError('torchcodec'))
+        exec(
+            "def detect_key(path, device='cpu'):\n"
+            "    seen['waveform'] = load_audio(path, 22050)\n"
+            "    print('\\n✅ Predicted key: A minor\\n')\n"
+            "    return ['A minor']\n",
+            module.__dict__)
 
         stdout = sys.stdout
 
@@ -169,15 +183,16 @@ class SKey(unittest.TestCase):
             say('✅ Predicted key: A minor')
             return ['A minor']
 
-        module = types.SimpleNamespace(detect_key=detect_key,
-                                       load_audio=MagicMock(side_effect=RuntimeError('torchcodec')))
         with tempfile.TemporaryDirectory() as directory:
             path = str(Path(directory) / 'tone.wav')
             t = np.arange(44100) / 44100
             sf.write(path, np.stack([0.2 * np.sin(2 * np.pi * 440 * t), 0.1 * np.sin(2 * np.pi * 440 * t)], axis=1), 44100)
-            with patch.object(adapters, '_optional', return_value=module):
+            console = Console()
+            with patch.object(adapters, '_optional', return_value=module), \
+                 patch('sys.stdout', new=console):
                 result = adapters.skey_key(path)
         self.assertEqual(result, {'value': 'A minor', 'confidence': 1.0, 'source': 's-key'})
+        self.assertEqual(console.getvalue(), '')
         waveform = seen['waveform']
         self.assertEqual(tuple(waveform.shape[:1]), (1,))
         self.assertAlmostEqual(waveform.shape[1], 22050, delta=2)

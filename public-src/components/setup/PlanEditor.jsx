@@ -5,7 +5,7 @@ import { stagePositions } from '../../../src/shared/stage.ts';
 import { buildRig, lineOf } from '../../../src/shared/rig.ts';
 import { fixtureOutputColor, fixtureCellColors, patchedAt } from '../../utils.js';
 import {
-  PLAN_SNAP, autoPlace, clamp, geometryOf, lineFromEnds, placeAt, plotBox, pointIn, pxOf, round1, snapTo, surfaceStyle,
+  PLAN_SNAP, STAGE_EDGES, autoPlace, clamp, geometryOf, lineFromEnds, placeAt, plotBox, pointIn, pxOf, round1, snapTo, surfaceStyle,
 } from '../../stage-geometry.js';
 import { rigSelectionSig, selectOnly, toggleSelected, identifyFixtures, stopIdentify } from '../../rig-ui.js';
 
@@ -25,15 +25,24 @@ import { rigSelectionSig, selectOnly, toggleSelected, identifyFixtures, stopIden
  * With snapping on, positions keep to a 2.5% grid, angles to 15°; Alt places
  * freely. Lamps not placed yet wait as chips beside the plot: tap one, then
  * the plot (or drag it there). Auto-place proposes places for them first.
+ * The top edge is the stage and TV wall, which src/shared/room.ts calls the front.
  */
 
 const SNAP_STEP = PLAN_SNAP;
+const HEIGHT_STEP = 5;
 const SNAP_ANGLE = 15;
 const DRAW_IDENTIFY_SECONDS = 60;
 const readSnap = () => { try { return localStorage.getItem('lightshow.plan.snap') !== '0'; } catch { return true; } };
 
 /** How many cells a bar's line is measured in: a panel's columns, else its cells. */
 const lineCells = (rig, i) => (rig.grids[i] ? rig.grids[i].columns : rig.ranges[i].count);
+
+/** One height step up (dir 1) or down (−1), on the 5 % grid, floor 0 to ceiling 100; unset is mid-room. */
+export function stepHeight(height, dir) {
+  const h = Number.isFinite(height) ? height : 50;
+  const next = dir > 0 ? Math.floor(h / HEIGHT_STEP) * HEIGHT_STEP + HEIGHT_STEP : Math.ceil(h / HEIGHT_STEP) * HEIGHT_STEP - HEIGHT_STEP;
+  return Math.max(0, Math.min(100, next));
+}
 
 /** Arrange: the selection along one row, evenly spread, in the order they stand. */
 export function rowPositions(points) {
@@ -319,7 +328,13 @@ export function PlanEditor() {
   };
   const resetPlace = () => { for (const id of chosen) edit({ id, position: null, geometry: null }); };
 
-  // ── Auto-place ──
+  // ── Height, and auto-place ──
+  const one = chosen.length === 1 ? fixtures[indexOf.get(chosen[0])] : null;
+  const oneHeight = one && one.position && Number.isFinite(one.position.height) ? one.position.height : null;
+  const setHeight = (height) => {
+    const at = positions[indexOf.get(one.id)];
+    edit({ id: one.id, position: { x: round1(at.x), y: round1(at.y), height } });
+  };
   const waiting = fixtures.filter((f) => !f.position);
   const propose = (all) => setProposal({ all, list: autoPlace(fixtures, { all }) });
   const applyProposal = () => {
@@ -381,12 +396,14 @@ export function PlanEditor() {
       )}
       <div class="plan-body">
       <div ref={surface} class={`stage-surface plan-surface editing tool-${tool}${armed !== null ? ' placing' : ''}`} role="group"
-        aria-label="Plan of the rig, viewed from above with the audience at the bottom"
+        aria-label="Plan of the rig from above: the stage and TV wall (the front) at the top, the audience (the back) at the bottom, left and right as the audience sees them"
         style={surfaceStyle}
         onPointerDown={onPointerDown} onPointerMove={onPointerMove}
         onPointerUp={(e) => finish(e, true)} onPointerCancel={(e) => finish(e, false)}>
         <span class="plan-grid" aria-hidden="true" style={plotBox} />
-        <span class="stage-back">BACK OF STAGE</span>
+        <span class="stage-back plan-edge-top" aria-hidden="true">{STAGE_EDGES.top}</span>
+        <span class="plan-edge plan-edge-left" aria-hidden="true">{STAGE_EDGES.left}</span>
+        <span class="plan-edge plan-edge-right" aria-hidden="true">{STAGE_EDGES.right}</span>
         {drawnFixtures.map((fix, i) => {
           if (!rig.cellMaps[i]) return null;
           const { start, count } = rig.ranges[i];
@@ -406,16 +423,21 @@ export function PlanEditor() {
           const grid = rig.grids[i];
           const shape = grid ? `a panel of ${grid.columns} × ${grid.rows} cells` : bar ? `a bar of ${rig.ranges[i].count} cells` : '';
           const isSelected = selected.includes(fix.id);
+          const height = fix.position && Number.isFinite(fix.position.height) ? fix.position.height : null;
+          const h = height ?? 50;
           return <button key={fix.id} type="button" data-fixture={fix.id}
             class={`stage-fixture ${bar ? 'bar' : ''} ${isSelected ? 'selected' : ''} ${identifying.has(fix.id) ? 'identifying' : ''}`}
             style={{ ...placeAt(point), '--light': color }}
             aria-pressed={isSelected}
-            aria-label={`${fix.label}${shape ? `, ${shape}` : ''}, position ${Math.round(point.x)}, ${Math.round(point.y)}. `
+            aria-label={`${fix.label}${shape ? `, ${shape}` : ''}, position ${Math.round(point.x)}, ${Math.round(point.y)}, height ${h} %${height === null ? ' (not set)' : ''}. `
               + `Arrow keys move the selection${bar ? '; [ and ] turn it, minus and equals change its length, 0 resets both' : ''}.`}
             title={`${fix.label} · ${patchedAt(fix)}`}
             onClick={(e) => { if (e.detail === 0) { if (e.shiftKey) toggleSelected(fix.id); else selectOnly(fix.id); } }}
             onKeyDown={(e) => onKeyDown(e, fix, i)}>
             <i class="stage-glow" /><span class="stage-lamp">{i + 1}</span><span class="stage-label">{fix.label}</span>
+            <span class={`plan-height${height === null ? ' unset' : ''}`}
+              title={height === null ? 'Height not set: mid-room (50 %)' : `Height ${height} % (0 floor, 100 ceiling)`}
+              style={{ '--h': h / 100 }} aria-hidden="true">↑{h}</span>
           </button>;
         })}
         {tool === 'select' && drawnFixtures.map((fix, i) => {
@@ -448,7 +470,7 @@ export function PlanEditor() {
           </>;
         })()}
         {!fixtures.length && <p class="panel-empty">Nothing is patched yet. Add fixtures below.</p>}
-        <span class="stage-audience">AUDIENCE</span>
+        <span class="stage-audience plan-edge-bottom" aria-hidden="true">{STAGE_EDGES.bottom}</span>
       </div>
       <div class="plan-unplaced" role="group" aria-label={`Not placed yet: ${waiting.length} lamp${waiting.length === 1 ? '' : 's'}`}>
         <h3 class="plan-unplaced-title">Not placed yet</h3>
@@ -463,7 +485,7 @@ export function PlanEditor() {
         {armed !== null && <p class="plan-hint" role="status">Tap the plot where it hangs. Alt places it off the grid.</p>}
       </div>
       </div>
-      {/* Under the plot, so the plot does not move under the pointer when a proposal shows. */}
+      {/* Under the plot, so it does not move when a lamp is picked up or a proposal shows. */}
       {proposal && (
         <div class="plan-proposal" role="status">
           <span>{proposal.list.length ? `Proposed places for ${proposal.list.length} lamp${proposal.list.length === 1 ? '' : 's'}, dashed on the plot.` : 'Nothing to place.'}</span>
@@ -472,6 +494,24 @@ export function PlanEditor() {
           <button type="button" class="btn" onClick={() => setProposal(null)}>Cancel</button>
         </div>
       )}
+      {one && (() => {
+        const h = oneHeight ?? 50;
+        return <section class="plan-selected" aria-label={`${one.label} on the plot`}>
+          <strong class="plan-selected-name">{indexOf.get(one.id) + 1} · {one.label}</strong>
+          <div class="plan-height-edit" role="group" aria-label="Height">
+            <span class="plan-height-label">Height</span>
+            <button type="button" class="btn plan-step" aria-label={`Lower ${one.label}`} disabled={!connected || !one.position || h <= 0}
+              onClick={() => setHeight(stepHeight(oneHeight ?? undefined, -1))}>−</button>
+            <input type="range" class="plan-height-range" min="0" max="100" step={HEIGHT_STEP} aria-label={`Height of ${one.label}`}
+              value={h} disabled={!connected || !one.position} onChange={(e) => setHeight(Number(e.currentTarget.value))} />
+            <button type="button" class="btn plan-step" aria-label={`Raise ${one.label}`} disabled={!connected || !one.position || h >= 100}
+              onClick={() => setHeight(stepHeight(oneHeight ?? undefined, 1))}>+</button>
+            <output class="plan-height-value">{h} %</output>
+            <span class="plan-height-scale">{oneHeight === null ? 'not set: mid-room · ' : ''}0 floor, 100 ceiling</span>
+            {!one.position && <span class="plan-height-hint">Place it first: a height belongs to a place on the plot.</span>}
+          </div>
+        </section>;
+      })()}
       <p class="look-note">
         Numbers are patch order; a bar's first cell is outlined. Patterns travel across the rig as it is placed here.
         {rig.hasPixels ? ' Select a bar and Draw it to map which way it runs.' : ''}

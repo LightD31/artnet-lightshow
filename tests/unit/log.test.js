@@ -78,7 +78,7 @@ test('the last run\'s tail is read back, skipping what is not a record', (t) => 
   assert.deepEqual(readTail(path.join(dir, 'missing.log')), []);
 });
 
-test('the server\'s log: the console taken over, tags as components, the file and the tail', (t) => {
+test('server logging routes tagged console output to disk and tail', (t) => {
   const dir = tmp(t);
   fs.writeFileSync(path.join(dir, 'lightshow.log'), `${JSON.stringify({ level: 50, time: 1, msg: 'before the crash', component: 'engine' })}\n`);
   const before = buffer.last;

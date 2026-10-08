@@ -62,6 +62,7 @@ function ModePicker({ fixture, onDone }) {
       modeName: mode.modeName,
       channelCount: mode.channelCount,
       channelMap: mode.channelMap,
+      ...(mode.strobeHz ? { strobeHz: mode.strobeHz } : {}),
       channelList: mode.channelList.map(({ offset, name, attribute, cell }) => ({ offset, name, attribute, ...(cell !== undefined ? { cell } : {}) })),
       ...(mode.cells ? { cells: mode.cells } : {}),
       ...(mode.grid ? { grid: mode.grid } : {}),

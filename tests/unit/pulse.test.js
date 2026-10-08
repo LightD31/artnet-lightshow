@@ -36,7 +36,7 @@ test('the envelopes are read fifty times a second and interpolated between', () 
   assert.ok(Math.abs(track.at(20).other - 128 / 255) < 1e-9);
 });
 
-test('a drum hit is its strength on the hit and fades after it, a kick slower than a hat', () => {
+test('drum pulses decay at instrument-specific rates', () => {
   const track = pulseTrack(block());
   assert.strictEqual(track.at(999).kick, 0, 'nothing before the first kick');
   assert.strictEqual(track.at(1000).kick, 0.8);
@@ -47,7 +47,7 @@ test('a drum hit is its strength on the hit and fades after it, a kick slower th
   assert.ok(DECAY_MS.kick > DECAY_MS.snare && DECAY_MS.snare > DECAY_MS.hats);
 });
 
-test('an unseparated track has the mix and the lanes but no stems, and a broken block is no pulse', () => {
+test('unseparated tracks omit stems and malformed pulse data is rejected', () => {
   const plain = pulseTrack(block({ stems: false }));
   assert.strictEqual(plain.stems, false);
   const reading = plain.at(1000);
@@ -164,7 +164,7 @@ test('the engine reads the show\'s pulse into every frame\'s input', () => {
   assert.strictEqual(renderInput().pulse, null);
 });
 
-test('the auto show answers with the pulse where it is playing, and nothing when stopped', () => {
+test('auto shows expose pulse data only while playing', () => {
   const show = new AutoShow(() => {}, [{ name: 'Blackout' }], []);
   try {
     show.analysis = { duration: 10, bpm: 120, beats: [0, 0.5, 1, 1.5, 2], downbeats: [0, 2], segments: [], events: [], pulse: block() };

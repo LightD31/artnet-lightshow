@@ -69,7 +69,7 @@ test('a moving fader sends the latest value once a frame, not every input', () =
   assert.deepStrictEqual(sent, [3, 4], 'and not again when the frame comes');
 });
 
-test('the draft is shown while the hand is on it, and gives way once the server agrees', () => {
+test('drafts remain visible until the server agrees', () => {
   let t = 0;
   const sent = [];
   const frames = [];

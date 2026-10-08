@@ -19,7 +19,7 @@ The patterns, colours, palettes, energy effects, fixtures and cues offered in ac
 The **Busk** preset page has what a set played by hand needs:
 
 - **Palettes** — every palette on the server, each button in its first colour, lit while it is the look's palette.
-- **Hold** — each energy effect (white strobe, colour strobe, blinder, UV wash, kill, glow) and a blackout, **on only while the button is held**. The server lets go of a held effect on its own a second after it last heard from Companion, so a crash or a dropped network with a button down never leaves the rig strobing.
+- **Hold** — each energy effect (white strobe, colour strobe, blinder, UV wash, kill, glow) and a blackout, **on only while the button is held**. The server lets go of a held effect on its own a second after it last heard from Companion, so a crash or a dropped network with a button down never leaves the rig strobing. The two strobes wait for the photosensitivity acknowledgement on the server: until it is given, a press (held or latched) is refused and the module's log says why.
 - **Tempo** — tap, the BPM, double and halve, ±5.
 - **Auto show** — start or stop it, its intensity (±10 and a display), a sync nudge (±20 ms) and the track playing.
 - **Master** — the master level (±10 % and a display) and blackout.
@@ -33,7 +33,7 @@ The **Busk** preset page has what a set played by hand needs:
 | Set Bars Pattern                  | The LED bars' own picture (a pixel effect) while the pars run the pattern; or none   |
 | Set Panels Pattern                | The panels' own picture (a WLED matrix: bars, fire, rain…); or none, as the bars     |
 | Set Pixel Map                     | Lay pixel effects across the stage, along each bar, or mirrored                      |
-| Set Palette                       | A palette from the server, at 2, 3 or 4 colours                                      |
+| Set Palette                       | A server palette with 1–8 colour slots and authored gradients; classic variants use 2, 3 or 4 colours |
 | Set Colour A / B / C / D          | Change one colour slot (C/D feed 3/4-colour patterns)                                |
 | Set BPM / Adjust BPM              | Set exact BPM or nudge it by ± amount                                                |
 | Double / Halve BPM                | ×2 or ÷2                                                                             |

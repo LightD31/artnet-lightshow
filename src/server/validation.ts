@@ -1,10 +1,12 @@
 import { z } from 'zod';
+import { admissionPolicySchema, rateOverrideSchema } from '../shared/hardware.ts';
 import net from 'node:net';
 import { COLOR_PRESETS, AUTO_SOURCES, TEMPO_MODES, SYNC_OFFSET_LIMIT_MS } from './presets.ts';
-import { PALETTE_IDS } from './palettes.ts';
+import { paletteBodySchema } from '../shared/palette-model.ts';
 import { FIXTURE_GROUPS } from '../shared/stage.ts';
 import { EMITTERS, PIXEL_MAPS, MAX_CELLS_PER_FIXTURE, MAX_PROFILE_CHANNELS } from '../shared/rig.ts';
 import { HUE_BRIDGE_ID_RE, stripIssue } from '../shared/placement.ts';
+import { parseHex } from '../shared/effects/palette.ts';
 import { HttpError } from '../errors.ts';
 
 /** Input that failed its schema: a 400, with zod's issues for the client. */
@@ -24,6 +26,8 @@ const fixtureId = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1
 const fixturePosition = z.object({
   x: z.number().finite().min(0).max(100),
   y: z.number().finite().min(0).max(100),
+  // Floor to ceiling, for the party effects that read the room's height.
+  height: z.number().min(0).max(100).optional(),
 }).strict();
 const fixtureGroup = z.enum(FIXTURE_GROUPS);
 // A bar's line on the stage plot, centred on its position: how long it is in
@@ -35,6 +39,14 @@ const fixtureGeometry = z.object({
 }).strict();
 const colorIdx = z.number().int().min(0).max(COLOR_PRESETS.length - 1);
 const unitValue = z.number().min(0).max(1).optional();
+
+/** A fixed colour as the effects take one on the wire: #RGB, #RRGGBB or #RRGGBBWW. */
+const hexColour = z.string().max(16).refine((value) => {
+  try { parseHex(value); return true; } catch { return false; }
+}, { message: 'expected a hex colour (#RGB, #RRGGBB or #RRGGBBWW)' });
+
+/** Colours every effect plays instead of its own: one to eight, fixed. Null lets them play their own. */
+const paletteOverride = z.array(hexColour).min(1).max(8).nullable();
 
 // Hostname per RFC 1123, or an IPv4 literal. Rejecting junk here means a typo
 // in the ArtNet panel surfaces as a validation error instead of a stream of
@@ -107,6 +119,7 @@ const artnetSchema = z.object({
 // Pattern / strobeFunction / energyOverride accept any string — the engine
 // silently no-ops on unknown ids, matching the previous lenient behaviour
 // and giving auto-show.js room for new pattern pools without a schema bump.
+// A pattern may name an effect preset as well (the effect library).
 const patchSchema = z.object({
   // Not rounded: a track at 123.7 BPM run at 124 drifts a beat off the music
   // in under a minute.
@@ -147,17 +160,12 @@ const patchSchema = z.object({
   strobeSpeed: u8.optional(),
   strobeFunction: z.string().min(1).max(64).optional(),
   energyOverride: z.union([z.string().min(1).max(64), z.null()]).optional(),
-  // A named look from server/palettes.js. Writes all four colour slots at once;
-  // null just clears the label. Unknown ids are rejected rather than ignored —
-  // unlike a pattern id, a palette that silently does nothing looks like the
-  // colour buttons broke.
-  // The custom message because the default union error is a bare "Invalid
-  // input", which reaches the operator as a toast that says nothing.
-  palette: z.union([z.enum(PALETTE_IDS as [string, ...string[]]), z.null()], {
-    error: `is not a known palette (${PALETTE_IDS.join(', ')})`,
-  }).optional(),
-  // Which bank the palette resolves against. Only meaningful alongside
-  // `palette`; a smaller palette wraps to fill all four slots.
+  // Light DJ's active palette: the effects play these instead of their own
+  // colours and the slots. An empty list is no clear command; null is.
+  paletteOverride: paletteOverride.optional(),
+  basePalette: paletteBodySchema.nullable().optional(),
+  overridePalette: paletteBodySchema.nullable().optional(),
+  palette: z.string().min(1).max(64).nullable().optional(),
   paletteSize: z.union([z.literal(2), z.literal(3), z.literal(4)]).optional(),
   artnet: artnetSchema.optional(),
   prolinkEnabled: z.boolean().optional(),
@@ -204,6 +212,9 @@ const fixtureAddSchema = z.object({
 }).strict();
 
 const fixtureMessageSchema = z.object({
+  productId: z.string().min(1).max(128).nullable().optional(),
+  hardware: rateOverrideSchema.nullable().optional(),
+  admission: admissionPolicySchema.nullable().optional(),
   id: fixtureId,
   position: fixturePosition.nullable().optional(),
   group: fixtureGroup.nullable().optional(),
@@ -230,6 +241,9 @@ const fixtureMessageSchema = z.object({
 const fixtureRestoreSchema = z.object({
   index: z.number().int().min(0).max(255),
   fixture: z.object({
+    productId: z.string().min(1).max(128).nullable().optional(),
+    hardware: rateOverrideSchema.nullable().optional(),
+    admission: admissionPolicySchema.nullable().optional(),
     id: fixtureId.optional(),
     position: fixturePosition.nullable().optional(),
     group: fixtureGroup.nullable().optional(),
@@ -260,6 +274,8 @@ interface CellCheck {
 const kelvin = z.number().int().min(1000).max(20000);
 
 const profileSchema = z.object({
+  hardware: rateOverrideSchema.optional(),
+  strobeHz: z.object({ min: z.number().nonnegative().max(100), max: z.number().positive().max(100) }).strict().refine((v) => v.min <= v.max).optional(),
   id: z.string().min(1).max(128)
     .refine((v) => !RESERVED_PROFILE_IDS.includes(v), { message: 'is a reserved id' }),
   name: z.string().min(1).max(128),
@@ -394,6 +410,9 @@ const showSchema = z.object({
   artnet: artnetSchema.optional(),
   profiles: z.array(profileSchema).optional(),
   fixtures: z.array(z.object({
+    productId: z.string().min(1).max(128).nullable().optional(),
+    hardware: rateOverrideSchema.nullable().optional(),
+    admission: admissionPolicySchema.nullable().optional(),
     id: fixtureId.optional(),
     position: fixturePosition.nullable().optional(),
     group: fixtureGroup.nullable().optional(),
@@ -531,6 +550,8 @@ export type DeezerState = z.output<typeof deezerStateSchema>;
 export {
   fixtureId,
   dmxUniverse,
+  hexColour,
+  paletteOverride,
   patchSchema,
   deezerStateSchema,
   overrideSchema,

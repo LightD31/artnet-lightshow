@@ -3,8 +3,10 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { EventEmitter } from 'node:events';
 
 import { MidiMapStore, DEFAULT_MAP, ACTIONS, defaultTypeFor, sameControl, mapSchema } from '../../src/server/midi-map.ts';
+import MidiController, { MIDI_HOLD_MAX_MS } from '../../src/midi.ts';
 
 let dir;
 let file;
@@ -155,4 +157,123 @@ test('a snapshot cannot be used to mutate the live map', () => {
   snap.map.notes['99'] = { action: 'tap' };
 
   assert.strictEqual(s.get().notes['99'], undefined);
+});
+
+test('a padPress binding names its pad, and the pad is part of which control it is', () => {
+  assert.ok(ACTIONS.some((a) => a.id === 'padPress'));
+  assert.ok(ACTIONS.some((a) => a.id === 'energyHold') && ACTIONS.some((a) => a.id === 'cycleEnergyEffect'));
+  assert.ok(mapSchema.safeParse({ cc: {}, notes: { 40: { action: 'padPress', bank: 1, slot: 7 } } }).success);
+  assert.ok(!mapSchema.safeParse({ cc: {}, notes: { 40: { action: 'padPress', bank: 2, slot: 0 } } }).success);
+  assert.ok(!mapSchema.safeParse({ cc: {}, notes: { 40: { action: 'padPress' } } }).success, 'no pad, no binding');
+  assert.ok(!sameControl({ action: 'padPress', bank: 0, slot: 1 }, { action: 'padPress', bank: 0, slot: 2 }));
+  assert.ok(sameControl({ action: 'padPress', bank: 0, slot: 1 }, { action: 'padPress', bank: 0, slot: 1 }));
+});
+
+test('MIDI padPress maps a note to a pad press/release', () => {
+  const midi = new MidiController({ fixtures: [] }, () => {}, () => {});
+  const calls = [];
+  midi.pads = {
+    press: (bank, slot, owner, token) => calls.push(['press', bank, slot, owner, token]),
+    release: (bank, slot, owner, token) => calls.push(['release', bank, slot, owner, token]),
+  };
+  const input = new EventEmitter();
+  midi.input = input;
+  midi.setMap({ cc: {}, notes: { 40: { action: 'padPress', bank: 1, slot: 2 }, 41: { action: 'padPress', bank: 0, slot: 0 } } });
+  midi._bindInput();
+
+  input.emit('noteon', { note: 40, velocity: 100, channel: 0 });
+  input.emit('noteon', { note: 40, velocity: 100, channel: 0 });
+  assert.equal(calls.filter((c) => c[0] === 'press').length, 1, 'a repeated note-on never presses again');
+  const [, bank, slot, owner, token] = calls[0];
+  assert.deepStrictEqual([bank, slot], [1, 2]);
+
+  input.emit('noteon', { note: 41, velocity: 100, channel: 0 });
+  // The map changes under the held note: its release still finds the pad it pressed.
+  midi.setMap({ cc: {}, notes: {} });
+  input.emit('noteoff', { note: 40, channel: 0 });
+  assert.deepStrictEqual(calls.at(-1), ['release', 1, 2, owner, token]);
+  input.emit('noteon', { note: 41, velocity: 0, channel: 0 });
+  assert.deepStrictEqual(calls.at(-1).slice(0, 3), ['release', 0, 0]);
+  assert.equal(calls.length, 4);
+  midi.close();
+});
+
+// A pad bench: `launch` answers what each press launched; renew answers `live`.
+function padBench(t, launch) {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const midi = new MidiController({ fixtures: [] }, () => {}, () => {});
+  const calls = [];
+  const c = { live: true, strobeMs: 2000 };
+  midi.pads = {
+    press: (bank, slot) => { calls.push(['press', bank, slot]); return launch(bank, slot); },
+    renew: (bank, slot) => { calls.push(['renew', bank, slot]); return c.live; },
+    release: (bank, slot) => calls.push(['release', bank, slot]),
+    strobeMaxMs: () => c.strobeMs,
+  };
+  const input = new EventEmitter();
+  midi.input = input;
+  midi.setMap({ cc: {}, notes: { 40: { action: 'padPress', bank: 0, slot: 1 } } });
+  midi._bindInput();
+  const count = (kind) => calls.filter((x) => x[0] === kind).length;
+  return { midi, input, calls, c, count };
+}
+const HOLD = { mode: 'hold', spec: { kind: 'chase' } };
+
+test('MIDI pad presses renew holds without retriggering loops or one-shots', (t) => {
+  const modes = { hold: HOLD, loop: { mode: 'latched', spec: { kind: 'chase' } }, once: { mode: 'once', spec: { kind: 'chase' } }, off: null };
+  for (const [name, voice] of Object.entries(modes)) {
+    const { midi, input, count } = padBench(t, () => voice);
+    input.emit('noteon', { note: 40, velocity: 100, channel: 0 });
+    t.mock.timers.tick(4000);
+    assert.equal(count('press'), 1, `${name}: pressed once`);
+    assert.equal(count('renew'), name === 'hold' ? 10 : 0, `${name}: renewals`);
+    input.emit('noteoff', { note: 40, channel: 0 });
+    t.mock.timers.tick(4000);
+    assert.deepEqual([count('press'), count('renew') <= 10], [1, true], `${name}: nothing after the note-off`);
+    midi.close();
+    t.mock.timers.reset();
+  }
+});
+
+test("MIDI stops renewing an ended hold", (t) => {
+  const b = padBench(t, () => HOLD);
+  b.input.emit('noteon', { note: 40, velocity: 100, channel: 0 });
+  b.c.live = false;
+  t.mock.timers.tick(400);
+  t.mock.timers.tick(4000);
+  assert.deepEqual([b.count('press'), b.count('renew'), b.count('release')], [1, 1, 1]);
+  b.midi.close();
+});
+
+test("MIDI releases holds when the input port disappears", (t) => {
+  const b = padBench(t, () => HOLD);
+  b.input.emit('noteon', { note: 40, velocity: 100, channel: 0 });
+  t.mock.timers.tick(800);
+  b.midi._portGone = () => true;
+  t.mock.timers.tick(400);
+  t.mock.timers.tick(4000);
+  assert.deepEqual([b.count('renew'), b.count('release')], [2, 1]);
+  b.midi.close();
+});
+
+test("MIDI strobe holds obey the configured strobe ceiling", (t) => {
+  const b = padBench(t, () => ({ mode: 'hold', spec: { kind: 'strobe' } }));
+  b.input.emit('noteon', { note: 40, velocity: 100, channel: 0 });
+  t.mock.timers.tick(1600);
+  assert.deepEqual([b.count('renew'), b.count('release')], [4, 0]);
+  t.mock.timers.tick(400);
+  assert.deepEqual([b.count('renew'), b.count('release')], [4, 1], 'let go at the cap');
+  b.midi.close();
+});
+
+test("MIDI effect holds obey the five-minute ceiling", (t) => {
+  const b = padBench(t, () => HOLD);
+  b.input.emit('noteon', { note: 40, velocity: 100, channel: 0 });
+  t.mock.timers.tick(MIDI_HOLD_MAX_MS - 400);
+  assert.equal(b.count('release'), 0);
+  t.mock.timers.tick(400);
+  assert.equal(b.count('release'), 1);
+  t.mock.timers.tick(4000);
+  assert.equal(b.count('renew'), MIDI_HOLD_MAX_MS / 400 - 1);
+  b.midi.close();
 });

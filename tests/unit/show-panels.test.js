@@ -157,7 +157,7 @@ test('the panels draw their own picture; the pars and the strips are untouched',
   assert.ok(of(chase, (i) => !panel(i)).every(Boolean), 'the chase on everything else');
 });
 
-test('a picture for panels changes nothing on a rig without them, and nothing with none asked', () => {
+test('panel pictures leave rigs unchanged when no panel output is requested', () => {
   const noPanels = buildRig(RIG.filter((f) => f.profileId !== 'panel8x4'), profileOf);
   const look = { pattern: 'solid', pixelPattern: 'comet' };
   assert.deepStrictEqual(paint(noPanels, { ...look, panelPattern: 'fire' }), paint(noPanels, look));

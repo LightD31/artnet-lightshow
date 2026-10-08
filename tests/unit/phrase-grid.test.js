@@ -55,7 +55,7 @@ test('a bar is the median downbeat gap, not the first one', () => {
 });
 
 for (const { name, doc } of tracks) {
-  test(`${name}: every rotation lands on a downbeat, on a phrase boundary of its section`, () => {
+  test(`${name}: rotations follow the phrase grid`, () => {
     let total = 0;
     for (const intensity of [30, 50, 80, 100]) total += assertOnPhraseGrid(doc, plan(doc, intensity).intents);
     assert.ok(total > 0, 'expected the track to rotate at some intensity');

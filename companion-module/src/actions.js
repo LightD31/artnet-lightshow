@@ -19,6 +19,11 @@ const MODE_TOGGLE = [
 	{ id: 'off', label: 'Off' },
 ]
 
+const padOptions = [
+	{ type: 'number', id: 'bank', label: 'Bank (0-1)', default: 0, min: 0, max: 1 },
+	{ type: 'number', id: 'slot', label: 'Slot (0-7)', default: 0, min: 0, max: 7 },
+]
+
 export function UpdateActions(self) {
 	const state = self.liveState
 	const fixtureForNumber = (number) => fixturesOf(state).find((fixture) => fixture.id === Number(number) - 1)
@@ -341,6 +346,22 @@ export function UpdateActions(self) {
 			name: 'Energy Override Off',
 			options: [],
 			callback: () => self.sendSet({ energyOverride: null }),
+		},
+		// The deck's pads: pressed once; a hold pad is renewed until the release, a loop toggles, a once fires (presets pair the two).
+		pad_hold: {
+			name: 'Pad: press (a hold pad until release)',
+			options: padOptions,
+			callback: ({ options }) => self.connection?.holdPad(options.bank, options.slot),
+		},
+		pad_release: {
+			name: 'Pad: release',
+			options: padOptions,
+			callback: ({ options }) => self.connection?.releasePad(options.bank, options.slot),
+		},
+		strobe_burst: {
+			name: 'Strobe burst',
+			options: [{ type: 'number', id: 'ms', label: 'Length (ms)', default: 1000, min: 100, max: 30000 }],
+			callback: ({ options }) => self.connection?.strobeBurst(options.ms),
 		},
 
 		// Momentary, the way a busking button wants it: on while the button is

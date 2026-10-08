@@ -1,13 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { stateSig, dmxSig, connectedSig, emitFixture, stagePreviewSig } from '../state.js';
 import { colorToCss, fixtureOutputColor, fixtureCellColors, meanLight, fmtTime, patchedAt } from '../utils.js';
 import { useDmxFeed } from '../use-dmx.js';
-import { useRehearsalTrack } from '../rehearsal.js';
+import { useRehearsalTrack, useRehearsalSampler } from '../rehearsal.js';
+import { NowPlaying } from './NowPlaying.jsx';
 import { useTimeline } from '../use-timeline.js';
-import { createPreviewSampler } from '../../src/shared/preview.ts';
 import { stagePositions } from '../../src/shared/stage.ts';
 import { buildRig, lineOf } from '../../src/shared/rig.ts';
-import { clamp, geometryOf, placeAt, pointIn, surfaceStyle } from '../stage-geometry.js';
+import { STAGE_EDGES, clamp, geometryOf, placeAt, pointIn, surfaceStyle } from '../stage-geometry.js';
 
 export function StagePreview() {
   const s = stateSig.value;
@@ -36,7 +36,7 @@ export function StagePreview() {
   const rehearsal = stagePreviewSig.value.rehearsal && !!data;
   // The timeline data carries the analysed beats, so the chase steps here on
   // the same beats the rig will step on.
-  const sample = useMemo(() => createPreviewSampler(data?.timeline, data), [data]);
+  const sample = useRehearsalSampler(data);
   // One entry per light: a par, or each cell of a bar.
   const preview = rehearsal ? sample(position, fixtures, s.colorPresets, rig) : null;
   // Read inside the branch that uses it: a signal subscribes on read, so while
@@ -116,7 +116,7 @@ export function StagePreview() {
     <div class={`stage-surface ${edit ? 'editing' : ''}`} role="group"
       aria-label="Stage layout, viewed from the audience"
       style={surfaceStyle}>
-      <span class="stage-back">BACK OF STAGE</span>
+      <span class="stage-back">{STAGE_EDGES.top}</span>
       {/* A bar's cells first, so its number and every lamp sit on top. */}
       {drawn.map((fix, i) => {
         if (!rig.cellMaps[i]) return null;
@@ -190,11 +190,12 @@ export function StagePreview() {
           onPointerCancel={(event) => finish(event, false)} onLostPointerCapture={(event) => finish(event, false)} />;
       })}
       {!fixtures.length && <p class="panel-empty">Add fixtures in the Rig view to build your stage.</p>}
-      <span class="stage-audience">AUDIENCE</span>
+      <span class="stage-audience">{STAGE_EDGES.bottom}</span>
     </div>
     <p class="look-note">{edit
       ? `Drag fixtures or use arrow keys.${rig.hasPixels ? ' Drag a bar\'s end handle to turn or stretch it.' : ''} Positions are saved with the show.`
-      : 'Numbers are patch order. Patterns travel across the stage as placed here, left to right. Colours approximate the output; strobe timing is not simulated.'}</p>
+      : 'Numbers are patch order. Patterns travel across the stage as placed here, left to right. Colours approximate the output.'}</p>
+    <p class="stage-now" aria-live="polite"><strong>Now playing</strong> <NowPlaying /></p>
     {data && <div class="stage-rehearsal">
       <button class={`btn sm ${rehearsal ? 'active' : ''}`} aria-pressed={rehearsal}
         onClick={() => setUi({ rehearsal: !rehearsal, playing: false })}>{rehearsal ? 'Return to live' : 'Rehearse track'}</button>

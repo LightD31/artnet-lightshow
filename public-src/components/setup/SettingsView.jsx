@@ -1,3 +1,4 @@
+import { HardwareSettings } from './Hardware.jsx';
 import { useEffect, useState } from 'preact/hooks';
 import { pick, socket, emitLive } from '../../state.js';
 import { useSettings, settingsSig, saveSettings, at } from '../../setup-state.js';
@@ -106,6 +107,7 @@ export function SettingsView() {
       <div class="setup-columns">
         <div class="setup-col">
           <SettingsSection {...SHOW} stored={showStored} />
+          <HardwareSettings />
           <MidiController />
           <MidiMap />
         </div>

@@ -148,10 +148,11 @@ test('with nothing analysed, the Timeline view says how to get a track', async (
   await expect(page.getByText('No track is analysed yet')).toBeVisible();
 });
 
-test('4 and 5 open the Timeline and the Stage', async ({ page }) => {
-  await open(page, 'manual');
-  await page.locator('body').press('4');
-  await expect(page.locator('#panel-timeline')).toBeVisible();
+test('3 opens Auto Show with Timeline and 5 opens Stage', async ({ page }) => {
+  await open(page, 'effects');
+  await page.locator('body').press('3');
+  await page.getByRole('tab', { name: 'Timeline', exact: true }).click();
+  await expect(page.locator('.timeline-view')).toBeVisible();
   await page.locator('body').press('5');
   await expect(page.locator('#panel-stage')).toBeVisible();
 });

@@ -14,6 +14,8 @@ interface XmlChannelSet {
 }
 
 interface XmlChannelFunction {
+  '@_PhysicalFrom'?: string | number;
+  '@_PhysicalTo'?: string | number;
   '@_Attribute'?: string;
   '@_Name'?: string;
   '@_DMXFrom'?: string | number;
@@ -83,6 +85,7 @@ type Effect = 'open' | 'closed' | 'strobe' | 'flash' | 'dimmer' | 'none' | 'othe
 
 /** A channel's value ranges and its value at rest, in its own resolution (all its bytes). */
 interface ChannelValues {
+  strobeHz?: { min: number; max: number };
   width: number;
   /** Each range from where it starts to the next one, in order; empty when the file gives none. */
   ranges: { from: number; effect: Effect }[];
@@ -379,7 +382,18 @@ function readValues(ch: XmlDmxChannel, width: number): ChannelValues {
     ?? dmxValue(ch['@_Default'], width)
     ?? dmxValue(used[0]?.fn['@_Default'], width)
     ?? 0;
-  return { width, ranges: distinct, rest };
+  let strobeHz: ChannelValues['strobeHz'];
+  const unit = 256 ** (width - 1), low = STANDARD_STROBE.lo * unit, high = STANDARD_STROBE.hi * unit;
+  for (let i = 0; i < used.length; i++) {
+    const { fn, attribute } = used[i];
+    const from = dmxValue(fn['@_DMXFrom'], width) ?? 0;
+    const to = i + 1 < used.length ? (dmxValue(used[i + 1].fn['@_DMXFrom'], width) ?? 0) - 1 : 256 ** width - 1;
+    const first = Number(fn['@_PhysicalFrom']), last = Number(fn['@_PhysicalTo']);
+    if (effectOf(attribute, fn['@_Name'] || '') !== 'strobe' || from > low || to < high || !(first >= 0 && last > 0 && last >= first && last <= 100)) continue;
+    const at = (v: number) => first + (last - first) * (v - from) / Math.max(1, to - from);
+    strobeHz = { min: at(low), max: at(high) };
+  }
+  return { width, ranges: distinct, rest, strobeHz };
 }
 
 /** The range a value falls in, or null below the first. */
@@ -617,6 +631,8 @@ function parseMode(mode: XmlDmxMode, geometries: GeometryIndex): ImportedMode {
   }
 
   const result: ImportedMode = { modeName, channelCount, channelMap, channelList };
+  const strobe = entries.find((e) => e.attribute === 'strobe' && e.bytes[0] === channelMap.strobe);
+  if (strobe?.values.strobeHz) result.strobeHz = strobe.values.strobeHz;
   if (cellKeys.length) result.cells = cellKeys.map((key, i) => ({ name: String(key).slice(0, 64), channelMap: cellMaps[i] }));
   if (held.size) result.defaults = [...held].sort((a, b) => a[0] - b[0]).map(([offset, value]): ChannelDefault => ({ offset, value }));
   if (warnings.length) result.warnings = warnings;

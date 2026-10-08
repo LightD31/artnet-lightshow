@@ -164,7 +164,7 @@ async function settled() {
   await new Promise((r) => setImmediate(r));
 }
 
-test('without a mixer, the show follows the master, and a playing deck when the master stops', async () => {
+test('without a mixer, stopped master decks hand over to playing decks', async () => {
   const l = link();
   const changes = [];
   l.p.onTrackChange((track, change) => changes.push({ track: track.trackId, ...change }));
@@ -185,7 +185,7 @@ test('without a mixer, the show follows the master, and a playing deck when the 
     'not a mix: the other deck had stopped');
 });
 
-test('in a mix, the show moves when the outgoing deck goes off air, not when a fader flickers', async () => {
+test('mix handover waits for the outgoing deck to leave the air', async () => {
   const l = link();
   const changes = [];
   l.p.onTrackChange((track, change) => changes.push({ track: track.trackId, ...change }));
@@ -213,7 +213,7 @@ test('in a mix, the show moves when the outgoing deck goes off air, not when a f
   assert.ok(handoff.overlapMs > 8000 && handoff.overlapMs < 10000, `heard together for ${handoff.overlapMs} ms`);
 });
 
-test('an ejected deck hands over at once, and every track is announced once for prefetch', async () => {
+test('ejected decks hand over and tracks announce once for prefetch', async () => {
   const l = link();
   const loaded = [];
   l.p.onAnyTrackLoaded((track) => loaded.push(track.trackId));

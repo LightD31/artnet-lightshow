@@ -157,7 +157,7 @@ function renderAt(fixtures, patch, times) {
   }
 }
 
-test('an identified par blinks white through a blackout and a closed master; the rest is untouched', () => {
+test('identified pars bypass blackout and master without changing other lamps', () => {
   const par = fixture(1, 1, BUILTIN_PROFILE_ID);
   const other = fixture(2, 13, BUILTIN_PROFILE_ID);
   const ch = getProfile(par).channelMap;
@@ -175,7 +175,7 @@ test('an identified par blinks white through a blackout and a closed master; the
   assert.deepStrictEqual(live.subarray(12, 24), plain.subarray(12, 24), 'the other fixture shows the look');
 });
 
-test('an identified bar shows its first cell green and its last red; identify ends on time', () => {
+test('bar identification marks endpoints until expiry', () => {
   const bar = fixture(3, 1, BAR.id);
   const cells = BAR.cells.map((c) => c.channelMap);
   const request = { seq: 1, ids: [3], at: 0, ms: 1000 };
