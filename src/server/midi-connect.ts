@@ -8,6 +8,7 @@ export interface MidiPorts {
   close(): void;
   connect(input: string | null, output: string | null): boolean;
   listPorts(): unknown;
+  refreshPorts(): unknown;
 }
 
 /**

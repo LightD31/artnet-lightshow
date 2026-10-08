@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { EventEmitter } from 'node:events';
+import { createRequire } from 'node:module';
 
 import MidiController from '../../src/midi.ts';
 
@@ -845,4 +846,65 @@ test('a tempo-match button switches the mode and is lit while the clock follows 
   h.leds.length = 0;
   h.midi.sendFeedback();
   assert.deepStrictEqual(h.leds.map((m) => [m.note, m.velocity]), [[40, 0]]);
+});
+
+// Ports: only the ones the operator picked are opened. connect() used to fall
+// back to the first port matching /x.?touch/i, then to the first port of all.
+const XTOUCH = 'X-TOUCH COMPACT:X-TOUCH COMPACT MIDI 1 28:0';
+const AG06 = 'AG06/AG03:AG06/AG03 MIDI 1 24:0';
+
+// Stand in for the machine's port list, and record which ports get opened.
+function withPorts(inputs, outputs, fn) {
+  const easymidi = createRequire(import.meta.url)('easymidi');
+  const real = { getInputs: easymidi.getInputs, getOutputs: easymidi.getOutputs, Input: easymidi.Input, Output: easymidi.Output };
+  const opened = [];
+  easymidi.getInputs = () => inputs;
+  easymidi.getOutputs = () => outputs;
+  easymidi.Input = class extends EventEmitter { constructor(name) { super(); opened.push(['input', name]); } close() {} };
+  easymidi.Output = class { constructor(name) { opened.push(['output', name]); } send() {} close() {} };
+  try {
+    const h = harness();
+    h.midi.close();
+    fn(h.midi, opened);
+  } finally {
+    Object.assign(easymidi, real);
+  }
+}
+
+test('with no port picked, an X-Touch on the bus is left alone', () => {
+  withPorts([AG06, XTOUCH], [AG06, XTOUCH], (midi, opened) => {
+    assert.strictEqual(midi.connect(null, null), false);
+    assert.strictEqual(midi.enabled, false);
+    assert.deepStrictEqual(opened, []);
+  });
+});
+
+test('the picked ports are the ones opened', () => {
+  withPorts([AG06, XTOUCH], [AG06, XTOUCH], (midi, opened) => {
+    assert.strictEqual(midi.connect(XTOUCH, XTOUCH), true);
+    assert.strictEqual(midi.enabled, true);
+    assert.deepStrictEqual(opened, [['input', XTOUCH], ['output', XTOUCH]]);
+  });
+});
+
+test('a picked input that is not there opens nothing in its place', () => {
+  // The controller came back under another ALSA client number.
+  withPorts([AG06, XTOUCH.replace('28:0', '32:0')], [AG06], (midi, opened) => {
+    assert.strictEqual(midi.connect(XTOUCH, XTOUCH), false);
+    assert.deepStrictEqual(opened, []);
+  });
+});
+
+test('a picked output that is not there connects the input without feedback', () => {
+  withPorts([XTOUCH], [AG06], (midi, opened) => {
+    assert.strictEqual(midi.connect(XTOUCH, XTOUCH), true);
+    assert.deepStrictEqual(opened, [['input', XTOUCH]]);
+  });
+});
+
+test('our own RtMidi ports are not offered to pick', () => {
+  // Left behind by an earlier connection: picking one loops our feedback back in.
+  withPorts([XTOUCH, 'RtMidi Output Client:RtMidi Output 133:0'], [XTOUCH, 'RtMidi Input Client:RtMidi Input 131:0'], (midi) => {
+    assert.deepStrictEqual(midi.listPorts(), { inputs: [XTOUCH], outputs: [XTOUCH] });
+  });
 });

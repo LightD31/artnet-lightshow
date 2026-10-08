@@ -13,6 +13,9 @@ import { RestartBanner } from './RestartBanner.jsx';
  * and what its controls do, the engine, and the server itself.
  */
 
+// Each refresh opens and closes an ALSA client per direction, so not faster.
+const PORTS_REFRESH_MS = 2000;
+
 /** The control surface: its ports, whether it is connected, motorised feedback. */
 function MidiController() {
   const s = pick(['midi']);
@@ -32,6 +35,15 @@ function MidiController() {
     return () => socket.off('midi-status', onStatus);
   }, []);
 
+  // The server only lists the ports again when asked, so ask while the picker
+  // is on screen: a controller switched on after the start shows up in it.
+  useEffect(() => {
+    const refresh = () => { if (!document.hidden) emitLive('midi-ports'); };
+    refresh();
+    const timer = setInterval(refresh, PORTS_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, []);
+
   const connect = () => {
     setStatus('Connecting…');
     emitLive('midi-connect', { input: inputShown || null, output: outputShown || null });
@@ -41,7 +53,7 @@ function MidiController() {
       <label for={id}>{label}</label>
       <div class="setting-control">
         <select id={id} value={value} onChange={(e) => set(e.target.value)}>
-          <option value="">— auto-detect —</option>
+          <option value="">— none —</option>
           {value && !list.includes(value) && <option value={value}>{value} (not connected)</option>}
           {list.map((name) => <option key={name} value={name}>{name}</option>)}
         </select>

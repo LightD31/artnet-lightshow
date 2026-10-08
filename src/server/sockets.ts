@@ -309,6 +309,14 @@ function attachSockets(io: Server, { midi, integrations }: {
       }
     });
 
+    // The Settings picker asks while it is open, so a controller switched on
+    // after the start can be picked. Every page hears a list that changed, and
+    // only then: the list rides every broadcast, so it is cached in between.
+    socket.on('midi-ports', () => {
+      const before = JSON.stringify(midi.listPorts());
+      if (JSON.stringify(midi.refreshPorts()) !== before) integrations.broadcast();
+    });
+
     socket.on('disconnect', () => {
       voices.disconnect(socket.id);
       console.log('Client disconnected:', socket.id);

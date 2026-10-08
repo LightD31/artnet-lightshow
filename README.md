@@ -2791,8 +2791,9 @@ controller, far too noisy during a show.
 
 ### Default mapping — Behringer X-Touch Compact
 
-Set the controller to **Standard MIDI mode** (Layer A). The server auto-detects
-the first port matching `/x.?touch/i`.
+Set the controller to **Standard MIDI mode** (Layer A), then pick its input and
+output ports under **Settings → MIDI controller**. The server never picks a port
+by itself: until one is picked, MIDI stays off.
 
 | Control | MIDI | Action |
 |---------|------|--------|
