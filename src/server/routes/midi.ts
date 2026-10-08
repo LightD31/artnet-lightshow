@@ -74,16 +74,17 @@ export function attachMidiRoutes(app: Express, ctx: RouteContext): void {
       return res.status(400).json({ ok: false, error: messageOf(err) });
     }
 
-    // A CC binding needs to know whether the control is an encoder or a fader.
-    // The action says which by default; an explicit type in the request wins,
-    // for the controller whose faders send relative or whose encoders don't.
+    // A CC binding needs to know whether the control is an encoder or a fader,
+    // and an encoder whether it sends steps or its position. What an encoder
+    // showed itself to be while learning wins; then an explicit type in the
+    // request, for the controller whose faders send relative; then the action's.
     const captured = await midi.startLearn(binding);
     if (!captured) {
       return res.json({ ok: false, error: 'Learn cancelled or timed out', learned: null });
     }
 
     const stored = { ...captured.binding };
-    if (captured.kind === 'cc' && !stored.type) stored.type = defaultTypeFor(stored.action);
+    if (captured.kind === 'cc') stored.type = captured.type || stored.type || defaultTypeFor(stored.action);
     if (captured.kind === 'notes') delete stored.type;
 
     try {
