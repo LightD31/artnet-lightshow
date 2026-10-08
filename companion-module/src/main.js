@@ -132,4 +132,12 @@ export default class ArtnetLightshowInstance extends InstanceBase {
 	armOutputs(mode) {
 		return this.#connected()?.armOutputs(mode)
 	}
+
+	paletteOverride(id) {
+		return this.#connected()?.paletteOverride(id)
+	}
+
+	stopEffects() {
+		return this.#connected()?.stopEffects()
+	}
 }

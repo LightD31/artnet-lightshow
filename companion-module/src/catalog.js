@@ -150,9 +150,16 @@ const listed = (value, fallback) => (Array.isArray(value) && value.length ? valu
 
 export const patternsOf = (state) => listed(state.patterns, PATTERNS)
 export const colorsOf = (state) => listed(state.colorPresets, COLOR_PRESETS)
+// Most built-in palettes carry no name: they are named as the app names them
+// (PaletteEditor.jsx paletteName), so no button or dropdown reads "undefined".
+const PALETTE_NAMES = { hdDefault: 'Hue Dynamics default', hdStrobe: 'Hue Dynamics strobe', randomRandom: 'Random, Random' }
+const named = (palette) => (palette.name ? palette : {
+	...palette,
+	name: PALETTE_NAMES[palette.id] || String(palette.id).replace(/([a-z])(?=[A-Z])/g, '$1 ').replace(/^./, (c) => c.toUpperCase()),
+})
 export const palettesOf = (state) => [...new Map([
 	...listed(state.builtinPalettes, listed(state.palettes, [])), ...listed(state.userPalettes, []),
-].map((palette) => [palette.id, palette])).values()]
+].map((palette) => [palette.id, named(palette)])).values()]
 export const energyOf = (state) => listed(state.energyEffects, ENERGY_EFFECTS)
 export const strobesOf = (state) => listed(state.strobeFunctions, STROBE_FUNCTIONS)
 export const cuesOf = (state) => listed(state.cues, [])
@@ -213,4 +220,47 @@ export function paletteSwatch(state, palette) {
 	const indices = (palette.colors && (palette.colors[2] || palette.colors[4])) || []
 	const table = colorsOf(state)
 	return indices.map((i) => table[i]).filter(Boolean)
+}
+
+// ── Busking: the show played by hand ─────────────────────────────────────────
+// The same lists the X-Touch browses (src/midi.ts _lookList), so a Stream Deck
+// and a controller step through the looks in the same order.
+
+/** The rig's patterns (classic and party, no pixel pictures), or the Hue Dynamics and Light DJ effects — the fast-flashing ones only once acknowledged. */
+export function lookList(state, kind) {
+	const rows = patternsOf(state)
+	if (kind === 'pattern') return rows.filter((r) => !r.pixel && !r.app)
+	const acknowledged = !!state.safety?.photosensitivityAcknowledged
+	return rows.filter((r) => (r.app === 'hd' || r.app === 'ldj') && (acknowledged || !r.rapidFlash))
+}
+
+/** The look one step from the one on stage, round the list; from outside it, its first or last. */
+export function stepLook(state, kind, direction) {
+	const list = lookList(state, kind)
+	if (!list.length) return null
+	const at = list.findIndex((r) => r.id === state.pattern)
+	const step = direction === 'previous' ? -1 : 1
+	const next = at < 0 ? (step > 0 ? 0 : list.length - 1) : (at + step + list.length) % list.length
+	return list[next].id
+}
+
+const pick = (list, random) => list[Math.min(list.length - 1, Math.floor(random() * list.length))]
+
+/** A random look of that kind, never the one on stage. */
+export function randomLook(state, kind, random = Math.random) {
+	const others = lookList(state, kind).filter((r) => r.id !== state.pattern)
+	return others.length ? pick(others, random).id : null
+}
+
+/** A random palette for the override, never the one on. */
+export function randomPalette(state, random = Math.random) {
+	const others = palettesOf(state).filter((p) => p.id !== state.paletteOverrideId)
+	return others.length ? pick(others, random).id : null
+}
+
+/** Four random colours for the slots, each one that lights: never the blackout entry. */
+export function randomColours(state, random = Math.random) {
+	const lit = colorsOf(state).map((c, i) => ({ c, i })).filter(({ c }) => DIES.some((die) => (c[die] || 0) > 0)).map(({ i }) => i)
+	if (!lit.length) return {}
+	return Object.fromEntries(COLOR_SLOTS.map((slot) => [slot.id, pick(lit, random)]))
 }

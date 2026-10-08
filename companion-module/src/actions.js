@@ -10,6 +10,10 @@ import {
 	fixturesOf,
 	palettesOf,
 	patternsOf,
+	randomColours,
+	randomLook,
+	randomPalette,
+	stepLook,
 	strobesOf,
 } from './constants.js'
 
@@ -17,6 +21,11 @@ const MODE_TOGGLE = [
 	{ id: 'toggle', label: 'Toggle' },
 	{ id: 'on', label: 'On' },
 	{ id: 'off', label: 'Off' },
+]
+
+const LOOK_KINDS = [
+	{ id: 'pattern', label: 'Patterns' },
+	{ id: 'effect', label: 'Effects (Hue Dynamics, Light DJ)' },
 ]
 
 const padOptions = [
@@ -114,6 +123,100 @@ export function UpdateActions(self) {
 			callback: ({ options }) => {
 				if (!options.palette) return
 				self.sendSet({ palette: options.palette, paletteSize: Number(options.size) || 4 })
+			},
+		},
+
+		// ── Busking: the show played by hand ──
+
+		palette_override: {
+			name: 'Palette Override',
+			options: [
+				{
+					type: 'dropdown',
+					id: 'palette',
+					label: 'Palette',
+					default: paletteChoices[0]?.id ?? '',
+					choices: paletteChoices,
+					allowCustom: true,
+				},
+				{ type: 'dropdown', id: 'mode', label: 'Mode', default: 'toggle', choices: MODE_TOGGLE },
+			],
+			callback: async ({ options }) => {
+				if (!options.palette) return
+				const on = self.liveState.paletteOverrideId === options.palette
+				const next = options.mode === 'toggle' ? !on : options.mode === 'on'
+				await self.paletteOverride(next ? options.palette : null)
+			},
+		},
+
+		palette_override_off: {
+			name: 'Palette Override Off',
+			options: [],
+			callback: async () => {
+				await self.paletteOverride(null)
+			},
+		},
+
+		browse_look: {
+			name: 'Browse Patterns or Effects',
+			options: [
+				{ type: 'dropdown', id: 'kind', label: 'Through', default: 'pattern', choices: LOOK_KINDS },
+				{ type: 'dropdown', id: 'direction', label: 'Step', default: 'next', choices: [
+					{ id: 'next', label: 'Next' },
+					{ id: 'previous', label: 'Previous' },
+				] },
+				{ type: 'number', id: 'fadeMs', label: 'Crossfade (ms, 0 cuts)', default: 0, min: 0, max: 10000 },
+			],
+			callback: ({ options }) => {
+				const pattern = stepLook(self.liveState, options.kind, options.direction)
+				if (pattern) self.sendSet({ pattern, ...(options.fadeMs > 0 ? { fadeMs: options.fadeMs } : {}) })
+			},
+		},
+
+		random_look: {
+			name: 'Random Pattern, Effect, Palette or Colours',
+			options: [
+				{ type: 'dropdown', id: 'what', label: 'Random', default: 'pattern', choices: [
+					...LOOK_KINDS,
+					{ id: 'palette', label: 'Palette override' },
+					{ id: 'colours', label: 'Colours A-D' },
+				] },
+			],
+			callback: async ({ options }) => {
+				const state = self.liveState
+				if (options.what === 'palette') {
+					const id = randomPalette(state)
+					if (id) await self.paletteOverride(id)
+				} else if (options.what === 'colours') {
+					self.sendSet(randomColours(state))
+				} else {
+					const pattern = randomLook(state, options.what)
+					if (pattern) self.sendSet({ pattern })
+				}
+			},
+		},
+
+		stop_effects: {
+			name: 'Stop Every Effect',
+			options: [],
+			callback: async () => {
+				await self.stopEffects()
+			},
+		},
+
+		tempo_mode: {
+			name: 'Automatic Tempo Match',
+			options: [
+				{ type: 'dropdown', id: 'mode', label: 'Mode', default: 'toggle', choices: [
+					{ id: 'toggle', label: 'Toggle' },
+					{ id: 'auto', label: 'Follow the music' },
+					{ id: 'manual', label: 'Keep my tempo' },
+				] },
+			],
+			callback: ({ options }) => {
+				const auto = self.liveState.tempoMode !== 'manual'
+				const next = options.mode === 'toggle' ? (auto ? 'manual' : 'auto') : options.mode
+				self.sendSet({ tempoMode: next })
 			},
 		},
 
@@ -240,6 +343,7 @@ export function UpdateActions(self) {
 						{ id: 2, label: '1/2 (half)' },
 						{ id: 4, label: '1/4 (quarter)' },
 						{ id: 8, label: '1/8 (eighth)' },
+						{ id: 16, label: '1/16 (sixteenth)' },
 					],
 				},
 			],

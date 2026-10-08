@@ -2889,19 +2889,31 @@ Companion **v4.3+** (the module uses the v2 connection API).
    the server uses one
 4. Drag presets onto buttons
 
-It is made for busking. The **Busk** preset page has:
-- every palette on the server;
-- energy effects and a blackout that last only while their button is held
-  (sent as `energy-hold`, which the server lets go of on its own if Companion
-  stops renewing it, so a crash with a button down never latches a strobe);
-- tap tempo, ×2 and ÷2;
-- the auto show's on/off, intensity and sync nudge;
-- the master level;
+It is made for busking: the **Busk** preset page plays a show by hand with
+the auto show stopped.
+- **Looks** — the previous and next pattern or effect (the same lists the
+  X-Touch's encoders browse), the look on stage, a random pattern or effect,
+  and play/stop.
+- **Colours over every effect** — every palette on the server as the palette
+  override, on until pressed again and lit while on; palette off; a random
+  palette; random colours A–D.
+- **Hits** — the 16 pads (a hold pad plays while its button is down, renewed,
+  so a crash lets go of it), a strobe burst and a blackout held.
+- **Tempo** — tap, the BPM, ×2 and ÷2, automatic tempo match on/off, and the
+  beat division from 1/1 to 1/16.
+- **Show** — the auto show on/off, what is playing, stop every effect, the
+  master level and blackout.
 - a button for every saved cue.
 
+The **Auto show** page has its on/off, intensity and sync nudge for riding it.
+Button texts name the connection's variables by its own label, so they keep
+working whatever the connection is called.
+
 Other presets cover every pattern and pixel effect (the bars' own picture and
-the pixel map too), colours A–D, transport, a blackout per fixture and latched
-energy effects, with feedback lighting the active state. Pad buttons hold
+the pixel map too), colours A–D and whole palettes into them, transport, a
+blackout per fixture and energy effects latched or held (sent as
+`energy-hold`, let go of by the server if Companion stops renewing it), with
+feedback lighting the active state. Pad buttons hold
 the server's pads while pressed (renewed, so a crash lets go as the energy
 holds do), and a strobe burst button fires the strobe for 100–30,000 ms
 (1 s by default). When the server refuses the access token it says so with
