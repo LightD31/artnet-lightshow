@@ -1,5 +1,6 @@
 import { transitionFor } from '../show/transition.ts';
-import { state, getLiveState, getDmxSnapshot, getDmxUniverses, setExtrasProvider } from './state.ts';
+import { presetById } from '../shared/effects/catalogue.ts';
+import { state, getLiveState, getDmxSnapshot, getDmxUniverses, setExtrasProvider, setSequenceProvider, setSequenceRuns, reconcileFreeClock, voices, strobe } from './state.ts';
 import { createPublisher, ROOM } from './protocol.ts';
 import { encodeDmxFrame } from '../shared/dmx-frame.ts';
 import { setHooks, applyPatch } from './patch.ts';
@@ -20,7 +21,18 @@ import { AutoSync } from '../auto-sync.ts';
 import LiveDirector from '../show/live-director.ts';
 import { PATTERNS } from './presets.ts';
 import { settings } from './settings.ts';
-import { identify } from './engine.ts';
+import { baseEffect, effectChanged, identify, setAudioSource, setEffectSource, setSequenceSource } from './engine.ts';
+import { AudioFeatures, feedOf, resolveDetectors } from './audio-features.ts';
+import { BIN_HZ } from '../shared/spectrum-bands.ts';
+import { safety } from './safety.ts';
+import { EffectLibrary } from './effect-library.ts';
+import { PaletteStore } from './palette-store.ts';
+import { PadStore, Pads, patternPlayer } from './pads.ts';
+import { presetLookup } from './routes/voices.ts';
+import { padTakeOf, sequenceBeatAhead, Sequencer } from './sequencer.ts';
+import { SequenceStore } from './sequence-store.ts';
+import { toHex } from '../shared/effects/palette.ts';
+import { configFile } from './config-dir.ts';
 import type { Server } from 'socket.io';
 import type AutoShow from '../auto-show.ts';
 import type { AnalysisCache } from '../analysis-cache.ts';
@@ -29,6 +41,7 @@ import type MidiController from '../midi.ts';
 import type NowPlayingSource from '../nowplaying-source.ts';
 import type ProLink from '../prolink.ts';
 import type LiveInput from '../live-input.ts';
+import type { LiveReading } from '../live-input.ts';
 import type { ProlinkTrack } from '../prolink.ts';
 import type { AnalysisPriority } from '../analyzer-worker.ts';
 import type SpotifyClient from '../spotify.ts';
@@ -36,6 +49,9 @@ import type { BeatGrid } from '../shared/beat-clock.ts';
 import type { AutoPosition } from './auto-position.ts';
 import type { DeezerState } from './validation.ts';
 import type { NowPlaying } from '../types/playback.ts';
+import type { AudioFrame } from '../shared/effects/audio-frame.ts';
+import type { Detectors } from './audio-features.ts';
+import type { EffectSpec } from '../shared/effects/types.ts';
 
 /** Everything the integrations wire together. */
 export interface IntegrationDeps {
@@ -48,6 +64,13 @@ export interface IntegrationDeps {
   autoShow: AutoShow;
   analysisCache?: AnalysisCache | null;
   liveInput?: LiveInput | null;
+  /** The effect library and the effect palettes; the ones in config/ unless a test stands in. */
+  effectLibrary?: EffectLibrary | null;
+  paletteStore?: PaletteStore | null;
+  /** The pads' layout; config/pads.json's unless a test stands in. */
+  padStore?: PadStore | null;
+  /** The saved sequences; the ones in config/ unless a test stands in. */
+  sequenceStore?: SequenceStore | null;
 }
 
 /** Which source the auto show follows. */
@@ -88,7 +111,117 @@ function reportAnalysisError(label: string, err: unknown): void {
 // LINK, auto-show) into the engine + state. Returns the integration handle that
 // routes (src/server/routes/) and sockets.ts call back into.
 function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolink, autoShow, analysisCache = null,
-  liveInput = null }: IntegrationDeps) {
+  liveInput = null, effectLibrary = null, paletteStore = null, padStore = null, sequenceStore = null }: IntegrationDeps) {
+  // ─── The effect library ─────────────────────────────────────────────────
+  // The presets and palettes saved on this server, first: the live state
+  // reads them from the first broadcast on.
+  const library = {
+    effects: effectLibrary ?? new EffectLibrary(configFile('effects.json')).load(),
+    palettes: paletteStore ?? new PaletteStore(configFile('palettes.json')).load(),
+  };
+  // The pads play the library's presets, saved ones included, as they are at
+  // each press; the strobe pad and voice-hold's `{ preset: 'strobe' }` hold the strobe.
+  // A pattern pad plays a pattern from the sequence shelf (below) as one voice;
+  // a pattern or sequencePattern pad saves only naming one on the shelf.
+  const pads = new Pads({
+    voices, store: padStore ?? new PadStore(configFile('pads.json')).load(), lookup: () => presetLookup(library),
+    pattern: (id): ReturnType<SequenceStore['getPattern']> => sequence.store.getPattern(id),
+    fixtureIds: () => state.fixtures.map((f) => f.id), beat: () => conductor.peek().beatPos, strobe,
+    patternVoice: patternPlayer({
+      voices, pattern: (id): ReturnType<SequenceStore['getPattern']> => sequence.store.getPattern(id), fixtureIds: () => state.fixtures.map((f) => f.id),
+      resolve: (id) => library.effects.resolve(id),
+    }),
+  });
+  // MIDI padPress notes hold the deck's pads under their own owner and token.
+  midi.pads = {
+    press: (bank, slot, owner, token) => pads.press(bank, slot, owner, token),
+    renew: (_bank, _slot, owner, token) => voices.renew(owner, token),
+    release: (bank, slot, owner, token) => { pads.release(bank, slot, owner, token); voices.release(owner, token); },
+    strobeMaxMs: () => settings.get('safety.strobeMaxLatchSec') * 1000,
+  };
+
+  // ─── The sequencer ──────────────────────────────────────────────────────
+  // The shelf of saved sequences and the transport playing the loaded one.
+  // Its commands and automation change the master, the tempo and the palette
+  // override from inside the engine's tick, through the patch like any
+  // change but as the sequence's own (no hand on a control); the pages hear
+  // of them at most ten times a second, after the tick.
+  let sequenceNews: ReturnType<typeof setTimeout> | null = null;
+  function broadcastSoon(): void {
+    if (sequenceNews) return;
+    sequenceNews = setTimeout(guarded('sequence-broadcast', () => { sequenceNews = null; broadcast(); }), 100);
+    if (sequenceNews.unref) sequenceNews.unref();
+  }
+  const sequence = {
+    store: sequenceStore ?? new SequenceStore(configFile('sequences.json')).load(),
+    sequencer: new Sequencer({
+      resolve: (id) => library.effects.resolve(id),
+      presetName: (id) => library.effects.summaries().find((preset) => preset.id === id)?.name ?? presetById(id)?.name ?? id,
+      palette: (id) => library.palettes.materialize(id)?.map(toHex) ?? null,
+      paletteSettings: (id) => {
+        const p = library.palettes.get(id)?.palette;
+        if (!p) return null;
+        const { gradients, sets, gradient, gradientSet, gradientRole } = p;
+        return { gradients, sets, gradient, gradientSet, gradientRole };
+      },
+      apply: ({ paletteOverrideId, ...patch }) => {
+        // A refusal here must not cost the frame its sequence.
+        try {
+          applyPatch(patch, { origin: 'sequence', paletteOverrideId });
+        } catch (err) {
+          console.warn(`[sequence] could not apply ${Object.keys(patch).join(', ')}: ${messageOf(err)}`);
+        }
+        broadcastSoon();
+      },
+      current: () => ({ masterDimmer: state.masterDimmer, bpm: state.bpm, paletteOverride: state.paletteOverride ? state.paletteOverride.map(toHex) : null, paletteOverrideId: state.paletteOverrideId, overridePalette: state.overridePalette }),
+      musicMode: (mode) => {
+        // The settings file refusing the write leaves the mode as it was; the sequence still plays.
+        try {
+          settings.update({ audio: { mode } });
+        } catch (err) {
+          console.warn(`[sequence] could not set the audio mode to ${mode}: ${messageOf(err)}`);
+        }
+      },
+      admit: (spec) => safety.requireAcknowledged(spec),
+      fixtureIds: () => state.fixtures.map((f) => f.id),
+      pattern: (id): ReturnType<SequenceStore['getPattern']> => sequence.store.getPattern(id),
+      // A preset pad records as its preset, a pattern pad as its bundle; the strobe and drops do not (padTakeOf).
+      pad: (bank, slot) => padTakeOf(pads.store.get(bank, slot), presetLookup(library)),
+      beat: () => conductor.peek().beatPos,
+      onRun: () => { reconcileFreeClock(); broadcastSoon(); },
+    }),
+  };
+  // The pads count in the conductor's beats, the sequence in its own: the
+  // same distance from now on both.
+  const toSequenceBeat = (beat: number) => {
+    const at = sequence.sequencer.status();
+    return sequenceBeatAhead(at.beat, beat - conductor.peek().beatPos, at.loop);
+  };
+  // During a take the drop is staged with it (dropPattern).
+  pads.insertPattern = (id, atBeat) => {
+    sequence.sequencer.dropPattern(id, toSequenceBeat(atBeat), atBeat);
+    broadcast();
+  };
+  pads.onHit = ({ bank, slot, startBeat, endBeat, lengthMs, once }) => {
+    if (!sequence.sequencer.recording()) return;
+    // An explicit length in ms counts in beats at the tempo now; a release is how long it was held, on the conductor's clock.
+    const lengthBeats = lengthMs === undefined ? undefined : (lengthMs * conductor.peek().bpm) / 60000;
+    sequence.sequencer.onPadHit({
+      bank, slot, startBeat: toSequenceBeat(startBeat), clockBeat: startBeat,
+      ...(endBeat === undefined ? {} : { heldBeats: endBeat - startBeat }), ...(lengthBeats === undefined ? {} : { lengthBeats }), ...(once ? { once } : {}),
+    });
+    broadcast();
+  };
+  // Read once a frame by the engine; its status rides the live state. Holds
+  // whose voice ended by itself close first.
+  setSequenceSource((reading) => {
+    pads.sweep();
+    const frame = sequence.sequencer.frame(reading);
+    if (sequence.sequencer.runs()) broadcastSoon();
+    return frame;
+  });
+  setSequenceProvider(() => sequence.sequencer.status());
+  setSequenceRuns(() => sequence.sequencer.runs());
   // Slot statuses, one per upcoming track up to state.autoPrefetchDepth.
   // slots[0] is the immediate next track (back-compat with the old
   // spotifyNext shape — that field still mirrors slots[0]).
@@ -210,10 +343,20 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
         lastError: prolink.lastError,
       },
       live: liveInput ? { ...liveInput.status(), director: liveDirector ? liveDirector.status() : null } : null,
+      audio: liveAudio(),
       autoShow: autoShow.getClientState(),
       // Summaries, not the stored looks: a hundred full cues would ride every
       // broadcast, and the buttons only need a name and a swatch.
       cues: cues.summaries(),
+      // The presets and palettes saved here, so one saved mid-show reaches
+      // every open page; a preset's spec is GET /api/effects/:id's.
+      effects: library.effects.summaries(),
+      userPalettes: library.palettes.list(),
+      // The layout and which pads are lit; a voice starting or ending is a broadcast already.
+      pads: pads.view(),
+      // The saved sequences and patterns by id and name, so one saved on another page reaches the pickers.
+      sequences: sequence.store.summaries(),
+      sequencePatterns: sequence.store.patternSummaries(),
       warm: warmer.status(),
       midi: { enabled: midi.enabled, ports: midi.listPorts() },
       // The fixtures showing themselves on the rig, marked on the stage plot.
@@ -224,7 +367,10 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
 
   // Hook the patch module so it can react to higher-level concerns.
   setHooks({
+    palette: (id) => library.palettes.materializeBody(id),
     broadcast,
+    // A hand on the master or the tempo ends the sequence's automation of it.
+    handEdit: (edit) => sequence.sequencer.handEdit(edit),
     prolinkEnable: () => {
       prolink.enable().catch((err) => {
         console.error('PRO DJ LINK enable failed:', messageOf(err));
@@ -340,16 +486,102 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
     patterns: PATTERNS,
     pixels: () => currentRig().hasPixels,
   }) : null;
-  if (liveInput && liveDirector) {
-    liveInput.onReading((r) => liveDirector.onReading(r));
-    liveInput.onEvent((e) => liveDirector.onEvent(e));
-  }
+  if (liveInput && liveDirector) liveInput.onEvent((e) => liveDirector.onEvent(e));
 
   function syncLiveDirector(): void {
     if (!liveDirector) return;
     const drive = showWanted && !autoShow.running && liveListening() && settings.get('live.director');
     if (drive && !liveDirector.active) liveDirector.start();
     else if (!drive && liveDirector.active) liveDirector.stop();
+  }
+
+  // ─── What the party effects hear ────────────────────────────────────────
+  // One set of detectors for every effect (audio-features.ts), on the
+  // settings of the Disco or Visualizer playing, else on the settings here:
+  // the base look's effect, validated, the voices playing over it (on the
+  // voices' own clock; one hidden or not started yet owns nothing) and the
+  // sequence's clips on top of the patch, with the photosensitivity
+  // acknowledgement that admits a Visualizer among them. A macro or pattern
+  // pad counts as the child it plays at the music's beat now.
+  function detectors(): Detectors {
+    const nowMs = performance.now();
+    const fixtureIds = state.fixtures.map((f) => f.id);
+    return resolveDetectors({
+      base: baseEffect(), clips: sequence.sequencer.playing(fixtureIds), voices: voices.frames(nowMs), nowMs,
+      // The reading both render paths handed the last frame (engine.ts runSequenceSource).
+      beatPos: sequence.sequencer.lastBeat(),
+      fixtureIds, ldjTrigger: settings.get('audio.ldjTrigger'),
+      acknowledged: settings.get('safety.photosensitivityAcknowledged'),
+    });
+  }
+  const audioFeatures = new AudioFeatures({
+    master: () => settings.get('audio.master'),
+    disco: () => detectors().disco,
+    ldjTrigger: () => detectors().spl.trigger,
+    binHz: BIN_HZ,
+    // Asked from inside a reading: the input is asked once that line has been handled.
+    onBands: () => queueMicrotask(guarded('audio bands', () => { if (liveInput) liveInput.refreshBands(); })),
+  });
+  if (liveInput) {
+    // Every start of the live input, whoever starts it, asks for these bands.
+    liveInput.useBands(() => audioFeatures.bandList());
+    // One listener for both: the live input keeps only one. Each is guarded,
+    // so a fault in one does not starve the other.
+    const directorHears = liveDirector ? guarded('live director', (r: LiveReading) => liveDirector.onReading(r)) : null;
+    const featuresHear = guarded('audio features', (r: LiveReading) => audioFeatures.onReading(r));
+    liveInput.onReading((r) => {
+      if (directorHears) directorHears(r);
+      featuresHear(r);
+    });
+  }
+
+  /**
+   * The hop for what the room hears now: the stream time the live input
+   * places, latency included, and never one older than the last handed out.
+   */
+  function heard(): AudioFrame | null {
+    const streamNowMs = liveInput ? liveInput.streamNowMs() : null;
+    return audioFeatures.heard(streamNowMs === null ? undefined : streamNowMs / 1000);
+  }
+  setAudioSource(heard);
+
+  /** What is heard, for a meter that reads a few times a second at most. */
+  function heardSummary() {
+    const frame = heard();
+    return {
+      listening: !!frame,
+      levels: frame ? { ...frame.party } : null,
+      spl: frame ? { db: frame.spl.db, level: frame.spl.level, beat: frame.spl.beat, section: frame.spl.section } : null,
+    };
+  }
+
+  /**
+   * The audio settings, what is heard, and whose settings the detectors run
+   * on — which a playing Disco or Visualizer takes over from the settings.
+   */
+  function audioSummary(heardNow = heardSummary()) {
+    const d = detectors();
+    return {
+      ...settings.group('audio'),
+      ...heardNow,
+      detectors: {
+        spl: d.spl,
+        disco: { owner: d.disco.owner, bands: d.disco.bands, globals: d.disco.globals },
+      },
+    };
+  }
+
+  // The live state's copy of what is heard moves with the once-a-second
+  // sweep: a broadcast in between (a fader being dragged) carries the same
+  // levels, so they cost one patch a second, not one per broadcast. The
+  // settings and owners in it are always current.
+  const HEARD_EVERY_MS = 900;
+  let heardAt = -Infinity;
+  let heardThen = heardSummary();
+  function liveAudio() {
+    const now = Date.now();
+    if (now - heardAt >= HEARD_EVERY_MS) { heardAt = now; heardThen = heardSummary(); }
+    return audioSummary(heardThen);
   }
 
   // ─── The pattern clock's track lock ─────────────────────────────────────
@@ -921,6 +1153,14 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   }), 1000 / 30);
   if (dmxFrameTimer.unref) dmxFrameTimer.unref();
 
+  // What the party effects hear, at the same rate, to the pages showing its
+  // meters; the hop the rig renders, not one the live state carries.
+  const audioTimer = setInterval(guarded('audio-feed', () => {
+    if (!publisher.wants(ROOM.audio)) { publisher.resetAudio(); return; }
+    publisher.sendAudio(feedOf(heard()));
+  }), 1000 / 30);
+  if (audioTimer.unref) audioTimer.unref();
+
   // Some status fields drift without any explicit event — `authenticated` on
   // the now-playing and Deezer sources expires on a staleness timer, and
   // Spotify's poll updates status without calling broadcast(). A low-rate
@@ -929,10 +1169,37 @@ function setupIntegrations({ io, midi, spotify, nowPlaying, deezerSource, prolin
   const statusTimer = setInterval(guarded('status-broadcast', broadcast), 1000);
   if (statusTimer.unref) statusTimer.unref();
 
+  // A look's pattern id plays the library's effect: a built-in preset by id
+  // or alias, else one saved here; a legacy look or an id nothing knows
+  // plays its pattern function, or nothing, as before.
+  setEffectSource((pattern) => library.effects.resolve(pattern));
+  // A new spec saved over the preset on stage replaces what the rig plays at
+  // once, so it passes the gate starting it would; a preset not playing is
+  // only being edited.
+  library.effects.setAdmission((id: string, spec: EffectSpec) => {
+    if (id === state.pattern) safety.requireAcknowledged(spec);
+  });
+  // Every saved change: the effect on stage starts again if its kind or
+  // settings changed (new colours or brightness play on), and every page
+  // hears of it.
+  library.effects.onChange(() => {
+    effectChanged();
+    broadcast();
+  });
+  library.palettes.onChange(() => broadcast());
+  pads.store.onChange(() => broadcast());
+  sequence.store.onChange(() => broadcast());
+
   return {
     broadcast,
     publisher,
     warmer,
+    // The audio features and their summary, for the audio route.
+    audio: { features: audioFeatures, summary: audioSummary, detectors },
+    library,
+    pads,
+    // The shelf and the transport, for the sequence routes.
+    sequence,
     hybrid,
     prefetchNextFromQueue,
     clearSpotifyNext: () => {

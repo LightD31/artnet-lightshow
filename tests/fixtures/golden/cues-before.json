@@ -1,0 +1,112 @@
+{
+  "cues": [
+    {
+      "id": "ee017eb35f4f4c77",
+      "name": "Position Chase",
+      "createdAt": "2026-10-04T20:21:28.563Z",
+      "updatedAt": "2026-10-04T20:21:28.563Z",
+      "look": {
+        "bpm": 120,
+        "beatDivision": 1,
+        "running": true,
+        "pattern": "position-chase",
+        "colorA": 0,
+        "colorB": 6,
+        "colorC": 4,
+        "colorD": 8,
+        "masterDimmer": 255,
+        "masterBlackout": false,
+        "strobeSpeed": 0,
+        "strobeFunction": "standard",
+        "energyOverride": null,
+        "pixelMap": "stage",
+        "pixelPattern": null,
+        "panelPattern": null,
+        "fixtureIds": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "overrides": [
+          null,
+          null,
+          null,
+          null
+        ]
+      }
+    },
+    {
+      "id": "02938632dd47a8e1",
+      "name": "Halves",
+      "createdAt": "2026-10-04T20:21:28.616Z",
+      "updatedAt": "2026-10-04T20:21:28.616Z",
+      "look": {
+        "bpm": 120,
+        "beatDivision": 1,
+        "running": true,
+        "pattern": "halves",
+        "colorA": 0,
+        "colorB": 6,
+        "colorC": 4,
+        "colorD": 8,
+        "masterDimmer": 255,
+        "masterBlackout": false,
+        "strobeSpeed": 0,
+        "strobeFunction": "standard",
+        "energyOverride": null,
+        "pixelMap": "stage",
+        "pixelPattern": null,
+        "panelPattern": null,
+        "fixtureIds": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "overrides": [
+          null,
+          null,
+          null,
+          null
+        ]
+      }
+    },
+    {
+      "id": "93e96e6ad94196b1",
+      "name": "Swirl under Palette Strobe",
+      "createdAt": "2026-10-04T20:21:28.797Z",
+      "updatedAt": "2026-10-04T20:21:28.797Z",
+      "look": {
+        "bpm": 120,
+        "beatDivision": 1,
+        "running": true,
+        "pattern": "swirl",
+        "colorA": 0,
+        "colorB": 6,
+        "colorC": 4,
+        "colorD": 8,
+        "masterDimmer": 255,
+        "masterBlackout": false,
+        "strobeSpeed": 0,
+        "strobeFunction": "standard",
+        "energyOverride": "palette-strobe",
+        "pixelMap": "stage",
+        "pixelPattern": null,
+        "panelPattern": null,
+        "fixtureIds": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "overrides": [
+          null,
+          null,
+          null,
+          null
+        ]
+      }
+    }
+  ]
+}

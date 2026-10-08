@@ -33,8 +33,11 @@ const PANEL = {
 const PAR = { profileId: 'cameo-root-par-6-12ch' };   // dimmer 0, strobe 2, red 3, green 4, blue 5
 let beat = 0;
 let saved;
+let now = 1e9;
+const realNow = performance.now;
 
 test.before(() => {
+  performance.now = () => now;
   registerProfile(BAR);
   registerProfile(BARE);
   registerProfile(PANEL);
@@ -43,6 +46,7 @@ test.before(() => {
   conductor.setProlinkSource(() => ({ beatPos: beat, bpm: 120 }));
 });
 test.after(() => {
+  performance.now = realNow;
   conductor.setProlinkSource(null);
   state.fixtures = saved.fixtures;
   state.artnet.enabled = saved.artnet;
@@ -71,6 +75,7 @@ function show(patch, at = 0.25) {
   beat = 0;
   applyPatch({ ...LOOK, ...patch });
   beat = at;
+  now += 1000;
   renderFrame();
   return universes.getBuffer(0);
 }
@@ -79,7 +84,7 @@ const cellRGB = (dmx, base, c) => [dmx[base + 2 + c * 3], dmx[base + 3 + c * 3],
 
 test('a look the same on every cell drives a bar exactly as it drives a par', () => {
   rig(fixture(0, 1, PAR.profileId), fixture(1, 13, BAR.id));
-  const dmx = show({ pattern: 'solid', masterDimmer: 180 });
+  const dmx = show({ pattern: 'solid', colorA: 0, masterDimmer: 180 });
   const par = [dmx[3], dmx[4], dmx[5]];
   assert.ok(par.some((v) => v > 0), 'the par is lit');
   assert.strictEqual(dmx[12], dmx[0], 'the bar\'s dimmer is the par\'s');
@@ -188,7 +193,7 @@ test('with a picture of their own, the bars run it and the pars keep the look', 
 });
 
 
-test('with a picture of their own, the panels run it and the rest of the rig keeps its look', () => {
+test('panel pictures leave the rest of the rig on its base look', () => {
   rig(fixture(0, 1, PAR.profileId), fixture(1, 13, BAR.id), fixture(2, 40, PANEL.id));
   const panelOf = (dmx) => dmx.slice(39, 39 + 24);
   const look = { pattern: 'solid', pixelPattern: 'comet', pixelMap: 'bar', anchorMs: 0 };

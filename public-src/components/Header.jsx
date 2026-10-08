@@ -1,7 +1,9 @@
+import { NowPlaying } from './NowPlaying.jsx';
 import { connectedSig, pick } from '../state.js';
 import { formatBpm, clockSource } from '../utils.js';
 import { useState } from 'preact/hooks';
 import { awakeSig, fullscreenSig, setAwake, toggleFullscreen, canFullscreen } from '../device.js';
+import { StrobesOff } from './Photosensitivity.jsx';
 
 // The themes, and what each is for. `system` follows the device's setting.
 const THEMES = [
@@ -107,6 +109,7 @@ export function Header() {
             <span>{energy.replace(/-/g, ' ')}</span>
           </div>
         )}
+        <StrobesOff />
         {s.flashLimit && (
           <div class="stat-pill" title="Flash limit: at most three large-area flashes a second (Settings → Show)">
             <span class="label">Flash</span>
@@ -125,6 +128,7 @@ export function Header() {
         </div>
       </div>
       <DeviceTools />
+      <div class="header-now"><NowPlaying /></div>
     </header>
   );
 }

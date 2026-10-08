@@ -1,35 +1,14 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useState } from 'preact/hooks';
 import { send, emitTap, followMusic, pick } from '../state.js';
+import { padLabel } from '../now-playing.js';
 import { formatBpm, clockSource } from '../utils.js';
 import { useDraft } from '../draft.js';
-import { useEnergyPads } from '../energy-pad.js';
-import { focusedByPointer } from '../focus-origin.js';
+import { useVoicePads, holdsWhilePressed, padKey, rapidPad } from '../voice-pad.js';
+import { useSafetyGate } from './Photosensitivity.jsx';
+import { Transport } from './Transport.jsx';
 
 // Steps per beat. 1/16 was in the README and on MIDI, and missing here (A7.26).
 const DIVISIONS = [1, 2, 4, 8, 16];
-
-/**
- * Whether Space on this element taps the tempo.
- *
- * Space belongs to whatever is focused, and only falls through to tap tempo
- * when that is nothing — tested on focusability rather than on a list of tag
- * names, since the timeline canvas is a tabIndex="0" element that no list
- * would have named, and pressing Space on it changed the BPM mid-set.
- *
- * With one exception: a button or fader the pointer last touched. A click
- * leaves focus on the button, so after pressing Blackout, Space pressed
- * Blackout again instead of tapping — the tap key stopped working after the
- * first click of the night (A7.26). Such a control keeps Space when the
- * keyboard brought focus to it, and hands it to the tempo when the pointer
- * did (focus-origin.js).
- */
-function spaceIsTap(target) {
-  if (!target || target === document.body || target === document.documentElement) return true;
-  if (target.isContentEditable) return false;
-  if (target.tagName === 'BUTTON') return focusedByPointer(target);
-  if (target.tagName === 'INPUT' && target.type === 'range') return focusedByPointer(target);
-  return !(target.tabIndex >= 0 || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
-}
 
 /**
  * The tempo, and a way to type one (A7.26: the README promised it). Press the
@@ -62,9 +41,10 @@ function BpmEntry({ bpm }) {
   );
 }
 
-export function CommandBar() {
-  const [, padProps] = useEnergyPads();
-  const s = pick(['bpm', 'beatDivision', 'clock', 'running', 'masterDimmer', 'masterBlackout', 'energyEffects', 'energyOverride']);
+export function CommandBar({ transport = true } = {}) {
+  const { held, gatedPadProps } = useVoicePads();
+  const gate = useSafetyGate();
+  const s = pick(['bpm', 'beatDivision', 'clock', 'running', 'masterDimmer', 'masterBlackout', 'pads', 'patterns', 'effects', 'sequencePatterns']);
   const bpm = s.bpm || 120;
   const division = s.beatDivision || 1;
   const periodMs = (60_000 / bpm) / division;
@@ -74,21 +54,13 @@ export function CommandBar() {
   // 124.7 rather than float noise.
   const nudge = (delta) => send({ bpm: Math.max(20, Math.min(300, Math.round((bpm + delta) * 100) / 100)) });
 
-  useEffect(() => {
-    const onKey = (e) => {
-      if (e.code !== 'Space') return;
-      if (e.repeat || e.ctrlKey || e.altKey || e.metaKey || e.defaultPrevented) return;
-      if (!spaceIsTap(e.target)) return;
-      e.preventDefault();
-      emitTap();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, []);
+
 
   const [dim, onMaster, commitMaster] = useDraft(s.masterDimmer ?? 255, (v) => send({ masterDimmer: v }));
   const masterPct = Math.round((dim / 255) * 100);
-  const effects = s.energyEffects || [];
+  // The strip is pads bank A, the filled ones, played as on the deck.
+  const strip = (s.pads?.layout || []).filter((p) => p.bank === 0 && p.content).sort((a, b) => a.slot - b.slot);
+  const lit = s.pads?.lit || [];
 
   return (
     <section class="command-bar" aria-label="Live controls">
@@ -133,11 +105,7 @@ export function CommandBar() {
 
       {/* Transport */}
       <div class="cb-block cb-transport">
-        <button
-          class={`cb-play ${s.running ? 'active' : ''}`}
-          onClick={() => send({ running: !s.running })}
-          title={s.running ? 'Stop' : 'Play'}
-        >{s.running ? '■' : '▶'}</button>
+        {transport && <Transport compact />}
 
         <button
           class={`cb-blackout ${s.masterBlackout ? 'active' : ''}`}
@@ -164,22 +132,30 @@ export function CommandBar() {
 
       <div class="cb-divider" />
 
-      {/* Energy panic strip */}
+      {/* Pads bank A */}
       <div class="cb-block cb-energy">
-        <span class="cb-energy-label">ENERGY</span>
+        <span class="cb-energy-label">PADS</span>
         <div class="cb-energy-grid">
-          {effects.map((eff) => (
-            <button
-              key={eff.id}
-              class={`cb-energy-btn ${s.energyOverride === eff.id ? 'active' : ''}`}
-              {...padProps(eff.id)}
-              title={`${eff.name} — ${eff.desc} (hold)`}
-            >
-              <span class="cb-energy-name">{eff.name}</span>
-            </button>
-          ))}
+          {strip.map((p) => {
+            const on = !!lit[p.slot] || held.has(padKey(0, p.slot));
+            const name = padLabel(p, s);
+            return (
+              <button
+                key={p.slot}
+                type="button"
+                class={`cb-energy-btn ${on ? 'active' : ''}`}
+                aria-pressed={on}
+                {...gatedPadProps(p, gate, rapidPad(p, s.patterns, s.effects), name)}
+                style={{ '--pad-accent': p.accent, touchAction: 'none' }}
+                title={`${name} (${holdsWhilePressed(p) ? 'hold' : p.launch === 'loop' ? 'tap to loop' : 'tap'})`}
+              >
+                <span class="cb-energy-name">{name}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
+      {gate.dialog}
     </section>
   );
 }

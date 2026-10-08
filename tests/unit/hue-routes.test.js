@@ -42,7 +42,7 @@ const lamp = (id, bridge, channel = 0) => ({
 async function withApp({ bridges = [], fixtures = [par(0, 1)], pair = async () => ({ ok: true, username: 'new-key', clientKey: 'ccdd', applicationId: 'app-1' }) }, fn) {
   const saved = { fixtures: state.fixtures, next: state.nextFixtureId, values: settings.all(), hue: output.getHueConfig() };
   settings.save = () => {};
-  settings._values = { ...settings.all(), hue: { bridges: JSON.parse(JSON.stringify(bridges)), latencyMs: 0 } };
+  settings._values = { ...settings.all(), hue: { bridges: JSON.parse(JSON.stringify(bridges)), latencyMs: 0, strobe: 'flash' } };
   output.configureHue(settings.group('hue'));
   state.fixtures = fixtures.map((f) => ({ ...f }));
   state.nextFixtureId = Math.max(0, ...state.fixtures.map((f) => f.id + 1));

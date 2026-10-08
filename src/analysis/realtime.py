@@ -98,6 +98,8 @@ class StreamingAnalyzer:
                                     * self.sample_rate / self.hop))
         self._buffer = np.zeros(0, dtype=np.float32)
         self._window = np.hanning(self.n_fft).astype(np.float32)
+        self._power_window = np.hamming(self.n_fft)
+        self._newest = None
         self._previous_spectrum = None
         self._onset_history = deque(maxlen=history_frames)
         self._energy_history = deque(maxlen=history_frames)
@@ -161,6 +163,26 @@ class StreamingAnalyzer:
         rms = self._energy_history[-1] if self._energy_history else 0.0
         return float(flux), float(rms)
 
+    def last_power_spectrum(self):
+        """
+        The newest frame's power spectrum on Hue Dynamics' scale, `|X|²` per
+        bin of a Hamming-windowed rFFT with no normalisation, and the frame's
+        raw Σx². `(None, 0.0)` before the first whole frame.
+
+        The frame's mean comes off before the window: a DC offset is not
+        sound, and windowed it would spread into the bins above DC, where it
+        reads as a 21.5 Hz tone. Σx² keeps it, being the frame's raw energy.
+
+        A transform of its own beside the analyser's Hann one, which the beat
+        tracking is tuned on and stays as it is; worked out on request, so a
+        caller that never asks pays nothing per hop.
+        """
+        if self._newest is None:
+            return None, 0.0
+        x = self._newest.astype(np.float64)
+        spectrum = np.fft.rfft((x - x.mean()) * self._power_window)
+        return spectrum.real ** 2 + spectrum.imag ** 2, float(np.dot(x, x))
+
     def push(self, samples):
         """
         Consume audio and return the events it produced, oldest first.
@@ -176,6 +198,8 @@ class StreamingAnalyzer:
         while self._buffer.size >= self.n_fft:
             frame = self._buffer[:self.n_fft]
             self._buffer = self._buffer[self.hop:]
+            # A view, and safe to keep: the buffer is only ever replaced, never written into.
+            self._newest = frame
             events.extend(self._process(frame))
             self._frame_index += 1
         return events

@@ -23,7 +23,7 @@ async function load() {
         export { rigSelectionSig } from './public-src/rig-ui.js';
         export { lineFromEnds, geometryOf } from './public-src/stage-geometry.js';
         export { SettingsSection } from './public-src/components/setup/Section.jsx';
-        export { SERVER, ENGINE, LIVE } from './public-src/components/setup/specs.js';
+        export { SERVER, ENGINE, LIVE, SHOW } from './public-src/components/setup/specs.js';
         export { PatchTable, conflictsOf } from './public-src/components/setup/PatchTable.jsx';
         export { Inspector } from './public-src/components/setup/Inspector.jsx';
         export { rowPositions, endToEnd } from './public-src/components/setup/PlanEditor.jsx';
@@ -65,7 +65,7 @@ function given(state) {
   ui.store.applySnapshot({ versions: {}, state: { profiles: PROFILES, fixtures: [], ...state } });
 }
 
-test('a settings section: secrets never shown, restart badges, and what the server resolved', () => {
+test("server settings mask configured secrets", () => {
   ui.settingsSig.value = {
     settings: { server: { host: '127.0.0.1', port: 3000, token: '', publicUrl: '' }, engine: { thread: 'worker' } },
     secrets: { 'server.token': true },
@@ -77,10 +77,30 @@ test('a settings section: secrets never shown, restart badges, and what the serv
   assert.match(server, /id="set-server.token" type="password"/);
   assert.match(server, /placeholder="•••••••• \(leave blank to keep\)"/, 'says a token is set, never what it is');
   assert.doesNotMatch(server, /value="[^"]+" aria-describedby="set-server.token-help"/);
+});
+
+test("server settings mark restart requirements and unchanged values", () => {
+  ui.settingsSig.value = {
+    settings: { server: { host: '127.0.0.1', port: 3000, token: '', publicUrl: '' }, engine: { thread: 'worker' } },
+    secrets: { 'server.token': true },
+    restartKeys: ['server.host', 'server.port', 'server.token', 'engine.thread'],
+    pendingRestart: ['server.port'],
+    engine: { thread: 'worker', rate: 44, frames: 100, renderMs: { p95: 0.4 }, lateFrames: 1, skippedFrames: 0 },
+  };
+  const server = ui.html(ui.h(ui.SettingsSection, ui.SERVER));
   assert.strictEqual(server.split('class="setting-badge ').length - 1, 3, 'host, port and token restart');
   assert.match(server, /restart to apply/, 'the port differs from what is running');
   assert.match(server, /class="btn active" disabled>Apply/, 'nothing to apply yet');
+});
 
+test("engine settings show resolved runtime values", () => {
+  ui.settingsSig.value = {
+    settings: { server: { host: '127.0.0.1', port: 3000, token: '', publicUrl: '' }, engine: { thread: 'worker' } },
+    secrets: { 'server.token': true },
+    restartKeys: ['server.host', 'server.port', 'server.token', 'engine.thread'],
+    pendingRestart: ['server.port'],
+    engine: { thread: 'worker', rate: 44, frames: 100, renderMs: { p95: 0.4 }, lateFrames: 1, skippedFrames: 0 },
+  };
   const engine = ui.html(ui.h(ui.SettingsSection, ui.ENGINE));
   assert.match(engine, /Currently: its own thread — 44 frames a second, 0.4 ms to render \(p95\), 1 late or dropped/);
 });
@@ -91,6 +111,15 @@ test('a select keeps a stored value the list no longer has, and says so', () => 
   assert.match(html, /Scarlett 2i2 \(not found\)/);
   assert.match(html, /The default input/, 'the input list, for an input');
   assert.doesNotMatch(html, /Speakers/);
+});
+
+test('Settings → Show selects the saved Hue flash mode', () => {
+  ui.settingsSig.value = { settings: { outputs: { armed: false }, auto: { setMemory: true }, safety: { flashLimit: false }, hue: { strobe: 'pulse' } }, secrets: {} };
+  const html = ui.html(ui.h(ui.SettingsSection, ui.SHOW));
+  const select = html.match(/<select id="set-hue.strobe"[^>]*>(.*?)<\/select>/);
+  assert.ok(select);
+  assert.deepStrictEqual([...select[1].matchAll(/<option (?:selected )?value="([^"]+)"/g)].map((m) => m[1]), ['flash', 'pulse']);
+  assert.match(select[0], /<option selected value="pulse"/);
 });
 
 test('overlaps: on one universe only, and a strip on every universe it runs over', () => {

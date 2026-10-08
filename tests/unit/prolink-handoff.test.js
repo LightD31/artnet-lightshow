@@ -98,7 +98,7 @@ function rig() {
   return { integrations, prolink, autoShow, log, track, release, deckPositions };
 }
 
-test('through a mix, the outgoing show plays on its own deck until the incoming one is ready, then crossfades', async () => {
+test('mix handover keeps outgoing playback until the incoming show is ready', async () => {
   const r = rig();
   r.integrations.startAutoShow();
   assert.strictEqual(r.autoShow.getPositionMs(), 60000, 'the show plays on CDJ-1');

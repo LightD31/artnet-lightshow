@@ -1,11 +1,4 @@
-/**
- * The shapes the rig is described in: colours, fixture profiles, fixtures on
- * the stage plot, and the music's expression channel.
- *
- * Types only — nothing here exists at runtime — so both the server and the
- * browser bundle can import it. The server's zod schemas (server/validation.ts)
- * are what check that data arriving from outside actually has these shapes.
- */
+import type { AdmissionPolicy, RateOverride } from '../shared/hardware.ts';
 
 /** A look colour: red, green and blue, and the extra dies, each 0–255. */
 export interface Colour {
@@ -90,6 +83,8 @@ export interface ChannelDefault {
 
 /** What a kind of fixture is, channel by channel. */
 export interface Profile {
+  hardware?: RateOverride;
+  strobeHz?: { min: number; max: number };
   id: string;
   name: string;
   manufacturer?: string;
@@ -133,6 +128,8 @@ export interface HueLampTraits {
 export interface Point {
   x: number;
   y: number;
+  /** How high in the room, 0 (the floor) to 100 (the ceiling); mid-room when unset. */
+  height?: number;
 }
 
 /** A bar's line on the stage plot: its length, and its angle in degrees. */
@@ -157,6 +154,9 @@ export interface Override {
 
 /** What the stage plot and the pattern layer need to know of a fixture. */
 export interface StageFixture {
+  productId?: string | null;
+  hardware?: RateOverride | null;
+  admission?: AdmissionPolicy | null;
   position?: Point | null;
   group?: string | null;
   geometry?: Geometry | null;
@@ -286,6 +286,7 @@ export type PixelMap = 'stage' | 'bar' | 'mirror';
 
 /** One DMX mode of an imported fixture (GDTF or OFL), ready to become a profile. */
 export interface ImportedMode {
+  strobeHz?: { min: number; max: number };
   modeName: string;
   channelCount: number;
   channelMap: ChannelMap;

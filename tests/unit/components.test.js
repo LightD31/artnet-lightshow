@@ -4,7 +4,7 @@
 // from a state snapshot. What they draw from a given state is pinned here;
 // how they behave in a browser is tests/e2e.
 
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -21,8 +21,21 @@ async function load() {
         export { h } from 'preact';
         export { store } from './public-src/state.js';
         export { Perform, sourceHealth } from './public-src/components/Perform.jsx';
+        export { Header } from './public-src/components/Header.jsx';
+        export { StagePreview } from './public-src/components/StagePreview.jsx';
+        export { NowPlaying, PlayingVoices } from './public-src/components/NowPlaying.jsx';
+        export { SHORTCUTS } from './public-src/components/Shortcuts.jsx';
+        export { VIEWS } from './public-src/views.js';
         export { CommandBar } from './public-src/components/CommandBar.jsx';
-        export { followMusic } from './public-src/state.js';
+        export { Effects, PhotosensitivityConfirm, editingSig, filterByLibrary, groupRows, quickDeck, tapRow, usePress } from './public-src/components/Effects.jsx';
+        export { Inspector, SingleColourField, readRecommendedPreference, savePreset, withRecommended } from './public-src/components/Inspector.jsx';
+        export { PaletteEditor, isHexColour, normaliseHex, savePalette } from './public-src/components/PaletteEditor.jsx';
+        export { librarySig, socket, followMusic } from './public-src/state.js';
+        export { Pads, PadEditor, padGlyph, padBody, contentRows, padChoices } from './public-src/components/Pads.jsx';
+        export { StrobePad, StrobeSettings, strobeBody, strobeChoices } from './public-src/components/StrobePad.jsx';
+        export { createVoiceHolds } from './public-src/hold-control.js';
+        export { BUILTIN_PALETTES, CATALOGUE, FAMILIES } from './src/shared/effects/index.ts';
+        export { requiresAcknowledgement } from './src/shared/effects/registry.ts';
       `,
       resolveDir: ROOT,
       loader: 'js',
@@ -56,21 +69,48 @@ function given(state) {
     palettes: [{ id: 'arctic', name: 'Arctic', colors: { 4: [1, 2, 3, 4] } }, { id: 'volcanic', name: 'Volcanic', colors: { 4: [5, 6, 7, 8] } }],
     palette: 'volcanic', colorPresets: [], activeSource: 'timer',
     autoShow: { status: 'idle', intensity: 70 },
+    pads: { layout: LAYOUT, lit: Array(16).fill(null) }, voices: [], strobe: STROBE,
     ...state,
   } });
 }
 const count = (html, needle) => html.split(needle).length - 1;
 
-test('the Perform view has a pad for blackout, every effect, and tap — in the order a hand learns them', () => {
+// The pads layout as the server sends it: bank 0 the energy effects, the strobe and a look.
+const pad = (bank, slot, label, content, launch = 'hold', extra = {}) => ({
+  bank, slot, label, accent: '#FF8800', content, launch, quantise: 0.25, targets: 'shared', ...extra,
+});
+const LAYOUT = [
+  pad(0, 0, 'Kill', { kind: 'preset', id: 'energy.kill' }),
+  pad(0, 1, 'Blinder', { kind: 'preset', id: 'energy.blinder' }),
+  pad(0, 2, 'Strobe', { kind: 'strobe', id: 'strobe' }),
+  pad(0, 3, 'Colour strobe', { kind: 'preset', id: 'energy.colorStrobe' }),
+  pad(0, 4, 'UV', { kind: 'preset', id: 'energy.uvWash' }, 'loop'),
+  pad(0, 5, 'Glow', { kind: 'preset', id: 'energy.glow' }, 'once'),
+  pad(0, 6, 'Domino', { kind: 'preset', id: 'hd.neonDomino' }, 'loop', { targets: [2] }),
+  pad(0, 7, '', null),
+  ...Array.from({ length: 8 }, (_, i) => pad(1, i, `Look ${i + 1}`, { kind: 'pattern', id: 'groove' }, 'loop')),
+];
+const STROBE = {
+  active: null, mode: null,
+  settings: { palette: ['#FFFFFF'], flashesPerSecond: 5, continueBetween: false, clock: 'wall', brightness: 1, onMs: 100, blackMs: 100 },
+};
+const padLabels = (html) => [...html.matchAll(/class="pad-label">([^<]*)</g)].map((m) => m[1]);
+
+test('the Perform view has blackout, the bank, the strobe, tap and stop all', () => {
   given({});
   const html = ui.html(ui.h(ui.Perform, {}));
   const names = [...html.matchAll(/class="perform-pad-name">([^<]+)</g)].map((m) => m[1]);
-  assert.deepStrictEqual(names, ['Blackout', 'Kill', 'Blinder', 'Strobe', 'Colour strobe', 'UV', 'Glow', 'Tap']);
-  assert.strictEqual(count(html, 'aria-pressed="true"'), 1, 'only the palette in use is pressed');
-  assert.match(html, /class="perform-palette active" aria-pressed="true"><span[^>]*>.*?Volcanic/);
+  assert.deepStrictEqual(names, ['Blackout', 'Tap', 'Stop all voices']);
+  assert.deepStrictEqual(padLabels(html), ['Kill', 'Blinder', 'Strobe', 'Colour strobe', 'UV', 'Glow', 'Domino', 'Empty']);
+  assert.match(html, /class="strobe-hold"/);
+  assert.strictEqual(count(html, 'aria-pressed="true"'), 2, 'the Override destination and Off are pressed');
+  assert.match(html, /aria-pressed="true" data-override="off"/, 'no palette override: Off is pressed');
+  assert.match(html, /aria-label="Palette destination"/);
+  assert.match(html, />Base<.*>Override</);
   assert.match(html, /aria-valuetext="50 percent"/, 'the master, as a person reads it');
   assert.match(html, /aria-valuetext="70 percent"/, 'the show\'s intensity');
   assert.match(html, /Nothing loaded/);
+  assert.doesNotMatch(html, /Latch effects/, 'a pad\'s launch mode says how it plays');
 });
 
 test('the Perform view has the outputs switch, saying what disarmed means', () => {
@@ -84,11 +124,25 @@ test('the Perform view has the outputs switch, saying what disarmed means', () =
   assert.match(html, /Armed.*frames go out to the rig — tap to disarm/s);
 });
 
-test('blackout and a held effect show as pressed', () => {
-  given({ masterBlackout: true, energyOverride: 'uv-wash' });
+test('unacknowledged strobe notices follow server safety state', () => {
+  const views = () => [ui.html(ui.h(ui.Header, {})), ui.html(ui.h(ui.Perform, {}))];
+  const notice = /<button type="button" class="[^"]*" data-safety="ask"[^>]*>(?:<[^>]+>)*Strobes off until acknowledged/;
+  given({ safety: { photosensitivityAcknowledged: false, hdFlashIntervalMs: 350, strobeMaxLatchSec: 60 } });
+  for (const html of views()) assert.match(html, notice);
+  assert.match(views()[1], /tap to acknowledge/);
+  given({ safety: { photosensitivityAcknowledged: true, hdFlashIntervalMs: 350, strobeMaxLatchSec: 60 } });
+  for (const html of views()) assert.doesNotMatch(html, /Strobes off/);
+  given({});
+  for (const html of views()) assert.doesNotMatch(html, /Strobes off/);
+});
+
+test('blackout and a running voice\'s pad show as pressed', () => {
+  const lit = Array(16).fill(null);
+  lit[4] = 'v7';
+  given({ masterBlackout: true, pads: { layout: LAYOUT, lit } });
   const html = ui.html(ui.h(ui.Perform, {}));
   assert.match(html, /class="perform-pad pad-blackout active" aria-pressed="true"/);
-  assert.match(html, /class="perform-pad pad-uv-wash active"/);
+  assert.match(html, /class="pad-cell lit"[^>]*data-slot="4"[^>]*aria-pressed="true"/);
   assert.match(html, /on — tap to restore/);
 });
 
@@ -107,7 +161,7 @@ test('sync health says when the source the show follows is not working', () => {
   assert.match(html, /chip-warn" title="no beats"/, 'a failed analysis is flagged, with why');
 });
 
-test('the command bar offers every division to 1/16, a tempo to type, and a named master', () => {
+test('command bar exposes tempo, division and master controls', () => {
   given({});
   const html = ui.html(ui.h(ui.CommandBar, {}));
   const divisions = [...html.matchAll(/title="Beat division 1\/(\d+)"/g)].map((m) => Number(m[1]));
@@ -142,4 +196,621 @@ test('following the music again is POST /api/tempo/auto', async () => {
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+// ── The Effects view, its inspector and the palette editor ─────────────────
+
+// The catalogue rows as the server lists them in `patterns` (src/server/presets.ts).
+const PRESET_ROWS = ui.CATALOGUE.filter((p) => !p.legacy).map((p) => ({
+  id: p.id, name: p.name, desc: p.desc, ...(p.party ? { party: true } : {}), ...(p.pixel ? { pixel: true } : {}),
+  app: p.app, family: p.family, rapidFlash: ui.requiresAcknowledgement(p.spec), scope: p.spec.scope ?? null,
+}));
+const LEGACY_ROWS = ui.CATALOGUE.filter((p) => p.legacy)
+  .map(({ id, name, desc, party, preset }) => ({ id, name, desc, party, ...(preset ? { preset } : {}), legacy: true }));
+const UPSTREAM_ROWS = [
+  { id: 'chase', name: 'Chase →', desc: 'One fixture at a time, forward', legacy: true },
+  { id: 'gradient', name: 'Gradient', desc: 'The look\'s colours as a gradient scrolling across the rig', pixel: true, legacy: true },
+];
+const PATTERN_ROWS = [...UPSTREAM_ROWS, ...LEGACY_ROWS, ...PRESET_ROWS];
+const domino = ui.CATALOGUE.find((p) => p.id === 'hd.neonDomino');
+const USER_PRESET = {
+  id: 'u1', name: 'My Domino', spec: { ...domino.spec, params: { ...domino.spec.params, attack: 0.5 } },
+  createdAt: '2026-10-06T00:00:00.000Z', updatedAt: '2026-10-06T00:00:00.000Z',
+};
+const USER_PALETTE = { id: 'p1', name: 'Mine', colours: ['#112233', '#445566'] };
+
+function givenLibrary(state) {
+  ui.librarySig.value = {
+    status: 'ready', families: ui.FAMILIES, builtin: ui.CATALOGUE, user: [USER_PRESET],
+    palettes: { builtin: ui.BUILTIN_PALETTES, user: [USER_PALETTE] },
+  };
+  given({
+    pattern: 'hd.neonDomino', patterns: PATTERN_ROWS, families: ui.FAMILIES, builtinPalettes: ui.BUILTIN_PALETTES,
+    effects: [{ id: 'u1', name: 'My Domino', kind: 'hd.positionChase', rapidFlash: false, scope: 'measure', updatedAt: USER_PRESET.updatedAt }],
+    userPalettes: [USER_PALETTE], safety: { photosensitivityAcknowledged: false, hdFlashIntervalMs: 350, strobeMaxLatchSec: 60 },
+    fixtures: [{ id: 1, name: 'Par 1' }, { id: 2, name: 'Par 2' }], profiles: {},
+    ...state,
+  });
+}
+
+/** The button for one row of the list, as rendered. */
+const rowOf = (html, id) => {
+  const m = new RegExp(`<button[^>]*data-id="${id.replace(/\./g, '\\.')}"[^>]*>(?:(?!</button>).)*</button>`, 's').exec(html);
+  return m ? m[0] : null;
+};
+
+test('Effects groups presets by source and family', () => {
+  givenLibrary({});
+  const html = ui.html(ui.h(ui.Effects, {}));
+  const groups = [...html.matchAll(/class="effects-group-title">([^<]+)</g)].map((m) => m[1]);
+  assert.deepStrictEqual(groups, ['Hue Dynamics', 'Light DJ', 'Own', 'Classic effects']);
+  // A family heads its presets.
+  assert.match(html, /Position Chase<\/[^>]+>(?:(?!effects-family-title).)*data-id="hd\.neonDomino"/s);
+  assert.match(html, /effects-family-title">Disco<\/[^>]+>(?:(?!effects-family-title).)*data-id="hd\.disco\.pop"/s);
+  assert.match(html, /effects-family-title">Channel<\/[^>]+>(?:(?!effects-family-title).)*data-id="ldj\.StrobeCycle"/s);
+  // The fork's own: the presets saved here, the party looks, the energy controls.
+  assert.match(html, /effects-family-title">Your presets<\/[^>]+>(?:(?!effects-family-title).)*data-id="u1"/s);
+  assert.match(html, /effects-family-title">Party Looks<\/[^>]+>(?:(?!effects-family-title).)*data-id="position-chase"/s);
+  assert.match(html, /effects-family-title">Energy<\/[^>]+>(?:(?!effects-family-title).)*data-id="energy\.blinder"/s);
+  assert.ok(rowOf(html, 'chase') && rowOf(html, 'gradient'), 'the upstream patterns are listed');
+  // The one playing is pressed, and only it.
+  assert.strictEqual(count(html, 'aria-pressed="true"'), 1 + 1, 'the row on stage, and the Library chip All');
+  assert.match(rowOf(html, 'hd.neonDomino'), /class="pattern-btn active/);
+  // Every group is folded until opened; a search opens them.
+  assert.strictEqual(count(html, '<details class="effects-group" open'), 0);
+  assert.strictEqual(count(html, '<details class="effects-group"'), 4);
+  // A rapid flash carries its warning; a slow one does not.
+  assert.match(rowOf(html, 'hd.voltageConfetti'), /badge-rapid/);
+  assert.match(rowOf(html, 'ldj.TrueStrobe'), /badge-rapid/);
+  assert.doesNotMatch(rowOf(html, 'hd.neonDomino'), /badge-rapid/);
+  assert.match(html, /type="search"[^>]*aria-label="Search effects"/);
+});
+
+test("Library filters presets by duration and ownership", () => {
+  const rows = [
+    { id: 'a', scope: 'singleBeat' }, { id: 'b', scope: 'measure' }, { id: 'u', scope: 'measure', user: true }, { id: 'c' },
+  ];
+  const ids = (mode) => ui.filterByLibrary(rows, mode).map((r) => r.id);
+  assert.deepStrictEqual(ids('single'), ['a']);
+  assert.deepStrictEqual(ids('multi'), ['b', 'u']);
+  assert.deepStrictEqual(ids('custom'), ['u']);
+  assert.deepStrictEqual(ids('all'), ['a', 'b', 'u', 'c']);
+});
+
+test("Library exposes filter chips with All selected initially", () => {
+  givenLibrary({});
+  const html = ui.html(ui.h(ui.Effects, {}));
+  const labels = [...html.matchAll(/class="effects-chip library[^"]*"[^>]*aria-pressed="(true|false)"[^>]*>([^<]+)</g)].map((m) => `${m[2]}:${m[1]}`);
+  assert.deepStrictEqual(labels, ['Single:false', 'Multi:false', 'Custom:false', 'All:true']);
+  const chips = [...html.matchAll(/class="effects-chip ?[^"]*"[^>]*aria-pressed="false"[^>]*>([^<]+)</g)].map((m) => m[1]);
+  assert.deepStrictEqual(chips.slice(0, 3), ['Party', 'Pixel', 'Rapid flash'], 'the filters are chips');
+});
+
+test("Library groups saved presets before the other custom families", () => {
+  const grouped = ui.groupRows([{ id: 'u1', name: 'Mine', user: true, scope: 'measure' }, ...PATTERN_ROWS], ui.FAMILIES);
+  assert.deepStrictEqual(grouped.map((g) => g.app), ['hd', 'ldj', 'own', 'upstream']);
+  assert.deepStrictEqual(grouped[2].families.map((f) => f.name), ['Your presets', 'Party Looks', 'Energy']);
+  assert.deepStrictEqual(grouped[3].families.map((f) => f.name), ['Effects', 'Pixel effects']);
+});
+
+test("Position Chase inspector exposes ordered envelope controls", () => {
+  givenLibrary({});
+  const html = ui.html(ui.h(ui.Inspector, { id: 'hd.neonDomino' }));
+  assert.match(html, /Neon Domino/);
+  for (const label of ['Curve', 'Attack', 'Hold', 'Release', 'Stagger', 'Direction', 'Order', 'Angle', 'Repetitions', 'Loop length', 'Trigger']) {
+    assert.match(html, new RegExp(`>${label}<`), `${label} is offered`);
+  }
+  for (const label of ['Trail', 'Probability', 'Radius', 'Origin x']) {
+    assert.doesNotMatch(html, new RegExp(`>${label}<`), `${label} is not`);
+  }
+  assert.match(html, /80 ticks/, 'the attack, 80/960 of a beat');
+  assert.match(html, /default 4 beats/, 'a measure preset loops over the bar unless told otherwise');
+  assert.match(html, /Save as…/);
+  assert.doesNotMatch(html, />Delete</, 'a built-in cannot be deleted');
+});
+
+test("Radial Pulse inspector exposes origins and radius", () => {
+  givenLibrary({});
+  const html = ui.html(ui.h(ui.Inspector, { id: 'hd.bassBloom' }));
+  for (const label of ['Origin x', 'Origin y', 'Origin z', 'Radius', 'Direction']) assert.match(html, new RegExp(`>${label}<`), label);
+  for (const label of ['Angle', 'Stagger', 'Order', 'Trail']) assert.doesNotMatch(html, new RegExp(`>${label}<`), label);
+});
+
+test("Simple ADSR inspector exposes its envelope", () => {
+  givenLibrary({});
+  const html = ui.html(ui.h(ui.Inspector, { id: 'hd.iceStrike' }));
+  assert.match(html, />Envelope</);
+  assert.doesNotMatch(html, />Attack</);
+  assert.match(html, /default 1 beat</, 'a single-beat preset loops once a beat');
+});
+
+test("Light DJ strobe inspector offers its backlit variant", () => {
+  givenLibrary({});
+  const html = ui.html(ui.h(ui.Inspector, { id: 'ldj.StrobeCycle' }));
+  assert.match(html, />Cadence</);
+  assert.match(html, />Beats</);
+  assert.match(html, />Backlit</);
+});
+
+test("Light DJ Swirl inspector omits a backlit variant", () => {
+  givenLibrary({});
+  const html = ui.html(ui.h(ui.Inspector, { id: 'ldj.Swirl' }));
+  assert.doesNotMatch(html, />Backlit</);
+});
+
+test("Visualizer inspector exposes activity and automatic colours", () => {
+  givenLibrary({});
+  const html = ui.html(ui.h(ui.Inspector, { id: 'ldj.visualizer.firework' }));
+  for (const label of ['Active', 'Mellow', 'Auto colours']) assert.match(html, new RegExp(`>${label}<`), label);
+});
+
+test("Disco inspector exposes channels and detectors", () => {
+  givenLibrary({});
+  const html = ui.html(ui.h(ui.Inspector, { id: 'hd.disco.pop' }));
+  for (const label of ['Style', 'Channels', 'Bands', 'Globals', 'Par 1', 'Par 2']) assert.match(html, new RegExp(`>${label}<`), label);
+});
+
+test("saved preset inspectors permit replacement and deletion", () => {
+  givenLibrary({});
+  const html = ui.html(ui.h(ui.Inspector, { id: 'u1' }));
+  assert.match(html, /My Domino/);
+  assert.match(html, /480 ticks/, 'its own attack');
+  assert.match(html, />Save</);
+  assert.match(html, />Delete</);
+});
+
+test("hex colour input accepts supported channel widths", () => {
+  assert.ok(ui.isHexColour('#abc') && ui.isHexColour('#AABBCC') && ui.isHexColour('#aabbccdd'));
+  assert.ok(!ui.isHexColour('AABBCC') && !ui.isHexColour('#GGGGGG') && !ui.isHexColour('#AABBCCD') && !ui.isHexColour(''));
+});
+
+test("hex colours normalize to uppercase full width", () => {
+  assert.strictEqual(ui.normaliseHex('#abc'), '#AABBCC');
+  assert.strictEqual(ui.normaliseHex('#aabbccdd'), '#AABBCCDD');
+});
+
+function singleColourInputs(value, onChange) {
+  const walk = (node) => !node || typeof node !== 'object' ? [] : [node, ...[node.props?.children].flat(Infinity).flatMap(walk)];
+  return walk(ui.SingleColourField({ value, onChange }));
+}
+
+test('single-colour envelopes display every stored emitter channel', () => {
+  const html = ui.html(ui.h(ui.SingleColourField, { value: '#123456789ABC', onChange: () => {} }));
+  assert.match(html, /id="insp-rgbEnvelope-singleColour"[^>]*value="#123456789ABC"/);
+  assert.match(html, /aria-label="Single colour W"[^>]*value="120"/);
+  assert.match(html, /aria-label="Single colour A"[^>]*value="154"/);
+  assert.match(html, /aria-label="Single colour UV"[^>]*value="188"/);
+});
+
+test('single-colour RGB picker edits preserve white, amber and UV', () => {
+  const changes = [];
+  const inputs = singleColourInputs('#123456789ABC', (next) => changes.push(next));
+  inputs.find((node) => node.props?.type === 'color').props.onInput({ target: { value: '#abcdef' } });
+  assert.deepStrictEqual(changes, ['#ABCDEF789ABC']);
+});
+
+test('single-colour hex entry accepts full emitter values', () => {
+  const changes = [];
+  const inputs = singleColourInputs('#FFFFFF', (next) => changes.push(next));
+  const field = inputs.find((node) => node.props?.id === 'insp-rgbEnvelope-singleColour');
+  field.props.onCommit('#123456789abc');
+  assert.deepStrictEqual(changes, ['#123456789ABC']);
+});
+
+test('single-colour emitter inputs preserve the other channels', () => {
+  const changes = [];
+  const inputs = singleColourInputs('#123456789ABC', (next) => changes.push(next));
+  inputs.find((node) => node.props?.['aria-label'] === 'Single colour UV').props.onCommit(64);
+  assert.deepStrictEqual(changes, ['#123456789A40']);
+});
+
+test('single-colour controls ignore invalid emitter values', () => {
+  const changes = [];
+  const inputs = singleColourInputs('#FFFFFF', (next) => changes.push(next));
+  inputs.find((node) => node.props?.id === 'insp-rgbEnvelope-singleColour').props.onCommit('invalid');
+  inputs.find((node) => node.props?.['aria-label'] === 'Single colour UV').props.onCommit(256);
+  assert.deepStrictEqual(changes, []);
+});
+
+test("palette editor marks invalid colours and offers saved palettes", () => {
+  const html = ui.html(ui.h(ui.PaletteEditor, {
+    colours: ['#FF0000', 'nope', { random: true }], onChange: () => {}, builtin: ui.BUILTIN_PALETTES, user: [USER_PALETTE],
+  }));
+  assert.match(html, /aria-label="Colour 1"[^>]*value="#FF0000"/);
+  assert.doesNotMatch(html, /aria-label="Colour 1"[^>]*aria-invalid/);
+  assert.match(html, /aria-label="Colour 2"[^>]*aria-invalid="true"/);
+  assert.match(html, /class="palette-random"[^>]*>Random</);
+  assert.match(html, /<optgroup label="Light DJ">(?:(?!<\/optgroup>).)*>Red Cyan</s);
+  assert.match(html, /<optgroup label="Your palettes">(?:(?!<\/optgroup>).)*>Mine</s);
+  assert.match(html, /Save as palette…/);
+});
+
+test("full palettes omit the add-colour control", () => {
+  const full = ui.html(ui.h(ui.PaletteEditor, { colours: Array(8).fill('#FFFFFF'), onChange: () => {} }));
+  assert.doesNotMatch(full, />\+ Colour</);
+});
+
+test('saving a built-in posts a copy; saving a preset of your own puts it in place', async () => {
+  givenLibrary({});
+  const calls = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (path, init) => {
+    calls.push({ path, init });
+    const body = JSON.parse(init.body);
+    const preset = { id: path === '/api/effects' ? 'u2' : path.split('/').pop(), name: body.name, spec: body.spec, createdAt: 'now', updatedAt: 'now' };
+    const palette = { id: 'p2', name: body.name, colours: body.colours };
+    return { ok: true, status: 201, json: async () => ({ ok: true, ...(body.spec ? { preset } : { palette }) }) };
+  };
+  try {
+    const draft = { name: 'Slow Domino', spec: { ...domino.spec, params: { ...domino.spec.params, attack: 0.5 } } };
+    const copy = await ui.savePreset({ source: 'builtin', id: 'hd.neonDomino' }, draft);
+    assert.strictEqual(copy.ok, true);
+    assert.strictEqual(copy.preset.id, 'u2');
+    assert.deepStrictEqual([calls[0].path, calls[0].init.method], ['/api/effects', 'POST']);
+    assert.deepStrictEqual(JSON.parse(calls[0].init.body), draft);
+    assert.ok(ui.librarySig.value.user.some((p) => p.id === 'u2'), 'the copy is in the library at once');
+
+    await ui.savePreset({ source: 'user', id: 'u1' }, { name: 'My Domino', spec: USER_PRESET.spec });
+    assert.deepStrictEqual([calls[1].path, calls[1].init.method], ['/api/effects/u1', 'PUT']);
+
+    const saved = await ui.savePalette('Sunset', ['#FF8800', { random: true }]);
+    assert.strictEqual(saved.palette.id, 'p2');
+    assert.deepStrictEqual([calls[2].path, calls[2].init.method], ['/api/palettes', 'POST']);
+    assert.deepStrictEqual(JSON.parse(calls[2].init.body), { name: 'Sunset', colours: ['#FF8800', { random: true }] });
+    assert.ok(ui.librarySig.value.palettes.user.some((p) => p.id === 'p2'));
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('the photosensitivity confirm names the risk and asks before a rapid flash plays', () => {
+  const row = PRESET_ROWS.find((r) => r.id === 'hd.voltageConfetti');
+  const html = ui.html(ui.h(ui.PhotosensitivityConfirm, { preset: row, onConfirm: () => {}, onCancel: () => {} }));
+  assert.match(html, /role="alertdialog"/);
+  assert.match(html, /aria-labelledby="photosensitivity-title"/);
+  assert.match(html, /Voltage Confetti/);
+  assert.match(html, /photosensitive epilepsy/i);
+  assert.match(html, />I understand — play it</);
+  assert.match(html, />Cancel</);
+});
+
+/** The deck's pads, in order, as rendered. */
+const deckOf = (html) => {
+  const deck = /<div class="effects-deck"[^>]*>(.*?)<div class="effects-catalogue">/s.exec(html);
+  return deck ? [...deck[1].matchAll(/<div class="effect-pad ?[^"]*" data-id="([^"]+)"/g)].map((m) => m[1]) : null;
+};
+
+test('the deck marks the base among saved and party presets', () => {
+  givenLibrary({ pattern: 'position-chase' });
+  const html = ui.html(ui.h(ui.Effects, {}));
+  assert.ok(html.indexOf('class="effects-deck"') < html.indexOf('class="effects-catalogue"'), 'the deck is above the catalogue');
+  const deck = deckOf(html);
+  assert.deepStrictEqual(deck.slice(0, 2), ['u1', 'position-chase'], 'the saved preset, then the party looks in catalogue order');
+  assert.ok(deck.includes('swirl') && !deck.includes('hd.neonDomino') && !deck.includes('chase'), 'party looks only, no built-in or upstream row');
+  // The badge names the app; a preset saved here carries its kind's app and says it is yours.
+  assert.match(html, /data-id="u1">(?:(?!<\/div>).)*effect-pad-app">Hue Dynamics<span class="effect-pad-yours"> · Yours</s);
+  assert.match(html, /data-id="position-chase"[^>]*>(?:(?!<\/div>).)*effect-pad-app">Own</s);
+  assert.match(html, /<div class="effect-pad active" data-id="position-chase" data-layer="base">/);
+  assert.strictEqual(count(html, 'class="effect-pad-now"'), 1);
+  // Every pad and row has its pencil; the pencil is not the pad.
+  assert.match(html, /<button type="button" class="effect-edit" aria-label="Edit My Domino"/);
+  assert.match(html, /<button type="button" class="effect-edit" aria-label="Edit Neon Domino"/);
+});
+
+test('shared status stays above the effect search', () => {
+  givenLibrary({});
+  const html = ui.html(ui.h(ui.Effects, {}));
+  const bar = /<div class="effects-now" role="status"[^>]*>(.*?)<\/div>/s.exec(html);
+  assert.ok(bar, 'the now-playing bar is there');
+  assert.ok(bar[1].includes(ui.html(ui.h(ui.NowPlaying, {}))));
+  assert.match(bar[1], /aria-label="Edit Neon Domino"/, 'its own pencil');
+  assert.ok(html.indexOf('class="effects-now"') < html.indexOf('class="effects-search"'), 'above the search');
+  assert.ok(html.indexOf('class="effects-tools"') < html.indexOf('class="effects-now"'), 'inside the sticky tools');
+  assert.strictEqual(count(html, '<details class="effects-group" open'), 0, 'while every group is folded');
+  givenLibrary({ pattern: null });
+  assert.match(ui.html(ui.h(ui.Effects, {})), /class="effects-now"/);
+});
+
+test('a favourite is pinned first on the deck, whatever it is', () => {
+  const rows = [{ id: 'a', party: true }, { id: 'u', user: true }, { id: 'x', app: 'ldj' }, { id: 'b', party: true }];
+  assert.deepStrictEqual(ui.quickDeck(rows, []).map((r) => r.id), ['u', 'a', 'b']);
+  assert.deepStrictEqual(ui.quickDeck(rows, ['x', 'b']).map((r) => r.id), ['x', 'b', 'u', 'a']);
+  assert.deepStrictEqual(ui.quickDeck(rows, ['gone']).map((r) => r.id), ['u', 'a', 'b'], 'a favourite that no longer exists is skipped');
+  givenLibrary({});
+  globalThis.localStorage = { getItem: (key) => (key === 'lightshow.effects.favourites' ? JSON.stringify(['ldj.Swirl', 'u1']) : null), setItem() {}, removeItem() {} };
+  try {
+    const html = ui.html(ui.h(ui.Effects, {}));
+    assert.deepStrictEqual(deckOf(html).slice(0, 3), ['ldj.Swirl', 'u1', 'position-chase']);
+    assert.match(html, /class="effect-star on" aria-pressed="true" aria-label="Favourite Swirl"/);
+    assert.match(html, /class="effect-star " aria-pressed="false" aria-label="Favourite Neon Domino"/);
+  } finally {
+    delete globalThis.localStorage;
+  }
+});
+
+test('row gestures distinguish long press from tap', () => {
+  const calls = { tap: 0, long: 0 };
+  let press = null;
+  const Probe = () => { press = ui.usePress(() => { calls.tap += 1; }, () => { calls.long += 1; }); return null; };
+  ui.html(ui.h(Probe, {}));
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    press.onPointerDown();
+    mock.timers.tick(600);
+    press.onPointerUp();
+    press.onClick();
+    assert.deepStrictEqual(calls, { tap: 0, long: 1 }, 'the long press, and the click after it swallowed');
+    press.onPointerDown();
+    mock.timers.tick(100);
+    press.onPointerUp();
+    press.onClick();
+    mock.timers.tick(1000);
+    assert.deepStrictEqual(calls, { tap: 1, long: 1 }, 'a quick tap');
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test('a plain tap puts the row on stage and nothing else', () => {
+  const sent = ui.socket.sent;
+  ui.socket.connected = true;
+  try {
+    sent.length = 0;
+    assert.strictEqual(ui.tapRow({ id: 'hd.neonDomino', name: 'Neon Domino', rapidFlash: false }, false), true);
+    assert.deepStrictEqual(sent, [['set', { pattern: 'hd.neonDomino' }]]);
+    // A rapid flash before the acknowledgement asks, and sends nothing.
+    sent.length = 0;
+    const asked = [];
+    assert.strictEqual(ui.tapRow({ id: 'hd.voltageConfetti', rapidFlash: true }, false, (row) => asked.push(row.id)), false);
+    assert.deepStrictEqual([sent, asked], [[], ['hd.voltageConfetti']]);
+    // Acknowledged, it plays like any other.
+    assert.strictEqual(ui.tapRow({ id: 'hd.voltageConfetti', rapidFlash: true }, true), true);
+    assert.deepStrictEqual(sent, [['set', { pattern: 'hd.voltageConfetti' }]]);
+  } finally {
+    ui.socket.connected = false;
+    sent.length = 0;
+  }
+});
+
+test('the inspector stays hidden until Edit is chosen, and closes again', () => {
+  givenLibrary({});
+  ui.editingSig.value = null;
+  let html = ui.html(ui.h(ui.Effects, {}));
+  assert.strictEqual(count(html, 'class="card effect-inspector"'), 0);
+  assert.strictEqual(count(html, 'role="dialog"'), 0);
+  ui.editingSig.value = 'hd.neonDomino';
+  try {
+    html = ui.html(ui.h(ui.Effects, {}));
+    assert.strictEqual(count(html, 'class="card effect-inspector"'), 1);
+    assert.match(html, /class="effect-sheet" role="dialog" aria-modal="true"[^>]*><div class="card effect-inspector">/, 'in a sheet over the page');
+    assert.match(html, /class="card effect-inspector">(?:(?!<\/strong>).)*<strong>Neon Domino</s);
+    assert.match(html, /aria-label="Close the inspector"/);
+  } finally {
+    ui.editingSig.value = null;
+  }
+});
+
+test("family recommendation preferences persist in this browser", () => {
+  givenLibrary({});
+  const stored = {};
+  globalThis.localStorage = { getItem: (key) => stored[key] ?? null, setItem: (key, v) => { stored[key] = v; }, removeItem() {} };
+  try {
+    assert.strictEqual(ui.readRecommendedPreference(), 'ask', 'asks until told otherwise');
+    let html = ui.html(ui.h(ui.Inspector, { id: 'hd.neonDomino' }));
+    assert.match(html, />On a family change</);
+    assert.match(html, /<option selected value="ask">Ask</);
+    stored['lightshow.effects.recommended'] = 'keep';
+    assert.strictEqual(ui.readRecommendedPreference(), 'keep');
+    html = ui.html(ui.h(ui.Inspector, { id: 'hd.neonDomino' }));
+    assert.match(html, /<option selected value="keep">Keep mine</, 'the kept answer can be changed back');
+    stored['lightshow.effects.recommended'] = 'bogus';
+    assert.strictEqual(ui.readRecommendedPreference(), 'ask', 'anything else is Ask');
+  } finally {
+    delete globalThis.localStorage;
+  }
+});
+
+test("recommended settings preserve the name and copy family defaults", () => {
+  const def = ui.FAMILIES.flatMap((f) => f.kinds).find((k) => k.defaults && k.defaults.params);
+  const before = { name: 'x', kind: 'hd.other', params: { stale: 1 }, brightness: 0.1 };
+  const after = ui.withRecommended(before, def);
+  assert.strictEqual(after.kind, def.kind);
+  assert.deepStrictEqual(after.params, def.defaults.params);
+  assert.strictEqual(after.name, 'x');
+  assert.strictEqual(after.brightness, def.defaults.brightness ?? 0.1);
+  assert.notStrictEqual(after.params, def.defaults.params, 'a copy, so editing it leaves the catalogue alone');
+});
+
+// ── Perform: pads and the strobe ─────────────────────────────────────────────
+
+test('pad banks render each slot\'s presentation and launch mode', () => {
+  given({});
+  const html = ui.html(ui.h(ui.Pads, {}));
+  assert.match(html, /role="tablist" aria-label="Pad banks"/);
+  assert.match(html, /role="tab" aria-selected="true"[^>]*>A</);
+  assert.match(html, /role="tab" aria-selected="false"[^>]*>B</);
+  assert.match(html, /style="--pad-accent:#FF8800;?"[^>]*data-bank="0" data-slot="1"/);
+  assert.deepStrictEqual([ui.padGlyph('hold'), ui.padGlyph('once'), ui.padGlyph('loop')], ['●', '▶', '↻']);
+  assert.match(html, /data-slot="4"[^>]*title="UV — tap to loop, tap again to stop"/);
+  assert.match(html, /data-slot="5"[^>]*title="Glow — tap to play once"/);
+  assert.match(html, /data-slot="1"[^>]*title="Blinder — hold"/);
+  assert.match(html, /class="pad-cell empty"[^>]*disabled/);
+  assert.match(html, /aria-pressed="false"[^>]*>Edit pads</);
+  const bank1 = ui.html(ui.h(ui.Pads, { initialBank: 1 }));
+  assert.deepStrictEqual(padLabels(bank1), ['Look 1', 'Look 2', 'Look 3', 'Look 4', 'Look 5', 'Look 6', 'Look 7', 'Look 8']);
+});
+
+test('pad editor exposes effect, launch, quantise and fixture choices', () => {
+  givenLibrary({ pads: { layout: LAYOUT, lit: Array(16).fill(null) } });
+  const rows = ui.contentRows([{ id: 'u1', name: 'My Domino', user: true }, ...PATTERN_ROWS], ['chase']);
+  assert.deepStrictEqual(rows.slice(0, 2).map((r) => r.id), ['chase', 'u1']);
+  assert.ok(rows.findIndex((r) => !r.party && !r.user && r.id !== 'chase') > rows.findIndex((r) => r.party), 'party before the rest');
+  const html = ui.html(ui.h(ui.PadEditor, { entry: LAYOUT[6], onClose: () => {}, initial: { patterns: [{ id: 'groove', name: 'Groove' }] } }));
+  assert.match(html, /role="dialog" aria-modal="true" aria-label="Edit pad A7"/);
+  assert.match(html, /<option value="preset:hd.neonDomino" selected/);
+  assert.match(html, /<option value="preset:u1"/);
+  // Every preset under kind preset, palette-strobe too; a legacy row never as a preset or a pattern.
+  assert.match(html, /<option value="preset:palette-strobe"/);
+  assert.doesNotMatch(html, /value="(?:preset|pattern):(?:chase|gradient|confetti|swirl)"/);
+  // The shelf's patterns: played as one voice, or dropped into the sequence.
+  assert.match(html, /<optgroup label="Patterns, played as one voice"><option value="pattern:groove"[^>]*>Groove</);
+  assert.match(html, /<optgroup label="Patterns, dropped into the sequence"><option value="sequencePattern:groove"[^>]*>Groove</);
+  assert.match(html, /name="pad-launch" value="loop" checked/);
+  assert.match(html, /<option value="0.25" selected>1\/4 beat</);
+  assert.match(html, /<input type="checkbox" value="2" checked[^>]*\/?>(?:<span>)?Par 2/);
+  assert.match(html, /<input type="checkbox" value="1"(?! checked)[^>]*\/?>(?:<span>)?Par 1/);
+});
+
+test('pad editor offers playable presets and migrated legacy looks', () => {
+  const rows = [{ id: 'u1', name: 'My Domino', user: true }, ...PATTERN_ROWS];
+  const shelf = [{ id: 'groove', name: 'Groove' }, { id: 'p2', name: '' }];
+  const { presets, patterns, drops } = ui.padChoices(rows, shelf, ['chase', 'confetti']);
+  const values = presets.map((c) => c.value);
+  // Every saved and built-in preset once, by its own id, whatever the id looks like.
+  assert.deepStrictEqual([...values].sort(), ['preset:u1', ...PRESET_ROWS.map((r) => `preset:${r.id}`)].sort());
+  // The favourites lead: chase is no preset and offers none; confetti offers Voltage Confetti, under its own name.
+  assert.deepStrictEqual(presets.slice(0, 2), [
+    { value: 'preset:hd.voltageConfetti', name: 'Voltage Confetti' }, { value: 'preset:u1', name: 'My Domino' },
+  ]);
+  // Then the other looks' presets in the looks' order, before the rest of the catalogue.
+  const linked = LEGACY_ROWS.filter((r) => r.preset && r.id !== 'confetti').map((r) => `preset:${r.preset}`);
+  assert.deepStrictEqual(values.slice(2, 2 + linked.length), linked);
+  assert.deepStrictEqual(patterns, [{ value: 'pattern:groove', name: 'Groove' }, { value: 'pattern:p2', name: 'p2' }]);
+  assert.deepStrictEqual(drops, [{ value: 'sequencePattern:groove', name: 'Groove' }, { value: 'sequencePattern:p2', name: 'p2' }]);
+  assert.deepStrictEqual(ui.padBody({ label: '', accent: '#123456', content: 'sequencePattern:groove', launch: 'once', quantise: 4, targets: [] }).content,
+    { kind: 'sequencePattern', id: 'groove' });
+});
+
+test("pad editor serializes the fields stored by the server", () => {
+  const body = ui.padBody({ label: 'Domino', accent: '#00ff00', content: 'preset:hd.neonDomino', launch: 'loop', quantise: '1', targets: [2, 1] });
+  assert.deepStrictEqual(body, { label: 'Domino', accent: '#00FF00', content: { kind: 'preset', id: 'hd.neonDomino' }, launch: 'loop', quantise: 1, targets: [2, 1] });
+});
+
+test("strobe pad edits force hold launch", () => {
+  assert.deepStrictEqual(ui.padBody({ label: '', accent: '#123456', content: 'strobe:strobe', launch: 'loop', quantise: 0, targets: 'shared' }).launch, 'hold');
+});
+
+test("empty pad content serializes as null", () => {
+  assert.strictEqual(ui.padBody({ label: '', accent: '#123456', content: '', launch: 'once', quantise: 0, targets: [] }).content, null);
+});
+
+test("empty pad target selection means the whole rig", () => {
+  assert.strictEqual(ui.padBody({ label: '', accent: '#123456', content: '', launch: 'once', quantise: 0, targets: [] }).targets, 'shared', 'no fixture ticked is the whole rig');
+});
+
+test('strobe pad exposes hold, burst and settings controls', () => {
+  given({});
+  let html = ui.html(ui.h(ui.StrobePad, {}));
+  assert.match(html, /class="strobe-hold"[^>]*aria-pressed="false"/);
+  assert.match(html, />Burst 2 s</);
+  assert.match(html, /aria-label="Strobe settings"/);
+  given({ strobe: { ...STROBE, active: { id: 'strobe', mode: 'hold', startedAt: 1, until: null }, mode: 'hold' } });
+  html = ui.html(ui.h(ui.StrobePad, {}));
+  assert.match(html, /class="strobe-hold active"[^>]*aria-pressed="true"/);
+});
+
+test("strobe settings show the current controls", () => {
+  givenLibrary({ strobe: STROBE });
+  const html = ui.html(ui.h(ui.StrobeSettings, { onClose: () => {} }));
+  assert.match(html, /role="dialog" aria-modal="true" aria-label="Strobe settings"/);
+  assert.match(html, /value="#FFFFFF"/, 'the palette editor with the strobe\'s colour');
+  assert.match(html, /aria-label="Flashes per second"[^>]*min="1"[^>]*max="5"[^>]*value="5"/);
+  assert.match(html, /<input type="checkbox"[^>]*\/?>(?:<span>)?Look shows between flashes/);
+  assert.match(html, /<option value="wall" selected/);
+  assert.match(html, /aria-label="Strobe brightness"[^>]*value="100"/);
+});
+
+test("strobe settings serialize bounded normalized palette values", () => {
+  assert.deepStrictEqual(ui.strobeBody({ palette: ['#ff0000', 'random', '#00FF00', '#1', '#2', '#3', '#444444', '#555555', '#666666', '#777777'], flashesPerSecond: '3', continueBetween: true, clock: 'beat', brightness: 50 }),
+    { palette: ['#FF0000', '#00FF00', '#444444', '#555555', '#666666', '#777777'], function: 'palette', speed: 128, flashesPerSecond: 3, continueBetween: true, clock: 'beat', brightness: 0.5 });
+  // A ROOT PAR program keeps its speed, bounded to the look's 1..255.
+  const ramp = ui.strobeBody({ palette: ['#ffffff'], function: 'ramp-up', speed: 400, flashesPerSecond: 2, continueBetween: false, clock: 'beat', brightness: 100 });
+  assert.deepStrictEqual([ramp.function, ramp.speed], ['ramp-up', 255]);
+});
+
+test('the strobe sheet offers its palette flashes and the look\'s drawn functions, a program with its speed', () => {
+  const functions = [{ id: 'standard', name: 'Standard' }, { id: 'ramp-up-down', name: 'Ramp Up/Down' }, { id: 'break', name: 'Burst' }];
+  assert.deepStrictEqual(ui.strobeChoices(functions).map((f) => f.id), ['palette', 'ramp-up-down', 'break'],
+    'the fixture\'s own standard strobe is the look\'s, not the voice\'s');
+  given({ strobeFunctions: functions, strobe: { active: null, settings: { function: 'break', speed: 200, flashesPerSecond: 2, continueBetween: true, clock: 'beat', brightness: 1, palette: ['#FFFFFF'] } } });
+  const html = ui.html(ui.h(ui.StrobeSettings, { onClose() {} }));
+  assert.match(html, /<option value="break" selected[^>]*>Burst<\/option>/);
+  assert.match(html, /aria-label="Strobe speed"[^>]*value="200"/);
+  assert.doesNotMatch(html, /Flashes per second/, 'a program runs at its speed, not a rate');
+});
+
+test('voice holds release their own tokens', () => {
+  const sent = [];
+  const holds = ui.createVoiceHolds((p) => { sent.push(p); return true; });
+  holds.press('p0-1', { pad: { bank: 0, slot: 1 } });
+  holds.press('strobe', { effect: { preset: 'strobe' } });
+  assert.notStrictEqual(sent[0].token, sent[1].token);
+  assert.deepStrictEqual(sent[0], { action: 'press', token: sent[0].token, pad: { bank: 0, slot: 1 } });
+  assert.deepStrictEqual(sent[1], { action: 'press', token: sent[1].token, effect: { preset: 'strobe' } });
+  assert.deepStrictEqual(holds.held(), ['p0-1', 'strobe']);
+  holds.release('p0-1');
+  assert.deepStrictEqual(sent[2], { action: 'release', token: sent[0].token, pad: { bank: 0, slot: 1 } });
+  holds.releaseAll();
+  assert.deepStrictEqual(sent[3], { action: 'release', token: sent[1].token, effect: { preset: 'strobe' } });
+  assert.deepStrictEqual(holds.held(), []);
+});
+
+test('the command bar\'s strip is pads bank A', () => {
+  given({});
+  const html = ui.html(ui.h(ui.CommandBar, {}));
+  assert.match(html, /class="cb-energy-label">PADS</);
+  const names = [...html.matchAll(/class="cb-energy-name">([^<]*)</g)].map((m) => m[1]);
+  assert.deepStrictEqual(names, ['Kill', 'Blinder', 'Strobe', 'Colour strobe', 'UV', 'Glow', 'Domino']);
+});
+
+
+test('every live status surface renders the shared state', () => {
+  givenLibrary({
+    sequence: { loaded: { id: 'intro', name: 'Intro' }, paused: true, beat: 3, bar: 1,
+      activeClips: [{ id: 'c1', laneId: 'a', lane: 'Front', name: 'Custom pulse' }] },
+    voices: [{ id: 'api:1', label: 'API look', mode: 'latched', targets: 'shared' }],
+    paletteOverride: ['#123456'], fixtures: [],
+  });
+  const expected = ui.html(ui.h(ui.NowPlaying, {}));
+  assert.match(expected, /Clips: Front: Custom pulse/);
+  for (const Component of [ui.Header, ui.Perform, ui.Effects, ui.StagePreview]) {
+    assert.ok(ui.html(ui.h(Component, {})).includes(expected));
+  }
+});
+
+test('pad labels agree between the deck and command bar', () => {
+  const entry = pad(0, 0, '', { kind: 'preset', id: 'hd.neonDomino' });
+  givenLibrary({ pads: { layout: [entry], lit: [] } });
+  const labels = padLabels(ui.html(ui.h(ui.Pads, {})));
+  const strip = ui.html(ui.h(ui.CommandBar, {}));
+  const rendered = /class="cb-energy-name">([^<]*)</.exec(strip);
+  assert.strictEqual(labels[0], rendered[1]);
+  assert.strictEqual(labels[0], ui.CATALOGUE.find((row) => row.id === entry.content.id).name);
+});
+
+test('shortcut help derives every view chord from the navigation', () => {
+  const items = ui.SHORTCUTS.flatMap((group) => group.items).filter((item) => item.view);
+  assert.deepStrictEqual(items.map((item) => [item.view, item.keys]), ui.VIEWS.map((view) => [view.id, [...(view.shift ? ['Shift'] : []), view.key]]));
+});
+
+test('voice stop uses the visible voice identifier', async () => {
+  given({ voices: [{ id: 'api:1/2', label: 'Remote', mode: 'latched', targets: 'shared' }, { id: 'hidden', hidden: true }] });
+  const children = ui.PlayingVoices({}).props.children[0];
+  assert.strictEqual(children.length, 1);
+  const stop = children[0].props.children.find((child) => child.type === 'button');
+  const calls = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (path, init) => { calls.push([path, init.method]); return { ok: true, json: async () => ({ ok: true }) }; };
+  try {
+    await stop.props.onClick();
+    assert.deepStrictEqual(calls, [['/api/voices/api%3A1%2F2', 'DELETE']]);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+test('saved pattern pad names agree between the deck and command bar', () => {
+  const entry = pad(0, 0, '', { kind: 'pattern', id: 'p1' });
+  givenLibrary({ pads: { layout: [entry], lit: [] }, sequencePatterns: [{ id: 'p1', name: 'Closing phrase' }] });
+  assert.strictEqual(padLabels(ui.html(ui.h(ui.Pads, {})))[0], 'Closing phrase');
+  const strip = ui.html(ui.h(ui.CommandBar, {}));
+  assert.strictEqual(/class="cb-energy-name">([^<]*)</.exec(strip)[1], 'Closing phrase');
 });

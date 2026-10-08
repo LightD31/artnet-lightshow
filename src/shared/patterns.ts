@@ -1,39 +1,14 @@
+import type { ResolvedGradient } from './palette-model.ts';
 import { colourMixer } from './color.ts';
-import { FLASH_MS, MIN_SLOT_MS, flashLit, scatter, rampUp, rampDown, randomSwell, swellsIn } from './strobe-fx.ts';
-import { HUE_PULSE_MS, HUE_PULSE_FLOOR, huePulseLevel } from './look-math.ts';
+import { HOLD_STROBE_MAX_HZ, HUE_PULSE_MS, HUE_PULSE_FLOOR, huePulseLevel } from './look-math.ts';
+import { roomOf, xOf, yOf } from './room.ts';
 import type { StagePlan } from './rig.ts';
+import { FLASH_MS, MIN_SLOT_MS, flashLit, scatter, rampUp, rampDown, randomSwell, swellsIn } from './strobe-fx.ts';
 import type { Colour, Expression, PulseReading } from '../types/rig.ts';
 
-// Pure pattern functions. Each takes (ctx) where:
-//   ctx.colors        : array of resolved Colour A..D presets
-//   ctx.fixtureCount  : N slots — fixtures, or for a CELL_PATTERNS entry every
-//                       cell of every bar (see shared/layer.js)
-//   ctx.step          : steps of the beat grid since the scene's anchor
-//                       (shared/beat-clock.js)
-//   ctx.stepPos       : the same count, continuous (2.5 is halfway through the
-//                       third step)
-//   ctx.stepPhase     : how far through the current step, 0..1
-//   ctx.phase         : the expressive patterns' travel, 0..1, moved by motion
-//   ctx.hue           : rotating hue for color-cycle / rainbow
-//   ctx.twinkle       : per-slot stochastic memory (mutated for 'twinkle')
-//   ctx.xs, ctx.ys    : each slot's place across the rig, 0..1 (xs may be null:
-//                       even spacing); ys on the same scale, or null
-//   ctx.progress      : how far through its span a picture that plays once
-//                       (a build-up's fill) has got, 0..1, or null
-//   ctx.stepMs        : how long a step lasts at the tempo, in ms, or null —
-//                       what times the strobe effects' flashes
-//   ctx.plan          : where each slot stands on the stage plot, and its
-//                       group, when the rig is placed (shared/rig.ts) — what
-//                       the party effects travel the room by; null otherwise
-//   ctx.noFlash       : which slots are Hue lamps, never flashed, or null
-//   ctx.write(i, color, dim, strobe) — sets slot i's render colour
-//
-// 'fade' and 'hit' are whole-rig envelopes: the engine and the preview set
-// their brightness from the beat position themselves (beat-clock.js
-// fadePhase / hitPhase); the functions here only seed the colour.
-
-/** What a pattern is handed for one frame (see shared/layer.ts). */
 export interface PatternContext {
+  random?: () => number;
+  gradient?: ResolvedGradient | null;
   colors: readonly Colour[];
   fixtureCount: number;
   step: number;
@@ -45,18 +20,14 @@ export interface PatternContext {
   xs: readonly number[] | null;
   ys: readonly number[] | null;
   dynamics: Readonly<Expression> | null;
-  /** The music at pixel rate (show/pulse.ts), or null: every pattern has to
-   *  look right without it — the preview, a manual look, an older analysis. */
   pulse?: Readonly<PulseReading> | null;
-  /** How far through its span a picture that plays once has got, 0..1, or
-   *  null when the scene gave it none (see shared/layer.ts). */
   progress?: number | null;
-  /** How long one step lasts at the tempo, in ms, or null when it is not known. */
   stepMs?: number | null;
-  /** Each slot's place on the stage plot and its group, or null for an unplaced rig. */
   plan?: StagePlan | null;
-  /** The slots that are Hue lamps and so are never flashed, or null. */
+  // Preserve the legacy Hue mask name used by rig layouts.
   noFlash?: readonly boolean[] | null;
+  // Older direct pattern callers retain pulse when this setting is absent.
+  hueStrobe?: 'flash' | 'pulse';
   write(i: number, colour: Colour, dim: number, strobe: number): void;
 }
 
@@ -82,24 +53,8 @@ function hsvToRgb(h: number, s: number, v: number): Colour {
   };
 }
 
-// Brightness for the lamps a travelling pattern is *not* on. Dark enough that
-// the moving lamp is what the eye follows, bright enough that the rig does not
-// look half-broken between hits. The old patterns each picked their own value
-// between 50 and 80, which made a chase and a runner sit at visibly different
-// levels for no reason.
 const BED = 45;
 
-/**
- * The bed, moved by what is actually playing.
- *
- * A constant is the right answer only for a rig with nothing to go on. With the
- * expression channel running, the gap between the travelling lamp and the rest
- * is a musical quantity: over a sparse intro the bed drops close to black and
- * the moving lamp is the whole show, and under a dense chorus it lifts so the
- * rig reads as lit rather than as one lamp working. `air` is the measurement —
- * how much texture is on top of the track — because that is what fills the
- * space between hits in the music too.
- */
 function bedOf(ctx: PatternContext): number {
   const d = ctx.dynamics;
   if (!d) return BED;
@@ -107,69 +62,32 @@ function bedOf(ctx: PatternContext): number {
   return Math.round(Math.max(0, Math.min(120, (12 + 90 * (d.air ?? .3)) * level)));
 }
 
-/** A 0..1 reading from the expression channel, or a default without one. */
 function dyn(ctx: PatternContext, key: keyof Expression, fallback: number): number {
   const value = ctx.dynamics ? ctx.dynamics[key] : undefined;
   return value !== undefined && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : fallback;
 }
 
-/**
- * The distinct colours the four slots hold, in slot order.
- *
- * A palette smaller than four slots wraps to fill them — a duo becomes A/B/A/B
- * and a triad A/B/C/A (see server/palettes.js) — so counting distinct entries
- * recovers the size the operator actually picked. Slots hold resolved preset
- * objects out of one COLOR_PRESETS table, so two slots on the same preset are
- * the same object and reference equality is the right test.
- *
- * This is what lets one `split` replace the old split / split-3 / split-4: a
- * pattern uses as many colours as the look has, instead of the caller picking
- * the variant whose name matches the palette size. Eight patterns collapsed
- * into four this way, and the auto show no longer has to gate a `multi3` and a
- * `multi4` pool on the palette it happened to lock.
- */
 function paletteOf(ctx: Pick<PatternContext, 'colors'>): Colour[] {
   const out: Colour[] = [];
   for (const c of ctx.colors) if (c && !out.includes(c)) out.push(c);
   return out.length ? out : [{ r: 0, g: 0, b: 0, w: 0, a: 0, uv: 0 }];
 }
 
-// Patterns that are a picture across the rig rather than a sequence of lamps:
-// they run on every cell of every bar, so a wave rolls smoothly along a bar
-// instead of the whole bar taking one colour. The rest step through fixtures,
-// and a bar takes its slot's colour on every cell.
+export const LAMP_PATTERNS = new Set(['position-chase', 'starlight', 'confetti', 'anchor-fill', 'halves', 'flip',
+  'ring-strobe', 'ring-backlit', 'fireworks', 'flashes']);
+
 const CELL_PATTERNS = new Set([
   'ensemble', 'ribbon', 'wave', 'rainbow', 'twinkle', 'sparkle',
   'gradient', 'comet', 'burst', 'plasma', 'meter', 'drums', 'stems',
   'rise', 'impact', 'bars', 'fire', 'rain',
   'flash-chase', 'flash-scatter', 'flash-fill', 'flash-alternate', 'ramp', 'core',
+  'radial-pulse', 'spatial-wash', 'bounce-scan', 'streak',
+  'breathe', 'volume-gate', 'room-wave', 'swirl',
   'ramp-scatter', 'decay-scatter', 'flash-burst',
-  // The party effects: a picture over the room, so over a bar's cells too.
-  'position-chase', 'radial-pulse', 'spatial-wash', 'bounce-scan', 'streak', 'starlight',
-  'breathe', 'volume-gate', 'confetti',
-  'anchor-fill', 'halves', 'flip', 'room-wave', 'ring-strobe', 'ring-backlit', 'fireworks', 'flashes', 'swirl',
 ]);
-
-/** Where slot i sits across the rig, 0..1: its placed position, or even spacing. */
-function xOf(ctx: PatternContext, i: number): number {
-  if (ctx.xs) return ctx.xs[i];
-  return ctx.fixtureCount > 1 ? i / (ctx.fixtureCount - 1) : 0.5;
-}
-
-/** And front to back, on the same scale; the middle when nothing says. */
-function yOf(ctx: PatternContext, i: number): number {
-  return ctx.ys ? ctx.ys[i] : 0.5;
-}
 
 const frac = (v: number): number => v - Math.floor(v);
 
-// ── Palette gradients ────────────────────────────────────────────────────────
-// The pixel effects paint a continuous gradient through the look's colours, A
-// into B into C and back round to A. Blending round the colour wheel (see
-// color.js) is too costly to do for every cell of every bar forty times a
-// second, so each palette's gradient is worked out once, 64 steps between each
-// pair of colours, and looked up. Engine and preview share this table, so
-// they paint the same colour for the same place.
 const GRADIENT_STEPS = 64;
 const gradients = new Map<string, Colour[]>();
 
@@ -182,8 +100,6 @@ function gradientOf(pal: readonly Colour[]): Colour[] {
     for (let k = 0; k < pal.length; k++) {
       const mix = colourMixer(pal[k], pal[(k + 1) % pal.length]);
       for (let s = 0; s < GRADIENT_STEPS; s++) {
-        // The ends are the palette's own colours, by reference, so a look
-        // that lands exactly on one shows exactly that preset.
         table.push(s === 0 ? pal[k] : mix(s / GRADIENT_STEPS));
       }
     }
@@ -192,7 +108,10 @@ function gradientOf(pal: readonly Colour[]): Colour[] {
   return table;
 }
 
-/** The colour at `p` round the palette's cycle (0 and 1 are colour A). */
+function contextGradient(ctx: PatternContext, pal: readonly Colour[], p: number): Colour {
+  return ctx.gradient?.sample(p) ?? gradientAt(pal, p);
+}
+
 function gradientAt(pal: readonly Colour[], p: number): Colour {
   if (pal.length === 1) return pal[0];
   const table = gradientOf(pal);
@@ -200,40 +119,15 @@ function gradientAt(pal: readonly Colour[], p: number): Colour {
 }
 
 const PATTERN_FUNCS: Record<string, PatternFn> = {
-  // The two expressive patterns are driven at frame rate by the expression
-  // channel rather than stepped by the beat clock, which is what lets them
-  // follow a swell. It is also what made them the quietest things in the
-  // vocabulary: both used to sit in a narrow band around a third of full and
-  // never leave it, so a chorus and a breakdown came out at the same
-  // brightness. The gains below open that band at both ends — the crest
-  // reaches full and the trough drops most of the way to black — because on a
-  // rig of static pars the depth of the sweep is the only thing carrying it.
   ensemble(ctx) {
     const d = ctx.dynamics || { bass: .5, vocal: .5, air: .3, width: .5, motion: .4 };
     const phase = ctx.phase ?? ctx.step * .25;
     const pal = paletteOf(ctx);
     for (let i = 0; i < ctx.fixtureCount; i++) {
-      // Where this lamp stands across the rig: the operator's placement when
-      // there is one (see shared/stage.js), even spacing otherwise. With real
-      // positions the centre is the middle of the stage, not the middle of
-      // the patch list.
       const x = ctx.xs ? ctx.xs[i] : ctx.fixtureCount > 1 ? i / (ctx.fixtureCount - 1) : .5;
       const centre = ctx.fixtureCount <= 2 ? .5 : 1 - Math.abs(2 * x - 1);
-      // Between half a cycle and a full one across the rig. It used to be one
-      // to two, which on four lamps aliases exactly: at two cycles the rig
-      // alternates in pairs and at one it moves as a block, and neither is the
-      // crest travelling from one end to the other that the pattern is for.
       const spread = (0.5 + d.width * 0.5) * Math.PI * 2;
-      // Raised to a power so the sweep is a travelling crest rather than an
-      // even ripple: the same movement, but with somewhere dark for it to
-      // travel *through*.
       const sweep = Math.pow((1 + Math.sin(phase * Math.PI * 2 - x * spread)) / 2, 1.6);
-      // The bass and vocal terms are complementary across the rig — as one
-      // fades in the other fades out — so together they held every lamp at
-      // roughly one level and the pattern read as a dim wash with a ripple on
-      // it. They are the *bed* here, and the sweep on top of them is what
-      // moves, with enough authority to reach full on a loud track and to
-      // leave the lamps it is not on well below it.
       const bed = .06 + .5 * (d.bass * (1 - centre) + d.vocal * centre);
       const strength = bed + (.35 + .5 * d.air) * sweep;
       ctx.write(i, pal[(centre > .5 ? 0 : 1) % pal.length], Math.round(Math.min(1, strength) * 255), 0);
@@ -243,13 +137,7 @@ const PATTERN_FUNCS: Record<string, PatternFn> = {
     const d = ctx.dynamics || { width: .6, motion: .3, air: .5 };
     const phase = ctx.phase ?? ctx.step / 8;
     const pal = paletteOf(ctx);
-    // Where the unlit end of the ribbon sits. Texture lifts it, so a dense
-    // track keeps the whole rig alive and a sparse one lets the crest be the
-    // only thing on stage.
     const floor = 18 + 55 * d.air;
-    // Round the colour wheel rather than through the middle of it: A and B are
-    // opposites, and averaging them per channel left a washed-out grey band
-    // across the middle of the rig. See shared/color.js.
     const mix = pal.length === 1 ? null : colourMixer(pal[0], pal[1 % pal.length]);
     for (let i = 0; i < ctx.fixtureCount; i++) {
       const x = ctx.xs ? ctx.xs[i] : i / Math.max(1, ctx.fixtureCount - 1);
@@ -258,7 +146,6 @@ const PATTERN_FUNCS: Record<string, PatternFn> = {
       ctx.write(i, mix ? mix(wave) : pal[0], Math.round(floor + crest * (255 - floor)), 0);
     }
   },
-  // ── Whole rig ─────────────────────────────────────────────────────────────
 
   solid(ctx) {
     const [colA] = ctx.colors;
@@ -267,7 +154,6 @@ const PATTERN_FUNCS: Record<string, PatternFn> = {
 
   fade(ctx) {
     const [colA] = ctx.colors;
-    // Brightness is overwritten by renderDmx for smoothness.
     for (let i = 0; i < ctx.fixtureCount; i++) ctx.write(i, colA, 255, 0);
   },
 
@@ -282,33 +168,17 @@ const PATTERN_FUNCS: Record<string, PatternFn> = {
   },
 
   'color-cycle'(ctx) {
-    // Steps the whole rig to the next colour in the look each beat. It used to
-    // sweep raw HSV, which ignored the palette entirely and so had to be kept
-    // out of every generated-show pool; driving it from the slots means it
-    // finally agrees with whatever look is on stage.
     const pal = paletteOf(ctx);
     const col = pal[ctx.step % pal.length];
     for (let i = 0; i < ctx.fixtureCount; i++) ctx.write(i, col, 255, 0);
   },
 
   rainbow(ctx) {
-    // The one deliberately palette-free look: a full spectrum spread across the
-    // rig. No set of six presets can approximate it, which is why it survives
-    // the fold — and why the auto show still leaves it alone.
     const N = Math.max(1, ctx.fixtureCount);
     for (let i = 0; i < ctx.fixtureCount; i++) {
       ctx.write(i, hsvToRgb(ctx.hue + (360 / N) * i, 1, 1), 255, 0);
     }
   },
-
-  // ── Travelling ────────────────────────────────────────────────────────────
-  //
-  // All of these light one or two lamps at full and hold the rest at the bed —
-  // which is no longer a constant, but how much air the track has (see
-  // `bedOf`), so the same chase reads as sparse over an intro and as lit under
-  // a chorus. The lit lamp takes the next colour in the look on every step, so
-  // a four-colour palette gets the old chase-4 behaviour and a two-colour
-  // palette alternates — one pattern instead of three.
 
   chase(ctx) {
     const pal = paletteOf(ctx);
@@ -348,11 +218,6 @@ const PATTERN_FUNCS: Record<string, PatternFn> = {
     const N = Math.max(1, ctx.fixtureCount);
     const lead = ctx.step % N;
     const col = pal[ctx.step % pal.length];
-    // The tail is how long the light hangs behind the lead lamp, and the music
-    // says how long that should be: a fast, driving passage leaves a short hard
-    // trail, a slow one smears. `motion` carries the same reading that decides
-    // how fast the expressive patterns sweep, so the whole rig agrees about how
-    // quickly the track is moving.
     const tail = 1 + Math.round(dyn(ctx, 'motion', .3) * 2.4);
     const bed = bedOf(ctx);
     for (let i = 0; i < N; i++) {
@@ -378,19 +243,8 @@ const PATTERN_FUNCS: Record<string, PatternFn> = {
   wave(ctx) {
     const [colA] = ctx.colors;
     const N = Math.max(1, ctx.fixtureCount);
-    // How far the wave is spread across the rig follows the mix's own width. A
-    // mono, centred track gets a rig that swells together; a wide one gets a
-    // wave that genuinely travels, which is the same information the mix is
-    // already giving the ears.
     const spread = 0.35 + dyn(ctx, 'width', .5) * 1.3;
     for (let i = 0; i < N; i++) {
-      // One full sweep every eight beats. The phase used to advance 0.25 rad a
-      // beat — a quarter turn every twenty-five beats — so on anything shorter
-      // than a whole song the wave never visibly moved.
-      // The lamp's real place across the rig, scaled to the range i/N covers.
-      // Without positions this is the original expression, operand for operand:
-      // an unplaced rig must render exactly as it always has, and reordering the
-      // arithmetic can move a rounded DMX value by one.
       const offset = ctx.xs
         ? (ctx.xs[i] * (N - 1) / N) * Math.PI * 2 * spread
         : (i * (Math.PI * 2 / N) * spread);
@@ -400,11 +254,6 @@ const PATTERN_FUNCS: Record<string, PatternFn> = {
     }
   },
 
-  // One more lamp on every step until the rig is full, then back to one. It
-  // used to count an empty step as well — N + 1 steps a stack — so four lamps
-  // stacked over five steps and drifted a step against the bar every time
-  // round, with the downbeat, of all steps, the dark one. N steps a stack puts
-  // a full rig on the bar's last step and the first lamp on the next downbeat.
   'stack-up'(ctx) {
     const pal = paletteOf(ctx);
     const bed = bedOf(ctx);
@@ -412,13 +261,9 @@ const PATTERN_FUNCS: Record<string, PatternFn> = {
     const pos = ctx.step % Math.max(1, N);
     for (let i = 0; i < N; i++) {
       const lit = i <= pos;
-      // The stack builds in the look's colours rather than one flat wash, so a
-      // four-lamp rig fills with four different colours.
       ctx.write(i, lit ? pal[i % pal.length] : pal[pal.length - 1], lit ? 255 : bed, 0);
     }
   },
-
-  // ── Sectional ─────────────────────────────────────────────────────────────
 
   split(ctx) {
     const pal = paletteOf(ctx);
@@ -428,9 +273,6 @@ const PATTERN_FUNCS: Record<string, PatternFn> = {
   },
 
   sections(ctx) {
-    // The rig divides into as many blocks as the look has colours and they
-    // rotate one place each beat. Was three patterns — alt-halves, alt-thirds,
-    // alt-quarters — that differed only in how many blocks they cut.
     const pal = paletteOf(ctx);
     const N = Math.max(1, ctx.fixtureCount);
     const size = Math.max(1, Math.ceil(N / pal.length));
@@ -441,22 +283,11 @@ const PATTERN_FUNCS: Record<string, PatternFn> = {
     }
   },
 
-  // ── Random ────────────────────────────────────────────────────────────────
-  //
-  // Three of them because they are three different looks, not three spellings
-  // of one: a soft shimmer that never goes dark, a hard scatter with gaps, and
-  // a single lamp popping against black.
-
-  // How *much* scatter there is follows the air in the track. A shimmer is a
-  // picture of the top end, so a passage with hats and reverb on it twinkles
-  // densely and one without barely moves — which is the difference between the
-  // effect illustrating the music and the effect running regardless of it.
-
   twinkle(ctx) {
     const pal = paletteOf(ctx);
     const density = 0.15 + dyn(ctx, 'air', .4) * 0.5;
     for (let i = 0; i < ctx.fixtureCount; i++) {
-      if (Math.random() < density) ctx.twinkle[i] = Math.random() < 0.7 ? 255 : 60;
+      if ((ctx.random ?? Math.random)() < density) ctx.twinkle[i] = (ctx.random ?? Math.random)() < 0.7 ? 255 : 60;
       ctx.write(i, pal[i % pal.length], ctx.twinkle[i], 0);
     }
   },
@@ -465,14 +296,14 @@ const PATTERN_FUNCS: Record<string, PatternFn> = {
     const pal = paletteOf(ctx);
     const density = 0.12 + dyn(ctx, 'air', .4) * 0.45;
     for (let i = 0; i < ctx.fixtureCount; i++) {
-      ctx.write(i, pal[i % pal.length], Math.random() < density ? 255 : 0, 0);
+      ctx.write(i, pal[i % pal.length], (ctx.random ?? Math.random)() < density ? 255 : 0, 0);
     }
   },
 
   'random-flash'(ctx) {
     const pal = paletteOf(ctx);
     const N = ctx.fixtureCount;
-    const target = Math.floor(Math.random() * Math.max(1, N));
+    const target = Math.floor((ctx.random ?? Math.random)() * Math.max(1, N));
     const bed = Math.round(bedOf(ctx) * 0.5);
     for (let i = 0; i < N; i++) {
       ctx.write(i, pal[ctx.step % pal.length], i === target ? 255 : bed, 0);
@@ -480,32 +311,16 @@ const PATTERN_FUNCS: Record<string, PatternFn> = {
   },
 };
 
-// ── Pixel effects ─────────────────────────────────────────────────────────────
-//
-// Built for LED bars: pictures drawn across every cell, not a colour per
-// lamp. They run on a rig of pars too — four lamps are four samples of the
-// same picture — but they come into their own when a bar has sixteen cells to
-// draw it with. All are functions of where a cell is and where the music is
-// (ctx.stepPos, ctx.stepPhase), so the rehearsal preview draws exactly what
-// the rig will.
-
 Object.assign(PATTERN_FUNCS, {
-  // The look's colours laid out as a gradient across the rig, scrolling one
-  // full cycle every sixteen steps. Wider music spreads it further.
   gradient(ctx) {
     const pal = paletteOf(ctx);
     const span = 0.5 + dyn(ctx, 'width', 0.5);
     const scroll = (ctx.stepPos ?? ctx.step) / 16;
     for (let i = 0; i < ctx.fixtureCount; i++) {
-      ctx.write(i, gradientAt(pal, xOf(ctx, i) * span - scroll), 255, 0);
+      ctx.write(i, contextGradient(ctx, pal, xOf(ctx, i) * span - scroll), 255, 0);
     }
   },
 
-  // A bright head crossing the rig every four steps, trailing a tail that is
-  // long when the music is barely moving and short when it drives. The head
-  // runs on past the far side until its tail has left the rig, so a lap ends
-  // dark rather than lighting both ends at once, and each lap takes the next
-  // colour of the look.
   comet(ctx) {
     const pal = paletteOf(ctx);
     const bed = bedOf(ctx);
@@ -525,8 +340,6 @@ Object.assign(PATTERN_FUNCS, {
     }
   },
 
-  // A ring thrown out from the middle of the stage on every step, fading as
-  // it goes; decay in the music widens it into a softer wave.
   burst(ctx) {
     const pal = paletteOf(ctx);
     const bed = bedOf(ctx);
@@ -540,9 +353,6 @@ Object.assign(PATTERN_FUNCS, {
     }
   },
 
-  // Slow interference of three waves across the rig, in the look's colours: a
-  // field that never repeats the same way twice in a phrase. Texture in the
-  // music lifts the dark parts of it.
   plasma(ctx) {
     const pal = paletteOf(ctx);
     const t = ((ctx.stepPos ?? ctx.step) * Math.PI * 2) / 32;
@@ -552,18 +362,13 @@ Object.assign(PATTERN_FUNCS, {
       const x = xOf(ctx, i);
       const y = yOf(ctx, i);
       const v = (Math.sin(x * f + t) + Math.sin(y * f * 0.8 - t * 1.3) + Math.sin((x + y) * f * 0.5 + t * 0.7) + 3) / 6;
-      ctx.write(i, gradientAt(pal, v), Math.round(floor + Math.pow(v, 1.5) * (255 - floor)), 0);
+      ctx.write(i, contextGradient(ctx, pal, v), Math.round(floor + Math.pow(v, 1.5) * (255 - floor)), 0);
     }
   },
 
-  // A level meter across the rig, filled by the low end of the music and
-  // kicked a little further on every step. Laid out mirrored, it fills from
-  // the middle out; per bar, every bar is its own meter.
   meter(ctx) {
     const pal = paletteOf(ctx);
     const bed = bedOf(ctx);
-    // With the pulse, the low end is the bass stem and the kick is the kick
-    // as it was hit; without it, the expression channel and the step.
     const p = ctx.pulse;
     const kick = (p ? p.kick : Math.pow(1 - (ctx.stepPhase ?? 0), 3)) * 0.15;
     const low = p ? (p.bass ?? p.mix) : dyn(ctx, 'bass', 0.5);
@@ -576,12 +381,6 @@ Object.assign(PATTERN_FUNCS, {
     }
   },
 
-  // The kit, as it is played: the kick fills the bar from its middle and falls
-  // back, the snare cracks at its two ends, the hats light a scatter of cells
-  // that moves on with every hit. With the pulse these are the real hits read
-  // off the drum stem; without one, a kick on every step, a snare on every
-  // other and a hat between, so the pattern still reads in the preview and on
-  // a manual look.
   drums(ctx) {
     const pal = paletteOf(ctx);
     const bed = Math.round(bedOf(ctx) * 0.6);
@@ -593,7 +392,6 @@ Object.assign(PATTERN_FUNCS, {
       const kick = hits.kick * clamp01((reach - fromMiddle) / 0.12);
       const snare = hits.snare * clamp01((fromMiddle - 0.55) / 0.3);
       const hat = scatter(i, hatSeed) < 0.28 ? hits.hats : 0;
-      // The strongest of the three owns the cell.
       if (kick >= snare && kick >= hat && kick > 0.02) {
         ctx.write(i, pal[0], Math.round(bed + (255 - bed) * kick), 0);
       } else if (snare >= hat && snare > 0.02) {
@@ -606,11 +404,6 @@ Object.assign(PATTERN_FUNCS, {
     }
   },
 
-  // The arrangement, laid out from the middle of the rig: the voice at the
-  // centre, then the rest of the band, the drums, and the bass at the far
-  // ends, each zone as loud as its stem is playing and in its own colour. On
-  // a track that was not separated the expression channel stands in for the
-  // stems.
   stems(ctx) {
     const pal = paletteOf(ctx);
     const floor = 10;
@@ -626,12 +419,6 @@ Object.assign(PATTERN_FUNCS, {
     }
   },
 
-  // A build-up, drawn: the rig fills from where the picture starts — the
-  // middle, laid out mirrored — as the build goes on, and is full on the
-  // drop. With a span (the build's length) the fill follows it exactly;
-  // without one it fills once every sixteen steps. The edge of the fill is
-  // the brightest cell, and in the last quarter the whole fill stutters on
-  // every step, the way the snare roll under it does.
   rise(ctx) {
     const pal = paletteOf(ctx);
     const bed = Math.round(bedOf(ctx) * 0.4);
@@ -647,11 +434,6 @@ Object.assign(PATTERN_FUNCS, {
     }
   },
 
-  // A drop, drawn: a ring thrown out from the middle of the stage on every
-  // step, and sparks scattered over the whole rig on every kick — the kick as
-  // it was hit when the analysis has the pulse, one on every step when not.
-  // The sparks take the look's lift (its last colour), so they read against
-  // the ring rather than as more of it.
   impact(ctx) {
     const pal = paletteOf(ctx);
     const bed = bedOf(ctx);
@@ -674,18 +456,7 @@ Object.assign(PATTERN_FUNCS, {
   },
 } satisfies Record<string, PatternFn>);
 
-// ── Panels ──────────────────────────────────────────────────────────────────
-// Pictures after LedFx's and WLED's matrix effects. On a panel — cells with a
-// height, as a WLED matrix has — they stand up: bars rise, flames lick and
-// rain falls from its top to its bottom. On a strip, which has no height, the
-// strip is laid along that height instead, so each still reads.
-
 Object.assign(PATTERN_FUNCS, {
-  // A spectrum analyser, after LedFx's bars: the band as it plays, a column
-  // each for the kick, the bass, the drums, the snare, the rest of the band,
-  // the voice and the hats, left to right, each filled from the bottom as high
-  // as it is loud, the colour running up the look's gradient, its top cell the
-  // brightest. On a strip each band lights its stretch as bright as it plays.
   bars(ctx) {
     const pal = paletteOf(ctx);
     const bed = Math.round(bedOf(ctx) * 0.3);
@@ -701,15 +472,10 @@ Object.assign(PATTERN_FUNCS, {
       const height = rows(i);
       if (height > level) { ctx.write(i, pal[pal.length - 1], bed, 0); continue; }
       const top = level - height < 0.07;
-      ctx.write(i, gradientAt(pal, height * (pal.length - 1) / pal.length), top ? 255 : Math.round(170 + 60 * height), 0);
+      ctx.write(i, contextGradient(ctx, pal, height * (pal.length - 1) / pal.length), top ? 255 : Math.round(170 + 60 * height), 0);
     }
   },
 
-  // Fire, after WLED's and LedFx's: flames licking up from the bottom, taller
-  // as the bass pushes and flaring on every kick, hottest at the root in the
-  // look's first colour and cooling to its last at the tips. Noise on the
-  // clock rather than a simulation, so every frame is the same for the same
-  // moment: the preview and the rig burn alike.
   fire(ctx) {
     const pal = paletteOf(ctx);
     const p = ctx.pulse;
@@ -726,16 +492,10 @@ Object.assign(PATTERN_FUNCS, {
       const flame = heat * (0.55 + 0.9 * noise2(across * 7, t * 0.8, 11));
       const lick = 0.75 + 0.25 * noise2(across * 13, height * 6 - t * 3, 29);
       const v = clamp01((flame - height) / Math.max(0.05, flame)) * lick;
-      ctx.write(i, gradientAt(pal, (1 - v) * far), Math.round(255 * Math.pow(v, 0.9)), 0);
+      ctx.write(i, contextGradient(ctx, pal, (1 - v) * far), Math.round(255 * Math.pow(v, 0.9)), 0);
     }
   },
 
-  // Rain, after the digital rain every matrix plays: drops falling down each
-  // column in time, a lap every four steps, each column at its own speed and
-  // offset, with a trail that is long in slow music and short in driving
-  // music; the head is the look's lift, the trail its first colour, and the
-  // hats shake loose a scatter of extra drops. On a strip, three drops run
-  // along it.
   rain(ctx) {
     const pal = paletteOf(ctx);
     const bed = Math.round(bedOf(ctx) * 0.25);
@@ -747,7 +507,6 @@ Object.assign(PATTERN_FUNCS, {
     for (let i = 0; i < ctx.fixtureCount; i++) {
       const x = xOf(ctx, i);
       const depth = rows ? rows(i) : x;
-      // From the top: a panel's rows count down from it, a strip from its start.
       const fall = rows ? 1 - depth : depth;
       const column = rows ? Math.round(x * 997) : 0;
       let level = 0;
@@ -782,22 +541,15 @@ Object.assign(PATTERN_FUNCS, {
 // the strobe functions' (shared/strobe-fx.ts), so a program and a function
 // flash alike.
 // Without a tempo, a step as long as a beat at 120 BPM.
+// Bound replay cost for sparse flashes, including direct preview seeks.
+const SCATTER_LOOKBACK = 32;
 const DEFAULT_STEP_MS = 500;
-// The cold white a hybrid's strobe core is.
 const STROBE_WHITE: Colour = { r: 255, g: 255, b: 255, w: 255, a: 0, uv: 0 };
 
-/** How long a step lasts, in ms. */
 function stepMsOf(ctx: PatternContext): number {
   return ctx.stepMs && ctx.stepMs > 0 ? ctx.stepMs : DEFAULT_STEP_MS;
 }
 
-/**
- * The grid the flashes fall on: `want` a step, halved until each is at least
- * MIN_SLOT_MS long — and past one a step, one every two steps, four, … — so
- * a fast tempo or a fine division thins the flashes out rather than running
- * them under a frame. Which flash it is, how far into it, and how long each
- * is.
- */
 function flashGrid(ctx: PatternContext, want: number): { slot: number; phase: number; slotMs: number } {
   const stepMs = stepMsOf(ctx);
   let perStep = want;
@@ -827,7 +579,6 @@ function rankOf(ctx: PatternContext): { rank: (i: number) => number; count: numb
   return { rank: (i) => rank[i], count: known.count };
 }
 
-/** How far a slot is from the middle of the picture, 0 there and 1 at its edge. */
 function fromMiddle(ctx: PatternContext, i: number): number {
   const x = xOf(ctx, i) - 0.5;
   const y = ctx.ys ? yOf(ctx, i) - 0.5 : 0;
@@ -835,9 +586,6 @@ function fromMiddle(ctx: PatternContext, i: number): number {
 }
 
 Object.assign(PATTERN_FUNCS, {
-  // A segment chase: one flash stepping zone to zone, a lap a step — or as
-  // many steps as it takes for every zone to get a flash of its own on a long
-  // rig — each lap in the look's next colour.
   'flash-chase'(ctx) {
     const pal = paletteOf(ctx);
     const { rank, count } = rankOf(ctx);
@@ -849,34 +597,47 @@ Object.assign(PATTERN_FUNCS, {
     const lap = Math.floor(pos);
     const along = frac(pos) * N;
     const head = Math.min(N - 1, Math.floor(along));
-    const lit = flashLit(frac(along), (stepMs * steps) / N);
+    const zoneMs = (stepMs * steps) / N;
+    const lit = flashLit(frac(along), zoneMs);
     const colour = pal[lap % pal.length];
     for (let i = 0; i < ctx.fixtureCount; i++) {
+      if (isHueSlot(ctx, i)) {
+        // Keep the previous lap's colour until this zone flashes again.
+        const back = rank(i) <= head ? 0 : 1;
+        if (lap - back < 0) { ctx.write(i, colour, 0, 0); continue; }
+        ctx.write(i, pal[(lap - back) % pal.length], huePulse((along - rank(i) + back * N) * zoneMs), 0);
+        continue;
+      }
       ctx.write(i, colour, lit && rank(i) === head ? 255 : 0, 0);
     }
   },
 
-  // A random segment strobe: on every flash a scatter of zones fires, each in
-  // one of the look's colours. How many follows the air in the track, and
-  // more on the off-beat, where the hats are. Which zones is settled where
-  // the flash starts — the hats as they were then — so a zone never drops out
-  // of a flash halfway through it.
   'flash-scatter'(ctx) {
     const pal = paletteOf(ctx);
     const { slot, phase, slotMs } = flashGrid(ctx, 8);
     const lit = flashLit(phase, slotMs);
-    const hats = kitFromTheClock({ ...ctx, stepPhase: frac((slot * slotMs) / stepMsOf(ctx)) }).hats;
-    const density = Math.min(0.7, 0.12 + 0.3 * dyn(ctx, 'air', 0.4) + 0.25 * hats);
+    const densityOf = (s: number) => {
+      const hats = kitFromTheClock({ ...ctx, stepPhase: frac((s * slotMs) / stepMsOf(ctx)) }).hats;
+      return Math.min(0.7, 0.12 + 0.3 * dyn(ctx, 'air', 0.4) + 0.25 * hats);
+    };
+    const density = densityOf(slot);
+    const colourOf = (i: number, s: number) => pal[Math.floor(scatter(i, s + 7919) * pal.length) % pal.length];
+    // Bound sparse-history work and share density samples across Hue lamps.
+    let before: number[] | null = null;
     for (let i = 0; i < ctx.fixtureCount; i++) {
+      if (isHueSlot(ctx, i)) {
+        before ??= Array.from({ length: Math.min(SCATTER_LOOKBACK, slot + 1) }, (_, ago) => (ago ? densityOf(slot - ago) : density));
+        let ago = 0;
+        while (ago < before.length && !(scatter(i, slot - ago) < before[ago])) ago++;
+        if (ago < before.length) ctx.write(i, colourOf(i, slot - ago), huePulse((ago + phase) * slotMs), 0);
+        else ctx.write(i, colourOf(i, slot), 0, 0);
+        continue;
+      }
       const on = lit && scatter(i, slot) < density;
-      ctx.write(i, pal[Math.floor(scatter(i, slot + 7919) * pal.length) % pal.length], on ? 255 : 0, 0);
+      ctx.write(i, colourOf(i, slot), on ? 255 : 0, 0);
     }
   },
 
-  // A fill flash: on every step the light runs out from the middle to the
-  // edges in the first third of it, holds, and is cut to black before the
-  // next — the "grow" a strobe panel's program runs. It starts from the zones
-  // nearest the middle, which on an even number of them is two.
   'flash-fill'(ctx) {
     const pal = paletteOf(ctx);
     const phase = ctx.stepPhase ?? 0;
@@ -886,13 +647,19 @@ Object.assign(PATTERN_FUNCS, {
     for (let i = 0; i < ctx.fixtureCount; i++) nearest = Math.min(nearest, fromMiddle(ctx, i));
     const reach = nearest + Math.min(1, phase / 0.3) * (1 - nearest);
     for (let i = 0; i < ctx.fixtureCount; i++) {
-      ctx.write(i, colour, !cut && fromMiddle(ctx, i) <= reach + 1e-6 ? 255 : 0, 0);
+      const lit = !cut && fromMiddle(ctx, i) <= reach + 1e-6;
+      if (!lit && isHueSlot(ctx, i)) {
+        // Keep the previous fill's tail until this fill reaches the zone.
+        if (cut) { ctx.write(i, colour, huePulse((phase - 0.6) * stepMsOf(ctx)), 0); continue; }
+        if ((ctx.stepPos ?? ctx.step) >= 1) {
+          ctx.write(i, pal[(((ctx.step - 1) % pal.length) + pal.length) % pal.length], huePulse((phase + 0.4) * stepMsOf(ctx)), 0);
+          continue;
+        }
+      }
+      ctx.write(i, colour, lit ? 255 : 0, 0);
     }
   },
 
-  // Odd and even: every other zone flashes on the step, the rest on the
-  // half-step between, each half in its own colour of the look — on steps
-  // too short to halve, a step each.
   'flash-alternate'(ctx) {
     const pal = paletteOf(ctx);
     const { rank } = rankOf(ctx);
@@ -901,31 +668,33 @@ Object.assign(PATTERN_FUNCS, {
     const lit = flashLit(phase, slotMs);
     const colour = pal[half % pal.length];
     for (let i = 0; i < ctx.fixtureCount; i++) {
+      if (isHueSlot(ctx, i)) {
+        // The inactive half must retain its previous flash's colour.
+        const own = rank(i) % 2;
+        const ago = (half - own + 2) % 2;
+        ctx.write(i, pal[own % pal.length], slot - ago < 0 ? 0 : huePulse((ago + phase) * slotMs), 0);
+        continue;
+      }
       ctx.write(i, colour, lit && rank(i) % 2 === half ? 255 : 0, 0);
     }
   },
 
-  // A ramp: every step swells from black to full — the middle first, the
-  // edges a moment behind — and is cut on the next, so the beat lands as the
-  // snap to black and the swell after it.
   ramp(ctx) {
     const pal = paletteOf(ctx);
-    // With no clock inside the step, the swell at its top.
     const phase = ctx.stepPhase ?? 1;
     const colour = pal[ctx.step % pal.length];
+    // Let the previous swell decay beneath the new one to soften the beat cut.
+    const fall = (ctx.stepPos ?? ctx.step) >= 1 ? huePulse(phase * stepMsOf(ctx)) : 0;
+    const before = pal[(((ctx.step - 1) % pal.length) + pal.length) % pal.length];
     for (let i = 0; i < ctx.fixtureCount; i++) {
       const lag = 0.35 * fromMiddle(ctx, i);
       const level = clamp01((phase - lag) / (1 - lag));
-      ctx.write(i, colour, Math.round(255 * level * level), 0);
+      const swell = Math.round(255 * level * level);
+      if (isHueSlot(ctx, i) && fall > swell) ctx.write(i, before, fall, 0);
+      else ctx.write(i, colour, swell, 0);
     }
   },
 
-  // The hybrid strobe's own look: its outer zones a wash in the look's
-  // colour, and a cold white core that strikes on every step — on the kick
-  // as it was hit, when the analysis has the pulse. On a line of lights the
-  // core is its middle third; on one in rows (a strobe panel), its middle
-  // row, the white line across it. Between strikes the core glows faintly in
-  // the wash's colour, as the ring around a strobe tube lights it.
   core(ctx) {
     const pal = paletteOf(ctx);
     const level = dyn(ctx, 'level', 0.8);
@@ -934,10 +703,16 @@ Object.assign(PATTERN_FUNCS, {
     const strike = ctx.pulse ? ctx.pulse.kick > 0.6 : flashLit(grid.phase, grid.slotMs);
     const rows = heightsOf(ctx);
     const inCore = rows ? (i: number) => Math.abs(rows(i) - 0.5) < 0.17 : (i: number) => fromMiddle(ctx, i) < 0.34;
+    const glow = Math.round(aura * 0.3);
     for (let i = 0; i < ctx.fixtureCount; i++) {
-      if (inCore(i)) {
+      if (inCore(i) && isHueSlot(ctx, i)) {
+        // Keep the core's native glow beneath the softened strike.
+        const level = ctx.pulse ? Math.max(glow, Math.round(255 * clamp01(ctx.pulse.kick / 0.6)))
+          : huePulse(grid.phase * grid.slotMs, glow);
+        ctx.write(i, level > glow ? STROBE_WHITE : pal[0], level, 0);
+      } else if (inCore(i)) {
         if (strike) ctx.write(i, STROBE_WHITE, 255, 0);
-        else ctx.write(i, pal[0], Math.round(aura * 0.3), 0);
+        else ctx.write(i, pal[0], glow, 0);
       } else {
         ctx.write(i, pal[0], aura, 0);
       }
@@ -1029,15 +804,9 @@ function heightsOf(ctx: PatternContext): ((i: number) => number) | null {
     if (y > hi) hi = y;
   }
   if (!(hi - lo > 0.02)) return null;
-  // Down the plot, and down a panel, is towards its bottom row.
   return (i) => (hi - ys[i]) / (hi - lo);
 }
 
-/**
- * The band, as bars: kick, bass, drums, snare, the rest, voice, hats, each
- * 0..1. The pulse where the track was analysed; the expression channel and a
- * kit played by the clock where it was not.
- */
 function bandLevels(ctx: PatternContext): number[] {
   const p = ctx.pulse;
   if (p) {
@@ -1048,7 +817,6 @@ function bandLevels(ctx: PatternContext): number[] {
     dyn(ctx, 'vocal', 0.4), kit.hats].map(clamp01);
 }
 
-/** Smooth value noise, 0..1: `scatter` on a lattice, eased between its points. */
 function noise2(x: number, y: number, seed: number): number {
   const xi = Math.floor(x);
   const yi = Math.floor(y);
@@ -1077,265 +845,13 @@ function kitFromTheClock(ctx: PatternContext): { kick: number; snare: number; ha
   };
 }
 
-// ── Party effects ───────────────────────────────────────────────────────────
-// After the party engines of the Hue apps: the Party families of Hue Dynamics
-// (a position chase, a radial pulse, a spatial wash, a bouncing scan, a
-// streak, a twinkle, a breathing fade, a volume gate, a frequency burst) and
-// the room effects of Light DJ (anchor fills, halves and flips, waves, the
-// ring strobe and its backlit twin, fireworks and flashes, the swirl). Both
-// drive a handful of lamps placed round a room, and that is what these are
-// built on: a lamp's place on the stage plot (ctx.plan) decides where a chase
-// reaches it, which half of the room it is in and which corner it fills
-// from, so the effects travel across the room rather than along the patch. A
-// rig nobody has placed travels in stage order instead, and a rig in one row
-// sweeps along the row for any heading.
-//
-// Every one steps on the musical clock: an event is a whole number of steps,
-// and what a lamp shows is a function of where in the event the music is —
-// nothing accumulates — so the rehearsal preview and the rig agree frame for
-// frame. The strobes among them are gated by the beat, never random, and no
-// lamp is flashed more than five times a second; a Hue lamp is never flashed
-// at all, but takes each flash as the colour at full falling to a floor.
-
-/** No lamp flashes faster than this, whatever the division (the party apps' cap). */
-const MAX_LAMP_FLASH_HZ = 5;
-/** What the lamps a backlit effect is not on are parked at, in colour B. */
+const MAX_LAMP_FLASH_HZ = HOLD_STROBE_MAX_HZ;
 const BACKLIGHT = 120;
 
-/** Where each slot is in the room, and everything the party effects read off that. */
-interface Room {
-  n: number;
-  /** Centred on the rig and scaled so the farthest lamp is at 1: across, and towards the front. */
-  x: number[];
-  y: number[];
-  /** Across and down the rig's own extent, -1..1 each (0 where it has none). */
-  u: number[];
-  v: number[];
-  /** How far from the middle, 0..1. */
-  dist: number[];
-  /** Round the room from the front, clockwise seen from above, in turns 0..1. */
-  turn: number[];
-  /** Each slot's place round the ring, 0..n-1 — along the row, on a rig with no depth. */
-  ring: number[];
-  group: readonly (string | null)[] | null;
-  /** Does the rig stand in two dimensions. */
-  spread: boolean;
-  along: Map<number, number[]>;
-  ranks: Map<number, number[]>;
-  halves: Map<string, number[]>;
-  channels: Map<number, number[]>;
-  xs: readonly number[] | null;
-  ys: readonly number[] | null;
-}
-
-const rooms = new WeakMap<object, Room>();
-const evenRooms = new Map<number, Room>();
-
-/** The room of a frame's slots: from the plan, else from the slots' places across the rig. */
-function roomOf(ctx: PatternContext): Room {
-  const n = Math.max(1, ctx.fixtureCount);
-  const plan = ctx.plan;
-  if (plan && plan.x.length >= n && plan.y.length >= n) {
-    let room = rooms.get(plan);
-    if (!room || room.n !== n) {
-      room = buildRoom(n, (i) => plan.x[i], (i) => plan.y[i], plan.group);
-      rooms.set(plan, room);
-    }
-    return room;
-  }
-  const key = ctx.xs ?? ctx.ys;
-  if (key) {
-    let room = rooms.get(key);
-    if (!room || room.n !== n || room.xs !== ctx.xs || room.ys !== ctx.ys) {
-      room = buildRoom(n, (i) => xOf(ctx, i), (i) => yOf(ctx, i), null);
-      room.xs = ctx.xs;
-      room.ys = ctx.ys;
-      rooms.set(key, room);
-    }
-    return room;
-  }
-  let room = evenRooms.get(n);
-  if (!room) {
-    if (evenRooms.size > 64) evenRooms.clear();
-    room = buildRoom(n, (i) => xOf(ctx, i), () => 0.5, null);
-    evenRooms.set(n, room);
-  }
-  return room;
-}
-
-function buildRoom(n: number, xAt: (i: number) => number, yAt: (i: number) => number,
-  group: readonly (string | null)[] | null): Room {
-  let lo = Infinity; let hi = -Infinity; let top = Infinity; let bottom = -Infinity;
-  for (let i = 0; i < n; i++) {
-    lo = Math.min(lo, xAt(i)); hi = Math.max(hi, xAt(i));
-    top = Math.min(top, yAt(i)); bottom = Math.max(bottom, yAt(i));
-  }
-  const cx = (lo + hi) / 2;
-  const cy = (top + bottom) / 2;
-  const spanX = hi - lo;
-  const spanY = bottom - top;
-  let far = 0;
-  for (let i = 0; i < n; i++) far = Math.max(far, Math.hypot(xAt(i) - cx, yAt(i) - cy));
-  if (far < 1e-9) far = 1;
-  const x: number[] = []; const y: number[] = []; const u: number[] = []; const v: number[] = [];
-  const dist: number[] = []; const turn: number[] = [];
-  for (let i = 0; i < n; i++) {
-    const dx = xAt(i) - cx;
-    const dy = yAt(i) - cy;
-    x.push(dx / far);
-    y.push(dy / far);
-    u.push(spanX > 1e-9 ? dx / (spanX / 2) : 0);
-    v.push(spanY > 1e-9 ? dy / (spanY / 2) : 0);
-    dist.push(Math.hypot(dx, dy) / far);
-    // From the front (down the plot is towards the audience), clockwise.
-    turn.push(frac(Math.atan2(-dx, dy) / (Math.PI * 2)));
-  }
-  const spread = spanX > 0.02 && spanY > 0.02;
-  // Round the ring by angle; a rig in a row has no ring, so along the row.
-  const ring = ranksOf(spread ? turn : (spanX >= spanY ? x : y));
-  if (!spread) for (let i = 0; i < n; i++) turn[i] = ring[i] / n;
-  return { n, x, y, u, v, dist, turn, ring, group, spread, along: new Map(), ranks: new Map(), halves: new Map(), channels: new Map(), xs: null, ys: null };
-}
-
-/** Each entry's rank in ascending order, ties in index order. */
-function ranksOf(values: readonly number[]): number[] {
-  const order = values.map((_, i) => i).sort((a, b) => values[a] - values[b] || a - b);
-  const rank = new Array<number>(values.length);
-  order.forEach((i, r) => { rank[i] = r; });
-  return rank;
-}
-
-/**
- * How far along a heading each slot lies, 0..1 — 0 degrees towards the
- * front, 90 towards the right. A rig with no extent along the heading (one
- * row, swept front to back) is swept along the row instead, the way the
- * heading points.
- */
-function alongOf(room: Room, heading: number): number[] {
-  let along = room.along.get(heading);
-  if (along) return along;
-  const sin = Math.sin((heading * Math.PI) / 180);
-  const cos = Math.cos((heading * Math.PI) / 180);
-  let p = room.x.map((x, i) => x * sin + room.y[i] * cos);
-  let lo = Math.min(...p);
-  let hi = Math.max(...p);
-  if (hi - lo < 0.1) {
-    const wide = Math.max(...room.x) - Math.min(...room.x) >= Math.max(...room.y) - Math.min(...room.y);
-    const axis = wide ? room.x : room.y;
-    const towards = wide ? sin : cos;
-    const other = wide ? cos : sin;
-    const reverse = towards < -1e-9 || (Math.abs(towards) <= 1e-9 && other < 0);
-    p = axis.map((a) => (reverse ? -a : a));
-    lo = Math.min(...p);
-    hi = Math.max(...p);
-  }
-  along = hi - lo > 1e-9 ? p.map((a) => (a - lo) / (hi - lo)) : p.map(() => 0.5);
-  room.along.set(heading, along);
-  return along;
-}
-
-/** Each slot's rank along a heading, 0..n-1. */
-function rankAlong(room: Room, heading: number): number[] {
-  let rank = room.ranks.get(heading);
-  if (!rank) {
-    rank = ranksOf(alongOf(room, heading));
-    room.ranks.set(heading, rank);
-  }
-  return rank;
-}
-
-/**
- * Which half of the room each slot is in: 0 the front or the left, 1 the
- * back or the right, as many each side as can be. A fixture grouped front or
- * back is in that half whatever the plot says.
- */
-function halfOf(room: Room, axis: 'depth' | 'width'): number[] {
-  let half = room.halves.get(axis);
-  if (half) return half;
-  const n = room.n;
-  if (axis === 'depth') {
-    const rank = rankAlong(room, 0);
-    half = rank.map((r, i) => {
-      const g = room.group ? room.group[i] : null;
-      if (g === 'front') return 0;
-      if (g === 'back') return 1;
-      return r >= Math.floor(n / 2) ? 0 : 1;
-    });
-  } else {
-    const rank = rankAlong(room, 90);
-    half = rank.map((r) => (r < Math.ceil(n / 2) ? 0 : 1));
-  }
-  room.halves.set(axis, half);
-  return half;
-}
-
-// Where the anchors stand, across and down the rig's extent: two are the
-// left and the right, three add the front, four are the corners from the
-// front left round to the back left, five add the middle.
-const ANCHORS: Record<number, [number, number][]> = {
-  2: [[-1, 0], [1, 0]],
-  3: [[-1, 0], [0, 1], [1, 0]],
-  4: [[-1, 1], [1, 1], [1, -1], [-1, -1]],
-  5: [[-1, 1], [1, 1], [1, -1], [-1, -1], [0, 0]],
-};
-
-/**
- * Each slot's channel among `count` anchors: every anchor takes the nearest
- * free lamp in turn, no anchor more than its share, so a room with all its
- * lamps on one side still fills every channel.
- */
-function channelsOf(room: Room, count: number): number[] {
-  let channel = room.channels.get(count);
-  if (channel) return channel;
-  const n = room.n;
-  const anchors = ANCHORS[count] || ANCHORS[4];
-  const c = anchors.length;
-  channel = new Array<number>(n).fill(-1);
-  const size = new Array<number>(c).fill(0);
-  const share = Math.floor(n / c);
-  let spare = n % c;
-  let remaining = n;
-  while (remaining > 0) {
-    let progressed = false;
-    for (let k = 0; k < c && remaining > 0; k++) {
-      if (size[k] > share) continue;
-      if (size[k] === share) {
-        if (spare <= 0) continue;
-        spare--;
-      }
-      let pick = -1;
-      let best = Infinity;
-      for (let i = 0; i < n; i++) {
-        if (channel[i] >= 0) continue;
-        const d = Math.hypot(room.u[i] - anchors[k][0], room.v[i] - anchors[k][1]);
-        if (d < best - 1e-12) { best = d; pick = i; }
-      }
-      if (pick < 0) break;
-      channel[pick] = k;
-      size[k]++;
-      remaining--;
-      progressed = true;
-    }
-    if (!progressed) {
-      for (let i = 0; i < n; i++) if (channel[i] < 0) channel[i] = i % c;
-      break;
-    }
-  }
-  room.channels.set(count, channel);
-  return channel;
-}
-
-/** How many anchors a rig of n lamps fills from: the sides, the corners, or the corners and the middle. */
-function anchorCount(n: number): number {
-  return n <= 3 ? 2 : n <= 7 ? 4 : 5;
-}
-
-/** Where the music is, in steps, continuous. */
 function posOf(ctx: PatternContext): number {
   return ctx.stepPos ?? ctx.step + (ctx.stepPhase ?? 0);
 }
 
-/** Which event of `steps` steps the music is in, and how far through it. */
 function eventAt(pos: number, steps: number): { event: number; progress: number } {
   const t = pos / steps;
   return { event: Math.floor(t), progress: t - Math.floor(t) };
@@ -1353,11 +869,6 @@ function ease(p: number, curve: Curve): number {
   }
 }
 
-/**
- * An attack, hold and release envelope, as the party apps shape every event:
- * `p` into it, the three lengths in the same units, 0 outside them. With no
- * attack the event is at full the moment it starts.
- */
 function envelope(p: number, attack: number, hold: number, release: number, curve: Curve): number {
   if (p < 0) return 0;
   if (p < attack) return ease(p / attack, curve);
@@ -1371,27 +882,17 @@ function smoothstep(lo: number, hi: number, v: number): number {
   return t * t * (3 - 2 * t);
 }
 
-/** A crest, 1 at the whole turn and 0 half a turn away. */
 const crest = (phase: number): number => (Math.cos(frac(phase) * Math.PI * 2) + 1) / 2;
 
-/** `level` 0..1 lifted off the bed, as a DMX value. */
 function lift(bed: number, level: number): number {
   return Math.round(bed + (255 - bed) * clamp01(level));
 }
 
-// A Hue lamp's flash is the colour at full falling to a floor over
-// HUE_PULSE_MS and held there (look-math.ts huePulseLevel): a strobe a
-// bridge can follow.
-const huePulse = huePulseLevel;
+// Beat fractions must not tip a pulse across a dimmer rounding boundary.
+const huePulse = (sinceMs: number, floor?: number): number => huePulseLevel(Math.round(sinceMs * 1000) / 1000, floor);
 
-/** Is slot i a Hue lamp, never flashed. */
-const isHueSlot = (ctx: PatternContext, i: number): boolean => !!ctx.noFlash && !!ctx.noFlash[i];
+const isHueSlot = (ctx: PatternContext, i: number): boolean => ctx.hueStrobe !== 'flash' && !!ctx.noFlash && !!ctx.noFlash[i];
 
-/**
- * The steps a flash grid has to space its flashes by so that no lamp flashes
- * faster than MAX_LAMP_FLASH_HZ, when every lamp flashes once in `lamps`
- * steps: 1 on a step long enough, else doubled until it is.
- */
 function flashEvery(ctx: PatternContext, lamps: number): number {
   const stepMs = stepMsOf(ctx);
   let every = 1;
@@ -1399,11 +900,6 @@ function flashEvery(ctx: PatternContext, lamps: number): number {
   return every;
 }
 
-/**
- * The ring strobe: one lamp at a time round the ring of the room, a flash on
- * every step, each lap in the look's next colour; backlit, the lit lamp is
- * colour A and the rest are parked on colour B.
- */
 function ringStrobe(ctx: PatternContext, backlit: boolean): void {
   const pal = paletteOf(ctx);
   const room = roomOf(ctx);
@@ -1418,7 +914,6 @@ function ringStrobe(ctx: PatternContext, backlit: boolean): void {
   const rest = pal[1 % pal.length];
   for (let i = 0; i < ctx.fixtureCount; i++) {
     const r = room.ring[i];
-    // How many slots ago this lamp last flashed, and in which lap.
     const ago = (head - r + n) % n;
     const lap = Math.floor((slot - ago) / n);
     const colour = backlit ? pal[0] : pal[((lap % pal.length) + pal.length) % pal.length];
@@ -1434,7 +929,6 @@ function ringStrobe(ctx: PatternContext, backlit: boolean): void {
   }
 }
 
-/** The lamp a fireworks event bursts from: drawn by the event, never the one before. */
 function burstOrigin(event: number, n: number): number {
   const at = (e: number) => Math.floor(scatter(e, 9001) * n) % n;
   const here = at(event);
@@ -1442,12 +936,7 @@ function burstOrigin(event: number, n: number): number {
 }
 
 const PARTY_PATTERNS = {
-  // ── Hue Dynamics' Party families ──────────────────────────────────────
 
-  // Neon Domino: the envelope runs from lamp to lamp along a heading by
-  // position, half a step apart, each lamp in the look's next colour; the
-  // heading turns a quarter every run, so the domino crosses the room to the
-  // front, then to the right, then to the back, then to the left.
   'position-chase'(ctx: PatternContext) {
     const pal = paletteOf(ctx);
     const bed = bedOf(ctx);
@@ -1457,7 +946,7 @@ const PARTY_PATTERNS = {
     const length = Math.max(1, Math.ceil((room.n - 1) * STAGGER + ATTACK + HOLD + RELEASE));
     const { event: run, progress } = eventAt(posOf(ctx), length);
     const into = progress * length;
-    const rank = rankAlong(room, (run * 90) % 360);
+    const rank = room.rankAlong((run * 90) % 360);
     for (let i = 0; i < ctx.fixtureCount; i++) {
       const level = envelope(into - rank[i] * STAGGER, ATTACK, HOLD, RELEASE, 'out');
       const colour = pal[(rank[i] + run) % pal.length];
@@ -1465,10 +954,6 @@ const PARTY_PATTERNS = {
     }
   },
 
-  // Bass Bloom: a ring from the middle of the room out to its farthest lamp
-  // once a bar, each lamp as bright as it is near the ring, swelling over the
-  // first of the bar and fading through the rest, as hard as the bass is
-  // pushing; the colour runs on through the look as the ring passes.
   'radial-pulse'(ctx: PatternContext) {
     const pal = paletteOf(ctx);
     const bed = bedOf(ctx);
@@ -1480,13 +965,10 @@ const PARTY_PATTERNS = {
     for (let i = 0; i < ctx.fixtureCount; i++) {
       const d = room.dist[i];
       const ring = 1 - smoothstep(0.12, 0.45, Math.abs(d - progress));
-      ctx.write(i, gradientAt(pal, (d + progress) / 2 + event / pal.length), lift(bed, env * ring * drive), 0);
+      ctx.write(i, contextGradient(ctx, pal, (d + progress) / 2 + event / pal.length), lift(bed, env * ring * drive), 0);
     }
   },
 
-  // Aurora Drift: a soft crest of the look's colours rolling across the room
-  // along a heading that turns a quarter every bar, each bar's wash swelling
-  // in and fading out over the next one's, so the room never goes dark.
   'spatial-wash'(ctx: PatternContext) {
     const pal = paletteOf(ctx);
     const bed = bedOf(ctx);
@@ -1494,7 +976,7 @@ const PARTY_PATTERNS = {
     const { event, progress } = eventAt(posOf(ctx), 4);
     const wash = (e: number, p: number): [number[], number[]] => {
       const env = envelope(p, 0.375, 0.25, 0.5, 'inout');
-      const along = alongOf(room, ((e * 90) % 360 + 360) % 360);
+      const along = room.along(((e * 90) % 360 + 360) % 360);
       const phases: number[] = []; const levels: number[] = [];
       for (let i = 0; i < ctx.fixtureCount; i++) {
         const phase = along[i] - p + 0.11 * e;
@@ -1507,19 +989,16 @@ const PARTY_PATTERNS = {
     const [before, beforePhase] = wash(event - 1, 1 + progress);
     for (let i = 0; i < ctx.fixtureCount; i++) {
       const fromNow = now[i] >= before[i];
-      ctx.write(i, gradientAt(pal, fromNow ? nowPhase[i] : beforePhase[i]), lift(bed, fromNow ? now[i] : before[i]), 0);
+      ctx.write(i, contextGradient(ctx, pal, fromNow ? nowPhase[i] : beforePhase[i]), lift(bed, fromNow ? now[i] : before[i]), 0);
     }
   },
 
-  // Prism Ricochet: a bright line sweeping across the room along a heading of
-  // 28 degrees and back again every bar, in the look's next colour on every
-  // pass, the rest held at the bed.
   'bounce-scan'(ctx: PatternContext) {
     const pal = paletteOf(ctx);
     const bed = bedOf(ctx);
     const room = roomOf(ctx);
     const { event, progress } = eventAt(posOf(ctx), 4);
-    const along = alongOf(room, 28);
+    const along = room.along(28);
     const head = 1 - Math.abs(progress * 2 - 1);
     const pass = event * 2 + (progress >= 0.5 ? 1 : 0);
     const colour = pal[pass % pal.length];
@@ -1529,9 +1008,6 @@ const PARTY_PATTERNS = {
     }
   },
 
-  // Meteor Shower: a comet with a long tail streaking across the room along
-  // a heading of 42 degrees, on two events in three and in a direction the
-  // event draws, every half bar; between streaks the rig rests at the bed.
   streak(ctx: PatternContext) {
     const pal = paletteOf(ctx);
     const bed = bedOf(ctx);
@@ -1543,7 +1019,7 @@ const PARTY_PATTERNS = {
       return;
     }
     const reverse = scatter(event, 77) >= 0.5;
-    const along = alongOf(room, 42);
+    const along = room.along(42);
     const TRAIL = 0.25;
     const head = progress * (1 + 2 * TRAIL);
     const colour = pal[event % pal.length];
@@ -1554,8 +1030,6 @@ const PARTY_PATTERNS = {
     }
   },
 
-  // Starlight Scatter: on every step about a third of the lamps light, each
-  // in a colour of the look drawn for it, and fade out over most of the step.
   starlight(ctx: PatternContext) {
     const pal = paletteOf(ctx);
     const bed = Math.round(bedOf(ctx) * 0.3);
@@ -1563,23 +1037,19 @@ const PARTY_PATTERNS = {
     for (let i = 0; i < ctx.fixtureCount; i++) {
       const roll = scatter(i, event * 131 + 1);
       const level = roll <= 0.35 ? 0.82 * envelope(progress, 0, 0.08, 0.72, 'out') : 0;
-      ctx.write(i, gradientAt(pal, roll + event * 0.07), lift(bed, level), 0);
+      ctx.write(i, contextGradient(ctx, pal, roll + event * 0.07), lift(bed, level), 0);
     }
   },
 
-  // Velvet Breath: the whole room swells and falls as one over a bar, in a
-  // colour that drifts a little further round the look on every breath.
   breathe(ctx: PatternContext) {
     const pal = paletteOf(ctx);
     const { event, progress } = eventAt(posOf(ctx), 4);
     const env = envelope(progress, 0.4, 0.15, 0.4, 'inout');
-    const colour = gradientAt(pal, progress * 0.3 + event * 0.17);
+    const colour = contextGradient(ctx, pal, progress * 0.3 + event * 0.17);
     const dim = Math.round(25 + 230 * env);
     for (let i = 0; i < ctx.fixtureCount; i++) ctx.write(i, colour, dim, 0);
   },
 
-  // Afterglow Gate: a wash of the look's colours rolling slowly across the
-  // room, that opens with how loud the music is and closes as it goes quiet.
   'volume-gate'(ctx: PatternContext) {
     const pal = paletteOf(ctx);
     const room = roomOf(ctx);
@@ -1587,16 +1057,13 @@ const PARTY_PATTERNS = {
     const loud = ctx.pulse ? ctx.pulse.mix : dyn(ctx, 'level', 0.8);
     const gate = clamp01((loud - 0.25) / 0.75);
     const open = 0.2 + 0.8 * gate;
-    const along = alongOf(room, 90);
+    const along = room.along(90);
     for (let i = 0; i < ctx.fixtureCount; i++) {
       const phase = along[i] - progress + 0.11 * event;
-      ctx.write(i, gradientAt(pal, phase), Math.round(255 * (0.72 + 0.28 * crest(phase)) * open), 0);
+      ctx.write(i, contextGradient(ctx, pal, phase), Math.round(255 * (0.72 + 0.28 * crest(phase)) * open), 0);
     }
   },
 
-  // Voltage Confetti: on every step — no closer together than 400 ms — three
-  // lamps in four pop in colours of the look drawn for them and die away
-  // over most of the step; with the pulse they pop on the kick as it was hit.
   confetti(ctx: PatternContext) {
     const pal = paletteOf(ctx);
     const every = Math.max(1, Math.ceil(400 / stepMsOf(ctx)));
@@ -1604,22 +1071,16 @@ const PARTY_PATTERNS = {
     const env = ctx.pulse ? ctx.pulse.kick : envelope(progress, 0, 0.17, 0.46, 'out');
     for (let i = 0; i < ctx.fixtureCount; i++) {
       const lit = scatter(i, event * 17 + 3) < 0.75;
-      const colour = gradientAt(pal, scatter(i, event * 17 + 9) + event * 0.31);
+      const colour = contextGradient(ctx, pal, scatter(i, event * 17 + 9) + event * 0.31);
       ctx.write(i, colour, lit ? Math.round(255 * env) : 0, 0);
     }
   },
 
-  // ── Light DJ's room effects ───────────────────────────────────────────
-
-  // Fill Cycle: the room split round its anchors by position — the left and
-  // the right, the four corners, or the corners and the middle on a bigger
-  // rig — and filled anchor by anchor on every step, the look's next colour
-  // over the last, round the room and over again.
   'anchor-fill'(ctx: PatternContext) {
     const pal = paletteOf(ctx);
     const room = roomOf(ctx);
-    const count = anchorCount(room.n);
-    const channel = channelsOf(room, count);
+    const count = room.anchorCount();
+    const channel = room.channels(count);
     const step = Math.max(0, Math.floor(posOf(ctx)));
     const k = step % count;
     const lap = Math.floor(step / count);
@@ -1628,57 +1089,43 @@ const PARTY_PATTERNS = {
     for (let i = 0; i < ctx.fixtureCount; i++) ctx.write(i, channel[i] <= k ? fresh : last, 255, 0);
   },
 
-  // Rotating Halves: the front of the room against the back on one step, the
-  // left against the right on the next, in colours A and B that swap every
-  // other time round — front and back from the fixture groups when they are
-  // set, from the plot otherwise.
   halves(ctx: PatternContext) {
     const pal = paletteOf(ctx);
     const room = roomOf(ctx);
     const step = Math.max(0, Math.floor(posOf(ctx)));
-    const half = halfOf(room, step % 2 ? 'width' : 'depth');
+    const depth = step % 2 === 0;
+    const half = room.halves(depth ? 'depth' : 'width');
     const swap = step % 4 >= 2 ? 1 : 0;
-    for (let i = 0; i < ctx.fixtureCount; i++) ctx.write(i, pal[(half[i] ^ swap) % pal.length], 255, 0);
+    for (let i = 0; i < ctx.fixtureCount; i++) {
+      const side = depth ? 1 - half[i] : half[i];
+      ctx.write(i, pal[(side ^ swap) % pal.length], 255, 0);
+    }
   },
 
-  // Flip: the room's four corners by position, one diagonal in colour A and
-  // the other in B, swapping on every step.
   flip(ctx: PatternContext) {
     const pal = paletteOf(ctx);
     const room = roomOf(ctx);
-    const channel = channelsOf(room, 4);
+    const channel = room.channels(4);
     const step = Math.max(0, Math.floor(posOf(ctx)));
     for (let i = 0; i < ctx.fixtureCount; i++) ctx.write(i, pal[((channel[i] % 2) + step) % 2 % pal.length], 255, 0);
   },
 
-  // Swagger: a wave of the look's colours crossing the room once a bar,
-  // along a heading that turns on by a seventh of a circle every lap, so no
-  // two laps cross the room the same way. Half a wavelength spans the room,
-  // so the crest leads and the trough follows it in.
   'room-wave'(ctx: PatternContext) {
     const pal = paletteOf(ctx);
     const bed = bedOf(ctx);
     const room = roomOf(ctx);
     const { event: lap, progress } = eventAt(posOf(ctx), 4);
-    const along = alongOf(room, Math.round(25.7 + 51.4 * (((lap % 7) + 7) % 7)) % 360);
+    const along = room.along(Math.round(25.7 + 51.4 * (((lap % 7) + 7) % 7)) % 360);
     for (let i = 0; i < ctx.fixtureCount; i++) {
       const travel = along[i] - progress;
-      ctx.write(i, gradientAt(pal, travel), lift(bed, Math.pow(crest(travel / 2), 1.3)), 0);
+      ctx.write(i, contextGradient(ctx, pal, travel), lift(bed, Math.pow(crest(travel / 2), 1.3)), 0);
     }
   },
 
-  // Strobe Cycle: one lamp at a time round the ring of the room, a flash on
-  // every step, each lap in the look's next colour — on the beat, its halves,
-  // quarters or eighths as the division says, and never a lamp more than
-  // five times a second: a step too short for that holds the ring for two.
   'ring-strobe'(ctx: PatternContext) { ringStrobe(ctx, false); },
 
-  // The same ring, backlit: the lit lamp in colour A, the rest parked on B.
   'ring-backlit'(ctx: PatternContext) { ringStrobe(ctx, true); },
 
-  // Fireworks: on every step a burst on one lamp — never the one before — in
-  // the look's next colour, spreading to its neighbours a little later and
-  // dimmer the farther they stand, and dying away over the next bar.
   fireworks(ctx: PatternContext) {
     const pal = paletteOf(ctx);
     const bed = Math.round(bedOf(ctx) * 0.3);
@@ -1695,17 +1142,13 @@ const PARTY_PATTERNS = {
         const level = envelope(age, 0, 0.3, 3.7, 'out') * (1 - 0.65 * Math.pow(d, 0.7));
         if (level > best) {
           best = level;
-          colour = gradientAt(pal, e / pal.length + 0.15 * d);
+          colour = contextGradient(ctx, pal, e / pal.length + 0.15 * d);
         }
       }
       ctx.write(i, colour, lift(bed, best), 0);
     }
   },
 
-  // Flashes: on every step a scatter of lamps — about a third, drawn afresh
-  // each time — flashes hard in colours of the look and is cut after a fifth
-  // of the step, the rest sitting low; a step shorter than a fifth of a
-  // second flashes every second one, so no lamp outruns five a second.
   flashes(ctx: PatternContext) {
     const pal = paletteOf(ctx);
     const bed = Math.round(bedOf(ctx) * 0.3);
@@ -1716,7 +1159,6 @@ const PARTY_PATTERNS = {
       const lit = (e: number) => scatter(i, e * 53 + 11) < 0.35;
       const colourOf = (e: number) => pal[Math.floor(scatter(i, e * 53 + 29) * pal.length) % pal.length];
       if (isHueSlot(ctx, i)) {
-        // Since this lamp's last flash, this event's or an earlier one's.
         let ago = 0;
         while (ago < 8 && !lit(event - ago)) ago++;
         if (ago >= 8) { ctx.write(i, colourOf(event), bed, 0); continue; }
@@ -1728,8 +1170,6 @@ const PARTY_PATTERNS = {
     }
   },
 
-  // Swirl: the look's colours laid round the room by angle and turning, a
-  // full turn every eight steps, the crest in front of the trough behind it.
   swirl(ctx: PatternContext) {
     const pal = paletteOf(ctx);
     const bed = bedOf(ctx);
@@ -1737,7 +1177,7 @@ const PARTY_PATTERNS = {
     const t = posOf(ctx) / 8;
     for (let i = 0; i < ctx.fixtureCount; i++) {
       const phase = room.turn[i] - t;
-      ctx.write(i, gradientAt(pal, phase), lift(bed, Math.pow(crest(phase), 1.2)), 0);
+      ctx.write(i, contextGradient(ctx, pal, phase), lift(bed, Math.pow(crest(phase), 1.2)), 0);
     }
   },
 } satisfies Record<string, PatternFn>;

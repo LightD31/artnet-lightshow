@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { hardwareOf } from '../shared/hardware.ts';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -1028,7 +1029,12 @@ async function runPreflight({ midi, spotify, prolink, analysisCache, downloadMod
     checkAnalysisModels({ download: downloadModels }),
   ]);
 
+  const unverified = state.fixtures.filter((f) => !hardwareOf(f, getProfile(f), settings.group('hardware')).measured);
+  const constrained = state.fixtures.filter((f) => f.admission === 'hold' || f.admission === 'exclude');
   const checks: Check[] = [
+    { id: 'hardware-capability', label: 'Hardware capability', status: unverified.length ? 'warn' : 'ok',
+      detail: `${unverified.length} fixtures have limits without measurements verifying the configured rate. ${constrained.length} fixtures hold or exclude effects they cannot follow.`,
+      fix: unverified.length ? 'Review Hardware limits in Settings and each fixture in Rig.' : null },
     checkEngine(engineStatus(), { standalone }),
     checkOutputsArmed(isArmed(), { standalone }),
     artnet,

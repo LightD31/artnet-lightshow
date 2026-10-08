@@ -1,4 +1,6 @@
-import { useState, useEffect, useRef } from 'preact/hooks';
+import { PaletteStrip } from './PaletteStrip.jsx';
+import { parseHex, toHex } from '../../src/shared/palette-model.ts';
+import { useState, useRef } from 'preact/hooks';
 import { send, pick } from '../state.js';
 import { colorToCss } from '../utils.js';
 
@@ -9,85 +11,6 @@ const SLOTS = [
   { key: 'colorD', label: 'D', cssVar: 'var(--accent-4)' },
 ];
 
-const PALETTE_SIZES = [
-  { size: 2, hint: 'Two contrasting colours — reads cleanly on a small rig' },
-  { size: 3, hint: 'Three well-separated hues' },
-  { size: 4, hint: 'The full hand-tuned tetrad' },
-];
-
-/**
- * The named looks the auto show picks from, offered by hand.
- *
- * Building four slots that sit together out of twenty-four swatches is the
- * fiddly part of driving the rig manually, and the generated show already had a
- * bank of answers. One press writes all four slots; the size picks which bank,
- * and a palette smaller than four wraps to fill every slot.
- */
-function PaletteRow({ palettes, active, presets }) {
-  const [size, setSize] = useState(() => {
-    const saved = parseInt(localStorage.getItem('lightshow.paletteSize'), 10);
-    return saved === 2 || saved === 3 ? saved : 4;
-  });
-  useEffect(() => { localStorage.setItem('lightshow.paletteSize', String(size)); }, [size]);
-
-  if (!palettes.length) return null;
-
-  const swatchBg = (i) => {
-    const c = presets[i];
-    if (!c) return '#333';
-    return c.name === 'Blackout' ? '#111' : colorToCss(c);
-  };
-
-  return (
-    <div class="palette-picker">
-      <div class="palette-head">
-        <span class="palette-title" id="manual-palette-label">Palettes</span>
-        <div class="segmented" role="group" aria-labelledby="manual-palette-label">
-          {PALETTE_SIZES.map(({ size: n, hint }) => (
-            <button
-              key={n}
-              type="button"
-              class={`segmented-btn ${size === n ? 'active' : ''}`}
-              aria-pressed={size === n}
-              title={hint}
-              onClick={() => {
-                setSize(n);
-                // Live, when a look is already on stage: "same palette, two
-                // colours". With nothing selected the server leaves the slots
-                // alone and this only sets what the next press will use.
-                if (active) send({ paletteSize: n });
-              }}
-            >{n}</button>
-          ))}
-        </div>
-      </div>
-
-      <div class="palette-grid">
-        {palettes.map((p) => {
-          const colors = (p.colors && p.colors[size]) || [];
-          return (
-            <button
-              key={p.id}
-              type="button"
-              class={`palette-btn ${active === p.id ? 'active' : ''}`}
-              aria-pressed={active === p.id}
-              title={`${p.name} — writes all four slots`}
-              onClick={() => send({ palette: p.id, paletteSize: size })}
-            >
-              <span class="palette-swatches">
-                {colors.map((idx, i) => (
-                  <span key={i} class="palette-swatch" style={{ background: swatchBg(idx) }} />
-                ))}
-              </span>
-              <span class="palette-name">{p.name}</span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 /** The slot a Shift-click (or right-click) writes to instead: A↔B, C↔D. */
 function pairedSlot(slot) {
   return slot === 'colorA' ? 'colorB'
@@ -96,7 +19,7 @@ function pairedSlot(slot) {
 }
 
 export function Colors() {
-  const s = pick(['colorA', 'colorB', 'colorC', 'colorD', 'colorPresets', 'palette', 'palettes']);
+  const s = pick(['colorA', 'colorB', 'colorC', 'colorD', 'colorPresets', 'palette', 'palettes', 'basePalette']);
   const presets = s.colorPresets || [];
   const [activeSlot, setActiveSlot] = useState('colorA');
   // Roving tabindex: the grid is one stop in the tab order and the arrow keys
@@ -108,17 +31,18 @@ export function Colors() {
   if (presets.length === 0) return null;
 
   const swatchBg = (c) => (c.name === 'Blackout' ? '#111' : colorToCss(c));
-  const slotIndex = (k) => s[k];
+  const slotColour = (k) => s.basePalette?.colours[SLOTS.findIndex((slot) => slot.key === k) % s.basePalette.colours.length];
+  const slotIndex = (k) => slotColour(k) ? presets.findIndex((p) => toHex(p) === slotColour(k)) : s[k];
   const slotPreset = (k) => {
     const i = slotIndex(k);
-    return i != null && presets[i] ? presets[i] : null;
+    return i != null && presets[i] ? presets[i] : slotColour(k) ? { ...parseHex(slotColour(k)), name: slotColour(k) } : null;
   };
 
   return (
     <div class="card">
       <div class="card-title">Colours</div>
 
-      <PaletteRow palettes={s.palettes || []} active={s.palette || null} presets={presets} />
+      <PaletteStrip initialTarget="base" />
 
       {/* Which slot the grid below writes into. Not a tablist: there is one
           shared grid rather than a panel per slot, and declaring tabs without
@@ -177,10 +101,10 @@ export function Colors() {
           const bg = swatchBg(c);
           const cls = [
             'color-swatch',
-            i === s.colorA ? 'active-a' : '',
-            i === s.colorB ? 'active-b' : '',
-            i === s.colorC ? 'active-c' : '',
-            i === s.colorD ? 'active-d' : '',
+            i === slotIndex('colorA') ? 'active-a' : '',
+            i === slotIndex('colorB') ? 'active-b' : '',
+            i === slotIndex('colorC') ? 'active-c' : '',
+            i === slotIndex('colorD') ? 'active-d' : '',
           ].filter(Boolean).join(' ');
           // Shift writes to the opposite-pair slot for fast two-handed work.
           // A keyboard activation carries shiftKey just as a click does, so
@@ -192,7 +116,7 @@ export function Colors() {
           };
           // Colour alone carries which slots a swatch is in, so the label has
           // to say it — and say where pressing it would land.
-          const held = SLOTS.filter((sl) => s[sl.key] === i).map((sl) => sl.label);
+          const held = SLOTS.filter((sl) => slotIndex(sl.key) === i).map((sl) => sl.label);
           const target = SLOTS.find((sl) => sl.key === activeSlot)?.label;
           return (
             <button

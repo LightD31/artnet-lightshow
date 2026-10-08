@@ -40,7 +40,7 @@ test('a rig placed in one column falls back to even spacing', () => {
   assert.strictEqual(spatialLayout([at(50, 10), at(50, 60), at(50, 90)]).xs, null);
 });
 
-test('every pattern renders an unplaced rig exactly as it did before positions existed', () => {
+test('unplaced rigs preserve rendering from before spatial positioning', () => {
   // The identity order and no xs must be a no-op, value for value.
   const colors = [COLOR_PRESETS[1], COLOR_PRESETS[4], COLOR_PRESETS[6], COLOR_PRESETS[10]];
   const dynamics = { level: .8, bass: .6, vocal: .4, air: .5, width: .7, motion: .5, decay: .3 };

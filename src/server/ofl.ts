@@ -649,6 +649,7 @@ function readMode(mode: OflMode, matrix: Matrix | null, index: Index): ImportedM
   const undrivenColours = new Set<string>();
   const drivenBy = new Map<ModeChannel, string>();
   let strobeTried = false;
+  let strobeHz: ImportedMode['strobeHz'];
   for (const c of inOrder) {
     const { attribute, driven } = attributeOf(c.kind);
     if (!driven) {
@@ -673,6 +674,7 @@ function readMode(mode: OflMode, matrix: Matrix | null, index: Index): ImportedM
         continue;
       }
     }
+    if (attribute === 'strobe') strobeHz = physicalStrobe(c.channel.def);
     if (attribute in map) continue;
     const coarse = c.bytes.get(0);
     if (coarse === undefined) continue;
@@ -724,6 +726,7 @@ function readMode(mode: OflMode, matrix: Matrix | null, index: Index): ImportedM
   if (!drivenBy.size) warnings.push('The show drives nothing in this mode: it has no dimmer or colour channels');
 
   const result: ImportedMode = { modeName: mode.name.slice(0, 128), channelCount: slots.length, channelMap, channelList };
+  if (strobeHz) result.strobeHz = strobeHz;
   if (cellScopes.length) {
     result.cells = cellScopes.map((scope, i): ProfileCell => ({
       name: (isPixel(scope) ? `Pixel ${scope}` : `Group ${scope}`).slice(0, 64),
@@ -780,3 +783,16 @@ export {
   parseOfl,
   oflSchema,
 };
+
+function physicalStrobe(def: OflChannel): ImportedMode['strobeHz'] {
+  const scale = 256 ** (resolutionOf(def) - 1);
+  const low = STANDARD_STROBE.lo * scale, high = STANDARD_STROBE.hi * scale;
+  const cap = capabilityAt(def, low);
+  if (!cap || cap !== capabilityAt(def, high) || !cap.dmxRange) return undefined;
+  const hz = (v: unknown) => typeof v === 'string' && /^\d+(?:\.\d+)?\s*Hz$/i.test(v) ? parseFloat(v) : NaN;
+  const from = hz(cap.speedStart ?? cap.speed), to = hz(cap.speedEnd ?? cap.speed);
+  if (!(from >= 0 && to > 0 && to >= from && to <= 100)) return undefined;
+  const [a, b] = cap.dmxRange;
+  const at = (v: number) => from + (to - from) * (v - a) / Math.max(1, b - a);
+  return { min: at(low), max: at(high) };
+}

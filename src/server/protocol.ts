@@ -19,6 +19,8 @@
  *              while it changes, and only to pages that have subscribed to it
  *              (`subscribe: ['dmx']`). Volatile: a frame a slow page cannot
  *              take is dropped rather than queued behind the next
+ *   audio      what the party effects hear (audio-features.ts), the same way:
+ *              up to thirty times a second, to `subscribe: ['audio']`
  *
  * Version 1 is kept, unchanged, for whatever connects without asking — the
  * Bitfocus Companion module, a page from before protocol 2 — and its JSON DMX
@@ -30,13 +32,13 @@ import type { Server } from 'socket.io';
 export const PROTOCOL = 2;
 
 /** Rooms a socket is in: which protocol it speaks, and what it subscribed to. */
-export const ROOM = { v1: 'protocol:1', v2: 'protocol:2', dmx: 'feed:dmx' } as const;
+export const ROOM = { v1: 'protocol:1', v2: 'protocol:2', dmx: 'feed:dmx', audio: 'feed:audio' } as const;
 
 /** What a page may subscribe to. */
-export const TOPICS = { dmx: ROOM.dmx } as const;
+export const TOPICS = { dmx: ROOM.dmx, audio: ROOM.audio } as const;
 
-export type Domain = 'look' | 'rig' | 'show' | 'sources' | 'catalogs' | 'system';
-export const DOMAINS: readonly Domain[] = ['look', 'rig', 'show', 'sources', 'catalogs', 'system'];
+export type Domain = 'look' | 'rig' | 'show' | 'sources' | 'audio' | 'sequence' | 'catalogs' | 'library' | 'voices' | 'pads' | 'system';
+export const DOMAINS: readonly Domain[] = ['look', 'rig', 'show', 'sources', 'audio', 'sequence', 'catalogs', 'library', 'voices', 'pads', 'system'];
 
 /**
  * Which domain each key of the live state belongs to. Grouped by what changes
@@ -49,9 +51,13 @@ const DOMAIN_OF: Readonly<Record<string, Domain>> = {
   colorA: 'look', colorB: 'look', colorC: 'look', colorD: 'look', palette: 'look',
   masterDimmer: 'look', masterBlackout: 'look', flashLimit: 'look',
   strobeSpeed: 'look', strobeFunction: 'look', pixelMap: 'look', pixelPattern: 'look', panelPattern: 'look',
-  energyOverride: 'look',
+  energyOverride: 'look', paletteOverride: 'look', paletteOverrideId: 'look', safety: 'look',
+  basePalette: 'look', overridePalette: 'look',
+  strobe: 'look',
+  // The matrix board, its mode and held colours: like the strobe, played over the look.
+  matrix: 'look',
 
-  artnet: 'rig', universes: 'rig', fixtures: 'rig', profiles: 'rig', identify: 'rig', hueBridges: 'rig', armed: 'rig',
+  artnet: 'rig', universes: 'rig', fixtures: 'rig', profiles: 'rig', identify: 'rig', hueBridges: 'rig', hueStrobe: 'rig', hardware: 'rig', armed: 'rig',
 
   autoIntensity: 'show', autoSyncOffsetMs: 'show', autoSource: 'show', autoPrefetchDepth: 'show',
   autoShow: 'show', activeSource: 'show', showOn: 'show', cues: 'show', warm: 'show',
@@ -60,9 +66,32 @@ const DOMAIN_OF: Readonly<Record<string, Domain>> = {
   hybrid: 'sources', deezer: 'sources', deezerPrefetch: 'sources', prolink: 'sources', live: 'sources',
   midi: 'sources',
 
+  // The audio summary: its levels move every sweep, and only the meters watch them.
+  audio: 'audio',
+
+  // The sequencer: the sequence loaded, and (from the transport) where it plays;
+  // the shelf of saved ones and of patterns, by id and name.
+  sequence: 'sequence', sequences: 'sequence', sequencePatterns: 'sequence',
+
   colorPresets: 'catalogs', patterns: 'catalogs', energyEffects: 'catalogs', strobeFunctions: 'catalogs',
   palettes: 'catalogs', builtinProfileIds: 'catalogs', syncOffsetLimitMs: 'catalogs',
+  families: 'catalogs', builtinPalettes: 'catalogs',
+
+  // The presets and palettes saved on this server: one saved mid-show reaches
+  // every open page, and only the pickers watch them.
+  effects: 'library', userPalettes: 'library',
+
+  // The effects launched over the look: a pad pressed moves only this, and only the pads watch it.
+  voices: 'voices',
+
+  // The pads' layout and which of them are lit: the deck and the pad grid watch it, nothing else.
+  pads: 'pads',
 };
+
+/** Is the key named in the table (rather than falling to `system`)? */
+export function hasDomain(key: string): boolean {
+  return Object.hasOwn(DOMAIN_OF, key);
+}
 
 export function domainOf(key: string): Domain {
   return Object.hasOwn(DOMAIN_OF, key) ? DOMAIN_OF[key] : 'system';
@@ -176,11 +205,15 @@ type Io = Pick<Server, 'emit'> & Partial<Pick<Server, 'to' | 'sockets'>>;
  *   wants(room)         whether anyone is listening there, so a feed nobody
  *                       reads is not built
  *   sendDmxFrame(bytes) to the pages subscribed to DMX
+ *   sendAudio(feed)     to the pages subscribed to the audio
  */
 export function createPublisher(io: Io) {
   const differ = new StateDiffer();
   let lastLiveJson = '';
   let lastFrame: Uint8Array | null = null;
+  // Undefined until something is sent; null once the audio has gone.
+  let lastAudio: unknown;
+  let lastAudioJson: string | undefined;
 
   const room = (name: string) => (typeof io.to === 'function' ? io.to(name) : io);
   const size = (name: string): number => io.sockets?.adapter?.rooms?.get(name)?.size ?? 0;
@@ -224,6 +257,33 @@ export function createPublisher(io: Io) {
     /** Forget the last frame, so the next is sent even if it is the same. */
     resetDmx(): void {
       lastFrame = null;
+    },
+
+    /**
+     * What the party effects hear, to its subscribers, unless they have it
+     * already. Volatile like the DMX; the one message that the audio has gone
+     * (null) is not, so no meter is left standing on the last level.
+     */
+    sendAudio(feed: unknown): boolean {
+      if (typeof io.to !== 'function') return false;
+      const json = JSON.stringify(feed ?? null);
+      if (json === lastAudioJson) return false;
+      lastAudioJson = json;
+      lastAudio = feed ?? null;
+      if (feed) io.to(ROOM.audio).volatile.emit('audio', feed);
+      else io.to(ROOM.audio).emit('audio', null);
+      return true;
+    },
+
+    /** The audio last sent, for a page that has just subscribed; undefined before any. */
+    lastAudio(): unknown {
+      return lastAudio;
+    },
+
+    /** Forget the last audio sent: nobody is subscribed. */
+    resetAudio(): void {
+      lastAudio = undefined;
+      lastAudioJson = undefined;
     },
   };
 }

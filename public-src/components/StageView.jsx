@@ -3,9 +3,8 @@ import { pick, connectedSig, dmxSig, stagePreviewSig } from '../state.js';
 import { fmtTime, rigLights } from '../utils.js';
 import { useDmxFeed } from '../use-dmx.js';
 import { useTimeline } from '../use-timeline.js';
-import { useRehearsalTrack } from '../rehearsal.js';
+import { useRehearsalTrack, useRehearsalSampler } from '../rehearsal.js';
 import { placeRig, lightRGB, STAGE_W, STAGE_D, TRUSS_H } from '../stage3d/world.js';
-import { createPreviewSampler } from '../../src/shared/preview.ts';
 import { buildRig, rigSignature } from '../../src/shared/rig.ts';
 
 /**
@@ -57,7 +56,7 @@ export function StageView() {
   // The rig changes only when the patch does: compare its signature.
   const signature = rigSignature(fixtures, JSON.stringify(Object.keys(profiles)));
   const rig = useMemo(() => buildRig(fixtures, (f) => profiles[f.profileId] || null), [signature]);
-  const sample = useMemo(() => createPreviewSampler(data?.timeline, data), [data]);
+  const sample = useRehearsalSampler(data);
 
   // What the frame loop reads, without restarting it for every change.
   const live = useRef({});

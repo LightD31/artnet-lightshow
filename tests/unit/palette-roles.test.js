@@ -39,7 +39,7 @@ test('the committed tracks include both modes, so both palette paths are covered
 });
 
 for (const { name, doc } of tracks) {
-  test(`${name}: every full look keeps the bank's lift in slot D`, () => {
+  test(`${name}: full looks retain the lift in D`, () => {
     const p = plan(doc);
     const lift = TETRADS[p.paletteName][3];
     const looks = fullLooks(p.intents);

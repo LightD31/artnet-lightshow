@@ -35,6 +35,25 @@ test('a tempo change keeps the phase: it speeds up from here, not from zero', ()
   assert.ok(close(r.c.now().beatPos, 3));
 });
 
+test('free tempo stays in the valid range', () => {
+  const r = rig({ bpm: 120 });
+  for (const [typed, expected] of [[0, 20], [-5, 20], [1e9, 300], ['0', 20], [NaN, 120], [Infinity, 120], ['fast', 120]]) {
+    r.c.setBpm(typed);
+    const reading = r.c.now();
+    assert.strictEqual(reading.bpm, expected, `setBpm(${String(typed)})`);
+    assert.strictEqual(reading.source, 'tap');
+    r.c.setBpm(120);
+  }
+  // A locked source handing back to the free clock passes through the same floor.
+  const grid = makeGrid([0, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12]);
+  let pos = 50;
+  r.c.setTrack({ key: 'burst', grid, positionMs: () => pos });
+  for (let i = 0; i < 4; i++) { r.advance(25); pos += 25; r.c.now(); }
+  assert.ok(r.c.now().bpm > 0 && Number.isFinite(r.c.now().bpm), 'a 20 ms grid reads as a finite positive tempo');
+  r.c.clearTrack({ key: 'burst' });
+  assert.strictEqual(r.c.now().bpm, 300, 'carried on by the free clock, held to its ceiling');
+});
+
 test('a tap lands a beat on the tap', () => {
   const r = rig({ bpm: 120 });
   r.c.now();

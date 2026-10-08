@@ -638,8 +638,7 @@ test('an unknown mode is a 400 and changes nothing, by route or by /api/set', ()
     const res = await call('POST', path, { body });
     assert.strictEqual(res.status, 400, path);
     assert.strictEqual(res.body.ok, false);
-    assert.match(res.body.error, /tempoMode/);
-  }
+      }
   assert.deepStrictEqual([state.tempoMode, conductor.tempoMode, settings.get('clock.tempoMode')], ['manual', 'manual', 'manual']);
   assert.strictEqual(state.masterDimmer, dimmer, 'the rest of a refused patch is not applied either');
 

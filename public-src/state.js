@@ -1,22 +1,16 @@
 import { computed, signal } from '@preact/signals';
 import { io } from 'socket.io-client';
-import { createHoldControl } from './hold-control.js';
+import { createVoiceHolds } from './hold-control.js';
 import { timelinePosition } from './timeline-state.js';
 import { createStore } from './store.js';
 import { decodeDmxFrame } from '../src/shared/dmx-frame.ts';
 
-// Single source of truth on the client: the server's state, one signal per key
-// (store.js, protocol v2 — src/server/protocol.ts). `field('masterDimmer')`
-// re-renders only on that key; `stateSig` is everything at once, for the
-// components that want it.
+// One signal per state key (store.js, protocol v2), so a field re-renders only its readers.
 export const store = createStore();
 export const field = store.field;
 export const stateSig = store.all;
 
-/**
- * The named keys of the state, read so that the calling component re-renders
- * when one of them changes and not for anything else.
- */
+/** Reads the named keys, so the caller re-renders on those alone. */
 export function pick(keys) {
   const out = {};
   for (const key of keys) out[key] = field(key).value;
@@ -24,59 +18,32 @@ export function pick(keys) {
 }
 export const connectedSig = signal(false);
 
-// Why the surface is barred, not just that it is. Socket.IO retries a dropped
-// connection on its own but gives up immediately on a handshake the server
-// rejected, so "reconnecting" was a promise the page could not keep: a browser
-// without the access token sat behind that veil forever while nothing retried.
-//   connecting    — first attempt, has never been online
-//   online        — live
-//   reconnecting  — was online, socket dropped, Socket.IO is retrying
-//   unauthorized  — handshake refused; public/auth.js is asking for the token
+// 'unauthorized' apart from 'reconnecting': a refused handshake is never retried; auth.js asks for the token.
 export const connectionSig = signal({ status: 'connecting' });
 
-// Live DMX values by universe, on their own signal so the stream only
-// re-renders the views that show DMX output (the monitor and the fixture
-// previews) instead of waking every control panel in the tree. Thirty binary
-// frames a second, and only while one of those views is on screen and has
-// subscribed (useDmxFeed).
+// Its own signal, so 30 frames a second wake only the DMX views that subscribed (wantDmx).
 export const dmxSig = signal({});
 
-// The *shape* of that stream — which universes are live and how many channels
-// each carries — as a comparable string. It recomputes on every frame but its
-// value changes only when the rig does, so a component reading this instead of
-// dmxSig lays out the monitor once rather than ten times a second. The values
-// themselves are written into the cells imperatively.
+// Changes only when the rig does, so the monitor lays out once rather than every frame.
 export const dmxShapeSig = computed(() => {
   const snap = dmxSig.value || {};
   return Object.keys(snap).map(Number).sort((a, b) => a - b)
     .map((u) => `${u}:${(snap[u] || []).length}`).join(',');
 });
 
-// Auto-show playback position (pushed from server at ~10 Hz). Held in its own
-// signal so the timeline visualiser can re-render without churning the rest.
+// Pushed at ~10 Hz, on its own signal so only the timeline re-renders.
 export const autoPositionSig = signal({ positionMs: 0, running: false, updatedAt: 0 });
 
-// Auto-show timeline payload (loaded on demand from /api/auto/timeline).
 export const autoTimelineSig = signal({ data: null, key: null, status: 'idle', error: null });
 
-// Stage preview panel state. The panel is mounted in both the manual and the
-// auto view, and two copies of this in component state meant an operator who
-// started positioning fixtures in one view found the other still in live mode —
-// or worse, rehearsing at a different position. It is one panel to the person
-// using it, so it gets one piece of state.
-//
-// The drag in progress deliberately stays local to the component: it belongs to
-// one pointer on one surface, and sharing it would let a drag begun in one view
-// go on driving a lamp in the other.
+// Shared by the stage preview in both views so they never disagree; a drag stays in the component.
 export const stagePreviewSig = signal({
   edit: false, rehearsal: false, playing: false, position: 0,
-  // The track the rehearsal belongs to (StagePreview), so a view switch that
-  // remounts the panel does not mistake itself for a new track.
+  // So a remount on a view switch is not taken for a new track.
   trackId: undefined,
 });
 
-// Token comes from public/auth.js, which runs before this bundle. Guarded so the
-// bundle still works if it ever loads without it.
+// From public/auth.js, loaded first; guarded in case it is not.
 const auth = (typeof window !== 'undefined' && window.LightshowAuth) || {
   token: '', connected: () => {}, requireToken: () => {}, onToken: () => {},
 };
@@ -86,13 +53,10 @@ export const socket = io({
   auth: { token: auth.token || '', protocol: 2 },
 });
 
-// Created before socket listeners are registered so a very fast disconnect
-// during page startup cannot hit a temporal-dead-zone reference.
-export const energyHold = createHoldControl((payload) => emitLive('energy-hold', payload));
+// Before the socket listeners, so a fast disconnect at startup cannot hit the TDZ.
+export const voiceHolds = createVoiceHolds((payload) => emitLive('voice-hold', payload));
 
-// Whether this page has ever had a live socket, which is what separates "not up
-// yet" from "we lost it". Kept apart from connectionSig, which is already
-// 'reconnecting' by the time the retry errors arrive.
+// Tells "not up yet" from "lost it"; connectionSig is already 'reconnecting' when retries fail.
 let everOnline = false;
 
 socket.on('connect', () => {
@@ -100,19 +64,17 @@ socket.on('connect', () => {
   connectedSig.value = true;
   connectionSig.value = { status: 'online' };
   auth.connected();                       // clears the token prompt, if it was up
+  loadLibrary();
 });
 
 socket.on('disconnect', () => {
-  energyHold.release();
+  voiceHolds.releaseAll();
   freezePosition();
   connectedSig.value = false;
   connectionSig.value = { status: 'reconnecting' };
 });
 
-// A refused handshake and an unreachable server both land here. `socket.active`
-// tells them apart: true means Socket.IO is still retrying (server down, network
-// gone), false means it has given up because a middleware rejected us — which,
-// on this server, only happens for a missing or wrong token.
+// socket.active: still retrying (server or network down); false: the token was refused.
 socket.on('connect_error', () => {
   connectedSig.value = false;
   if (socket.active) {
@@ -137,8 +99,7 @@ socket.on('snapshot', (snapshot) => {
   if (snapshot.state.autoShow && !snapshot.state.autoShow.running) freezePosition();
 });
 
-// Then only what changed. A patch that is not the next for its domain means
-// one went missing: ask for the whole state rather than drift.
+// A patch out of sequence means one went missing: resync rather than drift.
 let resyncing = false;
 socket.on('patch', (patch) => {
   if (!patch) return;
@@ -148,10 +109,13 @@ socket.on('patch', (patch) => {
     socket.emit('sync', (snapshot) => {
       resyncing = false;
       if (snapshot && snapshot.state) store.applySnapshot(snapshot);
+      // A library change may be among what was missed.
+      loadLibrary();
     });
     return;
   }
   if (result === 'ok' && patch.set && patch.set.autoShow && !patch.set.autoShow.running) freezePosition();
+  if (result === 'ok' && patch.d === 'library') loadLibrary();
 });
 
 // DMX as bytes (src/shared/dmx-frame.ts), while subscribed.
@@ -160,8 +124,7 @@ socket.on('dmx-frame', (message) => {
   if (frame) dmxSig.value = frame;
 });
 
-// How many views on screen want the DMX feed. The first subscribes, the last
-// unsubscribes, and a reconnect subscribes again for whoever is still there.
+// The first view subscribes, the last unsubscribes, and a reconnect subscribes again.
 let dmxWanted = 0;
 export function wantDmx() {
   if (dmxWanted++ === 0 && socket.connected) socket.emit('subscribe', ['dmx']);
@@ -173,6 +136,24 @@ export function wantDmx() {
   };
 }
 socket.on('connect', () => { if (dmxWanted > 0) socket.emit('subscribe', ['dmx']); });
+
+// About 30 a second to subscribers only, counted like the DMX feed; null while nobody listens.
+export const audioFeedSig = signal(null);
+socket.on('audio', (feed) => { audioFeedSig.value = feed; });
+let audioWanted = 0;
+export function wantAudio() {
+  if (audioWanted++ === 0 && socket.connected) socket.emit('subscribe', ['audio']);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    if (--audioWanted === 0) {
+      if (socket.connected) socket.emit('unsubscribe', ['audio']);
+      audioFeedSig.value = null;
+    }
+  };
+}
+socket.on('connect', () => { if (audioWanted > 0) socket.emit('subscribe', ['audio']); });
 socket.on('auto-position', ({ positionMs, running, advancing, revision }) => {
   if (!Number.isFinite(positionMs)) return;
   const currentRevision = stateSig.value.autoShow?.timelineRevision;
@@ -180,31 +161,20 @@ socket.on('auto-position', ({ positionMs, running, advancing, revision }) => {
   autoPositionSig.value = { positionMs, running: !!running, advancing, revision, updatedAt: performance.now() };
 });
 
-// Toast comes from public/toast.js, which runs before this bundle. Guarded so
-// the bundle still works if it ever loads without it.
+// From public/toast.js, loaded first; guarded in case it is not.
 const toast = (typeof window !== 'undefined' && window.Toast) || {
   error: () => {}, info: () => {}, success: () => {}, push: () => () => {},
 };
 export { toast };
 
-// The server refuses invalid input on every socket path — an address past the
-// end of a universe, a fixture move over the transmit cap, a bad MIDI port.
-// Until this listener existed none of it reached the operator: the control just
-// snapped back on the next broadcast, which reads as the app eating your input.
-//
-// The messages are written for a person (they name the fixture and say what the
-// limit is), so they go out as-is.
-socket.on('error-msg', ({ message }) => {
+// Socket refusals reach the operator; the messages are written for a person, so shown as-is.
+socket.on('error-msg', ({ source, message, token }) => {
+  // A refused hold must not stay lit and renewing.
+  if (source === 'voice-hold') voiceHolds.refuse(token);
   if (message) toast.error(message);
 });
 
-/**
- * Fetch a JSON API and surface the failure.
- *
- * Nearly every call site was fire-and-forget, so a 400 from the server looked
- * exactly like success. Returns the parsed body either way; callers that want
- * to branch still can, and callers that don't at least stop swallowing errors.
- */
+// Toasts every failure, since most callers fire and forget; returns the parsed body either way.
 export async function api(path, init) {
   try {
     const res = await fetch(path, {
@@ -219,11 +189,31 @@ export async function api(path, init) {
     }
     return { ok: true, ...body };
   } catch (err) {
-    // A network-level failure here almost always means the server went away
-    // mid-show, which is worth saying plainly rather than as a bare TypeError.
+    // Almost always the server went away mid-show: say so rather than a bare TypeError.
     toast.error(`Could not reach the server: ${err.message}`);
     return { ok: false, error: err.message };
   }
+}
+
+// The live state has only summaries: specs come from GET /api/effects on connect and library changes.
+export const librarySig = signal({ status: 'idle', families: [], builtin: [], user: [], palettes: { builtin: [], user: [] } });
+
+let libraryLoads = 0;
+export async function loadLibrary() {
+  const load = ++libraryLoads;
+  const res = await api('/api/effects');
+  // Two loads in flight answer in either order; only the latest may land.
+  if (load !== libraryLoads) return res;
+  librarySig.value = res.ok
+    ? { status: 'ready', families: res.families || [], builtin: res.builtin || [], user: res.user || [],
+      palettes: { builtin: [], user: [], ...(res.palettes || {}) } }
+    : { ...librarySig.value, status: 'error' };
+  return res;
+}
+
+/** Change the library on this page the moment a save answers, ahead of the broadcast. */
+export function patchLibrary(fn) {
+  librarySig.value = fn(librarySig.value);
 }
 
 // Live actions must never queue up for replay after reconnecting.

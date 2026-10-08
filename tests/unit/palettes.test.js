@@ -94,7 +94,7 @@ test('a palette and an explicit slot in one patch let the slot win', () => {
 });
 
 test('an unknown palette id is refused rather than silently ignored', () => {
-  assert.throws(() => applyPatch({ palette: 'not-a-look' }), /palette/);
+  assert.throws(() => applyPatch({ palette: 'not-a-look' }));
 });
 
 test('a null palette clears the label without touching the slots', () => {

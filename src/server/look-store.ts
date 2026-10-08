@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { JsonStore } from './json-store.ts';
 import { lookSchema, captureLook, recallLook } from './cues.ts';
-import { messageOf } from '../errors.ts';
+import { state } from './state.ts';
+import { messageOf, statusOf } from '../errors.ts';
 
 /**
  * The look on stage, kept so a restart can put it back (config/look.json).
@@ -86,9 +87,31 @@ export function currentLook(autoShow: ResumableShow | null, source = 'timer'): U
   return { look: lookSchema.parse(captureLook()), auto };
 }
 
-/** Put a saved look back on stage — without its energy effect. */
-export function putBack(saved: SavedLook): void {
-  recallLook({ ...saved.look, energyOverride: null });
+/**
+ * Put a saved look back on stage — without its energy effect, and without
+ * the settings a cue carries (audio mode, strobe): settings.json holds those
+ * as they were last saved, and a look up to two seconds older must not undo
+ * a change made just before the restart. An effect that waits for a
+ * photosensitivity acknowledgement taken back since stays off, as an energy
+ * effect does: the rest of the look comes back on the pattern the server
+ * started with, its masters and overrides included. False, and the look left
+ * as it is, when even that is refused. A restart comes up either way.
+ */
+export function putBack(saved: SavedLook): boolean {
+  const { audioMode: _audioMode, strobe: _strobe, ...look } = saved.look;
+  try {
+    try {
+      recallLook({ ...look, energyOverride: null });
+    } catch (err) {
+      if (statusOf(err) !== 409) throw err;
+      console.warn(`[look] the look from ${saved.savedAt} comes back without ${look.pattern}: ${messageOf(err)}`);
+      recallLook({ ...look, pattern: state.pattern, energyOverride: null });
+    }
+    return true;
+  } catch (err) {
+    console.warn(`[look] could not put back the look from ${saved.savedAt}: ${messageOf(err)}`);
+    return false;
+  }
 }
 
 /**

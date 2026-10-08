@@ -14,7 +14,7 @@ test('a fresh install is walked from outputs to the pre-show check', async ({ pa
   test.setTimeout(90_000);
   const before = await state(request);
   await setupDone(request, false);
-  await page.goto('/#manual');
+  await page.goto('/#effects');
   const dialog = page.getByRole('dialog', { name: /Set up the rig/ });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole('button', { name: 'Skip setup' })).toBeFocused();
@@ -52,7 +52,7 @@ test('a fresh install is walked from outputs to the pre-show check', async ({ pa
 
   // Not offered again.
   await page.reload();
-  await page.locator('#panel-manual').waitFor();
+  await page.locator('#panel-effects').waitFor();
   await expect(page.getByRole('dialog', { name: /Set up the rig/ })).toHaveCount(0);
 
   await request.put('/api/settings', { data: { spotify: { clientId: '' } } });
@@ -63,7 +63,7 @@ test('a fresh install is walked from outputs to the pre-show check', async ({ pa
 
 test('the setup can be left, keeps what was done, and is there again in Settings', async ({ page, request }) => {
   await setupDone(request, false);
-  await page.goto('/#manual');
+  await page.goto('/#effects');
   const dialog = page.getByRole('dialog', { name: /Set up the rig/ });
   await expect(dialog).toBeVisible();
   await page.keyboard.press('Escape');

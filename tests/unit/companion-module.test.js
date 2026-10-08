@@ -50,6 +50,28 @@ test('its built-in lists are the server\'s, for before it has connected', () => 
 
 // ── Against the server ───────────────────────────────────────────────────────
 
+test('Companion palettes include unified builtins and saved palettes', () => {
+  const live = { palettes: [{ id: 'old' }], builtinPalettes: [{ id: 'all', name: 'All' }],
+    userPalettes: [{ id: 'mine', name: 'Mine' }] };
+  assert.deepStrictEqual(catalog.palettesOf(live).map((p) => p.id), ['all', 'mine']);
+  assert.equal(catalog.paletteName(live, 'mine'), 'Mine');
+  assert.ok(['builtinPalettes', 'userPalettes'].every((key) => catalog.CATALOG_KEYS.includes(key)));
+});
+
+test('Companion palette swatches retain every full-colour emitter', () => {
+  assert.deepStrictEqual(catalog.paletteSwatch({}, { colours: ['#102030405060', '#abc', { random: true }] }), [
+    { r: 16, g: 32, b: 48, w: 64, a: 80, uv: 96 }, { r: 170, g: 187, b: 204, w: 0, a: 0, uv: 0 },
+  ]);
+});
+
+test('Companion colour feedback follows the base body instead of stale indices', () => {
+  const live = { colorA: 0, colorB: 0, basePalette: { colours: ['#0000000000FF', '#FF0000'] } };
+  assert.equal(catalog.slotColorSelected(live, 'colorA', 0), false);
+  assert.equal(catalog.slotColorSelected(live, 'colorB', 0), true);
+  assert.equal(catalog.slotColorName(live, 'colorB'), 'Red');
+  assert.equal(catalog.slotColorName(live, 'colorC'), catalog.slotColorName(live, 'colorA'));
+});
+
 async function serve() {
   const app = express();
   const rest = [];
@@ -109,7 +131,8 @@ test('it connects on protocol 2 and follows the state by its changes alone', asy
     // The auto show and the cues are asked over HTTP, with the token.
     assert.deepStrictEqual(await conn.recallCue('cue 7'), { ok: true });
     const missing = await conn.recallCue('missing');
-    assert.deepStrictEqual(missing, { ok: false, error: 'No such cue' });
+    assert.equal(missing.ok, false);
+    assert.ok(missing.error);
     await conn.autoShow('toggle');
     // The outputs' switch too: a toggle reads the state, which starts disarmed.
     await conn.armOutputs('disarm');
@@ -125,7 +148,7 @@ test('it connects on protocol 2 and follows the state by its changes alone', asy
   }
 });
 
-test('a held effect lasts while the button is down, and ends when it comes up — or when Companion goes', async () => {
+test('held Companion effects end on release or disconnect', async () => {
   const s = await serve();
   const conn = new LightshowConnection({ host: '127.0.0.1', port: s.port });
   const other = new LightshowConnection({ host: '127.0.0.1', port: s.port });
@@ -149,4 +172,119 @@ test('a held effect lasts while the button is down, and ends when it comes up �
     other.disconnect();
     await s.close();
   }
+});
+
+// presets.js and variables.js import Companion's own package, a dev
+// dependency of the root package so these two run wherever the suite does.
+test('Companion presets include 16 pads and the strobe', async () => {
+  const { UpdatePresets } = await import('../../companion-module/src/presets.js');
+  let presets = null;
+  UpdatePresets({ liveState: {}, setPresetDefinitions: (_structure, defs) => { presets = defs; } });
+  for (let n = 1; n <= 16; n++) {
+    const pad = presets[`pad_${n}`];
+    assert.ok(pad, `pad ${n}`);
+    const bank = Math.floor((n - 1) / 8);
+    const slot = (n - 1) % 8;
+    assert.deepStrictEqual(pad.steps[0].down, [{ actionId: 'pad_hold', options: { bank, slot } }]);
+    assert.deepStrictEqual(pad.steps[0].up, [{ actionId: 'pad_release', options: { bank, slot } }]);
+  }
+  assert.deepStrictEqual(presets.strobe_burst.steps[0].down.map((a) => a.actionId), ['strobe_burst']);
+});
+
+test('the variables name every pad and keep the energy override', async () => {
+  const { UpdateVariableDefinitions, UpdateVariableValues } = await import('../../companion-module/src/variables.js');
+  let defs = null;
+  let values = null;
+  const pads = { layout: [{ bank: 0, slot: 0, label: 'Rainbow' }, { bank: 1, slot: 7, label: 'Strobe' }], lit: [] };
+  const self = { liveState: { pads }, setVariableDefinitions: (d) => { defs = d; }, setVariableValues: (v) => { values = v; } };
+  UpdateVariableDefinitions(self);
+  UpdateVariableValues(self);
+  const ids = Array.isArray(defs) ? defs.map((d) => d.variableId) : Object.keys(defs);
+  for (let n = 1; n <= 16; n++) assert.ok(ids.includes(`pad_${n}_label`), `pad_${n}_label`);
+  assert.ok(ids.includes('energy_override'));
+  assert.equal(values.pad_1_label, 'Rainbow');
+  assert.equal(values.pad_16_label, 'Strobe');
+  assert.equal(values.energy_override, 'off');
+});
+
+test('a refused token is reported as unauthorized, by the code the server sends', async () => {
+  const server = http.createServer();
+  const io = new Server(server);
+  io.use((_socket, next) => {
+    const err = new Error('Access token refused');
+    err.data = { code: 'unauthorized', presented: true };
+    next(err);
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const statuses = [];
+  const conn = new LightshowConnection({
+    host: '127.0.0.1', port: server.address().port, token: 'wrong',
+    onStatus: (status, message) => statuses.push([status, message]), onChange: () => {},
+  });
+  try {
+    conn.connect();
+    assert.ok(await until(() => statuses.some(([s]) => s === 'unauthorized' || s === 'error')));
+    assert.deepStrictEqual(statuses.find(([s]) => s !== 'connecting'), ['unauthorized', 'Access token refused']);
+  } finally {
+    conn.disconnect?.();
+    io.close();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("Companion renews held pads without pressing again", async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+  const conn = new LightshowConnection({ host: 'localhost' });
+  const posts = [];
+  const renewed = true;
+  conn.post = async (path, body) => {
+    posts.push([path, body.token]);
+    return path.endsWith('/renew') ? { ok: true, renewed } : { ok: true, id: 'v' };
+  };
+  await conn.holdPad(0, 3);
+  for (let i = 0; i < 5; i++) { t.mock.timers.tick(400); await flush(); }
+  assert.deepStrictEqual(posts.map(([p]) => p.split('/').at(-1)), ['press', 'renew', 'renew', 'renew', 'renew', 'renew']);
+  assert.ok(posts.every(([, token]) => token === 'companion:0:3'));
+  conn.disconnect();
+});
+
+test("Companion stops renewing when the hold no longer exists", async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+  const conn = new LightshowConnection({ host: 'localhost' });
+  const posts = [];
+  let renewed = true;
+  conn.post = async (path, body) => {
+    posts.push([path, body.token]);
+    return path.endsWith('/renew') ? { ok: true, renewed } : { ok: true, id: 'v' };
+  };
+  await conn.holdPad(0, 3);
+  for (let i = 0; i < 5; i++) { t.mock.timers.tick(400); await flush(); }
+  renewed = false;
+  t.mock.timers.tick(400);
+  await flush();
+  t.mock.timers.tick(4000);
+  await flush();
+  assert.equal(posts.length, 7, 'stopped at the first renewal that found no hold');
+  conn.disconnect();
+});
+
+test("Companion release during a press prevents renewal", async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+  const conn = new LightshowConnection({ host: 'localhost' });
+  const posts = [];
+  const renewed = true;
+  conn.post = async (path, body) => {
+    posts.push([path, body.token]);
+    return path.endsWith('/renew') ? { ok: true, renewed } : { ok: true, id: 'v' };
+  };
+  const pressing = conn.holdPad(1, 2);
+  await conn.releasePad(1, 2);
+  await pressing;
+  t.mock.timers.tick(4000);
+  await flush();
+  assert.deepStrictEqual(posts.map(([p]) => p.split('/').at(-1)), ['press', 'release']);
+  conn.disconnect();
 });

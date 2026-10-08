@@ -10,7 +10,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const PORT = 3997;
+// Two below the suite's own server, so the two never share a port.
+const PORT = (Number(process.env.E2E_PORT) || 3999) - 2;
 const BASE = `http://127.0.0.1:${PORT}`;
 const ROOT = path.join(import.meta.dirname, '..', '..');
 

@@ -1,5 +1,5 @@
 // The Rig view's plot: placing a lamp from its chip by tap or drag, nudging
-// it, and auto-place's proposal, apply and undo.
+// it, auto-place's proposal, apply and undo, and a height that survives a reload.
 // Each test puts the positions back the way it found them.
 
 import { test, expect } from '@playwright/test';
@@ -26,7 +26,7 @@ test.afterEach(async ({ page, request }) => {
 
 /** Wait until the plot draws the lamp where the server has it: a nudge moves it from there. */
 async function drawnAt(page, id, { x, y }) {
-  const label = new RegExp(`, position ${Math.round(x)}, ${Math.round(y)}\\.`);
+  const label = new RegExp(`, position ${Math.round(x)}, ${Math.round(y)},`);
   await expect(page.locator(`.plan-surface [data-fixture="${id}"]`)).toHaveAttribute('aria-label', label);
 }
 
@@ -63,7 +63,7 @@ test('a chip tapped then the plot tapped places the lamp; arrow keys nudge it; a
   await until(request, (s) => positionOf(s, first.id).y === placed.y + 2.5);
   await resetPlace(page, request, first.id);
 
-  // Measured again: the chips beside the plot changed when the first was placed.
+  // The selected lamp's height row above the plot changes its height: measure again.
   const plot = await page.locator('.plan-surface').boundingBox();
   const box = await page.locator(`.plan-chip[data-chip="${second.id}"]`).boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -113,4 +113,31 @@ test('auto-place shows its proposal, applies it in one tap and undoes it in one 
     await resetPlace(page, request, u.id);
   }
   await expect(page.locator('.plan-chip')).toHaveCount(unplaced.length);
+});
+
+test('the height set on the plot persists after a reload', async ({ page, request }) => {
+  const before = await state(request);
+  const target = before.fixtures.find((f) => !f.position);
+  await open(page, 'rig');
+  await page.locator(`.plan-surface [data-fixture="${target.id}"]`).click();
+  const raise = page.getByRole('button', { name: `Raise ${target.label}` });
+  await expect(raise).toBeDisabled();
+  await expect(page.locator('.plan-selected')).toContainText('Place it first');
+  await page.locator(`.plan-chip[data-chip="${target.id}"]`).click();
+  const surface = await page.locator('.plan-surface').boundingBox();
+  await page.mouse.click(surface.x + surface.width * 0.5, surface.y + surface.height * 0.8);
+  await until(request, (s) => !!positionOf(s, target.id));
+  await raise.click();
+  await until(request, (s) => positionOf(s, target.id)?.height === 55);
+  await raise.click();
+  await until(request, (s) => positionOf(s, target.id)?.height === 60);
+
+  await page.reload();
+  await page.locator('.offline-veil').waitFor({ state: 'detached' });
+  const lamp = page.locator(`.plan-surface [data-fixture="${target.id}"]`);
+  await expect(lamp.locator('.plan-height')).toHaveText('↑60');
+  await lamp.click();
+  await expect(page.getByRole('slider', { name: `Height of ${target.label}` })).toHaveValue('60');
+  await page.locator('.inspector').getByRole('button', { name: 'Reset place' }).click();
+  await until(request, (s) => positionOf(s, target.id) === null);
 });

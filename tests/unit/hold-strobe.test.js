@@ -12,7 +12,7 @@ import { HUE_COLOR } from './hue-test-lamps.js';
 import { COLOR_PRESETS, ENERGY_EFFECTS } from '../../src/server/presets.ts';
 import { createPreviewSampler } from '../../src/shared/preview.ts';
 import { buildRig } from '../../src/shared/rig.ts';
-import { HOLD_STROBE, HOLD_FLASH_MS, HOLD_BLACK_MS, HUE_PULSE_MS, HUE_PULSE_FLOOR, holdStrobeFlash, holdStrobeLook, resolveEnergyOverride } from '../../src/shared/look-math.ts';
+import { HOLD_STROBE, HOLD_FLASH_MS, HOLD_BLACK_MS, HUE_PULSE_MS, HUE_PULSE_FLOOR, holdStrobeFlash, holdStrobeLook, huePulseLevel as huePulseLevelOf, resolveEnergyOverride } from '../../src/shared/look-math.ts';
 
 const RED = COLOR_PRESETS[0];
 const BLUE = COLOR_PRESETS[5];
@@ -68,6 +68,13 @@ test('a Hue lamp takes each flash at full and falls to the floor, never black', 
   for (let ms = 0; ms < 2000; ms += 25) assert.ok(rigAt(ms)[1].dim >= 40, `${rigAt(ms)[1].dim} at ${ms} ms`);
 });
 
+test('with hueStrobe flash the lamp goes black after the flash', () => {
+  assert.deepStrictEqual(rigAt(0, { hueStrobe: 'flash' })[1], { dim: 255, r: 255, g: 0, b: 0 }, 'flashed at full');
+  assert.strictEqual(rigAt(150, { hueStrobe: 'flash' })[1].dim, 0, 'black, as a par');
+  assert.deepStrictEqual(rigAt(150, { hueStrobe: 'flash' })[1], rigAt(150, { hueStrobe: 'flash' })[0], 'exactly as the par');
+  assert.strictEqual(rigAt(150, { hueStrobe: 'pulse' })[1].dim, huePulseLevelOf(150), 'pulsed when asked');
+});
+
 test('the flash limit still holds the rig to its three large flashes a second', () => {
   const store = universes.createUniverseStore(universes.allocateShared());
   const renderer = createRenderer({ profileOf: getProfile, profilesRevision, now: 0 });
@@ -93,6 +100,28 @@ test('the preview drives the same bytes as the rig, par and lamp alike', () => {
     assert.deepStrictEqual([par.r, par.g, par.b], [preview[0].r, preview[0].g, preview[0].b], `the par at ${ms} ms`);
     assert.deepStrictEqual([lamp.r, lamp.g, lamp.b], [preview[1].r, preview[1].g, preview[1].b], `the lamp at ${ms} ms`);
   }
+});
+
+const OVERRIDE = [{ r: 0, g: 255, b: 0, w: 0, a: 0, uv: 0 }, { r: 255, g: 0, b: 136, w: 0, a: 0, uv: 0 }];
+for (const energy of [HOLD_STROBE, 'color-strobe', 'glow']) {
+  test(`${energy} preview matches the rig under a palette override`, () => {
+    const fixtures = [PAR, LAMP];
+    const rig = buildRig(fixtures, getProfile);
+    const sample = createPreviewSampler([
+      { timeMs: 0, action: 'patch', data: LOOK },
+      { timeMs: 0, action: 'energy', data: { id: energy, durationMs: 5000 } },
+    ], null, { paletteOverride: ['#00FF00', '#FF0088'] });
+    for (const ms of [0, 60, 100, 170, 200, 250, 320, 480, 760, 1010]) {
+      const preview = sample(ms, fixtures, COLOR_PRESETS, rig);
+      const rendered = rigAt(ms, { energy, paletteOverride: OVERRIDE });
+      assert.deepEqual(rendered.map((c) => [c.r, c.g, c.b]), preview.map((c) => [c.r, c.g, c.b]));
+    }
+  });
+}
+
+test('the hold strobe cycles the override colours', () => {
+  assert.deepEqual(rigAt(0, { paletteOverride: OVERRIDE })[0], { dim: 255, r: 0, g: 255, b: 0 });
+  assert.deepEqual(rigAt(250, { paletteOverride: OVERRIDE })[0], { dim: 255, r: 255, g: 0, b: 136 });
 });
 
 // ── Its timing and its look, per lamp ───────────────────────────────────────
