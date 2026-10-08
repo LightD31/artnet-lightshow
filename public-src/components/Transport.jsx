@@ -47,7 +47,9 @@ export function Transport({ initial, compact = false, prefer = null } = {}) {
   const loadedId = status?.loaded?.id || '';
   const revision = status?.revision || 0;
   useEffect(() => {
-    if (initial || compact || driver !== 'sequence') return;
+    // Only a sequence handed in stands in for the fetch: the Sequence view
+    // passes its `initial`, which is {} in use, and its lanes need names.
+    if (initial?.sequence || compact || driver !== 'sequence') return;
     if (!loadedId) { setSequence(null); return; }
     let live = true;
     api('/api/sequence').then((res) => { if (live && res.ok) setSequence(res.sequence || null); });
@@ -68,6 +70,9 @@ export function Transport({ initial, compact = false, prefer = null } = {}) {
           <option value="look" selected={value === 'look'}>Look by hand</option>
           <option value="auto" selected={value === 'auto'}>Auto show</option>
           {driver === 'sequence' && !loadedId && <option value="sequence:" disabled selected>Pick a sequence</option>}
+          {loadedId && !sequences.some((q) => q.id === loadedId) && (
+            <option value={`sequence:${loadedId}`} selected>{status?.loaded?.name || 'Unsaved sequence'} (not saved)</option>
+          )}
           <optgroup label="Sequences">
             {sequences.map((q) => <option key={q.id} value={`sequence:${q.id}`} selected={q.id === loadedId}>{q.name || q.id}</option>)}
           </optgroup>

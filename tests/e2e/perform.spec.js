@@ -233,6 +233,9 @@ test('the strobe sheet switches the strobe to a ROOT PAR program and back, keepi
     await page.getByRole('button', { name: 'Strobe settings' }).click();
     const sheet = page.getByRole('dialog', { name: 'Strobe settings' });
     await expect(sheet.getByRole('slider', { name: 'Flashes per second' })).toBeVisible();
+    // The colours show whole: a colour bar's rule once cut their row to 14 px.
+    const colours = sheet.locator('.palette-swatches');
+    expect(await colours.evaluate((row) => row.scrollHeight <= row.clientHeight && row.clientHeight >= 30), 'the colour row is not clipped').toBe(true);
     await sheet.getByRole('combobox', { name: 'Function' }).selectOption('ramp-up-rnd');
     await until(request, (s) => s.strobe.settings.function === 'ramp-up-rnd');
     // A program runs at its speed, on the beat: the rate and the clock are the palette flashes'.
@@ -246,6 +249,8 @@ test('the strobe sheet switches the strobe to a ROOT PAR program and back, keepi
     await sheet.getByRole('combobox', { name: 'Function' }).selectOption('palette');
     await until(request, (s) => s.strobe.settings.function === 'palette' && s.strobe.settings.speed === 200);
     await expect(sheet.getByRole('slider', { name: 'Flashes per second' })).toBeVisible();
+    await sheet.getByRole('button', { name: 'Done' }).click();
+    await expect(sheet).toHaveCount(0);
   } finally {
     await request.put('/api/strobe', { data: { function: before.function ?? 'palette', speed: before.speed ?? 128 } });
   }

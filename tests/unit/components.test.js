@@ -228,7 +228,7 @@ function givenLibrary(state) {
     pattern: 'hd.neonDomino', patterns: PATTERN_ROWS, families: ui.FAMILIES, builtinPalettes: ui.BUILTIN_PALETTES,
     effects: [{ id: 'u1', name: 'My Domino', kind: 'hd.positionChase', rapidFlash: false, scope: 'measure', updatedAt: USER_PRESET.updatedAt }],
     userPalettes: [USER_PALETTE], safety: { photosensitivityAcknowledged: false, hdFlashIntervalMs: 350, strobeMaxLatchSec: 60 },
-    fixtures: [{ id: 1, name: 'Par 1' }, { id: 2, name: 'Par 2' }], profiles: {},
+    fixtures: [{ id: 1, label: 'Par 1' }, { id: 2, label: 'Par 2' }], profiles: {},
     ...state,
   });
 }
