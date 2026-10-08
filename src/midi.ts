@@ -83,6 +83,9 @@ const require = createRequire(import.meta.url);
 // Milliseconds per encoder detent when nudging the light/music sync.
 const SYNC_NUDGE_MS = 5;
 
+// The ALSA client RtMidi opens behind each of our ports.
+const OWN_PORT = /^RtMidi (Input|Output) Client:/;
+
 let easymidi: EasyMidi | undefined;
 try {
   easymidi = require('easymidi') as EasyMidi;
@@ -279,9 +282,13 @@ class MidiController {
   listPorts(): MidiPortList {
     if (!easymidi) return { inputs: [], outputs: [] };
     // Cache the result — enumerate once, refresh only on explicit connect/close
+    // or when the Settings picker asks (refreshPorts).
     if (this._cachedPorts) return this._cachedPorts;
     try {
-      this._cachedPorts = { inputs: easymidi.getInputs(), outputs: easymidi.getOutputs() };
+      // On ALSA every open port brings an "RtMidi … Client" of ours into the
+      // list, and it outlives close(). Picking one wires our feedback back in.
+      const pickable = (name: string) => !OWN_PORT.test(name);
+      this._cachedPorts = { inputs: easymidi.getInputs().filter(pickable), outputs: easymidi.getOutputs().filter(pickable) };
     } catch (_) {
       this._cachedPorts = { inputs: [], outputs: [] };
     }
@@ -299,6 +306,14 @@ class MidiController {
       return false;
     }
 
+    // Only the ports the operator picked. This used to fall back to the first
+    // port matching /x.?touch/i, then to the first port of all, so any surface
+    // on the bus could take the show over (the e2e server included).
+    if (!inputName) {
+      console.log('[MIDI] No input port picked. Pick one under Settings → MIDI controller.');
+      return false;
+    }
+
     const { inputs, outputs } = this.refreshPorts();
     if (!inputs.length && !outputs.length) {
       console.warn('[MIDI] No MIDI ports available.');
@@ -308,18 +323,15 @@ class MidiController {
     console.log('[MIDI] Available inputs: ', inputs);
     console.log('[MIDI] Available outputs:', outputs);
 
-    // Auto-detect X-Touch Compact if no name given
-    const findPort = (list: string[], hint: string | null): string | null => {
-      if (hint) return list.find(n => n === hint) || null;
-      return list.find(n => /x.?touch/i.test(n)) || list[0] || null;
-    };
-
-    const inName  = findPort(inputs,  inputName);
-    const outName = findPort(outputs, outputName);
+    const inName  = inputs.includes(inputName) ? inputName : null;
+    const outName = outputName && outputs.includes(outputName) ? outputName : null;
 
     if (!inName) {
-      console.warn('[MIDI] No input port found. Pick one under Settings → MIDI controller.');
+      console.warn(`[MIDI] Input port "${inputName}" is not available. Plug it in, or pick another under Settings → MIDI controller.`);
       return false;
+    }
+    if (outputName && !outName) {
+      console.warn(`[MIDI] Output port "${outputName}" is not available; connecting without feedback.`);
     }
 
     try {
